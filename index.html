@@ -11,45 +11,85 @@
 <div class="res"><div class="res-icon ri-stone"><svg viewBox="0 0 24 24" fill="#e2e8f0" style="width:12px;height:12px;display:block;"><path d="M19,4H5A2,2 0 0,0 3,6V18A2,2 0 0,0 5,20H19A2,2 0 0,0 21,18V6A2,2 0 0,0 19,4M19,7.5H13V6H19V7.5M11.5,6V7.5H5V6H11.5M5,9H11V10.5H5V9M12.5,9H19V10.5H12.5V9M19,12H13V13.5H19V12M11.5,12V13.5H5V12H11.5M5,15H11V16.5H5V15M12.5,15H19V16.5H12.5V15M19,18H13V19.5H19V18M11.5,18V19.5H5V18H11.5Z"/></svg></div><div class="res-val" id="r-stone">200</div></div>
 <div id="pop">Pop: 3/5</div>
 <div id="idle-vil-btn" onclick="selectIdleVillager()">🧑‍🌾 Idle: <span id="idle-vil-count">0</span></div>
+<div id="menu-btn" onclick="toggleMenu()">Menu</div>
 </div>
 <div id="msg"></div>
 <div id="help-hint"></div>
 </div>
 <div id="bottom">
-<div id="sel-info"><div id="sel-name">AoE II Mini</div><div id="sel-details">Tap to select, then tap map to command</div></div>
+<div id="bottom-toggle">🔽</div>
 <div id="actions"></div>
+<div id="sel-info">
+  <div id="sel-portrait" ondblclick="toggleCameraFollow()" title="Double-click to lock camera on this unit">⚔️</div>
+  <div id="sel-stats">
+    <div id="sel-name">AoE II Mini</div>
+    <div id="sel-details">Tap to select, then tap map to command</div>
+  </div>
+</div>
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 </div>
 
 <div id="tutorial">
 <div id="tutorial-box">
-<h2>Age of Empires II Mini</h2>
-<p id="tut-desktop">
-<span class="key">Left-click</span> select units &amp; buildings<br>
-<span class="key">Right-click</span> move, gather, or attack<br>
-<span class="key">WASD</span> scroll the map<br><br>
-Select villagers, then <span class="key">right-click</span>:<br>
-Trees = chop wood &bull; Gold = mine gold<br>
-Stone = mine stone &bull; Berries = forage<br>
-Use build buttons to place buildings<br>
-</p>
-<p id="tut-mobile" style="display:none">
-<span class="key">Drag</span> to pan the camera<br>
-<span class="key">Tap</span> to select units &amp; buildings<br>
-<span class="key">Tap map</span> with units selected to command<br><br>
-Select villagers, then tap:<br>
-Trees = chop &bull; Gold/Stone = mine<br>
-Berries = forage &bull; Empty = move<br>
-Use build buttons to place buildings<br>
-</p>
-<p>Build <span class="key">Houses</span> for population &bull; <span class="key">Barracks</span> for military<br>
-Destroy the enemy <span class="key">Town Center</span> to win!</p>
-<div id="difficulty-picker">
-<button type="button" class="difficulty-btn" onclick="startGame('easy')">Easy<span>Slower economy, later attacks</span></button>
-<button type="button" class="difficulty-btn recommended" onclick="startGame('standard')">Standard<span>Balanced AoE-style build order</span></button>
-<button type="button" class="difficulty-btn" onclick="startGame('hard')">Hard<span>Faster boom, earlier pressure</span></button>
+<h2>Age of Empires II</h2>
+<div class="subtitle">MINI EDITION</div>
+
+<div class="menu-divider"></div>
+
+<div class="setup-section">
+  <h3>Select Difficulty</h3>
+  <div class="difficulty-options">
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="easy">
+      <span class="custom-radio"></span>
+      <span class="option-label">Easy</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="standard" checked>
+      <span class="custom-radio"></span>
+      <span class="option-label">Standard</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="hard">
+      <span class="custom-radio"></span>
+      <span class="option-label">Hard</span>
+    </label>
+  </div>
 </div>
-<div class="hint">Choose a difficulty to start</div>
+
+<div class="menu-divider"></div>
+
+<div class="setup-section">
+  <h3>Map Size</h3>
+  <div class="difficulty-options">
+    <label class="difficulty-option">
+      <input type="radio" name="mapsize" value="small">
+      <span class="custom-radio"></span>
+      <span class="option-label">Small</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="mapsize" value="medium" checked>
+      <span class="custom-radio"></span>
+      <span class="option-label">Medium</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="mapsize" value="large">
+      <span class="custom-radio"></span>
+      <span class="option-label">Large</span>
+    </label>
+  </div>
+</div>
+
+<div class="menu-divider"></div>
+
+<div class="menu-button-container" style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
+  <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
+    RESUME MATCH
+  </button>
+  <button type="button" id="start-game-btn" class="menu-action-btn" onclick="onStartClicked()">
+    START GAME
+  </button>
+</div>
 </div>
 </div>
 

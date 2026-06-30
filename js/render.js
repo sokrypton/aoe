@@ -1473,7 +1473,7 @@ function drawSelection(){
 }
 
 function drawMinimap(){
-  let dpr = window.devicePixelRatio || 1;
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
   let mw=MC.clientWidth||160,mh=MC.clientHeight||160;
   MC.width=mw*dpr;MC.height=mh*dpr;
   MC.style.width=mw+'px';MC.style.height=mh+'px';
@@ -1492,8 +1492,6 @@ function drawMinimap(){
     MX.fill();
   };
   MX.clearRect(0,0,mw,mh);
-  MX.fillStyle='#071006';
-  MX.fillRect(0,0,mw,mh);
   for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
     let f = fog[y] && fog[y][x];
     let c = '#000000'; // unexplored is black
@@ -1609,7 +1607,10 @@ function drawProjectiles() {
 }
 
 function render(){
-  X.fillStyle='#1a3a0a';X.fillRect(0,0,W,window.innerHeight);
+  // Black background so unexplored fog (drawTile() skips drawing when
+  // fog===0) and the area beyond the map edge both read as true black,
+  // matching AoE2 rather than showing a dark-green "explored" tint.
+  X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
   
   X.save();
   // Center zoom scale around viewport camera center
@@ -1709,7 +1710,7 @@ function render(){
       let sy2 = rPos.iy - camY + H/2 + topH;
       
       // Draw dotted rally line
-      X.strokeStyle = '#00ffff';
+      X.strokeStyle = '#ffd700';
       X.lineWidth = 1.5;
       X.setLineDash([4, 4]);
       X.beginPath();
@@ -1718,8 +1719,8 @@ function render(){
       X.stroke();
       X.setLineDash([]);
       
-      // Draw small cyan rally flag
-      X.fillStyle = '#00ffff';
+      // Draw small gold rally flag
+      X.fillStyle = '#ffd700';
       X.fillRect(sx2 - 1, sy2 - 12, 2, 12); // pole
       X.beginPath();
       X.moveTo(sx2 + 1, sy2 - 12);

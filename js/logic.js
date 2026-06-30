@@ -384,8 +384,15 @@ function damageEntity(attacker, target){
     }
   }
   
-  // Retaliation: attacked units fight back (not sheep, only opposing teams)
-  if(target.type==='unit'&&target.utype!=='sheep'&&attacker.team!==target.team){
+  // Retaliation: attacked units fight back (not sheep, only opposing teams).
+  // A unit actively carrying out a player move order (a path in progress, or
+  // a pending multi-leg move goal — see updateUnit()) keeps obeying it
+  // instead of being yanked into combat; e.g. a retreating soldier should
+  // keep retreating. Note: a unit that's merely following another (but has
+  // already caught up and stopped, path.length===0) isn't "mid-order" in
+  // that sense and should still defend itself like any idle unit.
+  let hasActiveMoveOrder = target.type==='unit' && (target.path.length>0 || target.moveGoalX!==undefined);
+  if(target.type==='unit'&&target.utype!=='sheep'&&attacker.team!==target.team&&!hasActiveMoveOrder){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -469,6 +476,46 @@ function updateUnit(e){
   if(e.hp<=0)return;
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
+
+  // Follow: keep tracking a moving friendly unit (AoE2-style "Follow" order).
+  // Re-paths toward its current position periodically rather than once, since
+  // the destination keeps changing.
+  if(e.followId){
+    let f=entitiesById.get(e.followId);
+    if(!f||f.hp<=0){
+      e.followId=undefined;
+    } else {
+      let d=dist(e,f);
+      if(d>1.5){
+        if(e.path.length===0 && tick-(e.lastFollowRepathTick||0)>=12){
+          e.lastFollowRepathTick=tick;
+          pathUnitTo(e,Math.round(f.x),Math.round(f.y));
+        }
+      } else if(e.path.length>0){
+        // Close enough — stop walking but keep following so we resume if it moves away.
+        e.path=[];e.moveT=0;e.fromX=e.x;e.fromY=e.y;
+      }
+    }
+  }
+
+  // Multi-leg pathing: if the current task/target-free move order only got a
+  // partial route last time (far-off destination, blocked by obstacles, etc.),
+  // automatically continue toward the original goal once the current leg ends,
+  // instead of silently stopping partway like a stuck/unresponsive order.
+  if(e.path.length===0 && e.moveGoalX!==undefined && !e.target && !e.task && !e.followId){
+    let atGoal = Math.round(e.x)===e.moveGoalX && Math.round(e.y)===e.moveGoalY;
+    if(atGoal){
+      e.moveGoalX=undefined;e.moveGoalY=undefined;
+    } else if(tick-(e.lastRepathTick||0)>=10){
+      e.lastRepathTick=tick;
+      let goalX=e.moveGoalX, goalY=e.moveGoalY;
+      pathUnitTo(e,goalX,goalY);
+      if(e.path.length===0){
+        // No progress possible from here; stop retrying every frame.
+        e.moveGoalX=undefined;e.moveGoalY=undefined;
+      }
+    }
+  }
 
   // Ranged units: halt walking path as soon as we step within firing range of our combat target
   if(e.target && !e.task){
@@ -763,6 +810,11 @@ function updateUnit(e){
   }
   // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
   let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep';
+  // Note: followId isn't excluded here — a unit that has caught up to its
+  // follow target and stopped (path empty) should still engage nearby
+  // enemies like any idle unit; combat naturally takes precedence and the
+  // follow order resumes once the fight ends (followId itself isn't touched
+  // by combat, only the per-leg pathing is).
   if(isMilitary && !e.target && e.path.length===0 && !e.task){
     let scanRange=6;
     let closest=null, closestD=scanRange+1;

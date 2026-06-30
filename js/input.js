@@ -242,6 +242,7 @@ C.addEventListener('touchmove',e=>{
     if(touchLast){
       camX-=(mx-touchLast.x);
       camY-=(my-touchLast.y);
+      window.cameraFollowId=null;
     }
     touchLast={x:mx,y:my};
     touchMoved=true;
@@ -266,6 +267,7 @@ C.addEventListener('touchmove',e=>{
       let dy=t.clientY-touchLast.y;
       camX-=dx;
       camY-=dy;
+      window.cameraFollowId=null;
     }
     touchLast={x:t.clientX,y:t.clientY};
   }
@@ -384,6 +386,11 @@ function minimapJump(sx,sy){
   p.y = Math.max(0, Math.min(MAP, p.y));
   let iso=toIso(p.x,p.y);
   camX=iso.ix;camY=iso.iy;
+  window.targetCamX=camX;window.targetCamY=camY;
+  // Manual camera jump should release camera-follow, same as any other
+  // manual pan — otherwise handleScroll() snaps straight back to the
+  // followed unit on the very next frame and the minimap click does nothing.
+  window.cameraFollowId=null;
 }
 MC.addEventListener('mousedown',e=>{
   if(gameOver)return;
@@ -577,9 +584,10 @@ function doCommand(sx,sy){
   let t0=map[tile.y]&&map[tile.y][tile.x];
   let markerColor='#0f0';
   if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
-  // Check if targeting enemy OR own sheep for harvesting
+  // Check if targeting enemy OR own sheep for harvesting OR own unit to follow
   let target=null;
   let buildTarget=null;
+  let followTarget=null;
   let hitR=isMobile?18:12;
   entities.forEach(en=>{
     // Target enemies — only if actively visible
@@ -607,15 +615,29 @@ function doCommand(sx,sy){
       let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
       if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
     }
+    // Target any other own unit (AoE2-style "Follow") — units, not sheep
+    if(en.team===0&&en.type==='unit'&&en.utype!=='sheep'){
+      let iso=toIso(en.x,en.y);
+      let idOff=en.id%7;
+      let ox=(idOff%3-1)*6;
+      let oy=(Math.floor(idOff/3)-1)*4;
+      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
+      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
+      if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)followTarget=en;
+    }
   });
   if(!target){
     target = getBuildingUnderCursor(sx, sy, en => en.team === 1 && buildingFogLevel(en) === 2);
   }
   if(!target){
+    // Repair/build-finish takes priority over "Follow" — a friendly unit
+    // merely standing near a damaged building shouldn't hijack the click.
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
   }
+  if(buildTarget)followTarget=null;
   if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
+  else if(followTarget)markerColor='#0f8';
   cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
 
   // Play response sound on command
@@ -633,6 +655,7 @@ function doCommand(sx,sy){
     s.gatherX=-1;s.gatherY=-1;s.prevTask=null; // fully clear old state
     s.buildTarget=null;
     s.buildQueue=[];
+    s.followId=undefined;
     if(buildTarget&&s.utype==='villager'){
       s.target=null;s.task='build';s.buildTarget=buildTarget.id;
       let b=BLDGS[buildTarget.btype];
@@ -644,11 +667,16 @@ function doCommand(sx,sy){
         // Friendly sheep targeted by military unit: treat as move command!
         s.target=null;
         let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-        s.task=null;pathUnitTo(s,tile.x+ox,tile.y+oy);
+        s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
         idx++;
       } else {
         s.target=target.id;s.task=null;clearUnitPath(s);s.buildTarget=null;
       }
+    } else if(followTarget&&followTarget.id!==s.id&&s.utype!=='sheep'){
+      // AoE2-style "Follow": keep pathing toward the followed unit's current
+      // position (see updateUnit() in logic.js for the continuous re-pathing).
+      s.target=null;s.task=null;s.followId=followTarget.id;
+      pathUnitTo(s,Math.round(followTarget.x),Math.round(followTarget.y));
     } else {
       s.target=null;
       let t=map[tile.y]&&map[tile.y][tile.x];
@@ -661,13 +689,13 @@ function doCommand(sx,sy){
         else {
           // Move command: use formation offset
           let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-          s.task=null;pathUnitTo(s,tile.x+ox,tile.y+oy);
+          s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
           idx++;
         }
       } else {
         // Military move: use formation offset
         let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-        s.task=null;pathUnitTo(s,tile.x+ox,tile.y+oy);
+        s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
         idx++;
       }
     }
@@ -772,21 +800,41 @@ C.addEventListener('mouseleave',()=>{mouseInGame=false;});
 
 function handleScroll(){
   if(gameOver)return;
-  let spd=8;
-  if(keys['w']||keys['ArrowUp'])camY-=spd;
-  if(keys['s']||keys['ArrowDown'])camY+=spd;
-  if(keys['a']||keys['ArrowLeft'])camX-=spd;
-  if(keys['d']||keys['ArrowRight'])camX+=spd;
+  let spd=6;
+  let manualPan=false;
+
+  if(keys['w']||keys['ArrowUp']){camY-=spd;manualPan=true;}
+  if(keys['s']||keys['ArrowDown']){camY+=spd;manualPan=true;}
+  if(keys['a']||keys['ArrowLeft']){camX-=spd;manualPan=true;}
+  if(keys['d']||keys['ArrowRight']){camX+=spd;manualPan=true;}
+
   // AoE2-style edge scrolling (desktop only).
-  // Bottom boundary is the game viewport edge (topH+H), not window bottom, so
-  // mousing over the UI panel doesn't accidentally scroll the camera.
+  // Activated only when the mouse cursor goes all the way to the window borders (edge = 1 pixel).
   if(!isMobile&&mouseInGame){
-    let edge=5;
-    if(mouseX<edge)camX-=spd;
-    if(mouseX>W-edge)camX+=spd;
-    if(mouseY<topH+edge)camY-=spd;
-    if(mouseY>topH+H-edge)camY+=spd;
+    let edge=1;
+    if(mouseX<=0){camX-=spd;manualPan=true;}
+    if(mouseX>=W-edge){camX+=spd;manualPan=true;}
+    if(mouseY<=0){camY-=spd;manualPan=true;}
+    if(mouseY>=window.innerHeight-edge){camY+=spd;manualPan=true;}
   }
+
+  // Camera-follow: any manual pan input releases the lock; otherwise keep
+  // re-centering on the followed unit every frame (see toggleCameraFollow()).
+  if(manualPan){
+    window.cameraFollowId=null;
+  } else if(window.cameraFollowId){
+    let f=entities.find(en=>en.id===window.cameraFollowId);
+    if(f&&f.hp>0){
+      let iso=toIso(f.x,f.y);
+      camX=iso.ix;camY=iso.iy;
+    } else {
+      window.cameraFollowId=null;
+    }
+  }
+
+  // Force clean integer camera coordinates globally
+  camX = Math.round(camX);
+  camY = Math.round(camY);
 }
 
 // ---- RESIZE ----

@@ -1,48 +1,119 @@
 function updateUI(){
-  document.getElementById('r-food').textContent=Math.floor(res.food);
-  document.getElementById('r-wood').textContent=Math.floor(res.wood);
-  document.getElementById('r-gold').textContent=Math.floor(res.gold);
-  document.getElementById('r-stone').textContent=Math.floor(res.stone);
+  let currentFood = Math.floor(res.food);
+  let currentWood = Math.floor(res.wood);
+  let currentGold = Math.floor(res.gold);
+  let currentStone = Math.floor(res.stone);
+  
+  // Calculate idle villagers count
+  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
+  let currentIdleCount = idleVils.length;
+  
+  // Selection key
+  let currentSelListKey = selected.map(s => s.id).join(',');
+  if (currentSelListKey !== (window.lastSelListKey || '')) {
+    window.currentVillagerMenu = 'main';
+    window.lastSelListKey = currentSelListKey;
+  }
+  
+  // Selected detail key
+  let currentSelectionDetails = '';
+  if (selected.length > 0) {
+    let e = selected[0];
+    currentSelectionDetails = `${e.id}:${e.hp}:${e.maxHp}:${e.complete ? 1 : 0}:${e.buildProgress || 0}`;
+    if (e.queue) {
+      currentSelectionDetails += `:${e.queue.length}:${Math.floor(e.trainTick)}`;
+    }
+    if (e.task) {
+      currentSelectionDetails += `:${e.task}:${e.resCarrying || 0}:${e.targetId || 0}`;
+    }
+    let b = BLDGS[e.btype];
+    if (b && b.isFarm) {
+      let tr = (map[e.y] && map[e.y][e.x]) ? map[e.y][e.x].res : 0;
+      currentSelectionDetails += `:${tr}`;
+    }
+    // Include camera-lock state so toggling it (which changes no other
+    // tracked field) still passes the dirty-state check below and refreshes
+    // the '.cam-locked' portrait indicator immediately.
+    currentSelectionDetails += `:cam${window.cameraFollowId === e.id ? 1 : 0}`;
+  }
+
+  // Initialize dirty state tracker if not present
+  if (!window.lastUIState) {
+    window.lastUIState = {
+      food: -1, wood: -1, gold: -1, stone: -1,
+      popUsed: -1, popCap: -1, idleCount: -1,
+      gameOver: null, gameStarted: null, selectedKey: null,
+      selectionDetails: null, placing: null, currentVillagerMenu: null
+    };
+  }
+
+  let lu = window.lastUIState;
+  let stateChanged = (
+    currentFood !== lu.food || currentWood !== lu.wood ||
+    currentGold !== lu.gold || currentStone !== lu.stone ||
+    popUsed !== lu.popUsed || popCap !== lu.popCap ||
+    currentIdleCount !== lu.idleCount || gameOver !== lu.gameOver ||
+    gameStarted !== lu.gameStarted || currentSelListKey !== lu.selectedKey ||
+    currentSelectionDetails !== lu.selectionDetails || placing !== lu.placing ||
+    window.currentVillagerMenu !== lu.currentVillagerMenu
+  );
+
+  if (!stateChanged) return;
+
+  // Update cached state
+  lu.food = currentFood;
+  lu.wood = currentWood;
+  lu.gold = currentGold;
+  lu.stone = currentStone;
+  lu.popUsed = popUsed;
+  lu.popCap = popCap;
+  lu.idleCount = currentIdleCount;
+  lu.gameOver = gameOver;
+  lu.gameStarted = gameStarted;
+  lu.selectedKey = currentSelListKey;
+  lu.selectionDetails = currentSelectionDetails;
+  lu.placing = placing;
+  lu.currentVillagerMenu = window.currentVillagerMenu;
+
+  // Perform actual DOM updates
+  document.getElementById('r-food').textContent=currentFood;
+  document.getElementById('r-wood').textContent=currentWood;
+  document.getElementById('r-gold').textContent=currentGold;
+  document.getElementById('r-stone').textContent=currentStone;
   document.getElementById('pop').textContent=`Pop: ${popUsed}/${popCap}`;
 
-  // Update Idle Villager banner button
-  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
   let idleBtn = document.getElementById('idle-vil-btn');
   if (idleBtn) {
-    document.getElementById('idle-vil-count').textContent = idleVils.length;
-    if (idleVils.length > 0) {
+    document.getElementById('idle-vil-count').textContent = currentIdleCount;
+    if (currentIdleCount > 0) {
       idleBtn.classList.add('idle-active');
     } else {
       idleBtn.classList.remove('idle-active');
     }
   }
 
-
   let act=document.getElementById('actions');
-
-  // Only rebuild action buttons when selection changes (not every frame)
-  let currentSelListKey = selected.map(s=>s.id).join(',');
-  if (currentSelListKey !== (window.lastSelListKey || '')) {
-    window.currentVillagerMenu = 'main';
-    window.lastSelListKey = currentSelListKey;
-  }
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   if(rebuildActions)act.innerHTML='';
 
+  let port = document.getElementById('sel-portrait');
   if(gameOver){
+    if (port) { port.textContent = won ? '🏆' : '💀'; port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent=won?'VICTORY!':'DEFEAT!';
     document.getElementById('sel-details').textContent=won?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
     return;
   }
   if(!gameStarted){
+    if (port) { port.textContent = '⚔️'; port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Choose Difficulty';
     document.getElementById('sel-details').textContent='Select Easy, Standard, or Hard to begin';
     return;
   }
 
   if(selected.length===0){
+    if (port) { port.textContent = '⚔️'; port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='AoE II Mini';
     if(isMobile){
       document.getElementById('sel-details').textContent='Tap: select unit/building\nWith units selected, tap map\nto move/gather/attack\nDrag to pan camera';
@@ -54,8 +125,14 @@ function updateUI(){
   let e=selected[0];
   if(e.type==='building'){
     let b=BLDGS[e.btype];
+    if (port) { port.textContent = b.icon; port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent=b.name;
+    let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
+    let hpColor = '#2b8a3e';
+    if (hpPct < 20) hpColor = '#cc3333';
+    else if (hpPct < 50) hpColor = '#d9a711';
     let det=`HP: ${e.hp}/${e.maxHp}`;
+    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
     if(!e.complete) det+=`<br>Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
     else if(b.pop) det+=`<br>Provides ${b.pop} population`;
     else if(b.drop) det+=`<br>Dropoff: ${b.drop}`;
@@ -86,14 +163,36 @@ function updateUI(){
         let u=UNITS[ut];
         let btn=document.createElement('div');btn.className='act-btn';
         let costStr=formatCost(u.cost);
-        btn.innerHTML=`<div class="btn-emoji">${u.icon}</div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>`;
+        let desc=u.desc||'';
+        btn.innerHTML=`<div class="btn-emoji">${u.icon}</div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
+          `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
         btn.onclick=()=>trainUnit(e,ut);
         act.appendChild(btn);
       });
     }
   } else {
+    if (port) {
+      port.textContent = UNITS[e.utype].icon;
+      port.classList.toggle('cam-locked', window.cameraFollowId===e.id);
+    }
     document.getElementById('sel-name').textContent=UNITS[e.utype].name+(selected.length>1?` (${selected.length})`:'');
+    let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
+    let hpColor = '#2b8a3e';
+    if (hpPct < 20) hpColor = '#cc3333';
+    else if (hpPct < 50) hpColor = '#d9a711';
     let det=`HP: ${e.hp}/${e.maxHp}`;
+    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
+
+    // Display combat stats for military units
+    let uData = UNITS[e.utype];
+    if (uData && e.utype !== 'sheep') {
+      let stats = [];
+      if (uData.atk > 0) stats.push(`⚔️ ${uData.atk}`);
+      if (uData.range > 0) stats.push(`🏹 ${uData.range}`);
+      stats.push(`🏃 ${uData.speed.toFixed(2)}`);
+      det += `<br><span style="color:#ffd700;font-weight:bold;font-size:12px;">${stats.join('  ')}</span>`;
+    }
+
     // Show friendly task names
     let taskNames={chop:'Chopping wood',mine_gold:'Mining gold',mine_stone:'Mining stone',
       forage:'Foraging berries',farm:'Farming',build:'Building','return':'Returning resources'};
@@ -117,7 +216,8 @@ function updateUI(){
         ];
         menuButtons.forEach(bi => {
           let btn=document.createElement('div');btn.className='act-btn menu-btn';
-          btn.innerHTML=`<div class="btn-emoji">${bi.icon}</div><div class="btn-label">${bi.name}</div><span class="cost">HotKey: [${bi.key}]</span>`;
+          btn.innerHTML=`<div class="btn-emoji">${bi.icon}</div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>` +
+            `<div class="tooltip"><strong>${bi.name} Menu</strong><div class="tooltip-desc">Opens the list of available ${bi.action === 'eco' ? 'economic' : 'military'} structures.</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
             window.currentVillagerMenu = bi.action;
@@ -128,7 +228,8 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'eco') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
-        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
+        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
+          `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
           updateUI();
@@ -146,7 +247,10 @@ function updateUI(){
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           let bData=BLDGS[bi.type];
-          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${formatCost(bData.cost)} [${bi.key}]</span>`;
+          let costStr=formatCost(bData.cost);
+          let desc=bData.desc||'';
+          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
+            `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;
@@ -157,7 +261,8 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'mil') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
-        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
+        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
+          `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
           updateUI();
@@ -174,7 +279,10 @@ function updateUI(){
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           let bData=BLDGS[bi.type];
-          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${formatCost(bData.cost)} [${bi.key}]</span>`;
+          let costStr=formatCost(bData.cost);
+          let desc=bData.desc||'';
+          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
+            `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;
@@ -210,6 +318,7 @@ function cancelQueue(bldgId,idx){
 
 function showMsg(txt){
   let el=document.getElementById('msg');el.textContent=txt;el.style.opacity='1';
+  if (window.playSound) window.playSound('alert');
   setTimeout(()=>el.style.opacity='0',2000);
 }
 
@@ -232,8 +341,39 @@ window.selectIdleVillager = function() {
   let iso = toIso(vil.x, vil.y);
   camX = iso.ix;
   camY = iso.iy;
-  
+  window.targetCamX = camX;
+  window.targetCamY = camY;
+  // Manual camera jump should release camera-follow, same as any other
+  // manual pan — otherwise handleScroll() snaps straight back next frame.
+  window.cameraFollowId = null;
+
   if (window.playSound) window.playSound('select_villager');
   showMsg('Selected idle villager');
   updateUI();
 };
+
+window.toggleBottomPanel = function() {
+  let bottom = document.getElementById('bottom');
+  let toggle = document.getElementById('bottom-toggle');
+  if (bottom && toggle) {
+    let isCollapsed = bottom.classList.toggle('collapsed');
+    toggle.textContent = isCollapsed ? '🔼' : '🔽';
+    localStorage.setItem('hud_collapsed', isCollapsed ? '1' : '0');
+    showMsg(isCollapsed ? 'HUD Collapsed' : 'HUD Expanded');
+  }
+};
+
+// Load bottom panel collapsed preference and bind event listener dynamically
+(function() {
+  let collapsed = localStorage.getItem('hud_collapsed') === '1';
+  let bottom = document.getElementById('bottom');
+  let toggle = document.getElementById('bottom-toggle');
+  if (bottom && toggle) {
+    toggle.addEventListener('click', window.toggleBottomPanel);
+    
+    if (collapsed) {
+      bottom.classList.add('collapsed');
+      toggle.textContent = '🔼';
+    }
+  }
+})();

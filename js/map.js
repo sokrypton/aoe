@@ -8,6 +8,9 @@ function genMap(){
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
   let baseAngle=Math.atan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
   let baseSide=Math.random()<0.5?-1:1;
+  // Resource distances below were tuned for the original 60x60 map; scale them
+  // so larger maps spread bases/resources out instead of leaving empty grass.
+  let scale=MAP/60;
 
   function randFloat(min,max){return Math.random()*(max-min)+min;}
   function inBounds(x,y,margin=0){return x>=margin&&x<MAP-margin&&y>=margin&&y<MAP-margin;}
@@ -148,43 +151,58 @@ function genMap(){
 
   starts.forEach(s=>clearArea(s.cx,s.cy,6));
 
-  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),5);
+  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),5*scale);
   placeMirrored(berriesOffset,placeBerries);
 
-  let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),8);
-  placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4,1));
+  let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),8*scale);
+  placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
 
-  let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8);
-  placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,4,1));
+  let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);
+  placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,4*scale,1));
 
-  let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12);
-  placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8,3));
+  let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12*scale);
+  placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3));
 
-  let secondStoneOffset=polar(baseAngle+Math.PI-baseSide*0.8+randFloat(-0.25,0.25),11);
-  placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,3,350,2,8,3));
+  let secondStoneOffset=polar(baseAngle+Math.PI-baseSide*0.8+randFloat(-0.25,0.25),11*scale);
+  placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,3,350,2,8*scale,3));
 
-  placeMirroredForest(baseAngle+Math.PI+randFloat(-0.35,0.35),8,5,2);
-  placeMirroredForest(baseAngle+baseSide*1.7+randFloat(-0.25,0.25),9,5,2);
-  placeMirroredForest(baseAngle-baseSide*1.25+randFloat(-0.25,0.25),11,6,2);
+  placeMirroredForest(baseAngle+Math.PI+randFloat(-0.35,0.35),8*scale,5,2);
+  placeMirroredForest(baseAngle+baseSide*1.7+randFloat(-0.25,0.25),9*scale,5,2);
+  placeMirroredForest(baseAngle-baseSide*1.25+randFloat(-0.25,0.25),11*scale,6,2);
 
   [baseAngle+Math.PI-0.7,baseAngle+Math.PI+0.5,baseAngle+baseSide*2.2].forEach(a=>{
-    let offset=polar(a+randFloat(-0.15,0.15),4);
+    let offset=polar(a+randFloat(-0.15,0.15),4*scale);
     placeMirrored(offset,(x,y)=>{
       x=Math.round(x);y=Math.round(y);
       if(inBounds(x,y,1)&&!resourceBuffer(x,y,2)&&map[y][x].t===TERRAIN.GRASS)map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null};
     });
   });
 
-  placeNeutralPair(7,-6,(x,y)=>placePatch(TERRAIN.GOLD,x,y,5,800,3,12));
-  placeNeutralPair(-8,5,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,12));
-  placeNeutralPair(0,12,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,12));
+  placeNeutralPair(7*scale,-6*scale,(x,y)=>placePatch(TERRAIN.GOLD,x,y,5,800,3,12*scale));
+  placeNeutralPair(-8*scale,5*scale,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,12*scale));
+  placeNeutralPair(0,12*scale,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,12*scale));
 
-  for(let i=0;i<7;i++){
+  // Extra neutral deposit pairs beyond the 3 above: scale count with map area
+  // (scale^2) so bigger maps have proportionally more to contest, not just
+  // more empty buffer between the same fixed set of deposits.
+  let extraDepositPairs=Math.round(3*scale*scale)-3;
+  for(let i=0;i<extraDepositPairs;i++){
     let angle=randFloat(0,Math.PI*2);
-    let dist=randInt(9,23);
+    let dist=randFloat(10,16)*scale;
+    let offset=polar(angle,dist);
+    let isGold=i%2===0;
+    placeNeutralPair(offset.x,offset.y,(x,y)=>placePatch(isGold?TERRAIN.GOLD:TERRAIN.STONE,x,y,isGold?5:4,isGold?800:350,3,12*scale));
+  }
+
+  // Scattered neutral forest patches: scale count with map area (scale^2) so
+  // bigger maps don't end up with proportionally more empty grass.
+  let extraForestPatches=Math.round(7*scale*scale);
+  for(let i=0;i<extraForestPatches;i++){
+    let angle=randFloat(0,Math.PI*2);
+    let dist=randInt(Math.round(9*scale),Math.round(23*scale));
     let x=MAP/2+Math.round(Math.cos(angle)*dist);
     let y=MAP/2+Math.round(Math.sin(angle)*dist);
-    if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13))continue;
+    if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13*scale))continue;
     placeForestLine(x,y,randFloat(0,Math.PI),randInt(4,7),randInt(2,3));
   }
 

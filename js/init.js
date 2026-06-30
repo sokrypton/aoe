@@ -14,6 +14,7 @@ function init(){
   });
   placeStartingSheep();
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
+  window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
   // Show initial help on mobile
   if(isMobile){
@@ -47,6 +48,7 @@ function placeStartingSheep(){
 function startGame(difficulty){
   aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
   gameStarted=true;
+  gamePaused=false;
   aiTick=0;
   window.playedGameOverSound = false; // Reset game over sound trigger
   // Initialize audio on first click
@@ -57,9 +59,66 @@ function startGame(difficulty){
   showMsg('Difficulty: '+AI_LEVELS[aiDifficulty].name);
 }
 
+function onStartClicked(){
+  let selected = document.querySelector('input[name="difficulty"]:checked');
+  let diff = selected ? selected.value : 'standard';
+  let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
+  setMapSize(sizeSelected ? sizeSelected.value : 'medium');
+
+  // Always regenerate the map (even on a fresh load) so the chosen size takes effect,
+  // since init() already ran once at script load with the default size.
+  restartGame(diff);
+}
+
+function restartGame(difficulty){
+  gameOver = false;
+  won = false;
+  gameStarted = false;
+  entities = [];
+  entitiesById.clear();
+  corpses = [];
+  selected = [];
+  tick = 0;
+  
+  // Reset resources to defaults
+  res = {food:200, wood:200, gold:100, stone:200};
+  aiRes = {food:100, wood:100, gold:100, stone:100};
+  
+  // Re-generate map and spawn starts
+  init();
+  
+  startGame(difficulty);
+}
+
+function toggleCameraFollow(){
+  if(selected.length===0 || selected[0].type!=='unit' || selected[0].team!==0)return;
+  let id=selected[0].id;
+  window.cameraFollowId = (window.cameraFollowId===id) ? null : id;
+  updateUI();
+}
+
+function toggleMenu(){
+  let menu = document.getElementById('tutorial');
+  if (menu) {
+    if (menu.style.display === 'none' || menu.style.display === '') {
+      menu.style.display = 'flex';
+      gamePaused = true;
+      let resumeBtn = document.getElementById('resume-game-btn');
+      if (resumeBtn) {
+        resumeBtn.style.display = entities.length > 0 ? 'inline-block' : 'none';
+      }
+    } else {
+      menu.style.display = 'none';
+      gamePaused = false;
+    }
+  }
+}
+
 function gameLoop(){
-  if(gameStarted)handleScroll();
-  update();
+  if(gameStarted && !gamePaused) {
+    handleScroll();
+    update();
+  }
   render();
   updateUI();
   if(gameOver){
@@ -67,12 +126,26 @@ function gameLoop(){
       window.playedGameOverSound = true;
       if (window.playSound) window.playSound(won ? 'victory' : 'defeat');
     }
-    X.fillStyle='rgba(0,0,0,0.6)';X.fillRect(0,0,W,window.innerHeight);
+    X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
     let cy=topH+H/2;
-    X.fillStyle=won?'#ffd700':'#ff4444';X.font='bold 48px serif';X.textAlign='center';
-    X.fillText(won?'VICTORY':'DEFEAT',W/2,cy-20);
-    X.fillStyle='#fff';X.font='20px sans-serif';
-    X.fillText(won?'You destroyed the enemy!':'Your Town Center fell!',W/2,cy+20);
+
+    // Draw gold banner background
+    X.fillStyle='rgba(40,20,5,0.85)';
+    X.fillRect(0,cy-80,W,140);
+    X.strokeStyle='#bfa054';X.lineWidth=3;
+    X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
+    X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
+
+    // Main text using Cinzel
+    X.fillStyle=won?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
+    X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
+    X.fillText(won?'VICTORY':'DEFEAT',W/2,cy-15);
+
+    // Subtext using Georgia
+    X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
+    X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
+    X.fillText(won?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
+    X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
   }
   requestAnimationFrame(gameLoop);
 }
