@@ -737,6 +737,9 @@ function drawBuilding(e, part = null){
         X.moveTo(t1sx, t1sy - 7 - slideY); X.lineTo(t2sx, t2sy - 7 - slideY);
         X.moveTo(t1sx, t1sy - 15 - slideY); X.lineTo(t2sx, t2sy - 15 - slideY);
         X.stroke();
+
+        // Lintel arch bridging the two towers (drawn as part of the back-to-mid layer)
+        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5);
       }
       if (part === 'back') {
         X.globalAlpha = 1;
@@ -745,12 +748,6 @@ function drawBuilding(e, part = null){
     }
 
     if (part === 'front' || part === null) {
-      let dx = t2sx - t1sx, dy = t2sy - t1sy;
-      if (e.complete) {
-        // Draw lintel
-        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5);
-      }
-
       // Draw front post (Tower 2)
       drawBuildingBlock(t2sx, t2sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
 
@@ -928,21 +925,36 @@ function drawUnit(e){
   } else if(e.gatherX !== undefined && e.gatherY !== undefined && e.task && e.task !== 'return'){
     tx = e.gatherX + 0.5;
     ty = e.gatherY + 0.5;
+  } else if(e.path && e.path.length > 0){
+    // Look 3 steps ahead to smooth out diagonal paths that alternate N+E or S+W steps
+    let ahead = Math.min(3, e.path.length - 1);
+    tx = e.path[ahead].x;
+    ty = e.path[ahead].y;
   }
+  if(e.facingNorth===undefined) e.facingNorth = false;
+  let targetDy = 0;
   if(tx !== -1 && ty !== -1){
     let targetIso = toIso(tx, ty);
     let targetSx = targetIso.ix - camX + W/2;
     targetDx = targetSx - sx;
+    // targetSy must match the sy formula (which includes +HALF_TH) so the delta is correct
+    let targetSy = targetIso.iy - camY + topH + H/2 + HALF_TH;
+    targetDy = targetSy - sy;
   }
   if(targetDx !== 0){
-    // Face the target (resource, foundation, dropsite, or enemy unit)
     e.facing = targetDx > 0 ? 1 : -1;
   } else if(e.lastSx!==undefined){
-    // Face the direction of screen velocity
     let diff = sx - e.lastSx;
     if(Math.abs(diff) > 0.1) e.facing = diff > 0 ? 1 : -1;
   }
+  if(targetDy !== 0){
+    e.facingNorth = targetDy < 0;
+  } else if(e.lastSy!==undefined){
+    let diffY = sy - e.lastSy;
+    if(Math.abs(diffY) > 0.1) e.facingNorth = diffY < 0;
+  }
   e.lastSx = sx;
+  e.lastSy = sy;
 
   // Torso / Head bobbing
   let bob=e.path.length>0?Math.sin(tick*0.3+e.id)*1.5:0;
@@ -956,56 +968,85 @@ function drawUnit(e){
 
   // --- DRAW FLIPPABLE STUFF ---
   if(e.utype!=='sheep'){
+    let humanXOffset = e.utype === 'scout' ? -3 : 0;
+    let humanYOffset = e.utype === 'scout' ? -8 : 0;
+
     // Walking leg cycle (swinging legs with constant leg length)
     if(e.utype==='scout'){
-      // Horse leg swing
-      let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4 : 0;
-      X.strokeStyle = '#000000'; X.lineWidth = 2.2;
-      X.beginPath();
-      // Front legs
-      X.moveTo(3, 4); X.lineTo(3+walk, 11);
-      X.moveTo(5, 4); X.lineTo(5-walk, 11);
-      // Back legs
-      X.moveTo(-6, 4); X.lineTo(-6+walk, 11);
-      X.moveTo(-8, 4); X.lineTo(-8-walk, 11);
-      X.stroke();
-      
-      X.strokeStyle = '#8b5a2b'; X.lineWidth = 1.3;
-      X.beginPath();
-      X.moveTo(3, 4); X.lineTo(3+walk, 11);
-      X.moveTo(5, 4); X.lineTo(5-walk, 11);
-      X.moveTo(-6, 4); X.lineTo(-6+walk, 11);
-      X.moveTo(-8, 4); X.lineTo(-8-walk, 11);
-      X.stroke();
-    } else if(e.path.length>0){
-      let walk = Math.sin(tick*0.4+e.id)*2.5;
+      // Horse legs drawn as simple black lines matching human styling
+      let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4.5 : 0;
       X.strokeStyle = '#000000'; X.lineWidth = 1.8;
       X.beginPath();
-      X.moveTo(-2, -bob); X.lineTo(-2-walk, 3-bob);
-      X.moveTo(2, -bob); X.lineTo(2+walk, 3-bob);
+      // Front legs
+      X.moveTo(3, -4); X.lineTo(3+walk, 2);
+      X.moveTo(5, -4); X.lineTo(5-walk, 2);
+      // Back legs
+      X.moveTo(-6, -4); X.lineTo(-6+walk, 2);
+      X.moveTo(-8, -4); X.lineTo(-8-walk, 2);
+      X.stroke();
+    } else {
+      // Human legs (visible both when standing and walking)
+        let walk = e.path.length>0 ? Math.sin(tick*0.4+e.id)*2.5 : 0;
+      X.strokeStyle = '#000000'; X.lineWidth = 1.8;
+      X.beginPath();
+      X.moveTo(-2+humanXOffset, -bob); X.lineTo(-2-walk+humanXOffset, 3-bob);
+      X.moveTo(2+humanXOffset, -bob); X.lineTo(2+walk+humanXOffset, 3-bob);
       X.stroke();
     }
 
-    let humanYOffset = e.utype === 'scout' ? -5 : 0;
-
     // Horse body drawn under the rider
     if(e.utype==='scout'){
-      X.fillStyle='#a0522d'; X.strokeStyle='#000'; X.lineWidth=1.2;
-      X.beginPath();
-      X.ellipse(-1, 3, 10, 5, 0, 0, Math.PI*2);
-      X.fill(); X.stroke();
-      
-      X.beginPath();
-      X.ellipse(6, -1, 4, 7, -Math.PI/6, 0, Math.PI*2);
-      X.fill(); X.stroke();
-      X.beginPath();
-      X.ellipse(9, -6, 4, 2.5, -Math.PI/6, 0, Math.PI*2);
-      X.fill(); X.stroke();
-      
-      X.strokeStyle='#000'; X.lineWidth=2.5;
-      X.beginPath(); X.moveTo(-11, 2); X.lineTo(-15, 8); X.stroke();
-      X.strokeStyle='#111'; X.lineWidth=1.5;
-      X.beginPath(); X.moveTo(-11, 2); X.lineTo(-15, 8); X.stroke();
+      // Direction-aware neck/head: E/S = head to the right, N/W = head raised upward
+      let hNorth = e.facingNorth;
+
+      // Outline silhouette (black, drawn first slightly larger)
+      X.fillStyle='#000000';
+      X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();          // saddle blanket outline
+      X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();  // rump outline
+      X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();   // chest outline
+
+      if(hNorth){
+        // Neck raised, head pointing upper-right (away from camera)
+        X.beginPath(); X.ellipse(4, -12, 4.0, 7.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // neck outline
+        X.beginPath(); X.ellipse(5, -18, 4.2, 3.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // head outline
+        X.beginPath(); X.ellipse(6.5, -16.5, 2.6, 2.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // snout outline
+        X.beginPath(); X.ellipse(2, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1 outline
+        X.beginPath(); X.ellipse(5, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2 outline
+      } else {
+        // Neck forward, head to the right (E/S direction)
+        X.beginPath(); X.ellipse(5, -9, 4.6, 8.3, -Math.PI/6, 0, Math.PI*2); X.fill();   // neck outline
+        X.beginPath(); X.ellipse(9, -13, 4.6, 3.3, -Math.PI/6, 0, Math.PI*2); X.fill();  // head outline
+        X.beginPath(); X.ellipse(11, -11.5, 3.0, 2.6, -Math.PI/12, 0, Math.PI*2); X.fill(); // snout outline
+        X.beginPath(); X.ellipse(6, -16.5, 2.0, 3.3, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
+        X.beginPath(); X.ellipse(8.5, -15.5, 2.0, 3.3, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear2 outline
+      }
+
+      // Colored fills
+      X.fillStyle=tc;
+      X.beginPath(); X.rect(-6, -8, 9, 6); X.fill();   // saddle blanket
+      X.fillStyle='#8b5a2b';
+      X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill(); // rump
+      X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();  // chest
+
+      if(hNorth){
+        X.beginPath(); X.ellipse(4, -12, 3.2, 6.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // neck
+        X.beginPath(); X.ellipse(5, -18, 3.4, 2.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // head
+        X.beginPath(); X.ellipse(6.5, -16.5, 1.8, 1.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // snout
+        X.beginPath(); X.ellipse(2, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1
+        X.beginPath(); X.ellipse(5, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2
+      } else {
+        X.beginPath(); X.ellipse(5, -9, 3.8, 7.5, -Math.PI/6, 0, Math.PI*2); X.fill();   // neck
+        X.beginPath(); X.ellipse(9, -13, 3.8, 2.5, -Math.PI/6, 0, Math.PI*2); X.fill();  // head
+        X.beginPath(); X.ellipse(11, -11.5, 2.2, 1.8, -Math.PI/12, 0, Math.PI*2); X.fill(); // snout
+        X.beginPath(); X.ellipse(6, -16.5, 1.2, 2.5, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
+        X.beginPath(); X.ellipse(8.5, -15.5, 1.2, 2.5, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear2
+      }
+
+      // Tail (same in all directions)
+      X.strokeStyle='#000'; X.lineWidth=3.0;
+      X.beginPath(); X.moveTo(-10, -7); X.quadraticCurveTo(-14, -3, -13, 3); X.stroke();
+      X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
+      X.beginPath(); X.moveTo(-10, -7); X.quadraticCurveTo(-14, -3, -13, 3); X.stroke();
     }
 
     // Torso
@@ -1013,34 +1054,65 @@ function drawUnit(e){
     if(e.utype==='militia'){
       // Iron chainmail torso
       X.fillStyle='#6b6b6b';
-      X.beginPath();X.arc(0,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
       // Team-colored surcoat tunic
       X.fillStyle=tc;
-      X.beginPath();X.rect(-2.5,-10+humanYOffset,5,8);X.fill();X.stroke();
+      X.beginPath();X.rect(-2.5+humanXOffset,-10+humanYOffset,5,8);X.fill();X.stroke();
     } else {
       // Team-colored peasant shirt
       X.fillStyle=tc;
-      X.beginPath();X.arc(0,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
     }
-    // Flesh Head
-    X.fillStyle='#edc9a0';
-    X.beginPath();X.arc(0,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
-    // Headwear
-    if(e.utype==='militia'){
-      // Norman iron helm
-      X.fillStyle='#8a8a8a';
-      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
-      X.fillStyle='#daa520';
-      X.beginPath();X.rect(-4.5,-15+humanYOffset,9,1.5);X.fill();X.stroke();
-      X.fillStyle='#8a8a8a';
-      X.beginPath();X.rect(-0.75,-15+humanYOffset,1.5,4);X.fill();X.stroke();
-    } else if(e.utype==='archer') {
-      X.fillStyle='#2e8b57'; // green archer hood
-      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+    if (e.facingNorth) {
+      // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
+      if(e.utype==='militia'){
+        // Back of Norman iron helm
+        X.fillStyle='#8a8a8a';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+        X.fillStyle='#daa520';
+        X.beginPath();X.rect(-4.5+humanXOffset,-14.5+humanYOffset,9,1.5);X.fill();X.stroke();
+      } else if(e.utype==='archer') {
+        // Back of archer hood
+        X.fillStyle='#2e8b57';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+      } else if(e.utype==='villager') {
+        // Back of blonde hair
+        X.fillStyle = '#b58e3d';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
+      } else {
+        // Back of leather hood cap
+        X.fillStyle='#4a2e1b';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+      }
     } else {
-      // Peasant leather hood cap
-      X.fillStyle='#4a2e1b';
-      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+      // Facing South (towards camera): Draw flesh face and headwear cap
+      // Flesh Head
+      X.fillStyle='#edc9a0';
+      X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
+      
+      // Headwear Cap
+      if(e.utype==='militia'){
+        // Norman iron helm
+        X.fillStyle='#8a8a8a';
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+        X.fillStyle='#daa520';
+        X.beginPath();X.rect(-4.5+humanXOffset,-15+humanYOffset,9,1.5);X.fill();X.stroke();
+        X.fillStyle='#8a8a8a';
+        X.beginPath();X.rect(-0.75+humanXOffset,-15+humanYOffset,1.5,4);X.fill();X.stroke();
+      } else if(e.utype==='archer') {
+        X.fillStyle='#2e8b57'; // green archer hood
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+      } else if(e.utype==='villager') {
+        // No helmet/hood: just natural blonde hair!
+        X.fillStyle = '#b58e3d';
+        X.beginPath();
+        X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
+        X.fill(); X.stroke();
+      } else {
+        // Peasant leather hood cap for spearman/scout
+        X.fillStyle='#4a2e1b';
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+      }
     }
 
     // Tools & weapons (animated swinging swings during active tasks)
@@ -1178,71 +1250,73 @@ function drawUnit(e){
       }
       X.restore();
     } else if(e.utype==='scout'){
-      // Scout wooden club weapon
+      // Scout Sword (straight broadsword like the militia soldier)
       let swinging=e.target&&e.path.length===0;
-      X.save(); X.translate(4, -7+humanYOffset);
-      if(swinging) X.rotate(anim*1.1);
-      else X.rotate(-0.5);
-      X.strokeStyle='#000'; X.lineWidth=2.2;
-      X.beginPath(); X.moveTo(0,0); X.lineTo(6,-6); X.stroke();
-      X.strokeStyle='#8B4513'; X.lineWidth=1.2;
-      X.beginPath(); X.moveTo(0,0); X.lineTo(6,-6); X.stroke();
+      X.save(); X.translate(3+humanXOffset, -7+humanYOffset);
+      if(swinging) X.rotate(anim*1.0);
+      else X.rotate(-0.3);
+      X.strokeStyle='#000000'; X.lineWidth=1;
+      X.fillStyle='#6a4a20'; X.beginPath(); X.rect(-1, 0, 3, 5); X.fill(); X.stroke();
+      X.fillStyle='#aa8'; X.beginPath(); X.rect(-3, -1, 7, 2); X.fill(); X.stroke();
+      X.fillStyle='#ccd';
+      X.beginPath(); X.moveTo(-1, -1); X.lineTo(0, -14); X.lineTo(2, -1); X.closePath(); X.fill(); X.stroke();
+      X.fillStyle='#eef'; X.beginPath(); X.rect(0, -12, 1, 8); X.fill();
       X.restore();
     }
   } else {
-    // Sheep hooves (swinging walking legs)
-    X.strokeStyle='#000000';X.lineWidth=2;
-    let hoofWalk = e.path.length > 0 ? Math.sin(tick * 0.4 + e.id) * 2 : 0;
+    // Sheep — 4-direction: body always the same, head tracks movement direction
+    // facing=-1 flips X via scale, so local coords always draw "head to the right"
+    // facingNorth=true  → N or W direction (head goes up-right in local = away from camera)
+    // facingNorth=false → E or S direction (head goes right in local = toward/beside camera)
+
+    // 4-leg walk cycle: two pairs alternating
+    let hw1 = e.path.length > 0 ? Math.sin(tick * 0.45 + e.id) * 2.5 : 0;
+    let hw2 = -hw1;
+    X.strokeStyle='#000000'; X.lineWidth=1.8;
     X.beginPath();
-    X.moveTo(-3, 2);X.lineTo(-3 - hoofWalk, 5);
-    X.moveTo(3, 2);X.lineTo(3 + hoofWalk, 5);
+    X.moveTo(-4, 0); X.lineTo(-4 + hw1, 5);   // back-left
+    X.moveTo(-1, 1); X.lineTo(-1 + hw2, 5);    // back-right
+    X.moveTo(2, 1);  X.lineTo(2  + hw1, 5);    // front-left
+    X.moveTo(5, 0);  X.lineTo(5  + hw2, 5);    // front-right
     X.stroke();
-    X.strokeStyle='#222';X.lineWidth=1;
-    X.beginPath();
-    X.moveTo(-3, 2);X.lineTo(-3 - hoofWalk, 5);
-    X.moveTo(3, 2);X.lineTo(3 + hoofWalk, 5);
-    X.stroke();
-    
-    // Fluffy cloud body wool Outline (Dark)
+
+    // Fluffy wool body (same from all angles)
     X.fillStyle='#000000';
-    X.beginPath();X.arc(-4, -3, 5, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(4, -3, 5, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(0, -6, 5.5, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(0, -1, 5.5, 0, Math.PI*2);X.fill();
-
-    // Fluffy cloud body wool Fill
+    X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
     X.fillStyle='#f0ead8';
-    X.beginPath();X.arc(-4, -3, 4, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(4, -3, 4, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(0, -6, 4.5, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(0, -1, 4.5, 0, Math.PI*2);X.fill();
+    X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
 
-    // Dark head & ears wiggling (AoE2-style eating grass)
-    let headX = 6;
-    let headY = -3;
-    let earX = 7;
-    let earY = -5;
+    // Head & ear — position depends on direction
+    let headX, headY, earX, earY;
     if(e.eatingGrass){
-      let chew = Math.sin(tick * 0.6) * 1.0;
-      headX = 6.2;
-      headY = 1.2 + chew;
-      earX = 5.5;
-      earY = -1.2 + chew;
+      let chew = Math.sin(tick * 0.6);
+      headX = 6; headY = 2 + chew;
+      earX = 5;  earY = -0.5 + chew;
+    } else if(e.facingNorth){
+      // Heading away from camera: head tucked up-right (NE in screen space)
+      headX = 3; headY = -8;
+      earX = 2;  earY = -10;
+    } else {
+      // Heading toward camera or sideways: head to the right
+      headX = 6; headY = -3;
+      earX = 7;  earY = -5;
     }
+
     X.fillStyle='#333';
     X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
     X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
     X.fillStyle='#e0d8c0';
-    X.beginPath();X.arc(earX,earY,1,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
 
-    // Small green grass blade sticking out of mouth and wiggling
     if(e.eatingGrass){
-      X.strokeStyle = '#4e8c2d';
-      X.lineWidth = 1.2;
-      X.beginPath();
-      X.moveTo(headX, headY + 1);
-      X.lineTo(headX + 4, headY + 3);
-      X.stroke();
+      X.strokeStyle='#4e8c2d'; X.lineWidth=1.2;
+      X.beginPath();X.moveTo(headX,headY+1);X.lineTo(headX+4,headY+3);X.stroke();
     }
   }
 
@@ -1269,22 +1343,45 @@ function drawUnit(e){
 function drawGhost(){
   if(!placing)return;
   let tile=screenToTile(mouseX,mouseY);
+
+  if (placing === 'WALL' && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
+    let line = getLineTiles(window.wallDragStart, window.wallDragEnd);
+    line.forEach(t => {
+      let ok = canPlace('WALL', t.x, t.y, 0);
+      let iso = toIso(t.x, t.y);
+      let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
+      X.fillStyle = ok ? 'rgba(0,200,0,0.3)' : 'rgba(200,0,0,0.3)';
+      X.beginPath();
+      X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
+      X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
+      X.closePath();X.fill();
+    });
+    return;
+  }
+
   let b=BLDGS[placing];
   let bw=b.w, bh=b.h;
+  let ox=tile.x, oy=tile.y;
   if(placing==='GATE'){
     let isWall = (tx, ty) => {
       let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 0);
       return !!w;
     };
-    let hasEW = isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y);
-    let hasNS = isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1);
-    if (hasEW) { bw = 2; bh = 1; }
-    else if (hasNS) { bw = 1; bh = 2; }
-    else { bw = 1; bh = 2; } // Default layout if no valid walls found
+    if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
+      ox = tile.x; oy = tile.y; bw = 2; bh = 1;
+    } else if (isWall(tile.x - 1, tile.y) && isWall(tile.x, tile.y)) {
+      ox = tile.x - 1; oy = tile.y; bw = 2; bh = 1;
+    } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1)) {
+      ox = tile.x; oy = tile.y; bw = 1; bh = 2;
+    } else if (isWall(tile.x, tile.y - 1) && isWall(tile.x, tile.y)) {
+      ox = tile.x; oy = tile.y - 1; bw = 1; bh = 2;
+    } else {
+      bw = 1; bh = 2;
+    }
   }
   let ok=canPlace(placing,tile.x,tile.y,0);
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
-    let iso=toIso(tile.x+dx,tile.y+dy);
+    let iso=toIso(ox+dx,oy+dy);
     let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
     X.fillStyle=ok?'rgba(0,200,0,0.3)':'rgba(200,0,0,0.3)';
     X.beginPath();
@@ -1482,10 +1579,10 @@ function render(){
   allDrawable.push(...corpses, ...trees);
   
   let sorted=allDrawable.sort((a,b)=>{
-    let ax = a.type==='building' ? a.x + (a.w||BLDGS[a.btype]?.w||1)/2 : (a.type==='gate_back' ? a.x + 0.5 : (a.type==='gate_front' ? a.x + 0.5 : (a.type==='tree' ? a.x + 0.1 : (a.type==='unit' ? a.x + 0.25 : a.x))));
-    let ay = a.type==='building' ? a.y + (a.h||BLDGS[a.btype]?.h||1)/2 : (a.type==='gate_back' ? a.y + 0.5 : (a.type==='gate_front' ? a.y + 0.5 : (a.type==='tree' ? a.y + 0.1 : (a.type==='unit' ? a.y + 0.25 : a.y))));
-    let bx = b.type==='building' ? b.x + (b.w||BLDGS[b.btype]?.w||1)/2 : (b.type==='gate_back' ? b.x + 0.5 : (b.type==='gate_front' ? b.x + 0.5 : (b.type==='tree' ? b.x + 0.1 : (b.type==='unit' ? b.x + 0.25 : b.x))));
-    let by = b.type==='building' ? b.y + (b.h||BLDGS[b.btype]?.h||1)/2 : (b.type==='gate_back' ? b.y + 0.5 : (b.type==='gate_front' ? b.y + 0.5 : (b.type==='tree' ? b.y + 0.1 : (b.type==='unit' ? b.y + 0.25 : b.y))));
+    let ax = a.type==='building' ? a.x + (a.w||BLDGS[a.btype]?.w||1)/2 : (a.type==='gate_back' ? a.x + 0.05 : (a.type==='gate_front' ? a.x + 0.5 : (a.type==='tree' ? a.x + 0.1 : (a.type==='unit' ? a.x + 0.25 : a.x))));
+    let ay = a.type==='building' ? a.y + (a.h||BLDGS[a.btype]?.h||1)/2 : (a.type==='gate_back' ? a.y + 0.05 : (a.type==='gate_front' ? a.y + 0.5 : (a.type==='tree' ? a.y + 0.1 : (a.type==='unit' ? a.y + 0.25 : a.y))));
+    let bx = b.type==='building' ? b.x + (b.w||BLDGS[b.btype]?.w||1)/2 : (b.type==='gate_back' ? b.x + 0.05 : (b.type==='gate_front' ? b.x + 0.5 : (b.type==='tree' ? b.x + 0.1 : (b.type==='unit' ? b.x + 0.25 : b.x))));
+    let by = b.type==='building' ? b.y + (b.h||BLDGS[b.btype]?.h||1)/2 : (b.type==='gate_back' ? b.y + 0.05 : (b.type==='gate_front' ? b.y + 0.5 : (b.type==='tree' ? b.y + 0.1 : (b.type==='unit' ? b.y + 0.25 : b.y))));
     return (ay+ax) - (by+bx);
   });
   sorted.forEach(e=>{

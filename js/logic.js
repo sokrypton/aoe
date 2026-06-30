@@ -36,6 +36,27 @@ function canPlace(type,x,y,team=0){
   }
   return true;
 }
+function getLineTiles(p1, p2) {
+  let tiles = [];
+  let dx = p2.x - p1.x;
+  let dy = p2.y - p1.y;
+  let steps = Math.max(Math.abs(dx), Math.abs(dy));
+  if (steps === 0) {
+    tiles.push({x: p1.x, y: p1.y});
+    return tiles;
+  }
+  for (let i = 0; i <= steps; i++) {
+    let t = i / steps;
+    let tx = Math.round(p1.x + t * dx);
+    let ty = Math.round(p1.y + t * dy);
+    // Avoid duplicate coordinates
+    if (!tiles.some(tile => tile.x === tx && tile.y === ty)) {
+      tiles.push({x: tx, y: ty});
+    }
+  }
+  return tiles;
+}
+
 
 const RES_KEYS={f:'food',w:'wood',g:'gold',s:'stone'};
 const GATHER_TASKS={
@@ -286,24 +307,41 @@ function updateGatherTask(e,config){
 
 function checkNextBuild(e){
   e.buildQueue = e.buildQueue || [];
-  e.buildQueue = e.buildQueue.filter(id => {
-    let bt = entities.find(en => en.id === id);
-    return bt && (!bt.complete || bt.hp < bt.maxHp);
-  });
-  if (e.buildQueue.length > 0) {
-    let nextId = e.buildQueue[0];
-    let bt = entities.find(en => en.id === nextId);
-    if (bt) {
-      e.task = 'build';
-      e.buildTarget = nextId;
-      e.target = null;
-      let b = BLDGS[bt.btype];
-      let px = b.isFarm ? bt.x : bt.x + b.w;
-      let py = b.isFarm ? bt.y : bt.y + b.h;
-      pathUnitTo(e, px, py);
-      return true;
+  // Find all actual unfinished building entities in the queue
+  let unfinishedInQueue = e.buildQueue
+    .map(id => entities.find(en => en.id === id))
+    .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp));
+
+  if (unfinishedInQueue.length === 0) {
+    // Look for any unfinished allied foundations nearby (within 25 tiles)
+    let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete);
+    if (unfinished.length > 0) {
+      unfinished.sort((a, b) => dist(e, a) - dist(e, b));
+      if (dist(e, unfinished[0]) <= 25) {
+        unfinishedInQueue.push(unfinished[0]);
+      }
     }
   }
+
+  if (unfinishedInQueue.length > 0) {
+    // Sort unfinished targets by distance to the villager so they build the closest next!
+    unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b));
+    
+    // Sync the queue list with sorted order
+    e.buildQueue = unfinishedInQueue.map(bt => bt.id);
+    
+    let bt = unfinishedInQueue[0];
+    e.task = 'build';
+    e.buildTarget = bt.id;
+    e.target = null;
+    let b = BLDGS[bt.btype];
+    let px = b.isFarm ? bt.x : bt.x + b.w;
+    let py = b.isFarm ? bt.y : bt.y + b.h;
+    pathUnitTo(e, px, py);
+    return true;
+  }
+  
+  e.buildQueue = [];
   return false;
 }
 

@@ -9,6 +9,8 @@ function init(){
       let sp=findSpawnTile(tc.rallyX+i%2,tc.rallyY+Math.floor(i/2),5)||{x:tc.rallyX,y:tc.rallyY};
       createUnit('villager',sp.x,sp.y,start.team);
     }
+    let ssp=findSpawnTile(tc.rallyX+2,tc.rallyY+1,5)||{x:tc.rallyX,y:tc.rallyY};
+    createUnit('scout',ssp.x,ssp.y,start.team);
   });
   placeStartingSheep();
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;

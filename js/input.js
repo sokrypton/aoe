@@ -22,18 +22,32 @@ document.addEventListener('keydown',e=>{
     updateUI();
   }
   
-  // Villager building hotkeys
+  // Villager building hotkeys (Grid-style like AoE2 Definitive Edition)
   let hasVil = selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
   if(hasVil) {
-    if(key==='q') { placing='HOUSE'; showMsg('Place House'); }
-    else if(key==='w') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
-    else if(key==='e') { placing='MCAMP'; showMsg('Place Mining Camp'); }
-    else if(key==='r') { placing='MILL'; showMsg('Place Mill'); }
-    else if(key==='f') { placing='FARM'; showMsg('Place Farm'); }
-    else if(key==='b') { placing='BARRACKS'; showMsg('Place Barracks'); }
-    else if(key==='t') { placing='TOWER'; showMsg('Place Watch Tower'); }
-    else if(key==='z') { placing='WALL'; showMsg('Place Stone Wall'); }
-    else if(key==='x') { placing='GATE'; showMsg('Place Gate'); }
+    window.currentVillagerMenu = window.currentVillagerMenu || 'main';
+    if(window.currentVillagerMenu === 'main') {
+      if(key==='q') {
+        window.currentVillagerMenu = 'eco';
+        updateUI();
+      } else if(key==='w') {
+        window.currentVillagerMenu = 'mil';
+        updateUI();
+      }
+    } else if(window.currentVillagerMenu === 'eco') {
+      if(key==='q') { placing='HOUSE'; showMsg('Place House'); }
+      else if(key==='w') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
+      else if(key==='e') { placing='MCAMP'; showMsg('Place Mining Camp'); }
+      else if(key==='r') { placing='MILL'; showMsg('Place Mill'); }
+      else if(key==='t') { placing='FARM'; showMsg('Place Farm'); }
+      else if(key==='Escape') { window.currentVillagerMenu = 'main'; updateUI(); }
+    } else if(window.currentVillagerMenu === 'mil') {
+      if(key==='q') { placing='BARRACKS'; showMsg('Place Barracks'); }
+      else if(key==='w') { placing='TOWER'; showMsg('Place Watch Tower'); }
+      else if(key==='e') { placing='WALL'; showMsg('Place Stone Wall'); }
+      else if(key==='r') { placing='GATE'; showMsg('Place Gate'); }
+      else if(key==='Escape') { window.currentVillagerMenu = 'main'; updateUI(); }
+    }
   }
   
   // Training hotkeys for selected buildings
@@ -53,12 +67,24 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
+window.isDraggingWall = false;
+window.wallDragStart = null;
+window.wallDragEnd = null;
+
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
   if(e.button===0){
     if(placing){
-      doPlace(e.clientX,e.clientY);
-      justPlaced=true;
+      if (placing === 'WALL') {
+        let tile = screenToTile(e.clientX, e.clientY);
+        window.isDraggingWall = true;
+        window.wallDragStart = tile;
+        window.wallDragEnd = tile;
+        justPlaced = true;
+      } else {
+        doPlace(e.clientX,e.clientY);
+        justPlaced=true;
+      }
       return;
     }
     dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false;
@@ -68,6 +94,18 @@ C.addEventListener('mousedown',e=>{
 C.addEventListener('mousemove',e=>{
   if(gameOver||hasTouch)return;
   mouseX=e.clientX;mouseY=e.clientY;
+  if (window.isDraggingWall) {
+    let tile = screenToTile(e.clientX, e.clientY);
+    let start = window.wallDragStart;
+    let dx = tile.x - start.x;
+    let dy = tile.y - start.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      window.wallDragEnd = { x: tile.x, y: start.y };
+    } else {
+      window.wallDragEnd = { x: start.x, y: tile.y };
+    }
+    return;
+  }
   if(dragStart&&(e.buttons&1)){
     dragEnd={x:e.clientX,y:e.clientY};
     if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8)isDragging=true;
@@ -78,6 +116,63 @@ document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=
 C.addEventListener('mouseup',e=>{
   if(gameOver||hasTouch)return;
   if(e.button===0){
+    if (window.isDraggingWall) {
+      window.isDraggingWall = false;
+      let start = window.wallDragStart;
+      let end = window.wallDragEnd;
+      window.wallDragStart = null;
+      window.wallDragEnd = null;
+
+      let line = getLineTiles(start, end);
+      let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+      if(vils.length===0){
+        showMsg('Select a villager to build!');
+        placing=null;
+        return;
+      }
+
+      let b = BLDGS['WALL'];
+      let placedCount = 0;
+      let lastBldg = null;
+
+      line.forEach(t => {
+        if (canPlace('WALL', t.x, t.y, 0)) {
+          let actualCost = {...b.cost};
+          if (canAfford(0, actualCost)) {
+            spendCost(0, actualCost);
+            let bldg = createBuilding('WALL', t.x, t.y, 0);
+            bldg.complete = false;
+            bldg.buildProgress = 0;
+            lastBldg = bldg;
+            placedCount++;
+
+            vils.forEach(v => {
+              v.buildQueue = v.buildQueue || [];
+              v.buildQueue.push(bldg.id);
+            });
+          } else {
+            showMsg('Not enough stone!');
+          }
+        }
+      });
+
+      if (placedCount > 0 && lastBldg) {
+        vils.forEach(v => {
+          if (v.task !== 'build' || !v.buildTarget) {
+            v.task = 'build';
+            v.buildTarget = lastBldg.id;
+            v.target = null;
+            pathUnitTo(v, lastBldg.x + 1, lastBldg.y + 1);
+          }
+        });
+      }
+
+      if (!keys['Shift']) {
+        placing = null;
+      }
+      justPlaced = false;
+      return;
+    }
     if(placing)return;
     if(justPlaced){
       justPlaced=false;

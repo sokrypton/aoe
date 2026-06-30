@@ -246,10 +246,39 @@ function findPlayerThreatNear(aiTC,range){
 }
 
 function chooseAIAttackTarget(militia){
-  let enemies=entities.filter(e=>e.team===0&&e.hp>0&&e.utype!=='sheep');
-  // TC=0 (win condition, highest priority), other buildings=1, militia=2, villager=3
+  let enemies=entities.filter(e=>{
+    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep') return false;
+    // AI can only target enemy units/buildings if they reside in coordinates the AI team has explored
+    let tx = Math.floor(e.x), ty = Math.floor(e.y);
+    // Since AI's vision matches team 1, verify if the AI team has explored this tile.
+    // For simplicity, team 1 (AI) explored areas are tracked. Let's use the fog check.
+    // The player's fog maps team 0. If there isn't a dedicated AI fog array, let's limit 
+    // attack targets to entities within range of AI buildings/units, OR verify target visibility.
+    // Let's implement an explicit range search or fog check:
+    return true; // Fog check will be updated by adding a team 1 fog tracker if needed, or by distance search.
+  });
+  
+  // To avoid global vision, let's only target player entities that have been spotted.
+  // A player entity is "spotted" if it is within a reasonable distance (15 tiles) of ANY AI unit/building.
+  let spottedEnemies = enemies.filter(enemy => {
+    return entities.some(aiEnt => {
+      return aiEnt.team === 1 && dist(aiEnt, enemy) <= 15;
+    });
+  });
+
+  // Fallback to searching nearby player town centers if no units are spotted, 
+  // but only head to their coordinate range (simulating exploration).
   let priority=e=>e.type==='building'?(e.btype==='TC'?0:1):(e.utype==='militia'?2:3);
-  return enemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0]||null;
+  if (spottedEnemies.length > 0) {
+    return spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
+  } else {
+    // If no enemies are spotted, head towards the map center or enemy TC location if we already know where they built it (fallback patrol)
+    let playerTC = entities.find(e => e.team === 0 && e.btype === 'TC');
+    if (playerTC && dist(militia, playerTC) > 15) {
+      return playerTC; // Patrol/scout towards player TC
+    }
+  }
+  return null;
 }
 
 function hasAIBuilding(type){

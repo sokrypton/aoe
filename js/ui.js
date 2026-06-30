@@ -21,7 +21,12 @@ function updateUI(){
   let act=document.getElementById('actions');
 
   // Only rebuild action buttons when selection changes (not every frame)
-  let selKey=selected.map(s=>s.id).join(',')+':'+placing;
+  let currentSelListKey = selected.map(s=>s.id).join(',');
+  if (currentSelListKey !== (window.lastSelListKey || '')) {
+    window.currentVillagerMenu = 'main';
+    window.lastSelListKey = currentSelListKey;
+  }
+  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   if(rebuildActions)act.innerHTML='';
@@ -102,28 +107,82 @@ function updateUI(){
     document.getElementById('sel-details').innerHTML=det;
 
     if(rebuildActions&&e.utype==='villager'&&e.team===0){
-      let builds=[
-        {type:'HOUSE',label:'House'},
-        {type:'LCAMP',label:'Lumber C.'},
-        {type:'MCAMP',label:'Mine C.'},
-        {type:'MILL',label:'Mill'},
-        {type:'FARM',label:'Farm'},
-        {type:'BARRACKS',label:'Barracks'},
-        {type:'TOWER',label:'Watch Tower'},
-        {type:'WALL',label:'Stone Wall'},
-        {type:'GATE',label:'Gate'}
-      ];
-      builds.forEach(bi=>{
-        let btn=document.createElement('div');btn.className='act-btn';
-        let bData=BLDGS[bi.type];
-        btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${formatCost(bData.cost)}</span>`;
-        btn.onclick=()=>{
-          if(gameOver)return;
-          placing=bi.type;
-          showMsg((isMobile?'Tap':'Click')+' to place '+bi.label);
+      window.currentVillagerMenu = window.currentVillagerMenu || 'main';
+
+      if (window.currentVillagerMenu === 'main') {
+        // Main Building Menus
+        let menuButtons = [
+          { name: 'Build Economic', key: 'Q', icon: '🌾', action: 'eco' },
+          { name: 'Build Military', key: 'W', icon: '🛡️', action: 'mil' }
+        ];
+        menuButtons.forEach(bi => {
+          let btn=document.createElement('div');btn.className='act-btn menu-btn';
+          btn.innerHTML=`<div class="btn-emoji">${bi.icon}</div><div class="btn-label">${bi.name}</div><span class="cost">HotKey: [${bi.key}]</span>`;
+          btn.onclick=()=>{
+            if(gameOver)return;
+            window.currentVillagerMenu = bi.action;
+            updateUI();
+          };
+          act.appendChild(btn);
+        });
+      } else if (window.currentVillagerMenu === 'eco') {
+        // Back Button (First)
+        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
+        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
+        backBtn.onclick=()=>{
+          window.currentVillagerMenu = 'main';
+          updateUI();
         };
-        act.appendChild(btn);
-      });
+        act.appendChild(backBtn);
+
+        // Economic Sub-Menu
+        let builds=[
+          {type:'HOUSE',label:'House',key:'Q'},
+          {type:'LCAMP',label:'Lumber Camp',key:'W'},
+          {type:'MCAMP',label:'Mining Camp',key:'E'},
+          {type:'MILL',label:'Mill',key:'R'},
+          {type:'FARM',label:'Farm',key:'T'}
+        ];
+        builds.forEach(bi=>{
+          let btn=document.createElement('div');btn.className='act-btn';
+          let bData=BLDGS[bi.type];
+          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${formatCost(bData.cost)} [${bi.key}]</span>`;
+          btn.onclick=()=>{
+            if(gameOver)return;
+            placing=bi.type;
+            showMsg((isMobile?'Tap':'Click')+' to place '+bi.label);
+          };
+          act.appendChild(btn);
+        });
+      } else if (window.currentVillagerMenu === 'mil') {
+        // Back Button (First)
+        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
+        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
+        backBtn.onclick=()=>{
+          window.currentVillagerMenu = 'main';
+          updateUI();
+        };
+        act.appendChild(backBtn);
+
+        // Military Sub-Menu
+        let builds=[
+          {type:'BARRACKS',label:'Barracks',key:'Q'},
+          {type:'TOWER',label:'Watch Tower',key:'W'},
+          {type:'WALL',label:'Stone Wall',key:'E'},
+          {type:'GATE',label:'Gate',key:'R'}
+        ];
+        builds.forEach(bi=>{
+          let btn=document.createElement('div');btn.className='act-btn';
+          let bData=BLDGS[bi.type];
+          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${formatCost(bData.cost)} [${bi.key}]</span>`;
+          btn.onclick=()=>{
+            if(gameOver)return;
+            placing=bi.type;
+            showMsg((isMobile?'Tap':'Click')+' to place '+bi.label);
+          };
+          act.appendChild(btn);
+        });
+      }
     }
   }
 }
