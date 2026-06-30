@@ -1013,12 +1013,12 @@ function drawUnit(e){
         X.beginPath(); X.ellipse(2, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1 outline
         X.beginPath(); X.ellipse(5, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2 outline
       } else {
-        // Neck forward, head to the right (E/S direction)
-        X.beginPath(); X.ellipse(5, -9, 4.6, 8.3, -Math.PI/6, 0, Math.PI*2); X.fill();   // neck outline
-        X.beginPath(); X.ellipse(9, -13, 4.6, 3.3, -Math.PI/6, 0, Math.PI*2); X.fill();  // head outline
-        X.beginPath(); X.ellipse(11, -11.5, 3.0, 2.6, -Math.PI/12, 0, Math.PI*2); X.fill(); // snout outline
-        X.beginPath(); X.ellipse(6, -16.5, 2.0, 3.3, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
-        X.beginPath(); X.ellipse(8.5, -15.5, 2.0, 3.3, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear2 outline
+        // Neck horizontal, head level to the right (E/S direction — horse going forward)
+        X.beginPath(); X.ellipse(5, -6, 8.3, 4.6, 0, 0, Math.PI*2); X.fill();            // neck outline (horizontal)
+        X.beginPath(); X.ellipse(11, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill();           // head outline
+        X.beginPath(); X.ellipse(14, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill();           // snout outline
+        X.beginPath(); X.ellipse(9.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();          // ear1 outline
+        X.beginPath(); X.ellipse(12, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();           // ear2 outline
       }
 
       // Colored fills
@@ -1035,11 +1035,11 @@ function drawUnit(e){
         X.beginPath(); X.ellipse(2, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1
         X.beginPath(); X.ellipse(5, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2
       } else {
-        X.beginPath(); X.ellipse(5, -9, 3.8, 7.5, -Math.PI/6, 0, Math.PI*2); X.fill();   // neck
-        X.beginPath(); X.ellipse(9, -13, 3.8, 2.5, -Math.PI/6, 0, Math.PI*2); X.fill();  // head
-        X.beginPath(); X.ellipse(11, -11.5, 2.2, 1.8, -Math.PI/12, 0, Math.PI*2); X.fill(); // snout
-        X.beginPath(); X.ellipse(6, -16.5, 1.2, 2.5, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
-        X.beginPath(); X.ellipse(8.5, -15.5, 1.2, 2.5, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear2
+        X.beginPath(); X.ellipse(5, -6, 7.5, 3.8, 0, 0, Math.PI*2); X.fill();            // neck (horizontal)
+        X.beginPath(); X.ellipse(11, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill();           // head
+        X.beginPath(); X.ellipse(14, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill();           // snout
+        X.beginPath(); X.ellipse(9.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();          // ear1
+        X.beginPath(); X.ellipse(12, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();           // ear2
       }
 
       // Tail (same in all directions)
@@ -1307,6 +1307,10 @@ function drawUnit(e){
       headX = 6; headY = -3;
       earX = 7;  earY = -5;
     }
+
+    // Team bandana just below head
+    X.fillStyle = tc;
+    X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
 
     X.fillStyle='#333';
     X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
