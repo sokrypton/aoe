@@ -10,7 +10,7 @@
 <div class="res"><div class="res-icon ri-gold"><svg viewBox="0 0 24 24" fill="#ffd700" style="width:12px;height:12px;display:block;"><path d="M12,2L2,12H22L12,2M7,12L2,17H12L7,12M17,12L12,17H22L17,12M12,17L7,22H17L12,17Z"/></svg></div><div class="res-val" id="r-gold">100</div></div>
 <div class="res"><div class="res-icon ri-stone"><svg viewBox="0 0 24 24" fill="#e2e8f0" style="width:12px;height:12px;display:block;"><path d="M19,4H5A2,2 0 0,0 3,6V18A2,2 0 0,0 5,20H19A2,2 0 0,0 21,18V6A2,2 0 0,0 19,4M19,7.5H13V6H19V7.5M11.5,6V7.5H5V6H11.5M5,9H11V10.5H5V9M12.5,9H19V10.5H12.5V9M19,12H13V13.5H19V12M11.5,12V13.5H5V12H11.5M5,15H11V16.5H5V15M12.5,15H19V16.5H12.5V15M19,18H13V19.5H19V18M11.5,18V19.5H5V18H11.5Z"/></svg></div><div class="res-val" id="r-stone">200</div></div>
 <div id="pop">Pop: 3/5</div>
-<div id="global-stance-btn" onclick="toggleGlobalStance()">⚔ Auto-Attack: ON</div>
+<div id="idle-vil-btn" onclick="selectIdleVillager()">🧑‍🌾 Idle: <span id="idle-vil-count">0</span></div>
 </div>
 <div id="msg"></div>
 <div id="help-hint"></div>
@@ -53,6 +53,7 @@ Destroy the enemy <span class="key">Town Center</span> to win!</p>
 </div>
 </div>
 
+<script src="js/audio.js"></script>
 <script src="js/core.js"></script>
 <script src="js/map.js"></script>
 <script src="js/entities.js"></script>

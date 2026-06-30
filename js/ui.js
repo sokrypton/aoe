@@ -5,14 +5,18 @@ function updateUI(){
   document.getElementById('r-stone').textContent=Math.floor(res.stone);
   document.getElementById('pop').textContent=`Pop: ${popUsed}/${popCap}`;
 
-  let gsBtn = document.getElementById('global-stance-btn');
-  if(gsBtn){
-    if(globalAutoAttack){
-      gsBtn.innerHTML=`⚔ Auto-Attack: <span class="status-on">ON</span>`;
-    }else{
-      gsBtn.innerHTML=`⚔ Auto-Attack: <span class="status-off">OFF</span>`;
+  // Update Idle Villager banner button
+  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
+  let idleBtn = document.getElementById('idle-vil-btn');
+  if (idleBtn) {
+    document.getElementById('idle-vil-count').textContent = idleVils.length;
+    if (idleVils.length > 0) {
+      idleBtn.classList.add('idle-active');
+    } else {
+      idleBtn.classList.remove('idle-active');
     }
   }
+
 
   let act=document.getElementById('actions');
 
@@ -104,7 +108,10 @@ function updateUI(){
         {type:'MCAMP',label:'Mine C.'},
         {type:'MILL',label:'Mill'},
         {type:'FARM',label:'Farm'},
-        {type:'BARRACKS',label:'Barracks'}
+        {type:'BARRACKS',label:'Barracks'},
+        {type:'TOWER',label:'Watch Tower'},
+        {type:'WALL',label:'Stone Wall'},
+        {type:'GATE',label:'Gate'}
       ];
       builds.forEach(bi=>{
         let btn=document.createElement('div');btn.className='act-btn';
@@ -147,15 +154,27 @@ function showMsg(txt){
   setTimeout(()=>el.style.opacity='0',2000);
 }
 
-window.toggleGlobalStance = function() {
-  if (gameOver) return;
-  globalAutoAttack = !globalAutoAttack;
-  // Update all player units to match the new global stance
-  entities.forEach(en => {
-    if (en.team === 0 && en.type === 'unit') {
-      en.autoAttack = globalAutoAttack;
-    }
-  });
-  showMsg(`Global Auto-Attack: ${globalAutoAttack ? 'ON' : 'OFF'}`);
+
+window.selectIdleVillager = function() {
+  if (gameOver || !gameStarted) return;
+  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
+  if (idleVils.length === 0) {
+    showMsg('No idle villagers!');
+    return;
+  }
+  
+  window.lastIdleVilIndex = window.lastIdleVilIndex || 0;
+  let vil = idleVils[window.lastIdleVilIndex % idleVils.length];
+  window.lastIdleVilIndex++;
+  
+  selected = [vil];
+  
+  // Center camera
+  let iso = toIso(vil.x, vil.y);
+  camX = iso.ix;
+  camY = iso.iy;
+  
+  if (window.playSound) window.playSound('select_villager');
+  showMsg('Selected idle villager');
   updateUI();
 };

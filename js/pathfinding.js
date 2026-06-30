@@ -4,7 +4,17 @@ function walkable(x,y,ignore){
   let t=map[y][x];
   if(t.t===TERRAIN.FARM)return true;
   if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
-  if(t.occupied&&t.occupied!==ignore)return false;
+  if(t.occupied&&t.occupied!==ignore) {
+    // Let friendly units pass through gates
+    let bldg = entities.find(en => en.id === t.occupied);
+    if (bldg && bldg.btype === 'GATE') {
+      let walker = entities.find(en => en.id === ignore);
+      if (walker && walker.team === bldg.team) {
+        return true;
+      }
+    }
+    return false;
+  }
   return true;
 }
 function findPath(sx,sy,ex,ey,ignore){
@@ -13,13 +23,9 @@ function findPath(sx,sy,ex,ey,ignore){
   // Only redirect for truly impassable destinations (water, buildings)
   // Resource tiles (forest, gold, stone, berries) are valid destinations
   if(!walkable(ex,ey,ignore)){
-    let dt=map[ey]&&map[ey][ex];
-    let isResource=dt&&(dt.t===TERRAIN.FOREST||dt.t===TERRAIN.GOLD||dt.t===TERRAIN.STONE||dt.t===TERRAIN.BERRIES||dt.t===TERRAIN.FARM);
-    if(!isResource){
-      let found=false;
-      for(let r=1;r<6&&!found;r++)for(let dy=-r;dy<=r&&!found;dy++)for(let dx=-r;dx<=r;dx++){
-        if(walkable(ex+dx,ey+dy,ignore)){ex+=dx;ey+=dy;found=true;break;}
-      }
+    let found=false;
+    for(let r=1;r<20&&!found;r++)for(let dy=-r;dy<=r&&!found;dy++)for(let dx=-r;dx<=r;dx++){
+      if(walkable(ex+dx,ey+dy,ignore)){ex+=dx;ey+=dy;found=true;break;}
     }
   }
   // Use a Map for O(1) open-list lookup instead of O(n) linear scan.

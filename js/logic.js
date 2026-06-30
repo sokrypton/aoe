@@ -1,12 +1,38 @@
 // ---- GAME LOGIC ----
-function canPlace(type,x,y){
+function canPlace(type,x,y,team=0){
   let b=BLDGS[type];
-  for(let dy=0;dy<b.h;dy++)for(let dx=0;dx<b.w;dx++){
-    let nx=x+dx,ny=y+dy;
+  let bw=b.w, bh=b.h;
+  let ox=x, oy=y;
+  if(type==='GATE'){
+    // A gate can ONLY be placed on an existing 2-tile allied wall segment.
+    let isWall = (tx, ty) => {
+      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === team);
+      return !!w;
+    };
+    if (isWall(x, y) && isWall(x + 1, y)) {
+      ox = x; oy = y; bw = 2; bh = 1;
+    } else if (isWall(x - 1, y) && isWall(x, y)) {
+      ox = x - 1; oy = y; bw = 2; bh = 1;
+    } else if (isWall(x, y) && isWall(x, y + 1)) {
+      ox = x; oy = y; bw = 1; bh = 2;
+    } else if (isWall(x, y - 1) && isWall(x, y)) {
+      ox = x; oy = y - 1; bw = 1; bh = 2;
+    } else {
+      return false; // Must be built on exactly 2 wall tiles
+    }
+  }
+  for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
+    let nx=ox+dx,ny=oy+dy;
     if(nx<0||nx>=MAP||ny<0||ny>=MAP)return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
-    if(t.occupied)return false;
+    if(t.occupied){
+      let existing = entities.find(en => en.id === t.occupied);
+      if (existing && existing.type === 'building' && existing.btype === 'WALL' && existing.team === team) {
+        continue;
+      }
+      return false;
+    }
   }
   return true;
 }
@@ -58,7 +84,8 @@ function buildingPop(e,includeIncomplete){
 }
 
 function teamPopCap(team,includeIncomplete=false){
-  return entities.reduce((total,e)=>e.team===team?total+buildingPop(e,includeIncomplete):total,0);
+  let cap = entities.reduce((total,e)=>e.team===team?total+buildingPop(e,includeIncomplete):total,0);
+  return Math.min(200, cap);
 }
 
 function teamQueuedPop(team){
@@ -189,7 +216,18 @@ function depleteGatherTile(pos,config){
 }
 
 function updateGatherTask(e,config){
-  let gatherTile=rememberedGatherTile(e,config.terrain)||findNearTile(e,config.terrain);
+  let gatherTile = rememberedGatherTile(e, config.terrain);
+  let isAdj = false;
+
+  if (gatherTile) {
+    isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
+    if (!isAdj) {
+      gatherTile = findNearTile(e, config.terrain);
+    }
+  } else {
+    gatherTile = findNearTile(e, config.terrain);
+  }
+
   if(!gatherTile){
     e.task=null;
     clearGatherTarget(e);
@@ -198,15 +236,15 @@ function updateGatherTask(e,config){
 
   e.gatherX=gatherTile.x;
   e.gatherY=gatherTile.y;
-  // requiresOwnCompleteFarm guard removed: both rememberedGatherTile and findNearTile
-  // already call canGatherTile which validates the farm, so this check is unreachable.
-  let d=dist(e,{x:gatherTile.x+0.5,y:gatherTile.y+0.5});
-  if(d>1.0){
-    pathUnitTo(e,gatherTile.x,gatherTile.y);
-    if(e.path.length===0){
-      clearGatherTarget(e);
-      e.task=null;
-      if(e.team===0)showMsg('Resource is unreachable!');
+  isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
+  if(!isAdj){
+    if(e.path.length === 0){
+      pathUnitTo(e,gatherTile.x,gatherTile.y);
+      if(e.path.length===0){
+        clearGatherTarget(e);
+        e.task=null;
+        if(e.team===0)showMsg('Resource is unreachable!');
+      }
     }
     return;
   }
@@ -226,6 +264,20 @@ function updateGatherTask(e,config){
   e.carrying++;
   e.carryType=config.resource;
   e.gatherCooldown=config.cooldown;
+
+  // Play gathering audio effects (player team 0)
+  if (e.team === 0 && window.playSound) {
+    let sType = e.task;
+    if (sType === 'mine_gold' || sType === 'mine_stone') sType = 'mine';
+    window.playSound(sType);
+  }
+  // Spawn gathering particles
+  let pColor = '#4a8c2a';
+  if (e.task === 'chop') pColor = '#8b5a2b';
+  else if (e.task === 'mine_gold') pColor = '#ffd700';
+  else if (e.task === 'mine_stone') pColor = '#888';
+  spawnParticles(gatherTile.x + 0.5, gatherTile.y + 0.5, pColor, 2, 0.02, 1.2);
+
   if(tile.res<=0){
     depleteGatherTile(gatherTile,config);
     clearGatherTarget(e);
@@ -234,10 +286,9 @@ function updateGatherTask(e,config){
 
 function checkNextBuild(e){
   e.buildQueue = e.buildQueue || [];
-  // Filter out any completed or invalid targets
   e.buildQueue = e.buildQueue.filter(id => {
     let bt = entities.find(en => en.id === id);
-    return bt && !bt.complete;
+    return bt && (!bt.complete || bt.hp < bt.maxHp);
   });
   if (e.buildQueue.length > 0) {
     let nextId = e.buildQueue[0];
@@ -257,10 +308,35 @@ function checkNextBuild(e){
 }
 
 function damageEntity(attacker, target){
-  target.hp -= attacker.atk;
+  let dmg = attacker.atk || 0;
+  if (attacker.utype === 'spearman' && target.utype === 'scout') dmg += 8; // Spearman counters Scout Cavalry
+  if (attacker.utype === 'militia' && target.utype === 'spearman') dmg += 2; // Militia counters Spearman
+  if (attacker.utype === 'scout' && target.utype === 'archer') dmg += 3; // Scout counters Archer
+  if (attacker.utype === 'archer' && target.utype === 'spearman') dmg += 3; // Archer counters Spearman
+
+  target.hp -= dmg;
+
+  // Play combat sound and spawn particles
+  if (target.type === 'unit') {
+    if (window.playSound) window.playSound('attack');
+    spawnParticles(target.x, target.y, '#990000', 4, 0.04, 1.5);
+  } else {
+    if (window.playSound) window.playSound('build');
+    spawnParticles(target.x + (BLDGS[target.btype]?.w||1)/2, target.y + (BLDGS[target.btype]?.h||1)/2, '#8b6c43', 3, 0.03, 2);
+  }
+
+  // Under attack alarm trigger (player team 0)
+  if (target.team === 0 && attacker.team === 1) {
+    let lastAlert = window.lastAlertTick || 0;
+    if (tick - lastAlert > 180) {
+      window.lastAlertTick = tick;
+      if (window.playSound) window.playSound('alert');
+      showMsg('We are under attack!');
+    }
+  }
   
-  // Retaliation: attacked units fight back (not sheep, only opposing teams, and only if autoAttack is enabled)
-  if(target.type==='unit'&&target.utype!=='sheep'&&attacker.team!==target.team&&(target.autoAttack!==false)){
+  // Retaliation: attacked units fight back (not sheep, only opposing teams)
+  if(target.type==='unit'&&target.utype!=='sheep'&&attacker.team!==target.team){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -285,6 +361,17 @@ function updateUnit(e){
   if(e.hp<=0)return;
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
+
+  // Ranged units: halt walking path as soon as we step within firing range of our combat target
+  if(e.target && !e.task){
+    let t=entities.find(en=>en.id===e.target);
+    if(t && t.hp>0){
+      let range = UNITS[e.utype]?.range || 0;
+      if(range > 0 && dist(e,t) <= range){
+        clearUnitPath(e);
+      }
+    }
+  }
 
   // Sheep behavior (AoE2-style)
   if(e.utype==='sheep'){
@@ -343,25 +430,42 @@ function updateUnit(e){
   if(e.target){
     let t=entities.find(en=>en.id===e.target);
     if(!t||t.hp<=0){e.target=null;return;}
-    if(t.type==='building'){
-      // Attack building: path to nearest perimeter tile, attack when adjacent
-      if(!adjToBuilding(e.x,e.y,t)){
-        let pt=nearestBldgPerimeter(e.x,e.y,t);
-        pathUnitTo(e,pt.x,pt.y);
-        if(e.path.length===0)e.target=null; // can't reach, give up
-      } else if(e.atkCooldown<=0){
-        damageEntity(e,t);
-        e.atkCooldown=30;
+    let d=dist(e,t);
+    let range = UNITS[e.utype]?.range || 0;
+
+    if (range > 0) {
+      // Ranged combat: stay within range and fire projectiles
+      if (d > range) {
+        pathUnitTo(e, Math.round(t.x), Math.round(t.y));
+        if (e.path.length === 0) e.target = null;
+      } else {
+        clearUnitPath(e);
+        if (e.atkCooldown <= 0) {
+          spawnProjectile(e, t);
+          e.atkCooldown = 45; // Archer fires every 1.5s
+        }
       }
     } else {
-      // Attack unit: path close and hit
-      let d=dist(e,t);
-      if(d>1.5){
-        pathUnitTo(e,Math.round(t.x),Math.round(t.y));
-        if(e.path.length===0)e.target=null;
-      } else if(e.atkCooldown<=0){
-        damageEntity(e,t);
-        e.atkCooldown=30;
+      // Melee combat
+      if(t.type==='building'){
+        // Attack building: path to nearest perimeter tile, attack when adjacent
+        if(!adjToBuilding(e.x,e.y,t)){
+          let pt=nearestBldgPerimeter(e.x,e.y,t);
+          pathUnitTo(e,pt.x,pt.y);
+          if(e.path.length===0)e.target=null; // can't reach, give up
+        } else if(e.atkCooldown<=0){
+          damageEntity(e,t);
+          e.atkCooldown=30;
+        }
+      } else {
+        // Attack unit: path close and hit
+        if(d>1.5){
+          pathUnitTo(e,Math.round(t.x),Math.round(t.y));
+          if(e.path.length===0)e.target=null;
+        } else if(e.atkCooldown<=0){
+          damageEntity(e,t);
+          e.atkCooldown=30;
+        }
       }
     }
     return;
@@ -370,7 +474,7 @@ function updateUnit(e){
   if(e.utype==='villager'&&e.task){
     if(e.task==='build'&&e.buildTarget){
       let bt=entities.find(en=>en.id===e.buildTarget);
-      if(!bt||bt.complete){
+      if(!bt||(bt.complete && bt.hp >= bt.maxHp)){
         if(!checkNextBuild(e)){
           e.task=null;
           e.buildTarget=null;
@@ -394,16 +498,93 @@ function updateUnit(e){
           }
         }
       } else {
-        bt.buildProgress++;
-        if(bt.buildProgress>=bt.buildTime){
-          bt.complete=true;
-          e.buildTarget=null;
-          // Clean completed target from queue
-          if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
-          // Auto-farm only if there are no more buildings left in queue
-          if(!checkNextBuild(e)){
-            if(bt.btype==='FARM'){e.task='farm';}
-            else{e.task=null;}
+        if (!bt.complete) {
+          bt.buildProgress++;
+          if (tick % 30 === 0 && e.team === 0 && window.playSound) {
+            window.playSound('build');
+          }
+          if(bt.buildProgress>=bt.buildTime){
+            bt.complete=true;
+            e.buildTarget=null;
+            if (e.team === 0 && window.playSound) {
+              window.playSound('train'); // play herald fanfare on building completed
+            }
+            if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
+            
+            // Auto-task villager after construction is finished (if no other buildings in queue)
+            if(!checkNextBuild(e)){
+              if(bt.btype==='FARM'){
+                e.task='farm';
+                e.gatherX=bt.x;
+                e.gatherY=bt.y;
+              } else if(bt.btype==='LCAMP'){
+                let nearWood = findNearTile(e, TERRAIN.FOREST);
+                if (nearWood) {
+                  e.task = 'chop';
+                  e.gatherX = nearWood.x;
+                  e.gatherY = nearWood.y;
+                  pathUnitTo(e, nearWood.x, nearWood.y);
+                } else {
+                  e.task = null;
+                }
+              } else if(bt.btype==='MILL'){
+                let nearBerries = findNearTile(e, TERRAIN.BERRIES);
+                if (nearBerries) {
+                  e.task = 'forage';
+                  e.gatherX = nearBerries.x;
+                  e.gatherY = nearBerries.y;
+                  pathUnitTo(e, nearBerries.x, nearBerries.y);
+                } else {
+                  e.task = null;
+                }
+              } else if(bt.btype==='MCAMP'){
+                let nearGold = findNearTile(e, TERRAIN.GOLD);
+                let nearStone = findNearTile(e, TERRAIN.STONE);
+                let targetTile = null;
+                let targetTask = null;
+                if (nearGold && nearStone) {
+                  let dGold = Math.abs(nearGold.x - e.x) + Math.abs(nearGold.y - e.y);
+                  let dStone = Math.abs(nearStone.x - e.x) + Math.abs(nearStone.y - e.y);
+                  if (dGold <= dStone) {
+                    targetTile = nearGold;
+                    targetTask = 'mine_gold';
+                  } else {
+                    targetTile = nearStone;
+                    targetTask = 'mine_stone';
+                  }
+                } else if (nearGold) {
+                  targetTile = nearGold;
+                  targetTask = 'mine_gold';
+                } else if (nearStone) {
+                  targetTile = nearStone;
+                  targetTask = 'mine_stone';
+                }
+                
+                if (targetTile) {
+                  e.task = targetTask;
+                  e.gatherX = targetTile.x;
+                  e.gatherY = targetTile.y;
+                  pathUnitTo(e, targetTile.x, targetTile.y);
+                } else {
+                  e.task = null;
+                }
+              } else {
+                e.task=null;
+              }
+            }
+          }
+        } else {
+          // Repair completed but damaged building
+          bt.hp = Math.min(bt.maxHp, bt.hp + 5);
+          if (tick % 30 === 0 && e.team === 0 && window.playSound) {
+            window.playSound('build');
+          }
+          if (bt.hp >= bt.maxHp) {
+            e.buildTarget = null;
+            if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
+            if(!checkNextBuild(e)){
+              e.task=null;
+            }
           }
         }
       }
@@ -433,8 +614,9 @@ function updateUnit(e){
     }
     if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
   }
-  // Auto-attack: idle units engage nearby enemies (AoE2 defensive stance, not sheep, and only if autoAttack is enabled)
-  if(e.utype!=='sheep'&&!e.target&&e.path.length===0&&!e.task&&(e.autoAttack!==false)){
+  // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
+  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep';
+  if(isMilitary && !e.target && e.path.length===0 && !e.task){
     let scanRange=6;
     let closest=null, closestD=scanRange+1;
     entities.forEach(en=>{
@@ -527,6 +709,31 @@ function findSpawnTile(x,y,maxRadius=4){
 
 function updateBuilding(e){
   if(!e.complete)return;
+
+  // Tower / TC arrow fire (defensive structures auto-fire)
+  if (e.btype === 'TOWER' || e.btype === 'TC') {
+    e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
+    if (e.atkCooldown <= 0) {
+      let range = e.btype === 'TC' ? 6 : 5;
+      let target = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && en.utype !== 'sheep')
+                           .filter(en => dist({x: e.x + e.w/2, y: e.y + e.h/2}, en) <= range)
+                           .sort((a,b) => dist({x: e.x + e.w/2, y: e.y + e.h/2}, a) - dist({x: e.x + e.w/2, y: e.y + e.h/2}, b))[0];
+      if (target) {
+        let bCenter = {
+          id: e.id,
+          type: 'building',
+          btype: e.btype,
+          x: e.x + e.w/2,
+          y: e.y + e.h/2,
+          team: e.team,
+          atk: e.btype === 'TC' ? 5 : 6 // TC deals 5, Tower deals 6
+        };
+        spawnProjectile(bCenter, target);
+        e.atkCooldown = 40; // fire every 1.3s
+      }
+    }
+  }
+
   if(e.queue.length>0){
     let u=UNITS[e.queue[0]];
     if(e.trainTick<u.trainTime)e.trainTick++;
@@ -539,6 +746,11 @@ function updateBuilding(e){
       let ut=e.queue.shift();
       let unit=createUnit(ut,spawn.x,spawn.y,e.team);
       
+      // Play training complete fanfare sound (player team 0)
+      if (e.team === 0 && window.playSound) {
+        window.playSound('train');
+      }
+      
       // Auto-command the unit based on building's rally point
       if(unit && e.team===0 && e.rallyX!==undefined && e.rallyY!==undefined){
         if(e.rallyTargetId){
@@ -548,7 +760,7 @@ function updateBuilding(e){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
-            } else if(target.team===1){
+            } else if(target.team===1 || (target.team===0 && target.utype==='sheep' && unit.utype==='villager')){
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {

@@ -39,11 +39,17 @@ const BLDGS={
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',icon:'⛏️'},
   MILL:{name:'Mill',w:1,h:1,hp:600,cost:{w:100},drop:'food',icon:'🛞'},
   FARM:{name:'Farm',w:1,h:1,hp:100,cost:{w:60},isFarm:true,food:300,icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia'],icon:'⚔️'}
+  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],icon:'⚔️'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,icon:'🗼'},
+  WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},icon:'🧱'},
+  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{w:30,s:20},icon:'🚪'}
 };
 const UNITS={
   villager:{name:'Villager',hp:25,atk:3,range:0,speed:1.0,cost:{f:50},trainTime:120,icon:'🧑‍🌾'},
   militia:{name:'Militia',hp:40,atk:4,range:0,speed:1.12,cost:{f:60,g:20},trainTime:100,icon:'🛡️'},
+  spearman:{name:'Spearman',hp:35,atk:3,range:0,speed:1.0,cost:{f:35,w:25},trainTime:110,icon:'🔱'},
+  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,cost:{f:25,w:45},trainTime:140,icon:'🏹'},
+  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.35,cost:{f:80},trainTime:120,icon:'🏇'},
   sheep:{name:'Sheep',hp:8,atk:0,range:0,speed:0.6,cost:{},trainTime:0,food:100,icon:'🐑'}
 };
 const AI_LEVELS={
@@ -58,7 +64,7 @@ function randInt(min,max){
 
 // ---- GAME STATE ----
 let map=[], entities=[], corpses=[], selected=[], camX=0, camY=0, tick=0;
-let globalAutoAttack=true;
+
 let res={food:200,wood:200,gold:100,stone:200};
 let popUsed=0, popCap=0;
 let aiRes={food:200,wood:200,gold:100,stone:200}, aiPop=0, aiPopCap=0, aiTick=0;
@@ -66,3 +72,114 @@ let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
 let lastSelKey='';
 let gameStarted=false, aiDifficulty='standard';
+
+// ---- NEW SPEC GAME STATE & HELPERS ----
+let fog=[], projectiles=[], particles=[];
+
+function darkenColor(hex, percent) {
+  if (!hex || hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
+  let num = parseInt(hex.slice(1), 16),
+      amt = Math.round(2.55 * percent * 100),
+      R = (num >> 16) - amt,
+      G = (num >> 8 & 0x00FF) - amt,
+      B = (num & 0x0000FF) - amt;
+  return "#" + (0x1000000 + (R<0?0:R>255?255:R)*0x10000 + (G<0?0:G>255?255:G)*0x100 + (B<0?0:B>255?255:B)).toString(16).slice(1);
+}
+
+function initFog() {
+  fog = [];
+  for (let y = 0; y < MAP; y++) {
+    fog[y] = [];
+    for (let x = 0; x < MAP; x++) {
+      fog[y][x] = 0; // Unexplored
+    }
+  }
+}
+
+function updateFog() {
+  if (!gameStarted) return;
+  // 1. Reset active vision (2) to explored (1)
+  for (let y = 0; y < MAP; y++) {
+    for (let x = 0; x < MAP; x++) {
+      if (fog[y][x] === 2) fog[y][x] = 1;
+    }
+  }
+  
+  // 2. Set visible tiles around player units/buildings (team 0)
+  entities.forEach(e => {
+    if (e.team !== 0) return;
+    
+    let sight = 5;
+    if (e.type === 'building') {
+      if (!e.complete) sight = 1;
+      else if (e.btype === 'TC') sight = 8;
+      else if (e.btype === 'TOWER') sight = 9;
+      else if (e.btype === 'HOUSE') sight = 4;
+      else sight = 5;
+    } else {
+      if (e.utype === 'sheep') sight = 3;
+      else if (e.utype === 'scout') sight = 7;
+      else sight = 5;
+    }
+    
+    let cx = Math.round(e.x);
+    let cy = Math.round(e.y);
+    if (e.type === 'building') {
+      let b = BLDGS[e.btype];
+      cx = Math.round(e.x + b.w/2);
+      cy = Math.round(e.y + b.h/2);
+    }
+    
+    for (let dy = -sight; dy <= sight; dy++) {
+      for (let dx = -sight; dx <= sight; dx++) {
+        if (dx*dx + dy*dy <= sight*sight) {
+          let tx = cx + dx;
+          let ty = cy + dy;
+          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) {
+            fog[ty][tx] = 2; // Active vision
+          }
+        }
+      }
+    }
+  });
+}
+
+function spawnParticles(x, y, color, count, speed=0.03, size=2) {
+  for (let i = 0; i < count; i++) {
+    let angle = Math.random() * Math.PI * 2;
+    let sp = Math.random() * speed;
+    particles.push({
+      x: x + (Math.random() - 0.5) * 0.3,
+      y: y + (Math.random() - 0.5) * 0.3,
+      vx: Math.cos(angle) * sp,
+      vy: Math.sin(angle) * sp,
+      life: randInt(20, 35),
+      maxLife: 35,
+      color: color,
+      size: size + Math.random() * 1.5
+    });
+  }
+}
+
+function spawnProjectile(attacker, target) {
+  let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
+  let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+  let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
+  projectiles.push({
+    x: attacker.x,
+    y: attacker.y,
+    startX: attacker.x,
+    startY: attacker.y,
+    totalDist: d,
+    targetId: target.id,
+    attacker: attacker
+  });
+  if (window.playSound) window.playSound('arrow');
+}
+
+function isUnitOnScreen(en) {
+  let iso = toIso(en.x, en.y);
+  let sx = iso.ix - camX + W/2;
+  let sy = iso.iy - camY + topH + H/2;
+  return sx >= -50 && sx <= W + 50 && sy >= -50 && sy <= H + 50;
+}

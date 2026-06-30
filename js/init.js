@@ -1,6 +1,7 @@
 // ---- INIT ----
 function init(){
   genMap();
+  initFog(); // Initialize Fog of War grid
   STARTS.forEach(start=>{
     let tc=createBuilding('TC',start.x,start.y,start.team);
     tc.complete=true;
@@ -45,6 +46,10 @@ function startGame(difficulty){
   aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
   gameStarted=true;
   aiTick=0;
+  window.playedGameOverSound = false; // Reset game over sound trigger
+  // Initialize audio on first click
+  if (window.initAudio) window.initAudio();
+  
   let menu=document.getElementById('tutorial');
   if(menu)menu.style.display='none';
   showMsg('Difficulty: '+AI_LEVELS[aiDifficulty].name);
@@ -56,6 +61,10 @@ function gameLoop(){
   render();
   updateUI();
   if(gameOver){
+    if (!window.playedGameOverSound) {
+      window.playedGameOverSound = true;
+      if (window.playSound) window.playSound(won ? 'victory' : 'defeat');
+    }
     X.fillStyle='rgba(0,0,0,0.6)';X.fillRect(0,0,W,window.innerHeight);
     let cy=topH+H/2;
     X.fillStyle=won?'#ffd700':'#ff4444';X.font='bold 48px serif';X.textAlign='center';

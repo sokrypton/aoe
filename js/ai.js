@@ -10,7 +10,7 @@ function updateAI(){
   if(!aiTC)return;
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
-  let mils=aiUnits.filter(u=>u.utype==='militia');
+  let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
   let readyBarracks=barracks.filter(b=>b.complete);
 
@@ -19,6 +19,7 @@ function updateAI(){
   ensureAIHousing(aiTC,profile);
   planAIDropSites(aiTC,vils,profile);
   planAIFarming(aiTC,vils,profile);
+  planAITowers(aiTC,vils,profile); // AI Watch Tower planning
   planAIMilitaryBuildings(aiTC,vils,barracks,profile);
   queueAIMilitary(readyBarracks,profile);
   assignAIVillagers(vils,profile);
@@ -68,6 +69,15 @@ function planAIDropSites(aiTC,vils,profile){
   }
 }
 
+function planAITowers(aiTC,vils,profile){
+  if(vils.length<8||!canAfford(1,BLDGS.TOWER.cost))return;
+  let currentTowers=entities.filter(e=>e.type==='building'&&e.team===1&&e.btype==='TOWER').length;
+  let maxTowers=profile===AI_LEVELS.hard?2:(profile===AI_LEVELS.standard?1:0);
+  if(currentTowers>=maxTowers)return;
+  let pos=findAIBuildSpot(aiTC,'TOWER');
+  if(pos)placeAIBuilding('TOWER',pos.x,pos.y);
+}
+
 function planAIMilitaryBuildings(aiTC,vils,barracks,profile){
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(1,BLDGS.BARRACKS.cost))return;
   let pos=findAIBuildSpot(aiTC,'BARRACKS');
@@ -75,18 +85,28 @@ function planAIMilitaryBuildings(aiTC,vils,barracks,profile){
 }
 
 function queueAIMilitary(readyBarracks,profile){
-  let currentArmy=entities.filter(e=>e.team===1&&e.type==='unit'&&e.utype==='militia').length;
+  let currentArmy=entities.filter(e=>e.team===1&&e.type==='unit'&&['militia','spearman','archer','scout'].includes(e.utype)).length;
   let maxArmy=profile.attackSize+profile.armyReserve+5;
   if(currentArmy>=maxArmy)return;
+  
+  let types = ['militia', 'spearman', 'archer', 'scout'];
+
   readyBarracks.forEach(barracks=>{
     while(barracks.queue.length<profile.queueLimit&&teamPopUsed(1)+teamQueuedPop(1)<teamPopCap(1)&&currentArmy+barracks.queue.length<maxArmy){
-      if(!queueUnit(barracks,'militia').ok)break;
+      let utype = types[randInt(0, types.length - 1)];
+      if(!queueUnit(barracks,utype).ok){
+        if(!queueUnit(barracks,'spearman').ok){
+          if(!queueUnit(barracks,'militia').ok){
+            break;
+          }
+        }
+      }
     }
   });
 }
 
 function assignAIVillagers(vils,profile){
-  let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===1&&!en.complete);
+  let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===1&&(!en.complete || en.hp < en.maxHp));
   vils.forEach(v=>{
     if(v.path.length>0||v.target)return;
     let build=neededAIBuildingWork(incompleteBuilds,vils,profile);
@@ -206,10 +226,23 @@ function controlAIMilitary(mils,aiTC,profile){
 }
 
 function findPlayerThreatNear(aiTC,range){
-  let cx=aiTC.x+aiTC.w/2,cy=aiTC.y+aiTC.h/2;
-  return entities.filter(e=>e.team===0&&e.type==='unit'&&e.utype!=='sheep')
-    .filter(e=>dist({x:cx,y:cy},e)<=range)
-    .sort((a,b)=>dist({x:cx,y:cy},a)-dist({x:cx,y:cy},b))[0]||null;
+  let aiBuildings = entities.filter(e=>e.team===1&&e.type==='building'&&e.complete);
+  let playerUnits = entities.filter(e=>e.team===0&&e.type==='unit'&&e.utype!=='sheep');
+  
+  let closestThreat = null;
+  let minDist = 9999;
+  
+  playerUnits.forEach(pu => {
+    aiBuildings.forEach(ab => {
+      let d = dist({x: ab.x + ab.w/2, y: ab.y + ab.h/2}, pu);
+      if (d <= range && d < minDist) {
+        minDist = d;
+        closestThreat = pu;
+      }
+    });
+  });
+  
+  return closestThreat;
 }
 
 function chooseAIAttackTarget(militia){
@@ -224,9 +257,48 @@ function hasAIBuilding(type){
 }
 
 function placeAIBuilding(type,x,y){
-  if(!canPlace(type,x,y)||!canAfford(1,BLDGS[type].cost))return null;
-  spendCost(1,BLDGS[type].cost);
-  let building=createBuilding(type,x,y,1);
+  let b=BLDGS[type];
+  let gw = b.w, gh = b.h;
+  let ox = x, oy = y;
+  if (type === 'GATE') {
+    let isWall = (tx, ty) => {
+      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 1);
+      return !!w;
+    };
+    if (isWall(x, y) && isWall(x + 1, y)) {
+      ox = x; oy = y; gw = 2; gh = 1;
+    } else if (isWall(x - 1, y) && isWall(x, y)) {
+      ox = x - 1; oy = y; gw = 2; gh = 1;
+    } else if (isWall(x, y) && isWall(x, y + 1)) {
+      ox = x; oy = y; gw = 1; gh = 2;
+    } else if (isWall(x, y - 1) && isWall(x, y)) {
+      ox = x; oy = y - 1; gw = 1; gh = 2;
+    }
+  }
+  let wallsToRemove = [];
+  for (let dy = 0; dy < gh; dy++) {
+    for (let dx = 0; dx < gw; dx++) {
+      let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === 1);
+      if (w) wallsToRemove.push(w);
+    }
+  }
+  let actualCost = {...b.cost};
+  if (type === 'GATE') {
+    actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
+  } else if (type === 'TOWER') {
+    let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === 1);
+    if (existing) {
+      actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
+      wallsToRemove.push(existing);
+    }
+  }
+  if(!canPlace(type,x,y,1)||!canAfford(1,actualCost))return null;
+  spendCost(1,actualCost);
+  if (wallsToRemove.length > 0) {
+    let ids = new Set(wallsToRemove.map(w => w.id));
+    entities = entities.filter(en => !ids.has(en.id));
+  }
+  let building=createBuilding(type,ox,oy,1,gw,gh);
   building.complete=false;
   building.buildProgress=0;
   return building;

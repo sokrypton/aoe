@@ -1,5 +1,8 @@
 // ---- RENDERING ----
 function drawTile(x,y){
+  let f = fog[y] && fog[y][x];
+  if (f === 0) return; // unexplored (completely black)
+
   let iso=toIso(x,y);
   let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
   if(sx<-TW*2||sx>W+TW*2||sy<-TH*4||sy>H+TH*4)return;
@@ -73,6 +76,15 @@ function drawTile(x,y){
       X.fillStyle='#cc3344';X.beginPath();X.arc(bx,by,2*s,0,Math.PI*2);X.fill();
       X.fillStyle='#ff99a8';X.beginPath();X.arc(bx-0.5*s,by-0.5*s,0.7*s,0,Math.PI*2);X.fill(); // shiny glint
     }
+  }
+
+  // Explored but out of sight overlay
+  if (f === 1) {
+    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    X.beginPath();
+    X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
+    X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
+    X.closePath();X.fill();
   }
 }
 
@@ -163,6 +175,9 @@ function drawFullTreeBody(sx, cy, s) {
 }
 
 function drawTreeEntity(x,y){
+  let f = fog[y] && fog[y][x];
+  if (f === 0) return; // unexplored (black)
+
   let iso=toIso(x,y);
   let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
   let cy=sy+HALF_TH;
@@ -180,7 +195,6 @@ function drawTreeEntity(x,y){
   let totalSway = sway + gust;
 
   // Initialize fell tick for falling tree animation
-  // Use <= 60 (not === 60) so simultaneous chops that skip 60 still trigger the fall
   if(t.res <= 60 && t.fellTick === undefined){
     t.fellTick = tick;
   }
@@ -225,9 +239,51 @@ function drawTreeEntity(x,y){
     // Stage 3: Standing stump only
     drawStump(sx, cy, s);
   }
+
+  // Fog of War tree shadow overlay
+  if (f === 1) {
+    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    X.beginPath();
+    X.arc(sx, cy - 18 * s, 16 * s, 0, Math.PI * 2);
+    X.fill();
+  }
 }
 
 // ---- MODULAR ISOMETRIC RENDERING HELPERS ----
+
+// Draws a half-length wall slab from a pillar center toward the midpoint with a neighbor.
+// sx,sy: start screen pos (pillar center base)
+// dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
+// wallH: height of the wall slab in pixels
+function drawWallLink(sx, sy, dx, dy, wallH) {
+  let ex = sx + dx, ey = sy + dy;
+  // Determine which iso axis the wall runs along:
+  //   iso Y axis (NE-SW): dx and dy have opposite signs → thickness along iso X = (+4, +2)
+  //   iso X axis (NW-SE): dx and dy have same sign    → thickness along iso Y = (-4, +2)
+  let isAlongIsoY = (dx > 0) !== (dy > 0);
+  let px = isAlongIsoY ? 4 : -4;
+  let py = 2; // always +2 (both perpendiculars have same Y component)
+
+  X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
+
+  // 1. Visible side face (SE face for iso-Y walls, SW face for iso-X walls)
+  X.fillStyle = isAlongIsoY ? '#adada0' : '#cfcfc4';
+  X.beginPath();
+  X.moveTo(sx + px, sy + py);              // near-bottom
+  X.lineTo(ex + px, ey + py);              // far-bottom
+  X.lineTo(ex + px, ey + py - wallH);      // far-top
+  X.lineTo(sx + px, sy + py - wallH);      // near-top
+  X.closePath(); X.fill(); X.stroke();
+
+  // 2. Top walkway face
+  X.fillStyle = '#b8b8b0';
+  X.beginPath();
+  X.moveTo(sx - px, sy - py - wallH);      // near NW/NE edge
+  X.lineTo(sx + px, sy + py - wallH);      // near SE/SW edge
+  X.lineTo(ex + px, ey + py - wallH);      // far SE/SW edge
+  X.lineTo(ex - px, ey - py - wallH);      // far NW/NE edge
+  X.closePath(); X.fill(); X.stroke();
+}
 
 // Draws a 3D isometric building block with Left/Right walls and Flat or Peaked roof
 function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roofR){
@@ -377,7 +433,7 @@ function drawWindmillSails(hx,hy,id){
 }
 
 // Main function to draw building entities
-function drawBuilding(e){
+function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
   let iso=toIso(cx,cy);
@@ -564,6 +620,155 @@ function drawBuilding(e){
       X.fillStyle='#d5ccbe';X.beginPath();X.ellipse(fx-5,fy+2,4,3,0,0,Math.PI*2);X.fill();X.stroke();
     }
   }
+  else if(e.btype==='TOWER'){
+    bh=36;
+    let linkY = sy + 16;
+    let wallH = 14;
+    let getB = (tx, ty) => entities.find(en => en.type === 'building' && en.x === tx && en.y === ty);
+
+    // South neighbor (y+1)
+    let sB = getB(e.x, e.y + 1);
+    if (sB) {
+      if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
+        drawWallLink(sx, linkY, -32, 16, wallH);
+      } else if (sB.btype === 'GATE') {
+        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH);
+      }
+    }
+
+    // East neighbor (x+1)
+    let eB = getB(e.x + 1, e.y);
+    if (eB) {
+      if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
+        drawWallLink(sx, linkY, 32, 16, wallH);
+      } else if (eB.btype === 'GATE') {
+        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH);
+      }
+    }
+
+    // Castle Age Watch Tower — 3 stacked blocks (centered at sy+16)
+    drawBuildingBlock(sx, sy+9, 14, 7, 22, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+    drawBuildingBlock(sx, sy+9-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030');
+    drawBuildingBlock(sx, sy+9-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'flat', 0, tc, tcD);
+    if (e.complete) drawWavingFlag(sx, sy+9, 44, tc, tcD);
+  }
+  else if(e.btype==='WALL'){
+    bh=14;
+    let pillarH = 22;
+    let wallH = 14;   // lower than pillar to create bastion crenellated effect
+    let linkY = sy + 16;
+    let getB = (tx, ty) => entities.find(en => en.type === 'building' && en.x === tx && en.y === ty);
+
+    // 1. Draw central pillar first (so that front-facing links connect on top of its base)
+    drawBuildingBlock(sx, sy+11.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+
+    // 2. Draw South and East links second (running towards the front, overlapping the pillar)
+    // South neighbor (y+1)
+    let sB = getB(e.x, e.y + 1);
+    if (sB) {
+      if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
+        drawWallLink(sx, linkY, -32, 16, wallH);
+      } else if (sB.btype === 'GATE') {
+        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH);
+      }
+    }
+
+    // East neighbor (x+1)
+    let eB = getB(e.x + 1, e.y);
+    if (eB) {
+      if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
+        drawWallLink(sx, linkY, 32, 16, wallH);
+      } else if (eB.btype === 'GATE') {
+        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH);
+      }
+    }
+  }
+
+  else if(e.btype==='GATE'){
+    let pillarH = 22;
+    bh = pillarH;
+    let t1sx, t1sy, t2sx, t2sy;
+    let sx_center, sy_center;
+    let wallLineNS = e.h > e.w;
+
+    if (wallLineNS) {
+      // N-S Gate (footprint 1x2) - NE-SW direction
+      t1sx = sx; t1sy = sy + 16;
+      t2sx = sx - 32; t2sy = sy + 32;
+      sx_center = sx - 16; sy_center = sy + 24;
+    } else {
+      // E-W Gate (footprint 2x1) - NW-SE direction
+      t1sx = sx; t1sy = sy + 16;
+      t2sx = sx + 32; t2sy = sy + 32;
+      sx_center = sx + 16; sy_center = sy + 24;
+    }
+
+    if (part === 'back' || part === null) {
+      // Draw back post (Tower 1)
+      drawBuildingBlock(t1sx, t1sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+
+      if (e.complete) {
+        let gp = e.gateProgress || 0;
+        let slideY = gp * 22;
+        let dx = t2sx - t1sx, dy = t2sy - t1sy;
+
+        // Ground shadow
+        X.strokeStyle = 'rgba(0,0,0,0.3)'; X.lineWidth = 2.5;
+        X.beginPath();
+        X.moveTo(t1sx, t1sy); X.lineTo(t2sx, t2sy);
+        X.stroke();
+
+        // Sliding portcullis bars
+        X.strokeStyle = '#3a2515'; X.lineWidth = 1.8;
+        let barCount = 7;
+        for (let i = 1; i <= barCount; i++) {
+          let t = i / (barCount + 1);
+          let bx = t1sx + t * dx;
+          let by = t1sy + t * dy;
+          X.beginPath();
+          X.moveTo(bx, by - slideY);
+          X.lineTo(bx, by - 22 - slideY);
+          X.stroke();
+        }
+
+        // Horizontal diagonal lattice bars
+        X.strokeStyle = '#111'; X.lineWidth = 1.2;
+        X.beginPath();
+        X.moveTo(t1sx, t1sy - 7 - slideY); X.lineTo(t2sx, t2sy - 7 - slideY);
+        X.moveTo(t1sx, t1sy - 15 - slideY); X.lineTo(t2sx, t2sy - 15 - slideY);
+        X.stroke();
+      }
+      if (part === 'back') {
+        X.globalAlpha = 1;
+        return;
+      }
+    }
+
+    if (part === 'front' || part === null) {
+      let dx = t2sx - t1sx, dy = t2sy - t1sy;
+      if (e.complete) {
+        // Draw lintel
+        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5);
+      }
+
+      // Draw front post (Tower 2)
+      drawBuildingBlock(t2sx, t2sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+
+      // Draw connection links
+      let wallH = 14;
+      if (wallLineNS) {
+        let sB = entities.find(en => en.type === 'building' && en.x === e.x && en.y === e.y + 2);
+        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER')) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH);
+        }
+      } else {
+        let eB = entities.find(en => en.type === 'building' && en.x === e.x + 2 && en.y === e.y);
+        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER')) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH);
+        }
+      }
+    }
+  }
   else if(e.btype==='FARM'){
     bh=0;
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
@@ -621,7 +826,22 @@ function drawBuilding(e){
     X.fillStyle='#003';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
     X.fillStyle='#0af';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
   }
+
+  // Fog of War building shadow overlay
+  let f = fog[e.y] && fog[e.y][e.x];
+  if (f === 1) {
+    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    X.beginPath();
+    X.moveTo(sx, sy);
+    X.lineTo(sx + bw, sy + bhh);
+    X.lineTo(sx, sy + bhh*2);
+    X.lineTo(sx - bw, sy + bhh);
+    X.closePath();
+    X.fill();
+  }
 }
+
+
 
 function drawCorpse(c){
   let iso=toIso(c.x,c.y);
@@ -737,7 +957,27 @@ function drawUnit(e){
   // --- DRAW FLIPPABLE STUFF ---
   if(e.utype!=='sheep'){
     // Walking leg cycle (swinging legs with constant leg length)
-    if(e.path.length>0){
+    if(e.utype==='scout'){
+      // Horse leg swing
+      let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4 : 0;
+      X.strokeStyle = '#000000'; X.lineWidth = 2.2;
+      X.beginPath();
+      // Front legs
+      X.moveTo(3, 4); X.lineTo(3+walk, 11);
+      X.moveTo(5, 4); X.lineTo(5-walk, 11);
+      // Back legs
+      X.moveTo(-6, 4); X.lineTo(-6+walk, 11);
+      X.moveTo(-8, 4); X.lineTo(-8-walk, 11);
+      X.stroke();
+      
+      X.strokeStyle = '#8b5a2b'; X.lineWidth = 1.3;
+      X.beginPath();
+      X.moveTo(3, 4); X.lineTo(3+walk, 11);
+      X.moveTo(5, 4); X.lineTo(5-walk, 11);
+      X.moveTo(-6, 4); X.lineTo(-6+walk, 11);
+      X.moveTo(-8, 4); X.lineTo(-8-walk, 11);
+      X.stroke();
+    } else if(e.path.length>0){
       let walk = Math.sin(tick*0.4+e.id)*2.5;
       X.strokeStyle = '#000000'; X.lineWidth = 1.8;
       X.beginPath();
@@ -745,36 +985,62 @@ function drawUnit(e){
       X.moveTo(2, -bob); X.lineTo(2+walk, 3-bob);
       X.stroke();
     }
+
+    let humanYOffset = e.utype === 'scout' ? -5 : 0;
+
+    // Horse body drawn under the rider
+    if(e.utype==='scout'){
+      X.fillStyle='#a0522d'; X.strokeStyle='#000'; X.lineWidth=1.2;
+      X.beginPath();
+      X.ellipse(-1, 3, 10, 5, 0, 0, Math.PI*2);
+      X.fill(); X.stroke();
+      
+      X.beginPath();
+      X.ellipse(6, -1, 4, 7, -Math.PI/6, 0, Math.PI*2);
+      X.fill(); X.stroke();
+      X.beginPath();
+      X.ellipse(9, -6, 4, 2.5, -Math.PI/6, 0, Math.PI*2);
+      X.fill(); X.stroke();
+      
+      X.strokeStyle='#000'; X.lineWidth=2.5;
+      X.beginPath(); X.moveTo(-11, 2); X.lineTo(-15, 8); X.stroke();
+      X.strokeStyle='#111'; X.lineWidth=1.5;
+      X.beginPath(); X.moveTo(-11, 2); X.lineTo(-15, 8); X.stroke();
+    }
+
     // Torso
     X.strokeStyle='#000000';X.lineWidth=1;
     if(e.utype==='militia'){
       // Iron chainmail torso
       X.fillStyle='#6b6b6b';
-      X.beginPath();X.arc(0,-6,5,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(0,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
       // Team-colored surcoat tunic
       X.fillStyle=tc;
-      X.beginPath();X.rect(-2.5,-10,5,8);X.fill();X.stroke();
+      X.beginPath();X.rect(-2.5,-10+humanYOffset,5,8);X.fill();X.stroke();
     } else {
       // Team-colored peasant shirt
       X.fillStyle=tc;
-      X.beginPath();X.arc(0,-6,5,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(0,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
     }
     // Flesh Head
     X.fillStyle='#edc9a0';
-    X.beginPath();X.arc(0,-14,4,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.arc(0,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
     // Headwear
     if(e.utype==='militia'){
       // Norman iron helm
       X.fillStyle='#8a8a8a';
-      X.beginPath();X.arc(0,-15,4.5,Math.PI,0);X.fill();X.stroke();
+      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
       X.fillStyle='#daa520';
-      X.beginPath();X.rect(-4.5,-15,9,1.5);X.fill();X.stroke();
+      X.beginPath();X.rect(-4.5,-15+humanYOffset,9,1.5);X.fill();X.stroke();
       X.fillStyle='#8a8a8a';
-      X.beginPath();X.rect(-0.75,-15,1.5,4);X.fill();X.stroke();
+      X.beginPath();X.rect(-0.75,-15+humanYOffset,1.5,4);X.fill();X.stroke();
+    } else if(e.utype==='archer') {
+      X.fillStyle='#2e8b57'; // green archer hood
+      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
     } else {
       // Peasant leather hood cap
       X.fillStyle='#4a2e1b';
-      X.beginPath();X.arc(0,-15,4.5,Math.PI,0);X.fill();X.stroke();
+      X.beginPath();X.arc(0,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
     }
 
     // Tools & weapons (animated swinging swings during active tasks)
@@ -787,7 +1053,7 @@ function drawUnit(e){
         X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
         X.strokeStyle='#8B4513';X.lineWidth=1.2;
         X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
-        // Simple Axe Head (Attached at the tip)
+        // Simple Axe Head
         X.fillStyle='#b0b0b0';
         X.beginPath();
         X.moveTo(7, -10);
@@ -805,14 +1071,14 @@ function drawUnit(e){
         X.strokeStyle='#8B4513';X.lineWidth=1.3;
         X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
         
-        // Pickaxe Head (Thick crescent centered exactly at the tip)
-        X.strokeStyle='#000000';X.lineWidth=3; // outline
+        // Pickaxe Head
+        X.strokeStyle='#000000';X.lineWidth=3;
         X.beginPath();
         X.moveTo(2, -13);
         X.quadraticCurveTo(7, -12, 12, -7);
         X.stroke();
         
-        X.strokeStyle='#b0b0b0';X.lineWidth=1.5; // steel fill
+        X.strokeStyle='#b0b0b0';X.lineWidth=1.5;
         X.beginPath();
         X.moveTo(2, -13);
         X.quadraticCurveTo(7, -12, 12, -7);
@@ -880,6 +1146,48 @@ function drawUnit(e){
       X.fillRect(shx-3, shy, 6, 1);
       X.fillRect(shx, shy-3, 1, 6);
       X.strokeStyle='#000000';X.lineWidth=0.75;X.stroke();
+    } else if(e.utype==='spearman'){
+      // Spearman long spear
+      let swinging=e.target&&e.path.length===0;
+      X.save(); X.translate(3, -6+humanYOffset);
+      if(swinging) X.translate(anim*4, 0); // thrusting
+      X.strokeStyle='#8B4513'; X.lineWidth=1.8;
+      X.beginPath(); X.moveTo(-6, 8); X.lineTo(11, -9); X.stroke();
+      X.fillStyle='#ccd'; X.strokeStyle='#000'; X.lineWidth=0.8;
+      X.beginPath();
+      X.moveTo(11, -9); X.lineTo(15, -13); X.lineTo(12, -6); X.closePath();
+      X.fill(); X.stroke();
+      X.restore();
+    } else if(e.utype==='archer'){
+      // Archer bow and arrow
+      let swinging=e.target&&e.path.length===0;
+      X.save(); X.translate(4, -8+humanYOffset);
+      if(swinging) {
+        X.strokeStyle='#8B4513'; X.lineWidth=1.5;
+        X.beginPath(); X.arc(0, 0, 6, -Math.PI/2, Math.PI/2); X.stroke();
+        X.strokeStyle='#e0e0e0'; X.lineWidth=0.75;
+        X.beginPath(); X.moveTo(0, -6); X.lineTo(-3, 0); X.lineTo(0, 6); X.stroke();
+        // small arrow ready to fire
+        X.strokeStyle='#fff'; X.lineWidth=1;
+        X.beginPath(); X.moveTo(-3, 0); X.lineTo(5, 0); X.stroke();
+      } else {
+        X.strokeStyle='#8B4513'; X.lineWidth=1.5;
+        X.beginPath(); X.arc(0, 0, 6, -Math.PI/2.5, Math.PI/2.5); X.stroke();
+        X.strokeStyle='#e0e0e0'; X.lineWidth=0.75;
+        X.beginPath(); X.moveTo(2, -4); X.lineTo(2, 4); X.stroke();
+      }
+      X.restore();
+    } else if(e.utype==='scout'){
+      // Scout wooden club weapon
+      let swinging=e.target&&e.path.length===0;
+      X.save(); X.translate(4, -7+humanYOffset);
+      if(swinging) X.rotate(anim*1.1);
+      else X.rotate(-0.5);
+      X.strokeStyle='#000'; X.lineWidth=2.2;
+      X.beginPath(); X.moveTo(0,0); X.lineTo(6,-6); X.stroke();
+      X.strokeStyle='#8B4513'; X.lineWidth=1.2;
+      X.beginPath(); X.moveTo(0,0); X.lineTo(6,-6); X.stroke();
+      X.restore();
     }
   } else {
     // Sheep hooves (swinging walking legs)
@@ -962,8 +1270,20 @@ function drawGhost(){
   if(!placing)return;
   let tile=screenToTile(mouseX,mouseY);
   let b=BLDGS[placing];
-  let ok=canPlace(placing,tile.x,tile.y);
-  for(let dy=0;dy<b.h;dy++)for(let dx=0;dx<b.w;dx++){
+  let bw=b.w, bh=b.h;
+  if(placing==='GATE'){
+    let isWall = (tx, ty) => {
+      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 0);
+      return !!w;
+    };
+    let hasEW = isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y);
+    let hasNS = isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1);
+    if (hasEW) { bw = 2; bh = 1; }
+    else if (hasNS) { bw = 1; bh = 2; }
+    else { bw = 1; bh = 2; } // Default layout if no valid walls found
+  }
+  let ok=canPlace(placing,tile.x,tile.y,0);
+  for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let iso=toIso(tile.x+dx,tile.y+dy);
     let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
     X.fillStyle=ok?'rgba(0,200,0,0.3)':'rgba(200,0,0,0.3)';
@@ -1007,10 +1327,19 @@ function drawMinimap(){
   MX.fillStyle='#071006';
   MX.fillRect(0,0,mw,mh);
   for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
-    let t=map[y][x];
-    let c=t.t===TERRAIN.GRASS?'#4a8c2a':t.t===TERRAIN.FOREST?'#1a4010':
-      t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
-      t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
+    let f = fog[y] && fog[y][x];
+    let c = '#000000'; // unexplored is black
+    if (f === 1) {
+      let t=map[y][x];
+      c=t.t===TERRAIN.GRASS?'#254615':t.t===TERRAIN.FOREST?'#0d2008':
+        t.t===TERRAIN.GOLD?'#6d5210':t.t===TERRAIN.STONE?'#404040':
+        t.t===TERRAIN.WATER?'#224c6e':t.t===TERRAIN.FARM?'#453d28':'#254615';
+    } else if (f === 2) {
+      let t=map[y][x];
+      c=t.t===TERRAIN.GRASS?'#4a8c2a':t.t===TERRAIN.FOREST?'#1a4010':
+        t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
+        t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
+    }
     fillDiamond([miniPoint(x,y),miniPoint(x+1,y),miniPoint(x+1,y+1),miniPoint(x,y+1)],c);
   }
   let outline=[miniPoint(0,0),miniPoint(MAP,0),miniPoint(MAP,MAP),miniPoint(0,MAP)];
@@ -1022,6 +1351,11 @@ function drawMinimap(){
   MX.closePath();
   MX.stroke();
   entities.forEach(e=>{
+    let ex = Math.round(e.x), ey = Math.round(e.y);
+    let f = fog[ey] && fog[ey][ex];
+    if (f === 0 || f === undefined) return; // unexplored
+    if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide active enemy units in fog
+    
     MX.fillStyle=TEAM_COLORS[e.team];
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;
@@ -1044,6 +1378,62 @@ function drawMinimap(){
   for(let i=1;i<vp.length;i++)MX.lineTo(vp[i].x,vp[i].y);
   MX.closePath();
   MX.stroke();
+}
+
+function drawParticles() {
+  X.save();
+  particles.forEach(p => {
+    let iso = toIso(p.x, p.y);
+    let sx = iso.ix - camX + W/2;
+    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    if (sx < -10 || sx > W + 10 || sy < -10 || sy > H + 10) return;
+    X.fillStyle = p.color;
+    X.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
+    X.beginPath();
+    X.arc(sx, sy, p.size, 0, Math.PI * 2);
+    X.fill();
+  });
+  X.restore();
+}
+
+function drawProjectiles() {
+  X.save();
+  projectiles.forEach(p => {
+    let target = entities.find(en => en.id === p.targetId);
+    if (!target) return;
+    let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
+    let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+    let dCurrent = Math.sqrt((p.x - targetX)**2 + (p.y - targetY)**2);
+    let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
+    
+    let iso = toIso(p.x, p.y);
+    let sx = iso.ix - camX + W/2;
+    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    
+    // Height arc
+    let arcH = Math.sin(progress * Math.PI) * 35 * (p.totalDist / 5);
+    sy -= arcH;
+    
+    let dx = targetX - p.x;
+    let dy = targetY - p.y;
+    let angle = Math.atan2(dy, dx);
+    let isoAngle = angle - Math.PI/4;
+    
+    X.strokeStyle = '#000';
+    X.lineWidth = 2.2;
+    X.beginPath();
+    X.moveTo(sx, sy);
+    X.lineTo(sx - Math.cos(isoAngle)*8, sy - Math.sin(isoAngle)*4);
+    X.stroke();
+    
+    X.strokeStyle = '#fff';
+    X.lineWidth = 1;
+    X.beginPath();
+    X.moveTo(sx, sy);
+    X.lineTo(sx - Math.cos(isoAngle)*7, sy - Math.sin(isoAngle)*3.5);
+    X.stroke();
+  });
+  X.restore();
 }
 
 function render(){
@@ -1069,28 +1459,63 @@ function render(){
     }
   }
 
-  let allDrawable = [...entities, ...corpses, ...trees];
+  let allDrawable = [];
+  entities.forEach(en => {
+    if (en.type === 'building' && en.btype === 'GATE') {
+      let wallLineNS = en.h > en.w;
+      allDrawable.push({
+        type: 'gate_back',
+        entity: en,
+        x: en.x,
+        y: en.y
+      });
+      allDrawable.push({
+        type: 'gate_front',
+        entity: en,
+        x: wallLineNS ? en.x : en.x + 1,
+        y: wallLineNS ? en.y + 1 : en.y
+      });
+    } else {
+      allDrawable.push(en);
+    }
+  });
+  allDrawable.push(...corpses, ...trees);
   
   let sorted=allDrawable.sort((a,b)=>{
-    let ax = a.type==='building' ? a.x + (BLDGS[a.btype]?.w||1)/2 : (a.type==='tree' ? a.x + 0.1 : (a.type==='unit' ? a.x + 0.25 : a.x));
-    let ay = a.type==='building' ? a.y + (BLDGS[a.btype]?.h||1)/2 : (a.type==='tree' ? a.y + 0.1 : (a.type==='unit' ? a.y + 0.25 : a.y));
-    let bx = b.type==='building' ? b.x + (BLDGS[b.btype]?.w||1)/2 : (b.type==='tree' ? b.x + 0.1 : (b.type==='unit' ? b.x + 0.25 : b.x));
-    let by = b.type==='building' ? b.y + (BLDGS[b.btype]?.h||1)/2 : (b.type==='tree' ? b.y + 0.1 : (b.type==='unit' ? b.y + 0.25 : b.y));
+    let ax = a.type==='building' ? a.x + (a.w||BLDGS[a.btype]?.w||1)/2 : (a.type==='gate_back' ? a.x + 0.5 : (a.type==='gate_front' ? a.x + 0.5 : (a.type==='tree' ? a.x + 0.1 : (a.type==='unit' ? a.x + 0.25 : a.x))));
+    let ay = a.type==='building' ? a.y + (a.h||BLDGS[a.btype]?.h||1)/2 : (a.type==='gate_back' ? a.y + 0.5 : (a.type==='gate_front' ? a.y + 0.5 : (a.type==='tree' ? a.y + 0.1 : (a.type==='unit' ? a.y + 0.25 : a.y))));
+    let bx = b.type==='building' ? b.x + (b.w||BLDGS[b.btype]?.w||1)/2 : (b.type==='gate_back' ? b.x + 0.5 : (b.type==='gate_front' ? b.x + 0.5 : (b.type==='tree' ? b.x + 0.1 : (b.type==='unit' ? b.x + 0.25 : b.x))));
+    let by = b.type==='building' ? b.y + (b.h||BLDGS[b.btype]?.h||1)/2 : (b.type==='gate_back' ? b.y + 0.5 : (b.type==='gate_front' ? b.y + 0.5 : (b.type==='tree' ? b.y + 0.1 : (b.type==='unit' ? b.y + 0.25 : b.y))));
     return (ay+ax) - (by+bx);
   });
   sorted.forEach(e=>{
+    // Fog of War checks for entities
+    let ex = Math.round(e.x), ey = Math.round(e.y);
+    let f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
+    if (f === 0) return; // unexplored
+    if (f === 1 && e.team !== 0) {
+      // unexplored but out of sight: hide enemy units/corpses
+      if (e.type === 'unit' || e.type === 'corpse') return;
+    }
+
     if(e.type==='building') drawBuilding(e);
+    else if(e.type==='gate_back') drawBuilding(e.entity, 'back');
+    else if(e.type==='gate_front') drawBuilding(e.entity, 'front');
     else if(e.type==='corpse') drawCorpse(e);
     else if(e.type==='tree') drawTreeEntity(e.x, e.y);
     else drawUnit(e);
   });
+  
+  drawProjectiles(); // Draw archer arrows
+  drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
 
   // Draw selected building's rally point flag & line (AoE2-style)
   if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === 0) {
     let bldg = selected[0];
-    if (bldg.rallyX !== undefined && bldg.rallyY !== undefined) {
-      let bCenter = toIso(bldg.x + (BLDGS[bldg.btype].w || 1)/2, bldg.y + (BLDGS[bldg.btype].h || 1)/2);
+    let bData = BLDGS[bldg.btype];
+    if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {
+      let bCenter = toIso(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
       let rPos = toIso(bldg.rallyX + 0.5, bldg.rallyY + 0.5);
       
       let sx1 = bCenter.ix - camX + W/2;
@@ -1141,19 +1566,21 @@ function render(){
 
   drawSelection();
 
-  // Update cursor based on context (desktop only)
+  // Update custom cursors via body classes (desktop only)
   if(!isMobile&&!placing){
     let tile=screenToTile(mouseX,mouseY);
     let haveVils=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
     let haveUnits=selected.some(s=>s.type==='unit'&&s.team===0);
     let t=tile.y>=0&&tile.y<MAP&&tile.x>=0&&tile.x<MAP?map[tile.y][tile.x]:null;
-    let overEnemy=entities.some(en=>en.team===1&&(en.type==='unit'?
-      (Math.abs(Math.round(en.x)-tile.x)<2&&Math.abs(Math.round(en.y)-tile.y)<2):
-      (tile.x>=en.x&&tile.x<en.x+(en.w||1)&&tile.y>=en.y&&tile.y<en.y+(en.h||1))));
-    if(haveUnits&&overEnemy)C.style.cursor='crosshair';
-    else if(haveVils&&t&&(t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES))C.style.cursor='cell';
-    else if(haveUnits)C.style.cursor='pointer';
-    else C.style.cursor='default';
-  } else if(placing){C.style.cursor='copy';}
+    let overEnemy=entities.some(en=>en.team===1&&en.type==='unit'&&(Math.abs(Math.round(en.x)-tile.x)<2&&Math.abs(Math.round(en.y)-tile.y)<2))
+      || (typeof getBuildingUnderCursor === 'function' && !!getBuildingUnderCursor(mouseX, mouseY, en=>en.team===1));
+    let alliedB = (typeof getBuildingUnderCursor === 'function') ? getBuildingUnderCursor(mouseX, mouseY, en=>en.team===0) : null;
+    let canWorkB = alliedB && (!alliedB.complete || alliedB.hp < alliedB.maxHp);
+    
+    if(haveUnits&&overEnemy) C.className = 'cursor-crosshair';
+    else if(haveVils&&(canWorkB || (t&&(t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)))) C.className = 'cursor-cell';
+    else if(haveUnits) C.className = 'cursor-pointer';
+    else C.className = 'cursor-default';
+  } else if(placing){ C.className = 'cursor-copy'; }
   drawMinimap();
 }

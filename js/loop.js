@@ -2,6 +2,62 @@
 function update(){
   if(gameOver||!gameStarted)return;
   tick++;
+
+  // Update particles
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Update smoking/burning buildings & gate open/close states
+  entities.forEach(e => {
+    if (e.type === 'building') {
+      if (e.hp < e.maxHp * 0.7 && tick % 5 === 0) {
+        spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
+      }
+      if (e.hp < e.maxHp * 0.3 && tick % 3 === 0) {
+        spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, Math.random() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
+      }
+      if (e.btype === 'GATE' && e.complete) {
+        let friendlyNear = entities.some(en => en.type === 'unit' && en.team === e.team && 
+          en.x >= e.x - 1.2 && en.x <= e.x + e.w + 0.2 && 
+          en.y >= e.y - 1.2 && en.y <= e.y + e.h + 0.2);
+        e.gateProgress = e.gateProgress || 0;
+        if (friendlyNear) {
+          e.gateProgress = Math.min(1.0, e.gateProgress + 0.08);
+        } else {
+          e.gateProgress = Math.max(0.0, e.gateProgress - 0.08);
+        }
+        e.isOpen = e.gateProgress > 0.5;
+      }
+    }
+  });
+
+  // Update projectiles
+  let remainingProjectiles = [];
+  projectiles.forEach(p => {
+    let target = entities.find(en => en.id === p.targetId);
+    if (!target || target.hp <= 0) return;
+    let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
+    let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+    let dx = targetX - p.x;
+    let dy = targetY - p.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    let speed = 0.25; // tiles per tick
+    if (dist <= speed) {
+      damageEntity(p.attacker, target);
+    } else {
+      p.x += (dx / dist) * speed;
+      p.y += (dy / dist) * speed;
+      remainingProjectiles.push(p);
+    }
+  });
+  projectiles = remainingProjectiles;
+
+  updateFog(); // Update Fog of War visibility grid
+
   let current=[...entities];
   current.forEach(e=>{
     if(entities.includes(e)){

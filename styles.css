@@ -1,6 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;600&display=swap');
+
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#0d0501;overflow:hidden;font-family:'Segoe UI',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%}
-canvas{display:block;cursor:default}
+html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%}
+
+/* Custom SVGs for game cursors */
+#game.cursor-default {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M6,10 L10,4 C11,2 13,1 15,1 C17,1 19,2.5 19.5,4 C20.5,3 22,2.5 23.5,3.5 C24.5,4.5 24.5,6 24.5,7 C25.5,7 26.5,8.5 26.5,10 C26.5,13 23,15 21,15 L19,23 L10,23 L7,16 L6,10 Z" fill="%23cfa043" stroke="%233e2105" stroke-width="2" stroke-linejoin="round"/><rect x="10" y="22" width="9" height="5" fill="%238a5a22" stroke="%233e2105" stroke-width="2" rx="1"/></svg>') 12 2, default !important;
+}
+#game.cursor-crosshair {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M26,3 L29,6 L14,21 L12,21 L11,20 L11,18 L26,3 Z" fill="%23e0e0e0" stroke="%23111" stroke-width="1.5"/><path d="M10,19 L13,22 L11,24 L8,21 L10,19 Z" fill="%23b08030" stroke="%23111" stroke-width="1.5"/><rect x="4" y="25" width="5" height="5" transform="rotate(-45 6.5 27.5)" fill="%23803020" stroke="%23111" stroke-width="1.5"/></svg>') 27 5, crosshair !important;
+}
+#game.cursor-cell {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M22,2 L28,8 L10,26 L4,20 L22,2 Z" fill="%238b5a2b" stroke="%23111" stroke-width="1.5"/><path d="M24,4 L28,8 C27,10 24,11 22,9 L20,7 C20,5 22,3 24,4 Z" fill="%23a0a0a0" stroke="%23111" stroke-width="1.5"/></svg>') 26 4, cell !important;
+}
+#game.cursor-copy {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M4,28 L14,18 L10,14 L0,24 L4,28 Z" fill="%238b5a2b" stroke="%23111" stroke-width="1.5"/><path d="M12,12 L20,4 C22,6 24,8 26,10 L18,18 L12,12 Z" fill="%23a0a0a0" stroke="%23111" stroke-width="1.5"/><rect x="23" y="7" width="5" height="12" transform="rotate(45 25.5 13)" fill="%23333" stroke="%23111" stroke-width="1.5"/></svg>') 25 13, copy !important;
+}
+#game.cursor-pointer {
+  cursor: pointer !important;
+}
+
+canvas{display:block}
 
 #ui{position:absolute;top:0;left:0;width:100%;pointer-events:none;z-index:10}
 
@@ -87,7 +107,7 @@ canvas{display:block;cursor:default}
   justify-content:center;
 }
 #sel-name{
-  font-family: 'Times New Roman', Georgia, serif;
+  font-family: 'Cinzel', Georgia, serif;
   font-size:15px;
   font-weight:bold;
   color:#ffd700;
@@ -119,7 +139,7 @@ canvas{display:block;cursor:default}
   background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
   border: 2px solid #bfa054;
   color:#ffebad;
-  font-family: Georgia, serif;
+  font-family: 'Inter', sans-serif;
   font-size:11px;
   font-weight:bold;
   cursor:pointer;
@@ -450,4 +470,40 @@ canvas{display:block;cursor:default}
 #global-stance-btn:hover {
   border-color: #ffd700;
   background: rgba(40, 20, 5, 0.65);
+}
+
+#idle-vil-btn {
+  color: #ffebad;
+  font-size: 11px;
+  font-weight: bold;
+  margin-left: 8px;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #5a3f1d;
+  border-radius: 4px;
+  padding: 2px 8px;
+  box-shadow: inset 0 0 4px #000;
+  text-shadow: 1px 1px 1px #000;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+#idle-vil-btn:hover {
+  border-color: #ffd700;
+  background: rgba(40, 20, 5, 0.65);
+}
+.idle-active {
+  animation: flash-gold 1.2s infinite alternate;
+  border-color: #ffd700 !important;
+}
+
+@keyframes flash-gold {
+  0% {
+    background-color: rgba(90, 60, 20, 0.6);
+    box-shadow: 0 0 4px #ffd700, inset 0 0 4px #000;
+  }
+  100% {
+    background-color: rgba(220, 160, 40, 0.85);
+    box-shadow: 0 0 12px #ffd700, inset 0 0 4px #000;
+    color: #fff;
+  }
 }

@@ -5,7 +5,7 @@ function createUnit(type,x,y,team){
   let e={id:nextId++,type:'unit',utype:type,x,y,fromX:x,fromY:y,tx:x,ty:y,team,hp:u.hp,maxHp:u.hp,
     atk:u.atk,range:u.range,speed:u.speed,path:[],task:null,target:null,
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
-    gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,autoAttack:globalAutoAttack};
+    gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1};
   entities.push(e);
   return e;
 }
@@ -27,17 +27,19 @@ function pushUnitsOut(bx,by,bw,bh){
     }
   });
 }
-function createBuilding(type,x,y,team){
+function createBuilding(type,x,y,team,customW=null,customH=null){
   let b=BLDGS[type];
+  let bw = customW !== null ? customW : b.w;
+  let bh = customH !== null ? customH : b.h;
   let e={id:nextId++,type:'building',btype:type,x,y,team,hp:b.hp,maxHp:b.hp,
-    w:b.w,h:b.h,queue:[],trainTick:0,rallyX:x+b.w,rallyY:y+b.h,
+    w:bw,h:bh,queue:[],trainTick:0,rallyX:x+bw,rallyY:y+bh,
     complete:true,buildProgress:0,buildTime:200,
     food:b.food||0,maxFood:b.food||0};
-  for(let dy=0;dy<b.h;dy++)for(let dx=0;dx<b.w;dx++){
+  for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     if(y+dy<MAP&&x+dx<MAP)map[y+dy][x+dx].occupied=e.id;
     if(b.isFarm){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;}
   }
   entities.push(e);
-  if(!b.isFarm)pushUnitsOut(x,y,b.w,b.h);
+  if(!b.isFarm)pushUnitsOut(x,y,e.w,e.h);
   return e;
 }

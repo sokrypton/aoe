@@ -9,8 +9,47 @@ let justPlaced=false; // flag to prevent mouseup selection clearing when placing
 document.addEventListener('keydown',e=>{
   if(gameOver)return;
   keys[e.key]=true;
-  if(e.key==='Escape'){placing=null;selected=[];}
-  if((e.key==='h'||e.key==='H')&&selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0))placing='HOUSE';
+  let key = e.key.toLowerCase();
+  if(e.key==='Escape'){placing=null;selected=[];updateUI();}
+  if(e.key==='Delete'||e.key==='Backspace'){
+    selected.forEach(en=>{
+      if(en.team===0){
+        en.hp=0;
+        if(typeof handleDeath==='function')handleDeath(en,1);
+      }
+    });
+    selected=[];
+    updateUI();
+  }
+  
+  // Villager building hotkeys
+  let hasVil = selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+  if(hasVil) {
+    if(key==='q') { placing='HOUSE'; showMsg('Place House'); }
+    else if(key==='w') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
+    else if(key==='e') { placing='MCAMP'; showMsg('Place Mining Camp'); }
+    else if(key==='r') { placing='MILL'; showMsg('Place Mill'); }
+    else if(key==='f') { placing='FARM'; showMsg('Place Farm'); }
+    else if(key==='b') { placing='BARRACKS'; showMsg('Place Barracks'); }
+    else if(key==='t') { placing='TOWER'; showMsg('Place Watch Tower'); }
+    else if(key==='z') { placing='WALL'; showMsg('Place Stone Wall'); }
+    else if(key==='x') { placing='GATE'; showMsg('Place Gate'); }
+  }
+  
+  // Training hotkeys for selected buildings
+  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === 0 && selected[0].complete) {
+    let bldg = selected[0];
+    if (bldg.btype === 'TC') {
+      if (key === 'v') {
+        trainUnit(bldg, 'villager');
+      }
+    } else if (bldg.btype === 'BARRACKS') {
+      if (key === 'm') trainUnit(bldg, 'militia');
+      else if (key === 's') trainUnit(bldg, 'spearman');
+      else if (key === 'a') trainUnit(bldg, 'archer');
+      else if (key === 'c') trainUnit(bldg, 'scout');
+    }
+  }
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
@@ -286,6 +325,38 @@ MC.addEventListener('touchend',()=>{
 // ==============================
 // ---- SHARED INPUT ACTIONS ----
 // ==============================
+function getBuildingUnderCursor(sx, sy, filter) {
+  const BLDG_HEIGHTS = {
+    TC: 55, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
+    MILL: 32, FARM: 6, TOWER: 58, WALL: 26, GATE: 32
+  };
+  let bestB = null;
+  let bestSortY = -9999;
+  entities.forEach(en=>{
+    if(en.type==='building' && (!filter || filter(en))){
+      let w = en.w !== undefined ? en.w : b.w;
+      let h = en.h !== undefined ? en.h : b.h;
+      let cx = en.x + w / 2;
+      let cy = en.y + h / 2;
+      let iso = toIso(cx, cy);
+      let scrx = (iso.ix - camX) * ZOOM + W/2;
+      let scry = (iso.iy - camY) * ZOOM + H/2 + topH;
+      let bw = w * 32 * ZOOM;
+      let bhh = h * 16 * ZOOM;
+      let height = (BLDG_HEIGHTS[en.btype] || 25) * ZOOM;
+      
+      if(sx >= scrx - bw && sx <= scrx + bw && sy >= scry - bhh - height && sy <= scry + bhh) {
+        let sortY = cy + cx;
+        if (sortY > bestSortY) {
+          bestSortY = sortY;
+          bestB = en;
+        }
+      }
+    }
+  });
+  return bestB;
+}
+
 function doSelect(sx,sy,shift){
   let tile=screenToTile(sx,sy);
   let clicked=null;
@@ -304,18 +375,22 @@ function doSelect(sx,sy,shift){
     }
   });
   if(!clicked){
-    entities.forEach(en=>{
-      if(en.type==='building'){
-        let b=BLDGS[en.btype];
-        if(tile.x>=en.x&&tile.x<en.x+b.w&&tile.y>=en.y&&tile.y<en.y+b.h)clicked=en;
-      }
-    });
+    clicked = getBuildingUnderCursor(sx, sy);
   }
   if(clicked){
     if(shift){
       if(!selected.some(s=>s.id===clicked.id))selected.push(clicked);
     }
     else selected=[clicked];
+
+    // Play selection sound (player team 0)
+    if (clicked.team === 0 && window.playSound) {
+      if (clicked.type === 'unit') {
+        if (clicked.utype === 'villager') window.playSound('select_villager');
+        else if (clicked.utype === 'sheep') window.playSound('sheep');
+        else window.playSound('select_military');
+      }
+    }
   } else selected=[];
 }
 
@@ -334,6 +409,14 @@ function doBoxSelect(x1,y1,x2,y2){
   });
   let units=selected.filter(s=>s.type==='unit');
   if(units.length>0)selected=units;
+
+  // Play group selection sound
+  if (selected.length > 0 && selected[0].team === 0 && window.playSound) {
+    let first = selected[0];
+    if (first.utype === 'villager') window.playSound('select_villager');
+    else if (first.utype === 'sheep') window.playSound('sheep');
+    else window.playSound('select_military');
+  }
 }
 
 function doCommand(sx,sy){
@@ -341,9 +424,11 @@ function doCommand(sx,sy){
   if(selected.length===0)return;
   let tile=screenToTile(sx,sy);
 
-  // If a friendly building is selected, right-clicking sets its Rally Point
+  // If a friendly training building is selected, right-clicking sets its Rally Point
   if(selected[0].type==='building'&&selected[0].team===0){
     let bldg=selected[0];
+    let bData=BLDGS[bldg.btype];
+    if(!bData || !bData.builds || bData.builds.length === 0) return;
     if(!inMapBounds(tile.x,tile.y))return;
     bldg.rallyX=tile.x;
     bldg.rallyY=tile.y;
@@ -352,7 +437,7 @@ function doCommand(sx,sy){
     let rTarget=null;
     let hitR=isMobile?18:12;
     entities.forEach(en=>{
-      if(en.type==='unit'||en.type==='building'){
+      if(en.type==='unit'){
         let iso=toIso(en.x,en.y);
         let idOff=en.id%7;
         let ox=(idOff%3-1)*6;
@@ -363,6 +448,9 @@ function doCommand(sx,sy){
         if(Math.sqrt(dx*dx+dy*dy)<hitR*ZOOM)rTarget=en;
       }
     });
+    if(!rTarget){
+      rTarget = getBuildingUnderCursor(sx, sy);
+    }
     
     if(rTarget){
       bldg.rallyTargetId=rTarget.id;
@@ -404,10 +492,6 @@ function doCommand(sx,sy){
         let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
         if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
       }
-      if(en.type==='building'){
-        let b=BLDGS[en.btype];
-        if(tile.x>=en.x&&tile.x<en.x+b.w&&tile.y>=en.y&&tile.y<en.y+b.h)target=en;
-      }
     }
     // Target own sheep (villagers harvest them)
     if(en.team===0&&en.utype==='sheep'){
@@ -421,13 +505,24 @@ function doCommand(sx,sy){
     }
   });
   if(!target){
-    buildTarget=buildingAtTile(tile.x,tile.y,en=>en.team===0&&!en.complete);
+    target = getBuildingUnderCursor(sx, sy, en => en.team === 1);
+  }
+  if(!target){
+    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
   }
   if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
-  // Generate formation offsets for group movement (AoE2-style spread)
+
+  // Play response sound on command
   let movers=selected.filter(s=>s.team===0&&s.type==='unit');
+  if (movers.length > 0 && window.playSound) {
+    let first = movers[0];
+    if (first.utype === 'villager') window.playSound('select_villager');
+    else if (first.utype !== 'sheep') window.playSound('select_military');
+  }
+
+  // Generate formation offsets for group movement (AoE2-style spread)
   let offsets=getFormation(movers.length);
   let idx=0;
   movers.forEach(s=>{
@@ -498,11 +593,50 @@ function doPlace(sx,sy){
     placing=null;
     return;
   }
-  if(canPlace(placing,tile.x,tile.y)){
+  if(canPlace(placing,tile.x,tile.y,0)){
     let b=BLDGS[placing];
-    if(!canAfford(0,b.cost)){showMsg('Not enough resources!');placing=null;return;}
-    spendCost(0,b.cost);
-    let bldg=createBuilding(placing,tile.x,tile.y,0);
+    let gw = b.w, gh = b.h;
+    let ox = tile.x, oy = tile.y;
+    if (placing === 'GATE') {
+      let isWall = (tx, ty) => {
+        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 0);
+        return !!w;
+      };
+      if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
+        ox = tile.x; oy = tile.y; gw = 2; gh = 1;
+      } else if (isWall(tile.x - 1, tile.y) && isWall(tile.x, tile.y)) {
+        ox = tile.x - 1; oy = tile.y; gw = 2; gh = 1;
+      } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1)) {
+        ox = tile.x; oy = tile.y; gw = 1; gh = 2;
+      } else if (isWall(tile.x, tile.y - 1) && isWall(tile.x, tile.y)) {
+        ox = tile.x; oy = tile.y - 1; gw = 1; gh = 2;
+      }
+    }
+    let wallsToRemove = [];
+    for (let dy = 0; dy < gh; dy++) {
+      for (let dx = 0; dx < gw; dx++) {
+        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === 0);
+        if (w) wallsToRemove.push(w);
+      }
+    }
+    let actualCost = {...b.cost};
+    if (placing === 'GATE') {
+      actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
+    } else if (placing === 'TOWER') {
+      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && en.btype === 'WALL' && en.team === 0);
+      if (existing) {
+        actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
+        wallsToRemove.push(existing);
+      }
+    }
+    if(!canAfford(0,actualCost)){showMsg('Not enough resources!');placing=null;return;}
+    spendCost(0,actualCost);
+    if (wallsToRemove.length > 0) {
+      let ids = new Set(wallsToRemove.map(w => w.id));
+      entities = entities.filter(en => !ids.has(en.id));
+      selected = selected.filter(s => !ids.has(s.id));
+    }
+    let bldg=createBuilding(placing,ox,oy,0,gw,gh);
     bldg.complete=false;bldg.buildProgress=0;
     vils.forEach(v=>{
       v.buildQueue = v.buildQueue || [];
@@ -510,7 +644,7 @@ function doPlace(sx,sy){
       // Start construction task immediately if not already building
       if(v.task!=='build'||!v.buildTarget){
         v.task='build';v.buildTarget=bldg.id;v.target=null;
-        let px=b.isFarm?tile.x:tile.x+b.w, py=b.isFarm?tile.y:tile.y+b.h;
+        let px=b.isFarm?ox:ox+gw, py=b.isFarm?oy:oy+gh;
         pathUnitTo(v,px,py);
       }
     });
@@ -559,4 +693,32 @@ window.addEventListener('resize',()=>{
   C.width=W*dpr;C.height=window.innerHeight*dpr;
   C.style.width=W+'px';C.style.height=window.innerHeight+'px';
   X.scale(dpr,dpr);
+});
+
+// Double click to select all units of same type on screen
+C.addEventListener('dblclick', e => {
+  if (gameOver || hasTouch) return;
+  let tile = screenToTile(e.clientX, e.clientY);
+  let clicked = null;
+  let hitR = 12;
+  entities.forEach(en => {
+    if (en.type === 'unit' && en.team === 0) {
+      let iso = toIso(en.x, en.y);
+      let idOff = en.id % 7;
+      let ox = (idOff % 3 - 1) * 6;
+      let oy = (Math.floor(idOff / 3) - 1) * 4;
+      let scrx = (iso.ix - camX + ox) * ZOOM + W / 2;
+      let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H / 2 + topH;
+      let dx = e.clientX - scrx, dy = e.clientY - (scry - 10 * ZOOM);
+      if (Math.sqrt(dx * dx + dy * dy) < hitR * ZOOM) clicked = en;
+    }
+  });
+  if (clicked) {
+    selected = entities.filter(en => en.team === 0 && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));
+    if (window.playSound) {
+      if (clicked.utype === 'villager') window.playSound('select_villager');
+      else window.playSound('select_military');
+    }
+    updateUI();
+  }
 });
