@@ -24,7 +24,10 @@ function findPath(sx,sy,ex,ey,ignore){
   // Resource tiles (forest, gold, stone, berries) are valid destinations
   if(!walkable(ex,ey,ignore)){
     let found=false;
-    for(let r=1;r<20&&!found;r++)for(let dy=-r;dy<=r&&!found;dy++)for(let dx=-r;dx<=r;dx++){
+    let t = map[ey] && map[ey][ex];
+    let isRes = t && (t.t === TERRAIN.FOREST || t.t === TERRAIN.GOLD || t.t === TERRAIN.STONE || t.t === TERRAIN.BERRIES);
+    let maxR = isRes ? 1 : 20;
+    for(let r=1;r<=maxR&&!found;r++)for(let dy=-r;dy<=r&&!found;dy++)for(let dx=-r;dx<=r;dx++){
       if(walkable(ex+dx,ey+dy,ignore)){ex+=dx;ey+=dy;found=true;break;}
     }
   }
@@ -51,7 +54,7 @@ function findPath(sx,sy,ex,ey,ignore){
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
       if(dx===0&&dy===0)continue;
       let nx=cur.x+dx,ny=cur.y+dy;
-      if(!walkable(nx,ny,ignore)&&!(nx===ex&&ny===ey))continue;
+      if(!walkable(nx,ny,ignore))continue;
       // Block diagonal moves that cut through the gap between two touching obstacles
       if(dx&&dy&&(!walkable(cur.x+dx,cur.y,ignore)||!walkable(cur.x,cur.y+dy,ignore)))continue;
       let k=nx+ny*MAP;

@@ -33,23 +33,23 @@ const TCOL={
 };
 
 const BLDGS={
-  TC:{name:'Town Center',w:2,h:2,hp:2400,cost:{w:275},builds:['villager'],icon:'🏰'},
-  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,icon:'🏠'},
-  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',icon:'🪓'},
-  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',icon:'⛏️'},
-  MILL:{name:'Mill',w:1,h:1,hp:600,cost:{w:100},drop:'food',icon:'🛞'},
-  FARM:{name:'Farm',w:1,h:1,hp:100,cost:{w:60},isFarm:true,food:300,icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],icon:'⚔️'},
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,icon:'🗼'},
-  WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},icon:'🧱'},
-  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{w:30,s:20},icon:'🚪'}
+  TC:{name:'Town Center',w:2,h:2,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,icon:'🏰'},
+  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:150,icon:'🏠'},
+  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:210,icon:'🪓'},
+  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:210,icon:'⛏️'},
+  MILL:{name:'Mill',w:1,h:1,hp:600,cost:{w:100},drop:'food',buildTime:210,icon:'🛞'},
+  FARM:{name:'Farm',w:1,h:1,hp:100,cost:{w:60},isFarm:true,food:300,buildTime:90,icon:'🌱'},
+  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:300,icon:'⚔️'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,buildTime:480,icon:'🗼'},
+  WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},buildTime:30,icon:'🧱'},
+  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{w:30,s:20},buildTime:210,icon:'🚪'}
 };
 const UNITS={
   villager:{name:'Villager',hp:25,atk:3,range:0,speed:1.0,cost:{f:50},trainTime:120,icon:'🧑‍🌾'},
   militia:{name:'Militia',hp:40,atk:4,range:0,speed:1.12,cost:{f:60,g:20},trainTime:100,icon:'🛡️'},
-  spearman:{name:'Spearman',hp:35,atk:3,range:0,speed:1.0,cost:{f:35,w:25},trainTime:110,icon:'🔱'},
-  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,cost:{f:25,w:45},trainTime:140,icon:'🏹'},
-  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.35,cost:{f:80},trainTime:120,icon:'🏇'},
+  spearman:{name:'Spearman',hp:35,atk:3,range:0,speed:1.25,cost:{f:35,w:25},trainTime:105,icon:'🔱'},
+  archer:{name:'Archer',hp:30,atk:4,range:4,speed:1.20,cost:{w:25,g:45},trainTime:167,icon:'🏹'},
+  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.50,cost:{f:80},trainTime:143,icon:'🏇'},
   sheep:{name:'Sheep',hp:8,atk:0,range:0,speed:0.6,cost:{},trainTime:0,food:100,icon:'🐑'}
 };
 const AI_LEVELS={

@@ -62,10 +62,10 @@ function getLineTiles(p1, p2) {
 const RES_KEYS={f:'food',w:'wood',g:'gold',s:'stone'};
 const GATHER_TASKS={
   chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:15,clearOccupied:true},
-  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:20},
-  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:20},
-  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:15},
-  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:18,clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true}
+  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:15},
+  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:16},
+  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:18,clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true},
+  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:19}
 };
 
 function resourceStore(team){
@@ -257,13 +257,22 @@ function updateGatherTask(e,config){
         e.failedGatherTiles = e.failedGatherTiles || new Set();
         e.failedGatherTiles.add(gatherTile.x + gatherTile.y * MAP);
 
-        let nextTile = findNearTile(e, config.terrain, e.failedGatherTiles);
-        if (nextTile) {
+        let foundPath = false;
+        while (true) {
+          let nextTile = findNearTile(e, config.terrain, e.failedGatherTiles);
+          if (!nextTile) break;
+
           e.gatherX = nextTile.x;
           e.gatherY = nextTile.y;
           pathUnitTo(e, nextTile.x, nextTile.y);
-          if (e.path.length > 0) return;
+          if (e.path.length > 0) {
+            foundPath = true;
+            break;
+          }
+          e.failedGatherTiles.add(nextTile.x + nextTile.y * MAP);
         }
+
+        if (foundPath) return;
 
         clearGatherTarget(e);
         e.task=null;
@@ -511,18 +520,31 @@ function updateUnit(e){
   }
 
   if(e.path.length>0){
-    e.moveT+=e.speed*0.04;
-    while(e.moveT>=1&&e.path.length>0){
+    // e.speed * 1.43 screen pixels per frame is the baseline movement speed
+    let speedInPixels = e.speed * 1.43;
+    e.moveT += speedInPixels;
+
+    while(e.path.length>0){
       let nextTile = e.path[0];
-      if (typeof walkable === 'function' && !walkable(nextTile.x, nextTile.y, e.id)) {
-        e.path = [];
-        e.moveT = 0;
+      let p1 = toIso(e.fromX, e.fromY);
+      let p2 = toIso(nextTile.x, nextTile.y);
+      let dx = p2.ix - p1.ix;
+      let dy = p2.iy - p1.iy;
+      let screenDist = Math.sqrt(dx*dx + dy*dy) || 1.0;
+
+      if(e.moveT>=screenDist){
+        if (typeof walkable === 'function' && !walkable(nextTile.x, nextTile.y, e.id)) {
+          e.path = [];
+          e.moveT = 0;
+          break;
+        }
+        e.moveT-=screenDist;
+        let next=e.path.shift();
+        e.fromX=next.x;e.fromY=next.y;
+        e.x=next.x;e.y=next.y;
+      } else {
         break;
       }
-      e.moveT-=1;
-      let next=e.path.shift();
-      e.fromX=next.x;e.fromY=next.y;
-      e.x=next.x;e.y=next.y;
     }
     if(e.path.length>0){
       let next=e.path[0];
@@ -530,8 +552,14 @@ function updateUnit(e){
         e.path = [];
         e.moveT = 0;
       } else {
-        e.x=e.fromX+(next.x-e.fromX)*e.moveT;
-        e.y=e.fromY+(next.y-e.fromY)*e.moveT;
+        let p1 = toIso(e.fromX, e.fromY);
+        let p2 = toIso(next.x, next.y);
+        let dx = p2.ix - p1.ix;
+        let dy = p2.iy - p1.iy;
+        let screenDist = Math.sqrt(dx*dx + dy*dy) || 1.0;
+        let t = e.moveT / screenDist;
+        e.x=e.fromX+(next.x-e.fromX)*t;
+        e.y=e.fromY+(next.y-e.fromY)*t;
       }
     }
     return;
@@ -629,12 +657,50 @@ function updateUnit(e){
           }
         } else {
           // Repair completed but damaged building
-          bt.hp = Math.min(bt.maxHp, bt.hp + 5);
+          bt.repairCounter = (bt.repairCounter || 0) + 1;
+          if (bt.repairCounter >= 3) {
+            bt.repairCounter = 0;
+
+            let bData = BLDGS[bt.btype];
+            let bCost = (bData && bData.cost) || {};
+            let costFraction = 0.5 / bt.maxHp;
+            let woodCost = (bCost.w || 0) * costFraction;
+            let stoneCost = (bCost.s || 0) * costFraction;
+
+            bt.woodDebt = (bt.woodDebt || 0) + woodCost;
+            bt.stoneDebt = (bt.stoneDebt || 0) + stoneCost;
+
+            let wD = Math.floor(bt.woodDebt);
+            let sD = Math.floor(bt.stoneDebt);
+
+            let store = resourceStore(e.team);
+            let hasWood = store.wood >= wD;
+            let hasStone = sD === 0 || (store.stone !== undefined && store.stone >= sD);
+
+            if (hasWood && hasStone) {
+              store.wood -= wD;
+              if (sD > 0 && store.stone !== undefined) store.stone -= sD;
+              bt.woodDebt -= wD;
+              bt.stoneDebt -= sD;
+              bt.hp = Math.min(bt.maxHp, bt.hp + 1);
+            } else {
+              if (e.team === 0) {
+                showMsg('Not enough resources to repair!');
+              }
+              e.buildTarget = null;
+              e.task = null;
+              bt.woodDebt = 0;
+              bt.stoneDebt = 0;
+              return;
+            }
+          }
           if (tick % 30 === 0 && e.team === 0 && window.playSound) {
             window.playSound('build');
           }
           if (bt.hp >= bt.maxHp) {
             e.buildTarget = null;
+            bt.woodDebt = 0;
+            bt.stoneDebt = 0;
             if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
             if(!checkNextBuild(e)){
               e.task=null;
@@ -660,12 +726,21 @@ function updateUnit(e){
           failedDrops.add(drop.id);
           e.failedDrops = failedDrops;
 
-          let nextDrop = nearestDrop(e, e.carryType, failedDrops);
-          if (nextDrop) {
+          let foundPath = false;
+          while (true) {
+            let nextDrop = nearestDrop(e, e.carryType, failedDrops);
+            if (!nextDrop) break;
+
             let nextPt = nearestBldgPerimeter(e.x, e.y, nextDrop);
             pathUnitTo(e, nextPt.x, nextPt.y);
-            if (e.path.length > 0) return;
+            if (e.path.length > 0) {
+              foundPath = true;
+              break;
+            }
+            failedDrops.add(nextDrop.id);
           }
+
+          if (foundPath) return;
 
           e.task=null;
           e.failedDrops=null;
