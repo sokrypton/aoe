@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Age of Empires II - Mini</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="stylesheet" href="styles.css"></head><body>
+<canvas id="game"></canvas>
+<div id="ui">
+<div id="topbar">
+<div class="res"><div class="res-icon ri-food"><svg viewBox="0 0 24 24" fill="#ffec99" style="width:12px;height:12px;display:block;"><path d="M12,3C11,5 9,7 9,9C9,11 11,13 12,15C13,13 15,11 15,9C15,7 13,5 12,3M8,7C7,9 5,11 5,13C5,15 7,17 8,19C9,17 11,15 11,13C11,11 9,9 8,7M16,7C15,9 13,11 13,13C13,15 15,17 16,19C17,17 19,15 19,13C19,11 17,9 16,7Z"/></svg></div><div class="res-val" id="r-food">200</div></div>
+<div class="res"><div class="res-icon ri-wood"><svg viewBox="0 0 24 24" fill="#ffd8a8" style="width:12px;height:12px;display:block;"><path d="M2,16.5L4.5,14L7,16.5L4.5,19L2,16.5M22,7.5L19.5,10L17,7.5L19.5,5L22,7.5M7,12L17,2H22L12,12H7M2,22L12,12H17L7,22H2Z"/></svg></div><div class="res-val" id="r-wood">200</div></div>
+<div class="res"><div class="res-icon ri-gold"><svg viewBox="0 0 24 24" fill="#ffd700" style="width:12px;height:12px;display:block;"><path d="M12,2L2,12H22L12,2M7,12L2,17H12L7,12M17,12L12,17H22L17,12M12,17L7,22H17L12,17Z"/></svg></div><div class="res-val" id="r-gold">100</div></div>
+<div class="res"><div class="res-icon ri-stone"><svg viewBox="0 0 24 24" fill="#e2e8f0" style="width:12px;height:12px;display:block;"><path d="M19,4H5A2,2 0 0,0 3,6V18A2,2 0 0,0 5,20H19A2,2 0 0,0 21,18V6A2,2 0 0,0 19,4M19,7.5H13V6H19V7.5M11.5,6V7.5H5V6H11.5M5,9H11V10.5H5V9M12.5,9H19V10.5H12.5V9M19,12H13V13.5H19V12M11.5,12V13.5H5V12H11.5M5,15H11V16.5H5V15M12.5,15H19V16.5H12.5V15M19,18H13V19.5H19V18M11.5,18V19.5H5V18H11.5Z"/></svg></div><div class="res-val" id="r-stone">200</div></div>
+<div id="pop">Pop: 3/5</div>
+<div id="global-stance-btn" onclick="toggleGlobalStance()">⚔ Auto-Attack: ON</div>
+</div>
+<div id="msg"></div>
+<div id="help-hint"></div>
+</div>
+<div id="bottom">
+<div id="sel-info"><div id="sel-name">AoE II Mini</div><div id="sel-details">Tap to select, then tap map to command</div></div>
+<div id="actions"></div>
+<div id="minimap-wrap"><canvas id="minimap"></canvas></div>
+</div>
+
+<div id="tutorial">
+<div id="tutorial-box">
+<h2>Age of Empires II Mini</h2>
+<p id="tut-desktop">
+<span class="key">Left-click</span> select units &amp; buildings<br>
+<span class="key">Right-click</span> move, gather, or attack<br>
+<span class="key">WASD</span> scroll the map<br><br>
+Select villagers, then <span class="key">right-click</span>:<br>
+Trees = chop wood &bull; Gold = mine gold<br>
+Stone = mine stone &bull; Berries = forage<br>
+Use build buttons to place buildings<br>
+</p>
+<p id="tut-mobile" style="display:none">
+<span class="key">Drag</span> to pan the camera<br>
+<span class="key">Tap</span> to select units &amp; buildings<br>
+<span class="key">Tap map</span> with units selected to command<br><br>
+Select villagers, then tap:<br>
+Trees = chop &bull; Gold/Stone = mine<br>
+Berries = forage &bull; Empty = move<br>
+Use build buttons to place buildings<br>
+</p>
+<p>Build <span class="key">Houses</span> for population &bull; <span class="key">Barracks</span> for military<br>
+Destroy the enemy <span class="key">Town Center</span> to win!</p>
+<div id="difficulty-picker">
+<button type="button" class="difficulty-btn" onclick="startGame('easy')">Easy<span>Slower economy, later attacks</span></button>
+<button type="button" class="difficulty-btn recommended" onclick="startGame('standard')">Standard<span>Balanced AoE-style build order</span></button>
+<button type="button" class="difficulty-btn" onclick="startGame('hard')">Hard<span>Faster boom, earlier pressure</span></button>
+</div>
+<div class="hint">Choose a difficulty to start</div>
+</div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/loop.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/input.js"></script>
+<script src="js/init.js"></script>
+</body></html>
