@@ -1,14 +1,34 @@
 // ---- RENDERING ----
+
+// Returns the effective fog level for a building across its whole footprint:
+//   0 = all tiles unexplored (skip drawing)
+//   1 = some explored but none currently visible (draw with shadow)
+//   2 = at least one tile actively visible (draw normally)
+function buildingFogLevel(e) {
+  let b = BLDGS[e.btype];
+  let w = e.w !== undefined ? e.w : (b ? b.w : 1);
+  let h = e.h !== undefined ? e.h : (b ? b.h : 1);
+  let maxF = 0;
+  for (let dy = 0; dy < h; dy++)
+    for (let dx = 0; dx < w; dx++) {
+      let tf = (fog[e.y+dy] && fog[e.y+dy][e.x+dx]) || 0;
+      if (tf > maxF) maxF = tf;
+      if (maxF === 2) return 2;
+    }
+  return maxF;
+}
+
 function drawTile(x,y){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (completely black)
 
   let iso=toIso(x,y);
-  let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
   if(sx<-TW*2||sx>W+TW*2||sy<-TH*4||sy>H+TH*4)return;
   let t=map[y][x];
   let cols=TCOL[t.t]||TCOL[0];
   let col=cols[(x*7+y*13)%cols.length];
+
   X.fillStyle=col;
   X.beginPath();
   X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
@@ -78,17 +98,18 @@ function drawTile(x,y){
     }
   }
 
-  // Explored but out of sight overlay
+  // Draw fog of war overlay to darken the tile and its static resources
   if (f === 1) {
-    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    X.fillStyle = 'rgba(0,0,0,0.55)';
     X.beginPath();
     X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
     X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
-    X.closePath();X.fill();
+    X.closePath();
+    X.fill();
   }
 }
 
-function drawStump(sx, cy, s) {
+function drawStump(sx, cy, s, darken = false) {
   X.fillStyle = '#000000';
   X.beginPath();
   X.moveTo(sx - 4.5 * s, cy + 2 * s);
@@ -97,7 +118,7 @@ function drawStump(sx, cy, s) {
   X.lineTo(sx - 3.2 * s, cy - 8 * s);
   X.closePath(); X.fill();
   
-  X.fillStyle = '#8B4513';
+  X.fillStyle = darken ? '#3a1e08' : '#8B4513';
   X.beginPath();
   X.moveTo(sx - 3.5 * s, cy + 2 * s);
   X.lineTo(sx + 3.5 * s, cy + 2 * s);
@@ -105,13 +126,13 @@ function drawStump(sx, cy, s) {
   X.lineTo(sx - 2.2 * s, cy - 8 * s);
   X.closePath(); X.fill();
   
-  X.fillStyle = '#cd853f';
+  X.fillStyle = darken ? '#5a3a1b' : '#cd853f';
   X.beginPath();
   X.ellipse(sx, cy - 8 * s, 2.2 * s, 1.0 * s, 0, 0, Math.PI * 2); X.fill();
   X.strokeStyle = '#000000'; X.lineWidth = 1; X.stroke();
 }
 
-function drawFullTreeBody(sx, cy, s) {
+function drawFullTreeBody(sx, cy, s, darken = false) {
   // A. Trunk Outline (Dark)
   X.fillStyle = '#000000';
   X.beginPath();
@@ -123,7 +144,7 @@ function drawFullTreeBody(sx, cy, s) {
   X.fill();
   
   // B. Trunk Fill (Warm Rich Wood Brown)
-  X.fillStyle = '#8B4513';
+  X.fillStyle = darken ? '#3a1e08' : '#8B4513';
   X.beginPath();
   X.moveTo(sx - 2.5 * s, cy + 2 * s);
   X.lineTo(sx + 2.5 * s, cy + 2 * s);
@@ -150,7 +171,7 @@ function drawFullTreeBody(sx, cy, s) {
   });
   
   // 2. Vibrant Saturated Green Fill
-  X.fillStyle = '#2e8b1d';
+  X.fillStyle = darken ? '#10300a' : '#2e8b1d';
   bubbles.forEach(b => {
     X.beginPath();
     X.arc(sx + b.x * s, cy + b.y * s, b.r * s, 0, Math.PI * 2);
@@ -158,7 +179,7 @@ function drawFullTreeBody(sx, cy, s) {
   });
   
   // 3. Cell-Shaded Mid-Light Highlights
-  X.fillStyle = '#52be3a';
+  X.fillStyle = darken ? '#184010' : '#52be3a';
   bubbles.forEach(b => {
     X.beginPath();
     X.arc(sx + (b.x - b.r * 0.15) * s, cy + (b.y - b.r * 0.15) * s, b.r * 0.75 * s, 0, Math.PI * 2);
@@ -166,7 +187,7 @@ function drawFullTreeBody(sx, cy, s) {
   });
   
   // 4. Bright Lime Sunlit Tips (Extra pop)
-  X.fillStyle = '#99e550';
+  X.fillStyle = darken ? '#28551a' : '#99e550';
   bubbles.forEach(b => {
     X.beginPath();
     X.arc(sx + (b.x - b.r * 0.3) * s, cy + (b.y - b.r * 0.3) * s, b.r * 0.35 * s, 0, Math.PI * 2);
@@ -179,7 +200,7 @@ function drawTreeEntity(x,y){
   if (f === 0) return; // unexplored (black)
 
   let iso=toIso(x,y);
-  let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
   let cy=sy+HALF_TH;
   let t=map[y][x];
   if(!t || t.res<=0) return;
@@ -188,21 +209,24 @@ function drawTreeEntity(x,y){
   let sizeNoise = 0.8 + ((x * 17 + y * 23) % 5) * 0.08;
   let s = 1.05 * sizeNoise;
   
-  // 2. Dynamic Wind Sway & Traveling Gust of Wind
-  let windPhase = tick * 0.015 + x * 0.45 + y * 0.35;
-  let sway = Math.sin(windPhase) * 0.035;
-  let gust = Math.max(0, Math.sin(tick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
-  let totalSway = sway + gust;
+  // 2. Dynamic Wind Sway — frozen in shroud (static snapshot when out of sight)
+  let totalSway = 0;
+  if (f === 2) {
+    let windPhase = tick * 0.015 + x * 0.45 + y * 0.35;
+    let sway = Math.sin(windPhase) * 0.035;
+    let gust = Math.max(0, Math.sin(tick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
+    totalSway = sway + gust;
+  }
 
   // Initialize fell tick for falling tree animation
   if(t.res <= 60 && t.fellTick === undefined){
     t.fellTick = tick;
   }
 
-  // Calculate fall progress and angle
+  // Calculate fall progress and angle — frozen in shroud (static snapshot)
   let fallAngle = 0;
   let isFalling = false;
-  if(t.fellTick !== undefined && t.fellTick > 0){
+  if(f === 2 && t.fellTick !== undefined && t.fellTick > 0){
     let dt = tick - t.fellTick;
     if(dt < 40){
       isFalling = true;
@@ -211,41 +235,28 @@ function drawTreeEntity(x,y){
     }
   }
 
+  let darken = (f === 1);
+
   if(t.res > 60 || isFalling){
     // Stage 1: Standing or falling full tree
     X.save();
     X.translate(sx, cy);
     X.rotate(totalSway + fallAngle);
     X.translate(-sx, -cy);
-    
-    drawFullTreeBody(sx, cy, s);
-    
+    drawFullTreeBody(sx, cy, s, darken);
     X.restore();
   } else if(t.res > 20){
-    // Stage 2: Standing stump AND fallen tree lying on the ground!
-    // A. Standing stump
-    drawStump(sx, cy, s);
-    
-    // B. Fallen tree flat on ground
+    // Stage 2: Standing stump AND fallen tree lying on the ground
+    drawStump(sx, cy, s, darken);
     X.save();
     X.translate(sx, cy);
-    X.rotate(Math.PI / 2.15); // lie flat!
+    X.rotate(Math.PI / 2.15);
     X.translate(-sx, -cy);
-    
-    drawFullTreeBody(sx, cy, s);
-    
+    drawFullTreeBody(sx, cy, s, darken);
     X.restore();
   } else {
     // Stage 3: Standing stump only
-    drawStump(sx, cy, s);
-  }
-
-  // Fog of War tree shadow overlay
-  if (f === 1) {
-    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    X.beginPath();
-    X.arc(sx, cy - 18 * s, 16 * s, 0, Math.PI * 2);
-    X.fill();
+    drawStump(sx, cy, s, darken);
   }
 }
 
@@ -255,42 +266,93 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false) {
   let ex = sx + dx, ey = sy + dy;
-  // Determine which iso axis the wall runs along:
-  //   iso Y axis (NE-SW): dx and dy have opposite signs → thickness along iso X = (+4, +2)
-  //   iso X axis (NW-SE): dx and dy have same sign    → thickness along iso Y = (-4, +2)
   let isAlongIsoY = (dx > 0) !== (dy > 0);
   let px = isAlongIsoY ? 4 : -4;
   let py = 2; // always +2 (both perpendiculars have same Y component)
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
-  // 1. Visible side face (SE face for iso-Y walls, SW face for iso-X walls)
-  X.fillStyle = isAlongIsoY ? '#adada0' : '#cfcfc4';
+  let fillL = isAlongIsoY ? '#adada0' : '#cfcfc4';
+  let fillTop = '#b8b8b0';
+  if (darken) {
+    fillL = darkenColor(fillL);
+    fillTop = darkenColor(fillTop);
+  }
+
+  // 1. Visible side face
+  X.fillStyle = fillL;
   X.beginPath();
-  X.moveTo(sx + px, sy + py);              // near-bottom
-  X.lineTo(ex + px, ey + py);              // far-bottom
-  X.lineTo(ex + px, ey + py - wallH);      // far-top
-  X.lineTo(sx + px, sy + py - wallH);      // near-top
+  X.moveTo(sx + px, sy + py);
+  X.lineTo(ex + px, ey + py);
+  X.lineTo(ex + px, ey + py - wallH);
+  X.lineTo(sx + px, sy + py - wallH);
   X.closePath(); X.fill(); X.stroke();
 
   // 2. Top walkway face
-  X.fillStyle = '#b8b8b0';
+  X.fillStyle = fillTop;
   X.beginPath();
-  X.moveTo(sx - px, sy - py - wallH);      // near NW/NE edge
-  X.lineTo(sx + px, sy + py - wallH);      // near SE/SW edge
-  X.lineTo(ex + px, ey + py - wallH);      // far SE/SW edge
-  X.lineTo(ex - px, ey - py - wallH);      // far NW/NE edge
+  X.moveTo(sx - px, sy - py - wallH);
+  X.lineTo(sx + px, sy + py - wallH);
+  X.lineTo(ex + px, ey + py - wallH);
+  X.lineTo(ex - px, ey - py - wallH);
   X.closePath(); X.fill(); X.stroke();
 }
 
+const darkenCache = new Map();
+function darkenColor(col) {
+  if (!col) return col;
+  let cached = darkenCache.get(col);
+  if (cached) return cached;
+  
+  let result = col;
+  if (col.startsWith('#')) {
+    let hex = col.substring(1);
+    let r, g, b;
+    if (hex.length === 6) {
+      r = parseInt(hex.substring(0, 2), 16);
+      g = parseInt(hex.substring(2, 4), 16);
+      b = parseInt(hex.substring(4, 6), 16);
+      r = Math.floor(r * 0.45);
+      g = Math.floor(g * 0.45);
+      b = Math.floor(b * 0.45);
+      result = `rgb(${r},${g},${b})`;
+    } else if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+      r = Math.floor(r * 0.45);
+      g = Math.floor(g * 0.45);
+      b = Math.floor(b * 0.45);
+      result = `rgb(${r},${g},${b})`;
+    }
+  } else if (col.startsWith('rgb')) {
+    let parts = col.match(/\d+/g);
+    if (parts && parts.length >= 3) {
+      let r = Math.floor(parseInt(parts[0]) * 0.45);
+      let g = Math.floor(parseInt(parts[1]) * 0.45);
+      let b = Math.floor(parseInt(parts[2]) * 0.45);
+      result = `rgb(${r},${g},${b})`;
+    }
+  }
+  darkenCache.set(col, result);
+  return result;
+}
+
 // Draws a 3D isometric building block with Left/Right walls and Flat or Peaked roof
-function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roofR){
+function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roofR,darken=false){
   let strokeColor = '#000000';
   X.strokeStyle = strokeColor;
   X.lineWidth = 1.3;
   X.lineJoin = 'round';
+
+  if (darken) {
+    wallL = darkenColor(wallL);
+    wallR = darkenColor(wallR);
+    roofL = darkenColor(roofL);
+    roofR = darkenColor(roofR);
+  }
 
   // 1. Left Wall Face (skewed 2:1)
   X.fillStyle=wallL;X.beginPath();
@@ -334,8 +396,9 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
 }
 
 // Draws a skewed wooden door sits flat against the Left Wall
-function drawDoorLeft(sx,sy,bw,bhh,color){
-  X.fillStyle=color;X.beginPath();
+function drawDoorLeft(sx,sy,bw,bhh,color,darken=false){
+  let c = darken ? darkenColor(color) : color;
+  X.fillStyle=c;X.beginPath();
   X.moveTo(sx-bw*0.625,sy+bhh*1.375);X.lineTo(sx-bw*0.375,sy+bhh*1.625);
   X.lineTo(sx-bw*0.375,sy+bhh*1.625-8);X.lineTo(sx-bw*0.625,sy+bhh*1.375-8);X.closePath();
   X.fill();
@@ -343,14 +406,16 @@ function drawDoorLeft(sx,sy,bw,bhh,color){
 }
 
 // Draws a double gate wrapping the bottom corner of a building block
-function drawCornerDoubleGate(sx,sy,bhh,gateH,colorL,colorR){
+function drawCornerDoubleGate(sx,sy,bhh,gateH,colorL,colorR,darken=false){
   X.strokeStyle='#000000';X.lineWidth=1;
+  let cL = darken ? darkenColor(colorL) : colorL;
+  let cR = darken ? darkenColor(colorR) : colorR;
   // Left leaf
-  X.fillStyle=colorL;X.beginPath();
+  X.fillStyle=cL;X.beginPath();
   X.moveTo(sx-6,sy+bhh*2-3);X.lineTo(sx,sy+bhh*2);
   X.lineTo(sx,sy+bhh*2-gateH);X.lineTo(sx-6,sy+bhh*2-gateH-3);X.closePath();X.fill();X.stroke();
   // Right leaf
-  X.fillStyle=colorR;X.beginPath();
+  X.fillStyle=cR;X.beginPath();
   X.moveTo(sx,sy+bhh*2);X.lineTo(sx+6,sy+bhh*2-3);
   X.lineTo(sx+6,sy+bhh*2-gateH-3);X.lineTo(sx,sy+bhh*2-gateH);X.closePath();X.fill();X.stroke();
 }
@@ -431,17 +496,20 @@ function drawWindmillSails(hx,hy,id){
   X.beginPath();X.arc(hx,hy,3.5,0,Math.PI*2);X.fill();
   X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
 }
-
 // Main function to draw building entities
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
   let iso=toIso(cx,cy);
-  let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
   if(sx<-100||sx>W+100||sy<-100||sy>H+100)return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
   sy-=bhh;
-  if(!e.complete) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
+  // Compute fog level once for the full footprint; used to gate animations and overlay
+  let f = window._ghostDraw ? 2 : buildingFogLevel(e);
+  let visible = f === 2; // actively in sight — show live animations
+  let darken = !window._ghostDraw && f === 1;
+  if(!e.complete && !window._ghostDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
   let tc=e.team===0?'#2266bb':'#cc4444';
   let tcD=e.team===0?'#1a4488':'#993333';
   let bh=10;
@@ -452,21 +520,22 @@ function drawBuilding(e, part = null){
   X.lineJoin = 'round';
 
   if(e.btype==='TC'){
+    bh=40; // main keep is 40px tall above sy+6 offset → highest point sy-34; use 40 for coverage
     // 4-Block modular TC layout
     // 1. Tall Main Keep Tower
-    drawBuildingBlock(sx, sy+6, 26, 13, 40, '#e0e0d8','#bcbcb0','flat',0,tc,tcD);
+    drawBuildingBlock(sx, sy+6, 26, 13, 40, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
     // Corner Turrets on main keep tower roof
-    drawBuildingBlock(sx-26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD);
-    drawBuildingBlock(sx+26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD);
+    drawBuildingBlock(sx-26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
+    drawBuildingBlock(sx+26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
     
     // 2. Left Annex Wing
-    drawBuildingBlock(sx-32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD);
+    drawBuildingBlock(sx-32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD, darken);
     // 3. Right Annex Great Hall
-    drawBuildingBlock(sx+32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD);
+    drawBuildingBlock(sx+32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD, darken);
     // 4. Low Gatehouse Entrance
-    drawBuildingBlock(sx, sy+44, 20, 10, 14, '#c0c0b8','#a0a098','flat',0,'#606058','#505048');
+    drawBuildingBlock(sx, sy+44, 20, 10, 14, '#c0c0b8','#a0a098','flat',0,'#606058','#505048', darken);
     // Double Gate on Gatehouse front corner (with drawbridge chains)
-    drawCornerDoubleGate(sx, sy+44, 10, 10, '#3e2715','#5c3d24');
+    drawCornerDoubleGate(sx, sy+44, 10, 10, '#3e2715','#5c3d24', darken);
     
     X.strokeStyle='#000000';X.lineWidth=1;
     X.beginPath();
@@ -481,60 +550,54 @@ function drawBuilding(e, part = null){
     X.fillRect(sx+10, sy+6-40+5, 2, 5);
     X.strokeRect(sx+10, sy+6-40+5, 2, 5);
     // Waving flag on main keep tower top
-    if(e.complete) drawWavingFlag(sx, sy+6, 40, tc, tcD);
+    if(e.complete && visible) drawWavingFlag(sx, sy+6, 40, tc, tcD);
   }
   else if(e.btype==='HOUSE'){
-    bh=15;
+    bh=22; // wall=12 + peaked roofH=10 -> 22 height
+    let houseW = 22;
+    let houseH = 11;
+    let sy_house = sy + bhh - houseH; // center on tile
     // Timber cottage
-    drawBuildingBlock(sx,sy,bw,bhh,bh, '#ebd2b0','#d2b48c','peaked',15,tc,tcD);
-    // Tudor half-timbered cross beams
-    X.strokeStyle='#000000';X.lineWidth=2;
-    X.beginPath();
-    X.moveTo(sx-16, sy+9);X.lineTo(sx-16, sy+24);
-    X.moveTo(sx-32, sy+16);X.lineTo(sx, sy+17);
-    X.moveTo(sx-32, sy+1);X.lineTo(sx, sy+32);
-    X.moveTo(sx+16, sy+9);X.lineTo(sx+16, sy+24);
-    X.moveTo(sx, sy+17);X.lineTo(sx+32, sy+16);
-    X.moveTo(sx, sy+32);X.lineTo(sx+32, sy+1);
-    X.stroke();
+    drawBuildingBlock(sx,sy_house,houseW,houseH,bh, '#ebd2b0','#d2b48c','peaked',10,tc,tcD, darken);
     // Door centered on Left wall
-    drawDoorLeft(sx,sy,bw,bhh,'#5c3d24');
+    drawDoorLeft(sx,sy_house,houseW,houseH,'#5c3d24', darken);
     // Chimney & smoke
-    let chx = sx + bw*0.4, chy = sy + bhh*0.4 - bh;
-    X.fillStyle='#8a4030';X.fillRect(chx-2,chy-8,4,10);
-    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(chx-2,chy-8,4,10);
-    X.fillStyle='#602820';X.fillRect(chx-2,chy-10,4,2);
-    X.strokeRect(chx-2,chy-10,4,2);
-    if(e.complete) drawChimneySmoke(chx,chy-10);
+    let chx = sx + houseW*0.4, chy = sy_house + houseH*0.4 - bh;
+    X.fillStyle=darken ? darkenColor('#8a4030') : '#8a4030';X.fillRect(chx-1.5,chy-6,3,8);
+    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(chx-1.5,chy-6,3,8);
+    X.fillStyle=darken ? darkenColor('#602820') : '#602820';X.fillRect(chx-1.5,chy-8,3,2);
+    X.strokeRect(chx-1.5,chy-8,3,2);
+    if(e.complete && visible) drawChimneySmoke(chx,chy-8);
   }
   else if(e.btype==='BARRACKS'){
+    bh=26; // annex: wall 16 + roofH 10 → ridge sy-14; use 26 for full coverage
     // 1. Garrison Annex / Sleeping Quarters
-    drawBuildingBlock(sx, sy+12, 20, 10, 16, '#b89868','#987848','peaked',10,tc,tcD);
+    drawBuildingBlock(sx, sy+12, 20, 10, 16, '#b89868','#987848','peaked',10,tc,tcD, darken);
     
     // 2. Main Garrison Longhouse
-    drawBuildingBlock(sx-32, sy+22, 26, 13, 18, '#b89868','#987848','peaked',12,tc,tcD);
+    drawBuildingBlock(sx-32, sy+22, 26, 13, 18, '#b89868','#987848','peaked',12,tc,tcD, darken);
     // Hanging shields on Garrison Left wall
     X.strokeStyle='#000000';X.lineWidth=1;
-    X.fillStyle='#a0a0a0';X.beginPath();X.arc(sx-44, sy+19, 3, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=tc;X.beginPath();X.arc(sx-44, sy+19, 1.5, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle='#a0a0a0';X.beginPath();X.arc(sx-20, sy+31, 3, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=tc;X.beginPath();X.arc(sx-20, sy+31, 1.5, 0, Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';X.beginPath();X.arc(sx-44, sy+19, 3, 0, Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor(tc) : tc;X.beginPath();X.arc(sx-44, sy+19, 1.5, 0, Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';X.beginPath();X.arc(sx-20, sy+31, 3, 0, Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor(tc) : tc;X.beginPath();X.arc(sx-20, sy+31, 1.5, 0, Math.PI*2);X.fill();X.stroke();
     // Door on Garrison left wall
-    drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24');
+    drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24', darken);
     
     // 3. Corner Stone Watchtower
-    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfcfc4','#adada0','flat',0,'#606058','#505048');
+    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfcfc4','#adada0','flat',0,'#606058','#505048', darken);
     // Crenellations on tower top
-    X.fillStyle='#8d8d80';
+    X.fillStyle=darken ? darkenColor('#8d8d80') : '#8d8d80';
     X.fillRect(sx+32-6, sy+32-30+8-3, 3, 3);
     X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(sx+32-6, sy+32-30+8-3, 3, 3);
     X.fillRect(sx+32+2, sy+32-30+8-3, 3, 3);
     X.strokeRect(sx+32+2, sy+32-30+8-3, 3, 3);
     // Flag on tower top
-    if(e.complete) drawWavingFlag(sx+32, sy+32, 30, tc, tcD);
+    if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 30, tc, tcD);
 
     // 4. Fenced Training Yard
-    X.fillStyle='#bfa38a';X.beginPath();
+    X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
     X.moveTo(sx,sy+32);X.lineTo(sx+32,sy+48);
     X.lineTo(sx,sy+64);X.lineTo(sx-32,sy+48);X.closePath();
     X.fill();
@@ -544,8 +607,8 @@ function drawBuilding(e, part = null){
     let tgx=sx+10, tgy=sy+44;
     X.strokeStyle='#000000';X.lineWidth=1.5;
     X.beginPath();X.moveTo(tgx,tgy);X.lineTo(tgx,tgy-8);X.stroke();
-    X.fillStyle='#fff';X.beginPath();X.arc(tgx,tgy-8,3.5,0,Math.PI*2);X.fill();X.stroke();
-    X.fillStyle='#c00';X.beginPath();X.arc(tgx,tgy-8,1.5,0,Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor('#fff') : '#fff';X.beginPath();X.arc(tgx,tgy-8,3.5,0,Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor('#c00') : '#c00';X.beginPath();X.arc(tgx,tgy-8,1.5,0,Math.PI*2);X.fill();X.stroke();
     
     // Fence around front edges
     X.strokeStyle='#000000';X.lineWidth=1.5;
@@ -560,24 +623,24 @@ function drawBuilding(e, part = null){
   else if(e.btype==='LCAMP'){
     bh=10;
     // Wood camp shelter
-    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#d2b48c','#b59975');
+    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#d2b48c','#b59975', darken);
     // Log pile & wood chopping stump
     if(e.complete){
       let lx = sx-bw*0.6, ly = sy+bhh*1.3;
-      X.fillStyle='#6e473b';
+      X.fillStyle=darken ? darkenColor('#6e473b') : '#6e473b';
       X.fillRect(lx-10,ly-5,16,6);
       X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(lx-10,ly-5,16,6);
       X.fillRect(lx-6,ly-9,12,6);
       X.strokeRect(lx-6,ly-9,12,6);
-      X.fillStyle='#ebd2b0';
+      X.fillStyle=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
       X.beginPath();X.arc(lx-10,ly-2,3,0,Math.PI*2);X.fill();X.stroke();
       X.beginPath();X.arc(lx-6,ly-6,3,0,Math.PI*2);X.fill();X.stroke();
 
       // Chopping block stump next to logs
       let cbx = sx-2, cby = sy+bhh*1.5;
-      X.fillStyle='#8a5a3a';X.fillRect(cbx-3, cby-4, 6, 5);
+      X.fillStyle=darken ? darkenColor('#8a5a3a') : '#8a5a3a';X.fillRect(cbx-3, cby-4, 6, 5);
       X.strokeStyle='#000000';X.strokeRect(cbx-3, cby-4, 6, 5);
-      X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(cbx,cby-4,3,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#ebd2b0') : '#ebd2b0';X.beginPath();X.ellipse(cbx,cby-4,3,1.5,0,0,Math.PI*2);X.fill();X.stroke();
       // Axe sticking in stump
       X.strokeStyle='#000000';X.lineWidth=1;
       X.beginPath();X.moveTo(cbx,cby-4);X.lineTo(cbx-3,cby-8);X.stroke();
@@ -586,15 +649,15 @@ function drawBuilding(e, part = null){
   else if(e.btype==='MCAMP'){
     bh=10;
     // Mining camp lean-to
-    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#9f886c','#826f57');
+    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#9f886c','#826f57', darken);
     // Gold & Stone nugget pile & pickaxes
     if(e.complete){
       let mx = sx+bw*0.6, my = sy+bhh*1.3;
       X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle='#ffd700';X.beginPath();X.arc(mx,my,4,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#daa520';X.beginPath();X.arc(mx-2,my+1,2.5,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#777';X.beginPath();X.arc(mx-8,my+2,3.5,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#999';X.beginPath();X.arc(mx-6,my-1,2.5,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#ffd700') : '#ffd700';X.beginPath();X.arc(mx,my,4,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#daa520') : '#daa520';X.beginPath();X.arc(mx-2,my+1,2.5,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#777') : '#777';X.beginPath();X.arc(mx-8,my+2,3.5,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#999') : '#999';X.beginPath();X.arc(mx-6,my-1,2.5,0,Math.PI*2);X.fill();X.stroke();
 
       // Pickaxes leaning against left wall support
       let px = sx-bw*0.4, py = sy+bhh*1.1;
@@ -605,19 +668,19 @@ function drawBuilding(e, part = null){
     }
   }
   else if(e.btype==='MILL'){
-    bh=18;
+    bh=36; // conical tower: wall 18 + conical roofH 16 → ridge sy-34; use 36
     // Conical tower
-    drawBuildingBlock(sx,sy,bw*0.7,bhh*0.7,bh, '#dcd0a0','#bca880','conical',16,'#a65c3b','#863c20');
+    drawBuildingBlock(sx,sy,bw*0.7,bhh*0.7,bh, '#dcd0a0','#bca880','conical',16,'#a65c3b','#863c20', darken);
     // Sails & flour sacks
     if(e.complete){
-      drawWindmillSails(sx-bw*0.35,sy-bh+4,e.id);
+      if(visible) drawWindmillSails(sx-bw*0.35,sy-bh+4,e.id);
       
       // Flour sacks piled at the base
       let fx = sx+bw*0.4, fy = sy+bhh*1.2;
       X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle='#e5dcd0';X.beginPath();X.ellipse(fx,fy,4,3,0,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#c8bdae';X.beginPath();X.ellipse(fx,fy-2,3,2,0,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#d5ccbe';X.beginPath();X.ellipse(fx-5,fy+2,4,3,0,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#e5dcd0') : '#e5dcd0';X.beginPath();X.ellipse(fx,fy,4,3,0,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#c8bdae') : '#c8bdae';X.beginPath();X.ellipse(fx,fy-2,3,2,0,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#d5ccbe') : '#d5ccbe';X.beginPath();X.ellipse(fx-5,fy+2,4,3,0,0,Math.PI*2);X.fill();X.stroke();
     }
   }
   else if(e.btype==='TOWER'){
@@ -630,9 +693,9 @@ function drawBuilding(e, part = null){
     let sB = getB(e.x, e.y + 1);
     if (sB) {
       if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, -32, 16, wallH);
+        drawWallLink(sx, linkY, -32, 16, wallH, darken);
       } else if (sB.btype === 'GATE') {
-        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH);
+        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH, darken);
       }
     }
 
@@ -640,17 +703,17 @@ function drawBuilding(e, part = null){
     let eB = getB(e.x + 1, e.y);
     if (eB) {
       if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, 32, 16, wallH);
+        drawWallLink(sx, linkY, 32, 16, wallH, darken);
       } else if (eB.btype === 'GATE') {
-        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH);
+        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH, darken);
       }
     }
 
     // Castle Age Watch Tower — 3 stacked blocks (centered at sy+16)
-    drawBuildingBlock(sx, sy+9, 14, 7, 22, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
-    drawBuildingBlock(sx, sy+9-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030');
-    drawBuildingBlock(sx, sy+9-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'flat', 0, tc, tcD);
-    if (e.complete) drawWavingFlag(sx, sy+9, 44, tc, tcD);
+    drawBuildingBlock(sx, sy+9, 14, 7, 22, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+    drawBuildingBlock(sx, sy+9-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
+    drawBuildingBlock(sx, sy+9-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'flat', 0, tc, tcD, darken);
+    if (e.complete && visible) drawWavingFlag(sx, sy+9, 44, tc, tcD);
   }
   else if(e.btype==='WALL'){
     bh=14;
@@ -660,16 +723,16 @@ function drawBuilding(e, part = null){
     let getB = (tx, ty) => entities.find(en => en.type === 'building' && en.x === tx && en.y === ty);
 
     // 1. Draw central pillar first (so that front-facing links connect on top of its base)
-    drawBuildingBlock(sx, sy+11.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+    drawBuildingBlock(sx, sy+11.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
     // South neighbor (y+1)
     let sB = getB(e.x, e.y + 1);
     if (sB) {
       if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, -32, 16, wallH);
+        drawWallLink(sx, linkY, -32, 16, wallH, darken);
       } else if (sB.btype === 'GATE') {
-        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH);
+        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH, darken);
       }
     }
 
@@ -677,9 +740,9 @@ function drawBuilding(e, part = null){
     let eB = getB(e.x + 1, e.y);
     if (eB) {
       if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, 32, 16, wallH);
+        drawWallLink(sx, linkY, 32, 16, wallH, darken);
       } else if (eB.btype === 'GATE') {
-        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH);
+        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH, darken);
       }
     }
   }
@@ -705,10 +768,10 @@ function drawBuilding(e, part = null){
 
     if (part === 'back' || part === null) {
       // Draw back post (Tower 1)
-      drawBuildingBlock(t1sx, t1sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+      drawBuildingBlock(t1sx, t1sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
 
       if (e.complete) {
-        let gp = e.gateProgress || 0;
+        let gp = visible ? (e.gateProgress || 0) : 0; // frozen closed in shroud
         let slideY = gp * 22;
         let dx = t2sx - t1sx, dy = t2sy - t1sy;
 
@@ -719,7 +782,7 @@ function drawBuilding(e, part = null){
         X.stroke();
 
         // Sliding portcullis bars
-        X.strokeStyle = '#3a2515'; X.lineWidth = 1.8;
+        X.strokeStyle = darken ? darkenColor('#3a2515') : '#3a2515'; X.lineWidth = 1.8;
         let barCount = 7;
         for (let i = 1; i <= barCount; i++) {
           let t = i / (barCount + 1);
@@ -732,14 +795,14 @@ function drawBuilding(e, part = null){
         }
 
         // Horizontal diagonal lattice bars
-        X.strokeStyle = '#111'; X.lineWidth = 1.2;
+        X.strokeStyle = darken ? darkenColor('#111') : '#111'; X.lineWidth = 1.2;
         X.beginPath();
         X.moveTo(t1sx, t1sy - 7 - slideY); X.lineTo(t2sx, t2sy - 7 - slideY);
         X.moveTo(t1sx, t1sy - 15 - slideY); X.lineTo(t2sx, t2sy - 15 - slideY);
         X.stroke();
 
         // Lintel arch bridging the two towers (drawn as part of the back-to-mid layer)
-        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5);
+        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5, darken);
       }
       if (part === 'back') {
         X.globalAlpha = 1;
@@ -749,19 +812,19 @@ function drawBuilding(e, part = null){
 
     if (part === 'front' || part === null) {
       // Draw front post (Tower 2)
-      drawBuildingBlock(t2sx, t2sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890');
+      drawBuildingBlock(t2sx, t2sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
 
       // Draw connection links
       let wallH = 14;
       if (wallLineNS) {
         let sB = entities.find(en => en.type === 'building' && en.x === e.x && en.y === e.y + 2);
         if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER')) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH);
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken);
         }
       } else {
         let eB = entities.find(en => en.type === 'building' && en.x === e.x + 2 && en.y === e.y);
         if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER')) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH);
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken);
         }
       }
     }
@@ -774,6 +837,7 @@ function drawBuilding(e, part = null){
       let cropH=3+growth*8;
       let cropCount=Math.max(2,Math.ceil(9*growth));
       let cropColor=growth>0.5?'#5a9828':'#8a9838';
+      if (darken) cropColor = darkenColor(cropColor);
       for(let i=0;i<cropCount;i++){
         let row=Math.floor(i/3), col=i%3-1;
         let cy2=sy+bhh*0.5+row*bhh*0.4;
@@ -781,7 +845,7 @@ function drawBuilding(e, part = null){
         X.strokeStyle=cropColor;X.lineWidth=1.2;
         X.beginPath();X.moveTo(cx2,cy2);X.lineTo(cx2,cy2-cropH);X.stroke();
         if(growth>0.3){
-          X.fillStyle=growth>0.6?'#6aaa30':'#aa9a30';
+          X.fillStyle=darken ? darkenColor(growth>0.6?'#6aaa30':'#aa9a30') : (growth>0.6?'#6aaa30':'#aa9a30');
           X.beginPath();X.arc(cx2,cy2-cropH,1.5+growth,0,Math.PI*2);X.fill();
           X.strokeStyle='#000000';X.lineWidth=0.75;X.stroke();
         }
@@ -791,6 +855,8 @@ function drawBuilding(e, part = null){
 
   X.globalAlpha=1;
 
+  // Progress bars, HP, selection — only when actively visible (not in fog)
+  if (!window._ghostDraw && (f === 2 || e.team === 0)) {
   // Construction Progress Bar
   if(!e.complete){
     let bww=b.w*24;
@@ -823,26 +889,14 @@ function drawBuilding(e, part = null){
     X.fillStyle='#003';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
     X.fillStyle='#0af';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
   }
-
-  // Fog of War building shadow overlay
-  let f = fog[e.y] && fog[e.y][e.x];
-  if (f === 1) {
-    X.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    X.beginPath();
-    X.moveTo(sx, sy);
-    X.lineTo(sx + bw, sy + bhh);
-    X.lineTo(sx, sy + bhh*2);
-    X.lineTo(sx - bw, sy + bhh);
-    X.closePath();
-    X.fill();
-  }
+  } // end fog-aware UI
 }
 
 
 
 function drawCorpse(c){
   let iso=toIso(c.x,c.y);
-  let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2+HALF_TH;
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(sx<-50||sx>W+50||sy<-50||sy>H+50)return;
   
   let idOff=c.id%7;
@@ -899,7 +953,7 @@ function drawCorpse(c){
 
 function drawUnit(e){
   let iso=toIso(e.x,e.y);
-  let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2+HALF_TH;
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(sx<-50||sx>W+50||sy<-50||sy>H+50)return;
   // Group spread: offset based on unit ID so stacked units are visible
   let idOff=e.id%7;
@@ -1348,6 +1402,7 @@ function drawGhost(){
   if(!placing)return;
   let tile=screenToTile(mouseX,mouseY);
 
+  // Wall drag: show colored diamonds along the drag line
   if (placing === 'WALL' && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
     let line = getLineTiles(window.wallDragStart, window.wallDragEnd);
     line.forEach(t => {
@@ -1364,30 +1419,42 @@ function drawGhost(){
   }
 
   let b=BLDGS[placing];
-  let bw=b.w, bh=b.h;
+  let bw=b.w, bh_=b.h;
   let ox=tile.x, oy=tile.y;
   if(placing==='GATE'){
-    let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 0);
-      return !!w;
-    };
-    if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
-      ox = tile.x; oy = tile.y; bw = 2; bh = 1;
-    } else if (isWall(tile.x - 1, tile.y) && isWall(tile.x, tile.y)) {
-      ox = tile.x - 1; oy = tile.y; bw = 2; bh = 1;
-    } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1)) {
-      ox = tile.x; oy = tile.y; bw = 1; bh = 2;
-    } else if (isWall(tile.x, tile.y - 1) && isWall(tile.x, tile.y)) {
-      ox = tile.x; oy = tile.y - 1; bw = 1; bh = 2;
+    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype==='WALL'&&en.team===0);
+    if (isWall(tile.x, tile.y) && isWall(tile.x+1, tile.y)) {
+      ox=tile.x; oy=tile.y; bw=2; bh_=1;
+    } else if (isWall(tile.x-1, tile.y) && isWall(tile.x, tile.y)) {
+      ox=tile.x-1; oy=tile.y; bw=2; bh_=1;
+    } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y+1)) {
+      ox=tile.x; oy=tile.y; bw=1; bh_=2;
+    } else if (isWall(tile.x, tile.y-1) && isWall(tile.x, tile.y)) {
+      ox=tile.x; oy=tile.y-1; bw=1; bh_=2;
     } else {
-      bw = 1; bh = 2;
+      bw=1; bh_=2;
     }
   }
   let ok=canPlace(placing,tile.x,tile.y,0);
-  for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
+
+  // Draw ghost: actual building rendered semi-transparently
+  let fakeE={
+    type:'building', btype:placing, x:ox, y:oy, team:0,
+    hp:b.hp, maxHp:b.hp, complete:true,
+    buildProgress:0, buildTime:200, queue:[],
+    w:bw, h:bh_, rallyX:ox, rallyY:oy, gateProgress:0
+  };
+  X.globalAlpha=0.55;
+  window._ghostDraw=true;
+  drawBuilding(fakeE);
+  window._ghostDraw=false;
+  X.globalAlpha=1;
+
+  // Tint footprint tiles green (valid) or red (invalid)
+  X.fillStyle=ok?'rgba(0,200,80,0.28)':'rgba(220,30,0,0.28)';
+  for(let dy=0;dy<bh_;dy++)for(let dx=0;dx<bw;dx++){
     let iso=toIso(ox+dx,oy+dy);
     let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
-    X.fillStyle=ok?'rgba(0,200,0,0.3)':'rgba(200,0,0,0.3)';
     X.beginPath();
     X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
     X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
@@ -1453,9 +1520,9 @@ function drawMinimap(){
   MX.stroke();
   entities.forEach(e=>{
     let ex = Math.round(e.x), ey = Math.round(e.y);
-    let f = fog[ey] && fog[ey][ex];
-    if (f === 0 || f === undefined) return; // unexplored
-    if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide active enemy units in fog
+    let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
+    if (f === 0) return; // completely unexplored — hide everything
+    if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
     
     MX.fillStyle=TEAM_COLORS[e.team];
     if(e.type==='building'){
@@ -1484,6 +1551,8 @@ function drawMinimap(){
 function drawParticles() {
   X.save();
   particles.forEach(p => {
+    let px = Math.round(p.x), py = Math.round(p.y);
+    if (py < 0 || py >= MAP || px < 0 || px >= MAP || fog[py][px] !== 2) return;
     let iso = toIso(p.x, p.y);
     let sx = iso.ix - camX + W/2;
     let sy = iso.iy - camY + topH + H/2 + HALF_TH;
@@ -1500,10 +1569,12 @@ function drawParticles() {
 function drawProjectiles() {
   X.save();
   projectiles.forEach(p => {
+    let ppx = Math.round(p.x), ppy = Math.round(p.y);
+    if (ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
     let target = entities.find(en => en.id === p.targetId);
     if (!target) return;
-    let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
-    let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+    let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
+    let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
     let dCurrent = Math.sqrt((p.x - targetX)**2 + (p.y - targetY)**2);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
     
@@ -1542,9 +1613,9 @@ function render(){
   
   X.save();
   // Center zoom scale around viewport camera center
-  X.translate(W/2, H/2 + topH);
+  X.translate(Math.round(W/2), Math.round(H/2 + topH));
   X.scale(ZOOM, ZOOM);
-  X.translate(-W/2, -(H/2 + topH));
+  X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
 
   // Draw ground tiles
   for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++)drawTile(x,y);
@@ -1592,11 +1663,24 @@ function render(){
   sorted.forEach(e=>{
     // Fog of War checks for entities
     let ex = Math.round(e.x), ey = Math.round(e.y);
-    let f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
-    if (f === 0) return; // unexplored
-    if (f === 1 && e.team !== 0) {
-      // unexplored but out of sight: hide enemy units/corpses
+    let f;
+    if (e.type === 'building') {
+      f = buildingFogLevel(e);
+    } else if (e.type === 'gate_back' || e.type === 'gate_front') {
+      f = buildingFogLevel(e.entity);
+    } else {
+      f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
+    }
+    if (f === 0) return; // completely unexplored
+    // Resolve the actual entity and team for gate proxy objects
+    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front') ? e.entity : e;
+    let eTeam = realEntity ? realEntity.team : e.team;
+    // Mark enemy buildings as seen when in active vision
+    if (f === 2 && eTeam !== 0 && realEntity && realEntity.type === 'building') realEntity._seen = true;
+    if (f === 1 && eTeam !== 0) {
+      // explored but not visible: hide enemy units, corpses, and buildings never seen before
       if (e.type === 'unit' || e.type === 'corpse') return;
+      if (realEntity && realEntity.type === 'building' && !realEntity._seen) return;
     }
 
     if(e.type==='building') drawBuilding(e);
@@ -1673,13 +1757,18 @@ function render(){
     let haveVils=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
     let haveUnits=selected.some(s=>s.type==='unit'&&s.team===0);
     let t=tile.y>=0&&tile.y<MAP&&tile.x>=0&&tile.x<MAP?map[tile.y][tile.x]:null;
-    let overEnemy=entities.some(en=>en.team===1&&en.type==='unit'&&(Math.abs(Math.round(en.x)-tile.x)<2&&Math.abs(Math.round(en.y)-tile.y)<2))
-      || (typeof getBuildingUnderCursor === 'function' && !!getBuildingUnderCursor(mouseX, mouseY, en=>en.team===1));
-    let alliedB = (typeof getBuildingUnderCursor === 'function') ? getBuildingUnderCursor(mouseX, mouseY, en=>en.team===0) : null;
+    let tileVisible = tile.y>=0&&tile.y<MAP&&tile.x>=0&&tile.x<MAP && fog[tile.y]&&fog[tile.y][tile.x]===2;
+    let overEnemy = tileVisible && (
+      entities.some(en=>en.team!==0&&en.type==='unit'&&(Math.abs(Math.round(en.x)-tile.x)<2&&Math.abs(Math.round(en.y)-tile.y)<2))
+      || (typeof getBuildingUnderCursor === 'function' && !!getBuildingUnderCursor(mouseX, mouseY, en=>en.team===1))
+    );
+    let alliedB = tileVisible && (typeof getBuildingUnderCursor === 'function') ? getBuildingUnderCursor(mouseX, mouseY, en=>en.team===0) : null;
     let canWorkB = alliedB && (!alliedB.complete || alliedB.hp < alliedB.maxHp);
     
+    let overAllyBuilding = alliedB && alliedB.complete && alliedB.hp >= alliedB.maxHp;
     if(haveUnits&&overEnemy) C.className = 'cursor-crosshair';
-    else if(haveVils&&(canWorkB || (t&&(t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)))) C.className = 'cursor-cell';
+    else if(haveVils&&(canWorkB || (tileVisible&&t&&(t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)))) C.className = 'cursor-cell';
+    else if(haveUnits&&overAllyBuilding) C.className = 'cursor-garrison';
     else if(haveUnits) C.className = 'cursor-pointer';
     else C.className = 'cursor-default';
   } else if(placing){ C.className = 'cursor-copy'; }

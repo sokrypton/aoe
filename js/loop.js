@@ -40,8 +40,8 @@ function update(){
   projectiles.forEach(p => {
     let target = entities.find(en => en.id === p.targetId);
     if (!target || target.hp <= 0) return;
-    let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
-    let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+    let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
+    let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
     let dx = targetX - p.x;
     let dy = targetY - p.y;
     let dist = Math.sqrt(dx*dx + dy*dy);

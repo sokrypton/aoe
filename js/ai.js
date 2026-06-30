@@ -132,8 +132,8 @@ function assignAIBuilder(v,build){
   v.target=null;
   clearGatherTarget(v);
   let b=BLDGS[build.btype];
-  let px=b.isFarm?build.x:build.x+b.w, py=b.isFarm?build.y:build.y+b.h;
-  pathUnitTo(v,px,py);
+  let pt=b.isFarm?{x:build.x,y:build.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,build):{x:build.x+build.w,y:build.y+build.h});
+  pathUnitTo(v,pt.x,pt.y);
 }
 
 function isAIGatherTaskStale(v){
@@ -326,6 +326,7 @@ function placeAIBuilding(type,x,y){
   if (wallsToRemove.length > 0) {
     let ids = new Set(wallsToRemove.map(w => w.id));
     entities = entities.filter(en => !ids.has(en.id));
+    ids.forEach(id => entitiesById.delete(id));
   }
   let building=createBuilding(type,ox,oy,1,gw,gh);
   building.complete=false;

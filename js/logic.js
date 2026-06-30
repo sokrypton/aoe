@@ -24,6 +24,7 @@ function canPlace(type,x,y,team=0){
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
     if(nx<0||nx>=MAP||ny<0||ny>=MAP)return false;
+    if(team===0&&fog[ny][nx]===0)return false; // can't build on unexplored tiles
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -141,10 +142,11 @@ function refreshPopulationCounts(){
   aiPopCap=teamPopCap(1);
 }
 
-function nearestDrop(e,resType){
+function nearestDrop(e,resType,excludeIds=null){
   let best=null,bd=999;
   entities.forEach(b=>{
     if(b.type!=='building'||b.team!==e.team||!b.complete)return;
+    if(excludeIds && excludeIds.has(b.id))return;
     if(b.btype==='TC'||(BLDGS[b.btype].drop&&BLDGS[b.btype].drop.split(',').includes(resType))){
       let d=distToBuilding(e.x,e.y,b);
       if(d<bd){bd=d;best=b;}
@@ -158,8 +160,7 @@ function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
 function buildingAtTile(x,y,filter){
   return entities.find(en=>{
     if(en.type!=='building')return false;
-    let b=BLDGS[en.btype];
-    return x>=en.x&&x<en.x+b.w&&y>=en.y&&y<en.y+b.h&&(!filter||filter(en));
+    return x>=en.x&&x<en.x+en.w&&y>=en.y&&y<en.y+en.h&&(!filter||filter(en));
   })||null;
 }
 
@@ -176,9 +177,8 @@ function canGatherTile(e,terrain,x,y){
 
 // Distance from point to nearest tile of a building
 function distToBuilding(px,py,bldg){
-  let b=BLDGS[bldg.btype];
   let best=999;
-  for(let dy=0;dy<b.h;dy++)for(let dx=0;dx<b.w;dx++){
+  for(let dy=0;dy<bldg.h;dy++)for(let dx=0;dx<bldg.w;dx++){
     let d=Math.abs(bldg.x+dx+0.5-px)+Math.abs(bldg.y+dy+0.5-py);
     if(d<best)best=d;
   }
@@ -187,9 +187,8 @@ function distToBuilding(px,py,bldg){
 
 // Check if unit is adjacent to any tile of a building (within 1.5 tiles)
 function adjToBuilding(px,py,bldg){
-  let b=BLDGS[bldg.btype];
-  for(let dy=-1;dy<=b.h;dy++)for(let dx=-1;dx<=b.w;dx++){
-    if(dx>=0&&dx<b.w&&dy>=0&&dy<b.h)continue; // skip building tiles themselves
+  for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
+    if(dx>=0&&dx<bldg.w&&dy>=0&&dy<bldg.h)continue; // skip building tiles themselves
     let tx=bldg.x+dx+0.5, ty=bldg.y+dy+0.5;
     if(Math.abs(px-tx)<1.2&&Math.abs(py-ty)<1.2)return true;
   }
@@ -198,22 +197,22 @@ function adjToBuilding(px,py,bldg){
 
 // Find nearest walkable tile adjacent to building perimeter
 function nearestBldgPerimeter(px,py,bldg){
-  let b=BLDGS[bldg.btype];
   let best=null,bd=999;
-  for(let dy=-1;dy<=b.h;dy++)for(let dx=-1;dx<=b.w;dx++){
-    if(dx>=0&&dx<b.w&&dy>=0&&dy<b.h)continue;
+  for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
+    if(dx>=0&&dx<bldg.w&&dy>=0&&dy<bldg.h)continue;
     let tx=bldg.x+dx, ty=bldg.y+dy;
     if(tx>=0&&tx<MAP&&ty>=0&&ty<MAP&&walkable(tx,ty)){
       let d=Math.abs(px-tx)+Math.abs(py-ty);
       if(d<bd){bd=d;best={x:tx,y:ty};}
     }
   }
-  return best||{x:Math.min(bldg.x+b.w,MAP-1),y:Math.min(bldg.y+b.h,MAP-1)};
+  return best||{x:Math.min(bldg.x+bldg.w,MAP-1),y:Math.min(bldg.y+bldg.h,MAP-1)};
 }
 
 function clearGatherTarget(e){
   e.gatherX=-1;
   e.gatherY=-1;
+  e.failedGatherTiles=null;
 }
 
 function rememberedGatherTile(e,terrain){
@@ -238,14 +237,7 @@ function depleteGatherTile(pos,config){
 
 function updateGatherTask(e,config){
   let gatherTile = rememberedGatherTile(e, config.terrain);
-  let isAdj = false;
-
-  if (gatherTile) {
-    isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
-    if (!isAdj) {
-      gatherTile = findNearTile(e, config.terrain);
-    }
-  } else {
+  if(!gatherTile){
     gatherTile = findNearTile(e, config.terrain);
   }
 
@@ -257,11 +249,22 @@ function updateGatherTask(e,config){
 
   e.gatherX=gatherTile.x;
   e.gatherY=gatherTile.y;
-  isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
+  let isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
   if(!isAdj){
     if(e.path.length === 0){
       pathUnitTo(e,gatherTile.x,gatherTile.y);
       if(e.path.length===0){
+        e.failedGatherTiles = e.failedGatherTiles || new Set();
+        e.failedGatherTiles.add(gatherTile.x + gatherTile.y * MAP);
+
+        let nextTile = findNearTile(e, config.terrain, e.failedGatherTiles);
+        if (nextTile) {
+          e.gatherX = nextTile.x;
+          e.gatherY = nextTile.y;
+          pathUnitTo(e, nextTile.x, nextTile.y);
+          if (e.path.length > 0) return;
+        }
+
         clearGatherTarget(e);
         e.task=null;
         if(e.team===0)showMsg('Resource is unreachable!');
@@ -335,9 +338,8 @@ function checkNextBuild(e){
     e.buildTarget = bt.id;
     e.target = null;
     let b = BLDGS[bt.btype];
-    let px = b.isFarm ? bt.x : bt.x + b.w;
-    let py = b.isFarm ? bt.y : bt.y + b.h;
-    pathUnitTo(e, px, py);
+    let pt = b.isFarm ? {x: bt.x, y: bt.y} : nearestBldgPerimeter(e.x, e.y, bt);
+    pathUnitTo(e, pt.x, pt.y);
     return true;
   }
   
@@ -360,7 +362,7 @@ function damageEntity(attacker, target){
     spawnParticles(target.x, target.y, '#990000', 4, 0.04, 1.5);
   } else {
     if (window.playSound) window.playSound('build');
-    spawnParticles(target.x + (BLDGS[target.btype]?.w||1)/2, target.y + (BLDGS[target.btype]?.h||1)/2, '#8b6c43', 3, 0.03, 2);
+    spawnParticles(target.x + (target.w||1)/2, target.y + (target.h||1)/2, '#8b6c43', 3, 0.03, 2);
   }
 
   // Under attack alarm trigger (player team 0)
@@ -393,6 +395,65 @@ function damageEntity(attacker, target){
   }
   
   if(target.hp<=0) handleDeath(target, attacker.team);
+}function autoTaskBuilder(e, bt){
+  if(bt.btype==='FARM'){
+    e.task='farm';
+    e.gatherX=bt.x;
+    e.gatherY=bt.y;
+  } else if(bt.btype==='LCAMP'){
+    let nearWood = findNearTile(e, TERRAIN.FOREST);
+    if (nearWood) {
+      e.task = 'chop';
+      e.gatherX = nearWood.x;
+      e.gatherY = nearWood.y;
+      pathUnitTo(e, nearWood.x, nearWood.y);
+    } else {
+      e.task = null;
+    }
+  } else if(bt.btype==='MILL'){
+    let nearBerries = findNearTile(e, TERRAIN.BERRIES);
+    if (nearBerries) {
+      e.task = 'forage';
+      e.gatherX = nearBerries.x;
+      e.gatherY = nearBerries.y;
+      pathUnitTo(e, nearBerries.x, nearBerries.y);
+    } else {
+      e.task = null;
+    }
+  } else if(bt.btype==='MCAMP'){
+    let nearGold = findNearTile(e, TERRAIN.GOLD);
+    let nearStone = findNearTile(e, TERRAIN.STONE);
+    let targetTile = null;
+    let targetTask = null;
+    if (nearGold && nearStone) {
+      let dGold = Math.abs(nearGold.x - e.x) + Math.abs(nearGold.y - e.y);
+      let dStone = Math.abs(nearStone.x - e.x) + Math.abs(nearStone.y - e.y);
+      if (dGold <= dStone) {
+        targetTile = nearGold;
+        targetTask = 'mine_gold';
+      } else {
+        targetTile = nearStone;
+        targetTask = 'mine_stone';
+      }
+    } else if (nearGold) {
+      targetTile = nearGold;
+      targetTask = 'mine_gold';
+    } else if (nearStone) {
+      targetTile = nearStone;
+      targetTask = 'mine_stone';
+    }
+    
+    if (targetTile) {
+      e.task = targetTask;
+      e.gatherX = targetTile.x;
+      e.gatherY = targetTile.y;
+      pathUnitTo(e, targetTile.x, targetTile.y);
+    } else {
+      e.task = null;
+    }
+  } else {
+    e.task = null;
+  }
 }
 
 function updateUnit(e){
@@ -452,6 +513,12 @@ function updateUnit(e){
   if(e.path.length>0){
     e.moveT+=e.speed*0.04;
     while(e.moveT>=1&&e.path.length>0){
+      let nextTile = e.path[0];
+      if (typeof walkable === 'function' && !walkable(nextTile.x, nextTile.y, e.id)) {
+        e.path = [];
+        e.moveT = 0;
+        break;
+      }
       e.moveT-=1;
       let next=e.path.shift();
       e.fromX=next.x;e.fromY=next.y;
@@ -459,8 +526,13 @@ function updateUnit(e){
     }
     if(e.path.length>0){
       let next=e.path[0];
-      e.x=e.fromX+(next.x-e.fromX)*e.moveT;
-      e.y=e.fromY+(next.y-e.fromY)*e.moveT;
+      if (typeof walkable === 'function' && !walkable(next.x, next.y, e.id)) {
+        e.path = [];
+        e.moveT = 0;
+      } else {
+        e.x=e.fromX+(next.x-e.fromX)*e.moveT;
+        e.y=e.fromY+(next.y-e.fromY)*e.moveT;
+      }
     }
     return;
   }
@@ -516,6 +588,7 @@ function updateUnit(e){
         if(!checkNextBuild(e)){
           e.task=null;
           e.buildTarget=null;
+          if(bt) autoTaskBuilder(e, bt);
         }
         return;
       }
@@ -551,64 +624,7 @@ function updateUnit(e){
             
             // Auto-task villager after construction is finished (if no other buildings in queue)
             if(!checkNextBuild(e)){
-              if(bt.btype==='FARM'){
-                e.task='farm';
-                e.gatherX=bt.x;
-                e.gatherY=bt.y;
-              } else if(bt.btype==='LCAMP'){
-                let nearWood = findNearTile(e, TERRAIN.FOREST);
-                if (nearWood) {
-                  e.task = 'chop';
-                  e.gatherX = nearWood.x;
-                  e.gatherY = nearWood.y;
-                  pathUnitTo(e, nearWood.x, nearWood.y);
-                } else {
-                  e.task = null;
-                }
-              } else if(bt.btype==='MILL'){
-                let nearBerries = findNearTile(e, TERRAIN.BERRIES);
-                if (nearBerries) {
-                  e.task = 'forage';
-                  e.gatherX = nearBerries.x;
-                  e.gatherY = nearBerries.y;
-                  pathUnitTo(e, nearBerries.x, nearBerries.y);
-                } else {
-                  e.task = null;
-                }
-              } else if(bt.btype==='MCAMP'){
-                let nearGold = findNearTile(e, TERRAIN.GOLD);
-                let nearStone = findNearTile(e, TERRAIN.STONE);
-                let targetTile = null;
-                let targetTask = null;
-                if (nearGold && nearStone) {
-                  let dGold = Math.abs(nearGold.x - e.x) + Math.abs(nearGold.y - e.y);
-                  let dStone = Math.abs(nearStone.x - e.x) + Math.abs(nearStone.y - e.y);
-                  if (dGold <= dStone) {
-                    targetTile = nearGold;
-                    targetTask = 'mine_gold';
-                  } else {
-                    targetTile = nearStone;
-                    targetTask = 'mine_stone';
-                  }
-                } else if (nearGold) {
-                  targetTile = nearGold;
-                  targetTask = 'mine_gold';
-                } else if (nearStone) {
-                  targetTile = nearStone;
-                  targetTask = 'mine_stone';
-                }
-                
-                if (targetTile) {
-                  e.task = targetTask;
-                  e.gatherX = targetTile.x;
-                  e.gatherY = targetTile.y;
-                  pathUnitTo(e, targetTile.x, targetTile.y);
-                } else {
-                  e.task = null;
-                }
-              } else {
-                e.task=null;
-              }
+              autoTaskBuilder(e, bt);
             }
           }
         } else {
@@ -629,19 +645,37 @@ function updateUnit(e){
       return;
     }
     if(e.task==='return'){
-      let drop=nearestDrop(e,e.carryType);
-      if(!drop){e.task=null;return;}
+      let failedDrops = e.failedDrops || new Set();
+      let drop=nearestDrop(e,e.carryType,failedDrops);
+      if(!drop){
+        e.task=null;
+        e.failedDrops=null;
+        if(e.team===0)showMsg('Cannot reach drop site!');
+        return;
+      }
       if(!adjToBuilding(e.x,e.y,drop)){
         let pt=nearestBldgPerimeter(e.x,e.y,drop);
         pathUnitTo(e,pt.x,pt.y);
         if(e.path.length===0){
+          failedDrops.add(drop.id);
+          e.failedDrops = failedDrops;
+
+          let nextDrop = nearestDrop(e, e.carryType, failedDrops);
+          if (nextDrop) {
+            let nextPt = nearestBldgPerimeter(e.x, e.y, nextDrop);
+            pathUnitTo(e, nextPt.x, nextPt.y);
+            if (e.path.length > 0) return;
+          }
+
           e.task=null;
+          e.failedDrops=null;
           if(e.team===0)showMsg('Cannot reach drop site!');
         }
       } else {
         if(e.team===0)res[e.carryType]+=e.carrying;
         else aiRes[e.carryType]+=e.carrying;
         e.carrying=0;
+        e.failedDrops=null;
         if(e.prevTask){e.task=e.prevTask;e.prevTask=null;}
         else e.task=null;
       }
@@ -659,6 +693,8 @@ function updateUnit(e){
     let closest=null, closestD=scanRange+1;
     entities.forEach(en=>{
       if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&en.utype!=='sheep'){
+        let ey=Math.round(en.y),ex=Math.round(en.x);
+        if(e.team===0&&(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2))return;
         let d=dist(e,en);
         if(d<closestD){closestD=d;closest=en;}
       }
@@ -667,7 +703,7 @@ function updateUnit(e){
   }
 }
 
-function findNearTile(e,terrain){
+function findNearTile(e,terrain,excludeSet=null){
   let bx=Math.round(e.x),by=Math.round(e.y);
   let best=null,bd=999;
   // Collect tiles already claimed by other villagers on same team
@@ -680,6 +716,7 @@ function findNearTile(e,terrain){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
+        if(excludeSet && excludeSet.has(nx+ny*MAP))continue;
         if(!canGatherTile(e,terrain,nx,ny))continue;
         if(claimed.has(nx+ny*MAP))continue; // skip claimed tiles
         let d=Math.abs(dx)+Math.abs(dy);
@@ -688,11 +725,12 @@ function findNearTile(e,terrain){
     }
     if(best)return best;
   }
-  // If all tiles are claimed, fall back to any available tile
+  // If all tiles are claimed, fall back to any available tile (excluding completely blocked ones)
   for(let r=0;r<12;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
+        if(excludeSet && excludeSet.has(nx+ny*MAP))continue;
         if(!canGatherTile(e,terrain,nx,ny))continue;
         let d=Math.abs(dx)+Math.abs(dy);
         if(d<bd){bd=d;best={x:nx,y:ny};}
@@ -712,7 +750,7 @@ function handleDeath(e,killerTeam){
   }
   if(e.type==='building'){
     let b=BLDGS[e.btype];
-    for(let dy=0;dy<b.h;dy++)for(let dx=0;dx<b.w;dx++){
+    for(let dy=0;dy<e.h;dy++)for(let dx=0;dx<e.w;dx++){
       if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=null;
         if(b.isFarm)map[e.y+dy][e.x+dx].t=TERRAIN.GRASS;}
     }
@@ -736,6 +774,7 @@ function handleDeath(e,killerTeam){
   }
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);
+  entitiesById.delete(e.id);
 }
 
 function findSpawnTile(x,y,maxRadius=4){
@@ -778,7 +817,7 @@ function updateBuilding(e){
     if(e.trainTick>=u.trainTime){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
       let b=BLDGS[e.btype];
-      let spawn=findSpawnTile(e.x+b.w,e.y+b.h) || findSpawnTile(e.x,e.y);
+      let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
       if(!spawn)return;
       e.trainTick=0;
       let ut=e.queue.shift();

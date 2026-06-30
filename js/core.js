@@ -63,7 +63,7 @@ function randInt(min,max){
 }
 
 // ---- GAME STATE ----
-let map=[], entities=[], corpses=[], selected=[], camX=0, camY=0, tick=0;
+let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
 
 let res={food:200,wood:200,gold:100,stone:200};
 let popUsed=0, popCap=0;
@@ -126,8 +126,8 @@ function updateFog() {
     let cy = Math.round(e.y);
     if (e.type === 'building') {
       let b = BLDGS[e.btype];
-      cx = Math.round(e.x + b.w/2);
-      cy = Math.round(e.y + b.h/2);
+      cx = Math.round(e.x + (e.w || b.w)/2);
+      cy = Math.round(e.y + (e.h || b.h)/2);
     }
     
     for (let dy = -sight; dy <= sight; dy++) {
@@ -162,8 +162,8 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
 }
 
 function spawnProjectile(attacker, target) {
-  let targetX = target.type === 'building' ? target.x + BLDGS[target.btype].w/2 : target.x;
-  let targetY = target.type === 'building' ? target.y + BLDGS[target.btype].h/2 : target.y;
+  let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
+  let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
   let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
   projectiles.push({
     x: attacker.x,

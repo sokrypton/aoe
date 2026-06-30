@@ -7,6 +7,7 @@ function createUnit(type,x,y,team){
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
     gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1};
   entities.push(e);
+  entitiesById.set(e.id, e);
   return e;
 }
 function pushUnitsOut(bx,by,bw,bh){
@@ -40,6 +41,7 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
     if(b.isFarm){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;}
   }
   entities.push(e);
+  entitiesById.set(e.id, e);
   if(!b.isFarm)pushUnitsOut(x,y,e.w,e.h);
   return e;
 }

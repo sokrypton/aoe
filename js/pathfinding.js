@@ -5,11 +5,11 @@ function walkable(x,y,ignore){
   if(t.t===TERRAIN.FARM)return true;
   if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
   if(t.occupied&&t.occupied!==ignore) {
-    // Let friendly units pass through gates
-    let bldg = entities.find(en => en.id === t.occupied);
+    // Let friendly units or anyone (if open) pass through gates
+    let bldg = entitiesById.get(t.occupied);
     if (bldg && bldg.btype === 'GATE') {
-      let walker = entities.find(en => en.id === ignore);
-      if (walker && walker.team === bldg.team) {
+      let walker = entitiesById.get(ignore);
+      if (walker && (walker.team === bldg.team || bldg.isOpen)) {
         return true;
       }
     }

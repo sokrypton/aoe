@@ -459,6 +459,10 @@ function doSelect(sx,sy,shift){
   let hitR=isMobile?18:12;
   entities.forEach(en=>{
     if(en.type==='unit'){
+      // Skip enemy units not actively visible
+      let eux=Math.round(en.x),euy=Math.round(en.y);
+      let uf=(eux>=0&&eux<MAP&&euy>=0&&euy<MAP)?fog[euy][eux]:0;
+      if(en.team!==0 && uf!==2) return;
       let iso=toIso(en.x,en.y);
       let idOff=en.id%7;
       let ox=(idOff%3-1)*6;
@@ -471,6 +475,8 @@ function doSelect(sx,sy,shift){
   });
   if(!clicked){
     clicked = getBuildingUnderCursor(sx, sy);
+    // Don't select enemy buildings that aren't visible
+    if(clicked && clicked.team!==0 && buildingFogLevel(clicked)!==2) clicked=null;
   }
   if(clicked){
     if(shift){
@@ -576,8 +582,11 @@ function doCommand(sx,sy){
   let buildTarget=null;
   let hitR=isMobile?18:12;
   entities.forEach(en=>{
-    // Target enemies
+    // Target enemies — only if actively visible
     if(en.team===1){
+      let eux=Math.round(en.x),euy=Math.round(en.y);
+      let uf=(eux>=0&&eux<MAP&&euy>=0&&euy<MAP)?fog[euy][eux]:0;
+      if(uf!==2) return;
       if(en.type==='unit'){
         let iso=toIso(en.x,en.y);
         let idOff=en.id%7;
@@ -600,7 +609,7 @@ function doCommand(sx,sy){
     }
   });
   if(!target){
-    target = getBuildingUnderCursor(sx, sy, en => en.team === 1);
+    target = getBuildingUnderCursor(sx, sy, en => en.team === 1 && buildingFogLevel(en) === 2);
   }
   if(!target){
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
@@ -627,8 +636,8 @@ function doCommand(sx,sy){
     if(buildTarget&&s.utype==='villager'){
       s.target=null;s.task='build';s.buildTarget=buildTarget.id;
       let b=BLDGS[buildTarget.btype];
-      let px=b.isFarm?buildTarget.x:buildTarget.x+b.w, py=b.isFarm?buildTarget.y:buildTarget.y+b.h;
-      pathUnitTo(s,px,py);
+      let pt=b.isFarm?{x:buildTarget.x,y:buildTarget.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(s.x,s.y,buildTarget):{x:buildTarget.x+buildTarget.w,y:buildTarget.y+buildTarget.h});
+      pathUnitTo(s,pt.x,pt.y);
     } else if(target){
       if(s.utype==='sheep'){return;} // sheep don't attack
       if(target.team===0&&target.utype==='sheep'&&s.utype!=='villager'){
@@ -730,6 +739,7 @@ function doPlace(sx,sy){
       let ids = new Set(wallsToRemove.map(w => w.id));
       entities = entities.filter(en => !ids.has(en.id));
       selected = selected.filter(s => !ids.has(s.id));
+      ids.forEach(id => entitiesById.delete(id));
     }
     let bldg=createBuilding(placing,ox,oy,0,gw,gh);
     bldg.complete=false;bldg.buildProgress=0;
@@ -739,8 +749,8 @@ function doPlace(sx,sy){
       // Start construction task immediately if not already building
       if(v.task!=='build'||!v.buildTarget){
         v.task='build';v.buildTarget=bldg.id;v.target=null;
-        let px=b.isFarm?ox:ox+gw, py=b.isFarm?oy:oy+gh;
-        pathUnitTo(v,px,py);
+        let pt=b.isFarm?{x:ox,y:oy}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,bldg):{x:ox+gw,y:oy+gh});
+        pathUnitTo(v,pt.x,pt.y);
       }
     });
     

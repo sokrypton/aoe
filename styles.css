@@ -3,21 +3,36 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%}
 
-/* Custom SVGs for game cursors */
+/* Custom SVGs for game cursors — AoE2 style */
+
+/* Default: classic cream arrow, no selection */
 #game.cursor-default {
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M6,10 L10,4 C11,2 13,1 15,1 C17,1 19,2.5 19.5,4 C20.5,3 22,2.5 23.5,3.5 C24.5,4.5 24.5,6 24.5,7 C25.5,7 26.5,8.5 26.5,10 C26.5,13 23,15 21,15 L19,23 L10,23 L7,16 L6,10 Z" fill="%23cfa043" stroke="%233e2105" stroke-width="2" stroke-linejoin="round"/><rect x="10" y="22" width="9" height="5" fill="%238a5a22" stroke="%233e2105" stroke-width="2" rx="1"/></svg>') 12 2, default !important;
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M3,2 L3,22 L8,17 L11,26 L14,25 L11,16 L17,16 Z" fill="%23f4e070" stroke="%232a1000" stroke-width="1.5" stroke-linejoin="round"/></svg>') 3 2, default !important;
 }
-#game.cursor-crosshair {
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M26,3 L29,6 L14,21 L12,21 L11,20 L11,18 L26,3 Z" fill="%23e0e0e0" stroke="%23111" stroke-width="1.5"/><path d="M10,19 L13,22 L11,24 L8,21 L10,19 Z" fill="%23b08030" stroke="%23111" stroke-width="1.5"/><rect x="4" y="25" width="5" height="5" transform="rotate(-45 6.5 27.5)" fill="%23803020" stroke="%23111" stroke-width="1.5"/></svg>') 27 5, crosshair !important;
-}
-#game.cursor-cell {
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M22,2 L28,8 L10,26 L4,20 L22,2 Z" fill="%238b5a2b" stroke="%23111" stroke-width="1.5"/><path d="M24,4 L28,8 C27,10 24,11 22,9 L20,7 C20,5 22,3 24,4 Z" fill="%23a0a0a0" stroke="%23111" stroke-width="1.5"/></svg>') 26 4, cell !important;
-}
-#game.cursor-copy {
-  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M4,28 L14,18 L10,14 L0,24 L4,28 Z" fill="%238b5a2b" stroke="%23111" stroke-width="1.5"/><path d="M12,12 L20,4 C22,6 24,8 26,10 L18,18 L12,12 Z" fill="%23a0a0a0" stroke="%23111" stroke-width="1.5"/><rect x="23" y="7" width="5" height="12" transform="rotate(45 25.5 13)" fill="%23333" stroke="%23111" stroke-width="1.5"/></svg>') 25 13, copy !important;
-}
+
+/* Move: green arrow — units selected, click to move */
 #game.cursor-pointer {
-  cursor: pointer !important;
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M3,2 L3,22 L8,17 L11,26 L14,25 L11,16 L17,16 Z" fill="%2364d840" stroke="%23183800" stroke-width="1.5" stroke-linejoin="round"/></svg>') 3 2, pointer !important;
+}
+
+/* Attack: classic sword — tapered blade, T-bar crossguard, wrapped grip, round pommel */
+#game.cursor-crosshair {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M29,2 L20,11 L17,14 Z" fill="%23d0d8e0" stroke="%23444" stroke-width="1" stroke-linejoin="round"/><line x1="28" y1="3" x2="20" y2="11" stroke="%23f0f4ff" stroke-width="1"/><line x1="13" y1="17" x2="23" y2="7" stroke="%23c09820" stroke-width="3.5" stroke-linecap="round"/><line x1="18" y1="14" x2="10" y2="22" stroke="%236a4a20" stroke-width="2.5" stroke-linecap="round"/><circle cx="9" cy="23" r="2.5" fill="%23804020" stroke="%23333" stroke-width="1"/></svg>') 29 2, crosshair !important;
+}
+
+/* Gather: pickaxe — villager over resource */
+#game.cursor-cell {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><line x1="15" y1="16" x2="7" y2="28" stroke="%23704020" stroke-width="3" stroke-linecap="round"/><path d="M15,16 L6,5 L9,3 L17,14 Z" fill="%23909090" stroke="%23222" stroke-width="1.5" stroke-linejoin="round"/><path d="M15,16 L25,5 L28,8 L18,19 Z" fill="%23c0c0c0" stroke="%23222" stroke-width="1.5" stroke-linejoin="round"/></svg>') 26 6, cell !important;
+}
+
+/* Build: hammer — placing a building */
+#game.cursor-copy {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><line x1="13" y1="18" x2="28" y2="28" stroke="%23704020" stroke-width="3.5" stroke-linecap="round"/><polygon points="4,12 12,4 19,11 11,19" fill="%23888888" stroke="%23222" stroke-width="1.5" stroke-linejoin="round"/><polygon points="4,12 12,4 15,7 7,15" fill="%23aaaaaa" stroke="none"/></svg>') 4 4, copy !important;
+}
+
+/* Garrison: shield — units selected over allied building */
+#game.cursor-garrison {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M16,2 L28,7 L28,17 C28,23 22,28 16,30 C10,28 4,23 4,17 L4,7 Z" fill="%234488cc" stroke="%23111" stroke-width="1.5" stroke-linejoin="round"/><path d="M16,6 L24,10 L24,17 C24,21 20,25 16,27 C12,25 8,21 8,17 L8,10 Z" fill="%235599dd" stroke="none"/><line x1="16" y1="9" x2="16" y2="24" stroke="%23fff" stroke-width="2" stroke-linecap="round"/><line x1="9" y1="16" x2="23" y2="16" stroke="%23fff" stroke-width="2" stroke-linecap="round"/></svg>') 16 2, default !important;
 }
 
 canvas{display:block}
