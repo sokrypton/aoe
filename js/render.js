@@ -395,6 +395,77 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
   }
 }
 
+// Worn dirt clearing a camp's footprint sits on, so an open-sided shelter
+// (no walls of its own to ground it) doesn't look like it's floating on
+// untouched grass.
+function drawCampClearing(sx,sy,bw,bhh,darken=false){
+  X.fillStyle = darken ? darkenColor('#8a7252') : '#8a7252';
+  X.strokeStyle = 'rgba(0,0,0,0.25)';
+  X.lineWidth = 1;
+  // The full tile diamond — (sx,sy)/(sx+bw,sy+bhh)/(sx,sy+bhh*2)/(sx-bw,sy+bhh)
+  // are exactly the building's footprint tile corners (same shape drawTile()
+  // uses for terrain), not a smaller inset shape. In iso view the building's
+  // base should cover its whole ground tile, not float as a patch within it.
+  X.beginPath();
+  X.moveTo(sx,sy);X.lineTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.closePath();
+  X.fill();X.stroke();
+}
+
+// Open-sided "camp" shelter: a peaked roof on visible corner posts with no
+// wall faces, so the prop pile underneath reads through — distinguishes
+// resource camps from solid buildings (TC/Barracks/etc.) in silhouette.
+//
+// Draws only the roof + pennant — NOT any of the 3 support posts. All posts
+// sit at the same ground level as (or in front of) the prop pile placed
+// between them, so they must be painted *after* the props or the pile's
+// fills (e.g. a log's end-cap) paint over them. Call drawCampPosts() once
+// the props are drawn to finish the shelter.
+function drawCampShelter(sx,sy,bw,bhh,postH,roofH,postColor,roofL,roofR,teamColor,teamColorDark,darken=false){
+  if (darken) { roofL = darkenColor(roofL); roofR = darkenColor(roofR); }
+  X.lineJoin='round';
+
+  // Peaked roof sitting atop the posts (same math as drawBuildingBlock's
+  // peaked roof, anchored at eave height postH instead of a solid wall's bh)
+  let bh=postH;
+  X.strokeStyle='#000000';X.lineWidth=1.3;
+  X.fillStyle=roofL;X.beginPath();
+  X.moveTo(sx,sy-bh-roofH);X.lineTo(sx,sy+bhh*2-bh-roofH);
+  X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx-bw,sy+bhh-bh);X.closePath();X.fill();X.stroke();
+  X.fillStyle=roofR;X.beginPath();
+  X.moveTo(sx,sy-bh-roofH);X.lineTo(sx,sy+bhh*2-bh-roofH);
+  X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx+bw,sy+bhh-bh);X.closePath();X.fill();X.stroke();
+
+  // Small team-colored pennant at the ridge apex so the camp's owner reads
+  // at a glance, same as every other building's team trim/flag.
+  let tcc = darken ? darkenColor(teamColor) : teamColor;
+  let tccD = darken ? darkenColor(teamColorDark) : teamColorDark;
+  let apexX=sx, apexY=sy-bh-roofH;
+  X.strokeStyle='#000000';X.lineWidth=1.3;
+  X.beginPath();X.moveTo(apexX,apexY);X.lineTo(apexX,apexY-10);X.stroke();
+  X.fillStyle=tcc;X.beginPath();
+  X.moveTo(apexX,apexY-10);X.lineTo(apexX+9,apexY-7);X.lineTo(apexX,apexY-4);X.closePath();
+  X.fill();X.stroke();
+  X.fillStyle=tccD;X.beginPath();
+  X.moveTo(apexX,apexY-9);X.lineTo(apexX+6,apexY-7);X.lineTo(apexX,apexY-5);X.closePath();
+  X.fill();
+}
+
+// Draws all 3 of the camp shelter's support posts (left, right, front-center).
+// Must be called AFTER any props placed under the canopy, not as part of
+// drawCampShelter() — every post shares ground level with (or is nearer the
+// camera than) the prop pile between them, so drawing posts first let a
+// prop's fill (e.g. a log's end-cap) paint right over a post.
+function drawCampPosts(sx,sy,bw,bhh,postH,postColor,darken=false){
+  let pc = darken ? darkenColor(postColor) : postColor;
+  X.lineJoin='round';
+  [[sx-bw,sy+bhh],[sx+bw,sy+bhh],[sx,sy+bhh*2]].forEach(([gx,gy])=>{
+    X.strokeStyle=pc;X.lineWidth=4;
+    X.beginPath();X.moveTo(gx,gy);X.lineTo(gx,gy-postH);X.stroke();
+    X.strokeStyle='#000000';X.lineWidth=1;
+    X.beginPath();X.moveTo(gx,gy);X.lineTo(gx,gy-postH);X.stroke();
+  });
+}
+
 // Draws a skewed wooden door sits flat against the Left Wall
 function drawDoorLeft(sx,sy,bw,bhh,color,darken=false){
   let c = darken ? darkenColor(color) : color;
@@ -621,51 +692,65 @@ function drawBuilding(e, part = null){
     X.stroke();
   }
   else if(e.btype==='LCAMP'){
-    bh=10;
-    // Wood camp shelter
-    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#d2b48c','#b59975', darken);
-    // Log pile & wood chopping stump
+    bh=20;
+    // Worn dirt clearing the camp sits on, drawn before the shelter so props ground onto it
+    drawCampClearing(sx,sy,bw,bhh,darken);
+    // Open timber lean-to: tall pointed tent on posts, no walls, so the log pile reads through
+    drawCampShelter(sx,sy,bw,bhh,bh,14,'#8a6a4a','#d2b48c','#b59975', tc,tcD, darken);
+    // Log pile & wood chopping stump — sized to actually fill the floor
+    // space under the canopy instead of looking like scattered debris.
     if(e.complete){
-      let lx = sx-bw*0.6, ly = sy+bhh*1.3;
-      X.fillStyle=darken ? darkenColor('#6e473b') : '#6e473b';
-      X.fillRect(lx-10,ly-5,16,6);
-      X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(lx-10,ly-5,16,6);
-      X.fillRect(lx-6,ly-9,12,6);
-      X.strokeRect(lx-6,ly-9,12,6);
-      X.fillStyle=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
-      X.beginPath();X.arc(lx-10,ly-2,3,0,Math.PI*2);X.fill();X.stroke();
-      X.beginPath();X.arc(lx-6,ly-6,3,0,Math.PI*2);X.fill();X.stroke();
+      let logCol=darken ? darkenColor('#6e473b') : '#6e473b';
+      let endCol=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
+      X.strokeStyle='#000000';X.lineWidth=1.2;
+      // 3 stacked logs, shifted left of the front-center post so the post
+      // (drawn afterward, in front) doesn't slice through the pile.
+      let lx=sx-16, ly=sy+bhh*1.05;
+      [[0,10],[-6,2],[1,-6]].forEach(([dx,dy])=>{
+        let x=lx+dx, y=ly+dy;
+        X.fillStyle=logCol;X.fillRect(x-12,y-4,24,8);X.strokeRect(x-12,y-4,24,8);
+        X.fillStyle=endCol;
+        X.beginPath();X.ellipse(x-12,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.ellipse(x+12,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
+      });
 
-      // Chopping block stump next to logs
-      let cbx = sx-2, cby = sy+bhh*1.5;
-      X.fillStyle=darken ? darkenColor('#8a5a3a') : '#8a5a3a';X.fillRect(cbx-3, cby-4, 6, 5);
-      X.strokeStyle='#000000';X.strokeRect(cbx-3, cby-4, 6, 5);
-      X.fillStyle=darken ? darkenColor('#ebd2b0') : '#ebd2b0';X.beginPath();X.ellipse(cbx,cby-4,3,1.5,0,0,Math.PI*2);X.fill();X.stroke();
-      // Axe sticking in stump
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.beginPath();X.moveTo(cbx,cby-4);X.lineTo(cbx-3,cby-8);X.stroke();
+      // Chopping stump, just in front of the pile — the log pile itself is
+      // the giveaway for what this building produces, no axe needed.
+      let cbx=sx+13, cby=sy+bhh*1.4;
+      X.fillStyle=darken ? darkenColor('#8a5a3a') : '#8a5a3a';X.fillRect(cbx-5,cby-7,10,9);
+      X.strokeRect(cbx-5,cby-7,10,9);
+      X.fillStyle=endCol;X.beginPath();X.ellipse(cbx,cby-7,5,2.6,0,0,Math.PI*2);X.fill();X.stroke();
     }
+    // All 3 posts drawn last so they sit in front of the log pile instead of
+    // being hidden behind it (e.g. a log's end-cap painting over a post).
+    drawCampPosts(sx,sy,bw,bhh,bh,'#8a6a4a',darken);
   }
   else if(e.btype==='MCAMP'){
-    bh=10;
-    // Mining camp lean-to
-    drawBuildingBlock(sx,sy,bw,bhh,bh, '#c6a880','#a68860','flat',0,'#9f886c','#826f57', darken);
-    // Gold & Stone nugget pile & pickaxes
+    bh=20;
+    // Worn dirt clearing the camp sits on, drawn before the shelter so props ground onto it
+    drawCampClearing(sx,sy,bw,bhh,darken);
+    // Open mining shed: lower, flatter roof than the lumber camp's pointed
+    // tent (no crossbeam — it had nothing to visually anchor to once the
+    // pile moved aside, and just read as a stray line floating in the
+    // doorway, same problem the front post had before the pile flanked it).
+    drawCampShelter(sx,sy,bw,bhh,bh,8,'#6e665c','#9f886c','#826f57', tc,tcD, darken);
+    // Gold & Stone ore pile, tucked snugly against the left side of the
+    // front-center post (like the lumber camp's log pile) so the post reads
+    // as "planted next to the pile" instead of a bare line in open dirt.
     if(e.complete){
-      let mx = sx+bw*0.6, my = sy+bhh*1.3;
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle=darken ? darkenColor('#ffd700') : '#ffd700';X.beginPath();X.arc(mx,my,4,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#daa520') : '#daa520';X.beginPath();X.arc(mx-2,my+1,2.5,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#777') : '#777';X.beginPath();X.arc(mx-8,my+2,3.5,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#999') : '#999';X.beginPath();X.arc(mx-6,my-1,2.5,0,Math.PI*2);X.fill();X.stroke();
-
-      // Pickaxes leaning against left wall support
-      let px = sx-bw*0.4, py = sy+bhh*1.1;
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.beginPath();X.moveTo(px,py);X.lineTo(px-4,py-8);X.stroke();
-      X.lineWidth=1.5;
-      X.beginPath();X.moveTo(px-6,py-8);X.lineTo(px-2,py-8);X.stroke();
+      let mx=sx-12, my=sy+bhh*1.15;
+      X.strokeStyle='#000000';X.lineWidth=1.2;
+      // Stone cluster (left)
+      X.fillStyle=darken ? darkenColor('#7d7d7d') : '#7d7d7d';X.beginPath();X.arc(mx-10,my,7,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#9a9a9a') : '#9a9a9a';X.beginPath();X.arc(mx-4,my-5,5,0,Math.PI*2);X.fill();X.stroke();
+      // Gold cluster (right) — the ore pile itself is the giveaway for what
+      // this building produces, no pickaxes needed.
+      X.fillStyle=darken ? darkenColor('#daa520') : '#daa520';X.beginPath();X.arc(mx+9,my+1,7,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#ffd700') : '#ffd700';X.beginPath();X.arc(mx+3,my-5,5,0,Math.PI*2);X.fill();X.stroke();
     }
+    // All 3 posts drawn last so they sit in front of the ore pile instead of
+    // being hidden behind it (e.g. a nugget's fill painting over a post).
+    drawCampPosts(sx,sy,bw,bhh,bh,'#6e665c',darken);
   }
   else if(e.btype==='MILL'){
     bh=36; // conical tower: wall 18 + conical roofH 16 → ridge sy-34; use 36
@@ -1404,7 +1489,7 @@ function drawGhost(){
 
   // Wall drag: show colored diamonds along the drag line
   if (placing === 'WALL' && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
-    let line = getLineTiles(window.wallDragStart, window.wallDragEnd);
+    let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
     line.forEach(t => {
       let ok = canPlace('WALL', t.x, t.y, 0);
       let iso = toIso(t.x, t.y);

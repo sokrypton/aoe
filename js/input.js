@@ -70,6 +70,21 @@ document.addEventListener('keyup',e=>{keys[e.key]=false;});
 window.isDraggingWall = false;
 window.wallDragStart = null;
 window.wallDragEnd = null;
+window.wallDragCorner = null;
+window.wallPrimaryAxis = null;
+
+// Builds an elbow (two straight segments) from start->corner->end, so a
+// drag that changes direction partway through (e.g. right, then down)
+// projects both legs plus the corner tile, instead of collapsing to a
+// single straight line toward the final cursor position.
+function getWallElbowTiles(start, corner, end){
+  let leg1 = getLineTiles(start, corner);
+  let leg2 = getLineTiles(corner, end);
+  if (leg2.length && leg1.length && leg2[0].x === leg1[leg1.length-1].x && leg2[0].y === leg1[leg1.length-1].y) {
+    leg2 = leg2.slice(1);
+  }
+  return leg1.concat(leg2);
+}
 
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
@@ -80,6 +95,8 @@ C.addEventListener('mousedown',e=>{
         window.isDraggingWall = true;
         window.wallDragStart = tile;
         window.wallDragEnd = tile;
+        window.wallDragCorner = tile;
+        window.wallPrimaryAxis = null;
         justPlaced = true;
       } else {
         doPlace(e.clientX,e.clientY);
@@ -99,10 +116,17 @@ C.addEventListener('mousemove',e=>{
     let start = window.wallDragStart;
     let dx = tile.x - start.x;
     let dy = tile.y - start.y;
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      window.wallDragEnd = { x: tile.x, y: start.y };
+    // Lock which axis the player committed to first (once they've moved at
+    // least a tile), so later movement on the other axis becomes the second
+    // leg of an elbow instead of re-snapping the whole drag to one straight line.
+    if (window.wallPrimaryAxis === null && (Math.abs(dx) >= 1 || Math.abs(dy) >= 1)) {
+      window.wallPrimaryAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+    }
+    window.wallDragEnd = tile;
+    if (window.wallPrimaryAxis === 'y') {
+      window.wallDragCorner = { x: start.x, y: tile.y };
     } else {
-      window.wallDragEnd = { x: start.x, y: tile.y };
+      window.wallDragCorner = { x: tile.x, y: start.y };
     }
     return;
   }
@@ -120,10 +144,13 @@ C.addEventListener('mouseup',e=>{
       window.isDraggingWall = false;
       let start = window.wallDragStart;
       let end = window.wallDragEnd;
+      let corner = window.wallDragCorner || end;
       window.wallDragStart = null;
       window.wallDragEnd = null;
+      window.wallDragCorner = null;
+      window.wallPrimaryAxis = null;
 
-      let line = getLineTiles(start, end);
+      let line = getWallElbowTiles(start, corner, end);
       let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
       if(vils.length===0){
         showMsg('Select a villager to build!');
