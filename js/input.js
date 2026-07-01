@@ -889,8 +889,8 @@ function handleScroll(){
 // ---- RESIZE ----
 window.addEventListener('resize',()=>{
   W=window.innerWidth;
-  bottomH=isMobile?(W<=380?130:W<=600?150:200):200;
-  topH=isMobile?(W<=600?28:32):32;
+  bottomH=isMobile?(W<=380?175:W<=600?200:200):200;
+  topH=isMobile?(W<=600?46:36):36;
   H=window.innerHeight-bottomH;
   C.width=W*dpr;C.height=window.innerHeight*dpr;
   C.style.width=W+'px';C.style.height=window.innerHeight+'px';

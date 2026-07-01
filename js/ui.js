@@ -95,7 +95,7 @@ function updateUI(){
   document.getElementById('r-wood').textContent=currentWood;
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
-  document.getElementById('pop').textContent=`Pop: ${popUsed}/${popCap}`;
+  document.getElementById('pop').textContent=`${popUsed}/${popCap}`;
 
   let idleBtn = document.getElementById('idle-vil-btn');
   if (idleBtn) {
@@ -202,8 +202,9 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           let costStr=formatCost(u.cost);
           let desc=u.desc||'';
+          let statsStr=`⚔ ${u.atk} ATK&nbsp;&nbsp;❤ ${u.hp} HP`+(u.range>0?`&nbsp;&nbsp;➶ ${u.range} RNG`:'');
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
-            `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+            `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-stats">${statsStr}</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });

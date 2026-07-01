@@ -3,8 +3,8 @@ const MC=document.getElementById('minimap'),MX=MC.getContext('2d');
 const isMobile='ontouchstart' in window||navigator.maxTouchPoints>0;
 // Command markers (visual feedback when you issue a command)
 let cmdMarkers=[]; // {x,y,time,color}
-let bottomH=isMobile?(window.innerWidth<=380?130:window.innerWidth<=600?150:200):200;
-let topH=isMobile?(window.innerWidth<=600?28:32):32;
+let bottomH=isMobile?(window.innerWidth<=380?175:window.innerWidth<=600?200:200):200;
+let topH=isMobile?(window.innerWidth<=600?46:36):36;
 const dpr = Math.max(1, window.devicePixelRatio || 1);
 const ZOOM_MIN = 0.6, ZOOM_MAX = 2.5;
 let ZOOM = isMobile ? 1.5 : 1.0;

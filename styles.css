@@ -141,18 +141,38 @@ canvas {
 }
 
 /* ---- COLLAPSED HUD STATES ----
-   Collapsing only shrinks the panel height and hides the selection info
-   panel — the action buttons keep their normal size/layout and just get
-   cropped by the shorter panel (scrollable via #actions' own
-   overflow-y:auto), so icons never move or resize when toggling. */
+   Collapsing only shrinks the panel height — the action buttons keep their
+   normal size/layout (single row, horizontally scrollable via #actions),
+   so icons never move or resize when toggling. The minimap's reserved
+   space (#bottom's padding-right) is kept so nothing scrolls under it. */
 #bottom.collapsed {
   height: 80px;
 }
+/* Keep a compact icon+HP summary instead of hiding selection info entirely —
+   #sel-info already clips overflow, so shrinking the portrait and capping
+   #sel-details' height crops down to just the "HP: x/y" line + bar (always
+   the first thing added to its innerHTML) without touching any JS. */
 #bottom.collapsed #sel-info {
-  display: none !important;
+  width: auto;
+  max-width: 130px;
+  padding: 6px;
+  gap: 8px;
+  align-items: center; /* short collapsed bar: center instead of top-pinning */
+}
+#bottom.collapsed #sel-name {
+  display: none;
+}
+#bottom.collapsed #sel-details {
+  max-height: 28px;
+  overflow: hidden;
+  font-size: 11px;
+}
+#bottom.collapsed #sel-details .hp-bar-bg {
+  width: 100px;
 }
 #bottom.collapsed #actions {
   border-right: none;
+  align-items: center; /* short collapsed bar: center the row instead of top-pinning */
 }
 #sel-info {
   width: 260px;
@@ -163,12 +183,12 @@ canvas {
   flex-shrink: 0;
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start; /* pin to the top-left, not vertically centered */
   gap: 12px;
 }
 #sel-portrait {
-  width: 52px;
-  height: 52px;
+  width: 58px;
+  height: 58px;
   /* background-image (not the `background` shorthand) so it doesn't reset
      background-position/size/repeat — those are set by .sprite-icon /
      .icon-* below, at lower specificity, when a sprite icon is shown. */
@@ -236,14 +256,17 @@ canvas {
   flex: 1;
   padding: 8px;
   display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  flex-wrap: nowrap; /* single row — overflow scrolls/drags horizontally instead of wrapping */
+  align-items: flex-start; /* pin the icon row to the top-left, not vertically centered */
+  justify-content: flex-start;
   gap: 6px;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-right: 2px double #5a3e1a;
 }
 .act-btn{
   position:relative; /* anchors .tooltip to this button, not to #bottom */
+  flex-shrink:0; /* keep full size when there's not enough row width, scroll instead of squeezing */
   min-width:58px;
   height:58px;
   background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
@@ -555,36 +578,43 @@ canvas {
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
-  #topbar{height:30px;padding:0 6px}
-  .res{margin-right:6px;font-size:11px;padding:1px 4px}
-  .res-icon{width:15px;height:15px;margin-right:4px}
-  .res-val{min-width:24px}
-  #pop{font-size:11px;padding:1px 4px}
-  #bottom{height:170px}
-  #sel-info{width:130px;padding:6px}
-  #sel-name{font-size:12px}
-  #sel-details{font-size:9px}
-  .act-btn{min-width:64px;height:64px;font-size:11px}
-  #bottom.collapsed{height:88px}
-  #minimap-wrap{width:140px;height:140px;margin:4px}
-  #msg{font-size:13px;top:38px}
+  #topbar{height:46px;padding:0 8px}
+  .res{margin-right:8px;font-size:14px;padding:4px 8px}
+  .res-icon{width:22px;height:22px;margin-right:6px}
+  .res-val{min-width:30px}
+  #pop{font-size:14px;padding:4px 8px}
+  #idle-vil-btn{font-size:14px;padding:5px 10px}
+  #menu-btn{font-size:14px;padding:5px 10px}
+  #bottom{height:200px}
+  #sel-info{width:160px;padding:10px}
+  #sel-portrait{width:70px;height:70px;font-size:36px}
+  #sel-name{font-size:16px}
+  #sel-details{font-size:12px}
+  .act-btn{min-width:70px;height:70px;font-size:13px}
+  #bottom.collapsed{height:96px}
+  #minimap-wrap{width:150px;height:150px;margin:4px}
+  #msg{font-size:16px;top:50px}
 }
 @media(max-width:480px){
   #tutorial-box{padding:20px 18px;width:340px}
   .setup-section{margin:12px 0}
   .menu-divider{margin:10px 0}
   .setup-row{flex-direction:column;gap:12px}
-  .segment{font-size:13px;padding:9px 2px}
+  .setup-col h3{font-size:15px}
+  .segment{font-size:15px;padding:12px 4px}
+  .menu-action-btn{font-size:18px;padding:13px 26px}
 }
 @media(max-width:380px){
-  .res{margin-right:4px}
-  .res-icon{display:none}
-  #bottom{height:145px}
-  #sel-info{width:90px;padding:4px}
-  #sel-name{font-size:10px}
-  .act-btn{min-width:60px;height:60px;font-size:10px}
-  #bottom.collapsed{height:84px}
-  #minimap-wrap{width:120px;height:120px}
+  .res{margin-right:5px;font-size:13px;padding:3px 6px}
+  .res-icon{width:19px;height:19px;margin-right:4px}
+  #bottom{height:175px}
+  #sel-info{width:120px;padding:8px}
+  #sel-portrait{width:64px;height:64px;font-size:32px}
+  #sel-name{font-size:13px}
+  #sel-details{font-size:11px}
+  .act-btn{min-width:64px;height:64px;font-size:12px}
+  #bottom.collapsed{height:90px}
+  #minimap-wrap{width:130px;height:130px}
 }
 
 /* ---- TRAINING QUEUE STYLES ---- */
@@ -798,6 +828,12 @@ canvas {
 }
 .act-btn .tooltip .tooltip-cost {
   color: #ffc87a;
+  font-weight: bold;
+  font-size: 10px;
+  margin-bottom: 6px;
+}
+.act-btn .tooltip .tooltip-stats {
+  color: #9fd88a;
   font-weight: bold;
   font-size: 10px;
   margin-bottom: 6px;

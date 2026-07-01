@@ -1746,9 +1746,12 @@ function drawUnit(e){
     X.strokeStyle='#fff';X.lineWidth=1.5;
     X.beginPath();X.ellipse(sx,sy+2,8,4,0,0,Math.PI*2);X.stroke();
   }
-  // Idle indicator
-  if(e.team===0&&e.utype==='villager'&&!isActive){
-    X.fillStyle='#ffd700';X.font='bold 9px sans-serif';X.textAlign='center';
+  // Idle indicator — keep showing while walking too, as long as no
+  // task/target is actually assigned (a bare move order isn't "working").
+  if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target){
+    X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
+    X.font='bold 16px sans-serif';X.textAlign='center';
+    X.strokeText('?',sx,sy-20);
     X.fillText('?',sx,sy-20);
   }
 }
