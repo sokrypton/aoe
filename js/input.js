@@ -456,7 +456,7 @@ MC.addEventListener('touchend',()=>{
 // ==============================
 function getBuildingUnderCursor(sx, sy, filter) {
   const BLDG_HEIGHTS = {
-    TC: 55, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
+    TC: 80, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
     MILL: 32, FARM: 6, TOWER: 58, WALL: 26, GATE: 32
   };
   let bestB = null;

@@ -41,7 +41,7 @@ const TCOL={
 };
 
 const BLDGS={
-  TC:{name:'Town Center',w:2,h:2,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,desc:'Town Center. Trains villagers and accepts resource dropoffs.',icon:'🏰'},
+  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,desc:'Town Center. Trains villagers and accepts resource dropoffs.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:150,desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:210,desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:210,desc:'Drop site for Gold and Stone.',icon:'⛏️'},
@@ -73,9 +73,9 @@ function randInt(min,max){
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
 
-let res={food:200,wood:200,gold:100,stone:200};
+let res={food:200,wood:200,gold:100,stone:200,prepaidFarms:0};
 let popUsed=0, popCap=0;
-let aiRes={food:200,wood:200,gold:100,stone:200}, aiPop=0, aiPopCap=0, aiTick=0;
+let aiRes={food:200,wood:200,gold:100,stone:200,prepaidFarms:0}, aiPop=0, aiPopCap=0, aiTick=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
 let lastSelKey='';

@@ -133,10 +133,27 @@ function updateUI(){
     else if (hpPct < 50) hpColor = '#d9a711';
     let det=`HP: ${e.hp}/${e.maxHp}`;
     det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
-    if(!e.complete) det+=`<br>Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
-    else if(b.pop) det+=`<br>Provides ${b.pop} population`;
-    else if(b.drop) det+=`<br>Dropoff: ${b.drop}`;
-    else if(b.isFarm){let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0; det+=`<br>Food remaining: ${tr}`;}
+    if(!e.complete && !e.exhausted) det+=`<br>Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
+    else {
+      if(b.pop) det+=`<br>Provides ${b.pop} population`;
+      else if(b.drop) {
+        det+=`<br>Dropoff: ${b.drop}`;
+        if (e.btype === 'MILL') {
+          det+=`<br>Prepaid Reseeds: ${res.prepaidFarms || 0}`;
+        }
+      }
+      else if(b.isFarm){
+        if(e.exhausted){
+          det+=`<br><span style="color:#ff4444;font-weight:bold;">EXHAUSTED</span>`;
+          if(e.buildProgress > 0) {
+            det+=`<br>Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
+          }
+        } else {
+          let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
+          det+=`<br>Food remaining: ${tr}`;
+        }
+      }
+    }
     
     if(e.queue && e.queue.length>0){
       let pct=Math.floor(e.trainTick/(UNITS[e.queue[0]].trainTime)*100);
@@ -154,21 +171,47 @@ function updateUI(){
       });
       det+=`  </div>`;
       det+=`</div>`;
-    } else if(e.complete&&b.builds&&e.team===0) {
-      det+=`<br><span style="color:#bfa054">Click button below to train</span>`;
+    } else if(e.team===0) {
+      if(e.complete && b.builds) {
+        det+=`<br><span style="color:#bfa054">Click button below to train</span>`;
+      } else if(e.complete && e.btype === 'MILL') {
+        det+=`<br><span style="color:#bfa054">Prepay farm reseeds below</span>`;
+      } else if(b.isFarm && e.exhausted) {
+        det+=`<br><span style="color:#bfa054">Reactivate farm below</span>`;
+      }
     }
     document.getElementById('sel-details').innerHTML=det;
-    if(rebuildActions&&e.team===0&&e.complete&&b.builds){
-      b.builds.forEach(ut=>{
-        let u=UNITS[ut];
+    if(rebuildActions&&e.team===0){
+      if(e.complete && b.builds){
+        b.builds.forEach(ut=>{
+          let u=UNITS[ut];
+          let btn=document.createElement('div');btn.className='act-btn';
+          let costStr=formatCost(u.cost);
+          let desc=u.desc||'';
+          btn.innerHTML=`<div class="btn-emoji">${u.icon}</div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
+            `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+          btn.onclick=()=>trainUnit(e,ut);
+          act.appendChild(btn);
+        });
+      }
+      if(e.complete && e.btype === 'MILL') {
         let btn=document.createElement('div');btn.className='act-btn';
-        let costStr=formatCost(u.cost);
-        let desc=u.desc||'';
-        btn.innerHTML=`<div class="btn-emoji">${u.icon}</div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
-          `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
-        btn.onclick=()=>trainUnit(e,ut);
+        let costStr='W:60';
+        let desc='Queue a farm reseed. When a farm runs out of food, it will automatically consume a reseed from the queue to replenish itself.';
+        btn.innerHTML=`<div class="btn-emoji">🌾</div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>` +
+          `<div class="tooltip"><strong>Prepay Farm Reseed</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+        btn.onclick=()=>prepayFarm();
         act.appendChild(btn);
-      });
+      }
+      if(b.isFarm && e.exhausted) {
+        let btn=document.createElement('div');btn.className='act-btn';
+        let costStr='W:60';
+        let desc='Reactivate this exhausted farm. Instantly replenishes food.';
+        btn.innerHTML=`<div class="btn-emoji">🌾</div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>` +
+          `<div class="tooltip"><strong>Reactivate Farm</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+        btn.onclick=()=>reactivateFarm(e);
+        act.appendChild(btn);
+      }
     }
   } else {
     if (port) {
@@ -377,3 +420,38 @@ window.toggleBottomPanel = function() {
     }
   }
 })();
+
+function prepayFarm() {
+  if (gameOver) return;
+  let cost = {w: 60};
+  if (!canAfford(0, cost)) {
+    showMsg('Not enough wood!');
+    return;
+  }
+  spendCost(0, cost);
+  res.prepaidFarms = (res.prepaidFarms || 0) + 1;
+  showMsg(`Farm reseed prepaid (Queue: ${res.prepaidFarms})`);
+  updateUI();
+}
+
+function reactivateFarm(farm) {
+  if (gameOver) return;
+  if (!farm.exhausted) return;
+  let cost = {w: 60};
+  if (!canAfford(0, cost)) {
+    showMsg('Not enough wood!');
+    return;
+  }
+  spendCost(0, cost);
+  farm.exhausted = false;
+  farm.complete = true;
+  farm.hp = farm.maxHp;
+  let tile = map[farm.y][farm.x];
+  tile.t = TERRAIN.FARM;
+  tile.res = 300;
+  showMsg('Farm reactivated!');
+  updateUI();
+}
+
+window.prepayFarm = prepayFarm;
+window.reactivateFarm = reactivateFarm;

@@ -224,15 +224,27 @@ function rememberedGatherTile(e,terrain){
 
 function depleteGatherTile(pos,config){
   let tile=map[pos.y][pos.x];
-  tile.t=TERRAIN.GRASS;
-  if(config.clearOccupied)tile.occupied=null;
   if(config.removeFarm){
     let farm=entities.find(f=>f.type==='building'&&f.btype==='FARM'&&f.x===pos.x&&f.y===pos.y);
     if(farm){
-      entities=entities.filter(en=>en.id!==farm.id);
-      selected=selected.filter(s=>s.id!==farm.id);
+      let store = resourceStore(farm.team);
+      if (store && store.prepaidFarms > 0) {
+        store.prepaidFarms--;
+        tile.res = 300;
+        farm.hp = farm.maxHp;
+        if (farm.team === 0) showMsg("Farm auto-reseeded! (Prepaid remaining: " + store.prepaidFarms + ")");
+        return;
+      } else {
+        farm.exhausted = true;
+        farm.complete = false;
+        farm.buildProgress = 0;
+        tile.res = 0;
+        return;
+      }
     }
   }
+  tile.t=TERRAIN.GRASS;
+  if(config.clearOccupied)tile.occupied=null;
 }
 
 function updateGatherTask(e,config){
@@ -685,6 +697,32 @@ function updateUnit(e){
         }
       } else {
         if (!bt.complete) {
+          if (bt.btype === 'FARM' && bt.exhausted) {
+            let store = resourceStore(e.team);
+            if (store && store.prepaidFarms > 0) {
+              store.prepaidFarms--;
+              if (e.team === 0) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
+              bt.exhausted = false;
+              let tile = map[bt.y][bt.x];
+              tile.t = TERRAIN.FARM;
+              tile.res = 300;
+            } else {
+              if (store && store.wood >= 60) {
+                store.wood -= 60;
+                if (e.team === 0) showMsg("Farm reseeded (-60 Wood)");
+                bt.exhausted = false;
+                let tile = map[bt.y][bt.x];
+                tile.t = TERRAIN.FARM;
+                tile.res = 300;
+              } else {
+                if (e.team === 0) showMsg("Not enough wood to reseed farm!");
+                e.task = null;
+                e.buildTarget = null;
+                clearGatherTarget(e);
+                return;
+              }
+            }
+          }
           bt.buildProgress++;
           if (tick % 30 === 0 && e.team === 0 && window.playSound) {
             window.playSound('build');
@@ -912,6 +950,21 @@ function findSpawnTile(x,y,maxRadius=4){
 }
 
 function updateBuilding(e){
+  if (e.btype === 'FARM' && e.exhausted) {
+    if (e.team === 1) { // AI auto-reseed
+      let store = resourceStore(1);
+      if (store && store.wood >= 60) {
+        store.wood -= 60;
+        e.exhausted = false;
+        e.complete = true;
+        e.hp = e.maxHp;
+        let tile = map[e.y][e.x];
+        tile.t = TERRAIN.FARM;
+        tile.res = 300;
+      }
+    }
+  }
+
   if(!e.complete)return;
 
   // Tower / TC arrow fire (defensive structures auto-fire)

@@ -266,8 +266,17 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false) {
-  let ex = sx + dx, ey = sy + dy;
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5) {
+
+  let L = Math.sqrt(dx * dx + dy * dy);
+  if (L === 0) return;
+  let ux = dx / L, uy = dy / L;
+
+  let nsx = sx + ux * d1;
+  let nsy = sy + uy * d1;
+  let nex = sx + dx - ux * d2;
+  let ney = sy + dy - uy * d2;
+
   let isAlongIsoY = (dx > 0) !== (dy > 0);
   let px = isAlongIsoY ? 4 : -4;
   let py = 2; // always +2 (both perpendiculars have same Y component)
@@ -284,19 +293,19 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false) {
   // 1. Visible side face
   X.fillStyle = fillL;
   X.beginPath();
-  X.moveTo(sx + px, sy + py);
-  X.lineTo(ex + px, ey + py);
-  X.lineTo(ex + px, ey + py - wallH);
-  X.lineTo(sx + px, sy + py - wallH);
+  X.moveTo(nsx + px, nsy + py);
+  X.lineTo(nex + px, ney + py);
+  X.lineTo(nex + px, ney + py - wallH);
+  X.lineTo(nsx + px, nsy + py - wallH);
   X.closePath(); X.fill(); X.stroke();
 
   // 2. Top walkway face
   X.fillStyle = fillTop;
   X.beginPath();
-  X.moveTo(sx - px, sy - py - wallH);
-  X.lineTo(sx + px, sy + py - wallH);
-  X.lineTo(ex + px, ey + py - wallH);
-  X.lineTo(ex - px, ey - py - wallH);
+  X.moveTo(nsx - px, nsy - py - wallH);
+  X.lineTo(nsx + px, nsy + py - wallH);
+  X.lineTo(nex + px, ney + py - wallH);
+  X.lineTo(nex - px, ney - py - wallH);
   X.closePath(); X.fill(); X.stroke();
 }
 
@@ -366,14 +375,18 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
 
   // 3. Roof (Flat top face or Peaked gable slopes)
   if(roofType==='flat'){
-    // Top face base diamond
+    // Fill left half facet
     X.fillStyle=roofL;X.beginPath();
-    X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
-    X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx-bw,sy+bhh-bh);X.closePath();X.fill();X.stroke();
-    // Shaded right half for 3D depth
+    X.moveTo(sx-bw,sy+bhh-bh);X.lineTo(sx,sy-bh);
+    X.lineTo(sx,sy+bhh*2-bh);X.closePath();X.fill();
+    // Fill right half facet
     X.fillStyle=roofR;X.beginPath();
     X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
-    X.lineTo(sx,sy+bhh*2-bh);X.closePath();X.fill();X.stroke();
+    X.lineTo(sx,sy+bhh*2-bh);X.closePath();X.fill();
+    // Stroke outer boundary only
+    X.beginPath();
+    X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
+    X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx-bw,sy+bhh-bh);X.closePath();X.stroke();
   } else if(roofType==='peaked'){
     // Left roof slope
     X.fillStyle=roofL;X.beginPath();
@@ -591,37 +604,238 @@ function drawBuilding(e, part = null){
   X.lineJoin = 'round';
 
   if(e.btype==='TC'){
-    bh=40; // main keep is 40px tall above sy+6 offset → highest point sy-34; use 40 for coverage
-    // 4-Block modular TC layout
-    // 1. Tall Main Keep Tower
-    drawBuildingBlock(sx, sy+6, 26, 13, 40, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
-    // Corner Turrets on main keep tower roof
-    drawBuildingBlock(sx-26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
-    drawBuildingBlock(sx+26, sy+6-40+13, 4, 2, 8, '#e0e0d8','#bcbcb0','flat',0,tc,tcD, darken);
-    
-    // 2. Left Annex Wing
-    drawBuildingBlock(sx-32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD, darken);
-    // 3. Right Annex Great Hall
-    drawBuildingBlock(sx+32, sy+22, 26, 13, 22, '#d0d0c8','#acac9c','flat',0,tc,tcD, darken);
-    // 4. Low Gatehouse Entrance
-    drawBuildingBlock(sx, sy+44, 20, 10, 14, '#c0c0b8','#a0a098','flat',0,'#606058','#505048', darken);
-    // Double Gate on Gatehouse front corner (with drawbridge chains)
-    drawCornerDoubleGate(sx, sy+44, 10, 10, '#3e2715','#5c3d24', darken);
-    
-    X.strokeStyle='#000000';X.lineWidth=1;
+    bh=60; // 40 * 1.5 = 60
+
+    // Draw stone foundation pavement covering the keep footprint in the back quadrant
+    X.fillStyle = darken ? darkenColor('#8d8d80') : '#b8b8b0';
+    X.strokeStyle = '#000000';
+    X.lineWidth = 1.3;
     X.beginPath();
-    X.moveTo(sx, sy+64-10);X.lineTo(sx-4, sy+64-11);
-    X.moveTo(sx, sy+64-10);X.lineTo(sx+4, sy+64-11);
+    X.moveTo(sx, sy);
+    X.lineTo(sx + 48, sy + 24);
+    X.lineTo(sx, sy + 48);
+    X.lineTo(sx - 48, sy + 24);
+    X.closePath();
+    X.fill();
     X.stroke();
 
-    // Window slits on main keep
-    X.fillStyle='#000000';
-    X.fillRect(sx-10, sy+6-40+5, 2, 5);
-    X.strokeRect(sx-10, sy+6-40+5, 2, 5);
-    X.fillRect(sx+10, sy+6-40+5, 2, 5);
-    X.strokeRect(sx+10, sy+6-40+5, 2, 5);
-    // Waving flag on main keep tower top
-    if(e.complete && visible) drawWavingFlag(sx, sy+6, 40, tc, tcD);
+    // 1. Tall Main Keep Tower (solid stone, centered in the back quadrant)
+    drawBuildingBlock(sx, sy, 48, 24, 60, '#e0e0d8','#bcbcb0','flat',0,'#b8b8b0','#b8b8b0', darken);
+    // 3D Castle battlements (crenellations) on flat top edges
+    let merlons = [
+      { x: sx,      y: sy - 56 }, // Top corner (0px gap to top)
+      { x: sx - 20, y: sy - 46 }, // Back-left (perfectly centered on top-left edge)
+      { x: sx + 20, y: sy - 46 }, // Back-right (perfectly centered on top-right edge)
+      { x: sx - 40, y: sy - 36 }, // Left corner (0px gap to left)
+      { x: sx + 40, y: sy - 36 }, // Right corner (0px gap to right)
+      { x: sx - 20, y: sy - 26 }, // Front-left (perfectly centered on bottom-left edge)
+      { x: sx + 20, y: sy - 26 }, // Front-right (perfectly centered on bottom-right edge)
+      { x: sx,      y: sy - 16 }  // Bottom corner (0px gap to bottom)
+    ];
+
+    let drawMerlon = (mx, my) => {
+      let wl = '#e0e0d8', wr = '#bcbcb0', rf = '#b8b8b0';
+      if (darken) {
+        wl = darkenColor(wl);
+        wr = darkenColor(wr);
+        rf = darkenColor(rf);
+      }
+      X.strokeStyle = '#000000';
+      X.lineWidth = 1.3;
+      X.lineJoin = 'round';
+
+      // 1. Left Wall (fully outlined)
+      X.fillStyle = wl;
+      X.beginPath();
+      X.moveTo(mx - 8, my - 10);
+      X.lineTo(mx, my - 6);
+      X.lineTo(mx, my + 4);
+      X.lineTo(mx - 8, my);
+      X.closePath();
+      X.fill();
+      X.stroke();
+
+      // 2. Right Wall (fully outlined)
+      X.fillStyle = wr;
+      X.beginPath();
+      X.moveTo(mx, my - 6);
+      X.lineTo(mx + 8, my - 10);
+      X.lineTo(mx + 8, my);
+      X.lineTo(mx, my + 4);
+      X.closePath();
+      X.fill();
+      X.stroke();
+
+      // 3. Flat Top (fully outlined)
+      X.fillStyle = rf;
+      X.beginPath();
+      X.moveTo(mx, my - 14);
+      X.lineTo(mx + 8, my - 10);
+      X.lineTo(mx, my - 6);
+      X.lineTo(mx - 8, my - 10);
+      X.closePath();
+      X.fill();
+      X.stroke();
+    };
+
+    merlons.forEach(m => {
+      drawMerlon(m.x, m.y);
+    });
+
+    // 3D Recessed arrow-loop windows on keep walls (perfectly aligned with wall perspective & depth)
+    let winFill = darken ? darkenColor('#1c1c1c') : '#1c1c1c';
+    let stoneShadow = darken ? darkenColor('#a0a098') : '#bcbcb0';
+    let stoneDark = darken ? darkenColor('#8c8c84') : '#a8a8a0';
+
+    X.strokeStyle = '#000000';
+    X.lineWidth = 1.3;
+    X.lineJoin = 'round';
+
+    // 1. Left Wall Window (skewed 2:1 up-right, recessed inwards-right)
+    let lwx = sx - 24, lwy = sy - 6;
+    let lO1 = { x: lwx - 4, y: lwy - 9 };
+    let lO2 = { x: lwx + 4, y: lwy - 5 };
+    let lO3 = { x: lwx + 4, y: lwy + 9 };
+    let lO4 = { x: lwx - 4, y: lwy + 5 };
+
+    let lB1 = { x: lwx - 2, y: lwy - 8 };
+    let lB2 = { x: lwx + 6, y: lwy - 4 };
+    let lB3 = { x: lwx + 6, y: lwy + 10 };
+    let lB4 = { x: lwx - 2, y: lwy + 6 };
+
+    // Fill inside left wall depth panel
+    X.fillStyle = stoneShadow;
+    X.beginPath();
+    X.moveTo(lO1.x, lO1.y);
+    X.lineTo(lB1.x, lB1.y);
+    X.lineTo(lB4.x, lB4.y);
+    X.lineTo(lO4.x, lO4.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Fill inside bottom ledge depth panel
+    X.fillStyle = stoneDark;
+    X.beginPath();
+    X.moveTo(lO4.x, lO4.y);
+    X.lineTo(lB4.x, lB4.y);
+    X.lineTo(lB3.x, lB3.y);
+    X.lineTo(lO3.x, lO3.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Fill dark back wall opening
+    X.fillStyle = winFill;
+    X.beginPath();
+    X.moveTo(lB1.x, lB1.y);
+    X.lineTo(lB2.x, lB2.y);
+    X.lineTo(lB3.x, lB3.y);
+    X.lineTo(lB4.x, lB4.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Outer frame outline
+    X.beginPath();
+    X.moveTo(lO1.x, lO1.y);
+    X.lineTo(lO2.x, lO2.y);
+    X.lineTo(lO3.x, lO3.y);
+    X.lineTo(lO4.x, lO4.y);
+    X.closePath(); X.stroke();
+
+    // 2. Right Wall Window (skewed 2:1 down-right, recessed inwards-left)
+    let rwx = sx + 24, rwy = sy - 6;
+    let rO1 = { x: rwx - 4, y: rwy - 5 };
+    let rO2 = { x: rwx + 4, y: rwy - 9 };
+    let rO3 = { x: rwx + 4, y: rwy + 5 };
+    let rO4 = { x: rwx - 4, y: rwy + 9 };
+
+    let rB1 = { x: rwx - 6, y: rwy - 4 };
+    let rB2 = { x: rwx + 2, y: rwy - 8 };
+    let rB3 = { x: rwx + 2, y: rwy + 6 };
+    let rB4 = { x: rwx - 6, y: rwy + 10 };
+
+    // Fill inside right wall depth panel
+    X.fillStyle = stoneShadow;
+    X.beginPath();
+    X.moveTo(rO2.x, rO2.y);
+    X.lineTo(rB2.x, rB2.y);
+    X.lineTo(rB3.x, rB3.y);
+    X.lineTo(rO3.x, rO3.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Fill inside bottom ledge depth panel
+    X.fillStyle = stoneDark;
+    X.beginPath();
+    X.moveTo(rO4.x, rO4.y);
+    X.lineTo(rB4.x, rB4.y);
+    X.lineTo(rB3.x, rB3.y);
+    X.lineTo(rO3.x, rO3.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Fill dark back wall opening
+    X.fillStyle = winFill;
+    X.beginPath();
+    X.moveTo(rB1.x, rB1.y);
+    X.lineTo(rB2.x, rB2.y);
+    X.lineTo(rB3.x, rB3.y);
+    X.lineTo(rB4.x, rB4.y);
+    X.closePath(); X.fill(); X.stroke();
+
+    // Outer frame outline
+    X.beginPath();
+    X.moveTo(rO1.x, rO1.y);
+    X.lineTo(rO2.x, rO2.y);
+    X.lineTo(rO3.x, rO3.y);
+    X.lineTo(rO4.x, rO4.y);
+    X.closePath(); X.stroke();
+
+
+
+    // 2. Left Annex Roof (open-sided shelter roof covering left quadrant, matching team color)
+    let laX = sx - 48, laY = sy + 24;
+    let laH = 16, laRoofH = 12;
+    let laL = tc, laR = tcD;
+    if (darken) { laL = darkenColor(laL); laR = darkenColor(laR); }
+    X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
+    X.fillStyle=laL;X.beginPath();
+    X.moveTo(laX,laY-laH-laRoofH); X.lineTo(laX,laY+24*2-laH-laRoofH);
+    X.lineTo(laX,laY+24*2-laH); X.lineTo(laX-48,laY+24-laH); X.closePath(); X.fill(); X.stroke();
+    X.fillStyle=laR;X.beginPath();
+    X.moveTo(laX,laY-laH-laRoofH); X.lineTo(laX,laY+24*2-laH-laRoofH);
+    X.lineTo(laX,laY+24*2-laH); X.lineTo(laX+48,laY+24-laH); X.closePath(); X.fill(); X.stroke();
+
+    // 3. Right Annex Roof (open-sided shelter roof covering right quadrant, matching team color)
+    let raX = sx + 48, raY = sy + 24;
+    let raH = 16, raRoofH = 12;
+    let raL = tc, raR = tcD;
+    if (darken) { raL = darkenColor(raL); raR = darkenColor(raR); }
+    X.fillStyle=raL;X.beginPath();
+    X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
+    X.lineTo(raX,raY+24*2-raH); X.lineTo(raX-48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
+    X.fillStyle=raR;X.beginPath();
+    X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
+    X.lineTo(raX,raY+24*2-raH); X.lineTo(raX+48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
+
+    // 5. Draw all wooden posts (sorted back-to-front for perfect depth overlap)
+    let posts = [
+      // Left Annex posts (height 16)
+      { x: sx - 96, y: sy + 48, h: 16 }, // Left-most
+      { x: sx - 48, y: sy + 72, h: 16 }, // Bottom-left
+
+      // Right Annex posts (height 16)
+      { x: sx + 96, y: sy + 48, h: 16 }, // Right-most
+      { x: sx + 48, y: sy + 72, h: 16 }, // Bottom-right
+
+      // Shared Center Post (height 16)
+      { x: sx,      y: sy + 48, h: 16 }  // Center
+    ];
+    posts.sort((a, b) => a.y - b.y);
+
+    let postColor = '#8a6a4a';
+    let pc = darken ? darkenColor(postColor) : postColor;
+    X.lineJoin = 'round';
+    posts.forEach(p => {
+      X.strokeStyle = pc; X.lineWidth = 3.5;
+      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
+      X.strokeStyle = '#000000'; X.lineWidth = 1;
+      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
+    });
   }
   else if(e.btype==='HOUSE'){
     bh=22; // wall=12 + peaked roofH=10 -> 22 height
@@ -772,68 +986,61 @@ function drawBuilding(e, part = null){
     bh=36;
     let linkY = sy + 16;
     let wallH = 14;
-    let getB = (tx, ty) => entities.find(en => en.type === 'building' && en.x === tx && en.y === ty);
+    let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
+
+    // Castle Age Watch Tower — 3 stacked blocks. Base is shifted so its
+    // front-bottom vertex lands on linkY (sy+16), same as wall pillars,
+    // so the wall link's near edge meets the tower with no gap. Drawn
+    // before the links (like WALL's pillar) since the links extend
+    // toward the viewer and should overlap the tower's base, not be
+    // hidden behind it.
+    drawBuildingBlock(sx, sy+2+7, 14, 7, 30, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+    drawBuildingBlock(sx, sy+2-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
+    drawBuildingBlock(sx, sy+2-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'peaked', 6, tc, tcD, darken);
 
     // South neighbor (y+1)
     let sB = getB(e.x, e.y + 1);
-    if (sB) {
-      if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, -32, 16, wallH, darken);
-      } else if (sB.btype === 'GATE') {
-        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH, darken);
-      }
+    if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+      drawWallLink(sx, linkY, -32, 16, wallH, darken);
     }
 
     // East neighbor (x+1)
     let eB = getB(e.x + 1, e.y);
-    if (eB) {
-      if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, 32, 16, wallH, darken);
-      } else if (eB.btype === 'GATE') {
-        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH, darken);
-      }
+    if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+      drawWallLink(sx, linkY, 32, 16, wallH, darken);
     }
 
-    // Castle Age Watch Tower — 3 stacked blocks (centered at sy+16)
-    drawBuildingBlock(sx, sy+9, 14, 7, 22, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
-    drawBuildingBlock(sx, sy+9-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
-    drawBuildingBlock(sx, sy+9-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'flat', 0, tc, tcD, darken);
-    if (e.complete && visible) drawWavingFlag(sx, sy+9, 44, tc, tcD);
+    if (e.complete && visible) drawWavingFlag(sx, sy+2, 40, tc, tcD);
   }
   else if(e.btype==='WALL'){
     bh=14;
     let pillarH = 22;
     let wallH = 14;   // lower than pillar to create bastion crenellated effect
     let linkY = sy + 16;
-    let getB = (tx, ty) => entities.find(en => en.type === 'building' && en.x === tx && en.y === ty);
+    let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
 
-    // 1. Draw central pillar first (so that front-facing links connect on top of its base)
-    drawBuildingBlock(sx, sy+11.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+    // 1. Draw central pillar first (centered concentrically at sy+16)
+    // Colors match drawWallLink's palette so the pillar reads as part of
+    // the same wall run instead of a separately-shaded block; top is a
+    // single flat color rather than a two-tone faceted cap.
+    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, '#cfcfc4', '#adada0', 'flat', 0, '#b8b8b0', '#b8b8b0', darken);
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
     // South neighbor (y+1)
     let sB = getB(e.x, e.y + 1);
-    if (sB) {
-      if (sB.btype === 'WALL' || sB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, -32, 16, wallH, darken);
-      } else if (sB.btype === 'GATE') {
-        if (sB.h > sB.w) drawWallLink(sx, linkY, -32, 16, wallH, darken);
-      }
+    if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+      drawWallLink(sx, linkY, -32, 16, wallH, darken);
     }
 
     // East neighbor (x+1)
     let eB = getB(e.x + 1, e.y);
-    if (eB) {
-      if (eB.btype === 'WALL' || eB.btype === 'TOWER') {
-        drawWallLink(sx, linkY, 32, 16, wallH, darken);
-      } else if (eB.btype === 'GATE') {
-        if (eB.w > eB.h) drawWallLink(sx, linkY, 32, 16, wallH, darken);
-      }
+    if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+      drawWallLink(sx, linkY, 32, 16, wallH, darken);
     }
   }
 
   else if(e.btype==='GATE'){
-    let pillarH = 22;
+    let pillarH = 28;
     bh = pillarH;
     let t1sx, t1sy, t2sx, t2sy;
     let sx_center, sy_center;
@@ -851,22 +1058,27 @@ function drawBuilding(e, part = null){
       sx_center = sx + 16; sy_center = sy + 24;
     }
 
+    let dx = t2sx - t1sx, dy = t2sy - t1sy;
+    let gp = visible ? (e.gateProgress || 0) : 0; // frozen closed in shroud
+    let slideY = gp * 26;
+
     if (part === 'back' || part === null) {
-      // Draw back post (Tower 1)
-      drawBuildingBlock(t1sx, t1sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+      // 1. Draw back post (Tower 1 - larger bastion centered at t1sy-7)
+      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+
+      // Draw battlements (merlons) on Tower 1 top
+      let m1 = [
+        { x: t1sx,      y: t1sy - 35 }, // Top
+        { x: t1sx - 10, y: t1sy - 30 }, // Left
+        { x: t1sx + 10, y: t1sy - 30 }, // Right
+        { x: t1sx,      y: t1sy - 25 }  // Bottom
+      ];
+      m1.forEach(m => {
+        drawBuildingBlock(m.x, m.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+      });
 
       if (e.complete) {
-        let gp = visible ? (e.gateProgress || 0) : 0; // frozen closed in shroud
-        let slideY = gp * 22;
-        let dx = t2sx - t1sx, dy = t2sy - t1sy;
-
-        // Ground shadow
-        X.strokeStyle = 'rgba(0,0,0,0.3)'; X.lineWidth = 2.5;
-        X.beginPath();
-        X.moveTo(t1sx, t1sy); X.lineTo(t2sx, t2sy);
-        X.stroke();
-
-        // Sliding portcullis bars
+        // Sliding portcullis bars (height 26)
         X.strokeStyle = darken ? darkenColor('#3a2515') : '#3a2515'; X.lineWidth = 1.8;
         let barCount = 7;
         for (let i = 1; i <= barCount; i++) {
@@ -875,20 +1087,29 @@ function drawBuilding(e, part = null){
           let by = t1sy + t * dy;
           X.beginPath();
           X.moveTo(bx, by - slideY);
-          X.lineTo(bx, by - 22 - slideY);
+          X.lineTo(bx, by - 20 - slideY);
           X.stroke();
         }
 
-        // Horizontal diagonal lattice bars
-        X.strokeStyle = darken ? darkenColor('#111') : '#111'; X.lineWidth = 1.2;
-        X.beginPath();
-        X.moveTo(t1sx, t1sy - 7 - slideY); X.lineTo(t2sx, t2sy - 7 - slideY);
-        X.moveTo(t1sx, t1sy - 15 - slideY); X.lineTo(t2sx, t2sy - 15 - slideY);
-        X.stroke();
-
-        // Lintel arch bridging the two towers (drawn as part of the back-to-mid layer)
-        drawWallLink(t1sx, t1sy - pillarH, dx, dy, 5, darken);
       }
+
+      // 1. Draw connection links for Post 1 (back post centered at t1sy)
+      let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
+      let wallH = 14;
+      if (wallLineNS) {
+        // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
+        let eB = getB(e.x + 1, e.y);
+        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken);
+        }
+      } else {
+        // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
+        let sB = getB(e.x, e.y + 1);
+        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken);
+        }
+      }
+
       if (part === 'back') {
         X.globalAlpha = 1;
         return;
@@ -896,20 +1117,42 @@ function drawBuilding(e, part = null){
     }
 
     if (part === 'front' || part === null) {
-      // Draw front post (Tower 2)
-      drawBuildingBlock(t2sx, t2sy - 4.5, 9, 4.5, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+      // 2. Draw front post (Tower 2 - larger bastion centered at t2sy-7)
+      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
 
-      // Draw connection links
+      // Draw battlements (merlons) on Tower 2 top
+      let m2 = [
+        { x: t2sx,      y: t2sy - 35 }, // Top
+        { x: t2sx - 10, y: t2sy - 30 }, // Left
+        { x: t2sx + 10, y: t2sy - 30 }, // Right
+        { x: t2sx,      y: t2sy - 25 }  // Bottom
+      ];
+      m2.forEach(m => {
+        drawBuildingBlock(m.x, m.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+      });
+
+      // Draw connection links for Post 2 (front post centered at t2sy)
       let wallH = 14;
+      let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
       if (wallLineNS) {
-        let sB = entities.find(en => en.type === 'building' && en.x === e.x && en.y === e.y + 2);
-        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER')) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken);
+        // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
+        let sB = getB(e.x, e.y + 2);
+        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, d1=8);
+        }
+        let eB = getB(e.x + 1, e.y + 1);
+        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, d1=8);
         }
       } else {
-        let eB = entities.find(en => en.type === 'building' && en.x === e.x + 2 && en.y === e.y);
-        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER')) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken);
+        // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
+        let eB = getB(e.x + 2, e.y);
+        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, d1=8);
+        }
+        let sB = getB(e.x + 1, e.y + 1);
+        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, d1=8);
         }
       }
     }
@@ -918,7 +1161,7 @@ function drawBuilding(e, part = null){
     bh=0;
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
     let growth=tileRes/(e.maxFood||300);
-    if(growth>0){
+    if(growth>0 && !e.exhausted){
       let cropH=3+growth*8;
       let cropCount=Math.max(2,Math.ceil(9*growth));
       let cropColor=growth>0.5?'#5a9828':'#8a9838';
@@ -934,6 +1177,19 @@ function drawBuilding(e, part = null){
           X.beginPath();X.arc(cx2,cy2-cropH,1.5+growth,0,Math.PI*2);X.fill();
           X.strokeStyle='#000000';X.lineWidth=0.75;X.stroke();
         }
+      }
+    } else {
+      // Draw withered, exhausted stalks
+      let cropColor = darken ? '#251e16' : '#3f2f22';
+      let cropCount = 5;
+      let cropH = 4;
+      for(let i=0;i<cropCount;i++){
+        let row=Math.floor(i/2), col=(i%2)*2-1;
+        let cy2=sy+bhh*0.55+row*bhh*0.35;
+        let cx2=sx+col*bw*0.2;
+        X.strokeStyle=cropColor;X.lineWidth=1.0;
+        // Draw slanted lines representing dry, collapsed stalks
+        X.beginPath();X.moveTo(cx2,cy2);X.lineTo(cx2+3,cy2-cropH);X.stroke();
       }
     }
   }

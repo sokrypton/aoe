@@ -183,7 +183,7 @@ function planAIWalls(aiTC,vils,profile){
 
 function computeAIWallRing(tc,radius){
   let r=Math.max(4,Math.round(radius));
-  let cx=tc.x+1,cy=tc.y+1; // TC is 2x2, build the ring around its center
+  let cx=tc.x+Math.floor(tc.w/2),cy=tc.y+Math.floor(tc.h/2); // build the ring around its center
   let tiles=[];
   let seen=new Set();
   // Each tile remembers which side of the ring it's on, so the gate can be
@@ -222,7 +222,7 @@ function getEnemyDirection(tc){
     let plStart=STARTS.find(s=>s.team===0);
     ex=plStart?plStart.x:0;ey=plStart?plStart.y:0;
   }
-  let vx=ex-(tc.x+1),vy=ey-(tc.y+1);
+  let vx=ex-(tc.x+Math.floor(tc.w/2)),vy=ey-(tc.y+Math.floor(tc.h/2));
   let len=Math.hypot(vx,vy)||1;
   return {dx:vx/len,dy:vy/len};
 }
@@ -235,7 +235,7 @@ function scoreWallSide(side,tc){
   let dir=WALL_SIDE_DIR[side];
   let score=0;
   entities.filter(e=>e.type==='building'&&e.team===1&&['LCAMP','MCAMP','MILL'].includes(e.btype)).forEach(d=>{
-    let vx=(d.x+0.5)-(tc.x+1),vy=(d.y+0.5)-(tc.y+1);
+    let vx=(d.x+0.5)-(tc.x+Math.floor(tc.w/2)),vy=(d.y+0.5)-(tc.y+Math.floor(tc.h/2));
     let len=Math.hypot(vx,vy)||1;
     score+=(vx/len)*dir.dx+(vy/len)*dir.dy;
   });
@@ -470,7 +470,7 @@ function controlAIMilitary(mils,aiTC,profile){
     if(localAllyPower>0&&localEnemyPower>localAllyPower*1.6){
       mils.forEach(m=>{
         m.target=null;
-        pathUnitTo(m,aiTC.x+1,aiTC.y+1);
+        pathUnitTo(m,aiTC.x+Math.floor(aiTC.w/2),aiTC.y+Math.floor(aiTC.h/2));
       });
       return;
     }
@@ -656,7 +656,7 @@ function findAIDropSite(terrain,type,tc){
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
     if(map[y][x].t!==terrain||map[y][x].res<=0)continue;
-    if(dist({x,y},{x:tc.x+1,y:tc.y+1})>maxDist)continue;
+    if(dist({x,y},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})>maxDist)continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by))continue;
@@ -674,7 +674,7 @@ function findAIDropSite(terrain,type,tc){
   candidates.sort((a,b)=>a.s-b.s);
   for(let i=0;i<candidates.length;i++){
     let c=candidates[i];
-    if(findPath(tc.x+1,tc.y+1,c.x,c.y,-1).length>0)return{x:c.x,y:c.y};
+    if(findPath(tc.x+Math.floor(tc.w/2),tc.y+Math.floor(tc.h/2),c.x,c.y,-1).length>0)return{x:c.x,y:c.y};
   }
   return null;
 }
