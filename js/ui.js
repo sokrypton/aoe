@@ -13,6 +13,8 @@ function setPortraitIcon(port, key, fallbackEmoji){
   }
 }
 
+
+
 function updateUI(){
   let currentFood = Math.floor(res.food);
   let currentWood = Math.floor(res.wood);
@@ -50,6 +52,11 @@ function updateUI(){
     // tracked field) still passes the dirty-state check below and refreshes
     // the '.cam-locked' portrait indicator immediately.
     currentSelectionDetails += `:cam${window.cameraFollowId === e.id ? 1 : 0}`;
+    // Multi-select renders a live per-unit HP bar for every selected unit
+    // (not just selected[0]), so the dirty check needs all of their HP too.
+    if (selected.length > 1) {
+      currentSelectionDetails += ':grid' + selected.map(s => s.id + '_' + s.hp).join(',');
+    }
   }
 
   // Initialize dirty state tracker if not present
@@ -108,10 +115,59 @@ function updateUI(){
   }
 
   let act=document.getElementById('actions');
-  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main');
+  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount;
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
+  let bottomEl = document.getElementById('bottom');
+  if (bottomEl) {
+    let isSubMenu = window.currentVillagerMenu === 'eco' || window.currentVillagerMenu === 'mil';
+    bottomEl.classList.toggle('menu-active', isSubMenu);
+  }
   if(rebuildActions)act.innerHTML='';
+
+  // Multi-select: the portrait+stats card is replaced by a grid of every
+  // selected unit's own icon (AoE2-style), each with its own mini HP bar,
+  // rather than one aggregate card for selected[0]. Rebuilt only when the
+  // selection or any selected unit's HP changes (see currentSelectionDetails).
+  let selInfo=document.getElementById('sel-info');
+  let selGrid=document.getElementById('sel-grid');
+  let isMulti=selected.length>1;
+  if(selInfo) selInfo.classList.toggle('multi-select', isMulti);
+  if(selGrid && currentSelectionDetails!==(window.lastSelGridDetails||'')){
+    window.lastSelGridDetails=currentSelectionDetails;
+    selGrid.innerHTML='';
+    if(isMulti){
+      selected.forEach(s=>{
+        let key=s.type==='building'?s.btype:s.utype;
+        let data=s.type==='building'?BLDGS[key]:UNITS[key];
+        let icon=document.createElement('div');
+        icon.className='sel-unit-icon';
+        setPortraitIcon(icon, key, data&&data.icon);
+        let hpPct=Math.max(0,Math.min(100,Math.floor(s.hp/s.maxHp*100)));
+        let hpColor='#2b8a3e';
+        if(hpPct<20) hpColor='#cc3333';
+        else if(hpPct<50) hpColor='#d9a711';
+        let bar=document.createElement('div');bar.className='sel-unit-hp';
+        let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
+        fill.style.width=hpPct+'%';
+        fill.style.background=hpColor;
+        bar.appendChild(fill);
+        icon.appendChild(bar);
+        icon.title=(data&&data.name||key)+` (HP ${s.hp}/${s.maxHp})\nLeft-click: select only this unit\nRight-click or Shift-click: remove from selection`;
+        icon.onclick=(ev)=>{
+          if(ev.shiftKey) selected=selected.filter(u=>u.id!==s.id);
+          else selected=[s];
+          updateUI();
+        };
+        icon.oncontextmenu=(ev)=>{
+          ev.preventDefault();
+          selected=selected.filter(u=>u.id!==s.id);
+          updateUI();
+        };
+        selGrid.appendChild(icon);
+      });
+    }
+  }
 
   let port = document.getElementById('sel-portrait');
   if(gameOver){
@@ -130,11 +186,7 @@ function updateUI(){
   if(selected.length===0){
     if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='AoE II Mini';
-    if(isMobile){
-      document.getElementById('sel-details').textContent='Tap: select unit/building\nWith units selected, tap map\nto move/gather/attack\nDrag to pan camera';
-    } else {
-      document.getElementById('sel-details').textContent='Left-click: select\nRight-click: command\nDrag: box select | WASD: scroll';
-    }
+    document.getElementById('sel-details').textContent='Select a unit or building';
     return;
   }
   let e=selected[0];
@@ -148,32 +200,37 @@ function updateUI(){
     else if (hpPct < 50) hpColor = '#d9a711';
     let det=`HP: ${e.hp}/${e.maxHp}`;
     det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
-    if(!e.complete && !e.exhausted) det+=`<br>Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
+    
+    let bAtk = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? BLDGS.TOWER.atk : 0);
+    let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? 5 : 0);
+    if(bAtk > 0) {
+      det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">⚔️ ${bAtk}  🏹 ${bRange}</div>`;
+    }
+    if(!e.complete && !e.exhausted) det+=`<div style="margin-top:1px;">Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
     else {
-      if(b.pop) det+=`<br>Provides ${b.pop} population`;
+      if(b.pop) det+=`<div style="margin-top:1px;">Provides ${b.pop} population</div>`;
       else if(b.drop) {
-        det+=`<br>Dropoff: ${b.drop}`;
+        det+=`<div style="margin-top:1px;">Dropoff: ${b.drop}</div>`;
         if (e.btype === 'MILL') {
-          det+=`<br>Prepaid Reseeds: ${res.prepaidFarms || 0}`;
+          det+=`<div style="margin-top:1px;">Prepaid Reseeds: ${res.prepaidFarms || 0}</div>`;
         }
       }
       else if(b.isFarm){
         if(e.exhausted){
-          det+=`<br><span style="color:#ff4444;font-weight:bold;">EXHAUSTED</span>`;
+          det+=`<div style="color:#ff4444;font-weight:bold;margin-top:1px;">EXHAUSTED</div>`;
           if(e.buildProgress > 0) {
-            det+=`<br>Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%`;
+            det+=`<div style="margin-top:1px;">Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
           }
         } else {
           let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
-          det+=`<br>Food remaining: ${tr}`;
+          det+=`<div style="margin-top:1px;">Food remaining: ${tr}</div>`;
         }
       }
     }
     
     if(e.queue && e.queue.length>0){
       let pct=Math.floor(e.trainTick/(UNITS[e.queue[0]].trainTime)*100);
-      det+=`<div class="train-container">`;
-      det+=`  <div class="train-title">Training: <strong>${UNITS[e.queue[0]].name}</strong></div>`;
+      det+=`<div class="train-compact">`;
       det+=`  <div class="train-bar-bg"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
       det+=`  <div class="train-queue-slots">`;
       e.queue.forEach((ut, idx) => {
@@ -185,14 +242,6 @@ function updateUI(){
       });
       det+=`  </div>`;
       det+=`</div>`;
-    } else if(e.team===0) {
-      if(e.complete && b.builds) {
-        det+=`<br><span style="color:#bfa054">Click button below to train</span>`;
-      } else if(e.complete && e.btype === 'MILL') {
-        det+=`<br><span style="color:#bfa054">Prepay farm reseeds below</span>`;
-      } else if(b.isFarm && e.exhausted) {
-        det+=`<br><span style="color:#bfa054">Reactivate farm below</span>`;
-      }
     }
     document.getElementById('sel-details').innerHTML=det;
     if(rebuildActions&&e.team===0){
@@ -201,29 +250,28 @@ function updateUI(){
           let u=UNITS[ut];
           let btn=document.createElement('div');btn.className='act-btn';
           let costStr=formatCost(u.cost);
-          let desc=u.desc||'';
-          let statsStr=`⚔ ${u.atk} ATK&nbsp;&nbsp;❤ ${u.hp} HP`+(u.range>0?`&nbsp;&nbsp;➶ ${u.range} RNG`:'');
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
-            `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-stats">${statsStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
       }
+      if(e.complete && e.btype === 'TC' && currentIdleCount > 0) {
+        let btn=document.createElement('div');btn.className='act-btn idle-active';
+        btn.innerHTML=`<div class="btn-emoji" style="font-size: 24px; line-height: 1;">🧑‍🌾</div><div class="idle-badge">${currentIdleCount}</div>`;
+        btn.onclick=()=>selectIdleVillager();
+        act.appendChild(btn);
+      }
       if(e.complete && e.btype === 'MILL') {
         let btn=document.createElement('div');btn.className='act-btn framed';
         let costStr='W:60';
-        let desc='Queue a farm reseed. When a farm runs out of food, it will automatically consume a reseed from the queue to replenish itself.';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>` +
-          `<div class="tooltip"><strong>Prepay Farm Reseed</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>prepayFarm();
         act.appendChild(btn);
       }
       if(b.isFarm && e.exhausted) {
         let btn=document.createElement('div');btn.className='act-btn framed';
         let costStr='W:60';
-        let desc='Reactivate this exhausted farm. Instantly replenishes food.';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>` +
-          `<div class="tooltip"><strong>Reactivate Farm</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
       }
@@ -233,7 +281,15 @@ function updateUI(){
       setPortraitIcon(port, e.utype, UNITS[e.utype].icon);
       port.classList.toggle('cam-locked', window.cameraFollowId===e.id);
     }
-    document.getElementById('sel-name').textContent=UNITS[e.utype].name+(selected.length>1?` (${selected.length})`:'');
+    let unitName = '';
+    if (e.utype === 'sheep' || e.utype === 'sheep_carcass') {
+      unitName = selected.length > 1 ? 'Sheep' : 'Sheep';
+    } else if (e.utype === 'villager') {
+      unitName = selected.length > 1 ? 'Villagers' : 'Villager';
+    } else {
+      unitName = selected.length > 1 ? 'Soldiers' : 'Soldier';
+    }
+    document.getElementById('sel-name').textContent = unitName + (selected.length > 1 ? ` (${selected.length})` : '');
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
     let hpColor = '#2b8a3e';
     if (hpPct < 20) hpColor = '#cc3333';
@@ -249,19 +305,17 @@ function updateUI(){
       if (uData.atk > 0) stats.push(`⚔️ ${uData.atk}`);
       if (uData.range > 0) stats.push(`🏹 ${uData.range}`);
       stats.push(`🏃 ${uData.speed.toFixed(2)}`);
-      det += `<br><span style="color:#ffd700;font-weight:bold;font-size:12px;">${stats.join('  ')}</span>`;
+      det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">${stats.join('  ')}</div>`;
     }
 
     // Show friendly task names
     let taskNames={chop:'Chopping wood',mine_gold:'Mining gold',mine_stone:'Mining stone',
       forage:'Foraging berries',farm:'Farming',build:'Building','return':'Returning resources'};
-    if(e.task) det+=`<br>${taskNames[e.task]||e.task}`;
-    if(e.carrying>0) det+=` (${e.carrying} ${e.carryType})`;
-    // Show command hints
-    if(e.utype==='villager'&&e.team===0&&!e.task){
-      if(isMobile) det+=`<br><span style="color:#bfa054">Tap resources to gather</span>`;
-      else det+=`<br><span style="color:#bfa054">Right-click resources to gather</span>`;
-    }
+    let taskStr = '';
+    if(e.task) taskStr += taskNames[e.task]||e.task;
+    if(e.carrying>0) taskStr += ` (${e.carrying} ${e.carryType})`;
+    if(taskStr) det+=`<div style="margin-top:1px;">${taskStr}</div>`;
+
     document.getElementById('sel-details').innerHTML=det;
 
     if(rebuildActions&&e.utype==='villager'&&e.team===0){
@@ -275,8 +329,7 @@ function updateUI(){
         ];
         menuButtons.forEach(bi => {
           let btn=document.createElement('div');btn.className='act-btn menu-btn framed';
-          btn.innerHTML=`<div class="btn-emoji sprite-icon ${bi.iconClass}"></div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>` +
-            `<div class="tooltip"><strong>${bi.name} Menu</strong><div class="tooltip-desc">Opens the list of available ${bi.action === 'eco' ? 'economic' : 'military'} structures.</div></div>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon ${bi.iconClass}"></div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>`;
           btn.onclick=()=>{
             if(gameOver)return;
             window.currentVillagerMenu = bi.action;
@@ -287,8 +340,7 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'eco') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
-        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
-          `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
+        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
           updateUI();
@@ -307,9 +359,7 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
-          let desc=bData.desc||'';
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
-            `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;
@@ -320,8 +370,7 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'mil') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
-        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
-          `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
+        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
           updateUI();
@@ -339,9 +388,7 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
-          let desc=bData.desc||'';
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
-            `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;
@@ -352,6 +399,8 @@ function updateUI(){
       }
     }
   }
+
+
 }
 
 function trainUnit(bldg,utype){
@@ -411,15 +460,9 @@ window.selectIdleVillager = function() {
   updateUI();
 };
 
-window.updateBottomHeight = function(collapsed) {
-  let bottom = document.getElementById('bottom');
-  let isCol = collapsed !== undefined ? collapsed : (bottom ? bottom.classList.contains('collapsed') : false);
+window.updateBottomHeight = function() {
   let w = window.innerWidth;
-  if (isCol) {
-    bottomH = isMobile ? (w <= 380 ? 90 : 96) : 80;
-  } else {
-    bottomH = isMobile ? (w <= 380 ? 175 : 200) : 200;
-  }
+  bottomH = isMobile ? (w <= 380 ? 90 : 96) : 80;
   topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
   H = window.innerHeight - bottomH;
   W = w;
@@ -436,42 +479,7 @@ window.updateBottomHeight = function(collapsed) {
   }
 };
 
-window.toggleBottomPanel = function(){
-  let bottom = document.getElementById('bottom');
-  let toggle = document.getElementById('bottom-toggle');
-  if (bottom && toggle) {
-    let isCollapsed = bottom.classList.toggle('collapsed');
-    toggle.textContent = isCollapsed ? '🔼' : '🔽';
-    localStorage.setItem('hud_collapsed', isCollapsed ? '1' : '0');
-    
-    // Update bottomH and viewport height H dynamically
-    window.updateBottomHeight(isCollapsed);
-    
-    showMsg(isCollapsed ? 'HUD Collapsed' : 'HUD Expanded');
-  }
-};
-
-// Load bottom panel collapsed preference and bind event listener dynamically.
-// Default to collapsed on a mobile device's first-ever visit (no stored
-// preference yet) to save screen space; any explicit prior choice (on any
-// platform) always wins over this default.
-(function() {
-  let stored = localStorage.getItem('hud_collapsed');
-  let collapsed = stored !== null ? (stored === '1') : isMobile;
-  let bottom = document.getElementById('bottom');
-  let toggle = document.getElementById('bottom-toggle');
-  if (bottom && toggle) {
-    toggle.addEventListener('click', window.toggleBottomPanel);
-    
-    if (collapsed) {
-      bottom.classList.add('collapsed');
-      toggle.textContent = '🔼';
-    }
-    
-    // Set initial heights correctly
-    window.updateBottomHeight(collapsed);
-  }
-})();
+window.updateBottomHeight();
 
 function prepayFarm() {
   if (gameOver) return;

@@ -174,7 +174,7 @@ document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=
 C.addEventListener('wheel',e=>{
   if(gameOver)return;
   e.preventDefault();
-  let factor=e.deltaY<0?1.1:1/1.1;
+  let factor=e.deltaY<0?1.02:1/1.02;
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
 C.addEventListener('mouseup',e=>{
@@ -394,29 +394,18 @@ function handleTap(sx,sy){
   let tappedEnemy=null;  // enemy unit or building
 
   // Check units first (higher priority)
-  entities.forEach(en=>{
-    let iso=toIso(en.x,en.y);
-    let idOff=en.id%7;
-    let ox=(idOff%3-1)*6, oy=(Math.floor(idOff/3)-1)*4;
-    let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-    let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+topH+H/2;
-    let dx=sx-scrx,dy=sy-scry;
-    if(en.type==='unit'&&Math.sqrt(dx*dx+dy*dy)<hitR*ZOOM){
-      if(en.team===0)tappedOwn=en;
-      else tappedEnemy=en; // team 1 enemies AND team 2 neutrals
-    }
-  });
+  let tappedUnit = getUnitUnderCursor(sx, sy);
+  if (tappedUnit) {
+    if (tappedUnit.team === 0) tappedOwn = tappedUnit;
+    else tappedEnemy = tappedUnit;
+  }
   // Then buildings
   if(!tappedOwn&&!tappedEnemy){
-    entities.forEach(en=>{
-      if(en.type==='building'){
-        let b=BLDGS[en.btype];
-        if(tile.x>=en.x&&tile.x<en.x+b.w&&tile.y>=en.y&&tile.y<en.y+b.h){
-          if(en.team===0)tappedOwn=en;
-          else tappedEnemy=en;
-        }
-      }
-    });
+    let tappedB = getBuildingUnderCursor(sx, sy);
+    if (tappedB) {
+      if(tappedB.team===0) tappedOwn = tappedB;
+      else tappedEnemy = tappedB;
+    }
   }
 
   // 2. Nothing selected → just select
@@ -568,27 +557,114 @@ function getBuildingUnderCursor(sx, sy, filter) {
   return bestB;
 }
 
-function doSelect(sx,sy,shift){
-  let tile=screenToTile(sx,sy);
-  let clicked=null;
-  // Try units first (bigger hit area on mobile)
-  let hitR=isMobile?18:12;
-  entities.forEach(en=>{
-    if(en.type==='unit'){
-      // Skip enemy units not actively visible
-      let eux=Math.round(en.x),euy=Math.round(en.y);
-      let uf=(eux>=0&&eux<MAP&&euy>=0&&euy<MAP)?fog[euy][eux]:0;
-      if(en.team!==0 && uf!==2) return;
-      let iso=toIso(en.x,en.y);
-      let idOff=en.id%7;
-      let ox=(idOff%3-1)*6;
-      let oy=(Math.floor(idOff/3)-1)*4;
-      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-      let dx=sx-scrx,dy=sy-(scry-10*ZOOM);
-      if(Math.sqrt(dx*dx+dy*dy)<hitR*ZOOM)clicked=en;
+function getUnitUnderCursor(sx, sy) {
+  let bestU = null;
+  let bestSortY = -9999;
+  let extraHit = isMobile ? 6 * ZOOM : 0;
+
+  entities.forEach(en => {
+    if (en.type === 'unit') {
+      let eux = Math.round(en.x), euy = Math.round(en.y);
+      let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
+      if (en.team !== 0 && uf !== 2) return;
+
+      let iso = toIso(en.x, en.y);
+      let idOff = en.id % 7;
+      let ox = (idOff % 3 - 1) * 6;
+      let oy = (Math.floor(idOff / 3) - 1) * 4;
+      let scrx = (iso.ix - camX + ox) * ZOOM + W/2;
+      let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H/2 + topH;
+
+      let w = 10 * ZOOM + extraHit;
+      let hStart = 2 * ZOOM + extraHit;
+      let hEnd = -28 * ZOOM - extraHit;
+
+      if (en.utype === 'sheep' || en.utype === 'sheep_carcass') {
+        w = 16 * ZOOM + extraHit;
+        hStart = 2 * ZOOM + extraHit;
+        hEnd = -16 * ZOOM - extraHit;
+      }
+
+      let dx = sx - scrx;
+      let dy = sy - scry;
+      if (Math.abs(dx) <= w && dy <= hStart && dy >= hEnd) {
+        let sortY = en.y + en.x;
+        if (sortY > bestSortY) {
+          bestSortY = sortY;
+          bestU = en;
+        }
+      }
     }
   });
+  return bestU;
+}
+
+function getResourceUnderCursor(sx, sy) {
+  let tile = screenToTile(sx, sy);
+  let bestRes = null;
+  let bestSortY = -9999;
+  
+  let searchRadius = 3;
+  for (let dy = -1; dy <= searchRadius; dy++) {
+    for (let dx = -1; dx <= searchRadius; dx++) {
+      let tx = tile.x + dx;
+      let ty = tile.y + dy;
+      if (!inMapBounds(tx, ty)) continue;
+      
+      let t0 = map[ty][tx];
+      if (!t0) continue;
+      
+      let isForest = t0.t === TERRAIN.FOREST;
+      let isGold = t0.t === TERRAIN.GOLD;
+      let isStone = t0.t === TERRAIN.STONE;
+      let isBerries = t0.t === TERRAIN.BERRIES;
+      let isFarm = t0.t === TERRAIN.FARM;
+      
+      if (isForest || isGold || isStone || isBerries || isFarm) {
+        let iso = toIso(tx + 0.5, ty + 0.5);
+        let scrx = (iso.ix - camX) * ZOOM + W/2;
+        let scry = (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH;
+        
+        let w = 12 * ZOOM;
+        let hStart = 2 * ZOOM;
+        let hEnd = -20 * ZOOM;
+        
+        if (isForest) {
+          w = 12 * ZOOM;
+          hStart = 4 * ZOOM;
+          hEnd = -50 * ZOOM;
+        } else if (isGold || isStone) {
+          w = 16 * ZOOM;
+          hStart = 2 * ZOOM;
+          hEnd = -18 * ZOOM;
+        } else if (isBerries) {
+          w = 14 * ZOOM;
+          hStart = 2 * ZOOM;
+          hEnd = -22 * ZOOM;
+        } else if (isFarm) {
+          w = 28 * ZOOM;
+          hStart = 8 * ZOOM;
+          hEnd = -8 * ZOOM;
+        }
+        
+        let clickDx = sx - scrx;
+        let clickDy = sy - scry;
+        if (Math.abs(clickDx) <= w && clickDy <= hStart && clickDy >= hEnd) {
+          let sortY = ty + tx;
+          if (sortY > bestSortY) {
+            bestSortY = sortY;
+            bestRes = { x: tx, y: ty, type: t0.t };
+          }
+        }
+      }
+    }
+  }
+  return bestRes;
+}
+
+function doSelect(sx,sy,shift){
+  let tile=screenToTile(sx,sy);
+  let clicked=getUnitUnderCursor(sx, sy);
   if(!clicked){
     clicked = getBuildingUnderCursor(sx, sy);
     // Don't select enemy buildings that aren't visible
@@ -644,7 +720,8 @@ function doBoxSelect(x1,y1,x2,y2){
 function doCommand(sx,sy){
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
-  let tile=screenToTile(sx,sy);
+  let resTarget = getResourceUnderCursor(sx, sy);
+  let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
   // If a friendly training building is selected, right-clicking sets its Rally Point
   if(selected[0].type==='building'&&selected[0].team===0){
@@ -656,20 +733,7 @@ function doCommand(sx,sy){
     bldg.rallyY=tile.y;
     
     // Find target entity under the click
-    let rTarget=null;
-    let hitR=isMobile?18:12;
-    entities.forEach(en=>{
-      if(en.type==='unit'){
-        let iso=toIso(en.x,en.y);
-        let idOff=en.id%7;
-        let ox=(idOff%3-1)*6;
-        let oy=(Math.floor(idOff/3)-1)*4;
-        let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-        let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-        let dx=sx-scrx,dy=sy-(scry-10*ZOOM);
-        if(Math.sqrt(dx*dx+dy*dy)<hitR*ZOOM)rTarget=en;
-      }
-    });
+    let rTarget = getUnitUnderCursor(sx, sy);
     if(!rTarget){
       rTarget = getBuildingUnderCursor(sx, sy);
     }
@@ -702,54 +766,17 @@ function doCommand(sx,sy){
   let target=null;
   let buildTarget=null;
   let followTarget=null;
-  let hitR=isMobile?18:12;
-  entities.forEach(en=>{
-    // Target enemies — only if actively visible
-    if(en.team===1){
-      let eux=Math.round(en.x),euy=Math.round(en.y);
-      let uf=(eux>=0&&eux<MAP&&euy>=0&&euy<MAP)?fog[euy][eux]:0;
-      if(uf!==2) return;
-      if(en.type==='unit'){
-        let iso=toIso(en.x,en.y);
-        let idOff=en.id%7;
-        let ox=(idOff%3-1)*6;
-        let oy=(Math.floor(idOff/3)-1)*4;
-        let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-        let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-        if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
-      }
+  
+  let clickedUnit = getUnitUnderCursor(sx, sy);
+  if (clickedUnit) {
+    if (clickedUnit.team === 1) {
+      target = clickedUnit;
+    } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
+      target = clickedUnit;
+    } else {
+      followTarget = clickedUnit;
     }
-    // Target own sheep (villagers harvest them)
-    if(en.team===0&&en.utype==='sheep'){
-      let iso=toIso(en.x,en.y);
-      let idOff=en.id%7;
-      let ox=(idOff%3-1)*6;
-      let oy=(Math.floor(idOff/3)-1)*4;
-      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-      if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
-    }
-    // Target sheep carcasses for gathering (any team/neutral)
-    if(en.utype==='sheep_carcass'){
-      let iso=toIso(en.x,en.y);
-      let idOff=en.id%7;
-      let ox=(idOff%3-1)*6;
-      let oy=(Math.floor(idOff/3)-1)*4;
-      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-      if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
-    }
-    // Target any other own unit (AoE2-style "Follow") — units, not sheep
-    if(en.team===0&&en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
-      let iso=toIso(en.x,en.y);
-      let idOff=en.id%7;
-      let ox=(idOff%3-1)*6;
-      let oy=(Math.floor(idOff/3)-1)*4;
-      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-      if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)followTarget=en;
-    }
-  });
+  }
   if(!target){
     target = getBuildingUnderCursor(sx, sy, en => en.team === 1 && buildingFogLevel(en) === 2);
   }
@@ -937,15 +964,7 @@ function handleScroll(elapsed){
   if(keys['a']||keys['ArrowLeft']){camX-=spd;manualPan=true;}
   if(keys['d']||keys['ArrowRight']){camX+=spd;manualPan=true;}
 
-  // AoE2-style edge scrolling (desktop only).
-  // Activated only when the mouse cursor goes all the way to the window borders (edge = 1 pixel).
-  if(!isMobile&&mouseInGame){
-    let edge=1;
-    if(mouseX<=0){camX-=spd;manualPan=true;}
-    if(mouseX>=W-edge){camX+=spd;manualPan=true;}
-    if(mouseY<=0){camY-=spd;manualPan=true;}
-    if(mouseY>=window.innerHeight-edge){camY+=spd;manualPan=true;}
-  }
+
 
   // Camera-follow: any manual pan input releases the lock; otherwise keep
   // re-centering on the followed unit every frame (see toggleCameraFollow()).

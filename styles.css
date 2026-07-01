@@ -59,7 +59,7 @@ canvas {
 .res{
   display:flex;
   align-items:center;
-  margin-right:14px;
+  margin-right:8px;
   color:#ffebad;
   font-family: 'Cinzel', Georgia, serif;
   font-size:13px;
@@ -70,6 +70,7 @@ canvas {
   padding: 2px 8px;
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
+  height: 24px;
 }
 .res-icon{
   width:18px;
@@ -88,7 +89,7 @@ canvas {
   font-family: 'Cinzel', Georgia, serif;
   font-size:13px;
   font-weight:bold;
-  margin-left:auto;
+  margin-right: 8px;
   white-space:nowrap;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid #5a3f1d;
@@ -96,6 +97,14 @@ canvas {
   padding: 2px 8px;
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#idle-vil-btn, #menu-btn {
+  display: none !important;
 }
 
 /* ---- BOTTOM PANEL (AoE2 HUD Command Box) ---- */
@@ -104,87 +113,26 @@ canvas {
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 200px;
+  height: 80px;
   background: linear-gradient(180deg, #3d2310 0%, #1f0f04 100%);
   border-top: 3px double #bfa054;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
   display: flex;
-  padding-right: 200px; /* Always reserve right corner for the minimap */
   pointer-events: auto;
   z-index: 10;
-  transition: height 0.2s ease-in-out;
-}
-#bottom-toggle {
-  position: absolute;
-  top: -16px;
-  left: 16px;
-  width: 28px;
-  height: 16px;
-  background: #3d2310;
-  border: 2px solid #bfa054;
-  border-bottom: none;
-  border-radius: 4px 4px 0 0;
-  color: #ffebad;
-  font-size: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 999 !important;
-  box-shadow: 0 -2px 4px rgba(0,0,0,0.5);
-  transition: background 0.15s;
-  pointer-events: auto;
-}
-#bottom-toggle:hover {
-  background: #5a3e1a;
-  color: #fff;
 }
 
-/* ---- COLLAPSED HUD STATES ----
-   Collapsing only shrinks the panel height — the action buttons keep their
-   normal size/layout (single row, horizontally scrollable via #actions),
-   so icons never move or resize when toggling. The minimap's reserved
-   space (#bottom's padding-right) is kept so nothing scrolls under it. */
-#bottom.collapsed {
-  height: 80px;
-}
-/* Keep a compact icon+HP summary instead of hiding selection info entirely —
-   #sel-info already clips overflow, so shrinking the portrait and capping
-   #sel-details' height crops down to just the "HP: x/y" line + bar (always
-   the first thing added to its innerHTML) without touching any JS. */
-#bottom.collapsed #sel-info {
-  width: auto;
-  max-width: 130px;
-  padding: 6px;
-  gap: 8px;
-  align-items: center; /* short collapsed bar: center instead of top-pinning */
-}
-#bottom.collapsed #sel-name {
-  display: none;
-}
-#bottom.collapsed #sel-details {
-  max-height: 28px;
-  overflow: hidden;
-  font-size: 11px;
-}
-#bottom.collapsed #sel-details .hp-bar-bg {
-  width: 100px;
-}
-#bottom.collapsed #actions {
-  border-right: none;
-  align-items: center; /* short collapsed bar: center the row instead of top-pinning */
-}
 #sel-info {
-  width: 260px;
-  padding: 10px;
+  width: 220px;
+  padding: 6px;
   color: #ffebad;
   border-right: 2px double #5a3e1a;
   overflow: hidden;
   flex-shrink: 0;
   display: flex;
   flex-direction: row;
-  align-items: flex-start; /* pin to the top-left, not vertically centered */
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
 }
 #sel-portrait {
   width: 58px;
@@ -222,29 +170,83 @@ canvas {
 }
 #sel-name {
   font-family: 'Cinzel', Georgia, serif;
-  font-size: 14px;
+  font-size: 11px;
   font-weight: bold;
   color: #ffd700;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   text-shadow: 1px 1px 2px #000;
 }
 #sel-details {
-  font-size: 11px;
+  font-size: 10px;
   color: #d1c499;
-  line-height: 1.4;
+  line-height: 1.35;
   white-space: pre-line;
   text-shadow: 1px 1px 1px #000;
 }
+#sel-details .hp-bar-bg {
+  width: 100px;
+  margin-top: 3px;
+  margin-bottom: 2px;
+}
+/* ---- MULTI-SELECT GRID ----
+   When >1 unit is selected, #sel-info swaps its single portrait+stats card
+   for a scrollable grid of every selected unit's own icon (AoE2-style),
+   each with its own mini HP bar. Clicking one narrows the selection to it. */
+#sel-grid {
+  display: none;
+  flex: 1;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 2px;
+  overflow: hidden;
+  height: 100%;
+  padding: 4px 0 0 4px;
+}
+#sel-info.multi-select #sel-portrait,
+#sel-info.multi-select #sel-stats {
+  display: none;
+}
+#sel-info.multi-select #sel-grid {
+  display: flex;
+}
+.sel-unit-icon {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #5a3e1a;
+  border-radius: 2px;
+  background-image: radial-gradient(circle, #805c36 0%, #3e2612 100%);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sel-unit-icon:hover {
+  border-color: #ffd700;
+}
+.sel-unit-hp {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  height: 3px;
+  background: #251408;
+  border-radius: 1px;
+  overflow: hidden;
+}
+.sel-unit-hp-fill {
+  height: 100%;
+}
+
 .hp-bar-bg {
   width: 140px;
   height: 6px;
   background: #251408;
   border: 1px solid #5c3b1e;
   border-radius: 1px;
-  margin-top: 5px;
+  margin-top: 3px;
+  margin-bottom: 2px;
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.8);
   overflow: hidden;
 }
@@ -257,15 +259,25 @@ canvas {
   padding: 8px;
   display: flex;
   flex-wrap: nowrap; /* single row — overflow scrolls/drags horizontally instead of wrapping */
-  align-items: flex-start; /* pin the icon row to the top-left, not vertically centered */
+  align-items: center; /* center the row instead of top-pinning */
   justify-content: flex-start;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-right: 2px double #5a3e1a;
+  border-right: none;
+}
+#bottom.menu-active #actions {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 15;
+  background: linear-gradient(180deg, #3d2310 0%, #1f0f04 100%);
+  padding: 8px 12px;
 }
 .act-btn{
-  position:relative; /* anchors .tooltip to this button, not to #bottom */
+  position:relative; /* anchors the queue-cancel-hover badge, not the button itself */
   flex-shrink:0; /* keep full size when there's not enough row width, scroll instead of squeezing */
   min-width:58px;
   height:58px;
@@ -363,7 +375,7 @@ canvas {
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
      fills #minimap-wrap — it auto-adapts to the button's current size
-     (collapsed vs expanded, any breakpoint) with no separate rules needed. */
+     with no separate rules needed. */
   width:100%;
   height:100%;
   margin-bottom:0;
@@ -373,15 +385,15 @@ canvas {
   height:16px;
 }
 .btn-label{
-  display:none; /* name is shown in the hover tooltip instead, so the icon can be bigger */
+  display:none; /* name is hidden to let the icon fill the button space */
 }
 
 #minimap-wrap {
   width: 190px;
   height: 190px;
   position: absolute;
-  right: 5px;
-  bottom: 5px;
+  right: -30px;
+  top: -30px;
   z-index: 20;
   flex-shrink: 0;
 }
@@ -579,20 +591,18 @@ canvas {
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
   #topbar{height:46px;padding:0 8px}
-  .res{margin-right:8px;font-size:14px;padding:4px 8px}
+  .res{margin-right:4px;font-size:14px;padding:4px 8px;height:32px}
   .res-icon{width:22px;height:22px;margin-right:6px}
   .res-val{min-width:30px}
-  #pop{font-size:14px;padding:4px 8px}
+  #pop{font-size:14px;padding:4px 8px;margin-right:4px;height:32px}
   #idle-vil-btn{font-size:14px;padding:5px 10px}
   #menu-btn{font-size:14px;padding:5px 10px}
-  #bottom{height:200px}
-  #sel-info{width:160px;padding:10px}
-  #sel-portrait{width:70px;height:70px;font-size:36px}
-  #sel-name{font-size:16px}
-  #sel-details{font-size:12px}
+  #bottom{height:96px}
+  #sel-info{width:180px;padding:6px}
+  #sel-portrait{width:50px;height:50px;font-size:24px}
+  #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
-  #bottom.collapsed{height:96px}
-  #minimap-wrap{width:150px;height:150px;margin:4px}
+  #minimap-wrap{width:140px;height:140px;top:-20px;right:-20px}
   #msg{font-size:16px;top:50px}
 }
 @media(max-width:480px){
@@ -605,16 +615,15 @@ canvas {
   .menu-action-btn{font-size:18px;padding:13px 26px}
 }
 @media(max-width:380px){
-  .res{margin-right:5px;font-size:13px;padding:3px 6px}
+  .res{margin-right:3px;font-size:13px;padding:3px 6px;height:27px}
   .res-icon{width:19px;height:19px;margin-right:4px}
-  #bottom{height:175px}
-  #sel-info{width:120px;padding:8px}
-  #sel-portrait{width:64px;height:64px;font-size:32px}
-  #sel-name{font-size:13px}
-  #sel-details{font-size:11px}
+  #bottom{height:90px}
+  #sel-info{width:145px;padding:6px}
+  #sel-portrait{width:44px;height:44px;font-size:20px}
+  #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
-  #bottom.collapsed{height:90px}
-  #minimap-wrap{width:130px;height:130px}
+  #minimap-wrap{width:110px;height:110px;top:-15px;right:-15px}
+  #pop{font-size:12px;padding:3px 6px;margin-right:3px;height:27px}
 }
 
 /* ---- TRAINING QUEUE STYLES ---- */
@@ -757,6 +766,25 @@ canvas {
   animation: flash-gold 1.2s infinite alternate;
   border-color: #ffd700 !important;
 }
+.idle-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: #ff4444;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 8px;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  border: 1px solid #ffebad;
+  box-shadow: 0 0 3px rgba(0,0,0,0.5);
+  font-family: sans-serif;
+  z-index: 10;
+}
 
 @keyframes flash-gold {
   0% {
@@ -792,58 +820,72 @@ canvas {
   box-shadow: 0 0 6px rgba(229, 193, 88, 0.4), inset 0 0 4px #000;
 }
 
-/* ---- ACTION TOOLTIPS ---- */
-.act-btn .tooltip {
+/* ---- COMPACT TRAINING QUEUE STYLES ---- */
+.train-compact {
+  margin-top: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.train-compact .train-bar-bg {
+  width: 100px;
+  height: 4px;
+  background: #111;
+  border: 1px solid #bfa054;
+  border-radius: 1px;
+  overflow: hidden;
+}
+.train-compact .train-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
+  width: 0%;
+}
+.train-compact .train-queue-slots {
+  display: flex;
+  gap: 3px;
+}
+.train-compact .queue-slot {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
+  border: 1px solid #bfa054;
+  color: #ffebad;
+  font-family: Georgia, serif;
+  font-size: 8px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 1px;
+  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  transition: all 0.15s;
+}
+.train-compact .queue-slot .queue-icon {
+  width: 12px;
+  height: 12px;
+}
+.train-compact .queue-slot .queue-cancel-hover {
   display: none;
   position: absolute;
-  top: 100%;
-  margin-top: 8px;
+  top: 0;
   left: 0;
-  width: 220px;
-  background: radial-gradient(circle, #2a160a 0%, #120904 100%);
-  border: 2px double #bfa054;
-  border-radius: 4px;
-  padding: 10px 12px;
-  color: #ffebad;
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  text-align: left;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.85);
-  pointer-events: none;
-  z-index: 100;
-  line-height: 1.4;
-  white-space: normal;
-  text-transform: none;
-}
-.act-btn .tooltip strong {
-  display: block;
-  font-family: 'Cinzel', serif;
-  color: #ffd700;
-  font-size: 13px;
-  border-bottom: 1px solid #5a3f1d;
-  padding-bottom: 4px;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.act-btn .tooltip .tooltip-cost {
-  color: #ffc87a;
-  font-weight: bold;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.65);
+  align-items: center;
+  justify-content: center;
   font-size: 10px;
-  margin-bottom: 6px;
-}
-.act-btn .tooltip .tooltip-stats {
-  color: #9fd88a;
+  color: #ff8b8b;
   font-weight: bold;
-  font-size: 10px;
-  margin-bottom: 6px;
 }
-.act-btn .tooltip .tooltip-desc {
-  color: #d1c499;
+.train-compact .queue-slot:hover .queue-cancel-hover {
+  display: flex;
 }
-.act-btn:hover .tooltip {
-  display: block;
+.train-compact .active-slot {
+  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
+  border-color: #ffd700;
 }
-#bottom.collapsed .act-btn:hover .tooltip {
-  display: none; /* icon-only collapsed bar: no hover info box */
-}
+
+

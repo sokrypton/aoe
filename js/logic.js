@@ -198,14 +198,14 @@ function distToBuilding(px,py,bldg){
   return best;
 }
 
-// Check if unit is adjacent to any tile of a building (within 1.5 tiles)
+// Check if unit is adjacent to a building (within 1.5 tiles of its nearest edge).
+// Uses the same nearest-edge distance as distToTarget() — a prior per-perimeter-tile
+// box test (|dx|<1.2 && |dy|<1.2) let units register as "adjacent" from up to
+// ~1.7 tiles past the nearest edge near corners, well beyond intended melee reach.
 function adjToBuilding(px,py,bldg){
-  for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
-    if(dx>=0&&dx<bldg.w&&dy>=0&&dy<bldg.h)continue; // skip building tiles themselves
-    let tx=bldg.x+dx+0.5, ty=bldg.y+dy+0.5;
-    if(Math.abs(px-tx)<1.2&&Math.abs(py-ty)<1.2)return true;
-  }
-  return false;
+  let dx=Math.max(bldg.x-px, 0, px-(bldg.x+bldg.w));
+  let dy=Math.max(bldg.y-py, 0, py-(bldg.y+bldg.h));
+  return Math.sqrt(dx*dx+dy*dy) <= 1.5;
 }
 
 // Find nearest walkable tile adjacent to building perimeter
@@ -1144,7 +1144,7 @@ function updateBuilding(e){
           x: e.x + e.w/2,
           y: e.y + e.h/2,
           team: e.team,
-          atk: e.btype === 'TC' ? 5 : 6 // TC deals 5, Tower deals 6
+          atk: e.btype === 'TC' ? 6 : BLDGS.TOWER.atk // TC deals 6; Tower matches its own BLDGS.TOWER.atk stat (5)
         };
         spawnProjectile(bCenter, target);
         e.atkCooldown = 40; // fire every 1.3s
@@ -1184,6 +1184,10 @@ function updateBuilding(e){
             } else {
               pathUnitTo(unit,e.rallyX,e.rallyY);
             }
+          } else {
+            // Rallied entity is gone (destroyed/removed) — fall back to the
+            // plain rally coordinates instead of silently leaving the unit idle.
+            pathUnitTo(unit,e.rallyX,e.rallyY);
           }
         } else if(e.rallyResourceType!==undefined&&e.rallyResourceType!==null&&unit.utype==='villager'){
           let resNames={[TERRAIN.FOREST]:'chop',[TERRAIN.GOLD]:'mine_gold',[TERRAIN.STONE]:'mine_stone',[TERRAIN.BERRIES]:'forage',[TERRAIN.FARM]:'farm'};
