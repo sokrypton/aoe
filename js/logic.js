@@ -29,7 +29,11 @@ function canPlace(type,x,y,team=0){
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
       let existing = entities.find(en => en.id === t.occupied);
-      if (existing && existing.type === 'building' && existing.btype === 'WALL' && existing.team === team) {
+      // Only GATE and TOWER may be placed on top of an existing allied
+      // WALL (they consume the wall tile(s) they're built on, see
+      // doPlace's wallsToRemove); anything else, including another WALL,
+      // must not overlap an existing building.
+      if ((type === 'GATE' || type === 'TOWER') && existing && existing.type === 'building' && existing.btype === 'WALL' && existing.team === team) {
         continue;
       }
       return false;

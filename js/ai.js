@@ -545,6 +545,35 @@ function findPlayerThreatNear(aiTC,range){
   return closestThreat;
 }
 
+// Can this militia actually reach (i.e. path adjacent to) the given target?
+// Priority-based target selection doesn't know about walls in the way, so
+// this is used to catch a walled-off pick before committing to it.
+function isTargetReachable(unit, target){
+  if (target.type !== 'building') return true;
+  if (adjToBuilding(unit.x, unit.y, target)) return true;
+  let pt = nearestBldgPerimeter(unit.x, unit.y, target);
+  return findPath(unit.x, unit.y, pt.x, pt.y, unit.id).length > 0;
+}
+
+// Nearest enemy wall/tower/gate that this militia can actually path to.
+function nearestReachableWallLike(unit, team){
+  return entities.filter(en => en.type === 'building' && en.team === team && en.hp > 0 &&
+      (en.btype === 'WALL' || en.btype === 'TOWER' || en.btype === 'GATE'))
+    .sort((a, b) => dist(unit, a) - dist(unit, b))
+    .find(w => isTargetReachable(unit, w)) || null;
+}
+
+// If the chosen target is walled off and unreachable, attack the nearest
+// reachable wall/tower/gate instead of marching toward something the unit
+// can never actually get adjacent to (which would otherwise leave it stuck
+// re-picking the same unreachable building forever, since target selection
+// is priority-based and doesn't account for reachability).
+function resolveReachableAttackTarget(militia, candidate){
+  if (!candidate) return null;
+  if (isTargetReachable(militia, candidate)) return candidate;
+  return nearestReachableWallLike(militia, candidate.team) || null;
+}
+
 function chooseAIAttackTarget(militia){
   let enemies=entities.filter(e=>{
     if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep') return false;
@@ -571,14 +600,15 @@ function chooseAIAttackTarget(militia){
   // but only head to their coordinate range (simulating exploration).
   let priority=e=>e.type==='building'?(e.btype==='TC'?0:1):(e.utype==='militia'?2:3);
   if (spottedEnemies.length > 0) {
-    return spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
+    let best = spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
+    return resolveReachableAttackTarget(militia, best);
   } else if (window.aiIntel && window.aiIntel.tcSeen) {
     // Only head for the player's TC if a scout/unit has actually seen it at
     // some point this game — otherwise the AI would be marching on knowledge
     // it has no in-fiction way of having.
     let playerTC = entities.find(e => e.team === 0 && e.btype === 'TC');
     if (playerTC && dist(militia, playerTC) > visionRange) {
-      return playerTC; // Patrol/march towards the known player TC
+      return resolveReachableAttackTarget(militia, playerTC); // Patrol/march towards the known player TC
     }
   }
   return null;

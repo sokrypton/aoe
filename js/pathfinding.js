@@ -11,6 +11,14 @@ function walkable(x,y,ignore){
   let blockedByOccupant=t.occupied&&t.occupied!==ignore;
   if(!isResource&&!blockedByOccupant)return true;
 
+  // A building foundation that no builder has started work on yet isn't a
+  // real obstacle — anyone (allied or enemy) can walk through it. Once
+  // construction has actually begun (buildProgress > 0) it blocks normally.
+  if(t.occupied){
+    let occ = entitiesById.get(t.occupied);
+    if(occ && occ.type === 'building' && !occ.complete && !occ.buildProgress) return true;
+  }
+
   // Only resolve the walker entity (a Map lookup) when an exception could
   // actually apply — i.e. the tile would otherwise be blocked. findPath()
   // calls walkable() for every neighbor of every expanded node (up to tens of

@@ -266,7 +266,7 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false) {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
@@ -278,8 +278,8 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   let ney = sy + dy - uy * d2;
 
   let isAlongIsoY = (dx > 0) !== (dy > 0);
-  let px = isAlongIsoY ? 4 : -4;
-  let py = 2; // always +2 (both perpendiculars have same Y component)
+  let px = isAlongIsoY ? thick : -thick;
+  let py = thick / 2; // always positive (both perpendiculars have same Y component)
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
@@ -307,6 +307,18 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   X.lineTo(nex + px, ney + py - wallH);
   X.lineTo(nex - px, ney - py - wallH);
   X.closePath(); X.fill(); X.stroke();
+
+  // 3. End cap face — closes the cut end exposed when d1/d2 trims the
+  // link back from its endpoint (e.g. the gate door not reaching its post).
+  if (capNear) {
+    X.fillStyle = fillL;
+    X.beginPath();
+    X.moveTo(nex - px, ney - py);
+    X.lineTo(nex + px, ney + py);
+    X.lineTo(nex + px, ney + py - wallH);
+    X.lineTo(nex - px, ney - py - wallH);
+    X.closePath(); X.fill(); X.stroke();
+  }
 }
 
 const darkenCache = new Map();
@@ -1089,7 +1101,7 @@ function drawBuilding(e, part = null){
         // Sliding solid wood gate door — same style/placement as a wall
         // extension (drawWallLink), just wood-brown and sliding up into
         // the bastion as gateProgress goes from closed (0) to open (1).
-        drawWallLink(t1sx, t1sy - slideY, dx, dy, 20, darken, 7, 0, '#8b5a2b', '#a5723a');
+        drawWallLink(t1sx, t1sy - slideY, dx, dy, 20, darken, 7, 0, '#8b5a2b', '#a5723a', 2, true);
       }
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy)
@@ -1732,14 +1744,37 @@ function drawGhost(){
   if(!placing)return;
   let tile=screenToTile(mouseX,mouseY);
 
-  // Wall drag: show colored diamonds along the drag line
+  // Wall drag: show the actual wall pillars/links along the drag line
+  // (same ghost style as a single hovered wall), not just flat tint tiles.
   if (placing === 'WALL' && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
     let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
+    let pillarH = 22, wallH = 14;
+    let toScr = (tx, ty) => {
+      let iso = toIso(tx + 0.5, ty + 0.5);
+      return { x: iso.ix - camX + W/2, y: iso.iy - camY + topH + H/2 - HALF_TH };
+    };
+    X.globalAlpha = 0.55;
+    window._ghostDraw = true;
+    line.forEach((t, i) => {
+      let p = toScr(t.x, t.y);
+      let linkY = p.y + 16;
+      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, '#cfcfc4', '#adada0', 'flat', 0, '#b8b8b0', '#b8b8b0', false);
+      let next = line[i+1];
+      if (next) {
+        let ddx = next.x - t.x, ddy = next.y - t.y;
+        let off = toIso(ddx, ddy);
+        drawWallLink(p.x, linkY, off.ix, off.iy, wallH, false);
+      }
+    });
+    window._ghostDraw = false;
+    X.globalAlpha = 1;
+
+    // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
       let ok = canPlace('WALL', t.x, t.y, 0);
       let iso = toIso(t.x, t.y);
       let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
-      X.fillStyle = ok ? 'rgba(0,200,0,0.3)' : 'rgba(200,0,0,0.3)';
+      X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
       X.beginPath();
       X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
       X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
