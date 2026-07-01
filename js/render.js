@@ -266,7 +266,7 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null) {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
@@ -283,8 +283,8 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5) {
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
-  let fillL = isAlongIsoY ? '#adada0' : '#cfcfc4';
-  let fillTop = '#b8b8b0';
+  let fillL = colorL || (isAlongIsoY ? '#adada0' : '#cfcfc4');
+  let fillTop = colorTop || '#b8b8b0';
   if (darken) {
     fillL = darkenColor(fillL);
     fillTop = darkenColor(fillTop);
@@ -1086,19 +1086,10 @@ function drawBuilding(e, part = null){
       drawBastionMerlons(t1sx, t1sy, '#b0b0a4', '#b0b0a4', darken);
 
       if (e.complete) {
-        // Sliding portcullis bars (height 26)
-        X.strokeStyle = darken ? darkenColor('#3a2515') : '#3a2515'; X.lineWidth = 1.8;
-        let barCount = 7;
-        for (let i = 1; i <= barCount; i++) {
-          let t = i / (barCount + 1);
-          let bx = t1sx + t * dx;
-          let by = t1sy + t * dy;
-          X.beginPath();
-          X.moveTo(bx, by - slideY);
-          X.lineTo(bx, by - 20 - slideY);
-          X.stroke();
-        }
-
+        // Sliding solid wood gate door — same style/placement as a wall
+        // extension (drawWallLink), just wood-brown and sliding up into
+        // the bastion as gateProgress goes from closed (0) to open (1).
+        drawWallLink(t1sx, t1sy - slideY, dx, dy, 20, darken, 7, 0, '#8b5a2b', '#a5723a');
       }
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy)
