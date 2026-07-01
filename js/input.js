@@ -137,6 +137,12 @@ C.addEventListener('mousemove',e=>{
 });
 // Track mouse position globally so edge scroll works correctly when cursor is over UI panels
 document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=e.clientY;}});
+C.addEventListener('wheel',e=>{
+  if(gameOver)return;
+  e.preventDefault();
+  let factor=e.deltaY<0?1.1:1/1.1;
+  setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
+},{passive:false});
 C.addEventListener('mouseup',e=>{
   if(gameOver||hasTouch)return;
   if(e.button===0){
@@ -235,6 +241,8 @@ let touchAnchor=null;  // where the touch started (for tap detection)
 let touchLast=null;    // last touch position (for pan delta)
 let touchMoved=false;  // did finger travel > threshold?
 let touchId=null;      // track which finger is primary
+let pinchStartDist=null; // two-finger distance at pinch start, for pinch-zoom
+let pinchStartZoom=null; // ZOOM at pinch start
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
@@ -256,6 +264,10 @@ C.addEventListener('touchstart',e=>{
     let mx=(touches[0].clientX+touches[1].clientX)/2;
     let my=(touches[0].clientY+touches[1].clientY)/2;
     touchLast={x:mx,y:my};
+    let pdx=touches[0].clientX-touches[1].clientX;
+    let pdy=touches[0].clientY-touches[1].clientY;
+    pinchStartDist=Math.sqrt(pdx*pdx+pdy*pdy);
+    pinchStartZoom=ZOOM;
   }
 },{passive:false});
 
@@ -263,9 +275,15 @@ C.addEventListener('touchmove',e=>{
   e.preventDefault();
   let touches=e.touches;
   if(touches.length>=2){
-    // Two-finger pan
+    // Two-finger pinch-to-zoom (around the midpoint), then pan
     let mx=(touches[0].clientX+touches[1].clientX)/2;
     let my=(touches[0].clientY+touches[1].clientY)/2;
+    let pdx=touches[0].clientX-touches[1].clientX;
+    let pdy=touches[0].clientY-touches[1].clientY;
+    let pdist=Math.sqrt(pdx*pdx+pdy*pdy);
+    if(pinchStartDist&&Math.abs(pdist-pinchStartDist)>4){ // deadzone avoids jitter zoom during pure pans
+      setZoomAroundPoint(pinchStartZoom*(pdist/pinchStartDist),mx,my);
+    }
     if(touchLast){
       camX-=(mx-touchLast.x);
       camY-=(my-touchLast.y);
@@ -312,11 +330,15 @@ C.addEventListener('touchend',e=>{
     touchLast=null;
     touchMoved=false;
     touchId=null;
+    pinchStartDist=null;
+    pinchStartZoom=null;
   } else if(e.touches.length===1){
     // Went from 2 fingers to 1: update last position, stay in pan mode
     let t=e.touches[0];
     touchLast={x:t.clientX,y:t.clientY};
     touchMoved=true; // don't allow tap after multi-touch
+    pinchStartDist=null;
+    pinchStartZoom=null;
   }
 },{passive:false});
 

@@ -6,7 +6,8 @@ let cmdMarkers=[]; // {x,y,time,color}
 let bottomH=isMobile?(window.innerWidth<=380?130:window.innerWidth<=600?150:200):200;
 let topH=isMobile?(window.innerWidth<=600?28:32):32;
 const dpr = Math.max(1, window.devicePixelRatio || 1);
-let ZOOM = 1.0;
+const ZOOM_MIN = 0.6, ZOOM_MAX = 2.5;
+let ZOOM = isMobile ? 1.5 : 1.0;
 let W=window.innerWidth,H=window.innerHeight-bottomH;
 C.width=W*dpr;C.height=window.innerHeight*dpr;
 C.style.width=W+'px';C.style.height=window.innerHeight+'px';
@@ -72,6 +73,19 @@ function randInt(min,max){
 
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
+
+// Zoom in/out while keeping the world point under screen point (sx,sy) fixed
+// in place — used by both wheel zoom (desktop) and pinch zoom (mobile).
+function setZoomAroundPoint(newZoom, sx, sy){
+  newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+  if(newZoom === ZOOM) return;
+  let isoX = (sx - W/2)/ZOOM + camX;
+  let isoY = (sy - (H/2 + topH))/ZOOM + camY;
+  ZOOM = newZoom;
+  camX = isoX - (sx - W/2)/ZOOM;
+  camY = isoY - (sy - (H/2 + topH))/ZOOM;
+  window.cameraFollowId = null;
+}
 
 let res={food:200,wood:200,gold:100,stone:200,prepaidFarms:0};
 let popUsed=0, popCap=0;

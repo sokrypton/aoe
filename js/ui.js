@@ -1,3 +1,18 @@
+// Sprite sheet (sprites.png) covers every BLDGS/UNITS key directly (class
+// names match btype/utype: icon-TC, icon-villager, etc). Anything else
+// (no selection, cancel-only actions) falls back to the emoji glyph.
+const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
+  'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE']);
+function setPortraitIcon(port, key, fallbackEmoji){
+  [...port.classList].filter(c=>c==='sprite-icon'||c.startsWith('icon-')).forEach(c=>port.classList.remove(c));
+  if (SPRITE_ICON_KEYS.has(key)) {
+    port.textContent='';
+    port.classList.add('sprite-icon','icon-'+key);
+  } else {
+    port.textContent = fallbackEmoji || '';
+  }
+}
+
 function updateUI(){
   let currentFood = Math.floor(res.food);
   let currentWood = Math.floor(res.wood);
@@ -106,14 +121,14 @@ function updateUI(){
     return;
   }
   if(!gameStarted){
-    if (port) { port.textContent = '⚔️'; port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Choose Difficulty';
     document.getElementById('sel-details').textContent='Select Easy, Standard, or Hard to begin';
     return;
   }
 
   if(selected.length===0){
-    if (port) { port.textContent = '⚔️'; port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='AoE II Mini';
     if(isMobile){
       document.getElementById('sel-details').textContent='Tap: select unit/building\nWith units selected, tap map\nto move/gather/attack\nDrag to pan camera';
@@ -125,7 +140,7 @@ function updateUI(){
   let e=selected[0];
   if(e.type==='building'){
     let b=BLDGS[e.btype];
-    if (port) { port.textContent = b.icon; port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, e.btype, b.icon); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent=b.name;
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
     let hpColor = '#2b8a3e';
@@ -162,10 +177,9 @@ function updateUI(){
       det+=`  <div class="train-bar-bg"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
       det+=`  <div class="train-queue-slots">`;
       e.queue.forEach((ut, idx) => {
-        let iconChar = UNITS[ut].icon;
         let slotClass = idx === 0 ? "queue-slot active-slot" : "queue-slot";
         det+=`    <div class="${slotClass}" onclick="cancelQueue(${e.id}, ${idx})" title="Click to cancel and refund">`;
-        det+=`      ${iconChar}`;
+        det+=`      <div class="sprite-icon icon-${ut} queue-icon"></div>`;
         det+=`      <div class="queue-cancel-hover">×</div>`;
         det+=`    </div>`;
       });
@@ -188,26 +202,26 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           let costStr=formatCost(u.cost);
           let desc=u.desc||'';
-          btn.innerHTML=`<div class="btn-emoji">${u.icon}</div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>` +
             `<div class="tooltip"><strong>Train ${u.name}</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
       }
       if(e.complete && e.btype === 'MILL') {
-        let btn=document.createElement('div');btn.className='act-btn';
+        let btn=document.createElement('div');btn.className='act-btn framed';
         let costStr='W:60';
         let desc='Queue a farm reseed. When a farm runs out of food, it will automatically consume a reseed from the queue to replenish itself.';
-        btn.innerHTML=`<div class="btn-emoji">🌾</div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>` +
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>` +
           `<div class="tooltip"><strong>Prepay Farm Reseed</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
         btn.onclick=()=>prepayFarm();
         act.appendChild(btn);
       }
       if(b.isFarm && e.exhausted) {
-        let btn=document.createElement('div');btn.className='act-btn';
+        let btn=document.createElement('div');btn.className='act-btn framed';
         let costStr='W:60';
         let desc='Reactivate this exhausted farm. Instantly replenishes food.';
-        btn.innerHTML=`<div class="btn-emoji">🌾</div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>` +
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>` +
           `<div class="tooltip"><strong>Reactivate Farm</strong><div class="tooltip-cost">${costStr}</div><div class="tooltip-desc">${desc}</div></div>`;
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
@@ -215,7 +229,7 @@ function updateUI(){
     }
   } else {
     if (port) {
-      port.textContent = UNITS[e.utype].icon;
+      setPortraitIcon(port, e.utype, UNITS[e.utype].icon);
       port.classList.toggle('cam-locked', window.cameraFollowId===e.id);
     }
     document.getElementById('sel-name').textContent=UNITS[e.utype].name+(selected.length>1?` (${selected.length})`:'');
@@ -254,12 +268,12 @@ function updateUI(){
       if (window.currentVillagerMenu === 'main') {
         // Main Building Menus
         let menuButtons = [
-          { name: 'Build Economic', key: 'Q', icon: '🌾', action: 'eco' },
-          { name: 'Build Military', key: 'W', icon: '🛡️', action: 'mil' }
+          { name: 'Build Economic', key: 'Q', iconClass: 'icon-econ', action: 'eco' },
+          { name: 'Build Military', key: 'W', iconClass: 'icon-mil', action: 'mil' }
         ];
         menuButtons.forEach(bi => {
-          let btn=document.createElement('div');btn.className='act-btn menu-btn';
-          btn.innerHTML=`<div class="btn-emoji">${bi.icon}</div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>` +
+          let btn=document.createElement('div');btn.className='act-btn menu-btn framed';
+          btn.innerHTML=`<div class="btn-emoji sprite-icon ${bi.iconClass}"></div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>` +
             `<div class="tooltip"><strong>${bi.name} Menu</strong><div class="tooltip-desc">Opens the list of available ${bi.action === 'eco' ? 'economic' : 'military'} structures.</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
@@ -270,8 +284,8 @@ function updateUI(){
         });
       } else if (window.currentVillagerMenu === 'eco') {
         // Back Button (First)
-        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
-        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
+        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
+        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
           `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
@@ -292,7 +306,7 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
           let desc=bData.desc||'';
-          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
             `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
@@ -303,8 +317,8 @@ function updateUI(){
         });
       } else if (window.currentVillagerMenu === 'mil') {
         // Back Button (First)
-        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn';
-        backBtn.innerHTML=`<div class="btn-emoji">↩️</div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
+        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
+        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>` +
           `<div class="tooltip"><strong>Go Back</strong><div class="tooltip-desc">Return to the main building menu.</div></div>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
@@ -324,7 +338,7 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
           let desc=bData.desc||'';
-          btn.innerHTML=`<div class="btn-emoji">${bData.icon}</div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>` +
             `<div class="tooltip"><strong>Build ${bData.name}</strong><div class="tooltip-cost">${costStr} [${bi.key}]</div><div class="tooltip-desc">${desc}</div></div>`;
           btn.onclick=()=>{
             if(gameOver)return;
@@ -406,9 +420,13 @@ window.toggleBottomPanel = function() {
   }
 };
 
-// Load bottom panel collapsed preference and bind event listener dynamically
+// Load bottom panel collapsed preference and bind event listener dynamically.
+// Default to collapsed on a mobile device's first-ever visit (no stored
+// preference yet) to save screen space; any explicit prior choice (on any
+// platform) always wins over this default.
 (function() {
-  let collapsed = localStorage.getItem('hud_collapsed') === '1';
+  let stored = localStorage.getItem('hud_collapsed');
+  let collapsed = stored !== null ? (stored === '1') : isMobile;
   let bottom = document.getElementById('bottom');
   let toggle = document.getElementById('bottom-toggle');
   if (bottom && toggle) {

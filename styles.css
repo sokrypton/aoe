@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;600&display=swap');
 
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%}
+html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%;overscroll-behavior:none}
 
 /* Custom SVGs for game cursors — AoE2 style */
 
@@ -75,19 +75,13 @@ canvas {
   width:18px;
   height:18px;
   margin-right:6px;
-  border-radius:50%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:11px;
-  font-weight:900;
   flex-shrink:0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  /* Visually bigger than its own layout box (scale doesn't affect flex
+     sizing/spacing), so it overflows past the badge's frame on purpose. */
+  transform:scale(1.7);
+  position:relative;
+  z-index:2;
 }
-.ri-food{background:radial-gradient(circle, #e85252, #a61c1c); border:1px solid #ffd700; color:#fff}
-.ri-wood{background:radial-gradient(circle, #51cf66, #2b8a3e); border:1px solid #ffd700; color:#fff}
-.ri-gold{background:radial-gradient(circle, #fcc419, #d97706); border:1px solid #ffd700; color:#fff}
-.ri-stone{background:radial-gradient(circle, #adb5bd, #495057); border:1px solid #ffd700; color:#fff}
 .res-val{min-width:32px;text-align:right}
 #pop{
   color:#ffebad;
@@ -146,41 +140,19 @@ canvas {
   color: #fff;
 }
 
-/* ---- COLLAPSED HUD STATES ---- */
+/* ---- COLLAPSED HUD STATES ----
+   Collapsing only shrinks the panel height and hides the selection info
+   panel — the action buttons keep their normal size/layout and just get
+   cropped by the shorter panel (scrollable via #actions' own
+   overflow-y:auto), so icons never move or resize when toggling. */
 #bottom.collapsed {
-  height: 64px;
+  height: 80px;
 }
 #bottom.collapsed #sel-info {
   display: none !important;
 }
 #bottom.collapsed #actions {
-  flex: 1;
-  padding: 6px 12px;
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
   border-right: none;
-}
-#bottom.collapsed .act-btn {
-  width: 44px;
-  height: 44px;
-  padding: 2px;
-  flex-shrink: 0;
-}
-#bottom.collapsed .act-btn .btn-label,
-#bottom.collapsed .act-btn .cost {
-  display: none !important; /* Icons only! */
-}
-#bottom.collapsed .act-btn .btn-emoji {
-  font-size: 22px;
-  margin: 0;
-}
-#bottom.collapsed .act-btn .tooltip {
-  bottom: 56px;
 }
 #sel-info {
   width: 260px;
@@ -197,7 +169,10 @@ canvas {
 #sel-portrait {
   width: 52px;
   height: 52px;
-  background: radial-gradient(circle, #805c36 0%, #3e2612 100%);
+  /* background-image (not the `background` shorthand) so it doesn't reset
+     background-position/size/repeat — those are set by .sprite-icon /
+     .icon-* below, at lower specificity, when a sprite icon is shown. */
+  background-image: radial-gradient(circle, #805c36 0%, #3e2612 100%);
   border: 2px solid #bfa054;
   border-radius: 4px;
   display: flex;
@@ -208,6 +183,11 @@ canvas {
   box-shadow: inset 0 0 6px #000, 1px 1px 3px rgba(0,0,0,0.5);
   text-shadow: 1px 1px 2px #000;
   cursor: pointer;
+}
+#sel-portrait.sprite-icon{
+  background-image: url('sprites.png');
+  background-size: 500% 500%;
+  background-repeat: no-repeat;
 }
 #sel-portrait.cam-locked {
   border-color: #4ade80;
@@ -263,8 +243,8 @@ canvas {
   border-right: 2px double #5a3e1a;
 }
 .act-btn{
-  min-width:54px;
-  height:54px;
+  min-width:58px;
+  height:58px;
   background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
   border: 2px solid #bfa054;
   color:#ffebad;
@@ -279,7 +259,7 @@ canvas {
   border-radius:4px;
   line-height:1.2;
   text-align:center;
-  padding:2px 4px;
+  padding:4px;
   box-shadow: inset 0 0 5px #000, 1px 1px 3px rgba(0,0,0,0.5);
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;
@@ -290,24 +270,86 @@ canvas {
   color:#fff;
   box-shadow: 0 0 8px rgba(255,215,0,0.4), inset 0 0 5px #000;
 }
+/* These icons (econ/mil/back/reseed) already have their own frame baked
+   into the artwork, so skip the button's own border/background to avoid
+   a double-frame look — the icon art is the whole button. */
+.act-btn.framed{
+  background:none;
+  border:none;
+  box-shadow:none;
+  padding:0;
+}
+.act-btn.framed:hover, .act-btn.framed:active{
+  background:none;
+  border:none;
+  box-shadow:0 0 8px rgba(255,215,0,0.6);
+  filter:brightness(1.15);
+}
 .act-btn .cost{
-  font-size:8px;
-  color:#ffc87a;
-  margin-top:2px;
+  display:none; /* shown in the tooltip instead, so the icon can be bigger */
 }
 .btn-emoji{
   font-size:16px;
   margin-bottom:2px;
   line-height:1;
 }
+
+/* ---- SPRITE ICONS (sprites.png) ----
+   5 columns x 5 rows. background-size:500%/500% makes each cell exactly
+   fill the element regardless of its box size, so background-position is
+   expressed as fractions (c/4, r/4) rather than fixed pixel offsets — the
+   same .icon-* class works at any display size (button icon, portrait, etc).
+*/
+.sprite-icon{
+  display:inline-block;
+  background-image:url('sprites.png');
+  background-repeat:no-repeat;
+  background-size:500% 500%;
+}
+.icon-villager  {background-position:0%   0%;}
+.icon-militia   {background-position:25%  0%;}
+.icon-spearman  {background-position:50%  0%;}
+.icon-archer    {background-position:75%  0%;}
+.icon-scout     {background-position:100% 0%;}
+
+.icon-sheep     {background-position:0%   25%;}
+.icon-TC        {background-position:25%  25%;}
+.icon-HOUSE     {background-position:50%  25%;}
+.icon-LCAMP     {background-position:75%  25%;}
+.icon-MCAMP     {background-position:100% 25%;}
+
+.icon-MILL      {background-position:0%   50%;}
+.icon-FARM      {background-position:25%  50%;}
+.icon-BARRACKS  {background-position:50%  50%;}
+.icon-TOWER     {background-position:75%  50%;}
+.icon-WALL      {background-position:100% 50%;}
+
+.icon-GATE      {background-position:0%   75%;}
+.icon-food      {background-position:25%  75%;}
+.icon-wood      {background-position:50%  75%;}
+.icon-gold      {background-position:75%  75%;}
+.icon-stone     {background-position:100% 75%;}
+
+.icon-cancel    {background-position:0%   100%;}
+.icon-econ      {background-position:25%  100%;}
+.icon-mil       {background-position:50%  100%;}
+.icon-back      {background-position:75%  100%;}
+.icon-reseed    {background-position:100% 100%;}
+
+.btn-emoji.sprite-icon{
+  /* Fill the button's content box, same as #minimap{width:100%;height:100%}
+     fills #minimap-wrap — it auto-adapts to the button's current size
+     (collapsed vs expanded, any breakpoint) with no separate rules needed. */
+  width:100%;
+  height:100%;
+  margin-bottom:0;
+}
+.queue-slot .queue-icon{
+  width:16px;
+  height:16px;
+}
 .btn-label{
-  font-size:9px;
-  color:#ffebad;
-  text-shadow:1px 1px 1px #000;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  max-width:100%;
+  display:none; /* name is shown in the hover tooltip instead, so the icon can be bigger */
 }
 
 #minimap-wrap {
@@ -417,48 +459,60 @@ canvas {
   text-align: center;
   letter-spacing: 1px;
 }
-.difficulty-options {
+/* Difficulty + Map Size side-by-side as compact segmented controls,
+   instead of two tall stacked lists of radio rows. */
+.setup-row {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 240px;
-  margin: 0 auto;
+  gap: 16px;
+  margin: 16px 0;
 }
-.difficulty-option {
+.setup-col {
+  flex: 1;
+  min-width: 0;
+}
+.setup-col h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 13px;
+  font-weight: 700;
+  color: #5c3b1e;
+  margin-bottom: 8px;
+  text-align: center;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.segmented {
+  display: flex;
+  border: 2px solid #8b6c43;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ebd9af;
+}
+.segment {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
+  padding: 8px 2px;
   cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 4px;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
+  font-family: Georgia, serif;
+  font-size: 12px;
+  font-weight: bold;
+  color: #3b220c;
+  text-align: center;
 }
-.difficulty-option:hover {
-  background: rgba(92, 59, 30, 0.08);
+.segment:not(:last-child) {
+  border-right: 2px solid #8b6c43;
 }
-.difficulty-option input[type="radio"] {
+.segment:hover {
+  background: rgba(92, 59, 30, 0.12);
+}
+.segment input[type="radio"] {
   display: none;
 }
-.custom-radio {
-  width: 18px;
-  height: 18px;
-  border: 2px solid #8b6c43;
-  border-radius: 50%;
-  margin-right: 12px;
-  display: inline-block;
-  position: relative;
-  background: #ebd9af;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
-}
-.difficulty-option input[type="radio"]:checked + .custom-radio::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 8px;
-  height: 8px;
+.segment:has(input:checked) {
   background: #8c1d1d;
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  color: #ffebad;
 }
 .option-label {
   font-family: Georgia, serif;
@@ -479,6 +533,11 @@ canvas {
 }
 .toggle-option:hover {
   background: rgba(92, 59, 30, 0.08);
+}
+.toggle-option-compact {
+  max-width: none;
+  font-size: 13px;
+  opacity: 0.85;
 }
 .toggle-switch {
   position: relative;
@@ -549,21 +608,26 @@ canvas {
   box-shadow: 0 6px 18px rgba(229, 193, 88, 0.45);
   transform: translateY(-1px);
 }
+.menu-button-container {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 10px;
+}
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
   #topbar{height:30px;padding:0 6px}
   .res{margin-right:6px;font-size:11px;padding:1px 4px}
-  .res-icon{width:15px;height:15px;font-size:9px;margin-right:4px}
+  .res-icon{width:15px;height:15px;margin-right:4px}
   .res-val{min-width:24px}
   #pop{font-size:11px;padding:1px 4px}
-  #bottom{height:150px}
+  #bottom{height:170px}
   #sel-info{width:130px;padding:6px}
   #sel-name{font-size:12px}
   #sel-details{font-size:9px}
-  .act-btn{min-width:44px;height:44px;font-size:9px}
-  .btn-emoji{font-size:13px;margin-bottom:1px}
-  .btn-label{font-size:8px}
+  .act-btn{min-width:64px;height:64px;font-size:11px}
+  #bottom.collapsed{height:88px}
   #minimap-wrap{width:140px;height:140px;margin:4px}
   #msg{font-size:13px;top:38px}
 }
@@ -572,16 +636,17 @@ canvas {
   #tutorial-box h2{font-size:22px}
   .setup-section{margin:12px 0}
   .menu-divider{margin:10px 0}
+  .setup-row{flex-direction:column;gap:12px}
+  .segment{font-size:13px;padding:9px 2px}
 }
 @media(max-width:380px){
   .res{margin-right:4px}
   .res-icon{display:none}
-  #bottom{height:130px}
+  #bottom{height:145px}
   #sel-info{width:90px;padding:4px}
   #sel-name{font-size:10px}
-  .act-btn{min-width:40px;height:40px;font-size:8px}
-  .btn-emoji{font-size:11px;margin-bottom:0px}
-  .btn-label{font-size:7px}
+  .act-btn{min-width:60px;height:60px;font-size:10px}
+  #bottom.collapsed{height:84px}
   #minimap-wrap{width:120px;height:120px}
 }
 
@@ -764,7 +829,7 @@ canvas {
 .act-btn .tooltip {
   display: none;
   position: absolute;
-  bottom: 62px;
+  bottom: 68px;
   left: 50%;
   transform: translateX(-50%);
   width: 220px;
