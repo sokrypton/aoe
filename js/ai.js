@@ -296,7 +296,7 @@ function findAIWallDefenseSpot(){
   let xs=plan.map(t=>t.x),ys=plan.map(t=>t.y);
   let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   let corners=[{x:minX,y:minY},{x:maxX,y:minY},{x:minX,y:maxY},{x:maxX,y:maxY}];
-  return corners.find(c=>!hasTowerAt(c.x,c.y))||null;
+  return corners.find(c=>isWallAt(c.x,c.y)&&!hasTowerAt(c.x,c.y))||null;
 }
 
 function planAIMilitaryBuildings(aiTC,vils,barracks,profile){
@@ -674,6 +674,9 @@ function placeAIBuilding(type,x,y){
   let building=createBuilding(type,ox,oy,1,gw,gh);
   building.complete=false;
   building.buildProgress=0;
+  if (wallsToRemove.length > 0) {
+    building.wasWall = true;
+  }
   return building;
 }
 

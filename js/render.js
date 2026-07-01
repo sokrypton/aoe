@@ -1254,8 +1254,8 @@ function drawCorpse(c){
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
   
-  let idOff=c.id%7;
-  sx+=(idOff%3-1)*6; sy+=(Math.floor(idOff/3)-1)*4;
+  let { ox, oy } = getUnitGroupOffset(c.id);
+  sx += ox; sy += oy;
   let tc=TEAM_COLORS[c.team];
   
   let age = performance.now() - c.deathTime;
@@ -1311,8 +1311,8 @@ function drawUnit(e){
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
   // Group spread: offset based on unit ID so stacked units are visible
-  let idOff=e.id%7;
-  sx+=(idOff%3-1)*6; sy+=(Math.floor(idOff/3)-1)*4;
+  let { ox, oy } = getUnitGroupOffset(e.id);
+  sx += ox; sy += oy;
   let tc=TEAM_COLORS[e.team];
   let anim=Math.sin(tick*0.15+e.id*2);
   let isActive=e.task||e.target||e.path.length>0;

@@ -41,7 +41,7 @@ function updateUI(){
       currentSelectionDetails += `:${e.queue.length}:${Math.floor(e.trainTick)}`;
     }
     if (e.task) {
-      currentSelectionDetails += `:${e.task}:${e.resCarrying || 0}:${e.targetId || 0}`;
+      currentSelectionDetails += `:${e.task}:${e.carrying || 0}:${e.target || e.buildTarget || e.followId || 0}`;
     }
     let b = BLDGS[e.btype];
     if (b && b.isFarm) {
@@ -103,16 +103,6 @@ function updateUI(){
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
   document.getElementById('pop').textContent=`${popUsed}/${popCap}`;
-
-  let idleBtn = document.getElementById('idle-vil-btn');
-  if (idleBtn) {
-    document.getElementById('idle-vil-count').textContent = currentIdleCount;
-    if (currentIdleCount > 0) {
-      idleBtn.classList.add('idle-active');
-    } else {
-      idleBtn.classList.remove('idle-active');
-    }
-  }
 
   let act=document.getElementById('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount;

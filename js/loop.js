@@ -108,9 +108,13 @@ function separateUnits(){
   for(let i=0;i<units.length;i++){
     for(let j=i+1;j<units.length;j++){
       let a=units[i], b=units[j];
-      // Skip units actively gathering on a resource tile
-      let aGathering=a.gatherX>=0&&a.path.length===0;
-      let bGathering=b.gatherX>=0&&b.path.length===0;
+      // Skip units actively gathering on a resource tile, building, or harvesting a sheep carcass
+      let aGathering = (a.gatherX >= 0 && a.path.length === 0) || 
+                       (a.buildTarget !== null && a.path.length === 0) ||
+                       (a.target !== null && a.path.length === 0 && entitiesById.get(a.target)?.utype === 'sheep_carcass');
+      let bGathering = (b.gatherX >= 0 && b.path.length === 0) || 
+                       (b.buildTarget !== null && b.path.length === 0) ||
+                       (b.target !== null && b.path.length === 0 && entitiesById.get(b.target)?.utype === 'sheep_carcass');
       let dx=a.x-b.x, dy=a.y-b.y;
       let d=Math.sqrt(dx*dx+dy*dy);
       if(d<minDist&&d>0.01){

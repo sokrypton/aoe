@@ -711,7 +711,40 @@ function updateUnit(e){
 
   if(e.target && e.task !== 'return'){
     let t=entities.find(en=>en.id===e.target);
-    if(!t||t.hp<=0){e.target=null;return;}
+    if(!t||t.hp<=0){
+      e.target=null;
+      e.explicitAttack=false;
+      return;
+    }
+
+    // Fog of War visibility check for combat targets
+    if (t.team !== e.team && t.team !== 2) {
+      if (e.team === 0) {
+        let visible = false;
+        if (t.type === 'unit') {
+          let tx = Math.round(t.x), ty = Math.round(t.y);
+          visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+        } else if (t.type === 'building') {
+          visible = buildingFogLevel(t) === 2;
+        }
+        if (!visible) {
+          e.target = null;
+          e.explicitAttack = false;
+          clearUnitPath(e);
+          return;
+        }
+      } else if (e.team === 1) {
+        let visionRange = 15 * (typeof aiScale === 'function' ? aiScale() : 1.0);
+        let visible = entities.some(aiEnt => {
+          return aiEnt.team === 1 && dist(aiEnt, t) <= visionRange;
+        });
+        if (!visible) {
+          e.target = null;
+          clearUnitPath(e);
+          return;
+        }
+      }
+    }
 
     // Defensive Stance anchor retreat check
     if (e.stance === 'defensive' && e.defendX !== undefined) {
@@ -758,7 +791,7 @@ function updateUnit(e){
     if (range > 0) {
       // Ranged combat: stay within range and fire projectiles
       if (d > range) {
-        if (e.stance === 'standground') {
+        if (e.stance === 'standground' && !e.explicitAttack) {
           e.target = null;
           return;
         }
@@ -776,7 +809,7 @@ function updateUnit(e){
       if(t.type==='building'){
         // Attack building: path to nearest perimeter tile, attack when adjacent
         if(!adjToBuilding(e.x,e.y,t)){
-          if (e.stance === 'standground') {
+          if (e.stance === 'standground' && !e.explicitAttack) {
             e.target = null;
             return;
           }
@@ -791,7 +824,7 @@ function updateUnit(e){
         // Attack unit: path close and hit
         let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.2 : 1.5;
         if(d>maxD){
-          if (e.stance === 'standground') {
+          if (e.stance === 'standground' && !e.explicitAttack) {
             e.target = null;
             return;
           }
@@ -1072,6 +1105,7 @@ function handleDeath(e,killerTeam){
     e.team = 2; // neutral resource
     clearUnitPath(e);
     if (window.playSound) window.playSound('sheep');
+    selected=selected.filter(s=>s.id!==e.id);
     return;
   }
   if(e.type==='building'){
@@ -1157,9 +1191,13 @@ function updateBuilding(e){
     if(e.trainTick<u.trainTime)e.trainTick++;
     if(e.trainTick>=u.trainTime){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
-      let b=BLDGS[e.btype];
       let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
-      if(!spawn)return;
+      if(!spawn){
+        if(e.team===0 && tick % 180 === 0){
+          showMsg("Spawn point blocked! Clear area near " + BLDGS[e.btype].name);
+        }
+        return;
+      }
       e.trainTick=0;
       let ut=e.queue.shift();
       let unit=createUnit(ut,spawn.x,spawn.y,e.team);

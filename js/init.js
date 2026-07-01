@@ -53,6 +53,7 @@ function startGame(difficulty){
   window.playedGameOverSound = false; // Reset game over sound trigger
   // Initialize audio on first click
   if (window.initAudio) window.initAudio();
+  if (window.startAmbientMusic) window.startAmbientMusic();
   
   let menu=document.getElementById('tutorial');
   if(menu)menu.style.display='none';
@@ -89,6 +90,12 @@ function restartGame(difficulty){
   window.aiGateBuilt = false;
   window.aiGateTile = null;
   window.aiIntel = null;
+
+  // Reset UI cache to prevent stale HUD panels on restart
+  window.lastUIState = null;
+  window.lastSelListKey = null;
+  window.lastSelGridDetails = null;
+  window.lastSelKey = null;
 
   // Re-generate map and spawn starts
   init();

@@ -249,7 +249,15 @@ function spawnProjectile(attacker, target) {
 
 function isUnitOnScreen(en) {
   let iso = toIso(en.x, en.y);
-  let sx = iso.ix - camX + W/2;
-  let sy = iso.iy - camY + topH + H/2;
-  return sx >= -50 && sx <= W + 50 && sy >= -50 && sy <= H + 50;
+  let sx = (iso.ix - camX) * ZOOM + W/2;
+  let sy = (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH;
+  return sx >= -50 * ZOOM && sx <= W + 50 * ZOOM && sy >= -50 * ZOOM && sy <= H + 50 * ZOOM;
+}
+
+function getUnitGroupOffset(entityId) {
+  let idOff = entityId % 7;
+  return {
+    ox: (idOff % 3 - 1) * 6,
+    oy: (Math.floor(idOff / 3) - 1) * 4
+  };
 }

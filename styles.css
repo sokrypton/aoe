@@ -103,10 +103,6 @@ canvas {
   justify-content: center;
 }
 
-#idle-vil-btn, #menu-btn {
-  display: none !important;
-}
-
 /* ---- BOTTOM PANEL (AoE2 HUD Command Box) ---- */
 #bottom {
   position: absolute;
@@ -595,7 +591,7 @@ canvas {
   .res-icon{width:22px;height:22px;margin-right:6px}
   .res-val{min-width:30px}
   #pop{font-size:14px;padding:4px 8px;margin-right:4px;height:32px}
-  #idle-vil-btn{font-size:14px;padding:5px 10px}
+  #mute-btn{font-size:14px;padding:5px 10px}
   #menu-btn{font-size:14px;padding:5px 10px}
   #bottom{height:96px}
   #sel-info{width:180px;padding:6px}
@@ -743,25 +739,6 @@ canvas {
   background: rgba(40, 20, 5, 0.65);
 }
 
-#idle-vil-btn {
-  color: #ffebad;
-  font-size: 11px;
-  font-weight: bold;
-  margin-left: 8px;
-  cursor: pointer;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid #5a3f1d;
-  border-radius: 4px;
-  padding: 2px 8px;
-  box-shadow: inset 0 0 4px #000;
-  text-shadow: 1px 1px 1px #000;
-  white-space: nowrap;
-  transition: all 0.15s;
-}
-#idle-vil-btn:hover {
-  border-color: #ffd700;
-  background: rgba(40, 20, 5, 0.65);
-}
 .idle-active {
   animation: flash-gold 1.2s infinite alternate;
   border-color: #ffd700 !important;
@@ -886,6 +863,27 @@ canvas {
 .train-compact .active-slot {
   background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
   border-color: #ffd700;
+}
+
+#mute-btn {
+  color: #ffd700;
+  font-size: 13px;
+  margin-left: auto;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #bfa054;
+  border-radius: 4px;
+  padding: 1px 8px;
+  box-shadow: inset 0 0 4px #000;
+  text-shadow: 1px 1px 1px #000;
+  white-space: nowrap;
+  transition: all 0.15s;
+  pointer-events: auto;
+}
+#mute-btn:hover {
+  border-color: #fff;
+  background: rgba(140, 29, 29, 0.65);
+  box-shadow: 0 0 6px rgba(229, 193, 88, 0.4), inset 0 0 4px #000;
 }
 
 

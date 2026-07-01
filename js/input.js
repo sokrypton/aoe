@@ -534,8 +534,8 @@ function getBuildingUnderCursor(sx, sy, filter) {
   let bestSortY = -9999;
   entities.forEach(en=>{
     if(en.type==='building' && (!filter || filter(en))){
-      let w = en.w !== undefined ? en.w : b.w;
-      let h = en.h !== undefined ? en.h : b.h;
+      let w = en.w !== undefined ? en.w : BLDGS[en.btype].w;
+      let h = en.h !== undefined ? en.h : BLDGS[en.btype].h;
       let cx = en.x + w / 2;
       let cy = en.y + h / 2;
       let iso = toIso(cx, cy);
@@ -569,9 +569,7 @@ function getUnitUnderCursor(sx, sy) {
       if (en.team !== 0 && uf !== 2) return;
 
       let iso = toIso(en.x, en.y);
-      let idOff = en.id % 7;
-      let ox = (idOff % 3 - 1) * 6;
-      let oy = (Math.floor(idOff / 3) - 1) * 4;
+      let { ox, oy } = getUnitGroupOffset(en.id);
       let scrx = (iso.ix - camX + ox) * ZOOM + W/2;
       let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H/2 + topH;
 
@@ -665,6 +663,11 @@ function getResourceUnderCursor(sx, sy) {
 function doSelect(sx,sy,shift){
   let tile=screenToTile(sx,sy);
   let clicked=getUnitUnderCursor(sx, sy);
+  if(clicked && clicked.team!==0){
+    let tx = Math.floor(clicked.x), ty = Math.floor(clicked.y);
+    let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+    if(!visible) clicked=null;
+  }
   if(!clicked){
     clicked = getBuildingUnderCursor(sx, sy);
     // Don't select enemy buildings that aren't visible
@@ -697,13 +700,25 @@ function doBoxSelect(x1,y1,x2,y2){
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   selected=entities.filter(en=>{
     if(en.team!==0)return false;
+    if(en.type!=='unit'||en.utype==='sheep')return false;
     let iso=toIso(en.x,en.y);
-    let idOff=en.id%7;
-    let ox=(idOff%3-1)*6;
-    let oy=(Math.floor(idOff/3)-1)*4;
-    let sx=(iso.ix-camX+ox)*ZOOM+W/2;
-    let sy=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
-    return sx>=sx1&&sx<=sx2&&sy>=sy1&&sy<=sy2;
+    let { ox, oy } = getUnitGroupOffset(en.id);
+    let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
+    let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
+
+    let w = 10 * ZOOM;
+    let hStart = 2 * ZOOM;
+    let hEnd = -28 * ZOOM;
+
+    if (en.utype === 'sheep' || en.utype === 'sheep_carcass') {
+      w = 16 * ZOOM;
+      hStart = 2 * ZOOM;
+      hEnd = -16 * ZOOM;
+    }
+
+    let horizontalOverlap = Math.max(sx1, scrx - w) <= Math.min(sx2, scrx + w);
+    let verticalOverlap = Math.max(sy1, scry + hEnd) <= Math.min(sy2, scry + hStart);
+    return horizontalOverlap && verticalOverlap;
   });
   let units=selected.filter(s=>s.type==='unit');
   if(units.length>0)selected=units;
@@ -768,6 +783,11 @@ function doCommand(sx,sy){
   let followTarget=null;
   
   let clickedUnit = getUnitUnderCursor(sx, sy);
+  if (clickedUnit && clickedUnit.team !== 0) {
+    let tx = Math.floor(clickedUnit.x), ty = Math.floor(clickedUnit.y);
+    let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+    if (!visible) clickedUnit = null;
+  }
   if (clickedUnit) {
     if (clickedUnit.team === 1) {
       target = clickedUnit;
@@ -808,6 +828,8 @@ function doCommand(sx,sy){
     s.buildTarget=null;
     s.buildQueue=[];
     s.followId=undefined;
+    s.defendX=s.x;s.defendY=s.y;
+    s.explicitAttack=false;
     if(buildTarget&&s.utype==='villager'){
       s.target=null;s.task='build';s.buildTarget=buildTarget.id;
       let b=BLDGS[buildTarget.btype];
@@ -823,6 +845,7 @@ function doCommand(sx,sy){
         idx++;
       } else {
         s.target=target.id;s.task=null;clearUnitPath(s);s.buildTarget=null;
+        s.explicitAttack=true;
       }
     } else if(followTarget&&followTarget.id!==s.id&&s.utype!=='sheep'){
       // AoE2-style "Follow": keep pathing toward the followed unit's current
@@ -997,22 +1020,8 @@ window.addEventListener('resize',()=>{
 // Double click to select all units of same type on screen
 C.addEventListener('dblclick', e => {
   if (gameOver || hasTouch) return;
-  let tile = screenToTile(e.clientX, e.clientY);
-  let clicked = null;
-  let hitR = 12;
-  entities.forEach(en => {
-    if (en.type === 'unit' && en.team === 0) {
-      let iso = toIso(en.x, en.y);
-      let idOff = en.id % 7;
-      let ox = (idOff % 3 - 1) * 6;
-      let oy = (Math.floor(idOff / 3) - 1) * 4;
-      let scrx = (iso.ix - camX + ox) * ZOOM + W / 2;
-      let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H / 2 + topH;
-      let dx = e.clientX - scrx, dy = e.clientY - (scry - 10 * ZOOM);
-      if (Math.sqrt(dx * dx + dy * dy) < hitR * ZOOM) clicked = en;
-    }
-  });
-  if (clicked) {
+  let clicked = getUnitUnderCursor(e.clientX, e.clientY);
+  if (clicked && clicked.team === 0) {
     selected = entities.filter(en => en.team === 0 && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));
     if (window.playSound) {
       if (clicked.utype === 'villager') window.playSound('select_villager');
