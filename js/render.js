@@ -581,6 +581,24 @@ function drawWindmillSails(hx,hy,id){
   X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
 }
 // Main function to draw building entities
+// Shared by TOWER/WALL/GATE for locating an adjacent building to link to.
+function getConnectedBuilding(tx, ty){
+  return entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
+}
+function isWallLike(b){
+  return !!b && (b.btype === 'WALL' || b.btype === 'TOWER' || b.btype === 'GATE');
+}
+// GATE's 4-merlon battlement cap, shared between its back and front posts.
+function drawBastionMerlons(cx, cy, colorL, colorR, darken){
+  let m = [
+    { x: cx,      y: cy - 35 }, // Top
+    { x: cx - 10, y: cy - 30 }, // Left
+    { x: cx + 10, y: cy - 30 }, // Right
+    { x: cx,      y: cy - 25 }  // Bottom
+  ];
+  m.forEach(p => drawBuildingBlock(p.x, p.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, colorL, colorR, darken));
+}
+
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
@@ -986,7 +1004,6 @@ function drawBuilding(e, part = null){
     bh=36;
     let linkY = sy + 16;
     let wallH = 14;
-    let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
 
     // Castle Age Watch Tower — 3 stacked blocks. Base is shifted so its
     // front-bottom vertex lands on linkY (sy+16), same as wall pillars,
@@ -1003,14 +1020,12 @@ function drawBuilding(e, part = null){
     // diverging from one vertex) — use d1=8 there too so the two stubs
     // clear each other instead of clipping at the shared vertex.
     // South neighbor (y+1)
-    let sB = getB(e.x, e.y + 1);
-    if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+    if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
       drawWallLink(sx, linkY, -32, 16, wallH, darken, 8);
     }
 
     // East neighbor (x+1)
-    let eB = getB(e.x + 1, e.y);
-    if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+    if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
       drawWallLink(sx, linkY, 32, 16, wallH, darken, 8);
     }
 
@@ -1021,7 +1036,6 @@ function drawBuilding(e, part = null){
     let pillarH = 22;
     let wallH = 14;   // lower than pillar to create bastion crenellated effect
     let linkY = sy + 16;
-    let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
 
     // 1. Draw central pillar first (centered concentrically at sy+16)
     // Colors match drawWallLink's palette so the pillar reads as part of
@@ -1031,14 +1045,12 @@ function drawBuilding(e, part = null){
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
     // South neighbor (y+1)
-    let sB = getB(e.x, e.y + 1);
-    if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+    if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
       drawWallLink(sx, linkY, -32, 16, wallH, darken);
     }
 
     // East neighbor (x+1)
-    let eB = getB(e.x + 1, e.y);
-    if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+    if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
       drawWallLink(sx, linkY, 32, 16, wallH, darken);
     }
   }
@@ -1071,15 +1083,7 @@ function drawBuilding(e, part = null){
       drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
 
       // Draw battlements (merlons) on Tower 1 top
-      let m1 = [
-        { x: t1sx,      y: t1sy - 35 }, // Top
-        { x: t1sx - 10, y: t1sy - 30 }, // Left
-        { x: t1sx + 10, y: t1sy - 30 }, // Right
-        { x: t1sx,      y: t1sy - 25 }  // Bottom
-      ];
-      m1.forEach(m => {
-        drawBuildingBlock(m.x, m.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
-      });
+      drawBastionMerlons(t1sx, t1sy, '#b0b0a4', '#b0b0a4', darken);
 
       if (e.complete) {
         // Sliding portcullis bars (height 26)
@@ -1098,18 +1102,15 @@ function drawBuilding(e, part = null){
       }
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy)
-      let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
       let wallH = 14;
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
-        let eB = getB(e.x + 1, e.y);
-        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
           drawWallLink(t1sx, t1sy, 32, 16, wallH, darken);
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
-        let sB = getB(e.x, e.y + 1);
-        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
           drawWallLink(t1sx, t1sy, -32, 16, wallH, darken);
         }
       }
@@ -1125,38 +1126,25 @@ function drawBuilding(e, part = null){
       drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
 
       // Draw battlements (merlons) on Tower 2 top
-      let m2 = [
-        { x: t2sx,      y: t2sy - 35 }, // Top
-        { x: t2sx - 10, y: t2sy - 30 }, // Left
-        { x: t2sx + 10, y: t2sy - 30 }, // Right
-        { x: t2sx,      y: t2sy - 25 }  // Bottom
-      ];
-      m2.forEach(m => {
-        drawBuildingBlock(m.x, m.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
-      });
+      drawBastionMerlons(t2sx, t2sy, '#b0b0a4', '#989890', darken);
 
       // Draw connection links for Post 2 (front post centered at t2sy)
       let wallH = 14;
-      let getB = (tx, ty) => entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
       if (wallLineNS) {
         // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
-        let sB = getB(e.x, e.y + 2);
-        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, d1=8);
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 2))) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8);
         }
-        let eB = getB(e.x + 1, e.y + 1);
-        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, d1=8);
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8);
         }
       } else {
         // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
-        let eB = getB(e.x + 2, e.y);
-        if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, d1=8);
+        if (isWallLike(getConnectedBuilding(e.x + 2, e.y))) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8);
         }
-        let sB = getB(e.x + 1, e.y + 1);
-        if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, d1=8);
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8);
         }
       }
     }
@@ -1219,11 +1207,17 @@ function drawBuilding(e, part = null){
     X.fillStyle='#300';X.fillRect(sx-bww/2,hpY+1,bww,4);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-bww/2,hpY+1,bww*e.hp/e.maxHp,4);
   }
-  // Selection
+  // Selection — outlines the entity's actual footprint (e.w/e.h), not the
+  // building type's default template size, so multi-tile footprints that
+  // differ from the template (e.g. a 1x2/2x1 GATE vs BLDGS.GATE's 1x1)
+  // still get an outline spanning every tile they occupy.
   if(selected.includes(e)){
     X.strokeStyle='#fff';X.lineWidth=2;X.setLineDash([3,3]);
+    let fw=e.w||b.w, fh=e.h||b.h;
+    let toScr=(wx,wy)=>{let p=toIso(wx,wy);return{x:p.ix-camX+W/2,y:p.iy-camY+topH+H/2};};
+    let pN=toScr(e.x,e.y), pE=toScr(e.x+fw,e.y), pS=toScr(e.x+fw,e.y+fh), pW=toScr(e.x,e.y+fh);
     X.beginPath();
-    X.moveTo(sx,sy);X.lineTo(sx+bw+2,sy+bhh);X.lineTo(sx,sy+bhh*2+2);X.lineTo(sx-bw-2,sy+bhh);X.closePath();X.stroke();
+    X.moveTo(pN.x,pN.y);X.lineTo(pE.x+2,pE.y);X.lineTo(pS.x,pS.y+2);X.lineTo(pW.x-2,pW.y);X.closePath();X.stroke();
     X.setLineDash([]);
   }
   // Train progress
