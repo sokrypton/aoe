@@ -240,11 +240,14 @@ function spawnProjectile(attacker, target) {
     y: attacker.y,
     startX: attacker.x,
     startY: attacker.y,
+    // Launch height: towers/TC fire from their battlements, units from
+    // chest height — drawProjectiles blends this down to impact height.
+    startH: attacker.type === 'building' ? (attacker.btype === 'TC' ? 55 : 36) : 12,
     totalDist: d,
     targetId: target.id,
     attacker: attacker
   });
-  if (window.playSound) window.playSound('arrow');
+  if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
 }
 
 function isUnitOnScreen(en) {

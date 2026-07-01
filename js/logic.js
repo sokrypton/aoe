@@ -163,8 +163,11 @@ function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
 
 function distToTarget(a,b){
   if(b && b.type==='building'){
-    let dx=Math.max(b.x-a.x, 0, a.x-(b.x+b.w));
-    let dy=Math.max(b.y-a.y, 0, a.y-(b.y+b.h));
+    // A w-wide building occupies tile centers [x .. x+w-1], so its
+    // geometric footprint spans [x-0.5, x+w-0.5]. Measuring against
+    // [x, x+w] (as before) overhangs the far sides by a full tile.
+    let dx=Math.max(b.x-0.5-a.x, 0, a.x-(b.x+b.w-0.5));
+    let dy=Math.max(b.y-0.5-a.y, 0, a.y-(b.y+b.h-0.5));
     return Math.sqrt(dx*dx+dy*dy);
   }
   return dist(a,b);
@@ -203,9 +206,13 @@ function distToBuilding(px,py,bldg){
 // box test (|dx|<1.2 && |dy|<1.2) let units register as "adjacent" from up to
 // ~1.7 tiles past the nearest edge near corners, well beyond intended melee reach.
 function adjToBuilding(px,py,bldg){
-  let dx=Math.max(bldg.x-px, 0, px-(bldg.x+bldg.w));
-  let dy=Math.max(bldg.y-py, 0, py-(bldg.y+bldg.h));
-  return Math.sqrt(dx*dx+dy*dy) <= 1.5;
+  // Tile-accurate footprint (see distToTarget). Perimeter tile centers sit
+  // 0.5 (orthogonal) to ~0.71 (diagonal corner) from this rect, so 1.2
+  // accepts every true perimeter tile while rejecting the next ring out —
+  // previously the inflated rect + 1.5 let melee hit from ~2 tiles away.
+  let dx=Math.max(bldg.x-0.5-px, 0, px-(bldg.x+bldg.w-0.5));
+  let dy=Math.max(bldg.y-0.5-py, 0, py-(bldg.y+bldg.h-0.5));
+  return Math.sqrt(dx*dx+dy*dy) <= 1.2;
 }
 
 // Find nearest walkable tile adjacent to building perimeter
@@ -220,6 +227,31 @@ function nearestBldgPerimeter(px,py,bldg,ignore){
     }
   }
   return best||{x:Math.min(bldg.x+bldg.w,MAP-1),y:Math.min(bldg.y+bldg.h,MAP-1)};
+}
+
+
+// AoE2-style siege spread: each melee attacker of a building claims its own
+// perimeter tile, so a group fans out and surrounds the building instead of
+// stacking up behind whichever tile happens to be nearest.
+function siegePerimeterSpot(e,t){
+  let claimed=new Set();
+  entities.forEach(en=>{
+    if(en!==e&&en.type==='unit'&&en.target===t.id&&en.siegeSpot){
+      claimed.add(en.siegeSpot.x+','+en.siegeSpot.y);
+    }
+  });
+  let best=null,bd=1e9;
+  for(let dy=-1;dy<=t.h;dy++)for(let dx=-1;dx<=t.w;dx++){
+    if(dx>=0&&dx<t.w&&dy>=0&&dy<t.h)continue;
+    let tx=t.x+dx, ty=t.y+dy;
+    if(tx<0||tx>=MAP||ty<0||ty>=MAP)continue;
+    if(!walkable(tx,ty,e.id))continue;
+    let d=Math.abs(e.x-tx)+Math.abs(e.y-ty);
+    if(claimed.has(tx+','+ty))d+=100; // strongly prefer an unclaimed spot
+    if(d<bd){bd=d;best={x:tx,y:ty};}
+  }
+  if(best){e.siegeSpot=best;return best;}
+  return nearestBldgPerimeter(e.x,e.y,t,e.id);
 }
 
 function clearGatherTarget(e){
@@ -267,8 +299,11 @@ function updateGatherTask(e,config){
   }
 
   if(!gatherTile){
-    e.task=null;
     clearGatherTarget(e);
+    // Deposit whatever is already carried instead of idling with a partial
+    // load in hand; with nothing carried, just go idle.
+    e.prevTask=null;
+    e.task = e.carrying>0 ? 'return' : null;
     return;
   }
 
@@ -300,7 +335,8 @@ function updateGatherTask(e,config){
         if (foundPath) return;
 
         clearGatherTarget(e);
-        e.task=null;
+        e.prevTask=null;
+        e.task = e.carrying>0 ? 'return' : null;
         if(e.team===0)showMsg('Resource is unreachable!');
       }
     }
@@ -321,13 +357,15 @@ function updateGatherTask(e,config){
   tile.res--;
   e.carrying++;
   e.carryType=config.resource;
+  if(config.resource==='food') e.foodSrc = e.task==='farm' ? 'wheat' : 'berries';
   e.gatherCooldown=config.cooldown;
 
-  // Play gathering audio effects (player team 0)
-  if (e.team === 0 && window.playSound) {
+  // Gathering audio: positional, so it's heard when the view is near the
+  // work — including enemy villagers when you scout their base.
+  if (window.playSound) {
     let sType = e.task;
     if (sType === 'mine_gold' || sType === 'mine_stone') sType = 'mine';
-    window.playSound(sType);
+    window.playSound(sType, gatherTile.x + 0.5, gatherTile.y + 0.5);
   }
   // Spawn gathering particles
   let pColor = '#4a8c2a';
@@ -392,10 +430,10 @@ function damageEntity(attacker, target){
 
   // Play combat sound and spawn particles
   if (target.type === 'unit') {
-    if (window.playSound) window.playSound('attack');
+    if (window.playSound) window.playSound('attack', target.x, target.y);
     spawnParticles(target.x, target.y, '#990000', 4, 0.04, 1.5);
   } else {
-    if (window.playSound) window.playSound('build');
+    if (window.playSound) window.playSound('build', target.x + (target.w||1)/2, target.y + (target.h||1)/2);
     spawnParticles(target.x + (target.w||1)/2, target.y + (target.h||1)/2, '#8b6c43', 3, 0.03, 2);
   }
 
@@ -446,6 +484,20 @@ function damageEntity(attacker, target){
     }
   }
   
+  // Defend sieged buildings: when a building is hit, nearby idle military
+  // (not passive, no current fight) converge on the attacker — matching how
+  // units already retaliate when hit themselves.
+  if(target.type==='building'&&attacker.team!==target.team){
+    entities.forEach(en=>{
+      if(en.type!=='unit'||en.team!==target.team)return;
+      if(en.utype==='villager'||en.utype==='sheep'||en.utype==='sheep_carcass')return;
+      if(en.target||en.task||en.stance==='passive')return;
+      if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
+      if(distToTarget(en,target)>8)return;
+      en.target=attacker.id;
+    });
+  }
+
   if(target.hp<=0) handleDeath(target, attacker.team);
 }function autoTaskBuilder(e, bt){
   if(bt.btype==='FARM'){
@@ -733,7 +785,12 @@ function updateUnit(e){
           clearUnitPath(e);
           return;
         }
-      } else if (e.team === 1) {
+      } else if (e.team === 1 && !e.explicitAttack) {
+        // Ordinary AI units drop targets they can no longer see. Explicit
+        // marches (controlAIMilitary attacks on the remembered player TC)
+        // are exempt — the AI knows where the TC is even out of sight,
+        // otherwise the army's attack order is wiped the tick after it's
+        // given and it never leaves home.
         let visionRange = 15 * (typeof aiScale === 'function' ? aiScale() : 1.0);
         let visible = entities.some(aiEnt => {
           return aiEnt.team === 1 && dist(aiEnt, t) <= visionRange;
@@ -773,8 +830,9 @@ function updateUnit(e){
           t.hp--;
           e.carrying++;
           e.carryType='food';
+          e.foodSrc='meat';
           e.gatherCooldown=15; // Gather rate
-          if(window.playSound && tick % 30 === 0) window.playSound('forage');
+          if(window.playSound && tick % 30 === 0) window.playSound('forage', t.x, t.y);
           spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
           if(t.hp<=0){
             handleDeath(t, e.team);
@@ -813,7 +871,7 @@ function updateUnit(e){
             e.target = null;
             return;
           }
-          let pt=nearestBldgPerimeter(e.x,e.y,t,e.id);
+          let pt=siegePerimeterSpot(e,t);
           pathUnitTo(e,pt.x,pt.y);
           if(e.path.length===0)e.target=null; // can't reach, give up
         } else if(e.atkCooldown<=0){
@@ -876,6 +934,9 @@ function updateUnit(e){
             store.prepaidFarms--;
             if (e.team === 0) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
             bt.exhausted = false;
+            bt.complete = true;               // exhaustion had flagged it incomplete;
+            bt.buildProgress = bt.buildTime;  // without this, canGatherTile rejects the
+            bt.hp = bt.maxHp;                 // farm and the farmer silently goes idle
             let tile = map[bt.y][bt.x];
             tile.t = TERRAIN.FARM;
             tile.res = 300;
@@ -889,6 +950,9 @@ function updateUnit(e){
               store.wood -= 60;
               if (e.team === 0) showMsg("Farm reseeded (-60 Wood)");
               bt.exhausted = false;
+              bt.complete = true;
+              bt.buildProgress = bt.buildTime;
+              bt.hp = bt.maxHp;
               let tile = map[bt.y][bt.x];
               tile.t = TERRAIN.FARM;
               tile.res = 300;
@@ -908,8 +972,8 @@ function updateUnit(e){
         }
         if (!bt.complete) {
           bt.buildProgress++;
-          if (tick % 30 === 0 && e.team === 0 && window.playSound) {
-            window.playSound('build');
+          if (tick % 30 === 0 && window.playSound) {
+            window.playSound('build', bt.x + bt.w/2, bt.y + bt.h/2);
           }
           if(bt.buildProgress>=bt.buildTime){
             bt.complete=true;
@@ -963,8 +1027,8 @@ function updateUnit(e){
               return;
             }
           }
-          if (tick % 30 === 0 && e.team === 0 && window.playSound) {
-            window.playSound('build');
+          if (tick % 30 === 0 && window.playSound) {
+            window.playSound('build', bt.x + bt.w/2, bt.y + bt.h/2);
           }
           if (bt.hp >= bt.maxHp) {
             e.buildTarget = null;
@@ -1021,7 +1085,13 @@ function updateUnit(e){
         e.carrying=0;
         e.failedDrops=null;
         if(e.prevTask){e.task=e.prevTask;e.prevTask=null;}
-        else e.task=null;
+        else {
+          e.task=null;
+          // Nothing to resume: release the remembered gather tile so it
+          // stops counting as "claimed" for other villagers (findNearTile)
+          // and this idle villager isn't exempt from unit separation.
+          if(!e.target) clearGatherTarget(e);
+        }
       }
       return;
     }
@@ -1104,7 +1174,7 @@ function handleDeath(e,killerTeam){
     e.speed = 0;
     e.team = 2; // neutral resource
     clearUnitPath(e);
-    if (window.playSound) window.playSound('sheep');
+    if (window.playSound) window.playSound('sheep', e.x, e.y);
     selected=selected.filter(s=>s.id!==e.id);
     return;
   }

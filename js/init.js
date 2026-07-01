@@ -60,11 +60,44 @@ function startGame(difficulty){
   showMsg('Difficulty: '+AI_LEVELS[aiDifficulty].name);
 }
 
+function applyAudioSettings(){
+  let sm = document.querySelector('input[name="soundmode"]:checked');
+  let mu = document.querySelector('input[name="music"]:checked');
+  window.soundMode = sm ? sm.value : 'all';
+  window.musicEnabled = mu ? mu.value === 'on' : true;
+  try {
+    localStorage.setItem('aoeSoundMode', window.soundMode);
+    localStorage.setItem('aoeMusic', window.musicEnabled ? 'on' : 'off');
+  } catch (e) {}
+  // Apply immediately if a match is running (menu can be reopened mid-game)
+  if (window.musicEnabled === false) { if (window.stopAmbientMusic) stopAmbientMusic(); }
+  else if (gameStarted && !gameOver && window.startAmbientMusic) startAmbientMusic();
+}
+
+// Restore saved audio prefs into the menu controls on load
+(function restoreAudioSettings(){
+  try {
+    let sm = localStorage.getItem('aoeSoundMode');
+    let mu = localStorage.getItem('aoeMusic');
+    if (sm) {
+      let el = document.querySelector('input[name="soundmode"][value="'+sm+'"]');
+      if (el) el.checked = true;
+      window.soundMode = sm;
+    }
+    if (mu) {
+      let el = document.querySelector('input[name="music"][value="'+mu+'"]');
+      if (el) el.checked = true;
+      window.musicEnabled = mu === 'on';
+    }
+  } catch (e) {}
+})();
+
 function onStartClicked(){
   let selected = document.querySelector('input[name="difficulty"]:checked');
   let diff = selected ? selected.value : 'standard';
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
+  applyAudioSettings();
 
   window.fogDisabled = false;
 
@@ -116,11 +149,18 @@ function toggleMenu(){
     if (menu.style.display === 'none' || menu.style.display === '') {
       menu.style.display = 'flex';
       gamePaused = true;
+      let inMatch = entities.length > 0 && gameStarted;
       let resumeBtn = document.getElementById('resume-game-btn');
       if (resumeBtn) {
-        resumeBtn.style.display = entities.length > 0 ? 'inline-block' : 'none';
+        // No resuming a finished match — only Restart makes sense then
+        resumeBtn.style.display = (inMatch && !gameOver) ? 'inline-block' : 'none';
+      }
+      let startBtn = document.getElementById('start-game-btn');
+      if (startBtn) {
+        startBtn.textContent = inMatch ? 'Restart' : 'Start';
       }
     } else {
+      applyAudioSettings();
       menu.style.display = 'none';
       gamePaused = false;
     }

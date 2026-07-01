@@ -49,42 +49,47 @@ function drawTile(x,y){
   X.closePath();X.fill();
   let cy=sy+HALF_TH;
 
+  // Rounded boulder dome with flat base, outline, and top-left highlight —
+  // shared by the gold and stone mine tiles.
+  const dome=(rx,ry,rw,rh,c)=>{
+    X.strokeStyle='#000';X.lineWidth=1.2;X.fillStyle=c;
+    X.beginPath();X.ellipse(rx,ry,rw,rh,0,Math.PI,Math.PI*2);X.closePath();X.fill();X.stroke();
+    X.fillStyle='rgba(255,255,255,0.14)';
+    X.beginPath();X.ellipse(rx-rw*0.3,ry-rh*0.45,rw*0.35,rh*0.3,-0.3,0,Math.PI*2);X.fill();
+  };
   if(t.t===TERRAIN.GOLD){
     let s=0.3+0.7*Math.min(t.res/800,1);
-    // Dark rock outcrop base
-    X.fillStyle='#4c4c44';X.beginPath();
-    X.moveTo(sx-11*s, cy);X.lineTo(sx+11*s, cy+2);
-    X.lineTo(sx+6*s, cy-6*s);X.lineTo(sx-8*s, cy-4*s);X.closePath();
-    X.fill();
-    X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-
-    // Jagged gold crystal nuggets (3D faceted)
-    let drawGoldNugget = (nx, ny, sz) => {
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle='#c59f08';X.beginPath(); // shadow facet
-      X.moveTo(nx, ny);X.lineTo(nx-sz, ny-sz*0.5);X.lineTo(nx, ny-sz*2);X.closePath();X.fill();X.stroke();
-      X.fillStyle='#ffd700';X.beginPath(); // highlight facet
-      X.moveTo(nx, ny);X.lineTo(nx+sz, ny-sz*0.5);X.lineTo(nx, ny-sz*2);X.closePath();X.fill();X.stroke();
-      X.fillStyle='#ffffff';X.beginPath(); // specular glint
-      X.moveTo(nx, ny-sz*2);X.lineTo(nx-sz*0.2, ny-sz*1.5);X.lineTo(nx+sz*0.2, ny-sz*1.5);X.closePath();X.fill();
+    // Rock mounds
+    dome(sx-7*s, cy+3, 6.5*s, 8*s, '#6d675d');
+    dome(sx+7*s, cy+3, 6*s, 7*s, '#7a746a');
+    dome(sx,     cy+4, 8.5*s, 12*s, '#736d63');
+    // Shiny gold ore embedded in the rock
+    const ore=(ox,oy,r)=>{
+      X.strokeStyle='#000';X.lineWidth=1;
+      X.fillStyle='#e8b90f';X.beginPath();X.arc(ox,oy,r,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle='#ffe14d';X.beginPath();X.arc(ox-r*0.3,oy-r*0.3,r*0.45,0,Math.PI*2);X.fill();
+      X.fillStyle='#fff';X.beginPath();X.arc(ox-r*0.45,oy-r*0.5,r*0.2,0,Math.PI*2);X.fill();
     };
-    drawGoldNugget(sx-4*s, cy-1*s, 5*s);
-    drawGoldNugget(sx+5*s, cy-2*s, 4*s);
-    drawGoldNugget(sx, cy-5*s, 6*s);
+    ore(sx-1.5*s, cy-4*s, 2.6*s);
+    ore(sx+3.5*s, cy-0.5*s, 2.1*s);
+    ore(sx-6*s,   cy+0.5, 1.9*s);
+    ore(sx+8*s,   cy+0.5, 1.6*s);
+    ore(sx+1.5*s, cy+3, 1.4*s); // loose nugget at the base
   }
   if(t.t===TERRAIN.STONE){
     let s=0.3+0.7*Math.min(t.res/350,1);
-    // Rough chiseled rock boulders (light/dark facets)
-    let drawStoneBoulder = (bx, by, w, h) => {
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle='#6b6b6b';X.beginPath(); // shadow face
-      X.moveTo(bx, by);X.lineTo(bx-w, by-h*0.3);X.lineTo(bx-w*0.5, by-h);X.lineTo(bx+w*0.5, by-h);X.closePath();X.fill();X.stroke();
-      X.fillStyle='#999999';X.beginPath(); // highlight face
-      X.moveTo(bx, by);X.lineTo(bx+w, by-h*0.3);X.lineTo(bx+w*0.5, by-h);X.lineTo(bx-w*0.5, by-h);X.closePath();X.fill();X.stroke();
-    };
-    drawStoneBoulder(sx-6*s, cy+1*s, 6*s, 7*s);
-    drawStoneBoulder(sx+6*s, cy+2*s, 5*s, 6*s);
-    drawStoneBoulder(sx, cy-4*s, 7*s, 8*s);
+    // Granite mounds
+    dome(sx-7*s, cy+3, 6.5*s, 7.5*s, '#7e7e7e');
+    dome(sx+7*s, cy+3, 6*s, 6.5*s, '#8b8b8b');
+    dome(sx,     cy+4, 8.5*s, 11*s, '#979797');
+    // Cracks
+    X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1;
+    X.beginPath();X.moveTo(sx-2*s,cy-6*s);X.lineTo(sx-3.5*s,cy-2*s);X.lineTo(sx-2*s,cy+1);X.stroke();
+    X.beginPath();X.moveTo(sx+3*s,cy-4*s);X.lineTo(sx+4.5*s,cy-1*s);X.stroke();
+    // Pebbles at the base
+    X.strokeStyle='#000';X.lineWidth=1;X.fillStyle='#8b8b8b';
+    X.beginPath();X.ellipse(sx-3*s,cy+4,1.8*s,1.2*s,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(sx+9*s,cy+3,1.5*s,1.0*s,0,0,Math.PI*2);X.fill();X.stroke();
   }
   if(t.t===TERRAIN.BERRIES){
     let s=0.4+0.6*Math.min(t.res/200,1);
@@ -296,8 +301,8 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
-  let fillL = colorL || (isAlongIsoY ? '#adada0' : '#cfcfc4');
-  let fillTop = colorTop || '#b8b8b0';
+  let fillL = colorL || (isAlongIsoY ? '#aca392' : '#cfc8b6');
+  let fillTop = colorTop || '#b7ad97';
   if (darken) {
     fillL = darkenColor(fillL);
     fillTop = darkenColor(fillTop);
@@ -431,6 +436,40 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
     X.moveTo(sx,sy-bh-roofH);X.lineTo(sx+bw,sy+bhh-bh);
     X.lineTo(sx,sy+bhh*2-bh);X.closePath();X.fill();X.stroke();
   }
+
+  // Material pass: translucent overlays that work with any wall/roof color —
+  // horizontal course lines (stone courses / plank rows), a shadow band at
+  // the wall base, a highlight under the roofline, and a ridge highlight on
+  // peaked roofs.
+  X.save();
+  X.lineWidth = 1;
+  X.strokeStyle = 'rgba(0,0,0,0.13)';
+  for (let t of [0.3, 0.55, 0.8]) {
+    X.beginPath();
+    X.moveTo(sx - bw, sy + bhh - bh + bh * t);
+    X.lineTo(sx, sy + bhh * 2 - bh + bh * t);
+    X.lineTo(sx + bw, sy + bhh - bh + bh * t);
+    X.stroke();
+  }
+  X.fillStyle = 'rgba(0,0,0,0.10)';
+  X.beginPath();
+  X.moveTo(sx - bw, sy + bhh - bh + bh * 0.8); X.lineTo(sx, sy + bhh * 2 - bh + bh * 0.8);
+  X.lineTo(sx, sy + bhh * 2); X.lineTo(sx - bw, sy + bhh); X.closePath(); X.fill();
+  X.beginPath();
+  X.moveTo(sx, sy + bhh * 2 - bh + bh * 0.8); X.lineTo(sx + bw, sy + bhh - bh + bh * 0.8);
+  X.lineTo(sx + bw, sy + bhh); X.lineTo(sx, sy + bhh * 2); X.closePath(); X.fill();
+  X.strokeStyle = 'rgba(255,255,255,0.18)';
+  X.beginPath();
+  X.moveTo(sx - bw, sy + bhh - bh + 1.5); X.lineTo(sx, sy + bhh * 2 - bh + 1.5);
+  X.lineTo(sx + bw, sy + bhh - bh + 1.5);
+  X.stroke();
+  if (roofType === 'peaked') {
+    X.strokeStyle = 'rgba(255,255,255,0.3)'; X.lineWidth = 1.5;
+    X.beginPath();
+    X.moveTo(sx, sy - bh - roofH); X.lineTo(sx, sy + bhh * 2 - bh - roofH);
+    X.stroke();
+  }
+  X.restore();
 }
 
 // Worn dirt clearing a camp's footprint sits on, so an open-sided shelter
@@ -540,6 +579,63 @@ function drawWavingFlag(sx,sy,bh,color,colorDark){
   X.fill();X.stroke();
 }
 
+// Timber building under a gable roof: the ridge runs back-left to
+// front-right, showing one roof slope to the camera and a triangular
+// gable end above the front-right wall. Overhangs are pure translations
+// along the ridge / down-slope directions so all edges stay iso-parallel.
+// Returns key anchor points so callers can place props.
+function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken){
+  let wl=darken?darkenColor(wallL):wallL;
+  let wr=darken?darkenColor(wallR):wallR;
+  let rl=darken?darkenColor(roofC):roofC;
+  let beam=darken?darkenColor(beamC):beamC;
+  X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+  // Walls
+  X.fillStyle=wl;X.beginPath();
+  X.moveTo(sx-W,sy0+hh-wallH);X.lineTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.lineTo(sx-W,sy0+hh);X.closePath();X.fill();X.stroke();
+  X.fillStyle=wr;X.beginPath();
+  X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx+W,sy0+hh-wallH);X.lineTo(sx+W,sy0+hh);X.lineTo(sx,sy0+hh*2);X.closePath();X.fill();X.stroke();
+  // Corner post
+  X.strokeStyle=beam;X.lineWidth=1.6;
+  X.beginPath();X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.stroke();
+  // Gable-end triangle above the front-right wall, with a center stud
+  let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
+  let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};
+  let M2={x:sx-W*0.5,y:sy0+hh*0.5-wallH-roofH};
+  X.fillStyle=wr;X.strokeStyle='#000';X.lineWidth=1.3;
+  X.beginPath();X.moveTo(Bp.x,Bp.y);X.lineTo(Rp.x,Rp.y);X.lineTo(M1.x,M1.y);X.closePath();X.fill();X.stroke();
+  X.strokeStyle=beam;X.lineWidth=1.6;
+  X.beginPath();X.moveTo((Bp.x+Rp.x)/2,(Bp.y+Rp.y)/2);X.lineTo(M1.x,M1.y);X.stroke();
+  // Roof slope with iso-parallel overhangs
+  let vR={x:(M2.x-M1.x)*0.10, y:(M2.y-M1.y)*0.10};
+  let vF={x:(M1.x-M2.x)*0.02, y:(M1.y-M2.y)*0.02};
+  let vS={x:(Lp.x-M2.x)*0.10, y:(Lp.y-M2.y)*0.10};
+  let M2e={x:M2.x+vR.x, y:M2.y+vR.y};
+  let M1e={x:M1.x+vF.x, y:M1.y+vF.y};
+  let EL={x:Lp.x+vR.x+vS.x, y:Lp.y+vR.y+vS.y};
+  let EB={x:Bp.x+vF.x+vS.x, y:Bp.y+vF.y+vS.y};
+  X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
+  X.beginPath();X.moveTo(M2e.x,M2e.y);X.lineTo(M1e.x,M1e.y);X.lineTo(EB.x,EB.y);X.lineTo(EL.x,EL.y);X.closePath();X.fill();X.stroke();
+  // Course lines parallel to the ridge
+  X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
+  for(let t of [0.35,0.7]){
+    X.beginPath();
+    X.moveTo(M2e.x+(EL.x-M2e.x)*t, M2e.y+(EL.y-M2e.y)*t);
+    X.lineTo(M1e.x+(EB.x-M1e.x)*t, M1e.y+(EB.y-M1e.y)*t);
+    X.stroke();
+  }
+  return {M1,M2,Rp,Bp,Lp};
+}
+
+// Small team pennant on a short pole (for houses/small buildings)
+function drawPennant(px,py,color,darken){
+  let c = darken ? darkenColor(color) : color;
+  X.strokeStyle='#000';X.lineWidth=1.2;
+  X.beginPath();X.moveTo(px,py);X.lineTo(px,py-8);X.stroke();
+  X.fillStyle=c;X.beginPath();
+  X.moveTo(px,py-8);X.lineTo(px+7,py-6);X.lineTo(px,py-4);X.closePath();X.fill();X.stroke();
+}
+
 // Draws animated chimney smoke puffs
 function drawChimneySmoke(cx,cy){
   X.fillStyle='rgba(180,180,180,0.4)';
@@ -556,11 +652,13 @@ function drawWindmillSails(hx,hy,id){
   for(let i=0; i<4; i++){
     let a = rot + i * Math.PI / 2;
     
-    // Direction vectors (isometric skewed projection)
+    // Direction vectors — the fan is mounted on the mill cap facing the
+    // camera, so it spins in a (slightly flattened) screen-plane circle;
+    // opposite sails stay perfectly symmetric around the hub.
     let dx = Math.cos(a);
-    let dy = -Math.cos(a)*0.5 - Math.sin(a)*1.1;
+    let dy = Math.sin(a) * 0.95;
     let px = -Math.sin(a);
-    let py = Math.sin(a)*0.5 - Math.cos(a)*1.1;
+    let py = Math.cos(a) * 0.95;
     
     let L = 27; // Spar length (increased from 14 for massive drama!)
     let tx = hx + dx * L;
@@ -621,7 +719,7 @@ function drawBastionMerlons(cx, cy, colorL, colorR, darken){
     { x: cx + 10, y: cy - 30 }, // Right
     { x: cx,      y: cy - 25 }  // Bottom
   ];
-  m.forEach(p => drawBuildingBlock(p.x, p.y, 4, 2, 5, '#c8c8bc', '#a8a89c', 'flat', 0, colorL, colorR, darken));
+  m.forEach(p => drawBuildingBlock(p.x, p.y, 4, 2, 5, '#c8c0ae', '#a89f8d', 'flat', 0, colorL, colorR, darken));
 }
 
 function drawBuilding(e, part = null){
@@ -650,7 +748,7 @@ function drawBuilding(e, part = null){
     bh=60; // 40 * 1.5 = 60
 
     // Draw stone foundation pavement covering the keep footprint in the back quadrant
-    X.fillStyle = darken ? darkenColor('#8d8d80') : '#b8b8b0';
+    X.fillStyle = darken ? darkenColor('#8d8577') : '#b7ad97';
     X.strokeStyle = '#000000';
     X.lineWidth = 1.3;
     X.beginPath();
@@ -663,7 +761,7 @@ function drawBuilding(e, part = null){
     X.stroke();
 
     // 1. Tall Main Keep Tower (solid stone, centered in the back quadrant)
-    drawBuildingBlock(sx, sy, 48, 24, 60, '#e0e0d8','#bcbcb0','flat',0,'#b8b8b0','#b8b8b0', darken);
+    drawBuildingBlock(sx, sy, 48, 24, 60, '#ded5c2','#bcb29b','flat',0,'#b7ad97','#b7ad97', darken);
     // 3D Castle battlements (crenellations) on flat top edges
     let merlons = [
       { x: sx,      y: sy - 56 }, // Top corner (0px gap to top)
@@ -677,7 +775,7 @@ function drawBuilding(e, part = null){
     ];
 
     let drawMerlon = (mx, my) => {
-      let wl = '#e0e0d8', wr = '#bcbcb0', rf = '#b8b8b0';
+      let wl = '#ded5c2', wr = '#bcb29b', rf = '#b7ad97';
       if (darken) {
         wl = darkenColor(wl);
         wr = darkenColor(wr);
@@ -727,7 +825,7 @@ function drawBuilding(e, part = null){
 
     // 3D Recessed arrow-loop windows on keep walls (perfectly aligned with wall perspective & depth)
     let winFill = darken ? darkenColor('#1c1c1c') : '#1c1c1c';
-    let stoneShadow = darken ? darkenColor('#a0a098') : '#bcbcb0';
+    let stoneShadow = darken ? darkenColor('#a0a098') : '#bcb29b';
     let stoneDark = darken ? darkenColor('#8c8c84') : '#a8a8a0';
 
     X.strokeStyle = '#000000';
@@ -833,7 +931,7 @@ function drawBuilding(e, part = null){
     // 2. Left Annex Roof (open-sided shelter roof covering left quadrant, matching team color)
     let laX = sx - 48, laY = sy + 24;
     let laH = 16, laRoofH = 12;
-    let laL = tc, laR = tcD;
+    let laL = '#a8845c', laR = '#8a6a48';
     if (darken) { laL = darkenColor(laL); laR = darkenColor(laR); }
     X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
     X.fillStyle=laL;X.beginPath();
@@ -846,7 +944,7 @@ function drawBuilding(e, part = null){
     // 3. Right Annex Roof (open-sided shelter roof covering right quadrant, matching team color)
     let raX = sx + 48, raY = sy + 24;
     let raH = 16, raRoofH = 12;
-    let raL = tc, raR = tcD;
+    let raL = '#a8845c', raR = '#8a6a48';
     if (darken) { raL = darkenColor(raL); raR = darkenColor(raR); }
     X.fillStyle=raL;X.beginPath();
     X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
@@ -879,65 +977,147 @@ function drawBuilding(e, part = null){
       X.strokeStyle = '#000000'; X.lineWidth = 1;
       X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
     });
+
+    // Team banner flying from the keep top
+    if(e.complete) drawWavingFlag(sx, sy, 72, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD);
   }
   else if(e.btype==='HOUSE'){
-    bh=22; // wall=12 + peaked roofH=10 -> 22 height
-    let houseW = 22;
-    let houseH = 11;
-    let sy_house = sy + bhh - houseH; // center on tile
-    // Timber cottage
-    drawBuildingBlock(sx,sy_house,houseW,houseH,bh, '#ebd2b0','#d2b48c','peaked',10,tc,tcD, darken);
-    // Door centered on Left wall
-    drawDoorLeft(sx,sy_house,houseW,houseH,'#5c3d24', darken);
-    // Chimney & smoke
-    let chx = sx + houseW*0.4, chy = sy_house + houseH*0.4 - bh;
-    X.fillStyle=darken ? darkenColor('#8a4030') : '#8a4030';X.fillRect(chx-1.5,chy-6,3,8);
-    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(chx-1.5,chy-6,3,8);
-    X.fillStyle=darken ? darkenColor('#602820') : '#602820';X.fillRect(chx-1.5,chy-8,3,2);
-    X.strokeRect(chx-1.5,chy-8,3,2);
-    if(e.complete && visible) drawChimneySmoke(chx,chy-8);
+    // Timber-framed cottage under a big yellow hay gable roof
+    let W=22, hh=11, wallH=14, roofH=18;
+    bh=26;
+    let sy0=sy+bhh-hh; // center on tile
+    let wl=darken?darkenColor('#ebd2b0'):'#ebd2b0';
+    let wr=darken?darkenColor('#d2b48c'):'#d2b48c';
+    let beam=darken?darkenColor('#7a5a38'):'#7a5a38';
+    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+    // Plaster walls
+    X.fillStyle=wl;X.beginPath();
+    X.moveTo(sx-W,sy0+hh-wallH);X.lineTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.lineTo(sx-W,sy0+hh);X.closePath();X.fill();X.stroke();
+    X.fillStyle=wr;X.beginPath();
+    X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx+W,sy0+hh-wallH);X.lineTo(sx+W,sy0+hh);X.lineTo(sx,sy0+hh*2);X.closePath();X.fill();X.stroke();
+    // Half-timber framing: front corner post, studs, and a mid-rail per face
+    X.strokeStyle=beam;X.lineWidth=1.6;
+    X.beginPath();X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.stroke();
+    [0.35,0.7].forEach(t=>{
+      X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
+      X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
+    });
+    X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
+    // Door on the left wall, shuttered window on the right wall
+    drawDoorLeft(sx,sy0,W,hh,'#5c3d24', darken);
+    let wx=sx+W*0.5, wy=sy0+hh*2-wallH-hh*0.5+wallH*0.3;
+    X.fillStyle=darken?darkenColor('#3a2a18'):'#3a2a18';X.strokeStyle='#000';X.lineWidth=1;
+    X.beginPath();X.moveTo(wx-3,wy+1.5);X.lineTo(wx+3,wy-1.5);X.lineTo(wx+3,wy+3.5);X.lineTo(wx-3,wy+6.5);X.closePath();X.fill();X.stroke();
+    // Gable hay roof: the ridge runs from back-left to front-right, so we
+    // see one big hay slope (facing lower-left) and a triangular plaster
+    // gable end above the front-right wall.
+    let rl=darken?darkenColor('#e8c04a'):'#e8c04a';
+    let ridgeC=darken?darkenColor('#b58a2e'):'#b58a2e';
+    // Wall-top rim corners and the two gable peaks over the wall midlines
+    let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
+    let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};   // front gable peak
+    let M2={x:sx-W*0.5,y:sy0+hh*0.5-wallH-roofH};   // back gable peak
+    // Gable-end triangle above the front-right wall, with a center stud
+    X.fillStyle=wr;X.strokeStyle='#000';X.lineWidth=1.3;
+    X.beginPath();X.moveTo(Bp.x,Bp.y);X.lineTo(Rp.x,Rp.y);X.lineTo(M1.x,M1.y);X.closePath();X.fill();X.stroke();
+    X.strokeStyle=beam;X.lineWidth=1.6;
+    X.beginPath();X.moveTo((Bp.x+Rp.x)/2,(Bp.y+Rp.y)/2);X.lineTo(M1.x,M1.y);X.stroke();
+    // Hay slope with overhang. Overhangs are pure translations along the
+    // ridge direction (vR back / vF front) and down-slope direction (vS),
+    // so every roof edge stays parallel to its wall — iso-correct.
+    let vR={x:(M2.x-M1.x)*0.10, y:(M2.y-M1.y)*0.10}; // back ridge extension
+    let vF={x:(M1.x-M2.x)*0.02, y:(M1.y-M2.y)*0.02}; // front ridge extension
+    let vS={x:(Lp.x-M2.x)*0.10, y:(Lp.y-M2.y)*0.10}; // down-slope eave extension
+    let M2e={x:M2.x+vR.x, y:M2.y+vR.y};
+    let M1e={x:M1.x+vF.x, y:M1.y+vF.y};
+    let EL={x:Lp.x+vR.x+vS.x, y:Lp.y+vR.y+vS.y};
+    let EB={x:Bp.x+vF.x+vS.x, y:Bp.y+vF.y+vS.y};
+    X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
+    X.beginPath();X.moveTo(M2e.x,M2e.y);X.lineTo(M1e.x,M1e.y);X.lineTo(EB.x,EB.y);X.lineTo(EL.x,EL.y);X.closePath();X.fill();X.stroke();
+    // Thatch strand lines parallel to the ridge
+    X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
+    [0.35,0.7].forEach(t=>{
+      X.beginPath();
+      X.moveTo(M2e.x+(EL.x-M2e.x)*t, M2e.y+(EL.y-M2e.y)*t);
+      X.lineTo(M1e.x+(EB.x-M1e.x)*t, M1e.y+(EB.y-M1e.y)*t);
+      X.stroke();
+    });
+    // Ragged straw fringe hanging past the eave
+    X.strokeStyle=ridgeC;X.lineWidth=1.2;X.lineCap='round';
+    for(let i=0;i<=4;i++){
+      let t=i/4;
+      let fx2=EL.x+(EB.x-EL.x)*t, fy2=EL.y+(EB.y-EL.y)*t;
+      X.beginPath();X.moveTo(fx2,fy2);X.lineTo(fx2-0.5,fy2+2.5);X.stroke();
+    }
+    X.lineCap='butt';
+    // Team pennant at the front gable peak
+    drawPennant(M1.x,M1.y,tc,darken);
+    // Chimney poking through the hay slope + smoke
+    let cru={x:M2.x+(M1.x-M2.x)*0.3, y:M2.y+(M1.y-M2.y)*0.3};
+    let cre={x:EL.x+(EB.x-EL.x)*0.3, y:EL.y+(EB.y-EL.y)*0.3};
+    let chx=cru.x+(cre.x-cru.x)*0.3, chTop=cru.y+(cre.y-cru.y)*0.3-9;
+    X.fillStyle=darken?darkenColor('#8a4030'):'#8a4030';X.fillRect(chx-2,chTop,4,9);
+    X.strokeStyle='#000';X.lineWidth=1;X.strokeRect(chx-2,chTop,4,9);
+    X.fillStyle=darken?darkenColor('#602820'):'#602820';X.fillRect(chx-2.6,chTop-2.5,5.2,2.5);X.strokeRect(chx-2.6,chTop-2.5,5.2,2.5);
+    if(e.complete && visible) drawChimneySmoke(chx,chTop-3);
   }
   else if(e.btype==='BARRACKS'){
-    bh=26; // annex: wall 16 + roofH 10 → ridge sy-14; use 26 for full coverage
-    // 1. Garrison Annex / Sleeping Quarters
-    drawBuildingBlock(sx, sy+12, 20, 10, 16, '#b89868','#987848','peaked',10,tc,tcD, darken);
-    
-    // 2. Main Garrison Longhouse
-    drawBuildingBlock(sx-32, sy+22, 26, 13, 18, '#b89868','#987848','peaked',12,tc,tcD, darken);
-    // Hanging shields on Garrison Left wall
+    bh=32;
+    // 1. Sleeping-quarters annex at the back
+    drawGableBlock(sx+2, sy+10, 20, 10, 13, 12, '#b89868','#987848','#7d5f43','#6e5138', darken);
+    // 2. Main garrison longhouse in front-left
+    drawGableBlock(sx-32, sy+22, 26, 13, 16, 15, '#b89868','#987848','#7d5f43','#6e5138', darken);
+    // Hanging shields on the longhouse left wall
     X.strokeStyle='#000000';X.lineWidth=1;
-    X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';X.beginPath();X.arc(sx-44, sy+19, 3, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=darken ? darkenColor(tc) : tc;X.beginPath();X.arc(sx-44, sy+19, 1.5, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';X.beginPath();X.arc(sx-20, sy+31, 3, 0, Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=darken ? darkenColor(tc) : tc;X.beginPath();X.arc(sx-20, sy+31, 1.5, 0, Math.PI*2);X.fill();X.stroke();
-    // Door on Garrison left wall
+    [[-46,25],[-38,29]].forEach(([dx2,dy2])=>{
+      X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';
+      X.beginPath();X.arc(sx+dx2, sy+dy2, 3.2, 0, Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor(tc) : tc;
+      X.beginPath();X.arc(sx+dx2, sy+dy2, 1.6, 0, Math.PI*2);X.fill();X.stroke();
+    });
+    // Door on the longhouse left wall
     drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24', darken);
-    
-    // 3. Corner Stone Watchtower
-    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfcfc4','#adada0','flat',0,'#606058','#505048', darken);
-    // Crenellations on tower top
-    X.fillStyle=darken ? darkenColor('#8d8d80') : '#8d8d80';
-    X.fillRect(sx+32-6, sy+32-30+8-3, 3, 3);
-    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(sx+32-6, sy+32-30+8-3, 3, 3);
-    X.fillRect(sx+32+2, sy+32-30+8-3, 3, 3);
-    X.strokeRect(sx+32+2, sy+32-30+8-3, 3, 3);
-    // Flag on tower top
-    if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 30, tc, tcD);
 
-    // 4. Fenced Training Yard
+    // 3. Corner stone watchtower
+    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfc8b6','#aca392','flat',0,'#9a9184','#867d70', darken);
+    X.fillStyle=darken ? darkenColor('#8d8577') : '#8d8577';
+    X.fillRect(sx+32-13, sy+32-30+6, 3.5, 4);
+    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(sx+32-13, sy+32-30+6, 3.5, 4);
+    X.fillRect(sx+32+9.5, sy+32-30+6, 3.5, 4);
+    X.strokeRect(sx+32+9.5, sy+32-30+6, 3.5, 4);
+    // Flagpole planted at the center of the tower's top face, not its back
+    // corner, so the flag visibly connects to the roof.
+    if(e.complete && visible) drawWavingFlag(sx+32, sy+40, 28, tc, tcD);
+
+    // 4. Fenced training yard
     X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
     X.moveTo(sx,sy+32);X.lineTo(sx+32,sy+48);
     X.lineTo(sx,sy+64);X.lineTo(sx-32,sy+48);X.closePath();
     X.fill();
     X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
-    
+
+    // Straw training dummy in the yard
+    let dxp=sx-10, dyp=sy+52;
+    X.strokeStyle='#000';X.lineWidth=2.8;X.lineCap='round';
+    X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
+    X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
+    X.strokeStyle=darken ? darkenColor('#8a6a4a') : '#8a6a4a';X.lineWidth=1.4;
+    X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
+    X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
+    X.lineCap='butt';
+    X.fillStyle=darken ? darkenColor('#c8ab7a') : '#c8ab7a'; // burlap torso
+    X.strokeStyle='#000';X.lineWidth=1;
+    X.beginPath();X.ellipse(dxp,dyp-6,3.2,4.2,0,0,Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=darken ? darkenColor('#e8c04a') : '#e8c04a'; // straw head
+    X.beginPath();X.arc(dxp,dyp-14.5,2.6,0,Math.PI*2);X.fill();X.stroke();
+
     // Archery target board
-    let tgx=sx+10, tgy=sy+44;
+    let tgx=sx+12, tgy=sy+46;
     X.strokeStyle='#000000';X.lineWidth=1.5;
     X.beginPath();X.moveTo(tgx,tgy);X.lineTo(tgx,tgy-8);X.stroke();
     X.fillStyle=darken ? darkenColor('#fff') : '#fff';X.beginPath();X.arc(tgx,tgy-8,3.5,0,Math.PI*2);X.fill();X.stroke();
     X.fillStyle=darken ? darkenColor('#c00') : '#c00';X.beginPath();X.arc(tgx,tgy-8,1.5,0,Math.PI*2);X.fill();X.stroke();
-    
+
     // Fence around front edges
     X.strokeStyle='#000000';X.lineWidth=1.5;
     X.beginPath();X.moveTo(sx,sy+64);X.lineTo(sx+32,sy+48);X.stroke();
@@ -949,76 +1129,129 @@ function drawBuilding(e, part = null){
     X.stroke();
   }
   else if(e.btype==='LCAMP'){
-    bh=20;
-    // Worn dirt clearing the camp sits on, drawn before the shelter so props ground onto it
-    drawCampClearing(sx,sy,bw,bhh,darken);
-    // Open timber lean-to: tall pointed tent on posts, no walls, so the log pile reads through
-    drawCampShelter(sx,sy,bw,bhh,bh,14,'#8a6a4a','#d2b48c','#b59975', tc,tcD, darken);
-    // Log pile & wood chopping stump — sized to actually fill the floor
-    // space under the canopy instead of looking like scattered debris.
+    bh=30;
+    // Worn dirt clearing, enlarged past the tile so the oversized props
+    // (log pile / ore cart) still sit on worked ground
+    drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
+    // Small plank shack in the back-right quadrant
+    drawBuildingBlock(sx+14, sy+8, 20, 10, 14, '#b89868','#987848','peaked',8,'#8a6a48','#715539', darken);
+    drawDoorLeft(sx+14, sy+8, 20, 10, '#5c3d24', darken);
+    drawPennant(sx+14, sy+6, tc, darken);
     if(e.complete){
       let logCol=darken ? darkenColor('#6e473b') : '#6e473b';
       let endCol=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
       X.strokeStyle='#000000';X.lineWidth=1.2;
-      // 3 stacked logs, shifted left of the front-center post so the post
-      // (drawn afterward, in front) doesn't slice through the pile.
-      let lx=sx-16, ly=sy+bhh*1.05;
-      [[0,10],[-6,2],[1,-6]].forEach(([dx,dy])=>{
+      // Big log pile filling the front-left quadrant
+      let lx=sx-20, ly=sy+bhh*1.0;
+      [[0,8],[-5,0],[2,-7]].forEach(([dx,dy])=>{
         let x=lx+dx, y=ly+dy;
-        X.fillStyle=logCol;X.fillRect(x-12,y-4,24,8);X.strokeRect(x-12,y-4,24,8);
+        X.fillStyle=logCol;X.fillRect(x-13,y-4,26,8);X.strokeRect(x-13,y-4,26,8);
         X.fillStyle=endCol;
-        X.beginPath();X.ellipse(x-12,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
-        X.beginPath();X.ellipse(x+12,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.ellipse(x-13,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.ellipse(x+13,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
+        X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8;
+        X.beginPath();X.arc(x+13,y,1.6,0,Math.PI*2);X.stroke();
+        X.strokeStyle='#000';X.lineWidth=1.2;
       });
-
-      // Chopping stump, just in front of the pile — the log pile itself is
-      // the giveaway for what this building produces, no axe needed.
-      let cbx=sx+13, cby=sy+bhh*1.4;
+      // Chopping stump with an axe planted in it
+      let cbx=sx+6, cby=sy+bhh*1.55;
       X.fillStyle=darken ? darkenColor('#8a5a3a') : '#8a5a3a';X.fillRect(cbx-5,cby-7,10,9);
       X.strokeRect(cbx-5,cby-7,10,9);
       X.fillStyle=endCol;X.beginPath();X.ellipse(cbx,cby-7,5,2.6,0,0,Math.PI*2);X.fill();X.stroke();
+      // Axe: handle angled up-right, head buried in the stump face
+      X.strokeStyle='#000';X.lineWidth=2.6;X.lineCap='round';
+      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx+8,cby-17);X.stroke();
+      X.strokeStyle='#8B4513';X.lineWidth=1.3;
+      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx+8,cby-17);X.stroke();
+      X.lineCap='butt';
+      X.fillStyle=darken ? darkenColor('#b0b0b0') : '#b0b0b0';
+      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx-3,cby-11);X.lineTo(cbx-1,cby-5);X.closePath();
+      X.fill();X.strokeStyle='#000';X.lineWidth=1;X.stroke();
     }
-    // All 3 posts drawn last so they sit in front of the log pile instead of
-    // being hidden behind it (e.g. a log's end-cap painting over a post).
-    drawCampPosts(sx,sy,bw,bhh,bh,'#8a6a4a',darken);
   }
   else if(e.btype==='MCAMP'){
-    bh=20;
-    // Worn dirt clearing the camp sits on, drawn before the shelter so props ground onto it
-    drawCampClearing(sx,sy,bw,bhh,darken);
-    // Open mining shed: lower, flatter roof than the lumber camp's pointed
-    // tent (no crossbeam — it had nothing to visually anchor to once the
-    // pile moved aside, and just read as a stray line floating in the
-    // doorway, same problem the front post had before the pile flanked it).
-    drawCampShelter(sx,sy,bw,bhh,bh,8,'#6e665c','#9f886c','#826f57', tc,tcD, darken);
-    // Gold & Stone ore pile, tucked snugly against the left side of the
-    // front-center post (like the lumber camp's log pile) so the post reads
-    // as "planted next to the pile" instead of a bare line in open dirt.
+    bh=30;
+    // Worn dirt clearing, enlarged past the tile so the oversized props
+    // (log pile / ore cart) still sit on worked ground
+    drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
+    // Dark timber mine shed in the back-right quadrant
+    drawBuildingBlock(sx+14, sy+8, 20, 10, 12, '#7a6a55','#635546','peaked',7,'#55483a','#463b2f', darken);
+    drawDoorLeft(sx+14, sy+8, 20, 10, '#2e2519', darken);
+    drawPennant(sx+14, sy+7, tc, darken);
     if(e.complete){
-      let mx=sx-12, my=sy+bhh*1.15;
       X.strokeStyle='#000000';X.lineWidth=1.2;
-      // Stone cluster (left)
-      X.fillStyle=darken ? darkenColor('#7d7d7d') : '#7d7d7d';X.beginPath();X.arc(mx-10,my,7,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#9a9a9a') : '#9a9a9a';X.beginPath();X.arc(mx-4,my-5,5,0,Math.PI*2);X.fill();X.stroke();
-      // Gold cluster (right) — the ore pile itself is the giveaway for what
-      // this building produces, no pickaxes needed.
-      X.fillStyle=darken ? darkenColor('#daa520') : '#daa520';X.beginPath();X.arc(mx+9,my+1,7,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#ffd700') : '#ffd700';X.beginPath();X.arc(mx+3,my-5,5,0,Math.PI*2);X.fill();X.stroke();
+      // Ore cart heaped with gold in the front-left quadrant
+      let mx=sx-18, my=sy+bhh*1.15;
+      // Ore heap first (behind the cart's front wall)
+      let gcol=darken ? darkenColor('#e8b90f') : '#e8b90f';
+      let gtop=darken ? darkenColor('#ffe14d') : '#ffe14d';
+      [[-4,-9],[0,-11],[4,-9],[-2,-7],[3,-6]].forEach(([dx,dy])=>{
+        X.fillStyle=gcol;X.beginPath();X.arc(mx+dx,my+dy,3,0,Math.PI*2);X.fill();X.stroke();
+        X.fillStyle=gtop;X.beginPath();X.arc(mx+dx-1,my+dy-1,1.3,0,Math.PI*2);X.fill();
+      });
+      // Cart body (inverted trapezoid) with plank lines
+      X.fillStyle=darken ? darkenColor('#6e5138') : '#6e5138';
+      X.beginPath();X.moveTo(mx-10,my-8);X.lineTo(mx+10,my-8);X.lineTo(mx+7,my+1);X.lineTo(mx-7,my+1);X.closePath();
+      X.fill();X.stroke();
+      X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.9;
+      X.beginPath();X.moveTo(mx-9,my-5);X.lineTo(mx+9,my-5);X.stroke();
+      X.beginPath();X.moveTo(mx-8,my-2);X.lineTo(mx+8,my-2);X.stroke();
+      X.strokeStyle='#000';X.lineWidth=1.2;
+      // Wheels
+      X.fillStyle=darken ? darkenColor('#3a2f24') : '#3a2f24';
+      X.beginPath();X.arc(mx-5,my+2.5,2.6,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(mx+5,my+2.5,2.6,0,Math.PI*2);X.fill();X.stroke();
+      // Stone boulder pile beside the cart
+      let scol=darken ? darkenColor('#8b8b8b') : '#8b8b8b';
+      let scol2=darken ? darkenColor('#9a9a9a') : '#9a9a9a';
+      X.fillStyle=scol;X.beginPath();X.arc(sx+2,sy+bhh*1.55,5.5,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=scol2;X.beginPath();X.arc(sx+9,sy+bhh*1.45,4,0,Math.PI*2);X.fill();X.stroke();
     }
-    // All 3 posts drawn last so they sit in front of the ore pile instead of
-    // being hidden behind it (e.g. a nugget's fill painting over a post).
-    drawCampPosts(sx,sy,bw,bhh,bh,'#6e665c',darken);
   }
   else if(e.btype==='MILL'){
-    bh=36; // conical tower: wall 18 + conical roofH 16 → ridge sy-34; use 36
-    // Conical tower
-    drawBuildingBlock(sx,sy,bw*0.7,bhh*0.7,bh, '#dcd0a0','#bca880','conical',16,'#a65c3b','#863c20', darken);
+    bh=52; // tapered tower (36) + conical cap (16)
+    let by = sy + bhh*0.55;           // base diamond top corner
+    let W0 = bw*0.75, W1 = bw*0.55;   // half-width at the base / top (taper)
+    let hh0 = W0*0.5, hh1 = W1*0.5;   // 2:1 iso front-corner drops
+    let H = 36, ty = by - H;
+    let wl = darken?darkenColor('#dcd0a0'):'#dcd0a0';
+    let wr = darken?darkenColor('#bca880'):'#bca880';
+    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+    // Tapered left/right faces
+    X.fillStyle=wl;X.beginPath();
+    X.moveTo(sx-W0,by);X.lineTo(sx,by+hh0);X.lineTo(sx,ty+hh1);X.lineTo(sx-W1,ty);X.closePath();X.fill();X.stroke();
+    X.fillStyle=wr;X.beginPath();
+    X.moveTo(sx,by+hh0);X.lineTo(sx+W0,by);X.lineTo(sx+W1,ty);X.lineTo(sx,ty+hh1);X.closePath();X.fill();X.stroke();
+    // Plank courses following the taper
+    X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+    for(let t of [0.22,0.44,0.66,0.88]){
+      let rw = W0+(W1-W0)*t;
+      let ey = by+(ty-by)*t;                       // edge corner y at this height
+      let fy2 = (by+hh0)+((ty+hh1)-(by+hh0))*t;    // front corner y at this height
+      X.beginPath();X.moveTo(sx-rw,ey);X.lineTo(sx,fy2);X.lineTo(sx+rw,ey);X.stroke();
+    }
+    // Door on the front-left face
+    let dA={x:sx-W0*0.55, y:by+hh0*0.5}, dB={x:sx-W0*0.15, y:by+hh0*0.86};
+    X.fillStyle=darken?darkenColor('#5c3d24'):'#5c3d24';
+    X.strokeStyle='#000';X.lineWidth=1;
+    X.beginPath();X.moveTo(dA.x,dA.y);X.lineTo(dB.x,dB.y);
+    X.lineTo(dB.x,dB.y-9);X.lineTo(dA.x,dA.y-9);X.closePath();X.fill();X.stroke();
+    // Conical shingled cap with a small overhang
+    let capH=18, ov=3;
+    let cl=darken?darkenColor('#a65c3b'):'#a65c3b', cr=darken?darkenColor('#863c20'):'#863c20';
+    X.strokeStyle='#000';X.lineWidth=1.3;
+    X.fillStyle=cl;X.beginPath();
+    X.moveTo(sx,ty-capH);X.lineTo(sx-W1-ov,ty);X.lineTo(sx,ty+hh1+ov*0.5);X.closePath();X.fill();X.stroke();
+    X.fillStyle=cr;X.beginPath();
+    X.moveTo(sx,ty-capH);X.lineTo(sx+W1+ov,ty);X.lineTo(sx,ty+hh1+ov*0.5);X.closePath();X.fill();X.stroke();
+    // Team pennant at the apex
+    drawPennant(sx,ty-capH,tc,darken);
     // Sails & flour sacks
     if(e.complete){
-      if(visible) drawWindmillSails(sx-bw*0.35,sy-bh+4,e.id);
-      
+      if(visible) drawWindmillSails(sx, ty+hh1, e.id); // hub on the cap's front face center
+
       // Flour sacks piled at the base
-      let fx = sx+bw*0.4, fy = sy+bhh*1.2;
+      let fx = sx+W0*0.55, fy = by+hh0*0.9;
       X.strokeStyle='#000000';X.lineWidth=1;
       X.fillStyle=darken ? darkenColor('#e5dcd0') : '#e5dcd0';X.beginPath();X.ellipse(fx,fy,4,3,0,0,Math.PI*2);X.fill();X.stroke();
       X.fillStyle=darken ? darkenColor('#c8bdae') : '#c8bdae';X.beginPath();X.ellipse(fx,fy-2,3,2,0,0,Math.PI*2);X.fill();X.stroke();
@@ -1036,9 +1269,9 @@ function drawBuilding(e, part = null){
     // before the links (like WALL's pillar) since the links extend
     // toward the viewer and should overlap the tower's base, not be
     // hidden behind it.
-    drawBuildingBlock(sx, sy+2+7, 14, 7, 30, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#989890', darken);
+    drawBuildingBlock(sx, sy+2+7, 14, 7, 30, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#989890', darken);
     drawBuildingBlock(sx, sy+2-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
-    drawBuildingBlock(sx, sy+2-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'peaked', 6, tc, tcD, darken);
+    drawBuildingBlock(sx, sy+2-28, 12, 6, 8, '#c8c0ae', '#a89f8d', 'peaked', 6, tc, tcD, darken);
 
     // South and East links can both originate from this same corner
     // point, same as GATE's front post (which also has two links
@@ -1066,7 +1299,7 @@ function drawBuilding(e, part = null){
     // Colors match drawWallLink's palette so the pillar reads as part of
     // the same wall run instead of a separately-shaded block; top is a
     // single flat color rather than a two-tone faceted cap.
-    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, '#cfcfc4', '#adada0', 'flat', 0, '#b8b8b0', '#b8b8b0', darken);
+    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, '#cfc8b6', '#aca392', 'flat', 0, '#b7ad97', '#b7ad97', darken);
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
     // South neighbor (y+1)
@@ -1105,7 +1338,7 @@ function drawBuilding(e, part = null){
 
     if (part === 'back' || part === null) {
       // 1. Draw back post (Tower 1 - larger bastion centered at t1sy-7)
-      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
 
       // Draw battlements (merlons) on Tower 1 top
       drawBastionMerlons(t1sx, t1sy, '#b0b0a4', '#b0b0a4', darken);
@@ -1139,7 +1372,7 @@ function drawBuilding(e, part = null){
 
     if (part === 'front' || part === null) {
       // 2. Draw front post (Tower 2 - larger bastion centered at t2sy-7)
-      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, '#c8c8bc', '#a8a89c', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
 
       // Draw battlements (merlons) on Tower 2 top
       drawBastionMerlons(t2sx, t2sy, '#b0b0a4', '#989890', darken);
@@ -1169,37 +1402,68 @@ function drawBuilding(e, part = null){
     bh=0;
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
     let growth=tileRes/(e.maxFood||300);
+    // Footprint diamond corners
+    let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
+    // Tilled soil bed covering the footprint
+    X.fillStyle = darken?darkenColor('#7a5a38'):'#7a5a38';
+    X.beginPath();X.moveTo(cT.x,cT.y);X.lineTo(cR.x,cR.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();
+    X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=1.2;X.stroke();
+    // Furrows parallel to the top-right edge
+    let rows=[0.2,0.4,0.6,0.8];
+    let rowEnds=t=>[
+      {x:cT.x+(cL.x-cT.x)*t, y:cT.y+(cL.y-cT.y)*t},
+      {x:cR.x+(cB.x-cR.x)*t, y:cR.y+(cB.y-cR.y)*t}
+    ];
+    X.strokeStyle='rgba(0,0,0,0.18)';X.lineWidth=1.2;
+    rows.forEach(t=>{
+      let [a,b2]=rowEnds(t);
+      X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b2.x,b2.y);X.stroke();
+    });
     if(growth>0 && !e.exhausted){
-      let cropH=3+growth*8;
-      let cropCount=Math.max(2,Math.ceil(9*growth));
-      let cropColor=growth>0.5?'#5a9828':'#8a9838';
-      if (darken) cropColor = darkenColor(cropColor);
-      for(let i=0;i<cropCount;i++){
-        let row=Math.floor(i/3), col=i%3-1;
-        let cy2=sy+bhh*0.5+row*bhh*0.4;
-        let cx2=sx+col*bw*0.25;
-        X.strokeStyle=cropColor;X.lineWidth=1.2;
-        X.beginPath();X.moveTo(cx2,cy2);X.lineTo(cx2,cy2-cropH);X.stroke();
-        if(growth>0.3){
-          X.fillStyle=darken ? darkenColor(growth>0.6?'#6aaa30':'#aa9a30') : (growth>0.6?'#6aaa30':'#aa9a30');
-          X.beginPath();X.arc(cx2,cy2-cropH,1.5+growth,0,Math.PI*2);X.fill();
-          X.strokeStyle='#000000';X.lineWidth=0.75;X.stroke();
+      // Wheat planted in rows along the furrows: green sprouts that grow
+      // into tall golden stalks with grain heads as the field ripens.
+      let cropH=2+growth*7;
+      let ripe=growth>0.55;
+      let stalkCol = ripe ? '#c9a227' : '#6fa03a';
+      let headCol  = ripe ? '#e8c84a' : '#8fbf55';
+      if(darken){ stalkCol=darkenColor(stalkCol); headCol=darkenColor(headCol); }
+      rows.forEach((t,ri)=>{
+        let [a,b2]=rowEnds(t);
+        for(let i=1;i<=4;i++){
+          let u=i/5+((ri%2)?0.05:-0.05);
+          let px=a.x+(b2.x-a.x)*u, py=a.y+(b2.y-a.y)*u;
+          X.strokeStyle=stalkCol;X.lineWidth=1.4;
+          X.beginPath();X.moveTo(px,py);X.lineTo(px,py-cropH);X.stroke();
+          X.beginPath();X.moveTo(px,py);X.lineTo(px-2,py-cropH*0.75);X.stroke();
+          X.beginPath();X.moveTo(px,py);X.lineTo(px+2,py-cropH*0.75);X.stroke();
+          if(growth>0.3){
+            X.fillStyle=headCol;
+            X.beginPath();X.ellipse(px,py-cropH,1.3,2.0,0,0,Math.PI*2);X.fill();
+            X.strokeStyle='rgba(0,0,0,0.5)';X.lineWidth=0.7;X.stroke();
+          }
         }
-      }
+      });
     } else {
-      // Draw withered, exhausted stalks
-      let cropColor = darken ? '#251e16' : '#3f2f22';
-      let cropCount = 5;
-      let cropH = 4;
-      for(let i=0;i<cropCount;i++){
-        let row=Math.floor(i/2), col=(i%2)*2-1;
-        let cy2=sy+bhh*0.55+row*bhh*0.35;
-        let cx2=sx+col*bw*0.2;
-        X.strokeStyle=cropColor;X.lineWidth=1.0;
-        // Draw slanted lines representing dry, collapsed stalks
-        X.beginPath();X.moveTo(cx2,cy2);X.lineTo(cx2+3,cy2-cropH);X.stroke();
-      }
+      // Withered, exhausted stalks slumped along the furrows
+      X.strokeStyle = darken ? '#251e16' : '#3f2f22';X.lineWidth=1.0;
+      rows.forEach((t,ri)=>{
+        let [a,b2]=rowEnds(t);
+        for(let i=1;i<=3;i++){
+          let u=i/4+((ri%2)?0.06:-0.06);
+          let px=a.x+(b2.x-a.x)*u, py=a.y+(b2.y-a.y)*u;
+          X.beginPath();X.moveTo(px,py);X.lineTo(px+3,py-3);X.stroke();
+        }
+      });
     }
+    // Low fence posts at the corners
+    let pc = darken?darkenColor('#6e4f33'):'#6e4f33';
+    [cT,cR,cB,cL].forEach(c=>{
+      X.strokeStyle='#000';X.lineWidth=2.6;X.lineCap='round';
+      X.beginPath();X.moveTo(c.x,c.y);X.lineTo(c.x,c.y-5);X.stroke();
+      X.strokeStyle=pc;X.lineWidth=1.3;
+      X.beginPath();X.moveTo(c.x,c.y);X.lineTo(c.x,c.y-5);X.stroke();
+      X.lineCap='butt';
+    });
   }
 
   X.globalAlpha=1;
@@ -1248,6 +1512,27 @@ function drawBuilding(e, part = null){
 }
 
 
+
+// Big readable broadsword, drawn with the context translated to the grip.
+// Combat swing is shaped: slow overhead wind-up, fast slash (like the
+// villagers' work swing) instead of a symmetric sine wobble.
+function drawBigSword(swinging, id){
+  if(swinging){
+    let ph=((tick*0.07+id*0.4)%1+1)%1;
+    let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
+    X.rotate(0.9-2.1*u);
+  } else X.rotate(0.5); // rest: blade leans outward, away from the head
+  X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
+  // Grip and pommel
+  X.fillStyle='#6a4a20';X.beginPath();X.rect(-1.5,0,4,6);X.fill();X.stroke();
+  X.fillStyle='#e8c84a';X.beginPath();X.arc(0.5,6.8,1.6,0,Math.PI*2);X.fill();X.stroke();
+  // Wide crossguard
+  X.fillStyle='#e8c84a';X.beginPath();X.rect(-4.5,-2,10,2.6);X.fill();X.stroke();
+  // Broad blade with a bright fuller
+  X.fillStyle='#dde3ea';
+  X.beginPath();X.moveTo(-2.4,-2);X.lineTo(0.5,-22);X.lineTo(3.4,-2);X.closePath();X.fill();X.stroke();
+  X.fillStyle='#fff';X.beginPath();X.rect(0,-18.5,1.3,13);X.fill();
+}
 
 function drawCorpse(c){
   let iso=toIso(c.x,c.y);
@@ -1413,7 +1698,7 @@ function drawUnit(e){
       X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
       X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
       
-      X.fillStyle='#f0ead8';
+      X.fillStyle='#f2eddd';
       X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
       X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
       X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
@@ -1443,7 +1728,7 @@ function drawUnit(e){
     X.rotate(-0.5);
     X.fillStyle = '#000000';
     X.beginPath(); X.ellipse(-2, 0, 3, 2, 0, 0, Math.PI*2); X.fill();
-    X.fillStyle = '#f0ead8';
+    X.fillStyle = '#f2eddd';
     X.beginPath(); X.ellipse(-2, 0, 2, 1.2, 0, 0, Math.PI*2); X.fill();
     X.restore();
 
@@ -1454,7 +1739,7 @@ function drawUnit(e){
     X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
     X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
     
-    X.fillStyle='#e5dfcf'; // slightly dirtier/darker wool for carcass
+    X.fillStyle='#e8e2d2'; // slightly dirtier/darker wool for carcass
     X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
     X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
     X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
@@ -1493,12 +1778,12 @@ function drawUnit(e){
     return;
   } else if(e.utype!=='sheep'){
     let humanXOffset = e.utype === 'scout' ? -3 : 0;
-    let humanYOffset = e.utype === 'scout' ? -8 : 0;
+    let humanYOffset = e.utype === 'scout' ? -11 : 0;
 
     // Walking leg cycle (swinging legs with constant leg length)
     if(e.utype==='scout'){
       let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4.5 : 0;
-      X.strokeStyle = '#000000'; X.lineWidth = 1.8;
+      X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
       X.beginPath();
       
       let useDir = e.dir;
@@ -1511,36 +1796,56 @@ function drawUnit(e){
       if (useDir === 1 || useDir === 5) {
         // South / North: Centered legs
         // Front pair
-        X.moveTo(-3, -4); X.lineTo(-3, 2.2 + walk);
-        X.moveTo(3, -4); X.lineTo(3, 2.2 - walk);
+        X.moveTo(-3, -4); X.lineTo(-3, 4.4 + walk);
+        X.moveTo(3, -4); X.lineTo(3, 4.4 - walk);
         // Back pair
-        X.moveTo(-4.5, -4); X.lineTo(-4.5, 1.2 - walk);
-        X.moveTo(4.5, -4); X.lineTo(4.5, 1.2 + walk);
+        X.moveTo(-4.5, -4); X.lineTo(-4.5, 3.4 - walk);
+        X.moveTo(4.5, -4); X.lineTo(4.5, 3.4 + walk);
       } else if (useDir === 7) {
         // East (Profile)
-        X.moveTo(4, -4); X.lineTo(4 + walk, 2.2);
-        X.moveTo(6.5, -4); X.lineTo(6.5 - walk, 2.2);
-        X.moveTo(-7, -4); X.lineTo(-7 + walk, 2.2);
-        X.moveTo(-9.5, -4); X.lineTo(-9.5 - walk, 2.2);
+        X.moveTo(3.5, -4); X.lineTo(3.5 + walk, 4.4);
+        X.moveTo(5.5, -4); X.lineTo(5.5 - walk, 4.4);
+        X.moveTo(-4.5, -4); X.lineTo(-4.5 + walk, 4.4);
+        X.moveTo(-6.5, -4); X.lineTo(-6.5 - walk, 4.4);
       } else {
         // Southeast / Northeast (Diagonal)
-        X.moveTo(3, -4); X.lineTo(3 + walk, 2.2);
-        X.moveTo(5, -4); X.lineTo(5 - walk, 2.2);
-        X.moveTo(-6, -4); X.lineTo(-6 + walk, 2.2);
-        X.moveTo(-8, -4); X.lineTo(-8 - walk, 2.2);
+        X.moveTo(2.8, -4); X.lineTo(2.8 + walk, 4.4);
+        X.moveTo(4.6, -4); X.lineTo(4.6 - walk, 4.4);
+        X.moveTo(-3.8, -4); X.lineTo(-3.8 + walk, 4.4);
+        X.moveTo(-5.6, -4); X.lineTo(-5.6 - walk, 4.4);
       }
-      X.stroke();
+      X.strokeStyle = '#000000'; X.lineWidth = 3.0; X.lineCap='round'; X.stroke();
+      X.strokeStyle = '#6e4520'; X.lineWidth = 1.5; X.stroke();
+      X.lineCap='butt';
+      // Hooves: dark caps at each leg endpoint
+      let hoofPts;
+      if (useDir === 1 || useDir === 5) hoofPts=[[-3,4.4+walk],[3,4.4-walk],[-4.5,3.4-walk],[4.5,3.4+walk]];
+      else if (useDir === 7) hoofPts=[[3.5+walk,4.4],[5.5-walk,4.4],[-4.5+walk,4.4],[-6.5-walk,4.4]];
+      else hoofPts=[[2.8+walk,4.4],[4.6-walk,4.4],[-3.8+walk,4.4],[-5.6-walk,4.4]];
+      X.fillStyle='#241408';
+      hoofPts.forEach(p=>{X.beginPath();X.ellipse(p[0],p[1]+0.5,1.5,1.1,0,0,Math.PI*2);X.fill();});
+      X.restore();
     } else {
       // Human legs (visible both when standing and walking)
         let walk = e.path.length>0 ? Math.sin(tick*0.4+e.id)*2.5 : 0;
-      X.strokeStyle = '#000000'; X.lineWidth = 1.8;
       X.beginPath();
       X.moveTo(-2+humanXOffset, -bob); X.lineTo(-2-walk+humanXOffset, 3-bob);
       X.moveTo(2+humanXOffset, -bob); X.lineTo(2+walk+humanXOffset, 3-bob);
-      X.stroke();
+      X.strokeStyle = '#000000'; X.lineWidth = 3.0; X.lineCap='round'; X.stroke();
+      X.strokeStyle = '#5b3a1e'; X.lineWidth = 1.5; X.stroke();
+      // Boots
+      X.fillStyle='#3a2412';
+      X.beginPath();X.arc(-2-walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(2+walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
+      X.lineCap='butt';
     }
+    // When the horse faces the camera its head hangs in front of the
+    // rider, so that part is deferred and drawn after the rider.
+    let horseHeadFront = null;
 
-    // Horse body drawn under the rider
+    // Horse drawn under the rider. The neck+head are one arched silhouette
+    // (curved crest, jaw, squared muzzle) — the key to reading "horse" at
+    // icon size. Idle horses nod gently, swish their tail and flick an ear.
     if(e.utype==='scout'){
       let useDir = e.dir;
       if (e.facing === -1) {
@@ -1548,143 +1853,126 @@ function drawUnit(e){
         else if (e.dir === 3) useDir = 7; // W -> E
         else if (e.dir === 4) useDir = 6; // NW -> NE
       }
-      
-      // Outline silhouette (black, drawn first slightly larger)
-      X.fillStyle='#000000';
-      
-      if (useDir === 5) {
-        // North (facing away): neck/head first (further away) so torso covers them
-        X.beginPath(); X.ellipse(0, -10.5, 4.6, 5.8, 0, 0, Math.PI*2); X.fill(); // neck outline
-        X.beginPath(); X.ellipse(0, -15.5, 4.0, 4.6, 0, 0, Math.PI*2); X.fill(); // head outline
-        X.beginPath(); X.ellipse(-2.0, -18.2, 1.8, 3.0, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
-        X.beginPath(); X.ellipse(2.0, -18.2, 1.8, 3.0, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2 outline
-        
-        X.beginPath(); X.rect(-5.3, -8.3, 10.6, 6.6); X.fill(); // blanket outline
-        X.beginPath(); X.ellipse(0, -4.5, 8.3, 7.8, 0, 0, Math.PI*2); X.fill(); // torso outline
+      const coat='#8b5a2b', maneC='#3f2810';
+      let idle = e.path.length===0;
+      let nod = idle ? Math.sin(tick*0.05+e.id)*0.8 : 0;
+      let swish = Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
+      X.save(); X.translate(0,-1); X.scale(1.35,1.35); // match the enlarged legs
+      const ear=(x,y,ang)=>{ X.save(); X.translate(x,y); X.rotate(ang);
+        X.beginPath(); X.moveTo(-1.2,0.6); X.lineTo(0,-2.8); X.lineTo(1.2,0.6); X.closePath();
+        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2; X.fill(); X.stroke(); X.restore(); };
+      X.strokeStyle='#000'; X.lineWidth=1.2;
+
+      if (useDir === 7 || useDir === 0) {
+        // East profile / Southeast diagonal (same construction, SE compressed)
+        let k = useDir === 7 ? 1 : 0.85;
+        // Swishing tail
+        X.save(); X.translate(-6.6*k,-7); X.rotate(swish);
+        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7*k,3,-2.2*k,9);
+        X.strokeStyle='#000'; X.lineWidth=3.4; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.8; X.stroke(); X.lineCap='butt';
+        X.restore();
+        // Body capsule
+        X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
+        X.beginPath(); X.ellipse(0,-6,7.4*k,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
+        // Neck + head silhouette, anchored at the front of the body
+        // (nods gently while idle)
+        X.save(); X.translate(2.6*k,nod);
+        ear(8.5*k,-13.9,-0.2); ear(10.1*k,-13.3,0.3);
+        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2;
+        X.beginPath();
+        X.moveTo(2.2*k,-2.6);
+        X.quadraticCurveTo(6.6*k,-4.6, 7.8*k,-9);        // front of neck up to the throat
+        X.quadraticCurveTo(10.5*k,-8.6, 14.2*k,-8.6);    // long flat jaw out to the muzzle
+        X.lineTo(14.8*k,-12);                            // tall squared nose end
+        X.quadraticCurveTo(12.5*k,-13.6, 9.6*k,-13.9);   // long flat forehead back to the poll
+        X.quadraticCurveTo(4.6*k,-14.4, 1.6*k,-11);      // arched crest of the neck
+        X.quadraticCurveTo(-0.4*k,-8.5, -0.6*k,-5.5);    // down into the withers
+        X.closePath(); X.fill(); X.stroke();
+        // Mane along the crest
+        X.strokeStyle=maneC; X.lineWidth=2.4; X.lineCap='round';
+        X.beginPath(); X.moveTo(0.2*k,-7.5); X.quadraticCurveTo(4.4*k,-13.2, 8.4*k,-13); X.stroke();
+        X.lineCap='butt';
+        // Eye high on the head, nostril at the nose
+        X.fillStyle='#000';
+        X.beginPath(); X.arc(9.7*k,-11.7,0.6,0,Math.PI*2); X.fill();
+        X.fillStyle='rgba(0,0,0,0.45)';
+        X.beginPath(); X.arc(13.9*k,-10.3,0.5,0,Math.PI*2); X.fill();
+        X.restore();
+      } else if (useDir === 6) {
+        // Northeast diagonal (back view): arched neck seen from behind
+        X.save(); X.translate(-5.8,-6.5); X.rotate(swish);
+        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7,3,-2.2,9);
+        X.strokeStyle='#000'; X.lineWidth=3.4; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.8; X.stroke(); X.lineCap='butt';
+        X.restore();
+        X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
+        X.beginPath(); X.ellipse(0,-6,6.6,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
+        X.save(); X.translate(1.6,nod);
+        ear(4.2,-16.6,-0.2); ear(6.4,-16.2,0.25);
+        X.fillStyle=coat;
+        X.beginPath();
+        X.moveTo(1.5,-5); X.quadraticCurveTo(1.8,-11, 3.4,-14.6);
+        X.lineTo(6.6,-14);
+        X.quadraticCurveTo(6.6,-9, 6,-4);
+        X.closePath(); X.fill(); X.stroke();
+        // Round skull from behind, dipped forward
+        X.beginPath(); X.ellipse(5.2,-14.5,2.3,2.4,0.15,0,Math.PI*2); X.fill(); X.stroke();
+        // Mane down the crest
+        X.strokeStyle=maneC; X.lineWidth=2.2; X.lineCap='round';
+        X.beginPath(); X.moveTo(2.6,-5.5); X.quadraticCurveTo(3.2,-10.5,4,-14.6); X.stroke();
+        X.lineCap='butt';
+        X.restore();
       } else if (useDir === 1) {
-        // South (facing camera): torso first, then blanket, then neck/head in front
-        X.beginPath(); X.rect(-5.3, -8.3, 10.6, 6.6); X.fill(); // blanket outline
-        X.beginPath(); X.ellipse(0, -4.5, 8.3, 7.8, 0, 0, Math.PI*2); X.fill(); // torso outline
-        
-        X.beginPath(); X.ellipse(0, -7.5, 4.8, 5.8, 0, 0, Math.PI*2); X.fill(); // neck outline
-        X.beginPath(); X.ellipse(0, -12.5, 4.3, 5.0, 0, 0, Math.PI*2); X.fill(); // head outline
-        X.beginPath(); X.ellipse(0, -10.5, 3.3, 2.8, 0, 0, Math.PI*2); X.fill(); // snout outline
-        X.beginPath(); X.ellipse(-2.2, -15.5, 1.8, 3.0, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
-        X.beginPath(); X.ellipse(2.2, -15.5, 1.8, 3.0, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2 outline
-      } else if (useDir === 7) {
-        // East (Profile)
-        X.beginPath(); X.rect(-7.8, -8.8, 11.6, 7.6); X.fill(); // blanket outline
-        X.beginPath(); X.ellipse(-5, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill(); // rump outline
-        X.beginPath(); X.ellipse(3, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();  // chest outline
-        // neck horizontal, head level
-        X.beginPath(); X.ellipse(6, -6, 9.3, 4.6, 0, 0, Math.PI*2); X.fill(); // neck outline
-        X.beginPath(); X.ellipse(13, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill(); // head outline
-        X.beginPath(); X.ellipse(16, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill(); // snout outline
-        X.beginPath(); X.ellipse(11.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill(); // ear1 outline
-        X.beginPath(); X.ellipse(14.0, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill(); // ear2 outline
-      } else if (useDir === 0) {
-        // Southeast (Diagonal front)
-        X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();
-        X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(5, -6, 8.3, 4.6, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(11, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(14, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(9.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(12, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();
+        // South (front view): body behind the rider; the hanging head is
+        // deferred so it renders in front of the rider.
+        X.fillStyle=coat;
+        X.beginPath(); X.ellipse(0,-5.5,5.6,5.2,0,0,Math.PI*2); X.fill(); X.stroke();
+        horseHeadFront = () => {
+          let nod2 = (e.path.length===0) ? Math.sin(tick*0.05+e.id)*0.8 : 0;
+          X.save(); X.translate(0,-1+nod2); X.scale(1.35,1.35);
+          X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
+          ear(2,-12.4,-0.3); ear(6.2,-12.2,0.3);
+          // Face tapers from a broad skull to a narrow muzzle
+          X.beginPath();
+          X.moveTo(1.3,-10.8);
+          X.quadraticCurveTo(1.2,-6.4, 2.4,-4.4);
+          X.quadraticCurveTo(4.1,-3.2, 5.8,-4.4);
+          X.quadraticCurveTo(7,-6.4, 6.9,-10.8);
+          X.quadraticCurveTo(4.1,-13.6, 1.3,-10.8);
+          X.closePath(); X.fill(); X.stroke();
+          // Forelock tuft
+          X.fillStyle=maneC;
+          X.beginPath(); X.arc(4.1,-11.9,1.8,Math.PI*0.9,Math.PI*0.1,true); X.fill();
+          // Eyes wide on the skull, darker muzzle with nostrils
+          X.fillStyle='#000';
+          X.beginPath(); X.arc(2.6,-9.4,0.6,0,Math.PI*2); X.fill();
+          X.beginPath(); X.arc(5.6,-9.4,0.6,0,Math.PI*2); X.fill();
+          X.fillStyle='#6e4520';
+          X.beginPath(); X.ellipse(4.1,-4.7,1.7,1.2,0,0,Math.PI*2); X.fill(); X.stroke();
+          X.restore();
+        };
       } else {
-        // Northeast (Diagonal back)
-        X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();
-        X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(4, -12, 4.0, 7.0, -Math.PI/3, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(5, -18, 4.2, 3.0, -Math.PI/3, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(6.5, -16.5, 2.6, 2.0, -Math.PI/3, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(2, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.ellipse(5, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();
+        // North (back view): neck/head face away, body and tail closest
+        X.save(); X.translate(0,nod);
+        X.fillStyle=coat;
+        X.beginPath(); X.ellipse(3,-10,2.9,4.6,0,0,Math.PI*2); X.fill(); X.stroke(); // neck
+        ear(1.5,-15,-0.25); ear(4.7,-14.9,0.25);
+        X.beginPath(); X.ellipse(3,-13.1,2.6,2.8,0,0,Math.PI*2); X.fill(); X.stroke(); // back of head
+        X.fillStyle=maneC;
+        X.beginPath(); X.ellipse(3,-11.8,1.3,4.2,0,0,Math.PI*2); X.fill(); // mane down the crest
+        X.restore();
+        // Body drawn over the neck base
+        X.fillStyle=coat;
+        X.beginPath(); X.ellipse(0,-5,5.8,5.3,0,0,Math.PI*2); X.fill(); X.stroke();
+        // Swishing tail down the center
+        X.save(); X.translate(0,-3); X.rotate(swish);
+        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-0.8,4.5,0,8.5);
+        X.strokeStyle='#000'; X.lineWidth=3.2; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.6; X.stroke(); X.lineCap='butt';
+        X.restore();
       }
-
-      // Colored fills
-      if (useDir === 5) {
-        // North (facing away): Draw neck/head first (further away) so torso/rump covers them
-        X.fillStyle='#8b5a2b';
-        X.beginPath(); X.ellipse(0, -10.5, 3.8, 5.0, 0, 0, Math.PI*2); X.fill(); // neck
-        X.beginPath(); X.ellipse(0, -15.5, 3.2, 3.8, 0, 0, Math.PI*2); X.fill(); // head
-        X.beginPath(); X.ellipse(-2.0, -18.2, 1.0, 2.2, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
-        X.beginPath(); X.ellipse(2.0, -18.2, 1.0, 2.2, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2
-
-        // Torso/rump is closer, so drawn on top
-        X.beginPath(); X.ellipse(0, -4.5, 7.5, 7.0, 0, 0, Math.PI*2); X.fill(); 
-        
-        // Saddle blanket is closest
-        X.fillStyle=tc;
-        X.beginPath(); X.rect(-4.5, -7.5, 9, 5); X.fill();
-      } else if (useDir === 1) {
-        // South (facing camera): Torso first, then blanket, then neck/head in front
-        X.fillStyle='#8b5a2b';
-        X.beginPath(); X.ellipse(0, -4.5, 7.5, 7.0, 0, 0, Math.PI*2); X.fill();
-
-        X.fillStyle=tc;
-        X.beginPath(); X.rect(-4.5, -7.5, 9, 5); X.fill();
-
-        X.fillStyle='#8b5a2b';
-        X.beginPath(); X.ellipse(0, -7.5, 4.0, 5.0, 0, 0, Math.PI*2); X.fill(); // neck
-        X.beginPath(); X.ellipse(0, -12.5, 3.5, 4.2, 0, 0, Math.PI*2); X.fill(); // head
-        X.beginPath(); X.ellipse(0, -10.5, 2.5, 2.0, 0, 0, Math.PI*2); X.fill(); // snout
-        X.beginPath(); X.ellipse(-2.2, -15.5, 1.0, 2.2, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
-        X.beginPath(); X.ellipse(2.2, -15.5, 1.0, 2.2, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2
-      } else {
-        // East / Southeast / Northeast (Diagonal or Profile)
-        X.fillStyle=tc;
-        if (useDir === 7) {
-          X.beginPath(); X.rect(-7, -8, 10, 6); X.fill();
-        } else {
-          X.beginPath(); X.rect(-6, -8, 9, 6); X.fill();
-        }
-
-        X.fillStyle='#8b5a2b';
-        if (useDir === 7) {
-          X.beginPath(); X.ellipse(-5, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill(); // rump
-          X.beginPath(); X.ellipse(3, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();  // chest
-          X.beginPath(); X.ellipse(6, -6, 8.5, 3.8, 0, 0, Math.PI*2); X.fill();  // neck
-          X.beginPath(); X.ellipse(13, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill(); // head
-          X.beginPath(); X.ellipse(16, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill(); // snout
-          X.beginPath(); X.ellipse(11.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill(); // ear1
-          X.beginPath(); X.ellipse(14.0, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill(); // ear2
-        } else if (useDir === 0) {
-          X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(5, -6, 7.5, 3.8, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(11, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(14, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(9.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(12, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();
-        } else {
-          X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(4, -12, 3.2, 6.2, -Math.PI/3, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(5, -18, 3.4, 2.2, -Math.PI/3, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(6.5, -16.5, 1.8, 1.2, -Math.PI/3, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(2, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();
-          X.beginPath(); X.ellipse(5, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();
-        }
-      }
-
-      // Tail
-      if (useDir === 5) {
-        // North: Center tail hanging straight down (drawn on top of rump)
-        X.strokeStyle='#000'; X.lineWidth=3.0;
-        X.beginPath(); X.moveTo(0, -2); X.quadraticCurveTo(-1, 3, 0, 7); X.stroke();
-        X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
-        X.beginPath(); X.moveTo(0, -2); X.quadraticCurveTo(-1, 3, 0, 7); X.stroke();
-      } else if (useDir !== 1) {
-        // Side/Diagonal: Tail at the back
-        let txLoc = useDir === 7 ? -12 : -10;
-        X.strokeStyle='#000'; X.lineWidth=3.0;
-        X.beginPath(); X.moveTo(txLoc, -7); X.quadraticCurveTo(txLoc - 4, -3, txLoc - 3, 3); X.stroke();
-        X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
-        X.beginPath(); X.moveTo(txLoc, -7); X.quadraticCurveTo(txLoc - 4, -3, txLoc - 3, 3); X.stroke();
-      }
+      X.restore();
     }
 
     // Torso
@@ -1700,6 +1988,41 @@ function drawUnit(e){
       // Team-colored peasant shirt
       X.fillStyle=tc;
       X.beginPath();X.arc(humanXOffset,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
+    }
+
+    // Torso volume: soft highlight upper-left, shade lower-right
+    X.save();
+    X.beginPath();X.arc(humanXOffset,-6+humanYOffset,4.6,0,Math.PI*2);X.clip();
+    X.fillStyle='rgba(255,255,255,0.22)';
+    X.beginPath();X.arc(humanXOffset-2,-8.5+humanYOffset,3.6,0,Math.PI*2);X.fill();
+    X.fillStyle='rgba(0,0,0,0.18)';
+    X.beginPath();X.arc(humanXOffset+2.5,-3+humanYOffset,3.6,0,Math.PI*2);X.fill();
+    X.restore();
+
+    // Arms: rear arm hangs at the side, front arm reaches toward the weapon/tool hand
+    {
+      let armSwing = e.path.length>0 ? Math.sin(tick*0.4+e.id)*1.5 : 0;
+      // While a villager works a tool, the front hand grips the handle base
+      // (the tool's rotation anchor at (3,-9)) instead of hanging loose.
+      let gripping = e.utype==='villager' && e.path.length===0 &&
+        (e.task==='chop'||e.task==='mine_gold'||e.task==='mine_stone'||e.task==='build');
+      // Picking (berries/farm): no tool — the front arm just reaches out and
+      // down repeatedly, like plucking.
+      let picking = e.utype==='villager' && e.path.length===0 &&
+        (e.task==='forage'||e.task==='farm');
+      let pick = Math.sin(tick*0.18+e.id);
+      X.beginPath();
+      X.moveTo(-3.5+humanXOffset,-8+humanYOffset); X.lineTo(-5+humanXOffset-armSwing,-3.5+humanYOffset);
+      X.moveTo(3.5+humanXOffset,-8+humanYOffset);
+      if(gripping) X.lineTo(3,-8.8);
+      else if(picking) X.lineTo(5.6+humanXOffset+pick*0.8, -5.5+humanYOffset-pick*3.5);
+      else X.lineTo(4.5+humanXOffset+armSwing,-4.5+humanYOffset);
+      X.strokeStyle='#000000';X.lineWidth=3.0;X.lineCap='round';X.stroke();
+      X.strokeStyle='#edc9a0';X.lineWidth=1.5;X.stroke();
+      X.lineCap='butt';
+      // Head/headwear drawing below relies on the black outline stroke set
+      // before the torso — restore it after the skin-colored arm pass.
+      X.strokeStyle='#000000';X.lineWidth=1;
     }
     if (e.facingNorth) {
       // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
@@ -1728,15 +2051,11 @@ function drawUnit(e){
       X.fillStyle='#edc9a0';
       X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
 
-      // Draw 8-direction friendly facial features (eyes / profile nose)
+      // Draw 8-direction friendly facial features (eyes)
       if (e.dir === 7 || e.dir === 3) {
-        // East/West: Draw profile nose
-        X.fillStyle='#edc9a0';
-        X.beginPath();
-        X.moveTo(humanXOffset + 3.5, -15 + humanYOffset);
-        X.lineTo(humanXOffset + 5.5, -14 + humanYOffset);
-        X.lineTo(humanXOffset + 3.5, -13 + humanYOffset);
-        X.fill(); X.stroke();
+        // East/West profile: single eye toward the facing side
+        X.fillStyle='#000';
+        X.beginPath(); X.arc(humanXOffset + 2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
       } else if (e.dir === 1) {
         // South: Draw two centered eyes (facing straight forward)
         X.fillStyle='#000';
@@ -1774,287 +2093,367 @@ function drawUnit(e){
       }
     }
 
+    // Head/helmet highlight: small crescent on the upper-left for volume
+    X.save();
+    X.beginPath();X.arc(humanXOffset,-14.5+humanYOffset,4.1,0,Math.PI*2);X.clip();
+    X.fillStyle='rgba(255,255,255,0.25)';
+    X.beginPath();X.arc(humanXOffset-1.8,-16.5+humanYOffset,2.6,0,Math.PI*2);X.fill();
+    X.restore();
+
+    // Horse head in front of the rider (front-facing scout)
+    if(horseHeadFront) horseHeadFront();
+
     // Tools & weapons (animated swinging swings during active tasks)
     if(e.utype==='villager'){
-      let swing=isActive&&e.path.length===0?anim*0.8:0;
+      // Shaped work swing: slow wind-up (70% of the cycle), fast strike
+      // (30%), instead of a symmetric sine wobble. swing is the tool's
+      // rotation: -1.1 fully raised, +0.5 at the moment of impact.
+      let working = isActive && e.path.length===0;
+      let phRaw = tick*0.055 + e.id*0.37;
+      let ph = ((phRaw % 1) + 1) % 1;
+      let u = ph < 0.7 ? ph/0.7 : 1-(ph-0.7)/0.3;
+      let swing = working ? (0.5 - 1.6*u) : 0;
+      // One impact burst per cycle, right as the tool lands
+      let swingCyc = Math.floor(phRaw);
+      let impact = working && ph > 0.93 && e._swingCyc !== swingCyc;
+      if(impact) e._swingCyc = swingCyc;
+      // Impact point in tile coords: the gather tile if known, else just ahead
+      let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
+      let hitY = (e.gatherY >= 0 && e.gatherY !== undefined) ? e.gatherY + 0.3 : e.y;
       if(e.task==='chop'&&e.path.length===0){
+        if(impact) spawnParticles(hitX, hitY, '#c9a15e', 2, 0.02, 1.5); // wood chips
         X.save();X.translate(3,-9);X.rotate(swing);
-        // Handle
-        X.strokeStyle='#000000';X.lineWidth=2.2;
-        X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.2;
-        X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
-        // Simple Axe Head
-        X.fillStyle='#b0b0b0';
+        // Long handle
+        X.strokeStyle='#000000';X.lineWidth=3.4;X.lineCap='round';
+        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
+        X.strokeStyle='#8B4513';X.lineWidth=1.8;
+        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
+        // Big wedge axe head with a bright cutting edge
+        X.fillStyle='#b8bfc6';
         X.beginPath();
-        X.moveTo(7, -10);
-        X.lineTo(11, -12);
-        X.lineTo(10, -5);
-        X.closePath();
-        X.fill();
-        X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+        X.moveTo(8,-14.5);
+        X.lineTo(14.5,-17);
+        X.lineTo(13,-6.5);
+        X.lineTo(7.4,-9.5);
+        X.closePath();X.fill();
+        X.strokeStyle='#000000';X.lineWidth=1.2;X.lineJoin='round';X.stroke();
+        X.strokeStyle='#fff';X.lineWidth=1.4;
+        X.beginPath();X.moveTo(13.9,-15.9);X.lineTo(12.7,-7.9);X.stroke();
         X.restore();
       } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0){
+        if(impact) spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
         X.save();X.translate(3,-9);X.rotate(swing);
-        // Handle
-        X.strokeStyle='#000000';X.lineWidth=2.5;
-        X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.3;
-        X.beginPath();X.moveTo(0,0);X.lineTo(7,-10);X.stroke();
-        
-        // Pickaxe Head
-        X.strokeStyle='#000000';X.lineWidth=3;
-        X.beginPath();
-        X.moveTo(2, -13);
-        X.quadraticCurveTo(7, -12, 12, -7);
-        X.stroke();
-        
-        X.strokeStyle='#b0b0b0';X.lineWidth=1.5;
-        X.beginPath();
-        X.moveTo(2, -13);
-        X.quadraticCurveTo(7, -12, 12, -7);
-        X.stroke();
+        // Long handle
+        X.strokeStyle='#000000';X.lineWidth=3.4;X.lineCap='round';
+        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
+        X.strokeStyle='#8B4513';X.lineWidth=1.8;
+        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
+        // Big curved pick head, points tapering both ways
+        X.strokeStyle='#000000';X.lineWidth=5;X.lineCap='round';
+        X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
+        X.strokeStyle='#b8bfc6';X.lineWidth=2.4;
+        X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
+        X.lineCap='butt';
         X.restore();
-      } else if((e.task==='forage'||e.task==='farm')&&e.path.length===0){
-        let bnd=Math.abs(anim)*2;
-        // Straw Basket
-        X.fillStyle='#ebd2b0';
-        X.beginPath();
-        X.moveTo(1, -2-bnd); X.lineTo(6, -2-bnd);
-        X.lineTo(5, -6-bnd); X.lineTo(2, -6-bnd);
-        X.closePath();
-        X.fill(); X.stroke();
-        // Visual food inside basket
-        if(e.task==='forage'){
-          X.fillStyle='#cc3344'; // red berries
-          X.beginPath();
-          X.arc(2.5, -6.5-bnd, 1.2, 0, Math.PI*2);
-          X.arc(4.5, -6.5-bnd, 1.2, 0, Math.PI*2);
-          X.fill(); X.stroke();
-        } else {
-          X.fillStyle='#da0'; // golden grain
-          X.beginPath();
-          X.arc(3.5, -6.8-bnd, 1.3, 0, Math.PI*2);
-          X.fill(); X.stroke();
-        }
       } else if(e.task==='build'&&e.path.length===0){
+        if(impact) spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
         X.save();X.translate(3,-9);X.rotate(swing);
         // Handle
-        X.strokeStyle='#000000';X.lineWidth=2.2;
-        X.beginPath();X.moveTo(0,0);X.lineTo(6,-9);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.2;
-        X.beginPath();X.moveTo(0,0);X.lineTo(6,-9);X.stroke();
-        // Hammer head
-        X.fillStyle='#888';
-        X.beginPath();X.rect(2.5,-12,5,4);X.fill();
-        X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+        X.strokeStyle='#000000';X.lineWidth=3.2;X.lineCap='round';
+        X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();
+        X.strokeStyle='#8B4513';X.lineWidth=1.7;
+        X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();X.lineCap='butt';
+        // Big square mallet head with a bright face
+        X.fillStyle='#9aa0a6';
+        X.beginPath();X.rect(4,-15.5,7,5.5);X.fill();
+        X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
+        X.fillStyle='#fff';
+        X.beginPath();X.rect(9.8,-15,1.2,4.5);X.fill();
         X.restore();
       }
       if(e.carrying>0){
-        let cc=e.carryType==='food'?'#d44':e.carryType==='wood'?'#8B4513':e.carryType==='gold'?'#ffd700':'#888';
-        X.fillStyle=cc;X.beginPath();X.rect(-7,-10,3,6);X.fill();X.stroke();
+        X.strokeStyle='#000';X.lineWidth=1;
+        if(e.carryType==='wood'){
+          // Bundle of three logs over the shoulder: two below, one on top,
+          // round end grain facing the camera.
+          X.save();X.translate(-6,-8);X.rotate(-0.18);
+          const log=(lx,ly)=>{
+            X.fillStyle='#6e473b';X.beginPath();X.rect(lx-9.5,ly-1.7,10,3.4);X.fill();X.stroke();
+            X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+0.5,ly,1.8,2.0,0,0,Math.PI*2);X.fill();X.stroke();
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8;
+            X.beginPath();X.arc(lx+0.5,ly,0.8,0,Math.PI*2);X.stroke();
+            X.strokeStyle='#000';X.lineWidth=1;
+          };
+          log(0.5,1.8); log(4,1.6); log(2.2,-1.6);
+          X.restore();
+        } else if(e.carryType==='stone'){
+          // Comically oversized haul: a big cut block with a smaller one
+          // stacked on top, hoisted on the shoulder.
+          X.save();X.translate(-7.5,-9);
+          const block=(bx,by,s)=>{
+            X.fillStyle='#b3b3b3';X.beginPath(); // top face
+            X.moveTo(bx,by-2.2*s);X.lineTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx-3.4*s,by-0.6*s);X.closePath();X.fill();X.stroke();
+            X.fillStyle='#8f8f8f';X.beginPath(); // left face
+            X.moveTo(bx-3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx-3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
+            X.fillStyle='#787878';X.beginPath(); // right face
+            X.moveTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx+3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8; // crack
+            X.beginPath();X.moveTo(bx-1.8*s,by+1.2*s);X.lineTo(bx-1.2*s,by+2.6*s);X.lineTo(bx-1.9*s,by+3.6*s);X.stroke();
+            X.strokeStyle='#000';X.lineWidth=1;
+          };
+          block(0,0,1.5);          // big base block
+          block(1.2,-4.6,0.95);    // smaller block stacked on top
+          X.restore();
+        } else if(e.carryType==='gold'){
+          // Overflowing armful of gold: heaped shiny nuggets with twinkles
+          X.save();X.translate(-6.5,-7.5);
+          const nug=(nx,ny,r)=>{
+            X.fillStyle='#e8b90f';X.beginPath();X.arc(nx,ny,r,0,Math.PI*2);X.fill();X.stroke();
+            X.fillStyle='#ffe14d';X.beginPath();X.arc(nx-r*0.3,ny-r*0.3,r*0.5,0,Math.PI*2);X.fill();
+          };
+          nug(-2.2,0.5,2.2); nug(2,0.8,2.0); nug(0,-0.6,2.4);
+          nug(-1,-2.6,1.9); nug(1.6,-2.2,1.7); nug(0.3,-4,1.5);
+          // Twinkling 4-point sparkles
+          let tw=(Math.sin(tick*0.25+e.id)+1)/2;
+          X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
+          const spark=(px,py,r)=>{
+            X.beginPath();
+            X.moveTo(px,py-r);X.lineTo(px+r*0.3,py-r*0.3);X.lineTo(px+r,py);X.lineTo(px+r*0.3,py+r*0.3);
+            X.lineTo(px,py+r);X.lineTo(px-r*0.3,py+r*0.3);X.lineTo(px-r,py);X.lineTo(px-r*0.3,py-r*0.3);
+            X.closePath();X.fill();
+          };
+          spark(-1.5,-3.6,0.6+1.6*tw); spark(2.4,-0.6,0.5+1.2*(1-tw));
+          X.restore();
+        } else {
+          // Food — carry the goods themselves, big and readable, no basket.
+          // What shows depends on where the food came from.
+          X.save();X.translate(-7,-7);
+          if(e.foodSrc==='meat'){
+            // Fluffy white wool bundle (from sheep): scalloped cloud like
+            // the sheep's own coat — silhouette pass, then wool fill
+            let puffs=[[-1.8,-0.8,1.9],[1.8,-1,1.9],[0,-2.8,1.9],[0,0.6,2.0]];
+            X.fillStyle='#000';
+            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2]+1,0,Math.PI*2);X.fill();});
+            X.fillStyle='#f2eddd';
+            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2],0,Math.PI*2);X.fill();});
+            X.fillStyle='rgba(255,255,255,0.5)';
+            X.beginPath();X.arc(-0.6,-2.2,1.2,0,Math.PI*2);X.fill();
+          } else if(e.foodSrc==='wheat'){
+            // Tied wheat sheaf over the shoulder
+            X.save();X.rotate(-0.25);
+            X.strokeStyle='#c9a227';X.lineWidth=1.4;
+            for(let i=-2;i<=2;i++){
+              X.beginPath();X.moveTo(0,3);X.lineTo(i*1.7,-4);X.stroke();
+            }
+            X.strokeStyle='#000';X.lineWidth=1.2;
+            X.beginPath();X.moveTo(-1.7,1);X.lineTo(1.7,1);X.stroke();
+            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8;
+            for(let i=-2;i<=2;i++){
+              X.beginPath();X.ellipse(i*1.7,-4.7,0.9,1.7,i*0.15,0,Math.PI*2);X.fill();X.stroke();
+            }
+            X.restore();
+          } else {
+            // Armful of big glossy berries
+            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1;
+            [[-1.6,-0.8],[1.6,-1.1],[0,-3.2],[0,1]].forEach(([bx2,by2])=>{
+              X.beginPath();X.arc(bx2,by2,2.2,0,Math.PI*2);X.fill();X.stroke();
+            });
+            X.fillStyle='#ff99a8';
+            X.beginPath();X.arc(-2.2,-1.4,0.7,0,Math.PI*2);X.fill();
+            X.beginPath();X.arc(-0.6,-3.8,0.7,0,Math.PI*2);X.fill();
+          }
+          X.restore();
+        }
       }
     } else if(e.utype==='militia'){
-      // Militia Sword (swings during combat targets)
+      // Militia broadsword (shaped combat slash)
       let swinging=e.target&&e.path.length===0;
-      X.save();X.translate(4,-7);
-      if(swinging) X.rotate(anim*1.0);
-      else X.rotate(-0.3);
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle='#6a4a20';X.beginPath();X.rect(-1,0,3,5);X.fill();X.stroke();
-      X.fillStyle='#aa8';X.beginPath();X.rect(-3,-1,7,2);X.fill();X.stroke();
-      X.fillStyle='#ccd';
-      X.beginPath();X.moveTo(-1,-1);X.lineTo(0,-14);X.lineTo(2,-1);X.closePath();X.fill();X.stroke();
-      X.fillStyle='#eef';X.beginPath();X.rect(0,-12,1,8);X.fill();
+      X.save();X.translate(6.5,-6);
+      drawBigSword(swinging, e.id);
       X.restore();
 
-      // Shield (steel kite shield with team-colored cross)
+      // Big steel kite shield with a team-colored cross
       let shx = -6, shy = -6;
       if (e.dir === 4 || e.dir === 5 || e.dir === 6) {
         shx = -2.5; // Shift to the back center when facing North directions
         shy = -7;
       }
-      X.fillStyle='#a0a0a0';X.beginPath();
-      X.moveTo(shx-3, shy-4);X.lineTo(shx+3, shy-4);
-      X.lineTo(shx+4, shy);X.lineTo(shx, shy+6);X.lineTo(shx-4, shy);X.closePath();X.fill();X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=1.2;X.lineJoin='round';
+      X.fillStyle='#a8adb3';X.beginPath();
+      X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
+      X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
       X.fillStyle=tc;X.beginPath();
-      X.fillRect(shx-3, shy, 6, 1);
-      X.fillRect(shx, shy-3, 1, 6);
-      X.strokeStyle='#000000';X.lineWidth=0.75;X.stroke();
+      X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
+      X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
+      X.strokeStyle='#000000';X.lineWidth=0.8;X.stroke();
     } else if(e.utype==='spearman'){
-      // Spearman long spear
+      // Long spear with a big leaf-shaped head; the thrust is shaped —
+      // slow pull-back, fast jab along the shaft.
       let swinging=e.target&&e.path.length===0;
       X.save(); X.translate(3, -6+humanYOffset);
-      if(swinging) X.translate(anim*4, 0); // thrusting
-      X.strokeStyle='#8B4513'; X.lineWidth=1.8;
-      X.beginPath(); X.moveTo(-6, 8); X.lineTo(11, -9); X.stroke();
-      X.fillStyle='#ccd'; X.strokeStyle='#000'; X.lineWidth=0.8;
+      if(swinging){
+        let ph=((tick*0.07+e.id*0.4)%1+1)%1;
+        let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
+        let off=-2.5*u+4.5*(1-u);
+        X.translate(off*0.75, -off*0.75);
+      }
+      X.strokeStyle='#000'; X.lineWidth=3.2; X.lineCap='round';
+      X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
+      X.strokeStyle='#8B4513'; X.lineWidth=1.6;
+      X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
+      X.lineCap='butt';
+      X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1.1; X.lineJoin='round';
+      // Leaf head symmetric about the shaft axis: base corners sit at
+      // shaft-end ± perpendicular, tip continues along the shaft direction.
       X.beginPath();
-      X.moveTo(11, -9); X.lineTo(15, -13); X.lineTo(12, -6); X.closePath();
+      X.moveTo(10, -12); X.lineTo(17.6, -15.6); X.lineTo(13.9, -8.1); X.closePath();
       X.fill(); X.stroke();
       X.restore();
     } else if(e.utype==='archer'){
-      // Archer bow and arrow
+      // Big bow with a full draw cycle: nock and pull back slowly, release,
+      // string snaps forward and vibrates until the next arrow.
       let swinging=e.target&&e.path.length===0;
+      let ph=((tick*0.06+e.id*0.4)%1+1)%1;
       X.save(); X.translate(4, -8+humanYOffset);
-      if(swinging) {
-        X.strokeStyle='#8B4513'; X.lineWidth=1.5;
-        X.beginPath(); X.arc(0, 0, 6, -Math.PI/2, Math.PI/2); X.stroke();
-        X.strokeStyle='#e0e0e0'; X.lineWidth=0.75;
-        X.beginPath(); X.moveTo(0, -6); X.lineTo(-3, 0); X.lineTo(0, 6); X.stroke();
-        // small arrow ready to fire
-        X.strokeStyle='#fff'; X.lineWidth=1;
-        X.beginPath(); X.moveTo(-3, 0); X.lineTo(5, 0); X.stroke();
+      // Thick recurve limbs
+      X.strokeStyle='#000'; X.lineWidth=4.2; X.lineCap='round';
+      X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
+      X.strokeStyle='#8B4513'; X.lineWidth=2.3;
+      X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
+      X.lineCap='butt';
+      let tipX = 10*Math.cos(Math.PI/2.15), tipY = 10*Math.sin(Math.PI/2.15);
+      if(swinging && ph < 0.72){
+        let d = ph/0.72;
+        let pull = -2 - 5.5*d;
+        // Drawn string
+        X.strokeStyle='#e8e8e8'; X.lineWidth=1;
+        X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(pull, 0); X.lineTo(tipX, tipY); X.stroke();
+        // Nocked arrow: thick shaft, steel head, red fletching
+        X.strokeStyle='#000'; X.lineWidth=2.6; X.lineCap='round';
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
+        X.strokeStyle='#f5f2e9'; X.lineWidth=1.3;
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
+        X.lineCap='butt';
+        X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1;
+        X.beginPath(); X.moveTo(pull+18.5, 0); X.lineTo(pull+13.6, -2.5); X.lineTo(pull+13.6, 2.5); X.closePath(); X.fill(); X.stroke();
+        X.fillStyle='#cc4444';
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, -2.8); X.lineTo(pull+1.4, -0.5); X.closePath(); X.fill();
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, 2.8); X.lineTo(pull+1.4, 0.5); X.closePath(); X.fill();
       } else {
-        X.strokeStyle='#8B4513'; X.lineWidth=1.5;
-        X.beginPath(); X.arc(0, 0, 6, -Math.PI/2.5, Math.PI/2.5); X.stroke();
-        X.strokeStyle='#e0e0e0'; X.lineWidth=0.75;
-        X.beginPath(); X.moveTo(2, -4); X.lineTo(2, 4); X.stroke();
+        // String at rest — vibrates briefly right after the release
+        let vib = swinging ? Math.sin(tick*1.2)*2.2*(1-(ph-0.72)/0.28) : 0;
+        X.strokeStyle='#e8e8e8'; X.lineWidth=1;
+        X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }
       X.restore();
     } else if(e.utype==='scout'){
-      // Scout Sword (straight broadsword like the militia soldier)
+      // Scout broadsword (same big sword as the militia, shaped slash).
+      // At rest it parks on the rider's LEFT side, mirrored — the right is
+      // where the horse's head rises, and the blade would point into it.
       let swinging=e.target&&e.path.length===0;
-      X.save(); X.translate(3+humanXOffset, -7+humanYOffset);
-      if(swinging) X.rotate(anim*1.0);
-      else X.rotate(-0.3);
-      X.strokeStyle='#000000'; X.lineWidth=1;
-      X.fillStyle='#6a4a20'; X.beginPath(); X.rect(-1, 0, 3, 5); X.fill(); X.stroke();
-      X.fillStyle='#aa8'; X.beginPath(); X.rect(-3, -1, 7, 2); X.fill(); X.stroke();
-      X.fillStyle='#ccd';
-      X.beginPath(); X.moveTo(-1, -1); X.lineTo(0, -14); X.lineTo(2, -1); X.closePath(); X.fill(); X.stroke();
-      X.fillStyle='#eef'; X.beginPath(); X.rect(0, -12, 1, 8); X.fill();
+      X.save();
+      if(swinging){
+        X.translate(6+humanXOffset, -6+humanYOffset);
+        drawBigSword(true, e.id);
+      } else {
+        X.translate(-4.5+humanXOffset, -6+humanYOffset);
+        X.scale(-1,1);
+        drawBigSword(false, e.id);
+      }
       X.restore();
     }
   } else {
-    // Sheep — 4-direction: body always the same, head tracks movement direction
-    // Waddling/Rolling rotation when walking
+    // Sheep — scalloped wool cloud; head tracks movement direction
     let waddle = e.path.length > 0 ? Math.sin(tick * 0.2 + e.id) * 0.06 : 0;
-    
-    // Slow breathing scale factor for wool when idle
-    let breath = e.path.length === 0 ? Math.sin(tick * 0.06 + e.id) * 0.15 : 0;
+    let breath = e.path.length === 0 ? Math.sin(tick * 0.06 + e.id) * 0.12 : 0;
 
     X.save();
     X.rotate(waddle);
 
-    // 4-leg walk cycle: two pairs alternating
+    // 4-leg walk cycle: outlined stubby legs with hooves
     let hw1 = e.path.length > 0 ? Math.sin(tick * 0.45 + e.id) * 3.0 : 0;
     let hw2 = -hw1;
-    X.strokeStyle='#000000'; X.lineWidth=1.8;
+    let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
     X.beginPath();
-    X.moveTo(-4, 0); X.lineTo(-4 + hw1, 5);   // back-left
-    X.moveTo(-1, 1); X.lineTo(-1 + hw2, 5);    // back-right
-    X.moveTo(2, 1);  X.lineTo(2  + hw1, 5);    // front-left
-    X.moveTo(5, 0);  X.lineTo(5  + hw2, 5);    // front-right
-    X.stroke();
+    legPts.forEach(p => { X.moveTo(p[0], p[1]); X.lineTo(p[0] + p[2], 5); });
+    X.strokeStyle='#000'; X.lineWidth=2.6; X.lineCap='round'; X.stroke();
+    X.strokeStyle='#8a8378'; X.lineWidth=1.3; X.stroke(); X.lineCap='butt';
+    X.fillStyle='#241f18';
+    legPts.forEach(p => { X.beginPath(); X.ellipse(p[0] + p[2], 5.3, 1.2, 0.9, 0, 0, Math.PI*2); X.fill(); });
 
-    // Cute waggable tail at the rear (-8, -3.5)
+    // Waggable wool-puff tail at the rear
     let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
     let tailAngle = Math.sin(tick * tailRate + e.id) * 0.4;
     X.save();
-    X.translate(-8, -3.5);
-    X.rotate(tailAngle - 0.2); // angled down slightly
-    X.fillStyle = '#000000';
-    X.beginPath(); X.ellipse(-2, 0, 3, 2, 0, 0, Math.PI*2); X.fill();
-    X.fillStyle = '#f0ead8';
-    X.beginPath(); X.ellipse(-2, 0, 2, 1.2, 0, 0, Math.PI*2); X.fill();
+    X.translate(-7.5, -4);
+    X.rotate(tailAngle - 0.2);
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(-1.5, 0, 2.6, 0, Math.PI*2); X.fill();
+    X.fillStyle='#f2eddd';
+    X.beginPath(); X.arc(-1.5, 0, 1.7, 0, Math.PI*2); X.fill();
     X.restore();
 
-    // Fluffy wool body (pulsates slightly with breathing)
-    let r1 = 5 + breath, r2 = 5.5 + breath, r3 = 4.5 + breath;
-    X.fillStyle='#000000';
-    X.beginPath();X.arc(-4,-3,r1,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,r1,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,r2,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,r2,0,Math.PI*2);X.fill();
-    X.fillStyle='#f0ead8';
-    X.beginPath();X.arc(-4,-3,r3,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,r3,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,r1,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,r1,0,Math.PI*2);X.fill();
+    // Scalloped wool cloud: black silhouette pass, then wool fill pass
+    let puffs = [[-4.5,-3.5,3.4],[-1.5,-6.5,3.5],[2.5,-6,3.4],[5,-3,3.2],[2,-0.5,3.3],[-2,-0.5,3.4],[0,-3.5,4.4]];
+    X.fillStyle='#000';
+    puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+1.1+breath, 0, Math.PI*2); X.fill(); });
+    X.fillStyle='#f2eddd';
+    puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+breath, 0, Math.PI*2); X.fill(); });
+    // Wool shading: highlight on top, ground shade underneath
+    X.fillStyle='rgba(255,255,255,0.5)';
+    X.beginPath(); X.arc(-1, -6.5, 2.6, 0, Math.PI*2); X.fill();
+    X.fillStyle='rgba(110,95,70,0.20)';
+    X.beginPath(); X.ellipse(0, 1.6, 5.8, 2, 0, 0, Math.PI*2); X.fill();
 
-    // Head & ear — position depends on direction
     let earWiggle = e.eatingGrass ? Math.sin(tick * 0.5 + e.id) * 1.2 : Math.sin(tick * 0.1 + e.id) * 0.4;
+
+    // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
+    // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
+    const sheepHead = (hx, hy, mode) => {
+      X.strokeStyle='#000'; X.lineWidth=1;
+      // Team bandana under the chin
+      X.fillStyle=tc;
+      X.beginPath(); X.ellipse(hx, hy+3.6, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+      // Droopy ears
+      X.fillStyle = mode==='back' ? '#4a463e' : '#57534a';
+      X.save(); X.translate(hx-2.6, hy-0.6+earWiggle); X.rotate(-0.5);
+      X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
+      X.save(); X.translate(hx+2.6, hy-0.6-earWiggle); X.rotate(0.5);
+      X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
+      // Head
+      X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
+      X.beginPath(); X.ellipse(hx, hy, 2.7, 3.1, 0, 0, Math.PI*2); X.fill(); X.stroke();
+      // Wool tuft on top of the head
+      X.fillStyle='#000';
+      X.beginPath(); X.arc(hx, hy-2.9, 2.2, 0, Math.PI*2); X.fill();
+      X.fillStyle='#f2eddd';
+      X.beginPath(); X.arc(hx, hy-2.9, 1.6, 0, Math.PI*2); X.fill();
+    };
+
     let headX = 0, headY = 0;
-    
-    if(e.eatingGrass){
+    if (e.eatingGrass) {
       let chew = Math.sin(tick * 0.6);
       headX = 6; headY = 2 + chew;
-      let earX = 5,  earY = -0.5 + chew + earWiggle;
-      
-      // Team bandana
-      X.fillStyle = tc;
-      X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-      // Head
-      X.fillStyle='#333';
-      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-      // Ear
-      X.fillStyle='#e0d8c0';
-      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
+      sheepHead(headX, headY, 'side');
     } else if (e.dir === 1) {
-      // Strictly South: Head in center-front, two ears on sides
+      // Strictly South: head center-front
       headX = 0; headY = 1.5;
-      
-      // Bandana
-      X.fillStyle = tc;
-      X.beginPath(); X.ellipse(headX, headY + 3.8, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-      // Head
-      X.fillStyle='#333';
-      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-      // Left Ear
-      X.fillStyle='#e0d8c0';
-      X.beginPath();X.arc(headX - 3.2, headY - 1 + earWiggle, 1.1, 0, Math.PI*2); X.fill(); X.stroke();
-      // Right Ear
-      X.beginPath();X.arc(headX + 3.2, headY - 1 - earWiggle, 1.1, 0, Math.PI*2); X.fill(); X.stroke();
+      sheepHead(headX, headY, 'front');
     } else if (e.dir === 5) {
-      // Strictly North: Head in center-back, two ears tucked
+      // Strictly North: head center-back, no face
       headX = 0; headY = -8;
-      
-      // Bandana
-      X.fillStyle = tc;
-      X.beginPath(); X.ellipse(headX, headY + 3.5, 3, 1.6, 0, 0, Math.PI*2); X.fill();
-      // Head
-      X.fillStyle='#222';
-      X.beginPath();X.arc(headX,headY,2.4,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-      // Left Ear
-      X.fillStyle='#b0a890';
-      X.beginPath();X.arc(headX - 2.8, headY - 1.2 + earWiggle, 1.0, 0, Math.PI*2); X.fill(); X.stroke();
-      // Right Ear
-      X.beginPath();X.arc(headX + 2.8, headY - 1.2 - earWiggle, 1.0, 0, Math.PI*2); X.fill(); X.stroke();
+      sheepHead(headX, headY, 'back');
     } else {
       // Side and diagonal directions
-      let earX, earY;
       let useDir = e.dir;
       if (e.facing === -1) {
         if (e.dir === 2) useDir = 0;      // SW -> SE
         else if (e.dir === 3) useDir = 7; // W -> E
         else if (e.dir === 4) useDir = 6; // NW -> NE
       }
-      
-      if (useDir === 7) {
-        headX = 7; headY = -3;
-        earX = 4.8; earY = -5.5 + earWiggle;
-      } else if (useDir === 0) {
-        headX = 6; headY = -1;
-        earX = 4.0; earY = -3.5 + earWiggle;
-      } else {
-        headX = 4; headY = -7.2;
-        earX = 2.2; earY = -9.2 + earWiggle;
-      }
-      
-      // Bandana
-      X.fillStyle = tc;
-      X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-      // Head
-      X.fillStyle='#333';
-      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-      // Ear
-      X.fillStyle='#e0d8c0';
-      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
+      if (useDir === 7)      { headX = 6.5; headY = -3.5; sheepHead(headX, headY, 'side'); }
+      else if (useDir === 0) { headX = 5.5; headY = -1.5; sheepHead(headX, headY, 'side'); }
+      else                   { headX = 3.5; headY = -7.5; sheepHead(headX, headY, 'back'); }
     }
 
     if(e.eatingGrass){
@@ -2072,11 +2471,12 @@ function drawUnit(e){
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
 
-  // HP bar
+  // HP bar (higher for the scout — horse and rider stand taller)
   if(e.hp<e.maxHp){
-    X.fillStyle='#000000';X.fillRect(sx-9,sy-23,18,5);
-    X.fillStyle='#300';X.fillRect(sx-8,sy-22,16,3);
-    X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,sy-22,16*e.hp/e.maxHp,3);
+    let hpTop = e.utype==='scout' ? sy-33 : sy-23;
+    X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
+    X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
+    X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);
   }
   // Selection circle
   if(selected.includes(e)){
@@ -2111,7 +2511,7 @@ function drawGhost(){
     line.forEach((t, i) => {
       let p = toScr(t.x, t.y);
       let linkY = p.y + 16;
-      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, '#cfcfc4', '#adada0', 'flat', 0, '#b8b8b0', '#b8b8b0', false);
+      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, '#cfc8b6', '#aca392', 'flat', 0, '#b7ad97', '#b7ad97', false);
       let next = line[i+1];
       if (next) {
         let ddx = next.x - t.x, ddy = next.y - t.y;
@@ -2339,69 +2739,65 @@ function drawProjectiles() {
     if (!target) return;
     let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
     let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
-    let dCurrent = Math.sqrt((p.x - targetX)**2 + (p.y - targetY)**2);
+    let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
-    
-    // Current position
+
     let iso = toIso(p.x, p.y);
     let sx = iso.ix - camX + W/2;
     let sy = iso.iy - camY + topH + H/2 + HALF_TH;
-    let arcH = Math.sin(progress * Math.PI) * 35 * (p.totalDist / 5);
-    sy -= arcH;
+    // Height along the flight: launch height (bow / battlements) blends to
+    // impact height at the target's body, plus the ballistic arc.
+    let startH = p.startH || 12;
+    let endH = 8;
+    let A = 35 * (p.totalDist / 5);
+    let arcH = Math.sin(progress * Math.PI) * A;
+    let lift = startH + (endH - startH) * progress + arcH;
+    sy -= lift;
 
-    // Previous position (slightly earlier in the flight path)
-    let prevProgress = Math.max(0, progress - 0.05);
-    let prevX = p.startX + (targetX - p.startX) * prevProgress;
-    let prevY = p.startY + (targetY - p.startY) * prevProgress;
-    let prevIso = toIso(prevX, prevY);
-    let prevSx = prevIso.ix - camX + W/2;
-    let prevSy = prevIso.iy - camY + topH + H/2 + HALF_TH;
-    let prevArcH = Math.sin(prevProgress * Math.PI) * 35 * (p.totalDist / 5);
-    prevSy -= prevArcH;
+    // Analytic flight tangent in screen space: iso ground motion plus the
+    // derivative of arc+height blend, so the arrow always points along its
+    // actual path — including right at launch and impact.
+    let isoS = toIso(p.startX, p.startY), isoT = toIso(targetX, targetY);
+    let vx = isoT.ix - isoS.ix;
+    let vy = (isoT.iy - isoS.iy) - (Math.cos(progress*Math.PI)*Math.PI*A + (endH - startH));
+    let screenAngle = Math.atan2(vy, vx);
 
-    // Calculate tangent screen angle
-    let screenAngle = Math.atan2(sy - prevSy, sx - prevSx);
-    if (Math.abs(sx - prevSx) < 0.01 && Math.abs(sy - prevSy) < 0.01) {
-      // Fallback if progress is 0
-      let dx = targetX - p.startX;
-      let dy = targetY - p.startY;
-      screenAngle = Math.atan2(dy, dx) - Math.PI/4;
-    }
-
-    let arrowLength = 9;
-
-    // Black outline
-    X.strokeStyle = '#000000';
-    X.lineWidth = 2.4;
+    let L = 14;
+    let ca = Math.cos(screenAngle), sa = Math.sin(screenAngle);
+    let px2 = -sa, py2 = ca;
+    // Motion streak trailing the arrow
+    X.strokeStyle = 'rgba(255,255,255,0.3)';
+    X.lineWidth = 2; X.lineCap='round';
     X.beginPath();
-    X.moveTo(sx, sy);
-    X.lineTo(sx - Math.cos(screenAngle) * arrowLength, sy - Math.sin(screenAngle) * arrowLength);
+    X.moveTo(sx - ca*(L+2), sy - sa*(L+2));
+    X.lineTo(sx - ca*(L+11), sy - sa*(L+11));
     X.stroke();
-    
-    // White/creamy inner line
-    X.strokeStyle = '#eaeaea';
-    X.lineWidth = 1.0;
+    // Thick shaft
+    X.strokeStyle = '#000'; X.lineWidth = 3.2;
+    X.beginPath(); X.moveTo(sx - ca*L, sy - sa*L); X.lineTo(sx, sy); X.stroke();
+    X.strokeStyle = '#f5f2e9'; X.lineWidth = 1.4;
+    X.beginPath(); X.moveTo(sx - ca*L, sy - sa*L); X.lineTo(sx, sy); X.stroke();
+    X.lineCap='butt';
+    // Big steel head
+    X.fillStyle = '#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1;
     X.beginPath();
-    X.moveTo(sx, sy);
-    X.lineTo(sx - Math.cos(screenAngle) * (arrowLength - 0.5), sy - Math.sin(screenAngle) * (arrowLength - 0.5));
-    X.stroke();
-
-    // Red/gold arrow head tip
-    X.fillStyle = '#cc2222';
+    X.moveTo(sx + ca*3.4, sy + sa*3.4);
+    X.lineTo(sx - ca*1.5 + px2*2.3, sy - sa*1.5 + py2*2.3);
+    X.lineTo(sx - ca*1.5 - px2*2.3, sy - sa*1.5 - py2*2.3);
+    X.closePath(); X.fill(); X.stroke();
+    // Red fletching fins
+    let tx2 = sx - ca*L, ty2 = sy - sa*L;
+    X.fillStyle = '#cc4444';
     X.beginPath();
-    X.arc(sx, sy, 0.8, 0, Math.PI * 2);
-    X.fill();
-
-    // Fletching (feathers) at the tail
-    let tailX = sx - Math.cos(screenAngle) * (arrowLength - 1.5);
-    let tailY = sy - Math.sin(screenAngle) * (arrowLength - 1.5);
-    let perpAngle = screenAngle + Math.PI/2;
-    X.strokeStyle = '#fbfbfb';
-    X.lineWidth = 1.0;
+    X.moveTo(tx2 + ca*2, ty2 + sa*2);
+    X.lineTo(tx2 - ca*3 + px2*2.8, ty2 - sa*3 + py2*2.8);
+    X.lineTo(tx2, ty2);
+    X.closePath(); X.fill();
     X.beginPath();
-    X.moveTo(tailX + Math.cos(perpAngle) * 2.2, tailY + Math.sin(perpAngle) * 2.2);
-    X.lineTo(tailX - Math.cos(perpAngle) * 2.2, tailY - Math.sin(perpAngle) * 2.2);
-    X.stroke();
+    X.moveTo(tx2 + ca*2, ty2 + sa*2);
+    X.lineTo(tx2 - ca*3 - px2*2.8, ty2 - sa*3 - py2*2.8);
+    X.lineTo(tx2, ty2);
+    X.closePath(); X.fill();
   });
   X.restore();
 }

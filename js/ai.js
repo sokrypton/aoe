@@ -163,6 +163,22 @@ function planAIWalls(aiTC,vils,profile){
       } else if(result){
         let b=placeAIBuilding('GATE',result.x,result.y);
         if(b)window.aiGateBuilt=true;
+      } else {
+        // No opening and no valid gate spot: breach the ring ourselves.
+        breachAIWallRing(plan,aiTC);
+        window.aiGateBuilt=true;
+      }
+    } else if(aiTick%600===0){
+      // Periodic sanity check: can the army still get out toward the enemy?
+      // (A gate can be destroyed, or the 'natural opening' can later be
+      // walled off by terrain-adjacent building placement.)
+      let dirTarget=getEnemyDirection(aiTC);
+      let ex=Math.round(aiTC.x+dirTarget.dx*(profile.wallRadius*aiScale()+4));
+      let ey=Math.round(aiTC.y+dirTarget.dy*(profile.wallRadius*aiScale()+4));
+      ex=Math.max(1,Math.min(MAP-2,ex)); ey=Math.max(1,Math.min(MAP-2,ey));
+      let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+      if(walkable(ex,ey)&&findPath(tcx,tcy,ex,ey,aiTC.id).length===0){
+        breachAIWallRing(plan,aiTC);
       }
     }
     return;
@@ -179,6 +195,31 @@ function planAIWalls(aiTC,vils,profile){
     next.done=true;
     placedThisCall++;
   }
+}
+
+
+// Tears down one of the AI's own wall tiles on the most useful side so the
+// army can leave a ring that ended up fully sealed (no walkable opening and
+// no placeable gate). A real player would delete a wall segment here too.
+function breachAIWallRing(plan,aiTC){
+  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(b,aiTC)-scoreWallSide(a,aiTC));
+  for(let side of ranked){
+    let sideTiles=plan.filter(t=>t.side===side);
+    let mid=Math.floor(sideTiles.length/2);
+    let ordered=[sideTiles[mid],...sideTiles];
+    for(let t of ordered){
+      if(!t)continue;
+      let w=entities.find(en=>en.type==='building'&&en.team===1&&en.btype==='WALL'&&en.x===t.x&&en.y===t.y);
+      if(w){
+        map[w.y][w.x].occupied=null;
+        entities=entities.filter(en=>en.id!==w.id);
+        entitiesById.delete(w.id);
+        window.aiGateTile={x:t.x,y:t.y};
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function computeAIWallRing(tc,radius){
@@ -258,7 +299,11 @@ function resolveAIGate(plan,aiTC){
   let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(b,aiTC)-scoreWallSide(a,aiTC));
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
-    let hole=sideTiles.find(t=>!wallAt(t.x,t.y));
+    // Only a *walkable* wall-less tile counts as a natural opening — the
+    // usual reason a ring tile has no wall is that impassable terrain
+    // (forest/gold/stone) blocked it, which seals the ring rather than
+    // opening it. Treating those as openings walled the AI's army in.
+    let hole=sideTiles.find(t=>!wallAt(t.x,t.y)&&walkable(t.x,t.y));
     if(hole){
       window.aiGateTile=hole;
       return 'satisfied';
@@ -506,7 +551,10 @@ function controlAIMilitary(mils,aiTC,profile){
   let attackers=available.slice(0,Math.max(profile.attackSize,mils.length-profile.armyReserve));
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(m);
-    if(target){m.target=target.id;clearUnitPath(m);}
+    // explicitAttack: this is a deliberate march on remembered intel — the
+    // per-tick vision check in updateUnit() must not wipe the order just
+    // because the destination is beyond current AI sight range.
+    if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);}
   });
 }
 
