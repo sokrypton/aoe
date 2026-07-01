@@ -998,16 +998,20 @@ function drawBuilding(e, part = null){
     drawBuildingBlock(sx, sy+2-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
     drawBuildingBlock(sx, sy+2-28, 12, 6, 8, '#c8c8bc', '#a8a89c', 'peaked', 6, tc, tcD, darken);
 
+    // South and East links can both originate from this same corner
+    // point, same as GATE's front post (which also has two links
+    // diverging from one vertex) — use d1=8 there too so the two stubs
+    // clear each other instead of clipping at the shared vertex.
     // South neighbor (y+1)
     let sB = getB(e.x, e.y + 1);
     if (sB && (sB.btype === 'WALL' || sB.btype === 'TOWER' || sB.btype === 'GATE')) {
-      drawWallLink(sx, linkY, -32, 16, wallH, darken);
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8);
     }
 
     // East neighbor (x+1)
     let eB = getB(e.x + 1, e.y);
     if (eB && (eB.btype === 'WALL' || eB.btype === 'TOWER' || eB.btype === 'GATE')) {
-      drawWallLink(sx, linkY, 32, 16, wallH, darken);
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8);
     }
 
     if (e.complete && visible) drawWavingFlag(sx, sy+2, 40, tc, tcD);
