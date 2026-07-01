@@ -367,9 +367,19 @@ function assignAIVillagers(vils,profile){
 }
 
 function neededAIBuildingWork(incompleteBuilds,vils,profile){
+  let tc = entities.find(e => e.team === 1 && e.btype === 'TC');
   return incompleteBuilds.find(build=>{
     let assigned=vils.filter(v=>v.task==='build'&&v.buildTarget===build.id).length;
-    return assigned<profile.buildersPerBuilding;
+    if (assigned >= profile.buildersPerBuilding) return false;
+    
+    if (tc) {
+      let b = BLDGS[build.btype];
+      let pt = b.isFarm ? {x: build.x, y: build.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(tc.x, tc.y, build, tc.id) : {x: build.x, y: build.y});
+      if (findPath(tc.x + Math.floor(tc.w/2), tc.y + Math.floor(tc.h/2), pt.x, pt.y, tc.id).length === 0) {
+        return false;
+      }
+    }
+    return true;
   });
 }
 
@@ -379,7 +389,7 @@ function assignAIBuilder(v,build){
   v.target=null;
   clearGatherTarget(v);
   let b=BLDGS[build.btype];
-  let pt=b.isFarm?{x:build.x,y:build.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,build):{x:build.x+build.w,y:build.y+build.h});
+  let pt=b.isFarm?{x:build.x,y:build.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,build,v.id):{x:build.x+build.w,y:build.y+build.h});
   pathUnitTo(v,pt.x,pt.y);
 }
 
@@ -449,7 +459,7 @@ function findAIFarmSpot(tc){
       let ang=a*Math.PI*2/16;
       let tx=tc.x+Math.round(Math.cos(ang)*r);
       let ty=tc.y+Math.round(Math.sin(ang)*r);
-      if(canPlace('FARM',tx,ty))return{x:tx,y:ty};
+      if(canPlace('FARM',tx,ty,1))return{x:tx,y:ty};
     }
   }
   return null;
@@ -551,7 +561,7 @@ function findPlayerThreatNear(aiTC,range){
 function isTargetReachable(unit, target){
   if (target.type !== 'building') return true;
   if (adjToBuilding(unit.x, unit.y, target)) return true;
-  let pt = nearestBldgPerimeter(unit.x, unit.y, target);
+  let pt = nearestBldgPerimeter(unit.x, unit.y, target, unit.id);
   return findPath(unit.x, unit.y, pt.x, pt.y, unit.id).length > 0;
 }
 
@@ -576,7 +586,7 @@ function resolveReachableAttackTarget(militia, candidate){
 
 function chooseAIAttackTarget(militia){
   let enemies=entities.filter(e=>{
-    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep') return false;
+    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep' || e.utype === 'sheep_carcass') return false;
     // AI can only target enemy units/buildings if they reside in coordinates the AI team has explored
     let tx = Math.floor(e.x), ty = Math.floor(e.y);
     // Since AI's vision matches team 1, verify if the AI team has explored this tile.
@@ -675,7 +685,13 @@ function findAIBuildSpot(tc,type){
       let ang=a*Math.PI*2/16;
       let tx=tc.x+Math.round(Math.cos(ang)*r);
       let ty=tc.y+Math.round(Math.sin(ang)*r);
-      if(canPlace(type,tx,ty))return{x:tx,y:ty};
+      if(canPlace(type,tx,ty,1)){
+        let tcx = tc.x + Math.floor(tc.w/2);
+        let tcy = tc.y + Math.floor(tc.h/2);
+        if (findPath(tcx, tcy, tx, ty, tc.id).length > 0) {
+          return {x:tx,y:ty};
+        }
+      }
     }
   }
   return null;
@@ -689,7 +705,7 @@ function findAIDropSite(terrain,type,tc){
     if(dist({x,y},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})>maxDist)continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
-      if(!canPlace(type,bx,by))continue;
+      if(!canPlace(type,bx,by,1))continue;
       let nearby=countResourceTilesNear(terrain,bx,by,4);
       let s=dist({x:bx,y:by},{x:tc.x,y:tc.y})-nearby*1.5;
       candidates.push({x:bx,y:by,s});
@@ -704,7 +720,7 @@ function findAIDropSite(terrain,type,tc){
   candidates.sort((a,b)=>a.s-b.s);
   for(let i=0;i<candidates.length;i++){
     let c=candidates[i];
-    if(findPath(tc.x+Math.floor(tc.w/2),tc.y+Math.floor(tc.h/2),c.x,c.y,-1).length>0)return{x:c.x,y:c.y};
+    if(findPath(tc.x+Math.floor(tc.w/2),tc.y+Math.floor(tc.h/2),c.x,c.y,tc.id).length>0)return{x:c.x,y:c.y};
   }
   return null;
 }

@@ -6,10 +6,44 @@ let isDragging=false;
 let hasTouch=false; // set true on first touch, suppresses mouse
 let justPlaced=false; // flag to prevent mouseup selection clearing when placing buildings
 
+function selectTownCenter() {
+  if (gameOver) return;
+  let tcs = entities.filter(e => e.team === 0 && e.type === 'building' && e.btype === 'TC');
+  if (tcs.length === 0) return;
+  
+  window.lastTCIndex = window.lastTCIndex || 0;
+  let tc = tcs[window.lastTCIndex % tcs.length];
+  window.lastTCIndex++;
+  
+  selected = [tc];
+  
+  // Center camera on Town Center
+  let iso = toIso(tc.x + tc.w/2, tc.y + tc.h/2);
+  camX = iso.ix;
+  camY = iso.iy;
+  window.targetCamX = camX;
+  window.targetCamY = camY;
+  window.cameraFollowId = null;
+  
+  if (window.playSound) window.playSound('select_military');
+  updateUI();
+}
+
 document.addEventListener('keydown',e=>{
   if(gameOver)return;
+  if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   keys[e.key]=true;
   let key = e.key.toLowerCase();
+  
+  if (key === 'h') {
+    selectTownCenter();
+    return;
+  }
+  if (e.key === '.' || e.key === ',') {
+    if (window.selectIdleVillager) window.selectIdleVillager();
+    return;
+  }
+  
   if(e.key==='Escape'){placing=null;selected=[];updateUI();}
   if(e.key==='Delete'||e.key==='Backspace'){
     selected.forEach(en=>{
@@ -88,7 +122,7 @@ function getWallElbowTiles(start, corner, end){
 
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
-  if(e.button===0){
+  if(e.button===0 && !e.ctrlKey){
     if(placing){
       if (placing === 'WALL') {
         let tile = screenToTile(e.clientX, e.clientY);
@@ -145,7 +179,7 @@ C.addEventListener('wheel',e=>{
 },{passive:false});
 C.addEventListener('mouseup',e=>{
   if(gameOver||hasTouch)return;
-  if(e.button===0){
+  if(e.button===0 && !e.ctrlKey){
     if (window.isDraggingWall) {
       window.isDraggingWall = false;
       let start = window.wallDragStart;
@@ -219,10 +253,12 @@ C.addEventListener('mouseup',e=>{
     dragStart=null;dragEnd=null;isDragging=false;
   }
 });
-C.addEventListener('contextmenu',e=>{
+document.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(gameOver||hasTouch)return;
-  doCommand(e.clientX,e.clientY);
+  if(e.target===C){
+    doCommand(e.clientX,e.clientY);
+  }
 });
 
 // ==============================
@@ -385,7 +421,17 @@ function handleTap(sx,sy){
 
   // 2. Nothing selected → just select
   if(selected.length===0){
-    if(tappedOwn||tappedEnemy) selected=[tappedOwn||tappedEnemy];
+    if(tappedOwn||tappedEnemy) {
+      selected=[tappedOwn||tappedEnemy];
+      if (window.playSound && (tappedOwn || tappedEnemy).team === 0) {
+        let clicked = tappedOwn || tappedEnemy;
+        if (clicked.type === 'unit') {
+          if (clicked.utype === 'villager') window.playSound('select_villager');
+          else if (clicked.utype === 'sheep') window.playSound('sheep');
+          else window.playSound('select_military');
+        }
+      }
+    }
     return;
   }
 
@@ -401,6 +447,13 @@ function handleTap(sx,sy){
     // Tapped on own entity → switch selection
     if(tappedOwn){
       selected=[tappedOwn];
+      if (window.playSound && tappedOwn.team === 0) {
+        if (tappedOwn.type === 'unit') {
+          if (tappedOwn.utype === 'villager') window.playSound('select_villager');
+          else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
+          else window.playSound('select_military');
+        }
+      }
       return;
     }
     // Tapped on enemy → attack
@@ -416,6 +469,13 @@ function handleTap(sx,sy){
   // 4. Have a building selected (not units)
   if(tappedOwn){
     selected=[tappedOwn];
+    if (window.playSound && tappedOwn.team === 0) {
+      if (tappedOwn.type === 'unit') {
+        if (tappedOwn.utype === 'villager') window.playSound('select_villager');
+        else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
+        else window.playSound('select_military');
+      }
+    }
   } else if(tappedEnemy){
     selected=[tappedEnemy];
   } else {
@@ -548,7 +608,12 @@ function doSelect(sx,sy,shift){
         else window.playSound('select_military');
       }
     }
-  } else selected=[];
+  } else {
+    if (selected.length > 0 && selected[0].team === 0) {
+      showMsg("Use Right-Click (or Ctrl+Click on Mac) to move/command units!");
+    }
+    selected=[];
+  }
 }
 
 function doBoxSelect(x1,y1,x2,y2){
@@ -664,8 +729,18 @@ function doCommand(sx,sy){
       let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
       if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
     }
+    // Target sheep carcasses for gathering (any team/neutral)
+    if(en.utype==='sheep_carcass'){
+      let iso=toIso(en.x,en.y);
+      let idOff=en.id%7;
+      let ox=(idOff%3-1)*6;
+      let oy=(Math.floor(idOff/3)-1)*4;
+      let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
+      let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
+      if(Math.abs(sx-scrx)<hitR*ZOOM&&Math.abs(sy-(scry-10*ZOOM))<(hitR+3)*ZOOM)target=en;
+    }
     // Target any other own unit (AoE2-style "Follow") — units, not sheep
-    if(en.team===0&&en.type==='unit'&&en.utype!=='sheep'){
+    if(en.team===0&&en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
       let iso=toIso(en.x,en.y);
       let idOff=en.id%7;
       let ox=(idOff%3-1)*6;
@@ -684,7 +759,8 @@ function doCommand(sx,sy){
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
   }
   if(buildTarget)followTarget=null;
-  if(target)markerColor='#f44';
+  if(target && target.utype==='sheep_carcass')markerColor='#ff0';
+  else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';
   cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
@@ -701,19 +777,19 @@ function doCommand(sx,sy){
   let offsets=getFormation(movers.length);
   let idx=0;
   movers.forEach(s=>{
-    s.gatherX=-1;s.gatherY=-1;s.prevTask=null; // fully clear old state
+    s.gatherX=-1;s.gatherY=-1;s.prevTask=null;s.savedTask=null; // fully clear old state
     s.buildTarget=null;
     s.buildQueue=[];
     s.followId=undefined;
     if(buildTarget&&s.utype==='villager'){
       s.target=null;s.task='build';s.buildTarget=buildTarget.id;
       let b=BLDGS[buildTarget.btype];
-      let pt=b.isFarm?{x:buildTarget.x,y:buildTarget.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(s.x,s.y,buildTarget):{x:buildTarget.x+buildTarget.w,y:buildTarget.y+buildTarget.h});
+      let pt=b.isFarm?{x:buildTarget.x,y:buildTarget.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(s.x,s.y,buildTarget,s.id):{x:buildTarget.x+buildTarget.w,y:buildTarget.y+buildTarget.h});
       pathUnitTo(s,pt.x,pt.y);
     } else if(target){
       if(s.utype==='sheep'){return;} // sheep don't attack
-      if(target.team===0&&target.utype==='sheep'&&s.utype!=='villager'){
-        // Friendly sheep targeted by military unit: treat as move command!
+      if((target.utype==='sheep'||target.utype==='sheep_carcass')&&s.utype!=='villager'){
+        // Sheep or carcass targeted by military unit: treat as move command!
         s.target=null;
         let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
         s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
@@ -820,13 +896,16 @@ function doPlace(sx,sy){
     }
     let bldg=createBuilding(placing,ox,oy,0,gw,gh);
     bldg.complete=false;bldg.buildProgress=0;
+    if (wallsToRemove.length > 0) {
+      bldg.wasWall = true;
+    }
     vils.forEach(v=>{
       v.buildQueue = v.buildQueue || [];
       v.buildQueue.push(bldg.id);
       // Start construction task immediately if not already building
       if(v.task!=='build'||!v.buildTarget){
-        v.task='build';v.buildTarget=bldg.id;v.target=null;
-        let pt=b.isFarm?{x:ox,y:oy}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,bldg):{x:ox+gw,y:oy+gh});
+        v.task='build';v.buildTarget=bldg.id;v.target=null;v.savedTask=null;
+        let pt=b.isFarm?{x:ox,y:oy}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,bldg,v.id):{x:ox+gw,y:oy+gh});
         pathUnitTo(v,pt.x,pt.y);
       }
     });
@@ -847,9 +926,10 @@ let mouseInGame=false;
 C.addEventListener('mouseenter',()=>{mouseInGame=true;});
 C.addEventListener('mouseleave',()=>{mouseInGame=false;});
 
-function handleScroll(){
+function handleScroll(elapsed){
   if(gameOver)return;
-  let spd=6;
+  let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;
+  let spd = 12 * dt;
   let manualPan=false;
 
   if(keys['w']||keys['ArrowUp']){camY-=spd;manualPan=true;}
@@ -881,20 +961,18 @@ function handleScroll(){
     }
   }
 
-  // Force clean integer camera coordinates globally
-  camX = Math.round(camX);
-  camY = Math.round(camY);
+  // Clamp camera to map bounds (with a margin of 200 pixels in screen/iso coordinates)
+  let maxW = MAP * HALF_TW + 200;
+  let maxH = MAP * TH + 200;
+  camX = Math.max(-maxW, Math.min(maxW, camX));
+  camY = Math.max(-200, Math.min(maxH, camY));
 }
 
 // ---- RESIZE ----
 window.addEventListener('resize',()=>{
-  W=window.innerWidth;
-  bottomH=isMobile?(W<=380?175:W<=600?200:200):200;
-  topH=isMobile?(W<=600?46:36):36;
-  H=window.innerHeight-bottomH;
-  C.width=W*dpr;C.height=window.innerHeight*dpr;
-  C.style.width=W+'px';C.style.height=window.innerHeight+'px';
-  X.scale(dpr,dpr);
+  if (window.updateBottomHeight) {
+    window.updateBottomHeight();
+  }
 });
 
 // Double click to select all units of same type on screen

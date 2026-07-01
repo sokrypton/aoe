@@ -59,7 +59,8 @@ const UNITS={
   spearman:{name:'Spearman',hp:35,atk:3,range:0,speed:1.25,cost:{f:35,w:25},trainTime:105,desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
   archer:{name:'Archer',hp:30,atk:4,range:4,speed:1.20,cost:{w:25,g:45},trainTime:167,desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.50,cost:{f:80},trainTime:143,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
-  sheep:{name:'Sheep',hp:8,atk:0,range:0,speed:1.0,cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🐑'}
+  sheep:{name:'Sheep',hp:8,atk:0,range:0,speed:1.0,cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
+  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'}
 };
 const AI_LEVELS={
   easy:{name:'Easy',decisionInterval:240,maxVils:9,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:7,attackTick:3900,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:1,wood:1,gold:0,stone:0}},
@@ -174,17 +175,57 @@ function updateFog() {
 }
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
+  let type = 'dust';
+  if (color === '#9c382a') type = 'blood';
+  else if (color.includes('rgba(100,100,100') || color === '#888' || color === '#666') type = 'smoke';
+  else if (color === '#ff4500' || color === '#ff8c00' || color === '#ffd700') type = 'fire';
+  else if (color === '#4e8c2d') type = 'grass';
+
   for (let i = 0; i < count; i++) {
     let angle = Math.random() * Math.PI * 2;
     let sp = Math.random() * speed;
+    let maxLife = type === 'blood' ? randInt(40, 60) : randInt(20, 35);
+    
+    let z = 0;
+    let vz = 0;
+    let gravity = 0;
+    let drag = 1.0;
+    
+    if (type === 'blood') {
+      z = 0.35 + Math.random() * 0.2; // Torso level
+      vz = 0.02 + Math.random() * 0.03;
+      gravity = 0.003;
+      drag = 0.96;
+    } else if (type === 'fire') {
+      z = 0.1;
+      vz = 0.01 + Math.random() * 0.015;
+      gravity = -0.0003;
+      drag = 0.98;
+    } else if (type === 'smoke') {
+      z = 0.2;
+      vz = 0.008 + Math.random() * 0.012;
+      gravity = -0.0002;
+      drag = 0.95;
+    } else if (type === 'dust' || type === 'grass') {
+      z = 0.05;
+      vz = 0.02 + Math.random() * 0.03;
+      gravity = 0.004;
+      drag = 0.94;
+    }
+
     particles.push({
       x: x + (Math.random() - 0.5) * 0.3,
       y: y + (Math.random() - 0.5) * 0.3,
+      z: z,
       vx: Math.cos(angle) * sp,
       vy: Math.sin(angle) * sp,
-      life: randInt(20, 35),
-      maxLife: 35,
+      vz: vz,
+      gravity: gravity,
+      drag: drag,
+      life: maxLife,
+      maxLife: maxLife,
       color: color,
+      type: type,
       size: size + Math.random() * 1.5
     });
   }

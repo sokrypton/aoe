@@ -105,7 +105,7 @@ function teamPopUsed(team){
 function buildingPop(e,includeIncomplete){
   if(e.type!=='building')return 0;
   if(!includeIncomplete&&!e.complete)return 0;
-  if(e.btype==='TC')return 5;
+  if(e.btype==='TC')return 10;
   return BLDGS[e.btype].pop||0;
 }
 
@@ -161,6 +161,15 @@ function nearestDrop(e,resType,excludeIds=null){
 
 function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
 
+function distToTarget(a,b){
+  if(b && b.type==='building'){
+    let dx=Math.max(b.x-a.x, 0, a.x-(b.x+b.w));
+    let dy=Math.max(b.y-a.y, 0, a.y-(b.y+b.h));
+    return Math.sqrt(dx*dx+dy*dy);
+  }
+  return dist(a,b);
+}
+
 function buildingAtTile(x,y,filter){
   return entities.find(en=>{
     if(en.type!=='building')return false;
@@ -200,12 +209,12 @@ function adjToBuilding(px,py,bldg){
 }
 
 // Find nearest walkable tile adjacent to building perimeter
-function nearestBldgPerimeter(px,py,bldg){
+function nearestBldgPerimeter(px,py,bldg,ignore){
   let best=null,bd=999;
   for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
     if(dx>=0&&dx<bldg.w&&dy>=0&&dy<bldg.h)continue;
     let tx=bldg.x+dx, ty=bldg.y+dy;
-    if(tx>=0&&tx<MAP&&ty>=0&&ty<MAP&&walkable(tx,ty)){
+    if(tx>=0&&tx<MAP&&ty>=0&&ty<MAP&&walkable(tx,ty,ignore)){
       let d=Math.abs(px-tx)+Math.abs(py-ty);
       if(d<bd){bd=d;best={x:tx,y:ty};}
     }
@@ -363,7 +372,7 @@ function checkNextBuild(e){
     e.buildTarget = bt.id;
     e.target = null;
     let b = BLDGS[bt.btype];
-    let pt = b.isFarm ? {x: bt.x, y: bt.y} : nearestBldgPerimeter(e.x, e.y, bt);
+    let pt = b.isFarm ? {x: bt.x, y: bt.y} : nearestBldgPerimeter(e.x, e.y, bt, e.id);
     pathUnitTo(e, pt.x, pt.y);
     return true;
   }
@@ -420,6 +429,17 @@ function damageEntity(attacker, target){
       }
     }
     if(shouldRetaliate){
+      // Save task details so they can resume after defending themselves
+      if (target.utype === 'villager' && target.task && !target.savedTask) {
+        target.savedTask = {
+          task: target.task,
+          gatherX: target.gatherX,
+          gatherY: target.gatherY,
+          buildTarget: target.buildTarget,
+          buildQueue: target.buildQueue ? [...target.buildQueue] : [],
+          prevTask: target.prevTask
+        };
+      }
       target.target = attacker.id;
       target.task = null; // drop gathering/farming/building tasks
       clearUnitPath(target);
@@ -488,8 +508,35 @@ function damageEntity(attacker, target){
   }
 }
 
+function restoreSavedTask(e) {
+  if (e.utype === 'villager' && e.savedTask) {
+    e.task = e.savedTask.task;
+    e.gatherX = e.savedTask.gatherX;
+    e.gatherY = e.savedTask.gatherY;
+    e.buildTarget = e.savedTask.buildTarget;
+    e.buildQueue = e.savedTask.buildQueue;
+    e.prevTask = e.savedTask.prevTask;
+    e.savedTask = null;
+    
+    // Re-path them to their task!
+    if (e.task === 'build' && e.buildTarget) {
+      let bt = entities.find(en => en.id === e.buildTarget);
+      if (bt) {
+        let b = BLDGS[bt.btype];
+        let pt = b.isFarm ? {x: bt.x, y: bt.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(e.x, e.y, bt, e.id) : {x: bt.x + bt.w, y: bt.y + bt.h});
+        if (pt) pathUnitTo(e, pt.x, pt.y);
+      }
+    } else if (e.gatherX !== undefined && e.gatherX >= 0) {
+      pathUnitTo(e, e.gatherX, e.gatherY);
+    }
+  }
+}
+
 function updateUnit(e){
   if(e.hp<=0)return;
+  if(e.utype==='villager' && !e.target && e.savedTask){
+    restoreSavedTask(e);
+  }
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
 
@@ -533,13 +580,33 @@ function updateUnit(e){
     }
   }
 
-  // Ranged units: halt walking path as soon as we step within firing range of our combat target
+  // Melee & Ranged units: halt walking path as soon as we step within attack range of our target,
+  // or periodically re-path if the moving target has shifted away from our current path's endpoint.
   if(e.target && !e.task){
     let t=entities.find(en=>en.id===e.target);
     if(t && t.hp>0){
       let range = UNITS[e.utype]?.range || 0;
-      if(range > 0 && dist(e,t) <= range){
+      let maxDist = range > 0 ? range : ((e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass')) ? 0.2 : 1.5);
+      
+      let inRange = false;
+      if (range > 0) {
+        inRange = distToTarget(e, t) <= maxDist;
+      } else {
+        if (t.type === 'building') {
+          inRange = adjToBuilding(e.x, e.y, t);
+        } else {
+          inRange = distToTarget(e, t) <= maxDist;
+        }
+      }
+
+      if(inRange){
         clearUnitPath(e);
+      } else if(t.type==='unit' && tick % 15 === 0 && e.path.length > 0){
+        let endTile = e.path[e.path.length - 1];
+        let dToDest = Math.sqrt((endTile.x - t.x)**2 + (endTile.y - t.y)**2);
+        if(dToDest > 1.5){
+          pathUnitTo(e, Math.round(t.x), Math.round(t.y));
+        }
       }
     }
   }
@@ -569,22 +636,36 @@ function updateUnit(e){
       }
     }
 
-    // Convert to first player/AI unit that gets within 5 tiles
-    if(e.team===2){
-      let closest=null, cd=6;
-      entities.forEach(en=>{
-        if(en.type==='unit'&&en.utype!=='sheep'&&(en.team===0||en.team===1)){
-          let d=dist(e,en);
-          if(d<cd){cd=d;closest=en;}
-        }
-      });
-      if(closest){e.team=closest.team;clearUnitPath(e);} // convert and stop
+    // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
+    // and no friendly unit (except other sheep) is closer to guard them, they convert!
+    let closest=null, cd=5;
+    entities.forEach(en=>{
+      if(en.type==='unit'&&en.utype!=='sheep'&&(en.team===0||en.team===1)){
+        let d=dist(e,en);
+        if(d<cd){cd=d;closest=en;}
+      }
+    });
+    if(closest && closest.team !== e.team){
+      let guarded = false;
+      if (e.team === 0 || e.team === 1) {
+        let guardDist = cd;
+        entities.forEach(en=>{
+          if(en.type==='unit'&&en.utype!=='sheep'&&en.team===e.team){
+            let d=dist(e,en);
+            if(d<guardDist){guarded=true;}
+          }
+        });
+      }
+      if(!guarded){
+        e.team=closest.team;
+        clearUnitPath(e);
+      }
     }
   }
 
   if(e.path.length>0){
-    // e.speed * 1.43 screen pixels per frame is the baseline movement speed
-    let speedInPixels = e.speed * 1.43;
+    // e.speed * 2.1 screen pixels per frame is the baseline movement speed
+    let speedInPixels = e.speed * 2.1;
     e.moveT += speedInPixels;
 
     while(e.path.length>0){
@@ -628,15 +709,59 @@ function updateUnit(e){
     return;
   }
 
-  if(e.target){
+  if(e.target && e.task !== 'return'){
     let t=entities.find(en=>en.id===e.target);
     if(!t||t.hp<=0){e.target=null;return;}
-    let d=dist(e,t);
+
+    // Defensive Stance anchor retreat check
+    if (e.stance === 'defensive' && e.defendX !== undefined) {
+      let dFromAnchor = Math.sqrt((e.x - e.defendX)**2 + (e.y - e.defendY)**2);
+      if (dFromAnchor > 6) {
+        e.target = null;
+        clearUnitPath(e);
+        pathUnitTo(e, Math.round(e.defendX), Math.round(e.defendY));
+        return;
+      }
+    }
+
+    if(e.utype==='villager' && t.utype==='sheep_carcass'){
+      let d=distToTarget(e,t);
+      if(d>0.2){
+        pathUnitTo(e,Math.round(t.x),Math.round(t.y));
+        if(e.path.length===0)e.target=null;
+      } else {
+        clearUnitPath(e);
+        if(e.carrying>=e.carryMax){
+          e.prevTask=null;
+          e.task='return';
+          return;
+        }
+        if(e.gatherCooldown<=0){
+          t.hp--;
+          e.carrying++;
+          e.carryType='food';
+          e.gatherCooldown=15; // Gather rate
+          if(window.playSound && tick % 30 === 0) window.playSound('forage');
+          spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
+          if(t.hp<=0){
+            handleDeath(t, e.team);
+            e.target=null;
+          }
+        }
+      }
+      return;
+    }
+
+    let d=distToTarget(e,t);
     let range = UNITS[e.utype]?.range || 0;
 
     if (range > 0) {
       // Ranged combat: stay within range and fire projectiles
       if (d > range) {
+        if (e.stance === 'standground') {
+          e.target = null;
+          return;
+        }
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
         if (e.path.length === 0) e.target = null;
       } else {
@@ -651,7 +776,11 @@ function updateUnit(e){
       if(t.type==='building'){
         // Attack building: path to nearest perimeter tile, attack when adjacent
         if(!adjToBuilding(e.x,e.y,t)){
-          let pt=nearestBldgPerimeter(e.x,e.y,t);
+          if (e.stance === 'standground') {
+            e.target = null;
+            return;
+          }
+          let pt=nearestBldgPerimeter(e.x,e.y,t,e.id);
           pathUnitTo(e,pt.x,pt.y);
           if(e.path.length===0)e.target=null; // can't reach, give up
         } else if(e.atkCooldown<=0){
@@ -660,7 +789,12 @@ function updateUnit(e){
         }
       } else {
         // Attack unit: path close and hit
-        if(d>1.5){
+        let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.2 : 1.5;
+        if(d>maxD){
+          if (e.stance === 'standground') {
+            e.target = null;
+            return;
+          }
           pathUnitTo(e,Math.round(t.x),Math.round(t.y));
           if(e.path.length===0)e.target=null;
         } else if(e.atkCooldown<=0){
@@ -675,7 +809,7 @@ function updateUnit(e){
   if(e.utype==='villager'&&e.task){
     if(e.task==='build'&&e.buildTarget){
       let bt=entities.find(en=>en.id===e.buildTarget);
-      if(!bt||(bt.complete && bt.hp >= bt.maxHp)){
+      if(!bt||(bt.complete && bt.hp >= bt.maxHp && !(bt.btype==='FARM' && bt.exhausted))){
         if(!checkNextBuild(e)){
           e.task=null;
           e.buildTarget=null;
@@ -689,44 +823,57 @@ function updateUnit(e){
         if(isFarm){
           pathUnitTo(e,bt.x,bt.y);
         } else {
-          let pt=nearestBldgPerimeter(e.x,e.y,bt);
+          let pt=nearestBldgPerimeter(e.x,e.y,bt,e.id);
           pathUnitTo(e,pt.x,pt.y);
         }
         if(e.path.length===0){
-          if(e.team===0)showMsg('Building site is unreachable!');
-          if(!checkNextBuild(e)){
-            e.task=null;
-            e.buildTarget=null;
+          let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
+          if (!checkClose) {
+            if(e.team===0)showMsg('Building site is unreachable!');
+            if(!checkNextBuild(e)){
+              e.task=null;
+              e.buildTarget=null;
+            }
           }
         }
       } else {
-        if (!bt.complete) {
-          if (bt.btype === 'FARM' && bt.exhausted) {
-            let store = resourceStore(e.team);
-            if (store && store.prepaidFarms > 0) {
-              store.prepaidFarms--;
-              if (e.team === 0) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
+        if (bt.btype === 'FARM' && bt.exhausted) {
+          let store = resourceStore(e.team);
+          if (store && store.prepaidFarms > 0) {
+            store.prepaidFarms--;
+            if (e.team === 0) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
+            bt.exhausted = false;
+            let tile = map[bt.y][bt.x];
+            tile.t = TERRAIN.FARM;
+            tile.res = 300;
+            e.task = 'farm';
+            e.gatherX = bt.x;
+            e.gatherY = bt.y;
+            e.buildTarget = null;
+            return;
+          } else {
+            if (store && store.wood >= 60) {
+              store.wood -= 60;
+              if (e.team === 0) showMsg("Farm reseeded (-60 Wood)");
               bt.exhausted = false;
               let tile = map[bt.y][bt.x];
               tile.t = TERRAIN.FARM;
               tile.res = 300;
+              e.task = 'farm';
+              e.gatherX = bt.x;
+              e.gatherY = bt.y;
+              e.buildTarget = null;
+              return;
             } else {
-              if (store && store.wood >= 60) {
-                store.wood -= 60;
-                if (e.team === 0) showMsg("Farm reseeded (-60 Wood)");
-                bt.exhausted = false;
-                let tile = map[bt.y][bt.x];
-                tile.t = TERRAIN.FARM;
-                tile.res = 300;
-              } else {
-                if (e.team === 0) showMsg("Not enough wood to reseed farm!");
-                e.task = null;
-                e.buildTarget = null;
-                clearGatherTarget(e);
-                return;
-              }
+              if (e.team === 0) showMsg("Not enough wood to reseed farm!");
+              e.task = null;
+              e.buildTarget = null;
+              clearGatherTarget(e);
+              return;
             }
           }
+        }
+        if (!bt.complete) {
           bt.buildProgress++;
           if (tick % 30 === 0 && e.team === 0 && window.playSound) {
             window.playSound('build');
@@ -809,7 +956,7 @@ function updateUnit(e){
         return;
       }
       if(!adjToBuilding(e.x,e.y,drop)){
-        let pt=nearestBldgPerimeter(e.x,e.y,drop);
+        let pt=nearestBldgPerimeter(e.x,e.y,drop,e.id);
         pathUnitTo(e,pt.x,pt.y);
         if(e.path.length===0){
           failedDrops.add(drop.id);
@@ -820,7 +967,7 @@ function updateUnit(e){
             let nextDrop = nearestDrop(e, e.carryType, failedDrops);
             if (!nextDrop) break;
 
-            let nextPt = nearestBldgPerimeter(e.x, e.y, nextDrop);
+            let nextPt = nearestBldgPerimeter(e.x, e.y, nextDrop, e.id);
             pathUnitTo(e, nextPt.x, nextPt.y);
             if (e.path.length > 0) {
               foundPath = true;
@@ -858,17 +1005,23 @@ function updateUnit(e){
   // follow order resumes once the fight ends (followId itself isn't touched
   // by combat, only the per-leg pathing is).
   if(isMilitary && !e.target && e.path.length===0 && !e.task){
-    let scanRange=6;
-    let closest=null, closestD=scanRange+1;
-    entities.forEach(en=>{
-      if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&en.utype!=='sheep'){
-        let ey=Math.round(en.y),ex=Math.round(en.x);
-        if(e.team===0&&(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2))return;
-        let d=dist(e,en);
-        if(d<closestD){closestD=d;closest=en;}
+    e.defendX = e.x;
+    e.defendY = e.y;
+    if (e.stance !== 'passive') {
+      let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
+      let closest=null, closestD=scanRange+0.1;
+      entities.forEach(en=>{
+        if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
+          let ey=Math.round(en.y),ex=Math.round(en.x);
+          if(e.team===0&&(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2))return;
+          let d=dist(e,en);
+          if(d<closestD){closestD=d;closest=en;}
+        }
+      });
+      if(closest) {
+        e.target=closest.id;
       }
-    });
-    if(closest) e.target=closest.id;
+    }
   }
 }
 
@@ -911,11 +1064,15 @@ function findNearTile(e,terrain,excludeSet=null){
 }
 
 function handleDeath(e,killerTeam){
-  // Sheep drop food to killer's team
-  if(e.type==='unit'&&e.utype==='sheep'&&UNITS.sheep.food){
-    let food=UNITS.sheep.food;
-    if(killerTeam===0)res.food+=food;
-    else if(killerTeam===1)aiRes.food+=food;
+  if(e.type==='unit'&&e.utype==='sheep'){
+    e.utype = 'sheep_carcass';
+    e.hp = 100;
+    e.maxHp = 100;
+    e.speed = 0;
+    e.team = 2; // neutral resource
+    clearUnitPath(e);
+    if (window.playSound) window.playSound('sheep');
+    return;
   }
   if(e.type==='building'){
     let b=BLDGS[e.btype];
@@ -928,8 +1085,8 @@ function handleDeath(e,killerTeam){
       else{gameOver=true;won=false;}
     }
   }
-  // Add to corpses list for AoE2-style decay (skip for sheep)
-  if(e.type==='unit'&&e.utype!=='sheep'){
+  // Add to corpses list for AoE2-style decay (skip for sheep/carcasses)
+  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
     corpses.push({
       type: 'corpse',
       utype: e.utype,
@@ -976,7 +1133,7 @@ function updateBuilding(e){
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
       let range = e.btype === 'TC' ? 6 : 5;
-      let target = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && en.utype !== 'sheep')
+      let target = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
                            .filter(en => dist({x: e.x + e.w/2, y: e.y + e.h/2}, en) <= range)
                            .sort((a,b) => dist({x: e.x + e.w/2, y: e.y + e.h/2}, a) - dist({x: e.x + e.w/2, y: e.y + e.h/2}, b))[0];
       if (target) {

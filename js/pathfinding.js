@@ -16,7 +16,10 @@ function walkable(x,y,ignore){
   // construction has actually begun (buildProgress > 0) it blocks normally.
   if(t.occupied){
     let occ = entitiesById.get(t.occupied);
-    if(occ && occ.type === 'building' && !occ.complete && !occ.buildProgress) return true;
+    if(occ && occ.type === 'building' && !occ.complete && !occ.buildProgress) {
+      if (occ.wasWall) return false;
+      return true;
+    }
   }
 
   // Only resolve the walker entity (a Map lookup) when an exception could

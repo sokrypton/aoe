@@ -7,6 +7,35 @@ function update(){
   particles.forEach(p => {
     p.x += p.vx;
     p.y += p.vy;
+    
+    // Apply horizontal drag
+    if (p.drag) {
+      p.vx *= p.drag;
+      p.vy *= p.drag;
+    }
+    
+    // Apply vertical physics
+    if (p.z !== undefined) {
+      p.z += p.vz;
+      p.vz -= p.gravity;
+      
+      // Ground collision
+      if (p.z <= 0) {
+        p.z = 0;
+        if (p.type === 'blood') {
+          p.vx = 0;
+          p.vy = 0;
+          p.vz = 0;
+        } else if ((p.type === 'dust' || p.type === 'grass') && p.vz < -0.005) {
+          p.vz = -p.vz * 0.45;
+          p.vx *= 0.6;
+          p.vy *= 0.6;
+        } else {
+          p.vz = 0;
+        }
+      }
+    }
+    
     p.life--;
   });
   particles = particles.filter(p => p.life > 0);
@@ -73,7 +102,7 @@ function update(){
 
 // Soft unit separation: push overlapping units apart (AoE2 collision)
 function separateUnits(){
-  let units=entities.filter(e=>e.type==='unit');
+  let units=entities.filter(e=>e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass');
   let sep=0.08;
   let minDist=0.5;
   for(let i=0;i<units.length;i++){

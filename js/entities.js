@@ -5,7 +5,8 @@ function createUnit(type,x,y,team){
   let e={id:nextId++,type:'unit',utype:type,x,y,fromX:x,fromY:y,tx:x,ty:y,team,hp:u.hp,maxHp:u.hp,
     atk:u.atk,range:u.range,speed:u.speed,path:[],task:null,target:null,
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
-    gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1};
+    gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,
+    stance: (type !== 'villager' && type !== 'sheep') ? 'aggressive' : undefined};
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;

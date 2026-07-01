@@ -120,10 +120,24 @@ function toggleMenu(){
   }
 }
 
+let lastTime = performance.now();
+const timeStep = 1000 / 60;
+let accumulator = 0;
+
 function gameLoop(){
+  let now = performance.now();
+  let elapsed = now - lastTime;
+  lastTime = now;
+
+  if (elapsed > 250) elapsed = 250; // prevent spiral of death
+
   if(gameStarted && !gamePaused) {
-    handleScroll();
-    update();
+    handleScroll(elapsed);
+    accumulator += elapsed;
+    while (accumulator >= timeStep) {
+      update();
+      accumulator -= timeStep;
+    }
   }
   render();
   updateUI();

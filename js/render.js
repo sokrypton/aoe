@@ -1341,29 +1341,38 @@ function drawUnit(e){
     ty = e.path[ahead].y;
   }
   if(e.facingNorth===undefined) e.facingNorth = false;
-  let targetDy = 0;
+  let dx = 0, dy = 0;
   if(tx !== -1 && ty !== -1){
-    let targetIso = toIso(tx, ty);
-    let targetSx = targetIso.ix - camX + W/2;
-    targetDx = targetSx - sx;
-    // targetSy must match the sy formula (which includes +HALF_TH) so the delta is correct
-    let targetSy = targetIso.iy - camY + topH + H/2 + HALF_TH;
-    targetDy = targetSy - sy;
+    dx = tx - e.x;
+    dy = ty - e.y;
+  } else if(e.lastX!==undefined && e.lastY!==undefined){
+    let diffX = e.x - e.lastX;
+    let diffY = e.y - e.lastY;
+    if (Math.abs(diffX) > 0.005 || Math.abs(diffY) > 0.005) {
+      dx = diffX;
+      dy = diffY;
+    }
   }
-  if(targetDx !== 0){
-    e.facing = targetDx > 0 ? 1 : -1;
-  } else if(e.lastSx!==undefined){
-    let diff = sx - e.lastSx;
-    if(Math.abs(diff) > 0.1) e.facing = diff > 0 ? 1 : -1;
+  if(dx !== 0 || dy !== 0){
+    let angle = Math.atan2(dy, dx);
+    let dir = Math.round(angle / (Math.PI / 4));
+    if (dir < 0) dir += 8;
+    dir = dir % 8;
+    e.dir = dir;
+
+    // Map 8-direction index (0: SE, 1: S, 2: SW, 3: W, 4: NW, 5: N, 6: NE, 7: E) to quadrants:
+    if (dir === 0 || dir === 1 || dir === 7) {
+      e.facing = 1; e.facingNorth = false; // SE, S, E (facing front-right)
+    } else if (dir === 2 || dir === 3) {
+      e.facing = -1; e.facingNorth = false; // SW, W (facing front-left)
+    } else if (dir === 4) {
+      e.facing = -1; e.facingNorth = true; // NW (facing back-left)
+    } else if (dir === 5 || dir === 6) {
+      e.facing = 1; e.facingNorth = true; // N, NE (facing back-right)
+    }
   }
-  if(targetDy !== 0){
-    e.facingNorth = targetDy < 0;
-  } else if(e.lastSy!==undefined){
-    let diffY = sy - e.lastSy;
-    if(Math.abs(diffY) > 0.1) e.facingNorth = diffY < 0;
-  }
-  e.lastSx = sx;
-  e.lastSy = sy;
+  e.lastX = e.x;
+  e.lastY = e.y;
 
   // Torso / Head bobbing
   let bob=e.path.length>0?Math.sin(tick*0.3+e.id)*1.5:0;
@@ -1372,26 +1381,154 @@ function drawUnit(e){
   // Save context and apply horizontal flipping based on facing direction
   X.save();
   if(e.utype==='sheep') X.translate(sx, sy + sbob);
+  else if(e.utype==='sheep_carcass') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
   X.scale(e.facing, 1);
 
   // --- DRAW FLIPPABLE STUFF ---
-  if(e.utype!=='sheep'){
+  if(e.utype==='sheep_carcass'){
+    let dt = performance.now() - (e.deathTime || 0);
+    let duration = 750; // 0.75 seconds collapse
+    if(dt < duration){
+      let progress = dt / duration;
+      
+      X.save();
+      X.translate(0, progress * 4.5);
+      X.rotate(progress * (Math.PI / 2.2));
+      
+      // Draw 4 legs twitching/kicking
+      let legKick = Math.sin(tick * 0.7 + e.id) * 3 * (1 - progress);
+      X.strokeStyle='#000000'; X.lineWidth=1.8;
+      X.beginPath();
+      X.moveTo(-4, 0); X.lineTo(-4 + legKick, 5 * (1 - progress));
+      X.moveTo(-1, 1); X.lineTo(-1 - legKick, 5 * (1 - progress));
+      X.moveTo(2, 1);  X.lineTo(2  + legKick, 5 * (1 - progress));
+      X.moveTo(5, 0);  X.lineTo(5  - legKick, 5 * (1 - progress));
+      X.stroke();
+
+      // Fluffy wool body
+      X.fillStyle='#000000';
+      X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
+      
+      X.fillStyle='#f0ead8';
+      X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
+
+      // Head falling
+      let headX = 6, headY = -3 + progress * 4.5;
+      let earX = 7, earY = -5 + progress * 4.5;
+      X.fillStyle='#333';
+      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      X.fillStyle='#e0d8c0';
+      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
+      
+      X.restore();
+      X.restore();
+      return;
+    }
+
+    // --- FULLY COLLAPSED ROUND CARCASS ---
+    X.save();
+    X.translate(0, 3.5);
+
+    // Tail dropped to ground
+    X.save();
+    X.translate(-8, -1.0);
+    X.rotate(-0.5);
+    X.fillStyle = '#000000';
+    X.beginPath(); X.ellipse(-2, 0, 3, 2, 0, 0, Math.PI*2); X.fill();
+    X.fillStyle = '#f0ead8';
+    X.beginPath(); X.ellipse(-2, 0, 2, 1.2, 0, 0, Math.PI*2); X.fill();
+    X.restore();
+
+    // Round fluffy wool body (identical to live sheep, but no legs)
+    X.fillStyle='#000000';
+    X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
+    
+    X.fillStyle='#e5dfcf'; // slightly dirtier/darker wool for carcass
+    X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
+
+    // Head dropped flat to ground
+    let headX = 6, headY = 1.0;
+    let earX = 7, earY = -0.5;
+
+    // Team bandana just below head
+    X.fillStyle = tc;
+    X.beginPath(); X.ellipse(headX, headY + 3, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+
+    X.fillStyle='#333';
+    X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
+    X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+    X.fillStyle='#e0d8c0';
+    X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
+
+    // Partially eaten raw meat/ribs in the center of the round wool body
+    let foodPct = e.hp / e.maxHp;
+    if(foodPct < 0.75){
+      X.fillStyle='#c84b4b'; // raw meat
+      X.beginPath();X.ellipse(0, -3.5, 4.2 * (1 - foodPct), 2.8 * (1 - foodPct), 0, 0, Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=0.85;X.stroke();
+      
+      if(foodPct < 0.4){
+        X.strokeStyle='#ffffff';X.lineWidth=1.1;
+        X.beginPath();X.moveTo(-1.2, -5);X.lineTo(-1.2, -2);X.stroke();
+        X.beginPath();X.moveTo(1.2, -5.5);X.lineTo(1.2, -2.5);X.stroke();
+      }
+    }
+    
+    X.restore();
+    X.restore();
+    return;
+  } else if(e.utype!=='sheep'){
     let humanXOffset = e.utype === 'scout' ? -3 : 0;
     let humanYOffset = e.utype === 'scout' ? -8 : 0;
 
     // Walking leg cycle (swinging legs with constant leg length)
     if(e.utype==='scout'){
-      // Horse legs drawn as simple black lines matching human styling
       let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4.5 : 0;
       X.strokeStyle = '#000000'; X.lineWidth = 1.8;
       X.beginPath();
-      // Front legs
-      X.moveTo(3, -4); X.lineTo(3+walk, 2);
-      X.moveTo(5, -4); X.lineTo(5-walk, 2);
-      // Back legs
-      X.moveTo(-6, -4); X.lineTo(-6+walk, 2);
-      X.moveTo(-8, -4); X.lineTo(-8-walk, 2);
+      
+      let useDir = e.dir;
+      if (e.facing === -1) {
+        if (e.dir === 2) useDir = 0;      // SW -> SE
+        else if (e.dir === 3) useDir = 7; // W -> E
+        else if (e.dir === 4) useDir = 6; // NW -> NE
+      }
+      
+      if (useDir === 1 || useDir === 5) {
+        // South / North: Centered legs
+        // Front pair
+        X.moveTo(-3, -4); X.lineTo(-3, 2.2 + walk);
+        X.moveTo(3, -4); X.lineTo(3, 2.2 - walk);
+        // Back pair
+        X.moveTo(-4.5, -4); X.lineTo(-4.5, 1.2 - walk);
+        X.moveTo(4.5, -4); X.lineTo(4.5, 1.2 + walk);
+      } else if (useDir === 7) {
+        // East (Profile)
+        X.moveTo(4, -4); X.lineTo(4 + walk, 2.2);
+        X.moveTo(6.5, -4); X.lineTo(6.5 - walk, 2.2);
+        X.moveTo(-7, -4); X.lineTo(-7 + walk, 2.2);
+        X.moveTo(-9.5, -4); X.lineTo(-9.5 - walk, 2.2);
+      } else {
+        // Southeast / Northeast (Diagonal)
+        X.moveTo(3, -4); X.lineTo(3 + walk, 2.2);
+        X.moveTo(5, -4); X.lineTo(5 - walk, 2.2);
+        X.moveTo(-6, -4); X.lineTo(-6 + walk, 2.2);
+        X.moveTo(-8, -4); X.lineTo(-8 - walk, 2.2);
+      }
       X.stroke();
     } else {
       // Human legs (visible both when standing and walking)
@@ -1405,57 +1542,149 @@ function drawUnit(e){
 
     // Horse body drawn under the rider
     if(e.utype==='scout'){
-      // Direction-aware neck/head: E/S = head to the right, N/W = head raised upward
-      let hNorth = e.facingNorth;
-
+      let useDir = e.dir;
+      if (e.facing === -1) {
+        if (e.dir === 2) useDir = 0;      // SW -> SE
+        else if (e.dir === 3) useDir = 7; // W -> E
+        else if (e.dir === 4) useDir = 6; // NW -> NE
+      }
+      
       // Outline silhouette (black, drawn first slightly larger)
       X.fillStyle='#000000';
-      X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();          // saddle blanket outline
-      X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();  // rump outline
-      X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();   // chest outline
-
-      if(hNorth){
-        // Neck raised, head pointing upper-right (away from camera)
-        X.beginPath(); X.ellipse(4, -12, 4.0, 7.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // neck outline
-        X.beginPath(); X.ellipse(5, -18, 4.2, 3.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // head outline
-        X.beginPath(); X.ellipse(6.5, -16.5, 2.6, 2.0, -Math.PI/3, 0, Math.PI*2); X.fill(); // snout outline
-        X.beginPath(); X.ellipse(2, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1 outline
-        X.beginPath(); X.ellipse(5, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2 outline
+      
+      if (useDir === 5) {
+        // North (facing away): neck/head first (further away) so torso covers them
+        X.beginPath(); X.ellipse(0, -10.5, 4.6, 5.8, 0, 0, Math.PI*2); X.fill(); // neck outline
+        X.beginPath(); X.ellipse(0, -15.5, 4.0, 4.6, 0, 0, Math.PI*2); X.fill(); // head outline
+        X.beginPath(); X.ellipse(-2.0, -18.2, 1.8, 3.0, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
+        X.beginPath(); X.ellipse(2.0, -18.2, 1.8, 3.0, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2 outline
+        
+        X.beginPath(); X.rect(-5.3, -8.3, 10.6, 6.6); X.fill(); // blanket outline
+        X.beginPath(); X.ellipse(0, -4.5, 8.3, 7.8, 0, 0, Math.PI*2); X.fill(); // torso outline
+      } else if (useDir === 1) {
+        // South (facing camera): torso first, then blanket, then neck/head in front
+        X.beginPath(); X.rect(-5.3, -8.3, 10.6, 6.6); X.fill(); // blanket outline
+        X.beginPath(); X.ellipse(0, -4.5, 8.3, 7.8, 0, 0, Math.PI*2); X.fill(); // torso outline
+        
+        X.beginPath(); X.ellipse(0, -7.5, 4.8, 5.8, 0, 0, Math.PI*2); X.fill(); // neck outline
+        X.beginPath(); X.ellipse(0, -12.5, 4.3, 5.0, 0, 0, Math.PI*2); X.fill(); // head outline
+        X.beginPath(); X.ellipse(0, -10.5, 3.3, 2.8, 0, 0, Math.PI*2); X.fill(); // snout outline
+        X.beginPath(); X.ellipse(-2.2, -15.5, 1.8, 3.0, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1 outline
+        X.beginPath(); X.ellipse(2.2, -15.5, 1.8, 3.0, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2 outline
+      } else if (useDir === 7) {
+        // East (Profile)
+        X.beginPath(); X.rect(-7.8, -8.8, 11.6, 7.6); X.fill(); // blanket outline
+        X.beginPath(); X.ellipse(-5, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill(); // rump outline
+        X.beginPath(); X.ellipse(3, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();  // chest outline
+        // neck horizontal, head level
+        X.beginPath(); X.ellipse(6, -6, 9.3, 4.6, 0, 0, Math.PI*2); X.fill(); // neck outline
+        X.beginPath(); X.ellipse(13, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill(); // head outline
+        X.beginPath(); X.ellipse(16, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill(); // snout outline
+        X.beginPath(); X.ellipse(11.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill(); // ear1 outline
+        X.beginPath(); X.ellipse(14.0, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill(); // ear2 outline
+      } else if (useDir === 0) {
+        // Southeast (Diagonal front)
+        X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();
+        X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(5, -6, 8.3, 4.6, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(11, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(14, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(9.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(12, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();
       } else {
-        // Neck horizontal, head level to the right (E/S direction — horse going forward)
-        X.beginPath(); X.ellipse(5, -6, 8.3, 4.6, 0, 0, Math.PI*2); X.fill();            // neck outline (horizontal)
-        X.beginPath(); X.ellipse(11, -6, 4.0, 3.3, 0, 0, Math.PI*2); X.fill();           // head outline
-        X.beginPath(); X.ellipse(14, -5, 2.8, 2.2, 0, 0, Math.PI*2); X.fill();           // snout outline
-        X.beginPath(); X.ellipse(9.5, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();          // ear1 outline
-        X.beginPath(); X.ellipse(12, -9, 1.8, 3.0, 0, 0, Math.PI*2); X.fill();           // ear2 outline
+        // Northeast (Diagonal back)
+        X.beginPath(); X.rect(-6.8, -8.8, 10.6, 7.6); X.fill();
+        X.beginPath(); X.ellipse(-4, -4, 7.3, 6.8, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(2, -5, 6.8, 6.3, 0, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(4, -12, 4.0, 7.0, -Math.PI/3, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(5, -18, 4.2, 3.0, -Math.PI/3, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(6.5, -16.5, 2.6, 2.0, -Math.PI/3, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(2, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.ellipse(5, -21, 1.8, 3.0, -Math.PI/6, 0, Math.PI*2); X.fill();
       }
 
       // Colored fills
-      X.fillStyle=tc;
-      X.beginPath(); X.rect(-6, -8, 9, 6); X.fill();   // saddle blanket
-      X.fillStyle='#8b5a2b';
-      X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill(); // rump
-      X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();  // chest
+      if (useDir === 5) {
+        // North (facing away): Draw neck/head first (further away) so torso/rump covers them
+        X.fillStyle='#8b5a2b';
+        X.beginPath(); X.ellipse(0, -10.5, 3.8, 5.0, 0, 0, Math.PI*2); X.fill(); // neck
+        X.beginPath(); X.ellipse(0, -15.5, 3.2, 3.8, 0, 0, Math.PI*2); X.fill(); // head
+        X.beginPath(); X.ellipse(-2.0, -18.2, 1.0, 2.2, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
+        X.beginPath(); X.ellipse(2.0, -18.2, 1.0, 2.2, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2
 
-      if(hNorth){
-        X.beginPath(); X.ellipse(4, -12, 3.2, 6.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // neck
-        X.beginPath(); X.ellipse(5, -18, 3.4, 2.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // head
-        X.beginPath(); X.ellipse(6.5, -16.5, 1.8, 1.2, -Math.PI/3, 0, Math.PI*2); X.fill(); // snout
-        X.beginPath(); X.ellipse(2, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear1
-        X.beginPath(); X.ellipse(5, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();  // ear2
+        // Torso/rump is closer, so drawn on top
+        X.beginPath(); X.ellipse(0, -4.5, 7.5, 7.0, 0, 0, Math.PI*2); X.fill(); 
+        
+        // Saddle blanket is closest
+        X.fillStyle=tc;
+        X.beginPath(); X.rect(-4.5, -7.5, 9, 5); X.fill();
+      } else if (useDir === 1) {
+        // South (facing camera): Torso first, then blanket, then neck/head in front
+        X.fillStyle='#8b5a2b';
+        X.beginPath(); X.ellipse(0, -4.5, 7.5, 7.0, 0, 0, Math.PI*2); X.fill();
+
+        X.fillStyle=tc;
+        X.beginPath(); X.rect(-4.5, -7.5, 9, 5); X.fill();
+
+        X.fillStyle='#8b5a2b';
+        X.beginPath(); X.ellipse(0, -7.5, 4.0, 5.0, 0, 0, Math.PI*2); X.fill(); // neck
+        X.beginPath(); X.ellipse(0, -12.5, 3.5, 4.2, 0, 0, Math.PI*2); X.fill(); // head
+        X.beginPath(); X.ellipse(0, -10.5, 2.5, 2.0, 0, 0, Math.PI*2); X.fill(); // snout
+        X.beginPath(); X.ellipse(-2.2, -15.5, 1.0, 2.2, -Math.PI/12, 0, Math.PI*2); X.fill(); // ear1
+        X.beginPath(); X.ellipse(2.2, -15.5, 1.0, 2.2, Math.PI/12, 0, Math.PI*2); X.fill();  // ear2
       } else {
-        X.beginPath(); X.ellipse(5, -6, 7.5, 3.8, 0, 0, Math.PI*2); X.fill();            // neck (horizontal)
-        X.beginPath(); X.ellipse(11, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill();           // head
-        X.beginPath(); X.ellipse(14, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill();           // snout
-        X.beginPath(); X.ellipse(9.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();          // ear1
-        X.beginPath(); X.ellipse(12, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();           // ear2
+        // East / Southeast / Northeast (Diagonal or Profile)
+        X.fillStyle=tc;
+        if (useDir === 7) {
+          X.beginPath(); X.rect(-7, -8, 10, 6); X.fill();
+        } else {
+          X.beginPath(); X.rect(-6, -8, 9, 6); X.fill();
+        }
+
+        X.fillStyle='#8b5a2b';
+        if (useDir === 7) {
+          X.beginPath(); X.ellipse(-5, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill(); // rump
+          X.beginPath(); X.ellipse(3, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();  // chest
+          X.beginPath(); X.ellipse(6, -6, 8.5, 3.8, 0, 0, Math.PI*2); X.fill();  // neck
+          X.beginPath(); X.ellipse(13, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill(); // head
+          X.beginPath(); X.ellipse(16, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill(); // snout
+          X.beginPath(); X.ellipse(11.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill(); // ear1
+          X.beginPath(); X.ellipse(14.0, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill(); // ear2
+        } else if (useDir === 0) {
+          X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(5, -6, 7.5, 3.8, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(11, -6, 3.2, 2.5, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(14, -5, 2.0, 1.4, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(9.5, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(12, -9, 1.0, 2.2, 0, 0, Math.PI*2); X.fill();
+        } else {
+          X.beginPath(); X.ellipse(-4, -4, 6.5, 6.0, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(2, -5, 6.0, 5.5, 0, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(4, -12, 3.2, 6.2, -Math.PI/3, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(5, -18, 3.4, 2.2, -Math.PI/3, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(6.5, -16.5, 1.8, 1.2, -Math.PI/3, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(2, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();
+          X.beginPath(); X.ellipse(5, -21, 1.0, 2.2, -Math.PI/6, 0, Math.PI*2); X.fill();
+        }
       }
 
-      // Tail (same in all directions)
-      X.strokeStyle='#000'; X.lineWidth=3.0;
-      X.beginPath(); X.moveTo(-10, -7); X.quadraticCurveTo(-14, -3, -13, 3); X.stroke();
-      X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
-      X.beginPath(); X.moveTo(-10, -7); X.quadraticCurveTo(-14, -3, -13, 3); X.stroke();
+      // Tail
+      if (useDir === 5) {
+        // North: Center tail hanging straight down (drawn on top of rump)
+        X.strokeStyle='#000'; X.lineWidth=3.0;
+        X.beginPath(); X.moveTo(0, -2); X.quadraticCurveTo(-1, 3, 0, 7); X.stroke();
+        X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
+        X.beginPath(); X.moveTo(0, -2); X.quadraticCurveTo(-1, 3, 0, 7); X.stroke();
+      } else if (useDir !== 1) {
+        // Side/Diagonal: Tail at the back
+        let txLoc = useDir === 7 ? -12 : -10;
+        X.strokeStyle='#000'; X.lineWidth=3.0;
+        X.beginPath(); X.moveTo(txLoc, -7); X.quadraticCurveTo(txLoc - 4, -3, txLoc - 3, 3); X.stroke();
+        X.strokeStyle='#2e1a0c'; X.lineWidth=1.8;
+        X.beginPath(); X.moveTo(txLoc, -7); X.quadraticCurveTo(txLoc - 4, -3, txLoc - 3, 3); X.stroke();
+      }
     }
 
     // Torso
@@ -1498,6 +1727,27 @@ function drawUnit(e){
       // Flesh Head
       X.fillStyle='#edc9a0';
       X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
+
+      // Draw 8-direction friendly facial features (eyes / profile nose)
+      if (e.dir === 7 || e.dir === 3) {
+        // East/West: Draw profile nose
+        X.fillStyle='#edc9a0';
+        X.beginPath();
+        X.moveTo(humanXOffset + 3.5, -15 + humanYOffset);
+        X.lineTo(humanXOffset + 5.5, -14 + humanYOffset);
+        X.lineTo(humanXOffset + 3.5, -13 + humanYOffset);
+        X.fill(); X.stroke();
+      } else if (e.dir === 1) {
+        // South: Draw two centered eyes (facing straight forward)
+        X.fillStyle='#000';
+        X.beginPath(); X.arc(humanXOffset - 1.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.arc(humanXOffset + 1.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
+      } else if (e.dir === 0 || e.dir === 2) {
+        // Southeast/Southwest: Draw two eyes shifted to the front-right/front-left
+        X.fillStyle='#000';
+        X.beginPath(); X.arc(humanXOffset + 0.5, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
+        X.beginPath(); X.arc(humanXOffset + 2.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
+      }
       
       // Headwear Cap
       if(e.utype==='militia'){
@@ -1620,6 +1870,10 @@ function drawUnit(e){
 
       // Shield (steel kite shield with team-colored cross)
       let shx = -6, shy = -6;
+      if (e.dir === 4 || e.dir === 5 || e.dir === 6) {
+        shx = -2.5; // Shift to the back center when facing North directions
+        shy = -7;
+      }
       X.fillStyle='#a0a0a0';X.beginPath();
       X.moveTo(shx-3, shy-4);X.lineTo(shx+3, shy-4);
       X.lineTo(shx+4, shy);X.lineTo(shx, shy+6);X.lineTo(shx-4, shy);X.closePath();X.fill();X.stroke();
@@ -1674,12 +1928,17 @@ function drawUnit(e){
     }
   } else {
     // Sheep — 4-direction: body always the same, head tracks movement direction
-    // facing=-1 flips X via scale, so local coords always draw "head to the right"
-    // facingNorth=true  → N or W direction (head goes up-right in local = away from camera)
-    // facingNorth=false → E or S direction (head goes right in local = toward/beside camera)
+    // Waddling/Rolling rotation when walking
+    let waddle = e.path.length > 0 ? Math.sin(tick * 0.2 + e.id) * 0.06 : 0;
+    
+    // Slow breathing scale factor for wool when idle
+    let breath = e.path.length === 0 ? Math.sin(tick * 0.06 + e.id) * 0.15 : 0;
+
+    X.save();
+    X.rotate(waddle);
 
     // 4-leg walk cycle: two pairs alternating
-    let hw1 = e.path.length > 0 ? Math.sin(tick * 0.45 + e.id) * 2.5 : 0;
+    let hw1 = e.path.length > 0 ? Math.sin(tick * 0.45 + e.id) * 3.0 : 0;
     let hw2 = -hw1;
     X.strokeStyle='#000000'; X.lineWidth=1.8;
     X.beginPath();
@@ -1689,48 +1948,126 @@ function drawUnit(e){
     X.moveTo(5, 0);  X.lineTo(5  + hw2, 5);    // front-right
     X.stroke();
 
-    // Fluffy wool body (same from all angles)
+    // Cute waggable tail at the rear (-8, -3.5)
+    let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
+    let tailAngle = Math.sin(tick * tailRate + e.id) * 0.4;
+    X.save();
+    X.translate(-8, -3.5);
+    X.rotate(tailAngle - 0.2); // angled down slightly
+    X.fillStyle = '#000000';
+    X.beginPath(); X.ellipse(-2, 0, 3, 2, 0, 0, Math.PI*2); X.fill();
+    X.fillStyle = '#f0ead8';
+    X.beginPath(); X.ellipse(-2, 0, 2, 1.2, 0, 0, Math.PI*2); X.fill();
+    X.restore();
+
+    // Fluffy wool body (pulsates slightly with breathing)
+    let r1 = 5 + breath, r2 = 5.5 + breath, r3 = 4.5 + breath;
     X.fillStyle='#000000';
-    X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(-4,-3,r1,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,r1,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,r2,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,r2,0,Math.PI*2);X.fill();
     X.fillStyle='#f0ead8';
-    X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(-4,-3,r3,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(4,-3,r3,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-6,r1,0,Math.PI*2);X.fill();
+    X.beginPath();X.arc(0,-1,r1,0,Math.PI*2);X.fill();
 
     // Head & ear — position depends on direction
-    let headX, headY, earX, earY;
+    let earWiggle = e.eatingGrass ? Math.sin(tick * 0.5 + e.id) * 1.2 : Math.sin(tick * 0.1 + e.id) * 0.4;
+    let headX = 0, headY = 0;
+    
     if(e.eatingGrass){
       let chew = Math.sin(tick * 0.6);
       headX = 6; headY = 2 + chew;
-      earX = 5;  earY = -0.5 + chew;
-    } else if(e.facingNorth){
-      // Heading away from camera: head tucked up-right (NE in screen space)
-      headX = 3; headY = -8;
-      earX = 2;  earY = -10;
+      let earX = 5,  earY = -0.5 + chew + earWiggle;
+      
+      // Team bandana
+      X.fillStyle = tc;
+      X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+      // Head
+      X.fillStyle='#333';
+      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      // Ear
+      X.fillStyle='#e0d8c0';
+      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
+    } else if (e.dir === 1) {
+      // Strictly South: Head in center-front, two ears on sides
+      headX = 0; headY = 1.5;
+      
+      // Bandana
+      X.fillStyle = tc;
+      X.beginPath(); X.ellipse(headX, headY + 3.8, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+      // Head
+      X.fillStyle='#333';
+      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      // Left Ear
+      X.fillStyle='#e0d8c0';
+      X.beginPath();X.arc(headX - 3.2, headY - 1 + earWiggle, 1.1, 0, Math.PI*2); X.fill(); X.stroke();
+      // Right Ear
+      X.beginPath();X.arc(headX + 3.2, headY - 1 - earWiggle, 1.1, 0, Math.PI*2); X.fill(); X.stroke();
+    } else if (e.dir === 5) {
+      // Strictly North: Head in center-back, two ears tucked
+      headX = 0; headY = -8;
+      
+      // Bandana
+      X.fillStyle = tc;
+      X.beginPath(); X.ellipse(headX, headY + 3.5, 3, 1.6, 0, 0, Math.PI*2); X.fill();
+      // Head
+      X.fillStyle='#222';
+      X.beginPath();X.arc(headX,headY,2.4,0,Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      // Left Ear
+      X.fillStyle='#b0a890';
+      X.beginPath();X.arc(headX - 2.8, headY - 1.2 + earWiggle, 1.0, 0, Math.PI*2); X.fill(); X.stroke();
+      // Right Ear
+      X.beginPath();X.arc(headX + 2.8, headY - 1.2 - earWiggle, 1.0, 0, Math.PI*2); X.fill(); X.stroke();
     } else {
-      // Heading toward camera or sideways: head to the right
-      headX = 6; headY = -3;
-      earX = 7;  earY = -5;
+      // Side and diagonal directions
+      let earX, earY;
+      let useDir = e.dir;
+      if (e.facing === -1) {
+        if (e.dir === 2) useDir = 0;      // SW -> SE
+        else if (e.dir === 3) useDir = 7; // W -> E
+        else if (e.dir === 4) useDir = 6; // NW -> NE
+      }
+      
+      if (useDir === 7) {
+        headX = 7; headY = -3;
+        earX = 4.8; earY = -5.5 + earWiggle;
+      } else if (useDir === 0) {
+        headX = 6; headY = -1;
+        earX = 4.0; earY = -3.5 + earWiggle;
+      } else {
+        headX = 4; headY = -7.2;
+        earX = 2.2; earY = -9.2 + earWiggle;
+      }
+      
+      // Bandana
+      X.fillStyle = tc;
+      X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+      // Head
+      X.fillStyle='#333';
+      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
+      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      // Ear
+      X.fillStyle='#e0d8c0';
+      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
     }
-
-    // Team bandana just below head
-    X.fillStyle = tc;
-    X.beginPath(); X.ellipse(headX, headY + 4, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-
-    X.fillStyle='#333';
-    X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-    X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
-    X.fillStyle='#e0d8c0';
-    X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
 
     if(e.eatingGrass){
       X.strokeStyle='#4e8c2d'; X.lineWidth=1.2;
-      X.beginPath();X.moveTo(headX,headY+1);X.lineTo(headX+4,headY+3);X.stroke();
+      X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
+      X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
+      
+      // Spawn tiny grass particle puffs
+      if(tick % 24 === 0){
+        spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
+      }
     }
+    X.restore();
   }
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
@@ -1930,17 +2267,65 @@ function drawMinimap(){
 function drawParticles() {
   X.save();
   particles.forEach(p => {
-    let px = Math.round(p.x), py = Math.round(p.y);
-    if (py < 0 || py >= MAP || px < 0 || px >= MAP || fog[py][px] !== 2) return;
+    let px = Math.round(p.x), ppy = Math.round(p.y);
+    if (ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
+    
     let iso = toIso(p.x, p.y);
     let sx = iso.ix - camX + W/2;
     let sy = iso.iy - camY + topH + H/2 + HALF_TH;
-    if (sx < -10 || sx > W + 10 || sy < -10 || sy > H + 10) return;
-    X.fillStyle = p.color;
+    
+    let pz = p.z || 0;
+    sy -= pz * 35;
+
+    if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
+
     X.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
-    X.beginPath();
-    X.arc(sx, sy, p.size, 0, Math.PI * 2);
-    X.fill();
+    
+    if (p.type === 'fire') {
+      let pct = p.life / p.maxLife;
+      let col = '#e02200';
+      if (pct > 0.65) col = '#ffff80';
+      else if (pct > 0.35) col = '#ff9d21';
+      
+      let curSize = p.size * (0.3 + pct * 0.9);
+      
+      X.fillStyle = col;
+      X.beginPath();
+      X.arc(sx, sy, curSize * 2.0, 0, Math.PI * 2);
+      X.globalAlpha = Math.max(0, Math.min(1, (p.life / p.maxLife) * 0.25));
+      X.fill();
+      
+      X.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
+      X.beginPath();
+      X.arc(sx, sy, curSize, 0, Math.PI * 2);
+      X.fill();
+    } 
+    else if (p.type === 'smoke') {
+      let pct = p.life / p.maxLife;
+      let curSize = p.size * (1.0 + (1.0 - pct) * 1.5);
+      X.fillStyle = 'rgba(100, 100, 100, 0.4)';
+      X.beginPath();
+      X.arc(sx, sy, curSize, 0, Math.PI * 2);
+      X.fill();
+    } 
+    else if (p.type === 'blood') {
+      X.fillStyle = p.color;
+      if (pz <= 0.01) {
+        X.beginPath();
+        X.ellipse(sx, sy, p.size * 1.6, p.size * 0.8, 0, 0, Math.PI * 2);
+        X.fill();
+      } else {
+        X.beginPath();
+        X.arc(sx, sy, p.size, 0, Math.PI * 2);
+        X.fill();
+      }
+    } 
+    else {
+      X.fillStyle = p.color;
+      X.beginPath();
+      X.arc(sx, sy, p.size, 0, Math.PI * 2);
+      X.fill();
+    }
   });
   X.restore();
 }
@@ -1957,31 +2342,65 @@ function drawProjectiles() {
     let dCurrent = Math.sqrt((p.x - targetX)**2 + (p.y - targetY)**2);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
     
+    // Current position
     let iso = toIso(p.x, p.y);
     let sx = iso.ix - camX + W/2;
     let sy = iso.iy - camY + topH + H/2 + HALF_TH;
-    
-    // Height arc
     let arcH = Math.sin(progress * Math.PI) * 35 * (p.totalDist / 5);
     sy -= arcH;
-    
-    let dx = targetX - p.x;
-    let dy = targetY - p.y;
-    let angle = Math.atan2(dy, dx);
-    let isoAngle = angle - Math.PI/4;
-    
-    X.strokeStyle = '#000';
-    X.lineWidth = 2.2;
+
+    // Previous position (slightly earlier in the flight path)
+    let prevProgress = Math.max(0, progress - 0.05);
+    let prevX = p.startX + (targetX - p.startX) * prevProgress;
+    let prevY = p.startY + (targetY - p.startY) * prevProgress;
+    let prevIso = toIso(prevX, prevY);
+    let prevSx = prevIso.ix - camX + W/2;
+    let prevSy = prevIso.iy - camY + topH + H/2 + HALF_TH;
+    let prevArcH = Math.sin(prevProgress * Math.PI) * 35 * (p.totalDist / 5);
+    prevSy -= prevArcH;
+
+    // Calculate tangent screen angle
+    let screenAngle = Math.atan2(sy - prevSy, sx - prevSx);
+    if (Math.abs(sx - prevSx) < 0.01 && Math.abs(sy - prevSy) < 0.01) {
+      // Fallback if progress is 0
+      let dx = targetX - p.startX;
+      let dy = targetY - p.startY;
+      screenAngle = Math.atan2(dy, dx) - Math.PI/4;
+    }
+
+    let arrowLength = 9;
+
+    // Black outline
+    X.strokeStyle = '#000000';
+    X.lineWidth = 2.4;
     X.beginPath();
     X.moveTo(sx, sy);
-    X.lineTo(sx - Math.cos(isoAngle)*8, sy - Math.sin(isoAngle)*4);
+    X.lineTo(sx - Math.cos(screenAngle) * arrowLength, sy - Math.sin(screenAngle) * arrowLength);
     X.stroke();
     
-    X.strokeStyle = '#fff';
-    X.lineWidth = 1;
+    // White/creamy inner line
+    X.strokeStyle = '#eaeaea';
+    X.lineWidth = 1.0;
     X.beginPath();
     X.moveTo(sx, sy);
-    X.lineTo(sx - Math.cos(isoAngle)*7, sy - Math.sin(isoAngle)*3.5);
+    X.lineTo(sx - Math.cos(screenAngle) * (arrowLength - 0.5), sy - Math.sin(screenAngle) * (arrowLength - 0.5));
+    X.stroke();
+
+    // Red/gold arrow head tip
+    X.fillStyle = '#cc2222';
+    X.beginPath();
+    X.arc(sx, sy, 0.8, 0, Math.PI * 2);
+    X.fill();
+
+    // Fletching (feathers) at the tail
+    let tailX = sx - Math.cos(screenAngle) * (arrowLength - 1.5);
+    let tailY = sy - Math.sin(screenAngle) * (arrowLength - 1.5);
+    let perpAngle = screenAngle + Math.PI/2;
+    X.strokeStyle = '#fbfbfb';
+    X.lineWidth = 1.0;
+    X.beginPath();
+    X.moveTo(tailX + Math.cos(perpAngle) * 2.2, tailY + Math.sin(perpAngle) * 2.2);
+    X.lineTo(tailX - Math.cos(perpAngle) * 2.2, tailY - Math.sin(perpAngle) * 2.2);
     X.stroke();
   });
   X.restore();
@@ -1992,6 +2411,17 @@ function render(){
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
   X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
+
+  // Viewport culling: calculate visible map tile range
+  let p1 = screenToMap(0, 0);
+  let p2 = screenToMap(W, 0);
+  let p3 = screenToMap(0, window.innerHeight);
+  let p4 = screenToMap(W, window.innerHeight);
+  
+  let minX = Math.max(0, Math.floor(Math.min(p1.x, p2.x, p3.x, p4.x)) - 2);
+  let maxX = Math.min(MAP - 1, Math.ceil(Math.max(p1.x, p2.x, p3.x, p4.x)) + 2);
+  let minY = Math.max(0, Math.floor(Math.min(p1.y, p2.y, p3.y, p4.y)) - 2);
+  let maxY = Math.min(MAP - 1, Math.ceil(Math.max(p1.y, p2.y, p3.y, p4.y)) + 2);
   
   X.save();
   // Center zoom scale around viewport camera center
@@ -1999,15 +2429,15 @@ function render(){
   X.scale(ZOOM, ZOOM);
   X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
 
-  // Draw ground tiles
-  for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++)drawTile(x,y);
+  // Draw ground tiles (only visible ones)
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);
 
   // Filter out expired corpses using wall-clock time so they still fade after game over
   corpses = corpses.filter(c => performance.now() - c.deathTime < 5000);
   
-  // Find all trees with wood resource remaining to depth-sort them dynamically
+  // Find visible trees with wood resource remaining to depth-sort them dynamically
   let trees = [];
-  for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
+  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
     if(map[y][x].t===TERRAIN.FOREST && map[y][x].res>0){
       trees.push({type:'tree', x:x, y:y});
     }
@@ -2015,34 +2445,69 @@ function render(){
 
   let allDrawable = [];
   entities.forEach(en => {
+    // Only draw visible entities (either player's team or visible in fog)
+    let f;
+    if (en.type === 'building') {
+      f = buildingFogLevel(en);
+    } else {
+      let ex = Math.round(en.x), ey = Math.round(en.y);
+      f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
+    }
+    if (f === 0) return; // unexplored
+
+    // Check if the entity is within visible range (culling)
+    let enX = en.x, enY = en.y;
+    if (en.type === 'building') {
+      enX += (en.w || 1) / 2;
+      enY += (en.h || 1) / 2;
+    }
+    if (enX < minX - 4 || enX > maxX + 4 || enY < minY - 4 || enY > maxY + 4) return;
+
     if (en.type === 'building' && en.btype === 'GATE') {
       let wallLineNS = en.h > en.w;
       allDrawable.push({
         type: 'gate_back',
         entity: en,
         x: en.x,
-        y: en.y
+        y: en.y,
+        sortVal: en.y + en.x + 0.1
       });
       allDrawable.push({
         type: 'gate_front',
         entity: en,
         x: wallLineNS ? en.x : en.x + 1,
-        y: wallLineNS ? en.y + 1 : en.y
+        y: wallLineNS ? en.y + 1 : en.y,
+        sortVal: (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1)
       });
     } else {
+      let sortVal;
+      if (en.type === 'building') {
+        if (en.btype === 'FARM') sortVal = en.y + en.x + 0.05;
+        else sortVal = en.y + (en.h || 1) / 2 + en.x + (en.w || 1) / 2;
+      } else {
+        if (en.utype === 'sheep_carcass') sortVal = en.y + en.x + 0.05;
+        else sortVal = en.y + en.x + 0.25;
+      }
+      en.sortVal = sortVal;
       allDrawable.push(en);
     }
   });
-  allDrawable.push(...corpses, ...trees);
-  
-  let sorted=allDrawable.sort((a,b)=>{
-    let ax = a.type==='building' ? a.x + (a.w||BLDGS[a.btype]?.w||1)/2 : (a.type==='gate_back' ? a.x + 0.05 : (a.type==='gate_front' ? a.x + 0.5 : (a.type==='tree' ? a.x + 0.1 : (a.type==='unit' ? a.x + 0.25 : a.x))));
-    let ay = a.type==='building' ? a.y + (a.h||BLDGS[a.btype]?.h||1)/2 : (a.type==='gate_back' ? a.y + 0.05 : (a.type==='gate_front' ? a.y + 0.5 : (a.type==='tree' ? a.y + 0.1 : (a.type==='unit' ? a.y + 0.25 : a.y))));
-    let bx = b.type==='building' ? b.x + (b.w||BLDGS[b.btype]?.w||1)/2 : (b.type==='gate_back' ? b.x + 0.05 : (b.type==='gate_front' ? b.x + 0.5 : (b.type==='tree' ? b.x + 0.1 : (b.type==='unit' ? b.x + 0.25 : b.x))));
-    let by = b.type==='building' ? b.y + (b.h||BLDGS[b.btype]?.h||1)/2 : (b.type==='gate_back' ? b.y + 0.05 : (b.type==='gate_front' ? b.y + 0.5 : (b.type==='tree' ? b.y + 0.1 : (b.type==='unit' ? b.y + 0.25 : b.y))));
-    return (ay+ax) - (by+bx);
+
+  corpses.forEach(c => {
+    if (c.x >= minX - 2 && c.x <= maxX + 2 && c.y >= minY - 2 && c.y <= maxY + 2) {
+      c.sortVal = c.y + c.x;
+      allDrawable.push(c);
+    }
   });
-  sorted.forEach(e=>{
+
+  trees.forEach(t => {
+    t.sortVal = t.y + t.x + 0.1;
+    allDrawable.push(t);
+  });
+
+  allDrawable.sort((a, b) => a.sortVal - b.sortVal);
+
+  allDrawable.forEach(e=>{
     // Fog of War checks for entities
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f;
@@ -2133,26 +2598,6 @@ function render(){
 
   drawSelection();
 
-  // Update custom cursors via body classes (desktop only)
-  if(!isMobile&&!placing){
-    let tile=screenToTile(mouseX,mouseY);
-    let haveVils=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
-    let haveUnits=selected.some(s=>s.type==='unit'&&s.team===0);
-    let t=tile.y>=0&&tile.y<MAP&&tile.x>=0&&tile.x<MAP?map[tile.y][tile.x]:null;
-    let tileVisible = tile.y>=0&&tile.y<MAP&&tile.x>=0&&tile.x<MAP && fog[tile.y]&&fog[tile.y][tile.x]===2;
-    let overEnemy = tileVisible && (
-      entities.some(en=>en.team!==0&&en.type==='unit'&&(Math.abs(Math.round(en.x)-tile.x)<2&&Math.abs(Math.round(en.y)-tile.y)<2))
-      || (typeof getBuildingUnderCursor === 'function' && !!getBuildingUnderCursor(mouseX, mouseY, en=>en.team===1))
-    );
-    let alliedB = tileVisible && (typeof getBuildingUnderCursor === 'function') ? getBuildingUnderCursor(mouseX, mouseY, en=>en.team===0) : null;
-    let canWorkB = alliedB && (!alliedB.complete || alliedB.hp < alliedB.maxHp);
-    
-    let overAllyBuilding = alliedB && alliedB.complete && alliedB.hp >= alliedB.maxHp;
-    if(haveUnits&&overEnemy) C.className = 'cursor-crosshair';
-    else if(haveVils&&(canWorkB || (tileVisible&&t&&(t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)))) C.className = 'cursor-cell';
-    else if(haveUnits&&overAllyBuilding) C.className = 'cursor-garrison';
-    else if(haveUnits) C.className = 'cursor-pointer';
-    else C.className = 'cursor-default';
-  } else if(placing){ C.className = 'cursor-copy'; }
+
   drawMinimap();
 }

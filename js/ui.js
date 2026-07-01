@@ -238,12 +238,13 @@ function updateUI(){
     let hpColor = '#2b8a3e';
     if (hpPct < 20) hpColor = '#cc3333';
     else if (hpPct < 50) hpColor = '#d9a711';
-    let det=`HP: ${e.hp}/${e.maxHp}`;
-    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
+    let isCarcass = e.utype === 'sheep_carcass';
+    let det = isCarcass ? `Food remaining: ${e.hp}/${e.maxHp}` : `HP: ${e.hp}/${e.maxHp}`;
+    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${isCarcass ? '#e2b13c' : hpColor};"></div></div>`;
 
     // Display combat stats for military units
     let uData = UNITS[e.utype];
-    if (uData && e.utype !== 'sheep') {
+    if (uData && e.utype !== 'sheep' && e.utype !== 'sheep_carcass') {
       let stats = [];
       if (uData.atk > 0) stats.push(`⚔️ ${uData.atk}`);
       if (uData.range > 0) stats.push(`🏹 ${uData.range}`);
@@ -410,13 +411,42 @@ window.selectIdleVillager = function() {
   updateUI();
 };
 
-window.toggleBottomPanel = function() {
+window.updateBottomHeight = function(collapsed) {
+  let bottom = document.getElementById('bottom');
+  let isCol = collapsed !== undefined ? collapsed : (bottom ? bottom.classList.contains('collapsed') : false);
+  let w = window.innerWidth;
+  if (isCol) {
+    bottomH = isMobile ? (w <= 380 ? 90 : 96) : 80;
+  } else {
+    bottomH = isMobile ? (w <= 380 ? 175 : 200) : 200;
+  }
+  topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
+  H = window.innerHeight - bottomH;
+  W = w;
+  
+  let C = document.getElementById('game');
+  if (C) {
+    let X = C.getContext('2d');
+    let dpr = Math.max(1, window.devicePixelRatio || 1);
+    C.width = W * dpr;
+    C.height = window.innerHeight * dpr;
+    C.style.width = W + 'px';
+    C.style.height = window.innerHeight + 'px';
+    if (X) X.scale(dpr, dpr);
+  }
+};
+
+window.toggleBottomPanel = function(){
   let bottom = document.getElementById('bottom');
   let toggle = document.getElementById('bottom-toggle');
   if (bottom && toggle) {
     let isCollapsed = bottom.classList.toggle('collapsed');
     toggle.textContent = isCollapsed ? '🔼' : '🔽';
     localStorage.setItem('hud_collapsed', isCollapsed ? '1' : '0');
+    
+    // Update bottomH and viewport height H dynamically
+    window.updateBottomHeight(isCollapsed);
+    
     showMsg(isCollapsed ? 'HUD Collapsed' : 'HUD Expanded');
   }
 };
@@ -437,6 +467,9 @@ window.toggleBottomPanel = function() {
       bottom.classList.add('collapsed');
       toggle.textContent = '🔼';
     }
+    
+    // Set initial heights correctly
+    window.updateBottomHeight(collapsed);
   }
 })();
 
