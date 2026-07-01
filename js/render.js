@@ -1,5 +1,18 @@
 // ---- RENDERING ----
 
+// Offscreen-culling check for a point already in pre-scale/logical screen
+// space (before render()'s translate/scale(ZOOM)/translate transform is
+// applied). The actual visible logical window grows/shrinks with 1/ZOOM
+// (zooming out reveals more world), so the margin must scale with it too —
+// a fixed-pixel margin here would wrongly cull tiles/entities that are
+// genuinely on screen once zoomed out.
+function isOffscreen(sx, sy, margin){
+  let halfW = (W/2)/ZOOM + margin;
+  let halfH = (H/2)/ZOOM + margin;
+  let cy = H/2 + topH;
+  return sx < W/2-halfW || sx > W/2+halfW || sy < cy-halfH || sy > cy+halfH;
+}
+
 // Returns the effective fog level for a building across its whole footprint:
 //   0 = all tiles unexplored (skip drawing)
 //   1 = some explored but none currently visible (draw with shadow)
@@ -24,7 +37,7 @@ function drawTile(x,y){
 
   let iso=toIso(x,y);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
-  if(sx<-TW*2||sx>W+TW*2||sy<-TH*4||sy>H+TH*4)return;
+  if(isOffscreen(sx,sy,TW*2))return;
   let t=map[y][x];
   let cols=TCOL[t.t]||TCOL[0];
   let col=cols[(x*7+y*13)%cols.length];
@@ -616,7 +629,7 @@ function drawBuilding(e, part = null){
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
   let iso=toIso(cx,cy);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
-  if(sx<-100||sx>W+100||sy<-100||sy>H+100)return;
+  if(isOffscreen(sx,sy,100))return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
   sy-=bhh;
   // Compute fog level once for the full footprint; used to gate animations and overlay
@@ -1239,7 +1252,7 @@ function drawBuilding(e, part = null){
 function drawCorpse(c){
   let iso=toIso(c.x,c.y);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
-  if(sx<-50||sx>W+50||sy<-50||sy>H+50)return;
+  if(isOffscreen(sx,sy,50))return;
   
   let idOff=c.id%7;
   sx+=(idOff%3-1)*6; sy+=(Math.floor(idOff/3)-1)*4;
@@ -1296,7 +1309,7 @@ function drawCorpse(c){
 function drawUnit(e){
   let iso=toIso(e.x,e.y);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
-  if(sx<-50||sx>W+50||sy<-50||sy>H+50)return;
+  if(isOffscreen(sx,sy,50))return;
   // Group spread: offset based on unit ID so stacked units are visible
   let idOff=e.id%7;
   sx+=(idOff%3-1)*6; sy+=(Math.floor(idOff/3)-1)*4;

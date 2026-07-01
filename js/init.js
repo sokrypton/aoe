@@ -65,20 +65,12 @@ function onStartClicked(){
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
 
-  let fogToggle = document.getElementById('fog-disabled-toggle');
-  window.fogDisabled = !!(fogToggle && fogToggle.checked);
-  localStorage.setItem('fog_disabled', window.fogDisabled ? '1' : '0');
+  window.fogDisabled = false;
 
   // Always regenerate the map (even on a fresh load) so the chosen size takes effect,
   // since init() already ran once at script load with the default size.
   restartGame(diff);
 }
-
-// Restore the fog-of-war preference into the start menu checkbox on load.
-(function(){
-  let fogToggle = document.getElementById('fog-disabled-toggle');
-  if (fogToggle) fogToggle.checked = localStorage.getItem('fog_disabled') === '1';
-})();
 
 function restartGame(difficulty){
   gameOver = false;
