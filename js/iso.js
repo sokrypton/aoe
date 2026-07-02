@@ -15,9 +15,9 @@ function screenToTile(sx,sy){
 }
 
 function getMiniTransform(mw,mh){
-  let pad=Math.max(3,Math.min(mw,mh)*0.04);
+  let pad=0;
   let scale=Math.min((mw-pad*2)/(MAP*TW),(mh-pad*2)/(MAP*TH));
-  return{scale,ox:mw/2,oy:(mh-MAP*TH*scale)/2};
+  return{scale,ox:mw/2,oy:pad};
 }
 
 function mapToMini(x,y,mw,mh){

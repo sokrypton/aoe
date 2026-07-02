@@ -2592,7 +2592,7 @@ function drawSelection(){
 
 function drawMinimap(){
   let dpr = Math.max(1, window.devicePixelRatio || 1);
-  let mw=MC.clientWidth||160,mh=MC.clientHeight||160;
+  let mw=MC.parentElement.clientWidth||160,mh=MC.parentElement.clientHeight||160;
   MC.width=mw*dpr;MC.height=mh*dpr;
   MC.style.width=mw+'px';MC.style.height=mh+'px';
   MX.scale(dpr,dpr);

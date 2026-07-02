@@ -84,12 +84,40 @@ canvas {
   z-index:2;
 }
 .res-val{min-width:32px;text-align:right}
+#pop-wrap {
+  position: absolute;
+  bottom: 84px;
+  right: 6px;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+}
+#home-btn, #map-btn, #idle-btn {
+  background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
+  border: 1px solid #bfa054;
+  border-radius: 4px;
+  height: 24px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: inset 0 0 4px #000;
+  transition: all 0.15s;
+  font-size: 14px;
+  position: relative;
+}
+#home-btn:hover, #home-btn:active,
+#map-btn:hover, #map-btn:active,
+#idle-btn:hover, #idle-btn:active {
+  background: linear-gradient(180deg, #7c5837 0%, #442d18 100%);
+  border-color: #ffebad;
+}
 #pop{
   color:#ffebad;
   font-family: 'Cinzel', Georgia, serif;
   font-size:13px;
   font-weight:bold;
-  margin-right: 8px;
   white-space:nowrap;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid #5a3f1d;
@@ -320,6 +348,20 @@ canvas {
 .act-btn .cost{
   display:none; /* shown in the tooltip instead, so the icon can be bigger */
 }
+
+
+/* Active/pulsing state when waiting for map tap */
+.act-btn.rally-active {
+  border-color: #ffd700 !important;
+  background: linear-gradient(180deg, #5a3800 0%, #2a1800 100%) !important;
+  box-shadow: 0 0 12px rgba(255,215,0,0.7), inset 0 0 5px #000 !important;
+  animation: rally-pulse 1s ease-in-out infinite;
+}
+@keyframes rally-pulse {
+  0%   { box-shadow: 0 0 8px  rgba(255,215,0,0.6), inset 0 0 5px #000; }
+  50%  { box-shadow: 0 0 18px rgba(255,215,0,1.0), inset 0 0 5px #000; }
+  100% { box-shadow: 0 0 8px  rgba(255,215,0,0.6), inset 0 0 5px #000; }
+}
 .btn-emoji{
   font-size:16px;
   margin-bottom:2px;
@@ -384,16 +426,35 @@ canvas {
   display:none; /* name is hidden to let the icon fill the button space */
 }
 
+/* ---- MINIMAP ----
+   The wrap is a square whose side = min(28vw, 220px) so it scales smoothly
+   with the viewport without breakpoint jumps.
+   right:0 + overflow:hidden clips the transparent canvas corners flush to
+   the screen edge — no more negative right offset hacks.
+   The diamond is top-aligned inside the canvas (see getMiniTransform in iso.js)
+   so top:0 puts the visible map peak at the very top-right corner. */
 #minimap-wrap {
-  width: 250px;
-  height: 250px;
   position: absolute;
-  /* Tucked so the empty top-right corner of the square wrap (outside the
-     diamond) sits exactly under the floating Menu button. */
-  right: -14px;
-  top: -6px;
+  top: 0;
+  right: 0;
+  width: min(45vw, 380px);
+  height: min(45vw, 380px);
+  overflow: hidden;
   z-index: 20;
   flex-shrink: 0;
+  pointer-events: auto;
+}
+#minimap-wrap.minimap-expanded {
+  width: 100% !important;
+  height: 50vw !important;
+  max-width: none !important;
+  max-height: none !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  background: none;
 }
 #minimap{
   width:100%;
@@ -588,22 +649,18 @@ canvas {
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
-  #topbar{height:46px;padding:0 6px}
-  /* Tightened so all 4 resources AND the population counter fit on a
-     390px-wide phone (they previously overflowed and pop was clipped). */
-  .res{margin-right:3px;font-size:13px;padding:3px 5px;height:30px}
-  .res-icon{width:20px;height:20px;margin-right:4px}
-  .res-val{min-width:26px}
-  #pop{font-size:13px;padding:3px 5px;margin-right:0;height:30px}
-  #menu-btn{font-size:13px;padding:5px 10px}
+
+  #pop{font-size:13px;padding:3px 5px;height:30px}
+  #home-btn, #map-btn, #idle-btn {height:30px;width:34px;font-size:16px}
+  #pop-wrap{bottom:100px}
+  #minimap-wrap:not(.minimap-expanded) { display: none; }
+
   #bottom{height:96px}
   #sel-info{width:180px;padding:6px}
   #sel-portrait{width:50px;height:50px;font-size:24px}
   #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
-  /* Minimap drops below the topbar on phones so it doesn't cover the
-     resource row; the Menu button sits just left of its diamond. */
-  #minimap-wrap{width:170px;height:170px;top:52px;right:-14px}
+  /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
   #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
 }
@@ -617,16 +674,15 @@ canvas {
   .menu-action-btn{font-size:18px;padding:13px 26px}
 }
 @media(max-width:380px){
-  .res{margin-right:2px;font-size:12px;padding:3px 4px;height:27px}
-  .res-icon{width:18px;height:18px;margin-right:3px}
-  .res-val{min-width:24px}
+
   #bottom{height:90px}
   #sel-info{width:145px;padding:6px}
   #sel-portrait{width:44px;height:44px;font-size:20px}
   #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
-  #minimap-wrap{width:140px;height:140px;top:52px;right:-12px}
-  #pop{font-size:12px;padding:3px 4px;margin-right:0;height:27px}
+  #pop{font-size:12px;padding:3px 4px;height:27px}
+  #home-btn, #map-btn, #idle-btn {height:27px;width:30px;font-size:15px}
+  #pop-wrap{bottom:94px}
 }
 
 /* ---- TRAINING QUEUE STYLES ---- */
@@ -752,12 +808,12 @@ canvas {
 }
 .idle-badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: -5px;
+  right: -5px;
   background: #ff4444;
   color: #fff;
   border-radius: 50%;
-  font-size: 8px;
+  font-size: 9px;
   width: 14px;
   height: 14px;
   display: flex;
@@ -785,21 +841,23 @@ canvas {
 #menu-btn {
   color: #ffd700;
   font-family: 'Cinzel', serif;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: bold;
   cursor: pointer;
-  background: linear-gradient(180deg, #321c0e 0%, #1f0f06 100%);
-  border: 1px solid #bfa054;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #5a3f1d;
   border-radius: 4px;
-  padding: 4px 12px;
-  box-shadow: inset 0 0 4px #000, 0 2px 6px rgba(0,0,0,0.6);
+  padding: 0 12px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
   white-space: nowrap;
   transition: all 0.15s;
-  /* Floats at the very top-right, ABOVE the minimap (z 20) so it is always
-     clickable — inside the topbar it sat underneath the minimap overlay. */
   position: fixed;
-  top: 6px;
+  top: 4.5px;
   right: 8px;
   z-index: 30;
   pointer-events: auto;

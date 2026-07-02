@@ -63,8 +63,9 @@ function findPath(sx,sy,ex,ey,ignore){
   let startH=Math.max(startAdx,startAdy)+0.41*Math.min(startAdx,startAdy);
   let startNode={x:sx,y:sy,g:0,h:startH,f:startH,p:null};
   let open=[startNode];
-  let openMap=new Map([[sx+sy*MAP,startNode]]);
-  let closed=new Set();
+  let openMap=new Array(MAP*MAP);
+  openMap[sx+sy*MAP]=startNode;
+  let closed=new Uint8Array(MAP*MAP);
   let iters=0;
   // Track the node that got closest to the goal so far. If the search runs out
   // of budget (large/obstructed maps can need more than the iteration cap) we
@@ -83,8 +84,8 @@ function findPath(sx,sy,ex,ey,ignore){
       return path;
     }
     let ck=cur.x+cur.y*MAP;
-    openMap.delete(ck);
-    closed.add(ck);
+    openMap[ck]=undefined;
+    closed[ck]=1;
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
       if(dx===0&&dy===0)continue;
       let nx=cur.x+dx,ny=cur.y+dy;
@@ -92,15 +93,15 @@ function findPath(sx,sy,ex,ey,ignore){
       // Block diagonal moves that cut through the gap between two touching obstacles
       if(dx&&dy&&(!walkable(cur.x+dx,cur.y,ignore)||!walkable(cur.x,cur.y+dy,ignore)))continue;
       let k=nx+ny*MAP;
-      if(closed.has(k))continue;
+      if(closed[k])continue;
       let g=cur.g+(dx&&dy?1.41:1);
-      let existing=openMap.get(k);
+      let existing=openMap[k];
       if(existing){if(g<existing.g){existing.g=g;existing.f=g+existing.h;existing.p=cur;}}
       else{
         let adx=Math.abs(nx-ex),ady=Math.abs(ny-ey);
         let h=Math.max(adx,ady)+0.41*Math.min(adx,ady);
         let node={x:nx,y:ny,g,h,f:g+h,p:cur};
-        open.push(node);openMap.set(k,node);
+        open.push(node);openMap[k]=node;
         if(h<bestNode.h)bestNode=node;
       }
     }

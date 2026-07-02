@@ -65,7 +65,8 @@ function updateUI(){
       food: -1, wood: -1, gold: -1, stone: -1,
       popUsed: -1, popCap: -1, idleCount: -1,
       gameOver: null, gameStarted: null, selectedKey: null,
-      selectionDetails: null, placing: null, currentVillagerMenu: null
+      selectionDetails: null, placing: null, currentVillagerMenu: null,
+      settingRally: null
     };
   }
 
@@ -77,7 +78,8 @@ function updateUI(){
     currentIdleCount !== lu.idleCount || gameOver !== lu.gameOver ||
     gameStarted !== lu.gameStarted || currentSelListKey !== lu.selectedKey ||
     currentSelectionDetails !== lu.selectionDetails || placing !== lu.placing ||
-    window.currentVillagerMenu !== lu.currentVillagerMenu
+    window.currentVillagerMenu !== lu.currentVillagerMenu ||
+    !!window.settingRally !== !!lu.settingRally
   );
 
   if (!stateChanged) return;
@@ -96,6 +98,7 @@ function updateUI(){
   lu.selectionDetails = currentSelectionDetails;
   lu.placing = placing;
   lu.currentVillagerMenu = window.currentVillagerMenu;
+  lu.settingRally = !!window.settingRally;
 
   // Perform actual DOM updates
   document.getElementById('r-food').textContent=currentFood;
@@ -103,9 +106,21 @@ function updateUI(){
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
   document.getElementById('pop').textContent=`${popUsed}/${popCap}`;
+  
+  let idleBtn = document.getElementById('idle-btn');
+  if(idleBtn) {
+    if(currentIdleCount > 0) {
+      idleBtn.style.display = 'flex';
+      idleBtn.innerHTML = `🧑‍🌾<div class="idle-badge">${currentIdleCount}</div>`;
+      idleBtn.classList.add('idle-active');
+    } else {
+      idleBtn.style.display = 'none';
+      idleBtn.classList.remove('idle-active');
+    }
+  }
 
   let act=document.getElementById('actions');
-  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount;
+  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally;
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
@@ -244,13 +259,33 @@ function updateUI(){
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
+
+        // Rally Point button — lets mobile players set rally without right-click
+        if (e.complete) {
+          if (window.settingRally) {
+            // Show cancel button while in rally-setting mode
+            let cancelBtn=document.createElement('div');
+            cancelBtn.className='act-btn rally-btn rally-active';
+            cancelBtn.id='rally-cancel-btn';
+            cancelBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Tap map to<br>set rally</div>`;
+            cancelBtn.onclick=()=>{ window.settingRally=false; showMsg('Rally cancelled'); updateUI(); };
+            act.appendChild(cancelBtn);
+          } else {
+            let rallyBtn=document.createElement('div');
+            rallyBtn.className='act-btn rally-btn';
+            rallyBtn.id='rally-set-btn';
+            rallyBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Set Rally</div>`;
+            rallyBtn.onclick=()=>{
+              if(gameOver)return;
+              window.settingRally=true;
+              showMsg('Tap the map to set rally point');
+              updateUI();
+            };
+            act.appendChild(rallyBtn);
+          }
+        }
       }
-      if(e.complete && e.btype === 'TC' && currentIdleCount > 0) {
-        let btn=document.createElement('div');btn.className='act-btn idle-active';
-        btn.innerHTML=`<div class="btn-emoji" style="font-size: 24px; line-height: 1;">🧑‍🌾</div><div class="idle-badge">${currentIdleCount}</div>`;
-        btn.onclick=()=>selectIdleVillager();
-        act.appendChild(btn);
-      }
+
       if(e.complete && e.btype === 'MILL') {
         let btn=document.createElement('div');btn.className='act-btn framed';
         let costStr='W:60';

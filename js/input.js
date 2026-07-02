@@ -44,7 +44,7 @@ document.addEventListener('keydown',e=>{
     return;
   }
   
-  if(e.key==='Escape'){placing=null;selected=[];updateUI();}
+  if(e.key==='Escape'){placing=null;selected=[];window.settingRally=false;updateUI();}
   if(e.key==='Delete'||e.key==='Backspace'){
     selected.forEach(en=>{
       if(en.team===0){
@@ -248,7 +248,17 @@ C.addEventListener('mouseup',e=>{
     if(isDragging&&dragStart&&dragEnd){
       doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
     } else {
-      doSelect(e.clientX,e.clientY,e.shiftKey);
+      if (window.settingRally) {
+        let bldg = selected[0];
+        let bData = bldg && BLDGS[bldg.btype];
+        if(bldg && bldg.type==='building' && bldg.team===0 && bData && bData.builds && bData.builds.length>0){
+          doCommand(e.clientX, e.clientY);
+        }
+        window.settingRally = false;
+        updateUI();
+      } else {
+        doSelect(e.clientX,e.clientY,e.shiftKey);
+      }
     }
     dragStart=null;dragEnd=null;isDragging=false;
   }
@@ -257,6 +267,7 @@ document.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(gameOver||hasTouch)return;
   if(e.target===C){
+    window.settingRally=false; // right-click itself handles rally; clear the flag
     doCommand(e.clientX,e.clientY);
   }
 });
@@ -386,6 +397,18 @@ function handleTap(sx,sy){
     return;
   }
 
+  // 2. If in rally-setting mode, set the rally point on tap
+  if(window.settingRally){
+    let bldg = selected[0];
+    let bData = bldg && BLDGS[bldg.btype];
+    if(bldg && bldg.type==='building' && bldg.team===0 && bData && bData.builds && bData.builds.length>0){
+      doCommand(sx, sy);
+    }
+    window.settingRally = false;
+    updateUI();
+    return;
+  }
+
   let tile=screenToTile(sx,sy);
   let hitR=20; // generous hit area for fingers
 
@@ -408,7 +431,7 @@ function handleTap(sx,sy){
     }
   }
 
-  // 2. Nothing selected → just select
+  // 3. Nothing selected → just select
   if(selected.length===0){
     if(tappedOwn||tappedEnemy) {
       selected=[tappedOwn||tappedEnemy];
@@ -424,7 +447,7 @@ function handleTap(sx,sy){
     return;
   }
 
-  // 3. Have units selected
+  // 4. Have units selected
   let haveUnits=selected.some(s=>s.type==='unit'&&s.team===0);
   let haveVillagers=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
   if(haveUnits){
@@ -433,8 +456,9 @@ function handleTap(sx,sy){
       doCommand(sx,sy);
       return;
     }
-    // Tapped on own entity → switch selection
+    // Tapped on own entity → switch selection (cancel rally mode)
     if(tappedOwn){
+      window.settingRally=false;
       selected=[tappedOwn];
       if (window.playSound && tappedOwn.team === 0) {
         if (tappedOwn.type === 'unit') {
@@ -455,8 +479,10 @@ function handleTap(sx,sy){
     return;
   }
 
-  // 4. Have a building selected (not units)
+  // 5. Have a building selected (not units)
   if(tappedOwn){
+    // Switching selection cancels rally mode
+    window.settingRally=false;
     selected=[tappedOwn];
     if (window.playSound && tappedOwn.team === 0) {
       if (tappedOwn.type === 'unit') {
@@ -466,8 +492,11 @@ function handleTap(sx,sy){
       }
     }
   } else if(tappedEnemy){
+    window.settingRally=false;
     selected=[tappedEnemy];
   } else {
+    // Tapped empty map -> deselect
+    window.settingRally=false;
     selected=[];
   }
 }
@@ -490,6 +519,30 @@ function minimapJump(sx,sy){
   // followed unit on the very next frame and the minimap click does nothing.
   window.cameraFollowId=null;
 }
+
+function toggleMinimap(){
+  let wrap = document.getElementById('minimap-wrap');
+  if(wrap) {
+    wrap.classList.toggle('minimap-expanded');
+    if(window.playSound) window.playSound('click');
+  }
+}
+
+function focusTownCenter(){
+  if(gameOver)return;
+  let tc = entities.find(e => e.type === 'building' && e.team === 0 && e.btype === 'TC');
+  if(tc) {
+    // TC is 3x3 tiles, so center is +1.5 tiles
+    let iso = toIso(tc.x + 1.5, tc.y + 1.5);
+    camX = iso.ix;
+    camY = iso.iy;
+    window.targetCamX = camX;
+    window.targetCamY = camY;
+    window.cameraFollowId = null;
+    if(window.playSound) window.playSound('click');
+  }
+}
+
 MC.addEventListener('mousedown',e=>{
   if(gameOver)return;
   hasTouch=false;
