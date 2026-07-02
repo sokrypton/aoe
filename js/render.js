@@ -1487,6 +1487,23 @@ function drawBuilding(e, part = null){
     X.fillStyle='#300';X.fillRect(sx-bww/2,hpY+1,bww,4);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-bww/2,hpY+1,bww*e.hp/e.maxHp,4);
   }
+  // Garrison count — just the number, planted beside this building's own
+  // team flag (only TC and TOWER can ever hold a garrison, and both fly
+  // their flag at the very top of the structure using this same sx/sy).
+  if(e.team===0&&e.garrison&&e.garrison.length>0){
+    let flagX=sx, flagY;
+    if(e.btype==='TC') flagY=sy-88;
+    else if(e.btype==='TOWER') flagY=sy-54;
+    else flagY=sy-bh-11; // fallback, shouldn't normally trigger
+    let label=String(e.garrison.length);
+    X.font='bold 12px sans-serif';X.textAlign='left';
+    let tw2=X.measureText(label).width+9;
+    X.fillStyle='rgba(0,0,0,0.6)';
+    X.fillRect(flagX+3,flagY-9,tw2,15);
+    X.fillStyle='#ffd700';
+    X.fillText(label,flagX+7,flagY+2);
+    X.textAlign='left';
+  }
   // Selection — outlines the entity's actual footprint (e.w/e.h), not the
   // building type's default template size, so multi-tile footprints that
   // differ from the template (e.g. a 1x2/2x1 GATE vs BLDGS.GATE's 1x1)
@@ -1592,6 +1609,7 @@ function drawCorpse(c){
 }
 
 function drawUnit(e){
+  if(e.garrisonedIn)return; // hidden inside a building
   let iso=toIso(e.x,e.y);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
@@ -2624,17 +2642,14 @@ function drawMinimap(){
         t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
         t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
     }
-    fillDiamond([miniPoint(x,y),miniPoint(x+1,y),miniPoint(x+1,y+1),miniPoint(x,y+1)],c);
+    // Inflate each tile slightly so neighbors overlap — without this,
+    // anti-aliased edges leave hairline transparent seams that show the
+    // battlefield through the (semi-transparent) minimap as cracks.
+    fillDiamond([miniPoint(x-0.06,y-0.06),miniPoint(x+1.06,y-0.06),miniPoint(x+1.06,y+1.06),miniPoint(x-0.06,y+1.06)],c);
   }
-  let outline=[miniPoint(0,0),miniPoint(MAP,0),miniPoint(MAP,MAP),miniPoint(0,MAP)];
-  MX.strokeStyle='#d8c878';
-  MX.lineWidth=1;
-  MX.beginPath();
-  MX.moveTo(outline[0].x,outline[0].y);
-  for(let i=1;i<outline.length;i++)MX.lineTo(outline[i].x,outline[i].y);
-  MX.closePath();
-  MX.stroke();
+  // (ornamental frame is drawn last, on top of entities/viewport — see below)
   entities.forEach(e=>{
+    if(e.type==='unit'&&e.garrisonedIn)return; // hidden inside a building
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
     if (f === 0) return; // completely unexplored — hide everything
@@ -2646,7 +2661,10 @@ function drawMinimap(){
       fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],TEAM_COLORS[e.team]);
     } else {
       let p=miniPoint(e.x+0.5,e.y+0.5);
-      MX.fillRect(p.x-1,p.y-1,2,2);
+      // Dot scales with the minimap's zoom (≈ half a tile), so units stay
+      // visible when the map is expanded instead of staying 2px specks.
+      let dot=Math.max(2,HALF_TW*mt.scale);
+      MX.fillRect(p.x-dot/2,p.y-dot/2,dot,dot);
     }
   });
   let bottomY=window.innerHeight-bottomH;
@@ -2662,6 +2680,51 @@ function drawMinimap(){
   for(let i=1;i<vp.length;i++)MX.lineTo(vp[i].x,vp[i].y);
   MX.closePath();
   MX.stroke();
+
+  // ---- Ornamental medieval frame around the diamond ----
+  // Layered strokes (dark wood → gold trim → parchment highlight) plus
+  // riveted corner medallions. Widths scale with the canvas so the frame
+  // grows dramatic on the expanded map and stays dainty on the small one.
+  let corners=[miniPoint(0,0),miniPoint(MAP,0),miniPoint(MAP,MAP),miniPoint(0,MAP)];
+  let frameW=8; // constant — same frame weight on small and expanded map
+  let tracePath=()=>{
+    MX.beginPath();
+    MX.moveTo(corners[0].x,corners[0].y);
+    for(let i=1;i<corners.length;i++)MX.lineTo(corners[i].x,corners[i].y);
+    MX.closePath();
+  };
+  MX.lineJoin='round';
+  // outer shadow for lift off the battlefield
+  MX.strokeStyle='rgba(0,0,0,0.55)';MX.lineWidth=frameW*1.6;tracePath();MX.stroke();
+  // dark wood body
+  MX.strokeStyle='#3a2410';MX.lineWidth=frameW*1.25;tracePath();MX.stroke();
+  // wood grain mid-tone
+  MX.strokeStyle='#5c3d24';MX.lineWidth=frameW*0.8;tracePath();MX.stroke();
+  // gold trim
+  MX.strokeStyle='#bfa054';MX.lineWidth=frameW*0.32;tracePath();MX.stroke();
+  // bright inner filet
+  MX.strokeStyle='#ffe9ad';MX.lineWidth=Math.max(1,frameW*0.1);tracePath();MX.stroke();
+  // corner medallions: riveted gold-ringed studs at the four points
+  let medR=frameW*0.95;
+  corners.forEach(c=>{
+    MX.beginPath();MX.arc(c.x,c.y,medR,0,Math.PI*2);
+    MX.fillStyle='#2a1808';MX.fill();
+    MX.lineWidth=Math.max(1.5,medR*0.28);MX.strokeStyle='#bfa054';MX.stroke();
+    MX.beginPath();MX.arc(c.x,c.y,medR*0.42,0,Math.PI*2);
+    MX.fillStyle='#d8b566';MX.fill();
+    // glint
+    MX.beginPath();MX.arc(c.x-medR*0.15,c.y-medR*0.15,medR*0.14,0,Math.PI*2);
+    MX.fillStyle='#fff3cf';MX.fill();
+  });
+  // small studs at the edge midpoints
+  for(let i=0;i<4;i++){
+    let a=corners[i],b=corners[(i+1)%4];
+    let mxm=(a.x+b.x)/2,mym=(a.y+b.y)/2;
+    MX.beginPath();MX.arc(mxm,mym,medR*0.45,0,Math.PI*2);
+    MX.fillStyle='#2a1808';MX.fill();
+    MX.lineWidth=Math.max(1,medR*0.16);MX.strokeStyle='#bfa054';MX.stroke();
+  }
+  MX.lineJoin='miter';
 }
 
 function drawParticles() {

@@ -92,21 +92,28 @@ canvas {
   display: flex;
   gap: 6px;
 }
-#home-btn, #map-btn, #idle-btn {
+#home-btn, #map-btn, #idle-btn, #bell-btn {
   background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
   border: 1px solid #bfa054;
   border-radius: 4px;
   height: 24px;
-  width: 28px;
+  width: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   box-shadow: inset 0 0 4px #000;
   transition: all 0.15s;
-  font-size: 14px;
+  font-size: 12px;
   position: relative;
 }
+/* The corner minimap is always visible above the 600px breakpoint, so the
+   toggle button is redundant there — it only earns its place once the small
+   minimap disappears (see the matching max-width:600px rule below). */
+#map-btn {
+  display: none;
+}
+#bell-btn:hover, #bell-btn:active,
 #home-btn:hover, #home-btn:active,
 #map-btn:hover, #map-btn:active,
 #idle-btn:hover, #idle-btn:active {
@@ -349,6 +356,19 @@ canvas {
   display:none; /* shown in the tooltip instead, so the icon can be bigger */
 }
 
+/* Unaffordable actions: greyed out, no hover glow, click is swallowed in JS */
+.act-btn.disabled{
+  opacity:0.4;
+  filter:grayscale(0.8);
+  cursor:not-allowed;
+}
+.act-btn.disabled:hover, .act-btn.disabled:active{
+  background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
+  border-color:#bfa054;
+  box-shadow: inset 0 0 4px #000;
+  filter:grayscale(0.8);
+}
+
 
 /* Active/pulsing state when waiting for map tap */
 .act-btn.rally-active {
@@ -459,6 +479,24 @@ canvas {
 #minimap{
   width:100%;
   height:100%;
+}
+/* Map toggle button glows while the minimap is expanded */
+#map-btn.map-active{
+  filter:drop-shadow(0 0 6px #ffd700) brightness(1.25);
+}
+/* Visual cue: minimap is non-interactive during building placement.
+   pointer-events:none on the WRAP (not just the canvas) so clicks fall
+   through to the game canvas underneath. */
+#minimap-wrap.build-active {
+  opacity: 0.45;
+  pointer-events: none;
+}
+/* Same treatment while a box-select drag is in progress: once the drag
+   crosses into the minimap's diamond, its own pointer-events would steal
+   mousemove/mouseup from the game canvas and cut the selection box short. */
+#minimap-wrap.drag-select-active {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 /* ---- FLOATING NOTIFICATIONS ---- */
@@ -651,9 +689,12 @@ canvas {
 @media(max-width:600px){
 
   #pop{font-size:13px;padding:3px 5px;height:30px}
-  #home-btn, #map-btn, #idle-btn {height:30px;width:34px;font-size:16px}
+  #home-btn, #map-btn, #idle-btn, #bell-btn {height:30px;width:30px;font-size:14px}
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
+  /* Corner minimap is gone at this width — the only way back to a map view
+     is this button, so it earns its keep here (hidden by default above). */
+  #map-btn { display: flex; }
 
   #bottom{height:96px}
   #sel-info{width:180px;padding:6px}
@@ -681,7 +722,7 @@ canvas {
   #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
   #pop{font-size:12px;padding:3px 4px;height:27px}
-  #home-btn, #map-btn, #idle-btn {height:27px;width:30px;font-size:15px}
+  #home-btn, #map-btn, #idle-btn, #bell-btn {height:27px;width:27px;font-size:13px}
   #pop-wrap{bottom:94px}
 }
 
@@ -805,6 +846,13 @@ canvas {
 .idle-active {
   animation: flash-gold 1.2s infinite alternate;
   border-color: #ffd700 !important;
+}
+/* Town bell ringing: same 🔔 icon, but the button lights up while active */
+#bell-btn.bell-active {
+  animation: flash-gold 1.2s infinite alternate;
+  border-color: #ffd700 !important;
+  background: linear-gradient(180deg, #8a5a20 0%, #5c3810 100%);
+  box-shadow: 0 0 8px #ffd700, inset 0 0 4px #000;
 }
 .idle-badge {
   position: absolute;

@@ -68,7 +68,7 @@ function update(){
   let remainingProjectiles = [];
   projectiles.forEach(p => {
     let target = entities.find(en => en.id === p.targetId);
-    if (!target || target.hp <= 0) return;
+    if (!target || target.hp <= 0 || target.garrisonedIn) return; // target hid inside a building — arrow fizzles
     let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
     let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
     let dx = targetX - p.x;
@@ -102,7 +102,7 @@ function update(){
 
 // Soft unit separation: push overlapping units apart (AoE2 collision)
 function separateUnits(){
-  let units=entities.filter(e=>e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass');
+  let units=entities.filter(e=>e.type==='unit'&&!e.garrisonedIn&&e.utype!=='sheep'&&e.utype!=='sheep_carcass');
   let sep=0.08;
   let minDist=0.5;
   for(let i=0;i<units.length;i++){

@@ -14,9 +14,10 @@
 <div id="help-hint"></div>
 </div>
 <div id="pop-wrap">
-  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()" title="Select Idle Villager"></div>
-  <div id="map-btn" onclick="toggleMinimap()" title="Toggle Map">🗺️</div>
-  <div id="home-btn" onclick="focusTownCenter()" title="Go to Town Center">🏰</div>
+  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"></div>
+  <div id="bell-btn" style="display:none;" onclick="toggleTownBell()">🔔</div>
+  <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap.">🌍</div>
+  <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center.">🏰</div>
   <div id="pop">4/10</div>
 </div>
 <div id="bottom">
@@ -33,7 +34,7 @@
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <!-- Direct body child: #ui is its own stacking context capped at z-index 10,
      so the button must live outside it to render above the minimap (z 20). -->
-<div id="menu-btn" onclick="toggleMenu()">Menu</div>
+<div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings.">Menu</div>
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 
 <div id="tutorial">

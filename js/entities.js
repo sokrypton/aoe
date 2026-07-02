@@ -13,7 +13,7 @@ function createUnit(type,x,y,team){
 }
 function pushUnitsOut(bx,by,bw,bh){
   entities.forEach(e=>{
-    if(e.type==='unit'){
+    if(e.type==='unit'&&!e.garrisonedIn){
       let ux=Math.round(e.x), uy=Math.round(e.y);
       if(ux>=bx&&ux<bx+bw&&uy>=by&&uy<by+bh){
         if(typeof findSpawnTile==='function'){
@@ -36,7 +36,7 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   let e={id:nextId++,type:'building',btype:type,x,y,team,hp:b.hp,maxHp:b.hp,
     w:bw,h:bh,queue:[],trainTick:0,rallyX:x+bw,rallyY:y+bh,
     complete:true,buildProgress:0,buildTime:b.buildTime||200,
-    food:b.food||0,maxFood:b.food||0};
+    food:b.food||0,maxFood:b.food||0,garrison:[]};
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     if(y+dy<MAP&&x+dx<MAP)map[y+dy][x+dx].occupied=e.id;
     if(b.isFarm){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;}

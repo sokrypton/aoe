@@ -437,11 +437,18 @@ function damageEntity(attacker, target){
     spawnParticles(target.x + (target.w||1)/2, target.y + (target.h||1)/2, '#8b6c43', 3, 0.03, 2);
   }
 
-  // Under attack alarm trigger (player team 0)
+  // Feed the adaptive music: actual damage is the strongest mood signal —
+  // it catches open-field battles that building-proximity checks miss.
+  if (attacker.team === 1 && target.team === 0) window.lastDangerTick = tick;
+  else if (attacker.team === 0 && target.team === 1) window.lastWarTick = tick;
+
+  // Under attack alarm (player team 0): the horn announces a NEW attack, not
+  // an ongoing one — the danger music carries the battle. It only re-arms
+  // after ~20s without taking any hits.
   if (target.team === 0 && attacker.team === 1) {
-    let lastAlert = window.lastAlertTick || 0;
-    if (tick - lastAlert > 180) {
-      window.lastAlertTick = tick;
+    let lastHit = window.lastUnderAttackTick;
+    window.lastUnderAttackTick = tick;
+    if (lastHit === undefined || tick - lastHit > 600) {
       if (window.playSound) window.playSound('alert');
       showMsg('We are under attack!');
     }
@@ -584,10 +591,130 @@ function restoreSavedTask(e) {
   }
 }
 
+// ---- GARRISON (AoE2-style town bell & building garrison) ----
+function garrisonCap(b){return (b.btype&&BLDGS[b.btype].garrisonCap)||0;}
+function garrisonCount(b){return b.garrison?b.garrison.length:0;}
+function canGarrisonIn(b,team){
+  return b.type==='building'&&b.team===team&&b.complete&&b.hp>0&&garrisonCap(b)>0;
+}
+function enterGarrison(e,b){
+  b.garrison=b.garrison||[];
+  if(b.garrison.length>=garrisonCap(b))return false;
+  clearUnitPath(e);
+  e.task=null;e.target=null;e.followId=undefined;e.garrisonTarget=null;
+  e.garrisonedIn=b.id;
+  // Park the unit at the building's center so fog/minimap stay sane while hidden.
+  e.x=b.x+b.w/2;e.y=b.y+b.h/2;e.fromX=e.x;e.fromY=e.y;
+  b.garrison.push(e.id);
+  // If the entering unit was selected, hand the selection to the building
+  // (once its last selected unit steps inside) so the garrison grid shows up.
+  if(selected.some(s=>s.id===e.id)){
+    selected=selected.filter(s=>s.id!==e.id);
+    if(selected.length===0)selected=[b];
+  }
+  return true;
+}
+// Eject garrisoned units to open tiles around the building. Optional filter
+// (e.g. villagers only for "all clear"); returns how many were ejected.
+function ejectGarrison(b,filter){
+  if(!b.garrison||b.garrison.length===0)return 0;
+  let keep=[],out=0;
+  b.garrison.forEach(id=>{
+    let u=entitiesById.get(id);
+    if(!u){return;}
+    if(filter&&!filter(u)){keep.push(id);return;}
+    let spawn=findSpawnTile(b.x+b.w,b.y+b.h,8)||findSpawnTile(b.x-1,b.y-1,8);
+    u.garrisonedIn=undefined;
+    if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
+    u.fromX=u.x;u.fromY=u.y;
+    clearUnitPath(u);
+    out++;
+    // Villagers with a savedTask auto-resume via restoreSavedTask in updateUnit.
+  });
+  b.garrison=keep;
+  return out;
+}
+function ringTownBell(){
+  window.bellActive=true;
+  // Reserve slots so villagers spread across TC/towers instead of all
+  // targeting one full building.
+  let spots=entities.filter(en=>canGarrisonIn(en,0))
+    .map(b=>({b,room:garrisonCap(b)-garrisonCount(b)}));
+  let sent=0;
+  entities.forEach(e=>{
+    if(e.team!==0||e.type!=='unit'||e.utype!=='villager'||e.garrisonedIn)return;
+    if(e.task==='garrison')return;
+    let best=null,bd=Infinity;
+    spots.forEach(s=>{
+      if(s.room<=0)return;
+      let d=distToBuilding(e.x,e.y,s.b);
+      if(d<bd){bd=d;best=s;}
+    });
+    if(!best)return;
+    best.room--;
+    if(!e.savedTask&&(e.task||e.buildTarget||e.gatherX>=0)){
+      e.savedTask={task:e.task,gatherX:e.gatherX,gatherY:e.gatherY,
+        buildTarget:e.buildTarget,buildQueue:e.buildQueue,prevTask:e.prevTask};
+    }
+    e.target=null;e.followId=undefined;e.buildTarget=null;
+    e.task='garrison';e.garrisonTarget=best.b.id;
+    let pt=nearestBldgPerimeter(e.x,e.y,best.b,e.id);
+    if(pt)pathUnitTo(e,pt.x,pt.y);
+    sent++;
+  });
+  if(window.playSound)window.playSound('bell');
+  showMsg(sent>0?'Town bell! Villagers run for cover':'Town bell! No garrison space for villagers');
+  if(typeof updateUI==='function')updateUI();
+}
+function soundAllClear(){
+  window.bellActive=false;
+  // Release villagers from every garrison (military stays put — use the
+  // building's Ungarrison button for them) and cancel villagers still en route.
+  entities.forEach(en=>{
+    if(en.type==='building'&&en.team===0)ejectGarrison(en,u=>u.utype==='villager');
+  });
+  entities.forEach(e=>{
+    if(e.team===0&&e.type==='unit'&&e.task==='garrison'){
+      e.task=null;e.garrisonTarget=null;clearUnitPath(e);
+    }
+  });
+  if(window.playSound)window.playSound('bell_clear');
+  showMsg('All clear! Villagers return to work');
+  if(typeof updateUI==='function')updateUI();
+}
+
 function updateUnit(e){
   if(e.hp<=0)return;
-  if(e.utype==='villager' && !e.target && e.savedTask){
+  if(e.garrisonedIn)return; // inside a building: no movement, tasks, or combat
+  // Targets that garrisoned mid-fight become unattackable — drop them.
+  if(e.target){
+    let t=entitiesById.get(e.target);
+    if(t&&t.garrisonedIn)e.target=null;
+  }
+  if(e.utype==='villager' && !e.target && e.savedTask && e.task!=='garrison'){
     restoreSavedTask(e);
+  }
+  // Walking toward a building to garrison inside it
+  if(e.task==='garrison'){
+    let b=e.garrisonTarget?entitiesById.get(e.garrisonTarget):null;
+    if(!b||b.hp<=0||!b.complete||garrisonCount(b)>=garrisonCap(b)){
+      e.task=null;e.garrisonTarget=null; // savedTask (if any) resumes next tick
+    } else if((()=>{
+      // Arrival check: like adjToBuilding but accepts diagonal corner
+      // perimeter tiles (~1.41 from the footprint), which nearestBldgPerimeter
+      // legitimately routes units to.
+      let gdx=Math.max(b.x-0.5-e.x,0,e.x-(b.x+b.w-0.5));
+      let gdy=Math.max(b.y-0.5-e.y,0,e.y-(b.y+b.h-0.5));
+      return Math.sqrt(gdx*gdx+gdy*gdy)<=1.45;
+    })()){
+      enterGarrison(e,b);
+      return;
+    } else if(e.path.length===0&&tick-(e.lastRepathTick||0)>=10){
+      e.lastRepathTick=tick;
+      let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
+      if(pt)pathUnitTo(e,pt.x,pt.y);
+      if(e.path.length===0){e.task=null;e.garrisonTarget=null;}
+    }
   }
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
@@ -1114,7 +1241,7 @@ function updateUnit(e){
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let closest=null, closestD=scanRange+0.1;
       entities.forEach(en=>{
-        if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
+        if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&!en.garrisonedIn&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
           let ey=Math.round(en.y),ex=Math.round(en.x);
           if(e.team===0&&(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2))return;
           let d=dist(e,en);
@@ -1179,6 +1306,14 @@ function handleDeath(e,killerTeam){
     return;
   }
   if(e.type==='building'){
+    // Units garrisoned inside a destroyed building perish with it (AoE2 rule)
+    if(e.garrison&&e.garrison.length>0){
+      let ids=e.garrison.slice();e.garrison=[];
+      ids.forEach(id=>{
+        let u=entitiesById.get(id);
+        if(u){u.garrisonedIn=undefined;u.hp=0;handleDeath(u,killerTeam);}
+      });
+    }
     let b=BLDGS[e.btype];
     for(let dy=0;dy<e.h;dy++)for(let dx=0;dx<e.w;dx++){
       if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=null;
@@ -1237,23 +1372,37 @@ function updateBuilding(e){
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
       let range = e.btype === 'TC' ? 6 : 5;
-      let target = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
-                           .filter(en => dist({x: e.x + e.w/2, y: e.y + e.h/2}, en) <= range)
-                           .sort((a,b) => dist({x: e.x + e.w/2, y: e.y + e.h/2}, a) - dist({x: e.x + e.w/2, y: e.y + e.h/2}, b))[0];
-      if (target) {
+      let center = {x: e.x + e.w/2, y: e.y + e.h/2};
+      let targets = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
+                            .filter(en => dist(center, en) <= range)
+                            .sort((a,b) => dist(center, a) - dist(center, b));
+      if (targets.length > 0) {
         let bCenter = {
           id: e.id,
           type: 'building',
           btype: e.btype,
-          x: e.x + e.w/2,
-          y: e.y + e.h/2,
+          x: center.x,
+          y: center.y,
           team: e.team,
           atk: e.btype === 'TC' ? 6 : BLDGS.TOWER.atk // TC deals 6; Tower matches its own BLDGS.TOWER.atk stat (5)
         };
-        spawnProjectile(bCenter, target);
+        // AoE2-style: garrisoned units add extra arrows (capped at +5),
+        // spread over the closest targets in range.
+        let arrows = 1 + Math.min(garrisonCount(e), 5);
+        for (let i = 0; i < arrows; i++) {
+          spawnProjectile(bCenter, targets[i % targets.length]);
+        }
         e.atkCooldown = 40; // fire every 1.3s
       }
     }
+  }
+
+  // Garrisoned units slowly heal while sheltered
+  if (garrisonCount(e) > 0 && tick % 45 === 0) {
+    e.garrison.forEach(id => {
+      let u = entitiesById.get(id);
+      if (u && u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 1);
+    });
   }
 
   if(e.queue.length>0){
@@ -1277,6 +1426,27 @@ function updateBuilding(e){
         window.playSound('train');
       }
       
+      // Rally point set on a garrisonable own building (including this one):
+      // the fresh unit appears directly inside it, AoE2-style — no walking.
+      if(unit && e.team===0 && e.rallyX!==undefined && e.rallyY!==undefined){
+        let rallyB=null;
+        if(e.rallyTargetId){
+          let t=entitiesById.get(e.rallyTargetId);
+          if(t&&t.type==='building'&&canGarrisonIn(t,unit.team))rallyB=t;
+        } else {
+          let tx=Math.floor(e.rallyX), ty=Math.floor(e.rallyY);
+          if(ty>=0&&ty<MAP&&tx>=0&&tx<MAP&&map[ty][tx].occupied){
+            let t=entitiesById.get(map[ty][tx].occupied);
+            if(t&&canGarrisonIn(t,unit.team))rallyB=t;
+          }
+        }
+        if(rallyB&&garrisonCount(rallyB)<garrisonCap(rallyB)){
+          enterGarrison(unit,rallyB);
+          if(typeof updateUI==='function')updateUI();
+          return;
+        }
+      }
+
       // Auto-command the unit based on building's rally point
       if(unit && e.team===0 && e.rallyX!==undefined && e.rallyY!==undefined){
         if(e.rallyTargetId){

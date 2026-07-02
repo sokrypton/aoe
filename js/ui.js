@@ -22,7 +22,7 @@ function updateUI(){
   let currentStone = Math.floor(res.stone);
   
   // Calculate idle villagers count
-  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
+  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
   let currentIdleCount = idleVils.length;
   
   // Selection key
@@ -57,6 +57,14 @@ function updateUI(){
     if (selected.length > 1) {
       currentSelectionDetails += ':grid' + selected.map(s => s.id + '_' + s.hp).join(',');
     }
+    // Garrison grid on a selected building — needs members + their HP in the
+    // dirty key so the panel refreshes as units enter/leave/heal.
+    if (selected.length === 1 && e.garrison && e.garrison.length > 0) {
+      currentSelectionDetails += ':gar' + e.garrison.map(id => {
+        let u = entitiesById.get(id);
+        return u ? id + '_' + u.hp : id;
+      }).join(',');
+    }
   }
 
   // Initialize dirty state tracker if not present
@@ -79,7 +87,8 @@ function updateUI(){
     gameStarted !== lu.gameStarted || currentSelListKey !== lu.selectedKey ||
     currentSelectionDetails !== lu.selectionDetails || placing !== lu.placing ||
     window.currentVillagerMenu !== lu.currentVillagerMenu ||
-    !!window.settingRally !== !!lu.settingRally
+    !!window.settingRally !== !!lu.settingRally ||
+    !!window.bellActive !== !!lu.bellActive
   );
 
   if (!stateChanged) return;
@@ -99,6 +108,7 @@ function updateUI(){
   lu.placing = placing;
   lu.currentVillagerMenu = window.currentVillagerMenu;
   lu.settingRally = !!window.settingRally;
+  lu.bellActive = !!window.bellActive;
 
   // Perform actual DOM updates
   document.getElementById('r-food').textContent=currentFood;
@@ -107,12 +117,29 @@ function updateUI(){
   document.getElementById('r-stone').textContent=currentStone;
   document.getElementById('pop').textContent=`${popUsed}/${popCap}`;
   
+  let bellBtn = document.getElementById('bell-btn');
+  if(bellBtn) {
+    if(gameStarted && !gameOver) {
+      bellBtn.style.display = 'flex';
+      bellBtn.textContent = '🔔';
+      bellBtn.classList.toggle('bell-active', !!window.bellActive);
+      bellBtn.dataset.tipLabel = 'Town Bell';
+      bellBtn.dataset.tipDesc = window.bellActive
+        ? 'Bell is ringing — villagers are hiding in Town Centers and towers. Click to sound the all clear.'
+        : 'Ring the town bell: all villagers run to garrison in the nearest Town Center or tower.';
+    } else {
+      bellBtn.style.display = 'none';
+    }
+  }
+
   let idleBtn = document.getElementById('idle-btn');
   if(idleBtn) {
     if(currentIdleCount > 0) {
       idleBtn.style.display = 'flex';
       idleBtn.innerHTML = `🧑‍🌾<div class="idle-badge">${currentIdleCount}</div>`;
       idleBtn.classList.add('idle-active');
+      idleBtn.dataset.tipLabel = 'Idle Villager';
+      idleBtn.dataset.tipDesc = `${currentIdleCount} villager${currentIdleCount>1?'s are':' is'} idle. Click to select and cycle through them.`;
     } else {
       idleBtn.style.display = 'none';
       idleBtn.classList.remove('idle-active');
@@ -120,13 +147,18 @@ function updateUI(){
   }
 
   let act=document.getElementById('actions');
-  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally;
+  let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally
+    +':'+!!window.bellActive+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0);
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
   if (bottomEl) {
     let isSubMenu = window.currentVillagerMenu === 'eco' || window.currentVillagerMenu === 'mil';
     bottomEl.classList.toggle('menu-active', isSubMenu);
+  }
+  let minimapWrap = document.getElementById('minimap-wrap');
+  if (minimapWrap) {
+    minimapWrap.classList.toggle('build-active', !!(placing || window.isDraggingWall));
   }
   if(rebuildActions)act.innerHTML='';
 
@@ -137,11 +169,42 @@ function updateUI(){
   let selInfo=document.getElementById('sel-info');
   let selGrid=document.getElementById('sel-grid');
   let isMulti=selected.length>1;
-  if(selInfo) selInfo.classList.toggle('multi-select', isMulti);
+  // A selected own building with units inside reuses the multi-select grid to
+  // show its garrison (AoE2-style); clicking an icon releases that unit.
+  let garrisonSel = !isMulti && selected.length===1 && selected[0].type==='building'
+    && selected[0].team===0 && selected[0].garrison && selected[0].garrison.length>0
+    ? selected[0] : null;
+  if(selInfo) selInfo.classList.toggle('multi-select', isMulti||!!garrisonSel);
   if(selGrid && currentSelectionDetails!==(window.lastSelGridDetails||'')){
     window.lastSelGridDetails=currentSelectionDetails;
     selGrid.innerHTML='';
-    if(isMulti){
+    if(garrisonSel){
+      garrisonSel.garrison.forEach(id=>{
+        let u=entitiesById.get(id);
+        if(!u)return;
+        let data=UNITS[u.utype];
+        let icon=document.createElement('div');
+        icon.className='sel-unit-icon';
+        setPortraitIcon(icon, u.utype, data&&data.icon);
+        let hpPct=Math.max(0,Math.min(100,Math.floor(u.hp/u.maxHp*100)));
+        let hpColor='#2b8a3e';
+        if(hpPct<20) hpColor='#cc3333';
+        else if(hpPct<50) hpColor='#d9a711';
+        let bar=document.createElement('div');bar.className='sel-unit-hp';
+        let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
+        fill.style.width=hpPct+'%';
+        fill.style.background=hpColor;
+        bar.appendChild(fill);
+        icon.appendChild(bar);
+        icon.title=(data&&data.name||u.utype)+` (HP ${u.hp}/${u.maxHp})\nClick to release from garrison`;
+        icon.onclick=()=>{
+          if(gameOver)return;
+          ejectGarrison(garrisonSel, gu=>gu.id===id);
+          updateUI();
+        };
+        selGrid.appendChild(icon);
+      });
+    } else if(isMulti){
       selected.forEach(s=>{
         let key=s.type==='building'?s.btype:s.utype;
         let data=s.type==='building'?BLDGS[key]:UNITS[key];
@@ -176,7 +239,7 @@ function updateUI(){
 
   let port = document.getElementById('sel-portrait');
   if(gameOver){
-    if (port) { port.textContent = won ? '🏆' : '💀'; port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, null, won ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent=won?'VICTORY!':'DEFEAT!';
     document.getElementById('sel-details').textContent=won?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
     return;
@@ -210,6 +273,9 @@ function updateUI(){
     let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? 5 : 0);
     if(bAtk > 0) {
       det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">⚔️ ${bAtk}  🏹 ${bRange}</div>`;
+    }
+    if(e.complete && garrisonCap(e) > 0) {
+      det += `<div style="margin-top:1px;">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
     }
     if(!e.complete && !e.exhausted) det+=`<div style="margin-top:1px;">Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
     else {
@@ -256,6 +322,7 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='unit';
           btn.dataset.tipKey=ut;
+          btn.dataset.cost=JSON.stringify(u.cost);
           let costStr=formatCost(u.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>trainUnit(e,ut);
@@ -300,6 +367,7 @@ function updateUI(){
         btn.dataset.tipLabel='Prepay Farm Reseed';
         btn.dataset.tipDesc='Pre-pays 60 Wood to automatically reseed an exhausted farm. Queued reseeds are used before spending resources again.';
         btn.dataset.tipCost=JSON.stringify({w:60});
+        btn.dataset.cost=JSON.stringify({w:60});
         let costStr='W:60';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>prepayFarm();
@@ -311,6 +379,7 @@ function updateUI(){
         btn.dataset.tipLabel='Reactivate Farm';
         btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (300 Food).';
         btn.dataset.tipCost=JSON.stringify({w:60});
+        btn.dataset.cost=JSON.stringify({w:60});
         let costStr='W:60';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>reactivateFarm(e);
@@ -409,6 +478,7 @@ function updateUI(){
           btn.dataset.tipType='building';
           btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
+          btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>{
@@ -443,6 +513,7 @@ function updateUI(){
           btn.dataset.tipType='building';
           btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
+          btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>{
@@ -456,8 +527,28 @@ function updateUI(){
     }
   }
 
-
+  refreshActionAffordability();
 }
+
+// Grey out action buttons whose cost can't currently be paid. Runs on every
+// dirty updateUI pass (resource totals are part of the dirty check), so
+// buttons wake up the moment the resources come in — no rebuild needed.
+function refreshActionAffordability(){
+  document.querySelectorAll('#actions .act-btn[data-cost]').forEach(btn=>{
+    let cost;
+    try{ cost=JSON.parse(btn.dataset.cost); }catch(_){ return; }
+    btn.classList.toggle('disabled', !canAfford(0,cost));
+  });
+}
+// Swallow clicks on disabled buttons before their own onclick fires.
+document.getElementById('actions').addEventListener('click', function(e){
+  let btn = e.target.closest && e.target.closest('.act-btn.disabled');
+  if(btn){
+    e.stopPropagation();
+    e.preventDefault();
+    showMsg('Not enough resources!');
+  }
+}, true);
 
 function trainUnit(bldg,utype){
   if(gameOver)return;
@@ -489,9 +580,15 @@ function showMsg(txt){
 }
 
 
+window.toggleTownBell = function() {
+  if (gameOver || !gameStarted) return;
+  if (window.bellActive) soundAllClear();
+  else ringTownBell();
+};
+
 window.selectIdleVillager = function() {
   if (gameOver || !gameStarted) return;
-  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && e.path.length === 0);
+  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
   if (idleVils.length === 0) {
     showMsg('No idle villagers!');
     return;
@@ -733,6 +830,32 @@ window.reactivateFarm = reactivateFarm;
     // Only hide when leaving #bottom entirely (not just moving between children)
     if (!this.contains(e.relatedTarget)) hideTip();
   });
+
+  // ---- Top-bar & menu button hover: plain label/desc tooltips ----
+  // Same rich tooltip as action buttons, driven by data-tip-label/-desc set
+  // either statically in index.html (map/home/menu) or dynamically in
+  // updateUI() (bell/idle).
+  function attachSimpleTips(container) {
+    if (!container) return;
+    container.addEventListener('mouseover', function(e) {
+      if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
+      let el = e.target;
+      while (el && el !== this.parentElement) {
+        if (el.dataset && el.dataset.tipLabel) break;
+        el = el.parentElement;
+      }
+      if (!el || !el.dataset || !el.dataset.tipLabel) { hideTip(); return; }
+      showTip(buildTipHTML({ name: el.dataset.tipLabel, desc: el.dataset.tipDesc || null }), e.clientX, e.clientY);
+    });
+    container.addEventListener('mousemove', function(e) {
+      if (TIP.classList.contains('visible')) positionTip(e.clientX, e.clientY);
+    });
+    container.addEventListener('mouseout', function(e) {
+      if (!this.contains(e.relatedTarget)) hideTip();
+    });
+  }
+  attachSimpleTips(document.getElementById('pop-wrap'));
+  attachSimpleTips(document.getElementById('menu-btn'));
 
 })();
 

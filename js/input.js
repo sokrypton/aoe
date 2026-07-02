@@ -166,7 +166,17 @@ C.addEventListener('mousemove',e=>{
   }
   if(dragStart&&(e.buttons&1)){
     dragEnd={x:e.clientX,y:e.clientY};
-    if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8)isDragging=true;
+    if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
+      if(!isDragging){
+        isDragging=true;
+        // Disable the minimap's own hit-testing the moment a real box-select
+        // starts — otherwise dragging the selection box over the minimap's
+        // diamond hands mousemove/mouseup to it instead of the game canvas,
+        // silently truncating the drag.
+        let mw=document.getElementById('minimap-wrap');
+        if(mw)mw.classList.add('drag-select-active');
+      }
+    }
   }
 });
 // Track mouse position globally so edge scroll works correctly when cursor is over UI panels
@@ -261,6 +271,8 @@ C.addEventListener('mouseup',e=>{
       }
     }
     dragStart=null;dragEnd=null;isDragging=false;
+    let mw=document.getElementById('minimap-wrap');
+    if(mw)mw.classList.remove('drag-select-active');
   }
 });
 document.addEventListener('contextmenu',e=>{
@@ -503,27 +515,58 @@ function handleTap(sx,sy){
 
 // Minimap: works with both mouse and touch dragging
 let minimapDragging = false;
-function minimapJump(sx,sy){
-  let rect=MC.getBoundingClientRect();
-  let mx=(sx-rect.left)/rect.width*(MC.clientWidth||rect.width);
-  let my=(sy-rect.top)/rect.height*(MC.clientHeight||rect.height);
-  let p=miniToMap(mx,my,MC.clientWidth||rect.width,MC.clientHeight||rect.height);
-  // Clamping coordinates so dragging slightly outside map boundaries feels smooth
+
+// Returns true when canvas-local point (mx,my) falls inside the isometric
+// diamond that represents the map. The minimap canvas is square but the
+// playable area is only the diamond in the centre — corner regions are empty.
+function isInMinimapDiamond(mx, my, mw, mh) {
+  let mt = getMiniTransform(mw, mh);
+  let hw = MAP * HALF_TW * mt.scale; // diamond horizontal half-width
+  let hh = MAP * HALF_TH * mt.scale; // diamond vertical half-height
+  let cx = mt.ox;       // horizontal centre = mw/2
+  let cy = mt.oy + hh;  // vertical centre   = pad + hh from top
+  return (Math.abs(mx - cx) / hw + Math.abs(my - cy) / hh) <= 1;
+}
+
+function minimapJump(sx, sy) {
+  let rect = MC.getBoundingClientRect();
+  let mw = MC.clientWidth  || rect.width;
+  let mh = MC.clientHeight || rect.height;
+  // Canvas-local coordinates of the click
+  let mx = (sx - rect.left) / rect.width  * mw;
+  let my = (sy - rect.top)  / rect.height * mh;
+
+  // Only apply the diamond hit-test for fresh clicks, not for an ongoing drag.
+  // Once dragging has started inside the diamond, the cursor is free to roam
+  // outside the minimap canvas until the mouse/touch is released.
+  if (!minimapDragging && !isInMinimapDiamond(mx, my, mw, mh)) return;
+
+  // When cursor is outside the minimap canvas during a drag, clamp canvas
+  // coordinates so miniToMap still produces a valid map position.
+  mx = Math.max(0, Math.min(mw, mx));
+  my = Math.max(0, Math.min(mh, my));
+
+  let p = miniToMap(mx, my, mw, mh);
+  // Clamp to map bounds so dragging past the edge snaps to the corner
   p.x = Math.max(0, Math.min(MAP, p.x));
   p.y = Math.max(0, Math.min(MAP, p.y));
-  let iso=toIso(p.x,p.y);
-  camX=iso.ix;camY=iso.iy;
-  window.targetCamX=camX;window.targetCamY=camY;
+  let iso = toIso(p.x, p.y);
+  camX = iso.ix; camY = iso.iy;
+  window.targetCamX = camX; window.targetCamY = camY;
   // Manual camera jump should release camera-follow, same as any other
   // manual pan — otherwise handleScroll() snaps straight back to the
   // followed unit on the very next frame and the minimap click does nothing.
-  window.cameraFollowId=null;
+  window.cameraFollowId = null;
 }
 
 function toggleMinimap(){
   let wrap = document.getElementById('minimap-wrap');
   if(wrap) {
-    wrap.classList.toggle('minimap-expanded');
+    let expanded = wrap.classList.toggle('minimap-expanded');
+    // Light the map button up while expanded so it clearly reads as an
+    // active toggle that can be pressed again to exit.
+    let btn = document.getElementById('map-btn');
+    if(btn) btn.classList.toggle('map-active', expanded);
     if(window.playSound) window.playSound('click');
   }
 }
@@ -545,6 +588,11 @@ function focusTownCenter(){
 
 MC.addEventListener('mousedown',e=>{
   if(gameOver)return;
+  if(placing || window.isDraggingWall)return; // ignore minimap during build/wall placement
+  // Don't start a drag when the click lands in an empty corner outside the diamond
+  let rect=MC.getBoundingClientRect();
+  let mw=MC.clientWidth||rect.width, mh=MC.clientHeight||rect.height;
+  if(!isInMinimapDiamond((e.clientX-rect.left)/rect.width*mw,(e.clientY-rect.top)/rect.height*mh,mw,mh))return;
   hasTouch=false;
   minimapDragging=true;
   minimapJump(e.clientX,e.clientY);
@@ -561,9 +609,15 @@ window.addEventListener('mouseup',()=>{
 MC.addEventListener('touchstart',e=>{
   e.preventDefault();e.stopPropagation();
   if(gameOver)return;
+  if(placing || window.isDraggingWall)return; // ignore minimap during build/wall placement
+  // Don't start a drag when the touch lands in an empty corner outside the diamond
+  let t0=e.touches[0];
+  let rect=MC.getBoundingClientRect();
+  let mw=MC.clientWidth||rect.width, mh=MC.clientHeight||rect.height;
+  if(!isInMinimapDiamond((t0.clientX-rect.left)/rect.width*mw,(t0.clientY-rect.top)/rect.height*mh,mw,mh))return;
   hasTouch=true;
   minimapDragging=true;
-  minimapJump(e.touches[0].clientX,e.touches[0].clientY);
+  minimapJump(t0.clientX,t0.clientY);
 },{passive:false});
 MC.addEventListener('touchmove',e=>{
   if(minimapDragging){
@@ -616,7 +670,7 @@ function getUnitUnderCursor(sx, sy) {
   let extraHit = isMobile ? 6 * ZOOM : 0;
 
   entities.forEach(en => {
-    if (en.type === 'unit') {
+    if (en.type === 'unit' && !en.garrisonedIn) {
       let eux = Math.round(en.x), euy = Math.round(en.y);
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
       if (en.team !== 0 && uf !== 2) return;
@@ -753,7 +807,7 @@ function doBoxSelect(x1,y1,x2,y2){
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   selected=entities.filter(en=>{
     if(en.team!==0)return false;
-    if(en.type!=='unit'||en.utype==='sheep')return false;
+    if(en.type!=='unit'||en.utype==='sheep'||en.garrisonedIn)return false;
     let iso=toIso(en.x,en.y);
     let { ox, oy } = getUnitGroupOffset(en.id);
     let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
@@ -856,6 +910,9 @@ function doCommand(sx,sy){
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
     // merely standing near a damaged building shouldn't hijack the click.
+    // Manual garrisoning-by-click was removed for simplicity: the town bell
+    // is now the only way villagers garrison, so clicking an own building
+    // always means "fix it" (repair if damaged, resume if unfinished).
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
   }
   if(buildTarget)followTarget=null;

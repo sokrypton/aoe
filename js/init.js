@@ -1,5 +1,11 @@
 // ---- INIT ----
 function init(){
+  window.bellActive=false;
+  window.lastUnderAttackTick=undefined;
+  // Music mood damage-signals must reset with the tick counter, or a stale
+  // large value from the previous match reads as "combat right now".
+  window.lastDangerTick=undefined;
+  window.lastWarTick=undefined;
   genMap();
   initFog(); // Initialize Fog of War grid
   STARTS.forEach(start=>{
@@ -51,9 +57,15 @@ function startGame(difficulty){
   gamePaused=false;
   aiTick=0;
   window.playedGameOverSound = false; // Reset game over sound trigger
-  // Initialize audio on first click
-  if (window.initAudio) window.initAudio();
-  if (window.startAmbientMusic) window.startAmbientMusic();
+  if (window.stopGameOverMusic) window.stopGameOverMusic();
+  // Initialize audio on first click. Music must never be able to block the
+  // game from starting — a scheduling error here is logged, not fatal.
+  try {
+    if (window.initAudio) window.initAudio();
+    if (window.startAmbientMusic) window.startAmbientMusic();
+  } catch (err) {
+    console.warn('Music failed to start:', err);
+  }
   
   let menu=document.getElementById('tutorial');
   if(menu)menu.style.display='none';
@@ -160,9 +172,12 @@ function toggleMenu(){
         startBtn.textContent = inMatch ? 'Restart' : 'Start';
       }
     } else {
-      applyAudioSettings();
       menu.style.display = 'none';
+      // Unpause BEFORE applying audio settings: playAmbientChord skips
+      // scheduling while gamePaused, so starting music against a still-paused
+      // game would silently defer it to the next phrase (~6s later).
       gamePaused = false;
+      applyAudioSettings();
     }
   }
 }
@@ -191,7 +206,8 @@ function gameLoop(){
   if(gameOver){
     if (!window.playedGameOverSound) {
       window.playedGameOverSound = true;
-      if (window.playSound) window.playSound(won ? 'victory' : 'defeat');
+      if (window.stopAmbientMusic) window.stopAmbientMusic(); // cut ambient so the ending piece stands alone
+      if (window.startGameOverMusic) window.startGameOverMusic(won);
     }
     X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
     let cy=topH+H/2;

@@ -42,14 +42,14 @@ const TCOL={
 };
 
 const BLDGS={
-  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,desc:'Town Center. Trains villagers and accepts resource dropoffs.',icon:'🏰'},
+  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,garrisonCap:15,desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:150,desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:210,desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:210,desc:'Drop site for Gold and Stone.',icon:'⛏️'},
   MILL:{name:'Mill',w:1,h:1,hp:600,cost:{w:100},drop:'food',buildTime:210,desc:'Drop site for Food. Necessary to plant Farms.',icon:'🛞'},
   FARM:{name:'Farm',w:1,h:1,hp:100,cost:{w:60},isFarm:true,food:300,buildTime:90,desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
   BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:300,desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,buildTime:480,desc:'Defensive tower. Automatically shoots arrows at nearby enemies.',icon:'🗼'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,buildTime:480,garrisonCap:5,desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},buildTime:30,desc:'Heavy stone defensive barrier to block chokepoints.',icon:'🧱'},
   GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{w:30,s:20},buildTime:210,desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'}
 };
