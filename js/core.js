@@ -64,7 +64,7 @@ const UNITS={
 };
 const AI_LEVELS={
   easy:{name:'Easy',decisionInterval:240,maxVils:9,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:7,attackTick:3900,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:1,wood:1,gold:0,stone:0}},
-  standard:{name:'Standard',decisionInterval:180,maxVils:14,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:9,attackTick:2700,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:2,wood:1,gold:1,stone:0}},
+  standard:{name:'Medium',decisionInterval:180,maxVils:14,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:9,attackTick:2700,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:2,wood:1,gold:1,stone:0}},
   hard:{name:'Hard',decisionInterval:120,maxVils:20,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:10,attackTick:2100,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:3,wood:2,gold:1,stone:0}}
 };
 

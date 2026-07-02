@@ -247,7 +247,7 @@ function updateUI(){
   if(!gameStarted){
     if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Choose Difficulty';
-    document.getElementById('sel-details').textContent='Select Easy, Standard, or Hard to begin';
+    document.getElementById('sel-details').textContent='Select Easy, Medium, or Hard to begin';
     return;
   }
 

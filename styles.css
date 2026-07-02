@@ -568,41 +568,37 @@ canvas {
 .menu-divider {
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, #8b6c43 50%, transparent 100%);
-  margin: 16px 0;
+  margin: 14px 0;
 }
-.setup-section {
-  text-align: left;
-  margin: 20px 0;
-}
-.setup-section h3 {
-  font-family: 'Cinzel', serif;
-  font-size: 16px;
-  font-weight: 700;
-  color: #5c3b1e;
-  margin-bottom: 12px;
-  text-align: center;
-  letter-spacing: 1px;
-}
-/* Difficulty + Map Size side-by-side as compact segmented controls,
-   instead of two tall stacked lists of radio rows. */
-.setup-row {
-  display: flex;
-  gap: 16px;
-  margin: 16px 0;
+/* All four settings (Difficulty, Map Size, Sound, Music) as one balanced
+   2x2 grid of compact segmented controls — reads as a single settings
+   panel instead of two separately-spaced rows, and an icon in each label
+   lets you scan the panel without reading every word. */
+.setup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+  margin: 14px 0;
 }
 .setup-col {
-  flex: 1;
   min-width: 0;
 }
 .setup-col h3 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   font-family: 'Cinzel', serif;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   color: #5c3b1e;
-  margin-bottom: 8px;
-  text-align: center;
-  letter-spacing: 1px;
+  margin-bottom: 7px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+.setup-icon {
+  font-size: 13px;
+  line-height: 1;
 }
 .segmented {
   display: flex;
@@ -637,12 +633,6 @@ canvas {
 .segment:has(input:checked) {
   background: #8c1d1d;
   color: #ffebad;
-}
-.option-label {
-  font-family: Georgia, serif;
-  font-size: 15px;
-  font-weight: bold;
-  color: #3b220c;
 }
 .menu-action-btn {
   border: 2px solid #e5c158;
@@ -707,10 +697,10 @@ canvas {
 }
 @media(max-width:480px){
   #tutorial-box{padding:20px 18px;width:340px}
-  .setup-section{margin:12px 0}
   .menu-divider{margin:10px 0}
-  .setup-row{flex-direction:column;gap:12px}
-  .setup-col h3{font-size:15px}
+  .setup-grid{grid-template-columns:1fr;gap:12px}
+  .setup-col h3{font-size:14px}
+  .setup-icon{font-size:15px}
   .segment{font-size:15px;padding:12px 4px}
   .menu-action-btn{font-size:18px;padding:13px 26px}
 }
