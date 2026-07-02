@@ -96,6 +96,7 @@ function update(){
   });
   separateUnits();
   refreshPopulationCounts();
+  updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
   updateAI();
   refreshPopulationCounts();
 }

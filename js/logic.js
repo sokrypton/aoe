@@ -634,15 +634,20 @@ function ejectGarrison(b,filter){
   b.garrison=keep;
   return out;
 }
-function ringTownBell(){
-  window.bellActive=true;
+// team defaults to 0 (player) for every existing UI call site. The AI (team
+// 1) reuses the exact same mechanic for its own defense — see
+// updateAIGarrisonReaction() in ai.js — but never touches the player's HUD
+// (bell icon state, messages, sound), which stays keyed to team 0 only.
+function ringTownBell(team){
+  team=team===undefined?0:team;
+  if(team===0)window.bellActive=true;
   // Reserve slots so villagers spread across TC/towers instead of all
   // targeting one full building.
-  let spots=entities.filter(en=>canGarrisonIn(en,0))
+  let spots=entities.filter(en=>canGarrisonIn(en,team))
     .map(b=>({b,room:garrisonCap(b)-garrisonCount(b)}));
   let sent=0;
   entities.forEach(e=>{
-    if(e.team!==0||e.type!=='unit'||e.utype!=='villager'||e.garrisonedIn)return;
+    if(e.team!==team||e.type!=='unit'||e.utype!=='villager'||e.garrisonedIn)return;
     if(e.task==='garrison')return;
     let best=null,bd=Infinity;
     spots.forEach(s=>{
@@ -662,25 +667,31 @@ function ringTownBell(){
     if(pt)pathUnitTo(e,pt.x,pt.y);
     sent++;
   });
-  if(window.playSound)window.playSound('bell');
-  showMsg(sent>0?'Town bell! Villagers run for cover':'Town bell! No garrison space for villagers');
-  if(typeof updateUI==='function')updateUI();
+  if(team===0){
+    if(window.playSound)window.playSound('bell');
+    showMsg(sent>0?'Town bell! Villagers run for cover':'Town bell! No garrison space for villagers');
+    if(typeof updateUI==='function')updateUI();
+  }
+  return sent;
 }
-function soundAllClear(){
-  window.bellActive=false;
+function soundAllClear(team){
+  team=team===undefined?0:team;
+  if(team===0)window.bellActive=false;
   // Release villagers from every garrison (military stays put — use the
   // building's Ungarrison button for them) and cancel villagers still en route.
   entities.forEach(en=>{
-    if(en.type==='building'&&en.team===0)ejectGarrison(en,u=>u.utype==='villager');
+    if(en.type==='building'&&en.team===team)ejectGarrison(en,u=>u.utype==='villager');
   });
   entities.forEach(e=>{
-    if(e.team===0&&e.type==='unit'&&e.task==='garrison'){
+    if(e.team===team&&e.type==='unit'&&e.task==='garrison'){
       e.task=null;e.garrisonTarget=null;clearUnitPath(e);
     }
   });
-  if(window.playSound)window.playSound('bell_clear');
-  showMsg('All clear! Villagers return to work');
-  if(typeof updateUI==='function')updateUI();
+  if(team===0){
+    if(window.playSound)window.playSound('bell_clear');
+    showMsg('All clear! Villagers return to work');
+    if(typeof updateUI==='function')updateUI();
+  }
 }
 
 function updateUnit(e){

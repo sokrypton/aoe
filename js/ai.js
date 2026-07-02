@@ -5,6 +5,31 @@
 // instead of staying clustered around its starting TC.
 function aiScale(){return MAP/60;}
 
+// ---- AI GARRISON REACTION (town bell equivalent) ----
+// Mirrors the player's town-bell mechanic: when the AI's own base is taking
+// damage, its idle-able villagers run for cover in the nearest TC/tower with
+// room, then come back out once things quiet down. Runs every tick (not
+// gated by updateAI's slow decisionInterval) so the reaction is prompt —
+// a raid that's over in a few seconds shouldn't be able to slip past the
+// AI's decision cadence entirely. window.lastWarTick already timestamps the
+// last time a player unit damaged a team-1 entity (see damageEntity in
+// logic.js, which also drives the player's "war" music mood) — reused here
+// instead of a second combat-tracking hook.
+const AI_GARRISON_HOLD_TICKS = 360; // ~12s at 30 ticks/sec: stay hidden briefly after the last hit
+function updateAIGarrisonReaction(){
+  if(!gameStarted||gameOver)return;
+  // ?? not || : lastWarTick can legitimately be 0 (a hit landed on tick 0),
+  // and 0 is falsy — || would wrongly discard it and treat that as "never".
+  let underAttack = tick - (window.lastWarTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
+  if(underAttack && !window.aiBellActive){
+    window.aiBellActive=true;
+    ringTownBell(1);
+  } else if(!underAttack && window.aiBellActive){
+    window.aiBellActive=false;
+    soundAllClear(1);
+  }
+}
+
 function updateAI(){
   aiTick++;
   let profile=AI_LEVELS[aiDifficulty]||AI_LEVELS.standard;

@@ -1,9 +1,11 @@
 // ---- INIT ----
 function init(){
   window.bellActive=false;
+  window.aiBellActive=false;
   window.lastUnderAttackTick=undefined;
-  // Music mood damage-signals must reset with the tick counter, or a stale
-  // large value from the previous match reads as "combat right now".
+  // Music mood / AI-garrison damage-signals must reset with the tick
+  // counter, or a stale large value from the previous match reads as
+  // "combat right now".
   window.lastDangerTick=undefined;
   window.lastWarTick=undefined;
   genMap();
