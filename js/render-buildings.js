@@ -857,11 +857,6 @@ function drawBuilding(e, part = null){
       X.fillStyle=wr;X.beginPath();
       X.moveTo(sx,y0+h0);X.lineTo(sx+w0,y0);X.lineTo(sx+w1,y1);X.lineTo(sx,y1+h1);X.closePath();X.fill();X.stroke();
     });
-    // Small vent window near the top band
-    let vw=wAt(0.86), vh=vw*0.5, vy=yAt(0.86);
-    X.fillStyle=darken?darkenColor('#2a1c10'):'#2a1c10';
-    X.strokeStyle='#000';X.lineWidth=1;
-    X.beginPath();X.ellipse(sx-vw*0.3,vy+vh*0.55,2.2,3,0,0,Math.PI*2);X.fill();X.stroke();
 
     // Door centered on the base band's left face
     let baseW=wAt(0), baseH=baseW*0.5;
