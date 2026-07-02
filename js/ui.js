@@ -162,6 +162,21 @@ function updateUI(){
   }
   if(rebuildActions)act.innerHTML='';
 
+  // "Never mind" — leftmost action button whenever anything is selected, a
+  // full-size mobile-friendly tap target (same size as every other action
+  // button) instead of a tiny corner badge. Clears the selection and any
+  // pending targeting mode, same as pressing Escape.
+  if(rebuildActions && selected.length>0 && gameStarted && !gameOver){
+    let cancelBtn=document.createElement('div');
+    cancelBtn.className='act-btn framed';
+    cancelBtn.dataset.tipType='action';
+    cancelBtn.dataset.tipLabel='Cancel';
+    cancelBtn.dataset.tipDesc='Deselect and cancel any pending command.';
+    cancelBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-cancel"></div>`;
+    cancelBtn.onclick=()=>{ if(window.deselectAll)window.deselectAll(); };
+    act.appendChild(cancelBtn);
+  }
+
   // Multi-select: the portrait+stats card is replaced by a grid of every
   // selected unit's own icon (AoE2-style), each with its own mini HP bar,
   // rather than one aggregate card for selected[0]. Rebuilt only when the
@@ -584,6 +599,29 @@ window.toggleTownBell = function() {
   if (gameOver || !gameStarted) return;
   if (window.bellActive) soundAllClear();
   else ringTownBell();
+};
+
+// "Never mind" — cancels one level at a time (Escape-style), since fully
+// deselecting a villager just because you changed your mind about which
+// building to place is more disruptive than helpful:
+//   1. Actively placing a building → just cancel the placement, keep the
+//      villager(s) selected so they can pick something else.
+//   2. Targeting a rally point → just cancel that, keep selection.
+//   3. Browsing the eco/mil build submenu → back out to the main villager
+//      panel, keep selection.
+//   4. Nothing pending → fully deselect.
+window.deselectAll = function() {
+  if (placing) {
+    placing = null;
+  } else if (window.settingRally) {
+    window.settingRally = false;
+  } else if (window.currentVillagerMenu === 'eco' || window.currentVillagerMenu === 'mil') {
+    window.currentVillagerMenu = 'main';
+  } else {
+    selected = [];
+    window.currentVillagerMenu = 'main';
+  }
+  updateUI();
 };
 
 window.selectIdleVillager = function() {

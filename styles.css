@@ -54,7 +54,12 @@ canvas {
   display:flex;
   align-items:center;
   padding:0 12px;
-  pointer-events:auto;
+  /* Purely a resource display, nothing inside is ever clickable — auto
+     pointer-events here meant this full-width strip silently ate clicks
+     meant for whatever's underneath, most noticeably the minimap's diamond
+     peak (which also starts at top:0 and overlaps this exact strip) and
+     any unit near the very top edge of the battlefield. */
+  pointer-events:none;
 }
 .res{
   display:flex;
@@ -462,7 +467,15 @@ canvas {
   overflow: hidden;
   z-index: 20;
   flex-shrink: 0;
-  pointer-events: auto;
+  /* The wrap (and the canvas inside it) never intercepts pointer events —
+     the game canvas underneath always receives every click/tap, and its own
+     input handlers decide whether a point falls on the minimap's diamond
+     (via isInMinimapDiamond in input.js, the same geometry drawMinimap uses
+     to paint it) before treating it as a minimap pan vs. a game command.
+     That single JS-side check is the one source of truth for "is this the
+     minimap," instead of an approximate CSS clip-path that has to be kept
+     in sync with the canvas geometry by hand. */
+  pointer-events: none;
 }
 #minimap-wrap.minimap-expanded {
   width: 100% !important;
@@ -484,19 +497,13 @@ canvas {
 #map-btn.map-active{
   filter:drop-shadow(0 0 6px #ffd700) brightness(1.25);
 }
-/* Visual cue: minimap is non-interactive during building placement.
-   pointer-events:none on the WRAP (not just the canvas) so clicks fall
-   through to the game canvas underneath. */
-#minimap-wrap.build-active {
-  opacity: 0.45;
-  pointer-events: none;
-}
-/* Same treatment while a box-select drag is in progress: once the drag
-   crosses into the minimap's diamond, its own pointer-events would steal
-   mousemove/mouseup from the game canvas and cut the selection box short. */
+/* Visual-only cues (the wrap is always pointer-events:none, so these can't
+   actually block anything — they just de-emphasize the minimap while
+   something else has priority: placing a building/wall, or dragging a
+   selection box). */
+#minimap-wrap.build-active,
 #minimap-wrap.drag-select-active {
   opacity: 0.45;
-  pointer-events: none;
 }
 
 /* ---- FLOATING NOTIFICATIONS ---- */

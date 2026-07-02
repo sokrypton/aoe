@@ -15,9 +15,8 @@ function screenToTile(sx,sy){
 }
 
 function getMiniTransform(mw,mh){
-  // Padding leaves room for the ornamental frame drawn around the diamond
-  // (see drawMinimap) so its outer strokes/medallions don't clip.
-  let pad=16;
+  // Small padding just keeps the thin border stroke from clipping.
+  let pad=4;
   let scale=Math.min((mw-pad*2)/(MAP*TW),(mh-pad*2)/(MAP*TH));
   return{scale,ox:mw/2,oy:pad};
 }

@@ -120,22 +120,145 @@ function getWallElbowTiles(start, corner, end){
   return leg1.concat(leg2);
 }
 
+// Wall-drag: shared by mouse (drag) and touch (drag) so a line of walls can
+// be laid out in one gesture on both input methods, instead of one tile per
+// tap/click. A zero-length drag (touchstart+touchend with no movement, or a
+// plain click) degenerates to a single wall tile via getLineTiles' steps===0
+// case, so this also fully replaces the old single-tap-places-one-wall path.
+function startWallDrag(sx,sy){
+  let tile = screenToTile(sx, sy);
+  window.isDraggingWall = true;
+  window.wallDragStart = tile;
+  window.wallDragEnd = tile;
+  window.wallDragCorner = tile;
+  window.wallPrimaryAxis = null;
+}
+function updateWallDrag(sx,sy){
+  let tile = screenToTile(sx, sy);
+  let start = window.wallDragStart;
+  let dx = tile.x - start.x;
+  let dy = tile.y - start.y;
+  // Lock which axis the player committed to first (once they've moved at
+  // least a tile), so later movement on the other axis becomes the second
+  // leg of an elbow instead of re-snapping the whole drag to one straight line.
+  if (window.wallPrimaryAxis === null && (Math.abs(dx) >= 1 || Math.abs(dy) >= 1)) {
+    window.wallPrimaryAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+  }
+  window.wallDragEnd = tile;
+  if (window.wallPrimaryAxis === 'y') {
+    window.wallDragCorner = { x: start.x, y: tile.y };
+  } else {
+    window.wallDragCorner = { x: tile.x, y: start.y };
+  }
+}
+// Cancel a wall-drag in progress without placing anything (e.g. a second
+// finger joins mid-gesture on touch).
+function abortWallDrag(){
+  window.isDraggingWall = false;
+  window.wallDragStart = null;
+  window.wallDragEnd = null;
+  window.wallDragCorner = null;
+  window.wallPrimaryAxis = null;
+}
+function finalizeWallDrag(){
+  window.isDraggingWall = false;
+  let start = window.wallDragStart;
+  let end = window.wallDragEnd;
+  let corner = window.wallDragCorner || end;
+  window.wallDragStart = null;
+  window.wallDragEnd = null;
+  window.wallDragCorner = null;
+  window.wallPrimaryAxis = null;
+
+  let line = getWallElbowTiles(start, corner, end);
+  let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+  if(vils.length===0){
+    showMsg('Select a villager to build!');
+    placing=null;
+    return;
+  }
+
+  let b = BLDGS['WALL'];
+  let placedCount = 0;
+  let lastBldg = null;
+
+  line.forEach(t => {
+    if (canPlace('WALL', t.x, t.y, 0)) {
+      let actualCost = {...b.cost};
+      if (canAfford(0, actualCost)) {
+        spendCost(0, actualCost);
+        let bldg = createBuilding('WALL', t.x, t.y, 0);
+        bldg.complete = false;
+        bldg.buildProgress = 0;
+        lastBldg = bldg;
+        placedCount++;
+
+        vils.forEach(v => {
+          v.buildQueue = v.buildQueue || [];
+          v.buildQueue.push(bldg.id);
+        });
+      } else {
+        showMsg('Not enough stone!');
+      }
+    }
+  });
+
+  if (placedCount > 0 && lastBldg) {
+    vils.forEach(v => {
+      if (v.task !== 'build' || !v.buildTarget) {
+        v.task = 'build';
+        v.buildTarget = lastBldg.id;
+        v.target = null;
+        pathUnitTo(v, lastBldg.x + 1, lastBldg.y + 1);
+      }
+    });
+  }
+
+  // keys['Shift'] (hold to place multiple lines) is desktop-only — on touch
+  // that object entry is simply never set, so this naturally always exits
+  // placing mode after one drag, which is the right default for mobile.
+  if (!keys['Shift']) {
+    placing = null;
+  }
+}
+
+// Belt-and-suspenders reset: a mouseup that lands on some OTHER element
+// (topbar, bottom HUD, outside the browser window, etc.) never reaches C's
+// own mouseup handler below, which would otherwise leave minimapDragging
+// stuck true forever — every subsequent mousemove would keep panning the
+// camera to follow the cursor with no way to stop it. A window-level
+// listener catches mouseup regardless of where it lands (as long as it
+// bubbles, which plain releases always do) and unconditionally clears it.
+window.addEventListener('mouseup',()=>{minimapDragging=false;});
+// Same reasoning for tracking the drag itself: C's own mousemove only fires
+// while the cursor is physically over the canvas, so dragging up into the
+// topbar (or off the edge of the browser window) would silently freeze the
+// pan mid-gesture until the cursor wandered back onto C. A window-level
+// mousemove keeps the camera following the cursor everywhere, matching how
+// the release above already works regardless of where it lands.
+window.addEventListener('mousemove',e=>{
+  if(minimapDragging) minimapJump(e.clientX,e.clientY);
+});
+
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
   if(e.button===0 && !e.ctrlKey){
+    // Placing/wall-dragging always takes priority over the minimap — the
+    // minimap should never block or interfere with an action already in
+    // progress, only offer camera-panning when nothing else claims the click.
     if(placing){
       if (placing === 'WALL') {
-        let tile = screenToTile(e.clientX, e.clientY);
-        window.isDraggingWall = true;
-        window.wallDragStart = tile;
-        window.wallDragEnd = tile;
-        window.wallDragCorner = tile;
-        window.wallPrimaryAxis = null;
+        startWallDrag(e.clientX, e.clientY);
         justPlaced = true;
       } else {
         doPlace(e.clientX,e.clientY);
         justPlaced=true;
       }
+      return;
+    }
+    if(isPointOnMinimap(e.clientX,e.clientY)){
+      minimapDragging=true;
+      minimapJump(e.clientX,e.clientY);
       return;
     }
     dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false;
@@ -145,23 +268,9 @@ C.addEventListener('mousedown',e=>{
 C.addEventListener('mousemove',e=>{
   if(gameOver||hasTouch)return;
   mouseX=e.clientX;mouseY=e.clientY;
+  if(minimapDragging)return; // handled by the window-level listener above
   if (window.isDraggingWall) {
-    let tile = screenToTile(e.clientX, e.clientY);
-    let start = window.wallDragStart;
-    let dx = tile.x - start.x;
-    let dy = tile.y - start.y;
-    // Lock which axis the player committed to first (once they've moved at
-    // least a tile), so later movement on the other axis becomes the second
-    // leg of an elbow instead of re-snapping the whole drag to one straight line.
-    if (window.wallPrimaryAxis === null && (Math.abs(dx) >= 1 || Math.abs(dy) >= 1)) {
-      window.wallPrimaryAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-    }
-    window.wallDragEnd = tile;
-    if (window.wallPrimaryAxis === 'y') {
-      window.wallDragCorner = { x: start.x, y: tile.y };
-    } else {
-      window.wallDragCorner = { x: tile.x, y: start.y };
-    }
+    updateWallDrag(e.clientX, e.clientY);
     return;
   }
   if(dragStart&&(e.buttons&1)){
@@ -169,10 +278,9 @@ C.addEventListener('mousemove',e=>{
     if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
       if(!isDragging){
         isDragging=true;
-        // Disable the minimap's own hit-testing the moment a real box-select
-        // starts — otherwise dragging the selection box over the minimap's
-        // diamond hands mousemove/mouseup to it instead of the game canvas,
-        // silently truncating the drag.
+        // Visual-only cue now (the minimap can't actually intercept the
+        // drag anymore — it's pointer-events:none) — dims it so it's clear
+        // dragging over it won't do anything special.
         let mw=document.getElementById('minimap-wrap');
         if(mw)mw.classList.add('drag-select-active');
       }
@@ -190,63 +298,12 @@ C.addEventListener('wheel',e=>{
 C.addEventListener('mouseup',e=>{
   if(gameOver||hasTouch)return;
   if(e.button===0 && !e.ctrlKey){
+    if(minimapDragging){
+      minimapDragging=false;
+      return;
+    }
     if (window.isDraggingWall) {
-      window.isDraggingWall = false;
-      let start = window.wallDragStart;
-      let end = window.wallDragEnd;
-      let corner = window.wallDragCorner || end;
-      window.wallDragStart = null;
-      window.wallDragEnd = null;
-      window.wallDragCorner = null;
-      window.wallPrimaryAxis = null;
-
-      let line = getWallElbowTiles(start, corner, end);
-      let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
-      if(vils.length===0){
-        showMsg('Select a villager to build!');
-        placing=null;
-        return;
-      }
-
-      let b = BLDGS['WALL'];
-      let placedCount = 0;
-      let lastBldg = null;
-
-      line.forEach(t => {
-        if (canPlace('WALL', t.x, t.y, 0)) {
-          let actualCost = {...b.cost};
-          if (canAfford(0, actualCost)) {
-            spendCost(0, actualCost);
-            let bldg = createBuilding('WALL', t.x, t.y, 0);
-            bldg.complete = false;
-            bldg.buildProgress = 0;
-            lastBldg = bldg;
-            placedCount++;
-
-            vils.forEach(v => {
-              v.buildQueue = v.buildQueue || [];
-              v.buildQueue.push(bldg.id);
-            });
-          } else {
-            showMsg('Not enough stone!');
-          }
-        }
-      });
-
-      if (placedCount > 0 && lastBldg) {
-        vils.forEach(v => {
-          if (v.task !== 'build' || !v.buildTarget) {
-            v.task = 'build';
-            v.buildTarget = lastBldg.id;
-            v.target = null;
-            pathUnitTo(v, lastBldg.x + 1, lastBldg.y + 1);
-          }
-        });
-      }
-
-      if (!keys['Shift']) {
-        placing = null;
-      }
+      finalizeWallDrag();
       justPlaced = false;
       return;
     }
@@ -279,6 +336,7 @@ document.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(gameOver||hasTouch)return;
   if(e.target===C){
+    if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
     doCommand(e.clientX,e.clientY);
   }
@@ -288,13 +346,18 @@ document.addEventListener('contextmenu',e=>{
 // ---- INPUT: TOUCH (Mobile) ----
 // ==============================
 // Simple scheme:
-//   Drag = pan camera (always)
+//   Drag = pan camera
+//   Drag while placing a wall = lay a line of walls (same as the desktop drag)
+//   Long-press (~380ms) then drag, starting on empty ground = box-select
 //   Quick tap = context-aware:
 //     - placing mode → place building
 //     - nothing selected → select entity under finger
-//     - units selected + tap own entity → switch selection
+//     - units selected + tap own unit → switch selection
+//     - units selected + tap own building → command (farm/repair/etc.)
 //     - units selected + tap map → move/gather/attack (command)
 //     - building selected + tap elsewhere → try select, or deselect
+//   Double-tap on an own unit = select every unit of that type on screen
+//     (touch equivalent of the desktop double-click handler below)
 
 let touchAnchor=null;  // where the touch started (for tap detection)
 let touchLast=null;    // last touch position (for pan delta)
@@ -302,6 +365,10 @@ let touchMoved=false;  // did finger travel > threshold?
 let touchId=null;      // track which finger is primary
 let pinchStartDist=null; // two-finger distance at pinch start, for pinch-zoom
 let pinchStartZoom=null; // ZOOM at pinch start
+let touchLongPressTimer=null; // arms box-select if the finger holds still on empty ground
+let touchBoxSelectMode=false; // armed (and possibly active) box-select drag
+let touchLastTapTime=0;       // for double-tap detection
+let touchLastTapUtype=null;   // utype of the unit tapped last, if any
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
@@ -310,16 +377,52 @@ C.addEventListener('touchstart',e=>{
   let touches=e.touches;
   if(touches.length===1){
     let t=touches[0];
+    // Placing/wall-dragging always takes priority over the minimap — see
+    // the matching comment on the mouse path above.
+    if(!placing && isPointOnMinimap(t.clientX,t.clientY)){
+      minimapDragging=true;
+      minimapJump(t.clientX,t.clientY);
+      return;
+    }
     touchId=t.identifier;
     touchAnchor={x:t.clientX,y:t.clientY};
     touchLast={x:t.clientX,y:t.clientY};
     touchMoved=false;
     mouseX=t.clientX;mouseY=t.clientY; // for ghost preview
+
+    if(placing==='WALL'){
+      startWallDrag(t.clientX,t.clientY);
+    } else if(!placing){
+      // Arm long-press box-select only when the touch starts on empty
+      // ground — starting on a unit/building should never hijack a tap or
+      // pan into a selection box.
+      clearTimeout(touchLongPressTimer);
+      touchBoxSelectMode=false;
+      let hitU=getUnitUnderCursor(t.clientX,t.clientY);
+      let hitB=hitU?null:getBuildingUnderCursor(t.clientX,t.clientY);
+      if(!hitU&&!hitB){
+        let anchorAtArm=touchAnchor;
+        touchLongPressTimer=setTimeout(()=>{
+          if(touchAnchor===anchorAtArm && !touchMoved){
+            touchBoxSelectMode=true;
+            dragStart={x:touchAnchor.x,y:touchAnchor.y};
+            dragEnd=null;
+            isDragging=false;
+          }
+        },380);
+      }
+    }
   }
   if(touches.length>=2){
-    // Multi-touch: always pan, cancel any tap
+    // Multi-touch: always pan/pinch, cancel any tap or single-finger gesture
+    // that was in progress (box-select arm/drag, wall-drag).
     touchMoved=true;
     touchAnchor=null;
+    clearTimeout(touchLongPressTimer);
+    touchBoxSelectMode=false;
+    dragStart=null;dragEnd=null;isDragging=false;
+    minimapDragging=false;
+    if(window.isDraggingWall)abortWallDrag();
     let mx=(touches[0].clientX+touches[1].clientX)/2;
     let my=(touches[0].clientY+touches[1].clientY)/2;
     touchLast={x:mx,y:my};
@@ -357,6 +460,18 @@ C.addEventListener('touchmove',e=>{
   if(touches.length===1){
     let t=touches[0];
     mouseX=t.clientX;mouseY=t.clientY; // update ghost preview
+
+    if(minimapDragging){
+      minimapJump(t.clientX,t.clientY);
+      return;
+    }
+
+    if(window.isDraggingWall){
+      updateWallDrag(t.clientX,t.clientY);
+      touchMoved=true;
+      return;
+    }
+
     // Check if we've moved past the tap threshold
     if(touchAnchor){
       let dx=t.clientX-touchAnchor.x;
@@ -365,6 +480,20 @@ C.addEventListener('touchmove',e=>{
         touchMoved=true;
       }
     }
+
+    if(touchBoxSelectMode){
+      dragEnd={x:t.clientX,y:t.clientY};
+      if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
+        if(!isDragging){
+          isDragging=true;
+          let mw=document.getElementById('minimap-wrap');
+          if(mw)mw.classList.add('drag-select-active');
+        }
+      }
+      touchLast={x:t.clientX,y:t.clientY};
+      return; // don't also pan the camera while dragging a selection box
+    }
+
     // Pan the camera once we know it's a drag
     if(touchMoved&&touchLast){
       let dx=t.clientX-touchLast.x;
@@ -381,9 +510,34 @@ C.addEventListener('touchend',e=>{
   e.preventDefault();
   // Only process tap when all fingers are lifted
   if(e.touches.length===0){
-    if(!touchMoved&&touchAnchor){
-      // It's a tap! Process context-aware action
-      handleTap(touchAnchor.x,touchAnchor.y);
+    clearTimeout(touchLongPressTimer);
+    if(minimapDragging){
+      minimapDragging=false;
+    } else if(window.isDraggingWall){
+      finalizeWallDrag();
+    } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
+      doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      let mw=document.getElementById('minimap-wrap');
+      if(mw)mw.classList.remove('drag-select-active');
+    } else if(!touchMoved&&touchAnchor){
+      // It's a tap! Double-tap on the same own unit type selects every
+      // instance of that type on screen (touch equivalent of dblclick below).
+      let now=performance.now();
+      let tappedU=getUnitUnderCursor(touchAnchor.x,touchAnchor.y);
+      if(tappedU && tappedU.team===0 && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
+        selected=entities.filter(en=>en.team===0&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
+        if(window.playSound){
+          if(tappedU.utype==='villager')window.playSound('select_villager');
+          else if(tappedU.utype!=='sheep')window.playSound('select_military');
+        }
+        updateUI();
+        touchLastTapTime=0;
+        touchLastTapUtype=null;
+      } else {
+        handleTap(touchAnchor.x,touchAnchor.y);
+        touchLastTapTime=now;
+        touchLastTapUtype=tappedU?tappedU.utype:null;
+      }
     }
     touchAnchor=null;
     touchLast=null;
@@ -391,6 +545,8 @@ C.addEventListener('touchend',e=>{
     touchId=null;
     pinchStartDist=null;
     pinchStartZoom=null;
+    touchBoxSelectMode=false;
+    dragStart=null;dragEnd=null;isDragging=false;
   } else if(e.touches.length===1){
     // Went from 2 fingers to 1: update last position, stay in pan mode
     let t=e.touches[0];
@@ -468,25 +624,22 @@ function handleTap(sx,sy){
       doCommand(sx,sy);
       return;
     }
-    // Tapped on own entity → switch selection (cancel rally mode)
-    if(tappedOwn){
+    // Tapped on another own UNIT → switch selection (quick re-pick). Tapping
+    // an own BUILDING instead falls through to doCommand below — so a
+    // selected villager tapping a farm/mill/damaged building actually
+    // works it instead of just re-selecting the building and doing nothing.
+    if(tappedOwn&&tappedOwn.type==='unit'){
       window.settingRally=false;
       selected=[tappedOwn];
       if (window.playSound && tappedOwn.team === 0) {
-        if (tappedOwn.type === 'unit') {
-          if (tappedOwn.utype === 'villager') window.playSound('select_villager');
-          else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
-          else window.playSound('select_military');
-        }
+        if (tappedOwn.utype === 'villager') window.playSound('select_villager');
+        else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
+        else window.playSound('select_military');
       }
       return;
     }
-    // Tapped on enemy → attack
-    if(tappedEnemy){
-      doCommand(sx,sy);
-      return;
-    }
-    // Tapped on map → move or gather
+    // Tapped on enemy, own building, or empty map → command (move/gather/
+    // build/repair/attack) — doCommand resolves the exact target itself.
     doCommand(sx,sy);
     return;
   }
@@ -526,6 +679,21 @@ function isInMinimapDiamond(mx, my, mw, mh) {
   let cx = mt.ox;       // horizontal centre = mw/2
   let cy = mt.oy + hh;  // vertical centre   = pad + hh from top
   return (Math.abs(mx - cx) / hw + Math.abs(my - cy) / hh) <= 1;
+}
+
+// The minimap wrap/canvas are pointer-events:none (see styles.css) so the
+// game canvas underneath always receives every click/tap, everywhere on
+// screen, including over the visible minimap. This is the single check its
+// input handlers use to decide "is this point actually the minimap" (its
+// diamond, not just its square footprint) before treating (clientX,clientY)
+// as a minimap pan instead of a game-world coordinate.
+function isPointOnMinimap(clientX, clientY) {
+  let rect = MC.getBoundingClientRect();
+  if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return false;
+  let mw = MC.clientWidth || rect.width, mh = MC.clientHeight || rect.height;
+  let mx = (clientX - rect.left) / rect.width * mw;
+  let my = (clientY - rect.top) / rect.height * mh;
+  return isInMinimapDiamond(mx, my, mw, mh);
 }
 
 function minimapJump(sx, sy) {
@@ -571,6 +739,28 @@ function toggleMinimap(){
   }
 }
 
+// Must match the max-width in the "#minimap-wrap:not(.minimap-expanded)
+// {display:none}" media query in styles.css — that's the width below which
+// the small corner minimap has no room and the full-screen toggle exists at all.
+const MINIMAP_SMALL_BREAKPOINT = 600;
+// The expanded state is a manual toggle, so it otherwise persists forever —
+// if a phone is rotated from portrait (narrow, expanded map in use) to
+// landscape (wide enough for the small corner map again), the expanded
+// view would stay stuck full-screen with no visual reason to. Collapse it
+// automatically the moment the viewport grows past the breakpoint where
+// the small map becomes viable again; never force it open, only closed.
+function collapseMinimapIfWide(){
+  if(window.innerWidth <= MINIMAP_SMALL_BREAKPOINT) return;
+  let wrap = document.getElementById('minimap-wrap');
+  if(wrap && wrap.classList.contains('minimap-expanded')){
+    wrap.classList.remove('minimap-expanded');
+    let btn = document.getElementById('map-btn');
+    if(btn) btn.classList.remove('map-active');
+  }
+}
+window.addEventListener('resize', collapseMinimapIfWide);
+window.addEventListener('orientationchange', collapseMinimapIfWide);
+
 function focusTownCenter(){
   if(gameOver)return;
   let tc = entities.find(e => e.type === 'building' && e.team === 0 && e.btype === 'TC');
@@ -586,57 +776,16 @@ function focusTownCenter(){
   }
 }
 
-MC.addEventListener('mousedown',e=>{
-  if(gameOver)return;
-  if(placing || window.isDraggingWall)return; // ignore minimap during build/wall placement
-  // Don't start a drag when the click lands in an empty corner outside the diamond
-  let rect=MC.getBoundingClientRect();
-  let mw=MC.clientWidth||rect.width, mh=MC.clientHeight||rect.height;
-  if(!isInMinimapDiamond((e.clientX-rect.left)/rect.width*mw,(e.clientY-rect.top)/rect.height*mh,mw,mh))return;
-  hasTouch=false;
-  minimapDragging=true;
-  minimapJump(e.clientX,e.clientY);
-});
-window.addEventListener('mousemove',e=>{
-  if(minimapDragging){
-    minimapJump(e.clientX,e.clientY);
-  }
-});
-window.addEventListener('mouseup',()=>{
-  minimapDragging=false;
-});
-
-MC.addEventListener('touchstart',e=>{
-  e.preventDefault();e.stopPropagation();
-  if(gameOver)return;
-  if(placing || window.isDraggingWall)return; // ignore minimap during build/wall placement
-  // Don't start a drag when the touch lands in an empty corner outside the diamond
-  let t0=e.touches[0];
-  let rect=MC.getBoundingClientRect();
-  let mw=MC.clientWidth||rect.width, mh=MC.clientHeight||rect.height;
-  if(!isInMinimapDiamond((t0.clientX-rect.left)/rect.width*mw,(t0.clientY-rect.top)/rect.height*mh,mw,mh))return;
-  hasTouch=true;
-  minimapDragging=true;
-  minimapJump(t0.clientX,t0.clientY);
-},{passive:false});
-MC.addEventListener('touchmove',e=>{
-  if(minimapDragging){
-    e.preventDefault();e.stopPropagation();
-    minimapJump(e.touches[0].clientX,e.touches[0].clientY);
-  }
-},{passive:false});
-MC.addEventListener('touchend',()=>{
-  minimapDragging=false;
-});
+// No listeners on MC itself — it's pointer-events:none, so every click/tap
+// (even ones that visually land on the minimap) is handled by C's own
+// mousedown/mouseup/contextmenu/touch* listeners below, which check
+// isPointOnMinimap() first and branch to minimapJump() when it's true.
 
 // ==============================
 // ---- SHARED INPUT ACTIONS ----
 // ==============================
 function getBuildingUnderCursor(sx, sy, filter) {
-  const BLDG_HEIGHTS = {
-    TC: 80, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
-    MILL: 32, FARM: 6, TOWER: 58, WALL: 26, GATE: 32
-  };
+  // BLDG_HEIGHTS is a shared global — see core.js.
   let bestB = null;
   let bestSortY = -9999;
   entities.forEach(en=>{
@@ -807,7 +956,7 @@ function doBoxSelect(x1,y1,x2,y2){
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   selected=entities.filter(en=>{
     if(en.team!==0)return false;
-    if(en.type!=='unit'||en.utype==='sheep'||en.garrisonedIn)return false;
+    if(en.type!=='unit'||en.garrisonedIn)return false;
     let iso=toIso(en.x,en.y);
     let { ox, oy } = getUnitGroupOffset(en.id);
     let scrx=(iso.ix-camX+ox)*ZOOM+W/2;

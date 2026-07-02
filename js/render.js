@@ -49,47 +49,71 @@ function drawTile(x,y){
   X.closePath();X.fill();
   let cy=sy+HALF_TH;
 
-  // Rounded boulder dome with flat base, outline, and top-left highlight —
-  // shared by the gold and stone mine tiles.
-  const dome=(rx,ry,rw,rh,c)=>{
-    X.strokeStyle='#000';X.lineWidth=1.2;X.fillStyle=c;
-    X.beginPath();X.ellipse(rx,ry,rw,rh,0,Math.PI,Math.PI*2);X.closePath();X.fill();X.stroke();
-    X.fillStyle='rgba(255,255,255,0.14)';
-    X.beginPath();X.ellipse(rx-rw*0.3,ry-rh*0.45,rw*0.35,rh*0.3,-0.3,0,Math.PI*2);X.fill();
+  // Faceted 3D boulder — a low-poly rock spire with a bright top facet, a
+  // lit left face, and a shadowed right face, instead of a flat painted
+  // dome. The apex sits well above the ground-contact point so, like the
+  // berry bushes, a tall boulder visibly rises past the tile's own edge.
+  const boulder=(cx0,cy0,r,cTop,cLeft,cRight)=>{
+    let apex={x:cx0,        y:cy0-r*1.7};
+    let topL={x:cx0-r*0.85, y:cy0-r*0.85};
+    let topR={x:cx0+r*0.8,  y:cy0-r*0.9};
+    let midL={x:cx0-r*1.15, y:cy0-r*0.05};
+    let midR={x:cx0+r*1.1,  y:cy0-r*0.02};
+    let baseL={x:cx0-r*0.65,y:cy0+r*0.4};
+    let baseR={x:cx0+r*0.6, y:cy0+r*0.45};
+    let baseC={x:cx0,       y:cy0+r*0.55};
+    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+    // Left-lit facet
+    X.fillStyle=cLeft;X.beginPath();
+    X.moveTo(apex.x,apex.y);X.lineTo(topL.x,topL.y);X.lineTo(midL.x,midL.y);X.lineTo(baseL.x,baseL.y);X.lineTo(baseC.x,baseC.y);X.closePath();X.fill();X.stroke();
+    // Right-shadow facet
+    X.fillStyle=cRight;X.beginPath();
+    X.moveTo(apex.x,apex.y);X.lineTo(topR.x,topR.y);X.lineTo(midR.x,midR.y);X.lineTo(baseR.x,baseR.y);X.lineTo(baseC.x,baseC.y);X.closePath();X.fill();X.stroke();
+    // Bright highlight sliver at the apex
+    X.fillStyle=cTop;X.beginPath();
+    X.moveTo(apex.x,apex.y);X.lineTo(topL.x,topL.y);X.lineTo(cx0,cy0-r*0.6);X.lineTo(topR.x,topR.y);X.closePath();X.fill();X.stroke();
   };
   if(t.t===TERRAIN.GOLD){
-    let s=0.3+0.7*Math.min(t.res/800,1);
-    // Rock mounds
-    dome(sx-7*s, cy+3, 6.5*s, 8*s, '#6d675d');
-    dome(sx+7*s, cy+3, 6*s, 7*s, '#7a746a');
-    dome(sx,     cy+4, 8.5*s, 12*s, '#736d63');
-    // Shiny gold ore embedded in the rock
-    const ore=(ox,oy,r)=>{
-      X.strokeStyle='#000';X.lineWidth=1;
-      X.fillStyle='#e8b90f';X.beginPath();X.arc(ox,oy,r,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle='#ffe14d';X.beginPath();X.arc(ox-r*0.3,oy-r*0.3,r*0.45,0,Math.PI*2);X.fill();
-      X.fillStyle='#fff';X.beginPath();X.arc(ox-r*0.45,oy-r*0.5,r*0.2,0,Math.PI*2);X.fill();
+    let s=0.4+0.6*Math.min(t.res/800,1);
+    let gy=cy-8; // centered on the tile — the tall spire's apex pokes into
+                 // the tile above, same deliberate overflow as the bushes.
+    // Same faceted boulder cluster as stone, just cast in solid gold —
+    // reads as "this whole vein is gold" at a glance instead of grey rock
+    // with a few small nuggets stuck on.
+    boulder(sx-9*s, gy+5, 6*s, '#f4d35e', '#d1a017', '#8f6607');
+    boulder(sx+9*s, gy+5, 5.5*s, '#f4d35e', '#c99815', '#916d0a');
+    boulder(sx, gy+6, 9.5*s, '#ffe066', '#e8b90f', '#a8790a');
+    // Sparkle glints scattered across the gold facets — small 4-point stars
+    // so it unmistakably reads as shiny metal, not just yellow stone.
+    const sparkle=(ox,oy,r)=>{
+      X.fillStyle='#fff8dc';X.strokeStyle='rgba(120,80,0,0.5)';X.lineWidth=0.6;
+      X.beginPath();
+      X.moveTo(ox,oy-r);X.lineTo(ox+r*0.28,oy-r*0.28);X.lineTo(ox+r,oy);
+      X.lineTo(ox+r*0.28,oy+r*0.28);X.lineTo(ox,oy+r);X.lineTo(ox-r*0.28,oy+r*0.28);
+      X.lineTo(ox-r,oy);X.lineTo(ox-r*0.28,oy-r*0.28);X.closePath();
+      X.fill();X.stroke();
     };
-    ore(sx-1.5*s, cy-4*s, 2.6*s);
-    ore(sx+3.5*s, cy-0.5*s, 2.1*s);
-    ore(sx-6*s,   cy+0.5, 1.9*s);
-    ore(sx+8*s,   cy+0.5, 1.6*s);
-    ore(sx+1.5*s, cy+3, 1.4*s); // loose nugget at the base
+    sparkle(sx-1.5*s, gy-13*s, 2.6*s);
+    sparkle(sx+4.5*s, gy-6*s,  1.8*s);
+    sparkle(sx-7*s,   gy-2*s,  1.6*s);
+    sparkle(sx+8.5*s, gy+2*s,  1.4*s);
+    sparkle(sx+1*s,   gy+5*s,  1.3*s);
   }
   if(t.t===TERRAIN.STONE){
-    let s=0.3+0.7*Math.min(t.res/350,1);
-    // Granite mounds
-    dome(sx-7*s, cy+3, 6.5*s, 7.5*s, '#7e7e7e');
-    dome(sx+7*s, cy+3, 6*s, 6.5*s, '#8b8b8b');
-    dome(sx,     cy+4, 8.5*s, 11*s, '#979797');
-    // Cracks
+    let s=0.4+0.6*Math.min(t.res/350,1);
+    let gy=cy-8; // centered on the tile, matching gold — was bottom-heavy
+    // Granite cluster: two flanking boulders, one tall central spire
+    boulder(sx-9*s, gy+5, 6*s, '#b0b0b0', '#8c8c8c', '#686868');
+    boulder(sx+9*s, gy+5, 5.5*s, '#b0b0b0', '#95958f', '#6e6e6e');
+    boulder(sx, gy+6, 9.5*s, '#c2c2c2', '#9d9d9d', '#767678');
+    // Cracks across the central spire
     X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1;
-    X.beginPath();X.moveTo(sx-2*s,cy-6*s);X.lineTo(sx-3.5*s,cy-2*s);X.lineTo(sx-2*s,cy+1);X.stroke();
-    X.beginPath();X.moveTo(sx+3*s,cy-4*s);X.lineTo(sx+4.5*s,cy-1*s);X.stroke();
-    // Pebbles at the base
+    X.beginPath();X.moveTo(sx-2*s,gy-11*s);X.lineTo(sx-3.5*s,gy-5*s);X.lineTo(sx-2*s,gy-1);X.stroke();
+    X.beginPath();X.moveTo(sx+3*s,gy-8*s);X.lineTo(sx+4.5*s,gy-3*s);X.stroke();
+    // Pebbles scattered at the base
     X.strokeStyle='#000';X.lineWidth=1;X.fillStyle='#8b8b8b';
-    X.beginPath();X.ellipse(sx-3*s,cy+4,1.8*s,1.2*s,0,0,Math.PI*2);X.fill();X.stroke();
-    X.beginPath();X.ellipse(sx+9*s,cy+3,1.5*s,1.0*s,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(sx-4*s,gy+7,1.8*s,1.2*s,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(sx+11*s,gy+6,1.5*s,1.0*s,0,0,Math.PI*2);X.fill();X.stroke();
   }
   if(t.t===TERRAIN.BERRIES){
     let s=0.4+0.6*Math.min(t.res/200,1);
@@ -646,12 +670,12 @@ function drawChimneySmoke(cx,cy){
 }
 
 // Draws animated rotating windmill sails
-function drawWindmillSails(hx,hy,id){
+function drawWindmillSails(hx,hy,id,scale=1){
   let rot = tick * 0.035 + id*0.5; // slightly faster for more drama!
-  
+
   for(let i=0; i<4; i++){
     let a = rot + i * Math.PI / 2;
-    
+
     // Direction vectors — the fan is mounted on the mill cap facing the
     // camera, so it spins in a (slightly flattened) screen-plane circle;
     // opposite sails stay perfectly symmetric around the hub.
@@ -659,31 +683,31 @@ function drawWindmillSails(hx,hy,id){
     let dy = Math.sin(a) * 0.95;
     let px = -Math.sin(a);
     let py = Math.cos(a) * 0.95;
-    
-    let L = 27; // Spar length (increased from 14 for massive drama!)
+
+    let L = 27*scale; // Spar length (increased from 14 for massive drama!)
     let tx = hx + dx * L;
     let ty = hy + dy * L;
-    
+
     // 1. Spar wood outline (thick black)
     X.strokeStyle = '#000000';
     X.lineWidth = 3;
     X.beginPath(); X.moveTo(hx, hy); X.lineTo(tx, ty); X.stroke();
-    
+
     // 2. Spar wood fill (brown)
     X.strokeStyle = '#8B4513';
     X.lineWidth = 1.5;
     X.beginPath(); X.moveTo(hx, hy); X.lineTo(tx, ty); X.stroke();
-    
+
     // 3. Canvas sail sheet (quadrilateral)
-    let x1 = hx + dx * 5;
-    let y1 = hy + dy * 5;
+    let x1 = hx + dx * 5*scale;
+    let y1 = hy + dy * 5*scale;
     let x2 = tx;
     let y2 = ty;
-    let x3 = tx + px * 8;
-    let y3 = ty + py * 8;
-    let x4 = x1 + px * 6;
-    let y4 = y1 + py * 6;
-    
+    let x3 = tx + px * 8*scale;
+    let y3 = ty + py * 8*scale;
+    let x4 = x1 + px * 6*scale;
+    let y4 = y1 + py * 6*scale;
+
     X.fillStyle = '#f5f2e9';
     X.beginPath();
     X.moveTo(x1, y1);
@@ -692,15 +716,15 @@ function drawWindmillSails(hx,hy,id){
     X.lineTo(x4, y4);
     X.closePath();
     X.fill();
-    
+
     X.strokeStyle = '#000000';
     X.lineWidth = 1.3;
     X.stroke();
   }
-  
+
   // Center pivot pin
   X.fillStyle='#866840';
-  X.beginPath();X.arc(hx,hy,3.5,0,Math.PI*2);X.fill();
+  X.beginPath();X.arc(hx,hy,3.5*scale,0,Math.PI*2);X.fill();
   X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
 }
 // Main function to draw building entities
@@ -1209,53 +1233,66 @@ function drawBuilding(e, part = null){
     }
   }
   else if(e.btype==='MILL'){
-    bh=52; // tapered tower (36) + conical cap (16)
-    let by = sy + bhh*0.55;           // base diamond top corner
-    let W0 = bw*0.75, W1 = bw*0.55;   // half-width at the base / top (taper)
-    let hh0 = W0*0.5, hh1 = W1*0.5;   // 2:1 iso front-corner drops
-    let H = 36, ty = by - H;
-    let wl = darken?darkenColor('#dcd0a0'):'#dcd0a0';
-    let wr = darken?darkenColor('#bca880'):'#bca880';
-    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
-    // Tapered left/right faces
-    X.fillStyle=wl;X.beginPath();
-    X.moveTo(sx-W0,by);X.lineTo(sx,by+hh0);X.lineTo(sx,ty+hh1);X.lineTo(sx-W1,ty);X.closePath();X.fill();X.stroke();
-    X.fillStyle=wr;X.beginPath();
-    X.moveTo(sx,by+hh0);X.lineTo(sx+W0,by);X.lineTo(sx+W1,ty);X.lineTo(sx,ty+hh1);X.closePath();X.fill();X.stroke();
-    // Plank courses following the taper
-    X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
-    for(let t of [0.22,0.44,0.66,0.88]){
-      let rw = W0+(W1-W0)*t;
-      let ey = by+(ty-by)*t;                       // edge corner y at this height
-      let fy2 = (by+hh0)+((ty+hh1)-(by+hh0))*t;    // front corner y at this height
-      X.beginPath();X.moveTo(sx-rw,ey);X.lineTo(sx,fy2);X.lineTo(sx+rw,ey);X.stroke();
-    }
-    // Door on the front-left face
-    let dA={x:sx-W0*0.55, y:by+hh0*0.5}, dB={x:sx-W0*0.15, y:by+hh0*0.86};
-    X.fillStyle=darken?darkenColor('#5c3d24'):'#5c3d24';
+    // One continuously-tapering octagonal tower (matching the icon-MILL
+    // reference art) — 3 color bands suggest stone-to-timber courses without
+    // ever breaking the outline into separate stepped drums.
+    bh=72;
+    let by = sy + bhh;                 // tower centered on the 2x2 footprint
+    let W0=bw*0.58, W1=bw*0.30;        // base / top half-widths
+    let H=48, ty=by-H;
+    const lerp=(a,b,t)=>a+(b-a)*t;
+    const wAt=t=>lerp(W0,W1,t);        // half-width at height-fraction t (0=base,1=top)
+    const yAt=t=>lerp(by,ty,t);
+    // 3 bands, each a trapezoid whose edges exactly meet the next band's —
+    // no gaps, no ledges, one unbroken silhouette.
+    let bands=[
+      {t0:0,    t1:0.42, cL:'#8a6a42', cR:'#6d4f30'}, // dark cocoa base
+      {t0:0.42, t1:0.74, cL:'#a5814f', cR:'#87663f'}, // mid brown
+      {t0:0.74, t1:1,    cL:'#c9a874', cR:'#a9895c'}, // lighter top band
+    ];
+    X.lineJoin='round';
+    bands.forEach(bd=>{
+      let y0=yAt(bd.t0), y1=yAt(bd.t1);
+      let w0=wAt(bd.t0), w1=wAt(bd.t1);
+      let h0=w0*0.5, h1=w1*0.5;
+      let wl=darken?darkenColor(bd.cL):bd.cL, wr=darken?darkenColor(bd.cR):bd.cR;
+      X.strokeStyle='#000';X.lineWidth=1.2;
+      X.fillStyle=wl;X.beginPath();
+      X.moveTo(sx-w0,y0);X.lineTo(sx,y0+h0);X.lineTo(sx,y1+h1);X.lineTo(sx-w1,y1);X.closePath();X.fill();X.stroke();
+      X.fillStyle=wr;X.beginPath();
+      X.moveTo(sx,y0+h0);X.lineTo(sx+w0,y0);X.lineTo(sx+w1,y1);X.lineTo(sx,y1+h1);X.closePath();X.fill();X.stroke();
+    });
+    // Small vent window near the top band
+    let vw=wAt(0.86), vh=vw*0.5, vy=yAt(0.86);
+    X.fillStyle=darken?darkenColor('#2a1c10'):'#2a1c10';
+    X.strokeStyle='#000';X.lineWidth=1;
+    X.beginPath();X.ellipse(sx-vw*0.3,vy+vh*0.55,2.2,3,0,0,Math.PI*2);X.fill();X.stroke();
+
+    // Door centered on the base band's left face
+    let baseW=wAt(0), baseH=baseW*0.5;
+    let dA={x:sx-baseW*0.62,y:by+baseH*0.38}, dB={x:sx-baseW*0.38,y:by+baseH*0.62};
+    X.fillStyle=darken?darkenColor('#3a2612'):'#3a2612';
     X.strokeStyle='#000';X.lineWidth=1;
     X.beginPath();X.moveTo(dA.x,dA.y);X.lineTo(dB.x,dB.y);
-    X.lineTo(dB.x,dB.y-9);X.lineTo(dA.x,dA.y-9);X.closePath();X.fill();X.stroke();
-    // Conical shingled cap with a small overhang
-    let capH=18, ov=3;
-    let cl=darken?darkenColor('#a65c3b'):'#a65c3b', cr=darken?darkenColor('#863c20'):'#863c20';
-    X.strokeStyle='#000';X.lineWidth=1.3;
-    X.fillStyle=cl;X.beginPath();
-    X.moveTo(sx,ty-capH);X.lineTo(sx-W1-ov,ty);X.lineTo(sx,ty+hh1+ov*0.5);X.closePath();X.fill();X.stroke();
-    X.fillStyle=cr;X.beginPath();
-    X.moveTo(sx,ty-capH);X.lineTo(sx+W1+ov,ty);X.lineTo(sx,ty+hh1+ov*0.5);X.closePath();X.fill();X.stroke();
-    // Team pennant at the apex
-    drawPennant(sx,ty-capH,tc,darken);
-    // Sails & flour sacks
-    if(e.complete){
-      if(visible) drawWindmillSails(sx, ty+hh1, e.id); // hub on the cap's front face center
+    X.lineTo(dB.x,dB.y-12);X.lineTo(dA.x,dA.y-12);X.closePath();X.fill();X.stroke();
 
-      // Flour sacks piled at the base
-      let fx = sx+W0*0.55, fy = by+hh0*0.9;
-      X.strokeStyle='#000000';X.lineWidth=1;
-      X.fillStyle=darken ? darkenColor('#e5dcd0') : '#e5dcd0';X.beginPath();X.ellipse(fx,fy,4,3,0,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#c8bdae') : '#c8bdae';X.beginPath();X.ellipse(fx,fy-2,3,2,0,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor('#d5ccbe') : '#d5ccbe';X.beginPath();X.ellipse(fx-5,fy+2,4,3,0,0,Math.PI*2);X.fill();X.stroke();
+    // ---- Rounded dome cap, flush with the tower's own top width (no
+    // separate steep cone / overhang jump — continues the same taper) ----
+    let topHalf=W1*0.5;
+    let capH=16;
+    let cl=darken?darkenColor('#a65c3b'):'#a65c3b', cr=darken?darkenColor('#863c20'):'#863c20';
+    X.strokeStyle='#000';X.lineWidth=1.2;
+    X.fillStyle=cl;X.beginPath();
+    X.moveTo(sx,ty-capH);X.quadraticCurveTo(sx-W1,ty-capH*0.3,sx-W1,ty);X.lineTo(sx,ty+topHalf);X.closePath();X.fill();X.stroke();
+    X.fillStyle=cr;X.beginPath();
+    X.moveTo(sx,ty-capH);X.quadraticCurveTo(sx+W1,ty-capH*0.3,sx+W1,ty);X.lineTo(sx,ty+topHalf);X.closePath();X.fill();X.stroke();
+
+    if(e.complete){
+      let hubY=ty+topHalf*0.3;
+      // Team pennant drawn BEFORE the sails so the blades sweep in front of
+      // it, matching how a mounted flag sits behind a windmill's fan.
+      drawPennant(sx,ty-capH-2,tc,darken);
+      if(visible) drawWindmillSails(sx, hubY, e.id, 1.6);
     }
   }
   else if(e.btype==='TOWER'){
@@ -1504,19 +1541,6 @@ function drawBuilding(e, part = null){
     X.fillText(label,flagX+7,flagY+2);
     X.textAlign='left';
   }
-  // Selection — outlines the entity's actual footprint (e.w/e.h), not the
-  // building type's default template size, so multi-tile footprints that
-  // differ from the template (e.g. a 1x2/2x1 GATE vs BLDGS.GATE's 1x1)
-  // still get an outline spanning every tile they occupy.
-  if(selected.includes(e)){
-    X.strokeStyle='#fff';X.lineWidth=2;X.setLineDash([3,3]);
-    let fw=e.w||b.w, fh=e.h||b.h;
-    let toScr=(wx,wy)=>{let p=toIso(wx,wy);return{x:p.ix-camX+W/2,y:p.iy-camY+topH+H/2};};
-    let pN=toScr(e.x,e.y), pE=toScr(e.x+fw,e.y), pS=toScr(e.x+fw,e.y+fh), pW=toScr(e.x,e.y+fh);
-    X.beginPath();
-    X.moveTo(pN.x,pN.y);X.lineTo(pE.x+2,pE.y);X.lineTo(pS.x,pS.y+2);X.lineTo(pW.x-2,pW.y);X.closePath();X.stroke();
-    X.setLineDash([]);
-  }
   // Train progress
   if(e.queue&&e.queue.length>0){
     let pct=e.trainTick/(UNITS[e.queue[0]].trainTime);
@@ -1598,7 +1622,7 @@ function drawCorpse(c){
     X.beginPath();X.arc(0,-10,3.6,Math.PI,0);X.fill();
   } else {
     X.fillStyle='#4a2e1b';
-    X.beginPath();X.arc(0,-10,3.6,Math.PI,0);X.fill();
+          X.beginPath();X.arc(0,-10,3.6,Math.PI,0);X.fill();
   }
   
   // Dropped weapons next to corpse
@@ -1607,6 +1631,259 @@ function drawCorpse(c){
   
   X.restore();
 }
+
+// ---- True-silhouette selection outline ----
+// Renders the entity's exact silhouette into an offscreen buffer, dilates it
+// by 2px in 8 directions, then subtracts the original — leaving a clean gold
+// ring, which is blit onto the main canvas on top of everything drawn so far.
+//
+// This MUST be called from inside render()'s own X.save()/scale(ZOOM)/
+// X.restore() block — i.e. call sites, drawUnit/drawBuilding themselves, and
+// this function all need to agree on which side of that transform they're
+// operating on. Every position here is computed exactly the way drawUnit/
+// drawBuilding compute theirs: logical (unscaled) pixels, ZOOM never
+// multiplied in manually. That's deliberate, not an oversight — an earlier
+// version of this drew the ring AFTER X.restore() (outside the transform)
+// and re-applied ZOOM by hand, which sounds equivalent but isn't: the real
+// sprite's position gets Math.round()'ed BEFORE the canvas scales it by
+// ZOOM (round-then-scale, since it's drawn inside the transform), while the
+// manual version rounded AFTER multiplying by ZOOM (scale-then-round).
+// Those two only agree when camX/camY land on exact integers, which is
+// rare during scrolling/following — the rest of the time the ring would
+// drift up to half a zoom-level's worth of pixels off the sprite, in a
+// different direction every frame as the camera moves. That drift is what
+// "glitchy" was: not a buffer-management bug, a coordinate-space mismatch.
+// Once both the sprite and its ring are positioned by the SAME transform,
+// they can't disagree — so this needs no manual ZOOM math at all, only
+// dpr (device pixel ratio, for crisp buffers on retina screens), which is
+// an orthogonal concern from gameplay zoom.
+const SIL_UNIT_SIZE = 84;  // logical px — covers any unit
+const SIL_BLDG_SIZE = 300; // logical px — covers largest building (TC 3x3)
+// Selected entities whose combined bounding box (all their silhouette
+// extents unioned together) fits within this span get ONE merged ring
+// drawn around the whole group instead of one ring per entity — see
+// drawOutlines() below for why. Beyond this span there's no visual benefit
+// to merging anyway (the ~2px dilation could never bridge that big a gap
+// between two far-apart members, so their rings would never touch whether
+// merged or not) — only cost, in the form of a much bigger shared buffer
+// mostly covering empty space. Falls back to the old per-entity path there.
+const SIL_MERGE_MAX_SPAN = 700; // logical px
+
+let _silMaskC=null,_silMaskX=null; // logical-pixel user space (scale(_silSS) applied)
+let _silFlatC=null,_silFlatX=null; // physical px, no extra scale
+let _silRingC=null,_silRingX=null;
+let _silSS=0,_silAllocW=0,_silAllocH=0; // tracks what the buffers were last built for
+
+// Every other shape in this renderer is drawn with vector calls (arc/lineTo/
+// etc.) directly under the active X.scale(ZOOM,ZOOM) transform, so it's
+// re-evaluated at whatever the current zoom is and never blurs. This ring
+// is the one raster bitmap in the pipeline — captured once into an offscreen
+// buffer, then composited through that same ZOOM transform — so if the
+// buffer's own pixel density doesn't keep up with ZOOM, the browser ends up
+// stretching a low-res bitmap and it visibly softens at higher zoom. The
+// supersample factor is dpr * ZOOM (not just dpr) so the buffer always has
+// enough physical pixels for however zoomed-in the game currently is.
+//
+// ZOOM is quantized up to the nearest quarter-step before feeding into this,
+// so a smooth mouse-wheel zoom doesn't force a buffer reallocation on every
+// single frame — only when crossing a quarter-zoom boundary. (Buffers are
+// also grow-only/reused across frames when the requested size already fits,
+// same as before — this is purely about how many physical pixels a given
+// requested size actually gets.)
+function _silSuperSample(){
+  return dpr * Math.max(1, Math.ceil(ZOOM*4)/4);
+}
+
+function _silEnsure(cssW,cssH){
+  let ss=_silSuperSample();
+  let needW=Math.max(_silAllocW,cssW), needH=Math.max(_silAllocH,cssH);
+  // Rebuild if the supersample factor changed OR we need a bigger canvas in
+  // either dimension (only grow each dimension independently, never shrink
+  // — same reuse-across-calls logic as before, just 2D now: a merged
+  // group's bounding box is rarely square).
+  if(_silMaskC && _silSS===ss && _silAllocW>=needW && _silAllocH>=needH) return;
+  _silSS=ss; _silAllocW=needW; _silAllocH=needH;
+  let physW=Math.ceil(needW*ss), physH=Math.ceil(needH*ss);
+  function mk(){ let c=document.createElement('canvas');c.width=physW;c.height=physH;return c; }
+  _silMaskC=mk(); _silMaskX=_silMaskC.getContext('2d');
+  _silMaskX.scale(ss,ss);           // logical-pixel user space on the mask
+  _silFlatC=mk(); _silFlatX=_silFlatC.getContext('2d'); // physical px
+  _silRingC=mk(); _silRingX=_silRingC.getContext('2d'); // physical px
+}
+
+// Where a selected entity's silhouette sits on screen, in the same
+// logical-pixel space drawUnit/drawBuilding themselves draw in — used both
+// to union a bounding box across a whole selection and to know where to
+// place this one entity within a shared buffer. Returns null if the entity
+// isn't eligible for an outline at all (garrisoned, wrong type, fogged, or
+// scrolled off-screen) so callers can filter with a plain .filter(Boolean).
+function _outlineExtent(e){
+  if(!e||e.garrisonedIn) return null;
+  const isUnit=e.type==='unit', isBldg=e.type==='building';
+  if(!isUnit&&!isBldg) return null;
+
+  let f = isBldg ? buildingFogLevel(e) : (()=>{
+    let ex=Math.round(e.x),ey=Math.round(e.y);
+    return (fog[ey]&&fog[ey][ex]!==undefined)?fog[ey][ex]:0;
+  })();
+  if(f!==2) return null;
+
+  const cssPx  = isUnit ? SIL_UNIT_SIZE : SIL_BLDG_SIZE;
+  const anchorX = isUnit ? 42 : cssPx/2;
+  const anchorY = isUnit ? 58 : cssPx*0.72;
+
+  let sx, sy;
+  if(isUnit){
+    const iso=toIso(e.x,e.y);
+    sx=Math.round(iso.ix-camX+W/2);
+    sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
+    const {ox,oy}=getUnitGroupOffset(e.id);
+    sx+=ox; sy+=oy;
+  } else {
+    const b=BLDGS[e.btype];
+    const cx=e.x+b.w/2, cy=e.y+b.h/2;
+    const iso=toIso(cx,cy);
+    const bhh=(e.h||b.h)*HALF_TH;
+    sx=Math.round(iso.ix-camX+W/2);
+    sy=Math.round(iso.iy-camY+topH+H/2-bhh);
+  }
+  if(isOffscreen(sx,sy,cssPx)) return null;
+
+  return {
+    e, isUnit, cssPx, anchorX, anchorY, sx, sy,
+    left: sx-anchorX, top: sy-anchorY,
+    right: sx+(cssPx-anchorX), bottom: sy+(cssPx-anchorY)
+  };
+}
+
+// Renders every entity in `infos` into ONE shared buffer (each at its own
+// offset within it), flattens+dilates+subtracts ONCE for the whole group,
+// then blits the result — this is what makes touching/adjacent selected
+// entities merge into a single continuous outline instead of showing a
+// visible seam where two individually-dilated rings overlap. `bufW`/`bufH`
+// is the buffer size (logical px); `originLeft`/`originTop` is where that
+// buffer's (0,0) sits on screen.
+function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
+  _silEnsure(bufW,bufH);
+  const ss = _silSuperSample();
+  const physW = Math.ceil(bufW*ss), physH = Math.ceil(bufH*ss);
+
+  // ── Step 1: render every entity's exact shape into the shared mask,
+  // each positioned at its own offset within the group's buffer. ──────────
+  _silMaskX.clearRect(0,0,bufW,bufH);
+  const sv={X,camX,camY,W,H,topH,ZOOM};
+  X=_silMaskX; W=2000; H=2000; topH=0; ZOOM=1;
+  try{
+    infos.forEach(info=>{
+      const {e,isUnit,anchorX,anchorY,sx,sy}=info;
+      // Where this entity's own anchor point lands inside the shared
+      // buffer — same idea as the old single-entity anchor, just offset by
+      // the buffer's screen origin instead of always (anchorX,anchorY).
+      const bufAnchorX = sx-originLeft, bufAnchorY = sy-originTop;
+      if(isUnit){
+        const {ox,oy}=getUnitGroupOffset(e.id);
+        const iso=toIso(e.x,e.y);
+        camX=iso.ix+W/2-(bufAnchorX-ox);
+        camY=iso.iy+H/2+HALF_TH-(bufAnchorY-oy);
+        drawUnit(e);
+      } else {
+        const b=BLDGS[e.btype];
+        const iso=toIso(e.x+b.w/2, e.y+b.h/2);
+        const bhh=(e.h||b.h)*HALF_TH;
+        camX=iso.ix+W/2-bufAnchorX;
+        camY=iso.iy+H/2-bhh-bufAnchorY;
+        drawBuilding(e);
+      }
+    });
+  } finally {
+    X=sv.X; camX=sv.camX; camY=sv.camY;
+    W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
+  }
+
+  // ── Step 2: flatten mask to a solid gold silhouette ───────────────────
+  _silFlatX.clearRect(0,0,physW,physH);
+  _silFlatX.globalCompositeOperation='source-over';
+  _silFlatX.fillStyle='#ffd700';
+  _silFlatX.fillRect(0,0,physW,physH);
+  _silFlatX.globalCompositeOperation='destination-in';
+  // 9-arg drawImage: copy only the first physW×physH pixels of the mask
+  // (the buffer may be larger than needed if a bigger group/building was
+  // previously selected — grow-only reuse).
+  _silFlatX.drawImage(_silMaskC,0,0,physW,physH, 0,0,physW,physH);
+  _silFlatX.globalCompositeOperation='source-over';
+
+  // ── Step 3: dilate by ~2 logical px, subtract original → ring ─────────
+  // The offset is in PHYSICAL pixels (this buffer's own space), so it's
+  // scaled by `ss` too — otherwise the ring would visibly get THINNER as
+  // ss grows with zoom (2 physical px is a smaller and smaller logical
+  // distance at higher resolution). This keeps the ring's on-screen
+  // thickness constant regardless of zoom or dpr.
+  //
+  // The "dilate" is approximated by stamping the silhouette at several
+  // points around a circle and taking their union — a real circular
+  // dilation would need every point on that circle, so a small sample
+  // count leaves visible seams: at a CONVEX/pointy feature (top of the
+  // head, a weapon tip, the dot of the question mark), the union of a few
+  // shifted copies of that point doesn't blend into a smooth cap — it
+  // shows as a cluster of small facet "peaks", one per sample direction.
+  // At a CONCAVE dip between features, a sparse sample set sometimes
+  // doesn't bridge the gap at all, leaving a thin transparent notch. 24
+  // samples (vs. an earlier 8) makes the approximation close enough to a
+  // true circle that neither is visible in practice, for a cheap linear
+  // cost increase (each sample is one drawImage call) — and since this now
+  // runs ONCE per group instead of once per entity, merging several units
+  // together is actually CHEAPER than outlining them separately, not more
+  // expensive, on top of looking right.
+  const R=2*ss;
+  const DIRS=24;
+  _silRingX.clearRect(0,0,physW,physH);
+  _silRingX.globalCompositeOperation='source-over';
+  for(let i=0;i<DIRS;i++){
+    let a=i/DIRS*Math.PI*2;
+    _silRingX.drawImage(_silFlatC,0,0,physW,physH, Math.cos(a)*R,Math.sin(a)*R,physW,physH);
+  }
+  _silRingX.globalCompositeOperation='destination-out';
+  _silRingX.drawImage(_silFlatC,0,0,physW,physH, 0,0,physW,physH);
+  _silRingX.globalCompositeOperation='source-over';
+
+  // ── Step 4: blit ring to screen at its logical-pixel size ─────────────
+  // Destination is bufW×bufH logical pixels — the SAME units drawUnit/
+  // drawBuilding draw in — so the active X.scale(ZOOM,ZOOM) transform
+  // (still in effect; we're inside it) scales this identically to the
+  // real sprites. No manual ZOOM multiplication needed here at all.
+  X.drawImage(_silRingC,0,0,physW,physH, originLeft, originTop, bufW, bufH);
+}
+
+// AoE2-style gold silhouette ring for selected units and buildings. Call
+// from inside render()'s active ZOOM transform (see the big comment above
+// _silSuperSample for why) — right after the main entity loop is the
+// natural spot, matching where the ring needs to land relative to
+// everything else painted that frame.
+//
+// Entities whose silhouettes are close together share ONE buffer and get
+// dilated as a single unioned shape (_renderRingGroup), so touching or
+// overlapping selected units read as one continuous outline around the
+// group instead of two individually-dilated rings meeting at a visible
+// seam. Far-apart entities (beyond SIL_MERGE_MAX_SPAN) fall back to their
+// own individual buffer — merging them would cost a much bigger mostly-
+// empty buffer for zero visual benefit, since the dilation could never
+// bridge that big a gap anyway.
+function drawOutlines(){
+  if(!selected.length) return;
+  let infos = selected.map(_outlineExtent).filter(Boolean);
+  if(infos.length===0) return;
+
+  let minLeft=Math.min(...infos.map(i=>i.left)), minTop=Math.min(...infos.map(i=>i.top));
+  let maxRight=Math.max(...infos.map(i=>i.right)), maxBottom=Math.max(...infos.map(i=>i.bottom));
+  let spanW=maxRight-minLeft, spanH=maxBottom-minTop;
+
+  if(infos.length===1 || spanW>SIL_MERGE_MAX_SPAN || spanH>SIL_MERGE_MAX_SPAN){
+    infos.forEach(info=>_renderRingGroup([info], info.left, info.top, info.cssPx, info.cssPx));
+  } else {
+    _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
+  }
+}
+
 
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
@@ -2496,11 +2773,10 @@ function drawUnit(e){
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);
   }
-  // Selection circle
-  if(selected.includes(e)){
-    X.strokeStyle='#fff';X.lineWidth=1.5;
-    X.beginPath();X.ellipse(sx,sy+2,8,4,0,0,Math.PI*2);X.stroke();
-  }
+  // Selection is drawn separately, in drawUnitOutlines() — a final
+  // pass after every building this frame, so it stays visible even when a
+  // building is painted over this unit later in the depth sort (see there
+  // for why: this codebase has no z-buffer, just one Y-sorted paint pass).
   // Idle indicator — keep showing while walking too, as long as no
   // task/target is actually assigned (a bare move order isn't "working").
   if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target){
@@ -2681,50 +2957,13 @@ function drawMinimap(){
   MX.closePath();
   MX.stroke();
 
-  // ---- Ornamental medieval frame around the diamond ----
-  // Layered strokes (dark wood → gold trim → parchment highlight) plus
-  // riveted corner medallions. Widths scale with the canvas so the frame
-  // grows dramatic on the expanded map and stays dainty on the small one.
+  // Simple thin border around the diamond
   let corners=[miniPoint(0,0),miniPoint(MAP,0),miniPoint(MAP,MAP),miniPoint(0,MAP)];
-  let frameW=8; // constant — same frame weight on small and expanded map
-  let tracePath=()=>{
-    MX.beginPath();
-    MX.moveTo(corners[0].x,corners[0].y);
-    for(let i=1;i<corners.length;i++)MX.lineTo(corners[i].x,corners[i].y);
-    MX.closePath();
-  };
-  MX.lineJoin='round';
-  // outer shadow for lift off the battlefield
-  MX.strokeStyle='rgba(0,0,0,0.55)';MX.lineWidth=frameW*1.6;tracePath();MX.stroke();
-  // dark wood body
-  MX.strokeStyle='#3a2410';MX.lineWidth=frameW*1.25;tracePath();MX.stroke();
-  // wood grain mid-tone
-  MX.strokeStyle='#5c3d24';MX.lineWidth=frameW*0.8;tracePath();MX.stroke();
-  // gold trim
-  MX.strokeStyle='#bfa054';MX.lineWidth=frameW*0.32;tracePath();MX.stroke();
-  // bright inner filet
-  MX.strokeStyle='#ffe9ad';MX.lineWidth=Math.max(1,frameW*0.1);tracePath();MX.stroke();
-  // corner medallions: riveted gold-ringed studs at the four points
-  let medR=frameW*0.95;
-  corners.forEach(c=>{
-    MX.beginPath();MX.arc(c.x,c.y,medR,0,Math.PI*2);
-    MX.fillStyle='#2a1808';MX.fill();
-    MX.lineWidth=Math.max(1.5,medR*0.28);MX.strokeStyle='#bfa054';MX.stroke();
-    MX.beginPath();MX.arc(c.x,c.y,medR*0.42,0,Math.PI*2);
-    MX.fillStyle='#d8b566';MX.fill();
-    // glint
-    MX.beginPath();MX.arc(c.x-medR*0.15,c.y-medR*0.15,medR*0.14,0,Math.PI*2);
-    MX.fillStyle='#fff3cf';MX.fill();
-  });
-  // small studs at the edge midpoints
-  for(let i=0;i<4;i++){
-    let a=corners[i],b=corners[(i+1)%4];
-    let mxm=(a.x+b.x)/2,mym=(a.y+b.y)/2;
-    MX.beginPath();MX.arc(mxm,mym,medR*0.45,0,Math.PI*2);
-    MX.fillStyle='#2a1808';MX.fill();
-    MX.lineWidth=Math.max(1,medR*0.16);MX.strokeStyle='#bfa054';MX.stroke();
-  }
-  MX.lineJoin='miter';
+  MX.strokeStyle='#d8c878';MX.lineWidth=1.5;MX.lineJoin='round';
+  MX.beginPath();
+  MX.moveTo(corners[0].x,corners[0].y);
+  for(let i=1;i<corners.length;i++)MX.lineTo(corners[i].x,corners[i].y);
+  MX.closePath();MX.stroke();
 }
 
 function drawParticles() {
@@ -2996,7 +3235,14 @@ function render(){
     else if(e.type==='tree') drawTreeEntity(e.x, e.y);
     else drawUnit(e);
   });
-  
+
+  // Selection outlines (units + buildings), in their own pass after every
+  // entity has painted for the frame — see drawOutlines() for why this
+  // must run from inside the same active ZOOM transform as everything else
+  // (moving it outside and re-applying ZOOM by hand was the source of a
+  // frame-to-frame "glitchy" drift between the ring and the real sprite).
+  drawOutlines();
+
   drawProjectiles(); // Draw archer arrows
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();

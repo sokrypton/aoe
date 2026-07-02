@@ -39,7 +39,11 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
     food:b.food||0,maxFood:b.food||0,garrison:[]};
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     if(y+dy<MAP&&x+dx<MAP)map[y+dy][x+dx].occupied=e.id;
-    if(b.isFarm){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;}
+    // Only the origin tile becomes actual harvestable farmland — the rest of
+    // a >1x1 footprint (see FARM in core.js) is just occupied ground under
+    // the tilled-plot art, matching AoE2 where a farm is one resource node
+    // regardless of how large its visual plot is.
+    if(b.isFarm&&dx===0&&dy===0){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;}
   }
   entities.push(e);
   entitiesById.set(e.id, e);

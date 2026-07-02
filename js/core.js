@@ -1,4 +1,8 @@
-const C=document.getElementById('game'),X=C.getContext('2d');
+const C=document.getElementById('game');
+// X is reassignable (not const): drawSelectedUnitOutlines() briefly redirects
+// it to an offscreen buffer so it can reuse drawUnit() itself to capture a
+// unit's exact silhouette, instead of maintaining a separate outline shape.
+let X=C.getContext('2d');
 const MC=document.getElementById('minimap'),MX=MC.getContext('2d');
 const isMobile='ontouchstart' in window||navigator.maxTouchPoints>0;
 // Command markers (visual feedback when you issue a command)
@@ -30,6 +34,15 @@ function setMapSize(sizeKey){
   ];
 }
 const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
+// Approximate on-screen structure height (px, pre-zoom) per building type —
+// footprint diamonds alone don't capture how tall a building actually
+// paints, which matters for anything doing screen-space hit-testing against
+// a building's visual silhouette (click-to-select in input.js, and the
+// behind-a-building outline check in render.js).
+const BLDG_HEIGHTS = {
+  TC: 80, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
+  MILL: 32, FARM: 6, TOWER: 58, WALL: 26, GATE: 32
+};
 const TERRAIN={GRASS:0,FOREST:1,GOLD:2,STONE:3,WATER:4,FARM:5,BERRIES:6};
 const TCOL={
   [TERRAIN.GRASS]:['#4a8c2a','#52942e','#468828','#4e9030'],
@@ -46,8 +59,11 @@ const BLDGS={
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:150,desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:210,desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:210,desc:'Drop site for Gold and Stone.',icon:'⛏️'},
-  MILL:{name:'Mill',w:1,h:1,hp:600,cost:{w:100},drop:'food',buildTime:210,desc:'Drop site for Food. Necessary to plant Farms.',icon:'🛞'},
-  FARM:{name:'Farm',w:1,h:1,hp:100,cost:{w:60},isFarm:true,food:300,buildTime:90,desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:210,desc:'Drop site for Food. Necessary to plant Farms.',icon:'🛞'},
+  // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
+  // (see createBuilding in entities.js) — the extra footprint is just a
+  // bigger plot of tilled ground for the crop art to fill, not extra food.
+  FARM:{name:'Farm',w:2,h:2,hp:100,cost:{w:60},isFarm:true,food:300,buildTime:90,desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
   BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:300,desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
   TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,buildTime:480,garrisonCap:5,desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},buildTime:30,desc:'Heavy stone defensive barrier to block chokepoints.',icon:'🧱'},
