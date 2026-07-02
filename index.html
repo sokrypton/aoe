@@ -83,8 +83,8 @@
   <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
     Resume
   </button>
-  <button type="button" id="start-game-btn" class="menu-action-btn" onclick="onStartClicked()">
-    Start
+  <button type="button" id="start-game-btn" class="menu-action-btn" onclick="onStartClicked()" disabled>
+    Loading&hellip;
   </button>
 </div>
 </div>
@@ -96,6 +96,11 @@
 <script src="js/entities.js"></script>
 <script src="js/pathfinding.js"></script>
 <script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
 <script src="js/render.js"></script>
 <script src="js/logic.js"></script>
 <script src="js/ai.js"></script>
@@ -103,4 +108,22 @@
 <script src="js/ui.js"></script>
 <script src="js/input.js"></script>
 <script src="js/init.js"></script>
+<script>
+// Plain <script src> tags (no defer/async) load and execute strictly in
+// order, each one blocking the next — but the Start button's markup sits
+// EARLIER in this document than any of them, so the browser can paint it
+// (and in some cases let it be clicked) before the code behind it has
+// actually finished loading. That's a real race, not just a cosmetic
+// concern: clicking Start before, say, init.js has run means
+// onStartClicked() doesn't exist yet, or an earlier file (game logic,
+// input handlers) is still missing. The button starts disabled in the
+// HTML; this tag is the LAST thing in the document, so by the time it
+// runs, every game script above it is guaranteed to have already loaded
+// and executed (that's what makes plain synchronous script tags useful
+// here) — so this is the correct, simplest point to flip it back on.
+(function(){
+  var btn = document.getElementById('start-game-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Start'; }
+})();
+</script>
 </body></html>

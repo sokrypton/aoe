@@ -659,6 +659,15 @@ canvas {
   transform: translateY(1px);
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
+.menu-action-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+  filter: grayscale(0.4);
+  box-shadow: none;
+}
+.menu-action-btn:disabled:active {
+  transform: none; /* no press-down feedback while it can't actually be clicked */
+}
 #start-game-btn {
   background: linear-gradient(180deg, #8c1d1d 0%, #5a0c0c 100%);
 }
