@@ -254,6 +254,8 @@ function updateUI(){
         b.builds.forEach(ut=>{
           let u=UNITS[ut];
           let btn=document.createElement('div');btn.className='act-btn';
+          btn.dataset.tipType='unit';
+          btn.dataset.tipKey=ut;
           let costStr=formatCost(u.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>`;
           btn.onclick=()=>trainUnit(e,ut);
@@ -267,6 +269,9 @@ function updateUI(){
             let cancelBtn=document.createElement('div');
             cancelBtn.className='act-btn rally-btn rally-active';
             cancelBtn.id='rally-cancel-btn';
+            cancelBtn.dataset.tipType='action';
+            cancelBtn.dataset.tipLabel='Cancel Rally';
+            cancelBtn.dataset.tipDesc='Click to stop setting the rally point.';
             cancelBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Tap map to<br>set rally</div>`;
             cancelBtn.onclick=()=>{ window.settingRally=false; showMsg('Rally cancelled'); updateUI(); };
             act.appendChild(cancelBtn);
@@ -274,6 +279,9 @@ function updateUI(){
             let rallyBtn=document.createElement('div');
             rallyBtn.className='act-btn rally-btn';
             rallyBtn.id='rally-set-btn';
+            rallyBtn.dataset.tipType='action';
+            rallyBtn.dataset.tipLabel='Set Rally Point';
+            rallyBtn.dataset.tipDesc='Newly trained units will automatically walk to the rally point after spawning.';
             rallyBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Set Rally</div>`;
             rallyBtn.onclick=()=>{
               if(gameOver)return;
@@ -288,6 +296,10 @@ function updateUI(){
 
       if(e.complete && e.btype === 'MILL') {
         let btn=document.createElement('div');btn.className='act-btn framed';
+        btn.dataset.tipType='action';
+        btn.dataset.tipLabel='Prepay Farm Reseed';
+        btn.dataset.tipDesc='Pre-pays 60 Wood to automatically reseed an exhausted farm. Queued reseeds are used before spending resources again.';
+        btn.dataset.tipCost=JSON.stringify({w:60});
         let costStr='W:60';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>prepayFarm();
@@ -295,6 +307,10 @@ function updateUI(){
       }
       if(b.isFarm && e.exhausted) {
         let btn=document.createElement('div');btn.className='act-btn framed';
+        btn.dataset.tipType='action';
+        btn.dataset.tipLabel='Reactivate Farm';
+        btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (300 Food).';
+        btn.dataset.tipCost=JSON.stringify({w:60});
         let costStr='W:60';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>`;
         btn.onclick=()=>reactivateFarm(e);
@@ -348,12 +364,17 @@ function updateUI(){
 
       if (window.currentVillagerMenu === 'main') {
         // Main Building Menus
-        let menuButtons = [
-          { name: 'Build Economic', key: 'Q', iconClass: 'icon-econ', action: 'eco' },
-          { name: 'Build Military', key: 'W', iconClass: 'icon-mil', action: 'mil' }
+        const menuButtonDefs = [
+          { name: 'Build Economic', key: 'Q', iconClass: 'icon-econ', action: 'eco',
+            tipLabel: 'Economic Buildings', tipDesc: 'Build resource drop sites, mills, houses, and farms.' },
+          { name: 'Build Military', key: 'W', iconClass: 'icon-mil', action: 'mil',
+            tipLabel: 'Military Buildings', tipDesc: 'Build barracks to train soldiers and towers to defend your base.' }
         ];
-        menuButtons.forEach(bi => {
+        menuButtonDefs.forEach(bi => {
           let btn=document.createElement('div');btn.className='act-btn menu-btn framed';
+          btn.dataset.tipType='action';
+          btn.dataset.tipLabel=bi.tipLabel;
+          btn.dataset.tipDesc=bi.tipDesc;
           btn.innerHTML=`<div class="btn-emoji sprite-icon ${bi.iconClass}"></div><div class="btn-label">${bi.name}</div><span class="cost">[${bi.key}]</span>`;
           btn.onclick=()=>{
             if(gameOver)return;
@@ -365,6 +386,9 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'eco') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
+        backBtn.dataset.tipType='action';
+        backBtn.dataset.tipLabel='Back';
+        backBtn.dataset.tipDesc='Return to the main villager command panel.';
         backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
@@ -382,6 +406,8 @@ function updateUI(){
         ];
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
+          btn.dataset.tipType='building';
+          btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
@@ -395,6 +421,9 @@ function updateUI(){
       } else if (window.currentVillagerMenu === 'mil') {
         // Back Button (First)
         let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
+        backBtn.dataset.tipType='action';
+        backBtn.dataset.tipLabel='Back';
+        backBtn.dataset.tipDesc='Return to the main villager command panel.';
         backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
         backBtn.onclick=()=>{
           window.currentVillagerMenu = 'main';
@@ -411,6 +440,8 @@ function updateUI(){
         ];
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
+          btn.dataset.tipType='building';
+          btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
           let costStr=formatCost(bData.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
@@ -542,3 +573,166 @@ function reactivateFarm(farm) {
 
 window.prepayFarm = prepayFarm;
 window.reactivateFarm = reactivateFarm;
+
+// ==============================
+// ---- HOVER TOOLTIP SYSTEM ----
+// ==============================
+// Desktop-only. Suppressed entirely on touch devices.
+// Shows rich info (name, desc, HP, stats, cost) for:
+//   • Action buttons (.act-btn) in the bottom panel
+//   • Units and buildings hovered on the game canvas
+// ==============================
+
+(function() {
+  const TIP = document.getElementById('tooltip');
+  if (!TIP) return;
+
+  // Resource key → human-readable label
+  const RES_LABEL = { f: 'Food', w: 'Wood', g: 'Gold', s: 'Stone' };
+
+  // Build the inner HTML for a tooltip given a data descriptor object:
+  //   { name, desc?, hp?, maxHp?, stats?, cost? }
+  function buildTipHTML(d) {
+    let html = `<div class="tip-name">${d.name}</div>`;
+    if (d.desc) html += `<div class="tip-desc">${d.desc}</div>`;
+
+    // Stats line (attack, range, speed…)
+    if (d.stats && d.stats.length) {
+      html += `<div class="tip-stats">${d.stats.join('  ')}</div>`;
+    }
+
+    // HP bar
+    if (d.hp != null && d.maxHp != null) {
+      const pct = Math.max(0, Math.min(100, Math.floor(d.hp / d.maxHp * 100)));
+      const col = pct < 20 ? '#cc3333' : pct < 50 ? '#d9a711' : '#2b8a3e';
+      html += `<div class="tip-hp-bar"><div class="tip-hp-fill" style="width:${pct}%;background:${col};"></div></div>`;
+      html += `<div style="font-size:10px;color:#d1c499;">HP: ${d.hp}/${d.maxHp}</div>`;
+    }
+
+    // Cost breakdown with resource icons
+    if (d.cost) {
+      const entries = Object.entries(d.cost);
+      if (entries.length) {
+        html += '<div class="tip-cost">';
+        entries.forEach(([k, v]) => {
+          // k may be short ('f','w','g','s') or full ('food','wood','gold','stone')
+          let shortKey = k;
+          if (k === 'food') shortKey = 'f';
+          else if (k === 'wood') shortKey = 'w';
+          else if (k === 'gold') shortKey = 'g';
+          else if (k === 'stone') shortKey = 's';
+          const resName = RES_LABEL[shortKey] || k;
+          // Map to sprite icon class
+          const iconClass = {f:'food',w:'wood',g:'gold',s:'stone'}[shortKey] || shortKey;
+          html += `<div class="tip-cost-row">` +
+            `<span class="tip-cost-icon icon-${iconClass}"></span>` +
+            `<span class="tip-cost-label">${resName}: <b>${v}</b></span>` +
+            `</div>`;
+        });
+        html += '</div>';
+      }
+    }
+    return html;
+  }
+
+  // Position the tooltip near (mx, my), keeping it inside the viewport
+  function positionTip(mx, my) {
+    const OFFSET = 14;
+    TIP.style.left = '';
+    TIP.style.right = '';
+    TIP.style.top = '';
+    TIP.style.bottom = '';
+
+    const tw = TIP.offsetWidth || 220;
+    const th = TIP.offsetHeight || 80;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Prefer right of cursor; flip left if it would overflow
+    let left = mx + OFFSET;
+    if (left + tw > vw - 8) left = mx - tw - OFFSET;
+    if (left < 4) left = 4;
+
+    // Prefer below cursor; flip above if it would overflow
+    let top = my + OFFSET;
+    if (top + th > vh - 8) top = my - th - OFFSET;
+    if (top < 4) top = 4;
+
+    TIP.style.left = left + 'px';
+    TIP.style.top  = top  + 'px';
+  }
+
+  function showTip(html, mx, my) {
+    TIP.innerHTML = html;
+    TIP.classList.add('visible');
+    positionTip(mx, my);
+  }
+
+  function hideTip() {
+    TIP.classList.remove('visible');
+  }
+
+  // ---- Action button hover: show unit/building being trained or placed ----
+  // Delegated listener on #bottom catches all .act-btn children even after
+  // updateUI() rebuilds them. Tooltip content is driven entirely by data
+  // attributes (tipType, tipKey, tipLabel, tipDesc) set on each button.
+
+  document.getElementById('bottom').addEventListener('mouseover', function(e) {
+    if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
+
+    // Walk up from the hovered element to find a .act-btn
+    let el = e.target;
+    while (el && el !== this) {
+      if (el.classList && el.classList.contains('act-btn')) break;
+      el = el.parentElement;
+    }
+    if (!el || !el.classList || !el.classList.contains('act-btn')) { hideTip(); return; }
+
+    const tipType  = el.dataset.tipType;   // 'unit' | 'building' | 'action'
+    const tipKey   = el.dataset.tipKey;    // utype or btype key
+    const tipLabel = el.dataset.tipLabel;  // plain-text label for 'action' type
+    const tipDesc  = el.dataset.tipDesc;   // plain-text description for 'action' type
+
+    if (!tipType) { hideTip(); return; }
+
+    let d = null;
+    if (tipType === 'unit') {
+      const u = UNITS[tipKey];
+      if (!u) return;
+      const stats = [];
+      if (u.atk > 0) stats.push(`⚔️ ${u.atk}`);
+      if (u.range > 0) stats.push(`🏹 ${u.range}`);
+      if (u.speed > 0) stats.push(`🏃 ${u.speed.toFixed(2)}`);
+      d = { name: u.name, desc: u.desc || null, stats, cost: u.cost };
+    } else if (tipType === 'building') {
+      const b = BLDGS[tipKey];
+      if (!b) return;
+      const stats = [];
+      if (tipKey === 'TC' || tipKey === 'TOWER') {
+        const atk = tipKey === 'TC' ? 6 : b.atk;
+        const rng = tipKey === 'TC' ? 6 : b.range;
+        if (atk > 0) stats.push(`⚔️ ${atk}`);
+        if (rng > 0) stats.push(`🏹 ${rng}`);
+      }
+      d = { name: b.name, desc: b.desc || null, stats, cost: b.cost };
+    } else if (tipType === 'action') {
+      // Plain action buttons (rally, eco/mil menu, back, reseed, reactivate)
+      let cost = null;
+      try { cost = el.dataset.tipCost ? JSON.parse(el.dataset.tipCost) : null; } catch(_) {}
+      d = { name: tipLabel || '', desc: tipDesc || null, cost };
+    }
+
+    if (d) showTip(buildTipHTML(d), e.clientX, e.clientY);
+  });
+
+  document.getElementById('bottom').addEventListener('mousemove', function(e) {
+    if (TIP.classList.contains('visible')) positionTip(e.clientX, e.clientY);
+  });
+
+  document.getElementById('bottom').addEventListener('mouseout', function(e) {
+    // Only hide when leaving #bottom entirely (not just moving between children)
+    if (!this.contains(e.relatedTarget)) hideTip();
+  });
+
+})();
+

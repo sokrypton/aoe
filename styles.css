@@ -937,5 +937,95 @@ canvas {
 }
 
 
-
+/* ---- HOVER TOOLTIP (desktop only) ---- */
+#tooltip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  max-width: 220px;
+  padding: 8px 12px;
+  background: radial-gradient(ellipse at top left, #2e1a08 0%, #160b02 100%);
+  border: 2px solid #bfa054;
+  border-radius: 4px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.85), inset 0 0 8px rgba(0,0,0,0.5);
+  color: #ffebad;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  /* hidden by default; JS shows/hides via .visible */
+  display: none;
+}
+#tooltip.visible {
+  display: block;
+  opacity: 1;
+}
+#tooltip .tip-name {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 12px;
+  font-weight: bold;
+  color: #ffd700;
+  text-shadow: 1px 1px 2px #000;
+  margin-bottom: 4px;
+}
+#tooltip .tip-desc {
+  color: #d1c499;
+  font-size: 10px;
+  margin-bottom: 5px;
+  line-height: 1.4;
+}
+#tooltip .tip-stats {
+  color: #ffd700;
+  font-size: 10px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+#tooltip .tip-cost {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #5a3f1d;
+}
+#tooltip .tip-cost-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+#tooltip .tip-cost-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background-image: url('sprites.png');
+  background-repeat: no-repeat;
+  background-size: 500% 500%;
+  flex-shrink: 0;
+}
+#tooltip .tip-cost-icon.icon-food  { background-position: 25% 75%; }
+#tooltip .tip-cost-icon.icon-wood  { background-position: 50% 75%; }
+#tooltip .tip-cost-icon.icon-gold  { background-position: 75% 75%; }
+#tooltip .tip-cost-icon.icon-stone { background-position: 100% 75%; }
+#tooltip .tip-cost-label {
+  color: #ffebad;
+}
+#tooltip .tip-hp-bar {
+  width: 100%;
+  height: 5px;
+  background: #251408;
+  border: 1px solid #5c3b1e;
+  border-radius: 1px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+}
+#tooltip .tip-hp-fill {
+  height: 100%;
+  transition: width 0.15s;
+}
+@media (hover: none) {
+  /* Completely suppress tooltip on touch-only devices */
+  #tooltip { display: none !important; }
+}
 
