@@ -588,19 +588,24 @@ canvas {
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
-  #topbar{height:46px;padding:0 8px}
-  .res{margin-right:4px;font-size:14px;padding:4px 8px;height:32px}
-  .res-icon{width:22px;height:22px;margin-right:6px}
-  .res-val{min-width:30px}
-  #pop{font-size:14px;padding:4px 8px;margin-right:4px;height:32px}
-  #menu-btn{font-size:14px;padding:5px 10px}
+  #topbar{height:46px;padding:0 6px}
+  /* Tightened so all 4 resources AND the population counter fit on a
+     390px-wide phone (they previously overflowed and pop was clipped). */
+  .res{margin-right:3px;font-size:13px;padding:3px 5px;height:30px}
+  .res-icon{width:20px;height:20px;margin-right:4px}
+  .res-val{min-width:26px}
+  #pop{font-size:13px;padding:3px 5px;margin-right:0;height:30px}
+  #menu-btn{font-size:13px;padding:5px 10px}
   #bottom{height:96px}
   #sel-info{width:180px;padding:6px}
   #sel-portrait{width:50px;height:50px;font-size:24px}
   #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
-  #minimap-wrap{width:180px;height:180px;top:-12px;right:-16px}
-  #msg{font-size:16px;top:50px}
+  /* Minimap drops below the topbar on phones so it doesn't cover the
+     resource row; the Menu button sits just left of its diamond. */
+  #minimap-wrap{width:170px;height:170px;top:52px;right:-14px}
+  #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
+  #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
 }
 @media(max-width:480px){
   #tutorial-box{padding:20px 18px;width:340px}
@@ -612,15 +617,16 @@ canvas {
   .menu-action-btn{font-size:18px;padding:13px 26px}
 }
 @media(max-width:380px){
-  .res{margin-right:3px;font-size:13px;padding:3px 6px;height:27px}
-  .res-icon{width:19px;height:19px;margin-right:4px}
+  .res{margin-right:2px;font-size:12px;padding:3px 4px;height:27px}
+  .res-icon{width:18px;height:18px;margin-right:3px}
+  .res-val{min-width:24px}
   #bottom{height:90px}
   #sel-info{width:145px;padding:6px}
   #sel-portrait{width:44px;height:44px;font-size:20px}
   #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
-  #minimap-wrap{width:150px;height:150px;top:-10px;right:-14px}
-  #pop{font-size:12px;padding:3px 6px;margin-right:3px;height:27px}
+  #minimap-wrap{width:140px;height:140px;top:52px;right:-12px}
+  #pop{font-size:12px;padding:3px 4px;margin-right:0;height:27px}
 }
 
 /* ---- TRAINING QUEUE STYLES ---- */

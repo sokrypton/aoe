@@ -416,7 +416,9 @@ function cancelQueue(bldgId,idx){
 
 function showMsg(txt){
   let el=document.getElementById('msg');el.textContent=txt;el.style.opacity='1';
-  if (window.playSound) window.playSound('alert');
+  // The help hint shares the same screen spot — yield to the message
+  let hint=document.getElementById('help-hint');
+  if(hint)hint.style.opacity='0';
   setTimeout(()=>el.style.opacity='0',2000);
 }
 
