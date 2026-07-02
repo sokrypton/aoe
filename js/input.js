@@ -289,9 +289,40 @@ C.addEventListener('mousemove',e=>{
 });
 // Track mouse position globally so edge scroll works correctly when cursor is over UI panels
 document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=e.clientY;}});
+// A trackpad two-finger swipe and a literal mouse wheel notch both arrive
+// as plain 'wheel' events with no dedicated flag telling them apart —
+// pinch/spread is the only unambiguous case (browsers set ctrlKey:true
+// specifically so apps can detect it). This is the same well-known
+// heuristic mapbox-gl's scroll-zoom handler uses for exactly this
+// distinction: Chrome/Safari also expose the legacy wheelDeltaY alongside
+// the standard deltaY, and for a trackpad swipe they derive it as exactly
+// wheelDeltaY = -3 * deltaY — a ratio a physical wheel notch essentially
+// never produces (wheelDeltaY there is a fixed step, e.g. ±120,
+// independent of deltaY's own magnitude). Firefox doesn't expose
+// wheelDelta* at all; there, deltaMode 0 (pixel-based) is trackpad-typical
+// while a real wheel reports deltaMode 1 (line-based).
+function isTrackpadWheel(e){
+  if(e.wheelDeltaY!==undefined) return e.wheelDeltaY===e.deltaY*-3;
+  return e.deltaMode===0;
+}
 C.addEventListener('wheel',e=>{
   if(gameOver)return;
   e.preventDefault();
+  if(e.ctrlKey){
+    // Pinch/spread — zoom, regardless of device (trackpad gesture or an
+    // actual Ctrl+wheel).
+    let factor=e.deltaY<0?1.02:1/1.02;
+    setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
+    return;
+  }
+  if(isTrackpadWheel(e)){
+    // Two-finger trackpad swipe (no pinch) — pan the view, same convention
+    // as Google Maps/Figma: the camera follows the scroll direction.
+    camX+=e.deltaX/ZOOM; camY+=e.deltaY/ZOOM;
+    window.cameraFollowId=null;
+    return;
+  }
+  // An actual mouse wheel notch — zoom, unchanged from before.
   let factor=e.deltaY<0?1.02:1/1.02;
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
