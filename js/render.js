@@ -25,7 +25,7 @@ function render(){
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);
 
   // Filter out expired corpses using wall-clock time so they still fade after game over
-  corpses = corpses.filter(c => performance.now() - c.deathTime < 5000);
+  corpses = corpses.filter(c => performance.now() - c.deathTime < CORPSE_LIFE);
   
   // Find visible trees with wood resource remaining to depth-sort them dynamically
   let trees = [];

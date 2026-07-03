@@ -123,6 +123,12 @@ function randInt(min,max){
   return Math.floor(Math.random()*(max-min+1))+min;
 }
 
+// Corpse decay timeline (wall-clock ms, AoE2-style): fresh body until
+// CORPSE_SKEL, then a bone/skeleton stage, fading out over the last 3s
+// before CORPSE_LIFE. See drawCorpse() in render-units.js and the corpse
+// cull in render.js.
+const CORPSE_SKEL=12000, CORPSE_LIFE=25000;
+
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
 

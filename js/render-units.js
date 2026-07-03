@@ -32,53 +32,215 @@ function drawCorpse(c){
   let tc=TEAM_COLORS[c.team];
   
   let age = performance.now() - c.deathTime;
-  let alpha = Math.max(0, 1 - age / 5000);
-  
+
+  // AoE2-style death sequence, staged instead of popping in flat:
+  // (1) 0-600ms the body topples over its feet, accelerating, with a small
+  //     impact recoil and dust puff;
+  // (2) blood seeps out from under it and spreads over ~2s, drying to a
+  //     brown stain over time;
+  // (3) the corpse lies solid, per-unit-type art (a scout dies WITH its
+  //     horse, a bear is a bear-sized mound);
+  // (4) at CORPSE_SKEL it decays to bones (AoE2 skeleton stage), and only
+  //     fades away in the last seconds of CORPSE_LIFE.
+  const TOPPLE = 600;
+  let p = Math.min(1, age / TOPPLE);
+  let rot = (Math.PI / 2.25) * p * p; // accelerating fall
+  if (age > TOPPLE && age < TOPPLE + 300) {
+    rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
+  }
+  let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
+  let big = c.utype === 'scout' || c.utype === 'bear'; // horse/bear-sized corpse
+
+  // Impact dust puff, once, the moment the body hits the ground (same
+  // render-side particle spawning the sheep's grass nibbling uses)
+  if (age >= TOPPLE && !c.impactFx) {
+    c.impactFx = true;
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', big ? 7 : 4, 0.02, big ? 2.2 : 1.6);
+  }
+
   X.save();
   X.globalAlpha = alpha;
-  
-  // 1. Blood pool under the collapsed corpse
-  X.fillStyle = 'rgba(120, 0, 0, 0.7)';
-  X.beginPath();
-  X.ellipse(sx, sy + 3, 9*UNIT_SCALE, 4.5*UNIT_SCALE, 0, 0, Math.PI * 2);
-  X.fill();
-  
-  // 2. Rotate corpse flat on the ground plane
-  X.translate(sx, sy);
-  X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
-  X.rotate(Math.PI / 2.25);
-  
-  // Render flattened body parts
-  if(c.utype==='militia'){
-    X.fillStyle='#6b6b6b';
-    X.beginPath();X.arc(0,-3,4,0,Math.PI*2);X.fill();
-    X.fillStyle=tc;
-    X.fillRect(-2,-6,4,6);
-  } else {
-    X.fillStyle=tc;
-    X.beginPath();X.arc(0,-3,4,0,Math.PI*2);X.fill();
-    X.fillStyle='#5c3d24';
-    X.fillRect(-2,-5,4,4);
-  }
-  // Head
-  X.fillStyle='#edc9a0';
-  X.beginPath();X.arc(0,-9,3.2,0,Math.PI*2);X.fill();
-  // Headwear
-  if(c.utype==='militia'){
-    X.fillStyle='#8a8a8a';
-    X.beginPath();X.arc(0,-10,3.6,Math.PI,0);X.fill();
-  } else {
-    X.fillStyle='#4a2e1b';
-          X.beginPath();X.arc(0,-10,3.6,Math.PI,0);X.fill();
-  }
-  
-  // Dropped weapons next to corpse
-  X.strokeStyle='#5c3d24';X.lineWidth=1.5/UNIT_SCALE;
-  X.beginPath();X.moveTo(3,-2);X.lineTo(8,1);X.stroke();
-  
-  X.restore();
-}
 
+  // 1. Blood pool seeps out from under the body after impact, then dries
+  //    from fresh red to a brown stain as the corpse ages
+  let bp = Math.max(0, Math.min(1, (age - TOPPLE * 0.7) / 2000));
+  if (bp > 0) {
+    let spread = (1 - (1 - bp) * (1 - bp)) * (big ? 1.4 : 1); // ease-out growth
+    let dry = Math.max(0, Math.min(1, (age - 8000) / 8000));
+    let poolA = 0.7 * Math.min(1, bp * 3) * (1 - dry * 0.55);
+    X.fillStyle = 'rgba(' + Math.round(120 - 40*dry) + ', ' + Math.round(25*dry) + ', ' + Math.round(10*dry) + ', ' + poolA.toFixed(3) + ')';
+    X.beginPath();
+    X.ellipse(sx, sy + 3, 9*UNIT_SCALE*spread, 4.5*UNIT_SCALE*spread, 0, 0, Math.PI * 2);
+    X.fill();
+  }
+
+  // 2. Skeleton decay stage (AoE2): after CORPSE_SKEL the body is bones,
+  //    laid out flat by the same over-the-feet rotation the corpse used.
+  //    Humans get a round skull with two sockets and a ribcage; the horse
+  //    gets a full side-view horse skeleton (long muzzled skull on neck
+  //    vertebrae, arched spine, hanging ribcage, four leg bones, tail) at
+  //    the living horse's size, with the rider's small skeleton beside it.
+  if (age >= CORPSE_SKEL) {
+    X.translate(sx, sy);
+    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
+    X.rotate(Math.PI / 2.25);
+    const BONE='#e8e4d8';
+    const humanSkeleton=(ox2,oy2,ss)=>{
+      X.save();X.translate(ox2,oy2);
+      X.fillStyle=BONE;
+      X.beginPath();X.arc(0,-9*ss,2.8*ss,0,Math.PI*2);X.fill(); // skull — plain bone white, matching the ribs
+      X.fillStyle='#000';
+      X.beginPath();X.arc(-0.9*ss,-9.3*ss,0.55*ss,0,Math.PI*2);X.fill();   // eye sockets
+      X.beginPath();X.arc(0.9*ss,-9.3*ss,0.55*ss,0,Math.PI*2);X.fill();
+      X.strokeStyle=BONE;X.lineWidth=1.4/UNIT_SCALE;
+      X.beginPath();X.moveTo(0,-6*ss);X.lineTo(0,1*ss);X.stroke();         // spine
+      for(let i=0;i<3;i++){
+        X.beginPath();X.arc(0,(-4.5+i*2)*ss,2.2*ss,0.15*Math.PI,0.85*Math.PI);X.stroke();
+      }
+      X.restore();
+    };
+    const horseSkeleton=(hs)=>{
+      X.save();X.scale(hs,hs); // spans the living horse's 1.35x footprint
+      // Leg bones with hoof knobs, same stance as the living legs
+      X.strokeStyle=BONE;X.lineWidth=1.6/UNIT_SCALE;X.lineCap='round';
+      [[3.5,-4,3.9],[5.5,-4,5.9],[-4.5,-4,-4.1],[-6.5,-4,-6.1]].forEach(p=>{
+        X.beginPath();X.moveTo(p[0],p[1]);X.lineTo(p[2],4.4);X.stroke();
+      });
+      X.lineCap='butt';
+      X.fillStyle=BONE;
+      [[3.9,4.4],[5.9,4.4],[-4.1,4.4],[-6.1,4.4]].forEach(p=>{
+        X.beginPath();X.arc(p[0],p[1],0.9,0,Math.PI*2);X.fill();
+      });
+      // Arched spine from hip to withers, and the bony tail
+      X.strokeStyle=BONE;X.lineWidth=1.8/UNIT_SCALE;
+      X.beginPath();X.moveTo(-7,-7.5);X.quadraticCurveTo(0,-10,5,-8.5);X.stroke();
+      X.lineWidth=1.2/UNIT_SCALE;
+      X.beginPath();X.moveTo(-7,-7.5);X.quadraticCurveTo(-9.2,-6,-9,-1.5);X.stroke();
+      // Ribcage: a proper barrel — each rib springs FROM the spine and
+      // sweeps down-and-back in a long curve; longest over the chest,
+      // tapering toward the hip. Rounded caps so the tips read as bone.
+      X.lineWidth=1.5/UNIT_SCALE;X.lineCap='round';
+      for(let i=0;i<6;i++){
+        let rx=-5+i*1.7;                    // rib root along the spine
+        let ry=-8.6+Math.abs(rx)*0.12;      // follows the spine's arch
+        let len=4.6-Math.abs(i-3.2)*0.55;   // chest ribs longest
+        X.beginPath();
+        X.moveTo(rx,ry);
+        X.quadraticCurveTo(rx-1.6,ry+len*0.65, rx-1.1,ry+len);
+        X.stroke();
+      }
+      X.lineCap='butt';
+      // Neck vertebrae rising to the skull
+      X.lineWidth=1.8/UNIT_SCALE;
+      X.beginPath();X.moveTo(5,-8.5);X.quadraticCurveTo(7,-10.5,8.3,-12.3);X.stroke();
+      // Skull kept simple: one elongated bone shape + eye socket, plain
+      // bone white with no outline so it matches the ribcage strokes
+      X.fillStyle=BONE;
+      X.beginPath();X.ellipse(10.4,-12.2,3.2,1.6,0.25,0,Math.PI*2);X.fill();
+      X.fillStyle='#000';
+      X.beginPath();X.arc(9.2,-12.8,0.6,0,Math.PI*2);X.fill();
+      X.restore();
+    };
+    if(c.utype==='scout'){
+      horseSkeleton(1.35);
+      humanSkeleton(-11,-11,1);     // the rider, beside his horse
+    } else if(c.utype==='bear'){
+      // Bear remains: same construction as the horse but squatter — the
+      // boulder ribcage is the read
+      horseSkeleton(1.15);
+    } else {
+      humanSkeleton(0,0,1.25);
+    }
+    X.restore();
+    return;
+  }
+
+  // 3. Fresh corpse: the LIVING sprite itself, toppled over its feet — no
+  //    simplified stand-in art. drawUnit() applies e.corpseRot after its
+  //    own transform, so the character keeps every detail (outfit, hair,
+  //    held weapon, the scout's whole horse+rider) at exactly its living
+  //    size; only the pose changes. The pseudo-entity is cached on the
+  //    corpse and frozen (path empty, no target) so nothing animates.
+  X.restore(); // blood pool used screen coords; drawUnit sets its own transform
+  if(!c.pose){
+    c.pose = {type:'unit', utype:c.utype, team:c.team, id:c.id, x:c.x, y:c.y,
+      female:c.female, dir:7, facing:c.facing, facingNorth:false,
+      path:[], target:null, buildTarget:null, task:null, followId:undefined,
+      hp:1, maxHp:1, carrying:0, carryType:null,
+      lastX:c.x, lastY:c.y, corpseRot:0};
+  }
+  c.pose.corpseRot = rot;
+  X.save();
+  X.globalAlpha = alpha;
+  drawUnit(c.pose);
+
+  // Dropped weapon: drawUnit suppresses the held weapon on corpse poses,
+  // and here it falls as its own body — released from the HAND's position
+  // the moment the unit dies, dropping under gravity at its own rate
+  // (a touch slower than the 600ms body topple) while tumbling to its
+  // final lying angle, with a small clatter-wobble as it lands.
+  let armed = c.utype==='militia'||c.utype==='scout'||c.utype==='spearman'||c.utype==='archer';
+  if (armed) {
+    const WDROP = 850;
+    // Held position (where the living sprite draws the weapon) -> rest
+    // spot on the ground beside the body, per type. {x,y,angle}.
+    const HOLD = {
+      militia:  {x:6.5,  y:-6,  a:0.5},
+      scout:    {x:-4.5, y:-17, a:-0.6},
+      spearman: {x:3,    y:-6,  a:0},
+      archer:   {x:4,    y:-8,  a:0}
+    };
+    const REST = {
+      militia:  {x:10,  y:1.5, a:2.0},
+      scout:    {x:-11, y:1.5, a:-2.0},
+      spearman: {x:8,   y:2,   a:0.8},
+      archer:   {x:9,   y:2,   a:1.2}
+    };
+    let h = HOLD[c.utype], r = REST[c.utype];
+    let wt = Math.min(1, age / WDROP);
+    let fall = wt * wt; // gravity: accelerating drop
+    let wx = h.x + (r.x - h.x) * fall;
+    let wy = h.y + (r.y - h.y) * fall;
+    let wa = h.a + (r.a - h.a) * fall;
+    if (age > WDROP && age < WDROP + 250) {
+      wa += 0.1 * Math.sin((age - WDROP) / 250 * Math.PI); // landing wobble
+    }
+    X.translate(sx, sy);
+    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
+    X.translate(wx, wy);
+    X.rotate(wa);
+    if(c.utype==='spearman'){
+      // The spear, lying loose (static shapes of the living spear)
+      X.save();X.scale(0.8,0.8);
+      X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
+      X.beginPath();X.moveTo(-8,10);X.lineTo(12,-10);X.stroke();
+      X.strokeStyle='#8B4513';X.lineWidth=1.6/UNIT_SCALE;
+      X.beginPath();X.moveTo(-8,10);X.lineTo(12,-10);X.stroke();
+      X.lineCap='butt';
+      X.fillStyle='#dde3ea';X.strokeStyle='#000';X.lineWidth=1.1/UNIT_SCALE;X.lineJoin='round';
+      X.beginPath();X.moveTo(10,-12);X.lineTo(17.6,-15.6);X.lineTo(13.9,-8.1);X.closePath();X.fill();X.stroke();
+      X.restore();
+    } else if(c.utype==='archer'){
+      // The bow, lying loose with its string at rest
+      X.save();X.scale(0.85,0.85);
+      X.strokeStyle='#000';X.lineWidth=4.2/UNIT_SCALE;X.lineCap='round';
+      X.beginPath();X.arc(0,0,10,-Math.PI/2.15,Math.PI/2.15);X.stroke();
+      X.strokeStyle='#8B4513';X.lineWidth=2.3/UNIT_SCALE;
+      X.beginPath();X.arc(0,0,10,-Math.PI/2.15,Math.PI/2.15);X.stroke();
+      X.lineCap='butt';
+      let tipX=10*Math.cos(Math.PI/2.15), tipY=10*Math.sin(Math.PI/2.15);
+      X.strokeStyle='#e8e8e8';X.lineWidth=1/UNIT_SCALE;
+      X.beginPath();X.moveTo(tipX,-tipY);X.lineTo(tipX,tipY);X.stroke();
+      X.restore();
+    } else {
+      // Militia / scout broadsword
+      X.rotate(0.35);
+      drawBigSword(false, c.id);
+    }
+  }
+  X.restore();
+  return;
+}
 
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
@@ -175,6 +337,11 @@ function drawUnit(e){
   else if(e.utype==='sheep_carcass') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
   X.scale(e.facing * UNIT_SCALE, UNIT_SCALE);
+  // Corpse pose (see drawCorpse): the dead are drawn with this very
+  // function so they keep every living detail — just toppled over their
+  // feet by this rotation. corpseRot also freezes the idle animations
+  // (breathing, tail swish, idle "?") so the body lies still.
+  if(e.corpseRot) X.rotate(e.corpseRot);
 
   // --- DRAW FLIPPABLE STUFF ---
   if(e.utype==='sheep_carcass'){
@@ -289,7 +456,7 @@ function drawUnit(e){
     // Chase/attack read: forward lunge while mauling, slight prowl sway walking
     let lunge = attacking ? Math.max(0, Math.sin(tick*0.35+e.id)) * 3 : 0;
     let sway = e.path.length>0 ? Math.sin(tick*0.25+e.id)*0.05 : 0;
-    let breath = (e.path.length===0 && !attacking) ? Math.sin(tick*0.05+e.id)*0.25 : 0;
+    let breath = (e.path.length===0 && !attacking && !e.corpseRot) ? Math.sin(tick*0.05+e.id)*0.25 : 0;
 
     X.save();
     X.rotate(sway);
@@ -489,9 +656,9 @@ function drawUnit(e){
         else if (e.dir === 4) useDir = 6; // NW -> NE
       }
       const coat='#8b5a2b', maneC='#3f2810';
-      let idle = e.path.length===0;
+      let idle = e.path.length===0 && !e.corpseRot;
       let nod = idle ? Math.sin(tick*0.05+e.id)*0.8 : 0;
-      let swish = Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
+      let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // match the enlarged legs
       const ear=(x,y,ang)=>{ X.save(); X.translate(x,y); X.rotate(ang);
         // Rounded leaf-shaped ear (a bare triangle reads as a horn)
@@ -1013,11 +1180,15 @@ function drawUnit(e){
         }
       }
     } else if(e.utype==='militia'){
-      // Militia broadsword (shaped combat slash)
-      let swinging=e.target&&e.path.length===0;
-      X.save();X.translate(6.5,-6);
-      drawBigSword(swinging, e.id);
-      X.restore();
+      // Militia broadsword (shaped combat slash). A corpse has dropped its
+      // sword (drawCorpse draws it on the ground); the shield stays
+      // strapped to the arm.
+      if(!e.corpseRot){
+        let swinging=e.target&&e.path.length===0;
+        X.save();X.translate(6.5,-6);
+        drawBigSword(swinging, e.id);
+        X.restore();
+      }
 
       // Big steel kite shield with a team-colored cross
       let shx = -6, shy = -6;
@@ -1033,9 +1204,10 @@ function drawUnit(e){
       X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
       X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
       X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
-    } else if(e.utype==='spearman'){
+    } else if(e.utype==='spearman'&&!e.corpseRot){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
-      // slow pull-back, fast jab along the shaft.
+      // slow pull-back, fast jab along the shaft. (Corpses drop it —
+      // drawCorpse lays it on the ground.)
       let swinging=e.target&&e.path.length===0;
       X.save(); X.translate(3, -6+humanYOffset);
       if(swinging){
@@ -1060,9 +1232,10 @@ function drawUnit(e){
       X.moveTo(10, -12); X.lineTo(17.6, -15.6); X.lineTo(13.9, -8.1); X.closePath();
       X.fill(); X.stroke();
       X.restore();
-    } else if(e.utype==='archer'){
+    } else if(e.utype==='archer'&&!e.corpseRot){
       // Big bow with a full draw cycle: nock and pull back slowly, release,
-      // string snaps forward and vibrates until the next arrow.
+      // string snaps forward and vibrates until the next arrow. (Corpses
+      // drop it — drawCorpse lays it on the ground.)
       let swinging=e.target&&e.path.length===0;
       let ph=((tick*0.06+e.id*0.4)%1+1)%1;
       X.save(); X.translate(4, -8+humanYOffset);
@@ -1098,10 +1271,11 @@ function drawUnit(e){
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }
       X.restore();
-    } else if(e.utype==='scout'){
+    } else if(e.utype==='scout'&&!e.corpseRot){
       // Scout broadsword (same big sword as the militia, shaped slash).
       // At rest it parks on the rider's LEFT side, mirrored — the right is
       // where the horse's head rises, and the blade would point into it.
+      // (Corpses drop it — drawCorpse lays it on the ground.)
       let swinging=e.target&&e.path.length===0;
       X.save();
       if(swinging){
@@ -1237,7 +1411,7 @@ function drawUnit(e){
   // for why: this codebase has no z-buffer, just one Y-sorted paint pass).
   // Idle indicator — keep showing while walking too, as long as no
   // task/target is actually assigned (a bare move order isn't "working").
-  if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target){
+  if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
     X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2; // absolute coords — not under UNIT_SCALE
     X.font='bold 16px sans-serif';X.textAlign='center';
     X.strokeText('?',sx,sy-20*UNIT_SCALE);

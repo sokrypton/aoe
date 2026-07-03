@@ -1516,9 +1516,14 @@ function handleDeath(e,killerTeam){
       else{gameOver=true;won=false;}
     }
   }
-  // Add to corpses list for AoE2-style decay (skip for sheep/carcasses and
-  // bears — the corpse renderer draws humanoid bodies keyed on utype)
-  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&e.utype!=='bear'){
+  // Death blood burst — bigger than the per-hit spatter, marks the kill.
+  // Bears get a heavier burst to match their bulk.
+  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
+    spawnParticles(e.x,e.y,'#990000',e.utype==='bear'?12:7,0.05,1.8);
+  }
+  // Add to corpses list for AoE2-style decay (sheep are the exception —
+  // they become a harvestable carcass entity instead, handled above)
+  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
     corpses.push({
       type: 'corpse',
       utype: e.utype,
@@ -1527,6 +1532,7 @@ function handleDeath(e,killerTeam){
       team: e.team,
       id: e.id,
       facing: e.facing || 1,
+      female: e.female, // villagers keep their hairdo in death
       deathTime: performance.now()
     });
   }
