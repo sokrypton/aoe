@@ -5,6 +5,8 @@ let keys={};
 let isDragging=false;
 let hasTouch=false; // set true on first touch, suppresses mouse
 let justPlaced=false; // flag to prevent mouseup selection clearing when placing buildings
+let middleDrag=false;
+let middleDragLast=null;
 
 function selectTownCenter() {
   if (gameOver) return;
@@ -294,6 +296,13 @@ window.addEventListener('mousemove',e=>{
 
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
+  if(e.button===1){
+    middleDrag=true;
+    middleDragLast={x:e.clientX,y:e.clientY};
+    window.cameraFollowId=null;
+    e.preventDefault();
+    return;
+  }
   if(e.button===0 && !e.ctrlKey){
     // Placing/wall-dragging always takes priority over the minimap — the
     // minimap should never block or interfere with an action already in
@@ -320,6 +329,15 @@ C.addEventListener('mousedown',e=>{
 C.addEventListener('mousemove',e=>{
   if(gameOver||hasTouch)return;
   mouseX=e.clientX;mouseY=e.clientY;
+  if(middleDrag && (e.buttons&4 || e.button===1)){
+    if(middleDragLast){
+      camX -= (e.clientX - middleDragLast.x) / ZOOM;
+      camY -= (e.clientY - middleDragLast.y) / ZOOM;
+      window.cameraFollowId=null;
+    }
+    middleDragLast={x:e.clientX,y:e.clientY};
+    return;
+  }
   if(minimapDragging)return; // handled by the window-level listener above
   if (window.isDraggingWall) {
     updateWallDrag(e.clientX, e.clientY);
@@ -380,6 +398,11 @@ C.addEventListener('wheel',e=>{
 },{passive:false});
 C.addEventListener('mouseup',e=>{
   if(gameOver||hasTouch)return;
+  if(e.button===1){
+    middleDrag=false;
+    middleDragLast=null;
+    return;
+  }
   if(e.button===0 && !e.ctrlKey){
     if(minimapDragging){
       minimapDragging=false;
@@ -423,6 +446,11 @@ document.addEventListener('contextmenu',e=>{
     window.settingRally=false; // right-click itself handles rally; clear the flag
     doCommand(e.clientX,e.clientY);
   }
+});
+
+window.addEventListener('blur',()=>{
+  middleDrag=false;
+  middleDragLast=null;
 });
 
 // ==============================
