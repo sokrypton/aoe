@@ -993,5 +993,6 @@ window.reactivateFarm = reactivateFarm;
   }
   attachSimpleTips(document.getElementById('pop-wrap'));
   attachSimpleTips(document.getElementById('menu-btn'));
+  attachSimpleTips(document.getElementById('fs-btn'));
 
 })();

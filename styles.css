@@ -72,7 +72,7 @@ canvas {
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid #5a3f1d;
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 1px 5px;
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
   height: 22px;
@@ -80,7 +80,7 @@ canvas {
 .res-icon{
   width:15px;
   height:15px;
-  margin-right:4px;
+  margin-right:3px;
   flex-shrink:0;
   /* Visually bigger than its own layout box (scale doesn't affect flex
      sizing/spacing), so it overflows past the badge's frame on purpose. */
@@ -91,7 +91,7 @@ canvas {
 .pop-res .res-icon{
   width:12px;
   height:12px;
-  margin-right:4px;
+  margin-right:3px;
   transform:none;
   font-size:11px;
   display:flex;
@@ -101,7 +101,7 @@ canvas {
 .pop-res .res-val{
   min-width:34px;
 }
-.res-val{min-width:34px;text-align:right}
+.res-val{min-width:32px;text-align:right}
 #pop-wrap {
   position: absolute;
   bottom: 84px;
@@ -1168,7 +1168,7 @@ canvas {
   }
 }
 
-#menu-btn {
+#menu-btn, #fs-btn {
   color: #ffd700;
   font-family: 'Cinzel', serif;
   font-size: 13px;
@@ -1177,8 +1177,9 @@ canvas {
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid #5a3f1d;
   border-radius: 4px;
-  padding: 0 12px;
+  padding: 0;
   height: 24px;
+  width: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1188,14 +1189,31 @@ canvas {
   transition: all 0.15s;
   position: fixed;
   top: 4.5px;
-  right: 8px;
   z-index: 30;
   pointer-events: auto;
 }
-#menu-btn:hover {
+#menu-btn .btn-emoji, #fs-btn .btn-emoji{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:100%;
+  line-height:1;
+}
+#fs-btn .btn-emoji{
+  position: relative;
+  top: 1px;
+}
+#menu-btn:hover, #fs-btn:hover {
   border-color: #fff;
   background: rgba(140, 29, 29, 0.65);
   box-shadow: 0 0 6px rgba(229, 193, 88, 0.4), inset 0 0 4px #000;
+}
+#fs-btn{
+  right: 42px;
+}
+#menu-btn{
+  right: 8px;
 }
 
 /* ---- COMPACT TRAINING QUEUE STYLES ---- */

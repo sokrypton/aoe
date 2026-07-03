@@ -243,6 +243,36 @@ function toggleHelp(){
   if(o)o.style.display=(o.style.display==='none'||o.style.display==='')?'flex':'none';
 }
 
+function isFullscreen(){
+  return !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+}
+
+async function toggleFullscreen(){
+  let el = document.documentElement;
+  try {
+    if (isFullscreen()) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+      else if (document.mozCancelFullScreen) await document.mozCancelFullScreen();
+      else if (document.msExitFullscreen) document.msExitFullscreen();
+    } else {
+      if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      else if (el.mozRequestFullScreen) await el.mozRequestFullScreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+    }
+  } catch (err) {
+    console.warn('Fullscreen toggle failed:', err);
+  }
+}
+
+window.addEventListener('fullscreenchange', ()=>{
+  let btn = document.getElementById('fs-btn');
+  if (btn) btn.dataset.tipDesc = isFullscreen()
+    ? 'Exit fullscreen mode.'
+    : 'Enter fullscreen mode.';
+});
+
 function toggleMenu(){
   let menu = document.getElementById('tutorial');
   if (menu) {
