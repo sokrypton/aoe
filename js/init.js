@@ -155,6 +155,50 @@ function onStartClicked(){
   restartGame(diff);
 }
 
+function handleStartButton(){
+  if (window.menuMode === 'restart-ready') {
+    onStartClicked();
+    return;
+  }
+  let inMatch = gameStarted && !gameOver && entities.length > 0;
+  if (inMatch) {
+    openRestartMenu();
+  } else {
+    onStartClicked();
+  }
+}
+
+function applyMenuMode(mode){
+  let menu = document.getElementById('tutorial');
+  let difficultyRow = menu ? menu.querySelector('.setup-grid .setup-row:first-child') : null;
+  let startBtn = document.getElementById('start-game-btn');
+  let resumeBtn = document.getElementById('resume-game-btn');
+  if (!menu) return;
+  window.menuMode = mode;
+
+  if (mode === 'ingame') {
+    if (difficultyRow) difficultyRow.style.display = 'none';
+    if (startBtn) startBtn.textContent = 'Restart';
+    if (resumeBtn) resumeBtn.style.display = 'flex';
+  } else if (mode === 'restart-ready') {
+    if (difficultyRow) difficultyRow.style.display = '';
+    if (startBtn) startBtn.textContent = 'Start';
+    if (resumeBtn) resumeBtn.style.display = 'none';
+  } else {
+    if (difficultyRow) difficultyRow.style.display = '';
+    if (startBtn) startBtn.textContent = 'Start';
+    if (resumeBtn) resumeBtn.style.display = 'none';
+  }
+}
+
+function openRestartMenu(){
+  let menu = document.getElementById('tutorial');
+  if (!menu) return;
+  menu.style.display = 'flex';
+  gamePaused = true;
+  applyMenuMode('restart-ready');
+}
+
 function restartGame(difficulty){
   gameOver = false;
   won = false;
@@ -206,15 +250,7 @@ function toggleMenu(){
       menu.style.display = 'flex';
       gamePaused = true;
       let inMatch = entities.length > 0 && gameStarted;
-      let resumeBtn = document.getElementById('resume-game-btn');
-      if (resumeBtn) {
-        // No resuming a finished match — only Restart makes sense then
-        resumeBtn.style.display = (inMatch && !gameOver) ? 'flex' : 'none';
-      }
-      let startBtn = document.getElementById('start-game-btn');
-      if (startBtn) {
-        startBtn.textContent = inMatch ? 'Restart' : 'Start';
-      }
+      applyMenuMode((inMatch && !gameOver) ? 'ingame' : 'prestart');
     } else {
       menu.style.display = 'none';
       // Unpause BEFORE applying audio settings: playAmbientChord skips

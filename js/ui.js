@@ -109,8 +109,6 @@ function updateUI(){
       let pct = Math.floor(selected[0].trainTick / u.trainTime * 100);
       let fill = document.querySelector('#sel-details .train-bar-fill');
       if (fill) fill.style.width = pct + '%';
-      let label = document.getElementById('train-pct-text');
-      if (label) label.textContent = `Training: ${u.name} — ${pct}%`;
     }
   }
 
@@ -138,7 +136,8 @@ function updateUI(){
   document.getElementById('r-wood').textContent=currentWood;
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
-  document.getElementById('pop').textContent=`${popUsed}/${popCap}`;
+  let popEl = document.getElementById('r-pop');
+  if (popEl) popEl.textContent = `${popUsed}/${popCap}`;
   
   let bellBtn = document.getElementById('bell-btn');
   if(bellBtn) {
@@ -311,9 +310,8 @@ function updateUI(){
       // own once the queue empties, since this rebuilds every UI tick.
       let u=UNITS[e.queue[0]];
       let pct=Math.floor(e.trainTick/u.trainTime*100);
-      det=`<div id="train-pct-text" style="color:#ffd700;font-weight:bold;font-size:11px;">Training: ${u.name} — ${pct}%</div>`;
-      det+=`<div class="train-compact">`;
-      det+=`<div class="train-bar-bg"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
+      det=`<div class="train-compact">`;
+      det+=`<div class="train-bar-bg" title="Training ${u.name} ${pct}%"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
       det+=`<div class="train-queue-slots">`;
       e.queue.forEach((ut, idx) => {
         let slotClass = idx === 0 ? "queue-slot active-slot" : "queue-slot";
@@ -323,7 +321,7 @@ function updateUI(){
         det+=`</div>`;
       });
       det+=`</div></div>`;
-      det+=`<div style="margin-top:2px;font-size:9px;color:#bfae7f;">Click a queued unit to cancel &amp; refund</div>`;
+      det+=`<div style="margin-top:2px;font-size:9px;color:#bfae7f;">Click to cancel</div>`;
     } else {
       det=`HP: ${Math.ceil(e.hp)}/${e.maxHp}`;
       det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
@@ -997,4 +995,3 @@ window.reactivateFarm = reactivateFarm;
   attachSimpleTips(document.getElementById('menu-btn'));
 
 })();
-
