@@ -301,6 +301,12 @@ window.addEventListener('mousemove',e=>{
 
 C.addEventListener('mousedown',e=>{
   if(gameOver||hasTouch)return; // ignore synthetic mouse events
+  // Trust the event's own modifier snapshot over the keydown/keyup-tracked
+  // keys map: OS-level shortcuts (e.g. macOS Cmd+Shift+5 for screen
+  // recording) can swallow a key's keyup entirely, leaving keys['Shift']
+  // stuck true forever with no window blur ever firing. e.shiftKey is
+  // always accurate for the instant of this click.
+  keys['Shift'] = e.shiftKey;
   if(e.button===1){
     middleDrag=true;
     middleDragLast={x:e.clientX,y:e.clientY};
@@ -967,7 +973,10 @@ function getBuildingUnderCursor(sx, sy, filter) {
 function getUnitUnderCursor(sx, sy) {
   let bestU = null;
   let bestSortY = -9999;
-  let extraHit = isMobile ? 6 * ZOOM : 0;
+  // Units render tiny at normal zoom, so give clicks a bit of forgiveness
+  // on both desktop and mobile — mobile gets more since fingers are much
+  // less precise than a mouse cursor.
+  let extraHit = (isMobile ? 6 : 3) * ZOOM;
 
   entities.forEach(en => {
     if (en.type === 'unit' && !en.garrisonedIn) {

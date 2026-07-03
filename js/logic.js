@@ -1131,7 +1131,14 @@ function updateUnit(e){
     // near, and only give up when far away with genuinely no route (walled).
     // Returns false if the caller should stop processing this tick.
     function combatApproach(u,tgt,dist,pathFn){
-      if(tick-(u.chaseRepathTick||0)<15) return false; // waiting for a slot
+      // The 15-tick repath cooldown is only meant to throttle re-pathing
+      // while a chase is already in motion (avoids every unit re-pathing
+      // every single tick). If the unit has actually run out of path and
+      // stopped, waiting out the rest of the cooldown just freezes it in
+      // place until the cooldown clears, then it snaps onto a fresh path —
+      // looks like a stutter/twitch. Repath immediately whenever there's no
+      // path left, regardless of cooldown.
+      if(u.path.length>0 && tick-(u.chaseRepathTick||0)<15) return false; // waiting for a slot
       u.chaseRepathTick=tick;
       if(pathFn)pathFn();
       else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
