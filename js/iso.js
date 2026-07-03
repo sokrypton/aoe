@@ -18,7 +18,19 @@ function getMiniTransform(mw,mh){
   // Small padding just keeps the thin border stroke from clipping.
   let pad=4;
   let scale=Math.min((mw-pad*2)/(MAP*TW),(mh-pad*2)/(MAP*TH));
-  return{scale,ox:mw/2,oy:pad};
+  // The mobile skin's minimap box is wide-and-short (its width is always the
+  // binding constraint), so top-anchoring the diamond just naturally sits it
+  // flush with almost no dead space below — fine there. Classic's box is a
+  // taller square, where top-anchoring instead leaves a visible dead band
+  // under the diamond; centering it only for classic (this is the one place
+  // that reads the flag, and it's a no-op — same oy as before — whenever the
+  // box's height isn't the loose dimension) keeps the mobile page untouched.
+  let oy = pad;
+  if (typeof isClassicUI !== 'undefined' && isClassicUI) {
+    let diamondH = MAP * TH * scale;
+    oy = Math.max(pad, (mh - diamondH) / 2);
+  }
+  return{scale,ox:mw/2,oy};
 }
 
 function mapToMini(x,y,mw,mh){

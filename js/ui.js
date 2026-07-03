@@ -199,15 +199,17 @@ function updateUI(){
     act.appendChild(cancelBtn);
   }
 
-  // Multi-select: the portrait+stats card is replaced by a grid of every
-  // selected unit's own icon (AoE2-style), each with its own mini HP bar,
-  // rather than one aggregate card for selected[0]. Rebuilt only when the
-  // selection or any selected unit's HP changes (see currentSelectionDetails).
+  // Multi-select: the portrait+stats card is replaced by a grid of icons
+  // (AoE2-style). AoE2 groups identical unit types into a single icon with
+  // a count badge — selecting 5 archers shows one archer portrait "x5", not
+  // five identical icons — and only fans out to one-icon-per-type when the
+  // selection is mixed. Rebuilt only when the selection or any selected
+  // unit's HP changes (see currentSelectionDetails).
   let selInfo=document.getElementById('sel-info');
   let selGrid=document.getElementById('sel-grid');
   let isMulti=selected.length>1;
   // A selected own building with units inside reuses the multi-select grid to
-  // show its garrison (AoE2-style); clicking an icon releases that unit.
+  // show its garrison (AoE2-style); clicking an icon releases one of them.
   let garrisonSel = !isMulti && selected.length===1 && selected[0].type==='building'
     && selected[0].team===0 && selected[0].garrison && selected[0].garrison.length>0
     ? selected[0] : null;
@@ -215,61 +217,74 @@ function updateUI(){
   if(selGrid && currentSelectionDetails!==(window.lastSelGridDetails||'')){
     window.lastSelGridDetails=currentSelectionDetails;
     selGrid.innerHTML='';
+    // Buckets a flat unit/building list into same-type groups, preserving
+    // first-seen order so the grid doesn't reshuffle every refresh.
+    let groupByType=(list)=>{
+      let order=[], groups=new Map();
+      list.forEach(s=>{
+        let key=s.type==='building'?s.btype:s.utype;
+        if(!groups.has(key)){ groups.set(key,[]); order.push(key); }
+        groups.get(key).push(s);
+      });
+      return order.map(key=>{
+        let members=groups.get(key);
+        let data=members[0].type==='building'?BLDGS[key]:UNITS[key];
+        return {key,data,members};
+      });
+    };
+    let renderGroup=(g, {title, onClick, onRemove})=>{
+      let icon=document.createElement('div');
+      icon.className='sel-unit-icon';
+      setPortraitIcon(icon, g.key, g.data&&g.data.icon);
+      let avgHpPct=Math.max(0,Math.min(100,Math.round(
+        g.members.reduce((sum,u)=>sum+u.hp/u.maxHp,0)/g.members.length*100)));
+      let hpColor='#2b8a3e';
+      if(avgHpPct<20) hpColor='#cc3333';
+      else if(avgHpPct<50) hpColor='#d9a711';
+      let bar=document.createElement('div');bar.className='sel-unit-hp';
+      let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
+      fill.style.width=avgHpPct+'%';
+      fill.style.background=hpColor;
+      bar.appendChild(fill);
+      icon.appendChild(bar);
+      if(g.members.length>1){
+        let badge=document.createElement('div');
+        badge.className='sel-unit-count';
+        badge.textContent=g.members.length;
+        icon.appendChild(badge);
+      }
+      icon.title=title(g);
+      icon.onclick=(ev)=>onClick(g,ev);
+      if(onRemove) icon.oncontextmenu=(ev)=>{ ev.preventDefault(); onRemove(g,ev); };
+      selGrid.appendChild(icon);
+    };
     if(garrisonSel){
-      garrisonSel.garrison.forEach(id=>{
-        let u=entitiesById.get(id);
-        if(!u)return;
-        let data=UNITS[u.utype];
-        let icon=document.createElement('div');
-        icon.className='sel-unit-icon';
-        setPortraitIcon(icon, u.utype, data&&data.icon);
-        let hpPct=Math.max(0,Math.min(100,Math.floor(u.hp/u.maxHp*100)));
-        let hpColor='#2b8a3e';
-        if(hpPct<20) hpColor='#cc3333';
-        else if(hpPct<50) hpColor='#d9a711';
-        let bar=document.createElement('div');bar.className='sel-unit-hp';
-        let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
-        fill.style.width=hpPct+'%';
-        fill.style.background=hpColor;
-        bar.appendChild(fill);
-        icon.appendChild(bar);
-        icon.title=(data&&data.name||u.utype)+` (HP ${u.hp}/${u.maxHp})\nClick to release from garrison`;
-        icon.onclick=()=>{
-          if(gameOver)return;
-          ejectGarrison(garrisonSel, gu=>gu.id===id);
-          updateUI();
-        };
-        selGrid.appendChild(icon);
+      let members=garrisonSel.garrison.map(id=>entitiesById.get(id)).filter(Boolean);
+      groupByType(members).forEach(g=>{
+        renderGroup(g, {
+          title: g=>`${g.data&&g.data.name||g.key} x${g.members.length}\nClick to release one from garrison`,
+          onClick: (g)=>{
+            if(gameOver)return;
+            let victim=g.members[0];
+            ejectGarrison(garrisonSel, gu=>gu.id===victim.id);
+            updateUI();
+          }
+        });
       });
     } else if(isMulti){
-      selected.forEach(s=>{
-        let key=s.type==='building'?s.btype:s.utype;
-        let data=s.type==='building'?BLDGS[key]:UNITS[key];
-        let icon=document.createElement('div');
-        icon.className='sel-unit-icon';
-        setPortraitIcon(icon, key, data&&data.icon);
-        let hpPct=Math.max(0,Math.min(100,Math.floor(s.hp/s.maxHp*100)));
-        let hpColor='#2b8a3e';
-        if(hpPct<20) hpColor='#cc3333';
-        else if(hpPct<50) hpColor='#d9a711';
-        let bar=document.createElement('div');bar.className='sel-unit-hp';
-        let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
-        fill.style.width=hpPct+'%';
-        fill.style.background=hpColor;
-        bar.appendChild(fill);
-        icon.appendChild(bar);
-        icon.title=(data&&data.name||key)+` (HP ${s.hp}/${s.maxHp})\nLeft-click: select only this unit\nRight-click or Shift-click: remove from selection`;
-        icon.onclick=(ev)=>{
-          if(ev.shiftKey) selected=selected.filter(u=>u.id!==s.id);
-          else selected=[s];
-          updateUI();
-        };
-        icon.oncontextmenu=(ev)=>{
-          ev.preventDefault();
-          selected=selected.filter(u=>u.id!==s.id);
-          updateUI();
-        };
-        selGrid.appendChild(icon);
+      groupByType(selected).forEach(g=>{
+        renderGroup(g, {
+          title: g=>`${g.data&&g.data.name||g.key} x${g.members.length}\nLeft-click: select only this group\nRight-click or Shift-click: remove from selection`,
+          onClick: (g,ev)=>{
+            if(ev.shiftKey) selected=selected.filter(u=>!g.members.includes(u));
+            else selected=g.members.slice();
+            updateUI();
+          },
+          onRemove: (g)=>{
+            selected=selected.filter(u=>!g.members.includes(u));
+            updateUI();
+          }
+        });
       });
     }
   }
@@ -486,7 +501,15 @@ function updateUI(){
 
     document.getElementById('sel-details').innerHTML=det;
 
-    if(rebuildActions&&e.utype==='villager'&&e.team===0){
+    // The build menu requires EVERY selected unit to be a buildable-capable
+    // villager, not just selected[0] — AoE2 only offers an action when all
+    // selected units share it (select a villager + a scout together and you
+    // get no build/train options at all, only the commands both can do).
+    // Gating on just e here would show "Build Economic/Military" for a
+    // mixed villager+scout selection merely because the villager happened
+    // to be first in the array.
+    let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+    if(rebuildActions&&allVillagers){
       window.currentVillagerMenu = window.currentVillagerMenu || 'main';
 
       if (window.currentVillagerMenu === 'main') {
@@ -750,9 +773,14 @@ window.selectIdleMilitary = function() {
   updateUI();
 };
 
+let isClassicUI = document.body.classList.contains('classic-ui');
 window.updateBottomHeight = function() {
   let w = window.innerWidth;
-  bottomH = isMobile ? (w <= 380 ? 90 : 96) : 80;
+  // The classic layout wraps its action buttons into a real 2-row grid
+  // (see classic-style.css) instead of the mobile skin's single scrolling
+  // row, so it needs a taller bar to fit them — not width-responsive since
+  // classic isn't trying to support small screens.
+  bottomH = isClassicUI ? 128 : (isMobile ? (w <= 380 ? 90 : 96) : 80);
   topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
   H = window.innerHeight - bottomH;
   W = w;
@@ -767,6 +795,11 @@ window.updateBottomHeight = function() {
     C.style.height = window.innerHeight + 'px';
     if (X) X.scale(dpr, dpr);
   }
+  // Exposes the current bar heights to CSS. Only classic-style.css reads
+  // these (to size/place the corner minimap against the real bar height
+  // instead of a hardcoded duplicate number) — inert on the default page.
+  document.documentElement.style.setProperty('--bottom-h', bottomH + 'px');
+  document.documentElement.style.setProperty('--top-h', topH + 'px');
 };
 
 window.updateBottomHeight();

@@ -513,23 +513,18 @@ canvas {
 }
 
 /* ---- MINIMAP ----
-   The isometric diamond drawn inside this box (see drawMinimap in
-   render-fx.js / getMiniTransform in iso.js) has a fixed ~2:1 (wide:tall)
-   aspect ratio — it's MAP*TW by MAP*TH, and TW/TH (64/32) are themselves
-   2:1. A *square* box (the old width===height rule) forces the diamond's
-   scale to be bounded by its own height, wasting roughly the entire top
-   and bottom halves of the box as dead padding — visible as a tiny diamond
-   floating in a mostly-empty square. Sizing the box itself to the same
-   2:1 ratio (aspect-ratio, height as the driving dimension) means the
-   diamond actually fills its box, in both this skin and classic's.
+   The wrap is a square whose side = min(28vw, 220px) so it scales smoothly
+   with the viewport without breakpoint jumps.
    right:0 + overflow:hidden clips the transparent canvas corners flush to
-   the screen edge — no more negative right offset hacks. */
+   the screen edge — no more negative right offset hacks.
+   The diamond is top-aligned inside the canvas (see getMiniTransform in iso.js)
+   so top:0 puts the visible map peak at the very top-right corner. */
 #minimap-wrap {
   position: absolute;
   top: 0;
   right: 0;
-  height: min(22vw, 190px);
-  aspect-ratio: 2 / 1;
+  width: min(45vw, 380px);
+  height: min(45vw, 380px);
   overflow: hidden;
   z-index: 20;
   flex-shrink: 0;
@@ -1426,11 +1421,317 @@ canvas {
   margin-top: 6px;
 }
 .ui-switch-link a {
-  color: #b89a5e;
+  color: #a8a084;
   font-size: 11px;
   text-decoration: underline;
   cursor: pointer;
 }
 .ui-switch-link a:hover {
-  color: #ffd700;
+  color: #e8d99a;
+}
+
+/* ==================================================================
+   CLASSIC UI — everything below is what makes this file diverge from
+   styles.css. Two parts:
+   1) Palette: cool granite/bronze instead of the mobile skin's warm
+      wood/gold, square-cut frames instead of rounded ones.
+   2) Layout: the real AoE2 HUD arrangement — unit/building portrait at
+      the far left of the command bar, the minimap at the far right
+      (flush against the bar, not floating over the battlefield), and
+      the small utility buttons (bell/home/map/idle) up by the resource
+      bar instead of stacked above the minimap.
+   ------------------------------------------------------------------ */
+
+/* -- Palette -- */
+#topbar{
+  background: linear-gradient(180deg, #4c4a44 0%, #26241f 100%);
+  border-bottom: 3px solid #8f8560;
+}
+.res, #pop, #global-stance-btn{
+  border-radius: 2px;
+  border-color: #6e654a;
+  background: rgba(18,18,15,0.55);
+}
+#bottom{
+  background: linear-gradient(180deg, #56534a 0%, #29271f 100%);
+  border-top: 3px solid #8f8560;
+}
+#sel-info{
+  border-left-color: transparent;
+  border-right: 3px double #6e654a;
+  align-items: flex-start;
+  padding-top: 10px;
+  /* AoE2 places the selection readout here too — bottom-left of the
+     command bar, before the button grid — for both the single-unit
+     portrait+stats card and (swapped in via .multi-select) the grid of
+     small unit icons; it isn't a separate panel, it's the same slot doing
+     double duty, same as the mobile skin already does. What mobile did
+     have to compromise on was room: 240px/96px-tall was squeezed for a
+     phone screen. Classic's bar is both wider and taller (128px), so the
+     grid gets to actually breathe instead of packing tiny icons. */
+  width: 280px;
+}
+#sel-info.multi-select{
+  align-items: stretch;
+  padding-top: 6px;
+}
+#sel-grid{
+  gap: 4px;
+  padding: 2px;
+}
+.sel-unit-icon{
+  width: 42px;
+  height: 42px;
+}
+.sel-unit-hp{
+  height: 4px;
+}
+#sel-portrait, .sel-unit-icon{
+  border-radius: 2px;
+  border-width: 3px;
+  border-style: double;
+  border-color: #cbb87a;
+  background-image: radial-gradient(circle, #6d6858 0%, #2c2a24 100%);
+  box-shadow: inset 0 0 6px #000, 0 0 0 1px #2c2a24, 1px 1px 3px rgba(0,0,0,0.6);
+}
+#sel-portrait{
+  width: 64px;
+  height: 64px;
+}
+/* Whenever a unit icon is actually shown (single portrait or one tile of
+   the multi-select/garrison grid), setPortraitIcon() in ui.js adds
+   .sprite-icon alongside .sel-unit-icon/#sel-portrait — that needs to win
+   back over the plain radial-gradient placeholder above. The base file
+   only carries the equivalent override for the portrait
+   (#sel-portrait.sprite-icon); without a matching one for the grid tiles,
+   the placeholder (same specificity, later in the cascade) was blanking
+   out every multi-select/garrison icon. */
+#sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
+  background-image: url('sprites.png');
+  background-size: 500% 500%;
+  background-repeat: no-repeat;
+}
+#sel-name{
+  color: #e8dca0;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+#sel-details{
+  font-size: 11px;
+}
+.act-btn{
+  border-radius: 2px;
+  border-color: #8f8560;
+  background: linear-gradient(180deg, #57544a 0%, #2b2924 100%);
+}
+.act-btn:hover, .act-btn:active{
+  background: linear-gradient(180deg, #726d5c 0%, #3c392f 100%);
+  border-color: #e8d99a;
+}
+.act-btn.disabled:hover, .act-btn.disabled:active{
+  background: linear-gradient(180deg, #57544a 0%, #2b2924 100%);
+  border-color: #8f8560;
+}
+#home-btn, #map-btn, #idle-btn, #bell-btn, #menu-btn, #fs-btn{
+  border-radius: 2px;
+  border-color: #8f8560;
+  background: linear-gradient(180deg, #504e46 0%, #24231f 100%);
+}
+#bell-btn:hover, #bell-btn:active,
+#home-btn:hover, #home-btn:active,
+#map-btn:hover, #map-btn:active,
+#idle-btn:hover, #idle-btn:active,
+#menu-btn:hover, #menu-btn:active,
+#fs-btn:hover{
+  background: linear-gradient(180deg, #726d5c 0%, #3c392f 100%);
+  border-color: #e8d99a;
+}
+.queue-slot, .train-container, .train-bar-bg{
+  border-radius: 1px;
+  border-color: #8f8560;
+}
+#tooltip{
+  background: radial-gradient(ellipse at top left, #45433c 0%, #201e1a 100%);
+  border-color: #8f8560;
+}
+#tooltip .tip-name{
+  color: #e8d99a;
+}
+#tooltip .tip-cost-row, #tooltip .tip-stats{
+  color: #e8d99a;
+}
+#tooltip .tip-cost{
+  border-top-color: #6e654a;
+}
+#tooltip .tip-hp-bar{
+  border-color: #6e654a;
+}
+/* Resource bar: one continuous bronze strip with hairline dividers between
+   entries, instead of the mobile skin's individually boxed pills — closer
+   to the real HUD's single resource strip. */
+#topbar{
+  padding: 0 4px;
+}
+.res{
+  background: none;
+  border: none;
+  border-right: 1px solid #6e654a;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 1px 12px;
+  height: 100%;
+  margin-right: 0;
+}
+.pop-res{
+  border-right: none;
+}
+
+/* -- Layout --
+   The real AoE2 HUD arrangement: unit/building portrait at the far left of
+   the command bar, a fixed (non-scrolling) 2-row grid of command buttons
+   next to it, and the minimap docked flush in the bottom-right corner of
+   the bar itself — not floating over the battlefield like the mobile skin.
+   --bottom-h/--top-h are published from updateBottomHeight() in ui.js
+   (which gives classic a fixed taller bar to fit the 2-row grid), so this
+   tracks the real bar height instead of duplicating a number here. Not
+   trying to also support small/mobile screens — see index.html for that. */
+#bottom{
+  height: var(--bottom-h, 128px);
+  /* DOM order is #actions then #sel-info (right-docked info panel in the
+     mobile layout); flip it visually so the portrait sits at the far left,
+     command buttons in the middle, like the original HUD. */
+  flex-direction: row;
+  /* The minimap (below) is deliberately taller than this bar and protrudes
+     above it — #bottom's own box still spans full width behind it for the
+     background fill, but must not swallow clicks meant for the minimap/
+     canvas in that overlap zone. Only the actual interactive pieces
+     (#actions, #sel-info) opt back into pointer-events themselves. */
+  pointer-events: none;
+}
+#sel-info{
+  order: 1;
+  pointer-events: auto;
+}
+#actions{
+  order: 2;
+  /* A real fixed grid (not flex-wrap's line-packing) — uniform cell size,
+     tight gutter, packs left-to-right then top-to-bottom exactly like the
+     original's command grid. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 52px);
+  grid-auto-rows: 52px;
+  gap: 3px;
+  align-content: flex-start;
+  justify-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 6px;
+  pointer-events: auto;
+  /* margin, not padding: padding would still be part of this element's own
+     hit-testable box (still swallowing clicks meant for the minimap behind
+     it), where margin actually excludes that space from the box so those
+     clicks fall through #bottom's pointer-events:none to the canvas/
+     minimap beneath. */
+  margin-right: calc(var(--bottom-h, 128px) * 2);
+}
+.act-btn{
+  min-width: 0;
+  width: 52px;
+  height: 52px;
+}
+#minimap-wrap{
+  top: auto;
+  /* AoE2 places the minimap flush against the command bar, filling its
+     full height top-to-bottom (not a separate oversized panel floating
+     above it). Sized to the bar's own height, but NOT a square — the
+     diamond drawn inside (see drawMinimap/getMiniTransform) is a fixed
+     2:1 (wide:tall) shape, so a square box would only ever get filled
+     top-to-bottom at the cost of leaving the diamond tiny with huge dead
+     left/right bands, or bounded by width and leaving huge dead top/
+     bottom bands. Matching the box's own aspect ratio to the diamond's
+     is what actually makes it fill the space (see the equivalent fix in
+     the base file's #minimap-wrap for the mobile skin). */
+  bottom: 0;
+  right: 0;
+  height: var(--bottom-h, 128px);
+  /* width MUST be auto here — the earlier #minimap-wrap rule (this file is
+     a full copy of the base stylesheet, not an import) still sets an
+     explicit width:min(45vw,380px). With both width and height explicit,
+     aspect-ratio has no effect per spec, so without this the box silently
+     kept using that old, unrelated width — usually wider than 2x this
+     height, drifting the whole panel left over the button grid instead of
+     sitting flush against the right edge. */
+  width: auto;
+  aspect-ratio: 2 / 1;
+}
+/* The idle-villager button lives inside the minimap's bottom-left corner
+   in the original HUD (idle-btn is an actual child of #minimap-wrap in
+   classic.html for this reason — see the comment there). #minimap-wrap
+   itself is already position:absolute, so it's a containing block for
+   this without needing any extra wrapper. */
+#minimap-wrap #idle-btn{
+  position: absolute;
+  /* A circular badge in the minimap's bottom-left corner, AoE2-style.
+     Bleeding it past the box's edge (negative left) got silently clipped —
+     #minimap-wrap has overflow:hidden (needed to clip the canvas's
+     transparent corners flush to the panel), so anything positioned
+     outside its bounds is cut off, not just visually overlapping. Instead,
+     line the button's left edge up with the minimap's own left edge, with
+     a couple px of inward breathing room so the minimap's edge is still
+     visible rather than fully covered. */
+  bottom: 2px;
+  left: 24px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  z-index: 1;
+  pointer-events: auto;
+}
+#pop-wrap{
+  bottom: auto;
+  top: calc(var(--top-h, 36px) + 6px);
+  right: 6px;
+  flex-direction: row;
+}
+/* The "Cancel"/deselect button (leftmost whenever a selection exists) is
+   redundant here — classic already has room for a dedicated "Back" button
+   in submenus, and clicking empty ground deselects same as always. */
+#actions .act-btn:has(.icon-cancel){
+  display: none;
+}
+/* The base file's #bottom.menu-active #actions rule (further up, inherited
+   from styles.css) makes the action grid take over the whole bar and
+   hardcodes the old brown background whenever a submenu (Build Economic/
+   Military) is open — a mobile-only trick to give cramped phone screens
+   more room for the submenu's icons, at the cost of hiding the portrait/
+   minimap and breaking the classic palette while browsing. The real AoE2
+   command grid never does this: opening a building submenu just swaps the
+   icons in place inside the same fixed panel, with the unit info panel and
+   minimap staying put the whole time. Classic has the room for that, so
+   just undo the mobile override's position/background instead of
+   re-fighting it with more specificity. */
+#bottom.menu-active #actions{
+  position: static;
+  width: auto;
+  height: auto;
+  z-index: auto;
+  background: none;
+  padding: 6px;
+  margin-right: calc(var(--bottom-h, 128px) * 2);
+}
+/* The base file's narrow-viewport media query (this file is a full copy,
+   not an import) hides the corner minimap under 600px in favor of a
+   toggle button (#map-btn), since a phone screen has no room for both the
+   HUD bar and a floating minimap. Classic isn't trying to support that
+   screen size at all (see index.html vs classic.html), so the minimap
+   should just always be there and that fallback button should never
+   appear — !important because the mobile rule living inside a media
+   query still wins on plain specificity otherwise (its :not() adds a
+   class to the selector), and re-fighting it with an equally-narrow media
+   query of our own would be more fragile than just settling this outright. */
+#minimap-wrap:not(.minimap-expanded){
+  display: block !important;
+}
+#map-btn{
+  display: none !important;
 }

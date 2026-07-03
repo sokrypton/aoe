@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Not Age of Empires II</title>
+<html><head><meta charset="UTF-8"><title>Not Age of Empires II (Classic UI)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<link rel="stylesheet" href="styles.css"></head><body>
+<link rel="stylesheet" href="classic-style.css"></head><body class="classic-ui">
 <canvas id="game"></canvas>
 <div id="ui">
 <div id="topbar">
@@ -13,7 +13,6 @@
 </div>
 </div>
 <div id="pop-wrap">
-  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div>
   <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji">🔔</span></div>
   <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap."><span class="btn-emoji">🌍</span></div>
   <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center."><span class="btn-emoji">🏰</span></div>
@@ -29,7 +28,11 @@
   <div id="sel-grid"></div>
 </div>
 </div>
-<div id="minimap-wrap"><canvas id="minimap"></canvas></div>
+<!-- In the real AoE2 HUD the idle-villager button sits directly in the
+     minimap's bottom-left corner rather than up by the resource bar —
+     moved here (as an actual child of minimap-wrap) so it can be
+     positioned relative to the minimap panel itself. See classic-style.css. -->
+<div id="minimap-wrap"><canvas id="minimap"></canvas><div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
@@ -172,7 +175,7 @@
       </button>
       <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
-    <div class="ui-switch-link"><a href="classic.html">Switch to Classic UI</a></div>
+    <div class="ui-switch-link"><a href="index.html">Switch to Mobile UI</a></div>
 
   </div>
 </div>
