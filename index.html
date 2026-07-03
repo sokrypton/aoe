@@ -11,8 +11,6 @@
 <div class="res"><div class="res-icon sprite-icon icon-stone"></div><div class="res-val" id="r-stone">200</div></div>
 <div class="res pop-res"><div class="res-icon" aria-hidden="true">👥</div><div class="res-val" id="r-pop">4/10</div></div>
 </div>
-<div id="msg"></div>
-<div id="help-hint"></div>
 </div>
 <div id="pop-wrap">
   <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div>
@@ -33,6 +31,8 @@
 </div>
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
+<div id="msg"></div>
+<div id="help-hint"></div>
 <div id="help-overlay" style="display:none;" onclick="if(event.target===this)toggleHelp()">
   <div id="help-box">
     <button type="button" id="help-close" onclick="toggleHelp()">✕</button>

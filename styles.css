@@ -546,7 +546,7 @@ canvas {
 
 /* ---- FLOATING NOTIFICATIONS ---- */
 #msg{
-  position:absolute;
+  position:fixed;
   top:48px;
   left:50%;
   transform:translateX(-50%);
@@ -558,17 +558,17 @@ canvas {
   opacity:0;
   transition:opacity .3s;
   white-space:nowrap;
-  z-index:20;
+  z-index:10000;
 }
 #help-hint{
-  position:absolute;
+  position:fixed;
   top:44px;
   left:50%;
   transform:translateX(-50%);
   color:#d1c499;
   font-size:11px;
   text-shadow:0 0 4px #000, 0 0 2px #000;
-  z-index:15;
+  z-index:10000;
   pointer-events:none;
   opacity:0;
   transition:opacity .5s;
