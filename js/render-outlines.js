@@ -193,15 +193,13 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
   // shifted copies of that point doesn't blend into a smooth cap — it
   // shows as a cluster of small facet "peaks", one per sample direction.
   // At a CONCAVE dip between features, a sparse sample set sometimes
-  // doesn't bridge the gap at all, leaving a thin transparent notch. 24
-  // samples (vs. an earlier 8) makes the approximation close enough to a
-  // true circle that neither is visible in practice, for a cheap linear
-  // cost increase (each sample is one drawImage call) — and since this now
-  // runs ONCE per group instead of once per entity, merging several units
-  // together is actually CHEAPER than outlining them separately, not more
-  // expensive, on top of looking right.
+  // doesn't bridge the gap at all, leaving a thin transparent notch. 8
+  // samples is much cheaper, but can expose those notches on sharper
+  // silhouettes. Since this now runs ONCE per group instead of once per
+  // entity, merging several units together is still cheaper than outlining
+  // them separately.
   const R=2*ss;
-  const DIRS=24;
+  const DIRS=8;
   _silRingX.clearRect(0,0,physW,physH);
   _silRingX.globalCompositeOperation='source-over';
   for(let i=0;i<DIRS;i++){
@@ -249,5 +247,4 @@ function drawOutlines(){
     _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
   }
 }
-
 
