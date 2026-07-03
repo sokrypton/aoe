@@ -290,7 +290,7 @@ function updateUI(){
 
   if(selected.length===0){
     if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent='Not AoE II — Mini';
+    document.getElementById('sel-name').textContent='Not AoE II';
     document.getElementById('sel-details').textContent='Select a unit or building';
     return;
   }
