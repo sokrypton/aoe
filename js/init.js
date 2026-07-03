@@ -90,6 +90,12 @@ function startGame(difficulty){
   aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
   gameStarted=true;
   gamePaused=false;
+  // A genuine fresh start — no other pause reason should carry over from
+  // whatever came before (see recomputeGamePaused()/the flags it reads,
+  // further down this file).
+  localMenuOpen = false;
+  remoteMenuOpen = false;
+  disconnectedPause = false;
   aiTick=0;
   window.playedGameOverSound = false; // Reset game over sound trigger
   if (window.stopGameOverMusic) window.stopGameOverMusic();
@@ -202,6 +208,50 @@ function hideDisconnectOverlay(){
   hideMpOverlay();
 }
 
+// Once the match has genuinely started, the pre-match setup/connecting UI
+// needs to stop showing forever, not just while #tutorial happens to be
+// hidden — otherwise reopening the menu mid-match (the pause menu) shows
+// the stale "Connected!"/"Opponent connected! Starting match…" status text.
+// The multiplayer mid-match menu is also deliberately minimal — Resume and
+// Save Game only, for BOTH roles:
+//   - No Restart: regenerating the whole match isn't something a live 1v1
+//     should support mid-game (single-player's menu still has it —
+//     see the untouched applyMenuMode()).
+//   - No Load: loading a file mid-connected-match would just get
+//     overwritten by the host's own next sync (on the host) or corrupt
+//     the guest's mirror of it (on the guest) — the intended reload flow
+//     is save now, close, load-and-host fresh later (see
+//     saveGameToFile()'s wasMultiplayerGame tag).
+//   - No difficulty/map/speed/sound/music pickers, no Help, no re-showing
+//     the "Host Multiplayer Game" button (already mid-match).
+//   - Save Game IS shown for both roles: the guest's entities/map are a
+//     live mirror of the host's (js/net-sync.js), so a save taken from
+//     either side is an equally valid snapshot.
+function restoreMenuForMatch(){
+  let startRow = document.getElementById('start-row');
+  if (startRow) startRow.style.display = '';
+  let statusPanel = document.getElementById('mp-status-panel');
+  if (statusPanel) statusPanel.style.display = 'none';
+  let startBtn = document.getElementById('start-game-btn');
+  if (startBtn) startBtn.style.display = 'none';
+  let helpBtn = document.getElementById('help-btn');
+  if (helpBtn) helpBtn.style.display = 'none';
+  let menu = document.getElementById('tutorial');
+  if (menu) {
+    menu.querySelectorAll('.setup-grid, .menu-divider').forEach(el => { el.style.display = 'none'; });
+  }
+  let mpRow = document.getElementById('mp-row');
+  if (mpRow) mpRow.style.display = 'none';
+  let saveLoadRow = document.getElementById('save-load-row');
+  if (saveLoadRow) saveLoadRow.style.display = '';
+  // Save Game is hidden by default in the HTML (no match exists yet on the
+  // pre-game screen) — now that one genuinely does, show it back.
+  let saveBtn = document.getElementById('save-game-btn');
+  if (saveBtn) saveBtn.style.display = '';
+  let loadBtn = document.getElementById('load-game-btn');
+  if (loadBtn) loadBtn.style.display = 'none';
+}
+
 function copyMpLink(){
   let box = document.getElementById('mp-link-box');
   if (!box) return;
@@ -244,10 +294,13 @@ function onHostClicked(){
   // already fill it, so the status panel/link box need room made for them
   // by hiding what's no longer relevant once hosting starts (map size and
   // speed are already locked in above; difficulty doesn't apply without an
-  // AI opponent).
+  // AI opponent). #mp-row (this very button) is included too — disabling
+  // it alone still left it sitting there grayed out on the "waiting for
+  // opponent" screen, which reads as "you could still click this," not
+  // "you're already hosting."
   let menu = document.getElementById('tutorial');
   if (menu) {
-    menu.querySelectorAll('.setup-grid, #save-load-row, #start-row').forEach(el => { el.style.display = 'none'; });
+    menu.querySelectorAll('.setup-grid, #save-load-row, #start-row, #mp-row').forEach(el => { el.style.display = 'none'; });
   }
 
   hostSession().then(peerId => {
@@ -307,32 +360,37 @@ window.onNetConnectionOpen = function(){
         showMpStatus('Opponent connected! Resuming match…');
         let menu = document.getElementById('tutorial');
         if (menu) menu.style.display = 'none';
-        gamePaused = false;
+        localMenuOpen = false;
+        recomputeGamePaused();
       } else {
         showMpStatus('Opponent connected! Starting match…');
         restartGame('standard');
       }
-      // Re-enable Save/Load for the rest of the match — onHostClicked()
-      // hid this row to make room for the waiting-for-opponent link panel,
-      // but the host (only the host — a guest never reaches this branch)
-      // should be able to save an in-progress match, or have already used
-      // Load to get here in the first place.
-      let saveLoadRow = document.getElementById('save-load-row');
-      if (saveLoadRow) saveLoadRow.style.display = '';
+      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
+      restoreMenuForMatch();
     } else {
       // Reconnect: resume exactly where the match was paused, don't touch
       // anything else — the guest gets caught back up by the forced full
-      // sync above, same mechanism a first join uses.
+      // sync above, same mechanism a first join uses. Only clears ITS OWN
+      // reason (disconnectedPause) — recomputeGamePaused() below still
+      // keeps the game paused if e.g. this host's own menu happens to be
+      // open at the exact moment the guest reconnects.
       hideDisconnectOverlay();
-      gamePaused = false;
+      disconnectedPause = false;
+      recomputeGamePaused();
     }
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
       mpMatchStarted = true;
       showMpStatus('Connected! Waiting for game state…');
+      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
+      // Save Game works for the guest too (their entities/map are a live
+      // mirror of the host's), it's everything ELSE that stays hidden.
+      restoreMenuForMatch();
     } else {
       hideDisconnectOverlay();
-      gamePaused = false;
+      disconnectedPause = false;
+      recomputeGamePaused();
     }
   }
 };
@@ -342,7 +400,8 @@ window.onNetConnectionClosed = function(){
   // someone else's flow (the pre-game "waiting to join" status panel, or
   // just a post-game teardown) — not this mid-match pause/reconnect one.
   if (!mpMatchStarted || gameOver) return;
-  gamePaused = true;
+  disconnectedPause = true;
+  recomputeGamePaused();
   showDisconnectOverlay(netRole === 'host'
     ? 'Your opponent disconnected. Waiting for them to reconnect…'
     : 'Connection to host lost. Attempting to reconnect…');
@@ -362,24 +421,56 @@ function attemptReconnect(){
   });
 }
 
-// Guest-only: whether the HOST currently has their menu open — set by the
-// 'host-menu' message below (broadcast from toggleMenu() whenever the host
-// opens/closes it). Tracked separately from gamePaused so the guest's own
-// local Resume click (toggleMenu()'s close branch, further down) doesn't
-// un-pause out from under a host menu that's still open — see the guard
-// there.
-let hostMenuOpenForGuest = false;
+// gamePaused has three independent reasons it can be true, any of which
+// can be active at once (e.g. this client opens its own local menu WHILE
+// the connection is also mid-reconnect): this client's own #tutorial menu
+// being open, the OTHER peer's menu being open (either direction — see
+// the message handler below), and a disconnect/reconnect in progress. A
+// bug this exact shape already bit once (see applyNetSync's one-shot
+// guard in js/net-sync.js — a different unconditional overwrite): any
+// code path that just sets `gamePaused = false` directly, without
+// checking whether some OTHER reason is still active, will incorrectly
+// resume the game out from under a menu/overlay that's still visibly
+// showing. recomputeGamePaused() is the one place that ever decides the
+// final value — every handler below only ever touches its own reason flag
+// and then calls this, never `gamePaused` directly (except the hard reset
+// in startGame()).
+let localMenuOpen = false;
+let remoteMenuOpen = false;
+let disconnectedPause = false;
+function recomputeGamePaused(){
+  gamePaused = localMenuOpen || remoteMenuOpen || disconnectedPause;
+}
 
+// Called from toggleMenu() — sends this client's own menu open/close state
+// to the other peer, whichever role we are. A no-op if not connected.
+function broadcastMenuState(open){
+  if (!netConnected) return;
+  if (netRole === 'host') broadcastToGuest({ type: 'host-menu', open });
+  else if (netRole === 'guest') sendToHost({ type: 'guest-menu', open });
+}
+
+// Symmetric both ways — either peer opening their menu pauses (and alerts)
+// the other, not just the host. Without this, a guest stepping away to
+// check settings would leave the host free to keep building/training/
+// fighting in real time while the guest sits frozen, unable to respond —
+// exactly the kind of one-sided advantage a 1v1 match shouldn't allow.
 onNetMessage((msg) => {
-  if (msg.type !== 'host-menu' || netRole !== 'guest') return;
-  hostMenuOpenForGuest = !!msg.open;
-  if (hostMenuOpenForGuest) {
-    gamePaused = true;
-    showMpOverlay('Game Paused', 'The host has paused the game.', false);
-  } else {
-    gamePaused = false;
+  let isRemoteMenuMsg = (msg.type === 'host-menu' && netRole === 'guest')
+    || (msg.type === 'guest-menu' && netRole === 'host');
+  if (!isRemoteMenuMsg) return;
+  remoteMenuOpen = !!msg.open;
+  if (remoteMenuOpen) {
+    showMpOverlay('Game Paused', netRole === 'guest'
+      ? 'The host has paused the game.'
+      : 'Your opponent has paused the game.', false);
+  } else if (!disconnectedPause) {
+    // Don't blow away a disconnect overlay that's showing for an unrelated
+    // reason — recomputeGamePaused() below still gets the pause state
+    // right either way, this is purely about which message stays on screen.
     hideMpOverlay();
   }
+  recomputeGamePaused();
 });
 
 // Guest entry point: called once at boot (see the bottom of this file) if
@@ -422,21 +513,52 @@ function applyMenuMode(mode){
   let difficultyRow = menu ? menu.querySelector('.setup-grid .setup-row:first-child') : null;
   let startBtn = document.getElementById('start-game-btn');
   let resumeBtn = document.getElementById('resume-game-btn');
+  let mpRow = document.getElementById('mp-row');
+  let saveBtn = document.getElementById('save-game-btn');
+  let loadBtn = document.getElementById('load-game-btn');
   if (!menu) return;
   window.menuMode = mode;
 
   if (mode === 'ingame') {
     if (difficultyRow) difficultyRow.style.display = 'none';
-    if (startBtn) startBtn.textContent = 'Restart';
+    // Restart and Load are both dropped from the mid-game menu entirely —
+    // keeping things simple: reloading the browser tab already restarts a
+    // fresh match, and Load mid-game is the same "why would you overwrite
+    // your current progress with an old file" awkwardness Restart has.
+    // Resume/Save/Help are the only mid-game actions that make sense.
+    if (startBtn) startBtn.style.display = 'none';
     if (resumeBtn) resumeBtn.style.display = 'flex';
+    if (loadBtn) loadBtn.style.display = 'none';
+    // "Host Multiplayer Game" reads as "start a fresh match to host" — but
+    // mid-game it would actually take your CURRENT progress online (see
+    // mpHostingFromExistingGame in onHostClicked()), which isn't what the
+    // label promises and is a confusing thing to stumble into via the
+    // pause menu. That capability is still reachable, just not through
+    // this button: loading a save tagged wasMultiplayerGame triggers it
+    // automatically (see applySavedGame() in js/save.js) without the user
+    // ever needing to click Host themselves. A live MP session already
+    // hides this row too (restoreMenuForMatch()) — this just extends the
+    // same idea to plain single-player's mid-game menu.
+    if (mpRow) mpRow.style.display = 'none';
+    // Save is hidden by default in the HTML (no match exists on the
+    // pristine pre-game screen) — this is the general "a match now exists"
+    // signal for ANY mid-game pause menu, single-player included, not just
+    // the MP-specific restoreMenuForMatch() path.
+    if (saveBtn) saveBtn.style.display = '';
   } else if (mode === 'restart-ready') {
     if (difficultyRow) difficultyRow.style.display = '';
-    if (startBtn) startBtn.textContent = 'Start';
+    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = '';
+    if (mpRow) mpRow.style.display = '';
+    if (saveBtn) saveBtn.style.display = 'none';
   } else {
     if (difficultyRow) difficultyRow.style.display = '';
-    if (startBtn) startBtn.textContent = 'Start';
+    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = '';
+    if (mpRow) mpRow.style.display = '';
+    if (saveBtn) saveBtn.style.display = 'none';
   }
 }
 
@@ -444,7 +566,8 @@ function openRestartMenu(){
   let menu = document.getElementById('tutorial');
   if (!menu) return;
   menu.style.display = 'flex';
-  gamePaused = true;
+  localMenuOpen = true;
+  recomputeGamePaused();
   applyMenuMode('restart-ready');
 }
 
@@ -527,24 +650,27 @@ function toggleMenu(){
   if (menu) {
     if (menu.style.display === 'none' || menu.style.display === '') {
       menu.style.display = 'flex';
-      gamePaused = true;
+      localMenuOpen = true;
+      recomputeGamePaused();
       let inMatch = entities.length > 0 && gameStarted;
       applyMenuMode((inMatch && !gameOver) ? 'ingame' : 'prestart');
-      // Pause the GUEST too, with an explanatory overlay — otherwise the
-      // match keeps running live on their screen (and the host keeps
-      // receiving their commands) while the host can't see or respond to
-      // any of it.
-      if (netRole === 'host' && netConnected) broadcastToGuest({ type: 'host-menu', open: true });
+      // Pause the OTHER peer too, with an explanatory overlay — otherwise
+      // the match keeps running live on their screen (and, for the guest
+      // opening their own menu, the host keeps building/training/fighting
+      // in real time while the guest sits frozen and unable to respond —
+      // a one-sided advantage neither direction should get away with).
+      broadcastMenuState(true);
     } else {
       menu.style.display = 'none';
       // Unpause BEFORE applying audio settings: playAmbientChord skips
       // scheduling while gamePaused, so starting music against a still-paused
       // game would silently defer it to the next phrase (~6s later).
-      // Guest-only guard: hostMenuOpenForGuest is only ever true here if
-      // the HOST's menu is still open — don't resume out from under that
-      // just because the guest's own (separate, local) menu closed.
-      if (!hostMenuOpenForGuest) gamePaused = false;
-      if (netRole === 'host' && netConnected) broadcastToGuest({ type: 'host-menu', open: false });
+      // recomputeGamePaused() (not a direct `gamePaused = false`) — stays
+      // paused if remoteMenuOpen or disconnectedPause is also active,
+      // instead of blindly resuming out from under either.
+      localMenuOpen = false;
+      recomputeGamePaused();
+      broadcastMenuState(false);
       applyAudioSettings();
       // Apply the other menu settings mid-match too (map size is the one
       // exception — it needs a map regen, so it only takes effect on Restart).

@@ -177,16 +177,24 @@
       <button type="button" id="start-game-btn" class="menu-action-btn" onclick="handleStartButton()" disabled>
         Loading&hellip;
       </button>
+      <!-- Lives here (next to Resume/Restart), not in #save-load-row, so
+           the mid-game menu is one balanced row (Resume | Save | Help)
+           instead of a wide Resume row with a small, off-center Save
+           button stacked awkwardly underneath it. Hidden by default (no
+           match exists on this pre-game screen) — see
+           restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">💾 Save</button>
       <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
-    <div class="menu-button-container" id="save-load-row">
-      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()">💾 Save Game</button>
-      <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+    <div class="menu-row-pair">
+      <div class="menu-button-container" id="save-load-row">
+        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+      </div>
+      <div class="menu-button-container" id="mp-row">
+        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
+      </div>
     </div>
     <input type="file" id="load-file-input" accept="application/json,.json" style="display:none" onchange="loadGameFromFile(this.files[0]); this.value='';">
-    <div class="menu-button-container" id="mp-row">
-      <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
-    </div>
     <!-- Shown once hosting starts (link + waiting-for-opponent status) or
          while a guest is auto-connecting from a ?join= link. Plain
          display:none/flex toggling, same pattern as #help-overlay. -->
@@ -197,8 +205,6 @@
         <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
       </div>
     </div>
-    <div class="ui-switch-link"><a href="classic.html">Switch to Classic UI</a></div>
-
   </div>
 </div>
 </div>

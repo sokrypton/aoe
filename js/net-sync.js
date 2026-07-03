@@ -28,6 +28,9 @@
 // future benchmarking without a reload.
 let NET_SYNC_TARGET_PER_SEC = 15;
 
+// See the one-shot guard inside applyNetSync() below.
+let guestInitialMenuHidden = false;
+
 // A naive reuse of serializeGame() sends the ENTIRE map+fog every single
 // sync — for a medium map that's ~280KB of a ~290KB payload, 6x/sec
 // (~1.7MB/s), which is almost certainly what "feels slow." Two fixes:
@@ -220,8 +223,21 @@ function applyNetSync(data){
     window.lastUIState = null;
     updateUI();
 
-    let menu = document.getElementById('tutorial');
-    if (menu && menu.style.display !== 'none') menu.style.display = 'none';
+    // One-shot, not "every sync": this only exists to dismiss the guest's
+    // pre-match "Connecting… waiting for game state" panel the moment real
+    // gameplay data starts arriving. Left unconditional, it fought any
+    // LATER legitimate reason the guest's own #tutorial menu might be open
+    // (their own local pause menu) — the very next sync (~65ms later)
+    // would force it closed again, completely bypassing toggleMenu()'s own
+    // gamePaused bookkeeping, leaving the game stuck paused with no menu
+    // visible to un-pause it (reported as "interpolation breaks" — it
+    // wasn't broken, gamePaused was just stuck true with nothing on screen
+    // to explain why).
+    if (!guestInitialMenuHidden) {
+      guestInitialMenuHidden = true;
+      let menu = document.getElementById('tutorial');
+      if (menu && menu.style.display !== 'none') menu.style.display = 'none';
+    }
   } catch (err) {
     console.error('Failed to apply network sync:', err);
   }

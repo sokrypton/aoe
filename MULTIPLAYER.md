@@ -76,6 +76,177 @@ review) at every stage:
 
 ## Recently completed
 
+- **Load Game / Host Multiplayer Game row wasn't actually full-width.**
+  The `Start | ?` row above it stretches edge-to-edge (`flex: 1 1 auto` on
+  `#start-game-btn`), but `#load-game-btn`/`#host-game-btn` had no such
+  rule — each just sat at its own natural content width, centered inside
+  its half of `.menu-row-pair`, leaving visible gaps on both outer edges
+  that didn't match the row above. Added both to the same
+  `flex: 1 1 auto` rule (`styles.css`/`classic-style.css`) so the row now
+  spans the exact same width as `Start | ?` above it. Verified with a
+  screenshot — both rows now align edge-to-edge.
+
+- **Pre-game setup grid: was never actually a grid at any screen width.**
+  `.setup-row`/`.setup-col` (`styles.css`/`classic-style.css`) forced
+  `flex-direction: column` unconditionally — a deliberate mobile-friendly
+  stack — but that meant every setting (Difficulty, Map Size, Speed,
+  Sound, Music) rendered as its own full-width row even on desktop,
+  despite the HTML already grouping them into row-pairs
+  (Difficulty+MapSize, Speed+Sound+Music) that were never actually laid
+  out side by side. Result: a tall menu, and a visible asymmetry where
+  Music's row (2 segments) split differently than every other row's
+  (3 segments) with no shared column edges to compare against. Added a
+  `@media (min-width: 700px)` override that turns each `.setup-row` into a
+  real side-by-side grid (label-above-control per column, since
+  label-left/control-right doesn't fit a narrower per-column width) —
+  narrower screens keep the exact original stacked layout untouched.
+  Verified at both 1300px (now 2 compact, symmetric rows instead of 5) and
+  420px (pixel-identical to before).
+
+- **Save button moved to fix a real layout asymmetry.** Once Restart/Load
+  were dropped from the mid-game menu, whatever was left in
+  `#save-load-row` was just Save Game alone — sitting small and
+  off-center below the full-width Resume row, a visibly unbalanced
+  two-tier stack. Moved `#save-game-btn` out of `#save-load-row` and into
+  `#start-row` itself (next to Resume/Restart/Help — pure DOM move, no id
+  changes, so none of the many `getElementById`-based show/hide call sites
+  in `js/init.js` needed touching). Mid-game is now one clean row: Resume
+  | Save | Help (single-player) or just Resume | Save (multiplayer, Help
+  hidden there already). `#save-load-row` now only holds Load Game,
+  pairing cleanly with `#mp-row`'s Host button via the existing
+  `.menu-row-pair` from the earlier pre-game cleanup.
+
+- **Pre-game and mid-game menus both cleaned up for conciseness.**
+  - Pre-game setup screen: dropped Save Game entirely (no match exists
+    yet, so there's nothing to save — `#save-game-btn` starts
+    `display:none` in the HTML itself, `applyMenuMode`/`restoreMenuForMatch`
+    show it back once a match genuinely exists) and put Load Game + Host
+    Multiplayer Game on one visual line (`.menu-row-pair` in
+    `styles.css`/`classic-style.css` — wraps `#save-load-row`/`#mp-row`
+    without merging them, since both are independently toggled by several
+    other places in `js/init.js`).
+  - Mid-game pause menu (single-player, since multiplayer's version was
+    already simplified earlier — see below): Restart and Load are now
+    hidden entirely too, keeping just Resume/Save Game/Help
+    (`applyMenuMode('ingame')`) — restarting a match is just as easy by
+    reloading the tab, and Load mid-game has the same "why would this
+    overwrite my current progress" awkwardness Restart does.
+
+- **"Host Multiplayer Game" no longer shown once a match is already in
+  progress** (`applyMenuMode('ingame')`, `js/init.js`) — the label reads
+  as "start a fresh match to host," but mid-game it would actually take
+  your CURRENT progress online (`mpHostingFromExistingGame`), which isn't
+  what the button promises and was confusing to stumble into via the
+  pause menu. That capability didn't need the button anyway: loading a
+  `wasMultiplayerGame`-tagged save already triggers it automatically (see
+  below) without the user ever clicking Host themselves. The button still
+  shows on the pristine pre-game setup screen and after clicking Restart
+  (`restart-ready` mode) — only the "already mid-game" case hides it, for
+  both single-player and multiplayer alike.
+  - Also hid it the moment Host is first clicked (`onHostClicked()`),
+    added to the same `.setup-grid, #save-load-row, #start-row` hide list
+    — previously just `disabled`, so it sat there visibly grayed out on
+    the whole "waiting for opponent" screen, reading as "you could still
+    click this" rather than "you're already hosting."
+
+- **Loading a multiplayer save now auto-hosts immediately** instead of
+  requiring the user to manually reopen the menu and click Host — since
+  the file is already tagged `wasMultiplayerGame: true`, we already know
+  that's what they want. `applySavedGame()` (`js/save.js`) keeps the menu
+  open and calls `onHostClicked()` itself, landing the user directly on
+  the shareable-link screen. A single-player save loads exactly as before
+  (menu closes, "Game loaded" message) — this only triggers for the
+  multiplayer-tagged case.
+  - **Real bug found by testing this end-to-end with a save that
+    originated from the GUEST side specifically** (not just a host-
+    originated one): the guest's local `tick` is deliberately fractional
+    (`js/init.js`'s `gameLoop()` nudges it every frame — `elapsed/timeStep`
+    — purely so `render-units.js`'s tick-driven walk-cycle animations keep
+    playing between syncs; never meant to be authoritative). A save taken
+    from the guest's side captures that fractional value. Loading it and
+    hosting from it left `tick` permanently fractional (every future tick
+    is just `+= 1` from there) — and `tick % netSyncIntervalTicks === 0`
+    (`js/loop.js`'s sync-cadence check) then **never evaluates true
+    again**, silently breaking `hostSyncTick()` forever with no error
+    anywhere: the new guest would connect successfully (`netConnected:
+    true`) but sit at zero entities permanently. Host-originated saves
+    never hit this (host's tick is always a clean integer), which is
+    exactly why it stayed invisible until guest-save existed and was
+    tested combined with auto-host. Fixed with `Math.round(data.tick)` on
+    load.
+
+- **Mid-match menu simplified to just Resume + Save Game, for both roles.**
+  `restoreMenuForMatch()` (`js/init.js`) now hides everything else once a
+  match starts — Restart (`restartGame()` regenerates the whole match;
+  only the host's simulation is authoritative, and a live 1v1 shouldn't
+  support restarting it mid-game for either role), Load (loading a file
+  mid-connected-match would just get overwritten by the host's next sync,
+  or corrupt the guest's mirror of it — the intended flow is save now,
+  close, load-and-host fresh later), the difficulty/map/speed/sound/music
+  pickers, Help, and the "Host Multiplayer Game" button (already
+  mid-match). Single-player's mid-game menu is untouched (still has
+  Restart/settings/Help via the existing `applyMenuMode()`), this only
+  applies once `netRole` is set.
+  - **Guest now has Save Game access too** (previously host-only) — the
+    guest's entities/map are a live mirror of the host's
+    (`js/net-sync.js`), so `serializeGame()` called from the guest's side
+    produces an equally valid snapshot. `wasMultiplayerGame` (`js/save.js`)
+    now tags a save from either role, not just the host — the point of the
+    tag is the same either way: whoever loads it later can click Host and
+    pick up as the new host from that exact state, regardless of who
+    originally saved it.
+  - Also removed the "Switch to Classic/Mobile UI" link from both
+    `index.html` and `classic.html`.
+
+- **Guest's menu now pauses the host too (was host-only, one-directional).**
+  Opening the guest's own local menu previously only froze their own
+  screen — the host kept simulating in real time (still building/training/
+  fighting) while the guest sat unable to respond, a real one-sided
+  advantage in a 1v1. `toggleMenu()`'s broadcast is now symmetric: guest
+  sends `{type:'guest-menu', open}` to the host exactly like the host
+  already sent `{type:'host-menu', open}` to the guest, both handled by
+  one `remoteMenuOpen` reason flag (renamed from the host-only
+  `hostMenuOpenForGuest`) feeding the same `recomputeGamePaused()`. Host
+  sees "Your opponent has paused the game." on the same overlay.
+
+- **Mid-match pause-menu hardening — two real bugs found by direct
+  reproduction, not code review.**
+  1. `applyNetSync()` (`js/net-sync.js`) had a line meant to dismiss the
+     guest's pre-match "Connecting…" panel on the first sync, but it
+     unconditionally re-ran on *every* sync (~15/sec) — so the instant the
+     guest opened their own local pause menu, the very next sync (~65ms
+     later) force-closed it again by directly touching the DOM, bypassing
+     `toggleMenu()`'s own `gamePaused` bookkeeping entirely. Symptom:
+     the menu "quickly turns off" on its own, and the game is stuck
+     paused with no visible menu to un-pause it (this is what looked like
+     "interpolation breaking" — it wasn't broken, `gamePaused` was just
+     stuck `true`). Fixed with a one-shot guard (`guestInitialMenuHidden`)
+     so that code only ever fires once per page load.
+  2. That fix surfaced (and this session then also fixed) a whole *class*
+     of bug: several places independently forced `gamePaused = false`
+     assuming they were the only reason the game was paused — including
+     the mirror case, where the host's menu closing could incorrectly
+     resume the guest even if the *guest's own* local menu was still open.
+     Replaced every such site with one unified model in `js/init.js`:
+     three independent boolean reasons (`localMenuOpen`,
+     `hostMenuOpenForGuest`, `disconnectedPause`) ORed together by a
+     single `recomputeGamePaused()`, which every handler calls instead of
+     ever touching `gamePaused` directly.
+  3. Separately, reopening the menu mid-match (either role) showed the
+     stale pre-connection status text ("Connected!.../Opponent connected!
+     Starting match…") with **no visible Resume button at all** —
+     `#start-row` (which contains it) was hidden by the initial
+     setup-screen hides (`onHostClicked()`/`enterGuestJoinMode`) and
+     nothing ever undid that once the match actually started, unlike
+     `#save-load-row` which already had this fix. New
+     `restoreMenuForMatch(showSaveLoad)` re-shows `#start-row` and hides
+     the stale status panel for both roles (guest gets `#start-row` only,
+     no save/load access).
+  - All three verified via actual screenshots of the reopened mid-match
+    menu (not just DOM property checks) for both host and guest, plus a
+    compound-scenario test (guest's own menu + host's menu toggling
+    independently) and the full existing regression suite.
+
 - **Guest-side movement interpolation/extrapolation.** The guest never
   runs its own simulation tick, so between syncs everything used to be
   frozen and then snap to the new position. Fixed with three small

@@ -7,13 +7,16 @@ function serializeGame(){
   return {
     version: 1,
     savedAt: new Date().toISOString(),
-    // A visible signature that this save came from a hosted multiplayer
-    // match (rather than single-player) — surfaced in the filename and the
-    // load confirmation message below, not just a hidden field. Host-only
-    // by construction (the guest never has Save/Load UI access at all —
-    // see js/init.js's enterGuestJoinMode), so netRole is only ever 'host'
-    // or null (single-player) at the point this actually runs.
-    wasMultiplayerGame: typeof netRole !== 'undefined' && netRole === 'host',
+    // A visible signature that this save came from a multiplayer match
+    // (rather than single-player) — surfaced in the filename and the load
+    // confirmation message below, not just a hidden field. Both host AND
+    // guest can produce one: the guest's local entities/map are a live
+    // mirror of the host's (kept in sync — see js/net-sync.js), so a save
+    // taken from the guest's side is just as valid a snapshot. The point
+    // of tagging it is the same either way — whoever loads it later can
+    // click Host and pick up as the new host from that exact state,
+    // regardless of which role originally saved it.
+    wasMultiplayerGame: typeof netRole !== 'undefined' && (netRole === 'host' || netRole === 'guest'),
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
     map, fog, entities, nextId,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
@@ -108,7 +111,20 @@ function applySavedGame(data){
   }
   try {
     MAP = data.MAP;
-    tick = data.tick || 0;
+    // Math.round, not a bare assignment: a save taken from the GUEST side
+    // can have a fractional tick (js/init.js's gameLoop() deliberately
+    // nudges the guest's own local `tick` by a fractional amount every
+    // frame — elapsed/timeStep — purely so render-units.js's tick-driven
+    // walk-cycle/limb animations keep playing between syncs; it was never
+    // meant to be authoritative). Loading straight into a fresh host
+    // session and never rounding it leaves `tick` permanently fractional
+    // (every future tick is just += 1 from there) — and
+    // `tick % netSyncIntervalTicks === 0` (js/loop.js's sync-cadence
+    // check) then never evaluates true again, silently breaking
+    // hostSyncTick() forever with no error anywhere. Caught by an actual
+    // end-to-end test hosting from a guest-originated save, not by
+    // inspecting the load code in isolation.
+    tick = Math.round(data.tick) || 0;
     camX = data.camX || 0;
     camY = data.camY || 0;
     ZOOM = data.ZOOM || ZOOM;
@@ -189,9 +205,6 @@ function applySavedGame(data){
       console.warn('Music failed to start on load:', err);
     }
 
-    let menu = document.getElementById('tutorial');
-    if (menu) menu.style.display = 'none';
-
     // A load discontinuously replaces the whole world (map, entities, ids)
     // out from under whatever the periodic delta sync (js/net-sync.js) was
     // tracking — a plain dirty-cell delta against the OLD map would be
@@ -206,9 +219,27 @@ function applySavedGame(data){
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
     updateUI();
-    if (window.showMsg) showMsg(data.wasMultiplayerGame
-      ? 'Multiplayer game loaded — open the menu and click Host to go back online'
-      : 'Game loaded');
+
+    if (data.wasMultiplayerGame && typeof onHostClicked === 'function') {
+      // Skip the manual "now open the menu and click Host yourself" step —
+      // the file is already tagged as having come from a multiplayer
+      // match, so we already know that's what the user wants. Keep the
+      // menu open (mirroring what actually clicking the menu button would
+      // do — same localMenuOpen/gamePaused bookkeeping, see js/init.js) and
+      // kick off hosting immediately so the user lands directly on the
+      // shareable-link screen instead of having to go find it themselves.
+      let menu = document.getElementById('tutorial');
+      if (menu) menu.style.display = 'flex';
+      if (typeof localMenuOpen !== 'undefined') {
+        localMenuOpen = true;
+        recomputeGamePaused();
+      }
+      onHostClicked();
+    } else {
+      let menu = document.getElementById('tutorial');
+      if (menu) menu.style.display = 'none';
+      if (window.showMsg) showMsg('Game loaded');
+    }
   } catch (err) {
     console.error('Load failed:', err);
     if (window.showMsg) showMsg('Load failed: save file looked valid but couldn\'t be applied');
