@@ -4,6 +4,14 @@ function render(){
   // matching AoE2 rather than showing a dark-green "explored" tint.
   X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
 
+  // A guest arriving via a multiplayer join link skips the normal local
+  // init()/genMap() entirely (it's about to receive the host's world over
+  // the network instead — see enterGuestJoinMode in init.js), so `map` is
+  // briefly empty while the connection is still being established. Every
+  // tile-drawing loop below indexes map[y][x] assuming a fully populated
+  // MAP x MAP grid, so bail out before that rather than crash.
+  if (map.length === 0) return;
+
   // Viewport culling: calculate visible map tile range
   let p1 = screenToMap(0, 0);
   let p2 = screenToMap(W, 0);

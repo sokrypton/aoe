@@ -155,6 +155,255 @@ function onStartClicked(){
   restartGame(diff);
 }
 
+// ---- MULTIPLAYER: host/join UI glue (see js/net.js for the actual PeerJS
+// connection plumbing this calls into) ----
+function showMpStatus(text, link){
+  let panel = document.getElementById('mp-status-panel');
+  let textEl = document.getElementById('mp-status-text');
+  let linkRow = document.getElementById('mp-link-row');
+  let linkBox = document.getElementById('mp-link-box');
+  if (!panel) return;
+  panel.style.display = 'block';
+  if (textEl) textEl.textContent = text;
+  if (link) {
+    if (linkRow) linkRow.style.display = 'flex';
+    if (linkBox) linkBox.value = link;
+  } else if (linkRow) {
+    linkRow.style.display = 'none';
+  }
+}
+
+// The full-screen mid-match blocking overlay — distinct from showMpStatus's
+// panel, which lives inside the #tutorial setup menu and is hidden for the
+// whole match. Shared by two unrelated triggers: a dropped connection (see
+// onNetConnectionClosed/onNetConnectionOpen above) and the host opening
+// their menu (see toggleMenu()/the 'host-menu' handler below) — same
+// look, different title/text, and the spinner only makes sense for the
+// "trying to reconnect" case.
+function showMpOverlay(title, text, spinner){
+  let el = document.getElementById('mp-disconnect-overlay');
+  let titleEl = document.getElementById('mp-disconnect-title');
+  let textEl = document.getElementById('mp-disconnect-text');
+  let spinnerEl = document.getElementById('mp-disconnect-spinner');
+  if (!el) return;
+  if (titleEl) titleEl.textContent = title;
+  if (textEl) textEl.textContent = text;
+  if (spinnerEl) spinnerEl.style.display = spinner ? '' : 'none';
+  el.style.display = 'flex';
+}
+function hideMpOverlay(){
+  let el = document.getElementById('mp-disconnect-overlay');
+  if (el) el.style.display = 'none';
+}
+function showDisconnectOverlay(text){
+  showMpOverlay('Connection Lost', text, true);
+}
+function hideDisconnectOverlay(){
+  hideMpOverlay();
+}
+
+function copyMpLink(){
+  let box = document.getElementById('mp-link-box');
+  if (!box) return;
+  box.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(box.value)
+      .then(() => { if (window.showMsg) showMsg('Link copied!'); })
+      .catch(() => {});
+  }
+}
+
+// Captured the instant Host is clicked — a match already in progress at
+// that moment (gameStarted, not just-finished) means the user loaded a
+// save file first and wants to host FROM that state, not start fresh.
+// Read by onNetConnectionOpen below to decide whether to restartGame().
+let mpHostingFromExistingGame = false;
+
+function onHostClicked(){
+  mpHostingFromExistingGame = gameStarted && !gameOver && entities.length > 0;
+  if (!mpHostingFromExistingGame) {
+    // Only apply the setup screen's map size/speed pickers when actually
+    // starting fresh — hosting from an already-loaded save must keep
+    // exactly what was in that file, not silently override it with
+    // whatever the (irrelevant, in that case) setup controls happen to
+    // be set to.
+    let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
+    setMapSize(sizeSelected ? sizeSelected.value : 'medium');
+    let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
+    setGameSpeed(speedSelected ? parseFloat(speedSelected.value) : 2);
+    window.fogDisabled = false;
+  }
+  applyAudioSettings();
+
+  let hostBtn = document.getElementById('host-game-btn');
+  if (hostBtn) hostBtn.disabled = true;
+  showMpStatus('Starting host session…');
+
+  // The menu box has a fixed max-height with no scrolling (intentional,
+  // AoE2-style compact layout) — the setup controls plus Start/Save/Load
+  // already fill it, so the status panel/link box need room made for them
+  // by hiding what's no longer relevant once hosting starts (map size and
+  // speed are already locked in above; difficulty doesn't apply without an
+  // AI opponent).
+  let menu = document.getElementById('tutorial');
+  if (menu) {
+    menu.querySelectorAll('.setup-grid, #save-load-row, #start-row').forEach(el => { el.style.display = 'none'; });
+  }
+
+  hostSession().then(peerId => {
+    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
+    // Deliberately do NOT start the match yet — restartGame() calls
+    // startGame(), which hides this very menu (and the link/status panel
+    // along with it), so a real host would never get the chance to
+    // actually see/copy the link they just generated. The match starts
+    // once a guest actually connects (see onNetConnectionOpen below).
+    showMpStatus('Waiting for opponent to join…', link);
+  }).catch(err => {
+    console.error('Failed to host:', err);
+    showMpStatus('Could not start hosting — see console for details.');
+    if (hostBtn) hostBtn.disabled = false;
+  });
+}
+
+// Set once the match actually starts (host's first restartGame() call) —
+// distinguishes the FIRST connection (which should start/join the match)
+// from a later reconnect mid-match (which must resume in place instead of
+// re-running restartGame() and wiping out the game in progress).
+let mpMatchStarted = false;
+let mpReconnectTimer = null;
+
+// Fired by js/net.js once the DataConnection actually opens (both host and
+// guest reach this — role-specific handling below).
+window.onNetConnectionOpen = function(){
+  if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
+  if (netRole === 'host') {
+    // Every fresh connection (first join, or a reconnect) needs a complete
+    // map to apply deltas onto — never assume a (re)connecting guest
+    // already has current state. See js/net-sync.js.
+    guestNeedsFullSync = true;
+    if (!mpMatchStarted) {
+      mpMatchStarted = true;
+      // Fog-of-war vision (updateFog() in core.js) is hardcoded to only
+      // track team 0's units/buildings — a single-player assumption, since
+      // there's only ever been one human perspective to compute it for.
+      // Making it properly per-team is a real architectural change out of
+      // scope here; disabling fog entirely for multiplayer (reusing the
+      // existing fogDisabled toggle, same one the ?autostart debug flow
+      // uses) is the pragmatic v1 trade-off instead — both players just
+      // see the whole map. Only needs setting on the HOST: the guest never
+      // runs updateFog() itself, it just inherits whatever fog array the
+      // host computes as part of each sync payload.
+      window.fogDisabled = true;
+      if (mpHostingFromExistingGame) {
+        // Hosting from a save loaded before Host was clicked — keep that
+        // exact state rather than wiping it with a fresh restartGame().
+        // The forced full sync above is what actually gets the guest
+        // caught up on it, same mechanism a reconnect uses. Getting here
+        // means the pause menu was open (that's how Host got clicked),
+        // which set gamePaused=true — restartGame() would have implicitly
+        // cleared that for the fresh-start path, so it must be done
+        // explicitly here too, or the host's own update()/hostSyncTick()
+        // never run and the guest never receives anything.
+        showMpStatus('Opponent connected! Resuming match…');
+        let menu = document.getElementById('tutorial');
+        if (menu) menu.style.display = 'none';
+        gamePaused = false;
+      } else {
+        showMpStatus('Opponent connected! Starting match…');
+        restartGame('standard');
+      }
+      // Re-enable Save/Load for the rest of the match — onHostClicked()
+      // hid this row to make room for the waiting-for-opponent link panel,
+      // but the host (only the host — a guest never reaches this branch)
+      // should be able to save an in-progress match, or have already used
+      // Load to get here in the first place.
+      let saveLoadRow = document.getElementById('save-load-row');
+      if (saveLoadRow) saveLoadRow.style.display = '';
+    } else {
+      // Reconnect: resume exactly where the match was paused, don't touch
+      // anything else — the guest gets caught back up by the forced full
+      // sync above, same mechanism a first join uses.
+      hideDisconnectOverlay();
+      gamePaused = false;
+    }
+  } else if (netRole === 'guest') {
+    if (!mpMatchStarted) {
+      mpMatchStarted = true;
+      showMpStatus('Connected! Waiting for game state…');
+    } else {
+      hideDisconnectOverlay();
+      gamePaused = false;
+    }
+  }
+};
+
+window.onNetConnectionClosed = function(){
+  // A drop before the match ever started, or after it's already over, is
+  // someone else's flow (the pre-game "waiting to join" status panel, or
+  // just a post-game teardown) — not this mid-match pause/reconnect one.
+  if (!mpMatchStarted || gameOver) return;
+  gamePaused = true;
+  showDisconnectOverlay(netRole === 'host'
+    ? 'Your opponent disconnected. Waiting for them to reconnect…'
+    : 'Connection to host lost. Attempting to reconnect…');
+  if (netRole === 'guest') attemptReconnect();
+};
+
+// Guest-only: retries joinSession() against the same host peer id every
+// few seconds until it succeeds (onNetConnectionOpen above clears the
+// timer and resumes the match) or the match ends some other way. The host
+// doesn't need an equivalent loop — its own Peer stays alive the whole
+// time, passively waiting on the `connection` listener already registered
+// in hostSession() (js/net.js), same as it did for the original join.
+function attemptReconnect(){
+  if (netConnected || gameOver) return;
+  joinSession(window.__mpHostPeerId).catch(() => {
+    mpReconnectTimer = setTimeout(attemptReconnect, 3000);
+  });
+}
+
+// Guest-only: whether the HOST currently has their menu open — set by the
+// 'host-menu' message below (broadcast from toggleMenu() whenever the host
+// opens/closes it). Tracked separately from gamePaused so the guest's own
+// local Resume click (toggleMenu()'s close branch, further down) doesn't
+// un-pause out from under a host menu that's still open — see the guard
+// there.
+let hostMenuOpenForGuest = false;
+
+onNetMessage((msg) => {
+  if (msg.type !== 'host-menu' || netRole !== 'guest') return;
+  hostMenuOpenForGuest = !!msg.open;
+  if (hostMenuOpenForGuest) {
+    gamePaused = true;
+    showMpOverlay('Game Paused', 'The host has paused the game.', false);
+  } else {
+    gamePaused = false;
+    hideMpOverlay();
+  }
+});
+
+// Guest entry point: called once at boot (see the bottom of this file) if
+// the page was opened via a host's shareable ?join= link. Skips the normal
+// single-player Start flow — the guest is about to receive the host's
+// whole world over the network (Phase 2/net-sync.js), not generate its own
+// via init()'s local genMap()/STARTS spawn.
+function enterGuestJoinMode(hostPeerId){
+  myTeam = 1;
+  window.__mpHostPeerId = hostPeerId; // remembered for attemptReconnect() above
+  let menu = document.getElementById('tutorial');
+  // Hide the normal setup UI (difficulty/map size/start button etc.) —
+  // none of it applies to a guest, who inherits the host's match settings.
+  if (menu) {
+    menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, .menu-divider')
+      .forEach(el => { el.style.display = 'none'; });
+  }
+  showMpStatus('Connecting to host…');
+  joinSession(hostPeerId).catch(err => {
+    console.error('Failed to join:', err);
+    showMpStatus('Could not connect — the link may be invalid or expired.');
+  });
+}
+
 function handleStartButton(){
   if (window.menuMode === 'restart-ready') {
     onStartClicked();
@@ -281,12 +530,21 @@ function toggleMenu(){
       gamePaused = true;
       let inMatch = entities.length > 0 && gameStarted;
       applyMenuMode((inMatch && !gameOver) ? 'ingame' : 'prestart');
+      // Pause the GUEST too, with an explanatory overlay — otherwise the
+      // match keeps running live on their screen (and the host keeps
+      // receiving their commands) while the host can't see or respond to
+      // any of it.
+      if (netRole === 'host' && netConnected) broadcastToGuest({ type: 'host-menu', open: true });
     } else {
       menu.style.display = 'none';
       // Unpause BEFORE applying audio settings: playAmbientChord skips
       // scheduling while gamePaused, so starting music against a still-paused
       // game would silently defer it to the next phrase (~6s later).
-      gamePaused = false;
+      // Guest-only guard: hostMenuOpenForGuest is only ever true here if
+      // the HOST's menu is still open — don't resume out from under that
+      // just because the guest's own (separate, local) menu closed.
+      if (!hostMenuOpenForGuest) gamePaused = false;
+      if (netRole === 'host' && netConnected) broadcastToGuest({ type: 'host-menu', open: false });
       applyAudioSettings();
       // Apply the other menu settings mid-match too (map size is the one
       // exception — it needs a map regen, so it only takes effect on Restart).
@@ -318,10 +576,40 @@ function gameLoop(){
 
   if(gameStarted && !gamePaused) {
     handleScroll(elapsed);
-    accumulator += elapsed;
-    while (accumulator >= timeStep) {
-      update();
-      accumulator -= timeStep;
+    // A multiplayer guest never runs its own simulation tick — its
+    // `entities`/`map`/etc. get wholesale-overwritten by the host's next
+    // sync payload anyway (see net-sync.js), so locally advancing a copy
+    // that's about to be discarded is wasted work and can look glitchy
+    // (e.g. a cooldown ticking down locally then snapping back on sync).
+    // Camera scroll above stays local either way — that's pure UI.
+    if (netRole !== 'guest') {
+      accumulator += elapsed;
+      while (accumulator >= timeStep) {
+        update();
+        accumulator -= timeStep;
+      }
+    } else {
+      // Nearly every limb/leg/tool/breathing animation in render-units.js
+      // is a direct function of the global `tick` (e.g. Math.sin(tick*0.45
+      // +e.id) for a walk cycle) — since the guest otherwise only ever
+      // gets `tick` overwritten by a sync (applyNetSync), all of that
+      // animation was frozen mid-pose between syncs even after position
+      // itself started gliding smoothly (advanceGuestUnits below). Nudging
+      // `tick` forward by the same real-time-to-tick-equivalent conversion
+      // used everywhere else in this branch keeps those animations playing;
+      // it's purely a rendering input on the guest (nothing here re-runs
+      // gameplay logic keyed on tick), and the next sync's authoritative
+      // integer `tick` corrects any drift, same as everything else.
+      tick += elapsed / timeStep;
+
+      // Projectiles and unit movement both get smoothed locally between
+      // syncs (see advanceGuestProjectiles/advanceGuestUnits in
+      // js/loop.js) — purely cosmetic position-only replays of the host's
+      // own stepping math, never touching combat/task/hp resolution (that
+      // already happened on the host); the next sync's authoritative
+      // entities/projectiles lists correct/remove them regardless.
+      advanceGuestProjectiles(elapsed);
+      advanceGuestUnits(elapsed);
     }
   }
   render();
@@ -356,11 +644,23 @@ function gameLoop(){
   requestAnimationFrame(gameLoop);
 }
 
-init();
+// A guest arriving via a host's ?join= link skips the normal local
+// init() entirely — it's about to receive the host's whole world over
+// the network instead of generating (and briefly showing) its own.
+let joinHostId = (typeof window !== 'undefined' && window.location)
+  ? new URLSearchParams(window.location.search).get('join') : null;
+
+if (!joinHostId) {
+  init();
+}
 gameLoop();
 
 if (typeof window !== 'undefined' && window.location && window.location.search.includes('autostart')) {
   setMapSize('medium');
   window.fogDisabled = true;
   restartGame('standard');
+}
+
+if (joinHostId) {
+  enterGuestJoinMode(joinHostId);
 }

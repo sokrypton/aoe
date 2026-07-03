@@ -305,6 +305,7 @@ function rememberedGatherTile(e,terrain){
 
 function depleteGatherTile(pos,config){
   let tile=map[pos.y][pos.x];
+  markMapDirty(pos.x,pos.y); // every branch below mutates this same tile
   if(config.removeFarm){
     let farm=entities.find(f=>f.type==='building'&&f.btype==='FARM'&&f.x===pos.x&&f.y===pos.y);
     if(farm){
@@ -391,6 +392,7 @@ function updateGatherTask(e,config){
     e.carrying = 0;
   }
   tile.res--;
+  markMapDirty(gatherTile.x,gatherTile.y);
   e.carrying++;
   e.carryType=config.resource;
   if(config.resource==='food') e.foodSrc = e.task==='farm' ? 'wheat' : 'berries';
@@ -711,7 +713,12 @@ function ejectGarrison(b,filter){
 // (bell icon state, messages, sound), which stays keyed to team 0 only.
 function ringTownBell(team){
   team=team===undefined?0:team;
-  if(team===0)window.bellActive=true;
+  // window.bellActive/the sound+message feedback below are local-player UI
+  // state, not world state — gate them on whichever team THIS browser tab
+  // is actually playing (myTeam, always 0 outside multiplayer) rather than
+  // a hardcoded 0, so a multiplayer guest playing team 1 gets its own bell
+  // feedback instead of silently getting none.
+  if(team===myTeam)window.bellActive=true;
   // Reserve slots so villagers spread across TC/towers instead of all
   // targeting one full building.
   let spots=entities.filter(en=>canGarrisonIn(en,team))
@@ -738,7 +745,7 @@ function ringTownBell(team){
     if(pt)pathUnitTo(e,pt.x,pt.y);
     sent++;
   });
-  if(team===0){
+  if(team===myTeam){
     if(window.playSound)window.playSound('bell');
     showMsg(sent>0?'Town bell! Villagers run for cover':'Town bell! No garrison space for villagers');
     if(typeof updateUI==='function')updateUI();
@@ -747,7 +754,7 @@ function ringTownBell(team){
 }
 function soundAllClear(team){
   team=team===undefined?0:team;
-  if(team===0)window.bellActive=false;
+  if(team===myTeam)window.bellActive=false;
   // Release villagers from every garrison (military stays put — use the
   // building's Ungarrison button for them) and cancel villagers still en route.
   entities.forEach(en=>{
@@ -758,7 +765,7 @@ function soundAllClear(team){
       e.task=null;e.garrisonTarget=null;clearUnitPath(e);
     }
   });
-  if(team===0){
+  if(team===myTeam){
     if(window.playSound)window.playSound('bell_clear');
     showMsg('All clear! Villagers return to work');
     if(typeof updateUI==='function')updateUI();
@@ -1245,6 +1252,7 @@ function updateUnit(e){
             let tile = map[bt.y][bt.x];
             tile.t = TERRAIN.FARM;
             tile.res = BLDGS.FARM.food;
+            markMapDirty(bt.x,bt.y);
             e.task = 'farm';
             e.gatherX = bt.x;
             e.gatherY = bt.y;
@@ -1261,6 +1269,7 @@ function updateUnit(e){
               let tile = map[bt.y][bt.x];
               tile.t = TERRAIN.FARM;
               tile.res = BLDGS.FARM.food;
+              markMapDirty(bt.x,bt.y);
               e.task = 'farm';
               e.gatherX = bt.x;
               e.gatherY = bt.y;
@@ -1511,7 +1520,7 @@ function handleDeath(e,killerTeam){
     }
     let b=BLDGS[e.btype];
     for(let dy=0;dy<e.h;dy++)for(let dx=0;dx<e.w;dx++){
-      if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=null;
+      if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=null;markMapDirty(e.x+dx,e.y+dy);
         if(b.isFarm)map[e.y+dy][e.x+dx].t=TERRAIN.GRASS;}
     }
     if(e.btype==='TC'){
@@ -1578,6 +1587,7 @@ function updateBuilding(e){
         let tile = map[e.y][e.x];
         tile.t = TERRAIN.FARM;
         tile.res = BLDGS.FARM.food;
+        markMapDirty(e.x,e.y);
       }
     }
   }

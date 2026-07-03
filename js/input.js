@@ -10,7 +10,7 @@ let middleDragLast=null;
 
 function selectTownCenter() {
   if (gameOver) return;
-  let tcs = entities.filter(e => e.team === 0 && e.type === 'building' && e.btype === 'TC');
+  let tcs = entities.filter(e => e.team === myTeam && e.type === 'building' && e.btype === 'TC');
   if (tcs.length === 0) return;
   
   window.lastTCIndex = window.lastTCIndex || 0;
@@ -57,7 +57,7 @@ document.addEventListener('keydown',e=>{
     let n = e.key;
     window.ctrlGroups = window.ctrlGroups || {};
     if (e.ctrlKey || e.metaKey) {
-      if (selected.length > 0 && selected.every(s => s.team === 0)) {
+      if (selected.length > 0 && selected.every(s => s.team === myTeam)) {
         window.ctrlGroups[n] = selected.map(s => s.id);
         showMsg('Control group ' + n + ' assigned (' + selected.length + ')');
       }
@@ -90,7 +90,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){placing=null;selected=[];window.settingRally=false;updateUI();}
   if(e.key==='Delete'||e.key==='Backspace'){
     selected.forEach(en=>{
-      if(en.team===0){
+      if(en.team===myTeam){
         // AoE2: deleting an UNFINISHED foundation refunds its cost (mis-click
         // recovery / quick-wall cancel). Completed buildings and units refund
         // nothing. (Slight over-refund if a gate/tower consumed wall tiles for
@@ -109,7 +109,7 @@ document.addEventListener('keydown',e=>{
   }
   
   // Villager building hotkeys (Grid-style like AoE2 Definitive Edition)
-  let hasVil = selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+  let hasVil = selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(hasVil) {
     window.currentVillagerMenu = window.currentVillagerMenu || 'main';
     if(window.currentVillagerMenu === 'main') {
@@ -139,7 +139,7 @@ document.addEventListener('keydown',e=>{
   }
   
   // Training hotkeys for selected buildings
-  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === 0 && selected[0].complete) {
+  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam && selected[0].complete) {
     let bldg = selected[0];
     if (bldg.btype === 'TC') {
       if (key === 'v') {
@@ -229,8 +229,13 @@ function finalizeWallDrag(){
   window.wallDragCorner = null;
   window.wallPrimaryAxis = null;
 
+  let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
+  if (netRole === 'guest') {
+    sendCommand({ kind: 'wall-drag', start, end, corner, unitIds: vils.map(s=>s.id) });
+    if(!keys['Shift']) placing=null;
+    return;
+  }
   let line = getWallElbowTiles(start, corner, end);
-  let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
   if(vils.length===0){
     showMsg('Select a villager to build!');
     placing=null;
@@ -242,11 +247,11 @@ function finalizeWallDrag(){
   let lastBldg = null;
 
   line.forEach(t => {
-    if (canPlace('WALL', t.x, t.y, 0)) {
+    if (canPlace('WALL', t.x, t.y, myTeam)) {
       let actualCost = {...b.cost};
-      if (canAfford(0, actualCost)) {
-        spendCost(0, actualCost);
-        let bldg = createBuilding('WALL', t.x, t.y, 0);
+      if (canAfford(myTeam, actualCost)) {
+        spendCost(myTeam, actualCost);
+        let bldg = createBuilding('WALL', t.x, t.y, myTeam);
         bldg.complete = false;
         bldg.buildProgress = 0;
         lastBldg = bldg;
@@ -435,7 +440,7 @@ C.addEventListener('mouseup',e=>{
       if (window.settingRally) {
         let bldg = selected[0];
         let bData = bldg && BLDGS[bldg.btype];
-        if(bldg && bldg.type==='building' && bldg.team===0 && bData && bData.builds && bData.builds.length>0){
+        if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
           doCommand(e.clientX, e.clientY);
         }
         window.settingRally = false;
@@ -646,8 +651,8 @@ C.addEventListener('touchend',e=>{
       // instance of that type on screen (touch equivalent of dblclick below).
       let now=performance.now();
       let tappedU=getUnitUnderCursor(touchAnchor.x,touchAnchor.y);
-      if(tappedU && tappedU.team===0 && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
-        selected=entities.filter(en=>en.team===0&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
+      if(tappedU && tappedU.team===myTeam && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
+        selected=entities.filter(en=>en.team===myTeam&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
         if(window.playSound){
           if(tappedU.utype==='villager')window.playSound('select_villager');
           else if(tappedU.utype!=='sheep')window.playSound('select_military');
@@ -680,10 +685,10 @@ C.addEventListener('touchend',e=>{
 },{passive:false});
 
 function hasSelectedMobileBuilder(){
-  return selected.some(s=>s.team===0&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
+  return selected.some(s=>s.team===myTeam&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
 }
 function hasSelectedMobileWalkOrder(){
-  let movers=selected.filter(s=>s.team===0&&s.type==='unit');
+  let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
   return movers.length>0 && movers.every(s=>
     !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined
   );
@@ -708,7 +713,7 @@ function handleTap(sx,sy){
   if(window.settingRally){
     let bldg = selected[0];
     let bData = bldg && BLDGS[bldg.btype];
-    if(bldg && bldg.type==='building' && bldg.team===0 && bData && bData.builds && bData.builds.length>0){
+    if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
       doCommand(sx, sy);
     }
     window.settingRally = false;
@@ -726,14 +731,14 @@ function handleTap(sx,sy){
   // Check units first (higher priority)
   let tappedUnit = getUnitUnderCursor(sx, sy);
   if (tappedUnit) {
-    if (tappedUnit.team === 0) tappedOwn = tappedUnit;
+    if (tappedUnit.team === myTeam) tappedOwn = tappedUnit;
     else tappedEnemy = tappedUnit;
   }
   // Then buildings
   if(!tappedOwn&&!tappedEnemy){
     let tappedB = getBuildingUnderCursor(sx, sy);
     if (tappedB) {
-      if(tappedB.team===0) tappedOwn = tappedB;
+      if(tappedB.team===myTeam) tappedOwn = tappedB;
       else tappedEnemy = tappedB;
     }
   }
@@ -742,7 +747,7 @@ function handleTap(sx,sy){
   if(selected.length===0){
     if(tappedOwn||tappedEnemy) {
       selected=[tappedOwn||tappedEnemy];
-      if (window.playSound && (tappedOwn || tappedEnemy).team === 0) {
+      if (window.playSound && (tappedOwn || tappedEnemy).team === myTeam) {
         let clicked = tappedOwn || tappedEnemy;
         if (clicked.type === 'unit') {
           if (clicked.utype === 'villager') window.playSound('select_villager');
@@ -755,8 +760,8 @@ function handleTap(sx,sy){
   }
 
   // 4. Have units selected
-  let haveUnits=selected.some(s=>s.type==='unit'&&s.team===0);
-  let haveVillagers=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+  let haveUnits=selected.some(s=>s.type==='unit'&&s.team===myTeam);
+  let haveVillagers=selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(haveUnits){
     // Tapped on own sheep with villagers → harvest command
     if(tappedOwn&&tappedOwn.utype==='sheep'&&haveVillagers){
@@ -771,7 +776,7 @@ function handleTap(sx,sy){
     if(tappedOwn&&tappedOwn.type==='unit'){
       window.settingRally=false;
       selected=[tappedOwn];
-      if (window.playSound && tappedOwn.team === 0) {
+      if (window.playSound && tappedOwn.team === myTeam) {
         if (tappedOwn.utype === 'villager') window.playSound('select_villager');
         else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
         else window.playSound('select_military');
@@ -793,7 +798,7 @@ function handleTap(sx,sy){
     // Switching selection cancels rally mode
     window.settingRally=false;
     selected=[tappedOwn];
-    if (window.playSound && tappedOwn.team === 0) {
+    if (window.playSound && tappedOwn.team === myTeam) {
       if (tappedOwn.type === 'unit') {
         if (tappedOwn.utype === 'villager') window.playSound('select_villager');
         else if (tappedOwn.utype === 'sheep') window.playSound('sheep');
@@ -920,7 +925,7 @@ function centerCameraOnSelection(){
 
 function focusTownCenter(){
   if(gameOver)return;
-  let tc = entities.find(e => e.type === 'building' && e.team === 0 && e.btype === 'TC');
+  let tc = entities.find(e => e.type === 'building' && e.team === myTeam && e.btype === 'TC');
   if(tc) {
     // TC is 3x3 tiles, so center is +1.5 tiles
     let iso = toIso(tc.x + 1.5, tc.y + 1.5);
@@ -982,7 +987,7 @@ function getUnitUnderCursor(sx, sy) {
     if (en.type === 'unit' && !en.garrisonedIn) {
       let eux = Math.round(en.x), euy = Math.round(en.y);
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
-      if (en.team !== 0 && uf !== 2) return;
+      if (en.team !== myTeam && uf !== 2) return;
 
       let iso = toIso(en.x, en.y);
       let { ox, oy } = getUnitGroupOffset(en.id);
@@ -1084,7 +1089,7 @@ function getResourceUnderCursor(sx, sy) {
 function doSelect(sx,sy,shift){
   let tile=screenToTile(sx,sy);
   let clicked=getUnitUnderCursor(sx, sy);
-  if(clicked && clicked.team!==0){
+  if(clicked && clicked.team!==myTeam){
     let tx = Math.floor(clicked.x), ty = Math.floor(clicked.y);
     let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
     if(!visible) clicked=null;
@@ -1092,7 +1097,7 @@ function doSelect(sx,sy,shift){
   if(!clicked){
     clicked = getBuildingUnderCursor(sx, sy);
     // Don't select enemy buildings that aren't visible
-    if(clicked && clicked.team!==0 && buildingFogLevel(clicked)!==2) clicked=null;
+    if(clicked && clicked.team!==myTeam && buildingFogLevel(clicked)!==2) clicked=null;
   }
   if(clicked){
     if(shift){
@@ -1101,7 +1106,7 @@ function doSelect(sx,sy,shift){
     else selected=[clicked];
 
     // Play selection sound (player team 0)
-    if (clicked.team === 0 && window.playSound) {
+    if (clicked.team === myTeam && window.playSound) {
       if (clicked.type === 'unit') {
         if (clicked.utype === 'villager') window.playSound('select_villager');
         else if (clicked.utype === 'sheep') window.playSound('sheep');
@@ -1109,7 +1114,7 @@ function doSelect(sx,sy,shift){
       }
     }
   } else {
-    if (selected.length > 0 && selected[0].team === 0) {
+    if (selected.length > 0 && selected[0].team === myTeam) {
       showMsg("Use Right-Click (or Ctrl+Click on Mac) to move/command units!");
     }
     selected=[];
@@ -1120,7 +1125,7 @@ function doBoxSelect(x1,y1,x2,y2){
   let sx1=Math.min(x1,x2),sy1=Math.min(y1,y2);
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   selected=entities.filter(en=>{
-    if(en.team!==0)return false;
+    if(en.team!==myTeam)return false;
     if(en.type!=='unit'||en.garrisonedIn)return false;
     let iso=toIso(en.x,en.y);
     let { ox, oy } = getUnitGroupOffset(en.id);
@@ -1145,7 +1150,7 @@ function doBoxSelect(x1,y1,x2,y2){
   if(units.length>0)selected=units;
 
   // Play group selection sound
-  if (selected.length > 0 && selected[0].team === 0 && window.playSound) {
+  if (selected.length > 0 && selected[0].team === myTeam && window.playSound) {
     let first = selected[0];
     if (first.utype === 'villager') window.playSound('select_villager');
     else if (first.utype === 'sheep') window.playSound('sheep');
@@ -1156,11 +1161,20 @@ function doBoxSelect(x1,y1,x2,y2){
 function doCommand(sx,sy){
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
+  // A multiplayer guest never mutates world state directly — it sends the
+  // click as an intent and the host re-runs this exact same function
+  // (see applyRemoteCommand in js/net-cmd.js), temporarily substituting
+  // `selected` for the guest's own units so all the targeting/rally logic
+  // below is reused verbatim, just attributed to the right team.
+  if (netRole === 'guest') {
+    sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
+    return;
+  }
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
   // If a friendly training building is selected, right-clicking sets its Rally Point
-  if(selected[0].type==='building'&&selected[0].team===0){
+  if(selected[0].type==='building'&&selected[0].team===myTeam){
     let bldg=selected[0];
     let bData=BLDGS[bldg.btype];
     if(!bData || !bData.builds || bData.builds.length === 0) return;
@@ -1204,13 +1218,16 @@ function doCommand(sx,sy){
   let followTarget=null;
   
   let clickedUnit = getUnitUnderCursor(sx, sy);
-  if (clickedUnit && clickedUnit.team !== 0) {
+  if (clickedUnit && clickedUnit.team !== myTeam) {
     let tx = Math.floor(clickedUnit.x), ty = Math.floor(clickedUnit.y);
     let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
     if (!visible) clickedUnit = null;
   }
   if (clickedUnit) {
-    if (clickedUnit.team === 1) {
+    // (1-myTeam): the OTHER human-controlled team — 1 for the host, 0 for
+    // a multiplayer guest. Team 2 (gaia: sheep/bears) is handled by the
+    // separate utype checks below, not by this team comparison.
+    if (clickedUnit.team === (1-myTeam)) {
       target = clickedUnit;
     } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
       target = clickedUnit;
@@ -1222,7 +1239,7 @@ function doCommand(sx,sy){
     }
   }
   if(!target){
-    target = getBuildingUnderCursor(sx, sy, en => en.team === 1 && buildingFogLevel(en) === 2);
+    target = getBuildingUnderCursor(sx, sy, en => en.team === (1-myTeam) && buildingFogLevel(en) === 2);
   }
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
@@ -1230,7 +1247,7 @@ function doCommand(sx,sy){
     // Manual garrisoning-by-click was removed for simplicity: the town bell
     // is now the only way villagers garrison, so clicking an own building
     // always means "fix it" (repair if damaged, resume if unfinished).
-    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === 0 && (!en.complete || en.hp < en.maxHp));
+    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';
@@ -1240,7 +1257,7 @@ function doCommand(sx,sy){
   cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
 
   // Play response sound on command
-  let movers=selected.filter(s=>s.team===0&&s.type==='unit');
+  let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
   if (movers.length > 0 && window.playSound) {
     let first = movers[0];
     if (first.utype === 'villager') window.playSound('select_villager');
@@ -1324,20 +1341,29 @@ function getFormation(n){
 }
 
 function doPlace(sx,sy){
+  if (netRole === 'guest') {
+    let vilIds = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam).map(s=>s.id);
+    sendCommand({ kind: 'build-placement', placing, sx, sy, unitIds: vilIds, view: currentViewSnapshot() });
+    // Guest's own placement-preview mode ends immediately; the actual
+    // foundation appears once it comes back from the host on the next sync
+    // (no local prediction in v1 — see the multiplayer plan's punt list).
+    if(!keys['Shift']) placing=null;
+    return;
+  }
   let tile=screenToTile(sx,sy);
-  let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+  let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(vils.length===0){
     showMsg('Select a villager to build!');
     placing=null;
     return;
   }
-  if(canPlace(placing,tile.x,tile.y,0)){
+  if(canPlace(placing,tile.x,tile.y,myTeam)){
     let b=BLDGS[placing];
     let gw = b.w, gh = b.h;
     let ox = tile.x, oy = tile.y;
     if (placing === 'GATE') {
       let isWall = (tx, ty) => {
-        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 0);
+        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === myTeam);
         return !!w;
       };
       if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
@@ -1353,7 +1379,7 @@ function doPlace(sx,sy){
     let wallsToRemove = [];
     for (let dy = 0; dy < gh; dy++) {
       for (let dx = 0; dx < gw; dx++) {
-        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === 0);
+        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === myTeam);
         if (w) wallsToRemove.push(w);
       }
     }
@@ -1361,21 +1387,21 @@ function doPlace(sx,sy){
     if (placing === 'GATE') {
       actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
     } else if (placing === 'TOWER') {
-      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && en.btype === 'WALL' && en.team === 0);
+      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && en.btype === 'WALL' && en.team === myTeam);
       if (existing) {
         actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
         wallsToRemove.push(existing);
       }
     }
-    if(!canAfford(0,actualCost)){showMsg('Not enough resources!');placing=null;return;}
-    spendCost(0,actualCost);
+    if(!canAfford(myTeam,actualCost)){showMsg('Not enough resources!');placing=null;return;}
+    spendCost(myTeam,actualCost);
     if (wallsToRemove.length > 0) {
       let ids = new Set(wallsToRemove.map(w => w.id));
       entities = entities.filter(en => !ids.has(en.id));
       selected = selected.filter(s => !ids.has(s.id));
       ids.forEach(id => entitiesById.delete(id));
     }
-    let bldg=createBuilding(placing,ox,oy,0,gw,gh);
+    let bldg=createBuilding(placing,ox,oy,myTeam,gw,gh);
     bldg.complete=false;bldg.buildProgress=0;
     bldg.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
     if (wallsToRemove.length > 0) {
@@ -1453,8 +1479,8 @@ window.addEventListener('resize',()=>{
 C.addEventListener('dblclick', e => {
   if (gameOver || hasTouch) return;
   let clicked = getUnitUnderCursor(e.clientX, e.clientY);
-  if (clicked && clicked.team === 0) {
-    selected = entities.filter(en => en.team === 0 && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));
+  if (clicked && clicked.team === myTeam) {
+    selected = entities.filter(en => en.team === myTeam && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));
     if (window.playSound) {
       if (clicked.utype === 'villager') window.playSound('select_villager');
       else window.playSound('select_military');

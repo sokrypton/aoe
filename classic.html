@@ -36,6 +36,13 @@
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
+<div id="mp-disconnect-overlay" style="display:none;">
+  <div id="mp-disconnect-box">
+    <div id="mp-disconnect-title">Connection Lost</div>
+    <div id="mp-disconnect-text"></div>
+    <div id="mp-disconnect-spinner"></div>
+  </div>
+</div>
 <div id="help-hint"></div>
 <div id="help-overlay" style="display:none;" onclick="if(event.target===this)toggleHelp()">
   <div id="help-box">
@@ -166,7 +173,7 @@
 
     <div class="menu-divider"></div>
 
-    <div class="menu-button-container">
+    <div class="menu-button-container" id="start-row">
       <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
         Resume
       </button>
@@ -175,6 +182,21 @@
       </button>
       <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
+    <div class="menu-button-container" id="save-load-row">
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()">💾 Save Game</button>
+      <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+    </div>
+    <input type="file" id="load-file-input" accept="application/json,.json" style="display:none" onchange="loadGameFromFile(this.files[0]); this.value='';">
+    <div class="menu-button-container" id="mp-row">
+      <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
+    </div>
+    <div id="mp-status-panel" style="display:none;">
+      <div id="mp-status-text"></div>
+      <div id="mp-link-row" style="display:none;">
+        <input type="text" id="mp-link-box" readonly onclick="this.select()">
+        <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
+      </div>
+    </div>
     <div class="ui-switch-link"><a href="index.html">Switch to Mobile UI</a></div>
 
   </div>
@@ -182,6 +204,7 @@
 </div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/core.js"></script>
 <script src="js/map.js"></script>
@@ -198,6 +221,10 @@
 <script src="js/ai.js"></script>
 <script src="js/loop.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/save.js"></script>
+<script src="js/net.js"></script>
+<script src="js/net-sync.js"></script>
+<script src="js/net-cmd.js"></script>
 <script src="js/input.js"></script>
 <script src="js/init.js"></script>
 <script>

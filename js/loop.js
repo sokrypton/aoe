@@ -121,9 +121,84 @@ function update(){
   });
   separateUnits();
   refreshPopulationCounts();
-  updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
-  updateAI();
+  // Team 1 is AI-controlled only in single-player. The moment "Host Game"
+  // is clicked (netRole set), a human guest replaces the AI on team 1 —
+  // gated on netRole itself (not just "no guest connected yet") so the AI
+  // doesn't get to make irreversible decisions (spend resources, queue
+  // units) on team 1 during the waiting-for-opponent window either.
+  if (netRole == null) {
+    updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
+    updateAI();
+  }
   refreshPopulationCounts();
+
+  // Multiplayer: broadcast a world snapshot to a connected guest at
+  // roughly NET_SYNC_TARGET_PER_SEC real syncs/sec, whatever GAME_SPEED is
+  // set to (see js/net-sync.js) — no-op (netRole stays null) in
+  // single-player. Recomputed each tick rather than cached since
+  // GAME_SPEED can change mid-match (the in-game menu allows it).
+  if (netRole === 'host' && netConnected) {
+    let netSyncIntervalTicks = Math.max(1, Math.round(30 * GAME_SPEED / NET_SYNC_TARGET_PER_SEC));
+    if (tick % netSyncIntervalTicks === 0) hostSyncTick();
+  }
+}
+
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame
+// instead of the tick-locked block above — cosmetic position-only flight,
+// no damage/removal-on-impact (the host already resolved that the instant
+// a shot landed; the guest's `projectiles` list gets wholesale-replaced by
+// the next sync's authoritative version — js/net-sync.js — regardless of
+// wherever this left them). Keeps arrows flying smoothly between syncs
+// instead of only moving in visible ~6x/sec jumps like everything else the
+// guest doesn't locally simulate.
+function advanceGuestProjectiles(elapsedMs){
+  let speed = 0.25 * (elapsedMs / timeStep); // same 0.25 tiles/tick as the authoritative update above
+  projectiles.forEach(p => {
+    let dx = p.tx - p.x, dy = p.ty - p.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist <= speed || dist === 0) { p.x = p.tx; p.y = p.ty; }
+    else { p.x += (dx / dist) * speed; p.y += (dy / dist) * speed; }
+  });
+}
+
+// Guest-only, same pattern as advanceGuestProjectiles above but for unit
+// walking — the far more visually obvious "teleports every sync" case.
+// This is a deliberate near-verbatim DUPLICATE of the position-stepping
+// subset of updateUnit()'s path-following block (js/logic.js, the
+// `if(e.path.length>0){...}` block), not a shared function called by both
+// host and guest — same reasoning as the projectile function: a shared
+// helper would add indirection into the host's authoritative tick for no
+// benefit, and risks a future updateUnit change silently altering
+// guest-only behavior or vice versa. Only ever touches
+// x/y/fromX/fromY/moveT/path — never target/hp/cooldowns/task fields, and
+// deliberately skips the walkable() rechecks the host's version does
+// (worst case: renders up to one extra half-step into a tile the host has
+// since blocked, corrected by the very next sync — purely cosmetic, same
+// risk class as a projectile flying toward an already-dead target).
+function advanceGuestUnits(elapsedMs){
+  entities.forEach(e => {
+    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0||e.path.length===0)return;
+    let speedInPixels = e.speed * 1.19 * (elapsedMs / timeStep);
+    e.moveT += speedInPixels;
+    while(e.path.length>0){
+      let nextTile = e.path[0];
+      let p1=toIso(e.fromX,e.fromY), p2=toIso(nextTile.x,nextTile.y);
+      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
+      if(e.moveT>=screenDist){
+        e.moveT-=screenDist;
+        let next=e.path.shift();
+        e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
+      } else break;
+    }
+    if(e.path.length>0){
+      let next=e.path[0];
+      let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
+      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
+      let t = e.moveT/screenDist;
+      e.x=e.fromX+(next.x-e.fromX)*t;
+      e.y=e.fromY+(next.y-e.fromY)*t;
+    }
+  });
 }
 
 // AoE2-style "excuse me": a stationary villager/sheep standing on a moving

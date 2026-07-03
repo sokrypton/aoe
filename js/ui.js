@@ -3,6 +3,14 @@
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE']);
+// window.bellActive has always meant "team 0's town bell is ringing" —
+// team 1's equivalent is tracked separately as window.aiBellActive (set by
+// ai.js, and reused for a multiplayer guest's own bell state — see
+// js/net-cmd.js). This picks whichever one actually describes MY team.
+function myBellActive(){
+  return myTeam === 0 ? !!window.bellActive : !!window.aiBellActive;
+}
+
 function setPortraitIcon(port, key, fallbackEmoji){
   [...port.classList].filter(c=>c==='sprite-icon'||c.startsWith('icon-')).forEach(c=>port.classList.remove(c));
   if (SPRITE_ICON_KEYS.has(key)) {
@@ -16,13 +24,23 @@ function setPortraitIcon(port, key, fallbackEmoji){
 
 
 function updateUI(){
-  let currentFood = Math.floor(res.food);
-  let currentWood = Math.floor(res.wood);
-  let currentGold = Math.floor(res.gold);
-  let currentStone = Math.floor(res.stone);
-  
+  // resourceStore(myTeam): team 0's `res` for the host/single-player, or
+  // `aiRes` for a multiplayer guest playing team 1 — so the topbar shows
+  // whichever side THIS browser tab actually controls.
+  let myResources = resourceStore(myTeam);
+  let currentFood = Math.floor(myResources.food);
+  let currentWood = Math.floor(myResources.wood);
+  let currentGold = Math.floor(myResources.gold);
+  let currentStone = Math.floor(myResources.stone);
+  // Pop cap/used likewise computed for myTeam rather than the team-0-only
+  // popUsed/popCap globals (those stay as team-0-specific caches refreshed
+  // by refreshPopulationCounts() each tick — teamPopUsed/teamPopCap are
+  // pure functions over `entities`, safe to call directly for any team).
+  let myPopUsed = teamPopUsed(myTeam);
+  let myPopCap = teamPopCap(myTeam);
+
   // Calculate idle villagers count
-  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
+  let idleVils = entities.filter(e => e.team === myTeam && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
   let currentIdleCount = idleVils.length;
   
   // Selection key
@@ -90,13 +108,13 @@ function updateUI(){
   let stateChanged = (
     currentFood !== lu.food || currentWood !== lu.wood ||
     currentGold !== lu.gold || currentStone !== lu.stone ||
-    popUsed !== lu.popUsed || popCap !== lu.popCap ||
+    myPopUsed !== lu.popUsed || myPopCap !== lu.popCap ||
     currentIdleCount !== lu.idleCount || gameOver !== lu.gameOver ||
     gameStarted !== lu.gameStarted || currentSelListKey !== lu.selectedKey ||
     currentSelectionDetails !== lu.selectionDetails || placing !== lu.placing ||
     window.currentVillagerMenu !== lu.currentVillagerMenu ||
     !!window.settingRally !== !!lu.settingRally ||
-    !!window.bellActive !== !!lu.bellActive
+    myBellActive() !== !!lu.bellActive
   );
 
   // Live training-progress patch: runs every frame on the EXISTING DOM (bar
@@ -119,8 +137,8 @@ function updateUI(){
   lu.wood = currentWood;
   lu.gold = currentGold;
   lu.stone = currentStone;
-  lu.popUsed = popUsed;
-  lu.popCap = popCap;
+  lu.popUsed = myPopUsed;
+  lu.popCap = myPopCap;
   lu.idleCount = currentIdleCount;
   lu.gameOver = gameOver;
   lu.gameStarted = gameStarted;
@@ -129,7 +147,7 @@ function updateUI(){
   lu.placing = placing;
   lu.currentVillagerMenu = window.currentVillagerMenu;
   lu.settingRally = !!window.settingRally;
-  lu.bellActive = !!window.bellActive;
+  lu.bellActive = myBellActive();
 
   // Perform actual DOM updates
   document.getElementById('r-food').textContent=currentFood;
@@ -137,16 +155,16 @@ function updateUI(){
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
   let popEl = document.getElementById('r-pop');
-  if (popEl) popEl.textContent = `${popUsed}/${popCap}`;
+  if (popEl) popEl.textContent = `${myPopUsed}/${myPopCap}`;
   
   let bellBtn = document.getElementById('bell-btn');
   if(bellBtn) {
     if(gameStarted && !gameOver) {
       bellBtn.style.display = 'flex';
       bellBtn.textContent = '🔔';
-      bellBtn.classList.toggle('bell-active', !!window.bellActive);
+      bellBtn.classList.toggle('bell-active', myBellActive());
       bellBtn.dataset.tipLabel = 'Town Bell';
-      bellBtn.dataset.tipDesc = window.bellActive
+      bellBtn.dataset.tipDesc = myBellActive()
         ? 'Bell is ringing — villagers are hiding in Town Centers and towers. Click to sound the all clear.'
         : 'Ring the town bell: all villagers run to garrison in the nearest Town Center or tower.';
     } else {
@@ -170,7 +188,7 @@ function updateUI(){
 
   let act=document.getElementById('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally
-    +':'+!!window.bellActive+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0);
+    +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0);
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
@@ -211,7 +229,7 @@ function updateUI(){
   // A selected own building with units inside reuses the multi-select grid to
   // show its garrison (AoE2-style); clicking an icon releases one of them.
   let garrisonSel = !isMulti && selected.length===1 && selected[0].type==='building'
-    && selected[0].team===0 && selected[0].garrison && selected[0].garrison.length>0
+    && selected[0].team===myTeam && selected[0].garrison && selected[0].garrison.length>0
     ? selected[0] : null;
   if(selInfo) selInfo.classList.toggle('multi-select', isMulti||!!garrisonSel);
   if(selGrid && currentSelectionDetails!==(window.lastSelGridDetails||'')){
@@ -372,7 +390,7 @@ function updateUI(){
       }
     }
     document.getElementById('sel-details').innerHTML=det;
-    if(rebuildActions&&e.team===0){
+    if(rebuildActions&&e.team===myTeam){
       if(e.complete && b.builds){
         b.builds.forEach(ut=>{
           let u=UNITS[ut];
@@ -508,7 +526,7 @@ function updateUI(){
     // Gating on just e here would show "Build Economic/Military" for a
     // mixed villager+scout selection merely because the villager happened
     // to be first in the array.
-    let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===0);
+    let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
     if(rebuildActions&&allVillagers){
       window.currentVillagerMenu = window.currentVillagerMenu || 'main';
 
@@ -621,7 +639,7 @@ function refreshActionAffordability(){
   document.querySelectorAll('#actions .act-btn[data-cost]').forEach(btn=>{
     let cost;
     try{ cost=JSON.parse(btn.dataset.cost); }catch(_){ return; }
-    btn.classList.toggle('disabled', !canAfford(0,cost));
+    btn.classList.toggle('disabled', !canAfford(myTeam,cost));
   });
 }
 // Swallow clicks on disabled buttons before their own onclick fires.
@@ -666,6 +684,10 @@ document.getElementById('actions').addEventListener('click', function(e){
 
 function trainUnit(bldg,utype){
   if(gameOver)return;
+  if (netRole === 'guest') {
+    sendCommand({ kind: 'train-unit', bldgId: bldg.id, utype });
+    return;
+  }
   let result=queueUnit(bldg,utype);
   if(result.reason==='pop')showMsg('Need more houses!');
   else if(result.reason==='resources')showMsg('Not enough resources!');
@@ -673,6 +695,10 @@ function trainUnit(bldg,utype){
 
 function cancelQueue(bldgId,idx){
   if(gameOver)return;
+  if (netRole === 'guest') {
+    sendCommand({ kind: 'cancel-queue', bldgId, idx });
+    return;
+  }
   let bldg=entities.find(en=>en.id===bldgId);
   if(!bldg||bldg.type!=='building')return;
   let utype=bldg.queue[idx];
@@ -696,8 +722,14 @@ function showMsg(txt){
 
 window.toggleTownBell = function() {
   if (gameOver || !gameStarted) return;
-  if (window.bellActive) soundAllClear();
-  else ringTownBell();
+  if (netRole === 'guest') {
+    // Host applies this with the guest's fixed team (1) and sets
+    // window.aiBellActive itself — see js/net-cmd.js.
+    sendCommand({ kind: 'town-bell', ringing: !myBellActive() });
+    return;
+  }
+  if (myBellActive()) soundAllClear(myTeam);
+  else ringTownBell(myTeam);
 };
 
 // "Never mind" — cancels one level at a time (Escape-style), since fully
@@ -725,7 +757,7 @@ window.deselectAll = function() {
 
 window.selectIdleVillager = function() {
   if (gameOver || !gameStarted) return;
-  let idleVils = entities.filter(e => e.team === 0 && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
+  let idleVils = entities.filter(e => e.team === myTeam && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
   if (idleVils.length === 0) {
     showMsg('No idle villagers!');
     return;
@@ -756,7 +788,7 @@ window.selectIdleVillager = function() {
 // selectIdleVillager above. "Idle" = no target, no task, standing still.
 window.selectIdleMilitary = function() {
   if (gameOver || !gameStarted) return;
-  let mil = entities.filter(e => e.team === 0 && e.type === 'unit' && !e.garrisonedIn &&
+  let mil = entities.filter(e => e.team === myTeam && e.type === 'unit' && !e.garrisonedIn &&
     ['militia','spearman','archer','scout'].includes(e.utype) &&
     !e.task && !e.target && e.path.length === 0);
   if (mil.length === 0) { showMsg('No idle soldiers!'); return; }
@@ -807,13 +839,14 @@ window.updateBottomHeight();
 function prepayFarm() {
   if (gameOver) return;
   let cost = {w: 60};
-  if (!canAfford(0, cost)) {
+  if (!canAfford(myTeam, cost)) {
     showMsg('Not enough wood!');
     return;
   }
-  spendCost(0, cost);
-  res.prepaidFarms = (res.prepaidFarms || 0) + 1;
-  showMsg(`Farm reseed prepaid (Queue: ${res.prepaidFarms})`);
+  spendCost(myTeam, cost);
+  let store = resourceStore(myTeam);
+  store.prepaidFarms = (store.prepaidFarms || 0) + 1;
+  showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`);
   updateUI();
 }
 
@@ -821,17 +854,18 @@ function reactivateFarm(farm) {
   if (gameOver) return;
   if (!farm.exhausted) return;
   let cost = {w: 60};
-  if (!canAfford(0, cost)) {
+  if (!canAfford(myTeam, cost)) {
     showMsg('Not enough wood!');
     return;
   }
-  spendCost(0, cost);
+  spendCost(myTeam, cost);
   farm.exhausted = false;
   farm.complete = true;
   farm.hp = farm.maxHp;
   let tile = map[farm.y][farm.x];
   tile.t = TERRAIN.FARM;
   tile.res = 300;
+  markMapDirty(farm.x,farm.y);
   showMsg('Farm reactivated!');
   updateUI();
 }

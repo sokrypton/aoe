@@ -153,6 +153,28 @@ let gameOver=false, won=false;
 let lastSelKey='';
 let gameStarted=false, gamePaused=false, aiDifficulty='standard';
 
+// ---- MULTIPLAYER (see js/net.js) ----
+// myTeam: which team THIS browser tab plays as. Always 0 in single-player
+// and for the host (host keeps its existing team-0 identity); becomes 1 on
+// a guest right after joining, since the guest replaces the AI on team 1.
+// netRole: null (single-player) | 'host' | 'guest'. netConn/netConnected
+// track the PeerJS DataConnection itself.
+let myTeam=0, netRole=null;
+let netConn=null, netConnected=false;
+// dirtyMapCells: tiles the host has changed since its last sync broadcast
+// (see js/net-sync.js). guestNeedsFullSync forces the next payload to carry
+// the whole `map` instead of just deltas — set on every fresh/re- connection
+// (js/init.js's onNetConnectionOpen) so a (re)joining guest always gets a
+// complete base to apply deltas onto, never partial state.
+let dirtyMapCells=[];
+let guestNeedsFullSync=true;
+// Cheap no-op in single-player (netRole stays null) and on the guest itself
+// (which never mutates the authoritative map) — only the host's own writes
+// need tracking for the next broadcast.
+function markMapDirty(x,y){
+  if(netRole==='host') dirtyMapCells.push({x,y});
+}
+
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
 
