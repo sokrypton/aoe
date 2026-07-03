@@ -38,9 +38,17 @@ function updateUI(){
     let e = selected[0];
     currentSelectionDetails = `${e.id}:${e.hp}:${e.maxHp}:${e.complete ? 1 : 0}:${e.buildProgress || 0}`;
     if (e.queue) {
-      currentSelectionDetails += `:${e.queue.length}:${Math.floor(e.trainTick)}`;
+      // Structural signature only (queue contents), NOT trainTick: progress
+      // changes every tick, and keying on it rebuilt the whole details panel
+      // 30+ times a second — destroying the clickable queue slots under the
+      // cursor (flashing hover, eaten cancel clicks). Live progress is
+      // patched onto the stable DOM below instead.
+      currentSelectionDetails += `:${e.queue.join(',')}`;
     }
-    if (e.task) {
+    // Target-driven work (sheep harvesting) has no task, so key on task OR
+    // target OR a carried load — otherwise the card wouldn't refresh as a
+    // butcher's food count ticks up.
+    if (e.task || e.target || e.carrying) {
       currentSelectionDetails += `:${e.task}:${e.carrying || 0}:${e.target || e.buildTarget || e.followId || 0}`;
     }
     let b = BLDGS[e.btype];
@@ -90,6 +98,21 @@ function updateUI(){
     !!window.settingRally !== !!lu.settingRally ||
     !!window.bellActive !== !!lu.bellActive
   );
+
+  // Live training-progress patch: runs every frame on the EXISTING DOM (bar
+  // width + label text only), so the interactive queue slots are never
+  // rebuilt mid-hover/mid-click. Full rebuilds happen only on structural
+  // changes via the dirty key above.
+  if (selected.length === 1 && selected[0].queue && selected[0].queue.length > 0) {
+    let u = UNITS[selected[0].queue[0]];
+    if (u) {
+      let pct = Math.floor(selected[0].trainTick / u.trainTime * 100);
+      let fill = document.querySelector('#sel-details .train-bar-fill');
+      if (fill) fill.style.width = pct + '%';
+      let label = document.getElementById('train-pct-text');
+      if (label) label.textContent = `Training: ${u.name} — ${pct}%`;
+    }
+  }
 
   if (!stateChanged) return;
 
@@ -268,7 +291,7 @@ function updateUI(){
 
   if(selected.length===0){
     if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent='AoE II Mini';
+    document.getElementById('sel-name').textContent='Not AoE II — Mini';
     document.getElementById('sel-details').textContent='Select a unit or building';
     return;
   }
@@ -281,53 +304,59 @@ function updateUI(){
     let hpColor = '#2b8a3e';
     if (hpPct < 20) hpColor = '#cc3333';
     else if (hpPct < 50) hpColor = '#d9a711';
-    let det=`HP: ${e.hp}/${e.maxHp}`;
-    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
-    
-    let bAtk = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? BLDGS.TOWER.atk : 0);
-    let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? 5 : 0);
-    if(bAtk > 0) {
-      det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">⚔️ ${bAtk}  🏹 ${bRange}</div>`;
-    }
-    if(e.complete && garrisonCap(e) > 0) {
-      det += `<div style="margin-top:1px;">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
-    }
-    if(!e.complete && !e.exhausted) det+=`<div style="margin-top:1px;">Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
-    else {
-      if(b.pop) det+=`<div style="margin-top:1px;">Provides ${b.pop} population</div>`;
-      else if(b.drop) {
-        det+=`<div style="margin-top:1px;">Dropoff: ${b.drop}</div>`;
-        if (e.btype === 'MILL') {
-          det+=`<div style="margin-top:1px;">Prepaid Reseeds: ${res.prepaidFarms || 0}</div>`;
-        }
-      }
-      else if(b.isFarm){
-        if(e.exhausted){
-          det+=`<div style="color:#ff4444;font-weight:bold;margin-top:1px;">EXHAUSTED</div>`;
-          if(e.buildProgress > 0) {
-            det+=`<div style="margin-top:1px;">Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
-          }
-        } else {
-          let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
-          det+=`<div style="margin-top:1px;">Food remaining: ${tr}</div>`;
-        }
-      }
-    }
-    
+    let det;
     if(e.queue && e.queue.length>0){
-      let pct=Math.floor(e.trainTick/(UNITS[e.queue[0]].trainTime)*100);
+      // Training view DISPLACES the normal building card while the queue is
+      // active — the regular info (HP, garrison, dropoff…) comes back on its
+      // own once the queue empties, since this rebuilds every UI tick.
+      let u=UNITS[e.queue[0]];
+      let pct=Math.floor(e.trainTick/u.trainTime*100);
+      det=`<div id="train-pct-text" style="color:#ffd700;font-weight:bold;font-size:11px;">Training: ${u.name} — ${pct}%</div>`;
       det+=`<div class="train-compact">`;
-      det+=`  <div class="train-bar-bg"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
-      det+=`  <div class="train-queue-slots">`;
+      det+=`<div class="train-bar-bg"><div class="train-bar-fill" style="width: ${pct}%"></div></div>`;
+      det+=`<div class="train-queue-slots">`;
       e.queue.forEach((ut, idx) => {
         let slotClass = idx === 0 ? "queue-slot active-slot" : "queue-slot";
-        det+=`    <div class="${slotClass}" onclick="cancelQueue(${e.id}, ${idx})" title="Click to cancel and refund">`;
-        det+=`      <div class="sprite-icon icon-${ut} queue-icon"></div>`;
-        det+=`      <div class="queue-cancel-hover">×</div>`;
-        det+=`    </div>`;
+        det+=`<div class="${slotClass}" onclick="cancelQueue(${e.id}, ${idx})" title="Click to cancel and refund">`;
+        det+=`<div class="sprite-icon icon-${ut} queue-icon"></div>`;
+        det+=`<div class="queue-cancel-hover">×</div>`;
+        det+=`</div>`;
       });
-      det+=`  </div>`;
-      det+=`</div>`;
+      det+=`</div></div>`;
+      det+=`<div style="margin-top:2px;font-size:9px;color:#bfae7f;">Click a queued unit to cancel &amp; refund</div>`;
+    } else {
+      det=`HP: ${Math.ceil(e.hp)}/${e.maxHp}`;
+      det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
+
+      let bAtk = (e.btype === 'TC' || e.btype === 'TOWER') ? 5 : 0; // both fire 5-damage arrows
+      let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? BLDGS.TOWER.range : 0);
+      if(bAtk > 0) {
+        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">⚔️ ${bAtk}  🏹 ${bRange}</div>`;
+      }
+      if(e.complete && garrisonCap(e) > 0) {
+        det += `<div style="margin-top:1px;">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
+      }
+      if(!e.complete && !e.exhausted) det+=`<div style="margin-top:1px;">Building: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
+      else {
+        if(b.pop) det+=`<div style="margin-top:1px;">Provides ${b.pop} population</div>`;
+        else if(b.drop) {
+          det+=`<div style="margin-top:1px;">Dropoff: ${b.drop}</div>`;
+          if (e.btype === 'MILL') {
+            det+=`<div style="margin-top:1px;">Prepaid Reseeds: ${res.prepaidFarms || 0}</div>`;
+          }
+        }
+        else if(b.isFarm){
+          if(e.exhausted){
+            det+=`<div style="color:#ff4444;font-weight:bold;margin-top:1px;">EXHAUSTED</div>`;
+            if(e.buildProgress > 0) {
+              det+=`<div style="margin-top:1px;">Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
+            }
+          } else {
+            let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
+            det+=`<div style="margin-top:1px;">Food remaining: ${tr}</div>`;
+          }
+        }
+      }
     }
     document.getElementById('sel-details').innerHTML=det;
     if(rebuildActions&&e.team===0){
@@ -406,13 +435,19 @@ function updateUI(){
       setPortraitIcon(port, e.utype, UNITS[e.utype].icon);
       port.classList.toggle('cam-locked', window.cameraFollowId===e.id);
     }
-    let unitName = '';
-    if (e.utype === 'sheep' || e.utype === 'sheep_carcass') {
-      unitName = selected.length > 1 ? 'Sheep' : 'Sheep';
-    } else if (e.utype === 'villager') {
-      unitName = selected.length > 1 ? 'Villagers' : 'Villager';
-    } else {
-      unitName = selected.length > 1 ? 'Soldiers' : 'Soldier';
+    // Use the unit's real name (Scout Cavalry, Militia, …) instead of a
+    // generic "Soldier". Uniform multi-selections pluralize; mixed ones get
+    // a group label.
+    const UNIT_PLURALS = {villager:'Villagers', militia:'Militia', spearman:'Spearmen',
+      archer:'Archers', scout:'Scout Cavalry', sheep:'Sheep', sheep_carcass:'Sheep Carcasses'};
+    let unitName = UNITS[e.utype] ? UNITS[e.utype].name : e.utype;
+    if (selected.length > 1) {
+      let allSame = selected.every(s => s.utype === e.utype);
+      if (allSame) {
+        unitName = UNIT_PLURALS[e.utype] || unitName;
+      } else {
+        unitName = selected.every(s => s.utype !== 'villager' && s.utype !== 'sheep' && s.utype !== 'sheep_carcass') ? 'Army' : 'Mixed Group';
+      }
     }
     document.getElementById('sel-name').textContent = unitName + (selected.length > 1 ? ` (${selected.length})` : '');
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
@@ -429,17 +464,27 @@ function updateUI(){
       let stats = [];
       if (uData.atk > 0) stats.push(`⚔️ ${uData.atk}`);
       if (uData.range > 0) stats.push(`🏹 ${uData.range}`);
+      if (uData.armor && (uData.armor.m > 0 || uData.armor.p > 0)) stats.push(`🛡️ ${uData.armor.m}/${uData.armor.p}`);
       stats.push(`🏃 ${uData.speed.toFixed(2)}`);
+      // Job shown purely as resource icon + carried amount, on the stats row
+      // after the walk rate: [wood]0 = lumberjack heading out, [wood]7 =
+      // hauling 7 wood. The resource comes from the task when the hands are
+      // empty. Builders get 🔨 (no resource), idle villagers 💤.
+      let TASK_RES={chop:'wood',mine_gold:'gold',mine_stone:'stone',forage:'food',farm:'food'};
+      let resType=e.carrying>0?e.carryType:TASK_RES[e.task];
+      // Sheep work is target-driven (no task): a villager killing or
+      // butchering a sheep is on food duty — show [food] with the live count.
+      if(!resType && e.target){
+        let tgt=entitiesById.get(e.target);
+        if(tgt&&(tgt.utype==='sheep'||tgt.utype==='sheep_carcass'))resType='food';
+      }
+      if(resType){
+        stats.push(`<span title="${resType}: carrying ${e.carrying}"><span class="res-mini-icon icon-${resType}"></span>${e.carrying}</span>`);
+      } else if(e.task==='build') stats.push(`<span title="Building">🔨</span>`);
+      else if(e.task==='garrison') stats.push(`<span title="Running to shelter">🏰</span>`);
+      else if(e.utype==='villager' && !e.task && !e.target && e.path.length===0) stats.push(`<span title="Idle">💤</span>`);
       det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">${stats.join('  ')}</div>`;
     }
-
-    // Show friendly task names
-    let taskNames={chop:'Chopping wood',mine_gold:'Mining gold',mine_stone:'Mining stone',
-      forage:'Foraging berries',farm:'Farming',build:'Building','return':'Returning resources'};
-    let taskStr = '';
-    if(e.task) taskStr += taskNames[e.task]||e.task;
-    if(e.carrying>0) taskStr += ` (${e.carrying} ${e.carryType})`;
-    if(taskStr) det+=`<div style="margin-top:1px;">${taskStr}</div>`;
 
     document.getElementById('sel-details').innerHTML=det;
 
@@ -481,12 +526,15 @@ function updateUI(){
         act.appendChild(backBtn);
 
         // Economic Sub-Menu
+        // Ordered by importance: pop cap first, then food, then the drop
+        // sites. TC deliberately hidden for now (rebuild-a-TC may return
+        // later — the placement path still supports it).
         let builds=[
           {type:'HOUSE',label:'House',key:'Q'},
-          {type:'LCAMP',label:'Lumber Camp',key:'W'},
-          {type:'MCAMP',label:'Mining Camp',key:'E'},
+          {type:'FARM',label:'Farm',key:'W'},
+          {type:'LCAMP',label:'Lumber Camp',key:'E'},
           {type:'MILL',label:'Mill',key:'R'},
-          {type:'FARM',label:'Farm',key:'T'}
+          {type:'MCAMP',label:'Mining Camp',key:'T'}
         ];
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
@@ -564,6 +612,36 @@ document.getElementById('actions').addEventListener('click', function(e){
     showMsg('Not enough resources!');
   }
 }, true);
+
+// Desktop swipe: drag anywhere on the actions bar to scroll it horizontally
+// (touch devices scroll natively via overflow-x). A drag past a small
+// threshold suppresses the click that would otherwise fire on the button
+// under the cursor when the mouse is released.
+(function(){
+  let bar=document.getElementById('actions');
+  if(!bar||!bar.addEventListener)return;
+  let dragging=false,dragMoved=false,startX=0,startScroll=0;
+  bar.addEventListener('mousedown',e=>{
+    dragging=true;dragMoved=false;startX=e.clientX;startScroll=bar.scrollLeft;
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    let dx=e.clientX-startX;
+    if(Math.abs(dx)>5)dragMoved=true;
+    if(dragMoved)bar.scrollLeft=startScroll-dx;
+  });
+  window.addEventListener('mouseup',()=>{dragging=false;});
+  bar.addEventListener('click',e=>{
+    if(dragMoved){e.stopPropagation();e.preventDefault();dragMoved=false;}
+  },true);
+  // Mouse wheel scrolls the bar horizontally too.
+  bar.addEventListener('wheel',e=>{
+    if(bar.scrollWidth>bar.clientWidth){
+      bar.scrollLeft+=(e.deltaX||e.deltaY);
+      e.preventDefault();
+    }
+  },{passive:false});
+})();
 
 function trainUnit(bldg,utype){
   if(gameOver)return;
@@ -650,6 +728,27 @@ window.selectIdleVillager = function() {
 
   if (window.playSound) window.playSound('select_villager');
   showMsg('Selected idle villager');
+  updateUI();
+};
+
+// ',' hotkey — AoE2's idle-military cycle, the army-side twin of
+// selectIdleVillager above. "Idle" = no target, no task, standing still.
+window.selectIdleMilitary = function() {
+  if (gameOver || !gameStarted) return;
+  let mil = entities.filter(e => e.team === 0 && e.type === 'unit' && !e.garrisonedIn &&
+    ['militia','spearman','archer','scout'].includes(e.utype) &&
+    !e.task && !e.target && e.path.length === 0);
+  if (mil.length === 0) { showMsg('No idle soldiers!'); return; }
+  window.lastIdleMilIndex = window.lastIdleMilIndex || 0;
+  let u = mil[window.lastIdleMilIndex % mil.length];
+  window.lastIdleMilIndex++;
+  selected = [u];
+  let iso = toIso(u.x, u.y);
+  camX = iso.ix; camY = iso.iy;
+  window.targetCamX = camX; window.targetCamY = camY;
+  window.cameraFollowId = null;
+  if (window.playSound) window.playSound('select_military');
+  showMsg('Selected idle soldier');
   updateUI();
 };
 
@@ -834,21 +933,23 @@ window.reactivateFarm = reactivateFarm;
     if (tipType === 'unit') {
       const u = UNITS[tipKey];
       if (!u) return;
-      const stats = [];
+      const stats = [`❤️ ${u.hp}`];
       if (u.atk > 0) stats.push(`⚔️ ${u.atk}`);
       if (u.range > 0) stats.push(`🏹 ${u.range}`);
+      if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) stats.push(`🛡️ ${u.armor.m}/${u.armor.p}`);
       if (u.speed > 0) stats.push(`🏃 ${u.speed.toFixed(2)}`);
       d = { name: u.name, desc: u.desc || null, stats, cost: u.cost };
     } else if (tipType === 'building') {
       const b = BLDGS[tipKey];
       if (!b) return;
-      const stats = [];
+      const stats = [`❤️ ${b.hp}`];
       if (tipKey === 'TC' || tipKey === 'TOWER') {
-        const atk = tipKey === 'TC' ? 6 : b.atk;
+        const atk = 5; // both fire 5-damage arrows (AoE2)
         const rng = tipKey === 'TC' ? 6 : b.range;
         if (atk > 0) stats.push(`⚔️ ${atk}`);
         if (rng > 0) stats.push(`🏹 ${rng}`);
       }
+      if (b.armor && (b.armor.m > 0 || b.armor.p > 0)) stats.push(`🛡️ ${b.armor.m}/${b.armor.p}`);
       d = { name: b.name, desc: b.desc || null, stats, cost: b.cost };
     } else if (tipType === 'action') {
       // Plain action buttons (rally, eco/mil menu, back, reseed, reactivate)

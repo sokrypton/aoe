@@ -219,8 +219,15 @@ canvas {
   font-size: 10px;
   color: #d1c499;
   line-height: 1.35;
-  white-space: pre-line;
+  /* normal wrapping (pre-line rendered stray newlines in generated markup as
+     hard line breaks); long content scrolls instead of clipping mid-line */
+  white-space: normal;
+  overflow-y: auto;
+  max-height: 100%;
   text-shadow: 1px 1px 1px #000;
+}
+#sel-stats {
+  max-height: 100%;
 }
 #sel-details .hp-bar-bg {
   width: 100px;
@@ -294,14 +301,22 @@ canvas {
   flex: 1;
   padding: 8px;
   display: flex;
-  flex-wrap: nowrap; /* single row — overflow scrolls/drags horizontally instead of wrapping */
-  align-items: center; /* center the row instead of top-pinning */
+  /* single row: overflow scrolls horizontally — swipe on touch, drag or
+     mouse-wheel on desktop (see the drag-to-scroll handlers in ui.js). The
+     thin scrollbar below makes the overflow discoverable. */
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-start;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
   border-right: none;
+  scrollbar-width: thin;                      /* Firefox */
+  scrollbar-color: #bfa054 rgba(0,0,0,0.3);
 }
+#actions::-webkit-scrollbar { height: 5px; }
+#actions::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+#actions::-webkit-scrollbar-thumb { background: #bfa054; border-radius: 3px; }
 #bottom.menu-active #actions {
   position: absolute;
   left: 0;
@@ -582,10 +597,44 @@ canvas {
    panel instead of two separately-spaced rows, and an icon in each label
    lets you scan the panel without reading every word. */
 .setup-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+/* Two tidy rows: the match-defining choices (Difficulty, Map) get a roomy
+   2-up top row; Speed/Sound/Music sit 3-up below, slightly muted. */
+.setup-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px 16px;
-  margin: 14px 0;
+  gap: 10px 14px;
+}
+.setup-row-audio {
+  grid-template-columns: repeat(3, 1fr);
+  opacity: 0.85;
+  padding-top: 2px;
+}
+#menu-subtitle {
+  text-align: center;
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 13px;
+  color: #d8c58a;
+  margin-top: 2px;
+  letter-spacing: 0.4px;
+}
+#menu-disclaimer {
+  margin-top: 10px;
+  font-size: 9px;
+  line-height: 1.45;
+  color: #9c8a5e;
+  text-align: center;
+  max-width: 460px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.menu-help-btn {
+  filter: saturate(0.7);
+  font-size: 13px;
 }
 .setup-col {
   min-width: 0;
@@ -641,6 +690,120 @@ canvas {
   background: #8c1d1d;
   color: #ffebad;
 }
+/* ---- HOW TO PLAY overlay ---- */
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  z-index: 150; /* above the start menu (#tutorial is 100), below the tooltip (200) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+#help-box {
+  position: relative;
+  background: linear-gradient(180deg, #3d2812 0%, #241505 100%);
+  border: 2px solid #bfa054;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+  color: #e8dcb8;
+  width: 560px;
+  max-width: 94vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 22px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+#help-box h2 {
+  font-family: 'Cinzel', Georgia, serif;
+  color: #ffd700;
+  font-size: 20px;
+  margin: 0 0 10px;
+  text-align: center;
+}
+#help-box h4 {
+  font-family: 'Cinzel', Georgia, serif;
+  color: #ffcf5e;
+  font-size: 14px;
+  margin: 0 0 6px;
+  border-bottom: 1px solid #5a3e1a;
+  padding-bottom: 3px;
+}
+#help-box p { margin: 6px 0; color: #d8caa4; }
+.help-section { margin-bottom: 14px; }
+.help-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 3px 0;
+  color: #e2d5ac;
+}
+.help-ico { flex-shrink: 0; }
+#help-close {
+  position: sticky;
+  float: right;
+  top: 0;
+  background: #5c3d24;
+  border: 1px solid #bfa054;
+  color: #ffebad;
+  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+  cursor: pointer;
+}
+/* Controls: two labeled columns of "input → what it does" rows — far easier
+   to scan than prose with dot separators. Stacks to one column on phones. */
+.help-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+}
+.help-controls-title {
+  font-weight: bold;
+  color: #ffcf5e;
+  margin-bottom: 4px;
+}
+.help-kv {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 3px 0;
+}
+.help-k {
+  flex: 0 0 46%;
+  color: #f0e3ba;
+  font-weight: bold;
+}
+.help-v { color: #c9bb94; }
+.help-kv kbd {
+  background: #1d1206;
+  border: 1px solid #8a6a3a;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 11px;
+}
+@media (max-width: 600px) {
+  .help-controls { grid-template-columns: 1fr; }
+}
+
+.help-disclaimer {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #5a3e1a;
+  font-size: 10px;
+  color: #9c8a5e;
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  #help-box { font-size: 12px; padding: 14px 14px 10px; }
+  #help-box h2 { font-size: 17px; }
+}
+
 .menu-action-btn {
   border: 2px solid #e5c158;
   color: #ffebad;
@@ -714,7 +877,9 @@ canvas {
 @media(max-width:480px){
   #tutorial-box{padding:20px 18px;width:340px}
   .menu-divider{margin:10px 0}
-  .setup-grid{grid-template-columns:1fr;gap:12px}
+  .setup-grid{gap:12px}
+  .setup-row{grid-template-columns:1fr} /* stack the settings on small phones */
+  .setup-row-audio{grid-template-columns:1fr 1fr}
   .setup-col h3{font-size:14px}
   .setup-icon{font-size:15px}
   .segment{font-size:15px;padding:12px 4px}
@@ -1049,6 +1214,21 @@ canvas {
   gap: 5px;
   font-size: 10px;
 }
+/* Small inline resource icon for the selection card's task line (icons +
+   counts instead of words — e.g. 🪓 [wood]7 for "chopping, carrying 7 wood") */
+.res-mini-icon {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  background-image: url('sprites.png');
+  background-repeat: no-repeat;
+  background-size: 500% 500%;
+}
+.res-mini-icon.icon-food  { background-position: 25% 75%; }
+.res-mini-icon.icon-wood  { background-position: 50% 75%; }
+.res-mini-icon.icon-gold  { background-position: 75% 75%; }
+.res-mini-icon.icon-stone { background-position: 100% 75%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;

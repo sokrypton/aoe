@@ -102,7 +102,7 @@ function genMap(){
     let offsets=[[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1]];
     return offsets.map(([dx,dy])=>{
       let x=spot.x+dx,y=spot.y+dy;
-      if(inBounds(x,y,1)){map[y][x]={t:TERRAIN.BERRIES,res:200,occupied:null};return{x,y};}
+      if(inBounds(x,y,1)){map[y][x]={t:TERRAIN.BERRIES,res:125,occupied:null};return{x,y};} // AoE2: 125 food per bush
       return null;
     }).filter(Boolean);
   }
@@ -128,7 +128,7 @@ function genMap(){
         let edgeFalloff = edge ? 0.85 : 1.0;
         
         if(!protectedBase(x,y) && !resourceBuffer(x,y,2) && map[y][x].t===TERRAIN.GRASS && Math.random()<edgeFalloff){
-          map[y][x]={t:TERRAIN.FOREST,res:randInt(120,200),occupied:null};
+          map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null}; // AoE2: 100 wood per tree
           placed++;
         }
       }
@@ -151,27 +151,32 @@ function genMap(){
 
   starts.forEach(s=>clearArea(s.cx,s.cy,6));
 
-  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),5*scale);
+  // Berries sit a real walk away from the TC (AoE2 Arabia: ~10 tiles at full
+  // scale) so building the Mill next to them is an actual decision.
+  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),6.5*scale);
   placeMirrored(berriesOffset,placeBerries);
 
   let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),8*scale);
   placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
 
   let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);
-  placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,4*scale,1));
+  placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)); // AoE2: main stone is 5 tiles
 
   let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12*scale);
   placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3));
 
   let secondStoneOffset=polar(baseAngle+Math.PI-baseSide*0.8+randFloat(-0.25,0.25),11*scale);
-  placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,3,350,2,8*scale,3));
+  placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)); // AoE2: secondary stone is 4 tiles
 
   placeMirroredForest(baseAngle+Math.PI+randFloat(-0.35,0.35),8*scale,5,2);
   placeMirroredForest(baseAngle+baseSide*1.7+randFloat(-0.25,0.25),9*scale,5,2);
   placeMirroredForest(baseAngle-baseSide*1.25+randFloat(-0.25,0.25),11*scale,6,2);
 
+  // Straggler trees: lone trees hugging the TC (AoE2 puts 2-3 within a few
+  // tiles) — early wood without committing to a lumber camp. Fixed distance,
+  // NOT scaled: stragglers belong at the base on every map size.
   [baseAngle+Math.PI-0.7,baseAngle+Math.PI+0.5,baseAngle+baseSide*2.2].forEach(a=>{
-    let offset=polar(a+randFloat(-0.15,0.15),4*scale);
+    let offset=polar(a+randFloat(-0.15,0.15),4);
     placeMirrored(offset,(x,y)=>{
       x=Math.round(x);y=Math.round(y);
       if(inBounds(x,y,1)&&!resourceBuffer(x,y,2)&&map[y][x].t===TERRAIN.GRASS)map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null};

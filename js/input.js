@@ -39,8 +39,49 @@ document.addEventListener('keydown',e=>{
     selectTownCenter();
     return;
   }
-  if (e.key === '.' || e.key === ',') {
+  if (e.key === '.') {
     if (window.selectIdleVillager) window.selectIdleVillager();
+    return;
+  }
+  // AoE2 mapping: ',' cycles idle MILITARY (the '.' key handles villagers).
+  if (e.key === ',') {
+    if (window.selectIdleMilitary) window.selectIdleMilitary();
+    return;
+  }
+  // Control groups (AoE2): Ctrl+1..9 assigns the current selection, 1..9
+  // recalls it, and pressing the same number again quickly also centers
+  // the camera on the group.
+  if (e.key >= '1' && e.key <= '9') {
+    let n = e.key;
+    window.ctrlGroups = window.ctrlGroups || {};
+    if (e.ctrlKey || e.metaKey) {
+      if (selected.length > 0 && selected.every(s => s.team === 0)) {
+        window.ctrlGroups[n] = selected.map(s => s.id);
+        showMsg('Control group ' + n + ' assigned (' + selected.length + ')');
+      }
+      e.preventDefault();
+      return;
+    }
+    let ids = window.ctrlGroups[n];
+    if (ids && ids.length) {
+      let units = ids.map(id => entitiesById.get(id)).filter(u => u && u.hp > 0 && !u.garrisonedIn);
+      window.ctrlGroups[n] = units.map(u => u.id); // prune the dead
+      if (units.length) {
+        let again = window._lastGroupKey === n && (performance.now() - (window._lastGroupTime || 0)) < 450;
+        selected = units;
+        if (again) centerCameraOnSelection();
+        window._lastGroupKey = n; window._lastGroupTime = performance.now();
+        updateUI();
+      } else {
+        showMsg('Control group ' + n + ' is empty');
+      }
+    }
+    return;
+  }
+  // Space: jump the camera to the current selection (AoE2-style).
+  if (e.key === ' ') {
+    e.preventDefault();
+    centerCameraOnSelection();
     return;
   }
   
@@ -48,6 +89,15 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Delete'||e.key==='Backspace'){
     selected.forEach(en=>{
       if(en.team===0){
+        // AoE2: deleting an UNFINISHED foundation refunds its cost (mis-click
+        // recovery / quick-wall cancel). Completed buildings and units refund
+        // nothing. (Slight over-refund if a gate/tower consumed wall tiles for
+        // a stone discount — rare and in the player's favor, acceptable.)
+        if(en.type==='building'&&!en.complete&&!en.exhausted){
+          let store=resourceStore(0);
+          Object.entries(BLDGS[en.btype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
+          showMsg(BLDGS[en.btype].name+' cancelled (refunded)');
+        }
         en.hp=0;
         if(typeof handleDeath==='function')handleDeath(en,1);
       }
@@ -69,11 +119,13 @@ document.addEventListener('keydown',e=>{
         updateUI();
       }
     } else if(window.currentVillagerMenu === 'eco') {
+      // Hotkeys mirror the menu's importance order (see ui.js eco builds).
+      // TC placement is hidden for now (no hotkey) but doPlace still handles it.
       if(key==='q') { placing='HOUSE'; showMsg('Place House'); }
-      else if(key==='w') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
-      else if(key==='e') { placing='MCAMP'; showMsg('Place Mining Camp'); }
+      else if(key==='w') { placing='FARM'; showMsg('Place Farm'); }
+      else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
       else if(key==='r') { placing='MILL'; showMsg('Place Mill'); }
-      else if(key==='t') { placing='FARM'; showMsg('Place Farm'); }
+      else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); }
       else if(key==='Escape') { window.currentVillagerMenu = 'main'; updateUI(); }
     } else if(window.currentVillagerMenu === 'mil') {
       if(key==='q') { placing='BARRACKS'; showMsg('Place Barracks'); }
@@ -792,6 +844,19 @@ function collapseMinimapIfWide(){
 window.addEventListener('resize', collapseMinimapIfWide);
 window.addEventListener('orientationchange', collapseMinimapIfWide);
 
+function centerCameraOnSelection(){
+  if(selected.length===0)return;
+  let cx=0,cy=0,n=0;
+  selected.forEach(s=>{
+    let w=s.type==='building'?(s.w||1):0, h=s.type==='building'?(s.h||1):0;
+    cx+=s.x+w/2; cy+=s.y+h/2; n++;
+  });
+  let iso=toIso(cx/n,cy/n);
+  camX=iso.ix; camY=iso.iy;
+  window.targetCamX=camX; window.targetCamY=camY;
+  window.cameraFollowId=null;
+}
+
 function focusTownCenter(){
   if(gameOver)return;
   let tc = entities.find(e => e.type === 'building' && e.team === 0 && e.btype === 'TC');
@@ -1236,6 +1301,7 @@ function doPlace(sx,sy){
     }
     let bldg=createBuilding(placing,ox,oy,0,gw,gh);
     bldg.complete=false;bldg.buildProgress=0;
+    bldg.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
     if (wallsToRemove.length > 0) {
       bldg.wasWall = true;
     }

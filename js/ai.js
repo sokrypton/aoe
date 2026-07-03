@@ -38,7 +38,22 @@ function updateAI(){
   let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===1);
   let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===1);
   let aiTC=aiBuildings.find(b=>b.btype==='TC');
-  if(!aiTC)return;
+  if(!aiTC){
+    // TC destroyed but not eliminated (conquest rules): try to rebuild it,
+    // and keep villagers gathering and the army fighting in the meantime.
+    addAITrickle(profile);
+    let vils=aiUnits.filter(u=>u.utype==='villager');
+    let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
+    let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
+    if(anchor&&vils.length>0&&canAfford(1,BLDGS.TC.cost)){
+      let pos=findAIBuildSpot(anchor,'TC');
+      if(pos)placeAIBuilding('TC',pos.x,pos.y);
+    }
+    assignAIVillagers(vils,profile);
+    if(anchor)controlAIMilitary(mils,anchor,profile);
+    controlAIScouts(mils,null);
+    return;
+  }
 
   updateAIIntel(profile); // what has scouting/combat actually revealed about the player this tick
 
@@ -206,7 +221,21 @@ function planAIWalls(aiTC,vils,profile){
         breachAIWallRing(plan,aiTC);
       }
     }
-    return;
+    // Wall maintenance: a DESTROYED segment (entity gone, not just damaged —
+    // damaged walls are already covered by the repair path in
+    // assignAIVillagers) gets its plan tile re-queued so the build loop
+    // below fills the breach. The intended opening (gate/breach tile) is
+    // left alone, as are tiles something else now legitimately occupies.
+    if(window.aiGateBuilt && aiTick%300===0){
+      let gt=window.aiGateTile;
+      plan.forEach(pt=>{
+        if(gt&&pt.x===gt.x&&pt.y===gt.y)return;
+        let occ=buildingAtTile(pt.x,pt.y,en=>en.team===1);
+        if(!occ&&canPlace('WALL',pt.x,pt.y,1))pt.done=false;
+      });
+    }
+    if(plan.every(pt=>pt.done))return; // ring intact — nothing to build
+    // else fall through to the build loop to fill the breach
   }
 
   // Place as many wall tiles as the current stone stockpile allows in one
@@ -377,7 +406,9 @@ function planAIMilitaryBuildings(aiTC,vils,barracks,profile){
 
 function queueAIMilitary(readyBarracks,profile){
   let currentArmy=entities.filter(e=>e.team===1&&e.type==='unit'&&['militia','spearman','archer','scout'].includes(e.utype)).length;
-  let maxArmy=profile.attackSize+profile.armyReserve+5;
+  // Train toward the NEXT wave's size (plus home defense reserve) so the
+  // army goal escalates with each wave launched, AoE2-style.
+  let maxArmy=aiWaveSize(profile)+profile.armyReserve;
   if(currentArmy>=maxArmy)return;
   
   let types = ['militia', 'spearman', 'archer', 'scout'];
@@ -488,13 +519,16 @@ function assignAIGatherTask(v,vils,profile){
 function aiEcoPlan(vilCount,profile){
   let militaryStarted=entities.some(e=>e.team===1&&e.type==='building'&&e.btype==='BARRACKS');
   let hasMill=hasAIBuilding('MILL');
-  if(vilCount<=5)return{forage:3,chop:2,mine_gold:1,mine_stone:1};
-  if(!militaryStarted)return{forage:3,chop:4,mine_gold:1,mine_stone:1};
+  // AoE2 Dark Age economy: food + wood first (villager production and
+  // buildings), gold only once military production begins, stone only for
+  // walls/towers (the wall-plan boost below handles that).
+  if(vilCount<=5)return{forage:4,chop:2};
+  if(!militaryStarted)return{forage:4,chop:4,mine_gold:1};
   // Only include 'farm' key when value > 0 — a zero denominator in the gatherer sort produces NaN
   let base;
-  if(profile===AI_LEVELS.easy) base={forage:2,chop:3,mine_gold:2,mine_stone:1};
-  else if(profile===AI_LEVELS.hard) base={forage:3,chop:4,mine_gold:4,mine_stone:1};
-  else base={forage:3,chop:3,mine_gold:3,mine_stone:1};
+  if(profile===AI_LEVELS.easy) base={forage:3,chop:3,mine_gold:2};
+  else if(profile===AI_LEVELS.hard) base={forage:4,chop:4,mine_gold:4,mine_stone:1};
+  else base={forage:4,chop:3,mine_gold:3,mine_stone:1};
   if(hasMill) base.farm=profile===AI_LEVELS.hard?4:profile===AI_LEVELS.easy?2:3;
   // Walls/gate/towers are pure stone sinks (~5/tile, dozens of tiles) — without
   // this the default 1-share stone ratio never keeps up and the ring stalls
@@ -539,6 +573,14 @@ function hasReachableResource(v,terrain){
   return !!findNearTile(v,terrain);
 }
 
+// Current attack-wave size: starts at profile.attackSize and grows by
+// waveGrowth per wave already launched (AoE2-style escalation from an early
+// raid to progressively larger armies). Capped so the army goal always fits
+// under the 200 pop ceiling alongside the villager economy.
+function aiWaveSize(profile){
+  return Math.min(60, profile.attackSize+(window.aiWaveCount||0)*profile.waveGrowth);
+}
+
 function controlAIMilitary(mils,aiTC,profile){
   let threat=findPlayerThreatNear(aiTC,12*aiScale());
   if(threat){
@@ -562,7 +604,11 @@ function controlAIMilitary(mils,aiTC,profile){
     });
     return;
   }
-  if(mils.length<profile.attackSize||aiTick<profile.attackTick)return;
+  let waveSize=aiWaveSize(profile);
+  if(mils.length<waveSize||aiTick<profile.attackTick)return;
+  // Minimum spacing between waves: after committing an attack, regroup and
+  // rebuild before the next (larger) one instead of dribbling units out.
+  if(aiTick-(window.aiLastWaveTick??-1e9)<profile.waveCooldown)return;
 
   let available=mils.filter(m=>!m.target);
   let intel=window.aiIntel;
@@ -573,14 +619,19 @@ function controlAIMilitary(mils,aiTC,profile){
     if(availablePower<intel.strength*profile.attackAdvantage)return;
   }
 
-  let attackers=available.slice(0,Math.max(profile.attackSize,mils.length-profile.armyReserve));
+  let attackers=available.slice(0,Math.max(waveSize,mils.length-profile.armyReserve));
+  let launched=0;
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(m);
     // explicitAttack: this is a deliberate march on remembered intel — the
     // per-tick vision check in updateUnit() must not wipe the order just
     // because the destination is beyond current AI sight range.
-    if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);}
+    if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);launched++;}
   });
+  if(launched>0){
+    window.aiWaveCount=(window.aiWaveCount||0)+1;
+    window.aiLastWaveTick=aiTick;
+  }
 }
 
 // Scouts were previously just folded into the attack mob in controlAIMilitary
@@ -747,6 +798,7 @@ function placeAIBuilding(type,x,y){
   let building=createBuilding(type,ox,oy,1,gw,gh);
   building.complete=false;
   building.buildProgress=0;
+  building.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
   if (wallsToRemove.length > 0) {
     building.wasWall = true;
   }

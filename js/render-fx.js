@@ -135,22 +135,34 @@ function drawMinimap(){
     fillDiamond([miniPoint(x-0.06,y-0.06),miniPoint(x+1.06,y-0.06),miniPoint(x+1.06,y+1.06),miniPoint(x-0.06,y+1.06)],c);
   }
   // (ornamental frame is drawn last, on top of entities/viewport — see below)
+  // Selected objects draw white (AoE2-style) so the current selection is
+  // findable on the minimap at a glance.
+  let selectedIds=new Set(selected.map(s=>s.id));
   entities.forEach(e=>{
     if(e.type==='unit'&&e.garrisonedIn)return; // hidden inside a building
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
     if (f === 0) return; // completely unexplored — hide everything
     if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
-    
-    MX.fillStyle=TEAM_COLORS[e.team];
+
+    let isSel=selectedIds.has(e.id);
+    // Under-attack blink (AoE2): a player object hit in the last ~4 game-s
+    // pulses white on the minimap so raids are spottable at a glance.
+    // 60-tick cycle ≈ 1 blink per real second at 2x speed — slow enough to
+    // read as a deliberate alert rather than a flicker.
+    let recentlyHit=e.team===0&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
+    let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
+    let color=(isSel||blinkOn)?'#ffffff':TEAM_COLORS[e.team];
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;
-      fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],TEAM_COLORS[e.team]);
+      fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],color);
     } else {
       let p=miniPoint(e.x+0.5,e.y+0.5);
       // Dot scales with the minimap's zoom (≈ half a tile), so units stay
       // visible when the map is expanded instead of staying 2px specks.
       let dot=Math.max(2,HALF_TW*mt.scale);
+      if(isSel)dot+=1; // selected dots read slightly bigger, like AoE2
+      MX.fillStyle=color;
       MX.fillRect(p.x-dot/2,p.y-dot/2,dot,dot);
     }
   });
@@ -248,10 +260,8 @@ function drawProjectiles() {
   projectiles.forEach(p => {
     let ppx = Math.round(p.x), ppy = Math.round(p.y);
     if (ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
-    let target = entities.find(en => en.id === p.targetId);
-    if (!target) return;
-    let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
-    let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
+    // Arrows fly to a fixed aim point (p.tx/p.ty), not a tracked entity.
+    let targetX = p.tx, targetY = p.ty;
     let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
 

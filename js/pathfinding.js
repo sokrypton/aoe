@@ -2,8 +2,54 @@
 // Raised from the original 800 so long-distance/obstructed routes on bigger
 // maps (90/120 tiles) can still find a full path instead of capping out early.
 const MAX_PATH_ITERS=2200;
-function walkable(x,y,ignore){
+
+// ---- UNIT COLLISION (AoE2-style) ----
+// Stationary units occupy their tile and are hard obstacles: A* routes around
+// them, and a walking unit stops when it bumps into one (its normal repath
+// logic then finds a way around). Units that are themselves walking don't
+// block — matching AoE2, where moving traffic flows through/past itself and
+// only parked units force a detour. This is also what caps how many melee
+// attackers can engage one target: the victim's tile is blocked, so attackers
+// ring the surrounding tiles and latecomers mill around outside.
+// Rebuilt once per tick in update(); Int32Array of unit ids (0 = free).
+let unitBlock=null;
+function rebuildUnitBlock(){
+  if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
+  else unitBlock.fill(0);
+  entities.forEach(e=>{
+    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)return;
+    if(e.utype==='sheep_carcass')return; // a corpse on the ground blocks nobody
+    if(e.path.length>0)return; // moving units don't block
+    let x=Math.round(e.x),y=Math.round(e.y);
+    if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
+  });
+}
+
+function walkable(x,y,ignore,ignoreUnits){
   if(x<0||x>=MAP||y<0||y>=MAP)return false;
+  // Stationary-unit collision (see rebuildUnitBlock above). ignoreUnits is
+  // for separateUnits(), which resolves residual overlap and must not treat
+  // the very units it's separating as immovable walls.
+  if(!ignoreUnits&&unitBlock){
+    let uid=unitBlock[x+y*MAP];
+    if(uid&&uid!==ignore){
+      let walker=entitiesById.get(ignore);
+      let blocker=entitiesById.get(uid);
+      if(blocker){
+        // Harvest exception: a villager may step onto the sheep/carcass it
+        // is working on.
+        let harvesting=walker&&walker.target===uid&&(blocker.utype==='sheep'||blocker.utype==='sheep_carcass');
+        // Pushables (AoE2 soft-push): sheep yield to anyone, villagers yield
+        // to same-team traffic — the walker paths straight through and
+        // separateUnits() shoves the blocker aside on contact. SOLDIERS are
+        // never pushable: a parked army holds ground and traffic must route
+        // around it (that's also what keeps the melee surround cap intact).
+        let pushable=blocker.utype==='sheep'||
+          (blocker.utype==='villager'&&walker&&walker.team===blocker.team);
+        if(!harvesting&&!pushable)return false;
+      }
+    }
+  }
   let t=map[y][x];
   if(t.t===TERRAIN.FARM)return true;
 
@@ -20,6 +66,19 @@ function walkable(x,y,ignore){
       if (occ.wasWall) return false;
       return true;
     }
+    // TC open courtyard: only the stone keep (the back 2x2 quadrant of the
+    // 3x3 footprint) is solid — the two open-sided shelter roofs and the
+    // front yard (the dx===2 / dy===2 edge tiles) are walkable, matching
+    // what the art actually shows. The tiles stay `occupied` so nothing can
+    // be BUILT there; construction sites still block fully.
+    if(occ && occ.type === 'building' && occ.btype === 'TC' && occ.complete) {
+      let rdx = x - occ.x, rdy = y - occ.y;
+      if (rdx === 2 || rdy === 2) return true;
+    }
+    // Farms are flat fields (AoE2): the entire 2x2 plot is walkable ground
+    // for anyone — farmers stand on it, armies trample across it. Only the
+    // origin tile carries the food; `occupied` still blocks construction.
+    if(occ && occ.type === 'building' && occ.btype === 'FARM') return true;
   }
 
   // Only resolve the walker entity (a Map lookup) when an exception could

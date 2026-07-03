@@ -26,14 +26,24 @@ let STARTS=[
   {team:1,x:MAP-13,y:MAP-13}
 ];
 // Switches the active map dimensions/start positions; must run before genMap()/init().
+// The player spawns in a random corner each match (so openings aren't
+// memorizable), with the enemy always in the diagonally opposite corner —
+// genMap()'s mirrored resource placement works for any diagonal.
 function setMapSize(sizeKey){
   MAP=MAP_SIZES[sizeKey]||MAP_SIZES.medium;
+  let lo=10, hi=MAP-13;
+  let corners=[[lo,lo],[hi,lo],[lo,hi],[hi,hi]];
+  let c=corners[randInt(0,3)];
   STARTS=[
-    {team:0,x:10,y:10},
-    {team:1,x:MAP-13,y:MAP-13}
+    {team:0,x:c[0],y:c[1]},
+    {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
   ];
 }
 const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
+// Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
+// all rates below are authored in real AoE2 game-seconds at 30 ticks each.
+// Mutable: the main menu's Speed option sets it via setGameSpeed() (init.js).
+let GAME_SPEED = 2;
 // Approximate on-screen structure height (px, pre-zoom) per building type —
 // footprint diamonds alone don't capture how tall a building actually
 // paints, which matters for anything doing screen-space hit-testing against
@@ -55,33 +65,52 @@ const TCOL={
 };
 
 const BLDGS={
-  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:900,garrisonCap:15,desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
-  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:150,desc:'Increases population capacity by 5.',icon:'🏠'},
-  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:210,desc:'Drop site for Wood.',icon:'🪓'},
-  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:210,desc:'Drop site for Gold and Stone.',icon:'⛏️'},
-  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:210,desc:'Drop site for Food. Necessary to plant Farms.',icon:'🛞'},
+  // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
+  // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
+  // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
+  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:750,armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
+  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
+  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Food. Necessary to plant Farms.',icon:'🛞'},
   // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
-  FARM:{name:'Farm',w:2,h:2,hp:100,cost:{w:60},isFarm:true,food:300,buildTime:90,desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:300,desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:700,cost:{w:125,s:50},range:5,atk:5,buildTime:480,garrisonCap:5,desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
-  WALL:{name:'Stone Wall',w:1,h:1,hp:1000,cost:{s:5},buildTime:30,desc:'Heavy stone defensive barrier to block chokepoints.',icon:'🧱'},
-  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{w:30,s:20},buildTime:210,desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'}
+  FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
+  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:1020,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  WALL:{name:'Stone Wall',w:1,h:1,hp:900,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier to block chokepoints.',icon:'🧱'},
+  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'}
 };
+// speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
+// rof = reload between attacks; armor = {m: melee, p: pierce}. All values
+// track AoE2 Dark/Feudal-age stats.
 const UNITS={
-  villager:{name:'Villager',hp:25,atk:3,range:0,speed:1.0,cost:{f:50},trainTime:120,desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
-  militia:{name:'Militia',hp:40,atk:4,range:0,speed:1.12,cost:{f:60,g:20},trainTime:100,desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
-  spearman:{name:'Spearman',hp:35,atk:3,range:0,speed:1.25,cost:{f:35,w:25},trainTime:105,desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
-  archer:{name:'Archer',hp:30,atk:4,range:4,speed:1.20,cost:{w:25,g:45},trainTime:167,desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
-  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.50,cost:{f:80},trainTime:143,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
-  sheep:{name:'Sheep',hp:8,atk:0,range:0,speed:1.0,cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
-  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'}
+  villager:{name:'Villager',hp:25,atk:3,range:0,speed:0.8,rof:60,armor:{m:0,p:0},cost:{f:50},trainTime:750,desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
+  militia:{name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:60,armor:{m:0,p:1},cost:{f:60,g:20},trainTime:630,desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
+  spearman:{name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:90,armor:{m:0,p:0},cost:{f:35,w:25},trainTime:660,desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
+  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:60,armor:{m:0,p:0},cost:{w:25,g:45},trainTime:1050,desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
+  // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2); with no
+  // age system here, the familiar fast scout is the right baseline.
+  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
+  sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
+  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'}
 };
+// AI pacing, authored against the AoE2-rate economy (30 ticks per
+// game-second; villager trains in 25 game-s, militia in 21 game-s).
+// AoE2-style attack plan: the first strike is a small early raid
+// (attackSize units, launched no earlier than attackTick), then each
+// subsequent wave grows by waveGrowth with at least waveCooldown between
+// launches — mirroring how the AoE2 AI escalates from a drush into
+// progressively larger attack groups instead of one fixed army size.
+// attackTick reference points: hard rushes ~8 game-minutes (a classic drush
+// window), easy waits ~15. trickle is free resources per decisionInterval —
+// the original AoE2's harder AIs cheated a modest resource trickle; easy
+// gets none.
 const AI_LEVELS={
-  easy:{name:'Easy',decisionInterval:240,maxVils:9,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:7,attackTick:3900,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:1,wood:1,gold:0,stone:0}},
-  standard:{name:'Medium',decisionInterval:180,maxVils:14,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:9,attackTick:2700,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:2,wood:1,gold:1,stone:0}},
-  hard:{name:'Hard',decisionInterval:120,maxVils:20,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:10,attackTick:2100,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:3,wood:2,gold:1,stone:0}}
+  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0}},
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0}},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1}}
 };
 
 function randInt(min,max){
@@ -247,9 +276,21 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   }
 }
 
+// AoE2-style ballistics: arrows fly to a fixed ground POSITION (where the
+// target was at fire time), not to the target entity — so fast units can
+// dodge by moving, and a shot lands on whoever is standing at the impact
+// point. Archers have 80% accuracy (a miss scatters the aim point);
+// tower/TC fire is 100% accurate, as in AoE2.
 function spawnProjectile(attacker, target) {
   let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
   let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
+  let accuracy = attacker.type === 'building' ? 1.0 : 0.8;
+  if (target.type !== 'building' && Math.random() > accuracy) {
+    let ang = Math.random() * Math.PI * 2;
+    let off = 0.6 + Math.random() * 0.8;
+    targetX += Math.cos(ang) * off;
+    targetY += Math.sin(ang) * off;
+  }
   let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
   projectiles.push({
     x: attacker.x,
@@ -260,7 +301,10 @@ function spawnProjectile(attacker, target) {
     // chest height — drawProjectiles blends this down to impact height.
     startH: attacker.type === 'building' ? (attacker.btype === 'TC' ? 55 : 36) : 12,
     totalDist: d,
-    targetId: target.id,
+    tx: targetX,
+    ty: targetY,
+    // Buildings can't sidestep — a shot at a building always connects.
+    targetBuildingId: target.type === 'building' ? target.id : null,
     attacker: attacker
   });
   if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);

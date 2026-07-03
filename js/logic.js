@@ -64,12 +64,15 @@ function getLineTiles(p1, p2) {
 
 
 const RES_KEYS={f:'food',w:'wood',g:'gold',s:'stone'};
+// cooldown is ticks (30/game-second) per 1 resource gathered, tuned to AoE2
+// base gather rates: wood ~0.39/s, gold ~0.38/s, stone ~0.36/s, farm ~0.32/s,
+// forage ~0.31/s.
 const GATHER_TASKS={
-  chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:15,clearOccupied:true},
-  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:15},
-  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:16},
-  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:18,clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true},
-  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:19}
+  chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:77,clearOccupied:true},
+  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:79},
+  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:83},
+  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:94,clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true},
+  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:97}
 };
 
 function resourceStore(team){
@@ -105,6 +108,7 @@ function teamPopUsed(team){
 function buildingPop(e,includeIncomplete){
   if(e.type!=='building')return 0;
   if(!includeIncomplete&&!e.complete)return 0;
+  // House rule: 10 pop (AoE2 gives 5, less than a house — feels wrong here).
   if(e.btype==='TC')return 10;
   return BLDGS[e.btype].pop||0;
 }
@@ -275,7 +279,7 @@ function depleteGatherTile(pos,config){
       let store = resourceStore(farm.team);
       if (store && store.prepaidFarms > 0) {
         store.prepaidFarms--;
-        tile.res = 300;
+        tile.res = BLDGS.FARM.food;
         farm.hp = farm.maxHp;
         if (farm.team === 0) showMsg("Farm auto-reseeded! (Prepaid remaining: " + store.prepaidFarms + ")");
         return;
@@ -421,10 +425,30 @@ function checkNextBuild(e){
 
 function damageEntity(attacker, target){
   let dmg = attacker.atk || 0;
-  if (attacker.utype === 'spearman' && target.utype === 'scout') dmg += 8; // Spearman counters Scout Cavalry
-  if (attacker.utype === 'militia' && target.utype === 'spearman') dmg += 2; // Militia counters Spearman
-  if (attacker.utype === 'scout' && target.utype === 'archer') dmg += 3; // Scout counters Archer
-  if (attacker.utype === 'archer' && target.utype === 'spearman') dmg += 3; // Archer counters Spearman
+  // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
+  // carcasses) into 1 real damage — no attack stat means no damage at all.
+  if (dmg <= 0) return;
+  // AoE2 attack bonuses. The other classic counters need no bonus — they
+  // emerge from the armor system: scouts beat archers because their 2 pierce
+  // armor halves arrow damage, and militia beat spearmen on raw stats.
+  if (attacker.utype === 'spearman' && target.utype === 'scout') dmg += 15; // AoE2 spearman +15 vs cavalry
+  if (attacker.utype === 'archer' && target.utype === 'spearman') dmg += 3; // AoE2 archer +3 vs spearman
+  // Bonuses vs buildings (AoE2 building-class bonuses): without siege units,
+  // these are what let a Dark Age army crack structures at all now that
+  // buildings have real armor.
+  if (target.type === 'building') {
+    if (attacker.utype === 'villager') dmg += 3;
+    if (attacker.utype === 'militia') dmg += 2;
+  }
+
+  // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
+  // arrows deal pierce damage; everything else is melee. High building pierce
+  // armor is what makes arrows nearly useless against structures.
+  let isPierce = (attacker.range || 0) > 0 || attacker.type === 'building';
+  let armor = target.type === 'unit'
+    ? (UNITS[target.utype].armor || {m:0,p:0})
+    : (BLDGS[target.btype].armor || {m:0,p:0});
+  dmg = Math.max(1, dmg - (isPierce ? armor.p : armor.m));
 
   target.hp -= dmg;
 
@@ -436,6 +460,10 @@ function damageEntity(attacker, target){
     if (window.playSound) window.playSound('build', target.x + (target.w||1)/2, target.y + (target.h||1)/2);
     spawnParticles(target.x + (target.w||1)/2, target.y + (target.h||1)/2, '#8b6c43', 3, 0.03, 2);
   }
+
+  // Minimap raid alert: attacked player objects blink white for a moment
+  // (drawMinimap reads this), AoE2-style.
+  if (target.team === 0) target.lastHitTick = tick;
 
   // Feed the adaptive music: actual damage is the strongest mood signal —
   // it catches open-field battles that building-proximity checks miss.
@@ -461,8 +489,19 @@ function damageEntity(attacker, target){
   // keep retreating. Note: a unit that's merely following another (but has
   // already caught up and stopped, path.length===0) isn't "mid-order" in
   // that sense and should still defend itself like any idle unit.
-  let hasActiveMoveOrder = target.type==='unit' && (target.path.length>0 || target.moveGoalX!==undefined);
-  if(target.type==='unit'&&target.utype!=='sheep'&&attacker.team!==target.team&&!hasActiveMoveOrder){
+  // For a villager, walking is usually TASK-walking (to the tree, to the
+  // drop-off) — that must not exempt it from defending itself, or gatherers
+  // get stabbed mid-commute without reacting. Only an explicit player move
+  // order (moveGoalX, set solely by issueMoveOrder) keeps a villager walking.
+  let hasActiveMoveOrder = target.type==='unit' && (
+    target.utype==='villager'
+      ? target.moveGoalX!==undefined
+      : (target.path.length>0 || target.moveGoalX!==undefined));
+  // AoE2: villagers fight back against melee attackers but don't chase
+  // ranged ones (hopeless kiting) or buildings (tower/TC fire).
+  let hopelessChase = target.utype==='villager' &&
+    ((attacker.range||0)>0 || attacker.type==='building');
+  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&attacker.team!==target.team&&!hasActiveMoveOrder&&!hopelessChase){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -724,7 +763,14 @@ function updateUnit(e){
       e.lastRepathTick=tick;
       let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
       if(pt)pathUnitTo(e,pt.x,pt.y);
-      if(e.path.length===0){e.task=null;e.garrisonTarget=null;}
+      if(e.path.length===0){
+        // Entrance likely crowded with other garrisoning villagers — keep
+        // trying a few rounds before abandoning shelter.
+        e.garrisonRetries=(e.garrisonRetries||0)+1;
+        if(e.garrisonRetries>=6){e.garrisonRetries=0;e.task=null;e.garrisonTarget=null;}
+      } else {
+        e.garrisonRetries=0;
+      }
     }
   }
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
@@ -776,7 +822,11 @@ function updateUnit(e){
     let t=entities.find(en=>en.id===e.target);
     if(t && t.hp>0){
       let range = UNITS[e.utype]?.range || 0;
-      let maxDist = range > 0 ? range : ((e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass')) ? 0.2 : 1.5);
+      // Sheep (live or carcass): 0.9 so villagers ring it — requiring exact
+      // contact (0.2) made every villager after the first "unreachable" once
+      // the tile was collision-claimed, and they dropped the order and idled.
+      let maxDist = range > 0 ? range :
+        (e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass')) ? 0.9 : 1.5;
       
       let inRange = false;
       if (range > 0) {
@@ -854,8 +904,10 @@ function updateUnit(e){
   }
 
   if(e.path.length>0){
-    // e.speed * 2.1 screen pixels per frame is the baseline movement speed
-    let speedInPixels = e.speed * 2.1;
+    // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
+    // covers sqrt(32^2+16^2) ≈ 35.78 screen px, and there are 30 ticks per
+    // game-second, so px-per-tick = speed * 35.78/30 ≈ speed * 1.19.
+    let speedInPixels = e.speed * 1.19;
     e.moveT += speedInPixels;
 
     while(e.path.length>0){
@@ -954,9 +1006,17 @@ function updateUnit(e){
 
     if(e.utype==='villager' && t.utype==='sheep_carcass'){
       let d=distToTarget(e,t);
-      if(d>0.2){
-        pathUnitTo(e,Math.round(t.x),Math.round(t.y));
-        if(e.path.length===0)e.target=null;
+      // Harvest from a ring around the carcass (not stacked on its tile) so
+      // several villagers can eat one sheep at once, AoE2-style — the whole
+      // starting crew on the first sheep is the classic opening.
+      if(d>0.9){
+        // Full ring: wait for an eating spot instead of abandoning the sheep
+        // (same patience pattern as combatApproach below).
+        if(tick-(e.chaseRepathTick||0)>=15){
+          e.chaseRepathTick=tick;
+          pathUnitTo(e,Math.round(t.x),Math.round(t.y));
+          if(e.path.length===0 && d>8)e.target=null;
+        }
       } else {
         clearUnitPath(e);
         if(e.carrying>=e.carryMax){
@@ -969,7 +1029,7 @@ function updateUnit(e){
           e.carrying++;
           e.carryType='food';
           e.foodSrc='meat';
-          e.gatherCooldown=15; // Gather rate
+          e.gatherCooldown=90; // ~0.33 food/game-second, AoE2 herding rate
           if(window.playSound && tick % 30 === 0) window.playSound('forage', t.x, t.y);
           spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
           if(t.hp<=0){
@@ -984,6 +1044,21 @@ function updateUnit(e){
     let d=distToTarget(e,t);
     let range = UNITS[e.utype]?.range || 0;
 
+    // Shared approach-with-patience: pathing can fail TRANSIENTLY when the
+    // spot around a target is collision-crowded (full melee ring, busy drop
+    // site). Old behavior dropped the order on any empty path, leaving units
+    // idle next to a fight. Now: retry on a cooldown, hold position while
+    // near, and only give up when far away with genuinely no route (walled).
+    // Returns false if the caller should stop processing this tick.
+    function combatApproach(u,tgt,dist,pathFn){
+      if(tick-(u.chaseRepathTick||0)<15) return false; // waiting for a slot
+      u.chaseRepathTick=tick;
+      if(pathFn)pathFn();
+      else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
+      if(u.path.length===0 && dist>8){u.target=null;return false;} // truly unreachable
+      return true;
+    }
+
     if (range > 0) {
       // Ranged combat: stay within range and fire projectiles
       if (d > range) {
@@ -991,13 +1066,12 @@ function updateUnit(e){
           e.target = null;
           return;
         }
-        pathUnitTo(e, Math.round(t.x), Math.round(t.y));
-        if (e.path.length === 0) e.target = null;
+        if(!combatApproach(e,t,d)) return;
       } else {
         clearUnitPath(e);
         if (e.atkCooldown <= 0) {
           spawnProjectile(e, t);
-          e.atkCooldown = 45; // Archer fires every 1.5s
+          e.atkCooldown = UNITS[e.utype].rof; // per-unit reload (archer 2s)
         }
       }
     } else {
@@ -1009,26 +1083,23 @@ function updateUnit(e){
             e.target = null;
             return;
           }
-          let pt=siegePerimeterSpot(e,t);
-          pathUnitTo(e,pt.x,pt.y);
-          if(e.path.length===0)e.target=null; // can't reach, give up
+          combatApproach(e,t,d,()=>{let pt=siegePerimeterSpot(e,t);pathUnitTo(e,pt.x,pt.y);});
         } else if(e.atkCooldown<=0){
           damageEntity(e,t);
-          e.atkCooldown=30;
+          e.atkCooldown=UNITS[e.utype].rof;
         }
       } else {
         // Attack unit: path close and hit
-        let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.2 : 1.5;
+        let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.9 : 1.5; // adjacent slaughter, see maxDist above
         if(d>maxD){
           if (e.stance === 'standground' && !e.explicitAttack) {
             e.target = null;
             return;
           }
-          pathUnitTo(e,Math.round(t.x),Math.round(t.y));
-          if(e.path.length===0)e.target=null;
+          if(!combatApproach(e,t,d)) return;
         } else if(e.atkCooldown<=0){
           damageEntity(e,t);
-          e.atkCooldown=30;
+          e.atkCooldown=UNITS[e.utype].rof;
         }
       }
     }
@@ -1058,12 +1129,21 @@ function updateUnit(e){
         if(e.path.length===0){
           let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
           if (!checkClose) {
+            // Perimeter may just be crowded with other builders — retry a few
+            // times before declaring the site unreachable and dropping it.
+            e.buildRetries=(e.buildRetries||0)+1;
+            if(e.buildRetries<6) return;
+            e.buildRetries=0;
             if(e.team===0)showMsg('Building site is unreachable!');
             if(!checkNextBuild(e)){
               e.task=null;
               e.buildTarget=null;
             }
+          } else {
+            e.buildRetries=0;
           }
+        } else {
+          e.buildRetries=0;
         }
       } else {
         if (bt.btype === 'FARM' && bt.exhausted) {
@@ -1077,7 +1157,7 @@ function updateUnit(e){
             bt.hp = bt.maxHp;                 // farm and the farmer silently goes idle
             let tile = map[bt.y][bt.x];
             tile.t = TERRAIN.FARM;
-            tile.res = 300;
+            tile.res = BLDGS.FARM.food;
             e.task = 'farm';
             e.gatherX = bt.x;
             e.gatherY = bt.y;
@@ -1093,7 +1173,7 @@ function updateUnit(e){
               bt.hp = bt.maxHp;
               let tile = map[bt.y][bt.x];
               tile.t = TERRAIN.FARM;
-              tile.res = 300;
+              tile.res = BLDGS.FARM.food;
               e.task = 'farm';
               e.gatherX = bt.x;
               e.gatherY = bt.y;
@@ -1110,11 +1190,16 @@ function updateUnit(e){
         }
         if (!bt.complete) {
           bt.buildProgress++;
+          // HP grows with construction (AoE2): each work tick adds its share
+          // of maxHp, so a half-built structure has half its HP. Damage taken
+          // during construction persists (the cap only limits, never heals).
+          bt.hp=Math.min(bt.maxHp,bt.hp+bt.maxHp/bt.buildTime);
           if (tick % 30 === 0 && window.playSound) {
             window.playSound('build', bt.x + bt.w/2, bt.y + bt.h/2);
           }
           if(bt.buildProgress>=bt.buildTime){
             bt.complete=true;
+            bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
             e.buildTarget=null;
             if (e.team === 0 && window.playSound) {
               window.playSound('train'); // play herald fanfare on building completed
@@ -1182,12 +1267,22 @@ function updateUnit(e){
       return;
     }
     if(e.task==='return'){
+      // Patience gate: when every route was blocked (usually a crowded drop
+      // site, not a walled-off one), wait a beat and retry with a full load
+      // instead of going idle and silently losing the carried resources.
+      if(e.dropWaitTick!==undefined){
+        if(tick-e.dropWaitTick<30)return;
+        e.dropWaitTick=undefined;
+        e.failedDrops=null;
+      }
       let failedDrops = e.failedDrops || new Set();
       let drop=nearestDrop(e,e.carryType,failedDrops);
       if(!drop){
+        // No drop site exists at all for this resource — genuinely nothing
+        // to wait for.
         e.task=null;
         e.failedDrops=null;
-        if(e.team===0)showMsg('Cannot reach drop site!');
+        if(e.team===0)showMsg('No drop site for '+e.carryType+'! Build one.');
         return;
       }
       if(!adjToBuilding(e.x,e.y,drop)){
@@ -1213,9 +1308,9 @@ function updateUnit(e){
 
           if (foundPath) return;
 
-          e.task=null;
-          e.failedDrops=null;
-          if(e.team===0)showMsg('Cannot reach drop site!');
+          // Every drop site unreachable right now — hold the load and retry
+          // shortly (see dropWaitTick gate above) rather than giving up.
+          e.dropWaitTick=tick;
         }
       } else {
         if(e.team===0)res[e.carryType]+=e.carrying;
@@ -1239,7 +1334,7 @@ function updateUnit(e){
     if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
   }
   // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
-  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep';
+  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass';
   // Note: followId isn't excluded here — a unit that has caught up to its
   // follow target and stopped (path empty) should still engage nearby
   // enemies like any idle unit; combat naturally takes precedence and the
@@ -1331,6 +1426,10 @@ function handleDeath(e,killerTeam){
         if(b.isFarm)map[e.y+dy][e.x+dx].t=TERRAIN.GRASS;}
     }
     if(e.btype==='TC'){
+      // Victory condition: the Town Center is the heart of each side — lose
+      // it, lose the game. (Full-elimination conquest rules were tried and
+      // reverted; teamEliminated() below remains as a fallback for the
+      // no-TC-left edge cases.)
       if(e.team===1){gameOver=true;won=true;}
       else{gameOver=true;won=false;}
     }
@@ -1351,6 +1450,17 @@ function handleDeath(e,killerTeam){
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);
   entitiesById.delete(e.id);
+  // Conquest victory (AoE2): a side is defeated when it has nothing left —
+  // no buildings and no units (sheep don't count, they change hands).
+  if(e.team===0||e.team===1){
+    if(teamEliminated(1)){gameOver=true;won=true;}
+    else if(teamEliminated(0)){gameOver=true;won=false;}
+  }
+}
+
+function teamEliminated(team){
+  return !entities.some(en=>en.team===team&&
+    (en.type==='building'||(en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass')));
 }
 
 function findSpawnTile(x,y,maxRadius=4){
@@ -1371,7 +1481,7 @@ function updateBuilding(e){
         e.hp = e.maxHp;
         let tile = map[e.y][e.x];
         tile.t = TERRAIN.FARM;
-        tile.res = 300;
+        tile.res = BLDGS.FARM.food;
       }
     }
   }
@@ -1382,7 +1492,7 @@ function updateBuilding(e){
   if (e.btype === 'TOWER' || e.btype === 'TC') {
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
-      let range = e.btype === 'TC' ? 6 : 5;
+      let range = e.btype === 'TC' ? 6 : BLDGS.TOWER.range; // AoE2: TC range 6, Watch Tower 8
       let center = {x: e.x + e.w/2, y: e.y + e.h/2};
       let targets = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
                             .filter(en => dist(center, en) <= range)
@@ -1395,7 +1505,7 @@ function updateBuilding(e){
           x: center.x,
           y: center.y,
           team: e.team,
-          atk: e.btype === 'TC' ? 6 : BLDGS.TOWER.atk // TC deals 6; Tower matches its own BLDGS.TOWER.atk stat (5)
+          atk: e.btype === 'TC' ? 5 : BLDGS.TOWER.atk // AoE2: both TC and Watch Tower deal 5 pierce
         };
         // AoE2-style: garrisoned units add extra arrows (capped at +5),
         // spread over the closest targets in range.
@@ -1403,7 +1513,7 @@ function updateBuilding(e){
         for (let i = 0; i < arrows; i++) {
           spawnProjectile(bCenter, targets[i % targets.length]);
         }
-        e.atkCooldown = 40; // fire every 1.3s
+        e.atkCooldown = 60; // fire every 2 game-seconds (AoE2 TC/tower reload)
       }
     }
   }

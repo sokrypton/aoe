@@ -493,16 +493,26 @@ function drawUnit(e){
       // (the tool's rotation anchor at (3,-9)) instead of hanging loose.
       let gripping = e.utype==='villager' && e.path.length===0 &&
         (e.task==='chop'||e.task==='mine_gold'||e.task==='mine_stone'||e.task==='build');
-      // Picking (berries/farm): no tool — the front arm just reaches out and
-      // down repeatedly, like plucking.
+      // Picking (berries/farm/butchering a carcass): no tool — the front arm
+      // just reaches out and down repeatedly, like plucking. Carcass
+      // harvesters are target-driven (no task), hence the extra check.
+      let carcassTarget = !e.task&&e.target&&entitiesById.get(e.target)?.utype==='sheep_carcass';
       let picking = e.utype==='villager' && e.path.length===0 &&
-        (e.task==='forage'||e.task==='farm');
+        (e.task==='forage'||e.task==='farm'||carcassTarget);
       let pick = Math.sin(tick*0.18+e.id);
+      // Fighting (AoE2 villagers have an attack animation): a fast forward
+      // jab — sharp punch out, slower recovery — whenever a villager is
+      // engaging a combat target (incl. slaughtering a live sheep).
+      let fighting = e.utype==='villager' && e.path.length===0 && !e.task &&
+        e.target && !picking && !carcassTarget;
+      let jabPh = ((tick*0.06 + e.id*0.41) % 1 + 1) % 1;
+      let jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
       X.beginPath();
       X.moveTo(-3.5+humanXOffset,-8+humanYOffset); X.lineTo(-5+humanXOffset-armSwing,-3.5+humanYOffset);
       X.moveTo(3.5+humanXOffset,-8+humanYOffset);
       if(gripping) X.lineTo(3,-8.8);
       else if(picking) X.lineTo(5.6+humanXOffset+pick*0.8, -5.5+humanYOffset-pick*3.5);
+      else if(fighting) X.lineTo(4.5+humanXOffset+jab*4.5, -6.5+humanYOffset-jab*1.5);
       else X.lineTo(4.5+humanXOffset+armSwing,-4.5+humanYOffset);
       X.strokeStyle='#000000';X.lineWidth=3.0;X.lineCap='round';X.stroke();
       X.strokeStyle='#edc9a0';X.lineWidth=1.5;X.stroke();
@@ -589,6 +599,23 @@ function drawUnit(e){
 
     // Horse head in front of the rider (front-facing scout)
     if(horseHeadFront) horseHeadFront();
+
+    // Screen-space angle from this unit to its combat target, expressed in
+    // the current facing-mirrored local frame (the context is under
+    // X.scale(e.facing,1), so local +x always means "the way I'm facing").
+    // Used to point aimed weapons (bow, spear) along the real attack line
+    // instead of a fixed pose. Clamped so extreme up/down shots don't fold
+    // the weapon through the body.
+    let aimAngle = () => {
+      let t = entitiesById.get(e.target);
+      if (!t) return 0;
+      let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
+      let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
+      let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
+      let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
+      let a = Math.atan2(diy, e.facing * dix);
+      return Math.max(-1.15, Math.min(1.15, a));
+    };
 
     // Tools & weapons (animated swinging swings during active tasks)
     if(e.utype==='villager'){
@@ -779,6 +806,10 @@ function drawUnit(e){
       let swinging=e.target&&e.path.length===0;
       X.save(); X.translate(3, -6+humanYOffset);
       if(swinging){
+        // Point the shaft at the target: the spear is drawn along -45°
+        // locally, so rotating by aim+45° lays it on the attack line; the
+        // thrust offset below is along the shaft, so it follows for free.
+        X.rotate(aimAngle()+Math.PI/4);
         let ph=((tick*0.07+e.id*0.4)%1+1)%1;
         let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
         let off=-2.5*u+4.5*(1-u);
@@ -802,6 +833,7 @@ function drawUnit(e){
       let swinging=e.target&&e.path.length===0;
       let ph=((tick*0.06+e.id*0.4)%1+1)%1;
       X.save(); X.translate(4, -8+humanYOffset);
+      if(swinging) X.rotate(aimAngle()); // bow + nocked arrow point at the target
       // Thick recurve limbs
       X.strokeStyle='#000'; X.lineWidth=4.2; X.lineCap='round';
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
@@ -958,9 +990,10 @@ function drawUnit(e){
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
 
-  // HP bar (higher for the scout — horse and rider stand taller)
+  // HP bar floats clear above the head (higher for the scout — horse and
+  // rider stand taller) so it never covers the unit's face.
   if(e.hp<e.maxHp){
-    let hpTop = e.utype==='scout' ? sy-33 : sy-23;
+    let hpTop = e.utype==='scout' ? sy-40 : sy-30;
     X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);

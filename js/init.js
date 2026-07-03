@@ -36,20 +36,30 @@ function init(){
 function placeStartingSheep(){
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
   let baseAngle=Math.atan2(starts[1].y-starts[0].y,starts[1].x-starts[0].x);
-  let offsets=[
+  // AoE2 Arabia herdables: 4 sheep near the TC, plus 2 far PAIRS the player
+  // has to scout to find (8 per player total).
+  let nearOffsets=[
     {angle:baseAngle+0.75,dist:4},
     {angle:baseAngle-0.75,dist:4},
     {angle:baseAngle+2.35,dist:6},
     {angle:baseAngle-2.35,dist:6}
-  ].map(o=>({x:Math.round(Math.cos(o.angle)*o.dist),y:Math.round(Math.sin(o.angle)*o.dist)}));
+  ];
+  let farPairs=[
+    {angle:baseAngle+1.6+Math.random()*0.4,dist:9},
+    {angle:baseAngle-1.6-Math.random()*0.4,dist:9}
+  ];
   STARTS.forEach((start,index)=>{
     let center={x:start.x+1,y:start.y+1};
-    offsets.forEach(offset=>{
-      let ox=index===0?offset.x:-offset.x;
-      let oy=index===0?offset.y:-offset.y;
-      let sp=findSpawnTile(center.x+ox,center.y+oy,3);
-      if(sp)createUnit('sheep',sp.x,sp.y,2);
-    });
+    let place=(o,count)=>{
+      let ox=Math.round(Math.cos(o.angle)*o.dist)*(index===0?1:-1);
+      let oy=Math.round(Math.sin(o.angle)*o.dist)*(index===0?1:-1);
+      for(let i=0;i<count;i++){
+        let sp=findSpawnTile(center.x+ox+i,center.y+oy,3);
+        if(sp)createUnit('sheep',sp.x,sp.y,2);
+      }
+    };
+    nearOffsets.forEach(o=>place(o,1));
+    farPairs.forEach(o=>place(o,2));
   });
 }
 
@@ -111,6 +121,8 @@ function onStartClicked(){
   let diff = selected ? selected.value : 'standard';
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
+  let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
+  setGameSpeed(speedSelected ? parseFloat(speedSelected.value) : 2);
   applyAudioSettings();
 
   window.fogDisabled = false;
@@ -137,6 +149,8 @@ function restartGame(difficulty){
   window.aiGateBuilt = false;
   window.aiGateTile = null;
   window.aiIntel = null;
+  window.aiWaveCount = 0;
+  window.aiLastWaveTick = null;
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;
@@ -155,6 +169,11 @@ function toggleCameraFollow(){
   let id=selected[0].id;
   window.cameraFollowId = (window.cameraFollowId===id) ? null : id;
   updateUI();
+}
+
+function toggleHelp(){
+  let o=document.getElementById('help-overlay');
+  if(o)o.style.display=(o.style.display==='none'||o.style.display==='')?'flex':'none';
 }
 
 function toggleMenu(){
@@ -180,12 +199,25 @@ function toggleMenu(){
       // game would silently defer it to the next phrase (~6s later).
       gamePaused = false;
       applyAudioSettings();
+      // Apply the other menu settings mid-match too (map size is the one
+      // exception — it needs a map regen, so it only takes effect on Restart).
+      let speedSel = document.querySelector('input[name="gamespeed"]:checked');
+      if (speedSel) setGameSpeed(parseFloat(speedSel.value));
+      let diffSel = document.querySelector('input[name="difficulty"]:checked');
+      if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
     }
   }
 }
 
 let lastTime = performance.now();
-const timeStep = 1000 / 60;
+// Simulation runs at 30 ticks per game-second (all tick-count constants in
+// core.js/logic.js are authored against that), scaled by GAME_SPEED — like
+// AoE2, where "1.7x speed" just runs more game-seconds per real second.
+let timeStep = 1000 / (30 * GAME_SPEED);
+function setGameSpeed(speed){
+  GAME_SPEED = speed;
+  timeStep = 1000 / (30 * GAME_SPEED);
+}
 let accumulator = 0;
 
 function gameLoop(){
