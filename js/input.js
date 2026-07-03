@@ -154,6 +154,11 @@ document.addEventListener('keydown',e=>{
   }
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
+// If focus leaves the window while a key is physically held (alt-tab,
+// clicking devtools, an OS shortcut, etc.), its keyup never fires and the
+// key stays stuck 'true' forever — e.g. Shift stuck down keeps building
+// placement (doPlace) from ever exiting "place next foundation" mode.
+window.addEventListener('blur',()=>{Object.keys(keys).forEach(k=>keys[k]=false);});
 
 window.isDraggingWall = false;
 window.wallDragStart = null;
