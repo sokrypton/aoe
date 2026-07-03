@@ -600,12 +600,15 @@ function drawBuilding(e, part = null){
     X.lineTo(raX,raY+24*2-raH); X.lineTo(raX+48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
 
     // Team banner flying from the keep top
-    if(e.complete) drawWavingFlag(sx, sy, 72, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD);
+    // 68 plants the pole base exactly on the top merlon's cap (sy-70)
+    if(e.complete) drawWavingFlag(sx, sy, 68, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD);
   }
   else if(e.btype==='HOUSE'){
-    // Timber-framed cottage under a big yellow hay gable roof
-    let W=22, hh=11, wallH=14, roofH=18;
-    bh=26;
+    // Timber-framed cottage under a big yellow hay gable roof.
+    // Base spans the full tile diamond (W/hh = HALF_TW/HALF_TH), so all
+    // four wall corners land exactly on the tile's edges.
+    let W=32, hh=16, wallH=16, roofH=20;
+    bh=32;
     let sy0=sy+bhh-hh; // center on tile
     let wl=darken?darkenColor('#ebd2b0'):'#ebd2b0';
     let wr=darken?darkenColor('#d2b48c'):'#d2b48c';
@@ -624,16 +627,13 @@ function drawBuilding(e, part = null){
       X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
     });
     X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
-    // Door on the left wall, shuttered window on the right wall
-    drawDoorLeft(sx,sy0,W,hh,'#5c3d24', darken);
-    let wx=sx+W*0.5, wy=sy0+hh*2-wallH-hh*0.5+wallH*0.3;
-    X.fillStyle=darken?darkenColor('#3a2a18'):'#3a2a18';X.strokeStyle='#000';X.lineWidth=1;
-    X.beginPath();X.moveTo(wx-3,wy+1.5);X.lineTo(wx+3,wy-1.5);X.lineTo(wx+3,wy+3.5);X.lineTo(wx-3,wy+6.5);X.closePath();X.fill();X.stroke();
+    
     // Gable hay roof: the ridge runs from back-left to front-right, so we
     // see one big hay slope (facing lower-left) and a triangular plaster
     // gable end above the front-right wall.
-    let rl=darken?darkenColor('#e8c04a'):'#e8c04a';
-    let ridgeC=darken?darkenColor('#b58a2e'):'#b58a2e';
+    // Team-colored roof
+    let rl=darken?darkenColor(tc):tc;
+    let ridgeC=darken?darkenColor(tcD):tcD;
     // Wall-top rim corners and the two gable peaks over the wall midlines
     let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
     let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};   // front gable peak
@@ -663,52 +663,59 @@ function drawBuilding(e, part = null){
       X.lineTo(M1e.x+(EB.x-M1e.x)*t, M1e.y+(EB.y-M1e.y)*t);
       X.stroke();
     });
-    // Ragged straw fringe hanging past the eave
-    X.strokeStyle=ridgeC;X.lineWidth=1.2;X.lineCap='round';
-    for(let i=0;i<=4;i++){
-      let t=i/4;
-      let fx2=EL.x+(EB.x-EL.x)*t, fy2=EL.y+(EB.y-EL.y)*t;
-      X.beginPath();X.moveTo(fx2,fy2);X.lineTo(fx2-0.5,fy2+2.5);X.stroke();
-    }
-    X.lineCap='butt';
     // Team pennant at the front gable peak
     drawPennant(M1.x,M1.y,tc,darken);
-    // Chimney poking through the hay slope + smoke
-    let cru={x:M2.x+(M1.x-M2.x)*0.3, y:M2.y+(M1.y-M2.y)*0.3};
-    let cre={x:EL.x+(EB.x-EL.x)*0.3, y:EL.y+(EB.y-EL.y)*0.3};
-    let chx=cru.x+(cre.x-cru.x)*0.3, chTop=cru.y+(cre.y-cru.y)*0.3-9;
-    X.fillStyle=darken?darkenColor('#8a4030'):'#8a4030';X.fillRect(chx-2,chTop,4,9);
-    X.strokeStyle='#000';X.lineWidth=1;X.strokeRect(chx-2,chTop,4,9);
-    X.fillStyle=darken?darkenColor('#602820'):'#602820';X.fillRect(chx-2.6,chTop-2.5,5.2,2.5);X.strokeRect(chx-2.6,chTop-2.5,5.2,2.5);
-    if(e.complete && visible) drawChimneySmoke(chx,chTop-3);
+    // Big 3D brick chimney poking through the roof slope: an iso block
+    // with two shaded faces, a wider cap slab, and a dark flue opening.
+    {
+      let cru={x:M2.x+(M1.x-M2.x)*0.3, y:M2.y+(M1.y-M2.y)*0.3};
+      let cre={x:EL.x+(EB.x-EL.x)*0.3, y:EL.y+(EB.y-EL.y)*0.3};
+      let bx=cru.x+(cre.x-cru.x)*0.3, by=cru.y+(cre.y-cru.y)*0.3;
+      let topY=by-16, w=5, hh2=2.5;
+      let brickL=darken?darkenColor('#9a4a34'):'#9a4a34';
+      let brickR=darken?darkenColor('#7c3826'):'#7c3826';
+      let capL=darken?darkenColor('#8d857a'):'#8d857a';
+      let capR=darken?darkenColor('#6f675c'):'#6f675c';
+      X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
+      // Shaft: left (lit) and right (shaded) faces, sinking into the roof
+      X.fillStyle=brickL;X.beginPath();
+      X.moveTo(bx-w,topY+hh2);X.lineTo(bx,topY+hh2*2);X.lineTo(bx,by+hh2*2);X.lineTo(bx-w,by+hh2);X.closePath();X.fill();X.stroke();
+      X.fillStyle=brickR;X.beginPath();
+      X.moveTo(bx,topY+hh2*2);X.lineTo(bx+w,topY+hh2);X.lineTo(bx+w,by+hh2);X.lineTo(bx,by+hh2*2);X.closePath();X.fill();X.stroke();
+      // Mortar course lines on the lit face
+      X.strokeStyle='rgba(0,0,0,0.2)';X.lineWidth=1;
+      for(let t of [0.35,0.7]){
+        let yy=topY+(by-topY)*t;
+        X.beginPath();X.moveTo(bx-w,yy+hh2);X.lineTo(bx,yy+hh2*2);X.stroke();
+      }
+      // Cap slab: a wider stone diamond with visible thickness
+      let cw=w+2, chh=hh2+1, capY=topY-3;
+      X.strokeStyle='#000';X.lineWidth=1.2;
+      X.fillStyle=capR;X.beginPath(); // slab side skirts
+      X.moveTo(bx-cw,capY+chh);X.lineTo(bx,capY+chh*2);X.lineTo(bx+cw,capY+chh);
+      X.lineTo(bx+cw,capY+chh+3);X.lineTo(bx,capY+chh*2+3);X.lineTo(bx-cw,capY+chh+3);
+      X.closePath();X.fill();X.stroke();
+      X.fillStyle=capL;X.beginPath(); // slab top face
+      X.moveTo(bx,capY);X.lineTo(bx+cw,capY+chh);X.lineTo(bx,capY+chh*2);X.lineTo(bx-cw,capY+chh);X.closePath();X.fill();X.stroke();
+      // Dark flue opening in the middle of the cap
+      X.fillStyle=darken?darkenColor('#1c1208'):'#1c1208';X.beginPath();
+      X.moveTo(bx,capY+chh-1.6);X.lineTo(bx+3,capY+chh);X.lineTo(bx,capY+chh+1.6);X.lineTo(bx-3,capY+chh);X.closePath();X.fill();X.stroke();
+      if(e.complete && visible) drawChimneySmoke(bx,capY-4);
+    }
   }
   else if(e.btype==='BARRACKS'){
     bh=32;
-    // 1. Sleeping-quarters annex at the back
-    drawGableBlock(sx+2, sy+10, 20, 10, 13, 12, '#b89868','#987848','#7d5f43','#6e5138', darken);
-    // 2. Main garrison longhouse in front-left
-    drawGableBlock(sx-32, sy+22, 26, 13, 16, 15, '#b89868','#987848','#7d5f43','#6e5138', darken);
-    // Hanging shields on the longhouse left wall
-    X.strokeStyle='#000000';X.lineWidth=1;
-    [[-46,25],[-38,29]].forEach(([dx2,dy2])=>{
-      X.fillStyle=darken ? darkenColor('#a0a0a0') : '#a0a0a0';
-      X.beginPath();X.arc(sx+dx2, sy+dy2, 3.2, 0, Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=darken ? darkenColor(tc) : tc;
-      X.beginPath();X.arc(sx+dx2, sy+dy2, 1.6, 0, Math.PI*2);X.fill();X.stroke();
-    });
+    // 1. Sleeping-quarters annex at the back (team-colored roof)
+    drawGableBlock(sx+2, sy+10, 20, 10, 13, 12, '#b89868','#987848',tc,'#6e5138', darken);
+    // 2. Main garrison longhouse in front-left (team-colored roof)
+    drawGableBlock(sx-32, sy+22, 26, 13, 16, 15, '#b89868','#987848',tc,'#6e5138', darken);
     // Door on the longhouse left wall
     drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24', darken);
 
-    // 3. Corner stone watchtower
-    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfc8b6','#aca392','flat',0,'#9a9184','#867d70', darken);
-    X.fillStyle=darken ? darkenColor('#8d8577') : '#8d8577';
-    X.fillRect(sx+32-13, sy+32-30+6, 3.5, 4);
-    X.strokeStyle='#000000';X.lineWidth=1;X.strokeRect(sx+32-13, sy+32-30+6, 3.5, 4);
-    X.fillRect(sx+32+9.5, sy+32-30+6, 3.5, 4);
-    X.strokeRect(sx+32+9.5, sy+32-30+6, 3.5, 4);
-    // Flagpole planted at the center of the tower's top face, not its back
-    // corner, so the flag visibly connects to the roof.
-    if(e.complete && visible) drawWavingFlag(sx+32, sy+40, 28, tc, tcD);
+    // 3. Corner stone watchtower with a team-colored pyramid cap; the
+    // flagpole is planted exactly on the pyramid's apex (sy-8).
+    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfc8b6','#aca392','conical',10,tc,tcD, darken);
+    if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 38, tc, tcD);
 
     // 4. Fenced training yard
     X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
@@ -753,11 +760,13 @@ function drawBuilding(e, part = null){
     bh=30;
     // Worn dirt clearing, enlarged past the tile so the oversized props
     // (log pile / ore cart) still sit on worked ground
-    drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
+    // drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
+    drawCampClearing(sx, sy, bw, bhh, darken);
+    
     // Small plank shack in the back-right quadrant
     drawBuildingBlock(sx+14, sy+8, 20, 10, 14, '#b89868','#987848','peaked',8,'#8a6a48','#715539', darken);
     drawDoorLeft(sx+14, sy+8, 20, 10, '#5c3d24', darken);
-    drawPennant(sx+14, sy+6, tc, darken);
+    drawPennant(sx+14, sy-14, tc, darken);
     if(e.complete){
       let logCol=darken ? darkenColor('#6e473b') : '#6e473b';
       let endCol=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
@@ -794,11 +803,12 @@ function drawBuilding(e, part = null){
     bh=30;
     // Worn dirt clearing, enlarged past the tile so the oversized props
     // (log pile / ore cart) still sit on worked ground
-    drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
+    drawCampClearing(sx, sy, bw, bhh, darken);
+
     // Dark timber mine shed in the back-right quadrant
     drawBuildingBlock(sx+14, sy+8, 20, 10, 12, '#7a6a55','#635546','peaked',7,'#55483a','#463b2f', darken);
     drawDoorLeft(sx+14, sy+8, 20, 10, '#2e2519', darken);
-    drawPennant(sx+14, sy+7, tc, darken);
+    drawPennant(sx+14, sy-10, tc, darken);
     if(e.complete){
       X.strokeStyle='#000000';X.lineWidth=1.2;
       // Ore cart heaped with gold in the front-left quadrant
@@ -844,7 +854,7 @@ function drawBuilding(e, part = null){
     // no gaps, no ledges, one unbroken silhouette.
     let bands=[
       {t0:0,    t1:0.42, cL:'#8a6a42', cR:'#6d4f30'}, // dark cocoa base
-      {t0:0.42, t1:0.74, cL:'#a5814f', cR:'#87663f'}, // mid brown
+      {t0:0.42, t1:0.74, cL:tc, cR:tcD}, // mid brown
       {t0:0.74, t1:1,    cL:'#c9a874', cR:'#a9895c'}, // lighter top band
     ];
     X.lineJoin='round';
@@ -872,6 +882,8 @@ function drawBuilding(e, part = null){
     // separate steep cone / overhang jump — continues the same taper) ----
     let topHalf=W1*0.5;
     let capH=16;
+    
+    // Team-colored dome cap
     let cl=darken?darkenColor('#a65c3b'):'#a65c3b', cr=darken?darkenColor('#863c20'):'#863c20';
     X.strokeStyle='#000';X.lineWidth=1.2;
     X.fillStyle=cl;X.beginPath();
@@ -883,7 +895,7 @@ function drawBuilding(e, part = null){
       let hubY=ty+topHalf*0.3;
       // Team pennant drawn BEFORE the sails so the blades sweep in front of
       // it, matching how a mounted flag sits behind a windmill's fan.
-      drawPennant(sx,ty-capH-2,tc,darken);
+      // drawPennant(sx,ty-capH,tc,darken); // planted on the dome apex
       if(visible) drawWindmillSails(sx, hubY, e.id, 1.6);
     }
   }
@@ -916,7 +928,9 @@ function drawBuilding(e, part = null){
       drawWallLink(sx, linkY, 32, 16, wallH, darken, 8);
     }
 
-    if (e.complete && visible) drawWavingFlag(sx, sy+2, 40, tc, tcD);
+    // 36 centers the pole on the peaked cap's ridge (sy-40..sy-28) instead
+    // of perching it on the ridge's back end
+    if (e.complete && visible) drawWavingFlag(sx, sy+2, 36, tc, tcD);
   }
   else if(e.btype==='WALL'){
     bh=14;
