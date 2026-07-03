@@ -13,9 +13,12 @@ function init(){
   STARTS.forEach(start=>{
     let tc=createBuilding('TC',start.x,start.y,start.team);
     tc.complete=true;
+    // Alternate the starting trio's sex from a random seed so every match
+    // opens with a visible mix (a pure coin flip makes all-same 25% likely).
+    let firstFemale=Math.random()<0.5;
     for(let i=0;i<3;i++){
       let sp=findSpawnTile(tc.rallyX+i%2,tc.rallyY+Math.floor(i/2),5)||{x:tc.rallyX,y:tc.rallyY};
-      createUnit('villager',sp.x,sp.y,start.team);
+      createUnit('villager',sp.x,sp.y,start.team).female = (i%2===0)===firstFemale;
     }
     let ssp=findSpawnTile(tc.rallyX+2,tc.rallyY+1,5)||{x:tc.rallyX,y:tc.rallyY};
     createUnit('scout',ssp.x,ssp.y,start.team);
@@ -186,7 +189,7 @@ function toggleMenu(){
       let resumeBtn = document.getElementById('resume-game-btn');
       if (resumeBtn) {
         // No resuming a finished match — only Restart makes sense then
-        resumeBtn.style.display = (inMatch && !gameOver) ? 'inline-block' : 'none';
+        resumeBtn.style.display = (inMatch && !gameOver) ? 'flex' : 'none';
       }
       let startBtn = document.getElementById('start-game-btn');
       if (startBtn) {

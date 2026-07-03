@@ -106,73 +106,75 @@
 
 <div id="tutorial">
 <div id="tutorial-box">
-<img id="title-logo" src="logo.png" alt="Not Age of Empires II - Mini (a fan parody)">
-<div id="menu-subtitle">&ldquo;<b>Not</b> Age of Empires II&rdquo; &mdash; Mini</div>
-
-<div class="menu-divider"></div>
-
-<div class="setup-grid">
-  <div class="setup-row">
-    <div class="setup-col">
-      <h3><span class="setup-icon">⚔️</span>Difficulty</h3>
-      <div class="segmented">
-        <label class="segment"><input type="radio" name="difficulty" value="easy"><span>Easy</span></label>
-        <label class="segment"><input type="radio" name="difficulty" value="standard" checked><span>Medium</span></label>
-        <label class="segment"><input type="radio" name="difficulty" value="hard"><span>Hard</span></label>
-      </div>
-    </div>
-    <div class="setup-col">
-      <h3><span class="setup-icon">🗺️</span>Map Size</h3>
-      <div class="segmented">
-        <label class="segment"><input type="radio" name="mapsize" value="small"><span>Small</span></label>
-        <label class="segment"><input type="radio" name="mapsize" value="medium" checked><span>Medium</span></label>
-        <label class="segment"><input type="radio" name="mapsize" value="large"><span>Large</span></label>
-      </div>
+<div class="menu-shell">
+  <div class="menu-hero">
+    <div class="title-pane">
+      <img id="title-logo" src="logo.png" alt="Not Age of Empires II - Mini (a fan parody)">
     </div>
   </div>
-  <div class="setup-row setup-row-audio">
-    <div class="setup-col">
-      <h3><span class="setup-icon">⏩</span>Speed</h3>
-      <div class="segmented">
-        <label class="segment"><input type="radio" name="gamespeed" value="1"><span>1x</span></label>
-        <label class="segment"><input type="radio" name="gamespeed" value="2" checked><span>2x</span></label>
-        <label class="segment"><input type="radio" name="gamespeed" value="4"><span>4x</span></label>
+
+  <div class="menu-content">
+    <div class="menu-divider"></div>
+
+    <div class="setup-grid">
+      <div class="setup-row">
+        <div class="setup-col">
+          <h3>Difficulty</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="difficulty" value="easy"><span>Easy</span></label>
+            <label class="segment"><input type="radio" name="difficulty" value="standard" checked><span>Medium</span></label>
+            <label class="segment"><input type="radio" name="difficulty" value="hard"><span>Hard</span></label>
+          </div>
+        </div>
+        <div class="setup-col">
+          <h3>Map Size</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="mapsize" value="small"><span>Small</span></label>
+            <label class="segment"><input type="radio" name="mapsize" value="medium" checked><span>Medium</span></label>
+            <label class="segment"><input type="radio" name="mapsize" value="large"><span>Large</span></label>
+          </div>
+        </div>
+      </div>
+      <div class="setup-row setup-row-audio">
+        <div class="setup-col setup-col-speed">
+          <h3>Speed</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="gamespeed" value="1"><span>1</span></label>
+            <label class="segment"><input type="radio" name="gamespeed" value="2" checked><span>2</span></label>
+            <label class="segment"><input type="radio" name="gamespeed" value="4"><span>4</span></label>
+          </div>
+        </div>
+        <div class="setup-col">
+          <h3>Sound</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="soundmode" value="all" checked><span>All</span></label>
+            <label class="segment"><input type="radio" name="soundmode" value="alerts"><span>Alerts</span></label>
+            <label class="segment"><input type="radio" name="soundmode" value="off"><span>Off</span></label>
+          </div>
+        </div>
+        <div class="setup-col">
+          <h3>Music</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="music" value="on" checked><span>On</span></label>
+            <label class="segment"><input type="radio" name="music" value="off"><span>Off</span></label>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="setup-col">
-      <h3><span class="setup-icon">🔊</span>Sound</h3>
-      <div class="segmented">
-        <label class="segment"><input type="radio" name="soundmode" value="all" checked><span>All</span></label>
-        <label class="segment"><input type="radio" name="soundmode" value="alerts"><span>Alerts</span></label>
-        <label class="segment"><input type="radio" name="soundmode" value="off"><span>Off</span></label>
-      </div>
+
+    <div class="menu-divider"></div>
+
+    <div class="menu-button-container">
+      <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
+        Resume
+      </button>
+      <button type="button" id="start-game-btn" class="menu-action-btn" onclick="onStartClicked()" disabled>
+        Loading&hellip;
+      </button>
+      <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
-    <div class="setup-col">
-      <h3><span class="setup-icon">🎵</span>Music</h3>
-      <div class="segmented">
-        <label class="segment"><input type="radio" name="music" value="on" checked><span>On</span></label>
-        <label class="segment"><input type="radio" name="music" value="off"><span>Off</span></label>
-      </div>
-    </div>
+
   </div>
-</div>
-
-<div class="menu-divider"></div>
-
-<div class="menu-button-container">
-  <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
-    Resume
-  </button>
-  <button type="button" id="start-game-btn" class="menu-action-btn" onclick="onStartClicked()" disabled>
-    Loading&hellip;
-  </button>
-  <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
-</div>
-
-<div id="menu-disclaimer">
-  A free fan-made <b>parody</b>. Not an official product &mdash; not affiliated with,
-  endorsed by, or connected to Microsoft, Xbox Game Studios, Ensemble Studios, or the
-  Age of Empires franchise in any way.
 </div>
 </div>
 </div>

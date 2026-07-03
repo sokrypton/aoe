@@ -7,7 +7,7 @@ function drawBigSword(swinging, id){
     let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
     X.rotate(0.9-2.1*u);
   } else X.rotate(0.5); // rest: blade leans outward, away from the head
-  X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
+  X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
   // Grip and pommel
   X.fillStyle='#6a4a20';X.beginPath();X.rect(-1.5,0,4,6);X.fill();X.stroke();
   X.fillStyle='#e8c84a';X.beginPath();X.arc(0.5,6.8,1.6,0,Math.PI*2);X.fill();X.stroke();
@@ -18,6 +18,9 @@ function drawBigSword(swinging, id){
   X.beginPath();X.moveTo(-2.4,-2);X.lineTo(0.5,-22);X.lineTo(3.4,-2);X.closePath();X.fill();X.stroke();
   X.fillStyle='#fff';X.beginPath();X.rect(0,-18.5,1.3,13);X.fill();
 }
+
+// Uniform size multiplier for every drawn character (units and corpses).
+const UNIT_SCALE = 1.25;
 
 function drawCorpse(c){
   let iso=toIso(c.x,c.y);
@@ -37,12 +40,12 @@ function drawCorpse(c){
   // 1. Blood pool under the collapsed corpse
   X.fillStyle = 'rgba(120, 0, 0, 0.7)';
   X.beginPath();
-  X.ellipse(sx, sy + 3, 9, 4.5, 0, 0, Math.PI * 2);
+  X.ellipse(sx, sy + 3, 9*UNIT_SCALE, 4.5*UNIT_SCALE, 0, 0, Math.PI * 2);
   X.fill();
   
   // 2. Rotate corpse flat on the ground plane
   X.translate(sx, sy);
-  X.scale(c.facing, 1);
+  X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
   X.rotate(Math.PI / 2.25);
   
   // Render flattened body parts
@@ -70,7 +73,7 @@ function drawCorpse(c){
   }
   
   // Dropped weapons next to corpse
-  X.strokeStyle='#5c3d24';X.lineWidth=1.5;
+  X.strokeStyle='#5c3d24';X.lineWidth=1.5/UNIT_SCALE;
   X.beginPath();X.moveTo(3,-2);X.lineTo(8,1);X.stroke();
   
   X.restore();
@@ -91,7 +94,7 @@ function drawUnit(e){
 
   // Shadow
   X.fillStyle='rgba(0,0,0,0.3)';
-  X.beginPath();X.ellipse(sx,sy+2,6,3,0,0,Math.PI*2);X.fill();
+  X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location
   if(e.facing===undefined) e.facing = 1;
@@ -155,7 +158,7 @@ function drawUnit(e){
   if(e.utype==='sheep') X.translate(sx, sy + sbob);
   else if(e.utype==='sheep_carcass') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
-  X.scale(e.facing, 1);
+  X.scale(e.facing * UNIT_SCALE, UNIT_SCALE);
 
   // --- DRAW FLIPPABLE STUFF ---
   if(e.utype==='sheep_carcass'){
@@ -170,7 +173,7 @@ function drawUnit(e){
       
       // Draw 4 legs twitching/kicking
       let legKick = Math.sin(tick * 0.7 + e.id) * 3 * (1 - progress);
-      X.strokeStyle='#000000'; X.lineWidth=1.8;
+      X.strokeStyle='#000000'; X.lineWidth=1.8/UNIT_SCALE;
       X.beginPath();
       X.moveTo(-4, 0); X.lineTo(-4 + legKick, 5 * (1 - progress));
       X.moveTo(-1, 1); X.lineTo(-1 - legKick, 5 * (1 - progress));
@@ -196,7 +199,7 @@ function drawUnit(e){
       let earX = 7, earY = -5 + progress * 4.5;
       X.fillStyle='#333';
       X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;X.stroke();
       X.fillStyle='#e0d8c0';
       X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
       
@@ -242,7 +245,7 @@ function drawUnit(e){
 
     X.fillStyle='#333';
     X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-    X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+    X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;X.stroke();
     X.fillStyle='#e0d8c0';
     X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
 
@@ -251,10 +254,10 @@ function drawUnit(e){
     if(foodPct < 0.75){
       X.fillStyle='#c84b4b'; // raw meat
       X.beginPath();X.ellipse(0, -3.5, 4.2 * (1 - foodPct), 2.8 * (1 - foodPct), 0, 0, Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=0.85;X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=0.85/UNIT_SCALE;X.stroke();
       
       if(foodPct < 0.4){
-        X.strokeStyle='#ffffff';X.lineWidth=1.1;
+        X.strokeStyle='#ffffff';X.lineWidth=1.1/UNIT_SCALE;
         X.beginPath();X.moveTo(-1.2, -5);X.lineTo(-1.2, -2);X.stroke();
         X.beginPath();X.moveTo(1.2, -5.5);X.lineTo(1.2, -2.5);X.stroke();
       }
@@ -301,8 +304,8 @@ function drawUnit(e){
         X.moveTo(-3.8, -4); X.lineTo(-3.8 + walk, 4.4);
         X.moveTo(-5.6, -4); X.lineTo(-5.6 - walk, 4.4);
       }
-      X.strokeStyle = '#000000'; X.lineWidth = 3.0; X.lineCap='round'; X.stroke();
-      X.strokeStyle = '#6e4520'; X.lineWidth = 1.5; X.stroke();
+      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+      X.strokeStyle = '#6e4520'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
       X.lineCap='butt';
       // Hooves: dark caps at each leg endpoint
       let hoofPts;
@@ -318,8 +321,8 @@ function drawUnit(e){
       X.beginPath();
       X.moveTo(-2+humanXOffset, -bob); X.lineTo(-2-walk+humanXOffset, 3-bob);
       X.moveTo(2+humanXOffset, -bob); X.lineTo(2+walk+humanXOffset, 3-bob);
-      X.strokeStyle = '#000000'; X.lineWidth = 3.0; X.lineCap='round'; X.stroke();
-      X.strokeStyle = '#5b3a1e'; X.lineWidth = 1.5; X.stroke();
+      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+      X.strokeStyle = '#5b3a1e'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
       // Boots
       X.fillStyle='#3a2412';
       X.beginPath();X.arc(-2-walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
@@ -346,9 +349,12 @@ function drawUnit(e){
       let swish = Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // match the enlarged legs
       const ear=(x,y,ang)=>{ X.save(); X.translate(x,y); X.rotate(ang);
-        X.beginPath(); X.moveTo(-1.2,0.6); X.lineTo(0,-2.8); X.lineTo(1.2,0.6); X.closePath();
-        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2; X.fill(); X.stroke(); X.restore(); };
-      X.strokeStyle='#000'; X.lineWidth=1.2;
+        // Rounded leaf-shaped ear (a bare triangle reads as a horn)
+        X.beginPath(); X.moveTo(-1.1,0.6);
+        X.quadraticCurveTo(-1.3,-1.6, 0,-2.4);
+        X.quadraticCurveTo(1.3,-1.6, 1.1,0.6); X.closePath();
+        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fill(); X.stroke(); X.restore(); };
+      X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
 
       if (useDir === 7 || useDir === 0) {
         // East profile / Southeast diagonal (same construction, SE compressed)
@@ -356,17 +362,17 @@ function drawUnit(e){
         // Swishing tail
         X.save(); X.translate(-6.6*k,-7); X.rotate(swish);
         X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7*k,3,-2.2*k,9);
-        X.strokeStyle='#000'; X.lineWidth=3.4; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.8; X.stroke(); X.lineCap='butt';
+        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
         X.restore();
         // Body capsule
-        X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
+        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
         X.beginPath(); X.ellipse(0,-6,7.4*k,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
         // Neck + head silhouette, anchored at the front of the body
         // (nods gently while idle)
         X.save(); X.translate(2.6*k,nod);
         ear(8.5*k,-13.9,-0.2); ear(10.1*k,-13.3,0.3);
-        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2;
+        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
         X.beginPath();
         X.moveTo(2.2*k,-2.6);
         X.quadraticCurveTo(6.6*k,-4.6, 7.8*k,-9);        // front of neck up to the throat
@@ -375,9 +381,13 @@ function drawUnit(e){
         X.quadraticCurveTo(12.5*k,-13.6, 9.6*k,-13.9);   // long flat forehead back to the poll
         X.quadraticCurveTo(4.6*k,-14.4, 1.6*k,-11);      // arched crest of the neck
         X.quadraticCurveTo(-0.4*k,-8.5, -0.6*k,-5.5);    // down into the withers
-        X.closePath(); X.fill(); X.stroke();
+        // fill() closes the path on its own; stroking the OPEN path skips
+        // the bottom edge, so the neck has no outline where it meets the
+        // body and reads as one connected shape (both stroke ends land
+        // inside the body silhouette).
+        X.fill(); X.stroke();
         // Mane along the crest
-        X.strokeStyle=maneC; X.lineWidth=2.4; X.lineCap='round';
+        X.strokeStyle=maneC; X.lineWidth=2.4/UNIT_SCALE; X.lineCap='round';
         X.beginPath(); X.moveTo(0.2*k,-7.5); X.quadraticCurveTo(4.4*k,-13.2, 8.4*k,-13); X.stroke();
         X.lineCap='butt';
         // Eye high on the head, nostril at the nose
@@ -390,24 +400,26 @@ function drawUnit(e){
         // Northeast diagonal (back view): arched neck seen from behind
         X.save(); X.translate(-5.8,-6.5); X.rotate(swish);
         X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7,3,-2.2,9);
-        X.strokeStyle='#000'; X.lineWidth=3.4; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.8; X.stroke(); X.lineCap='butt';
+        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
         X.restore();
-        X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
+        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
         X.beginPath(); X.ellipse(0,-6,6.6,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
         X.save(); X.translate(1.6,nod);
-        ear(4.2,-16.6,-0.2); ear(6.4,-16.2,0.25);
+        ear(3.9,-16.4,-0.25); ear(6.1,-16,0.25);
         X.fillStyle=coat;
+        // Slim tapering neck seen from behind (was a wide flat slab)
         X.beginPath();
-        X.moveTo(1.5,-5); X.quadraticCurveTo(1.8,-11, 3.4,-14.6);
-        X.lineTo(6.6,-14);
-        X.quadraticCurveTo(6.6,-9, 6,-4);
-        X.closePath(); X.fill(); X.stroke();
+        X.moveTo(2.2,-4.5); X.quadraticCurveTo(2.4,-10, 3.5,-14.2);
+        X.lineTo(6,-13.8);
+        X.quadraticCurveTo(6.2,-9, 5.4,-4);
+        // open-path stroke: no outline along the base where it joins the body
+        X.fill(); X.stroke();
         // Round skull from behind, dipped forward
-        X.beginPath(); X.ellipse(5.2,-14.5,2.3,2.4,0.15,0,Math.PI*2); X.fill(); X.stroke();
+        X.beginPath(); X.ellipse(4.9,-14.3,2.1,2.2,0.15,0,Math.PI*2); X.fill(); X.stroke();
         // Mane down the crest
-        X.strokeStyle=maneC; X.lineWidth=2.2; X.lineCap='round';
-        X.beginPath(); X.moveTo(2.6,-5.5); X.quadraticCurveTo(3.2,-10.5,4,-14.6); X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=2/UNIT_SCALE; X.lineCap='round';
+        X.beginPath(); X.moveTo(3,-5); X.quadraticCurveTo(3.6,-10,4.2,-14.4); X.stroke();
         X.lineCap='butt';
         X.restore();
       } else if (useDir === 1) {
@@ -418,25 +430,29 @@ function drawUnit(e){
         horseHeadFront = () => {
           let nod2 = (e.path.length===0) ? Math.sin(tick*0.05+e.id)*0.8 : 0;
           X.save(); X.translate(0,-1+nod2); X.scale(1.35,1.35);
-          X.strokeStyle='#000'; X.lineWidth=1.2; X.fillStyle=coat;
-          ear(2,-12.4,-0.3); ear(6.2,-12.2,0.3);
-          // Face tapers from a broad skull to a narrow muzzle
+          X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
+          ear(2.4,-12.6,-0.3); ear(5.8,-12.4,0.3);
+          // Rounded skull narrowing into a short hanging muzzle
           X.beginPath();
-          X.moveTo(1.3,-10.8);
-          X.quadraticCurveTo(1.2,-6.4, 2.4,-4.4);
-          X.quadraticCurveTo(4.1,-3.2, 5.8,-4.4);
-          X.quadraticCurveTo(7,-6.4, 6.9,-10.8);
-          X.quadraticCurveTo(4.1,-13.6, 1.3,-10.8);
+          X.moveTo(1.6,-10.6);
+          X.quadraticCurveTo(1.4,-7.2, 2.7,-4.9);   // left cheek down to the muzzle
+          X.quadraticCurveTo(4.1,-3.9, 5.5,-4.9);   // rounded chin
+          X.quadraticCurveTo(6.8,-7.2, 6.6,-10.6);  // right cheek back up
+          X.quadraticCurveTo(4.1,-13.8, 1.6,-10.6); // domed forehead
           X.closePath(); X.fill(); X.stroke();
           // Forelock tuft
           X.fillStyle=maneC;
-          X.beginPath(); X.arc(4.1,-11.9,1.8,Math.PI*0.9,Math.PI*0.1,true); X.fill();
-          // Eyes wide on the skull, darker muzzle with nostrils
+          X.beginPath(); X.arc(4.1,-11.7,1.9,Math.PI*0.9,Math.PI*0.1,true); X.fill();
+          // Big friendly eyes wide on the skull
           X.fillStyle='#000';
-          X.beginPath(); X.arc(2.6,-9.4,0.6,0,Math.PI*2); X.fill();
-          X.beginPath(); X.arc(5.6,-9.4,0.6,0,Math.PI*2); X.fill();
+          X.beginPath(); X.arc(2.7,-9.2,0.7,0,Math.PI*2); X.fill();
+          X.beginPath(); X.arc(5.5,-9.2,0.7,0,Math.PI*2); X.fill();
+          // Lighter rounded muzzle with nostril dots
           X.fillStyle='#6e4520';
-          X.beginPath(); X.ellipse(4.1,-4.7,1.7,1.2,0,0,Math.PI*2); X.fill(); X.stroke();
+          X.beginPath(); X.ellipse(4.1,-5.4,1.8,1.4,0,0,Math.PI*2); X.fill(); X.stroke();
+          X.fillStyle='rgba(0,0,0,0.55)';
+          X.beginPath(); X.arc(3.4,-5.4,0.35,0,Math.PI*2); X.fill();
+          X.beginPath(); X.arc(4.8,-5.4,0.35,0,Math.PI*2); X.fill();
           X.restore();
         };
       } else {
@@ -455,15 +471,15 @@ function drawUnit(e){
         // Swishing tail down the center
         X.save(); X.translate(0,-3); X.rotate(swish);
         X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-0.8,4.5,0,8.5);
-        X.strokeStyle='#000'; X.lineWidth=3.2; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.6; X.stroke(); X.lineCap='butt';
+        X.strokeStyle='#000'; X.lineWidth=3.2/UNIT_SCALE; X.lineCap='round'; X.stroke();
+        X.strokeStyle=maneC; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt';
         X.restore();
       }
       X.restore();
     }
 
     // Torso
-    X.strokeStyle='#000000';X.lineWidth=1;
+    X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
     if(e.utype==='militia'){
       // Iron chainmail torso
       X.fillStyle='#6b6b6b';
@@ -471,6 +487,24 @@ function drawUnit(e){
       // Team-colored surcoat tunic
       X.fillStyle=tc;
       X.beginPath();X.rect(-2.5+humanXOffset,-10+humanYOffset,5,8);X.fill();X.stroke();
+    } else if(e.utype==='villager'&&e.female){
+      // Female villagers wear a dress drawn as ONE continuous path — a
+      // rounded bodice (smaller than the male torso) flowing into a
+      // bell-shaped skirt wider than the shoulders, with a single outline
+      // so there's no seam at the waist. Boots peek out below the hem.
+      let sway = e.path.length>0 ? Math.sin(tick*0.4+e.id)*0.7 : 0;
+      X.fillStyle=tc;
+      X.beginPath();
+      X.arc(0,-6,4.1,Math.PI,0);                        // rounded bodice over the chest
+      X.quadraticCurveTo(4.5,-2.5,5.6+sway,2.4-bob);    // waist flaring out to the hem
+      X.quadraticCurveTo(0,3.8-bob,-5.6+sway,2.4-bob);  // rounded hem
+      X.quadraticCurveTo(-4.5,-2.5,-4.1,-6);            // back up to the bodice
+      X.closePath();
+      X.fill();X.stroke();
+      // Hem shadow so the skirt reads as a cone, not a flat triangle
+      X.strokeStyle='rgba(0,0,0,0.25)';X.lineWidth=1.4/UNIT_SCALE;
+      X.beginPath();X.moveTo(4+sway,1.3-bob);X.quadraticCurveTo(0,2.5-bob,-4+sway,1.3-bob);X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
     } else {
       // Team-colored peasant shirt
       X.fillStyle=tc;
@@ -478,13 +512,16 @@ function drawUnit(e){
     }
 
     // Torso volume: soft highlight upper-left, shade lower-right
-    X.save();
-    X.beginPath();X.arc(humanXOffset,-6+humanYOffset,4.6,0,Math.PI*2);X.clip();
-    X.fillStyle='rgba(255,255,255,0.22)';
-    X.beginPath();X.arc(humanXOffset-2,-8.5+humanYOffset,3.6,0,Math.PI*2);X.fill();
-    X.fillStyle='rgba(0,0,0,0.18)';
-    X.beginPath();X.arc(humanXOffset+2.5,-3+humanYOffset,3.6,0,Math.PI*2);X.fill();
-    X.restore();
+    {
+      let torsoR = (e.utype==='villager'&&e.female) ? 3.7 : 4.6;
+      X.save();
+      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,torsoR,0,Math.PI*2);X.clip();
+      X.fillStyle='rgba(255,255,255,0.22)';
+      X.beginPath();X.arc(humanXOffset-2,-8.5+humanYOffset,3.6,0,Math.PI*2);X.fill();
+      X.fillStyle='rgba(0,0,0,0.18)';
+      X.beginPath();X.arc(humanXOffset+2.5,-3+humanYOffset,3.6,0,Math.PI*2);X.fill();
+      X.restore();
+    }
 
     // Arms: rear arm hangs at the side, front arm reaches toward the weapon/tool hand
     {
@@ -514,12 +551,12 @@ function drawUnit(e){
       else if(picking) X.lineTo(5.6+humanXOffset+pick*0.8, -5.5+humanYOffset-pick*3.5);
       else if(fighting) X.lineTo(4.5+humanXOffset+jab*4.5, -6.5+humanYOffset-jab*1.5);
       else X.lineTo(4.5+humanXOffset+armSwing,-4.5+humanYOffset);
-      X.strokeStyle='#000000';X.lineWidth=3.0;X.lineCap='round';X.stroke();
-      X.strokeStyle='#edc9a0';X.lineWidth=1.5;X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=3.0/UNIT_SCALE;X.lineCap='round';X.stroke();
+      X.strokeStyle='#edc9a0';X.lineWidth=1.5/UNIT_SCALE;X.stroke();
       X.lineCap='butt';
       // Head/headwear drawing below relies on the black outline stroke set
       // before the torso — restore it after the skin-colored arm pass.
-      X.strokeStyle='#000000';X.lineWidth=1;
+      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
     }
     if (e.facingNorth) {
       // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
@@ -536,7 +573,19 @@ function drawUnit(e){
       } else if(e.utype==='villager') {
         // Back of blonde hair
         X.fillStyle = '#b58e3d';
-        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
+        if(e.female){
+          // One continuous silhouette: over the back of the head and
+          // tapering down the back to the waist (single fill + stroke so
+          // head and fall can't read as two pieces).
+          X.beginPath();
+          X.arc(humanXOffset,-14+humanYOffset,4.2,Math.PI,0);                                          // over the top of the head
+          X.quadraticCurveTo(4.4+humanXOffset,-9+humanYOffset,3+humanXOffset,-4.8+humanYOffset);       // right edge tapering down
+          X.quadraticCurveTo(0+humanXOffset,-3.6+humanYOffset,-3+humanXOffset,-4.8+humanYOffset);      // rounded hair ends
+          X.quadraticCurveTo(-4.4+humanXOffset,-9+humanYOffset,-4.2+humanXOffset,-14+humanYOffset);    // left edge back up
+          X.closePath();X.fill();X.stroke();
+        } else {
+          X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
+        }
       } else {
         // Back of leather hood cap
         X.fillStyle='#4a2e1b';
@@ -580,9 +629,48 @@ function drawUnit(e){
       } else if(e.utype==='villager') {
         // No helmet/hood: just natural blonde hair!
         X.fillStyle = '#b58e3d';
-        X.beginPath();
-        X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
-        X.fill(); X.stroke();
+        if(e.female){
+          // The whole hairdo (crown + strands) is ONE path with a single
+          // fill and stroke, so the outline traces the outer silhouette and
+          // the pieces can't read as disconnected. The crown arc runs over
+          // the top of the head between the strands' upper ends; the
+          // hairline height matches the male cap so the face stays visible.
+          if(e.dir===7||e.dir===3){
+            // Profile: all the hair falls behind the head as one thick
+            // strand (local -x is always the back of the head, since the
+            // context is mirrored to the facing direction).
+            X.beginPath();
+            X.moveTo(-3.6+humanXOffset,-6.4+humanYOffset);                                                // strand tip at the shoulder
+            X.quadraticCurveTo(-4.7+humanXOffset,-7.8+humanYOffset,-4.9+humanXOffset,-10.5+humanYOffset); // outer edge up
+            X.quadraticCurveTo(-5.2+humanXOffset,-14+humanYOffset,-4.2+humanXOffset,-15.4+humanYOffset);  // into the crown's back end
+            X.arc(humanXOffset,-15.4+humanYOffset,4.2,Math.PI,0);                                         // over the top of the head
+            X.lineTo(-2.4+humanXOffset,-15.4+humanYOffset);                                               // hairline back across the forehead
+            X.quadraticCurveTo(-2.8+humanXOffset,-11.5+humanYOffset,-2.5+humanXOffset,-8+humanYOffset);   // inner edge down
+            X.closePath();
+            X.fill();X.stroke();
+          } else {
+            // Front/back-quarter: strands fall along BOTH sides of the head
+            // down to the shoulders, leaving the face fully open between.
+            X.beginPath();
+            X.moveTo(-3.4+humanXOffset,-6.6+humanYOffset);                                                // left strand tip
+            X.quadraticCurveTo(-4.6+humanXOffset,-8+humanYOffset,-4.7+humanXOffset,-10.5+humanYOffset);   // left outer edge up
+            X.quadraticCurveTo(-5+humanXOffset,-14+humanYOffset,-4.2+humanXOffset,-15.4+humanYOffset);    // into the crown's left end
+            X.arc(humanXOffset,-15.4+humanYOffset,4.2,Math.PI,0);                                         // over the top of the head
+            X.quadraticCurveTo(5+humanXOffset,-14+humanYOffset,4.7+humanXOffset,-10.5+humanYOffset);      // right outer edge down
+            X.quadraticCurveTo(4.6+humanXOffset,-8+humanYOffset,3.4+humanXOffset,-6.6+humanYOffset);      // right strand tip
+            X.quadraticCurveTo(2.9+humanXOffset,-8.5+humanYOffset,3+humanXOffset,-11+humanYOffset);       // right inner edge up
+            X.quadraticCurveTo(3.1+humanXOffset,-14+humanYOffset,2.7+humanXOffset,-15.4+humanYOffset);
+            X.lineTo(-2.7+humanXOffset,-15.4+humanYOffset);                                               // hairline across the forehead
+            X.quadraticCurveTo(-3.1+humanXOffset,-14+humanYOffset,-3+humanXOffset,-11+humanYOffset);      // left inner edge down
+            X.quadraticCurveTo(-2.9+humanXOffset,-8.5+humanYOffset,-3.4+humanXOffset,-6.6+humanYOffset);
+            X.closePath();
+            X.fill();X.stroke();
+          }
+        } else {
+          X.beginPath();
+          X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
+          X.fill(); X.stroke();
+        }
       } else {
         // Peasant leather hood cap for spearman/scout
         X.fillStyle='#4a2e1b';
@@ -638,9 +726,9 @@ function drawUnit(e){
         if(impact) spawnParticles(hitX, hitY, '#c9a15e', 2, 0.02, 1.5); // wood chips
         X.save();X.translate(3,-9);X.rotate(swing);
         // Long handle
-        X.strokeStyle='#000000';X.lineWidth=3.4;X.lineCap='round';
+        X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.8;
+        X.strokeStyle='#8B4513';X.lineWidth=1.8/UNIT_SCALE;
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
         // Big wedge axe head with a bright cutting edge
         X.fillStyle='#b8bfc6';
@@ -650,22 +738,22 @@ function drawUnit(e){
         X.lineTo(13,-6.5);
         X.lineTo(7.4,-9.5);
         X.closePath();X.fill();
-        X.strokeStyle='#000000';X.lineWidth=1.2;X.lineJoin='round';X.stroke();
-        X.strokeStyle='#fff';X.lineWidth=1.4;
+        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';X.stroke();
+        X.strokeStyle='#fff';X.lineWidth=1.4/UNIT_SCALE;
         X.beginPath();X.moveTo(13.9,-15.9);X.lineTo(12.7,-7.9);X.stroke();
         X.restore();
       } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0){
         if(impact) spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
         X.save();X.translate(3,-9);X.rotate(swing);
         // Long handle
-        X.strokeStyle='#000000';X.lineWidth=3.4;X.lineCap='round';
+        X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.8;
+        X.strokeStyle='#8B4513';X.lineWidth=1.8/UNIT_SCALE;
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
         // Big curved pick head, points tapering both ways
-        X.strokeStyle='#000000';X.lineWidth=5;X.lineCap='round';
+        X.strokeStyle='#000000';X.lineWidth=5/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
-        X.strokeStyle='#b8bfc6';X.lineWidth=2.4;
+        X.strokeStyle='#b8bfc6';X.lineWidth=2.4/UNIT_SCALE;
         X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
         X.lineCap='butt';
         X.restore();
@@ -673,20 +761,20 @@ function drawUnit(e){
         if(impact) spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
         X.save();X.translate(3,-9);X.rotate(swing);
         // Handle
-        X.strokeStyle='#000000';X.lineWidth=3.2;X.lineCap='round';
+        X.strokeStyle='#000000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.7;
+        X.strokeStyle='#8B4513';X.lineWidth=1.7/UNIT_SCALE;
         X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();X.lineCap='butt';
         // Big square mallet head with a bright face
         X.fillStyle='#9aa0a6';
         X.beginPath();X.rect(4,-15.5,7,5.5);X.fill();
-        X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
+        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.stroke();
         X.fillStyle='#fff';
         X.beginPath();X.rect(9.8,-15,1.2,4.5);X.fill();
         X.restore();
       }
       if(e.carrying>0){
-        X.strokeStyle='#000';X.lineWidth=1;
+        X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
         if(e.carryType==='wood'){
           // Bundle of three logs over the shoulder: two below, one on top,
           // round end grain facing the camera.
@@ -694,9 +782,9 @@ function drawUnit(e){
           const log=(lx,ly)=>{
             X.fillStyle='#6e473b';X.beginPath();X.rect(lx-9.5,ly-1.7,10,3.4);X.fill();X.stroke();
             X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+0.5,ly,1.8,2.0,0,0,Math.PI*2);X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8;
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
             X.beginPath();X.arc(lx+0.5,ly,0.8,0,Math.PI*2);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1;
+            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
           };
           log(0.5,1.8); log(4,1.6); log(2.2,-1.6);
           X.restore();
@@ -711,9 +799,9 @@ function drawUnit(e){
             X.moveTo(bx-3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx-3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
             X.fillStyle='#787878';X.beginPath(); // right face
             X.moveTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx+3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8; // crack
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE; // crack
             X.beginPath();X.moveTo(bx-1.8*s,by+1.2*s);X.lineTo(bx-1.2*s,by+2.6*s);X.lineTo(bx-1.9*s,by+3.6*s);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1;
+            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
           };
           block(0,0,1.5);          // big base block
           block(1.2,-4.6,0.95);    // smaller block stacked on top
@@ -755,20 +843,20 @@ function drawUnit(e){
           } else if(e.foodSrc==='wheat'){
             // Tied wheat sheaf over the shoulder
             X.save();X.rotate(-0.25);
-            X.strokeStyle='#c9a227';X.lineWidth=1.4;
+            X.strokeStyle='#c9a227';X.lineWidth=1.4/UNIT_SCALE;
             for(let i=-2;i<=2;i++){
               X.beginPath();X.moveTo(0,3);X.lineTo(i*1.7,-4);X.stroke();
             }
-            X.strokeStyle='#000';X.lineWidth=1.2;
+            X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;
             X.beginPath();X.moveTo(-1.7,1);X.lineTo(1.7,1);X.stroke();
-            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8;
+            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8/UNIT_SCALE;
             for(let i=-2;i<=2;i++){
               X.beginPath();X.ellipse(i*1.7,-4.7,0.9,1.7,i*0.15,0,Math.PI*2);X.fill();X.stroke();
             }
             X.restore();
           } else {
             // Armful of big glossy berries
-            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1;
+            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
             [[-1.6,-0.8],[1.6,-1.1],[0,-3.2],[0,1]].forEach(([bx2,by2])=>{
               X.beginPath();X.arc(bx2,by2,2.2,0,Math.PI*2);X.fill();X.stroke();
             });
@@ -792,14 +880,14 @@ function drawUnit(e){
         shx = -2.5; // Shift to the back center when facing North directions
         shy = -7;
       }
-      X.strokeStyle='#000000';X.lineWidth=1.2;X.lineJoin='round';
+      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
       X.fillStyle='#a8adb3';X.beginPath();
       X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
       X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
       X.fillStyle=tc;X.beginPath();
       X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
       X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
-      X.strokeStyle='#000000';X.lineWidth=0.8;X.stroke();
+      X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
     } else if(e.utype==='spearman'){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
       // slow pull-back, fast jab along the shaft.
@@ -815,12 +903,12 @@ function drawUnit(e){
         let off=-2.5*u+4.5*(1-u);
         X.translate(off*0.75, -off*0.75);
       }
-      X.strokeStyle='#000'; X.lineWidth=3.2; X.lineCap='round';
+      X.strokeStyle='#000'; X.lineWidth=3.2/UNIT_SCALE; X.lineCap='round';
       X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
-      X.strokeStyle='#8B4513'; X.lineWidth=1.6;
+      X.strokeStyle='#8B4513'; X.lineWidth=1.6/UNIT_SCALE;
       X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
       X.lineCap='butt';
-      X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1.1; X.lineJoin='round';
+      X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1.1/UNIT_SCALE; X.lineJoin='round';
       // Leaf head symmetric about the shaft axis: base corners sit at
       // shaft-end ± perpendicular, tip continues along the shaft direction.
       X.beginPath();
@@ -835,9 +923,9 @@ function drawUnit(e){
       X.save(); X.translate(4, -8+humanYOffset);
       if(swinging) X.rotate(aimAngle()); // bow + nocked arrow point at the target
       // Thick recurve limbs
-      X.strokeStyle='#000'; X.lineWidth=4.2; X.lineCap='round';
+      X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round';
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
-      X.strokeStyle='#8B4513'; X.lineWidth=2.3;
+      X.strokeStyle='#8B4513'; X.lineWidth=2.3/UNIT_SCALE;
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
       X.lineCap='butt';
       let tipX = 10*Math.cos(Math.PI/2.15), tipY = 10*Math.sin(Math.PI/2.15);
@@ -845,15 +933,15 @@ function drawUnit(e){
         let d = ph/0.72;
         let pull = -2 - 5.5*d;
         // Drawn string
-        X.strokeStyle='#e8e8e8'; X.lineWidth=1;
+        X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(pull, 0); X.lineTo(tipX, tipY); X.stroke();
         // Nocked arrow: thick shaft, steel head, red fletching
-        X.strokeStyle='#000'; X.lineWidth=2.6; X.lineCap='round';
+        X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round';
         X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
-        X.strokeStyle='#f5f2e9'; X.lineWidth=1.3;
+        X.strokeStyle='#f5f2e9'; X.lineWidth=1.3/UNIT_SCALE;
         X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
         X.lineCap='butt';
-        X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1;
+        X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(pull+18.5, 0); X.lineTo(pull+13.6, -2.5); X.lineTo(pull+13.6, 2.5); X.closePath(); X.fill(); X.stroke();
         X.fillStyle='#cc4444';
         X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, -2.8); X.lineTo(pull+1.4, -0.5); X.closePath(); X.fill();
@@ -861,7 +949,7 @@ function drawUnit(e){
       } else {
         // String at rest — vibrates briefly right after the release
         let vib = swinging ? Math.sin(tick*1.2)*2.2*(1-(ph-0.72)/0.28) : 0;
-        X.strokeStyle='#e8e8e8'; X.lineWidth=1;
+        X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }
       X.restore();
@@ -895,8 +983,8 @@ function drawUnit(e){
     let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
     X.beginPath();
     legPts.forEach(p => { X.moveTo(p[0], p[1]); X.lineTo(p[0] + p[2], 5); });
-    X.strokeStyle='#000'; X.lineWidth=2.6; X.lineCap='round'; X.stroke();
-    X.strokeStyle='#8a8378'; X.lineWidth=1.3; X.stroke(); X.lineCap='butt';
+    X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round'; X.stroke();
+    X.strokeStyle='#8a8378'; X.lineWidth=1.3/UNIT_SCALE; X.stroke(); X.lineCap='butt';
     X.fillStyle='#241f18';
     legPts.forEach(p => { X.beginPath(); X.ellipse(p[0] + p[2], 5.3, 1.2, 0.9, 0, 0, Math.PI*2); X.fill(); });
 
@@ -929,7 +1017,7 @@ function drawUnit(e){
     // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
     // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
     const sheepHead = (hx, hy, mode) => {
-      X.strokeStyle='#000'; X.lineWidth=1;
+      X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
       // Team bandana under the chin
       X.fillStyle=tc;
       X.beginPath(); X.ellipse(hx, hy+3.6, 3, 1.8, 0, 0, Math.PI*2); X.fill();
@@ -976,7 +1064,7 @@ function drawUnit(e){
     }
 
     if(e.eatingGrass){
-      X.strokeStyle='#4e8c2d'; X.lineWidth=1.2;
+      X.strokeStyle='#4e8c2d'; X.lineWidth=1.2/UNIT_SCALE;
       X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
       X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
       
@@ -993,7 +1081,7 @@ function drawUnit(e){
   // HP bar floats clear above the head (higher for the scout — horse and
   // rider stand taller) so it never covers the unit's face.
   if(e.hp<e.maxHp){
-    let hpTop = e.utype==='scout' ? sy-40 : sy-30;
+    let hpTop = e.utype==='scout' ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
     X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);
@@ -1005,10 +1093,10 @@ function drawUnit(e){
   // Idle indicator — keep showing while walking too, as long as no
   // task/target is actually assigned (a bare move order isn't "working").
   if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target){
-    X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
+    X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2; // absolute coords — not under UNIT_SCALE
     X.font='bold 16px sans-serif';X.textAlign='center';
-    X.strokeText('?',sx,sy-20);
-    X.fillText('?',sx,sy-20);
+    X.strokeText('?',sx,sy-20*UNIT_SCALE);
+    X.fillText('?',sx,sy-20*UNIT_SCALE);
   }
 }
 

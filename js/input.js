@@ -640,6 +640,23 @@ C.addEventListener('touchend',e=>{
   }
 },{passive:false});
 
+function hasSelectedMobileBuilder(){
+  return selected.some(s=>s.team===0&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
+}
+function hasSelectedMobileWalkOrder(){
+  let movers=selected.filter(s=>s.team===0&&s.type==='unit');
+  return movers.length>0 && movers.every(s=>
+    !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined
+  );
+}
+function finishMobileUnitCommand(){
+  if(hasSelectedMobileWalkOrder())return;
+  if(hasSelectedMobileBuilder())return;
+  selected=[];
+  window.settingRally=false;
+  updateUI();
+}
+
 // Context-aware tap handler for mobile
 function handleTap(sx,sy){
   // 1. If placing a building, place it
@@ -705,6 +722,7 @@ function handleTap(sx,sy){
     // Tapped on own sheep with villagers → harvest command
     if(tappedOwn&&tappedOwn.utype==='sheep'&&haveVillagers){
       doCommand(sx,sy);
+      finishMobileUnitCommand();
       return;
     }
     // Tapped on another own UNIT → switch selection (quick re-pick). Tapping
@@ -724,6 +742,10 @@ function handleTap(sx,sy){
     // Tapped on enemy, own building, or empty map → command (move/gather/
     // build/repair/attack) — doCommand resolves the exact target itself.
     doCommand(sx,sy);
+    // After non-walk mobile commands, the next tap should feel like a fresh
+    // selection. Walk orders and active builders stay selected: walking often
+    // gets adjusted repeatedly, and construction has follow-up choices.
+    finishMobileUnitCommand();
     return;
   }
 

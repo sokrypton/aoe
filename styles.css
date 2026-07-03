@@ -564,100 +564,111 @@ canvas {
   align-items:center;
   justify-content:center;
   cursor:default;
+  padding:12px;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  touch-action:pan-y;
 }
 #tutorial-box {
   background: radial-gradient(circle, #f9f2db 0%, #dec99a 100%);
   border: 5px double #5c3b1e;
   border-radius: 6px;
-  padding: 32px 40px;
-  width: 420px;
-  max-width: 90%;
+  padding: 0;
+  width: min(460px, calc(100vw - 16px));
+  max-width: none;
   color: #3b220c;
-  text-align: center;
+  text-align: left;
   box-shadow: 0 15px 45px rgba(0,0,0,0.9), inset 0 0 40px rgba(92,59,30,0.25);
   font-family: 'Inter', sans-serif;
-  overflow: hidden; /* clip #title-logo's edge-to-edge bleed to the box's rounded corners */
+  overflow-x: hidden; /* clip #title-logo's edge-to-edge bleed to the box's rounded corners */
+  overflow-y: hidden;
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  display: flex;
+  flex-direction: column;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 #title-logo {
   display: block;
-  /* Bleed past the box's own side/top padding so the banner fills more of
-     the menu instead of sitting inset within it. */
-  width: calc(100% + 80px);
+  width: 100%;
   height: auto;
-  margin: -32px -40px 14px;
+  margin: 0;
   box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+}
+.menu-shell{
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  min-height:0;
+}
+.menu-hero{
+  display:block;
+  flex:0 0 auto;
+}
+.title-pane{
+  display:block;
+}
+.menu-content{
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  min-width:0;
+  width:100%;
+  padding:2px 14px 0;
 }
 .menu-divider {
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, #8b6c43 50%, transparent 100%);
-  margin: 14px 0;
+  margin: 3px 0 5px;
 }
-/* All four settings (Difficulty, Map Size, Sound, Music) as one balanced
-   2x2 grid of compact segmented controls — reads as a single settings
-   panel instead of two separately-spaced rows, and an icon in each label
-   lets you scan the panel without reading every word. */
+/* Settings as compact segmented controls grouped into a simple mobile-friendly
+   stack: difficulty/map, speed, then sound/music. */
 .setup-grid {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin: 12px 0;
+  gap: 6px;
+  margin: 3px 0 0;
 }
-/* Two tidy rows: the match-defining choices (Difficulty, Map) get a roomy
-   2-up top row; Speed/Sound/Music sit 3-up below, slightly muted. */
 .setup-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .setup-row-audio {
-  grid-template-columns: repeat(3, 1fr);
   opacity: 0.85;
-  padding-top: 2px;
 }
-#menu-subtitle {
-  text-align: center;
-  font-family: 'Cinzel', Georgia, serif;
-  font-size: 13px;
-  color: #d8c58a;
-  margin-top: 2px;
-  letter-spacing: 0.4px;
-}
-#menu-disclaimer {
-  margin-top: 10px;
-  font-size: 9px;
-  line-height: 1.45;
-  color: #9c8a5e;
-  text-align: center;
-  max-width: 460px;
-  margin-left: auto;
-  margin-right: auto;
-}
-.menu-help-btn {
-  filter: saturate(0.7);
-  font-size: 13px;
+.setup-col-speed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .setup-col {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .setup-col h3 {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  flex: 0 0 92px;
   gap: 5px;
   font-family: 'Cinzel', serif;
   font-size: 12px;
   font-weight: 700;
   color: #5c3b1e;
-  margin-bottom: 7px;
+  margin-bottom: 0;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
-.setup-icon {
-  font-size: 13px;
-  line-height: 1;
-}
 .segmented {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 2px solid #8b6c43;
   border-radius: 6px;
   overflow: hidden;
@@ -668,7 +679,8 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 2px;
+  min-height: 34px;
+  padding: 4px 2px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   font-family: Georgia, serif;
@@ -805,58 +817,81 @@ canvas {
 }
 
 .menu-action-btn {
-  border: 2px solid #e5c158;
-  color: #ffebad;
-  text-shadow: 1px 1px 2px #000;
-  box-shadow: 0 5px 12px rgba(0,0,0,0.6);
-  font-family: 'Cinzel', serif;
-  font-size: 16px;
+  border: 2px solid #8b6c43;
+  background: #ebd9af;
+  color: #3b220c;
+  box-shadow: none;
+  font-family: Georgia, serif;
+  font-size: 12px;
   font-weight: bold;
-  letter-spacing: 1px;
-  padding: 10px 24px;
+  letter-spacing: 0;
+  padding: 0 14px;
+  min-height: 46px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
   border-radius: 4px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
 }
 .menu-action-btn:active {
   transform: translateY(1px);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  background: #e0c586;
+}
+.menu-action-btn:hover {
+  background: rgba(92, 59, 30, 0.12);
+  border-color: #5c3b1e;
 }
 .menu-action-btn:disabled {
   cursor: default;
   opacity: 0.55;
-  filter: grayscale(0.4);
+  filter: grayscale(0.3);
   box-shadow: none;
 }
 .menu-action-btn:disabled:active {
   transform: none; /* no press-down feedback while it can't actually be clicked */
 }
-#start-game-btn {
-  background: linear-gradient(180deg, #8c1d1d 0%, #5a0c0c 100%);
-}
-#start-game-btn:hover {
-  background: linear-gradient(180deg, #a82323 0%, #6e0f0f 100%);
-  box-shadow: 0 6px 18px rgba(229, 193, 88, 0.45);
-  transform: translateY(-1px);
-}
-#resume-game-btn {
-  background: linear-gradient(180deg, #2b8a3e 0%, #1b5e20 100%);
-}
-#resume-game-btn:hover {
-  background: linear-gradient(180deg, #37a850 0%, #227c2d 100%);
-  box-shadow: 0 6px 18px rgba(229, 193, 88, 0.45);
-  transform: translateY(-1px);
-}
 .menu-button-container {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: center;
-  margin-top: 10px;
+  margin-top: 8px;
+  padding: 8px 0 max(10px, env(safe-area-inset-bottom));
+}
+#start-game-btn,
+#resume-game-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.menu-help-btn {
+  flex: 0 0 46px;
+  width: 46px;
+  filter: saturate(0.7);
+  font-size: 13px;
 }
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
-
+  #tutorial{
+    align-items:flex-start;
+    justify-content:center;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+  }
+  #tutorial-box{
+    width: min(460px, calc(100vw - 16px));
+    max-width: none;
+    min-height: 0;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 0;
+    border-width: 3px;
+    overflow-y: hidden;
+    text-align: left;
+  }
   #pop{font-size:13px;padding:3px 5px;height:30px}
   #home-btn, #map-btn, #idle-btn, #bell-btn {height:30px;width:30px;font-size:14px}
   #pop-wrap{bottom:100px}
@@ -875,18 +910,6 @@ canvas {
   #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
 }
 @media(max-width:480px){
-  #tutorial-box{padding:20px 18px;width:340px}
-  .menu-divider{margin:10px 0}
-  .setup-grid{gap:12px}
-  .setup-row{grid-template-columns:1fr} /* stack the settings on small phones */
-  .setup-row-audio{grid-template-columns:1fr 1fr}
-  .setup-col h3{font-size:14px}
-  .setup-icon{font-size:15px}
-  .segment{font-size:15px;padding:12px 4px}
-  .menu-action-btn{font-size:18px;padding:13px 26px}
-}
-@media(max-width:380px){
-
   #bottom{height:90px}
   #sel-info{width:145px;padding:6px}
   #sel-portrait{width:44px;height:44px;font-size:20px}
@@ -895,6 +918,54 @@ canvas {
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #home-btn, #map-btn, #idle-btn, #bell-btn {height:27px;width:27px;font-size:13px}
   #pop-wrap{bottom:94px}
+}
+
+@media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
+  #tutorial{
+    padding: max(2px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(2px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  #tutorial-box{
+    width:min(960px, calc(100vw - 12px));
+    max-height:calc(100dvh - 4px);
+    display:flex;
+    flex-direction:row;
+    gap:0;
+    align-items:stretch;
+  }
+  .menu-shell{
+    flex-direction:row;
+    width:100%;
+    min-width:0;
+    gap:0;
+    align-items:stretch;
+  }
+  .menu-hero{
+    flex:0 0 56%;
+    display:flex;
+    min-width:0;
+    overflow:hidden;
+    position:relative;
+  }
+  .title-pane{
+    position:relative;
+    width:100%;
+    height:100%;
+    display:flex;
+    min-width:0;
+    overflow:hidden;
+  }
+  #title-logo{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    margin:0;
+    object-fit:contain;
+    object-position:left top;
+  }
+  .menu-content{
+    flex:1 1 auto;
+  }
 }
 
 /* ---- TRAINING QUEUE STYLES ---- */
@@ -1262,4 +1333,3 @@ canvas {
   /* Completely suppress tooltip on touch-only devices */
   #tooltip { display: none !important; }
 }
-

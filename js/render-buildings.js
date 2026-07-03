@@ -547,10 +547,37 @@ function drawBuilding(e, part = null){
 
 
 
-    // 2. Left Annex Roof (open-sided shelter roof covering left quadrant, matching team color)
+    // 2. Wooden posts, drawn BEFORE the annex roofs so the tent cloth
+    // overlaps the pole tops (sorted back-to-front for depth)
+    let posts = [
+      { x: sx - 96, y: sy + 48, h: 16 }, // Left-most
+      { x: sx - 48, y: sy + 72, h: 16 }, // Bottom-left
+      { x: sx + 96, y: sy + 48, h: 16 }, // Right-most
+      { x: sx + 48, y: sy + 72, h: 16 }, // Bottom-right
+      { x: sx,      y: sy + 48, h: 16 }  // Center
+    ];
+    posts.sort((a, b) => a.y - b.y);
+    let postColor = '#8a6a4a';
+    let pc = darken ? darkenColor(postColor) : postColor;
+    X.lineJoin = 'round';
+    // Contact shadows on the ground first, so every pole overlaps them
+    X.fillStyle = 'rgba(0,0,0,0.25)';
+    posts.forEach(p => {
+      X.beginPath(); X.ellipse(p.x, p.y + 1, 5, 2.4, 0, 0, Math.PI*2); X.fill();
+    });
+    // Chunky outlined poles: black underlay stroke, wood-colored core
+    posts.forEach(p => {
+      X.strokeStyle = '#000000'; X.lineWidth = 6; X.lineCap = 'round';
+      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
+      X.strokeStyle = pc; X.lineWidth = 4;
+      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
+      X.lineCap = 'butt';
+    });
+
+    // 3. Left Annex Roof (open-sided shelter roof covering left quadrant, in team color)
     let laX = sx - 48, laY = sy + 24;
     let laH = 16, laRoofH = 12;
-    let laL = '#a8845c', laR = '#8a6a48';
+    let laL = tc, laR = tcD;
     if (darken) { laL = darkenColor(laL); laR = darkenColor(laR); }
     X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
     X.fillStyle=laL;X.beginPath();
@@ -560,10 +587,10 @@ function drawBuilding(e, part = null){
     X.moveTo(laX,laY-laH-laRoofH); X.lineTo(laX,laY+24*2-laH-laRoofH);
     X.lineTo(laX,laY+24*2-laH); X.lineTo(laX+48,laY+24-laH); X.closePath(); X.fill(); X.stroke();
 
-    // 3. Right Annex Roof (open-sided shelter roof covering right quadrant, matching team color)
+    // 4. Right Annex Roof (open-sided shelter roof covering right quadrant, in team color)
     let raX = sx + 48, raY = sy + 24;
     let raH = 16, raRoofH = 12;
-    let raL = '#a8845c', raR = '#8a6a48';
+    let raL = tc, raR = tcD;
     if (darken) { raL = darkenColor(raL); raR = darkenColor(raR); }
     X.fillStyle=raL;X.beginPath();
     X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
@@ -571,31 +598,6 @@ function drawBuilding(e, part = null){
     X.fillStyle=raR;X.beginPath();
     X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
     X.lineTo(raX,raY+24*2-raH); X.lineTo(raX+48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
-
-    // 5. Draw all wooden posts (sorted back-to-front for perfect depth overlap)
-    let posts = [
-      // Left Annex posts (height 16)
-      { x: sx - 96, y: sy + 48, h: 16 }, // Left-most
-      { x: sx - 48, y: sy + 72, h: 16 }, // Bottom-left
-
-      // Right Annex posts (height 16)
-      { x: sx + 96, y: sy + 48, h: 16 }, // Right-most
-      { x: sx + 48, y: sy + 72, h: 16 }, // Bottom-right
-
-      // Shared Center Post (height 16)
-      { x: sx,      y: sy + 48, h: 16 }  // Center
-    ];
-    posts.sort((a, b) => a.y - b.y);
-
-    let postColor = '#8a6a4a';
-    let pc = darken ? darkenColor(postColor) : postColor;
-    X.lineJoin = 'round';
-    posts.forEach(p => {
-      X.strokeStyle = pc; X.lineWidth = 3.5;
-      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
-      X.strokeStyle = '#000000'; X.lineWidth = 1;
-      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
-    });
 
     // Team banner flying from the keep top
     if(e.complete) drawWavingFlag(sx, sy, 72, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD);

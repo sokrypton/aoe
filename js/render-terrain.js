@@ -208,7 +208,7 @@ function drawFullTreeBody(sx, cy, s, darken = false) {
   X.fillStyle = '#000000';
   bubbles.forEach(b => {
     X.beginPath();
-    X.arc(sx + b.x * s, cy + b.y * s, b.r * s + 1.5, 0, Math.PI * 2);
+    X.arc(sx + b.x * s, cy + b.y * s, b.r * s + 1.2, 0, Math.PI * 2);
     X.fill();
   });
   

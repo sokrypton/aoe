@@ -6,7 +6,9 @@ function createUnit(type,x,y,team){
     atk:u.atk,range:u.range,speed:u.speed,path:[],task:null,target:null,
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
     gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,
-    stance: (type !== 'villager' && type !== 'sheep') ? 'aggressive' : undefined};
+    stance: (type !== 'villager' && type !== 'sheep') ? 'aggressive' : undefined,
+    // Villagers are randomly male or female (cosmetic only, like AoE2)
+    female: type === 'villager' ? Math.random() < 0.5 : undefined};
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;
