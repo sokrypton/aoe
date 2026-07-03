@@ -144,6 +144,10 @@ function drawMinimap(){
     let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
     if (f === 0) return; // completely unexplored — hide everything
     if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
+    // Enemy buildings in shroud are only "remembered" if they were actually
+    // seen at some point — same _seen rule as the main map, so the two views
+    // never disagree (and buildings the AI put up after we left aren't leaked).
+    if (f === 1 && e.team !== 0 && e.type === 'building' && !e._seen) return;
 
     let isSel=selectedIds.has(e.id);
     // Under-attack blink (AoE2): a player object hit in the last ~4 game-s

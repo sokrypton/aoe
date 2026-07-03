@@ -44,8 +44,11 @@ function walkable(x,y,ignore,ignoreUnits){
         // separateUnits() shoves the blocker aside on contact. SOLDIERS are
         // never pushable: a parked army holds ground and traffic must route
         // around it (that's also what keeps the melee surround cap intact).
+        // A "stubborn" villager (repeatedly displaced recently — see
+        // isStubborn in loop.js) stops yielding: paths must route around it
+        // like a parked soldier, which is what breaks displacement cycles.
         let pushable=blocker.utype==='sheep'||
-          (blocker.utype==='villager'&&walker&&walker.team===blocker.team);
+          (blocker.utype==='villager'&&walker&&walker.team===blocker.team&&!isStubborn(blocker));
         if(!harvesting&&!pushable)return false;
       }
     }

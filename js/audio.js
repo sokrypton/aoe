@@ -303,6 +303,36 @@ function playSound(type, wx, wy) {
         });
         break;
       }
+      case 'bear': {
+        // Low rumbling growl: detuned saws sliding down through a dark
+        // lowpass, with a slow wobble so it reads "animal", not "engine"
+        const bp = rnd(0.9, 1.15);
+        const fl = audioCtx.createBiquadFilter();
+        fl.type = 'lowpass';
+        fl.frequency.setValueAtTime(420 * bp, now);
+        fl.frequency.linearRampToValueAtTime(180 * bp, now + 0.5);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(0.09, now + 0.06);
+        g.gain.setValueAtTime(0.09, now + 0.35);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        const lfo = audioCtx.createOscillator();
+        const lfoGain = audioCtx.createGain();
+        lfo.frequency.value = rnd(18, 24);
+        lfoGain.gain.value = 6 * bp;
+        fl.connect(g); g.connect(out);
+        [72, 72 * 1.02, 108].forEach(freq => {
+          const o = audioCtx.createOscillator();
+          o.type = 'sawtooth';
+          o.frequency.setValueAtTime(freq * bp, now);
+          o.frequency.linearRampToValueAtTime(freq * bp * 0.8, now + 0.55);
+          lfoGain.connect(o.frequency);
+          o.connect(fl);
+          o.start(now); o.stop(now + 0.62);
+        });
+        lfo.start(now); lfo.stop(now + 0.62);
+        break;
+      }
       case 'sheep': {
         // Bleat with random pitch so the flock doesn't sound cloned
         const bp = rnd(0.85, 1.3);

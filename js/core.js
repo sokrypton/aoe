@@ -93,6 +93,12 @@ const UNITS={
   // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2); with no
   // age system here, the familiar fast scout is the right baseline.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
+  // Wild predator (AoE2 wolf logic, bear body): gaia team 2, lurks in the
+  // wild, charges any player unit that wanders into its territory, then
+  // returns to its den area when the prey escapes. Stronger than an AoE2
+  // wolf (45hp/7atk vs 25/3) so a lone villager should run, but a couple
+  // of militia put it down without drama.
+  bear:{name:'Bear',hp:45,atk:7,range:0,speed:1.2,rof:60,armor:{m:1,p:0},cost:{f:0},trainTime:0,desc:'Wild animal. Attacks anyone who wanders too close.',icon:'🐻'},
   sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
   sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'}
 };

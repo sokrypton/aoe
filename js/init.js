@@ -24,6 +24,7 @@ function init(){
     createUnit('scout',ssp.x,ssp.y,start.team);
   });
   placeStartingSheep();
+  placeWildBears();
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
@@ -64,6 +65,25 @@ function placeStartingSheep(){
     nearOffsets.forEach(o=>place(o,1));
     farPairs.forEach(o=>place(o,2));
   });
+}
+
+// AoE2 Arabia wolves, reskinned as bears: a handful of lone predators in
+// the no-man's-land between the two towns. Kept well away from both TCs so
+// the starting economy is safe — they punish careless scouting and lone
+// villagers sent to far resources, not the opening build order.
+function placeWildBears(){
+  let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
+  let placed=0, attempts=0;
+  while(placed<5 && attempts<400){
+    attempts++;
+    let x=randInt(4,MAP-5), y=randInt(4,MAP-5);
+    if(!walkable(x,y))continue;
+    if(starts.some(s=>Math.sqrt((s.x-x)**2+(s.y-y)**2)<16))continue;
+    let bear=createUnit('bear',x,y,2);
+    // Den anchor: the bear leashes back here after a chase (see logic.js)
+    bear.homeX=x; bear.homeY=y;
+    placed++;
+  }
 }
 
 function startGame(difficulty){

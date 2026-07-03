@@ -439,7 +439,7 @@ function updateUI(){
     // generic "Soldier". Uniform multi-selections pluralize; mixed ones get
     // a group label.
     const UNIT_PLURALS = {villager:'Villagers', militia:'Militia', spearman:'Spearmen',
-      archer:'Archers', scout:'Scout Cavalry', sheep:'Sheep', sheep_carcass:'Sheep Carcasses'};
+      archer:'Archers', scout:'Scout Cavalry', sheep:'Sheep', sheep_carcass:'Sheep Carcasses', bear:'Bears'};
     let unitName = UNITS[e.utype] ? UNITS[e.utype].name : e.utype;
     if (selected.length > 1) {
       let allSame = selected.every(s => s.utype === e.utype);

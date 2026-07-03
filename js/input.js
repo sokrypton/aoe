@@ -955,6 +955,11 @@ function getUnitUnderCursor(sx, sy) {
         w = 16 * ZOOM + extraHit;
         hStart = 2 * ZOOM + extraHit;
         hEnd = -16 * ZOOM - extraHit;
+      } else if (en.utype === 'bear') {
+        // Cartoon bear is drawn much wider/taller than a sheep
+        w = 22 * ZOOM + extraHit;
+        hStart = 4 * ZOOM + extraHit;
+        hEnd = -24 * ZOOM - extraHit;
       }
 
       let dx = sx - scrx;
@@ -1167,6 +1172,9 @@ function doCommand(sx,sy){
       target = clickedUnit;
     } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
       target = clickedUnit;
+    } else if (clickedUnit.utype === 'bear') {
+      // Wild bear (gaia): right-click means attack, never follow
+      target = clickedUnit;
     } else {
       followTarget = clickedUnit;
     }
@@ -1233,11 +1241,15 @@ function doCommand(sx,sy){
       s.target=null;
       let t=map[tile.y]&&map[tile.y][tile.x];
       if(s.utype==='villager'&&t){
-        if(t.t===TERRAIN.FOREST){s.task='chop';s.gatherX=tile.x;s.gatherY=tile.y;pathUnitTo(s,tile.x,tile.y);}
-        else if(t.t===TERRAIN.GOLD){s.task='mine_gold';s.gatherX=tile.x;s.gatherY=tile.y;pathUnitTo(s,tile.x,tile.y);}
-        else if(t.t===TERRAIN.STONE){s.task='mine_stone';s.gatherX=tile.x;s.gatherY=tile.y;pathUnitTo(s,tile.x,tile.y);}
-        else if(t.t===TERRAIN.BERRIES){s.task='forage';s.gatherX=tile.x;s.gatherY=tile.y;pathUnitTo(s,tile.x,tile.y);}
-        else if(t.t===TERRAIN.FARM){s.task='farm';s.gatherX=tile.x;s.gatherY=tile.y;pathUnitTo(s,tile.x,tile.y);}
+        // Group spread (AoE2 DE): each villager claims its own tile of the
+        // clicked resource — claims are visible to the next villager in this
+        // same loop via gatherX, so the group fans out tile by tile.
+        let TASK_BY_TERRAIN={[TERRAIN.FOREST]:'chop',[TERRAIN.GOLD]:'mine_gold',[TERRAIN.STONE]:'mine_stone',[TERRAIN.BERRIES]:'forage',[TERRAIN.FARM]:'farm'};
+        let gTask=TASK_BY_TERRAIN[t.t];
+        if(gTask){
+          let g=claimGatherTileNear(s,t.t,tile.x,tile.y);
+          s.task=gTask;s.gatherX=g.x;s.gatherY=g.y;pathUnitTo(s,g.x,g.y);
+        }
         else {
           // Move command: use formation offset
           let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;

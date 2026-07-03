@@ -99,12 +99,23 @@ function genMap(){
     let spot=findClearSpot(cx,cy,2,4);
     if(!spot)return[];
     clearArea(spot.x,spot.y,2);
-    let offsets=[[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1]];
-    return offsets.map(([dx,dy])=>{
-      let x=spot.x+dx,y=spot.y+dy;
-      if(inBounds(x,y,1)){map[y][x]={t:TERRAIN.BERRIES,res:125,occupied:null};return{x,y};} // AoE2: 125 food per bush
-      return null;
-    }).filter(Boolean);
+    // AoE2 Arabia: 6 bushes in an organic clump. Grow the patch by
+    // repeatedly sprouting a bush adjacent to a random existing one, so
+    // every game's clump has a different — but always contiguous — shape,
+    // instead of the same stamped rectangle.
+    let placed=[{x:spot.x,y:spot.y}];
+    map[spot.y][spot.x]={t:TERRAIN.BERRIES,res:125,occupied:null}; // AoE2: 125 food per bush
+    let guard=0;
+    while(placed.length<6&&guard++<80){
+      let base=placed[randInt(0,placed.length-1)];
+      let dx=randInt(-1,1),dy=randInt(-1,1);
+      if(!dx&&!dy)continue;
+      let x=base.x+dx,y=base.y+dy;
+      if(!inBounds(x,y,1)||map[y][x].t!==TERRAIN.GRASS||protectedBase(x,y))continue;
+      map[y][x]={t:TERRAIN.BERRIES,res:125,occupied:null};
+      placed.push({x,y});
+    }
+    return placed;
   }
   function placeForestLine(cx,cy,angle,len,wid){
     let spot=findClearSpot(cx,cy,2,5,4);
@@ -153,10 +164,13 @@ function genMap(){
 
   // Berries sit a real walk away from the TC (AoE2 Arabia: ~10 tiles at full
   // scale) so building the Mill next to them is an actual decision.
-  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),6.5*scale);
+  // Distance bands vary game to game (AoE2 Arabia: berries ~6-8, gold ~7-9
+  // tiles out) so the walk to each resource is part of the map roll too,
+  // not just the angle.
+  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale);
   placeMirrored(berriesOffset,placeBerries);
 
-  let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),8*scale);
+  let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),randFloat(7.3,9)*scale);
   placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
 
   let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);

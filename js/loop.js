@@ -100,6 +100,15 @@ function update(){
 
   updateFog(); // Update Fog of War visibility grid
 
+  // Remember enemy buildings the moment any of their tiles is actively
+  // visible. This must live in the game loop, NOT the render pass: the
+  // renderer viewport-culls, so buildings scouted while the camera was
+  // elsewhere never got their _seen flag and stayed invisible on the main
+  // map even though the minimap (which ignores culling) showed them.
+  entities.forEach(e => {
+    if (e.type === 'building' && !e._seen && e.team !== 0 && buildingFogLevel(e) === 2) e._seen = true;
+  });
+
   rebuildUnitBlock(); // stationary-unit collision grid (see pathfinding.js)
   nudgeAside(); // villagers/sheep STEP OUT of approaching traffic's way
 
@@ -135,8 +144,20 @@ function nudgeAside(){
     let pushable=s.utype==='sheep'||(s.utype==='villager'&&s.team===m.team);
     if(!pushable||s.target)return;
     if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
-    // Step to an adjacent free tile that isn't on the mover's onward path.
+    // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
+    // digs its heels in and stops yielding — isStubborn() below also makes
+    // it non-pushable, so the traffic re-routes around it instead. This
+    // breaks the endless "polite waltz" where two villagers displace each
+    // other forever (dodge → task re-path → counter-dodge → …), while
+    // one-off step-asides and the anti-trapping behavior stay intact.
+    if(isStubborn(s))return;
+    if(tick-(s.lastDodgeTick||0)>=300)s.dodgeCount=0; // peace resets the tally
+    // Step to an adjacent free tile that isn't on the mover's onward path,
+    // and never onto the mover's OWN tile — movers don't register in the
+    // block grid, so that tile looks free but is a guaranteed swap-collision
+    // (the classic trigger for the dance above).
     let onward=new Set(m.path.slice(0,3).map(p=>p.x+','+p.y));
+    onward.add(Math.round(m.x)+','+Math.round(m.y));
     let best=null;
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
       if(!dx&&!dy)continue;
@@ -149,9 +170,17 @@ function nudgeAside(){
     }
     if(best){
       s.lastDodgeTick=tick;
+      s.dodgeCount=(s.dodgeCount||0)+1;
       setUnitPath(s,[{x:best.x,y:best.y}]); // a walked step, not a teleport/shove
     }
   });
+}
+
+// True while a much-displaced unit is holding its ground (see nudgeAside):
+// it won't step aside and walkable() treats it as a hard obstacle so paths
+// route around it. Wears off after ~10s without being harassed.
+function isStubborn(u){
+  return (u.dodgeCount||0)>=3 && tick-(u.lastDodgeTick||0)<300;
 }
 
 // Soft unit separation: push overlapping units apart (AoE2 collision).

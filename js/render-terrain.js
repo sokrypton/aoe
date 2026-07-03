@@ -73,18 +73,34 @@ function drawTile(x,y){
     X.fillStyle=cTop;X.beginPath();
     X.moveTo(apex.x,apex.y);X.lineTo(topL.x,topL.y);X.lineTo(cx0,cy0-r*0.6);X.lineTo(topR.x,topR.y);X.closePath();X.fill();X.stroke();
   };
+  // Rubble left where a mined-out boulder used to stand: a few small
+  // faceted-ish pebbles, so depletion reads as "carted away", not "shrunk".
+  const rubble=(ox,oy,col,colDark)=>{
+    X.strokeStyle='#000';X.lineWidth=1;
+    X.fillStyle=col;
+    X.beginPath();X.ellipse(ox-2.5,oy,2.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(ox+2.5,oy+1,1.9,1.2,0,0,Math.PI*2);X.fill();X.stroke();
+    X.fillStyle=colDark;
+    X.beginPath();X.ellipse(ox+0.5,oy-1.8,1.5,1.0,0,0,Math.PI*2);X.fill();X.stroke();
+  };
   if(t.t===TERRAIN.GOLD){
-    let s=0.4+0.6*Math.min(t.res/800,1);
+    // Discrete depletion (AoE2 mine damage states): the flanking boulders
+    // get mined away one at a time — leaving rubble — and the central spire
+    // finally breaks to a stub, instead of the whole cluster scaling down.
+    let pct=Math.min(t.res/800,1);
     let gy=cy-8; // centered on the tile — the tall spire's apex pokes into
                  // the tile above, same deliberate overflow as the bushes.
     // Same faceted boulder cluster as stone, just cast in solid gold —
     // reads as "this whole vein is gold" at a glance instead of grey rock
     // with a few small nuggets stuck on.
-    boulder(sx-9*s, gy+5, 6*s, '#f4d35e', '#d1a017', '#8f6607');
-    boulder(sx+9*s, gy+5, 5.5*s, '#f4d35e', '#c99815', '#916d0a');
-    boulder(sx, gy+6, 9.5*s, '#ffe066', '#e8b90f', '#a8790a');
+    if(pct>0.66) boulder(sx-9, gy+5, 6, '#f4d35e', '#d1a017', '#8f6607');
+    else rubble(sx-9, gy+7, '#d1a017', '#8f6607');
+    if(pct>0.33) boulder(sx+9, gy+5, 5.5, '#f4d35e', '#c99815', '#916d0a');
+    else rubble(sx+9, gy+6, '#c99815', '#916d0a');
+    boulder(sx, gy+6, pct>0.12?9.5:5.5, '#ffe066', '#e8b90f', '#a8790a'); // broken stub at the end
     // Sparkle glints scattered across the gold facets — small 4-point stars
     // so it unmistakably reads as shiny metal, not just yellow stone.
+    // Fewer glints as the vein empties (they sit on the remaining rock).
     const sparkle=(ox,oy,r)=>{
       X.fillStyle='#fff8dc';X.strokeStyle='rgba(120,80,0,0.5)';X.lineWidth=0.6;
       X.beginPath();
@@ -93,50 +109,76 @@ function drawTile(x,y){
       X.lineTo(ox-r,oy);X.lineTo(ox-r*0.28,oy-r*0.28);X.closePath();
       X.fill();X.stroke();
     };
-    sparkle(sx-1.5*s, gy-13*s, 2.6*s);
-    sparkle(sx+4.5*s, gy-6*s,  1.8*s);
-    sparkle(sx-7*s,   gy-2*s,  1.6*s);
-    sparkle(sx+8.5*s, gy+2*s,  1.4*s);
-    sparkle(sx+1*s,   gy+5*s,  1.3*s);
+    let glints=[[sx+1,gy+5,1.3],[sx-1.5,gy-13,2.6],[sx+4.5,gy-6,1.8],[sx-7,gy-2,1.6],[sx+8.5,gy+2,1.4]];
+    if(pct<=0.12){glints=[[sx+1,gy+2,1.3]];} // only the stub remains to glint
+    else if(pct<=0.33)glints=glints.slice(0,3);
+    else if(pct<=0.66)glints=glints.slice(0,4);
+    glints.forEach(g=>sparkle(g[0],g[1],g[2]));
   }
   if(t.t===TERRAIN.STONE){
-    let s=0.4+0.6*Math.min(t.res/350,1);
+    // Same discrete quarrying states as the gold vein above.
+    let pct=Math.min(t.res/350,1);
     let gy=cy-8; // centered on the tile, matching gold — was bottom-heavy
     // Granite cluster: two flanking boulders, one tall central spire
-    boulder(sx-9*s, gy+5, 6*s, '#b0b0b0', '#8c8c8c', '#686868');
-    boulder(sx+9*s, gy+5, 5.5*s, '#b0b0b0', '#95958f', '#6e6e6e');
-    boulder(sx, gy+6, 9.5*s, '#c2c2c2', '#9d9d9d', '#767678');
-    // Cracks across the central spire
-    X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1;
-    X.beginPath();X.moveTo(sx-2*s,gy-11*s);X.lineTo(sx-3.5*s,gy-5*s);X.lineTo(sx-2*s,gy-1);X.stroke();
-    X.beginPath();X.moveTo(sx+3*s,gy-8*s);X.lineTo(sx+4.5*s,gy-3*s);X.stroke();
+    if(pct>0.66) boulder(sx-9, gy+5, 6, '#b0b0b0', '#8c8c8c', '#686868');
+    else rubble(sx-9, gy+7, '#9d9d9d', '#767678');
+    if(pct>0.33) boulder(sx+9, gy+5, 5.5, '#b0b0b0', '#95958f', '#6e6e6e');
+    else rubble(sx+9, gy+6, '#95958f', '#6e6e6e');
+    boulder(sx, gy+6, pct>0.12?9.5:5.5, '#c2c2c2', '#9d9d9d', '#767678'); // broken stub at the end
+    // Cracks across the central spire (only while it still stands tall)
+    if(pct>0.12){
+      X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1;
+      X.beginPath();X.moveTo(sx-2,gy-11);X.lineTo(sx-3.5,gy-5);X.lineTo(sx-2,gy-1);X.stroke();
+      X.beginPath();X.moveTo(sx+3,gy-8);X.lineTo(sx+4.5,gy-3);X.stroke();
+    }
     // Pebbles scattered at the base
     X.strokeStyle='#000';X.lineWidth=1;X.fillStyle='#8b8b8b';
-    X.beginPath();X.ellipse(sx-4*s,gy+7,1.8*s,1.2*s,0,0,Math.PI*2);X.fill();X.stroke();
-    X.beginPath();X.ellipse(sx+11*s,gy+6,1.5*s,1.0*s,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(sx-4,gy+7,1.8,1.2,0,0,Math.PI*2);X.fill();X.stroke();
+    X.beginPath();X.ellipse(sx+11,gy+6,1.5,1.0,0,0,Math.PI*2);X.fill();X.stroke();
   }
   if(t.t===TERRAIN.BERRIES){
-    let s=0.4+0.6*Math.min(t.res/200,1);
-    // Dark outline around foliage cloud
-    X.fillStyle='#000000';
-    X.beginPath();X.arc(sx-4*s, cy-3*s, 6*s+1.2, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(sx+4*s, cy-2*s, 5*s+1.2, 0, Math.PI*2);X.fill();
-    X.beginPath();X.arc(sx, cy-7*s, 7*s+1.2, 0, Math.PI*2);X.fill();
-
-    // Textured bushy leaves (overlapping circle cluster)
-    X.fillStyle='#1e4c12';X.beginPath();X.arc(sx-4*s, cy-3*s, 6*s, 0, Math.PI*2);X.fill(); // shadow puff
-    X.fillStyle='#2a631b';X.beginPath();X.arc(sx+4*s, cy-2*s, 5*s, 0, Math.PI*2);X.fill(); // shadow puff
-    X.fillStyle='#367f22';X.beginPath();X.arc(sx, cy-7*s, 7*s, 0, Math.PI*2);X.fill(); // highlight puff
-    
-    // Red berries with specular reflection highlights
-    let berryCount=Math.max(2,Math.ceil(5*s));
+    // Discrete depletion: the bush itself stays FULL SIZE while foragers
+    // strip it — berries pop off one by one, then the crown puffs get
+    // picked bare (removed) in two steps. Only the number of sub-elements
+    // changes, never the scale, so a half-empty bush reads as "picked
+    // over", not "smaller bush".
+    let pct=Math.min(t.res/125,1);
+    let gy=cy+2; // foliage ground line, low on the tile
+    // Ground contact shadow so the bush sits ON the tile, not floats
+    X.fillStyle='rgba(0,0,0,0.25)';
+    X.beginPath();X.ellipse(sx,gy+1.5,10,3,0,0,Math.PI*2);X.fill();
+    // Big scalloped foliage cloud rising well past the tile edge — one black
+    // silhouette pass, then leaf fills (same one-piece-outline treatment as
+    // the unit sprites). Lower puffs darker, crown brighter. The last two
+    // puffs are the upper crown: gone below 2/3, then the mid pair below 1/3.
+    let puffs=[[-7,-4,5.5],[7,-4,5],[0,-4.5,6.5],[-4,-10.5,5.5],[4.5,-10,5],[0,-14.5,4.5]];
+    if(pct<=0.33)puffs=puffs.slice(0,3);
+    else if(pct<=0.66)puffs=puffs.slice(0,5);
+    X.fillStyle='#000';
+    puffs.forEach(p=>{X.beginPath();X.arc(sx+p[0],gy+p[1],p[2]+1.2,0,Math.PI*2);X.fill();});
+    puffs.forEach(p=>{
+      X.fillStyle=p[1]>-7?'#2a631b':'#3c8a25';
+      X.beginPath();X.arc(sx+p[0],gy+p[1],p[2],0,Math.PI*2);X.fill();
+    });
+    // Sunlit crown (only while the crown puff is still there)
+    if(pct>0.66){
+      X.fillStyle='rgba(255,255,210,0.20)';
+      X.beginPath();X.arc(sx-1,gy-14.5,3.4,0,Math.PI*2);X.fill();
+    }
+    // Fat red berries with shiny glints, seeded per tile so neighboring
+    // bushes don't look like clones. Count tracks remaining food 1:1-ish —
+    // this IS the depletion animation, berries visibly popping off.
+    let seed=x*7+y*13;
+    let berryCount=Math.round(8*pct);
+    let berryLift=pct<=0.33?4:0; // picked-low bush: berries sit on the low puffs
     for(let i=0;i<berryCount;i++){
-      let a=i*1.2+0.4;
-      let bx = sx + Math.cos(a)*6*s;
-      let by = cy - 4*s + Math.sin(a)*4*s;
-      X.fillStyle='#000000';X.beginPath();X.arc(bx,by,2*s+0.8,0,Math.PI*2);X.fill(); // berry outline
-      X.fillStyle='#cc3344';X.beginPath();X.arc(bx,by,2*s,0,Math.PI*2);X.fill();
-      X.fillStyle='#ff99a8';X.beginPath();X.arc(bx-0.5*s,by-0.5*s,0.7*s,0,Math.PI*2);X.fill(); // shiny glint
+      let a=(seed+i)*2.39996; // golden-angle scatter
+      let rr=3.5+((seed+i*3)%4)*1.6;
+      let bx=sx+Math.cos(a)*rr*1.6;
+      let by=gy-8+berryLift+Math.sin(a)*rr;
+      X.fillStyle='#000000';X.beginPath();X.arc(bx,by,3.4,0,Math.PI*2);X.fill(); // berry outline
+      X.fillStyle='#cc3344';X.beginPath();X.arc(bx,by,2.6,0,Math.PI*2);X.fill();
+      X.fillStyle='#ff99a8';X.beginPath();X.arc(bx-0.7,by-0.7,0.85,0,Math.PI*2);X.fill(); // shiny glint
     }
   }
 

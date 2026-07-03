@@ -98,7 +98,7 @@ function formatCost(cost){
 }
 
 function unitPop(type){
-  return type==='sheep'?0:1;
+  return (type==='sheep'||type==='bear')?0:1;
 }
 
 function teamPopUsed(team){
@@ -256,6 +256,38 @@ function siegePerimeterSpot(e,t){
   }
   if(best){e.siegeSpot=best;return best;}
   return nearestBldgPerimeter(e.x,e.y,t,e.id);
+}
+
+// AoE2 DE-style group spread: when several villagers are tasked onto one
+// resource tile, each claims its own tile of the same resource near the
+// click instead of the whole group piling onto one tree. Rings expand from
+// the clicked tile; within a ring the villager takes the tile closest to
+// itself. If everything nearby is claimed, crowding the clicked tile is the
+// correct fallback (AoE2 also lets villagers share a tile when it's all
+// that's left).
+function claimGatherTileNear(e,terrain,cx,cy){
+  let claimed=new Set();
+  entities.forEach(en=>{
+    if(en.type==='unit'&&en.id!==e.id&&en.team===e.team&&en.gatherX>=0)
+      claimed.add(en.gatherX+','+en.gatherY);
+  });
+  if(!claimed.has(cx+','+cy))return{x:cx,y:cy};
+  for(let r=1;r<=5;r++){
+    let best=null,bd=1e9;
+    for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue; // ring only
+      let nx=cx+dx,ny=cy+dy;
+      if(nx<0||nx>=MAP||ny<0||ny>=MAP)continue;
+      let t=map[ny][nx];
+      if(t.t!==terrain||t.res<=0)continue;
+      if(claimed.has(nx+','+ny))continue;
+      if(!canGatherTile(e,terrain,nx,ny))continue;
+      let d=Math.abs(e.x-nx)+Math.abs(e.y-ny);
+      if(d<bd){bd=d;best={x:nx,y:ny};}
+    }
+    if(best)return best;
+  }
+  return{x:cx,y:cy};
 }
 
 function clearGatherTarget(e){
@@ -903,6 +935,54 @@ function updateUnit(e){
     }
   }
 
+  // Bear behavior (AoE2 wolf logic): a leashed ambush predator, NOT generic
+  // military AI — it has its own aggro/give-up rules instead of the
+  // isMilitary auto-attack below (which never stops chasing).
+  if(e.utype==='bear'){
+    if(e.homeX===undefined){e.homeX=e.x;e.homeY=e.y;}
+    let home={x:e.homeX,y:e.homeY};
+
+    if(e.target){
+      // Give up the chase when the prey dies/escapes or the bear has been
+      // pulled too far from its den, then trot home. AoE2 wolves leash the
+      // same way, which is what makes them dodgeable by design.
+      let t=entitiesById.get(e.target);
+      if(!t||t.hp<=0||t.garrisonedIn||dist(e,t)>10||dist(e,home)>14){
+        e.target=null;
+        clearUnitPath(e);
+        pathUnitTo(e,Math.round(home.x),Math.round(home.y));
+      }
+    } else {
+      // Aggro: charge the closest player/AI unit that wanders into range.
+      // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
+      // runs on a stagger so 5 bears don't all scan every tick.
+      if(tick%10===e.id%10){
+        let closest=null,cd=5.5;
+        entities.forEach(en=>{
+          if(en.type!=='unit'||en.hp<=0||en.garrisonedIn)return;
+          if(en.team!==0&&en.team!==1)return;
+          if(en.utype==='sheep'||en.utype==='sheep_carcass')return;
+          let d=dist(e,en);
+          if(d<cd){cd=d;closest=en;}
+        });
+        if(closest){
+          e.target=closest.id;
+          clearUnitPath(e);
+          if(window.playSound)window.playSound('bear',e.x,e.y);
+        }
+      }
+      // Idle: slow wander around the den, like the sheep but ranging wider
+      // and always drifting back toward home.
+      if(!e.target&&e.path.length===0&&tick%150===0&&Math.random()<0.3){
+        let wx=Math.round(home.x)+randInt(-3,3);
+        let wy=Math.round(home.y)+randInt(-3,3);
+        if(wx>=0&&wx<MAP&&wy>=0&&wy<MAP&&walkable(wx,wy)){
+          pathUnitTo(e,wx,wy);
+        }
+      }
+    }
+  }
+
   if(e.path.length>0){
     // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
     // covers sqrt(32^2+16^2) ≈ 35.78 screen px, and there are 30 ticks per
@@ -1334,7 +1414,9 @@ function updateUnit(e){
     if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
   }
   // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
-  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass';
+  // Bears are excluded: they use their own leashed aggro logic above, not
+  // the never-give-up military chase here.
+  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear';
   // Note: followId isn't excluded here — a unit that has caught up to its
   // follow target and stopped (path empty) should still engage nearby
   // enemies like any idle unit; combat naturally takes precedence and the
@@ -1434,8 +1516,9 @@ function handleDeath(e,killerTeam){
       else{gameOver=true;won=false;}
     }
   }
-  // Add to corpses list for AoE2-style decay (skip for sheep/carcasses)
-  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
+  // Add to corpses list for AoE2-style decay (skip for sheep/carcasses and
+  // bears — the corpse renderer draws humanoid bodies keyed on utype)
+  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&e.utype!=='bear'){
     corpses.push({
       type: 'corpse',
       utype: e.utype,
