@@ -202,19 +202,22 @@ function updateUI(){
   }
   if(rebuildActions)act.innerHTML='';
 
-  // "Never mind" — leftmost action button whenever anything is selected, a
+  // "Back" — leftmost action button whenever anything is selected, a
   // full-size mobile-friendly tap target (same size as every other action
-  // button) instead of a tiny corner badge. Clears the selection and any
-  // pending targeting mode, same as pressing Escape.
+  // button). A RETURN arrow, not an ✖: deselectAll() steps back ONE level
+  // per press (cancel placement → cancel rally → leave submenu → deselect),
+  // so for a villager the same arrow pressed repeatedly walks back out of
+  // the build submenus and finally exits — the submenus' own separate Back
+  // buttons are gone.
   if(rebuildActions && selected.length>0 && gameStarted && !gameOver){
-    let cancelBtn=document.createElement('div');
-    cancelBtn.className='act-btn framed';
-    cancelBtn.dataset.tipType='action';
-    cancelBtn.dataset.tipLabel='Cancel';
-    cancelBtn.dataset.tipDesc='Deselect and cancel any pending command.';
-    cancelBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-cancel"></div>`;
-    cancelBtn.onclick=()=>{ if(window.deselectAll)window.deselectAll(); };
-    act.appendChild(cancelBtn);
+    let backBtn=document.createElement('div');
+    backBtn.className='act-btn back-btn framed';
+    backBtn.dataset.tipType='action';
+    backBtn.dataset.tipLabel='Back';
+    backBtn.dataset.tipDesc='Go back one step: cancel placement or targeting, leave a submenu, or deselect.';
+    backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div>`;
+    backBtn.onclick=()=>{ if(window.deselectAll)window.deselectAll(); };
+    act.appendChild(backBtn);
   }
 
   // Multi-select: the portrait+stats card is replaced by a grid of icons
@@ -578,17 +581,9 @@ function updateUI(){
           act.appendChild(btn);
         });
       } else if (window.currentVillagerMenu === 'eco') {
-        // Back Button (First)
-        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
-        backBtn.dataset.tipType='action';
-        backBtn.dataset.tipLabel='Back';
-        backBtn.dataset.tipDesc='Return to the main villager command panel.';
-        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
-        backBtn.onclick=()=>{
-          window.currentVillagerMenu = 'main';
-          updateUI();
-        };
-        act.appendChild(backBtn);
+        // (No submenu Back button — the global leftmost return arrow steps
+        // back to the main panel; see the "Back" button at the top of
+        // updateUI.)
 
         // Economic Sub-Menu
         // Ordered by importance: pop cap first, then food, then the drop
@@ -617,17 +612,9 @@ function updateUI(){
           act.appendChild(btn);
         });
       } else if (window.currentVillagerMenu === 'mil') {
-        // Back Button (First)
-        let backBtn=document.createElement('div');backBtn.className='act-btn back-btn framed';
-        backBtn.dataset.tipType='action';
-        backBtn.dataset.tipLabel='Back';
-        backBtn.dataset.tipDesc='Return to the main villager command panel.';
-        backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div><div class="btn-label">Back</div><span class="cost">[Esc]</span>`;
-        backBtn.onclick=()=>{
-          window.currentVillagerMenu = 'main';
-          updateUI();
-        };
-        act.appendChild(backBtn);
+        // (No submenu Back button — the global leftmost return arrow steps
+        // back to the main panel; see the "Back" button at the top of
+        // updateUI.)
 
         // Military Sub-Menu
         let builds=[
@@ -1014,9 +1001,10 @@ window.reactivateFarm = reactivateFarm;
   // updateUI() rebuilds them. Tooltip content is driven entirely by data
   // attributes (tipType, tipKey, tipLabel, tipDesc) set on each button.
 
-  // Build the tooltip descriptor for an .act-btn from its data attributes —
-  // shared by desktop hover (mouseover below) and mobile press-and-hold
-  // (attachLongPress below). Returns null when the button carries no tip.
+  // Build the tooltip descriptor for an .act-btn from its data attributes
+  // (desktop hover; mobile long-press inspection was tried and removed —
+  // the release-tap suppression interfered with normal button taps).
+  // Returns null when the button carries no tip.
   function descriptorForActBtn(el) {
     const tipType  = el.dataset.tipType;   // 'unit' | 'building' | 'action'
     const tipKey   = el.dataset.tipKey;    // utype or btype key
@@ -1108,130 +1096,5 @@ window.reactivateFarm = reactivateFarm;
   attachSimpleTips(document.getElementById('menu-btn'));
   attachSimpleTips(document.getElementById('fs-btn'));
   attachSimpleTips(document.getElementById('chat-btn'));
-
-  // ---- Mobile: press-and-hold to inspect ----
-  // Touch has no hover, so the rich tooltips above were simply unreachable
-  // on a phone (the mouseover handlers bail on hasTouch). Standard mobile
-  // idiom instead: hold a button ~450ms → tooltip appears ABOVE it (the
-  // finger occludes everything below); release → tooltip hides and the tap
-  // is SWALLOWED, so inspecting "Militia, 60 food" never accidentally
-  // trains one. A quick tap (released before the threshold) behaves
-  // exactly as before. Moving the finger more than a few px cancels the
-  // hold — a pan/scroll that happens to start on a button must not pop
-  // tooltips or eat the gesture.
-  const LONG_PRESS_MS = 450;
-  const MOVE_TOLERANCE_PX = 10;
-  let lpTimer = null;
-  let lpStart = null;
-  let lpShown = false;
-  let suppressNextClick = false;
-
-  // Browsers synthesize a `click` after touchend even when we preventDefault
-  // inconsistently across platforms — a capture-phase guard is the reliable
-  // way to eat exactly one post-inspection tap.
-  document.addEventListener('click', function(e){
-    if (suppressNextClick) {
-      suppressNextClick = false;
-      e.stopPropagation();
-      e.preventDefault();
-    }
-  }, true);
-
-  // Centered above the pressed button, clamped to the viewport; falls back
-  // to below it for buttons already at the top edge (top bar).
-  function showTipAboveRect(html, rect){
-    TIP.innerHTML = html;
-    TIP.classList.add('visible');
-    const tw = TIP.offsetWidth || 220;
-    const th = TIP.offsetHeight || 80;
-    let left = rect.left + rect.width / 2 - tw / 2;
-    left = Math.max(4, Math.min(left, window.innerWidth - tw - 4));
-    let top = rect.top - th - 10;
-    if (top < 4) top = rect.bottom + 10;
-    TIP.style.left = left + 'px';
-    TIP.style.top = top + 'px';
-  }
-
-  function longPressTargetFrom(e, container){
-    let el = e.target;
-    while (el && el !== container.parentElement) {
-      if (el.classList && el.classList.contains('act-btn')) return { el, kind: 'act' };
-      if (el.dataset && el.dataset.tipLabel) return { el, kind: 'simple' };
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function cancelLongPress(){
-    clearTimeout(lpTimer);
-    lpTimer = null;
-    lpStart = null;
-    if (lpShown) { hideTip(); lpShown = false; }
-  }
-
-  function attachLongPress(container){
-    if (!container) return;
-    container.addEventListener('touchstart', function(e){
-      cancelLongPress();
-      const hit = longPressTargetFrom(e, this);
-      if (!hit) return;
-      const t = e.touches[0];
-      lpStart = { x: t.clientX, y: t.clientY };
-      lpTimer = setTimeout(() => {
-        const d = hit.kind === 'act'
-          ? descriptorForActBtn(hit.el)
-          : { name: hit.el.dataset.tipLabel, desc: hit.el.dataset.tipDesc || null };
-        if (!d) return;
-        lpShown = true;
-        showTipAboveRect(buildTipHTML(d), hit.el.getBoundingClientRect());
-      }, LONG_PRESS_MS);
-    }, { passive: true });
-
-    container.addEventListener('touchmove', function(e){
-      if (!lpStart) return;
-      const t = e.touches[0];
-      if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > MOVE_TOLERANCE_PX) {
-        cancelLongPress(); // finger slid away — treat as a scroll/abort, not a tap
-      }
-    }, { passive: true });
-
-    const onEnd = function(e){
-      clearTimeout(lpTimer);
-      lpTimer = null;
-      lpStart = null;
-      if (lpShown) {
-        hideTip();
-        lpShown = false;
-        suppressNextClick = true; // the release after an inspection is not a command
-        // Safety: if no click gets synthesized at all, don't let the flag
-        // eat some unrelated tap seconds later.
-        setTimeout(() => { suppressNextClick = false; }, 500);
-        if (e.cancelable) e.preventDefault(); // also blocks click synthesis at the source where supported
-      }
-    };
-    container.addEventListener('touchend', onEnd, { passive: false });
-    container.addEventListener('touchcancel', onEnd, { passive: false });
-
-    // Long-press fires the browser context menu / selection callout on many
-    // platforms — that would fight the tooltip.
-    container.addEventListener('contextmenu', function(e){ e.preventDefault(); });
-  }
-
-  attachLongPress(document.getElementById('bottom'));
-  attachLongPress(document.getElementById('pop-wrap'));
-  attachLongPress(document.getElementById('menu-btn'));
-  attachLongPress(document.getElementById('fs-btn'));
-  attachLongPress(document.getElementById('chat-btn'));
-
-  // One-time discoverability hint, first time a touch player presses any
-  // action button. localStorage-persisted like the audio/settings prefs.
-  document.getElementById('bottom').addEventListener('touchstart', function(e){
-    try {
-      if (localStorage.getItem('aoeHoldHintShown')) return;
-      if (!longPressTargetFrom(e, this)) return;
-      localStorage.setItem('aoeHoldHintShown', '1');
-      if (typeof showMsg === 'function') showMsg('Tip: press and hold any button to see details');
-    } catch (err) {}
-  }, { passive: true });
 
 })();

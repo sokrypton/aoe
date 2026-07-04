@@ -1674,3 +1674,9 @@ canvas {
   color: #5c3b1e;
   margin-top: 2px;
 }
+
+#mp-disconnect-save {
+  margin-top: 14px;
+  min-height: 40px;
+  padding: 0 18px;
+}

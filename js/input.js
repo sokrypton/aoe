@@ -1310,6 +1310,33 @@ function doCommand(sx,sy){
   // authoritative simulation mutation the guest must never perform on its
   // own soon-to-be-overwritten copy.
   if (isGuestSender) {
+    // Movement PREDICTION for plain walk orders: start this client's own
+    // units moving immediately instead of waiting a command round-trip
+    // plus the next sync (~150-250ms on a real link — the visible
+    // "everyone hesitates" lag when dragging a big army around). The
+    // guest has the same map and pathfinder as the host, so it computes
+    // the same formation walk locally — MOVEMENT FIELDS ONLY (path via
+    // pathUnitTo; never task/target/gather state, which stay
+    // host-authoritative). The host's authoritative paths arrive 1-2
+    // syncs later and simply replace these guesses; the delta merge's
+    // position blend (js/net-sync.js) smooths the tiny disagreement.
+    // Deliberately NOT predicted: attack/follow/build/repair commands and
+    // villager clicks onto gatherable terrain — those set task state and
+    // approach points the host computes differently (perimeter spots,
+    // claimed gather tiles), so a guess would visibly zigzag.
+    if (!target && !buildTarget && !followTarget && movers.length > 0) {
+      let t0 = map[tile.y] && map[tile.y][tile.x];
+      let GATHERABLE = new Set([TERRAIN.FOREST, TERRAIN.GOLD, TERRAIN.STONE, TERRAIN.BERRIES, TERRAIN.FARM]);
+      let offs = getFormation(movers.length);
+      let oIdx = 0;
+      movers.forEach(s => {
+        if (s.garrisonedIn || s.utype === 'sheep') return;
+        if (s.utype === 'villager' && t0 && GATHERABLE.has(t0.t)) return; // gather order, not a walk
+        let ox = offs[oIdx] ? offs[oIdx][0] : 0, oy = offs[oIdx] ? offs[oIdx][1] : 0;
+        oIdx++;
+        pathUnitTo(s, tile.x + ox, tile.y + oy);
+      });
+    }
     sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
     return;
   }

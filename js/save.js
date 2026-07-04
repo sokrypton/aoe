@@ -79,6 +79,16 @@ function serializeGame(){
   };
 }
 
+// A world snapshot safe to JSON.stringify: same as serializeGame() but with
+// every live Set anywhere in it replaced by null (see saveGameToFile's
+// comment below for why that's a correctness no-op). Used both by the save
+// file below and by the guest→host state handback over the network
+// (js/net-sync.js's 'request-state' handler) — the wire path stringifies
+// too (compressMessage, js/net.js), so it needs the exact same treatment.
+function serializeGameForWire(){
+  return JSON.parse(JSON.stringify(serializeGame(), (k, v) => v instanceof Set ? null : v));
+}
+
 function saveGameToFile(){
   try {
     let data = serializeGame();

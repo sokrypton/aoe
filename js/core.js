@@ -418,6 +418,10 @@ let hostKnownGuestCam = null;
 //   hostPeerId          — the host's peer id this client knows
 //   bottomHeightSet     — has the guest's bottom-bar height been computed
 //   guestInitialMenuHidden — has the guest's pre-match panel been dismissed
+//   awaitingStateFromGuest — this is a rehosted page (?host= resume link)
+//                          waiting to recover the world from the guest's
+//                          live mirror (see enterHostResumeMode, js/init.js)
+//   stateRequestTimer   — the 5s re-request interval for the above
 window.__mpSession = {
   cameraCentered: false,
   hostJustLoadedSave: false,
@@ -425,6 +429,8 @@ window.__mpSession = {
   hostPeerId: null,
   bottomHeightSet: false,
   guestInitialMenuHidden: false,
+  awaitingStateFromGuest: false,
+  stateRequestTimer: null,
 };
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {

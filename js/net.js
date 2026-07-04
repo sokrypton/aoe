@@ -216,7 +216,14 @@ function wireConnection(conn){
 // right after the old session dies (server-side cleanup lag, or someone
 // else's tab happening to hold it) — falls back to a fresh random id
 // rather than failing hosting outright if so.
-function hostSession(desiredId){
+// `strict`: reject on 'unavailable-id' instead of falling back to a random
+// id. The ?host= resume flow (js/init.js's enterHostResumeMode) NEEDS the
+// exact id back — the guest's reconnect loop is retrying that id and only
+// that id, so a silent random fallback would strand it forever; the caller
+// retries after a delay instead (the signaling server takes a few seconds
+// to release a dead session's id). The save-file re-host flow keeps the
+// non-strict fallback: a brand-new guest just uses whatever link is shown.
+function hostSession(desiredId, strict){
   return new Promise((resolve, reject) => {
     if (typeof Peer === 'undefined') { reject(new Error('PeerJS library not loaded')); return; }
     netRole = 'host';
@@ -255,6 +262,13 @@ function hostSession(desiredId){
     peer.on('error', (err) => {
       if (settled) return;
       if (desiredId && err.type === 'unavailable-id') {
+        if (strict) {
+          // Destroy the half-made peer so its error/retry state can't
+          // linger, then let the caller decide (retry after a delay).
+          try { peer.destroy(); } catch (e) {}
+          reject(err);
+          return;
+        }
         // The exact id we wanted isn't free yet — fall back to a fresh
         // random one instead of failing hosting outright. Only the
         // ORIGINAL guest's reconnect benefits from the exact id match; a

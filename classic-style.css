@@ -2012,3 +2012,9 @@ canvas {
 #game-over-title.game-over-victory { color: #ffd700; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
 #game-over-title.game-over-defeat  { color: #ff6d6d; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
 #game-over-sub { color: #d8cba0; }
+
+#mp-disconnect-save {
+  margin-top: 14px;
+  min-height: 40px;
+  padding: 0 18px;
+}

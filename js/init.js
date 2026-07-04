@@ -281,6 +281,12 @@ function showMpOverlay(title, text, spinner){
   if (titleEl) titleEl.textContent = title;
   if (textEl) textEl.textContent = text;
   if (spinnerEl) spinnerEl.style.display = spinner ? '' : 'none';
+  // Safety hatch on a genuine DISCONNECT (the spinner case — not the
+  // opponent-paused overlay): either side can bank the match to a file
+  // right there while waiting, in case the reconnect never comes. A guest
+  // save is just as valid as a host one (see js/save.js).
+  let saveBtn = document.getElementById('mp-disconnect-save');
+  if (saveBtn) saveBtn.style.display = (spinner && gameStarted && entities.length > 0) ? '' : 'none';
   el.style.display = 'flex';
 }
 function hideMpOverlay(){
@@ -421,6 +427,12 @@ function onHostClicked(){
       if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
       return;
     }
+    // Rewrite the HOST's own URL to a resume link (?host=<id>, no reload):
+    // if this page ever dies mid-match, reopening it from browser history/
+    // tab-restore re-enters the match via enterHostResumeMode below —
+    // reclaim the same peer id, let the guest's retry loop reconnect, and
+    // recover the world from the guest's live mirror.
+    try { history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(peerId)); } catch (e) {}
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
     // Deliberately do NOT start the match yet — restartGame() calls
     // startGame(), which hides this very menu (and the link/status panel
@@ -454,6 +466,13 @@ function leaveMpSession(){
   mpHostingFromExistingGame = false;
   disconnectedPause = false;
   window.__mpSession.loadedHostPeerId = null;
+  window.__mpSession.awaitingStateFromGuest = false;
+  // The ?host= resume URL points at a session that no longer exists —
+  // leaving it in place would make a later reload silently re-enter the
+  // (dead) resume flow instead of the normal menu.
+  try {
+    if (new URLSearchParams(location.search).has('host')) history.replaceState(null, '', location.pathname);
+  } catch (e) {}
   recomputeGamePaused();
 }
 
@@ -489,6 +508,27 @@ window.onNetConnectionOpen = function(){
     // map to apply deltas onto — never assume a (re)connecting guest
     // already has current state. See js/net-sync.js.
     guestNeedsFullSync = true;
+    // ?host= resume: this rehosted page has NO world of its own — the only
+    // current copy is the guest's live mirror. Ask for it instead of
+    // wiping the match with a fresh restartGame(); the 'state-snapshot'
+    // reply (js/net-sync.js) applies it and finishes match setup. Repeat
+    // the request every 5s until one lands (same belt-and-suspenders idea
+    // as requestFullSync) — the interval self-clears once the flag drops.
+    if (window.__mpSession.awaitingStateFromGuest) {
+      showMpStatus('Opponent reconnected! Recovering match…');
+      broadcastToGuest({ type: 'request-state' });
+      if (!window.__mpSession.stateRequestTimer) {
+        window.__mpSession.stateRequestTimer = setInterval(() => {
+          if (!window.__mpSession.awaitingStateFromGuest || !netConnected) {
+            clearInterval(window.__mpSession.stateRequestTimer);
+            window.__mpSession.stateRequestTimer = null;
+            return;
+          }
+          broadcastToGuest({ type: 'request-state' });
+        }, 5000);
+      }
+      return;
+    }
     if (!mpMatchStarted) {
       mpMatchStarted = true;
       // Real per-team fog now (updateFog() in js/core.js computes vision
@@ -663,6 +703,45 @@ function enterGuestJoinMode(hostPeerId){
       .forEach(el => { el.style.display = 'none'; });
   }
   attemptGuestJoin();
+}
+
+// Host entry point for a ?host=<id> resume link (see onHostClicked's
+// history.replaceState): the previous host page died mid-match, and the
+// only live copy of the world is the still-connected guest's mirror.
+// Reclaim the SAME peer id (the guest's attemptReconnect loop is retrying
+// it every 3s and nothing else), then onNetConnectionOpen's
+// awaitingStateFromGuest branch asks the guest for the world.
+//
+// The id usually isn't free immediately — the signaling server takes a few
+// seconds to notice the old session died and release it — so this retries
+// strict hostSession() (js/net.js) rather than accepting its usual
+// random-id fallback, which would reclaim NOTHING (the guest would retry a
+// dead id forever).
+function enterHostResumeMode(peerId){
+  window.__mpSession.awaitingStateFromGuest = true;
+  let menu = document.getElementById('tutorial');
+  if (menu) {
+    menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
+      .forEach(el => { el.style.display = 'none'; });
+  }
+  showMpStatus('Reconnecting to your match…');
+  let attempts = 0;
+  let tryHost = () => {
+    hostSession(peerId, true).then(() => {
+      showMpStatus('Waiting for your opponent to reconnect…');
+    }).catch(err => {
+      attempts++;
+      if (err && err.type === 'unavailable-id' && attempts < 10) {
+        showMpStatus('Reclaiming your session… (attempt ' + attempts + ')');
+        setTimeout(tryHost, 3000);
+      } else {
+        console.error('Host resume failed:', err);
+        window.__mpSession.awaitingStateFromGuest = false;
+        showMpStatus('Could not resume this session — it may have expired. Load a save file and host again, or start fresh.');
+      }
+    });
+  };
+  tryHost();
 }
 
 // The guest's initial connection attempt, re-runnable via the Retry button
@@ -1080,8 +1159,13 @@ function gameLoop(){
 // A guest arriving via a host's ?join= link skips the normal local
 // init() entirely — it's about to receive the host's whole world over
 // the network instead of generating (and briefly showing) its own.
-let joinHostId = (typeof window !== 'undefined' && window.location)
-  ? new URLSearchParams(window.location.search).get('join') : null;
+// ?host=<id> is the HOST's own resume link (written by history.replaceState
+// in onHostClicked) — a rehosting page also has no world of its own; it
+// recovers the match from the connected guest's live mirror.
+let bootParams = (typeof window !== 'undefined' && window.location)
+  ? new URLSearchParams(window.location.search) : new URLSearchParams();
+let joinHostId = bootParams.get('join');
+let resumeHostId = joinHostId ? null : bootParams.get('host');
 
 if (!joinHostId) {
   init();
@@ -1096,4 +1180,6 @@ if (typeof window !== 'undefined' && window.location && window.location.search.i
 
 if (joinHostId) {
   enterGuestJoinMode(joinHostId);
+} else if (resumeHostId) {
+  enterHostResumeMode(resumeHostId);
 }

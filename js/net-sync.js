@@ -663,6 +663,60 @@ onNetMessage((msg) => {
   if (msg.type === 'request-full-sync' && netRole === 'host') {
     guestNeedsFullSync = true;
   }
+  // ---- Host crash recovery (the ?host= resume link, js/init.js) ----
+  // A rehosted page has no world; the guest's live mirror is the only copy
+  // left. The guest hands the whole thing back as a save-grade snapshot
+  // (serializeGameForWire, js/save.js — verified complete: fog asymmetry is
+  // reconstructed from savedByTeam/otherTeamExploredEver, and host-only
+  // sync bookkeeping rebuilds on the next full sync). A guest with no
+  // world yet (a brand-new joiner to a rehosted id) answers null, telling
+  // the host to just start a fresh match instead.
+  if (msg.type === 'request-state' && netRole === 'guest') {
+    let hasWorld = gameStarted && map.length > 0 && entities.length > 0;
+    sendToHost({ type: 'state-snapshot', data: hasWorld ? serializeGameForWire() : null });
+  }
+  if (msg.type === 'state-snapshot' && netRole === 'host' && window.__mpSession.awaitingStateFromGuest) {
+    window.__mpSession.awaitingStateFromGuest = false;
+    if (window.__mpSession.stateRequestTimer) {
+      clearInterval(window.__mpSession.stateRequestTimer);
+      window.__mpSession.stateRequestTimer = null;
+    }
+    mpMatchStarted = true;
+    window.fogDisabled = false;
+    if (msg.data && typeof msg.data === 'object') {
+      // applySavedGame's alreadyConnectedHost branch (js/save.js) resumes
+      // in place: hides the menu, unpauses, forces the confirming full
+      // sync back to the guest.
+      try {
+        applySavedGame(msg.data);
+        // The snapshot was authored by the GUEST, so its save-file-only UI
+        // fields describe the guest's screen: drop the guest's selection
+        // (applySavedGame re-resolved it onto OUR `selected`), point the
+        // camera at our own base instead of wherever the guest was
+        // looking, and cancel the hostJustLoadedSave flag applySavedGame
+        // set — the guest's world/camera never went anywhere, so the
+        // "discontinuous jump, re-center the guest" signal (stateReloaded)
+        // would just yank their view around for no reason.
+        selected = [];
+        window.cameraFollowId = null;
+        let own = entities.find(en => en.team === 0 && en.btype === 'TC') || entities.find(en => en.team === 0);
+        if (own) {
+          let iso = toIso(own.x + (own.w || 1) / 2, own.y + (own.h || 1) / 2);
+          camX = iso.ix; camY = iso.iy;
+        }
+        window.__mpSession.hostJustLoadedSave = false;
+        showMsg('Match recovered! Battle on');
+      } catch (err) {
+        console.error('Failed to apply recovered state:', err);
+        showMpStatus('Could not recover the match state — see console.');
+        return;
+      }
+    } else {
+      // Guest had nothing to hand back — behave like a first connection.
+      restartGame('standard');
+    }
+    restoreMenuForMatch();
+  }
   // Host-side: remember the guest's own reported camera position (see
   // hostKnownGuestCam's comment, js/core.js) so it can be handed back on a
   // future full sync.
