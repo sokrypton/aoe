@@ -202,10 +202,34 @@ function closeOptionsPanel(){
 }
 
 function onStartClicked(){
-  // "Play Again" from a finished multiplayer match starts a fresh LOCAL
-  // game — tear the dead session down first so netRole/myTeam don't leak
-  // multiplayer behavior (guest never simulating, host broadcasting syncs)
-  // into the new single-player match.
+  // "Rematch" — the HOST restarting after a finished MP match whose
+  // connection is still alive: fresh world over the same session, exactly
+  // the way onNetConnectionOpen starts the first match. The guest's own
+  // game-over menu dismisses itself when the rematch's first sync lands
+  // (applyNetSync, js/net-sync.js).
+  if (netRole === 'host' && netConnected && gameOver) {
+    let sizeSel = document.querySelector('input[name="mapsize"]:checked');
+    setMapSize(sizeSel ? sizeSel.value : 'medium');
+    let speedSel = document.querySelector('input[name="gamespeed"]:checked');
+    setGameSpeed(speedSel ? parseFloat(speedSel.value) : 2);
+    applyAudioSettings();
+    applyGameSettings();
+    window.fogDisabled = false;
+    restartGame('standard');
+    // AFTER restartGame (which resets both): the guest needs the complete
+    // fresh world, and the stateReloaded flag makes it re-center its
+    // camera on its new base instead of staring at the old map's spot —
+    // same discontinuous-jump mechanism a host-loaded save uses.
+    guestNeedsFullSync = true;
+    window.__mpSession.hostJustLoadedSave = true;
+    restoreMenuForMatch();
+    showMsg('Rematch! A new battle begins');
+    return;
+  }
+  // "Play Again" from a finished multiplayer match with a DEAD connection
+  // starts a fresh LOCAL game — tear the session remnants down first so
+  // netRole/myTeam don't leak multiplayer behavior (guest never
+  // simulating, host broadcasting syncs) into the single-player match.
   if (netRole && gameOver) leaveMpSession();
   let selected = document.querySelector('input[name="difficulty"]:checked');
   let diff = selected ? selected.value : 'standard';
@@ -699,13 +723,25 @@ function applyMenuMode(mode){
 
   if (mode === 'gameover') {
     // Same layout as prestart (Play Again = a fresh start), minus the MP
-    // host button when a (now finished) MP session is still attached —
-    // Play Again there tears the session down and starts local (see
-    // onStartClicked); offering "Host" next to it would be confusing.
+    // host button when a (now finished) MP session is still attached.
+    // With a LIVE connection the host's button becomes "Rematch" — a fresh
+    // MP match over the same connection (see onStartClicked) — and the
+    // guest gets no button at all: only the host simulates, so only the
+    // host can start one; the guest's menu closes by itself when the
+    // rematch's first sync arrives (applyNetSync, js/net-sync.js).
+    // Disconnected-or-single-player keeps plain local Play Again.
+    let liveMp = !!netRole && netConnected;
     if (difficultyRow) difficultyRow.style.display = '';
-    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = '🔄 Play Again'; }
+    if (startBtn) {
+      startBtn.style.display = (liveMp && netRole === 'guest') ? 'none' : '';
+      startBtn.textContent = (liveMp && netRole === 'host') ? '🔄 Rematch' : '🔄 Play Again';
+    }
+    if (liveMp && netRole === 'guest') {
+      let sub = document.getElementById('game-over-sub');
+      if (sub) sub.textContent = 'Waiting for the host to start a rematch…';
+    }
     if (resumeBtn) resumeBtn.style.display = 'none';
-    if (loadBtn) loadBtn.style.display = '';
+    if (loadBtn) loadBtn.style.display = liveMp ? 'none' : '';
     if (mpRow) mpRow.style.display = netRole ? 'none' : '';
     if (saveBtn) saveBtn.style.display = 'none';
   } else if (mode === 'ingame') {

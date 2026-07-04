@@ -31,6 +31,25 @@ function selectTownCenter() {
   updateUI();
 }
 
+// Delete own units/buildings by id — shared by the Delete/Backspace key
+// below and the "Cancel Build" action button (js/ui.js). The guest is
+// never authoritative — mutating hp/calling handleDeath() directly would
+// only affect its own local (about-to-be-overwritten) copy: the very next
+// sync from the host, which never saw it happen, would restore the
+// "deleted" entity. Relay it as a command instead, same as every other
+// guest action — see js/net-cmd.js.
+function requestDeleteOwned(ownIds){
+  if (!ownIds || !ownIds.length) return;
+  if (netRole === 'guest') {
+    sendCommand({ kind: 'delete-units', unitIds: ownIds });
+  } else {
+    ownIds.forEach(id => {
+      let en = entitiesById.get(id);
+      if (en && en.team === myTeam) deleteOwnedEntity(en);
+    });
+  }
+}
+
 document.addEventListener('keydown',e=>{
   if(gameOver)return;
   if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -98,20 +117,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){placing=null;selected=[];window.settingRally=false;updateUI();}
   if(e.key==='Delete'||e.key==='Backspace'){
     let ownIds = selected.filter(en=>en.team===myTeam).map(en=>en.id);
-    if (ownIds.length) {
-      if (netRole === 'guest') {
-        // The guest is never authoritative — mutating hp/calling
-        // handleDeath() directly here would only affect the guest's own
-        // local (about-to-be-overwritten) copy: the very next regular
-        // sync from the host, which never saw this happen, restores the
-        // "deleted" unit and reverts any gameOver/won it happened to
-        // trigger. Relay it as a command instead, same as every other
-        // guest action (move/build/train/...) — see js/net-cmd.js.
-        sendCommand({ kind: 'delete-units', unitIds: ownIds });
-      } else {
-        selected.forEach(en=>{ if(en.team===myTeam) deleteOwnedEntity(en); });
-      }
-    }
+    requestDeleteOwned(ownIds);
     selected=[];
     updateUI();
   }

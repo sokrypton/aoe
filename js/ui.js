@@ -393,6 +393,30 @@ function updateUI(){
     }
     document.getElementById('sel-details').innerHTML=det;
     if(rebuildActions&&e.team===myTeam){
+      // Cancel Construction — a full-size action button so touch players
+      // can abort a mis-placed foundation (desktop always had the
+      // Delete/Backspace path to deleteOwnedEntity; there is no key on a
+      // phone). Full refund, same rule as the key (js/logic.js's
+      // deleteOwnedEntity). Only for a genuine in-progress foundation —
+      // an exhausted farm mid-reseed is not a cancellable purchase.
+      if(!e.complete && !e.exhausted){
+        let cancelBuildBtn=document.createElement('div');
+        cancelBuildBtn.className='act-btn framed';
+        cancelBuildBtn.dataset.tipType='action';
+        cancelBuildBtn.dataset.tipLabel='Cancel Construction';
+        cancelBuildBtn.dataset.tipDesc='Stop building this and refund its full cost.';
+        cancelBuildBtn.innerHTML=`<div class="btn-emoji">🚫</div><div class="btn-label">Cancel Build</div><span class="cost">full refund</span>`;
+        cancelBuildBtn.onclick=()=>{
+          requestDeleteOwned([e.id]);
+          // The guest's copy vanishes on the next sync (~65ms); give the
+          // instant local feedback the host path gets from
+          // deleteOwnedEntity's own showMsg.
+          if(netRole==='guest'&&typeof showMsg==='function')showMsg(b.name+' cancelled (refunded)');
+          selected=[];
+          updateUI();
+        };
+        act.appendChild(cancelBuildBtn);
+      }
       if(e.complete && b.builds){
         b.builds.forEach(ut=>{
           let u=UNITS[ut];
@@ -990,28 +1014,21 @@ window.reactivateFarm = reactivateFarm;
   // updateUI() rebuilds them. Tooltip content is driven entirely by data
   // attributes (tipType, tipKey, tipLabel, tipDesc) set on each button.
 
-  document.getElementById('bottom').addEventListener('mouseover', function(e) {
-    if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
-
-    // Walk up from the hovered element to find a .act-btn
-    let el = e.target;
-    while (el && el !== this) {
-      if (el.classList && el.classList.contains('act-btn')) break;
-      el = el.parentElement;
-    }
-    if (!el || !el.classList || !el.classList.contains('act-btn')) { hideTip(); return; }
-
+  // Build the tooltip descriptor for an .act-btn from its data attributes —
+  // shared by desktop hover (mouseover below) and mobile press-and-hold
+  // (attachLongPress below). Returns null when the button carries no tip.
+  function descriptorForActBtn(el) {
     const tipType  = el.dataset.tipType;   // 'unit' | 'building' | 'action'
     const tipKey   = el.dataset.tipKey;    // utype or btype key
     const tipLabel = el.dataset.tipLabel;  // plain-text label for 'action' type
     const tipDesc  = el.dataset.tipDesc;   // plain-text description for 'action' type
 
-    if (!tipType) { hideTip(); return; }
+    if (!tipType) return null;
 
     let d = null;
     if (tipType === 'unit') {
       const u = UNITS[tipKey];
-      if (!u) return;
+      if (!u) return null;
       const stats = [`❤️ ${u.hp}`];
       if (u.atk > 0) stats.push(`⚔️ ${u.atk}`);
       if (u.range > 0) stats.push(`🏹 ${u.range}`);
@@ -1020,7 +1037,7 @@ window.reactivateFarm = reactivateFarm;
       d = { name: u.name, desc: u.desc || null, stats, cost: u.cost };
     } else if (tipType === 'building') {
       const b = BLDGS[tipKey];
-      if (!b) return;
+      if (!b) return null;
       const stats = [`❤️ ${b.hp}`];
       if (tipKey === 'TC' || tipKey === 'TOWER') {
         const atk = 5; // both fire 5-damage arrows (AoE2)
@@ -1036,8 +1053,23 @@ window.reactivateFarm = reactivateFarm;
       try { cost = el.dataset.tipCost ? JSON.parse(el.dataset.tipCost) : null; } catch(_) {}
       d = { name: tipLabel || '', desc: tipDesc || null, cost };
     }
+    return d;
+  }
 
+  document.getElementById('bottom').addEventListener('mouseover', function(e) {
+    if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
+
+    // Walk up from the hovered element to find a .act-btn
+    let el = e.target;
+    while (el && el !== this) {
+      if (el.classList && el.classList.contains('act-btn')) break;
+      el = el.parentElement;
+    }
+    if (!el || !el.classList || !el.classList.contains('act-btn')) { hideTip(); return; }
+
+    const d = descriptorForActBtn(el);
     if (d) showTip(buildTipHTML(d), e.clientX, e.clientY);
+    else hideTip();
   });
 
   document.getElementById('bottom').addEventListener('mousemove', function(e) {
@@ -1075,5 +1107,131 @@ window.reactivateFarm = reactivateFarm;
   attachSimpleTips(document.getElementById('pop-wrap'));
   attachSimpleTips(document.getElementById('menu-btn'));
   attachSimpleTips(document.getElementById('fs-btn'));
+  attachSimpleTips(document.getElementById('chat-btn'));
+
+  // ---- Mobile: press-and-hold to inspect ----
+  // Touch has no hover, so the rich tooltips above were simply unreachable
+  // on a phone (the mouseover handlers bail on hasTouch). Standard mobile
+  // idiom instead: hold a button ~450ms → tooltip appears ABOVE it (the
+  // finger occludes everything below); release → tooltip hides and the tap
+  // is SWALLOWED, so inspecting "Militia, 60 food" never accidentally
+  // trains one. A quick tap (released before the threshold) behaves
+  // exactly as before. Moving the finger more than a few px cancels the
+  // hold — a pan/scroll that happens to start on a button must not pop
+  // tooltips or eat the gesture.
+  const LONG_PRESS_MS = 450;
+  const MOVE_TOLERANCE_PX = 10;
+  let lpTimer = null;
+  let lpStart = null;
+  let lpShown = false;
+  let suppressNextClick = false;
+
+  // Browsers synthesize a `click` after touchend even when we preventDefault
+  // inconsistently across platforms — a capture-phase guard is the reliable
+  // way to eat exactly one post-inspection tap.
+  document.addEventListener('click', function(e){
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, true);
+
+  // Centered above the pressed button, clamped to the viewport; falls back
+  // to below it for buttons already at the top edge (top bar).
+  function showTipAboveRect(html, rect){
+    TIP.innerHTML = html;
+    TIP.classList.add('visible');
+    const tw = TIP.offsetWidth || 220;
+    const th = TIP.offsetHeight || 80;
+    let left = rect.left + rect.width / 2 - tw / 2;
+    left = Math.max(4, Math.min(left, window.innerWidth - tw - 4));
+    let top = rect.top - th - 10;
+    if (top < 4) top = rect.bottom + 10;
+    TIP.style.left = left + 'px';
+    TIP.style.top = top + 'px';
+  }
+
+  function longPressTargetFrom(e, container){
+    let el = e.target;
+    while (el && el !== container.parentElement) {
+      if (el.classList && el.classList.contains('act-btn')) return { el, kind: 'act' };
+      if (el.dataset && el.dataset.tipLabel) return { el, kind: 'simple' };
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function cancelLongPress(){
+    clearTimeout(lpTimer);
+    lpTimer = null;
+    lpStart = null;
+    if (lpShown) { hideTip(); lpShown = false; }
+  }
+
+  function attachLongPress(container){
+    if (!container) return;
+    container.addEventListener('touchstart', function(e){
+      cancelLongPress();
+      const hit = longPressTargetFrom(e, this);
+      if (!hit) return;
+      const t = e.touches[0];
+      lpStart = { x: t.clientX, y: t.clientY };
+      lpTimer = setTimeout(() => {
+        const d = hit.kind === 'act'
+          ? descriptorForActBtn(hit.el)
+          : { name: hit.el.dataset.tipLabel, desc: hit.el.dataset.tipDesc || null };
+        if (!d) return;
+        lpShown = true;
+        showTipAboveRect(buildTipHTML(d), hit.el.getBoundingClientRect());
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    container.addEventListener('touchmove', function(e){
+      if (!lpStart) return;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > MOVE_TOLERANCE_PX) {
+        cancelLongPress(); // finger slid away — treat as a scroll/abort, not a tap
+      }
+    }, { passive: true });
+
+    const onEnd = function(e){
+      clearTimeout(lpTimer);
+      lpTimer = null;
+      lpStart = null;
+      if (lpShown) {
+        hideTip();
+        lpShown = false;
+        suppressNextClick = true; // the release after an inspection is not a command
+        // Safety: if no click gets synthesized at all, don't let the flag
+        // eat some unrelated tap seconds later.
+        setTimeout(() => { suppressNextClick = false; }, 500);
+        if (e.cancelable) e.preventDefault(); // also blocks click synthesis at the source where supported
+      }
+    };
+    container.addEventListener('touchend', onEnd, { passive: false });
+    container.addEventListener('touchcancel', onEnd, { passive: false });
+
+    // Long-press fires the browser context menu / selection callout on many
+    // platforms — that would fight the tooltip.
+    container.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  }
+
+  attachLongPress(document.getElementById('bottom'));
+  attachLongPress(document.getElementById('pop-wrap'));
+  attachLongPress(document.getElementById('menu-btn'));
+  attachLongPress(document.getElementById('fs-btn'));
+  attachLongPress(document.getElementById('chat-btn'));
+
+  // One-time discoverability hint, first time a touch player presses any
+  // action button. localStorage-persisted like the audio/settings prefs.
+  document.getElementById('bottom').addEventListener('touchstart', function(e){
+    try {
+      if (localStorage.getItem('aoeHoldHintShown')) return;
+      if (!longPressTargetFrom(e, this)) return;
+      localStorage.setItem('aoeHoldHintShown', '1');
+      if (typeof showMsg === 'function') showMsg('Tip: press and hold any button to see details');
+    } catch (err) {}
+  }, { passive: true });
 
 })();

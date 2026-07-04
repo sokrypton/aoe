@@ -1003,21 +1003,28 @@ function drawUnit(e){
     // Horse head in front of the rider (front-facing scout)
     if(horseHeadFront) horseHeadFront();
 
-    // Screen-space angle from this unit to its combat target, expressed in
-    // the current facing-mirrored local frame (the context is under
-    // X.scale(e.facing,1), so local +x always means "the way I'm facing").
-    // Used to point aimed weapons (bow, spear) along the real attack line
-    // instead of a fixed pose. Clamped so extreme up/down shots don't fold
-    // the weapon through the body.
+    // TRUE screen-space angle from this unit to its combat target. Used to
+    // point aimed weapons (bow, spear) along the real attack line. Callers
+    // must first UNDO the facing mirror (X.scale(e.facing,1) inside the
+    // already-mirrored context cancels it) and then rotate by this — the
+    // old version instead expressed the angle in the mirrored frame and
+    // clamped it to ±1.15 rad, which meant a shot at anything steeply up/
+    // down or slightly across the body rendered up to ~130° off the real
+    // direction (an archer firing at a target up-screen showed its bow
+    // pointing down-forward). Exact rotation needs no fold-through-body
+    // clamp: the body's facing already tracks the target's horizontal
+    // side, so the weapon never has to point backward more than the small
+    // sector-boundary overshoot. When the target entity is gone
+    // mid-swing, fall back to "straight ahead" in screen terms.
     let aimAngle = () => {
       let t = entitiesById.get(e.target);
-      if (!t) return 0;
+      if (!t) return e.facing === -1 ? Math.PI : 0;
       let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
       let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
       let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
       let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
-      let a = Math.atan2(diy, e.facing * dix);
-      return Math.max(-1.15, Math.min(1.15, a));
+      if (dix === 0 && diy === 0) return e.facing === -1 ? Math.PI : 0;
+      return Math.atan2(diy, dix);
     };
 
     // Tools & weapons (animated swinging swings during active tasks)
@@ -1217,9 +1224,11 @@ function drawUnit(e){
       let swinging=e.target&&e.path.length===0;
       X.save(); X.translate(3, -6+humanYOffset);
       if(swinging){
-        // Point the shaft at the target: the spear is drawn along -45°
+        // Point the shaft at the target: un-mirror first (same trick as
+        // the bow above), then rotate. The spear is drawn along -45°
         // locally, so rotating by aim+45° lays it on the attack line; the
         // thrust offset below is along the shaft, so it follows for free.
+        X.scale(e.facing,1);
         X.rotate(aimAngle()+Math.PI/4);
         let ph=((tick*0.07+e.id*0.4)%1+1)%1;
         let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
@@ -1245,7 +1254,11 @@ function drawUnit(e){
       let swinging=e.target&&e.path.length===0;
       let ph=((tick*0.06+e.id*0.4)%1+1)%1;
       X.save(); X.translate(4, -8+humanYOffset);
-      if(swinging) X.rotate(aimAngle()); // bow + nocked arrow point at the target
+      // Un-mirror (the context is under X.scale(e.facing,1); scaling by
+      // e.facing again cancels it — the translate above stays mirrored so
+      // the bow remains in the correct hand), then rotate by the TRUE
+      // screen angle so the bow + nocked arrow point exactly at the target.
+      if(swinging){ X.scale(e.facing,1); X.rotate(aimAngle()); }
       // Thick recurve limbs
       X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round';
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();

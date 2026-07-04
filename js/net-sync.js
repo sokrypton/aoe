@@ -43,6 +43,14 @@ function pickFields(obj, fields){
   return out;
 }
 
+// Entity fields that exist ONLY on the guest (written by render-units.js
+// each frame for facing/turn-hysteresis animation) — the host strips these
+// from the wire (see the strip list in buildSyncPayload), so the guest's
+// delta merge must never treat their absence from an incoming entity as
+// "the host deleted this field".
+const GUEST_LOCAL_ENTITY_FIELDS = new Set(
+  ['dir', 'facing', 'facingNorth', 'pendingDir', 'pendingDirT', 'lastX', 'lastY', 'sortVal']);
+
 // An entity minus its per-tick movement-progress fields — the part the
 // guest CAN'T derive on its own and must always be told about. `path` is
 // deliberately core, not movement: a path change is either a new order
@@ -421,6 +429,21 @@ function applyNetSync(data){
         if (existing) {
           let prevHp = existing.hp;
           let oldX = existing.x, oldY = existing.y;
+          // Object.assign can only ADD/OVERWRITE — a field the host cleared
+          // with `= undefined` (garrisonedIn on town-bell all-clear,
+          // followId, savedTask...) vanishes from the wire entirely
+          // (JSON.stringify drops undefined-valued keys), so the guest's
+          // stale copy survived the merge forever. Symptom: guest's
+          // villagers never came back OUT of garrison — the host had
+          // ejected them, but every guest copy kept `garrisonedIn`, which
+          // hides a unit from rendering. So first drop any local key the
+          // incoming (complete) serialized entity no longer has — except
+          // the guest-local render bookkeeping (render-units.js's facing/
+          // turn-hysteresis state) that the host strips from the wire on
+          // purpose (see buildSyncPayload) and must survive every merge.
+          for (let k in existing) {
+            if (!(k in e) && !GUEST_LOCAL_ENTITY_FIELDS.has(k)) delete existing[k];
+          }
           Object.assign(existing, e);
           // Soften the visual snap between the guest's own extrapolated
           // position (advanceGuestUnits, js/loop.js) and the host's
@@ -499,6 +522,34 @@ function applyNetSync(data){
     aiPopCap = data.aiPopCap || 0;
     aiTick = data.aiTick || 0;
 
+    // Host started a rematch (gameOver flips back to false in the sync
+    // stream): this guest's world just got wholesale-replaced with a fresh
+    // match, but a pile of guest-LOCAL state still describes the old one.
+    // The host cleared its own equivalents in restartGame() — the guest
+    // never runs restartGame, so it must do the same here. Entity/corpse
+    // ids RESTART on a fresh match (nextId resets), so the stale id-keyed
+    // sets would misfire on the new match's unrelated entities. Also
+    // dismiss the guest's auto-opened game-over menu and re-arm it (plus
+    // the game-over fanfare) for the next match's ending.
+    if (gameOver && !data.gameOver) {
+      scoutedByMe.clear();
+      guestReactedCorpses.clear();
+      guestPrevHp.clear();
+      guestBuildingFxTick.clear();
+      treeFellTicks.clear();
+      corpseImpactFxDone.clear();
+      workSwingCycles.clear();
+      window.gameOverMenuShown = false;
+      window.playedGameOverSound = false;
+      if (window.stopGameOverMusic) stopGameOverMusic();
+      if (window.menuMode === 'gameover' && localMenuOpen) {
+        let menu = document.getElementById('tutorial');
+        if (menu) menu.style.display = 'none';
+        localMenuOpen = false;
+        recomputeGamePaused();
+      }
+      if (typeof showMsg === 'function') showMsg('Rematch! A new battle begins');
+    }
     gameOver = !!data.gameOver;
     won = !!data.won;
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
