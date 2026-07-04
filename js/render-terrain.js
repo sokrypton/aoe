@@ -302,16 +302,19 @@ function drawTreeEntity(x,y){
     totalSway = sway + gust;
   }
 
-  // Initialize fell tick for falling tree animation
-  if(t.res <= 60 && t.fellTick === undefined){
-    t.fellTick = tick;
+  // Initialize fell tick for falling tree animation — treeFellTicks
+  // (js/core.js), not a field on the tile itself; see its comment.
+  let fellKey = x + ',' + y;
+  if(t.res <= 60 && !treeFellTicks.has(fellKey)){
+    treeFellTicks.set(fellKey, tick);
   }
 
   // Calculate fall progress and angle — frozen in shroud (static snapshot)
   let fallAngle = 0;
   let isFalling = false;
-  if(f === 2 && t.fellTick !== undefined && t.fellTick > 0){
-    let dt = tick - t.fellTick;
+  let fellTick = treeFellTicks.get(fellKey);
+  if(f === 2 && fellTick !== undefined && fellTick > 0){
+    let dt = tick - fellTick;
     if(dt < 40){
       isFalling = true;
       let progress = dt / 40;

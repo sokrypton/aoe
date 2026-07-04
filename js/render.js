@@ -4,6 +4,14 @@ function render(){
   // matching AoE2 rather than showing a dark-green "explored" tint.
   X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
 
+  // A guest arriving via a multiplayer join link skips the normal local
+  // init()/genMap() entirely (it's about to receive the host's world over
+  // the network instead — see enterGuestJoinMode in init.js), so `map` is
+  // briefly empty while the connection is still being established. Every
+  // tile-drawing loop below indexes map[y][x] assuming a fully populated
+  // MAP x MAP grid, so bail out before that rather than crash.
+  if (map.length === 0) return;
+
   // Viewport culling: calculate visible map tile range
   let p1 = screenToMap(0, 0);
   let p2 = screenToMap(W, 0);
@@ -114,12 +122,13 @@ function render(){
     // Resolve the actual entity and team for gate proxy objects
     let realEntity = (e.type === 'gate_back' || e.type === 'gate_front') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
-    // Mark enemy buildings as seen when in active vision
-    if (f === 2 && eTeam !== 0 && realEntity && realEntity.type === 'building') realEntity._seen = true;
-    if (f === 1 && eTeam !== 0) {
+    // Mark enemy buildings as seen when in active vision — scoutedByMe
+    // (js/core.js), not a flag on the entity itself; see its comment.
+    if (f === 2 && eTeam !== myTeam && realEntity && realEntity.type === 'building') scoutedByMe.add(realEntity.id);
+    if (f === 1 && eTeam !== myTeam) {
       // explored but not visible: hide enemy units, corpses, and buildings never seen before
       if (e.type === 'unit' || e.type === 'corpse') return;
-      if (realEntity && realEntity.type === 'building' && !realEntity._seen) return;
+      if (realEntity && realEntity.type === 'building' && !scoutedByMe.has(realEntity.id)) return;
     }
 
     if(e.type==='building') drawBuilding(e);
@@ -142,7 +151,7 @@ function render(){
   drawGhost();
 
   // Draw selected building's rally point flag & line (AoE2-style)
-  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === 0) {
+  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam) {
     let bldg = selected[0];
     let bData = BLDGS[bldg.btype];
     if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Not Age of Empires II</title>
+<html><head><meta charset="UTF-8"><title>Age of Epochs II</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <link rel="stylesheet" href="styles.css"></head><body>
 <canvas id="game"></canvas>
@@ -23,16 +23,24 @@
 <div id="sel-info">
   <div id="sel-portrait" ondblclick="toggleCameraFollow()" title="Double-click to lock camera on this unit">⚔️</div>
   <div id="sel-stats">
-    <div id="sel-name">Not AoE II</div>
+    <div id="sel-name">Age of Epochs II</div>
     <div id="sel-details">Tap to select, then tap map to command</div>
   </div>
   <div id="sel-grid"></div>
 </div>
 </div>
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
+<div id="net-stats" style="display:none;"></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
+<div id="mp-disconnect-overlay" style="display:none;">
+  <div id="mp-disconnect-box">
+    <div id="mp-disconnect-title">Connection Lost</div>
+    <div id="mp-disconnect-text"></div>
+    <div id="mp-disconnect-spinner"></div>
+  </div>
+</div>
 <div id="help-hint"></div>
 <div id="help-overlay" style="display:none;" onclick="if(event.target===this)toggleHelp()">
   <div id="help-box">
@@ -95,9 +103,10 @@
     </div>
 
     <div class="help-disclaimer">
-      &ldquo;Not Age of Empires II&rdquo; is a free fan-made <b>parody</b>.
-      It is not an official product and is not affiliated with, endorsed by, or connected
-      to Microsoft, Xbox Game Studios, Ensemble Studios, or the Age of Empires franchise.
+      &ldquo;Age of Epochs II&rdquo; is a free, fan-made game inspired by classic
+      real-time strategy titles. It is not an official product and is not affiliated
+      with, endorsed by, or connected to Microsoft, Xbox Game Studios, Ensemble
+      Studios, or the Age of Empires franchise.
     </div>
   </div>
 </div>
@@ -108,7 +117,7 @@
 <div class="menu-shell">
   <div class="menu-hero">
     <div class="title-pane">
-      <img id="title-logo" src="logo.png" alt="Not Age of Empires II (a fan parody)">
+      <img id="title-logo" src="logo.png" alt="Age of Epochs II">
     </div>
   </div>
 
@@ -163,22 +172,47 @@
 
     <div class="menu-divider"></div>
 
-    <div class="menu-button-container">
+    <div class="menu-button-container" id="start-row">
       <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
         Resume
       </button>
       <button type="button" id="start-game-btn" class="menu-action-btn" onclick="handleStartButton()" disabled>
         Loading&hellip;
       </button>
+      <!-- Lives here (next to Resume/Restart), not in #save-load-row, so
+           the mid-game menu is one balanced row (Resume | Save | Help)
+           instead of a wide Resume row with a small, off-center Save
+           button stacked awkwardly underneath it. Hidden by default (no
+           match exists on this pre-game screen) — see
+           restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">💾 Save</button>
       <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
-    <div class="ui-switch-link"><a href="classic.html">Switch to Classic UI</a></div>
-
+    <div class="menu-row-pair">
+      <div class="menu-button-container" id="save-load-row">
+        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+      </div>
+      <div class="menu-button-container" id="mp-row">
+        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
+      </div>
+    </div>
+    <input type="file" id="load-file-input" accept="application/json,.json" style="display:none" onchange="loadGameFromFile(this.files[0]); this.value='';">
+    <!-- Shown once hosting starts (link + waiting-for-opponent status) or
+         while a guest is auto-connecting from a ?join= link. Plain
+         display:none/flex toggling, same pattern as #help-overlay. -->
+    <div id="mp-status-panel" style="display:none;">
+      <div id="mp-status-text"></div>
+      <div id="mp-link-row" style="display:none;">
+        <input type="text" id="mp-link-box" readonly onclick="this.select()">
+        <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
+      </div>
+    </div>
   </div>
 </div>
 </div>
 </div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/core.js"></script>
 <script src="js/map.js"></script>
@@ -195,6 +229,10 @@
 <script src="js/ai.js"></script>
 <script src="js/loop.js"></script>
 <script src="js/ui.js"></script>
+<script src="js/save.js"></script>
+<script src="js/net.js"></script>
+<script src="js/net-sync.js"></script>
+<script src="js/net-cmd.js"></script>
 <script src="js/input.js"></script>
 <script src="js/init.js"></script>
 <script>

@@ -354,8 +354,8 @@ function drawBuilding(e, part = null){
   let visible = f === 2; // actively in sight — show live animations
   let darken = !window._ghostDraw && f === 1;
   if(!e.complete && !window._ghostDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
-  let tc=e.team===0?'#2266bb':'#cc4444';
-  let tcD=e.team===0?'#1a4488':'#993333';
+  let tc=teamColor(e.team);
+  let tcD=teamColorDark(e.team);
   let bh=10;
 
   let strokeColor = '#000000';
@@ -1112,7 +1112,7 @@ function drawBuilding(e, part = null){
   X.globalAlpha=1;
 
   // Progress bars, HP, selection — only when actively visible (not in fog)
-  if (!window._ghostDraw && (f === 2 || e.team === 0)) {
+  if (!window._ghostDraw && (f === 2 || e.team === myTeam)) {
   // Construction Progress Bar
   if(!e.complete){
     let bww=b.w*24;
@@ -1133,7 +1133,7 @@ function drawBuilding(e, part = null){
   // Garrison count — just the number, planted beside this building's own
   // team flag (only TC and TOWER can ever hold a garrison, and both fly
   // their flag at the very top of the structure using this same sx/sy).
-  if(e.team===0&&e.garrison&&e.garrison.length>0){
+  if(e.team===myTeam&&e.garrison&&e.garrison.length>0){
     let flagX=sx, flagY;
     if(e.btype==='TC') flagY=sy-88;
     else if(e.btype==='TOWER') flagY=sy-54;

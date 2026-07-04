@@ -99,15 +99,14 @@ function update(){
   projectiles = remainingProjectiles;
 
   updateFog(); // Update Fog of War visibility grid
+  updateTeamExploredEver(1); // js/core.js — host-only: remembers team 1's (the guest's) explored history
 
   // Remember enemy buildings the moment any of their tiles is actively
   // visible. This must live in the game loop, NOT the render pass: the
   // renderer viewport-culls, so buildings scouted while the camera was
-  // elsewhere never got their _seen flag and stayed invisible on the main
+  // elsewhere never got marked scouted and stayed invisible on the main
   // map even though the minimap (which ignores culling) showed them.
-  entities.forEach(e => {
-    if (e.type === 'building' && !e._seen && e.team !== 0 && buildingFogLevel(e) === 2) e._seen = true;
-  });
+  markScoutedBuildings(); // js/core.js — also called guest-side in js/net-sync.js
 
   rebuildUnitBlock(); // stationary-unit collision grid (see pathfinding.js)
   nudgeAside(); // villagers/sheep STEP OUT of approaching traffic's way
@@ -121,9 +120,166 @@ function update(){
   });
   separateUnits();
   refreshPopulationCounts();
-  updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
-  updateAI();
+  // Team 1 is AI-controlled only in single-player. The moment "Host Game"
+  // is clicked (netRole set), a human guest replaces the AI on team 1 —
+  // gated on netRole itself (not just "no guest connected yet") so the AI
+  // doesn't get to make irreversible decisions (spend resources, queue
+  // units) on team 1 during the waiting-for-opponent window either.
+  if (netRole == null) {
+    updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
+    updateAI();
+  }
   refreshPopulationCounts();
+
+  // Multiplayer: broadcast a world snapshot to a connected guest at
+  // roughly NET_SYNC_TARGET_PER_SEC real syncs/sec, whatever GAME_SPEED is
+  // set to (see js/net-sync.js) — no-op (netRole stays null) in
+  // single-player. Recomputed each tick rather than cached since
+  // GAME_SPEED can change mid-match (the in-game menu allows it).
+  if (netRole === 'host' && netConnected) {
+    let netSyncIntervalTicks = Math.max(1, Math.round(30 * GAME_SPEED / NET_SYNC_TARGET_PER_SEC));
+    if (tick % netSyncIntervalTicks === 0) hostSyncTick();
+  }
+}
+
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame
+// instead of the tick-locked block above — cosmetic position-only flight,
+// no damage resolution (the host already resolved that the instant a shot
+// landed). Keeps arrows flying smoothly between syncs instead of only
+// moving in visible ~6x/sec jumps like everything else the guest doesn't
+// locally simulate.
+//
+// Also owns REMOVAL on arrival now: since js/net-sync.js only ever sends a
+// NEW projectile once (never a wholesale replace on every delta sync — see
+// buildSyncPayload's comment), nothing else ever prunes an arrived one from
+// this list. Uses the exact same distance/speed arrival test as the host's
+// own authoritative removal (js/loop.js's update()), so both sides agree on
+// when a shot has landed even though only the guest is the one dropping its
+// own local copy here.
+function advanceGuestProjectiles(elapsedMs){
+  let speed = 0.25 * (elapsedMs / timeStep); // same 0.25 tiles/tick as the authoritative update above
+  let remaining = [];
+  projectiles.forEach(p => {
+    let dx = p.tx - p.x, dy = p.ty - p.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist <= speed || dist === 0) return; // arrived — drop it, matching the host's own removal
+    p.x += (dx / dist) * speed; p.y += (dy / dist) * speed;
+    remaining.push(p);
+  });
+  projectiles = remaining;
+}
+
+// Guest-only, same pattern as advanceGuestProjectiles above but for unit
+// walking — the far more visually obvious "teleports every sync" case.
+// This is a deliberate near-verbatim DUPLICATE of the position-stepping
+// subset of updateUnit()'s path-following block (js/logic.js, the
+// `if(e.path.length>0){...}` block), not a shared function called by both
+// host and guest — same reasoning as the projectile function: a shared
+// helper would add indirection into the host's authoritative tick for no
+// benefit, and risks a future updateUnit change silently altering
+// guest-only behavior or vice versa. Only ever touches
+// x/y/fromX/fromY/moveT/path — never target/hp/cooldowns/task fields, and
+// deliberately skips the walkable() rechecks the host's version does
+// (worst case: renders up to one extra half-step into a tile the host has
+// since blocked, corrected by the very next sync — purely cosmetic, same
+// risk class as a projectile flying toward an already-dead target).
+function advanceGuestUnits(elapsedMs){
+  entities.forEach(e => {
+    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0||e.path.length===0)return;
+    let speedInPixels = e.speed * 1.19 * (elapsedMs / timeStep);
+    e.moveT += speedInPixels;
+    while(e.path.length>0){
+      let nextTile = e.path[0];
+      let p1=toIso(e.fromX,e.fromY), p2=toIso(nextTile.x,nextTile.y);
+      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
+      if(e.moveT>=screenDist){
+        e.moveT-=screenDist;
+        let next=e.path.shift();
+        e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
+      } else break;
+    }
+    if(e.path.length>0){
+      let next=e.path[0];
+      let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
+      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
+      let t = e.moveT/screenDist;
+      e.x=e.fromX+(next.x-e.fromX)*t;
+      e.y=e.fromY+(next.y-e.fromY)*t;
+    }
+  });
+}
+
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame.
+// update()'s particle-physics block above (position/drag/gravity/ground-
+// bounce/life countdown) is HOST-ONLY — the guest never calls update() at
+// all, it only ever renders. Now that the guest independently spawns its
+// own particles (hit/death/gather/building-fx below), something has to
+// age and move them the same way, at frame cadence rather than per whole
+// tick — same `elapsedMs/timeStep` fractional-step scaling as
+// advanceGuestUnits/Projectiles use for the same reason.
+function advanceGuestParticles(elapsedMs){
+  let steps = elapsedMs / timeStep;
+  particles.forEach(p => {
+    p.x += p.vx * steps;
+    p.y += p.vy * steps;
+    if (p.drag) {
+      let dragStep = Math.pow(p.drag, steps);
+      p.vx *= dragStep;
+      p.vy *= dragStep;
+    }
+    if (p.z !== undefined) {
+      p.z += p.vz * steps;
+      p.vz -= p.gravity * steps;
+      if (p.z <= 0) {
+        p.z = 0;
+        if (p.type === 'blood') {
+          p.vx = 0; p.vy = 0; p.vz = 0;
+        } else if ((p.type === 'dust' || p.type === 'grass') && p.vz < -0.005) {
+          p.vz = -p.vz * 0.45;
+          p.vx *= 0.6;
+          p.vy *= 0.6;
+        } else {
+          p.vz = 0;
+        }
+      }
+    }
+    p.life -= steps;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame,
+// same reasoning as advanceGuestProjectiles/advanceGuestUnits above but for
+// damaged-building smoke/fire (js/loop.js's own update() has the
+// authoritative version of this exact block, host-only). This one isn't
+// smoothing anything already-networked — smoke/fire particles are never
+// sent at all — it's independently re-deriving a periodic visual effect
+// from hp/maxHp, which the guest already has via the normal sync, using
+// its own locally-advancing `tick` (js/init.js's per-frame nudge) as the
+// timing source instead of needing the host to send anything new.
+function advanceGuestBuildingEffects(){
+  // `tick % N === 0` (the host's version) fires exactly once per N whole
+  // ticks because the host's `tick` is a plain integer incremented once
+  // per simulation step. The guest's `tick` instead advances fractionally
+  // every rendered frame (js/init.js's per-frame nudge, purely for smooth
+  // animation) — Math.floor(tick) can sit on the same multiple-of-N value
+  // across many consecutive frames, so a bare modulo check here would fire
+  // repeatedly instead of once. guestBuildingFxTick (per-entity, per-effect
+  // last-fired tick) throttles it back down to "once per interval" instead.
+  let t = Math.floor(tick);
+  entities.forEach(e => {
+    if (e.type !== 'building' || !e.complete) return;
+    let rec = guestBuildingFxTick.get(e.id);
+    if (!rec) { rec = {smoke: -999, fire: -999}; guestBuildingFxTick.set(e.id, rec); }
+    if (e.hp < e.maxHp * 0.7 && t - rec.smoke >= 5) {
+      rec.smoke = t;
+      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
+    }
+    if (e.hp < e.maxHp * 0.3 && t - rec.fire >= 3) {
+      rec.fire = t;
+      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, Math.random() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
+    }
+  });
 }
 
 // AoE2-style "excuse me": a stationary villager/sheep standing on a moving

@@ -671,15 +671,19 @@ canvas {
 .menu-divider {
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, #8b6c43 50%, transparent 100%);
-  margin: 3px 0 5px;
+  margin: 0;
 }
 /* Settings as compact segmented controls grouped into a simple mobile-friendly
-   stack: difficulty/map, speed, then sound/music. */
+   stack: difficulty/map, speed, then sound/music. Symmetric top/bottom margin
+   (paired with .menu-divider's own zero margin above) keeps every gap in the
+   menu — divider-to-grid, grid-to-divider, divider-to-button-row — at the
+   same 8px rhythm as the button rows themselves (.menu-button-container's
+   margin-top), instead of the previous asymmetric 3px/13px mix. */
 .setup-grid {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 3px 0 0;
+  margin: 8px 0;
 }
 .setup-row {
   display: flex;
@@ -715,6 +719,35 @@ canvas {
   margin-bottom: 0;
   letter-spacing: 0.5px;
   text-transform: uppercase;
+}
+/* The base rules above stack every setting as its own full-width row
+   (deliberately, for narrow/mobile screens — see the "mobile-friendly
+   stack" comment on .setup-grid). But the HTML already groups these into
+   row-pairs (Difficulty+Map Size, then Speed+Sound+Music) that were never
+   actually laid out side by side at ANY width — every screen size got the
+   single-column mobile stack, which is why the menu reads as tall and
+   asymmetric on desktop (5 full-width rows, one of which — Music — only
+   has 2 segments instead of 3, so its two halves don't line up with any
+   other row's column edges). This turns each .setup-row into a real
+   side-by-side grid on wider screens, label-above-control per column
+   (rather than label-left/control-right, which doesn't fit in a narrower
+   per-column width) — narrower screens keep the original stacked layout
+   completely untouched. */
+@media (min-width: 700px) {
+  .setup-row {
+    flex-direction: row;
+    gap: 14px;
+  }
+  .setup-col {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .setup-col h3 {
+    flex: 0 0 auto;
+    justify-content: center;
+  }
 }
 .segmented {
   display: flex;
@@ -909,8 +942,25 @@ canvas {
   margin-top: 8px;
   padding: 8px 0 max(10px, env(safe-area-inset-bottom));
 }
+/* Puts #save-load-row and #mp-row on one visual line (Load Game next to
+   Host Multiplayer Game) while keeping them as separate elements — both
+   are independently shown/hidden in several places in js/init.js
+   (restoreMenuForMatch, enterGuestJoinMode, onHostClicked), so merging
+   them into one container would mean updating every one of those. */
+.menu-row-pair {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.menu-row-pair > .menu-button-container {
+  flex: 1 1 0;
+  margin-top: 0;
+}
 #start-game-btn,
-#resume-game-btn {
+#resume-game-btn,
+#save-game-btn,
+#load-game-btn,
+#host-game-btn {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -1244,6 +1294,32 @@ canvas {
   right: 8px;
 }
 
+#net-stats {
+  position: fixed;
+  top: 4.5px;
+  right: 78px;
+  z-index: 30;
+  height: 24px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #5a3f1d;
+  border-radius: 4px;
+  box-shadow: inset 0 0 4px #000;
+  color: #ffd700;
+  font-family: 'Cinzel', serif;
+  font-size: 11px;
+  font-weight: bold;
+  text-shadow: 1px 1px 1px #000;
+  white-space: nowrap;
+  pointer-events: none;
+}
+#net-stats span {
+  color: #e8d9a8;
+}
+
 /* ---- COMPACT TRAINING QUEUE STYLES ---- */
 .train-compact {
   margin-top: 3px;
@@ -1433,4 +1509,84 @@ canvas {
 }
 .ui-switch-link a:hover {
   color: #ffd700;
+}
+
+/* ---- MULTIPLAYER (host/join) ---- */
+#mp-status-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid #8b6c43;
+  border-radius: 6px;
+  text-align: center;
+}
+#mp-status-text {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 12px;
+  color: #5c3b1e;
+  margin-bottom: 6px;
+}
+#mp-link-row {
+  display: flex;
+  gap: 6px;
+}
+#mp-link-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 6px 8px;
+  border: 2px solid #8b6c43;
+  border-radius: 4px;
+  background: #ebd9af;
+  color: #3b220c;
+}
+
+/* Full-screen block while a connection is dropped mid-match — deliberately
+   reuses #tutorial-box's parchment look for visual consistency, but is its
+   own overlay since #tutorial itself is hidden for the entire match. */
+#mp-disconnect-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.75);
+  z-index: 180; /* above in-match UI, below the tooltip layer (200) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+#mp-disconnect-box {
+  background: radial-gradient(circle, #f9f2db 0%, #dec99a 100%);
+  border: 5px double #5c3b1e;
+  border-radius: 6px;
+  padding: 22px 28px;
+  max-width: min(380px, calc(100vw - 32px));
+  color: #3b220c;
+  text-align: center;
+  box-shadow: 0 15px 45px rgba(0,0,0,0.9), inset 0 0 40px rgba(92,59,30,0.25);
+  font-family: 'Inter', sans-serif;
+}
+#mp-disconnect-title {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 20px;
+  color: #5c3b1e;
+  margin-bottom: 10px;
+}
+#mp-disconnect-text {
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+#mp-disconnect-spinner {
+  width: 26px;
+  height: 26px;
+  margin: 0 auto;
+  border: 3px solid #8b6c43;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: mp-disconnect-spin 0.9s linear infinite;
+}
+@keyframes mp-disconnect-spin {
+  to { transform: rotate(360deg); }
 }

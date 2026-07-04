@@ -39,7 +39,24 @@ function setMapSize(sizeKey){
     {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
   ];
 }
-const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
+// Gaia (neutral sheep/bears), not a player team — named so a future 3rd+
+// player team is a color-array entry away, not a hunt for bare "2"s.
+const GAIA_TEAM = 2;
+// Real player teams only; room to add a 3rd without colliding with GAIA_COLOR.
+const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b'];
+const GAIA_COLOR = '#cccc88';
+// Absolute lookup (team 0 always blue, team 1 always red) regardless of viewer.
+function teamColor(team){
+  return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS[team];
+}
+// Darker variant per team, for building art's shaded/shadow side — kept as
+// its own hand-picked pair (not a generic darkenColor() pass) since
+// building art wants a specific darker tone, not a percentage darken.
+const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333'];
+const GAIA_COLOR_DARK = '#999966';
+function teamColorDark(team){
+  return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[team];
+}
 // Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
 // all rates below are authored in real AoE2 game-seconds at 30 ticks each.
 // Mutable: the main menu's Speed option sets it via setGameSpeed() (init.js).
@@ -145,16 +162,138 @@ function setZoomAroundPoint(newZoom, sx, sy){
   window.cameraFollowId = null;
 }
 
-let res={food:200,wood:200,gold:100,stone:200,prepaidFarms:0};
+// Indexed by team (0 = host/single-player, 1 = guest/AI) rather than two
+// separate named globals — see resourceStore() (js/logic.js), the one place
+// that should ever be used to read/write these. Array-indexed so a future
+// 3rd+ team is a new array entry, not a new named global.
+let resources = [
+  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0},
+  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0}
+];
 let popUsed=0, popCap=0;
-let aiRes={food:200,wood:200,gold:100,stone:200,prepaidFarms:0}, aiPop=0, aiPopCap=0, aiTick=0;
+let aiPop=0, aiPopCap=0, aiTick=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
+// `won` is always computed/synced as "did TEAM 0 win" (js/logic.js's
+// handleDeath, js/net-sync.js's applyNetSync just copies the host's own
+// value verbatim) — correct as-is for the host (myTeam is always 0), but
+// wrong for the guest without adjustment: a guest who actually won would
+// have `won === false` (since team 0/the host lost), and the raw value
+// would show them a "DEFEAT" screen for winning. Every UI-facing read of
+// game outcome should go through this instead of the raw `won` variable.
+function didIWin(){
+  return myTeam === 0 ? won : !won;
+}
 let lastSelKey='';
 let gameStarted=false, gamePaused=false, aiDifficulty='standard';
 
+// ---- MULTIPLAYER (see js/net.js) ----
+// myTeam: which team THIS browser tab plays as. Always 0 in single-player
+// and for the host (host keeps its existing team-0 identity); becomes 1 on
+// a guest right after joining, since the guest replaces the AI on team 1.
+// netRole: null (single-player) | 'host' | 'guest'. netConn/netConnected
+// track the PeerJS DataConnection itself.
+let myTeam=0, netRole=null;
+let netConn=null, netConnected=false;
+// dirtyMapCells: tiles the host has changed since its last sync broadcast
+// (see js/net-sync.js). guestNeedsFullSync forces the next payload to carry
+// the whole `map` instead of just deltas — set on every fresh/re- connection
+// (js/init.js's onNetConnectionOpen) so a (re)joining guest always gets a
+// complete base to apply deltas onto, never partial state.
+let dirtyMapCells=[];
+let guestNeedsFullSync=true;
+// Cheap no-op in single-player (netRole stays null) and on the guest itself
+// (which never mutates the authoritative map) — only the host's own writes
+// need tracking for the next broadcast.
+function markMapDirty(x,y){
+  if(netRole==='host') dirtyMapCells.push({x,y});
+}
+
+// Which tile the falling-tree animation started on, and when — LOCAL-ONLY,
+// keyed by "x,y" rather than stored as a `fellTick` field directly on the
+// map tile object (js/render-terrain.js used to do this). Same bug shape
+// as scoutedByMe above: every wood-chop decrements a tile's `res`, which
+// calls markMapDirty() and sends that tile as a dirty-cell delta — on the
+// GUEST, applying that delta means `map[y][x] = cell` (a brand-new object
+// from the wire), wiping out whatever `fellTick` had been set on the OLD
+// object. Since the tree-falling trigger is `if (res<=60 && fellTick===
+// undefined)`, every single subsequent chop below that threshold saw a
+// fresh `undefined` and restarted the fall animation from scratch —
+// reported as "the tree falling sequence keeps repeating over and over".
+let treeFellTicks = new Map();
+
+// Same shape of bug, two more instances found in the same audit:
+// - corpseImpactFxDone: which corpse ids have already played their one-time
+//   ground-impact dust puff (js/render-units.js's drawCorpse). Used to live
+//   as `c.impactFx` directly on the corpse object — corpses get wholesale-
+//   replaced by every sync (`corpses = data.corpses`, js/net-sync.js), so
+//   the guest kept re-triggering the puff on every sync instead of once.
+// - workSwingCycles: per-unit last work-swing cycle that already fired its
+//   impact particle (js/render-units.js) — was `e._swingCyc` directly on
+//   the entity, wiped by sync's wholesale entity replacement.
+let corpseImpactFxDone = new Set();
+let workSwingCycles = new Map();
+
+// Guest-only: reconstructs host-only particle side-effects (hit/death
+// blood, building smoke/fire, gather puffs) by diffing each sync against
+// the last one, instead of the host sending new messages for them.
+// guestPrevHp: entity id -> hp as of last sync (detects damage taken).
+// guestReactedCorpses: corpse ids already given their one-shot death burst.
+let guestPrevHp = new Map();
+let guestReactedCorpses = new Set();
+// Per-building last-fired tick for the guest's damage smoke/fire loop
+// (advanceGuestBuildingEffects, js/loop.js) — a bare tick%N check doesn't
+// work since the guest's tick advances fractionally, not per whole tick.
+let guestBuildingFxTick = new Map();
+
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
+let nextProjectileId = 1;
+
+// Projectiles/corpses/cmdMarkers are "create-once" — deterministic (or
+// purely locally-aged) after creation, so js/net-sync.js's buildSyncPayload
+// sends each kind's full list only on a fresh join/reconnect, and just the
+// new ones since last time otherwise (same idea as mapDelta). One registry
+// instead of three copy-pasted pending-array/push-site/branch trios — a 4th
+// kind is one new entry here. `live()` returns the current full array;
+// `map()` strips to wire fields.
+const SYNC_BUFFERS = {
+  projectiles: {
+    pending: [],
+    live: () => projectiles,
+    map: p => ({
+      id: p.id, x: p.x, y: p.y, startX: p.startX, startY: p.startY,
+      startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
+    })
+  },
+  corpses: { pending: [], live: () => corpses, map: c => c },
+  // BOTH host and guest push into this one (whichever client issues a
+  // command locally — see js/input.js) since a marker is purely local UI
+  // feedback either side can generate, but only the host's own
+  // buildSyncPayload ever actually reads/clears `pending` — a guest pushing
+  // into it is simply inert, since the guest never builds a sync payload.
+  cmdMarkers: { pending: [], live: () => cmdMarkers, map: m => m }
+};
+function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
+
+// Host-only: id -> JSON of the last entity snapshot sent to the guest.
+// Unlike SYNC_BUFFERS, entities aren't create-once (they change constantly)
+// — but at idle nothing changes, and resending the whole array anyway
+// (measured at ~85% of the idle payload) was pure waste. Diffed against
+// this every delta sync so only actually-changed entities get resent.
+let lastSentEntitySnapshot = new Map();
+// ids of enemy buildings THIS client has ever seen at active vision (2) —
+// lives outside the synced entity data so it survives the wholesale
+// entity replace on each sync (host tracks team 0's scouting, guest
+// independently tracks team 1's).
+let scoutedByMe = new Set();
+function markScoutedBuildings(){
+  entities.forEach(e => {
+    if (e.type === 'building' && e.team !== myTeam && !scoutedByMe.has(e.id) && buildingFogLevel(e) === 2) {
+      scoutedByMe.add(e.id);
+    }
+  });
+}
 
 function darkenColor(hex, percent) {
   if (!hex || hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
@@ -177,6 +316,54 @@ function initFog() {
   }
 }
 
+// Shared vision math used both by updateFog() (each client's own live fog,
+// for whichever team is "me" locally) and updateTeamExploredEver() below
+// (persistent memory of the OTHER team's explored history) — factored out
+// so the sight-radius table only lives in one place. Calls cb(x,y) for
+// every currently-visible tile around every entity on `team`.
+function forEachVisibleTile(team, cb){
+  entities.forEach(e => {
+    if (e.team !== team) return;
+
+    let sight = 5;
+    if (e.type === 'building') {
+      if (!e.complete) sight = 1;
+      else if (e.btype === 'TC') sight = 8;
+      else if (e.btype === 'TOWER') sight = 9;
+      else if (e.btype === 'HOUSE') sight = 4;
+      else sight = 5;
+    } else {
+      if (e.utype === 'sheep') sight = 3;
+      else if (e.utype === 'scout') sight = 7;
+      else sight = 5;
+    }
+
+    let cx = Math.round(e.x);
+    let cy = Math.round(e.y);
+    if (e.type === 'building') {
+      let b = BLDGS[e.btype];
+      // Footprint spans [e.x, e.x+w) — center tile is Math.floor, not round
+      // (round pushes odd-sized buildings, incl. the 3x3 TC, one tile off).
+      cx = Math.floor(e.x + (e.w || b.w)/2);
+      cy = Math.floor(e.y + (e.h || b.h)/2);
+    }
+
+    for (let dy = -sight; dy <= sight; dy++) {
+      for (let dx = -sight; dx <= sight; dx++) {
+        // Euclidean (circle) works for every real sight radius (3+), but at
+        // sight=1 (a fresh foundation) it degenerates to a plus-shape,
+        // missing the 4 diagonal corners — use a square there instead.
+        let inRange = sight === 1 ? (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) : (dx*dx + dy*dy <= sight*sight);
+        if (inRange) {
+          let tx = cx + dx;
+          let ty = cy + dy;
+          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);
+        }
+      }
+    }
+  });
+}
+
 function updateFog() {
   if (!gameStarted) return;
   if (window.fogDisabled) {
@@ -191,45 +378,54 @@ function updateFog() {
       if (fog[y][x] === 2) fog[y][x] = 1;
     }
   }
-  
-  // 2. Set visible tiles around player units/buildings (team 0)
-  entities.forEach(e => {
-    if (e.team !== 0) return;
-    
-    let sight = 5;
-    if (e.type === 'building') {
-      if (!e.complete) sight = 1;
-      else if (e.btype === 'TC') sight = 8;
-      else if (e.btype === 'TOWER') sight = 9;
-      else if (e.btype === 'HOUSE') sight = 4;
-      else sight = 5;
-    } else {
-      if (e.utype === 'sheep') sight = 3;
-      else if (e.utype === 'scout') sight = 7;
-      else sight = 5;
-    }
-    
-    let cx = Math.round(e.x);
-    let cy = Math.round(e.y);
-    if (e.type === 'building') {
-      let b = BLDGS[e.btype];
-      cx = Math.round(e.x + (e.w || b.w)/2);
-      cy = Math.round(e.y + (e.h || b.h)/2);
-    }
-    
-    for (let dy = -sight; dy <= sight; dy++) {
-      for (let dx = -sight; dx <= sight; dx++) {
-        if (dx*dx + dy*dy <= sight*sight) {
-          let tx = cx + dx;
-          let ty = cy + dy;
-          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) {
-            fog[ty][tx] = 2; // Active vision
-          }
-        }
-      }
-    }
-  });
+
+  // 2. Set visible tiles around MY OWN units/buildings. Each client only
+  // computes/uses its own team's fog locally — fog is never sent over the
+  // network, so host (team 0) and guest (team 1) never conflict.
+  forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
+
+// Persistent record of every tile the OTHER team has ever seen, computed
+// the same way that team computes its own live fog, but from THIS client's
+// perspective. Unlike `fog`, this survives the other side's tab closing —
+// lets a rejoining guest recover its explored map (host tracks index 1;
+// see buildSyncPayload's `exploredEver`) and lets a guest-originated save
+// restore the host's fog too, since whoever loads a save becomes the new
+// host (js/save.js) regardless of who saved it (guest tracks index 0 for
+// this case). Indexed by team rather than two mirror-image variables —
+// only the host can usefully update index 1 (has the guest's real
+// positions every tick), only the guest can update index 0 (only gets the
+// host's positions via sync).
+let teamExploredEver = {0: new Set(), 1: new Set()};
+function updateTeamExploredEver(team){
+  if (window.fogDisabled) return;
+  if (team === 1 && netRole !== 'host') return;
+  if (team === 0 && netRole !== 'guest') return;
+  forEachVisibleTile(team, (tx, ty) => { teamExploredEver[team].add(ty * MAP + tx); });
+}
+
+// Host-only memory of the guest's last-reported camera position (sent via
+// the 'guest-view' message) — lets a (re)connecting guest restore its pan
+// position instead of recentering, since the host outlives a guest reload.
+let hostKnownGuestCam = null;
+
+// One-shot / session-lifecycle flags for the MP connection, consolidated
+// from scattered ad hoc `window.__flag` properties into one place:
+//   cameraCentered      — has this guest tab centered its camera yet
+//   hostJustLoadedSave  — host just loaded a save mid-match; next full
+//                          sync should force the guest to re-center
+//   loadedHostPeerId    — peer id to request when re-hosting from a save
+//   hostPeerId          — the host's peer id this client knows
+//   bottomHeightSet     — has the guest's bottom-bar height been computed
+//   guestInitialMenuHidden — has the guest's pre-match panel been dismissed
+window.__mpSession = {
+  cameraCentered: false,
+  hostJustLoadedSave: false,
+  loadedHostPeerId: null,
+  hostPeerId: null,
+  bottomHeightSet: false,
+  guestInitialMenuHidden: false,
+};
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   let type = 'dust';
@@ -304,7 +500,8 @@ function spawnProjectile(attacker, target) {
     targetY += Math.sin(ang) * off;
   }
   let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
-  projectiles.push({
+  let proj = {
+    id: nextProjectileId++,
     x: attacker.x,
     y: attacker.y,
     startX: attacker.x,
@@ -318,7 +515,14 @@ function spawnProjectile(attacker, target) {
     // Buildings can't sidestep — a shot at a building always connects.
     targetBuildingId: target.type === 'building' ? target.id : null,
     attacker: attacker
-  });
+  };
+  projectiles.push(proj);
+  // Flight is fully deterministic (fixed start/target/speed — see
+  // js/loop.js's update() and its guest-side twin advanceGuestProjectiles)
+  // — the network sync only ever needs to tell the guest about a NEW
+  // projectile once, not keep resending its position every ~65ms (see
+  // SYNC_BUFFERS above).
+  markPendingSync('projectiles', proj);
   if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
 }
 
