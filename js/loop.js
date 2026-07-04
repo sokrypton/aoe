@@ -157,6 +157,9 @@ function update(){
 // when a shot has landed even though only the guest is the one dropping its
 // own local copy here.
 function advanceGuestProjectiles(elapsedMs){
+  // Same stale-sync freeze as advanceGuestUnits below — don't keep flying
+  // arrows off last-known data when the sync stream has gone quiet.
+  if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 500) return;
   let speed = 0.25 * (elapsedMs / timeStep); // same 0.25 tiles/tick as the authoritative update above
   let remaining = [];
   projectiles.forEach(p => {
@@ -184,6 +187,13 @@ function advanceGuestProjectiles(elapsedMs){
 // since blocked, corrected by the very next sync — purely cosmetic, same
 // risk class as a projectile flying toward an already-dead target).
 function advanceGuestUnits(elapsedMs){
+  // Extrapolation is only trustworthy for a sync interval or two past the
+  // last applied sync (~65ms apart when healthy). If syncs stop arriving
+  // (network hiccup, wedged stream awaiting the resync watchdog in
+  // js/net-sync.js), keep the world frozen at its last known-good state
+  // rather than confidently walking units through walls and into ever-
+  // larger corrections.
+  if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 500) return;
   entities.forEach(e => {
     if(e.type!=='unit'||e.garrisonedIn||e.hp<=0||e.path.length===0)return;
     let speedInPixels = e.speed * 1.19 * (elapsedMs / timeStep);

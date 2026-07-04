@@ -1617,7 +1617,7 @@ function handleDeath(e,killerTeam){
     else if(teamEliminated(0)){gameOver=true;won=false;}
   }
   if (!wasGameOver && gameOver && typeof netRole !== 'undefined' && netRole === 'host' && netConnected) {
-    hostSyncTick();
+    hostSyncTick(true); // force past the backpressure skip — this is the guest's only chance to learn the match ended
   }
 }
 

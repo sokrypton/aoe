@@ -68,6 +68,9 @@ function buildSyncPayload(){
 
   let payload = pickFields(base, COMMON_SYNC_FIELDS);
   payload.full = full;
+  // One boolean per sync so the guest's remoteMenuOpen mirror self-heals if
+  // a one-shot 'host-menu' message is ever lost — see applyNetSync below.
+  payload.hostMenuOpen = localMenuOpen;
 
   // Unlike SYNC_BUFFERS' create-once lists, entities constantly change —
   // but at true idle NOTHING about them changes, and resending the whole
@@ -152,24 +155,81 @@ function buildSyncPayload(){
   return payload;
 }
 
-function hostSyncTick(){
-  broadcastToGuest({ type: 'sync', data: buildSyncPayload() });
+// Every sync carries a sequence number so the guest can detect a hole in
+// the stream (a message the receive pipeline dropped — decompress failure,
+// handler exception) instead of silently applying deltas onto a state
+// they no longer match. Assigned at SEND time, not per attempted tick —
+// a tick skipped by the backpressure check below produces no gap, since
+// its changes simply coalesce into the next payload (dirtyMapCells /
+// SYNC_BUFFERS.pending / lastSentEntitySnapshot all accumulate naturally).
+let netSyncSeq = 0;
+
+// `force` (the gameOver broadcast in js/logic.js's handleDeath) bypasses
+// the backpressure skip — it's the last sync the guest will ever get, and
+// update() never runs again after gameOver to retry it.
+function hostSyncTick(force){
+  // Backpressure: the reliable-ordered DataChannel buffers unboundedly if
+  // we produce faster than the real uplink drains (never visible on
+  // same-machine loopback, the original 1v1 test setup — very visible
+  // across two computers as ever-growing sync latency). Skipping a delta
+  // is free: everything queued just rides the next one. A pending full
+  // sync gets a bigger allowance (it IS the recovery payload) but still
+  // defers rather than piling onto an already-choked channel.
+  if (!force && netSendBuffered() > (guestNeedsFullSync ? 256 * 1024 : 64 * 1024)) return;
+  broadcastToGuest({ type: 'sync', seq: ++netSyncSeq, data: buildSyncPayload() });
 }
+
+// ---- Guest-side resync safety net ----
+// The guest can only bootstrap from a full sync, and the host only sends
+// one unprompted per (re)connection (guestNeedsFullSync, js/init.js's
+// onNetConnectionOpen). If that one message is ever lost or fails to
+// apply, every later delta hits applyNetSync's "nothing safe to do" guard
+// forever while pings keep the connection looking healthy — the exact
+// "guest frozen until refresh, no error anywhere" failure. These three
+// pieces (seq-gap detection in the handler below, apply-failure reporting,
+// and the staleness watchdog) all funnel into one recovery action: ask the
+// host for a fresh full sync.
+let lastAppliedSyncSeq = 0;
+let lastSyncAppliedAt = 0;
+let lastFullSyncRequestAt = 0;
+function requestFullSync(reason){
+  let now = performance.now();
+  // Rate-limited: one in-flight request is enough, and while the host's
+  // reply is traveling every further sync we look at would "fail" too.
+  if (now - lastFullSyncRequestAt < 2000) return;
+  lastFullSyncRequestAt = now;
+  console.warn('Requesting full resync from host:', reason);
+  sendToHost({ type: 'request-full-sync' });
+}
+
+// Watchdog for the silent-wedge case where no sync arrives at all (or none
+// applies) yet the connection itself stays alive. Skipped while paused —
+// the host's update() (and therefore hostSyncTick()) legitimately doesn't
+// run while gamePaused, so "no sync in 5s" is expected then, not a wedge.
+setInterval(() => {
+  if (netRole !== 'guest' || !netConnected || !mpMatchStarted || gameOver || gamePaused) return;
+  if (map.length === 0) requestFullSync('no world state yet');
+  else if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 5000) requestFullSync('no sync applied in 5s');
+}, 1000);
 
 // Guest-side apply: same world-state fields applySavedGame() touches
 // (js/save.js), but selection/camera/UI-mode fields from the payload are
 // intentionally ignored — those describe the HOST's local UI, not
 // anything the guest should inherit every sync tick.
+// Returns true if the payload was actually applied — false means the guest's
+// world state did NOT advance and the caller must treat it as a hole in the
+// sync stream (request a full resync), never silently move on: before this
+// returned a value, a guest that missed its one full sync sat rejecting
+// every delta forever with no visible error.
 function applyNetSync(data){
-  if (!data || typeof data !== 'object') return;
+  if (!data || typeof data !== 'object') return false;
   // A full sync must actually carry a complete entities list and map; a
   // delta sync needs a changedEntities list and somewhere (an existing map)
   // to apply mapDelta onto. Any missing means there's nothing safe to do
-  // with this message — wait for the next one rather than risk a
-  // half-built world.
+  // with this message — report failure rather than risk a half-built world.
   if (data.full
     ? (!Array.isArray(data.entities) || !Array.isArray(data.map))
-    : (!Array.isArray(data.changedEntities) || !Array.isArray(data.mapDelta) || map.length === 0)) return;
+    : (!Array.isArray(data.changedEntities) || !Array.isArray(data.mapDelta) || map.length === 0)) return false;
   try {
     MAP = data.MAP;
     tick = data.tick || 0;
@@ -316,7 +376,25 @@ function applyNetSync(data){
         let existing = entitiesById.get(e.id);
         if (existing) {
           let prevHp = existing.hp;
+          let oldX = existing.x, oldY = existing.y;
           Object.assign(existing, e);
+          // Soften the visual snap between the guest's own extrapolated
+          // position (advanceGuestUnits, js/loop.js) and the host's
+          // authoritative one — under real-network jitter the raw assign
+          // reads as constant stuttering. Small corrections blend halfway
+          // (spreading them over 2-3 syncs); anything bigger than ~1.5
+          // tiles is a genuine discontinuity (teleport/garrison/death
+          // cleanup) and must snap. Mid-path units re-derive x/y from
+          // fromX/moveT next frame anyway, so for them this is a harmless
+          // no-op — the blend mainly serves stationary/arriving units.
+          if (existing.type === 'unit'
+              && typeof oldX === 'number' && typeof existing.x === 'number') {
+            let dx = existing.x - oldX, dy = existing.y - oldY;
+            if (dx * dx + dy * dy < 1.5 * 1.5) {
+              existing.x = oldX + dx * 0.5;
+              existing.y = oldY + dy * 0.5;
+            }
+          }
           if (prevHp !== undefined && existing.hp < prevHp && existing.hp > 0) spawnHitParticle(existing);
         } else {
           entities.push(e);
@@ -431,14 +509,50 @@ function applyNetSync(data){
       let menu = document.getElementById('tutorial');
       if (menu && menu.style.display !== 'none') menu.style.display = 'none';
     }
+
+    // Menu-pause state rides along on every sync as a single boolean so it
+    // self-heals: the one-shot 'host-menu' messages (js/init.js) are the
+    // prompt notification, but if an open:false is ever lost the guest used
+    // to stay stuck gamePaused forever with nothing on screen to explain
+    // why. Any applied sync now reconciles the mirror. (The reverse case —
+    // a lost open:true — can't be healed this way since a paused host stops
+    // syncing entirely, but a guest that missed a pause just keeps
+    // cosmetically extrapolating; harmless by comparison.)
+    if (typeof data.hostMenuOpen === 'boolean' && data.hostMenuOpen !== remoteMenuOpen) {
+      setRemoteMenuOpen(data.hostMenuOpen);
+    }
+    return true;
   } catch (err) {
     console.error('Failed to apply network sync:', err);
+    return false;
   }
 }
 
 onNetMessage((msg) => {
   if (msg.type === 'sync' && netRole === 'guest') {
-    applyNetSync(msg.data);
+    // A delta that isn't exactly the next seq means something between it
+    // and the last applied sync was lost in the receive pipeline (the
+    // transport itself is reliable-ordered, but a decompress/apply failure
+    // drops a message after delivery) — its changes are gone for good, so
+    // applying this one would silently diverge from the host. Don't apply;
+    // recover. A FULL sync is self-contained and always applies (it also
+    // re-anchors the counter). Before the first full sync ever lands,
+    // lastAppliedSyncSeq is 0 and any delta fails this check — which is
+    // exactly right: deltas are useless until a full sync bootstraps us.
+    if (!msg.data || !msg.data.full) {
+      if (msg.seq !== lastAppliedSyncSeq + 1) { requestFullSync('sync seq gap'); return; }
+    }
+    if (applyNetSync(msg.data)) {
+      if (typeof msg.seq === 'number') lastAppliedSyncSeq = msg.seq;
+      lastSyncAppliedAt = performance.now();
+    } else {
+      requestFullSync('sync failed to apply');
+    }
+  }
+  // Guest detected a wedged/holey sync stream — resend the complete world
+  // on the next hostSyncTick, same mechanism a reconnect uses.
+  if (msg.type === 'request-full-sync' && netRole === 'host') {
+    guestNeedsFullSync = true;
   }
   // Host-side: remember the guest's own reported camera position (see
   // hostKnownGuestCam's comment, js/core.js) so it can be handed back on a

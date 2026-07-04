@@ -84,11 +84,40 @@ async function decompressMessage(data){
 let netBytesSent = 0;
 let netBytesReceived = 0;
 
+// How many bytes are sitting in the RTCDataChannel's outgoing buffer,
+// still waiting for the actual network to drain them. On a reliable-
+// ordered channel this grows without bound if we produce faster than the
+// link carries — hostSyncTick (js/net-sync.js) checks this before sending
+// to skip/defer syncs instead of piling on latency. PeerJS exposes the
+// underlying channel as `.dataChannel`. Doesn't count messages still in
+// sendQueue awaiting compression — a few in-flight at most, close enough.
+function netSendBuffered(){
+  return (netConn && netConn.dataChannel) ? netConn.dataChannel.bufferedAmount : 0;
+}
+
+// Dev-only fault injection, settable from the console (nothing in the app
+// sets these). Chrome's network throttling does NOT touch WebRTC, so this
+// is the practical way to reproduce real-link conditions on one machine:
+//   NET_TEST_DELAY_MS = 300      // serial per-message delay (throughput cap)
+//   NET_TEST_DROP_RATE = 0.05    // randomly drop 5% of outgoing messages
+//   NET_TEST_DROP_NEXT_FULL = true // drop the next full sync (host console)
+//                                  // to verify the guest auto-recovers
 let sendQueue = Promise.resolve();
 function queueSend(conn, msg){
   sendQueue = sendQueue
     .then(() => compressMessage(msg))
-    .then(bytes => { netBytesSent += bytes.length; conn.send(bytes); })
+    .then(bytes => window.NET_TEST_DELAY_MS
+      ? new Promise(res => setTimeout(() => res(bytes), window.NET_TEST_DELAY_MS))
+      : bytes)
+    .then(bytes => {
+      if (window.NET_TEST_DROP_RATE && Math.random() < window.NET_TEST_DROP_RATE) return;
+      if (window.NET_TEST_DROP_NEXT_FULL && msg.type === 'sync' && msg.data && msg.data.full) {
+        window.NET_TEST_DROP_NEXT_FULL = false;
+        return;
+      }
+      netBytesSent += bytes.length;
+      conn.send(bytes);
+    })
     .catch(err => console.error('Net send failed (message dropped):', err));
 }
 

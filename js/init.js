@@ -473,11 +473,11 @@ function broadcastMenuState(open){
 // check settings would leave the host free to keep building/training/
 // fighting in real time while the guest sits frozen, unable to respond —
 // exactly the kind of one-sided advantage a 1v1 match shouldn't allow.
-onNetMessage((msg) => {
-  let isRemoteMenuMsg = (msg.type === 'host-menu' && netRole === 'guest')
-    || (msg.type === 'guest-menu' && netRole === 'host');
-  if (!isRemoteMenuMsg) return;
-  remoteMenuOpen = !!msg.open;
+// Shared by the one-shot menu messages below AND the per-sync hostMenuOpen
+// reconciliation (js/net-sync.js's applyNetSync) — the latter is what
+// un-wedges a guest whose 'host-menu' open:false message got lost.
+function setRemoteMenuOpen(open){
+  remoteMenuOpen = !!open;
   if (remoteMenuOpen) {
     showMpOverlay('Game Paused', netRole === 'guest'
       ? 'The host has paused the game.'
@@ -489,6 +489,13 @@ onNetMessage((msg) => {
     hideMpOverlay();
   }
   recomputeGamePaused();
+}
+
+onNetMessage((msg) => {
+  let isRemoteMenuMsg = (msg.type === 'host-menu' && netRole === 'guest')
+    || (msg.type === 'guest-menu' && netRole === 'host');
+  if (!isRemoteMenuMsg) return;
+  setRemoteMenuOpen(msg.open);
 });
 
 // Guest entry point: called once at boot (see the bottom of this file) if
