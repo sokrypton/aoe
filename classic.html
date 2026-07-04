@@ -13,6 +13,7 @@
 </div>
 </div>
 <div id="pop-wrap">
+  <div id="chat-btn" onclick="openChatInput()" style="display:none;" data-tip-label="Chat" data-tip-desc="Send a message to your opponent."><span class="btn-emoji">💬</span></div>
   <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji">🔔</span></div>
   <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap."><span class="btn-emoji">🌍</span></div>
   <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center."><span class="btn-emoji">🏰</span></div>
@@ -36,6 +37,11 @@
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
+<div id="chat-log"></div>
+<div id="chat-input-wrap" style="display:none;">
+  <span id="chat-input-prefix">To opponent:</span>
+  <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false">
+</div>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">
     <div id="mp-disconnect-title">Connection Lost</div>
@@ -232,6 +238,7 @@
 <script src="js/net.js"></script>
 <script src="js/net-sync.js"></script>
 <script src="js/net-cmd.js"></script>
+<script src="js/chat.js"></script>
 <script src="js/input.js"></script>
 <script src="js/init.js"></script>
 <script>

@@ -78,9 +78,9 @@ async function decompressMessage(data){
   return JSON.parse(new TextDecoder().decode(out));
 }
 
-// Running totals for the in-game connection-stats display (js/init.js's
-// updateNetStats) — byte counts are measured post-compression, i.e. actual
-// wire bytes, not the pre-compression JSON size.
+// Running totals of actual wire bytes (measured post-compression, not the
+// pre-compression JSON size). No longer displayed in-game — kept because
+// they're handy from the console when debugging sync traffic.
 let netBytesSent = 0;
 let netBytesReceived = 0;
 

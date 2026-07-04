@@ -34,6 +34,14 @@ function selectTownCenter() {
 document.addEventListener('keydown',e=>{
   if(gameOver)return;
   if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  // Multiplayer chat (js/chat.js) — classic RTS binding. Once the box is
+  // open, its own focused-input listener owns the keyboard (the guard
+  // above skips INPUT targets), so this only ever OPENS it.
+  if (e.key === 'Enter' && typeof openChatInput === 'function' && chatAvailable()) {
+    openChatInput();
+    e.preventDefault();
+    return;
+  }
   keys[e.key]=true;
   let key = e.key.toLowerCase();
   

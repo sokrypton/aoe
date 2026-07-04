@@ -743,32 +743,9 @@ function setGameSpeed(speed){
 }
 let accumulator = 0;
 
-// ---- Multiplayer connection stats (bandwidth) ----
-// Purely a display concern — reads netBytesSent/netBytesReceived (js/net.js).
-// Only shown while an actual netRole connection exists.
-let netStatsLastBytesSent = 0;
-let netStatsLastBytesReceived = 0;
-let netStatsLastSampleAt = 0;
-
-function updateNetStats(now){
-  let el = document.getElementById('net-stats');
-  if (!el) return;
-  if (netRole !== 'host' && netRole !== 'guest') {
-    if (el.style.display !== 'none') el.style.display = 'none';
-    return;
-  }
-  if (el.style.display === 'none') el.style.display = 'flex';
-  if (now - netStatsLastSampleAt < 500) return; // sample twice a second — smooth enough, cheap enough
-  let dt = (now - netStatsLastSampleAt) / 1000;
-  let downKbps = dt > 0 ? ((netBytesReceived - netStatsLastBytesReceived) / 1024) / dt : 0;
-  let upKbps = dt > 0 ? ((netBytesSent - netStatsLastBytesSent) / 1024) / dt : 0;
-  netStatsLastBytesSent = netBytesSent;
-  netStatsLastBytesReceived = netBytesReceived;
-  netStatsLastSampleAt = now;
-  let totalMB = (netBytesSent + netBytesReceived) / (1024 * 1024);
-  el.innerHTML = '<span>&darr;' + downKbps.toFixed(1) + ' &uarr;' + upKbps.toFixed(1) + ' KB/s</span>'
-    + '<span>' + totalMB.toFixed(2) + ' MB</span>';
-}
+// The on-screen bandwidth stats box was removed, but the underlying
+// counters (netBytesSent/netBytesReceived, js/net.js) still accumulate —
+// handy from the console when debugging sync traffic.
 
 // requestAnimationFrame stops entirely in a hidden tab — fine in single-
 // player (the game just pauses with you), but a HOST alt-tabbing away used
@@ -802,8 +779,6 @@ function gameLoop(){
   lastTime = now;
 
   if (elapsed > 250) elapsed = 250; // prevent spiral of death
-
-  updateNetStats(now);
 
   if(gameStarted && !gamePaused) {
     handleScroll(elapsed);

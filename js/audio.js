@@ -97,7 +97,9 @@ let _lastSoundAt = {};
 
 // Sounds that still play in "Alerts Only" mode: the things you must not
 // miss even with effects off (AoE2's minimal-audio style).
-const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_clear']);
+// 'chat' counts as an alert: an opponent's message is communication you
+// asked for by playing multiplayer, not battlefield ambience to mute.
+const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_clear', 'chat']);
 
 function playSound(type, wx, wy) {
   if (window.audioMuted) return;
@@ -242,6 +244,23 @@ function playSound(type, wx, wy) {
             o.start(now + i * 0.04);
             o.stop(now + 0.5);
           });
+        });
+        break;
+      }
+      case 'chat': {
+        // Two quick soft sine blips, rising — unmistakably "message", quiet
+        // enough to never compete with combat audio.
+        [660, 880].forEach((freq, i) => {
+          const o = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          o.type = 'sine';
+          o.frequency.setValueAtTime(freq, now + i * 0.09);
+          g.gain.setValueAtTime(0.0001, now + i * 0.09);
+          g.gain.linearRampToValueAtTime(0.045, now + i * 0.09 + 0.015);
+          g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.12);
+          o.connect(g); g.connect(out);
+          o.start(now + i * 0.09);
+          o.stop(now + i * 0.09 + 0.13);
         });
         break;
       }
