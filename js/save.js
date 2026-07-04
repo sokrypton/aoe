@@ -19,15 +19,16 @@ function serializeGame(){
     wasMultiplayerGame: typeof netRole !== 'undefined' && (netRole === 'host' || netRole === 'guest'),
     // The host's PeerJS peer id active at save time — captured from
     // whichever side is doing the saving, since both know it (the host
-    // has it directly; the guest cached it as window.__mpHostPeerId when
-    // it joined). Letting a later re-host request this SAME id back
-    // (js/net.js's hostSession()) is what lets the original guest's own
-    // already-running reconnect loop succeed silently after the host
-    // reloads its whole page and re-hosts from this save, instead of being
-    // permanently stranded retrying against an id that no longer exists.
+    // has it directly; the guest cached it as __mpSession.hostPeerId when
+    // it joined — see that object's comment, js/core.js). Letting a later
+    // re-host request this SAME id back (js/net.js's hostSession()) is what
+    // lets the original guest's own already-running reconnect loop succeed
+    // silently after the host reloads its whole page and re-hosts from this
+    // save, instead of being permanently stranded retrying against an id
+    // that no longer exists.
     hostPeerId: typeof netRole !== 'undefined' && netRole === 'host' && typeof netPeer !== 'undefined' && netPeer
       ? netPeer.id
-      : (typeof netRole !== 'undefined' && netRole === 'guest' ? (window.__mpHostPeerId || null) : null),
+      : (typeof netRole !== 'undefined' && netRole === 'guest' ? (window.__mpSession.hostPeerId || null) : null),
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
     map, fog, entities, nextId,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
@@ -62,11 +63,11 @@ function serializeGame(){
     // grid for that future host. `savedByTeam` records which team `fog`
     // actually belongs to, and `otherTeamExploredEver` carries the OTHER
     // team's persistent "ever explored" memory (js/core.js's
-    // updateGuestExploredEver()/updateHostExploredEver() — whichever this
+    // teamExploredEver/updateTeamExploredEver — whichever index this
     // session tracks depends on whether it's host or guest) so
     // applySavedGame can reconstruct team 0's fog correctly either way.
     savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
-    otherTeamExploredEver: Array.from(myTeam === 1 ? hostExploredEver : guestExploredEver),
+    otherTeamExploredEver: Array.from(teamExploredEver[myTeam === 1 ? 0 : 1]),
     bellActive: !!window.bellActive,
     aiBellActive: !!window.aiBellActive,
     aiWallPlan: window.aiWallPlan || null,
@@ -166,7 +167,7 @@ function applySavedGame(data){
     // already IS team 0's grid — use it directly, and the saved
     // otherTeamExploredEver is team 1's ("guest") memory. If it came from
     // the guest (savedByTeam 1), data.fog is team 1's grid instead — that
-    // becomes the new guestExploredEver, while the saved
+    // becomes the new teamExploredEver[1], while the saved
     // otherTeamExploredEver (the guest's own locally-tracked team-0 memory)
     // is what rebuilds team 0's fog here.
     if (data.savedByTeam === 1) {
@@ -175,15 +176,15 @@ function applySavedGame(data){
         let tx = key % MAP, ty = Math.floor(key / MAP);
         if (fog[ty]) fog[ty][tx] = 1;
       });
-      guestExploredEver = new Set();
+      teamExploredEver[1] = new Set();
       (data.fog || []).forEach((row, y) => row.forEach((cell, x) => {
-        if (cell > 0) guestExploredEver.add(y * MAP + x);
+        if (cell > 0) teamExploredEver[1].add(y * MAP + x);
       }));
-      hostExploredEver = new Set();
+      teamExploredEver[0] = new Set();
     } else {
       fog = data.fog || [];
-      guestExploredEver = new Set(data.otherTeamExploredEver || []);
-      hostExploredEver = new Set();
+      teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
+      teamExploredEver[0] = new Set();
     }
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
@@ -290,15 +291,15 @@ function applySavedGame(data){
     // buildSyncPayload/applyNetSync) so a (re)connecting guest knows this
     // isn't just an ordinary reconnect — it's a discontinuous state jump —
     // and should re-center its camera on its own units again, even though
-    // its own one-shot __netCameraCentered flag may already have fired
-    // back when it first joined. Set unconditionally on ANY multiplayer
-    // save load, not just when already actively hosting: a save can just
-    // as easily be loaded on a fresh page BEFORE hosting has (re)started
-    // (the normal "reload the whole browser, then load, then re-host"
-    // flow), in which case netRole isn't 'host' yet at this exact moment —
-    // but the flag just sits harmlessly until the first full sync is ever
-    // built, whenever hosting actually begins.
-    if (data.wasMultiplayerGame) window.__hostJustLoadedSave = true;
+    // it may already have centered once (see __mpSession's comment,
+    // js/core.js). Set unconditionally on ANY multiplayer save load, not
+    // just when already actively hosting: a save can just as easily be
+    // loaded on a fresh page BEFORE hosting has (re)started (the normal
+    // "reload the whole browser, then load, then re-host" flow), in which
+    // case netRole isn't 'host' yet at this exact moment — but the flag
+    // just sits harmlessly until the first full sync is ever built,
+    // whenever hosting actually begins.
+    if (data.wasMultiplayerGame) window.__mpSession.hostJustLoadedSave = true;
 
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
@@ -334,7 +335,7 @@ function applySavedGame(data){
       // One-shot: read by onHostClicked() (js/init.js) to request this
       // exact peer id back from PeerJS instead of a random one — see
       // hostPeerId's comment above (js/net.js's hostSession()).
-      window.__loadedHostPeerId = data.hostPeerId || null;
+      window.__mpSession.loadedHostPeerId = data.hostPeerId || null;
       onHostClicked();
     } else {
       let menu = document.getElementById('tutorial');

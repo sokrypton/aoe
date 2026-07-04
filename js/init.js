@@ -306,8 +306,8 @@ function onHostClicked(){
   // Only meaningful right after loading a multiplayer save (js/save.js sets
   // this one-shot flag) — read-then-clear so it never leaks into a later,
   // unrelated "Host" button click that has nothing to do with a load.
-  let desiredPeerId = window.__loadedHostPeerId || null;
-  window.__loadedHostPeerId = null;
+  let desiredPeerId = window.__mpSession.loadedHostPeerId || null;
+  window.__mpSession.loadedHostPeerId = null;
 
   hostSession(desiredPeerId).then(peerId => {
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
@@ -434,7 +434,7 @@ window.onNetConnectionClosed = function(){
 // in hostSession() (js/net.js), same as it did for the original join.
 function attemptReconnect(){
   if (netConnected || gameOver) return;
-  joinSession(window.__mpHostPeerId).catch(() => {
+  joinSession(window.__mpSession.hostPeerId).catch(() => {
     mpReconnectTimer = setTimeout(attemptReconnect, 3000);
   });
 }
@@ -498,7 +498,7 @@ onNetMessage((msg) => {
 // via init()'s local genMap()/STARTS spawn.
 function enterGuestJoinMode(hostPeerId){
   myTeam = 1;
-  window.__mpHostPeerId = hostPeerId; // remembered for attemptReconnect() above
+  window.__mpSession.hostPeerId = hostPeerId; // remembered for attemptReconnect() above
   let menu = document.getElementById('tutorial');
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
   // none of it applies to a guest, who inherits the host's match settings.
@@ -599,12 +599,18 @@ function restartGame(difficulty){
   selected = [];
   tick = 0;
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
-  guestExploredEver.clear(); // fresh map, fresh host-side guest-fog memory — see js/core.js
-  hostExploredEver.clear(); // fresh map, fresh guest-side host-fog memory — see js/core.js
+  teamExploredEver[0].clear(); // fresh map, stale explored-history memory no longer meaningful — see js/core.js
+  teamExploredEver[1].clear();
   hostKnownGuestCam = null; // fresh map, stale camera position no longer meaningful — see js/core.js
-  newProjectilesSinceSync = [];
-  newCorpsesSinceSync = [];
-  newCmdMarkersSinceSync = [];
+  for (let kind in SYNC_BUFFERS) SYNC_BUFFERS[kind].pending = []; // fresh map, stale pending-sync entries no longer meaningful — see js/core.js
+  window.__mpSession.cameraCentered = false;
+  window.__mpSession.hostJustLoadedSave = false;
+  window.__mpSession.bottomHeightSet = false;
+  window.__mpSession.guestInitialMenuHidden = false;
+  // loadedHostPeerId/hostPeerId deliberately NOT reset here — they're
+  // consumed/read across the actual connection lifecycle (onHostClicked,
+  // attemptReconnect), which spans restartGame() calls rather than being
+  // scoped to one "match" the way the above per-match state is.
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();

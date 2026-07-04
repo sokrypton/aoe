@@ -1604,9 +1604,9 @@ function handleDeath(e,killerTeam){
     corpses.push(corpse);
     // A corpse never moves again and fades out purely by wall-clock time,
     // independently on every client (js/render.js's CORPSE_LIFE filter) —
-    // see newCorpsesSinceSync's comment (js/core.js) for why only NEW
-    // corpses need to go over the network at all.
-    newCorpsesSinceSync.push(corpse);
+    // see SYNC_BUFFERS's comment (js/core.js) for why only NEW corpses need
+    // to go over the network at all.
+    markPendingSync('corpses', corpse);
   }
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);

@@ -1202,7 +1202,7 @@ function doCommand(sx,sy){
       }
       let marker = {x:tile.x,y:tile.y,time:tick,color:'#0af'};
       cmdMarkers.push(marker);
-      newCmdMarkersSinceSync.push(marker);
+      markPendingSync('cmdMarkers', marker);
     }
 
     if (isGuestSender) {
@@ -1276,7 +1276,7 @@ function doCommand(sx,sy){
   if (!isReplayingRemoteCommand) {
     let marker = {x:tile.x,y:tile.y,time:tick,color:markerColor};
     cmdMarkers.push(marker);
-    newCmdMarkersSinceSync.push(marker);
+    markPendingSync('cmdMarkers', marker);
   }
 
   // Play response sound on command — not when replaying a guest's command

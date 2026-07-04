@@ -246,25 +246,37 @@ let guestBuildingFxTick = new Map();
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
 let nextProjectileId = 1;
-// Host-only: projectiles/corpses created since the last sync, sent once
-// (js/net-sync.js's buildSyncPayload) instead of resending the whole
-// existing list every ~65ms — both are fully deterministic once created
-// (constant-velocity straight-line flight; static position + wall-clock
-// fade), so the guest only ever needs to learn about a NEW one, never a
-// correction to an existing one. Cleared every sync regardless of
-// full/delta (a full sync already covers everything via the complete
-// current lists).
-let newProjectilesSinceSync = [];
-let newCorpsesSinceSync = [];
-// Same idea, same reason (js/render.js's `cmdMarkers=cmdMarkers.filter(m=>
-// tick-m.time<30)` already ages/removes these independently per-client) —
-// a marker never changes after creation, so it only ever needs to be sent
-// once. Distinct from the two above in one way: BOTH host and guest push
-// into this (whichever one issues a command locally — see input.js), but
-// only the host's own buildSyncPayload ever actually reads/clears it; a
-// guest pushing into it is simply inert since the guest never builds a
-// sync payload itself.
-let newCmdMarkersSinceSync = [];
+
+// Projectiles/corpses/cmdMarkers are all "create-once" — fully deterministic
+// (or purely locally-aged, for markers/corpses) after creation, so none of
+// them ever need a correction resent after the fact. js/net-sync.js's
+// buildSyncPayload sends each kind's COMPLETE current list on a full sync
+// (fresh join/reconnect, nothing local to build on yet) but only the ones
+// created since the last sync on every other sync — same "don't resend the
+// unchanging part" idea as mapDelta. One registry instead of three
+// hand-copied pending-array/push-site/full-vs-delta-branch trios; adding a
+// fourth candidate is one new entry here, not a new branch in net-sync.js.
+// `live()` returns the current full authoritative array (host-only, or
+// whichever client happens to hold it); `map()` strips to wire fields
+// (identity for corpses/cmdMarkers, which have no extra fields to drop).
+const SYNC_BUFFERS = {
+  projectiles: {
+    pending: [],
+    live: () => projectiles,
+    map: p => ({
+      id: p.id, x: p.x, y: p.y, startX: p.startX, startY: p.startY,
+      startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
+    })
+  },
+  corpses: { pending: [], live: () => corpses, map: c => c },
+  // BOTH host and guest push into this one (whichever client issues a
+  // command locally — see js/input.js) since a marker is purely local UI
+  // feedback either side can generate, but only the host's own
+  // buildSyncPayload ever actually reads/clears `pending` — a guest pushing
+  // into it is simply inert, since the guest never builds a sync payload.
+  cmdMarkers: { pending: [], live: () => cmdMarkers, map: m => m }
+};
+function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
 // replaces a naive e._seen flag on the shared entity object, which would
 // get silently clobbered every ~65ms by the entities array being
@@ -306,9 +318,9 @@ function initFog() {
 }
 
 // Shared vision math used both by updateFog() (each client's own live fog,
-// for whichever team is "me" locally) and updateGuestExploredEver() below
-// (host-only persistent memory of team 1's explored history) — factored
-// out so the sight-radius table only lives in one place. Calls cb(x,y) for
+// for whichever team is "me" locally) and updateTeamExploredEver() below
+// (persistent memory of the OTHER team's explored history) — factored out
+// so the sight-radius table only lives in one place. Calls cb(x,y) for
 // every currently-visible tile around every entity on `team`.
 function forEachVisibleTile(team, cb){
   entities.forEach(e => {
@@ -373,34 +385,30 @@ function updateFog() {
   forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
 
-// Host-only: a persistent record of every tile team 1 (the guest) has ever
-// seen, computed the exact same way the guest computes its own live fog —
-// but from the HOST's perspective, using the same authoritative entity
-// positions it already simulates every tick. Unlike the guest's own `fog`
-// array, this never disappears when the guest's tab closes/reloads, which
-// is what lets a rejoining guest recover their previously-explored map
-// (see buildSyncPayload's `exploredEver` field in js/net-sync.js) and lets
-// a saved multiplayer game correctly restore the guest's exploration too
-// (js/save.js) — both impossible if this lived only in the guest's own,
-// disposable browser tab.
-let guestExploredEver = new Set();
-function updateGuestExploredEver(){
-  if (netRole !== 'host' || window.fogDisabled) return;
-  forEachVisibleTile(1, (tx, ty) => { guestExploredEver.add(ty * MAP + tx); });
-}
-
-// Guest-only mirror of the above: the guest already receives the host's
-// own units/buildings in every sync, so it can just as easily compute
-// team 0's persistent explored history locally too — needed so a
-// GUEST-originated save can still correctly restore the HOST's fog when
-// later reloaded, since whoever loads a save always becomes the new host
-// (js/save.js), regardless of which side originally saved it. Without
-// this, a guest-originated save would have nothing to offer for team 0's
-// fog at all, and the new host would start with a blank map.
-let hostExploredEver = new Set();
-function updateHostExploredEver(){
-  if (netRole !== 'guest' || window.fogDisabled) return;
-  forEachVisibleTile(0, (tx, ty) => { hostExploredEver.add(ty * MAP + tx); });
+// A persistent record of every tile the OTHER team has ever seen, computed
+// the exact same way that team's own client would compute its live fog —
+// but from THIS client's perspective, using the same authoritative synced
+// entity positions. Unlike either side's own local `fog` array, this never
+// disappears when the other side's tab closes/reloads, which is what lets
+// a rejoining guest recover their previously-explored map (host tracks
+// team[1]; see buildSyncPayload's `exploredEver` field in js/net-sync.js)
+// and lets a GUEST-originated save still correctly restore the HOST's fog
+// when later reloaded, since whoever loads a save always becomes the new
+// host (js/save.js), regardless of which side originally saved it (guest
+// tracks team[0] for exactly this case — without it, a guest-originated
+// save would have nothing to offer for team 0's fog at all).
+// Indexed by team number rather than two separate mirror-image
+// variables/functions — the host is the only one who can usefully update
+// index 1 (needs the guest's real unit positions, which only the host's
+// authoritative simulation has every tick); the guest is the only one who
+// can usefully update index 0 (needs the host's positions, which only
+// arrive via sync on the guest).
+let teamExploredEver = {0: new Set(), 1: new Set()};
+function updateTeamExploredEver(team){
+  if (window.fogDisabled) return;
+  if (team === 1 && netRole !== 'host') return;
+  if (team === 0 && netRole !== 'guest') return;
+  forEachVisibleTile(team, (tx, ty) => { teamExploredEver[team].add(ty * MAP + tx); });
 }
 
 // Host-only memory of the guest's own last-reported camera position
@@ -412,6 +420,37 @@ function updateHostExploredEver(){
 // the host survives a guest's own page refresh/reload, which is exactly
 // when this matters (the guest's own in-memory camX/camY doesn't).
 let hostKnownGuestCam = null;
+
+// One-shot / session-lifecycle flags for the MP connection, previously
+// scattered as ad hoc `window.__flag` properties (plus one stray top-level
+// `let`) across js/net-sync.js, js/save.js, and js/init.js — consolidated
+// here so the full set of "things that happen once per connection
+// lifecycle" is visible in one place instead of only grep-discoverable.
+// Hung off `window` (not a plain module-level object) to match the existing
+// convention for MP globals shared across these plain <script> files.
+//   cameraCentered      — has this guest tab ever centered its camera yet
+//                          (js/net-sync.js's applyNetSync/reportGuestViewIfChanged)
+//   hostJustLoadedSave  — one-shot: host just loaded a save mid-match, next
+//                          full sync should force the guest to re-center
+//                          (js/save.js's applySavedGame, js/net-sync.js)
+//   loadedHostPeerId    — one-shot: peer id to request when re-hosting from
+//                          a loaded save (js/save.js, js/init.js's onHostClicked)
+//   hostPeerId          — the host's peer id this client knows (host: its
+//                          own; guest: cached from the join link) — read by
+//                          js/init.js's attemptReconnect and js/save.js's
+//                          serializeGame
+//   bottomHeightSet     — one-shot: has the guest's bottom-bar height been
+//                          computed yet (js/net-sync.js)
+//   guestInitialMenuHidden — one-shot: has the guest's pre-match "waiting"
+//                          panel been dismissed yet (js/net-sync.js)
+window.__mpSession = {
+  cameraCentered: false,
+  hostJustLoadedSave: false,
+  loadedHostPeerId: null,
+  hostPeerId: null,
+  bottomHeightSet: false,
+  guestInitialMenuHidden: false,
+};
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   let type = 'dust';
@@ -506,11 +545,9 @@ function spawnProjectile(attacker, target) {
   // Flight is fully deterministic (fixed start/target/speed — see
   // js/loop.js's update() and its guest-side twin advanceGuestProjectiles)
   // — the network sync only ever needs to tell the guest about a NEW
-  // projectile once, not keep resending its position every ~65ms. Tracked
-  // separately from `projectiles` itself so js/net-sync.js's buildSyncPayload
-  // can send just what's new since the last sync and clear this, while the
-  // host's own `projectiles` array keeps evolving normally.
-  newProjectilesSinceSync.push(proj);
+  // projectile once, not keep resending its position every ~65ms (see
+  // SYNC_BUFFERS above).
+  markPendingSync('projectiles', proj);
   if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
 }
 

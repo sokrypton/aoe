@@ -28,9 +28,6 @@
 // future benchmarking without a reload.
 let NET_SYNC_TARGET_PER_SEC = 15;
 
-// See the one-shot guard inside applyNetSync() below.
-let guestInitialMenuHidden = false;
-
 // A naive reuse of serializeGame() sends the ENTIRE map+fog every single
 // sync — for a medium map that's ~280KB of a ~290KB payload, 6x/sec
 // (~1.7MB/s), which is almost certainly what "feels slow." Two fixes:
@@ -48,6 +45,35 @@ let guestInitialMenuHidden = false;
 //      broadcast (dirtyMapCells, appended to by markMapDirty() calls at
 //      the handful of places gameplay code mutates a map cell — see
 //      js/core.js) gets sent.
+// Fields common to every sync payload (full or delta) — sourced from
+// serializeGame()'s save-file shape (js/save.js) via an explicit whitelist
+// instead of spreading everything and deleting the exceptions. Several of
+// these (selectedIds/cameraFollowId/currentVillagerMenu/settingRally/
+// scoutedByMe/savedByTeam/otherTeamExploredEver/aiDifficulty/version/
+// savedAt/wasMultiplayerGame/hostPeerId) describe THIS session's own local
+// UI/save-file bookkeeping and are ignored by the receiving guest (see
+// applyNetSync's file-header comment) rather than pruned here — keeping
+// them is unchanged behavior from before this list existed, not something
+// this whitelist is meant to newly decide. `map`/`fog`/projectiles/corpses/
+// cmdMarkers are deliberately excluded: `fog` is never sent at all (see
+// below), and the rest are added separately per full-vs-delta case (map
+// only on a full sync; projectiles/corpses/cmdMarkers via the SYNC_BUFFERS
+// loop below).
+const COMMON_SYNC_FIELDS = ['version', 'savedAt', 'wasMultiplayerGame',
+  'hostPeerId', 'MAP', 'tick', 'camX', 'camY', 'ZOOM', 'GAME_SPEED', 'nextId',
+  'res', 'aiRes', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
+  'gameStarted', 'gameOver', 'won', 'aiDifficulty', 'selectedIds',
+  'cameraFollowId', 'currentVillagerMenu', 'settingRally', 'fogDisabled',
+  'scoutedByMe', 'savedByTeam', 'otherTeamExploredEver', 'bellActive',
+  'aiBellActive', 'aiWallPlan', 'aiGateBuilt', 'aiGateTile', 'aiIntel',
+  'aiWaveCount', 'aiLastWaveTick'];
+
+function pickFields(obj, fields){
+  let out = {};
+  fields.forEach(f => { out[f] = obj[f]; });
+  return out;
+}
+
 function buildSyncPayload(){
   let base = serializeGame();
   let full = guestNeedsFullSync;
@@ -61,44 +87,39 @@ function buildSyncPayload(){
       : e
   );
 
-  let payload = {...base, entities, full};
-  delete payload.fog;
+  let payload = pickFields(base, COMMON_SYNC_FIELDS);
+  payload.entities = entities;
+  payload.full = full;
 
-  // Projectiles are excluded from serializeGame() (js/save.js) because a
-  // *saved file* would hold a stale entity reference in `attacker` — but
-  // for a live sync, drawProjectiles() (js/render-fx.js) never actually
-  // reads `attacker` at all, only x/y/startX/startY/startH/tx/ty/totalDist
-  // (damage is already resolved on the host the instant a projectile lands
-  // — js/loop.js — so the guest never needs to resolve anything, just draw
-  // it).
-  //
-  // Both projectiles and corpses are fully deterministic once created —
-  // constant-velocity straight-line flight to a fixed point (js/loop.js's
-  // update(), replicated exactly by the guest's own advanceGuestProjectiles),
-  // and a static position that just fades out over CORPSE_LIFE wall-clock
-  // time (js/render.js, already computed independently per-client). Neither
-  // needs a single correction resent after creation — only a FULL sync
-  // (a fresh join/reconnect, with no local history to build on) needs the
-  // complete current lists; every other sync only sends what's NEW since
-  // the last one (newProjectilesSinceSync/newCorpsesSinceSync, js/core.js),
-  // same "don't resend the unchanging part" idea as mapDelta below.
-  let mapProjectile = p => ({
-    id: p.id, x: p.x, y: p.y, startX: p.startX, startY: p.startY,
-    startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
-  });
+  // Projectiles/corpses/cmdMarkers are all "create-once" (see SYNC_BUFFERS's
+  // comment, js/core.js) — fully deterministic or purely locally-aged once
+  // created, so none of them ever need a correction resent after the fact.
+  // A full sync (fresh join/reconnect, nothing local to build on yet) sends
+  // each kind's COMPLETE current list; every other sync only sends what's
+  // new since the last one, same "don't resend the unchanging part" idea as
+  // mapDelta below. One loop over the shared registry instead of three
+  // hand-copied full/delta branches.
+  let capitalize = s => s[0].toUpperCase() + s.slice(1);
+  for (let kind in SYNC_BUFFERS) {
+    let buf = SYNC_BUFFERS[kind];
+    if (full) {
+      payload[kind] = buf.live().map(buf.map);
+    } else {
+      payload['new' + capitalize(kind)] = buf.pending.map(buf.map);
+    }
+    buf.pending = [];
+  }
 
   if (full) {
     guestNeedsFullSync = false;
     dirtyMapCells = []; // the full map already covers everything queued so far
-    payload.projectiles = projectiles.map(mapProjectile);
-    // payload.corpses already carries the full current list via `base`
-    // (serializeGame()) — nothing more to do for the full case.
+    payload.map = base.map;
     // Only worth sending on a full (re)sync — this is how a (re)joining
     // guest recovers previously-explored terrain it can no longer see (see
-    // updateGuestExploredEver()'s comment, js/core.js): host-computed, so
+    // updateTeamExploredEver()'s comment, js/core.js): host-computed, so
     // it survives a guest tab close/reopen that would otherwise wipe the
     // guest's own local `fog` memory entirely.
-    payload.exploredEver = Array.from(guestExploredEver);
+    payload.exploredEver = Array.from(teamExploredEver[1]);
     // The guest's own last-reported camera position (js/core.js's
     // hostKnownGuestCam, kept updated by the 'guest-view' message handler
     // below) — lets a (re)connecting guest restore wherever it had
@@ -109,33 +130,16 @@ function buildSyncPayload(){
     // just loaded a save mid-match (not an ordinary reconnect, which also
     // sets `full` but shouldn't yank the guest's camera around) — tells
     // the guest this is a discontinuous state jump, so it should re-center
-    // its camera even though its own one-shot __netCameraCentered flag
-    // already fired at original join.
-    if (window.__hostJustLoadedSave) {
+    // its camera even though it may already have centered once (see
+    // __mpSession's comment, js/core.js).
+    if (window.__mpSession.hostJustLoadedSave) {
       payload.stateReloaded = true;
-      window.__hostJustLoadedSave = false;
+      window.__mpSession.hostJustLoadedSave = false;
     }
   } else {
-    delete payload.map;
     payload.mapDelta = dirtyMapCells.map(({x,y}) => ({x, y, cell: map[y][x]}));
     dirtyMapCells = [];
-    delete payload.projectiles;
-    delete payload.corpses;
-    payload.newProjectiles = newProjectilesSinceSync.map(mapProjectile);
-    payload.newCorpses = newCorpsesSinceSync;
-    // Same treatment, same reason (see newCmdMarkersSinceSync's comment,
-    // js/core.js) — a marker is create-once/fade-in-place, so only ever
-    // send the new ones; the guest's OWN just-created markers (from its
-    // own local doCommand()/finalizeWallDrag() call, js/input.js) already
-    // live in its own `cmdMarkers` and must never be wholesale-overwritten
-    // by this, or they'd disappear the instant the next sync arrives
-    // instead of fading naturally like a host's own click does.
-    delete payload.cmdMarkers;
-    payload.newCmdMarkers = newCmdMarkersSinceSync;
   }
-  newProjectilesSinceSync = [];
-  newCorpsesSinceSync = [];
-  newCmdMarkersSinceSync = [];
   return payload;
 }
 
@@ -194,7 +198,7 @@ function applyNetSync(data){
     // test checking the guest's fog distribution, not by reading the code.
     if (fog.length !== MAP) initFog();
     // Restore previously-explored terrain (host-computed — see
-    // updateGuestExploredEver()'s comment, js/core.js) before updateFog()
+    // updateTeamExploredEver()'s comment, js/core.js) before updateFog()
     // below layers current live vision on top. Only present on a full
     // sync; a delta sync has nothing new to restore here.
     if (data.full && Array.isArray(data.exploredEver)) {
@@ -237,7 +241,7 @@ function applyNetSync(data){
       (data.newProjectiles || []).forEach(p => { projectiles.push({...p}); });
     }
     // Same full-vs-delta split as corpses/projectiles above (see
-    // newCmdMarkersSinceSync's comment, js/core.js): a full sync replaces
+    // SYNC_BUFFERS's comment, js/core.js): a full sync replaces
     // wholesale (fresh join/reconnect, nothing local to preserve yet); a
     // delta sync only ever APPENDS the host's new markers onto this
     // guest's own already-existing list — critically, never overwrites it,
@@ -330,8 +334,8 @@ function applyNetSync(data){
     // doesn't fight the guest's own manual panning on later syncs — except
     // when data.stateReloaded explicitly asks for it again (a host-loaded
     // save is a discontinuous jump, not something to just quietly ignore).
-    if (data.stateReloaded) window.__netCameraCentered = false;
-    if (!window.__netCameraCentered) {
+    if (data.stateReloaded) window.__mpSession.cameraCentered = false;
+    if (!window.__mpSession.cameraCentered) {
       // data.guestCam is only trustworthy for a genuine fresh join/reconnect
       // (this guest tab just started, so it has no camera history of its
       // own yet) — NOT for data.stateReloaded, where this SAME still-alive
@@ -341,13 +345,13 @@ function applyNetSync(data){
       // own unit instead, same as it always has.
       if (data.guestCam && !data.stateReloaded) {
         camX = data.guestCam.x; camY = data.guestCam.y;
-        window.__netCameraCentered = true;
+        window.__mpSession.cameraCentered = true;
       } else {
         let own = entities.find(e => e.team === myTeam);
         if (own) {
           let iso = toIso(own.x, own.y);
           camX = iso.ix; camY = iso.iy;
-          window.__netCameraCentered = true;
+          window.__mpSession.cameraCentered = true;
         }
       }
     }
@@ -378,13 +382,13 @@ function applyNetSync(data){
     // deliberately NOT touched here — all local UI state, untouched by
     // the network (see file header comment).
 
-    if (window.updateBottomHeight && !window.__netBottomHeightSet) {
+    if (window.updateBottomHeight && !window.__mpSession.bottomHeightSet) {
       updateBottomHeight();
-      window.__netBottomHeightSet = true;
+      window.__mpSession.bottomHeightSet = true;
     }
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
-    updateHostExploredEver(); // js/core.js — guest-side mirror of the host's updateGuestExploredEver()
+    updateTeamExploredEver(0); // js/core.js — guest-side: remembers team 0's (host's) explored history
     markScoutedBuildings(); // js/core.js — host's equivalent runs every tick in js/loop.js's update()
     // Force updateUI() to actually rebuild rather than skip via its
     // dirty-check cache, since this "tick" never ran through the normal
@@ -409,8 +413,8 @@ function applyNetSync(data){
     // visible to un-pause it (reported as "interpolation breaks" — it
     // wasn't broken, gamePaused was just stuck true with nothing on screen
     // to explain why).
-    if (!guestInitialMenuHidden) {
-      guestInitialMenuHidden = true;
+    if (!window.__mpSession.guestInitialMenuHidden) {
+      window.__mpSession.guestInitialMenuHidden = true;
       let menu = document.getElementById('tutorial');
       if (menu && menu.style.display !== 'none') menu.style.display = 'none';
     }
@@ -448,7 +452,7 @@ function reportGuestViewIfChanged(now){
   // THAT would race the very first full sync's restore and stomp the
   // host's correctly-remembered position with garbage before it's ever
   // used, on every fresh join/reconnect.
-  if (!window.__netCameraCentered) return;
+  if (!window.__mpSession.cameraCentered) return;
   if (now - lastGuestViewReportAt < 1500) return;
   lastGuestViewReportAt = now;
   if (lastReportedGuestCam && lastReportedGuestCam.x === camX && lastReportedGuestCam.y === camY) return;
