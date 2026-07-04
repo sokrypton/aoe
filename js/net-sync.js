@@ -110,7 +110,25 @@ function applyNetSync(data){
     if (data.full) {
       map = data.map;
     } else {
-      data.mapDelta.forEach(({x,y,cell}) => { if (map[y]) map[y][x] = cell; });
+      // A resource tile's `res` dropping is the guest-visible signature of
+      // a successful gather cycle (js/logic.js's gatherFromTile spawns a
+      // matching particle there on the host the instant it happens — a
+      // host-only simulation side-effect the guest never otherwise sees).
+      // Detected here, not with any new network message: the delta itself
+      // already tells us exactly which tile changed and by how much.
+      data.mapDelta.forEach(({x,y,cell}) => {
+        if (!map[y]) return;
+        let old = map[y][x];
+        if (old && cell && cell.res < old.res && old.res > 0 &&
+            (old.t === TERRAIN.FOREST || old.t === TERRAIN.GOLD || old.t === TERRAIN.STONE || old.t === TERRAIN.BERRIES || old.t === TERRAIN.FARM)) {
+          let pColor = '#4a8c2a';
+          if (old.t === TERRAIN.FOREST) pColor = '#8b5a2b';
+          else if (old.t === TERRAIN.GOLD) pColor = '#ffd700';
+          else if (old.t === TERRAIN.STONE) pColor = '#888';
+          spawnParticles(x + 0.5, y + 0.5, pColor, 2, 0.02, 1.2);
+        }
+        map[y][x] = cell;
+      });
     }
     // fog is never sent (see the file-header comment above) — pre-allocate
     // it locally once so the unconditional updateFog() call below has
@@ -125,13 +143,30 @@ function applyNetSync(data){
     // test checking the guest's fog distribution, not by reading the code.
     if (fog.length !== MAP) initFog();
     let loadNow = performance.now();
+    // Death blood-burst (js/logic.js's handleDeath spawns it on the host the
+    // instant a unit dies — the guest never otherwise sees it, since
+    // particles aren't networked at all: js/net-sync.js's outgoing payload
+    // just carries the resulting corpse). guestReactedCorpses (js/core.js)
+    // makes this a one-shot per corpse id rather than re-firing on every
+    // sync the way `c.impactFx` used to (see that comment).
+    (data.corpses || []).forEach(c => {
+      if (!guestReactedCorpses.has(c.id)) {
+        guestReactedCorpses.add(c.id);
+        spawnParticles(c.x, c.y, '#990000', c.utype === 'bear' ? 12 : 7, 0.05, 1.8);
+      }
+    });
     corpses = (data.corpses || []).map(c => ({...c, deathTime: loadNow - (c.ageAtSaveMs || 0)}));
     cmdMarkers = data.cmdMarkers || [];
     // Replaced wholesale each sync (see advanceGuestProjectiles() in
     // js/loop.js for the smooth per-frame flight in between syncs) —
     // whatever the host still has in flight, including "gone" = landed.
     projectiles = (data.projectiles || []).map(p => ({...p}));
-    particles = [];
+    // particles are never networked and used to be reset here every sync —
+    // fine when the guest never spawned any of its own, but now it does
+    // (advanceGuestParticles/the hit/death/gather/building-fx hooks below),
+    // so wiping this on every ~65ms sync would cut every particle's
+    // intended ~0.7-2s lifespan down to a few dozen milliseconds. Left
+    // alone here; js/loop.js's advanceGuestParticles owns aging them out.
 
     // render-units.js computes facing (dir/facing/facingNorth) purely from
     // rendering, comparing each entity's position against its OWN lastX/
@@ -164,6 +199,29 @@ function applyNetSync(data){
       if (old) Object.assign(e, old);
       entitiesById.set(e.id, e);
     });
+
+    // Combat hit-particles (js/logic.js's damageEntity spawns them on the
+    // host at the moment of each individual hit — same "host-only
+    // simulation side-effect" gap as the death blood-burst above, but
+    // per-hit instead of per-death, so a one-shot corpse-id Set doesn't
+    // apply here). guestPrevHp (js/core.js) is the previous sync's hp per
+    // entity id; any entity whose hp dropped since then took a hit in the
+    // interim, however many actual hits that represents — this can only
+    // ever detect "at least one," not the true hit count, since only hp is
+    // sampled once per sync rather than every damageEntity() call, but a
+    // single burst per sync reads as continuous combat feedback either way.
+    entities.forEach(e => {
+      let prevHp = guestPrevHp.get(e.id);
+      if (prevHp !== undefined && e.hp < prevHp && e.hp > 0) {
+        if (e.type === 'unit') {
+          spawnParticles(e.x, e.y, '#990000', 4, 0.04, 1.5);
+        } else {
+          spawnParticles(e.x + (e.w||1)/2, e.y + (e.h||1)/2, '#8b6c43', 3, 0.03, 2);
+        }
+      }
+    });
+    guestPrevHp.clear();
+    entities.forEach(e => guestPrevHp.set(e.id, e.hp));
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
     // Re-resolve the GUEST's OWN pre-sync selection by id against the
     // freshly rebuilt entitiesById — not data.selectedIds (that's the

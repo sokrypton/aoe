@@ -94,6 +94,37 @@ function applyRemoteCommand(intent){
     case 'cancel-queue':
       cancelQueue(intent.bldgId, intent.idx);
       break;
+    case 'delete-units':
+      // Resolved by id against the HOST's own entitiesById (never trust
+      // anything from across the network as an object reference), and
+      // only ever units the intent itself already filtered to the
+      // guest's own team (js/input.js) — deleteOwnedEntity() doesn't
+      // re-check ownership itself, same trust boundary as every other
+      // relayed command here.
+      (intent.unitIds || []).forEach(id => {
+        let en = entitiesById.get(id);
+        if (en) deleteOwnedEntity(en);
+      });
+      break;
+    case 'prepay-farm':
+      // prepayFarm()/reactivateFarm() internally use the shared myTeam
+      // indirection (canAfford/spendCost/resourceStore(myTeam)) to know
+      // whose resources to spend — same reason doCommand/doPlace need
+      // withRemoteSelection's myTeam swap. No unit selection involved, so
+      // an empty id list — only the myTeam swap matters here.
+      withRemoteSelection([], () => prepayFarm());
+      break;
+    case 'reactivate-farm':
+      withRemoteSelection([], () => {
+        let farm = entitiesById.get(intent.bldgId);
+        if (farm) reactivateFarm(farm);
+      });
+      break;
+    case 'eject-garrison': {
+      let bldg = entitiesById.get(intent.bldgId);
+      if (bldg) ejectGarrison(bldg, gu => gu.id === intent.unitId);
+      break;
+    }
     case 'town-bell':
       // Guest is always team 1 in this 1v1 design (host stays team 0) — see
       // js/init.js's enterGuestJoinMode. window.aiBellActive is the same

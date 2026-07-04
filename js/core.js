@@ -40,6 +40,17 @@ function setMapSize(sizeKey){
   ];
 }
 const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
+// TEAM_COLORS itself is an absolute team-number lookup (team 0 is always
+// blue) — fine for host/single-player, where myTeam is always 0 anyway,
+// but wrong for a guest: their own team-1 units/buildings would render in
+// "enemy" red and the real enemy's in "friendly" blue. Every team-color
+// read should go through this instead — my own team always reads as
+// color 0 (blue), the opponent always as color 1 (red), neutral (gaia:
+// sheep/bears) unaffected.
+function teamColor(team){
+  if (team === 2) return TEAM_COLORS[2];
+  return team === myTeam ? TEAM_COLORS[0] : TEAM_COLORS[1];
+}
 // Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
 // all rates below are authored in real AoE2 game-seconds at 30 ticks each.
 // Mutable: the main menu's Speed option sets it via setGameSpeed() (init.js).
@@ -150,6 +161,16 @@ let popUsed=0, popCap=0;
 let aiRes={food:200,wood:200,gold:100,stone:200,prepaidFarms:0}, aiPop=0, aiPopCap=0, aiTick=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
+// `won` is always computed/synced as "did TEAM 0 win" (js/logic.js's
+// handleDeath, js/net-sync.js's applyNetSync just copies the host's own
+// value verbatim) — correct as-is for the host (myTeam is always 0), but
+// wrong for the guest without adjustment: a guest who actually won would
+// have `won === false` (since team 0/the host lost), and the raw value
+// would show them a "DEFEAT" screen for winning. Every UI-facing read of
+// game outcome should go through this instead of the raw `won` variable.
+function didIWin(){
+  return myTeam === 0 ? won : !won;
+}
 let lastSelKey='';
 let gameStarted=false, gamePaused=false, aiDifficulty='standard';
 
@@ -174,6 +195,50 @@ let guestNeedsFullSync=true;
 function markMapDirty(x,y){
   if(netRole==='host') dirtyMapCells.push({x,y});
 }
+
+// Which tile the falling-tree animation started on, and when — LOCAL-ONLY,
+// keyed by "x,y" rather than stored as a `fellTick` field directly on the
+// map tile object (js/render-terrain.js used to do this). Same bug shape
+// as scoutedByMe above: every wood-chop decrements a tile's `res`, which
+// calls markMapDirty() and sends that tile as a dirty-cell delta — on the
+// GUEST, applying that delta means `map[y][x] = cell` (a brand-new object
+// from the wire), wiping out whatever `fellTick` had been set on the OLD
+// object. Since the tree-falling trigger is `if (res<=60 && fellTick===
+// undefined)`, every single subsequent chop below that threshold saw a
+// fresh `undefined` and restarted the fall animation from scratch —
+// reported as "the tree falling sequence keeps repeating over and over".
+let treeFellTicks = new Map();
+
+// Same shape of bug, two more instances found in the same audit:
+// - corpseImpactFxDone: which corpse ids have already played their one-time
+//   ground-impact dust puff (js/render-units.js's drawCorpse). Used to live
+//   as `c.impactFx` directly on the corpse object — corpses get wholesale-
+//   replaced by every sync (`corpses = data.corpses`, js/net-sync.js), so
+//   the guest kept re-triggering the puff on every sync instead of once.
+// - workSwingCycles: per-unit id, the last work-swing cycle number that
+//   already fired its one impact particle (wood chips/mining sparks,
+//   js/render-units.js). Used to live as `e._swingCyc` directly on the
+//   entity object — same wholesale-replacement problem via `entities =
+//   data.entities`.
+let corpseImpactFxDone = new Set();
+let workSwingCycles = new Map();
+
+// Guest-only: independently reconstructing particle effects that are
+// currently host-only simulation side-effects (blood/debris on taking
+// damage, blood burst on death, smoke/fire on damaged buildings, resource-
+// gather puffs) by comparing each new sync against the previous one — the
+// same idea as scoutedByMe/updateFog computing real per-team state from
+// already-synced data instead of needing the host to send anything new.
+// guestPrevHp: entity id -> hp as of the last sync (detects "this entity
+// just took damage"). guestReactedCorpses: corpse ids already given their
+// one-time death blood-burst.
+let guestPrevHp = new Map();
+let guestReactedCorpses = new Set();
+// Per-building-id last-fired tick for the guest's independently-derived
+// damage smoke/fire loop (advanceGuestBuildingEffects, js/loop.js) — see
+// that function's comment for why a bare tick-modulo check doesn't work
+// on the guest's fractional, per-frame-advancing `tick`.
+let guestBuildingFxTick = new Map();
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];

@@ -508,7 +508,7 @@ function detectMusicMood() {
     const NEAR = 10;
     let myBldgs = [], theirBldgs = [];
     entities.forEach(en => {
-      if (en.type === 'building') (en.team === 0 ? myBldgs : theirBldgs).push(en);
+      if (en.type === 'building') (en.team === myTeam ? myBldgs : theirBldgs).push(en);
     });
     let danger = false, war = false;
     // Strongest signal: actual damage in the last ~8 seconds (set by
@@ -519,12 +519,15 @@ function detectMusicMood() {
     }
     entities.forEach(en => {
       if (en.type !== 'unit' || en.utype === 'villager' || en.utype === 'sheep' || en.utype === 'sheep_carcass' || en.garrisonedIn) return;
-      let list = en.team === 1 ? myBldgs : (en.team === 0 ? theirBldgs : []);
+      // A unit that ISN'T mine near MY buildings = danger; MY unit near
+      // THEIR buildings = war. Neutral (team 2 — bears/wildlife) excluded
+      // entirely, same as the original team-0/1-only branching did.
+      let list = en.team === 2 ? [] : (en.team !== myTeam ? myBldgs : theirBldgs);
       for (let i = 0; i < list.length; i++) {
         let b = list[i];
         let dx = en.x - (b.x + b.w / 2), dy = en.y - (b.y + b.h / 2);
         if (dx * dx + dy * dy <= NEAR * NEAR) {
-          if (en.team === 1) danger = true; else war = true;
+          if (en.team !== myTeam) danger = true; else war = true;
           break;
         }
       }

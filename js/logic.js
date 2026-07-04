@@ -24,7 +24,23 @@ function canPlace(type,x,y,team=0){
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
     if(nx<0||nx>=MAP||ny<0||ny>=MAP)return false;
-    if(team===0&&fog[ny][nx]===0)return false; // can't build on unexplored tiles
+    // Can't build on unexplored tiles — but ONLY ever checked for team 0,
+    // not `team===myTeam` (tried that, reverted — see comment). `fog` is
+    // only ever valid for whichever team updateFog() actually computed on
+    // the machine currently running this code. The host's own machine
+    // ALWAYS computes team 0's fog every tick (myTeam is 0 there); when
+    // executing a RELAYED guest command via withRemoteSelection, myTeam
+    // gets temporarily swapped to 1 for the callback, but the underlying
+    // `fog` data itself is NOT recomputed for team 1 at that moment — it's
+    // still team 0's snapshot. `team===myTeam` inside that swapped
+    // callback would compare team 1's placement against team 0's fog,
+    // incorrectly blocking legitimate guest builds in areas team 0 hasn't
+    // scouted (caught by an actual two-browser-context build test, not
+    // code review — the host would silently refuse a placement the guest
+    // could clearly see and had every right to build on). Same root cause
+    // as the already-documented combat-targeting/auto-attack limitation:
+    // team 1 has no real fog grid on the host, only team 0 does.
+    if(team===0&&fog[ny][nx]===0)return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -496,8 +512,13 @@ function damageEntity(attacker, target){
   }
 
   // Minimap raid alert: attacked player objects blink white for a moment
-  // (drawMinimap reads this), AoE2-style.
-  if (target.team === 0) target.lastHitTick = tick;
+  // (drawMinimap reads this via teamColor()'s myTeam-relative logic), AoE2-
+  // style. Not team-restricted here — this runs during the HOST's normal
+  // per-tick processing of both teams every tick, so `myTeam` would be
+  // constant (always 0) regardless of which team is actually being hit,
+  // same trap as the rally-point bug — record it for either team
+  // unconditionally, the READ side already filters to "mine" correctly.
+  target.lastHitTick = tick;
 
   // Feed the adaptive music: actual damage is the strongest mood signal —
   // it catches open-field battles that building-proximity checks miss.
@@ -1497,7 +1518,36 @@ function findNearTile(e,terrain,excludeSet=null){
   return null;
 }
 
+// Delete/Backspace key (js/input.js, host/single-player path directly;
+// js/net-cmd.js's 'delete-units' case for a relayed guest command) — a
+// player deliberately killing their OWN unit/building (AoE2 has this too,
+// e.g. to free population cap or cancel a mis-placed foundation).
+function deleteOwnedEntity(en){
+  // AoE2: deleting an UNFINISHED foundation refunds its cost (mis-click
+  // recovery / quick-wall cancel). Completed buildings and units refund
+  // nothing. (Slight over-refund if a gate/tower consumed wall tiles for
+  // a stone discount — rare and in the player's favor, acceptable.)
+  if(en.type==='building'&&!en.complete&&!en.exhausted){
+    let store=resourceStore(en.team); // the OWNING team's resources, not always team 0's
+    Object.entries(BLDGS[en.btype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
+    // Same "shows on whichever client actually executes this" limitation
+    // js/ui.js's cancelQueue() already has for a relayed command — not
+    // solved here either, kept consistent rather than special-cased.
+    if (typeof showMsg === 'function') showMsg(BLDGS[en.btype].name+' cancelled (refunded)');
+  }
+  en.hp=0;
+  handleDeath(en,1);
+}
+
 function handleDeath(e,killerTeam){
+  // update() (js/loop.js) early-returns the instant gameOver is true, so
+  // hostSyncTick() (called later inside it, on the normal ~15/sec cadence)
+  // never runs again after this point — meaning unless the exact tick the
+  // game ends on happens to coincide with a scheduled sync, the guest
+  // would never receive the final gameOver/won state at all, stuck
+  // forever not knowing the match ended. Snapshot gameOver here and force
+  // one broadcast the instant it flips true, regardless of tick timing.
+  let wasGameOver = gameOver;
   if(e.type==='unit'&&e.utype==='sheep'){
     e.utype = 'sheep_carcass';
     e.hp = 100;
@@ -1561,6 +1611,9 @@ function handleDeath(e,killerTeam){
     if(teamEliminated(1)){gameOver=true;won=true;}
     else if(teamEliminated(0)){gameOver=true;won=false;}
   }
+  if (!wasGameOver && gameOver && typeof netRole !== 'undefined' && netRole === 'host' && netConnected) {
+    hostSyncTick();
+  }
 }
 
 function teamEliminated(team){
@@ -1577,7 +1630,12 @@ function findSpawnTile(x,y,maxRadius=4){
 
 function updateBuilding(e){
   if (e.btype === 'FARM' && e.exhausted) {
-    if (e.team === 1) { // AI auto-reseed
+    // AI auto-reseed — genuinely the AI only in single-player (netRole
+    // null). In multiplayer, team 1 is a real guest who should manage
+    // reseeding manually just like team 0 does (js/ui.js's prepayFarm/
+    // reactivateFarm) — auto-spending their wood behind their back would
+    // be surprising and remove their control over the decision.
+    if (e.team === 1 && netRole === null) {
       let store = resourceStore(1);
       if (store && store.wood >= 60) {
         store.wood -= 60;
@@ -1655,7 +1713,17 @@ function updateBuilding(e){
       
       // Rally point set on a garrisonable own building (including this one):
       // the fresh unit appears directly inside it, AoE2-style — no walking.
-      if(unit && e.team===0 && e.rallyX!==undefined && e.rallyY!==undefined){
+      // NOTE: this whole block runs as part of the HOST's normal per-tick
+      // building-queue processing (js/loop.js's update()), for EVERY
+      // building regardless of team, every tick — `myTeam` is constant
+      // (always 0 on whichever machine is hosting) throughout this code,
+      // not a per-entity "whose perspective" signal the way it is in
+      // rendering/UI/input code. The old `e.team===0` restriction wasn't
+      // "my team" logic at all, just an unconditional rally point feature
+      // arbitrarily limited to team 0 — team 1 is a real player in
+      // multiplayer (the guest) who sets rally points too, so this now
+      // applies to both player teams (team 2/neutral has no buildings).
+      if(unit && (e.team===0||e.team===1) && e.rallyX!==undefined && e.rallyY!==undefined){
         let rallyB=null;
         if(e.rallyTargetId){
           let t=entitiesById.get(e.rallyTargetId);
@@ -1674,16 +1742,17 @@ function updateBuilding(e){
         }
       }
 
-      // Auto-command the unit based on building's rally point
-      if(unit && e.team===0 && e.rallyX!==undefined && e.rallyY!==undefined){
+      // Auto-command the unit based on building's rally point — same
+      // "both player teams, not myTeam" reasoning as the block above.
+      if(unit && (e.team===0||e.team===1) && e.rallyX!==undefined && e.rallyY!==undefined){
         if(e.rallyTargetId){
           let target=entities.find(en=>en.id===e.rallyTargetId);
           if(target){
-            if(unit.utype==='villager'&&target.type==='building'&&!target.complete&&target.team===0){
+            if(unit.utype==='villager'&&target.type==='building'&&!target.complete&&target.team===e.team){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
-            } else if(target.team===1 || (target.team===0 && target.utype==='sheep' && unit.utype==='villager')){
+            } else if((target.team!==e.team && target.team!==2) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {

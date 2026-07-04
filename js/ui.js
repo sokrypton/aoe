@@ -284,6 +284,7 @@ function updateUI(){
           onClick: (g)=>{
             if(gameOver)return;
             let victim=g.members[0];
+            if (netRole === 'guest') { sendCommand({ kind: 'eject-garrison', bldgId: garrisonSel.id, unitId: victim.id }); return; }
             ejectGarrison(garrisonSel, gu=>gu.id===victim.id);
             updateUI();
           }
@@ -309,9 +310,10 @@ function updateUI(){
 
   let port = document.getElementById('sel-portrait');
   if(gameOver){
-    if (port) { setPortraitIcon(port, null, won ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent=won?'VICTORY!':'DEFEAT!';
-    document.getElementById('sel-details').textContent=won?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
+    let iWon = didIWin();
+    if (port) { setPortraitIcon(port, null, iWon ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
+    document.getElementById('sel-name').textContent=iWon?'VICTORY!':'DEFEAT!';
+    document.getElementById('sel-details').textContent=iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
     return;
   }
   if(!gameStarted){
@@ -838,6 +840,11 @@ window.updateBottomHeight();
 
 function prepayFarm() {
   if (gameOver) return;
+  // Never mutate locally as the guest — same "would only affect the
+  // guest's own about-to-be-overwritten copy" bug the Delete key had
+  // (see js/net-cmd.js's header comment). This one spends resources and
+  // increments a counter with no unit/building reference needed at all.
+  if (netRole === 'guest') { sendCommand({ kind: 'prepay-farm' }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
     showMsg('Not enough wood!');
@@ -853,6 +860,7 @@ function prepayFarm() {
 function reactivateFarm(farm) {
   if (gameOver) return;
   if (!farm.exhausted) return;
+  if (netRole === 'guest') { sendCommand({ kind: 'reactivate-farm', bldgId: farm.id }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
     showMsg('Not enough wood!');

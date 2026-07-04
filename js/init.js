@@ -580,6 +580,12 @@ function restartGame(difficulty){
   selected = [];
   tick = 0;
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
+  treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
+  corpseImpactFxDone.clear();
+  workSwingCycles.clear();
+  guestPrevHp.clear();
+  guestReactedCorpses.clear();
+  guestBuildingFxTick.clear();
 
   // Reset resources to defaults
   res = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
@@ -604,7 +610,7 @@ function restartGame(difficulty){
 }
 
 function toggleCameraFollow(){
-  if(selected.length===0 || selected[0].type!=='unit' || selected[0].team!==0)return;
+  if(selected.length===0 || selected[0].type!=='unit' || selected[0].team!==myTeam)return;
   let id=selected[0].id;
   window.cameraFollowId = (window.cameraFollowId===id) ? null : id;
   updateUI();
@@ -736,15 +742,18 @@ function gameLoop(){
       // entities/projectiles lists correct/remove them regardless.
       advanceGuestProjectiles(elapsed);
       advanceGuestUnits(elapsed);
+      advanceGuestParticles(elapsed);
+      advanceGuestBuildingEffects();
     }
   }
   render();
   updateUI();
   if(gameOver){
+    let iWon = didIWin();
     if (!window.playedGameOverSound) {
       window.playedGameOverSound = true;
       if (window.stopAmbientMusic) window.stopAmbientMusic(); // cut ambient so the ending piece stands alone
-      if (window.startGameOverMusic) window.startGameOverMusic(won);
+      if (window.startGameOverMusic) window.startGameOverMusic(iWon);
     }
     X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
     let cy=topH+H/2;
@@ -757,14 +766,14 @@ function gameLoop(){
     X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
 
     // Main text using Cinzel
-    X.fillStyle=won?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
+    X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
     X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
-    X.fillText(won?'VICTORY':'DEFEAT',W/2,cy-15);
+    X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
 
     // Subtext using Georgia
     X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
     X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
-    X.fillText(won?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
+    X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
     X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
   }
   requestAnimationFrame(gameLoop);

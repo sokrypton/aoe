@@ -29,7 +29,7 @@ function drawGhost(){
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
-      let ok = canPlace('WALL', t.x, t.y, 0);
+      let ok = canPlace('WALL', t.x, t.y, myTeam);
       let iso = toIso(t.x, t.y);
       let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
@@ -45,7 +45,7 @@ function drawGhost(){
   let bw=b.w, bh_=b.h;
   let ox=tile.x, oy=tile.y;
   if(placing==='GATE'){
-    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype==='WALL'&&en.team===0);
+    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype==='WALL'&&en.team===myTeam);
     if (isWall(tile.x, tile.y) && isWall(tile.x+1, tile.y)) {
       ox=tile.x; oy=tile.y; bw=2; bh_=1;
     } else if (isWall(tile.x-1, tile.y) && isWall(tile.x, tile.y)) {
@@ -58,11 +58,11 @@ function drawGhost(){
       bw=1; bh_=2;
     }
   }
-  let ok=canPlace(placing,tile.x,tile.y,0);
+  let ok=canPlace(placing,tile.x,tile.y,myTeam);
 
   // Draw ghost: actual building rendered semi-transparently
   let fakeE={
-    type:'building', btype:placing, x:ox, y:oy, team:0,
+    type:'building', btype:placing, x:ox, y:oy, team:myTeam,
     hp:b.hp, maxHp:b.hp, complete:true,
     buildProgress:0, buildTime:200, queue:[],
     w:bw, h:bh_, rallyX:ox, rallyY:oy, gateProgress:0
@@ -157,7 +157,7 @@ function drawMinimap(){
     // read as a deliberate alert rather than a flicker.
     let recentlyHit=e.team===myTeam&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
     let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
-    let color=(isSel||blinkOn)?'#ffffff':TEAM_COLORS[e.team];
+    let color=(isSel||blinkOn)?'#ffffff':teamColor(e.team);
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;
       fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],color);

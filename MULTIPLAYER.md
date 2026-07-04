@@ -76,6 +76,192 @@ review) at every stage:
 
 ## Recently completed
 
+- **Guest-side particle effects — same "derive it locally instead of
+  needing the host to send anything new" idea as fog-of-war, applied to
+  the whole particle system.** Particles were never networked at all
+  (deliberately, per `js/net-sync.js`'s payload-building comment), so a
+  guest previously never saw blood on death, hit-particles during combat,
+  smoke/fire on damaged buildings, or resource-gather puffs — all of
+  those are host-only simulation side-effects. Fixed by having the guest
+  independently notice the same underlying state changes it already
+  receives every sync (an hp decrease, a new corpse, a changed map-tile
+  resource value) and spawn the identical particle locally:
+  - Death blood-burst and combat hit-particles: `js/net-sync.js`'s
+    `applyNetSync()` now diffs each new sync's entity hp against the
+    previous one (`guestPrevHp`, `js/core.js`) and reacts to each new
+    corpse id once (`guestReactedCorpses`) — same colors/counts as
+    `js/logic.js`'s `damageEntity()`/`handleDeath()`.
+  - Gather-tile depletion puff: hooked into the existing `mapDelta`
+    application loop in the same function — a resource-tile `res`
+    decrease in a delta already tells us a gather cycle just happened,
+    no new signal needed.
+  - Damaged-building smoke/fire: `js/loop.js`'s new
+    `advanceGuestBuildingEffects()`, called once per rendered frame from
+    `js/init.js`'s guest loop, replicating `update()`'s existing hp-
+    threshold logic but throttled by `guestBuildingFxTick` (per-building,
+    per-effect last-fired tick) rather than a bare `tick % N` check —
+    the guest's `tick` advances fractionally every frame (unlike the
+    host's once-per-simulation-step integer), so the naive version would
+    fire on every frame within the same multiple-of-N window instead of
+    once, flooding the screen with particles.
+  - This surfaced a real prerequisite bug: nothing was aging or moving
+    the guest's own particles at all (`update()`'s particle-physics tick,
+    where a particle's position/drag/gravity/life-countdown normally
+    happen, never runs on the guest), and `applyNetSync()` was
+    unconditionally resetting `particles = []` on every sync — harmless
+    when the guest never spawned any, but would have cut every new
+    particle's ~0.7-2s intended lifespan down to a few dozen
+    milliseconds. Added `js/loop.js`'s `advanceGuestParticles()` (same
+    physics as `update()`'s block, scaled by `elapsedMs/timeStep` like
+    the other guest-side interpolation functions instead of per whole
+    tick) and removed the blanket reset.
+  - Two smaller, same-shape bugs found and fixed in the same pass: the
+    corpse ground-impact dust puff (`c.impactFx`) and the one-impact-per-
+    work-swing wood-chip/mining-spark particle (`e._swingCyc`) both lived
+    directly on objects that get wholesale-replaced by every sync
+    (corpses/entities respectively) — re-triggering repeatedly on the
+    guest instead of once. Moved to `corpseImpactFxDone`/`workSwingCycles`
+    (`js/core.js`), same pattern as `treeFellTicks` below. Also found
+    (and fixed) the write side of the minimap "recently hit, blink white"
+    flag was hardcoded `if (target.team === 0)` — never set at all for
+    team 1, so a guest's own units never blinked when hit regardless of
+    the myTeam-relative read side already in place; same "host-only
+    simulation, myTeam is constant there" trap as the rally-point bug —
+    fixed by recording it for either team unconditionally.
+  - Verified directly: death/hit particles appear on the guest at the
+    right counts/colors, particles actually decay to zero within a few
+    seconds rather than persisting forever or vanishing within one sync
+    interval, sustained building damage produces a bounded (not runaway-
+    growing) particle count over several seconds, and a gather-tile delta
+    produces the matching puff. Full regression suite still passes.
+
+- **Tree-falling animation repeated forever once a tree dropped below its
+  fall threshold, guest-side only.** `js/render-terrain.js` stored
+  `fellTick` directly on the map tile object — but every wood-chop
+  decrements that tile's `res`, which calls `markMapDirty()` and sends it
+  as a dirty-cell delta; applying that delta on the guest replaces the
+  whole tile object (`map[y][x] = cell`) with a fresh one from the wire,
+  wiping whatever `fellTick` had been set. Since the trigger is `res<=60
+  && fellTick===undefined`, every subsequent chop below that threshold
+  saw a fresh `undefined` and restarted the fall animation from scratch —
+  exactly the "keeps repeating over and over" reported. Same bug shape as
+  `scoutedByMe` earlier this session: moved to `treeFellTicks`
+  (`js/core.js`), a plain `Map` keyed by tile coordinate, entirely outside
+  the synced map data. Verified directly: simulated 5 more chops on the
+  same tile after crossing the threshold and confirmed the guest's
+  recorded fall-start tick stays identical instead of resetting each time.
+
+- **Full audit for the same bug shapes, after finding 5 real instances in
+  one session** — systematically searched every `.team === 0/1` /
+  `!== 0/1` literal and every input.js/ui.js action handler for the two
+  patterns that kept recurring. Found and fixed ~15 more sites:
+  - **Client-side "whose perspective" bugs (fixed with `myTeam`)**: building
+    team color inverted for the guest (`js/render-buildings.js` — a guest
+    would see their OWN buildings in enemy red), same for units/corpses/
+    minimap blink (`js/render-units.js`, `js/render-fx.js` — added a
+    shared `teamColor()` helper in `js/core.js` so buildings/units/minimap
+    are all consistently relative to `myTeam` instead of a mix of relative
+    and absolute), build-ghost-preview validity/color and gate-wall-
+    snapping (`js/render-fx.js`), building HP/progress-bar visibility and
+    garrison-count label (`js/render-buildings.js`), rally-point flag/line
+    indicator (`js/render.js`), camera-follow toggle (`js/init.js`), and
+    adaptive music mood detection — danger/war were swapped for a guest
+    (`js/audio.js`).
+  - **Host-simulation bugs, NOT fixable with `myTeam`** (this runs during
+    the host's normal per-tick processing of every entity regardless of
+    team — `myTeam` is constant there, always 0, except briefly during a
+    relayed-command callback where it's swapped but the underlying data
+    it should govern isn't): a trained unit's rally point (garrison-on-
+    rally and auto-command-on-rally) was hardcoded to team 0 only,
+    silently doing nothing for a guest's buildings — fixed by applying it
+    to both player teams unconditionally (`js/logic.js`), since a rally
+    point is a universal mechanic, not a "my team" check. Exhausted farms
+    auto-reseed for team 1 — correct when team 1 is genuinely the AI
+    (single-player), but was also silently auto-spending a real guest's
+    wood in multiplayer with no say in it — fixed by gating the auto-
+    reseed on `netRole === null` (`js/logic.js`).
+  - **A real regression caught only by re-running the existing build
+    test, not by reasoning alone**: `canPlace()`'s "can't build on
+    unexplored tiles" check was tried as `team===myTeam`, which looked
+    right for the guest's own client-side preview — but broke the HOST's
+    actual execution of a relayed guest build command, because the fog
+    grid *itself* is only ever team 0's data on the host (the temporary
+    `myTeam` swap during a relayed command doesn't make `fog` valid for
+    team 1) — so it was comparing the guest's placement against the
+    host's own vision, wrongly refusing builds the guest could clearly
+    see. Reverted to `team===0` — same category as the already-documented
+    combat-targeting limitation below, not a quick fix.
+  - **Missing guest-relay guards** (same bug class as the Delete key,
+    caught in the same audit): `prepayFarm()`/`reactivateFarm()`
+    (`js/ui.js`) and the garrison-eject minimap-icon click handler had no
+    `netRole==='guest'` check at all and no relay command defined —
+    added `'prepay-farm'`/`'reactivate-farm'`/`'eject-garrison'` intent
+    kinds (`js/net-cmd.js`).
+  - Deliberately NOT fixed (documented, not silently missing): the many
+    `showMsg`/sound-effect call sites in `js/logic.js` (farm reseeded,
+    resource unreachable, under attack, training fanfare, etc.) are
+    genuinely host-screen-only feedback with no way to reach the guest's
+    own screen without a new server→guest notification message — a real
+    but much larger feature, not a mechanical fix like everything else
+    here.
+  - Verified with a dedicated two-browser-context test per fix (team
+    colors, rally point actually walking/garrisoning, prepay/reactivate/
+    eject-garrison relaying and taking effect on the host, single-player's
+    AI still auto-reseeding correctly, multiplayer's guest farm correctly
+    NOT auto-reseeding) plus the full existing regression suite.
+
+- **Delete/Backspace (killing your own unit/building — a real gameplay
+  action, e.g. to free population cap) never worked for the guest.**
+  `js/input.js`'s handler called `handleDeath()` directly, with no check
+  for `netRole==='guest'` — since the guest is never authoritative, this
+  only ever mutated the guest's own local (about-to-be-overwritten) copy;
+  the next regular sync from the host, which never saw it happen,
+  silently reverted it. Symptom exactly as reported: delete your own
+  TC as the guest, "DEFEAT" flashes, then reverts back to a live match a
+  moment later. Fixed the same way every other guest action already works
+  — relayed as a `'delete-units'` command (`js/net-cmd.js`) that the host
+  executes for real. Extracted the shared logic into `deleteOwnedEntity()`
+  (`js/logic.js`), which also fixes a second bug found in the same
+  code: the unfinished-foundation refund always credited `resourceStore(0)`
+  regardless of whose building it was — a guest cancelling their own
+  foundation was refunding the *host's* resources, not their own. Verified
+  both directly: guest deleting their own villager (persists correctly,
+  confirmed still gone 1s later) and guest deleting their own TC (correct
+  defeat that stays defeated, not the flash-then-revert from before).
+
+- **Two more team-0-hardcoded bugs found while investigating a report of
+  "guest's idle villagers missing the '?' indicator."**
+  1. The idle-villager `?` marker (`js/render-units.js`) was gated on
+     `e.team===0` — exactly the same bug shape as the fog-of-war one
+     above, just missed in that pass since it's rendering logic, not fog
+     itself. Fixed to `e.team===myTeam`.
+  2. **A more serious one found along the way, unrelated to what was
+     reported**: `won` is computed and networked as a raw "did team 0
+     win" boolean (`js/logic.js`'s `handleDeath`, copied verbatim by
+     `js/net-sync.js`'s `applyNetSync`) — every UI site that read it
+     directly (`js/ui.js`'s bottom panel, `js/init.js`'s full-screen
+     victory/defeat banner and end-game music trigger) would show the
+     **guest the exact inverse of their actual outcome**: win as the
+     guest and see "DEFEAT", lose and see "VICTORY". Added `didIWin()`
+     (`js/core.js`: `myTeam === 0 ? won : !won`) and swapped every
+     UI-facing read to go through it instead of the raw flag.
+  3. **Also found, same investigation**: `update()` (`js/loop.js`)
+     early-returns the instant `gameOver` is true — meaning
+     `hostSyncTick()` (called later inside it, on the normal cadence)
+     never runs again after the game ends. Unless the exact tick the game
+     ends on happens to coincide with a scheduled sync, the guest would
+     never receive the final `gameOver`/`won` state at all — stuck
+     forever not knowing the match had ended. Fixed by snapshotting
+     `gameOver` at the top of `handleDeath()` and forcing one broadcast
+     the instant it flips true, regardless of tick timing.
+  - All three verified with a real two-browser-context test: killing a
+    unit and checking the guest's corpse arrives with correctly-rebased
+    death-animation timing (already worked, confirmed not broken — corpse
+    `deathTime` rebasing via `ageAtSaveMs` already existed), destroying
+    the host's own TC and confirming the guest's `gameOver` flips
+    immediately and `didIWin()` correctly returns opposite values on each
+    side despite sharing the same underlying `won` flag.
+
 - **Real per-team fog of war** (previously the biggest item in Known
   Limitations). Both players used to see the entire map — `updateFog()`
   was hardcoded to `if (e.team !== 0) return;`, a leftover single-player
@@ -442,17 +628,30 @@ Roughly in order of "most worth doing next":
    payload size becomes a real problem again (e.g. much larger player
    counts or unit caps).
 
-4. **Combat auto-acquire still uses the AI's cheat-vision rule for team 1
-   in multiplayer.** `logic.js`'s combat target-visibility check only
-   fog-gates team 0's units (`if (e.team === 0) { ...fog check... }`) —
-   correct for single-player (team 1 is the AI, which deliberately ignores
-   fog for everything), but in multiplayer team 1 is now a real guest, who
-   currently keeps the same "can track a target through fog" exemption
-   the AI has. Fixing this properly needs the host to compute a *second*
-   fog grid for team 1 purely for this simulation check (the host's own
-   `fog` only ever reflects `myTeam`, which is always 0 for the host) —
-   real but narrower unfairness than "can't see the map at all," scoped
-   out of the per-team fog work above to keep it focused.
+4. **Several combat/placement rules still only fog-gate team 0, same root
+   cause, all needing a real team-1 fog grid on the host to fix properly.**
+   The host's own `fog` variable only ever holds team 0's vision — always,
+   even momentarily during a relayed guest command, since the temporary
+   `myTeam` swap changes who a check is evaluated *for* but not what data
+   `fog` actually contains. Fixing any of these needs the host to compute
+   a *second*, independent fog grid for team 1 purely for these checks
+   (not for rendering — the guest already does that correctly, locally).
+   Known sites, all currently exempting team 1 from a real vision check
+   it should probably have as a genuine player:
+   - Combat target de-acquire (`logic.js` — a unit tracking a target it
+     can no longer see) and idle-military auto-engage scanning
+     (`logic.js`) both only fog-gate team 0; team 1 keeps the AI's
+     "cheat-vision" fallback (a flat radius check) even when team 1 is a
+     real multiplayer guest.
+   - `canPlace()`'s "can't build on unexplored tiles" restriction — same
+     thing, only ever applied to team 0. (Tried making it `myTeam`-relative
+     instead — broke host-side execution of the guest's own legitimate
+     builds, since `team===myTeam` inside the relayed-command context
+     compares team 1's placement against team 0's fog. Reverted.)
+   All are the same narrower unfairness ("can act through fog you
+   shouldn't be able to see through"), not "can't see the map at all" —
+   scoped out of the per-team fog work to keep it focused, and out of the
+   broader team-0-hardcoding audit above for the same reason.
 
 5. **Spectator mode / more than 2 players.** Architecture is strictly 1v1
    host-vs-guest today; anything beyond that is a bigger design change.

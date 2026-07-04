@@ -151,7 +151,7 @@ function render(){
   drawGhost();
 
   // Draw selected building's rally point flag & line (AoE2-style)
-  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === 0) {
+  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam) {
     let bldg = selected[0];
     let bData = BLDGS[bldg.btype];
     if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {

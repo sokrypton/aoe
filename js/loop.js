@@ -199,6 +199,79 @@ function advanceGuestUnits(elapsedMs){
   });
 }
 
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame.
+// update()'s particle-physics block above (position/drag/gravity/ground-
+// bounce/life countdown) is HOST-ONLY — the guest never calls update() at
+// all, it only ever renders. Now that the guest independently spawns its
+// own particles (hit/death/gather/building-fx below), something has to
+// age and move them the same way, at frame cadence rather than per whole
+// tick — same `elapsedMs/timeStep` fractional-step scaling as
+// advanceGuestUnits/Projectiles use for the same reason.
+function advanceGuestParticles(elapsedMs){
+  let steps = elapsedMs / timeStep;
+  particles.forEach(p => {
+    p.x += p.vx * steps;
+    p.y += p.vy * steps;
+    if (p.drag) {
+      let dragStep = Math.pow(p.drag, steps);
+      p.vx *= dragStep;
+      p.vy *= dragStep;
+    }
+    if (p.z !== undefined) {
+      p.z += p.vz * steps;
+      p.vz -= p.gravity * steps;
+      if (p.z <= 0) {
+        p.z = 0;
+        if (p.type === 'blood') {
+          p.vx = 0; p.vy = 0; p.vz = 0;
+        } else if ((p.type === 'dust' || p.type === 'grass') && p.vz < -0.005) {
+          p.vz = -p.vz * 0.45;
+          p.vx *= 0.6;
+          p.vy *= 0.6;
+        } else {
+          p.vz = 0;
+        }
+      }
+    }
+    p.life -= steps;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+// Guest-only, called from gameLoop() (js/init.js) once per rendered frame,
+// same reasoning as advanceGuestProjectiles/advanceGuestUnits above but for
+// damaged-building smoke/fire (js/loop.js's own update() has the
+// authoritative version of this exact block, host-only). This one isn't
+// smoothing anything already-networked — smoke/fire particles are never
+// sent at all — it's independently re-deriving a periodic visual effect
+// from hp/maxHp, which the guest already has via the normal sync, using
+// its own locally-advancing `tick` (js/init.js's per-frame nudge) as the
+// timing source instead of needing the host to send anything new.
+function advanceGuestBuildingEffects(){
+  // `tick % N === 0` (the host's version) fires exactly once per N whole
+  // ticks because the host's `tick` is a plain integer incremented once
+  // per simulation step. The guest's `tick` instead advances fractionally
+  // every rendered frame (js/init.js's per-frame nudge, purely for smooth
+  // animation) — Math.floor(tick) can sit on the same multiple-of-N value
+  // across many consecutive frames, so a bare modulo check here would fire
+  // repeatedly instead of once. guestBuildingFxTick (per-entity, per-effect
+  // last-fired tick) throttles it back down to "once per interval" instead.
+  let t = Math.floor(tick);
+  entities.forEach(e => {
+    if (e.type !== 'building' || !e.complete) return;
+    let rec = guestBuildingFxTick.get(e.id);
+    if (!rec) { rec = {smoke: -999, fire: -999}; guestBuildingFxTick.set(e.id, rec); }
+    if (e.hp < e.maxHp * 0.7 && t - rec.smoke >= 5) {
+      rec.smoke = t;
+      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
+    }
+    if (e.hp < e.maxHp * 0.3 && t - rec.fire >= 3) {
+      rec.fire = t;
+      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, Math.random() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
+    }
+  });
+}
+
 // AoE2-style "excuse me": a stationary villager/sheep standing on a moving
 // unit's NEXT tile takes a polite sidestep of its own accord — it is not
 // shoved. Task fields survive the step (gather/build logic re-paths back

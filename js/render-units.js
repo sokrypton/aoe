@@ -29,7 +29,7 @@ function drawCorpse(c){
   
   let { ox, oy } = getUnitGroupOffset(c.id);
   sx += ox; sy += oy;
-  let tc=TEAM_COLORS[c.team];
+  let tc=teamColor(c.team);
   
   let age = performance.now() - c.deathTime;
 
@@ -52,9 +52,12 @@ function drawCorpse(c){
   let big = c.utype === 'scout' || c.utype === 'bear'; // horse/bear-sized corpse
 
   // Impact dust puff, once, the moment the body hits the ground (same
-  // render-side particle spawning the sheep's grass nibbling uses)
-  if (age >= TOPPLE && !c.impactFx) {
-    c.impactFx = true;
+  // render-side particle spawning the sheep's grass nibbling uses).
+  // Tracked in corpseImpactFxDone (js/core.js), not a `c.impactFx` field —
+  // corpses get wholesale-replaced by every sync, which used to wipe that
+  // flag and re-trigger the puff repeatedly instead of once.
+  if (age >= TOPPLE && !corpseImpactFxDone.has(c.id)) {
+    corpseImpactFxDone.add(c.id);
     spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', big ? 7 : 4, 0.02, big ? 2.2 : 1.6);
   }
 
@@ -250,7 +253,7 @@ function drawUnit(e){
   // Group spread: offset based on unit ID so stacked units are visible
   let { ox, oy } = getUnitGroupOffset(e.id);
   sx += ox; sy += oy;
-  let tc=TEAM_COLORS[e.team];
+  let tc=teamColor(e.team);
   let anim=Math.sin(tick*0.15+e.id*2);
   let isActive=e.task||e.target||e.path.length>0;
 
@@ -1029,8 +1032,11 @@ function drawUnit(e){
       let swing = working ? (0.5 - 1.6*u) : 0;
       // One impact burst per cycle, right as the tool lands
       let swingCyc = Math.floor(phRaw);
-      let impact = working && ph > 0.93 && e._swingCyc !== swingCyc;
-      if(impact) e._swingCyc = swingCyc;
+      // Tracked in workSwingCycles (js/core.js), not `e._swingCyc` — entities
+      // get wholesale-replaced by every sync, which used to wipe that field
+      // and fire extra impact particles well beyond one per swing cycle.
+      let impact = working && ph > 0.93 && workSwingCycles.get(e.id) !== swingCyc;
+      if(impact) workSwingCycles.set(e.id, swingCyc);
       // Impact point in tile coords: the gather tile if known, else just ahead
       let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
       let hitY = (e.gatherY >= 0 && e.gatherY !== undefined) ? e.gatherY + 0.3 : e.y;
@@ -1411,7 +1417,7 @@ function drawUnit(e){
   // for why: this codebase has no z-buffer, just one Y-sorted paint pass).
   // Idle indicator — keep showing while walking too, as long as no
   // task/target is actually assigned (a bare move order isn't "working").
-  if(e.team===0&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
+  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
     X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2; // absolute coords — not under UNIT_SCALE
     X.font='bold 16px sans-serif';X.textAlign='center';
     X.strokeText('?',sx,sy-20*UNIT_SCALE);
