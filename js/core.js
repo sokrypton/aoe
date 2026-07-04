@@ -296,6 +296,19 @@ const SYNC_BUFFERS = {
   cmdMarkers: { pending: [], live: () => cmdMarkers, map: m => m }
 };
 function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
+
+// Host-only: id -> JSON of the last entity snapshot actually sent to the
+// guest. `entities` itself is NOT create-once like SYNC_BUFFERS above (every
+// field on a moving/fighting/gathering unit changes constantly) — but at
+// true idle, NOTHING about it changes, and resending the whole array anyway
+// (as buildSyncPayload used to) was measured at ~85% of the idle-steady-state
+// payload. Compared against this snapshot every delta sync (js/net-sync.js)
+// so only entities whose serialized form actually differs get resent, same
+// "don't resend the unchanging part" idea as mapDelta/SYNC_BUFFERS, just
+// computed via comparison instead of tracked via push-sites (entities change
+// via dozens of scattered mutation call sites in js/logic.js — diffing is
+// far safer than trying to mark every one of them dirty by hand).
+let lastSentEntitySnapshot = new Map();
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
 // replaces a naive e._seen flag on the shared entity object, which would
 // get silently clobbered every ~65ms by the entities array being
@@ -362,13 +375,31 @@ function forEachVisibleTile(team, cb){
     let cy = Math.round(e.y);
     if (e.type === 'building') {
       let b = BLDGS[e.btype];
-      cx = Math.round(e.x + (e.w || b.w)/2);
-      cy = Math.round(e.y + (e.h || b.h)/2);
+      // A building's footprint spans continuous tiles [e.x, e.x+w) — the
+      // tile CONTAINING the center point is Math.floor(center), not
+      // Math.round. For any odd width/height (every 1x1 building, and the
+      // 3x3 TC), the continuous center lands exactly on a tile boundary,
+      // and Math.round always rounds .5 up — consistently shifting vision
+      // one tile right/down from the building's true center (2x2 buildings
+      // like Mill/Barracks/Farm happened to dodge this, since their center
+      // lands cleanly on a whole number with no rounding ambiguity at all).
+      cx = Math.floor(e.x + (e.w || b.w)/2);
+      cy = Math.floor(e.y + (e.h || b.h)/2);
     }
 
     for (let dy = -sight; dy <= sight; dy++) {
       for (let dx = -sight; dx <= sight; dx++) {
-        if (dx*dx + dy*dy <= sight*sight) {
+        // Euclidean distance (a circle) already naturally includes the
+        // near-center diagonals for every real sight radius in the game
+        // (3+) — but at sight=1 (a building foundation just started, before
+        // any real construction progress) it degenerates to a plus/cross
+        // shape (center + 4 orthogonal neighbors only), excluding the 4
+        // diagonal corners of the immediate 3x3 neighborhood. Chebyshev
+        // distance (a square) at this one radius reveals the full 3x3
+        // neighborhood instead, matching a fresh foundation's expected
+        // "immediate surroundings" reveal.
+        let inRange = sight === 1 ? (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) : (dx*dx + dy*dy <= sight*sight);
+        if (inRange) {
           let tx = cx + dx;
           let ty = cy + dy;
           if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);

@@ -50,23 +50,23 @@ let NET_SYNC_TARGET_PER_SEC = 15;
 // instead of spreading everything and deleting the exceptions. Several of
 // these (selectedIds/cameraFollowId/currentVillagerMenu/settingRally/
 // scoutedByMe/savedByTeam/otherTeamExploredEver/aiDifficulty/version/
-// savedAt/wasMultiplayerGame/hostPeerId) describe THIS session's own local
-// UI/save-file bookkeeping and are ignored by the receiving guest (see
-// applyNetSync's file-header comment) rather than pruned here — keeping
-// them is unchanged behavior from before this list existed, not something
-// this whitelist is meant to newly decide. `map`/`fog`/projectiles/corpses/
-// cmdMarkers are deliberately excluded: `fog` is never sent at all (see
-// below), and the rest are added separately per full-vs-delta case (map
-// only on a full sync; projectiles/corpses/cmdMarkers via the SYNC_BUFFERS
-// loop below).
-const COMMON_SYNC_FIELDS = ['version', 'savedAt', 'wasMultiplayerGame',
-  'hostPeerId', 'MAP', 'tick', 'camX', 'camY', 'ZOOM', 'GAME_SPEED', 'nextId',
+// savedAt/wasMultiplayerGame/hostPeerId/camX/camY/ZOOM) describe THIS
+// session's own local UI/save-file bookkeeping and are never read anywhere
+// in applyNetSync() (confirmed by grep, not assumed — see the file-header
+// comment's "camX/camY/ZOOM/... are deliberately NOT touched here" note) —
+// so, unlike `map`/`fog`/entities/projectiles/corpses/cmdMarkers (added
+// separately below per full-vs-delta case), these are deliberately NOT
+// routed into the live sync payload at all, only into save.js's actual
+// save-file output (serializeGame() itself is unchanged; only this
+// sync-specific whitelist excludes them). One of these,
+// `otherTeamExploredEver`, is genuinely large and grows over a match's
+// lifetime — sending it on every ~65ms sync when only a save-file load
+// ever reads it was pure, compounding waste.
+const COMMON_SYNC_FIELDS = ['MAP', 'tick', 'GAME_SPEED',
   'resources', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
-  'gameStarted', 'gameOver', 'won', 'aiDifficulty', 'selectedIds',
-  'cameraFollowId', 'currentVillagerMenu', 'settingRally', 'fogDisabled',
-  'scoutedByMe', 'savedByTeam', 'otherTeamExploredEver', 'bellActive',
-  'aiBellActive', 'aiWallPlan', 'aiGateBuilt', 'aiGateTile', 'aiIntel',
-  'aiWaveCount', 'aiLastWaveTick'];
+  'gameStarted', 'gameOver', 'won', 'fogDisabled',
+  'bellActive', 'aiBellActive', 'aiWallPlan', 'aiGateBuilt', 'aiGateTile',
+  'aiIntel', 'aiWaveCount', 'aiLastWaveTick', 'nextId'];
 
 function pickFields(obj, fields){
   let out = {};
@@ -80,16 +80,64 @@ function buildSyncPayload(){
 
   // Round entity coordinates for the wire only — continuous movement math
   // (separateUnits() etc. in js/loop.js) needs full float precision, but
-  // that precision is visually meaningless over the network.
-  let entities = base.entities.map(e =>
-    (typeof e.x === 'number' && typeof e.y === 'number')
-      ? {...e, x: Math.round(e.x*100)/100, y: Math.round(e.y*100)/100}
-      : e
-  );
+  // that precision is visually meaningless over the network. Also strip
+  // render-only bookkeeping fields (dir/facing/facingNorth/pendingDir/
+  // pendingDirT/lastX/lastY) that render-units.js writes directly onto
+  // entity objects purely for ITS OWN animation purposes — since the HOST
+  // renders its own view too, these end up on the host's own entities, but
+  // the guest already computes its own independently from its own render
+  // loop and never needs the host's copies. Worse than just wasted bytes:
+  // merging the host's copy onto the guest's own object (applyNetSync's
+  // merge-patch) would clobber the guest's independently-ticking
+  // `pendingDirT` turn-hysteresis counter with the host's unrelated one —
+  // reintroducing the exact "spurious facing flip at each sync boundary"
+  // bug the old oldFacingById rescue existed to prevent. Stripping at the
+  // source (never sent at all) is more robust than any rescue-after-the-
+  // fact approach, and these fields are confirmed (by grep) to be read
+  // nowhere outside render-units.js, so the host's own live entities are
+  // untouched — only the wire copy omits them.
+  let entities = base.entities.map(e => {
+    let {dir, facing, facingNorth, pendingDir, pendingDirT, lastX, lastY, ...stripped} = e;
+    if (typeof stripped.x === 'number' && typeof stripped.y === 'number') {
+      stripped.x = Math.round(stripped.x*100)/100;
+      stripped.y = Math.round(stripped.y*100)/100;
+    }
+    return stripped;
+  });
 
   let payload = pickFields(base, COMMON_SYNC_FIELDS);
-  payload.entities = entities;
   payload.full = full;
+
+  // Unlike SYNC_BUFFERS' create-once lists, entities constantly change —
+  // but at true idle NOTHING about them changes, and resending the whole
+  // array every ~65ms regardless (measured: ~85% of the idle payload) is
+  // pure waste. A full sync still sends the complete list (a fresh join/
+  // reconnect has no local history to diff against); every other sync only
+  // sends entities whose serialized form actually differs from the last
+  // snapshot actually sent (lastSentEntitySnapshot, js/core.js), plus the
+  // ids of any that vanished (died/were deleted) since then.
+  if (full) {
+    payload.entities = entities;
+    lastSentEntitySnapshot = new Map(entities.map(e => [e.id, JSON.stringify(e)]));
+  } else {
+    let changedEntities = [];
+    let currentIds = new Set();
+    entities.forEach(e => {
+      currentIds.add(e.id);
+      let json = JSON.stringify(e);
+      if (lastSentEntitySnapshot.get(e.id) !== json) {
+        changedEntities.push(e);
+        lastSentEntitySnapshot.set(e.id, json);
+      }
+    });
+    let removedEntityIds = [];
+    lastSentEntitySnapshot.forEach((json, id) => {
+      if (!currentIds.has(id)) removedEntityIds.push(id);
+    });
+    removedEntityIds.forEach(id => lastSentEntitySnapshot.delete(id));
+    payload.changedEntities = changedEntities;
+    payload.removedEntityIds = removedEntityIds;
+  }
 
   // Projectiles/corpses/cmdMarkers are all "create-once" (see SYNC_BUFFERS's
   // comment, js/core.js) — fully deterministic or purely locally-aged once
@@ -152,11 +200,15 @@ function hostSyncTick(){
 // intentionally ignored — those describe the HOST's local UI, not
 // anything the guest should inherit every sync tick.
 function applyNetSync(data){
-  if (!data || typeof data !== 'object' || !Array.isArray(data.entities)) return;
-  // A full sync must actually carry a map; a delta sync needs somewhere to
-  // apply onto. Either missing means there's nothing safe to do with this
-  // message — wait for the next one rather than risk a half-built world.
-  if (data.full ? !Array.isArray(data.map) : (!Array.isArray(data.mapDelta) || map.length === 0)) return;
+  if (!data || typeof data !== 'object') return;
+  // A full sync must actually carry a complete entities list and map; a
+  // delta sync needs a changedEntities list and somewhere (an existing map)
+  // to apply mapDelta onto. Any missing means there's nothing safe to do
+  // with this message — wait for the next one rather than risk a
+  // half-built world.
+  if (data.full
+    ? (!Array.isArray(data.entities) || !Array.isArray(data.map))
+    : (!Array.isArray(data.changedEntities) || !Array.isArray(data.mapDelta) || map.length === 0)) return;
   try {
     MAP = data.MAP;
     tick = data.tick || 0;
@@ -260,60 +312,61 @@ function applyNetSync(data){
     // intended ~0.7-2s lifespan down to a few dozen milliseconds. Left
     // alone here; js/loop.js's advanceGuestParticles owns aging them out.
 
-    // render-units.js computes facing (dir/facing/facingNorth) purely from
-    // rendering, comparing each entity's position against its OWN lastX/
-    // lastY every frame — it even has deliberate multi-frame "turn
-    // hysteresis" (pendingDir/pendingDirT) so a unit's sprite doesn't strobe
-    // when the movement angle sits near a facing-sector boundary. That
-    // state lives ON the entity object and needs to stay continuous with
-    // THIS guest's own render history. But applyNetSync wholesale-replaces
-    // `entities` with brand-new objects from the host every sync — so
-    // without rescuing these fields first, the guest's own tracked facing
-    // gets clobbered every sync by whatever unrelated snapshot the HOST's
-    // own rendering happened to have for that entity, producing a spurious
-    // facing flip/twitch right at each sync boundary (most visible on
-    // units with a strong left/right profile, like the scout's horse).
-    let oldFacingById = new Map();
-    entities.forEach(e => {
-      if (e.type === 'unit') {
-        oldFacingById.set(e.id, {
-          dir: e.dir, facing: e.facing, facingNorth: e.facingNorth,
-          pendingDir: e.pendingDir, pendingDirT: e.pendingDirT,
-          lastX: e.lastX, lastY: e.lastY
-        });
-      }
-    });
-
-    entities = data.entities;
-    entitiesById.clear();
-    entities.forEach(e => {
-      let old = oldFacingById.get(e.id);
-      if (old) Object.assign(e, old);
-      entitiesById.set(e.id, e);
-    });
-
     // Combat hit-particles (js/logic.js's damageEntity spawns them on the
     // host at the moment of each individual hit — same "host-only
     // simulation side-effect" gap as the death blood-burst above, but
     // per-hit instead of per-death, so a one-shot corpse-id Set doesn't
-    // apply here). guestPrevHp (js/core.js) is the previous sync's hp per
-    // entity id; any entity whose hp dropped since then took a hit in the
-    // interim, however many actual hits that represents — this can only
-    // ever detect "at least one," not the true hit count, since only hp is
-    // sampled once per sync rather than every damageEntity() call, but a
-    // single burst per sync reads as continuous combat feedback either way.
-    entities.forEach(e => {
-      let prevHp = guestPrevHp.get(e.id);
-      if (prevHp !== undefined && e.hp < prevHp && e.hp > 0) {
-        if (e.type === 'unit') {
-          spawnParticles(e.x, e.y, '#990000', 4, 0.04, 1.5);
+    // apply here). Detected by comparing an entity's hp just before this
+    // sync touches it against its incoming hp — this can only ever detect
+    // "at least one" hit, not the true count, since only hp is sampled once
+    // per sync rather than every damageEntity() call, but a single burst
+    // per sync reads as continuous combat feedback either way.
+    let spawnHitParticle = e => {
+      if (e.type === 'unit') spawnParticles(e.x, e.y, '#990000', 4, 0.04, 1.5);
+      else spawnParticles(e.x + (e.w||1)/2, e.y + (e.h||1)/2, '#8b6c43', 3, 0.03, 2);
+    };
+
+    if (data.full) {
+      // Fresh join/reconnect — no local history to merge into, and
+      // render-units.js's per-entity facing/turn-hysteresis state
+      // (dir/facing/facingNorth/pendingDir/pendingDirT/lastX/lastY) has
+      // nothing continuous to preserve yet either, so a wholesale replace
+      // is correct and simplest here (unlike the delta case below, which
+      // merges in place specifically to avoid clobbering that state).
+      entities = data.entities;
+      entitiesById.clear();
+      entities.forEach(e => {
+        let prevHp = guestPrevHp.get(e.id);
+        if (prevHp !== undefined && e.hp < prevHp && e.hp > 0) spawnHitParticle(e);
+        entitiesById.set(e.id, e);
+      });
+      guestPrevHp.clear();
+      entities.forEach(e => guestPrevHp.set(e.id, e.hp));
+    } else {
+      // Merge changed entities into whatever this guest already has —
+      // Object.assign onto the SAME existing object (not a replace)
+      // preserves every guest-local-only field automatically (render-
+      // units.js's facing/turn-hysteresis state chief among them), with no
+      // rescue-and-reapply step needed the way the old wholesale-replace
+      // approach required. A genuinely new id (a just-trained unit, a
+      // just-placed building) has no existing object to merge into, so it's
+      // simply added.
+      (data.changedEntities || []).forEach(e => {
+        let existing = entitiesById.get(e.id);
+        if (existing) {
+          let prevHp = existing.hp;
+          Object.assign(existing, e);
+          if (prevHp !== undefined && existing.hp < prevHp && existing.hp > 0) spawnHitParticle(existing);
         } else {
-          spawnParticles(e.x + (e.w||1)/2, e.y + (e.h||1)/2, '#8b6c43', 3, 0.03, 2);
+          entities.push(e);
+          entitiesById.set(e.id, e);
         }
+      });
+      (data.removedEntityIds || []).forEach(id => entitiesById.delete(id));
+      if ((data.removedEntityIds || []).length) {
+        entities = entities.filter(e => entitiesById.has(e.id));
       }
-    });
-    guestPrevHp.clear();
-    entities.forEach(e => guestPrevHp.set(e.id, e.hp));
+    }
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
     // Re-resolve the GUEST's OWN pre-sync selection by id against the
     // freshly rebuilt entitiesById — not data.selectedIds (that's the

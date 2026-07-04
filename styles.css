@@ -671,15 +671,19 @@ canvas {
 .menu-divider {
   height: 2px;
   background: linear-gradient(90deg, transparent 0%, #8b6c43 50%, transparent 100%);
-  margin: 3px 0 5px;
+  margin: 0;
 }
 /* Settings as compact segmented controls grouped into a simple mobile-friendly
-   stack: difficulty/map, speed, then sound/music. */
+   stack: difficulty/map, speed, then sound/music. Symmetric top/bottom margin
+   (paired with .menu-divider's own zero margin above) keeps every gap in the
+   menu — divider-to-grid, grid-to-divider, divider-to-button-row — at the
+   same 8px rhythm as the button rows themselves (.menu-button-container's
+   margin-top), instead of the previous asymmetric 3px/13px mix. */
 .setup-grid {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 3px 0 0;
+  margin: 8px 0;
 }
 .setup-row {
   display: flex;

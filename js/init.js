@@ -617,6 +617,7 @@ function restartGame(difficulty){
   guestPrevHp.clear();
   guestReactedCorpses.clear();
   guestBuildingFxTick.clear();
+  lastSentEntitySnapshot = new Map(); // fresh map, stale entity-diff baseline no longer meaningful — see js/core.js
 
   // Reset resources to defaults — team 1 (single-player AI, or a real MP
   // guest) gets the same starting resources as team 0, not a handicap; AI
