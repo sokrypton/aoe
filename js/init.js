@@ -770,6 +770,32 @@ function updateNetStats(now){
     + '<span>' + totalMB.toFixed(2) + ' MB</span>';
 }
 
+// requestAnimationFrame stops entirely in a hidden tab — fine in single-
+// player (the game just pauses with you), but a HOST alt-tabbing away used
+// to halt simulation and all sync broadcasts, leaving the guest frozen
+// staring at a live-but-silent connection (and at risk of a false
+// heartbeat-timeout trip). This interval keeps the host's simulation
+// running while hidden. Background setInterval is throttled to ~1/sec —
+// pages holding an active WebRTC connection are exempt from Chrome's far
+// harsher intensive throttling — so each firing may need to cover a full
+// second of game time: the catch-up clamp here is 1500ms, not gameLoop's
+// 250ms (dozens of ticks per firing is cheap; rendering, the actual
+// expensive part, stays skipped while hidden). Only ever advances
+// `lastTime` itself, so when the tab comes back, gameLoop's own elapsed
+// math resumes cleanly with no double-counted time.
+setInterval(() => {
+  if (!document.hidden || netRole !== 'host' || !netConnected) return;
+  if (!gameStarted || gamePaused || gameOver) return;
+  let now = performance.now();
+  let elapsed = Math.min(now - lastTime, 1500);
+  lastTime = now;
+  accumulator += elapsed;
+  while (accumulator >= timeStep) {
+    update();
+    accumulator -= timeStep;
+  }
+}, 250);
+
 function gameLoop(){
   let now = performance.now();
   let elapsed = now - lastTime;

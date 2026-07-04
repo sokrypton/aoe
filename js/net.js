@@ -223,6 +223,16 @@ function hostSession(desiredId){
 
     let finish = (peer) => {
       netPeer = peer;
+      // 'disconnected' = lost the SIGNALING server (PeerJS cloud), not the
+      // game DataConnection — laptop sleep or a wifi blip is enough. An
+      // established match keeps playing without signaling, but this host's
+      // peer id dies with the socket, so any FUTURE (re)join attempt from
+      // the guest would retry against an id that no longer exists, forever.
+      // reconnect() re-registers the same id on the same Peer object; no-op
+      // guard on destroyed covers a deliberate teardown racing the event.
+      peer.on('disconnected', () => {
+        if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
+      });
       netPeer.on('connection', (conn) => {
         // Strictly 1v1 (see plan's punt list: no >2-peer topology in v1),
         // but a genuinely live existing connection is rare here in

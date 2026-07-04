@@ -43,6 +43,26 @@ function pickFields(obj, fields){
   return out;
 }
 
+// An entity minus its per-tick movement-progress fields — the part the
+// guest CAN'T derive on its own and must always be told about. `path` is
+// deliberately core, not movement: a path change is either a new order
+// (must send now) or a tile consumed en route (the natural ~1/sec
+// re-anchor cadence for a moving unit). See the movement-skip in
+// buildSyncPayload's delta branch below.
+function entityCoreJson(e){
+  let {x, y, fromX, fromY, moveT, ...core} = e;
+  return JSON.stringify(core);
+}
+// Host-only, parallel to lastSentEntitySnapshot (js/core.js): id -> core
+// JSON as of the last actual send. Rebuilt on every full sync.
+let lastSentEntityCore = new Map();
+// Counts delta syncs for the staggered keyframe below — every entity gets
+// force-resent (movement fields included) once per KEYFRAME_EVERY deltas
+// (~2s at 15/sec), offset by its id so keyframes spread evenly across
+// syncs instead of all landing on the same payload.
+const KEYFRAME_EVERY = 30;
+let deltaSyncCounter = 0;
+
 function buildSyncPayload(){
   let base = serializeGame();
   let full = guestNeedsFullSync;
@@ -57,8 +77,14 @@ function buildSyncPayload(){
   // would clobber the guest's own `pendingDirT` turn-hysteresis counter,
   // causing a spurious facing flip at sync boundaries — confirmed (by
   // grep) unused outside render-units.js, so stripping is safe.
+  // sortVal joins the strip list for a subtler reason than the rest: it's
+  // written by render.js every frame (draw-order key, recomputed from x/y
+  // on every client independently), so on a MOVING unit it changes every
+  // tick — leaving it in didn't just waste bytes, it made every moving
+  // unit's "core" look changed every sync, completely defeating the
+  // movement-skip in the delta branch below.
   let entities = base.entities.map(e => {
-    let {dir, facing, facingNorth, pendingDir, pendingDirT, lastX, lastY, ...stripped} = e;
+    let {dir, facing, facingNorth, pendingDir, pendingDirT, lastX, lastY, sortVal, ...stripped} = e;
     if (typeof stripped.x === 'number' && typeof stripped.y === 'number') {
       stripped.x = Math.round(stripped.x*100)/100;
       stripped.y = Math.round(stripped.y*100)/100;
@@ -83,22 +109,49 @@ function buildSyncPayload(){
   if (full) {
     payload.entities = entities;
     lastSentEntitySnapshot = new Map(entities.map(e => [e.id, JSON.stringify(e)]));
+    lastSentEntityCore = new Map(entities.map(e => [e.id, entityCoreJson(e)]));
   } else {
+    deltaSyncCounter++;
     let changedEntities = [];
     let currentIds = new Set();
     entities.forEach(e => {
       currentIds.add(e.id);
       let json = JSON.stringify(e);
       if (lastSentEntitySnapshot.get(e.id) !== json) {
-        changedEntities.push(e);
-        lastSentEntitySnapshot.set(e.id, json);
+        // A unit that's just walking its already-sent path changes
+        // x/y/fromX/fromY/moveT every single tick — under the plain diff
+        // above, marching units dominated the entire delta stream (resent
+        // ~15x/sec each) even though the guest independently replays the
+        // exact same path-stepping math (advanceGuestUnits, js/loop.js).
+        // So: if the only thing that changed is that movement progress,
+        // don't resend — the guest is already simulating it. Everything
+        // else (the "core" — orders, combat, and crucially `path` itself)
+        // still triggers an immediate send, and since path consumption
+        // shrinks `path` each tile reached, a moving unit still re-anchors
+        // about once per tile (~1/sec) instead of 15/sec, naturally
+        // bounding guest drift. A slow keyframe (staggered by id so it
+        // never bursts) additionally force-resends each entity every
+        // KEYFRAME_EVERY deltas as a catch-all for any x/y write this
+        // reasoning missed — costs almost nothing, caps any surprise at
+        // ~2s. separateUnits() (js/loop.js) specifically only nudges x/y
+        // on path.length===0 units, which never take this skip.
+        let coreJson = entityCoreJson(e);
+        let moving = e.type === 'unit' && Array.isArray(e.path) && e.path.length > 0;
+        let keyframe = (deltaSyncCounter + e.id) % KEYFRAME_EVERY === 0;
+        if (moving && !keyframe && lastSentEntityCore.get(e.id) === coreJson) {
+          // movement-only progress — guest replays it locally
+        } else {
+          changedEntities.push(e);
+          lastSentEntitySnapshot.set(e.id, json);
+          lastSentEntityCore.set(e.id, coreJson);
+        }
       }
     });
     let removedEntityIds = [];
     lastSentEntitySnapshot.forEach((json, id) => {
       if (!currentIds.has(id)) removedEntityIds.push(id);
     });
-    removedEntityIds.forEach(id => lastSentEntitySnapshot.delete(id));
+    removedEntityIds.forEach(id => { lastSentEntitySnapshot.delete(id); lastSentEntityCore.delete(id); });
     payload.changedEntities = changedEntities;
     payload.removedEntityIds = removedEntityIds;
   }
