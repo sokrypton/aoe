@@ -78,16 +78,23 @@ async function decompressMessage(data){
   return JSON.parse(new TextDecoder().decode(out));
 }
 
+// Running totals for the in-game connection-stats display (js/init.js's
+// updateNetStats) — byte counts are measured post-compression, i.e. actual
+// wire bytes, not the pre-compression JSON size.
+let netBytesSent = 0;
+let netBytesReceived = 0;
+
 let sendQueue = Promise.resolve();
 function queueSend(conn, msg){
   sendQueue = sendQueue
     .then(() => compressMessage(msg))
-    .then(bytes => conn.send(bytes))
+    .then(bytes => { netBytesSent += bytes.length; conn.send(bytes); })
     .catch(err => console.error('Net send failed (message dropped):', err));
 }
 
 let recvQueue = Promise.resolve();
 function queueReceive(data){
+  netBytesReceived += (data instanceof Uint8Array ? data : new Uint8Array(data)).length;
   recvQueue = recvQueue
     .then(() => decompressMessage(data))
     .then(msg => dispatchNetMessage(msg))
@@ -165,27 +172,64 @@ function wireConnection(conn){
 // Host side: create a Peer, wait for a guest to connect to it.
 // Resolves with this host's peerId (to embed in the shareable link) once
 // PeerJS's cloud signaling server has assigned one.
-function hostSession(){
+//
+// `desiredId`, when given, asks PeerJS's signaling server for that EXACT
+// id instead of a random one — used when re-hosting from a loaded save
+// (js/save.js's serializeGame() stores the host peer id that was active at
+// save time). Requesting the same id back lets the ORIGINAL guest's own
+// already-running attemptReconnect() loop (js/init.js, which keeps retrying
+// against its cached host id every few seconds) silently succeed on its
+// own, with no new link needed — otherwise a host reloading its whole page
+// and re-hosting always got a fresh random id, permanently stranding that
+// guest's tab retrying against an id that no longer exists (confirmed by
+// an actual two-browser-context test: the guest sat showing "Attempting to
+// reconnect…" forever). The id might not be immediately available again
+// right after the old session dies (server-side cleanup lag, or someone
+// else's tab happening to hold it) — falls back to a fresh random id
+// rather than failing hosting outright if so.
+function hostSession(desiredId){
   return new Promise((resolve, reject) => {
     if (typeof Peer === 'undefined') { reject(new Error('PeerJS library not loaded')); return; }
     netRole = 'host';
-    netPeer = new Peer();
-    netPeer.on('open', (id) => resolve(id));
-    netPeer.on('error', (err) => {
+
+    let finish = (peer) => {
+      netPeer = peer;
+      netPeer.on('connection', (conn) => {
+        // Strictly 1v1 (see plan's punt list: no >2-peer topology in v1),
+        // but a genuinely live existing connection is rare here in
+        // practice — a fresh incoming connection almost always means the
+        // same guest reconnecting (e.g. after closing/reopening their tab,
+        // where PeerJS's own 'close' event may never have fired for the
+        // dead old one — see the heartbeat watchdog above). So always
+        // accept the new connection, tearing down whatever the old
+        // reference was rather than rejecting the new guest and getting
+        // permanently stuck.
+        if (netConn && netConn !== conn) { try { netConn.close(); } catch (e) {} }
+        wireConnection(conn);
+      });
+      resolve(netPeer.id);
+    };
+
+    let settled = false;
+    let peer = desiredId ? new Peer(desiredId) : new Peer();
+    peer.on('open', () => { settled = true; finish(peer); });
+    peer.on('error', (err) => {
+      if (settled) return;
+      if (desiredId && err.type === 'unavailable-id') {
+        // The exact id we wanted isn't free yet — fall back to a fresh
+        // random one instead of failing hosting outright. Only the
+        // ORIGINAL guest's reconnect benefits from the exact id match; a
+        // brand-new guest just uses whatever link is shown regardless.
+        let fallback = new Peer();
+        fallback.on('open', () => { settled = true; finish(fallback); });
+        fallback.on('error', (err2) => {
+          console.error('PeerJS host error (fallback):', err2);
+          reject(err2);
+        });
+        return;
+      }
       console.error('PeerJS host error:', err);
       reject(err);
-    });
-    netPeer.on('connection', (conn) => {
-      // Strictly 1v1 (see plan's punt list: no >2-peer topology in v1), but
-      // a genuinely live existing connection is rare here in practice — a
-      // fresh incoming connection almost always means the same guest
-      // reconnecting (e.g. after closing/reopening their tab, where
-      // PeerJS's own 'close' event may never have fired for the dead old
-      // one — see the heartbeat watchdog above). So always accept the new
-      // connection, tearing down whatever the old reference was rather
-      // than rejecting the new guest and getting permanently stuck.
-      if (netConn && netConn !== conn) { try { netConn.close(); } catch (e) {} }
-      wireConnection(conn);
     });
   });
 }

@@ -80,6 +80,28 @@ function buildSyncPayload(){
   if (full) {
     guestNeedsFullSync = false;
     dirtyMapCells = []; // the full map already covers everything queued so far
+    // Only worth sending on a full (re)sync — this is how a (re)joining
+    // guest recovers previously-explored terrain it can no longer see (see
+    // updateGuestExploredEver()'s comment, js/core.js): host-computed, so
+    // it survives a guest tab close/reopen that would otherwise wipe the
+    // guest's own local `fog` memory entirely.
+    payload.exploredEver = Array.from(guestExploredEver);
+    // The guest's own last-reported camera position (js/core.js's
+    // hostKnownGuestCam, kept updated by the 'guest-view' message handler
+    // below) — lets a (re)connecting guest restore wherever it had
+    // actually panned to instead of recentering on its own base every
+    // time (see applyNetSync's camera-centering block below).
+    if (hostKnownGuestCam) payload.guestCam = hostKnownGuestCam;
+    // One-shot signal set by js/save.js's applySavedGame() when the HOST
+    // just loaded a save mid-match (not an ordinary reconnect, which also
+    // sets `full` but shouldn't yank the guest's camera around) — tells
+    // the guest this is a discontinuous state jump, so it should re-center
+    // its camera even though its own one-shot __netCameraCentered flag
+    // already fired at original join.
+    if (window.__hostJustLoadedSave) {
+      payload.stateReloaded = true;
+      window.__hostJustLoadedSave = false;
+    }
   } else {
     delete payload.map;
     payload.mapDelta = dirtyMapCells.map(({x,y}) => ({x, y, cell: map[y][x]}));
@@ -142,6 +164,16 @@ function applyNetSync(data){
     // resting at "unexplored". Caught by an actual two-browser-context
     // test checking the guest's fog distribution, not by reading the code.
     if (fog.length !== MAP) initFog();
+    // Restore previously-explored terrain (host-computed — see
+    // updateGuestExploredEver()'s comment, js/core.js) before updateFog()
+    // below layers current live vision on top. Only present on a full
+    // sync; a delta sync has nothing new to restore here.
+    if (data.full && Array.isArray(data.exploredEver)) {
+      data.exploredEver.forEach(key => {
+        let tx = key % MAP, ty = Math.floor(key / MAP);
+        if (fog[ty] && fog[ty][tx] === 0) fog[ty][tx] = 1;
+      });
+    }
     let loadNow = performance.now();
     // Death blood-burst (js/logic.js's handleDeath spawns it on the host the
     // instant a unit dies — the guest never otherwise sees it, since
@@ -233,16 +265,27 @@ function applyNetSync(data){
     // The guest never runs init() (which normally centers camX/camY on
     // your own starting base — see js/init.js), so on the very first sync
     // its camera is still sitting at the core.js default (0,0), looking at
-    // empty space nowhere near the actual map. Center it on one of the
-    // guest's own units/buildings once, the same way init() does for a
-    // normal local game start; never again after that so it doesn't fight
-    // the guest's own manual panning on later syncs.
+    // empty space nowhere near the actual map. Restore wherever this guest
+    // had actually panned to last (data.guestCam — host-remembered, since
+    // the host survives a guest's own reload/refresh) if available;
+    // otherwise fall back to centering on one of the guest's own units/
+    // buildings, the same way init() does for a normal local game start.
+    // Only ever done once per page load — never again after that so it
+    // doesn't fight the guest's own manual panning on later syncs — except
+    // when data.stateReloaded explicitly asks for it again (a host-loaded
+    // save is a discontinuous jump, not something to just quietly ignore).
+    if (data.stateReloaded) window.__netCameraCentered = false;
     if (!window.__netCameraCentered) {
-      let own = entities.find(e => e.team === myTeam);
-      if (own) {
-        let iso = toIso(own.x, own.y);
-        camX = iso.ix; camY = iso.iy;
+      if (data.guestCam) {
+        camX = data.guestCam.x; camY = data.guestCam.y;
         window.__netCameraCentered = true;
+      } else {
+        let own = entities.find(e => e.team === myTeam);
+        if (own) {
+          let iso = toIso(own.x, own.y);
+          camX = iso.ix; camY = iso.iy;
+          window.__netCameraCentered = true;
+        }
       }
     }
 
@@ -278,6 +321,7 @@ function applyNetSync(data){
     }
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
+    updateHostExploredEver(); // js/core.js — guest-side mirror of the host's updateGuestExploredEver()
     markScoutedBuildings(); // js/core.js — host's equivalent runs every tick in js/loop.js's update()
     // Force updateUI() to actually rebuild rather than skip via its
     // dirty-check cache, since this "tick" never ran through the normal
@@ -316,4 +360,28 @@ onNetMessage((msg) => {
   if (msg.type === 'sync' && netRole === 'guest') {
     applyNetSync(msg.data);
   }
+  // Host-side: remember the guest's own reported camera position (see
+  // hostKnownGuestCam's comment, js/core.js) so it can be handed back on a
+  // future full sync.
+  if (msg.type === 'guest-view' && netRole === 'host') {
+    hostKnownGuestCam = { x: msg.camX, y: msg.camY };
+  }
 });
+
+// Guest-only: periodically tells the host where its camera actually is,
+// so the host can hand it back on a future (re)connect (data.guestCam
+// above). Not sent every frame — camera position only matters for a FUTURE
+// reconnect, not the live match, so a coarse interval is plenty and keeps
+// this off the hot path entirely. Skips sending when nothing changed
+// since the last report, same "only send what's new" spirit as the fog
+// exploration reporting elsewhere in this file.
+let lastGuestViewReportAt = 0;
+let lastReportedGuestCam = null;
+function reportGuestViewIfChanged(now){
+  if (netRole !== 'guest') return;
+  if (now - lastGuestViewReportAt < 1500) return;
+  lastGuestViewReportAt = now;
+  if (lastReportedGuestCam && lastReportedGuestCam.x === camX && lastReportedGuestCam.y === camY) return;
+  lastReportedGuestCam = { x: camX, y: camY };
+  sendToHost({ type: 'guest-view', camX, camY });
+}

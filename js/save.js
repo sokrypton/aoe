@@ -17,6 +17,17 @@ function serializeGame(){
     // click Host and pick up as the new host from that exact state,
     // regardless of which role originally saved it.
     wasMultiplayerGame: typeof netRole !== 'undefined' && (netRole === 'host' || netRole === 'guest'),
+    // The host's PeerJS peer id active at save time — captured from
+    // whichever side is doing the saving, since both know it (the host
+    // has it directly; the guest cached it as window.__mpHostPeerId when
+    // it joined). Letting a later re-host request this SAME id back
+    // (js/net.js's hostSession()) is what lets the original guest's own
+    // already-running reconnect loop succeed silently after the host
+    // reloads its whole page and re-hosts from this save, instead of being
+    // permanently stranded retrying against an id that no longer exists.
+    hostPeerId: typeof netRole !== 'undefined' && netRole === 'host' && typeof netPeer !== 'undefined' && netPeer
+      ? netPeer.id
+      : (typeof netRole !== 'undefined' && netRole === 'guest' ? (window.__mpHostPeerId || null) : null),
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
     map, fog, entities, nextId,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
@@ -43,6 +54,19 @@ function serializeGame(){
     // scoutedByMe Set, not stored on individual entities (see its comment
     // for why). Saved as a plain array since Sets aren't JSON-safe.
     scoutedByMe: Array.from(scoutedByMe),
+    // `fog` above is always THIS session's own team's live grid (team 0's
+    // if saved from the host, team 1's if saved from the guest) — but
+    // whoever LOADS this save always becomes the new host (see
+    // applySavedGame's comment), regardless of which side originally saved
+    // it. So a guest-originated save's `fog` is actually the WRONG team's
+    // grid for that future host. `savedByTeam` records which team `fog`
+    // actually belongs to, and `otherTeamExploredEver` carries the OTHER
+    // team's persistent "ever explored" memory (js/core.js's
+    // updateGuestExploredEver()/updateHostExploredEver() — whichever this
+    // session tracks depends on whether it's host or guest) so
+    // applySavedGame can reconstruct team 0's fog correctly either way.
+    savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
+    otherTeamExploredEver: Array.from(myTeam === 1 ? hostExploredEver : guestExploredEver),
     bellActive: !!window.bellActive,
     aiBellActive: !!window.aiBellActive,
     aiWallPlan: window.aiWallPlan || null,
@@ -135,7 +159,32 @@ function applySavedGame(data){
     if (data.GAME_SPEED) setGameSpeed(data.GAME_SPEED);
 
     map = data.map;
-    fog = data.fog || [];
+    // Whoever loads a save always becomes the new host (see below), so the
+    // new session's `fog` must end up holding TEAM 0's grid regardless of
+    // which side originally saved. If the save came from the host
+    // (savedByTeam 0, or an older save predating this field), data.fog
+    // already IS team 0's grid — use it directly, and the saved
+    // otherTeamExploredEver is team 1's ("guest") memory. If it came from
+    // the guest (savedByTeam 1), data.fog is team 1's grid instead — that
+    // becomes the new guestExploredEver, while the saved
+    // otherTeamExploredEver (the guest's own locally-tracked team-0 memory)
+    // is what rebuilds team 0's fog here.
+    if (data.savedByTeam === 1) {
+      initFog();
+      (data.otherTeamExploredEver || []).forEach(key => {
+        let tx = key % MAP, ty = Math.floor(key / MAP);
+        if (fog[ty]) fog[ty][tx] = 1;
+      });
+      guestExploredEver = new Set();
+      (data.fog || []).forEach((row, y) => row.forEach((cell, x) => {
+        if (cell > 0) guestExploredEver.add(y * MAP + x);
+      }));
+      hostExploredEver = new Set();
+    } else {
+      fog = data.fog || [];
+      guestExploredEver = new Set(data.otherTeamExploredEver || []);
+      hostExploredEver = new Set();
+    }
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
     let loadNow = performance.now();
@@ -218,14 +267,57 @@ function applySavedGame(data){
     // whether this load happened before hosting even started (the normal
     // "load a save, then host from it" flow) or mid-match with a guest
     // already connected (not the primary use case, but safe for free).
+    // A guest already connected mid-match, loading a save right out from
+    // under them, is a real (if secondary) use case — but calling
+    // onHostClicked() below unconditionally in that case would spin up a
+    // whole NEW hostSession()/peer id and show a "waiting for opponent"
+    // screen the already-connected guest will never see or use. The
+    // existing DataConnection keeps working fine regardless (confirmed by
+    // an actual two-browser-context test — the underlying RTCDataChannel
+    // survives a new Peer object being created), but the host would sit
+    // paused on that screen indefinitely, and since hostSyncTick() only
+    // ever runs inside the host's own update() loop (js/loop.js), which
+    // doesn't run while gamePaused, the guest would see no updates
+    // (resources, positions, anything) until the host happened to
+    // manually dismiss it. Detected BEFORE the netRole/guestNeedsFullSync
+    // block below (which is what would otherwise look identical for both
+    // cases — a host that's about to (re-)host and a host that's already
+    // mid-match).
+    let alreadyConnectedHost = typeof netRole !== 'undefined' && netRole === 'host' && netConnected;
+
     if (typeof netRole !== 'undefined' && netRole === 'host') guestNeedsFullSync = true;
+    // One-shot signal riding the next full sync (js/net-sync.js's
+    // buildSyncPayload/applyNetSync) so a (re)connecting guest knows this
+    // isn't just an ordinary reconnect — it's a discontinuous state jump —
+    // and should re-center its camera on its own units again, even though
+    // its own one-shot __netCameraCentered flag may already have fired
+    // back when it first joined. Set unconditionally on ANY multiplayer
+    // save load, not just when already actively hosting: a save can just
+    // as easily be loaded on a fresh page BEFORE hosting has (re)started
+    // (the normal "reload the whole browser, then load, then re-host"
+    // flow), in which case netRole isn't 'host' yet at this exact moment —
+    // but the flag just sits harmlessly until the first full sync is ever
+    // built, whenever hosting actually begins.
+    if (data.wasMultiplayerGame) window.__hostJustLoadedSave = true;
 
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
     updateUI();
 
-    if (data.wasMultiplayerGame && typeof onHostClicked === 'function') {
+    if (alreadyConnectedHost) {
+      // Resume in place: the connection itself is still fine, only the
+      // host's own local menu (opened by whatever UI flow triggered this
+      // load) needs closing so its paused game loop resumes and actually
+      // pushes the freshly loaded state out via the next hostSyncTick().
+      let menu = document.getElementById('tutorial');
+      if (menu) menu.style.display = 'none';
+      if (typeof localMenuOpen !== 'undefined') {
+        localMenuOpen = false;
+        recomputeGamePaused();
+      }
+      if (window.showMsg) showMsg('Game loaded — resuming match');
+    } else if (data.wasMultiplayerGame && typeof onHostClicked === 'function') {
       // Skip the manual "now open the menu and click Host yourself" step —
       // the file is already tagged as having come from a multiplayer
       // match, so we already know that's what the user wants. Keep the
@@ -239,6 +331,10 @@ function applySavedGame(data){
         localMenuOpen = true;
         recomputeGamePaused();
       }
+      // One-shot: read by onHostClicked() (js/init.js) to request this
+      // exact peer id back from PeerJS instead of a random one — see
+      // hostPeerId's comment above (js/net.js's hostSession()).
+      window.__loadedHostPeerId = data.hostPeerId || null;
       onHostClicked();
     } else {
       let menu = document.getElementById('tutorial');

@@ -354,11 +354,8 @@ function drawBuilding(e, part = null){
   let visible = f === 2; // actively in sight — show live animations
   let darken = !window._ghostDraw && f === 1;
   if(!e.complete && !window._ghostDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
-  let tc=e.team===myTeam?'#2266bb':'#cc4444';
-  let tcD=e.team===myTeam?'#1a4488':'#993333';
-  // (kept as its own slightly-different palette from teamColor()'s
-  // TEAM_COLORS — this darker/lighter pair is building-art-specific, not
-  // the general team-tint — but the same myTeam-relative logic applies)
+  let tc=teamColor(e.team);
+  let tcD=teamColorDark(e.team);
   let bh=10;
 
   let strokeColor = '#000000';

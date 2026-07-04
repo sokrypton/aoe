@@ -40,16 +40,19 @@ function setMapSize(sizeKey){
   ];
 }
 const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
-// TEAM_COLORS itself is an absolute team-number lookup (team 0 is always
-// blue) — fine for host/single-player, where myTeam is always 0 anyway,
-// but wrong for a guest: their own team-1 units/buildings would render in
-// "enemy" red and the real enemy's in "friendly" blue. Every team-color
-// read should go through this instead — my own team always reads as
-// color 0 (blue), the opponent always as color 1 (red), neutral (gaia:
-// sheep/bears) unaffected.
+// Absolute team-number lookup (team 0 is always blue, team 1 always red,
+// regardless of which player is viewing) — every team-color read goes
+// through this rather than TEAM_COLORS directly, so there's one place to
+// change if that ever needs to be perspective-relative again.
 function teamColor(team){
-  if (team === 2) return TEAM_COLORS[2];
-  return team === myTeam ? TEAM_COLORS[0] : TEAM_COLORS[1];
+  return TEAM_COLORS[team];
+}
+// Darker variant per team, for building art's shaded/shadow side — kept as
+// its own hand-picked pair (not a generic darkenColor() pass) since
+// building art wants a specific darker tone, not a percentage darken.
+const TEAM_COLORS_DARK={0:'#1a4488',1:'#993333',2:'#999966'};
+function teamColorDark(team){
+  return TEAM_COLORS_DARK[team];
 }
 // Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
 // all rates below are authored in real AoE2 game-seconds at 30 ticks each.
@@ -282,6 +285,48 @@ function initFog() {
   }
 }
 
+// Shared vision math used both by updateFog() (each client's own live fog,
+// for whichever team is "me" locally) and updateGuestExploredEver() below
+// (host-only persistent memory of team 1's explored history) — factored
+// out so the sight-radius table only lives in one place. Calls cb(x,y) for
+// every currently-visible tile around every entity on `team`.
+function forEachVisibleTile(team, cb){
+  entities.forEach(e => {
+    if (e.team !== team) return;
+
+    let sight = 5;
+    if (e.type === 'building') {
+      if (!e.complete) sight = 1;
+      else if (e.btype === 'TC') sight = 8;
+      else if (e.btype === 'TOWER') sight = 9;
+      else if (e.btype === 'HOUSE') sight = 4;
+      else sight = 5;
+    } else {
+      if (e.utype === 'sheep') sight = 3;
+      else if (e.utype === 'scout') sight = 7;
+      else sight = 5;
+    }
+
+    let cx = Math.round(e.x);
+    let cy = Math.round(e.y);
+    if (e.type === 'building') {
+      let b = BLDGS[e.btype];
+      cx = Math.round(e.x + (e.w || b.w)/2);
+      cy = Math.round(e.y + (e.h || b.h)/2);
+    }
+
+    for (let dy = -sight; dy <= sight; dy++) {
+      for (let dx = -sight; dx <= sight; dx++) {
+        if (dx*dx + dy*dy <= sight*sight) {
+          let tx = cx + dx;
+          let ty = cy + dy;
+          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);
+        }
+      }
+    }
+  });
+}
+
 function updateFog() {
   if (!gameStarted) return;
   if (window.fogDisabled) {
@@ -296,7 +341,7 @@ function updateFog() {
       if (fog[y][x] === 2) fog[y][x] = 1;
     }
   }
-  
+
   // 2. Set visible tiles around MY OWN units/buildings — myTeam is 0 for
   // host/single-player, 1 for a connected guest (js/core.js's existing
   // "who am I" indirection, same one input.js/ui.js/logic.js already use).
@@ -305,43 +350,48 @@ function updateFog() {
   // sync payload), so the host computing team 0's fog and the guest
   // independently computing team 1's fog from the same synced entities
   // never conflict.
-  entities.forEach(e => {
-    if (e.team !== myTeam) return;
-    
-    let sight = 5;
-    if (e.type === 'building') {
-      if (!e.complete) sight = 1;
-      else if (e.btype === 'TC') sight = 8;
-      else if (e.btype === 'TOWER') sight = 9;
-      else if (e.btype === 'HOUSE') sight = 4;
-      else sight = 5;
-    } else {
-      if (e.utype === 'sheep') sight = 3;
-      else if (e.utype === 'scout') sight = 7;
-      else sight = 5;
-    }
-    
-    let cx = Math.round(e.x);
-    let cy = Math.round(e.y);
-    if (e.type === 'building') {
-      let b = BLDGS[e.btype];
-      cx = Math.round(e.x + (e.w || b.w)/2);
-      cy = Math.round(e.y + (e.h || b.h)/2);
-    }
-    
-    for (let dy = -sight; dy <= sight; dy++) {
-      for (let dx = -sight; dx <= sight; dx++) {
-        if (dx*dx + dy*dy <= sight*sight) {
-          let tx = cx + dx;
-          let ty = cy + dy;
-          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) {
-            fog[ty][tx] = 2; // Active vision
-          }
-        }
-      }
-    }
-  });
+  forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
+
+// Host-only: a persistent record of every tile team 1 (the guest) has ever
+// seen, computed the exact same way the guest computes its own live fog —
+// but from the HOST's perspective, using the same authoritative entity
+// positions it already simulates every tick. Unlike the guest's own `fog`
+// array, this never disappears when the guest's tab closes/reloads, which
+// is what lets a rejoining guest recover their previously-explored map
+// (see buildSyncPayload's `exploredEver` field in js/net-sync.js) and lets
+// a saved multiplayer game correctly restore the guest's exploration too
+// (js/save.js) — both impossible if this lived only in the guest's own,
+// disposable browser tab.
+let guestExploredEver = new Set();
+function updateGuestExploredEver(){
+  if (netRole !== 'host' || window.fogDisabled) return;
+  forEachVisibleTile(1, (tx, ty) => { guestExploredEver.add(ty * MAP + tx); });
+}
+
+// Guest-only mirror of the above: the guest already receives the host's
+// own units/buildings in every sync, so it can just as easily compute
+// team 0's persistent explored history locally too — needed so a
+// GUEST-originated save can still correctly restore the HOST's fog when
+// later reloaded, since whoever loads a save always becomes the new host
+// (js/save.js), regardless of which side originally saved it. Without
+// this, a guest-originated save would have nothing to offer for team 0's
+// fog at all, and the new host would start with a blank map.
+let hostExploredEver = new Set();
+function updateHostExploredEver(){
+  if (netRole !== 'guest' || window.fogDisabled) return;
+  forEachVisibleTile(0, (tx, ty) => { hostExploredEver.add(ty * MAP + tx); });
+}
+
+// Host-only memory of the guest's own last-reported camera position
+// (js/net-sync.js's onNetMessage handler for 'guest-view', sent
+// periodically by the guest — camera position is pure local UI state the
+// host has no way to derive on its own, unlike fog). Included in the next
+// full sync so a (re)connecting guest restores wherever it had actually
+// panned to, instead of recentering on its own base every single time —
+// the host survives a guest's own page refresh/reload, which is exactly
+// when this matters (the guest's own in-memory camX/camY doesn't).
+let hostKnownGuestCam = null;
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   let type = 'dust';

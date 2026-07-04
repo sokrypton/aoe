@@ -303,7 +303,13 @@ function onHostClicked(){
     menu.querySelectorAll('.setup-grid, #save-load-row, #start-row, #mp-row').forEach(el => { el.style.display = 'none'; });
   }
 
-  hostSession().then(peerId => {
+  // Only meaningful right after loading a multiplayer save (js/save.js sets
+  // this one-shot flag) — read-then-clear so it never leaks into a later,
+  // unrelated "Host" button click that has nothing to do with a load.
+  let desiredPeerId = window.__loadedHostPeerId || null;
+  window.__loadedHostPeerId = null;
+
+  hostSession(desiredPeerId).then(peerId => {
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
     // Deliberately do NOT start the match yet — restartGame() calls
     // startGame(), which hides this very menu (and the link/status panel
@@ -378,6 +384,19 @@ window.onNetConnectionOpen = function(){
       disconnectedPause = false;
       recomputeGamePaused();
     }
+    // Re-broadcast this session's actual current localMenuOpen regardless
+    // of which branch above ran. A (re)connecting guest's own remoteMenuOpen
+    // is a mirrored copy of whatever the LAST 'host-menu' message it ever
+    // received said — if the previous host session died (crash/reload)
+    // while its menu happened to be open, it can never send the matching
+    // open:false (the whole page is gone), permanently stranding that
+    // guest paused with remoteMenuOpen stuck true and nothing on screen to
+    // explain why (confirmed by an actual test: host reloads from a save
+    // while its own menu was open, guest auto-reconnects via the same peer
+    // id, and ends up stuck gamePaused with no visible cause). This new
+    // session's localMenuOpen is always known-correct at this point (freshly
+    // computed above), so just tell the guest what it actually is.
+    broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
       mpMatchStarted = true;
@@ -580,6 +599,9 @@ function restartGame(difficulty){
   selected = [];
   tick = 0;
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
+  guestExploredEver.clear(); // fresh map, fresh host-side guest-fog memory — see js/core.js
+  hostExploredEver.clear(); // fresh map, fresh guest-side host-fog memory — see js/core.js
+  hostKnownGuestCam = null; // fresh map, stale camera position no longer meaningful — see js/core.js
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();
@@ -587,9 +609,12 @@ function restartGame(difficulty){
   guestReactedCorpses.clear();
   guestBuildingFxTick.clear();
 
-  // Reset resources to defaults
+  // Reset resources to defaults — team 1 (single-player AI, or a real MP
+  // guest) gets the same starting resources as team 0, not a handicap; AI
+  // difficulty is tuned via gather rates/behavior (js/ai.js), not a lower
+  // resource floor.
   res = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
-  aiRes = {food:100, wood:100, gold:100, stone:100, prepaidFarms:0};
+  aiRes = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
   window.aiWallPlan = null;
   window.aiGateBuilt = false;
   window.aiGateTile = null;
@@ -699,12 +724,41 @@ function setGameSpeed(speed){
 }
 let accumulator = 0;
 
+// ---- Multiplayer connection stats (bandwidth) ----
+// Purely a display concern — reads netBytesSent/netBytesReceived (js/net.js).
+// Only shown while an actual netRole connection exists.
+let netStatsLastBytesSent = 0;
+let netStatsLastBytesReceived = 0;
+let netStatsLastSampleAt = 0;
+
+function updateNetStats(now){
+  let el = document.getElementById('net-stats');
+  if (!el) return;
+  if (netRole !== 'host' && netRole !== 'guest') {
+    if (el.style.display !== 'none') el.style.display = 'none';
+    return;
+  }
+  if (el.style.display === 'none') el.style.display = 'flex';
+  if (now - netStatsLastSampleAt < 500) return; // sample twice a second — smooth enough, cheap enough
+  let dt = (now - netStatsLastSampleAt) / 1000;
+  let downKbps = dt > 0 ? ((netBytesReceived - netStatsLastBytesReceived) / 1024) / dt : 0;
+  let upKbps = dt > 0 ? ((netBytesSent - netStatsLastBytesSent) / 1024) / dt : 0;
+  netStatsLastBytesSent = netBytesSent;
+  netStatsLastBytesReceived = netBytesReceived;
+  netStatsLastSampleAt = now;
+  let totalMB = (netBytesSent + netBytesReceived) / (1024 * 1024);
+  el.innerHTML = '<span>&darr;' + downKbps.toFixed(1) + ' &uarr;' + upKbps.toFixed(1) + ' KB/s</span>'
+    + '<span>' + totalMB.toFixed(2) + ' MB</span>';
+}
+
 function gameLoop(){
   let now = performance.now();
   let elapsed = now - lastTime;
   lastTime = now;
 
   if (elapsed > 250) elapsed = 250; // prevent spiral of death
+
+  updateNetStats(now);
 
   if(gameStarted && !gamePaused) {
     handleScroll(elapsed);
@@ -745,6 +799,7 @@ function gameLoop(){
       advanceGuestParticles(elapsed);
       advanceGuestBuildingEffects();
     }
+    reportGuestViewIfChanged(now); // js/net-sync.js — lets the host hand this back on a future reconnect
   }
   render();
   updateUI();

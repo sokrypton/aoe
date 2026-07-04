@@ -99,6 +99,7 @@ function update(){
   projectiles = remainingProjectiles;
 
   updateFog(); // Update Fog of War visibility grid
+  updateGuestExploredEver(); // js/core.js — host-only persistent memory of team 1's explored history
 
   // Remember enemy buildings the moment any of their tiles is actively
   // visible. This must live in the game loop, NOT the render pass: the
