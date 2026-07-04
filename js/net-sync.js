@@ -9,59 +9,28 @@
 // a second on the GUEST'S OWN already-running session, so it must never
 // clobber the guest's local selection/camera — only world state.
 
-// Target REAL sync rate, not a tick count — ticks run at 30*GAME_SPEED/sec,
-// so a fixed tick-count interval would silently give someone playing at
-// speed 4 four times the bandwidth of someone at speed 1 for the same
-// setting, with nobody having chosen that. Benchmarked (two-browser-context
-// tests, see the scratchpad tuning scripts): payload is a near-constant
-// ~14.5-14.8KB regardless of rate (it's driven by entity count, not
-// frequency), and the host's own simulation clock stays in perfect
-// lockstep even syncing every single tick (verified up to 120/sec at
-// GAME_SPEED=4, zero dropped ticks) — so there's no engine/PeerJS ceiling
-// here at all. The real constraint is bandwidth: 15/sec keeps this to
-// ~220KB/s regardless of chosen game speed (computed below), comfortably
-// under most home upload connections, while still being a correction
-// every ~65ms — plenty responsive given position/tick interpolation
-// already smooths the visuals *between* syncs (js/loop.js's
-// advanceGuestUnits/advanceGuestProjectiles + the tick nudge in
-// js/init.js's gameLoop). `let` so it's still tunable at runtime for
-// future benchmarking without a reload.
+// Target REAL sync rate, not a tick count — a fixed tick-count interval
+// would give someone at speed 4 four times the bandwidth of speed 1 for
+// the same setting. Benchmarked: payload size is driven by entity count,
+// not frequency, and the host stays in lockstep even at 120/sec — no
+// engine ceiling. 15/sec keeps bandwidth reasonable while still landing a
+// correction every ~65ms (position/tick interpolation smooths the rest).
 let NET_SYNC_TARGET_PER_SEC = 15;
 
-// A naive reuse of serializeGame() sends the ENTIRE map+fog every single
-// sync — for a medium map that's ~280KB of a ~290KB payload, 6x/sec
-// (~1.7MB/s), which is almost certainly what "feels slow." Two fixes:
-//   1. fog is never sent at all — each client computes its OWN team's real
-//      fog-of-war locally from the fully-synced entities/map (updateFog()
-//      in js/core.js, gated on the shared myTeam indirection: 0 for the
-//      host, 1 for the guest). No network protocol needed for this at
-//      all — the guest already receives every entity (both teams') every
-//      sync, so it can independently work out its own team's vision
-//      without the host ever needing to send a fog grid.
-//   2. map is sent whole only once (guestNeedsFullSync, reset to true on
-//      every fresh connection/reconnect in onNetConnectionOpen — so a
-//      (re)joining guest always gets a complete base first). After that,
-//      only the small list of cells actually changed since the last
-//      broadcast (dirtyMapCells, appended to by markMapDirty() calls at
-//      the handful of places gameplay code mutates a map cell — see
-//      js/core.js) gets sent.
-// Fields common to every sync payload (full or delta) — sourced from
-// serializeGame()'s save-file shape (js/save.js) via an explicit whitelist
-// instead of spreading everything and deleting the exceptions. Several of
-// these (selectedIds/cameraFollowId/currentVillagerMenu/settingRally/
+// fog is never sent — each client computes its own team's fog locally from
+// the synced entities (updateFog(), js/core.js). map is sent whole only
+// once per (re)connection (guestNeedsFullSync); after that only changed
+// cells (dirtyMapCells) go out.
+//
+// COMMON_SYNC_FIELDS is an explicit whitelist (not spread-then-delete) of
+// what a live sync actually needs. Several serializeGame() fields
+// (selectedIds/cameraFollowId/currentVillagerMenu/settingRally/
 // scoutedByMe/savedByTeam/otherTeamExploredEver/aiDifficulty/version/
-// savedAt/wasMultiplayerGame/hostPeerId/camX/camY/ZOOM) describe THIS
-// session's own local UI/save-file bookkeeping and are never read anywhere
-// in applyNetSync() (confirmed by grep, not assumed — see the file-header
-// comment's "camX/camY/ZOOM/... are deliberately NOT touched here" note) —
-// so, unlike `map`/`fog`/entities/projectiles/corpses/cmdMarkers (added
-// separately below per full-vs-delta case), these are deliberately NOT
-// routed into the live sync payload at all, only into save.js's actual
-// save-file output (serializeGame() itself is unchanged; only this
-// sync-specific whitelist excludes them). One of these,
-// `otherTeamExploredEver`, is genuinely large and grows over a match's
-// lifetime — sending it on every ~65ms sync when only a save-file load
-// ever reads it was pure, compounding waste.
+// savedAt/wasMultiplayerGame/hostPeerId/camX/camY/ZOOM) are save-file-only
+// bookkeeping never read by applyNetSync() (confirmed by grep) — excluded
+// here, still present in actual save files. `otherTeamExploredEver`
+// especially: large and grows over a match, pure compounding waste to
+// resend every sync when only a save load ever reads it.
 const COMMON_SYNC_FIELDS = ['MAP', 'tick', 'GAME_SPEED',
   'resources', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
   'gameStarted', 'gameOver', 'won', 'fogDisabled',
@@ -78,24 +47,16 @@ function buildSyncPayload(){
   let base = serializeGame();
   let full = guestNeedsFullSync;
 
-  // Round entity coordinates for the wire only — continuous movement math
-  // (separateUnits() etc. in js/loop.js) needs full float precision, but
-  // that precision is visually meaningless over the network. Also strip
-  // render-only bookkeeping fields (dir/facing/facingNorth/pendingDir/
-  // pendingDirT/lastX/lastY) that render-units.js writes directly onto
-  // entity objects purely for ITS OWN animation purposes — since the HOST
-  // renders its own view too, these end up on the host's own entities, but
-  // the guest already computes its own independently from its own render
-  // loop and never needs the host's copies. Worse than just wasted bytes:
-  // merging the host's copy onto the guest's own object (applyNetSync's
-  // merge-patch) would clobber the guest's independently-ticking
-  // `pendingDirT` turn-hysteresis counter with the host's unrelated one —
-  // reintroducing the exact "spurious facing flip at each sync boundary"
-  // bug the old oldFacingById rescue existed to prevent. Stripping at the
-  // source (never sent at all) is more robust than any rescue-after-the-
-  // fact approach, and these fields are confirmed (by grep) to be read
-  // nowhere outside render-units.js, so the host's own live entities are
-  // untouched — only the wire copy omits them.
+  // Round entity coordinates for the wire (full precision is visually
+  // meaningless over the network). Also strip render-only bookkeeping
+  // fields (dir/facing/facingNorth/pendingDir/pendingDirT/lastX/lastY) that
+  // render-units.js writes onto entities for its own animation — the host
+  // renders its own view too, so these end up on the host's entities, but
+  // the guest computes its own independently and never needs them. Worse
+  // than wasted bytes: merging the host's copy onto the guest's object
+  // would clobber the guest's own `pendingDirT` turn-hysteresis counter,
+  // causing a spurious facing flip at sync boundaries — confirmed (by
+  // grep) unused outside render-units.js, so stripping is safe.
   let entities = base.entities.map(e => {
     let {dir, facing, facingNorth, pendingDir, pendingDirT, lastX, lastY, ...stripped} = e;
     if (typeof stripped.x === 'number' && typeof stripped.y === 'number') {

@@ -39,22 +39,13 @@ function setMapSize(sizeKey){
     {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
   ];
 }
-// Gaia (neutral sheep/bears) is not a real player team — named here instead
-// of a bare literal `2` scattered across a handful of comparison/creation
-// sites (js/logic.js, js/audio.js, js/init.js), so a real 3rd+ player team
-// is a color-array entry away rather than a hunt for every "2" that meant
-// "not a player."
+// Gaia (neutral sheep/bears), not a player team — named so a future 3rd+
+// player team is a color-array entry away, not a hunt for bare "2"s.
 const GAIA_TEAM = 2;
-// Real player teams only — index 0/1 today, `.push()`-ready for a 3rd+
-// player later without colliding with GAIA_COLOR below (the old
-// `TEAM_COLORS[2]` conflated gaia with "team 2," which a real 3rd player
-// would have collided with).
+// Real player teams only; room to add a 3rd without colliding with GAIA_COLOR.
 const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b'];
 const GAIA_COLOR = '#cccc88';
-// Absolute team-number lookup (team 0 is always blue, team 1 always red,
-// regardless of which player is viewing) — every team-color read goes
-// through this rather than PLAYER_TEAM_COLORS directly, so there's one
-// place to change if that ever needs to be perspective-relative again.
+// Absolute lookup (team 0 always blue, team 1 always red) regardless of viewer.
 function teamColor(team){
   return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS[team];
 }
@@ -237,47 +228,35 @@ let treeFellTicks = new Map();
 //   as `c.impactFx` directly on the corpse object — corpses get wholesale-
 //   replaced by every sync (`corpses = data.corpses`, js/net-sync.js), so
 //   the guest kept re-triggering the puff on every sync instead of once.
-// - workSwingCycles: per-unit id, the last work-swing cycle number that
-//   already fired its one impact particle (wood chips/mining sparks,
-//   js/render-units.js). Used to live as `e._swingCyc` directly on the
-//   entity object — same wholesale-replacement problem via `entities =
-//   data.entities`.
+// - workSwingCycles: per-unit last work-swing cycle that already fired its
+//   impact particle (js/render-units.js) — was `e._swingCyc` directly on
+//   the entity, wiped by sync's wholesale entity replacement.
 let corpseImpactFxDone = new Set();
 let workSwingCycles = new Map();
 
-// Guest-only: independently reconstructing particle effects that are
-// currently host-only simulation side-effects (blood/debris on taking
-// damage, blood burst on death, smoke/fire on damaged buildings, resource-
-// gather puffs) by comparing each new sync against the previous one — the
-// same idea as scoutedByMe/updateFog computing real per-team state from
-// already-synced data instead of needing the host to send anything new.
-// guestPrevHp: entity id -> hp as of the last sync (detects "this entity
-// just took damage"). guestReactedCorpses: corpse ids already given their
-// one-time death blood-burst.
+// Guest-only: reconstructs host-only particle side-effects (hit/death
+// blood, building smoke/fire, gather puffs) by diffing each sync against
+// the last one, instead of the host sending new messages for them.
+// guestPrevHp: entity id -> hp as of last sync (detects damage taken).
+// guestReactedCorpses: corpse ids already given their one-shot death burst.
 let guestPrevHp = new Map();
 let guestReactedCorpses = new Set();
-// Per-building-id last-fired tick for the guest's independently-derived
-// damage smoke/fire loop (advanceGuestBuildingEffects, js/loop.js) — see
-// that function's comment for why a bare tick-modulo check doesn't work
-// on the guest's fractional, per-frame-advancing `tick`.
+// Per-building last-fired tick for the guest's damage smoke/fire loop
+// (advanceGuestBuildingEffects, js/loop.js) — a bare tick%N check doesn't
+// work since the guest's tick advances fractionally, not per whole tick.
 let guestBuildingFxTick = new Map();
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
 let nextProjectileId = 1;
 
-// Projectiles/corpses/cmdMarkers are all "create-once" — fully deterministic
-// (or purely locally-aged, for markers/corpses) after creation, so none of
-// them ever need a correction resent after the fact. js/net-sync.js's
-// buildSyncPayload sends each kind's COMPLETE current list on a full sync
-// (fresh join/reconnect, nothing local to build on yet) but only the ones
-// created since the last sync on every other sync — same "don't resend the
-// unchanging part" idea as mapDelta. One registry instead of three
-// hand-copied pending-array/push-site/full-vs-delta-branch trios; adding a
-// fourth candidate is one new entry here, not a new branch in net-sync.js.
-// `live()` returns the current full authoritative array (host-only, or
-// whichever client happens to hold it); `map()` strips to wire fields
-// (identity for corpses/cmdMarkers, which have no extra fields to drop).
+// Projectiles/corpses/cmdMarkers are "create-once" — deterministic (or
+// purely locally-aged) after creation, so js/net-sync.js's buildSyncPayload
+// sends each kind's full list only on a fresh join/reconnect, and just the
+// new ones since last time otherwise (same idea as mapDelta). One registry
+// instead of three copy-pasted pending-array/push-site/branch trios — a 4th
+// kind is one new entry here. `live()` returns the current full array;
+// `map()` strips to wire fields.
 const SYNC_BUFFERS = {
   projectiles: {
     pending: [],
@@ -297,28 +276,16 @@ const SYNC_BUFFERS = {
 };
 function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
 
-// Host-only: id -> JSON of the last entity snapshot actually sent to the
-// guest. `entities` itself is NOT create-once like SYNC_BUFFERS above (every
-// field on a moving/fighting/gathering unit changes constantly) — but at
-// true idle, NOTHING about it changes, and resending the whole array anyway
-// (as buildSyncPayload used to) was measured at ~85% of the idle-steady-state
-// payload. Compared against this snapshot every delta sync (js/net-sync.js)
-// so only entities whose serialized form actually differs get resent, same
-// "don't resend the unchanging part" idea as mapDelta/SYNC_BUFFERS, just
-// computed via comparison instead of tracked via push-sites (entities change
-// via dozens of scattered mutation call sites in js/logic.js — diffing is
-// far safer than trying to mark every one of them dirty by hand).
+// Host-only: id -> JSON of the last entity snapshot sent to the guest.
+// Unlike SYNC_BUFFERS, entities aren't create-once (they change constantly)
+// — but at idle nothing changes, and resending the whole array anyway
+// (measured at ~85% of the idle payload) was pure waste. Diffed against
+// this every delta sync so only actually-changed entities get resent.
 let lastSentEntitySnapshot = new Map();
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
-// replaces a naive e._seen flag on the shared entity object, which would
-// get silently clobbered every ~65ms by the entities array being
-// wholesale-replaced on sync (js/net-sync.js) — same failure shape as an
-// earlier bug this session where render-only facing state on entities got
-// overwritten by the host's unrelated copy. This Set lives entirely
-// outside the synced entity data, same as entitiesById/selected, so it
-// survives every sync untouched and is genuinely local per-client (the
-// host remembers what team 0 has scouted, the guest independently
-// remembers what team 1 has scouted — never the same building list).
+// lives outside the synced entity data so it survives the wholesale
+// entity replace on each sync (host tracks team 0's scouting, guest
+// independently tracks team 1's).
 let scoutedByMe = new Set();
 function markScoutedBuildings(){
   entities.forEach(e => {
@@ -375,29 +342,17 @@ function forEachVisibleTile(team, cb){
     let cy = Math.round(e.y);
     if (e.type === 'building') {
       let b = BLDGS[e.btype];
-      // A building's footprint spans continuous tiles [e.x, e.x+w) — the
-      // tile CONTAINING the center point is Math.floor(center), not
-      // Math.round. For any odd width/height (every 1x1 building, and the
-      // 3x3 TC), the continuous center lands exactly on a tile boundary,
-      // and Math.round always rounds .5 up — consistently shifting vision
-      // one tile right/down from the building's true center (2x2 buildings
-      // like Mill/Barracks/Farm happened to dodge this, since their center
-      // lands cleanly on a whole number with no rounding ambiguity at all).
+      // Footprint spans [e.x, e.x+w) — center tile is Math.floor, not round
+      // (round pushes odd-sized buildings, incl. the 3x3 TC, one tile off).
       cx = Math.floor(e.x + (e.w || b.w)/2);
       cy = Math.floor(e.y + (e.h || b.h)/2);
     }
 
     for (let dy = -sight; dy <= sight; dy++) {
       for (let dx = -sight; dx <= sight; dx++) {
-        // Euclidean distance (a circle) already naturally includes the
-        // near-center diagonals for every real sight radius in the game
-        // (3+) — but at sight=1 (a building foundation just started, before
-        // any real construction progress) it degenerates to a plus/cross
-        // shape (center + 4 orthogonal neighbors only), excluding the 4
-        // diagonal corners of the immediate 3x3 neighborhood. Chebyshev
-        // distance (a square) at this one radius reveals the full 3x3
-        // neighborhood instead, matching a fresh foundation's expected
-        // "immediate surroundings" reveal.
+        // Euclidean (circle) works for every real sight radius (3+), but at
+        // sight=1 (a fresh foundation) it degenerates to a plus-shape,
+        // missing the 4 diagonal corners — use a square there instead.
         let inRange = sight === 1 ? (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) : (dx*dx + dy*dy <= sight*sight);
         if (inRange) {
           let tx = cx + dx;
@@ -424,35 +379,23 @@ function updateFog() {
     }
   }
 
-  // 2. Set visible tiles around MY OWN units/buildings — myTeam is 0 for
-  // host/single-player, 1 for a connected guest (js/core.js's existing
-  // "who am I" indirection, same one input.js/ui.js/logic.js already use).
-  // Each client only ever computes and uses its OWN team's fog locally —
-  // fog is never sent over the network (js/net-sync.js strips it from the
-  // sync payload), so the host computing team 0's fog and the guest
-  // independently computing team 1's fog from the same synced entities
-  // never conflict.
+  // 2. Set visible tiles around MY OWN units/buildings. Each client only
+  // computes/uses its own team's fog locally — fog is never sent over the
+  // network, so host (team 0) and guest (team 1) never conflict.
   forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
 
-// A persistent record of every tile the OTHER team has ever seen, computed
-// the exact same way that team's own client would compute its live fog —
-// but from THIS client's perspective, using the same authoritative synced
-// entity positions. Unlike either side's own local `fog` array, this never
-// disappears when the other side's tab closes/reloads, which is what lets
-// a rejoining guest recover their previously-explored map (host tracks
-// team[1]; see buildSyncPayload's `exploredEver` field in js/net-sync.js)
-// and lets a GUEST-originated save still correctly restore the HOST's fog
-// when later reloaded, since whoever loads a save always becomes the new
-// host (js/save.js), regardless of which side originally saved it (guest
-// tracks team[0] for exactly this case — without it, a guest-originated
-// save would have nothing to offer for team 0's fog at all).
-// Indexed by team number rather than two separate mirror-image
-// variables/functions — the host is the only one who can usefully update
-// index 1 (needs the guest's real unit positions, which only the host's
-// authoritative simulation has every tick); the guest is the only one who
-// can usefully update index 0 (needs the host's positions, which only
-// arrive via sync on the guest).
+// Persistent record of every tile the OTHER team has ever seen, computed
+// the same way that team computes its own live fog, but from THIS client's
+// perspective. Unlike `fog`, this survives the other side's tab closing —
+// lets a rejoining guest recover its explored map (host tracks index 1;
+// see buildSyncPayload's `exploredEver`) and lets a guest-originated save
+// restore the host's fog too, since whoever loads a save becomes the new
+// host (js/save.js) regardless of who saved it (guest tracks index 0 for
+// this case). Indexed by team rather than two mirror-image variables —
+// only the host can usefully update index 1 (has the guest's real
+// positions every tick), only the guest can update index 0 (only gets the
+// host's positions via sync).
 let teamExploredEver = {0: new Set(), 1: new Set()};
 function updateTeamExploredEver(team){
   if (window.fogDisabled) return;
@@ -461,38 +404,20 @@ function updateTeamExploredEver(team){
   forEachVisibleTile(team, (tx, ty) => { teamExploredEver[team].add(ty * MAP + tx); });
 }
 
-// Host-only memory of the guest's own last-reported camera position
-// (js/net-sync.js's onNetMessage handler for 'guest-view', sent
-// periodically by the guest — camera position is pure local UI state the
-// host has no way to derive on its own, unlike fog). Included in the next
-// full sync so a (re)connecting guest restores wherever it had actually
-// panned to, instead of recentering on its own base every single time —
-// the host survives a guest's own page refresh/reload, which is exactly
-// when this matters (the guest's own in-memory camX/camY doesn't).
+// Host-only memory of the guest's last-reported camera position (sent via
+// the 'guest-view' message) — lets a (re)connecting guest restore its pan
+// position instead of recentering, since the host outlives a guest reload.
 let hostKnownGuestCam = null;
 
-// One-shot / session-lifecycle flags for the MP connection, previously
-// scattered as ad hoc `window.__flag` properties (plus one stray top-level
-// `let`) across js/net-sync.js, js/save.js, and js/init.js — consolidated
-// here so the full set of "things that happen once per connection
-// lifecycle" is visible in one place instead of only grep-discoverable.
-// Hung off `window` (not a plain module-level object) to match the existing
-// convention for MP globals shared across these plain <script> files.
-//   cameraCentered      — has this guest tab ever centered its camera yet
-//                          (js/net-sync.js's applyNetSync/reportGuestViewIfChanged)
-//   hostJustLoadedSave  — one-shot: host just loaded a save mid-match, next
-//                          full sync should force the guest to re-center
-//                          (js/save.js's applySavedGame, js/net-sync.js)
-//   loadedHostPeerId    — one-shot: peer id to request when re-hosting from
-//                          a loaded save (js/save.js, js/init.js's onHostClicked)
-//   hostPeerId          — the host's peer id this client knows (host: its
-//                          own; guest: cached from the join link) — read by
-//                          js/init.js's attemptReconnect and js/save.js's
-//                          serializeGame
-//   bottomHeightSet     — one-shot: has the guest's bottom-bar height been
-//                          computed yet (js/net-sync.js)
-//   guestInitialMenuHidden — one-shot: has the guest's pre-match "waiting"
-//                          panel been dismissed yet (js/net-sync.js)
+// One-shot / session-lifecycle flags for the MP connection, consolidated
+// from scattered ad hoc `window.__flag` properties into one place:
+//   cameraCentered      — has this guest tab centered its camera yet
+//   hostJustLoadedSave  — host just loaded a save mid-match; next full
+//                          sync should force the guest to re-center
+//   loadedHostPeerId    — peer id to request when re-hosting from a save
+//   hostPeerId          — the host's peer id this client knows
+//   bottomHeightSet     — has the guest's bottom-bar height been computed
+//   guestInitialMenuHidden — has the guest's pre-match panel been dismissed
 window.__mpSession = {
   cameraCentered: false,
   hostJustLoadedSave: false,
