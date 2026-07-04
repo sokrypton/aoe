@@ -39,20 +39,32 @@ function setMapSize(sizeKey){
     {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
   ];
 }
-const TEAM_COLORS={0:'#2266bb',1:'#dd3b3b',2:'#cccc88'};
+// Gaia (neutral sheep/bears) is not a real player team — named here instead
+// of a bare literal `2` scattered across a handful of comparison/creation
+// sites (js/logic.js, js/audio.js, js/init.js), so a real 3rd+ player team
+// is a color-array entry away rather than a hunt for every "2" that meant
+// "not a player."
+const GAIA_TEAM = 2;
+// Real player teams only — index 0/1 today, `.push()`-ready for a 3rd+
+// player later without colliding with GAIA_COLOR below (the old
+// `TEAM_COLORS[2]` conflated gaia with "team 2," which a real 3rd player
+// would have collided with).
+const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b'];
+const GAIA_COLOR = '#cccc88';
 // Absolute team-number lookup (team 0 is always blue, team 1 always red,
 // regardless of which player is viewing) — every team-color read goes
-// through this rather than TEAM_COLORS directly, so there's one place to
-// change if that ever needs to be perspective-relative again.
+// through this rather than PLAYER_TEAM_COLORS directly, so there's one
+// place to change if that ever needs to be perspective-relative again.
 function teamColor(team){
-  return TEAM_COLORS[team];
+  return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS[team];
 }
 // Darker variant per team, for building art's shaded/shadow side — kept as
 // its own hand-picked pair (not a generic darkenColor() pass) since
 // building art wants a specific darker tone, not a percentage darken.
-const TEAM_COLORS_DARK={0:'#1a4488',1:'#993333',2:'#999966'};
+const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333'];
+const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
-  return TEAM_COLORS_DARK[team];
+  return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[team];
 }
 // Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
 // all rates below are authored in real AoE2 game-seconds at 30 ticks each.
@@ -159,9 +171,16 @@ function setZoomAroundPoint(newZoom, sx, sy){
   window.cameraFollowId = null;
 }
 
-let res={food:200,wood:200,gold:100,stone:200,prepaidFarms:0};
+// Indexed by team (0 = host/single-player, 1 = guest/AI) rather than two
+// separate named globals — see resourceStore() (js/logic.js), the one place
+// that should ever be used to read/write these. Array-indexed so a future
+// 3rd+ team is a new array entry, not a new named global.
+let resources = [
+  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0},
+  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0}
+];
 let popUsed=0, popCap=0;
-let aiRes={food:200,wood:200,gold:100,stone:200,prepaidFarms:0}, aiPop=0, aiPopCap=0, aiTick=0;
+let aiPop=0, aiPopCap=0, aiTick=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
 // `won` is always computed/synced as "did TEAM 0 win" (js/logic.js's

@@ -520,9 +520,9 @@ function detectMusicMood() {
     entities.forEach(en => {
       if (en.type !== 'unit' || en.utype === 'villager' || en.utype === 'sheep' || en.utype === 'sheep_carcass' || en.garrisonedIn) return;
       // A unit that ISN'T mine near MY buildings = danger; MY unit near
-      // THEIR buildings = war. Neutral (team 2 — bears/wildlife) excluded
+      // THEIR buildings = war. Neutral (gaia — bears/wildlife) excluded
       // entirely, same as the original team-0/1-only branching did.
-      let list = en.team === 2 ? [] : (en.team !== myTeam ? myBldgs : theirBldgs);
+      let list = en.team === GAIA_TEAM ? [] : (en.team !== myTeam ? myBldgs : theirBldgs);
       for (let i = 0; i < list.length; i++) {
         let b = list[i];
         let dx = en.x - (b.x + b.w / 2), dy = en.y - (b.y + b.h / 2);

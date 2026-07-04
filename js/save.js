@@ -40,7 +40,7 @@ function serializeGame(){
     // performance.now().
     corpses: corpses.map(c => ({...c, deathTime: undefined, ageAtSaveMs: performance.now() - c.deathTime})),
     cmdMarkers,
-    res, aiRes, popUsed, popCap, aiPop, aiPopCap, aiTick,
+    resources, popUsed, popCap, aiPop, aiPopCap, aiTick,
     gameStarted, gameOver, won, aiDifficulty,
     // What the player had selected and whether the camera was locked onto a
     // unit are saved by id (not object reference — see the matching restore
@@ -96,7 +96,7 @@ function saveGameToFile(){
     let a = document.createElement('a');
     let stamp = data.savedAt.replace(/[:.]/g, '-');
     a.href = url;
-    a.download = `not-aoe2-save${data.wasMultiplayerGame ? '-mp' : ''}-${stamp}.json`;
+    a.download = `aoe2-save${data.wasMultiplayerGame ? '-mp' : ''}-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -210,8 +210,7 @@ function applySavedGame(data){
     // happen for a save/load round trip, but would for a hand-edited file).
     selected = (data.selectedIds || []).map(id => entitiesById.get(id)).filter(Boolean);
 
-    res = data.res || res;
-    aiRes = data.aiRes || aiRes;
+    resources = data.resources || resources;
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
     aiPop = data.aiPop || 0;

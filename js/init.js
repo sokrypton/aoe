@@ -59,7 +59,7 @@ function placeStartingSheep(){
       let oy=Math.round(Math.sin(o.angle)*o.dist)*(index===0?1:-1);
       for(let i=0;i<count;i++){
         let sp=findSpawnTile(center.x+ox+i,center.y+oy,3);
-        if(sp)createUnit('sheep',sp.x,sp.y,2);
+        if(sp)createUnit('sheep',sp.x,sp.y,GAIA_TEAM);
       }
     };
     nearOffsets.forEach(o=>place(o,1));
@@ -79,7 +79,7 @@ function placeWildBears(){
     let x=randInt(4,MAP-5), y=randInt(4,MAP-5);
     if(!walkable(x,y))continue;
     if(starts.some(s=>Math.sqrt((s.x-x)**2+(s.y-y)**2)<16))continue;
-    let bear=createUnit('bear',x,y,2);
+    let bear=createUnit('bear',x,y,GAIA_TEAM);
     // Den anchor: the bear leashes back here after a chase (see logic.js)
     bear.homeX=x; bear.homeY=y;
     placed++;
@@ -622,8 +622,10 @@ function restartGame(difficulty){
   // guest) gets the same starting resources as team 0, not a handicap; AI
   // difficulty is tuned via gather rates/behavior (js/ai.js), not a lower
   // resource floor.
-  res = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
-  aiRes = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
+  resources = [
+    {food:200, wood:200, gold:100, stone:200, prepaidFarms:0},
+    {food:200, wood:200, gold:100, stone:200, prepaidFarms:0}
+  ];
   window.aiWallPlan = null;
   window.aiGateBuilt = false;
   window.aiGateTile = null;

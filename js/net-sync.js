@@ -61,7 +61,7 @@ let NET_SYNC_TARGET_PER_SEC = 15;
 // loop below).
 const COMMON_SYNC_FIELDS = ['version', 'savedAt', 'wasMultiplayerGame',
   'hostPeerId', 'MAP', 'tick', 'camX', 'camY', 'ZOOM', 'GAME_SPEED', 'nextId',
-  'res', 'aiRes', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
+  'resources', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
   'gameStarted', 'gameOver', 'won', 'aiDifficulty', 'selectedIds',
   'cameraFollowId', 'currentVillagerMenu', 'settingRally', 'fogDisabled',
   'scoutedByMe', 'savedByTeam', 'otherTeamExploredEver', 'bellActive',
@@ -356,8 +356,7 @@ function applyNetSync(data){
       }
     }
 
-    res = data.res || res;
-    aiRes = data.aiRes || aiRes;
+    resources = data.resources || resources;
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
     aiPop = data.aiPop || 0;

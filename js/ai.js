@@ -127,7 +127,7 @@ function estimateLocalPlayerPower(center,radius){
 }
 
 function addAITrickle(profile){
-  Object.entries(profile.trickle).forEach(([resName,amount])=>{aiRes[resName]+=amount;});
+  Object.entries(profile.trickle).forEach(([resName,amount])=>{resourceStore(1)[resName]+=amount;});
 }
 
 function queueAIVillagers(aiTC,vils,profile){
@@ -135,7 +135,7 @@ function queueAIVillagers(aiTC,vils,profile){
   let hasReadyBarracks=entities.some(e=>e.team===1&&e.type==='building'&&e.btype==='BARRACKS'&&e.complete);
   // Only hold back villager training for military food reserve once a minimum workforce exists,
   // otherwise the AI can deadlock with too few villagers to ever recover food income.
-  if(hasReadyBarracks&&vils.length>=6&&aiRes.food<profile.militaryFoodReserve)return;
+  if(hasReadyBarracks&&vils.length>=6&&resourceStore(1).food<profile.militaryFoodReserve)return;
   while(aiTC.queue.length<profile.queueLimit&&vils.length+aiTC.queue.filter(u=>u==='villager').length<profile.maxVils){
     let result=queueUnit(aiTC,'villager');
     if(!result.ok)break;

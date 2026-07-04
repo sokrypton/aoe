@@ -92,7 +92,7 @@ const GATHER_TASKS={
 };
 
 function resourceStore(team){
-  return team===0?res:aiRes;
+  return resources[team];
 }
 
 function resourceName(key){
@@ -1068,7 +1068,7 @@ function updateUnit(e){
     }
 
     // Fog of War visibility check for combat targets
-    if (t.team !== e.team && t.team !== 2) {
+    if (t.team !== e.team && t.team !== GAIA_TEAM) {
       if (e.team === 0) {
         let visible = false;
         if (t.type === 'unit') {
@@ -1430,8 +1430,7 @@ function updateUnit(e){
           e.dropWaitTick=tick;
         }
       } else {
-        if(e.team===0)res[e.carryType]+=e.carrying;
-        else aiRes[e.carryType]+=e.carrying;
+        resourceStore(e.team)[e.carryType]+=e.carrying;
         e.carrying=0;
         e.failedDrops=null;
         if(e.prevTask){e.task=e.prevTask;e.prevTask=null;}
@@ -1758,7 +1757,7 @@ function updateBuilding(e){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
-            } else if((target.team!==e.team && target.team!==2) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
+            } else if((target.team!==e.team && target.team!==GAIA_TEAM) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {

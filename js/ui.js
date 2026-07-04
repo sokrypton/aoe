@@ -325,7 +325,7 @@ function updateUI(){
 
   if(selected.length===0){
     if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent='Not AoE II';
+    document.getElementById('sel-name').textContent='Age of Epochs II';
     document.getElementById('sel-details').textContent='Select a unit or building';
     return;
   }
@@ -375,7 +375,7 @@ function updateUI(){
         else if(b.drop) {
           det+=`<div style="margin-top:1px;">Dropoff: ${b.drop}</div>`;
           if (e.btype === 'MILL') {
-            det+=`<div style="margin-top:1px;">Prepaid Reseeds: ${res.prepaidFarms || 0}</div>`;
+            det+=`<div style="margin-top:1px;">Prepaid Reseeds: ${resourceStore(myTeam).prepaidFarms || 0}</div>`;
           }
         }
         else if(b.isFarm){
