@@ -1200,9 +1200,8 @@ function doCommand(sx,sy){
           showMsg('Rally point set to location');
         }
       }
-      let marker = {x:tile.x,y:tile.y,time:tick,color:'#0af'};
-      cmdMarkers.push(marker);
-      markPendingSync('cmdMarkers', marker);
+      // Local-only click feedback — never synced (see SYNC_BUFFERS, js/core.js)
+      cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:'#0af'});
     }
 
     if (isGuestSender) {
@@ -1274,9 +1273,8 @@ function doCommand(sx,sy){
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';
   if (!isReplayingRemoteCommand) {
-    let marker = {x:tile.x,y:tile.y,time:tick,color:markerColor};
-    cmdMarkers.push(marker);
-    markPendingSync('cmdMarkers', marker);
+    // Local-only click feedback — never synced (see SYNC_BUFFERS, js/core.js)
+    cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
   }
 
   // Play response sound on command — not when replaying a guest's command

@@ -842,6 +842,22 @@ window.stopGameOverMusic = stopGameOverMusic;
 window.startAmbientMusic = startAmbientMusic;
 window.stopAmbientMusic = stopAmbientMusic;
 
+// Autoplay policy: an AudioContext created before any user gesture starts
+// 'suspended' and stays silent until resumed FROM a gesture handler. The
+// host always initializes audio inside a click (Start/Host button), but a
+// GUEST arrives via a ?join= link with no interaction at all — its music
+// (started by the first full sync, js/net-sync.js) would sit scheduled but
+// inaudible. playSound() resumes too, but only when some event happens to
+// fire one; this hook guarantees the very first click/keypress anywhere
+// unblocks audio. Listeners stay registered (cheap no-ops once running) to
+// also cover the context re-suspending later (some browsers do on long
+// background stints).
+['pointerdown', 'keydown'].forEach(evt => {
+  document.addEventListener(evt, () => {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }, { capture: true });
+});
+
 window.audioMuted = false;
 function toggleMute() {
   window.audioMuted = !window.audioMuted;

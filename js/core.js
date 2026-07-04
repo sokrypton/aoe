@@ -266,13 +266,13 @@ const SYNC_BUFFERS = {
       startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
     })
   },
-  corpses: { pending: [], live: () => corpses, map: c => c },
-  // BOTH host and guest push into this one (whichever client issues a
-  // command locally — see js/input.js) since a marker is purely local UI
-  // feedback either side can generate, but only the host's own
-  // buildSyncPayload ever actually reads/clears `pending` — a guest pushing
-  // into it is simply inert, since the guest never builds a sync payload.
-  cmdMarkers: { pending: [], live: () => cmdMarkers, map: m => m }
+  corpses: { pending: [], live: () => corpses, map: c => c }
+  // cmdMarkers are deliberately NOT here: a marker is click feedback for
+  // whoever clicked, generated locally on that client (js/input.js) and
+  // never during a replayed remote command — networking them only ever
+  // leaked the host's own clicks (selection targets, rally points) onto
+  // the guest's screen, telling the opponent exactly where the host was
+  // commanding.
 };
 function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
 

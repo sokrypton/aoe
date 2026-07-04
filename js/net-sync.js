@@ -366,19 +366,10 @@ function applyNetSync(data){
       });
       (data.newProjectiles || []).forEach(p => { projectiles.push({...p}); });
     }
-    // Same full-vs-delta split as corpses/projectiles above (see
-    // SYNC_BUFFERS's comment, js/core.js): a full sync replaces
-    // wholesale (fresh join/reconnect, nothing local to preserve yet); a
-    // delta sync only ever APPENDS the host's new markers onto this
-    // guest's own already-existing list — critically, never overwrites it,
-    // so a marker this guest just pushed for its OWN click (js/input.js)
-    // keeps fading naturally via render.js's tick-based filter instead of
-    // vanishing the instant the next ~65ms sync arrives.
-    if (data.full) {
-      cmdMarkers = data.cmdMarkers || [];
-    } else {
-      (data.newCmdMarkers || []).forEach(m => cmdMarkers.push(m));
-    }
+    // cmdMarkers are never synced anymore (see SYNC_BUFFERS's comment,
+    // js/core.js — the host's markers on the guest's screen revealed
+    // exactly where the host was clicking); each client keeps only its own.
+    // Older payload fields (cmdMarkers/newCmdMarkers) are simply ignored.
     // particles are never networked and used to be reset here every sync —
     // fine when the guest never spawned any of its own, but now it does
     // (advanceGuestParticles/the hit/death/gather/building-fx hooks below),
@@ -561,6 +552,20 @@ function applyNetSync(data){
       window.__mpSession.guestInitialMenuHidden = true;
       let menu = document.getElementById('tutorial');
       if (menu && menu.style.display !== 'none') menu.style.display = 'none';
+      // Music: every other way into a running match (startGame(), save
+      // load) starts the ambient loop itself — this first-full-sync moment
+      // is the guest's equivalent "the match is now on screen" point, and
+      // without it the guest simply never got music at all. Same
+      // never-block-the-game try/catch as startGame() (js/init.js). The
+      // context may still be suspended under the browser's autoplay policy
+      // (a ?join= link is opened without any click) — audio.js's one-time
+      // gesture hook resumes it on the guest's first interaction.
+      try {
+        if (window.initAudio) window.initAudio();
+        if (window.startAmbientMusic) window.startAmbientMusic();
+      } catch (err) {
+        console.warn('Music failed to start:', err);
+      }
     }
 
     // Menu-pause state rides along on every sync as a single boolean so it
