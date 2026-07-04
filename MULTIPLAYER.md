@@ -76,6 +76,48 @@ review) at every stage:
 
 ## Recently completed
 
+- **Real per-team fog of war** (previously the biggest item in Known
+  Limitations). Both players used to see the entire map — `updateFog()`
+  was hardcoded to `if (e.team !== 0) return;`, a leftover single-player
+  assumption, worked around by forcing `window.fogDisabled = true` for MP.
+  Turned out to need almost no new architecture: `updateFog()` now checks
+  `e.team !== myTeam` (the same host-is-0/guest-is-1 indirection already
+  used everywhere else), and since fog was already never sent over the
+  network, each client just computes its OWN team's real vision locally
+  from the fully-synced entities/map — no protocol change. Good news
+  found during research: the AI (`js/ai.js`) already fully ignores fog for
+  its own decisions (a stubbed-out scouting check that always returns
+  `true`), so there was no AI/fog coupling to preserve.
+  - **Two real bugs found only by actually connecting a host+guest and
+    checking `fog`'s contents, not by reading the change in isolation**:
+    (1) `net-sync.js` pre-allocated the guest's `fog` array with a bare
+    `new Array(MAP)` per row — a sparse array of holes (`undefined`), not
+    filled with `0`. Invisible for the entire time MP forced
+    `fogDisabled` (that branch of `updateFog()` unconditionally overwrites
+    every single cell, masking the gap), but the instant real fog
+    computation only touches cells within someone's sight radius, every
+    tile neither player ever visited stayed `undefined` forever instead of
+    resting at "unexplored". Fixed by calling the real `initFog()`
+    instead. (2) The `_seen` flag marking a scouted enemy building
+    "remembered" (`js/render.js`/`js/loop.js`) lived directly on the
+    shared entity object — which gets wholesale-replaced by every sync.
+    Each client's own "have I personally scouted this" memory would have
+    been silently clobbered by the other side's copy every ~65ms, same
+    failure shape as an earlier session bug with unit-facing state.
+    Replaced with `scoutedByMe` (`js/core.js`) — a plain `Set` of building
+    ids kept entirely outside the synced entity data (same pattern as
+    `entitiesById`/`selected`), so it's genuinely local and per-client:
+    the host remembers what team 0 scouted, the guest independently
+    remembers what team 1 scouted, and a sync can never touch either.
+  - Verified with real fog-distribution counts on both sides (each
+    ~228/8100 tiles visible at match start, correctly 0 at the *other*
+    player's base), a scout physically walking 20 tiles and the target
+    tile's fog transitioning from unexplored → visible exactly as it
+    arrived, and screenshots of both players' actual rendered views
+    showing properly limited vision instead of the whole map. Full
+    existing regression suite still passes. One deliberately deferred
+    correctness gap: see Known Limitations below (combat auto-acquire).
+
 - **Load Game / Host Multiplayer Game row wasn't actually full-width.**
   The `Start | ?` row above it stretches edge-to-edge (`flex: 1 1 auto` on
   `#start-game-btn`), but `#load-game-btn`/`#host-game-btn` had no such
@@ -393,25 +435,24 @@ Roughly in order of "most worth doing next":
    server, free ones are limited), but worth documenting clearly if anyone
    hits it.
 
-3. **Per-team fog of war.** Fog is currently disabled entirely for
-   multiplayer (both players see the whole map) because the existing fog
-   logic (`updateFog()` in `core.js`) is hardcoded to only compute vision
-   for team 0 — a leftover single-player assumption. Making it properly
-   per-team is a real architectural change (fog would need to become
-   per-team data, and rendering would need to pick the right one based on
-   `myTeam`), bigger than anything else on this list.
-
-4. **Entity delta encoding.** Still not done, but now much lower priority
+3. **Entity delta encoding.** Still not done, but now much lower priority
    than when first considered — generic compression already got the
    payload from ~13-14.5KB down to ~1.8KB/sync without any structural
    change or the bug-risk of hand-rolled diffing. Only worth revisiting if
    payload size becomes a real problem again (e.g. much larger player
    counts or unit caps).
 
+4. **Combat auto-acquire still uses the AI's cheat-vision rule for team 1
+   in multiplayer.** `logic.js`'s combat target-visibility check only
+   fog-gates team 0's units (`if (e.team === 0) { ...fog check... }`) —
+   correct for single-player (team 1 is the AI, which deliberately ignores
+   fog for everything), but in multiplayer team 1 is now a real guest, who
+   currently keeps the same "can track a target through fog" exemption
+   the AI has. Fixing this properly needs the host to compute a *second*
+   fog grid for team 1 purely for this simulation check (the host's own
+   `fog` only ever reflects `myTeam`, which is always 0 for the host) —
+   real but narrower unfairness than "can't see the map at all," scoped
+   out of the per-team fog work above to keep it focused.
+
 5. **Spectator mode / more than 2 players.** Architecture is strictly 1v1
    host-vs-guest today; anything beyond that is a bigger design change.
-
-6. **Guest-side save/load.** Deliberately out of scope for the host-only
-   Save/Load work above — the guest's state is just a mirror of the host's,
-   so there was no real motivation for it, but a guest wanting to keep
-   their own local copy of a match would need this designed separately.

@@ -336,17 +336,16 @@ window.onNetConnectionOpen = function(){
     guestNeedsFullSync = true;
     if (!mpMatchStarted) {
       mpMatchStarted = true;
-      // Fog-of-war vision (updateFog() in core.js) is hardcoded to only
-      // track team 0's units/buildings — a single-player assumption, since
-      // there's only ever been one human perspective to compute it for.
-      // Making it properly per-team is a real architectural change out of
-      // scope here; disabling fog entirely for multiplayer (reusing the
-      // existing fogDisabled toggle, same one the ?autostart debug flow
-      // uses) is the pragmatic v1 trade-off instead — both players just
-      // see the whole map. Only needs setting on the HOST: the guest never
-      // runs updateFog() itself, it just inherits whatever fog array the
-      // host computes as part of each sync payload.
-      window.fogDisabled = true;
+      // Real per-team fog now (updateFog() in js/core.js computes vision
+      // for `myTeam` — 0 on the host, 1 on the guest — instead of a
+      // hardcoded team 0). Force it on explicitly regardless of whatever
+      // a loaded save's own fogDisabled flag was — a live multiplayer
+      // match should always use real fog, not a leftover "reveal map"
+      // setting from single-player. Only needs setting on the HOST: the
+      // guest computes its own fog entirely locally (see js/net-sync.js's
+      // applyNetSync), never inherits this flag from a sync payload for
+      // that purpose.
+      window.fogDisabled = false;
       if (mpHostingFromExistingGame) {
         // Hosting from a save loaded before Host was clicked — keep that
         // exact state rather than wiping it with a fresh restartGame().
@@ -580,7 +579,8 @@ function restartGame(difficulty){
   corpses = [];
   selected = [];
   tick = 0;
-  
+  scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
+
   // Reset resources to defaults
   res = {food:200, wood:200, gold:100, stone:200, prepaidFarms:0};
   aiRes = {food:100, wood:100, gold:100, stone:100, prepaidFarms:0};

@@ -39,6 +39,10 @@ function serializeGame(){
     currentVillagerMenu: window.currentVillagerMenu || 'main',
     settingRally: !!window.settingRally,
     fogDisabled: !!window.fogDisabled,
+    // Which enemy buildings THIS client has ever scouted — js/core.js's
+    // scoutedByMe Set, not stored on individual entities (see its comment
+    // for why). Saved as a plain array since Sets aren't JSON-safe.
+    scoutedByMe: Array.from(scoutedByMe),
     bellActive: !!window.bellActive,
     aiBellActive: !!window.aiBellActive,
     aiWallPlan: window.aiWallPlan || null,
@@ -171,6 +175,7 @@ function applySavedGame(data){
     aiDifficulty = AI_LEVELS[data.aiDifficulty] ? data.aiDifficulty : aiDifficulty;
 
     window.fogDisabled = !!data.fogDisabled;
+    scoutedByMe = new Set(data.scoutedByMe || []);
     window.bellActive = !!data.bellActive;
     window.aiBellActive = !!data.aiBellActive;
     window.aiWallPlan = data.aiWallPlan || null;

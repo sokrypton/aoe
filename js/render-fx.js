@@ -143,18 +143,19 @@ function drawMinimap(){
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
     if (f === 0) return; // completely unexplored — hide everything
-    if (f === 1 && e.team !== 0 && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
+    if (f === 1 && e.team !== myTeam && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
     // Enemy buildings in shroud are only "remembered" if they were actually
-    // seen at some point — same _seen rule as the main map, so the two views
-    // never disagree (and buildings the AI put up after we left aren't leaked).
-    if (f === 1 && e.team !== 0 && e.type === 'building' && !e._seen) return;
+    // seen at some point — same scoutedByMe rule as the main map (js/core.js),
+    // so the two views never disagree (and buildings put up after we left
+    // aren't leaked).
+    if (f === 1 && e.team !== myTeam && e.type === 'building' && !scoutedByMe.has(e.id)) return;
 
     let isSel=selectedIds.has(e.id);
     // Under-attack blink (AoE2): a player object hit in the last ~4 game-s
     // pulses white on the minimap so raids are spottable at a glance.
     // 60-tick cycle ≈ 1 blink per real second at 2x speed — slow enough to
     // read as a deliberate alert rather than a flicker.
-    let recentlyHit=e.team===0&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
+    let recentlyHit=e.team===myTeam&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
     let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
     let color=(isSel||blinkOn)?'#ffffff':TEAM_COLORS[e.team];
     if(e.type==='building'){

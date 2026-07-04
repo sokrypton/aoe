@@ -103,11 +103,9 @@ function update(){
   // Remember enemy buildings the moment any of their tiles is actively
   // visible. This must live in the game loop, NOT the render pass: the
   // renderer viewport-culls, so buildings scouted while the camera was
-  // elsewhere never got their _seen flag and stayed invisible on the main
+  // elsewhere never got marked scouted and stayed invisible on the main
   // map even though the minimap (which ignores culling) showed them.
-  entities.forEach(e => {
-    if (e.type === 'building' && !e._seen && e.team !== 0 && buildingFogLevel(e) === 2) e._seen = true;
-  });
+  markScoutedBuildings(); // js/core.js — also called guest-side in js/net-sync.js
 
   rebuildUnitBlock(); // stationary-unit collision grid (see pathfinding.js)
   nudgeAside(); // villagers/sheep STEP OUT of approaching traffic's way

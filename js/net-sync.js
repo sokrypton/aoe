@@ -34,10 +34,13 @@ let guestInitialMenuHidden = false;
 // A naive reuse of serializeGame() sends the ENTIRE map+fog every single
 // sync — for a medium map that's ~280KB of a ~290KB payload, 6x/sec
 // (~1.7MB/s), which is almost certainly what "feels slow." Two fixes:
-//   1. fog is never sent at all — multiplayer forces window.fogDisabled
-//      (see js/init.js's onNetConnectionOpen), so updateFog() always fills
-//      every tile with the same constant on both sides anyway; the guest
-//      just runs that fill locally instead of receiving it over the wire.
+//   1. fog is never sent at all — each client computes its OWN team's real
+//      fog-of-war locally from the fully-synced entities/map (updateFog()
+//      in js/core.js, gated on the shared myTeam indirection: 0 for the
+//      host, 1 for the guest). No network protocol needed for this at
+//      all — the guest already receives every entity (both teams') every
+//      sync, so it can independently work out its own team's vision
+//      without the host ever needing to send a fog grid.
 //   2. map is sent whole only once (guestNeedsFullSync, reset to true on
 //      every fresh connection/reconnect in onNetConnectionOpen — so a
 //      (re)joining guest always gets a complete base first). After that,
@@ -110,10 +113,17 @@ function applyNetSync(data){
       data.mapDelta.forEach(({x,y,cell}) => { if (map[y]) map[y][x] = cell; });
     }
     // fog is never sent (see the file-header comment above) — pre-allocate
-    // it locally once so the unconditional updateFog() call below (which
-    // fills every tile with the same constant under fogDisabled) has
-    // somewhere to write.
-    if (fog.length !== MAP) fog = Array.from({length: MAP}, () => new Array(MAP));
+    // it locally once so the unconditional updateFog() call below has
+    // somewhere to write real per-team vision into. initFog() (js/core.js),
+    // not a bare `new Array(MAP)` — that leaves every row a sparse array
+    // of holes (undefined), not filled with 0 (unexplored). Harmless back
+    // when MP always forced fogDisabled (its branch of updateFog()
+    // unconditionally overwrites every single cell to 2 regardless of
+    // prior state) — but with real fog now computed, any tile neither
+    // player's units ever visit stays a hole forever instead of correctly
+    // resting at "unexplored". Caught by an actual two-browser-context
+    // test checking the guest's fog distribution, not by reading the code.
+    if (fog.length !== MAP) initFog();
     let loadNow = performance.now();
     corpses = (data.corpses || []).map(c => ({...c, deathTime: loadNow - (c.ageAtSaveMs || 0)}));
     cmdMarkers = data.cmdMarkers || [];
@@ -210,6 +220,7 @@ function applyNetSync(data){
     }
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
+    markScoutedBuildings(); // js/core.js — host's equivalent runs every tick in js/loop.js's update()
     // Force updateUI() to actually rebuild rather than skip via its
     // dirty-check cache, since this "tick" never ran through the normal
     // update() path that keeps that cache honest tick-to-tick. Deliberately

@@ -177,6 +177,24 @@ function markMapDirty(x,y){
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
+// ids of enemy buildings THIS client has ever seen at active vision (2) —
+// replaces a naive e._seen flag on the shared entity object, which would
+// get silently clobbered every ~65ms by the entities array being
+// wholesale-replaced on sync (js/net-sync.js) — same failure shape as an
+// earlier bug this session where render-only facing state on entities got
+// overwritten by the host's unrelated copy. This Set lives entirely
+// outside the synced entity data, same as entitiesById/selected, so it
+// survives every sync untouched and is genuinely local per-client (the
+// host remembers what team 0 has scouted, the guest independently
+// remembers what team 1 has scouted — never the same building list).
+let scoutedByMe = new Set();
+function markScoutedBuildings(){
+  entities.forEach(e => {
+    if (e.type === 'building' && e.team !== myTeam && !scoutedByMe.has(e.id) && buildingFogLevel(e) === 2) {
+      scoutedByMe.add(e.id);
+    }
+  });
+}
 
 function darkenColor(hex, percent) {
   if (!hex || hex.startsWith('rgba') || hex.startsWith('rgb')) return hex;
@@ -214,9 +232,16 @@ function updateFog() {
     }
   }
   
-  // 2. Set visible tiles around player units/buildings (team 0)
+  // 2. Set visible tiles around MY OWN units/buildings — myTeam is 0 for
+  // host/single-player, 1 for a connected guest (js/core.js's existing
+  // "who am I" indirection, same one input.js/ui.js/logic.js already use).
+  // Each client only ever computes and uses its OWN team's fog locally —
+  // fog is never sent over the network (js/net-sync.js strips it from the
+  // sync payload), so the host computing team 0's fog and the guest
+  // independently computing team 1's fog from the same synced entities
+  // never conflict.
   entities.forEach(e => {
-    if (e.team !== 0) return;
+    if (e.team !== myTeam) return;
     
     let sight = 5;
     if (e.type === 'building') {
