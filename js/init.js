@@ -127,6 +127,25 @@ function applyAudioSettings(){
   else if (gameStarted && !gameOver && window.startAmbientMusic) startAmbientMusic();
 }
 
+// Non-audio settings, same live-apply-and-persist idea as
+// applyAudioSettings above. Speed and difficulty take effect immediately
+// (both are safe to change mid-match); map size only matters at the next
+// restart, but its choice is persisted here all the same. A guest never
+// applies speed locally — GAME_SPEED is host-authoritative and arrives via
+// sync (js/net-sync.js); writing it here would just fight the next sync.
+function applyGameSettings(){
+  let speedSel = document.querySelector('input[name="gamespeed"]:checked');
+  if (speedSel && netRole !== 'guest') setGameSpeed(parseFloat(speedSel.value));
+  let diffSel = document.querySelector('input[name="difficulty"]:checked');
+  if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
+  let sizeSel = document.querySelector('input[name="mapsize"]:checked');
+  try {
+    if (diffSel) localStorage.setItem('aoeDifficulty', diffSel.value);
+    if (sizeSel) localStorage.setItem('aoeMapSize', sizeSel.value);
+    if (speedSel) localStorage.setItem('aoeGameSpeed', speedSel.value);
+  } catch (e) {}
+}
+
 // Restore saved audio prefs into the menu controls on load
 (function restoreAudioSettings(){
   try {
@@ -145,7 +164,49 @@ function applyAudioSettings(){
   } catch (e) {}
 })();
 
+// Same restore for difficulty/map size/speed. Only the radio gets checked —
+// no globals are written here: everything that consumes these reads the
+// checked radio at start time (onStartClicked/onHostClicked), so the radios
+// are the single source of truth and there's no ordering dependency on
+// core.js having initialized.
+(function restoreGameSettings(){
+  try {
+    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed']]
+      .forEach(([key, name]) => {
+        let v = localStorage.getItem(key);
+        if (!v) return;
+        let el = document.querySelector('input[name="'+name+'"][value="'+v+'"]');
+        if (el) el.checked = true;
+      });
+  } catch (e) {}
+})();
+
+// ---- Two-level menu: 'main' (big actions) vs 'options' (settings grid) ----
+// Orthogonal to applyMenuMode()'s menuMode — menuMode decides WHICH actions
+// are visible for the current game state; menuPanel decides which of the
+// two panels is showing. Every path that opens the menu resets to 'main'.
+function showMenuPanel(which){
+  let main = document.getElementById('menu-panel-main');
+  let opts = document.getElementById('menu-panel-options');
+  if (main) main.style.display = which === 'main' ? '' : 'none';
+  if (opts) opts.style.display = which === 'options' ? '' : 'none';
+}
+
+// Back button: settings take effect the moment you leave Options, not only
+// when the whole menu closes — otherwise "changed music off, hit Back,
+// resumed" would surprisingly keep playing until the next menu visit.
+function closeOptionsPanel(){
+  applyAudioSettings();
+  applyGameSettings();
+  showMenuPanel('main');
+}
+
 function onStartClicked(){
+  // "Play Again" from a finished multiplayer match starts a fresh LOCAL
+  // game — tear the dead session down first so netRole/myTeam don't leak
+  // multiplayer behavior (guest never simulating, host broadcasting syncs)
+  // into the new single-player match.
+  if (netRole && gameOver) leaveMpSession();
   let selected = document.querySelector('input[name="difficulty"]:checked');
   let diff = selected ? selected.value : 'standard';
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
@@ -153,6 +214,7 @@ function onStartClicked(){
   let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
   setGameSpeed(speedSelected ? parseFloat(speedSelected.value) : 2);
   applyAudioSettings();
+  applyGameSettings();
 
   window.fogDisabled = false;
 
@@ -228,17 +290,33 @@ function hideDisconnectOverlay(){
 //     live mirror of the host's (js/net-sync.js), so a save taken from
 //     either side is an equally valid snapshot.
 function restoreMenuForMatch(){
+  showMenuPanel('main');
   let startRow = document.getElementById('start-row');
   if (startRow) startRow.style.display = '';
   let statusPanel = document.getElementById('mp-status-panel');
   if (statusPanel) statusPanel.style.display = 'none';
   let startBtn = document.getElementById('start-game-btn');
   if (startBtn) startBtn.style.display = 'none';
-  let helpBtn = document.getElementById('help-btn');
-  if (helpBtn) helpBtn.style.display = 'none';
   let menu = document.getElementById('tutorial');
+  // Options + Help ARE available mid-match now (unlike the pre-two-level
+  // menu, which dropped Help to keep the single panel small). Explicitly
+  // re-shown — a guest's enterGuestJoinMode broad-hid every
+  // .menu-button-container, including the ones inside #misc-row.
   if (menu) {
-    menu.querySelectorAll('.setup-grid, .menu-divider').forEach(el => { el.style.display = 'none'; });
+    menu.querySelectorAll('#misc-row, #misc-row .menu-button-container, #options-back-row')
+      .forEach(el => { el.style.display = ''; });
+    // The settings grid lives in the (hidden) options panel; what's
+    // restart-scoped or host-authoritative gets hidden INSIDE it rather
+    // than hiding the grid wholesale: difficulty/map size need a fresh
+    // match, and speed is the host's call — a guest's GAME_SPEED arrives
+    // via sync (js/net-sync.js), so showing the picker would be a lie.
+    let grid = menu.querySelector('.setup-grid');
+    if (grid) grid.style.display = '';
+    let firstRow = menu.querySelector('.setup-grid .setup-row:first-child');
+    if (firstRow) firstRow.style.display = 'none';
+    let speedCol = menu.querySelector('.setup-col-speed');
+    if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
+    menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
   }
   let mpRow = document.getElementById('mp-row');
   if (mpRow) mpRow.style.display = 'none';
@@ -281,6 +359,7 @@ function onHostClicked(){
     setMapSize(sizeSelected ? sizeSelected.value : 'medium');
     let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
     setGameSpeed(speedSelected ? parseFloat(speedSelected.value) : 2);
+    applyGameSettings();
     window.fogDisabled = false;
   }
   applyAudioSettings();
@@ -288,19 +367,18 @@ function onHostClicked(){
   let hostBtn = document.getElementById('host-game-btn');
   if (hostBtn) hostBtn.disabled = true;
   showMpStatus('Starting host session…');
+  let cancelBtn = document.getElementById('mp-cancel-btn');
+  if (cancelBtn) cancelBtn.style.display = '';
 
-  // The menu box has a fixed max-height with no scrolling (intentional,
-  // AoE2-style compact layout) — the setup controls plus Start/Save/Load
-  // already fill it, so the status panel/link box need room made for them
-  // by hiding what's no longer relevant once hosting starts (map size and
-  // speed are already locked in above; difficulty doesn't apply without an
-  // AI opponent). #mp-row (this very button) is included too — disabling
-  // it alone still left it sitting there grayed out on the "waiting for
-  // opponent" screen, which reads as "you could still click this," not
-  // "you're already hosting."
+  // Hide the action rows so the "waiting for opponent" status/link panel
+  // stands alone (the settings grid needs no hiding anymore — it lives in
+  // the separate options panel). #mp-row (this very button) is included
+  // too — disabling it alone still left it sitting there grayed out, which
+  // reads as "you could still click this," not "you're already hosting."
+  // Everything hidden here is restored by cancelHosting() below.
   let menu = document.getElementById('tutorial');
   if (menu) {
-    menu.querySelectorAll('.setup-grid, #save-load-row, #start-row, #mp-row').forEach(el => { el.style.display = 'none'; });
+    menu.querySelectorAll('#save-load-row, #start-row, #mp-row, #misc-row').forEach(el => { el.style.display = 'none'; });
   }
 
   // Only meaningful right after loading a multiplayer save (js/save.js sets
@@ -310,6 +388,15 @@ function onHostClicked(){
   window.__mpSession.loadedHostPeerId = null;
 
   hostSession(desiredPeerId).then(peerId => {
+    // Cancelled while the signaling server was still assigning an id
+    // (cancelHosting → teardownNet nulls netRole) — don't resurrect the
+    // "waiting" panel the user just dismissed, and destroy the
+    // just-created peer (hostSession assigned it to netPeer in finish(),
+    // AFTER teardownNet already ran) so no one can still join it.
+    if (netRole !== 'host') {
+      if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
+      return;
+    }
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
     // Deliberately do NOT start the match yet — restartGame() calls
     // startGame(), which hides this very menu (and the link/status panel
@@ -330,6 +417,44 @@ function onHostClicked(){
 // re-running restartGame() and wiping out the game in progress).
 let mpMatchStarted = false;
 let mpReconnectTimer = null;
+
+// Fully leave multiplayer: transport teardown (teardownNet, js/net.js) plus
+// all the session-level state that lives HERE rather than in net.js — the
+// reconnect retry timer especially: left armed, it would re-join the old
+// host seconds after the user deliberately walked away.
+function leaveMpSession(){
+  if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
+  teardownNet();
+  myTeam = 0;
+  mpMatchStarted = false;
+  mpHostingFromExistingGame = false;
+  disconnectedPause = false;
+  window.__mpSession.loadedHostPeerId = null;
+  recomputeGamePaused();
+}
+
+// Wired to #mp-cancel-btn on the "Waiting for opponent…" screen — before
+// this, clicking Host was irreversible: the setup UI was hidden and the
+// only way back was a page refresh.
+function cancelHosting(){
+  let wasMidMatch = mpHostingFromExistingGame;
+  leaveMpSession();
+  let panel = document.getElementById('mp-status-panel');
+  if (panel) panel.style.display = 'none';
+  let cancelBtn = document.getElementById('mp-cancel-btn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  let hostBtn = document.getElementById('host-game-btn');
+  if (hostBtn) hostBtn.disabled = false;
+  // Restore exactly the rows onHostClicked hid, then let applyMenuMode
+  // re-derive per-button visibility for wherever we actually are (hosting
+  // from a loaded save means a match is live behind the menu → 'ingame').
+  ['save-load-row', 'start-row', 'mp-row', 'misc-row'].forEach(id => {
+    let el = document.getElementById(id);
+    if (el) el.style.display = '';
+  });
+  showMenuPanel('main');
+  applyMenuMode(wasMidMatch && gameStarted && !gameOver && entities.length > 0 ? 'ingame' : 'prestart');
+}
 
 // Fired by js/net.js once the DataConnection actually opens (both host and
 // guest reach this — role-specific handling below).
@@ -513,10 +638,20 @@ function enterGuestJoinMode(hostPeerId){
     menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
   }
+  attemptGuestJoin();
+}
+
+// The guest's initial connection attempt, re-runnable via the Retry button
+// — the old inline version left "Could not connect" as a dead end with a
+// page refresh as the only recourse.
+function attemptGuestJoin(){
+  let retryBtn = document.getElementById('mp-retry-btn');
+  if (retryBtn) retryBtn.style.display = 'none';
   showMpStatus('Connecting to host…');
-  joinSession(hostPeerId).catch(err => {
+  joinSession(window.__mpSession.hostPeerId).catch(err => {
     console.error('Failed to join:', err);
     showMpStatus('Could not connect — the link may be invalid or expired.');
+    if (retryBtn) retryBtn.style.display = '';
   });
 }
 
@@ -544,7 +679,36 @@ function applyMenuMode(mode){
   if (!menu) return;
   window.menuMode = mode;
 
-  if (mode === 'ingame') {
+  // The VICTORY/DEFEAT banner block only exists in 'gameover' mode.
+  let banner = document.getElementById('game-over-banner');
+  if (banner) {
+    banner.style.display = mode === 'gameover' ? '' : 'none';
+    if (mode === 'gameover') {
+      let iWon = didIWin();
+      let title = document.getElementById('game-over-title');
+      let sub = document.getElementById('game-over-sub');
+      if (title) {
+        title.textContent = iWon ? '🏆 Victory!' : '💀 Defeat';
+        title.className = iWon ? 'game-over-victory' : 'game-over-defeat';
+      }
+      if (sub) sub.textContent = iWon
+        ? 'Your empire has triumphed!'
+        : 'Your empire falls to dust.';
+    }
+  }
+
+  if (mode === 'gameover') {
+    // Same layout as prestart (Play Again = a fresh start), minus the MP
+    // host button when a (now finished) MP session is still attached —
+    // Play Again there tears the session down and starts local (see
+    // onStartClicked); offering "Host" next to it would be confusing.
+    if (difficultyRow) difficultyRow.style.display = '';
+    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = '🔄 Play Again'; }
+    if (resumeBtn) resumeBtn.style.display = 'none';
+    if (loadBtn) loadBtn.style.display = '';
+    if (mpRow) mpRow.style.display = netRole ? 'none' : '';
+    if (saveBtn) saveBtn.style.display = 'none';
+  } else if (mode === 'ingame') {
     if (difficultyRow) difficultyRow.style.display = 'none';
     // Restart and Load are both dropped from the mid-game menu entirely —
     // keeping things simple: reloading the browser tab already restarts a
@@ -593,6 +757,7 @@ function openRestartMenu(){
   menu.style.display = 'flex';
   localMenuOpen = true;
   recomputeGamePaused();
+  showMenuPanel('main');
   applyMenuMode('restart-ready');
 }
 
@@ -646,6 +811,8 @@ function restartGame(difficulty){
   window.lastSelListKey = null;
   window.lastSelGridDetails = null;
   window.lastSelKey = null;
+  window.gameOverMenuShown = false; // re-arm the game-over auto-menu (gameLoop)
+  window.playedGameOverSound = false;
 
   // Re-generate map and spawn starts
   init();
@@ -702,8 +869,10 @@ function toggleMenu(){
       menu.style.display = 'flex';
       localMenuOpen = true;
       recomputeGamePaused();
+      showMenuPanel('main'); // the menu always opens on the main panel
       let inMatch = entities.length > 0 && gameStarted;
-      applyMenuMode((inMatch && !gameOver) ? 'ingame' : 'prestart');
+      applyMenuMode((inMatch && !gameOver) ? 'ingame'
+        : (gameOver && entities.length > 0) ? 'gameover' : 'prestart');
       // Pause the OTHER peer too, with an explanatory overlay — otherwise
       // the match keeps running live on their screen (and, for the guest
       // opening their own menu, the host keeps building/training/fighting
@@ -724,10 +893,7 @@ function toggleMenu(){
       applyAudioSettings();
       // Apply the other menu settings mid-match too (map size is the one
       // exception — it needs a map regen, so it only takes effect on Restart).
-      let speedSel = document.querySelector('input[name="gamespeed"]:checked');
-      if (speedSel) setGameSpeed(parseFloat(speedSel.value));
-      let diffSel = document.querySelector('input[name="difficulty"]:checked');
-      if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
+      applyGameSettings();
     }
   }
 }
@@ -825,6 +991,27 @@ function gameLoop(){
   updateUI();
   if(gameOver){
     let iWon = didIWin();
+    // Auto-open the menu in 'gameover' mode (Play Again / Load) a moment
+    // after the canvas VICTORY/DEFEAT banner lands — previously the banner
+    // just sat there and the only way to a new game was finding the ☰
+    // button. One-shot (reset in restartGame). Deliberately NOT
+    // broadcastMenuState(true): the opponent hits gameOver too and gets
+    // their own menu; flashing a "Game Paused" overlay over their result
+    // screen would be wrong (and there's nothing left to pause).
+    if (!window.gameOverMenuShown) {
+      window.gameOverMenuShown = true;
+      setTimeout(() => {
+        if (!gameOver) return;      // already restarted meanwhile
+        if (localMenuOpen) return;  // user beat us to the menu
+        let menu = document.getElementById('tutorial');
+        if (!menu) return;
+        menu.style.display = 'flex';
+        localMenuOpen = true;
+        recomputeGamePaused();
+        showMenuPanel('main');
+        applyMenuMode('gameover');
+      }, 2200);
+    }
     if (!window.playedGameOverSound) {
       window.playedGameOverSound = true;
       if (window.stopAmbientMusic) window.stopAmbientMusic(); // cut ambient so the ending piece stands alone

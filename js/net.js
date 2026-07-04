@@ -304,6 +304,20 @@ function joinSession(hostPeerId){
   });
 }
 
+// Tear the whole transport down: connection, peer, role. The complement of
+// hostSession/joinSession — used when the user deliberately leaves
+// multiplayer (cancel hosting, Play Again after a finished MP match), not
+// for transient drops (those keep the peer alive for reconnects). Session-
+// level cleanup (reconnect timer, myTeam, match flags) lives in init.js's
+// leaveMpSession(), which wraps this.
+function teardownNet(){
+  netConnected = false;
+  if (netConn) { try { netConn.close(); } catch (e) {} }
+  netConn = null;
+  if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
+  netRole = null;
+}
+
 function sendToHost(msg){
   if (netRole === 'guest' && netConn && netConnected) queueSend(netConn, msg);
 }

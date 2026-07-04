@@ -1625,3 +1625,52 @@ canvas {
   outline: none;
 }
 
+
+/* ---- TWO-LEVEL MENU: new elements ---- */
+/* Primary action (Start/Play Again/Resume) gets the same deep red as a
+   checked segment so the menu has one clear "go" affordance. */
+#start-game-btn, #resume-game-btn {
+  background: #8c1d1d;
+  color: #ffebad;
+  border-color: #5c1010;
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+}
+#start-game-btn:hover, #resume-game-btn:hover {
+  background: #a32626;
+  border-color: #5c1010;
+}
+#start-game-btn:active, #resume-game-btn:active {
+  background: #781616;
+}
+#options-back-row {
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+}
+#options-back-btn {
+  flex: 1 1 auto;
+}
+#mp-cancel-btn, #mp-retry-btn {
+  width: 100%;
+  margin-top: 6px;
+  min-height: 38px;
+}
+#game-over-banner {
+  text-align: center;
+  padding: 10px 0 2px;
+}
+#game-over-title {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+#game-over-title.game-over-victory { color: #9a7b1a; text-shadow: 0 1px 0 rgba(255,255,255,0.4); }
+#game-over-title.game-over-defeat  { color: #8c1d1d; text-shadow: 0 1px 0 rgba(255,255,255,0.35); }
+#game-over-sub {
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 13px;
+  color: #5c3b1e;
+  margin-top: 2px;
+}

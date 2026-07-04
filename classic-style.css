@@ -1911,3 +1911,104 @@ canvas {
   outline: none;
 }
 
+
+/* ---- TWO-LEVEL MENU: new elements (structural, shared with mobile) ---- */
+#options-back-row { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+#options-back-btn { flex: 1 1 auto; }
+#mp-cancel-btn, #mp-retry-btn { width: 100%; margin-top: 6px; min-height: 38px; }
+#game-over-banner { text-align: center; padding: 10px 0 2px; }
+#game-over-title {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+#game-over-sub {
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ---- CLASSIC MENU SKIN ----
+   The launch/pause menu finally matches the in-game HUD: same stone-grey
+   gradients, #8f8560 gold-brass borders with a light-top/dark-bottom
+   bevel, Cinzel headings, gold accent on the primary action and checked
+   segments. Appended after the shared parchment section so these override
+   it by cascade order (same specificity, later wins). */
+#tutorial-box {
+  background: linear-gradient(180deg, #4c4a44 0%, #2b2924 55%, #26241f 100%);
+  border: 2px solid #8f8560;
+  border-radius: 3px;
+  color: #e8e0c6;
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.14),
+    inset -1px -1px 0 rgba(0,0,0,0.65),
+    0 15px 45px rgba(0,0,0,0.9);
+}
+.menu-divider {
+  background: linear-gradient(90deg, transparent 0%, #8f8560 50%, transparent 100%);
+}
+.setup-col h3 { color: #d8cba0; }
+.segmented {
+  border: 1px solid #8f8560;
+  background: #24231f;
+  border-radius: 3px;
+}
+.segment {
+  color: #cfc39c;
+  border-color: #57544a;
+}
+.segment:not(:last-child) { border-right: 1px solid #57544a; }
+.segment:hover { background: rgba(255,255,255,0.07); }
+.segment:has(input:checked) {
+  background: linear-gradient(180deg, #8a7434 0%, #5d4d1f 100%);
+  color: #ffe9a8;
+}
+.menu-action-btn {
+  background: linear-gradient(180deg, #504e46 0%, #24231f 100%);
+  border: 1px solid #8f8560;
+  border-radius: 3px;
+  color: #e8d9a8;
+  font-family: 'Cinzel', Georgia, serif;
+  letter-spacing: 0.4px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.12),
+    inset -1px -1px 0 rgba(0,0,0,0.55);
+}
+.menu-action-btn:hover {
+  background: linear-gradient(180deg, #5c5a50 0%, #2b2924 100%);
+  border-color: #ffebad;
+  color: #ffebad;
+}
+.menu-action-btn:active {
+  background: linear-gradient(180deg, #24231f 0%, #504e46 100%);
+}
+#start-game-btn, #resume-game-btn {
+  background: linear-gradient(180deg, #8a7434 0%, #4f421d 100%);
+  border: 1px solid #c9a743;
+  color: #ffe9a8;
+  font-size: 14px;
+  box-shadow:
+    inset 1px 1px 0 rgba(255,255,255,0.22),
+    inset -1px -1px 0 rgba(0,0,0,0.55);
+}
+#start-game-btn:hover, #resume-game-btn:hover {
+  background: linear-gradient(180deg, #9d8540 0%, #5d4d24 100%);
+  border-color: #ffe9a8;
+}
+#mp-status-panel {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid #8f8560;
+  border-radius: 3px;
+}
+#mp-status-text { color: #d8cba0; }
+#mp-link-box {
+  background: #1d1c18;
+  border: 1px solid #8f8560;
+  border-radius: 3px;
+  color: #e8d9a8;
+}
+#game-over-title.game-over-victory { color: #ffd700; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
+#game-over-title.game-over-defeat  { color: #ff6d6d; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
+#game-over-sub { color: #d8cba0; }

@@ -132,6 +132,11 @@
   <div class="menu-content">
     <div class="menu-divider"></div>
 
+    <!-- Two-level menu: #menu-panel-main holds the big actions; the
+         settings grid lives in #menu-panel-options behind the Options
+         button. showMenuPanel() (js/init.js) swaps them; the menu always
+         opens on 'main'. -->
+    <div id="menu-panel-options" style="display:none;">
     <div class="setup-grid">
       <div class="setup-row">
         <div class="setup-col">
@@ -177,8 +182,16 @@
         </div>
       </div>
     </div>
+      <div class="menu-button-container" id="options-back-row">
+        <button type="button" id="options-back-btn" class="menu-action-btn" onclick="closeOptionsPanel()">⬅ Back</button>
+      </div>
+    </div>
 
-    <div class="menu-divider"></div>
+    <div id="menu-panel-main">
+    <div id="game-over-banner" style="display:none;">
+      <div id="game-over-title"></div>
+      <div id="game-over-sub"></div>
+    </div>
 
     <div class="menu-button-container" id="start-row">
       <button type="button" id="resume-game-btn" class="menu-action-btn" onclick="toggleMenu()" style="display: none;">
@@ -194,7 +207,6 @@
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
       <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">💾 Save</button>
-      <button type="button" id="help-btn" class="menu-action-btn menu-help-btn" onclick="toggleHelp()">❓</button>
     </div>
     <div class="menu-row-pair">
       <div class="menu-button-container" id="save-load-row">
@@ -204,6 +216,14 @@
         <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
       </div>
     </div>
+    <div class="menu-row-pair" id="misc-row">
+      <div class="menu-button-container">
+        <button type="button" id="options-btn" class="menu-action-btn" onclick="showMenuPanel('options')">⚙️ Options</button>
+      </div>
+      <div class="menu-button-container">
+        <button type="button" id="help-btn" class="menu-action-btn" onclick="toggleHelp()">❓ Help</button>
+      </div>
+    </div>
     <input type="file" id="load-file-input" accept="application/json,.json" style="display:none" onchange="loadGameFromFile(this.files[0]); this.value='';">
     <div id="mp-status-panel" style="display:none;">
       <div id="mp-status-text"></div>
@@ -211,6 +231,9 @@
         <input type="text" id="mp-link-box" readonly onclick="this.select()">
         <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
       </div>
+      <button type="button" id="mp-cancel-btn" class="menu-action-btn" style="display:none;" onclick="cancelHosting()">✖ Cancel</button>
+      <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">↻ Retry Connection</button>
+    </div>
     </div>
   </div>
 </div>
