@@ -33,6 +33,19 @@ function currentViewSnapshot(){
 // against the HOST's own team (0) even while processing a command that's
 // supposed to be acting on the guest's team-1 units, silently discarding
 // all of them.
+// Set true for the ENTIRE duration of applyRemoteCommand() below (every
+// relayed command kind, not just the ones that happen to go through
+// withRemoteSelection) — read by doCommand()/doPlace()/finalizeWallDrag()/
+// trainUnit()/cancelQueue()/prepayFarm()/reactivateFarm() (js/input.js,
+// js/ui.js) to suppress the local-acknowledgment sound/click-ripple marker/
+// showMsg() status text those normally fire. Those exist to give feedback
+// to whoever physically triggered the action; the guest already got its
+// own instant local feedback in its own tab before this was ever sent, so
+// the host replaying the same shared function to apply the actual
+// game-logic effect shouldn't ALSO pop a sound/marker/message on the
+// HOST's own screen for an action the host had nothing to do with.
+let isReplayingRemoteCommand = false;
+
 function withRemoteSelection(unitIds, fn){
   let hostSelected = selected;
   let hostTeam = myTeam;
@@ -59,6 +72,8 @@ function withRemoteViewport(view, fn){
 
 function applyRemoteCommand(intent){
   if (!intent || !intent.kind) return;
+  isReplayingRemoteCommand = true;
+  try {
   switch (intent.kind) {
     case 'command':
       withRemoteViewport(intent.view, () => {
@@ -135,6 +150,9 @@ function applyRemoteCommand(intent){
       if (intent.ringing) ringTownBell(1); else soundAllClear(1);
       if (typeof updateUI === 'function') updateUI();
       break;
+  }
+  } finally {
+    isReplayingRemoteCommand = false;
   }
 }
 

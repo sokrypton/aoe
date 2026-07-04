@@ -245,6 +245,26 @@ let guestBuildingFxTick = new Map();
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
+let nextProjectileId = 1;
+// Host-only: projectiles/corpses created since the last sync, sent once
+// (js/net-sync.js's buildSyncPayload) instead of resending the whole
+// existing list every ~65ms — both are fully deterministic once created
+// (constant-velocity straight-line flight; static position + wall-clock
+// fade), so the guest only ever needs to learn about a NEW one, never a
+// correction to an existing one. Cleared every sync regardless of
+// full/delta (a full sync already covers everything via the complete
+// current lists).
+let newProjectilesSinceSync = [];
+let newCorpsesSinceSync = [];
+// Same idea, same reason (js/render.js's `cmdMarkers=cmdMarkers.filter(m=>
+// tick-m.time<30)` already ages/removes these independently per-client) —
+// a marker never changes after creation, so it only ever needs to be sent
+// once. Distinct from the two above in one way: BOTH host and guest push
+// into this (whichever one issues a command locally — see input.js), but
+// only the host's own buildSyncPayload ever actually reads/clears it; a
+// guest pushing into it is simply inert since the guest never builds a
+// sync payload itself.
+let newCmdMarkersSinceSync = [];
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
 // replaces a naive e._seen flag on the shared entity object, which would
 // get silently clobbered every ~65ms by the entities array being
@@ -466,7 +486,8 @@ function spawnProjectile(attacker, target) {
     targetY += Math.sin(ang) * off;
   }
   let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
-  projectiles.push({
+  let proj = {
+    id: nextProjectileId++,
     x: attacker.x,
     y: attacker.y,
     startX: attacker.x,
@@ -480,7 +501,16 @@ function spawnProjectile(attacker, target) {
     // Buildings can't sidestep — a shot at a building always connects.
     targetBuildingId: target.type === 'building' ? target.id : null,
     attacker: attacker
-  });
+  };
+  projectiles.push(proj);
+  // Flight is fully deterministic (fixed start/target/speed — see
+  // js/loop.js's update() and its guest-side twin advanceGuestProjectiles)
+  // — the network sync only ever needs to tell the guest about a NEW
+  // projectile once, not keep resending its position every ~65ms. Tracked
+  // separately from `projectiles` itself so js/net-sync.js's buildSyncPayload
+  // can send just what's new since the last sync and clear this, while the
+  // host's own `projectiles` array keeps evolving normally.
+  newProjectilesSinceSync.push(proj);
   if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
 }
 

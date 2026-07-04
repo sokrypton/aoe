@@ -1590,7 +1590,7 @@ function handleDeath(e,killerTeam){
   // Add to corpses list for AoE2-style decay (sheep are the exception —
   // they become a harvestable carcass entity instead, handled above)
   if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
-    corpses.push({
+    let corpse = {
       type: 'corpse',
       utype: e.utype,
       x: e.x,
@@ -1600,7 +1600,13 @@ function handleDeath(e,killerTeam){
       facing: e.facing || 1,
       female: e.female, // villagers keep their hairdo in death
       deathTime: performance.now()
-    });
+    };
+    corpses.push(corpse);
+    // A corpse never moves again and fades out purely by wall-clock time,
+    // independently on every client (js/render.js's CORPSE_LIFE filter) —
+    // see newCorpsesSinceSync's comment (js/core.js) for why only NEW
+    // corpses need to go over the network at all.
+    newCorpsesSinceSync.push(corpse);
   }
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);

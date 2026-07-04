@@ -691,8 +691,14 @@ function trainUnit(bldg,utype){
     return;
   }
   let result=queueUnit(bldg,utype);
-  if(result.reason==='pop')showMsg('Need more houses!');
-  else if(result.reason==='resources')showMsg('Not enough resources!');
+  // Not when replaying a guest's command on the host (see
+  // isReplayingRemoteCommand's comment, js/net-cmd.js) — a status message
+  // about the GUEST's own training attempt shouldn't pop up on the HOST's
+  // own screen.
+  if (!isReplayingRemoteCommand) {
+    if(result.reason==='pop')showMsg('Need more houses!');
+    else if(result.reason==='resources')showMsg('Not enough resources!');
+  }
 }
 
 function cancelQueue(bldgId,idx){
@@ -710,7 +716,7 @@ function cancelQueue(bldgId,idx){
   let store=resourceStore(bldg.team);
   Object.entries(cost).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
   if(idx===0)bldg.trainTick=0;
-  showMsg(UNITS[utype].name+' cancelled (refunded)');
+  if (!isReplayingRemoteCommand) showMsg(UNITS[utype].name+' cancelled (refunded)');
 }
 
 function showMsg(txt){
@@ -847,13 +853,13 @@ function prepayFarm() {
   if (netRole === 'guest') { sendCommand({ kind: 'prepay-farm' }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
-    showMsg('Not enough wood!');
+    if (!isReplayingRemoteCommand) showMsg('Not enough wood!');
     return;
   }
   spendCost(myTeam, cost);
   let store = resourceStore(myTeam);
   store.prepaidFarms = (store.prepaidFarms || 0) + 1;
-  showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`);
+  if (!isReplayingRemoteCommand) showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`);
   updateUI();
 }
 
@@ -863,7 +869,7 @@ function reactivateFarm(farm) {
   if (netRole === 'guest') { sendCommand({ kind: 'reactivate-farm', bldgId: farm.id }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
-    showMsg('Not enough wood!');
+    if (!isReplayingRemoteCommand) showMsg('Not enough wood!');
     return;
   }
   spendCost(myTeam, cost);
@@ -874,7 +880,7 @@ function reactivateFarm(farm) {
   tile.t = TERRAIN.FARM;
   tile.res = 300;
   markMapDirty(farm.x,farm.y);
-  showMsg('Farm reactivated!');
+  if (!isReplayingRemoteCommand) showMsg('Farm reactivated!');
   updateUI();
 }
 

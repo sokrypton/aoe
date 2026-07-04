@@ -237,7 +237,7 @@ function finalizeWallDrag(){
   }
   let line = getWallElbowTiles(start, corner, end);
   if(vils.length===0){
-    showMsg('Select a villager to build!');
+    if (!isReplayingRemoteCommand) showMsg('Select a villager to build!');
     placing=null;
     return;
   }
@@ -262,7 +262,7 @@ function finalizeWallDrag(){
           v.buildQueue.push(bldg.id);
         });
       } else {
-        showMsg('Not enough stone!');
+        if (!isReplayingRemoteCommand) showMsg('Not enough stone!');
       }
     }
   });
@@ -1161,15 +1161,17 @@ function doBoxSelect(x1,y1,x2,y2){
 function doCommand(sx,sy){
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
-  // A multiplayer guest never mutates world state directly — it sends the
-  // click as an intent and the host re-runs this exact same function
-  // (see applyRemoteCommand in js/net-cmd.js), temporarily substituting
-  // `selected` for the guest's own units so all the targeting/rally logic
-  // below is reused verbatim, just attributed to the right team.
-  if (netRole === 'guest') {
-    sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
-    return;
-  }
+  // A multiplayer guest never mutates world state directly — the actual
+  // targeting/rally/movement logic below only ever runs for the HOST
+  // (either processing its own local click, or replaying a relayed guest
+  // command via applyRemoteCommand in js/net-cmd.js). But the marker-color/
+  // rally-target DETECTION itself only reads client-local data (fog,
+  // entities, map, myTeam) that's just as valid on the guest's own client —
+  // so the guest computes its own instant local feedback (marker + sound/
+  // message) below, then sends the command and returns before any of the
+  // actual state mutation, rather than waiting on a round-trip through the
+  // host for feedback that was always purely cosmetic.
+  let isGuestSender = netRole === 'guest';
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
@@ -1179,33 +1181,50 @@ function doCommand(sx,sy){
     let bData=BLDGS[bldg.btype];
     if(!bData || !bData.builds || bData.builds.length === 0) return;
     if(!inMapBounds(tile.x,tile.y))return;
-    bldg.rallyX=tile.x;
-    bldg.rallyY=tile.y;
-    
+
     // Find target entity under the click
     let rTarget = getUnitUnderCursor(sx, sy);
     if(!rTarget){
       rTarget = getBuildingUnderCursor(sx, sy);
     }
-    
+
+    if (!isReplayingRemoteCommand) {
+      if(rTarget){
+        showMsg('Rally point set to '+ (rTarget.type==='unit' ? UNITS[rTarget.utype].name : BLDGS[rTarget.btype].name));
+      } else {
+        let t0=map[tile.y]&&map[tile.y][tile.x];
+        if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM)){
+          let resNames={[TERRAIN.FOREST]:'wood',[TERRAIN.GOLD]:'gold',[TERRAIN.STONE]:'stone',[TERRAIN.BERRIES]:'food',[TERRAIN.FARM]:'food (farm)'};
+          showMsg('Rally point set to gather '+resNames[t0.t]);
+        } else {
+          showMsg('Rally point set to location');
+        }
+      }
+      let marker = {x:tile.x,y:tile.y,time:tick,color:'#0af'};
+      cmdMarkers.push(marker);
+      newCmdMarkersSinceSync.push(marker);
+    }
+
+    if (isGuestSender) {
+      sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
+      return;
+    }
+
+    bldg.rallyX=tile.x;
+    bldg.rallyY=tile.y;
     if(rTarget){
       bldg.rallyTargetId=rTarget.id;
       bldg.rallyResourceType=null;
-      showMsg('Rally point set to '+ (rTarget.type==='unit' ? UNITS[rTarget.utype].name : BLDGS[rTarget.btype].name));
     } else {
       let t0=map[tile.y]&&map[tile.y][tile.x];
       if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM)){
         bldg.rallyResourceType=t0.t;
         bldg.rallyTargetId=null;
-        let resNames={[TERRAIN.FOREST]:'wood',[TERRAIN.GOLD]:'gold',[TERRAIN.STONE]:'stone',[TERRAIN.BERRIES]:'food',[TERRAIN.FARM]:'food (farm)'};
-        showMsg('Rally point set to gather '+resNames[t0.t]);
       } else {
         bldg.rallyResourceType=null;
         bldg.rallyTargetId=null;
-        showMsg('Rally point set to location');
       }
     }
-    cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:'#0af'});
     return;
   }
   // Visual command marker
@@ -1254,14 +1273,33 @@ function doCommand(sx,sy){
   else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';
-  cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
+  if (!isReplayingRemoteCommand) {
+    let marker = {x:tile.x,y:tile.y,time:tick,color:markerColor};
+    cmdMarkers.push(marker);
+    newCmdMarkersSinceSync.push(marker);
+  }
 
-  // Play response sound on command
+  // Play response sound on command — not when replaying a guest's command
+  // on the host (see isReplayingRemoteCommand's comment, js/net-cmd.js):
+  // the guest already heard/saw its own feedback locally the instant it
+  // clicked, well before this ever reached the host.
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
-  if (movers.length > 0 && window.playSound) {
+  if (movers.length > 0 && window.playSound && !isReplayingRemoteCommand) {
     let first = movers[0];
     if (first.utype === 'villager') window.playSound('select_villager');
     else if (first.utype !== 'sheep') window.playSound('select_military');
+  }
+
+  // The guest has now shown/played its own local feedback above (marker +
+  // sound) — send the actual command to the host and stop here, same
+  // "never mutate world state directly" rule as everywhere else a guest
+  // issues an action (js/net-cmd.js's file header comment). Everything
+  // below this point (formation offsets, task/path assignment) is
+  // authoritative simulation mutation the guest must never perform on its
+  // own soon-to-be-overwritten copy.
+  if (isGuestSender) {
+    sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
+    return;
   }
 
   // Generate formation offsets for group movement (AoE2-style spread)
@@ -1353,7 +1391,11 @@ function doPlace(sx,sy){
   let tile=screenToTile(sx,sy);
   let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(vils.length===0){
-    showMsg('Select a villager to build!');
+    // Same reasoning as doCommand()'s marker/sound suppression (see
+    // isReplayingRemoteCommand's comment, js/net-cmd.js): a status message
+    // about the GUEST's own placement attempt has no business popping up
+    // on the HOST's own screen when this is just the host replaying it.
+    if (!isReplayingRemoteCommand) showMsg('Select a villager to build!');
     placing=null;
     return;
   }
@@ -1393,7 +1435,7 @@ function doPlace(sx,sy){
         wallsToRemove.push(existing);
       }
     }
-    if(!canAfford(myTeam,actualCost)){showMsg('Not enough resources!');placing=null;return;}
+    if(!canAfford(myTeam,actualCost)){if (!isReplayingRemoteCommand) showMsg('Not enough resources!');placing=null;return;}
     spendCost(myTeam,actualCost);
     if (wallsToRemove.length > 0) {
       let ids = new Set(wallsToRemove.map(w => w.id));
@@ -1421,11 +1463,11 @@ function doPlace(sx,sy){
     // Hold Shift to place multiple building foundations
     if(!keys['Shift']){
       placing=null;
-    } else {
+    } else if (!isReplayingRemoteCommand) {
       showMsg('Place next foundation (release Shift to finish)');
     }
   } else {
-    showMsg('Can\'t build here!');
+    if (!isReplayingRemoteCommand) showMsg('Can\'t build here!');
   }
 }
 

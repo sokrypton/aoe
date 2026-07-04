@@ -70,16 +70,29 @@ function buildSyncPayload(){
   // reads `attacker` at all, only x/y/startX/startY/startH/tx/ty/totalDist
   // (damage is already resolved on the host the instant a projectile lands
   // — js/loop.js — so the guest never needs to resolve anything, just draw
-  // it). The in-flight list is typically tiny (a handful at once), so this
-  // is cheap regardless of sync rate.
-  payload.projectiles = projectiles.map(p => ({
-    x: p.x, y: p.y, startX: p.startX, startY: p.startY,
+  // it).
+  //
+  // Both projectiles and corpses are fully deterministic once created —
+  // constant-velocity straight-line flight to a fixed point (js/loop.js's
+  // update(), replicated exactly by the guest's own advanceGuestProjectiles),
+  // and a static position that just fades out over CORPSE_LIFE wall-clock
+  // time (js/render.js, already computed independently per-client). Neither
+  // needs a single correction resent after creation — only a FULL sync
+  // (a fresh join/reconnect, with no local history to build on) needs the
+  // complete current lists; every other sync only sends what's NEW since
+  // the last one (newProjectilesSinceSync/newCorpsesSinceSync, js/core.js),
+  // same "don't resend the unchanging part" idea as mapDelta below.
+  let mapProjectile = p => ({
+    id: p.id, x: p.x, y: p.y, startX: p.startX, startY: p.startY,
     startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
-  }));
+  });
 
   if (full) {
     guestNeedsFullSync = false;
     dirtyMapCells = []; // the full map already covers everything queued so far
+    payload.projectiles = projectiles.map(mapProjectile);
+    // payload.corpses already carries the full current list via `base`
+    // (serializeGame()) — nothing more to do for the full case.
     // Only worth sending on a full (re)sync — this is how a (re)joining
     // guest recovers previously-explored terrain it can no longer see (see
     // updateGuestExploredEver()'s comment, js/core.js): host-computed, so
@@ -106,7 +119,23 @@ function buildSyncPayload(){
     delete payload.map;
     payload.mapDelta = dirtyMapCells.map(({x,y}) => ({x, y, cell: map[y][x]}));
     dirtyMapCells = [];
+    delete payload.projectiles;
+    delete payload.corpses;
+    payload.newProjectiles = newProjectilesSinceSync.map(mapProjectile);
+    payload.newCorpses = newCorpsesSinceSync;
+    // Same treatment, same reason (see newCmdMarkersSinceSync's comment,
+    // js/core.js) — a marker is create-once/fade-in-place, so only ever
+    // send the new ones; the guest's OWN just-created markers (from its
+    // own local doCommand()/finalizeWallDrag() call, js/input.js) already
+    // live in its own `cmdMarkers` and must never be wholesale-overwritten
+    // by this, or they'd disappear the instant the next sync arrives
+    // instead of fading naturally like a host's own click does.
+    delete payload.cmdMarkers;
+    payload.newCmdMarkers = newCmdMarkersSinceSync;
   }
+  newProjectilesSinceSync = [];
+  newCorpsesSinceSync = [];
+  newCmdMarkersSinceSync = [];
   return payload;
 }
 
@@ -181,18 +210,45 @@ function applyNetSync(data){
     // just carries the resulting corpse). guestReactedCorpses (js/core.js)
     // makes this a one-shot per corpse id rather than re-firing on every
     // sync the way `c.impactFx` used to (see that comment).
-    (data.corpses || []).forEach(c => {
-      if (!guestReactedCorpses.has(c.id)) {
+    //
+    // Corpses and projectiles are handled differently depending on full vs
+    // delta (see buildSyncPayload's comment, js/net-sync.js, for why): a
+    // full sync wholesale-replaces both lists (this guest tab has no local
+    // history to build on — a fresh join/reconnect); a delta sync only ever
+    // carries the NEW ones since last time, appended onto whatever this
+    // guest is already independently aging/flying locally
+    // (advanceGuestProjectiles in js/loop.js; render.js's CORPSE_LIFE fade
+    // for corpses) — never resent, never wholesale-replaced.
+    if (data.full) {
+      (data.corpses || []).forEach(c => {
+        if (!guestReactedCorpses.has(c.id)) {
+          guestReactedCorpses.add(c.id);
+          spawnParticles(c.x, c.y, '#990000', c.utype === 'bear' ? 12 : 7, 0.05, 1.8);
+        }
+      });
+      corpses = (data.corpses || []).map(c => ({...c, deathTime: loadNow - (c.ageAtSaveMs || 0)}));
+      projectiles = (data.projectiles || []).map(p => ({...p}));
+    } else {
+      (data.newCorpses || []).forEach(c => {
         guestReactedCorpses.add(c.id);
         spawnParticles(c.x, c.y, '#990000', c.utype === 'bear' ? 12 : 7, 0.05, 1.8);
-      }
-    });
-    corpses = (data.corpses || []).map(c => ({...c, deathTime: loadNow - (c.ageAtSaveMs || 0)}));
-    cmdMarkers = data.cmdMarkers || [];
-    // Replaced wholesale each sync (see advanceGuestProjectiles() in
-    // js/loop.js for the smooth per-frame flight in between syncs) —
-    // whatever the host still has in flight, including "gone" = landed.
-    projectiles = (data.projectiles || []).map(p => ({...p}));
+        corpses.push({...c, deathTime: loadNow});
+      });
+      (data.newProjectiles || []).forEach(p => { projectiles.push({...p}); });
+    }
+    // Same full-vs-delta split as corpses/projectiles above (see
+    // newCmdMarkersSinceSync's comment, js/core.js): a full sync replaces
+    // wholesale (fresh join/reconnect, nothing local to preserve yet); a
+    // delta sync only ever APPENDS the host's new markers onto this
+    // guest's own already-existing list — critically, never overwrites it,
+    // so a marker this guest just pushed for its OWN click (js/input.js)
+    // keeps fading naturally via render.js's tick-based filter instead of
+    // vanishing the instant the next ~65ms sync arrives.
+    if (data.full) {
+      cmdMarkers = data.cmdMarkers || [];
+    } else {
+      (data.newCmdMarkers || []).forEach(m => cmdMarkers.push(m));
+    }
     // particles are never networked and used to be reset here every sync —
     // fine when the guest never spawned any of its own, but now it does
     // (advanceGuestParticles/the hit/death/gather/building-fx hooks below),
@@ -276,7 +332,14 @@ function applyNetSync(data){
     // save is a discontinuous jump, not something to just quietly ignore).
     if (data.stateReloaded) window.__netCameraCentered = false;
     if (!window.__netCameraCentered) {
-      if (data.guestCam) {
+      // data.guestCam is only trustworthy for a genuine fresh join/reconnect
+      // (this guest tab just started, so it has no camera history of its
+      // own yet) — NOT for data.stateReloaded, where this SAME still-alive
+      // guest tab already reported some now-stale pre-load camera position
+      // that has nothing to do with wherever entities ended up after the
+      // host's loaded save; that case must always recenter on the guest's
+      // own unit instead, same as it always has.
+      if (data.guestCam && !data.stateReloaded) {
         camX = data.guestCam.x; camY = data.guestCam.y;
         window.__netCameraCentered = true;
       } else {
@@ -379,6 +442,13 @@ let lastGuestViewReportAt = 0;
 let lastReportedGuestCam = null;
 function reportGuestViewIfChanged(now){
   if (netRole !== 'guest') return;
+  // Before the camera has ever actually been centered/restored (see
+  // applyNetSync's camera-centering block), camX/camY still hold whatever
+  // meaningless pre-connection default core.js started with — reporting
+  // THAT would race the very first full sync's restore and stomp the
+  // host's correctly-remembered position with garbage before it's ever
+  // used, on every fresh join/reconnect.
+  if (!window.__netCameraCentered) return;
   if (now - lastGuestViewReportAt < 1500) return;
   lastGuestViewReportAt = now;
   if (lastReportedGuestCam && lastReportedGuestCam.x === camX && lastReportedGuestCam.y === camY) return;

@@ -144,20 +144,29 @@ function update(){
 
 // Guest-only, called from gameLoop() (js/init.js) once per rendered frame
 // instead of the tick-locked block above — cosmetic position-only flight,
-// no damage/removal-on-impact (the host already resolved that the instant
-// a shot landed; the guest's `projectiles` list gets wholesale-replaced by
-// the next sync's authoritative version — js/net-sync.js — regardless of
-// wherever this left them). Keeps arrows flying smoothly between syncs
-// instead of only moving in visible ~6x/sec jumps like everything else the
-// guest doesn't locally simulate.
+// no damage resolution (the host already resolved that the instant a shot
+// landed). Keeps arrows flying smoothly between syncs instead of only
+// moving in visible ~6x/sec jumps like everything else the guest doesn't
+// locally simulate.
+//
+// Also owns REMOVAL on arrival now: since js/net-sync.js only ever sends a
+// NEW projectile once (never a wholesale replace on every delta sync — see
+// buildSyncPayload's comment), nothing else ever prunes an arrived one from
+// this list. Uses the exact same distance/speed arrival test as the host's
+// own authoritative removal (js/loop.js's update()), so both sides agree on
+// when a shot has landed even though only the guest is the one dropping its
+// own local copy here.
 function advanceGuestProjectiles(elapsedMs){
   let speed = 0.25 * (elapsedMs / timeStep); // same 0.25 tiles/tick as the authoritative update above
+  let remaining = [];
   projectiles.forEach(p => {
     let dx = p.tx - p.x, dy = p.ty - p.y;
     let dist = Math.sqrt(dx*dx + dy*dy);
-    if (dist <= speed || dist === 0) { p.x = p.tx; p.y = p.ty; }
-    else { p.x += (dx / dist) * speed; p.y += (dy / dist) * speed; }
+    if (dist <= speed || dist === 0) return; // arrived — drop it, matching the host's own removal
+    p.x += (dx / dist) * speed; p.y += (dy / dist) * speed;
+    remaining.push(p);
   });
+  projectiles = remaining;
 }
 
 // Guest-only, same pattern as advanceGuestProjectiles above but for unit

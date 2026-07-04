@@ -602,6 +602,9 @@ function restartGame(difficulty){
   guestExploredEver.clear(); // fresh map, fresh host-side guest-fog memory — see js/core.js
   hostExploredEver.clear(); // fresh map, fresh guest-side host-fog memory — see js/core.js
   hostKnownGuestCam = null; // fresh map, stale camera position no longer meaningful — see js/core.js
+  newProjectilesSinceSync = [];
+  newCorpsesSinceSync = [];
+  newCmdMarkersSinceSync = [];
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();
