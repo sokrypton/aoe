@@ -35,7 +35,7 @@ function init(){
 
 function placeStartingSheep(){
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
-  let baseAngle=Math.atan2(starts[1].y-starts[0].y,starts[1].x-starts[0].x);
+  let baseAngle=simAtan2(starts[1].y-starts[0].y,starts[1].x-starts[0].x);
   // AoE2 Arabia herdables: 4 sheep near the TC, plus 2 far PAIRS the player
   // has to scout to find (8 per player total).
   let nearOffsets=[
@@ -51,8 +51,8 @@ function placeStartingSheep(){
   STARTS.forEach((start,index)=>{
     let center={x:start.x+1,y:start.y+1};
     let place=(o,count)=>{
-      let ox=Math.round(Math.cos(o.angle)*o.dist)*(index===0?1:-1);
-      let oy=Math.round(Math.sin(o.angle)*o.dist)*(index===0?1:-1);
+      let ox=Math.round(simCos(o.angle)*o.dist)*(index===0?1:-1);
+      let oy=Math.round(simSin(o.angle)*o.dist)*(index===0?1:-1);
       for(let i=0;i<count;i++){
         let sp=findSpawnTile(center.x+ox+i,center.y+oy,3);
         if(sp)createUnit('sheep',sp.x,sp.y,GAIA_TEAM);
@@ -74,7 +74,7 @@ function placeWildBears(){
     attempts++;
     let x=simRandInt(4,MAP-5), y=simRandInt(4,MAP-5);
     if(!walkable(x,y))continue;
-    if(starts.some(s=>Math.sqrt((s.x-x)**2+(s.y-y)**2)<16))continue;
+    if(starts.some(s=>{let bdx=s.x-x,bdy=s.y-y;return Math.sqrt(bdx*bdx+bdy*bdy)<16}))continue;
     let bear=createUnit('bear',x,y,GAIA_TEAM);
     // Den anchor: the bear leashes back here after a chase (see logic.js)
     bear.homeX=x; bear.homeY=y;

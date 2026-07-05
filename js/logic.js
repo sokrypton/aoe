@@ -197,7 +197,7 @@ function nearestDrop(e,resType,excludeIds=null){
   return best;
 }
 
-function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
+function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 
 // ---- PER-TICK SPATIAL INDEX (perf) ----
 // Coarse grid over targetable units (non-sheep/carcass, alive, not
@@ -1008,7 +1008,8 @@ function updateUnit(e){
         clearUnitPath(e);
       } else if(t.type==='unit' && tick % 15 === 0 && e.path.length > 0){
         let endTile = e.path[e.path.length - 1];
-        let dToDest = Math.sqrt((endTile.x - t.x)**2 + (endTile.y - t.y)**2);
+        let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
+        let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
         if(dToDest > 1.5){
           pathUnitTo(e, Math.round(t.x), Math.round(t.y));
         }
@@ -1151,7 +1152,8 @@ function updateUnit(e){
 
     // Defensive Stance anchor retreat check
     if (e.stance === 'defensive' && e.defendX !== undefined) {
-      let dFromAnchor = Math.sqrt((e.x - e.defendX)**2 + (e.y - e.defendY)**2);
+      let adx = e.x - e.defendX, ady = e.y - e.defendY;
+      let dFromAnchor = Math.sqrt(adx*adx + ady*ady);
       if (dFromAnchor > 6) {
         e.target = null;
         clearUnitPath(e);

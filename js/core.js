@@ -165,6 +165,36 @@ function simRandom(){
 function simRandInt(min,max){
   return Math.floor(simRandom()*(max-min+1))+min;
 }
+// ---- Deterministic trig for SIM code ----
+// Math.sin/cos/atan2 are implementation-defined per JS engine (each browser
+// ships its own libm), so two lockstep peers on different browsers can
+// disagree in the last bits and desync. Sim code uses these polynomial
+// approximations instead — built only from +,-,*,/ and % (IEEE-exact, so
+// identical on every engine). Accuracy ~1e-7 rad (sin/cos) / ~1e-5 (atan2):
+// far more than the placement/scatter math needs. Render code should keep
+// using Math.sin/cos — it's faster and cosmetic.
+const SIM_PI = Math.PI, SIM_2PI = Math.PI * 2, SIM_HALF_PI = Math.PI / 2;
+function simSin(x){
+  x = x % SIM_2PI;
+  if (x > SIM_PI) x -= SIM_2PI; else if (x < -SIM_PI) x += SIM_2PI;
+  if (x > SIM_HALF_PI) x = SIM_PI - x; else if (x < -SIM_HALF_PI) x = -SIM_PI - x;
+  const x2 = x * x;
+  // Taylor degree-9 on [-PI/2, PI/2]
+  return x * (1 + x2 * (-1/6 + x2 * (1/120 + x2 * (-1/5040 + x2 / 362880))));
+}
+function simCos(x){ return simSin(x + SIM_HALF_PI); }
+function simAtan2(y, x){
+  if (x === 0 && y === 0) return 0;
+  const ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+  // atan on [0,1] via minimax polynomial, then octant unfolding
+  const z = ay > ax ? ax / ay : ay / ax;
+  const z2 = z * z;
+  let a = z * (0.9998660 + z2 * (-0.3302995 + z2 * (0.1801410 + z2 * (-0.0851330 + z2 * 0.0208351))));
+  if (ay > ax) a = SIM_HALF_PI - a;
+  if (x < 0) a = SIM_PI - a;
+  return y < 0 ? -a : a;
+}
+
 // Establish the seed for a fresh match. Host/single-player draws a random
 // one; a guest (or a replay) passes the agreed seed in. Must run before
 // setMapSize()/genMap() — they consume sim randomness.
@@ -550,10 +580,11 @@ function spawnProjectile(attacker, target) {
   if (target.type !== 'building' && simRandom() > accuracy) {
     let ang = simRandom() * Math.PI * 2;
     let off = 0.6 + simRandom() * 0.8;
-    targetX += Math.cos(ang) * off;
-    targetY += Math.sin(ang) * off;
+    targetX += simCos(ang) * off;
+    targetY += simSin(ang) * off;
   }
-  let d = Math.sqrt((attacker.x - targetX)**2 + (attacker.y - targetY)**2);
+  let dxp = attacker.x - targetX, dyp = attacker.y - targetY;
+  let d = Math.sqrt(dxp*dxp + dyp*dyp);
   let proj = {
     id: nextProjectileId++,
     x: attacker.x,

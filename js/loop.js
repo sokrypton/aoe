@@ -89,7 +89,8 @@ function update(){
         let victim = null, vd = 0.45;
         entities.forEach(en => {
           if (en.type !== 'unit' || en.team === shooter.team || en.hp <= 0 || en.garrisonedIn) return;
-          let d = Math.hypot(en.x - p.tx, en.y - p.ty);
+          let idx = en.x - p.tx, idy = en.y - p.ty;
+          let d = Math.sqrt(idx*idx + idy*idy);
           if (d < vd) { vd = d; victim = en; }
         });
         if (victim) damageEntity(shooter, victim);

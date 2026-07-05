@@ -6,7 +6,7 @@ function genMap(){
   }}
 
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
-  let baseAngle=Math.atan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
+  let baseAngle=simAtan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
   let baseSide=simRandom()<0.5?-1:1;
   // Resource distances below were tuned for the original 60x60 map; scale them
   // so larger maps spread bases/resources out instead of leaving empty grass.
@@ -15,7 +15,7 @@ function genMap(){
   function randFloat(min,max){return simRandom()*(max-min)+min;}
   function inBounds(x,y,margin=0){return x>=margin&&x<MAP-margin&&y>=margin&&y<MAP-margin;}
   function distXY(ax,ay,bx,by){return Math.sqrt((ax-bx)*(ax-bx)+(ay-by)*(ay-by));}
-  function polar(angle,dist){return{x:Math.round(Math.cos(angle)*dist),y:Math.round(Math.sin(angle)*dist)};}
+  function polar(angle,dist){return{x:Math.round(simCos(angle)*dist),y:Math.round(simSin(angle)*dist)};}
   function clearArea(cx,cy,r){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       let x=cx+dx,y=cy+dy;
@@ -122,8 +122,8 @@ function genMap(){
     if(!spot)return 0;
     let placed=0;
     let r = Math.ceil(Math.sqrt(len*len + wid*wid)) + 1;
-    let cos = Math.cos(angle);
-    let sin = Math.sin(angle);
+    let cos = simCos(angle);
+    let sin = simSin(angle);
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       let x = spot.x + dx;
       let y = spot.y + dy;
@@ -219,8 +219,8 @@ function genMap(){
   for(let i=0;i<extraForestPatches;i++){
     let angle=randFloat(0,Math.PI*2);
     let dist=simRandInt(Math.round(9*scale),Math.round(23*scale));
-    let x=MAP/2+Math.round(Math.cos(angle)*dist);
-    let y=MAP/2+Math.round(Math.sin(angle)*dist);
+    let x=MAP/2+Math.round(simCos(angle)*dist);
+    let y=MAP/2+Math.round(simSin(angle)*dist);
     if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13*scale))continue;
     placeForestLine(x,y,randFloat(0,Math.PI),simRandInt(4,7),simRandInt(2,3));
   }

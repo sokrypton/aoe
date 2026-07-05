@@ -236,7 +236,8 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
   while(e.path.length>0){
     let nextTile=e.path[0];
     let p1=toIso(e.fromX,e.fromY), p2=toIso(nextTile.x,nextTile.y);
-    let screenDist=Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy)||1.0;
+    let sddx=p2.ix-p1.ix, sddy=p2.iy-p1.iy;
+    let screenDist=Math.sqrt(sddx*sddx+sddy*sddy)||1.0;
     if(e.moveT>=screenDist){
       if(checkWalkable && !walkable(nextTile.x,nextTile.y,e.id)){
         e.path=[]; e.moveT=0; return;
@@ -252,7 +253,8 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
       e.path=[]; e.moveT=0; return;
     }
     let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
-    let screenDist=Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy)||1.0;
+    let sddx=p2.ix-p1.ix, sddy=p2.iy-p1.iy;
+    let screenDist=Math.sqrt(sddx*sddx+sddy*sddy)||1.0;
     let t=e.moveT/screenDist;
     e.x=e.fromX+(next.x-e.fromX)*t;
     e.y=e.fromY+(next.y-e.fromY)*t;

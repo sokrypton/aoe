@@ -29,7 +29,8 @@ function updateAIGarrisonReaction(){
     window.aiSeenWarTick=window.lastWarTick;
     let tc=entities.find(b=>b.type==='building'&&b.team===1&&b.btype==='TC');
     if(tc && window.lastWarX!==undefined){
-      let d=Math.hypot(window.lastWarX-(tc.x+tc.w/2), window.lastWarY-(tc.y+tc.h/2));
+      let wdx=window.lastWarX-(tc.x+tc.w/2), wdy=window.lastWarY-(tc.y+tc.h/2);
+      let d=Math.sqrt(wdx*wdx+wdy*wdy);
       if(d<=AI_BASE_ALARM_RADIUS*aiScale()) window.lastAIBaseHitTick=window.lastWarTick;
     }
   }
@@ -345,7 +346,7 @@ function getEnemyDirection(tc){
     ex=plStart?plStart.x:0;ey=plStart?plStart.y:0;
   }
   let vx=ex-(tc.x+Math.floor(tc.w/2)),vy=ey-(tc.y+Math.floor(tc.h/2));
-  let len=Math.hypot(vx,vy)||1;
+  let len=Math.sqrt(vx*vx+vy*vy)||1;
   return {dx:vx/len,dy:vy/len};
 }
 
@@ -358,7 +359,7 @@ function scoreWallSide(side,tc){
   let score=0;
   entities.filter(e=>e.type==='building'&&e.team===1&&['LCAMP','MCAMP','MILL'].includes(e.btype)).forEach(d=>{
     let vx=(d.x+0.5)-(tc.x+Math.floor(tc.w/2)),vy=(d.y+0.5)-(tc.y+Math.floor(tc.h/2));
-    let len=Math.hypot(vx,vy)||1;
+    let len=Math.sqrt(vx*vx+vy*vy)||1;
     score+=(vx/len)*dir.dx+(vy/len)*dir.dy;
   });
   let enemyDir=getEnemyDirection(tc);
@@ -592,8 +593,8 @@ function findAIFarmSpot(tc){
   for(let r=2;r<maxR;r++){
     for(let a=0;a<16;a++){
       let ang=a*Math.PI*2/16;
-      let tx=tc.x+Math.round(Math.cos(ang)*r);
-      let ty=tc.y+Math.round(Math.sin(ang)*r);
+      let tx=tc.x+Math.round(simCos(ang)*r);
+      let ty=tc.y+Math.round(simSin(ang)*r);
       if(canPlace('FARM',tx,ty,1))return{x:tx,y:ty};
     }
   }
@@ -839,8 +840,8 @@ function findAIBuildSpot(tc,type){
   for(let r=3;r<maxR;r++){
     for(let a=0;a<16;a++){
       let ang=a*Math.PI*2/16;
-      let tx=tc.x+Math.round(Math.cos(ang)*r);
-      let ty=tc.y+Math.round(Math.sin(ang)*r);
+      let tx=tc.x+Math.round(simCos(ang)*r);
+      let ty=tc.y+Math.round(simSin(ang)*r);
       if(canPlace(type,tx,ty,1)){
         let tcx = tc.x + Math.floor(tc.w/2);
         let tcy = tc.y + Math.floor(tc.h/2);
