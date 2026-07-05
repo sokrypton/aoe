@@ -188,7 +188,25 @@ function showMenuPanel(which){
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   updateUiSwitchVisibility();
+  scaleMenuToFit();
 }
+
+// The menu is authored at two FIXED design sizes (see the fixed-size menu
+// block in styles.css) and scaled uniformly to fit the viewport — a game
+// splash screen, not a fluid layout. Measured from layout size (transform
+// doesn't affect offsetWidth/Height), so it must re-run whenever the
+// menu's content changes height (panel switch, host status/QR, menu mode).
+function scaleMenuToFit(){
+  let wrap = document.getElementById('menu-scale-wrap');
+  if (!wrap) return;
+  wrap.style.transform = 'none';
+  let w = wrap.offsetWidth, h = wrap.offsetHeight;
+  if (!w || !h) return;
+  let s = Math.min((window.innerWidth - 12) / w, (window.innerHeight - 12) / h, 1.15);
+  wrap.style.transform = s === 1 ? 'none' : 'scale(' + s + ')';
+}
+window.addEventListener('resize', scaleMenuToFit);
+window.addEventListener('orientationchange', scaleMenuToFit);
 
 // The "Switch to Classic/Mobile UI" link below the menu box only belongs
 // on the pristine pre-game MAIN menu: switching pages mid-match would
@@ -201,7 +219,12 @@ function updateUiSwitchVisibility(){
   if (!row) return;
   let preGame = (window.menuMode === undefined || window.menuMode === 'prestart')
     && !netRole && !gameStarted && menuPanelIsMain();
-  row.style.display = preGame ? '' : 'none';
+  // A touch-device user on the mobile page has no business being offered
+  // the desktop-oriented classic skin — hide the link entirely for them.
+  // The reverse direction stays: a phone user who lands on classic.html
+  // very much wants the escape hatch back to the mobile UI.
+  let wrongAudience = isMobile && !(typeof isClassicUI !== 'undefined' && isClassicUI);
+  row.style.display = (preGame && !wrongAudience) ? '' : 'none';
 }
 function menuPanelIsMain(){
   let opts = document.getElementById('menu-panel-options');
@@ -265,6 +288,11 @@ function onStartClicked(){
 
 // ---- MULTIPLAYER: host/join UI glue (see js/net.js for the actual PeerJS
 // connection plumbing this calls into) ----
+// Defer one frame so the DOM the rescale measures includes this update.
+function scheduleMenuRescale(){
+  requestAnimationFrame(() => { if (typeof scaleMenuToFit === 'function') scaleMenuToFit(); });
+}
+
 function showMpStatus(text, link){
   let panel = document.getElementById('mp-status-panel');
   let textEl = document.getElementById('mp-status-text');
@@ -280,6 +308,7 @@ function showMpStatus(text, link){
   // tried and reverted — it kept kicking the legitimate guest), so the
   // protection is social: tell the host to share with exactly one person.
   if (noteEl) noteEl.style.display = link ? '' : 'none';
+  scheduleMenuRescale();
   if (link) {
     if (linkRow) linkRow.style.display = 'flex';
     if (linkBox) linkBox.value = link;
@@ -928,6 +957,7 @@ function applyMenuMode(mode){
     if (saveBtn) saveBtn.style.display = 'none';
   }
   updateUiSwitchVisibility();
+  scheduleMenuRescale();
 }
 
 function openRestartMenu(){
@@ -1257,4 +1287,7 @@ if (joinHostId) {
   if (!link) return;
   let target = location.pathname.endsWith('classic.html') ? 'index.html' : 'classic.html';
   link.href = target + location.search;
+  // Initial visibility (audience + menu state) — nothing else evaluates it
+  // until the first menu-state change.
+  updateUiSwitchVisibility();
 })();

@@ -956,8 +956,11 @@ canvas {
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
   #tutorial{
-    align-items:flex-start;
-    justify-content:center;
+    /* Inherits the base center/center alignment (the old top-align
+       override caused a visible snap-to-top at this breakpoint). Safe
+       because #tutorial-box's max-height below always leaves room for
+       the switch link — a centered flex child TALLER than its scroll
+       container would get its top clipped unreachably. */
     padding:
       max(8px, env(safe-area-inset-top))
       max(8px, env(safe-area-inset-right))
@@ -968,7 +971,9 @@ canvas {
     width: min(460px, calc(100vw - 16px));
     max-width: none;
     min-height: 0;
-    max-height: calc(100vh - 16px);
+    /* Leaves room for the switch-UI link below the box (see the
+       centering note on #tutorial above). */
+    max-height: calc(100dvh - 56px);
     max-height: calc(100dvh - 16px);
     padding: 0;
     border-width: 3px;
@@ -1022,7 +1027,15 @@ canvas {
 
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
   #tutorial{
-    padding: max(2px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(2px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    /* SYMMETRIC horizontal padding: in landscape a notched phone reports a
+       large inset on one side only (the notch side), and per-side padding
+       shifted the flex-centered box toward the other edge — "menu snaps
+       left". Both sides take the LARGER of the two insets so the box
+       stays visually centered on the screen. */
+    padding: max(2px, env(safe-area-inset-top))
+             max(8px, env(safe-area-inset-left), env(safe-area-inset-right))
+             max(2px, env(safe-area-inset-bottom))
+             max(8px, env(safe-area-inset-left), env(safe-area-inset-right));
   }
   #tutorial-box{
     width:min(960px, calc(100vw - 12px));
@@ -1049,22 +1062,27 @@ canvas {
   .title-pane{
     position:relative;
     width:100%;
-    height:100%;
     display:flex;
+    align-items:center;
     min-width:0;
     overflow:hidden;
   }
+  /* The logo's natural aspect drives the BOX height: full pane width,
+     height follows — the parchment box hugs the artwork instead of
+     stretching to fill the screen. */
   #title-logo{
-    position:absolute;
-    inset:0;
+    position:static;
+    display:block;
     width:100%;
-    height:100%;
+    height:auto;
     margin:0;
-    object-fit:contain;
-    object-position:left top;
   }
   .menu-content{
     flex:1 1 auto;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    padding:2px 10px;
   }
 }
 
@@ -2061,3 +2079,32 @@ canvas {
   text-align: center;
 }
 #mp-share-note { color: #d8cba0; }
+
+/* Classic is desktop-oriented: the leftmost Back/return action button is a
+   mobile affordance (no Escape key on a phone). Desktop steps back the
+   same way with Esc (cancel placement → leave submenu → deselect), so the
+   button is just noise in the AoE2-style command grid. */
+.act-btn.back-btn { display: none; }
+
+/* ==== FIXED-SIZE MENU DESIGNS ====
+   The menu is authored at exactly TWO design sizes — portrait (390px wide,
+   stacked) and landscape (720px wide, hero beside buttons; the existing
+   aspect-ratio media query supplies the side-by-side structure) — and
+   #menu-scale-wrap is uniformly scale()d to fit the viewport
+   (scaleMenuToFit, js/init.js), like a game splash screen. No fluid
+   breakpoint resizing = no snap points; the menu always looks identical,
+   only bigger or smaller. */
+#tutorial { overflow: hidden; }
+#menu-scale-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+}
+#tutorial-box {
+  width: 390px !important;
+  max-height: none !important;
+}
+@media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
+  #tutorial-box { width: 720px !important; }
+}

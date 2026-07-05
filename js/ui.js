@@ -380,7 +380,7 @@ function updateUI(){
         det+=`</div>`;
       });
       det+=`</div></div>`;
-      det+=`<div style="margin-top:2px;font-size:9px;color:#bfae7f;">Click to cancel</div>`;
+      // (No "Click to cancel" caption — the per-slot tooltip/title carries it.)
     } else {
       det=`HP: ${Math.ceil(e.hp)}/${e.maxHp}`;
       det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
@@ -388,7 +388,7 @@ function updateUI(){
       let bAtk = (e.btype === 'TC' || e.btype === 'TOWER') ? 5 : 0; // both fire 5-damage arrows
       let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? BLDGS.TOWER.range : 0);
       if(bAtk > 0) {
-        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">⚔️ ${bAtk}  🏹 ${bRange}</div>`;
+        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;"><span class="sel-combat-stats">⚔️ ${bAtk}  🏹 ${bRange}</span></div>`;
       }
       if(e.complete && garrisonCap(e) > 0) {
         det += `<div style="margin-top:1px;">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
@@ -545,11 +545,17 @@ function updateUI(){
     // Display combat stats for military units
     let uData = UNITS[e.utype];
     if (uData && e.utype !== 'sheep' && e.utype !== 'sheep_carcass') {
+      // Combat numbers get their own class: the mobile skin hides them
+      // (.sel-combat-stats{display:none} in styles.css — space is tight and
+      // the long-press/hover tooltips carry the same numbers), while the
+      // job/carrying/idle status icons after them stay visible everywhere.
+      let combat = [];
       let stats = [];
-      if (uData.atk > 0) stats.push(`⚔️ ${uData.atk}`);
-      if (uData.range > 0) stats.push(`🏹 ${uData.range}`);
-      if (uData.armor && (uData.armor.m > 0 || uData.armor.p > 0)) stats.push(`🛡️ ${uData.armor.m}/${uData.armor.p}`);
-      stats.push(`🏃 ${uData.speed.toFixed(2)}`);
+      if (uData.atk > 0) combat.push(`⚔️ ${uData.atk}`);
+      if (uData.range > 0) combat.push(`🏹 ${uData.range}`);
+      if (uData.armor && (uData.armor.m > 0 || uData.armor.p > 0)) combat.push(`🛡️ ${uData.armor.m}/${uData.armor.p}`);
+      combat.push(`🏃 ${uData.speed.toFixed(2)}`);
+      if (combat.length) stats.push(`<span class="sel-combat-stats">${combat.join('  ')}</span>`);
       // Job shown purely as resource icon + carried amount, on the stats row
       // after the walk rate: [wood]0 = lumberjack heading out, [wood]7 =
       // hauling 7 wood. The resource comes from the task when the hands are
@@ -849,6 +855,15 @@ window.selectIdleMilitary = function() {
 };
 
 let isClassicUI = document.body.classList.contains('classic-ui');
+// Landscape phone: the HUD moves from a bottom bar to a LEFT VERTICAL RAIL
+// (see the matching @media (orientation: landscape) and (max-height:500px)
+// block in styles.css — keep the two conditions aligned). Height is the
+// scarce dimension in landscape; the rail costs abundant width instead.
+window.isMobileLandscape = function() {
+  return isMobile && !isClassicUI
+    && window.innerWidth > window.innerHeight && window.innerHeight <= 500;
+};
+
 window.updateBottomHeight = function() {
   let w = window.innerWidth;
   // The classic layout wraps its action buttons into a real 2-row grid
@@ -857,6 +872,16 @@ window.updateBottomHeight = function() {
   // classic isn't trying to support small screens.
   bottomH = isClassicUI ? 128 : (isMobile ? (w <= 380 ? 90 : 96) : 80);
   topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
+  // Landscape rail overlays the canvas' LEFT edge — there is no bottom bar
+  // at all, so the world gets the full height below the topbar. No
+  // horizontal inset is introduced on purpose: the engine has no left/right
+  // HUD concept (world centered at W/2 everywhere), players pan freely, and
+  // a slight auto-center bias under the rail is a fine trade for not
+  // touching every screen-projection site.
+  if (window.isMobileLandscape()) {
+    bottomH = 0;
+    topH = 36;
+  }
   H = window.innerHeight - bottomH;
   W = w;
   

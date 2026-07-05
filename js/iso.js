@@ -18,18 +18,16 @@ function getMiniTransform(mw,mh){
   // Small padding just keeps the thin border stroke from clipping.
   let pad=4;
   let scale=Math.min((mw-pad*2)/(MAP*TW),(mh-pad*2)/(MAP*TH));
-  // The mobile skin's minimap box is wide-and-short (its width is always the
-  // binding constraint), so top-anchoring the diamond just naturally sits it
-  // flush with almost no dead space below — fine there. Classic's box is a
-  // taller square, where top-anchoring instead leaves a visible dead band
-  // under the diamond; centering it only for classic (this is the one place
-  // that reads the flag, and it's a no-op — same oy as before — whenever the
-  // box's height isn't the loose dimension) keeps the mobile page untouched.
-  let oy = pad;
-  if (typeof isClassicUI !== 'undefined' && isClassicUI) {
-    let diamondH = MAP * TH * scale;
-    oy = Math.max(pad, (mh - diamondH) / 2);
-  }
+  // Center the diamond vertically whenever the box is taller than the
+  // drawn diamond (a no-op — same oy as top-anchoring — whenever height is
+  // the binding constraint, i.e. the mobile skin's wide 2:1 boxes).
+  // Matters for the boxes where height IS loose: classic's taller square
+  // and the mobile landscape mode's tall right-panel minimap, both of
+  // which would otherwise show the diamond pinned to the top of a mostly
+  // empty strip. Renderer (drawMinimap) and hit-testing (isPointOnMinimap/
+  // minimapJump) both come through here, so they can't disagree.
+  let diamondH = MAP * TH * scale;
+  let oy = Math.max(pad, (mh - diamondH) / 2);
   return{scale,ox:mw/2,oy};
 }
 

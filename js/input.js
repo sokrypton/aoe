@@ -1001,8 +1001,17 @@ const MINIMAP_SMALL_BREAKPOINT = 600;
 // view would stay stuck full-screen with no visual reason to. Collapse it
 // automatically the moment the viewport grows past the breakpoint where
 // the small map becomes viable again; never force it open, only closed.
+// Whether the map-button-toggled minimap mode is active for the current
+// viewport: narrow portrait screens (no room for the corner map) OR mobile
+// landscape (the corner map would eat the top-right; the toggle opens a
+// tall right panel instead — see the landscape media query, styles.css).
+function minimapToggleModeActive(){
+  return window.innerWidth <= MINIMAP_SMALL_BREAKPOINT
+    || (window.isMobileLandscape && window.isMobileLandscape());
+}
+
 function collapseMinimapIfWide(){
-  if(window.innerWidth <= MINIMAP_SMALL_BREAKPOINT) return;
+  if(minimapToggleModeActive()) return;
   let wrap = document.getElementById('minimap-wrap');
   if(wrap && wrap.classList.contains('minimap-expanded')){
     wrap.classList.remove('minimap-expanded');
