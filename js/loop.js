@@ -79,7 +79,7 @@ function update(){
     let speed = PROJECTILE_TILES_PER_TICK; // shared with the guest's cosmetic flight (js/pathfinding.js)
     if (dist <= speed) {
       if (p.targetBuildingId) {
-        let b = entities.find(en => en.id === p.targetBuildingId);
+        let b = entitiesById.get(p.targetBuildingId);
         if (b && b.hp > 0) damageEntity(p.attacker, b);
       } else {
         let victim = null, vd = 0.45;
@@ -113,7 +113,7 @@ function update(){
 
   let current=[...entities];
   current.forEach(e=>{
-    if(entities.includes(e)){
+    if(entitiesById.has(e.id)){
       if(e.type==='unit')updateUnit(e);
       else updateBuilding(e);
     }
@@ -336,42 +336,65 @@ function separateUnits(){
   let units=entities.filter(e=>e.type==='unit'&&!e.garrisonedIn&&e.utype!=='sheep_carcass');
   let sep=0.08;
   let minDist=0.5;
+  // Per-unit flag computed once — the old all-pairs loop recomputed it,
+  // including an entitiesById lookup, for every PAIR (n²/2 times per tick).
+  // Skip units actively gathering on a resource tile, building, or harvesting a sheep carcass
+  let gathering=units.map(a=>
+    (a.gatherX >= 0 && a.path.length === 0) ||
+    (a.buildTarget !== null && a.path.length === 0) ||
+    (a.target !== null && a.path.length === 0 && entitiesById.get(a.target)?.utype === 'sheep_carcass'));
+  // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be
+  // within minDist (0.5), so each unit compares against its 3×3 cell
+  // neighborhood instead of every other unit on the map. The j>i guard keeps
+  // each pair processed exactly once, like the old triangular loop.
+  let cells=new Map();
   for(let i=0;i<units.length;i++){
-    for(let j=i+1;j<units.length;j++){
-      let a=units[i], b=units[j];
-      // Skip units actively gathering on a resource tile, building, or harvesting a sheep carcass
-      let aGathering = (a.gatherX >= 0 && a.path.length === 0) ||
-                       (a.buildTarget !== null && a.path.length === 0) ||
-                       (a.target !== null && a.path.length === 0 && entitiesById.get(a.target)?.utype === 'sheep_carcass');
-      let bGathering = (b.gatherX >= 0 && b.path.length === 0) ||
-                       (b.buildTarget !== null && b.path.length === 0) ||
-                       (b.target !== null && b.path.length === 0 && entitiesById.get(b.target)?.utype === 'sheep_carcass');
-      let dx=a.x-b.x, dy=a.y-b.y;
-      let d=Math.sqrt(dx*dx+dy*dy);
-      if(d<minDist&&d>0.01){
-        let push=sep*(minDist-d)/d;
-        let px=dx*push, py=dy*push;
-        // ignoreUnits=true: the overlapping units being separated must not
-        // count each other's block-grid entries as walls.
-        if(a.path.length===0&&!aGathering){
-          let nax=a.x+px, nay=a.y+py;
-          if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
-        }
-        if(b.path.length===0&&!bGathering){
-          let nbx=b.x-px, nby=b.y-py;
-          if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
-        }
-      } else if(d<=0.01){
-        if(a.path.length===0&&!aGathering){
-          let nax=a.x+Math.random()*0.3-0.15;
-          let nay=a.y+Math.random()*0.3-0.15;
-          if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
-        }
-        if(b.path.length===0&&!bGathering){
-          let nbx=b.x+Math.random()*0.3-0.15;
-          let nby=b.y+Math.random()*0.3-0.15;
-          if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
-        }
+    let u=units[i];
+    let key=(u.x|0)*4096+(u.y|0);
+    let arr=cells.get(key);
+    if(!arr)cells.set(key,arr=[]);
+    arr.push(i);
+  }
+  let processPair=(i,j)=>{
+    let a=units[i], b=units[j];
+    let aGathering=gathering[i], bGathering=gathering[j];
+    let dx=a.x-b.x, dy=a.y-b.y;
+    let d=Math.sqrt(dx*dx+dy*dy);
+    if(d<minDist&&d>0.01){
+      let push=sep*(minDist-d)/d;
+      let px=dx*push, py=dy*push;
+      // ignoreUnits=true: the overlapping units being separated must not
+      // count each other's block-grid entries as walls.
+      if(a.path.length===0&&!aGathering){
+        let nax=a.x+px, nay=a.y+py;
+        if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
+      }
+      if(b.path.length===0&&!bGathering){
+        let nbx=b.x-px, nby=b.y-py;
+        if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
+      }
+    } else if(d<=0.01){
+      if(a.path.length===0&&!aGathering){
+        let nax=a.x+Math.random()*0.3-0.15;
+        let nay=a.y+Math.random()*0.3-0.15;
+        if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
+      }
+      if(b.path.length===0&&!bGathering){
+        let nbx=b.x+Math.random()*0.3-0.15;
+        let nby=b.y+Math.random()*0.3-0.15;
+        if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
+      }
+    }
+  };
+  for(let i=0;i<units.length;i++){
+    let cx=units[i].x|0, cy=units[i].y|0;
+    for(let ndy=-1;ndy<=1;ndy++)for(let ndx=-1;ndx<=1;ndx++){
+      let gx=cx+ndx, gy=cy+ndy;
+      if(gx<0||gy<0)continue;
+      let arr=cells.get(gx*4096+gy);
+      if(!arr)continue;
+      for(let k=0;k<arr.length;k++){
+        if(arr[k]>i)processPair(i,arr[k]);
       }
     }
   }

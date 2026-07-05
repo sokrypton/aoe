@@ -95,12 +95,30 @@ function drawSelection(){
   X.setLineDash([]);
 }
 
+// Terrain-layer cache: repainting all MAP² fog-tinted tile diamonds — and
+// reallocating the canvas buffer via the width/height assignment — every
+// frame was the single biggest per-frame cost on mobile. The tile layer only
+// changes as fog is revealed / terrain mutates, and a ~4Hz refresh is
+// imperceptible on a minimap, so it's painted to an offscreen canvas and
+// blitted. Entities, blink, and the viewport rectangle stay per-frame.
+let miniTerrain=null, miniTerrainAt=-1e9;
+let miniW=0, miniH=0, miniDimsStale=true;
+window.addEventListener('resize',()=>{miniDimsStale=true;});
+const MINI_TERRAIN_REFRESH_MS=250;
+
 function drawMinimap(){
   let dpr = Math.max(1, window.devicePixelRatio || 1);
-  let mw=MC.parentElement.clientWidth||160,mh=MC.parentElement.clientHeight||160;
-  MC.width=mw*dpr;MC.height=mh*dpr;
-  MC.style.width=mw+'px';MC.style.height=mh+'px';
-  MX.scale(dpr,dpr);
+  if(miniDimsStale||!miniW){ // layout read (clientWidth forces reflow) only after a resize
+    miniW=MC.parentElement.clientWidth||160;
+    miniH=MC.parentElement.clientHeight||160;
+    miniDimsStale=false;
+  }
+  let mw=miniW,mh=miniH;
+  if(MC.width!==mw*dpr||MC.height!==mh*dpr){ // realloc only when the size actually changed
+    MC.width=mw*dpr;MC.height=mh*dpr;
+    MC.style.width=mw+'px';MC.style.height=mh+'px';
+  }
+  MX.setTransform(dpr,0,0,dpr,0,0);
   let mt=getMiniTransform(mw,mh);
   let miniPoint=(x,y)=>{
     let iso=toIso(x,y);
@@ -114,26 +132,45 @@ function drawMinimap(){
     MX.closePath();
     MX.fill();
   };
-  MX.clearRect(0,0,mw,mh);
-  for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
-    let f = fog[y] && fog[y][x];
-    let c = '#000000'; // unexplored is black
-    if (f === 1) {
-      let t=map[y][x];
-      c=t.t===TERRAIN.GRASS?'#254615':t.t===TERRAIN.FOREST?'#0d2008':
-        t.t===TERRAIN.GOLD?'#6d5210':t.t===TERRAIN.STONE?'#404040':
-        t.t===TERRAIN.WATER?'#224c6e':t.t===TERRAIN.FARM?'#453d28':'#254615';
-    } else if (f === 2) {
-      let t=map[y][x];
-      c=t.t===TERRAIN.GRASS?'#4a8c2a':t.t===TERRAIN.FOREST?'#1a4010':
-        t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
-        t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
+
+  if(!miniTerrain||miniTerrain.width!==mw*dpr||miniTerrain.height!==mh*dpr
+     ||performance.now()-miniTerrainAt>MINI_TERRAIN_REFRESH_MS){
+    if(!miniTerrain)miniTerrain=document.createElement('canvas');
+    if(miniTerrain.width!==mw*dpr)miniTerrain.width=mw*dpr;
+    if(miniTerrain.height!==mh*dpr)miniTerrain.height=mh*dpr;
+    let TX=miniTerrain.getContext('2d');
+    TX.setTransform(dpr,0,0,dpr,0,0);
+    TX.clearRect(0,0,mw,mh);
+    for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
+      let f = fog[y] && fog[y][x];
+      let c = '#000000'; // unexplored is black
+      if (f === 1) {
+        let t=map[y][x];
+        c=t.t===TERRAIN.GRASS?'#254615':t.t===TERRAIN.FOREST?'#0d2008':
+          t.t===TERRAIN.GOLD?'#6d5210':t.t===TERRAIN.STONE?'#404040':
+          t.t===TERRAIN.WATER?'#224c6e':t.t===TERRAIN.FARM?'#453d28':'#254615';
+      } else if (f === 2) {
+        let t=map[y][x];
+        c=t.t===TERRAIN.GRASS?'#4a8c2a':t.t===TERRAIN.FOREST?'#1a4010':
+          t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
+          t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
+      }
+      // Inflate each tile slightly so neighbors overlap — without this,
+      // anti-aliased edges leave hairline transparent seams that show the
+      // battlefield through the (semi-transparent) minimap as cracks.
+      let p0=miniPoint(x-0.06,y-0.06),p1=miniPoint(x+1.06,y-0.06),
+          p2=miniPoint(x+1.06,y+1.06),p3=miniPoint(x-0.06,y+1.06);
+      TX.fillStyle=c;
+      TX.beginPath();
+      TX.moveTo(p0.x,p0.y);TX.lineTo(p1.x,p1.y);TX.lineTo(p2.x,p2.y);TX.lineTo(p3.x,p3.y);
+      TX.closePath();TX.fill();
     }
-    // Inflate each tile slightly so neighbors overlap — without this,
-    // anti-aliased edges leave hairline transparent seams that show the
-    // battlefield through the (semi-transparent) minimap as cracks.
-    fillDiamond([miniPoint(x-0.06,y-0.06),miniPoint(x+1.06,y-0.06),miniPoint(x+1.06,y+1.06),miniPoint(x-0.06,y+1.06)],c);
+    miniTerrainAt=performance.now();
   }
+  MX.clearRect(0,0,mw,mh);
+  MX.setTransform(1,0,0,1,0,0);
+  MX.drawImage(miniTerrain,0,0);
+  MX.setTransform(dpr,0,0,dpr,0,0);
   // (ornamental frame is drawn last, on top of entities/viewport — see below)
   // Selected objects draw white (AoE2-style) so the current selection is
   // findable on the minimap at a glance.

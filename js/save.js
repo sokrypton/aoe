@@ -68,8 +68,7 @@ function serializeGame(){
     // applySavedGame can reconstruct team 0's fog correctly either way.
     savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
     otherTeamExploredEver: Array.from(teamExploredEver[myTeam === 1 ? 0 : 1]),
-    bellActive: !!window.bellActive,
-    aiBellActive: !!window.aiBellActive,
+    bellRinging: window.bellRinging || [false,false],
     aiWallPlan: window.aiWallPlan || null,
     aiGateBuilt: !!window.aiGateBuilt,
     aiGateTile: window.aiGateTile || null,
@@ -235,8 +234,7 @@ function applySavedGame(data){
 
     window.fogDisabled = !!data.fogDisabled;
     scoutedByMe = new Set(data.scoutedByMe || []);
-    window.bellActive = !!data.bellActive;
-    window.aiBellActive = !!data.aiBellActive;
+    window.bellRinging = [!!(data.bellRinging&&data.bellRinging[0]), !!(data.bellRinging&&data.bellRinging[1])];
     window.aiWallPlan = data.aiWallPlan || null;
     window.aiGateBuilt = !!data.aiGateBuilt;
     window.aiGateTile = data.aiGateTile || null;

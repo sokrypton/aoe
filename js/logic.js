@@ -44,7 +44,7 @@ function canPlace(type,x,y,team=0){
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
-      let existing = entities.find(en => en.id === t.occupied);
+      let existing = entitiesById.get(t.occupied);
       // Only GATE and TOWER may be placed on top of an existing allied
       // WALL (they consume the wall tile(s) they're built on, see
       // doPlace's wallsToRemove); anything else, including another WALL,
@@ -186,6 +186,55 @@ function nearestDrop(e,resType,excludeIds=null){
 }
 
 function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2)}
+
+// ---- PER-TICK SPATIAL INDEX (perf) ----
+// Coarse grid over targetable units (non-sheep/carcass, alive, not
+// garrisoned), rebuilt at most once per tick and shared by every proximity
+// scan that used to walk the whole entities array per scanning unit —
+// auto-attack acquisition, sheep conversion, bear aggro. Late-game that was
+// O(units × entities) per tick. Entries are live references, so positions
+// read at query time are current even if a unit moved after the grid was
+// built (units move far less than a cell per tick); hp/garrison are
+// re-checked at query time so mid-tick deaths can't be targeted.
+const UNIT_GRID_CELL=4;
+let unitGridTick=-1, unitGrid=new Map();
+function targetableUnitGrid(){
+  if(unitGridTick===tick)return unitGrid;
+  unitGridTick=tick;
+  unitGrid.clear();
+  entities.forEach(en=>{
+    if(en.type!=='unit'||en.hp<=0||en.garrisonedIn)return;
+    if(en.utype==='sheep'||en.utype==='sheep_carcass')return;
+    let key=((en.x/UNIT_GRID_CELL)|0)*4096+((en.y/UNIT_GRID_CELL)|0);
+    let a=unitGrid.get(key);
+    if(!a)unitGrid.set(key,a=[]);
+    a.push(en);
+  });
+  return unitGrid;
+}
+// Closest grid unit to `e` strictly within `range` that passes `pred`.
+function closestUnitNear(e,range,pred){
+  let grid=targetableUnitGrid();
+  let c=UNIT_GRID_CELL;
+  let cx=(e.x/c)|0, cy=(e.y/c)|0, cr=Math.ceil(range/c)+1;
+  let closest=null, closestD=range;
+  for(let gy=cy-cr;gy<=cy+cr;gy++){
+    if(gy<0)continue;
+    for(let gx=cx-cr;gx<=cx+cr;gx++){
+      if(gx<0)continue;
+      let a=grid.get(gx*4096+gy);
+      if(!a)continue;
+      for(let k=0;k<a.length;k++){
+        let en=a[k];
+        if(en===e||en.hp<=0||en.garrisonedIn)continue;
+        if(!pred(en))continue;
+        let d=dist(e,en);
+        if(d<closestD){closestD=d;closest=en;}
+      }
+    }
+  }
+  return closest;
+}
 
 function distToTarget(a,b){
   if(b && b.type==='building'){
@@ -444,7 +493,7 @@ function checkNextBuild(e){
   e.buildQueue = e.buildQueue || [];
   // Find all actual unfinished building entities in the queue
   let unfinishedInQueue = e.buildQueue
-    .map(id => entities.find(en => en.id === id))
+    .map(id => entitiesById.get(id))
     .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp));
 
   if (unfinishedInQueue.length === 0) {
@@ -573,7 +622,7 @@ function damageEntity(attacker, target){
     if(!target.target){
       shouldRetaliate = true;
     } else {
-      let curT = entities.find(en=>en.id===target.target);
+      let curT = entitiesById.get(target.target);
       // Switch target from buildings/sheep to focus the attacking soldier
       if(!curT || curT.type==='building'||curT.utype==='sheep'){
         shouldRetaliate = true;
@@ -685,7 +734,7 @@ function restoreSavedTask(e) {
     
     // Re-path them to their task!
     if (e.task === 'build' && e.buildTarget) {
-      let bt = entities.find(en => en.id === e.buildTarget);
+      let bt = entitiesById.get(e.buildTarget);
       if (bt) {
         let b = BLDGS[bt.btype];
         let pt = b.isFarm ? {x: bt.x, y: bt.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(e.x, e.y, bt, e.id) : {x: bt.x + bt.w, y: bt.y + bt.h});
@@ -751,15 +800,15 @@ function ejectGarrison(b,filter){
 // team defaults to 0 (player) for every existing UI call site. The AI (team
 // 1) reuses the exact same mechanic for its own defense — see
 // updateAIGarrisonReaction() in ai.js — but never touches the player's HUD
-// (bell icon state, messages, sound), which stays keyed to team 0 only.
+// (messages, sound), which stays keyed to myTeam only.
 function ringTownBell(team){
   team=team===undefined?0:team;
-  // window.bellActive/the sound+message feedback below are local-player UI
-  // state, not world state — gate them on whichever team THIS browser tab
-  // is actually playing (myTeam, always 0 outside multiplayer) rather than
-  // a hardcoded 0, so a multiplayer guest playing team 1 gets its own bell
-  // feedback instead of silently getting none.
-  if(team===myTeam)window.bellActive=true;
+  // bellRinging is per-team world state (like resources/teamExploredEver),
+  // maintained HERE so no caller juggles its own flag — the sound+message
+  // feedback below stays gated on myTeam (whichever team THIS browser tab
+  // plays), so a multiplayer guest playing team 1 gets its own bell
+  // feedback and the host never hears the other side's bell.
+  window.bellRinging[team]=true;
   // Reserve slots so villagers spread across TC/towers instead of all
   // targeting one full building.
   let spots=entities.filter(en=>canGarrisonIn(en,team))
@@ -795,7 +844,7 @@ function ringTownBell(team){
 }
 function soundAllClear(team){
   team=team===undefined?0:team;
-  if(team===myTeam)window.bellActive=false;
+  window.bellRinging[team]=false;
   // Release villagers from every garrison (military stays put — use the
   // building's Ungarrison button for them) and cancel villagers still en route.
   entities.forEach(en=>{
@@ -905,7 +954,7 @@ function updateUnit(e){
   // Melee & Ranged units: halt walking path as soon as we step within attack range of our target,
   // or periodically re-path if the moving target has shifted away from our current path's endpoint.
   if(e.target && !e.task){
-    let t=entities.find(en=>en.id===e.target);
+    let t=entitiesById.get(e.target);
     if(t && t.hp>0){
       let range = UNITS[e.utype]?.range || 0;
       // Sheep (live or carcass): 0.9 so villagers ring it — requiring exact
@@ -964,23 +1013,12 @@ function updateUnit(e){
 
     // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
     // and no friendly unit (except other sheep) is closer to guard them, they convert!
-    let closest=null, cd=5;
-    entities.forEach(en=>{
-      if(en.type==='unit'&&en.utype!=='sheep'&&(en.team===0||en.team===1)){
-        let d=dist(e,en);
-        if(d<cd){cd=d;closest=en;}
-      }
-    });
+    let closest=closestUnitNear(e,5,en=>en.team===0||en.team===1);
     if(closest && closest.team !== e.team){
       let guarded = false;
       if (e.team === 0 || e.team === 1) {
-        let guardDist = cd;
-        entities.forEach(en=>{
-          if(en.type==='unit'&&en.utype!=='sheep'&&en.team===e.team){
-            let d=dist(e,en);
-            if(d<guardDist){guarded=true;}
-          }
-        });
+        let guardDist = dist(e,closest);
+        guarded = !!closestUnitNear(e,guardDist,en=>en.team===e.team);
       }
       if(!guarded){
         e.team=closest.team;
@@ -1011,14 +1049,7 @@ function updateUnit(e){
       // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
       // runs on a stagger so 5 bears don't all scan every tick.
       if(tick%10===e.id%10){
-        let closest=null,cd=5.5;
-        entities.forEach(en=>{
-          if(en.type!=='unit'||en.hp<=0||en.garrisonedIn)return;
-          if(en.team!==0&&en.team!==1)return;
-          if(en.utype==='sheep'||en.utype==='sheep_carcass')return;
-          let d=dist(e,en);
-          if(d<cd){cd=d;closest=en;}
-        });
+        let closest=closestUnitNear(e,5.5,en=>en.team===0||en.team===1);
         if(closest){
           e.target=closest.id;
           clearUnitPath(e);
@@ -1047,7 +1078,7 @@ function updateUnit(e){
   }
 
   if(e.target && e.task !== 'return'){
-    let t=entities.find(en=>en.id===e.target);
+    let t=entitiesById.get(e.target);
     if(!t||t.hp<=0){
       e.target=null;
       e.explicitAttack=false;
@@ -1214,7 +1245,7 @@ function updateUnit(e){
 
   if(e.utype==='villager'&&e.task){
     if(e.task==='build'&&e.buildTarget){
-      let bt=entities.find(en=>en.id===e.buildTarget);
+      let bt=entitiesById.get(e.buildTarget);
       if(!bt||(bt.complete && bt.hp >= bt.maxHp && !(bt.btype==='FARM' && bt.exhausted))){
         if(!checkNextBuild(e)){
           e.task=null;
@@ -1454,14 +1485,13 @@ function updateUnit(e){
     e.defendY = e.y;
     if (e.stance !== 'passive') {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
-      let closest=null, closestD=scanRange+0.1;
-      entities.forEach(en=>{
-        if(en.team!==e.team&&en.type==='unit'&&en.hp>0&&!en.garrisonedIn&&en.utype!=='sheep'&&en.utype!=='sheep_carcass'){
+      let closest=closestUnitNear(e,scanRange+0.1,en=>{
+        if(en.team===e.team)return false;
+        if(e.team===0){
           let ey=Math.round(en.y),ex=Math.round(en.x);
-          if(e.team===0&&(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2))return;
-          let d=dist(e,en);
-          if(d<closestD){closestD=d;closest=en;}
+          if(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2)return false;
         }
+        return true;
       });
       if(closest) {
         e.target=closest.id;
@@ -1470,17 +1500,40 @@ function updateUnit(e){
   }
 }
 
+// Per-tick cache of gather-tile claims per team (tile key = x + y*MAP).
+// findNearTile used to rebuild this set from the whole entities array for
+// EVERY caller — per depleted-resource villager per tick. Claims granted
+// mid-tick are added to the cached set as findNearTile hands them out, so
+// several villagers reassigned in the same tick still fan out; claims
+// RELEASED mid-tick linger until next tick, which is merely conservative.
+// (The cache can't exclude the asking villager's own claim the way the old
+// per-caller build did — harmless: findNearTile is only called to pick a
+// NEW tile, and the fallback pass ignores claims entirely.)
+let gatherClaimTick=-1, gatherClaims=[null,null];
+function claimedGatherSet(team){
+  if(gatherClaimTick!==tick){gatherClaimTick=tick;gatherClaims=[null,null];}
+  if(!gatherClaims[team]){
+    let s=new Set();
+    entities.forEach(en=>{
+      if(en.type==='unit'&&en.team===team&&en.gatherX>=0)
+        s.add(en.gatherX+en.gatherY*MAP);
+    });
+    gatherClaims[team]=s;
+  }
+  return gatherClaims[team];
+}
+
 function findNearTile(e,terrain,excludeSet=null){
   let bx=Math.round(e.x),by=Math.round(e.y);
   let best=null,bd=999;
-  // Collect tiles already claimed by other villagers on same team
-  let claimed=new Set();
-  entities.forEach(en=>{
-    if(en.type==='unit'&&en.id!==e.id&&en.team===e.team&&en.gatherX>=0)
-      claimed.add(en.gatherX+en.gatherY*MAP);
-  });
+  let claimed=claimedGatherSet(e.team);
+  // Ring-only scan: each radius pass visits just the new perimeter instead
+  // of rescanning the whole (2r+1)² square (the union of rings 0..r is that
+  // square, so the first radius that yields a hit returns the same tile the
+  // old full-square rescan did — at O(r²) total instead of O(r³)).
   for(let r=0;r<12;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
         if(excludeSet && excludeSet.has(nx+ny*MAP))continue;
@@ -1490,11 +1543,12 @@ function findNearTile(e,terrain,excludeSet=null){
         if(d<bd){bd=d;best={x:nx,y:ny};}
       }
     }
-    if(best)return best;
+    if(best){claimed.add(best.x+best.y*MAP);return best;}
   }
   // If all tiles are claimed, fall back to any available tile (excluding completely blocked ones)
   for(let r=0;r<12;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
         if(excludeSet && excludeSet.has(nx+ny*MAP))continue;
@@ -1503,7 +1557,7 @@ function findNearTile(e,terrain,excludeSet=null){
         if(d<bd){bd=d;best={x:nx,y:ny};}
       }
     }
-    if(best)return best;
+    if(best){claimed.add(best.x+best.y*MAP);return best;}
   }
   return null;
 }
@@ -1742,7 +1796,7 @@ function updateBuilding(e){
       // "both player teams, not myTeam" reasoning as the block above.
       if(unit && (e.team===0||e.team===1) && e.rallyX!==undefined && e.rallyY!==undefined){
         if(e.rallyTargetId){
-          let target=entities.find(en=>en.id===e.rallyTargetId);
+          let target=entitiesById.get(e.rallyTargetId);
           if(target){
             if(unit.utype==='villager'&&target.type==='building'&&!target.complete&&target.team===e.team){
               unit.task='build';

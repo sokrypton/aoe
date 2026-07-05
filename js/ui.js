@@ -3,12 +3,11 @@
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE']);
-// window.bellActive has always meant "team 0's town bell is ringing" —
-// team 1's equivalent is tracked separately as window.aiBellActive (set by
-// ai.js, and reused for a multiplayer guest's own bell state — see
-// js/net-cmd.js). This picks whichever one actually describes MY team.
+// window.bellRinging is per-team ([team 0, team 1]), maintained by
+// ringTownBell/soundAllClear in js/logic.js. In single-player team 1 is the
+// AI's bell; in multiplayer it's the guest's own.
 function myBellActive(){
-  return myTeam === 0 ? !!window.bellActive : !!window.aiBellActive;
+  return !!(window.bellRinging && window.bellRinging[myTeam]);
 }
 
 function setPortraitIcon(port, key, fallbackEmoji){
@@ -256,8 +255,19 @@ function updateUI(){
     && selected[0].team===myTeam && selected[0].garrison && selected[0].garrison.length>0
     ? selected[0] : null;
   if(selInfo) selInfo.classList.toggle('multi-select', isMulti||!!garrisonSel);
-  if(selGrid && currentSelectionDetails!==(window.lastSelGridDetails||'')){
-    window.lastSelGridDetails=currentSelectionDetails;
+  // The grid gets its OWN dirty key: only what it actually renders (selection
+  // membership, per-unit HP, garrison members). Keying it on the full
+  // currentSelectionDetails rebuilt every icon ~30×/s while watching a
+  // construction or a gathering villager — per-tick fields (buildProgress,
+  // farm res, carried amount, cam flag) the grid doesn't even display.
+  let gridKey = currentSelListKey;
+  if (isMulti) gridKey += ':' + selected.map(s => s.id + '_' + s.hp).join(',');
+  if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
+    let u = entitiesById.get(id);
+    return u ? id + '_' + u.hp : id;
+  }).join(',');
+  if(selGrid && gridKey!==(window.lastSelGridDetails||'')){
+    window.lastSelGridDetails=gridKey;
     selGrid.innerHTML='';
     // Buckets a flat unit/building list into same-type groups, preserving
     // first-seen order so the grid doesn't reshuffle every refresh.
@@ -748,7 +758,7 @@ function cancelQueue(bldgId,idx){
     sendCommand({ kind: 'cancel-queue', bldgId, idx });
     return;
   }
-  let bldg=entities.find(en=>en.id===bldgId);
+  let bldg=entitiesById.get(bldgId);
   if(!bldg||bldg.type!=='building')return;
   let utype=bldg.queue[idx];
   if(!utype)return;
@@ -772,8 +782,8 @@ function showMsg(txt){
 window.toggleTownBell = function() {
   if (gameOver || !gameStarted) return;
   if (netRole === 'guest') {
-    // Host applies this with the guest's fixed team (1) and sets
-    // window.aiBellActive itself — see js/net-cmd.js.
+    // Host applies this with the guest's fixed team (1); bellRinging[1]
+    // comes back on the next sync — see js/net-cmd.js.
     sendCommand({ kind: 'town-bell', ringing: !myBellActive() });
     return;
   }

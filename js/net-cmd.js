@@ -143,11 +143,9 @@ function applyRemoteCommand(intent){
     }
     case 'town-bell':
       // Guest is always team 1 in this 1v1 design (host stays team 0) — see
-      // js/init.js's enterGuestJoinMode. window.aiBellActive is the same
-      // flag ai.js sets for team 1's bell state, and is already part of the
-      // sync payload (js/save.js), so the guest's bell icon updates on the
-      // next sync via myBellActive() in ui.js.
-      window.aiBellActive = !!intent.ringing;
+      // js/init.js's enterGuestJoinMode. ringTownBell/soundAllClear maintain
+      // bellRinging[1], which rides the sync payload, so the guest's bell
+      // icon updates on the next sync via myBellActive() in ui.js.
       if (intent.ringing) ringTownBell(1); else soundAllClear(1);
       if (typeof updateUI === 'function') updateUI();
       break;

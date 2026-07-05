@@ -1,7 +1,6 @@
 // ---- INIT ----
 function init(){
-  window.bellActive=false;
-  window.aiBellActive=false;
+  window.bellRinging=[false,false]; // per-team town-bell state, indexed by team
   window.lastUnderAttackTick=undefined;
   // Music mood / AI-garrison damage-signals must reset with the tick
   // counter, or a stale large value from the previous match reads as

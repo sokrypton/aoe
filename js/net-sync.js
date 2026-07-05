@@ -22,7 +22,7 @@ let NET_SYNC_TARGET_PER_SEC = 15;
 // once per (re)connection (guestNeedsFullSync); after that only changed
 // cells (dirtyMapCells) go out.
 //
-// COMMON_SYNC_FIELDS is an explicit whitelist (not spread-then-delete) of
+// syncGameFields() is an explicit whitelist (not spread-then-delete) of
 // what a live sync actually needs. Several serializeGame() fields
 // (selectedIds/cameraFollowId/currentVillagerMenu/settingRally/
 // scoutedByMe/savedByTeam/otherTeamExploredEver/aiDifficulty/version/
@@ -31,16 +31,28 @@ let NET_SYNC_TARGET_PER_SEC = 15;
 // here, still present in actual save files. `otherTeamExploredEver`
 // especially: large and grows over a match, pure compounding waste to
 // resend every sync when only a save load ever reads it.
-const COMMON_SYNC_FIELDS = ['MAP', 'tick', 'GAME_SPEED',
-  'resources', 'popUsed', 'popCap', 'aiPop', 'aiPopCap', 'aiTick',
-  'gameStarted', 'gameOver', 'won', 'fogDisabled',
-  'bellActive', 'aiBellActive', 'aiWallPlan', 'aiGateBuilt', 'aiGateTile',
-  'aiIntel', 'aiWaveCount', 'aiLastWaveTick', 'nextId'];
-
-function pickFields(obj, fields){
-  let out = {};
-  fields.forEach(f => { out[f] = obj[f]; });
-  return out;
+// Built directly (not via serializeGame + pickFields): serializeGame also
+// materializes Array.from(teamExploredEver[...]) — which grows toward MAP²
+// over a match — plus Array.from(scoutedByMe) and a rebased corpses.map,
+// all of which the old pickFields immediately threw away, 15×/sec, on the
+// host. Field set must stay in lockstep with what applyNetSync reads.
+function syncGameFields(){
+  return {
+    MAP, tick, GAME_SPEED,
+    resources,
+    gameStarted, gameOver, won,
+    fogDisabled: !!window.fogDisabled,
+    // Per-team town-bell state; bellRinging[1] is the guest's own bell in
+    // MP (myBellActive() in js/ui.js). The ai* family (aiTick/aiWallPlan/
+    // aiIntel/wave state) is genuine AI-brain state: the AI never runs in
+    // multiplayer (js/loop.js gates on netRole), nothing on the guest reads
+    // it, so none of it is synced — save files still carry it all via
+    // serializeGame. Ditto the pop globals (popUsed/aiPop/…): save-file
+    // bookkeeping recomputed from entities everywhere it's displayed
+    // (teamPopUsed in js/ui.js).
+    bellRinging: window.bellRinging,
+    nextId
+  };
 }
 
 // CLIENT-LOCAL entity fields — the single list consumed by BOTH sides of
@@ -77,7 +89,6 @@ const KEYFRAME_EVERY = 30;
 let deltaSyncCounter = 0;
 
 function buildSyncPayload(){
-  let base = serializeGame();
   let full = guestNeedsFullSync;
 
   // Round entity coordinates for the wire (full precision is visually
@@ -86,7 +97,7 @@ function buildSyncPayload(){
   // merge guard, so the two can never fall out of step again; they did
   // once, with sortVal, and the symptom was every moving unit resending
   // every sync).
-  let entities = base.entities.map(e => {
+  let wireEntities = entities.map(e => {
     let stripped = {};
     for (let k in e) {
       if (!GUEST_LOCAL_ENTITY_FIELDS.has(k)) stripped[k] = e[k];
@@ -98,7 +109,7 @@ function buildSyncPayload(){
     return stripped;
   });
 
-  let payload = pickFields(base, COMMON_SYNC_FIELDS);
+  let payload = syncGameFields();
   payload.full = full;
   // One boolean per sync so the guest's remoteMenuOpen mirror self-heals if
   // a one-shot 'host-menu' message is ever lost — see applyNetSync below.
@@ -113,14 +124,14 @@ function buildSyncPayload(){
   // snapshot actually sent (lastSentEntitySnapshot, js/core.js), plus the
   // ids of any that vanished (died/were deleted) since then.
   if (full) {
-    payload.entities = entities;
-    lastSentEntitySnapshot = new Map(entities.map(e => [e.id, JSON.stringify(e)]));
-    lastSentEntityCore = new Map(entities.map(e => [e.id, entityCoreJson(e)]));
+    payload.entities = wireEntities;
+    lastSentEntitySnapshot = new Map(wireEntities.map(e => [e.id, JSON.stringify(e)]));
+    lastSentEntityCore = new Map(wireEntities.map(e => [e.id, entityCoreJson(e)]));
   } else {
     deltaSyncCounter++;
     let changedEntities = [];
     let currentIds = new Set();
-    entities.forEach(e => {
+    wireEntities.forEach(e => {
       currentIds.add(e.id);
       let json = JSON.stringify(e);
       if (lastSentEntitySnapshot.get(e.id) !== json) {
@@ -184,7 +195,7 @@ function buildSyncPayload(){
   if (full) {
     guestNeedsFullSync = false;
     dirtyMapCells = []; // the full map already covers everything queued so far
-    payload.map = base.map;
+    payload.map = map;
     // Only worth sending on a full (re)sync — this is how a (re)joining
     // guest recovers previously-explored terrain it can no longer see (see
     // updateTeamExploredEver()'s comment, js/core.js): host-computed, so
@@ -521,11 +532,6 @@ function applyNetSync(data){
     }
 
     resources = data.resources || resources;
-    popUsed = data.popUsed || 0;
-    popCap = data.popCap || 0;
-    aiPop = data.aiPop || 0;
-    aiPopCap = data.aiPopCap || 0;
-    aiTick = data.aiTick || 0;
 
     // Host started a rematch (gameOver flips back to false in the sync
     // stream): this guest's world just got wholesale-replaced with a fresh
@@ -560,14 +566,7 @@ function applyNetSync(data){
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
 
     window.fogDisabled = !!data.fogDisabled;
-    window.bellActive = !!data.bellActive;
-    window.aiBellActive = !!data.aiBellActive;
-    window.aiWallPlan = data.aiWallPlan || null;
-    window.aiGateBuilt = !!data.aiGateBuilt;
-    window.aiGateTile = data.aiGateTile || null;
-    window.aiIntel = data.aiIntel || null;
-    window.aiWaveCount = data.aiWaveCount || 0;
-    window.aiLastWaveTick = data.aiLastWaveTick || null;
+    window.bellRinging = [!!(data.bellRinging&&data.bellRinging[0]), !!(data.bellRinging&&data.bellRinging[1])];
 
     // camX/camY/ZOOM/currentVillagerMenu/settingRally/cameraFollowId are
     // deliberately NOT touched here — all local UI state, untouched by

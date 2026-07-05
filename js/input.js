@@ -1643,7 +1643,7 @@ function handleScroll(elapsed){
   if(manualPan){
     window.cameraFollowId=null;
   } else if(window.cameraFollowId){
-    let f=entities.find(en=>en.id===window.cameraFollowId);
+    let f=entitiesById.get(window.cameraFollowId);
     if(f&&f.hp>0){
       let iso=toIso(f.x,f.y);
       camX=iso.ix;camY=iso.iy;

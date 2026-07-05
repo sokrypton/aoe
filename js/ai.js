@@ -36,11 +36,10 @@ function updateAIGarrisonReaction(){
   // ?? not || : the tick can legitimately be 0 (a hit landed on tick 0),
   // and 0 is falsy — || would wrongly discard it and treat that as "never".
   let underAttack = tick - (window.lastAIBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
-  if(underAttack && !window.aiBellActive){
-    window.aiBellActive=true;
+  // ringTownBell/soundAllClear maintain bellRinging[1] themselves.
+  if(underAttack && !window.bellRinging[1]){
     ringTownBell(1);
-  } else if(!underAttack && window.aiBellActive){
-    window.aiBellActive=false;
+  } else if(!underAttack && window.bellRinging[1]){
     soundAllClear(1);
   }
 }

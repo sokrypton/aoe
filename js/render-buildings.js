@@ -325,7 +325,15 @@ function drawWindmillSails(hx,hy,id,scale=1){
 // Main function to draw building entities
 // Shared by TOWER/WALL/GATE for locating an adjacent building to link to.
 function getConnectedBuilding(tx, ty){
-  return entities.find(en => en.type === 'building' && tx >= en.x && tx < en.x + (en.w || BLDGS[en.btype]?.w || 1) && ty >= en.y && ty < en.y + (en.h || BLDGS[en.btype]?.h || 1));
+  // O(1) via the tile occupancy grid — every building footprint tile holds
+  // the owner's id (see placement in js/logic.js). The old full entities
+  // scan ran 1-4× per WALL/TOWER/GATE per frame: ~10-60k entity checks a
+  // frame for a decent wall ring.
+  if(ty<0||ty>=MAP||tx<0||tx>=MAP)return undefined;
+  let id=map[ty][tx].occupied;
+  if(!id)return undefined;
+  let en=entitiesById.get(id);
+  return en&&en.type==='building'?en:undefined;
 }
 function isWallLike(b){
   return !!b && (b.btype === 'WALL' || b.btype === 'TOWER' || b.btype === 'GATE');

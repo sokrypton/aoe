@@ -266,10 +266,10 @@ function drawUnit(e){
   let targetDx = 0;
   let tx = -1, ty = -1;
   if(e.target){
-    let t = entities.find(en => en.id === e.target);
+    let t = entitiesById.get(e.target);
     if(t) { tx = t.x; ty = t.y; }
   } else if(e.buildTarget){
-    let t = entities.find(en => en.id === e.buildTarget);
+    let t = entitiesById.get(e.buildTarget);
     if(t) { tx = t.x; ty = t.y; }
   } else if(e.gatherX !== undefined && e.gatherY !== undefined && e.task && e.task !== 'return'){
     tx = e.gatherX + 0.5;
