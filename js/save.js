@@ -39,6 +39,10 @@ function serializeGame(){
     // timestamp; applySavedGame rebases it against the new session's
     // performance.now().
     corpses: corpses.map(c => ({...c, deathTime: undefined, ageAtSaveMs: performance.now() - c.deathTime})),
+    // In-flight arrows carry real pending damage on the host (impact applies
+    // damageEntity, js/loop.js) — plain data since attacker became an
+    // id+snapshot, so a mid-volley save no longer silently loses those hits.
+    projectiles,
     cmdMarkers,
     resources, popUsed, popCap, aiPop, aiPopCap, aiTick,
     gameStarted, gameOver, won, aiDifficulty,
@@ -207,13 +211,14 @@ function applySavedGame(data){
     let loadNow = performance.now();
     corpses = (data.corpses || []).map(c => ({...c, deathTime: loadNow - (c.ageAtSaveMs || 0)}));
     cmdMarkers = data.cmdMarkers || [];
-    // In-flight projectiles/particles hold direct references to entity
-    // objects (e.g. a projectile's attacker/target) that are about to be
-    // thrown away in favor of the freshly-deserialized ones below — keeping
-    // them around would have their flight/impact logic acting on entities
-    // no longer in the world. They're both sub-second cosmetic effects, so
-    // just drop them rather than trying to re-point them at the new objects.
-    projectiles = [];
+    // Projectiles are plain data (attacker stored as id + snapshot, resolved
+    // at impact against the freshly-rebuilt entitiesById) so in-flight
+    // volleys — and their pending damage — survive the round-trip.
+    // Particles are genuinely sub-second cosmetics; dropping them is fine.
+    projectiles = data.projectiles || [];
+    // Keep new projectile ids above the loaded ones — the guest's sync-merge
+    // dedupes projectiles by id, so a collision would drop a real arrow.
+    nextProjectileId = projectiles.reduce((m,p)=>Math.max(m,p.id||0), 0) + 1;
     particles = [];
 
     entities = data.entities;

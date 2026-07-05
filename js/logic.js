@@ -70,8 +70,11 @@ function getLineTiles(p1, p2) {
     let t = i / steps;
     let tx = Math.round(p1.x + t * dx);
     let ty = Math.round(p1.y + t * dy);
-    // Avoid duplicate coordinates
-    if (!tiles.some(tile => tile.x === tx && tile.y === ty)) {
+    // Rounding along a straight line can only ever repeat the IMMEDIATELY
+    // previous tile, so comparing against the last one suffices (the old
+    // tiles.some() scan was O(n²) per wall drag).
+    let last = tiles[tiles.length - 1];
+    if (!last || last.x !== tx || last.y !== ty) {
       tiles.push({x: tx, y: ty});
     }
   }
@@ -178,7 +181,10 @@ function nearestDrop(e,resType,excludeIds=null){
     if(b.type!=='building'||b.team!==e.team||!b.complete)return;
     if(excludeIds && excludeIds.has(b.id))return;
     if(dropAccepts(b,resType)){
-      let d=distToBuilding(e.x,e.y,b);
+      // Euclidean footprint distance (distToTarget), matching the approach/
+      // arrival logic — ranking by Manhattan distToBuilding could pick a
+      // drop site that's actually a longer diagonal walk away.
+      let d=distToTarget(e,b);
       if(d<bd){bd=d;best=b;}
     }
   });
@@ -1627,8 +1633,10 @@ function handleDeath(e,killerTeam){
       // it, lose the game. (Full-elimination conquest rules were tried and
       // reverted; teamEliminated() below remains as a fallback for the
       // no-TC-left edge cases.)
-      if(e.team===1){gameOver=true;won=true;}
-      else{gameOver=true;won=false;}
+      // Only the two PLAYING teams end the game (a hypothetical gaia/third-
+      // team TC must not); `won` is from the host/team-0 perspective — the
+      // guest inverts it from the sync (see applyNetSync).
+      if(e.team===0||e.team===1){gameOver=true;won=(e.team===1);}
     }
   }
   // Death blood burst — bigger than the per-hit spatter, marks the kill.

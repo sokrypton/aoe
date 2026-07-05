@@ -1027,6 +1027,27 @@ function drawUnit(e){
       return Math.atan2(diy, dix);
     };
 
+    // Archer variant: the LAUNCH tangent of the ballistic arc, not the flat
+    // line to the target. drawProjectiles (js/render-fx.js) flies the arrow
+    // along vy = Δiy − (cos(progress·π)·π·A + (endH − startH)); at
+    // progress 0 that's Δiy − (π·A + endH − startH). Pointing the bow at
+    // the same tangent means the nocked arrow releases exactly along the
+    // real arrow's initial flight line — aiming flat at the target left a
+    // visible kink at the moment of release. Constants (35, /5, startH 12,
+    // endH 8) must stay in sync with spawnProjectile/drawProjectiles.
+    let aimAngleBallistic = () => {
+      let t = entitiesById.get(e.target);
+      if (!t) return e.facing === -1 ? Math.PI : 0;
+      let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
+      let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
+      let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
+      let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
+      let A = 35 * (Math.hypot(tcx - e.x, tcy - e.y) / 5); // arc amplitude
+      diy -= Math.PI * A + (8 - 12); // + endH − startH (units launch at 12, impact at 8)
+      if (dix === 0 && diy === 0) return e.facing === -1 ? Math.PI : 0;
+      return Math.atan2(diy, dix);
+    };
+
     // Tools & weapons (animated swinging swings during active tasks)
     if(e.utype==='villager'){
       // Shaped work swing: slow wind-up (70% of the cycle), fast strike
@@ -1251,14 +1272,24 @@ function drawUnit(e){
       // Big bow with a full draw cycle: nock and pull back slowly, release,
       // string snaps forward and vibrates until the next arrow. (Corpses
       // drop it — drawCorpse lays it on the ground.)
+      // The cycle is driven by the REAL reload timer (atkCooldown resets to
+      // rof the moment the projectile spawns — js/logic.js), not the old
+      // free-running per-id phase: the nocked arrow now releases exactly
+      // when the real arrow leaves, so the flight reads as THE arrow off
+      // the string. Works on the guest too — atkCooldown/target ride the
+      // entity sync.
       let swinging=e.target&&e.path.length===0;
-      let ph=((tick*0.06+e.id*0.4)%1+1)%1;
+      let bowRof=(UNITS.archer&&UNITS.archer.rof)||60;
+      let bowCd=e.atkCooldown||0;
+      let justFired=bowCd>bowRof*0.85;                         // string still snapping forward
+      let drawT=Math.min(1,Math.max(0,1-bowCd/(bowRof*0.85))); // 0 after the snap → 1 at release
       X.save(); X.translate(4, -8+humanYOffset);
       // Un-mirror (the context is under X.scale(e.facing,1); scaling by
       // e.facing again cancels it — the translate above stays mirrored so
-      // the bow remains in the correct hand), then rotate by the TRUE
-      // screen angle so the bow + nocked arrow point exactly at the target.
-      if(swinging){ X.scale(e.facing,1); X.rotate(aimAngle()); }
+      // the bow remains in the correct hand), then rotate to the arc's
+      // LAUNCH tangent so the nocked arrow points exactly along the real
+      // arrow's initial flight line (see aimAngleBallistic above).
+      if(swinging){ X.scale(e.facing,1); X.rotate(aimAngleBallistic()); }
       // Thick recurve limbs
       X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round';
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
@@ -1266,9 +1297,8 @@ function drawUnit(e){
       X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
       X.lineCap='butt';
       let tipX = 10*Math.cos(Math.PI/2.15), tipY = 10*Math.sin(Math.PI/2.15);
-      if(swinging && ph < 0.72){
-        let d = ph/0.72;
-        let pull = -2 - 5.5*d;
+      if(swinging && !justFired){
+        let pull = -2 - 5.5*drawT;
         // Drawn string
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(pull, 0); X.lineTo(tipX, tipY); X.stroke();
@@ -1284,8 +1314,9 @@ function drawUnit(e){
         X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, -2.8); X.lineTo(pull+1.4, -0.5); X.closePath(); X.fill();
         X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, 2.8); X.lineTo(pull+1.4, 0.5); X.closePath(); X.fill();
       } else {
-        // String at rest — vibrates briefly right after the release
-        let vib = swinging ? Math.sin(tick*1.2)*2.2*(1-(ph-0.72)/0.28) : 0;
+        // String at rest — vibrates briefly right after the release, decaying
+        // over the first 15% of the reload window
+        let vib = swinging ? Math.sin(tick*1.2)*2.2*Math.max(0,(bowCd-bowRof*0.85)/(bowRof*0.15)) : 0;
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }

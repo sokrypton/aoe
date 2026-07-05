@@ -78,17 +78,20 @@ function update(){
     let dist = Math.sqrt(dx*dx + dy*dy);
     let speed = PROJECTILE_TILES_PER_TICK; // shared with the guest's cosmetic flight (js/pathfinding.js)
     if (dist <= speed) {
+      // Prefer the live shooter (current stats); fall back to the spawn-time
+      // snapshot if it died mid-flight — the arrow still lands (AoE2-style).
+      let shooter = entitiesById.get(p.attackerId) || p.attackerSnap;
       if (p.targetBuildingId) {
         let b = entitiesById.get(p.targetBuildingId);
-        if (b && b.hp > 0) damageEntity(p.attacker, b);
+        if (b && b.hp > 0) damageEntity(shooter, b);
       } else {
         let victim = null, vd = 0.45;
         entities.forEach(en => {
-          if (en.type !== 'unit' || en.team === p.attacker.team || en.hp <= 0 || en.garrisonedIn) return;
+          if (en.type !== 'unit' || en.team === shooter.team || en.hp <= 0 || en.garrisonedIn) return;
           let d = Math.hypot(en.x - p.tx, en.y - p.ty);
           if (d < vd) { vd = d; victim = en; }
         });
-        if (victim) damageEntity(p.attacker, victim);
+        if (victim) damageEntity(shooter, victim);
       }
     } else {
       p.x += (dx / dist) * speed;

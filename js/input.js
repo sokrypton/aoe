@@ -826,7 +826,6 @@ function handleTap(sx,sy){
   }
 
   let tile=screenToTile(sx,sy);
-  let hitR=20; // generous hit area for fingers
 
   // Find what's under the tap
   let tappedOwn=null;    // own unit or building

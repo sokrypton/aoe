@@ -235,6 +235,13 @@ function planAIWalls(aiTC,vils,profile){
       let ex=Math.round(aiTC.x+dirTarget.dx*(profile.wallRadius*aiScale()+4));
       let ey=Math.round(aiTC.y+dirTarget.dy*(profile.wallRadius*aiScale()+4));
       ex=Math.max(1,Math.min(MAP-2,ex)); ey=Math.max(1,Math.min(MAP-2,ey));
+      // If the probe tile itself happens to be forest/water, step it back
+      // toward the ring (staying outside it) instead of skipping the check —
+      // otherwise a fully re-sealed ring was never re-breached just because
+      // one lookup tile 4 beyond the wall was unwalkable.
+      for(let back=0;back<3&&!walkable(ex,ey);back++){
+        ex=Math.round(ex-dirTarget.dx);ey=Math.round(ey-dirTarget.dy);
+      }
       let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
       if(walkable(ex,ey)&&findPath(tcx,tcy,ex,ey,aiTC.id).length===0){
         breachAIWallRing(plan,aiTC);
@@ -284,9 +291,10 @@ function breachAIWallRing(plan,aiTC){
       if(!t)continue;
       let w=entities.find(en=>en.type==='building'&&en.team===1&&en.btype==='WALL'&&en.x===t.x&&en.y===t.y);
       if(w){
-        map[w.y][w.x].occupied=null;
-        entities=entities.filter(en=>en.id!==w.id);
-        entitiesById.delete(w.id);
+        // Through the normal deletion path (same as the player's Delete
+        // key), not direct entities/map surgery — that bypassed death FX
+        // and left ghost references if the player had the wall selected.
+        deleteOwnedEntity(w);
         window.aiGateTile={x:t.x,y:t.y};
         return true;
       }
@@ -448,15 +456,19 @@ function queueAIMilitary(readyBarracks,profile){
     return types[randInt(0, types.length - 1)];
   };
 
+  // Count queued military across ALL barracks against the cap — the old
+  // per-barracks `currentArmy + barracks.queue.length` check let 2 barracks
+  // overshoot maxArmy by a full queue, double-spending food the villager
+  // planner may have reserved.
+  let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.length,0);
   readyBarracks.forEach(barracks=>{
-    while(barracks.queue.length<profile.queueLimit&&teamPopUsed(1)+teamQueuedPop(1)<teamPopCap(1)&&currentArmy+barracks.queue.length<maxArmy){
+    while(barracks.queue.length<profile.queueLimit&&teamPopUsed(1)+teamQueuedPop(1)<teamPopCap(1)&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
-      if(!queueUnit(barracks,utype).ok){
-        if(!queueUnit(barracks,'spearman').ok){
-          if(!queueUnit(barracks,'militia').ok){
-            break;
-          }
-        }
+      // Counter-pick first, then cheaper fallbacks if it's unaffordable.
+      if(queueUnit(barracks,utype).ok||queueUnit(barracks,'spearman').ok||queueUnit(barracks,'militia').ok){
+        queuedArmy++;
+      } else {
+        break;
       }
     }
   });
@@ -737,25 +749,13 @@ function resolveReachableAttackTarget(militia, candidate){
 }
 
 function chooseAIAttackTarget(militia){
-  let enemies=entities.filter(e=>{
-    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep' || e.utype === 'sheep_carcass') return false;
-    // AI can only target enemy units/buildings if they reside in coordinates the AI team has explored
-    let tx = Math.floor(e.x), ty = Math.floor(e.y);
-    // Since AI's vision matches team 1, verify if the AI team has explored this tile.
-    // For simplicity, team 1 (AI) explored areas are tracked. Let's use the fog check.
-    // The player's fog maps team 0. If there isn't a dedicated AI fog array, let's limit 
-    // attack targets to entities within range of AI buildings/units, OR verify target visibility.
-    // Let's implement an explicit range search or fog check:
-    return true; // Fog check will be updated by adding a team 1 fog tracker if needed, or by distance search.
-  });
-  
-  // To avoid global vision, let's only target player entities that have been spotted.
-  // A player entity is "spotted" if it is within a reasonable distance (15 tiles) of ANY AI unit/building.
+  // No global vision: only player entities "spotted" within sight range of
+  // ANY AI unit/building are targetable (there is no dedicated team-1 fog
+  // grid — proximity to AI entities stands in for it, same as aiIntel).
   let visionRange=15*aiScale();
-  let spottedEnemies = enemies.filter(enemy => {
-    return entities.some(aiEnt => {
-      return aiEnt.team === 1 && dist(aiEnt, enemy) <= visionRange;
-    });
+  let spottedEnemies=entities.filter(e=>{
+    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep' || e.utype === 'sheep_carcass') return false;
+    return entities.some(aiEnt => aiEnt.team === 1 && dist(aiEnt, e) <= visionRange);
   });
 
   // Fallback to searching nearby player town centers if no units are spotted,
@@ -863,7 +863,9 @@ function findAIDropSite(terrain,type,tc){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,1))continue;
       let nearby=countResourceTilesNear(terrain,bx,by,4);
-      let s=dist({x:bx,y:by},{x:tc.x,y:tc.y})-nearby*1.5;
+      // TC CENTER, matching the range filter above — scoring against the
+      // corner (tc.x,tc.y) skewed site choice toward the TC's up-left side.
+      let s=dist({x:bx,y:by},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})-nearby*1.5;
       candidates.push({x:bx,y:by,s});
     }
   }

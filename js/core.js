@@ -520,7 +520,18 @@ function spawnProjectile(attacker, target) {
     ty: targetY,
     // Buildings can't sidestep — a shot at a building always connects.
     targetBuildingId: target.type === 'building' ? target.id : null,
-    attacker: attacker
+    // Id + a plain-data snapshot instead of a live object reference: the
+    // impact (js/loop.js) prefers the live entity by id, but the snapshot
+    // means an arrow still lands with the right team/damage after its
+    // shooter dies mid-flight — and keeps projectiles JSON-safe, so saves
+    // can carry in-flight volleys instead of silently dropping their
+    // pending damage. Fields = exactly what damageEntity reads.
+    attackerId: attacker.id,
+    attackerSnap: {
+      id: attacker.id, team: attacker.team, type: attacker.type,
+      btype: attacker.btype, utype: attacker.utype,
+      atk: attacker.atk, range: attacker.range
+    }
   };
   projectiles.push(proj);
   // Flight is fully deterministic (fixed start/target/speed — see
