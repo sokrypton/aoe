@@ -771,6 +771,10 @@ function applyNetSync(data){
 }
 
 onNetMessage((msg) => {
+  // Lockstep matches never consume snapshot syncs — the local sim is the
+  // authority; a stray 'sync' (e.g. sent in a race around the mode
+  // handshake) would clobber a healthy deterministic world.
+  if (msg.type === 'sync' && typeof lockstepEnabled === 'function' && lockstepEnabled()) return;
   if (msg.type === 'sync' && netRole === 'guest') {
     // A delta that isn't exactly the next seq means something between it
     // and the last applied sync was lost in the receive pipeline (the

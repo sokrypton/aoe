@@ -102,7 +102,7 @@ function update(){
   // set to (see js/net-sync.js) — no-op (netRole stays null) in
   // single-player. Recomputed each tick rather than cached since
   // GAME_SPEED can change mid-match (the in-game menu allows it).
-  if (netRole === 'host' && netConnected) {
+  if (netRole === 'host' && netConnected && !lockstepEnabled()) {
     let netSyncIntervalTicks = Math.max(1, Math.round(30 * GAME_SPEED / NET_SYNC_TARGET_PER_SEC));
     if (tick % netSyncIntervalTicks === 0) hostSyncTick();
   }

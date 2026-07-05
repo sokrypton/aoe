@@ -30,6 +30,16 @@ let localCmdSeq = 0;
 
 function submitCommand(cmd){
   cmd.team = myTeam;
+  if (typeof lockstepEnabled === 'function' && lockstepEnabled()) {
+    // Lockstep: BOTH peers schedule the command at the issuer-stamped tick
+    // and the issuer broadcasts it; the peer schedules it verbatim
+    // (js/lockstep.js's 'cmd-ls' handler).
+    let execTick = tick + INPUT_DELAY_TICKS;
+    let seq = ++localCmdSeq;
+    scheduleCommand(execTick, myTeam, seq, cmd);
+    sendToPeer({ type: 'cmd-ls', execTick, seq, cmd });
+    return;
+  }
   if (netRole === 'guest') { sendCommand(cmd); return; }
   scheduleCommand(tick + INPUT_DELAY_TICKS, myTeam, ++localCmdSeq, cmd);
 }

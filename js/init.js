@@ -638,6 +638,9 @@ window.onNetConnectionOpen = function(){
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
         recomputeGamePaused();
+      } else if (lockstepRequested()) {
+        showMpStatus('Opponent connected! Starting lockstep match…');
+        hostStartLockstepMatch(); // js/lockstep.js — seed handshake + fresh world
       } else {
         showMpStatus('Opponent connected! Starting match…');
         restartGame('standard');
@@ -992,6 +995,14 @@ function restartGame(difficulty){
   // attemptReconnect), which spans restartGame() calls rather than being
   // scoped to one "match" the way the above per-match state is.
   clearCommandQueue(); // js/commands.js — stale scheduled commands must never fire into a fresh match
+  // Fresh id sequences: entity ids are part of the deterministic sim (they
+  // break distance-sort ties, key spatial maps, and feed the checksum) so
+  // every peer must allocate the SAME ids for the same world. Without this
+  // reset, a page that ran an earlier world (the script-load init(), a
+  // finished match) starts the new one at a different counter than a page
+  // that didn't — e.g. a ?join= guest, which skips the load-time init().
+  nextId = 1;
+  nextProjectileId = 1;
   teamVisibleNow = {0: new Set(), 1: new Set()}; // sim visibility resets with the world — see js/core.js
   teamExploredSim = {0: new Set(), 1: new Set()};
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
@@ -1165,12 +1176,22 @@ function gameLoop(){
     // that's about to be discarded is wasted work and can look glitchy
     // (e.g. a cooldown ticking down locally then snapping back on sync).
     // Camera scroll above stays local either way — that's pure UI.
-    if (netRole !== 'guest') {
+    if (netRole !== 'guest' || lockstepEnabled()) {
       accumulator += elapsed;
       while (accumulator >= timeStep) {
+        // Lockstep gate: never simulate a tick the peer's input watermark
+        // doesn't cover yet — the fast peer stalls (at most
+        // INPUT_DELAY_TICKS ahead), which keeps both sims in step without
+        // any separate clock-sync mechanism. Cap the accumulator so a long
+        // stall doesn't turn into a catch-up burst.
+        if (lockstepEnabled() && !lockstepCanSim(tick + 1)) {
+          accumulator = Math.min(accumulator, timeStep * INPUT_DELAY_TICKS);
+          break;
+        }
         update();
         accumulator -= timeStep;
       }
+      if (lockstepEnabled()) lockstepReport();
     } else {
       // Nearly every limb/leg/tool/breathing animation in render-units.js
       // is a direct function of the global `tick` (e.g. Math.sin(tick*0.45

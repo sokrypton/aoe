@@ -1354,7 +1354,9 @@ function doCommand(sx,sy){
     else if (first.utype !== 'sheep') window.playSound('select_military');
   }
 
-  if (isGuestSender) {
+  if (isGuestSender && !(typeof lockstepEnabled === 'function' && lockstepEnabled())) {
+    // (Not under lockstep: there the guest's OWN sim executes the command
+    // for real INPUT_DELAY_TICKS later — predicting on top would double-move.)
     // Movement PREDICTION for plain walk orders: start this client's own
     // units moving immediately instead of waiting a command round-trip
     // plus the next sync (~150-250ms on a real link — the visible
