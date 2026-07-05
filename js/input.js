@@ -757,6 +757,11 @@ function hasSelectedMobileBuilder(){
 // moveGoalX early on just the issuer would desync lockstep peers — it feeds
 // retaliation logic). Entries expire once the real command has landed.
 let pendingWalkOrder = new Map(); // unit id -> tick the walk was submitted
+function prunePendingWalks(){
+  // Entries are otherwise only removed when isPendingWalk() happens to read
+  // that id again — a match's worth of walk orders would accumulate.
+  pendingWalkOrder.forEach((t0, id) => { if (tick - t0 > INPUT_DELAY_TICKS + 30) pendingWalkOrder.delete(id); });
+}
 function isPendingWalk(id){
   let t0 = pendingWalkOrder.get(id);
   if (t0 === undefined) return false;
@@ -1414,6 +1419,7 @@ function doCommand(sx,sy){
   // keep-selection check (finishMobileUnitCommand) doesn't deselect them in
   // the input-delay window before the command actually executes.
   if (!target && !buildTarget && !followTarget) {
+    prunePendingWalks(); // keep the map bounded to recent orders
     movers.forEach(s => pendingWalkOrder.set(s.id, tick));
   }
 

@@ -203,6 +203,18 @@ function advanceGuestUnits(elapsedMs){
 function updateCosmetics(elapsedMs){
   advanceParticles(elapsedMs);
   updateBuildingDamageFx();
+  // Periodic sweep of per-entity cosmetic bookkeeping keyed by id — these
+  // Maps/Sets otherwise keep entries for every unit/building that ever
+  // died over a whole match (slow leak on long games).
+  if ((Math.floor(tick) % 600) === 0 && !window.__cosmeticSweepDone) {
+    window.__cosmeticSweepDone = true;
+    buildingFxTick.forEach((_, id) => { if (!entitiesById.has(id)) buildingFxTick.delete(id); });
+    workSwingCycles.forEach((_, id) => { if (!entitiesById.has(id)) workSwingCycles.delete(id); });
+    let liveCorpses = new Set(corpses.map(c => c.id));
+    corpseImpactFxDone.forEach(id => { if (!liveCorpses.has(id)) corpseImpactFxDone.delete(id); });
+  } else if ((Math.floor(tick) % 600) !== 0) {
+    window.__cosmeticSweepDone = false;
+  }
 }
 
 // Particle physics: position/drag/gravity/ground-bounce/life countdown.
