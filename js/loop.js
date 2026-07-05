@@ -195,9 +195,37 @@ function guestSyncIsFresh(){
 // very next sync.
 function advanceGuestUnits(elapsedMs){
   if (!guestSyncIsFresh()) return;
+  // Correction smoothing: applyNetSync (js/net-sync.js) records the visual
+  // displacement between where this client was RENDERING a unit and the
+  // host's authoritative position as smoothX/smoothY, instead of moving the
+  // unit instantly. Each frame the offset is applied on top of the stepped
+  // position and exponentially decayed (~180ms time constant), so under
+  // network jitter corrections glide instead of jumping. Invariants:
+  //  - path units: stepUnitAlongPath recomputes x/y from fromX/moveT every
+  //    frame, so the offset is re-added after stepping (never accumulates).
+  //  - stationary units: x/y already include the offset (applyNetSync sets
+  //    x = auth + smooth), so decaying subtracts the removed portion.
+  let k = Math.min(1, elapsedMs / 180);
   entities.forEach(e => {
-    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0||e.path.length===0)return;
-    stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK * (elapsedMs / timeStep), false);
+    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)return;
+    let hasSmooth = (e.smoothX || e.smoothY);
+    if (e.path.length > 0) {
+      stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK * (elapsedMs / timeStep), false);
+      if (hasSmooth) {
+        e.smoothX = (e.smoothX || 0) * (1 - k);
+        e.smoothY = (e.smoothY || 0) * (1 - k);
+        e.x += e.smoothX;
+        e.y += e.smoothY;
+      }
+    } else if (hasSmooth) {
+      let dx = (e.smoothX || 0) * k, dy = (e.smoothY || 0) * k;
+      e.x -= dx; e.y -= dy;
+      e.smoothX = (e.smoothX || 0) - dx;
+      e.smoothY = (e.smoothY || 0) - dy;
+    }
+    if (hasSmooth && Math.abs(e.smoothX) < 0.005 && Math.abs(e.smoothY) < 0.005) {
+      e.smoothX = 0; e.smoothY = 0;
+    }
   });
 }
 

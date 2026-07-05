@@ -66,7 +66,9 @@ function syncGameFields(){
 // (spurious sprite flips), and sortVal changes every tick on any moving
 // unit, which used to defeat the movement-skip diff entirely.
 const GUEST_LOCAL_ENTITY_FIELDS = new Set(
-  ['dir', 'facing', 'facingNorth', 'pendingDir', 'pendingDirT', 'lastX', 'lastY', 'sortVal']);
+  ['dir', 'facing', 'facingNorth', 'pendingDir', 'pendingDirT', 'lastX', 'lastY', 'sortVal',
+   // correction-smoothing offsets (see the merge below + advanceGuestUnits)
+   'smoothX', 'smoothY']);
 
 // An entity minus its per-tick movement-progress fields — the part the
 // guest CAN'T derive on its own and must always be told about. `path` is
@@ -499,21 +501,38 @@ function applyNetSync(data){
             if (!(k in e) && !GUEST_LOCAL_ENTITY_FIELDS.has(k)) delete existing[k];
           }
           Object.assign(existing, e);
-          // Soften the visual snap between the guest's own extrapolated
-          // position (advanceGuestUnits, js/loop.js) and the host's
-          // authoritative one — under real-network jitter the raw assign
-          // reads as constant stuttering. Small corrections blend halfway
-          // (spreading them over 2-3 syncs); anything bigger than ~1.5
+          // Correction smoothing: instead of moving the unit toward the
+          // host's authoritative position instantly (the old half-blend
+          // still produced visible jumps under real-network jitter), record
+          // the render-vs-authority displacement as a smoothX/smoothY
+          // offset that advanceGuestUnits (js/loop.js) applies on top of
+          // the authoritative position and decays over ~180ms — the unit
+          // GLIDES onto the corrected track. Anything bigger than ~1.5
           // tiles is a genuine discontinuity (teleport/garrison/death
-          // cleanup) and must snap. Mid-path units re-derive x/y from
-          // fromX/moveT next frame anyway, so for them this is a harmless
-          // no-op — the blend mainly serves stationary/arriving units.
+          // cleanup) and snaps, clearing any leftover offset.
           if (existing.type === 'unit'
               && typeof oldX === 'number' && typeof existing.x === 'number') {
-            let dx = existing.x - oldX, dy = existing.y - oldY;
-            if (dx * dx + dy * dy < 1.5 * 1.5) {
-              existing.x = oldX + dx * 0.5;
-              existing.y = oldY + dy * 0.5;
+            // oldX/oldY are the last RENDERED position (any previous offset
+            // already applied), so the fresh offset is simply rendered −
+            // authoritative — no accumulation, or the old offset would be
+            // double-counted.
+            let dx = oldX - existing.x, dy = oldY - existing.y;
+            // Glide threshold 2.5 tiles: bunched syncs on a laggy link
+            // produce legitimate corrections up to ~2 tiles, while genuine
+            // discontinuities (garrison exit, death cleanup, teleports) are
+            // far larger — those still snap.
+            if (dx * dx + dy * dy < 2.5 * 2.5) {
+              existing.smoothX = dx;
+              existing.smoothY = dy;
+              if (existing.path.length === 0) {
+                // Stationary invariant (see advanceGuestUnits): rendered
+                // pos = authoritative + offset. Path units get the offset
+                // re-added after each frame's stepping instead.
+                existing.x += dx;
+                existing.y += dy;
+              }
+            } else {
+              existing.smoothX = 0; existing.smoothY = 0;
             }
           }
           if (prevHp !== undefined && existing.hp < prevHp && existing.hp > 0) {
