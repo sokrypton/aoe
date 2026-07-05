@@ -9,23 +9,14 @@ function update(){
 
   // Update gate open/close states (smoke/fire moved to updateCosmetics —
   // purely visual, so it runs at frame cadence outside the deterministic
-  // sim tick and needs no lockstep agreement or rollback treatment)
-  entities.forEach(e => {
-    if (e.type === 'building') {
-      if (e.btype === 'GATE' && e.complete) {
-        let friendlyNear = entities.some(en => en.type === 'unit' && en.team === e.team && 
-          en.x >= e.x - 1.2 && en.x <= e.x + e.w + 0.2 && 
-          en.y >= e.y - 1.2 && en.y <= e.y + e.h + 0.2);
-        e.gateProgress = e.gateProgress || 0;
-        if (friendlyNear) {
-          e.gateProgress = Math.min(1.0, e.gateProgress + 0.08);
-        } else {
-          e.gateProgress = Math.max(0.0, e.gateProgress - 0.08);
-        }
-        e.isOpen = e.gateProgress > 0.5;
-      }
-    }
-  });
+  // sim tick and needs no lockstep agreement or rollback treatment).
+  // Was O(gates × entities) — a full entities.some() per gate per tick.
+  // Now: skip outright with no gates (the common case), otherwise index
+  // units into 1-tile cells once and run the EXACT same rect predicate on
+  // just the cells overlapping each gate's sensing rect. Boolean any-match
+  // is order-independent, so behavior (and lockstep determinism) is
+  // unchanged.
+  updateGates();
 
   // Update projectiles: each arrow flies to its fixed aim point (see
   // spawnProjectile). On impact it damages the building it was shot at, or
@@ -327,6 +318,50 @@ function nudgeAside(){
 // route around it. Wears off after ~10s without being harassed.
 function isStubborn(u){
   return (u.dodgeCount||0)>=3 && tick-(u.lastDodgeTick||0)<300;
+}
+
+// Gate open/close sensing — see the call site at the top of update().
+function updateGates(){
+  let gates = null;
+  for (let i = 0; i < entities.length; i++) {
+    let e = entities[i];
+    if (e.type === 'building' && e.btype === 'GATE' && e.complete) (gates || (gates = [])).push(e);
+  }
+  if (!gates) return;
+  // 1-tile cell index of units, built once per tick only when gates exist.
+  let cells = new Map();
+  for (let i = 0; i < entities.length; i++) {
+    let en = entities[i];
+    if (en.type !== 'unit') continue;
+    let key = (en.x | 0) * 4096 + (en.y | 0);
+    let arr = cells.get(key);
+    if (!arr) cells.set(key, arr = []);
+    arr.push(en);
+  }
+  gates.forEach(e => {
+    // Sensing rect: [x-1.2, x+w+0.2] × [y-1.2, y+h+0.2] — any cell whose
+    // units could satisfy it lies within floor(rect) bounds.
+    let x0 = Math.floor(e.x - 1.2), x1 = Math.floor(e.x + e.w + 0.2);
+    let y0 = Math.floor(e.y - 1.2), y1 = Math.floor(e.y + e.h + 0.2);
+    let friendlyNear = false;
+    outer: for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) {
+      let arr = cells.get(cx * 4096 + cy);
+      if (!arr) continue;
+      for (let k = 0; k < arr.length; k++) {
+        let en = arr[k];
+        if (en.team === e.team &&
+            en.x >= e.x - 1.2 && en.x <= e.x + e.w + 0.2 &&
+            en.y >= e.y - 1.2 && en.y <= e.y + e.h + 0.2) { friendlyNear = true; break outer; }
+      }
+    }
+    e.gateProgress = e.gateProgress || 0;
+    if (friendlyNear) {
+      e.gateProgress = Math.min(1.0, e.gateProgress + 0.08);
+    } else {
+      e.gateProgress = Math.max(0.0, e.gateProgress - 0.08);
+    }
+    e.isOpen = e.gateProgress > 0.5;
+  });
 }
 
 // Soft unit separation: push overlapping units apart (AoE2 collision).

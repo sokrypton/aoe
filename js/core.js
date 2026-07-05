@@ -424,20 +424,33 @@ function forEachVisibleTile(team, cb){
       cy = Math.floor(e.y + (e.h || b.h)/2);
     }
 
-    for (let dy = -sight; dy <= sight; dy++) {
-      for (let dx = -sight; dx <= sight; dx++) {
-        // Euclidean (circle) works for every real sight radius (3+), but at
-        // sight=1 (a fresh foundation) it degenerates to a plus-shape,
-        // missing the 4 diagonal corners — use a square there instead.
-        let inRange = sight === 1 ? (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) : (dx*dx + dy*dy <= sight*sight);
-        if (inRange) {
-          let tx = cx + dx;
-          let ty = cy + dy;
-          if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);
-        }
-      }
+    let offs = sightOffsets(sight);
+    for (let i = 0; i < offs.length; i += 2) {
+      let tx = cx + offs[i];
+      let ty = cy + offs[i + 1];
+      if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);
     }
   });
+}
+
+// Precomputed in-circle tile offsets per sight radius: the naive loop
+// tested (2s+1)^2 boxes per entity per tick (361 iterations at sight 9,
+// ~28% of them misses) — this walks exactly the in-range tiles. sight=1
+// keeps its historic square (a fresh foundation sees its 8 neighbors).
+let _sightOffsets = new Map();
+function sightOffsets(sight){
+  let offs = _sightOffsets.get(sight);
+  if (offs) return offs;
+  let list = [];
+  for (let dy = -sight; dy <= sight; dy++) {
+    for (let dx = -sight; dx <= sight; dx++) {
+      let inRange = sight === 1 ? (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) : (dx*dx + dy*dy <= sight*sight);
+      if (inRange) list.push(dx, dy);
+    }
+  }
+  offs = new Int16Array(list);
+  _sightOffsets.set(sight, offs);
+  return offs;
 }
 
 function updateFog() {
@@ -456,7 +469,7 @@ function updateFog() {
   // active vision and set the new visible tiles in one sweep. A legacy
   // (non-lockstep) guest never runs update(), so its grids are stale —
   // fall back to the downgrade loop + its own vision walk.
-  if (visionFreshTick === tick && teamVisGrid) {
+  if (visionFreshTick >= tick - 1 && visionFreshTick >= 0 && teamVisGrid) {
     const vg = teamVisGrid[myTeam];
     for (let y = 0; y < MAP; y++) {
       const row = fog[y], base = y * MAP;
@@ -528,6 +541,11 @@ function resetTeamVision(){
 }
 function updateTeamVision(){
   if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
+  // Recompute every 2nd tick: two full per-team vision walks were ~a quarter
+  // of the tick at scale, and sim reads tolerating 1 tick (16ms) of stale
+  // visibility is imperceptible. Deterministic — cadence is tick-derived,
+  // identical on every peer. (visGen/grids simply persist on off ticks.)
+  if (visionFreshTick >= 0 && tick - visionFreshTick < 2) return;
   visGen++;
   visionFreshTick = tick;
   for (let team = 0; team <= 1; team++) {

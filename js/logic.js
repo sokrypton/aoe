@@ -1525,7 +1525,12 @@ function updateUnit(e){
   if(isMilitary && !e.target && e.path.length===0 && !e.task){
     e.defendX = e.x;
     e.defendY = e.y;
-    if (e.stance !== 'passive') {
+    // Stagger the acquisition scan across 3 ticks by id: this scan (grid
+    // walk + fog gate per candidate) ran for EVERY idle military unit EVERY
+    // tick and dominated late-game tick cost. Worst added reaction delay is
+    // 2 ticks (~33ms) — imperceptible. (tick+id) keys it deterministically,
+    // identical on every lockstep peer.
+    if (e.stance !== 'passive' && (tick + e.id) % 3 === 0) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(en.team===e.team)return false;
