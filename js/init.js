@@ -503,6 +503,11 @@ function cancelHosting(){
 // guest reach this — role-specific handling below).
 window.onNetConnectionOpen = function(){
   if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
+  // Version handshake — both roles announce their wire-format version the
+  // moment the channel opens; the mismatch handler below tells BOTH
+  // players to refresh instead of letting a stale cached build surface as
+  // mystery desync.
+  queueSend(netConn, { type: 'proto', v: NET_PROTOCOL_VERSION });
   if (netRole === 'host') {
     // Every fresh connection (first join, or a reconnect) needs a complete
     // map to apply deltas onto — never assume a (re)connecting guest
@@ -681,6 +686,13 @@ function setRemoteMenuOpen(open){
 }
 
 onNetMessage((msg) => {
+  if (msg.type === 'proto' && msg.v !== NET_PROTOCOL_VERSION) {
+    console.error('Protocol mismatch: peer is v' + msg.v + ', this client is v' + NET_PROTOCOL_VERSION);
+    showMpOverlay('Version Mismatch',
+      'Your game version differs from your opponent’s — the match cannot run safely. '
+      + 'Both players should hard-refresh the page (Ctrl/Cmd+Shift+R) and reconnect.', false);
+    return;
+  }
   let isRemoteMenuMsg = (msg.type === 'host-menu' && netRole === 'guest')
     || (msg.type === 'guest-menu' && netRole === 'host');
   if (!isRemoteMenuMsg) return;

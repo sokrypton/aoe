@@ -111,14 +111,15 @@ function applyRemoteCommand(intent){
       break;
     case 'delete-units':
       // Resolved by id against the HOST's own entitiesById (never trust
-      // anything from across the network as an object reference), and
-      // only ever units the intent itself already filtered to the
-      // guest's own team (js/input.js) — deleteOwnedEntity() doesn't
-      // re-check ownership itself, same trust boundary as every other
-      // relayed command here.
+      // anything from across the network as an object reference). The
+      // team check is enforced HERE, not just client-side in js/input.js:
+      // deleteOwnedEntity() doesn't re-check ownership, and without this
+      // a modified guest client could delete the host's entire army by
+      // sending arbitrary ids — an instant win. The guest is always team
+      // 1 in this 1v1 design.
       (intent.unitIds || []).forEach(id => {
         let en = entitiesById.get(id);
-        if (en) deleteOwnedEntity(en);
+        if (en && en.team === 1) deleteOwnedEntity(en);
       });
       break;
     case 'prepay-farm':

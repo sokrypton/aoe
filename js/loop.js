@@ -76,7 +76,7 @@ function update(){
     let dx = p.tx - p.x;
     let dy = p.ty - p.y;
     let dist = Math.sqrt(dx*dx + dy*dy);
-    let speed = 0.25; // tiles per tick
+    let speed = PROJECTILE_TILES_PER_TICK; // shared with the guest's cosmetic flight (js/pathfinding.js)
     if (dist <= speed) {
       if (p.targetBuildingId) {
         let b = entities.find(en => en.id === p.targetBuildingId);
@@ -157,10 +157,8 @@ function update(){
 // when a shot has landed even though only the guest is the one dropping its
 // own local copy here.
 function advanceGuestProjectiles(elapsedMs){
-  // Same stale-sync freeze as advanceGuestUnits below — don't keep flying
-  // arrows off last-known data when the sync stream has gone quiet.
-  if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 500) return;
-  let speed = 0.25 * (elapsedMs / timeStep); // same 0.25 tiles/tick as the authoritative update above
+  if (!guestSyncIsFresh()) return; // see guestSyncIsFresh below
+  let speed = PROJECTILE_TILES_PER_TICK * (elapsedMs / timeStep); // same rate as the authoritative update above
   let remaining = [];
   projectiles.forEach(p => {
     let dx = p.tx - p.x, dy = p.ty - p.y;
@@ -172,50 +170,31 @@ function advanceGuestProjectiles(elapsedMs){
   projectiles = remaining;
 }
 
+// Extrapolation is only trustworthy for a sync interval or two past the
+// last applied sync (~65ms apart when healthy). If syncs stop arriving
+// (network hiccup, wedged stream awaiting the resync watchdog in
+// js/net-sync.js), the guest's cosmetic walkers freeze the world at its
+// last known-good state rather than confidently walking units through
+// walls / flying arrows past targets into ever-larger corrections.
+function guestSyncIsFresh(){
+  return !(lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 500);
+}
+
 // Guest-only, same pattern as advanceGuestProjectiles above but for unit
 // walking — the far more visually obvious "teleports every sync" case.
-// This is a deliberate near-verbatim DUPLICATE of the position-stepping
-// subset of updateUnit()'s path-following block (js/logic.js, the
-// `if(e.path.length>0){...}` block), not a shared function called by both
-// host and guest — same reasoning as the projectile function: a shared
-// helper would add indirection into the host's authoritative tick for no
-// benefit, and risks a future updateUnit change silently altering
-// guest-only behavior or vice versa. Only ever touches
-// x/y/fromX/fromY/moveT/path — never target/hp/cooldowns/task fields, and
-// deliberately skips the walkable() rechecks the host's version does
-// (worst case: renders up to one extra half-step into a tile the host has
-// since blocked, corrected by the very next sync — purely cosmetic, same
-// risk class as a projectile flying toward an already-dead target).
+// The actual stepping math is stepUnitAlongPath (js/pathfinding.js), the
+// SAME function the host's authoritative updateUnit runs — guaranteed
+// identical movement on both sides, which the guest's command prediction
+// (js/input.js) depends on. Only ever touches x/y/fromX/fromY/moveT/path —
+// never target/hp/cooldowns/task fields. checkWalkable=false: the block
+// grid is only current on the host; worst case the guest renders up to one
+// extra half-step into a tile the host has since blocked, corrected by the
+// very next sync.
 function advanceGuestUnits(elapsedMs){
-  // Extrapolation is only trustworthy for a sync interval or two past the
-  // last applied sync (~65ms apart when healthy). If syncs stop arriving
-  // (network hiccup, wedged stream awaiting the resync watchdog in
-  // js/net-sync.js), keep the world frozen at its last known-good state
-  // rather than confidently walking units through walls and into ever-
-  // larger corrections.
-  if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 500) return;
+  if (!guestSyncIsFresh()) return;
   entities.forEach(e => {
     if(e.type!=='unit'||e.garrisonedIn||e.hp<=0||e.path.length===0)return;
-    let speedInPixels = e.speed * 1.19 * (elapsedMs / timeStep);
-    e.moveT += speedInPixels;
-    while(e.path.length>0){
-      let nextTile = e.path[0];
-      let p1=toIso(e.fromX,e.fromY), p2=toIso(nextTile.x,nextTile.y);
-      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
-      if(e.moveT>=screenDist){
-        e.moveT-=screenDist;
-        let next=e.path.shift();
-        e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
-      } else break;
-    }
-    if(e.path.length>0){
-      let next=e.path[0];
-      let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
-      let screenDist = Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy) || 1.0;
-      let t = e.moveT/screenDist;
-      e.x=e.fromX+(next.x-e.fromX)*t;
-      e.y=e.fromY+(next.y-e.fromY)*t;
-    }
+    stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK * (elapsedMs / timeStep), false);
   });
 }
 

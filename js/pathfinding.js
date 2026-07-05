@@ -206,6 +206,56 @@ function pathUnitTo(e,x,y){
   return setUnitPath(e,findPath(Math.round(e.x),Math.round(e.y),x,y,e.id));
 }
 
+// e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
+// covers sqrt(32²+16²) ≈ 35.78 screen px, and there are 30 ticks per
+// game-second, so px-per-tick = speed * 35.78/30 ≈ speed * 1.19.
+const UNIT_PX_PER_TICK = 1.19;
+// Arrows fly a straight tile-space line at this rate (see update() and
+// advanceGuestProjectiles — both sides must agree on arrival timing).
+const PROJECTILE_TILES_PER_TICK = 0.25;
+
+// THE path-following step — the single source of truth for how a unit
+// physically advances along e.path, shared by the host's authoritative
+// tick (updateUnit, js/logic.js) and the guest's cosmetic between-sync
+// walker + movement prediction (advanceGuestUnits, js/loop.js). These two
+// used to be hand-kept duplicates; any drift between them means every
+// moving unit rubber-bands on the guest, and the guest's whole prediction
+// premise is that its stepping matches the host's EXACTLY.
+//
+// `distPx`: how many screen-pixels of progress to consume (host: one whole
+// tick's worth; guest: fractional, per rendered frame).
+// `checkWalkable`: host-only — it re-validates each tile against the live
+// block grid, which only the host's update() keeps current; the guest
+// passes false and accepts up to one cosmetic half-step into a tile the
+// host has since blocked (corrected by the next sync).
+function stepUnitAlongPath(e, distPx, checkWalkable){
+  e.moveT += distPx;
+  while(e.path.length>0){
+    let nextTile=e.path[0];
+    let p1=toIso(e.fromX,e.fromY), p2=toIso(nextTile.x,nextTile.y);
+    let screenDist=Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy)||1.0;
+    if(e.moveT>=screenDist){
+      if(checkWalkable && !walkable(nextTile.x,nextTile.y,e.id)){
+        e.path=[]; e.moveT=0; return;
+      }
+      e.moveT-=screenDist;
+      let next=e.path.shift();
+      e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
+    } else break;
+  }
+  if(e.path.length>0){
+    let next=e.path[0];
+    if(checkWalkable && !walkable(next.x,next.y,e.id)){
+      e.path=[]; e.moveT=0; return;
+    }
+    let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
+    let screenDist=Math.hypot(p2.ix-p1.ix, p2.iy-p1.iy)||1.0;
+    let t=e.moveT/screenDist;
+    e.x=e.fromX+(next.x-e.fromX)*t;
+    e.y=e.fromY+(next.y-e.fromY)*t;
+  }
+}
+
 // Use for genuine player "go to this spot" move orders only — NOT for
 // gather/build/combat-approach pathing, which already have their own
 // per-tick retry logic (see updateGatherTask, the combat-chase code in

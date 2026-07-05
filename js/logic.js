@@ -1012,50 +1012,11 @@ function updateUnit(e){
   }
 
   if(e.path.length>0){
-    // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
-    // covers sqrt(32^2+16^2) ≈ 35.78 screen px, and there are 30 ticks per
-    // game-second, so px-per-tick = speed * 35.78/30 ≈ speed * 1.19.
-    let speedInPixels = e.speed * 1.19;
-    e.moveT += speedInPixels;
-
-    while(e.path.length>0){
-      let nextTile = e.path[0];
-      let p1 = toIso(e.fromX, e.fromY);
-      let p2 = toIso(nextTile.x, nextTile.y);
-      let dx = p2.ix - p1.ix;
-      let dy = p2.iy - p1.iy;
-      let screenDist = Math.sqrt(dx*dx + dy*dy) || 1.0;
-
-      if(e.moveT>=screenDist){
-        if (typeof walkable === 'function' && !walkable(nextTile.x, nextTile.y, e.id)) {
-          e.path = [];
-          e.moveT = 0;
-          break;
-        }
-        e.moveT-=screenDist;
-        let next=e.path.shift();
-        e.fromX=next.x;e.fromY=next.y;
-        e.x=next.x;e.y=next.y;
-      } else {
-        break;
-      }
-    }
-    if(e.path.length>0){
-      let next=e.path[0];
-      if (typeof walkable === 'function' && !walkable(next.x, next.y, e.id)) {
-        e.path = [];
-        e.moveT = 0;
-      } else {
-        let p1 = toIso(e.fromX, e.fromY);
-        let p2 = toIso(next.x, next.y);
-        let dx = p2.ix - p1.ix;
-        let dy = p2.iy - p1.iy;
-        let screenDist = Math.sqrt(dx*dx + dy*dy) || 1.0;
-        let t = e.moveT / screenDist;
-        e.x=e.fromX+(next.x-e.fromX)*t;
-        e.y=e.fromY+(next.y-e.fromY)*t;
-      }
-    }
+    // Shared stepping math (stepUnitAlongPath, js/pathfinding.js) — the
+    // guest's between-sync walker uses the same function, so host and
+    // guest can never drift apart on movement. checkWalkable=true: only
+    // the host's tick keeps the block grid current.
+    stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK, true);
     return;
   }
 

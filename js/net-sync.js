@@ -43,11 +43,16 @@ function pickFields(obj, fields){
   return out;
 }
 
-// Entity fields that exist ONLY on the guest (written by render-units.js
-// each frame for facing/turn-hysteresis animation) — the host strips these
-// from the wire (see the strip list in buildSyncPayload), so the guest's
-// delta merge must never treat their absence from an incoming entity as
-// "the host deleted this field".
+// CLIENT-LOCAL entity fields — the single list consumed by BOTH sides of
+// the wire: buildSyncPayload strips these before sending (each client
+// recomputes its own), and the guest's delta merge protects them from the
+// "delete fields the host no longer has" sweep. They exist because
+// render-units.js (facing/turn-hysteresis animation) and render.js
+// (sortVal, the per-frame draw-order key) write per-client state directly
+// onto entities. Two reasons they must never cross the wire: merging the
+// host's copies clobbers the guest's own turn-hysteresis mid-animation
+// (spurious sprite flips), and sortVal changes every tick on any moving
+// unit, which used to defeat the movement-skip diff entirely.
 const GUEST_LOCAL_ENTITY_FIELDS = new Set(
   ['dir', 'facing', 'facingNorth', 'pendingDir', 'pendingDirT', 'lastX', 'lastY', 'sortVal']);
 
@@ -76,23 +81,16 @@ function buildSyncPayload(){
   let full = guestNeedsFullSync;
 
   // Round entity coordinates for the wire (full precision is visually
-  // meaningless over the network). Also strip render-only bookkeeping
-  // fields (dir/facing/facingNorth/pendingDir/pendingDirT/lastX/lastY) that
-  // render-units.js writes onto entities for its own animation — the host
-  // renders its own view too, so these end up on the host's entities, but
-  // the guest computes its own independently and never needs them. Worse
-  // than wasted bytes: merging the host's copy onto the guest's object
-  // would clobber the guest's own `pendingDirT` turn-hysteresis counter,
-  // causing a spurious facing flip at sync boundaries — confirmed (by
-  // grep) unused outside render-units.js, so stripping is safe.
-  // sortVal joins the strip list for a subtler reason than the rest: it's
-  // written by render.js every frame (draw-order key, recomputed from x/y
-  // on every client independently), so on a MOVING unit it changes every
-  // tick — leaving it in didn't just waste bytes, it made every moving
-  // unit's "core" look changed every sync, completely defeating the
-  // movement-skip in the delta branch below.
+  // meaningless over the network) and strip the client-local render fields
+  // (GUEST_LOCAL_ENTITY_FIELDS below — ONE list, shared with the guest's
+  // merge guard, so the two can never fall out of step again; they did
+  // once, with sortVal, and the symptom was every moving unit resending
+  // every sync).
   let entities = base.entities.map(e => {
-    let {dir, facing, facingNorth, pendingDir, pendingDirT, lastX, lastY, sortVal, ...stripped} = e;
+    let stripped = {};
+    for (let k in e) {
+      if (!GUEST_LOCAL_ENTITY_FIELDS.has(k)) stripped[k] = e[k];
+    }
     if (typeof stripped.x === 'number' && typeof stripped.y === 'number') {
       stripped.x = Math.round(stripped.x*100)/100;
       stripped.y = Math.round(stripped.y*100)/100;
@@ -269,8 +267,15 @@ function requestFullSync(reason){
 // run while gamePaused, so "no sync in 5s" is expected then, not a wedge.
 setInterval(() => {
   if (netRole !== 'guest' || !netConnected || !mpMatchStarted || gameOver || gamePaused) return;
-  if (map.length === 0) requestFullSync('no world state yet');
-  else if (lastSyncAppliedAt && performance.now() - lastSyncAppliedAt > 5000) requestFullSync('no sync applied in 5s');
+  if (map.length === 0) { requestFullSync('no world state yet'); return; }
+  if (!lastSyncAppliedAt) return;
+  let staleMs = performance.now() - lastSyncAppliedAt;
+  if (staleMs > 5000) requestFullSync('no sync applied in 5s');
+  // Between "hiccup" and "wedged": the guest's walkers have already frozen
+  // (guestSyncIsFresh, js/loop.js) — say WHY on screen, so a stutter reads
+  // as network weather instead of a broken game. showMsg self-fades and
+  // this interval re-raises it at most once per second while it persists.
+  else if (staleMs > 1500 && typeof showMsg === 'function') showMsg('Connection lagging…');
 }, 1000);
 
 // Guest-side apply: same world-state fields applySavedGame() touches

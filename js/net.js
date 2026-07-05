@@ -26,6 +26,15 @@
 let netPeer = null;
 let netMessageHandlers = [];
 
+// Bumped whenever the sync/command wire format changes incompatibly (seq
+// numbers, payload fields, new message types the peer must understand).
+// Both peers exchange it right after connecting (onNetConnectionOpen,
+// js/init.js) — this is a static GitHub Pages game, so one player having a
+// stale cached build while the other has today's is a very real failure
+// mode that otherwise surfaces as inexplicable desync instead of a clear
+// "refresh your page".
+const NET_PROTOCOL_VERSION = 2;
+
 // CompressionStream/DecompressionStream are stream-based (write in, read
 // chunks out), so both directions are inherently async. A single already-
 // fully-buffered input (our whole JSON string) drains in one microtask
