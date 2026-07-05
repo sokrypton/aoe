@@ -139,6 +139,12 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
   _silMaskX.clearRect(0,0,bufW,bufH);
   const sv={X,camX,camY,W,H,topH,ZOOM};
   X=_silMaskX; W=2000; H=2000; topH=0; ZOOM=1;
+  // Flag the re-invocation of the REAL drawUnit/drawBuilding below as a
+  // mask pass: drawUnit checks this to suppress its side effects (facing
+  // hysteresis advancement, particle spawns, swing-cycle bookkeeping) and
+  // its floating overlays (HP bar, idle "?"), which would otherwise run
+  // twice per frame for selected entities / be rasterized into the outline.
+  window._maskDraw=true;
   try{
     infos.forEach(info=>{
       const {e,isUnit,anchorX,anchorY,sx,sy}=info;
@@ -162,6 +168,7 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
       }
     });
   } finally {
+    window._maskDraw=false;
     X=sv.X; camX=sv.camX; camY=sv.camY;
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
   }

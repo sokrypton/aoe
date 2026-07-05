@@ -305,16 +305,23 @@ function drawUnit(e){
     // flicker across a facing boundary mirror-flops the entire sprite. A
     // one-sector change must therefore persist ~6 frames before committing;
     // decisive turns (≥2 sectors) still snap immediately.
-    if(e.dir !== undefined && dir !== e.dir){
-      let diff = Math.min((dir - e.dir + 8) % 8, (e.dir - dir + 8) % 8);
-      if(diff === 1){
-        if(e.pendingDir === dir) e.pendingDirT = (e.pendingDirT || 0) + 1;
-        else { e.pendingDir = dir; e.pendingDirT = 1; }
-        if(e.pendingDirT < 6) dir = e.dir;
-        else e.pendingDir = undefined;
+    if(window._maskDraw){
+      // Outline mask pass re-invokes drawUnit — it must be READ-ONLY here,
+      // or selected units advance the hysteresis twice per frame (turn
+      // inertia halved to ~3 frames). Render with the committed facing.
+      if(e.dir !== undefined) dir = e.dir;
+    } else {
+      if(e.dir !== undefined && dir !== e.dir){
+        let diff = Math.min((dir - e.dir + 8) % 8, (e.dir - dir + 8) % 8);
+        if(diff === 1){
+          if(e.pendingDir === dir) e.pendingDirT = (e.pendingDirT || 0) + 1;
+          else { e.pendingDir = dir; e.pendingDirT = 1; }
+          if(e.pendingDirT < 6) dir = e.dir;
+          else e.pendingDir = undefined;
+        } else e.pendingDir = undefined;
       } else e.pendingDir = undefined;
-    } else e.pendingDir = undefined;
-    e.dir = dir;
+      e.dir = dir;
+    }
 
     // Map 8-direction index (0: SE, 1: S, 2: SW, 3: W, 4: NW, 5: N, 6: NE, 7: E) to quadrants:
     if (dir === 0 || dir === 1 || dir === 7) {
@@ -1063,7 +1070,9 @@ function drawUnit(e){
       // Tracked in workSwingCycles (js/core.js), not `e._swingCyc` — entities
       // get wholesale-replaced by every sync, which used to wipe that field
       // and fire extra impact particles well beyond one per swing cycle.
-      let impact = working && ph > 0.93 && workSwingCycles.get(e.id) !== swingCyc;
+      // Never during the outline mask pass: it would consume this cycle's
+      // one impact (and spawn duplicate particles) before the real draw.
+      let impact = !window._maskDraw && working && ph > 0.93 && workSwingCycles.get(e.id) !== swingCyc;
       if(impact) workSwingCycles.set(e.id, swingCyc);
       // Impact point in tile coords: the gather tile if known, else just ahead
       let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
@@ -1437,8 +1446,9 @@ function drawUnit(e){
       X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
       X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
       
-      // Spawn tiny grass particle puffs
-      if(tick % 24 === 0){
+      // Spawn tiny grass particle puffs (not in the outline mask pass —
+      // a SELECTED grazing sheep used to double-spawn them)
+      if(tick % 24 === 0 && !window._maskDraw){
         spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
       }
     }
@@ -1446,6 +1456,11 @@ function drawUnit(e){
   }
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
+
+  // Floating overlays (HP bar, idle "?") are NOT part of the body silhouette
+  // — skip them in the outline mask pass, or a wounded selected unit gets a
+  // detached gold ring hovering around its HP bar rectangle.
+  if(window._maskDraw) return;
 
   // HP bar floats clear above the head (higher for the scout — horse and
   // rider stand taller) so it never covers the unit's face.

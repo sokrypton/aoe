@@ -37,10 +37,16 @@ function canPlace(type,x,y,team=0){
     // incorrectly blocking legitimate guest builds in areas team 0 hasn't
     // scouted (caught by an actual two-browser-context build test, not
     // code review — the host would silently refuse a placement the guest
-    // could clearly see and had every right to build on). Same root cause
-    // as the already-documented combat-targeting/auto-attack limitation:
-    // team 1 has no real fog grid on the host, only team 0 does.
+    // could clearly see and had every right to build on).
+    // Team 1 has no `fog` grid on the host — its equivalent is the
+    // teamExploredEver[1] history the host maintains every tick, so a
+    // relayed guest placement is held to the same "must be explored" rule
+    // as the host's own. Only in MP (netRole==='host'): in single-player
+    // netRole is null, teamExploredEver[1] is never populated, and the AI
+    // keeps its existing placement behavior.
     if(team===0&&fog[ny][nx]===0)return false;
+    if(team===1&&netRole==='host'&&!window.fogDisabled
+       &&!teamExploredEver[1].has(ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -1498,10 +1504,17 @@ function updateUnit(e){
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(en.team===e.team)return false;
-        if(e.team===0){
-          let ey=Math.round(en.y),ex=Math.round(en.x);
-          if(ey<0||ey>=MAP||ex<0||ex>=MAP||fog[ey][ex]!==2)return false;
-        }
+        let ey=Math.round(en.y),ex=Math.round(en.x);
+        if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
+        // Fog gate, symmetric per team: team 0 checks its real fog grid;
+        // in MP the host holds team 1 (the guest) to team1VisibleNow, the
+        // live-visibility set built each tick alongside teamExploredEver
+        // (js/core.js) — without it the guest's parked army auto-acquired
+        // enemies its owner had never scouted (X-ray vision). Single-player
+        // AI (netRole null) keeps its own aggro rules unchanged.
+        if(e.team===0&&fog[ey][ex]!==2)return false;
+        if(e.team===1&&netRole==='host'&&!window.fogDisabled
+           &&!team1VisibleNow.has(ey*MAP+ex))return false;
         return true;
       });
       if(closest) {

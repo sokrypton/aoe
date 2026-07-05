@@ -307,6 +307,30 @@ function applyNetSync(data){
   if (data.full
     ? (!Array.isArray(data.entities) || !Array.isArray(data.map))
     : (!Array.isArray(data.changedEntities) || !Array.isArray(data.mapDelta) || map.length === 0)) return false;
+  // Deep structural validation BEFORE any global mutation. The try/catch
+  // below still backstops the truly unexpected, but everything the apply
+  // path reads is shape-checked first — an exception mid-apply used to
+  // leave a half-applied hybrid world on screen for up to ~2s (the
+  // requestFullSync rate limit plus a round trip). Rejecting up front
+  // keeps the previous consistent world visible until the resync lands.
+  const isObj = v => v && typeof v === 'object';
+  if (data.full) {
+    if (!Number.isInteger(data.MAP) || data.MAP <= 0 || data.map.length !== data.MAP) return false;
+    if (!data.map.every(row => Array.isArray(row) && row.length === data.MAP)) return false;
+    if (!data.entities.every(e => isObj(e) && typeof e.id === 'number')) return false;
+  } else {
+    // A delta claiming a different map size is definitionally a desync —
+    // any world-shape change (rematch, save load) always rides a full sync.
+    if (data.MAP !== MAP) return false;
+    if (!data.changedEntities.every(e => isObj(e) && typeof e.id === 'number')) return false;
+    if (!data.mapDelta.every(d => isObj(d) && isObj(d.cell)
+        && Number.isInteger(d.x) && Number.isInteger(d.y)
+        && d.y >= 0 && d.y < MAP && d.x >= 0 && d.x < MAP)) return false;
+    if (data.removedEntityIds !== undefined && !Array.isArray(data.removedEntityIds)) return false;
+  }
+  for (const k of ['exploredEver', 'corpses', 'projectiles', 'newCorpses', 'newProjectiles']) {
+    if (data[k] !== undefined && !Array.isArray(data[k])) return false;
+  }
   try {
     MAP = data.MAP;
     tick = data.tick || 0;

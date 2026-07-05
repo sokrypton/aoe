@@ -397,11 +397,21 @@ function updateFog() {
 // positions every tick), only the guest can update index 0 (only gets the
 // host's positions via sync).
 let teamExploredEver = {0: new Set(), 1: new Set()};
+// Host-only: team 1's LIVE visibility this tick (tile keys y*MAP+x),
+// rebuilt as a free by-product of the forEachVisibleTile walk below. This
+// is what gives the guest symmetric fog treatment in sim code (auto-attack
+// acquisition, build placement) — the host has no team-1 `fog` grid, and
+// this set is the live equivalent of fog===2 for team 1.
+let team1VisibleNow = new Set();
 function updateTeamExploredEver(team){
   if (window.fogDisabled) return;
   if (team === 1 && netRole !== 'host') return;
   if (team === 0 && netRole !== 'guest') return;
-  forEachVisibleTile(team, (tx, ty) => { teamExploredEver[team].add(ty * MAP + tx); });
+  if (team === 1) team1VisibleNow = new Set();
+  forEachVisibleTile(team, (tx, ty) => {
+    teamExploredEver[team].add(ty * MAP + tx);
+    if (team === 1) team1VisibleNow.add(ty * MAP + tx);
+  });
 }
 
 // Host-only memory of the guest's last-reported camera position (sent via
