@@ -13,7 +13,10 @@ renders whatever the host sends back.
 
 **Connection**: PeerJS over WebRTC, using PeerJS's free public cloud
 signaling server (no custom backend). The host generates a shareable link
-(`?join=<peerId>`); the guest opens it and auto-connects.
+(`?join=<peerId>`); the guest opens it and auto-connects. The host's own
+URL is rewritten to `?host=<peerId>` when hosting starts — reopening it
+after a crash reclaims the same id and recovers the match from the guest
+(see "Host crash recovery" under Recently completed).
 
 **Files**:
 - `js/net.js` — PeerJS connection plumbing (host/join, message envelope)
@@ -28,8 +31,9 @@ signaling server (no custom backend). The host generates a shareable link
 full-snapshot serializer verbatim (`serializeGame()`), sent ~6×/sec. That
 came out to ~290KB/sync (~1.7MB/s continuous) because `map`+`fog` are both
 full `MAP×MAP` arrays. Optimized down to ~13KB/sync by:
-- never sending `fog` at all (it's always uniform in multiplayer — fog is
-  disabled entirely, see below)
+- never sending `fog` at all — each client computes its own team's fog
+  locally from the synced entities (`updateFog()`, js/core.js); real
+  per-team fog-of-war is fully supported in multiplayer
 - sending `map` in full only once (on connect/reconnect), then only the
   small list of cells that actually changed since the last sync
   (`markMapDirty()`, hooked at every map-mutating call site: building
@@ -60,7 +64,9 @@ efficient binary blob with only small framing overhead.
 ## What works today
 
 Verified end-to-end with real two-browser-context testing (not just code
-review) at every stage:
+review) at every stage — and since July 2026 the important flows are
+locked in by a repeatable suite: `./tests/run-all.sh` (four suites over
+real WebRTC; see `tests/README.md`).
 - Connection over PeerJS's real cloud signaling server, including with
   deliberately mismatched viewport sizes between host and guest
 - Move/attack/gather commands, building placement (including walls/gates),
@@ -687,30 +693,31 @@ correct behavior, not failures.
 
 ## Known limitations / good next improvements
 
-Roughly in order of "most worth doing next":
+Roughly in order of "most worth doing next". (Two former entries here are
+DONE and moved to "Recently completed": client-side prediction now covers
+plain walk orders — attack/build/gather commands stay deliberately
+unpredicted, see the July 2026 section for why — and entity delta encoding
+shipped as per-entity diffing plus the movement-offload skip; only
+field-level sub-entity deltas remain unbuilt, and the measured payloads
+don't justify them yet.)
 
-1. **Client-side prediction for the guest's own commands.** Right now a
-   guest's click has to round-trip to the host and come back on the next
-   sync before anything visibly happens (~1 sync interval + RTT, smaller
-   now that sync rate is ~15/sec, but still a real round-trip). Locally
-   applying an optimistic guess (e.g. start the unit walking immediately)
-   and reconciling against the host's authoritative answer when it arrives
-   would cut perceived input lag further. More complex than the
-   interpolation work above — needs a reconciliation strategy for when the
-   guess was wrong (unreachable tile, insufficient resources, etc.).
-
-2. **TURN relay fallback.** Only STUN is configured (PeerJS's default) —
+1. **TURN relay fallback.** Only STUN is configured (PeerJS's default) —
    strict NATs/corporate firewalls without a TURN server may simply fail
-   to connect. Not something to build from scratch casually (needs a TURN
-   server, free ones are limited), but worth documenting clearly if anyone
-   hits it.
+   to connect. Considered and deferred (free tiers exist — e.g. Metered
+   Open Relay, ~20GB/mo — but the credentials would sit in client-side JS
+   on a static site). Revisit only if cross-network joins actually fail
+   in practice.
 
-3. **Entity delta encoding.** Still not done, but now much lower priority
-   than when first considered — generic compression already got the
-   payload from ~13-14.5KB down to ~1.8KB/sync without any structural
-   change or the bug-risk of hand-rolled diffing. Only worth revisiting if
-   payload size becomes a real problem again (e.g. much larger player
-   counts or unit caps).
+2. **Field-level entity deltas.** A changed entity is resent whole; sending
+   only its changed fields (`{id, hp: 40}`) would shrink combat-heavy
+   syncs further. Low priority: deflate compression + the movement-offload
+   skip already keep real payloads small.
+
+3. **Fog-based interest filtering.** The guest receives the full entity
+   list, so a modified client can map-hack. Filtering to what the guest
+   can currently see requires host-side per-guest visibility tracking and
+   prompt "now revealed" sends — real complexity, only worth it if games
+   ever leave the friends-only trust model.
 
 4. **Several combat/placement rules still only fog-gate team 0, same root
    cause, all needing a real team-1 fog grid on the host to fix properly.**

@@ -1680,3 +1680,36 @@ canvas {
   min-height: 40px;
   padding: 0 18px;
 }
+
+#mp-qr {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+#mp-qr img {
+  background: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  width: 148px;
+  height: 148px;
+  image-rendering: pixelated;
+}
+
+/* Sits INSIDE #tutorial but below the menu box — the overlay is a flex
+   column so the box stays centered with the link floating beneath it. */
+#tutorial { flex-direction: column; }
+#ui-switch-row {
+  width: 100%;
+  text-align: center;
+  margin-top: 10px;
+  flex: 0 0 auto;
+}
+#ui-switch-link {
+  font-family: Georgia, serif;
+  font-size: 11px;
+  opacity: 0.75;
+  text-decoration: underline;
+  cursor: pointer;
+}
+#ui-switch-link:hover { opacity: 1; }
+#ui-switch-link { color: #d1c499; text-shadow: 0 1px 3px #000; }

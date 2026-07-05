@@ -31,6 +31,31 @@ function selectTownCenter() {
   updateUI();
 }
 
+// All of the player's UNFINISHED wall foundations orthogonally connected
+// to `start` — the "I mis-dragged this wall line" selection unit. BFS over
+// foundations rather than "same row" literally, so an elbow-shaped drag
+// (the wall tool's natural output) is caught whole. Completed segments
+// break the chain on purpose: they're paid-for, standing wall, and
+// bulk-cancel is a foundation-refund gesture.
+function collectUnfinishedWallChain(start){
+  let chain = [start];
+  let seen = new Set([start.id]);
+  let queue = [start];
+  while (queue.length) {
+    let cur = queue.pop();
+    entities.forEach(en => {
+      if (seen.has(en.id)) return;
+      if (en.type !== 'building' || en.btype !== 'WALL' || en.team !== myTeam) return;
+      if (en.complete || en.exhausted) return;
+      if (Math.abs(en.x - cur.x) + Math.abs(en.y - cur.y) !== 1) return;
+      seen.add(en.id);
+      chain.push(en);
+      queue.push(en);
+    });
+  }
+  return chain;
+}
+
 // Delete own units/buildings by id — shared by the Delete/Backspace key
 // below and the "Cancel Build" action button (js/ui.js). The guest is
 // never authoritative — mutating hp/calling handleDeath() directly would
@@ -512,6 +537,7 @@ let placingTouchDrag=false;   // touch drag-to-position building placement (see 
 const PLACING_GHOST_LIFT_PX=70; // ghost rides this far above the fingertip while dragging
 let touchLastTapTime=0;       // for double-tap detection
 let touchLastTapUtype=null;   // utype of the unit tapped last, if any
+let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-select on double-tap)
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
@@ -701,6 +727,8 @@ C.addEventListener('touchend',e=>{
       // instance of that type on screen (touch equivalent of dblclick below).
       let now=performance.now();
       let tappedU=getUnitUnderCursor(touchAnchor.x,touchAnchor.y);
+      let tappedWallB=!tappedU?getBuildingUnderCursor(touchAnchor.x,touchAnchor.y,
+        en=>en.team===myTeam&&en.btype==='WALL'&&!en.complete&&!en.exhausted):null;
       if(tappedU && tappedU.team===myTeam && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
         selected=entities.filter(en=>en.team===myTeam&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
         if(window.playSound){
@@ -710,10 +738,20 @@ C.addEventListener('touchend',e=>{
         updateUI();
         touchLastTapTime=0;
         touchLastTapUtype=null;
+      } else if(tappedWallB && touchLastTapWallId===tappedWallB.id && (now-touchLastTapTime)<380){
+        // Double-tap on an UNFINISHED wall foundation: select its whole
+        // connected unfinished chain (the mis-dragged line), so the
+        // multi Cancel Build button (js/ui.js) can refund it in one tap.
+        selected=collectUnfinishedWallChain(tappedWallB);
+        showMsg(selected.length+' wall foundation'+(selected.length>1?'s':'')+' selected');
+        updateUI();
+        touchLastTapTime=0;
+        touchLastTapWallId=null;
       } else {
         handleTap(touchAnchor.x,touchAnchor.y);
         touchLastTapTime=now;
         touchLastTapUtype=tappedU?tappedU.utype:null;
+        touchLastTapWallId=tappedWallB?tappedWallB.id:null;
       }
     }
     touchAnchor=null;
@@ -837,6 +875,20 @@ function handleTap(sx,sy){
     // Tapped on enemy, own building, or empty map → command (move/gather/
     // build/repair/attack) — doCommand resolves the exact target itself.
     doCommand(sx,sy);
+    // One tap, both outcomes: ordering villagers onto an own UNFINISHED
+    // foundation also selects the foundation itself, so its card (build
+    // progress + the Cancel Build refund button) is immediately on screen
+    // — previously reaching Cancel Build took a deselect plus a second
+    // tap, which read as "clicking the foundation does nothing".
+    // Completed buildings (farm work, repairs) deliberately don't steal
+    // the selection — those are repeat-order flows.
+    if(tappedOwn&&tappedOwn.type==='building'&&!tappedOwn.complete&&!tappedOwn.exhausted
+       &&selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam)){
+      window.settingRally=false;
+      selected=[tappedOwn];
+      updateUI();
+      return;
+    }
     // After non-walk mobile commands, the next tap should feel like a fresh
     // selection. Walk orders and active builders stay selected: walking often
     // gets adjusted repeatedly, and construction has follow-up choices.
@@ -1603,6 +1655,16 @@ C.addEventListener('dblclick', e => {
       if (clicked.utype === 'villager') window.playSound('select_villager');
       else window.playSound('select_military');
     }
+    updateUI();
+    return;
+  }
+  // Desktop parity with the touch double-tap: double-click an unfinished
+  // wall foundation to select its whole connected chain for bulk cancel.
+  let wallB = getBuildingUnderCursor(e.clientX, e.clientY,
+    en => en.team === myTeam && en.btype === 'WALL' && !en.complete && !en.exhausted);
+  if (wallB) {
+    selected = collectUnfinishedWallChain(wallB);
+    showMsg(selected.length + ' wall foundation' + (selected.length > 1 ? 's' : '') + ' selected');
     updateUI();
   }
 });

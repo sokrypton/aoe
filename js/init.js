@@ -28,13 +28,10 @@ function init(){
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
-  // Show initial help on mobile
-  if(isMobile){
-    let hint=document.getElementById('help-hint');
-    hint.textContent='Drag to pan \u2022 Tap to select \u2022 Tap map with units to command';
-    hint.style.opacity='1';
-    setTimeout(()=>hint.style.opacity='0',4000);
-  }
+  // (The old "Drag to pan \u2022 Tap to select" mobile hint that used to show
+  // here was removed \u2014 it re-fired on every init(), i.e. every restart and
+  // rematch, not just first launch; the \u2753 Help overlay documents the same
+  // gestures. #help-hint itself stays: showMsg() still coordinates with it.)
 }
 
 function placeStartingSheep(){
@@ -190,6 +187,25 @@ function showMenuPanel(which){
   let opts = document.getElementById('menu-panel-options');
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
+  updateUiSwitchVisibility();
+}
+
+// The "Switch to Classic/Mobile UI" link below the menu box only belongs
+// on the pristine pre-game MAIN menu: switching pages mid-match would
+// discard a running (or paused) game, and during any multiplayer flow the
+// page navigation would tear down the live connection. Everything that
+// changes menu state funnels through showMenuPanel/applyMenuMode, plus the
+// explicit MP entry points below.
+function updateUiSwitchVisibility(){
+  let row = document.getElementById('ui-switch-row');
+  if (!row) return;
+  let preGame = (window.menuMode === undefined || window.menuMode === 'prestart')
+    && !netRole && !gameStarted && menuPanelIsMain();
+  row.style.display = preGame ? '' : 'none';
+}
+function menuPanelIsMain(){
+  let opts = document.getElementById('menu-panel-options');
+  return !opts || opts.style.display === 'none';
 }
 
 // Back button: settings take effect the moment you leave Options, not only
@@ -254,14 +270,36 @@ function showMpStatus(text, link){
   let textEl = document.getElementById('mp-status-text');
   let linkRow = document.getElementById('mp-link-row');
   let linkBox = document.getElementById('mp-link-box');
+  let qrEl = document.getElementById('mp-qr');
   if (!panel) return;
   panel.style.display = 'block';
   if (textEl) textEl.textContent = text;
   if (link) {
     if (linkRow) linkRow.style.display = 'flex';
     if (linkBox) linkBox.value = link;
-  } else if (linkRow) {
-    linkRow.style.display = 'none';
+    // QR of the join link, for the sitting-across-the-table case — the
+    // guest points their phone camera at the host's screen instead of
+    // anyone typing/sending a URL. qrcode-generator is loaded from unpkg
+    // like PeerJS; if the CDN is unreachable the link box still works, so
+    // this degrades silently. Error level M, auto type — a localhost or
+    // github.io join URL fits comfortably.
+    if (qrEl) {
+      try {
+        if (typeof qrcode !== 'undefined') {
+          let qr = qrcode(0, 'M');
+          qr.addData(link);
+          qr.make();
+          qrEl.innerHTML = qr.createImgTag(4, 8);
+          qrEl.style.display = 'flex';
+        }
+      } catch (err) {
+        console.warn('QR generation failed:', err);
+        qrEl.style.display = 'none';
+      }
+    }
+  } else {
+    if (linkRow) linkRow.style.display = 'none';
+    if (qrEl) { qrEl.style.display = 'none'; qrEl.innerHTML = ''; }
   }
 }
 
@@ -321,6 +359,7 @@ function hideDisconnectOverlay(){
 //     either side is an equally valid snapshot.
 function restoreMenuForMatch(){
   showMenuPanel('main');
+  updateUiSwitchVisibility();
   let startRow = document.getElementById('start-row');
   if (startRow) startRow.style.display = '';
   let statusPanel = document.getElementById('mp-status-panel');
@@ -417,7 +456,9 @@ function onHostClicked(){
   let desiredPeerId = window.__mpSession.loadedHostPeerId || null;
   window.__mpSession.loadedHostPeerId = null;
 
-  hostSession(desiredPeerId).then(peerId => {
+  let hostPromise = hostSession(desiredPeerId);
+  updateUiSwitchVisibility(); // netRole is 'host' from here — hide the page-switch link
+  hostPromise.then(peerId => {
     // Cancelled while the signaling server was still assigning an id
     // (cancelHosting → teardownNet nulls netRole) — don't resurrect the
     // "waiting" panel the user just dismissed, and destroy the
@@ -486,6 +527,8 @@ function cancelHosting(){
   if (panel) panel.style.display = 'none';
   let cancelBtn = document.getElementById('mp-cancel-btn');
   if (cancelBtn) cancelBtn.style.display = 'none';
+  let qrEl = document.getElementById('mp-qr');
+  if (qrEl) { qrEl.style.display = 'none'; qrEl.innerHTML = ''; }
   let hostBtn = document.getElementById('host-game-btn');
   if (hostBtn) hostBtn.disabled = false;
   // Restore exactly the rows onHostClicked hid, then let applyMenuMode
@@ -686,6 +729,19 @@ function setRemoteMenuOpen(open){
 }
 
 onNetMessage((msg) => {
+  // The host turned us away: the match already has its two players (see
+  // rejectConnFull, js/net.js). Stop the reconnect machinery — retrying
+  // would just be rejected again every 3 seconds forever — and explain.
+  if (msg.type === 'session-full' && netRole === 'guest') {
+    window.__mpSession.sessionFull = true;
+    if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
+    mpMatchStarted = false; // we were never actually IN the match — no mid-match disconnect UI
+    hideDisconnectOverlay();
+    showMpStatus('This match already has two players. Ask the host for a new link once their game ends.');
+    let retryBtn = document.getElementById('mp-retry-btn');
+    if (retryBtn) retryBtn.style.display = ''; // the seat may free up — allow trying again
+    return;
+  }
   if (msg.type === 'proto' && msg.v !== NET_PROTOCOL_VERSION) {
     console.error('Protocol mismatch: peer is v' + msg.v + ', this client is v' + NET_PROTOCOL_VERSION);
     showMpOverlay('Version Mismatch',
@@ -715,6 +771,7 @@ function enterGuestJoinMode(hostPeerId){
       .forEach(el => { el.style.display = 'none'; });
   }
   attemptGuestJoin();
+  updateUiSwitchVisibility(); // netRole is 'guest' from here — hide the page-switch link
 }
 
 // Host entry point for a ?host=<id> resume link (see onHostClicked's
@@ -731,6 +788,7 @@ function enterGuestJoinMode(hostPeerId){
 // dead id forever).
 function enterHostResumeMode(peerId){
   window.__mpSession.awaitingStateFromGuest = true;
+  setTimeout(updateUiSwitchVisibility, 0); // after netRole set by hostSession below
   let menu = document.getElementById('tutorial');
   if (menu) {
     menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
@@ -876,6 +934,7 @@ function applyMenuMode(mode){
     if (mpRow) mpRow.style.display = '';
     if (saveBtn) saveBtn.style.display = 'none';
   }
+  updateUiSwitchVisibility();
 }
 
 function openRestartMenu(){
@@ -1195,3 +1254,14 @@ if (joinHostId) {
 } else if (resumeHostId) {
   enterHostResumeMode(resumeHostId);
 }
+
+// The "Switch to Classic/Mobile UI" footer link on the main menu panel —
+// point it at the sibling variant, CARRYING the current query string, so a
+// guest who opened a ?join= link (or a host resuming via ?host=) lands in
+// the other skin still connected to the same match flow.
+(function wireUiSwitchLink(){
+  let link = document.getElementById('ui-switch-link');
+  if (!link) return;
+  let target = location.pathname.endsWith('classic.html') ? 'index.html' : 'classic.html';
+  link.href = target + location.search;
+})();

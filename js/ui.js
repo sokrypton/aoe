@@ -218,6 +218,27 @@ function updateUI(){
     backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div>`;
     backBtn.onclick=()=>{ if(window.deselectAll)window.deselectAll(); };
     act.appendChild(backBtn);
+
+    // Bulk Cancel Build — when the whole selection is own unfinished
+    // foundations (the wall-chain double-tap/double-click produces exactly
+    // this), one button refunds them all. The single-foundation Cancel
+    // Build lives in the building card below; this is its multi twin.
+    if(selected.length>1 && selected.every(s=>s.type==='building'&&s.team===myTeam&&!s.complete&&!s.exhausted)){
+      let ids=selected.map(s=>s.id);
+      let bulkBtn=document.createElement('div');
+      bulkBtn.className='act-btn framed';
+      bulkBtn.dataset.tipType='action';
+      bulkBtn.dataset.tipLabel='Cancel Construction';
+      bulkBtn.dataset.tipDesc='Stop building all '+ids.length+' selected foundations and refund their full cost.';
+      bulkBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-cancel"></div><div class="btn-label">Cancel ×${ids.length}</div><span class="cost">full refund</span>`;
+      bulkBtn.onclick=()=>{
+        requestDeleteOwned(ids);
+        if(netRole==='guest'&&typeof showMsg==='function')showMsg(ids.length+' foundations cancelled (refunded)');
+        selected=[];
+        updateUI();
+      };
+      act.appendChild(bulkBtn);
+    }
   }
 
   // Multi-select: the portrait+stats card is replaced by a grid of icons
@@ -402,13 +423,16 @@ function updateUI(){
       // phone). Full refund, same rule as the key (js/logic.js's
       // deleteOwnedEntity). Only for a genuine in-progress foundation —
       // an exhausted farm mid-reseed is not a cancellable purchase.
-      if(!e.complete && !e.exhausted){
+      if(!e.complete && !e.exhausted && selected.length===1){
         let cancelBuildBtn=document.createElement('div');
         cancelBuildBtn.className='act-btn framed';
         cancelBuildBtn.dataset.tipType='action';
         cancelBuildBtn.dataset.tipLabel='Cancel Construction';
         cancelBuildBtn.dataset.tipDesc='Stop building this and refund its full cost.';
-        cancelBuildBtn.innerHTML=`<div class="btn-emoji">🚫</div><div class="btn-label">Cancel Build</div><span class="cost">full refund</span>`;
+        // Same anatomy as every other action button: sprite icon (the
+        // icon-cancel red X, freed up when the deselect button became the
+        // back arrow) + label + cost line.
+        cancelBuildBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-cancel"></div><div class="btn-label">Cancel Build</div><span class="cost">full refund</span>`;
         cancelBuildBtn.onclick=()=>{
           requestDeleteOwned([e.id]);
           // The guest's copy vanishes on the next sync (~65ms); give the

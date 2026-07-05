@@ -171,6 +171,10 @@ function dispatchNetMessage(msg){
 // (slower) values this replaced.
 const NET_HEARTBEAT_MS = 1000;
 const NET_TIMEOUT_MS = 4000;
+// Extra silence (beyond the watchdog trip) before a mid-match guest seat is
+// considered abandoned and a NEW guest may claim it — see hostSession's
+// connection handler. Total from last data to takeover ≈ 15s.
+const NET_SEAT_TAKEOVER_MS = 15000;
 let lastNetRecvAt = 0;
 
 function handleConnectionLost(){
@@ -232,6 +236,21 @@ function wireConnection(conn){
 // retries after a delay instead (the signaling server takes a few seconds
 // to release a dead session's id). The save-file re-host flow keeps the
 // non-strict fallback: a brand-new guest just uses whatever link is shown.
+// Which guest "owns" the current match's team-1 slot (their metadata token,
+// bound on first join — see the connection handler in hostSession).
+let hostBoundGuestToken = null;
+
+// Politely turn away a surplus joiner: let the channel open, tell them why,
+// then close — without touching netConn (the real guest's live connection).
+function rejectConnFull(conn){
+  conn.on('open', () => {
+    compressMessage({ type: 'session-full' })
+      .then(bytes => conn.send(bytes))
+      .catch(() => {});
+    setTimeout(() => { try { conn.close(); } catch (e) {} }, 800);
+  });
+}
+
 function hostSession(desiredId, strict){
   return new Promise((resolve, reject) => {
     if (typeof Peer === 'undefined') { reject(new Error('PeerJS library not loaded')); return; }
@@ -250,15 +269,44 @@ function hostSession(desiredId, strict){
         if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
       });
       netPeer.on('connection', (conn) => {
-        // Strictly 1v1 (see plan's punt list: no >2-peer topology in v1),
-        // but a genuinely live existing connection is rare here in
-        // practice — a fresh incoming connection almost always means the
-        // same guest reconnecting (e.g. after closing/reopening their tab,
-        // where PeerJS's own 'close' event may never have fired for the
-        // dead old one — see the heartbeat watchdog above). So always
-        // accept the new connection, tearing down whatever the old
-        // reference was rather than rejecting the new guest and getting
-        // permanently stuck.
+        // Strictly 1v1 — but the join link may have been shared with (or
+        // forwarded to) more than one person. Distinguish "my opponent
+        // reconnecting" from "a third person trying to join a running
+        // match" by a per-browser guest token the guest sends in the
+        // connection metadata (joinSession below): the first guest to
+        // join a match binds their token; while that match runs, only the
+        // SAME token may (re)connect — anyone else gets a 'session-full'
+        // message and is closed, without disturbing the live game. Once
+        // no match is running (pre-game, game over), any newcomer is
+        // welcome and re-binds the slot. Tokens live in the guest's
+        // localStorage keyed by host id, so closing/reopening the tab —
+        // the classic reconnect case — presents the same token.
+        let token = (conn.metadata && conn.metadata.guestToken) || null;
+        let midMatch = typeof mpMatchStarted !== 'undefined' && mpMatchStarted
+          && typeof gameOver !== 'undefined' && !gameOver;
+        let sameGuest = token && hostBoundGuestToken && token === hostBoundGuestToken;
+        // The seat is DEFENDED unless its owner is convincingly gone —
+        // otherwise a guest who left for good would deadlock the match
+        // (host waits forever on the disconnect overlay while every
+        // replacement joiner bounces off "session full"). "Convincingly
+        // gone" is deliberately strict — BOTH of:
+        //   1. the transport already declared the loss (watchdog/close →
+        //      netConnected false), and
+        //   2. a further NET_SEAT_TAKEOVER_MS of silence on top of it —
+        // because a too-eager takeover is worse than the deadlock it
+        // fixes: it CLOSES the original guest's connection (the accept
+        // path below replaces netConn), kicking a player whose phone tab
+        // was merely backgrounded for a few seconds. The genuine owner
+        // reconnecting is never subject to any of this (same token), and
+        // their 3s retry loop usually reclaims the seat long before a
+        // human stranger could.
+        let seatAbandoned = !netConnected
+          && (performance.now() - lastNetRecvAt) > NET_SEAT_TAKEOVER_MS;
+        if (midMatch && hostBoundGuestToken && !sameGuest && !seatAbandoned) {
+          rejectConnFull(conn);
+          return;
+        }
+        hostBoundGuestToken = token;
         if (netConn && netConn !== conn) { try { netConn.close(); } catch (e) {} }
         wireConnection(conn);
       });
@@ -296,6 +344,23 @@ function hostSession(desiredId, strict){
   });
 }
 
+function getGuestToken(hostPeerId){
+  let key = 'aoeGuestToken:' + hostPeerId;
+  try {
+    let t = localStorage.getItem(key);
+    if (!t) {
+      t = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      localStorage.setItem(key, t);
+    }
+    return t;
+  } catch (e) {
+    // No localStorage (private mode etc.) — a volatile token still lets
+    // in-page reconnects work; only a full tab reopen loses identity.
+    if (!window.__volatileGuestToken) window.__volatileGuestToken = Math.random().toString(36).slice(2);
+    return window.__volatileGuestToken;
+  }
+}
+
 // Guest side: create our own Peer, then connect directly to the host's id
 // (obtained from the ?join= URL param — see autoJoinFromUrl in init.js).
 function joinSession(hostPeerId){
@@ -316,7 +381,16 @@ function joinSession(hostPeerId){
       // not re-inflating it), so this is still nearly all of the deflate
       // win. Host's inbound `connection` listener just inherits whatever
       // mode the connecting peer — us — requested.
-      let conn = netPeer.connect(hostPeerId, { reliable: true, serialization: 'binary' });
+      let conn = netPeer.connect(hostPeerId, {
+        reliable: true,
+        serialization: 'binary',
+        // Stable per-browser identity for this host's match (see the
+        // host's connection handler above): lets the host tell "my
+        // opponent reconnecting" apart from "an extra person opening the
+        // shared link mid-match". localStorage, not sessionStorage — the
+        // reconnect case is precisely a closed-and-reopened tab.
+        metadata: { guestToken: getGuestToken(hostPeerId) },
+      });
       wireConnection(conn);
       conn.on('open', () => resolve());
     });
@@ -335,6 +409,7 @@ function joinSession(hostPeerId){
 // leaveMpSession(), which wraps this.
 function teardownNet(){
   netConnected = false;
+  hostBoundGuestToken = null; // a fresh session's seat is open to anyone
   if (netConn) { try { netConn.close(); } catch (e) {} }
   netConn = null;
   if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
