@@ -76,6 +76,16 @@ onNetMessage((msg) => {
     DET.enabled = true;
     gameStarted = true;
     gamePaused = false;
+    // init() (via restartGame) centered the camera on TEAM 0's start — on
+    // this guest that's the OPPONENT's base. Recenter on our own. (The old
+    // snapshot path did this in applyNetSync, which lockstep never runs.)
+    let own = entities.find(e => e.team === myTeam);
+    if (own) {
+      let iso = toIso(own.x, own.y);
+      camX = iso.ix; camY = iso.iy;
+      window.targetCamX = camX; window.targetCamY = camY;
+      window.__mpSession.cameraCentered = true;
+    }
     if (typeof showMpStatus === 'function') showMpStatus('Connected! Lockstep match started.');
     let menu = document.getElementById('tutorial');
     if (menu) menu.style.display = 'none';

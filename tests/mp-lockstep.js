@@ -30,6 +30,15 @@ const { BASE, sleep, check, finish } = require('./helpers');
   check(await guest.evaluate(() => matchSeed) === await host.evaluate(() => matchSeed),
     'seed handshake: same matchSeed on both peers');
 
+  // Guest camera starts on its OWN base (team 1), not the host's.
+  const camOk = await guest.evaluate(() => {
+    const own = entities.find(e => e.btype === 'TC' && e.team === 1);
+    const other = entities.find(e => e.btype === 'TC' && e.team === 0);
+    const d = (tc) => { const iso = toIso(tc.x, tc.y); const dx = iso.ix - camX, dy = iso.iy - camY; return Math.sqrt(dx*dx + dy*dy); };
+    return d(own) < d(other);
+  });
+  check(camOk, 'guest camera centered on its own base');
+
   // Both sims advance, and stay within the input-delay window of each other.
   await sleep(2000);
   const t1 = await Promise.all([host, guest].map(p => p.evaluate(() => tick)));
