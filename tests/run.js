@@ -13,7 +13,7 @@ const PORT = 8471;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon' };
 
-const SUITES = ['mp-menus.js', 'mp-sync.js', 'mp-features.js', 'mp-recovery.js'];
+const SUITES = ['sp-garrison.js', 'mp-menus.js', 'mp-sync.js', 'mp-features.js', 'mp-recovery.js', 'mp-audio.js'];
 
 const server = http.createServer((req, res) => {
   let file = path.normalize(decodeURIComponent(req.url.split('?')[0]));

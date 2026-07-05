@@ -702,6 +702,7 @@ document.getElementById('actions').addEventListener('click', function(e){
     e.stopPropagation();
     e.preventDefault();
     showMsg('Not enough resources!');
+    if (window.playSound) playSound('error');
   }
 }, true);
 
@@ -749,6 +750,7 @@ function trainUnit(bldg,utype){
   if (!isReplayingRemoteCommand) {
     if(result.reason==='pop')showMsg('Need more houses!');
     else if(result.reason==='resources')showMsg('Not enough resources!');
+    if (window.playSound) playSound('error');
   }
 }
 
@@ -928,7 +930,7 @@ function prepayFarm() {
   if (netRole === 'guest') { sendCommand({ kind: 'prepay-farm' }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) showMsg('Not enough wood!');
+    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
     return;
   }
   spendCost(myTeam, cost);
@@ -944,7 +946,7 @@ function reactivateFarm(farm) {
   if (netRole === 'guest') { sendCommand({ kind: 'reactivate-farm', bldgId: farm.id }); return; }
   let cost = {w: 60};
   if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) showMsg('Not enough wood!');
+    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
     return;
   }
   spendCost(myTeam, cost);

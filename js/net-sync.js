@@ -355,6 +355,14 @@ function applyNetSync(data){
           else if (old.t === TERRAIN.GOLD) pColor = '#ffd700';
           else if (old.t === TERRAIN.STONE) pColor = '#888';
           spawnParticles(x + 0.5, y + 0.5, pColor, 2, 0.02, 1.2);
+          // Gather audio: forage/farm only. Chop/mine play at the tool's
+          // VISUAL impact in render-units.js — the guest renders those
+          // swings itself, so sounding them here too would double up (and
+          // this sync-driven cadence is exactly the "delayed start" the
+          // render-side move fixed).
+          if (window.playSound && (old.t === TERRAIN.BERRIES || old.t === TERRAIN.FARM)) {
+            playSound('forage', x + 0.5, y + 0.5);
+          }
         }
         map[y][x] = cell;
       });
@@ -410,9 +418,14 @@ function applyNetSync(data){
       (data.newCorpses || []).forEach(c => {
         guestReactedCorpses.add(c.id);
         spawnParticles(c.x, c.y, '#990000', c.utype === 'bear' ? 12 : 7, 0.05, 1.8);
+        // Host plays the same in handleDeath; bears growl, humans cry out.
+        if (window.playSound) playSound(c.utype === 'bear' ? 'bear' : 'death', c.x, c.y);
         corpses.push({...c, deathTime: loadNow});
       });
-      (data.newProjectiles || []).forEach(p => { projectiles.push({...p}); });
+      (data.newProjectiles || []).forEach(p => {
+        projectiles.push({...p});
+        if (window.playSound) playSound('arrow', p.startX, p.startY);
+      });
     }
     // cmdMarkers are never synced anymore (see SYNC_BUFFERS's comment,
     // js/core.js — the host's markers on the guest's screen revealed
@@ -468,6 +481,7 @@ function applyNetSync(data){
         let existing = entitiesById.get(e.id);
         if (existing) {
           let prevHp = existing.hp;
+          let wasComplete = existing.complete;
           let oldX = existing.x, oldY = existing.y;
           // Object.assign can only ADD/OVERWRITE — a field the host cleared
           // with `= undefined` (garrisonedIn on town-bell all-clear,
@@ -502,13 +516,75 @@ function applyNetSync(data){
               existing.y = oldY + dy * 0.5;
             }
           }
-          if (prevHp !== undefined && existing.hp < prevHp && existing.hp > 0) spawnHitParticle(existing);
+          if (prevHp !== undefined && existing.hp < prevHp && existing.hp > 0) {
+            spawnHitParticle(existing);
+            // Combat audio + music-mood signals, guest-side. The host sets
+            // lastWarTick/lastDangerTick in damageEntity — those never
+            // reach the guest, so its adaptive music missed open-field
+            // battles entirely. Semantics are per-client: MY side taking
+            // hits = danger (plus the under-attack horn, same 20s re-arm
+            // as logic.js's host version); me damaging THEM = war.
+            // Sheep and carcasses are excluded entirely: a carcass being
+            // EATEN loses hp every bite, which used to read as a constant
+            // steel-clash battle (and livestock isn't combat anyway —
+            // matches the host-side exclusion in damageEntity).
+            let livestock = existing.utype === 'sheep' || existing.utype === 'sheep_carcass';
+            if (!livestock) {
+              // Units clash steel; buildings taking damage thud like the
+            // host's damageEntity ('build' is the shared masonry-hit sound).
+            if (window.playSound) {
+              if (existing.type === 'building') playSound('build', existing.x + (existing.w||1)/2, existing.y + (existing.h||1)/2);
+              else playSound('attack', existing.x, existing.y);
+            }
+              // The diff can't see the ATTACKER — a bear mauling counts as
+              // an hp drop too, but must not ring the war horn or shift the
+              // music (the host's horn fires only on enemy-PLAYER damage).
+              // Proxy: only treat it as PvP if the opposing player has
+              // something within plausible attack reach of the victim.
+              let pvp = entities.some(en => en.team === (1 - myTeam)
+                && Math.hypot(en.x - existing.x, en.y - existing.y) < 9);
+              if (pvp) {
+                if (existing.team === myTeam) {
+                  window.lastDangerTick = tick;
+                  let lastHit = window.lastUnderAttackTick;
+                  window.lastUnderAttackTick = tick;
+                  if (lastHit === undefined || tick - lastHit > 600) {
+                    if (window.playSound) playSound('alert');
+                  }
+                } else if (existing.team === 1 - myTeam) {
+                  window.lastWarTick = tick;
+                }
+              }
+            }
+          }
+          // Building finished (host flips e.complete true and plays its own
+          // fanfare gated on myTeam — mirror that for the guest's builds).
+          if (existing.type === 'building' && !wasComplete && existing.complete
+              && existing.team === myTeam && window.playSound) {
+            playSound('train');
+          }
         } else {
           entities.push(e);
           entitiesById.set(e.id, e);
+          // Newly trained own unit stepping out (delta-only — a full sync
+          // is a join/reconnect, not a batch of fresh recruits).
+          if (e.type === 'unit' && e.team === myTeam && e.utype !== 'sheep'
+              && e.utype !== 'sheep_carcass' && window.playSound) {
+            playSound('train');
+          }
         }
       });
-      (data.removedEntityIds || []).forEach(id => entitiesById.delete(id));
+      (data.removedEntityIds || []).forEach(id => {
+        // Buildings leave no corpse — their destruction audio hooks the
+        // removal itself (handleDeath is the only thing that removes them).
+        let gone = entitiesById.get(id);
+        // complete only — a cancelled foundation isn't a demolition (same
+        // rule as handleDeath host-side).
+        if (gone && gone.type === 'building' && gone.complete && window.playSound) {
+          playSound('collapse', gone.x + (gone.w || 1) / 2, gone.y + (gone.h || 1) / 2);
+        }
+        entitiesById.delete(id);
+      });
       if ((data.removedEntityIds || []).length) {
         entities = entities.filter(e => entitiesById.has(e.id));
       }
@@ -590,7 +666,17 @@ function applyNetSync(data){
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
 
     window.fogDisabled = !!data.fogDisabled;
+    // Bell audio on the actual TRANSITION of my own team's bell (delta
+    // syncs only — a full sync is a join/reconnect, where a stale "bell is
+    // ringing" chime would be noise, not news). The guest never sets
+    // bellRinging locally (ringTownBell runs host-side for its relayed
+    // command), so this is also how the guest hears its OWN bell.
+    let bellWas = !!(window.bellRinging && window.bellRinging[myTeam]);
     window.bellRinging = [!!(data.bellRinging&&data.bellRinging[0]), !!(data.bellRinging&&data.bellRinging[1])];
+    let bellNow = !!window.bellRinging[myTeam];
+    if (!data.full && bellNow !== bellWas && window.playSound) {
+      playSound(bellNow ? 'bell' : 'bell_clear');
+    }
 
     // camX/camY/ZOOM/currentVillagerMenu/settingRally/cameraFollowId are
     // deliberately NOT touched here — all local UI state, untouched by
@@ -716,7 +802,10 @@ onNetMessage((msg) => {
       // in place: hides the menu, unpauses, forces the confirming full
       // sync back to the guest.
       try {
-        applySavedGame(msg.data);
+        // fromOpponentMirror: WE are the original host recovering from the
+        // guest's live mirror — the guest stays team 1, no team swap (see
+        // applySavedGame, js/save.js).
+        applySavedGame(msg.data, { fromOpponentMirror: true });
         // The snapshot was authored by the GUEST, so its save-file-only UI
         // fields describe the guest's screen: drop the guest's selection
         // (applySavedGame re-resolved it onto OUR `selected`), point the

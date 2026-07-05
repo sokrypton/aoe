@@ -315,7 +315,7 @@ function finalizeWallDrag(){
           v.buildQueue.push(bldg.id);
         });
       } else {
-        if (!isReplayingRemoteCommand) showMsg('Not enough stone!');
+        if (!isReplayingRemoteCommand) { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); }
       }
     }
   });
@@ -1450,6 +1450,11 @@ function doCommand(sx,sy){
         let ox = offs[oIdx] ? offs[oIdx][0] : 0, oy = offs[oIdx] ? offs[oIdx][1] : 0;
         oIdx++;
         pathUnitTo(s, tile.x + ox, tile.y + oy);
+        // Mirror issueMoveOrder's moveGoal fields (the host syncs its own
+        // shortly): finishMobileUnitCommand's keep-selection check requires
+        // moveGoalX on a walk order — without it a mobile guest's units got
+        // deselected the moment they were sent walking.
+        s.moveGoalX = tile.x + ox; s.moveGoalY = tile.y + oy;
       });
     }
     sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
@@ -1621,7 +1626,7 @@ function doPlace(sx,sy){
       showMsg('Place next foundation (release Shift to finish)');
     }
   } else {
-    if (!isReplayingRemoteCommand) showMsg('Can\'t build here!');
+    if (!isReplayingRemoteCommand) { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); }
   }
 }
 

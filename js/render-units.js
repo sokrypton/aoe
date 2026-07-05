@@ -1058,25 +1058,55 @@ function drawUnit(e){
       // Shaped work swing: slow wind-up (70% of the cycle), fast strike
       // (30%), instead of a symmetric sine wobble. swing is the tool's
       // rotation: -1.1 fully raised, +0.5 at the moment of impact.
-      let working = isActive && e.path.length===0;
+      // "At the work site" — a villager whose task is already back to
+      // chop/mine but who is still STANDING AT THE DROP-OFF (the tick after
+      // depositing, or a guest waiting on the next sync) must not flash the
+      // tool or swing it; require actual proximity to the work. Gather
+      // tasks check the claimed gather tile, build checks the foundation's
+      // footprint; other tasks are unaffected.
+      let atSite = true;
+      if (e.task === 'chop' || e.task === 'mine_gold' || e.task === 'mine_stone') {
+        atSite = e.gatherX >= 0 &&
+          Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
+      } else if (e.task === 'build' && e.buildTarget) {
+        let bt = entitiesById.get(e.buildTarget);
+        atSite = !!bt && distToTarget(e, bt) < 1.8;
+      }
+      let working = isActive && e.path.length===0 && atSite;
       let phRaw = tick*0.055 + e.id*0.37;
       let ph = ((phRaw % 1) + 1) % 1;
       let u = ph < 0.7 ? ph/0.7 : 1-(ph-0.7)/0.3;
       let swing = working ? (0.5 - 1.6*u) : 0;
-      // One impact burst per cycle, right as the tool lands
+      // One impact burst per cycle, right as the tool lands. Detected by the
+      // cycle COUNTER advancing between frames, not by a frame happening to
+      // land inside the narrow strike window — at 4x speed that window (7%
+      // of a ~0.15s cycle ≈ 10ms) is shorter than one frame, so impacts
+      // dropped nondeterministically and the work sounds/particles
+      // stuttered. Tracked in workSwingCycles (js/core.js), not
+      // `e._swingCyc` — entities get wholesale-replaced by every sync,
+      // which used to wipe that field and fire extras. Never during the
+      // outline mask pass: it would consume this cycle's one impact (and
+      // spawn duplicate particles) before the real draw.
       let swingCyc = Math.floor(phRaw);
-      // Tracked in workSwingCycles (js/core.js), not `e._swingCyc` — entities
-      // get wholesale-replaced by every sync, which used to wipe that field
-      // and fire extra impact particles well beyond one per swing cycle.
-      // Never during the outline mask pass: it would consume this cycle's
-      // one impact (and spawn duplicate particles) before the real draw.
-      let impact = !window._maskDraw && working && ph > 0.93 && workSwingCycles.get(e.id) !== swingCyc;
-      if(impact) workSwingCycles.set(e.id, swingCyc);
+      let prevCyc = workSwingCycles.get(e.id);
+      let impact = !window._maskDraw && working && prevCyc !== undefined && swingCyc !== prevCyc;
+      if(!window._maskDraw && working) workSwingCycles.set(e.id, swingCyc);
       // Impact point in tile coords: the gather tile if known, else just ahead
       let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
       let hitY = (e.gatherY >= 0 && e.gatherY !== undefined) ? e.gatherY + 0.3 : e.y;
-      if(e.task==='chop'&&e.path.length===0){
-        if(impact) spawnParticles(hitX, hitY, '#c9a15e', 2, 0.02, 1.5); // wood chips
+      if(e.task==='chop'&&e.path.length===0&&atSite){
+        // Sound at the axe's VISUAL impact, not at resource extraction (the
+        // sim's gather cycle) — extraction lags the first visible hit by up
+        // to a full cycle, which read as delayed audio. Render runs on the
+        // guest too, so this also gives MP guests animation-synced chops.
+        if(impact){
+          spawnParticles(hitX, hitY, '#c9a15e', 2, 0.02, 1.5); // wood chips
+          // At 4x the swing period drops to ~0.15s and every villager's hits
+          // pile into the global rate limiter, which then drops them
+          // ARBITRARILY — the texture turns inconsistent. Sounding every
+          // OTHER swing at 4x restores the deterministic 2x cadence.
+          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('chop', hitX, hitY);
+        }
         X.save();X.translate(3,-9);X.rotate(swing);
         // Long handle
         X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
@@ -1095,8 +1125,12 @@ function drawUnit(e){
         X.strokeStyle='#fff';X.lineWidth=1.4/UNIT_SCALE;
         X.beginPath();X.moveTo(13.9,-15.9);X.lineTo(12.7,-7.9);X.stroke();
         X.restore();
-      } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0){
-        if(impact) spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
+      } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0&&atSite){
+        if(impact){
+          spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
+          // Synced to the pick's visual impact; every other swing at 4x (see chop above)
+          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('mine', hitX, hitY);
+        }
         X.save();X.translate(3,-9);X.rotate(swing);
         // Long handle
         X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
@@ -1110,8 +1144,13 @@ function drawUnit(e){
         X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
         X.lineCap='butt';
         X.restore();
-      } else if(e.task==='build'&&e.path.length===0){
-        if(impact) spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
+      } else if(e.task==='build'&&e.path.length===0&&atSite){
+        if(impact){
+          spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
+          // Hammer audio at the mallet's visual impact; every other swing
+          // at 4x (see chop above for both rationales)
+          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('build', e.x + e.facing*0.35, e.y - 0.1);
+        }
         X.save();X.translate(3,-9);X.rotate(swing);
         // Handle
         X.strokeStyle='#000000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';

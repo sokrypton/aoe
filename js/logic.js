@@ -481,12 +481,14 @@ function updateGatherTask(e,config){
   if(config.resource==='food') e.foodSrc = e.task==='farm' ? 'wheat' : 'berries';
   e.gatherCooldown=config.cooldown;
 
-  // Gathering audio: positional, so it's heard when the view is near the
-  // work — including enemy villagers when you scout their base.
-  if (window.playSound) {
-    let sType = e.task;
-    if (sType === 'mine_gold' || sType === 'mine_stone') sType = 'mine';
-    window.playSound(sType, gatherTile.x + 0.5, gatherTile.y + 0.5);
+  // Gathering audio: forage/farm only — they have no tool-swing animation,
+  // so extraction time is the natural cadence. Chop/mine sounds moved to
+  // the axe/pick's VISUAL impact in render-units.js (drawUnit), because the
+  // first extraction lags the first visible swing by up to a full gather
+  // cycle, which read as the sound starting late.
+  if (window.playSound && (e.task === 'forage' || e.task === 'farm')
+      && (GAME_SPEED < 4 || e.carrying % 2 === 0)) { // every other cycle at 4x — keeps the 2x cadence
+    window.playSound('forage', gatherTile.x + 0.5, gatherTile.y + 0.5);
   }
   // Spawn gathering particles
   let pColor = '#4a8c2a';
@@ -569,9 +571,13 @@ function damageEntity(attacker, target){
 
   target.hp -= dmg;
 
-  // Play combat sound and spawn particles
+  // Play combat sound and spawn particles. Sheep (live or carcass) don't
+  // get the steel clash — slaughtering livestock isn't a sword fight; the
+  // bleat on death (handleDeath) is the sheep's own audio.
   if (target.type === 'unit') {
-    if (window.playSound) window.playSound('attack', target.x, target.y);
+    if (window.playSound && target.utype !== 'sheep' && target.utype !== 'sheep_carcass') {
+      window.playSound('attack', target.x, target.y);
+    }
     spawnParticles(target.x, target.y, '#990000', 4, 0.04, 1.5);
   } else {
     if (window.playSound) window.playSound('build', target.x + (target.w||1)/2, target.y + (target.h||1)/2);
@@ -905,23 +911,43 @@ function updateUnit(e){
     })()){
       enterGarrison(e,b);
       return;
-    } else if(e.path.length===0&&tick-(e.lastRepathTick||0)>=10){
-      e.lastRepathTick=tick;
-      let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
-      if(pt)pathUnitTo(e,pt.x,pt.y);
-      if(e.path.length===0){
-        // Entrance likely crowded with other garrisoning villagers — keep
-        // trying a few rounds before abandoning shelter.
-        e.garrisonRetries=(e.garrisonRetries||0)+1;
-        if(e.garrisonRetries>=6){e.garrisonRetries=0;e.task=null;e.garrisonTarget=null;}
-      } else {
-        e.garrisonRetries=0;
+    } else {
+      // Stall detection: a path can exist but never advance — two belled
+      // villagers converging on the same doorway each become a STATIONARY
+      // body in the other's collision grid and deadlock with path length 1,
+      // standing outside forever (the old branch only re-pathed on an EMPTY
+      // path). Track movement; ~12 ticks without budging counts as blocked
+      // and forces a fresh route around the crowd.
+      if(e.x!==e.garrStallX||e.y!==e.garrStallY){
+        e.garrStallX=e.x;e.garrStallY=e.y;e.garrStallSince=tick;
+      }
+      let stalled=e.path.length>0&&tick-(e.garrStallSince??tick)>=12;
+      if((e.path.length===0||stalled)&&tick-(e.lastRepathTick||0)>=10){
+        e.lastRepathTick=tick;
+        if(stalled)clearUnitPath(e);
+        let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
+        if(pt)pathUnitTo(e,pt.x,pt.y);
+        if(e.path.length===0){
+          // Entrance likely crowded with other garrisoning villagers — keep
+          // trying a few rounds before abandoning shelter.
+          e.garrisonRetries=(e.garrisonRetries||0)+1;
+          if(e.garrisonRetries>=6){e.garrisonRetries=0;e.task=null;e.garrisonTarget=null;}
+        } else {
+          e.garrisonRetries=0;
+        }
       }
     }
     // Still heading for shelter: stop here. Falling through would let the
     // full-carry check below flip a loaded villager to 'return', sending it
-    // on a drop-off run through the raid instead of into the TC.
-    if(e.task==='garrison')return;
+    // on a drop-off run through the raid instead of into the TC — but the
+    // unit must still WALK: the shared movement step lives further down
+    // this function, so returning without stepping froze every belled
+    // villager that wasn't already within arrival radius ("only one goes
+    // in, the rest stand outside").
+    if(e.task==='garrison'){
+      if(e.path.length>0) stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK, true);
+      return;
+    }
   }
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
@@ -1177,7 +1203,7 @@ function updateUnit(e){
           e.carryType='food';
           e.foodSrc='meat';
           e.gatherCooldown=90; // ~0.33 food/game-second, AoE2 herding rate
-          if(window.playSound && tick % 30 === 0) window.playSound('forage', t.x, t.y);
+          if(window.playSound && tick % (GAME_SPEED >= 4 ? 60 : 30) === 0) window.playSound('forage', t.x, t.y);
           spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
           if(t.hp<=0){
             handleDeath(t, e.team);
@@ -1350,14 +1376,15 @@ function updateUnit(e){
           // of maxHp, so a half-built structure has half its HP. Damage taken
           // during construction persists (the cap only limits, never heals).
           bt.hp=Math.min(bt.maxHp,bt.hp+bt.maxHp/bt.buildTime);
-          if (tick % 30 === 0 && window.playSound) {
-            window.playSound('build', bt.x + bt.w/2, bt.y + bt.h/2);
-          }
+          // Construction hammer audio plays at the mallet's VISUAL impact in
+          // render-units.js (same treatment as chop/mine) — a sim-side
+          // tick%30 cadence here fought both the swing animation and the
+          // per-type rate limiter at 4x, which read as skipping.
           if(bt.buildProgress>=bt.buildTime){
             bt.complete=true;
             bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
             e.buildTarget=null;
-            if (e.team === 0 && window.playSound) {
+            if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
               window.playSound('train'); // play herald fanfare on building completed
             }
             if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
@@ -1406,9 +1433,10 @@ function updateUnit(e){
               return;
             }
           }
-          if (tick % 30 === 0 && window.playSound) {
-            window.playSound('build', bt.x + bt.w/2, bt.y + bt.h/2);
-          }
+          // Construction hammer audio plays at the mallet's VISUAL impact in
+          // render-units.js (same treatment as chop/mine) — a sim-side
+          // tick%30 cadence here fought both the swing animation and the
+          // per-type rate limiter at 4x, which read as skipping.
           if (bt.hp >= bt.maxHp) {
             e.buildTarget = null;
             bt.woodDebt = 0;
@@ -1657,6 +1685,17 @@ function handleDeath(e,killerTeam){
   if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
     spawnParticles(e.x,e.y,'#990000',e.utype==='bear'?12:7,0.05,1.8);
   }
+  // Death/destruction audio (host side; the guest hears the same via its
+  // new-corpse sync hook in js/net-sync.js). Fog + stereo pan are handled
+  // inside playSound.
+  if(window.playSound){
+    // Foundations are excluded: deleting an unfinished foundation is a
+    // refund/cancel action, not a demolition — silence is right there.
+    if(e.type==='building'&&e.complete) window.playSound('collapse', e.x+(e.w||1)/2, e.y+(e.h||1)/2);
+    // Bears growl their own death; humans get the death cry.
+    else if(e.type==='unit'&&e.utype==='bear') window.playSound('bear', e.x, e.y);
+    else if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass') window.playSound('death', e.x, e.y);
+  }
   // Add to corpses list for AoE2-style decay (sheep are the exception —
   // they become a harvestable carcass entity instead, handled above)
   if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
@@ -1789,7 +1828,7 @@ function updateBuilding(e){
       let unit=createUnit(ut,spawn.x,spawn.y,e.team);
       
       // Play training complete fanfare sound (player team 0)
-      if (e.team === 0 && window.playSound) {
+      if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
         window.playSound('train');
       }
       

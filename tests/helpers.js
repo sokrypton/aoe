@@ -38,4 +38,19 @@ async function startMatch() {
   return { browser, hostCtx, guestCtx, host, guest, hostId, errors };
 }
 
-module.exports = { BASE, sleep, check, finish, startMatch };
+// Wraps window.playSound so tests can assert WHICH sounds fired without
+// caring about (or waiting on) actual Web Audio: every accepted call is
+// logged to window.__soundLog as {type, tick} BEFORE the original runs.
+// Install after the page has loaded (playSound is a window global).
+async function shimSounds(page) {
+  await page.evaluate(() => {
+    window.__soundLog = [];
+    const orig = window.playSound;
+    window.playSound = function (type, wx, wy) {
+      window.__soundLog.push({ type, tick: typeof tick === 'number' ? tick : -1 });
+      return orig.call(this, type, wx, wy);
+    };
+  });
+}
+
+module.exports = { BASE, sleep, check, finish, startMatch, shimSounds };

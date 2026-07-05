@@ -101,11 +101,20 @@ let _lastSoundAt = {};
 // asked for by playing multiplayer, not battlefield ambience to mute.
 const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_clear', 'chat']);
 
+// Sounds allowed while the game is PAUSED (menu open, opponent's menu open,
+// mid-reconnect). World SFX are implicitly silent then (the sim isn't
+// running) but local UI sounds from input.js aren't — this makes the pause
+// gate explicit instead of relying on "all world-SFX callers live in
+// update()". Exempt: chat/alerts (legitimately arrive with the menu open in
+// MP), the menu's own clicks, and the end-of-game stingers.
+const PAUSE_EXEMPT_SOUNDS = new Set(['chat', 'alert', 'click', 'error', 'victory', 'defeat', 'bell', 'bell_clear']);
+
 function playSound(type, wx, wy) {
   if (window.audioMuted) return;
   let mode = window.soundMode || 'all';
   if (mode === 'off') return;
   if (mode === 'alerts' && !ALERT_ONLY_SOUNDS.has(type)) return;
+  if (typeof gamePaused !== 'undefined' && gamePaused && !PAUSE_EXEMPT_SOUNDS.has(type)) return;
   try {
     initAudio();
     if (!audioCtx) return;
@@ -145,7 +154,8 @@ function playSound(type, wx, wy) {
         tone(out, now, { type: 'triangle', f0: 300 * p, f1: 85, dur: 0.055, vol: 0.17 });
         tone(out, now, { type: 'triangle', f0: 110 * p, f1: 38, dur: 0.18, vol: 0.13 });
         if (Math.random() < 0.15) {
-          noiseHit(out, now, { t0: 0.02, dur: 0.09, vol: 0.07, type: 'highpass', f0: 2200, q: 0.7 });
+          // fiber crack, kept in the mids — high-pitched accents read harsh
+          noiseHit(out, now, { t0: 0.02, dur: 0.09, vol: 0.05, type: 'bandpass', f0: 1300, q: 1 });
         }
         break;
       }
@@ -157,7 +167,7 @@ function playSound(type, wx, wy) {
         [[1, 0.06], [2.76, 0.038], [5.4, 0.024], [8.93, 0.012]].forEach(([mult, vol], i) => {
           tone(out, now, { type: 'sine', f0: base * mult, f1: base * mult * 0.94, dur: 0.2 + i * 0.02, vol, detune: rnd(-8, 8) });
         });
-        noiseHit(out, now, { dur: 0.03, vol: 0.09, type: 'highpass', f0: 2400, q: 0.7 });
+        noiseHit(out, now, { dur: 0.03, vol: 0.06, type: 'bandpass', f0: 1400, q: 1.2 }); // stone chink, mids not treble
         break;
       }
       case 'build': {
@@ -449,6 +459,47 @@ function playSound(type, wx, wy) {
         });
         break;
       }
+      case 'click': {
+        // Subtle UI tick for menu/toggle buttons — short, quiet, unpitched
+        // enough to never compete with battlefield audio.
+        noiseHit(out, now, { dur: 0.025, vol: 0.06, type: 'bandpass', f0: 1300 * p, q: 2.5 });
+        tone(out, now, { type: 'sine', f0: 750 * p, f1: 560, dur: 0.03, vol: 0.04 });
+        break;
+      }
+      case 'error': {
+        // "Denied" blip: two quick descending low tones, AoE2-style refusal.
+        tone(out, now, { type: 'square', f0: 220 * p, f1: 200, dur: 0.07, vol: 0.05 });
+        tone(out, now, { type: 'square', f0: 165 * p, f1: 150, t0: 0.09, dur: 0.1, vol: 0.055 });
+        break;
+      }
+      case 'death': {
+        // Unit death: short falling cry + a soft body thud. Kept quick and
+        // low-key — battles produce many of these (rate limiter helps too).
+        // Cry sits in the mids so it carries on small speakers.
+        tone(out, now, { type: 'sawtooth', f0: 340 * p, f1: 120, dur: 0.22, vol: 0.075, att: 0.01 });
+        tone(out, now, { type: 'triangle', f0: 150 * p, f1: 60, t0: 0.1, dur: 0.15, vol: 0.06 });
+        noiseHit(out, now, { t0: 0.16, dur: 0.07, vol: 0.1, type: 'bandpass', f0: 550, q: 1 });
+        break;
+      }
+      case 'collapse': {
+        // Building destruction. The first version was a pure sub-300Hz
+        // rumble — measured at near-zero energy above a laptop woofer's
+        // roll-off, i.e. inaudible on MacBook/phone speakers ("deleting a
+        // building plays no sound"). The rumble stays for speakers that can
+        // render it, but the read now comes from mid-band timber cracks and
+        // tumbling debris that any speaker reproduces.
+        // Sharp initial timber crack
+        noiseHit(out, now, { dur: 0.08, vol: 0.26, type: 'bandpass', f0: 1500 * p, f1: 650, q: 1.2 });
+        tone(out, now, { type: 'square', f0: 240 * p, f1: 90, dur: 0.12, vol: 0.09 });
+        // Low rumble body
+        noiseHit(out, now, { dur: 0.55, vol: 0.17, type: 'lowpass', f0: 380, f1: 130, q: 0.8 });
+        tone(out, now, { type: 'sine', f0: 95 * p, f1: 40, dur: 0.6, vol: 0.12, att: 0.01 });
+        // Mid-band debris tumbling out over the rumble
+        [0.1, 0.2, 0.31, 0.43, 0.55].forEach(t0 => {
+          noiseHit(out, now, { t0, dur: 0.06, vol: 0.15, type: 'bandpass', f0: rnd(700, 1800), q: 1.8 });
+        });
+        break;
+      }
     }
   } catch (err) {
     console.warn("Audio Context Error: ", err);
@@ -575,13 +626,20 @@ const MELODY_PHRASES = [
   // C: reaches the high octave — the "banner on the hill" moment
   [[4,0,1],[5,1,0.5],[6,1.5,0.5],[7,2,1.5],[6,3.5,0.5],[5,4,1],[4,5,0.5],[2,5.5,0.5],[4,6,2]],
   // B': final cadence, dips below the tonic before landing
-  [[3,0,1],[2,1,1],[1,2,0.5],[0,2.5,0.5],[-1,3,1],[-3,4,1],[-1,5,0.5],[1,5.5,0.5],[0,6,2]]
+  [[3,0,1],[2,1,1],[1,2,0.5],[0,2.5,0.5],[-1,3,1],[-3,4,1],[-1,5,0.5],[1,5.5,0.5],[0,6,2]],
+  // D: high lament — starts on the octave and sighs stepwise back down
+  [[7,0,1],[6,1,0.5],[5,1.5,0.5],[4,2,1],[5,3,0.5],[4,3.5,0.5],[2,4,1],[1,5,0.5],[2,5.5,0.5],[0,6,2]],
+  // E: dancing round — quicker note pairs circling the 5th, estampie feel
+  [[0,0,0.5],[2,0.5,0.5],[4,1,1],[4,2,0.5],[5,2.5,0.5],[6,3,1],[5,4,0.5],[4,4.5,0.5],[2,5,1],[1,6,0.5],[0,6.5,1.5]]
 ];
-// Phrase order forms AABA-style verses: A B A' C B'
-const PHRASE_ORDER = [0, 1, 2, 3, 4];
+// Phrase order forms two answering verses so long games repeat less:
+// A B A' C B' | A D A' E B' — same bar-form skeleton, new middle lines.
+const PHRASE_ORDER = [0, 1, 2, 3, 4, 0, 5, 2, 6, 4];
 
-// Drone roots per phrase (as scale degrees): i — VII — i — III — i feel
-const DRONE_ROOTS = [0, -1, 0, 2, 0];
+// Drone roots per PHRASE (as scale degrees), parallel to MELODY_PHRASES:
+// i — VII — i — III — i for the original five; the high lament keeps the
+// tonic under it, the dance sits on VII for lift.
+const DRONE_ROOTS = [0, -1, 0, 2, 0, 0, -1];
 
 // Plucked string: bright attack that decays fast, plus a soft octave partial.
 function lutePluck(out, now, t0, freq, vol) {
@@ -620,6 +678,13 @@ function playAmbientChord() {
   let phraseDur = MUSIC_PHRASE_BEATS * beat;
   if (window.audioMuted || window.musicEnabled === false) return phraseDur;
   if (!audioCtx || gamePaused || gameOver || !gameStarted) return phraseDur;
+  // Hidden tab, SINGLE-PLAYER only: rAF halts the sim there, so music over a
+  // frozen game is wrong. An MP host keeps simulating in hidden tabs (the
+  // background interval in js/init.js) and its music should keep playing.
+  if (netRole === null && document.hidden) return phraseDur;
+  // Same self-heal as playSound: a context that re-suspended after a long
+  // background stint would otherwise stay silent until the next click.
+  if (audioCtx.state === 'suspended') audioCtx.resume();
 
   _currentMoodName = moodName;
   let bus = newPhraseBus();
@@ -710,6 +775,34 @@ function playAmbientChord() {
   return phraseDur;
 }
 
+// One-shot low horn hit for the peace→combat mood transition — the same
+// detuned-sawtooth recipe as the 'alert' war horn, but shorter and quieter
+// (it accompanies the music, it isn't an alert the player must act on).
+function moodStinger() {
+  try {
+    if (!audioCtx || window.audioMuted || window.musicEnabled === false) return;
+    const out = getMaster();
+    const now = audioCtx.currentTime;
+    const fl = audioCtx.createBiquadFilter();
+    fl.type = 'lowpass';
+    fl.frequency.setValueAtTime(420, now);
+    fl.frequency.linearRampToValueAtTime(900, now + 0.25);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.045, now + 0.06);
+    g.gain.setValueAtTime(0.045, now + 0.28);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    fl.connect(g); g.connect(out);
+    [147, 147 * 1.006, 73.5].forEach(freq => {
+      const o = audioCtx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(freq, now);
+      o.connect(fl);
+      o.start(now); o.stop(now + 0.6);
+    });
+  } catch (_) {}
+}
+
 function startAmbientMusic() {
   if (window.musicEnabled === false) return;
   if (ambientTimer) clearTimeout(ambientTimer);
@@ -731,8 +824,13 @@ function startAmbientMusic() {
     if (!audioCtx || !gameStarted) return;
     if (gameOver) { fadeOutPhrase(0.25); return; }
     if (gamePaused || window.audioMuted || window.musicEnabled === false) return;
+    if (netRole === null && document.hidden) return; // SP hidden tab: sim frozen, hold the music
     let m = detectMusicMood();
     if (m !== _currentMoodName) {
+      // Entering combat from peace gets a one-shot horn stinger over the
+      // crossfade, so the mood change lands as an event instead of the
+      // soundtrack just quietly changing gears.
+      if (_currentMoodName === 'peace' && (m === 'war' || m === 'danger')) moodStinger();
       fadeOutPhrase(0.3);
       clearTimeout(ambientTimer);
       ambientTimer = setTimeout(loop, 320);
@@ -784,6 +882,7 @@ function playGameOverPhrase(cfg) {
   let beat = 60 / cfg.bpm;
   let phraseDur = MUSIC_PHRASE_BEATS * beat;
   if (!audioCtx || window.audioMuted || window.soundMode === 'off') return phraseDur;
+  if (audioCtx.state === 'suspended') audioCtx.resume(); // self-heal like playSound
   let now = audioCtx.currentTime;
   let bus = audioCtx.createGain();
   bus.gain.value = 1;

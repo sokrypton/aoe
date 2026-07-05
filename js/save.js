@@ -146,7 +146,7 @@ function loadGameFromFile(file){
   reader.readAsText(file);
 }
 
-function applySavedGame(data){
+function applySavedGame(data, opts){
   if (!data || typeof data !== 'object' || !Array.isArray(data.entities) || !Array.isArray(data.map)) {
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
@@ -190,22 +190,48 @@ function applySavedGame(data){
     // becomes the new teamExploredEver[1], while the saved
     // otherTeamExploredEver (the guest's own locally-tracked team-0 memory)
     // is what rebuilds team 0's fog here.
-    if (data.savedByTeam === 1) {
-      initFog();
-      (data.otherTeamExploredEver || []).forEach(key => {
-        let tx = key % MAP, ty = Math.floor(key / MAP);
-        if (fog[ty]) fog[ty][tx] = 1;
+    // A guest-originated save (savedByTeam 1) loaded from a FILE: the
+    // loader always becomes the HOST, and the host is team 0 everywhere in
+    // this 1v1 design — so without correction the loading guest would
+    // resume commanding their OPPONENT's civilization. Swap the two player
+    // teams wholesale (gaia untouched) so the loader keeps their own
+    // units/buildings/resources; they render blue now because team 0 IS
+    // blue, but they command their own side. After the swap the save is
+    // indistinguishable from a host-originated one (data.fog is the
+    // loader's own grid = team 0's).
+    // NOT for the crash-recovery handback (opts.fromOpponentMirror — see
+    // the 'request-state' handler, js/net-sync.js): there the loader is
+    // the ORIGINAL host recovering the world from the guest's live mirror,
+    // the guest is still connected as team 1, and teams must stay put.
+    if (data.savedByTeam === 1 && !(opts && opts.fromOpponentMirror)) {
+      data.entities.forEach(e => {
+        if (e.team === 0) e.team = 1;
+        else if (e.team === 1) e.team = 0;
       });
-      teamExploredEver[1] = new Set();
-      (data.fog || []).forEach((row, y) => row.forEach((cell, x) => {
-        if (cell > 0) teamExploredEver[1].add(y * MAP + x);
-      }));
-      teamExploredEver[0] = new Set();
-    } else {
-      fog = data.fog || [];
-      teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
-      teamExploredEver[0] = new Set();
+      (data.corpses || []).forEach(c => {
+        if (c.team === 0) c.team = 1;
+        else if (c.team === 1) c.team = 0;
+      });
+      if (Array.isArray(data.resources) && data.resources.length >= 2) {
+        [data.resources[0], data.resources[1]] = [data.resources[1], data.resources[0]];
+      }
+      if (Array.isArray(data.bellRinging) && data.bellRinging.length >= 2) {
+        [data.bellRinging[0], data.bellRinging[1]] = [data.bellRinging[1], data.bellRinging[0]];
+      }
+      (data.projectiles || []).forEach(pr => {
+        if (pr.attackerSnap) {
+          if (pr.attackerSnap.team === 0) pr.attackerSnap.team = 1;
+          else if (pr.attackerSnap.team === 1) pr.attackerSnap.team = 0;
+        }
+      });
+      // teamExploredEver[1] (the rejoining opponent's memory) now comes
+      // from the saver's otherTeamExploredEver — same slot the
+      // host-originated path expects it in.
+      data.savedByTeam = 0;
     }
+    fog = data.fog || [];
+    teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
+    teamExploredEver[0] = new Set();
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
     let loadNow = performance.now();
