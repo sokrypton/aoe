@@ -508,6 +508,8 @@ let pinchStartDist=null; // two-finger distance at pinch start, for pinch-zoom
 let pinchStartZoom=null; // ZOOM at pinch start
 let touchLongPressTimer=null; // arms box-select if the finger holds still on empty ground
 let touchBoxSelectMode=false; // armed (and possibly active) box-select drag
+let placingTouchDrag=false;   // touch drag-to-position building placement (see touchstart)
+const PLACING_GHOST_LIFT_PX=70; // ghost rides this far above the fingertip while dragging
 let touchLastTapTime=0;       // for double-tap detection
 let touchLastTapUtype=null;   // utype of the unit tapped last, if any
 
@@ -533,7 +535,16 @@ C.addEventListener('touchstart',e=>{
 
     if(placing==='WALL'){
       startWallDrag(t.clientX,t.clientY);
-    } else if(!placing){
+    } else if(placing){
+      // Touch placement is DRAG-TO-POSITION: the finger carries the ghost
+      // (lifted above the fingertip once dragging, so it isn't hidden
+      // under the finger), and lifting the finger places the building at
+      // the ghost — a plain tap still places at the tap point, exactly as
+      // before. While this is active, single-finger camera panning is
+      // suspended (two-finger pan/pinch still works, and cancels the
+      // placement drag rather than building anything).
+      placingTouchDrag=true;
+    } else {
       // Arm long-press box-select only when the touch starts on empty
       // ground — starting on a unit/building should never hijack a tap or
       // pan into a selection box.
@@ -556,7 +567,10 @@ C.addEventListener('touchstart',e=>{
   }
   if(touches.length>=2){
     // Multi-touch: always pan/pinch, cancel any tap or single-finger gesture
-    // that was in progress (box-select arm/drag, wall-drag).
+    // that was in progress (box-select arm/drag, wall-drag, placement drag —
+    // the ghost stays, nothing is built; the next single-finger touch
+    // starts a fresh placement drag).
+    placingTouchDrag=false;
     touchMoved=true;
     touchAnchor=null;
     clearTimeout(touchLongPressTimer);
@@ -613,6 +627,19 @@ C.addEventListener('touchmove',e=>{
       return;
     }
 
+    if(placingTouchDrag){
+      // The ghost follows the finger, lifted above it once genuinely
+      // dragging so the target tiles stay visible. No camera pan — the
+      // finger is busy carrying the building.
+      if(touchAnchor && Math.abs(t.clientX-touchAnchor.x)+Math.abs(t.clientY-touchAnchor.y)>10){
+        touchMoved=true;
+      }
+      mouseX=t.clientX;
+      mouseY=t.clientY-(touchMoved?PLACING_GHOST_LIFT_PX:0);
+      touchLast={x:t.clientX,y:t.clientY};
+      return;
+    }
+
     // Check if we've moved past the tap threshold
     if(touchAnchor){
       let dx=t.clientX-touchAnchor.x;
@@ -656,6 +683,15 @@ C.addEventListener('touchend',e=>{
       minimapDragging=false;
     } else if(window.isDraggingWall){
       finalizeWallDrag();
+    } else if(placingTouchDrag){
+      // Release places at the ghost position (which handleTap's old path
+      // never sees — this branch owns ALL touch placement now). A plain
+      // tap places right at the tap point; a drag places at the lifted
+      // ghost. On an invalid spot doPlace() shows "Can't build here!" and
+      // stays in placement mode, so the user just drags again.
+      placingTouchDrag=false;
+      doPlace(mouseX,mouseY);
+      updateUI();
     } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
       doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
       let mw=document.getElementById('minimap-wrap');
@@ -687,6 +723,7 @@ C.addEventListener('touchend',e=>{
     pinchStartDist=null;
     pinchStartZoom=null;
     touchBoxSelectMode=false;
+    placingTouchDrag=false;
     dragStart=null;dragEnd=null;isDragging=false;
   } else if(e.touches.length===1){
     // Went from 2 fingers to 1: update last position, stay in pan mode

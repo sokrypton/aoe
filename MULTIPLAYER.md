@@ -76,6 +76,90 @@ review) at every stage:
 
 ## Recently completed
 
+### July 2026 — cross-network robustness, recovery, and latency batch
+
+Everything below is covered by the repo's e2e suite (`tests/`, see its
+README — four suites, two real browser contexts over real WebRTC; run
+`./tests/run-all.sh`).
+
+**Sync-stream robustness** (the "guest glitches then freezes until
+refresh" class of bugs, which only appeared across two real computers):
+- Every sync carries a **sequence number**; the guest detects gaps or
+  failed applies and sends `request-full-sync` (rate-limited), which makes
+  the host resend the complete world. A 1s watchdog also requests a resync
+  if the guest has no map or hasn't applied a sync in 5s. Previously the
+  ONE full sync at connect was the only bootstrap — lose it and every
+  later delta was silently dropped forever.
+- **Send backpressure**: `hostSyncTick` checks the datachannel's
+  `bufferedAmount` and skips delta ticks over 64KB queued (skipped changes
+  coalesce into the next payload for free) / defers full syncs over 256KB.
+  Invisible on loopback, essential on a real uplink.
+- **Field-deletion merge fix**: `JSON.stringify` drops undefined-valued
+  keys, so a host clearing a field (`garrisonedIn = undefined` on town-bell
+  all-clear) never reached the guest via `Object.assign`. The delta merge
+  now deletes local keys absent from the incoming entity (except the
+  client-local render fields). Symptom fixed: guest villagers never coming
+  back OUT of garrison.
+- Guest extrapolation **freezes after 500ms without a sync**
+  (`guestSyncIsFresh`) instead of walking units through walls, with a
+  "Connection lagging…" toast between 1.5s and the 5s resync threshold.
+- **Protocol version handshake** (`NET_PROTOCOL_VERSION`, js/net.js): both
+  peers announce their wire version on connect; a mismatch shows a clear
+  "refresh your page" overlay instead of mystery desync (GitHub Pages
+  caching makes stale-vs-fresh builds a real failure mode).
+
+**Bandwidth — the guest simulates walking**: units merely following an
+already-sent path are no longer resent every sync (they were ~all of the
+delta traffic for a marching army). The guest replays the exact same
+stepping — `stepUnitAlongPath()` in js/pathfinding.js is now the ONE
+movement function shared by the host's authoritative tick and the guest's
+between-sync walker — and each unit re-anchors naturally once per tile
+(path consumption is a "core" change) plus a staggered ~2s keyframe as a
+catch-all. Related: `sortVal` (render.js's per-frame draw-order key) was
+riding the wire and defeating the entity diff entirely; the client-local
+field list is now a single constant (`GUEST_LOCAL_ENTITY_FIELDS`) consumed
+by both the payload strip and the merge guard so they can't diverge again.
+
+**Guest movement prediction**: plain walk orders start the guest's own
+units moving instantly (same map, same pathfinder, same formation spread,
+movement fields only) instead of waiting command-RTT + next sync
+(~150–250ms of "everyone hesitates" on a real link). Host-authoritative
+paths land 1–2 syncs later and replace the guesses; the merge's position
+blend (corrections < 1.5 tiles halved per sync) smooths the seam. Attack/
+build/gather commands are deliberately NOT predicted — the host computes
+approach points a local guess would visibly contradict.
+
+**Host crash recovery** — either side can now reopen a link to resume:
+- Hosting rewrites the host's own URL to `?host=<peerId>` (no reload).
+  Reopening it reclaims the same peer id (strict mode in `hostSession` —
+  retries while the signaling server releases the dead id, never silently
+  falls back to a random id the guest would retry against forever), the
+  guest's existing 3s reconnect loop finds it, and the host recovers the
+  world **from the guest's live mirror** (`request-state` →
+  `state-snapshot`, a save-grade `serializeGameForWire()` snapshot applied
+  through `applySavedGame`'s resume-in-place branch). A stateless guest
+  answers null → normal fresh-match start.
+- The mid-match disconnect overlay has a **Save Game** button on both
+  sides (guest saves are complete snapshots) as the belt-and-suspenders
+  path.
+
+**Match lifecycle & UX**: two-level menu (main actions + Options panel;
+classic.html got its own stone/gold AoE2 skin); all settings persisted to
+localStorage; auto game-over menu with Victory/Defeat banner; **Rematch**
+— the host's game-over button starts a fresh MP match over the live
+connection, the guest's menu dismisses itself when the rematch's first
+sync lands (with all id-keyed guest-local state cleared, since entity ids
+restart); Cancel button while waiting-to-host; Retry on failed guest
+joins; in-game **chat** (Enter or the 💬 button, textContent-only
+rendering); guest ambient music (started on first full sync + an
+autoplay-policy resume hook); background-tab host keeps simulating via a
+setInterval fallback; host signaling-peer auto-reconnect.
+
+**Fairness/security**: the host now enforces team ownership on relayed
+`delete-units` (a modified guest could previously delete the host's whole
+army); the host's own click markers are no longer synced to the guest
+(they revealed exactly where the host was clicking).
+
 - **Guest-side particle effects — same "derive it locally instead of
   needing the host to send anything new" idea as fog-of-war, applied to
   the whole particle system.** Particles were never networked at all
