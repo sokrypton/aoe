@@ -1323,6 +1323,29 @@ canvas {
 #menu-btn{
   right: 8px;
 }
+/* Multiplayer bandwidth readout (js/net.js shows it only with a connected
+   peer, on non-touch devices, when the window is wide enough that it
+   doesn't crowd the resource bar). Sits left of the fullscreen button,
+   same chrome as the menu/fs buttons. Display is toggled by JS — flex
+   when active. */
+#net-stats{
+  /* In-flow flex child of #topbar, sitting right after the resource chips
+     so it stays aligned with them at any width. */
+  display: none;
+  align-items: center;
+  margin-left: 10px;
+  height: 22px;
+  padding: 0 8px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #5a3f1d;
+  border-radius: 4px;
+  box-shadow: inset 0 0 4px #000;
+  color: #d9c98f;
+  font-family: monospace;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 
 /* ---- COMPACT TRAINING QUEUE STYLES ---- */
@@ -1877,4 +1900,47 @@ canvas {
 }
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
   #tutorial-box { width: 720px !important; }
+}
+
+/* Safe-area rules apply only on touch devices (phones/tablets are
+   where cutouts and rounded corners live). Desktop is excluded on
+   purpose — env() is 0 there anyway, and gating makes that explicit. */
+@media (pointer: coarse) {
+  /* ==== NOTCH / ROUNDED-CORNER SAFE AREAS ====
+     Fullscreen always covers the physical display — camera cutouts and
+     rounded corners included (viewport-fit=cover in the page meta). The game
+     CANVAS deliberately stays edge-to-edge; every fixed interactive control
+     instead shifts inward by the device's reported safe-area insets, so
+     nothing tappable hides under a notch or gets clipped by a rounded
+     corner. env() resolves to 0 on screens without cutouts, so all of this
+     is a no-op on normal displays. */
+  #menu-btn{
+    right: calc(8px + env(safe-area-inset-right, 0px));
+    top: calc(4.5px + env(safe-area-inset-top, 0px));
+  }
+  #fs-btn{
+    right: calc(42px + env(safe-area-inset-right, 0px));
+    top: calc(4.5px + env(safe-area-inset-top, 0px));
+  }
+  /* Resource chips: keep them clear of a landscape notch on either side */
+  #topbar{
+    padding-left: calc(12px + env(safe-area-inset-left, 0px));
+    padding-right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+  /* Button strip + corner minimap hug the right edge */
+  #pop-wrap{
+    right: calc(6px + env(safe-area-inset-right, 0px));
+  }
+  #minimap-wrap{
+    right: env(safe-area-inset-right, 0px);
+  }
+  /* Landscape left rail: the notch side in one of the two landscape
+     orientations — pad the rail so its buttons stay reachable, keeping the
+     background flush to the physical edge. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #bottom{
+      padding-left: env(safe-area-inset-left, 0px);
+      width: calc(96px + env(safe-area-inset-left, 0px));
+    }
+  }
 }

@@ -88,10 +88,43 @@ async function decompressMessage(data){
 }
 
 // Running totals of actual wire bytes (measured post-compression, not the
-// pre-compression JSON size). No longer displayed in-game — kept because
-// they're handy from the console when debugging sync traffic.
+// pre-compression JSON size). Displayed in the classic skin's #net-stats
+// readout below; also handy from the console when debugging sync traffic.
 let netBytesSent = 0;
 let netBytesReceived = 0;
+
+// ---- NET STATS (upper-right, next to the fullscreen button) ----
+// Upload/download rate + total transferred, refreshed once a second, in
+// BOTH skins — but only where there's chrome room for it: hidden on touch
+// devices and whenever the window is too narrow for the readout to coexist
+// with the resource bar and the fullscreen/menu buttons. Display-only —
+// the counters above accumulate regardless.
+(function(){
+  let lastSent = 0, lastRecv = 0, lastT = performance.now();
+  const fmtRate = bps => bps >= 100 * 1024
+    ? (bps / (1024 * 1024)).toFixed(2) + ' MB/s'
+    : (bps / 1024).toFixed(1) + ' KB/s';
+  setInterval(() => {
+    const el = document.getElementById('net-stats');
+    if (!el) return;
+    const roomFor = !(typeof isMobile !== 'undefined' && isMobile) && window.innerWidth >= 700;
+    const active = roomFor && netRole && netConnected;
+    el.style.display = active ? 'flex' : 'none';
+    if (!active) return;
+    const now = performance.now(), dt = (now - lastT) / 1000 || 1;
+    const up = (netBytesSent - lastSent) / dt;
+    const down = (netBytesReceived - lastRecv) / dt;
+    lastSent = netBytesSent; lastRecv = netBytesReceived; lastT = now;
+    const totalMB = ((netBytesSent + netBytesReceived) / (1024 * 1024)).toFixed(2);
+    el.textContent = '↑ ' + fmtRate(up) + '  ↓ ' + fmtRate(down) + '  Σ ' + totalMB + ' MB';
+  }, 1000);
+  // The 1s cadence would leave the box overlapping the resource bar for up
+  // to a second after a shrink — hide immediately on resize instead.
+  window.addEventListener('resize', () => {
+    const el = document.getElementById('net-stats');
+    if (el && window.innerWidth < 700) el.style.display = 'none';
+  });
+})();
 
 // How many bytes are sitting in the RTCDataChannel's outgoing buffer,
 // still waiting for the actual network to drain them. On a reliable-

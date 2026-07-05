@@ -22,6 +22,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div class="res"><div class="res-icon sprite-icon icon-gold"></div><div class="res-val" id="r-gold">100</div></div>
 <div class="res"><div class="res-icon sprite-icon icon-stone"></div><div class="res-val" id="r-stone">200</div></div>
 <div class="res pop-res"><div class="res-icon" aria-hidden="true">👥</div><div class="res-val" id="r-pop">4/10</div></div>
+<div id="net-stats" style="display:none;"></div>
 </div>
 </div>
 <div id="pop-wrap">
