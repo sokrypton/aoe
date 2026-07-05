@@ -122,6 +122,7 @@ function update(){
     }
   });
   separateUnits();
+  updateStuckWatchdog(); // js/logic.js — general safety net over every task/path state machine
   refreshPopulationCounts();
   // Team 1 is AI-controlled only in single-player. The moment "Host Game"
   // is clicked (netRole set), a human guest replaces the AI on team 1 —

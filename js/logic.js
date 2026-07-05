@@ -911,30 +911,17 @@ function updateUnit(e){
     })()){
       enterGarrison(e,b);
       return;
-    } else {
-      // Stall detection: a path can exist but never advance — two belled
-      // villagers converging on the same doorway each become a STATIONARY
-      // body in the other's collision grid and deadlock with path length 1,
-      // standing outside forever (the old branch only re-pathed on an EMPTY
-      // path). Track movement; ~12 ticks without budging counts as blocked
-      // and forces a fresh route around the crowd.
-      if(e.x!==e.garrStallX||e.y!==e.garrStallY){
-        e.garrStallX=e.x;e.garrStallY=e.y;e.garrStallSince=tick;
-      }
-      let stalled=e.path.length>0&&tick-(e.garrStallSince??tick)>=12;
-      if((e.path.length===0||stalled)&&tick-(e.lastRepathTick||0)>=10){
-        e.lastRepathTick=tick;
-        if(stalled)clearUnitPath(e);
-        let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
-        if(pt)pathUnitTo(e,pt.x,pt.y);
-        if(e.path.length===0){
-          // Entrance likely crowded with other garrisoning villagers — keep
-          // trying a few rounds before abandoning shelter.
-          e.garrisonRetries=(e.garrisonRetries||0)+1;
-          if(e.garrisonRetries>=6){e.garrisonRetries=0;e.task=null;e.garrisonTarget=null;}
-        } else {
-          e.garrisonRetries=0;
-        }
+    } else if(e.path.length===0&&tick-(e.lastRepathTick||0)>=10){
+      e.lastRepathTick=tick;
+      let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
+      if(pt)pathUnitTo(e,pt.x,pt.y);
+      if(e.path.length===0){
+        // Entrance likely crowded with other garrisoning villagers — keep
+        // trying a few rounds before abandoning shelter.
+        e.garrisonRetries=(e.garrisonRetries||0)+1;
+        if(e.garrisonRetries>=6){e.garrisonRetries=0;e.task=null;e.garrisonTarget=null;}
+      } else {
+        e.garrisonRetries=0;
       }
     }
     // Still heading for shelter: stop here. Falling through would let the
@@ -1734,6 +1721,59 @@ function handleDeath(e,killerTeam){
 function teamEliminated(team){
   return !entities.some(en=>en.team===team&&
     (en.type==='building'||(en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass')));
+}
+
+// ---- STUCK-UNIT WATCHDOG ----
+// General safety net over EVERY task/path state machine, host-only. Each
+// task loop is designed to either progress or clear itself (blocked steps
+// clear the path; repath branches give up after bounded retries) — the
+// watchdog exists for whatever escapes that design: a unit that stays
+// "busy" (path/task/target/buildTarget) while its ENTIRE observable state
+// is frozen for 8 game-seconds gets reset to idle. Idle is the honest
+// failure mode — visible via the "?" marker and idle button, military
+// re-acquires via auto-attack, villagers with a savedTask resume — and the
+// console.warn turns any silent freeze into a diagnosable report.
+//
+// Legitimate stationary-busy states never trip it because their signature
+// keeps changing (gathering increments `carrying`; fighting cycles the
+// path/target as combat repositions) or they're exempted (deliberate
+// drop-off waits, garrisoned units, wildlife).
+const STUCK_WATCHDOG_TICKS = 240;   // 8 game-seconds
+const STUCK_CHECK_EVERY = 30;       // sample once per game-second
+let _stuckWatch = new Map();        // id -> {sig, since}
+function updateStuckWatchdog(){
+  if (tick % STUCK_CHECK_EVERY !== 0) return;
+  let seen = new Set();
+  entities.forEach(e => {
+    if (e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn) return;
+    if (e.utype === 'sheep' || e.utype === 'sheep_carcass' || e.utype === 'bear') return;
+    let busy = e.path.length > 0 || e.task || e.target || e.buildTarget;
+    if (!busy) { _stuckWatch.delete(e.id); return; }
+    if (e.task === 'return' && e.dropWaitTick !== undefined) { _stuckWatch.delete(e.id); return; } // deliberate wait
+    seen.add(e.id);
+    // The TARGET's hp / build progress is part of the signature: a
+    // stationary attacker or builder is making progress exactly when its
+    // target's state is changing (including damage dealt by teammates —
+    // a second-rank melee unit waiting for a slot in a live fight is fine).
+    let tgt = e.target ? entitiesById.get(e.target) : null;
+    let bt = e.buildTarget ? entitiesById.get(e.buildTarget) : null;
+    let sig = [Math.round(e.x * 20), Math.round(e.y * 20), e.task, e.target, e.buildTarget,
+      e.carrying, e.path.length, e.gatherX, e.gatherY, e.garrisonTarget,
+      tgt ? tgt.hp : '', bt ? (bt.buildProgress || 0) + '_' + bt.hp : ''].join('|');
+    let w = _stuckWatch.get(e.id);
+    if (!w || w.sig !== sig) { _stuckWatch.set(e.id, { sig, since: tick }); return; }
+    if (tick - w.since >= STUCK_WATCHDOG_TICKS) {
+      console.warn('[stuck-watchdog] freeing unit', e.id, e.utype,
+        'task=' + e.task, 'target=' + e.target, 'path=' + e.path.length,
+        'at', e.x.toFixed(1) + ',' + e.y.toFixed(1));
+      clearUnitPath(e);
+      e.task = null; e.target = null; e.buildTarget = null; e.garrisonTarget = null;
+      clearGatherTarget(e);
+      _stuckWatch.delete(e.id);
+    }
+  });
+  // prune entries for dead/removed units
+  for (const id of _stuckWatch.keys()) if (!seen.has(id) && !entitiesById.has(id)) _stuckWatch.delete(id);
 }
 
 function findSpawnTile(x,y,maxRadius=4,taken=null){
