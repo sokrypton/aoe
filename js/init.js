@@ -992,6 +992,8 @@ function restartGame(difficulty){
   // attemptReconnect), which spans restartGame() calls rather than being
   // scoped to one "match" the way the above per-match state is.
   clearCommandQueue(); // js/commands.js — stale scheduled commands must never fire into a fresh match
+  teamVisibleNow = {0: new Set(), 1: new Set()}; // sim visibility resets with the world — see js/core.js
+  teamExploredSim = {0: new Set(), 1: new Set()};
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();

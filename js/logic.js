@@ -44,9 +44,11 @@ function canPlace(type,x,y,team=0){
     // as the host's own. Only in MP (netRole==='host'): in single-player
     // netRole is null, teamExploredEver[1] is never populated, and the AI
     // keeps its existing placement behavior.
-    if(team===0&&fog[ny][nx]===0)return false;
-    if(team===1&&netRole==='host'&&!window.fogDisabled
-       &&!teamExploredEver[1].has(ny*MAP+nx))return false;
+    // Deterministic explored-rule, symmetric per team (teamExploredSim is
+    // sim state computed identically on every peer — js/core.js). The
+    // single-player AI (netRole null, team 1) keeps its historic exemption.
+    if(!window.fogDisabled && !(netRole==null && team===1)
+       && !teamExploredSim[team].has(ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -1116,15 +1118,21 @@ function updateUnit(e){
       return;
     }
 
-    // Fog of War visibility check for combat targets
+    // Fog of War visibility check for combat targets. Uses the sim's own
+    // deterministic per-team visibility (teamVisibleNow, js/core.js) —
+    // NEVER the viewer-local `fog` grid, which differs between lockstep
+    // peers. Applies to team 0 always, and to team 1 when it's a human
+    // (MP); the single-player AI keeps its distance-heuristic branch below.
     if (t.team !== e.team && t.team !== GAIA_TEAM) {
-      if (e.team === 0) {
+      if (e.team === 0 || (e.team === 1 && netRole != null)) {
         let visible = false;
-        if (t.type === 'unit') {
+        if (window.fogDisabled) {
+          visible = true;
+        } else if (t.type === 'unit') {
           let tx = Math.round(t.x), ty = Math.round(t.y);
-          visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+          visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && teamVisibleNow[e.team].has(ty*MAP+tx);
         } else if (t.type === 'building') {
-          visible = buildingFogLevel(t) === 2;
+          visible = buildingVisibleToTeam(t, e.team);
         }
         if (!visible) {
           e.target = null;
@@ -1523,15 +1531,12 @@ function updateUnit(e){
         if(en.team===e.team)return false;
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
-        // Fog gate, symmetric per team: team 0 checks its real fog grid;
-        // in MP the host holds team 1 (the guest) to team1VisibleNow, the
-        // live-visibility set built each tick alongside teamExploredEver
-        // (js/core.js) — without it the guest's parked army auto-acquired
-        // enemies its owner had never scouted (X-ray vision). Single-player
-        // AI (netRole null) keeps its own aggro rules unchanged.
-        if(e.team===0&&fog[ey][ex]!==2)return false;
-        if(e.team===1&&netRole==='host'&&!window.fogDisabled
-           &&!team1VisibleNow.has(ey*MAP+ex))return false;
+        // Fog gate, symmetric per team via the sim's deterministic
+        // visibility (teamVisibleNow, js/core.js) — never the viewer-local
+        // fog grid, which differs between lockstep peers. Single-player
+        // AI (netRole null, team 1) keeps its own aggro rules unchanged.
+        if(!window.fogDisabled && (e.team===0 || (e.team===1 && netRole!=null))
+           && !teamVisibleNow[e.team].has(ey*MAP+ex))return false;
         return true;
       });
       if(closest) {

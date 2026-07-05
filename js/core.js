@@ -452,8 +452,12 @@ function updateFog() {
 
   // 2. Set visible tiles around MY OWN units/buildings. Each client only
   // computes/uses its own team's fog locally — fog is never sent over the
-  // network, so host (team 0) and guest (team 1) never conflict.
-  forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
+  // network, so host (team 0) and guest (team 1) never conflict. Reuses
+  // the sim's per-team visibility (updateTeamVision, called just before
+  // this in update()) when fresh, avoiding a second full vision walk.
+  let vis = teamVisibleNow[myTeam];
+  if (vis && vis.size) vis.forEach(k => { fog[(k / MAP) | 0][k % MAP] = 2; });
+  else forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
 
 // Persistent record of every tile the OTHER team has ever seen, computed
@@ -483,6 +487,41 @@ function updateTeamExploredEver(team){
     teamExploredEver[team].add(ty * MAP + tx);
     if (team === 1) team1VisibleNow.add(ty * MAP + tx);
   });
+}
+
+// ---- Deterministic per-team visibility (SIM state) ----
+// The sim must never read `fog` (viewer-local — each client computes it for
+// its OWN team, so two lockstep peers reading it would diverge). Sim
+// decisions (auto-acquire fog gates, placement explored-rules, combat
+// target visibility) read these instead: recomputed every tick inside
+// update() from entities alone, so every peer agrees exactly.
+// teamVisibleNow: tiles visible to each team THIS tick.
+// teamExploredSim: every tile each team has EVER seen (deterministic
+// accumulation — same commands => same history on every peer).
+let teamVisibleNow = {0: new Set(), 1: new Set()};
+let teamExploredSim = {0: new Set(), 1: new Set()};
+function updateTeamVision(){
+  for (let team = 0; team <= 1; team++) {
+    let vis = new Set();
+    let explored = teamExploredSim[team];
+    forEachVisibleTile(team, (tx, ty) => {
+      let k = ty * MAP + tx;
+      vis.add(k);
+      explored.add(k);
+    });
+    teamVisibleNow[team] = vis;
+  }
+}
+// Building visibility for sim decisions: any footprint tile visible to `team`.
+function buildingVisibleToTeam(b, team){
+  if (window.fogDisabled) return true;
+  let bw = b.w || (BLDGS[b.btype] && BLDGS[b.btype].w) || 1;
+  let bh = b.h || (BLDGS[b.btype] && BLDGS[b.btype].h) || 1;
+  let vis = teamVisibleNow[team];
+  for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) {
+    if (vis.has((b.y + dy) * MAP + (b.x + dx))) return true;
+  }
+  return false;
 }
 
 // Host-only memory of the guest's last-reported camera position (sent via

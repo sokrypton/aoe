@@ -62,7 +62,8 @@ function update(){
   });
   projectiles = remainingProjectiles;
 
-  updateFog(); // Update Fog of War visibility grid
+  updateTeamVision(); // deterministic per-team visibility for SIM reads (js/core.js)
+  updateFog(); // Update Fog of War visibility grid (viewer-local, render/UI only)
   updateTeamExploredEver(1); // js/core.js — host-only: remembers team 1's (the guest's) explored history
 
   // Remember enemy buildings the moment any of their tiles is actively
