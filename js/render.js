@@ -1,4 +1,16 @@
+// Frame-scratch structures, reused every frame instead of reallocated:
+// the drawable list, the visible-tree list, per-tile tree records and the
+// two per-gate draw proxies (see their use sites in render()).
+const _treesScratch = [];
+const _drawableScratch = [];
+const _treePool = new Map();      // tile key (y*MAP+x) -> tree record
+const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
+let _poolMapSize = -1;
+
 function render(){
+  // Tree-pool keys encode MAP — a different map size would silently alias
+  // old records onto wrong tiles, so reset the pools on any size change.
+  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _poolMapSize = MAP; }
   // Black background so unexplored fog (drawTile() skips drawing when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
@@ -35,15 +47,21 @@ function render(){
   // Filter out expired corpses using wall-clock time so they still fade after game over
   corpses = corpses.filter(c => performance.now() - c.deathTime < CORPSE_LIFE);
   
-  // Find visible trees with wood resource remaining to depth-sort them dynamically
-  let trees = [];
+  // Find visible trees with wood resource remaining to depth-sort them
+  // dynamically. The per-tile tree records are pooled (keyed by tile) and
+  // both work arrays are reused across frames — building fresh objects/
+  // arrays for every visible tree every frame was steady GC churn.
+  let trees = _treesScratch; trees.length = 0;
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
     if(map[y][x].t===TERRAIN.FOREST && map[y][x].res>0){
-      trees.push({type:'tree', x:x, y:y});
+      let key = y*MAP + x;
+      let rec = _treePool.get(key);
+      if(!rec){ rec = {type:'tree', x:x, y:y, sortVal:0}; _treePool.set(key, rec); }
+      trees.push(rec);
     }
   }
 
-  let allDrawable = [];
+  let allDrawable = _drawableScratch; allDrawable.length = 0;
   entities.forEach(en => {
     // Only draw visible entities (either player's team or visible in fog)
     let f;
@@ -65,20 +83,21 @@ function render(){
 
     if (en.type === 'building' && en.btype === 'GATE') {
       let wallLineNS = en.h > en.w;
-      allDrawable.push({
-        type: 'gate_back',
-        entity: en,
-        x: en.x,
-        y: en.y,
-        sortVal: en.y + en.x + 0.1
-      });
-      allDrawable.push({
-        type: 'gate_front',
-        entity: en,
-        x: wallLineNS ? en.x : en.x + 1,
-        y: wallLineNS ? en.y + 1 : en.y,
-        sortVal: (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1)
-      });
+      // Pooled per gate id — same two proxy objects reused every frame.
+      let prox = _gateProxyPool.get(en.id);
+      if(!prox){
+        prox = { back: {type:'gate_back', entity:en, x:0, y:0, sortVal:0},
+                 front:{type:'gate_front', entity:en, x:0, y:0, sortVal:0} };
+        _gateProxyPool.set(en.id, prox);
+      }
+      prox.back.entity = en; prox.front.entity = en;
+      prox.back.x = en.x; prox.back.y = en.y;
+      prox.back.sortVal = en.y + en.x + 0.1;
+      prox.front.x = wallLineNS ? en.x : en.x + 1;
+      prox.front.y = wallLineNS ? en.y + 1 : en.y;
+      prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1);
+      allDrawable.push(prox.back);
+      allDrawable.push(prox.front);
     } else {
       let sortVal;
       if (en.type === 'building') {

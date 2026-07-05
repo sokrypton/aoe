@@ -203,7 +203,21 @@ function drawWavingFlag(sx,sy,bh,color,colorDark){
 // gable end above the front-right wall. Overhangs are pure translations
 // along the ridge / down-slope directions so all edges stay iso-parallel.
 // Returns key anchor points so callers can place props.
-function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken){
+// One open-sided tent-annex roof for the TC courtyard: two identical
+// quad faces meeting at an apex line (left face toward ax-48, right toward
+// ax+48). The TC draws this twice, at the left and right quadrant.
+function drawTCAnnexRoof(ax, ay, colL, colR){
+  const h = 16, roofH = 12;
+  X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
+  X.fillStyle=colL;X.beginPath();
+  X.moveTo(ax,ay-h-roofH); X.lineTo(ax,ay+24*2-h-roofH);
+  X.lineTo(ax,ay+24*2-h); X.lineTo(ax-48,ay+24-h); X.closePath(); X.fill(); X.stroke();
+  X.fillStyle=colR;X.beginPath();
+  X.moveTo(ax,ay-h-roofH); X.lineTo(ax,ay+24*2-h-roofH);
+  X.lineTo(ax,ay+24*2-h); X.lineTo(ax+48,ay+24-h); X.closePath(); X.fill(); X.stroke();
+}
+
+function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken, afterWalls){
   let wl=darken?darkenColor(wallL):wallL;
   let wr=darken?darkenColor(wallR):wallR;
   let rl=darken?darkenColor(roofC):roofC;
@@ -217,6 +231,10 @@ function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC
   // Corner post
   X.strokeStyle=beam;X.lineWidth=1.6;
   X.beginPath();X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.stroke();
+  // Caller-specific wall detailing (e.g. the house's half-timber studs),
+  // painted between the walls and the roof so the eave overhang still
+  // covers the stud tops exactly as before the refactor.
+  if(afterWalls) afterWalls();
   // Gable-end triangle above the front-right wall, with a center stud
   let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
   let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};
@@ -243,7 +261,7 @@ function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC
     X.lineTo(M1e.x+(EB.x-M1e.x)*t, M1e.y+(EB.y-M1e.y)*t);
     X.stroke();
   }
-  return {M1,M2,Rp,Bp,Lp};
+  return {M1,M2,Rp,Bp,Lp,M1e,M2e,EL,EB};
 }
 
 // Small team pennant on a short pole (for houses/small buildings)
@@ -582,30 +600,13 @@ function drawBuilding(e, part = null){
       X.lineCap = 'butt';
     });
 
-    // 3. Left Annex Roof (open-sided shelter roof covering left quadrant, in team color)
-    let laX = sx - 48, laY = sy + 24;
-    let laH = 16, laRoofH = 12;
-    let laL = tc, laR = tcD;
-    if (darken) { laL = darkenColor(laL); laR = darkenColor(laR); }
-    X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
-    X.fillStyle=laL;X.beginPath();
-    X.moveTo(laX,laY-laH-laRoofH); X.lineTo(laX,laY+24*2-laH-laRoofH);
-    X.lineTo(laX,laY+24*2-laH); X.lineTo(laX-48,laY+24-laH); X.closePath(); X.fill(); X.stroke();
-    X.fillStyle=laR;X.beginPath();
-    X.moveTo(laX,laY-laH-laRoofH); X.lineTo(laX,laY+24*2-laH-laRoofH);
-    X.lineTo(laX,laY+24*2-laH); X.lineTo(laX+48,laY+24-laH); X.closePath(); X.fill(); X.stroke();
-
-    // 4. Right Annex Roof (open-sided shelter roof covering right quadrant, in team color)
-    let raX = sx + 48, raY = sy + 24;
-    let raH = 16, raRoofH = 12;
-    let raL = tc, raR = tcD;
-    if (darken) { raL = darkenColor(raL); raR = darkenColor(raR); }
-    X.fillStyle=raL;X.beginPath();
-    X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
-    X.lineTo(raX,raY+24*2-raH); X.lineTo(raX-48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
-    X.fillStyle=raR;X.beginPath();
-    X.moveTo(raX,raY-raH-raRoofH); X.lineTo(raX,raY+24*2-raH-raRoofH);
-    X.lineTo(raX,raY+24*2-raH); X.lineTo(raX+48,raY+24-raH); X.closePath(); X.fill(); X.stroke();
+    // 3+4. Annex roofs (open-sided shelter roofs over the left and right
+    // courtyard quadrants, in team color) — the two are the identical shape
+    // mirored about the keep, so one helper drawn at ±48.
+    let annexL = darken ? darkenColor(tc) : tc;
+    let annexR = darken ? darkenColor(tcD) : tcD;
+    drawTCAnnexRoof(sx - 48, sy + 24, annexL, annexR);
+    drawTCAnnexRoof(sx + 48, sy + 24, annexL, annexR);
 
     // Team banner flying from the keep top
     // 68 plants the pole base exactly on the top merlon's cap (sy-70)
@@ -615,62 +616,26 @@ function drawBuilding(e, part = null){
     // Timber-framed cottage under a big yellow hay gable roof.
     // Base spans the full tile diamond (W/hh = HALF_TW/HALF_TH), so all
     // four wall corners land exactly on the tile's edges.
+    // Shared gable geometry (walls, gable end, team-colored roof slope,
+    // course lines) via drawGableBlock — the branch used to inline a
+    // line-for-line copy. House-only detailing: half-timber studs and
+    // mid-rails (painted via the afterWalls hook, i.e. between the walls
+    // and the roof, exactly where the old inline order put them), then a
+    // pennant and the chimney below.
     let W=32, hh=16, wallH=16, roofH=20;
     bh=32;
     let sy0=sy+bhh-hh; // center on tile
-    let wl=darken?darkenColor('#ebd2b0'):'#ebd2b0';
-    let wr=darken?darkenColor('#d2b48c'):'#d2b48c';
     let beam=darken?darkenColor('#7a5a38'):'#7a5a38';
-    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
-    // Plaster walls
-    X.fillStyle=wl;X.beginPath();
-    X.moveTo(sx-W,sy0+hh-wallH);X.lineTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.lineTo(sx-W,sy0+hh);X.closePath();X.fill();X.stroke();
-    X.fillStyle=wr;X.beginPath();
-    X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx+W,sy0+hh-wallH);X.lineTo(sx+W,sy0+hh);X.lineTo(sx,sy0+hh*2);X.closePath();X.fill();X.stroke();
-    // Half-timber framing: front corner post, studs, and a mid-rail per face
-    X.strokeStyle=beam;X.lineWidth=1.6;
-    X.beginPath();X.moveTo(sx,sy0+hh*2-wallH);X.lineTo(sx,sy0+hh*2);X.stroke();
-    [0.35,0.7].forEach(t=>{
-      X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
-      X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
-    });
-    X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
-    
-    // Gable hay roof: the ridge runs from back-left to front-right, so we
-    // see one big hay slope (facing lower-left) and a triangular plaster
-    // gable end above the front-right wall.
-    // Team-colored roof
-    let rl=darken?darkenColor(tc):tc;
-    let ridgeC=darken?darkenColor(tcD):tcD;
-    // Wall-top rim corners and the two gable peaks over the wall midlines
-    let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
-    let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};   // front gable peak
-    let M2={x:sx-W*0.5,y:sy0+hh*0.5-wallH-roofH};   // back gable peak
-    // Gable-end triangle above the front-right wall, with a center stud
-    X.fillStyle=wr;X.strokeStyle='#000';X.lineWidth=1.3;
-    X.beginPath();X.moveTo(Bp.x,Bp.y);X.lineTo(Rp.x,Rp.y);X.lineTo(M1.x,M1.y);X.closePath();X.fill();X.stroke();
-    X.strokeStyle=beam;X.lineWidth=1.6;
-    X.beginPath();X.moveTo((Bp.x+Rp.x)/2,(Bp.y+Rp.y)/2);X.lineTo(M1.x,M1.y);X.stroke();
-    // Hay slope with overhang. Overhangs are pure translations along the
-    // ridge direction (vR back / vF front) and down-slope direction (vS),
-    // so every roof edge stays parallel to its wall — iso-correct.
-    let vR={x:(M2.x-M1.x)*0.10, y:(M2.y-M1.y)*0.10}; // back ridge extension
-    let vF={x:(M1.x-M2.x)*0.02, y:(M1.y-M2.y)*0.02}; // front ridge extension
-    let vS={x:(Lp.x-M2.x)*0.10, y:(Lp.y-M2.y)*0.10}; // down-slope eave extension
-    let M2e={x:M2.x+vR.x, y:M2.y+vR.y};
-    let M1e={x:M1.x+vF.x, y:M1.y+vF.y};
-    let EL={x:Lp.x+vR.x+vS.x, y:Lp.y+vR.y+vS.y};
-    let EB={x:Bp.x+vF.x+vS.x, y:Bp.y+vF.y+vS.y};
-    X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
-    X.beginPath();X.moveTo(M2e.x,M2e.y);X.lineTo(M1e.x,M1e.y);X.lineTo(EB.x,EB.y);X.lineTo(EL.x,EL.y);X.closePath();X.fill();X.stroke();
-    // Thatch strand lines parallel to the ridge
-    X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
-    [0.35,0.7].forEach(t=>{
-      X.beginPath();
-      X.moveTo(M2e.x+(EL.x-M2e.x)*t, M2e.y+(EL.y-M2e.y)*t);
-      X.lineTo(M1e.x+(EB.x-M1e.x)*t, M1e.y+(EB.y-M1e.y)*t);
-      X.stroke();
-    });
+    let {M1,M2,M1e,M2e,EL,EB} = drawGableBlock(sx, sy0, W, hh, wallH, roofH,
+      '#ebd2b0', '#d2b48c', tc, '#7a5a38', darken, ()=>{
+        // Half-timber framing: studs and a mid-rail per face
+        X.strokeStyle=beam;X.lineWidth=1.6;
+        [0.35,0.7].forEach(t=>{
+          X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
+          X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
+        });
+        X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
+      });
     // Team pennant at the front gable peak
     drawPennant(M1.x,M1.y,tc,darken);
     // Big 3D brick chimney poking through the roof slope: an iso block

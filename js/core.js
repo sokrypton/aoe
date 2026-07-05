@@ -366,6 +366,9 @@ function forEachVisibleTile(team, cb){
 
 function updateFog() {
   if (!gameStarted) return;
+  // Fog is about to change — drop the per-building fog-level memo
+  // (buildingFogLevel, js/render-terrain.js) so the next frame recomputes.
+  if (typeof invalidateBuildingFogMemo === 'function') invalidateBuildingFogMemo();
   if (window.fogDisabled) {
     // Map revealed: every tile reads as actively-visible (2) so render/build
     // logic (which already branches on fog level) just sees a lit map.
@@ -560,10 +563,14 @@ function isUnitOnScreen(en) {
   return sx >= -50 * ZOOM && sx <= W + 50 * ZOOM && sy >= -50 * ZOOM && sy <= H + 50 * ZOOM;
 }
 
+// Returns a SHARED scratch object (every call site destructures the two
+// numbers immediately — never hold a reference to the returned object).
+// Called several times per unit per frame; allocating a fresh {ox,oy} each
+// time was measurable GC churn on mobile.
+const _unitGroupOffset = { ox: 0, oy: 0 };
 function getUnitGroupOffset(entityId) {
   let idOff = entityId % 7;
-  return {
-    ox: (idOff % 3 - 1) * 6,
-    oy: (Math.floor(idOff / 3) - 1) * 4
-  };
+  _unitGroupOffset.ox = (idOff % 3 - 1) * 6;
+  _unitGroupOffset.oy = (Math.floor(idOff / 3) - 1) * 4;
+  return _unitGroupOffset;
 }

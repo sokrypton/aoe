@@ -245,6 +245,19 @@ function drawCorpse(c){
   return;
 }
 
+// The canvas is already mirrored via X.scale(e.facing,…) when a unit faces
+// left, so left-pointing directions map onto their right-pointing twins and
+// only right-facing poses ever need authoring. Was copy-pasted at every
+// posed-sprite branch (bear, horse legs, scout).
+function mirroredDir(e){
+  if (e.facing === -1) {
+    if (e.dir === 2) return 0;      // SW -> SE
+    if (e.dir === 3) return 7;      // W -> E
+    if (e.dir === 4) return 6;      // NW -> NE
+  }
+  return e.dir;
+}
+
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   let iso=toIso(e.x,e.y);
@@ -491,12 +504,7 @@ function drawUnit(e){
     // right-pointing twins and we only author 4 poses:
     //   'front' (S: face to camera), 'back' (N: rump to camera),
     //   'side'  (E/SE profile),      'backside' (NE: profile from behind)
-    let useDir = e.dir;
-    if (e.facing === -1) {
-      if (e.dir === 2) useDir = 0;      // SW -> SE
-      else if (e.dir === 3) useDir = 7; // W -> E
-      else if (e.dir === 4) useDir = 6; // NW -> NE
-    }
+    let useDir = mirroredDir(e);
     let pose = e.dir === 1 ? 'front' : e.dir === 5 ? 'back' :
                (useDir === 6) ? 'backside' : 'side';
     // Profile head sits a touch lower when heading SE (downhill toward camera)
@@ -598,13 +606,8 @@ function drawUnit(e){
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
       X.beginPath();
       
-      let useDir = e.dir;
-      if (e.facing === -1) {
-        if (e.dir === 2) useDir = 0;      // SW -> SE
-        else if (e.dir === 3) useDir = 7; // W -> E
-        else if (e.dir === 4) useDir = 6; // NW -> NE
-      }
-      
+      let useDir = mirroredDir(e);
+
       if (useDir === 1 || useDir === 5) {
         // South / North: Centered legs
         // Front pair
@@ -659,12 +662,7 @@ function drawUnit(e){
     // (curved crest, jaw, squared muzzle) — the key to reading "horse" at
     // icon size. Idle horses nod gently, swish their tail and flick an ear.
     if(e.utype==='scout'){
-      let useDir = e.dir;
-      if (e.facing === -1) {
-        if (e.dir === 2) useDir = 0;      // SW -> SE
-        else if (e.dir === 3) useDir = 7; // W -> E
-        else if (e.dir === 4) useDir = 6; // NW -> NE
-      }
+      let useDir = mirroredDir(e);
       const coat='#8b5a2b', maneC='#3f2810';
       let idle = e.path.length===0 && !e.corpseRot;
       let nod = idle ? Math.sin(tick*0.05+e.id)*0.8 : 0;
@@ -1430,12 +1428,7 @@ function drawUnit(e){
       sheepHead(headX, headY, 'back');
     } else {
       // Side and diagonal directions
-      let useDir = e.dir;
-      if (e.facing === -1) {
-        if (e.dir === 2) useDir = 0;      // SW -> SE
-        else if (e.dir === 3) useDir = 7; // W -> E
-        else if (e.dir === 4) useDir = 6; // NW -> NE
-      }
+      let useDir = mirroredDir(e);
       if (useDir === 7)      { headX = 6.5; headY = -3.5; sheepHead(headX, headY, 'side'); }
       else if (useDir === 0) { headX = 5.5; headY = -1.5; sheepHead(headX, headY, 'side'); }
       else                   { headX = 3.5; headY = -7.5; sheepHead(headX, headY, 'back'); }

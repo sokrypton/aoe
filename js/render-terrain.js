@@ -17,17 +17,26 @@ function isOffscreen(sx, sy, margin){
 //   0 = all tiles unexplored (skip drawing)
 //   1 = some explored but none currently visible (draw with shadow)
 //   2 = at least one tile actively visible (draw normally)
+// Memoized per building until the fog actually changes (updateFog in
+// js/core.js calls invalidateBuildingFogMemo) — the w×h tile scan used to
+// re-run 2-3× per building per FRAME (render collect + draw loops, outline
+// extent, minimap), pure waste since fog only mutates once per tick.
+let _bflMemo = new Map();
+function invalidateBuildingFogMemo(){ _bflMemo.clear(); }
 function buildingFogLevel(e) {
+  let memo = _bflMemo.get(e.id);
+  if (memo !== undefined) return memo;
   let b = BLDGS[e.btype];
   let w = e.w !== undefined ? e.w : (b ? b.w : 1);
   let h = e.h !== undefined ? e.h : (b ? b.h : 1);
   let maxF = 0;
-  for (let dy = 0; dy < h; dy++)
+  outer: for (let dy = 0; dy < h; dy++)
     for (let dx = 0; dx < w; dx++) {
       let tf = (fog[e.y+dy] && fog[e.y+dy][e.x+dx]) || 0;
       if (tf > maxF) maxF = tf;
-      if (maxF === 2) return 2;
+      if (maxF === 2) break outer;
     }
+  _bflMemo.set(e.id, maxF);
   return maxF;
 }
 
