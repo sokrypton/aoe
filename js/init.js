@@ -1003,8 +1003,7 @@ function restartGame(difficulty){
   // that didn't — e.g. a ?join= guest, which skips the load-time init().
   nextId = 1;
   nextProjectileId = 1;
-  teamVisibleNow = {0: new Set(), 1: new Set()}; // sim visibility resets with the world — see js/core.js
-  teamExploredSim = {0: new Set(), 1: new Set()};
+  resetTeamVision(); // sim visibility grids reset with the world — see js/core.js
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();

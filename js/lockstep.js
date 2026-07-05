@@ -119,6 +119,11 @@ function lockstepCanSim(t){
 // After simming: tell the peer how far we are, with a periodic checksum.
 function lockstepReport(){
   if (tick === lastReportedSimTick) return;
+  // Report every 2nd tick (plus every checksum tick): each report is a
+  // compress+send, 60/s of which is real CPU on a mobile guest. The gating
+  // window (INPUT_DELAY_TICKS=4) comfortably absorbs watermarks that are
+  // one tick coarse.
+  if (tick % 2 !== 0 && tick % LOCKSTEP_CKSUM_EVERY !== 0 && tick - lastReportedSimTick < 2) return;
   lastReportedSimTick = tick;
   let msg = { type: 'tick', t: tick };
   if (tick % LOCKSTEP_CKSUM_EVERY === 0 && DET.history.length) {

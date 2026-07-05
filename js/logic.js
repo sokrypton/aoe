@@ -44,11 +44,11 @@ function canPlace(type,x,y,team=0){
     // as the host's own. Only in MP (netRole==='host'): in single-player
     // netRole is null, teamExploredEver[1] is never populated, and the AI
     // keeps its existing placement behavior.
-    // Deterministic explored-rule, symmetric per team (teamExploredSim is
+    // Deterministic explored-rule, symmetric per team (teamExploredGrid is
     // sim state computed identically on every peer — js/core.js). The
     // single-player AI (netRole null, team 1) keeps its historic exemption.
     if(!window.fogDisabled && !(netRole==null && team===1)
-       && !teamExploredSim[team].has(ny*MAP+nx))return false;
+       && !teamHasExplored(team, ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -1119,7 +1119,7 @@ function updateUnit(e){
     }
 
     // Fog of War visibility check for combat targets. Uses the sim's own
-    // deterministic per-team visibility (teamVisibleNow, js/core.js) —
+    // deterministic per-team visibility (teamCanSeeTile, js/core.js) —
     // NEVER the viewer-local `fog` grid, which differs between lockstep
     // peers. Applies to team 0 always, and to team 1 when it's a human
     // (MP); the single-player AI keeps its distance-heuristic branch below.
@@ -1130,7 +1130,7 @@ function updateUnit(e){
           visible = true;
         } else if (t.type === 'unit') {
           let tx = Math.round(t.x), ty = Math.round(t.y);
-          visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && teamVisibleNow[e.team].has(ty*MAP+tx);
+          visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && teamCanSeeTile(e.team, ty*MAP+tx);
         } else if (t.type === 'building') {
           visible = buildingVisibleToTeam(t, e.team);
         }
@@ -1532,11 +1532,11 @@ function updateUnit(e){
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
-        // visibility (teamVisibleNow, js/core.js) — never the viewer-local
+        // visibility (teamCanSeeTile, js/core.js) — never the viewer-local
         // fog grid, which differs between lockstep peers. Single-player
         // AI (netRole null, team 1) keeps its own aggro rules unchanged.
         if(!window.fogDisabled && (e.team===0 || (e.team===1 && netRole!=null))
-           && !teamVisibleNow[e.team].has(ey*MAP+ex))return false;
+           && !teamCanSeeTile(e.team, ey*MAP+ex))return false;
         return true;
       });
       if(closest) {

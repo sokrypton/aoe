@@ -274,6 +274,8 @@ let guestNeedsFullSync=true;
 // (which never mutates the authoritative map) — only the host's own writes
 // need tracking for the next broadcast.
 function markMapDirty(x,y){
+  // Same leak guard as markPendingSync: only snapshot sync drains this list.
+  if (typeof lockstepEnabled === 'function' && lockstepEnabled()) return;
   if(netRole==='host') dirtyMapCells.push({x,y});
 }
 
@@ -342,7 +344,13 @@ const SYNC_BUFFERS = {
   // the guest's screen, telling the opponent exactly where the host was
   // commanding.
 };
-function markPendingSync(kind, item){ SYNC_BUFFERS[kind].pending.push(item); }
+function markPendingSync(kind, item){
+  // Only the snapshot-sync path ever drains these (buildSyncPayload) — under
+  // lockstep nothing does, so pushing would leak an entry per arrow/corpse
+  // for the whole match.
+  if (typeof lockstepEnabled === 'function' && lockstepEnabled()) return;
+  SYNC_BUFFERS[kind].pending.push(item);
+}
 
 // Host-only: id -> JSON of the last entity snapshot sent to the guest.
 // Unlike SYNC_BUFFERS, entities aren't create-once (they change constantly)
@@ -443,21 +451,28 @@ function updateFog() {
     for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) fog[y][x] = 2;
     return;
   }
-  // 1. Reset active vision (2) to explored (1)
+  // Single combined pass when the sim's per-team visibility is fresh
+  // (updateTeamVision runs just before this in update()): downgrade stale
+  // active vision and set the new visible tiles in one sweep. A legacy
+  // (non-lockstep) guest never runs update(), so its grids are stale —
+  // fall back to the downgrade loop + its own vision walk.
+  if (visionFreshTick === tick && teamVisGrid) {
+    const vg = teamVisGrid[myTeam];
+    for (let y = 0; y < MAP; y++) {
+      const row = fog[y], base = y * MAP;
+      for (let x = 0; x < MAP; x++) {
+        if (vg[base + x] === visGen) row[x] = 2;
+        else if (row[x] === 2) row[x] = 1;
+      }
+    }
+    return;
+  }
   for (let y = 0; y < MAP; y++) {
     for (let x = 0; x < MAP; x++) {
       if (fog[y][x] === 2) fog[y][x] = 1;
     }
   }
-
-  // 2. Set visible tiles around MY OWN units/buildings. Each client only
-  // computes/uses its own team's fog locally — fog is never sent over the
-  // network, so host (team 0) and guest (team 1) never conflict. Reuses
-  // the sim's per-team visibility (updateTeamVision, called just before
-  // this in update()) when fresh, avoiding a second full vision walk.
-  let vis = teamVisibleNow[myTeam];
-  if (vis && vis.size) vis.forEach(k => { fog[(k / MAP) | 0][k % MAP] = 2; });
-  else forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
+  forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
 
 // Persistent record of every tile the OTHER team has ever seen, computed
@@ -495,31 +510,48 @@ function updateTeamExploredEver(team){
 // decisions (auto-acquire fog gates, placement explored-rules, combat
 // target visibility) read these instead: recomputed every tick inside
 // update() from entities alone, so every peer agrees exactly.
-// teamVisibleNow: tiles visible to each team THIS tick.
-// teamExploredSim: every tile each team has EVER seen (deterministic
-// accumulation — same commands => same history on every peer).
-let teamVisibleNow = {0: new Set(), 1: new Set()};
-let teamExploredSim = {0: new Set(), 1: new Set()};
+// Typed-array grids, not Sets: this runs for BOTH teams every tick and the
+// guest now runs the full sim on mobile — Set churn (two fresh Sets/tick +
+// ~80 adds per entity) was a measurable per-tick cost. visGen stamps make
+// "clearing" the visible grid a single counter increment.
+// teamVisGrid[team][k] === visGen  ->  tile k visible to team THIS tick.
+// teamExploredGrid[team][k] === 1  ->  team has EVER seen tile k
+// (deterministic accumulation — same commands => same history on every peer).
+let visGen = 0;
+let visionFreshTick = -1; // which sim tick the grids were computed for
+let teamVisGrid = null, teamExploredGrid = null;
+function resetTeamVision(){
+  teamVisGrid = [new Uint32Array(MAP * MAP), new Uint32Array(MAP * MAP)];
+  teamExploredGrid = [new Uint8Array(MAP * MAP), new Uint8Array(MAP * MAP)];
+  visGen = 0;
+  visionFreshTick = -1;
+}
 function updateTeamVision(){
+  if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
+  visGen++;
+  visionFreshTick = tick;
   for (let team = 0; team <= 1; team++) {
-    let vis = new Set();
-    let explored = teamExploredSim[team];
+    const vg = teamVisGrid[team], eg = teamExploredGrid[team];
     forEachVisibleTile(team, (tx, ty) => {
-      let k = ty * MAP + tx;
-      vis.add(k);
-      explored.add(k);
+      const k = ty * MAP + tx;
+      vg[k] = visGen;
+      eg[k] = 1;
     });
-    teamVisibleNow[team] = vis;
   }
+}
+function teamCanSeeTile(team, k){
+  return teamVisGrid != null && teamVisGrid[team][k] === visGen;
+}
+function teamHasExplored(team, k){
+  return teamExploredGrid != null && teamExploredGrid[team][k] === 1;
 }
 // Building visibility for sim decisions: any footprint tile visible to `team`.
 function buildingVisibleToTeam(b, team){
   if (window.fogDisabled) return true;
   let bw = b.w || (BLDGS[b.btype] && BLDGS[b.btype].w) || 1;
   let bh = b.h || (BLDGS[b.btype] && BLDGS[b.btype].h) || 1;
-  let vis = teamVisibleNow[team];
   for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) {
-    if (vis.has((b.y + dy) * MAP + (b.x + dx))) return true;
+    if (teamCanSeeTile(team, (b.y + dy) * MAP + (b.x + dx))) return true;
   }
   return false;
 }
