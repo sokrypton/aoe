@@ -3,6 +3,9 @@ function update(){
   if(gameOver||!gameStarted)return;
   detEnterSim(); // no-op unless DET.strict — traps un-migrated Math.random in sim code
   tick++;
+  // Execute every command stamped for this tick, in canonical (team, seq)
+  // order — the ONLY entry point for player mutations (js/commands.js).
+  runScheduledCommands();
 
   // Update gate open/close states (smoke/fire moved to updateCosmetics —
   // purely visual, so it runs at frame cadence outside the deterministic

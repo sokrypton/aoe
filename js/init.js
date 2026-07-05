@@ -991,6 +991,7 @@ function restartGame(difficulty){
   // consumed/read across the actual connection lifecycle (onHostClicked,
   // attemptReconnect), which spans restartGame() calls rather than being
   // scoped to one "match" the way the above per-match state is.
+  clearCommandQueue(); // js/commands.js — stale scheduled commands must never fire into a fresh match
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();

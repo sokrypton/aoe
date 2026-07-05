@@ -70,14 +70,7 @@ function collectUnfinishedWallChain(start){
 // guest action — see js/net-cmd.js.
 function requestDeleteOwned(ownIds){
   if (!ownIds || !ownIds.length) return;
-  if (netRole === 'guest') {
-    sendCommand({ kind: 'delete-units', unitIds: ownIds });
-  } else {
-    ownIds.forEach(id => {
-      let en = entitiesById.get(id);
-      if (en && en.team === myTeam) deleteOwnedEntity(en);
-    });
-  }
+  submitCommand({ kind: 'delete-units', unitIds: ownIds });
 }
 
 document.addEventListener('keydown',e=>{
@@ -283,53 +276,14 @@ function finalizeWallDrag(){
   window.wallPrimaryAxis = null;
 
   let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
-  if (netRole === 'guest') {
-    sendCommand({ kind: 'wall-drag', start, end, corner, unitIds: vils.map(s=>s.id) });
-    if(!keys['Shift']) placing=null;
-    return;
-  }
-  let line = getWallElbowTiles(start, corner, end);
   if(vils.length===0){
-    if (!isReplayingRemoteCommand) showMsg('Select a villager to build!');
+    showMsg('Select a villager to build!');
     placing=null;
     return;
   }
-
-  let b = BLDGS['WALL'];
-  let placedCount = 0;
-  let lastBldg = null;
-
-  line.forEach(t => {
-    if (canPlace('WALL', t.x, t.y, myTeam)) {
-      let actualCost = {...b.cost};
-      if (canAfford(myTeam, actualCost)) {
-        spendCost(myTeam, actualCost);
-        let bldg = createBuilding('WALL', t.x, t.y, myTeam);
-        bldg.complete = false;
-        bldg.buildProgress = 0;
-        lastBldg = bldg;
-        placedCount++;
-
-        vils.forEach(v => {
-          v.buildQueue = v.buildQueue || [];
-          v.buildQueue.push(bldg.id);
-        });
-      } else {
-        if (!isReplayingRemoteCommand) { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); }
-      }
-    }
-  });
-
-  if (placedCount > 0 && lastBldg) {
-    vils.forEach(v => {
-      if (v.task !== 'build' || !v.buildTarget) {
-        v.task = 'build';
-        v.buildTarget = lastBldg.id;
-        v.target = null;
-        pathUnitTo(v, lastBldg.x + 1, lastBldg.y + 1);
-      }
-    });
-  }
+  // Mutation half is execWallDrag (js/commands.js), run at the scheduled
+  // tick — start/corner/end are already world tiles.
+  submitCommand({ kind: 'wall-drag', start, end, corner, unitIds: vils.map(s=>s.id) });
 
   // keys['Shift'] (hold to place multiple lines) is desktop-only — on touch
   // that object entry is simply never set, so this naturally always exits
@@ -1333,26 +1287,9 @@ function doCommand(sx,sy){
       cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:'#0af'});
     }
 
-    if (isGuestSender) {
-      sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
-      return;
-    }
-
-    bldg.rallyX=tile.x;
-    bldg.rallyY=tile.y;
-    if(rTarget){
-      bldg.rallyTargetId=rTarget.id;
-      bldg.rallyResourceType=null;
-    } else {
-      let t0=map[tile.y]&&map[tile.y][tile.x];
-      if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM)){
-        bldg.rallyResourceType=t0.t;
-        bldg.rallyTargetId=null;
-      } else {
-        bldg.rallyResourceType=null;
-        bldg.rallyTargetId=null;
-      }
-    }
+    // World-space command, scheduled on the tick queue (js/commands.js) —
+    // the mutation itself happens in execRally at the stamped tick.
+    submitCommand({ kind: 'rally', bldgId: bldg.id, tileX: tile.x, tileY: tile.y, targetId: rTarget ? rTarget.id : null });
     return;
   }
   // Visual command marker
@@ -1417,13 +1354,6 @@ function doCommand(sx,sy){
     else if (first.utype !== 'sheep') window.playSound('select_military');
   }
 
-  // The guest has now shown/played its own local feedback above (marker +
-  // sound) — send the actual command to the host and stop here, same
-  // "never mutate world state directly" rule as everywhere else a guest
-  // issues an action (js/net-cmd.js's file header comment). Everything
-  // below this point (formation offsets, task/path assignment) is
-  // authoritative simulation mutation the guest must never perform on its
-  // own soon-to-be-overwritten copy.
   if (isGuestSender) {
     // Movement PREDICTION for plain walk orders: start this client's own
     // units moving immediately instead of waiting a command round-trip
@@ -1457,68 +1387,19 @@ function doCommand(sx,sy){
         s.moveGoalX = tile.x + ox; s.moveGoalY = tile.y + oy;
       });
     }
-    sendCommand({ kind: 'command', sx, sy, unitIds: selected.map(s => s.id), view: currentViewSnapshot() });
-    return;
   }
 
-  // Generate formation offsets for group movement (AoE2-style spread)
-  let offsets=getFormation(movers.length);
-  let idx=0;
-  movers.forEach(s=>{
-    s.gatherX=-1;s.gatherY=-1;s.prevTask=null;s.savedTask=null; // fully clear old state
-    s.buildTarget=null;
-    s.buildQueue=[];
-    s.followId=undefined;
-    s.defendX=s.x;s.defendY=s.y;
-    s.explicitAttack=false;
-    if(buildTarget&&s.utype==='villager'){
-      s.target=null;s.task='build';s.buildTarget=buildTarget.id;
-      let b=BLDGS[buildTarget.btype];
-      let pt=b.isFarm?{x:buildTarget.x,y:buildTarget.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(s.x,s.y,buildTarget,s.id):{x:buildTarget.x+buildTarget.w,y:buildTarget.y+buildTarget.h});
-      pathUnitTo(s,pt.x,pt.y);
-    } else if(target){
-      if(s.utype==='sheep'){return;} // sheep don't attack
-      if((target.utype==='sheep'||target.utype==='sheep_carcass')&&s.utype!=='villager'){
-        // Sheep or carcass targeted by military unit: treat as move command!
-        s.target=null;
-        let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-        s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
-        idx++;
-      } else {
-        s.target=target.id;s.task=null;clearUnitPath(s);s.buildTarget=null;
-        s.explicitAttack=true;
-      }
-    } else if(followTarget&&followTarget.id!==s.id&&s.utype!=='sheep'){
-      // AoE2-style "Follow": keep pathing toward the followed unit's current
-      // position (see updateUnit() in logic.js for the continuous re-pathing).
-      s.target=null;s.task=null;s.followId=followTarget.id;
-      pathUnitTo(s,Math.round(followTarget.x),Math.round(followTarget.y));
-    } else {
-      s.target=null;
-      let t=map[tile.y]&&map[tile.y][tile.x];
-      if(s.utype==='villager'&&t){
-        // Group spread (AoE2 DE): each villager claims its own tile of the
-        // clicked resource — claims are visible to the next villager in this
-        // same loop via gatherX, so the group fans out tile by tile.
-        let TASK_BY_TERRAIN={[TERRAIN.FOREST]:'chop',[TERRAIN.GOLD]:'mine_gold',[TERRAIN.STONE]:'mine_stone',[TERRAIN.BERRIES]:'forage',[TERRAIN.FARM]:'farm'};
-        let gTask=TASK_BY_TERRAIN[t.t];
-        if(gTask){
-          let g=claimGatherTileNear(s,t.t,tile.x,tile.y);
-          s.task=gTask;s.gatherX=g.x;s.gatherY=g.y;pathUnitTo(s,g.x,g.y);
-        }
-        else {
-          // Move command: use formation offset
-          let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-          s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
-          idx++;
-        }
-      } else {
-        // Military move: use formation offset
-        let ox=offsets[idx]?offsets[idx][0]:0, oy=offsets[idx]?offsets[idx][1]:0;
-        s.task=null;issueMoveOrder(s,tile.x+ox,tile.y+oy);
-        idx++;
-      }
-    }
+  // World-space command with all targets resolved to ids against THIS
+  // client's view (its fog, its screen). Mutation happens in
+  // execUnitCommand (js/commands.js) at the scheduled tick — on the host's
+  // queue for now, on both peers' queues once lockstep lands.
+  submitCommand({
+    kind: 'command',
+    unitIds: movers.map(s => s.id),
+    tileX: tile.x, tileY: tile.y,
+    targetId: target ? target.id : null,
+    buildTargetId: buildTarget ? buildTarget.id : null,
+    followId: followTarget ? followTarget.id : null
   });
 }
 
@@ -1537,96 +1418,24 @@ function getFormation(n){
   return offsets;
 }
 
+// Resolver only: screen->tile plus issuer-local UI concerns (placement
+// preview mode, Shift-to-repeat, "select a villager" nag). The actual
+// placement/cost/foundation mutation is execBuildPlacement (js/commands.js),
+// run at the scheduled tick.
 function doPlace(sx,sy){
-  if (netRole === 'guest') {
-    let vilIds = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam).map(s=>s.id);
-    sendCommand({ kind: 'build-placement', placing, sx, sy, unitIds: vilIds, view: currentViewSnapshot() });
-    // Guest's own placement-preview mode ends immediately; the actual
-    // foundation appears once it comes back from the host on the next sync
-    // (no local prediction in v1 — see the multiplayer plan's punt list).
-    if(!keys['Shift']) placing=null;
-    return;
-  }
   let tile=screenToTile(sx,sy);
   let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(vils.length===0){
-    // Same reasoning as doCommand()'s marker/sound suppression (see
-    // isReplayingRemoteCommand's comment, js/net-cmd.js): a status message
-    // about the GUEST's own placement attempt has no business popping up
-    // on the HOST's own screen when this is just the host replaying it.
-    if (!isReplayingRemoteCommand) showMsg('Select a villager to build!');
+    showMsg('Select a villager to build!');
     placing=null;
     return;
   }
-  if(canPlace(placing,tile.x,tile.y,myTeam)){
-    let b=BLDGS[placing];
-    let gw = b.w, gh = b.h;
-    let ox = tile.x, oy = tile.y;
-    if (placing === 'GATE') {
-      let isWall = (tx, ty) => {
-        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === myTeam);
-        return !!w;
-      };
-      if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
-        ox = tile.x; oy = tile.y; gw = 2; gh = 1;
-      } else if (isWall(tile.x - 1, tile.y) && isWall(tile.x, tile.y)) {
-        ox = tile.x - 1; oy = tile.y; gw = 2; gh = 1;
-      } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1)) {
-        ox = tile.x; oy = tile.y; gw = 1; gh = 2;
-      } else if (isWall(tile.x, tile.y - 1) && isWall(tile.x, tile.y)) {
-        ox = tile.x; oy = tile.y - 1; gw = 1; gh = 2;
-      }
-    }
-    let wallsToRemove = [];
-    for (let dy = 0; dy < gh; dy++) {
-      for (let dx = 0; dx < gw; dx++) {
-        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === myTeam);
-        if (w) wallsToRemove.push(w);
-      }
-    }
-    let actualCost = {...b.cost};
-    if (placing === 'GATE') {
-      actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
-    } else if (placing === 'TOWER') {
-      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && en.btype === 'WALL' && en.team === myTeam);
-      if (existing) {
-        actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
-        wallsToRemove.push(existing);
-      }
-    }
-    if(!canAfford(myTeam,actualCost)){if (!isReplayingRemoteCommand) showMsg('Not enough resources!');placing=null;return;}
-    spendCost(myTeam,actualCost);
-    if (wallsToRemove.length > 0) {
-      let ids = new Set(wallsToRemove.map(w => w.id));
-      entities = entities.filter(en => !ids.has(en.id));
-      selected = selected.filter(s => !ids.has(s.id));
-      ids.forEach(id => entitiesById.delete(id));
-    }
-    let bldg=createBuilding(placing,ox,oy,myTeam,gw,gh);
-    bldg.complete=false;bldg.buildProgress=0;
-    bldg.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-    if (wallsToRemove.length > 0) {
-      bldg.wasWall = true;
-    }
-    vils.forEach(v=>{
-      v.buildQueue = v.buildQueue || [];
-      v.buildQueue.push(bldg.id);
-      // Start construction task immediately if not already building
-      if(v.task!=='build'||!v.buildTarget){
-        v.task='build';v.buildTarget=bldg.id;v.target=null;v.savedTask=null;
-        let pt=b.isFarm?{x:ox,y:oy}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,bldg,v.id):{x:ox+gw,y:oy+gh});
-        pathUnitTo(v,pt.x,pt.y);
-      }
-    });
-    
-    // Hold Shift to place multiple building foundations
-    if(!keys['Shift']){
-      placing=null;
-    } else if (!isReplayingRemoteCommand) {
-      showMsg('Place next foundation (release Shift to finish)');
-    }
+  submitCommand({ kind: 'build-placement', btype: placing, tileX: tile.x, tileY: tile.y, unitIds: vils.map(s=>s.id) });
+  // Hold Shift to place multiple building foundations
+  if(!keys['Shift']){
+    placing=null;
   } else {
-    if (!isReplayingRemoteCommand) { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); }
+    showMsg('Place next foundation (release Shift to finish)');
   }
 }
 

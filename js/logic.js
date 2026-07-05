@@ -29,7 +29,7 @@ function canPlace(type,x,y,team=0){
     // only ever valid for whichever team updateFog() actually computed on
     // the machine currently running this code. The host's own machine
     // ALWAYS computes team 0's fog every tick (myTeam is 0 there); when
-    // executing a RELAYED guest command via withRemoteSelection, myTeam
+    // executing the other player's command via withCommandContext, myTeam
     // gets temporarily swapped to 1 for the callback, but the underlying
     // `fog` data itself is NOT recomputed for team 1 at that moment — it's
     // still team 0's snapshot. `team===myTeam` inside that swapped

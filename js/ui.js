@@ -318,9 +318,7 @@ function updateUI(){
           onClick: (g)=>{
             if(gameOver)return;
             let victim=g.members[0];
-            if (netRole === 'guest') { sendCommand({ kind: 'eject-garrison', bldgId: garrisonSel.id, unitId: victim.id }); return; }
-            ejectGarrison(garrisonSel, gu=>gu.id===victim.id);
-            updateUI();
+            submitCommand({ kind: 'eject-garrison', bldgId: garrisonSel.id, unitId: victim.id });
           }
         });
       });
@@ -736,40 +734,17 @@ document.getElementById('actions').addEventListener('click', function(e){
   },{passive:false});
 })();
 
+// Resolver only — the queueUnit mutation is execTrainUnit (js/commands.js),
+// run at the scheduled tick for both roles.
 function trainUnit(bldg,utype){
   if(gameOver)return;
-  if (netRole === 'guest') {
-    sendCommand({ kind: 'train-unit', bldgId: bldg.id, utype });
-    return;
-  }
-  let result=queueUnit(bldg,utype);
-  // Not when replaying a guest's command on the host (see
-  // isReplayingRemoteCommand's comment, js/net-cmd.js) — a status message
-  // about the GUEST's own training attempt shouldn't pop up on the HOST's
-  // own screen.
-  if (!isReplayingRemoteCommand) {
-    if(result.reason==='pop')showMsg('Need more houses!');
-    else if(result.reason==='resources')showMsg('Not enough resources!');
-    if (window.playSound) playSound('error');
-  }
+  submitCommand({ kind: 'train-unit', bldgId: bldg.id, utype });
 }
 
+// Resolver only — mutation is execCancelQueue (js/commands.js).
 function cancelQueue(bldgId,idx){
   if(gameOver)return;
-  if (netRole === 'guest') {
-    sendCommand({ kind: 'cancel-queue', bldgId, idx });
-    return;
-  }
-  let bldg=entitiesById.get(bldgId);
-  if(!bldg||bldg.type!=='building')return;
-  let utype=bldg.queue[idx];
-  if(!utype)return;
-  bldg.queue.splice(idx,1);
-  let cost=UNITS[utype].cost;
-  let store=resourceStore(bldg.team);
-  Object.entries(cost).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
-  if(idx===0)bldg.trainTick=0;
-  if (!isReplayingRemoteCommand) showMsg(UNITS[utype].name+' cancelled (refunded)');
+  submitCommand({ kind: 'cancel-queue', bldgId, idx });
 }
 
 function showMsg(txt){
@@ -786,14 +761,9 @@ function showMsg(txt){
 
 window.toggleTownBell = function() {
   if (gameOver || !gameStarted) return;
-  if (netRole === 'guest') {
-    // Host applies this with the guest's fixed team (1); bellRinging[1]
-    // comes back on the next sync — see js/net-cmd.js.
-    sendCommand({ kind: 'town-bell', ringing: !myBellActive() });
-    return;
-  }
-  if (myBellActive()) soundAllClear(myTeam);
-  else ringTownBell(myTeam);
+  // Executed by execCommand's 'town-bell' case (js/commands.js) with this
+  // client's team at the scheduled tick.
+  submitCommand({ kind: 'town-bell', ringing: !myBellActive() });
 };
 
 // "Never mind" — cancels one level at a time (Escape-style), since fully
@@ -927,38 +897,13 @@ function prepayFarm() {
   // guest's own about-to-be-overwritten copy" bug the Delete key had
   // (see js/net-cmd.js's header comment). This one spends resources and
   // increments a counter with no unit/building reference needed at all.
-  if (netRole === 'guest') { sendCommand({ kind: 'prepay-farm' }); return; }
-  let cost = {w: 60};
-  if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
-    return;
-  }
-  spendCost(myTeam, cost);
-  let store = resourceStore(myTeam);
-  store.prepaidFarms = (store.prepaidFarms || 0) + 1;
-  if (!isReplayingRemoteCommand) showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`);
-  updateUI();
+  submitCommand({ kind: 'prepay-farm' }); // mutation: prepayFarmNow (js/commands.js)
 }
 
 function reactivateFarm(farm) {
   if (gameOver) return;
   if (!farm.exhausted) return;
-  if (netRole === 'guest') { sendCommand({ kind: 'reactivate-farm', bldgId: farm.id }); return; }
-  let cost = {w: 60};
-  if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
-    return;
-  }
-  spendCost(myTeam, cost);
-  farm.exhausted = false;
-  farm.complete = true;
-  farm.hp = farm.maxHp;
-  let tile = map[farm.y][farm.x];
-  tile.t = TERRAIN.FARM;
-  tile.res = 300;
-  markMapDirty(farm.x,farm.y);
-  if (!isReplayingRemoteCommand) showMsg('Farm reactivated!');
-  updateUI();
+  submitCommand({ kind: 'reactivate-farm', bldgId: farm.id }); // mutation: reactivateFarmNow (js/commands.js)
 }
 
 window.prepayFarm = prepayFarm;

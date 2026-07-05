@@ -91,6 +91,42 @@ const { BASE, sleep, check, finish } = require('./helpers');
   const runA = await seededRun(123456789);
   const runB = await seededRun(123456789);
   const runC = await seededRun(987654321);
+
+  // ---- Command-replay determinism (the lockstep contract) ----
+  // Same seed + same world-space commands scheduled at the same ticks must
+  // produce an identical checksum stream — this is exactly what two
+  // lockstep peers (or a replay of a recorded log) rely on.
+  async function commandedRun(seed) {
+    const p = await browser.newPage();
+    p.on('pageerror', e => errors.push('cmd(' + seed + '): ' + String(e)));
+    await p.goto(BASE);
+    await sleep(800);
+    const out = await p.evaluate((seed) => {
+      window.__pendingMatchSeed = seed;
+      window.fogDisabled = true;
+      setMapSize('medium');
+      restartGame('standard');
+      const vilIds = entities.filter(e => e.utype === 'villager' && e.team === 0).map(e => e.id);
+      const tc = entities.find(e => e.btype === 'TC' && e.team === 0);
+      // Schedule a spread of command kinds at fixed ticks (world-space,
+      // exactly what resolvers emit).
+      scheduleCommand(10, 0, 1, { kind: 'command', unitIds: vilIds, tileX: tc.x + 8, tileY: tc.y + 8, targetId: null, buildTargetId: null, followId: null });
+      scheduleCommand(20, 0, 2, { kind: 'train-unit', bldgId: tc.id, utype: 'villager' });
+      scheduleCommand(40, 0, 3, { kind: 'build-placement', btype: 'HOUSE', tileX: tc.x + 6, tileY: tc.y + 2, unitIds: vilIds.slice(0, 1) });
+      scheduleCommand(60, 0, 4, { kind: 'town-bell', ringing: true });
+      scheduleCommand(120, 0, 5, { kind: 'town-bell', ringing: false });
+      const sums = [];
+      for (let i = 0; i < 400; i++) { update(); sums.push(simChecksum()); }
+      return { sums: sums, trained: entities.find(e => e.btype === 'TC' && e.team === 0).queue.length };
+    }, seed);
+    await p.close();
+    return out;
+  }
+  const cmdA = await commandedRun(42424242);
+  const cmdB = await commandedRun(42424242);
+  check(cmdA.sums.length === cmdB.sums.length && cmdA.sums.every((s, i) => s === cmdB.sums[i]),
+    'same seed + same commands: identical checksum stream over 400 ticks');
+  check(cmdA.trained === cmdB.trained, 'command effects identical (train queue)');
   check(runA.mapHash === runB.mapHash, 'same seed: identical map');
   check(runA.starts === runB.starts, 'same seed: identical start corners');
   check(runA.n === runB.n, 'same seed: identical entity count');
