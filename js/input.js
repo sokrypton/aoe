@@ -596,8 +596,11 @@ C.addEventListener('touchmove',e=>{
       setZoomAroundPoint(pinchStartZoom*(pdist/pinchStartDist),mx,my);
     }
     if(touchLast){
-      camX-=(mx-touchLast.x);
-      camY-=(my-touchLast.y);
+      // Screen px -> pre-zoom iso units (camX/camY are pre-zoom; render
+      // multiplies by ZOOM). Without /ZOOM the pan outruns the finger when
+      // zoomed in and lags it when zoomed out. Same as wheel-pan above.
+      camX-=(mx-touchLast.x)/ZOOM;
+      camY-=(my-touchLast.y)/ZOOM;
       window.cameraFollowId=null;
     }
     touchLast={x:mx,y:my};
@@ -660,8 +663,10 @@ C.addEventListener('touchmove',e=>{
     if(touchMoved&&touchLast){
       let dx=t.clientX-touchLast.x;
       let dy=t.clientY-touchLast.y;
-      camX-=dx;
-      camY-=dy;
+      // /ZOOM: see the two-finger pan above — keeps the map glued to the
+      // fingertip at every zoom level.
+      camX-=dx/ZOOM;
+      camY-=dy/ZOOM;
       window.cameraFollowId=null;
     }
     touchLast={x:t.clientX,y:t.clientY};
