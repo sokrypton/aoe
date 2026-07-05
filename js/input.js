@@ -3,7 +3,12 @@
 // ==============================
 let keys={};
 let isDragging=false;
-let hasTouch=false; // set true on first touch, suppresses mouse
+// Suppress mouse handlers only for a short window after real touch input —
+// browsers can fire synthetic mouse events right after touches. A permanent
+// "hasTouch" latch bricked the mouse on hybrid devices (touchscreen laptop,
+// iPad + trackpad) after a single accidental screen tap.
+let lastTouchTime=-1e9;
+function recentTouch(){return performance.now()-lastTouchTime<700;}
 let justPlaced=false; // flag to prevent mouseup selection clearing when placing buildings
 let middleDrag=false;
 let middleDragLast=null;
@@ -86,7 +91,11 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
     return;
   }
-  keys[e.key]=true;
+  // OS key auto-repeat only matters for held-key panning, which reads the
+  // keys map set on the FIRST keydown — action hotkeys below must fire once
+  // per physical press (holding 'a' with a barracks selected used to queue
+  // archers at repeat rate while the camera panned).
+  if(e.repeat)return;
   let key = e.key.toLowerCase();
   
   if (key === 'h') {
@@ -147,50 +156,49 @@ document.addEventListener('keydown',e=>{
     updateUI();
   }
   
-  // Villager building hotkeys (Grid-style like AoE2 Definitive Edition)
+  // Villager building hotkeys (Grid-style like AoE2 Definitive Edition).
+  // Consumed keys `return` so they never reach the pan-key registration at
+  // the bottom. Camera panning is arrow keys / edge / middle-drag only
+  // (AoE2-style) — letters are command keys and never pan.
   let hasVil = selected.some(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
   if(hasVil) {
     window.currentVillagerMenu = window.currentVillagerMenu || 'main';
     if(window.currentVillagerMenu === 'main') {
-      if(key==='q') {
-        window.currentVillagerMenu = 'eco';
-        updateUI();
-      } else if(key==='w') {
-        window.currentVillagerMenu = 'mil';
-        updateUI();
-      }
+      if(key==='q') { window.currentVillagerMenu = 'eco'; updateUI(); return; }
+      else if(key==='w') { window.currentVillagerMenu = 'mil'; updateUI(); return; }
     } else if(window.currentVillagerMenu === 'eco') {
       // Hotkeys mirror the menu's importance order (see ui.js eco builds).
       // TC placement is hidden for now (no hotkey) but doPlace still handles it.
-      if(key==='q') { placing='HOUSE'; showMsg('Place House'); }
-      else if(key==='w') { placing='FARM'; showMsg('Place Farm'); }
-      else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); }
-      else if(key==='r') { placing='MILL'; showMsg('Place Mill'); }
-      else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); }
-      else if(key==='Escape') { window.currentVillagerMenu = 'main'; updateUI(); }
+      if(key==='q') { placing='HOUSE'; showMsg('Place House'); return; }
+      else if(key==='w') { placing='FARM'; showMsg('Place Farm'); return; }
+      else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); return; }
+      else if(key==='r') { placing='MILL'; showMsg('Place Mill'); return; }
+      else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); return; }
     } else if(window.currentVillagerMenu === 'mil') {
-      if(key==='q') { placing='BARRACKS'; showMsg('Place Barracks'); }
-      else if(key==='w') { placing='TOWER'; showMsg('Place Watch Tower'); }
-      else if(key==='e') { placing='WALL'; showMsg('Place Stone Wall'); }
-      else if(key==='r') { placing='GATE'; showMsg('Place Gate'); }
-      else if(key==='Escape') { window.currentVillagerMenu = 'main'; updateUI(); }
+      if(key==='q') { placing='BARRACKS'; showMsg('Place Barracks'); return; }
+      else if(key==='w') { placing='TOWER'; showMsg('Place Watch Tower'); return; }
+      else if(key==='e') { placing='WALL'; showMsg('Place Stone Wall'); return; }
+      else if(key==='r') { placing='GATE'; showMsg('Place Gate'); return; }
     }
   }
-  
-  // Training hotkeys for selected buildings
+
+  // Training hotkeys for selected buildings (consume the key, same as above)
   if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam && selected[0].complete) {
     let bldg = selected[0];
     if (bldg.btype === 'TC') {
-      if (key === 'v') {
-        trainUnit(bldg, 'villager');
-      }
+      if (key === 'v') { trainUnit(bldg, 'villager'); return; }
     } else if (bldg.btype === 'BARRACKS') {
-      if (key === 'm') trainUnit(bldg, 'militia');
-      else if (key === 's') trainUnit(bldg, 'spearman');
-      else if (key === 'a') trainUnit(bldg, 'archer');
-      else if (key === 'c') trainUnit(bldg, 'scout');
+      if (key === 'm') { trainUnit(bldg, 'militia'); return; }
+      else if (key === 's') { trainUnit(bldg, 'spearman'); return; }
+      else if (key === 'a') { trainUnit(bldg, 'archer'); return; }
+      else if (key === 'c') { trainUnit(bldg, 'scout'); return; }
     }
   }
+
+  // Nothing consumed the key as an action: register it in the held-key map
+  // (handleScroll reads the arrow keys from it every frame, doPlace reads
+  // Shift; keyup/blur clear it).
+  keys[e.key]=true;
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 // If focus leaves the window while a key is physically held (alt-tab,
@@ -344,7 +352,7 @@ window.addEventListener('mousemove',e=>{
 });
 
 C.addEventListener('mousedown',e=>{
-  if(gameOver||hasTouch)return; // ignore synthetic mouse events
+  if(gameOver||recentTouch())return; // ignore synthetic mouse events
   // Trust the event's own modifier snapshot over the keydown/keyup-tracked
   // keys map: OS-level shortcuts (e.g. macOS Cmd+Shift+5 for screen
   // recording) can swallow a key's keyup entirely, leaving keys['Shift']
@@ -382,7 +390,7 @@ C.addEventListener('mousedown',e=>{
   }
 });
 C.addEventListener('mousemove',e=>{
-  if(gameOver||hasTouch)return;
+  if(gameOver||recentTouch())return;
   mouseX=e.clientX;mouseY=e.clientY;
   if(middleDrag && (e.buttons&4 || e.button===1)){
     if(middleDragLast){
@@ -452,7 +460,7 @@ C.addEventListener('wheel',e=>{
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
 C.addEventListener('mouseup',e=>{
-  if(gameOver||hasTouch)return;
+  if(gameOver||recentTouch())return;
   if(e.button===1){
     middleDrag=false;
     middleDragLast=null;
@@ -495,7 +503,7 @@ C.addEventListener('mouseup',e=>{
 });
 document.addEventListener('contextmenu',e=>{
   e.preventDefault();
-  if(gameOver||hasTouch)return;
+  if(gameOver||recentTouch())return;
   if(e.target===C){
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
@@ -534,7 +542,6 @@ let pinchStartZoom=null; // ZOOM at pinch start
 let touchLongPressTimer=null; // arms box-select if the finger holds still on empty ground
 let touchBoxSelectMode=false; // armed (and possibly active) box-select drag
 let placingTouchDrag=false;   // touch drag-to-position building placement (see touchstart)
-const PLACING_GHOST_LIFT_PX=70; // ghost rides this far above the fingertip while dragging
 let touchLastTapTime=0;       // for double-tap detection
 let touchLastTapUtype=null;   // utype of the unit tapped last, if any
 let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-select on double-tap)
@@ -542,7 +549,7 @@ let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-s
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
   if(gameOver)return;
-  hasTouch=true;
+  lastTouchTime=performance.now();
   let touches=e.touches;
   if(touches.length===1){
     let t=touches[0];
@@ -616,6 +623,7 @@ C.addEventListener('touchstart',e=>{
 
 C.addEventListener('touchmove',e=>{
   e.preventDefault();
+  lastTouchTime=performance.now(); // keep the mouse-suppression window alive through long drags
   let touches=e.touches;
   if(touches.length>=2){
     // Two-finger pinch-to-zoom (around the midpoint), then pan
@@ -654,14 +662,14 @@ C.addEventListener('touchmove',e=>{
     }
 
     if(placingTouchDrag){
-      // The ghost follows the finger, lifted above it once genuinely
-      // dragging so the target tiles stay visible. No camera pan — the
+      // The ghost tracks the fingertip exactly — no artificial lift, so the
+      // building always lands precisely where shown. No camera pan — the
       // finger is busy carrying the building.
       if(touchAnchor && Math.abs(t.clientX-touchAnchor.x)+Math.abs(t.clientY-touchAnchor.y)>10){
         touchMoved=true;
       }
       mouseX=t.clientX;
-      mouseY=t.clientY-(touchMoved?PLACING_GHOST_LIFT_PX:0);
+      mouseY=t.clientY;
       touchLast={x:t.clientX,y:t.clientY};
       return;
     }
@@ -702,6 +710,7 @@ C.addEventListener('touchmove',e=>{
 
 C.addEventListener('touchend',e=>{
   e.preventDefault();
+  lastTouchTime=performance.now(); // synthetic mouse events fire right after touchend
   // Only process tap when all fingers are lifted
   if(e.touches.length===0){
     clearTimeout(touchLongPressTimer);
@@ -1619,10 +1628,13 @@ function handleScroll(elapsed){
   let spd = 12 * dt;
   let manualPan=false;
 
-  if(keys['w']||keys['ArrowUp']){camY-=spd;manualPan=true;}
-  if(keys['s']||keys['ArrowDown']){camY+=spd;manualPan=true;}
-  if(keys['a']||keys['ArrowLeft']){camX-=spd;manualPan=true;}
-  if(keys['d']||keys['ArrowRight']){camX+=spd;manualPan=true;}
+  // Arrow keys only, like AoE2 — WASD are (grid) command hotkeys, and letting
+  // them also pan meant holding one while a barracks/villager was selected
+  // trained units / armed placements mid-scroll.
+  if(keys['ArrowUp']){camY-=spd;manualPan=true;}
+  if(keys['ArrowDown']){camY+=spd;manualPan=true;}
+  if(keys['ArrowLeft']){camX-=spd;manualPan=true;}
+  if(keys['ArrowRight']){camX+=spd;manualPan=true;}
 
 
 
@@ -1656,7 +1668,7 @@ window.addEventListener('resize',()=>{
 
 // Double click to select all units of same type on screen
 C.addEventListener('dblclick', e => {
-  if (gameOver || hasTouch) return;
+  if (gameOver || recentTouch()) return;
   let clicked = getUnitUnderCursor(e.clientX, e.clientY);
   if (clicked && clicked.team === myTeam) {
     selected = entities.filter(en => en.team === myTeam && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));

@@ -1094,7 +1094,7 @@ window.reactivateFarm = reactivateFarm;
   }
 
   document.getElementById('bottom').addEventListener('mouseover', function(e) {
-    if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
+    if (typeof recentTouch === 'function' && recentTouch()) { hideTip(); return; }
 
     // Walk up from the hovered element to find a .act-btn
     let el = e.target;
@@ -1125,7 +1125,7 @@ window.reactivateFarm = reactivateFarm;
   function attachSimpleTips(container) {
     if (!container) return;
     container.addEventListener('mouseover', function(e) {
-      if (typeof hasTouch !== 'undefined' && hasTouch) { hideTip(); return; }
+      if (typeof recentTouch === 'function' && recentTouch()) { hideTip(); return; }
       let el = e.target;
       while (el && el !== this.parentElement) {
         if (el.dataset && el.dataset.tipLabel) break;

@@ -1120,6 +1120,10 @@ function updateUnit(e){
           return;
         }
         if(e.gatherCooldown<=0){
+          // Switching resource types drops the old load (same rule as
+          // updateGatherTask) — without this, a villager carrying 9 wood
+          // took one bite and deposited 10 FOOD, a free conversion exploit.
+          if(e.carryType!=='food')e.carrying=0;
           t.hp--;
           e.carrying++;
           e.carryType='food';
