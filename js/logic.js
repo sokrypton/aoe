@@ -166,12 +166,18 @@ function refreshPopulationCounts(){
   aiPopCap=teamPopCap(1);
 }
 
+// AoE2 drop-off rule: the TC accepts every resource, other buildings only
+// the kinds listed in their BLDGS drop spec (mill: food, camps: their own).
+function dropAccepts(b,resType){
+  return b.btype==='TC'||(BLDGS[b.btype].drop&&BLDGS[b.btype].drop.split(',').includes(resType));
+}
+
 function nearestDrop(e,resType,excludeIds=null){
   let best=null,bd=999;
   entities.forEach(b=>{
     if(b.type!=='building'||b.team!==e.team||!b.complete)return;
     if(excludeIds && excludeIds.has(b.id))return;
-    if(b.btype==='TC'||(BLDGS[b.btype].drop&&BLDGS[b.btype].drop.split(',').includes(resType))){
+    if(dropAccepts(b,resType)){
       let d=distToBuilding(e.x,e.y,b);
       if(d<bd){bd=d;best=b;}
     }
@@ -523,7 +529,13 @@ function damageEntity(attacker, target){
   // Feed the adaptive music: actual damage is the strongest mood signal —
   // it catches open-field battles that building-proximity checks miss.
   if (attacker.team === 1 && target.team === 0) window.lastDangerTick = tick;
-  else if (attacker.team === 0 && target.team === 1) window.lastWarTick = tick;
+  else if (attacker.team === 0 && target.team === 1) {
+    window.lastWarTick = tick;
+    // Where the hit landed, for the AI's garrison reaction: it only rings
+    // its bell for hits near its own base, not for its attack wave taking
+    // damage across the map (see updateAIGarrisonReaction in js/ai.js).
+    window.lastWarX = target.x; window.lastWarY = target.y;
+  }
 
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
   // an ongoing one — the danger music carries the battle. It only re-arms
@@ -696,6 +708,14 @@ function enterGarrison(e,b){
   if(b.garrison.length>=garrisonCap(b))return false;
   clearUnitPath(e);
   e.task=null;e.target=null;e.followId=undefined;e.garrisonTarget=null;
+  // AoE2: garrisoning into a drop-off deposits the carried load on entry —
+  // a belled villager banks its wood the moment it enters the TC. Buildings
+  // that aren't a drop-off for the carried type (towers) don't; the villager
+  // keeps the load while sheltered and drops it off after the all-clear.
+  if(e.carrying>0&&e.carryType&&dropAccepts(b,e.carryType)){
+    resourceStore(e.team)[e.carryType]+=e.carrying;
+    e.carrying=0;
+  }
   e.garrisonedIn=b.id;
   // Park the unit at the building's center so fog/minimap stay sane while hidden.
   e.x=b.x+b.w/2;e.y=b.y+b.h/2;e.fromX=e.x;e.fromY=e.y;
@@ -832,14 +852,20 @@ function updateUnit(e){
         e.garrisonRetries=0;
       }
     }
+    // Still heading for shelter: stop here. Falling through would let the
+    // full-carry check below flip a loaded villager to 'return', sending it
+    // on a drop-off run through the raid instead of into the TC.
+    if(e.task==='garrison')return;
   }
   e.atkCooldown=Math.max(0,e.atkCooldown-1);
   e.gatherCooldown=Math.max(0,e.gatherCooldown-1);
 
   // Follow: keep tracking a moving friendly unit (AoE2-style "Follow" order).
   // Re-paths toward its current position periodically rather than once, since
-  // the destination keeps changing.
-  if(e.followId){
+  // the destination keeps changing. Suspended while in combat (!e.target) —
+  // followId survives clearUnitPath, so the chase logic below owns pathing
+  // during a fight and follow resumes once the target is gone.
+  if(e.followId && !e.target){
     let f=entitiesById.get(e.followId);
     if(!f||f.hp<=0){
       e.followId=undefined;

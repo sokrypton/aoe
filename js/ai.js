@@ -11,16 +11,31 @@ function aiScale(){return MAP/60;}
 // room, then come back out once things quiet down. Runs every tick (not
 // gated by updateAI's slow decisionInterval) so the reaction is prompt —
 // a raid that's over in a few seconds shouldn't be able to slip past the
-// AI's decision cadence entirely. window.lastWarTick already timestamps the
-// last time a player unit damaged a team-1 entity (see damageEntity in
-// logic.js, which also drives the player's "war" music mood) — reused here
-// instead of a second combat-tracking hook.
+// AI's decision cadence entirely. window.lastWarTick timestamps the last
+// time a player unit damaged a team-1 entity ANYWHERE (see damageEntity in
+// logic.js, which also drives the player's "war" music mood) — that includes
+// the AI's own attack wave trading hits at the player's base, so it can't
+// gate the bell directly (it would garrison the whole economy during every
+// AI offensive). Instead, damageEntity also records the hit location
+// (lastWarX/Y) and only hits near the AI's TC count as "base under attack".
 const AI_GARRISON_HOLD_TICKS = 360; // ~12s at 30 ticks/sec: stay hidden briefly after the last hit
+const AI_BASE_ALARM_RADIUS = 18; // tiles from TC center (scaled by aiScale) that count as "home"
 function updateAIGarrisonReaction(){
   if(!gameStarted||gameOver)return;
-  // ?? not || : lastWarTick can legitimately be 0 (a hit landed on tick 0),
+  // New hit since we last looked: classify it as base-hit or field-hit.
+  // (Runs every tick, so at most one hit per tick can be missed — a real
+  // base raid lands hits continuously, so the classification holds.)
+  if(window.lastWarTick!==undefined && window.lastWarTick!==window.aiSeenWarTick){
+    window.aiSeenWarTick=window.lastWarTick;
+    let tc=entities.find(b=>b.type==='building'&&b.team===1&&b.btype==='TC');
+    if(tc && window.lastWarX!==undefined){
+      let d=Math.hypot(window.lastWarX-(tc.x+tc.w/2), window.lastWarY-(tc.y+tc.h/2));
+      if(d<=AI_BASE_ALARM_RADIUS*aiScale()) window.lastAIBaseHitTick=window.lastWarTick;
+    }
+  }
+  // ?? not || : the tick can legitimately be 0 (a hit landed on tick 0),
   // and 0 is falsy — || would wrongly discard it and treat that as "never".
-  let underAttack = tick - (window.lastWarTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
+  let underAttack = tick - (window.lastAIBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
   if(underAttack && !window.aiBellActive){
     window.aiBellActive=true;
     ringTownBell(1);
@@ -158,7 +173,12 @@ function planAIDropSites(aiTC,vils,profile){
     let pos=findAIDropSite(TERRAIN.FOREST,'LCAMP',aiTC);
     if(pos)placeAIBuilding('LCAMP',pos.x,pos.y);
   }
-  if(!hasBarracks&&vils.length>=profile.barracksVil-1)return;
+  // Bank resources for the upcoming barracks — but only while we can't yet
+  // afford it. Once the barracks cost is covered and it STILL isn't up
+  // (placement kept failing on a cramped map), holding here would deadlock
+  // the whole eco chain forever: no mill, no mining camp, and planAIFarming
+  // also gates on the barracks existing.
+  if(!hasBarracks&&vils.length>=profile.barracksVil-1&&!canAfford(1,BLDGS.BARRACKS.cost))return;
   if(vils.length>=6&&hasBarracks&&!hasAIBuilding('MILL')&&canAfford(1,BLDGS.MILL.cost)){
     let pos=findAIDropSite(TERRAIN.BERRIES,'MILL',aiTC);
     if(pos)placeAIBuilding('MILL',pos.x,pos.y);
@@ -590,9 +610,18 @@ function controlAIMilitary(mils,aiTC,profile){
     // feeding units one at a time into a fight that's already lost — a real
     // opponent disengages rather than dying in place for no gain.
     if(localAllyPower>0&&localEnemyPower>localAllyPower*1.6){
+      let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
       mils.forEach(m=>{
+        // Already home: stand and fight (auto-attack acquires targets for
+        // idle units). Re-clearing targets here every decision tick used to
+        // pin the whole army in a retreat loop — shot at, never shooting
+        // back — whenever the enemy camped above the power threshold.
+        if(dist(m,{x:tcx,y:tcy})<=6)return;
+        if(!m.target&&m.path.length>0)return; // already retreating — don't re-path
         m.target=null;
-        pathUnitTo(m,aiTC.x+Math.floor(aiTC.w/2),aiTC.y+Math.floor(aiTC.h/2));
+        // Perimeter, not the TC's own occupied footprint tile.
+        let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
+        pathUnitTo(m,pt?pt.x:tcx,pt?pt.y:tcy);
       });
       return;
     }

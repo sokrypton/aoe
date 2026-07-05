@@ -207,7 +207,9 @@ function drawParticles() {
     let pz = p.z || 0;
     sy -= pz * 35;
 
-    if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
+    // isOffscreen scales the window by 1/ZOOM — a raw W/H bound here would
+    // cull particles that are plainly visible when zoomed out.
+    if (isOffscreen(sx, sy, 20)) return;
 
     X.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
     

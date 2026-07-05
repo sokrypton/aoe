@@ -189,9 +189,12 @@ function clearUnitPath(e){
   e.fromY=e.y;
   // Explicitly halting movement also cancels any pending long-distance goal,
   // so a unit pulled into combat doesn't later resume walking to a stale spot.
+  // followId deliberately survives: combat halts (in-range stop, retaliation)
+  // only touch the per-leg pathing, and the follow order resumes after the
+  // fight — see the auto-attack note in updateUnit. Explicit new orders clear
+  // followId themselves (doCommand in js/input.js).
   e.moveGoalX=undefined;
   e.moveGoalY=undefined;
-  e.followId=undefined;
 }
 
 function setUnitPath(e,path){

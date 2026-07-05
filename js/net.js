@@ -308,6 +308,18 @@ function joinSession(hostPeerId){
     // doesn't linger, rather than just silently orphaning it.
     if (netPeer) { try { netPeer.destroy(); } catch (e) {} }
     netPeer = new Peer();
+    // The promise otherwise only settles on the DataConnection's 'open' or a
+    // Peer-level 'error'. An ICE/connection failure where neither ever fires
+    // (host id alive but the connection hangs) would leave attemptReconnect's
+    // .catch unreached — no retry ever rescheduled, guest stuck on
+    // "Attempting to reconnect…" forever. Settle exactly once, with a hard
+    // deadline covering both the signaling handshake and the connect.
+    let settled = false;
+    const settle = (fn, arg) => { if (!settled) { settled = true; clearTimeout(joinDeadline); fn(arg); } };
+    const joinDeadline = setTimeout(() => {
+      try { netPeer.destroy(); } catch (e) {}
+      settle(reject, new Error('join timed out'));
+    }, 10000);
     netPeer.on('open', () => {
       // serialization:'binary' (PeerJS's bundled BinaryPack/msgpack encoder)
       // — 'none' isn't a constructor this PeerJS build actually registers
@@ -319,11 +331,11 @@ function joinSession(hostPeerId){
       // mode the connecting peer — us — requested.
       let conn = netPeer.connect(hostPeerId, { reliable: true, serialization: 'binary' });
       wireConnection(conn);
-      conn.on('open', () => resolve());
+      conn.on('open', () => settle(resolve));
     });
     netPeer.on('error', (err) => {
       console.error('PeerJS guest error:', err);
-      reject(err);
+      settle(reject, err);
     });
   });
 }
