@@ -104,6 +104,21 @@ function drawSelection(){
 let miniTerrain=null, miniTerrainAt=-1e9;
 let miniW=0, miniH=0, miniDimsStale=true;
 window.addEventListener('resize',()=>{miniDimsStale=true;});
+// The wrap's size also changes WITHOUT a window resize — most importantly
+// when the minimap is toggled visible (its size was measured while hidden,
+// which left it tiny until the next rotate/resize). Observe the wrap
+// directly so any layout change re-measures on the next frame.
+if (typeof ResizeObserver !== 'undefined' && MC.parentElement) {
+  new ResizeObserver(()=>{miniDimsStale=true;}).observe(MC.parentElement);
+}
+// Synchronous re-measure + redraw for the moment the minimap is toggled
+// (js/input.js toggleMinimap): the observer delivers too late for the very
+// next painted frame, which briefly showed the canvas at its OLD size
+// inside the newly-sized wrap — a visible small→large flicker on click.
+function refreshMinimapSize(){
+  miniDimsStale=true;
+  if(MC.parentElement && MC.parentElement.clientWidth>0) drawMinimap();
+}
 const MINI_TERRAIN_REFRESH_MS=250;
 
 function drawMinimap(){

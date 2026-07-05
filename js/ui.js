@@ -868,12 +868,14 @@ window.selectIdleMilitary = function() {
 };
 
 let isClassicUI = document.body.classList.contains('classic-ui');
-// Landscape phone: the HUD moves from a bottom bar to a LEFT VERTICAL RAIL
-// (see the matching @media (orientation: landscape) and (max-height:500px)
-// block in styles.css — keep the two conditions aligned). Height is the
-// scarce dimension in landscape; the rail costs abundant width instead.
+// Short landscape viewport (landscape phone OR a tiny desktop window): the
+// HUD moves from a bottom bar to a LEFT VERTICAL RAIL (see the matching
+// @media (orientation: landscape) and (max-height:500px) block in
+// styles.css — keep the two conditions aligned). Height is the scarce
+// dimension in landscape; the rail costs abundant width instead. Not gated
+// on isMobile: a desktop window squeezed short has the same problem.
 window.isMobileLandscape = function() {
-  return isMobile && !isClassicUI
+  return !isClassicUI
     && window.innerWidth > window.innerHeight && window.innerHeight <= 500;
 };
 
@@ -1021,37 +1023,33 @@ window.reactivateFarm = reactivateFarm;
     return html;
   }
 
-  // Position the tooltip near (mx, my), keeping it inside the viewport
-  function positionTip(mx, my) {
-    const OFFSET = 14;
-    TIP.style.left = '';
-    TIP.style.right = '';
-    TIP.style.top = '';
-    TIP.style.bottom = '';
-
+  // Position the tooltip against the hovered BUTTON's rect — never over it.
+  // The old version chased the cursor with a fixed offset and flipped over
+  // it near the viewport edges, which is exactly where the buttons live —
+  // so the flipped tooltip landed on top of the very button being hovered.
+  // Anchored placement: centered above the button, flipping below when
+  // there's no room above, clamped inside the viewport horizontally.
+  function positionTip(el) {
+    const GAP = 8;
+    const r = el.getBoundingClientRect();
     const tw = TIP.offsetWidth || 220;
     const th = TIP.offsetHeight || 80;
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
 
-    // Prefer right of cursor; flip left if it would overflow
-    let left = mx + OFFSET;
-    if (left + tw > vw - 8) left = mx - tw - OFFSET;
-    if (left < 4) left = 4;
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(4, Math.min(left, vw - tw - 4));
 
-    // Prefer below cursor; flip above if it would overflow
-    let top = my + OFFSET;
-    if (top + th > vh - 8) top = my - th - OFFSET;
-    if (top < 4) top = 4;
+    let top = r.top - th - GAP;       // prefer above the button
+    if (top < 4) top = r.bottom + GAP; // no room: below it
 
     TIP.style.left = left + 'px';
     TIP.style.top  = top  + 'px';
   }
 
-  function showTip(html, mx, my) {
+  function showTip(html, el) {
     TIP.innerHTML = html;
     TIP.classList.add('visible');
-    positionTip(mx, my);
+    positionTip(el);
   }
 
   function hideTip() {
@@ -1118,12 +1116,8 @@ window.reactivateFarm = reactivateFarm;
     if (!el || !el.classList || !el.classList.contains('act-btn')) { hideTip(); return; }
 
     const d = descriptorForActBtn(el);
-    if (d) showTip(buildTipHTML(d), e.clientX, e.clientY);
+    if (d) showTip(buildTipHTML(d), el);
     else hideTip();
-  });
-
-  document.getElementById('bottom').addEventListener('mousemove', function(e) {
-    if (TIP.classList.contains('visible')) positionTip(e.clientX, e.clientY);
   });
 
   document.getElementById('bottom').addEventListener('mouseout', function(e) {
@@ -1145,10 +1139,7 @@ window.reactivateFarm = reactivateFarm;
         el = el.parentElement;
       }
       if (!el || !el.dataset || !el.dataset.tipLabel) { hideTip(); return; }
-      showTip(buildTipHTML({ name: el.dataset.tipLabel, desc: el.dataset.tipDesc || null }), e.clientX, e.clientY);
-    });
-    container.addEventListener('mousemove', function(e) {
-      if (TIP.classList.contains('visible')) positionTip(e.clientX, e.clientY);
+      showTip(buildTipHTML({ name: el.dataset.tipLabel, desc: el.dataset.tipDesc || null }), el);
     });
     container.addEventListener('mouseout', function(e) {
       if (!this.contains(e.relatedTarget)) hideTip();

@@ -1800,32 +1800,13 @@ canvas {
   width: auto;
   aspect-ratio: 2 / 1;
 }
-/* The idle-villager button lives inside the minimap's bottom-left corner
-   in the original HUD (idle-btn is an actual child of #minimap-wrap in
-   classic.html for this reason — see the comment there). #minimap-wrap
-   itself is already position:absolute, so it's a containing block for
-   this without needing any extra wrapper. */
-#minimap-wrap #idle-btn{
-  position: absolute;
-  /* A circular badge in the minimap's bottom-left corner, AoE2-style.
-     Bleeding it past the box's edge (negative left) got silently clipped —
-     #minimap-wrap has overflow:hidden (needed to clip the canvas's
-     transparent corners flush to the panel), so anything positioned
-     outside its bounds is cut off, not just visually overlapping. Instead,
-     line the button's left edge up with the minimap's own left edge, with
-     a couple px of inward breathing room so the minimap's edge is still
-     visible rather than fully covered. */
-  bottom: 2px;
-  left: 24px;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  z-index: 1;
-  pointer-events: auto;
-}
+/* The button strip (idle/bell/home…) sits bottom-right just above the
+   command bar, same as the mobile skin — markup shared in js/page-shell.js,
+   buttons inherit the standard strip styling above. --bottom-h tracks
+   classic's taller bar (updateBottomHeight, js/ui.js) so the strip clears
+   it instead of hardcoding the base file's 84px. */
 #pop-wrap{
-  bottom: auto;
-  top: calc(var(--top-h, 36px) + 6px);
+  bottom: calc(var(--bottom-h, 128px) + 6px);
   right: 6px;
   flex-direction: row;
 }

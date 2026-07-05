@@ -5,16 +5,12 @@
 // Runs synchronously from a plain <script> at the top of <body>, so every
 // element exists before any game script (core.js … init.js) queries it.
 //
-// Variant differences (everything else is identical):
-//  - 'classic': the idle-villager button sits in the minimap's bottom-left
-//    corner like the real AoE2 HUD (a child of #minimap-wrap so
-//    classic-style.css can position it against the minimap panel);
-//    'mobile' keeps it in the #pop-wrap button strip by the resource bar.
-//  - The UI-switch link text points at the OTHER skin.
+// The only variant difference left is the UI-switch link text (points at
+// the OTHER skin) — the button strip, including the idle-villager button
+// next to the bell, is identical in both skins.
 (function(){
 const variant = window.UI_VARIANT || 'mobile';
 
-const IDLE_BTN = '<div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div>';
 const SWITCH_LABEL = variant === 'classic' ? '📱 Switch to Mobile UI' : '🏰 Switch to Classic UI';
 
 document.body.insertAdjacentHTML('afterbegin', `
@@ -30,7 +26,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 </div>
 <div id="pop-wrap">
   <div id="chat-btn" onclick="openChatInput()" style="display:none;" data-tip-label="Chat" data-tip-desc="Send a message to your opponent."><span class="btn-emoji">💬</span></div>
-  ${variant === 'classic' ? '' : IDLE_BTN}
+  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div>
   <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji">🔔</span></div>
   <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap."><span class="btn-emoji">🌍</span></div>
   <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center."><span class="btn-emoji">🏰</span></div>
@@ -46,7 +42,7 @@ document.body.insertAdjacentHTML('afterbegin', `
   <div id="sel-grid"></div>
 </div>
 </div>
-<div id="minimap-wrap"><canvas id="minimap"></canvas>${variant === 'classic' ? IDLE_BTN : ''}</div>
+<div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>

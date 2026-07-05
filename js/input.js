@@ -1001,6 +1001,9 @@ function toggleMinimap(){
     // active toggle that can be pressed again to exit.
     let btn = document.getElementById('map-btn');
     if(btn) btn.classList.toggle('map-active', expanded);
+    // Redraw at the new size before the browser paints this click's frame —
+    // otherwise the canvas shows one frame at the old size (visible flicker).
+    if(typeof refreshMinimapSize==='function') refreshMinimapSize();
     if(window.playSound) window.playSound('click');
   }
 }

@@ -1753,15 +1753,17 @@ canvas {
 }
 #mp-share-note { color: #7a4a1e; }
 
-/* ==== MOBILE LANDSCAPE: left HUD rail + tall toggled minimap ====
-   Height is the scarce dimension on a landscape phone (~390px) — the old
-   bottom bar spent ~96px of it and the always-on corner minimap covered
-   the top-right. The HUD becomes a LEFT VERTICAL RAIL (info card in
-   portrait orientation on top, action buttons in a 2-across grid below,
-   under the left thumb), and the minimap hides behind the 🌍 button,
-   expanding top-to-bottom as a right-side panel. Keep this media
-   condition aligned with isMobileLandscape() in js/ui.js. */
-@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+/* ==== SHORT LANDSCAPE: left HUD rail + tall toggled minimap ====
+   Height is the scarce dimension on a landscape phone (~390px) — and
+   equally on a tiny desktop window — the old bottom bar spent ~96px of it
+   and the always-on corner minimap covered the top-right. The HUD becomes
+   a LEFT VERTICAL RAIL (info card in portrait orientation on top, action
+   buttons in a 2-across grid below, under the left thumb), and the minimap
+   hides behind the 🌍 button, expanding top-to-bottom as a right-side
+   panel. Applies to ANY short landscape viewport (no pointer:coarse gate —
+   a squeezed desktop window needs the rail for the same height reason).
+   Keep this media condition aligned with isMobileLandscape() in js/ui.js. */
+@media (orientation: landscape) and (max-height: 500px) {
   #bottom {
     top: 36px;
     bottom: 0;
