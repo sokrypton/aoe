@@ -745,10 +745,24 @@ C.addEventListener('touchend',e=>{
 function hasSelectedMobileBuilder(){
   return selected.some(s=>s.team===myTeam&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
 }
+// UI-only record of walk commands submitted but not yet EXECUTED — the
+// command queue runs them INPUT_DELAY_TICKS after the tap (js/commands.js),
+// so at tap time the unit has no moveGoalX yet and the keep-selection check
+// below would wrongly deselect. Never read by the sim (setting the real
+// moveGoalX early on just the issuer would desync lockstep peers — it feeds
+// retaliation logic). Entries expire once the real command has landed.
+let pendingWalkOrder = new Map(); // unit id -> tick the walk was submitted
+function isPendingWalk(id){
+  let t0 = pendingWalkOrder.get(id);
+  if (t0 === undefined) return false;
+  if (tick - t0 > INPUT_DELAY_TICKS + 30) { pendingWalkOrder.delete(id); return false; }
+  return true;
+}
 function hasSelectedMobileWalkOrder(){
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
   return movers.length>0 && movers.every(s=>
-    !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined
+    (!s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined)
+    || isPendingWalk(s.id)
   );
 }
 function finishMobileUnitCommand(){
@@ -1389,6 +1403,13 @@ function doCommand(sx,sy){
         s.moveGoalX = tile.x + ox; s.moveGoalY = tile.y + oy;
       });
     }
+  }
+
+  // Plain walk order: mark the movers as pending-walk so the mobile
+  // keep-selection check (finishMobileUnitCommand) doesn't deselect them in
+  // the input-delay window before the command actually executes.
+  if (!target && !buildTarget && !followTarget) {
+    movers.forEach(s => pendingWalkOrder.set(s.id, tick));
   }
 
   // World-space command with all targets resolved to ids against THIS

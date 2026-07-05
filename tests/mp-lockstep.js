@@ -99,6 +99,24 @@ const { BASE, sleep, check, finish } = require('./helpers');
   check(compared > 100, 'checksum overlap window large enough (' + compared + ' ticks compared)');
   check(mismatches === 0, 'ZERO checksum mismatches across ' + compared + ' shared ticks');
 
+  // Mobile keep-selection: a walk order must NOT deselect during the
+  // input-delay window (finishMobileUnitCommand runs right after the tap,
+  // before the queued command executes).
+  const keepSel = await guest.evaluate(async () => {
+    selected = entities.filter(e => e.team === 1 && e.utype === 'villager');
+    const n = selected.length;
+    const u = selected[0];
+    const iso = toIso(u.x + 5, u.y + 5);
+    doCommand(iso.ix - camX + W/2, iso.iy - camY + topH + H/2);
+    finishMobileUnitCommand();
+    const stillNow = selected.length === n;
+    await new Promise(r => setTimeout(r, 1500));
+    finishMobileUnitCommand();
+    return { stillNow, stillLater: selected.length === n };
+  });
+  check(keepSel.stillNow && keepSel.stillLater,
+    'mobile walk order keeps selection through the input-delay window (now=' + keepSel.stillNow + ', later=' + keepSel.stillLater + ')');
+
   const desyncs = await Promise.all([host, guest].map(p => p.evaluate(() => window.__lockstepDesync || null)));
   check(!desyncs[0] && !desyncs[1], 'no desync flagged on either peer (' + desyncs.join(', ') + ')');
   check(errors.length === 0, 'no page errors (' + errors.join('; ') + ')');
