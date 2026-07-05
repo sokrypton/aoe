@@ -2051,3 +2051,13 @@ canvas {
 }
 #ui-switch-link:hover { opacity: 1; }
 #ui-switch-link { color: #d8cba0; }
+
+#mp-share-note {
+  margin-top: 7px;
+  font-family: Georgia, serif;
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.85;
+  text-align: center;
+}
+#mp-share-note { color: #d8cba0; }

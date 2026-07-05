@@ -271,9 +271,15 @@ function showMpStatus(text, link){
   let linkRow = document.getElementById('mp-link-row');
   let linkBox = document.getElementById('mp-link-box');
   let qrEl = document.getElementById('mp-qr');
+  let noteEl = document.getElementById('mp-share-note');
   if (!panel) return;
   panel.style.display = 'block';
   if (textEl) textEl.textContent = text;
+  // The 1v1 warning travels with the link: there's deliberately NO code
+  // guarding against a second person joining (a token-based seat guard was
+  // tried and reverted — it kept kicking the legitimate guest), so the
+  // protection is social: tell the host to share with exactly one person.
+  if (noteEl) noteEl.style.display = link ? '' : 'none';
   if (link) {
     if (linkRow) linkRow.style.display = 'flex';
     if (linkBox) linkBox.value = link;
@@ -729,19 +735,6 @@ function setRemoteMenuOpen(open){
 }
 
 onNetMessage((msg) => {
-  // The host turned us away: the match already has its two players (see
-  // rejectConnFull, js/net.js). Stop the reconnect machinery — retrying
-  // would just be rejected again every 3 seconds forever — and explain.
-  if (msg.type === 'session-full' && netRole === 'guest') {
-    window.__mpSession.sessionFull = true;
-    if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
-    mpMatchStarted = false; // we were never actually IN the match — no mid-match disconnect UI
-    hideDisconnectOverlay();
-    showMpStatus('This match already has two players. Ask the host for a new link once their game ends.');
-    let retryBtn = document.getElementById('mp-retry-btn');
-    if (retryBtn) retryBtn.style.display = ''; // the seat may free up — allow trying again
-    return;
-  }
   if (msg.type === 'proto' && msg.v !== NET_PROTOCOL_VERSION) {
     console.error('Protocol mismatch: peer is v' + msg.v + ', this client is v' + NET_PROTOCOL_VERSION);
     showMpOverlay('Version Mismatch',
