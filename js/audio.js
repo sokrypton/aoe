@@ -339,6 +339,7 @@ function playSound(type, wx, wy) {
         const lfoGain = audioCtx.createGain();
         lfo.frequency.value = rnd(18, 24);
         lfoGain.gain.value = 6 * bp;
+        lfo.connect(lfoGain); // wire the growl wobble (was missing — LFO ran connected to nothing)
         fl.connect(g); g.connect(out);
         [72, 72 * 1.02, 108].forEach(freq => {
           const o = audioCtx.createOscillator();

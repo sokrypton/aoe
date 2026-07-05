@@ -122,9 +122,9 @@ function render(){
     // Resolve the actual entity and team for gate proxy objects
     let realEntity = (e.type === 'gate_back' || e.type === 'gate_front') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
-    // Mark enemy buildings as seen when in active vision — scoutedByMe
-    // (js/core.js), not a flag on the entity itself; see its comment.
-    if (f === 2 && eTeam !== myTeam && realEntity && realEntity.type === 'building') scoutedByMe.add(realEntity.id);
+    // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
+    // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
+    // it; it must not write to saved state.
     if (f === 1 && eTeam !== myTeam) {
       // explored but not visible: hide enemy units, corpses, and buildings never seen before
       if (e.type === 'unit' || e.type === 'corpse') return;

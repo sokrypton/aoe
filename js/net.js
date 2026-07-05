@@ -195,6 +195,10 @@ function wireConnection(conn){
     if (window.onNetConnectionOpen) window.onNetConnectionOpen();
   });
   conn.on('data', (data) => {
+    // A superseded connection (guest reconnected; old conn's close hasn't
+    // landed yet) must neither feed the liveness watchdog nor dispatch
+    // stale messages — same netConn guard the 'close' handler uses.
+    if (netConn !== conn) return;
     lastNetRecvAt = performance.now();
     queueReceive(data);
   });

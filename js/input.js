@@ -148,7 +148,13 @@ document.addEventListener('keydown',e=>{
     return;
   }
   
-  if(e.key==='Escape'){placing=null;selected=[];window.settingRally=false;updateUI();}
+  if(e.key==='Escape'){
+    // Abort an in-progress wall drag too — leaving isDraggingWall set meant
+    // the NEXT mouseup ran finalizeWallDrag() and built the wall the player
+    // just tried to cancel.
+    if(window.isDraggingWall)abortWallDrag();
+    placing=null;selected=[];window.settingRally=false;updateUI();
+  }
   if(e.key==='Delete'||e.key==='Backspace'){
     let ownIds = selected.filter(en=>en.team===myTeam).map(en=>en.id);
     requestDeleteOwned(ownIds);

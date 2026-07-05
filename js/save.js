@@ -147,6 +147,13 @@ function applySavedGame(data){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
+  // serializeGame stamps version:1 — actually check it (the net layer's
+  // NET_PROTOCOL_VERSION exists for the same reason), so a future format
+  // change fails loudly here instead of misloading silently.
+  if (data.version !== 1) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ')');
+    return;
+  }
   try {
     MAP = data.MAP;
     // Math.round, not a bare assignment: a save taken from the GUEST side

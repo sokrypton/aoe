@@ -782,11 +782,16 @@ function enterGarrison(e,b){
 function ejectGarrison(b,filter){
   if(!b.garrison||b.garrison.length===0)return 0;
   let keep=[],out=0;
+  // Tiles already handed out THIS call — unitBlock only rebuilds next tick,
+  // so without this a full TC dumped all 15 units onto one tile and left
+  // them to random separation shoving.
+  let taken=new Set();
   b.garrison.forEach(id=>{
     let u=entitiesById.get(id);
     if(!u){return;}
     if(filter&&!filter(u)){keep.push(id);return;}
-    let spawn=findSpawnTile(b.x+b.w,b.y+b.h,8)||findSpawnTile(b.x-1,b.y-1,8);
+    let spawn=findSpawnTile(b.x+b.w,b.y+b.h,8,taken)||findSpawnTile(b.x-1,b.y-1,8,taken);
+    if(spawn)taken.add(spawn.x+','+spawn.y);
     u.garrisonedIn=undefined;
     if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
     u.fromX=u.x;u.fromY=u.y;
@@ -1671,8 +1676,14 @@ function teamEliminated(team){
     (en.type==='building'||(en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass')));
 }
 
-function findSpawnTile(x,y,maxRadius=4){
+function findSpawnTile(x,y,maxRadius=4,taken=null){
+  // Ring-only per radius (the old full-square rescan returned the first
+  // walkable tile in raster order — up to maxRadius-1 tiles up-left even
+  // when an adjacent tile was free). `taken` lets one call site spread a
+  // batch (e.g. ejectGarrison) across distinct tiles.
   for(let r=0;r<maxRadius;r++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
+    if(taken&&taken.has((x+dx)+','+(y+dy)))continue;
     if(walkable(x+dx,y+dy))return{x:x+dx,y:y+dy};
   }
   return null;

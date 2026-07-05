@@ -775,7 +775,10 @@ function showMsg(txt){
   // The help hint shares the same screen spot — yield to the message
   let hint=document.getElementById('help-hint');
   if(hint)hint.style.opacity='0';
-  setTimeout(()=>el.style.opacity='0',2000);
+  // Cancel the previous message's hide timer, or a message shown ~1.9s
+  // after another gets hidden almost immediately by the stale timer.
+  clearTimeout(window._msgTimer);
+  window._msgTimer=setTimeout(()=>el.style.opacity='0',2000);
 }
 
 
