@@ -7,12 +7,12 @@ function genMap(){
 
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
   let baseAngle=Math.atan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
-  let baseSide=Math.random()<0.5?-1:1;
+  let baseSide=simRandom()<0.5?-1:1;
   // Resource distances below were tuned for the original 60x60 map; scale them
   // so larger maps spread bases/resources out instead of leaving empty grass.
   let scale=MAP/60;
 
-  function randFloat(min,max){return Math.random()*(max-min)+min;}
+  function randFloat(min,max){return simRandom()*(max-min)+min;}
   function inBounds(x,y,margin=0){return x>=margin&&x<MAP-margin&&y>=margin&&y<MAP-margin;}
   function distXY(ax,ay,bx,by){return Math.sqrt((ax-bx)*(ax-bx)+(ay-by)*(ay-by));}
   function polar(angle,dist){return{x:Math.round(Math.cos(angle)*dist),y:Math.round(Math.sin(angle)*dist)};}
@@ -70,7 +70,7 @@ function genMap(){
       5:[[[0,0],[1,0],[-1,0],[0,1],[0,-1]],[[0,0],[1,0],[0,1],[1,1],[-1,0]],[[0,0],[-1,0],[0,1],[-1,1],[1,0]]],
       7:[[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]],[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1]],[[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1]]]
     };
-    let shape=(shapes[count]||shapes[5])[randInt(0,(shapes[count]||shapes[5]).length-1)];
+    let shape=(shapes[count]||shapes[5])[simRandInt(0,(shapes[count]||shapes[5]).length-1)];
     return shape.concat([[2,0],[-2,0],[0,2],[0,-2],[2,1],[1,2],[-1,2],[-2,1],[2,-1],[1,-2],[-1,-2],[-2,-1]]);
   }
   function placePatch(terrain,cx,cy,count,resAmt,clearRadius,minStartDist,search=5){
@@ -107,8 +107,8 @@ function genMap(){
     map[spot.y][spot.x]={t:TERRAIN.BERRIES,res:125,occupied:null}; // AoE2: 125 food per bush
     let guard=0;
     while(placed.length<6&&guard++<80){
-      let base=placed[randInt(0,placed.length-1)];
-      let dx=randInt(-1,1),dy=randInt(-1,1);
+      let base=placed[simRandInt(0,placed.length-1)];
+      let dx=simRandInt(-1,1),dy=simRandInt(-1,1);
       if(!dx&&!dy)continue;
       let x=base.x+dx,y=base.y+dy;
       if(!inBounds(x,y,1)||map[y][x].t!==TERRAIN.GRASS||protectedBase(x,y))continue;
@@ -138,7 +138,7 @@ function genMap(){
         let edge = Math.abs(l) > len - 0.7 || Math.abs(w) > wid - 0.7;
         let edgeFalloff = edge ? 0.85 : 1.0;
         
-        if(!protectedBase(x,y) && !resourceBuffer(x,y,2) && map[y][x].t===TERRAIN.GRASS && Math.random()<edgeFalloff){
+        if(!protectedBase(x,y) && !resourceBuffer(x,y,2) && map[y][x].t===TERRAIN.GRASS && simRandom()<edgeFalloff){
           map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null}; // AoE2: 100 wood per tree
           placed++;
         }
@@ -218,11 +218,11 @@ function genMap(){
   let extraForestPatches=Math.round(7*scale*scale);
   for(let i=0;i<extraForestPatches;i++){
     let angle=randFloat(0,Math.PI*2);
-    let dist=randInt(Math.round(9*scale),Math.round(23*scale));
+    let dist=simRandInt(Math.round(9*scale),Math.round(23*scale));
     let x=MAP/2+Math.round(Math.cos(angle)*dist);
     let y=MAP/2+Math.round(Math.sin(angle)*dist);
     if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13*scale))continue;
-    placeForestLine(x,y,randFloat(0,Math.PI),randInt(4,7),randInt(2,3));
+    placeForestLine(x,y,randFloat(0,Math.PI),simRandInt(4,7),simRandInt(2,3));
   }
 
   for(let i=0;i<=24;i++){

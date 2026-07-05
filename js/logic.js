@@ -1028,13 +1028,13 @@ function updateUnit(e){
 
     if(e.path.length===0 && !e.eatingGrass){
       // Periodically stop to eat grass (approx. every 4-8 seconds)
-      if(tick % 180 === 0 && Math.random() < 0.4){
-        e.eatTicks = randInt(60, 120);
+      if(tick % 180 === 0 && simRandom() < 0.4){
+        e.eatTicks = simRandInt(60, 120);
       }
       // Or wander around locally in tiny steps (within 1 tile)
-      else if(tick % 120 === 0 && Math.random() < 0.25){
-        let wx=Math.round(e.x)+randInt(-1,1);
-        let wy=Math.round(e.y)+randInt(-1,1);
+      else if(tick % 120 === 0 && simRandom() < 0.25){
+        let wx=Math.round(e.x)+simRandInt(-1,1);
+        let wy=Math.round(e.y)+simRandInt(-1,1);
         if(wx>=0&&wx<MAP&&wy>=0&&wy<MAP&&walkable(wx,wy)){
           pathUnitTo(e,wx,wy);
         }
@@ -1088,9 +1088,9 @@ function updateUnit(e){
       }
       // Idle: slow wander around the den, like the sheep but ranging wider
       // and always drifting back toward home.
-      if(!e.target&&e.path.length===0&&tick%150===0&&Math.random()<0.3){
-        let wx=Math.round(home.x)+randInt(-3,3);
-        let wy=Math.round(home.y)+randInt(-3,3);
+      if(!e.target&&e.path.length===0&&tick%150===0&&simRandom()<0.3){
+        let wx=Math.round(home.x)+simRandInt(-3,3);
+        let wy=Math.round(home.y)+simRandInt(-3,3);
         if(wx>=0&&wx<MAP&&wy>=0&&wy<MAP&&walkable(wx,wy)){
           pathUnitTo(e,wx,wy);
         }

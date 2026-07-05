@@ -14,7 +14,7 @@ function init(){
     tc.complete=true;
     // Alternate the starting trio's sex from a random seed so every match
     // opens with a visible mix (a pure coin flip makes all-same 25% likely).
-    let firstFemale=Math.random()<0.5;
+    let firstFemale=simRandom()<0.5;
     for(let i=0;i<3;i++){
       let sp=findSpawnTile(tc.rallyX+i%2,tc.rallyY+Math.floor(i/2),5)||{x:tc.rallyX,y:tc.rallyY};
       createUnit('villager',sp.x,sp.y,start.team).female = (i%2===0)===firstFemale;
@@ -45,8 +45,8 @@ function placeStartingSheep(){
     {angle:baseAngle-2.35,dist:6}
   ];
   let farPairs=[
-    {angle:baseAngle+1.6+Math.random()*0.4,dist:9},
-    {angle:baseAngle-1.6-Math.random()*0.4,dist:9}
+    {angle:baseAngle+1.6+simRandom()*0.4,dist:9},
+    {angle:baseAngle-1.6-simRandom()*0.4,dist:9}
   ];
   STARTS.forEach((start,index)=>{
     let center={x:start.x+1,y:start.y+1};
@@ -72,7 +72,7 @@ function placeWildBears(){
   let placed=0, attempts=0;
   while(placed<5 && attempts<400){
     attempts++;
-    let x=randInt(4,MAP-5), y=randInt(4,MAP-5);
+    let x=simRandInt(4,MAP-5), y=simRandInt(4,MAP-5);
     if(!walkable(x,y))continue;
     if(starts.some(s=>Math.sqrt((s.x-x)**2+(s.y-y)**2)<16))continue;
     let bear=createUnit('bear',x,y,GAIA_TEAM);

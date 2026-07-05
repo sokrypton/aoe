@@ -410,13 +410,13 @@ function separateUnits(){
       }
     } else if(d<=0.01){
       if(a.path.length===0&&!aGathering){
-        let nax=a.x+Math.random()*0.3-0.15;
-        let nay=a.y+Math.random()*0.3-0.15;
+        let nax=a.x+simRandom()*0.3-0.15;
+        let nay=a.y+simRandom()*0.3-0.15;
         if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
       }
       if(b.path.length===0&&!bGathering){
-        let nbx=b.x+Math.random()*0.3-0.15;
-        let nby=b.y+Math.random()*0.3-0.15;
+        let nbx=b.x+simRandom()*0.3-0.15;
+        let nby=b.y+simRandom()*0.3-0.15;
         if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
       }
     }

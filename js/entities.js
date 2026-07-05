@@ -13,7 +13,7 @@ function createUnit(type,x,y,team){
     // starts in horse profile (7 = east) — a horse head-on reads poorly.
     dir: type === 'scout' ? 7 : 1, facing: 1, facingNorth: false,
     // Villagers are randomly male or female (cosmetic only, like AoE2)
-    female: type === 'villager' ? Math.random() < 0.5 : undefined};
+    female: type === 'villager' ? simRandom() < 0.5 : undefined};
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;

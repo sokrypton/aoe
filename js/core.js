@@ -30,10 +30,15 @@ let STARTS=[
 // memorizable), with the enemy always in the diagonally opposite corner —
 // genMap()'s mirrored resource placement works for any diagonal.
 function setMapSize(sizeKey){
+  // First consumer of sim randomness in a fresh match: (re)seed here.
+  // A guest/replay stages the agreed seed in __pendingMatchSeed; the
+  // host/single-player draws a fresh one.
+  newMatchSeed(window.__pendingMatchSeed);
+  window.__pendingMatchSeed = null;
   MAP=MAP_SIZES[sizeKey]||MAP_SIZES.medium;
   let lo=10, hi=MAP-13;
   let corners=[[lo,lo],[hi,lo],[lo,hi],[hi,hi]];
-  let c=corners[randInt(0,3)];
+  let c=corners[simRandInt(0,3)];
   STARTS=[
     {team:0,x:c[0],y:c[1]},
     {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
@@ -136,8 +141,38 @@ const AI_LEVELS={
   hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1}}
 };
 
+// Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
+// a later tick must use simRandom/simRandInt below instead — the lockstep
+// peers must agree on all sim randomness. DET.strict (js/determinism.js)
+// traps Math.random inside the sim tick to enforce this.
 function randInt(min,max){
   return Math.floor(Math.random()*(max-min+1))+min;
+}
+
+// ---- Seeded sim PRNG (mulberry32) ----
+// simRngState is SIM STATE: checksummed (simChecksum) and, once lockstep
+// lands, saved/restored with snapshots. Both peers seed from the shared
+// matchSeed before any sim randomness (incl. map gen) runs.
+let simRngState = 1;
+let matchSeed = 1;
+function seedSimRng(seed){ simRngState = seed >>> 0; }
+function simRandom(){
+  simRngState = (simRngState + 0x6D2B79F5) | 0;
+  let t = Math.imul(simRngState ^ (simRngState >>> 15), 1 | simRngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function simRandInt(min,max){
+  return Math.floor(simRandom()*(max-min+1))+min;
+}
+// Establish the seed for a fresh match. Host/single-player draws a random
+// one; a guest (or a replay) passes the agreed seed in. Must run before
+// setMapSize()/genMap() — they consume sim randomness.
+function newMatchSeed(seed){
+  matchSeed = (seed == null ? Math.random()*0x100000000 : seed) >>> 0;
+  seedSimRng(matchSeed);
+  if (typeof detStartLog === 'function' && DET.log) detStartLog(matchSeed, { mapSize: MAP, speed: GAME_SPEED });
+  return matchSeed;
 }
 
 // Corpse decay timeline (wall-clock ms, AoE2-style): fresh body until
@@ -512,9 +547,9 @@ function spawnProjectile(attacker, target) {
   let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
   let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
   let accuracy = attacker.type === 'building' ? 1.0 : 0.8;
-  if (target.type !== 'building' && Math.random() > accuracy) {
-    let ang = Math.random() * Math.PI * 2;
-    let off = 0.6 + Math.random() * 0.8;
+  if (target.type !== 'building' && simRandom() > accuracy) {
+    let ang = simRandom() * Math.PI * 2;
+    let off = 0.6 + simRandom() * 0.8;
     targetX += Math.cos(ang) * off;
     targetY += Math.sin(ang) * off;
   }

@@ -451,9 +451,9 @@ function queueAIMilitary(readyBarracks,profile){
       // Counter-pick most of the time once there's real intel on what the
       // player is fielding — not always, so the matchup isn't perfectly
       // predictable/exploitable by the player switching unit types.
-      if(dominant&&Math.random()<0.7)return counterMap[dominant];
+      if(dominant&&simRandom()<0.7)return counterMap[dominant];
     }
-    return types[randInt(0, types.length - 1)];
+    return types[simRandInt(0, types.length - 1)];
   };
 
   // Count queued military across ALL barracks against the cap — the old
@@ -692,8 +692,8 @@ function controlAIScouts(mils,aiTC){
 function randomScoutWaypoint(){
   let margin=3;
   for(let attempt=0;attempt<8;attempt++){
-    let x=randInt(margin,MAP-1-margin);
-    let y=randInt(margin,MAP-1-margin);
+    let x=simRandInt(margin,MAP-1-margin);
+    let y=simRandInt(margin,MAP-1-margin);
     if(map[y]&&map[y][x]&&map[y][x].t!==TERRAIN.WATER)return{x,y};
   }
   return null;

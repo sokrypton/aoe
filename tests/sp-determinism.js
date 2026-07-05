@@ -62,6 +62,44 @@ const { BASE, sleep, check, finish } = require('./helpers');
   check(r.journal, 'command journal records and dumps');
   check(errors.length === 0, 'no page errors (' + errors.join('; ') + ')');
 
+  // ---- Same-seed reproducibility across independent pages ----
+  // Seed the sim PRNG, regenerate the world, then step the sim 300 ticks
+  // synchronously (no rAF interleaving inside one evaluate) and fingerprint
+  // map + per-tick checksums. Two pages with the same seed must agree on
+  // every tick; a third page with a different seed must not.
+  async function seededRun(seed) {
+    const p = await browser.newPage();
+    p.on('pageerror', e => errors.push('seeded(' + seed + '): ' + String(e)));
+    await p.goto(BASE);
+    await sleep(800);
+    const out = await p.evaluate((seed) => {
+      window.__pendingMatchSeed = seed;
+      window.fogDisabled = true;
+      setMapSize('medium');
+      restartGame('standard');
+      let mh = 0x811c9dc5;
+      for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
+        mh = detMix(mh, map[y][x].t); mh = detMix(mh, map[y][x].res || 0);
+      }
+      const sums = [simChecksum()];
+      for (let i = 0; i < 300; i++) { update(); sums.push(simChecksum()); }
+      return { mapHash: mh >>> 0, sums: sums, n: entities.length, starts: JSON.stringify(STARTS) };
+    }, seed);
+    await p.close();
+    return out;
+  }
+  const runA = await seededRun(123456789);
+  const runB = await seededRun(123456789);
+  const runC = await seededRun(987654321);
+  check(runA.mapHash === runB.mapHash, 'same seed: identical map');
+  check(runA.starts === runB.starts, 'same seed: identical start corners');
+  check(runA.n === runB.n, 'same seed: identical entity count');
+  check(runA.sums.length === runB.sums.length && runA.sums.every((s, i) => s === runB.sums[i]),
+    'same seed: identical checksum stream over 300 ticks');
+  check(runA.mapHash !== runC.mapHash || runA.sums[300] !== runC.sums[300],
+    'different seed: different world');
+  check(errors.length === 0, 'no page errors in seeded runs (' + errors.join('; ') + ')');
+
   await browser.close();
   finish();
 })();
