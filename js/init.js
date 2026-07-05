@@ -996,7 +996,7 @@ function restartGame(difficulty){
   workSwingCycles.clear();
   guestPrevHp.clear();
   guestReactedCorpses.clear();
-  guestBuildingFxTick.clear();
+  buildingFxTick.clear();
   lastSentEntitySnapshot = new Map(); // fresh map, stale entity-diff baseline no longer meaningful — see js/core.js
 
   // Reset resources to defaults — team 1 (single-player AI, or a real MP
@@ -1190,9 +1190,11 @@ function gameLoop(){
       // entities/projectiles lists correct/remove them regardless.
       advanceGuestProjectiles(elapsed);
       advanceGuestUnits(elapsed);
-      advanceGuestParticles(elapsed);
-      advanceGuestBuildingEffects();
     }
+    // Visual-only effects (particle physics, building smoke/fire) run at
+    // frame cadence for BOTH roles, outside the deterministic sim tick —
+    // see updateCosmetics (js/loop.js).
+    updateCosmetics(elapsed);
     reportGuestViewIfChanged(now); // js/net-sync.js — lets the host hand this back on a future reconnect
   }
   render();

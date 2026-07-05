@@ -435,10 +435,10 @@ function applyNetSync(data){
     // Older payload fields (cmdMarkers/newCmdMarkers) are simply ignored.
     // particles are never networked and used to be reset here every sync —
     // fine when the guest never spawned any of its own, but now it does
-    // (advanceGuestParticles/the hit/death/gather/building-fx hooks below),
+    // (advanceParticles/the hit/death/gather/building-fx hooks below),
     // so wiping this on every ~65ms sync would cut every particle's
     // intended ~0.7-2s lifespan down to a few dozen milliseconds. Left
-    // alone here; js/loop.js's advanceGuestParticles owns aging them out.
+    // alone here; js/loop.js's advanceParticles owns aging them out.
 
     // Combat hit-particles (js/logic.js's damageEntity spawns them on the
     // host at the moment of each individual hit — same "host-only
@@ -665,7 +665,7 @@ function applyNetSync(data){
       scoutedByMe.clear();
       guestReactedCorpses.clear();
       guestPrevHp.clear();
-      guestBuildingFxTick.clear();
+      buildingFxTick.clear();
       treeFellTicks.clear();
       corpseImpactFxDone.clear();
       workSwingCycles.clear();

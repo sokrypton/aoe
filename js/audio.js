@@ -30,12 +30,12 @@ function noiseBuffer() {
     const len = audioCtx.sampleRate;
     _noiseBuf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
     const d = _noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) d[i] = cosmeticRandom() * 2 - 1;
   }
   return _noiseBuf;
 }
 
-function rnd(a, b) { return a + Math.random() * (b - a); }
+function rnd(a, b) { return a + cosmeticRandom() * (b - a); }
 
 // Single enveloped oscillator note.
 function tone(out, now, { type = 'sine', f0 = 440, f1 = null, t0 = 0, dur = 0.1, vol = 0.1, att = 0.005, detune = 0 }) {
@@ -153,7 +153,7 @@ function playSound(type, wx, wy) {
         noiseHit(out, now, { dur: 0.045, vol: 0.2, type: 'bandpass', f0: 900 * p, f1: 250, q: 0.8 });
         tone(out, now, { type: 'triangle', f0: 300 * p, f1: 85, dur: 0.055, vol: 0.17 });
         tone(out, now, { type: 'triangle', f0: 110 * p, f1: 38, dur: 0.18, vol: 0.13 });
-        if (Math.random() < 0.15) {
+        if (cosmeticRandom() < 0.15) {
           // fiber crack, kept in the mids — high-pitched accents read harsh
           noiseHit(out, now, { t0: 0.02, dur: 0.09, vol: 0.05, type: 'bandpass', f0: 1300, q: 1 });
         }

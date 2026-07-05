@@ -144,9 +144,12 @@ const AI_LEVELS={
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
 // a later tick must use simRandom/simRandInt below instead — the lockstep
 // peers must agree on all sim randomness. DET.strict (js/determinism.js)
-// traps Math.random inside the sim tick to enforce this.
+// traps Math.random inside the sim tick to enforce this; cosmetic helpers
+// that legitimately run DURING the tick (particle/sound spawns from combat)
+// use this load-time captured reference to stay exempt from the trap.
+const cosmeticRandom = Math.random.bind(Math);
 function randInt(min,max){
-  return Math.floor(Math.random()*(max-min+1))+min;
+  return Math.floor(cosmeticRandom()*(max-min+1))+min;
 }
 
 // ---- Seeded sim PRNG (mulberry32) ----
@@ -307,9 +310,9 @@ let workSwingCycles = new Map();
 let guestPrevHp = new Map();
 let guestReactedCorpses = new Set();
 // Per-building last-fired tick for the guest's damage smoke/fire loop
-// (advanceGuestBuildingEffects, js/loop.js) — a bare tick%N check doesn't
+// (updateBuildingDamageFx, js/loop.js) — a bare tick%N check doesn't
 // work since the guest's tick advances fractionally, not per whole tick.
-let guestBuildingFxTick = new Map();
+let buildingFxTick = new Map();
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
@@ -519,8 +522,8 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   else if (color === '#4e8c2d') type = 'grass';
 
   for (let i = 0; i < count; i++) {
-    let angle = Math.random() * Math.PI * 2;
-    let sp = Math.random() * speed;
+    let angle = cosmeticRandom() * Math.PI * 2;
+    let sp = cosmeticRandom() * speed;
     let maxLife = type === 'blood' ? randInt(40, 60) : randInt(20, 35);
     
     let z = 0;
@@ -529,30 +532,30 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
     let drag = 1.0;
     
     if (type === 'blood') {
-      z = 0.35 + Math.random() * 0.2; // Torso level
-      vz = 0.02 + Math.random() * 0.03;
+      z = 0.35 + cosmeticRandom() * 0.2; // Torso level
+      vz = 0.02 + cosmeticRandom() * 0.03;
       gravity = 0.003;
       drag = 0.96;
     } else if (type === 'fire') {
       z = 0.1;
-      vz = 0.01 + Math.random() * 0.015;
+      vz = 0.01 + cosmeticRandom() * 0.015;
       gravity = -0.0003;
       drag = 0.98;
     } else if (type === 'smoke') {
       z = 0.2;
-      vz = 0.008 + Math.random() * 0.012;
+      vz = 0.008 + cosmeticRandom() * 0.012;
       gravity = -0.0002;
       drag = 0.95;
     } else if (type === 'dust' || type === 'grass') {
       z = 0.05;
-      vz = 0.02 + Math.random() * 0.03;
+      vz = 0.02 + cosmeticRandom() * 0.03;
       gravity = 0.004;
       drag = 0.94;
     }
 
     particles.push({
-      x: x + (Math.random() - 0.5) * 0.3,
-      y: y + (Math.random() - 0.5) * 0.3,
+      x: x + (cosmeticRandom() - 0.5) * 0.3,
+      y: y + (cosmeticRandom() - 0.5) * 0.3,
       z: z,
       vx: Math.cos(angle) * sp,
       vy: Math.sin(angle) * sp,
@@ -563,7 +566,7 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
       maxLife: maxLife,
       color: color,
       type: type,
-      size: size + Math.random() * 1.5
+      size: size + cosmeticRandom() * 1.5
     });
   }
 }

@@ -4,55 +4,11 @@ function update(){
   detEnterSim(); // no-op unless DET.strict — traps un-migrated Math.random in sim code
   tick++;
 
-  // Update particles
-  particles.forEach(p => {
-    p.x += p.vx;
-    p.y += p.vy;
-    
-    // Apply horizontal drag
-    if (p.drag) {
-      p.vx *= p.drag;
-      p.vy *= p.drag;
-    }
-    
-    // Apply vertical physics
-    if (p.z !== undefined) {
-      p.z += p.vz;
-      p.vz -= p.gravity;
-      
-      // Ground collision
-      if (p.z <= 0) {
-        p.z = 0;
-        if (p.type === 'blood') {
-          p.vx = 0;
-          p.vy = 0;
-          p.vz = 0;
-        } else if ((p.type === 'dust' || p.type === 'grass') && p.vz < -0.005) {
-          p.vz = -p.vz * 0.45;
-          p.vx *= 0.6;
-          p.vy *= 0.6;
-        } else {
-          p.vz = 0;
-        }
-      }
-    }
-    
-    p.life--;
-  });
-  particles = particles.filter(p => p.life > 0);
-
-  // Update smoking/burning buildings & gate open/close states
+  // Update gate open/close states (smoke/fire moved to updateCosmetics —
+  // purely visual, so it runs at frame cadence outside the deterministic
+  // sim tick and needs no lockstep agreement or rollback treatment)
   entities.forEach(e => {
     if (e.type === 'building') {
-      // Smoke/fire = battle damage on FINISHED buildings only. Foundations
-      // legitimately sit below these hp thresholds while under construction
-      // (hp grows with build progress) — a half-built house isn't burning.
-      if (e.complete && e.hp < e.maxHp * 0.7 && tick % 5 === 0) {
-        spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
-      }
-      if (e.complete && e.hp < e.maxHp * 0.3 && tick % 3 === 0) {
-        spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, Math.random() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
-      }
       if (e.btype === 'GATE' && e.complete) {
         let friendlyNear = entities.some(en => en.type === 'unit' && en.team === e.team && 
           en.x >= e.x - 1.2 && en.x <= e.x + e.w + 0.2 && 
@@ -234,15 +190,19 @@ function advanceGuestUnits(elapsedMs){
   });
 }
 
-// Guest-only, called from gameLoop() (js/init.js) once per rendered frame.
-// update()'s particle-physics block above (position/drag/gravity/ground-
-// bounce/life countdown) is HOST-ONLY — the guest never calls update() at
-// all, it only ever renders. Now that the guest independently spawns its
-// own particles (hit/death/gather/building-fx below), something has to
-// age and move them the same way, at frame cadence rather than per whole
-// tick — same `elapsedMs/timeStep` fractional-step scaling as
-// advanceGuestUnits/Projectiles use for the same reason.
-function advanceGuestParticles(elapsedMs){
+// ---- COSMETIC FRAME UPDATE (both roles) ----
+// Everything here is visual-only state the sim never reads: it runs at
+// frame cadence from gameLoop() on host AND guest, OUTSIDE the
+// deterministic sim tick — so it needs no lockstep agreement, no checksum
+// coverage, and no rollback treatment (see js/determinism.js). Frame-scaled
+// via elapsedMs/timeStep so it's frame-rate independent.
+function updateCosmetics(elapsedMs){
+  advanceParticles(elapsedMs);
+  updateBuildingDamageFx();
+}
+
+// Particle physics: position/drag/gravity/ground-bounce/life countdown.
+function advanceParticles(elapsedMs){
   let steps = elapsedMs / timeStep;
   particles.forEach(p => {
     p.x += p.vx * steps;
@@ -273,36 +233,25 @@ function advanceGuestParticles(elapsedMs){
   particles = particles.filter(p => p.life > 0);
 }
 
-// Guest-only, called from gameLoop() (js/init.js) once per rendered frame,
-// same reasoning as advanceGuestProjectiles/advanceGuestUnits above but for
-// damaged-building smoke/fire (js/loop.js's own update() has the
-// authoritative version of this exact block, host-only). This one isn't
-// smoothing anything already-networked — smoke/fire particles are never
-// sent at all — it's independently re-deriving a periodic visual effect
-// from hp/maxHp, which the guest already has via the normal sync, using
-// its own locally-advancing `tick` (js/init.js's per-frame nudge) as the
-// timing source instead of needing the host to send anything new.
-function advanceGuestBuildingEffects(){
-  // `tick % N === 0` (the host's version) fires exactly once per N whole
-  // ticks because the host's `tick` is a plain integer incremented once
-  // per simulation step. The guest's `tick` instead advances fractionally
-  // every rendered frame (js/init.js's per-frame nudge, purely for smooth
-  // animation) — Math.floor(tick) can sit on the same multiple-of-N value
-  // across many consecutive frames, so a bare modulo check here would fire
-  // repeatedly instead of once. guestBuildingFxTick (per-entity, per-effect
-  // last-fired tick) throttles it back down to "once per interval" instead.
+// Damaged-building smoke/fire, re-derived each frame from hp/maxHp —
+// these particles are never networked. buildingFxTick (per-entity,
+// per-effect last-fired tick) throttles to once per interval: the host's
+// tick is an integer, but a guest's advances fractionally per frame
+// (js/init.js), where a bare `tick % N` check would re-fire across many
+// consecutive frames.
+function updateBuildingDamageFx(){
   let t = Math.floor(tick);
   entities.forEach(e => {
     if (e.type !== 'building' || !e.complete) return;
-    let rec = guestBuildingFxTick.get(e.id);
-    if (!rec) { rec = {smoke: -999, fire: -999}; guestBuildingFxTick.set(e.id, rec); }
+    let rec = buildingFxTick.get(e.id);
+    if (!rec) { rec = {smoke: -999, fire: -999}; buildingFxTick.set(e.id, rec); }
     if (e.hp < e.maxHp * 0.7 && t - rec.smoke >= 5) {
       rec.smoke = t;
-      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
+      spawnParticles(e.x + e.w/2 + (cosmeticRandom() - 0.5)*0.5, e.y + e.h/2 + (cosmeticRandom() - 0.5)*0.5, 'rgba(100,100,100,0.5)', 1, 0.015, 3);
     }
     if (e.hp < e.maxHp * 0.3 && t - rec.fire >= 3) {
       rec.fire = t;
-      spawnParticles(e.x + e.w/2 + (Math.random() - 0.5)*0.5, e.y + e.h/2 + (Math.random() - 0.5)*0.5, Math.random() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
+      spawnParticles(e.x + e.w/2 + (cosmeticRandom() - 0.5)*0.5, e.y + e.h/2 + (cosmeticRandom() - 0.5)*0.5, cosmeticRandom() < 0.4 ? '#ff4500' : '#ffd700', 1, 0.02, 2.5);
     }
   });
 }
