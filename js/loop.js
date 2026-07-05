@@ -1,6 +1,7 @@
 // ---- MAIN LOOP ----
 function update(){
   if(gameOver||!gameStarted)return;
+  detEnterSim(); // no-op unless DET.strict — traps un-migrated Math.random in sim code
   tick++;
 
   // Update particles
@@ -144,6 +145,8 @@ function update(){
     let netSyncIntervalTicks = Math.max(1, Math.round(30 * GAME_SPEED / NET_SYNC_TARGET_PER_SEC));
     if (tick % netSyncIntervalTicks === 0) hostSyncTick();
   }
+  detExitSim();
+  if (DET.enabled) detAfterTick();
 }
 
 // Guest-only, called from gameLoop() (js/init.js) once per rendered frame
