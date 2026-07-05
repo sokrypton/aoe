@@ -1695,6 +1695,9 @@ function handleDeath(e,killerTeam){
       id: e.id,
       facing: e.facing || 1,
       female: e.female, // villagers keep their hairdo in death
+      // Wall-clock is safe here ONLY because corpses are cosmetic: nothing
+      // in the sim ever reads them (render/save only, see simChecksum's
+      // exclusions). Sim state must use `tick`, never performance.now().
       deathTime: performance.now()
     };
     corpses.push(corpse);
