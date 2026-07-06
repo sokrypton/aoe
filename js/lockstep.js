@@ -63,6 +63,13 @@ function sendToPeer(msg){
   else if (netRole === 'guest') sendToHost(msg);
 }
 
+// Seed the ring with the CURRENT state so a command stamped for the very
+// first ticks is still inside the rollback window.
+function lockstepSeedSnapshot(){
+  lockstepSnapshots.length = 0;
+  lockstepSnapshots.push({ t: tick, state: lockstepCaptureState() });
+}
+
 function lockstepResetState(){
   lockstepResyncBarrier = -1;
   lockstepResyncCount = 0;
@@ -85,6 +92,7 @@ function hostStartLockstepMatch(){
   setMapSize(sizeKey); // draws the fresh matchSeed both peers will share
   restartGame('standard');
   DET.enabled = true; // per-tick checksum ring for the exchange below
+  lockstepSeedSnapshot();
   broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED });
 }
 
@@ -98,6 +106,7 @@ onNetMessage((msg) => {
     setMapSize(msg.mapSize);
     restartGame('standard');
     DET.enabled = true;
+    lockstepSeedSnapshot();
     gameStarted = true;
     gamePaused = false;
     // init() (via restartGame) centered the camera on TEAM 0's start — on
@@ -134,7 +143,6 @@ onNetMessage((msg) => {
     // reconnect after a drop. Enter lockstep mode around the state apply.
     lockstepActive = true;
     lockstepResetState();
-    window.fogDisabled = false;
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     DET.enabled = true;
     gameStarted = true;
@@ -169,17 +177,29 @@ onNetMessage((msg) => {
 // ~20% slower so they catch up); Infinity when so far ahead that a peer
 // command could fall outside the rollback window.
 function lockstepTickSurcharge(){
-  if (peerSimTick < 0) return 0; // no report yet (match start)
+  // Hold at the start line until the peer's first report: the host starts
+  // a match while the guest is still applying the start state — running
+  // ahead meanwhile leaves the two sims permanently offset by the transit
+  // time, making EVERY guest command a rollback (and early ones landed
+  // before any snapshot existed: unrecoverable). Reports are time-based
+  // (below), so both sides exchange t=0 and release together.
+  if (peerSimTick < 0) return Infinity;
   let ahead = tick - peerSimTick;
   if (ahead > LOCKSTEP_HARD_AHEAD) return Infinity;
   if (ahead > LOCKSTEP_SOFT_AHEAD) return timeStep * 0.25;
   return 0;
 }
 
-// After simming: progress report + old-enough checksum, throttled.
+// After each frame: progress report + old-enough checksum. Throttled by
+// tick progress, with a time floor so a peer holding at the start line
+// (or stalled) still announces itself — without it, both sides would wait
+// at tick 0 for the other's first report forever.
+let lastReportWallMs = 0;
 function lockstepReport(){
-  if (tick - lastReportedSimTick < LOCKSTEP_REPORT_EVERY) return;
+  let nowMs = performance.now();
+  if (tick - lastReportedSimTick < LOCKSTEP_REPORT_EVERY && nowMs - lastReportWallMs < 250) return;
   lastReportedSimTick = tick;
+  lastReportWallMs = nowMs;
   let msg = { type: 'tick', t: tick };
   // Attach the newest history entry that is safely beyond rollback reach.
   for (let i = DET.history.length - 1; i >= 0; i--) {
@@ -216,6 +236,9 @@ function lockstepCaptureState(){
     bellRinging: window.bellRinging,
     stuckWatch: snapshotStuckWatch(),
     exploredSim: teamExploredGrid, // Uint8Arrays clone fine
+    // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
+    // agree, e.g. after the host loads a fog-disabled save mid-match.
+    fogDisabled: !!window.fogDisabled,
   });
 }
 
@@ -304,6 +327,8 @@ function lockstepApplyResync(state){
   // anything indexes the restored map, and fog is per-viewer (never part
   // of sim state) so it's rebuilt empty and recomputed next tick.
   MAP = state.map.length;
+  // Before initFog(): it seeds the whole grid as revealed when fog is off.
+  if (state.fogDisabled !== undefined) window.fogDisabled = !!state.fogDisabled;
   if (!fog.length || fog.length !== MAP) initFog();
   if (!window.bellRinging) window.bellRinging = [false, false];
   entities = state.entities;
@@ -321,12 +346,23 @@ function lockstepApplyResync(state){
   window.bellRinging = state.bellRinging;
   restoreStuckWatch(new Map(state.stuckWatch || []));
   teamExploredGrid = [Uint8Array.from(state.exploredSim[0]), Uint8Array.from(state.exploredSim[1])];
+  // A rejoining guest's fog was just rebuilt empty (fresh page) — its
+  // explored memory only survives in the sim's explored grid. Seed fog=1
+  // from our team's grid; a no-op for tiles already explored/visible, so
+  // it's safe on a peer whose fog was never lost (incl. the host itself).
+  const myEg = teamExploredGrid[myTeam];
+  for (let y = 0; y < MAP; y++) {
+    for (let x = 0; x < MAP; x++) {
+      if (fog[y][x] === 0 && myEg[y * MAP + x] === 1) fog[y][x] = 1;
+    }
+  }
   visionFreshTick = -1;
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
   clearCommandQueue();
   lockstepSnapshots.length = 0;
   DET.history.length = 0;
   lockstepResyncBarrier = tick;
+  lockstepSeedSnapshot();
   peerSimTick = tick;
   lastReportedSimTick = tick;
   lockstepDesyncedAt = null;

@@ -229,8 +229,27 @@ function applySavedGame(data, opts){
       // host-originated path expects it in.
       data.savedByTeam = 0;
     }
-    fog = data.fog || [];
-    teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
+    if (data.savedByTeam === 1 && opts && opts.fromOpponentMirror) {
+      // Guest-authored snapshot with teams left in place: data.fog is TEAM
+      // 1's live grid and otherTeamExploredEver is team 0's explored-ever
+      // memory (see serializeGame) — the mirror image of what the loading
+      // host (team 0) needs. Rebuild this side's fog from team 0's memory
+      // (explored, not currently-visible; updateFog() below re-lights the
+      // live tiles) and team 1's memory from the guest's own fog grid.
+      let hostEver = new Set(data.otherTeamExploredEver || []);
+      fog = [];
+      for (let y = 0; y < MAP; y++) {
+        fog[y] = [];
+        for (let x = 0; x < MAP; x++) fog[y][x] = hostEver.has(y * MAP + x) ? 1 : 0;
+      }
+      teamExploredEver[1] = new Set();
+      (data.fog || []).forEach((row, y) => row.forEach((v, x) => {
+        if (v > 0) teamExploredEver[1].add(y * MAP + x);
+      }));
+    } else {
+      fog = data.fog || [];
+      teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
+    }
     teamExploredEver[0] = new Set();
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
