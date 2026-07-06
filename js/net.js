@@ -100,23 +100,40 @@ let netBytesReceived = 0;
 // with the resource bar and the fullscreen/menu buttons. Display-only —
 // the counters above accumulate regardless.
 (function(){
-  let lastSent = 0, lastRecv = 0, lastT = performance.now();
+  let lastSent = 0, lastRecv = 0, lastT = performance.now(), lastTick = 0;
   const fmtRate = bps => bps >= 100 * 1024
     ? (bps / (1024 * 1024)).toFixed(2) + ' MB/s'
     : (bps / 1024).toFixed(1) + ' KB/s';
   setInterval(() => {
     const el = document.getElementById('net-stats');
     if (!el) return;
+    const ls = typeof lockstepEnabled === 'function' && lockstepEnabled();
+    // Desktop: full readout when there's chrome room. Mobile: normally
+    // hidden, but a compact sim-health readout (tps + input delay) shows
+    // during lockstep matches — that's where connection-pacing problems
+    // are felt and need monitoring.
     const roomFor = !(typeof isMobile !== 'undefined' && isMobile) && window.innerWidth >= 700;
-    const active = roomFor && netRole && netConnected;
+    const active = (roomFor || (isMobile && ls)) && netRole && netConnected;
     el.style.display = active ? 'flex' : 'none';
     if (!active) return;
     const now = performance.now(), dt = (now - lastT) / 1000 || 1;
     const up = (netBytesSent - lastSent) / dt;
     const down = (netBytesReceived - lastRecv) / dt;
+    // Sim pace: ticks actually produced per real second. Full rate is
+    // 30*GAME_SPEED (60 at the default 2x); lower means the lockstep gate
+    // (connection) or the device itself can't keep up. d = current input
+    // delay in ticks (the adaptive buffer, js/lockstep.js).
+    const t = Math.floor(tick);
+    const tps = gameStarted && !gamePaused ? Math.max(0, Math.round((t - lastTick) / dt)) : 0;
+    lastTick = t;
     lastSent = netBytesSent; lastRecv = netBytesReceived; lastT = now;
-    const totalMB = ((netBytesSent + netBytesReceived) / (1024 * 1024)).toFixed(2);
-    el.textContent = '↑ ' + fmtRate(up) + '  ↓ ' + fmtRate(down) + '  Σ ' + totalMB + ' MB';
+    const simTxt = ls ? (tps + 'tps d' + INPUT_DELAY_TICKS) : (tps + 'tps');
+    if (roomFor) {
+      const totalMB = ((netBytesSent + netBytesReceived) / (1024 * 1024)).toFixed(2);
+      el.textContent = '↑ ' + fmtRate(up) + '  ↓ ' + fmtRate(down) + '  Σ ' + totalMB + ' MB  ·  ' + simTxt;
+    } else {
+      el.textContent = simTxt; // compact mobile lockstep readout
+    }
   }, 1000);
   // The 1s cadence would leave the box overlapping the resource bar for up
   // to a second after a shrink — hide immediately on resize instead.
