@@ -27,6 +27,12 @@ let peerSimTick = -1;
 let lastReportedSimTick = -1;
 let lockstepDesyncedAt = null;
 const LOCKSTEP_CKSUM_EVERY = 30;
+// Start pessimistic (~167ms buffer) and adapt DOWN on a good link: a too-
+// small opening delay stalls the first seconds of every real-internet
+// match before the controller can react, which reads as "the game is
+// laggy" right at first impression. Coming down from a safe start only
+// costs command latency nobody notices while their first villagers walk.
+const LOCKSTEP_START_DELAY = 10;
 
 // ---- Adaptive input delay ----
 // The gating slack actually in force. INPUT_DELAY_TICKS (js/commands.js)
@@ -51,31 +57,46 @@ function lockstepApplyDelay(d){
   if (typeof showMsg === 'function') showMsg('Network buffer: ' + Math.round(d * timeStep) + 'ms');
 }
 
-// Stall accounting: a "stall" is a gameLoop frame that wanted to simulate
-// but couldn't because the peer's watermark hadn't covered the next tick.
-// Rolling window; the guest piggybacks its ratio on checksum reports and
-// the HOST decides delay changes for both (via the 'set-delay' command).
-let stallFrames = 0, simFrames = 0, peerStallPct = 0;
-let lastDelayChangeTick = 0;
+// Stall accounting (debug/stats only — see lockstepAdaptDelay for the
+// actual control signal): a "stall" is a gameLoop frame that wanted to
+// simulate but couldn't because the peer's watermark hadn't covered the
+// next tick.
+let stallFrames = 0, simFrames = 0;
 function lockstepNoteFrame(stalled){
   simFrames++;
   if (stalled) stallFrames++;
 }
+// Adaptive controller, host-driven. Control signal: PACE — sim ticks
+// actually produced vs. expected from wall-clock. Frame-level stall counts
+// over-trigger (a gated frame is harmless if the accumulator catches up
+// the same instant), which maxed the delay out on links that were already
+// running at full speed. Pace only moves when players would actually feel
+// it. Gating throttles both peers identically, so the host's own pace IS
+// the match's pace — no peer-side signal needed.
+let lastAdaptAt = 0, lastAdaptTick = 0, lastDelayChangeAt = 0;
 function lockstepAdaptDelay(){
   if (netRole !== 'host' || lockstepDesyncedAt != null) return;
-  if (tick - lastDelayChangeTick < 180 || simFrames < 60) return; // ~3s between changes
-  let own = stallFrames / simFrames;
-  let worst = Math.max(own, peerStallPct);
+  let nowMs = performance.now();
+  if (!lastAdaptAt) { lastAdaptAt = nowMs; lastAdaptTick = tick; return; }
+  let windowMs = nowMs - lastAdaptAt;
+  if (windowMs < 3000) return;
+  // A pause (menus, disconnect) poisons the window — reset the baseline.
+  if (windowMs > 10000) { lastAdaptAt = nowMs; lastAdaptTick = tick; return; }
+  let pace = (tick - lastAdaptTick) / (windowMs / timeStep);
+  lastAdaptAt = nowMs; lastAdaptTick = tick;
   stallFrames = 0; simFrames = 0;
-  if (worst > 0.08 && INPUT_DELAY_TICKS < INPUT_DELAY_MAX) {
-    lastDelayChangeTick = tick;
+  if (pace < 0.95 && INPUT_DELAY_TICKS < INPUT_DELAY_MAX) {
+    lastDelayChangeAt = nowMs;
     submitCommand({ kind: 'set-delay', d: Math.min(INPUT_DELAY_MAX, INPUT_DELAY_TICKS + 2) });
-  } else if (worst < 0.002 && INPUT_DELAY_TICKS > 4 && tick - lastDelayChangeTick >= 1200) {
-    // Strong hysteresis on the way down (near-zero stalls for ~20s, single
-    // steps) — without it the delay oscillates around the sweet spot,
-    // re-stalling every few seconds.
-    lastDelayChangeTick = tick;
-    submitCommand({ kind: 'set-delay', d: INPUT_DELAY_TICKS - 1 });
+  } else if (pace > 0.99 && INPUT_DELAY_TICKS > 4) {
+    // Coming down: quick single steps while still above the healthy-link
+    // range (walking off the pessimistic start), then strong hysteresis
+    // near the sweet spot — without it the delay oscillates and re-stalls.
+    let downEveryMs = INPUT_DELAY_TICKS > 8 ? 6000 : 20000;
+    if (nowMs - lastDelayChangeAt >= downEveryMs) {
+      lastDelayChangeAt = nowMs;
+      submitCommand({ kind: 'set-delay', d: INPUT_DELAY_TICKS - 1 });
+    }
   }
 }
 
@@ -104,8 +125,8 @@ function hostStartLockstepMatch(){
   peerSimTick = -1;
   lastReportedSimTick = -1;
   lockstepDesyncedAt = null;
-  INPUT_DELAY_TICKS = 4; lockstepSlack = 4; lockstepSlackNext = null;
-  stallFrames = 0; simFrames = 0; peerStallPct = 0; lastDelayChangeTick = 0;
+  INPUT_DELAY_TICKS = LOCKSTEP_START_DELAY; lockstepSlack = LOCKSTEP_START_DELAY; lockstepSlackNext = null;
+  stallFrames = 0; simFrames = 0; lastAdaptAt = 0; lastDelayChangeAt = 0;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let sizeKey = sizeSel ? sizeSel.value : 'medium';
   window.fogDisabled = false;
@@ -121,8 +142,8 @@ onNetMessage((msg) => {
     peerSimTick = -1;
     lastReportedSimTick = -1;
     lockstepDesyncedAt = null;
-    INPUT_DELAY_TICKS = 4; lockstepSlack = 4; lockstepSlackNext = null;
-    stallFrames = 0; simFrames = 0; peerStallPct = 0; lastDelayChangeTick = 0;
+    INPUT_DELAY_TICKS = LOCKSTEP_START_DELAY; lockstepSlack = LOCKSTEP_START_DELAY; lockstepSlackNext = null;
+    stallFrames = 0; simFrames = 0; lastAdaptAt = 0; lastDelayChangeAt = 0;
     window.fogDisabled = false;
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     window.__pendingMatchSeed = msg.seed;
@@ -158,7 +179,6 @@ onNetMessage((msg) => {
   } else if (msg.type === 'tick' && lockstepActive) {
     if (msg.t > peerSimTick) peerSimTick = msg.t;
     if (msg.h !== undefined) lockstepCheckPeerChecksum(msg.ct, msg.h);
-    if (msg.sp !== undefined) peerStallPct = msg.sp;
   }
 });
 
@@ -191,10 +211,6 @@ function lockstepReport(){
     let last = DET.history[DET.history.length - 1];
     msg.ct = last.tick;
     msg.h = last.sum;
-    if (netRole === 'guest' && simFrames > 0) {
-      msg.sp = +(stallFrames / simFrames).toFixed(3); // guest stall ratio for the host's controller
-      stallFrames = 0; simFrames = 0;
-    }
   }
   sendToPeer(msg);
   lockstepAdaptDelay();
