@@ -640,7 +640,7 @@ function damageEntity(attacker, target){
   // ranged ones (hopeless kiting) or buildings (tower/TC fire).
   let hopelessChase = target.utype==='villager' &&
     ((attacker.range||0)>0 || attacker.type==='building');
-  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&attacker.team!==target.team&&!hasActiveMoveOrder&&!hopelessChase){
+  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -672,7 +672,7 @@ function damageEntity(attacker, target){
   // Defend sieged buildings: when a building is hit, nearby idle military
   // (not passive, no current fight) converge on the attacker — matching how
   // units already retaliate when hit themselves.
-  if(target.type==='building'&&attacker.team!==target.team){
+  if(target.type==='building'&&!sameSide(attacker.team,target.team)){
     entities.forEach(en=>{
       if(en.type!=='unit'||en.team!==target.team)return;
       if(en.utype==='villager'||en.utype==='sheep'||en.utype==='sheep_carcass')return;
@@ -1050,11 +1050,11 @@ function updateUnit(e){
     // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
     // and no friendly unit (except other sheep) is closer to guard them, they convert!
     let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
-    if(closest && closest.team !== e.team){
+    if(closest && !sameSide(closest.team, e.team)){
       let guarded = false;
       if (isPlayerTeam(e.team)) {
         let guardDist = dist(e,closest);
-        guarded = !!closestUnitNear(e,guardDist,en=>en.team===e.team);
+        guarded = !!closestUnitNear(e,guardDist,en=>sameSide(en.team,e.team)); // allied guards protect too
       }
       if(!guarded){
         e.team=closest.team;
@@ -1126,7 +1126,7 @@ function updateUnit(e){
     // NEVER the viewer-local `fog` grid, which differs between lockstep
     // peers. Applies to human teams; AI teams keep their distance-heuristic
     // branch below (their "vision" is proximity, not fog — js/ai.js).
-    if (t.team !== e.team && t.team !== GAIA_TEAM) {
+    if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM) {
       if (isHumanTeam(e.team)) {
         let visible = false;
         if (window.fogDisabled) {
@@ -1536,7 +1536,7 @@ function updateUnit(e){
     if (e.stance !== 'passive' && (tick + e.id) % 3 === 0) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
-        if(en.team===e.team)return false;
+        if(sameSide(en.team,e.team))return false;
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
@@ -1561,7 +1561,7 @@ function updateUnit(e){
         let bestB = null, bestD = Infinity, bestPri = -1;
         for (let bi = 0; bi < entities.length; bi++) {
           let b = entities[bi];
-          if (b.type !== 'building' || b.team === e.team || b.team === GAIA_TEAM || b.hp <= 0) continue;
+          if (b.type !== 'building' || sameSide(b.team, e.team) || b.team === GAIA_TEAM || b.hp <= 0) continue;
           if (b.btype === 'WALL' || b.btype === 'GATE') continue;
           let d = distToTarget(e, b);
           if (d > scanRange + 0.1) continue;
@@ -1698,13 +1698,15 @@ function handleDeath(e,killerTeam){
       // it, lose the game. (Full-elimination conquest rules were tried and
       // reverted; teamEliminated() below remains as a fallback for the
       // no-TC-left edge cases.)
-      // Only the two PLAYING teams end the game (a hypothetical gaia/third-
-      // team TC must not); `won` is from the host/team-0 perspective — the
-      // guest inverts it from the sync (see applyNetSync).
-      // `won` is still binary "did team 0 win" (see didIWin, js/core.js) —
-      // a real >2-player mode needs a winningTeam instead. isPlayerTeam
-      // keeps gaia/future-neutral TCs from ending the game.
-      if(isPlayerTeam(e.team)){gameOver=true;won=(e.team!==0);}
+      // Losing your (only) TC knocks YOUR TEAM out; the match ends when
+      // the surviving teams are all one alliance (checkAllianceVictory).
+      // Identity alliances + 2 teams reduce exactly to the old instant
+      // game-over. isPlayerTeam keeps gaia TCs (hypothetical) from ever
+      // ending the game.
+      if(isPlayerTeam(e.team)){
+        defeatedTeams[e.team]=true;
+        checkAllianceVictory();
+      }
     }
   }
   // Death blood burst — bigger than the per-hit spatter, marks the kill.
@@ -1750,11 +1752,35 @@ function handleDeath(e,killerTeam){
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);
   entitiesById.delete(e.id);
-  // Conquest victory (AoE2): a side is defeated when it has nothing left —
+  // Conquest victory (AoE2): a team is defeated when it has nothing left —
   // no buildings and no units (sheep don't count, they change hands).
   if(isPlayerTeam(e.team)){
-    if(teamEliminated(1)){gameOver=true;won=true;}
-    else if(teamEliminated(0)){gameOver=true;won=false;}
+    for(let t=0;t<NUM_TEAMS;t++){
+      if(!defeatedTeams[t]&&teamEliminated(t))defeatedTeams[t]=true;
+    }
+    checkAllianceVictory();
+  }
+}
+
+// The match ends when every non-defeated player team is on ONE side.
+// `won` stays binary "did team 0's side win" (didIWin inverts for the
+// guest, js/core.js) — everyone-defeated is a loss for team 0 too. Pure
+// function of the defeatedTeams flags, so simultaneous defeats within a
+// tick resolve deterministically no matter the marking order.
+function checkAllianceVictory(){
+  if(gameOver)return;
+  // A defeat must have actually happened: the conquest hook calls this on
+  // EVERY player-entity death, and a match where all teams share one
+  // alliance (sandbox/testing) would otherwise end on the first casualty,
+  // since the survivors trivially form a single side.
+  if(!defeatedTeams.some(Boolean))return;
+  let alive=new Set();
+  for(let t=0;t<NUM_TEAMS;t++){
+    if(!defeatedTeams[t])alive.add(allianceOf(t));
+  }
+  if(alive.size<=1){
+    gameOver=true;
+    won=alive.size===1&&alive.has(allianceOf(0));
   }
 }
 
@@ -1862,7 +1888,7 @@ function updateBuilding(e){
     if (e.atkCooldown <= 0) {
       let range = e.btype === 'TC' ? 6 : BLDGS.TOWER.range; // AoE2: TC range 6, Watch Tower 8
       let center = {x: e.x + e.w/2, y: e.y + e.h/2};
-      let targets = entities.filter(en => en.team !== e.team && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
+      let targets = entities.filter(en => !sameSide(en.team, e.team) && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
                             .filter(en => dist(center, en) <= range)
                             .sort((a,b) => dist(center, a) - dist(center, b));
       if (targets.length > 0) {
@@ -1956,7 +1982,7 @@ function updateBuilding(e){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
-            } else if((target.team!==e.team && target.team!==GAIA_TEAM) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
+            } else if((!sameSide(target.team,e.team) && target.team!==GAIA_TEAM) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {

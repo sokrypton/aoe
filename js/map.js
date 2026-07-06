@@ -6,8 +6,6 @@ function genMap(){
   }}
 
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
-  let baseAngle=simAtan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
-  let baseSide=simRandom()<0.5?-1:1;
   // Resource distances below were tuned for the original 60x60 map; scale them
   // so larger maps spread bases/resources out instead of leaving empty grass.
   let scale=MAP/60;
@@ -162,40 +160,79 @@ function genMap(){
 
   starts.forEach(s=>clearArea(s.cx,s.cy,6));
 
-  // Berries sit a real walk away from the TC (AoE2 Arabia: ~10 tiles at full
-  // scale) so building the Mill next to them is an actual decision.
-  // Distance bands vary game to game (AoE2 Arabia: berries ~6-8, gold ~7-9
-  // tiles out) so the walk to each resource is part of the map roll too,
-  // not just the angle.
-  let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale);
-  placeMirrored(berriesOffset,placeBerries);
+  // Per-base resource kits. TWO starts keep the original mirrored layout
+  // and its exact sim-RNG draw sequence (1v1 maps must stay bit-identical);
+  // more starts get the same kit composition placed per base, oriented
+  // toward the map center (where the enemy/contested ground is).
+  let placeStraggler=(x,y)=>{
+    x=Math.round(x);y=Math.round(y);
+    if(inBounds(x,y,1)&&!resourceBuffer(x,y,2)&&map[y][x].t===TERRAIN.GRASS)map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null};
+  };
+  if(starts.length===2){
+    let baseAngle=simAtan2(starts[1].cy-starts[0].cy,starts[1].cx-starts[0].cx);
+    let baseSide=simRandom()<0.5?-1:1;
 
-  let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),randFloat(7.3,9)*scale);
-  placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
+    // Berries sit a real walk away from the TC (AoE2 Arabia: ~10 tiles at full
+    // scale) so building the Mill next to them is an actual decision.
+    // Distance bands vary game to game (AoE2 Arabia: berries ~6-8, gold ~7-9
+    // tiles out) so the walk to each resource is part of the map roll too,
+    // not just the angle.
+    let berriesOffset=polar(baseAngle+baseSide*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale);
+    placeMirrored(berriesOffset,placeBerries);
 
-  let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);
-  placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)); // AoE2: main stone is 5 tiles
+    let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),randFloat(7.3,9)*scale);
+    placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
 
-  let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12*scale);
-  placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3));
+    let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);
+    placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)); // AoE2: main stone is 5 tiles
 
-  let secondStoneOffset=polar(baseAngle+Math.PI-baseSide*0.8+randFloat(-0.25,0.25),11*scale);
-  placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)); // AoE2: secondary stone is 4 tiles
+    let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12*scale);
+    placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3));
 
-  placeMirroredForest(baseAngle+Math.PI+randFloat(-0.35,0.35),8*scale,5,2);
-  placeMirroredForest(baseAngle+baseSide*1.7+randFloat(-0.25,0.25),9*scale,5,2);
-  placeMirroredForest(baseAngle-baseSide*1.25+randFloat(-0.25,0.25),11*scale,6,2);
+    let secondStoneOffset=polar(baseAngle+Math.PI-baseSide*0.8+randFloat(-0.25,0.25),11*scale);
+    placeMirrored(secondStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)); // AoE2: secondary stone is 4 tiles
 
-  // Straggler trees: lone trees hugging the TC (AoE2 puts 2-3 within a few
-  // tiles) — early wood without committing to a lumber camp. Fixed distance,
-  // NOT scaled: stragglers belong at the base on every map size.
-  [baseAngle+Math.PI-0.7,baseAngle+Math.PI+0.5,baseAngle+baseSide*2.2].forEach(a=>{
-    let offset=polar(a+randFloat(-0.15,0.15),4);
-    placeMirrored(offset,(x,y)=>{
-      x=Math.round(x);y=Math.round(y);
-      if(inBounds(x,y,1)&&!resourceBuffer(x,y,2)&&map[y][x].t===TERRAIN.GRASS)map[y][x]={t:TERRAIN.FOREST,res:100,occupied:null};
+    placeMirroredForest(baseAngle+Math.PI+randFloat(-0.35,0.35),8*scale,5,2);
+    placeMirroredForest(baseAngle+baseSide*1.7+randFloat(-0.25,0.25),9*scale,5,2);
+    placeMirroredForest(baseAngle-baseSide*1.25+randFloat(-0.25,0.25),11*scale,6,2);
+
+    // Straggler trees: lone trees hugging the TC (AoE2 puts 2-3 within a few
+    // tiles) — early wood without committing to a lumber camp. Fixed distance,
+    // NOT scaled: stragglers belong at the base on every map size.
+    [baseAngle+Math.PI-0.7,baseAngle+Math.PI+0.5,baseAngle+baseSide*2.2].forEach(a=>{
+      let offset=polar(a+randFloat(-0.15,0.15),4);
+      placeMirrored(offset,placeStraggler);
     });
-  });
+  } else {
+    // Per-start orientation: angle toward map center (contested ground) and
+    // an independent left/right lean per base. Fixed iteration order —
+    // step-major, start-minor — keeps the draw sequence deterministic.
+    let sAngle=starts.map(s=>simAtan2(MAP/2-s.cy,MAP/2-s.cx));
+    let sSide=starts.map(()=>simRandom()<0.5?-1:1);
+    // Clamp targets into the map: a corner base's kit angle can point a
+    // patch off the edge (the mirrored 2-start layout never could), and
+    // findClearSpot's local search can't recover from an out-of-bounds
+    // center — the patch would silently vanish.
+    let atStart=(i,offset,fn)=>fn(
+      Math.max(3,Math.min(MAP-4,starts[i].cx+offset.x)),
+      Math.max(3,Math.min(MAP-4,starts[i].cy+offset.y)));
+    let eachStart=fn=>{for(let i=0;i<starts.length;i++)fn(i,sAngle[i],sSide[i]);};
+
+    eachStart((i,ang,side)=>atStart(i,polar(ang+side*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale),placeBerries));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+randFloat(-0.35,0.35),randFloat(7.3,9)*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang-side*1.45+randFloat(-0.25,0.25),8*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI+side*0.65+randFloat(-0.25,0.25),12*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI-side*0.8+randFloat(-0.25,0.25),11*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)));
+    [[Math.PI,0,8],[0,1.7,9],[0,-1.25,11]].forEach(([flip,lean,dist])=>{
+      eachStart((i,ang,side)=>{
+        let a=ang+flip+side*lean+randFloat(-0.25,0.25);
+        atStart(i,polar(a,dist*scale),(x,y)=>placeForestLine(x,y,a+Math.PI/2,dist===11?6:5,2));
+      });
+    });
+    [[Math.PI,-0.7],[Math.PI,0.5],[0,2.2]].forEach(([flip,lean])=>{
+      eachStart((i,ang,side)=>atStart(i,polar(ang+flip+(flip?lean:side*lean)+randFloat(-0.15,0.15),4),placeStraggler));
+    });
+  }
 
   placeNeutralPair(7*scale,-6*scale,(x,y)=>placePatch(TERRAIN.GOLD,x,y,5,800,3,12*scale));
   placeNeutralPair(-8*scale,5*scale,(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,3,12*scale));
@@ -225,11 +262,24 @@ function genMap(){
     placeForestLine(x,y,randFloat(0,Math.PI),simRandInt(4,7),simRandInt(2,3));
   }
 
-  for(let i=0;i<=24;i++){
-    let t=i/24;
-    let x=Math.round(starts[0].cx+(starts[1].cx-starts[0].cx)*t);
-    let y=Math.round(starts[0].cy+(starts[1].cy-starts[0].cy)*t);
-    clearForestArea(x,y,2);
+  // Guaranteed walkable route between bases: 2 starts keep the original
+  // single diagonal; more starts get a star — every base to the center.
+  if(starts.length===2){
+    for(let i=0;i<=24;i++){
+      let t=i/24;
+      let x=Math.round(starts[0].cx+(starts[1].cx-starts[0].cx)*t);
+      let y=Math.round(starts[0].cy+(starts[1].cy-starts[0].cy)*t);
+      clearForestArea(x,y,2);
+    }
+  } else {
+    starts.forEach(s0=>{
+      for(let i=0;i<=24;i++){
+        let t=i/24;
+        let x=Math.round(s0.cx+(MAP/2-s0.cx)*t);
+        let y=Math.round(s0.cy+(MAP/2-s0.cy)*t);
+        clearForestArea(x,y,2);
+      }
+    });
   }
 
   starts.forEach(s=>clearArea(s.cx,s.cy,3));

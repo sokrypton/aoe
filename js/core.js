@@ -41,28 +41,66 @@ function setMapSize(sizeKey){
   // host/single-player draws a fresh one.
   newMatchSeed(window.__pendingMatchSeed);
   window.__pendingMatchSeed = null;
+  // 2v2 forces at least medium: four corner resource kits (reach ~12*scale
+  // tiles each) plus the contested-center deposits collide on a 60-tile map.
+  if(NUM_TEAMS>2&&sizeKey==='small')sizeKey='medium';
   MAP=MAP_SIZES[sizeKey]||MAP_SIZES.medium;
   let lo=10, hi=MAP-13;
   let corners=[[lo,lo],[hi,lo],[lo,hi],[hi,hi]];
   let c=corners[simRandInt(0,3)];
-  STARTS=[
-    {team:0,x:c[0],y:c[1]},
-    {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
-  ];
+  if(NUM_TEAMS<=2){
+    STARTS=[
+      {team:0,x:c[0],y:c[1]},
+      {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
+    ];
+  } else {
+    // 2v2: allies share a map side. Team 0 keeps its random corner; the
+    // ally (team 1) takes one of the two adjacent corners (one extra
+    // draw); the enemy pair (teams 2/3) gets the remaining side, ordered
+    // so team 2 faces team 0 across the map.
+    let adjacent=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]];
+    let a=adjacent[simRandInt(0,1)];
+    let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
+    STARTS=[
+      {team:0,x:c[0],y:c[1]},
+      {team:1,x:a[0],y:a[1]},
+      {team:2,x:opp(c)[0],y:opp(c)[1]},
+      {team:3,x:opp(a)[0],y:opp(a)[1]}
+    ];
+  }
 }
 // How many PLAYER teams exist in a match. Every per-team structure
 // (resources, vision grids, explored memory, bell state) must size itself
 // from this — never a literal 2 — so adding players is a data change here,
-// not a codebase hunt. NOTE: plenty of >2-player STRUCTURAL work remains
-// (single peer connection, AI pinned to team 1, 2-base map gen, save
-// team-swap) — this constant is the sizing knob, not the whole story.
+// not a codebase hunt. Set per match by onStartClicked (SP Players picker:
+// 2 or 4) and forced to 2 by every MP path. Remaining >2-player STRUCTURAL
+// work: single peer connection and the 2-team save swap.
 let NUM_TEAMS = 2;
 // "A real player team" (excludes gaia and garbage ids) — use this instead
 // of enumerating `team === 0 || team === 1`.
 function isPlayerTeam(t){ return t >= 0 && t < NUM_TEAMS; }
-// "An enemy of `team`" — any OTHER player team (gaia is never an enemy in
-// this sense; bears/sheep have their own utype-based handling).
-function isEnemyOf(team, e){ return isPlayerTeam(e.team) && e.team !== team; }
+// ---- ALLIANCES ----
+// teamAlliance[t] = alliance id; same id => allied. Default is identity
+// (every team its own side — all mutually hostile), and nothing in the UI
+// sets anything else yet, so today this is pure wiring. SIM state: rides
+// snapshots/resync/save and feeds simChecksum like the other per-team
+// arrays below.
+let teamAlliance = null;
+function resetTeamAlliance(){
+  teamAlliance = Array.from({length: NUM_TEAMS}, (_, t) => t);
+}
+function allianceOf(t){
+  return (teamAlliance && isPlayerTeam(t)) ? teamAlliance[t] : t;
+}
+// "On the same side": identical team, or two allied player teams. Gaia is
+// never on anyone's side (except its own literal team id). This is THE
+// don't-attack predicate — combat/aggro/retaliation sites test !sameSide.
+function sameSide(t1, t2){
+  return t1 === t2 || (isPlayerTeam(t1) && isPlayerTeam(t2) && allianceOf(t1) === allianceOf(t2));
+}
+// "An enemy of `team`" — any player team NOT on `team`'s side (gaia is
+// never an enemy in this sense; bears/sheep have utype-based handling).
+function isEnemyOf(team, e){ return isPlayerTeam(e.team) && !sameSide(team, e.team); }
 
 // ---- PER-TEAM CONTROLLERS ----
 // Who drives each team: {type:'human'} (this tab or a remote peer — the
@@ -95,19 +133,32 @@ function restoreTeamState(src){
   if (src.teamControllers) teamControllers = src.teamControllers;
   AI_STATES = src.aiStates || null;
   lastTeamHit = src.lastTeamHit || null;
+  teamAlliance = src.teamAlliance || null;
+  defeatedTeams = src.defeatedTeams || null;
   if (!AI_STATES) resetAIStates();
   if (!lastTeamHit) resetLastTeamHit();
+  if (!teamAlliance) resetTeamAlliance();
+  if (!defeatedTeams) resetDefeatedTeams();
 }
 // The controller layout for the two match shapes that exist today. The
 // single derivation point — restart, hosting transitions, and save-load
 // fallbacks all route through here rather than hand-flipping slots.
 function defaultControllers(mp){
-  return [{type:'human'}, mp ? {type:'human'} : {type:'ai', difficulty: aiDifficulty}];
+  if (mp) return [{type:'human'}, {type:'human'}]; // MP is strictly 1v1
+  return Array.from({length: NUM_TEAMS}, (_, t) =>
+    t === 0 ? {type:'human'} : {type:'ai', difficulty: aiDifficulty});
+}
+// SP 4-team = 2v2 (teams 0+1 vs 2+3 — the only >2 shape offered today);
+// everything else is every-team-for-itself (identity).
+function defaultAlliances(mp){
+  if (!mp && NUM_TEAMS === 4) return [0, 0, 1, 1];
+  return Array.from({length: NUM_TEAMS}, (_, t) => t);
 }
 function freshAIState(team){
   return { team, tick: 0,
     intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
-    waveCount: 0, lastWaveTick: null, seenWarTick: null, lastBaseHitTick: null };
+    waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
+    seenWarTick: null, lastBaseHitTick: null };
 }
 function resetAIStates(){
   AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
@@ -119,6 +170,14 @@ function resetAIStates(){
 let lastTeamHit = null;
 function resetLastTeamHit(){
   lastTeamHit = Array.from({length: NUM_TEAMS}, () => null);
+}
+
+// Which teams are out of the match (lost their TC / eliminated). Sim state
+// like lastTeamHit; victory is decided over the alliances of the teams NOT
+// in here (checkAllianceVictory, js/logic.js).
+let defeatedTeams = null;
+function resetDefeatedTeams(){
+  defeatedTeams = Array.from({length: NUM_TEAMS}, () => false);
 }
 // Gaia (neutral sheep/bears), not a player team. Parked far above any
 // plausible player id so team 2, 3, ... stay free for actual players —
@@ -214,9 +273,9 @@ const UNITS={
 // the original AoE2's harder AIs cheated a modest resource trickle; easy
 // gets none.
 const AI_LEVELS={
-  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0}},
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0}},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1}}
+  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:2,targetFarms:2,wallCheckInterval:600,wallMaintInterval:600,waveCap:20,allyJoinWindow:0,allyJoinFactor:1.0},
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:40,allyJoinWindow:600,allyJoinFactor:0.75},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:60,allyJoinWindow:900,allyJoinFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
@@ -577,13 +636,34 @@ function updateTeamVision(){
   if (visionFreshTick >= 0 && tick - visionFreshTick < 2) return;
   visGen++;
   visionFreshTick = tick;
+  // Shared vision: each team's visible tiles are written to every ALLIED
+  // team's grids too (teamCanSeeTile/teamHasExplored/updateFog all become
+  // ally-shared for free). Identity alliances (the default) take the plain
+  // single-grid path — bit-identical to the pre-alliance loop, and the
+  // entity walk count is one per team either way.
+  const allied = Array.from({length: NUM_TEAMS}, (_, t) => {
+    const g = [];
+    for (let u = 0; u < NUM_TEAMS; u++) if (sameSide(t, u)) g.push(u);
+    return g;
+  });
   for (let team = 0; team < NUM_TEAMS; team++) {
-    const vg = teamVisGrid[team], eg = teamExploredGrid[team];
-    forEachVisibleTile(team, (tx, ty) => {
-      const k = ty * MAP + tx;
-      vg[k] = visGen;
-      eg[k] = 1;
-    });
+    const group = allied[team];
+    if (group.length === 1) {
+      const vg = teamVisGrid[team], eg = teamExploredGrid[team];
+      forEachVisibleTile(team, (tx, ty) => {
+        const k = ty * MAP + tx;
+        vg[k] = visGen;
+        eg[k] = 1;
+      });
+    } else {
+      forEachVisibleTile(team, (tx, ty) => {
+        const k = ty * MAP + tx;
+        for (const u of group) {
+          teamVisGrid[u][k] = visGen;
+          teamExploredGrid[u][k] = 1;
+        }
+      });
+    }
   }
 }
 function teamCanSeeTile(team, k){

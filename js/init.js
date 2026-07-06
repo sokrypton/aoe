@@ -35,32 +35,47 @@ function init(){
 
 function placeStartingSheep(){
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
-  let baseAngle=simAtan2(starts[1].y-starts[0].y,starts[1].x-starts[0].x);
   // AoE2 Arabia herdables: 4 sheep near the TC, plus 2 far PAIRS the player
-  // has to scout to find (8 per player total).
-  let nearOffsets=[
-    {angle:baseAngle+0.75,dist:4},
-    {angle:baseAngle-0.75,dist:4},
-    {angle:baseAngle+2.35,dist:6},
-    {angle:baseAngle-2.35,dist:6}
-  ];
-  let farPairs=[
-    {angle:baseAngle+1.6+simRandom()*0.4,dist:9},
-    {angle:baseAngle-1.6-simRandom()*0.4,dist:9}
-  ];
-  STARTS.forEach((start,index)=>{
-    let center={x:start.x+1,y:start.y+1};
+  // has to scout to find (8 per player total). TWO starts keep the original
+  // shared-axis + sign-flip layout verbatim (exact sim-RNG order, 1v1 maps
+  // bit-identical); more starts orient each base's kit toward the map
+  // center, each with its own far-pair jitter draws.
+  let buildOffsets=angle=>({
+    near:[
+      {angle:angle+0.75,dist:4},
+      {angle:angle-0.75,dist:4},
+      {angle:angle+2.35,dist:6},
+      {angle:angle-2.35,dist:6}
+    ],
+    far:[
+      {angle:angle+1.6+simRandom()*0.4,dist:9},
+      {angle:angle-1.6-simRandom()*0.4,dist:9}
+    ]
+  });
+  let placeKit=(center,offs,sign)=>{
     let place=(o,count)=>{
-      let ox=Math.round(simCos(o.angle)*o.dist)*(index===0?1:-1);
-      let oy=Math.round(simSin(o.angle)*o.dist)*(index===0?1:-1);
+      let ox=Math.round(simCos(o.angle)*o.dist)*sign;
+      let oy=Math.round(simSin(o.angle)*o.dist)*sign;
       for(let i=0;i<count;i++){
         let sp=findSpawnTile(center.x+ox+i,center.y+oy,3);
         if(sp)createUnit('sheep',sp.x,sp.y,GAIA_TEAM);
       }
     };
-    nearOffsets.forEach(o=>place(o,1));
-    farPairs.forEach(o=>place(o,2));
-  });
+    offs.near.forEach(o=>place(o,1));
+    offs.far.forEach(o=>place(o,2));
+  };
+  if(STARTS.length===2){
+    let baseAngle=simAtan2(starts[1].y-starts[0].y,starts[1].x-starts[0].x);
+    let offs=buildOffsets(baseAngle); // one shared kit, mirrored by the sign flip
+    STARTS.forEach((start,index)=>{
+      placeKit({x:start.x+1,y:start.y+1},offs,index===0?1:-1);
+    });
+  } else {
+    STARTS.forEach(start=>{
+      let center={x:start.x+1,y:start.y+1};
+      placeKit(center,buildOffsets(simAtan2(MAP/2-center.y,MAP/2-center.x)),1);
+    });
+  }
 }
 
 // AoE2 Arabia wolves, reskinned as bears: a handful of lone predators in
@@ -148,10 +163,12 @@ function applyGameSettings(){
   let diffSel = document.querySelector('input[name="difficulty"]:checked');
   if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
+  let playersSel = document.querySelector('input[name="players"]:checked');
   try {
     if (diffSel) localStorage.setItem('aoeDifficulty', diffSel.value);
     if (sizeSel) localStorage.setItem('aoeMapSize', sizeSel.value);
     if (speedSel) localStorage.setItem('aoeGameSpeed', speedSel.value);
+    if (playersSel) localStorage.setItem('aoePlayers', playersSel.value);
   } catch (e) {}
 }
 
@@ -180,7 +197,7 @@ function applyGameSettings(){
 // core.js having initialized.
 (function restoreGameSettings(){
   try {
-    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed']]
+    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players']]
       .forEach(([key, name]) => {
         let v = localStorage.getItem(key);
         if (!v) return;
@@ -275,6 +292,11 @@ function onStartClicked(){
   if (netRole && gameOver) leaveMpSession();
   let selected = document.querySelector('input[name="difficulty"]:checked');
   let diff = selected ? selected.value : 'standard';
+  // Match shape (single-player only — MP paths force 2). Must be set
+  // BEFORE setMapSize (which builds STARTS and draws sim RNG) and before
+  // restartGame (which sizes every per-team structure from NUM_TEAMS).
+  let playersSelected = document.querySelector('input[name="players"]:checked');
+  NUM_TEAMS = playersSelected && playersSelected.value === '4' ? 4 : 2;
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
   let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
@@ -470,6 +492,7 @@ function onHostClicked(){
     // exactly what was in that file, not silently override it with
     // whatever the (irrelevant, in that case) setup controls happen to
     // be set to.
+    NUM_TEAMS = 2; // MP is strictly 1v1 — the Players picker is SP-only
     let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
     setMapSize(sizeSelected ? sizeSelected.value : 'medium');
     let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
@@ -797,6 +820,7 @@ onNetMessage((msg) => {
 // whole world over the network (Phase 2/net-sync.js), not generate its own
 // via init()'s local genMap()/STARTS spawn.
 function enterGuestJoinMode(hostPeerId){
+  NUM_TEAMS = 2; // MP is strictly 1v1 (the host's lockstep-start confirms)
   myTeam = 1;
   window.__mpSession.hostPeerId = hostPeerId; // remembered for attemptReconnect() above
   let menu = document.getElementById('tutorial');
@@ -994,8 +1018,10 @@ function restartGame(difficulty){
   selected = [];
   tick = 0;
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
-  // Fresh map, stale explored-history memory no longer meaningful — see js/core.js
-  for (let t = 0; t < NUM_TEAMS; t++) teamExploredEver[t].clear();
+  // Fresh map, stale explored-history memory no longer meaningful — see
+  // js/core.js. Rebuild (not just clear): the load-time object was sized
+  // for the default NUM_TEAMS, which may have grown since (2v2).
+  for (let t = 0; t < NUM_TEAMS; t++) teamExploredEver[t] = new Set();
   window.__mpSession.cameraCentered = false;
   window.__mpSession.hostJustLoadedSave = false;
   window.__mpSession.bottomHeightSet = false;
@@ -1029,8 +1055,10 @@ function restartGame(difficulty){
   // with explicit slot choices — everything downstream already reads
   // teamControllers, not netRole.
   teamControllers = defaultControllers(netRole != null);
-  resetAIStates();     // fresh per-team AI plan state (js/core.js)
-  resetLastTeamHit();  // fresh per-team "last hit taken" record (js/core.js)
+  resetAIStates();      // fresh per-team AI plan state (js/core.js)
+  resetLastTeamHit();   // fresh per-team "last hit taken" record (js/core.js)
+  teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
+  resetDefeatedTeams();
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;

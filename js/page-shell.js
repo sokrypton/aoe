@@ -160,6 +160,13 @@ document.body.insertAdjacentHTML('afterbegin', `
           </div>
         </div>
         <div class="setup-col">
+          <h3>Players</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="players" value="2" checked><span>1v1</span></label>
+            <label class="segment"><input type="radio" name="players" value="4"><span>2v2</span></label>
+          </div>
+        </div>
+        <div class="setup-col">
           <h3>Map Size</h3>
           <div class="segmented">
             <label class="segment"><input type="radio" name="mapsize" value="small"><span>Small</span></label>

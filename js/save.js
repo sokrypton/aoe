@@ -52,6 +52,8 @@ function serializeGame(){
     teamControllers,
     aiStates: AI_STATES,
     lastTeamHit,
+    teamAlliance,
+    defeatedTeams,
     // What the player had selected and whether the camera was locked onto a
     // unit are saved by id (not object reference — see the matching restore
     // in applySavedGame, which re-resolves these against the freshly
@@ -243,7 +245,7 @@ function applySavedGame(data, opts){
       // Per-team controller/AI/hit state swaps with the teams (an AI
       // state's own `team` field must track its new slot).
       // (2-team swap by design — the whole savedByTeam model is 1v1.)
-      ['teamControllers', 'aiStates', 'lastTeamHit'].forEach(k => {
+      ['teamControllers', 'aiStates', 'lastTeamHit', 'teamAlliance', 'defeatedTeams'].forEach(k => {
         if (Array.isArray(data[k]) && data[k].length >= 2) {
           [data[k][0], data[k][1]] = [data[k][1], data[k][0]];
         }

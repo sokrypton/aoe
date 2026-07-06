@@ -38,7 +38,7 @@ function update(){
       } else {
         let victim = null, vd = 0.45;
         entities.forEach(en => {
-          if (en.type !== 'unit' || en.team === shooter.team || en.hp <= 0 || en.garrisonedIn) return;
+          if (en.type !== 'unit' || sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) return; // no ally friendly fire
           let idx = en.x - p.tx, idy = en.y - p.ty;
           let d = Math.sqrt(idx*idx + idy*idy);
           if (d < vd) { vd = d; victim = en; }

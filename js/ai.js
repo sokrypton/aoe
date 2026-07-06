@@ -59,14 +59,19 @@ function updateAI(ai){
     addAITrickle(ai,profile);
     let vils=aiUnits.filter(u=>u.utype==='villager');
     let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
-    let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
+    // Rebuild near the workforce, not next to whatever building happens to
+    // be first in the array (could be a lone far-flung wall segment).
+    let anchor=(vils.length>0&&aiBuildings.length>0
+        ?aiBuildings.slice().sort((a,b)=>dist(a,vils[0])-dist(b,vils[0]))[0]
+        :aiBuildings[0])
+      ||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
     if(anchor&&vils.length>0&&canAfford(ai.team,BLDGS.TC.cost)){
       let pos=findAIBuildSpot(ai,anchor,'TC');
       if(pos)placeAIBuilding(ai,'TC',pos.x,pos.y);
     }
     assignAIVillagers(ai,vils,profile);
     if(anchor)controlAIMilitary(ai,mils,anchor,profile);
-    controlAIScouts(mils,null);
+    controlAIScouts(ai,mils,null);
     return;
   }
 
@@ -75,6 +80,21 @@ function updateAI(ai){
   let vils=aiUnits.filter(u=>u.utype==='villager');
   let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
+
+  // Field flee: a villager taking hits AWAY from the base bubble runs home
+  // (raids near the TC already ring the garrison bell). No new state — the
+  // path home makes assignAIVillagers leave it alone until it arrives, by
+  // which time the recent-hit window has expired and it re-tasks normally.
+  let alarmR=AI_BASE_ALARM_RADIUS*aiScale();
+  let tcCenter={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+  vils.forEach(v=>{
+    if(v.lastHitTick==null||tick-v.lastHitTick>=120)return;
+    if(dist(v,tcCenter)<=alarmR)return;
+    v.task=null;v.target=null;v.buildTarget=null;
+    clearGatherTarget(v);
+    let pt=nearestBldgPerimeter(v.x,v.y,aiTC,v.id);
+    pathUnitTo(v,pt?pt.x:aiTC.x,pt?pt.y:aiTC.y);
+  });
   let readyBarracks=barracks.filter(b=>b.complete);
 
   addAITrickle(ai,profile);
@@ -88,7 +108,7 @@ function updateAI(ai){
   queueAIMilitary(ai,readyBarracks,profile);
   assignAIVillagers(ai,vils,profile);
   controlAIMilitary(ai,mils,aiTC,profile);
-  controlAIScouts(mils,aiTC);
+  controlAIScouts(ai,mils,aiTC);
 }
 
 // ---- AI INTEL ----
@@ -112,15 +132,17 @@ function unitPower(utype){
 }
 
 function updateAIIntel(ai,aiTC,profile){
-  let intel=ai.intel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0};
-  let unitCounts={},strength=0;
+  let intel=ai.intel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0,tcTeam:null};
+  let unitCounts={},strength=0,strengthByTeam={};
   getSpottedPlayerEntities(ai).forEach(e=>{
     if(e.type==='unit'){
       unitCounts[e.utype]=(unitCounts[e.utype]||0)+1;
-      strength+=unitPower(e.utype);
+      let p=unitPower(e.utype);
+      strength+=p;
+      strengthByTeam[e.team]=(strengthByTeam[e.team]||0)+p;
     } else if(e.type==='building'&&e.btype==='TC'){
       intel.tcSeen=true;
-      intel.tcX=e.x;intel.tcY=e.y;
+      intel.tcX=e.x;intel.tcY=e.y;intel.tcTeam=e.team;
     }
   });
   // Safety net: if scouting genuinely never finds the player (bad luck on a
@@ -130,10 +152,11 @@ function updateAIIntel(ai,aiTC,profile){
   if(!intel.tcSeen&&ai.tick>profile.attackTick*2){
     let enemyTC=entities.filter(e=>isEnemyOf(ai.team,e)&&e.btype==='TC')
       .sort((a,b)=>dist(a,aiTC)-dist(b,aiTC))[0];
-    if(enemyTC){intel.tcSeen=true;intel.tcX=enemyTC.x;intel.tcY=enemyTC.y;}
+    if(enemyTC){intel.tcSeen=true;intel.tcX=enemyTC.x;intel.tcY=enemyTC.y;intel.tcTeam=enemyTC.team;}
   }
   intel.unitCounts=unitCounts;
   intel.strength=strength;
+  intel.strengthByTeam=strengthByTeam; // per-enemy-team split — wave commits compare vs ONE target, not the sum
   ai.intel=intel;
 }
 
@@ -193,7 +216,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
 function planAITowers(ai,aiTC,vils,profile){
   if(vils.length<8||!canAfford(ai.team,BLDGS.TOWER.cost))return;
   let currentTowers=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='TOWER').length;
-  let maxTowers=profile===AI_LEVELS.hard?2:(profile===AI_LEVELS.standard?1:0);
+  let maxTowers=profile.maxTowers||0;
   if(currentTowers>=maxTowers)return;
   // Prefer building the tower directly into the wall ring (gate flank, then
   // corners) once it's up, over a generic freestanding spot.
@@ -229,7 +252,7 @@ function planAIWalls(ai,aiTC,vils,profile){
         breachAIWallRing(ai,plan,aiTC);
         ai.gateBuilt=true;
       }
-    } else if(ai.tick%600===0){
+    } else if(ai.tick%profile.wallCheckInterval===0){
       // Periodic sanity check: can the army still get out toward the enemy?
       // (A gate can be destroyed, or the 'natural opening' can later be
       // walled off by terrain-adjacent building placement.)
@@ -254,7 +277,7 @@ function planAIWalls(ai,aiTC,vils,profile){
     // assignAIVillagers) gets its plan tile re-queued so the build loop
     // below fills the breach. The intended opening (gate/breach tile) is
     // left alone, as are tiles something else now legitimately occupies.
-    if(ai.gateBuilt && ai.tick%300===0){
+    if(ai.gateBuilt && ai.tick%profile.wallMaintInterval===0){
       let gt=ai.gateTile;
       plan.forEach(pt=>{
         if(gt&&pt.x===gt.x&&pt.y===gt.y)return;
@@ -344,7 +367,7 @@ function getEnemyDirection(ai,tc){
     ex=intel.tcX;ey=intel.tcY;
   } else {
     // Never scouted anyone: assume the nearest OTHER start position.
-    let plStart=STARTS.filter(s=>s.team!==ai.team)
+    let plStart=STARTS.filter(s=>!sameSide(ai.team,s.team))
       .sort((a,b)=>dist(a,tc)-dist(b,tc))[0];
     ex=plStart?plStart.x:0;ey=plStart?plStart.y:0;
   }
@@ -560,11 +583,10 @@ function aiEcoPlan(ai,vilCount,profile){
   if(vilCount<=5)return{forage:4,chop:2};
   if(!militaryStarted)return{forage:4,chop:4,mine_gold:1};
   // Only include 'farm' key when value > 0 — a zero denominator in the gatherer sort produces NaN
-  let base;
-  if(profile===AI_LEVELS.easy) base={forage:3,chop:3,mine_gold:2};
-  else if(profile===AI_LEVELS.hard) base={forage:4,chop:4,mine_gold:4,mine_stone:1};
-  else base={forage:4,chop:3,mine_gold:3,mine_stone:1};
-  if(hasMill) base.farm=profile===AI_LEVELS.hard?4:profile===AI_LEVELS.easy?2:3;
+  // SPREAD the profile's ratios: this function mutates `base` below (farm
+  // key, wall stone boost) and must never write into the shared AI_LEVELS.
+  let base={...profile.ecoRatios};
+  if(hasMill) base.farm=profile.farmShare;
   // Walls/gate/towers are pure stone sinks (~5/tile, dozens of tiles) — without
   // this the default 1-share stone ratio never keeps up and the ring stalls
   // forever half-built. Pull more gatherers onto stone until it's finished.
@@ -585,7 +607,7 @@ function planAIFarming(ai,aiTC,vils,profile){
   if(!hasAIBuilding(ai,'MILL')||!hasAIBuilding(ai,'BARRACKS'))return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
   let totalFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM').length;
-  let targetFarms=profile===AI_LEVELS.hard?4:profile===AI_LEVELS.easy?2:3;
+  let targetFarms=profile.targetFarms;
   if(totalFarms>=targetFarms)return;
   let pos=findAIFarmSpot(ai,aiTC);
   if(pos)placeAIBuilding(ai,'FARM',pos.x,pos.y);
@@ -613,14 +635,28 @@ function hasReachableResource(v,terrain){
 // raid to progressively larger armies). Capped so the army goal always fits
 // under the 200 pop ceiling alongside the villager economy.
 function aiWaveSize(ai,profile){
-  return Math.min(60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
+  return Math.min(profile.waveCap||60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
+}
+
+const AI_MIL_TYPES=['militia','spearman','archer','scout'];
+// Sum of allied (not own) military power within `range` of `center` — a
+// teammate's army standing right there counts toward "can we hold/win".
+function nearbyAlliedPower(ai,center,range){
+  let p=0;
+  entities.forEach(en=>{
+    if(en.type!=='unit'||en.team===ai.team||!sameSide(ai.team,en.team))return;
+    if(!AI_MIL_TYPES.includes(en.utype))return;
+    if(dist(en,center)<=range)p+=unitPower(en.utype);
+  });
+  return p;
 }
 
 function controlAIMilitary(ai,mils,aiTC,profile){
   let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
   if(threat){
-    let localEnemyPower=estimateLocalPlayerPower(ai,threat,10);
-    let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0);
+    let localEnemyPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
+    let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0)
+      +nearbyAlliedPower(ai,threat,10*aiScale());
     // Badly outmatched defending at home: pull back to the TC instead of
     // feeding units one at a time into a fight that's already lost — a real
     // opponent disengages rather than dying in place for no gain.
@@ -631,7 +667,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         // idle units). Re-clearing targets here every decision tick used to
         // pin the whole army in a retreat loop — shot at, never shooting
         // back — whenever the enemy camped above the power threshold.
-        if(dist(m,{x:tcx,y:tcy})<=6)return;
+        if(dist(m,{x:tcx,y:tcy})<=6*aiScale())return;
         if(!m.target&&m.path.length>0)return; // already retreating — don't re-path
         m.target=null;
         // Perimeter, not the TC's own occupied footprint tile.
@@ -641,26 +677,61 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       return;
     }
     mils.forEach(m=>{
-      if(!m.target||dist(m,threat)<10){
+      if(!m.target||dist(m,threat)<10*aiScale()){
         m.target=threat.id;
         clearUnitPath(m); // stop current movement so they engage immediately
       }
     });
     return;
   }
+  // Coordinated pushes: an allied AI that just launched (lastWaveGlobalTick,
+  // global tick — per-AI decision ticks aren't comparable) lowers our commit
+  // bar and halves the cooldown so waves cluster into joint attacks.
+  let requiredFactor=profile.attackAdvantage;
+  let cooldown=profile.waveCooldown;
+  if((profile.allyJoinWindow||0)>0&&AI_STATES){
+    for(let u=0;u<NUM_TEAMS;u++){
+      if(u===ai.team||!sameSide(ai.team,u))continue;
+      let st=AI_STATES[u];
+      if(st&&st.lastWaveGlobalTick!=null&&tick-st.lastWaveGlobalTick<profile.allyJoinWindow){
+        requiredFactor*=profile.allyJoinFactor;
+        cooldown=Math.floor(cooldown/2);
+        break;
+      }
+    }
+  }
+  let holding=false;
   let waveSize=aiWaveSize(ai,profile);
-  if(mils.length<waveSize||ai.tick<profile.attackTick)return;
+  let available=mils.filter(m=>!m.target);
+  if(mils.length<waveSize||ai.tick<profile.attackTick)holding=true;
   // Minimum spacing between waves: after committing an attack, regroup and
   // rebuild before the next (larger) one instead of dribbling units out.
-  if(ai.tick-(ai.lastWaveTick??-1e9)<profile.waveCooldown)return;
-
-  let available=mils.filter(m=>!m.target);
-  let intel=ai.intel;
-  if(intel&&intel.strength>0){
-    // Don't commit to a march we already have scouting intel says we'd lose —
-    // hold and keep growing the army instead of throwing it away piecemeal.
-    let availablePower=available.reduce((s,m)=>s+unitPower(m.utype),0);
-    if(availablePower<intel.strength*profile.attackAdvantage)return;
+  else if(ai.tick-(ai.lastWaveTick??-1e9)<cooldown)holding=true;
+  else {
+    let intel=ai.intel;
+    if(intel&&intel.strength>0){
+      // Don't commit to a march intel says we'd lose — but compare against
+      // the CHOSEN TARGET's team, not the sum of every enemy army (which in
+      // a team game meant no single AI ever cleared the bar), and credit
+      // half of any allied army massed near our own base.
+      let availablePower=available.reduce((s,m)=>s+unitPower(m.utype),0);
+      let sbt=intel.strengthByTeam||{};
+      let targetTeam=(intel.tcSeen&&intel.tcTeam!=null)?intel.tcTeam:null;
+      if(targetTeam==null||sbt[targetTeam]==null){
+        for(let u=0;u<NUM_TEAMS;u++){
+          if(!isEnemyOf(ai.team,{team:u})||sbt[u]==null)continue;
+          if(targetTeam==null||sbt[u]<(sbt[targetTeam]??Infinity))targetTeam=u;
+        }
+      }
+      let targetStrength=targetTeam!=null&&sbt[targetTeam]!=null?sbt[targetTeam]:intel.strength;
+      let tcC={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+      let allyPower=nearbyAlliedPower(ai,tcC,20*aiScale());
+      if(availablePower+allyPower*0.5<targetStrength*requiredFactor)holding=true;
+    }
+  }
+  if(holding){
+    rallyIdleMilitary(ai,mils,aiTC); // forward defensive posture between waves
+    return;
   }
 
   let attackers=available.slice(0,Math.max(waveSize,mils.length-profile.armyReserve));
@@ -675,7 +746,32 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   if(launched>0){
     ai.waveCount=(ai.waveCount||0)+1;
     ai.lastWaveTick=ai.tick;
+    ai.lastWaveGlobalTick=tick; // global-tick stamp for allied coordination
   }
+}
+
+// Idle army posture between waves: hold a forward point (the gate, stepped
+// toward the enemy; else a spot ahead of the TC) instead of loitering on
+// the TC where a raid reaches the eco before the army reacts.
+function rallyIdleMilitary(ai,mils,aiTC){
+  let dir=getEnemyDirection(ai,aiTC);
+  let rx,ry;
+  if(ai.gateBuilt&&ai.gateTile){
+    rx=Math.round(ai.gateTile.x+dir.dx*2);
+    ry=Math.round(ai.gateTile.y+dir.dy*2);
+  } else {
+    rx=Math.round(aiTC.x+Math.floor(aiTC.w/2)+dir.dx*4*aiScale());
+    ry=Math.round(aiTC.y+Math.floor(aiTC.h/2)+dir.dy*4*aiScale());
+  }
+  rx=Math.max(1,Math.min(MAP-2,rx));ry=Math.max(1,Math.min(MAP-2,ry));
+  for(let back=0;back<3&&!walkable(rx,ry);back++){rx=Math.round(rx-dir.dx);ry=Math.round(ry-dir.dy);}
+  if(!walkable(rx,ry))return;
+  mils.forEach(m=>{
+    if(m.utype==='scout')return; // controlAIScouts owns scouts
+    if(m.target||m.path.length>0)return;
+    if(dist(m,{x:rx,y:ry})<=4)return;
+    pathUnitTo(m,rx,ry);
+  });
 }
 
 // Scouts were previously just folded into the attack mob in controlAIMilitary
@@ -683,24 +779,40 @@ function controlAIMilitary(ai,mils,aiTC,profile){
 // fighting/attacking or already travelling off to a fresh random point on the
 // map, so they actually explore (and the player sees them roaming) instead of
 // clumping at home until the army is big enough to march out together.
-function controlAIScouts(mils,aiTC){
+function controlAIScouts(ai,mils,aiTC){
   let scouts=mils.filter(m=>m.utype==='scout');
   scouts.forEach(s=>{
     if(s.target)return; // controlAIMilitary already has this scout fighting/attacking
     if(s.path&&s.path.length>0)return; // still travelling to its last waypoint
-    let pt=randomScoutWaypoint();
+    let pt=randomScoutWaypoint(ai,aiTC);
     if(pt)pathUnitTo(s,pt.x,pt.y);
   });
 }
 
-function randomScoutWaypoint(){
+// Exploration-biased waypoints: of 8 random candidates, prefer the one with
+// the most UNexplored tiles around it (sampled on a stride from the sim's
+// deterministic explored grid) plus a small far-from-home bonus — random
+// wandering re-visited known ground and could take ages to find a cornered
+// enemy on larger maps. Deterministic: sim RNG + sim state only.
+function randomScoutWaypoint(ai,aiTC){
   let margin=3;
+  let eg=teamExploredGrid&&teamExploredGrid[ai.team];
+  let best=null,bestScore=-1;
   for(let attempt=0;attempt<8;attempt++){
     let x=simRandInt(margin,MAP-1-margin);
     let y=simRandInt(margin,MAP-1-margin);
-    if(map[y]&&map[y][x]&&map[y][x].t!==TERRAIN.WATER)return{x,y};
+    if(!map[y]||!map[y][x]||map[y][x].t===TERRAIN.WATER)continue;
+    let score=0;
+    if(eg){
+      for(let dy=-3;dy<=3;dy+=3)for(let dx=-3;dx<=3;dx+=3){
+        let nx=x+dx,ny=y+dy;
+        if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&eg[ny*MAP+nx]===0)score++;
+      }
+    }
+    if(aiTC)score+=dist({x,y},aiTC)/MAP; // <1: only breaks near-ties toward far ground
+    if(score>bestScore){bestScore=score;best={x,y};}
   }
-  return null;
+  return best;
 }
 
 function findPlayerThreatNear(ai,aiTC,range){
@@ -764,7 +876,16 @@ function chooseAIAttackTarget(ai,militia){
 
   // Fallback to searching nearby player town centers if no units are spotted,
   // but only head to their coordinate range (simulating exploration).
-  let priority=e=>e.type==='building'?(e.btype==='TC'?0:1):(e.utype==='militia'?2:3);
+  // Fight the army in your face before sieging buildings (marching past a
+  // defending force into the TC invites getting surrounded), then the TC,
+  // then military infrastructure, then the rest; distant units last.
+  let engage=12*aiScale();
+  let priority=e=>{
+    if(e.type==='unit')return dist(militia,e)<=engage?0:4;
+    if(e.btype==='TC')return 1;
+    if(e.btype==='TOWER'||e.btype==='BARRACKS')return 2;
+    return 3;
+  };
   if (spottedEnemies.length > 0) {
     let best = spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
     return resolveReachableAttackTarget(militia, best);

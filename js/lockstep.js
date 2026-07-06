@@ -86,6 +86,7 @@ function lockstepResetState(){
 function hostStartLockstepMatch(){
   lockstepActive = true;
   lockstepResetState();
+  NUM_TEAMS = 2; // MP is strictly 1v1 — incl. the rematch path, which skips onHostClicked
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let sizeKey = sizeSel ? sizeSel.value : 'medium';
   window.fogDisabled = false;
@@ -96,7 +97,7 @@ function hostStartLockstepMatch(){
   // controllers: the host's slot layout is authoritative — today always
   // [human, human], but the guest applies whatever arrives, so AI slots in
   // MP become a host-side data change, not a protocol change.
-  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, controllers: teamControllers });
+  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance });
 }
 
 onNetMessage((msg) => {
@@ -105,12 +106,14 @@ onNetMessage((msg) => {
     lockstepResetState();
     window.fogDisabled = false;
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
+    NUM_TEAMS = msg.numTeams || 2; // before setMapSize (STARTS) and restartGame (sizing)
     window.__pendingMatchSeed = msg.seed;
     setMapSize(msg.mapSize);
     restartGame('standard');
     // Host's slot layout wins (restartGame derived a default from netRole).
     // Must land before the seed snapshot/checksums so both peers agree.
     if (msg.controllers) { teamControllers = msg.controllers; resetAIStates(); }
+    if (msg.alliances) teamAlliance = msg.alliances; else resetTeamAlliance();
     DET.enabled = true;
     lockstepSeedSnapshot();
     gameStarted = true;
@@ -245,7 +248,7 @@ function lockstepCaptureState(){
     // Per-team controller + AI plan state: SIM state (an AI team's brain
     // must rewind with a rollback and agree across peers — plain data,
     // clones fine). Same for lastTeamHit (AI garrison signal, js/core.js).
-    teamControllers, aiStates: AI_STATES, lastTeamHit,
+    teamControllers, aiStates: AI_STATES, lastTeamHit, teamAlliance, defeatedTeams,
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,

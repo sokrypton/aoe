@@ -33,7 +33,7 @@ let netMessageHandlers = [];
 // stale cached build while the other has today's is a very real failure
 // mode that otherwise surfaces as inexplicable desync instead of a clear
 // "refresh your page".
-const NET_PROTOCOL_VERSION = 6; // v6: per-team controllers/AI state in lockstep-start, snapshots, and simChecksum (js/core.js teamControllers/AI_STATES)
+const NET_PROTOCOL_VERSION = 7; // v7: alliances/defeatedTeams join lockstep-start, snapshots, and simChecksum (js/core.js teamAlliance)
 
 // CompressionStream/DecompressionStream are stream-based (write in, read
 // chunks out), so both directions are inherently async. A single already-

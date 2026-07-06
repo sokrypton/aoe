@@ -104,11 +104,18 @@ function simChecksum(){
       h = detMix(h, ai.waveCount);
       h = detMix(h, ai.gateBuilt ? 1 : 0);
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
-      if (ai.intel) { h = detMix(h, ai.intel.strength || 0); h = detMix(h, ai.intel.tcSeen ? 1 : 0); }
+      h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
+      if (ai.intel) {
+        h = detMix(h, ai.intel.strength || 0);
+        h = detMix(h, ai.intel.tcSeen ? 1 : 0);
+        for (let u = 0; u < NUM_TEAMS; u++) h = detMix(h, (ai.intel.strengthByTeam && ai.intel.strengthByTeam[u]) || 0);
+      }
       if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));
     }
     let hit = lastTeamHit && lastTeamHit[t];
     h = detMix(h, hit ? hit.tick : -1);
+    h = detMix(h, allianceOf(t));
+    h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
   }
   return h >>> 0;
 }
