@@ -242,7 +242,8 @@ function applySavedGame(data, opts){
       });
       // Per-team controller/AI/hit state swaps with the teams (an AI
       // state's own `team` field must track its new slot).
-      [['teamControllers'], ['aiStates'], ['lastTeamHit']].forEach(([k]) => {
+      // (2-team swap by design — the whole savedByTeam model is 1v1.)
+      ['teamControllers', 'aiStates', 'lastTeamHit'].forEach(k => {
         if (Array.isArray(data[k]) && data[k].length >= 2) {
           [data[k][0], data[k][1]] = [data[k][1], data[k][0]];
         }
@@ -303,21 +304,19 @@ function applySavedGame(data, opts){
     resources = data.resources || resources;
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
-    // Controller layout + per-team AI plan state + last-hit record. The
-    // crash-recovery handback (fromOpponentMirror) keeps teams in place so
-    // these apply verbatim; the file-load path team-swapped them above.
-    teamControllers = data.teamControllers ||
-      [{type:'human'}, data.wasMultiplayerGame ? {type:'human'} : {type:'ai', difficulty: data.aiDifficulty || 'standard'}];
-    AI_STATES = data.aiStates || null;
-    lastTeamHit = data.lastTeamHit || null;
-    if (!AI_STATES) resetAIStates();
-    if (!lastTeamHit) resetLastTeamHit();
 
     gameOver = !!data.gameOver;
     won = !!data.won;
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
     gamePaused = false;
     aiDifficulty = AI_LEVELS[data.aiDifficulty] ? data.aiDifficulty : aiDifficulty;
+    // Controller layout + per-team AI plan state + last-hit record. The
+    // crash-recovery handback (fromOpponentMirror) keeps teams in place so
+    // these apply verbatim; the file-load path team-swapped them above.
+    // (After the aiDifficulty restore above so the no-field fallback picks
+    // up the save's difficulty.)
+    if (!data.teamControllers) data.teamControllers = defaultControllers(!!data.wasMultiplayerGame);
+    restoreTeamState(data);
 
     window.fogDisabled = !!data.fogDisabled;
     if (opts && opts.fromOpponentMirror) {

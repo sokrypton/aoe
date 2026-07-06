@@ -595,8 +595,8 @@ function damageEntity(attacker, target){
   // it catches open-field battles that building-proximity checks miss.
   // Viewer-relative (myTeam, not 0/1): under lockstep both peers run this —
   // danger music is "I'm taking damage", war music is "I'm dealing it".
-  if (isPlayerTeam(attacker.team) && attacker.team !== myTeam && target.team === myTeam) window.lastDangerTick = tick;
-  else if (attacker.team === myTeam && isPlayerTeam(target.team) && target.team !== myTeam) {
+  if (isEnemyOf(myTeam, attacker) && target.team === myTeam) window.lastDangerTick = tick;
+  else if (attacker.team === myTeam && isEnemyOf(myTeam, target)) {
     window.lastWarTick = tick; // music mood only — the AI reads lastTeamHit below
   }
 
@@ -612,7 +612,7 @@ function damageEntity(attacker, target){
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
   // an ongoing one — the danger music carries the battle. It only re-arms
   // after ~20s without taking any hits.
-  if (target.team === myTeam && isPlayerTeam(attacker.team) && attacker.team !== myTeam) {
+  if (target.team === myTeam && isEnemyOf(myTeam, attacker)) {
     let lastHit = window.lastUnderAttackTick;
     window.lastUnderAttackTick = tick;
     if (lastHit === undefined || tick - lastHit > 600) {
@@ -1926,7 +1926,7 @@ function updateBuilding(e){
       // "my team" logic at all, just an unconditional rally point feature
       // arbitrarily limited to team 0 — team 1 is a real player in
       // multiplayer (the guest) who sets rally points too, so this now
-      // applies to both player teams (team 2/neutral has no buildings).
+      // applies to all player teams (gaia/neutral has no buildings).
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         let rallyB=null;
         if(e.rallyTargetId){

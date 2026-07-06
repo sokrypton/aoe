@@ -276,9 +276,7 @@ function lockstepRestore(snap){
   window.bellRinging = st.bellRinging;
   restoreStuckWatch(st.stuckWatch);
   teamExploredGrid = st.exploredSim;
-  teamControllers = st.teamControllers;
-  AI_STATES = st.aiStates;
-  lastTeamHit = st.lastTeamHit;
+  restoreTeamState(st); // controllers/AI_STATES/lastTeamHit (js/core.js)
   visionFreshTick = -1; // force vision/fog recompute on the next tick
   // UI object references now point at pre-restore objects — re-resolve by id.
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
@@ -359,12 +357,7 @@ function lockstepApplyResync(state){
   window.bellRinging = state.bellRinging;
   restoreStuckWatch(new Map(state.stuckWatch || []));
   teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
-  // Controller/AI/hit state travel with the sim (see lockstepCaptureState).
-  if (state.teamControllers) teamControllers = state.teamControllers;
-  AI_STATES = state.aiStates || null;
-  lastTeamHit = state.lastTeamHit || null;
-  if (!AI_STATES) resetAIStates();
-  if (!lastTeamHit) resetLastTeamHit();
+  restoreTeamState(state); // controllers/AI_STATES/lastTeamHit (js/core.js)
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
   // explored memory only survives in the sim's explored grid. Seed fog=1
   // from our team's grid; a no-op for tiles already explored/visible, so

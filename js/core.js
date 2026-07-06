@@ -88,6 +88,22 @@ function aiProfileFor(t){
 // structuredClone/JSON-safe so it rides the lockstep snapshot ring and the
 // save file unchanged — required for a deterministic AI under rollback.
 let AI_STATES = null;
+// One restore path for the per-team sim state above, shared by every
+// deserializer (lockstep rollback restore, resync apply, save load) so the
+// "non-null after restore" guarantee lives in exactly one place.
+function restoreTeamState(src){
+  if (src.teamControllers) teamControllers = src.teamControllers;
+  AI_STATES = src.aiStates || null;
+  lastTeamHit = src.lastTeamHit || null;
+  if (!AI_STATES) resetAIStates();
+  if (!lastTeamHit) resetLastTeamHit();
+}
+// The controller layout for the two match shapes that exist today. The
+// single derivation point — restart, hosting transitions, and save-load
+// fallbacks all route through here rather than hand-flipping slots.
+function defaultControllers(mp){
+  return [{type:'human'}, mp ? {type:'human'} : {type:'ai', difficulty: aiDifficulty}];
+}
 function freshAIState(team){
   return { team, tick: 0,
     intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
@@ -177,7 +193,7 @@ const UNITS={
   // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2); with no
   // age system here, the familiar fast scout is the right baseline.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
-  // Wild predator (AoE2 wolf logic, bear body): gaia team 2, lurks in the
+  // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
   // wolf (45hp/7atk vs 25/3) so a lone villager should run, but a couple

@@ -463,7 +463,7 @@ function onHostClicked(){
   // `netRole == null` gate around updateAI (js/loop.js). AI_STATES[1] is
   // deliberately left in place: cancelHosting() flips the slot back and
   // the AI resumes its plans exactly where it stopped.
-  if (teamControllers[1]) teamControllers[1] = {type: 'human'};
+  teamControllers = defaultControllers(true);
   if (!mpHostingFromExistingGame) {
     // Only apply the setup screen's map size/speed pickers when actually
     // starting fresh — hosting from an already-loaded save must keep
@@ -572,7 +572,7 @@ function cancelHosting(){
   // Back to single-player: slot 1 reverts to the AI (onHostClicked flipped
   // it to 'human' so the AI would sit out the waiting window). Its plan
   // state was kept, so a match resumed behind the menu continues seamlessly.
-  teamControllers[1] = {type: 'ai', difficulty: aiDifficulty};
+  teamControllers = defaultControllers(false);
   if (AI_STATES && !AI_STATES[1]) AI_STATES[1] = freshAIState(1);
   let panel = document.getElementById('mp-status-panel');
   if (panel) panel.style.display = 'none';
@@ -1028,9 +1028,7 @@ function restartGame(difficulty){
   // world-build time. A future match-setup UI replaces this derivation
   // with explicit slot choices — everything downstream already reads
   // teamControllers, not netRole.
-  teamControllers = netRole == null
-    ? [{type:'human'}, {type:'ai', difficulty: aiDifficulty}]
-    : [{type:'human'}, {type:'human'}];
+  teamControllers = defaultControllers(netRole != null);
   resetAIStates();     // fresh per-team AI plan state (js/core.js)
   resetLastTeamHit();  // fresh per-team "last hit taken" record (js/core.js)
 

@@ -1329,7 +1329,7 @@ function doCommand(sx,sy){
   if (clickedUnit) {
     // Any OTHER player team is an attack target. Gaia (sheep/bears) is
     // handled by the separate utype checks below, not by this comparison.
-    if (isPlayerTeam(clickedUnit.team) && clickedUnit.team !== myTeam) {
+    if (isEnemyOf(myTeam, clickedUnit)) {
       target = clickedUnit;
     } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
       target = clickedUnit;
@@ -1341,7 +1341,7 @@ function doCommand(sx,sy){
     }
   }
   if(!target){
-    target = getBuildingUnderCursor(sx, sy, en => isPlayerTeam(en.team) && en.team !== myTeam && buildingFogLevel(en) === 2);
+    target = getBuildingUnderCursor(sx, sy, en => isEnemyOf(myTeam, en) && buildingFogLevel(en) === 2);
   }
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
