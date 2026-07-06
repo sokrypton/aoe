@@ -146,6 +146,20 @@ function execCommand(cmd, team){
           if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
         }
         break;
+      case 'dev-spawn':
+        // Test-only scenario injection for multiplayer measurement: spawns
+        // a deterministic army through the queue so both lockstep peers
+        // create identical entities at the same tick. Requires an explicit
+        // console opt-in on BOTH peers (window.DEV_TEST_COMMANDS = true);
+        // inert otherwise. Used by tests/mp-lockstep-perf.js.
+        if (window.DEV_TEST_COMMANDS) {
+          let types = ['militia', 'archer', 'spearman', 'scout'];
+          for (let i = 0; i < (cmd.n | 0) && i < 400; i++) {
+            let t = findSpawnTile(cmd.x + (i % 20), cmd.y + ((i / 20) | 0), 12);
+            if (t) createUnit(types[i % 4], t.x, t.y, i % 2);
+          }
+        }
+        break;
       case 'town-bell':
         if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
         if (typeof updateUI === 'function') updateUI();
