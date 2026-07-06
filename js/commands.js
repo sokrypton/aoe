@@ -137,6 +137,15 @@ function execCommand(cmd, team){
         }
         break;
       }
+      case 'set-speed':
+        // Host-only control (team 0); executes at the same tick on both
+        // peers so timeStep/pacing never diverge. Range-clamped, never
+        // trusted from the wire.
+        if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
+          setGameSpeed(cmd.v);
+          if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
+        }
+        break;
       case 'town-bell':
         if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
         if (typeof updateUI === 'function') updateUI();

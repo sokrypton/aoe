@@ -131,7 +131,18 @@ function applyAudioSettings(){
 // sync (js/net-sync.js); writing it here would just fight the next sync.
 function applyGameSettings(){
   let speedSel = document.querySelector('input[name="gamespeed"]:checked');
-  if (speedSel && netRole !== 'guest') setGameSpeed(parseFloat(speedSel.value));
+  if (speedSel && netRole !== 'guest') {
+    let v = parseFloat(speedSel.value);
+    if (typeof lockstepEnabled === 'function' && lockstepEnabled()) {
+      // Lockstep: pacing must change on BOTH peers at the same tick — a
+      // host-only setGameSpeed just makes the host outrun the gating window
+      // and stall right back to the guest's old rate (looks like "speed
+      // can't be changed"). Routed through the command queue instead.
+      if (v !== GAME_SPEED) submitCommand({ kind: 'set-speed', v });
+    } else {
+      setGameSpeed(v);
+    }
+  }
   let diffSel = document.querySelector('input[name="difficulty"]:checked');
   if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');

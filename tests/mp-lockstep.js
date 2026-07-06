@@ -106,8 +106,19 @@ const { BASE, sleep, check, finish } = require('./helpers');
     selected = entities.filter(e => e.team === 1 && e.utype === 'villager');
     const n = selected.length;
     const u = selected[0];
-    const iso = toIso(u.x + 5, u.y + 5);
-    doCommand(iso.ix - camX + W/2, iso.iy - camY + topH + H/2);
+    // A guaranteed plain-walk destination: walkable GRASS, no entity within
+    // 2 tiles (a tap near a unit resolves as follow/attack, near a resource
+    // as gather — seed-dependent flake otherwise).
+    let gx = -1, gy = -1;
+    outer: for (let r = 3; r < 15; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = Math.round(u.x) + dx, y = Math.round(u.y) + dy;
+      if (x < 1 || y < 1 || x >= MAP - 1 || y >= MAP - 1) continue;
+      if (map[y][x].t !== TERRAIN.GRASS || !walkable(x, y)) continue;
+      if (entities.some(e => Math.abs(e.x - x) < 2 && Math.abs(e.y - y) < 2)) continue;
+      gx = x; gy = y; break outer;
+    }
+    const iso = toIso(gx, gy);
+    doCommand((iso.ix - camX) * ZOOM + W/2, (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH);
     finishMobileUnitCommand();
     const stillNow = selected.length === n;
     await new Promise(r => setTimeout(r, 1500));
@@ -135,6 +146,14 @@ const { BASE, sleep, check, finish } = require('./helpers');
     return selected.length === 0;
   });
   check(gatherDeselect, 'mobile gather order deselects villagers immediately');
+
+  // Speed change is a queued command: it must land on BOTH peers.
+  await host.evaluate(() => submitCommand({ kind: 'set-speed', v: 1 }));
+  await sleep(1500);
+  const speeds = await Promise.all([host, guest].map(p => p.evaluate(() => GAME_SPEED)));
+  check(speeds[0] === 1 && speeds[1] === 1, 'set-speed applied on both peers (' + speeds.join('/') + ')');
+  await host.evaluate(() => submitCommand({ kind: 'set-speed', v: 2 }));
+  await sleep(1000);
 
   const desyncs = await Promise.all([host, guest].map(p => p.evaluate(() => window.__lockstepDesync || null)));
   check(!desyncs[0] && !desyncs[1], 'no desync flagged on either peer (' + desyncs.join(', ') + ')');

@@ -1546,6 +1546,29 @@ function updateUnit(e){
       });
       if(closest) {
         e.target=closest.id;
+      } else if (e.team === 0 || netRole != null) {
+        // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
+        // behavior — soldiers parked in an enemy town shouldn't stand and
+        // soak tower/TC fire without answering). Attacking-capable
+        // structures (TOWER/TC) take priority over the rest; walls/gates
+        // are excluded so armies don't spontaneously whittle fortifications
+        // they're merely standing near. Same visibility gate as units;
+        // ties broken by lowest id (deterministic). The single-player AI
+        // (netRole null, team 1) keeps its own attack planning.
+        let bestB = null, bestD = Infinity, bestPri = -1;
+        for (let bi = 0; bi < entities.length; bi++) {
+          let b = entities[bi];
+          if (b.type !== 'building' || b.team === e.team || b.team === GAIA_TEAM || b.hp <= 0) continue;
+          if (b.btype === 'WALL' || b.btype === 'GATE') continue;
+          let d = distToTarget(e, b);
+          if (d > scanRange + 0.1) continue;
+          if (!window.fogDisabled && !buildingVisibleToTeam(b, e.team)) continue;
+          let pri = (b.btype === 'TOWER' || b.btype === 'TC') ? 1 : 0;
+          if (pri > bestPri || (pri === bestPri && (d < bestD || (d === bestD && bestB && b.id < bestB.id)))) {
+            bestPri = pri; bestD = d; bestB = b;
+          }
+        }
+        if (bestB) e.target = bestB.id;
       }
     }
   }
