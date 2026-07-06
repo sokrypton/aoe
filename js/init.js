@@ -1,6 +1,6 @@
 // ---- INIT ----
 function init(){
-  window.bellRinging=[false,false]; // per-team town-bell state, indexed by team
+  window.bellRinging=Array.from({length:NUM_TEAMS},()=>false); // per-team town-bell state, indexed by team
   window.lastUnderAttackTick=undefined;
   // Music mood / AI-garrison damage-signals must reset with the tick
   // counter, or a stale large value from the previous match reads as
@@ -84,6 +84,9 @@ function placeWildBears(){
 
 function startGame(difficulty){
   aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
+  // Sync the AI slots' difficulty to the menu pick (per-team difficulty is
+  // what the AI actually reads — aiProfileFor, js/core.js).
+  teamControllers.forEach(c => { if (c && c.type === 'ai') c.difficulty = aiDifficulty; });
   gameStarted=true;
   gamePaused=false;
   // A genuine fresh start — no other pause reason should carry over from
@@ -92,7 +95,6 @@ function startGame(difficulty){
   localMenuOpen = false;
   remoteMenuOpen = false;
   disconnectedPause = false;
-  aiTick=0;
   window.playedGameOverSound = false; // Reset game over sound trigger
   if (window.stopGameOverMusic) window.stopGameOverMusic();
   // Initialize audio on first click. Music must never be able to block the
@@ -454,6 +456,14 @@ let mpHostingFromExistingGame = false;
 
 function onHostClicked(){
   mpHostingFromExistingGame = gameStarted && !gameOver && entities.length > 0;
+  // Slot 1 becomes a (future) human guest the instant Host is clicked —
+  // NOT when the guest connects — so the AI can't make irreversible
+  // decisions (spend resources, queue units) during the waiting-for-
+  // opponent window. This is the data-driven successor to the old
+  // `netRole == null` gate around updateAI (js/loop.js). AI_STATES[1] is
+  // deliberately left in place: cancelHosting() flips the slot back and
+  // the AI resumes its plans exactly where it stopped.
+  if (teamControllers[1]) teamControllers[1] = {type: 'human'};
   if (!mpHostingFromExistingGame) {
     // Only apply the setup screen's map size/speed pickers when actually
     // starting fresh — hosting from an already-loaded save must keep
@@ -559,6 +569,11 @@ function leaveMpSession(){
 function cancelHosting(){
   let wasMidMatch = mpHostingFromExistingGame;
   leaveMpSession();
+  // Back to single-player: slot 1 reverts to the AI (onHostClicked flipped
+  // it to 'human' so the AI would sit out the waiting window). Its plan
+  // state was kept, so a match resumed behind the menu continues seamlessly.
+  teamControllers[1] = {type: 'ai', difficulty: aiDifficulty};
+  if (AI_STATES && !AI_STATES[1]) AI_STATES[1] = freshAIState(1);
   let panel = document.getElementById('mp-status-panel');
   if (panel) panel.style.display = 'none';
   let cancelBtn = document.getElementById('mp-cancel-btn');
@@ -979,8 +994,8 @@ function restartGame(difficulty){
   selected = [];
   tick = 0;
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
-  teamExploredEver[0].clear(); // fresh map, stale explored-history memory no longer meaningful — see js/core.js
-  teamExploredEver[1].clear();
+  // Fresh map, stale explored-history memory no longer meaningful — see js/core.js
+  for (let t = 0; t < NUM_TEAMS; t++) teamExploredEver[t].clear();
   window.__mpSession.cameraCentered = false;
   window.__mpSession.hostJustLoadedSave = false;
   window.__mpSession.bottomHeightSet = false;
@@ -1004,20 +1019,20 @@ function restartGame(difficulty){
   workSwingCycles.clear();
   buildingFxTick.clear();
 
-  // Reset resources to defaults — team 1 (single-player AI, or a real MP
-  // guest) gets the same starting resources as team 0, not a handicap; AI
-  // difficulty is tuned via gather rates/behavior (js/ai.js), not a lower
-  // resource floor.
-  resources = [
-    {food:200, wood:200, gold:100, stone:200, prepaidFarms:0},
-    {food:200, wood:200, gold:100, stone:200, prepaidFarms:0}
-  ];
-  window.aiWallPlan = null;
-  window.aiGateBuilt = false;
-  window.aiGateTile = null;
-  window.aiIntel = null;
-  window.aiWaveCount = 0;
-  window.aiLastWaveTick = null;
+  // Reset resources to defaults — every team (single-player AI, or real MP
+  // opponents) gets the same start, not a handicap; AI difficulty is tuned
+  // via gather rates/behavior (js/ai.js), not a lower resource floor.
+  resources = freshTeamResources();
+  // Controllers for the two shapes a fresh world can take today (SP human
+  // vs AI, or 1v1 lockstep human vs human), derived from netRole at
+  // world-build time. A future match-setup UI replaces this derivation
+  // with explicit slot choices — everything downstream already reads
+  // teamControllers, not netRole.
+  teamControllers = netRole == null
+    ? [{type:'human'}, {type:'ai', difficulty: aiDifficulty}]
+    : [{type:'human'}, {type:'human'}];
+  resetAIStates();     // fresh per-team AI plan state (js/core.js)
+  resetLastTeamHit();  // fresh per-team "last hit taken" record (js/core.js)
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;

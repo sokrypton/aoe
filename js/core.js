@@ -50,11 +50,67 @@ function setMapSize(sizeKey){
     {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
   ];
 }
-// Gaia (neutral sheep/bears), not a player team — named so a future 3rd+
-// player team is a color-array entry away, not a hunt for bare "2"s.
-const GAIA_TEAM = 2;
-// Real player teams only; room to add a 3rd without colliding with GAIA_COLOR.
-const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b'];
+// How many PLAYER teams exist in a match. Every per-team structure
+// (resources, vision grids, explored memory, bell state) must size itself
+// from this — never a literal 2 — so adding players is a data change here,
+// not a codebase hunt. NOTE: plenty of >2-player STRUCTURAL work remains
+// (single peer connection, AI pinned to team 1, 2-base map gen, save
+// team-swap) — this constant is the sizing knob, not the whole story.
+let NUM_TEAMS = 2;
+// "A real player team" (excludes gaia and garbage ids) — use this instead
+// of enumerating `team === 0 || team === 1`.
+function isPlayerTeam(t){ return t >= 0 && t < NUM_TEAMS; }
+// "An enemy of `team`" — any OTHER player team (gaia is never an enemy in
+// this sense; bears/sheep have their own utype-based handling).
+function isEnemyOf(team, e){ return isPlayerTeam(e.team) && e.team !== team; }
+
+// ---- PER-TEAM CONTROLLERS ----
+// Who drives each team: {type:'human'} (this tab or a remote peer — the
+// wire mapping decides which) or {type:'ai', difficulty}. This is SIM
+// state: lockstep peers must agree on it (carried in snapshots/resync and
+// mixed into simChecksum), and it replaces every old "team 1 is the AI
+// when netRole===null" special case with data. Today's two shapes are
+// [human, ai] (single-player) and [human, human] (1v1 lockstep), but
+// nothing below assumes that — any slot may be either type.
+let teamControllers = [{type:'human'}, {type:'ai', difficulty:'standard'}];
+function isAITeam(t){ return isPlayerTeam(t) && teamControllers[t] && teamControllers[t].type === 'ai'; }
+function isHumanTeam(t){ return isPlayerTeam(t) && !isAITeam(t); }
+function aiProfileFor(t){
+  let c = teamControllers[t];
+  return AI_LEVELS[c && c.difficulty] || AI_LEVELS[aiDifficulty] || AI_LEVELS.standard;
+}
+
+// ---- PER-TEAM AI STATE ----
+// One plan-state object per AI-controlled team (null for human slots) —
+// replaces the old single set of globals (aiTick, window.aiIntel/aiWallPlan/
+// aiGateBuilt/aiGateTile/aiWaveCount/aiLastWaveTick/aiSeenWarTick/
+// lastAIBaseHitTick), which could only ever drive ONE AI. Plain data:
+// structuredClone/JSON-safe so it rides the lockstep snapshot ring and the
+// save file unchanged — required for a deterministic AI under rollback.
+let AI_STATES = null;
+function freshAIState(team){
+  return { team, tick: 0,
+    intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
+    waveCount: 0, lastWaveTick: null, seenWarTick: null, lastBaseHitTick: null };
+}
+function resetAIStates(){
+  AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
+}
+
+// Last hit each team TOOK: lastTeamHit[team] = {tick,x,y} | null. Sim
+// state (AI garrison reactions read it on later ticks — snapshot/save it);
+// the viewer-local music mood keeps using window.lastWarTick separately.
+let lastTeamHit = null;
+function resetLastTeamHit(){
+  lastTeamHit = Array.from({length: NUM_TEAMS}, () => null);
+}
+// Gaia (neutral sheep/bears), not a player team. Parked far above any
+// plausible player id so team 2, 3, ... stay free for actual players —
+// gaia at 2 was exactly where the 3rd player's id would have landed.
+const GAIA_TEAM = 255;
+// Real player teams only, indexed by team id; gaia has its own color below.
+// Entries 2+ are pre-picked for future players.
+const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800'];
 const GAIA_COLOR = '#cccc88';
 // Absolute lookup (team 0 always blue, team 1 always red) regardless of viewer.
 function teamColor(team){
@@ -63,7 +119,7 @@ function teamColor(team){
 // Darker variant per team, for building art's shaded/shadow side — kept as
 // its own hand-picked pair (not a generic darkenColor() pass) since
 // building art wants a specific darker tone, not a percentage darken.
-const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333'];
+const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800'];
 const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
   return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[team];
@@ -240,12 +296,15 @@ function setZoomAroundPoint(newZoom, sx, sy){
 // separate named globals — see resourceStore() (js/logic.js), the one place
 // that should ever be used to read/write these. Array-indexed so a future
 // 3rd+ team is a new array entry, not a new named global.
-let resources = [
-  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0},
-  {food:200,wood:200,gold:100,stone:200,prepaidFarms:0}
-];
+function freshTeamResources(){
+  return Array.from({length: NUM_TEAMS}, () => ({food:200,wood:200,gold:100,stone:200,prepaidFarms:0}));
+}
+let resources = freshTeamResources();
+// Viewer-local convenience caches of MY team's population (see
+// refreshPopulationCounts, js/logic.js); per-team reads go through
+// teamPopUsed/teamPopCap directly. The old aiPop/aiPopCap/aiTick globals
+// are gone — AI bookkeeping lives in AI_STATES (above) per team.
 let popUsed=0, popCap=0;
-let aiPop=0, aiPopCap=0, aiTick=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
 // `won` is always computed/synced as "did TEAM 0 win" (js/logic.js's
@@ -446,15 +505,14 @@ function updateFog() {
 // Persistent record of every tile the OTHER team has ever seen, computed
 // the same way that team computes its own live fog, but from THIS client's
 // perspective. Unlike `fog`, this survives the other side's tab closing —
-// lets a rejoining guest recover its explored map (host tracks index 1;
-// see buildSyncPayload's `exploredEver`) and lets a guest-originated save
-// restore the host's fog too, since whoever loads a save becomes the new
-// host (js/save.js) regardless of who saved it (guest tracks index 0 for
-// this case). Indexed by team rather than two mirror-image variables —
-// only the host can usefully update index 1 (has the guest's real
-// positions every tick), only the guest can update index 0 (only gets the
-// host's positions via sync).
-let teamExploredEver = {0: new Set(), 1: new Set()};
+// it feeds serializeGame's `otherTeamExploredEver` (js/save.js) so a
+// guest-originated save/handback can restore the host's fog. LEGACY under
+// lockstep: only the host-side index-1 updater still runs (js/loop.js);
+// the guest-side index-0 updater died with the old snapshot sync, so
+// serializeGame unions this with the deterministic teamExploredGrid
+// (below), which both lockstep peers maintain exactly.
+let teamExploredEver = {};
+for (let _t = 0; _t < NUM_TEAMS; _t++) teamExploredEver[_t] = new Set();
 // Host-only: team 1's LIVE visibility this tick (tile keys y*MAP+x),
 // rebuilt as a free by-product of the forEachVisibleTile walk below. This
 // is what gives the guest symmetric fog treatment in sim code (auto-attack
@@ -489,8 +547,8 @@ let visGen = 0;
 let visionFreshTick = -1; // which sim tick the grids were computed for
 let teamVisGrid = null, teamExploredGrid = null;
 function resetTeamVision(){
-  teamVisGrid = [new Uint32Array(MAP * MAP), new Uint32Array(MAP * MAP)];
-  teamExploredGrid = [new Uint8Array(MAP * MAP), new Uint8Array(MAP * MAP)];
+  teamVisGrid = Array.from({length: NUM_TEAMS}, () => new Uint32Array(MAP * MAP));
+  teamExploredGrid = Array.from({length: NUM_TEAMS}, () => new Uint8Array(MAP * MAP));
   visGen = 0;
   visionFreshTick = -1;
 }
@@ -503,7 +561,7 @@ function updateTeamVision(){
   if (visionFreshTick >= 0 && tick - visionFreshTick < 2) return;
   visGen++;
   visionFreshTick = tick;
-  for (let team = 0; team <= 1; team++) {
+  for (let team = 0; team < NUM_TEAMS; team++) {
     const vg = teamVisGrid[team], eg = teamExploredGrid[team];
     forEachVisibleTile(team, (tx, ty) => {
       const k = ty * MAP + tx;

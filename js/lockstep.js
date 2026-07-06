@@ -93,7 +93,10 @@ function hostStartLockstepMatch(){
   restartGame('standard');
   DET.enabled = true; // per-tick checksum ring for the exchange below
   lockstepSeedSnapshot();
-  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED });
+  // controllers: the host's slot layout is authoritative — today always
+  // [human, human], but the guest applies whatever arrives, so AI slots in
+  // MP become a host-side data change, not a protocol change.
+  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, controllers: teamControllers });
 }
 
 onNetMessage((msg) => {
@@ -105,6 +108,9 @@ onNetMessage((msg) => {
     window.__pendingMatchSeed = msg.seed;
     setMapSize(msg.mapSize);
     restartGame('standard');
+    // Host's slot layout wins (restartGame derived a default from netRole).
+    // Must land before the seed snapshot/checksums so both peers agree.
+    if (msg.controllers) { teamControllers = msg.controllers; resetAIStates(); }
     DET.enabled = true;
     lockstepSeedSnapshot();
     gameStarted = true;
@@ -236,6 +242,10 @@ function lockstepCaptureState(){
     bellRinging: window.bellRinging,
     stuckWatch: snapshotStuckWatch(),
     exploredSim: teamExploredGrid, // Uint8Arrays clone fine
+    // Per-team controller + AI plan state: SIM state (an AI team's brain
+    // must rewind with a rollback and agree across peers — plain data,
+    // clones fine). Same for lastTeamHit (AI garrison signal, js/core.js).
+    teamControllers, aiStates: AI_STATES, lastTeamHit,
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,
@@ -266,6 +276,9 @@ function lockstepRestore(snap){
   window.bellRinging = st.bellRinging;
   restoreStuckWatch(st.stuckWatch);
   teamExploredGrid = st.exploredSim;
+  teamControllers = st.teamControllers;
+  AI_STATES = st.aiStates;
+  lastTeamHit = st.lastTeamHit;
   visionFreshTick = -1; // force vision/fog recompute on the next tick
   // UI object references now point at pre-restore objects — re-resolve by id.
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
@@ -314,7 +327,7 @@ const LOCKSTEP_MAX_RESYNCS = 5;
 
 function lockstepBuildResyncState(){
   let st = lockstepCaptureState();
-  st.exploredSim = [Array.from(st.exploredSim[0]), Array.from(st.exploredSim[1])];
+  st.exploredSim = st.exploredSim.map(g => Array.from(g));
   st.stuckWatch = Array.from(st.stuckWatch.entries());
   // Same Set->null normalization the save/wire path uses (js/save.js):
   // the sim treats a missing Set as empty and rebuilds it.
@@ -330,7 +343,7 @@ function lockstepApplyResync(state){
   // Before initFog(): it seeds the whole grid as revealed when fog is off.
   if (state.fogDisabled !== undefined) window.fogDisabled = !!state.fogDisabled;
   if (!fog.length || fog.length !== MAP) initFog();
-  if (!window.bellRinging) window.bellRinging = [false, false];
+  if (!window.bellRinging) window.bellRinging = Array.from({length: NUM_TEAMS}, () => false);
   entities = state.entities;
   entitiesById.clear();
   entities.forEach(e => entitiesById.set(e.id, e));
@@ -345,7 +358,13 @@ function lockstepApplyResync(state){
   simRngState = state.simRngState;
   window.bellRinging = state.bellRinging;
   restoreStuckWatch(new Map(state.stuckWatch || []));
-  teamExploredGrid = [Uint8Array.from(state.exploredSim[0]), Uint8Array.from(state.exploredSim[1])];
+  teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
+  // Controller/AI/hit state travel with the sim (see lockstepCaptureState).
+  if (state.teamControllers) teamControllers = state.teamControllers;
+  AI_STATES = state.aiStates || null;
+  lastTeamHit = state.lastTeamHit || null;
+  if (!AI_STATES) resetAIStates();
+  if (!lastTeamHit) resetLastTeamHit();
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
   // explored memory only survives in the sim's explored grid. Seed fog=1
   // from our team's grid; a no-op for tiles already explored/visible, so

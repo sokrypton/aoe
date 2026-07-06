@@ -1327,10 +1327,9 @@ function doCommand(sx,sy){
     if (!visible) clickedUnit = null;
   }
   if (clickedUnit) {
-    // (1-myTeam): the OTHER human-controlled team — 1 for the host, 0 for
-    // a multiplayer guest. Team 2 (gaia: sheep/bears) is handled by the
-    // separate utype checks below, not by this team comparison.
-    if (clickedUnit.team === (1-myTeam)) {
+    // Any OTHER player team is an attack target. Gaia (sheep/bears) is
+    // handled by the separate utype checks below, not by this comparison.
+    if (isPlayerTeam(clickedUnit.team) && clickedUnit.team !== myTeam) {
       target = clickedUnit;
     } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
       target = clickedUnit;
@@ -1342,7 +1341,7 @@ function doCommand(sx,sy){
     }
   }
   if(!target){
-    target = getBuildingUnderCursor(sx, sy, en => en.team === (1-myTeam) && buildingFogLevel(en) === 2);
+    target = getBuildingUnderCursor(sx, sy, en => isPlayerTeam(en.team) && en.team !== myTeam && buildingFogLevel(en) === 2);
   }
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit

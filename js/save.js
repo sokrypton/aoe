@@ -5,7 +5,7 @@
 // snapshot object round-trips cleanly with no custom (de)serialization.
 function serializeGame(){
   return {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
     // A visible signature that this save came from a multiplayer match
     // (rather than single-player) — surfaced in the filename and the load
@@ -44,8 +44,14 @@ function serializeGame(){
     // id+snapshot, so a mid-volley save no longer silently loses those hits.
     projectiles,
     cmdMarkers,
-    resources, popUsed, popCap, aiPop, aiPopCap, aiTick,
+    resources, popUsed, popCap,
     gameStarted, gameOver, won, aiDifficulty,
+    // Per-team controller layout + AI plan state + last-hit record
+    // (js/core.js) — all plain data, sized by numTeams.
+    numTeams: NUM_TEAMS,
+    teamControllers,
+    aiStates: AI_STATES,
+    lastTeamHit,
     // What the player had selected and whether the camera was locked onto a
     // unit are saved by id (not object reference — see the matching restore
     // in applySavedGame, which re-resolves these against the freshly
@@ -71,14 +77,22 @@ function serializeGame(){
     // session tracks depends on whether it's host or guest) so
     // applySavedGame can reconstruct team 0's fog correctly either way.
     savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
-    otherTeamExploredEver: Array.from(teamExploredEver[myTeam === 1 ? 0 : 1]),
-    bellRinging: window.bellRinging || [false,false],
-    aiWallPlan: window.aiWallPlan || null,
-    aiGateBuilt: !!window.aiGateBuilt,
-    aiGateTile: window.aiGateTile || null,
-    aiIntel: window.aiIntel || null,
-    aiWaveCount: window.aiWaveCount || 0,
-    aiLastWaveTick: window.aiLastWaveTick || null
+    // Union of the legacy per-tick memory AND the deterministic sim grid:
+    // teamExploredEver's guest-side updater for index 0 died with the
+    // legacy snapshot sync, so under lockstep the OTHER team's history
+    // lives (exactly) in teamExploredGrid — without it a host reloading
+    // mid-match rebuilt its fog from an empty set and lost its explored
+    // map (see applySavedGame's fromOpponentMirror branch).
+    otherTeamExploredEver: (() => {
+      let other = (typeof myTeam !== 'undefined' && myTeam === 1) ? 0 : 1;
+      let ever = new Set(teamExploredEver[other]);
+      if (teamExploredGrid && teamExploredGrid[other]) {
+        let eg = teamExploredGrid[other];
+        for (let k = 0; k < eg.length; k++) if (eg[k] === 1) ever.add(k);
+      }
+      return Array.from(ever);
+    })(),
+    bellRinging: window.bellRinging || Array.from({length: NUM_TEAMS}, () => false)
   };
 }
 
@@ -151,10 +165,10 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:1 — actually check it (the net layer's
+  // serializeGame stamps version:2 — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a future format
   // change fails loudly here instead of misloading silently.
-  if (data.version !== 1) {
+  if (data.version !== 2) {
     if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ')');
     return;
   }
@@ -180,6 +194,8 @@ function applySavedGame(data, opts){
     if (data.GAME_SPEED) setGameSpeed(data.GAME_SPEED);
 
     map = data.map;
+    // Sized per-team structures follow the save's team count.
+    NUM_TEAMS = data.numTeams || 2;
     // Whoever loads a save always becomes the new host (see below), so the
     // new session's `fog` must end up holding TEAM 0's grid regardless of
     // which side originally saved. If the save came from the host
@@ -224,6 +240,14 @@ function applySavedGame(data, opts){
           else if (pr.attackerSnap.team === 1) pr.attackerSnap.team = 0;
         }
       });
+      // Per-team controller/AI/hit state swaps with the teams (an AI
+      // state's own `team` field must track its new slot).
+      [['teamControllers'], ['aiStates'], ['lastTeamHit']].forEach(([k]) => {
+        if (Array.isArray(data[k]) && data[k].length >= 2) {
+          [data[k][0], data[k][1]] = [data[k][1], data[k][0]];
+        }
+      });
+      (data.aiStates || []).forEach((st, t) => { if (st) st.team = t; });
       // teamExploredEver[1] (the rejoining opponent's memory) now comes
       // from the saver's otherTeamExploredEver — same slot the
       // host-originated path expects it in.
@@ -279,9 +303,15 @@ function applySavedGame(data, opts){
     resources = data.resources || resources;
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
-    aiPop = data.aiPop || 0;
-    aiPopCap = data.aiPopCap || 0;
-    aiTick = data.aiTick || 0;
+    // Controller layout + per-team AI plan state + last-hit record. The
+    // crash-recovery handback (fromOpponentMirror) keeps teams in place so
+    // these apply verbatim; the file-load path team-swapped them above.
+    teamControllers = data.teamControllers ||
+      [{type:'human'}, data.wasMultiplayerGame ? {type:'human'} : {type:'ai', difficulty: data.aiDifficulty || 'standard'}];
+    AI_STATES = data.aiStates || null;
+    lastTeamHit = data.lastTeamHit || null;
+    if (!AI_STATES) resetAIStates();
+    if (!lastTeamHit) resetLastTeamHit();
 
     gameOver = !!data.gameOver;
     won = !!data.won;
@@ -290,14 +320,30 @@ function applySavedGame(data, opts){
     aiDifficulty = AI_LEVELS[data.aiDifficulty] ? data.aiDifficulty : aiDifficulty;
 
     window.fogDisabled = !!data.fogDisabled;
-    scoutedByMe = new Set(data.scoutedByMe || []);
-    window.bellRinging = [!!(data.bellRinging&&data.bellRinging[0]), !!(data.bellRinging&&data.bellRinging[1])];
-    window.aiWallPlan = data.aiWallPlan || null;
-    window.aiGateBuilt = !!data.aiGateBuilt;
-    window.aiGateTile = data.aiGateTile || null;
-    window.aiIntel = data.aiIntel || null;
-    window.aiWaveCount = data.aiWaveCount || 0;
-    window.aiLastWaveTick = data.aiLastWaveTick || null;
+    if (opts && opts.fromOpponentMirror) {
+      // data.scoutedByMe is the GUEST's memory — which of OUR buildings
+      // they've scouted — useless to the recovering host, and without a
+      // rebuild every enemy building the host had scouted vanishes from
+      // its map/minimap (buildings under explored fog only render if in
+      // scoutedByMe — js/render.js). Reconstruct: an enemy building with
+      // any footprint tile in the host's just-restored explored fog counts
+      // as scouted. Slightly generous (a building erected after the host
+      // explored and left gets remembered too), but the alternative is
+      // losing the whole scouting record.
+      scoutedByMe = new Set();
+      data.entities.forEach(e => {
+        // Same "enemy building" test as markScoutedBuildings (js/core.js).
+        if (e.type !== 'building' || e.team === myTeam) return;
+        let bw = e.w || (BLDGS[e.btype] && BLDGS[e.btype].w) || 1;
+        let bh = e.h || (BLDGS[e.btype] && BLDGS[e.btype].h) || 1;
+        outer: for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) {
+          if (fog[e.y + dy] && fog[e.y + dy][e.x + dx] > 0) { scoutedByMe.add(e.id); break outer; }
+        }
+      });
+    } else {
+      scoutedByMe = new Set(data.scoutedByMe || []);
+    }
+    window.bellRinging = Array.from({length: NUM_TEAMS}, (_, t) => !!(data.bellRinging && data.bellRinging[t]));
 
     // Camera-lock only makes sense if the locked unit is both saved and
     // still alive/present — entitiesById.has covers "still exists after

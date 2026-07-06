@@ -38,16 +38,11 @@ function canPlace(type,x,y,team=0){
     // scouted (caught by an actual two-browser-context build test, not
     // code review — the host would silently refuse a placement the guest
     // could clearly see and had every right to build on).
-    // Team 1 has no `fog` grid on the host — its equivalent is the
-    // teamExploredEver[1] history the host maintains every tick, so a
-    // relayed guest placement is held to the same "must be explored" rule
-    // as the host's own. Only in MP (netRole==='host'): in single-player
-    // netRole is null, teamExploredEver[1] is never populated, and the AI
-    // keeps its existing placement behavior.
     // Deterministic explored-rule, symmetric per team (teamExploredGrid is
-    // sim state computed identically on every peer — js/core.js). The
-    // single-player AI (netRole null, team 1) keeps its historic exemption.
-    if(!window.fogDisabled && !(netRole==null && team===1)
+    // sim state computed identically on every peer — js/core.js). AI teams
+    // keep their historic exemption (their "vision" is proximity-based,
+    // not fog-based — js/ai.js); humans must have explored the tile.
+    if(!window.fogDisabled && !isAITeam(team)
        && !teamHasExplored(team, ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
@@ -170,11 +165,12 @@ function queueUnit(bldg,utype){
   return check;
 }
 
+// Viewer-local convenience cache of MY team's population for the HUD —
+// any per-team read (AI planning, UI compare) goes through
+// teamPopUsed/teamPopCap directly with an explicit team.
 function refreshPopulationCounts(){
-  popUsed=teamPopUsed(0);
-  popCap=teamPopCap(0);
-  aiPop=teamPopUsed(1);
-  aiPopCap=teamPopCap(1);
+  popUsed=teamPopUsed(myTeam);
+  popCap=teamPopCap(myTeam);
 }
 
 // AoE2 drop-off rule: the TC accepts every resource, other buildings only
@@ -599,19 +595,24 @@ function damageEntity(attacker, target){
   // it catches open-field battles that building-proximity checks miss.
   // Viewer-relative (myTeam, not 0/1): under lockstep both peers run this —
   // danger music is "I'm taking damage", war music is "I'm dealing it".
-  if (attacker.team === 1 - myTeam && target.team === myTeam) window.lastDangerTick = tick;
-  else if (attacker.team === myTeam && target.team === 1 - myTeam) {
-    window.lastWarTick = tick;
-    // Where the hit landed, for the AI's garrison reaction: it only rings
-    // its bell for hits near its own base, not for its attack wave taking
-    // damage across the map (see updateAIGarrisonReaction in js/ai.js).
-    window.lastWarX = target.x; window.lastWarY = target.y;
+  if (isPlayerTeam(attacker.team) && attacker.team !== myTeam && target.team === myTeam) window.lastDangerTick = tick;
+  else if (attacker.team === myTeam && isPlayerTeam(target.team) && target.team !== myTeam) {
+    window.lastWarTick = tick; // music mood only — the AI reads lastTeamHit below
+  }
+
+  // SIM-side per-team hit record (unlike the viewer-relative music signals
+  // above): the last time each team took damage from another player team,
+  // and where. AI garrison reactions read this on later ticks
+  // (updateAIGarrisonReaction, js/ai.js), so it must be deterministic and
+  // ride the lockstep snapshots (js/core.js's lastTeamHit).
+  if (lastTeamHit && isEnemyOf(target.team, attacker) && isPlayerTeam(target.team)) {
+    lastTeamHit[target.team] = { tick, x: target.x, y: target.y };
   }
 
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
   // an ongoing one — the danger music carries the battle. It only re-arms
   // after ~20s without taking any hits.
-  if (target.team === myTeam && attacker.team === 1 - myTeam) {
+  if (target.team === myTeam && isPlayerTeam(attacker.team) && attacker.team !== myTeam) {
     let lastHit = window.lastUnderAttackTick;
     window.lastUnderAttackTick = tick;
     if (lastHit === undefined || tick - lastHit > 600) {
@@ -1048,10 +1049,10 @@ function updateUnit(e){
 
     // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
     // and no friendly unit (except other sheep) is closer to guard them, they convert!
-    let closest=closestUnitNear(e,5,en=>en.team===0||en.team===1);
+    let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
     if(closest && closest.team !== e.team){
       let guarded = false;
-      if (e.team === 0 || e.team === 1) {
+      if (isPlayerTeam(e.team)) {
         let guardDist = dist(e,closest);
         guarded = !!closestUnitNear(e,guardDist,en=>en.team===e.team);
       }
@@ -1084,7 +1085,7 @@ function updateUnit(e){
       // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
       // runs on a stagger so 5 bears don't all scan every tick.
       if(tick%10===e.id%10){
-        let closest=closestUnitNear(e,5.5,en=>en.team===0||en.team===1);
+        let closest=closestUnitNear(e,5.5,en=>isPlayerTeam(en.team));
         if(closest){
           e.target=closest.id;
           clearUnitPath(e);
@@ -1123,10 +1124,10 @@ function updateUnit(e){
     // Fog of War visibility check for combat targets. Uses the sim's own
     // deterministic per-team visibility (teamCanSeeTile, js/core.js) —
     // NEVER the viewer-local `fog` grid, which differs between lockstep
-    // peers. Applies to team 0 always, and to team 1 when it's a human
-    // (MP); the single-player AI keeps its distance-heuristic branch below.
+    // peers. Applies to human teams; AI teams keep their distance-heuristic
+    // branch below (their "vision" is proximity, not fog — js/ai.js).
     if (t.team !== e.team && t.team !== GAIA_TEAM) {
-      if (e.team === 0 || (e.team === 1 && netRole != null)) {
+      if (isHumanTeam(e.team)) {
         let visible = false;
         if (window.fogDisabled) {
           visible = true;
@@ -1142,15 +1143,15 @@ function updateUnit(e){
           clearUnitPath(e);
           return;
         }
-      } else if (e.team === 1 && !e.explicitAttack) {
+      } else if (isAITeam(e.team) && !e.explicitAttack) {
         // Ordinary AI units drop targets they can no longer see. Explicit
-        // marches (controlAIMilitary attacks on the remembered player TC)
+        // marches (controlAIMilitary attacks on the remembered enemy TC)
         // are exempt — the AI knows where the TC is even out of sight,
         // otherwise the army's attack order is wiped the tick after it's
         // given and it never leaves home.
         let visionRange = 15 * (typeof aiScale === 'function' ? aiScale() : 1.0);
         let visible = entities.some(aiEnt => {
-          return aiEnt.team === 1 && dist(aiEnt, t) <= visionRange;
+          return aiEnt.team === e.team && dist(aiEnt, t) <= visionRange;
         });
         if (!visible) {
           e.target = null;
@@ -1540,15 +1541,15 @@ function updateUnit(e){
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
         // visibility (teamCanSeeTile, js/core.js) — never the viewer-local
-        // fog grid, which differs between lockstep peers. Single-player
-        // AI (netRole null, team 1) keeps its own aggro rules unchanged.
-        if(!window.fogDisabled && (e.team===0 || (e.team===1 && netRole!=null))
+        // fog grid, which differs between lockstep peers. AI teams keep
+        // their own proximity-based aggro rules unchanged.
+        if(!window.fogDisabled && isHumanTeam(e.team)
            && !teamCanSeeTile(e.team, ey*MAP+ex))return false;
         return true;
       });
       if(closest) {
         e.target=closest.id;
-      } else if (e.team === 0 || netRole != null) {
+      } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
         // behavior — soldiers parked in an enemy town shouldn't stand and
         // soak tower/TC fire without answering). Attacking-capable
@@ -1700,7 +1701,10 @@ function handleDeath(e,killerTeam){
       // Only the two PLAYING teams end the game (a hypothetical gaia/third-
       // team TC must not); `won` is from the host/team-0 perspective — the
       // guest inverts it from the sync (see applyNetSync).
-      if(e.team===0||e.team===1){gameOver=true;won=(e.team===1);}
+      // `won` is still binary "did team 0 win" (see didIWin, js/core.js) —
+      // a real >2-player mode needs a winningTeam instead. isPlayerTeam
+      // keeps gaia/future-neutral TCs from ending the game.
+      if(isPlayerTeam(e.team)){gameOver=true;won=(e.team!==0);}
     }
   }
   // Death blood burst — bigger than the per-hit spatter, marks the kill.
@@ -1748,7 +1752,7 @@ function handleDeath(e,killerTeam){
   entitiesById.delete(e.id);
   // Conquest victory (AoE2): a side is defeated when it has nothing left —
   // no buildings and no units (sheep don't count, they change hands).
-  if(e.team===0||e.team===1){
+  if(isPlayerTeam(e.team)){
     if(teamEliminated(1)){gameOver=true;won=true;}
     else if(teamEliminated(0)){gameOver=true;won=false;}
   }
@@ -1831,13 +1835,12 @@ function findSpawnTile(x,y,maxRadius=4,taken=null){
 
 function updateBuilding(e){
   if (e.btype === 'FARM' && e.exhausted) {
-    // AI auto-reseed — genuinely the AI only in single-player (netRole
-    // null). In multiplayer, team 1 is a real guest who should manage
-    // reseeding manually just like team 0 does (js/ui.js's prepayFarm/
+    // AI auto-reseed — AI-controlled teams only. A human team (local or
+    // remote) manages reseeding manually (js/ui.js's prepayFarm/
     // reactivateFarm) — auto-spending their wood behind their back would
     // be surprising and remove their control over the decision.
-    if (e.team === 1 && netRole === null) {
-      let store = resourceStore(1);
+    if (isAITeam(e.team)) {
+      let store = resourceStore(e.team);
       if (store && store.wood >= 60) {
         store.wood -= 60;
         e.exhausted = false;
@@ -1924,7 +1927,7 @@ function updateBuilding(e){
       // arbitrarily limited to team 0 — team 1 is a real player in
       // multiplayer (the guest) who sets rally points too, so this now
       // applies to both player teams (team 2/neutral has no buildings).
-      if(unit && (e.team===0||e.team===1) && e.rallyX!==undefined && e.rallyY!==undefined){
+      if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         let rallyB=null;
         if(e.rallyTargetId){
           let t=entitiesById.get(e.rallyTargetId);
@@ -1945,7 +1948,7 @@ function updateBuilding(e){
 
       // Auto-command the unit based on building's rally point — same
       // "both player teams, not myTeam" reasoning as the block above.
-      if(unit && (e.team===0||e.team===1) && e.rallyX!==undefined && e.rallyY!==undefined){
+      if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         if(e.rallyTargetId){
           let target=entitiesById.get(e.rallyTargetId);
           if(target){

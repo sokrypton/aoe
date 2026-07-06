@@ -11,83 +11,83 @@ function aiScale(){return MAP/60;}
 // room, then come back out once things quiet down. Runs every tick (not
 // gated by updateAI's slow decisionInterval) so the reaction is prompt —
 // a raid that's over in a few seconds shouldn't be able to slip past the
-// AI's decision cadence entirely. window.lastWarTick timestamps the last
-// time a player unit damaged a team-1 entity ANYWHERE (see damageEntity in
-// logic.js, which also drives the player's "war" music mood) — that includes
-// the AI's own attack wave trading hits at the player's base, so it can't
-// gate the bell directly (it would garrison the whole economy during every
-// AI offensive). Instead, damageEntity also records the hit location
-// (lastWarX/Y) and only hits near the AI's TC count as "base under attack".
+// AI's decision cadence entirely. lastTeamHit[team] (js/core.js, recorded
+// by damageEntity in logic.js) timestamps and locates the last time an
+// enemy damaged one of THIS team's entities ANYWHERE — that includes this
+// AI's own attack wave trading hits at the enemy's base, so it can't gate
+// the bell directly (it would garrison the whole economy during every
+// offensive). Only hits near the AI's own TC count as "base under attack".
 const AI_GARRISON_HOLD_TICKS = 360; // ~12s at 30 ticks/sec: stay hidden briefly after the last hit
 const AI_BASE_ALARM_RADIUS = 18; // tiles from TC center (scaled by aiScale) that count as "home"
-function updateAIGarrisonReaction(){
+function updateAIGarrisonReaction(ai){
   if(!gameStarted||gameOver)return;
   // New hit since we last looked: classify it as base-hit or field-hit.
   // (Runs every tick, so at most one hit per tick can be missed — a real
   // base raid lands hits continuously, so the classification holds.)
-  if(window.lastWarTick!==undefined && window.lastWarTick!==window.aiSeenWarTick){
-    window.aiSeenWarTick=window.lastWarTick;
-    let tc=entities.find(b=>b.type==='building'&&b.team===1&&b.btype==='TC');
-    if(tc && window.lastWarX!==undefined){
-      let wdx=window.lastWarX-(tc.x+tc.w/2), wdy=window.lastWarY-(tc.y+tc.h/2);
+  let hit = lastTeamHit && lastTeamHit[ai.team];
+  if(hit && hit.tick!==ai.seenWarTick){
+    ai.seenWarTick=hit.tick;
+    let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+    if(tc){
+      let wdx=hit.x-(tc.x+tc.w/2), wdy=hit.y-(tc.y+tc.h/2);
       let d=Math.sqrt(wdx*wdx+wdy*wdy);
-      if(d<=AI_BASE_ALARM_RADIUS*aiScale()) window.lastAIBaseHitTick=window.lastWarTick;
+      if(d<=AI_BASE_ALARM_RADIUS*aiScale()) ai.lastBaseHitTick=hit.tick;
     }
   }
   // ?? not || : the tick can legitimately be 0 (a hit landed on tick 0),
   // and 0 is falsy — || would wrongly discard it and treat that as "never".
-  let underAttack = tick - (window.lastAIBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
-  // ringTownBell/soundAllClear maintain bellRinging[1] themselves.
-  if(underAttack && !window.bellRinging[1]){
-    ringTownBell(1);
-  } else if(!underAttack && window.bellRinging[1]){
-    soundAllClear(1);
+  let underAttack = tick - (ai.lastBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
+  // ringTownBell/soundAllClear maintain bellRinging[ai.team] themselves.
+  if(underAttack && !window.bellRinging[ai.team]){
+    ringTownBell(ai.team);
+  } else if(!underAttack && window.bellRinging[ai.team]){
+    soundAllClear(ai.team);
   }
 }
 
-function updateAI(){
-  aiTick++;
-  let profile=AI_LEVELS[aiDifficulty]||AI_LEVELS.standard;
-  if(aiTick%profile.decisionInterval!==0)return;
+function updateAI(ai){
+  ai.tick++;
+  let profile=aiProfileFor(ai.team);
+  if(ai.tick%profile.decisionInterval!==0)return;
 
-  let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===1);
-  let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===1);
+  let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===ai.team);
+  let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team);
   let aiTC=aiBuildings.find(b=>b.btype==='TC');
   if(!aiTC){
     // TC destroyed but not eliminated (conquest rules): try to rebuild it,
     // and keep villagers gathering and the army fighting in the meantime.
-    addAITrickle(profile);
+    addAITrickle(ai,profile);
     let vils=aiUnits.filter(u=>u.utype==='villager');
     let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
     let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
-    if(anchor&&vils.length>0&&canAfford(1,BLDGS.TC.cost)){
-      let pos=findAIBuildSpot(anchor,'TC');
-      if(pos)placeAIBuilding('TC',pos.x,pos.y);
+    if(anchor&&vils.length>0&&canAfford(ai.team,BLDGS.TC.cost)){
+      let pos=findAIBuildSpot(ai,anchor,'TC');
+      if(pos)placeAIBuilding(ai,'TC',pos.x,pos.y);
     }
-    assignAIVillagers(vils,profile);
-    if(anchor)controlAIMilitary(mils,anchor,profile);
+    assignAIVillagers(ai,vils,profile);
+    if(anchor)controlAIMilitary(ai,mils,anchor,profile);
     controlAIScouts(mils,null);
     return;
   }
 
-  updateAIIntel(profile); // what has scouting/combat actually revealed about the player this tick
+  updateAIIntel(ai,aiTC,profile); // what has scouting/combat actually revealed about the player this tick
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
   let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
   let readyBarracks=barracks.filter(b=>b.complete);
 
-  addAITrickle(profile);
-  queueAIVillagers(aiTC,vils,profile);
-  ensureAIHousing(aiTC,profile);
-  planAIDropSites(aiTC,vils,profile);
-  planAIFarming(aiTC,vils,profile);
-  planAIWalls(aiTC,vils,profile); // AI defensive wall ring + gate
-  planAITowers(aiTC,vils,profile); // AI Watch Tower planning
-  planAIMilitaryBuildings(aiTC,vils,barracks,profile);
-  queueAIMilitary(readyBarracks,profile);
-  assignAIVillagers(vils,profile);
-  controlAIMilitary(mils,aiTC,profile);
+  addAITrickle(ai,profile);
+  queueAIVillagers(ai,aiTC,vils,profile);
+  ensureAIHousing(ai,aiTC,profile);
+  planAIDropSites(ai,aiTC,vils,profile);
+  planAIFarming(ai,aiTC,vils,profile);
+  planAIWalls(ai,aiTC,vils,profile); // AI defensive wall ring + gate
+  planAITowers(ai,aiTC,vils,profile); // AI Watch Tower planning
+  planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile);
+  queueAIMilitary(ai,readyBarracks,profile);
+  assignAIVillagers(ai,vils,profile);
+  controlAIMilitary(ai,mils,aiTC,profile);
   controlAIScouts(mils,aiTC);
 }
 
@@ -99,10 +99,10 @@ function updateAI(){
 // extends AI vision, so exploring is what lets the AI react to what the
 // player is building rather than playing blind. TC sighting is sticky (once
 // scouted, the AI remembers where it is, like a human player would).
-function getSpottedPlayerEntities(){
+function getSpottedPlayerEntities(ai){
   let visionRange=15*aiScale();
-  return entities.filter(e=>e.team===0&&e.hp>0&&e.utype!=='sheep'&&
-    entities.some(ai=>ai.team===1&&dist(ai,e)<=visionRange));
+  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&e.utype!=='sheep'&&
+    entities.some(aiEnt=>aiEnt.team===ai.team&&dist(aiEnt,e)<=visionRange));
 }
 
 function unitPower(utype){
@@ -111,10 +111,10 @@ function unitPower(utype){
   return u.hp+u.atk*5;
 }
 
-function updateAIIntel(profile){
-  let intel=window.aiIntel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0};
+function updateAIIntel(ai,aiTC,profile){
+  let intel=ai.intel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0};
   let unitCounts={},strength=0;
-  getSpottedPlayerEntities().forEach(e=>{
+  getSpottedPlayerEntities(ai).forEach(e=>{
     if(e.type==='unit'){
       unitCounts[e.utype]=(unitCounts[e.utype]||0)+1;
       strength+=unitPower(e.utype);
@@ -127,77 +127,78 @@ function updateAIIntel(profile){
   // large map, player tucked in a corner, etc.), don't leave the AI passive
   // forever once its army is ready — a real opponent eventually locates you
   // through patrols/skirmishes even without perfect scouting.
-  if(!intel.tcSeen&&aiTick>profile.attackTick*2){
-    let playerTC=entities.find(e=>e.team===0&&e.btype==='TC');
-    if(playerTC){intel.tcSeen=true;intel.tcX=playerTC.x;intel.tcY=playerTC.y;}
+  if(!intel.tcSeen&&ai.tick>profile.attackTick*2){
+    let enemyTC=entities.filter(e=>isEnemyOf(ai.team,e)&&e.btype==='TC')
+      .sort((a,b)=>dist(a,aiTC)-dist(b,aiTC))[0];
+    if(enemyTC){intel.tcSeen=true;intel.tcX=enemyTC.x;intel.tcY=enemyTC.y;}
   }
   intel.unitCounts=unitCounts;
   intel.strength=strength;
-  window.aiIntel=intel;
+  ai.intel=intel;
 }
 
-function estimateLocalPlayerPower(center,radius){
-  return entities.filter(e=>e.team===0&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'&&dist(e,center)<=radius)
+function estimateLocalPlayerPower(ai,center,radius){
+  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'&&dist(e,center)<=radius)
     .reduce((s,e)=>s+unitPower(e.utype),0);
 }
 
-function addAITrickle(profile){
-  Object.entries(profile.trickle).forEach(([resName,amount])=>{resourceStore(1)[resName]+=amount;});
+function addAITrickle(ai,profile){
+  Object.entries(profile.trickle).forEach(([resName,amount])=>{resourceStore(ai.team)[resName]+=amount;});
 }
 
-function queueAIVillagers(aiTC,vils,profile){
+function queueAIVillagers(ai,aiTC,vils,profile){
   if(vils.length>=profile.maxVils)return;
-  let hasReadyBarracks=entities.some(e=>e.team===1&&e.type==='building'&&e.btype==='BARRACKS'&&e.complete);
+  let hasReadyBarracks=entities.some(e=>e.team===ai.team&&e.type==='building'&&e.btype==='BARRACKS'&&e.complete);
   // Only hold back villager training for military food reserve once a minimum workforce exists,
   // otherwise the AI can deadlock with too few villagers to ever recover food income.
-  if(hasReadyBarracks&&vils.length>=6&&resourceStore(1).food<profile.militaryFoodReserve)return;
+  if(hasReadyBarracks&&vils.length>=6&&resourceStore(ai.team).food<profile.militaryFoodReserve)return;
   while(aiTC.queue.length<profile.queueLimit&&vils.length+aiTC.queue.filter(u=>u==='villager').length<profile.maxVils){
     let result=queueUnit(aiTC,'villager');
     if(!result.ok)break;
   }
 }
 
-function ensureAIHousing(aiTC,profile){
-  let requested=teamPopUsed(1)+teamQueuedPop(1);
-  let plannedCap=teamPopCap(1,true);
-  let pendingHouses=entities.filter(e=>e.type==='building'&&e.team===1&&e.btype==='HOUSE'&&!e.complete).length;
-  if(requested<plannedCap-profile.houseBuffer||pendingHouses>1||!canAfford(1,BLDGS.HOUSE.cost))return;
-  let pos=findAIBuildSpot(aiTC,'HOUSE');
-  if(pos)placeAIBuilding('HOUSE',pos.x,pos.y);
+function ensureAIHousing(ai,aiTC,profile){
+  let requested=teamPopUsed(ai.team)+teamQueuedPop(ai.team);
+  let plannedCap=teamPopCap(ai.team,true);
+  let pendingHouses=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='HOUSE'&&!e.complete).length;
+  if(requested<plannedCap-profile.houseBuffer||pendingHouses>1||!canAfford(ai.team,BLDGS.HOUSE.cost))return;
+  let pos=findAIBuildSpot(ai,aiTC,'HOUSE');
+  if(pos)placeAIBuilding(ai,'HOUSE',pos.x,pos.y);
 }
 
-function planAIDropSites(aiTC,vils,profile){
+function planAIDropSites(ai,aiTC,vils,profile){
   if(!profile.dropSites||vils.length<5)return;
-  let hasBarracks=hasAIBuilding('BARRACKS');
-  if(!hasAIBuilding('LCAMP')&&canAfford(1,BLDGS.LCAMP.cost)){
-    let pos=findAIDropSite(TERRAIN.FOREST,'LCAMP',aiTC);
-    if(pos)placeAIBuilding('LCAMP',pos.x,pos.y);
+  let hasBarracks=hasAIBuilding(ai,'BARRACKS');
+  if(!hasAIBuilding(ai,'LCAMP')&&canAfford(ai.team,BLDGS.LCAMP.cost)){
+    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC);
+    if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
   }
   // Bank resources for the upcoming barracks — but only while we can't yet
   // afford it. Once the barracks cost is covered and it STILL isn't up
   // (placement kept failing on a cramped map), holding here would deadlock
   // the whole eco chain forever: no mill, no mining camp, and planAIFarming
   // also gates on the barracks existing.
-  if(!hasBarracks&&vils.length>=profile.barracksVil-1&&!canAfford(1,BLDGS.BARRACKS.cost))return;
-  if(vils.length>=6&&hasBarracks&&!hasAIBuilding('MILL')&&canAfford(1,BLDGS.MILL.cost)){
-    let pos=findAIDropSite(TERRAIN.BERRIES,'MILL',aiTC);
-    if(pos)placeAIBuilding('MILL',pos.x,pos.y);
+  if(!hasBarracks&&vils.length>=profile.barracksVil-1&&!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
+  if(vils.length>=6&&hasBarracks&&!hasAIBuilding(ai,'MILL')&&canAfford(ai.team,BLDGS.MILL.cost)){
+    let pos=findAIDropSite(ai,TERRAIN.BERRIES,'MILL',aiTC);
+    if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
-  if(vils.length>=7&&hasBarracks&&!hasAIBuilding('MCAMP')&&canAfford(1,BLDGS.MCAMP.cost)){
-    let pos=findAIDropSite(TERRAIN.GOLD,'MCAMP',aiTC);
-    if(pos)placeAIBuilding('MCAMP',pos.x,pos.y);
+  if(vils.length>=7&&hasBarracks&&!hasAIBuilding(ai,'MCAMP')&&canAfford(ai.team,BLDGS.MCAMP.cost)){
+    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC);
+    if(pos)placeAIBuilding(ai,'MCAMP',pos.x,pos.y);
   }
 }
 
-function planAITowers(aiTC,vils,profile){
-  if(vils.length<8||!canAfford(1,BLDGS.TOWER.cost))return;
-  let currentTowers=entities.filter(e=>e.type==='building'&&e.team===1&&e.btype==='TOWER').length;
+function planAITowers(ai,aiTC,vils,profile){
+  if(vils.length<8||!canAfford(ai.team,BLDGS.TOWER.cost))return;
+  let currentTowers=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='TOWER').length;
   let maxTowers=profile===AI_LEVELS.hard?2:(profile===AI_LEVELS.standard?1:0);
   if(currentTowers>=maxTowers)return;
   // Prefer building the tower directly into the wall ring (gate flank, then
   // corners) once it's up, over a generic freestanding spot.
-  let pos=findAIWallDefenseSpot()||findAIBuildSpot(aiTC,'TOWER');
-  if(pos)placeAIBuilding('TOWER',pos.x,pos.y);
+  let pos=findAIWallDefenseSpot(ai)||findAIBuildSpot(ai,aiTC,'TOWER');
+  if(pos)placeAIBuilding(ai,'TOWER',pos.x,pos.y);
 }
 
 // ---- AI DEFENSIVE WALLS ----
@@ -206,33 +207,33 @@ function planAITowers(aiTC,vils,profile){
 // with a single gate so the AI's own villagers/army can still path out.
 // The ring plan is computed once and cached so repeated calls just resume
 // building the next unfinished tile instead of re-scanning every tick.
-function planAIWalls(aiTC,vils,profile){
+function planAIWalls(ai,aiTC,vils,profile){
   if(!profile.walls||vils.length<profile.wallVils)return;
-  if(!window.aiWallPlan)window.aiWallPlan=computeAIWallRing(aiTC,profile.wallRadius*aiScale());
-  let plan=window.aiWallPlan;
+  if(!ai.wallPlan)ai.wallPlan=computeAIWallRing(aiTC,profile.wallRadius*aiScale());
+  let plan=ai.wallPlan;
 
   // The gate tile is built as a normal wall like the rest of the ring first —
   // placing a GATE only succeeds by consuming 2 existing adjacent wall tiles,
   // so it has to replace real walls rather than fill an intentional gap.
   let ringDone=plan.every(t=>t.done);
   if(ringDone){
-    if(!window.aiGateBuilt){
-      let result=resolveAIGate(plan,aiTC);
+    if(!ai.gateBuilt){
+      let result=resolveAIGate(ai,plan,aiTC);
       if(result==='satisfied'){
-        window.aiGateBuilt=true; // a blocked tile already left a natural opening on the best side
+        ai.gateBuilt=true; // a blocked tile already left a natural opening on the best side
       } else if(result){
-        let b=placeAIBuilding('GATE',result.x,result.y);
-        if(b)window.aiGateBuilt=true;
+        let b=placeAIBuilding(ai,'GATE',result.x,result.y);
+        if(b)ai.gateBuilt=true;
       } else {
         // No opening and no valid gate spot: breach the ring ourselves.
-        breachAIWallRing(plan,aiTC);
-        window.aiGateBuilt=true;
+        breachAIWallRing(ai,plan,aiTC);
+        ai.gateBuilt=true;
       }
-    } else if(aiTick%600===0){
+    } else if(ai.tick%600===0){
       // Periodic sanity check: can the army still get out toward the enemy?
       // (A gate can be destroyed, or the 'natural opening' can later be
       // walled off by terrain-adjacent building placement.)
-      let dirTarget=getEnemyDirection(aiTC);
+      let dirTarget=getEnemyDirection(ai,aiTC);
       let ex=Math.round(aiTC.x+dirTarget.dx*(profile.wallRadius*aiScale()+4));
       let ey=Math.round(aiTC.y+dirTarget.dy*(profile.wallRadius*aiScale()+4));
       ex=Math.max(1,Math.min(MAP-2,ex)); ey=Math.max(1,Math.min(MAP-2,ey));
@@ -245,7 +246,7 @@ function planAIWalls(aiTC,vils,profile){
       }
       let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
       if(walkable(ex,ey)&&findPath(tcx,tcy,ex,ey,aiTC.id).length===0){
-        breachAIWallRing(plan,aiTC);
+        breachAIWallRing(ai,plan,aiTC);
       }
     }
     // Wall maintenance: a DESTROYED segment (entity gone, not just damaged —
@@ -253,12 +254,12 @@ function planAIWalls(aiTC,vils,profile){
     // assignAIVillagers) gets its plan tile re-queued so the build loop
     // below fills the breach. The intended opening (gate/breach tile) is
     // left alone, as are tiles something else now legitimately occupies.
-    if(window.aiGateBuilt && aiTick%300===0){
-      let gt=window.aiGateTile;
+    if(ai.gateBuilt && ai.tick%300===0){
+      let gt=ai.gateTile;
       plan.forEach(pt=>{
         if(gt&&pt.x===gt.x&&pt.y===gt.y)return;
-        let occ=buildingAtTile(pt.x,pt.y,en=>en.team===1);
-        if(!occ&&canPlace('WALL',pt.x,pt.y,1))pt.done=false;
+        let occ=buildingAtTile(pt.x,pt.y,en=>en.team===ai.team);
+        if(!occ&&canPlace('WALL',pt.x,pt.y,ai.team))pt.done=false;
       });
     }
     if(plan.every(pt=>pt.done))return; // ring intact — nothing to build
@@ -269,10 +270,10 @@ function planAIWalls(aiTC,vils,profile){
   // go (capped) instead of one tile per decisionInterval — at one-per-tick
   // pacing a ~50-tile ring effectively never finished before a match ended.
   let placedThisCall=0;
-  while(placedThisCall<8&&canAfford(1,BLDGS.WALL.cost)){
+  while(placedThisCall<8&&canAfford(ai.team,BLDGS.WALL.cost)){
     let next=plan.find(t=>!t.done);
     if(!next)return;
-    placeAIBuilding('WALL',next.x,next.y); // success or not (blocked tile), mark resolved so the plan keeps progressing
+    placeAIBuilding(ai,'WALL',next.x,next.y); // success or not (blocked tile), mark resolved so the plan keeps progressing
     next.done=true;
     placedThisCall++;
   }
@@ -282,21 +283,21 @@ function planAIWalls(aiTC,vils,profile){
 // Tears down one of the AI's own wall tiles on the most useful side so the
 // army can leave a ring that ended up fully sealed (no walkable opening and
 // no placeable gate). A real player would delete a wall segment here too.
-function breachAIWallRing(plan,aiTC){
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(b,aiTC)-scoreWallSide(a,aiTC));
+function breachAIWallRing(ai,plan,aiTC){
+  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     let mid=Math.floor(sideTiles.length/2);
     let ordered=[sideTiles[mid],...sideTiles];
     for(let t of ordered){
       if(!t)continue;
-      let w=entities.find(en=>en.type==='building'&&en.team===1&&en.btype==='WALL'&&en.x===t.x&&en.y===t.y);
+      let w=entities.find(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===t.x&&en.y===t.y);
       if(w){
         // Through the normal deletion path (same as the player's Delete
         // key), not direct entities/map surgery — that bypassed death FX
         // and left ghost references if the player had the wall selected.
         deleteOwnedEntity(w);
-        window.aiGateTile={x:t.x,y:t.y};
+        ai.gateTile={x:t.x,y:t.y};
         return true;
       }
     }
@@ -336,13 +337,15 @@ const WALL_SIDE_DIR={N:{dx:0,dy:-1},S:{dx:0,dy:1},E:{dx:1,dy:0},W:{dx:-1,dy:0}};
 // never scouted, assumed-from-start-position) enemy base — that's the route
 // soldiers need to march out on to attack, and also the route a threat would
 // approach from, so it doubles as the side worth guarding most.
-function getEnemyDirection(tc){
-  let intel=window.aiIntel;
+function getEnemyDirection(ai,tc){
+  let intel=ai.intel;
   let ex,ey;
   if(intel&&intel.tcSeen){
     ex=intel.tcX;ey=intel.tcY;
   } else {
-    let plStart=STARTS.find(s=>s.team===0);
+    // Never scouted anyone: assume the nearest OTHER start position.
+    let plStart=STARTS.filter(s=>s.team!==ai.team)
+      .sort((a,b)=>dist(a,tc)-dist(b,tc))[0];
     ex=plStart?plStart.x:0;ey=plStart?plStart.y:0;
   }
   let vx=ex-(tc.x+Math.floor(tc.w/2)),vy=ey-(tc.y+Math.floor(tc.h/2));
@@ -354,15 +357,15 @@ function getEnemyDirection(tc){
 // sites — so villagers have a short, direct walk out to gather/return — and
 // (b) the enemy direction, weighted higher since the attack/defense route
 // matters more than gathering convenience.
-function scoreWallSide(side,tc){
+function scoreWallSide(ai,side,tc){
   let dir=WALL_SIDE_DIR[side];
   let score=0;
-  entities.filter(e=>e.type==='building'&&e.team===1&&['LCAMP','MCAMP','MILL'].includes(e.btype)).forEach(d=>{
+  entities.filter(e=>e.type==='building'&&e.team===ai.team&&['LCAMP','MCAMP','MILL'].includes(e.btype)).forEach(d=>{
     let vx=(d.x+0.5)-(tc.x+Math.floor(tc.w/2)),vy=(d.y+0.5)-(tc.y+Math.floor(tc.h/2));
     let len=Math.sqrt(vx*vx+vy*vy)||1;
     score+=(vx/len)*dir.dx+(vy/len)*dir.dy;
   });
-  let enemyDir=getEnemyDirection(tc);
+  let enemyDir=getEnemyDirection(ai,tc);
   score+=(enemyDir.dx*dir.dx+enemyDir.dy*dir.dy)*2;
   return score;
 }
@@ -374,11 +377,11 @@ function scoreWallSide(side,tc){
 // already a walkable opening, so nothing more to build. Otherwise it looks
 // for a buildable pair of real walls on that side, preferring the midpoint.
 // Falls through to the next-best side if the top side has neither.
-function resolveAIGate(plan,aiTC){
-  let wallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===1&&en.btype==='WALL'&&en.x===x&&en.y===y);
+function resolveAIGate(ai,plan,aiTC){
+  let wallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===x&&en.y===y);
   let hasWallNeighbor=(x,y)=>wallAt(x+1,y)||wallAt(x-1,y)||wallAt(x,y+1)||wallAt(x,y-1);
 
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(b,aiTC)-scoreWallSide(a,aiTC));
+  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     // Only a *walkable* wall-less tile counts as a natural opening — the
@@ -387,14 +390,14 @@ function resolveAIGate(plan,aiTC){
     // opening it. Treating those as openings walled the AI's army in.
     let hole=sideTiles.find(t=>!wallAt(t.x,t.y)&&walkable(t.x,t.y));
     if(hole){
-      window.aiGateTile=hole;
+      ai.gateTile=hole;
       return 'satisfied';
     }
     let mid=sideTiles[Math.floor(sideTiles.length/2)];
     let candidates=[mid,...sideTiles];
     let pick=candidates.find(c=>wallAt(c.x,c.y)&&hasWallNeighbor(c.x,c.y));
     if(pick){
-      window.aiGateTile=pick;
+      ai.gateTile=pick;
       return pick;
     }
   }
@@ -405,15 +408,15 @@ function resolveAIGate(plan,aiTC){
 // the finished wall ring: the gate's flank first (it's the one breach point
 // in an otherwise solid wall), then the four corners (the other natural
 // ambush/sightline points along the perimeter).
-function findAIWallDefenseSpot(){
-  let plan=window.aiWallPlan;
+function findAIWallDefenseSpot(ai){
+  let plan=ai.wallPlan;
   if(!plan)return null;
   let ringDone=plan.every(t=>t.done);
   if(!ringDone)return null;
-  let hasTowerAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===1&&en.btype==='TOWER'&&en.x===x&&en.y===y);
-  let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===1&&en.btype==='WALL'&&en.x===x&&en.y===y);
+  let hasTowerAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='TOWER'&&en.x===x&&en.y===y);
+  let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===x&&en.y===y);
 
-  let gateTile=window.aiGateTile;
+  let gateTile=ai.gateTile;
   if(gateTile){
     let flanks=[{x:gateTile.x+1,y:gateTile.y},{x:gateTile.x-1,y:gateTile.y},{x:gateTile.x,y:gateTile.y+1},{x:gateTile.x,y:gateTile.y-1}];
     let flank=flanks.find(f=>isWallAt(f.x,f.y)&&!hasTowerAt(f.x,f.y));
@@ -426,17 +429,17 @@ function findAIWallDefenseSpot(){
   return corners.find(c=>isWallAt(c.x,c.y)&&!hasTowerAt(c.x,c.y))||null;
 }
 
-function planAIMilitaryBuildings(aiTC,vils,barracks,profile){
-  if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(1,BLDGS.BARRACKS.cost))return;
-  let pos=findAIBuildSpot(aiTC,'BARRACKS');
-  if(pos)placeAIBuilding('BARRACKS',pos.x,pos.y);
+function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
+  if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
+  let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
+  if(pos)placeAIBuilding(ai,'BARRACKS',pos.x,pos.y);
 }
 
-function queueAIMilitary(readyBarracks,profile){
-  let currentArmy=entities.filter(e=>e.team===1&&e.type==='unit'&&['militia','spearman','archer','scout'].includes(e.utype)).length;
+function queueAIMilitary(ai,readyBarracks,profile){
+  let currentArmy=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&['militia','spearman','archer','scout'].includes(e.utype)).length;
   // Train toward the NEXT wave's size (plus home defense reserve) so the
   // army goal escalates with each wave launched, AoE2-style.
-  let maxArmy=aiWaveSize(profile)+profile.armyReserve;
+  let maxArmy=aiWaveSize(ai,profile)+profile.armyReserve;
   if(currentArmy>=maxArmy)return;
   
   let types = ['militia', 'spearman', 'archer', 'scout'];
@@ -446,7 +449,7 @@ function queueAIMilitary(readyBarracks,profile){
   // omniscient knowledge of the player's army.
   let counterMap={scout:'spearman',archer:'scout',militia:'archer',spearman:'archer'};
   let pickUnitType=()=>{
-    let counts=window.aiIntel&&window.aiIntel.unitCounts;
+    let counts=ai.intel&&ai.intel.unitCounts;
     if(counts){
       let dominant=Object.keys(counts).filter(t=>counterMap[t]).sort((a,b)=>counts[b]-counts[a])[0];
       // Counter-pick most of the time once there's real intel on what the
@@ -463,7 +466,7 @@ function queueAIMilitary(readyBarracks,profile){
   // planner may have reserved.
   let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.length,0);
   readyBarracks.forEach(barracks=>{
-    while(barracks.queue.length<profile.queueLimit&&teamPopUsed(1)+teamQueuedPop(1)<teamPopCap(1)&&currentArmy+queuedArmy<maxArmy){
+    while(barracks.queue.length<profile.queueLimit&&teamPopUsed(ai.team)+teamQueuedPop(ai.team)<teamPopCap(ai.team)&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
       // Counter-pick first, then cheaper fallbacks if it's unaffordable.
       if(queueUnit(barracks,utype).ok||queueUnit(barracks,'spearman').ok||queueUnit(barracks,'militia').ok){
@@ -475,8 +478,8 @@ function queueAIMilitary(readyBarracks,profile){
   });
 }
 
-function assignAIVillagers(vils,profile){
-  let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===1&&(!en.complete || en.hp < en.maxHp));
+function assignAIVillagers(ai,vils,profile){
+  let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===ai.team&&(!en.complete || en.hp < en.maxHp));
   vils.forEach(v=>{
     if(v.path.length>0||v.target)return;
     if(v.task==='build'){
@@ -487,20 +490,20 @@ function assignAIVillagers(vils,profile){
       // looking like the AI bumping off and returning. Only leave the build
       // if its target is actually gone/finished.
       let target=v.buildTarget&&entitiesById.get(v.buildTarget);
-      if(target&&target.team===1&&(!target.complete||target.hp<target.maxHp))return;
+      if(target&&target.team===ai.team&&(!target.complete||target.hp<target.maxHp))return;
     }
-    let build=neededAIBuildingWork(incompleteBuilds,vils,profile);
+    let build=neededAIBuildingWork(ai,incompleteBuilds,vils,profile);
     if(build&&v.task!=='build'){
       assignAIBuilder(v,build);
       return;
     }
     if(v.task&&v.task!=='build'&&!isAIGatherTaskStale(v))return;
-    assignAIGatherTask(v,vils,profile);
+    assignAIGatherTask(ai,v,vils,profile);
   });
 }
 
-function neededAIBuildingWork(incompleteBuilds,vils,profile){
-  let tc = entities.find(e => e.team === 1 && e.btype === 'TC');
+function neededAIBuildingWork(ai,incompleteBuilds,vils,profile){
+  let tc = entities.find(e => e.team === ai.team && e.btype === 'TC');
   return incompleteBuilds.find(build=>{
     let assigned=vils.filter(v=>v.task==='build'&&v.buildTarget===build.id).length;
     if (assigned >= profile.buildersPerBuilding) return false;
@@ -534,8 +537,8 @@ function isAIGatherTaskStale(v){
   return !tile||tile.t!==cfg.terrain||tile.res<=0||!canGatherTile(v,cfg.terrain,v.gatherX,v.gatherY);
 }
 
-function assignAIGatherTask(v,vils,profile){
-  let desired=aiEcoPlan(vils.length,profile);
+function assignAIGatherTask(ai,v,vils,profile){
+  let desired=aiEcoPlan(ai,vils.length,profile);
   let counts=countAIGatherers(vils);
   let task=Object.keys(desired).sort((a,b)=>(counts[a]||0)/desired[a]-(counts[b]||0)/desired[b])[0];
   if(task==='mine_gold'&&!hasReachableResource(v,TERRAIN.GOLD))task='chop';
@@ -548,9 +551,9 @@ function assignAIGatherTask(v,vils,profile){
   clearGatherTarget(v);
 }
 
-function aiEcoPlan(vilCount,profile){
-  let militaryStarted=entities.some(e=>e.team===1&&e.type==='building'&&e.btype==='BARRACKS');
-  let hasMill=hasAIBuilding('MILL');
+function aiEcoPlan(ai,vilCount,profile){
+  let militaryStarted=entities.some(e=>e.team===ai.team&&e.type==='building'&&e.btype==='BARRACKS');
+  let hasMill=hasAIBuilding(ai,'MILL');
   // AoE2 Dark Age economy: food + wood first (villager production and
   // buildings), gold only once military production begins, stone only for
   // walls/towers (the wall-plan boost below handles that).
@@ -565,7 +568,7 @@ function aiEcoPlan(vilCount,profile){
   // Walls/gate/towers are pure stone sinks (~5/tile, dozens of tiles) — without
   // this the default 1-share stone ratio never keeps up and the ring stalls
   // forever half-built. Pull more gatherers onto stone until it's finished.
-  let wallPlan=window.aiWallPlan;
+  let wallPlan=ai.wallPlan;
   if(wallPlan&&!wallPlan.every(t=>t.done))base.mine_stone=(base.mine_stone||1)+3;
   return base;
 }
@@ -577,25 +580,25 @@ function countAIGatherers(vils){
   },{forage:0,farm:0,chop:0,mine_gold:0,mine_stone:0});
 }
 
-function planAIFarming(aiTC,vils,profile){
+function planAIFarming(ai,aiTC,vils,profile){
   // Farms need a Mill for food drop-off; only worthwhile once military is underway
-  if(!hasAIBuilding('MILL')||!hasAIBuilding('BARRACKS'))return;
-  if(vils.length<6||!canAfford(1,BLDGS.FARM.cost))return;
-  let totalFarms=entities.filter(e=>e.type==='building'&&e.team===1&&e.btype==='FARM').length;
+  if(!hasAIBuilding(ai,'MILL')||!hasAIBuilding(ai,'BARRACKS'))return;
+  if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
+  let totalFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM').length;
   let targetFarms=profile===AI_LEVELS.hard?4:profile===AI_LEVELS.easy?2:3;
   if(totalFarms>=targetFarms)return;
-  let pos=findAIFarmSpot(aiTC);
-  if(pos)placeAIBuilding('FARM',pos.x,pos.y);
+  let pos=findAIFarmSpot(ai,aiTC);
+  if(pos)placeAIBuilding(ai,'FARM',pos.x,pos.y);
 }
 
-function findAIFarmSpot(tc){
+function findAIFarmSpot(ai,tc){
   let maxR=Math.round(10*aiScale());
   for(let r=2;r<maxR;r++){
     for(let a=0;a<16;a++){
       let ang=a*Math.PI*2/16;
       let tx=tc.x+Math.round(simCos(ang)*r);
       let ty=tc.y+Math.round(simSin(ang)*r);
-      if(canPlace('FARM',tx,ty,1))return{x:tx,y:ty};
+      if(canPlace('FARM',tx,ty,ai.team))return{x:tx,y:ty};
     }
   }
   return null;
@@ -609,14 +612,14 @@ function hasReachableResource(v,terrain){
 // waveGrowth per wave already launched (AoE2-style escalation from an early
 // raid to progressively larger armies). Capped so the army goal always fits
 // under the 200 pop ceiling alongside the villager economy.
-function aiWaveSize(profile){
-  return Math.min(60, profile.attackSize+(window.aiWaveCount||0)*profile.waveGrowth);
+function aiWaveSize(ai,profile){
+  return Math.min(60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
 }
 
-function controlAIMilitary(mils,aiTC,profile){
-  let threat=findPlayerThreatNear(aiTC,12*aiScale());
+function controlAIMilitary(ai,mils,aiTC,profile){
+  let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
   if(threat){
-    let localEnemyPower=estimateLocalPlayerPower(threat,10);
+    let localEnemyPower=estimateLocalPlayerPower(ai,threat,10);
     let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0);
     // Badly outmatched defending at home: pull back to the TC instead of
     // feeding units one at a time into a fight that's already lost — a real
@@ -645,14 +648,14 @@ function controlAIMilitary(mils,aiTC,profile){
     });
     return;
   }
-  let waveSize=aiWaveSize(profile);
-  if(mils.length<waveSize||aiTick<profile.attackTick)return;
+  let waveSize=aiWaveSize(ai,profile);
+  if(mils.length<waveSize||ai.tick<profile.attackTick)return;
   // Minimum spacing between waves: after committing an attack, regroup and
   // rebuild before the next (larger) one instead of dribbling units out.
-  if(aiTick-(window.aiLastWaveTick??-1e9)<profile.waveCooldown)return;
+  if(ai.tick-(ai.lastWaveTick??-1e9)<profile.waveCooldown)return;
 
   let available=mils.filter(m=>!m.target);
-  let intel=window.aiIntel;
+  let intel=ai.intel;
   if(intel&&intel.strength>0){
     // Don't commit to a march we already have scouting intel says we'd lose —
     // hold and keep growing the army instead of throwing it away piecemeal.
@@ -663,15 +666,15 @@ function controlAIMilitary(mils,aiTC,profile){
   let attackers=available.slice(0,Math.max(waveSize,mils.length-profile.armyReserve));
   let launched=0;
   attackers.forEach(m=>{
-    let target=chooseAIAttackTarget(m);
+    let target=chooseAIAttackTarget(ai,m);
     // explicitAttack: this is a deliberate march on remembered intel — the
     // per-tick vision check in updateUnit() must not wipe the order just
     // because the destination is beyond current AI sight range.
     if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);launched++;}
   });
   if(launched>0){
-    window.aiWaveCount=(window.aiWaveCount||0)+1;
-    window.aiLastWaveTick=aiTick;
+    ai.waveCount=(ai.waveCount||0)+1;
+    ai.lastWaveTick=ai.tick;
   }
 }
 
@@ -700,9 +703,9 @@ function randomScoutWaypoint(){
   return null;
 }
 
-function findPlayerThreatNear(aiTC,range){
-  let aiBuildings = entities.filter(e=>e.team===1&&e.type==='building'&&e.complete);
-  let playerUnits = entities.filter(e=>e.team===0&&e.type==='unit'&&e.utype!=='sheep');
+function findPlayerThreatNear(ai,aiTC,range){
+  let aiBuildings = entities.filter(e=>e.team===ai.team&&e.type==='building'&&e.complete);
+  let playerUnits = entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.utype!=='sheep');
   
   let closestThreat = null;
   let minDist = 9999;
@@ -749,14 +752,14 @@ function resolveReachableAttackTarget(militia, candidate){
   return nearestReachableWallLike(militia, candidate.team) || null;
 }
 
-function chooseAIAttackTarget(militia){
+function chooseAIAttackTarget(ai,militia){
   // No global vision: only player entities "spotted" within sight range of
   // ANY AI unit/building are targetable (there is no dedicated team-1 fog
   // grid — proximity to AI entities stands in for it, same as aiIntel).
   let visionRange=15*aiScale();
   let spottedEnemies=entities.filter(e=>{
-    if (e.team !== 0 || e.hp <= 0 || e.utype === 'sheep' || e.utype === 'sheep_carcass') return false;
-    return entities.some(aiEnt => aiEnt.team === 1 && dist(aiEnt, e) <= visionRange);
+    if (!isEnemyOf(ai.team,e) || e.hp <= 0 || e.utype === 'sheep' || e.utype === 'sheep_carcass') return false;
+    return entities.some(aiEnt => aiEnt.team === ai.team && dist(aiEnt, e) <= visionRange);
   });
 
   // Fallback to searching nearby player town centers if no units are spotted,
@@ -765,29 +768,30 @@ function chooseAIAttackTarget(militia){
   if (spottedEnemies.length > 0) {
     let best = spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
     return resolveReachableAttackTarget(militia, best);
-  } else if (window.aiIntel && window.aiIntel.tcSeen) {
-    // Only head for the player's TC if a scout/unit has actually seen it at
+  } else if (ai.intel && ai.intel.tcSeen) {
+    // Only head for an enemy TC if a scout/unit has actually seen one at
     // some point this game — otherwise the AI would be marching on knowledge
     // it has no in-fiction way of having.
-    let playerTC = entities.find(e => e.team === 0 && e.btype === 'TC');
-    if (playerTC && dist(militia, playerTC) > visionRange) {
-      return resolveReachableAttackTarget(militia, playerTC); // Patrol/march towards the known player TC
+    let enemyTC = entities.filter(e => isEnemyOf(ai.team, e) && e.btype === 'TC')
+      .sort((a, b) => dist(militia, a) - dist(militia, b))[0];
+    if (enemyTC && dist(militia, enemyTC) > visionRange) {
+      return resolveReachableAttackTarget(militia, enemyTC); // Patrol/march towards the known enemy TC
     }
   }
   return null;
 }
 
-function hasAIBuilding(type){
-  return entities.some(e=>e.type==='building'&&e.team===1&&e.btype===type);
+function hasAIBuilding(ai,type){
+  return entities.some(e=>e.type==='building'&&e.team===ai.team&&e.btype===type);
 }
 
-function placeAIBuilding(type,x,y){
+function placeAIBuilding(ai,type,x,y){
   let b=BLDGS[type];
   let gw = b.w, gh = b.h;
   let ox = x, oy = y;
   if (type === 'GATE') {
     let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === 1);
+      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === ai.team);
       return !!w;
     };
     if (isWall(x, y) && isWall(x + 1, y)) {
@@ -803,7 +807,7 @@ function placeAIBuilding(type,x,y){
   let wallsToRemove = [];
   for (let dy = 0; dy < gh; dy++) {
     for (let dx = 0; dx < gw; dx++) {
-      let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === 1);
+      let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === ai.team);
       if (w) wallsToRemove.push(w);
     }
   }
@@ -811,20 +815,20 @@ function placeAIBuilding(type,x,y){
   if (type === 'GATE') {
     actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
   } else if (type === 'TOWER') {
-    let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === 1);
+    let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === ai.team);
     if (existing) {
       actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
       wallsToRemove.push(existing);
     }
   }
-  if(!canPlace(type,x,y,1)||!canAfford(1,actualCost))return null;
-  spendCost(1,actualCost);
+  if(!canPlace(type,x,y,ai.team)||!canAfford(ai.team,actualCost))return null;
+  spendCost(ai.team,actualCost);
   if (wallsToRemove.length > 0) {
     let ids = new Set(wallsToRemove.map(w => w.id));
     entities = entities.filter(en => !ids.has(en.id));
     ids.forEach(id => entitiesById.delete(id));
   }
-  let building=createBuilding(type,ox,oy,1,gw,gh);
+  let building=createBuilding(type,ox,oy,ai.team,gw,gh);
   building.complete=false;
   building.buildProgress=0;
   building.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
@@ -834,7 +838,7 @@ function placeAIBuilding(type,x,y){
   return building;
 }
 
-function findAIBuildSpot(tc,type){
+function findAIBuildSpot(ai,tc,type){
   let b=BLDGS[type];
   let maxR=Math.round(12*aiScale());
   for(let r=3;r<maxR;r++){
@@ -842,7 +846,7 @@ function findAIBuildSpot(tc,type){
       let ang=a*Math.PI*2/16;
       let tx=tc.x+Math.round(simCos(ang)*r);
       let ty=tc.y+Math.round(simSin(ang)*r);
-      if(canPlace(type,tx,ty,1)){
+      if(canPlace(type,tx,ty,ai.team)){
         let tcx = tc.x + Math.floor(tc.w/2);
         let tcy = tc.y + Math.floor(tc.h/2);
         if (findPath(tcx, tcy, tx, ty, tc.id).length > 0) {
@@ -854,7 +858,7 @@ function findAIBuildSpot(tc,type){
   return null;
 }
 
-function findAIDropSite(terrain,type,tc){
+function findAIDropSite(ai,terrain,type,tc){
   let maxDist=22*aiScale();
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
@@ -862,7 +866,7 @@ function findAIDropSite(terrain,type,tc){
     if(dist({x,y},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})>maxDist)continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
-      if(!canPlace(type,bx,by,1))continue;
+      if(!canPlace(type,bx,by,ai.team))continue;
       let nearby=countResourceTilesNear(terrain,bx,by,4);
       // TC CENTER, matching the range filter above — scoring against the
       // corner (tc.x,tc.y) skewed site choice toward the TC's up-left side.

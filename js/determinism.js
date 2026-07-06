@@ -90,6 +90,26 @@ function simChecksum(){
   // Seeded sim PRNG state (added with the PRNG migration); tolerate absence
   // so the harness works before that lands.
   if (typeof simRngState !== 'undefined') h = detMix(h, simRngState);
+  // Per-team controllers + AI plan state (js/core.js): sim state — a
+  // host/guest settings disagreement or an AI brain diverging under
+  // rollback must trip the checksum instead of surfacing as slow mystery
+  // desync. Scalar digest only (intel counts/wall progress fold into it).
+  h = detMix(h, NUM_TEAMS);
+  for (let t = 0; t < NUM_TEAMS; t++) {
+    let c = teamControllers[t];
+    h = detMix(h, c && c.type === 'ai' ? 1 : 0);
+    let ai = AI_STATES && AI_STATES[t];
+    if (ai) {
+      h = detMix(h, ai.tick);
+      h = detMix(h, ai.waveCount);
+      h = detMix(h, ai.gateBuilt ? 1 : 0);
+      h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
+      if (ai.intel) { h = detMix(h, ai.intel.strength || 0); h = detMix(h, ai.intel.tcSeen ? 1 : 0); }
+      if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));
+    }
+    let hit = lastTeamHit && lastTeamHit[t];
+    h = detMix(h, hit ? hit.tick : -1);
+  }
   return h >>> 0;
 }
 

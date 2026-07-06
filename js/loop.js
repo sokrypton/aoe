@@ -77,14 +77,20 @@ function update(){
   separateUnits();
   updateStuckWatchdog(); // js/logic.js — general safety net over every task/path state machine
   refreshPopulationCounts();
-  // Team 1 is AI-controlled only in single-player. The moment "Host Game"
-  // is clicked (netRole set), a human guest replaces the AI on team 1 —
-  // gated on netRole itself (not just "no guest connected yet") so the AI
-  // doesn't get to make irreversible decisions (spend resources, queue
-  // units) on team 1 during the waiting-for-opponent window either.
-  if (netRole == null) {
-    updateAIGarrisonReaction(); // every tick, independent of the AI's slower decision cadence
-    updateAI();
+  // Run every AI-controlled team's brain. Which teams those are is DATA
+  // (teamControllers, js/core.js): clicking "Host Game" flips slot 1 to
+  // human before any guest connects (see onHostClicked), so the AI can't
+  // make irreversible decisions during the waiting-for-opponent window.
+  // Deterministic: AI state is per-team plain data (AI_STATES) that rides
+  // the lockstep snapshots, so an AI team would simulate identically on
+  // every peer — a controllers change away, no netRole check needed here.
+  if (AI_STATES) {
+    for (let t = 0; t < NUM_TEAMS; t++) {
+      if (!isAITeam(t)) continue;
+      if (!AI_STATES[t]) AI_STATES[t] = freshAIState(t);
+      updateAIGarrisonReaction(AI_STATES[t]); // every tick, independent of the AI's slower decision cadence
+      updateAI(AI_STATES[t]);
+    }
   }
   refreshPopulationCounts();
 

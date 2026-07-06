@@ -5,6 +5,19 @@ function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 }
 
+// resume() before any user gesture is guaranteed to fail, and Chrome logs
+// "The AudioContext was not allowed to start" for EVERY attempt — a match
+// resumed on a freshly reloaded page (no gesture yet) fires sounds every
+// tick and floods the console with tens of thousands of these. Try once,
+// then stop until a real gesture (the pointerdown/keydown hook below)
+// unlocks the context and clears the latch.
+let _audioResumeBlocked = false;
+function tryResumeAudio() {
+  if (!audioCtx || audioCtx.state !== 'suspended' || _audioResumeBlocked) return;
+  _audioResumeBlocked = true;
+  audioCtx.resume().then(() => { _audioResumeBlocked = false; }).catch(() => {});
+}
+
 // ---- SHARED SYNTH INFRASTRUCTURE ----
 
 // Master bus: everything routes through a gentle compressor so stacked
@@ -120,7 +133,12 @@ function playSound(type, wx, wy) {
     initAudio();
     if (!audioCtx) return;
     if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
+      tryResumeAudio();
+      // Still suspended (no user gesture yet on this page — e.g. a freshly
+      // reloaded host mid-recovery): skip scheduling entirely. currentTime
+      // is frozen while suspended, so queued events would all pile onto the
+      // same instant and blast at once on the unlocking click.
+      if (audioCtx.state === 'suspended') return;
     }
 
     // Rate-limit per sound type so a crowd of identical events (a mob all
@@ -685,7 +703,10 @@ function playAmbientChord() {
   if (netRole === null && document.hidden) return phraseDur;
   // Same self-heal as playSound: a context that re-suspended after a long
   // background stint would otherwise stay silent until the next click.
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') {
+    tryResumeAudio();
+    if (audioCtx.state === 'suspended') return phraseDur; // no gesture yet — inaudible anyway
+  }
 
   _currentMoodName = moodName;
   let bus = newPhraseBus();
@@ -883,7 +904,10 @@ function playGameOverPhrase(cfg) {
   let beat = 60 / cfg.bpm;
   let phraseDur = MUSIC_PHRASE_BEATS * beat;
   if (!audioCtx || window.audioMuted || window.soundMode === 'off') return phraseDur;
-  if (audioCtx.state === 'suspended') audioCtx.resume(); // self-heal like playSound
+  if (audioCtx.state === 'suspended') {
+    tryResumeAudio(); // self-heal like playSound
+    if (audioCtx.state === 'suspended') return phraseDur;
+  }
   let now = audioCtx.currentTime;
   let bus = audioCtx.createGain();
   bus.gain.value = 1;
@@ -974,7 +998,11 @@ window.stopAmbientMusic = stopAmbientMusic;
 // background stints).
 ['pointerdown', 'keydown'].forEach(evt => {
   document.addEventListener(evt, () => {
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    // Direct resume (not tryResumeAudio): a real gesture always may resume,
+    // and it must also clear the auto-resume latch set before the gesture.
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().then(() => { _audioResumeBlocked = false; }).catch(() => {});
+    }
   }, { capture: true });
 });
 
