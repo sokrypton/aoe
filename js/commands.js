@@ -22,8 +22,12 @@
 
 // ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
 // RTS (AoE2 ran 250ms command turns) but enough headroom for the peer's
-// command to arrive before its execution tick on a healthy link.
-const INPUT_DELAY_TICKS = 4;
+// command to arrive before its execution tick on a healthy link. Mutable:
+// on a laggy real link the adaptive controller (js/lockstep.js) raises it
+// via the 'set-delay' command so both peers switch at the same tick —
+// otherwise the gating window stalls the sim in bursts (felt as lag).
+let INPUT_DELAY_TICKS = 4;
+const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 
 let commandQueue = new Map(); // execTick -> [{team, seq, cmd}]
 let localCmdSeq = 0;
@@ -137,6 +141,15 @@ function execCommand(cmd, team){
         }
         break;
       }
+      case 'set-delay':
+        // Adaptive lockstep input delay (host-initiated; see the stall
+        // controller in js/lockstep.js). Executes at the same tick on both
+        // peers; lockstepApplyDelay handles the safe gating transition.
+        if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX
+            && typeof lockstepApplyDelay === 'function' && lockstepEnabled()) {
+          lockstepApplyDelay(cmd.d);
+        }
+        break;
       case 'set-speed':
         // Host-only control (team 0); executes at the same tick on both
         // peers so timeStep/pacing never diverge. Range-clamped, never

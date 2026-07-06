@@ -152,6 +152,19 @@ function queueSend(conn, msg){
       ? new Promise(res => setTimeout(() => res(bytes), window.NET_TEST_DELAY_MS))
       : bytes)
     .then(bytes => {
+      // NET_TEST_LATENCY_MS: PARALLEL per-message latency (unlike
+      // NET_TEST_DELAY_MS above, which serializes and therefore caps
+      // throughput) — the realistic way to fake link RTT. Equal timeout
+      // per message keeps FIFO ordering.
+      if (window.NET_TEST_LATENCY_MS) {
+        let delayed = bytes;
+        setTimeout(() => {
+          if (!netConnected || !conn) return;
+          netBytesSent += delayed.length;
+          try { conn.send(delayed); } catch (e) {}
+        }, window.NET_TEST_LATENCY_MS);
+        return;
+      }
       if (window.NET_TEST_DROP_RATE && Math.random() < window.NET_TEST_DROP_RATE) return;
       if (window.NET_TEST_DROP_NEXT_FULL && msg.type === 'sync' && msg.data && msg.data.full) {
         window.NET_TEST_DROP_NEXT_FULL = false;

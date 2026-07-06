@@ -1196,12 +1196,13 @@ function gameLoop(){
         // stall doesn't turn into a catch-up burst.
         if (lockstepEnabled() && !lockstepCanSim(tick + 1)) {
           accumulator = Math.min(accumulator, timeStep * INPUT_DELAY_TICKS);
+          lockstepNoteFrame(true); // stalled: feeds the adaptive-delay controller
           break;
         }
         update();
         accumulator -= timeStep;
       }
-      if (lockstepEnabled()) lockstepReport();
+      if (lockstepEnabled()) { lockstepNoteFrame(false); lockstepReport(); }
     } else {
       // Nearly every limb/leg/tool/breathing animation in render-units.js
       // is a direct function of the global `tick` (e.g. Math.sin(tick*0.45

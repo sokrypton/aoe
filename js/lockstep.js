@@ -28,6 +28,57 @@ let lastReportedSimTick = -1;
 let lockstepDesyncedAt = null;
 const LOCKSTEP_CKSUM_EVERY = 30;
 
+// ---- Adaptive input delay ----
+// The gating slack actually in force. INPUT_DELAY_TICKS (js/commands.js)
+// is what new commands are STAMPED with; the two must never violate
+// stamp(issuer) >= slack(receiver), or an in-flight command can arrive
+// after its tick was simmed. Decreases are safe immediately; an INCREASE
+// may only widen the gating after every old-stamp command has landed —
+// one old-delay window later.
+let lockstepSlack = 4;
+let lockstepSlackNext = null, lockstepSlackAtTick = 0;
+function lockstepApplyDelay(d){
+  let old = INPUT_DELAY_TICKS;
+  if (d === old) return;
+  INPUT_DELAY_TICKS = d; // stamping switches now — same sim tick on both peers
+  if (d < old) {
+    lockstepSlack = d; lockstepSlackNext = null;
+  } else {
+    lockstepSlack = old;
+    lockstepSlackNext = d;
+    lockstepSlackAtTick = tick + old;
+  }
+  if (typeof showMsg === 'function') showMsg('Network buffer: ' + Math.round(d * timeStep) + 'ms');
+}
+
+// Stall accounting: a "stall" is a gameLoop frame that wanted to simulate
+// but couldn't because the peer's watermark hadn't covered the next tick.
+// Rolling window; the guest piggybacks its ratio on checksum reports and
+// the HOST decides delay changes for both (via the 'set-delay' command).
+let stallFrames = 0, simFrames = 0, peerStallPct = 0;
+let lastDelayChangeTick = 0;
+function lockstepNoteFrame(stalled){
+  simFrames++;
+  if (stalled) stallFrames++;
+}
+function lockstepAdaptDelay(){
+  if (netRole !== 'host' || lockstepDesyncedAt != null) return;
+  if (tick - lastDelayChangeTick < 180 || simFrames < 60) return; // ~3s between changes
+  let own = stallFrames / simFrames;
+  let worst = Math.max(own, peerStallPct);
+  stallFrames = 0; simFrames = 0;
+  if (worst > 0.08 && INPUT_DELAY_TICKS < INPUT_DELAY_MAX) {
+    lastDelayChangeTick = tick;
+    submitCommand({ kind: 'set-delay', d: Math.min(INPUT_DELAY_MAX, INPUT_DELAY_TICKS + 2) });
+  } else if (worst < 0.002 && INPUT_DELAY_TICKS > 4 && tick - lastDelayChangeTick >= 1200) {
+    // Strong hysteresis on the way down (near-zero stalls for ~20s, single
+    // steps) — without it the delay oscillates around the sweet spot,
+    // re-stalling every few seconds.
+    lastDelayChangeTick = tick;
+    submitCommand({ kind: 'set-delay', d: INPUT_DELAY_TICKS - 1 });
+  }
+}
+
 // Requested via ?lockstep on the host's page; the guest turns it on when
 // the lockstep-start message arrives, whatever its own URL said. Captured
 // at load time — hosting rewrites location.search to the ?host= resume
@@ -53,6 +104,8 @@ function hostStartLockstepMatch(){
   peerSimTick = -1;
   lastReportedSimTick = -1;
   lockstepDesyncedAt = null;
+  INPUT_DELAY_TICKS = 4; lockstepSlack = 4; lockstepSlackNext = null;
+  stallFrames = 0; simFrames = 0; peerStallPct = 0; lastDelayChangeTick = 0;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let sizeKey = sizeSel ? sizeSel.value : 'medium';
   window.fogDisabled = false;
@@ -68,6 +121,8 @@ onNetMessage((msg) => {
     peerSimTick = -1;
     lastReportedSimTick = -1;
     lockstepDesyncedAt = null;
+    INPUT_DELAY_TICKS = 4; lockstepSlack = 4; lockstepSlackNext = null;
+    stallFrames = 0; simFrames = 0; peerStallPct = 0; lastDelayChangeTick = 0;
     window.fogDisabled = false;
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     window.__pendingMatchSeed = msg.seed;
@@ -103,17 +158,23 @@ onNetMessage((msg) => {
   } else if (msg.type === 'tick' && lockstepActive) {
     if (msg.t > peerSimTick) peerSimTick = msg.t;
     if (msg.h !== undefined) lockstepCheckPeerChecksum(msg.ct, msg.h);
+    if (msg.sp !== undefined) peerStallPct = msg.sp;
   }
 });
 
 // May we simulate tick T? (Called with tick+1 before each update().)
 function lockstepCanSim(t){
   if (!netConnected) return false; // peer gone: stall (disconnect flow pauses anyway)
+  // Deferred slack widening from lockstepApplyDelay.
+  if (lockstepSlackNext != null && t >= lockstepSlackAtTick) {
+    lockstepSlack = lockstepSlackNext;
+    lockstepSlackNext = null;
+  }
   // Strictly-greater window: while the peer is still AT tick P it can still
   // issue commands stamped P+DELAY, and those are sent BEFORE its {tick:P+1}
   // report (ordered channel). So tick T is complete only once the peer has
-  // reported P >= T - DELAY + 1.
-  return peerSimTick >= t - INPUT_DELAY_TICKS + 1;
+  // reported P >= T - SLACK + 1.
+  return peerSimTick >= t - lockstepSlack + 1;
 }
 
 // After simming: tell the peer how far we are, with a periodic checksum.
@@ -130,8 +191,13 @@ function lockstepReport(){
     let last = DET.history[DET.history.length - 1];
     msg.ct = last.tick;
     msg.h = last.sum;
+    if (netRole === 'guest' && simFrames > 0) {
+      msg.sp = +(stallFrames / simFrames).toFixed(3); // guest stall ratio for the host's controller
+      stallFrames = 0; simFrames = 0;
+    }
   }
   sendToPeer(msg);
+  lockstepAdaptDelay();
 }
 
 function lockstepCheckPeerChecksum(t, h){
