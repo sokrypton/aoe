@@ -57,7 +57,9 @@ let _silSS=0,_silAllocW=0,_silAllocH=0; // tracks what the buffers were last bui
 // same as before — this is purely about how many physical pixels a given
 // requested size actually gets.)
 function _silSuperSample(){
-  return dpr * Math.max(1, Math.ceil(ZOOM*4)/4);
+  // dpr capped at 2: the ring is a soft 2px glow, so dpr-3 phones gain no
+  // visible sharpness from the extra pixels — only 2.25x the fill cost.
+  return Math.min(dpr,2) * Math.max(1, Math.ceil(ZOOM*4)/4);
 }
 
 function _silEnsure(cssW,cssH){
@@ -206,7 +208,7 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
   // entity, merging several units together is still cheaper than outlining
   // them separately.
   const R=2*ss;
-  const DIRS=8;
+  const DIRS=4; // perf test: was 8 — right/down/left/up wraps the whole shape
   _silRingX.clearRect(0,0,physW,physH);
   _silRingX.globalCompositeOperation='source-over';
   for(let i=0;i<DIRS;i++){
