@@ -64,6 +64,11 @@ function detEntityHash(e){
   h = detMix(h, e.cooldown || 0);
   h = detMix(h, e.garrisonedIn == null ? -1 : e.garrisonedIn);
   h = detMix(h, e.complete ? 1 : 0);
+  // Age research rides the TC entity — hash it so a divergent research
+  // clock trips the checksum before it silently lands a mistimed age-up.
+  h = detMix(h, e.research ? e.research.tick : -1);
+  h = detMix(h, e.research ? e.research.target : -1);
+  h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
   return h >>> 0;
 }
 
@@ -105,6 +110,8 @@ function simChecksum(){
       h = detMix(h, ai.gateBuilt ? 1 : 0);
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
+      h = detMix(h, ai.savingForAge ? 1 : 0);
+      h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
       if (ai.intel) {
         h = detMix(h, ai.intel.strength || 0);
         h = detMix(h, ai.intel.tcSeen ? 1 : 0);
@@ -116,6 +123,7 @@ function simChecksum(){
     h = detMix(h, hit ? hit.tick : -1);
     h = detMix(h, allianceOf(t));
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
+    h = detMix(h, teamAge && teamAge[t] || 0);
   }
   return h >>> 0;
 }

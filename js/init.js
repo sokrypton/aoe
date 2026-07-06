@@ -1059,6 +1059,7 @@ function restartGame(difficulty){
   resetLastTeamHit();   // fresh per-team "last hit taken" record (js/core.js)
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
+  resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;

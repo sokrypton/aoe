@@ -362,7 +362,7 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood') {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
@@ -379,8 +379,13 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
-  let fillL = colorL || (isAlongIsoY ? '#aca392' : '#cfc8b6');
-  let fillTop = colorTop || '#b7ad97';
+  // Default palette by material: palisade wood (Dark age WALL/GATE) or the
+  // stone greys (Feudal SWALL/SGATE — the original Stone Wall palette).
+  let pal = mat === 'stone'
+    ? { a: '#aca392', b: '#cfc8b6', top: '#b7ad97' }
+    : { a: WOOD.R, b: WOOD.L, top: WOOD.top }; // shared timber palette (render-buildings.js)
+  let fillL = colorL || (isAlongIsoY ? pal.a : pal.b);
+  let fillTop = colorTop || pal.top;
   if (darken) {
     fillL = darkenColor(fillL);
     fillTop = darkenColor(fillTop);

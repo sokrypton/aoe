@@ -174,10 +174,25 @@ document.addEventListener('keydown',e=>{
       else if(key==='r') { placing='MILL'; showMsg('Place Mill'); return; }
       else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); return; }
     } else if(window.currentVillagerMenu === 'mil') {
-      if(key==='q') { placing='BARRACKS'; showMsg('Place Barracks'); return; }
-      else if(key==='w') { placing='TOWER'; showMsg('Place Watch Tower'); return; }
-      else if(key==='e') { placing='WALL'; showMsg('Place Stone Wall'); return; }
-      else if(key==='r') { placing='GATE'; showMsg('Place Gate'); return; }
+      // Locked types are hidden from the menu, so their hotkeys are inert
+      // (silent) too. E/R always place the BEST unlocked wall/gate material
+      // — the stone versions replace the palisade slot at Feudal.
+      let tryPlace=(type,label)=>{
+        if(!isUnlocked(myTeam,type))return;
+        placing=type; showMsg('Place '+label);
+      };
+      if(key==='q') { tryPlace('BARRACKS','Barracks'); return; }
+      else if(key==='w') { tryPlace('TOWER','Watch Tower'); return; }
+      else if(key==='e') {
+        if(isUnlocked(myTeam,'SWALL')) tryPlace('SWALL','Stone Wall');
+        else tryPlace('WALL','Palisade Wall');
+        return;
+      }
+      else if(key==='r') {
+        if(isUnlocked(myTeam,'SGATE')) tryPlace('SGATE','Stone Gate');
+        else tryPlace('GATE','Palisade Gate');
+        return;
+      }
     }
   }
 
@@ -187,10 +202,14 @@ document.addEventListener('keydown',e=>{
     if (bldg.btype === 'TC') {
       if (key === 'v') { trainUnit(bldg, 'villager'); return; }
     } else if (bldg.btype === 'BARRACKS') {
-      if (key === 'm') { trainUnit(bldg, 'militia'); return; }
-      else if (key === 's') { trainUnit(bldg, 'spearman'); return; }
-      else if (key === 'a') { trainUnit(bldg, 'archer'); return; }
-      else if (key === 'c') { trainUnit(bldg, 'scout'); return; }
+      // Locked (future-age) units are hidden from the panel — their
+      // hotkeys are inert rather than erroring.
+      let train=(ut)=>{ if(isUnlocked(myTeam,ut)) trainUnit(bldg,ut); };
+      if (key === 'm') { train('militia'); return; }
+      else if (key === 's') { train('spearman'); return; }
+      else if (key === 'a') { train('archer'); return; }
+      else if (key === 'c') { train('scout'); return; }
+      else if (key === 'k') { train('knight'); return; }
     }
   }
 
@@ -232,6 +251,7 @@ function getWallElbowTiles(start, corner, end){
 // case, so this also fully replaces the old single-tap-places-one-wall path.
 function startWallDrag(sx,sy){
   let tile = screenToTile(sx, sy);
+  window.wallDragBtype = placing; // WALL or SWALL — the drag places this material
   window.isDraggingWall = true;
   window.wallDragStart = tile;
   window.wallDragEnd = tile;
@@ -283,7 +303,7 @@ function finalizeWallDrag(){
   }
   // Mutation half is execWallDrag (js/commands.js), run at the scheduled
   // tick — start/corner/end are already world tiles.
-  submitCommand({ kind: 'wall-drag', start, end, corner, unitIds: vils.map(s=>s.id) });
+  submitCommand({ kind: 'wall-drag', btype: window.wallDragBtype || 'WALL', start, end, corner, unitIds: vils.map(s=>s.id) });
 
   // keys['Shift'] (hold to place multiple lines) is desktop-only — on touch
   // that object entry is simply never set, so this naturally always exits
@@ -331,7 +351,7 @@ C.addEventListener('mousedown',e=>{
     // minimap should never block or interfere with an action already in
     // progress, only offer camera-panning when nothing else claims the click.
     if(placing){
-      if (placing === 'WALL') {
+      if (isWallBtype(placing)) {
         startWallDrag(e.clientX, e.clientY);
         justPlaced = true;
       } else {
@@ -526,7 +546,7 @@ C.addEventListener('touchstart',e=>{
     touchMoved=false;
     mouseX=t.clientX;mouseY=t.clientY; // for ghost preview
 
-    if(placing==='WALL'){
+    if(isWallBtype(placing)){
       startWallDrag(t.clientX,t.clientY);
     } else if(placing){
       // Touch placement is DRAG-TO-POSITION: the finger carries the ghost

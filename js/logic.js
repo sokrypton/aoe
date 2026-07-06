@@ -1,12 +1,16 @@
 // ---- GAME LOGIC ----
 function canPlace(type,x,y,team=0){
+  // Age gate — sim-authoritative (binds humans, relayed guests, and AI).
+  if(!isUnlocked(team,type))return false;
   let b=BLDGS[type];
   let bw=b.w, bh=b.h;
   let ox=x, oy=y;
-  if(type==='GATE'){
-    // A gate can ONLY be placed on an existing 2-tile allied wall segment.
+  if(isGateBtype(type)){
+    // A gate can ONLY be placed on an existing 2-tile allied wall segment
+    // of the MATCHING material (palisade gate on palisade, stone on stone).
+    let wallB = GATE_WALL_MATCH[type];
     let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === team);
+      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
       return !!w;
     };
     if (isWall(x, y) && isWall(x + 1, y)) {
@@ -52,7 +56,9 @@ function canPlace(type,x,y,team=0){
       // WALL (they consume the wall tile(s) they're built on, see
       // doPlace's wallsToRemove); anything else, including another WALL,
       // must not overlap an existing building.
-      if ((type === 'GATE' || type === 'TOWER') && existing && existing.type === 'building' && existing.btype === 'WALL' && existing.team === team) {
+      if (existing && existing.type === 'building' && existing.team === team &&
+          ((isGateBtype(type) && existing.btype === GATE_WALL_MATCH[type]) ||
+           (type === 'TOWER' && isWallBtype(existing.btype)))) {
         continue;
       }
       return false;
@@ -152,6 +158,7 @@ function hasPopulationRoom(team,utype,includeQueue=true){
 }
 
 function canQueueUnit(bldg,utype){
+  if(!isUnlocked(bldg.team,utype))return {ok:false,reason:'age'};
   if(!hasPopulationRoom(bldg.team,utype,true))return{ok:false,reason:'pop'};
   if(!canAfford(bldg.team,UNITS[utype].cost))return{ok:false,reason:'resources'};
   return{ok:true};
@@ -581,9 +588,9 @@ function damageEntity(attacker, target){
   // armor halves arrow damage, and militia beat spearmen on raw stats.
   if (attacker.utype === 'spearman' && target.utype === 'scout') dmg += 15; // AoE2 spearman +15 vs cavalry
   if (attacker.utype === 'archer' && target.utype === 'spearman') dmg += 3; // AoE2 archer +3 vs spearman
-  // Bonuses vs buildings (AoE2 building-class bonuses): without siege units,
-  // these are what let a Dark Age army crack structures at all now that
-  // buildings have real armor.
+  // Bonuses vs buildings (AoE2 building-class bonuses): there are no siege
+  // units (even in Castle), so these are what let an army crack structures
+  // at all now that buildings have real armor.
   if (target.type === 'building') {
     if (attacker.utype === 'villager') dmg += 3;
     if (attacker.utype === 'militia') dmg += 2;
@@ -596,7 +603,11 @@ function damageEntity(attacker, target){
   let armor = target.type === 'unit'
     ? (UNITS[target.utype].armor || {m:0,p:0})
     : (BLDGS[target.btype].armor || {m:0,p:0});
-  dmg = Math.max(1, dmg - (isPierce ? armor.p : armor.m));
+  // Age bonus: military units gain +1 melee AND pierce armor per age past
+  // Dark (see MILITARY/ageBonus, js/core.js — attack side is applied at
+  // spawn + swept on age-up since atk is snapshotted onto entities).
+  let ageArm = (target.type === 'unit' && MILITARY.has(target.utype)) ? ageBonus(target.team) : 0;
+  dmg = Math.max(1, dmg - ((isPierce ? armor.p : armor.m) + ageArm));
 
   target.hp -= dmg;
 
@@ -1110,12 +1121,19 @@ function updateUnit(e){
         e.target=null;
         clearUnitPath(e);
         pathUnitTo(e,Math.round(home.x),Math.round(home.y));
+        // Leash hysteresis: no re-aggro until the bear is actually back
+        // near its den. Without this, a bear parked exactly at the leash
+        // limit with prey in aggro range flip-flopped between "charge" and
+        // "trot home" every scan — twitching in place forever (and jittering
+        // out from under every tower arrow aimed at it).
+        e.leashCooling=true;
       }
     } else {
+      if(e.leashCooling && dist(e,home)<4) e.leashCooling=false;
       // Aggro: charge the closest player/AI unit that wanders into range.
       // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
       // runs on a stagger so 5 bears don't all scan every tick.
-      if(tick%10===e.id%10){
+      if(!e.leashCooling && tick%10===e.id%10){
         let closest=closestUnitNear(e,5.5,en=>isPlayerTeam(en.team));
         if(closest){
           e.target=closest.id;
@@ -1237,8 +1255,10 @@ function updateUnit(e){
           if(window.playSound && tick % (GAME_SPEED >= 4 ? 60 : 30) === 0) window.playSound('forage', t.x, t.y);
           spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
           if(t.hp<=0){
+            // Shepherd continuity for ALL harvesters (including this one)
+            // lives in handleDeath — it retargets or nulls e.target itself,
+            // so no null-out here (that used to wipe the killer's retarget).
             handleDeath(t, e.team);
-            e.target=null;
           }
         }
       }
@@ -1597,7 +1617,7 @@ function updateUnit(e){
         for (let bi = 0; bi < entities.length; bi++) {
           let b = entities[bi];
           if (b.type !== 'building' || sameSide(b.team, e.team) || b.team === GAIA_TEAM || b.hp <= 0) continue;
-          if (b.btype === 'WALL' || b.btype === 'GATE') continue;
+          if (isWallBtype(b.btype) || isGateBtype(b.btype)) continue;
           let d = distToTarget(e, b);
           if (d > scanRange + 0.1) continue;
           if (!window.fogDisabled && !buildingVisibleToTeam(b, e.team)) continue;
@@ -1784,6 +1804,28 @@ function handleDeath(e,killerTeam){
     // to go over the network at all.
     markPendingSync('corpses', corpse);
   }
+  // Shepherd continuity: when a carcass is consumed, EVERY villager that
+  // was harvesting it moves on to the nearest remaining carcass or own/
+  // gaia sheep within herding range — not just the one whose bite finished
+  // it (the others used to be left with a dead target, idling). Runs
+  // before the removal below so `e` is excluded naturally by the hp gate.
+  // Deterministic: villagers in entities order, nearest pick with id ties.
+  if(e.utype==='sheep_carcass'){
+    entities.forEach(v=>{
+      if(v.type!=='unit'||v.utype!=='villager'||v.target!==e.id)return;
+      let next=null,best=12;
+      entities.forEach(en=>{
+        if(en.id===e.id||en.hp<=0)return;
+        let isCarc=en.utype==='sheep_carcass';
+        let isSheep=en.utype==='sheep'&&(en.team===v.team||en.team===GAIA_TEAM);
+        if(!isCarc&&!isSheep)return;
+        let d2=dist(v,en);
+        if(d2<best||(d2===best&&next&&en.id<next.id)){best=d2;next=en;}
+      });
+      v.target=next?next.id:null;
+      if(next)clearUnitPath(v);
+    });
+  }
   selected=selected.filter(s=>s.id!==e.id);
   entities=entities.filter(en=>en.id!==e.id);
   entitiesById.delete(e.id);
@@ -1955,6 +1997,29 @@ function updateBuilding(e){
     });
   }
 
+  // Age research (TC only): while active, the unit queue is PAUSED — the
+  // classic AoE2 tension of advancing vs more villagers. Completion is the
+  // one place teamAge advances, plus the military attack sweep (attack is
+  // snapshotted on entities; armor is added live in damageEntity).
+  if(e.research){
+    e.research.tick++;
+    if(e.research.tick>=AGES[e.research.target].researchTicks){
+      teamAge[e.team]=e.research.target;
+      entities.forEach(en=>{
+        if(en.type==='unit'&&en.team===e.team&&MILITARY.has(en.utype))en.atk+=1;
+      });
+      // AoE2-style power-spike aggression: an AI that just advanced presses
+      // its (freshly bumped) army — controlAIMilitary reads this stamp.
+      if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
+      if(e.team===myTeam){
+        showMsg('You have advanced to the '+AGES[e.research.target].name+'!');
+        if(window.playSound)playSound('victory');
+      }
+      e.research=undefined;
+      if(typeof updateUI==='function')updateUI();
+    }
+    return;
+  }
   if(e.queue.length>0){
     let u=UNITS[e.queue[0]];
     if(e.trainTick<u.trainTime)e.trainTick++;
@@ -2033,9 +2098,22 @@ function updateBuilding(e){
           let task=resNames[e.rallyResourceType];
           if(task){
             unit.task=task;
-            unit.gatherX=e.rallyX;
-            unit.gatherY=e.rallyY;
-            pathUnitTo(unit,e.rallyX,e.rallyY);
+            let cfg=GATHER_TASKS[task];
+            let gx=e.rallyX, gy=e.rallyY;
+            let rtile=map[gy]&&map[gy][gx];
+            if(!rtile||rtile.t!==cfg.terrain||rtile.res<=0||!canGatherTile(unit,cfg.terrain,gx,gy)){
+              // The flagged resource is exhausted/blocked: send the fresh
+              // villager to the nearest tile of the SAME type — searched
+              // around the rally point first (where the player pointed),
+              // then around the spawn — instead of marching it to a dead
+              // tile and hoping the 12-tile gather fallback can see past it.
+              let alt=findNearTile({x:gx,y:gy,team:unit.team},cfg.terrain)
+                   ||findNearTile(unit,cfg.terrain);
+              if(alt){gx=alt.x;gy=alt.y;}
+            }
+            unit.gatherX=gx;
+            unit.gatherY=gy;
+            pathUnitTo(unit,gx,gy);
           }
         } else {
           pathUnitTo(unit,e.rallyX,e.rallyY);

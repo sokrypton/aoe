@@ -4,7 +4,7 @@ function drawGhost(){
 
   // Wall drag: show the actual wall pillars/links along the drag line
   // (same ghost style as a single hovered wall), not just flat tint tiles.
-  if (placing === 'WALL' && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
+  if (isWallBtype(placing) && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
     let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
     let pillarH = 22, wallH = 14;
     let toScr = (tx, ty) => {
@@ -13,15 +13,23 @@ function drawGhost(){
     };
     X.globalAlpha = 0.55;
     window._ghostDraw = true;
+    // Ghost in the material actually being placed — the pillar colors here
+    // used to be hardcoded stone, so dragging a Dark-age palisade briefly
+    // previewed as stone.
+    let gMat = wallMat(placing);
+    let gpf = gMat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : ['#a5723a', '#8b5a2b', '#9c6c3f'];
     line.forEach((t, i) => {
       let p = toScr(t.x, t.y);
       let linkY = p.y + 16;
-      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, '#cfc8b6', '#aca392', 'flat', 0, '#b7ad97', '#b7ad97', false);
+      // pillar caps + link walkway tops are team-colored on the real
+      // wall — mirror it here (caps single flat color); pillar first so
+      // the walkway link connects visibly between towers, like the real wall
+      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, gpf[0], gpf[1], 'flat', 0, teamColor(myTeam), teamColor(myTeam), false);
       let next = line[i+1];
       if (next) {
         let ddx = next.x - t.x, ddy = next.y - t.y;
         let off = toIso(ddx, ddy);
-        drawWallLink(p.x, linkY, off.ix, off.iy, wallH, false);
+        drawWallLink(p.x, linkY - 0.5, off.ix, off.iy, wallH, false, 2.25*Math.sqrt(5), 2.25*Math.sqrt(5), null, teamColor(myTeam), 4.5, false, gMat);
       }
     });
     window._ghostDraw = false;
@@ -29,7 +37,7 @@ function drawGhost(){
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
-      let ok = canPlace('WALL', t.x, t.y, myTeam);
+      let ok = canPlace(placing, t.x, t.y, myTeam);
       let iso = toIso(t.x, t.y);
       let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
@@ -44,8 +52,8 @@ function drawGhost(){
   let b=BLDGS[placing];
   let bw=b.w, bh_=b.h;
   let ox=tile.x, oy=tile.y;
-  if(placing==='GATE'){
-    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype==='WALL'&&en.team===myTeam);
+  if(isGateBtype(placing)){
+    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype===GATE_WALL_MATCH[placing]&&en.team===myTeam);
     if (isWall(tile.x, tile.y) && isWall(tile.x+1, tile.y)) {
       ox=tile.x; oy=tile.y; bw=2; bh_=1;
     } else if (isWall(tile.x-1, tile.y) && isWall(tile.x, tile.y)) {

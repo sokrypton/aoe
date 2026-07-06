@@ -102,6 +102,37 @@ function sameSide(t1, t2){
 // never an enemy in this sense; bears/sheep have utype-based handling).
 function isEnemyOf(team, e){ return isPlayerTeam(e.team) && !sameSide(team, e.team); }
 
+// ---- AGES ----
+// AoE2-lite age progression. teamAge[t] = 0 (Dark) / 1 (Feudal) / 2
+// (Castle). SIM state with the full teamAlliance treatment: snapshots,
+// resync, save, checksum. Advancing is TC research (see execResearchAge,
+// js/commands.js, and the TC tick in js/logic.js).
+const AGES = [
+  {key:'dark',   name:'Dark Age'},
+  {key:'feudal', name:'Feudal Age', cost:{f:500},         researchTicks:1200},
+  {key:'castle', name:'Castle Age', cost:{f:800, g:200},  researchTicks:1650}
+];
+// Minimum age index per unit/building type; absent => available from Dark.
+const AGE_REQ = {
+  spearman:1, archer:1, scout:1, knight:2,
+  TOWER:1, SWALL:1, SGATE:1
+};
+function ageReq(type){ return AGE_REQ[type] || 0; }
+function isUnlocked(team, type){ return teamAge && isPlayerTeam(team) ? teamAge[team] >= ageReq(type) : true; }
+let teamAge = null;
+function resetTeamAge(){
+  teamAge = Array.from({length: NUM_TEAMS}, () => 0);
+}
+// Military units get +1 attack and +1 melee/pierce armor per age past
+// Dark (blacksmith-lite): attack applied at spawn + swept on age-up
+// (attack is snapshotted onto entities), armor added live in damageEntity.
+const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
+// Wall/gate material families: palisade (Dark) and stone (Feudal).
+function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
+function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }
+const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
+function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 0; }
+
 // ---- PER-TEAM CONTROLLERS ----
 // Who drives each team: {type:'human'} (this tab or a remote peer — the
 // wire mapping decides which) or {type:'ai', difficulty}. This is SIM
@@ -135,10 +166,12 @@ function restoreTeamState(src){
   lastTeamHit = src.lastTeamHit || null;
   teamAlliance = src.teamAlliance || null;
   defeatedTeams = src.defeatedTeams || null;
+  teamAge = src.teamAge || null;
   if (!AI_STATES) resetAIStates();
   if (!lastTeamHit) resetLastTeamHit();
   if (!teamAlliance) resetTeamAlliance();
   if (!defeatedTeams) resetDefeatedTeams();
+  if (!teamAge) resetTeamAge();
 }
 // The controller layout for the two match shapes that exist today. The
 // single derivation point — restart, hosting transitions, and save-load
@@ -158,7 +191,7 @@ function freshAIState(team){
   return { team, tick: 0,
     intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
-    seenWarTick: null, lastBaseHitTick: null };
+    seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null };
 }
 function resetAIStates(){
   AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
@@ -236,10 +269,15 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
   TOWER:{name:'Watch Tower',w:1,h:1,hp:1020,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
-  WALL:{name:'Stone Wall',w:1,h:1,hp:900,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier to block chokepoints.',icon:'🧱'},
-  GATE:{name:'Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'}
+  WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
+  GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
+  // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
+  // only replaces stone wall segments (and palisade gate only palisades):
+  // matching material keeps the consume/refund math and the art coherent.
+  SWALL:{name:'Stone Wall',w:1,h:1,hp:900,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
+  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
@@ -249,9 +287,11 @@ const UNITS={
   militia:{name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:60,armor:{m:0,p:1},cost:{f:60,g:20},trainTime:630,desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
   spearman:{name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:90,armor:{m:0,p:0},cost:{f:35,w:25},trainTime:660,desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
   archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:60,armor:{m:0,p:0},cost:{w:25,g:45},trainTime:1050,desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
-  // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2); with no
-  // age system here, the familiar fast scout is the right baseline.
+  // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2) — and
+  // the scout IS Feudal-gated here now (AGE_REQ), so the speed fits.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
+  // Castle-age heavy cavalry (AoE2-ish knight).
+  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:60,armor:{m:2,p:2},cost:{f:60,g:75},trainTime:1500,desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -273,9 +313,9 @@ const UNITS={
 // the original AoE2's harder AIs cheated a modest resource trickle; easy
 // gets none.
 const AI_LEVELS={
-  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:2,targetFarms:2,wallCheckInterval:600,wallMaintInterval:600,waveCap:20,allyJoinWindow:0,allyJoinFactor:1.0},
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:40,allyJoinWindow:600,allyJoinFactor:0.75},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:60,allyJoinWindow:900,allyJoinFactor:0.6}
+  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:2,targetFarms:2,wallCheckInterval:600,wallMaintInterval:600,waveCap:20,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:1,ageUpVils:[0,10],ageUpTick:[0,21600],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:40,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:60,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on

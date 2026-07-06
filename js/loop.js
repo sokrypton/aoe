@@ -238,7 +238,7 @@ function updateGates(){
   let gates = null;
   for (let i = 0; i < entities.length; i++) {
     let e = entities[i];
-    if (e.type === 'building' && e.btype === 'GATE' && e.complete) (gates || (gates = [])).push(e);
+    if (e.type === 'building' && isGateBtype(e.btype) && e.complete) (gates || (gates = [])).push(e);
   }
   if (!gates) return;
   // 1-tile cell index of units, built once per tick only when gates exist.

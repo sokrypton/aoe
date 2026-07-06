@@ -11,9 +11,13 @@ function createUnit(type,x,y,team){
     // and the face renderer draws NO eyes (its dir branches all miss), so
     // fresh units stared blankly. 1 = south, facing the viewer; the scout
     // starts in horse profile (7 = east) — a horse head-on reads poorly.
-    dir: type === 'scout' ? 7 : 1, facing: 1, facingNorth: false,
+    dir: (type === 'scout' || type === 'knight') ? 7 : 1, facing: 1, facingNorth: false,
     // Villagers are randomly male or female (cosmetic only, like AoE2)
     female: type === 'villager' ? simRandom() < 0.5 : undefined};
+  // Age bonus (blacksmith-lite): military spawns with +1 atk per age past
+  // Dark. Armor's matching bonus is applied live in damageEntity — attack
+  // is snapshotted here, armor is looked up from UNITS at hit time.
+  if (MILITARY.has(type)) e.atk += ageBonus(team);
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;

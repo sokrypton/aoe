@@ -132,6 +132,20 @@ function execCommand(cmd, team){
           if (en && en.team === team) deleteOwnedEntity(en);
         });
         break;
+      case 'research-age': {
+        let tc = entitiesById.get(cmd.bldgId);
+        if (tc && tc.type === 'building' && tc.team === team) {
+          withCommandContext(team, [], () => execResearchAge(tc));
+        }
+        break;
+      }
+      case 'cancel-research': {
+        let tc = entitiesById.get(cmd.bldgId);
+        if (tc && tc.type === 'building' && tc.team === team) {
+          withCommandContext(team, [], () => execCancelResearch(tc));
+        }
+        break;
+      }
       case 'prepay-farm':
         withCommandContext(team, [], () => prepayFarmNow());
         break;
@@ -316,9 +330,10 @@ function execBuildPlacement(cmd){
     let b = BLDGS[btype];
     let gw = b.w, gh = b.h;
     let ox = tile.x, oy = tile.y;
-    if (btype === 'GATE') {
+    if (isGateBtype(btype)) {
+      let wallB = GATE_WALL_MATCH[btype];
       let isWall = (tx, ty) => {
-        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === myTeam);
+        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === myTeam);
         return !!w;
       };
       if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
@@ -334,18 +349,27 @@ function execBuildPlacement(cmd){
     let wallsToRemove = [];
     for (let dy = 0; dy < gh; dy++) {
       for (let dx = 0; dx < gw; dx++) {
-        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === myTeam);
+        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && isWallBtype(en.btype) && en.team === myTeam);
         if (w) wallsToRemove.push(w);
       }
     }
     let actualCost = { ...b.cost };
-    if (btype === 'GATE') {
-      actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
+    // Refund each consumed wall's OWN cost (palisades refund wood, stone
+    // walls refund stone) against whatever this building costs.
+    let refundWalls = (walls) => {
+      walls.forEach(w2 => {
+        Object.entries(BLDGS[w2.btype].cost).forEach(([k, amt]) => {
+          actualCost[k] = Math.max(0, (actualCost[k] || 0) - amt);
+        });
+      });
+    };
+    if (isGateBtype(btype)) {
+      refundWalls(wallsToRemove);
     } else if (btype === 'TOWER') {
-      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && en.btype === 'WALL' && en.team === myTeam);
+      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);
       if (existing) {
-        actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
         wallsToRemove.push(existing);
+        refundWalls([existing]);
       }
     }
     if (!canAfford(myTeam, actualCost)) { if (!isReplayingRemoteCommand) showMsg('Not enough resources!'); return; }
@@ -382,15 +406,16 @@ function execWallDrag(cmd){
   let vils = selected.filter(s => s.type === 'unit' && s.utype === 'villager');
   if (vils.length === 0) return;
   let line = getWallElbowTiles(cmd.start, cmd.corner || cmd.end, cmd.end);
-  let b = BLDGS['WALL'];
+  let wallB = isWallBtype(cmd.btype) ? cmd.btype : 'WALL';
+  let b = BLDGS[wallB];
   let placedCount = 0;
   let lastBldg = null;
   line.forEach(t => {
-    if (canPlace('WALL', t.x, t.y, myTeam)) {
+    if (canPlace(wallB, t.x, t.y, myTeam)) {
       let actualCost = { ...b.cost };
       if (canAfford(myTeam, actualCost)) {
         spendCost(myTeam, actualCost);
-        let bldg = createBuilding('WALL', t.x, t.y, myTeam);
+        let bldg = createBuilding(wallB, t.x, t.y, myTeam);
         bldg.complete = false;
         bldg.buildProgress = 0;
         lastBldg = bldg;
@@ -422,8 +447,38 @@ function execTrainUnit(bldg, utype){
   if (!isReplayingRemoteCommand) {
     if (result.reason === 'pop') showMsg('Need more houses!');
     else if (result.reason === 'resources') showMsg('Not enough resources!');
+    else if (result.reason === 'age') showMsg('Requires the ' + AGES[ageReq(utype)].name + '!');
     if (result.reason && window.playSound) playSound('error');
   }
+}
+
+// Start advancing to the next age at this TC. The research is a plain
+// field on the TC entity ({target, tick}) so it rides saves and lockstep
+// rollbacks automatically, and dies (unrefunded, AoE2-style) with the TC.
+// While researching, the TC's unit queue is paused (js/logic.js).
+function execResearchAge(tc){
+  if (tc.btype !== 'TC' || !tc.complete || tc.research) return;
+  let next = teamAge[tc.team] + 1;
+  if (next >= AGES.length) return;
+  let cost = AGES[next].cost;
+  if (!canAfford(tc.team, cost)) {
+    if (!isReplayingRemoteCommand) { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); }
+    return;
+  }
+  spendCost(tc.team, cost);
+  tc.research = { target: next, tick: 0 };
+  if (!isReplayingRemoteCommand) showMsg('Advancing to the ' + AGES[next].name + '…');
+  if (typeof updateUI === 'function') updateUI();
+}
+
+function execCancelResearch(tc){
+  if (!tc.research) return;
+  let cost = AGES[tc.research.target].cost;
+  let store = resourceStore(tc.team);
+  Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
+  tc.research = undefined;
+  if (!isReplayingRemoteCommand) showMsg('Age research cancelled (refunded)');
+  if (typeof updateUI === 'function') updateUI();
 }
 
 function execCancelQueue(bldgId, idx, team){

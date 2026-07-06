@@ -125,7 +125,11 @@ function genMap(){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       let x = spot.x + dx;
       let y = spot.y + dy;
-      if(!inBounds(x,y,1))continue;
+      // margin 0 (not 1): trees may occupy the outermost tile ring. With a
+      // 1-tile margin every "map-edge" forest secretly left a walkable
+      // corridor along the border that units could file through — edge
+      // forests should genuinely seal the map edge.
+      if(!inBounds(x,y,0))continue;
       
       // Project grid offsets back to local rotated coordinates (l, w)
       let l = dx * cos + dy * sin;

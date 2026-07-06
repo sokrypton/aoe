@@ -58,7 +58,7 @@ function updateAI(ai){
     // and keep villagers gathering and the army fighting in the meantime.
     addAITrickle(ai,profile);
     let vils=aiUnits.filter(u=>u.utype==='villager');
-    let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
+    let mils=aiUnits.filter(u=>MILITARY.has(u.utype));
     // Rebuild near the workforce, not next to whatever building happens to
     // be first in the array (could be a lone far-flung wall segment).
     let anchor=(vils.length>0&&aiBuildings.length>0
@@ -78,7 +78,7 @@ function updateAI(ai){
   updateAIIntel(ai,aiTC,profile); // what has scouting/combat actually revealed about the player this tick
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
-  let mils=aiUnits.filter(u=>['militia','spearman','archer','scout'].includes(u.utype));
+  let mils=aiUnits.filter(u=>MILITARY.has(u.utype));
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
 
   // Field flee: a villager taking hits AWAY from the base bubble runs home
@@ -98,6 +98,7 @@ function updateAI(ai){
   let readyBarracks=barracks.filter(b=>b.complete);
 
   addAITrickle(ai,profile);
+  planAIAgeUp(ai,aiTC,vils,profile); // claims food/gold for the age before military spends it
   queueAIVillagers(ai,aiTC,vils,profile);
   ensureAIHousing(ai,aiTC,profile);
   planAIDropSites(ai,aiTC,vils,profile);
@@ -167,6 +168,23 @@ function estimateLocalPlayerPower(ai,center,radius){
 
 function addAITrickle(ai,profile){
   Object.entries(profile.trickle).forEach(([resName,amount])=>{resourceStore(ai.team)[resName]+=amount;});
+}
+
+// Advance ages, difficulty-paced. Once thresholds pass, either start the
+// research immediately or flag savingForAge so military spending yields
+// (villager production continues — eco first, AoE2-style).
+function planAIAgeUp(ai,aiTC,vils,profile){
+  let next=teamAge[ai.team]+1;
+  if(next>=AGES.length||next>(profile.maxAge||0)){ai.savingForAge=false;return;}
+  if(aiTC.research){ai.savingForAge=false;return;}
+  if(vils.length<(profile.ageUpVils&&profile.ageUpVils[next]||Infinity))return;
+  if(ai.tick<(profile.ageUpTick&&profile.ageUpTick[next]||Infinity))return;
+  if(canAfford(ai.team,AGES[next].cost)){
+    execResearchAge(aiTC); // same exec path as the player's command
+    ai.savingForAge=false;
+  } else {
+    ai.savingForAge=true;
+  }
 }
 
 function queueAIVillagers(ai,aiTC,vils,profile){
@@ -453,24 +471,35 @@ function findAIWallDefenseSpot(ai){
 }
 
 function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
+  let pressured=lastTeamHit&&lastTeamHit[ai.team]&&tick-lastTeamHit[ai.team].tick<900;
+  if(ai.savingForAge&&!pressured&&barracks.length>0)return; // first barracks still allowed — needed for defense
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
   if(pos)placeAIBuilding(ai,'BARRACKS',pos.x,pos.y);
 }
 
 function queueAIMilitary(ai,readyBarracks,profile){
-  let currentArmy=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&['militia','spearman','archer','scout'].includes(e.utype)).length;
+  let currentArmy=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&MILITARY.has(e.utype)).length;
   // Train toward the NEXT wave's size (plus home defense reserve) so the
   // army goal escalates with each wave launched, AoE2-style.
   let maxArmy=aiWaveSize(ai,profile)+profile.armyReserve;
   if(currentArmy>=maxArmy)return;
   
-  let types = ['militia', 'spearman', 'archer', 'scout'];
+  // Saving for an age-up: military spending yields the food/gold (the age
+  // research is the bigger power spike; villagers keep training) — UNLESS
+  // we've taken a hit recently. Survival outranks advancement, AoE2-style:
+  // an AI that keeps hoarding while its army isn't reinforcing dies rich.
+  let underPressure=lastTeamHit&&lastTeamHit[ai.team]&&tick-lastTeamHit[ai.team].tick<900;
+  if(ai.savingForAge&&!underPressure)return;
+  // Only currently-unlocked rosters — Dark-age barracks train militia only.
+  let types = AI_MIL_TYPES.filter(t=>isUnlocked(ai.team,t));
+  if(types.length===0)return;
   // Rock-paper-scissors counters, per the unit descriptions in core.js:
-  // spearman is anti-cavalry (counters scout), scout runs down archers,
-  // archers shred standing infantry. Picked from real scouted intel, not
+  // spearman is anti-cavalry (counters scout AND knight), scout runs down
+  // archers (a Castle-age AI prefers the knight for that job), archers
+  // shred standing infantry. Picked from real scouted intel, not
   // omniscient knowledge of the player's army.
-  let counterMap={scout:'spearman',archer:'scout',militia:'archer',spearman:'archer'};
+  let counterMap={scout:'spearman',knight:'spearman',archer:isUnlocked(ai.team,'knight')?'knight':'scout',militia:'archer',spearman:'archer'};
   let pickUnitType=()=>{
     let counts=ai.intel&&ai.intel.unitCounts;
     if(counts){
@@ -478,7 +507,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
       // Counter-pick most of the time once there's real intel on what the
       // player is fielding — not always, so the matchup isn't perfectly
       // predictable/exploitable by the player switching unit types.
-      if(dominant&&simRandom()<0.7)return counterMap[dominant];
+      if(dominant&&simRandom()<0.7&&isUnlocked(ai.team,counterMap[dominant]))return counterMap[dominant];
     }
     return types[simRandInt(0, types.length - 1)];
   };
@@ -593,11 +622,10 @@ function aiEcoPlan(ai,vilCount,profile){
     let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&e.complete&&!e.exhausted).length;
     base.farm=Math.max(profile.farmShare,activeFarms);
   }
-  // Walls/gate/towers are pure stone sinks (~5/tile, dozens of tiles) — without
-  // this the default 1-share stone ratio never keeps up and the ring stalls
-  // forever half-built. Pull more gatherers onto stone until it's finished.
+  // A palisade ring is a WOOD sink (2/tile, dozens of tiles, plus the 30-
+  // wood gate) — pull extra gatherers onto wood until it's finished.
   let wallPlan=ai.wallPlan;
-  if(wallPlan&&!wallPlan.every(t=>t.done))base.mine_stone=(base.mine_stone||1)+3;
+  if(wallPlan&&!wallPlan.every(t=>t.done))base.chop=(base.chop||1)+3;
   return base;
 }
 
@@ -654,7 +682,7 @@ function aiWaveSize(ai,profile){
   return Math.min(profile.waveCap||60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
 }
 
-const AI_MIL_TYPES=['militia','spearman','archer','scout'];
+const AI_MIL_TYPES=['militia','spearman','archer','scout','knight'];
 // Sum of allied (not own) military power within `range` of `center` — a
 // teammate's army standing right there counts toward "can we hold/win".
 function nearbyAlliedPower(ai,center,range){
@@ -715,6 +743,13 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         break;
       }
     }
+  }
+  // Post-age power surge (AoE2-style): right after advancing, the army just
+  // gained +1 atk/+1 armor — press the spike with a lower commit bar and a
+  // shortened cooldown for profile.ageSurgeWindow ticks.
+  if((profile.ageSurgeWindow||0)>0&&ai.lastAgeUpTick!=null&&tick-ai.lastAgeUpTick<profile.ageSurgeWindow){
+    requiredFactor*=profile.ageSurgeFactor;
+    cooldown=Math.floor(cooldown/2);
   }
   let holding=false;
   let waveSize=aiWaveSize(ai,profile);
@@ -864,7 +899,7 @@ function isTargetReachable(unit, target){
 // Nearest enemy wall/tower/gate that this militia can actually path to.
 function nearestReachableWallLike(unit, team){
   return entities.filter(en => en.type === 'building' && en.team === team && en.hp > 0 &&
-      (en.btype === 'WALL' || en.btype === 'TOWER' || en.btype === 'GATE'))
+      (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
     .sort((a, b) => dist(unit, a) - dist(unit, b))
     .find(w => isTargetReachable(unit, w)) || null;
 }
@@ -950,11 +985,11 @@ function placeAIBuilding(ai,type,x,y){
   }
   let actualCost = {...b.cost};
   if (type === 'GATE') {
-    actualCost.s = Math.max(0, (actualCost.s || 0) - wallsToRemove.length * 5);
+    actualCost.w = Math.max(0, (actualCost.w || 0) - wallsToRemove.length * (BLDGS.WALL.cost.w || 0));
   } else if (type === 'TOWER') {
     let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === ai.team);
     if (existing) {
-      actualCost.s = Math.max(0, (actualCost.s || 0) - 5);
+      actualCost.w = Math.max(0, (actualCost.w || 0) - (BLDGS.WALL.cost.w || 0));
       wallsToRemove.push(existing);
     }
   }

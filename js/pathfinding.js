@@ -99,7 +99,7 @@ function walkable(x,y,ignore,ignoreUnits){
   // Let same-side units (own team or allies) or anyone (if open) pass
   // through gates
   let bldg = entitiesById.get(t.occupied);
-  if (bldg && bldg.btype === 'GATE') {
+  if (bldg && isGateBtype(bldg.btype)) {
     if (walker && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
       return true;
     }

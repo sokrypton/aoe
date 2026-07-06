@@ -1,3 +1,14 @@
+// Mounted units share the scout's horse rendering; the knight swaps the
+// coat/rider styling (see the knight accents in the shared branches).
+function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
+
+// Accent metal by the owner's age: dull iron -> steel -> polished steel.
+// The subtle unit-side 'age look' (shields, helms).
+const AGE_METAL = ['#8f8a7d', '#a8adb3', '#c6cdd8'];
+function ageMetal(team){
+  return AGE_METAL[(teamAge && isPlayerTeam(team)) ? teamAge[team] : 0];
+}
+
 // Big readable broadsword, drawn with the context translated to the grip.
 // Combat swing is shaped: slow overhead wind-up, fast slash (like the
 // villagers' work swing) instead of a symmetric sine wobble.
@@ -49,7 +60,7 @@ function drawCorpse(c){
     rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
   }
   let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
-  let big = c.utype === 'scout' || c.utype === 'bear'; // horse/bear-sized corpse
+  let big = isMountedUnit(c.utype) || c.utype === 'bear'; // horse/bear-sized corpse
 
   // Impact dust puff, once, the moment the body hits the ground (same
   // render-side particle spawning the sheep's grass nibbling uses).
@@ -144,7 +155,7 @@ function drawCorpse(c){
       X.beginPath();X.arc(9.2,-12.8,0.6,0,Math.PI*2);X.fill();
       X.restore();
     };
-    if(c.utype==='scout'){
+    if(isMountedUnit(c.utype)){
       horseSkeleton(1.35);
       humanSkeleton(-11,-11,1);     // the rider, beside his horse
     } else if(c.utype==='bear'){
@@ -182,7 +193,7 @@ function drawCorpse(c){
   // the moment the unit dies, dropping under gravity at its own rate
   // (a touch slower than the 600ms body topple) while tumbling to its
   // final lying angle, with a small clatter-wobble as it lands.
-  let armed = c.utype==='militia'||c.utype==='scout'||c.utype==='spearman'||c.utype==='archer';
+  let armed = c.utype==='militia'||isMountedUnit(c.utype)||c.utype==='spearman'||c.utype==='archer';
   if (armed) {
     const WDROP = 850;
     // Held position (where the living sprite draws the weapon) -> rest
@@ -190,12 +201,14 @@ function drawCorpse(c){
     const HOLD = {
       militia:  {x:6.5,  y:-6,  a:0.5},
       scout:    {x:-4.5, y:-17, a:-0.6},
+      knight:   {x:-4.5, y:-17, a:-0.6},
       spearman: {x:3,    y:-6,  a:0},
       archer:   {x:4,    y:-8,  a:0}
     };
     const REST = {
       militia:  {x:10,  y:1.5, a:2.0},
       scout:    {x:-11, y:1.5, a:-2.0},
+      knight:   {x:-11, y:1.5, a:-2.0},
       spearman: {x:8,   y:2,   a:0.8},
       archer:   {x:9,   y:2,   a:1.2}
     };
@@ -597,11 +610,11 @@ function drawUnit(e){
     }
     X.restore();
   } else if(e.utype!=='sheep'){
-    let humanXOffset = e.utype === 'scout' ? -3 : 0;
-    let humanYOffset = e.utype === 'scout' ? -11 : 0;
+    let humanXOffset = isMountedUnit(e.utype) ? -3 : 0;
+    let humanYOffset = isMountedUnit(e.utype) ? -11 : 0;
 
     // Walking leg cycle (swinging legs with constant leg length)
-    if(e.utype==='scout'){
+    if(isMountedUnit(e.utype)){
       let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4.5 : 0;
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
       X.beginPath();
@@ -661,9 +674,11 @@ function drawUnit(e){
     // Horse drawn under the rider. The neck+head are one arched silhouette
     // (curved crest, jaw, squared muzzle) — the key to reading "horse" at
     // icon size. Idle horses nod gently, swish their tail and flick an ear.
-    if(e.utype==='scout'){
+    if(isMountedUnit(e.utype)){
       let useDir = mirroredDir(e);
-      const coat='#8b5a2b', maneC='#3f2810';
+      // Knight rides a darker courser; scout keeps the bay.
+      // Knight rides a WHITE charger (unmistakable vs the scout's bay).
+      const coat=e.utype==='knight'?'#e9e6de':'#8b5a2b', maneC=e.utype==='knight'?'#9a948a':'#3f2810';
       let idle = e.path.length===0 && !e.corpseRot;
       let nod = idle ? Math.sin(tick*0.05+e.id)*0.8 : 0;
       let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
@@ -880,9 +895,11 @@ function drawUnit(e){
     }
     if (e.facingNorth) {
       // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
-      if(e.utype==='militia'){
-        // Back of Norman iron helm
-        X.fillStyle='#8a8a8a';
+      if(e.utype==='militia' && ageBonus(e.team) >= 1){
+        // Back of Norman iron helm — FEUDAL+ only, same age gating (and the
+        // same ageMetal polish) as the front view; the Dark-age militia
+        // falls through to the leather-hood back below.
+        X.fillStyle=ageMetal(e.team);
         X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
         X.fillStyle='#daa520';
         X.beginPath();X.rect(-4.5+humanXOffset,-14.5+humanYOffset,9,1.5);X.fill();X.stroke();
@@ -935,13 +952,16 @@ function drawUnit(e){
       }
       
       // Headwear Cap
-      if(e.utype==='militia'){
-        // Norman iron helm
-        X.fillStyle='#8a8a8a';
+      if(e.utype==='militia' && ageBonus(e.team) >= 1){
+        // Norman iron helm — FEUDAL+. The Dark-age militia falls through to
+        // the peasant hood below (a levied farmer with a sword); the helm +
+        // kite shield ARE the upgrade look, and at Castle the ageMetal tint
+        // polishes the same drawing — maximal art reuse, zero new shapes.
+        X.fillStyle=ageMetal(e.team);
         X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
         X.fillStyle='#daa520';
         X.beginPath();X.rect(-4.5+humanXOffset,-15+humanYOffset,9,1.5);X.fill();X.stroke();
-        X.fillStyle='#8a8a8a';
+        X.fillStyle=ageMetal(e.team);
         X.beginPath();X.rect(-0.75+humanXOffset,-15+humanYOffset,1.5,4);X.fill();X.stroke();
       } else if(e.utype==='archer') {
         X.fillStyle='#2e8b57'; // green archer hood
@@ -991,6 +1011,11 @@ function drawUnit(e){
           X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
           X.fill(); X.stroke();
         }
+      } else if (e.utype==='knight') {
+        // Steel helm — the one-glance tell that this rider is the knight.
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+        X.beginPath();X.moveTo(humanXOffset-4.5,-15+humanYOffset);X.lineTo(humanXOffset+4.5,-15+humanYOffset);X.stroke();
       } else {
         // Peasant leather hood cap for spearman/scout
         X.fillStyle='#4a2e1b';
@@ -1270,20 +1295,25 @@ function drawUnit(e){
         X.restore();
       }
 
-      // Big steel kite shield with a team-colored cross
+      // Big steel kite shield with a team-colored cross — FEUDAL+ only.
+      // The Dark-age militia is a levied peasant with a sword; the shield
+      // (and at Castle, the steel helm below) turn the same drawing into
+      // the upgraded soldier, so age progression reuses this art.
+      if (ageBonus(e.team) >= 1) {
       let shx = -6, shy = -6;
       if (e.dir === 4 || e.dir === 5 || e.dir === 6) {
         shx = -2.5; // Shift to the back center when facing North directions
         shy = -7;
       }
       X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle='#a8adb3';X.beginPath();
+      X.fillStyle=ageMetal(e.team);X.beginPath();
       X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
       X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
       X.fillStyle=tc;X.beginPath();
       X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
       X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
       X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
+      }
     } else if(e.utype==='spearman'&&!e.corpseRot){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
       // slow pull-back, fast jab along the shaft. (Corpses drop it —
@@ -1367,7 +1397,7 @@ function drawUnit(e){
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }
       X.restore();
-    } else if(e.utype==='scout'&&!e.corpseRot){
+    } else if(isMountedUnit(e.utype)&&!e.corpseRot){
       // Scout broadsword (same big sword as the militia, shaped slash).
       // At rest it parks on the rider's LEFT side, mirrored — the right is
       // where the horse's head rises, and the blade would point into it.
@@ -1383,6 +1413,20 @@ function drawUnit(e){
         drawBigSword(false, e.id);
       }
       X.restore();
+      if(e.utype==='knight'){
+        // Kite shield with the team cross — same design as the (Feudal+)
+        // militia's, worn on the rider: the knight reads as that soldier,
+        // promoted and mounted.
+        let shx=-6+humanXOffset, shy=-5+humanYOffset;
+        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+        X.fillStyle=ageMetal(e.team);X.beginPath();
+        X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
+        X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
+        X.fillStyle=tc;X.beginPath();
+        X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
+        X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
+        X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
+      }
     }
   } else {
     // Sheep — scalloped wool cloud; head tracks movement direction
@@ -1497,7 +1541,7 @@ function drawUnit(e){
   // HP bar floats clear above the head (higher for the scout — horse and
   // rider stand taller) so it never covers the unit's face.
   if(e.hp<e.maxHp){
-    let hpTop = e.utype==='scout' ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
+    let hpTop = isMountedUnit(e.utype) ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
     X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);

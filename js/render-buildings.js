@@ -1,5 +1,21 @@
-// Draws a 3D isometric building block with Left/Right walls and Flat or Peaked roof
-function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roofR,darken=false){
+// Shared wood palette — one brown per ROLE, used by every building so
+// timber reads as the same material everywhere:
+//   L/R/top:      structural timber (palisade walls/gates, dark-age tower)
+//   plankL/R:     plank walls (barracks, mill huts, dark-age TC keep)
+//   beam:         half-timber framing beams
+//   post:         poles and posts (camps, TC courtyard, fences)
+const WOOD = {
+  L: '#bd8850', R: '#a06f3d', top: '#b07c46',
+  plankL: '#b89868', plankR: '#987848',
+  beam: '#6e5138', post: '#8a6a4a'
+};
+
+// Draws a 3D isometric building block with Left/Right walls and Flat or Peaked roof.
+// topLight: soften the FRONT rim edges (where the top face meets the walls)
+// to the light course-line stroke — used on blocks that carry merlons so
+// the battlement reads as continuous masonry instead of stacked boxes.
+// Back (silhouette) edges and wall sides/bottoms stay hard black.
+function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roofR,darken=false,topLight=false){
   let strokeColor = '#000000';
   X.strokeStyle = strokeColor;
   X.lineWidth = 1.3;
@@ -12,15 +28,23 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
     roofR = darkenColor(roofR);
   }
 
-  // 1. Left Wall Face (skewed 2:1)
+  // 1+2. Wall Faces (skewed 2:1)
   X.fillStyle=wallL;X.beginPath();
   X.moveTo(sx-bw,sy+bhh-bh);X.lineTo(sx,sy+bhh*2-bh);
-  X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.closePath();X.fill();X.stroke();
-
-  // 2. Right Wall Face (skewed 2:1)
+  X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.closePath();X.fill();
+  if(!topLight)X.stroke();
   X.fillStyle=wallR;X.beginPath();
   X.moveTo(sx,sy+bhh*2-bh);X.lineTo(sx+bw,sy+bhh-bh);
-  X.lineTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.closePath();X.fill();X.stroke();
+  X.lineTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.closePath();X.fill();
+  if(!topLight)X.stroke();
+  if(topLight){
+    // hard outline: wall sides, bottoms, center seam — skip the top edges
+    X.beginPath();
+    X.moveTo(sx-bw,sy+bhh-bh);X.lineTo(sx-bw,sy+bhh);X.lineTo(sx,sy+bhh*2);
+    X.lineTo(sx+bw,sy+bhh);X.lineTo(sx+bw,sy+bhh-bh);
+    X.moveTo(sx,sy+bhh*2);X.lineTo(sx,sy+bhh*2-bh);
+    X.stroke();
+  }
 
   // 3. Roof (Flat top face or Peaked gable slopes)
   if(roofType==='flat'){
@@ -32,10 +56,21 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
     X.fillStyle=roofR;X.beginPath();
     X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
     X.lineTo(sx,sy+bhh*2-bh);X.closePath();X.fill();
-    // Stroke outer boundary only
-    X.beginPath();
-    X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
-    X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx-bw,sy+bhh-bh);X.closePath();X.stroke();
+    if(topLight){
+      // back (silhouette) edges hard, front rim edges light
+      X.beginPath();
+      X.moveTo(sx-bw,sy+bhh-bh);X.lineTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);X.stroke();
+      X.save();
+      X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+      X.beginPath();
+      X.moveTo(sx-bw,sy+bhh-bh);X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx+bw,sy+bhh-bh);X.stroke();
+      X.restore();
+    } else {
+      // Stroke outer boundary only
+      X.beginPath();
+      X.moveTo(sx,sy-bh);X.lineTo(sx+bw,sy+bhh-bh);
+      X.lineTo(sx,sy+bhh*2-bh);X.lineTo(sx-bw,sy+bhh-bh);X.closePath();X.stroke();
+    }
   } else if(roofType==='peaked'){
     // Left roof slope
     X.fillStyle=roofL;X.beginPath();
@@ -82,12 +117,9 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
   X.moveTo(sx - bw, sy + bhh - bh + 1.5); X.lineTo(sx, sy + bhh * 2 - bh + 1.5);
   X.lineTo(sx + bw, sy + bhh - bh + 1.5);
   X.stroke();
-  if (roofType === 'peaked') {
-    X.strokeStyle = 'rgba(255,255,255,0.3)'; X.lineWidth = 1.5;
-    X.beginPath();
-    X.moveTo(sx, sy - bh - roofH); X.lineTo(sx, sy + bhh * 2 - bh - roofH);
-    X.stroke();
-  }
+  // (a white "ridge highlight" down peaked roofs' front edge used to be
+  // stroked here — at the small scale every peaked roof is drawn at, it
+  // read as a stray gray line rather than a specular edge)
   X.restore();
 }
 
@@ -188,13 +220,16 @@ function drawCornerDoubleGate(sx,sy,bhh,gateH,colorL,colorR,darken=false){
 }
 
 // Draws a flagpole and team-colored waving flag on top of a keep
-function drawWavingFlag(sx,sy,bh,color,colorDark){
+function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
+  // Pole base sits at sy-bh-2; poleLen lets tall buildings (TC) plant the
+  // base on an actual surface and still fly the flag clear of the roofline.
+  let top=sy-bh-2-poleLen;
   X.strokeStyle='#000000';X.lineWidth=1.5;
-  X.beginPath();X.moveTo(sx,sy-bh-2);X.lineTo(sx,sy-bh-24);X.stroke(); // pole
+  X.beginPath();X.moveTo(sx,sy-bh-2);X.lineTo(sx,top);X.stroke(); // pole
   let wave=Math.sin(tick*0.1)*3;
   X.fillStyle=color;X.beginPath();
-  X.moveTo(sx,sy-bh-24);X.lineTo(sx-16,sy-bh-20+wave);
-  X.lineTo(sx-16,sy-bh-12+wave);X.lineTo(sx,sy-bh-16);X.closePath();
+  X.moveTo(sx,top);X.lineTo(sx-16,top+4+wave);
+  X.lineTo(sx-16,top+12+wave);X.lineTo(sx,top+8);X.closePath();
   X.fill();X.stroke();
 }
 
@@ -353,9 +388,56 @@ function getConnectedBuilding(tx, ty){
   let en=entitiesById.get(id);
   return en&&en.type==='building'?en:undefined;
 }
-function isWallLike(b){
-  return !!b && (b.btype === 'WALL' || b.btype === 'TOWER' || b.btype === 'GATE');
+// 'wood' (palisade), 'stone', or null (TOWER — connects to both).
+function wallMat(bt){
+  if (bt === 'WALL' || bt === 'GATE') return 'wood';
+  if (bt === 'SWALL' || bt === 'SGATE') return 'stone';
+  return null;
 }
+// mat: restrict to one material family (towers always connect). Omitted =>
+// any wall-like neighbor.
+function isWallLike(b, mat){
+  if (!b) return false;
+  if (b.btype === 'TOWER') return true;
+  let m = wallMat(b.btype);
+  if (!m) return false;
+  return !mat || m === mat;
+}
+// One merlon block: two wall faces + a two-tone cap. Hard-outlined on
+// sides and tops, but the BOTTOM seam gets the light course-line stroke
+// (matching the material pass) so the merlon reads as continuous with the
+// masonry it stands on rather than a loose block. Shared by the TC's big
+// merlons and every bastion cap (tower, gate posts, barracks).
+function drawMerlonBlock(mx, my, bw, bhh, bh, wl, wr, cl, cr, darken){
+  if (darken) { wl=darkenColor(wl); wr=darkenColor(wr); cl=darkenColor(cl); cr=darkenColor(cr); }
+  X.strokeStyle = '#000000'; X.lineWidth = 1.3; X.lineJoin = 'round';
+  let bL=[mx-bw,my+bhh], bB=[mx,my+bhh*2], bR=[mx+bw,my+bhh];           // base corners
+  let tL=[mx-bw,my+bhh-bh], tB=[mx,my+bhh*2-bh], tR=[mx+bw,my+bhh-bh];  // wall tops
+  let tT=[mx,my-bh];                                                    // cap back vertex
+  X.fillStyle = wl; X.beginPath();
+  X.moveTo(...tL); X.lineTo(...tB); X.lineTo(...bB); X.lineTo(...bL); X.closePath(); X.fill();
+  X.fillStyle = wr; X.beginPath();
+  X.moveTo(...tB); X.lineTo(...tR); X.lineTo(...bR); X.lineTo(...bB); X.closePath(); X.fill();
+  // cap: two-tone fills, but outline the diamond PERIMETER only — a
+  // stroked center seam read as an extra line across the top
+  X.fillStyle = cl; X.beginPath();
+  X.moveTo(...tT); X.lineTo(...tB); X.lineTo(...tL); X.closePath(); X.fill();
+  X.fillStyle = cr; X.beginPath();
+  X.moveTo(...tT); X.lineTo(...tR); X.lineTo(...tB); X.closePath(); X.fill();
+  X.beginPath();
+  X.moveTo(...tT); X.lineTo(...tR); X.lineTo(...tB); X.lineTo(...tL); X.closePath(); X.stroke();
+  // hard outline: sides, wall-top edges, center seam — no bottom
+  X.beginPath();
+  X.moveTo(...bL); X.lineTo(...tL); X.lineTo(...tB); X.lineTo(...tR); X.lineTo(...bR);
+  X.moveTo(...tB); X.lineTo(...bB);
+  X.stroke();
+  // light bottom seam
+  X.save();
+  X.strokeStyle = 'rgba(0,0,0,0.13)'; X.lineWidth = 1;
+  X.beginPath(); X.moveTo(...bL); X.lineTo(...bB); X.lineTo(...bR); X.stroke();
+  X.restore();
+}
+
 // GATE's 4-merlon battlement cap, shared between its back and front posts.
 function drawBastionMerlons(cx, cy, colorL, colorR, darken){
   let m = [
@@ -364,11 +446,44 @@ function drawBastionMerlons(cx, cy, colorL, colorR, darken){
     { x: cx + 10, y: cy - 30 }, // Right
     { x: cx,      y: cy - 25 }  // Bottom
   ];
-  m.forEach(p => drawBuildingBlock(p.x, p.y, 4, 2, 5, '#c8c0ae', '#a89f8d', 'flat', 0, colorL, colorR, darken));
+  m.forEach(p => drawMerlonBlock(p.x, p.y, 4, 2, 5, '#c8c0ae', '#a89f8d', colorL, colorR, darken));
+}
+
+// Per-age look tables (owner's teamAge). Restraint by design: only the
+// NON-team wood/plaster fills shift — team-color roofs/trim stay untouched
+// so team identity always wins. One accessory change max per building
+// (TC merlons+flag are Castle-only; see below).
+const AGE_WALLS = [
+  { gl: '#e0c294', gr: '#c2a06e' },  // dark: rough wattle/daub
+  { gl: '#ebd2b0', gr: '#d2b48c' },  // feudal: today's plastered look
+  { gl: '#e8dcc8', gr: '#cfc0a4' }   // castle: whitewashed/limewashed
+];
+// Adds one building's ground-shadow diamond to the CURRENT canvas path
+// (no fill here). All shadows are accumulated and filled ONCE per frame in
+// render.js before any building paints — a union fill means overlapping
+// shadows of adjacent wall segments don't double-darken, and no shadow can
+// land on top of an already-drawn neighbor. Footprint grown slightly and
+// nudged toward the lower-right (away from the upper-left light); FARM is
+// a flat field — nothing to cast.
+function buildingShadowPath(e){
+  if (e.btype === 'FARM') return;
+  let b = BLDGS[e.btype];
+  let iso = toIso(e.x + b.w/2, e.y + b.h/2);
+  let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
+  if (isOffscreen(sx, sy, 100)) return;
+  let bw = b.w * HALF_TW, bhh = b.h * HALF_TH;
+  let g = 1.06, ox = 3, oy = 1.5;
+  X.moveTo(sx + ox, sy - bhh * g + oy);
+  X.lineTo(sx + bw * g + ox, sy + oy);
+  X.lineTo(sx + ox, sy + bhh * g + oy);
+  X.lineTo(sx - bw * g + ox, sy + oy);
+  X.closePath();
 }
 
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
+  let ownerAge = (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
+  let aw = AGE_WALLS[ownerAge] || AGE_WALLS[1];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
   let iso=toIso(cx,cy);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
@@ -405,8 +520,86 @@ function drawBuilding(e, part = null){
     X.fill();
     X.stroke();
 
-    // 1. Tall Main Keep Tower (solid stone, centered in the back quadrant)
-    drawBuildingBlock(sx, sy, 48, 24, 60, '#ded5c2','#bcb29b','flat',0,'#b7ad97','#b7ad97', darken);
+    // 1. Tall Main Keep Tower — stone from Feudal on; the DARK-age keep is
+    // a timber hall (plank walls + half-timber framing below), so a fresh
+    // town doesn't read as a finished castle.
+    let keepWood = ownerAge === 0;
+    let kL = keepWood ? WOOD.plankL : '#ded5c2';
+    let kR = keepWood ? WOOD.plankR : '#bcb29b';
+    // Up-facing rim is the brightest face — same light rule as the merlon
+    // caps (light from upper-left: top > left wall > right wall).
+    let kT = keepWood ? '#c8a878' : '#ece4d2';
+    drawBuildingBlock(sx, sy, 48, 24, 60, kL, kR, 'flat', 0, kT, kT, darken, ownerAge >= 2);
+    if (keepWood) {
+      // Half-timber framing on both visible faces: corner-to-corner studs
+      // and a mid-rail, same beam brown as the house's framing.
+      let beam = darken ? darkenColor('#6e5138') : '#6e5138';
+      X.strokeStyle = beam; X.lineWidth = 1.6;
+      [0.22, 0.78].forEach(t => { // symmetric — flanking the face-centered windows
+        // left face runs from (sx-48,sy+24) toward (sx,sy+48)
+        X.beginPath(); X.moveTo(sx - 48 + 48 * t, sy + 24 + 24 * t - 60); X.lineTo(sx - 48 + 48 * t, sy + 24 + 24 * t); X.stroke();
+        // right face runs from (sx,sy+48) toward (sx+48,sy+24)
+        X.beginPath(); X.moveTo(sx + 48 * t, sy + 48 - 24 * t - 60); X.lineTo(sx + 48 * t, sy + 48 - 24 * t); X.stroke();
+      });
+      // (no mid-rail — the material pass's light course line already
+      // marks mid-height; a dark beam there doubled the line)
+      X.strokeStyle = '#000000'; X.lineWidth = 1.3;
+    }
+    // Recessed rooftop behind a raised parapet rim — properly 3D: the rim
+    // keeps the cap color, the floor sits a few px LOWER, and the two far
+    // inner walls are drawn so the recess reads as real depth instead of a
+    // painted-on diamond. At Castle the merlons perch on the rim: the
+    // opening is inset to 32/48 so its lip meets the merlons' inner
+    // faces (merlon centers at ±40, half-width 8 → inner edge ±32).
+    {
+      let rcx = sx, rcy = sy - 36; // center of the top diamond
+      let inset = 32 / 48, depth = 5;
+      let ins = ([cx2, cy2]) => [rcx + (cx2 - rcx) * inset, rcy + (cy2 - rcy) * inset];
+      let N = ins([sx, sy - 60]), E = ins([sx + 48, sy - 36]), S = ins([sx, sy - 12]), W = ins([sx - 48, sy - 36]);
+      let dn = ([x2, y2]) => [x2, y2 + depth];
+      // Light model: with one distant light (upper-left), a face's color
+      // depends ONLY on its orientation — the N→E inner face looks SW so
+      // it's kL, the W→N face looks SE so it's kR, the floor faces up so
+      // it's kT. Depth inside the pit comes from the CAST shadow below,
+      // not from repainting the material darker.
+      let wallSE = darken ? darkenColor(kR) : kR;
+      let wallSW = darken ? darkenColor(kL) : kL;
+      let floorC = darken ? darkenColor(kT) : kT;
+      // The recess is drawn FLAT (every floor corner dropped by the same
+      // depth) and clipped to the rim opening — the front rim then occludes
+      // the floor's near edge naturally. (Dropping only the back corner
+      // read as a sloped floor; letting the shifted diamond overhang the
+      // front rim flattened the illusion.)
+      let openingPath = () => {
+        X.beginPath();
+        X.moveTo(...N); X.lineTo(...E); X.lineTo(...S); X.lineTo(...W); X.closePath();
+      };
+      X.save();
+      openingPath(); X.clip();
+      // interior seams in the light course-line stroke — hard black inside
+      // the pit fought with the light-seam masonry look everywhere else
+      X.strokeStyle = 'rgba(0,0,0,0.13)'; X.lineWidth = 1;
+      X.fillStyle = wallSE; X.beginPath();
+      X.moveTo(...W); X.lineTo(...N); X.lineTo(...dn(N)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
+      X.fillStyle = wallSW; X.beginPath();
+      X.moveTo(...N); X.lineTo(...E); X.lineTo(...dn(E)); X.lineTo(...dn(N)); X.closePath(); X.fill(); X.stroke();
+      X.fillStyle = floorC; X.beginPath();
+      X.moveTo(...dn(N)); X.lineTo(...dn(E)); X.lineTo(...dn(S)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
+      // Cast shadow: light from upper-left, so the west rim throws a soft
+      // band across the floor along the W→N wall base (no outline — it's
+      // shadow, not geometry).
+      let sh = 7; // how far the shadow reaches across the floor
+      let off = ([x2, y2]) => [x2 + sh, y2 + sh * 0.5];
+      X.fillStyle = 'rgba(0,0,0,0.13)'; X.beginPath();
+      X.moveTo(...dn(W)); X.lineTo(...dn(N)); X.lineTo(...off(dn(N))); X.lineTo(...off(dn(W))); X.closePath(); X.fill();
+      X.restore();
+      // Rim's inner lip outline on top of the clipped fill — light, like
+      // the rest of the masonry seams (the depth cues carry the recess)
+      X.save();
+      X.strokeStyle = 'rgba(0,0,0,0.13)'; X.lineWidth = 1;
+      openingPath(); X.stroke();
+      X.restore();
+    }
     // 3D Castle battlements (crenellations) on flat top edges
     let merlons = [
       { x: sx,      y: sy - 56 }, // Top corner (0px gap to top)
@@ -419,160 +612,79 @@ function drawBuilding(e, part = null){
       { x: sx,      y: sy - 16 }  // Bottom corner (0px gap to bottom)
     ];
 
-    let drawMerlon = (mx, my) => {
-      let wl = '#ded5c2', wr = '#bcb29b', rf = '#b7ad97';
-      if (darken) {
-        wl = darkenColor(wl);
-        wr = darkenColor(wr);
-        rf = darkenColor(rf);
-      }
-      X.strokeStyle = '#000000';
-      X.lineWidth = 1.3;
-      X.lineJoin = 'round';
+    // Merlons are the same masonry as the keep, lit the same way — the
+    // keep's face palette (bright cap kT, walls kL/kR) via the shared
+    // merlon block (light bottom seam so they connect to the rim).
+    let drawMerlon = (mx, my) => drawMerlonBlock(mx, my - 4, 8, 4, 10, kL, kR, kT, kT, darken);
 
-      // 1. Left Wall (fully outlined)
-      X.fillStyle = wl;
-      X.beginPath();
-      X.moveTo(mx - 8, my - 10);
-      X.lineTo(mx, my - 6);
-      X.lineTo(mx, my + 4);
-      X.lineTo(mx - 8, my);
-      X.closePath();
-      X.fill();
-      X.stroke();
-
-      // 2. Right Wall (fully outlined)
-      X.fillStyle = wr;
-      X.beginPath();
-      X.moveTo(mx, my - 6);
-      X.lineTo(mx + 8, my - 10);
-      X.lineTo(mx + 8, my);
-      X.lineTo(mx, my + 4);
-      X.closePath();
-      X.fill();
-      X.stroke();
-
-      // 3. Flat Top (fully outlined)
-      X.fillStyle = rf;
-      X.beginPath();
-      X.moveTo(mx, my - 14);
-      X.lineTo(mx + 8, my - 10);
-      X.lineTo(mx, my - 6);
-      X.lineTo(mx - 8, my - 10);
-      X.closePath();
-      X.fill();
-      X.stroke();
-    };
-
-    merlons.forEach(m => {
+    // Crenellations are the TC's Castle-age accessory — earlier ages read
+    // as a plain keep.
+    if (ownerAge >= 2) merlons.forEach(m => {
       drawMerlon(m.x, m.y);
     });
 
-    // 3D Recessed arrow-loop windows on keep walls (perfectly aligned with wall perspective & depth)
+    // 3D Recessed windows on the keep walls. One helper, mirrored by the
+    // wall slope m (+0.5 left face, -0.5 right face). The 3D read comes
+    // from real architectural parts, all following the global light:
+    //  - lintel UNDERSIDE at the top of the reveal (darkest — faces down)
+    //  - side jamb on the light side of the reveal (mid tone)
+    //  - deep dark opening
     let winFill = darken ? darkenColor('#1c1c1c') : '#1c1c1c';
-    let stoneShadow = darken ? darkenColor('#a0a098') : '#bcb29b';
-    let stoneDark = darken ? darkenColor('#8c8c84') : '#a8a8a0';
+    let jambC   = darken ? darkenColor(keepWood ? '#a97e4a' : '#bcb29b') : (keepWood ? '#a97e4a' : '#bcb29b');
+    let lintelC = darken ? darkenColor(keepWood ? '#6f5330' : '#7c766b') : (keepWood ? '#6f5330' : '#7c766b');
 
-    X.strokeStyle = '#000000';
-    X.lineWidth = 1.3;
-    X.lineJoin = 'round';
+    let drawKeepWindow = (wx2, wy2, m) => {
+      X.save(); X.translate(wx2, wy2); X.scale(1.3, 1.3); X.translate(-wx2, -wy2);
+      X.strokeStyle = '#000000'; X.lineWidth = 1.3; X.lineJoin = 'round';
+      let P = (x, yc) => ({ x: wx2 + x, y: wy2 + yc });
+      // outer frame (vertical sides, top/bottom edges follow the wall slope)
+      let O1 = P(-4, -7 - 4*m), O2 = P(4, -7 + 4*m), O3 = P(4, 7 + 4*m), O4 = P(-4, 7 - 4*m);
+      // opening, recessed INTO the wall (sideways along the face + down)
+      let B = o => ({ x: o.x + 4*m, y: o.y + 1.5 });
+      let B1 = B(O1), B2 = B(O2), B3 = B(O3), B4 = B(O4);
 
-    // 1. Left Wall Window (skewed 2:1 up-right, recessed inwards-right)
-    let lwx = sx - 24, lwy = sy - 6;
-    let lO1 = { x: lwx - 4, y: lwy - 9 };
-    let lO2 = { x: lwx + 4, y: lwy - 5 };
-    let lO3 = { x: lwx + 4, y: lwy + 9 };
-    let lO4 = { x: lwx - 4, y: lwy + 5 };
+      // Everything inside the reveal is CLIPPED to the outer frame — the
+      // recessed quads shift sideways into the wall and would otherwise
+      // poke past the frame on the recess side.
+      let framePath = () => {
+        X.beginPath();
+        X.moveTo(O1.x, O1.y); X.lineTo(O2.x, O2.y); X.lineTo(O3.x, O3.y); X.lineTo(O4.x, O4.y);
+        X.closePath();
+      };
+      X.save();
+      framePath(); X.clip();
+      // deep dark opening
+      X.fillStyle = winFill; X.beginPath();
+      X.moveTo(B1.x, B1.y); X.lineTo(B2.x, B2.y); X.lineTo(B3.x, B3.y); X.lineTo(B4.x, B4.y);
+      X.closePath(); X.fill();
+      // side jamb reveal (the side opposite the recess shift stays visible)
+      let J1 = m > 0 ? O1 : O2, J2 = m > 0 ? O4 : O3;
+      let JB1 = m > 0 ? B1 : B2, JB2 = m > 0 ? B4 : B3;
+      X.fillStyle = jambC; X.beginPath();
+      X.moveTo(J1.x, J1.y); X.lineTo(JB1.x, JB1.y); X.lineTo(JB2.x, JB2.y); X.lineTo(J2.x, J2.y);
+      X.closePath(); X.fill();
+      // lintel underside across the top of the reveal (darkest)
+      X.fillStyle = lintelC; X.beginPath();
+      X.moveTo(O1.x, O1.y); X.lineTo(O2.x, O2.y); X.lineTo(B2.x, B2.y); X.lineTo(B1.x, B1.y);
+      X.closePath(); X.fill();
+      // light interior seams (reveal edges)
+      X.strokeStyle = 'rgba(0,0,0,0.2)'; X.lineWidth = 1;
+      X.beginPath();
+      X.moveTo(JB1.x, JB1.y); X.lineTo(JB2.x, JB2.y);
+      X.moveTo(B1.x, B1.y); X.lineTo(B2.x, B2.y);
+      X.stroke();
+      X.restore();
+      // dark outer frame on top of the clipped interior — no protruding
+      // sill: it read as a tacked-on slab at this scale; the lintel
+      // shadow + jamb + deep opening carry the 3D on their own
+      framePath(); X.stroke();
+      X.restore();
+    };
 
-    let lB1 = { x: lwx - 2, y: lwy - 8 };
-    let lB2 = { x: lwx + 6, y: lwy - 4 };
-    let lB3 = { x: lwx + 6, y: lwy + 10 };
-    let lB4 = { x: lwx - 2, y: lwy + 6 };
-
-    // Fill inside left wall depth panel
-    X.fillStyle = stoneShadow;
-    X.beginPath();
-    X.moveTo(lO1.x, lO1.y);
-    X.lineTo(lB1.x, lB1.y);
-    X.lineTo(lB4.x, lB4.y);
-    X.lineTo(lO4.x, lO4.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Fill inside bottom ledge depth panel
-    X.fillStyle = stoneDark;
-    X.beginPath();
-    X.moveTo(lO4.x, lO4.y);
-    X.lineTo(lB4.x, lB4.y);
-    X.lineTo(lB3.x, lB3.y);
-    X.lineTo(lO3.x, lO3.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Fill dark back wall opening
-    X.fillStyle = winFill;
-    X.beginPath();
-    X.moveTo(lB1.x, lB1.y);
-    X.lineTo(lB2.x, lB2.y);
-    X.lineTo(lB3.x, lB3.y);
-    X.lineTo(lB4.x, lB4.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Outer frame outline
-    X.beginPath();
-    X.moveTo(lO1.x, lO1.y);
-    X.lineTo(lO2.x, lO2.y);
-    X.lineTo(lO3.x, lO3.y);
-    X.lineTo(lO4.x, lO4.y);
-    X.closePath(); X.stroke();
-
-    // 2. Right Wall Window (skewed 2:1 down-right, recessed inwards-left)
-    let rwx = sx + 24, rwy = sy - 6;
-    let rO1 = { x: rwx - 4, y: rwy - 5 };
-    let rO2 = { x: rwx + 4, y: rwy - 9 };
-    let rO3 = { x: rwx + 4, y: rwy + 5 };
-    let rO4 = { x: rwx - 4, y: rwy + 9 };
-
-    let rB1 = { x: rwx - 6, y: rwy - 4 };
-    let rB2 = { x: rwx + 2, y: rwy - 8 };
-    let rB3 = { x: rwx + 2, y: rwy + 6 };
-    let rB4 = { x: rwx - 6, y: rwy + 10 };
-
-    // Fill inside right wall depth panel
-    X.fillStyle = stoneShadow;
-    X.beginPath();
-    X.moveTo(rO2.x, rO2.y);
-    X.lineTo(rB2.x, rB2.y);
-    X.lineTo(rB3.x, rB3.y);
-    X.lineTo(rO3.x, rO3.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Fill inside bottom ledge depth panel
-    X.fillStyle = stoneDark;
-    X.beginPath();
-    X.moveTo(rO4.x, rO4.y);
-    X.lineTo(rB4.x, rB4.y);
-    X.lineTo(rB3.x, rB3.y);
-    X.lineTo(rO3.x, rO3.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Fill dark back wall opening
-    X.fillStyle = winFill;
-    X.beginPath();
-    X.moveTo(rB1.x, rB1.y);
-    X.lineTo(rB2.x, rB2.y);
-    X.lineTo(rB3.x, rB3.y);
-    X.lineTo(rB4.x, rB4.y);
-    X.closePath(); X.fill(); X.stroke();
-
-    // Outer frame outline
-    X.beginPath();
-    X.moveTo(rO1.x, rO1.y);
-    X.lineTo(rO2.x, rO2.y);
-    X.lineTo(rO3.x, rO3.y);
-    X.lineTo(rO4.x, rO4.y);
-    X.closePath(); X.stroke();
-
-
-
+    // Scaled up around their centers — read better against the larger keep
+    // and sit centered between the Dark-age framing studs.
+    drawKeepWindow(sx - 24, sy - 6,  0.5); // left wall window
+    drawKeepWindow(sx + 24, sy - 6, -0.5); // right wall window
     // 2. Wooden posts, drawn BEFORE the annex roofs so the tent cloth
     // overlaps the pole tops (sorted back-to-front for depth)
     let posts = [
@@ -583,7 +695,7 @@ function drawBuilding(e, part = null){
       { x: sx,      y: sy + 48, h: 16 }  // Center
     ];
     posts.sort((a, b) => a.y - b.y);
-    let postColor = '#8a6a4a';
+    let postColor = WOOD.post;
     let pc = darken ? darkenColor(postColor) : postColor;
     X.lineJoin = 'round';
     // Contact shadows on the ground first, so every pole overlaps them
@@ -610,7 +722,15 @@ function drawBuilding(e, part = null){
 
     // Team banner flying from the keep top
     // 68 plants the pole base exactly on the top merlon's cap (sy-70)
-    if(e.complete) drawWavingFlag(sx, sy, 68, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD);
+    // Every age flies the banner (only merlons are Castle-gated). Pole is
+    // PLANTED on the recessed roof floor (sy-31) and long enough to fly
+    // the flag clear above the rim.
+    // At Castle the pole moves up onto the back merlon's cap (sy-70);
+    // earlier ages plant it on the recessed roof floor as before.
+    if(e.complete){
+      if (ownerAge >= 2) drawWavingFlag(sx, sy, 68, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 22);
+      else drawWavingFlag(sx, sy, 29, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 42);
+    }
   }
   else if(e.btype==='HOUSE'){
     // Timber-framed cottage under a big yellow hay gable roof.
@@ -625,9 +745,9 @@ function drawBuilding(e, part = null){
     let W=32, hh=16, wallH=16, roofH=20;
     bh=32;
     let sy0=sy+bhh-hh; // center on tile
-    let beam=darken?darkenColor('#7a5a38'):'#7a5a38';
+    let beam=darken?darkenColor(WOOD.beam):WOOD.beam;
     let {M1,M2,M1e,M2e,EL,EB} = drawGableBlock(sx, sy0, W, hh, wallH, roofH,
-      '#ebd2b0', '#d2b48c', tc, '#7a5a38', darken, ()=>{
+      aw.gl, aw.gr, tc, WOOD.beam, darken, ()=>{
         // Half-timber framing: studs and a mid-rail per face
         X.strokeStyle=beam;X.lineWidth=1.6;
         [0.35,0.7].forEach(t=>{
@@ -678,6 +798,41 @@ function drawBuilding(e, part = null){
   }
   else if(e.btype==='BARRACKS'){
     bh=32;
+    // Small tethered horse in side profile (east-facing), one-piece
+    // silhouette: rump -> back -> neck crest -> head -> muzzle -> chest ->
+    // belly. Used by the age-gated hitching rail below to advertise that
+    // this building trains cavalry.
+    let drawYardHorse=(hx,hy,coat,maneC,s=1)=>{ // s: outer scale — divide stroke widths so outlines stay on-style
+      let c=darken?darkenColor(coat):coat, m=darken?darkenColor(maneC):maneC;
+      X.strokeStyle='#000';X.lineJoin='round';X.lineCap='round';
+      // legs (black outline, coat core)
+      [[-5.5,0],[-2.5,0.4],[3,0.4],[5.5,0]].forEach(([lx,ly])=>{
+        X.lineWidth=2.6/s;X.strokeStyle='#000';
+        X.beginPath();X.moveTo(hx+lx,hy-5+ly);X.lineTo(hx+lx,hy+ly);X.stroke();
+        X.lineWidth=1.2/s;X.strokeStyle=c;
+        X.beginPath();X.moveTo(hx+lx,hy-5+ly);X.lineTo(hx+lx,hy+ly-0.8);X.stroke();
+      });
+      X.strokeStyle='#000';X.lineWidth=1.2/s;
+      // body + neck + head silhouette
+      X.fillStyle=c;X.beginPath();
+      X.moveTo(hx-7,hy-6);                              // rump
+      X.quadraticCurveTo(hx-8.5,hy-10,hx-5,hy-10.5);    // over the rump
+      X.lineTo(hx+2,hy-10.5);                           // back
+      X.quadraticCurveTo(hx+5.5,hy-11,hx+6.5,hy-15);    // neck crest
+      X.quadraticCurveTo(hx+7,hy-17,hx+9,hy-16.5);      // poll
+      X.lineTo(hx+11.5,hy-14.5);                        // muzzle top
+      X.quadraticCurveTo(hx+11.8,hy-13,hx+10,hy-12.8);  // squared muzzle
+      X.quadraticCurveTo(hx+8,hy-12.5,hx+7.5,hy-10.5);  // jaw
+      X.quadraticCurveTo(hx+7.5,hy-7.5,hx+5.5,hy-6.2);  // chest
+      X.quadraticCurveTo(hx,hy-4.8,hx-4.5,hy-5.6);      // belly
+      X.closePath();X.fill();X.stroke();
+      // mane + tail
+      X.strokeStyle=m;X.lineWidth=2/s;
+      X.beginPath();X.moveTo(hx+3,hy-10.8);X.quadraticCurveTo(hx+5.8,hy-12.5,hx+6.8,hy-15.5);X.stroke();
+      let sw=visible?Math.sin(tick*0.06+e.id)*0.8:0;
+      X.beginPath();X.moveTo(hx-7,hy-9.5);X.quadraticCurveTo(hx-9.5+sw,hy-6,hx-8.5+sw,hy-1.5);X.stroke();
+      X.strokeStyle='#000';X.lineWidth=1.2/s;X.lineCap='butt';
+    };
     // 1. Sleeping-quarters annex at the back (team-colored roof)
     drawGableBlock(sx+2, sy+10, 20, 10, 13, 12, '#b89868','#987848',tc,'#6e5138', darken);
     // 2. Main garrison longhouse in front-left (team-colored roof)
@@ -685,10 +840,23 @@ function drawBuilding(e, part = null){
     // Door on the longhouse left wall
     drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24', darken);
 
-    // 3. Corner stone watchtower with a team-colored pyramid cap; the
-    // flagpole is planted exactly on the pyramid's apex (sy-8).
-    drawBuildingBlock(sx+32, sy+32, 16, 8, 30, '#cfc8b6','#aca392','conical',10,tc,tcD, darken);
-    if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 38, tc, tcD);
+    // 3. Corner watchtower — the barracks' age tell, matching the TC's
+    // progression: TIMBER in the Dark age, dressed stone from Feudal, and
+    // a crenellated flat top (merlons replace the pyramid cap) at Castle.
+    let twL = ownerAge === 0 ? WOOD.L : '#cfc8b6';
+    let twR = ownerAge === 0 ? WOOD.R : '#aca392';
+    // Same bastion element as the watch tower / gate posts: 14x7 footprint,
+    // stone-wall palette, merlons seated with the tower's +28 anchor (top
+    // face center is sy+9 here) so the crenellation reads identically.
+    if (ownerAge >= 2) {
+      drawBuildingBlock(sx+32, sy+32, 14, 7, 30, twL, twR, 'flat', 0, '#b7ad97', '#b7ad97', darken, true);
+      drawBastionMerlons(sx+32, sy+37, '#e0d8c6', '#c4bba6', darken);
+      // pole planted on the back merlon's cap (sy-1), like the tower
+      if(e.complete && visible) drawWavingFlag(sx+32, sy+30, 29, tc, tcD);
+    } else {
+      drawBuildingBlock(sx+32, sy+32, 14, 7, 30, twL, twR, 'conical', 10, tc, tcD, darken);
+      if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 38, tc, tcD);
+    }
 
     // 4. Fenced training yard
     X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
@@ -696,6 +864,21 @@ function drawBuilding(e, part = null){
     X.lineTo(sx,sy+64);X.lineTo(sx-32,sy+48);X.closePath();
     X.fill();
     X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
+
+    // Horses penned at the BACK of the training yard (drawn before the
+    // dummy/target so they read as standing behind them) — the visual tell
+    // that this barracks trains cavalry: the bay appears when scouts
+    // unlock (Feudal), the knight's white charger joins at Castle.
+    if(ownerAge >= 1){
+      let hs = 1.5;
+      let horseAt = (hx, hy, coat, maneC) => {
+        X.save(); X.translate(hx, hy); X.scale(hs, hs); X.translate(-hx, -hy);
+        drawYardHorse(hx, hy, coat, maneC, hs);
+        X.restore();
+      };
+      horseAt(sx + 6, sy + 45, '#8b5a2b', '#3f2810');             // Feudal bay (scout)
+      if(ownerAge >= 2) horseAt(sx + 20, sy + 51, '#e9e6de', '#9a948a'); // Castle white charger (knight)
+    }
 
     // Straw training dummy in the yard
     let dxp=sx-10, dyp=sy+52;
@@ -712,8 +895,9 @@ function drawBuilding(e, part = null){
     X.fillStyle=darken ? darkenColor('#e8c04a') : '#e8c04a'; // straw head
     X.beginPath();X.arc(dxp,dyp-14.5,2.6,0,Math.PI*2);X.fill();X.stroke();
 
-    // Archery target board
-    let tgx=sx+12, tgy=sy+46;
+    // Archery target board (left half of the yard, next to the dummy —
+    // the right half is the horse pen once cavalry unlocks)
+    let tgx=sx-22, tgy=sy+46;
     X.strokeStyle='#000000';X.lineWidth=1.5;
     X.beginPath();X.moveTo(tgx,tgy);X.lineTo(tgx,tgy-8);X.stroke();
     X.fillStyle=darken ? darkenColor('#fff') : '#fff';X.beginPath();X.arc(tgx,tgy-8,3.5,0,Math.PI*2);X.fill();X.stroke();
@@ -728,6 +912,7 @@ function drawBuilding(e, part = null){
     X.moveTo(sx+16,sy+56);X.lineTo(sx+16,sy+51);
     X.moveTo(sx-16,sy+56);X.lineTo(sx-16,sy+51);
     X.stroke();
+
   }
   else if(e.btype==='LCAMP'){
     bh=30;
@@ -877,59 +1062,100 @@ function drawBuilding(e, part = null){
     let linkY = sy + 16;
     let wallH = 14;
 
-    // Castle Age Watch Tower — 3 stacked blocks. Base is shifted so its
+    // Watch Tower — 3 stacked blocks. Base is shifted so its
     // front-bottom vertex lands on linkY (sy+16), same as wall pillars,
     // so the wall link's near edge meets the tower with no gap. Drawn
     // before the links (like WALL's pillar) since the links extend
     // toward the viewer and should overlap the tower's base, not be
     // hidden behind it.
-    drawBuildingBlock(sx, sy+2+7, 14, 7, 30, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#989890', darken);
-    drawBuildingBlock(sx, sy+2-22, 16, 8, 6, '#b89868', '#987848', 'flat', 0, '#a08050', '#806030', darken);
-    drawBuildingBlock(sx, sy+2-28, 12, 6, 8, '#c8c0ae', '#a89f8d', 'peaked', 6, tc, tcD, darken);
+    // Age look (tower unlocks at Feudal): FEUDAL keeps the peaked
+    // team-color cap; CASTLE swaps it for a crenellated flat top —
+    // same wood→stone→merlons progression as the TC and barracks tower.
+    // The tower IS a gate bastion, just taller — same 14x7 footprint,
+    // same stone-wall palette (GATE/WALL pf stone), same merlon cap —
+    // so a tower embedded in a wall run reads as kin to the gate posts.
+    // Feudal wears a peaked team-color roof; Castle swaps it for merlons.
+    let pfS = ['#cfc8b6', '#aca392', '#b7ad97'];
+    let towerH = 40; // gate posts use pillarH 22
+    drawBuildingBlock(sx, linkY-7, 14, 7, towerH, pfS[0], pfS[1], 'flat', 0, pfS[2], pfS[2], darken, ownerAge >= 2);
+    // arrow slits on BOTH visible faces — arrows can come from either side
+    X.fillStyle = '#1c1c1c';
+    X.save(); X.translate(sx-7, sy-4); X.transform(1,0.5,0,1,0,0);
+    X.fillRect(-1.2,-6,2.4,10); X.restore();
+    X.save(); X.translate(sx+7, sy-4); X.transform(1,-0.5,0,1,0,0);
+    X.fillRect(-1.2,-6,2.4,10); X.restore();
+    if (ownerAge >= 2) {
+      // +28 (not the gate's +22): seats the side merlons' bases ON the
+      // crown's top face — at the gate's height the small float is masked
+      // by the door behind, here it read as merlons hovering in air
+      drawBastionMerlons(sx, linkY - towerH + 28, '#e0d8c6', '#c4bba6', darken);
+    } else {
+      drawBuildingBlock(sx, linkY - towerH - 6, 12, 6, 4, pfS[0], pfS[1], 'peaked', 8, tc, tcD, darken);
+    }
 
     // South and East links can both originate from this same corner
     // point, same as GATE's front post (which also has two links
     // diverging from one vertex) — use d1=8 there too so the two stubs
     // clear each other instead of clipping at the shared vertex.
-    // South neighbor (y+1)
-    if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
-      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8);
+    // South neighbor (y+1) — towers join runs of EITHER material; the link
+    // stub takes the neighbor's material so it reads as that run continuing.
+    let sN = getConnectedBuilding(e.x, e.y + 1);
+    if (isWallLike(sN)) {
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, wallMat(sN.btype) || 'wood');
     }
 
     // East neighbor (x+1)
-    if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
-      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8);
+    let eN = getConnectedBuilding(e.x + 1, e.y);
+    if (isWallLike(eN)) {
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, wallMat(eN.btype) || 'wood');
     }
 
-    // 36 centers the pole on the peaked cap's ridge (sy-40..sy-28) instead
-    // of perching it on the ridge's back end
-    if (e.complete && visible) drawWavingFlag(sx, sy+2, 36, tc, tcD);
+    // Castle: pole planted on the back merlon's cap (sy-40), matching the
+    // TC. Feudal: pole rises from the peaked cap's apex (sy-42).
+    if (e.complete && visible) drawWavingFlag(sx, sy, ownerAge >= 2 ? 32 : 40, tc, tcD);
   }
-  else if(e.btype==='WALL'){
+  else if(isWallBtype(e.btype)){
     bh=14;
     let pillarH = 22;
     let wallH = 14;   // lower than pillar to create bastion crenellated effect
     let linkY = sy + 16;
+    // Material palette: palisade wood vs stone greys — links only join the
+    // SAME material (a palisade run and a stone run stay visually separate).
+    let mat = wallMat(e.btype);
+    let pf = mat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : [WOOD.L, WOOD.R, WOOD.top];
 
-    // 1. Draw central pillar first (centered concentrically at sy+16)
+    // 1. Draw central pillar first (centered concentrically at sy+16) —
+    // links draw AFTER so the walkway visibly connects between the
+    // mini towers instead of being swallowed by them.
     // Colors match drawWallLink's palette so the pillar reads as part of
-    // the same wall run instead of a separately-shaded block; top is a
-    // single flat color rather than a two-tone faceted cap.
-    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, '#cfc8b6', '#aca392', 'flat', 0, '#b7ad97', '#b7ad97', darken);
+    // the same wall run instead of a separately-shaded block. Pillar caps
+    // and walkway link tops are all team-colored (ownership read) — the
+    // cap as a SINGLE flat color, like the links' flat tops.
+    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
+    // Slab half-thickness 4.5 makes the link's 9px cross-section match
+    // the pillar's half-width exactly, and d1 = 2.25*sqrt(5) centers it:
+    // the near-end edge lands on the pillar's FRONT vertical edge and the
+    // back top corner on its BACK vertical edge, so both outlines
+    // coincide with the pillar's instead of doubling into thick lines.
+    // (linkY - 0.5: the 4.5-thick slab's bottom front corner otherwise
+    // lands 0.5px below the pillar's bottom vertex)
+    let d1 = 2.25 * Math.sqrt(5);
     // South neighbor (y+1)
-    if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
-      drawWallLink(sx, linkY, -32, 16, wallH, darken);
+    if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
+      drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, 4.5, false, mat);
     }
 
     // East neighbor (x+1)
-    if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
-      drawWallLink(sx, linkY, 32, 16, wallH, darken);
+    if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
+      drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, 4.5, false, mat);
     }
   }
 
-  else if(e.btype==='GATE'){
+  else if(isGateBtype(e.btype)){
+    let mat = wallMat(e.btype);
+    let pf = mat === 'stone' ? ['#c8c0ae', '#a89f8d', '#b0b0a4'] : [WOOD.L, WOOD.R, WOOD.top];
     let pillarH = 28;
     bh = pillarH;
     let t1sx, t1sy, t2sx, t2sy;
@@ -954,10 +1180,14 @@ function drawBuilding(e, part = null){
 
     if (part === 'back' || part === null) {
       // 1. Draw back post (Tower 1 - larger bastion centered at t1sy-7)
-      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+      // Pre-Castle the post top is team-colored like the wall walkways
+      // (single flat color); at Castle the merlons take over the cap.
+      let postTop = ownerAge >= 2 ? pf[2] : tc;
+      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop, postTop, darken, mat === 'stone' && ownerAge >= 2);
 
-      // Draw battlements (merlons) on Tower 1 top
-      drawBastionMerlons(t1sx, t1sy, '#b0b0a4', '#b0b0a4', darken);
+      // Battlements only on the STONE gate — a timber palisade gate has
+      // plain post tops; the merlons are part of the Feudal upgrade look.
+      if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t1sx, t1sy, '#e0d8c6', '#c4bba6', darken);
 
       if (e.complete) {
         // Sliding solid wood gate door — same style/placement as a wall
@@ -970,13 +1200,13 @@ function drawBuilding(e, part = null){
       let wallH = 14;
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
-          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken);
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
+          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, 5, null, tc, 4, false, mat);
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
-          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken);
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
+          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, 5, null, tc, 4, false, mat);
         }
       }
 
@@ -988,28 +1218,29 @@ function drawBuilding(e, part = null){
 
     if (part === 'front' || part === null) {
       // 2. Draw front post (Tower 2 - larger bastion centered at t2sy-7)
-      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, '#c8c0ae', '#a89f8d', 'flat', 0, '#b0b0a4', '#b0b0a4', darken);
+      let postTop2 = ownerAge >= 2 ? pf[2] : tc;
+      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop2, postTop2, darken, mat === 'stone' && ownerAge >= 2);
 
-      // Draw battlements (merlons) on Tower 2 top
-      drawBastionMerlons(t2sx, t2sy, '#b0b0a4', '#989890', darken);
+      // Battlements only on the STONE gate (see back post above).
+      if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t2sx, t2sy, '#e0d8c6', '#c4bba6', darken);
 
       // Draw connection links for Post 2 (front post centered at t2sy)
       let wallH = 14;
       if (wallLineNS) {
         // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + 2))) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8);
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 2), mat)) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8);
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
         }
       } else {
         // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x + 2, e.y))) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8);
+        if (isWallLike(getConnectedBuilding(e.x + 2, e.y), mat)) {
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8);
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
         }
       }
     }
@@ -1127,6 +1358,15 @@ function drawBuilding(e, part = null){
     X.fillStyle='#000000';X.fillRect(sx-bww/2-1,sy+bhh*2+3,bww+2,5); // black border box
     X.fillStyle='#003';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
     X.fillStyle='#0af';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
+  }
+  // Age research progress — same bar as training, gold fill, updates every
+  // frame (smooth, unlike the throttled panel text).
+  if(e.research){
+    let pct=e.research.tick/AGES[e.research.target].researchTicks;
+    let bww=b.w*24;
+    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,sy+bhh*2+3,bww+2,5);
+    X.fillStyle='#330';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
+    X.fillStyle='#fc0';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
   }
   } // end fog-aware UI
 }

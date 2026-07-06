@@ -2,7 +2,22 @@
 // names match btype/utype: icon-TC, icon-villager, etc). Anything else
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
-  'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE']);
+  'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
+  'knight','SWALL','SGATE','bear','logo']); // 7x7 master sheet cells
+
+// Units whose LOOK changes with age get age-specific icon cells; the base
+// cell is the Feudal look. Falls back to the base key for missing ages.
+const AGE_ICON_VARIANTS = {
+  militia:  {0:'militia-dark', 2:'militia-castle'},
+  spearman: {2:'spearman-castle'},
+  archer:   {2:'archer-castle'},
+  scout:    {2:'scout-castle'},
+};
+function iconKey(type){
+  let v = AGE_ICON_VARIANTS[type];
+  let k = v && teamAge ? v[teamAge[myTeam]] : null;
+  return k || type;
+}
 // window.bellRinging is per-team ([team 0, team 1]), maintained by
 // ringTownBell/soundAllClear in js/logic.js. In single-player team 1 is the
 // AI's bell; in multiplayer it's the guest's own.
@@ -128,6 +143,12 @@ function updateUI(){
       if (fill) fill.style.width = pct + '%';
     }
   }
+  // Same live patch for the Advance button's research fill — smooth every
+  // frame; the button itself only rebuilds on structural changes.
+  if (selected.length === 1 && selected[0].research) {
+    let fill = document.querySelector('#advance-progress-btn .btn-progress-fill');
+    if (fill) fill.style.width = (selected[0].research.tick / AGES[selected[0].research.target].researchTicks * 100).toFixed(1) + '%';
+  }
 
   if (!stateChanged) return;
 
@@ -155,12 +176,24 @@ function updateUI(){
   document.getElementById('r-stone').textContent=currentStone;
   let popEl = document.getElementById('r-pop');
   if (popEl) popEl.textContent = `${myPopUsed}/${myPopCap}`;
+  let ageEl = document.getElementById('r-age');
+  if (ageEl && teamAge) {
+    let crest = ageEl.parentElement.querySelector('.res-icon');
+    if (crest) crest.className = 'res-icon sprite-icon icon-age-' + AGES[teamAge[myTeam]].key;
+    let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
+    ageEl.textContent = myTC
+      ? `→ ${AGES[myTC.research.target].name.replace(' Age','')}…`
+      : AGES[teamAge[myTeam]].name.replace(' Age','');
+    ageEl.parentElement.title = myTC
+      ? 'Advancing to the ' + AGES[myTC.research.target].name + ' — villager training is paused at the Town Center.'
+      : 'Your current age. Advance from the Town Center to unlock new units and buildings.';
+  }
   
   let bellBtn = document.getElementById('bell-btn');
   if(bellBtn) {
     if(gameStarted && !gameOver) {
       bellBtn.style.display = 'flex';
-      bellBtn.textContent = '🔔';
+      bellBtn.innerHTML = '<span class="btn-emoji sprite-icon icon-bell"></span>';
       bellBtn.classList.toggle('bell-active', myBellActive());
       bellBtn.dataset.tipLabel = 'Town Bell';
       bellBtn.dataset.tipDesc = myBellActive()
@@ -175,7 +208,7 @@ function updateUI(){
   if(idleBtn) {
     if(currentIdleCount > 0) {
       idleBtn.style.display = 'flex';
-      idleBtn.innerHTML = `🧑‍🌾<div class="idle-badge">${currentIdleCount}</div>`;
+      idleBtn.innerHTML = `<span class="btn-emoji sprite-icon icon-idle"></span><div class="idle-badge">${currentIdleCount}</div>`;
       idleBtn.classList.add('idle-active');
       idleBtn.dataset.tipLabel = 'Idle Villager';
       idleBtn.dataset.tipDesc = `${currentIdleCount} villager${currentIdleCount>1?'s are':' is'} idle. Click to select and cycle through them.`;
@@ -187,7 +220,10 @@ function updateUI(){
 
   let act=document.getElementById('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally
-    +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0);
+    +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
+    // age + research flip which buttons EXIST (locked ones are hidden, wall/
+    // gate slots upgrade to stone at Feudal) — the panel must rebuild then.
+    +':'+(teamAge?teamAge[myTeam]:0)+':'+!!(selected[0]&&selected[0].research);
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
@@ -349,14 +385,14 @@ function updateUI(){
     return;
   }
   if(!gameStarted){
-    if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Choose Difficulty';
     document.getElementById('sel-details').textContent='Select Easy, Medium, or Hard to begin';
     return;
   }
 
   if(selected.length===0){
-    if (port) { setPortraitIcon(port, null, '⚔️'); port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Age of Epochs II';
     document.getElementById('sel-details').textContent='Select a unit or building';
     return;
@@ -453,17 +489,46 @@ function updateUI(){
         act.appendChild(cancelBuildBtn);
       }
       if(e.complete && b.builds){
-        b.builds.forEach(ut=>{
+        // Locked (future-age) units are HIDDEN, not greyed — AoE2-style:
+        // the menu only offers what you can actually train right now.
+        b.builds.filter(ut=>isUnlocked(myTeam,ut)).forEach(ut=>{
           let u=UNITS[ut];
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='unit';
           btn.dataset.tipKey=ut;
           btn.dataset.cost=JSON.stringify(u.cost);
-          let costStr=formatCost(u.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${ut}"></div><div class="btn-label">${u.name}</div><span class="cost">${costStr}</span>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div><div class="btn-label">${u.name}</div><span class="cost">${formatCost(u.cost)}</span>`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
+
+        // ---- Advance Age (TC only) ----
+        if(e.btype==='TC'&&teamAge&&teamAge[myTeam]<AGES.length-1){
+          let next=AGES[teamAge[myTeam]+1];
+          let btn=document.createElement('div');btn.className='act-btn';
+          btn.dataset.tipType='action';
+          if(e.research){
+            btn.dataset.tipLabel='Researching '+AGES[e.research.target].name;
+            btn.dataset.tipDesc='The Town Center cannot train villagers while advancing. Click to cancel and refund the full cost.';
+            btn.id='advance-progress-btn';
+            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-research"></div><div class="btn-label">${AGES[e.research.target].name}</div><span class="cost">Cancel</span>`
+              +`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:0%;"></div>`;
+            btn.style.position='relative';
+            btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
+          } else {
+            btn.dataset.cost=JSON.stringify(next.cost);
+            btn.dataset.tipLabel='Advance to '+next.name;
+            // tipCost renders the same icon cost rows as building/unit tips.
+            btn.dataset.tipCost=JSON.stringify(next.cost);
+            btn.dataset.tipDesc=(teamAge[myTeam]===0
+              ? 'Unlocks spearmen, archers, scouts, watch towers, and stone walls. Military gains +1 attack and +1 armor.'
+              : 'Unlocks the knight. Military gains a further +1 attack and +1 armor.')
+              +' The Town Center pauses villager training while researching.';
+            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-advance-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div><span class="cost">${formatCost(next.cost)}</span>`;
+            btn.onclick=()=>{ submitCommand({kind:'research-age',bldgId:e.id}); };
+          }
+          act.appendChild(btn);
+        }
 
         // Rally Point button — lets mobile players set rally without right-click
         if (e.complete) {
@@ -475,7 +540,7 @@ function updateUI(){
             cancelBtn.dataset.tipType='action';
             cancelBtn.dataset.tipLabel='Cancel Rally';
             cancelBtn.dataset.tipDesc='Click to stop setting the rally point.';
-            cancelBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Tap map to<br>set rally</div>`;
+            cancelBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Tap map to<br>set rally</div>`;
             cancelBtn.onclick=()=>{ window.settingRally=false; showMsg('Rally cancelled'); updateUI(); };
             act.appendChild(cancelBtn);
           } else {
@@ -485,7 +550,7 @@ function updateUI(){
             rallyBtn.dataset.tipType='action';
             rallyBtn.dataset.tipLabel='Set Rally Point';
             rallyBtn.dataset.tipDesc='Newly trained units will automatically walk to the rally point after spawning.';
-            rallyBtn.innerHTML=`<div class="btn-emoji" style="font-size:22px">🚩</div><div class="btn-label">Set Rally</div>`;
+            rallyBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Set Rally</div>`;
             rallyBtn.onclick=()=>{
               if(gameOver)return;
               window.settingRally=true;
@@ -633,7 +698,7 @@ function updateUI(){
           {type:'LCAMP',label:'Lumber Camp',key:'E'},
           {type:'MILL',label:'Mill',key:'R'},
           {type:'MCAMP',label:'Mining Camp',key:'T'}
-        ];
+        ].filter(bi=>isUnlocked(myTeam,bi.type)); // all Dark today; future-proof
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='building';
@@ -655,12 +720,15 @@ function updateUI(){
         // updateUI.)
 
         // Military Sub-Menu
+        // Locked entries are hidden; the wall/gate slots are REPLACED by
+        // their stone upgrades once Feudal unlocks them (palisades are the
+        // Dark-age versions of the same slot, not a separate option).
         let builds=[
           {type:'BARRACKS',label:'Barracks',key:'Q'},
           {type:'TOWER',label:'Watch Tower',key:'W'},
-          {type:'WALL',label:'Stone Wall',key:'E'},
-          {type:'GATE',label:'Gate',key:'R'}
-        ];
+          isUnlocked(myTeam,'SWALL')?{type:'SWALL',label:'Stone Wall',key:'E'}:{type:'WALL',label:'Palisade',key:'E'},
+          isUnlocked(myTeam,'SGATE')?{type:'SGATE',label:'Stone Gate',key:'R'}:{type:'GATE',label:'Palisade Gate',key:'R'}
+        ].filter(bi=>isUnlocked(myTeam,bi.type));
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='building';
@@ -692,6 +760,7 @@ function refreshActionAffordability(){
     try{ cost=JSON.parse(btn.dataset.cost); }catch(_){ return; }
     btn.classList.toggle('disabled', !canAfford(myTeam,cost));
   });
+
 }
 // Swallow clicks on disabled buttons before their own onclick fires.
 document.getElementById('actions').addEventListener('click', function(e){
@@ -824,7 +893,7 @@ window.selectIdleVillager = function() {
 window.selectIdleMilitary = function() {
   if (gameOver || !gameStarted) return;
   let mil = entities.filter(e => e.team === myTeam && e.type === 'unit' && !e.garrisonedIn &&
-    ['militia','spearman','archer','scout'].includes(e.utype) &&
+    MILITARY.has(e.utype) &&
     !e.task && !e.target && e.path.length === 0);
   if (mil.length === 0) { showMsg('No idle soldiers!'); return; }
   window.lastIdleMilIndex = window.lastIdleMilIndex || 0;
