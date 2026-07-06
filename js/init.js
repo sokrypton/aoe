@@ -1231,8 +1231,19 @@ function gameLoop(){
     updateCosmetics(elapsed);
     reportGuestViewIfChanged(now); // js/net-sync.js — lets the host hand this back on a future reconnect
   }
-  render();
-  updateUI();
+  // 30fps render cap on mobile: profiling shows render cost is ~65% native
+  // canvas fill/stroke rasterization of per-unit vector art — halving the
+  // frame rate halves it. Original AoE2 ran its whole loop at ~20fps and
+  // its sprites animate at ~10-15 frames/cycle, so 30 is still smoother
+  // than the reference. LOCAL pacing only: the sim keeps its full tick
+  // rate (and lockstep gating/watermarks are frame-rate independent).
+  window.__lastRenderAt = window.__lastRenderAt || 0;
+  const RENDER_MIN_MS = isMobile ? 1000 / 30 - 2 : 0; // -2ms slack so a 33.4ms rAF gap doesn't drop to 20fps
+  if (now - window.__lastRenderAt >= RENDER_MIN_MS) {
+    window.__lastRenderAt = now;
+    render();
+    updateUI();
+  }
   if(gameOver){
     let iWon = didIWin();
     // Auto-open the menu in 'gameover' mode (Play Again / Load) a moment
