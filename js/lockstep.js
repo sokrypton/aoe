@@ -1,104 +1,46 @@
-// ---- DETERMINISTIC LOCKSTEP (opt-in via ?lockstep while it burns in) ----
+// ---- DETERMINISTIC LOCKSTEP WITH BOUNDED ROLLBACK (opt-in via ?lockstep) ----
 // Both peers run the full simulation from the same seed and the same
-// tick-stamped command stream (js/commands.js): no snapshots, no smoothing,
-// no corrections — each player's own sim is the render source, so commands
-// feel instant (cosmetic feedback at input time, execution INPUT_DELAY_TICKS
-// later) and nothing ever jumps.
+// tick-stamped command stream (js/commands.js). The sim RUNS FREELY — it
+// never waits for the peer. A command that arrives for a tick we already
+// simulated triggers a rewind: restore the nearest snapshot before it,
+// re-simulate to the present with the command in place (identical to what
+// the on-time peer computed), and carry on. Lateness costs an invisible
+// few-ms resim instead of a visible pause — RTS commands are sparse, so
+// rollbacks are rare events, not a per-frame cost.
 //
 // Wire protocol (on top of js/net.js's envelope):
 //   {type:'lockstep-start', seed, mapSize, speed}   host -> guest: begin
 //   {type:'cmd-ls', execTick, seq, cmd}             both ways: a command,
-//       already world-space, stamped by the ISSUER at issueTick+delay;
-//       scheduled verbatim on both queues.
-//   {type:'tick', t, [ct, h]}                       both ways, per simmed
-//       tick: watermark "I have simulated through t (and issued every
-//       command with execTick <= t+delay)". Optional piggybacked checksum
-//       h for tick ct every LOCKSTEP_CKSUM_EVERY ticks.
-//
-// Gating: a peer may simulate tick T only once the other side's watermark
-// covers it (peerSimTick >= T - INPUT_DELAY_TICKS). The DataChannel is
-// reliable+ordered, so when {tick:t} arrives, every cmd-ls stamped by the
-// peer at or before t has already arrived — no missing-input case exists,
-// only waiting. A fast peer therefore stalls at most INPUT_DELAY_TICKS
-// ahead of a slow one: tick-rate sync falls out of the gating for free.
+//       already world-space, stamped by the ISSUER at issueTick+delay.
+//   {type:'tick', t, [ct, h]}                       both ways, ~10/s:
+//       progress report for loose drift control, plus a checksum h for an
+//       OLD tick ct (old enough that no in-flight command can still
+//       rewrite it on either side — see LOCKSTEP_CKSUM_LAG).
 
 let lockstepActive = false;
 let peerSimTick = -1;
 let lastReportedSimTick = -1;
 let lockstepDesyncedAt = null;
-const LOCKSTEP_CKSUM_EVERY = 30;
-// Start pessimistic (~167ms buffer) and adapt DOWN on a good link: a too-
-// small opening delay stalls the first seconds of every real-internet
-// match before the controller can react, which reads as "the game is
-// laggy" right at first impression. Coming down from a safe start only
-// costs command latency nobody notices while their first villagers walk.
-const LOCKSTEP_START_DELAY = 10;
+let lockstepRollbacks = 0; // stats: rewinds this match
 
-// ---- Adaptive input delay ----
-// The gating slack actually in force. INPUT_DELAY_TICKS (js/commands.js)
-// is what new commands are STAMPED with; the two must never violate
-// stamp(issuer) >= slack(receiver), or an in-flight command can arrive
-// after its tick was simmed. Decreases are safe immediately; an INCREASE
-// may only widen the gating after every old-stamp command has landed —
-// one old-delay window later.
-let lockstepSlack = 4;
-let lockstepSlackNext = null, lockstepSlackAtTick = 0;
-function lockstepApplyDelay(d){
-  let old = INPUT_DELAY_TICKS;
-  if (d === old) return;
-  INPUT_DELAY_TICKS = d; // stamping switches now — same sim tick on both peers
-  if (d < old) {
-    lockstepSlack = d; lockstepSlackNext = null;
-  } else {
-    lockstepSlack = old;
-    lockstepSlackNext = d;
-    lockstepSlackAtTick = tick + old;
-  }
-  if (typeof showMsg === 'function') showMsg('Network buffer: ' + Math.round(d * timeStep) + 'ms');
-}
-
-// Stall accounting (debug/stats only — see lockstepAdaptDelay for the
-// actual control signal): a "stall" is a gameLoop frame that wanted to
-// simulate but couldn't because the peer's watermark hadn't covered the
-// next tick.
-let stallFrames = 0, simFrames = 0;
-function lockstepNoteFrame(stalled){
-  simFrames++;
-  if (stalled) stallFrames++;
-}
-// Adaptive controller, host-driven. Control signal: PACE — sim ticks
-// actually produced vs. expected from wall-clock. Frame-level stall counts
-// over-trigger (a gated frame is harmless if the accumulator catches up
-// the same instant), which maxed the delay out on links that were already
-// running at full speed. Pace only moves when players would actually feel
-// it. Gating throttles both peers identically, so the host's own pace IS
-// the match's pace — no peer-side signal needed.
-let lastAdaptAt = 0, lastAdaptTick = 0, lastDelayChangeAt = 0;
-function lockstepAdaptDelay(){
-  if (netRole !== 'host' || lockstepDesyncedAt != null) return;
-  let nowMs = performance.now();
-  if (!lastAdaptAt) { lastAdaptAt = nowMs; lastAdaptTick = tick; return; }
-  let windowMs = nowMs - lastAdaptAt;
-  if (windowMs < 3000) return;
-  // A pause (menus, disconnect) poisons the window — reset the baseline.
-  if (windowMs > 10000) { lastAdaptAt = nowMs; lastAdaptTick = tick; return; }
-  let pace = (tick - lastAdaptTick) / (windowMs / timeStep);
-  lastAdaptAt = nowMs; lastAdaptTick = tick;
-  stallFrames = 0; simFrames = 0;
-  if (pace < 0.95 && INPUT_DELAY_TICKS < INPUT_DELAY_MAX) {
-    lastDelayChangeAt = nowMs;
-    submitCommand({ kind: 'set-delay', d: Math.min(INPUT_DELAY_MAX, INPUT_DELAY_TICKS + 2) });
-  } else if (pace > 0.99 && INPUT_DELAY_TICKS > 4) {
-    // Coming down: quick single steps while still above the healthy-link
-    // range (walking off the pessimistic start), then strong hysteresis
-    // near the sweet spot — without it the delay oscillates and re-stalls.
-    let downEveryMs = INPUT_DELAY_TICKS > 8 ? 6000 : 20000;
-    if (nowMs - lastDelayChangeAt >= downEveryMs) {
-      lastDelayChangeAt = nowMs;
-      submitCommand({ kind: 'set-delay', d: INPUT_DELAY_TICKS - 1 });
-    }
-  }
-}
+// Report every 6th tick (~10/s at default speed): enough for drift control
+// and checksum exchange; per-message compress+send is real CPU on mobile.
+const LOCKSTEP_REPORT_EVERY = 6;
+// Checksums are only exchanged for ticks at least this old: any command
+// that could rewrite history at tick T arrives within the rollback window,
+// so by T + LAG both peers' values for T are final.
+const LOCKSTEP_CKSUM_LAG = 90;
+// Snapshot ring: every SNAP_EVERY ticks, keep SNAP_KEEP — a ~5s rewind
+// window (300 ticks). A command later than that means the connection was
+// effectively dead longer than the net-layer heartbeat tolerates anyway.
+const LOCKSTEP_SNAP_EVERY = 10;
+const LOCKSTEP_SNAP_KEEP = 30;
+// Drift control (soft): if we're more than SOFT ticks ahead of the peer's
+// last report, run at ~80% speed so they catch up; HARD is a stop — only
+// reachable if the peer is truly wedged (their reports stopped arriving,
+// which the net heartbeat will surface as a disconnect shortly after).
+const LOCKSTEP_SOFT_AHEAD = 45;
+const LOCKSTEP_HARD_AHEAD = 240;
 
 // Requested via ?lockstep on the host's page; the guest turns it on when
 // the lockstep-start message arrives, whatever its own URL said. Captured
@@ -117,16 +59,19 @@ function sendToPeer(msg){
   else if (netRole === 'guest') sendToHost(msg);
 }
 
-// Host side: begin a fresh lockstep match the moment the guest connects
-// (mirrors the restartGame path in onNetConnectionOpen, plus the seed
-// handshake). Called from init.js instead of the plain restartGame.
-function hostStartLockstepMatch(){
-  lockstepActive = true;
+function lockstepResetState(){
   peerSimTick = -1;
   lastReportedSimTick = -1;
   lockstepDesyncedAt = null;
-  INPUT_DELAY_TICKS = LOCKSTEP_START_DELAY; lockstepSlack = LOCKSTEP_START_DELAY; lockstepSlackNext = null;
-  stallFrames = 0; simFrames = 0; lastAdaptAt = 0; lastDelayChangeAt = 0;
+  lockstepRollbacks = 0;
+  lockstepSnapshots.length = 0;
+  INPUT_DELAY_TICKS = 4;
+}
+
+// Host side: begin a fresh lockstep match the moment the guest connects.
+function hostStartLockstepMatch(){
+  lockstepActive = true;
+  lockstepResetState();
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let sizeKey = sizeSel ? sizeSel.value : 'medium';
   window.fogDisabled = false;
@@ -139,11 +84,7 @@ function hostStartLockstepMatch(){
 onNetMessage((msg) => {
   if (msg.type === 'lockstep-start' && netRole === 'guest') {
     lockstepActive = true;
-    peerSimTick = -1;
-    lastReportedSimTick = -1;
-    lockstepDesyncedAt = null;
-    INPUT_DELAY_TICKS = LOCKSTEP_START_DELAY; lockstepSlack = LOCKSTEP_START_DELAY; lockstepSlackNext = null;
-    stallFrames = 0; simFrames = 0; lastAdaptAt = 0; lastDelayChangeAt = 0;
+    lockstepResetState();
     window.fogDisabled = false;
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     window.__pendingMatchSeed = msg.seed;
@@ -170,50 +111,45 @@ onNetMessage((msg) => {
     // The peer's team: guest commands land on the host as team 1 and vice
     // versa — never trusted from the wire.
     let peerTeam = netRole === 'host' ? 1 : 0;
-    if (msg.execTick <= tick) {
-      // Should be impossible under the gating; if it ever happens the sims
-      // have already diverged — say so loudly rather than silently degrade.
-      lockstepFatal('late command: execTick ' + msg.execTick + ' arrived at tick ' + tick);
-    }
     scheduleCommand(msg.execTick, peerTeam, msg.seq, msg.cmd);
+    if (msg.execTick <= tick) {
+      // Late: that tick already ran without this command. Rewind and replay
+      // with it in place — converges with what the peer computed on time.
+      lockstepRollback(msg.execTick);
+    }
   } else if (msg.type === 'tick' && lockstepActive) {
     if (msg.t > peerSimTick) peerSimTick = msg.t;
     if (msg.h !== undefined) lockstepCheckPeerChecksum(msg.ct, msg.h);
   }
 });
 
-// May we simulate tick T? (Called with tick+1 before each update().)
-function lockstepCanSim(t){
-  if (!netConnected) return false; // peer gone: stall (disconnect flow pauses anyway)
-  // Deferred slack widening from lockstepApplyDelay.
-  if (lockstepSlackNext != null && t >= lockstepSlackAtTick) {
-    lockstepSlack = lockstepSlackNext;
-    lockstepSlackNext = null;
-  }
-  // Strictly-greater window: while the peer is still AT tick P it can still
-  // issue commands stamped P+DELAY, and those are sent BEFORE its {tick:P+1}
-  // report (ordered channel). So tick T is complete only once the peer has
-  // reported P >= T - SLACK + 1.
-  return peerSimTick >= t - lockstepSlack + 1;
+// ---- Free-running pace control ----
+// Returns the extra accumulator cost of one tick right now: 0 normally; a
+// 25% surcharge when we are far ahead of the peer's last report (runs us
+// ~20% slower so they catch up); Infinity when so far ahead that a peer
+// command could fall outside the rollback window.
+function lockstepTickSurcharge(){
+  if (peerSimTick < 0) return 0; // no report yet (match start)
+  let ahead = tick - peerSimTick;
+  if (ahead > LOCKSTEP_HARD_AHEAD) return Infinity;
+  if (ahead > LOCKSTEP_SOFT_AHEAD) return timeStep * 0.25;
+  return 0;
 }
 
-// After simming: tell the peer how far we are, with a periodic checksum.
+// After simming: progress report + old-enough checksum, throttled.
 function lockstepReport(){
-  if (tick === lastReportedSimTick) return;
-  // Report every 2nd tick (plus every checksum tick): each report is a
-  // compress+send, 60/s of which is real CPU on a mobile guest. The gating
-  // window (INPUT_DELAY_TICKS=4) comfortably absorbs watermarks that are
-  // one tick coarse.
-  if (tick % 2 !== 0 && tick % LOCKSTEP_CKSUM_EVERY !== 0 && tick - lastReportedSimTick < 2) return;
+  if (tick - lastReportedSimTick < LOCKSTEP_REPORT_EVERY) return;
   lastReportedSimTick = tick;
   let msg = { type: 'tick', t: tick };
-  if (tick % LOCKSTEP_CKSUM_EVERY === 0 && DET.history.length) {
-    let last = DET.history[DET.history.length - 1];
-    msg.ct = last.tick;
-    msg.h = last.sum;
+  // Attach the newest history entry that is safely beyond rollback reach.
+  for (let i = DET.history.length - 1; i >= 0; i--) {
+    if (DET.history[i].tick <= tick - LOCKSTEP_CKSUM_LAG) {
+      msg.ct = DET.history[i].tick;
+      msg.h = DET.history[i].sum;
+      break;
+    }
   }
   sendToPeer(msg);
-  lockstepAdaptDelay();
 }
 
 function lockstepCheckPeerChecksum(t, h){
@@ -229,9 +165,83 @@ function lockstepCheckPeerChecksum(t, h){
   }
 }
 
+// ---- Snapshot ring + rollback ----
+let lockstepSnapshots = []; // {t, state} — state captured AFTER simming tick t
+
+function lockstepCaptureState(){
+  return structuredClone({
+    entities, projectiles, corpses, resources, map,
+    popUsed, popCap, tick, gameOver, won,
+    nextId, nextProjectileId, simRngState,
+    bellRinging: window.bellRinging,
+    stuckWatch: snapshotStuckWatch(),
+    exploredSim: teamExploredGrid, // Uint8Arrays clone fine
+  });
+}
+
+function lockstepTakeSnapshot(){
+  if (tick % LOCKSTEP_SNAP_EVERY !== 0) return;
+  lockstepSnapshots.push({ t: tick, state: lockstepCaptureState() });
+  if (lockstepSnapshots.length > LOCKSTEP_SNAP_KEEP) lockstepSnapshots.shift();
+}
+
+function lockstepRestore(snap){
+  // Clone again so the ring copy stays pristine for a future rollback.
+  let st = structuredClone(snap.state);
+  entities = st.entities;
+  entitiesById.clear();
+  entities.forEach(e => entitiesById.set(e.id, e));
+  projectiles = st.projectiles;
+  corpses = st.corpses;
+  resources = st.resources;
+  map = st.map;
+  popUsed = st.popUsed; popCap = st.popCap;
+  tick = st.tick;
+  gameOver = st.gameOver; won = st.won;
+  nextId = st.nextId; nextProjectileId = st.nextProjectileId;
+  simRngState = st.simRngState;
+  window.bellRinging = st.bellRinging;
+  restoreStuckWatch(st.stuckWatch);
+  teamExploredGrid = st.exploredSim;
+  visionFreshTick = -1; // force vision/fog recompute on the next tick
+  // UI object references now point at pre-restore objects — re-resolve by id.
+  selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
+  // History beyond the restore point gets recomputed during resim.
+  while (DET.history.length && DET.history[DET.history.length - 1].tick > tick) DET.history.pop();
+}
+
+// Rewind so that execTick runs with the (just-scheduled) late command, then
+// re-simulate back to the present. window.__resim suppresses cosmetic side
+// effects (sounds, messages, particles) — those moments already played out
+// on this screen once.
+function lockstepRollback(execTick){
+  if (lockstepDesyncedAt != null) return;
+  let snap = null;
+  for (let i = lockstepSnapshots.length - 1; i >= 0; i--) {
+    if (lockstepSnapshots[i].t <= execTick - 1) { snap = lockstepSnapshots[i]; break; }
+  }
+  if (!snap) {
+    lockstepFatal('command for tick ' + execTick + ' older than the rollback window (at ' + tick + ')');
+    return;
+  }
+  let target = tick;
+  lockstepSnapshots = lockstepSnapshots.filter(s => s.t <= snap.t);
+  lockstepRestore(snap);
+  lockstepRollbacks++;
+  window.__resim = true;
+  try {
+    while (tick < target && !gameOver) {
+      update();
+      lockstepTakeSnapshot(); // re-fill the ring along the corrected timeline
+    }
+  } finally {
+    window.__resim = false;
+  }
+}
+
 // Desync is a bug, full stop (the whole determinism workstream exists so
-// this never fires). Phase A policy: freeze loudly and keep the evidence —
-// automated recovery (full-snapshot restore) is the tuning phase's job.
+// this never fires). Policy: freeze loudly and keep the evidence —
+// automated recovery (full-snapshot restore) is a later phase.
 function lockstepFatal(why){
   if (lockstepDesyncedAt != null) return;
   lockstepDesyncedAt = tick;

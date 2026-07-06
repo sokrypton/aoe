@@ -110,6 +110,7 @@ const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_c
 const PAUSE_EXEMPT_SOUNDS = new Set(['chat', 'alert', 'click', 'error', 'victory', 'defeat', 'bell', 'bell_clear']);
 
 function playSound(type, wx, wy) {
+  if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
   if (window.audioMuted) return;
   let mode = window.soundMode || 'all';
   if (mode === 'off') return;

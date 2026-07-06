@@ -45,11 +45,15 @@ const { BASE, sleep, check, finish } = require('./helpers');
   await sleep(1500);
   const t2 = await Promise.all([host, guest].map(p => p.evaluate(() => tick)));
   check(t2[0] > t1[0] && t2[1] > t1[1], 'both sims advance');
-  check(Math.abs(t2[0] - t2[1]) <= 8, 'peers within gating window (drift ' + Math.abs(t2[0] - t2[1]) + ' ticks)');
+  // Free-running rollback lockstep: peers stay LOOSELY aligned (soft brake
+  // at 45 ticks ahead), no hard window.
+  check(Math.abs(t2[0] - t2[1]) <= 60, 'peers loosely aligned (drift ' + Math.abs(t2[0] - t2[1]) + ' ticks)');
 
-  // Simulated latency from here on — gating must absorb it, not desync.
-  await host.evaluate(() => { window.NET_TEST_DELAY_MS = 150; });
-  await guest.evaluate(() => { window.NET_TEST_DELAY_MS = 150; });
+  // Simulated latency from here on — rollback must absorb it, not desync.
+  // NET_TEST_LATENCY_MS is parallel per-message latency; the old
+  // NET_TEST_DELAY_MS serializes sends and just builds an unbounded backlog.
+  await host.evaluate(() => { window.NET_TEST_LATENCY_MS = 150; });
+  await guest.evaluate(() => { window.NET_TEST_LATENCY_MS = 150; });
 
   // Guest command executes on BOTH sims (and identically).
   const guestMove = await guest.evaluate(() => {
@@ -149,7 +153,7 @@ const { BASE, sleep, check, finish } = require('./helpers');
 
   // Speed change is a queued command: it must land on BOTH peers.
   await host.evaluate(() => submitCommand({ kind: 'set-speed', v: 1 }));
-  await sleep(1500);
+  await sleep(2500); // command + possible rollback replay on the guest under latency
   const speeds = await Promise.all([host, guest].map(p => p.evaluate(() => GAME_SPEED)));
   check(speeds[0] === 1 && speeds[1] === 1, 'set-speed applied on both peers (' + speeds.join('/') + ')');
   await host.evaluate(() => submitCommand({ kind: 'set-speed', v: 2 }));

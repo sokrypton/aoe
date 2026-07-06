@@ -1189,20 +1189,22 @@ function gameLoop(){
     if (netRole !== 'guest' || lockstepEnabled()) {
       accumulator += elapsed;
       while (accumulator >= timeStep) {
-        // Lockstep gate: never simulate a tick the peer's input watermark
-        // doesn't cover yet — the fast peer stalls (at most
-        // INPUT_DELAY_TICKS ahead), which keeps both sims in step without
-        // any separate clock-sync mechanism. Cap the accumulator so a long
-        // stall doesn't turn into a catch-up burst.
-        if (lockstepEnabled() && !lockstepCanSim(tick + 1)) {
-          accumulator = Math.min(accumulator, timeStep * INPUT_DELAY_TICKS);
-          lockstepNoteFrame(true); // stalled: feeds the adaptive-delay controller
-          break;
+        // Lockstep runs FREELY — late peer commands rewind-and-resim
+        // instead of the sim ever waiting (js/lockstep.js). The surcharge
+        // is the only pacing coupling: ~20% slower when far ahead of the
+        // peer's reports, a stop only if the peer looks wedged (the net
+        // heartbeat surfaces that as a disconnect moments later).
+        if (lockstepEnabled()) {
+          let surcharge = lockstepTickSurcharge();
+          if (surcharge === Infinity) { accumulator = Math.min(accumulator, timeStep * 4); break; }
+          if (accumulator < timeStep + surcharge) break;
+          accumulator -= surcharge;
         }
         update();
         accumulator -= timeStep;
+        if (lockstepEnabled()) lockstepTakeSnapshot();
       }
-      if (lockstepEnabled()) { lockstepNoteFrame(false); lockstepReport(); }
+      if (lockstepEnabled()) lockstepReport();
     } else {
       // Nearly every limb/leg/tool/breathing animation in render-units.js
       // is a direct function of the global `tick` (e.g. Math.sin(tick*0.45

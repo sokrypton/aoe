@@ -1780,6 +1780,10 @@ function teamEliminated(team){
 const STUCK_WATCHDOG_TICKS = 240;   // 8 game-seconds
 const STUCK_CHECK_EVERY = 30;       // sample once per game-second
 let _stuckWatch = new Map();        // id -> {sig, since}
+// Snapshot access for lockstep rollback (js/lockstep.js): _stuckWatch is
+// sim state (it resets units), so a rewind must restore it too.
+function snapshotStuckWatch(){ return _stuckWatch; }
+function restoreStuckWatch(m){ _stuckWatch = m; }
 function updateStuckWatchdog(){
   if (tick % STUCK_CHECK_EVERY !== 0) return;
   let seen = new Set();

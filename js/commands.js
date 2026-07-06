@@ -21,11 +21,10 @@
 // schedule everything; the resolver/executor split stays as-is.
 
 // ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
-// RTS (AoE2 ran 250ms command turns) but enough headroom for the peer's
-// command to arrive before its execution tick on a healthy link. Mutable:
-// on a laggy real link the adaptive controller (js/lockstep.js) raises it
-// via the 'set-delay' command so both peers switch at the same tick —
-// otherwise the gating window stalls the sim in bursts (felt as lag).
+// RTS (AoE2 ran 250ms command turns). Under rollback lockstep
+// (js/lockstep.js) a command arriving LATE is no longer fatal — the sim
+// rewinds and re-simulates — so this stays small and fixed; it only sets
+// how often rollbacks happen, not whether the game stalls.
 let INPUT_DELAY_TICKS = 4;
 const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 
@@ -57,12 +56,19 @@ function scheduleCommand(execTick, team, seq, cmd){
 
 // Called at the top of update() for the tick just started. Canonical order
 // (team asc, then per-sender seq) so arrival order can never matter.
+// Entries are NOT deleted after execution: a lockstep rollback re-simulates
+// past ticks and must re-execute their commands from the queue. Pruned
+// once safely older than the rollback window.
+const COMMAND_KEEP_TICKS = 600;
 function runScheduledCommands(){
   let arr = commandQueue.get(tick);
-  if (!arr) return;
-  commandQueue.delete(tick);
-  arr.sort((a, b) => a.team - b.team || a.seq - b.seq);
-  arr.forEach(c => execCommand(c.cmd, c.team));
+  if (arr) {
+    arr.sort((a, b) => a.team - b.team || a.seq - b.seq);
+    arr.forEach(c => execCommand(c.cmd, c.team));
+  }
+  if (tick % 100 === 0) {
+    commandQueue.forEach((v, t) => { if (t < tick - COMMAND_KEEP_TICKS) commandQueue.delete(t); });
+  }
 }
 
 function clearCommandQueue(){
@@ -142,12 +148,11 @@ function execCommand(cmd, team){
         break;
       }
       case 'set-delay':
-        // Adaptive lockstep input delay (host-initiated; see the stall
-        // controller in js/lockstep.js). Executes at the same tick on both
-        // peers; lockstepApplyDelay handles the safe gating transition.
-        if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX
-            && typeof lockstepApplyDelay === 'function' && lockstepEnabled()) {
-          lockstepApplyDelay(cmd.d);
+        // Manual lockstep input-delay override (host-only). Under rollback
+        // the delay only tunes how often rewinds happen — lateness is no
+        // longer fatal — so there's no automatic controller anymore.
+        if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
+          INPUT_DELAY_TICKS = cmd.d;
         }
         break;
       case 'set-speed':

@@ -748,6 +748,7 @@ function cancelQueue(bldgId,idx){
 }
 
 function showMsg(txt){
+  if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
   let el=document.getElementById('msg');el.textContent=txt;el.style.opacity='1';
   // The help hint shares the same screen spot — yield to the message
   let hint=document.getElementById('help-hint');

@@ -610,6 +610,7 @@ window.__mpSession = {
 };
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
+  if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
   let type = 'dust';
   if (color === '#9c382a') type = 'blood';
   else if (color.includes('rgba(100,100,100') || color === '#888' || color === '#666') type = 'smoke';
