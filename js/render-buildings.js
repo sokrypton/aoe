@@ -1193,7 +1193,21 @@ function drawBuilding(e, part = null){
         // Sliding solid wood gate door — same style/placement as a wall
         // extension (drawWallLink), just wood-brown and sliding up into
         // the bastion as gateProgress goes from closed (0) to open (1).
-        drawWallLink(t1sx, t1sy - slideY, dx, dy, 20, darken, 7, 0, '#8b5a2b', '#a5723a', 2, true);
+        // Symmetric trims (7,7) center the door between the two posts —
+        // the old (7,0) ran it all the way into the front post's center,
+        // so the raised door hung visibly closer to the front tower.
+        // The slab stays exactly PARALLEL to the wall run (any per-end
+        // twist read as the whole gate being rotated) and is instead
+        // TRANSLATED in the GROUND PLANE. The ground-plane perpendicular
+        // in iso is the run direction mirrored, (ux, -uy) — using a
+        // screen-space perpendicular here made the door dip below the
+        // ground line (it is mostly vertical).
+        {
+          let Lg = Math.hypot(dx, dy), ux = dx / Lg, uy = dy / Lg;
+          const GT = 1; // ground-plane shift away from the viewer, in px
+          drawWallLink(t1sx + ux * GT, t1sy - slideY - uy * GT, dx, dy,
+                       16, darken, 9, 9, '#8b5a2b', '#a5723a', 2, true);
+        }
       }
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy)
