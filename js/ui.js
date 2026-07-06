@@ -875,7 +875,9 @@ window.updateBottomHeight = function() {
   let C = document.getElementById('game');
   if (C) {
     let X = C.getContext('2d');
-    let dpr = Math.max(1, window.devicePixelRatio || 1);
+    // Use the GLOBAL dpr (js/core.js) — it caps at 2x on mobile for render
+    // cost; a raw devicePixelRatio here silently undid that cap on every
+    // resize/rotate (this function runs at load too).
     C.width = W * dpr;
     C.height = window.innerHeight * dpr;
     C.style.width = W + 'px';

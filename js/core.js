@@ -9,7 +9,13 @@ const isMobile='ontouchstart' in window||navigator.maxTouchPoints>0;
 let cmdMarkers=[]; // {x,y,time,color}
 let bottomH=isMobile?(window.innerWidth<=380?175:window.innerWidth<=600?200:200):200;
 let topH=isMobile?(window.innerWidth<=600?46:36):36;
-const dpr = Math.max(1, window.devicePixelRatio || 1);
+// Game-canvas backing resolution. Capped at 2x on mobile: modern phones
+// report devicePixelRatio 3+, which makes every canvas fill/stroke touch
+// 2.25x more pixels than a 2x cap for no visible gain on this art style —
+// measured as the single biggest render cost at scale (fill-rate bound).
+// The minimap (render-fx.js) keeps the native ratio; it's tiny.
+const dpr = isMobile ? Math.min(2, Math.max(1, window.devicePixelRatio || 1))
+                     : Math.max(1, window.devicePixelRatio || 1);
 const ZOOM_MIN = 0.6, ZOOM_MAX = 2.5;
 let ZOOM = isMobile ? 1.5 : 1.0;
 let W=window.innerWidth,H=window.innerHeight-bottomH;
