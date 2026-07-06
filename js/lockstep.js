@@ -45,13 +45,14 @@ const LOCKSTEP_CKSUM_LAG = LOCKSTEP_SNAP_EVERY * LOCKSTEP_SNAP_KEEP;
 const LOCKSTEP_SOFT_AHEAD = 45;
 const LOCKSTEP_HARD_AHEAD = 240;
 
-// Requested via ?lockstep on the host's page; the guest turns it on when
-// the lockstep-start message arrives, whatever its own URL said. Captured
-// at load time — hosting rewrites location.search to the ?host= resume
-// link, which would otherwise drop the flag before the guest ever joins.
-const LOCKSTEP_URL_FLAG = typeof window !== 'undefined' && /[?&]lockstep\b/.test(window.location.search);
+// Lockstep is the DEFAULT for new multiplayer matches; ?legacy-sync on the
+// host's page forces the old host-authoritative snapshot mode (escape
+// hatch for one release). The guest follows whatever the host starts.
+// Captured at load time — hosting rewrites location.search to the ?host=
+// resume link, which would otherwise drop the flag mid-session.
+const LEGACY_SYNC_URL_FLAG = typeof window !== 'undefined' && /[?&]legacy-sync\b/.test(window.location.search);
 function lockstepRequested(){
-  return LOCKSTEP_URL_FLAG;
+  return !LEGACY_SYNC_URL_FLAG;
 }
 function lockstepEnabled(){
   return lockstepActive && netRole != null;
@@ -128,6 +129,32 @@ onNetMessage((msg) => {
     }
   } else if (msg.type === 'lockstep-resync' && netRole === 'guest' && lockstepActive) {
     lockstepApplyResync(msg.state);
+  } else if (msg.type === 'lockstep-resume' && netRole === 'guest') {
+    // (Re)joining a lockstep match already in progress — fresh page or a
+    // reconnect after a drop. Enter lockstep mode around the state apply.
+    lockstepActive = true;
+    lockstepResetState();
+    window.fogDisabled = false;
+    if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
+    DET.enabled = true;
+    gameStarted = true;
+    lockstepApplyResync(msg.state);
+    if (!window.__mpSession.cameraCentered) {
+      let own = entities.find(e => e.team === myTeam);
+      if (own) {
+        let iso = toIso(own.x, own.y);
+        camX = iso.ix; camY = iso.iy;
+        window.targetCamX = camX; window.targetCamY = camY;
+        window.__mpSession.cameraCentered = true;
+      }
+    }
+    if (typeof hideDisconnectOverlay === 'function') hideDisconnectOverlay();
+    disconnectedPause = false;
+    if (typeof recomputeGamePaused === 'function') recomputeGamePaused();
+    let menu = document.getElementById('tutorial');
+    if (menu) menu.style.display = 'none';
+    if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
+    if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');
   } else if (msg.type === 'lockstep-resync-request' && netRole === 'host' && lockstepActive) {
     lockstepStartResync();
   } else if (msg.type === 'tick' && lockstepActive) {
@@ -272,6 +299,13 @@ function lockstepBuildResyncState(){
 }
 
 function lockstepApplyResync(state){
+  // A reconnecting guest is a fresh page that skipped init(): size-derived
+  // and viewer-local structures don't exist yet. MAP must be set before
+  // anything indexes the restored map, and fog is per-viewer (never part
+  // of sim state) so it's rebuilt empty and recomputed next tick.
+  MAP = state.map.length;
+  if (!fog.length || fog.length !== MAP) initFog();
+  if (!window.bellRinging) window.bellRinging = [false, false];
   entities = state.entities;
   entitiesById.clear();
   entities.forEach(e => entitiesById.set(e.id, e));
@@ -300,6 +334,16 @@ function lockstepApplyResync(state){
   gamePaused = false;
   if (typeof recomputeGamePaused === 'function') recomputeGamePaused();
   if (typeof showMsg === 'function') showMsg('Connection re-synchronized');
+}
+
+// Mid-match reconnect (the guest's page may be brand new): hand it the
+// full sim state and re-enter lockstep — same machinery as desync
+// recovery. Called from onNetConnectionOpen (js/init.js) on the host.
+function lockstepResumeGuest(){
+  if (netRole !== 'host') return;
+  let state = lockstepBuildResyncState();
+  broadcastToGuest({ type: 'lockstep-resume', state, speed: GAME_SPEED });
+  lockstepApplyResync(state);
 }
 
 function lockstepStartResync(){

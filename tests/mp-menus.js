@@ -110,12 +110,14 @@ const check = (cond, name) => { console.log((cond ? 'PASS' : 'FAIL') + ': ' + na
     const hostResumed = await host.evaluate(() => !gamePaused);
     check(hostPaused && hostResumed, 'menu pause broadcast still works both ways');
 
-    // game over: host wins → both auto-show game-over menus
+    // game over: host wins → both auto-show game-over menus. The kill goes
+    // through the command queue (dev-destroy) so BOTH lockstep sims see it;
+    // guest units die too so team 1 is fully eliminated.
+    await Promise.all([host, guest].map(p => p.evaluate(() => { window.DEV_TEST_COMMANDS = true; })));
     await host.evaluate(() => {
-      let tc = entities.find(e => e.type === 'building' && e.btype === 'TC' && e.team === 1);
-      if (tc) { tc.hp = 0; handleDeath(tc, 0); }
+      entities.filter(e => e.team === 1).forEach(e => submitCommand({ kind: 'dev-destroy', id: e.id }));
     });
-    await host.waitForTimeout(3500);
+    await host.waitForTimeout(4500);
     const hostGo = await host.evaluate(() => ({
       over: gameOver,
       menu: document.getElementById('tutorial').style.display === 'flex',

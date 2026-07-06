@@ -252,25 +252,16 @@ function closeOptionsPanel(){
 
 function onStartClicked(){
   // "Rematch" — the HOST restarting after a finished MP match whose
-  // connection is still alive: fresh world over the same session, exactly
-  // the way onNetConnectionOpen starts the first match. The guest's own
-  // game-over menu dismisses itself when the rematch's first sync lands
-  // (applyNetSync, js/net-sync.js).
+  // connection is still alive: a fresh lockstep match over the same
+  // session, exactly the way onNetConnectionOpen starts the first one
+  // (the guest's game-over menu dismisses in its lockstep-start handler).
   if (netRole === 'host' && netConnected && gameOver) {
-    let sizeSel = document.querySelector('input[name="mapsize"]:checked');
-    setMapSize(sizeSel ? sizeSel.value : 'medium');
     let speedSel = document.querySelector('input[name="gamespeed"]:checked');
     setGameSpeed(speedSel ? parseFloat(speedSel.value) : 2);
     applyAudioSettings();
     applyGameSettings();
-    window.fogDisabled = false;
-    restartGame('standard');
-    // AFTER restartGame (which resets both): the guest needs the complete
-    // fresh world, and the stateReloaded flag makes it re-center its
-    // camera on its new base instead of staring at the old map's spot —
-    // same discontinuous-jump mechanism a host-loaded save uses.
-    guestNeedsFullSync = true;
-    window.__mpSession.hostJustLoadedSave = true;
+    hostStartLockstepMatch(); // reads the mapsize radio itself
+    window.__mpSession.cameraCentered = false;
     restoreMenuForMatch();
     showMsg('Rematch! A new battle begins');
     return;
@@ -597,10 +588,6 @@ window.onNetConnectionOpen = function(){
   // mystery desync.
   queueSend(netConn, { type: 'proto', v: NET_PROTOCOL_VERSION });
   if (netRole === 'host') {
-    // Every fresh connection (first join, or a reconnect) needs a complete
-    // map to apply deltas onto — never assume a (re)connecting guest
-    // already has current state. See js/net-sync.js.
-    guestNeedsFullSync = true;
     // ?host= resume: this rehosted page has NO world of its own — the only
     // current copy is the guest's live mirror. Ask for it instead of
     // wiping the match with a fresh restartGame(); the 'state-snapshot'
@@ -636,35 +623,34 @@ window.onNetConnectionOpen = function(){
       window.fogDisabled = false;
       if (mpHostingFromExistingGame) {
         // Hosting from a save loaded before Host was clicked — keep that
-        // exact state rather than wiping it with a fresh restartGame().
-        // The forced full sync above is what actually gets the guest
-        // caught up on it, same mechanism a reconnect uses. Getting here
-        // means the pause menu was open (that's how Host got clicked),
-        // which set gamePaused=true — restartGame() would have implicitly
-        // cleared that for the fresh-start path, so it must be done
-        // explicitly here too, or the host's own update()/hostSyncTick()
-        // never run and the guest never receives anything.
+        // exact state: hand it to the guest and enter lockstep from it
+        // (same machinery as desync recovery). Getting here means the
+        // pause menu was open (that's how Host got clicked), which set
+        // gamePaused=true — clear it so the loop resumes.
         showMpStatus('Opponent connected! Resuming match…');
+        lockstepActive = true;
+        lockstepResetState();
+        DET.enabled = true;
+        lockstepResumeGuest();
         let menu = document.getElementById('tutorial');
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
         recomputeGamePaused();
-      } else if (lockstepRequested()) {
-        showMpStatus('Opponent connected! Starting lockstep match…');
-        hostStartLockstepMatch(); // js/lockstep.js — seed handshake + fresh world
       } else {
         showMpStatus('Opponent connected! Starting match…');
-        restartGame('standard');
+        hostStartLockstepMatch(); // js/lockstep.js — seed handshake + fresh world
       }
       // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
       restoreMenuForMatch();
     } else {
-      // Reconnect: resume exactly where the match was paused, don't touch
-      // anything else — the guest gets caught back up by the forced full
-      // sync above, same mechanism a first join uses. Only clears ITS OWN
-      // reason (disconnectedPause) — recomputeGamePaused() below still
-      // keeps the game paused if e.g. this host's own menu happens to be
-      // open at the exact moment the guest reconnects.
+      // Reconnect: resume exactly where the match was paused. Lockstep:
+      // hand the (possibly brand-new) guest page the full sim state and
+      // re-enter lockstep — same machinery as desync recovery. Legacy: the
+      // guest gets caught back up by the forced full sync above. Only
+      // clears ITS OWN reason (disconnectedPause) — recomputeGamePaused()
+      // below still keeps the game paused if e.g. this host's own menu
+      // happens to be open at the exact moment the guest reconnects.
+      if (lockstepEnabled()) lockstepResumeGuest();
       hideDisconnectOverlay();
       disconnectedPause = false;
       recomputeGamePaused();
@@ -995,8 +981,6 @@ function restartGame(difficulty){
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
   teamExploredEver[0].clear(); // fresh map, stale explored-history memory no longer meaningful — see js/core.js
   teamExploredEver[1].clear();
-  hostKnownGuestCam = null; // fresh map, stale camera position no longer meaningful — see js/core.js
-  for (let kind in SYNC_BUFFERS) SYNC_BUFFERS[kind].pending = []; // fresh map, stale pending-sync entries no longer meaningful — see js/core.js
   window.__mpSession.cameraCentered = false;
   window.__mpSession.hostJustLoadedSave = false;
   window.__mpSession.bottomHeightSet = false;
@@ -1018,10 +1002,7 @@ function restartGame(difficulty){
   treeFellTicks.clear(); // fresh map, fresh tree-fall animation state — see js/core.js
   corpseImpactFxDone.clear();
   workSwingCycles.clear();
-  guestPrevHp.clear();
-  guestReactedCorpses.clear();
   buildingFxTick.clear();
-  lastSentEntitySnapshot = new Map(); // fresh map, stale entity-diff baseline no longer meaningful — see js/core.js
 
   // Reset resources to defaults — team 1 (single-player AI, or a real MP
   // guest) gets the same starting resources as team 0, not a handicap; AI
@@ -1205,34 +1186,11 @@ function gameLoop(){
         if (lockstepEnabled()) lockstepTakeSnapshot();
       }
       if (lockstepEnabled()) lockstepReport();
-    } else {
-      // Nearly every limb/leg/tool/breathing animation in render-units.js
-      // is a direct function of the global `tick` (e.g. Math.sin(tick*0.45
-      // +e.id) for a walk cycle) — since the guest otherwise only ever
-      // gets `tick` overwritten by a sync (applyNetSync), all of that
-      // animation was frozen mid-pose between syncs even after position
-      // itself started gliding smoothly (advanceGuestUnits below). Nudging
-      // `tick` forward by the same real-time-to-tick-equivalent conversion
-      // used everywhere else in this branch keeps those animations playing;
-      // it's purely a rendering input on the guest (nothing here re-runs
-      // gameplay logic keyed on tick), and the next sync's authoritative
-      // integer `tick` corrects any drift, same as everything else.
-      tick += elapsed / timeStep;
-
-      // Projectiles and unit movement both get smoothed locally between
-      // syncs (see advanceGuestProjectiles/advanceGuestUnits in
-      // js/loop.js) — purely cosmetic position-only replays of the host's
-      // own stepping math, never touching combat/task/hp resolution (that
-      // already happened on the host); the next sync's authoritative
-      // entities/projectiles lists correct/remove them regardless.
-      advanceGuestProjectiles(elapsed);
-      advanceGuestUnits(elapsed);
     }
     // Visual-only effects (particle physics, building smoke/fire) run at
     // frame cadence for BOTH roles, outside the deterministic sim tick —
     // see updateCosmetics (js/loop.js).
     updateCosmetics(elapsed);
-    reportGuestViewIfChanged(now); // js/net-sync.js — lets the host hand this back on a future reconnect
   }
   // 30fps render cap on mobile: profiling shows render cost is ~65% native
   // canvas fill/stroke rasterization of per-unit vector art — halving the

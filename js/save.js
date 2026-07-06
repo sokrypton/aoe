@@ -331,20 +331,16 @@ function applySavedGame(data, opts){
     // mid-match).
     let alreadyConnectedHost = typeof netRole !== 'undefined' && netRole === 'host' && netConnected;
 
-    if (typeof netRole !== 'undefined' && netRole === 'host') guestNeedsFullSync = true;
-    // One-shot signal riding the next full sync (js/net-sync.js's
-    // buildSyncPayload/applyNetSync) so a (re)connecting guest knows this
-    // isn't just an ordinary reconnect — it's a discontinuous state jump —
-    // and should re-center its camera on its own units again, even though
-    // it may already have centered once (see __mpSession's comment,
-    // js/core.js). Set unconditionally on ANY multiplayer save load, not
-    // just when already actively hosting: a save can just as easily be
-    // loaded on a fresh page BEFORE hosting has (re)started (the normal
-    // "reload the whole browser, then load, then re-host" flow), in which
-    // case netRole isn't 'host' yet at this exact moment — but the flag
-    // just sits harmlessly until the first full sync is ever built,
-    // whenever hosting actually begins.
-    if (data.wasMultiplayerGame) window.__mpSession.hostJustLoadedSave = true;
+    // Seed the deterministic explored-grids from the save (they postdate
+    // the save format): team 0 from the restored fog, team 1 from the
+    // opponent's explored history. Approximate but deterministic — and a
+    // connected guest immediately receives the exact grids via the
+    // lockstep resume below, so both peers agree bit-for-bit.
+    resetTeamVision();
+    for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
+      if (fog[y] && fog[y][x] > 0) teamExploredGrid[0][y * MAP + x] = 1;
+    }
+    teamExploredEver[1].forEach(k => { teamExploredGrid[1][k] = 1; });
 
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
@@ -352,10 +348,14 @@ function applySavedGame(data, opts){
     updateUI();
 
     if (alreadyConnectedHost) {
-      // Resume in place: the connection itself is still fine, only the
-      // host's own local menu (opened by whatever UI flow triggered this
-      // load) needs closing so its paused game loop resumes and actually
-      // pushes the freshly loaded state out via the next hostSyncTick().
+      // Resume in place: the connection itself is still fine — hand the
+      // loaded world to the guest and re-enter lockstep from it (same
+      // machinery as desync recovery), then close the host's own menu so
+      // its game loop resumes.
+      lockstepActive = true;
+      lockstepResetState();
+      DET.enabled = true;
+      lockstepResumeGuest();
       let menu = document.getElementById('tutorial');
       if (menu) menu.style.display = 'none';
       if (typeof localMenuOpen !== 'undefined') {

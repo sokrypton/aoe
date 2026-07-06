@@ -1752,10 +1752,6 @@ function handleDeath(e,killerTeam){
     if(teamEliminated(1)){gameOver=true;won=true;}
     else if(teamEliminated(0)){gameOver=true;won=false;}
   }
-  if (!wasGameOver && gameOver && typeof netRole !== 'undefined' && netRole === 'host' && netConnected
-      && !(typeof lockstepEnabled === 'function' && lockstepEnabled())) {
-    hostSyncTick(true); // force past the backpressure skip — this is the guest's only chance to learn the match ended (lockstep: both sims reach gameOver themselves)
-  }
 }
 
 function teamEliminated(team){

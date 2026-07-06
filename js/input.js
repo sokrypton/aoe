@@ -1274,7 +1274,6 @@ function doCommand(sx,sy){
   // message) below, then sends the command and returns before any of the
   // actual state mutation, rather than waiting on a round-trip through the
   // host for feedback that was always purely cosmetic.
-  let isGuestSender = netRole === 'guest';
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
@@ -1374,46 +1373,6 @@ function doCommand(sx,sy){
     else if (first.utype !== 'sheep') window.playSound('select_military');
   }
 
-  if (isGuestSender && !(typeof lockstepEnabled === 'function' && lockstepEnabled())) {
-    // (Not under lockstep: there the guest's OWN sim executes the command
-    // for real INPUT_DELAY_TICKS later — predicting on top would double-move.)
-    // Movement PREDICTION for plain walk orders: start this client's own
-    // units moving immediately instead of waiting a command round-trip
-    // plus the next sync (~150-250ms on a real link — the visible
-    // "everyone hesitates" lag when dragging a big army around). The
-    // guest has the same map and pathfinder as the host, so it computes
-    // the same formation walk locally — MOVEMENT FIELDS ONLY (path via
-    // pathUnitTo; never task/target/gather state, which stay
-    // host-authoritative). The host's authoritative paths arrive 1-2
-    // syncs later and simply replace these guesses; the delta merge's
-    // position blend (js/net-sync.js) smooths the tiny disagreement.
-    // Deliberately NOT predicted: attack/follow/build/repair commands and
-    // villager clicks onto gatherable terrain — those set task state and
-    // approach points the host computes differently (perimeter spots,
-    // claimed gather tiles), so a guess would visibly zigzag.
-    if (!target && !buildTarget && !followTarget && movers.length > 0) {
-      let t0 = map[tile.y] && map[tile.y][tile.x];
-      let GATHERABLE = new Set([TERRAIN.FOREST, TERRAIN.GOLD, TERRAIN.STONE, TERRAIN.BERRIES, TERRAIN.FARM]);
-      let offs = getFormation(movers.length);
-      let oIdx = 0;
-      movers.forEach(s => {
-        if (s.garrisonedIn || s.utype === 'sheep') return;
-        if (s.utype === 'villager' && t0 && GATHERABLE.has(t0.t)) return; // gather order, not a walk
-        let ox = offs[oIdx] ? offs[oIdx][0] : 0, oy = offs[oIdx] ? offs[oIdx][1] : 0;
-        oIdx++;
-        pathUnitTo(s, tile.x + ox, tile.y + oy);
-        // Mirror issueMoveOrder's moveGoal fields (the host syncs its own
-        // shortly): finishMobileUnitCommand's keep-selection check requires
-        // moveGoalX on a walk order — without it a mobile guest's units got
-        // deselected the moment they were sent walking.
-        s.moveGoalX = tile.x + ox; s.moveGoalY = tile.y + oy;
-      });
-    }
-  }
-
-  // Plain walk order: mark the movers as pending-walk so the mobile
-  // keep-selection check (finishMobileUnitCommand) doesn't deselect them in
-  // the input-delay window before the command actually executes.
   // Record the keep-selection decision for THIS command (see pendingOrderUI):
   // mirror execUnitCommand's rules — plain walk keeps selection; a villager
   // sent to build/repair keeps (builder flow); gather/attack/follow deselect.

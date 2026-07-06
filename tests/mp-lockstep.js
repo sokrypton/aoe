@@ -20,7 +20,7 @@ const { BASE, sleep, check, finish } = require('./helpers');
   const hostId = await host.evaluate(() => netPeer.id);
 
   const guestCtx = await browser.newContext();
-  const guest = await guestCtx.newPage();
+  let guest = await guestCtx.newPage();
   guest.on('pageerror', e => errors.push('guest: ' + e.message));
   await guest.goto(BASE + '?join=' + hostId);
   await guest.waitForFunction(() => typeof lockstepActive !== 'undefined' && lockstepActive && entities.length > 0 && tick > 0, null, { timeout: 30000 });
@@ -118,7 +118,10 @@ const { BASE, sleep, check, finish } = require('./helpers');
       const x = Math.round(u.x) + dx, y = Math.round(u.y) + dy;
       if (x < 1 || y < 1 || x >= MAP - 1 || y >= MAP - 1) continue;
       if (map[y][x].t !== TERRAIN.GRASS || !walkable(x, y)) continue;
-      if (entities.some(e => Math.abs(e.x - x) < 2 && Math.abs(e.y - y) < 2)) continue;
+      // Sprites paint UPWARD from their feet: a unit up to ~3 tiles south/east
+      // can still cover this tap point on screen, resolving the tap as a
+      // follow/attack instead of a walk (seed-dependent flake).
+      if (entities.some(e => Math.abs(e.x - x) < 3.5 && Math.abs(e.y - y) < 3.5)) continue;
       gx = x; gy = y; break outer;
     }
     const iso = toIso(gx, gy);
@@ -158,6 +161,32 @@ const { BASE, sleep, check, finish } = require('./helpers');
   check(speeds[0] === 1 && speeds[1] === 1, 'set-speed applied on both peers (' + speeds.join('/') + ')');
   await host.evaluate(() => submitCommand({ kind: 'set-speed', v: 2 }));
   await sleep(1000);
+
+  // Reconnect: kill the guest page mid-match; a brand-new page joining the
+  // same host must receive lockstep-resume (full state) and re-enter
+  // lockstep where the match left off.
+  const preDrop = await host.evaluate(() => ({ n: entities.length, tick: Math.round(tick) }));
+  await guestCtx.close();
+  await sleep(6000); // host heartbeat notices the drop and pauses
+  const guestCtx2 = await browser.newContext();
+  const guest2 = await guestCtx2.newPage();
+  guest2.on('pageerror', e => errors.push('guest2: ' + e.message));
+  await guest2.goto(BASE + '?join=' + hostId);
+  await guest2.waitForFunction(() => typeof lockstepActive !== 'undefined' && lockstepActive && entities.length > 0, null, { timeout: 30000 });
+  await sleep(4000);
+  const resumed = await Promise.all([host, guest2].map(p => p.evaluate(() => ({
+    n: entities.length, tick: Math.round(tick), paused: gamePaused, ls: lockstepEnabled() }))));
+  // Entity-count equality is NOT asserted here — the two samples land a few
+  // ticks apart and a unit can legitimately die in between; the checksum
+  // comparison below is the real state-equality test.
+  check(resumed[1].ls && Math.abs(resumed[1].n - resumed[0].n) <= 3 && !resumed[0].paused && !resumed[1].paused
+    && Math.abs(resumed[0].tick - resumed[1].tick) <= 60 && resumed[0].tick > preDrop.tick,
+    'guest reconnect resumes lockstep match (host ' + JSON.stringify(resumed[0]) + ' guest ' + JSON.stringify(resumed[1]) + ')');
+  const [h2, g2] = await Promise.all([host, guest2].map(p => p.evaluate(() => DET.history.slice(-30))));
+  const g2map = new Map(g2.map(r => [r.tick, r.sum]));
+  let c2 = 0, m2 = 0; h2.forEach(r => { if (g2map.has(r.tick)) { c2++; if (g2map.get(r.tick) !== r.sum) m2++; } });
+  check(c2 > 0 && m2 === 0, 'post-reconnect checksums agree (' + c2 + ' compared, ' + m2 + ' mismatches)');
+  guest = guest2; // final assertions below run against the reconnected guest
 
   const desyncs = await Promise.all([host, guest].map(p => p.evaluate(() => window.__lockstepDesync || null)));
   check(!desyncs[0] && !desyncs[1], 'no desync flagged on either peer (' + desyncs.join(', ') + ')');

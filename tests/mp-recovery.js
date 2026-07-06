@@ -8,15 +8,19 @@ const { BASE, sleep, check, finish, startMatch } = require('./helpers');
   const hostUrl = await firstHost.evaluate(() => location.href);
   check(hostUrl.includes('?host='), 'host URL rewritten to ?host= resume link');
 
-  // Diverge state from spawn so recovery is distinguishable from a restart.
+  // Diverge state from spawn so recovery is distinguishable from a restart —
+  // through the command queue (out-of-band writes desync a lockstep match):
+  // host queues a villager, guest prepays a farm (spends 60 wood).
   await firstHost.evaluate(() => {
     let tc = entities.find(e => e.btype === 'TC' && e.team === 0);
-    queueUnit(tc, 'villager');
-    resources[0].wood = 137; // marker value
+    trainUnit(tc, 'villager');
   });
+  await guest.evaluate(() => prepayFarm());
   await sleep(1500);
-  const marker = await guest.evaluate(() => resources[0].wood);
-  check(marker === 137, 'marker state synced to guest before crash');
+  const marker = await guest.evaluate(() => ({
+    q: (entities.find(e => e.btype === 'TC' && e.team === 0) || {}).queue.length,
+    pf: resources[1].prepaidFarms }));
+  check(marker.q > 0 && marker.pf === 1, 'marker state on both sims before crash (' + JSON.stringify(marker) + ')');
 
   // Crash the host.
   await firstHost.close();
@@ -31,24 +35,25 @@ const { BASE, sleep, check, finish, startMatch } = require('./helpers');
   host.on('pageerror', e => errors.push('rehost: ' + e.message));
   await host.goto(hostUrl);
   const recovered = await host.waitForFunction(() =>
-    typeof mpMatchStarted !== 'undefined' && mpMatchStarted && entities.length > 0 && resources[0].wood === 137,
+    typeof mpMatchStarted !== 'undefined' && mpMatchStarted && entities.length > 0
+    && resources[1] && resources[1].prepaidFarms === 1,
     null, { timeout: 60000 }).then(() => true).catch(() => false);
   check(recovered, 'rehosted page recovered world from guest');
   await sleep(2000);
 
   const post = await Promise.all([host, guest].map(p => p.evaluate(() => ({
-    ents: entities.length, wood: resources[0].wood, paused: gamePaused,
+    pf: resources[1].prepaidFarms, paused: gamePaused,
     overlay: document.getElementById('mp-disconnect-overlay').style.display,
   }))));
-  check(post[0].ents === post[1].ents && post[0].wood === 137 && post[1].wood === 137
+  check(post[0].pf === 1 && post[1].pf === 1
     && !post[0].paused && !post[1].paused && post[1].overlay === 'none',
-    'both sides resumed in sync after recovery');
+    'both sides resumed in sync after recovery (' + JSON.stringify(post) + ')');
 
   // Sim flowing + command round-trip after recovery.
   const t1 = await guest.evaluate(() => tick);
   await sleep(1200);
   const t2 = await guest.evaluate(() => tick);
-  check(t2 > t1, 'sync stream flowing after recovery');
+  check(t2 > t1, 'sim advancing after recovery');
   await guest.evaluate(() => {
     let tc = entities.find(e => e.btype === 'TC' && e.team === 1);
     trainUnit(tc, 'villager');

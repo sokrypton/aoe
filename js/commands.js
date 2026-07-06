@@ -31,20 +31,23 @@ const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 let commandQueue = new Map(); // execTick -> [{team, seq, cmd}]
 let localCmdSeq = 0;
 
+// Set true while executing a command issued by the OTHER player — read by
+// the shared mutation code to suppress issuer-only feedback (sounds/
+// markers/showMsg): that feedback belongs to whoever physically clicked,
+// and they already got it locally at input time.
+let isReplayingRemoteCommand = false;
+
 function submitCommand(cmd){
   cmd.team = myTeam;
+  let execTick = tick + INPUT_DELAY_TICKS;
+  let seq = ++localCmdSeq;
+  scheduleCommand(execTick, myTeam, seq, cmd);
+  // Multiplayer: BOTH peers schedule the command at the issuer-stamped
+  // tick; the peer gets it via 'cmd-ls' (js/lockstep.js) and rolls back if
+  // it arrives late.
   if (typeof lockstepEnabled === 'function' && lockstepEnabled()) {
-    // Lockstep: BOTH peers schedule the command at the issuer-stamped tick
-    // and the issuer broadcasts it; the peer schedules it verbatim
-    // (js/lockstep.js's 'cmd-ls' handler).
-    let execTick = tick + INPUT_DELAY_TICKS;
-    let seq = ++localCmdSeq;
-    scheduleCommand(execTick, myTeam, seq, cmd);
     sendToPeer({ type: 'cmd-ls', execTick, seq, cmd });
-    return;
   }
-  if (netRole === 'guest') { sendCommand(cmd); return; }
-  scheduleCommand(tick + INPUT_DELAY_TICKS, myTeam, ++localCmdSeq, cmd);
 }
 
 function scheduleCommand(execTick, team, seq, cmd){
@@ -171,11 +174,20 @@ function execCommand(cmd, team){
         // console opt-in on BOTH peers (window.DEV_TEST_COMMANDS = true);
         // inert otherwise. Used by tests/mp-lockstep-perf.js.
         if (window.DEV_TEST_COMMANDS) {
-          let types = ['militia', 'archer', 'spearman', 'scout'];
+          let types = cmd.utype ? [cmd.utype] : ['militia', 'archer', 'spearman', 'scout'];
           for (let i = 0; i < (cmd.n | 0) && i < 400; i++) {
             let t = findSpawnTile(cmd.x + (i % 20), cmd.y + ((i / 20) | 0), 12);
-            if (t) createUnit(types[i % 4], t.x, t.y, i % 2);
+            if (t) createUnit(types[i % types.length], t.x, t.y, cmd.forTeam != null ? cmd.forTeam : i % 2);
           }
+        }
+        break;
+      case 'dev-destroy':
+        // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — the
+        // lockstep replacement for tests that used to set hp=0 directly on
+        // one peer (an out-of-band write is an instant desync now).
+        if (window.DEV_TEST_COMMANDS) {
+          let victim = entitiesById.get(cmd.id);
+          if (victim) { victim.hp = 0; handleDeath(victim, team); }
         }
         break;
       case 'town-bell':

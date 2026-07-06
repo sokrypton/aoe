@@ -269,21 +269,11 @@ let gameStarted=false, gamePaused=false, aiDifficulty='standard';
 // track the PeerJS DataConnection itself.
 let myTeam=0, netRole=null;
 let netConn=null, netConnected=false;
-// dirtyMapCells: tiles the host has changed since its last sync broadcast
-// (see js/net-sync.js). guestNeedsFullSync forces the next payload to carry
-// the whole `map` instead of just deltas — set on every fresh/re- connection
-// (js/init.js's onNetConnectionOpen) so a (re)joining guest always gets a
-// complete base to apply deltas onto, never partial state.
-let dirtyMapCells=[];
-let guestNeedsFullSync=true;
-// Cheap no-op in single-player (netRole stays null) and on the guest itself
-// (which never mutates the authoritative map) — only the host's own writes
-// need tracking for the next broadcast.
-function markMapDirty(x,y){
-  // Same leak guard as markPendingSync: only snapshot sync drains this list.
-  if (typeof lockstepEnabled === 'function' && lockstepEnabled()) return;
-  if(netRole==='host') dirtyMapCells.push({x,y});
-}
+// Legacy snapshot-sync is gone (lockstep everywhere — js/lockstep.js), but
+// markMapDirty stays as a no-op seam: every sim-side map mutation already
+// calls it, which is exactly the hook a future map-mutation journal (e.g.
+// cheaper rollback snapshots) would need.
+function markMapDirty(x,y){}
 
 // Which tile the falling-tree animation started on, and when — LOCAL-ONLY,
 // keyed by "x,y" rather than stored as a `fellTick` field directly on the
@@ -310,13 +300,6 @@ let treeFellTicks = new Map();
 let corpseImpactFxDone = new Set();
 let workSwingCycles = new Map();
 
-// Guest-only: reconstructs host-only particle side-effects (hit/death
-// blood, building smoke/fire, gather puffs) by diffing each sync against
-// the last one, instead of the host sending new messages for them.
-// guestPrevHp: entity id -> hp as of last sync (detects damage taken).
-// guestReactedCorpses: corpse ids already given their one-shot death burst.
-let guestPrevHp = new Map();
-let guestReactedCorpses = new Set();
 // Per-building last-fired tick for the guest's damage smoke/fire loop
 // (updateBuildingDamageFx, js/loop.js) — a bare tick%N check doesn't
 // work since the guest's tick advances fractionally, not per whole tick.
@@ -326,44 +309,10 @@ let buildingFxTick = new Map();
 let fog=[], projectiles=[], particles=[];
 let nextProjectileId = 1;
 
-// Projectiles/corpses/cmdMarkers are "create-once" — deterministic (or
-// purely locally-aged) after creation, so js/net-sync.js's buildSyncPayload
-// sends each kind's full list only on a fresh join/reconnect, and just the
-// new ones since last time otherwise (same idea as mapDelta). One registry
-// instead of three copy-pasted pending-array/push-site/branch trios — a 4th
-// kind is one new entry here. `live()` returns the current full array;
-// `map()` strips to wire fields.
-const SYNC_BUFFERS = {
-  projectiles: {
-    pending: [],
-    live: () => projectiles,
-    map: p => ({
-      id: p.id, x: p.x, y: p.y, startX: p.startX, startY: p.startY,
-      startH: p.startH, tx: p.tx, ty: p.ty, totalDist: p.totalDist
-    })
-  },
-  corpses: { pending: [], live: () => corpses, map: c => c }
-  // cmdMarkers are deliberately NOT here: a marker is click feedback for
-  // whoever clicked, generated locally on that client (js/input.js) and
-  // never during a replayed remote command — networking them only ever
-  // leaked the host's own clicks (selection targets, rally points) onto
-  // the guest's screen, telling the opponent exactly where the host was
-  // commanding.
-};
-function markPendingSync(kind, item){
-  // Only the snapshot-sync path ever drains these (buildSyncPayload) — under
-  // lockstep nothing does, so pushing would leak an entry per arrow/corpse
-  // for the whole match.
-  if (typeof lockstepEnabled === 'function' && lockstepEnabled()) return;
-  SYNC_BUFFERS[kind].pending.push(item);
-}
+// Legacy pending-sync buffers are gone; markPendingSync stays as a no-op
+// seam at every create-once spawn site (projectiles, corpses).
+function markPendingSync(kind, item){}
 
-// Host-only: id -> JSON of the last entity snapshot sent to the guest.
-// Unlike SYNC_BUFFERS, entities aren't create-once (they change constantly)
-// — but at idle nothing changes, and resending the whole array anyway
-// (measured at ~85% of the idle payload) was pure waste. Diffed against
-// this every delta sync so only actually-changed entities get resent.
-let lastSentEntitySnapshot = new Map();
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
 // lives outside the synced entity data so it survives the wholesale
 // entity replace on each sync (host tracks team 0's scouting, guest
@@ -579,11 +528,6 @@ function buildingVisibleToTeam(b, team){
   }
   return false;
 }
-
-// Host-only memory of the guest's last-reported camera position (sent via
-// the 'guest-view' message) — lets a (re)connecting guest restore its pan
-// position instead of recentering, since the host outlives a guest reload.
-let hostKnownGuestCam = null;
 
 // One-shot / session-lifecycle flags for the MP connection, consolidated
 // from scattered ad hoc `window.__flag` properties into one place:

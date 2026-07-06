@@ -33,7 +33,7 @@ let netMessageHandlers = [];
 // stale cached build while the other has today's is a very real failure
 // mode that otherwise surfaces as inexplicable desync instead of a clear
 // "refresh your page".
-const NET_PROTOCOL_VERSION = 3; // v3: world-space tick-queued commands (js/commands.js)
+const NET_PROTOCOL_VERSION = 4; // v4: lockstep-only wire (cmd-ls/tick/lockstep-*, js/lockstep.js); snapshot 'sync'/'cmd' gone
 
 // CompressionStream/DecompressionStream are stream-based (write in, read
 // chunks out), so both directions are inherently async. A single already-
