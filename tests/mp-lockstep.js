@@ -117,6 +117,25 @@ const { BASE, sleep, check, finish } = require('./helpers');
   check(keepSel.stillNow && keepSel.stillLater,
     'mobile walk order keeps selection through the input-delay window (now=' + keepSel.stillNow + ', later=' + keepSel.stillLater + ')');
 
+  // ...but a GATHER order (villager tapped onto a resource tile) must
+  // deselect, exactly like it did before the command queue.
+  const gatherDeselect = await guest.evaluate(() => {
+    let fx = -1, fy = -1;
+    outer: for (let y = 1; y < MAP - 1; y++) for (let x = 1; x < MAP - 1; x++) {
+      if (map[y][x].t === TERRAIN.FOREST && map[y][x].res > 0) { fx = x; fy = y; break outer; }
+    }
+    selected = entities.filter(e => e.team === 1 && e.utype === 'villager');
+    // Exact render projection (see isUnitOnScreen, js/core.js) so the tap
+    // lands ON the forest tile, not the grass beside it.
+    const iso = toIso(fx, fy);
+    const sx = (iso.ix - camX) * ZOOM + W/2;
+    const sy = (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH;
+    doCommand(sx, sy);
+    finishMobileUnitCommand();
+    return selected.length === 0;
+  });
+  check(gatherDeselect, 'mobile gather order deselects villagers immediately');
+
   const desyncs = await Promise.all([host, guest].map(p => p.evaluate(() => window.__lockstepDesync || null)));
   check(!desyncs[0] && !desyncs[1], 'no desync flagged on either peer (' + desyncs.join(', ') + ')');
   check(errors.length === 0, 'no page errors (' + errors.join('; ') + ')');

@@ -750,30 +750,26 @@ C.addEventListener('touchend',e=>{
 function hasSelectedMobileBuilder(){
   return selected.some(s=>s.team===myTeam&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
 }
-// UI-only record of walk commands submitted but not yet EXECUTED — the
-// command queue runs them INPUT_DELAY_TICKS after the tap (js/commands.js),
-// so at tap time the unit has no moveGoalX yet and the keep-selection check
-// below would wrongly deselect. Never read by the sim (setting the real
-// moveGoalX early on just the issuer would desync lockstep peers — it feeds
-// retaliation logic). Entries expire once the real command has landed.
-let pendingWalkOrder = new Map(); // unit id -> tick the walk was submitted
-function prunePendingWalks(){
-  // Entries are otherwise only removed when isPendingWalk() happens to read
-  // that id again — a match's worth of walk orders would accumulate.
-  pendingWalkOrder.forEach((t0, id) => { if (tick - t0 > INPUT_DELAY_TICKS + 30) pendingWalkOrder.delete(id); });
-}
-function isPendingWalk(id){
-  let t0 = pendingWalkOrder.get(id);
-  if (t0 === undefined) return false;
-  if (tick - t0 > INPUT_DELAY_TICKS + 30) { pendingWalkOrder.delete(id); return false; }
-  return true;
+// UI-only record of the LAST command submitted per unit, not yet EXECUTED —
+// the queue runs commands INPUT_DELAY_TICKS after the tap (js/commands.js),
+// so at tap time the unit's live task/target/moveGoal fields still describe
+// the PREVIOUS order. The mobile keep-selection decision must follow the
+// command just issued (keep for plain walks and build orders, deselect for
+// gather/attack/follow), so the resolver records that decision here and it
+// takes precedence over stale live state until the command lands. Never
+// read by the sim (mutating real sim fields early on just the issuer would
+// desync lockstep peers).
+let pendingOrderUI = new Map(); // unit id -> {t: submit tick, keep: bool}
+function prunePendingOrders(){
+  pendingOrderUI.forEach((p, id) => { if (tick - p.t > INPUT_DELAY_TICKS + 30) pendingOrderUI.delete(id); });
 }
 function hasSelectedMobileWalkOrder(){
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
-  return movers.length>0 && movers.every(s=>
-    (!s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined)
-    || isPendingWalk(s.id)
-  );
+  return movers.length>0 && movers.every(s=>{
+    let p = pendingOrderUI.get(s.id);
+    if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + 30) return p.keep;
+    return !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined;
+  });
 }
 function finishMobileUnitCommand(){
   if(hasSelectedMobileWalkOrder())return;
@@ -1418,9 +1414,20 @@ function doCommand(sx,sy){
   // Plain walk order: mark the movers as pending-walk so the mobile
   // keep-selection check (finishMobileUnitCommand) doesn't deselect them in
   // the input-delay window before the command actually executes.
-  if (!target && !buildTarget && !followTarget) {
-    prunePendingWalks(); // keep the map bounded to recent orders
-    movers.forEach(s => pendingWalkOrder.set(s.id, tick));
+  // Record the keep-selection decision for THIS command (see pendingOrderUI):
+  // mirror execUnitCommand's rules — plain walk keeps selection; a villager
+  // sent to build/repair keeps (builder flow); gather/attack/follow deselect.
+  {
+    prunePendingOrders();
+    let t0p = map[tile.y] && map[tile.y][tile.x];
+    let GATHERABLE_T = t0p && (t0p.t === TERRAIN.FOREST || t0p.t === TERRAIN.GOLD || t0p.t === TERRAIN.STONE || t0p.t === TERRAIN.BERRIES || t0p.t === TERRAIN.FARM);
+    let plainWalk = !target && !buildTarget && !followTarget;
+    movers.forEach(s => {
+      let keep = false;
+      if (buildTarget && s.utype === 'villager') keep = true; // hasSelectedMobileBuilder flow
+      else if (plainWalk && !(s.utype === 'villager' && GATHERABLE_T)) keep = true;
+      pendingOrderUI.set(s.id, { t: tick, keep });
+    });
   }
 
   // World-space command with all targets resolved to ids against THIS
