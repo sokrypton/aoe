@@ -399,7 +399,7 @@ function depleteGatherTile(pos,config){
         store.prepaidFarms--;
         tile.res = BLDGS.FARM.food;
         farm.hp = farm.maxHp;
-        if (farm.team === 0) showMsg("Farm auto-reseeded! (Prepaid remaining: " + store.prepaidFarms + ")");
+        if (farm.team === myTeam) showMsg("Farm auto-reseeded! (Prepaid remaining: " + store.prepaidFarms + ")");
         return;
       } else {
         farm.exhausted = true;
@@ -459,7 +459,7 @@ function updateGatherTask(e,config){
         clearGatherTarget(e);
         e.prevTask=null;
         e.task = e.carrying>0 ? 'return' : null;
-        if(e.team===0)showMsg('Resource is unreachable!');
+        if(e.team===myTeam)showMsg('Resource is unreachable!');
       }
     }
     return;
@@ -597,8 +597,10 @@ function damageEntity(attacker, target){
 
   // Feed the adaptive music: actual damage is the strongest mood signal —
   // it catches open-field battles that building-proximity checks miss.
-  if (attacker.team === 1 && target.team === 0) window.lastDangerTick = tick;
-  else if (attacker.team === 0 && target.team === 1) {
+  // Viewer-relative (myTeam, not 0/1): under lockstep both peers run this —
+  // danger music is "I'm taking damage", war music is "I'm dealing it".
+  if (attacker.team === 1 - myTeam && target.team === myTeam) window.lastDangerTick = tick;
+  else if (attacker.team === myTeam && target.team === 1 - myTeam) {
     window.lastWarTick = tick;
     // Where the hit landed, for the AI's garrison reaction: it only rings
     // its bell for hits near its own base, not for its attack wave taking
@@ -609,7 +611,7 @@ function damageEntity(attacker, target){
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
   // an ongoing one — the danger music carries the battle. It only re-arms
   // after ~20s without taking any hits.
-  if (target.team === 0 && attacker.team === 1) {
+  if (target.team === myTeam && attacker.team === 1 - myTeam) {
     let lastHit = window.lastUnderAttackTick;
     window.lastUnderAttackTick = tick;
     if (lastHit === undefined || tick - lastHit > 600) {
@@ -1311,7 +1313,7 @@ function updateUnit(e){
             e.buildRetries=(e.buildRetries||0)+1;
             if(e.buildRetries<6) return;
             e.buildRetries=0;
-            if(e.team===0)showMsg('Building site is unreachable!');
+            if(e.team===myTeam)showMsg('Building site is unreachable!');
             if(!checkNextBuild(e)){
               e.task=null;
               e.buildTarget=null;
@@ -1327,7 +1329,7 @@ function updateUnit(e){
           let store = resourceStore(e.team);
           if (store && store.prepaidFarms > 0) {
             store.prepaidFarms--;
-            if (e.team === 0) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
+            if (e.team === myTeam) showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")");
             bt.exhausted = false;
             bt.complete = true;               // exhaustion had flagged it incomplete;
             bt.buildProgress = bt.buildTime;  // without this, canGatherTile rejects the
@@ -1344,7 +1346,7 @@ function updateUnit(e){
           } else {
             if (store && store.wood >= 60) {
               store.wood -= 60;
-              if (e.team === 0) showMsg("Farm reseeded (-60 Wood)");
+              if (e.team === myTeam) showMsg("Farm reseeded (-60 Wood)");
               bt.exhausted = false;
               bt.complete = true;
               bt.buildProgress = bt.buildTime;
@@ -1359,7 +1361,7 @@ function updateUnit(e){
               e.buildTarget = null;
               return;
             } else {
-              if (e.team === 0) showMsg("Not enough wood to reseed farm!");
+              if (e.team === myTeam) showMsg("Not enough wood to reseed farm!");
               e.task = null;
               e.buildTarget = null;
               clearGatherTarget(e);
@@ -1420,7 +1422,7 @@ function updateUnit(e){
               bt.stoneDebt -= sD;
               bt.hp = Math.min(bt.maxHp, bt.hp + 1);
             } else {
-              if (e.team === 0) {
+              if (e.team === myTeam) {
                 showMsg('Not enough resources to repair!');
               }
               e.buildTarget = null;
@@ -1463,7 +1465,7 @@ function updateUnit(e){
         // to wait for.
         e.task=null;
         e.failedDrops=null;
-        if(e.team===0)showMsg('No drop site for '+e.carryType+'! Build one.');
+        if(e.team===myTeam)showMsg('No drop site for '+e.carryType+'! Build one.');
         return;
       }
       if(!adjToBuilding(e.x,e.y,drop)){
@@ -1648,10 +1650,9 @@ function deleteOwnedEntity(en){
   if(en.type==='building'&&!en.complete&&!en.exhausted){
     let store=resourceStore(en.team); // the OWNING team's resources, not always team 0's
     Object.entries(BLDGS[en.btype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
-    // Same "shows on whichever client actually executes this" limitation
-    // js/ui.js's cancelQueue() already has for a relayed command — not
-    // solved here either, kept consistent rather than special-cased.
-    if (typeof showMsg === 'function') showMsg(BLDGS[en.btype].name+' cancelled (refunded)');
+    // Feedback belongs to the OWNER's screen only — under lockstep both
+    // peers execute this for either team's delete commands.
+    if (en.team === myTeam && typeof showMsg === 'function') showMsg(BLDGS[en.btype].name+' cancelled (refunded)');
   }
   en.hp=0;
   handleDeath(en,1);
@@ -1901,7 +1902,7 @@ function updateBuilding(e){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
       let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
       if(!spawn){
-        if(e.team===0 && tick % 180 === 0){
+        if(e.team===myTeam && tick % 180 === 0){
           showMsg("Spawn point blocked! Clear area near " + BLDGS[e.btype].name);
         }
         return;
