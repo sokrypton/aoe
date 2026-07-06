@@ -513,7 +513,7 @@ function updateUI(){
         let btn=document.createElement('div');btn.className='act-btn framed';
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Reactivate Farm';
-        btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (300 Food).';
+        btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (175 Food).';
         btn.dataset.tipCost=JSON.stringify({w:60});
         btn.dataset.cost=JSON.stringify({w:60});
         let costStr='W:60';

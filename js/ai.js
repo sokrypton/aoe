@@ -586,7 +586,13 @@ function aiEcoPlan(ai,vilCount,profile){
   // SPREAD the profile's ratios: this function mutates `base` below (farm
   // key, wall stone boost) and must never write into the shared AI_LEVELS.
   let base={...profile.ecoRatios};
-  if(hasMill) base.farm=profile.farmShare;
+  if(hasMill){
+    // Staff the farms we actually have: ~one farmer per active farm, never
+    // below the profile floor (fixed 2-4 shares idled the extra plots the
+    // dynamic farm target above builds).
+    let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&e.complete&&!e.exhausted).length;
+    base.farm=Math.max(profile.farmShare,activeFarms);
+  }
   // Walls/gate/towers are pure stone sinks (~5/tile, dozens of tiles) — without
   // this the default 1-share stone ratio never keeps up and the ring stalls
   // forever half-built. Pull more gatherers onto stone until it's finished.
@@ -606,11 +612,21 @@ function planAIFarming(ai,aiTC,vils,profile){
   // Farms need a Mill for food drop-off; only worthwhile once military is underway
   if(!hasAIBuilding(ai,'MILL')||!hasAIBuilding(ai,'BARRACKS'))return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
-  let totalFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM').length;
-  let targetFarms=profile.targetFarms;
-  if(totalFarms>=targetFarms)return;
+  // ACTIVE farms only (exhausted ones auto-reseed and shouldn't block new
+  // plots), against a target that grows with the workforce — a fixed 2-4
+  // farm cap starved the AI's food economy once the berries ran out.
+  let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&!e.exhausted).length;
+  let targetFarms=aiFarmTarget(ai,vils,profile);
+  if(activeFarms>=targetFarms)return;
   let pos=findAIFarmSpot(ai,aiTC);
   if(pos)placeAIBuilding(ai,'FARM',pos.x,pos.y);
+}
+
+// Farms wanted right now: the profile floor plus one per two villagers
+// beyond a starting workforce of 8, capped at 3x the floor.
+function aiFarmTarget(ai,vils,profile){
+  return Math.min(profile.targetFarms*3,
+    profile.targetFarms+Math.max(0,Math.floor((vils.length-8)/2)));
 }
 
 function findAIFarmSpot(ai,tc){

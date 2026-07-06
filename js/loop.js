@@ -191,7 +191,7 @@ function nudgeAside(){
     if(!uid||uid===m.id)return;
     let s=entitiesById.get(uid);
     if(!s||s.hp<=0)return;
-    let pushable=s.utype==='sheep'||(s.utype==='villager'&&s.team===m.team);
+    let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,m.team));
     if(!pushable||s.target)return;
     if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
     // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
@@ -262,7 +262,7 @@ function updateGates(){
       if (!arr) continue;
       for (let k = 0; k < arr.length; k++) {
         let en = arr[k];
-        if (en.team === e.team &&
+        if (sameSide(en.team, e.team) && // allies open our gates too
             en.x >= e.x - 1.2 && en.x <= e.x + e.w + 0.2 &&
             en.y >= e.y - 1.2 && en.y <= e.y + e.h + 0.2) { friendlyNear = true; break outer; }
       }

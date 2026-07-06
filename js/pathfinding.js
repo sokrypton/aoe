@@ -48,7 +48,7 @@ function walkable(x,y,ignore,ignoreUnits){
         // isStubborn in loop.js) stops yielding: paths must route around it
         // like a parked soldier, which is what breaks displacement cycles.
         let pushable=blocker.utype==='sheep'||
-          (blocker.utype==='villager'&&walker&&walker.team===blocker.team&&!isStubborn(blocker));
+          (blocker.utype==='villager'&&walker&&sameSide(walker.team,blocker.team)&&!isStubborn(blocker));
         if(!harvesting&&!pushable)return false;
       }
     }
@@ -96,10 +96,11 @@ function walkable(x,y,ignore,ignoreUnits){
   if(t.occupied && walker && walker.buildTarget === t.occupied) return true;
   if(isResource)return false;
 
-  // Let friendly units or anyone (if open) pass through gates
+  // Let same-side units (own team or allies) or anyone (if open) pass
+  // through gates
   let bldg = entitiesById.get(t.occupied);
   if (bldg && bldg.btype === 'GATE') {
-    if (walker && (walker.team === bldg.team || bldg.isOpen)) {
+    if (walker && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
       return true;
     }
   }

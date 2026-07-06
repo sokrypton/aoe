@@ -384,7 +384,7 @@ function rememberedGatherTile(e,terrain){
   return null;
 }
 
-function depleteGatherTile(pos,config){
+function depleteGatherTile(pos,config,gatherer){
   let tile=map[pos.y][pos.x];
   markMapDirty(pos.x,pos.y); // every branch below mutates this same tile
   if(config.removeFarm){
@@ -402,6 +402,15 @@ function depleteGatherTile(pos,config){
         farm.complete = false;
         farm.buildProgress = 0;
         tile.res = 0;
+        // Farmer continuity: hand the CURRENT farmer straight to the
+        // reseed-on-approach machinery (it's already standing on the farm)
+        // instead of letting it idle — that path handles prepaid → wood →
+        // idle-with-message and flips back to task='farm' on success.
+        if (gatherer && gatherer.utype === 'villager') {
+          gatherer.task = 'build';
+          gatherer.buildTarget = farm.id;
+          gatherer.target = null;
+        }
         return;
       }
     }
@@ -417,6 +426,28 @@ function updateGatherTask(e,config){
   }
 
   if(!gatherTile){
+    // Farmers keep the farm economy running by themselves: with no ACTIVE
+    // farm left to work, head to the nearest exhausted own farm and reseed
+    // it (the walk-up path pays prepaid first, then wood) — but only when
+    // the reseed is actually payable, otherwise the trip ends in an idle
+    // anyway. Deterministic pick: nearest, then lowest id.
+    if(e.task==='farm'){
+      let store=resourceStore(e.team);
+      if(store&&((store.prepaidFarms||0)>0||store.wood>=60)){
+        let ex=null,best=Infinity;
+        entities.forEach(en=>{
+          if(en.type!=='building'||en.btype!=='FARM'||en.team!==e.team||!en.exhausted)return;
+          let d=dist(e,en);
+          if(d<best||(d===best&&ex&&en.id<ex.id)){best=d;ex=en;}
+        });
+        if(ex){
+          e.task='build';
+          e.buildTarget=ex.id;
+          clearGatherTarget(e);
+          return;
+        }
+      }
+    }
     clearGatherTarget(e);
     // Deposit whatever is already carried instead of idling with a partial
     // load in hand; with nothing carried, just go idle.
@@ -465,7 +496,7 @@ function updateGatherTask(e,config){
   let tile=map[gatherTile.y][gatherTile.x];
   // Guard against two villagers depleting the same tile in the same tick
   if(tile.res<=0){
-    depleteGatherTile(gatherTile,config);
+    depleteGatherTile(gatherTile,config,e);
     clearGatherTarget(e);
     return;
   }
@@ -496,7 +527,7 @@ function updateGatherTask(e,config){
   spawnParticles(gatherTile.x + 0.5, gatherTile.y + 0.5, pColor, 2, 0.02, 1.2);
 
   if(tile.res<=0){
-    depleteGatherTile(gatherTile,config);
+    depleteGatherTile(gatherTile,config,e);
     clearGatherTarget(e);
   }
 }
@@ -1363,7 +1394,11 @@ function updateUnit(e){
               return;
             } else {
               if (e.team === myTeam) showMsg("Not enough wood to reseed farm!");
-              e.task = null;
+              // Look for another workable farm instead of idling — the
+              // farm-task fallback below (updateGatherTask) finds the next
+              // complete farm, or idles if none exists.
+              e.task = 'farm';
+              clearGatherTarget(e);
               e.buildTarget = null;
               clearGatherTarget(e);
               return;

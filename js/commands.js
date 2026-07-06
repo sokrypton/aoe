@@ -466,7 +466,7 @@ function reactivateFarmNow(farm){
   farm.hp = farm.maxHp;
   let tile = map[farm.y][farm.x];
   tile.t = TERRAIN.FARM;
-  tile.res = 300;
+  tile.res = BLDGS.FARM.food; // same refill as every other reseed path (fresh/prepaid/walk-up/AI)
   markMapDirty(farm.x, farm.y);
   if (!isReplayingRemoteCommand) showMsg('Farm reactivated!');
   if (typeof updateUI === 'function') updateUI();
