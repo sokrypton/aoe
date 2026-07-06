@@ -26,15 +26,18 @@ let lockstepRollbacks = 0; // stats: rewinds this match
 // Report every 6th tick (~10/s at default speed): enough for drift control
 // and checksum exchange; per-message compress+send is real CPU on mobile.
 const LOCKSTEP_REPORT_EVERY = 6;
-// Checksums are only exchanged for ticks at least this old: any command
-// that could rewrite history at tick T arrives within the rollback window,
-// so by T + LAG both peers' values for T are final.
-const LOCKSTEP_CKSUM_LAG = 90;
 // Snapshot ring: every SNAP_EVERY ticks, keep SNAP_KEEP — a ~5s rewind
 // window (300 ticks). A command later than that means the connection was
 // effectively dead longer than the net-layer heartbeat tolerates anyway.
 const LOCKSTEP_SNAP_EVERY = 10;
 const LOCKSTEP_SNAP_KEEP = 30;
+// Checksums are only exchanged for ticks at least a full ROLLBACK WINDOW
+// old: any command that can still legally rewrite tick T arrives within
+// the window, so only then is T final on both sides. (This was 90 ticks —
+// less than the window — and a single latency spike delivering a command
+// 90-300 ticks late rewrote already-exchanged history: a FALSE desync
+// alarm that froze a healthy match.)
+const LOCKSTEP_CKSUM_LAG = LOCKSTEP_SNAP_EVERY * LOCKSTEP_SNAP_KEEP;
 // Drift control (soft): if we're more than SOFT ticks ahead of the peer's
 // last report, run at ~80% speed so they catch up; HARD is a stop — only
 // reachable if the peer is truly wedged (their reports stopped arriving,
@@ -60,6 +63,9 @@ function sendToPeer(msg){
 }
 
 function lockstepResetState(){
+  lockstepResyncBarrier = -1;
+  lockstepResyncCount = 0;
+  lastResyncAt = 0;
   peerSimTick = -1;
   lastReportedSimTick = -1;
   lockstepDesyncedAt = null;
@@ -108,6 +114,9 @@ onNetMessage((msg) => {
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
   } else if (msg.type === 'cmd-ls' && lockstepActive) {
+    // Commands from before a resync point are stale on BOTH sides — the
+    // resync state already reflects (or deliberately drops) them.
+    if (msg.execTick <= lockstepResyncBarrier) return;
     // The peer's team: guest commands land on the host as team 1 and vice
     // versa — never trusted from the wire.
     let peerTeam = netRole === 'host' ? 1 : 0;
@@ -117,6 +126,10 @@ onNetMessage((msg) => {
       // with it in place — converges with what the peer computed on time.
       lockstepRollback(msg.execTick);
     }
+  } else if (msg.type === 'lockstep-resync' && netRole === 'guest' && lockstepActive) {
+    lockstepApplyResync(msg.state);
+  } else if (msg.type === 'lockstep-resync-request' && netRole === 'host' && lockstepActive) {
+    lockstepStartResync();
   } else if (msg.type === 'tick' && lockstepActive) {
     if (msg.t > peerSimTick) peerSimTick = msg.t;
     if (msg.h !== undefined) lockstepCheckPeerChecksum(msg.ct, msg.h);
@@ -239,14 +252,78 @@ function lockstepRollback(execTick){
   }
 }
 
-// Desync is a bug, full stop (the whole determinism workstream exists so
-// this never fires). Policy: freeze loudly and keep the evidence —
-// automated recovery (full-snapshot restore) is a later phase.
+// Desync recovery: the host snapshots its full sim state (normalized
+// through the same JSON round-trip the wire applies, so both peers end up
+// bit-identical), applies it to ITSELF, and sends it to the guest. Both
+// drop queued/in-flight commands older than the resync point. Costs a
+// brief hiccup instead of freezing the match. Rate-limited; a match that
+// keeps desyncing still freezes loudly so the bug gets reported.
+let lockstepResyncBarrier = -1; // drop stale cmd-ls at/below this tick
+let lockstepResyncCount = 0, lastResyncAt = 0;
+const LOCKSTEP_MAX_RESYNCS = 5;
+
+function lockstepBuildResyncState(){
+  let st = lockstepCaptureState();
+  st.exploredSim = [Array.from(st.exploredSim[0]), Array.from(st.exploredSim[1])];
+  st.stuckWatch = Array.from(st.stuckWatch.entries());
+  // Same Set->null normalization the save/wire path uses (js/save.js):
+  // the sim treats a missing Set as empty and rebuilds it.
+  return JSON.parse(JSON.stringify(st, (k, v) => v instanceof Set ? null : v));
+}
+
+function lockstepApplyResync(state){
+  entities = state.entities;
+  entitiesById.clear();
+  entities.forEach(e => entitiesById.set(e.id, e));
+  projectiles = state.projectiles;
+  corpses = state.corpses || [];
+  resources = state.resources;
+  map = state.map;
+  popUsed = state.popUsed; popCap = state.popCap;
+  tick = state.tick;
+  gameOver = state.gameOver; won = state.won;
+  nextId = state.nextId; nextProjectileId = state.nextProjectileId;
+  simRngState = state.simRngState;
+  window.bellRinging = state.bellRinging;
+  restoreStuckWatch(new Map(state.stuckWatch || []));
+  teamExploredGrid = [Uint8Array.from(state.exploredSim[0]), Uint8Array.from(state.exploredSim[1])];
+  visionFreshTick = -1;
+  selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
+  clearCommandQueue();
+  lockstepSnapshots.length = 0;
+  DET.history.length = 0;
+  lockstepResyncBarrier = tick;
+  peerSimTick = tick;
+  lastReportedSimTick = tick;
+  lockstepDesyncedAt = null;
+  window.__lockstepDesync = undefined;
+  gamePaused = false;
+  if (typeof recomputeGamePaused === 'function') recomputeGamePaused();
+  if (typeof showMsg === 'function') showMsg('Connection re-synchronized');
+}
+
+function lockstepStartResync(){
+  if (netRole !== 'host') return;
+  let state = lockstepBuildResyncState();
+  broadcastToGuest({ type: 'lockstep-resync', state });
+  lockstepApplyResync(state); // host passes through the same normalization
+}
+
 function lockstepFatal(why){
   if (lockstepDesyncedAt != null) return;
   lockstepDesyncedAt = tick;
-  window.__lockstepDesync = why; // tests assert this stays undefined
   console.error('LOCKSTEP DESYNC @ tick ' + tick + ': ' + why);
+  // Attempt automatic recovery (host authoritative for the resync state).
+  let nowMs = performance.now();
+  if (lockstepResyncCount < LOCKSTEP_MAX_RESYNCS && (lastResyncAt === 0 || nowMs - lastResyncAt > 10000)) {
+    lockstepResyncCount++;
+    lastResyncAt = nowMs;
+    if (typeof showMsg === 'function') showMsg('Connection hiccup — re-synchronizing…');
+    if (netRole === 'host') lockstepStartResync();
+    else sendToPeer({ type: 'lockstep-resync-request' });
+    return;
+  }
+  window.__lockstepDesync = why; // tests assert this stays undefined
   if (typeof showMsg === 'function') showMsg('Desync detected — match halted (' + why + ')');
   gamePaused = true;
 }
