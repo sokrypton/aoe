@@ -111,7 +111,8 @@ setTimeout(() => {
       const farms = bldgs.filter(b => b.btype === 'FARM');
       return {
         age: teamAge[t], vils: units.filter(u => u.utype === 'villager').length,
-        mil: units.filter(u => MILITARY.has(u.utype)).length,
+        mil: units.filter(u => isArmyUnit(u.utype)).length,
+        rams: units.filter(u => u.utype === 'ram').length,
         idleVils: units.filter(u => u.utype === 'villager' && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
         food: Math.round(st.food), wood: Math.round(st.wood), gold: Math.round(st.gold), stone: Math.round(st.stone),
         farms: farms.length, exhaustedFarms: farms.filter(f => f.exhausted).length,
@@ -199,7 +200,7 @@ setTimeout(() => {
     report.health.jsErrors = window.__errors.slice();
     // where every military unit stands at the end — is the army actually
     // reaching the enemy, or stalled somewhere en route?
-    report.end.milSnapshot = entities.filter(e => e.type === 'unit' && MILITARY.has(e.utype))
+    report.end.milSnapshot = entities.filter(e => e.type === 'unit' && isArmyUnit(e.utype))
       .map(e => ({team: e.team, ut: e.utype, x: +e.x.toFixed(0), y: +e.y.toFixed(0),
                   tgt: e.target || null, path: e.path.length, gs: e.groupSpeed || null,
                   retry: e.retry || null}));

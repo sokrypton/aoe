@@ -373,7 +373,16 @@ function pathReaches(sx,sy,tx,ty,ignore,tol=1.5){
   let p=findPath(sx,sy,tx,ty,ignore);
   if(p.length===0)return false;
   let last=p[p.length-1];
-  return Math.abs(last.x-tx)<=tol&&Math.abs(last.y-ty)<=tol;
+  if(Math.abs(last.x-tx)<=tol&&Math.abs(last.y-ty)<=tol)return true;
+  // Iteration-capped partial path: A* ran out of BUDGET, not out of map.
+  // A long path that closed most of the gap is a truncated route — treat
+  // it as reachable (armies re-targeting the enemy TC from 60+ tiles away
+  // were getting 'unreachable' and yo-yoing home forever). Short queries
+  // (build/drop sites) always complete within budget, so the strict
+  // end-adjacency test above still guards forest-pocket placements.
+  let dEnd=Math.max(Math.abs(last.x-tx),Math.abs(last.y-ty));
+  let dStart=Math.max(Math.abs(sx-tx),Math.abs(sy-ty));
+  return p.length>=25&&dEnd<dStart*0.6;
 }
 
 // Distance from point to nearest tile of a building
@@ -1285,6 +1294,7 @@ function updateUnit(e){
   if(e.target && e.task !== 'return'){
     let t=entitiesById.get(e.target);
     if(!t||t.hp<=0){
+      if(window.__dropStats)window.__dropStats.killed=(window.__dropStats.killed||0)+1;
       e.target=null;
       e.explicitAttack=false;
       return;
@@ -1323,6 +1333,7 @@ function updateUnit(e){
           return aiEnt.team === e.team && dist(aiEnt, t) <= visionRange;
         });
         if (!visible) {
+          if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
           e.target = null;
           clearUnitPath(e);
           return;
@@ -1407,7 +1418,18 @@ function updateUnit(e){
       if(pathFn)pathFn();
       else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
       if(u.path.length===0){
-        if(dist>8){u.target=null;retryClear(u,'chaseBlocked');return false;} // truly unreachable
+        if(dist>8){
+          // NOT an instant drop: a marching wave jams its own lanes for a
+          // few ticks constantly (40 units funneling), and dropping the
+          // order on the first empty repath sent whole waves trudging home
+          // from mid-map over and over. Only sustained failure (4 fails,
+          // 30 ticks apart — a real wall, not a jam) forfeits the march.
+          if(retryFail(u,'chaseFar',30,4)){
+            if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
+            u.target=null;retryClear(u,'chaseBlocked');
+          }
+          return false;
+        }
         // Near the target but no route, repeatedly: that's not a crowded
         // melee ring (those clear within a retry or two) — something static
         // is in the way, usually a wall. An AI unit switches to breaching
@@ -1420,6 +1442,7 @@ function updateUnit(e){
         }
       } else {
         retryClear(u,'chaseBlocked');
+        retryClear(u,'chaseFar');
       }
       return true;
     }

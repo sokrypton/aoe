@@ -297,6 +297,66 @@ function mirroredDir(e){
   return e.dir;
 }
 
+// ---- BATTERING RAM: one physical model, projected per view ----
+// Every facing AND the ground shadow derive from these numbers, so
+// proportions cannot drift between views. World units are local px at
+// scale 1 (RAM_SCALE applied at draw time): X = movement axis (a),
+// Y = width axis (b), Z = up (c).
+const RAM_DIM = {
+  L: 12,      // body half-length (gable planes at a=±L)
+  WE: 7,      // eave half-width
+  WB: 6,      // skirt-base half-width
+  CB: 3,      // ground clearance (bottom of walls)
+  CE: 9,      // eave height — also the log's axis height
+  CR: 17,     // ridge height
+  OV: 1.2,    // roof overhang past the gables
+  RLOG: 2.6,  // log radius → beam width 5.2 in EVERY projection
+  WR: 3,      // wheel radius
+  WA: 8,      // axle spacing (axles at a = -WA, 0, +WA)
+  WTH: 1.4,   // wheel tread width along the axle
+  SCALE: 1.45 // overall ram scale vs the unit grid
+};
+// Screen basis per authored facing (mirroredDir): u = movement axis,
+// v = ground-plane width axis, height is always (0,-1).
+// dir7 (E): u exactly horizontal (true profile heading); dir0/6 the 2:1
+// iso diagonals; dir1/5 head-on with a widened v (see drawRamBody).
+// Size-constancy factor for the true-profile pose (dir 7): a side
+// ELEVATION of the same body spans only 2·L where the 3/4 views span
+// 2·L·|u.x| + 2·(WE+WTH)·|v.x| — ~1.4x more. Classic sprite-art practice
+// (AoE2 included) keeps silhouette presence roughly constant across
+// facings, so the profile is drawn uniformly scaled by this factor about
+// the ground anchor. Derived, not eyeballed:
+//   K = (L·0.894 + (WE+WTH)·0.894) / L  for the current model ≈ 1.27
+// Half-way between true elevation (1.0) and full span-matching (~1.27):
+// full compensation overshot — the flat pose carries more solid mass than
+// the 3/4s, so equal bounding span reads LARGER. Split the difference.
+const RAM_PROFILE_K = (1 + 0.894 * (RAM_DIM.L + RAM_DIM.WE + RAM_DIM.WTH) / RAM_DIM.L) / 2; // ≈ 1.13
+const RAM_AXES = {
+  7: { u:{x:1,y:0},          v:{x:-0.6,y:0.4} },
+  0: { u:{x:0.894,y:0.447},  v:{x:-0.894,y:0.447} },
+  1: { u:{x:0,y:0.55},       v:{x:1.25,y:0} },
+  5: { u:{x:0,y:-0.55},      v:{x:1.25,y:0} },
+  6: { u:{x:0.894,y:-0.447}, v:{x:0.894,y:0.447} }
+};
+// Footprint shadow half-extents (local px, before UNIT_SCALE): the ground
+// rectangle |a| ≤ L+OV, |b| ≤ WE+WTH projected through the view basis —
+// |a|·|u| + |b|·|v| per screen axis is exact for an axis-aligned box.
+// 0.92 tucks the shadow slightly inside the silhouette. Mirrored dirs
+// (2/3/4) share their right-facing twin's extents (all terms are |abs|).
+function ramShadowExtent(dir){
+  let m = dir === 2 ? 0 : dir === 3 ? 7 : dir === 4 ? 6 : dir;
+  let ax = RAM_AXES[m] || RAM_AXES[7];
+  // the profile pose is drawn RAM_PROFILE_K larger (size constancy) — its
+  // footprint shadow scales with it
+  let k = m === 7 ? RAM_PROFILE_K : 1;
+  let A = (RAM_DIM.L + RAM_DIM.OV) * RAM_DIM.SCALE * 0.92 * k;
+  let B = (RAM_DIM.WE + RAM_DIM.WTH) * RAM_DIM.SCALE * 0.92 * k;
+  return {
+    rx: A * Math.abs(ax.u.x) + B * Math.abs(ax.v.x),
+    ry: Math.max(3.5, A * Math.abs(ax.u.y) + B * Math.abs(ax.v.y))
+  };
+}
+
 // ---- BATTERING RAM (covered ram, AoE2 style) ----
 // A rigid wooden shed on four wheels with a suspended log protruding from
 // the front gable, drawn as a true iso box: every vertex is
@@ -312,27 +372,18 @@ function drawRamBody(e){
   // dir7 (E) is pure screen-horizontal (tile (1,-1) → screen (64,0));
   // dir0/6 run along the 2:1 iso diagonals; dir1/5 point at/away from the
   // viewer (u vertical, foreshortened) with the width axis lying flat.
-  // dir7 (E) cheats a few degrees off pure profile: a true edge-on gable
-  // shows no roof pitch at all (both eave and ridge project horizontal, it
-  // reads as a flat-topped cart) — the slight 3/4 lets the front gable and
-  // pitch show, same trick the horse profile uses for richness. Head-on
-  // dirs 1/5 widen v: at true iso a shed pointing at the camera is
-  // narrower than it is tall, which reads as a tent, not a vehicle.
-  const AXES = {
-    7: { u:{x:0.97,y:0.24},   v:{x:-0.6,y:0.4} },
-    0: { u:{x:0.894,y:0.447}, v:{x:-0.894,y:0.447} },
-    1: { u:{x:0,y:0.55},      v:{x:1.5,y:0} },
-    5: { u:{x:0,y:-0.55},     v:{x:1.5,y:0} },
-    6: { u:{x:0.894,y:-0.447}, v:{x:0.894,y:0.447} }
-  };
-  let ax = AXES[useDir] || AXES[7];
+  // dir7 (E): the body axis u is EXACTLY horizontal — the ram points due
+  // east/west in profile. The 3/4 richness (visible front gable + roof
+  // pitch, vs the flat-topped-cart a true edge-on projection gives) comes
+  // entirely from the skewed width axis v, which costs nothing in heading.
+  // Head-on dirs 1/5 widen v: at true iso a shed pointing at the camera
+  // is narrower than it is tall, which reads as a tent, not a vehicle.
+  let ax = RAM_AXES[useDir] || RAM_AXES[7];
   let u = ax.u, v = ax.v;
   let P = (a,b,c) => ({ x: a*u.x + b*v.x, y: a*u.y + b*v.y - c });
 
-  // Body proportions (local px): half-length L, eave half-width WE, skirt
-  // base half-width WB; skirt from c=2..8, ridge at c=16, roof overhangs
-  // the gables by 1.
-  const L=10, WE=5.2, WB=4.2, CB=2, CE=8, CR=16, OV=1;
+  // All proportions come from the shared physical model (RAM_DIM above).
+  const { L, WE, WB, CB, CE, CR, OV, RLOG, WR, WA, WTH, SCALE } = RAM_DIM;
 
   let tc = teamColor(e.team);
   let rolling = e.path.length > 0;
@@ -344,9 +395,9 @@ function drawRamBody(e){
   let dLog = 0, recoil = 0;
   if (ramming) {
     let ph = ((tick*0.05 + e.id*0.4) % 1 + 1) % 1;
-    if (ph < 0.7) dLog = -3 * (ph/0.7);
-    else { let t = (ph-0.7)/0.3; dLog = -3 + 9 * (1 - Math.pow(1-t,3)); }
-    recoil = Math.max(0, dLog) * 0.22;
+    if (ph < 0.7) dLog = -4.5 * (ph/0.7);
+    else { let t = (ph-0.7)/0.3; dLog = -4.5 + 11.5 * (1 - Math.pow(1-t,3)); }
+    recoil = Math.max(0, dLog) * 0.2;
   }
   // Idle log sway — the only idle motion; a vehicle sits still.
   else if (!rolling) dLog = Math.sin(tick*0.05 + e.id) * 0.4;
@@ -355,7 +406,7 @@ function drawRamBody(e){
   // Rolling: gentle sway, no head-bob (suppressed in drawUnit's translate)
   if (rolling) X.translate(0, Math.sin(tick*0.2 + e.id) * 0.5);
   X.translate(recoil * u.x, recoil * u.y);
-  X.scale(1.15, 1.15); // the ram out-bulks even the horse units
+  X.scale(SCALE, SCALE); // the ram out-bulks even the horse units
 
   let lw = 1.2 / UNIT_SCALE;
   let poly = (pts, fill) => {
@@ -364,41 +415,79 @@ function drawRamBody(e){
     X.closePath(); X.fill();
     X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
   };
-  // Wheel: solid wooden disc with a rotating cross-spoke. Profile-ish
-  // facings draw circles; head-on facings see the wheels edge-on as
-  // narrow vertical ellipses (no spokes — too thin to read).
+  // Wheel: a short CYLINDER, not a flat disc — a dark tread capsule runs
+  // from the inner face to the outer face along the axle (the width axis
+  // v), then the lit wooden face with rotating cross-spokes and a hub sits
+  // on the outer end. Head-on facings see a wheel edge-on: only the tread
+  // shows, a dark rounded slab.
   let wheelRot = tick*0.35 + e.id;
   let wheel = (a, b, r) => {
-    let p = P(a, b, r); // center sits one radius above the ground line
     let thin = (useDir === 1 || useDir === 5);
-    X.fillStyle = '#5a4630';
-    X.strokeStyle = '#000'; X.lineWidth = lw;
-    X.beginPath();
-    X.ellipse(p.x, p.y, thin ? 1.3 : r, r, 0, 0, Math.PI*2);
-    X.fill(); X.stroke();
-    if (!thin) {
-      X.strokeStyle = '#3a2c1c'; X.lineWidth = 1 / UNIT_SCALE;
-      for (let k = 0; k < 2; k++) {
-        let ang = (rolling ? wheelRot : 0.6) + k * Math.PI/2;
-        X.beginPath();
-        X.moveTo(p.x - Math.cos(ang)*r*0.72, p.y - Math.sin(ang)*r*0.72);
-        X.lineTo(p.x + Math.cos(ang)*r*0.72, p.y + Math.sin(ang)*r*0.72);
-        X.stroke();
-      }
-      X.fillStyle = '#8a6a4a';
-      X.beginPath(); X.arc(p.x, p.y, 0.9, 0, Math.PI*2); X.fill();
+    if (thin) {
+      // Edge-on wheel: a plain SQUARE slab — these are solid wooden
+      // wheels, not tires; head-on there's no curve to show. Soft dark
+      // outline, faint lit strip for the rolling surface.
+      let p = P(a, b, r);
+      let w2 = WTH * 1.15, h2 = WR * 0.7; // tread width / wheel radius, edge-on
+      X.fillStyle = '#33261a';
+      X.fillRect(p.x - w2, p.y - h2, w2*2, h2*2);
+      X.strokeStyle = '#1d150c'; X.lineWidth = 0.9 / UNIT_SCALE;
+      X.strokeRect(p.x - w2, p.y - h2, w2*2, h2*2);
+      X.fillStyle = '#5a4630';
+      X.fillRect(p.x - 0.6, p.y - h2 + 0.6, 1.2, h2*2 - 1.2);
+      return;
     }
+    // thickness extends toward the vehicle's centerline
+    let bIn = b - Math.sign(b) * WTH;
+    let pIn = P(a, bIn, r), pF = P(a, b, r);
+    // The disc lies in the plane spanned by the movement axis u and the
+    // vertical: a rim point is r·cosθ·u + r·sinθ·(0,-1), i.e. EXACTLY a
+    // unit circle under the canvas transform (u.x, u.y, 0, -1). Drawing
+    // the face inside that transform gets the per-facing foreshortening
+    // and tilt from the math (dir7 near-circle, diagonals squeezed along
+    // the run) instead of eyeballing screen-facing circles — and a spoke
+    // drawn in disc-local coords genuinely rotates about the axle.
+    let discPath = (cx, cy) => {
+      X.save(); X.transform(u.x, u.y, 0, -1, cx, cy);
+      X.beginPath(); X.arc(0, 0, r, 0, Math.PI*2);
+      X.restore(); // pop BEFORE stroking so line width isn't distorted
+    };
+    // Tread: the cylinder silhouette is the disc ellipse SWEPT along the
+    // axle — a screen-space capsule has circular caps that disagree with
+    // the tilted end ellipses (visible bulge). Sweep = outline the inner
+    // cap, then fill the disc shape at a few steps toward the outer face;
+    // the union is the exact cylinder.
+    X.strokeStyle = '#1d150c'; X.lineWidth = 1.8 / UNIT_SCALE;
+    discPath(pIn.x, pIn.y); X.stroke();
+    X.fillStyle = '#33261a';
+    for (let t3 = 0; t3 <= 1.001; t3 += 0.2) {
+      discPath(pIn.x + (pF.x - pIn.x) * t3, pIn.y + (pF.y - pIn.y) * t3);
+      X.fill();
+    }
+    // outer face disc: lit wood, one true-rotating spoke, hub
+    X.fillStyle = '#5a4630';
+    X.strokeStyle = '#1d150c'; X.lineWidth = 0.9 / UNIT_SCALE;
+    discPath(pF.x, pF.y); X.fill(); X.stroke();
+    let ang = (rolling ? wheelRot : 0.6);
+    let sp = t => ({ x: pF.x + (Math.cos(ang)*u.x)*r*t, y: pF.y + (Math.cos(ang)*u.y - Math.sin(ang))*r*t });
+    let s1 = sp(-0.7), s2 = sp(0.7);
+    X.strokeStyle = '#3a2c1c'; X.lineWidth = 1 / UNIT_SCALE;
+    X.beginPath(); X.moveTo(s1.x, s1.y); X.lineTo(s2.x, s2.y); X.stroke();
+    X.fillStyle = '#8a6a4a';
+    X.beginPath(); X.arc(pF.x, pF.y, 0.7, 0, Math.PI*2); X.fill();
   };
   // Gable end (pentagon) at a=const: skirt base, eaves, ridge point.
   let gable = (a, fill) => poly([P(a,-WB,CB),P(a,WB,CB),P(a,WE,CE),P(a,0,CR),P(a,-WE,CE)], fill);
-  // Roof slope quad on side sgn (=±1), with overhang past the gables.
-  let slope = (sgn, fill) => poly([P(-L-OV,sgn*(WE+0.6),CE),P(L+OV,sgn*(WE+0.6),CE),P(L+OV,0,CR),P(-L-OV,0,CR)], fill);
+  // Roof slope quad on side sgn (=±1), with overhang past the gables AND
+  // past the wheels: the eave reaches wider and lower than the wall line
+  // (WE+1.5 at c=CE-1.2) so the roof visibly shelters the running gear.
+  let slope = (sgn, fill) => poly([P(-L-OV,sgn*(WE+1.5),CE-1.2),P(L+OV,sgn*(WE+1.5),CE-1.2),P(L+OV,0,CR),P(-L-OV,0,CR)], fill);
   // Skirt side wall on side sgn.
   let skirt = (sgn, fill) => poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WE,CE),P(-L,sgn*WE,CE)], fill);
   // Team-color fascia board along a slope's eave edge (ownership read).
   let fascia = (sgn) => {
     X.strokeStyle = tc; X.lineWidth = 2 / UNIT_SCALE;
-    let p1 = P(-L-OV, sgn*(WE+0.6), CE-0.2), p2 = P(L+OV, sgn*(WE+0.6), CE-0.2);
+    let p1 = P(-L-OV, sgn*(WE+1.5), CE-1.4), p2 = P(L+OV, sgn*(WE+1.5), CE-1.4);
     X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
   };
   // Plank seams down a slope (matches drawTCAnnexRoof's seam treatment).
@@ -406,7 +495,7 @@ function drawRamBody(e){
     X.strokeStyle = 'rgba(0,0,0,0.18)'; X.lineWidth = 1 / UNIT_SCALE;
     for (let t of [-0.5, 0, 0.5]) {
       let a = (L+OV) * t * 1.4;
-      let p1 = P(a, sgn*(WE+0.6), CE), p2 = P(a, 0, CR);
+      let p1 = P(a, sgn*(WE+1.5), CE-1.2), p2 = P(a, 0, CR);
       X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
     }
   };
@@ -414,36 +503,71 @@ function drawRamBody(e){
   // front gable. In head-on view it's just the iron cap + end face
   // pointing at the viewer.
   let logBeam = () => {
-    if (useDir === 5 || useDir === 6) return; // hidden from behind
-    if (useDir === 1) {
-      let p = P(L + 1.5 + dLog*0.4, 0, 6);
-      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = lw;
-      X.beginPath(); X.arc(p.x, p.y, 2.8, 0, Math.PI*2); X.fill(); X.stroke();
-      X.fillStyle = '#8f8f8f';
-      X.beginPath(); X.arc(p.x, p.y, 2.1, 0, Math.PI*2); X.fill();
-      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.9 / UNIT_SCALE;
-      X.beginPath(); X.arc(p.x - 0.5, p.y - 0.5, 1.1, Math.PI*0.7, Math.PI*1.6); X.stroke();
+    if (useDir === 5) return; // fully hidden from directly behind
+    if (useDir === 6) {
+      // NE back-diagonal: the capped tip still pokes past the FAR end,
+      // emerging from behind the roofline. Called FIRST in the branch, so
+      // the body paints over its base — it reads as coming from behind
+      // the ram rather than floating beside it. The visible travel is
+      // damped (×0.55): from behind, most of the stroke happens on the
+      // hidden far side, so full-amplitude motion looked too fast. Seen
+      // from the rear the brown shaft is NEARER than the iron cap, so the
+      // grey band is drawn first and the wood laps over the seam.
+      let d6 = dLog * 0.55;
+      let q1 = P(L + 0.6, 0, CE), q2 = P(L + 5.6 + d6, 0, CE), qb = P(L + 3.9 + d6, 0, CE);
+      // GEOMETRY line widths (no /UNIT_SCALE): the beam must scale with
+      // the body polygons, or it renders 1.25x thinner than the profile's
+      // rectangle beam.
+      X.strokeStyle = '#000'; X.lineWidth = RLOG*2 + 1.4; X.lineCap = 'round';
+      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(q2.x,q2.y); X.stroke();
+      X.strokeStyle = '#8f8f8f'; X.lineWidth = RLOG*2 + 0.6;
+      X.beginPath(); X.moveTo(qb.x,qb.y); X.lineTo(q2.x,q2.y); X.stroke();
+      X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2;
+      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(qb.x,qb.y); X.stroke();
+      X.lineCap = 'butt';
       return;
     }
-    let p1 = P(5 + dLog, 0, 6), p2 = P(L + 6 + dLog, 0, 6);
-    X.strokeStyle = '#000'; X.lineWidth = 4.6 / UNIT_SCALE; X.lineCap = 'round';
+    if (useDir === 1) {
+      // Head-on: the thrust reads as the capped end surging at the viewer —
+      // it travels down-screen and swells slightly, shrinking back into
+      // the opening on the windup.
+      let p = P(L + 1.5 + dLog*0.55, 0, CE);
+      let rr = Math.max(1.6, (RLOG + 0.4) + dLog*0.13); // iron cap radius = RLOG + band lip
+      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = lw;
+      X.beginPath(); X.arc(p.x, p.y, rr, 0, Math.PI*2); X.fill(); X.stroke();
+      X.fillStyle = '#8f8f8f';
+      X.beginPath(); X.arc(p.x, p.y, rr*0.75, 0, Math.PI*2); X.fill();
+      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.9 / UNIT_SCALE;
+      X.beginPath(); X.arc(p.x - 0.5, p.y - 0.5, rr*0.4, Math.PI*0.7, Math.PI*1.6); X.stroke();
+      return;
+    }
+    // The log STARTS at the opening plane (a=L) — never drawn across the
+    // gable face — so retracting genuinely slides it into the dark hole
+    // and the thrust makes it burst out.
+    // Beam thickness matches the head-on cap's diameter (~5.8px) so the
+    // log reads as the same timber from every facing.
+    let p1 = P(L - 0.8, 0, CE), p2 = P(L + 5.5 + dLog, 0, CE);
+    // GEOMETRY line widths — see the dir6 note: /UNIT_SCALE strokes render
+    // 1.25x thinner than the body polygons and the profile's rect beam.
+    X.strokeStyle = '#000'; X.lineWidth = RLOG*2 + 1.4; X.lineCap = 'round';
     X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
-    X.strokeStyle = '#6e473b'; X.lineWidth = 3 / UNIT_SCALE;
+    X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2;
     X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
     X.lineCap = 'butt';
     // iron cap: band + end face at the tip
-    let pb = P(L + 4.6 + dLog, 0, 6);
-    X.strokeStyle = '#8f8f8f'; X.lineWidth = 3.4 / UNIT_SCALE;
+    let pb = P(L + 3.6 + dLog, 0, CE);
+    X.strokeStyle = '#8f8f8f'; X.lineWidth = RLOG*2 + 0.6; X.lineCap = 'round';
     X.beginPath(); X.moveTo(pb.x,pb.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.lineCap = 'butt';
     X.fillStyle = '#c9c9c9';
-    X.beginPath(); X.arc(p2.x, p2.y, 1.5, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.arc(p2.x, p2.y, 2.2, 0, Math.PI*2); X.fill();
     X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
   };
   // Dark opening in a gable face that the log emerges from.
   let opening = (a) => {
-    let p = P(a, 0, 6);
+    let p = P(a, 0, CE);
     X.fillStyle = '#2a1f14';
-    X.beginPath(); X.ellipse(p.x, p.y, 3.2, 3.6, 0, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(p.x, p.y, 3.6, 4, 0, 0, Math.PI*2); X.fill();
     X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
   };
   // Cross-brace X on the rear gable (plain planks otherwise).
@@ -454,51 +578,133 @@ function drawRamBody(e){
     X.moveTo(c3.x,c3.y); X.lineTo(c4.x,c4.y); X.stroke();
   };
 
-  const WR = 3.2; // wheel radius
-  // Wheel layout: front/rear pairs at a=±6.5, sides at b=±(WB+0.6).
-  let wa = 6.5, wb = WB + 0.6;
+  // Wheel layout: three axles at a = -WA/0/+WA, mounted OUTSIDE the shed
+  // (AoE2) — fully visible, overlapping the skirt from in front on the
+  // near side, peeking past the body on the far side. Head-on, the square
+  // slabs stick out at the sides beyond the eave line. wheelPair draws
+  // ONE side's wheels sorted by projected screen depth, so the nearer
+  // wheel always paints over the farther one in every facing.
+  let wa = WA, wb = WB + 1.1, wbThin = WE + 1.2;
+  let wheelPair = (bSide) => {
+    // Head-on the true axle spacing climbs the stack too far up the body;
+    // compress it toward the NEAR end so the squares hug the ground line
+    // (the depth stagger stays, just tighter).
+    let thin = (useDir === 1 || useDir === 5);
+    let nearA = useDir === 5 ? -wa : wa;
+    let m = a => thin ? nearA - (nearA - a) * 0.5 : a;
+    [{a:-wa},{a:0},{a:wa}].map(w=>({a:m(w.a), y:P(m(w.a),bSide,WR).y}))
+      .sort((w1,w2)=>w1.y-w2.y)
+      .forEach(w=>wheel(w.a,bSide,WR));
+  };
 
-  if (useDir === 7 || useDir === 0) {
-    // E profile / SE front-diagonal: far wheels → far slope sliver →
+  if (useDir === 7) {
+    // TRUE PROFILE (E/W): a dedicated side ELEVATION, like the horse's
+    // profile pose — no iso box math. Viewer looks straight along the
+    // width axis: side wall below, the near roof slope as a band up to
+    // the horizontal ridge (slightly inset at the top ends so it doesn't
+    // read as a flat box), gable ends edge-on, log dead horizontal at the
+    // front. Ground at y=0, front = +x; the facing mirror makes W.
+    // Same physical model, elevation projection: lengths/heights map 1:1,
+    // then the whole pose is scaled by the size-constancy factor (see
+    // RAM_PROFILE_K) about the ground anchor.
+    X.scale(RAM_PROFILE_K, RAM_PROFILE_K);
+    const PL = L, PWAL = CB, PEAVE = CE, PRIDGE = CR, PWR = WR, PWA = WA;
+    let el = (pts, fill) => poly(pts.map(([x2,y2]) => ({x:x2, y:y2})), fill);
+    // far wheel row: the viewer sits above the ground plane, so the far
+    // side's wheels peek slightly HIGHER; dark silhouettes only.
+    X.fillStyle = '#241a10';
+    [-PWA, 0, PWA].forEach(x2 => {
+      X.beginPath(); X.arc(x2 + 1, -PWR - 2, PWR, 0, Math.PI*2); X.fill();
+    });
+    // Log BEHIND the body: in a true side view a cylinder IS a rectangle —
+    // no end-face ellipse, no perspective. Drawn before the wall/roof so
+    // the shed occludes its base and it reads as sliding out of the front.
+    {
+      let xTip = PL + 7 + dLog, h2 = RLOG, y0 = -PEAVE; // beam width 2·RLOG, like every view
+      X.fillStyle = '#6e473b';
+      X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE;
+      X.beginPath(); X.rect(PL - 4, y0 - h2, xTip - (PL - 4), h2*2); X.fill(); X.stroke();
+      X.fillStyle = '#8f8f8f';
+      X.beginPath(); X.rect(xTip - 2.4, y0 - h2 - 0.4, 2.4, h2*2 + 0.8); X.fill(); X.stroke();
+      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.8 / UNIT_SCALE;
+      X.beginPath(); X.moveTo(xTip - 1.1, y0 - h2 + 0.5); X.lineTo(xTip - 1.1, y0 + h2 - 0.5); X.stroke();
+    }
+    // side wall
+    el([[-PL,-PWAL],[PL,-PWAL],[PL,-PEAVE],[-PL,-PEAVE]], WOOD.plankR);
+    // roof band: eave to ridge, ridge inset for depth
+    el([[-PL-1.2,-PEAVE],[PL+1.2,-PEAVE],[PL-0.6,-PRIDGE],[-PL+0.6,-PRIDGE]], WOOD.plankL);
+    // plank seams following the end slant
+    X.strokeStyle = 'rgba(0,0,0,0.18)'; X.lineWidth = 1 / UNIT_SCALE;
+    for (let t of [-0.5, 0, 0.5]) {
+      X.beginPath();
+      X.moveTo((PL+1.2) * t * 1.4, -PEAVE);
+      X.lineTo((PL-0.6) * t * 1.4, -PRIDGE);
+      X.stroke();
+    }
+    // team fascia along the eave
+    X.strokeStyle = tc; X.lineWidth = 2.2 / UNIT_SCALE;
+    X.beginPath(); X.moveTo(-PL-1.2, -PEAVE+0.4); X.lineTo(PL+1.2, -PEAVE+0.4); X.stroke();
+    // near wheel row, full circles with the rolling spoke
+    [-PWA, 0, PWA].forEach(x2 => {
+      X.fillStyle = '#5a4630';
+      X.strokeStyle = '#1d150c'; X.lineWidth = 0.9 / UNIT_SCALE;
+      X.beginPath(); X.arc(x2, -PWR, PWR, 0, Math.PI*2); X.fill(); X.stroke();
+      let ang = rolling ? wheelRot : 0.6;
+      X.strokeStyle = '#3a2c1c'; X.lineWidth = 1 / UNIT_SCALE;
+      X.beginPath();
+      X.moveTo(x2 - Math.cos(ang)*PWR*0.7, -PWR - Math.sin(ang)*PWR*0.7);
+      X.lineTo(x2 + Math.cos(ang)*PWR*0.7, -PWR + Math.sin(ang)*PWR*0.7);
+      X.stroke();
+      X.fillStyle = '#8a6a4a';
+      X.beginPath(); X.arc(x2, -PWR, 0.8, 0, Math.PI*2); X.fill();
+    });
+  } else if (useDir === 0) {
+    // SE front-diagonal: far wheels → far slope sliver →
     // near skirt + front gable → near slope → log → near wheels.
-    wheel(-wa, -wb, WR); wheel(wa, -wb, WR);
+    wheelPair(-wb);
     slope(-1, WOOD.plankL);
     skirt(1, WOOD.plankR);
     gable(L, WOOD.plankR);
     opening(L);
+    wheelPair(wb); // exterior wheels over the skirt, under the roof overhang
+    logBeam();     // before the near slope: the roof overhang laps the beam's exit
     slope(1, WOOD.plankL); seams(1); fascia(1);
-    logBeam();
-    wheel(-wa, wb, WR); wheel(wa, wb, WR);
   } else if (useDir === 6) {
     // NE back-diagonal: log (far side, mostly hidden) → far wheels →
     // near slope is the DOWN-facing one; rear gable toward the viewer.
-    wheel(wa, -wb, WR); wheel(-wa, -wb, WR);
+    logBeam(); // far tip first: everything after occludes its base
+    wheelPair(-wb);
     slope(-1, WOOD.plankL);
     skirt(1, WOOD.plankR);
     gable(-L, WOOD.plankR);
     brace(-L);
+    wheelPair(wb); // exterior wheels over the skirt, under the roof overhang
     slope(1, WOOD.plankL); seams(1); fascia(1);
-    wheel(-wa, wb, WR); wheel(wa, wb, WR);
   } else if (useDir === 1) {
     // S head-on: rear slopes as flanks behind, front gable dominant,
     // foreshortened log cap pointing at the viewer.
-    wheel(-wa, -wb, WR); wheel(-wa, wb, WR);
+    // Wheel stacks FIRST: all three axles show as a receding ladder of
+    // squares at each side, but the body paints over them — wheels live
+    // beside/under the ram, never on top of it. wheelPair keeps the
+    // far-to-near order within each stack.
+    wheelPair(-wbThin); wheelPair(wbThin);
     slope(-1, WOOD.plankL); slope(1, WOOD.plankR);
+    seams(1); seams(-1);
     gable(L, WOOD.plankR);
     opening(L);
     fascia(1); fascia(-1);
     logBeam();
-    wheel(wa, -wb, WR); wheel(wa, wb, WR);
   } else {
     // N back view: rear gable toward the viewer, both slopes rising away.
     // The far/front gable (a=+L) is fully hidden by the roof — don't draw
     // it, or it paints over the slopes (painter's order).
-    wheel(-wa, -wb, WR); wheel(-wa, wb, WR);
+    // wheel stacks first — same occluded-by-body rule as S
+    wheelPair(-wbThin); wheelPair(wbThin);
     slope(-1, WOOD.plankL); slope(1, WOOD.plankR);
+    seams(1); seams(-1);
     gable(-L, WOOD.plankL);
     brace(-L);
     fascia(1); fascia(-1);
-    wheel(wa, -wb, WR); wheel(wa, wb, WR);
   }
 
   X.restore();
@@ -520,11 +726,12 @@ function drawUnit(e){
   // skip it or the selection ring traces the shadow blob too.
   if(!window._maskDraw){
     X.fillStyle='rgba(0,0,0,0.3)';
-    // The ram is the biggest unit in the game — wider footprint shadow
-    // (slightly rounder when facing to/away from the camera).
+    // Ram: the shadow is the projected ground footprint, computed from the
+    // SAME physical model as the body (ramShadowExtent) — per-facing size
+    // falls out of the math instead of hand-picked ellipses.
     if(e.utype==='ram'){
-      let headOn = e.dir===1||e.dir===5;
-      X.beginPath();X.ellipse(sx,sy+2,(headOn?8:11)*UNIT_SCALE,(headOn?6:5)*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+      let ext = ramShadowExtent(e.dir !== undefined ? e.dir : 7);
+      X.beginPath();X.ellipse(sx,sy+2,ext.rx*UNIT_SCALE,ext.ry*UNIT_SCALE,0,0,Math.PI*2);X.fill();
     } else {
       X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
     }

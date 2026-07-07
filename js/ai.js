@@ -971,7 +971,12 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // at the next objective, independent of the wave cooldown.
   {
     let tcC0={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
-    let strays=mils.filter(m=>!m.target&&m.utype!=='scout'&&dist(m,tcC0)>18*aiScale());
+    // FIXED 22-tile radius, not scaled: hard's aiScale(2) stretched the
+    // "near home" exemption to 36 tiles — mid-map camps of targetless wave
+    // survivors sat just inside it and never got re-pointed at the enemy.
+    // The forward rally posture parks ~16 tiles out at most, so 22 keeps
+    // home defenders exempt while catching every stalled march.
+    let strays=mils.filter(m=>!m.target&&m.utype!=='scout'&&dist(m,tcC0)>22);
     if(strays.length){
       let spotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
       strays.forEach(m=>{
