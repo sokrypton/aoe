@@ -2107,6 +2107,9 @@ canvas {
    same way with Esc (cancel placement → leave submenu → deselect), so the
    button is just noise in the AoE2-style command grid. */
 .act-btn.back-btn { display: none; }
+/* ...EXCEPT inside a villager build submenu, where the arrow is the only
+   mouse path back to the main build panel (Esc still works too). */
+.act-btn.back-btn.submenu-back { display: flex; }
 
 /* ==== FIXED-SIZE MENU DESIGNS ====
    The menu is authored at exactly TWO design sizes — portrait (390px wide,

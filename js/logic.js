@@ -697,9 +697,11 @@ function damageEntity(attacker, target){
     if (attacker.utype === 'villager') dmg += 3;
     if (attacker.utype === 'militia') dmg += 2;
     // The ram IS its building bonus: base atk 2 barely scratches a unit,
-    // +40 vs structures tears through walls (~7 hits on a palisade, ~27 on
-    // a stone wall after armor). Keep in sync with wallBreachTicks (ai.js).
-    if (attacker.utype === 'ram') dmg += 40;
+    // +70 vs structures tears through walls — calibrated so one ram kills
+    // a Castle-age stone wall segment (1485hp after masonry+fortified) in
+    // ~24 hits ≈ 120 game-s, matching AoE2's ~16 hits on its double-HP
+    // walls. Keep in sync with wallBreachTicks (ai.js).
+    if (attacker.utype === 'ram') dmg += 70;
   }
 
   // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
@@ -1562,7 +1564,13 @@ function updateUnit(e){
             e.buildTarget = null;
             return;
           } else {
-            if (store && store.wood >= 60) {
+            // Direct-from-bank reseed is AI-ONLY (it's how the AI manages
+            // its farms). A HUMAN's farmer must not silently spend 60 wood
+            // — that made the Mill's prepaid queue pointless: the whole
+            // point of prepay (AoE2 DE) is choosing WHEN wood goes to
+            // farms. No prepaid credit → the farm stays exhausted until
+            // the player reactivates it or queues reseeds at the Mill.
+            if (store && store.wood >= 60 && isAITeam(e.team)) {
               store.wood -= 60;
               feedbackFor(e.team, () => showMsg("Farm reseeded (-60 Wood)"));
               bt.exhausted = false;
@@ -1579,7 +1587,7 @@ function updateUnit(e){
               e.buildTarget = null;
               return;
             } else {
-              feedbackFor(e.team, () => showMsg("Not enough wood to reseed farm!"));
+              feedbackFor(e.team, () => showMsg(isAITeam(e.team) ? "Not enough wood to reseed farm!" : "Farm exhausted — reactivate it or prepay reseeds at the Mill"));
               // Look for another workable farm instead of idling — the
               // farm-task fallback below (updateGatherTask) finds the next
               // complete farm, or idles if none exists.
@@ -1982,6 +1990,7 @@ function handleDeath(e,killerTeam){
     if(e.type==='building'&&e.complete) window.playSound('collapse', e.x+(e.w||1)/2, e.y+(e.h||1)/2);
     // Bears growl their own death; humans get the death cry.
     else if(e.type==='unit'&&e.utype==='bear') window.playSound('bear', e.x, e.y);
+    else if(e.type==='unit'&&e.utype==='ram') window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
     else if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass') window.playSound('death', e.x, e.y);
   }
   // Add to corpses list for AoE2-style decay (sheep are the exception —

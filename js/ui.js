@@ -3,7 +3,7 @@
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
-  'knight','SWALL','SGATE','bear','logo',
+  'knight','SWALL','SGATE','bear','logo','ram',
   // Age-look variant cells (AGE_ICON_VARIANTS below)
   'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle']); // 7x7 master sheet cells
 
@@ -18,6 +18,18 @@ const AGE_ICON_VARIANTS = {
   archer:   {2:'archer-castle'},
   scout:    {2:'scout-castle'},
 };
+// Cost rendered as mini resource-icon+number chips overlaid on the action
+// button. Desktop keeps costs in the hover tooltip (.cost is display:none
+// there so icons stay big); coarse-pointer devices show the chips instead,
+// because touch has no hover tooltip and costs were simply invisible on
+// mobile. CSS: .cost-chips in styles.css.
+function costChips(cost){
+  const CLS = { f:'food', w:'wood', g:'gold', s:'stone' };
+  return '<span class="cost cost-chips">' + Object.entries(cost||{})
+    .map(([k,v])=>`<span class="cost-chip"><span class="res-mini-icon icon-${CLS[k]||k}"></span>${v}</span>`)
+    .join('') + '</span>';
+}
+
 function iconKey(type, team = myTeam){
   let v = AGE_ICON_VARIANTS[type];
   let k = v && teamAge ? v[teamAge[team]] : null;
@@ -252,6 +264,11 @@ function updateUI(){
   if(rebuildActions && selected.length>0 && gameStarted && !gameOver){
     let backBtn=document.createElement('div');
     backBtn.className='act-btn back-btn framed';
+    // Inside a villager build SUBMENU the back arrow is the only way back
+    // to the main build panel — the classic skin hides .back-btn (desktop
+    // steps back with Esc), but it must still show for this one case, so
+    // tag it (see .submenu-back in classic-style.css).
+    if(window.currentVillagerMenu==='eco'||window.currentVillagerMenu==='mil') backBtn.classList.add('submenu-back');
     backBtn.dataset.tipType='action';
     backBtn.dataset.tipLabel='Back';
     backBtn.dataset.tipDesc='Go back one step: cancel placement or targeting, leave a submenu, or deselect.';
@@ -299,7 +316,7 @@ function updateUI(){
       upBtn.dataset.tipLabel=allGates?'Upgrade to Stone Gate':'Upgrade to Stone Wall';
       upBtn.dataset.tipDesc='Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone. Damage carries over proportionally.';
       upBtn.dataset.cost=JSON.stringify(cost);
-      upBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-${allGates?'SGATE':'SWALL'}"></div><div class="btn-label">To Stone${ids.length>1?' ×'+ids.length:''}</div><span class="cost">${formatCost(cost)}</span>`;
+      upBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-${allGates?'SGATE':'SWALL'}"></div><div class="btn-label">To Stone${ids.length>1?' ×'+ids.length:''}</div>${costChips(cost)}`;
       upBtn.onclick=()=>{
         submitCommand({kind:'upgrade-walls',unitIds:ids});
       };
@@ -535,7 +552,7 @@ function updateUI(){
           let trainIcon=SPRITE_ICON_KEYS.has(iconKey(ut))
             ?`<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div>`
             :`<div class="btn-emoji">${u.icon||''}</div>`;
-          btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div><span class="cost">${formatCost(u.cost)}</span>`;
+          btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div>${costChips(u.cost)}`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
@@ -562,7 +579,7 @@ function updateUI(){
               ? 'Unlocks spearmen, archers, scouts, watch towers, and stone walls. Military gains +1 attack and +1 armor.'
               : 'Unlocks the knight. Military gains a further +1 attack and +1 armor.')
               +' The Town Center pauses villager training while researching.';
-            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div><span class="cost">${formatCost(next.cost)}</span>`;
+            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div>${costChips(next.cost)}`;
             btn.onclick=()=>{ submitCommand({kind:'research-age',bldgId:e.id}); };
           }
           act.appendChild(btn);
@@ -607,8 +624,7 @@ function updateUI(){
         btn.dataset.tipDesc='Pre-pays 60 Wood to automatically reseed an exhausted farm. Queued reseeds are used before spending resources again.';
         btn.dataset.tipCost=JSON.stringify({w:60});
         btn.dataset.cost=JSON.stringify({w:60});
-        let costStr='W:60';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div><span class="cost">${costStr}</span>`;
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div>${costChips({w:60})}`;
         btn.onclick=()=>prepayFarm();
         act.appendChild(btn);
       }
@@ -619,8 +635,7 @@ function updateUI(){
         btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (175 Food).';
         btn.dataset.tipCost=JSON.stringify({w:60});
         btn.dataset.cost=JSON.stringify({w:60});
-        let costStr='W:60';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div><span class="cost">${costStr}</span>`;
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div>${costChips({w:60})}`;
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
       }
@@ -744,7 +759,7 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;
@@ -774,7 +789,7 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div><span class="cost">${costStr}</span>`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;

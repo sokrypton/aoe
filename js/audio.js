@@ -206,6 +206,31 @@ function playSound(type, wx, wy) {
         noiseHit(out, now, { t0: 0.07, dur: 0.1, vol: 0.07, type: 'bandpass', f0: rnd(600, 900), q: 2.2 });
         break;
       }
+      case 'ram_hit': {
+        // Battering ram strike: a LOT of mass landing — deep timber boom,
+        // sharp splintering crack, masonry debris. Sits between 'build'
+        // (light hammer) and 'collapse' (whole building) in weight.
+        // Impact crack first, so the transient reads on small speakers.
+        noiseHit(out, now, { dur: 0.07, vol: 0.24, type: 'bandpass', f0: 1100 * p, f1: 500, q: 1.1 });
+        // Heavy wooden boom body
+        tone(out, now, { type: 'square', f0: 130 * p, f1: 42, dur: 0.16, vol: 0.14 });
+        tone(out, now, { type: 'sine', f0: 70 * p, f1: 34, dur: 0.34, vol: 0.14, att: 0.008 });
+        // A little rubble settling after the blow
+        [0.09, 0.17].forEach(t0 => {
+          noiseHit(out, now, { t0, dur: 0.05, vol: 0.08, type: 'bandpass', f0: rnd(600, 1300), q: 1.6 });
+        });
+        break;
+      }
+      case 'ram_creak': {
+        // Rolling ram: slow wooden axle creak — a pitch-bent groan in the
+        // low mids plus a faint wheel rumble. Quiet by design: it repeats
+        // the whole march, ambience rather than event.
+        const f = rnd(140, 190) * p;
+        tone(out, now, { type: 'sawtooth', f0: f, f1: f * 1.35, dur: 0.22, vol: 0.035, att: 0.05 });
+        tone(out, now, { type: 'sawtooth', f0: f * 0.51, f1: f * 0.62, t0: 0.05, dur: 0.18, vol: 0.025, att: 0.04 });
+        noiseHit(out, now, { dur: 0.3, vol: 0.03, type: 'lowpass', f0: 240, q: 0.7, att: 0.06 });
+        break;
+      }
       case 'attack': {
         // Steel clash: bright inharmonic ring + metal scrape
         const base = 520 * p;

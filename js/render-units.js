@@ -297,6 +297,10 @@ function mirroredDir(e){
   return e.dir;
 }
 
+// Per-ram last rolling-creak period that already played (render-side
+// cosmetic state, like workSwingCycles for the villagers' work swing).
+let ramCreakCycles = new Map();
+
 // ---- BATTERING RAM: one physical model, projected per view ----
 // Every facing AND the ground shadow derive from these numbers, so
 // proportions cannot drift between views. World units are local px at
@@ -310,7 +314,9 @@ const RAM_DIM = {
   CE: 9,      // eave height — also the log's axis height
   CR: 17,     // ridge height
   OV: 1.2,    // roof overhang past the gables
-  RLOG: 2.6,  // log radius → beam width 5.2 in EVERY projection
+  RLOG: 2.6,  // log shaft radius → beam width 5.2 in EVERY projection
+  RHEAD: 3.2, // forged iron head radius (RLOG + collar)
+  HLEN: 2.8,  // iron head length along the shaft
   WR: 3,      // wheel radius
   WA: 8,      // axle spacing (axles at a = -WA, 0, +WA)
   WTH: 1.4,   // wheel tread width along the axle
@@ -333,10 +339,10 @@ const RAM_DIM = {
 const RAM_PROFILE_K = (1 + 0.894 * (RAM_DIM.L + RAM_DIM.WE + RAM_DIM.WTH) / RAM_DIM.L) / 2; // ≈ 1.13
 const RAM_AXES = {
   7: { u:{x:1,y:0},          v:{x:-0.6,y:0.4} },
-  0: { u:{x:0.894,y:0.447},  v:{x:-0.894,y:0.447} },
+  0: { u:{x:0.894,y:0.447},  v:{x:-0.72,y:0.36} },
   1: { u:{x:0,y:0.55},       v:{x:1.25,y:0} },
   5: { u:{x:0,y:-0.55},      v:{x:1.25,y:0} },
-  6: { u:{x:0.894,y:-0.447}, v:{x:0.894,y:0.447} }
+  6: { u:{x:0.894,y:-0.447}, v:{x:0.72,y:0.36} }
 };
 // Footprint shadow half-extents (local px, before UNIT_SCALE): the ground
 // rectangle |a| ≤ L+OV, |b| ≤ WE+WTH projected through the view basis —
@@ -349,11 +355,15 @@ function ramShadowExtent(dir){
   // the profile pose is drawn RAM_PROFILE_K larger (size constancy) — its
   // footprint shadow scales with it
   let k = m === 7 ? RAM_PROFILE_K : 1;
-  let A = (RAM_DIM.L + RAM_DIM.OV) * RAM_DIM.SCALE * 0.92 * k;
-  let B = (RAM_DIM.WE + RAM_DIM.WTH) * RAM_DIM.SCALE * 0.92 * k;
+  let A = (RAM_DIM.L + RAM_DIM.OV) * RAM_DIM.SCALE * 0.78 * k;
+  let B = (RAM_DIM.WE + RAM_DIM.WTH) * RAM_DIM.SCALE * 0.78 * k;
+  // rx spans the full projected footprint, but ry is flattened to ~half:
+  // an ellipse tall enough to reach the footprint's far corners pools out
+  // BELOW the near wheels (it's centered on the anchor) and reads as the
+  // ram hovering over a puddle. Ground shadows hug the contact line.
   return {
     rx: A * Math.abs(ax.u.x) + B * Math.abs(ax.v.x),
-    ry: Math.max(3.5, A * Math.abs(ax.u.y) + B * Math.abs(ax.v.y))
+    ry: Math.max(3, (A * Math.abs(ax.u.y) + B * Math.abs(ax.v.y)) * 0.5)
   };
 }
 
@@ -383,7 +393,7 @@ function drawRamBody(e){
   let P = (a,b,c) => ({ x: a*u.x + b*v.x, y: a*u.y + b*v.y - c });
 
   // All proportions come from the shared physical model (RAM_DIM above).
-  const { L, WE, WB, CB, CE, CR, OV, RLOG, WR, WA, WTH, SCALE } = RAM_DIM;
+  const { L, WE, WB, CB, CE, CR, OV, RLOG, RHEAD, HLEN, WR, WA, WTH, SCALE } = RAM_DIM;
 
   let tc = teamColor(e.team);
   let rolling = e.path.length > 0;
@@ -394,13 +404,42 @@ function drawRamBody(e){
   // can hook in later (workSwingCycles pattern).
   let dLog = 0, recoil = 0;
   if (ramming) {
-    let ph = ((tick*0.05 + e.id*0.4) % 1 + 1) % 1;
-    if (ph < 0.7) dLog = -4.5 * (ph/0.7);
-    else { let t = (ph-0.7)/0.3; dLog = -4.5 + 11.5 * (1 - Math.pow(1-t,3)); }
+    // ~45-tick cycle (1.5 game-s): a heavy ram swings SLOWLY (AoE2), and
+    // the per-cycle impact boom needs the slower cadence to not spam.
+    let phRaw = tick*0.022 + e.id*0.4;
+    let ph = ((phRaw % 1) + 1) % 1;
+    if (ph < 0.7) dLog = -4 * (ph/0.7);
+    else { let t = (ph-0.7)/0.3; dLog = -4 + 8 * (1 - Math.pow(1-t,3)); }
     recoil = Math.max(0, dLog) * 0.2;
+    // One impact per thrust cycle, exactly when the strike lands (the
+    // cycle counter rolls over at the end of the fast 30% strike phase).
+    // Same counter pattern as the villagers' work swing (workSwingCycles):
+    // detected by the COUNTER advancing, so no impact is dropped or
+    // doubled at any game speed; never during the outline mask pass; only
+    // with a real target (the gallery's __animAttack stays silent).
+    let cyc = Math.floor(phRaw);
+    if (!window._maskDraw && e.target && workSwingCycles.get(e.id) !== cyc) {
+      if (workSwingCycles.has(e.id) && window.playSound) {
+        playSound('ram_hit', e.x, e.y);
+      }
+      workSwingCycles.set(e.id, cyc);
+    }
   }
   // Idle log sway — the only idle motion; a vehicle sits still.
   else if (!rolling) dLog = Math.sin(tick*0.05 + e.id) * 0.4;
+
+  // Rolling creak: a slow wooden groan while the ram is moving — sparse
+  // (every ~3 game-s, staggered per unit), skipped at 4x speed on odd
+  // cycles like the chop sound. Fired by the period COUNTER advancing
+  // (ramCreakCycles), not by a frame landing on an exact tick — frames
+  // skip ticks, and an equality check dropped most creaks.
+  if (rolling && !window._maskDraw && window.playSound) {
+    let ck = Math.floor((tick + e.id * 7) / 90);
+    if (ramCreakCycles.get(e.id) !== ck) {
+      if (ramCreakCycles.has(e.id) && (GAME_SPEED < 4 || ck % 2 === 0)) playSound('ram_creak', e.x, e.y);
+      ramCreakCycles.set(e.id, ck);
+    }
+  }
 
   X.save();
   // Rolling: gentle sway, no head-bob (suppressed in drawUnit's translate)
@@ -499,69 +538,76 @@ function drawRamBody(e){
       X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
     }
   };
-  // The ram log: a capped beam along the body axis, protruding from the
-  // front gable. In head-on view it's just the iron cap + end face
-  // pointing at the viewer.
+  // The ram itself: a timber shaft ending in a FORGED IRON HEAD — collar
+  // slightly fatter than the shaft (RHEAD), flat lit striking face. One
+  // spec, four projections; every width comes from RLOG/RHEAD/HLEN so it
+  // can't drift. Kept deliberately clean: no rivets/ropes/grain at this
+  // sprite size (clean-over-busy).
+  // All beam widths are GEOMETRY units (no /UNIT_SCALE): the beam must
+  // scale with the body polygons.
+  const IRON = '#71717a', IRON_HI = '#a9a9ae';
   let logBeam = () => {
     if (useDir === 5) return; // fully hidden from directly behind
     if (useDir === 6) {
-      // NE back-diagonal: the capped tip still pokes past the FAR end,
-      // emerging from behind the roofline. Called FIRST in the branch, so
-      // the body paints over its base — it reads as coming from behind
-      // the ram rather than floating beside it. The visible travel is
-      // damped (×0.55): from behind, most of the stroke happens on the
-      // hidden far side, so full-amplitude motion looked too fast. Seen
-      // from the rear the brown shaft is NEARER than the iron cap, so the
-      // grey band is drawn first and the wood laps over the seam.
-      let d6 = dLog * 0.55;
-      let q1 = P(L + 0.6, 0, CE), q2 = P(L + 5.6 + d6, 0, CE), qb = P(L + 3.9 + d6, 0, CE);
-      // GEOMETRY line widths (no /UNIT_SCALE): the beam must scale with
-      // the body polygons, or it renders 1.25x thinner than the profile's
-      // rectangle beam.
-      X.strokeStyle = '#000'; X.lineWidth = RLOG*2 + 1.4; X.lineCap = 'round';
+      // NE back-diagonal: only the head end pokes past the FAR gable,
+      // emerging from behind the roofline (called FIRST in the branch so
+      // the body occludes its base). Travel damped ×0.55 — most of the
+      // stroke happens on the hidden far side. From the rear the wood
+      // shaft is NEARER than the iron head, so the head draws first and
+      // the shaft laps the seam. No face highlight/rivets: the striking
+      // face points away.
+      // Hard damping (×0.35) and a short rest protrusion: at height CE the
+      // beam projects ABOVE the far roofline, so any long extension reads
+      // as a bar floating in mid-air behind the shed. From the rear you
+      // should mostly see the head nosing out a little further on the
+      // strike, not the shaft's whole travel.
+      let d6 = dLog * 0.35;
+      let tip = L + 5.2 + d6;
+      let q1 = P(L + 0.6, 0, CE), qh = P(tip - HLEN, 0, CE), q2 = P(tip, 0, CE);
+      X.strokeStyle = '#000'; X.lineWidth = RHEAD*2 + 1.4; X.lineCap = 'round';
       X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(q2.x,q2.y); X.stroke();
-      X.strokeStyle = '#8f8f8f'; X.lineWidth = RLOG*2 + 0.6;
-      X.beginPath(); X.moveTo(qb.x,qb.y); X.lineTo(q2.x,q2.y); X.stroke();
-      X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2;
-      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(qb.x,qb.y); X.stroke();
-      X.lineCap = 'butt';
+      X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2; X.lineCap = 'butt';
+      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(qh.x,qh.y); X.stroke();
+      X.strokeStyle = IRON; X.lineWidth = RHEAD*2;
+      X.beginPath(); X.moveTo(qh.x,qh.y); X.lineTo(q2.x,q2.y); X.stroke();
+      // From behind, the tip shows the flat STRIKING FACE: a disc
+      // perpendicular to the shaft, i.e. a circle in the (v, vertical)
+      // plane — same transform trick as the wheel discs. Shaded iron: it
+      // faces away from the upper-left light.
+      X.save(); X.transform(v.x, v.y, 0, -1, q2.x, q2.y);
+      X.beginPath(); X.arc(0, 0, RHEAD, 0, Math.PI*2);
+      X.restore();
+      X.fillStyle = '#5c5c63'; X.fill();
+      X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
       return;
     }
     if (useDir === 1) {
-      // Head-on: the thrust reads as the capped end surging at the viewer —
-      // it travels down-screen and swells slightly, shrinking back into
-      // the opening on the windup.
+      // Head-on: the forged head surges at the viewer — iron collar disc,
+      // lighter flat striking face, rivet dots on the collar ring. Swells
+      // slightly on the thrust, shrinks back into the opening on windup.
       let p = P(L + 1.5 + dLog*0.55, 0, CE);
-      let rr = Math.max(1.6, (RLOG + 0.4) + dLog*0.13); // iron cap radius = RLOG + band lip
-      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = lw;
+      let rr = Math.max(2, RHEAD + dLog*0.13);
+      X.fillStyle = IRON; X.strokeStyle = '#000'; X.lineWidth = lw;
       X.beginPath(); X.arc(p.x, p.y, rr, 0, Math.PI*2); X.fill(); X.stroke();
-      X.fillStyle = '#8f8f8f';
-      X.beginPath(); X.arc(p.x, p.y, rr*0.75, 0, Math.PI*2); X.fill();
-      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.9 / UNIT_SCALE;
-      X.beginPath(); X.arc(p.x - 0.5, p.y - 0.5, rr*0.4, Math.PI*0.7, Math.PI*1.6); X.stroke();
+      X.fillStyle = IRON_HI;
+      X.beginPath(); X.arc(p.x, p.y, rr*0.68, 0, Math.PI*2); X.fill();
       return;
     }
-    // The log STARTS at the opening plane (a=L) — never drawn across the
-    // gable face — so retracting genuinely slides it into the dark hole
-    // and the thrust makes it burst out.
-    // Beam thickness matches the head-on cap's diameter (~5.8px) so the
-    // log reads as the same timber from every facing.
-    let p1 = P(L - 0.8, 0, CE), p2 = P(L + 5.5 + dLog, 0, CE);
-    // GEOMETRY line widths — see the dir6 note: /UNIT_SCALE strokes render
-    // 1.25x thinner than the body polygons and the profile's rect beam.
-    X.strokeStyle = '#000'; X.lineWidth = RLOG*2 + 1.4; X.lineCap = 'round';
+    // SE front-diagonal. The shaft STARTS at the opening plane (a=L) — so
+    // retracting genuinely slides it into the dark hole and the thrust
+    // makes it burst out. Rope lashings wrap the shaft just outside the
+    // opening; the head is a fatter iron collar with a lit striking face.
+    let tip = L + 6 + dLog;
+    let p1 = P(L - 0.8, 0, CE), ph = P(tip - HLEN, 0, CE), p2 = P(tip, 0, CE), pf = P(tip - 0.7, 0, CE);
+    X.strokeStyle = '#000'; X.lineWidth = RHEAD*2 + 1.4; X.lineCap = 'round';
     X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
     X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2;
-    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(ph.x,ph.y); X.stroke();
+    X.strokeStyle = IRON; X.lineWidth = RHEAD*2;
+    X.beginPath(); X.moveTo(ph.x,ph.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.strokeStyle = IRON_HI; X.lineWidth = RHEAD*2 - 1.6;
+    X.beginPath(); X.moveTo(pf.x,pf.y); X.lineTo(p2.x,p2.y); X.stroke();
     X.lineCap = 'butt';
-    // iron cap: band + end face at the tip
-    let pb = P(L + 3.6 + dLog, 0, CE);
-    X.strokeStyle = '#8f8f8f'; X.lineWidth = RLOG*2 + 0.6; X.lineCap = 'round';
-    X.beginPath(); X.moveTo(pb.x,pb.y); X.lineTo(p2.x,p2.y); X.stroke();
-    X.lineCap = 'butt';
-    X.fillStyle = '#c9c9c9';
-    X.beginPath(); X.arc(p2.x, p2.y, 2.2, 0, Math.PI*2); X.fill();
-    X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
   };
   // Dark opening in a gable face that the log emerges from.
   let opening = (a) => {
@@ -619,15 +665,20 @@ function drawRamBody(e){
     // Log BEHIND the body: in a true side view a cylinder IS a rectangle —
     // no end-face ellipse, no perspective. Drawn before the wall/roof so
     // the shed occludes its base and it reads as sliding out of the front.
+    // Same piston spec as every view: wood shaft + rope lashings + forged
+    // iron head (fatter collar, flat lit striking face, rivets).
     {
-      let xTip = PL + 7 + dLog, h2 = RLOG, y0 = -PEAVE; // beam width 2·RLOG, like every view
+      let xTip = PL + 6 + dLog, xHd = null, h2 = RLOG, hh = 3.2, y0 = -PEAVE;
+      xHd = xTip - 2.8; // head base (HLEN)
       X.fillStyle = '#6e473b';
       X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE;
-      X.beginPath(); X.rect(PL - 4, y0 - h2, xTip - (PL - 4), h2*2); X.fill(); X.stroke();
-      X.fillStyle = '#8f8f8f';
-      X.beginPath(); X.rect(xTip - 2.4, y0 - h2 - 0.4, 2.4, h2*2 + 0.8); X.fill(); X.stroke();
-      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.8 / UNIT_SCALE;
-      X.beginPath(); X.moveTo(xTip - 1.1, y0 - h2 + 0.5); X.lineTo(xTip - 1.1, y0 + h2 - 0.5); X.stroke();
+      X.beginPath(); X.rect(PL - 4, y0 - h2, xHd - (PL - 4), h2*2); X.fill(); X.stroke();
+      // forged head: iron collar, lit striking face, rivets
+      X.fillStyle = '#71717a';
+      X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE;
+      X.beginPath(); X.rect(xHd, y0 - hh, xTip - xHd, hh*2); X.fill(); X.stroke();
+      X.fillStyle = '#a9a9ae';
+      X.fillRect(xTip - 0.9, y0 - hh + 0.5, 0.9, hh*2 - 1);
     }
     // side wall
     el([[-PL,-PWAL],[PL,-PWAL],[PL,-PEAVE],[-PL,-PEAVE]], WOOD.plankR);

@@ -1175,7 +1175,7 @@ function wallBreachTicks(unit, w){
   let dmg = unit.atk || 0;
   if (unit.utype === 'villager') dmg += 3;
   if (unit.utype === 'militia') dmg += 2;
-  if (unit.utype === 'ram') dmg += 40; // mirrors damageEntity's building bonus
+  if (unit.utype === 'ram') dmg += 70; // mirrors damageEntity's building bonus
   let armor = BLDGS[w.btype].armor || {m:0,p:0};
   dmg = Math.max(1, dmg - (((unit.range || 0) > 0) ? armor.p : armor.m));
   return Math.ceil(w.hp / dmg) * (UNITS[unit.utype].rof || 60);

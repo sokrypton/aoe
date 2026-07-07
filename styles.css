@@ -432,6 +432,21 @@ canvas {
 .act-btn .cost{
   display:none; /* shown in the tooltip instead, so the icon can be bigger */
 }
+/* Touch devices have no hover tooltip, so costs were invisible on mobile —
+   there the cost renders as mini resource-icon+number chips pinned to the
+   button's bottom edge (costChips, js/ui.js). Desktop keeps the tooltip. */
+@media (pointer: coarse) {
+  .act-btn .cost.cost-chips{
+    display:flex;
+    position:absolute; left:2px; right:2px; bottom:2px;
+    justify-content:center; gap:4px;
+    font-size:9.5px; font-weight:700; color:#ffe9b3;
+    text-shadow:0 1px 2px #000, 0 0 3px #000;
+    pointer-events:none; /* never eat the button tap */
+  }
+  .cost-chip{ display:inline-flex; align-items:center; gap:1px; }
+  .cost-chip .res-mini-icon{ width:10px; height:10px; vertical-align:0; }
+}
 
 /* Unaffordable actions: greyed out, no hover glow, click is swallowed in JS */
 .act-btn.disabled{
@@ -519,6 +534,7 @@ canvas {
 .icon-bell                {background-position:100%      83.3333%;}
 .icon-age-dark            {background-position:0%        100%;}
 .icon-age-feudal          {background-position:16.6667%  100%;}
+.icon-ram                 {background-position:66.6667%  83.3333%;} /* rendered from drawRamBody (SE pose) into the sheet's spare cell */
 .icon-age-castle          {background-position:33.3333%  100%;}
 .icon-idle                {background-position:50%       100%;}
 .icon-rally               {background-position:66.6667%  100%;}
