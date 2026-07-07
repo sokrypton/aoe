@@ -104,6 +104,9 @@ function detEntityHash(e){
   h = detMix(h, e.siegeSpot ? e.siegeSpot.x * 4096 + e.siegeSpot.y : -1); // cross-unit melee-ring claims
   // Stuck-watchdog watch entry (it force-clears tasks, so WHEN it fires is
   // sim state — see updateStuckWatchdog, js/logic.js).
+  h = detMix(h, e.fledBearId == null ? -1 : e.fledBearId); // bear-hunt trigger (js/ai.js reads it)
+  h = detMix(h, e.stepWait || 0); // blocked-lane wait counter (stepBlocked, js/pathfinding.js)
+  h = detMixFloat(h, e.groupSpeed || 0); // formation pace cap (unitMoveSpeed, js/logic.js)
   h = detMix(h, e.stuck ? e.stuck.since : -1);
   h = detMixStr(h, e.stuck && e.stuck.sig);
   return h >>> 0;
@@ -161,12 +164,14 @@ function simChecksum(){
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
+      h = detMix(h, ai.resignScore || 0);
       if (ai.intel) {
         h = detMix(h, ai.intel.strength || 0);
         h = detMix(h, ai.intel.tcSeen ? 1 : 0);
         for (let u = 0; u < NUM_TEAMS; u++) h = detMix(h, (ai.intel.strengthByTeam && ai.intel.strengthByTeam[u]) || 0);
       }
       if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));
+      if (ai.dangerZones) for (const z of ai.dangerZones) { h = detMix(h, z.x); h = detMix(h, z.y); h = detMix(h, z.until); h = detMix(h, z.bearId || -1); }
     }
     let hit = lastTeamHit && lastTeamHit[t];
     h = detMix(h, hit ? hit.tick : -1);

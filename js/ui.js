@@ -279,6 +279,32 @@ function updateUI(){
       };
       act.appendChild(bulkBtn);
     }
+
+    // Upgrade to Stone — when the selection is entirely own COMPLETED wood
+    // wall pieces (walls and/or palisade gates; double-click/double-tap on
+    // a standing wall selects the whole connected run) and stone is
+    // unlocked (Feudal). Converts in place at the stone piece's build cost
+    // — execUpgradeWalls (js/commands.js) re-validates age, ownership and
+    // cost on exec tick.
+    if(selected.length>0 && isUnlocked(myTeam,'SWALL')
+       && selected.every(s=>s.type==='building'&&s.team===myTeam&&WALL_STONE_MATCH[s.btype]&&s.complete&&!s.exhausted)){
+      let ids=selected.map(s=>s.id);
+      let cost={};
+      selected.forEach(s=>Object.entries(BLDGS[WALL_STONE_MATCH[s.btype]].cost)
+        .forEach(([k,v])=>{cost[k]=(cost[k]||0)+v;}));
+      let allGates=selected.every(s=>s.btype==='GATE');
+      let upBtn=document.createElement('div');
+      upBtn.className='act-btn framed';
+      upBtn.dataset.tipType='action';
+      upBtn.dataset.tipLabel=allGates?'Upgrade to Stone Gate':'Upgrade to Stone Wall';
+      upBtn.dataset.tipDesc='Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone. Damage carries over proportionally.';
+      upBtn.dataset.cost=JSON.stringify(cost);
+      upBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-${allGates?'SGATE':'SWALL'}"></div><div class="btn-label">To Stone${ids.length>1?' ×'+ids.length:''}</div><span class="cost">${formatCost(cost)}</span>`;
+      upBtn.onclick=()=>{
+        submitCommand({kind:'upgrade-walls',unitIds:ids});
+      };
+      act.appendChild(upBtn);
+    }
   }
 
   // Multi-select: the portrait+stats card is replaced by a grid of icons
@@ -424,7 +450,9 @@ function updateUI(){
       e.queue.forEach((ut, idx) => {
         let slotClass = idx === 0 ? "queue-slot active-slot" : "queue-slot";
         det+=`<div class="${slotClass}" onclick="cancelQueue(${e.id}, ${idx})" title="Click to cancel and refund">`;
-        det+=`<div class="sprite-icon icon-${ut} queue-icon"></div>`;
+        det+=SPRITE_ICON_KEYS.has(ut)
+          ?`<div class="sprite-icon icon-${ut} queue-icon"></div>`
+          :`<span class="queue-icon">${UNITS[ut].icon||''}</span>`;
         det+=`<div class="queue-cancel-hover">×</div>`;
         det+=`</div>`;
       });
@@ -502,7 +530,12 @@ function updateUI(){
           btn.dataset.tipType='unit';
           btn.dataset.tipKey=ut;
           btn.dataset.cost=JSON.stringify(u.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div><div class="btn-label">${u.name}</div><span class="cost">${formatCost(u.cost)}</span>`;
+          // Units without a sprites.png cell (ram) fall back to their emoji
+          // glyph, same rule as setPortraitIcon.
+          let trainIcon=SPRITE_ICON_KEYS.has(iconKey(ut))
+            ?`<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div>`
+            :`<div class="btn-emoji">${u.icon||''}</div>`;
+          btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div><span class="cost">${formatCost(u.cost)}</span>`;
           btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
@@ -898,7 +931,7 @@ window.selectIdleVillager = function() {
 window.selectIdleMilitary = function() {
   if (gameOver || !gameStarted) return;
   let mil = entities.filter(e => e.team === myTeam && e.type === 'unit' && !e.garrisonedIn &&
-    MILITARY.has(e.utype) &&
+    isArmyUnit(e.utype) &&
     !e.task && !e.target && e.path.length === 0);
   if (mil.length === 0) { showMsg('No idle soldiers!'); return; }
   window.lastIdleMilIndex = window.lastIdleMilIndex || 0;

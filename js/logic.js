@@ -323,7 +323,57 @@ function farmAtTile(x,y,team,requireComplete=true){
 
 function canGatherTile(e,terrain,x,y){
   if(terrain===TERRAIN.FARM)return !!farmAtTile(x,y,e.team,true);
+  // AI wildlife avoidance: tiles inside a live danger zone (a bear mauled a
+  // villager there — see the fleeBear reflex below) are ungatherable for
+  // that team until the zone expires. Humans manage their own safety.
+  let ai=AI_STATES&&AI_STATES[e.team];
+  if(ai&&ai.dangerZones&&ai.dangerZones.length){
+    for(let z of ai.dangerZones){
+      if(tick>=z.until)continue;
+      // Zone dies with its bear: a hunted bear frees the resource patch
+      // immediately (this is what makes dispatching the hunt worthwhile).
+      let bear=entitiesById.get(z.bearId);
+      if(!bear||bear.hp<=0)continue;
+      // Radius 4 around the mauling spot: big den-radius zones (tried at 8)
+      // locked out whole resource regions and STARVED the team — worse than
+      // the bear. Small zones stop the immediate re-tasking loop; the hunt
+      // (js/ai.js huntAIBears) is what actually reclaims the area.
+      if(Math.abs(x-z.x)<=4&&Math.abs(y-z.y)<=4)return false;
+    }
+  }
   return true;
+}
+
+// AoE2 formation speed-matching: units ordered as a GROUP move at the
+// slowest member's pace (groupSpeed, stamped by execUnitCommand and AI wave
+// launches) so scouts don't sprint ahead and arrive alone. Combat releases
+// the cap: once a unit's own target is close it fights at full speed.
+function unitMoveSpeed(e){
+  if(e.groupSpeed&&e.groupSpeed<e.speed){
+    if(e.target){
+      let t=entitiesById.get(e.target);
+      if(t&&distToTarget(e,t)<10){e.groupSpeed=undefined;return e.speed;}
+    }
+    if(!e.target&&e.path.length===0&&e.moveGoalX===undefined){e.groupSpeed=undefined;return e.speed;} // arrived
+    return e.groupSpeed;
+  }
+  return e.speed;
+}
+
+// findPath() REDIRECTS unwalkable destinations to the nearest walkable
+// tile within 20 — good for click-forgiveness, but it means "path.length>0"
+// does NOT mean the destination is reachable. This asks the honest
+// question: does a path exist that actually ENDS within `tol` of (tx,ty)?
+// Every AI reachability probe must use this, or camps get founded in
+// forest pockets no villager can ever enter (the walk 'succeeds' to a
+// redirect point, the builder wedges, the watchdog frees it, the assigner
+// re-offers the site — forever).
+function pathReaches(sx,sy,tx,ty,ignore,tol=1.5){
+  if(Math.abs(sx-tx)<=tol&&Math.abs(sy-ty)<=tol)return true;
+  let p=findPath(sx,sy,tx,ty,ignore);
+  if(p.length===0)return false;
+  let last=p[p.length-1];
+  return Math.abs(last.x-tx)<=tol&&Math.abs(last.y-ty)<=tol;
 }
 
 // Distance from point to nearest tile of a building
@@ -443,7 +493,7 @@ function depleteGatherTile(pos,config,gatherer){
       let store = resourceStore(farm.team);
       if (store && store.prepaidFarms > 0) {
         store.prepaidFarms--;
-        tile.res = BLDGS.FARM.food;
+        tile.res = farmFoodFor(farm.team);
         farm.hp = farm.maxHp;
         feedbackFor(farm.team, () => showMsg("Farm auto-reseeded! (Prepaid remaining: " + store.prepaidFarms + ")"));
         return;
@@ -557,7 +607,8 @@ function updateGatherTask(e,config){
   e.carrying++;
   e.carryType=config.resource;
   if(config.resource==='food') e.foodSrc = e.task==='farm' ? 'wheat' : 'berries';
-  e.gatherCooldown=config.cooldown;
+  // Eco cards (Double-Bit Axe / Bow Saw / Gold Mining) shorten the cycle.
+  e.gatherCooldown=gatherCooldownFor(e.team,config.resource,config.cooldown);
 
   // Gathering audio: forage/farm only — they have no tool-swing animation,
   // so extraction time is the natural cadence. Chop/mine sounds moved to
@@ -636,6 +687,10 @@ function damageEntity(attacker, target){
   if (target.type === 'building') {
     if (attacker.utype === 'villager') dmg += 3;
     if (attacker.utype === 'militia') dmg += 2;
+    // The ram IS its building bonus: base atk 2 barely scratches a unit,
+    // +40 vs structures tears through walls (~7 hits on a palisade, ~27 on
+    // a stone wall after armor). Keep in sync with wallBreachTicks (ai.js).
+    if (attacker.utype === 'ram') dmg += 40;
   }
 
   // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
@@ -645,10 +700,11 @@ function damageEntity(attacker, target){
   let armor = target.type === 'unit'
     ? (UNITS[target.utype].armor || {m:0,p:0})
     : (BLDGS[target.btype].armor || {m:0,p:0});
-  // Age bonus: military units gain +1 melee AND pierce armor per age past
-  // Dark (see MILITARY/ageBonus, js/core.js — attack side is applied at
-  // spawn + swept on age-up since atk is snapshotted onto entities).
-  let ageArm = (target.type === 'unit' && MILITARY.has(target.utype)) ? ageBonus(target.team) : 0;
+  // Armor cards (Scale Mail at Feudal, Chain Mail at Castle): military
+  // units gain +1 melee AND pierce armor per card, read live here (the
+  // matching attack cards are applied at spawn + swept on age-up since atk
+  // is snapshotted onto entities). See UPGRADES, js/core.js.
+  let ageArm = (target.type === 'unit' && MILITARY.has(target.utype)) ? upgradeArmorBonus(target.team) : 0;
   dmg = Math.max(1, dmg - ((isPierce ? armor.p : armor.m) + ageArm));
 
   target.hp -= dmg;
@@ -720,11 +776,35 @@ function damageEntity(attacker, target){
     target.utype==='villager'
       ? target.moveGoalX!==undefined
       : (target.path.length>0 || target.moveGoalX!==undefined));
-  // AoE2: villagers fight back against melee attackers but don't chase
-  // ranged ones (hopeless kiting) or buildings (tower/TC fire).
+  // AoE2: villagers fight back against melee attackers — INCLUDING bears:
+  // gatherers mob-retaliate as a group (five villagers beat a bear), which
+  // sim testing showed is what actually keeps wildlife losses low. An
+  // earlier flee-instead-of-fight reflex removed the group defense and
+  // bears picked off the runners one at a time (bear speed 1.2 outruns
+  // villager 0.8) — economies collapsed. They don't chase ranged attackers
+  // (hopeless kiting) or buildings (tower/TC fire).
   let hopelessChase = target.utype==='villager' &&
     ((attacker.range||0)>0 || attacker.type==='building');
-  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
+  // Wildlife bookkeeping (throttled): a mauled villager still calls in the
+  // military hunt (huntAIBears, js/ai.js) and stamps a small danger zone so
+  // the AI doesn't RE-TASK fresh gatherers onto the bear's patch while the
+  // fight/hunt plays out. The zone dies with the bear (canGatherTile).
+  if(target.utype==='villager'&&attacker.utype==='bear'&&retryReady(target,'fleeBear')){
+    retryStamp(target,'fleeBear',90);
+    target.fledBearId=attacker.id;
+    let dzAi=AI_STATES&&AI_STATES[target.team];
+    if(dzAi&&dzAi.dangerZones){
+      dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
+        let b=entitiesById.get(z.bearId);
+        return tick<z.until&&b&&b.hp>0;
+      }).slice(-7);
+      if(!dzAi.dangerZones.some(z=>z.bearId===attacker.id))
+        dzAi.dangerZones.push({x:Math.round(attacker.x),y:Math.round(attacker.y),until:tick+6000,bearId:attacker.id});
+    }
+  }
+  // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
+  // hacking at it just interrupts the wall it was ordered to break.
+  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&target.utype!=='ram'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -1019,7 +1099,7 @@ function updateUnit(e){
     // villager that wasn't already within arrival radius ("only one goes
     // in, the rest stand outside").
     if(e.task==='garrison'){
-      if(e.path.length>0) stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK, true);
+      if(e.path.length>0) stepUnitAlongPath(e, unitMoveSpeed(e) * UNIT_PX_PER_TICK, true);
       return;
     }
   }
@@ -1198,7 +1278,7 @@ function updateUnit(e){
     // guest's between-sync walker uses the same function, so host and
     // guest can never drift apart on movement. checkWalkable=true: only
     // the host's tick keeps the block grid current.
-    stepUnitAlongPath(e, e.speed * UNIT_PX_PER_TICK, true);
+    stepUnitAlongPath(e, unitMoveSpeed(e) * UNIT_PX_PER_TICK, true);
     return;
   }
 
@@ -1431,10 +1511,15 @@ function updateUnit(e){
           } else {
             retryClear(e,'build');
           }
-        } else {
-          retryClear(e,'build');
         }
+        // NOTE: a successful pathUnitTo (path.length>0) deliberately does
+        // NOT clear the fail counter — "got a path" isn't progress. A path
+        // whose first step is permanently blocked (stubborn unit in a
+        // 1-wide lane) is rebuilt every tick and used to reset the counter
+        // forever: the give-up below never fired and the villager froze
+        // until the watchdog broke it up. Only ARRIVAL clears (below).
       } else {
+        retryClear(e,'build');
         if (bt.btype === 'FARM' && bt.exhausted) {
           let store = resourceStore(e.team);
           if (store && store.prepaidFarms > 0) {
@@ -1446,7 +1531,7 @@ function updateUnit(e){
             bt.hp = bt.maxHp;                 // farm and the farmer silently goes idle
             let tile = map[bt.y][bt.x];
             tile.t = TERRAIN.FARM;
-            tile.res = BLDGS.FARM.food;
+            tile.res = farmFoodFor(bt.team);
             markMapDirty(bt.x,bt.y);
             e.task = 'farm';
             e.gatherX = bt.x;
@@ -1463,7 +1548,7 @@ function updateUnit(e){
               bt.hp = bt.maxHp;
               let tile = map[bt.y][bt.x];
               tile.t = TERRAIN.FARM;
-              tile.res = BLDGS.FARM.food;
+              tile.res = farmFoodFor(bt.team);
               markMapDirty(bt.x,bt.y);
               e.task = 'farm';
               e.gatherX = bt.x;
@@ -1496,9 +1581,6 @@ function updateUnit(e){
           if(bt.buildProgress>=bt.buildTime){
             bt.complete=true;
             bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
-            // A rebuilt TC brings a knocked-out team back into the match
-            // (mirrors the last-TC defeat rule in handleDeath).
-            if(bt.btype==='TC'&&defeatedTeams&&defeatedTeams[bt.team])defeatedTeams[bt.team]=false;
             e.buildTarget=null;
             if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
               window.playSound('train'); // play herald fanfare on building completed
@@ -1637,7 +1719,11 @@ function updateUnit(e){
   // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
   // Bears are excluded: they use their own leashed aggro logic above, not
   // the never-give-up military chase here.
-  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear';
+  // Rams are excluded too: AoE2 rams never auto-engage — with 1-2 dmg vs
+  // units, chasing a passing scout is pure suicide-by-distraction. They
+  // attack only what they're explicitly ordered onto (or what the AI's
+  // target planner assigns).
+  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear' && e.utype !== 'ram';
   // Note: followId isn't excluded here — a unit that has caught up to its
   // follow target and stopped (path empty) should still engage nearby
   // enemies like any idle unit; combat naturally takes precedence and the
@@ -1725,11 +1811,18 @@ function findNearTile(e,terrain,excludeList=null){
   let bx=Math.round(e.x),by=Math.round(e.y);
   let best=null,bd=999;
   let claimed=claimedGatherSet(e.team);
+  // Two-stage search: the cheap 12-radius ring first (covers the normal
+  // "work near the drop site" case), then a wide 28-radius pass ONLY if
+  // that found nothing. Capping at 12 idled entire towns late-game: once
+  // the nearby forest was chopped out, villagers at the TC couldn't "see"
+  // the treeline 13 tiles away and a food-starved town sat on 1800 banked
+  // wood with 10 idle villagers (sim seed 7). AoE2 villagers walk.
+  let scan=(rLo,rHi)=>{
   // Ring-only scan: each radius pass visits just the new perimeter instead
   // of rescanning the whole (2r+1)² square (the union of rings 0..r is that
   // square, so the first radius that yields a hit returns the same tile the
   // old full-square rescan did — at O(r²) total instead of O(r³)).
-  for(let r=0;r<12;r++){
+  for(let r=rLo;r<rHi;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
       let nx=bx+dx,ny=by+dy;
@@ -1743,6 +1836,10 @@ function findNearTile(e,terrain,excludeList=null){
     }
     if(best){claimed.add(best.x+best.y*MAP);return best;}
   }
+  return null;
+  };
+  let hit=scan(0,12);
+  if(hit)return hit;
   // If all tiles are claimed, fall back to any available tile (excluding completely blocked ones)
   for(let r=0;r<12;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
@@ -1757,7 +1854,9 @@ function findNearTile(e,terrain,excludeList=null){
     }
     if(best){claimed.add(best.x+best.y*MAP);return best;}
   }
-  return null;
+  // Nothing (free OR claimed) within 12: the near patch is exhausted —
+  // widen to 28 before giving up (see the two-stage comment above).
+  return scan(12,28);
 }
 
 // Delete/Backspace key (js/input.js, host/single-player path directly;
@@ -1826,15 +1925,22 @@ function handleDeath(e,killerTeam){
       // Identity alliances + 2 teams reduce exactly to the old instant
       // game-over. isPlayerTeam keeps gaia TCs (hypothetical) from ever
       // ending the game.
-      // Only a team's LAST TC knocks it out — AIs rebuild TCs (js/ai.js),
-      // so a spare/rebuilt one keeps the team in the match.
-      if(isPlayerTeam(e.team)&&!entities.some(en=>en.id!==e.id&&en.team===e.team&&en.type==='building'&&en.btype==='TC'&&en.complete&&en.hp>0)){
+      // Each team has exactly ONE Town Center and it cannot be rebuilt —
+      // losing it is the knockout (AoE2-flavored regicide-on-the-TC).
+      if(isPlayerTeam(e.team)){
         defeatedTeams[e.team]=true;
-        // Knockout feedback (the match may continue while an ally survives).
-        // The ally message is viewer-relative by nature — not issuer
-        // feedback — so it keeps its explicit sameSide gate.
-        if(e.team===localHumanTeam)feedbackFor(e.team, () => showMsg('Your Town Center has fallen — your team is knocked out!'));
-        else if(sameSide(e.team,localHumanTeam)&&!window.__resim)showMsg('Your ally has been knocked out!');
+        // The human's TC falling means DEFEAT for them — but if an allied
+        // team still stands, the match keeps running and they spectate the
+        // ally's fight (players like to watch). checkAllianceVictory ends
+        // the game the moment their whole SIDE is out (which in 1v1 is
+        // immediately), so no forced gameOver here.
+        if(e.team===localHumanTeam&&!window.__resim){
+          let allyAlive=false;
+          for(let t=0;t<NUM_TEAMS;t++)if(t!==e.team&&sameSide(t,e.team)&&!defeatedTeams[t])allyAlive=true;
+          showMsg(allyAlive?'Your Town Center has fallen — you are defeated! Spectating your ally\u2026'
+                           :'Your Town Center has fallen — you are defeated!');
+        }
+        else if(sameSide(e.team,localHumanTeam)&&e.team!==localHumanTeam&&!window.__resim)showMsg('Your ally has been knocked out!');
         checkAllianceVictory();
       }
     }
@@ -1977,8 +2083,15 @@ function updateStuckWatchdog(){
       tgt ? tgt.hp : '', bt ? (bt.buildProgress || 0) + '_' + bt.hp : ''].join('|');
     if (!e.stuck || e.stuck.sig !== sig) { e.stuck = { sig, since: tick }; return; }
     if (tick - e.stuck.since >= STUCK_WATCHDOG_TICKS) {
+      // A wedged BUILDER means its site is effectively unreachable right
+      // now (blocked lane, sealed pocket): back the site off too, or the
+      // AI re-assigns the freed villager straight back into the same wedge.
+      let wbt = e.buildTarget ? entitiesById.get(e.buildTarget) : null;
+      if (wbt && wbt.type === 'building') wbt.buildBackoffUntil = tick + 900;
       console.warn('[stuck-watchdog] freeing unit', e.id, e.utype,
         'task=' + e.task, 'target=' + e.target, 'path=' + e.path.length,
+        'buildTarget=' + e.buildTarget + (bt ? ('(' + bt.btype + '@' + bt.x + ',' + bt.y + ' prog=' + (bt.buildProgress||0) + '/' + bt.buildTime + ' complete=' + bt.complete + ')') : ''),
+        'gather=' + e.gatherX + ',' + e.gatherY, 'retry=' + JSON.stringify(e.retry||null),
         'at', e.x.toFixed(1) + ',' + e.y.toFixed(1));
       clearUnitPath(e);
       e.task = null; e.target = null; e.buildTarget = null; e.garrisonTarget = null;
@@ -2016,7 +2129,7 @@ function updateBuilding(e){
         e.hp = e.maxHp;
         let tile = map[e.y][e.x];
         tile.t = TERRAIN.FARM;
-        tile.res = BLDGS.FARM.food;
+        tile.res = farmFoodFor(e.team);
         markMapDirty(e.x,e.y);
       }
     }
@@ -2070,14 +2183,17 @@ function updateBuilding(e){
     e.research.tick++;
     if(e.research.tick>=AGES[e.research.target].researchTicks){
       teamAge[e.team]=e.research.target;
-      entities.forEach(en=>{
-        if(en.type==='unit'&&en.team===e.team&&MILITARY.has(en.utype))en.atk+=1;
-      });
+      // Baked-in tech: every card unlocked by the new age applies now (one-
+      // time stat sweeps; live-read effects key off teamAge via hasUpgrade).
+      // This replaced the old inline "+1 atk per age" sweep — that exact
+      // sweep is now the forging/iron_casting cards. See UPGRADES, core.js.
+      let cardNames=applyAgeUpgrades(e.team,e.research.target);
       // AoE2-style power-spike aggression: an AI that just advanced presses
       // its (freshly bumped) army — controlAIMilitary reads this stamp.
       if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
       if(e.team===myTeam){
-        showMsg('You have advanced to the '+AGES[e.research.target].name+'!');
+        showMsg('You have advanced to the '+AGES[e.research.target].name+'!'+
+          (cardNames.length?' Gained: '+cardNames.join(', ')+'.':''));
         if(window.playSound)playSound('victory');
       }
       e.research=undefined;

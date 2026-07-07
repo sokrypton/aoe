@@ -121,6 +121,9 @@ function execCommand(cmd, team){
         if (en && en.team === team) deleteOwnedEntity(en);
       });
       break;
+    case 'upgrade-walls':
+      withCommandContext(team, [], () => execUpgradeWalls(cmd, team));
+      break;
     case 'research-age': {
       let tc = entitiesById.get(cmd.bldgId);
       if (tc && tc.type === 'building' && tc.team === team) {
@@ -246,8 +249,14 @@ function execUnitCommand(cmd){
 
   let movers = selected.filter(s => s.type === 'unit');
   let offsets = getFormation(movers.length);
+  // AoE2 formation pace: a group order moves everyone at the slowest
+  // member's speed (see unitMoveSpeed, js/logic.js) so the group arrives
+  // together instead of trickling in fastest-first. Solo orders run free.
+  let groupSpeed = movers.length > 1
+    ? Math.min(...movers.map(m => m.speed || 1)) : undefined;
   let idx = 0;
   movers.forEach(s => {
+    s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
     s.buildTarget = null;
     s.buildQueue = [];
@@ -456,6 +465,45 @@ function execResearchAge(tc){
   spendCost(tc.team, cost);
   tc.research = { target: next, tick: 0 };
   feedbackFor(tc.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
+  if (typeof updateUI === 'function') updateUI();
+}
+
+// Upgrade completed palisade WALL/GATE pieces to their stone counterpart
+// (SWALL/SGATE) in place, paid at the stone piece's full build cost. Not
+// strict AoE2 — there palisades and stone walls are independent builds you
+// overlap — but the in-place conversion is this game's ergonomic
+// equivalent once the Feudal Age unlocks stone. Damage carries over as a
+// FRACTION (a half-burnt palisade becomes a half-damaged stone wall), so
+// upgrading mid-siege isn't also a free full repair.
+const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE' };
+function execUpgradeWalls(cmd, team){
+  let pieces = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
+  if (!pieces.length) return;
+  if (pieces.some(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]))) {
+    feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq('SWALL')].name + '!'); if (window.playSound) playSound('error'); });
+    return;
+  }
+  let cost = {};
+  pieces.forEach(en => Object.entries(BLDGS[WALL_STONE_MATCH[en.btype]].cost)
+    .forEach(([k, v]) => { cost[k] = (cost[k] || 0) + v; }));
+  if (!canAfford(team, cost)) {
+    feedbackFor(team, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
+    return;
+  }
+  spendCost(team, cost);
+  pieces.forEach(w => {
+    let stoneType = WALL_STONE_MATCH[w.btype];
+    let frac = w.hp / w.maxHp;
+    w.btype = stoneType; // gates keep their footprint/door state (w/h, gateProgress)
+    w.maxHp = buildingMaxHpFor(team, stoneType);
+    w.hp = Math.max(1, Math.round(w.maxHp * frac));
+    markMapDirty(w.x, w.y);
+  });
+  feedbackFor(team, () => {
+    showMsg(pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' upgraded to stone');
+    if (window.playSound) playSound('build', pieces[0].x, pieces[0].y);
+  });
   if (typeof updateUI === 'function') updateUI();
 }
 

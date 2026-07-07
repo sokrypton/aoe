@@ -114,7 +114,7 @@ const AGES = [
 ];
 // Minimum age index per unit/building type; absent => available from Dark.
 const AGE_REQ = {
-  spearman:1, archer:1, scout:1, knight:2,
+  spearman:1, archer:1, scout:1, knight:2, ram:2,
   TOWER:1, SWALL:1, SGATE:1
 };
 function ageReq(type){ return AGE_REQ[type] || 0; }
@@ -124,14 +124,140 @@ function resetTeamAge(){
   teamAge = Array.from({length: NUM_TEAMS}, () => 0);
 }
 // Military units get +1 attack and +1 melee/pierce armor per age past
-// Dark (blacksmith-lite): attack applied at spawn + swept on age-up
-// (attack is snapshotted onto entities), armor added live in damageEntity.
+// Dark via the forging/iron_casting and scale_armor/chain_mail cards (see
+// UPGRADES below): attack applied at spawn + swept on age-up (attack is
+// snapshotted onto entities), armor added live in damageEntity.
 const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
+// "Fights in the army" — MILITARY plus siege. The ram is deliberately NOT
+// in MILITARY (no blacksmith cards, no soft-push yielding: a parked ram is
+// a wall), but the AI's army control, wave sizing and the idle-military
+// hotkey must still treat it as a soldier.
+function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 // Wall/gate material families: palisade (Dark) and stone (Feudal).
 function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
 function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
 function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 0; }
+
+// ---- AGE UPGRADES ("cards") ----
+// AoE2-style blacksmith/eco techs, one card per real AoE2 research line.
+// Each card is self-contained: an optional one-time apply(team) that sweeps
+// stats onto EXISTING entities, plus live hooks (damageEntity armor,
+// createUnit/createBuilding spawn stats, gather cooldowns, farm food) that
+// read hasUpgrade(team, key) at the moment the stat matters.
+//
+// Today every card is baked into age-up: applyAgeUpgrades() runs from the
+// TC research completion (js/logic.js) and hasUpgrade derives from teamAge —
+// deliberately NO new sim state, since teamAge already rides snapshots,
+// saves and simChecksum. When cards become draftable later, replace
+// hasUpgrade/applyAgeUpgrades with a real per-team card set (with the full
+// teamAge sim-state treatment); every hook and apply() stays unchanged.
+const UPGRADES = {
+  // -- Feudal --
+  forging: {age:1, name:'Forging', desc:'Military units +1 attack', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
+  }},
+  scale_armor: {age:1, name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  fletching: {age:1, name:'Fletching', desc:'Archers +1 range', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') u.range += 1; });
+  }},
+  wheelbarrow: {age:1, name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='villager') {
+      u.speed = UNITS.villager.speed * 1.1; u.carryMax += 3;
+    }});
+  }},
+  horse_collar: {age:1, name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
+    topUpTeamFarms(team, 75); // future harvests: live via farmFoodFor
+  }},
+  double_bit_axe: {age:1, name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
+  gold_mining: {age:1, name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
+  // -- Castle --
+  iron_casting: {age:2, name:'Iron Casting', desc:'Military units +1 attack', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
+  }},
+  chain_mail: {age:2, name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  bow_saw: {age:2, name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
+  heavy_plow: {age:2, name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
+    topUpTeamFarms(team, 125);
+  }},
+  masonry: {age:2, name:'Masonry', desc:'Buildings +10% hit points', apply(team){
+    entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0) {
+      b.hp = Math.round(b.hp * 1.1); b.maxHp = Math.round(b.maxHp * 1.1);
+    }});
+  }},
+  fortified_wall: {age:2, name:'Fortified Wall', desc:'Stone walls and gates +50% hit points', apply(team){
+    entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE')) {
+      b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
+    }});
+  }},
+};
+function hasUpgrade(team, key){
+  let c = UPGRADES[key];
+  return !!c && teamAge && isPlayerTeam(team) && teamAge[team] >= c.age;
+}
+// One-time application of every card unlocked by reaching `age`; returns
+// the display names for the age-up message. Registry (insertion) order is
+// the application order — masonry before fortified_wall, so a stone wall
+// gets both multipliers the same way a wall built afterwards does.
+function applyAgeUpgrades(team, age){
+  let names = [];
+  Object.keys(UPGRADES).forEach(k => {
+    let c = UPGRADES[k];
+    if (c.age !== age) return;
+    if (c.apply) c.apply(team);
+    names.push(c.name);
+  });
+  return names;
+}
+// +1 attack per Forging/Iron Casting held — spawn-time counterpart of the
+// apply() sweeps above (attack is snapshotted onto entities).
+function upgradeAtkBonus(team){
+  return (hasUpgrade(team,'forging') ? 1 : 0) + (hasUpgrade(team,'iron_casting') ? 1 : 0);
+}
+// +1 melee AND pierce armor per armor card — read live in damageEntity.
+function upgradeArmorBonus(team){
+  return (hasUpgrade(team,'scale_armor') ? 1 : 0) + (hasUpgrade(team,'chain_mail') ? 1 : 0);
+}
+// Food a farm of this team seeds/reseeds with.
+function farmFoodFor(team){
+  return BLDGS.FARM.food +
+    (hasUpgrade(team,'horse_collar') ? 75 : 0) +
+    (hasUpgrade(team,'heavy_plow') ? 125 : 0);
+}
+// Per-gather-cycle cooldown in ticks after this team's eco cards. Rate
+// upgrades DIVIDE the cooldown (a 20% faster rate is cooldown/1.2), rounded
+// to whole ticks so every lockstep peer lands on the same integer.
+function gatherCooldownFor(team, resource, baseCooldown){
+  let rate = 1;
+  if (resource === 'wood') {
+    if (hasUpgrade(team,'double_bit_axe')) rate *= 1.2;
+    if (hasUpgrade(team,'bow_saw')) rate *= 1.2;
+  } else if (resource === 'gold') {
+    if (hasUpgrade(team,'gold_mining')) rate *= 1.15;
+  }
+  return rate === 1 ? baseCooldown : Math.round(baseCooldown / rate);
+}
+// Max HP a building of this team founds at (or converts to — see
+// execUpgradeWalls): base stat plus the HP card multipliers, masonry first
+// then fortified_wall, matching applyAgeUpgrades' registry order.
+function buildingMaxHpFor(team, btype){
+  let hp = BLDGS[btype].hp;
+  if (hasUpgrade(team, 'masonry')) hp = Math.round(hp * 1.1);
+  if ((btype === 'SWALL' || btype === 'SGATE') && hasUpgrade(team, 'fortified_wall')) hp = Math.round(hp * 1.5);
+  return hp;
+}
+// Top off the standing (unexhausted) farms a food card finds on arrival,
+// so the upgrade isn't dead weight until the next reseed cycle.
+function topUpTeamFarms(team, bonus){
+  entities.forEach(f => {
+    if (f.type !== 'building' || f.btype !== 'FARM' || f.team !== team || f.hp <= 0) return;
+    let tile = map[f.y] && map[f.y][f.x];
+    if (tile && tile.t === TERRAIN.FARM && tile.res > 0) {
+      tile.res += bonus;
+      markMapDirty(f.x, f.y);
+    }
+  });
+}
 
 // ---- PER-TEAM CONTROLLERS ----
 // Who drives each team: {type:'human'} (this tab or a remote peer — the
@@ -191,7 +317,17 @@ function freshAIState(team){
   return { team, tick: 0,
     intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
-    seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null };
+    seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null,
+    // Wildlife danger memory: gather tiles near a bear that mauled one of
+    // our villagers are off-limits until the stamp expires or the bear is
+    // hunted (canGatherTile, js/logic.js). AoE2 players route around
+    // wolves the same way; a 1.2-speed bear outruns 0.8-speed villagers,
+    // so avoidance — not fleeing — is what actually saves them.
+    dangerZones: [],
+    // Consecutive "this is hopeless" decision ticks (maybeResignAI,
+    // js/ai.js) — AoE2 AIs concede rather than make the winner grind
+    // down every last wall segment.
+    resignScore: 0 };
 }
 function resetAIStates(){
   AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
@@ -269,7 +405,7 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
   TOWER:{name:'Watch Tower',w:1,h:1,hp:1020,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
   GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
@@ -292,6 +428,14 @@ const UNITS={
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
   // Castle-age heavy cavalry (AoE2-ish knight).
   knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:60,armor:{m:2,p:2},cost:{f:60,g:75},trainTime:1500,desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
+  // Battering ram — Castle-age siege (AGE_REQ), trained at the Barracks
+  // (no siege workshop building exists). NOT in MILITARY on purpose (AoE2
+  // rams get no blacksmith melee/armor techs — see isArmyUnit). The tiny
+  // base attack is vs UNITS; the real damage is the +40 building-class
+  // bonus in damageEntity (js/logic.js) — mirrored in the AI's
+  // wallBreachTicks (js/ai.js). High pierce armor makes arrow fire (4-5
+  // pierce) tick for 1; melee hits it at full damage, the AoE2 counter.
+  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:0,p:8},cost:{w:160,g:75},trainTime:2160,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -313,7 +457,7 @@ const UNITS={
 // the original AoE2's harder AIs cheated a modest resource trickle; easy
 // gets none.
 const AI_LEVELS={
-  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:false,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:2,targetFarms:2,wallCheckInterval:600,wallMaintInterval:600,waveCap:20,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:1,ageUpVils:[0,10],ageUpTick:[0,21600],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  easy:{name:'Easy',decisionInterval:240,maxVils:12,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveGrowth:2,waveCooldown:2700,attackTick:27000,armyReserve:5,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:1.5,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:2,targetFarms:2,wallCheckInterval:600,wallMaintInterval:600,waveCap:20,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,12],ageUpTick:[0,21600,52200],ageSurgeWindow:0,ageSurgeFactor:1.0},
   standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:1,wood:1,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:40,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
   hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:60,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
 };
@@ -778,6 +922,7 @@ window.__mpSession = {
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {
   if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
+  if (window.__headlessSim) return; // nothing renders them; they'd only pile up
   let type = 'dust';
   if (color === '#9c382a') type = 'blood';
   else if (color.includes('rgba(100,100,100') || color === '#888' || color === '#666') type = 'smoke';

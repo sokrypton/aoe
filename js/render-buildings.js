@@ -320,11 +320,15 @@ function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   let O2 = { x: sx + 48*s, y: sy + 72 }; // outer front corner
   let up = (p, h) => ({ x: p.x, y: p.y - h });
   let K1r = up(K1,hK), K2r = up(K2,hK), O1r = up(O1,hO), O2r = up(O2,hO);
-  // shade on the ground under the open shelter
-  X.fillStyle = 'rgba(0,0,0,0.10)';
-  X.beginPath();
-  X.moveTo(K1.x,K1.y); X.lineTo(O1.x,O1.y); X.lineTo(O2.x,O2.y); X.lineTo(K2.x,K2.y);
-  X.closePath(); X.fill();
+  // shade on the ground under the open shelter — skipped in the selection-
+  // outline mask pass (window._maskDraw): shadow, not shape, and it filled
+  // the whole quadrant under the roof with a gold haze when selected.
+  if (!window._maskDraw) {
+    X.fillStyle = 'rgba(0,0,0,0.10)';
+    X.beginPath();
+    X.moveTo(K1.x,K1.y); X.lineTo(O1.x,O1.y); X.lineTo(O2.x,O2.y); X.lineTo(K2.x,K2.y);
+    X.closePath(); X.fill();
+  }
   // roof plane: wooden planks, lit by orientation (left plane faces the
   // light, right plane faces away)
   let plank = s < 0 ? WOOD.plankL : WOOD.plankR;
@@ -874,11 +878,17 @@ function drawBuilding(e, part = null){
     let postColor = WOOD.post;
     let pc = darken ? darkenColor(postColor) : postColor;
     X.lineJoin = 'round';
-    // Contact shadows on the ground first, so every pole overlaps them
-    X.fillStyle = 'rgba(0,0,0,0.25)';
-    posts.forEach(p => {
-      X.beginPath(); X.ellipse(p.x, p.y + 1, 5, 2.4, 0, 0, Math.PI*2); X.fill();
-    });
+    // Contact shadows on the ground first, so every pole overlaps them.
+    // Skipped in the selection-outline mask pass (window._maskDraw, see
+    // render-outlines.js): shadows aren't part of the building's shape,
+    // and rasterizing them into the silhouette put a gold-ringed blob on
+    // the ground beside each courtyard post.
+    if (!window._maskDraw) {
+      X.fillStyle = 'rgba(0,0,0,0.25)';
+      posts.forEach(p => {
+        X.beginPath(); X.ellipse(p.x, p.y + 1, 5, 2.4, 0, 0, Math.PI*2); X.fill();
+      });
+    }
     // Square timber posts drawn as proper iso prisms: lit left face,
     // shaded right face, bright top cap — same light rules as buildings.
     let pL = darken ? darkenColor('#9a7a56') : '#9a7a56';
@@ -1615,8 +1625,10 @@ function drawBuilding(e, part = null){
     let pillarH = 22;
     let wallH = 14;   // lower than pillar to create bastion crenellated effect
     let linkY = sy + 16;
-    // Material palette: palisade wood vs stone greys — links only join the
-    // SAME material (a palisade run and a stone run stay visually separate).
+    // Material palette: palisade wood vs stone greys. Links join ANY
+    // wall-like neighbor — each tile draws its own S/E slab in its OWN
+    // material, so a mixed run (partially upgraded to stone) reads as one
+    // continuous line with wood-meets-stone junctions at the pillars.
     let mat = wallMat(e.btype);
     let pf = mat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : [WOOD.L, WOOD.R, WOOD.top];
 
@@ -1645,12 +1657,12 @@ function drawBuilding(e, part = null){
     // below the pillar's bottom vertex)
     let d1 = lthick * Math.sqrt(5) / 2;
     // South neighbor (y+1)
-    if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
+    if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
       drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     }
 
     // East neighbor (x+1)
-    if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
+    if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
       drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     }
   }
@@ -1721,12 +1733,12 @@ function drawBuilding(e, part = null){
       let wallH = 14;
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y))) {
           drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 1))) {
           drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
         }
       }
@@ -1749,18 +1761,18 @@ function drawBuilding(e, part = null){
       let wallH = 14;
       if (wallLineNS) {
         // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + 2), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x, e.y + 2))) {
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
           drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       } else {
         // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x + 2, e.y), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x + 2, e.y))) {
           drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       }

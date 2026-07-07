@@ -35,7 +35,7 @@ let netMessageHandlers = [];
 // stale cached build while the other has today's is a very real failure
 // mode that otherwise surfaces as inexplicable desync instead of a clear
 // "refresh your page".
-const NET_PROTOCOL_VERSION = 8; // v8: age system — teamAge + TC research in snapshots and simChecksum (js/core.js AGES)
+const NET_PROTOCOL_VERSION = 10; // v10: battering ram is a trainable sim unit (js/core.js UNITS.ram); v9: age-up upgrade cards change sim math (js/core.js UPGRADES); v8: age system — teamAge + TC research in snapshots and simChecksum (js/core.js AGES)
 
 // CompressionStream/DecompressionStream are stream-based (write in, read
 // chunks out), so both directions are inherently async. A single already-

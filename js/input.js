@@ -43,6 +43,20 @@ function selectTownCenter() {
 // break the chain on purpose: they're paid-for, standing wall, and
 // bulk-cancel is a foundation-refund gesture.
 function collectUnfinishedWallChain(start){
+  return collectWallChain(start, en => !en.complete && !en.exhausted);
+}
+
+// COMPLETED wall run connected to `start` — the double-click unit for
+// bulk actions on standing walls (the Upgrade to Stone button, js/ui.js).
+// Same btype only, deliberately: the art now links mixed materials into
+// one continuous line, but bulk selection stops at a material change so
+// double-clicking a wood stretch never sweeps already-stone segments into
+// an upgrade order.
+function collectCompletedWallRun(start){
+  return collectWallChain(start, en => en.complete);
+}
+
+function collectWallChain(start, accept){
   let chain = [start];
   let seen = new Set([start.id]);
   let queue = [start];
@@ -50,8 +64,8 @@ function collectUnfinishedWallChain(start){
     let cur = queue.pop();
     entities.forEach(en => {
       if (seen.has(en.id)) return;
-      if (en.type !== 'building' || en.btype !== 'WALL' || en.team !== myTeam) return;
-      if (en.complete || en.exhausted) return;
+      if (en.type !== 'building' || en.btype !== start.btype || en.team !== myTeam) return;
+      if (!accept(en)) return;
       if (Math.abs(en.x - cur.x) + Math.abs(en.y - cur.y) !== 1) return;
       seen.add(en.id);
       chain.push(en);
@@ -720,7 +734,7 @@ C.addEventListener('touchend',e=>{
       let now=performance.now();
       let tappedU=getUnitUnderCursor(touchAnchor.x,touchAnchor.y);
       let tappedWallB=!tappedU?getBuildingUnderCursor(touchAnchor.x,touchAnchor.y,
-        en=>en.team===myTeam&&en.btype==='WALL'&&!en.complete&&!en.exhausted):null;
+        en=>en.team===myTeam&&en.btype==='WALL'&&!en.exhausted):null;
       if(tappedU && tappedU.team===myTeam && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
         selected=entities.filter(en=>en.team===myTeam&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
         if(window.playSound){
@@ -731,11 +745,17 @@ C.addEventListener('touchend',e=>{
         touchLastTapTime=0;
         touchLastTapUtype=null;
       } else if(tappedWallB && touchLastTapWallId===tappedWallB.id && (now-touchLastTapTime)<380){
-        // Double-tap on an UNFINISHED wall foundation: select its whole
-        // connected unfinished chain (the mis-dragged line), so the
-        // multi Cancel Build button (js/ui.js) can refund it in one tap.
-        selected=collectUnfinishedWallChain(tappedWallB);
-        showMsg(selected.length+' wall foundation'+(selected.length>1?'s':'')+' selected');
+        // Double-tap on a wall: an UNFINISHED foundation selects its whole
+        // connected unfinished chain (the mis-dragged line) for the multi
+        // Cancel Build button (js/ui.js); a COMPLETED wood wall selects its
+        // connected run for bulk actions (Upgrade to Stone).
+        if(tappedWallB.complete){
+          selected=collectCompletedWallRun(tappedWallB);
+          showMsg(selected.length+' wall segment'+(selected.length>1?'s':'')+' selected');
+        } else {
+          selected=collectUnfinishedWallChain(tappedWallB);
+          showMsg(selected.length+' wall foundation'+(selected.length>1?'s':'')+' selected');
+        }
         updateUI();
         touchLastTapTime=0;
         touchLastTapWallId=null;
@@ -1067,23 +1087,107 @@ function focusTownCenter(){
 // ==============================
 // ---- SHARED INPUT ACTIONS ----
 // ==============================
+// Hit-test a wall/gate against its DRAWN parts, in the unzoomed local
+// coords drawBuilding works in (same anchor math: BLDGS dims, sy -= bhh).
+// Returns which part was hit:
+//   'body' — a wall pillar, gate post, or the gate door: authoritative,
+//            the click is unambiguously on this entity.
+//   'link' — the wall's S/E extension slab toward a connected neighbor:
+//            the slab is drawn BY this tile, so a click between two posts
+//            resolves to the post whose extension it actually is (the
+//            N/W owner), not whichever tile sorts last.
+//   null   — not on any drawn part (the rest of the ground tile doesn't
+//            count, unlike the generic footprint-box test).
+// Gates get NO link zone on purpose: their stub links visually belong to
+// the adjoining wall run, and the gate selecting from half the wall line
+// is exactly the "wrong part selected" feel this replaces.
+function wallGateHitPart(en, lx, ly){
+  let b = BLDGS[en.btype];
+  let iso = toIso(en.x + b.w / 2, en.y + b.h / 2);
+  let sx0 = iso.ix - camX + W / 2;
+  let sy0 = iso.iy - camY + topH + H / 2 - b.h * HALF_TH; // tile top vertex
+  let pad = isMobile ? 5 : 3;      // finger/cursor forgiveness, local px
+  let capPad = pad + 8;            // extra headroom above posts: caps/merlons/pennants
+  if (isWallBtype(en.btype)) {
+    // Pillar: drawBuildingBlock(sx, sy0+20-pw, pw, pw/2, 22) spans
+    // x ∈ sx±pw, y ∈ [sy0+20-pw-22, sy0+20].
+    let pw = wallMat(en.btype) === 'stone' ? 9 : 7;
+    if (Math.abs(lx - sx0) <= pw + pad && ly >= sy0 + 20 - pw - 22 - capPad && ly <= sy0 + 20 + pad) return 'body';
+    // Extension slabs: drawWallLink from this tile's front corner
+    // (sx, sy0+16) a full tile step toward the S (-32,+16) / E (+32,+16)
+    // neighbor, body rising wallH=14 above that line. Any wall-like
+    // neighbor counts — mirrors the render condition, which links across
+    // materials (mixed wood/stone runs stay visually continuous).
+    for (let [nx, ny, dirX] of [[en.x, en.y + 1, -32], [en.x + 1, en.y, 32]]) {
+      if (!isWallLike(getConnectedBuilding(nx, ny))) continue;
+      let t = dirX < 0 ? (sx0 - lx) / 32 : (lx - sx0) / 32;
+      if (t <= 0 || t > 1) continue;
+      let lineY = sy0 + 16 + 16 * t; // slab base at this point of the run
+      if (ly >= lineY - 14 - pad && ly <= lineY + pad + 2) return 'link';
+    }
+    return null;
+  }
+  // Gate (footprint 1x2 / 2x1, anchored like a 1x1 — BLDGS dims): back
+  // post at (sx0, sy0+16), front post one tile step along the run, door
+  // slab between them. drawBuildingBlock(tx, ty-7, 14, 7, 28) spans
+  // x ∈ tx±14, y ∈ [ty-35, ty+7].
+  let ns = en.h > en.w;
+  let posts = [{ x: sx0, y: sy0 + 16 }, { x: ns ? sx0 - 32 : sx0 + 32, y: sy0 + 32 }];
+  for (let p of posts) {
+    // No horizontal pad: the posts are already 28px wide, and padding them
+    // sideways let the back post steal clicks from the last few px of the
+    // adjoining wall's extension slab (body outranks link).
+    if (Math.abs(lx - p.x) <= 14 && ly >= p.y - 35 - capPad && ly <= p.y + 7 + pad) return 'body';
+  }
+  // Door slab (tested at its CLOSED position: the doorway opening is gate
+  // body whether or not the door is currently slid up).
+  let t = ns ? (sx0 - lx) / 32 : (lx - sx0) / 32;
+  if (t > 0 && t < 1) {
+    let lineY = sy0 + 16 + 16 * t;
+    if (ly >= lineY - 16 - 9 - pad && ly <= lineY + pad) return 'body';
+  }
+  return null;
+}
+
 function getBuildingUnderCursor(sx, sy, filter) {
   // BLDG_HEIGHTS is a shared global — see core.js.
   let bestB = null;
   let bestSortY = -9999;
+  let bestLink = null;
+  let bestLinkSortY = -9999;
+  // Wall-likes are hit-tested against drawn geometry in unzoomed local
+  // space; invert the render zoom (which scales around (W/2, H/2+topH),
+  // see render.js) once here.
+  let lx = (sx - W / 2) / ZOOM + W / 2;
+  let ly = (sy - H / 2 - topH) / ZOOM + H / 2 + topH;
   entities.forEach(en=>{
     if(en.type==='building' && (!filter || filter(en))){
       let w = en.w !== undefined ? en.w : BLDGS[en.btype].w;
       let h = en.h !== undefined ? en.h : BLDGS[en.btype].h;
       let cx = en.x + w / 2;
       let cy = en.y + h / 2;
+      if (isWallBtype(en.btype) || isGateBtype(en.btype)) {
+        let part = wallGateHitPart(en, lx, ly);
+        if (!part) return;
+        let sortY = cy + cx;
+        if (part === 'link') {
+          // Fallback tier: a pillar/post/door ('body') hit anywhere wins
+          // over an extension hit, so the slab running INTO a post never
+          // steals the post's own click.
+          if (sortY > bestLinkSortY) { bestLinkSortY = sortY; bestLink = en; }
+        } else if (sortY > bestSortY) {
+          bestSortY = sortY;
+          bestB = en;
+        }
+        return;
+      }
       let iso = toIso(cx, cy);
       let scrx = (iso.ix - camX) * ZOOM + W/2;
       let scry = (iso.iy - camY) * ZOOM + H/2 + topH;
       let bw = w * 32 * ZOOM;
       let bhh = h * 16 * ZOOM;
       let height = (BLDG_HEIGHTS[en.btype] || 25) * ZOOM;
-      
+
       if(sx >= scrx - bw && sx <= scrx + bw && sy >= scry - bhh - height && sy <= scry + bhh) {
         let sortY = cy + cx;
         if (sortY > bestSortY) {
@@ -1093,7 +1197,7 @@ function getBuildingUnderCursor(sx, sy, filter) {
       }
     }
   });
-  return bestB;
+  return bestB || bestLink;
 }
 
 function getUnitUnderCursor(sx, sy) {
@@ -1514,12 +1618,19 @@ C.addEventListener('dblclick', e => {
     return;
   }
   // Desktop parity with the touch double-tap: double-click an unfinished
-  // wall foundation to select its whole connected chain for bulk cancel.
+  // wall foundation to select its whole connected chain for bulk cancel,
+  // or a COMPLETED wood wall to select its connected run (bulk actions
+  // like Upgrade to Stone).
   let wallB = getBuildingUnderCursor(e.clientX, e.clientY,
-    en => en.team === myTeam && en.btype === 'WALL' && !en.complete && !en.exhausted);
+    en => en.team === myTeam && en.btype === 'WALL' && !en.exhausted);
   if (wallB) {
-    selected = collectUnfinishedWallChain(wallB);
-    showMsg(selected.length + ' wall foundation' + (selected.length > 1 ? 's' : '') + ' selected');
+    if (wallB.complete) {
+      selected = collectCompletedWallRun(wallB);
+      showMsg(selected.length + ' wall segment' + (selected.length > 1 ? 's' : '') + ' selected');
+    } else {
+      selected = collectUnfinishedWallChain(wallB);
+      showMsg(selected.length + ' wall foundation' + (selected.length > 1 ? 's' : '') + ' selected');
+    }
     updateUI();
   }
 });

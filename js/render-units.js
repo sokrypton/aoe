@@ -56,6 +56,10 @@ function drawBigSword(swinging, id){
 const UNIT_SCALE = 1.25;
 
 function drawCorpse(c){
+  // Rams are art-only for now (design phase): a toppling-body + skeleton
+  // sequence makes no sense for a wooden vehicle. Placeholder: no corpse;
+  // proper break-apart debris comes with the gameplay phase.
+  if(c.utype==='ram') return;
   let iso=toIso(c.x,c.y);
   let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
@@ -293,6 +297,213 @@ function mirroredDir(e){
   return e.dir;
 }
 
+// ---- BATTERING RAM (covered ram, AoE2 style) ----
+// A rigid wooden shed on four wheels with a suspended log protruding from
+// the front gable, drawn as a true iso box: every vertex is
+// P(a,b,c) = a·u + b·v + c·(0,-1), where u is the body/movement axis in
+// SCREEN space, v the ground-plane width axis and c the height. The five
+// authored facings (mirroredDir 0,1,5,6,7) differ only in their u/v
+// vectors and which faces/wheels are visible; dirs 2/3/4 come free from
+// the facing mirror like every other unit. Called inside drawUnit's
+// translated+mirrored context, so all coords are local px around the
+// ground anchor at (0,0).
+function drawRamBody(e){
+  let useDir = mirroredDir(e);
+  // dir7 (E) is pure screen-horizontal (tile (1,-1) → screen (64,0));
+  // dir0/6 run along the 2:1 iso diagonals; dir1/5 point at/away from the
+  // viewer (u vertical, foreshortened) with the width axis lying flat.
+  // dir7 (E) cheats a few degrees off pure profile: a true edge-on gable
+  // shows no roof pitch at all (both eave and ridge project horizontal, it
+  // reads as a flat-topped cart) — the slight 3/4 lets the front gable and
+  // pitch show, same trick the horse profile uses for richness. Head-on
+  // dirs 1/5 widen v: at true iso a shed pointing at the camera is
+  // narrower than it is tall, which reads as a tent, not a vehicle.
+  const AXES = {
+    7: { u:{x:0.97,y:0.24},   v:{x:-0.6,y:0.4} },
+    0: { u:{x:0.894,y:0.447}, v:{x:-0.894,y:0.447} },
+    1: { u:{x:0,y:0.55},      v:{x:1.5,y:0} },
+    5: { u:{x:0,y:-0.55},     v:{x:1.5,y:0} },
+    6: { u:{x:0.894,y:-0.447}, v:{x:0.894,y:0.447} }
+  };
+  let ax = AXES[useDir] || AXES[7];
+  let u = ax.u, v = ax.v;
+  let P = (a,b,c) => ({ x: a*u.x + b*v.x, y: a*u.y + b*v.y - c });
+
+  // Body proportions (local px): half-length L, eave half-width WE, skirt
+  // base half-width WB; skirt from c=2..8, ridge at c=16, roof overhangs
+  // the gables by 1.
+  const L=10, WE=5.2, WB=4.2, CB=2, CE=8, CR=16, OV=1;
+
+  let tc = teamColor(e.team);
+  let rolling = e.path.length > 0;
+  let ramming = (!!e.target && e.path.length === 0) || e.__animAttack;
+
+  // Thrust cycle: slow windup 70% (log drags back), fast strike 30%
+  // (ease-out cubic), one monotonic phase so an impact-per-cycle counter
+  // can hook in later (workSwingCycles pattern).
+  let dLog = 0, recoil = 0;
+  if (ramming) {
+    let ph = ((tick*0.05 + e.id*0.4) % 1 + 1) % 1;
+    if (ph < 0.7) dLog = -3 * (ph/0.7);
+    else { let t = (ph-0.7)/0.3; dLog = -3 + 9 * (1 - Math.pow(1-t,3)); }
+    recoil = Math.max(0, dLog) * 0.22;
+  }
+  // Idle log sway — the only idle motion; a vehicle sits still.
+  else if (!rolling) dLog = Math.sin(tick*0.05 + e.id) * 0.4;
+
+  X.save();
+  // Rolling: gentle sway, no head-bob (suppressed in drawUnit's translate)
+  if (rolling) X.translate(0, Math.sin(tick*0.2 + e.id) * 0.5);
+  X.translate(recoil * u.x, recoil * u.y);
+  X.scale(1.15, 1.15); // the ram out-bulks even the horse units
+
+  let lw = 1.2 / UNIT_SCALE;
+  let poly = (pts, fill) => {
+    X.fillStyle = fill; X.beginPath();
+    pts.forEach((p,i) => i ? X.lineTo(p.x,p.y) : X.moveTo(p.x,p.y));
+    X.closePath(); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
+  };
+  // Wheel: solid wooden disc with a rotating cross-spoke. Profile-ish
+  // facings draw circles; head-on facings see the wheels edge-on as
+  // narrow vertical ellipses (no spokes — too thin to read).
+  let wheelRot = tick*0.35 + e.id;
+  let wheel = (a, b, r) => {
+    let p = P(a, b, r); // center sits one radius above the ground line
+    let thin = (useDir === 1 || useDir === 5);
+    X.fillStyle = '#5a4630';
+    X.strokeStyle = '#000'; X.lineWidth = lw;
+    X.beginPath();
+    X.ellipse(p.x, p.y, thin ? 1.3 : r, r, 0, 0, Math.PI*2);
+    X.fill(); X.stroke();
+    if (!thin) {
+      X.strokeStyle = '#3a2c1c'; X.lineWidth = 1 / UNIT_SCALE;
+      for (let k = 0; k < 2; k++) {
+        let ang = (rolling ? wheelRot : 0.6) + k * Math.PI/2;
+        X.beginPath();
+        X.moveTo(p.x - Math.cos(ang)*r*0.72, p.y - Math.sin(ang)*r*0.72);
+        X.lineTo(p.x + Math.cos(ang)*r*0.72, p.y + Math.sin(ang)*r*0.72);
+        X.stroke();
+      }
+      X.fillStyle = '#8a6a4a';
+      X.beginPath(); X.arc(p.x, p.y, 0.9, 0, Math.PI*2); X.fill();
+    }
+  };
+  // Gable end (pentagon) at a=const: skirt base, eaves, ridge point.
+  let gable = (a, fill) => poly([P(a,-WB,CB),P(a,WB,CB),P(a,WE,CE),P(a,0,CR),P(a,-WE,CE)], fill);
+  // Roof slope quad on side sgn (=±1), with overhang past the gables.
+  let slope = (sgn, fill) => poly([P(-L-OV,sgn*(WE+0.6),CE),P(L+OV,sgn*(WE+0.6),CE),P(L+OV,0,CR),P(-L-OV,0,CR)], fill);
+  // Skirt side wall on side sgn.
+  let skirt = (sgn, fill) => poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WE,CE),P(-L,sgn*WE,CE)], fill);
+  // Team-color fascia board along a slope's eave edge (ownership read).
+  let fascia = (sgn) => {
+    X.strokeStyle = tc; X.lineWidth = 2 / UNIT_SCALE;
+    let p1 = P(-L-OV, sgn*(WE+0.6), CE-0.2), p2 = P(L+OV, sgn*(WE+0.6), CE-0.2);
+    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
+  };
+  // Plank seams down a slope (matches drawTCAnnexRoof's seam treatment).
+  let seams = (sgn) => {
+    X.strokeStyle = 'rgba(0,0,0,0.18)'; X.lineWidth = 1 / UNIT_SCALE;
+    for (let t of [-0.5, 0, 0.5]) {
+      let a = (L+OV) * t * 1.4;
+      let p1 = P(a, sgn*(WE+0.6), CE), p2 = P(a, 0, CR);
+      X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
+    }
+  };
+  // The ram log: a capped beam along the body axis, protruding from the
+  // front gable. In head-on view it's just the iron cap + end face
+  // pointing at the viewer.
+  let logBeam = () => {
+    if (useDir === 5 || useDir === 6) return; // hidden from behind
+    if (useDir === 1) {
+      let p = P(L + 1.5 + dLog*0.4, 0, 6);
+      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = lw;
+      X.beginPath(); X.arc(p.x, p.y, 2.8, 0, Math.PI*2); X.fill(); X.stroke();
+      X.fillStyle = '#8f8f8f';
+      X.beginPath(); X.arc(p.x, p.y, 2.1, 0, Math.PI*2); X.fill();
+      X.strokeStyle = '#c9c9c9'; X.lineWidth = 0.9 / UNIT_SCALE;
+      X.beginPath(); X.arc(p.x - 0.5, p.y - 0.5, 1.1, Math.PI*0.7, Math.PI*1.6); X.stroke();
+      return;
+    }
+    let p1 = P(5 + dLog, 0, 6), p2 = P(L + 6 + dLog, 0, 6);
+    X.strokeStyle = '#000'; X.lineWidth = 4.6 / UNIT_SCALE; X.lineCap = 'round';
+    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.strokeStyle = '#6e473b'; X.lineWidth = 3 / UNIT_SCALE;
+    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.lineCap = 'butt';
+    // iron cap: band + end face at the tip
+    let pb = P(L + 4.6 + dLog, 0, 6);
+    X.strokeStyle = '#8f8f8f'; X.lineWidth = 3.4 / UNIT_SCALE;
+    X.beginPath(); X.moveTo(pb.x,pb.y); X.lineTo(p2.x,p2.y); X.stroke();
+    X.fillStyle = '#c9c9c9';
+    X.beginPath(); X.arc(p2.x, p2.y, 1.5, 0, Math.PI*2); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
+  };
+  // Dark opening in a gable face that the log emerges from.
+  let opening = (a) => {
+    let p = P(a, 0, 6);
+    X.fillStyle = '#2a1f14';
+    X.beginPath(); X.ellipse(p.x, p.y, 3.2, 3.6, 0, 0, Math.PI*2); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
+  };
+  // Cross-brace X on the rear gable (plain planks otherwise).
+  let brace = (a) => {
+    X.strokeStyle = WOOD.beam; X.lineWidth = 1.4 / UNIT_SCALE;
+    let c1=P(a,-WB+1,CB+1), c2=P(a,WB-1,CE-1), c3=P(a,WB-1,CB+1), c4=P(a,-WB+1,CE-1);
+    X.beginPath(); X.moveTo(c1.x,c1.y); X.lineTo(c2.x,c2.y);
+    X.moveTo(c3.x,c3.y); X.lineTo(c4.x,c4.y); X.stroke();
+  };
+
+  const WR = 3.2; // wheel radius
+  // Wheel layout: front/rear pairs at a=±6.5, sides at b=±(WB+0.6).
+  let wa = 6.5, wb = WB + 0.6;
+
+  if (useDir === 7 || useDir === 0) {
+    // E profile / SE front-diagonal: far wheels → far slope sliver →
+    // near skirt + front gable → near slope → log → near wheels.
+    wheel(-wa, -wb, WR); wheel(wa, -wb, WR);
+    slope(-1, WOOD.plankL);
+    skirt(1, WOOD.plankR);
+    gable(L, WOOD.plankR);
+    opening(L);
+    slope(1, WOOD.plankL); seams(1); fascia(1);
+    logBeam();
+    wheel(-wa, wb, WR); wheel(wa, wb, WR);
+  } else if (useDir === 6) {
+    // NE back-diagonal: log (far side, mostly hidden) → far wheels →
+    // near slope is the DOWN-facing one; rear gable toward the viewer.
+    wheel(wa, -wb, WR); wheel(-wa, -wb, WR);
+    slope(-1, WOOD.plankL);
+    skirt(1, WOOD.plankR);
+    gable(-L, WOOD.plankR);
+    brace(-L);
+    slope(1, WOOD.plankL); seams(1); fascia(1);
+    wheel(-wa, wb, WR); wheel(wa, wb, WR);
+  } else if (useDir === 1) {
+    // S head-on: rear slopes as flanks behind, front gable dominant,
+    // foreshortened log cap pointing at the viewer.
+    wheel(-wa, -wb, WR); wheel(-wa, wb, WR);
+    slope(-1, WOOD.plankL); slope(1, WOOD.plankR);
+    gable(L, WOOD.plankR);
+    opening(L);
+    fascia(1); fascia(-1);
+    logBeam();
+    wheel(wa, -wb, WR); wheel(wa, wb, WR);
+  } else {
+    // N back view: rear gable toward the viewer, both slopes rising away.
+    // The far/front gable (a=+L) is fully hidden by the roof — don't draw
+    // it, or it paints over the slopes (painter's order).
+    wheel(-wa, -wb, WR); wheel(-wa, wb, WR);
+    slope(-1, WOOD.plankL); slope(1, WOOD.plankR);
+    gable(-L, WOOD.plankL);
+    brace(-L);
+    fascia(1); fascia(-1);
+    wheel(wa, -wb, WR); wheel(wa, wb, WR);
+  }
+
+  X.restore();
+}
+
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   let iso=toIso(e.x,e.y);
@@ -309,7 +520,14 @@ function drawUnit(e){
   // skip it or the selection ring traces the shadow blob too.
   if(!window._maskDraw){
     X.fillStyle='rgba(0,0,0,0.3)';
-    X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+    // The ram is the biggest unit in the game — wider footprint shadow
+    // (slightly rounder when facing to/away from the camera).
+    if(e.utype==='ram'){
+      let headOn = e.dir===1||e.dir===5;
+      X.beginPath();X.ellipse(sx,sy+2,(headOn?8:11)*UNIT_SCALE,(headOn?6:5)*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+    } else {
+      X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+    }
   }
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location
@@ -395,7 +613,8 @@ function drawUnit(e){
   // Save context and apply horizontal flipping based on facing direction
   X.save();
   if(e.utype==='sheep'||e.utype==='bear') X.translate(sx, sy + sbob);
-  else if(e.utype==='sheep_carcass') X.translate(sx, sy);
+  // Vehicles don't head-bob — the ram applies its own subtle rolling sway
+  else if(e.utype==='sheep_carcass'||e.utype==='ram') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
   X.scale(e.facing * UNIT_SCALE, UNIT_SCALE);
   // Corpse pose (see drawCorpse): the dead are drawn with this very
@@ -510,6 +729,8 @@ function drawUnit(e){
     X.restore();
     X.restore();
     return;
+  } else if(e.utype==='ram'){
+    drawRamBody(e);
   } else if(e.utype==='bear'){
     // Bear — heavy quadruped in the sheep's style: one black silhouette
     // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.

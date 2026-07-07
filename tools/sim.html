@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>sim</title></head>
+<body>
+<!-- ---- HEADLESS SELF-PLAY SIMULATOR ----
+  Runs an all-AI match as fast as the CPU allows and emits a structured
+  JSON report (timelines, events, health metrics, auto-analysis findings)
+  into a result pre-element for headless scraping. Driven by tools/simulate.sh.
+
+  URL params:
+    mode=1v1|2v2        (default 1v1)
+    diff=easy|standard|hard   (default standard, all AI slots)
+    map=small|medium|large    (default: medium for 1v1, large for 2v2)
+    ticks=N             (default 60000)
+    seed=N              (optional — reproducible match)
+    rollback=1          (also run a snapshot/rollback determinism check)
+-->
+<canvas id="game"></canvas>
+<script>
+window.__errors = [];
+window.addEventListener('error', e => window.__errors.push(String(e.message) + ' @ ' + (e.filename||'').split('/').pop() + ':' + e.lineno));
+</script>
+<script src="../js/page-shell.js"></script>
+<script src="../js/audio.js"></script>
+<script src="../js/core.js"></script>
+<script src="../js/determinism.js"></script>
+<script src="../js/map.js"></script>
+<script src="../js/entities.js"></script>
+<script src="../js/pathfinding.js"></script>
+<script src="../js/iso.js"></script>
+<script src="../js/render-terrain.js"></script>
+<script src="../js/render-buildings.js"></script>
+<script src="../js/render-units.js"></script>
+<script src="../js/render-outlines.js"></script>
+<script src="../js/render-fx.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/logic.js"></script>
+<script src="../js/commands.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/loop.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/save.js"></script>
+<script src="../js/net.js"></script>
+<script src="../js/net-sync.js"></script>
+<script src="../js/lockstep.js"></script>
+<script src="../js/chat.js"></script>
+<script src="../js/input.js"></script>
+<script src="../js/init.js"></script>
+<script src="../js/boot.js"></script>
+<script>
+setTimeout(() => {
+  const q = new URLSearchParams(location.search);
+  const cfg = {
+    mode: q.get('mode') || '1v1',
+    diff: q.get('diff') || 'standard', // single value, or comma list per team: diff=easy,hard
+    map:  q.get('map')  || ((q.get('mode')||'1v1') === '2v2' ? 'large' : 'medium'),
+    ticks: parseInt(q.get('ticks') || '60000', 10),
+    seed: q.get('seed') ? parseInt(q.get('seed'), 10) : null,
+    rollback: q.get('rollback') === '1',
+  };
+  const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
+  const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
+
+  try {
+    // ---- match setup: every slot AI so the match plays itself ----
+    NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
+    if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
+    setMapSize(cfg.map);
+    restartGame(cfg.diff.split(',')[0]);
+    const diffs = cfg.diff.split(',');
+    teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
+    resetAIStates();
+    gameStarted = true; gamePaused = false;
+    // Headless speed: skip viewer-local per-tick work (fog, explored-ever,
+    // particles — see window.__headlessSim guards in js/loop.js, js/core.js)
+    // and stub the feedback sinks. The per-tick desync checksum (DET.enabled
+    // hashes every entity + the whole map EVERY tick) only runs when the
+    // rollback check asked for it — it was the single biggest cost.
+    window.__headlessSim = true;
+    window.playSound = () => {};
+    window.showMsg = () => {};
+    window.updateUI = () => {};
+    DET.enabled = cfg.rollback; DET.strict = true; // Math.random-in-sim tripwire stays on
+
+    // ---- instrumentation ----
+    // Villager/TC death events with the killer's team — early villager
+    // losses (wildlife, raids) explain most "slow/stalled economy" worlds.
+    const realHandleDeath = handleDeath;
+    handleDeath = function(e, killerTeam){
+      if (e.type === 'unit' && e.utype === 'villager')
+        report.events.push({t: tick, team: e.team, ev: 'vil-died', by: killerTeam === GAIA_TEAM ? 'gaia' : 'team' + killerTeam});
+      if (e.type === 'building' && e.btype === 'TC')
+        report.events.push({t: tick, team: e.team, ev: 'tc-destroyed', by: 'team' + killerTeam});
+      return realHandleDeath(e, killerTeam);
+    };
+    const watchdogLog = [];
+    const realWarn = console.warn;
+    console.warn = function(...a){
+      if (String(a[0]).includes('stuck-watchdog')) {
+        watchdogLog.push(tick);
+        (report.health.watchdogSamples = report.health.watchdogSamples || []).length < 8 &&
+          report.health.watchdogSamples.push(a.join(' '));
+      }
+      return realWarn.apply(console, a);
+    };
+
+    const SAMPLE_EVERY = Math.max(500, Math.floor(cfg.ticks / 60)); // ~60 samples
+    const sampleTeam = t => {
+      const units = entities.filter(e => e.team === t && e.type === 'unit');
+      const bldgs = entities.filter(e => e.team === t && e.type === 'building');
+      const st = resourceStore(t);
+      const farms = bldgs.filter(b => b.btype === 'FARM');
+      return {
+        age: teamAge[t], vils: units.filter(u => u.utype === 'villager').length,
+        mil: units.filter(u => MILITARY.has(u.utype)).length,
+        idleVils: units.filter(u => u.utype === 'villager' && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
+        food: Math.round(st.food), wood: Math.round(st.wood), gold: Math.round(st.gold), stone: Math.round(st.stone),
+        farms: farms.length, exhaustedFarms: farms.filter(f => f.exhausted).length,
+        racks: bldgs.filter(b => b.btype === 'BARRACKS').length,
+        swalls: bldgs.filter(b => b.btype === 'SWALL' || b.btype === 'SGATE').length,
+        pwalls: bldgs.filter(b => b.btype === 'WALL' || b.btype === 'GATE').length,
+        mills: bldgs.filter(b => b.btype === 'MILL').length,
+        houses: bldgs.filter(b => b.btype === 'HOUSE').length,
+        tcs: bldgs.filter(b => b.btype === 'TC' && b.complete).length,
+        tcHp: (bldgs.find(b => b.btype === 'TC') || {}).hp | 0,
+        waves: AI_STATES[t] ? AI_STATES[t].waveCount : 0,
+        defeated: !!defeatedTeams[t],
+      };
+    };
+    let prev = teams().map(sampleTeam);
+    prev.forEach((s, t) => report.events.push({t: 0, team: t, ev: 'start', vils: s.vils}));
+
+    // dance detection: dodge-count based — a unit repeatedly DISPLACED by
+    // others (nudgeAside bumps e.dodgeCount) is dancing; a gatherer
+    // shuttling between a resource and an adjacent drop site is not.
+    const dodgeBase = new Map(); // id -> dodgeCount at window start
+    const DANCE_SAMPLE = 200, DANCE_WIN = 15;
+    const danceOffenders = new Set();
+
+    // ---- main loop ----
+    const t0 = performance.now();
+    for (let i = 0; i < cfg.ticks && !gameOver; i++) {
+      update();
+      if (tick % (DANCE_SAMPLE * DANCE_WIN) === 0) {
+        entities.forEach(e => {
+          if (e.type !== 'unit') return;
+          const base = dodgeBase.get(e.id) || 0;
+          const now = e.dodgeCount || 0;
+          if (now - base >= 8 && !danceOffenders.has(e.id)) { // ≥8 displacements in one window: a dance, not a one-off step-aside
+            danceOffenders.add(e.id);
+            (report.health.dancerSamples = report.health.dancerSamples || []).length < 8 &&
+              report.health.dancerSamples.push({id: e.id, team: e.team, utype: e.utype, t: tick, x: +e.x.toFixed(1), y: +e.y.toFixed(1), task: e.task, gather: e.gatherX + ',' + e.gatherY});
+          }
+          dodgeBase.set(e.id, now);
+        });
+      }
+      if (tick % SAMPLE_EVERY === 0) {
+        const cur = teams().map(sampleTeam);
+        report.timeline.push({t: tick, teams: cur});
+        cur.forEach((s, t) => {
+          const p = prev[t];
+          if (s.age > p.age)   report.events.push({t: tick, team: t, ev: 'age-up', to: AGES[s.age].key});
+          if (s.waves > p.waves) report.events.push({t: tick, team: t, ev: 'attack-wave', n: s.waves});
+          if (s.tcs < p.tcs)   report.events.push({t: tick, team: t, ev: 'lost-tc'});
+          if (s.tcs > p.tcs && tick > SAMPLE_EVERY) report.events.push({t: tick, team: t, ev: 'rebuilt-tc'});
+          if (s.defeated && !p.defeated) report.events.push({t: tick, team: t, ev: 'knocked-out'});
+        });
+        prev = cur;
+      }
+    }
+    const wallMs = performance.now() - t0;
+
+    // ---- optional rollback determinism check ----
+    if (cfg.rollback && !gameOver) {
+      const snap = { t: tick, state: lockstepCaptureState() };
+      for (let i = 0; i < 100; i++) update();
+      const sumA = simChecksum();
+      lockstepRestore(snap);
+      window.__resim = true;
+      for (let i = 0; i < 100; i++) update();
+      window.__resim = false;
+      report.health.rollbackDeterministic = (sumA === simChecksum());
+    }
+
+    // ---- end state ----
+    report.end = {
+      checksum: simChecksum(), // cross-version equivalence: a behavior-neutral optimization must reproduce this exactly for the same seed
+      tick, gameOver, won,
+      defeated: defeatedTeams.slice(),
+      ages: teamAge.slice(),
+      winnerSide: gameOver ? (won ? 'alliance-of-team0' : 'other') : null,
+      final: teams().map(sampleTeam),
+    };
+    // performance.now() is frozen under Chrome's --virtual-time-budget, so
+    // wall timing is only meaningful when this page runs in a real browser.
+    report.health.wallMs = Math.round(wallMs) || null;
+    report.health.ticksPerSec = wallMs > 100 ? Math.round(tick / (wallMs / 1000)) : null;
+    report.health.watchdogFires = watchdogLog.length;
+    report.health.dancers = danceOffenders.size;
+    report.health.jsErrors = window.__errors.slice();
+    // where every military unit stands at the end — is the army actually
+    // reaching the enemy, or stalled somewhere en route?
+    report.end.milSnapshot = entities.filter(e => e.type === 'unit' && MILITARY.has(e.utype))
+      .map(e => ({team: e.team, ut: e.utype, x: +e.x.toFixed(0), y: +e.y.toFixed(0),
+                  tgt: e.target || null, path: e.path.length, gs: e.groupSpeed || null,
+                  retry: e.retry || null}));
+
+    // ---- auto-analysis: anomalies worth a look ----
+    const F = report.findings;
+    if (window.__errors.length) F.push('JS ERRORS: ' + window.__errors.join(' | '));
+    if (report.health.dancers > 0) F.push(`${report.health.dancers} villager(s) stuck dancing (motion without displacement)`);
+    if (report.health.watchdogFires > cfg.ticks / 4000) F.push(`high watchdog rate: ${watchdogLog.length} fires (units getting wedged)`);
+    teams().forEach(t => {
+      const samples = report.timeline.map(s => s.teams[t]);
+      if (!samples.length) return;
+      const last = samples[samples.length - 1];
+      const half = samples.slice(Math.floor(samples.length / 2));
+      if (!last.defeated) {
+        if (last.age === 0 && tick > 55000) F.push(`team${t} never left Dark Age by tick ${tick}`);
+        if (half.every(s => s.food < 60)) F.push(`team${t} food-starved for the entire second half`);
+        if (half.every(s => s.exhaustedFarms > 0 && s.exhaustedFarms >= s.farms - 1) && last.farms > 2)
+          F.push(`team${t} farms stay exhausted (${last.exhaustedFarms}/${last.farms}) — reseed economy broken?`);
+        if (half.every(s => s.idleVils >= 3)) F.push(`team${t} has ${last.idleVils} chronically idle villagers`);
+        const waveSamples = samples.map(s => s.waves);
+        const lastWaveGrowth = waveSamples[waveSamples.length-1] - waveSamples[Math.floor(waveSamples.length/2)];
+        if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 40000)
+          F.push(`team${t} launched no attack waves in the second half despite ${last.mil} military`);
+        if (half.every(s => s.mil === 0) && tick > 30000) F.push(`team${t} fields no military at all`);
+      }
+    });
+    if (!gameOver && cfg.ticks >= 100000) F.push('match did not resolve — possible stalemate');
+    if (report.health.ticksPerSec != null && report.health.ticksPerSec < 500) F.push(`slow sim: ${report.health.ticksPerSec} ticks/sec (pathfinding storm?)`);
+  } catch (err) {
+    window.__errors.push(err.message + '\n' + (err.stack || '').split('\n').slice(0, 4).join('\n'));
+    report.findings.push('CRASH: ' + err.message);
+    report.health.jsErrors = window.__errors.slice();
+  }
+
+  document.title = report.findings.length || window.__errors.length ? 'FINDINGS' : 'CLEAN';
+  const pre = document.createElement('pre');
+  pre.id = 'result';
+  pre.textContent = JSON.stringify(report, null, 1);
+  document.body.appendChild(pre);
+}, 400);
+</script>
+</body></html>

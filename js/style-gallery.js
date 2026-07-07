@@ -145,10 +145,10 @@
   mkFort('WALL', 'GATE', 'Palisade fortification (walls + gates)');
   mkU('villager', { female: false, label: 'Villager (male)' });
   mkU('villager', { female: true,  label: 'Villager (female)' });
-  ['militia','spearman','archer','scout','knight','sheep','bear'].forEach(u => mkU(u));
+  ['militia','spearman','archer','scout','knight','ram','sheep','bear'].forEach(u => mkU(u));
 
   // ---- Controls ----
-  let galleryAge = 0, galleryZoom = 1.5, walking = false, scrollY = 0;
+  let galleryAge = 0, galleryZoom = 1.5, walking = false, attacking = false, scrollY = 0;
   document.querySelectorAll('#style-controls button[data-age]').forEach(b => {
     b.onclick = () => {
       document.querySelectorAll('#style-controls button[data-age]').forEach(x => x.classList.remove('active'));
@@ -164,6 +164,11 @@
     };
   });
   document.getElementById('sg-walk').onchange = e => { walking = e.target.checked; };
+  // Attack toggle: previews attack cycles without a target (today only the
+  // ram's drawRamBody reads __animAttack). Wins over walking — a specimen
+  // can't do both.
+  let sgAtk = document.getElementById('sg-attack');
+  if (sgAtk) sgAtk.onchange = e => { attacking = e.target.checked; };
   window.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') scrollY += 60;
     if (e.key === 'ArrowUp') scrollY = Math.max(0, scrollY - 60);
@@ -259,7 +264,8 @@
               // walking toggle: a dummy path in the facing direction keeps
               // the gait cycle going AND keeps drawUnit's dir derivation
               // pointing the way the cell is labelled
-              if (walking) {
+              u.__animAttack = attacking;
+              if (walking && !attacking) {
                 u.path = [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }];
               } else {
                 u.path = [];
