@@ -62,12 +62,10 @@ function collectUnfinishedWallChain(start){
 }
 
 // Delete own units/buildings by id — shared by the Delete/Backspace key
-// below and the "Cancel Build" action button (js/ui.js). The guest is
-// never authoritative — mutating hp/calling handleDeath() directly would
-// only affect its own local (about-to-be-overwritten) copy: the very next
-// sync from the host, which never saw it happen, would restore the
-// "deleted" entity. Relay it as a command instead, same as every other
-// guest action — see js/net-cmd.js.
+// below and the "Cancel Build" action button (js/ui.js). Under lockstep
+// no peer mutates world state out-of-band — calling handleDeath()
+// directly here would desync the sims. Route it through the command
+// queue so both peers execute it on the same tick.
 function requestDeleteOwned(ownIds){
   if (!ownIds || !ownIds.length) return;
   submitCommand({ kind: 'delete-units', unitIds: ownIds });
@@ -1284,16 +1282,13 @@ function doBoxSelect(x1,y1,x2,y2){
 function doCommand(sx,sy){
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
-  // A multiplayer guest never mutates world state directly — the actual
-  // targeting/rally/movement logic below only ever runs for the HOST
-  // (either processing its own local click, or replaying a relayed guest
-  // command via applyRemoteCommand in js/net-cmd.js). But the marker-color/
-  // rally-target DETECTION itself only reads client-local data (fog,
-  // entities, map, myTeam) that's just as valid on the guest's own client —
-  // so the guest computes its own instant local feedback (marker + sound/
-  // message) below, then sends the command and returns before any of the
-  // actual state mutation, rather than waiting on a round-trip through the
-  // host for feedback that was always purely cosmetic.
+  // Clicks never mutate world state directly — this resolves the click to
+  // a world-space command and submits it to the queue (submitCommand),
+  // which executes it a few ticks later on BOTH peers (lockstep). The
+  // marker-color/rally-target DETECTION below reads only client-local data
+  // (fog, entities, map, myTeam), so the issuer gets instant local
+  // feedback (marker + sound/message) without waiting for the exec tick —
+  // feedback that was always purely cosmetic.
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
@@ -1310,7 +1305,7 @@ function doCommand(sx,sy){
       rTarget = getBuildingUnderCursor(sx, sy);
     }
 
-    if (!isReplayingRemoteCommand) {
+    feedbackFor(myTeam, () => {
       if(rTarget){
         showMsg('Rally point set to '+ (rTarget.type==='unit' ? UNITS[rTarget.utype].name : BLDGS[rTarget.btype].name));
       } else {
@@ -1322,9 +1317,9 @@ function doCommand(sx,sy){
           showMsg('Rally point set to location');
         }
       }
-      // Local-only click feedback — never synced (see SYNC_BUFFERS, js/core.js)
+      // Local-only click feedback — viewer cosmetic, never part of sim state
       cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:'#0af'});
-    }
+    });
 
     // World-space command, scheduled on the tick queue (js/commands.js) —
     // the mutation itself happens in execRally at the stamped tick.
@@ -1376,17 +1371,15 @@ function doCommand(sx,sy){
   else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';
-  if (!isReplayingRemoteCommand) {
-    // Local-only click feedback — never synced (see SYNC_BUFFERS, js/core.js)
+  feedbackFor(myTeam, () => {
+    // Local-only click feedback — viewer cosmetic, never part of sim state
     cmdMarkers.push({x:tile.x,y:tile.y,time:tick,color:markerColor});
-  }
+  });
 
-  // Play response sound on command — not when replaying a guest's command
-  // on the host (see isReplayingRemoteCommand's comment, js/net-cmd.js):
-  // the guest already heard/saw its own feedback locally the instant it
-  // clicked, well before this ever reached the host.
+  // Play response sound on command — issuer feedback (feedbackFor no-ops
+  // for the other peer's replayed commands and during rollback resim).
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
-  if (movers.length > 0 && window.playSound && !isReplayingRemoteCommand) {
+  if (movers.length > 0 && window.playSound && myTeam === localHumanTeam) {
     let first = movers[0];
     if (first.utype === 'villager') window.playSound('select_villager');
     else if (first.utype !== 'sheep') window.playSound('select_military');

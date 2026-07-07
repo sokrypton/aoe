@@ -13,12 +13,9 @@
 // foundation for both-peers-simulate lockstep (and for replays, see
 // detRecordCommand in js/determinism.js).
 //
-// Roles today (host-authoritative sync still in place):
-//   host / single-player: submitCommand schedules locally at tick+delay.
-//   guest: submitCommand relays the resolved world-space cmd to the host
-//     (js/net-cmd.js), which schedules it on ITS queue as team 1.
-// The lockstep cutover only changes WHO schedules — both peers will
-// schedule everything; the resolver/executor split stays as-is.
+// Roles (lockstep): every peer schedules its OWN commands locally at
+// tick+delay and mirrors them to the other peer as 'cmd-ls'
+// (js/lockstep.js), which schedules them at the same issuer-stamped tick.
 
 // ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
 // RTS (AoE2 ran 250ms command turns). Under rollback lockstep
@@ -30,12 +27,6 @@ const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 
 let commandQueue = new Map(); // execTick -> [{team, seq, cmd}]
 let localCmdSeq = 0;
-
-// Set true while executing a command issued by the OTHER player — read by
-// the shared mutation code to suppress issuer-only feedback (sounds/
-// markers/showMsg): that feedback belongs to whoever physically clicked,
-// and they already got it locally at input time.
-let isReplayingRemoteCommand = false;
 
 function submitCommand(cmd){
   cmd.team = myTeam;
@@ -83,7 +74,7 @@ function clearCommandQueue(){
 // The mutation code below (and the shared helpers it calls: canAfford,
 // spendCost, resourceStore, canPlace...) reads those globals for every
 // ownership/affordability check; swapping them lets one executor serve any
-// team. Generalizes net-cmd.js's old withRemoteSelection to both roles.
+// team.
 function withCommandContext(team, unitIds, fn){
   let prevSelected = selected;
   let prevTeam = myTeam;
@@ -95,122 +86,117 @@ function withCommandContext(team, unitIds, fn){
   try { fn(); } finally { selected = prevSelected; myTeam = prevTeam; }
 }
 
-// Dispatch one command. isReplayingRemoteCommand (js/net-cmd.js) gates all
-// issuer-only feedback (showMsg/sounds/markers) inside the mutation code:
-// true exactly when this command came from the OTHER player, so the local
+// Dispatch one command. Issuer-only feedback (showMsg/sounds/markers)
+// inside the mutation code goes through feedbackFor(team, …) (js/core.js),
+// which no-ops unless `team` is the human at this keyboard — the local
 // player never gets feedback for actions they didn't take.
 function execCommand(cmd, team){
   if (!cmd || !cmd.kind) return;
-  isReplayingRemoteCommand = (team !== myTeam);
-  try {
-    switch (cmd.kind) {
-      case 'rally':
-        withCommandContext(team, [], () => execRally(cmd));
-        break;
-      case 'command':
-        withCommandContext(team, cmd.unitIds, () => execUnitCommand(cmd));
-        break;
-      case 'build-placement':
-        withCommandContext(team, cmd.unitIds, () => execBuildPlacement(cmd));
-        break;
-      case 'wall-drag':
-        withCommandContext(team, cmd.unitIds, () => execWallDrag(cmd));
-        break;
-      case 'train-unit': {
-        let bldg = entitiesById.get(cmd.bldgId);
-        if (bldg && bldg.type === 'building' && bldg.team === team) {
-          withCommandContext(team, [], () => execTrainUnit(bldg, cmd.utype));
-        }
-        break;
+  switch (cmd.kind) {
+    case 'rally':
+      withCommandContext(team, [], () => execRally(cmd));
+      break;
+    case 'command':
+      withCommandContext(team, cmd.unitIds, () => execUnitCommand(cmd));
+      break;
+    case 'build-placement':
+      withCommandContext(team, cmd.unitIds, () => execBuildPlacement(cmd));
+      break;
+    case 'wall-drag':
+      withCommandContext(team, cmd.unitIds, () => execWallDrag(cmd));
+      break;
+    case 'train-unit': {
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.type === 'building' && bldg.team === team) {
+        withCommandContext(team, [], () => execTrainUnit(bldg, cmd.utype));
       }
-      case 'cancel-queue':
-        withCommandContext(team, [], () => execCancelQueue(cmd.bldgId, cmd.idx, team));
-        break;
-      case 'delete-units':
-        (cmd.unitIds || []).forEach(id => {
-          let en = entitiesById.get(id);
-          if (en && en.team === team) deleteOwnedEntity(en);
-        });
-        break;
-      case 'research-age': {
-        let tc = entitiesById.get(cmd.bldgId);
-        if (tc && tc.type === 'building' && tc.team === team) {
-          withCommandContext(team, [], () => execResearchAge(tc));
-        }
-        break;
-      }
-      case 'cancel-research': {
-        let tc = entitiesById.get(cmd.bldgId);
-        if (tc && tc.type === 'building' && tc.team === team) {
-          withCommandContext(team, [], () => execCancelResearch(tc));
-        }
-        break;
-      }
-      case 'prepay-farm':
-        withCommandContext(team, [], () => prepayFarmNow());
-        break;
-      case 'reactivate-farm': {
-        let farm = entitiesById.get(cmd.bldgId);
-        if (farm && farm.team === team) {
-          withCommandContext(team, [], () => reactivateFarmNow(farm));
-        }
-        break;
-      }
-      case 'eject-garrison': {
-        let bldg = entitiesById.get(cmd.bldgId);
-        if (bldg && bldg.team === team) {
-          ejectGarrison(bldg, gu => gu.id === cmd.unitId);
-          if (team === myTeam && typeof updateUI === 'function') updateUI();
-        }
-        break;
-      }
-      case 'set-delay':
-        // Manual lockstep input-delay override (host-only). Under rollback
-        // the delay only tunes how often rewinds happen — lateness is no
-        // longer fatal — so there's no automatic controller anymore.
-        if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
-          INPUT_DELAY_TICKS = cmd.d;
-        }
-        break;
-      case 'set-speed':
-        // Host-only control (team 0); executes at the same tick on both
-        // peers so timeStep/pacing never diverge. Range-clamped, never
-        // trusted from the wire.
-        if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
-          setGameSpeed(cmd.v);
-          if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
-        }
-        break;
-      case 'dev-spawn':
-        // Test-only scenario injection for multiplayer measurement: spawns
-        // a deterministic army through the queue so both lockstep peers
-        // create identical entities at the same tick. Requires an explicit
-        // console opt-in on BOTH peers (window.DEV_TEST_COMMANDS = true);
-        // inert otherwise. Used by tests/mp-lockstep-perf.js.
-        if (window.DEV_TEST_COMMANDS) {
-          let types = cmd.utype ? [cmd.utype] : ['militia', 'archer', 'spearman', 'scout'];
-          for (let i = 0; i < (cmd.n | 0) && i < 400; i++) {
-            let t = findSpawnTile(cmd.x + (i % 20), cmd.y + ((i / 20) | 0), 12);
-            if (t) createUnit(types[i % types.length], t.x, t.y, cmd.forTeam != null ? cmd.forTeam : i % 2);
-          }
-        }
-        break;
-      case 'dev-destroy':
-        // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — the
-        // lockstep replacement for tests that used to set hp=0 directly on
-        // one peer (an out-of-band write is an instant desync now).
-        if (window.DEV_TEST_COMMANDS) {
-          let victim = entitiesById.get(cmd.id);
-          if (victim) { victim.hp = 0; handleDeath(victim, team); }
-        }
-        break;
-      case 'town-bell':
-        if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
-        if (typeof updateUI === 'function') updateUI();
-        break;
+      break;
     }
-  } finally {
-    isReplayingRemoteCommand = false;
+    case 'cancel-queue':
+      withCommandContext(team, [], () => execCancelQueue(cmd.bldgId, cmd.idx, team));
+      break;
+    case 'delete-units':
+      (cmd.unitIds || []).forEach(id => {
+        let en = entitiesById.get(id);
+        if (en && en.team === team) deleteOwnedEntity(en);
+      });
+      break;
+    case 'research-age': {
+      let tc = entitiesById.get(cmd.bldgId);
+      if (tc && tc.type === 'building' && tc.team === team) {
+        withCommandContext(team, [], () => execResearchAge(tc));
+      }
+      break;
+    }
+    case 'cancel-research': {
+      let tc = entitiesById.get(cmd.bldgId);
+      if (tc && tc.type === 'building' && tc.team === team) {
+        withCommandContext(team, [], () => execCancelResearch(tc));
+      }
+      break;
+    }
+    case 'prepay-farm':
+      withCommandContext(team, [], () => prepayFarmNow());
+      break;
+    case 'reactivate-farm': {
+      let farm = entitiesById.get(cmd.bldgId);
+      if (farm && farm.team === team) {
+        withCommandContext(team, [], () => reactivateFarmNow(farm));
+      }
+      break;
+    }
+    case 'eject-garrison': {
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.team === team) {
+        ejectGarrison(bldg, gu => gu.id === cmd.unitId);
+        if (team === myTeam && typeof updateUI === 'function') updateUI();
+      }
+      break;
+    }
+    case 'set-delay':
+      // Manual lockstep input-delay override (host-only). Under rollback
+      // the delay only tunes how often rewinds happen — lateness is no
+      // longer fatal — so there's no automatic controller anymore.
+      if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
+        INPUT_DELAY_TICKS = cmd.d;
+      }
+      break;
+    case 'set-speed':
+      // Host-only control (team 0); executes at the same tick on both
+      // peers so timeStep/pacing never diverge. Range-clamped, never
+      // trusted from the wire.
+      if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
+        setGameSpeed(cmd.v);
+        if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
+      }
+      break;
+    case 'dev-spawn':
+      // Test-only scenario injection for multiplayer measurement: spawns
+      // a deterministic army through the queue so both lockstep peers
+      // create identical entities at the same tick. Requires an explicit
+      // console opt-in on BOTH peers (window.DEV_TEST_COMMANDS = true);
+      // inert otherwise. Used by tests/mp-lockstep-perf.js.
+      if (window.DEV_TEST_COMMANDS) {
+        let types = cmd.utype ? [cmd.utype] : ['militia', 'archer', 'spearman', 'scout'];
+        for (let i = 0; i < (cmd.n | 0) && i < 400; i++) {
+          let t = findSpawnTile(cmd.x + (i % 20), cmd.y + ((i / 20) | 0), 12);
+          if (t) createUnit(types[i % types.length], t.x, t.y, cmd.forTeam != null ? cmd.forTeam : i % 2);
+        }
+      }
+      break;
+    case 'dev-destroy':
+      // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — the
+      // lockstep replacement for tests that used to set hp=0 directly on
+      // one peer (an out-of-band write is an instant desync now).
+      if (window.DEV_TEST_COMMANDS) {
+        let victim = entitiesById.get(cmd.id);
+        if (victim) { victim.hp = 0; handleDeath(victim, team); }
+      }
+      break;
+    case 'town-bell':
+      if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
+      if (typeof updateUI === 'function') updateUI();
+      break;
   }
 }
 
@@ -251,8 +237,8 @@ function execUnitCommand(cmd){
   let target = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
   if (target && (target.hp <= 0 || target.garrisonedIn)) target = null;
   // Re-validate: an attack target must still be attackable by this team
-  // (enemy or gaia animal) — never a friendly unit.
-  if (target && target.team === myTeam && target.utype !== 'sheep' && target.utype !== 'sheep_carcass') target = null;
+  // (enemy or gaia animal) — never a friendly or allied unit.
+  if (target && sameSide(target.team, myTeam) && target.utype !== 'sheep' && target.utype !== 'sheep_carcass') target = null;
   let buildTarget = cmd.buildTargetId != null ? entitiesById.get(cmd.buildTargetId) : null;
   if (buildTarget && (buildTarget.team !== myTeam || buildTarget.type !== 'building')) buildTarget = null;
   let followTarget = cmd.followId != null ? entitiesById.get(cmd.followId) : null;
@@ -372,7 +358,7 @@ function execBuildPlacement(cmd){
         refundWalls([existing]);
       }
     }
-    if (!canAfford(myTeam, actualCost)) { if (!isReplayingRemoteCommand) showMsg('Not enough resources!'); return; }
+    if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
     spendCost(myTeam, actualCost);
     if (wallsToRemove.length > 0) {
       let ids = new Set(wallsToRemove.map(w => w.id));
@@ -397,7 +383,7 @@ function execBuildPlacement(cmd){
       }
     });
   } else {
-    if (!isReplayingRemoteCommand) { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); }
+    feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
   }
 }
 
@@ -425,7 +411,7 @@ function execWallDrag(cmd){
           v.buildQueue.push(bldg.id);
         });
       } else {
-        if (!isReplayingRemoteCommand) { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); }
+        feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
       }
     }
   });
@@ -444,12 +430,12 @@ function execWallDrag(cmd){
 // Train / cancel (moved from ui.js's trainUnit/cancelQueue mutation halves).
 function execTrainUnit(bldg, utype){
   let result = queueUnit(bldg, utype);
-  if (!isReplayingRemoteCommand) {
+  feedbackFor(myTeam, () => {
     if (result.reason === 'pop') showMsg('Need more houses!');
     else if (result.reason === 'resources') showMsg('Not enough resources!');
     else if (result.reason === 'age') showMsg('Requires the ' + AGES[ageReq(utype)].name + '!');
     if (result.reason && window.playSound) playSound('error');
-  }
+  });
 }
 
 // Start advancing to the next age at this TC. The research is a plain
@@ -461,13 +447,15 @@ function execResearchAge(tc){
   let next = teamAge[tc.team] + 1;
   if (next >= AGES.length) return;
   let cost = AGES[next].cost;
+  // feedbackFor handles the AI calling this directly from the sim
+  // (js/ai.js) — the human must not see the AI's advancement toasts.
   if (!canAfford(tc.team, cost)) {
-    if (!isReplayingRemoteCommand) { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); }
+    feedbackFor(tc.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
     return;
   }
   spendCost(tc.team, cost);
   tc.research = { target: next, tick: 0 };
-  if (!isReplayingRemoteCommand) showMsg('Advancing to the ' + AGES[next].name + '…');
+  feedbackFor(tc.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
   if (typeof updateUI === 'function') updateUI();
 }
 
@@ -477,7 +465,7 @@ function execCancelResearch(tc){
   let store = resourceStore(tc.team);
   Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
   tc.research = undefined;
-  if (!isReplayingRemoteCommand) showMsg('Age research cancelled (refunded)');
+  feedbackFor(tc.team, () => showMsg('Age research cancelled (refunded)'));
   if (typeof updateUI === 'function') updateUI();
 }
 
@@ -491,20 +479,20 @@ function execCancelQueue(bldgId, idx, team){
   let store = resourceStore(bldg.team);
   Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
   if (idx === 0) bldg.trainTick = 0;
-  if (!isReplayingRemoteCommand) showMsg(UNITS[utype].name + ' cancelled (refunded)');
+  feedbackFor(myTeam, () => showMsg(UNITS[utype].name + ' cancelled (refunded)'));
 }
 
 // Farm economy (moved from ui.js's prepayFarm/reactivateFarm mutation halves).
 function prepayFarmNow(){
   let cost = { w: 60 };
   if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
+    feedbackFor(myTeam, () => { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); });
     return;
   }
   spendCost(myTeam, cost);
   let store = resourceStore(myTeam);
   store.prepaidFarms = (store.prepaidFarms || 0) + 1;
-  if (!isReplayingRemoteCommand) showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`);
+  feedbackFor(myTeam, () => showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`));
   if (typeof updateUI === 'function') updateUI();
 }
 
@@ -512,7 +500,7 @@ function reactivateFarmNow(farm){
   if (!farm.exhausted) return;
   let cost = { w: 60 };
   if (!canAfford(myTeam, cost)) {
-    if (!isReplayingRemoteCommand) { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); }
+    feedbackFor(myTeam, () => { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); });
     return;
   }
   spendCost(myTeam, cost);
@@ -523,6 +511,6 @@ function reactivateFarmNow(farm){
   tile.t = TERRAIN.FARM;
   tile.res = BLDGS.FARM.food; // same refill as every other reseed path (fresh/prepaid/walk-up/AI)
   markMapDirty(farm.x, farm.y);
-  if (!isReplayingRemoteCommand) showMsg('Farm reactivated!');
+  feedbackFor(myTeam, () => showMsg('Farm reactivated!'));
   if (typeof updateUI === 'function') updateUI();
 }

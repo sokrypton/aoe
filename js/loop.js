@@ -39,6 +39,7 @@ function update(){
         let victim = null, vd = 0.45;
         entities.forEach(en => {
           if (en.type !== 'unit' || sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) return; // no ally friendly fire
+          if (en.utype === 'sheep' || en.utype === 'sheep_carcass') return; // arrows don't burn food (matches tower target acquisition)
           let idx = en.x - p.tx, idy = en.y - p.ty;
           let d = Math.sqrt(idx*idx + idy*idy);
           if (d < vd) { vd = d; victim = en; }
@@ -191,7 +192,11 @@ function nudgeAside(){
     if(!uid||uid===m.id)return;
     let s=entitiesById.get(uid);
     if(!s||s.hp<=0)return;
-    let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,m.team));
+    // Same pushable set as walkable() (js/pathfinding.js): sheep, villagers,
+    // and IDLE soldiers — a parked army must step aside for friendly traffic
+    // (AoE2 shove-through) instead of plugging its own gate.
+    let idleSoldier=MILITARY.has(s.utype)&&!s.task&&s.path.length===0&&s.stance!=='standground';
+    let pushable=s.utype==='sheep'||((s.utype==='villager'||idleSoldier)&&sameSide(s.team,m.team));
     if(!pushable||s.target)return;
     if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
     // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)

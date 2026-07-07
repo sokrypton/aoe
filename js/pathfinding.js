@@ -39,16 +39,21 @@ function walkable(x,y,ignore,ignoreUnits){
         // Harvest exception: a villager may step onto the sheep/carcass it
         // is working on.
         let harvesting=walker&&walker.target===uid&&(blocker.utype==='sheep'||blocker.utype==='sheep_carcass');
-        // Pushables (AoE2 soft-push): sheep yield to anyone, villagers yield
-        // to same-team traffic — the walker paths straight through and
-        // separateUnits() shoves the blocker aside on contact. SOLDIERS are
-        // never pushable: a parked army holds ground and traffic must route
-        // around it (that's also what keeps the melee surround cap intact).
-        // A "stubborn" villager (repeatedly displaced recently — see
-        // isStubborn in loop.js) stops yielding: paths must route around it
-        // like a parked soldier, which is what breaks displacement cycles.
+        // Pushables (AoE2 soft-push): sheep yield to anyone; villagers and
+        // IDLE soldiers yield to same-team traffic — the walker paths
+        // straight through and nudgeAside/separateUnits (js/loop.js) shove
+        // the blocker on contact. Fighting/moving/stand-ground soldiers
+        // hold ground (melee surround cap stays intact; a commanded army
+        // is a wall) — but a PARKED idle soldier must not: an idle army
+        // rallied at its own gate used to plug the single exit tile and
+        // trap the whole town, itself included, forever. A "stubborn" unit
+        // (repeatedly displaced recently — see isStubborn in loop.js)
+        // stops yielding: paths route around it, breaking displacement
+        // cycles.
+        let idleSoldier=MILITARY.has(blocker.utype)&&!blocker.target&&!blocker.task&&
+          blocker.path.length===0&&blocker.stance!=='standground';
         let pushable=blocker.utype==='sheep'||
-          (blocker.utype==='villager'&&walker&&sameSide(walker.team,blocker.team)&&!isStubborn(blocker));
+          ((blocker.utype==='villager'||idleSoldier)&&walker&&sameSide(walker.team,blocker.team)&&!isStubborn(blocker));
         if(!harvesting&&!pushable)return false;
       }
     }

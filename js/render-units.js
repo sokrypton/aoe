@@ -305,9 +305,12 @@ function drawUnit(e){
   let anim=Math.sin(tick*0.15+e.id*2);
   let isActive=e.task||e.target||e.path.length>0;
 
-  // Shadow
-  X.fillStyle='rgba(0,0,0,0.3)';
-  X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+  // Shadow — not part of the body silhouette: the outline mask pass must
+  // skip it or the selection ring traces the shadow blob too.
+  if(!window._maskDraw){
+    X.fillStyle='rgba(0,0,0,0.3)';
+    X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
+  }
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location
   if(e.facing===undefined) e.facing = 1;

@@ -89,10 +89,10 @@ canvas {
   z-index:2;
 }
 .pop-res .res-icon{
-  width:12px;
-  height:12px;
-  margin-right:3px;
-  transform:none;
+  /* Even more exaggerated than food/wood/gold: the two-faces art has more
+     empty padding in its cell, so it needs extra scale to visually match
+     — deliberately overflowing the badge border. */
+  transform:scale(1.8);
   font-size:11px;
   display:flex;
   align-items:center;
@@ -130,7 +130,7 @@ canvas {
 }
 #bell-btn .btn-emoji{
   font-size: 22px;
-  transform: scale(1.25);
+  transform: scale(1.1);
   transform-origin: center;
   display: inline-block;
 }
@@ -484,7 +484,7 @@ canvas {
 .icon-scout               {background-position:66.6667%  0%;}
 .icon-knight              {background-position:83.3333%  0%;}
 .icon-sheep               {background-position:100%      0%;}
-.icon-militia-dark        {background-position:0%        16.6667%;}
+.icon-militia-feudal      {background-position:0%        16.6667%;}
 .icon-militia-castle      {background-position:16.6667%  16.6667%;}
 .icon-spearman-castle     {background-position:33.3333%  16.6667%;}
 .icon-archer-castle       {background-position:50%       16.6667%;}
@@ -516,8 +516,6 @@ canvas {
 .icon-reseed              {background-position:16.6667%  83.3333%;}
 .icon-research            {background-position:33.3333%  83.3333%;}
 .icon-logo                {background-position:50%       83.3333%;}
-.icon-advance-feudal      {background-position:66.6667%  83.3333%;}
-.icon-advance-castle      {background-position:83.3333%  83.3333%;}
 .icon-bell                {background-position:100%      83.3333%;}
 .icon-age-dark            {background-position:0%        100%;}
 .icon-age-feudal          {background-position:16.6667%  100%;}
@@ -1034,7 +1032,7 @@ canvas {
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:24px}
   #bell-btn .btn-emoji{
     font-size: 24px;
-    transform: scale(1.25);
+    transform: scale(1.1);
   }
   .sel-unit-icon{width:44px;height:44px}
   #pop-wrap{bottom:100px}
@@ -1055,7 +1053,7 @@ canvas {
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:22px}
   #bell-btn .btn-emoji{
     font-size: 22px;
-    transform: scale(1.25);
+    transform: scale(1.1);
   }
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}

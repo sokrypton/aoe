@@ -1,13 +1,13 @@
 // ---- MULTIPLAYER: PeerJS connection plumbing ----
 // This file only owns the WebRTC connection lifecycle — establishing a
 // DataConnection between a host and a guest, and a thin send/receive
-// envelope. It knows nothing about game state; that's js/net-sync.js
-// (world state broadcast) and js/net-cmd.js (command relay), both of
-// which register themselves via onNetMessage() below rather than this
-// file reaching into game logic directly.
+// envelope. It knows nothing about game state; js/lockstep.js (command
+// exchange + resync) and js/net-sync.js (host-crash recovery) register
+// themselves via onNetMessage() below rather than this file reaching
+// into game logic directly.
 //
 // Message envelope: every message sent over the DataConnection is a plain
-// object {type: 'sync'|'cmd'|'hello'|'bye', ...payload}.
+// object {type: 'cmd-ls'|'tick'|'hello'|'bye'|..., ...payload}.
 //
 // Every message is compressed before it hits the wire: JSON.stringify →
 // deflate-raw (via the browser's built-in CompressionStream) → raw bytes.
@@ -16,7 +16,9 @@
 // better than anything a hand-rolled key-shortening scheme would realistic-
 // ally achieve, for zero ongoing maintenance cost. Applied uniformly to
 // 'cmd' messages too (not just 'sync') for one code path — they're tiny
-// enough that compression overhead is negligible either way.
+// enough that compression overhead is negligible either way. (The 13KB
+// figure is from the deleted snapshot-sync mode; resync/recovery state
+// payloads are far larger and benefit even more.)
 //
 // Since every send is already fully-encoded bytes, the connection uses
 // PeerJS's serialization:'none' — sending the ArrayBuffer/Uint8Array
@@ -40,9 +42,9 @@ const NET_PROTOCOL_VERSION = 8; // v8: age system — teamAge + TC research in s
 // fully-buffered input (our whole JSON string) drains in one microtask
 // hop or two, but the ORDER two overlapping async calls happen to resolve
 // in is not guaranteed to match the order they were started — and the
-// rest of the system (e.g. applyNetSync assuming "the next sync corrects
-// the previous one") depends on messages being processed in the order
-// they were sent/received. Each direction gets its own promise chain
+// rest of the system (e.g. lockstep's resync barrier assuming commands
+// sent before the resync arrive before it) depends on messages being
+// processed in the order they were sent/received. Each direction gets its own promise chain
 // below so sends/receives are always processed strictly in call order,
 // regardless of individual compress/decompress timing.
 async function compressMessage(msg){
@@ -143,17 +145,6 @@ let netBytesReceived = 0;
   });
 })();
 
-// How many bytes are sitting in the RTCDataChannel's outgoing buffer,
-// still waiting for the actual network to drain them. On a reliable-
-// ordered channel this grows without bound if we produce faster than the
-// link carries — hostSyncTick (js/net-sync.js) checks this before sending
-// to skip/defer syncs instead of piling on latency. PeerJS exposes the
-// underlying channel as `.dataChannel`. Doesn't count messages still in
-// sendQueue awaiting compression — a few in-flight at most, close enough.
-function netSendBuffered(){
-  return (netConn && netConn.dataChannel) ? netConn.dataChannel.bufferedAmount : 0;
-}
-
 // Dev-only fault injection, settable from the console (nothing in the app
 // sets these). Chrome's network throttling does NOT touch WebRTC, so this
 // is the practical way to reproduce real-link conditions on one machine:
@@ -202,9 +193,9 @@ function queueReceive(data){
     .catch(err => console.error('Net receive failed (message dropped):', err));
 }
 
-// Registers a callback invoked for every incoming message; net-sync.js and
-// net-cmd.js each add one for the message types they care about, rather
-// than this file needing to know about 'sync'/'cmd' payload shapes.
+// Registers a callback invoked for every incoming message; lockstep.js,
+// net-sync.js, and chat.js each add one for the message types they care
+// about, rather than this file needing to know payload shapes.
 function onNetMessage(handler){
   netMessageHandlers.push(handler);
 }

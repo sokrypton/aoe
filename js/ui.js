@@ -3,19 +3,24 @@
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
-  'knight','SWALL','SGATE','bear','logo']); // 7x7 master sheet cells
+  'knight','SWALL','SGATE','bear','logo',
+  // Age-look variant cells (AGE_ICON_VARIANTS below)
+  'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle']); // 7x7 master sheet cells
 
-// Units whose LOOK changes with age get age-specific icon cells; the base
-// cell is the Feudal look. Falls back to the base key for missing ages.
+// Units whose LOOK changes with age get age-specific icon cells. Falls
+// back to the base key for missing ages. Militia's BASE cell (row 0,
+// col 1: plain peasant swordsman, no shield) is the Dark look — matching
+// the in-game render, where the shield/helm only appear from Feudal on
+// (js/render-units.js) — and the round-shield cell is the Feudal look.
 const AGE_ICON_VARIANTS = {
-  militia:  {0:'militia-dark', 2:'militia-castle'},
+  militia:  {1:'militia-feudal', 2:'militia-castle'},
   spearman: {2:'spearman-castle'},
   archer:   {2:'archer-castle'},
   scout:    {2:'scout-castle'},
 };
-function iconKey(type){
+function iconKey(type, team = myTeam){
   let v = AGE_ICON_VARIANTS[type];
-  let k = v && teamAge ? v[teamAge[myTeam]] : null;
+  let k = v && teamAge ? v[teamAge[team]] : null;
   return k || type;
 }
 // window.bellRinging is per-team ([team 0, team 1]), maintained by
@@ -323,7 +328,7 @@ function updateUI(){
     let renderGroup=(g, {title, onClick, onRemove})=>{
       let icon=document.createElement('div');
       icon.className='sel-unit-icon';
-      setPortraitIcon(icon, g.key, g.data&&g.data.icon);
+      setPortraitIcon(icon, iconKey(g.key, g.members[0].team), g.data&&g.data.icon);
       let avgHpPct=Math.max(0,Math.min(100,Math.round(
         g.members.reduce((sum,u)=>sum+u.hp/u.maxHp,0)/g.members.length*100)));
       let hpColor='#2b8a3e';
@@ -524,7 +529,7 @@ function updateUI(){
               ? 'Unlocks spearmen, archers, scouts, watch towers, and stone walls. Military gains +1 attack and +1 armor.'
               : 'Unlocks the knight. Military gains a further +1 attack and +1 armor.')
               +' The Town Center pauses villager training while researching.';
-            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-advance-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div><span class="cost">${formatCost(next.cost)}</span>`;
+            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div><span class="cost">${formatCost(next.cost)}</span>`;
             btn.onclick=()=>{ submitCommand({kind:'research-age',bldgId:e.id}); };
           }
           act.appendChild(btn);
@@ -589,7 +594,7 @@ function updateUI(){
     }
   } else {
     if (port) {
-      setPortraitIcon(port, e.utype, UNITS[e.utype].icon);
+      setPortraitIcon(port, iconKey(e.utype, e.team), UNITS[e.utype].icon);
       port.classList.toggle('cam-locked', window.cameraFollowId===e.id);
     }
     // Use the unit's real name (Scout Cavalry, Militia, …) instead of a
@@ -965,9 +970,8 @@ window.updateBottomHeight();
 
 function prepayFarm() {
   if (gameOver) return;
-  // Never mutate locally as the guest — same "would only affect the
-  // guest's own about-to-be-overwritten copy" bug the Delete key had
-  // (see js/net-cmd.js's header comment). This one spends resources and
+  // Never mutate directly — out-of-band writes desync lockstep peers
+  // (same rule as the Delete key). This one spends resources and
   // increments a counter with no unit/building reference needed at all.
   submitCommand({ kind: 'prepay-farm' }); // mutation: prepayFarmNow (js/commands.js)
 }

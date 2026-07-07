@@ -99,29 +99,19 @@ function serializeGame(){
   };
 }
 
-// A world snapshot safe to JSON.stringify: same as serializeGame() but with
-// every live Set anywhere in it replaced by null (see saveGameToFile's
-// comment below for why that's a correctness no-op). Used both by the save
-// file below and by the guest→host state handback over the network
-// (js/net-sync.js's 'request-state' handler) — the wire path stringifies
-// too (compressMessage, js/net.js), so it needs the exact same treatment.
+// A world snapshot normalized through the same JSON round-trip the wire
+// applies. Used both by the save file below and by the guest→host state
+// handback over the network (js/net-sync.js's 'request-state' handler).
+// Entity retry/avoid state is plain arrays/objects (js/logic.js primitives),
+// so no Set→null normalization is needed anymore.
 function serializeGameForWire(){
-  return JSON.parse(JSON.stringify(serializeGame(), (k, v) => v instanceof Set ? null : v));
+  return JSON.parse(JSON.stringify(serializeGame()));
 }
 
 function saveGameToFile(){
   try {
     let data = serializeGame();
-    // A couple of villager pathfinding-retry fields (failedGatherTiles/
-    // failedDrops in logic.js) are live Set objects sitting directly on
-    // unit entities. JSON.stringify silently turns a Set into "{}", which
-    // then blows up the first time gather/drop-off retry logic calls
-    // .add()/.has() on it post-load. Rather than track down every such
-    // field by name (and every future one like it), null out any Set
-    // anywhere in the snapshot — matching the "null" reset state that
-    // code already falls back on (e.g. `e.failedGatherTiles = e.failedGatherTiles || new Set()`),
-    // so losing it is a correctness no-op, not a bug.
-    let blob = new Blob([JSON.stringify(data, (k, v) => v instanceof Set ? null : v)], {type: 'application/json'});
+    let blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
     let url = URL.createObjectURL(blob);
     let a = document.createElement('a');
     let stamp = data.savedAt.replace(/[:.]/g, '-');
@@ -185,12 +175,13 @@ function applySavedGame(data, opts){
     // meant to be authoritative). Loading straight into a fresh host
     // session and never rounding it leaves `tick` permanently fractional
     // (every future tick is just += 1 from there) — and
-    // `tick % netSyncIntervalTicks === 0` (js/loop.js's sync-cadence
-    // check) then never evaluates true again, silently breaking
-    // hostSyncTick() forever with no error anywhere. Caught by an actual
+    // every `tick % N === 0` cadence check (lockstep snapshots, checksum
+    // reports, watchdog sweeps) then never evaluates true again, silently
+    // breaking them forever with no error anywhere. Caught by an actual
     // end-to-end test hosting from a guest-originated save, not by
     // inspecting the load code in isolation.
     tick = Math.round(data.tick) || 0;
+    bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
     camX = data.camX || 0;
     camY = data.camY || 0;
     ZOOM = data.ZOOM || ZOOM;
@@ -252,6 +243,9 @@ function applySavedGame(data, opts){
         }
       });
       (data.aiStates || []).forEach((st, t) => { if (st) st.team = t; });
+      // `won` means "did team 0's side win" — after the swap the loader IS
+      // team 0, so a decided outcome must flip with the teams too.
+      if (data.gameOver) data.won = !data.won;
       // teamExploredEver[1] (the rejoining opponent's memory) now comes
       // from the saver's otherTeamExploredEver — same slot the
       // host-originated path expects it in.
@@ -393,11 +387,9 @@ function applySavedGame(data, opts){
     // existing DataConnection keeps working fine regardless (confirmed by
     // an actual two-browser-context test — the underlying RTCDataChannel
     // survives a new Peer object being created), but the host would sit
-    // paused on that screen indefinitely, and since hostSyncTick() only
-    // ever runs inside the host's own update() loop (js/loop.js), which
-    // doesn't run while gamePaused, the guest would see no updates
-    // (resources, positions, anything) until the host happened to
-    // manually dismiss it. Detected BEFORE the netRole/guestNeedsFullSync
+    // paused on that screen indefinitely — and a paused host stops
+    // simulating and reporting ticks, so the guest's match stalls until
+    // the host happened to manually dismiss it. Detected BEFORE the netRole/guestNeedsFullSync
     // block below (which is what would otherwise look identical for both
     // cases — a host that's about to (re-)host and a host that's already
     // mid-match).

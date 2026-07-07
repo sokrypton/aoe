@@ -422,15 +422,16 @@ let resources = freshTeamResources();
 let popUsed=0, popCap=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
-// `won` is always computed/synced as "did TEAM 0 win" (js/logic.js's
-// handleDeath, js/net-sync.js's applyNetSync just copies the host's own
-// value verbatim) — correct as-is for the host (myTeam is always 0), but
-// wrong for the guest without adjustment: a guest who actually won would
-// have `won === false` (since team 0/the host lost), and the raw value
-// would show them a "DEFEAT" screen for winning. Every UI-facing read of
-// game outcome should go through this instead of the raw `won` variable.
+// `won` is always computed as "did TEAM 0's side win" (js/logic.js's
+// checkAllianceVictory; identical on both lockstep peers) — correct as-is
+// for the host (myTeam is always 0), but wrong for a guest on the other
+// side without adjustment: a guest who actually won would have
+// `won === false` and see a "DEFEAT" screen for winning. Every UI-facing
+// read of game outcome should go through this instead of raw `won`.
 function didIWin(){
-  return myTeam === 0 ? won : !won;
+  // Alliance-based, not "team 1 is team 0's enemy": a guest seated as
+  // team 0's ALLY (4-team save hosted mid-match) shares team 0's outcome.
+  return sameSide(myTeam, 0) ? won : !won;
 }
 let lastSelKey='';
 let gameStarted=false, gamePaused=false, aiDifficulty='standard';
@@ -442,6 +443,22 @@ let gameStarted=false, gamePaused=false, aiDifficulty='standard';
 // netRole: null (single-player) | 'host' | 'guest'. netConn/netConnected
 // track the PeerJS DataConnection itself.
 let myTeam=0, netRole=null;
+// The team of the human at THIS keyboard. Set exactly alongside myTeam
+// (js/init.js: host stays 0, guest becomes 1) and — unlike myTeam, which
+// withCommandContext temporarily swaps to the ISSUING team during command
+// execution — NEVER reassigned by replay. That makes it the one reliable
+// reference point for issuer-only feedback.
+let localHumanTeam = 0;
+// The only legal gate for issuer-side feedback (showMsg/playSound/markers/
+// updateUI pokes) from sim or command code. Correct by construction for:
+// the other peer's command replay (team !== localHumanTeam), the AI calling
+// exec* directly (ditto), rollback resim (__resim; the sinks also suppress
+// it themselves), and sim events on own units.
+function feedbackFor(team, fn){
+  if (window.__resim) return;
+  if (team !== localHumanTeam) return;
+  fn();
+}
 let netConn=null, netConnected=false;
 // Legacy snapshot-sync is gone (lockstep everywhere — js/lockstep.js), but
 // markMapDirty stays as a no-op seam: every sim-side map mutation already
@@ -482,10 +499,6 @@ let buildingFxTick = new Map();
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
 let nextProjectileId = 1;
-
-// Legacy pending-sync buffers are gone; markPendingSync stays as a no-op
-// seam at every create-once spawn site (projectiles, corpses).
-function markPendingSync(kind, item){}
 
 // ids of enemy buildings THIS client has ever seen at active vision (2) —
 // lives outside the synced entity data so it survives the wholesale
@@ -661,6 +674,22 @@ function updateTeamExploredEver(team){
 let visGen = 0;
 let visionFreshTick = -1; // which sim tick the grids were computed for
 let teamVisGrid = null, teamExploredGrid = null;
+
+// ---- SIM-CACHE GENERATION COUNTER ----
+// Rollback/resync/save-load rewinds `tick`, so a cache keyed by
+// `cacheTick === tick` alone can collide with the abandoned timeline and
+// serve stale data into the resim (a real desync source — this bit both
+// gatherClaims and unitGrid). RULE: any memo that persists across ticks
+// must ALSO key on simGen, and register a reset callback here. bumpSimGen()
+// is called from every path that replaces/rewinds sim state: lockstepRestore,
+// lockstepApplyResync, applySavedGame, restartGame.
+// simGen itself is NOT sim state (peers may roll back different numbers of
+// times) — never hash or snapshot it.
+let simGen = 0;
+const SIM_CACHES = []; // reset callbacks, one per registered cache
+function registerSimCache(fn){ SIM_CACHES.push(fn); }
+function bumpSimGen(){ simGen++; SIM_CACHES.forEach(fn => fn()); }
+registerSimCache(() => { visionFreshTick = -1; }); // force vision/fog recompute
 function resetTeamVision(){
   teamVisGrid = Array.from({length: NUM_TEAMS}, () => new Uint32Array(MAP * MAP));
   teamExploredGrid = Array.from({length: NUM_TEAMS}, () => new Uint8Array(MAP * MAP));
@@ -850,12 +879,6 @@ function spawnProjectile(attacker, target) {
     }
   };
   projectiles.push(proj);
-  // Flight is fully deterministic (fixed start/target/speed — see
-  // js/loop.js's update() and its guest-side twin advanceGuestProjectiles)
-  // — the network sync only ever needs to tell the guest about a NEW
-  // projectile once, not keep resending its position every ~65ms (see
-  // SYNC_BUFFERS above).
-  markPendingSync('projectiles', proj);
   if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
 }
 

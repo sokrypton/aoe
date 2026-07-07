@@ -95,7 +95,11 @@ function render(){
       prox.back.sortVal = en.y + en.x + 0.1;
       prox.front.x = wallLineNS ? en.x : en.x + 1;
       prox.front.y = wallLineNS ? en.y + 1 : en.y;
-      prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1);
+      // +0.3 beats a unit's +0.25 tiebreak on the SAME tile: a unit passing
+      // through the archway stands on the front tile, and the near post
+      // must draw over it (it's closer to the viewer). Units a full tile
+      // nearer still sort higher and correctly draw over the gate.
+      prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1) + 0.3;
       allDrawable.push(prox.back);
       allDrawable.push(prox.front);
     } else {

@@ -1,4 +1,4 @@
-// ---- DETERMINISTIC LOCKSTEP WITH BOUNDED ROLLBACK (opt-in via ?lockstep) ----
+// ---- DETERMINISTIC LOCKSTEP WITH BOUNDED ROLLBACK (the only MP netcode) ----
 // Both peers run the full simulation from the same seed and the same
 // tick-stamped command stream (js/commands.js). The sim RUNS FREELY — it
 // never waits for the peer. A command that arrives for a tick we already
@@ -45,15 +45,6 @@ const LOCKSTEP_CKSUM_LAG = LOCKSTEP_SNAP_EVERY * LOCKSTEP_SNAP_KEEP;
 const LOCKSTEP_SOFT_AHEAD = 45;
 const LOCKSTEP_HARD_AHEAD = 240;
 
-// Lockstep is the DEFAULT for new multiplayer matches; ?legacy-sync on the
-// host's page forces the old host-authoritative snapshot mode (escape
-// hatch for one release). The guest follows whatever the host starts.
-// Captured at load time — hosting rewrites location.search to the ?host=
-// resume link, which would otherwise drop the flag mid-session.
-const LEGACY_SYNC_URL_FLAG = typeof window !== 'undefined' && /[?&]legacy-sync\b/.test(window.location.search);
-function lockstepRequested(){
-  return !LEGACY_SYNC_URL_FLAG;
-}
 function lockstepEnabled(){
   return lockstepActive && netRole != null;
 }
@@ -119,8 +110,7 @@ onNetMessage((msg) => {
     gameStarted = true;
     gamePaused = false;
     // init() (via restartGame) centered the camera on TEAM 0's start — on
-    // this guest that's the OPPONENT's base. Recenter on our own. (The old
-    // snapshot path did this in applyNetSync, which lockstep never runs.)
+    // this guest that's the OPPONENT's base. Recenter on our own.
     let own = entities.find(e => e.team === myTeam);
     if (own) {
       let iso = toIso(own.x, own.y);
@@ -243,7 +233,6 @@ function lockstepCaptureState(){
     popUsed, popCap, tick, gameOver, won,
     nextId, nextProjectileId, simRngState,
     bellRinging: window.bellRinging,
-    stuckWatch: snapshotStuckWatch(),
     exploredSim: teamExploredGrid, // Uint8Arrays clone fine
     // Per-team controller + AI plan state: SIM state (an AI team's brain
     // must rewind with a rollback and agree across peers — plain data,
@@ -277,10 +266,9 @@ function lockstepRestore(snap){
   nextId = st.nextId; nextProjectileId = st.nextProjectileId;
   simRngState = st.simRngState;
   window.bellRinging = st.bellRinging;
-  restoreStuckWatch(st.stuckWatch);
   teamExploredGrid = st.exploredSim;
   restoreTeamState(st); // controllers/AI_STATES/lastTeamHit (js/core.js)
-  visionFreshTick = -1; // force vision/fog recompute on the next tick
+  bumpSimGen(); // tick rewound — invalidate every registered sim cache (js/core.js)
   // UI object references now point at pre-restore objects — re-resolve by id.
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
   // History beyond the restore point gets recomputed during resim.
@@ -329,10 +317,16 @@ const LOCKSTEP_MAX_RESYNCS = 5;
 function lockstepBuildResyncState(){
   let st = lockstepCaptureState();
   st.exploredSim = st.exploredSim.map(g => Array.from(g));
-  st.stuckWatch = Array.from(st.stuckWatch.entries());
-  // Same Set->null normalization the save/wire path uses (js/save.js):
-  // the sim treats a missing Set as empty and rebuilds it.
-  return JSON.parse(JSON.stringify(st, (k, v) => v instanceof Set ? null : v));
+  // Corpse deathTime is performance.now()-epoch — meaningless on the peer's
+  // clock (page-load relative). Ship ages instead, same as the save path
+  // (js/save.js), and rebase on apply. Cosmetic only, but raw timestamps
+  // rendered every corpse instantly skeletal after a resync/rejoin.
+  st.corpses = st.corpses.map(c => ({...c, deathTime: undefined, ageAtSaveMs: performance.now() - c.deathTime}));
+  // Plain JSON round-trip = exactly what the wire does, so the host applies
+  // bit-identical state to what the guest receives. (No Set normalization
+  // needed anymore: entity retry/avoid state is plain arrays/objects —
+  // see the retry/avoid primitives in js/logic.js.)
+  return JSON.parse(JSON.stringify(st));
 }
 
 function lockstepApplyResync(state){
@@ -349,7 +343,14 @@ function lockstepApplyResync(state){
   entitiesById.clear();
   entities.forEach(e => entitiesById.set(e.id, e));
   projectiles = state.projectiles;
-  corpses = state.corpses || [];
+  // Rebase shipped corpse ages onto THIS page's performance.now() epoch
+  // (see lockstepBuildResyncState). Older peers/states without ageAtSaveMs
+  // fall back to "just died".
+  {
+    let nowMs = performance.now();
+    corpses = (state.corpses || []).map(c =>
+      c.ageAtSaveMs !== undefined ? {...c, ageAtSaveMs: undefined, deathTime: nowMs - c.ageAtSaveMs} : c);
+  }
   resources = state.resources;
   map = state.map;
   popUsed = state.popUsed; popCap = state.popCap;
@@ -358,7 +359,6 @@ function lockstepApplyResync(state){
   nextId = state.nextId; nextProjectileId = state.nextProjectileId;
   simRngState = state.simRngState;
   window.bellRinging = state.bellRinging;
-  restoreStuckWatch(new Map(state.stuckWatch || []));
   teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
   restoreTeamState(state); // controllers/AI_STATES/lastTeamHit (js/core.js)
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
@@ -371,9 +371,14 @@ function lockstepApplyResync(state){
       if (fog[y][x] === 0 && myEg[y * MAP + x] === 1) fog[y][x] = 1;
     }
   }
-  visionFreshTick = -1;
+  bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
-  clearCommandQueue();
+  // Prune only commands at/before the resync point — NOT the whole queue.
+  // Commands scheduled past it (our own just-submitted ones included) were
+  // already sent on the wire, and the peer's stale-guard keeps anything
+  // with execTick > barrier: it WILL execute them. Wiping them here made
+  // the issuer skip commands the peer runs — an instant re-desync loop.
+  commandQueue.forEach((v, t) => { if (t <= tick) commandQueue.delete(t); });
   lockstepSnapshots.length = 0;
   DET.history.length = 0;
   lockstepResyncBarrier = tick;
