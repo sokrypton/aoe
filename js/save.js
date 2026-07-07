@@ -296,7 +296,12 @@ function applySavedGame(data, opts){
 
     entities = data.entities;
     entitiesById.clear();
-    entities.forEach(e => entitiesById.set(e.id, e));
+    entities.forEach(e => {
+      // Buildings saved before atk was stamped at creation (createBuilding)
+      // deal 0 damage on arrow impact (js/loop.js prefers the live shooter).
+      if (e.type === 'building' && e.atk === undefined) e.atk = BLDGS[e.btype].atk || 0;
+      entitiesById.set(e.id, e);
+    });
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
     // Re-resolve the saved selection/camera-lock against the just-rebuilt
     // entitiesById (by id, not by trusting any stale object reference) —

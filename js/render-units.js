@@ -12,22 +12,44 @@ function ageMetal(team){
 // Big readable broadsword, drawn with the context translated to the grip.
 // Combat swing is shaped: slow overhead wind-up, fast slash (like the
 // villagers' work swing) instead of a symmetric sine wobble.
+// Shaped slash cycle shared by the sword and the arm that swings it:
+// slow windup over the shoulder → whip-fast strike (ease-out cubic) with
+// a small overshoot settle → smooth recovery back to guard.
+function swordSwingAngle(id){
+  let ph=((tick*0.05+id*0.4)%1+1)%1;
+  if(ph<0.35){let t=ph/0.35;return 0.5+0.65*t*t;}                        // windup -> 1.15
+  if(ph<0.52){let t=(ph-0.35)/0.17;return 1.15-2.5*(1-Math.pow(1-t,3));} // strike -> -1.35
+  if(ph<0.68){let t=(ph-0.52)/0.16;return -1.35+0.25*t;}                 // settle -> -1.1
+  let t=(ph-0.68)/0.32;return -1.1+1.6*(t*t*(3-2*t));                    // recover -> 0.5
+}
+
 function drawBigSword(swinging, id){
   if(swinging){
-    let ph=((tick*0.07+id*0.4)%1+1)%1;
-    let u=ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
-    X.rotate(0.9-2.1*u);
+    X.rotate(swordSwingAngle(id));
   } else X.rotate(0.5); // rest: blade leans outward, away from the head
   X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-  // Grip and pommel
-  X.fillStyle='#6a4a20';X.beginPath();X.rect(-1.5,0,4,6);X.fill();X.stroke();
-  X.fillStyle='#e8c84a';X.beginPath();X.arc(0.5,6.8,1.6,0,Math.PI*2);X.fill();X.stroke();
-  // Wide crossguard
-  X.fillStyle='#e8c84a';X.beginPath();X.rect(-4.5,-2,10,2.6);X.fill();X.stroke();
-  // Broad blade with a bright fuller
-  X.fillStyle='#dde3ea';
-  X.beginPath();X.moveTo(-2.4,-2);X.lineTo(0.5,-22);X.lineTo(3.4,-2);X.closePath();X.fill();X.stroke();
-  X.fillStyle='#fff';X.beginPath();X.rect(0,-18.5,1.3,13);X.fill();
+  // Same design as the barracks' crossed-swords emblem: parallel-edged
+  // blade tapering to a point, rounded gold crossguard, leather grip,
+  // gold pommel.
+  // Blade with point — single flat white, no fuller
+  X.fillStyle='#f5f2e9';
+  X.beginPath();
+  X.moveTo(-1.7,-2);X.lineTo(-1.4,-17);X.lineTo(0.5,-22);
+  X.lineTo(2.4,-17);X.lineTo(2.7,-2);X.closePath();X.fill();X.stroke();
+  // Rounded gold crossguard
+  X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
+  X.beginPath();X.moveTo(-4.2,-0.7);X.lineTo(5.2,-0.7);X.stroke();
+  X.strokeStyle='#daa520';X.lineWidth=1.8/UNIT_SCALE;
+  X.beginPath();X.moveTo(-3.9,-0.7);X.lineTo(4.9,-0.7);X.stroke();
+  // Grip
+  X.strokeStyle='#000';X.lineWidth=3/UNIT_SCALE;
+  X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.6);X.stroke();
+  X.strokeStyle='#5c3d24';X.lineWidth=1.6/UNIT_SCALE;
+  X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.4);X.stroke();
+  X.lineCap='butt';
+  // Pommel
+  X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+  X.beginPath();X.arc(0.5,6.6,1.5,0,Math.PI*2);X.fill();X.stroke();
 }
 
 // Uniform size multiplier for every drawn character (units and corpses).
@@ -613,6 +635,32 @@ function drawUnit(e){
     let humanXOffset = isMountedUnit(e.utype) ? -3 : 0;
     let humanYOffset = isMountedUnit(e.utype) ? -11 : 0;
 
+    // When the horse faces the camera its head hangs in front of the
+    // rider, so that part is deferred and drawn after the rider.
+    let horseHeadFront = null;
+
+    // The whole mount (legs + horse body) is a layer of its own: facing
+    // away, the rider's forward-held sword is on the FAR side of the
+    // horse too, so the mount must paint over it.
+    const drawMountLayer = () => {
+    if(!isMountedUnit(e.utype)) return;
+    {
+      // Profile / front-diagonal tail is the FARTHEST part of the horse —
+      // drawn before everything (legs included) so it sits behind them.
+      let useDirM = mirroredDir(e);
+      if (useDirM === 7 || useDirM === 0) {
+        const coatM = e.utype==='knight'?'#9a948a':'#3f2810';
+        let idleM = e.path.length===0 && !e.corpseRot;
+        let swishM = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idleM?0.2:0.08);
+        let kM = useDirM === 7 ? 1 : 0.72;
+        X.save(); X.translate(0,-1); X.scale(1.35,1.35);
+        X.translate(-6.6*kM,-7); X.rotate(swishM);
+        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7*kM,3,-2.2*kM,9);
+        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
+        X.strokeStyle=coatM; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
+        X.restore();
+      }
+    }
     // Walking leg cycle (swinging legs with constant leg length)
     if(isMountedUnit(e.utype)){
       let walk = e.path.length>0 ? Math.sin(tick*0.45+e.id)*4.5 : 0;
@@ -636,40 +684,37 @@ function drawUnit(e){
         X.moveTo(-4.5, -4); X.lineTo(-4.5 + walk, 4.4);
         X.moveTo(-6.5, -4); X.lineTo(-6.5 - walk, 4.4);
       } else {
-        // Southeast / Northeast (Diagonal)
-        X.moveTo(2.8, -4); X.lineTo(2.8 + walk, 4.4);
-        X.moveTo(4.6, -4); X.lineTo(4.6 - walk, 4.4);
-        X.moveTo(-3.8, -4); X.lineTo(-3.8 + walk, 4.4);
-        X.moveTo(-5.6, -4); X.lineTo(-5.6 - walk, 4.4);
+        // Diagonal 3/4 views: the +x pair is the horse's FRONT. Facing
+        // the camera (SE/SW) the front is the NEAR end — it plants lower
+        // and wider while the hind pair recedes (ends higher). Facing
+        // away (NE/NW) the horse's front is the FAR end, so the depths
+        // swap: hind pair near/low, front pair receding/high.
+        let fy = useDir === 6 ? 3.4 : 4.8; // front pair endpoint
+        let ry = useDir === 6 ? 4.8 : 3.4; // rear pair endpoint
+        X.moveTo(3.4, -4); X.lineTo(3.4 + walk, fy);
+        X.moveTo(5.2, -4); X.lineTo(5.2 - walk, fy);
+        X.moveTo(-3.2, -4); X.lineTo(-3.2 + walk, ry);
+        X.moveTo(-4.8, -4); X.lineTo(-4.8 - walk, ry);
       }
       X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-      X.strokeStyle = '#6e4520'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
+      // Leg color follows the coat: grey legs on the knight's white
+      // charger, brown on the scout's bay
+      X.strokeStyle = e.utype==='knight' ? '#b3ada1' : '#6e4520'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
       X.lineCap='butt';
       // Hooves: dark caps at each leg endpoint
       let hoofPts;
       if (useDir === 1 || useDir === 5) hoofPts=[[-3,4.4+walk],[3,4.4-walk],[-4.5,3.4-walk],[4.5,3.4+walk]];
       else if (useDir === 7) hoofPts=[[3.5+walk,4.4],[5.5-walk,4.4],[-4.5+walk,4.4],[-6.5-walk,4.4]];
-      else hoofPts=[[2.8+walk,4.4],[4.6-walk,4.4],[-3.8+walk,4.4],[-5.6-walk,4.4]];
+      else {
+        let fy = useDir === 6 ? 3.4 : 4.8, ry = useDir === 6 ? 4.8 : 3.4;
+        hoofPts=[[3.4+walk,fy],[5.2-walk,fy],[-3.2+walk,ry],[-4.8-walk,ry]];
+      }
       X.fillStyle='#241408';
       hoofPts.forEach(p=>{X.beginPath();X.ellipse(p[0],p[1]+0.5,1.5,1.1,0,0,Math.PI*2);X.fill();});
       X.restore();
-    } else {
-      // Human legs (visible both when standing and walking)
-        let walk = e.path.length>0 ? Math.sin(tick*0.4+e.id)*2.5 : 0;
-      X.beginPath();
-      X.moveTo(-2+humanXOffset, -bob); X.lineTo(-2-walk+humanXOffset, 3-bob);
-      X.moveTo(2+humanXOffset, -bob); X.lineTo(2+walk+humanXOffset, 3-bob);
-      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-      X.strokeStyle = '#5b3a1e'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
-      // Boots
-      X.fillStyle='#3a2412';
-      X.beginPath();X.arc(-2-walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(2+walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
-      X.lineCap='butt';
     }
-    // When the horse faces the camera its head hangs in front of the
-    // rider, so that part is deferred and drawn after the rider.
-    let horseHeadFront = null;
+    // (human legs are drawn inside drawBodyLayer below, so a weapon held
+    // behind the body when facing away is occluded by the legs too)
 
     // Horse drawn under the rider. The neck+head are one arched silhouette
     // (curved crest, jaw, squared muzzle) — the key to reading "horse" at
@@ -693,13 +738,11 @@ function drawUnit(e){
 
       if (useDir === 7 || useDir === 0) {
         // East profile / Southeast diagonal (same construction, SE compressed)
-        let k = useDir === 7 ? 1 : 0.85;
-        // Swishing tail
-        X.save(); X.translate(-6.6*k,-7); X.rotate(swish);
-        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7*k,3,-2.2*k,9);
-        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-        X.restore();
+        // Profile k=1; diagonal k=0.72 — the old 0.85 was so close to the
+        // profile that SW/W read as the same sprite. The 3/4 view is sold
+        // by real foreshortening plus receding hindquarters (legs below).
+        let k = useDir === 7 ? 1 : 0.72;
+        // (tail drawn earlier in drawMountLayer, behind the legs)
         // Body capsule
         X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
         X.beginPath(); X.ellipse(0,-6,7.4*k,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
@@ -733,13 +776,17 @@ function drawUnit(e){
         X.restore();
       } else if (useDir === 6) {
         // Northeast diagonal (back view): arched neck seen from behind
+        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
+        X.beginPath(); X.ellipse(0,-6,6.6,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
+        // Tail AFTER the body: facing away, the rump is the NEAR end, so
+        // the tail hangs in front of it (SE/SW draw the tail behind,
+        // since there the rump is the far end).
         X.save(); X.translate(-5.8,-6.5); X.rotate(swish);
         X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7,3,-2.2,9);
         X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
         X.strokeStyle=maneC; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
         X.restore();
         X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
-        X.beginPath(); X.ellipse(0,-6,6.6,4.9,0,0,Math.PI*2); X.fill(); X.stroke();
         X.save(); X.translate(1.6,nod);
         ear(3.9,-16.4,-0.25); ear(6.1,-16,0.25);
         X.fillStyle=coat;
@@ -783,7 +830,7 @@ function drawUnit(e){
           X.beginPath(); X.arc(2.7,-9.2,0.7,0,Math.PI*2); X.fill();
           X.beginPath(); X.arc(5.5,-9.2,0.7,0,Math.PI*2); X.fill();
           // Lighter rounded muzzle with nostril dots
-          X.fillStyle='#6e4520';
+          X.fillStyle = e.utype==='knight' ? '#b8b2a6' : '#6e4520';
           X.beginPath(); X.ellipse(4.1,-5.4,1.8,1.4,0,0,Math.PI*2); X.fill(); X.stroke();
           X.fillStyle='rgba(0,0,0,0.55)';
           X.beginPath(); X.arc(3.4,-5.4,0.35,0,Math.PI*2); X.fill();
@@ -812,17 +859,52 @@ function drawUnit(e){
       }
       X.restore();
     }
+    }; // end drawMountLayer
+
+    // Layering: hand-held weapons/tools draw BEHIND the body when the
+    // unit faces away from the camera (they're on the far side of the
+    // torso); shields stay on top in every facing (front arm toward the
+    // camera, or slung across the back). Body and held-item drawing are
+    // wrapped in closures so the invocation order can flip per facing.
+    const drawBodyLayer = () => {
+    if(!isMountedUnit(e.utype)){
+      // Human legs (visible both when standing and walking)
+      let walk = e.path.length>0 ? Math.sin(tick*0.4+e.id)*2.5 : 0;
+      X.beginPath();
+      X.moveTo(-2+humanXOffset, -bob); X.lineTo(-2-walk+humanXOffset, 3-bob);
+      X.moveTo(2+humanXOffset, -bob); X.lineTo(2+walk+humanXOffset, 3-bob);
+      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+      X.strokeStyle = '#5b3a1e'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
+      // Boots
+      X.fillStyle='#3a2412';
+      X.beginPath();X.arc(-2-walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(2+walk+humanXOffset,3.4-bob,1.4,0,Math.PI*2);X.fill();
+      X.lineCap='butt';
+    }
+    // CASTLE-age archer wears a quiver on the back: facing the camera it
+    // peeks BEHIND the shoulder (drawn before the torso); facing away
+    // it's strapped across the near side (drawn after, see below).
+    const drawQuiver = () => {
+      X.save(); X.translate(-4.2+humanXOffset,-9+humanYOffset); X.rotate(-0.3);
+      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
+      // arrows peeking out: shafts + red fletchings
+      X.strokeStyle='#000';X.lineWidth=1.6/UNIT_SCALE;X.lineCap='round';
+      X.beginPath();X.moveTo(-0.8,-3.2);X.lineTo(-0.8,-5.4);X.moveTo(0.8,-3.2);X.lineTo(0.8,-5.6);X.stroke();
+      X.lineCap='butt';
+      X.fillStyle='#cc4444';
+      X.beginPath();X.arc(-0.8,-5.4,0.9,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(0.8,-5.6,0.9,0,Math.PI*2);X.fill();
+      // leather tube
+      X.fillStyle='#7a5230';X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
+      X.beginPath();X.rect(-1.8,-3.6,3.6,7.2);X.fill();X.stroke();
+      X.restore();
+    };
+    let hasQuiver = e.utype==='archer' && ageBonus(e.team) >= 2;
+    if (hasQuiver && !e.facingNorth) drawQuiver();
 
     // Torso
     X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    if(e.utype==='militia'){
-      // Iron chainmail torso
-      X.fillStyle='#6b6b6b';
-      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
-      // Team-colored surcoat tunic
-      X.fillStyle=tc;
-      X.beginPath();X.rect(-2.5+humanXOffset,-10+humanYOffset,5,8);X.fill();X.stroke();
-    } else if(e.utype==='villager'&&e.female){
+    if(e.utype==='villager'&&e.female){
       // Female villagers wear a dress drawn as ONE continuous path — a
       // rounded bodice (smaller than the male torso) flowing into a
       // bell-shaped skirt wider than the shoulders, with a single outline
@@ -881,8 +963,13 @@ function drawUnit(e){
       let jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
       X.beginPath();
       X.moveTo(-3.5+humanXOffset,-8+humanYOffset); X.lineTo(-5+humanXOffset-armSwing,-3.5+humanYOffset);
+      // Militia mid-slash: the sword arm follows the pumping sword hand
+      // (same swing phase as drawBigSword) instead of hanging loose.
+      let slashing = e.utype==='militia' && e.path.length===0 && e.target && !e.corpseRot;
+      let sA = slashing ? Math.sin(swordSwingAngle(e.id)) : 0;
       X.moveTo(3.5+humanXOffset,-8+humanYOffset);
       if(gripping) X.lineTo(3,-8.8);
+      else if(slashing) X.lineTo(5.8+humanXOffset-1.4*sA, -5.8+humanYOffset-1.4*sA);
       else if(picking) X.lineTo(5.6+humanXOffset+pick*0.8, -5.5+humanYOffset-pick*3.5);
       else if(fighting) X.lineTo(4.5+humanXOffset+jab*4.5, -6.5+humanYOffset-jab*1.5);
       else X.lineTo(4.5+humanXOffset+armSwing,-4.5+humanYOffset);
@@ -895,18 +982,52 @@ function drawUnit(e){
     }
     if (e.facingNorth) {
       // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
-      if(e.utype==='militia' && ageBonus(e.team) >= 1){
-        // Back of Norman iron helm — FEUDAL+ only, same age gating (and the
-        // same ageMetal polish) as the front view; the Dark-age militia
-        // falls through to the leather-hood back below.
+      if(e.utype==='militia' && ageBonus(e.team) === 1){
+        // Back of the FEUDAL militia kettle hat (same as the spearman's):
+        // dome first, brim on top — the near side of the brim crosses
+        // the head when seen from behind.
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();X.arc(humanXOffset,-14.5+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.ellipse(humanXOffset,-13.2+humanYOffset,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+      } else if(e.utype==='militia' && ageBonus(e.team) >= 2){
+        // Back of the CASTLE Norman helm.
         X.fillStyle=ageMetal(e.team);
         X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+        X.save();
+        X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
+        X.beginPath();X.moveTo(humanXOffset,-18.4+humanYOffset);X.lineTo(humanXOffset,-14.6+humanYOffset);X.stroke();
+        X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+        X.lineCap='butt';X.restore();
         X.fillStyle='#daa520';
         X.beginPath();X.rect(-4.5+humanXOffset,-14.5+humanYOffset,9,1.5);X.fill();X.stroke();
+        X.fillStyle='rgba(0,0,0,0.45)';
+        [-3,0,3].forEach(rx=>{X.beginPath();X.arc(humanXOffset+rx,-13.75+humanYOffset,0.4,0,Math.PI*2);X.fill();});
       } else if(e.utype==='archer') {
-        // Back of archer hood
+        // Back of archer hood — same at every age (quiver is the tell)
         X.fillStyle='#2e8b57';
         X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+      } else if(e.utype==='spearman') {
+        X.fillStyle=ageMetal(e.team);
+        if (ageBonus(e.team) >= 2) {
+          // Back of the Castle Norman helm — same as the militia's
+          X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.5,0,Math.PI*2);X.fill();X.stroke();
+          X.save();
+          X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
+          X.beginPath();X.moveTo(humanXOffset,-18.4+humanYOffset);X.lineTo(humanXOffset,-14.6+humanYOffset);X.stroke();
+          X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
+          X.beginPath();X.arc(humanXOffset,-14+humanYOffset,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+          X.lineCap='butt';X.restore();
+          X.fillStyle='#daa520';
+          X.beginPath();X.rect(-4.5+humanXOffset,-14.5+humanYOffset,9,1.5);X.fill();X.stroke();
+          X.fillStyle='rgba(0,0,0,0.45)';
+          [-3,0,3].forEach(rx=>{X.beginPath();X.arc(humanXOffset+rx,-13.75+humanYOffset,0.4,0,Math.PI*2);X.fill();});
+        } else {
+          // Back of the Feudal kettle hat: dome first, brim ON TOP — seen
+          // from behind, the near side of the brim crosses the head.
+          X.beginPath();X.arc(humanXOffset,-14.5+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
+          X.beginPath();X.ellipse(humanXOffset,-13.2+humanYOffset,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+        }
       } else if(e.utype==='villager') {
         // Back of blonde hair
         X.fillStyle = '#b58e3d';
@@ -923,6 +1044,35 @@ function drawUnit(e){
         } else {
           X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
         }
+      } else if(e.utype==='knight') {
+        // Back of the blocky great helm: plume + crown band, no slit
+        let hx = humanXOffset, hy = humanYOffset;
+        X.fillStyle=tc;
+        X.beginPath();
+        X.moveTo(hx-1.2,-18.5+hy);
+        X.quadraticCurveTo(hx-2.2,-21.5+hy,hx,-22.3+hy);
+        X.quadraticCurveTo(hx+2.2,-21.5+hy,hx+1.2,-18.5+hy);
+        X.closePath();X.fill();X.stroke();
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();X.rect(hx-4,-18.5+hy,8,7.5);X.fill();X.stroke();
+        X.fillStyle='rgba(255,255,255,0.28)';
+        X.fillRect(hx-4,-18.5+hy,8,1.6);
+      } else if (e.utype==='scout' && ageBonus(e.team) >= 2) {
+        // Back of the Castle spiked cavalry helm
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();
+        X.moveTo(humanXOffset-0.8,-17.6+humanYOffset);
+        X.lineTo(humanXOffset,-20.4+humanYOffset);
+        X.lineTo(humanXOffset+0.8,-17.6+humanYOffset);
+        X.closePath();X.fill();X.stroke();
+        X.beginPath();X.arc(humanXOffset,-17.7+humanYOffset,0.9,0,Math.PI*2);X.fill();X.stroke(); // spike ball base
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
+        // hard BLACK rim line at the helm's lower edge
+        X.beginPath();X.moveTo(humanXOffset-3.7,-12+humanYOffset);X.lineTo(humanXOffset+3.7,-12+humanYOffset);X.stroke();
+        X.save();
+        X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.1/UNIT_SCALE;X.lineCap='round';
+        X.beginPath();X.arc(humanXOffset,-14+humanYOffset,3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+        X.lineCap='butt';X.restore();
       } else {
         // Back of leather hood cap
         X.fillStyle='#4a2e1b';
@@ -952,19 +1102,35 @@ function drawUnit(e){
       }
       
       // Headwear Cap
-      if(e.utype==='militia' && ageBonus(e.team) >= 1){
-        // Norman iron helm — FEUDAL+. The Dark-age militia falls through to
-        // the peasant hood below (a levied farmer with a sword); the helm +
-        // kite shield ARE the upgrade look, and at Castle the ageMetal tint
-        // polishes the same drawing — maximal art reuse, zero new shapes.
+      if(e.utype==='militia' && ageBonus(e.team) === 1){
+        // FEUDAL militia: same tilted iron kettle hat as the spearman —
+        // the levy gets standard-issue gear; the Norman helm below is the
+        // Castle upgrade. (Dark age falls through to the peasant hood.)
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();X.ellipse(humanXOffset,-16.2+humanYOffset,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.arc(humanXOffset,-15.4+humanYOffset,3.8,Math.PI,0);X.fill();X.stroke();
+      } else if(e.utype==='militia' && ageBonus(e.team) >= 2){
+        // CASTLE militia: Norman iron helm with gold band + nose bar.
         X.fillStyle=ageMetal(e.team);
         X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+        // dome ridge + upper-left highlight for volume
+        X.save();
+        X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
+        X.beginPath();X.moveTo(humanXOffset,-19.4+humanYOffset);X.lineTo(humanXOffset,-15.2+humanYOffset);X.stroke();
+        X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+        X.lineCap='butt';X.restore();
         X.fillStyle='#daa520';
         X.beginPath();X.rect(-4.5+humanXOffset,-15+humanYOffset,9,1.5);X.fill();X.stroke();
+        // rivets along the band
+        X.fillStyle='rgba(0,0,0,0.45)';
+        [-3,0,3].forEach(rx=>{X.beginPath();X.arc(humanXOffset+rx,-14.25+humanYOffset,0.4,0,Math.PI*2);X.fill();});
         X.fillStyle=ageMetal(e.team);
         X.beginPath();X.rect(-0.75+humanXOffset,-15+humanYOffset,1.5,4);X.fill();X.stroke();
       } else if(e.utype==='archer') {
-        X.fillStyle='#2e8b57'; // green archer hood
+        // Green hood at every age — the archer stays simple; the Castle
+        // tell is the quiver on the back.
+        X.fillStyle='#2e8b57';
         X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
       } else if(e.utype==='villager') {
         // No helmet/hood: just natural blonde hair!
@@ -1012,12 +1178,78 @@ function drawUnit(e){
           X.fill(); X.stroke();
         }
       } else if (e.utype==='knight') {
-        // Steel helm — the one-glance tell that this rider is the knight.
+        // Blocky GREAT HELM — flat-topped box covering the whole face.
+        // Detail pass: team-color plume on top, riveted crown band,
+        // vertical face ridge crossing the dark eye slit, breath holes.
+        let hx = humanXOffset, hy = humanYOffset;
+        // plume tuft first, so the helm's outline overlaps its base
+        X.fillStyle=tc;
+        X.beginPath();
+        X.moveTo(hx-1.2,-18.5+hy);
+        X.quadraticCurveTo(hx-2.2,-21.5+hy,hx,-22.3+hy);
+        X.quadraticCurveTo(hx+2.2,-21.5+hy,hx+1.2,-18.5+hy);
+        X.closePath();X.fill();X.stroke();
         X.fillStyle=ageMetal(e.team);
-        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
-        X.beginPath();X.moveTo(humanXOffset-4.5,-15+humanYOffset);X.lineTo(humanXOffset+4.5,-15+humanYOffset);X.stroke();
+        X.beginPath();X.rect(hx-4,-18.5+hy,8,7.5);X.fill();X.stroke();
+        // crown band across the top (slightly brighter strip)
+        X.fillStyle='rgba(255,255,255,0.28)';
+        X.fillRect(hx-4,-18.5+hy,8,1.6);
+        // vertical face ridge (the cross's upright)
+        X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=1.1/UNIT_SCALE;
+        X.beginPath();X.moveTo(hx,-16.9+hy);X.lineTo(hx,-11+hy);X.stroke();
+        X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
+        // dark eye slit (the cross's arms)
+        X.fillStyle='#1c1c1c';
+        X.fillRect(hx-2.6,-15.4+hy,5.2,1.2);
+        // breathing holes low on the face
+        X.fillStyle='rgba(0,0,0,0.45)';
+        X.beginPath();X.arc(hx-1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+        X.beginPath();X.arc(hx,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+        X.beginPath();X.arc(hx+1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+      } else if (e.utype==='spearman') {
+        X.fillStyle=ageMetal(e.team);
+        if (ageBonus(e.team) >= 2) {
+          // CASTLE: same Norman helm as the militia — dome with ridge and
+          // highlight, riveted gold band, nose bar.
+          X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
+          X.save();
+          X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
+          X.beginPath();X.moveTo(humanXOffset,-19.4+humanYOffset);X.lineTo(humanXOffset,-15.2+humanYOffset);X.stroke();
+          X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
+          X.beginPath();X.arc(humanXOffset,-15+humanYOffset,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+          X.lineCap='butt';X.restore();
+          X.fillStyle='#daa520';
+          X.beginPath();X.rect(-4.5+humanXOffset,-15+humanYOffset,9,1.5);X.fill();X.stroke();
+          X.fillStyle='rgba(0,0,0,0.45)';
+          [-3,0,3].forEach(rx=>{X.beginPath();X.arc(humanXOffset+rx,-14.25+humanYOffset,0.4,0,Math.PI*2);X.fill();});
+          X.fillStyle=ageMetal(e.team);
+          X.beginPath();X.rect(-0.75+humanXOffset,-15+humanYOffset,1.5,4);X.fill();X.stroke();
+        } else {
+          // FEUDAL: iron kettle hat TILTED BACK on the head — the raised
+          // brim sits above the brow (drawn behind the crown), leaving
+          // the face and eyes fully visible.
+          X.beginPath();X.ellipse(humanXOffset,-16.2+humanYOffset,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+          X.beginPath();X.arc(humanXOffset,-15.4+humanYOffset,3.8,Math.PI,0);X.fill();X.stroke();
+        }
+      } else if (e.utype==='scout' && ageBonus(e.team) >= 2) {
+        // CASTLE scout: spiked cavalry helm — open face, small spike on
+        // top; distinct from the knight's flat-topped great helm.
+        X.fillStyle=ageMetal(e.team);
+        X.beginPath();
+        X.moveTo(humanXOffset-0.8,-18.6+humanYOffset);
+        X.lineTo(humanXOffset,-21.4+humanYOffset);
+        X.lineTo(humanXOffset+0.8,-18.6+humanYOffset);
+        X.closePath();X.fill();X.stroke();
+        X.beginPath();X.arc(humanXOffset,-18.7+humanYOffset,0.9,0,Math.PI*2);X.fill();X.stroke(); // spike ball base
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.2,Math.PI,0);X.fill();X.stroke();
+        // hard BLACK lower edge so the helm/face boundary reads clearly
+        X.beginPath();X.moveTo(humanXOffset-4.2,-15+humanYOffset);X.lineTo(humanXOffset+4.2,-15+humanYOffset);X.stroke();
+        X.save();
+        X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.1/UNIT_SCALE;X.lineCap='round';
+        X.beginPath();X.arc(humanXOffset,-15+humanYOffset,3,Math.PI*1.15,Math.PI*1.55);X.stroke();
+        X.lineCap='butt';X.restore();
       } else {
-        // Peasant leather hood cap for spearman/scout
+        // Peasant leather hood cap for the scout (light cavalry)
         X.fillStyle='#4a2e1b';
         X.beginPath();X.arc(humanXOffset,-15+humanYOffset,4.5,Math.PI,0);X.fill();X.stroke();
       }
@@ -1030,8 +1262,10 @@ function drawUnit(e){
     X.beginPath();X.arc(humanXOffset-1.8,-16.5+humanYOffset,2.6,0,Math.PI*2);X.fill();
     X.restore();
 
-    // Horse head in front of the rider (front-facing scout)
-    if(horseHeadFront) horseHeadFront();
+    if (hasQuiver && e.facingNorth) drawQuiver();
+    }; // end drawBodyLayer (the front-facing horse head is deferred
+    // further: it draws after the held-items layer, so the horse's head
+    // is in front of the rider AND the resting sword)
 
     // TRUE screen-space angle from this unit to its combat target. Used to
     // point aimed weapons (bow, spear) along the real attack line. Callers
@@ -1079,6 +1313,7 @@ function drawUnit(e){
     };
 
     // Tools & weapons (animated swinging swings during active tasks)
+    const drawHeldLayer = () => {
     if(e.utype==='villager'){
       // Shaped work swing: slow wind-up (70% of the cycle), fast strike
       // (30%), instead of a symmetric sine wobble. swing is the tool's
@@ -1290,30 +1525,17 @@ function drawUnit(e){
       // strapped to the arm.
       if(!e.corpseRot){
         let swinging=e.target&&e.path.length===0;
-        X.save();X.translate(6.5,-6);
+        // Sword hand is fixed to the body — mirrored to the other screen
+        // side when the militia faces away from the camera. While
+        // swinging, the hand itself pumps with the slash (back and up on
+        // the windup, forward and down on the strike).
+        let fb = (!swinging && e.facingNorth) ? -1 : 1;
+        let s = swinging ? Math.sin(swordSwingAngle(e.id)) : 0;
+        X.save();X.translate((6.5-1.5*s)*fb,-6-1.5*s);X.scale(fb,1);
         drawBigSword(swinging, e.id);
         X.restore();
       }
-
-      // Big steel kite shield with a team-colored cross — FEUDAL+ only.
-      // The Dark-age militia is a levied peasant with a sword; the shield
-      // (and at Castle, the steel helm below) turn the same drawing into
-      // the upgraded soldier, so age progression reuses this art.
-      if (ageBonus(e.team) >= 1) {
-      let shx = -6, shy = -6;
-      if (e.dir === 4 || e.dir === 5 || e.dir === 6) {
-        shx = -2.5; // Shift to the back center when facing North directions
-        shy = -7;
-      }
-      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle=ageMetal(e.team);X.beginPath();
-      X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
-      X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
-      X.fillStyle=tc;X.beginPath();
-      X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
-      X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
-      X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
-      }
+      // (kite shield drawn in drawShieldLayer — always on top)
     } else if(e.utype==='spearman'&&!e.corpseRot){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
       // slow pull-back, fast jab along the shaft. (Corpses drop it —
@@ -1366,33 +1588,35 @@ function drawUnit(e){
       // LAUNCH tangent so the nocked arrow points exactly along the real
       // arrow's initial flight line (see aimAngleBallistic above).
       if(swinging){ X.scale(e.facing,1); X.rotate(aimAngleBallistic()); }
-      // Thick recurve limbs
-      X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round';
-      X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
-      X.strokeStyle='#8B4513'; X.lineWidth=2.3/UNIT_SCALE;
-      X.beginPath(); X.arc(0, 0, 10, -Math.PI/2.15, Math.PI/2.15); X.stroke();
+      // Thick recurve limbs — radius 8 (was 10): the bow should read as
+      // carried BY the archer, not dominate the whole silhouette
+      const BOW_R = 8;
+      X.strokeStyle='#000'; X.lineWidth=3.6/UNIT_SCALE; X.lineCap='round';
+      X.beginPath(); X.arc(0, 0, BOW_R, -Math.PI/2.15, Math.PI/2.15); X.stroke();
+      X.strokeStyle='#8B4513'; X.lineWidth=2/UNIT_SCALE;
+      X.beginPath(); X.arc(0, 0, BOW_R, -Math.PI/2.15, Math.PI/2.15); X.stroke();
       X.lineCap='butt';
-      let tipX = 10*Math.cos(Math.PI/2.15), tipY = 10*Math.sin(Math.PI/2.15);
+      let tipX = BOW_R*Math.cos(Math.PI/2.15), tipY = BOW_R*Math.sin(Math.PI/2.15);
       if(swinging && !justFired){
-        let pull = -2 - 5.5*drawT;
+        let pull = -1.6 - 4.4*drawT;
         // Drawn string
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(pull, 0); X.lineTo(tipX, tipY); X.stroke();
         // Nocked arrow: thick shaft, steel head, red fletching
-        X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round';
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
-        X.strokeStyle='#f5f2e9'; X.lineWidth=1.3/UNIT_SCALE;
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+16, 0); X.stroke();
+        X.strokeStyle='#000'; X.lineWidth=2.4/UNIT_SCALE; X.lineCap='round';
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+13, 0); X.stroke();
+        X.strokeStyle='#f5f2e9'; X.lineWidth=1.2/UNIT_SCALE;
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+13, 0); X.stroke();
         X.lineCap='butt';
         X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(pull+18.5, 0); X.lineTo(pull+13.6, -2.5); X.lineTo(pull+13.6, 2.5); X.closePath(); X.fill(); X.stroke();
+        X.beginPath(); X.moveTo(pull+15, 0); X.lineTo(pull+11, -2.1); X.lineTo(pull+11, 2.1); X.closePath(); X.fill(); X.stroke();
         X.fillStyle='#cc4444';
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, -2.8); X.lineTo(pull+1.4, -0.5); X.closePath(); X.fill();
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-3.2, 2.8); X.lineTo(pull+1.4, 0.5); X.closePath(); X.fill();
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-2.6, -2.3); X.lineTo(pull+1.1, -0.4); X.closePath(); X.fill();
+        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull-2.6, 2.3); X.lineTo(pull+1.1, 0.4); X.closePath(); X.fill();
       } else {
         // String at rest — vibrates briefly right after the release, decaying
         // over the first 15% of the reload window
-        let vib = swinging ? Math.sin(tick*1.2)*2.2*Math.max(0,(bowCd-bowRof*0.85)/(bowRof*0.15)) : 0;
+        let vib = swinging ? Math.sin(tick*1.2)*1.8*Math.max(0,(bowCd-bowRof*0.85)/(bowRof*0.15)) : 0;
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
       }
@@ -1408,26 +1632,70 @@ function drawUnit(e){
         X.translate(6+humanXOffset, -6+humanYOffset);
         drawBigSword(true, e.id);
       } else {
-        X.translate(-4.5+humanXOffset, -6+humanYOffset);
-        X.scale(-1,1);
+        // Both riders rest the sword on the RIGHT (sword hand), angled
+        // forward over the horse's shoulder. The hand is fixed to the
+        // BODY: seen from behind it appears on the opposite screen side,
+        // mirrored.
+        let fb = e.facingNorth ? -1 : 1;
+        X.translate(5.5*fb+humanXOffset, -6+humanYOffset);
+        X.scale(fb,1);
         drawBigSword(false, e.id);
       }
       X.restore();
-      if(e.utype==='knight'){
-        // Kite shield with the team cross — same design as the (Feudal+)
-        // militia's, worn on the rider: the knight reads as that soldier,
-        // promoted and mounted.
-        let shx=-6+humanXOffset, shy=-5+humanYOffset;
-        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-        X.fillStyle=ageMetal(e.team);X.beginPath();
-        X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
-        X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
-        X.fillStyle=tc;X.beginPath();
-        X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
-        X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
-        X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
-      }
+      // (knight's kite shield drawn in drawShieldLayer — always on top)
     }
+    }; // end drawHeldLayer
+
+    // Shields render on top in EVERY facing: facing the camera the shield
+    // arm is the near side; facing away it reads as slung across the back
+    // (which is also the near side). One shared drawing for militia
+    // (Feudal+, on foot) and knight (mounted).
+    // Steel kite shield with the team cross (militia Castle / knight)
+    const drawKiteShield = (shx, shy) => {
+      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+      X.fillStyle=ageMetal(e.team);X.beginPath();
+      X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
+      X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
+      X.fillStyle=tc;X.beginPath();
+      X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
+      X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
+      X.strokeStyle='#000000';X.lineWidth=0.8/UNIT_SCALE;X.stroke();
+    };
+    // Round WOODEN shield with an iron center boss (militia Feudal)
+    const drawRoundShield = (shx, shy) => {
+      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+      X.fillStyle='#a5723a';
+      X.beginPath();X.arc(shx,shy,4.8,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=ageMetal(e.team);
+      X.beginPath();X.arc(shx,shy,1.6,0,Math.PI*2);X.fill();X.stroke();
+    };
+    const drawShieldLayer = () => {
+      // Shield is strapped to the LEFT arm — like the sword, it mirrors
+      // to the opposite screen side when the unit faces away.
+      let fb = e.facingNorth ? -1 : 1;
+      if (e.utype==='knight') {
+        drawKiteShield(-6*fb+humanXOffset, -5+humanYOffset);
+      } else if (e.utype==='militia' && ageBonus(e.team) >= 1) {
+        // Feudal: round WOODEN shield; Castle: upgraded steel kite
+        if (ageBonus(e.team) >= 2) drawKiteShield(-6*fb, -6);
+        else drawRoundShield(-6*fb, -5);
+      } else if (e.utype==='scout' && ageBonus(e.team) >= 2) {
+        // Castle scout: same round wooden shield (iron boss) as the
+        // Feudal militia — light cavalry carries the simple gear.
+        drawRoundShield(-6*fb+humanXOffset, -5+humanYOffset);
+      }
+    };
+
+    // Facing away → held weapons/tools are on the far side of the torso,
+    // so the body must paint over them; facing the camera → the reverse.
+    // Facing away: held items are on the far side of BOTH the horse and
+    // the rider, so they draw first and everything paints over them.
+    if (e.facingNorth) { drawHeldLayer(); drawMountLayer(); drawBodyLayer(); }
+    else { drawMountLayer(); drawBodyLayer(); drawHeldLayer(); }
+    // Front-facing horse head over rider + weapons (it's the nearest thing
+    // to the camera); shield last — worn on the near arm.
+    if (horseHeadFront) horseHeadFront();
+    drawShieldLayer();
   } else {
     // Sheep — scalloped wool cloud; head tracks movement direction
     let waddle = e.path.length > 0 ? Math.sin(tick * 0.2 + e.id) * 0.06 : 0;

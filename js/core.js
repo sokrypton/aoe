@@ -260,7 +260,7 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:750,armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},

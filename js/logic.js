@@ -1963,7 +1963,7 @@ function updateBuilding(e){
   if (e.btype === 'TOWER' || e.btype === 'TC') {
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
-      let range = e.btype === 'TC' ? 6 : BLDGS.TOWER.range; // AoE2: TC range 6, Watch Tower 8
+      let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
       let center = {x: e.x + e.w/2, y: e.y + e.h/2};
       let targets = entities.filter(en => !sameSide(en.team, e.team) && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
                             .filter(en => dist(center, en) <= range)
@@ -1976,7 +1976,7 @@ function updateBuilding(e){
           x: center.x,
           y: center.y,
           team: e.team,
-          atk: e.btype === 'TC' ? 5 : BLDGS.TOWER.atk // AoE2: both TC and Watch Tower deal 5 pierce
+          atk: e.atk // AoE2: both TC and Watch Tower deal 5 pierce (set from BLDGS in createBuilding)
         };
         // AoE2-style: garrisoned units add extra arrows (capped at +5),
         // spread over the closest targets in range.

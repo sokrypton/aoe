@@ -204,6 +204,38 @@ function drawDoorLeft(sx,sy,bw,bhh,color,darken=false){
   X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
 }
 
+// Post-and-rail fence for the barracks yard: round-capped posts plus two
+// rails strung along each polyline (drawn in two passes so props can
+// stand in front of the back edge but behind the front edges).
+function drawBarracksFence(posts, railPaths, darken){
+  let postC = darken ? darkenColor(WOOD.post) : WOOD.post;
+  posts.forEach(p=>{
+    X.strokeStyle='#000';X.lineWidth=3;X.lineCap='round';
+    X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x,p.y-9);X.stroke();
+    X.strokeStyle=postC;X.lineWidth=1.4;
+    X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x,p.y-9);X.stroke();
+    X.lineCap='butt';
+  });
+  [3.5,7].forEach(h=>{
+    railPaths.forEach(path=>{
+      X.strokeStyle='#000';X.lineWidth=2.2;
+      X.beginPath();path.forEach((p,i)=>i?X.lineTo(p.x,p.y-h):X.moveTo(p.x,p.y-h));X.stroke();
+      X.strokeStyle=postC;X.lineWidth=0.9;
+      X.beginPath();path.forEach((p,i)=>i?X.lineTo(p.x,p.y-h):X.moveTo(p.x,p.y-h));X.stroke();
+    });
+  });
+}
+
+// Mirror of drawDoorLeft: skewed door flat against the Right Wall
+function drawDoorRight(sx,sy,bw,bhh,color,darken=false){
+  let c = darken ? darkenColor(color) : color;
+  X.fillStyle=c;X.beginPath();
+  X.moveTo(sx+bw*0.625,sy+bhh*1.375);X.lineTo(sx+bw*0.375,sy+bhh*1.625);
+  X.lineTo(sx+bw*0.375,sy+bhh*1.625-8);X.lineTo(sx+bw*0.625,sy+bhh*1.375-8);X.closePath();
+  X.fill();
+  X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+}
+
 // Draws a double gate wrapping the bottom corner of a building block
 function drawCornerDoubleGate(sx,sy,bhh,gateH,colorL,colorR,darken=false){
   X.strokeStyle='#000000';X.lineWidth=1;
@@ -226,11 +258,44 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
   let top=sy-bh-2-poleLen;
   X.strokeStyle='#000000';X.lineWidth=1.5;
   X.beginPath();X.moveTo(sx,sy-bh-2);X.lineTo(sx,top);X.stroke(); // pole
-  let wave=Math.sin(tick*0.1)*3;
-  X.fillStyle=color;X.beginPath();
-  X.moveTo(sx,top);X.lineTo(sx-16,top+4+wave);
-  X.lineTo(sx-16,top+12+wave);X.lineTo(sx,top+8);X.closePath();
-  X.fill();X.stroke();
+  X.fillStyle='#000000';X.beginPath();X.arc(sx,top-1.5,1.6,0,Math.PI*2);X.fill(); // finial
+  // Cloth: sampled ribbon flying left off the pole. A wave travels along
+  // the fabric (phase advances with distance from the hoist); amplitude is
+  // zero at the pole (it's pinned there) and grows toward the free end,
+  // plus a slight quadratic sag. Two superposed sines keep the motion from
+  // looking metronomic.
+  const L=17, H=8.5, N=8;
+  let t=tick*0.13;
+  let lift=(u)=>Math.sin(t-u*4.2)*3.0*u + Math.sin(t*0.63-u*7.0)*0.9*u + 2.4*u*u;
+  let pts=[];
+  for(let i=0;i<=N;i++){
+    let u=i/N;
+    pts.push({x:sx-L*u, y:top+1+lift(u), u});
+  }
+  X.fillStyle=color;X.lineWidth=1.3;X.lineJoin='round';
+  X.beginPath();
+  X.moveTo(pts[0].x,pts[0].y);
+  for(let p of pts)X.lineTo(p.x,p.y);
+  for(let i=N;i>=0;i--)X.lineTo(pts[i].x,pts[i].y+H);
+  X.closePath();X.fill();
+  // Fold shading: segments where the cloth surface tips away from the
+  // upper-left light (top edge descending toward the pole) read darker.
+  X.fillStyle=colorDark;
+  for(let i=0;i<N;i++){
+    if(pts[i+1].y-pts[i].y>0.6){
+      X.beginPath();
+      X.moveTo(pts[i].x,pts[i].y+0.65);X.lineTo(pts[i+1].x,pts[i+1].y+0.65);
+      X.lineTo(pts[i+1].x,pts[i+1].y+H-0.65);X.lineTo(pts[i].x,pts[i].y+H-0.65);
+      X.closePath();X.fill();
+    }
+  }
+  // outline over the shading so the silhouette stays crisp
+  X.strokeStyle='#000000';
+  X.beginPath();
+  X.moveTo(pts[0].x,pts[0].y);
+  for(let p of pts)X.lineTo(p.x,p.y);
+  for(let i=N;i>=0;i--)X.lineTo(pts[i].x,pts[i].y+H);
+  X.closePath();X.stroke();
 }
 
 // Timber building under a gable roof: the ridge runs back-left to
@@ -241,18 +306,55 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
 // One open-sided tent-annex roof for the TC courtyard: two identical
 // quad faces meeting at an apex line (left face toward ax-48, right toward
 // ax+48). The TC draws this twice, at the left and right quadrant.
-function drawTCAnnexRoof(ax, ay, colL, colR){
-  const h = 16, roofH = 12;
-  X.strokeStyle='#000000';X.lineWidth=1.3; X.lineJoin='round';
-  X.fillStyle=colL;X.beginPath();
-  X.moveTo(ax,ay-h-roofH); X.lineTo(ax,ay+24*2-h-roofH);
-  X.lineTo(ax,ay+24*2-h); X.lineTo(ax-48,ay+24-h); X.closePath(); X.fill(); X.stroke();
-  X.fillStyle=colR;X.beginPath();
-  X.moveTo(ax,ay-h-roofH); X.lineTo(ax,ay+24*2-h-roofH);
-  X.lineTo(ax,ay+24*2-h); X.lineTo(ax+48,ay+24-h); X.closePath(); X.fill(); X.stroke();
+// Open-sided lean-to shelter over one courtyard quadrant (AoE2 TC look):
+// a plank roof plane leaning from the keep wall (high) down to the outer
+// posts (low), open underneath — the shade + posts carry the "open
+// market stall" read. side: -1 = left quadrant, +1 = right quadrant.
+function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
+  const hK = 28, hO = 18; // roof height at the keep edge / outer eave — tall enough for units to walk under
+  let s = side;
+  // ground corners of the quadrant diamond
+  let K1 = { x: sx + 48*s, y: sy + 24 }; // keep side corner
+  let K2 = { x: sx,        y: sy + 48 }; // keep front corner
+  let O1 = { x: sx + 96*s, y: sy + 48 }; // outer side corner
+  let O2 = { x: sx + 48*s, y: sy + 72 }; // outer front corner
+  let up = (p, h) => ({ x: p.x, y: p.y - h });
+  let K1r = up(K1,hK), K2r = up(K2,hK), O1r = up(O1,hO), O2r = up(O2,hO);
+  // shade on the ground under the open shelter
+  X.fillStyle = 'rgba(0,0,0,0.10)';
+  X.beginPath();
+  X.moveTo(K1.x,K1.y); X.lineTo(O1.x,O1.y); X.lineTo(O2.x,O2.y); X.lineTo(K2.x,K2.y);
+  X.closePath(); X.fill();
+  // roof plane: wooden planks, lit by orientation (left plane faces the
+  // light, right plane faces away)
+  let plank = s < 0 ? WOOD.plankL : WOOD.plankR;
+  let pl = darken ? darkenColor(plank) : plank;
+  X.strokeStyle='#000000'; X.lineWidth=1.3; X.lineJoin='round';
+  X.fillStyle = pl; X.beginPath();
+  X.moveTo(K1r.x,K1r.y); X.lineTo(O1r.x,O1r.y); X.lineTo(O2r.x,O2r.y); X.lineTo(K2r.x,K2r.y);
+  X.closePath(); X.fill(); X.stroke();
+  // plank seams running down the slope (keep edge → outer eave)
+  X.save();
+  X.strokeStyle='rgba(0,0,0,0.18)'; X.lineWidth=1;
+  for (let t of [0.25, 0.5, 0.75]) {
+    let a = { x: K1r.x + (K2r.x-K1r.x)*t, y: K1r.y + (K2r.y-K1r.y)*t };
+    let b = { x: O1r.x + (O2r.x-O1r.x)*t, y: O1r.y + (O2r.y-O1r.y)*t };
+    X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
+  }
+  X.restore();
+  // team-color fascia boards along the two visible outer eave edges
+  let fs = 3.5;
+  let cOut = darken ? darkenColor(tc) : tc;   // outer edge (side-facing)
+  let cFrt = darken ? darkenColor(tcD) : tcD; // front edge (darker face)
+  X.fillStyle = s < 0 ? cOut : cFrt; X.beginPath();
+  X.moveTo(O1r.x,O1r.y); X.lineTo(O2r.x,O2r.y); X.lineTo(O2r.x,O2r.y+fs); X.lineTo(O1r.x,O1r.y+fs);
+  X.closePath(); X.fill(); X.stroke();
+  X.fillStyle = s < 0 ? cFrt : cOut; X.beginPath();
+  X.moveTo(O2r.x,O2r.y); X.lineTo(K2r.x,K2r.y); X.lineTo(K2r.x,K2r.y+fs); X.lineTo(O2r.x,O2r.y+fs);
+  X.closePath(); X.fill(); X.stroke();
 }
 
-function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken, afterWalls){
+function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken, afterWalls, noBackEave){
   let wl=darken?darkenColor(wallL):wallL;
   let wr=darken?darkenColor(wallR):wallR;
   let rl=darken?darkenColor(roofC):roofC;
@@ -270,22 +372,37 @@ function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC
   // painted between the walls and the roof so the eave overhang still
   // covers the stud tops exactly as before the refactor.
   if(afterWalls) afterWalls();
-  // Gable-end triangle above the front-right wall, with a center stud
+  // Roof anchor geometry (needed before the back panel below)
   let Rp={x:sx+W,y:sy0+hh-wallH}, Bp={x:sx,y:sy0+hh*2-wallH}, Lp={x:sx-W,y:sy0+hh-wallH};
   let M1={x:sx+W*0.5,y:sy0+hh*1.5-wallH-roofH};
   let M2={x:sx-W*0.5,y:sy0+hh*0.5-wallH-roofH};
-  X.fillStyle=wr;X.strokeStyle='#000';X.lineWidth=1.3;
-  X.beginPath();X.moveTo(Bp.x,Bp.y);X.lineTo(Rp.x,Rp.y);X.lineTo(M1.x,M1.y);X.closePath();X.fill();X.stroke();
-  X.strokeStyle=beam;X.lineWidth=1.6;
-  X.beginPath();X.moveTo((Bp.x+Rp.x)/2,(Bp.y+Rp.y)/2);X.lineTo(M1.x,M1.y);X.stroke();
-  // Roof slope with iso-parallel overhangs
   let vR={x:(M2.x-M1.x)*0.10, y:(M2.y-M1.y)*0.10};
-  let vF={x:(M1.x-M2.x)*0.02, y:(M1.y-M2.y)*0.02};
+  let vF={x:(M1.x-M2.x)*0.13, y:(M1.y-M2.y)*0.13}; // front eave projects past the gable face
   let vS={x:(Lp.x-M2.x)*0.10, y:(Lp.y-M2.y)*0.10};
   let M2e={x:M2.x+vR.x, y:M2.y+vR.y};
   let M1e={x:M1.x+vF.x, y:M1.y+vF.y};
   let EL={x:Lp.x+vR.x+vS.x, y:Lp.y+vR.y+vS.y};
   let EB={x:Bp.x+vF.x+vS.x, y:Bp.y+vF.y+vS.y};
+  // Gable-end triangle above the front-right wall, with a center stud
+  X.fillStyle=wr;X.strokeStyle='#000';X.lineWidth=1.3;
+  X.beginPath();X.moveTo(Bp.x,Bp.y);X.lineTo(Rp.x,Rp.y);X.lineTo(M1.x,M1.y);X.closePath();X.fill();X.stroke();
+  X.strokeStyle=beam;X.lineWidth=1.6;
+  X.beginPath();X.moveTo((Bp.x+Rp.x)/2,(Bp.y+Rp.y)/2);X.lineTo(M1.x,M1.y);X.stroke();
+  // BACK slope's overhanging eave: the strip of the far roof panel that
+  // projects past the gable face, running down the gable's right edge
+  // from the peak — darker team color (it faces away from the light).
+  if(!noBackEave){
+    let dn={x:(Rp.x-M1.x)*0.10, y:(Rp.y-M1.y)*0.10}; // down-slope overhang
+    X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
+    X.beginPath();
+    X.moveTo(M1.x, M1.y); X.lineTo(M1e.x, M1e.y);
+    X.lineTo(Rp.x+dn.x+vF.x, Rp.y+dn.y+vF.y);
+    X.lineTo(Rp.x+dn.x, Rp.y+dn.y);
+    X.closePath();X.fill();X.stroke();
+    X.fillStyle='rgba(0,0,0,0.3)';
+    X.fill();
+  }
+  // Front roof slope with iso-parallel overhangs
   X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
   X.beginPath();X.moveTo(M2e.x,M2e.y);X.lineTo(M1e.x,M1e.y);X.lineTo(EB.x,EB.y);X.lineTo(EL.x,EL.y);X.closePath();X.fill();X.stroke();
   // Course lines parallel to the ridge
@@ -318,62 +435,78 @@ function drawChimneySmoke(cx,cy){
 }
 
 // Draws animated rotating windmill sails
-function drawWindmillSails(hx,hy,id,scale=1){
-  let rot = tick * 0.035 + id*0.5; // slightly faster for more drama!
+function drawWindmillSails(hx,hy,id,scale=1,canvasCol='#f0ead8',canvasCol2=null){
+  let rot = tick * 0.012 + id*0.5; // slow, ponderous turn — mills are heavy
+
+  // Front-facing rotor: the fan spins in a (slightly flattened)
+  // screen-plane circle, sails alternating canvas colors around the hub.
+  const ux=1, uy=0, vx=0, vy=0.95;
 
   for(let i=0; i<4; i++){
     let a = rot + i * Math.PI / 2;
 
-    // Direction vectors — the fan is mounted on the mill cap facing the
-    // camera, so it spins in a (slightly flattened) screen-plane circle;
-    // opposite sails stay perfectly symmetric around the hub.
-    let dx = Math.cos(a);
-    let dy = Math.sin(a) * 0.95;
-    let px = -Math.sin(a);
-    let py = Math.cos(a) * 0.95;
+    let dx = Math.cos(a)*ux + Math.sin(a)*vx;
+    let dy = Math.cos(a)*uy + Math.sin(a)*vy;
+    let px = -Math.sin(a)*ux + Math.cos(a)*vx;
+    let py = -Math.sin(a)*uy + Math.cos(a)*vy;
 
-    let L = 27*scale; // Spar length (increased from 14 for massive drama!)
+    let L = 27*scale; // spar length
     let tx = hx + dx * L;
     let ty = hy + dy * L;
 
-    // 1. Spar wood outline (thick black)
+    // 1. Spar (whole arm): black underlay + wood core
     X.strokeStyle = '#000000';
     X.lineWidth = 3;
     X.beginPath(); X.moveTo(hx, hy); X.lineTo(tx, ty); X.stroke();
-
-    // 2. Spar wood fill (brown)
     X.strokeStyle = '#8B4513';
     X.lineWidth = 1.5;
     X.beginPath(); X.moveTo(hx, hy); X.lineTo(tx, ty); X.stroke();
 
-    // 3. Canvas sail sheet (quadrilateral)
-    let x1 = hx + dx * 5*scale;
-    let y1 = hy + dy * 5*scale;
-    let x2 = tx;
-    let y2 = ty;
-    let x3 = tx + px * 8*scale;
-    let y3 = ty + py * 8*scale;
-    let x4 = x1 + px * 6*scale;
-    let y4 = y1 + py * 6*scale;
-
-    X.fillStyle = '#f5f2e9';
-    X.beginPath();
-    X.moveTo(x1, y1);
-    X.lineTo(x2, y2);
-    X.lineTo(x3, y3);
-    X.lineTo(x4, y4);
-    X.closePath();
-    X.fill();
-
+    // 2. Canvas sail sheet on the trailing side of the spar, slightly
+    // wider at the tip than at the root (real sails flare outward)
+    let r0 = 7*scale;               // sheet starts clear of the hub
+    let x1 = hx + dx * r0,        y1 = hy + dy * r0;
+    let x2 = tx,                  y2 = ty;
+    let x3 = tx + px * 8*scale,   y3 = ty + py * 8*scale;
+    let x4 = x1 + px * 5*scale,   y4 = y1 + py * 5*scale;
+    // Striped canvas: the batten boundaries split each sail into panels
+    // that alternate white / team color along its length
+    const TS=[0, 0.3, 0.55, 0.8, 1];
+    let onSpar=t=>({x:x1+(x2-x1)*t, y:y1+(y2-y1)*t});
+    let onEdge=t=>({x:x4+(x3-x4)*t, y:y4+(y3-y4)*t});
+    for(let k=0;k<TS.length-1;k++){
+      let a1=onSpar(TS[k]), a2=onSpar(TS[k+1]);
+      let b1=onEdge(TS[k]), b2=onEdge(TS[k+1]);
+      X.fillStyle = (canvasCol2 && k%2) ? canvasCol2 : canvasCol;
+      X.beginPath();
+      X.moveTo(a1.x,a1.y);X.lineTo(a2.x,a2.y);X.lineTo(b2.x,b2.y);X.lineTo(b1.x,b1.y);
+      X.closePath();X.fill();
+    }
     X.strokeStyle = '#000000';
     X.lineWidth = 1.3;
-    X.stroke();
+    X.beginPath();
+    X.moveTo(x1, y1); X.lineTo(x2, y2); X.lineTo(x3, y3); X.lineTo(x4, y4);
+    X.closePath(); X.stroke();
+
+    // 3. Sail battens: crossbars at the panel boundaries
+    X.save();
+    X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=0.9;
+    for(let t of [0.3, 0.55, 0.8]){
+      let a=onSpar(t), b=onEdge(t);
+      X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b.x,b.y);X.stroke();
+    }
+    // leading-edge board along the spar side of the canvas
+    X.strokeStyle='rgba(0,0,0,0.2)';
+    X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
+    X.restore();
   }
 
-  // Center pivot pin
-  X.fillStyle='#866840';
-  X.beginPath();X.arc(hx,hy,3.5*scale,0,Math.PI*2);X.fill();
-  X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
+  // Hub: wooden boss with a shadowed rim and a bright center pin
+  X.fillStyle='#6d5138';
+  X.beginPath();X.arc(hx,hy,3.8*scale,0,Math.PI*2);X.fill();
+  X.strokeStyle='#000000';X.lineWidth=1.1;X.stroke();
+  X.fillStyle='#a08050';
+  X.beginPath();X.arc(hx-0.5,hy-0.5,1.6*scale,0,Math.PI*2);X.fill();
 }
 // Main function to draw building entities
 // Shared by TOWER/WALL/GATE for locating an adjacent building to link to.
@@ -468,16 +601,36 @@ const AGE_WALLS = [
 function buildingShadowPath(e){
   if (e.btype === 'FARM') return;
   let b = BLDGS[e.btype];
-  let iso = toIso(e.x + b.w/2, e.y + b.h/2);
-  let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
-  if (isOffscreen(sx, sy, 100)) return;
-  let bw = b.w * HALF_TW, bhh = b.h * HALF_TH;
+  // per-instance footprint: gates are 1x2 OR 2x1 depending on placement
+  let fw = e.w !== undefined ? e.w : b.w;
+  let fh = e.h !== undefined ? e.h : b.h;
   let g = 1.06, ox = 3, oy = 1.5;
-  X.moveTo(sx + ox, sy - bhh * g + oy);
-  X.lineTo(sx + bw * g + ox, sy + oy);
-  X.lineTo(sx + ox, sy + bhh * g + oy);
-  X.lineTo(sx - bw * g + ox, sy + oy);
-  X.closePath();
+  if (fw === fh) {
+    // square footprint: one diamond over the whole base
+    let iso = toIso(e.x + fw/2, e.y + fh/2);
+    let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
+    if (isOffscreen(sx, sy, 100)) return;
+    let bw = fw * HALF_TW, bhh = fh * HALF_TH;
+    X.moveTo(sx + ox, sy - bhh * g + oy);
+    X.lineTo(sx + bw * g + ox, sy + oy);
+    X.lineTo(sx + ox, sy + bhh * g + oy);
+    X.lineTo(sx - bw * g + ox, sy + oy);
+    X.closePath();
+  } else {
+    // non-square (gates, 1x2 / 2x1): a stretched diamond doesn't match
+    // the parallelogram footprint — shadow each tile individually; the
+    // union fill merges the overlap seamlessly.
+    for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
+      let iso = toIso(e.x + dx + 0.5, e.y + dy + 0.5);
+      let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
+      if (isOffscreen(sx, sy, 100)) continue;
+      X.moveTo(sx + ox, sy - HALF_TH * g + oy);
+      X.lineTo(sx + HALF_TW * g + ox, sy + oy);
+      X.lineTo(sx + ox, sy + HALF_TH * g + oy);
+      X.lineTo(sx - HALF_TW * g + ox, sy + oy);
+      X.closePath();
+    }
+  }
 }
 
 function drawBuilding(e, part = null){
@@ -553,7 +706,7 @@ function drawBuilding(e, part = null){
     // faces (merlon centers at ±40, half-width 8 → inner edge ±32).
     {
       let rcx = sx, rcy = sy - 36; // center of the top diamond
-      let inset = 32 / 48, depth = 5;
+      let inset = 38 / 48, depth = 5; // side merlon centers ±43, half-width 5 → inner corner ±38
       let ins = ([cx2, cy2]) => [rcx + (cx2 - rcx) * inset, rcy + (cy2 - rcy) * inset];
       let N = ins([sx, sy - 60]), E = ins([sx + 48, sy - 36]), S = ins([sx, sy - 12]), W = ins([sx - 48, sy - 36]);
       let dn = ([x2, y2]) => [x2, y2 + depth];
@@ -601,21 +754,35 @@ function drawBuilding(e, part = null){
       X.restore();
     }
     // 3D Castle battlements (crenellations) on flat top edges
+    // Merlon centers sit half a merlon-width (3,1.5 iso) inside the rim
+    // edge so each OUTER face lies exactly on the rim edge plane; corner
+    // merlons take both edges' insets so their outer corner touches the
+    // rim corner. Edge merlons at the 1/3 and 2/3 points of each edge.
+    // Four merlons per edge (corners shared), 10px wide (s=5). A diamond's
+    // edges have the same 2:1 slope as the rim edges, so FLUSH means the
+    // center sits at perpendicular distance s/√5 inside the edge line —
+    // an inward offset of (2s/5, s/5) = (2,1), NOT (s, s/2). Corner
+    // merlons offset (0, ±bhh) / (±s, 0) so the shared corner touches the
+    // rim corner with both faces flush. Middles at the edge thirds.
     let merlons = [
-      { x: sx,      y: sy - 56 }, // Top corner (0px gap to top)
-      { x: sx - 20, y: sy - 46 }, // Back-left (perfectly centered on top-left edge)
-      { x: sx + 20, y: sy - 46 }, // Back-right (perfectly centered on top-right edge)
-      { x: sx - 40, y: sy - 36 }, // Left corner (0px gap to left)
-      { x: sx + 40, y: sy - 36 }, // Right corner (0px gap to right)
-      { x: sx - 20, y: sy - 26 }, // Front-left (perfectly centered on bottom-left edge)
-      { x: sx + 20, y: sy - 26 }, // Front-right (perfectly centered on bottom-right edge)
-      { x: sx,      y: sy - 16 }  // Bottom corner (0px gap to bottom)
+      { x: sx,      y: sy - 57.5 }, // Top corner (rim corner sy-60)
+      { x: sx - 14, y: sy - 51 },   // Back-left edge, 1/3
+      { x: sx + 14, y: sy - 51 },   // Back-right edge, 1/3
+      { x: sx - 30, y: sy - 43 },   // Back-left edge, 2/3
+      { x: sx + 30, y: sy - 43 },   // Back-right edge, 2/3
+      { x: sx - 43, y: sy - 36 },   // Left corner (rim corner ±48)
+      { x: sx + 43, y: sy - 36 },   // Right corner
+      { x: sx - 30, y: sy - 29 },   // Front-left edge, 2/3
+      { x: sx + 30, y: sy - 29 },   // Front-right edge, 2/3
+      { x: sx - 14, y: sy - 21 },   // Front-left edge, 1/3
+      { x: sx + 14, y: sy - 21 },   // Front-right edge, 1/3
+      { x: sx,      y: sy - 14.5 }  // Bottom corner (rim corner sy-12)
     ];
 
     // Merlons are the same masonry as the keep, lit the same way — the
     // keep's face palette (bright cap kT, walls kL/kR) via the shared
     // merlon block (light bottom seam so they connect to the rim).
-    let drawMerlon = (mx, my) => drawMerlonBlock(mx, my - 4, 8, 4, 10, kL, kR, kT, kT, darken);
+    let drawMerlon = (mx, my) => drawMerlonBlock(mx, my - 2.5, 5, 2.5, 7, kL, kR, kT, kT, darken);
 
     // Crenellations are the TC's Castle-age accessory — earlier ages read
     // as a plain keep.
@@ -634,7 +801,7 @@ function drawBuilding(e, part = null){
     let lintelC = darken ? darkenColor(keepWood ? '#6f5330' : '#7c766b') : (keepWood ? '#6f5330' : '#7c766b');
 
     let drawKeepWindow = (wx2, wy2, m) => {
-      X.save(); X.translate(wx2, wy2); X.scale(1.3, 1.3); X.translate(-wx2, -wy2);
+      X.save();
       X.strokeStyle = '#000000'; X.lineWidth = 1.3; X.lineJoin = 'round';
       let P = (x, yc) => ({ x: wx2 + x, y: wy2 + yc });
       // outer frame (vertical sides, top/bottom edges follow the wall slope)
@@ -687,12 +854,21 @@ function drawBuilding(e, part = null){
     drawKeepWindow(sx + 24, sy - 6, -0.5); // right wall window
     // 2. Wooden posts, drawn BEFORE the annex roofs so the tent cloth
     // overlaps the pole tops (sorted back-to-front for depth)
+    // Posts tucked 12% in from the outer roof corners toward the keep so
+    // the whole post (cap included) sits UNDER the roof plane — the roofs
+    // paint after the posts and hide the tops, reading as real support.
+    // Heights meet the roof underside there (surface 18→28 minus boards).
+    // Posts at the roof corners, nudged inward by their own half-width so
+    // the post body stays inside the roof silhouette, and tall enough to
+    // run up BEHIND the fascia (roof draws after posts) — the visible post
+    // ends at the fascia's bottom edge with no seam, so the roof reads as
+    // resting on the beams.
     let posts = [
-      { x: sx - 96, y: sy + 48, h: 16 }, // Left-most
-      { x: sx - 48, y: sy + 72, h: 16 }, // Bottom-left
-      { x: sx + 96, y: sy + 48, h: 16 }, // Right-most
-      { x: sx + 48, y: sy + 72, h: 16 }, // Bottom-right
-      { x: sx,      y: sy + 48, h: 16 }  // Center
+      { x: sx - 93.5, y: sy + 48,    h: 15 }, // Left-most corner
+      { x: sx - 48,   y: sy + 70.75, h: 15 }, // Bottom-left corner
+      { x: sx + 93.5, y: sy + 48,    h: 15 }, // Right-most corner
+      { x: sx + 48,   y: sy + 70.75, h: 15 }, // Bottom-right corner
+      { x: sx,        y: sy + 48,    h: 25 }  // Center (under the high keep edge)
     ];
     posts.sort((a, b) => a.y - b.y);
     let postColor = WOOD.post;
@@ -703,22 +879,36 @@ function drawBuilding(e, part = null){
     posts.forEach(p => {
       X.beginPath(); X.ellipse(p.x, p.y + 1, 5, 2.4, 0, 0, Math.PI*2); X.fill();
     });
-    // Chunky outlined poles: black underlay stroke, wood-colored core
+    // Square timber posts drawn as proper iso prisms: lit left face,
+    // shaded right face, bright top cap — same light rules as buildings.
+    let pL = darken ? darkenColor('#9a7a56') : '#9a7a56';
+    let pR = darken ? darkenColor('#7c5f40') : '#7c5f40';
+    let pT = darken ? darkenColor('#b08c62') : '#b08c62';
     posts.forEach(p => {
-      X.strokeStyle = '#000000'; X.lineWidth = 6; X.lineCap = 'round';
-      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
-      X.strokeStyle = pc; X.lineWidth = 4;
-      X.beginPath(); X.moveTo(p.x, p.y); X.lineTo(p.x, p.y - p.h); X.stroke();
-      X.lineCap = 'butt';
+      let w = 2.5, hh2 = 1.25; // half-width / half-height of the post's tiny footprint
+      X.strokeStyle = '#000000'; X.lineWidth = 1.1;
+      // left face
+      X.fillStyle = pL; X.beginPath();
+      X.moveTo(p.x - w, p.y - hh2); X.lineTo(p.x, p.y);
+      X.lineTo(p.x, p.y - p.h); X.lineTo(p.x - w, p.y - hh2 - p.h);
+      X.closePath(); X.fill(); X.stroke();
+      // right face
+      X.fillStyle = pR; X.beginPath();
+      X.moveTo(p.x, p.y); X.lineTo(p.x + w, p.y - hh2);
+      X.lineTo(p.x + w, p.y - hh2 - p.h); X.lineTo(p.x, p.y - p.h);
+      X.closePath(); X.fill(); X.stroke();
+      // top cap
+      X.fillStyle = pT; X.beginPath();
+      X.moveTo(p.x, p.y - p.h); X.lineTo(p.x + w, p.y - hh2 - p.h);
+      X.lineTo(p.x, p.y - 2*hh2 - p.h); X.lineTo(p.x - w, p.y - hh2 - p.h);
+      X.closePath(); X.fill(); X.stroke();
     });
 
     // 3+4. Annex roofs (open-sided shelter roofs over the left and right
     // courtyard quadrants, in team color) — the two are the identical shape
     // mirored about the keep, so one helper drawn at ±48.
-    let annexL = darken ? darkenColor(tc) : tc;
-    let annexR = darken ? darkenColor(tcD) : tcD;
-    drawTCAnnexRoof(sx - 48, sy + 24, annexL, annexR);
-    drawTCAnnexRoof(sx + 48, sy + 24, annexL, annexR);
+    drawTCAnnexRoof(sx, sy, -1, tc, tcD, darken);
+    drawTCAnnexRoof(sx, sy, +1, tc, tcD, darken);
 
     // Team banner flying from the keep top
     // 68 plants the pole base exactly on the top merlon's cap (sy-70)
@@ -728,7 +918,7 @@ function drawBuilding(e, part = null){
     // At Castle the pole moves up onto the back merlon's cap (sy-70);
     // earlier ages plant it on the recessed roof floor as before.
     if(e.complete){
-      if (ownerAge >= 2) drawWavingFlag(sx, sy, 68, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 22);
+      if (ownerAge >= 2) drawWavingFlag(sx, sy, 66, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 22);
       else drawWavingFlag(sx, sy, 29, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 42);
     }
   }
@@ -745,22 +935,42 @@ function drawBuilding(e, part = null){
     let W=32, hh=16, wallH=16, roofH=20;
     bh=32;
     let sy0=sy+bhh-hh; // center on tile
-    let beam=darken?darkenColor(WOOD.beam):WOOD.beam;
+    // Per-age wall texture:
+    //  DARK   — bare plank walls: vertical board seams in the light
+    //           interior-seam stroke (framing beams over brown planks had
+    //           too little contrast and read as mud)
+    //  FEUDAL — plaster with half-timber framing in the shared beam brown
+    //  CASTLE — whitewash with darker oak framing so the timber still
+    //           reads against the paler wall
+    let hwL = ownerAge === 0 ? WOOD.plankL : aw.gl;
+    let hwR = ownerAge === 0 ? WOOD.plankR : aw.gr;
+    let beamCol = ownerAge >= 2 ? '#57432e' : WOOD.beam;
+    let beam=darken?darkenColor(beamCol):beamCol;
     let {M1,M2,M1e,M2e,EL,EB} = drawGableBlock(sx, sy0, W, hh, wallH, roofH,
-      aw.gl, aw.gr, tc, WOOD.beam, darken, ()=>{
-        // Half-timber framing: studs and a mid-rail per face
-        X.strokeStyle=beam;X.lineWidth=1.6;
-        [0.35,0.7].forEach(t=>{
-          X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
-          X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
-        });
-        X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
+      hwL, hwR, tc, beamCol, darken, ()=>{
+        if (ownerAge === 0) {
+          // plank seams: vertical board joints on both faces
+          X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
+          [0.25,0.5,0.75].forEach(t=>{
+            X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
+            X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
+          });
+        } else {
+          // Half-timber framing: studs and a mid-rail per face
+          X.strokeStyle=beam;X.lineWidth=1.6;
+          [0.35,0.7].forEach(t=>{
+            X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
+            X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
+          });
+          X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
+        }
       });
-    // Team pennant at the front gable peak
-    drawPennant(M1.x,M1.y,tc,darken);
+    // (no pennant — the house stays clean)
     // Big 3D brick chimney poking through the roof slope: an iso block
     // with two shaded faces, a wider cap slab, and a dark flue opening.
-    {
+    // FEUDAL+ only — the Dark-age cottage has a bare roof (a brick
+    // chimney is part of the town growing up).
+    if (ownerAge >= 1) {
       let cru={x:M2.x+(M1.x-M2.x)*0.3, y:M2.y+(M1.y-M2.y)*0.3};
       let cre={x:EL.x+(EB.x-EL.x)*0.3, y:EL.y+(EB.y-EL.y)*0.3};
       let bx=cru.x+(cre.x-cru.x)*0.3, by=cru.y+(cre.y-cru.y)*0.3;
@@ -802,116 +1012,288 @@ function drawBuilding(e, part = null){
     // silhouette: rump -> back -> neck crest -> head -> muzzle -> chest ->
     // belly. Used by the age-gated hitching rail below to advertise that
     // this building trains cavalry.
-    let drawYardHorse=(hx,hy,coat,maneC,s=1)=>{ // s: outer scale — divide stroke widths so outlines stay on-style
+    // East-profile horse borrowed from the unit renderer's construction
+    // (body capsule + arched neck/head silhouette + straight legs with
+    // hooves + rounded tail). graze: the whole head group rotates about
+    // the withers so the muzzle dips to the ground and back — the same
+    // rigid-group motion as the units' idle nod, just bigger.
+    let drawYardHorse=(hx,hy,coat,maneC,graze=false)=>{
       let c=darken?darkenColor(coat):coat, m=darken?darkenColor(maneC):maneC;
-      X.strokeStyle='#000';X.lineJoin='round';X.lineCap='round';
-      // legs (black outline, coat core)
-      [[-5.5,0],[-2.5,0.4],[3,0.4],[5.5,0]].forEach(([lx,ly])=>{
-        X.lineWidth=2.6/s;X.strokeStyle='#000';
-        X.beginPath();X.moveTo(hx+lx,hy-5+ly);X.lineTo(hx+lx,hy+ly);X.stroke();
-        X.lineWidth=1.2/s;X.strokeStyle=c;
-        X.beginPath();X.moveTo(hx+lx,hy-5+ly);X.lineTo(hx+lx,hy+ly-0.8);X.stroke();
+      let legC=coat==='#e9e6de'?'#b3ada1':'#6e4520';
+      if(darken) legC=darkenColor(legC);
+      // over-driven clamped sine: dwells at head-down / head-up
+      let g=(graze&&visible)?Math.min(1,Math.max(0,Math.sin(tick*0.02+e.id)*1.5+0.4)):0;
+      let swish=visible?Math.sin(tick*0.08+e.id)*0.2:0;
+      X.save();X.translate(hx,hy-5.2);X.scale(1.05,1.05);
+      X.lineJoin='round';
+      // tail (farthest — behind the legs)
+      X.save();X.translate(-6.6,-7);X.rotate(swish);
+      X.beginPath();X.moveTo(0,0);X.quadraticCurveTo(-2.7,3,-2.2,9);
+      X.strokeStyle='#000';X.lineWidth=2.5;X.lineCap='round';X.stroke();
+      X.strokeStyle=m;X.lineWidth=1.3;X.stroke();X.lineCap='butt';
+      X.restore();
+      // legs
+      X.beginPath();
+      X.moveTo(3.5,-4);X.lineTo(3.5,4.4);X.moveTo(5.5,-4);X.lineTo(5.5,4.4);
+      X.moveTo(-4.5,-4);X.lineTo(-4.5,4.4);X.moveTo(-6.5,-4);X.lineTo(-6.5,4.4);
+      X.strokeStyle='#000';X.lineWidth=2.2;X.lineCap='round';X.stroke();
+      X.strokeStyle=legC;X.lineWidth=1.1;X.stroke();X.lineCap='butt';
+      X.fillStyle='#241408';
+      [[3.5,4.4],[5.5,4.4],[-4.5,4.4],[-6.5,4.4]].forEach(p=>{
+        X.beginPath();X.ellipse(p[0],p[1]+0.5,1.5,1.1,0,0,Math.PI*2);X.fill();
       });
-      X.strokeStyle='#000';X.lineWidth=1.2/s;
-      // body + neck + head silhouette
-      X.fillStyle=c;X.beginPath();
-      X.moveTo(hx-7,hy-6);                              // rump
-      X.quadraticCurveTo(hx-8.5,hy-10,hx-5,hy-10.5);    // over the rump
-      X.lineTo(hx+2,hy-10.5);                           // back
-      X.quadraticCurveTo(hx+5.5,hy-11,hx+6.5,hy-15);    // neck crest
-      X.quadraticCurveTo(hx+7,hy-17,hx+9,hy-16.5);      // poll
-      X.lineTo(hx+11.5,hy-14.5);                        // muzzle top
-      X.quadraticCurveTo(hx+11.8,hy-13,hx+10,hy-12.8);  // squared muzzle
-      X.quadraticCurveTo(hx+8,hy-12.5,hx+7.5,hy-10.5);  // jaw
-      X.quadraticCurveTo(hx+7.5,hy-7.5,hx+5.5,hy-6.2);  // chest
-      X.quadraticCurveTo(hx,hy-4.8,hx-4.5,hy-5.6);      // belly
-      X.closePath();X.fill();X.stroke();
-      // mane + tail
-      X.strokeStyle=m;X.lineWidth=2/s;
-      X.beginPath();X.moveTo(hx+3,hy-10.8);X.quadraticCurveTo(hx+5.8,hy-12.5,hx+6.8,hy-15.5);X.stroke();
-      let sw=visible?Math.sin(tick*0.06+e.id)*0.8:0;
-      X.beginPath();X.moveTo(hx-7,hy-9.5);X.quadraticCurveTo(hx-9.5+sw,hy-6,hx-8.5+sw,hy-1.5);X.stroke();
-      X.strokeStyle='#000';X.lineWidth=1.2/s;X.lineCap='butt';
+      // body capsule
+      X.strokeStyle='#000';X.lineWidth=0.95;X.fillStyle=c;
+      X.beginPath();X.ellipse(0,-6,7.4,4.9,0,0,Math.PI*2);X.fill();X.stroke();
+      // neck + head group, rotating about the withers to graze
+      X.save();
+      X.translate(2,-5);X.rotate(g*0.85);X.translate(-2,5);
+      X.translate(2.6,0);
+      const ear=(ex,ey,ang)=>{X.save();X.translate(ex,ey);X.rotate(ang);
+        X.beginPath();X.moveTo(-1.1,0.6);
+        X.quadraticCurveTo(-1.3,-1.6,0,-2.4);
+        X.quadraticCurveTo(1.3,-1.6,1.1,0.6);X.closePath();
+        X.fillStyle=c;X.strokeStyle='#000';X.lineWidth=0.95;X.fill();X.stroke();X.restore();};
+      ear(8.5,-13.9,-0.2);ear(10.1,-13.3,0.3);
+      X.fillStyle=c;X.strokeStyle='#000';X.lineWidth=0.95;
+      X.beginPath();
+      X.moveTo(2.2,-2.6);
+      X.quadraticCurveTo(6.6,-4.6,7.8,-9);      // front of neck up to the throat
+      X.quadraticCurveTo(10.5,-8.6,14.2,-8.6);  // long flat jaw out to the muzzle
+      X.lineTo(14.8,-12);                       // tall squared nose end
+      X.quadraticCurveTo(12.5,-13.6,9.6,-13.9); // long flat forehead back to the poll
+      X.quadraticCurveTo(4.6,-14.4,1.6,-11);    // arched crest of the neck
+      X.quadraticCurveTo(-0.4,-8.5,-0.6,-5.5);  // down into the withers
+      X.fill();X.stroke();
+      // mane along the crest
+      X.strokeStyle=m;X.lineWidth=1.5;X.lineCap='round';
+      X.beginPath();X.moveTo(0.4,-7.5);X.quadraticCurveTo(3.4,-12,7.6,-13.2);X.stroke();
+      X.lineCap='butt';
+      // eye high on the head, nostril at the nose (same as the unit horse)
+      X.fillStyle='#000';
+      X.beginPath();X.arc(9.7,-11.7,0.6,0,Math.PI*2);X.fill();
+      X.fillStyle='rgba(0,0,0,0.45)';
+      X.beginPath();X.arc(13.9,-10.3,0.5,0,Math.PI*2);X.fill();
+      X.restore();
+      X.restore();
     };
-    // 1. Sleeping-quarters annex at the back (team-colored roof)
-    drawGableBlock(sx+2, sy+10, 20, 10, 13, 12, '#b89868','#987848',tc,'#6e5138', darken);
-    // 2. Main garrison longhouse in front-left (team-colored roof)
-    drawGableBlock(sx-32, sy+22, 26, 13, 16, 15, '#b89868','#987848',tc,'#6e5138', darken);
-    // Door on the longhouse left wall
-    drawDoorLeft(sx-32, sy+22, 26, 13, '#5c3d24', darken);
+    // Shared compound geometry: everything (hall, yard, fence, props)
+    // lives on one parallelogram grid. BP(a,b) maps a (along the NE long
+    // axis, ±bL) and b (across, hall wall at b=bD, yard front at b=bYF)
+    // to screen.
+    // bYF=51 pushes the yard's front to the plot boundary: the left end
+    // edge is parallel to the plot's front-left edge (1 unit inside), and
+    // at b=51 the right front corner just meets the front-right edge.
+    const bL=30, bD=13, bYF=51;
+    const bcx=sx-20, bcy=sy+23;
+    const BP=(a,b)=>({x:bcx+a+b, y:bcy-a/2+b/2});
 
-    // 3. Corner watchtower — the barracks' age tell, matching the TC's
-    // progression: TIMBER in the Dark age, dressed stone from Feudal, and
-    // a crenellated flat top (merlons replace the pyramid cap) at Castle.
-    let twL = ownerAge === 0 ? WOOD.L : '#cfc8b6';
-    let twR = ownerAge === 0 ? WOOD.R : '#aca392';
-    // Same bastion element as the watch tower / gate posts: 14x7 footprint,
-    // stone-wall palette, merlons seated with the tower's +28 anchor (top
-    // face center is sy+9 here) so the crenellation reads identically.
-    if (ownerAge >= 2) {
-      drawBuildingBlock(sx+32, sy+32, 14, 7, 30, twL, twR, 'flat', 0, '#b7ad97', '#b7ad97', darken, true);
-      drawBastionMerlons(sx+32, sy+37, '#e0d8c6', '#c4bba6', darken);
-      // pole planted on the back merlon's cap (sy-1), like the tower
-      if(e.complete && visible) drawWavingFlag(sx+32, sy+30, 29, tc, tcD);
-    } else {
-      drawBuildingBlock(sx+32, sy+32, 14, 7, 30, twL, twR, 'conical', 10, tc, tcD, darken);
-      if(e.complete && visible) drawWavingFlag(sx+32, sy+32, 38, tc, tcD);
-    }
-
-    // 4. Fenced training yard
+    // 0. Training-yard pad FIRST (ground layer): a full-length
+    // parallelogram running the hall's entire front, wall line to fence.
+    let Y1=BP(-bL,bD), Y2=BP(bL,bD), Y3=BP(bL,bYF), Y4=BP(-bL,bYF);
     X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
-    X.moveTo(sx,sy+32);X.lineTo(sx+32,sy+48);
-    X.lineTo(sx,sy+64);X.lineTo(sx-32,sy+48);X.closePath();
-    X.fill();
+    X.moveTo(Y1.x,Y1.y);X.lineTo(Y2.x,Y2.y);X.lineTo(Y3.x,Y3.y);X.lineTo(Y4.x,Y4.y);
+    X.closePath();X.fill();
     X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
+    // rake marks: light lines parallel to the hall
+    X.save();X.strokeStyle='rgba(0,0,0,0.08)';X.lineWidth=1;
+    [22.5,32,41.5].forEach(b=>{
+      let p1=BP(-bL,b), p2=BP(bL,b);
+      X.beginPath();X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.stroke();
+    });
+    X.restore();
 
-    // Horses penned at the BACK of the training yard (drawn before the
-    // dummy/target so they read as standing behind them) — the visual tell
-    // that this barracks trains cavalry: the bay appears when scouts
-    // unlock (Feudal), the knight's white charger joins at Castle.
-    if(ownerAge >= 1){
-      let hs = 1.5;
-      let horseAt = (hx, hy, coat, maneC) => {
-        X.save(); X.translate(hx, hy); X.scale(hs, hs); X.translate(-hx, -hy);
-        drawYardHorse(hx, hy, coat, maneC, hs);
+    // 1. Custom rectangular garrison hall: half-length L along the NE
+    // axis, half-depth D across (drawGableBlock only makes square
+    // diamonds). With cx=sx-20, cy=sy+23, L=30, D=13 the math works out
+    // exactly: the NW back wall lies ON the plot's back-left edge from
+    // the left corner (sx-64,sy+32) to the top corner (sx,sy), and the
+    // SE front wall passes through the yard's top corner (sx,sy+26).
+    // roofH > D/2 keeps the back roof slope entirely hidden — no
+    // back-eave artifacts. Ridge overhangs both gable ends slightly.
+    {
+      // g=0: a ridge overhang past the gable planes projects to a ~1px
+      // sliver between near-parallel edges (the strip's end edge and the
+      // gable roofline differ by only 0.9px perpendicular) — it renders
+      // as a black spike, so the roof ends exactly at the gable faces.
+      const L=30, D=13, wallH=24, roofH=12, g=0;
+      const cx=sx-20, cy=sy+23;
+      const P=(a,b)=>({x:cx+a+b, y:cy-a/2+b/2});
+      const up=(p,h)=>({x:p.x, y:p.y-h});
+      let Wc=P(-L,-D), Sc=P(-L,D), Ec=P(L,D);
+      let R1=up(P(-L,0),wallH+roofH), R1e=up(P(-L-g,0),wallH+roofH), R2e=up(P(L+g,0),wallH+roofH);
+      let wl=darken?darkenColor(aw.gl):aw.gl, wr=darken?darkenColor(aw.gr):aw.gr;
+      let rl=darken?darkenColor(tc):tc;
+      X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+      // BACK roof slope first: it recedes NW at screen slope 0.19/unit
+      // while the ridge climbs 0.5/unit, so it shows as a strip above the
+      // ridge. Darker (faces away from the light). Eave at v=-(D+2)
+      // offsets each ridge point by (-(D+2), (D+2)*(roofH/D-0.5)).
+      {
+        let bo={x:-(D+2), y:(D+2)*(roofH/D-0.5)};
+        let rd=darken?darkenColor(tcD):tcD;
+        X.fillStyle=rd;X.beginPath();
+        X.moveTo(R1e.x,R1e.y);X.lineTo(R2e.x,R2e.y);
+        X.lineTo(R2e.x+bo.x,R2e.y+bo.y);X.lineTo(R1e.x+bo.x,R1e.y+bo.y);
+        X.closePath();X.fill();X.stroke();
+      }
+      // SW gable end: wall + triangle as one lit face
+      X.fillStyle=wl;X.beginPath();
+      X.moveTo(Wc.x,Wc.y);X.lineTo(Sc.x,Sc.y);
+      X.lineTo(Sc.x,Sc.y-wallH);X.lineTo(R1.x,R1.y);X.lineTo(Wc.x,Wc.y-wallH);
+      X.closePath();X.fill();X.stroke();
+      // SE long wall (shaded side)
+      X.fillStyle=wr;X.beginPath();
+      X.moveTo(Sc.x,Sc.y);X.lineTo(Ec.x,Ec.y);
+      X.lineTo(Ec.x,Ec.y-wallH);X.lineTo(Sc.x,Sc.y-wallH);
+      X.closePath();X.fill();X.stroke();
+      // Door on the GABLE END wall (away from the yard) — the yard-facing
+      // wall carries only windows
+      let db=P(-L,0);
+      X.fillStyle=darken?darkenColor('#5c3d24'):'#5c3d24';X.lineWidth=1;
+      X.beginPath();
+      X.moveTo(db.x-4.5,db.y-2.25);X.lineTo(db.x+4.5,db.y+2.25);
+      X.lineTo(db.x+4.5,db.y+2.25-11);X.lineTo(db.x-4.5,db.y-2.25-11);
+      X.closePath();X.fill();X.stroke();
+      // Row of small windows facing the yard — the hall SLEEPS the garrison
+      X.fillStyle=darken?darkenColor('#2a2a2a'):'#2a2a2a';X.lineWidth=0.9;
+      [-16,-4,8,20].forEach(a=>{
+        let wb=up(P(a,D), wallH*0.4);
+        X.beginPath();
+        X.moveTo(wb.x-2.4,wb.y+1.2);X.lineTo(wb.x+2.4,wb.y-1.2);
+        X.lineTo(wb.x+2.4,wb.y-1.2-4.5);X.lineTo(wb.x-2.4,wb.y+1.2-4.5);
+        X.closePath();X.fill();X.stroke();
+      });
+      // Garrison's round wooden shield with an iron boss, hung on the
+      // gable over the door — drawn in the wall plane (sheared:
+      // horizontals at the gable's +0.5 slope, verticals plumb).
+      {
+        let sh=up(P(-L,0), wallH-5.5);
+        X.save();
+        X.translate(sh.x,sh.y);X.transform(1,0.5,0,1,0,0);
+        X.fillStyle=darken ? darkenColor('#a5723a') : '#a5723a';
+        X.strokeStyle='#000';X.lineWidth=1;
+        X.beginPath();X.arc(0,0,4,0,Math.PI*2);X.fill();X.stroke();
+        X.fillStyle=darken ? darkenColor('#c8c8c8') : '#c8c8c8';
+        X.beginPath();X.arc(0,0,1.4,0,Math.PI*2);X.fill();X.stroke();
         X.restore();
-      };
-      horseAt(sx + 6, sy + 45, '#8b5a2b', '#3f2810');             // Feudal bay (scout)
-      if(ownerAge >= 2) horseAt(sx + 20, sy + 51, '#e9e6de', '#9a948a'); // Castle white charger (knight)
+      }
+      // Roof: single visible front slope, ridge + eaves overhanging
+      let Se=up(P(-L-g,D+2), wallH-1.2), Ee=up(P(L+g,D+2), wallH-1.2);
+      X.fillStyle=rl;X.lineWidth=1.3;
+      X.beginPath();X.moveTo(R1e.x,R1e.y);X.lineTo(R2e.x,R2e.y);
+      X.lineTo(Ee.x,Ee.y);X.lineTo(Se.x,Se.y);X.closePath();X.fill();X.stroke();
+      X.save();X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
+      [0.35,0.7].forEach(t=>{
+        X.beginPath();
+        X.moveTo(R1e.x+(Se.x-R1e.x)*t, R1e.y+(Se.y-R1e.y)*t);
+        X.lineTo(R2e.x+(Ee.x-R2e.x)*t, R2e.y+(Ee.y-R2e.y)*t);
+        X.stroke();
+      });
+      X.restore();
+      // Team banner flying from the ridge's right end (the tower is gone;
+      // the hall carries the flag now)
+      if(e.complete && visible) drawWavingFlag(R2e.x, sy, 26, tc, tcD); // base on the raised ridge end
     }
 
-    // Straw training dummy in the yard
-    let dxp=sx-10, dyp=sy+52;
-    X.strokeStyle='#000';X.lineWidth=2.8;X.lineCap='round';
-    X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
-    X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
-    X.strokeStyle=darken ? darkenColor('#8a6a4a') : '#8a6a4a';X.lineWidth=1.4;
-    X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
-    X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
-    X.lineCap='butt';
-    X.fillStyle=darken ? darkenColor('#c8ab7a') : '#c8ab7a'; // burlap torso
-    X.strokeStyle='#000';X.lineWidth=1;
-    X.beginPath();X.ellipse(dxp,dyp-6,3.2,4.2,0,0,Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=darken ? darkenColor('#e8c04a') : '#e8c04a'; // straw head
-    X.beginPath();X.arc(dxp,dyp-14.5,2.6,0,Math.PI*2);X.fill();X.stroke();
+    // Right-end fence edge FIRST so the yard props (horse especially)
+    // stand in front of its rails
+    drawBarracksFence(
+      [BP(bL,26),BP(bL,38.5)],
+      [[BP(bL,bD),BP(bL,bYF)]], darken);
 
-    // Archery target board (left half of the yard, next to the dummy —
-    // the right half is the horse pen once cavalry unlocks)
-    let tgx=sx-22, tgy=sy+46;
-    X.strokeStyle='#000000';X.lineWidth=1.5;
-    X.beginPath();X.moveTo(tgx,tgy);X.lineTo(tgx,tgy-8);X.stroke();
-    X.fillStyle=darken ? darkenColor('#fff') : '#fff';X.beginPath();X.arc(tgx,tgy-8,3.5,0,Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=darken ? darkenColor('#c00') : '#c00';X.beginPath();X.arc(tgx,tgy-8,1.5,0,Math.PI*2);X.fill();X.stroke();
+    // Cavalry spot at the FAR end of the yard (right corner): one horse
+    // with a haystack — a bay when scouts unlock at Feudal, swapped for
+    // the knight's white charger at Castle.
+    if(ownerAge >= 1){
+      let coat = ownerAge >= 2 ? '#e9e6de' : '#8b5a2b';
+      let mane = ownerAge >= 2 ? '#9a948a' : '#3f2810';
+      let hp0=BP(14,33);
+      drawYardHorse(hp0.x, hp0.y, coat, mane, true); // grazing at the haystack
+      // haystack mound in front of the horse
+      let hayC=darken?darkenColor('#d9b44a'):'#d9b44a';
+      let hpH=BP(20,44); // near the front fence — its rails overlap the mound slightly
+      let hx2=hpH.x, hy2=hpH.y;
+      X.fillStyle=hayC;X.strokeStyle='#000';X.lineWidth=1;
+      X.beginPath();
+      X.moveTo(hx2-5,hy2);
+      X.quadraticCurveTo(hx2-3.6,hy2-5,hx2,hy2-5.3);
+      X.quadraticCurveTo(hx2+3.6,hy2-5,hx2+5,hy2);
+      X.ellipse(hx2,hy2,5,2,0,0,Math.PI);
+      X.closePath();X.fill();X.stroke();
+      X.save();X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.7;
+      X.beginPath();X.moveTo(hx2-2.6,hy2-1.4);X.lineTo(hx2-0.9,hy2-3.6);
+      X.moveTo(hx2+0.9,hy2-3.8);X.lineTo(hx2+2.6,hy2-1.4);X.stroke();
+      X.restore();
+    }
 
-    // Fence around front edges
-    X.strokeStyle='#000000';X.lineWidth=1.5;
-    X.beginPath();X.moveTo(sx,sy+64);X.lineTo(sx+32,sy+48);X.stroke();
-    X.beginPath();X.moveTo(sx,sy+64);X.lineTo(sx-32,sy+48);X.stroke();
-    X.beginPath();
-    X.moveTo(sx,sy+64);X.lineTo(sx,sy+59);
-    X.moveTo(sx+16,sy+56);X.lineTo(sx+16,sy+51);
-    X.moveTo(sx-16,sy+56);X.lineTo(sx-16,sy+51);
-    X.stroke();
+    // Straw training dummies. Dark age (militia only) drills at TWO
+    // dummies, mirrored around the yard center; from Feudal the left one
+    // is replaced by the archery target / spear rack / horse gear.
+    let drawDummy=(pt)=>{
+      let dxp=pt.x, dyp=pt.y;
+      X.strokeStyle='#000';X.lineWidth=2.8;X.lineCap='round';
+      X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
+      X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
+      X.strokeStyle=darken ? darkenColor('#8a6a4a') : '#8a6a4a';X.lineWidth=1.4;
+      X.beginPath();X.moveTo(dxp,dyp);X.lineTo(dxp,dyp-13);X.stroke();
+      X.beginPath();X.moveTo(dxp-6,dyp-9.5);X.lineTo(dxp+6,dyp-9.5);X.stroke();
+      X.lineCap='butt';
+      X.fillStyle=darken ? darkenColor('#c8ab7a') : '#c8ab7a'; // burlap torso
+      X.strokeStyle='#000';X.lineWidth=1;
+      X.beginPath();X.ellipse(dxp,dyp-6,3.2,4.2,0,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#e8c04a') : '#e8c04a'; // straw head
+      X.beginPath();X.arc(dxp,dyp-14.5,2.6,0,Math.PI*2);X.fill();X.stroke();
+    };
+    if(ownerAge === 0){ drawDummy(BP(-12,32)); drawDummy(BP(12,32)); }
+    else drawDummy(BP(0,30));
+
+    // Archery target: round straw butt on an A-frame stand — the ARCHER
+    // tell, so it only appears once archers unlock at Feudal
+    if(ownerAge >= 1){
+      let tp0=BP(-15,40); // open front-left ground, nothing crowding it
+      let tgx=tp0.x, tgy=tp0.y;
+      X.strokeStyle='#000000';X.lineWidth=1.8;X.lineCap='round';
+      X.beginPath();X.moveTo(tgx-3.2,tgy);X.lineTo(tgx,tgy-7);X.moveTo(tgx+3.2,tgy);X.lineTo(tgx,tgy-7);X.stroke();
+      X.strokeStyle=darken ? darkenColor(WOOD.post) : WOOD.post;X.lineWidth=1;
+      X.beginPath();X.moveTo(tgx-3.2,tgy);X.lineTo(tgx,tgy-7);X.moveTo(tgx+3.2,tgy);X.lineTo(tgx,tgy-7);X.stroke();
+      X.lineCap='butt';
+      X.strokeStyle='#000000';X.lineWidth=1;
+      X.fillStyle=darken ? darkenColor('#e8c04a') : '#e8c04a'; // straw butt
+      X.beginPath();X.arc(tgx,tgy-9,4.4,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#f5f2e9') : '#f5f2e9';
+      X.beginPath();X.arc(tgx,tgy-9,2.8,0,Math.PI*2);X.fill();X.stroke();
+      X.fillStyle=darken ? darkenColor('#c03a2b') : '#c03a2b';
+      X.beginPath();X.arc(tgx,tgy-9,1.3,0,Math.PI*2);X.fill();X.stroke();
+
+      // Spear rack (the SPEARMAN tell, also Feudal): two spears leaning
+      // on a low rail at the front-left fence
+      let rp0=BP(-15,26); // open ground, 10 units clear of the left fence
+      let rx=rp0.x, ry=rp0.y;
+      X.strokeStyle='#000';X.lineWidth=2;X.lineCap='round';
+      X.beginPath();X.moveTo(rx-4,ry);X.lineTo(rx-4,ry-6);X.moveTo(rx+4,ry);X.lineTo(rx+4,ry-6);X.stroke();
+      X.beginPath();X.moveTo(rx-5,ry-5.5);X.lineTo(rx+5,ry-5.5);X.stroke();
+      X.strokeStyle=darken ? darkenColor(WOOD.post) : WOOD.post;X.lineWidth=0.9;
+      X.beginPath();X.moveTo(rx-4,ry);X.lineTo(rx-4,ry-6);X.moveTo(rx+4,ry);X.lineTo(rx+4,ry-6);X.stroke();
+      X.beginPath();X.moveTo(rx-5,ry-5.5);X.lineTo(rx+5,ry-5.5);X.stroke();
+      X.lineCap='butt';
+      let shaft=darken ? darkenColor('#8a5a2b') : '#8a5a2b';
+      [[-2,1],[1.5,2.5]].forEach(([ox,ox2])=>{
+        X.strokeStyle='#000';X.lineWidth=1.9;
+        X.beginPath();X.moveTo(rx+ox,ry+1);X.lineTo(rx+ox2,ry-13);X.stroke();
+        X.strokeStyle=shaft;X.lineWidth=0.9;
+        X.beginPath();X.moveTo(rx+ox,ry+1);X.lineTo(rx+ox2,ry-13);X.stroke();
+        X.fillStyle=darken ? darkenColor('#c8c8c8') : '#c8c8c8';X.strokeStyle='#000';X.lineWidth=0.8;
+        X.beginPath();X.moveTo(rx+ox2-1,ry-13);X.lineTo(rx+ox2+1,ry-13);X.lineTo(rx+ox2,ry-16);X.closePath();X.fill();X.stroke();
+      });
+    }
+
+    // 3D post-and-rail fence along the LEFT END and the long FRONT edge
+    // (the right end was drawn earlier, behind the props): posts at
+    // corners and evenly along the run, two rails between.
+    drawBarracksFence(
+      [BP(-bL,bD),BP(-bL,26),BP(-bL,38.5),BP(-bL,bYF),BP(-15,bYF),BP(0,bYF),BP(15,bYF),BP(bL,bYF)],
+      [[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]], darken);
 
   }
   else if(e.btype==='LCAMP'){
@@ -923,38 +1305,54 @@ function drawBuilding(e, part = null){
     
     // Small plank shack in the back-right quadrant
     drawBuildingBlock(sx+14, sy+8, 20, 10, 14, '#b89868','#987848','peaked',8,'#8a6a48','#715539', darken);
-    drawDoorLeft(sx+14, sy+8, 20, 10, '#5c3d24', darken);
+    drawDoorRight(sx+14, sy+8, 20, 10, '#5c3d24', darken);
     drawPennant(sx+14, sy-14, tc, darken);
     if(e.complete){
       let logCol=darken ? darkenColor('#6e473b') : '#6e473b';
+      let logTop=darken ? darkenColor('#7d5344') : '#7d5344';
       let endCol=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
       X.strokeStyle='#000000';X.lineWidth=1.2;
-      // Big log pile filling the front-left quadrant
-      let lx=sx-20, ly=sy+bhh*1.0;
-      [[0,8],[-5,0],[2,-7]].forEach(([dx,dy])=>{
-        let x=lx+dx, y=ly+dy;
-        X.fillStyle=logCol;X.fillRect(x-13,y-4,26,8);X.strokeRect(x-13,y-4,26,8);
+      // ISO log pile: logs lie along the tile's SE diagonal (screen slope
+      // +0.5), cut ends facing the camera, stacked with real gravity —
+      // two on the ground separated along the other diagonal, one on top.
+      const UX=0.894, UY=0.447;             // SE ground direction
+      const VX=-0.894, VY=0.447;            // SW ground direction
+      let drawIsoLog=(cx,cy,L,r)=>{
+        // body: thick round-capped stroke along the SE axis — the back
+        // end is naturally rounded, the front gets the cut face
+        let x1=cx-L*UX, y1=cy-L*UY, x2=cx+L*UX, y2=cy+L*UY;
+        X.lineCap='round';
+        X.strokeStyle='#000000';X.lineWidth=r*2+2.4;
+        X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
+        X.strokeStyle=logCol;X.lineWidth=r*2;
+        X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
+        X.lineCap='butt';
+        // subtle lit top edge
+        X.save();X.strokeStyle='rgba(255,255,255,0.25)';X.lineWidth=1;
+        X.beginPath();X.moveTo(x1,y1-r+1.2);X.lineTo(x2,y2-r+1.2);X.stroke();
+        X.restore();
+        // near cut end facing the camera, with a growth ring
+        X.strokeStyle='#000000';X.lineWidth=1.2;
         X.fillStyle=endCol;
-        X.beginPath();X.ellipse(x-13,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
-        X.beginPath();X.ellipse(x+13,y,3.2,4,0,0,Math.PI*2);X.fill();X.stroke();
-        X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8;
-        X.beginPath();X.arc(x+13,y,1.6,0,Math.PI*2);X.stroke();
-        X.strokeStyle='#000';X.lineWidth=1.2;
-      });
-      // Chopping stump with an axe planted in it
+        X.beginPath();X.ellipse(x2,y2,r*0.88,r,0,0,Math.PI*2);X.fill();X.stroke();
+        X.save();X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8;
+        X.beginPath();X.ellipse(x2,y2,r*0.45,r*0.52,0,0,Math.PI*2);X.stroke();X.restore();
+      };
+      let lx=sx-20, ly=sy+bhh*1.05;
+      // painter's order: farther ground log first, nearer one over it,
+      // the stacked log last (it sits on top of both)
+      drawIsoLog(lx-VX*5, ly-VY*5+2, 11, 4);   // ground, farther
+      drawIsoLog(lx+VX*5, ly+VY*5+2, 11, 4);   // ground, nearer
+      drawIsoLog(lx, ly-4.5, 11, 4);           // stacked on top
+      // Chopping stump: cylinder with a rounded base and pale cut top
       let cbx=sx+6, cby=sy+bhh*1.55;
-      X.fillStyle=darken ? darkenColor('#8a5a3a') : '#8a5a3a';X.fillRect(cbx-5,cby-7,10,9);
-      X.strokeRect(cbx-5,cby-7,10,9);
+      let stumpC=darken ? darkenColor('#8a5a3a') : '#8a5a3a';
+      X.fillStyle=stumpC;X.beginPath();
+      X.moveTo(cbx-5,cby-7);X.lineTo(cbx-5,cby+2);
+      X.ellipse(cbx,cby+2,5,2.6,0,Math.PI,0,true);   // rounded bottom
+      X.lineTo(cbx+5,cby-7);
+      X.closePath();X.fill();X.stroke();
       X.fillStyle=endCol;X.beginPath();X.ellipse(cbx,cby-7,5,2.6,0,0,Math.PI*2);X.fill();X.stroke();
-      // Axe: handle angled up-right, head buried in the stump face
-      X.strokeStyle='#000';X.lineWidth=2.6;X.lineCap='round';
-      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx+8,cby-17);X.stroke();
-      X.strokeStyle='#8B4513';X.lineWidth=1.3;
-      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx+8,cby-17);X.stroke();
-      X.lineCap='butt';
-      X.fillStyle=darken ? darkenColor('#b0b0b0') : '#b0b0b0';
-      X.beginPath();X.moveTo(cbx+1,cby-8);X.lineTo(cbx-3,cby-11);X.lineTo(cbx-1,cby-5);X.closePath();
-      X.fill();X.strokeStyle='#000';X.lineWidth=1;X.stroke();
     }
   }
   else if(e.btype==='MCAMP'){
@@ -965,96 +1363,189 @@ function drawBuilding(e, part = null){
 
     // Dark timber mine shed in the back-right quadrant
     drawBuildingBlock(sx+14, sy+8, 20, 10, 12, '#7a6a55','#635546','peaked',7,'#55483a','#463b2f', darken);
-    drawDoorLeft(sx+14, sy+8, 20, 10, '#2e2519', darken);
+    drawDoorRight(sx+14, sy+8, 20, 10, '#2e2519', darken);
     drawPennant(sx+14, sy-10, tc, darken);
     if(e.complete){
       X.strokeStyle='#000000';X.lineWidth=1.2;
-      // Ore cart heaped with gold in the front-left quadrant
-      let mx=sx-18, my=sy+bhh*1.15;
-      // Ore heap first (behind the cart's front wall)
+      // ISO ore cart: an open-top 3D box aligned to the tile's SE
+      // diagonal, gold heaped inside, wheels on the visible flank.
+      let mx=sx-18, my=sy+bhh*1.1;
+      const UX=0.894, UY=0.447;   // SE (cart axis)
+      const VX=-0.894, VY=0.447;  // SW (across the cart)
+      const a=8, b=4.5, h=8;      // half-length, half-width, wall height
+      // ground corners: A back, B right, C front(nearest), D left
+      let Ax=mx-a*UX-b*VX, Ay=my-a*UY-b*VY;
+      let Bx=mx+a*UX-b*VX, By=my+a*UY-b*VY;
+      let Cx=mx+a*UX+b*VX, Cy=my+a*UY+b*VY;
+      let Dx=mx-a*UX+b*VX, Dy=my-a*UY+b*VY;
+      let wood=darken ? darkenColor('#6e5138') : '#6e5138';
+      let woodL=darken ? darkenColor('#7d5f42') : '#7d5f42';
+      // right-end face (B-C edge, toward the camera along the axis)
+      X.fillStyle=wood;X.beginPath();
+      X.moveTo(Bx,By-h);X.lineTo(Cx,Cy-h);X.lineTo(Cx,Cy);X.lineTo(Bx,By);X.closePath();X.fill();X.stroke();
+      // long flank (C-D edge, the near side) with plank lines
+      X.fillStyle=woodL;X.beginPath();
+      X.moveTo(Cx,Cy-h);X.lineTo(Dx,Dy-h);X.lineTo(Dx,Dy);X.lineTo(Cx,Cy);X.closePath();X.fill();X.stroke();
+      X.save();X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.9;
+      X.beginPath();X.moveTo(Cx-0.8,Cy-h*0.62);X.lineTo(Dx+0.8,Dy-h*0.62);X.stroke();
+      X.beginPath();X.moveTo(Cx-0.8,Cy-h*0.3);X.lineTo(Dx+0.8,Dy-h*0.3);X.stroke();
+      X.restore();
+      // open top: dark interior rim, then the gold heap rising out of it
+      X.fillStyle=darken ? darkenColor('#3c2d1e') : '#3c2d1e';
+      X.beginPath();
+      X.moveTo(Ax,Ay-h);X.lineTo(Bx,By-h);X.lineTo(Cx,Cy-h);X.lineTo(Dx,Dy-h);X.closePath();X.fill();X.stroke();
       let gcol=darken ? darkenColor('#e8b90f') : '#e8b90f';
       let gtop=darken ? darkenColor('#ffe14d') : '#ffe14d';
-      [[-4,-9],[0,-11],[4,-9],[-2,-7],[3,-6]].forEach(([dx,dy])=>{
-        X.fillStyle=gcol;X.beginPath();X.arc(mx+dx,my+dy,3,0,Math.PI*2);X.fill();X.stroke();
-        X.fillStyle=gtop;X.beginPath();X.arc(mx+dx-1,my+dy-1,1.3,0,Math.PI*2);X.fill();
+      [[-3,-1.5],[0,-3],[3,-1.5],[-1.5,0],[2,0.5]].forEach(([dx,dy])=>{
+        let nx2=mx+dx, ny2=my-h-2+dy;
+        X.fillStyle=gcol;X.beginPath();X.arc(nx2,ny2,2.6,0,Math.PI*2);X.fill();X.stroke();
+        X.fillStyle=gtop;X.beginPath();X.arc(nx2-0.8,ny2-0.8,1.1,0,Math.PI*2);X.fill();
       });
-      // Cart body (inverted trapezoid) with plank lines
-      X.fillStyle=darken ? darkenColor('#6e5138') : '#6e5138';
-      X.beginPath();X.moveTo(mx-10,my-8);X.lineTo(mx+10,my-8);X.lineTo(mx+7,my+1);X.lineTo(mx-7,my+1);X.closePath();
-      X.fill();X.stroke();
-      X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.9;
-      X.beginPath();X.moveTo(mx-9,my-5);X.lineTo(mx+9,my-5);X.stroke();
-      X.beginPath();X.moveTo(mx-8,my-2);X.lineTo(mx+8,my-2);X.stroke();
-      X.strokeStyle='#000';X.lineWidth=1.2;
-      // Wheels
+      // wheels on the near flank, perpendicular to the axis (squashed)
       X.fillStyle=darken ? darkenColor('#3a2f24') : '#3a2f24';
-      X.beginPath();X.arc(mx-5,my+2.5,2.6,0,Math.PI*2);X.fill();X.stroke();
-      X.beginPath();X.arc(mx+5,my+2.5,2.6,0,Math.PI*2);X.fill();X.stroke();
-      // Stone boulder pile beside the cart
+      [[-4],[4]].forEach(([t])=>{
+        let wx2=mx+t*UX+b*VX, wy2=my+t*UY+b*VY+1;
+        X.beginPath();X.ellipse(wx2,wy2,2.1,2.7,0,0,Math.PI*2);X.fill();X.stroke();
+        X.fillStyle='rgba(255,255,255,0.25)';
+        X.beginPath();X.arc(wx2,wy2,0.7,0,Math.PI*2);X.fill();
+        X.fillStyle=darken ? darkenColor('#3a2f24') : '#3a2f24';
+      });
+      // Faceted stone boulders beside the cart (polygonal, lit upper-left)
       let scol=darken ? darkenColor('#8b8b8b') : '#8b8b8b';
       let scol2=darken ? darkenColor('#9a9a9a') : '#9a9a9a';
-      X.fillStyle=scol;X.beginPath();X.arc(sx+2,sy+bhh*1.55,5.5,0,Math.PI*2);X.fill();X.stroke();
-      X.fillStyle=scol2;X.beginPath();X.arc(sx+9,sy+bhh*1.45,4,0,Math.PI*2);X.fill();X.stroke();
+      let rock=(rx,ry,r)=>{
+        X.fillStyle=scol;X.beginPath();
+        X.moveTo(rx-r,ry+r*0.35);X.lineTo(rx-r*0.55,ry-r*0.75);X.lineTo(rx+r*0.4,ry-r);
+        X.lineTo(rx+r,ry-r*0.15);X.lineTo(rx+r*0.65,ry+r*0.8);X.lineTo(rx-r*0.35,ry+r*0.95);
+        X.closePath();X.fill();X.stroke();
+        X.fillStyle=scol2;X.beginPath();
+        X.moveTo(rx-r*0.55,ry-r*0.75);X.lineTo(rx+r*0.4,ry-r);X.lineTo(rx+r*0.2,ry-r*0.1);X.lineTo(rx-r*0.5,ry-r*0.05);
+        X.closePath();X.fill();
+      };
+      rock(sx+2, sy+bhh*1.5, 5.5);
+      rock(sx+10, sy+bhh*1.42, 4);
     }
   }
   else if(e.btype==='MILL'){
-    // One continuously-tapering octagonal tower (matching the icon-MILL
-    // reference art) — 3 color bands suggest stone-to-timber courses without
-    // ever breaking the outline into separate stepped drums.
+    // Age-progressed mill body under a tall pointed cone cap:
+    //  DARK    — hexagonal timber smock: three visible plank facets
+    //  FEUDAL+ — round stone tower mill: curved silhouette, cylindrical
+    //            shading bands, masonry courses
     bh=72;
     let by = sy + bhh;                 // tower centered on the 2x2 footprint
-    let W0=bw*0.58, W1=bw*0.30;        // base / top half-widths
+    // Dark's hex smock tapers hard; the stone tower keeps a gentler taper
+    // so it reads as a CYLINDER with a slight batter, not a cone
+    let W0=ownerAge===0 ? bw*0.52 : bw*0.46, W1=ownerAge===0 ? bw*0.27 : bw*0.36;
     let H=48, ty=by-H;
     const lerp=(a,b,t)=>a+(b-a)*t;
     const wAt=t=>lerp(W0,W1,t);        // half-width at height-fraction t (0=base,1=top)
     const yAt=t=>lerp(by,ty,t);
-    // 3 bands, each a trapezoid whose edges exactly meet the next band's —
-    // no gaps, no ledges, one unbroken silhouette.
-    let bands=[
-      {t0:0,    t1:0.42, cL:'#8a6a42', cR:'#6d4f30'}, // dark cocoa base
-      {t0:0.42, t1:0.74, cL:tc, cR:tcD}, // mid brown
-      {t0:0.74, t1:1,    cL:'#c9a874', cR:'#a9895c'}, // lighter top band
-    ];
+    const dip=t=>wAt(t)*0.40;          // how far the front of the ring bulges below the side corners
     X.lineJoin='round';
-    bands.forEach(bd=>{
-      let y0=yAt(bd.t0), y1=yAt(bd.t1);
-      let w0=wAt(bd.t0), w1=wAt(bd.t1);
-      let h0=w0*0.5, h1=w1*0.5;
-      let wl=darken?darkenColor(bd.cL):bd.cL, wr=darken?darkenColor(bd.cR):bd.cR;
+    // front surface bottom at height t — the round body's bottom curve has
+    // control depth dip*2.2, so the CURVE itself sits at dip*1.1 mid-front
+    let frontY=t=>yAt(t)+dip(t)*(ownerAge===0?1:1.1);
+
+    if(ownerAge===0){
+      // Hexagonal prism: side corners at ±wAt, front corners at ±0.4·wAt
+      // dropped by dip() — three facets lit left→front→right per the light
+      const k=0.4;
+      let vx=t=>{let w=wAt(t),y=yAt(t),d=dip(t);return {
+        L:{x:sx-w,y}, FL:{x:sx-w*k,y:y+d}, FR:{x:sx+w*k,y:y+d}, R:{x:sx+w,y}};};
+      let b0=vx(0), b1=vx(1);
+      let quad=(p1,p2,p3,p4,col)=>{
+        X.fillStyle=darken?darkenColor(col):col;X.beginPath();
+        X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.lineTo(p3.x,p3.y);X.lineTo(p4.x,p4.y);
+        X.closePath();X.fill();X.stroke();
+      };
       X.strokeStyle='#000';X.lineWidth=1.2;
-      X.fillStyle=wl;X.beginPath();
-      X.moveTo(sx-w0,y0);X.lineTo(sx,y0+h0);X.lineTo(sx,y1+h1);X.lineTo(sx-w1,y1);X.closePath();X.fill();X.stroke();
-      X.fillStyle=wr;X.beginPath();
-      X.moveTo(sx,y0+h0);X.lineTo(sx+w0,y0);X.lineTo(sx+w1,y1);X.lineTo(sx,y1+h1);X.closePath();X.fill();X.stroke();
-    });
+      quad(b0.L,b0.FL,b1.FL,b1.L, WOOD.plankL);
+      quad(b0.FL,b0.FR,b1.FR,b1.FL, '#a8845a');
+      quad(b0.FR,b0.R,b1.R,b1.FR, WOOD.plankR);
+      // plank courses across all three facets
+      X.save();X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
+      [0.2,0.4,0.6,0.8].forEach(t=>{
+        let v=vx(t);
+        X.beginPath();X.moveTo(v.L.x,v.L.y);X.lineTo(v.FL.x,v.FL.y);
+        X.lineTo(v.FR.x,v.FR.y);X.lineTo(v.R.x,v.R.y);X.stroke();
+      });
+      X.restore();
+    } else {
+      // Round tower: one silhouette with curved bottom/top rings, shaded
+      // as a cylinder — lit band on the left rolling to shadow on the
+      // right (flat bands, keeping the game's flat-color language)
+      // five shading steps rolling light→dark across the curve — more
+      // subdivisions sell the roundness
+      let shades=['#ded7c5','#cfc8b6','#b7ad97','#a49a84','#8f8672'];
+      if(darken) shades=shades.map(darkenColor);
+      let path=()=>{
+        X.beginPath();
+        X.moveTo(sx-W0,by);
+        X.quadraticCurveTo(sx,by+dip(0)*2.2,sx+W0,by);
+        X.lineTo(sx+W1,ty);
+        X.quadraticCurveTo(sx,ty+dip(1)*2.2,sx-W1,ty);
+        X.closePath();
+      };
+      X.save(); path(); X.clip();
+      X.fillStyle=shades[0]; X.fillRect(sx-W0-2,ty-dip(1)*2-2,W0*4,H+dip(0)*4+4);
+      // band boundaries taper with the body so the shading follows the form
+      let band=(f,col)=>{
+        X.fillStyle=col;X.beginPath();
+        X.moveTo(sx+f*W0,frontY(0)+2);X.lineTo(sx+f*W1,frontY(1)-8);
+        X.lineTo(sx+W0*2,ty-20);X.lineTo(sx+W0*2,by+30);X.closePath();X.fill();
+      };
+      [-0.42,-0.05,0.34,0.66].forEach((f,i)=>band(f,shades[i+1]));
+      // masonry courses: curved rings + staggered joints
+      X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+      [0.18,0.36,0.54,0.72,0.9].forEach((t,ci)=>{
+        let w=wAt(t), y=yAt(t);
+        X.beginPath();X.moveTo(sx-w,y);
+        X.quadraticCurveTo(sx,y+dip(t)*2.2,sx+w,y);X.stroke();
+        let joints = ci%2 ? [-0.55,-0.1,0.35] : [-0.35,0.1,0.55];
+        joints.forEach(f=>{
+          let jx=sx+f*w, jy=y+dip(t)*2.2*(1-(f*f))*0.5; // approx on the ring curve
+          X.beginPath();X.moveTo(jx,jy);X.lineTo(jx,jy-3);X.stroke();
+        });
+      });
+      X.restore();
+      X.strokeStyle='#000';X.lineWidth=1.2; path(); X.stroke();
+    }
 
-    // Door centered on the base band's left face
-    let baseW=wAt(0), baseH=baseW*0.5;
-    let dA={x:sx-baseW*0.62,y:by+baseH*0.38}, dB={x:sx-baseW*0.38,y:by+baseH*0.62};
-    X.fillStyle=darken?darkenColor('#3a2612'):'#3a2612';
-    X.strokeStyle='#000';X.lineWidth=1;
-    X.beginPath();X.moveTo(dA.x,dA.y);X.lineTo(dB.x,dB.y);
-    X.lineTo(dB.x,dB.y-12);X.lineTo(dA.x,dA.y-12);X.closePath();X.fill();X.stroke();
+    // Door at the front center of the base, leaning with the taper
+    let doorC=darken?darkenColor('#3a2612'):'#3a2612';
+    let dhw0=4.5, dhw1=4.5*wAt(13/H)/wAt(0);
+    let dy0=frontY(0)-0.5;
+    X.fillStyle=doorC;X.strokeStyle='#000';X.lineWidth=1;
+    X.beginPath();
+    X.moveTo(sx-dhw0,dy0);X.lineTo(sx+dhw0,dy0);
+    X.lineTo(sx+dhw1,frontY(13/H));X.lineTo(sx-dhw1,frontY(13/H));X.closePath();
+    X.fill();X.stroke();
 
-    // ---- Rounded dome cap, flush with the tower's own top width (no
-    // separate steep cone / overhang jump — continues the same taper) ----
-    let topHalf=W1*0.5;
-    let capH=16;
-    
-    // Team-colored dome cap
-    let cl=darken?darkenColor('#a65c3b'):'#a65c3b', cr=darken?darkenColor('#863c20'):'#863c20';
-    X.strokeStyle='#000';X.lineWidth=1.2;
+    // ---- Tall pointed cone cap (wood, both ages) ----
+    // Two-tone halves filled WITHOUT strokes, then one silhouette stroke —
+    // no center seam line splitting the cone.
+    let capH=22;
+    let cl=darken?darkenColor(WOOD.L):WOOD.L, cr=darken?darkenColor(WOOD.R):WOOD.R;
+    let capBaseY=frontY(1);
     X.fillStyle=cl;X.beginPath();
-    X.moveTo(sx,ty-capH);X.quadraticCurveTo(sx-W1,ty-capH*0.3,sx-W1,ty);X.lineTo(sx,ty+topHalf);X.closePath();X.fill();X.stroke();
+    X.moveTo(sx,ty-capH);X.lineTo(sx-W1-1,ty);
+    X.quadraticCurveTo(sx-W1*0.4,capBaseY+1,sx,capBaseY+1);X.closePath();X.fill();
     X.fillStyle=cr;X.beginPath();
-    X.moveTo(sx,ty-capH);X.quadraticCurveTo(sx+W1,ty-capH*0.3,sx+W1,ty);X.lineTo(sx,ty+topHalf);X.closePath();X.fill();X.stroke();
+    X.moveTo(sx,ty-capH);X.lineTo(sx+W1+1,ty);
+    X.quadraticCurveTo(sx+W1*0.4,capBaseY+1,sx,capBaseY+1);X.closePath();X.fill();
+    X.strokeStyle='#000';X.lineWidth=1.2;
+    X.beginPath();
+    X.moveTo(sx,ty-capH);X.lineTo(sx-W1-1,ty);
+    X.quadraticCurveTo(sx-W1*0.4,capBaseY+1,sx,capBaseY+1);
+    X.quadraticCurveTo(sx+W1*0.4,capBaseY+1,sx+W1+1,ty);
+    X.closePath();X.stroke();
 
-    if(e.complete){
-      let hubY=ty+topHalf*0.3;
-      // Team pennant drawn BEFORE the sails so the blades sweep in front of
-      // it, matching how a mounted flag sits behind a windmill's fan.
-      // drawPennant(sx,ty-capH,tc,darken); // planted on the dome apex
-      if(visible) drawWindmillSails(sx, hubY, e.id, 1.6);
+    if(e.complete && visible){
+      // Front-mounted fan, hub centered on the cap. Sails alternate
+      // white canvas / team color so ownership reads while the fan still
+      // looks like cloth.
+      let hubY=ty+W1*0.55; // at the cap's base edge, where a real windshaft exits
+      drawWindmillSails(sx, hubY, e.id, 1.75, '#f0ead8', darken?darkenColor(tc):tc);
     }
   }
   else if(e.btype==='TOWER'){
@@ -1077,7 +1568,10 @@ function drawBuilding(e, part = null){
     // Feudal wears a peaked team-color roof; Castle swaps it for merlons.
     let pfS = ['#cfc8b6', '#aca392', '#b7ad97'];
     let towerH = 40; // gate posts use pillarH 22
-    drawBuildingBlock(sx, linkY-7, 14, 7, towerH, pfS[0], pfS[1], 'flat', 0, pfS[2], pfS[2], darken, ownerAge >= 2);
+    // topLight at every age: the crown's front rim edges take the light
+    // seam stroke — a hard black diamond outline showed as a dark ring
+    // around the base of the Feudal peaked cap (which is 12 wide vs 14).
+    drawBuildingBlock(sx, linkY-7, 14, 7, towerH, pfS[0], pfS[1], 'flat', 0, pfS[2], pfS[2], darken, true);
     // arrow slits on BOTH visible faces — arrows can come from either side
     X.fillStyle = '#1c1c1c';
     X.save(); X.translate(sx-7, sy-4); X.transform(1,0.5,0,1,0,0);
@@ -1101,13 +1595,15 @@ function drawBuilding(e, part = null){
     // stub takes the neighbor's material so it reads as that run continuing.
     let sN = getConnectedBuilding(e.x, e.y + 1);
     if (isWallLike(sN)) {
-      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, wallMat(sN.btype) || 'wood');
+      let m2 = wallMat(sN.btype) || 'wood', lt2 = m2==='stone'?4:3.5;
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2==='stone'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2);
     }
 
     // East neighbor (x+1)
     let eN = getConnectedBuilding(e.x + 1, e.y);
     if (isWallLike(eN)) {
-      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, wallMat(eN.btype) || 'wood');
+      let m3 = wallMat(eN.btype) || 'wood', lt3 = m3==='stone'?4:3.5;
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3==='stone'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3);
     }
 
     // Castle: pole planted on the back merlon's cap (sy-40), matching the
@@ -1131,31 +1627,42 @@ function drawBuilding(e, part = null){
     // the same wall run instead of a separately-shaded block. Pillar caps
     // and walkway link tops are all team-colored (ownership read) — the
     // cap as a SINGLE flat color, like the links' flat tops.
-    drawBuildingBlock(sx, sy+11, 9, 4.5, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
+    // The Dark-age palisade is SKINNIER than the stone wall (7px posts vs
+    // 9px pillars); the link geometry below scales with it so the
+    // edge-coincidence math still holds (thick = pillar half-width/2,
+    // d1 = thick*sqrt(5)/2 * 2 = thick/cos, bottom vertex kept at sy+20).
+    let isWood = mat !== 'stone';
+    let pw = isWood ? 7 : 9;
+    let lthick = pw / 2;
+    drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
-    // Slab half-thickness 4.5 makes the link's 9px cross-section match
-    // the pillar's half-width exactly, and d1 = 2.25*sqrt(5) centers it:
-    // the near-end edge lands on the pillar's FRONT vertical edge and the
-    // back top corner on its BACK vertical edge, so both outlines
-    // coincide with the pillar's instead of doubling into thick lines.
-    // (linkY - 0.5: the 4.5-thick slab's bottom front corner otherwise
-    // lands 0.5px below the pillar's bottom vertex)
-    let d1 = 2.25 * Math.sqrt(5);
+    // Slab half-thickness = pillar half-width/... matches the pillar's
+    // cross-section exactly; d1 centers it so the near-end edge lands on
+    // the pillar's FRONT vertical edge and the back top corner on its
+    // BACK vertical edge — outlines coincide instead of doubling.
+    // (linkY - 0.5: the slab's bottom front corner otherwise lands just
+    // below the pillar's bottom vertex)
+    let d1 = lthick * Math.sqrt(5) / 2;
     // South neighbor (y+1)
     if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
-      drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, 4.5, false, mat);
+      drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     }
 
     // East neighbor (x+1)
     if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
-      drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, 4.5, false, mat);
+      drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     }
   }
 
   else if(isGateBtype(e.btype)){
     let mat = wallMat(e.btype);
     let pf = mat === 'stone' ? ['#c8c0ae', '#a89f8d', '#b0b0a4'] : [WOOD.L, WOOD.R, WOOD.top];
+    // Link stubs must match the wall runs they join: the palisade is
+    // skinnier (3.5 half-thickness) than stone (4.5), and the far-end
+    // trim is the matching pillar-face distance so no gap opens.
+    let lth = mat === 'stone' ? 4 : 3.5;
+    let dEnd = mat === 'stone' ? 5 : lth * Math.sqrt(5) / 2;
     let pillarH = 28;
     bh = pillarH;
     let t1sx, t1sy, t2sx, t2sy;
@@ -1215,12 +1722,12 @@ function drawBuilding(e, part = null){
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
         if (isWallLike(getConnectedBuilding(e.x + 1, e.y), mat)) {
-          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, 5, null, tc, 4, false, mat);
+          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
         if (isWallLike(getConnectedBuilding(e.x, e.y + 1), mat)) {
-          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, 5, null, tc, 4, false, mat);
+          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
         }
       }
 
@@ -1243,18 +1750,18 @@ function drawBuilding(e, part = null){
       if (wallLineNS) {
         // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
         if (isWallLike(getConnectedBuilding(e.x, e.y + 2), mat)) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
         if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       } else {
         // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
         if (isWallLike(getConnectedBuilding(e.x + 2, e.y), mat)) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
         if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1), mat)) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, 5, null, tc, 4, false, mat);
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       }
     }
@@ -1263,56 +1770,103 @@ function drawBuilding(e, part = null){
     bh=0;
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
     let growth=tileRes/(e.maxFood||300);
-    // Footprint diamond corners
+    // Ground-level footprint corners and the raised bed (tilled soil sits
+    // a few px proud of the grass, with visible dirt sides on the two
+    // camera-facing edges — that lift is what makes the field read 3D).
+    const bedH=2.5;
     let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
-    // Tilled soil bed covering the footprint
-    X.fillStyle = darken?darkenColor('#7a5a38'):'#7a5a38';
-    X.beginPath();X.moveTo(cT.x,cT.y);X.lineTo(cR.x,cR.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();
-    X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=1.2;X.stroke();
-    // Furrows parallel to the top-right edge
-    let rows=[0.2,0.4,0.6,0.8];
+    let up=c=>({x:c.x,y:c.y-bedH});
+    let rT=up(cT), rR=up(cR), rB=up(cB), rL=up(cL);
+    // exhausted soil is paler and greyer — worked-out dirt
+    let dead=e.exhausted;
+    let soil    = dead ? '#7d6a52' : '#7a5a38';
+    let ridgeLt = dead ? '#8a7660' : '#87663f'; // lit ridge crest
+    let ridgeDk = dead ? '#6f5d47' : '#6b4d2e'; // furrow trough
+    let sideSW  = dead ? '#5f5040' : '#5e4527'; // bed side, SW-facing (lit side)
+    let sideSE  = dead ? '#4f4234' : '#4b371f'; // bed side, SE-facing (shaded)
+    if(darken){ soil=darkenColor(soil); ridgeLt=darkenColor(ridgeLt); ridgeDk=darkenColor(ridgeDk); sideSW=darkenColor(sideSW); sideSE=darkenColor(sideSE); }
+    X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
+    // bed side faces (front-left and front-right edges, extruded to ground)
+    X.fillStyle=sideSW;X.beginPath();
+    X.moveTo(rL.x,rL.y);X.lineTo(rB.x,rB.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();X.stroke();
+    X.fillStyle=sideSE;X.beginPath();
+    X.moveTo(rB.x,rB.y);X.lineTo(rR.x,rR.y);X.lineTo(cR.x,cR.y);X.lineTo(cB.x,cB.y);X.closePath();X.fill();X.stroke();
+    // bed top
+    X.fillStyle=soil;X.beginPath();
+    X.moveTo(rT.x,rT.y);X.lineTo(rR.x,rR.y);X.lineTo(rB.x,rB.y);X.lineTo(rL.x,rL.y);X.closePath();X.fill();
+    X.strokeStyle='rgba(0,0,0,0.35)';X.stroke();
+    // Plough ridges: alternating raised/trough bands parallel to the
+    // top-right edge. Each ridge catches light on its upper-left flank
+    // (band fill) and drops a furrow shadow line on its lower edge.
+    const NR=5; // ridge count
     let rowEnds=t=>[
-      {x:cT.x+(cL.x-cT.x)*t, y:cT.y+(cL.y-cT.y)*t},
-      {x:cR.x+(cB.x-cR.x)*t, y:cR.y+(cB.y-cR.y)*t}
+      {x:rT.x+(rL.x-rT.x)*t, y:rT.y+(rL.y-rT.y)*t},
+      {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
     ];
-    X.strokeStyle='rgba(0,0,0,0.18)';X.lineWidth=1.2;
-    rows.forEach(t=>{
-      let [a,b2]=rowEnds(t);
-      X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b2.x,b2.y);X.stroke();
-    });
-    if(growth>0 && !e.exhausted){
-      // Wheat planted in rows along the furrows: green sprouts that grow
-      // into tall golden stalks with grain heads as the field ripens.
-      let cropH=2+growth*7;
+    for(let i=0;i<NR;i++){
+      let t0=i/NR, t1=(i+1)/NR;
+      let [a0,b0]=rowEnds(t0), [a1,b1]=rowEnds(t1);
+      // lit crest band = upper 55% of the strip; trough = the rest
+      let mid=u=>({x:a0.x+(a1.x-a0.x)*u, y:a0.y+(a1.y-a0.y)*u});
+      let midB=u=>({x:b0.x+(b1.x-b0.x)*u, y:b0.y+(b1.y-b0.y)*u});
+      let m=mid(0.55), mb=midB(0.55);
+      X.fillStyle=ridgeLt;X.beginPath();
+      X.moveTo(a0.x,a0.y);X.lineTo(b0.x,b0.y);X.lineTo(mb.x,mb.y);X.lineTo(m.x,m.y);X.closePath();X.fill();
+      X.fillStyle=ridgeDk;X.beginPath();
+      X.moveTo(m.x,m.y);X.lineTo(mb.x,mb.y);X.lineTo(b1.x,b1.y);X.lineTo(a1.x,a1.y);X.closePath();X.fill();
+      // furrow shadow line at the strip boundary
+      X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
+      X.beginPath();X.moveTo(a1.x,a1.y);X.lineTo(b1.x,b1.y);X.stroke();
+    }
+    // crop rows stand on the ridge crests
+    let rows=[]; for(let i=0;i<NR;i++) rows.push((i+0.3)/NR);
+    if(growth>0 && !dead){
+      // Wheat: clusters along each ridge. Sprouts (green, splayed) grow
+      // into tall golden stalks that lean slightly and carry grain heads
+      // with awn whiskers when ripe.
+      let cropH=2.5+growth*7.5;
       let ripe=growth>0.55;
       let stalkCol = ripe ? '#c9a227' : '#6fa03a';
       let headCol  = ripe ? '#e8c84a' : '#8fbf55';
       if(darken){ stalkCol=darkenColor(stalkCol); headCol=darkenColor(headCol); }
       rows.forEach((t,ri)=>{
         let [a,b2]=rowEnds(t);
-        for(let i=1;i<=4;i++){
-          let u=i/5+((ri%2)?0.05:-0.05);
+        for(let i=1;i<=6;i++){
+          let u=i/7+((ri%2)?0.03:-0.03);
           let px=a.x+(b2.x-a.x)*u, py=a.y+(b2.y-a.y)*u;
-          X.strokeStyle=stalkCol;X.lineWidth=1.4;
-          X.beginPath();X.moveTo(px,py);X.lineTo(px,py-cropH);X.stroke();
-          X.beginPath();X.moveTo(px,py);X.lineTo(px-2,py-cropH*0.75);X.stroke();
-          X.beginPath();X.moveTo(px,py);X.lineTo(px+2,py-cropH*0.75);X.stroke();
+          let lean=(((i*7+ri*13)%5)-2)*0.55; // deterministic per-cluster lean
+          X.strokeStyle=stalkCol;X.lineWidth=1.3;
+          X.beginPath();X.moveTo(px,py);X.lineTo(px+lean,py-cropH);X.stroke();
+          X.beginPath();X.moveTo(px,py);X.lineTo(px-2+lean*0.5,py-cropH*0.7);X.stroke();
+          X.beginPath();X.moveTo(px,py);X.lineTo(px+2+lean*0.5,py-cropH*0.7);X.stroke();
           if(growth>0.3){
+            let hx=px+lean, hy=py-cropH;
             X.fillStyle=headCol;
-            X.beginPath();X.ellipse(px,py-cropH,1.3,2.0,0,0,Math.PI*2);X.fill();
+            X.beginPath();X.ellipse(hx,hy,1.2,2.0,lean*0.12,0,Math.PI*2);X.fill();
             X.strokeStyle='rgba(0,0,0,0.5)';X.lineWidth=0.7;X.stroke();
+            if(ripe){ // awn whiskers off the head
+              X.strokeStyle=headCol;X.lineWidth=0.7;
+              X.beginPath();X.moveTo(hx,hy-1.6);X.lineTo(hx+1.2,hy-3.2);X.stroke();
+              X.beginPath();X.moveTo(hx,hy-1.6);X.lineTo(hx-1.0,hy-3.0);X.stroke();
+            }
           }
         }
       });
     } else {
-      // Withered, exhausted stalks slumped along the furrows
-      X.strokeStyle = darken ? '#251e16' : '#3f2f22';X.lineWidth=1.0;
+      // Harvested/exhausted: short cut stubble on the crests plus a few
+      // fallen straws lying along the furrows.
+      let stub = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
       rows.forEach((t,ri)=>{
         let [a,b2]=rowEnds(t);
-        for(let i=1;i<=3;i++){
-          let u=i/4+((ri%2)?0.06:-0.06);
+        for(let i=1;i<=6;i++){
+          let u=i/7+((ri%2)?0.04:-0.04);
           let px=a.x+(b2.x-a.x)*u, py=a.y+(b2.y-a.y)*u;
-          X.beginPath();X.moveTo(px,py);X.lineTo(px+3,py-3);X.stroke();
+          X.strokeStyle=stub;X.lineWidth=1.1;
+          X.beginPath();X.moveTo(px,py);X.lineTo(px-0.6,py-2.2);X.stroke();
+          X.beginPath();X.moveTo(px+1,py);X.lineTo(px+1.4,py-1.8);X.stroke();
+          if((i+ri)%3===0){ // fallen straw
+            X.beginPath();X.moveTo(px-1,py+1);X.lineTo(px+3.5,py+2.2);X.stroke();
+          }
         }
       });
     }

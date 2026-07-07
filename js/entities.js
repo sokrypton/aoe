@@ -46,7 +46,7 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   let bh = customH !== null ? customH : b.h;
   let e={id:nextId++,type:'building',btype:type,x,y,team,hp:b.hp,maxHp:b.hp,
     w:bw,h:bh,queue:[],trainTick:0,rallyX:x+bw,rallyY:y+bh,
-    complete:true,buildProgress:0,buildTime:b.buildTime||200,
+    complete:true,buildProgress:0,buildTime:b.buildTime||200,atk:b.atk||0,
     food:b.food||0,maxFood:b.food||0,garrison:[]};
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     if(y+dy<MAP&&x+dx<MAP){map[y+dy][x+dx].occupied=e.id;markMapDirty(x+dx,y+dy);}

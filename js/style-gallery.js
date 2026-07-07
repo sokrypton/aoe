@@ -113,8 +113,34 @@
                    aimX: p.x + 3.5, aimY: p.y + 3.5, rowH: 340 });
   };
 
+  // Farm lifecycle in one card: fresh/ripe field → progressively harvested
+  // (crop height follows food left on the tile) → exhausted stubble.
+  const mkFarmStages = () => {
+    // fresh full-width band below the current slot row (the current wy row
+    // may already hold specimens at x < wx). Stages step along world
+    // (+1,-1) — screen-horizontal — so the row reads left to right.
+    const stages = [1.0, 0.65, 0.35, 0.12, 0]; // food fraction left; 0 = exhausted
+    let fw = BLDGS.FARM.w || 2, step = fw; // corner-to-corner: all 5 fit at 1.5x zoom
+    let y0 = wy + 8 + (stages.length - 1) * step;
+    let p = { x: 4, y: y0 }; wx = 4; wy = y0 + fw + 4;
+    let ents = [];
+    stages.forEach((fr, i) => {
+      let x = p.x + i * step, y = p.y - i * step;
+      let b = createBuilding('FARM', x, y, 0);
+      b.complete = true;
+      if (fr === 0) { b.exhausted = true; map[y][x].res = 0; }
+      else map[y][x].res = Math.round(BLDGS.FARM.food * fr);
+      ents.push(b);
+    });
+    let half = (stages.length - 1) * step / 2;
+    gallery.push({ kind: 'building', ents, label: 'Farm stages (ripe → harvested → exhausted)',
+                   anchor: ents[0], gateType: 'FARM',
+                   aimX: p.x + half + fw / 2, aimY: p.y - half + fw / 2,
+                   aimTx: 450, rowH: 240 });
+  };
+
   const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','FARM','TOWER','WALL','GATE','SWALL','SGATE'];
-  BROW.forEach(t => mkB(t));
+  BROW.forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
   mkFort('SWALL', 'SGATE', 'Stone fortification (walls + gates + towers)');
   mkFort('WALL', 'GATE', 'Palisade fortification (walls + gates)');
   mkU('villager', { female: false, label: 'Villager (male)' });
@@ -198,7 +224,7 @@
           withZoom(() => {
             // draw the specimen group with one camera aim per group
             let a = g.anchor, b = BLDGS[a.btype];
-            if (g.aimX !== undefined) aim(g.aimX, g.aimY, 330, cy + 150, false);
+            if (g.aimX !== undefined) aim(g.aimX, g.aimY, g.aimTx || 330, cy + 150, false);
             else aim(a.x + b.w / 2, a.y + b.h / 2, 130, cy + 130, false);
             // gates animate open/close so both states are visible
             g.ents.forEach(en => {
