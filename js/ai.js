@@ -25,7 +25,13 @@ function updateAIGarrisonReaction(ai){
   // (Runs every tick, so at most one hit per tick can be missed — a real
   // base raid lands hits continuously, so the classification holds.)
   let hit = lastTeamHit && lastTeamHit[ai.team];
-  if(hit && hit.tick!==ai.seenWarTick){
+  // Only a CORE hit (a villager or the TC actually taking damage) triggers the
+  // garrison bell. A besieger merely hitting the wall ring from outside is not
+  // a reason to hide the whole economy — if it can't breach, the villagers are
+  // safe and must keep working. (Reacting to any perimeter-wall hit kept the
+  // bell ringing for the entire siege → villagers garrisoned forever → the
+  // economy died in Dark Age while the walls held: the eco-stall bug.)
+  if(hit && hit.core && hit.tick!==ai.seenWarTick){
     ai.seenWarTick=hit.tick;
     let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
     if(tc){
@@ -452,17 +458,36 @@ function planAIWalls(ai,aiTC,vils,profile){
         breachAIWallRing(ai,plan,aiTC);
       }
     }
-    // Wall maintenance: a DESTROYED segment (entity gone, not just damaged —
-    // damaged walls are already covered by the repair path in
-    // assignAIVillagers) gets its plan tile re-queued so the build loop
-    // below fills the breach. The intended opening (gate/breach tile) is
-    // left alone, as are tiles something else now legitimately occupies.
-    if(ai.gateBuilt && ai.tick%profile.wallMaintInterval===0){
+    // Keep the ring SEALED: re-queue any plan tile that's a genuine open gap —
+    // nothing built on it, buildable, and reachable from the TC so a villager
+    // can actually close it (a destroyed segment, or a hole left when a tile
+    // was skipped while temporarily unreachable during construction). Runs
+    // EVERY decision: the old `ai.tick % wallMaintInterval` gate misaligned
+    // with the decision cadence (they coincided only every ~900 ticks), so a
+    // 1-tile hole could stay open the whole match — `done` meant "attempted,"
+    // not "sealed." Terrain-blocked tiles (canPlace false) and unreachable
+    // pockets (pathReaches false) stay skipped — the terrain seals those. A
+    // tile with enemies on it is left as an open breach until they're driven
+    // off (don't rebuild into a siege), and the gate opening is left alone.
+    if(ai.gateBuilt){
       let gt=ai.gateTile;
+      let mcx=aiTC.x+Math.floor(aiTC.w/2), mcy=aiTC.y+Math.floor(aiTC.h/2);
+      let foes=entities.filter(en=>en.type==='unit'&&en.hp>0&&isEnemyOf(ai.team,en));
+      // Only leave the designated opening unsealed while it's the SOLE egress.
+      // Once an actual gate exists (the reserved gate pair got built), a stale
+      // breach opening — e.g. a self-breach made before that gate finished, the
+      // exact "extra hole next to the wall" bug — is redundant and gets sealed
+      // like any other gap. The gate provides egress; the open breach was just
+      // a defensive hole.
+      let hasRealGate=entities.some(e=>e.type==='building'&&e.team===ai.team&&isGateBtype(e.btype)&&e.hp>0);
       plan.forEach(pt=>{
-        if(gt&&pt.x===gt.x&&pt.y===gt.y)return;
-        let occ=buildingAtTile(pt.x,pt.y,en=>en.team===ai.team);
-        if(!occ&&canPlace('WALL',pt.x,pt.y,ai.team))pt.done=false;
+        if(!pt.done)return; // already queued for building
+        if(gt&&pt.x===gt.x&&pt.y===gt.y&&!hasRealGate)return; // sole egress — keep it open
+        if(buildingAtTile(pt.x,pt.y,en=>en.team===ai.team))return; // sealed by a building
+        if(!canPlace('WALL',pt.x,pt.y,ai.team))return; // terrain-blocked = sealed by terrain
+        if(!pathReaches(mcx,mcy,pt.x,pt.y,aiTC.id))return; // unreachable pocket = terrain-sealed
+        if(foes.some(u=>Math.abs(u.x-pt.x)+Math.abs(u.y-pt.y)<=4))return; // active breach — don't rebuild into the assault
+        pt.done=false;
       });
     }
     if(plan.every(pt=>pt.done))return; // ring intact — nothing to build
@@ -694,8 +719,20 @@ function findAIWallDefenseSpot(ai){
   return corners.find(c=>isWallAt(c.x,c.y)&&!hasTowerAt(c.x,c.y))||null;
 }
 
+// "Real" pressure = a CORE hit (a villager or the TC actually taking damage)
+// in the last 900 ticks — NOT an enemy merely poking the wall ring. Used to
+// decide whether survival outranks advancement (age-up / eco). Gating on any
+// hit let a besieger stuck outside intact walls keep the AI permanently in
+// "emergency" mode: it kept pumping military instead of banking the age cost,
+// so a healthy walled economy (e.g. 443/500 food) never crossed into Feudal —
+// the second half of the Dark-Age stall. Same core-hit basis as the bell.
+function aiUnderRealPressure(ai){
+  let h=lastTeamHit&&lastTeamHit[ai.team];
+  return !!(h&&h.core&&tick-h.tick<900);
+}
+
 function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
-  let pressured=lastTeamHit&&lastTeamHit[ai.team]&&tick-lastTeamHit[ai.team].tick<900;
+  let pressured=aiUnderRealPressure(ai);
   if(ai.savingForAge&&!pressured&&barracks.length>0)return; // first barracks still allowed — needed for defense
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
@@ -713,7 +750,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // research is the bigger power spike; villagers keep training) — UNLESS
   // we've taken a hit recently. Survival outranks advancement, AoE2-style:
   // an AI that keeps hoarding while its army isn't reinforcing dies rich.
-  let underPressure=lastTeamHit&&lastTeamHit[ai.team]&&tick-lastTeamHit[ai.team].tick<900;
+  let underPressure=aiUnderRealPressure(ai);
   // Saving for an age: military spending yields — but never below a small
   // standing defense (half the army reserve). The saving window can span
   // many minutes on a slow food economy, and a blanket pause left AIs

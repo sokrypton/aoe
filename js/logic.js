@@ -756,7 +756,13 @@ function damageEntity(attacker, target){
   // (updateAIGarrisonReaction, js/ai.js), so it must be deterministic and
   // ride the lockstep snapshots (js/core.js's lastTeamHit).
   if (lastTeamHit && isEnemyOf(target.team, attacker) && isPlayerTeam(target.team)) {
-    lastTeamHit[target.team] = { tick, x: target.x, y: target.y };
+    // `core` = the hit actually threatens the economy: a villager or the Town
+    // Center itself. A hit on a peripheral WALL/other building is NOT core —
+    // the AI garrison reaction (updateAIGarrisonReaction) must not hide the
+    // whole workforce just because an army is poking the wall from outside a
+    // ring it can't breach (that froze the eco forever = the Dark-Age stall).
+    let core = target.utype === 'villager' || target.btype === 'TC';
+    lastTeamHit[target.team] = { tick, x: target.x, y: target.y, core };
   }
 
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
@@ -1437,9 +1443,20 @@ function updateUnit(e){
         // the nearest reachable enemy-side wall/gate/tower, AoE2-style —
         // it was standing there swinging at air forever otherwise. Human
         // units keep their explicit order (never hijack a player command).
-        if(retryFail(u,'chaseBlocked',0,4)&&isAITeam(u.team)&&typeof nearestReachableWallLike==='function'){
-          let w=nearestReachableWallLike(u,tgt.team);
-          if(w&&!sameSide(w.team,u.team)){u.target=w.id;u.explicitAttack=true;u.siegeSpot=null;return false;}
+        if(retryFail(u,'chaseBlocked',0,4)&&isAITeam(u.team)){
+          if(typeof nearestReachableWallLike==='function'){
+            let w=nearestReachableWallLike(u,tgt.team);
+            if(w&&!sameSide(w.team,u.team)){u.target=w.id;u.explicitAttack=true;u.siegeSpot=null;return false;}
+          }
+          // Nothing reachable to breach AND the target itself is unreachable
+          // (enemy sealed in a pocket / behind an unbreachable section). Drop
+          // it instead of swinging at air forever — that froze the unit on a
+          // stable target for 240 ticks = stuck-watchdog spam. controlAIMilitary
+          // re-tasks it (regroup / pick a reachable foe) next decision.
+          u.target=null;u.explicitAttack=false;u.siegeSpot=null;
+          retryClear(u,'chaseBlocked');
+          clearUnitPath(u);
+          return false;
         }
       } else {
         retryClear(u,'chaseBlocked');
