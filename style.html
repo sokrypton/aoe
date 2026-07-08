@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Style Gallery — Age of Epochs II</title>
+<style>
+  /* The gallery drives the game's own canvas + draw code; the page-shell
+     chrome is hidden by style-gallery.js. Controls live in a fixed bar. */
+  #style-controls{
+    position:fixed; top:0; left:0; right:0; z-index:500;
+    background:#2a1c10; color:#e8d9b0; font:13px sans-serif;
+    padding:6px 10px; display:flex; gap:8px; align-items:center;
+  }
+  #style-controls button{
+    background:#4a3419; color:#e8d9b0; border:1px solid #7a5a38;
+    padding:3px 10px; cursor:pointer; font:13px sans-serif;
+  }
+  #style-controls button.active{ background:#7a5a38; color:#fff; }
+  #style-controls label{ margin-left:12px; }
+</style>
+</head>
+<body>
+<div id="style-controls">
+  <strong>Style Gallery</strong>
+  <span>Age:</span>
+  <button data-age="0" class="active">Dark</button>
+  <button data-age="1">Feudal</button>
+  <button data-age="2">Castle</button>
+  <label><input type="checkbox" id="sg-walk"> walking</label>
+  <label><input type="checkbox" id="sg-attack"> attacking</label>
+  <span>Zoom:</span>
+  <button data-zoom="1">1x</button>
+  <button data-zoom="1.5" class="active">1.5x</button>
+  <button data-zoom="2">2x</button>
+  <span id="sg-hint" style="opacity:.7">scroll the page canvas with arrow keys</span>
+</div>
+<script src="js/page-shell.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/style-gallery.js"></script>
+</body>
+</html>

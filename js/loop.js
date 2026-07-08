@@ -39,6 +39,7 @@ function update(){
         let victim = null, vd = 0.45;
         entities.forEach(en => {
           if (en.type !== 'unit' || sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) return; // no ally friendly fire
+          if (en.utype === 'sheep' || en.utype === 'sheep_carcass') return; // arrows don't burn food (matches tower target acquisition)
           let idx = en.x - p.tx, idy = en.y - p.ty;
           let d = Math.sqrt(idx*idx + idy*idy);
           if (d < vd) { vd = d; victim = en; }
@@ -54,8 +55,13 @@ function update(){
   projectiles = remainingProjectiles;
 
   updateTeamVision(); // deterministic per-team visibility for SIM reads (js/core.js)
-  updateFog(); // Update Fog of War visibility grid (viewer-local, render/UI only)
-  updateTeamExploredEver(1); // js/core.js — host-only: remembers team 1's (the guest's) explored history
+  // Viewer-local work — skipped by the headless self-play simulator
+  // (tools/sim.html): fog and explored-ever memory are render/save-side
+  // only, never read by the sim, and cost real per-tick time at scale.
+  if (!window.__headlessSim) {
+    updateFog(); // Update Fog of War visibility grid (viewer-local, render/UI only)
+    updateTeamExploredEver(1); // js/core.js — host-only: remembers team 1's (the guest's) explored history
+  }
 
   // Remember enemy buildings the moment any of their tiles is actively
   // visible. This must live in the game loop, NOT the render pass: the
@@ -191,8 +197,21 @@ function nudgeAside(){
     if(!uid||uid===m.id)return;
     let s=entitiesById.get(uid);
     if(!s||s.hp<=0)return;
+    // Sheep and villagers actively DODGE (step aside). Idle soldiers are
+    // deliberately NOT in this set even though walkable() lets friendly
+    // traffic path through them: giving 50 clustered soldiers dodge steps
+    // turned the town square into a dodge/repath storm (each dodge briefly
+    // makes the soldier a blocking mover, forcing everyone else to repath —
+    // an infinite dance that also ate the tick budget). Movers walk through
+    // them; separateUnits resolves the momentary overlap softly.
     let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,m.team));
     if(!pushable||s.target)return;
+    // Never dodge a villager that's WORKING in place (farming/gathering/
+    // building): walkable() lets traffic pass straight through it instead
+    // (AoE2 farmers don't obstruct). Dodging it off its tile broke the work
+    // loop — it walked back, got dodged again, an infinite dance that never
+    // resumed farm duty.
+    if(s.utype==='villager'&&s.path.length===0&&(s.gatherX>=0||s.buildTarget))return;
     if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
     // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
     // digs its heels in and stops yielding — isStubborn() below also makes
@@ -238,7 +257,7 @@ function updateGates(){
   let gates = null;
   for (let i = 0; i < entities.length; i++) {
     let e = entities[i];
-    if (e.type === 'building' && e.btype === 'GATE' && e.complete) (gates || (gates = [])).push(e);
+    if (e.type === 'building' && isGateBtype(e.btype) && e.complete) (gates || (gates = [])).push(e);
   }
   if (!gates) return;
   // 1-tile cell index of units, built once per tick only when gates exist.

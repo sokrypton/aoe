@@ -64,6 +64,51 @@ function detEntityHash(e){
   h = detMix(h, e.cooldown || 0);
   h = detMix(h, e.garrisonedIn == null ? -1 : e.garrisonedIn);
   h = detMix(h, e.complete ? 1 : 0);
+  // Age research rides the TC entity — hash it so a divergent research
+  // clock trips the checksum before it silently lands a mistimed age-up.
+  h = detMix(h, e.research ? e.research.tick : -1);
+  h = detMix(h, e.research ? e.research.target : -1);
+  h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
+  // Fields the sim reads on later ticks that previously went unhashed — a
+  // divergence here only tripped the checksum once it eventually moved
+  // hp/x/y, often far outside the resync window.
+  h = detMixFloat(h, e.atk || 0);                 // age-up sweep mutates this
+  h = detMix(h, e.exhausted ? 1 : 0);             // farm lifecycle
+  h = detMix(h, e.trainTick || 0);                // training clock
+  h = detMixFloat(h, e.buildProgress || 0);       // construction clock
+  h = detMix(h, e.rallyX == null ? -1 : e.rallyX);
+  h = detMix(h, e.rallyY == null ? -1 : e.rallyY);
+  h = detMix(h, e.rallyTargetId == null ? -1 : e.rallyTargetId);
+  if (e.queue) { h = detMix(h, e.queue.length); for (let i = 0; i < e.queue.length; i++) h = detMixStr(h, e.queue[i]); }
+  h = detMix(h, e.gatherX == null ? -2 : e.gatherX); // villager tile claims steer OTHER villagers
+  h = detMix(h, e.gatherY == null ? -2 : e.gatherY);
+  h = detMix(h, e.explicitAttack ? 1 : 0);
+  h = detMixFloat(h, e.defendX || 0);
+  h = detMixFloat(h, e.defendY || 0);
+  h = detMix(h, e.savedTask ? 1 : 0);
+  h = detMix(h, e.buildBackoffUntil || 0); // AI assigners read this on later ticks
+  // Retry/throttle/avoid umbrellas (js/logic.js retryFail/avoidAdd): they
+  // decide WHICH TICK pathfinding and give-up fire on — unhashed, a
+  // divergence is invisible until it has already moved a position. Sorted
+  // keys so JSON round-trips can't reorder the hash.
+  if (e.retry) for (const k of Object.keys(e.retry).sort()) {
+    h = detMixStr(h, k); h = detMix(h, e.retry[k].n); h = detMix(h, e.retry[k].next);
+  }
+  if (e.avoid) for (const k of Object.keys(e.avoid).sort()) {
+    h = detMixStr(h, k); const a = e.avoid[k];
+    h = detMix(h, a.length); for (let i = 0; i < a.length; i++) h = detMix(h, a[i]);
+  }
+  h = detMixFloat(h, e.moveGoalX == null ? -1 : e.moveGoalX); // multi-leg move goal
+  h = detMixFloat(h, e.moveGoalY == null ? -1 : e.moveGoalY);
+  h = detMixStr(h, e.prevTask);
+  h = detMix(h, e.siegeSpot ? e.siegeSpot.x * 4096 + e.siegeSpot.y : -1); // cross-unit melee-ring claims
+  // Stuck-watchdog watch entry (it force-clears tasks, so WHEN it fires is
+  // sim state — see updateStuckWatchdog, js/logic.js).
+  h = detMix(h, e.fledBearId == null ? -1 : e.fledBearId); // bear-hunt trigger (js/ai.js reads it)
+  h = detMix(h, e.stepWait || 0); // blocked-lane wait counter (stepBlocked, js/pathfinding.js)
+  h = detMixFloat(h, e.groupSpeed || 0); // formation pace cap (unitMoveSpeed, js/logic.js)
+  h = detMix(h, e.stuck ? e.stuck.since : -1);
+  h = detMixStr(h, e.stuck && e.stuck.sig);
   return h >>> 0;
 }
 
@@ -85,8 +130,20 @@ function simChecksum(){
     h = detMixFloat(h, p.x); h = detMixFloat(h, p.y);
     h = detMixFloat(h, p.tx); h = detMixFloat(h, p.ty);
   }
+  // Map tiles: terrain + remaining resources are sim state (gather
+  // depletion, farm exhaust/reseed rewrite them) — unhashed, a divergent
+  // tree stump only surfaced when some unit's position later differed.
+  for (let y = 0; y < MAP; y++) {
+    let row = map[y];
+    for (let x = 0; x < MAP; x++) {
+      h = detMix(h, row[x].t);
+      if (row[x].res) h = detMixFloat(h, row[x].res);
+    }
+  }
   h = detMix(h, nextId);
   h = detMix(h, nextProjectileId);
+  // popUsed/popCap are deliberately NOT hashed: they are viewer-relative
+  // caches of teamPopUsed(myTeam), legitimately different on host vs guest.
   // Seeded sim PRNG state (added with the PRNG migration); tolerate absence
   // so the harness works before that lands.
   if (typeof simRngState !== 'undefined') h = detMix(h, simRngState);
@@ -105,17 +162,22 @@ function simChecksum(){
       h = detMix(h, ai.gateBuilt ? 1 : 0);
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
+      h = detMix(h, ai.savingForAge ? 1 : 0);
+      h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
+      h = detMix(h, ai.resignScore || 0);
       if (ai.intel) {
         h = detMix(h, ai.intel.strength || 0);
         h = detMix(h, ai.intel.tcSeen ? 1 : 0);
         for (let u = 0; u < NUM_TEAMS; u++) h = detMix(h, (ai.intel.strengthByTeam && ai.intel.strengthByTeam[u]) || 0);
       }
       if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));
+      if (ai.dangerZones) for (const z of ai.dangerZones) { h = detMix(h, z.x); h = detMix(h, z.y); h = detMix(h, z.until); h = detMix(h, z.bearId || -1); }
     }
     let hit = lastTeamHit && lastTeamHit[t];
     h = detMix(h, hit ? hit.tick : -1);
     h = detMix(h, allianceOf(t));
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
+    h = detMix(h, teamAge && teamAge[t] || 0);
   }
   return h >>> 0;
 }

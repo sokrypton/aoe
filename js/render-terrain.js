@@ -362,7 +362,7 @@ function drawTreeEntity(x,y){
 // sx,sy: start screen pos (pillar center base)
 // dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood') {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
@@ -379,8 +379,13 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
-  let fillL = colorL || (isAlongIsoY ? '#aca392' : '#cfc8b6');
-  let fillTop = colorTop || '#b7ad97';
+  // Default palette by material: palisade wood (Dark age WALL/GATE) or the
+  // stone greys (Feudal SWALL/SGATE — the original Stone Wall palette).
+  let pal = mat === 'stone'
+    ? { a: '#aca392', b: '#cfc8b6', top: '#b7ad97' }
+    : { a: WOOD.R, b: WOOD.L, top: WOOD.top }; // shared timber palette (render-buildings.js)
+  let fillL = colorL || (isAlongIsoY ? pal.a : pal.b);
+  let fillTop = colorTop || pal.top;
   if (darken) {
     fillL = darkenColor(fillL);
     fillTop = darkenColor(fillTop);
@@ -394,6 +399,55 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   X.lineTo(nex + px, ney + py - wallH);
   X.lineTo(nsx + px, nsy + py - wallH);
   X.closePath(); X.fill(); X.stroke();
+
+  // Palisade texture: vertical stake seams across the visible side face,
+  // so the wooden wall reads as driven beams rather than a flat slab
+  if (mat === 'wood' && !colorL) {
+    X.save();
+    X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=1;
+    for (let t of [0.25, 0.5, 0.75]) {
+      let vx = nsx + (nex - nsx) * t + px;
+      let vy = nsy + (ney - nsy) * t + py;
+      X.beginPath();X.moveTo(vx, vy);X.lineTo(vx, vy - wallH);X.stroke();
+    }
+    X.restore();
+  }
+
+  // Stone masonry texture: horizontal course lines with staggered vertical
+  // joints (light strokes per the seam-weight convention — hard black is
+  // reserved for silhouettes)
+  if (mat === 'stone' && !colorL) {
+    X.save();
+    X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+    let courses = 3;
+    for (let c = 1; c < courses; c++) {
+      let hy = wallH * c / courses;
+      X.beginPath();
+      X.moveTo(nsx + px, nsy + py - hy);
+      X.lineTo(nex + px, ney + py - hy);
+      X.stroke();
+      // staggered vertical joints on this course band
+      let joints = c % 2 ? [0.2, 0.5, 0.8] : [0.35, 0.65];
+      for (let t of joints) {
+        let vx = nsx + (nex - nsx) * t + px;
+        let vy = nsy + (ney - nsy) * t + py;
+        X.beginPath();
+        X.moveTo(vx, vy - hy);
+        X.lineTo(vx, vy - hy + wallH / courses);
+        X.stroke();
+      }
+    }
+    // top course joints — offset from the middle course below
+    for (let t of [0.2, 0.5, 0.8]) {
+      let vx = nsx + (nex - nsx) * t + px;
+      let vy = nsy + (ney - nsy) * t + py;
+      X.beginPath();
+      X.moveTo(vx, vy - wallH);
+      X.lineTo(vx, vy - wallH + wallH / courses);
+      X.stroke();
+    }
+    X.restore();
+  }
 
   // 2. Top walkway face
   X.fillStyle = fillTop;

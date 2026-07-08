@@ -11,9 +11,19 @@ function createUnit(type,x,y,team){
     // and the face renderer draws NO eyes (its dir branches all miss), so
     // fresh units stared blankly. 1 = south, facing the viewer; the scout
     // starts in horse profile (7 = east) — a horse head-on reads poorly.
-    dir: type === 'scout' ? 7 : 1, facing: 1, facingNorth: false,
+    dir: (type === 'scout' || type === 'knight') ? 7 : 1, facing: 1, facingNorth: false,
     // Villagers are randomly male or female (cosmetic only, like AoE2)
     female: type === 'villager' ? simRandom() < 0.5 : undefined};
+  // Upgrade cards (see UPGRADES, js/core.js) — spawn-time counterpart of
+  // the one-time sweeps applyAgeUpgrades runs over existing units. Attack/
+  // range/speed are snapshotted here; armor is looked up live in
+  // damageEntity, so no armor stamp is needed.
+  if (MILITARY.has(type)) e.atk += upgradeAtkBonus(team);
+  if (type === 'archer' && hasUpgrade(team, 'fletching')) e.range += 1;
+  if (type === 'villager' && hasUpgrade(team, 'wheelbarrow')) {
+    e.speed = UNITS.villager.speed * 1.1;
+    e.carryMax += 3;
+  }
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;
@@ -42,15 +52,19 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   let bh = customH !== null ? customH : b.h;
   let e={id:nextId++,type:'building',btype:type,x,y,team,hp:b.hp,maxHp:b.hp,
     w:bw,h:bh,queue:[],trainTick:0,rallyX:x+bw,rallyY:y+bh,
-    complete:true,buildProgress:0,buildTime:b.buildTime||200,
+    complete:true,buildProgress:0,buildTime:b.buildTime||200,atk:b.atk||0,
     food:b.food||0,maxFood:b.food||0,garrison:[]};
+  // Upgrade cards (see UPGRADES, js/core.js): buildings founded after the
+  // cards arrive get the same HP multipliers the apply() sweeps gave
+  // existing ones.
+  e.hp = e.maxHp = buildingMaxHpFor(team, type);
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     if(y+dy<MAP&&x+dx<MAP){map[y+dy][x+dx].occupied=e.id;markMapDirty(x+dx,y+dy);}
     // Only the origin tile becomes actual harvestable farmland — the rest of
     // a >1x1 footprint (see FARM in core.js) is just occupied ground under
     // the tilled-plot art, matching AoE2 where a farm is one resource node
     // regardless of how large its visual plot is.
-    if(b.isFarm&&dx===0&&dy===0){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=b.food||300;markMapDirty(x,y);}
+    if(b.isFarm&&dx===0&&dy===0){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=farmFoodFor(team);markMapDirty(x,y);}
   }
   entities.push(e);
   entitiesById.set(e.id, e);

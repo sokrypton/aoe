@@ -485,7 +485,12 @@ function onHostClicked(){
   // `netRole == null` gate around updateAI (js/loop.js). AI_STATES[1] is
   // deliberately left in place: cancelHosting() flips the slot back and
   // the AI resumes its plans exactly where it stopped.
-  teamControllers = defaultControllers(true);
+  // Hosting from an in-progress game (e.g. a 4-team 2v2 save): only slots
+  // 0/1 become human — slots 2/3 must KEEP their AI controllers, or those
+  // teams freeze forever (isAITeam false → their brains never run).
+  teamControllers = mpHostingFromExistingGame
+    ? teamControllers.map((c, t) => t <= 1 ? {type:'human'} : c)
+    : defaultControllers(true);
   if (!mpHostingFromExistingGame) {
     // Only apply the setup screen's map size/speed pickers when actually
     // starting fresh — hosting from an already-loaded save must keep
@@ -572,6 +577,7 @@ function leaveMpSession(){
   if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
   teardownNet();
   myTeam = 0;
+  localHumanTeam = 0;
   mpMatchStarted = false;
   mpHostingFromExistingGame = false;
   disconnectedPause = false;
@@ -654,10 +660,9 @@ window.onNetConnectionOpen = function(){
       // hardcoded team 0). Force it on explicitly regardless of whatever
       // a loaded save's own fogDisabled flag was — a live multiplayer
       // match should always use real fog, not a leftover "reveal map"
-      // setting from single-player. Only needs setting on the HOST: the
-      // guest computes its own fog entirely locally (see js/net-sync.js's
-      // applyNetSync), never inherits this flag from a sync payload for
-      // that purpose.
+      // setting from single-player. The guest forces it too on its own
+      // start path (js/lockstep.js), and resync state carries the flag
+      // (it gates sim-visible checks), so both peers agree.
       window.fogDisabled = false;
       if (mpHostingFromExistingGame) {
         // Hosting from a save loaded before Host was clicked — keep that
@@ -753,8 +758,8 @@ function attemptReconnect(){
 // the connection is also mid-reconnect): this client's own #tutorial menu
 // being open, the OTHER peer's menu being open (either direction — see
 // the message handler below), and a disconnect/reconnect in progress. A
-// bug this exact shape already bit once (see applyNetSync's one-shot
-// guard in js/net-sync.js — a different unconditional overwrite): any
+// bug this exact shape already bit once (in the deleted snapshot-sync
+// code — a different unconditional overwrite): any
 // code path that just sets `gamePaused = false` directly, without
 // checking whether some OTHER reason is still active, will incorrectly
 // resume the game out from under a menu/overlay that's still visibly
@@ -782,9 +787,9 @@ function broadcastMenuState(open){
 // check settings would leave the host free to keep building/training/
 // fighting in real time while the guest sits frozen, unable to respond —
 // exactly the kind of one-sided advantage a 1v1 match shouldn't allow.
-// Shared by the one-shot menu messages below AND the per-sync hostMenuOpen
-// reconciliation (js/net-sync.js's applyNetSync) — the latter is what
-// un-wedges a guest whose 'host-menu' open:false message got lost.
+// Driven by the one-shot menu messages below; the channel is reliable-
+// ordered, so a lost open:false can only mean a disconnect, which has its
+// own overlay/pause path.
 function setRemoteMenuOpen(open){
   remoteMenuOpen = !!open;
   if (remoteMenuOpen) {
@@ -822,6 +827,7 @@ onNetMessage((msg) => {
 function enterGuestJoinMode(hostPeerId){
   NUM_TEAMS = 2; // MP is strictly 1v1 (the host's lockstep-start confirms)
   myTeam = 1;
+  localHumanTeam = 1;
   window.__mpSession.hostPeerId = hostPeerId; // remembered for attemptReconnect() above
   let menu = document.getElementById('tutorial');
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
@@ -935,9 +941,9 @@ function applyMenuMode(mode){
     // host button when a (now finished) MP session is still attached.
     // With a LIVE connection the host's button becomes "Rematch" — a fresh
     // MP match over the same connection (see onStartClicked) — and the
-    // guest gets no button at all: only the host simulates, so only the
-    // host can start one; the guest's menu closes by itself when the
-    // rematch's first sync arrives (applyNetSync, js/net-sync.js).
+    // guest gets no button at all: only the host can start one; the
+    // guest's menu closes by itself when the rematch's 'lockstep-start'
+    // arrives (js/lockstep.js).
     // Disconnected-or-single-player keeps plain local Play Again.
     let liveMp = !!netRole && netConnected;
     if (difficultyRow) difficultyRow.style.display = '';
@@ -1017,6 +1023,7 @@ function restartGame(difficulty){
   corpses = [];
   selected = [];
   tick = 0;
+  bumpSimGen(); // tick rewound to 0 — invalidate every registered sim cache (js/core.js)
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
   // Fresh map, stale explored-history memory no longer meaningful — see
   // js/core.js. Rebuild (not just clear): the load-time object was sized
@@ -1059,6 +1066,7 @@ function restartGame(difficulty){
   resetLastTeamHit();   // fresh per-team "last hit taken" record (js/core.js)
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
+  resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;
@@ -1187,10 +1195,24 @@ setInterval(() => {
   let elapsed = Math.min(now - lastTime, 1500);
   lastTime = now;
   accumulator += elapsed;
+  // Mirror gameLoop's lockstep hooks exactly: without the surcharge the
+  // hidden host free-ran unbounded ahead of the guest (pacing/hard-stop
+  // never enforced), the snapshot ring froze at pre-hidden ticks (guest
+  // commands then forced fatal too-old rollbacks), and progress reports
+  // stopped. This interval predates lockstep — it was written for the
+  // legacy snapshot-sync broadcasts.
   while (accumulator >= timeStep) {
+    if (lockstepEnabled()) {
+      let surcharge = lockstepTickSurcharge();
+      if (surcharge === Infinity) { accumulator = Math.min(accumulator, timeStep * 4); break; }
+      if (accumulator < timeStep + surcharge) break;
+      accumulator -= surcharge;
+    }
     update();
     accumulator -= timeStep;
+    if (lockstepEnabled()) lockstepTakeSnapshot();
   }
+  if (lockstepEnabled()) lockstepReport();
 }, 250);
 
 function gameLoop(){

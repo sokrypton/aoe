@@ -89,10 +89,10 @@ canvas {
   z-index:2;
 }
 .pop-res .res-icon{
-  width:12px;
-  height:12px;
-  margin-right:3px;
-  transform:none;
+  /* Even more exaggerated than food/wood/gold: the two-faces art has more
+     empty padding in its cell, so it needs extra scale to visually match
+     — deliberately overflowing the badge border. */
+  transform:scale(1.8);
   font-size:11px;
   display:flex;
   align-items:center;
@@ -130,7 +130,7 @@ canvas {
 }
 #bell-btn .btn-emoji{
   font-size: 22px;
-  transform: scale(1.25);
+  transform: scale(1.1);
   transform-origin: center;
   display: inline-block;
 }
@@ -214,7 +214,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 500% 500%;
+  background-size: 700% 700%;
   background-repeat: no-repeat;
 }
 #sel-portrait.cam-locked {
@@ -456,46 +456,64 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   5 columns x 5 rows. background-size:500%/500% makes each cell exactly
+   7 columns x 7 rows. background-size:700%/700% makes each cell exactly
    fill the element regardless of its box size, so background-position is
-   expressed as fractions (c/4, r/4) rather than fixed pixel offsets — the
+   expressed as fractions (c/6, r/6) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
 */
 .sprite-icon{
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:500% 500%;
+  background-size:700% 700%; /* one 7x7 master sheet — see the labeled placeholder cells */
 }
-.icon-villager  {background-position:0%   0%;}
-.icon-militia   {background-position:25%  0%;}
-.icon-spearman  {background-position:50%  0%;}
-.icon-archer    {background-position:75%  0%;}
-.icon-scout     {background-position:100% 0%;}
-
-.icon-sheep     {background-position:0%   25%;}
-.icon-TC        {background-position:25%  25%;}
-.icon-HOUSE     {background-position:50%  25%;}
-.icon-LCAMP     {background-position:75%  25%;}
-.icon-MCAMP     {background-position:100% 25%;}
-
-.icon-MILL      {background-position:0%   50%;}
-.icon-FARM      {background-position:25%  50%;}
-.icon-BARRACKS  {background-position:50%  50%;}
-.icon-TOWER     {background-position:75%  50%;}
-.icon-WALL      {background-position:100% 50%;}
-
-.icon-GATE      {background-position:0%   75%;}
-.icon-food      {background-position:25%  75%;}
-.icon-wood      {background-position:50%  75%;}
-.icon-gold      {background-position:75%  75%;}
-.icon-stone     {background-position:100% 75%;}
-
-.icon-cancel    {background-position:0%   100%;}
-.icon-econ      {background-position:25%  100%;}
-.icon-mil       {background-position:50%  100%;}
-.icon-back      {background-position:75%  100%;}
-.icon-reseed    {background-position:100% 100%;}
+.icon-villager            {background-position:0%        0%;}
+.icon-militia             {background-position:16.6667%  0%;}
+.icon-spearman            {background-position:33.3333%  0%;}
+.icon-archer              {background-position:50%       0%;}
+.icon-scout               {background-position:66.6667%  0%;}
+.icon-knight              {background-position:83.3333%  0%;}
+.icon-sheep               {background-position:100%      0%;}
+.icon-militia-feudal      {background-position:0%        16.6667%;}
+.icon-militia-castle      {background-position:16.6667%  16.6667%;}
+.icon-spearman-castle     {background-position:33.3333%  16.6667%;}
+.icon-archer-castle       {background-position:50%       16.6667%;}
+.icon-scout-castle        {background-position:66.6667%  16.6667%;}
+.icon-bear                {background-position:83.3333%  16.6667%;}
+.icon-pop                 {background-position:100%      16.6667%;}
+.icon-TC                  {background-position:0%        33.3333%;}
+.icon-HOUSE               {background-position:16.6667%  33.3333%;}
+.icon-BARRACKS            {background-position:33.3333%  33.3333%;}
+.icon-MILL                {background-position:50%       33.3333%;}
+.icon-LCAMP               {background-position:66.6667%  33.3333%;}
+.icon-MCAMP               {background-position:83.3333%  33.3333%;}
+.icon-FARM                {background-position:100%      33.3333%;}
+.icon-TOWER               {background-position:0%        50%;}
+.icon-WALL                {background-position:16.6667%  50%;}
+.icon-GATE                {background-position:33.3333%  50%;}
+.icon-SWALL               {background-position:50%       50%;}
+.icon-SGATE               {background-position:66.6667%  50%;}
+.icon-gate-open           {background-position:83.3333%  50%;}
+.icon-gate-close          {background-position:100%      50%;}
+.icon-food                {background-position:0%        66.6667%;}
+.icon-wood                {background-position:16.6667%  66.6667%;}
+.icon-gold                {background-position:33.3333%  66.6667%;}
+.icon-stone               {background-position:50%       66.6667%;}
+.icon-cancel              {background-position:66.6667%  66.6667%;}
+.icon-econ                {background-position:83.3333%  66.6667%;}
+.icon-mil                 {background-position:100%      66.6667%;}
+.icon-back                {background-position:0%        83.3333%;}
+.icon-reseed              {background-position:16.6667%  83.3333%;}
+.icon-research            {background-position:33.3333%  83.3333%;}
+.icon-logo                {background-position:50%       83.3333%;}
+.icon-bell                {background-position:100%      83.3333%;}
+.icon-age-dark            {background-position:0%        100%;}
+.icon-age-feudal          {background-position:16.6667%  100%;}
+.icon-age-castle          {background-position:33.3333%  100%;}
+.icon-idle                {background-position:50%       100%;}
+.icon-rally               {background-position:66.6667%  100%;}
+.icon-map                 {background-position:83.3333%  100%;}
+.icon-home                {background-position:100%      100%;}
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -985,7 +1003,7 @@ canvas {
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:24px}
   #bell-btn .btn-emoji{
     font-size: 24px;
-    transform: scale(1.25);
+    transform: scale(1.1);
   }
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
@@ -1005,7 +1023,7 @@ canvas {
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:22px}
   #bell-btn .btn-emoji{
     font-size: 22px;
-    transform: scale(1.25);
+    transform: scale(1.1);
   }
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
@@ -1453,25 +1471,25 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 500% 500%;
+  background-size: 700% 700%;
 }
-.res-mini-icon.icon-food  { background-position: 25% 75%; }
-.res-mini-icon.icon-wood  { background-position: 50% 75%; }
-.res-mini-icon.icon-gold  { background-position: 75% 75%; }
-.res-mini-icon.icon-stone { background-position: 100% 75%; }
+.res-mini-icon.icon-food  { background-position: 0% 66.6667%; }
+.res-mini-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
+.res-mini-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
+.res-mini-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 500% 500%;
+  background-size: 700% 700%;
   flex-shrink: 0;
 }
-#tooltip .tip-cost-icon.icon-food  { background-position: 25% 75%; }
-#tooltip .tip-cost-icon.icon-wood  { background-position: 50% 75%; }
-#tooltip .tip-cost-icon.icon-gold  { background-position: 75% 75%; }
-#tooltip .tip-cost-icon.icon-stone { background-position: 100% 75%; }
+#tooltip .tip-cost-icon.icon-food  { background-position: 0% 66.6667%; }
+#tooltip .tip-cost-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
+#tooltip .tip-cost-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
+#tooltip .tip-cost-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-label {
   color: #ffebad;
 }
@@ -1666,7 +1684,7 @@ canvas {
    out every multi-select/garrison icon. */
 #sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 500% 500%;
+  background-size: 700% 700%;
   background-repeat: no-repeat;
 }
 #sel-name{
@@ -2089,6 +2107,9 @@ canvas {
    same way with Esc (cancel placement → leave submenu → deselect), so the
    button is just noise in the AoE2-style command grid. */
 .act-btn.back-btn { display: none; }
+/* ...EXCEPT inside a villager build submenu, where the arrow is the only
+   mouse path back to the main build panel (Esc still works too). */
+.act-btn.back-btn.submenu-back { display: flex; }
 
 /* ==== FIXED-SIZE MENU DESIGNS ====
    The menu is authored at exactly TWO design sizes — portrait (390px wide,

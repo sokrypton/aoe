@@ -21,16 +21,17 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div class="res"><div class="res-icon sprite-icon icon-wood"></div><div class="res-val" id="r-wood">200</div></div>
 <div class="res"><div class="res-icon sprite-icon icon-gold"></div><div class="res-val" id="r-gold">100</div></div>
 <div class="res"><div class="res-icon sprite-icon icon-stone"></div><div class="res-val" id="r-stone">200</div></div>
-<div class="res pop-res"><div class="res-icon" aria-hidden="true">👥</div><div class="res-val" id="r-pop">4/10</div></div>
+<div class="res pop-res"><div class="res-icon sprite-icon icon-pop" aria-hidden="true"></div><div class="res-val" id="r-pop">4/10</div></div>
+<div class="res age-res"><div class="res-icon sprite-icon icon-age-dark" aria-hidden="true"></div><div class="res-val" id="r-age">Dark</div></div>
 <div id="net-stats" style="display:none;"></div>
 </div>
 </div>
 <div id="pop-wrap">
   <div id="chat-btn" onclick="openChatInput()" style="display:none;" data-tip-label="Chat" data-tip-desc="Send a message to your opponent."><span class="btn-emoji">💬</span></div>
-  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji">🧑‍🌾</span></div>
-  <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji">🔔</span></div>
-  <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap."><span class="btn-emoji">🌍</span></div>
-  <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center."><span class="btn-emoji">🏰</span></div>
+  <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji sprite-icon icon-idle"></span></div>
+  <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji sprite-icon icon-bell"></span></div>
+  <div id="map-btn" onclick="toggleMinimap()" data-tip-label="Toggle Map" data-tip-desc="Show or hide the minimap."><span class="btn-emoji sprite-icon icon-map"></span></div>
+  <div id="home-btn" onclick="focusTownCenter()" data-tip-label="Go to Town Center" data-tip-desc="Center the camera on your Town Center."><span class="btn-emoji sprite-icon icon-home"></span></div>
 </div>
 <div id="bottom">
 <div id="actions"></div>
@@ -154,9 +155,9 @@ document.body.insertAdjacentHTML('afterbegin', `
         <div class="setup-col">
           <h3>Difficulty</h3>
           <div class="segmented">
-            <label class="segment"><input type="radio" name="difficulty" value="easy"><span>Easy</span></label>
-            <label class="segment"><input type="radio" name="difficulty" value="standard" checked><span>Medium</span></label>
-            <label class="segment"><input type="radio" name="difficulty" value="hard"><span>Hard</span></label>
+            <label class="segment"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label>
+            <label class="segment"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label>
+            <label class="segment"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label>
           </div>
         </div>
         <div class="setup-col">
@@ -169,9 +170,9 @@ document.body.insertAdjacentHTML('afterbegin', `
         <div class="setup-col">
           <h3>Map Size</h3>
           <div class="segmented">
-            <label class="segment"><input type="radio" name="mapsize" value="small"><span>Small</span></label>
-            <label class="segment"><input type="radio" name="mapsize" value="medium" checked><span>Medium</span></label>
-            <label class="segment"><input type="radio" name="mapsize" value="large"><span>Large</span></label>
+            <label class="segment"><input type="radio" name="mapsize" value="small"><span title="Small">S</span></label>
+            <label class="segment"><input type="radio" name="mapsize" value="medium" checked><span title="Medium">M</span></label>
+            <label class="segment"><input type="radio" name="mapsize" value="large"><span title="Large">L</span></label>
           </div>
         </div>
       </div>

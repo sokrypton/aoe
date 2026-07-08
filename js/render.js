@@ -81,7 +81,7 @@ function render(){
     }
     if (enX < minX - 4 || enX > maxX + 4 || enY < minY - 4 || enY > maxY + 4) return;
 
-    if (en.type === 'building' && en.btype === 'GATE') {
+    if (en.type === 'building' && isGateBtype(en.btype)) {
       let wallLineNS = en.h > en.w;
       // Pooled per gate id — same two proxy objects reused every frame.
       let prox = _gateProxyPool.get(en.id);
@@ -95,7 +95,11 @@ function render(){
       prox.back.sortVal = en.y + en.x + 0.1;
       prox.front.x = wallLineNS ? en.x : en.x + 1;
       prox.front.y = wallLineNS ? en.y + 1 : en.y;
-      prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1);
+      // +0.3 beats a unit's +0.25 tiebreak on the SAME tile: a unit passing
+      // through the archway stands on the front tile, and the near post
+      // must draw over it (it's closer to the viewer). Units a full tile
+      // nearer still sort higher and correctly draw over the gate.
+      prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1) + 0.3;
       allDrawable.push(prox.back);
       allDrawable.push(prox.front);
     } else {
@@ -125,6 +129,22 @@ function render(){
   });
 
   allDrawable.sort((a, b) => a.sortVal - b.sortVal);
+
+  // Building ground shadows, all in ONE union fill before any entity
+  // paints: overlapping diamonds (adjacent wall segments, gate+wall runs)
+  // darken once instead of stacking, and a later building's shadow can
+  // never fall on top of an earlier building's base.
+  X.fillStyle = 'rgba(0,0,0,0.16)';
+  X.beginPath();
+  allDrawable.forEach(e => {
+    if (e.type !== 'building' && e.type !== 'gate_back') return;
+    let be = e.type === 'gate_back' ? e.entity : e;
+    let f = buildingFogLevel(be);
+    if (f === 0) return;
+    if (f === 1 && be.team !== myTeam && !scoutedByMe.has(be.id)) return;
+    buildingShadowPath(be);
+  });
+  X.fill();
 
   allDrawable.forEach(e=>{
     // Fog of War checks for entities

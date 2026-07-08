@@ -39,16 +39,28 @@ function walkable(x,y,ignore,ignoreUnits){
         // Harvest exception: a villager may step onto the sheep/carcass it
         // is working on.
         let harvesting=walker&&walker.target===uid&&(blocker.utype==='sheep'||blocker.utype==='sheep_carcass');
-        // Pushables (AoE2 soft-push): sheep yield to anyone, villagers yield
-        // to same-team traffic — the walker paths straight through and
-        // separateUnits() shoves the blocker aside on contact. SOLDIERS are
-        // never pushable: a parked army holds ground and traffic must route
-        // around it (that's also what keeps the melee surround cap intact).
-        // A "stubborn" villager (repeatedly displaced recently — see
-        // isStubborn in loop.js) stops yielding: paths must route around it
-        // like a parked soldier, which is what breaks displacement cycles.
+        // Pushables (AoE2 soft-push): sheep yield to anyone; villagers and
+        // IDLE soldiers yield to same-team traffic — the walker paths
+        // straight through and nudgeAside/separateUnits (js/loop.js) shove
+        // the blocker on contact. Fighting/moving/stand-ground soldiers
+        // hold ground (melee surround cap stays intact; a commanded army
+        // is a wall) — but a PARKED idle soldier must not: an idle army
+        // rallied at its own gate used to plug the single exit tile and
+        // trap the whole town, itself included, forever. A "stubborn" unit
+        // (repeatedly displaced recently — see isStubborn in loop.js)
+        // stops yielding: paths route around it, breaking displacement
+        // cycles.
+        let idleSoldier=MILITARY.has(blocker.utype)&&!blocker.target&&!blocker.task&&
+          blocker.path.length===0&&blocker.stance!=='standground';
+        // A villager WORKING in place (farming/gathering/building) is pure
+        // pass-through for same-side traffic, AoE2-style — never displaced,
+        // never blocking, stubbornness irrelevant (it can't dance because
+        // nothing moves it; nudgeAside also leaves it alone).
+        let workingVillager=blocker.utype==='villager'&&blocker.path.length===0&&
+          (blocker.gatherX>=0||blocker.buildTarget);
         let pushable=blocker.utype==='sheep'||
-          (blocker.utype==='villager'&&walker&&sameSide(walker.team,blocker.team)&&!isStubborn(blocker));
+          (walker&&sameSide(walker.team,blocker.team)&&(workingVillager||
+            ((blocker.utype==='villager'||idleSoldier)&&!isStubborn(blocker))));
         if(!harvesting&&!pushable)return false;
       }
     }
@@ -99,7 +111,7 @@ function walkable(x,y,ignore,ignoreUnits){
   // Let same-side units (own team or allies) or anyone (if open) pass
   // through gates
   let bldg = entitiesById.get(t.occupied);
-  if (bldg && bldg.btype === 'GATE') {
+  if (bldg && isGateBtype(bldg.btype)) {
     if (walker && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
       return true;
     }
@@ -232,6 +244,18 @@ const PROJECTILE_TILES_PER_TICK = 0.25;
 // block grid, which only the host's update() keeps current; the guest
 // passes false and accepts up to one cosmetic half-step into a tile the
 // host has since blocked (corrected by the next sync).
+// Blocked next step: WAIT for the lane to clear (~1s) instead of dumping
+// the path. Clear-and-repath every tick was the wedge/dance generator: in
+// a 1-wide lane (forest chokepoints, wall gates) two units repathing into
+// each other never move, rack up dodge counts until both turn stubborn
+// (hard walls), and freeze until the watchdog breaks them up. Waiting is
+// what a real queue does — the blocker almost always moves on within a
+// few ticks. moveT is reset so unblocking can't teleport banked progress.
+function stepBlocked(e){
+  e.moveT=0;
+  e.stepWait=(e.stepWait||0)+1;
+  if(e.stepWait>30){e.stepWait=0;e.path=[];}
+}
 function stepUnitAlongPath(e, distPx, checkWalkable){
   e.moveT += distPx;
   while(e.path.length>0){
@@ -241,7 +265,7 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
     let screenDist=Math.sqrt(sddx*sddx+sddy*sddy)||1.0;
     if(e.moveT>=screenDist){
       if(checkWalkable && !walkable(nextTile.x,nextTile.y,e.id)){
-        e.path=[]; e.moveT=0; return;
+        stepBlocked(e); return;
       }
       e.moveT-=screenDist;
       let next=e.path.shift();
@@ -251,8 +275,9 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
   if(e.path.length>0){
     let next=e.path[0];
     if(checkWalkable && !walkable(next.x,next.y,e.id)){
-      e.path=[]; e.moveT=0; return;
+      stepBlocked(e); return;
     }
+    e.stepWait=0;
     let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
     let sddx=p2.ix-p1.ix, sddy=p2.iy-p1.iy;
     let screenDist=Math.sqrt(sddx*sddx+sddy*sddy)||1.0;
