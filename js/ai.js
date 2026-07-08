@@ -826,6 +826,22 @@ function aiEcoPlan(ai,vilCount,profile){
     if(base.farm)base.farm*=2;
     if(base.forage)base.forage*=2;
   }
+  // Saving for the next age: bias gatherers toward the resources that age
+  // actually COSTS so a turtled economy still accrues the age price. Hard
+  // AIs stalled at Feudal for entire matches sitting on ~60 gold (Castle
+  // needs 200) while stone piled to 750 and the gold camp sat unreachable
+  // behind the wall ring — but gold always drops at the TC, so pointing
+  // more hands at gold accrues the age price regardless of the camp. This
+  // is what unlocks Castle-age units (knights, rams) for the AI at all.
+  if(ai.savingForAge){
+    let next=teamAge[ai.team]+1;
+    let cost=(AGES[next]&&AGES[next].cost)||{};
+    if(cost.g&&store.gold<cost.g)   base.mine_gold=(base.mine_gold||1)+4;
+    if(cost.f&&store.food<cost.f){ if(base.farm)base.farm+=2; base.forage=(base.forage||1)+2; }
+    // don't keep pouring hands into wood/stone the age-up doesn't need
+    if(base.chop)base.chop=Math.max(1,Math.floor(base.chop/2));
+    if(base.mine_stone)delete base.mine_stone;
+  }
   return base;
 }
 

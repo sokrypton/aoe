@@ -1,0 +1,8 @@
+{
+  "name": "aoe-sim",
+  "private": true,
+  "description": "Playwright driver for the headless self-play simulator (tools/simulate.js).",
+  "dependencies": {
+    "playwright-core": "^1.61.0"
+  }
+}

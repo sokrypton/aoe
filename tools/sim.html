@@ -2,22 +2,28 @@
 <html><head><meta charset="utf-8"><title>sim</title></head>
 <body>
 <!-- ---- HEADLESS SELF-PLAY SIMULATOR ----
-  Runs an all-AI match as fast as the CPU allows and emits a structured
-  JSON report (timelines, events, health metrics, auto-analysis findings)
-  into a result pre-element for headless scraping. Driven by tools/simulate.sh.
+  Runs an all-AI match as fast as the CPU allows and returns a structured
+  JSON report (timelines, events, health metrics, auto-analysis findings).
 
-  URL params:
-    mode=1v1|2v2        (default 1v1)
-    diff=easy|standard|hard   (default standard, all AI slots)
-    map=small|medium|large    (default: medium for 1v1, large for 2v2)
-    ticks=N             (default 60000)
-    seed=N              (optional — reproducible match)
-    rollback=1          (also run a snapshot/rollback determinism check)
+  Driven by tools/simulate.js (Playwright): it loads this page, then calls
+  window.runSimulation(cfg) and reads the returned object directly — no DOM
+  scraping, real error capture, honest wall-clock timing. For a quick manual
+  look in a normal browser, open  tools/sim.html?run=1&mode=2v2&ticks=40000
+  and the report renders into a <pre id="result">.
+
+  cfg fields (all optional):
+    mode:  '1v1' | '2v2'                     (default '1v1')
+    diff:  'easy'|'standard'|'hard', or a comma list per team ('easy,hard')
+    map:   'small'|'medium'|'large'          (default: medium 1v1 / large 2v2)
+    ticks: N                                 (default 60000)
+    seed:  N                                 (optional — reproducible match)
+    rollback: true                           (also run a determinism check)
 -->
 <canvas id="game"></canvas>
 <script>
 window.__errors = [];
 window.addEventListener('error', e => window.__errors.push(String(e.message) + ' @ ' + (e.filename||'').split('/').pop() + ':' + e.lineno));
+window.addEventListener('unhandledrejection', e => window.__errors.push('unhandledrejection: ' + (e.reason && e.reason.message || e.reason)));
 </script>
 <script src="../js/page-shell.js"></script>
 <script src="../js/audio.js"></script>
@@ -47,15 +53,19 @@ window.addEventListener('error', e => window.__errors.push(String(e.message) + '
 <script src="../js/init.js"></script>
 <script src="../js/boot.js"></script>
 <script>
-setTimeout(() => {
-  const q = new URLSearchParams(location.search);
+// The whole simulation is one async function that RETURNS its report — the
+// driver awaits the value instead of scraping the DOM. It yields to the
+// event loop between tick batches so a long match never trips the browser's
+// unresponsive-tab killer and the driver can enforce its own timeout.
+window.runSimulation = async function(opts){
+  opts = opts || {};
   const cfg = {
-    mode: q.get('mode') || '1v1',
-    diff: q.get('diff') || 'standard', // single value, or comma list per team: diff=easy,hard
-    map:  q.get('map')  || ((q.get('mode')||'1v1') === '2v2' ? 'large' : 'medium'),
-    ticks: parseInt(q.get('ticks') || '60000', 10),
-    seed: q.get('seed') ? parseInt(q.get('seed'), 10) : null,
-    rollback: q.get('rollback') === '1',
+    mode: opts.mode || '1v1',
+    diff: opts.diff || 'standard',       // single value, or comma list per team: 'easy,hard'
+    map:  opts.map  || ((opts.mode||'1v1') === '2v2' ? 'large' : 'medium'),
+    ticks: parseInt(opts.ticks || 60000, 10),
+    seed: (opts.seed !== undefined && opts.seed !== null && opts.seed !== '') ? parseInt(opts.seed, 10) : null,
+    rollback: opts.rollback === true || opts.rollback === '1' || opts.rollback === 1,
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
   const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
@@ -137,47 +147,53 @@ setTimeout(() => {
     const DANCE_SAMPLE = 200, DANCE_WIN = 15;
     const danceOffenders = new Set();
 
-    // ---- main loop ----
+    // ---- main loop, run in batches so the page stays responsive ----
+    const BATCH = 2000;
     const t0 = performance.now();
-    for (let i = 0; i < cfg.ticks && !gameOver; i++) {
-      update();
-      if (tick % (DANCE_SAMPLE * DANCE_WIN) === 0) {
-        entities.forEach(e => {
-          if (e.type !== 'unit') return;
-          const base = dodgeBase.get(e.id) || 0;
-          const now = e.dodgeCount || 0;
-          if (now - base >= 8 && !danceOffenders.has(e.id)) { // ≥8 displacements in one window: a dance, not a one-off step-aside
-            danceOffenders.add(e.id);
-            (report.health.dancerSamples = report.health.dancerSamples || []).length < 8 &&
-              report.health.dancerSamples.push({id: e.id, team: e.team, utype: e.utype, t: tick, x: +e.x.toFixed(1), y: +e.y.toFixed(1), task: e.task, gather: e.gatherX + ',' + e.gatherY});
-          }
-          dodgeBase.set(e.id, now);
-        });
+    let i = 0;
+    while (i < cfg.ticks && !gameOver) {
+      const stop = Math.min(cfg.ticks, i + BATCH);
+      for (; i < stop && !gameOver; i++) {
+        update();
+        if (tick % (DANCE_SAMPLE * DANCE_WIN) === 0) {
+          entities.forEach(e => {
+            if (e.type !== 'unit') return;
+            const base = dodgeBase.get(e.id) || 0;
+            const now = e.dodgeCount || 0;
+            if (now - base >= 8 && !danceOffenders.has(e.id)) { // ≥8 displacements in one window: a dance, not a one-off step-aside
+              danceOffenders.add(e.id);
+              (report.health.dancerSamples = report.health.dancerSamples || []).length < 8 &&
+                report.health.dancerSamples.push({id: e.id, team: e.team, utype: e.utype, t: tick, x: +e.x.toFixed(1), y: +e.y.toFixed(1), task: e.task, gather: e.gatherX + ',' + e.gatherY});
+            }
+            dodgeBase.set(e.id, now);
+          });
+        }
+        if (tick % SAMPLE_EVERY === 0) {
+          const cur = teams().map(sampleTeam);
+          report.timeline.push({t: tick, teams: cur});
+          cur.forEach((s, t) => {
+            const p = prev[t];
+            if (s.age > p.age)   report.events.push({t: tick, team: t, ev: 'age-up', to: AGES[s.age].key});
+            if (s.waves > p.waves) report.events.push({t: tick, team: t, ev: 'attack-wave', n: s.waves});
+            if (s.tcs < p.tcs)   report.events.push({t: tick, team: t, ev: 'lost-tc'});
+            if (s.tcs > p.tcs && tick > SAMPLE_EVERY) report.events.push({t: tick, team: t, ev: 'rebuilt-tc'});
+            if (s.defeated && !p.defeated) report.events.push({t: tick, team: t, ev: 'knocked-out'});
+          });
+          prev = cur;
+        }
       }
-      if (tick % SAMPLE_EVERY === 0) {
-        const cur = teams().map(sampleTeam);
-        report.timeline.push({t: tick, teams: cur});
-        cur.forEach((s, t) => {
-          const p = prev[t];
-          if (s.age > p.age)   report.events.push({t: tick, team: t, ev: 'age-up', to: AGES[s.age].key});
-          if (s.waves > p.waves) report.events.push({t: tick, team: t, ev: 'attack-wave', n: s.waves});
-          if (s.tcs < p.tcs)   report.events.push({t: tick, team: t, ev: 'lost-tc'});
-          if (s.tcs > p.tcs && tick > SAMPLE_EVERY) report.events.push({t: tick, team: t, ev: 'rebuilt-tc'});
-          if (s.defeated && !p.defeated) report.events.push({t: tick, team: t, ev: 'knocked-out'});
-        });
-        prev = cur;
-      }
+      await new Promise(r => setTimeout(r, 0)); // yield between batches
     }
     const wallMs = performance.now() - t0;
 
     // ---- optional rollback determinism check ----
     if (cfg.rollback && !gameOver) {
       const snap = { t: tick, state: lockstepCaptureState() };
-      for (let i = 0; i < 100; i++) update();
+      for (let k = 0; k < 100; k++) update();
       const sumA = simChecksum();
       lockstepRestore(snap);
       window.__resim = true;
-      for (let i = 0; i < 100; i++) update();
+      for (let k = 0; k < 100; k++) update();
       window.__resim = false;
       report.health.rollbackDeterministic = (sumA === simChecksum());
     }
@@ -191,8 +207,8 @@ setTimeout(() => {
       winnerSide: gameOver ? (won ? 'alliance-of-team0' : 'other') : null,
       final: teams().map(sampleTeam),
     };
-    // performance.now() is frozen under Chrome's --virtual-time-budget, so
-    // wall timing is only meaningful when this page runs in a real browser.
+    // Real wall-clock timing now that we run in a normal Playwright browser
+    // (the old Chrome --virtual-time-budget froze performance.now()).
     report.health.wallMs = Math.round(wallMs) || null;
     report.health.ticksPerSec = wallMs > 100 ? Math.round(tick / (wallMs / 1000)) : null;
     report.health.watchdogFires = watchdogLog.length;
@@ -236,11 +252,25 @@ setTimeout(() => {
     report.health.jsErrors = window.__errors.slice();
   }
 
-  document.title = report.findings.length || window.__errors.length ? 'FINDINGS' : 'CLEAN';
-  const pre = document.createElement('pre');
-  pre.id = 'result';
-  pre.textContent = JSON.stringify(report, null, 1);
-  document.body.appendChild(pre);
-}, 400);
+  if (!report.health.jsErrors) report.health.jsErrors = window.__errors.slice();
+  return report;
+};
+
+// Manual-browser fallback: tools/sim.html?run=1&mode=2v2&ticks=40000 renders
+// the report into the page. The Playwright driver never sets ?run — it calls
+// runSimulation() directly and reads the returned value.
+if (new URLSearchParams(location.search).has('run')) {
+  const q = new URLSearchParams(location.search);
+  runSimulation({
+    mode: q.get('mode'), diff: q.get('diff'), map: q.get('map'),
+    ticks: q.get('ticks'), seed: q.get('seed'), rollback: q.get('rollback'),
+  }).then(report => {
+    document.title = (report.findings.length || report.health.jsErrors.length) ? 'FINDINGS' : 'CLEAN';
+    const pre = document.createElement('pre');
+    pre.id = 'result';
+    pre.textContent = JSON.stringify(report, null, 1);
+    document.body.appendChild(pre);
+  });
+}
 </script>
 </body></html>
