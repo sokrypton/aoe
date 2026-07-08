@@ -782,11 +782,21 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // targeting already points rams at structures — see chooseAIAttackTarget).
   let ramCount=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='ram').length
     +readyBarracks.reduce((s2,b)=>s2+b.queue.filter(q=>q==='ram').length,0);
+  let ramGold=UNITS.ram.cost.g||0;
+  let wantRam=isUnlocked(ai.team,'ram')&&ramCount<Math.ceil(maxArmy/6);
   let pickUnitType=()=>{
-    if(isUnlocked(ai.team,'ram')&&ramCount<Math.ceil(maxArmy/6)&&canAfford(ai.team,UNITS.ram.cost)){
+    if(wantRam&&canAfford(ai.team,UNITS.ram.cost)){
       ramCount++;
+      if(ramCount>=Math.ceil(maxArmy/6))wantRam=false;
       return 'ram';
     }
+    // Saving for a ram but gold-short: RESERVE gold for the siege — train the
+    // gold-free spearman meanwhile so gold banks toward the 75 a ram needs,
+    // instead of dribbling it into militia/knights. Gold-starved Castle AIs
+    // used to pour every scrap of gold into gold-hungry units and never afford
+    // a single ram, so their attacks bounced off walls forever (the finishing
+    // stalemate's other half). Spearman is decent filler and needs no gold.
+    if(wantRam&&resourceStore(ai.team).gold<ramGold&&isUnlocked(ai.team,'spearman'))return 'spearman';
     let counts=ai.intel&&ai.intel.unitCounts;
     if(counts){
       let dominant=Object.keys(counts).filter(t=>counterMap[t]).sort((a,b)=>counts[b]-counts[a])[0];
@@ -1118,6 +1128,19 @@ function nearbyAlliedPower(ai,center,range){
   return p;
 }
 
+// A directed siege holds under fire (AoE2): a ram (which can only usefully hit
+// structures) or any unit given an explicit order to attack an enemy BUILDING
+// keeps that order — the base-threat response below must not yank it off to
+// chase a raider or retreat it. The escorting army handles defenders instead.
+function holdsSiegeOrder(m){
+  if(m.utype==='ram')return true;
+  if(m.explicitAttack&&m.target){
+    let t=entitiesById.get(m.target);
+    if(t&&t.type==='building'&&!sameSide(t.team,m.team))return true;
+  }
+  return false;
+}
+
 function controlAIMilitary(ai,mils,aiTC,profile){
   let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
   if(threat){
@@ -1130,6 +1153,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     if(localAllyPower>0&&localEnemyPower>localAllyPower*1.6){
       let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
       mils.forEach(m=>{
+        if(holdsSiegeOrder(m))return; // a directed siege persists — don't retreat it
         // Already home: stand and fight (auto-attack acquires targets for
         // idle units). Re-clearing targets here every decision tick used to
         // pin the whole army in a retreat loop — shot at, never shooting
@@ -1144,6 +1168,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       return;
     }
     mils.forEach(m=>{
+      if(holdsSiegeOrder(m))return; // rams / directed sieges don't chase raiders
       if(!m.target||dist(m,threat)<10*aiScale()){
         m.target=threat.id;
         clearUnitPath(m); // stop current movement so they engage immediately
@@ -1386,7 +1411,7 @@ function wallBreachTicks(unit, w){
   let dmg = unit.atk || 0;
   if (unit.utype === 'villager') dmg += 3;
   if (unit.utype === 'militia') dmg += 2;
-  if (unit.utype === 'ram') dmg += 70; // mirrors damageEntity's building bonus
+  if (unit.utype === 'ram') dmg += 110; // mirrors damageEntity's building bonus
   let armor = BLDGS[w.btype].armor || {m:0,p:0};
   dmg = Math.max(1, dmg - (((unit.range || 0) > 0) ? armor.p : armor.m));
   return Math.ceil(w.hp / dmg) * (UNITS[unit.utype].rof || 60);
@@ -1477,10 +1502,17 @@ function chooseAIAttackTarget(ai,militia,spotted){
     if(e.btype==='TOWER'||e.btype==='BARRACKS')return 2;
     return 3;
   };
-  if (spottedEnemies.length > 0) {
-    let best = spottedEnemies.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
+  // Rams attack STRUCTURES only — 2 damage vs a unit is a wasted swing. Filter
+  // the candidate set so a ram never picks a soldier/villager just because no
+  // building happens to be in sight; instead it falls through to marching on
+  // the enemy TC to find a wall. The escorting soldiers handle the defenders
+  // (AoE2 siege doctrine: rams on the wall, army protecting them).
+  let cands = militia.utype==='ram' ? spottedEnemies.filter(e=>e.type==='building') : spottedEnemies;
+  if (cands.length > 0) {
+    let best = cands.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
     return resolveReachableAttackTarget(militia, best);
-  } else if (ai.intel && ai.intel.tcSeen) {
+  }
+  if (ai.intel && ai.intel.tcSeen) {
     // Only head for an enemy TC if a scout/unit has actually seen one at
     // some point this game — otherwise the AI would be marching on knowledge
     // it has no in-fiction way of having.

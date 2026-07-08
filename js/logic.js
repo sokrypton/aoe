@@ -696,11 +696,14 @@ function damageEntity(attacker, target){
     if (attacker.utype === 'villager') dmg += 3;
     if (attacker.utype === 'militia') dmg += 2;
     // The ram IS its building bonus: base atk 2 barely scratches a unit,
-    // +70 vs structures tears through walls — calibrated so one ram kills
-    // a Castle-age stone wall segment (1485hp after masonry+fortified) in
-    // ~24 hits ≈ 120 game-s, matching AoE2's ~16 hits on its double-HP
-    // walls. Keep in sync with wallBreachTicks (ai.js).
-    if (attacker.utype === 'ram') dmg += 70;
+    // +110 vs structures tears through walls. Tuned so one ram's net DPS
+    // (~20.8 hp/s after the wall's 8 melee armor, rof 150) clearly EXCEEDS a
+    // villager's repair (~10 hp/s) — matching AoE2, where a ram out-damages a
+    // repairer so a small siege force actually breaches instead of bouncing.
+    // (At +70 a ram did only ~12.8 hp/s: two repairing villagers stalled it
+    // forever, so no walled AI base ever fell — the finishing stalemate.)
+    // Keep in sync with wallBreachTicks (ai.js).
+    if (attacker.utype === 'ram') dmg += 110;
   }
 
   // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
