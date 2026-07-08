@@ -42,13 +42,16 @@ function canPlace(type,x,y,team=0){
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
       let existing = entitiesById.get(t.occupied);
-      // Only GATE and TOWER may be placed on top of an existing allied
-      // WALL (they consume the wall tile(s) they're built on, see
-      // doPlace's wallsToRemove); anything else, including another WALL,
-      // must not overlap an existing building.
+      // GATE, TOWER, and a STONE WALL upgrade may be placed on top of an
+      // existing allied wall (they consume the wall tile(s) they're built on,
+      // see execBuildPlacement's wallsToRemove); anything else, including
+      // another palisade, must not overlap an existing building. Stone-on-
+      // palisade lets you reinforce a wooden wall in place (an upgrade you
+      // build, mirroring how a gate is built over walls).
       if (existing && existing.type === 'building' && existing.team === team &&
           ((isGateBtype(type) && existing.btype === GATE_WALL_MATCH[type]) ||
-           (type === 'TOWER' && isWallBtype(existing.btype)))) {
+           (type === 'TOWER' && isWallBtype(existing.btype)) ||
+           (type === 'SWALL' && existing.btype === 'WALL'))) {
         continue;
       }
       return false;
@@ -1857,8 +1860,13 @@ function claimedGatherSet(team){
   return gatherClaims[team];
 }
 
-function findNearTile(e,terrain,excludeList=null){
-  let bx=Math.round(e.x),by=Math.round(e.y);
+function findNearTile(e,terrain,excludeList=null,anchor=null){
+  // Search origin: normally the unit itself, but callers can pass an `anchor`
+  // (e.g. a drop-off) to find the resource tile nearest THAT point instead —
+  // so an AI villager works beside its camp/TC (short round trips) rather than
+  // whatever patch is nearest to wherever it's standing. Validity/claim checks
+  // still use the real unit e.
+  let bx=anchor?Math.round(anchor.x):Math.round(e.x),by=anchor?Math.round(anchor.y):Math.round(e.y);
   let best=null,bd=999;
   let claimed=claimedGatherSet(e.team);
   // Two-stage search: the cheap 12-radius ring first (covers the normal

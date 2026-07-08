@@ -349,6 +349,10 @@ function execBuildPlacement(cmd){
     };
     if (isGateBtype(btype)) {
       refundWalls(wallsToRemove);
+    } else if (btype === 'SWALL') {
+      // Stone-on-palisade upgrade: the footprint loop already collected the
+      // palisade being replaced — refund its wood against the stone's cost.
+      refundWalls(wallsToRemove);
     } else if (btype === 'TOWER') {
       let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);
       if (existing) {

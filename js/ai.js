@@ -180,6 +180,13 @@ function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
   let w=nearestReachableWallLike(v,ai.team);
   if(w&&w.team===ai.team&&isWallBtype(w.btype)){
     deleteOwnedEntity(w);
+    // Hold this tile OPEN for a while instead of letting wall-maintenance
+    // instantly rebuild it — otherwise the worker is re-sealed next tick and
+    // we oscillate (delete → rebuild → re-trap), the "keeps deleting and
+    // recreating the wall" behavior. The gap is the worker's eco access; the
+    // ring still has its gate(s) for defense.
+    let pt=ai.wallPlan&&ai.wallPlan.find(t=>t.x===w.x&&t.y===w.y);
+    if(pt){pt.done=true;pt.rescueOpenUntil=tick+3000;}
   }
 }
 
@@ -310,13 +317,22 @@ function ensureAIHousing(ai,aiTC,profile){
   if(pos)placeAIBuilding(ai,'HOUSE',pos.x,pos.y);
 }
 
+const AI_DROP_COVER=10;  // a drop-off "covers" resource within this radius: only
+                         // build a camp for resources FARTHER than this (else
+                         // the TC/existing camp already serves it — no redundant
+                         // camp next to a drop that's right there)
+const AI_MAX_LCAMP=3, AI_MAX_MCAMP=2;
 function planAIDropSites(ai,aiTC,vils,profile){
   if(!profile.dropSites||vils.length<5)return;
   let hasBarracks=hasAIBuilding(ai,'BARRACKS');
-  // Wood/gold camps go at the resource but stay OUT of any food drop-off's
-  // farm belt (TC or Mill), keeping those rings clear for farms.
-  if(!hasAIBuilding(ai,'LCAMP')&&canAfford(ai.team,BLDGS.LCAMP.cost)){
-    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true);
+  // Wood camps: build one at the nearest forest NOT already covered by the TC
+  // or an existing camp, up to a cap — so villagers always have a short walk
+  // to a wood drop instead of trekking to a far treeline with none. Camps stay
+  // OUT of any food drop-off's farm belt.
+  let lcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP');
+  if(lcamps.length<AI_MAX_LCAMP&&canAfford(ai.team,BLDGS.LCAMP.cost)){
+    let woodDrops=[aiTC,...lcamps];
+    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true,woodDrops,AI_DROP_COVER);
     if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
   }
   // Bank resources for the upcoming barracks — but only while we can't yet
@@ -329,8 +345,10 @@ function planAIDropSites(ai,aiTC,vils,profile){
     let pos=findAIDropSite(ai,TERRAIN.BERRIES,'MILL',aiTC);
     if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
-  if(vils.length>=7&&hasBarracks&&!hasAIBuilding(ai,'MCAMP')&&canAfford(ai.team,BLDGS.MCAMP.cost)){
-    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC,true);
+  let mcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='MCAMP');
+  if(vils.length>=7&&hasBarracks&&mcamps.length<AI_MAX_MCAMP&&canAfford(ai.team,BLDGS.MCAMP.cost)){
+    let goldDrops=[aiTC,...mcamps];
+    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC,true,goldDrops,AI_DROP_COVER);
     if(pos)placeAIBuilding(ai,'MCAMP',pos.x,pos.y);
   }
 }
@@ -482,6 +500,7 @@ function planAIWalls(ai,aiTC,vils,profile){
       let hasRealGate=entities.some(e=>e.type==='building'&&e.team===ai.team&&isGateBtype(e.btype)&&e.hp>0);
       plan.forEach(pt=>{
         if(!pt.done)return; // already queued for building
+        if(pt.rescueOpenUntil&&tick<pt.rescueOpenUntil)return; // held open to free a trapped worker
         if(gt&&pt.x===gt.x&&pt.y===gt.y&&!hasRealGate)return; // sole egress — keep it open
         if(buildingAtTile(pt.x,pt.y,en=>en.team===ai.team))return; // sealed by a building
         if(!canPlace('WALL',pt.x,pt.y,ai.team))return; // terrain-blocked = sealed by terrain
@@ -960,6 +979,19 @@ function assignAIGatherTask(ai,v,vils,profile){
   v.target=null;
   v.buildTarget=null;
   clearGatherTarget(v);
+  // Drop-anchor the gather tile: work the resource nearest this task's own
+  // drop-off (its camp/TC) rather than the patch nearest wherever the villager
+  // is standing — short round trips, and a freshly-placed camp actually gets
+  // used instead of villagers hauling wood across the map to a far drop.
+  let gc=GATHER_TASKS[v.task];
+  if(gc){
+    let drop=nearestDrop(v,gc.resource);
+    if(drop){
+      let anchor={x:drop.x+(drop.w||1)/2,y:drop.y+(drop.h||1)/2};
+      let tile=findNearTile(v,gc.terrain,null,anchor);
+      if(tile&&pathReaches(v.x,v.y,tile.x,tile.y,v.id)){v.gatherX=tile.x;v.gatherY=tile.y;}
+    }
+  }
 }
 
 function aiEcoPlan(ai,vilCount,profile){
@@ -1655,10 +1687,20 @@ function findAIBuildSpot(ai,tc,type){
   return scan(true) || (reserve?scan(false):null);
 }
 
-function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false){
+function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=null,coverR=0){
   let maxDist=22*aiScale();
   let b=BLDGS[type];
   let beltDrops=avoidFarmBelt?aiFarmBeltDrops(ai.team):null;
+  // A patch already within coverR of an existing drop-off (the TC or a prior
+  // camp of this resource) is served — building another camp there is wasted.
+  // Skipping covered patches means the FIRST camp only goes up when the wood/
+  // gold is genuinely far from the TC, and LATER camps go to fresh far patches
+  // as near ones deplete (AoE2: a new lumber camp at each new forest, instead
+  // of one camp forever and villagers trekking 20 tiles to the next treeline).
+  let coveredBy=(x,y)=>existingDrops&&existingDrops.some(d=>{
+    let ex=Math.max(d.x-x,0,x-(d.x+d.w-1)), ey=Math.max(d.y-y,0,y-(d.y+d.h-1));
+    return Math.hypot(ex,ey)<coverR;
+  });
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
     if(map[y][x].t!==terrain||map[y][x].res<=0)continue;
@@ -1666,6 +1708,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false){
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,ai.team))continue;
+      if(coveredBy(bx,by))continue; // an existing drop already serves this patch
       let nearby=countResourceTilesNear(terrain,bx,by,4);
       // NEAREST ADEQUATE patch, AoE2-style: density only has to clear a
       // workability floor (>=8 tiles feeds several gatherers through the
