@@ -352,8 +352,42 @@ function planAIWalls(ai,aiTC,vils,profile){
   // zero military for 40k ticks because of it. Defense that can't train a
   // single spearman defends nothing.
   if(!hasAIBuilding(ai,'BARRACKS'))return;
-  if(!ai.wallPlan)ai.wallPlan=computeAIWallRing(aiTC,profile.wallRadius*aiScale());
+  if(!ai.wallPlan)ai.wallPlan=computeAIWallRing(ai,aiTC,profile.wallRadius*aiScale());
   let plan=ai.wallPlan;
+
+  // GATE-FIRST construction: the two reserved gate-pair tiles (on the eco
+  // side, see computeAIWallRing) are built before anything else, and the
+  // GATE is dropped on them as soon as both are walls. A gate is passable to
+  // own units, so from that moment the base has a working eco-side opening —
+  // it is NEVER sealed off from its resource camps while the rest of the
+  // ring closes (the collapse this fixes). A GATE can only be placed by
+  // consuming two adjacent walls, which is exactly why they must be built
+  // first rather than left as an open gap.
+  let gatePairs=ai.gatePairs||[];
+  ai.gatesDone=ai.gatesDone||{};
+  let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===x&&en.y===y);
+  let isGateAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isGateBtype(en.btype)&&en.x>=x-1&&en.x<=x&&en.y>=y-1&&en.y<=y);
+  gatePairs.forEach((pair,gi)=>{
+    if(ai.gatesDone[gi])return;
+    if(isGateAt(pair[0].x,pair[0].y)){ai.gatesDone[gi]=true;return;}
+    let bothWalls=pair.every(p=>isWallAt(p.x,p.y));
+    if(!bothWalls){
+      pair.forEach(p=>{
+        if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)){
+          placeAIBuilding(ai,'WALL',p.x,p.y);
+          let pt=plan.find(t=>t.x===p.x&&t.y===p.y); if(pt)pt.done=true;
+        }
+      });
+    } else {
+      let b=placeAIBuilding(ai,'GATE',pair[0].x,pair[0].y);
+      if(b){
+        ai.gatesDone[gi]=true;
+        ai.gateBuilt=true;               // at least one gate up → satisfies the ring-close/egress logic
+        ai.gateTile=ai.gateTile||{x:pair[0].x,y:pair[0].y};
+        plan.forEach(t=>{if((t.x===pair[0].x&&t.y===pair[0].y)||(t.x===pair[1].x&&t.y===pair[1].y))t.done=true;});
+      }
+    }
+  });
 
   // The gate tile is built as a normal wall like the rest of the ring first —
   // placing a GATE only succeeds by consuming 2 existing adjacent wall tiles,
@@ -469,7 +503,7 @@ function breachAIWallRing(ai,plan,aiTC){
   return false;
 }
 
-function computeAIWallRing(tc,radius){
+function computeAIWallRing(ai,tc,radius){
   let r=Math.max(4,Math.round(radius));
   let cx=tc.x+Math.floor(tc.w/2),cy=tc.y+Math.floor(tc.h/2); // build the ring around its center
   let tiles=[];
@@ -498,6 +532,42 @@ function computeAIWallRing(tc,radius){
   if(hasS)for(let x=xLo;x<=xHi;x++)addTile(x,cy+r,'S');
   if(hasW)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx-r,y,'W');
   if(hasE)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx+r,y,'E');
+  // ---- Reserve TWO gates: one toward the ECONOMY, one toward the ENEMY ----
+  // The old ring closed with a single gate carved AFTER the whole ring was
+  // built, toward the ENEMY. When the eco's resource camps sat on the far
+  // side, villagers were sealed from their own gold/wood/berries → idle →
+  // Dark-Age collapse (sim seed 2001). A single eco-side gate instead fixed
+  // that but forced the whole army to detour around the ring to reach the
+  // enemy → a pathfinding storm and gate-bottleneck wedging. So reserve BOTH:
+  // an eco-facing gate (short villager commute to camps) and an enemy-facing
+  // gate (short army egress). Both are own-passable, cheap (30 wood), and
+  // split the traffic. planAIWalls builds each pair's two tiles FIRST and
+  // gates them immediately, so both openings exist from early construction —
+  // the base is never sealed and the army never has to go the long way.
+  let camps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&(e.btype==='LCAMP'||e.btype==='MCAMP'||e.btype==='MILL'));
+  let sideFor=(dx,dy)=>Math.abs(dx)>=Math.abs(dy)?(dx>=0?'E':'W'):(dy>=0?'S':'N');
+  let ecx=0,ecy=0;
+  if(camps.length){ camps.forEach(c=>{ecx+=(c.x+0.5)-cx;ecy+=(c.y+0.5)-cy;}); }
+  let ed=getEnemyDirection(ai,tc);
+  let ecoSide=camps.length?sideFor(ecx,ecy):sideFor(ed.dx,ed.dy);
+  let enemySide=sideFor(ed.dx,ed.dy);
+  // Reserve a 2-wide gate pair on `side`; returns the pair or null.
+  let reserveGate=(side)=>{
+    let st=tiles.filter(t=>t.side===side&&walkable(t.x,t.y)&&!t.isGatePair);
+    if(!st.length)return null;
+    let mid=st[Math.floor(st.length/2)];
+    st.sort((a,b)=>(Math.abs(a.x-mid.x)+Math.abs(a.y-mid.y))-(Math.abs(b.x-mid.x)+Math.abs(b.y-mid.y)));
+    let a=st[0], horiz=(side==='N'||side==='S');
+    let b=st.find(t=>t!==a&&(horiz?(t.y===a.y&&Math.abs(t.x-a.x)===1):(t.x===a.x&&Math.abs(t.y-a.y)===1)));
+    if(!b)return null;
+    a.isGatePair=true;b.isGatePair=true;
+    return [{x:a.x,y:a.y},{x:b.x,y:b.y}];
+  };
+  ai.gatePairs=[];
+  let sides=ecoSide===enemySide?[ecoSide]:[ecoSide,enemySide];
+  for(let s of sides){ let g=reserveGate(s); if(g)ai.gatePairs.push(g); }
+  // If neither preferred side had a walkable run, fall back to any side.
+  if(!ai.gatePairs.length){ for(let s of ['E','W','S','N']){ let g=reserveGate(s); if(g){ai.gatePairs.push(g);break;} } }
   return tiles;
 }
 
@@ -784,6 +854,33 @@ function assignAIGatherTask(ai,v,vils,profile){
   // Stone has no late-game sink beyond walls/towers — a hoard means the
   // miner is wasted; wood is always spendable (farm reseeds, buildings).
   if(task==='mine_stone'&&resourceStore(ai.team).stone>800)task='chop';
+  // Reachability guard (this reassignment path only — never per tick — so no
+  // pathfinding storm): findNearTile checks proximity, NOT reachability, so a
+  // villager whose nearest resource is walled off from where it stands keeps
+  // getting handed a tile it can't walk to → it idles (food starves with
+  // farms unworked; sim hard seed 1). If the chosen tile is unreachable, try
+  // any other terrain that IS path-reachable; else walk to the nearest
+  // reachable own GATE (own units pass through it, so the rest of the map —
+  // and the eco — opens up once through) and re-evaluate next decision.
+  let cfg=GATHER_TASKS[task];
+  let tile=cfg?findNearTile(v,cfg.terrain):null;
+  if(tile&&!pathReaches(v.x,v.y,tile.x,tile.y,v.id)){
+    let picked=false;
+    for(let alt of ['farm','forage','chop','mine_gold','mine_stone']){
+      if(alt===task)continue;
+      let t2=findNearTile(v,GATHER_TASKS[alt].terrain);
+      if(t2&&pathReaches(v.x,v.y,t2.x,t2.y,v.id)){task=alt;picked=true;break;}
+    }
+    if(!picked){
+      let gates=(ai.gatePairs||[]).map(p=>p[0]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
+      if(gates.length){
+        gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
+        v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
+        pathUnitTo(v,gates[0].x,gates[0].y);
+        return;
+      }
+    }
+  }
   v.task=task;
   v.target=null;
   v.buildTarget=null;

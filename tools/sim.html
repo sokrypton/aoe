@@ -79,7 +79,16 @@ window.runSimulation = async function(opts){
     const diffs = cfg.diff.split(',');
     teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
     resetAIStates();
-    gameStarted = true; gamePaused = false;
+    // gamePaused = TRUE: this loop drives update() manually. The game's own
+    // requestAnimationFrame gameLoop (init.js) also calls update() when
+    // !gamePaused, on a WALL-CLOCK accumulator — and because our batched
+    // loop yields to the event loop between batches, that RAF loop would
+    // interleave and double-step ticks by a nondeterministic amount (the
+    // old fully-synchronous loop never yielded, so it never showed). Pausing
+    // the auto-loop makes our explicit update() calls the only stepper, so
+    // the sim is deterministic run-to-run again. update() itself doesn't
+    // gate on gamePaused, so manual stepping is unaffected.
+    gameStarted = true; gamePaused = true;
     // Headless speed: skip viewer-local per-tick work (fog, explored-ever,
     // particles — see window.__headlessSim guards in js/loop.js, js/core.js)
     // and stub the feedback sinks. The per-tick desync checksum (DET.enabled
