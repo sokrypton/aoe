@@ -42,8 +42,8 @@
     } else if (type === 'GATE' || type === 'SGATE') {
       let wallB = GATE_WALL_MATCH[type];
       let wTop = createBuilding(wallB, p.x, p.y, 0); wTop.complete = true;
-      let g = createBuilding(type, p.x, p.y + 1, 0, 1, 2); g.complete = true; g.gateProgress = 0;
-      let wBot = createBuilding(wallB, p.x, p.y + 3, 0); wBot.complete = true;
+      let g = createBuilding(type, p.x, p.y + 1, 0, 1, 3); g.complete = true; g.gateProgress = 0;
+      let wBot = createBuilding(wallB, p.x, p.y + 4, 0); wBot.complete = true;
       ents.push(wTop, g, wBot);
       g.__animGate = true;
     } else {
@@ -86,10 +86,10 @@
   // wall/gate/tower connection the game can produce.
   //         (0,0) SWALL
   //         (0,1) SWALL
-  //  (0,2) TOWER ── (1,2)(2,2) SWALL ── (3,2)(4,2) GATE(E-W) ── (5,2) SWALL ── (6,2) TOWER
+  //  (0,2) TOWER ─ (1,2)(2,2) SWALL ─ (3,2)(4,2)(5,2) GATE(E-W) ─ (6,2) SWALL ─ (7,2) TOWER
   //         (0,3) SWALL
-  //         (0,4)(0,5) GATE(N-S)
-  //         (0,6) SWALL
+  //         (0,4)(0,5)(0,6) GATE(N-S)
+  //         (0,7) SWALL
   const mkFort = (wallB, gateB, label) => {
     let p = { x: wx, y: wy }; wx = 4; wy += 12; // full-width slot on its own band
     let ents = [];
@@ -101,12 +101,12 @@
     put(wallB, 0, 0); put(wallB, 0, 1);
     put(towers ? 'TOWER' : wallB, 0, 2);
     put(wallB, 1, 2); put(wallB, 2, 2);
-    put(gateB, 3, 2, 2, 1).__animGate = true;   // E-W gate
-    put(wallB, 5, 2);
-    put(towers ? 'TOWER' : wallB, 6, 2);
+    put(gateB, 3, 2, 3, 1).__animGate = true;   // E-W gate (3x1)
+    put(wallB, 6, 2);
+    put(towers ? 'TOWER' : wallB, 7, 2);
     put(wallB, 0, 3);
-    put(gateB, 0, 4, 1, 2).__animGate = true;   // N-S gate
-    put(wallB, 0, 6);
+    put(gateB, 0, 4, 1, 3).__animGate = true;   // N-S gate (1x3)
+    put(wallB, 0, 7);
     gallery.push({ kind: 'building', ents, label, anchor: ents[0],
                    gateType: towers ? 'TOWER' : wallB,
                    maxAge: wallB === 'WALL' ? 0 : undefined,

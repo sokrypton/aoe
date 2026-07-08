@@ -327,19 +327,8 @@ function execBuildPlacement(cmd){
     let ox = tile.x, oy = tile.y;
     if (isGateBtype(btype)) {
       let wallB = GATE_WALL_MATCH[btype];
-      let isWall = (tx, ty) => {
-        let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === myTeam);
-        return !!w;
-      };
-      if (isWall(tile.x, tile.y) && isWall(tile.x + 1, tile.y)) {
-        ox = tile.x; oy = tile.y; gw = 2; gh = 1;
-      } else if (isWall(tile.x - 1, tile.y) && isWall(tile.x, tile.y)) {
-        ox = tile.x - 1; oy = tile.y; gw = 2; gh = 1;
-      } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y + 1)) {
-        ox = tile.x; oy = tile.y; gw = 1; gh = 2;
-      } else if (isWall(tile.x, tile.y - 1) && isWall(tile.x, tile.y)) {
-        ox = tile.x; oy = tile.y - 1; gw = 1; gh = 2;
-      }
+      let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === myTeam);
+      ({ ox, oy, gw, gh } = gateFootprint(tile.x, tile.y, isWall));
     }
     let wallsToRemove = [];
     for (let dy = 0; dy < gh; dy++) {
@@ -359,6 +348,10 @@ function execBuildPlacement(cmd){
       });
     };
     if (isGateBtype(btype)) {
+      refundWalls(wallsToRemove);
+    } else if (btype === 'SWALL') {
+      // Stone-on-palisade upgrade: the footprint loop already collected the
+      // palisade being replaced — refund its wood against the stone's cost.
       refundWalls(wallsToRemove);
     } else if (btype === 'TOWER') {
       let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);

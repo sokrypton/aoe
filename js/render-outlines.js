@@ -24,16 +24,12 @@
 // dpr (device pixel ratio, for crisp buffers on retina screens), which is
 // an orthogonal concern from gameplay zoom.
 const SIL_UNIT_SIZE = 84;  // logical px — covers any unit
-const SIL_BLDG_SIZE = 300; // logical px — covers largest building (TC 3x3)
-// Selected entities whose combined bounding box (all their silhouette
-// extents unioned together) fits within this span get ONE merged ring
-// drawn around the whole group instead of one ring per entity — see
-// drawOutlines() below for why. Beyond this span there's no visual benefit
-// to merging anyway (the ~2px dilation could never bridge that big a gap
-// between two far-apart members, so their rings would never touch whether
-// merged or not) — only cost, in the form of a much bigger shared buffer
-// mostly covering empty space. Falls back to the old per-entity path there.
-const SIL_MERGE_MAX_SPAN = 700; // logical px
+// Covers the largest building's full drawn silhouette. Measured extents of the
+// 4x4 Town Center from its anchor (footprint-top): ~129px each side, ~102px
+// above, ~94px below (the annex posts hang below the footprint). 340 with the
+// 0.62 anchor split below gives ±170 / 211 above / 129 below — margin on all
+// sides. (Was 300 at a 0.72 split → only 84px below, which clipped the posts.)
+const SIL_BLDG_SIZE = 340;
 
 let _silMaskC=null,_silMaskX=null; // logical-pixel user space (scale(_silSS) applied)
 let _silFlatC=null,_silFlatX=null; // physical px, no extra scale
@@ -98,7 +94,7 @@ function _outlineExtent(e){
 
   const cssPx  = isUnit ? SIL_UNIT_SIZE : SIL_BLDG_SIZE;
   const anchorX = isUnit ? 42 : cssPx/2;
-  const anchorY = isUnit ? 58 : cssPx*0.72;
+  const anchorY = isUnit ? 58 : cssPx*0.62; // 211px above / 129px below the footprint top
 
   let sx, sy;
   if(isUnit){
@@ -236,24 +232,43 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
 // Entities whose silhouettes are close together share ONE buffer and get
 // dilated as a single unioned shape (_renderRingGroup), so touching or
 // overlapping selected units read as one continuous outline around the
-// group instead of two individually-dilated rings meeting at a visible
-// seam. Far-apart entities (beyond SIL_MERGE_MAX_SPAN) fall back to their
-// own individual buffer — merging them would cost a much bigger mostly-
-// empty buffer for zero visual benefit, since the dilation could never
-// bridge that big a gap anyway.
+// group instead of two individually-dilated rings meeting at a visible seam.
+//
+// One shared buffer is used for ANY multi-entity selection, clamped to the
+// visible viewport. The buffer cost is bounded by the screen (one flatten +
+// dilate pass), not by the number selected — so selecting a 400-unit army
+// costs the same as selecting a screenful of anything else. (The old code
+// fell back to a PER-ENTITY buffer once the selection spanned more than a
+// threshold, which was O(N) offscreen churn: ~53ms to outline a spread-out
+// 400-unit selection. Every member is already on-screen — _outlineExtent
+// drops off-screen ones — so clamping the union box to the viewport loses
+// nothing, and far-apart rings still don't touch, exactly as before.)
 function drawOutlines(){
   if(!selected.length) return;
   let infos = selected.map(_outlineExtent).filter(Boolean);
   if(infos.length===0) return;
 
+  if(infos.length===1){
+    let info=infos[0];
+    _renderRingGroup([info], info.left, info.top, info.cssPx, info.cssPx);
+    return;
+  }
+
   let minLeft=Math.min(...infos.map(i=>i.left)), minTop=Math.min(...infos.map(i=>i.top));
   let maxRight=Math.max(...infos.map(i=>i.right)), maxBottom=Math.max(...infos.map(i=>i.bottom));
-  let spanW=maxRight-minLeft, spanH=maxBottom-minTop;
 
-  if(infos.length===1 || spanW>SIL_MERGE_MAX_SPAN || spanH>SIL_MERGE_MAX_SPAN){
-    infos.forEach(info=>_renderRingGroup([info], info.left, info.top, info.cssPx, info.cssPx));
-  } else {
-    _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
-  }
+  // Clamp the union box to the visible region (same bounds isOffscreen uses),
+  // plus a little slack for the dilation ring. Keeps the shared buffer at most
+  // viewport-sized no matter how far apart the members are.
+  const M = 4;
+  const hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH;
+  minLeft   = Math.max(minLeft,   W/2 - hw - M);
+  maxRight  = Math.min(maxRight,  W/2 + hw + M);
+  minTop    = Math.max(minTop,    cyv - hh - M);
+  maxBottom = Math.min(maxBottom, cyv + hh + M);
+  let spanW=maxRight-minLeft, spanH=maxBottom-minTop;
+  if(spanW<=0 || spanH<=0) return;
+
+  _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
 }
 

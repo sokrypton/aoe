@@ -54,17 +54,11 @@ function drawGhost(){
   let ox=tile.x, oy=tile.y;
   if(isGateBtype(placing)){
     let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype===GATE_WALL_MATCH[placing]&&en.team===myTeam);
-    if (isWall(tile.x, tile.y) && isWall(tile.x+1, tile.y)) {
-      ox=tile.x; oy=tile.y; bw=2; bh_=1;
-    } else if (isWall(tile.x-1, tile.y) && isWall(tile.x, tile.y)) {
-      ox=tile.x-1; oy=tile.y; bw=2; bh_=1;
-    } else if (isWall(tile.x, tile.y) && isWall(tile.x, tile.y+1)) {
-      ox=tile.x; oy=tile.y; bw=1; bh_=2;
-    } else if (isWall(tile.x, tile.y-1) && isWall(tile.x, tile.y)) {
-      ox=tile.x; oy=tile.y-1; bw=1; bh_=2;
-    } else {
-      bw=1; bh_=2;
-    }
+    let fp = gateFootprint(tile.x, tile.y, isWall);
+    ox=fp.ox; oy=fp.oy; bw=fp.gw; bh_=fp.gh;
+    // With no adjacent wall to snap to, preview the intended full 1x3 gate
+    // so the player sees the real size before committing.
+    if (bw===1 && bh_===1) { bw=1; bh_=3; }
   }
   let ok=canPlace(placing,tile.x,tile.y,myTeam);
 

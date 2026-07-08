@@ -6,24 +6,14 @@ function canPlace(type,x,y,team=0){
   let bw=b.w, bh=b.h;
   let ox=x, oy=y;
   if(isGateBtype(type)){
-    // A gate can ONLY be placed on an existing 2-tile allied wall segment
-    // of the MATCHING material (palisade gate on palisade, stone on stone).
+    // A gate can ONLY be placed on an existing run of allied wall tiles of
+    // the MATCHING material (palisade gate on palisade, stone on stone).
+    // gateFootprint picks the run (prefers 3-tile, falls back to 2) — use it
+    // here so placement validation checks EXACTLY the tiles that get built.
     let wallB = GATE_WALL_MATCH[type];
-    let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
-      return !!w;
-    };
-    if (isWall(x, y) && isWall(x + 1, y)) {
-      ox = x; oy = y; bw = 2; bh = 1;
-    } else if (isWall(x - 1, y) && isWall(x, y)) {
-      ox = x - 1; oy = y; bw = 2; bh = 1;
-    } else if (isWall(x, y) && isWall(x, y + 1)) {
-      ox = x; oy = y; bw = 1; bh = 2;
-    } else if (isWall(x, y - 1) && isWall(x, y)) {
-      ox = x; oy = y - 1; bw = 1; bh = 2;
-    } else {
-      return false; // Must be built on exactly 2 wall tiles
-    }
+    let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
+    ({ ox, oy, gw: bw, gh: bh } = gateFootprint(x, y, isWall));
+    if (bw === 1 && bh === 1) return false; // no matching wall run to build on
   }
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
@@ -52,13 +42,16 @@ function canPlace(type,x,y,team=0){
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
       let existing = entitiesById.get(t.occupied);
-      // Only GATE and TOWER may be placed on top of an existing allied
-      // WALL (they consume the wall tile(s) they're built on, see
-      // doPlace's wallsToRemove); anything else, including another WALL,
-      // must not overlap an existing building.
+      // GATE, TOWER, and a STONE WALL upgrade may be placed on top of an
+      // existing allied wall (they consume the wall tile(s) they're built on,
+      // see execBuildPlacement's wallsToRemove); anything else, including
+      // another palisade, must not overlap an existing building. Stone-on-
+      // palisade lets you reinforce a wooden wall in place (an upgrade you
+      // build, mirroring how a gate is built over walls).
       if (existing && existing.type === 'building' && existing.team === team &&
           ((isGateBtype(type) && existing.btype === GATE_WALL_MATCH[type]) ||
-           (type === 'TOWER' && isWallBtype(existing.btype)))) {
+           (type === 'TOWER' && isWallBtype(existing.btype)) ||
+           (type === 'SWALL' && existing.btype === 'WALL'))) {
         continue;
       }
       return false;
@@ -660,22 +653,31 @@ function checkNextBuild(e){
   }
 
   if (unfinishedInQueue.length > 0) {
-    // Sort unfinished targets by distance to the villager so they build the closest next!
+    // Nearest first, but pick the nearest one this builder can ACTUALLY REACH.
+    // A foundation can be near in straight-line distance yet sealed off (wrong
+    // side of a closing wall ring, boxed by other foundations) — assigning it
+    // anyway makes the builder walk, fail, give up, get handed the same
+    // nearest one again, and churn until the stuck-watchdog frees it. Skipping
+    // unreachable ones breaks that loop and lets the builder fall through to a
+    // reachable job / gathering.
     unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b));
-    
-    // Sync the queue list with sorted order
-    e.buildQueue = unfinishedInQueue.map(bt => bt.id);
-    
-    let bt = unfinishedInQueue[0];
-    e.task = 'build';
-    e.buildTarget = bt.id;
-    e.target = null;
-    let b = BLDGS[bt.btype];
-    let pt = b.isFarm ? {x: bt.x, y: bt.y} : nearestBldgPerimeter(e.x, e.y, bt, e.id);
-    pathUnitTo(e, pt.x, pt.y);
-    return true;
+    let bt = null, pt = null;
+    for (let cand of unfinishedInQueue) {
+      let b = BLDGS[cand.btype];
+      let cpt = b.isFarm ? {x: cand.x, y: cand.y} : nearestBldgPerimeter(e.x, e.y, cand, e.id);
+      let close = b.isFarm ? dist(e,{x:cand.x+0.5,y:cand.y+0.5})<1.2 : adjToBuilding(e.x,e.y,cand);
+      if (close || pathReaches(Math.round(e.x), Math.round(e.y), cpt.x, cpt.y, e.id)) { bt = cand; pt = cpt; break; }
+    }
+    if (bt) {
+      e.buildQueue = unfinishedInQueue.map(b => b.id);
+      e.task = 'build';
+      e.buildTarget = bt.id;
+      e.target = null;
+      pathUnitTo(e, pt.x, pt.y);
+      return true;
+    }
   }
-  
+
   e.buildQueue = [];
   return false;
 }
@@ -697,11 +699,14 @@ function damageEntity(attacker, target){
     if (attacker.utype === 'villager') dmg += 3;
     if (attacker.utype === 'militia') dmg += 2;
     // The ram IS its building bonus: base atk 2 barely scratches a unit,
-    // +70 vs structures tears through walls — calibrated so one ram kills
-    // a Castle-age stone wall segment (1485hp after masonry+fortified) in
-    // ~24 hits ≈ 120 game-s, matching AoE2's ~16 hits on its double-HP
-    // walls. Keep in sync with wallBreachTicks (ai.js).
-    if (attacker.utype === 'ram') dmg += 70;
+    // +110 vs structures tears through walls. Tuned so one ram's net DPS
+    // (~20.8 hp/s after the wall's 8 melee armor, rof 150) clearly EXCEEDS a
+    // villager's repair (~10 hp/s) — matching AoE2, where a ram out-damages a
+    // repairer so a small siege force actually breaches instead of bouncing.
+    // (At +70 a ram did only ~12.8 hp/s: two repairing villagers stalled it
+    // forever, so no walled AI base ever fell — the finishing stalemate.)
+    // Keep in sync with wallBreachTicks (ai.js).
+    if (attacker.utype === 'ram') dmg += 110;
   }
 
   // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
@@ -757,7 +762,13 @@ function damageEntity(attacker, target){
   // (updateAIGarrisonReaction, js/ai.js), so it must be deterministic and
   // ride the lockstep snapshots (js/core.js's lastTeamHit).
   if (lastTeamHit && isEnemyOf(target.team, attacker) && isPlayerTeam(target.team)) {
-    lastTeamHit[target.team] = { tick, x: target.x, y: target.y };
+    // `core` = the hit actually threatens the economy: a villager or the Town
+    // Center itself. A hit on a peripheral WALL/other building is NOT core —
+    // the AI garrison reaction (updateAIGarrisonReaction) must not hide the
+    // whole workforce just because an army is poking the wall from outside a
+    // ring it can't breach (that froze the eco forever = the Dark-Age stall).
+    let core = target.utype === 'villager' || target.btype === 'TC';
+    lastTeamHit[target.team] = { tick, x: target.x, y: target.y, core };
   }
 
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
@@ -1438,9 +1449,20 @@ function updateUnit(e){
         // the nearest reachable enemy-side wall/gate/tower, AoE2-style —
         // it was standing there swinging at air forever otherwise. Human
         // units keep their explicit order (never hijack a player command).
-        if(retryFail(u,'chaseBlocked',0,4)&&isAITeam(u.team)&&typeof nearestReachableWallLike==='function'){
-          let w=nearestReachableWallLike(u,tgt.team);
-          if(w&&!sameSide(w.team,u.team)){u.target=w.id;u.explicitAttack=true;u.siegeSpot=null;return false;}
+        if(retryFail(u,'chaseBlocked',0,4)&&isAITeam(u.team)){
+          if(typeof nearestReachableWallLike==='function'){
+            let w=nearestReachableWallLike(u,tgt.team);
+            if(w&&!sameSide(w.team,u.team)){u.target=w.id;u.explicitAttack=true;u.siegeSpot=null;return false;}
+          }
+          // Nothing reachable to breach AND the target itself is unreachable
+          // (enemy sealed in a pocket / behind an unbreachable section). Drop
+          // it instead of swinging at air forever — that froze the unit on a
+          // stable target for 240 ticks = stuck-watchdog spam. controlAIMilitary
+          // re-tasks it (regroup / pick a reachable foe) next decision.
+          u.target=null;u.explicitAttack=false;u.siegeSpot=null;
+          retryClear(u,'chaseBlocked');
+          clearUnitPath(u);
+          return false;
         }
       } else {
         retryClear(u,'chaseBlocked');
@@ -1838,8 +1860,13 @@ function claimedGatherSet(team){
   return gatherClaims[team];
 }
 
-function findNearTile(e,terrain,excludeList=null){
-  let bx=Math.round(e.x),by=Math.round(e.y);
+function findNearTile(e,terrain,excludeList=null,anchor=null){
+  // Search origin: normally the unit itself, but callers can pass an `anchor`
+  // (e.g. a drop-off) to find the resource tile nearest THAT point instead —
+  // so an AI villager works beside its camp/TC (short round trips) rather than
+  // whatever patch is nearest to wherever it's standing. Validity/claim checks
+  // still use the real unit e.
+  let bx=anchor?Math.round(anchor.x):Math.round(e.x),by=anchor?Math.round(anchor.y):Math.round(e.y);
   let best=null,bd=999;
   let claimed=claimedGatherSet(e.team);
   // Two-stage search: the cheap 12-radius ring first (covers the normal

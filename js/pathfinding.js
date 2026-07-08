@@ -81,14 +81,17 @@ function walkable(x,y,ignore,ignoreUnits){
       if (occ.wasWall) return false;
       return true;
     }
-    // TC open courtyard: only the stone keep (the back 2x2 quadrant of the
-    // 3x3 footprint) is solid — the two open-sided shelter roofs and the
-    // front yard (the dx===2 / dy===2 edge tiles) are walkable, matching
-    // what the art actually shows. The tiles stay `occupied` so nothing can
-    // be BUILT there; construction sites still block fully.
+    // TC open courtyard: on the 4x4 footprint only the BACK 2x2 stone keep
+    // is solid — that is exactly what the art draws (the foundation diamond
+    // sits in the back/top quadrant, origin-corner tiles rdx<2 && rdy<2; the
+    // open-sided shelter roofs and the front yard fill the other 12 tiles).
+    // Everything outside that keep is walkable, so units cross the courtyard
+    // and around just the 2x2 keep instead of detouring the whole 4x4, and
+    // farmers dock two-deep on the open sides. Tiles stay `occupied` so
+    // nothing can be BUILT there; construction sites still block fully.
     if(occ && occ.type === 'building' && occ.btype === 'TC' && occ.complete) {
       let rdx = x - occ.x, rdy = y - occ.y;
-      if (rdx === 2 || rdy === 2) return true;
+      if (rdx >= 2 || rdy >= 2) return true;
     }
     // Farms are flat fields (AoE2): the entire 2x2 plot is walkable ground
     // for anyone — farmers stand on it, armies trample across it. Only the
@@ -113,7 +116,13 @@ function walkable(x,y,ignore,ignoreUnits){
   let bldg = entitiesById.get(t.occupied);
   if (bldg && isGateBtype(bldg.btype)) {
     if (walker && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
-      return true;
+      // Only the CENTRE tile of the gate is a doorway. The end tiles sit
+      // under the bastion posts and stay solid, so units (and stray sheep
+      // that slip through while the gate is open) funnel through the middle
+      // instead of standing under a post.
+      let horiz = bldg.w >= bldg.h;
+      let idx = horiz ? (x - bldg.x) : (y - bldg.y);
+      if (idx === Math.floor(Math.max(bldg.w, bldg.h) / 2)) return true;
     }
   }
   return false;
