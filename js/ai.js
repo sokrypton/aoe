@@ -797,7 +797,7 @@ function assignAIVillagers(ai,vils,profile){
       let target=v.buildTarget&&entitiesById.get(v.buildTarget);
       if(target&&target.team===ai.team&&(!target.complete||target.hp<target.maxHp))return;
     }
-    let build=neededAIBuildingWork(ai,incompleteBuilds,vils,profile);
+    let build=neededAIBuildingWork(ai,incompleteBuilds,vils,profile,v);
     if(build&&v.task!=='build'){
       assignAIBuilder(v,build);
       return;
@@ -807,8 +807,7 @@ function assignAIVillagers(ai,vils,profile){
   });
 }
 
-function neededAIBuildingWork(ai,incompleteBuilds,vils,profile){
-  let tc = entities.find(e => e.team === ai.team && e.btype === 'TC');
+function neededAIBuildingWork(ai,incompleteBuilds,vils,profile,v){
   return incompleteBuilds.find(build=>{
     // Exhausted farms are NOT building work for an AI: auto-reseed pays
     // from the bank the moment 60 wood exists (updateBuilding, js/logic.js).
@@ -820,13 +819,18 @@ function neededAIBuildingWork(ai,incompleteBuilds,vils,profile){
     // A builder recently failed at this site — unreachable, or a repair
     // the bank couldn't pay (js/logic.js stamps the back-off; expires).
     if ((build.buildBackoffUntil||0) > tick) return false;
-    let assigned=vils.filter(v=>v.task==='build'&&v.buildTarget===build.id).length;
+    let assigned=vils.filter(u=>u.task==='build'&&u.buildTarget===build.id).length;
     if (assigned >= profile.buildersPerBuilding) return false;
-    
-    if (tc) {
+
+    // Reachability is checked from the ACTUAL builder v, not the TC: a villager
+    // sealed off from the ring (caught outside when the wall closed, boxed in a
+    // pocket) must not be handed a foundation only the TC can reach — that's
+    // the churn-until-watchdog loop. Falls back to the TC when no v is given.
+    let src = v || entities.find(e => e.team === ai.team && e.btype === 'TC');
+    if (src) {
       let b = BLDGS[build.btype];
-      let pt = b.isFarm ? {x: build.x, y: build.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(tc.x, tc.y, build, tc.id) : {x: build.x, y: build.y});
-      if (!pathReaches(tc.x + Math.floor(tc.w/2), tc.y + Math.floor(tc.h/2), pt.x, pt.y, tc.id)) {
+      let pt = b.isFarm ? {x: build.x, y: build.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(src.x, src.y, build, src.id) : {x: build.x, y: build.y});
+      if (!pathReaches(Math.round(src.x), Math.round(src.y), pt.x, pt.y, src.id)) {
         return false;
       }
     }
@@ -1037,8 +1041,18 @@ function findAIFarmSpot(ai,tc){
   // Nearest drop-edge first; deterministic tie-break keeps the sim in lockstep.
   cands.sort((a,b)=>a.dd-b.dd || a.x-b.x || a.y-b.y);
   // Farms are walkable so they don't truly block a gate, but a farmer working
-  // in the gateway looks wrong — keep plots out of the gate corridor too.
-  for(let c of cands){ if(canPlace('FARM',c.x,c.y,ai.team)&&!aiWouldBlockGate(c.x,c.y,F,F,ai.team)) return {x:c.x,y:c.y}; }
+  // in the gateway looks wrong — keep plots out of the gate corridor too. Also
+  // require the plot be reachable from the TC: placing a farm a builder can't
+  // path to just parks it as unbuildable work and wedges the assigned
+  // villager (stuck-watchdog). (The TC centre tile is on the walkable
+  // courtyard edge, so it's a valid path source.)
+  let tcx=tc.x+Math.floor(tc.w/2), tcy=tc.y+Math.floor(tc.h/2);
+  for(let c of cands){
+    if(!canPlace('FARM',c.x,c.y,ai.team))continue;
+    if(aiWouldBlockGate(c.x,c.y,F,F,ai.team))continue;
+    if(!pathReaches(tcx,tcy,c.x,c.y,tc.id))continue;
+    return {x:c.x,y:c.y};
+  }
   return null;
 }
 

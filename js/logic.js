@@ -650,22 +650,31 @@ function checkNextBuild(e){
   }
 
   if (unfinishedInQueue.length > 0) {
-    // Sort unfinished targets by distance to the villager so they build the closest next!
+    // Nearest first, but pick the nearest one this builder can ACTUALLY REACH.
+    // A foundation can be near in straight-line distance yet sealed off (wrong
+    // side of a closing wall ring, boxed by other foundations) — assigning it
+    // anyway makes the builder walk, fail, give up, get handed the same
+    // nearest one again, and churn until the stuck-watchdog frees it. Skipping
+    // unreachable ones breaks that loop and lets the builder fall through to a
+    // reachable job / gathering.
     unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b));
-    
-    // Sync the queue list with sorted order
-    e.buildQueue = unfinishedInQueue.map(bt => bt.id);
-    
-    let bt = unfinishedInQueue[0];
-    e.task = 'build';
-    e.buildTarget = bt.id;
-    e.target = null;
-    let b = BLDGS[bt.btype];
-    let pt = b.isFarm ? {x: bt.x, y: bt.y} : nearestBldgPerimeter(e.x, e.y, bt, e.id);
-    pathUnitTo(e, pt.x, pt.y);
-    return true;
+    let bt = null, pt = null;
+    for (let cand of unfinishedInQueue) {
+      let b = BLDGS[cand.btype];
+      let cpt = b.isFarm ? {x: cand.x, y: cand.y} : nearestBldgPerimeter(e.x, e.y, cand, e.id);
+      let close = b.isFarm ? dist(e,{x:cand.x+0.5,y:cand.y+0.5})<1.2 : adjToBuilding(e.x,e.y,cand);
+      if (close || pathReaches(Math.round(e.x), Math.round(e.y), cpt.x, cpt.y, e.id)) { bt = cand; pt = cpt; break; }
+    }
+    if (bt) {
+      e.buildQueue = unfinishedInQueue.map(b => b.id);
+      e.task = 'build';
+      e.buildTarget = bt.id;
+      e.target = null;
+      pathUnitTo(e, pt.x, pt.y);
+      return true;
+    }
   }
-  
+
   e.buildQueue = [];
   return false;
 }
