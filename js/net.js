@@ -110,12 +110,13 @@ let netBytesReceived = 0;
     const el = document.getElementById('net-stats');
     if (!el) return;
     const ls = typeof lockstepEnabled === 'function' && lockstepEnabled();
-    // Desktop: full readout when there's chrome room. Mobile: normally
-    // hidden, but a compact sim-health readout (tps + input delay) shows
-    // during lockstep matches — that's where connection-pacing problems
-    // are felt and need monitoring.
+    // The net/sim readout is a CLASSIC-skin feature only. The modern skin
+    // (index.html) keeps its chrome clean — no transfer stats in its top
+    // bar at any size. Classic shows the full ↑/↓/Σ·tps readout on desktop
+    // and a compact tps/delay line on mobile lockstep matches.
+    const classic = document.body.classList.contains('classic-ui');
     const roomFor = !(typeof isMobile !== 'undefined' && isMobile) && window.innerWidth >= 700;
-    const active = (roomFor || (isMobile && ls)) && netRole && netConnected;
+    const active = classic && (roomFor || (isMobile && ls)) && netRole && netConnected;
     el.style.display = active ? 'flex' : 'none';
     if (!active) return;
     const now = performance.now(), dt = (now - lastT) / 1000 || 1;

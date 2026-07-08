@@ -508,7 +508,11 @@ function drawRamBody(e){
     X.strokeStyle = '#1d150c'; X.lineWidth = 0.9 / UNIT_SCALE;
     discPath(pF.x, pF.y); X.fill(); X.stroke();
     let ang = (rolling ? wheelRot : 0.6);
-    let sp = t => ({ x: pF.x + (Math.cos(ang)*u.x)*r*t, y: pF.y + (Math.cos(ang)*u.y - Math.sin(ang))*r*t });
+    // Spoke rotates in the disc plane (û, up). The vertical term is +sin,
+    // not -sin: with -sin the diagonal wheels spun BACKWARD relative to
+    // travel (opposite the E/W profile wheels, which roll forward) — the
+    // sign flip makes the contact point track rearward as the ram advances.
+    let sp = t => ({ x: pF.x + (Math.cos(ang)*u.x)*r*t, y: pF.y + (Math.cos(ang)*u.y + Math.sin(ang))*r*t });
     let s1 = sp(-0.7), s2 = sp(0.7);
     X.strokeStyle = '#3a2c1c'; X.lineWidth = 1 / UNIT_SCALE;
     X.beginPath(); X.moveTo(s1.x, s1.y); X.lineTo(s2.x, s2.y); X.stroke();
@@ -761,6 +765,50 @@ function drawRamBody(e){
   X.restore();
 }
 
+// Ground-shadow footprint per unit type, in TILE units: half-length along
+// the body's facing and half-width across it. Radially-symmetric units set
+// len==wid (facing then doesn't matter); elongated ones (mounts, bear) are
+// longer along the body so their shadow stretches in profile and shortens
+// head-on. Tuned so the humanoid footprint matches the old 6×3-ish ellipse.
+const UNIT_SHADOW = {
+  villager:{len:0.17,wid:0.17}, militia:{len:0.18,wid:0.18},
+  spearman:{len:0.18,wid:0.18}, archer:{len:0.18,wid:0.18},
+  scout:{len:0.42,wid:0.19},    knight:{len:0.44,wid:0.21},
+  bear:{len:0.34,wid:0.26},     sheep:{len:0.17,wid:0.17},
+  sheep_carcass:{len:0.22,wid:0.2},
+  // Ram: big, elongated, and its wheels touch AT the anchor line (yoff),
+  // unlike foot units whose feet sit ~6px above it. Goes through the same
+  // rotated ground-oval path so its diagonal facings cast a tilted shadow.
+  ram:{len:0.62,wid:0.34,yoff:1.5}
+};
+// A grounded contact shadow: an oval lying on the iso ground plane,
+// oriented to the unit's heading. Drawn by mapping the canvas into ground
+// space (columns = the two iso tile axes, exactly toIso) then filling a
+// rotated unit circle — so the 2:1 iso squash, the diagonal tilt, and the
+// per-facing foreshortening all come from the projection, not hand-picked
+// per-view ellipses. Origin nudged toward the lower-right, away from the
+// upper-left light, matching the building shadows (buildingShadowPath).
+function drawUnitShadow(e, sx, sy){
+  let f = UNIT_SHADOW[e.utype] || {len:0.18, wid:0.18};
+  let ta = (e.dir || 0) * Math.PI / 4; // facing angle in TILE space
+  X.save();
+  X.fillStyle = 'rgba(0,0,0,0.28)';
+  // No horizontal nudge: units are small enough that the buildings' cast-
+  // to-the-right offset reads as the shadow being off its feet rather than
+  // as light direction — center it on the legs (origin x). Drop is per-type
+  // (f.yoff): foot units' feet sit ~6px above the anchor, vehicles (ram)
+  // contact the ground right at it. The ram's profile pose (dir 3/7 = W/E)
+  // is drawn larger (RAM_PROFILE_K), riding its wheels a touch higher, so
+  // its shadow tucks up to meet them.
+  let yoff = f.yoff !== undefined ? f.yoff : 6;
+  if(e.utype==='ram' && (e.dir===3 || e.dir===7)) yoff = -1.5;
+  X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, sx, sy + yoff);
+  X.rotate(ta);
+  X.scale(f.len, f.wid);
+  X.beginPath(); X.arc(0, 0, 1, 0, Math.PI * 2); X.fill();
+  X.restore();
+}
+
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   let iso=toIso(e.x,e.y);
@@ -776,16 +824,12 @@ function drawUnit(e){
   // Shadow — not part of the body silhouette: the outline mask pass must
   // skip it or the selection ring traces the shadow blob too.
   if(!window._maskDraw){
-    X.fillStyle='rgba(0,0,0,0.3)';
-    // Ram: the shadow is the projected ground footprint, computed from the
-    // SAME physical model as the body (ramShadowExtent) — per-facing size
-    // falls out of the math instead of hand-picked ellipses.
-    if(e.utype==='ram'){
-      let ext = ramShadowExtent(e.dir !== undefined ? e.dir : 7);
-      X.beginPath();X.ellipse(sx,sy+2,ext.rx*UNIT_SCALE,ext.ry*UNIT_SCALE,0,0,Math.PI*2);X.fill();
-    } else {
-      X.beginPath();X.ellipse(sx,sy+2,6*UNIT_SCALE,3*UNIT_SCALE,0,0,Math.PI*2);X.fill();
-    }
+    // Every unit — ram included — uses the shared drawUnitShadow, which
+    // projects a per-type ground oval through the real iso transform and
+    // rotates it to the unit's facing. So a horse (or ram) in profile
+    // casts a long flat shadow, head-on a shorter rounder one, and the
+    // diagonal facings (SE/SW/NW/NE) a properly TILTED one.
+    drawUnitShadow(e, sx, sy);
   }
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location

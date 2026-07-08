@@ -5,7 +5,9 @@ const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scou
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
   'knight','SWALL','SGATE','bear','logo','ram',
   // Age-look variant cells (AGE_ICON_VARIANTS below)
-  'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle']); // 7x7 master sheet cells
+  'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle',
+  // Age crests (also used as the idle info-box portrait — see updateUI)
+  'age-dark','age-feudal','age-castle']); // 7x7 master sheet cells
 
 // Units whose LOOK changes with age get age-specific icon cells. Falls
 // back to the base key for missing ages. Militia's BASE cell (row 0,
@@ -135,6 +137,15 @@ function updateUI(){
     };
   }
 
+  // Age signal for the dirty check: current age index + whether a TC is
+  // researching (and toward what) — so the age crest and the idle-box age
+  // display both refresh on advance/start/cancel, none of which touch the
+  // other tracked fields on their own.
+  let myResearchTC = (teamAge && isPlayerTeam(myTeam))
+    ? entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research) : null;
+  let ageKey = (teamAge && isPlayerTeam(myTeam))
+    ? teamAge[myTeam] + ':' + (myResearchTC ? myResearchTC.research.target : '-') : '';
+
   let lu = window.lastUIState;
   let stateChanged = (
     currentFood !== lu.food || currentWood !== lu.wood ||
@@ -145,7 +156,8 @@ function updateUI(){
     currentSelectionDetails !== lu.selectionDetails || placing !== lu.placing ||
     window.currentVillagerMenu !== lu.currentVillagerMenu ||
     !!window.settingRally !== !!lu.settingRally ||
-    myBellActive() !== !!lu.bellActive
+    myBellActive() !== !!lu.bellActive ||
+    ageKey !== lu.ageKey
   );
 
   // Live training-progress patch: runs every frame on the EXISTING DOM (bar
@@ -185,6 +197,7 @@ function updateUI(){
   lu.currentVillagerMenu = window.currentVillagerMenu;
   lu.settingRally = !!window.settingRally;
   lu.bellActive = myBellActive();
+  lu.ageKey = ageKey;
 
   // Perform actual DOM updates
   document.getElementById('r-food').textContent=currentFood;
@@ -440,6 +453,23 @@ function updateUI(){
   }
 
   if(selected.length===0){
+    // Nothing selected: the modern skin (index.html) surfaces the current
+    // AGE here — its top-bar age chip is hidden on mobile (cramped), so
+    // this idle box is where age lives. More useful than the old game-name
+    // placeholder, and harmless on desktop. Classic keeps the title.
+    let modern = !document.body.classList.contains('classic-ui');
+    if (modern && teamAge && isPlayerTeam(myTeam)) {
+      let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
+      let ageIdx = teamAge[myTeam];
+      if (port) { setPortraitIcon(port, 'age-' + AGES[ageIdx].key, '🏛️'); port.classList.remove('cam-locked'); }
+      document.getElementById('sel-name').textContent = myTC
+        ? 'Advancing to ' + AGES[myTC.research.target].name + '…'
+        : AGES[ageIdx].name;
+      document.getElementById('sel-details').textContent = myTC
+        ? 'Villager training paused at the Town Center'
+        : (ageIdx < AGES.length - 1 ? 'Advance at the Town Center to unlock more' : 'Select a unit or building');
+      return;
+    }
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent='Age of Epochs II';
     document.getElementById('sel-details').textContent='Select a unit or building';

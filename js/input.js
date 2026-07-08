@@ -427,7 +427,21 @@ document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=
 // wheelDelta* at all; there, deltaMode 0 (pixel-based) is trackpad-typical
 // while a real wheel reports deltaMode 1 (line-based).
 function isTrackpadWheel(e){
-  if(e.wheelDeltaY!==undefined) return e.wheelDeltaY===e.deltaY*-3;
+  // Any horizontal component means a two-finger trackpad swipe — a plain
+  // mouse wheel is vertical-only — so treat it as a pan outright.
+  if(e.deltaX!==0) return true;
+  if(e.wheelDeltaY!==undefined){
+    // Trackpad: wheelDeltaY ≈ -3·deltaY. A physical notch instead reports a
+    // FIXED wheelDeltaY (±120) unrelated to deltaY's magnitude. The compare
+    // must be TOLERANT, not exact: a precision trackpad reports a fractional
+    // deltaY (e.g. 4.0000009) against an integer wheelDeltaY (-12), so the
+    // old `wheelDeltaY === deltaY*-3` was false for every swipe and they all
+    // fell through to the zoom branch ("two-finger scroll zooms, won't pan").
+    // The two are the same underlying value, so the residual is ~1e-5 for a
+    // trackpad vs. hundreds for a wheel notch — a <1 window separates them
+    // cleanly at any swipe speed.
+    return Math.abs(e.wheelDeltaY + 3*e.deltaY) < 1;
+  }
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{

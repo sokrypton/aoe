@@ -7,7 +7,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PORT=$((8650 + RANDOM % 300)) # random port: lets several sims run in parallel
+# PID-derived port: parallel sims can never collide (RANDOM could — and a
+# collision made one sim load its JS from a SIBLING's server, then hang
+# forever when that sibling finished and tore the server down).
+PORT=$((9000 + $$ % 20000))
 QUERY=$(IFS='&'; echo "$*")
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 

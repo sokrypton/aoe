@@ -111,7 +111,8 @@ canvas {
   gap: 6px;
 }
 #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn, #menu-btn {
-  background: linear-gradient(180deg, #5c3d24 0%, #301f10 100%);
+  /* Slightly translucent so the map reads through the corner controls */
+  background: linear-gradient(180deg, rgba(92,61,36,0.82) 0%, rgba(48,31,16,0.82) 100%);
   border: 1px solid #bfa054;
   border-radius: 4px;
   height: 28px;
@@ -146,7 +147,7 @@ canvas {
 #map-btn:hover, #map-btn:active,
 #idle-btn:hover, #idle-btn:active,
 #menu-btn:hover, #menu-btn:active {
-  background: linear-gradient(180deg, #7c5837 0%, #442d18 100%);
+  background: linear-gradient(180deg, rgba(124,88,55,0.9) 0%, rgba(68,45,24,0.9) 100%);
   border-color: #ffebad;
 }
 #pop{
@@ -432,21 +433,33 @@ canvas {
 .act-btn .cost{
   display:none; /* shown in the tooltip instead, so the icon can be bigger */
 }
-/* Touch devices have no hover tooltip, so costs were invisible on mobile —
-   there the cost renders as mini resource-icon+number chips pinned to the
-   button's bottom edge (costChips, js/ui.js). Desktop keeps the tooltip. */
-@media (pointer: coarse) {
-  .act-btn .cost.cost-chips{
-    display:flex;
-    position:absolute; left:2px; right:2px; bottom:2px;
-    justify-content:center; gap:4px;
-    font-size:9.5px; font-weight:700; color:#ffe9b3;
-    text-shadow:0 1px 2px #000, 0 0 3px #000;
-    pointer-events:none; /* never eat the button tap */
-  }
-  .cost-chip{ display:inline-flex; align-items:center; gap:1px; }
-  .cost-chip .res-mini-icon{ width:10px; height:10px; vertical-align:0; }
+/* Costs render as mini resource-icon+number chips pinned to the button's
+   bottom edge (costChips, js/ui.js) — always on in this skin: the hover
+   tooltip still exists on desktop, but the chips make costs glanceable
+   everywhere and are the ONLY cost display on touch (no hover there).
+   Each chip sits in its own dark badge so icon+number read as one tag. */
+.act-btn .cost.cost-chips{
+  display:flex;
+  /* One row, CENTERED horizontally and dropped so it straddles the button's
+     bottom border — a cost banner clear of the icon art above it. */
+  position:absolute; left:50%; transform:translateX(-50%); bottom:-7px; right:auto;
+  flex-direction:row; justify-content:center; gap:0;
+  white-space:nowrap;
+  font-size:9.5px; font-weight:700; color:#ffe9b3;
+  pointer-events:none; /* never eat the button tap */
 }
+.cost-chip{
+  display:inline-flex; align-items:center; gap:1px;
+  background:rgba(20,12,6,0.72);
+  border:1px solid rgba(122,86,56,0.8);
+  border-radius:5px;
+  padding:0 3px 0 1px;
+  text-shadow:0 1px 1px #000;
+}
+/* adjacent chips fuse into one continuous strip */
+.cost-chip + .cost-chip{ border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
+.cost-chip:not(:last-child){ border-top-right-radius:0; border-bottom-right-radius:0; }
+.cost-chip .res-mini-icon{ width:10px; height:10px; vertical-align:0; }
 
 /* Unaffordable actions: greyed out, no hover glow, click is swallowed in JS */
 .act-btn.disabled{
@@ -1018,6 +1031,10 @@ canvas {
 
 /* ---- RESPONSIVE BREAKPOINTS ---- */
 @media(max-width:600px){
+  /* The top bar is cramped on phones — the age chip moves to the idle
+     info box in the bottom-right corner (see updateUI, js/ui.js), so hide
+     it here to free the resource row. */
+  .age-res{display:none}
   #tutorial{
     /* Inherits the base center/center alignment (the old top-align
        override caused a visible snap-to-top at this breakpoint). Safe
@@ -1044,10 +1061,15 @@ canvas {
     text-align: left;
   }
   #pop{font-size:13px;padding:3px 5px;height:30px}
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:32px;width:32px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:24px}
+  /* Corner action buttons (idle/bell/map/home/chat) grow on small screens
+     for touch — a ~28px desktop chip is far below a comfortable finger
+     target, and it's exactly on small phones that these one-tap shortcuts
+     matter most. (Duplicate 30px override further down this block removed;
+     this is the single source at ≤600px.) */
+  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:42px;width:42px}
+  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:28px}
   #bell-btn .btn-emoji{
-    font-size: 24px;
+    font-size: 28px;
     transform: scale(1.1);
   }
   .sel-unit-icon{width:44px;height:44px}
@@ -1065,12 +1087,6 @@ canvas {
   #sel-portrait{width:50px;height:50px;font-size:24px}
   #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:30px;width:30px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:22px}
-  #bell-btn .btn-emoji{
-    font-size: 22px;
-    transform: scale(1.1);
-  }
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
   #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
@@ -1084,7 +1100,11 @@ canvas {
   #sel-portrait{width:44px;height:44px;font-size:20px}
   #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:30px;width:30px;font-size:14px}
+  /* Even larger on the smallest phones — biggest tap target where fingers
+     cover the most screen. */
+  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:48px;width:48px}
+  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:32px}
+  #bell-btn .btn-emoji{font-size:32px;transform:scale(1.1)}
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #pop-wrap{bottom:94px}
 }

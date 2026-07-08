@@ -1158,13 +1158,46 @@ function drawBuilding(e, part = null){
       X.lineTo(Ec.x,Ec.y-wallH);X.lineTo(Sc.x,Sc.y-wallH);
       X.closePath();X.fill();X.stroke();
       // Door on the GABLE END wall (away from the yard) — the yard-facing
-      // wall carries only windows
-      let db=P(-L,0);
-      X.fillStyle=darken?darkenColor('#5c3d24'):'#5c3d24';X.lineWidth=1;
-      X.beginPath();
-      X.moveTo(db.x-4.5,db.y-2.25);X.lineTo(db.x+4.5,db.y+2.25);
-      X.lineTo(db.x+4.5,db.y+2.25-11);X.lineTo(db.x-4.5,db.y-2.25-11);
-      X.closePath();X.fill();X.stroke();
+      // wall carries only windows. Recessed into the wall for real depth,
+      // same architecture as the TC keep windows (drawKeepWindow above):
+      // a deep dark opening shifted back into the wall, revealing a lintel
+      // underside across the top (darkest, faces down) and one side jamb
+      // (mid tone), all clipped to the outer frame and following the
+      // upper-left light. The wall face runs along (1,0.5) per along-unit
+      // and rises straight up; the recess shifts the opening sideways into
+      // the wall + down so the lintel shows (mirrors the TC's +down shift).
+      {
+        let db=P(-L,0);
+        let W=4.5, H=11, depth=2;
+        // frame corners on the wall surface (base on the ground line)
+        let O1={x:db.x-W, y:db.y-W*0.5-H}, O2={x:db.x+W, y:db.y+W*0.5-H}; // top-left, top-right
+        let O3={x:db.x+W, y:db.y+W*0.5},   O4={x:db.x-W, y:db.y-W*0.5};   // bottom-right, bottom-left
+        // opening: pushed back into the wall (along +along) and down, so
+        // the top lintel reveal and the left jamb become visible
+        let B=o=>({x:o.x+depth, y:o.y+depth*0.5+1.5});
+        let B1=B(O1),B2=B(O2),B3=B(O3),B4=B(O4);
+        let doorDark=darken?darkenColor('#241505'):'#241505';
+        let jambC=darken?darkenColor('#6f5330'):'#6f5330';
+        let lintelC=darken?darkenColor('#503a21'):'#503a21';
+        let framePath=()=>{X.beginPath();X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(O3.x,O3.y);X.lineTo(O4.x,O4.y);X.closePath();};
+        X.save();
+        framePath();X.clip();
+        // deep dark opening
+        X.fillStyle=doorDark;X.beginPath();
+        X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.lineTo(B3.x,B3.y);X.lineTo(B4.x,B4.y);X.closePath();X.fill();
+        // left jamb reveal (frame's left edge → opening's left edge)
+        X.fillStyle=jambC;X.beginPath();
+        X.moveTo(O1.x,O1.y);X.lineTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.lineTo(O4.x,O4.y);X.closePath();X.fill();
+        // lintel underside across the top (darkest)
+        X.fillStyle=lintelC;X.beginPath();
+        X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(B2.x,B2.y);X.lineTo(B1.x,B1.y);X.closePath();X.fill();
+        // light interior seams (reveal inner edges)
+        X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
+        X.beginPath();X.moveTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.stroke();
+        X.restore();
+        // dark door frame outline over the clipped interior
+        X.strokeStyle='#000';X.lineWidth=1.1;framePath();X.stroke();
+      }
       // Row of small windows facing the yard — the hall SLEEPS the garrison
       X.fillStyle=darken?darkenColor('#2a2a2a'):'#2a2a2a';X.lineWidth=0.9;
       [-16,-4,8,20].forEach(a=>{
@@ -1174,20 +1207,6 @@ function drawBuilding(e, part = null){
         X.lineTo(wb.x+2.4,wb.y-1.2-4.5);X.lineTo(wb.x-2.4,wb.y+1.2-4.5);
         X.closePath();X.fill();X.stroke();
       });
-      // Garrison's round wooden shield with an iron boss, hung on the
-      // gable over the door — drawn in the wall plane (sheared:
-      // horizontals at the gable's +0.5 slope, verticals plumb).
-      {
-        let sh=up(P(-L,0), wallH-5.5);
-        X.save();
-        X.translate(sh.x,sh.y);X.transform(1,0.5,0,1,0,0);
-        X.fillStyle=darken ? darkenColor('#a5723a') : '#a5723a';
-        X.strokeStyle='#000';X.lineWidth=1;
-        X.beginPath();X.arc(0,0,4,0,Math.PI*2);X.fill();X.stroke();
-        X.fillStyle=darken ? darkenColor('#c8c8c8') : '#c8c8c8';
-        X.beginPath();X.arc(0,0,1.4,0,Math.PI*2);X.fill();X.stroke();
-        X.restore();
-      }
       // Roof: single visible front slope, ridge + eaves overhanging
       let Se=up(P(-L-g,D+2), wallH-1.2), Ee=up(P(L+g,D+2), wallH-1.2);
       X.fillStyle=rl;X.lineWidth=1.3;
