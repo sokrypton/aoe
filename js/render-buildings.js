@@ -662,7 +662,19 @@ function drawBuilding(e, part = null){
   X.lineJoin = 'round';
 
   if(e.btype==='TC'){
-    bh=60; // 40 * 1.5 = 60
+    // The keep art below is authored for the original 3x3 footprint: sx is
+    // the footprint's top screen corner and every offset is measured from
+    // there (48px = 3*HALF_TH is that corner's height above the footprint
+    // centre). For a larger footprint (now 4x4) scale the entire drawing up
+    // about the footprint centre so it fills the bigger diamond
+    // proportionally, then run the authored art unchanged against its 3x3
+    // reference corner. Keeps one source of truth for the keep geometry.
+    let tcS = b.w / 3;
+    let tcCx = sx, tcCy = sy + bhh; // footprint centre in screen space
+    sy = tcCy - 48;                 // authored 3x3 top corner
+    X.save();
+    X.translate(tcCx, tcCy); X.scale(tcS, tcS); X.translate(-tcCx, -tcCy);
+    bh = 60 * tcS; // scaled keep height, for overlays drawn after restore()
 
     // Draw stone foundation pavement covering the keep footprint in the back quadrant
     X.fillStyle = darken ? darkenColor('#8d8577') : '#b7ad97';
@@ -931,6 +943,7 @@ function drawBuilding(e, part = null){
       if (ownerAge >= 2) drawWavingFlag(sx, sy, 66, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 22);
       else drawWavingFlag(sx, sy, 29, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 42);
     }
+    X.restore();
   }
   else if(e.btype==='HOUSE'){
     // Timber-framed cottage under a big yellow hay gable roof.
@@ -1017,7 +1030,18 @@ function drawBuilding(e, part = null){
     }
   }
   else if(e.btype==='BARRACKS'){
-    bh=32;
+    // The barracks art below is authored for the original 2x2 footprint (sx
+    // is the footprint's top screen corner, 32px = 2*HALF_TH above the
+    // centre; the hall/yard grid is pinned to those plot corners). For a
+    // larger footprint (now 3x3) scale the whole drawing up about the
+    // footprint centre and run the authored art unchanged against its 2x2
+    // reference corner — one source of truth for the compound geometry.
+    let bkS = b.w / 2;
+    let bkCx = sx, bkCy = sy + bhh; // footprint centre in screen space
+    sy = bkCy - 32;                 // authored 2x2 top corner
+    X.save();
+    X.translate(bkCx, bkCy); X.scale(bkS, bkS); X.translate(-bkCx, -bkCy);
+    bh = 32 * bkS; // scaled height, for overlays drawn after restore()
     // Small tethered horse in side profile (east-facing), one-piece
     // silhouette: rump -> back -> neck crest -> head -> muzzle -> chest ->
     // belly. Used by the age-gated hitching rail below to advertise that
@@ -1323,7 +1347,7 @@ function drawBuilding(e, part = null){
     drawBarracksFence(
       [BP(-bL,bD),BP(-bL,26),BP(-bL,38.5),BP(-bL,bYF),BP(-15,bYF),BP(0,bYF),BP(15,bYF),BP(bL,bYF)],
       [[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]], darken);
-
+    X.restore();
   }
   else if(e.btype==='LCAMP'){
     bh=30;
@@ -1697,19 +1721,20 @@ function drawBuilding(e, part = null){
     let pillarH = 28;
     bh = pillarH;
     let t1sx, t1sy, t2sx, t2sy;
-    let sx_center, sy_center;
     let wallLineNS = e.h > e.w;
-
+    // Gate length in tiles (2 or 3). The two bastion posts sit at the two
+    // ENDS of the run and the sliding door spans between them, so the far
+    // post is (n-1) tile-steps from the near one. One +x tile step is
+    // (+32,+16) on screen; one +y step is (-32,+16).
+    let n = Math.max(e.w, e.h);
     if (wallLineNS) {
-      // N-S Gate (footprint 1x2) - NE-SW direction
-      t1sx = sx; t1sy = sy + 16;
-      t2sx = sx - 32; t2sy = sy + 32;
-      sx_center = sx - 16; sy_center = sy + 24;
+      // N-S Gate (footprint 1xN) - NE-SW direction
+      t1sx = sx;                 t1sy = sy + 16;
+      t2sx = sx - 32 * (n - 1);  t2sy = sy + 16 + 16 * (n - 1);
     } else {
-      // E-W Gate (footprint 2x1) - NW-SE direction
-      t1sx = sx; t1sy = sy + 16;
-      t2sx = sx + 32; t2sy = sy + 32;
-      sx_center = sx + 16; sy_center = sy + 24;
+      // E-W Gate (footprint Nx1) - NW-SE direction
+      t1sx = sx;                 t1sy = sy + 16;
+      t2sx = sx + 32 * (n - 1);  t2sy = sy + 16 + 16 * (n - 1);
     }
 
     let dx = t2sx - t1sx, dy = t2sy - t1sy;
@@ -1779,19 +1804,21 @@ function drawBuilding(e, part = null){
       // Draw connection links for Post 2 (front post centered at t2sy)
       let wallH = 14;
       if (wallLineNS) {
-        // N-S Gate: Post 2 is at (e.x, e.y+1). Parallel connection goes South (y+2), Perpendicular goes East (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + 2))) {
+        // N-S Gate: Post 2 is the far post at (e.x, e.y+n-1). Parallel goes
+        // South (y+n), Perpendicular goes East (x+1, y+n-1).
+        if (isWallLike(getConnectedBuilding(e.x, e.y + n))) {
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
+        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + n - 1))) {
           drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       } else {
-        // E-W Gate: Post 2 is at (e.x+1, e.y). Parallel connection goes East (x+2, y), Perpendicular goes South (x+1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x + 2, e.y))) {
+        // E-W Gate: Post 2 is the far post at (e.x+n-1, e.y). Parallel goes
+        // East (x+n, y), Perpendicular goes South (x+n-1, y+1).
+        if (isWallLike(getConnectedBuilding(e.x + n, e.y))) {
           drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
-        if (isWallLike(getConnectedBuilding(e.x + 1, e.y + 1))) {
+        if (isWallLike(getConnectedBuilding(e.x + n - 1, e.y + 1))) {
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       }
@@ -1938,7 +1965,7 @@ function drawBuilding(e, part = null){
   // their flag at the very top of the structure using this same sx/sy).
   if(e.team===myTeam&&e.garrison&&e.garrison.length>0){
     let flagX=sx, flagY;
-    if(e.btype==='TC') flagY=sy-88;
+    if(e.btype==='TC') flagY=sy-bh-28; // tracks the (age/size-scaled) keep top; sy-88 at 3x3
     else if(e.btype==='TOWER') flagY=sy-54;
     else flagY=sy-bh-11; // fallback, shouldn't normally trigger
     let label=String(e.garrison.length);

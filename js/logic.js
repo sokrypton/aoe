@@ -6,24 +6,14 @@ function canPlace(type,x,y,team=0){
   let bw=b.w, bh=b.h;
   let ox=x, oy=y;
   if(isGateBtype(type)){
-    // A gate can ONLY be placed on an existing 2-tile allied wall segment
-    // of the MATCHING material (palisade gate on palisade, stone on stone).
+    // A gate can ONLY be placed on an existing run of allied wall tiles of
+    // the MATCHING material (palisade gate on palisade, stone on stone).
+    // gateFootprint picks the run (prefers 3-tile, falls back to 2) — use it
+    // here so placement validation checks EXACTLY the tiles that get built.
     let wallB = GATE_WALL_MATCH[type];
-    let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
-      return !!w;
-    };
-    if (isWall(x, y) && isWall(x + 1, y)) {
-      ox = x; oy = y; bw = 2; bh = 1;
-    } else if (isWall(x - 1, y) && isWall(x, y)) {
-      ox = x - 1; oy = y; bw = 2; bh = 1;
-    } else if (isWall(x, y) && isWall(x, y + 1)) {
-      ox = x; oy = y; bw = 1; bh = 2;
-    } else if (isWall(x, y - 1) && isWall(x, y)) {
-      ox = x; oy = y - 1; bw = 1; bh = 2;
-    } else {
-      return false; // Must be built on exactly 2 wall tiles
-    }
+    let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
+    ({ ox, oy, gw: bw, gh: bh } = gateFootprint(x, y, isWall));
+    if (bw === 1 && bh === 1) return false; // no matching wall run to build on
   }
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;

@@ -307,8 +307,10 @@ function ensureAIHousing(ai,aiTC,profile){
 function planAIDropSites(ai,aiTC,vils,profile){
   if(!profile.dropSites||vils.length<5)return;
   let hasBarracks=hasAIBuilding(ai,'BARRACKS');
+  // Wood/gold camps go at the resource but stay OUT of any food drop-off's
+  // farm belt (TC or Mill), keeping those rings clear for farms.
   if(!hasAIBuilding(ai,'LCAMP')&&canAfford(ai.team,BLDGS.LCAMP.cost)){
-    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC);
+    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true);
     if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
   }
   // Bank resources for the upcoming barracks — but only while we can't yet
@@ -322,7 +324,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
     if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
   if(vils.length>=7&&hasBarracks&&!hasAIBuilding(ai,'MCAMP')&&canAfford(ai.team,BLDGS.MCAMP.cost)){
-    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC);
+    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC,true);
     if(pos)placeAIBuilding(ai,'MCAMP',pos.x,pos.y);
   }
 }
@@ -369,9 +371,10 @@ function planAIWalls(ai,aiTC,vils,profile){
   let isGateAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isGateBtype(en.btype)&&en.x>=x-1&&en.x<=x&&en.y>=y-1&&en.y<=y);
   gatePairs.forEach((pair,gi)=>{
     if(ai.gatesDone[gi])return;
-    if(isGateAt(pair[0].x,pair[0].y)){ai.gatesDone[gi]=true;return;}
-    let bothWalls=pair.every(p=>isWallAt(p.x,p.y));
-    if(!bothWalls){
+    let gc=pair[Math.floor(pair.length/2)]; // centre tile — the gate anchor
+    if(isGateAt(gc.x,gc.y)){ai.gatesDone[gi]=true;return;}
+    let allWalls=pair.every(p=>isWallAt(p.x,p.y));
+    if(!allWalls){
       pair.forEach(p=>{
         if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)){
           placeAIBuilding(ai,'WALL',p.x,p.y);
@@ -379,12 +382,14 @@ function planAIWalls(ai,aiTC,vils,profile){
         }
       });
     } else {
-      let b=placeAIBuilding(ai,'GATE',pair[0].x,pair[0].y);
+      // Drop the gate on the CENTRE tile: gateFootprint's centred branch then
+      // consumes all three reserved walls → a full 3-tile gate.
+      let b=placeAIBuilding(ai,'GATE',gc.x,gc.y);
       if(b){
         ai.gatesDone[gi]=true;
         ai.gateBuilt=true;               // at least one gate up → satisfies the ring-close/egress logic
-        ai.gateTile=ai.gateTile||{x:pair[0].x,y:pair[0].y};
-        plan.forEach(t=>{if((t.x===pair[0].x&&t.y===pair[0].y)||(t.x===pair[1].x&&t.y===pair[1].y))t.done=true;});
+        ai.gateTile=ai.gateTile||{x:gc.x,y:gc.y};
+        pair.forEach(p=>plan.forEach(t=>{if(t.x===p.x&&t.y===p.y)t.done=true;}));
       }
     }
   });
@@ -468,9 +473,18 @@ function planAIWalls(ai,aiTC,vils,profile){
   // go (capped) instead of one tile per decisionInterval — at one-per-tick
   // pacing a ~50-tile ring effectively never finished before a match ended.
   let placedThisCall=0;
+  let wtcx=aiTC.x+Math.floor(aiTC.w/2), wtcy=aiTC.y+Math.floor(aiTC.h/2);
   while(placedThisCall<8&&canAfford(ai.team,BLDGS.WALL.cost)){
     let next=plan.find(t=>!t.done);
     if(!next)return;
+    // Skip foundations no villager can reach — map-edge pockets boxed in by
+    // forest/border. Placing one there just wedges builders forever on an
+    // unbuildable wall (the stuck-watchdog spam this fixes); the border
+    // itself already seals that gap, so a hole there costs no defense.
+    if(canPlace('WALL',next.x,next.y,ai.team)&&!pathReaches(wtcx,wtcy,next.x,next.y,aiTC.id)){
+      next.done=true; // give up on this tile, keep the plan progressing
+      continue;
+    }
     placeAIBuilding(ai,'WALL',next.x,next.y); // success or not (blocked tile), mark resolved so the plan keeps progressing
     next.done=true;
     placedThisCall++;
@@ -551,17 +565,27 @@ function computeAIWallRing(ai,tc,radius){
   let ed=getEnemyDirection(ai,tc);
   let ecoSide=camps.length?sideFor(ecx,ecy):sideFor(ed.dx,ed.dy);
   let enemySide=sideFor(ed.dx,ed.dy);
-  // Reserve a 2-wide gate pair on `side`; returns the pair or null.
+  // Reserve a 3-wide gate run on `side`; returns [left, centre, right] (or
+  // top/mid/bottom) as close to the side's midpoint as possible, or null if 3
+  // consecutive walkable ring tiles aren't available. Gates are a 3-tile
+  // structure (see gateFootprint) — the gate is later dropped on the CENTRE
+  // tile so its centred footprint lands on exactly these three walls.
   let reserveGate=(side)=>{
+    let horiz=(side==='N'||side==='S');
+    let axis=t=>horiz?t.x:t.y;
     let st=tiles.filter(t=>t.side===side&&walkable(t.x,t.y)&&!t.isGatePair);
-    if(!st.length)return null;
+    if(st.length<3)return null;
+    st.sort((a,b)=>axis(a)-axis(b));
+    let byAxis=new Map(st.map(t=>[axis(t),t]));
     let mid=st[Math.floor(st.length/2)];
-    st.sort((a,b)=>(Math.abs(a.x-mid.x)+Math.abs(a.y-mid.y))-(Math.abs(b.x-mid.x)+Math.abs(b.y-mid.y)));
-    let a=st[0], horiz=(side==='N'||side==='S');
-    let b=st.find(t=>t!==a&&(horiz?(t.y===a.y&&Math.abs(t.x-a.x)===1):(t.x===a.x&&Math.abs(t.y-a.y)===1)));
-    if(!b)return null;
-    a.isGatePair=true;b.isGatePair=true;
-    return [{x:a.x,y:a.y},{x:b.x,y:b.y}];
+    let run=c=>{ let l=byAxis.get(c-1),m=byAxis.get(c),r=byAxis.get(c+1); return (l&&m&&r)?[l,m,r]:null; };
+    // Prefer the run centred on the side midpoint; otherwise the first window
+    // of 3 consecutive walkable tiles found scanning outward.
+    let picked=run(axis(mid));
+    if(!picked){ for(let t of st){ let rr=run(axis(t)); if(rr){picked=rr;break;} } }
+    if(!picked)return null;
+    picked.forEach(t=>t.isGatePair=true);
+    return picked.map(t=>({x:t.x,y:t.y}));
   };
   ai.gatePairs=[];
   let sides=ecoSide===enemySide?[ecoSide]:[ecoSide,enemySide];
@@ -872,7 +896,7 @@ function assignAIGatherTask(ai,v,vils,profile){
       if(t2&&pathReaches(v.x,v.y,t2.x,t2.y,v.id)){task=alt;picked=true;break;}
     }
     if(!picked){
-      let gates=(ai.gatePairs||[]).map(p=>p[0]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
+      let gates=(ai.gatePairs||[]).map(p=>p[Math.floor(p.length/2)]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
       if(gates.length){
         gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
         v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
@@ -982,16 +1006,39 @@ function aiFarmTarget(ai,vils,profile){
     profile.targetFarms+Math.max(0,Math.floor((vils.length-8)/2)));
 }
 
+// AoE2-style farm packing: farmers drop food at the nearest food drop-off
+// (the TC or a Mill), so lay 2x2 plots in grid-aligned rows flush against
+// those buildings, closest slot first. Around the 4x4 TC that's a tidy 2
+// farms per side; a 2x2 Mill gets one per side — then the block grows
+// outward in aligned rings. This replaces the old radial spiral, which
+// scattered plots at rounded angles and ignored the Mill entirely.
 function findAIFarmSpot(ai,tc){
+  const F=BLDGS.FARM.w; // 2-tile farm footprint (square)
   let maxR=Math.round(10*aiScale());
-  for(let r=2;r<maxR;r++){
-    for(let a=0;a<16;a++){
-      let ang=a*Math.PI*2/16;
-      let tx=tc.x+Math.round(simCos(ang)*r);
-      let ty=tc.y+Math.round(simSin(ang)*r);
-      if(canPlace('FARM',tx,ty,ai.team))return{x:tx,y:ty};
+  let drops=[tc, ...entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='MILL'&&e.complete)];
+  let cands=[];
+  for(let d of drops){
+    // Candidate origins are aligned to this drop's own grid (multiples of F
+    // from its origin) so the plots tile edge-to-edge with it and each other.
+    let x0=d.x-F*Math.ceil(maxR/F), y0=d.y-F*Math.ceil(maxR/F);
+    for(let fx=x0; fx<=d.x+d.w+maxR; fx+=F){
+      for(let fy=y0; fy<=d.y+d.h+maxR; fy+=F){
+        if(fx+F>d.x && fx<d.x+d.w && fy+F>d.y && fy<d.y+d.h) continue; // overlaps the drop
+        // squared nearest-edge distance from the plot centre to the drop rect
+        let cx=fx+F/2, cy=fy+F/2;
+        let ex=Math.max(d.x-cx,0,cx-(d.x+d.w));
+        let ey=Math.max(d.y-cy,0,cy-(d.y+d.h));
+        let dd=ex*ex+ey*ey;
+        if(dd>maxR*maxR) continue;
+        cands.push({x:fx,y:fy,dd});
+      }
     }
   }
+  // Nearest drop-edge first; deterministic tie-break keeps the sim in lockstep.
+  cands.sort((a,b)=>a.dd-b.dd || a.x-b.x || a.y-b.y);
+  // Farms are walkable so they don't truly block a gate, but a farmer working
+  // in the gateway looks wrong — keep plots out of the gate corridor too.
+  for(let c of cands){ if(canPlace('FARM',c.x,c.y,ai.team)&&!aiWouldBlockGate(c.x,c.y,F,F,ai.team)) return {x:c.x,y:c.y}; }
   return null;
 }
 
@@ -1404,19 +1451,8 @@ function placeAIBuilding(ai,type,x,y){
   let gw = b.w, gh = b.h;
   let ox = x, oy = y;
   if (type === 'GATE') {
-    let isWall = (tx, ty) => {
-      let w = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === ai.team);
-      return !!w;
-    };
-    if (isWall(x, y) && isWall(x + 1, y)) {
-      ox = x; oy = y; gw = 2; gh = 1;
-    } else if (isWall(x - 1, y) && isWall(x, y)) {
-      ox = x - 1; oy = y; gw = 2; gh = 1;
-    } else if (isWall(x, y) && isWall(x, y + 1)) {
-      ox = x; oy = y; gw = 1; gh = 2;
-    } else if (isWall(x, y - 1) && isWall(x, y)) {
-      ox = x; oy = y - 1; gw = 1; gh = 2;
-    }
+    let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === ai.team);
+    ({ ox, oy, gw, gh } = gateFootprint(x, y, isWall));
   }
   let wallsToRemove = [];
   for (let dy = 0; dy < gh; dy++) {
@@ -1452,47 +1488,94 @@ function placeAIBuilding(ai,type,x,y){
   return building;
 }
 
+// Food drop-offs (the TC and every Mill) each reserve a farm belt around them
+// so plots can ring the drop point and farmers have the shortest walk. Other
+// buildings must stay out of these belts. Overlapping belts (a Mill near the
+// TC) simply union into one shared farm block — exactly what we want.
+function aiFarmBeltDrops(team){
+  let drops=[];
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type!=='building'||e.team!==team)continue;
+    if(e.btype==='TC'||e.btype==='MILL')
+      drops.push({cx:e.x+e.w/2, cy:e.y+e.h/2, r:Math.ceil(e.w/2)+2*BLDGS.FARM.w});
+  }
+  return drops;
+}
+function aiInFarmBelt(bx,by,bw,bh,team,drops){
+  drops=drops||aiFarmBeltDrops(team);
+  let ccx=bx+bw/2, ccy=by+bh/2;
+  for(let d of drops){ if(Math.hypot(ccx-d.cx,ccy-d.cy)<d.r)return true; }
+  return false;
+}
+
+// A building must not sit in a gate's passage corridor — the centre doorway
+// tile plus a couple of tiles straight out each side along the travel axis.
+// Dropping a house/barracks there seals the choke the gate exists to open
+// (the reported "building in front of the gate blocks the path"). Flanking
+// wall tiles are NOT in the corridor, so towers can still guard the gate.
+function aiWouldBlockGate(bx,by,bw,bh,team){
+  for(let i=0;i<entities.length;i++){
+    let g=entities[i];
+    if(g.type!=='building'||!isGateBtype(g.btype)||!sameSide(team,g.team))continue;
+    let n=Math.max(g.w,g.h), horiz=g.w>=g.h;      // horiz gate (Nx1): travel is N-S
+    let ccx=horiz?g.x+Math.floor(n/2):g.x;         // gate centre (doorway) tile
+    let ccy=horiz?g.y:g.y+Math.floor(n/2);
+    for(let s=-2;s<=2;s++){
+      let px=ccx+(horiz?0:s), py=ccy+(horiz?s:0);
+      if(px>=bx&&px<bx+bw&&py>=by&&py<by+bh)return true;
+    }
+  }
+  return false;
+}
+
 function findAIBuildSpot(ai,tc,type){
   let b=BLDGS[type];
-  let maxR=Math.round(12*aiScale());
-  // AoE2-style placement: the inner ring around the TC (r<6) is the farm
-  // belt — farmers shuttle food to the TC drop-off, so every tile of walk
-  // is lost income and houses/barracks must not squat there. They start
-  // beyond it; the barracks additionally prefers the enemy-facing side
-  // (the army rallies toward the front, not inside the eco).
-  let minR=(type==='HOUSE'||type==='BARRACKS')?6:3;
+  // Measure everything from the TC CENTRE, not its origin corner — with a 4x4
+  // TC an origin-based radius made the reserved belt lopsided (deep on two
+  // sides, ~nothing on the +x/+y sides), so houses crowded the TC and ate
+  // farm slots. tcHalf is the TC's own half-extent.
+  let tcHalf=Math.ceil(tc.w/2);
+  let cx=tc.x+tc.w/2, cy=tc.y+tc.h/2;
+  let maxR=Math.round(14*aiScale()); // roomier core for the larger TC/Barracks
+  let minEdge=tcHalf+1;              // scan starts just outside the TC
+  // AoE2-style placement: houses/barracks must stay out of the FARM BELT
+  // around every food drop-off (TC AND each Mill) — that ring is reserved for
+  // farms so farmers have the shortest walk. Belts around a Mill near the TC
+  // merge into one shared block. Barracks additionally prefers the
+  // enemy-facing side (the army rallies toward the front, not inside the eco).
+  let reserve=(type==='HOUSE'||type==='BARRACKS');
+  let drops=reserve?aiFarmBeltDrops(ai.team):null;
   let angles=[...Array(16).keys()];
   if(type==='BARRACKS'){
     let ed=getEnemyDirection(ai,tc);
     let dot=a=>simCos(a*Math.PI*2/16)*ed.dx+simSin(a*Math.PI*2/16)*ed.dy;
     angles.sort((a1,a2)=>dot(a2)-dot(a1));
   }
-  let scan=(rLo,rHi)=>{
-    for(let r=rLo;r<rHi;r++){
+  let scan=(respectBelt)=>{
+    for(let r=minEdge;r<maxR;r++){
       for(let a of angles){
         let ang=a*Math.PI*2/16;
-        let tx=tc.x+Math.round(simCos(ang)*r);
-        let ty=tc.y+Math.round(simSin(ang)*r);
-        if(canPlace(type,tx,ty,ai.team)){
-          let tcx = tc.x + Math.floor(tc.w/2);
-          let tcy = tc.y + Math.floor(tc.h/2);
-          if (pathReaches(tcx, tcy, tx, ty, tc.id)) {
-            return {x:tx,y:ty};
-          }
-        }
+        let tx=Math.round(cx+simCos(ang)*r);
+        let ty=Math.round(cy+simSin(ang)*r);
+        if(!canPlace(type,tx,ty,ai.team))continue;
+        if(aiWouldBlockGate(tx,ty,b.w,b.h,ai.team))continue;
+        if(respectBelt&&reserve&&aiInFarmBelt(tx,ty,b.w,b.h,ai.team,drops))continue;
+        if(pathReaches(Math.floor(cx),Math.floor(cy),tx,ty,tc.id))return{x:tx,y:ty};
       }
     }
     return null;
   };
-  // Preferred band first; if it's full (houses/forest can exhaust it),
-  // squeeze into the farm belt rather than build NOTHING — a barracks that
-  // never lands means a team with zero military forever, and farms
-  // themselves gate on the barracks, so the whole economy stalls with it.
-  return scan(minR,maxR) || (minR>3 ? scan(3,minR) : null);
+  // Respect the farm belts first; if the base is too cramped to place anything
+  // outside them, squeeze in rather than build NOTHING — a barracks that never
+  // lands means zero military forever, and farming itself gates on it.
+  return scan(true) || (reserve?scan(false):null);
 }
 
-function findAIDropSite(ai,terrain,type,tc){
+function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false){
   let maxDist=22*aiScale();
+  let b=BLDGS[type];
+  let beltDrops=avoidFarmBelt?aiFarmBeltDrops(ai.team):null;
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
     if(map[y][x].t!==terrain||map[y][x].res<=0)continue;
@@ -1521,9 +1604,18 @@ function findAIDropSite(ai,terrain,type,tc){
   // score first, then accept the best-ranked candidate that's actually
   // reachable from the TC (pathfinding is too costly to run on every one).
   candidates.sort((a,b)=>a.s-b.s);
+  let tcx=tc.x+Math.floor(tc.w/2), tcy=tc.y+Math.floor(tc.h/2);
   for(let i=0;i<candidates.length;i++){
     let c=candidates[i];
-    if(pathReaches(tc.x+Math.floor(tc.w/2),tc.y+Math.floor(tc.h/2),c.x,c.y,tc.id))return{x:c.x,y:c.y};
+    // Keep camps OUT of the reserved farm belt (around the TC AND any Mill) so
+    // they don't squat where farms should ring the drop-off — but still build
+    // the camp at the resource itself. (Skipping the camp entirely and letting
+    // the whole wood line drop at the TC just congests it: units wedge at the
+    // one drop point. AoE2 builds the camp at the trees; it just isn't parked
+    // next to a food drop-off.) Also never seal a gate's passage.
+    if(avoidFarmBelt && aiInFarmBelt(c.x,c.y,b.w,b.h,ai.team,beltDrops))continue;
+    if(aiWouldBlockGate(c.x,c.y,b.w,b.h,ai.team))continue;
+    if(pathReaches(tcx,tcy,c.x,c.y,tc.id))return{x:c.x,y:c.y};
   }
   return null;
 }

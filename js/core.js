@@ -137,6 +137,28 @@ function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
 function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
+// Given a clicked tile and an isWall(x,y) predicate (matching-material wall,
+// same team), pick the gate footprint: prefer a 3-tile run through the click
+// (centred, then shifted), then a 2-tile run, else a lone 1x1. Horizontal
+// (E-W) is preferred over vertical when both fit, matching the old order.
+// Returns {ox, oy, gw, gh}. Shared by player (commands.js) and AI (ai.js) so
+// both stay in lockstep on gate sizing.
+function gateFootprint(x, y, isWall){
+  // 3-wide E-W: centred, then extend right, then extend left
+  if (isWall(x-1, y) && isWall(x, y) && isWall(x+1, y)) return { ox:x-1, oy:y, gw:3, gh:1 };
+  if (isWall(x, y) && isWall(x+1, y) && isWall(x+2, y)) return { ox:x,   oy:y, gw:3, gh:1 };
+  if (isWall(x-2, y) && isWall(x-1, y) && isWall(x, y)) return { ox:x-2, oy:y, gw:3, gh:1 };
+  // 3-tall N-S: centred, then extend down, then extend up
+  if (isWall(x, y-1) && isWall(x, y) && isWall(x, y+1)) return { ox:x, oy:y-1, gw:1, gh:3 };
+  if (isWall(x, y) && isWall(x, y+1) && isWall(x, y+2)) return { ox:x, oy:y,   gw:1, gh:3 };
+  if (isWall(x, y-2) && isWall(x, y-1) && isWall(x, y)) return { ox:x, oy:y-2, gw:1, gh:3 };
+  // 2-wide / 2-tall fallbacks (e.g. a wall gap only two tiles long)
+  if (isWall(x, y) && isWall(x+1, y)) return { ox:x,   oy:y, gw:2, gh:1 };
+  if (isWall(x-1, y) && isWall(x, y)) return { ox:x-1, oy:y, gw:2, gh:1 };
+  if (isWall(x, y) && isWall(x, y+1)) return { ox:x, oy:y,   gw:1, gh:2 };
+  if (isWall(x, y-1) && isWall(x, y)) return { ox:x, oy:y-1, gw:1, gh:2 };
+  return { ox:x, oy:y, gw:1, gh:1 };
+}
 function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 0; }
 
 // ---- AGE UPGRADES ("cards") ----
@@ -396,7 +418,7 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:3,h:3,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:750,armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
@@ -405,7 +427,7 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:2,h:2,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
   TOWER:{name:'Watch Tower',w:1,h:1,hp:1020,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
   GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},

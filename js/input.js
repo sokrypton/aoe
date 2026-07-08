@@ -46,17 +46,37 @@ function collectUnfinishedWallChain(start){
   return collectWallChain(start, en => !en.complete && !en.exhausted);
 }
 
-// COMPLETED wall run connected to `start` — the double-click unit for
-// bulk actions on standing walls (the Upgrade to Stone button, js/ui.js).
-// Same btype only, deliberately: the art now links mixed materials into
-// one continuous line, but bulk selection stops at a material change so
-// double-clicking a wood stretch never sweeps already-stone segments into
-// an upgrade order.
+// COMPLETED wall/gate run connected to `start` — the double-click unit for
+// bulk actions on a standing line (the Upgrade to Stone button, js/ui.js).
+// Includes same-material gates so the upgrade hits walls and gates together;
+// stops at a material change (see collectWallChain).
 function collectCompletedWallRun(start){
   return collectWallChain(start, en => en.complete);
 }
 
+// A wall/gate double-click target: a wall or gate segment (either material),
+// not exhausted. Gates ride along with the walls they sit in so bulk actions
+// (e.g. Upgrade to Stone → SWALL/SGATE) hit the whole line at once.
+function isWallSelectTarget(en){
+  return en.team === myTeam && (isWallBtype(en.btype) || isGateBtype(en.btype)) && !en.exhausted;
+}
+// Two wall/gate pieces are connected if any tile of one is orthogonally
+// adjacent to any tile of the other — footprint-aware, so a 1x1 wall links to
+// a multi-tile gate at the run's end (plain Manhattan-1 on origins would miss
+// it now that gates span 3 tiles).
+function wallGateAdjacent(a, b){
+  for (let ax = a.x; ax < a.x + a.w; ax++) for (let ay = a.y; ay < a.y + a.h; ay++)
+    for (let bx = b.x; bx < b.x + b.w; bx++) for (let by = b.y; by < b.y + b.h; by++)
+      if (Math.abs(ax - bx) + Math.abs(ay - by) === 1) return true;
+  return false;
+}
 function collectWallChain(start, accept){
+  // Same material family only (wood: WALL+GATE, stone: SWALL+SGATE) — the art
+  // links mixed materials into one line, but bulk selection stops at a
+  // material change so double-clicking a wood stretch never sweeps stone
+  // segments into an upgrade order. Within a family, walls AND gates chain
+  // together.
+  let startMat = wallMat(start.btype);
   let chain = [start];
   let seen = new Set([start.id]);
   let queue = [start];
@@ -64,9 +84,10 @@ function collectWallChain(start, accept){
     let cur = queue.pop();
     entities.forEach(en => {
       if (seen.has(en.id)) return;
-      if (en.type !== 'building' || en.btype !== start.btype || en.team !== myTeam) return;
+      if (en.type !== 'building' || en.team !== myTeam) return;
+      if (!(isWallBtype(en.btype) || isGateBtype(en.btype)) || wallMat(en.btype) !== startMat) return;
       if (!accept(en)) return;
-      if (Math.abs(en.x - cur.x) + Math.abs(en.y - cur.y) !== 1) return;
+      if (!wallGateAdjacent(en, cur)) return;
       seen.add(en.id);
       chain.push(en);
       queue.push(en);
@@ -747,8 +768,7 @@ C.addEventListener('touchend',e=>{
       // instance of that type on screen (touch equivalent of dblclick below).
       let now=performance.now();
       let tappedU=getUnitUnderCursor(touchAnchor.x,touchAnchor.y);
-      let tappedWallB=!tappedU?getBuildingUnderCursor(touchAnchor.x,touchAnchor.y,
-        en=>en.team===myTeam&&en.btype==='WALL'&&!en.exhausted):null;
+      let tappedWallB=!tappedU?getBuildingUnderCursor(touchAnchor.x,touchAnchor.y,isWallSelectTarget):null;
       if(tappedU && tappedU.team===myTeam && touchLastTapUtype===tappedU.utype && (now-touchLastTapTime)<380){
         selected=entities.filter(en=>en.team===myTeam&&en.type==='unit'&&en.utype===tappedU.utype&&isUnitOnScreen(en));
         if(window.playSound){
@@ -1082,8 +1102,7 @@ function focusTownCenter(){
   if(gameOver)return;
   let tc = entities.find(e => e.type === 'building' && e.team === myTeam && e.btype === 'TC');
   if(tc) {
-    // TC is 3x3 tiles, so center is +1.5 tiles
-    let iso = toIso(tc.x + 1.5, tc.y + 1.5);
+    let iso = toIso(tc.x + tc.w / 2, tc.y + tc.h / 2);
     camX = iso.ix;
     camY = iso.iy;
     window.targetCamX = camX;
@@ -1141,12 +1160,14 @@ function wallGateHitPart(en, lx, ly){
     }
     return null;
   }
-  // Gate (footprint 1x2 / 2x1, anchored like a 1x1 — BLDGS dims): back
-  // post at (sx0, sy0+16), front post one tile step along the run, door
-  // slab between them. drawBuildingBlock(tx, ty-7, 14, 7, 28) spans
-  // x ∈ tx±14, y ∈ [ty-35, ty+7].
+  // Gate (footprint 1xN / Nx1, anchored like a 1x1 — BLDGS dims): back
+  // post at (sx0, sy0+16), front post (n-1) tile steps along the run, door
+  // slab between them. Must mirror the render geometry (render-buildings.js).
+  // drawBuildingBlock(tx, ty-7, 14, 7, 28) spans x ∈ tx±14, y ∈ [ty-35, ty+7].
   let ns = en.h > en.w;
-  let posts = [{ x: sx0, y: sy0 + 16 }, { x: ns ? sx0 - 32 : sx0 + 32, y: sy0 + 32 }];
+  let n = Math.max(en.w, en.h);
+  let runX = 32 * (n - 1);
+  let posts = [{ x: sx0, y: sy0 + 16 }, { x: ns ? sx0 - runX : sx0 + runX, y: sy0 + 16 + 16 * (n - 1) }];
   for (let p of posts) {
     // No horizontal pad: the posts are already 28px wide, and padding them
     // sideways let the back post steal clicks from the last few px of the
@@ -1155,12 +1176,53 @@ function wallGateHitPart(en, lx, ly){
   }
   // Door slab (tested at its CLOSED position: the doorway opening is gate
   // body whether or not the door is currently slid up).
-  let t = ns ? (sx0 - lx) / 32 : (lx - sx0) / 32;
+  let t = ns ? (sx0 - lx) / runX : (lx - sx0) / runX;
   if (t > 0 && t < 1) {
-    let lineY = sy0 + 16 + 16 * t;
+    let lineY = sy0 + 16 + 16 * (n - 1) * t;
     if (ly >= lineY - 16 - 9 - pad && ly <= lineY + pad) return 'body';
   }
   return null;
+}
+
+// Exact "is this logical point on the entity's drawn shape" test. Re-runs the
+// real drawUnit/drawBuilding into a tiny offscreen with the camera shifted so
+// (lx,ly) lands at the sample window's centre, then reads the alpha there —
+// the same _maskDraw path the selection outline uses (render-outlines.js), so
+// the clickable area and the outline are guaranteed to match. Cheap: only ever
+// called on click/tap, and only for the 0-3 buildings whose extent box the
+// cursor falls in; the draw is clipped to a few pixels around the cursor.
+let _hitMaskC = null, _hitMaskX = null, _hitMaskWin = 0;
+function entityPixelHit(e, lx, ly) {
+  let win = isMobile ? 9 : 5;             // sample window (logical px), = tap forgiveness
+  let half = (win - 1) / 2;
+  // Build the offscreen once (size is constant per device). willReadFrequently
+  // keeps it on a CPU-backed surface so the getImageData readback below stays
+  // cheap — this only ever runs on a click, but there's no reason to pay a
+  // GPU stall for it.
+  if (!_hitMaskC || _hitMaskWin !== win) {
+    _hitMaskC = document.createElement('canvas');
+    _hitMaskC.width = win; _hitMaskC.height = win;
+    _hitMaskX = _hitMaskC.getContext('2d', { willReadFrequently: true });
+    _hitMaskWin = win;
+  }
+  _hitMaskX.clearRect(0, 0, win, win);
+  _hitMaskX.globalAlpha = 1;
+  let sv = { X, camX, camY, ZOOM };
+  X = _hitMaskX; ZOOM = 1;                // mask draws in logical px; keep W/H/topH real
+  camX = sv.camX + lx - half;            // shift so (lx,ly) -> (half,half)
+  camY = sv.camY + ly - half;
+  window._maskDraw = true;
+  try {
+    if (e.type === 'unit') drawUnit(e); else drawBuilding(e);
+  } catch (err) {
+    /* a draw failure shouldn't wedge selection — treat as miss */
+  } finally {
+    window._maskDraw = false;
+    X = sv.X; camX = sv.camX; camY = sv.camY; ZOOM = sv.ZOOM;
+  }
+  let data = _hitMaskX.getImageData(0, 0, win, win).data;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 10) return true;
+  return false;
 }
 
 function getBuildingUnderCursor(sx, sy, filter) {
@@ -1195,18 +1257,22 @@ function getBuildingUnderCursor(sx, sy, filter) {
         }
         return;
       }
-      let iso = toIso(cx, cy);
-      let scrx = (iso.ix - camX) * ZOOM + W/2;
-      let scry = (iso.iy - camY) * ZOOM + H/2 + topH;
-      let bw = w * 32 * ZOOM;
-      let bhh = h * 16 * ZOOM;
-      let height = (BLDG_HEIGHTS[en.btype] || 25) * ZOOM;
-
-      if(sx >= scrx - bw && sx <= scrx + bw && sy >= scry - bhh - height && sy <= scry + bhh) {
-        let sortY = cy + cx;
-        if (sortY > bestSortY) {
-          bestSortY = sortY;
-          bestB = en;
+      // Generic buildings: broad-phase against the silhouette's known extent
+      // box (footprint top anchor, see render-outlines.js), then confirm with
+      // an EXACT pixel test against the actual drawn shape. Footprint-derived
+      // geometry can never match the art (e.g. the TC's annex posts hang well
+      // outside the 4x4 footprint) — testing the real pixels means the click
+      // area always agrees with the selection outline, by construction.
+      let bIso = toIso(cx, cy);
+      let aX = bIso.ix - camX + W/2;                       // logical anchor x (footprint centre)
+      let aY = bIso.iy - camY + topH + H/2 - h * HALF_TH;  // logical anchor y (footprint top)
+      if (lx >= aX - 175 && lx <= aX + 175 && ly >= aY - 216 && ly <= aY + 134) {
+        if (entityPixelHit(en, lx, ly)) {
+          let sortY = cy + cx;
+          if (sortY > bestSortY) {
+            bestSortY = sortY;
+            bestB = en;
+          }
         }
       }
     }
@@ -1635,8 +1701,7 @@ C.addEventListener('dblclick', e => {
   // wall foundation to select its whole connected chain for bulk cancel,
   // or a COMPLETED wood wall to select its connected run (bulk actions
   // like Upgrade to Stone).
-  let wallB = getBuildingUnderCursor(e.clientX, e.clientY,
-    en => en.team === myTeam && en.btype === 'WALL' && !en.exhausted);
+  let wallB = getBuildingUnderCursor(e.clientX, e.clientY, isWallSelectTarget);
   if (wallB) {
     if (wallB.complete) {
       selected = collectCompletedWallRun(wallB);
