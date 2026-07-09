@@ -207,8 +207,12 @@ const UPGRADES = {
       b.hp = Math.round(b.hp * 1.1); b.maxHp = Math.round(b.maxHp * 1.1);
     }});
   }},
-  fortified_wall: {age:2, name:'Fortified Wall', desc:'Stone walls and gates +50% hit points', apply(team){
-    entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE')) {
+  // Fortifies the whole stone wall LINE — segments, gates, AND the towers that
+  // bastion it (our tower-in-wall deviation, see BLDGS.TOWER). Keep the btype
+  // set in sync with buildingMaxHpFor so a tower built after the tech founds at
+  // the boosted HP too.
+  fortified_wall: {age:2, name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
+    entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE' || b.btype==='TOWER')) {
       b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
     }});
   }},
@@ -265,7 +269,7 @@ function gatherCooldownFor(team, resource, baseCooldown){
 function buildingMaxHpFor(team, btype){
   let hp = BLDGS[btype].hp;
   if (hasUpgrade(team, 'masonry')) hp = Math.round(hp * 1.1);
-  if ((btype === 'SWALL' || btype === 'SGATE') && hasUpgrade(team, 'fortified_wall')) hp = Math.round(hp * 1.5);
+  if ((btype === 'SWALL' || btype === 'SGATE' || btype === 'TOWER') && hasUpgrade(team, 'fortified_wall')) hp = Math.round(hp * 1.5);
   return hp;
 }
 // Top off the standing (unexhausted) farms a food card finds on arrival,
@@ -428,13 +432,18 @@ const BLDGS={
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
   BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:1020,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
+  // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
+  // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
+  // it also rides the fortified_wall upgrade (see UPGRADES / buildingMaxHpFor),
+  // so a fully-fortified ring keeps its towers tougher than its segments.
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
   GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
   // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
   // only replaces stone wall segments (and palisade gate only palisades):
   // matching material keeps the consume/refund math and the art coherent.
-  SWALL:{name:'Stone Wall',w:1,h:1,hp:900,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
+  SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
   SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
