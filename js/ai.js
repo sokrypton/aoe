@@ -107,6 +107,7 @@ function updateAI(ai){
   planAITowers(ai,aiTC,vils,profile); // AI Watch Tower planning
   planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile);
   queueAIMilitary(ai,readyBarracks,profile);
+  ensureAIScout(ai,readyBarracks); // keep an explorer alive so the enemy actually gets found
   assignAIVillagers(ai,vils,profile);
   rescueTrappedAIVillagers(ai,aiTC,vils,profile);
   huntAIBears(ai,mils);
@@ -152,9 +153,18 @@ function huntAIBears(ai,mils){
   let bear=entitiesById.get(vil.fledBearId);
   if(!bear||bear.hp<=0||bear.utype!=='bear'){vil.fledBearId=undefined;return;}
   let sent=entities.filter(m=>m.team===ai.team&&m.type==='unit'&&m.target===bear.id).length;
-  for(let m of mils){
+  // Prefer non-scout military: the scout is fragile recon (atk 3) and throwing
+  // it at a bear just kills the map explorer. But in the DARK AGE the scout is
+  // often the ONLY military — and a mauled villager (eco) matters more than
+  // vision, so fall back to the scout rather than let the bear farm villagers
+  // (exempting scouts outright starved the Dark-Age eco: villagers died to
+  // bears unchecked → stuck in Dark Age). Two passes: fighters first, scouts
+  // only if nothing else answered.
+  let candidates=mils.filter(m=>!m.target);
+  let ordered=[...candidates.filter(m=>m.utype!=='scout'),...candidates.filter(m=>m.utype==='scout')];
+  for(let m of ordered){
     if(sent>=3)break;
-    if(m.target)continue; // scouts included: often the ONLY military when the mauling starts
+    if(m.utype==='scout'&&sent>0)break; // a fighter already went — spare the scout
     m.target=bear.id;m.explicitAttack=true;clearUnitPath(m);
     sent++;
   }
@@ -845,8 +855,26 @@ function queueAIMilitary(ai,readyBarracks,profile){
   });
 }
 
+const AI_REBALANCE_MAX=2; // gatherers re-tasked per decision — gradual, avoids thrash
 function assignAIVillagers(ai,vils,profile){
   let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===ai.team&&(!en.complete || en.hp < en.maxHp));
+  // Active re-tasking by need. The balancer below only re-picks a task for an
+  // IDLE or STALE villager, so a worker locked on a still-productive resource
+  // was never moved when priorities flipped — e.g. once the wall ring was done
+  // the wood demand collapsed, but the 8 villagers already chopping kept at it,
+  // piling 1000+ wood while food starved and the age-up never banked its 500
+  // (sim seed 2001: 10 farms, 1 farmer, 8 choppers, stuck in Dark Age). Pull a
+  // few workers off any task that now has clearly MORE hands than aiEcoPlan
+  // wants (which already sheds chop when wood floods / boosts farm when saving
+  // for age) and let assignAIGatherTask re-pick the neediest resource for them.
+  let desired=aiEcoPlan(ai,vils.length,profile);
+  let counts=countAIGatherers(vils);
+  let rebalanced=0;
+  let overSubscribed=(task)=>{
+    if(!GATHER_TASKS[task])return false;
+    if(!((counts[task]||0) > Math.max(1,desired[task]||0)+1))return false; // clear surplus only
+    return Object.keys(desired).some(k=>k!==task && (counts[k]||0) < (desired[k]||0)); // somewhere needs hands
+  };
   vils.forEach(v=>{
     // Sheltering villagers (inside a building or running to one after the
     // town bell) are off-limits: re-tasking them while immobile can claim
@@ -868,7 +896,16 @@ function assignAIVillagers(ai,vils,profile){
       assignAIBuilder(v,build);
       return;
     }
-    if(v.task&&v.task!=='build'&&!isAIGatherTaskStale(v))return;
+    if(v.task&&v.task!=='build'&&!isAIGatherTaskStale(v)){
+      // Still productive on its current resource — leave it unless the mix is
+      // badly skewed from what the economy needs now (capped per decision).
+      if(rebalanced<AI_REBALANCE_MAX && overSubscribed(v.task)){
+        rebalanced++;
+        counts[v.task]=(counts[v.task]||0)-1; // reflect the move so we don't over-pull this tick
+        assignAIGatherTask(ai,v,vils,profile);
+      }
+      return;
+    }
     assignAIGatherTask(ai,v,vils,profile);
   });
 }
@@ -1359,10 +1396,41 @@ function rallyIdleMilitary(ai,mils,aiTC){
 // fighting/attacking or already travelling off to a fresh random point on the
 // map, so they actually explore (and the player sees them roaming) instead of
 // clumping at home until the army is big enough to march out together.
+// Keep an explorer alive. Every team starts with one free scout, but it dies
+// early (wildlife, a stray enemy) and was NEVER replaced — so the AI ran blind
+// for the rest of the game: the enemy TC was only "found" via the late safety
+// net in updateAIIntel (attackTick*2), map control was ceded, and incoming
+// attacks arrived unseen. Once the scout is unlocked (Feudal — no Dark-Age
+// cavalry, AoE2-accurate) and a barracks is up, keep exactly one scout roaming
+// for exploration AND ongoing vision, retraining a lost one just as a human
+// keeps re-scouting. A retrain cooldown stops a scout that keeps dying at the
+// enemy's doorstep from churning food on a still-fragile economy.
+const AI_SCOUT_RETRAIN_COOLDOWN=2400;
+function ensureAIScout(ai,readyBarracks){
+  if(!isUnlocked(ai.team,'scout'))return;      // Dark Age: no replacement possible, AoE2-accurate
+  if(!readyBarracks.length)return;
+  let scouts=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='scout'&&e.hp>0).length;
+  let queued=readyBarracks.reduce((s,b)=>s+b.queue.filter(q=>q==='scout').length,0);
+  if(scouts+queued>=1)return;                   // one explorer is enough
+  if(tick-(ai.lastScoutTrainTick??-1e9)<AI_SCOUT_RETRAIN_COOLDOWN)return; // don't churn food re-feeding scouts to a raider
+  if(!canAfford(ai.team,UNITS.scout.cost))return;
+  queueUnit(readyBarracks[0],'scout');
+  ai.lastScoutTrainTick=tick;
+}
+
 function controlAIScouts(ai,mils,aiTC){
   let scouts=mils.filter(m=>m.utype==='scout');
   scouts.forEach(s=>{
-    if(s.target)return; // controlAIMilitary already has this scout fighting/attacking
+    if(s.target){
+      // A scout is recon, not siege. If it auto-acquired a BUILDING — the
+      // classic death is wandering next to the enemy TC while exploring and
+      // trading blows with it until the defenders finish it off — drop that
+      // target and get back to exploring. A real unit target (home defense,
+      // a raider) is left alone.
+      let tgt=entitiesById.get(s.target);
+      if(tgt&&tgt.type==='building'){ s.target=null; s.explicitAttack=false; clearUnitPath(s); }
+      else return; // legitimately engaging a unit — leave it
+    }
     if(s.path&&s.path.length>0)return; // still travelling to its last waypoint
     let pt=randomScoutWaypoint(ai,aiTC);
     if(pt)pathUnitTo(s,pt.x,pt.y);
