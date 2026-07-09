@@ -146,6 +146,7 @@ function aggregate(reports) {
     ticks,
     seed: a.seed != null ? parseInt(a.seed, 10) : null,
     rollback: a.rollback === '1',
+    bears: a.bears, // 'bears=0' disables wild bears (isolate eco/wave behavior from fauna losses)
   };
   // Generous evaluate timeout: the sim yields between batches, so this only
   // caps a genuinely wedged run. Scales with the tick budget.

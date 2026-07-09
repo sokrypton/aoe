@@ -185,10 +185,10 @@ function genMap(){
     placeMirrored(berriesOffset,placeBerries);
 
     let mainGoldOffset=polar(baseAngle+randFloat(-0.35,0.35),randFloat(7.3,9)*scale);
-    placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1));
+    placeMirrored(mainGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,6));
 
     let mainStoneOffset=polar(baseAngle-baseSide*1.45+randFloat(-0.25,0.25),8*scale);
-    placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)); // AoE2: main stone is 5 tiles
+    placeMirrored(mainStoneOffset,(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,6)); // AoE2: main stone is 5 tiles
 
     let secondGoldOffset=polar(baseAngle+Math.PI+baseSide*0.65+randFloat(-0.25,0.25),12*scale);
     placeMirrored(secondGoldOffset,(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3));
@@ -223,8 +223,8 @@ function genMap(){
     let eachStart=fn=>{for(let i=0;i<starts.length;i++)fn(i,sAngle[i],sSide[i]);};
 
     eachStart((i,ang,side)=>atStart(i,polar(ang+side*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale),placeBerries));
-    eachStart((i,ang,side)=>atStart(i,polar(ang+randFloat(-0.35,0.35),randFloat(7.3,9)*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,1)));
-    eachStart((i,ang,side)=>atStart(i,polar(ang-side*1.45+randFloat(-0.25,0.25),8*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,1)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+randFloat(-0.35,0.35),randFloat(7.3,9)*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,6)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang-side*1.45+randFloat(-0.25,0.25),8*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,6)));
     eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI+side*0.65+randFloat(-0.25,0.25),12*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3)));
     eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI-side*0.8+randFloat(-0.25,0.25),11*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)));
     [[Math.PI,0,8],[0,1.7,9],[0,-1.25,11]].forEach(([flip,lean,dist])=>{

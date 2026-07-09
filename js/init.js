@@ -83,6 +83,7 @@ function placeStartingSheep(){
 // the starting economy is safe — they punish careless scouting and lone
 // villagers sent to far resources, not the opening build order.
 function placeWildBears(){
+  if(window.__noBears)return; // headless-sim opt-out (tools/sim.html 'bears=0') — never set by the real game
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
   let placed=0, attempts=0;
   while(placed<5 && attempts<400){
@@ -204,6 +205,10 @@ function applyGameSettings(){
         let el = document.querySelector('input[name="'+name+'"][value="'+v+'"]');
         if (el) el.checked = true;
       });
+    // The player's chosen lobby name (js/lobby.js persists it here). A plain
+    // global — the lobby seeds its own seat's name input from it.
+    let nm = localStorage.getItem('aoePlayerName');
+    if (nm) localPlayerName = nm;
   } catch (e) {}
 })();
 
@@ -214,8 +219,10 @@ function applyGameSettings(){
 function showMenuPanel(which){
   let main = document.getElementById('menu-panel-main');
   let opts = document.getElementById('menu-panel-options');
+  let lobby = document.getElementById('menu-panel-lobby');
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
+  if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
   updateUiSwitchVisibility();
   scaleMenuToFit();
 }
@@ -549,11 +556,11 @@ function onHostClicked(){
     // recover the world from the guest's live mirror.
     try { history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(peerId)); } catch (e) {}
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
-    // Deliberately do NOT start the match yet — restartGame() calls
-    // startGame(), which hides this very menu (and the link/status panel
-    // along with it), so a real host would never get the chance to
-    // actually see/copy the link they just generated. The match starts
-    // once a guest actually connects (see onNetConnectionOpen below).
+    // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
+    // (js/lobby.js) only appears once a human guest actually connects (see
+    // onNetConnectionOpen → hostEnterLobby). Remember the link so a guest
+    // leaving the lobby drops the host back onto this same waiting screen.
+    if (typeof lobbyShareLink !== 'undefined') lobbyShareLink = link;
     showMpStatus('Waiting for opponent to join…', link);
   }).catch(err => {
     console.error('Failed to host:', err);
@@ -583,6 +590,11 @@ function leaveMpSession(){
   disconnectedPause = false;
   window.__mpSession.loadedHostPeerId = null;
   window.__mpSession.awaitingStateFromGuest = false;
+  // Tear down any pre-match lobby (js/lobby.js) too — a stale lobbyState /
+  // inLobby flag would confuse the next host/join attempt.
+  window.__mpSession.inLobby = false;
+  lobbyState = null;
+  lobbyShareLink = null;
   // The ?host= resume URL points at a session that no longer exists —
   // leaving it in place would make a later reload silently re-enter the
   // (dead) resume flow instead of the normal menu.
@@ -654,7 +666,6 @@ window.onNetConnectionOpen = function(){
       return;
     }
     if (!mpMatchStarted) {
-      mpMatchStarted = true;
       // Real per-team fog now (updateFog() in js/core.js computes vision
       // for `myTeam` — 0 on the host, 1 on the guest — instead of a
       // hardcoded team 0). Force it on explicitly regardless of whatever
@@ -669,7 +680,9 @@ window.onNetConnectionOpen = function(){
         // exact state: hand it to the guest and enter lockstep from it
         // (same machinery as desync recovery). Getting here means the
         // pause menu was open (that's how Host got clicked), which set
-        // gamePaused=true — clear it so the loop resumes.
+        // gamePaused=true — clear it so the loop resumes. This flow skips
+        // the lobby (it resumes an existing world, doesn't negotiate).
+        mpMatchStarted = true;
         showMpStatus('Opponent connected! Resuming match…');
         lockstepActive = true;
         lockstepResetState();
@@ -679,12 +692,16 @@ window.onNetConnectionOpen = function(){
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
         recomputeGamePaused();
+        // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
+        restoreMenuForMatch();
       } else {
-        showMpStatus('Opponent connected! Starting match…');
-        hostStartLockstepMatch(); // js/lockstep.js — seed handshake + fresh world
+        // Fresh match: a human guest just connected to a host waiting on the
+        // invite screen. Enter the PRE-MATCH LOBBY (js/lobby.js) — the match
+        // does NOT start until the host clicks Start. Do NOT set mpMatchStarted
+        // here: it gates every reconnect/resume branch and must only flip when
+        // the match actually begins (hostStartLockstepMatch).
+        if (typeof hostEnterLobby === 'function') hostEnterLobby();
       }
-      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
-      restoreMenuForMatch();
     } else {
       // Reconnect: resume exactly where the match was paused. Lockstep:
       // hand the (possibly brand-new) guest page the full sim state and
@@ -709,16 +726,17 @@ window.onNetConnectionOpen = function(){
     // while its own menu was open, guest auto-reconnects via the same peer
     // id, and ends up stuck gamePaused with no visible cause). This new
     // session's localMenuOpen is always known-correct at this point (freshly
-    // computed above), so just tell the guest what it actually is.
-    broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
+    // computed above), so just tell the guest what it actually is. Only
+    // meaningful once the match is live — during the lobby there's no sim to
+    // pause, and the guest's lobby panel isn't a "menu" the host should mirror.
+    if (mpMatchStarted) broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
-      mpMatchStarted = true;
-      showMpStatus('Connected! Waiting for game state…');
-      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
-      // Save Game works for the guest too (their entities/map are a live
-      // mirror of the host's), it's everything ELSE that stays hidden.
-      restoreMenuForMatch();
+      // First connect → wait for the host's lobby-open (js/lobby.js), which
+      // swaps in the lobby panel. Do NOT set mpMatchStarted here: it gates
+      // reconnect/resume and must only flip when the match actually starts
+      // (the guest's lockstep-start handler, js/lockstep.js).
+      showMpStatus('Connected! Entering lobby…');
     } else {
       hideDisconnectOverlay();
       disconnectedPause = false;
@@ -728,6 +746,25 @@ window.onNetConnectionOpen = function(){
 };
 
 window.onNetConnectionClosed = function(){
+  // A drop while in the PRE-MATCH LOBBY (before mpMatchStarted) is its own
+  // case — the mid-match disconnect overlay/reconnect below assumes a live
+  // match. Handle the lobby here and return.
+  if (window.__mpSession.inLobby) {
+    if (netRole === 'host') {
+      // Guest left the lobby: reopen seat 2, disable Start (js/lobby.js). The
+      // host's Peer stays alive, so the same guest reopening the link
+      // re-enters onNetConnectionOpen → onGuestEnteredLobby re-seats them.
+      if (typeof onGuestLeftLobby === 'function') onGuestLeftLobby();
+    } else if (netRole === 'guest') {
+      // Host vanished from the lobby: keep retrying the same peer id in case
+      // it was a transient blip / the host is reloading (onNetConnectionOpen
+      // re-shows the lobby via a fresh lobby-open). If the host truly left,
+      // the retries just fail quietly and the user can Leave.
+      showMpStatus('Connection lost — reconnecting to host…');
+      attemptReconnect();
+    }
+    return;
+  }
   // A drop before the match ever started, or after it's already over, is
   // someone else's flow (the pre-game "waiting to join" status panel, or
   // just a post-game teardown) — not this mid-match pause/reconnect one.
@@ -1067,6 +1104,12 @@ function restartGame(difficulty){
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
   resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
+  // Cosmetic seat labels/colors back to defaults (identity palette, no names).
+  // Like teamControllers above, the lobby/lockstep paths re-apply the agreed
+  // names+colors AFTER restartGame — see hostStartLockstepMatch / the
+  // lockstep-start handler (js/lockstep.js).
+  resetTeamColorMap();
+  resetTeamNames();
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;

@@ -260,6 +260,64 @@ document.body.insertAdjacentHTML('afterbegin', `
       <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">↻ Retry Connection</button>
     </div>
     </div>
+
+    <!-- Pre-match multiplayer lobby ("handshake"). Third sibling panel next to
+         #menu-panel-main / #menu-panel-options, swapped in by showMenuPanel
+         ('lobby'). All dynamic content (seat rows, color swatches) is built by
+         js/lobby.js into the containers below; the settings segmented controls
+         are host-interactive / guest-read-only. Reuses .setup-grid/.segmented/
+         .menu-action-btn and the .chat-line log styling. -->
+    <div id="menu-panel-lobby" style="display:none;">
+      <div id="lobby-heading" class="menu-divider"></div>
+      <div id="lobby-roster"></div>
+      <div class="setup-grid" id="lobby-settings-grid">
+        <div class="setup-row">
+          <div class="setup-col">
+            <h3>Teams</h3>
+            <div class="segmented" id="lobby-mode-seg">
+              <label class="segment"><input type="radio" name="lobbymode" value="1v1" checked><span title="Just the two of us">1v1</span></label>
+              <label class="segment"><input type="radio" name="lobbymode" value="humansVsAi"><span title="Both humans vs 2 AI">vs AI</span></label>
+              <label class="segment"><input type="radio" name="lobbymode" value="mixed"><span title="Human + AI on each side">Mixed</span></label>
+            </div>
+          </div>
+          <div class="setup-col" id="lobby-aidiff-col">
+            <h3>AI</h3>
+            <div class="segmented" id="lobby-aidiff-seg">
+              <label class="segment"><input type="radio" name="lobbyaidiff" value="easy"><span title="Easy">E</span></label>
+              <label class="segment"><input type="radio" name="lobbyaidiff" value="standard" checked><span title="Medium">M</span></label>
+              <label class="segment"><input type="radio" name="lobbyaidiff" value="hard"><span title="Hard">H</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="setup-row">
+          <div class="setup-col">
+            <h3>Map Size</h3>
+            <div class="segmented" id="lobby-mapsize-seg">
+              <label class="segment"><input type="radio" name="lobbymapsize" value="small"><span title="Small">S</span></label>
+              <label class="segment"><input type="radio" name="lobbymapsize" value="medium" checked><span title="Medium">M</span></label>
+              <label class="segment"><input type="radio" name="lobbymapsize" value="large"><span title="Large">L</span></label>
+            </div>
+          </div>
+          <div class="setup-col">
+            <h3>Speed</h3>
+            <div class="segmented" id="lobby-speed-seg">
+              <label class="segment"><input type="radio" name="lobbyspeed" value="1"><span>1</span></label>
+              <label class="segment"><input type="radio" name="lobbyspeed" value="2" checked><span>2</span></label>
+              <label class="segment"><input type="radio" name="lobbyspeed" value="4"><span>4</span></label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="lobby-chat-log"></div>
+      <div id="lobby-chat-input-wrap">
+        <input id="lobby-chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Type a message…">
+      </div>
+      <div class="menu-button-container">
+        <button type="button" id="lobby-ready-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyReadyClicked()">✔ Ready</button>
+        <button type="button" id="lobby-start-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyStartClicked()" disabled>Start Match</button>
+        <button type="button" id="lobby-leave-btn" class="menu-action-btn" onclick="onLobbyLeaveClicked()">✖ Leave Lobby</button>
+      </div>
+    </div>
   </div>
 </div>
 </div>

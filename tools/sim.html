@@ -66,6 +66,10 @@ window.runSimulation = async function(opts){
     ticks: parseInt(opts.ticks || 60000, 10),
     seed: (opts.seed !== undefined && opts.seed !== null && opts.seed !== '') ? parseInt(opts.seed, 10) : null,
     rollback: opts.rollback === true || opts.rollback === '1' || opts.rollback === 1,
+    // bears default ON; 'bears=0'/false disables the wild-bear spawns so a
+    // self-play match isn't skewed by one AI's villagers being mauled (lets us
+    // read pure eco/wave behavior). Sim-only — the real game never sets this.
+    bears: !(opts.bears === '0' || opts.bears === 0 || opts.bears === false || opts.bears === 'false'),
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
   const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
@@ -74,6 +78,7 @@ window.runSimulation = async function(opts){
     // ---- match setup: every slot AI so the match plays itself ----
     NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
+    window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
     setMapSize(cfg.map);
     restartGame(cfg.diff.split(',')[0]);
     const diffs = cfg.diff.split(',');
@@ -143,6 +148,17 @@ window.runSimulation = async function(opts){
         tcs: bldgs.filter(b => b.btype === 'TC' && b.complete).length,
         tcHp: (bldgs.find(b => b.btype === 'TC') || {}).hp | 0,
         waves: AI_STATES[t] ? AI_STATES[t].waveCount : 0,
+        lastWaveSize: AI_STATES[t] ? (AI_STATES[t].lastWaveSize || 0) : 0,
+        // --- eco-diagnostic telemetry (gold-starvation investigation) ---
+        saving: AI_STATES[t] ? !!AI_STATES[t].savingForAge : false,
+        gath: (() => { const g={chop:0,mine_gold:0,forage:0,farm:0,mine_stone:0};
+          units.forEach(u => { if (u.utype==='villager' && g[u.task]!==undefined) g[u.task]++; }); return g; })(),
+        goldTiles: (() => { let n=0; for (let y=0;y<map.length;y++) for (let x=0;x<map[y].length;x++) { const c=map[y][x]; if (c && c.t===TERRAIN.GOLD && c.res>0) n++; } return n; })(),
+        goldReachable: (() => { const v=units.find(u=>u.utype==='villager'); if(!v) return null; const gt=findNearTile(v,TERRAIN.GOLD,null,null,true); return gt ? pathReaches(v.x,v.y,gt.x,gt.y,v.id) : 'no-tile'; })(),
+        gates: bldgs.filter(b => b.btype === 'GATE' || b.btype === 'SGATE').length,
+        builders: units.filter(u => u.utype==='villager' && (u.task==='build' || u.buildTarget)).length,
+        idle: units.filter(u => u.utype==='villager' && !u.task && !u.buildTarget && !u.target && u.path.length===0).length,
+        desired: (() => { try { const v=units.filter(u=>u.utype==='villager'); return AI_STATES[t] ? aiEcoPlan(AI_STATES[t], v.length, aiProfileFor(t)) : null; } catch(e){ return 'err:'+e.message; } })(),
         defeated: !!defeatedTeams[t],
       };
     };
@@ -183,7 +199,7 @@ window.runSimulation = async function(opts){
           cur.forEach((s, t) => {
             const p = prev[t];
             if (s.age > p.age)   report.events.push({t: tick, team: t, ev: 'age-up', to: AGES[s.age].key});
-            if (s.waves > p.waves) report.events.push({t: tick, team: t, ev: 'attack-wave', n: s.waves});
+            if (s.waves > p.waves) report.events.push({t: tick, team: t, ev: 'attack-wave', n: s.waves, size: s.lastWaveSize});
             if (s.tcs < p.tcs)   report.events.push({t: tick, team: t, ev: 'lost-tc'});
             if (s.tcs > p.tcs && tick > SAMPLE_EVERY) report.events.push({t: tick, team: t, ev: 'rebuilt-tc'});
             if (s.defeated && !p.defeated) report.events.push({t: tick, team: t, ev: 'knocked-out'});

@@ -73,22 +73,39 @@ function lockstepResetState(){
   INPUT_DELAY_TICKS = 4;
 }
 
-// Host side: begin a fresh lockstep match the moment the guest connects.
+// Host side: begin a fresh lockstep match when the host clicks Start in the
+// lobby (onLobbyStartClicked, js/lobby.js). Also reused verbatim by the Rematch
+// path (onStartClicked, js/init.js) — which keeps the same lobbyState, so a
+// rematch reuses the agreed names/colors/AI/settings.
 function hostStartLockstepMatch(){
   lockstepActive = true;
   lockstepResetState();
-  NUM_TEAMS = 2; // MP is strictly 1v1 — incl. the rematch path, which skips onHostClicked
-  let sizeSel = document.querySelector('input[name="mapsize"]:checked');
-  let sizeKey = sizeSel ? sizeSel.value : 'medium';
+  // Config comes from the lobby when there is one; fall back to the setup-menu
+  // pickers otherwise (defensive — every live path today has a lobbyState).
+  let ls = (typeof lobbyState !== 'undefined') ? lobbyState : null;
+  NUM_TEAMS = ls ? (ls.numTeams || 2) : 2; // 2 (1v1) or 4 (2 humans + 2 AI) — see the lobby modes (js/lobby.js)
+  let sizeKey = ls ? ls.mapSize : (function(){ let s = document.querySelector('input[name="mapsize"]:checked'); return s ? s.value : 'medium'; })();
+  if (ls && typeof setGameSpeed === 'function') setGameSpeed(ls.speed);
   window.fogDisabled = false;
-  setMapSize(sizeKey); // draws the fresh matchSeed both peers will share
+  // Alliance layout drives the 4-team spawn adjacency (js/core.js setMapSize) —
+  // both peers must build STARTS from the SAME array, so it's derived from the
+  // lobby mode here and sent in lockstep-start below for the guest to reuse.
+  let al = (ls && typeof lobbyAlliancesFor === 'function') ? lobbyAlliancesFor(ls.mode) : undefined;
+  setMapSize(sizeKey, al); // draws the fresh matchSeed both peers will share
   restartGame('standard');
+  // The lobby's agreed seats become the authoritative team layout + cosmetic
+  // names/colors. Must land AFTER restartGame (which reset them to defaults)
+  // and BEFORE the seed snapshot/broadcast so both peers + the checksum agree.
+  // An AI seat here is what makes host-vs-AI-over-a-connection just a data
+  // change (the update() AI loop drives it — no protocol change).
+  if (ls && typeof applyLobbyConfigToTeams === 'function') applyLobbyConfigToTeams();
   DET.enabled = true; // per-tick checksum ring for the exchange below
   lockstepSeedSnapshot();
-  // controllers: the host's slot layout is authoritative — today always
-  // [human, human], but the guest applies whatever arrives, so AI slots in
-  // MP become a host-side data change, not a protocol change.
-  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance });
+  mpMatchStarted = true;
+  window.__mpSession.inLobby = false;
+  // names/colors are COSMETIC (never hashed/snapshotted) but must reach the
+  // guest so both screens render the agreed labels/colors consistently.
+  broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap });
 }
 
 onNetMessage((msg) => {
@@ -99,12 +116,22 @@ onNetMessage((msg) => {
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     NUM_TEAMS = msg.numTeams || 2; // before setMapSize (STARTS) and restartGame (sizing)
     window.__pendingMatchSeed = msg.seed;
-    setMapSize(msg.mapSize);
+    // Pass the host's alliance array so the guest builds identical 4-team
+    // spawns (allies in adjacent corners — js/core.js setMapSize).
+    setMapSize(msg.mapSize, msg.alliances);
     restartGame('standard');
     // Host's slot layout wins (restartGame derived a default from netRole).
     // Must land before the seed snapshot/checksums so both peers agree.
     if (msg.controllers) { teamControllers = msg.controllers; resetAIStates(); }
     if (msg.alliances) teamAlliance = msg.alliances; else resetTeamAlliance();
+    // Cosmetic lobby names/colors (not part of the checksum) — apply so this
+    // guest renders the agreed labels/colors, matching the host's screen.
+    if (msg.colors) teamColorMap = msg.colors;
+    if (msg.names) teamNames = msg.names;
+    // The match is now truly underway — flip the gate the lobby deliberately
+    // left off (js/init.js onNetConnectionOpen), and leave the lobby.
+    mpMatchStarted = true;
+    window.__mpSession.inLobby = false;
     DET.enabled = true;
     lockstepSeedSnapshot();
     gameStarted = true;
@@ -143,6 +170,13 @@ onNetMessage((msg) => {
     lockstepActive = true;
     lockstepResetState();
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
+    // A reconnecting guest is a fresh page with reset (identity/empty) name +
+    // color defaults — re-apply the agreed cosmetics so it doesn't show the
+    // wrong colors/names after resuming. Cosmetic, not part of the checksum.
+    if (msg.colors) teamColorMap = msg.colors;
+    if (msg.names) teamNames = msg.names;
+    mpMatchStarted = true; // a resume means the match is live
+    window.__mpSession.inLobby = false;
     DET.enabled = true;
     gameStarted = true;
     lockstepApplyResync(msg.state);
@@ -398,7 +432,9 @@ function lockstepApplyResync(state){
 function lockstepResumeGuest(){
   if (netRole !== 'host') return;
   let state = lockstepBuildResyncState();
-  broadcastToGuest({ type: 'lockstep-resume', state, speed: GAME_SPEED });
+  // Carry the cosmetic names/colors so a fresh reconnecting page re-shows them
+  // (the resync `state` deliberately excludes them — not sim state).
+  broadcastToGuest({ type: 'lockstep-resume', state, speed: GAME_SPEED, names: teamNames, colors: teamColorMap });
   lockstepApplyResync(state);
 }
 

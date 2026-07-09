@@ -35,7 +35,12 @@ let STARTS=[
 // The player spawns in a random corner each match (so openings aren't
 // memorizable), with the enemy always in the diagonally opposite corner —
 // genMap()'s mirrored resource placement works for any diagonal.
-function setMapSize(sizeKey){
+// `alliances` (optional): the per-team alliance array for THIS match, used
+// only for the 4-team layout so allied teams spawn in adjacent corners. Both
+// lockstep peers pass the identical agreed array (js/lockstep.js) so their
+// STARTS match. Defaults to [0,0,1,1] — the classic 2v2 — so single-player and
+// any caller that omits it keep the exact previous layout (and RNG draws).
+function setMapSize(sizeKey, alliances){
   // First consumer of sim randomness in a fresh match: (re)seed here.
   // A guest/replay stages the agreed seed in __pendingMatchSeed; the
   // host/single-player draws a fresh one.
@@ -54,18 +59,25 @@ function setMapSize(sizeKey){
       {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
     ];
   } else {
-    // 2v2: allies share a map side. Team 0 keeps its random corner; the
-    // ally (team 1) takes one of the two adjacent corners (one extra
-    // draw); the enemy pair (teams 2/3) gets the remaining side, ordered
-    // so team 2 faces team 0 across the map.
+    // 2v2: allies share a map side. Team 0 keeps its random corner; its ALLY
+    // takes one of the two adjacent corners (one extra draw); the enemy pair
+    // gets the remaining (opposite) side. Which team is team 0's ally comes
+    // from the alliance array — [0,0,1,1] pairs 0+1 (classic layout, and the
+    // default), while a mixed [0,1,0,1] pairs 0+2, so mixed human+AI teams
+    // still spawn their allies adjacent. The RNG draw count is identical
+    // either way, so seeds stay comparable.
+    let al = alliances || [0,0,1,1];
+    let ally0 = [1,2,3].find(t=>al[t]===al[0]);
+    if(ally0===undefined)ally0=1; // degenerate alliance data — fall back to classic
+    let enemies=[1,2,3].filter(t=>t!==ally0);
     let adjacent=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]];
     let a=adjacent[simRandInt(0,1)];
     let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
     STARTS=[
       {team:0,x:c[0],y:c[1]},
-      {team:1,x:a[0],y:a[1]},
-      {team:2,x:opp(c)[0],y:opp(c)[1]},
-      {team:3,x:opp(a)[0],y:opp(a)[1]}
+      {team:ally0,x:a[0],y:a[1]},
+      {team:enemies[0],x:opp(c)[0],y:opp(c)[1]},
+      {team:enemies[1],x:opp(a)[0],y:opp(a)[1]}
     ];
   }
 }
@@ -325,12 +337,21 @@ function restoreTeamState(src){
   if (!teamAlliance) resetTeamAlliance();
   if (!defeatedTeams) resetDefeatedTeams();
   if (!teamAge) resetTeamAge();
+  // Cosmetic seat labels/colors are NOT part of snapshot state (never hashed
+  // or captured) — the lobby / lockstep-start carries them separately. Only
+  // ensure they're non-null so teamColor()/teamName() never fault after a
+  // restore that happened before any lobby data arrived.
+  if (!teamColorMap) resetTeamColorMap();
+  if (!teamNames) resetTeamNames();
 }
 // The controller layout for the two match shapes that exist today. The
 // single derivation point — restart, hosting transitions, and save-load
 // fallbacks all route through here rather than hand-flipping slots.
 function defaultControllers(mp){
-  if (mp) return [{type:'human'}, {type:'human'}]; // MP is strictly 1v1
+  // MP humans occupy the low team slots (host=0, guest=1); any AI slots in a
+  // >2-team MP match are a lobby data change (applyLobbyConfigToTeams,
+  // js/lobby.js) applied right after — this default just sizes the array.
+  if (mp) return Array.from({length: NUM_TEAMS}, () => ({type:'human'}));
   return Array.from({length: NUM_TEAMS}, (_, t) =>
     t === 0 ? {type:'human'} : {type:'ai', difficulty: aiDifficulty});
 }
@@ -383,9 +404,24 @@ const GAIA_TEAM = 255;
 // Entries 2+ are pre-picked for future players.
 const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800'];
 const GAIA_COLOR = '#cccc88';
-// Absolute lookup (team 0 always blue, team 1 always red) regardless of viewer.
+// Seat -> palette-index indirection. teamColorMap[team] is an index into
+// PLAYER_TEAM_COLORS, letting the pre-match lobby (js/lobby.js) give a player
+// a color other than their team's default. COSMETIC ONLY: color is never read
+// by the sim and never hashed in simChecksum (js/determinism.js), so the two
+// lockstep peers may legitimately hold different maps with zero desync risk —
+// but in practice both apply the SAME agreed map (carried in lockstep-start)
+// so outlines/minimap read consistently on both screens. The default identity
+// map [0,1,2,3] reproduces the old fixed behavior exactly (team 0 blue, team 1
+// red). Never add this (or teamNames below) to lockstepCaptureState.
+let teamColorMap = null;
+function resetTeamColorMap(){ teamColorMap = Array.from({length: NUM_TEAMS}, (_, t) => t); }
+function teamColorIdx(team){
+  return (teamColorMap && teamColorMap[team] != null) ? teamColorMap[team] : team;
+}
+// Absolute lookup (team 0 default blue, team 1 default red) regardless of
+// viewer, remapped through teamColorMap for lobby-chosen colors.
 function teamColor(team){
-  return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS[team];
+  return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS[teamColorIdx(team)];
 }
 // Darker variant per team, for building art's shaded/shadow side — kept as
 // its own hand-picked pair (not a generic darkenColor() pass) since
@@ -393,8 +429,32 @@ function teamColor(team){
 const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800'];
 const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
-  return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[team];
+  return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[teamColorIdx(team)];
 }
+// Per-seat display names chosen in the lobby (js/lobby.js). teamNames[team] =
+// string | null (null = no name yet / AI / empty seat). Cosmetic and viewer-
+// independent — same rules as teamColorMap: never hashed, never snapshotted.
+let teamNames = null;
+function resetTeamNames(){ teamNames = Array.from({length: NUM_TEAMS}, () => null); }
+// A seat's display label: the lobby name if set, else a stable fallback.
+function teamName(team){
+  return (teamNames && teamNames[team]) ? teamNames[team] : ('Player ' + (team + 1));
+}
+// Seed both at load so the very first render (single-player, before any
+// restartGame) has valid maps. restartGame()/the lobby re-derive them later.
+resetTeamColorMap();
+resetTeamNames();
+
+// Host-authoritative pre-match lobby state (js/lobby.js). The host writes it
+// and rebroadcasts the whole thing on every change; the guest holds a mirror.
+// Full-snapshot (not deltas), like lockstep-resync — payload is tiny for two
+// seats and it sidesteps out-of-order partial-update bugs. null when no lobby
+// is active. Shape: { seats:[{type,name,colorIdx,ready,present}], mapSize,
+// speed, numTeams }.
+let lobbyState = null;
+// This tab's own chosen player name, restored from / persisted to
+// localStorage('aoePlayerName') by the lobby. Empty string = not set yet.
+let localPlayerName = '';
 // Game-seconds per real second (AoE2 "1.7x speed" = 1.7 game-seconds/sec);
 // all rates below are authored in real AoE2 game-seconds at 30 ticks each.
 // Mutable: the main menu's Speed option sets it via setGameSpeed() (init.js).
@@ -479,13 +539,16 @@ const UNITS={
 };
 // AI pacing, authored against the AoE2-rate economy (30 ticks per
 // game-second; villager trains in 25 game-s, militia in 21 game-s).
-// AoE2-style attack plan: the first strike is a small early raid
-// (attackSize units, launched no earlier than attackTick), then each
-// subsequent wave grows by waveGrowth with at least waveCooldown between
-// launches — mirroring how the AoE2 AI escalates from a drush into
-// progressively larger attack groups instead of one fixed army size.
+// AoE2-style attack plan: the first strike comes no earlier than attackTick,
+// then waves repeat with at least waveCooldown between launches. Wave SIZE is
+// economy-driven (aiWaveSize, js/ai.js), NOT a per-wave counter: it's a
+// fraction (armyPerVil) of the villagers past a small base (armyEcoFloor),
+// floored at attackSize and capped at waveCap. Waves still escalate over a
+// match — but only because the eco grows toward maxVils, then plateaus —
+// mirroring how AoE2 throttles difficulty through the economy (a stunted eco
+// fields small attacks) rather than a scripted attack timeline.
 // attackTick reference points: hard rushes ~8 game-minutes (a classic drush
-// window), easy waits ~15. trickle is free resources per decisionInterval —
+// window), easy waits ~18. trickle is free resources per decisionInterval —
 // the original AoE2's harder AIs cheated a modest resource trickle; easy
 // gets none.
 const AI_LEVELS={
@@ -493,18 +556,18 @@ const AI_LEVELS={
   // age, but by a weak economy and timid aggression. It CAN still reach Castle
   // (maxAge:2) and build rams/knights, but so slowly (Castle age-up ~35min,
   // needs 13 vils) and attacks so late/small/cautiously (first push ~18min,
-  // wave size 3, only commits at a 2x army advantage) that a beginner has ample
+  // eco-capped waves of ~3, only commits at a 2x army advantage) that a beginner has ample
   // time to stabilise and siege almost never lands. Mirrors how AoE2's easiest
   // AI feels easy: it's played worse, not given weaker units. Harder levels tech
   // faster and push harder for the real threat.
-  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveGrowth:2,waveCooldown:3600,attackTick:32400,armyReserve:5,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,waveCap:14,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:32400,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,waveCap:6,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
   // Standard plays FAIR — no resource cheat (trickle all 0), like AoE2's
   // Moderate AI. It's still a real challenge (reaches Castle ~15min, fields
   // rams/knights, walls + a tower, pushes from ~10min) but wins on competent
   // play, not free resources. Only hard cheats — AoE2 reserves resource
   // handicaps for its hardest tiers.
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:5,waveGrowth:3,waveCooldown:2100,attackTick:18000,armyReserve:7,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:40,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:6,waveGrowth:4,waveCooldown:1500,attackTick:14400,armyReserve:10,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:60,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:18000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:12,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:14400,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:24,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
@@ -954,6 +1017,11 @@ function buildingVisibleToTeam(b, team){
 //                          waiting to recover the world from the guest's
 //                          live mirror (see enterHostResumeMode, js/init.js)
 //   stateRequestTimer   — the 5s re-request interval for the above
+//   inLobby             — a connection is open and both peers are in the
+//                          pre-match lobby (js/lobby.js), before Start. This
+//                          is deliberately NOT mpMatchStarted (js/init.js) —
+//                          the match hasn't begun, so reconnect/resume paths
+//                          (which gate on mpMatchStarted) must stay dormant.
 window.__mpSession = {
   cameraCentered: false,
   hostJustLoadedSave: false,
@@ -963,6 +1031,7 @@ window.__mpSession = {
   guestInitialMenuHidden: false,
   awaitingStateFromGuest: false,
   stateRequestTimer: null,
+  inLobby: false,
 };
 
 function spawnParticles(x, y, color, count, speed=0.03, size=2) {

@@ -1296,12 +1296,19 @@ function hasReachableResource(v,terrain){
   return !!findNearTile(v,terrain,null,null,true); // probe only — don't claim the tile
 }
 
-// Current attack-wave size: starts at profile.attackSize and grows by
-// waveGrowth per wave already launched (AoE2-style escalation from an early
-// raid to progressively larger armies). Capped so the army goal always fits
-// under the 200 pop ceiling alongside the villager economy.
+// Current attack-wave size: tracks the ECONOMY, not a launch counter. AoE2
+// difficulty doesn't script an attack timeline — it throttles the eco, and an
+// attack is simply whatever army that eco can mass. So wave size is a fraction
+// of the villager count past a small base (armyPerVil beyond armyEcoFloor),
+// floored at attackSize and capped by waveCap. Waves still escalate over a
+// match — but only because villagers grow toward maxVils, then plateau — and
+// Easy stays gentle because its eco is capped low, NOT because a timer holds
+// back. (Previously: attackSize + waveCount*waveGrowth, a synthetic per-wave
+// ramp that overwhelmed Easy regardless of how stunted its economy was.)
 function aiWaveSize(ai,profile){
-  return Math.min(profile.waveCap||60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
+  let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
+  let ecoArmy=Math.floor(Math.max(0,vils-(profile.armyEcoFloor||0))*(profile.armyPerVil||0.5));
+  return Math.max(profile.attackSize, Math.min(profile.waveCap||60, ecoArmy));
 }
 
 const AI_MIL_TYPES=['militia','spearman','archer','scout','knight'];
@@ -1495,6 +1502,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     ai.waveCount=(ai.waveCount||0)+1;
     ai.lastWaveTick=ai.tick;
     ai.lastWaveGlobalTick=tick; // global-tick stamp for allied coordination
+    ai.lastWaveSize=launched; // telemetry only (sim samples it) — NOT in the determinism hash
   }
 }
 
