@@ -956,6 +956,20 @@ function assignAIVillagers(ai,vils,profile){
   let desired=aiEcoPlan(ai,vils.length,profile);
   let counts=countAIGatherers(vils);
   let rebalanced=0;
+  // Construction-labor governor. The defensive wall RING is dozens of segments,
+  // and with buildersPerBuilding=1 every spare villager grabs a different one —
+  // so the whole town downs tools to wall, freezing food+wood gathering for
+  // minutes right when the economy needs to grow (seed 7: 9 of 10 villagers
+  // building at tick 25k, food & wood both 0, never reached the 500-food Feudal
+  // age-up). Cap villagers on WALL/GATE work to a third of the workforce so the
+  // ring goes up GRADUALLY while the rest keep gathering — a healthy economy
+  // that walls a bit slower beats a frozen one that walls fast then starves. The
+  // ring still completes (just past the ~55k seal-oracle checkpoint on the
+  // slowest seeds); the economy never stalls, which is what actually loses games.
+  // Houses/farms/barracks/TC are uncapped — few, and economically essential.
+  let wallBuilderCap=Math.max(2,Math.floor(vils.length/3));
+  let isWallWork=b=>b&&(isWallBtype(b.btype)||isGateBtype(b.btype));
+  let wallBuilders=vils.filter(u=>u.task==='build'&&isWallWork(entitiesById.get(u.buildTarget))).length;
   let overSubscribed=(task)=>{
     if(!GATHER_TASKS[task])return false;
     if(!((counts[task]||0) > Math.max(1,desired[task]||0)+1))return false; // clear surplus only
@@ -979,8 +993,15 @@ function assignAIVillagers(ai,vils,profile){
     }
     let build=neededAIBuildingWork(ai,incompleteBuilds,vils,profile,v);
     if(build&&v.task!=='build'){
-      assignAIBuilder(v,build);
-      return;
+      // Throttle wall/gate construction to the governor above; let the villager
+      // fall through to gathering when the wall crew is already at capacity.
+      if(isWallWork(build)&&wallBuilders>=wallBuilderCap){
+        // fall through to gather
+      } else {
+        assignAIBuilder(v,build);
+        if(isWallWork(build))wallBuilders++;
+        return;
+      }
     }
     if(v.task&&v.task!=='build'&&!isAIGatherTaskStale(v)){
       // Still productive on its current resource — leave it unless the mix is
