@@ -687,6 +687,10 @@ function damageEntity(attacker, target){
   // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
   // carcasses) into 1 real damage — no attack stat means no damage at all.
   if (dmg <= 0) return;
+  // Landed a real hit this tick — records combat activity so the stuck-watchdog
+  // doesn't flag a unit that's actively fighting (e.g. sieging a wall an enemy
+  // repairs in step, so the target's SAMPLED hp reads flat though blows land).
+  attacker.lastAtkTick = tick;
   // AoE2 attack bonuses. The other classic counters need no bonus — they
   // emerge from the armor system: scouts beat archers because their 2 pierce
   // armor halves arrow damage, and militia beat spearmen on raw stats.
@@ -1296,6 +1300,25 @@ function updateUnit(e){
   }
 
   if(e.path.length>0){
+    // A combat unit can reach attack position for its target BEFORE its path
+    // runs out — e.g. a siege spot behind the wall keeps the path pointing past
+    // a segment the unit is already adjacent to, or a chase path overshoots a
+    // foe that stopped. Blindly walking the leftover path then strands the unit
+    // in attack range yet not attacking (it tries to walk "through" to the stale
+    // goal, jams in the crowd, and freezes until the stuck-watchdog frees it).
+    // If we're already in position to hit the target, drop the path now and let
+    // the combat block below strike this same tick.
+    if(e.target && e.task!=='return'){
+      let ct=entitiesById.get(e.target);
+      if(ct && ct.hp>0){
+        let inPos = ct.type==='building'
+          ? adjToBuilding(e.x,e.y,ct)
+          : distToTarget(e,ct) <= ((UNITS[e.utype]?.range||0)>0 ? UNITS[e.utype].range : 1.5);
+        if(inPos){ clearUnitPath(e); }
+      }
+    }
+  }
+  if(e.path.length>0){
     // Shared stepping math (stepUnitAlongPath, js/pathfinding.js) — the
     // guest's between-sync walker uses the same function, so host and
     // guest can never drift apart on movement. checkWalkable=true: only
@@ -1418,6 +1441,11 @@ function updateUnit(e){
     // idle next to a fight. Now: retry on a cooldown, hold position while
     // near, and only give up when far away with genuinely no route (walled).
     // Returns false if the caller should stop processing this tick.
+    // How long a unit may hold a target-with-a-path yet make ZERO real progress
+    // (no closing, no damage dealt) before we call it a deadlock. Well under the
+    // stuck-watchdog's 240 so the unit self-corrects (redirect/retarget/drop)
+    // rather than freezing until the watchdog forcibly frees it.
+    const CHASE_STALL_TICKS = 90;
     function combatApproach(u,tgt,dist,pathFn){
       // The 15-tick repath cooldown throttles re-pathing while a chase is in
       // motion. Repath immediately whenever there's no path left (else the unit
@@ -1427,28 +1455,56 @@ function updateUnit(e){
       if(pathFn)pathFn();
       else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
       if(u.path.length>0){
-        // A route exists — either a full path or a legit long-march PARTIAL
-        // (findPath returns a partial only when it hits its iteration budget on
-        // a still-reachable frontier). Advance; the unit is making progress.
-        retryClear(u,'chaseBlocked');
-        return true;
+        // A route exists — but "has a path" is NOT the same as "advancing".
+        // findPath ignores MOVING units, so a unit can hold a perfectly valid
+        // path it physically can't walk because the tiles ahead are jammed with
+        // fellow attackers (the breach-point crowd: several units redirected onto
+        // one wall segment that has only a tile or two of walkable perimeter).
+        // A budget-capped PARTIAL path can likewise lead to a frontier the unit
+        // never gets past. Trust the path only while there is REAL progress:
+        // distance to the target falling, OR the target losing hp (we or a
+        // teammate are landing hits). A sustained no-progress window is a
+        // deadlock — fall through to the same give-up an empty path takes. This
+        // exempts the states that merely LOOK stationary: a long march still
+        // closes distance, and a second-rank melee waiting for a slot still sees
+        // its target's hp drop from the front rank's blows.
+        let pr=u.chaseProg;
+        if(!pr || pr.id!==tgt.id || dist < pr.d-0.25 || tgt.hp < pr.hp){
+          u.chaseProg={id:tgt.id, d:dist, hp:tgt.hp, since:tick};
+          retryClear(u,'chaseBlocked');
+          return true;
+        }
+        if(tick - pr.since < CHASE_STALL_TICKS){
+          retryClear(u,'chaseBlocked');
+          return true;
+        }
+        // Stalled: a path exists but neither distance nor target-hp has moved for
+        // the whole window. Treat it exactly like an empty path (fall through) —
+        // but DON'T reset chaseProg here, or the next call re-enters the progress
+        // branch and the 2-strike give-up never accumulates.
       }
-      // EMPTY path is the honest, definitive "no route exists": findPath returns
-      // [] only after fully exploring the reachable region without touching the
-      // target (a budget cutoff yields a partial instead), and moving units don't
-      // block pathing — so this is a real wall/trap between us and the foe, not a
-      // transient jam. Give up at once (a 2-strike tolerance absorbs a one-tick
-      // anomaly) instead of freezing on it (the stuck-watchdog spam). An AI unit
-      // redirects to a reachable enemy wall to breach; else drops the impossible
-      // target (and remembers it, so the threat-response won't instantly re-send
-      // it). Human units keep their explicit order (never hijack a player command).
+      // EMPTY path (or a stalled non-empty one): the honest "can't actually get
+      // there". findPath returns [] only after fully exploring the reachable
+      // region without touching the target, and moving units don't block pathing
+      // — so this is a real wall/trap/deadlock, not a one-tick jam. Give up (a
+      // 2-strike tolerance absorbs a transient) instead of freezing (stuck-
+      // watchdog spam). An AI unit redirects to a DIFFERENT reachable enemy wall
+      // to breach (spreading a breach crowd along the ring instead of piling all
+      // onto one un-slottable segment); else it drops the impossible target and
+      // remembers it, so auto-acquire / threat-response won't instantly re-send
+      // it. Human units keep their explicit order (never hijack a player command).
       if(retryFail(u,'chaseBlocked',15,2)&&isAITeam(u.team)){
-        let w=(typeof nearestReachableWallLike==='function')?nearestReachableWallLike(u,tgt.team):null;
-        if(w&&!sameSide(w.team,u.team)){ u.target=w.id;u.explicitAttack=true;u.siegeSpot=null; }
+        // Scouts are recon (atk 3) — never redirect them to breach a wall:
+        // controlAIScouts strips building targets each decision, so a scout
+        // handed a wall just loses it, re-acquires the impossible foe, and
+        // oscillates in place (stuck-watchdog spam). Scouts always drop+remember.
+        let stalledId=tgt.id;
+        let w=(u.utype!=='scout'&&typeof nearestReachableWallLike==='function')?nearestReachableWallLike(u,tgt.team,stalledId):null;
+        if(w&&w.id!==stalledId&&!sameSide(w.team,u.team)){ u.target=w.id;u.explicitAttack=true;u.siegeSpot=null; }
         else { if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
           u.target=null;u.explicitAttack=false;u.siegeSpot=null;
-          u.unreachId=tgt.id; u.unreachUntil=tick+900; }
-        retryClear(u,'chaseBlocked'); clearUnitPath(u);
+          u.unreachId=stalledId; u.unreachUntil=tick+900; }
+        retryClear(u,'chaseBlocked'); clearUnitPath(u); u.chaseProg=undefined;
       }
       return false;
     }
@@ -1781,11 +1837,29 @@ function updateUnit(e){
     // tick and dominated late-game tick cost. Worst added reaction delay is
     // 2 ticks (~33ms) — imperceptible. (tick+id) keys it deterministically,
     // identical on every lockstep peer.
-    if (e.stance !== 'passive' && (tick + e.id) % 3 === 0) {
+    // AI scouts are pure recon (controlAIScouts owns them for exploration) —
+    // they must NOT auto-acquire attack targets, or they wedge chasing a foe
+    // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
+    // A HUMAN scout still auto-acquires (the player expects it to fight).
+    if (e.stance !== 'passive' && (tick + e.id) % 3 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
+      let reachAtk=(e.range>0?e.range:1.6);
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
-        if(e.unreachUntil>tick && e.unreachId===en.id)return false; // proved unreachable recently — don't re-grab
+        // Skip a foe we recently proved unreachable — UNLESS it is now within
+        // attack range AND actually hittable (pathing is then moot; we hit it
+        // where it stands). Without the range exception an idle unit ignored an
+        // enemy that walked right up to it (a soldier "refusing" a fight). But a
+        // foe that's in range only DIAGONALLY across a sealed wall corner is NOT
+        // hittable (melee corner rule) and can't be pathed to either, so keep
+        // skipping it — otherwise the unit re-acquires and oscillates in place.
+        if(e.unreachUntil>tick && e.unreachId===en.id){
+          if(dist(e,en)>reachAtk+0.5)return false; // out of range → keep skipping
+          if(e.range<=0){ // melee: reject the sealed-corner diagonal (matches the attack corner rule)
+            let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(en.x)-ex,dy=Math.round(en.y)-ey;
+            if(dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true))return false;
+          }
+        }
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
@@ -1797,20 +1871,26 @@ function updateUnit(e){
         return true;
       });
       if(closest) {
-        // Only lock on if we can actually PATH to it. An idle unit grabbing a
-        // foe it can't reach — the classic case is a raider poking our wall from
-        // outside our sealed ring — is the wedge source: it re-acquires every
-        // few ticks and freezes chasing an impossible target (stuck-watchdog
-        // spam). The candidate is within scan range (<=8 tiles), so this findPath
-        // is short and unambiguous (a real block gives [] or a path that stops
-        // short). If unreachable, remember it briefly so we don't re-scan it.
-        let cx=Math.round(closest.x), cy=Math.round(closest.y);
-        let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
-        let end=pth.length?pth[pth.length-1]:null;
-        let reach=(e.range>0?e.range:1.6);
-        if(end && Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy))<=Math.max(2,reach)){
+        if(dist(e,closest)<=reachAtk+0.5){
+          // Already in attack range → engage directly; no pathing needed (also
+          // skips the findPath below, the auto-acquire hotspot at a wall standoff).
           e.target=closest.id;
-        } else { e.unreachId=closest.id; e.unreachUntil=tick+300; }
+        } else {
+          // Only lock on if we can actually PATH to it. An idle unit grabbing a
+          // foe it can't reach — the classic case is a raider poking our wall from
+          // outside our sealed ring — is the wedge source: it re-acquires every
+          // few ticks and freezes chasing an impossible target (stuck-watchdog
+          // spam). The candidate is within scan range (<=8 tiles), so this findPath
+          // is short and unambiguous (a real block gives [] or a path that stops
+          // short). If unreachable, remember it long enough that a stalemate
+          // doesn't re-run this search every few ticks.
+          let cx=Math.round(closest.x), cy=Math.round(closest.y);
+          let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
+          let end=pth.length?pth[pth.length-1]:null;
+          if(end && Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy))<=Math.max(2,reachAtk)){
+            e.target=closest.id;
+          } else { e.unreachId=closest.id; e.unreachUntil=tick+900; }
+        }
       } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
         // behavior — soldiers parked in an enemy town shouldn't stand and
@@ -1833,7 +1913,16 @@ function updateUnit(e){
             bestPri = pri; bestD = d; bestB = b;
           }
         }
-        if (bestB) e.target = bestB.id;
+        if (bestB) {
+          // Only commit if we can actually reach it. A human unit never
+          // auto-gives-up (combatApproach's drop is AI-only), so locking onto a
+          // building behind a wall makes it wall-hump forever. Require a path
+          // that lands adjacent to the building's footprint.
+          let bx=Math.round(bestB.x+bestB.w/2), by=Math.round(bestB.y+bestB.h/2);
+          let pth=findPath(Math.round(e.x),Math.round(e.y),bx,by,e.id);
+          let end=pth.length?pth[pth.length-1]:null;
+          if(end && Math.max(Math.abs(end.x-bx),Math.abs(end.y-by))<=Math.max(bestB.w,bestB.h)+1) e.target=bestB.id;
+        }
       }
     }
   }
@@ -1865,12 +1954,18 @@ function claimedGatherSet(team){
   return gatherClaims[team];
 }
 
-function findNearTile(e,terrain,excludeList=null,anchor=null){
+function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
   // Search origin: normally the unit itself, but callers can pass an `anchor`
   // (e.g. a drop-off) to find the resource tile nearest THAT point instead —
   // so an AI villager works beside its camp/TC (short round trips) rather than
   // whatever patch is nearest to wherever it's standing. Validity/claim checks
   // still use the real unit e.
+  // noClaim=true: probe only (existence/reachability check) — do NOT reserve the
+  // tile in the per-tick claim set. The assigner calls this several times per
+  // villager for checks (hasReachableResource, reachability probes); claiming on
+  // each one reserved 2-3 tiles per villager, falsely saturating the claim set
+  // and pushing later villagers to farther patches. Only the FINAL assigned tile
+  // should claim.
   let bx=anchor?Math.round(anchor.x):Math.round(e.x),by=anchor?Math.round(anchor.y):Math.round(e.y);
   let best=null,bd=999;
   let claimed=claimedGatherSet(e.team);
@@ -1897,7 +1992,7 @@ function findNearTile(e,terrain,excludeList=null,anchor=null){
         if(d<bd){bd=d;best={x:nx,y:ny};}
       }
     }
-    if(best){claimed.add(best.x+best.y*MAP);return best;}
+    if(best){if(!noClaim)claimed.add(best.x+best.y*MAP);return best;}
   }
   return null;
   };
@@ -1915,7 +2010,7 @@ function findNearTile(e,terrain,excludeList=null,anchor=null){
         if(d<bd){bd=d;best={x:nx,y:ny};}
       }
     }
-    if(best){claimed.add(best.x+best.y*MAP);return best;}
+    if(best){if(!noClaim)claimed.add(best.x+best.y*MAP);return best;}
   }
   // Nothing (free OR claimed) within 12: the near patch is exhausted —
   // widen to 28 before giving up (see the two-stage comment above).
@@ -1939,7 +2034,9 @@ function deleteOwnedEntity(en){
     feedbackFor(en.team, () => showMsg(BLDGS[en.btype].name+' cancelled (refunded)'));
   }
   en.hp=0;
-  handleDeath(en,1);
+  // Self-delete has no enemy killer — attribute to GAIA (neutral), not a
+  // hardcoded team 1, so any kill/score attribution reading killerTeam is correct.
+  handleDeath(en,GAIA_TEAM);
 }
 
 function handleDeath(e,killerTeam){
@@ -2136,6 +2233,12 @@ function updateStuckWatchdog(){
     let busy = e.path.length > 0 || e.task || e.target || e.buildTarget;
     if (!busy) { e.stuck = undefined; return; }
     if (e.task === 'return' && retryActive(e,'dropWait')) { e.stuck = undefined; return; } // deliberate wait
+    // Actively fighting: a unit that landed a hit within the watchdog window is
+    // making progress by definition, even if its target's SAMPLED hp looks flat
+    // (a wall an enemy repairs in step, a second target soaking between its own
+    // regen ticks). Freezing such a unit is a false-positive that yanks it off a
+    // live attack. A genuinely wedged unit never reaches its target to swing.
+    if (e.lastAtkTick != null && tick - e.lastAtkTick < STUCK_WATCHDOG_TICKS) { e.stuck = undefined; return; }
     // The TARGET's hp / build progress is part of the signature: a
     // stationary attacker or builder is making progress exactly when its
     // target's state is changing (including damage dealt by teammates —

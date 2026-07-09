@@ -1007,6 +1007,7 @@ function spawnParticles(x, y, color, count, speed=0.03, size=2) {
 // point. Archers have 80% accuracy (a miss scatters the aim point);
 // tower/TC fire is 100% accurate, as in AoE2.
 function spawnProjectile(attacker, target) {
+  attacker.lastAtkTick = tick; // combat activity — see stuck-watchdog exemption (js/logic.js)
   let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
   let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
   let accuracy = attacker.type === 'building' ? 1.0 : 0.8;

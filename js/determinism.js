@@ -109,6 +109,11 @@ function detEntityHash(e){
   h = detMixFloat(h, e.groupSpeed || 0); // formation pace cap (unitMoveSpeed, js/logic.js)
   h = detMix(h, e.stuck ? e.stuck.since : -1);
   h = detMixStr(h, e.stuck && e.stuck.sig);
+  // Chase-progress watch (combatApproach, js/logic.js): decides WHEN a unit
+  // gives up a target it can't advance on, so it's sim state.
+  h = detMix(h, e.chaseProg ? e.chaseProg.since : -1);
+  h = detMix(h, e.chaseProg ? e.chaseProg.id : -2);
+  h = detMix(h, e.lastAtkTick == null ? -1 : e.lastAtkTick); // gates stuck-watchdog (js/logic.js)
   return h >>> 0;
 }
 

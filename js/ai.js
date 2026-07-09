@@ -87,8 +87,12 @@ function updateAI(ai){
   // which time the recent-hit window has expired and it re-tasks normally.
   let alarmR=AI_BASE_ALARM_RADIUS*aiScale();
   let tcCenter={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+  // Window must exceed the decision interval or this (decision-tick-only) check
+  // steps right over the hit: easy=240 / standard=180 / hard=120, so a fixed 120
+  // meant the flee almost never fired for easy/standard.
+  let fleeWindow=profile.decisionInterval+60;
   vils.forEach(v=>{
-    if(v.lastHitTick==null||tick-v.lastHitTick>=120)return;
+    if(v.lastHitTick==null||tick-v.lastHitTick>=fleeWindow)return;
     if(dist(v,tcCenter)<=alarmR)return;
     v.task=null;v.target=null;v.buildTarget=null;
     clearGatherTarget(v);
@@ -578,18 +582,28 @@ function wallTileSealed(pt,team){
   return false;
 }
 
-// Ground truth: can an ENEMY reach the TC from outside? Bounded multi-source
-// flood inward from the box boundary through enemy-passable ground. Uses
-// walkable(x,y,-1,true): no walker → our gates read as CLOSED (an enemy can't
-// use them) and open gates stay open; ignoreUnits=true → transient units don't
-// count as walls. 8-connected but NO diagonal corner-cutting, matching unit
-// movement (findPath). `extraBlock` optionally treats one tile as if walled
-// ("would sealing this pocket matter?"). Returns true = SEALED.
+// Ground truth: can an ENEMY reach the TC from outside RIGHT NOW? Bounded
+// multi-source flood inward from the box boundary through enemy-passable ground.
+// ignoreUnits=true → transient units don't count as walls; 8-connected but NO
+// diagonal corner-cutting, matching unit movement (findPath). Gates: a CLOSED
+// gate blocks, but an OPEN gate (it swung open for a nearby friendly — e.g. the
+// rallied army parked at it) is passable to anyone, so the honest check must
+// count it as a hole (walkable(-1) reads every gate as closed, so isOpen is
+// tested explicitly). `extraBlock` optionally treats one tile as if walled.
+// Returns true = SEALED.
 function aiBaseSealed(aiTC,team,radius,extraBlock){
   let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
   let R=Math.round(radius)+6, slack=2;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
-  let pass=(x,y)=>(!(extraBlock&&x===extraBlock.x&&y===extraBlock.y))&&walkable(x,y,-1,true);
+  let pass=(x,y)=>{
+    if(extraBlock&&x===extraBlock.x&&y===extraBlock.y)return false;
+    if(walkable(x,y,-1,true))return true;
+    let t=map[y]&&map[y][x];
+    if(t&&t.occupied){ let o=entitiesById.get(t.occupied);
+      if(o&&isGateBtype(o.btype)&&o.isOpen){ let horiz=o.w>=o.h, idx=horiz?(x-o.x):(y-o.y);
+        if(idx===Math.floor(Math.max(o.w,o.h)/2))return true; } } // open gate = doorway hole
+    return false;
+  };
   let seen=new Set(), q=[], head=0;
   let seed=(x,y)=>{ let k=x+','+y; if(!seen.has(k)&&pass(x,y)){seen.add(k);q.push([x,y]);} };
   for(let x=loX;x<=hiX;x++){ seed(x,loY); seed(x,hiY); }
@@ -867,11 +881,13 @@ function queueAIMilitary(ai,readyBarracks,profile){
   let types = AI_MIL_TYPES.filter(t=>isUnlocked(ai.team,t));
   if(types.length===0)return;
   // Rock-paper-scissors counters, per the unit descriptions in core.js:
-  // spearman is anti-cavalry (counters scout AND knight), scout runs down
-  // archers (a Castle-age AI prefers the knight for that job), archers
-  // shred standing infantry. Picked from real scouted intel, not
-  // omniscient knowledge of the player's army.
-  let counterMap={scout:'spearman',knight:'spearman',archer:isUnlocked(ai.team,'knight')?'knight':'scout',militia:'archer',spearman:'archer'};
+  // spearman is anti-cavalry (counters scout AND knight), archers shred
+  // standing infantry. The scout line is reserved SOLELY for recon (exactly
+  // one explorer — see ensureAIScout; controlAIScouts owns every utype==='scout'
+  // and won't let it fight), so it is never a military pick: anti-archer is the
+  // knight once unlocked, else militia (the melee closer in this roster).
+  // Picked from real scouted intel, not omniscient knowledge of the player's army.
+  let counterMap={scout:'spearman',knight:'spearman',archer:isUnlocked(ai.team,'knight')?'knight':'militia',militia:'archer',spearman:'archer'};
   // Castle-age siege contingent: keep ~1 ram per 6 army slots so attack
   // waves can crack walls/towers instead of bouncing off them (the wave
   // targeting already points rams at structures — see chooseAIAttackTarget).
@@ -880,11 +896,11 @@ function queueAIMilitary(ai,readyBarracks,profile){
   let ramGold=UNITS.ram.cost.g||0;
   let wantRam=isUnlocked(ai.team,'ram')&&ramCount<Math.ceil(maxArmy/6);
   let pickUnitType=()=>{
-    if(wantRam&&canAfford(ai.team,UNITS.ram.cost)){
-      ramCount++;
-      if(ramCount>=Math.ceil(maxArmy/6))wantRam=false;
-      return 'ram';
-    }
+    // NOTE: don't mutate ramCount/wantRam here — the actual queueUnit can still
+    // fail (pop cap) and fall back to spearman/militia, which would leave ram
+    // accounting overstated and under-produce rams. The caller updates the count
+    // only on a confirmed ram queue.
+    if(wantRam&&canAfford(ai.team,UNITS.ram.cost)) return 'ram';
     // Saving for a ram but gold-short: RESERVE gold for the siege — train the
     // gold-free spearman meanwhile so gold banks toward the 75 a ram needs,
     // instead of dribbling it into militia/knights. Gold-starved Castle AIs
@@ -912,8 +928,12 @@ function queueAIMilitary(ai,readyBarracks,profile){
     while(barracks.queue.length<profile.queueLimit&&teamPopUsed(ai.team)+teamQueuedPop(ai.team)<teamPopCap(ai.team)&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
       // Counter-pick first, then cheaper fallbacks if it's unaffordable.
-      if(queueUnit(barracks,utype).ok||queueUnit(barracks,'spearman').ok||queueUnit(barracks,'militia').ok){
+      let placed = queueUnit(barracks,utype).ok ? utype
+                 : queueUnit(barracks,'spearman').ok ? 'spearman'
+                 : queueUnit(barracks,'militia').ok ? 'militia' : null;
+      if(placed){
         queuedArmy++;
+        if(placed==='ram'){ ramCount++; if(ramCount>=Math.ceil(maxArmy/6))wantRam=false; } // count only a CONFIRMED ram
       } else {
         break;
       }
@@ -964,11 +984,15 @@ function assignAIVillagers(ai,vils,profile){
     }
     if(v.task&&v.task!=='build'&&!isAIGatherTaskStale(v)){
       // Still productive on its current resource — leave it unless the mix is
-      // badly skewed from what the economy needs now (capped per decision).
-      if(rebalanced<AI_REBALANCE_MAX && overSubscribed(v.task)){
+      // badly skewed from what the economy needs now (capped per decision), OR
+      // it's a lone stone miner sitting on a stone hoard (the >800→chop cutoff
+      // only applies at assignment, so a single miner otherwise mines forever).
+      let hoardStone = v.task==='mine_stone' && resourceStore(ai.team).stone>800;
+      if(rebalanced<AI_REBALANCE_MAX && (overSubscribed(v.task)||hoardStone)){
         rebalanced++;
-        counts[v.task]=(counts[v.task]||0)-1; // reflect the move so we don't over-pull this tick
+        counts[v.task]=(counts[v.task]||0)-1;              // source loses a hand
         assignAIGatherTask(ai,v,vils,profile);
+        if(GATHER_TASKS[v.task])counts[v.task]=(counts[v.task]||0)+1; // ...and credit the destination, so a 2nd pull this tick judges against the updated mix
       }
       return;
     }
@@ -1060,12 +1084,12 @@ function assignAIGatherTask(ai,v,vils,profile){
   // reachable own GATE (own units pass through it, so the rest of the map —
   // and the eco — opens up once through) and re-evaluate next decision.
   let cfg=GATHER_TASKS[task];
-  let tile=cfg?findNearTile(v,cfg.terrain):null;
+  let tile=cfg?findNearTile(v,cfg.terrain,null,null,true):null; // probe (reachability) — don't claim
   if(tile&&!pathReaches(v.x,v.y,tile.x,tile.y,v.id)){
     let picked=false;
     for(let alt of ['farm','forage','chop','mine_gold','mine_stone']){
       if(alt===task)continue;
-      let t2=findNearTile(v,GATHER_TASKS[alt].terrain);
+      let t2=findNearTile(v,GATHER_TASKS[alt].terrain,null,null,true); // probe — don't claim
       if(t2&&pathReaches(v.x,v.y,t2.x,t2.y,v.id)){task=alt;picked=true;break;}
     }
     if(!picked){
@@ -1248,7 +1272,7 @@ function findAIFarmSpot(ai,tc){
 }
 
 function hasReachableResource(v,terrain){
-  return !!findNearTile(v,terrain);
+  return !!findNearTile(v,terrain,null,null,true); // probe only — don't claim the tile
 }
 
 // Current attack-wave size: starts at profile.attackSize and grows by
@@ -1288,20 +1312,16 @@ function holdsSiegeOrder(m){
 function controlAIMilitary(ai,mils,aiTC,profile){
   let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
   // Ignore a threat our base is sealed against. A raider poking our ring from
-  // OUTSIDE is near our buildings (so findPlayerThreatNear flags it) but the army
-  // can't get to it — sending the whole garrison to chase freezes them at their
-  // own wall (the stuck-watchdog spam). Test with findPath from the TC: the path
-  // must actually END on the threat, not just exist. An unreachable raider yields
-  // either [] or a partial path that stops at the wall (endpoint far from it), so
-  // both are rejected. Threats reported here are close (within findPlayerThreatNear
-  // range), so a reachable one gets a full path that lands on it — no false reject.
-  // The wall/towers handle an enemy that genuinely can't get in.
+  // OUTSIDE can't be reached, so chasing it freezes the garrison at the wall (the
+  // stuck-watchdog spam). Reject ONLY on a DEFINITIVE no-route: findPath returns
+  // [] only after fully exploring the reachable region without a path — a truly
+  // sealed-out foe. A partial path (iteration-capped) means far-but-reachable —
+  // e.g. a raid on the ALLY's town across the map (findPlayerThreatNear includes
+  // ally buildings) — and MUST still draw a response, so we don't reject it. The
+  // earlier "endpoint must land on the threat" test wrongly dropped those.
   if(threat){
     let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
-    let tx=Math.round(threat.x), ty=Math.round(threat.y);
-    let pth=findPath(tcx,tcy,tx,ty,aiTC.id);
-    let end=pth.length?pth[pth.length-1]:null;
-    if(!end||Math.max(Math.abs(end.x-tx),Math.abs(end.y-ty))>2) threat=null;
+    if(findPath(tcx,tcy,Math.round(threat.x),Math.round(threat.y),aiTC.id).length===0) threat=null;
   }
   if(threat){
     let localEnemyPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
@@ -1328,6 +1348,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       return;
     }
     mils.forEach(m=>{
+      if(m.utype==='scout')return; // scouts are recon — controlAIScouts owns them, don't pull into defense
       if(holdsSiegeOrder(m))return; // rams / directed sieges don't chase raiders
       // Don't re-send a unit to chase a raider it just proved it can't reach
       // (e.g. one poking the wall from outside our sealed ring) — that's the
@@ -1387,7 +1408,10 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   }
   let holding=false;
   let waveSize=aiWaveSize(ai,profile);
-  let available=mils.filter(m=>!m.target);
+  // Scouts are recon, not wave fodder — controlAIScouts owns them (same
+  // exemption the stray-retask and rally paths already apply). Committing the
+  // lone explorer to the attack mob was the exact thing the scout rework fixed.
+  let available=mils.filter(m=>!m.target&&m.utype!=='scout');
   if(mils.length<waveSize||ai.tick<profile.attackTick)holding=true;
   // Minimum spacing between waves: after committing an attack, regroup and
   // rebuild before the next (larger) one instead of dribbling units out.
@@ -1638,7 +1662,7 @@ function wallBreachTicks(unit, w){
 // what makes the AI material-aware like AoE2's: a militia (6 dmg/hit vs
 // palisade) happily eats a 250hp palisade but a stone wall (1 dmg/hit,
 // ~900 hits) loses to a soft segment even a fair march away.
-function nearestReachableWallLike(unit, team){
+function nearestReachableWallLike(unit, team, excludeId){
   // sameSide, not ===: in 2v2 the blocking wall is often the ALLY's (human
   // and ally AI share a base area) — matching only the target's own team
   // left the attacking army stuck outside an allied wall with no target.
@@ -1656,7 +1680,10 @@ function nearestReachableWallLike(unit, team){
     .map(w => ({ w, score: wallBreachTicks(unit, w) + marchTicks(w) }))
     .sort((a, b) => a.score - b.score)
     .map(s => s.w)
-    .find(w => isTargetReachable(unit, w)) || null;
+    // Skip the segment we just stalled on (excludeId) and any wall we recently
+    // gave up on (unreach memory) so a crowded breach point spreads the overflow
+    // to a neighbouring segment instead of re-picking the same un-slottable one.
+    .find(w => w.id!==excludeId && !(unit.unreachId===w.id && unit.unreachUntil>tick) && isTargetReachable(unit, w)) || null;
 }
 
 // If the chosen target is walled off and unreachable, attack the cheapest
@@ -1913,7 +1940,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
   // a grass pocket fully boxed in by forest/water on every side. Rank by
   // score first, then accept the best-ranked candidate that's actually
   // reachable from the TC (pathfinding is too costly to run on every one).
-  candidates.sort((a,b)=>a.s-b.s);
+  candidates.sort((a,b)=>a.s-b.s || a.x-b.x || a.y-b.y); // positional tie-break: don't depend on Array.sort stability for a sim decision
   let tcx=tc.x+Math.floor(tc.w/2), tcy=tc.y+Math.floor(tc.h/2);
   for(let i=0;i<candidates.length;i++){
     let c=candidates[i];
