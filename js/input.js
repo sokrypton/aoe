@@ -226,6 +226,10 @@ document.addEventListener('keydown',e=>{
         else tryPlace('GATE','Palisade Gate');
         return;
       }
+      // Palisade stays available in every age (AoE2) — on its own keys once
+      // stone has taken the E/R slots.
+      else if(key==='t' && isUnlocked(myTeam,'SWALL')) { tryPlace('WALL','Palisade Wall'); return; }
+      else if(key==='y' && isUnlocked(myTeam,'SWALL')) { tryPlace('GATE','Palisade Gate'); return; }
     }
   }
 

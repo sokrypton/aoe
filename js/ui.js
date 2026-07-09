@@ -803,15 +803,24 @@ function updateUI(){
         // updateUI.)
 
         // Military Sub-Menu
-        // Locked entries are hidden; the wall/gate slots are REPLACED by
-        // their stone upgrades once Feudal unlocks them (palisades are the
-        // Dark-age versions of the same slot, not a separate option).
+        // Locked entries are hidden. Once Feudal unlocks stone, E/R become the
+        // Stone Wall/Gate — but palisade (wood) stays buildable in EVERY age
+        // (AoE2: cheap 2-wood, fast, never removed), so it's kept as separate
+        // trailing entries (T/Y) rather than being hidden behind stone.
         let builds=[
           {type:'BARRACKS',label:'Barracks',key:'Q'},
-          {type:'TOWER',label:'Watch Tower',key:'W'},
-          isUnlocked(myTeam,'SWALL')?{type:'SWALL',label:'Stone Wall',key:'E'}:{type:'WALL',label:'Palisade',key:'E'},
-          isUnlocked(myTeam,'SGATE')?{type:'SGATE',label:'Stone Gate',key:'R'}:{type:'GATE',label:'Palisade Gate',key:'R'}
-        ].filter(bi=>isUnlocked(myTeam,bi.type));
+          {type:'TOWER',label:'Watch Tower',key:'W'}
+        ];
+        if(isUnlocked(myTeam,'SWALL')){
+          builds.push({type:'SWALL',label:'Stone Wall',key:'E'});
+          builds.push({type:'SGATE',label:'Stone Gate',key:'R'});
+          builds.push({type:'WALL',label:'Palisade',key:'T'});
+          builds.push({type:'GATE',label:'Palisade Gate',key:'Y'});
+        } else {
+          builds.push({type:'WALL',label:'Palisade',key:'E'});
+          builds.push({type:'GATE',label:'Palisade Gate',key:'R'});
+        }
+        builds=builds.filter(bi=>isUnlocked(myTeam,bi.type));
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='building';

@@ -996,7 +996,6 @@ function assignAIGatherTask(ai,v,vils,profile){
 
 function aiEcoPlan(ai,vilCount,profile){
   let militaryStarted=entities.some(e=>e.team===ai.team&&e.type==='building'&&e.btype==='BARRACKS');
-  let hasMill=hasAIBuilding(ai,'MILL');
   // AoE2 Dark Age economy: food + wood first (villager production and
   // buildings), gold only once military production begins, stone only for
   // walls/towers (the wall-plan boost below handles that).
@@ -1006,11 +1005,15 @@ function aiEcoPlan(ai,vilCount,profile){
   // SPREAD the profile's ratios: this function mutates `base` below (farm
   // key, wall stone boost) and must never write into the shared AI_LEVELS.
   let base={...profile.ecoRatios};
-  if(hasMill){
-    // Staff the farms we actually have: ~one farmer per active farm, never
-    // below the profile floor (fixed 2-4 shares idled the extra plots the
-    // dynamic farm target above builds).
-    let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&e.complete&&!e.exhausted).length;
+  // Staff the farms we actually have: ~one farmer per active farm, never
+  // below the profile floor (fixed 2-4 shares idled the extra plots the
+  // dynamic farm target above builds). Keyed on the FARMS existing, NOT on
+  // owning a Mill: farms drop at the TC too, so a berry-less start now builds
+  // farms (planAIFarming) — but if staffing stayed mill-gated it built plots
+  // and assigned zero farmers, chopping wood while food starved to ~0 and it
+  // never left the Dark Age (sim seeds 3001/8001: 12 farms, food 2, wood 2000+).
+  let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&e.complete&&!e.exhausted).length;
+  if(activeFarms>0){
     base.farm=Math.max(profile.farmShare,activeFarms);
   }
   // A palisade ring is a WOOD sink (2/tile, dozens of tiles, plus the 30-
@@ -1057,8 +1060,14 @@ function countAIGatherers(vils){
 }
 
 function planAIFarming(ai,aiTC,vils,profile){
-  // Farms need a Mill for food drop-off; only worthwhile once military is underway
-  if(!hasAIBuilding(ai,'MILL')||!hasAIBuilding(ai,'BARRACKS'))return;
+  // Farms drop food at the nearest food drop-off — the TC (always present,
+  // dropAccepts it universally) or a Mill. Do NOT gate on having a Mill: the
+  // Mill only ever gets built on a BERRIES patch (planAIDropSites), so a
+  // berry-less start never built one → never farmed → starved in the Dark Age
+  // forever while wood piled up (sim seeds 4001/8001: age 0 at 90k, food ~10,
+  // wood 3800, zero farms/mills). Farms tile around the TC just fine.
+  // Only worthwhile once military is underway (barracks up).
+  if(!hasAIBuilding(ai,'BARRACKS'))return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
   // ACTIVE farms only (exhausted ones auto-reseed and shouldn't block new
   // plots), against a target that grows with the workforce — a fixed 2-4

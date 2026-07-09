@@ -240,7 +240,13 @@ window.runSimulation = async function(opts){
       if (!samples.length) return;
       const last = samples[samples.length - 1];
       const half = samples.slice(Math.floor(samples.length / 2));
-      if (!last.defeated) {
+      // Use the AUTHORITATIVE end-state defeat, not the last timeline sample:
+      // a team rushed to death is knocked out a few ticks AFTER the final
+      // periodic sample, so `last.defeated` is still false and the eco checks
+      // below fire on the rush-VICTIM ("never left Dark Age", "food-starved")
+      // — false positives that mask real eco bugs. A team that lost the game
+      // wasn't necessarily eco-broken; it just got out-produced and crushed.
+      if (!last.defeated && !report.end.defeated[t]) {
         if (last.age === 0 && tick > 55000) F.push(`team${t} never left Dark Age by tick ${tick}`);
         if (half.every(s => s.food < 60)) F.push(`team${t} food-starved for the entire second half`);
         if (half.every(s => s.exhaustedFarms > 0 && s.exhaustedFarms >= s.farms - 1) && last.farms > 2)
