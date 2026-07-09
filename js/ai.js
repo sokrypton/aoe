@@ -355,11 +355,19 @@ function planAIDropSites(ai,aiTC,vils,profile){
     let pos=findAIDropSite(ai,TERRAIN.BERRIES,'MILL',aiTC);
     if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
+  // Mining camps serve BOTH gold and stone. Build one at a far gold deposit AND
+  // one at a far stone deposit (each only if it's beyond AI_DROP_COVER of the
+  // TC / an existing camp) — the old code placed camps at GOLD only, so a
+  // distant stone deposit had no drop and villagers hauled stone all the way
+  // back to the TC.
   let mcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='MCAMP');
-  if(vils.length>=7&&hasBarracks&&mcamps.length<AI_MAX_MCAMP&&canAfford(ai.team,BLDGS.MCAMP.cost)){
-    let goldDrops=[aiTC,...mcamps];
-    let pos=findAIDropSite(ai,TERRAIN.GOLD,'MCAMP',aiTC,true,goldDrops,AI_DROP_COVER);
-    if(pos)placeAIBuilding(ai,'MCAMP',pos.x,pos.y);
+  if(vils.length>=7&&hasBarracks&&mcamps.length<AI_MAX_MCAMP){
+    let drops=[aiTC,...mcamps];
+    for(let ore of [TERRAIN.GOLD,TERRAIN.STONE]){
+      if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost))break;
+      let pos=findAIDropSite(ai,ore,'MCAMP',aiTC,true,drops,AI_DROP_COVER);
+      if(pos){ let b=placeAIBuilding(ai,'MCAMP',pos.x,pos.y); if(b){mcamps.push(b);drops.push(b);} }
+    }
   }
 }
 
@@ -404,15 +412,18 @@ function planAIWalls(ai,aiTC,vils,profile){
   let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===x&&en.y===y);
   let isGateAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isGateBtype(en.btype)&&en.x>=x-1&&en.x<=x&&en.y>=y-1&&en.y<=y);
   gatePairs.forEach((pair,gi)=>{
-    if(ai.gatesDone[gi])return;
     let gc=pair[Math.floor(pair.length/2)]; // centre tile — the gate anchor
+    if(ai.gatesDone[gi]){
+      if(isGateAt(gc.x,gc.y))return;   // gate still standing → nothing to do
+      ai.gatesDone[gi]=false;          // gate was destroyed → rebuild it
+    }
     if(isGateAt(gc.x,gc.y)){ai.gatesDone[gi]=true;return;}
     let allWalls=pair.every(p=>isWallAt(p.x,p.y));
     if(!allWalls){
       pair.forEach(p=>{
         if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)){
-          placeAIBuilding(ai,'WALL',p.x,p.y);
-          let pt=plan.find(t=>t.x===p.x&&t.y===p.y); if(pt)pt.done=true;
+          let b=placeAIBuilding(ai,'WALL',p.x,p.y);
+          if(b){let pt=plan.find(t=>t.x===p.x&&t.y===p.y); if(pt)pt.done=true;}
         }
       });
     } else {
@@ -428,18 +439,19 @@ function planAIWalls(ai,aiTC,vils,profile){
     }
   });
 
-  // The gate tile is built as a normal wall like the rest of the ring first —
-  // placing a GATE only succeeds by consuming 2 existing adjacent wall tiles,
-  // so it has to replace real walls rather than fill an intentional gap.
-  let ringDone=plan.every(t=>t.done);
-  // Stone upgrade (AoE2: palisade → stone from Feudal on): once the ring is
-  // closed and gated, convert a few palisade pieces per decision tick
-  // through the SAME exec path the player's upgrade button uses —
-  // feedbackFor keeps the toasts off the human's screen. GATES first: the
-  // gate is the breach point every attack funnels into, so it's the piece
-  // whose stone HP buys the most. Paced (≤4/decision) and priced exactly,
-  // keeping a small stone float so it never outbids towers.
-  if(ringDone&&ai.gateBuilt&&isUnlocked(ai.team,'SWALL')){
+  // ---- Honest enclosure state (the single source of truth) ----
+  // `sealed` = an enemy genuinely CANNOT flood-reach the TC. `canExit` = our own
+  // army genuinely CAN flood-reach outside. These replace `plan.every(done)`
+  // (which only meant "attempted") and the pathReaches egress probe (which
+  // false-positives). Computed once per call and reused below.
+  let wr=ai.wallRadiusUsed||Math.round(profile.wallRadius*aiScale());
+  let sealed=aiBaseSealed(aiTC,ai.team,wr);
+  let rescueActive=plan.some(pt=>pt.rescueOpenUntil&&tick<pt.rescueOpenUntil);
+
+  // Stone upgrade (AoE2: palisade → stone from Feudal on): only once actually
+  // sealed and gated. GATES first (the funnel point), paced ≤4/decision, priced
+  // exactly with a small stone float so it never outbids towers.
+  if(sealed&&ai.gateBuilt&&isUnlocked(ai.team,'SWALL')){
     let pals=entities.filter(en=>en.type==='building'&&en.team===ai.team&&
       (en.btype==='WALL'||en.btype==='GATE')&&en.complete&&en.hp>0);
     pals.sort((a,b)=>(a.btype==='GATE'?0:1)-(b.btype==='GATE'?0:1)||a.id-b.id);
@@ -453,95 +465,65 @@ function planAIWalls(ai,aiTC,vils,profile){
     }
     if(pick.length)execUpgradeWalls({unitIds:pick.map(w=>w.id)},ai.team);
   }
-  if(ringDone){
+
+  // Egress: the base is sealed to enemies but our army can't get out (no gate,
+  // or the gate/opening was destroyed or walled off). Carve one. A rescue hole
+  // held open for a trapped worker already IS an opening — don't double-breach.
+  if(sealed&&!rescueActive&&!armyCanReachEnemy(ai,aiTC)){
     if(!ai.gateBuilt){
       let result=resolveAIGate(ai,plan,aiTC);
-      if(result==='satisfied'){
-        ai.gateBuilt=true; // a blocked tile already left a natural opening on the best side
-      } else if(result){
-        let b=placeAIBuilding(ai,'GATE',result.x,result.y);
-        if(b)ai.gateBuilt=true;
-      } else {
-        // No opening and no valid gate spot: breach the ring ourselves.
-        breachAIWallRing(ai,plan,aiTC);
-        ai.gateBuilt=true;
-      }
-    } else if(ai.tick%profile.wallCheckInterval===0){
-      // Periodic sanity check: can the army still get out toward the enemy?
-      // (A gate can be destroyed, or the 'natural opening' can later be
-      // walled off by terrain-adjacent building placement.)
-      let dirTarget=getEnemyDirection(ai,aiTC);
-      let ex=Math.round(aiTC.x+dirTarget.dx*(profile.wallRadius*aiScale()+4));
-      let ey=Math.round(aiTC.y+dirTarget.dy*(profile.wallRadius*aiScale()+4));
-      ex=Math.max(1,Math.min(MAP-2,ex)); ey=Math.max(1,Math.min(MAP-2,ey));
-      // If the probe tile itself happens to be forest/water, step it back
-      // toward the ring (staying outside it) instead of skipping the check —
-      // otherwise a fully re-sealed ring was never re-breached just because
-      // one lookup tile 4 beyond the wall was unwalkable.
-      for(let back=0;back<3&&!walkable(ex,ey);back++){
-        ex=Math.round(ex-dirTarget.dx);ey=Math.round(ey-dirTarget.dy);
-      }
-      let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
-      if(walkable(ex,ey)&&!pathReaches(tcx,tcy,ex,ey,aiTC.id,1.5)){
-        breachAIWallRing(ai,plan,aiTC);
-      }
+      if(result==='satisfied'){ ai.gateBuilt=true; }
+      else if(result){ let b=placeAIBuilding(ai,'GATE',result.x,result.y); if(b)ai.gateBuilt=true; }
+      else { breachAIWallRing(ai,plan,aiTC); ai.gateBuilt=true; }
+    } else {
+      breachAIWallRing(ai,plan,aiTC); // gate existed but egress is blocked → reopen
     }
-    // Keep the ring SEALED: re-queue any plan tile that's a genuine open gap —
-    // nothing built on it, buildable, and reachable from the TC so a villager
-    // can actually close it (a destroyed segment, or a hole left when a tile
-    // was skipped while temporarily unreachable during construction). Runs
-    // EVERY decision: the old `ai.tick % wallMaintInterval` gate misaligned
-    // with the decision cadence (they coincided only every ~900 ticks), so a
-    // 1-tile hole could stay open the whole match — `done` meant "attempted,"
-    // not "sealed." Terrain-blocked tiles (canPlace false) and unreachable
-    // pockets (pathReaches false) stay skipped — the terrain seals those. A
-    // tile with enemies on it is left as an open breach until they're driven
-    // off (don't rebuild into a siege), and the gate opening is left alone.
-    if(ai.gateBuilt){
-      let gt=ai.gateTile;
-      let mcx=aiTC.x+Math.floor(aiTC.w/2), mcy=aiTC.y+Math.floor(aiTC.h/2);
-      let foes=entities.filter(en=>en.type==='unit'&&en.hp>0&&isEnemyOf(ai.team,en));
-      // Only leave the designated opening unsealed while it's the SOLE egress.
-      // Once an actual gate exists (the reserved gate pair got built), a stale
-      // breach opening — e.g. a self-breach made before that gate finished, the
-      // exact "extra hole next to the wall" bug — is redundant and gets sealed
-      // like any other gap. The gate provides egress; the open breach was just
-      // a defensive hole.
-      let hasRealGate=entities.some(e=>e.type==='building'&&e.team===ai.team&&isGateBtype(e.btype)&&e.hp>0);
-      plan.forEach(pt=>{
-        if(!pt.done)return; // already queued for building
-        if(pt.rescueOpenUntil&&tick<pt.rescueOpenUntil)return; // held open to free a trapped worker
-        if(gt&&pt.x===gt.x&&pt.y===gt.y&&!hasRealGate)return; // sole egress — keep it open
-        if(buildingAtTile(pt.x,pt.y,en=>en.team===ai.team))return; // sealed by a building
-        if(!canPlace('WALL',pt.x,pt.y,ai.team))return; // terrain-blocked = sealed by terrain
-        if(!pathReaches(mcx,mcy,pt.x,pt.y,aiTC.id))return; // unreachable pocket = terrain-sealed
-        if(foes.some(u=>Math.abs(u.x-pt.x)+Math.abs(u.y-pt.y)<=4))return; // active breach — don't rebuild into the assault
-        pt.done=false;
-      });
-    }
-    if(plan.every(pt=>pt.done))return; // ring intact — nothing to build
-    // else fall through to the build loop to fill the breach
   }
 
-  // Place as many wall tiles as the current stone stockpile allows in one
-  // go (capped) instead of one tile per decisionInterval — at one-per-tick
-  // pacing a ~50-tile ring effectively never finished before a match ended.
-  let placedThisCall=0;
+  // Self-heal: re-queue every plan tile that is a GENUINE open gap, judged from
+  // ACTUAL tile state (wallTileSealed) — not the `done` flag and not pathReaches.
+  // This is what catches a chopped-forest seam (terrain no longer seals it, no
+  // wall built) or a destroyed wall segment. Runs every decision. Keeps the
+  // sole-egress opening and rescue holes open, and won't rebuild into a siege.
+  if(!sealed||!plan.every(pt=>pt.done)){
+    let gt=ai.gateTile;
+    let foes=entities.filter(en=>en.type==='unit'&&en.hp>0&&isEnemyOf(ai.team,en));
+    let hasRealGate=entities.some(e=>e.type==='building'&&e.team===ai.team&&isGateBtype(e.btype)&&e.hp>0);
+    plan.forEach(pt=>{
+      if(pt.rescueOpenUntil&&tick<pt.rescueOpenUntil)return; // held open to free a trapped worker
+      if(gt&&pt.x===gt.x&&pt.y===gt.y&&!hasRealGate)return; // sole egress — keep it open
+      if(wallTileSealed(pt,ai.team)){pt.done=true;return;}  // truly sealed (own bldg / terrain) → done
+      if(foes.some(u=>Math.abs(u.x-pt.x)+Math.abs(u.y-pt.y)<=4))return; // active breach — don't rebuild into the assault
+      pt.done=false; // genuine open gap → re-queue
+    });
+  }
+  if(plan.every(pt=>pt.done))return; // ring physically complete — nothing to build
+
+  // Place wall tiles (capped per call). `done` now means SEALED, set only when a
+  // wall was actually placed, terrain permanently seals the tile, or a build
+  // failure/unreachable case is proven harmless — never on a silent failure
+  // (the old code's bug: it marked `done` regardless, recording never-built
+  // tiles as sealed → the 6/8 leak). Failed placements back off and retry.
+  let placedThisCall=0, iters=0;
   let wtcx=aiTC.x+Math.floor(aiTC.w/2), wtcy=aiTC.y+Math.floor(aiTC.h/2);
-  while(placedThisCall<8&&canAfford(ai.team,BLDGS.WALL.cost)){
-    let next=plan.find(t=>!t.done);
-    if(!next)return;
-    // Skip foundations no villager can reach — map-edge pockets boxed in by
-    // forest/border. Placing one there just wedges builders forever on an
-    // unbuildable wall (the stuck-watchdog spam this fixes); the border
-    // itself already seals that gap, so a hole there costs no defense.
-    if(canPlace('WALL',next.x,next.y,ai.team)&&!pathReaches(wtcx,wtcy,next.x,next.y,aiTC.id)){
-      next.done=true; // give up on this tile, keep the plan progressing
+  let BACKOFF=Math.max(120,profile.decisionInterval*2);
+  while(placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
+    iters++;
+    let next=plan.find(t=>!t.done&&!(t.buildBackoffUntil>tick));
+    if(!next)break;
+    if(terrainBarrier(next.x,next.y)){ next.done=true; continue; } // terrain permanently seals it
+    if(buildingAtTile(next.x,next.y,en=>en.team===ai.team)){ next.done=true; continue; } // already our building
+    // Can't reach to build? Only abandon (mark done) if the base is sealed WITHOUT
+    // this tile — otherwise it's a real hole we just can't reach yet, so back off
+    // and retry rather than lying that it's sealed.
+    if(!pathReaches(wtcx,wtcy,next.x,next.y,aiTC.id)){
+      if(aiBaseSealed(aiTC,ai.team,wr,next)){ next.done=true; }
+      else next.buildBackoffUntil=tick+BACKOFF;
       continue;
     }
-    placeAIBuilding(ai,'WALL',next.x,next.y); // success or not (blocked tile), mark resolved so the plan keeps progressing
-    next.done=true;
-    placedThisCall++;
+    let b=placeAIBuilding(ai,'WALL',next.x,next.y);
+    if(b){ next.done=true; placedThisCall++; }
+    else next.buildBackoffUntil=tick+BACKOFF; // transient block (unit on tile, etc.) → retry, don't lie
   }
 }
 
@@ -571,9 +553,89 @@ function breachAIWallRing(ai,plan,aiTC){
   return false;
 }
 
+// ---- HONEST ENCLOSURE PRIMITIVES ----
+// One ground-truth answer to "is my base sealed?" built on the SAME walkable()
+// units actually path with — so the check can never disagree with reality (the
+// old code used `plan.every(done)` [=attempted, not built] and pathReaches
+// [returns false-positives on partial paths], and a frozen one-shot plan that
+// never re-checked live terrain).
+
+// Impassable natural terrain (a free wall). NOT the same as "a wall is here".
+function terrainBarrier(x,y){
+  if(x<0||y<0||x>=MAP||y>=MAP)return true;
+  let t=map[y]&&map[y][x]; if(!t)return true;
+  return t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES;
+}
+
+// A plan tile counts as SEALED only if something impassable-to-an-enemy is
+// actually on it now: an allied building (wall/gate/house/camp) OR barrier
+// terrain. This replaces the `done` flag as the truth for one tile, so a
+// chopped-forest seam (terrain no longer a barrier, no wall built) reads as a
+// genuine open gap and gets re-queued.
+function wallTileSealed(pt,team){
+  if(buildingAtTile(pt.x,pt.y,en=>en.team===team))return true;
+  if(terrainBarrier(pt.x,pt.y))return true;
+  return false;
+}
+
+// Ground truth: can an ENEMY reach the TC from outside? Bounded multi-source
+// flood inward from the box boundary through enemy-passable ground. Uses
+// walkable(x,y,-1,true): no walker → our gates read as CLOSED (an enemy can't
+// use them) and open gates stay open; ignoreUnits=true → transient units don't
+// count as walls. 8-connected but NO diagonal corner-cutting, matching unit
+// movement (findPath). `extraBlock` optionally treats one tile as if walled
+// ("would sealing this pocket matter?"). Returns true = SEALED.
+function aiBaseSealed(aiTC,team,radius,extraBlock){
+  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let R=Math.round(radius)+6, slack=2;
+  let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
+  let pass=(x,y)=>(!(extraBlock&&x===extraBlock.x&&y===extraBlock.y))&&walkable(x,y,-1,true);
+  let seen=new Set(), q=[], head=0;
+  let seed=(x,y)=>{ let k=x+','+y; if(!seen.has(k)&&pass(x,y)){seen.add(k);q.push([x,y]);} };
+  for(let x=loX;x<=hiX;x++){ seed(x,loY); seed(x,hiY); }
+  for(let y=loY;y<=hiY;y++){ seed(loX,y); seed(hiX,y); }
+  while(head<q.length){ let e=q[head++], x=e[0], y=e[1];
+    if(Math.abs(x-cx)<=slack&&Math.abs(y-cy)<=slack)return false; // outside reached the TC → leak
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
+      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+','+ny;
+      if(seen.has(k)||!pass(nx,ny))continue;
+      if(dx&&dy&&(!pass(x+dx,y)||!pass(x,y+dy)))continue; // no corner-cut through a wall seam
+      seen.add(k); q.push([nx,ny]); } }
+  return true;
+}
+
+// Symmetric honest egress check: can OUR army get out? Flood from the TC
+// courtyard through OWN-passable ground (walker=aiTC → our gates OPEN, our walls
+// block) and see if it escapes the ring box. Replaces the pathReaches egress
+// probe. A ring is healthy when aiBaseSealed && armyCanReachEnemy.
+function armyCanReachEnemy(ai,aiTC){
+  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let R=(ai.wallRadiusUsed||8)+6;
+  let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
+  let pass=(x,y)=>walkable(x,y,aiTC.id,true);
+  let sx=cx,sy=cy,seed=false;
+  for(let r2=1;r2<=3&&!seed;r2++)for(let dy=-r2;dy<=r2&&!seed;dy++)for(let dx=-r2;dx<=r2&&!seed;dx++){
+    if(pass(cx+dx,cy+dy)){sx=cx+dx;sy=cy+dy;seed=true;} }
+  if(!seed)return true; // no courtyard to escape from → don't force a self-breach
+  let seen=new Set([sx+','+sy]), q=[[sx,sy]], head=0;
+  while(head<q.length){ let e=q[head++], x=e[0], y=e[1];
+    if(x<=loX||y<=loY||x>=hiX||y>=hiY)return true; // reached the box edge → army can leave
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
+      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+','+ny;
+      if(seen.has(k)||!pass(nx,ny))continue;
+      if(dx&&dy&&(!pass(x+dx,y)||!pass(x,y+dy)))continue;
+      seen.add(k); q.push([nx,ny]); } }
+  return false;
+}
+
 function computeAIWallRing(ai,tc,radius){
   let r=Math.max(4,Math.round(radius));
   let cx=tc.x+Math.floor(tc.w/2),cy=tc.y+Math.floor(tc.h/2); // build the ring around its center
+  // Remember the geometry so the honest seal-check (aiBaseSealed) can bound its
+  // flood to this base. (Economy-radius growth — enclosing far gold/stone — is a
+  // separate follow-up, gated on the seal metric; it must also widen the flood
+  // margin, so it is intentionally NOT enabled here.)
+  ai.wallRadiusUsed=r; ai.wallCx=cx; ai.wallCy=cy;
   let tiles=[];
   let seen=new Set();
   // Each tile remembers which side of the ring it's on, so the gate can be
@@ -586,13 +648,17 @@ function computeAIWallRing(ai,tc,radius){
     seen.add(key);
     tiles.push({x,y,done:false,side});
   };
-  // A corner TC sits closer to the edge than the ring radius. The map edge
-  // is already a wall (out of bounds + edge forests seal the border), so a
-  // side that would land on/past the border is OMITTED entirely — building
-  // along the border row places foundations in forest-locked pockets that
-  // villagers can never reach (endless stuck-watchdog/reassign loops).
-  // Instead the perpendicular sides extend all the way TO the edge, closing
-  // the corridor between the ring and the border.
+  // GEOMETRIC SQUARE ring at Chebyshev radius r — a CONTINUOUS wall outline on
+  // grass. Unlike a terrain-following ring it never depends on forest (which the
+  // AI chops for wood — its lumber camps sit on the treeline), so clearing trees
+  // can't spring a seam in it. Verified to seal 0/8 (no edge->TC path) where the
+  // connectivity ring leaked 6/8. It crosses the resource band cosmetically, but
+  // gold/stone are impassable and seal those segments; canPlace skips building
+  // ON them, so no wood is wasted and no hole is left.
+  // A corner TC sits closer to the edge than the ring radius. The map edge is
+  // already a wall (out of bounds), so a side that would land on/past the border
+  // is OMITTED entirely; the perpendicular sides extend to the edge to close the
+  // corridor between the ring and the border.
   let hasN=cy-r>=1, hasS=cy+r<=MAP-2, hasW=cx-r>=1, hasE=cx+r<=MAP-2;
   let xLo=hasW?cx-r:0, xHi=hasE?cx+r:MAP-1;
   let yLo=hasN?cy-r:0, yHi=hasS?cy+r:MAP-1;
@@ -1221,6 +1287,22 @@ function holdsSiegeOrder(m){
 
 function controlAIMilitary(ai,mils,aiTC,profile){
   let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
+  // Ignore a threat our base is sealed against. A raider poking our ring from
+  // OUTSIDE is near our buildings (so findPlayerThreatNear flags it) but the army
+  // can't get to it — sending the whole garrison to chase freezes them at their
+  // own wall (the stuck-watchdog spam). Test with findPath from the TC: the path
+  // must actually END on the threat, not just exist. An unreachable raider yields
+  // either [] or a partial path that stops at the wall (endpoint far from it), so
+  // both are rejected. Threats reported here are close (within findPlayerThreatNear
+  // range), so a reachable one gets a full path that lands on it — no false reject.
+  // The wall/towers handle an enemy that genuinely can't get in.
+  if(threat){
+    let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+    let tx=Math.round(threat.x), ty=Math.round(threat.y);
+    let pth=findPath(tcx,tcy,tx,ty,aiTC.id);
+    let end=pth.length?pth[pth.length-1]:null;
+    if(!end||Math.max(Math.abs(end.x-tx),Math.abs(end.y-ty))>2) threat=null;
+  }
   if(threat){
     let localEnemyPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
     let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0)
@@ -1247,6 +1329,10 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     }
     mils.forEach(m=>{
       if(holdsSiegeOrder(m))return; // rams / directed sieges don't chase raiders
+      // Don't re-send a unit to chase a raider it just proved it can't reach
+      // (e.g. one poking the wall from outside our sealed ring) — that's the
+      // wedge loop where the whole garrison freezes on an unreachable foe.
+      if(m.unreachUntil>tick&&m.unreachId===threat.id)return;
       if(!m.target||dist(m,threat)<10*aiScale()){
         m.target=threat.id;
         clearUnitPath(m); // stop current movement so they engage immediately
@@ -1432,9 +1518,30 @@ function controlAIScouts(ai,mils,aiTC){
       else return; // legitimately engaging a unit — leave it
     }
     if(s.path&&s.path.length>0)return; // still travelling to its last waypoint
-    let pt=randomScoutWaypoint(ai,aiTC);
+    // First, a lap around home: survey the base perimeter (the resource band /
+    // where the wall ring will go) before ranging out, like a human checking
+    // what's around the TC. Once the lap is done, switch to far exploration.
+    let pt = ai.baseSurveyed ? randomScoutWaypoint(ai,aiTC)
+                             : (baseSurveyWaypoint(ai,aiTC) || randomScoutWaypoint(ai,aiTC));
     if(pt)pathUnitTo(s,pt.x,pt.y);
   });
+}
+
+// Perimeter-survey waypoints: 8 compass points at ~the wall-ring radius around
+// the TC, walked in sequence at game start so the scout reveals the immediate
+// resources and the ground the wall will enclose before wandering off. Returns
+// null (and flips ai.baseSurveyed) once the lap is complete. Deterministic:
+// sequential index on AI_STATES, no RNG.
+function baseSurveyWaypoint(ai,aiTC){
+  const dirs=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+  let i=ai.surveyIdx||0;
+  if(i>=dirs.length){ ai.baseSurveyed=true; return null; }
+  ai.surveyIdx=i+1;
+  let prof=aiProfileFor(ai.team);
+  let R=Math.round(Math.max(6,(prof.wallRadius||6))*aiScale())+2; // just outside the ring band
+  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let [dx,dy]=dirs[i];
+  return { x:Math.max(1,Math.min(MAP-2,cx+dx*R)), y:Math.max(1,Math.min(MAP-2,cy+dy*R)) };
 }
 
 // Exploration-biased waypoints: of 8 random candidates, prefer the one with

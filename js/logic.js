@@ -1419,56 +1419,38 @@ function updateUnit(e){
     // near, and only give up when far away with genuinely no route (walled).
     // Returns false if the caller should stop processing this tick.
     function combatApproach(u,tgt,dist,pathFn){
-      // The 15-tick repath cooldown is only meant to throttle re-pathing
-      // while a chase is already in motion (avoids every unit re-pathing
-      // every single tick). If the unit has actually run out of path and
-      // stopped, waiting out the rest of the cooldown just freezes it in
-      // place until the cooldown clears, then it snaps onto a fresh path —
-      // looks like a stutter/twitch. Repath immediately whenever there's no
-      // path left, regardless of cooldown.
+      // The 15-tick repath cooldown throttles re-pathing while a chase is in
+      // motion. Repath immediately whenever there's no path left (else the unit
+      // freezes until the cooldown clears — a stutter).
       if(u.path.length>0 && !retryReady(u,'chase')) return false; // waiting for a slot
       retryStamp(u,'chase',15);
       if(pathFn)pathFn();
       else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
-      if(u.path.length===0){
-        if(dist>8){
-          // NOT an instant drop: a marching wave jams its own lanes for a
-          // few ticks constantly (40 units funneling), and dropping the
-          // order on the first empty repath sent whole waves trudging home
-          // from mid-map over and over. Only sustained failure (4 fails,
-          // 30 ticks apart — a real wall, not a jam) forfeits the march.
-          if(retryFail(u,'chaseFar',30,4)){
-            if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
-            u.target=null;retryClear(u,'chaseBlocked');
-          }
-          return false;
-        }
-        // Near the target but no route, repeatedly: that's not a crowded
-        // melee ring (those clear within a retry or two) — something static
-        // is in the way, usually a wall. An AI unit switches to breaching
-        // the nearest reachable enemy-side wall/gate/tower, AoE2-style —
-        // it was standing there swinging at air forever otherwise. Human
-        // units keep their explicit order (never hijack a player command).
-        if(retryFail(u,'chaseBlocked',0,4)&&isAITeam(u.team)){
-          if(typeof nearestReachableWallLike==='function'){
-            let w=nearestReachableWallLike(u,tgt.team);
-            if(w&&!sameSide(w.team,u.team)){u.target=w.id;u.explicitAttack=true;u.siegeSpot=null;return false;}
-          }
-          // Nothing reachable to breach AND the target itself is unreachable
-          // (enemy sealed in a pocket / behind an unbreachable section). Drop
-          // it instead of swinging at air forever — that froze the unit on a
-          // stable target for 240 ticks = stuck-watchdog spam. controlAIMilitary
-          // re-tasks it (regroup / pick a reachable foe) next decision.
-          u.target=null;u.explicitAttack=false;u.siegeSpot=null;
-          retryClear(u,'chaseBlocked');
-          clearUnitPath(u);
-          return false;
-        }
-      } else {
+      if(u.path.length>0){
+        // A route exists — either a full path or a legit long-march PARTIAL
+        // (findPath returns a partial only when it hits its iteration budget on
+        // a still-reachable frontier). Advance; the unit is making progress.
         retryClear(u,'chaseBlocked');
-        retryClear(u,'chaseFar');
+        return true;
       }
-      return true;
+      // EMPTY path is the honest, definitive "no route exists": findPath returns
+      // [] only after fully exploring the reachable region without touching the
+      // target (a budget cutoff yields a partial instead), and moving units don't
+      // block pathing — so this is a real wall/trap between us and the foe, not a
+      // transient jam. Give up at once (a 2-strike tolerance absorbs a one-tick
+      // anomaly) instead of freezing on it (the stuck-watchdog spam). An AI unit
+      // redirects to a reachable enemy wall to breach; else drops the impossible
+      // target (and remembers it, so the threat-response won't instantly re-send
+      // it). Human units keep their explicit order (never hijack a player command).
+      if(retryFail(u,'chaseBlocked',15,2)&&isAITeam(u.team)){
+        let w=(typeof nearestReachableWallLike==='function')?nearestReachableWallLike(u,tgt.team):null;
+        if(w&&!sameSide(w.team,u.team)){ u.target=w.id;u.explicitAttack=true;u.siegeSpot=null; }
+        else { if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
+          u.target=null;u.explicitAttack=false;u.siegeSpot=null;
+          u.unreachId=tgt.id; u.unreachUntil=tick+900; }
+        retryClear(u,'chaseBlocked'); clearUnitPath(u);
+      }
+      return false;
     }
 
     if (range > 0) {
@@ -1503,7 +1485,16 @@ function updateUnit(e){
       } else {
         // Attack unit: path close and hit
         let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.9 : 1.5; // adjacent slaughter, see maxDist above
-        if(d>maxD){
+        // A melee swing can't cross a SEALED wall corner: if the target sits
+        // diagonally across a corner whose BOTH orthogonal tiles are impassable,
+        // there's no line to strike through — same no-corner-cut rule movement
+        // uses. Without this, a unit hit a foe diagonally through two walls it
+        // couldn't walk between (ignoreUnits: we mean terrain/walls, not units).
+        let cornerBlocked=false;
+        { let ex=Math.round(e.x),ey=Math.round(e.y),tx=Math.round(t.x),ty=Math.round(t.y);
+          let dx=tx-ex,dy=ty-ey;
+          if(dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true))cornerBlocked=true; }
+        if(d>maxD||cornerBlocked){
           if (e.stance === 'standground' && !e.explicitAttack) {
             e.target = null;
             return;
@@ -1794,6 +1785,7 @@ function updateUnit(e){
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
+        if(e.unreachUntil>tick && e.unreachId===en.id)return false; // proved unreachable recently — don't re-grab
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
@@ -1805,7 +1797,20 @@ function updateUnit(e){
         return true;
       });
       if(closest) {
-        e.target=closest.id;
+        // Only lock on if we can actually PATH to it. An idle unit grabbing a
+        // foe it can't reach — the classic case is a raider poking our wall from
+        // outside our sealed ring — is the wedge source: it re-acquires every
+        // few ticks and freezes chasing an impossible target (stuck-watchdog
+        // spam). The candidate is within scan range (<=8 tiles), so this findPath
+        // is short and unambiguous (a real block gives [] or a path that stops
+        // short). If unreachable, remember it briefly so we don't re-scan it.
+        let cx=Math.round(closest.x), cy=Math.round(closest.y);
+        let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
+        let end=pth.length?pth[pth.length-1]:null;
+        let reach=(e.range>0?e.range:1.6);
+        if(end && Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy))<=Math.max(2,reach)){
+          e.target=closest.id;
+        } else { e.unreachId=closest.id; e.unreachUntil=tick+300; }
       } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
         // behavior — soldiers parked in an enemy town shouldn't stand and
