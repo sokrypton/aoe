@@ -109,8 +109,9 @@ function isEnemyOf(team, e){ return isPlayerTeam(e.team) && !sameSide(team, e.te
 // js/commands.js, and the TC tick in js/logic.js).
 const AGES = [
   {key:'dark',   name:'Dark Age'},
-  {key:'feudal', name:'Feudal Age', cost:{f:500},         researchTicks:1200},
-  {key:'castle', name:'Castle Age', cost:{f:800, g:200},  researchTicks:1650}
+  // Research times match AoE2 (DE): Feudal 130s, Castle 160s (30 ticks/game-s).
+  {key:'feudal', name:'Feudal Age', cost:{f:500},         researchTicks:3900},
+  {key:'castle', name:'Castle Age', cost:{f:800, g:200},  researchTicks:4800}
 ];
 // Minimum age index per unit/building type; absent => available from Dark.
 const AGE_REQ = {
@@ -458,7 +459,7 @@ const UNITS={
   // the scout IS Feudal-gated here now (AGE_REQ), so the speed fits.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
   // Castle-age heavy cavalry (AoE2-ish knight).
-  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:60,armor:{m:2,p:2},cost:{f:60,g:75},trainTime:1500,desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
+  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:60,armor:{m:2,p:2},cost:{f:60,g:75},trainTime:900,desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
   // Battering ram — Castle-age siege (AGE_REQ), trained at the Barracks
   // (no siege workshop building exists). NOT in MILITARY on purpose (AoE2
   // rams get no blacksmith melee/armor techs — see isArmyUnit). The tiny
@@ -466,7 +467,7 @@ const UNITS={
   // bonus in damageEntity (js/logic.js) — mirrored in the AI's
   // wallBreachTicks (js/ai.js). High pierce armor makes arrow fire (4-5
   // pierce) tick for 1; melee hits it at full damage, the AoE2 counter.
-  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:1350,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee.',icon:'🐏'},
+  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:1080,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
