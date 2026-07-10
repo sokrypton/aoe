@@ -46,6 +46,15 @@ canvas {
 #ui{position:absolute;top:0;left:0;width:100%;pointer-events:none;z-index:10}
 
 /* ---- TOP BAR (AoE2 Wood Banner Style) ---- */
+/* How far the top HUD (resource bar, menu button, toast) is pushed down to
+   clear a phone's display cutout — the safe-area top inset minus one 22px chip
+   height, since the chips flank the centered camera hole and can ride up into
+   its band. 0 on web/desktop (env() = 0). Keep the 22px in sync with
+   HUD_TOP_LIFT in js/ui.js (topH). Single source of truth for every top-anchored
+   HUD element below. */
+:root{
+  --hud-top: max(0px, calc(env(safe-area-inset-top, 0px) - 22px));
+}
 #topbar{
   background: linear-gradient(180deg, #321c0e 0%, #1f0f06 100%);
   border-bottom: 3px double #bfa054;
@@ -53,7 +62,15 @@ canvas {
   height:36px;
   display:flex;
   align-items:center;
-  padding:0 12px;
+  /* Embrace the display cutout on phones: push the resource chips DOWN past the
+     camera hole-punch / status strip and IN from curved corners. env() is 0 on
+     web & desktop, so this is inert there. content-box so padding-top grows the
+     bar's total height (the global *{box-sizing:border-box} would otherwise
+     shrink the 36px content area instead). topH in js/ui.js adds the same
+     safe-area-inset-top so the canvas world starts below the taller bar. */
+  box-sizing:content-box;
+  /* Push chips down past the cutout (--hud-top), in from curved corners. */
+  padding:var(--hud-top) calc(12px + env(safe-area-inset-right,0px)) 0 calc(12px + env(safe-area-inset-left,0px));
   /* Purely a resource display, nothing inside is ever clickable — auto
      pointer-events here meant this full-width strip silently ate clicks
      meant for whatever's underneath, most noticeably the minimap's diamond
@@ -584,7 +601,10 @@ canvas {
    the screen edge — no more negative right offset hacks. */
 #minimap-wrap {
   position: absolute;
-  top: 0;
+  /* Drop below a phone's top camera cutout so the hole doesn't clip the map
+     (env() = 0 on web/desktop). The tap hit-test reads the canvas's live
+     getBoundingClientRect (input.js), so it follows this offset automatically. */
+  top: env(safe-area-inset-top, 0px);
   right: 0;
   height: min(22vw, 190px);
   aspect-ratio: 2 / 1;
@@ -633,7 +653,11 @@ canvas {
 /* ---- FLOATING NOTIFICATIONS ---- */
 #msg{
   position:fixed;
-  top:48px;
+  /* Anchor to the reserved top-HUD height (--top-h, set by updateBottomHeight
+     in js/ui.js — it already includes the cutout inset) plus a gap, so toasts
+     ("Difficulty: Medium", etc.) always clear the resource bar on every
+     platform. Falls back to 46px if the var isn't set yet. */
+  top:calc(var(--top-h, 46px) + 14px);
   left:50%;
   transform:translateX(-50%);
   color:#ffd700;
@@ -1291,8 +1315,10 @@ canvas {
   #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
-  #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
-  #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
+  /* top follows the reserved top-HUD height (--top-h, incl. cutout inset) so it
+     clears the resource bar on a notched phone; 56px is the pre-cutout default. */
+  #msg{font-size:14px;top:calc(var(--top-h, 56px) + 10px);left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
+  #help-hint{top:calc(var(--top-h, 56px) + 10px);left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
 }
 @media(max-width:480px){
   #bottom{height:90px}
@@ -1578,7 +1604,11 @@ canvas {
   right: 42px;
 }
 #menu-btn{
-  right: 8px;
+  /* Clear the curved top-right corner + camera strip on phones (env() = 0 on
+     web/desktop). Uses --hud-top so it rides up level with the resource chips.
+     The old #fs-btn to its left is hidden in the native app, so there's room. */
+  right: calc(8px + env(safe-area-inset-right, 0px));
+  top: calc(4.5px + var(--hud-top));
 }
 /* Multiplayer bandwidth readout (js/net.js shows it only with a connected
    peer, on non-touch devices, when the window is wide enough that it
@@ -2107,6 +2137,30 @@ canvas {
   /* Chat anchors clear of the rail */
   #chat-log { left: 104px; top: 44px; }
   #chat-input-wrap { left: 104px; bottom: 8px; }
+
+  /* Camera cutout on the LEFT edge (set by updateBottomHeight in js/ui.js):
+     move the whole vertical rail to the RIGHT so the hole never covers it, and
+     flip everything anchored against the rail to the opposite side. */
+  .rail-right #bottom {
+    left: auto; right: 0;
+    border-right: none;
+    border-left: 3px double #bfa054;
+  }
+  .rail-right #pop-wrap { right: auto; left: 6px; }
+  .rail-right #chat-log { left: auto; right: 104px; }
+  .rail-right #chat-input-wrap { left: auto; right: 104px; }
+  .rail-right #minimap-wrap.minimap-expanded {
+    right: auto !important; left: 0 !important;
+  }
+
+  /* Landscape has NO top cutout inset, so without help the menu button sits at
+     right:8px — inside the rounded top-right corner (safe-area insets don't
+     cover plain corner radius). Enforce a minimum corner clearance in the
+     native app; max() lets the camera inset win on the rotation where the
+     camera IS on the right. Native-only so web/desktop stay put. */
+  .native-app #menu-btn {
+    right: calc(8px + max(env(safe-area-inset-right, 0px), 40px));
+  }
   /* Minimap: hidden by default, 🌍 button toggles a tall right panel */
   #minimap-wrap:not(.minimap-expanded) { display: none; }
   #map-btn { display: flex; }

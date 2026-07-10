@@ -1039,14 +1039,48 @@ window.isMobileLandscape = function() {
     && window.innerWidth > window.innerHeight && window.innerHeight <= 500;
 };
 
+// The display cutout inset the OS reserves on a given edge (e.g. a phone's
+// camera hole-punch). Measured from CSS env(safe-area-inset-<edge>) via a hidden
+// probe — 0 in a normal browser/desktop, non-zero in the native app drawing
+// edge-to-edge. Used to lay the HUD out around the camera.
+window.safeAreaInset = function(edge) {
+  let horiz = (edge === 'left' || edge === 'right');
+  let p = document.createElement('div');
+  p.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;'
+    + (horiz ? 'height:0;width:env(safe-area-inset-' + edge + ',0px);'
+             : 'width:0;height:env(safe-area-inset-' + edge + ',0px);');
+  document.body.appendChild(p);
+  let v = (horiz ? p.offsetWidth : p.offsetHeight) || 0;
+  p.remove();
+  return v;
+};
+window.safeAreaInsetTop = function() { return window.safeAreaInset('top'); };
+
+// The resource chips flank the centered camera hole, so the top HUD is lifted
+// back up by one chip height into the cutout band — only the centered hole
+// itself needs the full inset. Keep in sync with the 22px in #topbar padding
+// (styles.css).
+const HUD_TOP_LIFT = 22;
+
 window.updateBottomHeight = function() {
   let w = window.innerWidth;
+  let insetTop = Math.max(0, window.safeAreaInsetTop() - HUD_TOP_LIFT);
+  // In landscape the camera cutout sits on a side edge (left on one rotation,
+  // right on the other). Put the vertical HUD rail on the edge OPPOSITE the
+  // camera so the hole never covers it; the bottom mini-buttons then flip to
+  // the opposite side of the rail. Detected by which horizontal inset is
+  // larger. The .rail-right rules live in the landscape media query
+  // (styles.css), so this class is inert in portrait.
+  let camOnLeft = window.safeAreaInset('left') > window.safeAreaInset('right') + 1;
+  document.documentElement.classList.toggle('rail-right', camOnLeft);
   // The classic layout wraps its action buttons into a real 2-row grid
   // (see classic-style.css) instead of the mobile skin's single scrolling
   // row, so it needs a taller bar to fit them — not width-responsive since
   // classic isn't trying to support small screens.
   bottomH = isClassicUI ? 128 : (isMobile ? (w <= 380 ? 90 : 96) : 80);
-  topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
+  // + insetTop: the topbar grew by the cutout inset (styles.css), so the world
+  // must start that much lower to stay clear of the camera hole.
+  topH = (isMobile ? (w <= 600 ? 46 : 36) : 36) + insetTop;
   // Landscape rail overlays the canvas' LEFT edge — there is no bottom bar
   // at all, so the world gets the full height below the topbar. No
   // horizontal inset is introduced on purpose: the engine has no left/right
@@ -1055,7 +1089,7 @@ window.updateBottomHeight = function() {
   // touching every screen-projection site.
   if (window.isMobileLandscape()) {
     bottomH = 0;
-    topH = 36;
+    topH = 36 + insetTop;
   }
   H = window.innerHeight - bottomH;
   W = w;
@@ -1080,6 +1114,22 @@ window.updateBottomHeight = function() {
 };
 
 window.updateBottomHeight();
+
+// Flipping between the two landscapes (90°↔270°) keeps the SAME viewport size,
+// so 'resize' never fires — but the camera cutout jumps to the opposite edge,
+// so the rail must re-side. 'orientationchange' catches these; the deferred
+// re-run is because safe-area insets settle a beat after the event.
+(function watchOrientationForCutout(){
+  let rerun = () => {
+    if (!window.updateBottomHeight) return;
+    window.updateBottomHeight();
+    setTimeout(() => window.updateBottomHeight && window.updateBottomHeight(), 300);
+  };
+  window.addEventListener('orientationchange', rerun);
+  if (window.screen && screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener('change', rerun);
+  }
+})();
 
 function prepayFarm() {
   if (gameOver) return;

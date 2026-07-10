@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Icon Render</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}</style>
+</head><body>
+<script src="js/page-shell.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script>
+// Headless icon compositor: draws a knight on the game's REAL checked-grass
+// tiles using the game's own drawTile/drawUnit, into a fixed square canvas.
+// window.renderKnightIcon(opts) redraws; returns a data URL.
+(function(){
+  ['tutorial','bottom','topbar','minimap','help-hint','net-stats','tooltip','chat-panel']
+    .forEach(id => { let el = document.getElementById(id); if (el) el.style.display='none'; });
+
+  // Minimal all-grass world.
+  MAP = 64;
+  map = [];
+  for (let y=0;y<MAP;y++){ map[y]=[]; for (let x=0;x<MAP;x++) map[y][x]={t:TERRAIN.GRASS,res:0,occupied:null}; }
+  window.fogDisabled = true;
+  initFog();
+  // Force everything visible (drawTile skips fog===0 tiles).
+  for (let y=0;y<MAP;y++) for (let x=0;x<MAP;x++){ if(fog[y]) fog[y][x]=2; }
+  resetTeamVision && resetTeamVision();
+  resetTeamAge && resetTeamAge();
+  resetLastTeamHit && resetLastTeamHit();
+  resetDefeatedTeams && resetDefeatedTeams();
+  resetAIStates && resetAIStates();
+  gameStarted = true;
+  tick = 0;
+
+  window.renderKnightIcon = function(opts){
+    opts = opts || {};
+    let SIZE = opts.size || 1024;
+    let zoom = opts.zoom || 9;
+    let dir  = opts.dir != null ? opts.dir : 1;   // 1 = S (faces toward camera)
+    let team = opts.team != null ? opts.team : 0; // 0 blue, 1 red
+    let age  = opts.age != null ? opts.age : 2;   // Castle age = full knight
+    let cxTile = MAP/2, cyTile = MAP/2;
+
+    // Reconfigure the canvas to a square, dpr 1, no HUD offset.
+    C.width = SIZE; C.height = SIZE;
+    W = SIZE; H = SIZE; topH = 0;
+    try { dpr = 1; } catch(e){}
+    X.setTransform(1,0,0,1,0,0);
+
+    teamAge[0] = age; teamAge[1] = age;
+    invalidateBuildingFogMemo && invalidateBuildingFogMemo();
+
+    // Center the camera on the middle tile.
+    let iso = toIso(cxTile, cyTile);
+    camX = iso.ix; camY = iso.iy;
+
+    // Transparent base so the compositor (sharp) can place it on whatever bg.
+    X.clearRect(0,0,SIZE,SIZE);
+
+    // Zoom about the canvas center, then draw grass + knight. offX/offY shift
+    // the whole composited scene in screen px so the knight's visual mass (not
+    // its feet-anchor) lands centered.
+    let offX = opts.offX || 0, offY = opts.offY || 0;
+    X.save();
+    X.translate(offX, offY);
+    X.translate(SIZE/2, SIZE/2);
+    X.scale(zoom, zoom);
+    X.translate(-SIZE/2, -SIZE/2);
+
+    // Grass: draw enough tiles around center to fill the zoomed viewport.
+    let span = Math.ceil(SIZE / (zoom * 8)) + 4;
+    for (let dy=-span; dy<=span; dy++)
+      for (let dx=-span; dx<=span; dx++)
+        drawTile(Math.round(cxTile)+dx, Math.round(cyTile)+dy);
+
+    // Knight, standing on the center tile, locked facing.
+    let u = createUnit('knight', cxTile+0.5, cyTile+0.5, team);
+    u.task = 'icon'; delete u.gatherX; delete u.gatherY; u.path = [];
+    u.dir = dir;
+    if (dir===0||dir===1||dir===7){ u.facing=1;  u.facingNorth=false; }
+    else if (dir===2||dir===3)    { u.facing=-1; u.facingNorth=false; }
+    else if (dir===4)             { u.facing=-1; u.facingNorth=true;  }
+    else                          { u.facing=1;  u.facingNorth=true;  }
+    drawUnit(u);
+    X.restore();
+
+    return C.toDataURL('image/png');
+  };
+  window.__iconReady = true;
+})();
+</script>
+</body></html>

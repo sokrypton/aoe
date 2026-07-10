@@ -1,0 +1,22 @@
+{
+  "name": "age-of-epochs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Age of Epochs II — Android (Capacitor) wrapper for the static web game.",
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "sync": "npm run build:web && cap sync android",
+    "copy": "npm run build:web && cap copy android",
+    "open:android": "cap open android",
+    "apk:debug": "cd android && ./gradlew assembleDebug"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.4.1"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.4.1"
+  }
+}

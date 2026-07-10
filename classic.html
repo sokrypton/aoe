@@ -3,8 +3,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <link rel="stylesheet" href="classic-style.css">
 <!-- Cookieless, privacy-first traffic analytics (GoatCounter): referrer/UTM
-     acquisition data, no cookies, no IP stored, no consent banner needed. -->
-<script data-goatcounter="https://ageofepochs.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+     acquisition data, no cookies, no IP stored, no consent banner needed.
+     Skipped in the native (Capacitor) build — the beacon is web-only telemetry
+     and window.Capacitor is injected before page scripts run. -->
+<script>
+if (!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) {
+  var gc = document.createElement('script');
+  gc.setAttribute('data-goatcounter', 'https://ageofepochs.goatcounter.com/count');
+  gc.async = true; gc.src = 'https://gc.zgo.at/count.js';
+  document.head.appendChild(gc);
+}
+</script>
 </head><body class="classic-ui">
 <!-- All shared markup (HUD, menus, overlays) lives in js/page-shell.js —
      this page and classic.html are thin variant shells so the two skins
@@ -12,8 +21,10 @@
      (idle-button placement, switch-link label). -->
 <script>window.UI_VARIANT='classic';</script>
 <script src="js/page-shell.js"></script>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+<!-- Vendored locally (was unpkg) so the native/offline build has them in the
+     bundle; also hardens the web build against a CDN outage. -->
+<script src="js/vendor/peerjs.min.js"></script>
+<script src="js/vendor/qrcode.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/core.js"></script>
 <script src="js/determinism.js"></script>
@@ -40,5 +51,6 @@
 <script src="js/chat.js"></script>
 <script src="js/input.js"></script>
 <script src="js/init.js"></script>
+<script src="js/native.js"></script>
 <script src="js/boot.js"></script>
 </body></html>

@@ -62,7 +62,7 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div id="mp-disconnect-title">Connection Lost</div>
     <div id="mp-disconnect-text"></div>
     <div id="mp-disconnect-spinner"></div>
-    <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">💾 Save Game</button>
+    <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="quickSaveToSlot()">💾 Save Game</button>
   </div>
 </div>
 <div id="help-hint"></div>
@@ -212,6 +212,23 @@ document.body.insertAdjacentHTML('afterbegin', `
       </div>
     </div>
 
+    <!-- On-device save slots (js/save.js). Primary save/load flow — the file
+         download/upload dead-ends in a WebView, so slots persist to
+         localStorage instead. Populated by renderSavesPanel() when shown. -->
+    <div id="menu-panel-saves" style="display:none;">
+      <div id="saves-new-row" style="display:none;margin-bottom:10px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="save-name-input" placeholder="Save name…" maxlength="40"
+                 style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,.35);">
+          <button type="button" class="menu-action-btn" onclick="doSaveToSlot()" style="flex:0 0 auto;">💾 Save</button>
+        </div>
+      </div>
+      <div id="saves-list" style="max-height:min(46vh,320px);overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+      <div class="menu-button-container" style="margin-top:8px;">
+        <button type="button" class="menu-action-btn" onclick="showMenuPanel('main')">⬅ Back</button>
+      </div>
+    </div>
+
     <div id="menu-panel-main">
     <div id="game-over-banner" style="display:none;">
       <div id="game-over-title"></div>
@@ -231,11 +248,11 @@ document.body.insertAdjacentHTML('afterbegin', `
            button stacked awkwardly underneath it. Hidden by default (no
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
-      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">💾 Save</button>
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="showMenuPanel('saves')" style="display:none;">💾 Save</button>
     </div>
     <div class="menu-row-pair">
       <div class="menu-button-container" id="save-load-row">
-        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="showMenuPanel('saves')">📂 Load Game</button>
       </div>
       <div class="menu-button-container" id="mp-row">
         <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>

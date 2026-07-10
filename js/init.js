@@ -1,4 +1,23 @@
 // ---- INIT ----
+
+// True when running inside the Capacitor native shell (the Android app) rather
+// than a browser. Capacitor injects window.Capacitor before any page script
+// runs, so this is safe to call at module top level.
+function isNativeApp(){
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+// Base URL that a shared multiplayer link should point at. In the browser this
+// is just the current page, but inside the native app the WebView origin is
+// https://localhost (or a capacitor:// scheme), which no remote guest can open
+// — so links must point at the public site instead. The public site's App
+// Links intent-filter re-routes such a link back into the app if the guest
+// also has it installed (see js/native.js); otherwise it opens the web game.
+function shareBaseUrl(){
+  return isNativeApp() ? 'https://ageofepochs.com/index.html'
+                       : location.origin + location.pathname;
+}
+
 function init(){
   window.bellRinging=Array.from({length:NUM_TEAMS},()=>false); // per-team town-bell state, indexed by team
   window.lastUnderAttackTick=undefined;
@@ -220,9 +239,15 @@ function showMenuPanel(which){
   let main = document.getElementById('menu-panel-main');
   let opts = document.getElementById('menu-panel-options');
   let lobby = document.getElementById('menu-panel-lobby');
+  let saves = document.getElementById('menu-panel-saves');
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
+  if (saves) saves.style.display = which === 'saves' ? '' : 'none';
+  // Rebuild the slot list each time the saves panel is opened (freshest
+  // timestamps, reflects any deletes/adds); renderSavesPanel toggles the
+  // save-name row on whether there's actually a game to save right now.
+  if (which === 'saves' && typeof renderSavesPanel === 'function') renderSavesPanel();
   updateUiSwitchVisibility();
   scaleMenuToFit();
 }
@@ -264,7 +289,10 @@ function updateUiSwitchVisibility(){
 }
 function menuPanelIsMain(){
   let opts = document.getElementById('menu-panel-options');
-  return !opts || opts.style.display === 'none';
+  let saves = document.getElementById('menu-panel-saves');
+  let optsOpen = opts && opts.style.display !== 'none';
+  let savesOpen = saves && saves.style.display !== 'none';
+  return !optsOpen && !savesOpen;
 }
 
 // Back button: settings take effect the moment you leave Options, not only
@@ -554,7 +582,7 @@ function onHostClicked(){
     // called from hostStartLockstepMatch / the save-resume path). Otherwise a
     // host refreshing during the LOBBY would boot straight into
     // enterHostResumeMode and try to auto-recover a match that never began.
-    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
+    let link = shareBaseUrl() + '?join=' + encodeURIComponent(peerId);
     // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
     // (js/lobby.js) only appears once a human guest actually connects (see
     // onNetConnectionOpen → hostEnterLobby). Remember the link so a guest
@@ -1223,6 +1251,17 @@ window.addEventListener('fullscreenchange', ()=>{
     : 'Enter fullscreen mode.';
 });
 
+// The HTML Fullscreen API is a no-op in an Android WebView — the native app
+// gets a full-screen immersive activity from its theme instead, so the button
+// would just do nothing. Hide it in the native build.
+if (isNativeApp()) {
+  let fsBtn = document.getElementById('fs-btn');
+  if (fsBtn) fsBtn.style.display = 'none';
+  // Marks the native app for CSS that only makes sense there (e.g. rounded-
+  // corner clearance for the menu button in landscape — see styles.css).
+  document.documentElement.classList.add('native-app');
+}
+
 function toggleMenu(){
   let menu = document.getElementById('tutorial');
   if (menu) {
@@ -1441,6 +1480,9 @@ if (joinHostId) {
 (function wireUiSwitchLink(){
   let link = document.getElementById('ui-switch-link');
   if (!link) return;
+  // The native app ships the mobile skin only — classic.html isn't in the
+  // bundle, so the switch link would dead-end. Hide it entirely.
+  if (isNativeApp()) { link.style.display = 'none'; return; }
   let target = location.pathname.endsWith('classic.html') ? 'index.html' : 'classic.html';
   link.href = target + location.search;
   // Initial visibility (audience + menu state) — nothing else evaluates it

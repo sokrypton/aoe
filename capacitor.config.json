@@ -1,0 +1,8 @@
+{
+  "appId": "com.ageofepochs.app",
+  "appName": "Age of Epochs II",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

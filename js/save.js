@@ -463,3 +463,139 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: save file looked valid but couldn\'t be applied');
   }
 }
+
+// ---- ON-DEVICE SAVE SLOTS (localStorage) ----
+// The file download/upload above is kept as an Export/Import escape hatch, but
+// the PRIMARY flow — and the only one that works inside the Android WebView,
+// where a Blob download and a file <input> are both dead ends — is named slots
+// persisted in localStorage. Both paths reuse the exact same serializeGame()/
+// applySavedGame() core; only the transport differs.
+//
+// Layout: one key per save (SAVE_SLOT_PREFIX + id) holds the full JSON, plus a
+// small index array (SAVE_INDEX_KEY) of {id,name,savedAt,wasMp} so the list can
+// render without parsing every (potentially large) save blob.
+const SAVE_INDEX_KEY = 'aoeSaveIndex';
+const SAVE_SLOT_PREFIX = 'aoeSave:';
+
+function loadSaveIndex(){
+  try { let a = JSON.parse(localStorage.getItem(SAVE_INDEX_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+function writeSaveIndex(idx){
+  try { localStorage.setItem(SAVE_INDEX_KEY, JSON.stringify(idx)); }
+  catch (e) { console.warn('Save index write failed:', e); }
+}
+function listSaves(){
+  // Newest first (ISO timestamps sort lexicographically).
+  return loadSaveIndex().slice().sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+}
+function canSaveNow(){
+  return typeof gameStarted !== 'undefined' && gameStarted && Array.isArray(entities) && entities.length > 0;
+}
+function saveGameToSlot(name){
+  name = (name || '').trim();
+  if (!name) name = 'Save ' + (loadSaveIndex().length + 1);
+  try {
+    let data = serializeGame();
+    // Re-saving the same name overwrites that slot rather than piling up dupes.
+    let idx = loadSaveIndex();
+    let existing = idx.find(s => s.name === name);
+    let id = existing ? existing.id : (SAVE_SLOT_PREFIX + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36));
+    localStorage.setItem(id, JSON.stringify(data));
+    idx = idx.filter(s => s.id !== id);
+    idx.push({ id, name, savedAt: data.savedAt, wasMp: !!data.wasMultiplayerGame });
+    writeSaveIndex(idx);
+    if (window.showMsg) showMsg('Saved “' + name + '”');
+    return true;
+  } catch (e) {
+    console.error('Slot save failed:', e);
+    if (window.showMsg) showMsg(e && e.name === 'QuotaExceededError'
+      ? 'Save failed: storage full — delete old saves'
+      : 'Save failed');
+    return false;
+  }
+}
+// Auto-named one-tap save, used where there's no room for a name prompt (e.g.
+// the multiplayer-disconnect overlay).
+function quickSaveToSlot(){
+  let tag = (typeof netRole !== 'undefined' && netRole) ? 'MP ' : '';
+  return saveGameToSlot(tag + new Date().toLocaleString());
+}
+function loadSaveFromSlot(id){
+  try {
+    let raw = localStorage.getItem(id);
+    if (!raw) { if (window.showMsg) showMsg('Save not found'); return; }
+    applySavedGame(JSON.parse(raw));
+  } catch (e) {
+    console.error('Slot load failed:', e);
+    if (window.showMsg) showMsg('Load failed');
+  }
+}
+function deleteSave(id){
+  try { localStorage.removeItem(id); } catch (e) {}
+  writeSaveIndex(loadSaveIndex().filter(s => s.id !== id));
+  renderSavesPanel();
+}
+
+// ---- Saves panel UI (built with inline styles so both skins stay identical
+// without duplicating CSS across styles.css / classic-style.css) ----
+function relTime(iso){
+  if (!iso) return '';
+  let then = Date.parse(iso);
+  if (isNaN(then)) return '';
+  let s = Math.max(0, (Date.now() - then) / 1000);
+  if (s < 60) return 'just now';
+  let m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+  let h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+  let d = Math.floor(h / 24); if (d < 7) return d + 'd ago';
+  return new Date(then).toLocaleDateString();
+}
+function doSaveToSlot(){
+  let inp = document.getElementById('save-name-input');
+  if (saveGameToSlot(inp ? inp.value : '')) {
+    if (inp) inp.value = '';
+    renderSavesPanel();
+  }
+}
+function renderSavesPanel(){
+  let list = document.getElementById('saves-list');
+  if (!list) return;
+  let newRow = document.getElementById('saves-new-row');
+  if (newRow) newRow.style.display = canSaveNow() ? '' : 'none';
+  let saves = listSaves();
+  list.innerHTML = '';
+  if (!saves.length) {
+    let empty = document.createElement('div');
+    empty.textContent = 'No saved games yet.';
+    empty.style.cssText = 'opacity:.65;text-align:center;padding:14px 4px;';
+    list.appendChild(empty);
+    return;
+  }
+  saves.forEach(s => {
+    let row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;'
+      + 'background:rgba(0,0,0,.18);border:1px solid rgba(0,0,0,.25);border-radius:8px;';
+    let info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;text-align:left;cursor:pointer;';
+    info.onclick = () => loadSaveFromSlot(s.id);
+    let nm = document.createElement('div');
+    nm.textContent = s.name;
+    nm.style.cssText = 'font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    let meta = document.createElement('div');
+    meta.textContent = relTime(s.savedAt) + (s.wasMp ? ' • MP' : '');
+    meta.style.cssText = 'font-size:.8em;opacity:.7;';
+    info.appendChild(nm); info.appendChild(meta);
+    let loadBtn = document.createElement('button');
+    loadBtn.type = 'button'; loadBtn.className = 'menu-action-btn';
+    loadBtn.textContent = '▶';
+    loadBtn.title = 'Load'; loadBtn.style.cssText = 'flex:0 0 auto;padding:6px 12px;';
+    loadBtn.onclick = () => loadSaveFromSlot(s.id);
+    let delBtn = document.createElement('button');
+    delBtn.type = 'button'; delBtn.className = 'menu-action-btn';
+    delBtn.textContent = '🗑'; delBtn.title = 'Delete';
+    delBtn.style.cssText = 'flex:0 0 auto;padding:6px 10px;';
+    delBtn.onclick = () => { if (confirm('Delete save “' + s.name + '”?')) deleteSave(s.id); };
+    row.appendChild(info); row.appendChild(loadBtn); row.appendChild(delBtn);
+    list.appendChild(row);
+  });
+}

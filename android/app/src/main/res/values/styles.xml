@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <!-- Full-screen game: hide the status bar. The nav bar is hidden via
+             immersive-sticky mode in MainActivity (the HTML Fullscreen API is a
+             no-op in a WebView, so #fs-btn is hidden in js/init.js).
+             Cutout mode 'shortEdges': draw edge-to-edge INTO the display cutout
+             (e.g. the Pixel's centered camera hole-punch) so the WebView reports
+             real env(safe-area-inset-*) values. The top HUD bar then pads its
+             content down past the camera + curved corners (see #topbar in
+             styles.css), embracing the hole instead of letterboxing it. -->
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <!-- The game's own backdrop is black; make the window background match so
+             the safe-area / cutout region never flashes white behind the WebView. -->
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="android:background">@drawable/splash</item>
+    </style>
+</resources>
