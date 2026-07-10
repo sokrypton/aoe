@@ -158,6 +158,11 @@ function render(){
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
     }
     if (f === 0) return; // completely unexplored
+    // A corpse currently in view is WITNESSED — remember it so it keeps
+    // decaying on the map after we leave (AoE2), like buildings via
+    // scoutedByMe. Cosmetic/local (fog is per-viewer); corpses are excluded
+    // from the sim checksum, so this never affects lockstep.
+    if (e.type === 'corpse' && f === 2) e.seen = true;
     // Resolve the actual entity and team for gate proxy objects
     let realEntity = (e.type === 'gate_back' || e.type === 'gate_front') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
@@ -165,8 +170,12 @@ function render(){
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
     // it; it must not write to saved state.
     if (f === 1 && eTeam !== myTeam) {
-      // explored but not visible: hide enemy units, corpses, and buildings never seen before
-      if (e.type === 'unit' || e.type === 'corpse') return;
+      // explored but not visible: live enemy units are never shown, and
+      // buildings only if previously scouted. A corpse shows if we WITNESSED it
+      // (seen) so it finishes decaying on the map after we leave — but one that
+      // died entirely in the fog stays hidden (no fog-death info leak).
+      if (e.type === 'unit') return;
+      if (e.type === 'corpse' && !e.seen) return;
       if (realEntity && realEntity.type === 'building' && !scoutedByMe.has(realEntity.id)) return;
     }
 

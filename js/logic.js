@@ -96,6 +96,16 @@ const GATHER_TASKS={
   forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:97}
 };
 
+// Range at which a villager can slaughter a sheep / harvest a carcass. Must be
+// >= the diagonal tile spacing (~1.41) so the whole RING of neighbours around
+// the carcass can eat at once, not just the one villager standing on its tile:
+// distToTarget is centre-to-centre, so an orthogonally-adjacent villager is 1.0
+// away and a diagonal one 1.41 — both beyond the old 0.9, which left every
+// villager after the first stuck out of range, "chasing" forever, jamming the
+// approach and tripping the stuck-watchdog (the classic whole-crew-on-one-sheep
+// opening was quietly broken for AI and human alike).
+const SHEEP_HARVEST_RANGE=1.5;
+
 function resourceStore(team){
   return resources[team];
 }
@@ -504,6 +514,12 @@ function depleteGatherTile(pos,config,gatherer){
         farm.complete = false;
         farm.buildProgress = 0;
         tile.res = 0;
+        // AoE2-style audio cue: this farm ran dry and needs a reseed (or the
+        // farmer will idle). feedbackFor gates it to the owning human and stays
+        // silent during rollback resim; non-positional so it alerts wherever
+        // the view is. Rate-limited in playSound, so a wave of exhaustions on
+        // the same tick collapses to one chime.
+        feedbackFor(farm.team, () => window.playSound && window.playSound('farm_exhausted'));
         // Farmer continuity: hand the CURRENT farmer straight to the
         // reseed-on-approach machinery (it's already standing on the farm)
         // instead of letting it idle — that path handles prepaid → wood →
@@ -1180,11 +1196,10 @@ function updateUnit(e){
     let t=entitiesById.get(e.target);
     if(t && t.hp>0){
       let range = UNITS[e.utype]?.range || 0;
-      // Sheep (live or carcass): 0.9 so villagers ring it — requiring exact
-      // contact (0.2) made every villager after the first "unreachable" once
-      // the tile was collision-claimed, and they dropped the order and idled.
+      // Sheep (live or carcass): SHEEP_HARVEST_RANGE so the whole ring of
+      // villagers around it can reach — see the constant's note.
       let maxDist = range > 0 ? range :
-        (e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass')) ? 0.9 : 1.5;
+        (e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass')) ? SHEEP_HARVEST_RANGE : 1.5;
       
       let inRange = false;
       if (range > 0) {
@@ -1394,7 +1409,7 @@ function updateUnit(e){
       // Harvest from a ring around the carcass (not stacked on its tile) so
       // several villagers can eat one sheep at once, AoE2-style — the whole
       // starting crew on the first sheep is the classic opening.
-      if(d>0.9){
+      if(d>SHEEP_HARVEST_RANGE){
         // Full ring: wait for an eating spot instead of abandoning the sheep
         // (same patience pattern as combatApproach below).
         if(retryReady(e,'chase')){
@@ -1540,7 +1555,7 @@ function updateUnit(e){
         }
       } else {
         // Attack unit: path close and hit
-        let maxD = (e.utype==='villager' && t.utype==='sheep') ? 0.9 : 1.5; // adjacent slaughter, see maxDist above
+        let maxD = (e.utype==='villager' && t.utype==='sheep') ? SHEEP_HARVEST_RANGE : 1.5; // slaughter from the ring, see maxDist above
         // A melee swing can't cross a SEALED wall corner: if the target sits
         // diagonally across a corner whose BOTH orthogonal tiles are impassable,
         // there's no line to strike through — same no-corner-cut rule movement
@@ -1962,7 +1977,8 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
   // still use the real unit e.
   // noClaim=true: probe only (existence/reachability check) — do NOT reserve the
   // tile in the per-tick claim set. The assigner calls this several times per
-  // villager for checks (hasReachableResource, reachability probes); claiming on
+  // villager for fulfillability/reachability checks (assignAIGatherTask's
+  // tileFor probes one candidate task after another); claiming on
   // each one reserved 2-3 tiles per villager, falsely saturating the claim set
   // and pushing later villagers to farther patches. Only the FINAL assigned tile
   // should claim.

@@ -124,6 +124,9 @@ function execCommand(cmd, team){
     case 'upgrade-walls':
       withCommandContext(team, [], () => execUpgradeWalls(cmd, team));
       break;
+    case 'gate-lock':
+      withCommandContext(team, [], () => execGateLock(cmd, team));
+      break;
     case 'research-age': {
       let tc = entitiesById.get(cmd.bldgId);
       if (tc && tc.type === 'building' && tc.team === team) {
@@ -496,6 +499,23 @@ function execUpgradeWalls(cmd, team){
   feedbackFor(team, () => {
     showMsg(pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' upgraded to stone');
     if (window.playSound) playSound('build', pieces[0].x, pieces[0].y);
+  });
+  if (typeof updateUI === 'function') updateUI();
+}
+
+// Lock/unlock the selected own gates (AoE2). A locked gate seals the doorway to
+// everyone — pathfinding (js/pathfinding.js) refuses the centre tile and the
+// gate driver (js/loop.js) holds it shut — so the owner can wall a raider out
+// through its own gate. Re-validates ownership/type on the exec tick.
+function execGateLock(cmd, team){
+  let gates = (cmd.bldgIds || []).map(id => entitiesById.get(id))
+    .filter(g => g && g.type === 'building' && isGateBtype(g.btype) && g.team === team && g.complete && g.hp > 0);
+  if (!gates.length) return;
+  let locked = !!cmd.locked;
+  gates.forEach(g => { g.locked = locked; markMapDirty(g.x, g.y); });
+  feedbackFor(team, () => {
+    showMsg((locked ? 'Gate locked' : 'Gate unlocked') + (gates.length > 1 ? ' ×' + gates.length : ''));
+    if (window.playSound) playSound('click');
   });
   if (typeof updateUI === 'function') updateUI();
 }

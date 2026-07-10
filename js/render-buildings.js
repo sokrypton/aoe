@@ -1822,6 +1822,20 @@ function drawBuilding(e, part = null){
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       }
+      // Locked-gate indicator: a small padlock floating over the sealed door,
+      // so a locked gate reads differently from one that's merely swung shut.
+      // Only when in view (never leak a lock state through the shroud).
+      if (e.locked && visible) {
+        let mx = (t1sx + t2sx) / 2, my = (t1sy + t2sy) / 2 - 22;
+        X.save();
+        X.lineWidth = 1.3; X.strokeStyle = '#2a2a2a';
+        X.beginPath(); X.arc(mx, my - 3, 4, Math.PI, 0); X.stroke(); // shackle
+        X.fillStyle = '#e8c84a';
+        X.beginPath(); X.rect(mx - 5, my - 2, 10, 9); X.fill(); X.stroke(); // body
+        X.fillStyle = '#2a2a2a';
+        X.fillRect(mx - 0.9, my + 1.5, 1.8, 3.6); // keyhole
+        X.restore();
+      }
     }
   }
   else if(e.btype==='FARM'){

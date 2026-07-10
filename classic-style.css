@@ -493,8 +493,8 @@ canvas {
 .icon-GATE                {background-position:33.3333%  50%;}
 .icon-SWALL               {background-position:50%       50%;}
 .icon-SGATE               {background-position:66.6667%  50%;}
-.icon-gate-open           {background-position:83.3333%  50%;}
-.icon-gate-close          {background-position:100%      50%;}
+.icon-gate-lock           {background-position:83.3333%  50%;}
+.icon-gate-unlock         {background-position:100%      50%;}
 .icon-food                {background-position:0%        66.6667%;}
 .icon-wood                {background-position:16.6667%  66.6667%;}
 .icon-gold                {background-position:33.3333%  66.6667%;}
@@ -785,6 +785,203 @@ canvas {
 .segment:has(input:checked) {
   background: #8c1d1d;
   color: #ffebad;
+}
+/* ---- PRE-MATCH LOBBY panel (#menu-panel-lobby, built by js/lobby.js) ---- */
+#lobby-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.lobby-seat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 2px solid #8b6c43;
+  border-radius: 6px;
+  background: #ebd9af;
+}
+.lobby-seat.lobby-seat-empty { opacity: 0.6; }
+/* Add-AI button + its E/M/H difficulty on one row. */
+.lobby-addai-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.lobby-addai-row #lobby-addai-btn { flex: 1 1 auto; }
+.lobby-addai-row .segmented { flex: 0 0 auto; width: auto; min-width: 108px; }
+/* The swap partner mid-slide — lifted above its neighbours so it reads as
+   moving into the other team while it animates across. */
+.lobby-seat.lobby-seat-previewing {
+  position: relative;
+  z-index: 5;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+}
+/* Live "make room" gap that opens where the dragged seat will land; its growing
+   height slides the other tiles aside. */
+.lobby-seat-placeholder {
+  height: 0;
+  overflow: hidden;
+  border: 2px dashed #8c1d1d;
+  border-radius: 6px;
+  background: rgba(140, 29, 29, 0.08);
+  margin-bottom: 6px;
+  box-sizing: border-box;
+  transition: height 0.14s ease;
+}
+.lobby-seat-swatches { display: flex; gap: 4px; }
+.lobby-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid #5c3b1e;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: inset 0 0 2px rgba(0,0,0,0.4);
+}
+.lobby-swatch.lobby-swatch-sel { border-color: #ffebad; box-shadow: 0 0 0 2px #8c1d1d; }
+.lobby-swatch[disabled] { cursor: not-allowed; opacity: 0.35; }
+.lobby-seat-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-family: Georgia, serif;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 3px 6px;
+  outline: none;
+}
+.lobby-seat-name[readonly] { background: transparent; border-color: transparent; }
+.lobby-seat-badge {
+  flex: 0 0 auto;
+  font-family: 'Cinzel', serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #5c3b1e;
+}
+.lobby-seat-badge.lobby-ready { color: #1f6e30; }
+.lobby-team-group {
+  border: 2px dashed transparent;
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin-bottom: 4px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.lobby-team-group.lobby-drop-over {
+  border-color: #8c1d1d;
+  background: rgba(140, 29, 29, 0.08);
+}
+/* The boundary between the two teams. Dragging a player above it drops them on
+   Team 1, below it on Team 2. Emphasised while a drag is in progress. */
+.lobby-team-divider {
+  height: 2px;
+  margin: 8px 4px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(90deg, #8b6c43 0 8px, transparent 8px 15px);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+#lobby-roster.lobby-dragging-active .lobby-team-divider {
+  background: #8c1d1d;
+  box-shadow: 0 0 7px rgba(140, 29, 29, 0.6);
+}
+.lobby-team-header {
+  font-family: 'Cinzel', serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #5c3b1e;
+  margin: 4px 0 3px;
+  border-bottom: 1px solid #8b6c43;
+  padding-bottom: 2px;
+}
+.lobby-drag-handle {
+  flex: 0 0 auto;
+  cursor: grab;
+  color: #7a5c2e;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+  touch-action: none; /* let the custom pointer drag own touch gestures */
+}
+.lobby-drag-handle:active { cursor: grabbing; }
+.lobby-seat-dragging { opacity: 0.35; }
+.lobby-hint {
+  font-family: Georgia, serif;
+  font-size: 12px;
+  color: #7a3b1e;
+  text-align: center;
+  margin: 2px 0 4px;
+}
+/* The live clone that follows the pointer/finger during a drag. */
+.lobby-drag-ghost {
+  position: fixed;
+  left: 0; top: 0;
+  z-index: 300; /* above #tutorial (100) */
+  margin: 0;
+  pointer-events: none; /* so elementFromPoint sees the team group beneath */
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  opacity: 0.96;
+  cursor: grabbing;
+}
+.lobby-mini-btn {
+  font-family: Georgia, serif;
+  font-size: 11px;
+  font-weight: bold;
+  color: #3b220c;
+  background: #ebd9af;
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+.lobby-mini-btn:hover:not([disabled]) { background: rgba(92, 59, 30, 0.14); }
+.lobby-mini-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+#lobby-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 92px;
+  overflow-y: auto;
+  margin: 8px 0 6px;
+  padding: 6px 8px;
+  border: 2px solid #8b6c43;
+  border-radius: 6px;
+  background: rgba(20, 12, 4, 0.06);
+  font-family: Georgia, serif;
+  font-size: 13px;
+  text-align: left;
+}
+#lobby-chat-input-wrap { display: flex; margin-bottom: 6px; }
+#lobby-chat-input {
+  width: 100%;
+  background: rgba(255,255,255,0.4);
+  border: 1px solid #8b6c43;
+  border-radius: 4px;
+  color: #3b220c;
+  font-family: Georgia, serif;
+  font-size: 14px;
+  padding: 5px 8px;
+  outline: none;
+}
+/* Standalone game-over "See Map" button, centered just below the canvas
+   VICTORY/DEFEAT banner (banner spans the vertical middle). */
+#see-map-btn {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 74px);
+  transform: translateX(-50%);
+  z-index: 140; /* above the canvas banner, below the help/menu overlays */
+  width: auto;
+  min-width: 160px;
+}
+/* Preserve the centering transform on hover/press so the button doesn't jump
+   (the base :active swaps in translateY, dropping the horizontal centering). */
+#see-map-btn:hover, #see-map-btn:active {
+  transform: translateX(-50%);
 }
 /* ---- HOW TO PLAY overlay ---- */
 #help-overlay {

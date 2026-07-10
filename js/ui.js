@@ -88,6 +88,9 @@ function updateUI(){
   if (selected.length > 0) {
     let e = selected[0];
     currentSelectionDetails = `${e.id}:${e.hp}:${e.maxHp}:${e.complete ? 1 : 0}:${e.buildProgress || 0}`;
+    // Gate lock state, so the Lock/Unlock button label flips the instant the
+    // toggle lands (the button is derived from selected gates' .locked).
+    if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
     if (e.queue) {
       // Structural signature only (queue contents), NOT trainTick: progress
       // changes every tick, and keying on it rebuilt the whole details panel
@@ -334,6 +337,29 @@ function updateUI(){
         submitCommand({kind:'upgrade-walls',unitIds:ids});
       };
       act.appendChild(upBtn);
+    }
+    // Lock / unlock gate (AoE2): shown when every selected building is an own
+    // complete gate. A locked gate seals its doorway to everyone (incl. allies)
+    // so you can shut a raider out through your own wall line. Toggles all
+    // selected gates to the same state — lock if any is currently open.
+    if(selected.length>0 && selected.every(s=>s.type==='building'&&s.team===myTeam&&isGateBtype(s.btype)&&s.complete&&!s.exhausted)){
+      let gateIds=selected.map(s=>s.id);
+      let wantLock=selected.some(s=>!s.locked); // any unlocked → lock all; else unlock all
+      let lockBtn=document.createElement('div');
+      // NOT 'framed': the lock/unlock sprite cells are bare glyphs with no
+      // frame baked into the art (unlike the SGATE/econ/mil icons), so the
+      // plain .act-btn wooden border is what gives them the same framed look.
+      lockBtn.className='act-btn';
+      lockBtn.dataset.tipType='action';
+      lockBtn.dataset.tipLabel=wantLock?'Lock Gate':'Unlock Gate';
+      lockBtn.dataset.tipDesc=wantLock
+        ?'Seal the gate so nothing passes — including your own villagers and allies. Use it to shut a raider out.'
+        :'Reopen the gate so your units and allies pass through again.';
+      lockBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-gate-${wantLock?'lock':'unlock'}"></div><div class="btn-label">${wantLock?'Lock':'Unlock'}${gateIds.length>1?' ×'+gateIds.length:''}</div>`;
+      lockBtn.onclick=()=>{
+        submitCommand({kind:'gate-lock',bldgIds:gateIds,locked:wantLock});
+      };
+      act.appendChild(lockBtn);
     }
   }
 

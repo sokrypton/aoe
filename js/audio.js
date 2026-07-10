@@ -112,7 +112,7 @@ let _lastSoundAt = {};
 // miss even with effects off (AoE2's minimal-audio style).
 // 'chat' counts as an alert: an opponent's message is communication you
 // asked for by playing multiplayer, not battlefield ambience to mute.
-const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_clear', 'chat']);
+const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_clear', 'chat', 'farm_exhausted']);
 
 // Sounds allowed while the game is PAUSED (menu open, opponent's menu open,
 // mid-reconnect). World SFX are implicitly silent then (the sim isn't
@@ -204,6 +204,18 @@ function playSound(type, wx, wy) {
         // Leafy rustle: two staggered soft noise brushes
         noiseHit(out, now, { dur: 0.13, vol: 0.11, type: 'bandpass', f0: rnd(420, 720), q: 1.8 });
         noiseHit(out, now, { t0: 0.07, dur: 0.1, vol: 0.07, type: 'bandpass', f0: rnd(600, 900), q: 2.2 });
+        break;
+      }
+      case 'farm_exhausted': {
+        // "Field ran dry" notification — a soft DESCENDING two-note chime
+        // (C5→G4), the opposite motif to 'chat's rising blips and 'train's
+        // fanfare, so it reads unmistakably as "depleted / needs attention".
+        // A dry leafy-rustle tail roots it in farming. Non-positional (played
+        // via feedbackFor for the owning human only) so it alerts regardless of
+        // where the view is, like AoE2's farm-exhausted cue.
+        tone(out, now, { type: 'triangle', f0: 523.25, f1: 515, t0: 0,    dur: 0.15, vol: 0.12 });
+        tone(out, now, { type: 'triangle', f0: 392.0,  f1: 384, t0: 0.13, dur: 0.28, vol: 0.12 });
+        noiseHit(out, now, { t0: 0.13, dur: 0.18, vol: 0.05, type: 'bandpass', f0: 520, q: 2 });
         break;
       }
       case 'ram_hit': {

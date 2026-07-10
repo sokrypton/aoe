@@ -83,6 +83,7 @@ function placeStartingSheep(){
 // the starting economy is safe — they punish careless scouting and lone
 // villagers sent to far resources, not the opening build order.
 function placeWildBears(){
+  if(window.__noBears)return; // headless-sim opt-out (tools/sim.html 'bears=0') — never set by the real game
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
   let placed=0, attempts=0;
   while(placed<5 && attempts<400){
@@ -204,6 +205,10 @@ function applyGameSettings(){
         let el = document.querySelector('input[name="'+name+'"][value="'+v+'"]');
         if (el) el.checked = true;
       });
+    // The player's chosen lobby name (js/lobby.js persists it here). A plain
+    // global — the lobby seeds its own seat's name input from it.
+    let nm = localStorage.getItem('aoePlayerName');
+    if (nm) localPlayerName = nm;
   } catch (e) {}
 })();
 
@@ -214,8 +219,10 @@ function applyGameSettings(){
 function showMenuPanel(which){
   let main = document.getElementById('menu-panel-main');
   let opts = document.getElementById('menu-panel-options');
+  let lobby = document.getElementById('menu-panel-lobby');
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
+  if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
   updateUiSwitchVisibility();
   scaleMenuToFit();
 }
@@ -542,24 +549,38 @@ function onHostClicked(){
       if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
       return;
     }
-    // Rewrite the HOST's own URL to a resume link (?host=<id>, no reload):
-    // if this page ever dies mid-match, reopening it from browser history/
-    // tab-restore re-enters the match via enterHostResumeMode below —
-    // reclaim the same peer id, let the guest's retry loop reconnect, and
-    // recover the world from the guest's live mirror.
-    try { history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(peerId)); } catch (e) {}
+    // NOTE: the HOST's own ?host=<id> resume URL is deliberately NOT written
+    // here anymore — only once the match actually starts (setHostResumeUrl,
+    // called from hostStartLockstepMatch / the save-resume path). Otherwise a
+    // host refreshing during the LOBBY would boot straight into
+    // enterHostResumeMode and try to auto-recover a match that never began.
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
-    // Deliberately do NOT start the match yet — restartGame() calls
-    // startGame(), which hides this very menu (and the link/status panel
-    // along with it), so a real host would never get the chance to
-    // actually see/copy the link they just generated. The match starts
-    // once a guest actually connects (see onNetConnectionOpen below).
+    // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
+    // (js/lobby.js) only appears once a human guest actually connects (see
+    // onNetConnectionOpen → hostEnterLobby). Remember the link so a guest
+    // leaving the lobby drops the host back onto this same waiting screen.
+    if (typeof lobbyShareLink !== 'undefined') lobbyShareLink = link;
     showMpStatus('Waiting for opponent to join…', link);
   }).catch(err => {
     console.error('Failed to host:', err);
     showMpStatus('Could not start hosting — see console for details.');
     if (hostBtn) hostBtn.disabled = false;
   });
+}
+
+// Write the HOST's own ?host=<id> resume URL — but ONLY once the match has
+// actually started (called from hostStartLockstepMatch and the save-resume
+// path). If this page later dies mid-match, reopening it from history/tab-
+// restore re-enters the match via enterHostResumeMode (reclaim the same peer
+// id, let the guest's retry loop reconnect, recover the world from the guest's
+// live mirror). Deliberately NOT set during the lobby: a host refreshing
+// before Start should get a clean menu, not an auto-resume attempt.
+function setHostResumeUrl(){
+  try {
+    if (typeof netPeer !== 'undefined' && netPeer && netPeer.id) {
+      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id));
+    }
+  } catch (e) {}
 }
 
 // Set once the match actually starts (host's first restartGame() call) —
@@ -583,6 +604,11 @@ function leaveMpSession(){
   disconnectedPause = false;
   window.__mpSession.loadedHostPeerId = null;
   window.__mpSession.awaitingStateFromGuest = false;
+  // Tear down any pre-match lobby (js/lobby.js) too — a stale lobbyState /
+  // inLobby flag would confuse the next host/join attempt.
+  window.__mpSession.inLobby = false;
+  lobbyState = null;
+  lobbyShareLink = null;
   // The ?host= resume URL points at a session that no longer exists —
   // leaving it in place would make a later reload silently re-enter the
   // (dead) resume flow instead of the normal menu.
@@ -654,7 +680,6 @@ window.onNetConnectionOpen = function(){
       return;
     }
     if (!mpMatchStarted) {
-      mpMatchStarted = true;
       // Real per-team fog now (updateFog() in js/core.js computes vision
       // for `myTeam` — 0 on the host, 1 on the guest — instead of a
       // hardcoded team 0). Force it on explicitly regardless of whatever
@@ -669,7 +694,10 @@ window.onNetConnectionOpen = function(){
         // exact state: hand it to the guest and enter lockstep from it
         // (same machinery as desync recovery). Getting here means the
         // pause menu was open (that's how Host got clicked), which set
-        // gamePaused=true — clear it so the loop resumes.
+        // gamePaused=true — clear it so the loop resumes. This flow skips
+        // the lobby (it resumes an existing world, doesn't negotiate).
+        mpMatchStarted = true;
+        setHostResumeUrl(); // match is live now → arm the ?host= resume URL
         showMpStatus('Opponent connected! Resuming match…');
         lockstepActive = true;
         lockstepResetState();
@@ -679,12 +707,16 @@ window.onNetConnectionOpen = function(){
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
         recomputeGamePaused();
+        // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
+        restoreMenuForMatch();
       } else {
-        showMpStatus('Opponent connected! Starting match…');
-        hostStartLockstepMatch(); // js/lockstep.js — seed handshake + fresh world
+        // Fresh match: a human guest just connected to a host waiting on the
+        // invite screen. Enter the PRE-MATCH LOBBY (js/lobby.js) — the match
+        // does NOT start until the host clicks Start. Do NOT set mpMatchStarted
+        // here: it gates every reconnect/resume branch and must only flip when
+        // the match actually begins (hostStartLockstepMatch).
+        if (typeof hostEnterLobby === 'function') hostEnterLobby();
       }
-      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
-      restoreMenuForMatch();
     } else {
       // Reconnect: resume exactly where the match was paused. Lockstep:
       // hand the (possibly brand-new) guest page the full sim state and
@@ -709,16 +741,17 @@ window.onNetConnectionOpen = function(){
     // while its own menu was open, guest auto-reconnects via the same peer
     // id, and ends up stuck gamePaused with no visible cause). This new
     // session's localMenuOpen is always known-correct at this point (freshly
-    // computed above), so just tell the guest what it actually is.
-    broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
+    // computed above), so just tell the guest what it actually is. Only
+    // meaningful once the match is live — during the lobby there's no sim to
+    // pause, and the guest's lobby panel isn't a "menu" the host should mirror.
+    if (mpMatchStarted) broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
-      mpMatchStarted = true;
-      showMpStatus('Connected! Waiting for game state…');
-      // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
-      // Save Game works for the guest too (their entities/map are a live
-      // mirror of the host's), it's everything ELSE that stays hidden.
-      restoreMenuForMatch();
+      // First connect → wait for the host's lobby-open (js/lobby.js), which
+      // swaps in the lobby panel. Do NOT set mpMatchStarted here: it gates
+      // reconnect/resume and must only flip when the match actually starts
+      // (the guest's lockstep-start handler, js/lockstep.js).
+      showMpStatus('Connected! Entering lobby…');
     } else {
       hideDisconnectOverlay();
       disconnectedPause = false;
@@ -728,6 +761,33 @@ window.onNetConnectionOpen = function(){
 };
 
 window.onNetConnectionClosed = function(){
+  // A drop while in the PRE-MATCH LOBBY (before mpMatchStarted) is its own
+  // case — the mid-match disconnect overlay/reconnect below assumes a live
+  // match. Handle the lobby here and return.
+  if (window.__mpSession.inLobby) {
+    if (netRole === 'host') {
+      // Guest left the lobby: reopen seat 2, disable Start (js/lobby.js). The
+      // host's Peer stays alive, so the same guest reopening the link
+      // re-enters onNetConnectionOpen → onGuestEnteredLobby re-seats them.
+      if (typeof onGuestLeftLobby === 'function') onGuestLeftLobby();
+    } else if (netRole === 'guest') {
+      // Host left/closed the lobby: there's no match to resume, so tell the
+      // guest plainly instead of silently spinning. Drop the lobby, show the
+      // status, and offer a manual Retry (in case it was a transient blip and
+      // the host is still up) — onNetConnectionOpen re-enters the lobby if a
+      // reconnect lands.
+      window.__mpSession.inLobby = false;
+      lobbyState = null;
+      if (typeof showMenuPanel === 'function') showMenuPanel('main');
+      let menu = document.getElementById('tutorial');
+      if (menu) menu.style.display = 'flex';
+      showMpStatus('The host has disconnected.');
+      let retryBtn = document.getElementById('mp-retry-btn');
+      if (retryBtn) retryBtn.style.display = '';
+      if (typeof showMsg === 'function') showMsg('Host disconnected');
+    }
+    return;
+  }
   // A drop before the match ever started, or after it's already over, is
   // someone else's flow (the pre-game "waiting to join" status panel, or
   // just a post-game teardown) — not this mid-match pause/reconnect one.
@@ -937,14 +997,13 @@ function applyMenuMode(mode){
   }
 
   if (mode === 'gameover') {
-    // Same layout as prestart (Play Again = a fresh start), minus the MP
-    // host button when a (now finished) MP session is still attached.
-    // With a LIVE connection the host's button becomes "Rematch" — a fresh
-    // MP match over the same connection (see onStartClicked) — and the
-    // guest gets no button at all: only the host can start one; the
-    // guest's menu closes by itself when the rematch's 'lockstep-start'
-    // arrives (js/lockstep.js).
-    // Disconnected-or-single-player keeps plain local Play Again.
+    // This menu is NOT auto-opened on game over anymore (the end screen is the
+    // canvas banner + standalone "See Map" button, js/init.js gameLoop) — it
+    // only appears if the player clicks the ☰ button. When they do, it's the
+    // full post-game menu: Play Again (single-player / dead MP), or Rematch for
+    // a live-MP host (a fresh match over the same connection, see
+    // onStartClicked); the guest gets no button (its menu closes by itself when
+    // the rematch's 'lockstep-start' arrives), plus Load / Host as usual.
     let liveMp = !!netRole && netConnected;
     if (difficultyRow) difficultyRow.style.display = '';
     if (startBtn) {
@@ -1067,14 +1126,23 @@ function restartGame(difficulty){
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
   resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
+  // Cosmetic seat labels/colors back to defaults (identity palette, no names).
+  // Like teamControllers above, the lobby/lockstep paths re-apply the agreed
+  // names+colors AFTER restartGame — see hostStartLockstepMatch / the
+  // lockstep-start handler (js/lockstep.js).
+  resetTeamColorMap();
+  resetTeamNames();
 
   // Reset UI cache to prevent stale HUD panels on restart
   window.lastUIState = null;
   window.lastSelListKey = null;
   window.lastSelGridDetails = null;
   window.lastSelKey = null;
-  window.gameOverMenuShown = false; // re-arm the game-over auto-menu (gameLoop)
+  window.gameOverMenuShown = false; // re-arm the game-over "See Map" reveal (gameLoop)
   window.playedGameOverSound = false;
+  window.__gameOverBannerDismissed = false; // fresh match → banner armed again
+  window.seeMapMode = false; // exit the finished-map review mode
+  { let sm = document.getElementById('see-map-btn'); if (sm) sm.style.display = 'none'; }
 
   // Re-generate map and spawn starts
   init();
@@ -1092,6 +1160,37 @@ function toggleCameraFollow(){
 function toggleHelp(){
   let o=document.getElementById('help-overlay');
   if(o)o.style.display=(o.style.display==='none'||o.style.display==='')?'flex':'none';
+}
+
+// Game-over "See Map": dismiss the VICTORY/DEFEAT banner and let the player pan
+// over the finished, fully-revealed map (AoE2-style). No menu is involved.
+//   - window.seeMapMode re-enables the camera controls (pan/zoom/minimap/arrow
+//     keys) that are otherwise disabled once gameOver; command input stays off.
+//   - fog is turned off and every tile revealed so the whole map is visible.
+function seeMap(){
+  window.__gameOverBannerDismissed = true;
+  window.seeMapMode = true;
+  window.fogDisabled = true;
+  // Reveal every tile now (updateFog() no-ops while fogDisabled, so flip the
+  // grid directly — 2 = fully visible).
+  if (typeof fog !== 'undefined' && fog && fog.length) {
+    for (let y = 0; y < fog.length; y++) {
+      let row = fog[y];
+      for (let x = 0; x < row.length; x++) row[x] = 2;
+    }
+  }
+  // Enemy buildings render only once "scouted" (scoutedByMe, js/render.js) even
+  // under revealed fog — so mark every building scouted to actually show them.
+  if (typeof scoutedByMe !== 'undefined' && scoutedByMe && typeof entities !== 'undefined') {
+    entities.forEach(e => { if (e.type === 'building') scoutedByMe.add(e.id); });
+  }
+  // buildingFogLevel() caches per-building fog in _bflMemo, normally cleared by
+  // updateFog() — which doesn't run post-game. Clear it so the fog we just
+  // revealed above is actually seen (otherwise buildings keep their stale
+  // fog-level-0 and stay hidden).
+  if (typeof invalidateBuildingFogMemo === 'function') invalidateBuildingFogMemo();
+  let btn = document.getElementById('see-map-btn');
+  if (btn) btn.style.display = 'none';
 }
 
 function isFullscreen(){
@@ -1270,52 +1369,39 @@ function gameLoop(){
   }
   if(gameOver){
     let iWon = didIWin();
-    // Auto-open the menu in 'gameover' mode (Play Again / Load) a moment
-    // after the canvas VICTORY/DEFEAT banner lands — previously the banner
-    // just sat there and the only way to a new game was finding the ☰
-    // button. One-shot (reset in restartGame). Deliberately NOT
-    // broadcastMenuState(true): the opponent hits gameOver too and gets
-    // their own menu; flashing a "Game Paused" overlay over their result
-    // screen would be wrong (and there's nothing left to pause).
-    if (!window.gameOverMenuShown) {
-      window.gameOverMenuShown = true;
-      setTimeout(() => {
-        if (!gameOver) return;      // already restarted meanwhile
-        if (localMenuOpen) return;  // user beat us to the menu
-        let menu = document.getElementById('tutorial');
-        if (!menu) return;
-        menu.style.display = 'flex';
-        localMenuOpen = true;
-        recomputeGamePaused();
-        showMenuPanel('main');
-        applyMenuMode('gameover');
-      }, 2200);
-    }
     if (!window.playedGameOverSound) {
       window.playedGameOverSound = true;
       if (window.stopAmbientMusic) window.stopAmbientMusic(); // cut ambient so the ending piece stands alone
       if (window.startGameOverMusic) window.startGameOverMusic(iWon);
     }
-    X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
-    let cy=topH+H/2;
-
-    // Draw gold banner background
-    X.fillStyle='rgba(40,20,5,0.85)';
-    X.fillRect(0,cy-80,W,140);
-    X.strokeStyle='#bfa054';X.lineWidth=3;
-    X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
-    X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
-
-    // Main text using Cinzel
-    X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
-    X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
-    X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
-
-    // Subtext using Georgia
-    X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
-    X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
-    X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
-    X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
+    // The whole end screen is the VICTORY/DEFEAT banner plus a standalone
+    // "See Map" button under it — NO menu is opened over the result (and so no
+    // rematch/play-again). One-shot reveal of the button (reset in
+    // restartGame). See Map (seeMap()) dismisses the banner to show the map.
+    if (!window.gameOverMenuShown) {
+      window.gameOverMenuShown = true;
+      let sm = document.getElementById('see-map-btn');
+      if (sm) sm.style.display = '';
+    }
+    if (!window.__gameOverBannerDismissed) {
+      X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
+      let cy=topH+H/2;
+      // Gold banner background
+      X.fillStyle='rgba(40,20,5,0.85)';
+      X.fillRect(0,cy-80,W,140);
+      X.strokeStyle='#bfa054';X.lineWidth=3;
+      X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
+      X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
+      // Main text using Cinzel
+      X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
+      X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
+      X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
+      // Subtext using Georgia
+      X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
+      X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
+      X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
+      X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
+    }
   }
   requestAnimationFrame(gameLoop);
 }

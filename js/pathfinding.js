@@ -112,10 +112,11 @@ function walkable(x,y,ignore,ignoreUnits){
   if(isResource)return false;
 
   // Let same-side units (own team or allies) or anyone (if open) pass
-  // through gates
+  // through gates — UNLESS the gate is locked, which seals the doorway to
+  // everyone including the owner (AoE2 gate lock; owner unlocks to pass).
   let bldg = entitiesById.get(t.occupied);
   if (bldg && isGateBtype(bldg.btype)) {
-    if (walker && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
+    if (walker && !bldg.locked && (sameSide(walker.team, bldg.team) || bldg.isOpen)) {
       // Only the CENTRE tile of the gate is a doorway. The end tiles sit
       // under the bastion posts and stay solid, so units (and stray sheep
       // that slip through while the gate is open) funnel through the middle

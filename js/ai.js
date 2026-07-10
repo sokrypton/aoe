@@ -1080,65 +1080,107 @@ function isAIGatherTaskStale(v){
   return !tile||tile.t!==cfg.terrain||tile.res<=0||!canGatherTile(v,cfg.terrain,v.gatherX,v.gatherY);
 }
 
+// Nearest huntable herdable (live sheep or standing carcass) this villager can
+// actually reach — AoE2's free, high-value, FINITE opening food. Only gaia
+// strays or our own already-converted flock (never poach an enemy's), and only
+// within a short leash so nobody wanders the map chasing a lone sheep; a live
+// sheep converts to us automatically as the villager closes (js/logic.js).
+// Nearest huntable herdable this villager can reach. Several villagers can ring
+// and eat one carcass (js/logic.js), so no per-sheep cap is needed — the
+// starting-crew-on-one-sheep opening is exactly how it's meant to work.
+const AI_SHEEP_HUNT_RANGE=24;
+function nearestAISheep(ai,v){
+  let cands=[];
+  for(let e of entities){
+    if(e.hp<=0)continue;
+    if(e.utype!=='sheep'&&e.utype!=='sheep_carcass')continue;
+    if(e.team!==GAIA_TEAM&&e.team!==ai.team)continue; // gaia strays or our own flock; never poach an enemy's
+    let d=Math.abs(e.x-v.x)+Math.abs(e.y-v.y);
+    if(d<=AI_SHEEP_HUNT_RANGE)cands.push({e,d});
+  }
+  cands.sort((a,b)=>a.d-b.d);
+  for(let c of cands)if(pathReaches(v.x,v.y,c.e.x,c.e.y,v.id))return c.e;
+  return null;
+}
+
 function assignAIGatherTask(ai,v,vils,profile){
   let desired=aiEcoPlan(ai,vils.length,profile);
   let counts=countAIGatherers(vils);
-  let task=Object.keys(desired).sort((a,b)=>(counts[a]||0)/desired[a]-(counts[b]||0)/desired[b])[0];
-  // Fallback chain — ORDER MATTERS: farm degrades first so its fallback
-  // (forage) still gets the no-berries→chop check below. The old order ran
-  // farm→forage LAST, so late-game villagers (farms all exhausted, berries
-  // long gone) were assigned an impossible forage task that self-cleared
-  // every tick — a whole town idling while 60-wood farm reseeds starved
-  // for the wood those villagers should have been chopping.
-  if(task==='farm'&&!hasReachableResource(v,TERRAIN.FARM))task='forage';
-  if(task==='mine_gold'&&!hasReachableResource(v,TERRAIN.GOLD))task='chop';
-  if(task==='forage'&&!hasReachableResource(v,TERRAIN.BERRIES))task='chop';
-  // Stone has no late-game sink beyond walls/towers — a hoard means the
-  // miner is wasted; wood is always spendable (farm reseeds, buildings).
-  if(task==='mine_stone'&&resourceStore(ai.team).stone>800)task='chop';
-  // Reachability guard (this reassignment path only — never per tick — so no
-  // pathfinding storm): findNearTile checks proximity, NOT reachability, so a
-  // villager whose nearest resource is walled off from where it stands keeps
-  // getting handed a tile it can't walk to → it idles (food starves with
-  // farms unworked; sim hard seed 1). If the chosen tile is unreachable, try
-  // any other terrain that IS path-reachable; else walk to the nearest
-  // reachable own GATE (own units pass through it, so the rest of the map —
-  // and the eco — opens up once through) and re-evaluate next decision.
-  let cfg=GATHER_TASKS[task];
-  let tile=cfg?findNearTile(v,cfg.terrain,null,null,true):null; // probe (reachability) — don't claim
-  if(tile&&!pathReaches(v.x,v.y,tile.x,tile.y,v.id)){
-    let picked=false;
-    for(let alt of ['farm','forage','chop','mine_gold','mine_stone']){
-      if(alt===task)continue;
-      let t2=findNearTile(v,GATHER_TASKS[alt].terrain,null,null,true); // probe — don't claim
-      if(t2&&pathReaches(v.x,v.y,t2.x,t2.y,v.id)){task=alt;picked=true;break;}
+  // What can this villager work for task T right now? Returns a resource TILE
+  // {x,y} for terrain tasks, or a {sheep} sentinel for forage when a nearby
+  // herdable is the food source. Requires the resource to both exist nearby AND
+  // be path-reachable — findNearTile is a proximity probe only (a tile can be
+  // "near" yet walled off), so pathReaches is the real gate. null =
+  // unfulfillable. Stone with a full stockpile has no sink → unfulfillable, so
+  // a lone miner doesn't mine a useless hoard.
+  let targetFor=(task)=>{
+    if(task==='mine_stone'&&resourceStore(ai.team).stone>800)return null;
+    if(task==='forage'){
+      // Wild food, AoE2 order: eat the free, high-value, finite SHEEP first
+      // (they convert to us as the villager closes) before berry bushes. This
+      // is the AI's main early-food source — farms need a Barracks + wood
+      // first, and berries are often scarce — so ignoring the ~600 food of
+      // starting herdables was Dark-Age-locking food-poor starts.
+      let sheep=nearestAISheep(ai,v);
+      if(sheep)return{sheep};
     }
-    if(!picked){
-      let gates=(ai.gatePairs||[]).map(p=>p[Math.floor(p.length/2)]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
-      if(gates.length){
-        gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
-        v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
-        pathUnitTo(v,gates[0].x,gates[0].y);
-        return;
-      }
+    let cfg=GATHER_TASKS[task]; if(!cfg)return null;
+    let t=findNearTile(v,cfg.terrain,null,null,true); // proximity probe, no claim
+    return (t&&pathReaches(v.x,v.y,t.x,t.y,v.id))?t:null;
+  };
+  // Assign the highest-DEFICIT task (most under-staffed vs the plan) that this
+  // villager can actually fulfil. This replaces the old "pick the single
+  // neediest, and if its resource isn't proximate hard-redirect to chop"
+  // scheme, whose root flaw was dumping every unmeetable demand onto WOOD:
+  // a dead 'forage' (berries foraged out, fill ratio pinned at 0) perpetually
+  // won the slot then collapsed to chop, and a walled-off gold/farm did the
+  // same — so towns banked 9000 wood while gold pinned at ~10 or food starved,
+  // Dark/Feudal-locking for whole matches. Skipping unfulfillable tasks lets
+  // the next REAL need (gold for Castle/rams, farms for food) take the hand.
+  let ranked=Object.keys(desired)
+    .filter(t=>GATHER_TASKS[t])
+    .sort((a,b)=>(counts[a]||0)/desired[a]-(counts[b]||0)/desired[b]);
+  let task=null, target=null;
+  for(let t of ranked){ let tg=targetFor(t); if(tg){task=t;target=tg;break;} }
+  if(!task){
+    // Every resource the plan wants is walled off from where this villager
+    // stands. Walk to/through the nearest own GATE (own units pass the centre
+    // tile) so the rest of the map opens up, then re-evaluate next decision.
+    let gates=(ai.gatePairs||[]).map(p=>p[Math.floor(p.length/2)]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
+    if(gates.length){
+      gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
+      v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
+      pathUnitTo(v,gates[0].x,gates[0].y);
+      return;
     }
+    task='chop'; // last resort — wood is virtually always somewhere reachable
   }
-  v.task=task;
-  v.target=null;
   v.buildTarget=null;
   clearGatherTarget(v);
-  // Drop-anchor the gather tile: work the resource nearest this task's own
-  // drop-off (its camp/TC) rather than the patch nearest wherever the villager
-  // is standing — short round trips, and a freshly-placed camp actually gets
-  // used instead of villagers hauling wood across the map to a far drop.
+  // Herdable food: hunt it directly, target-based — and with NO task, exactly
+  // like the player's own sheep command (js/commands.js). The harvest path only
+  // runs on `target && !task` (js/logic.js); setting task='forage' alongside
+  // the target silently disabled it and wedged the villager. countAIGatherers
+  // credits a sheep-targeting villager as forage, so it still counts as a food
+  // gatherer against the plan. When the carcass is gone the villager goes idle
+  // and the balancer re-picks its next food source (another sheep, then
+  // berries/farms).
+  if(target&&target.sheep){ v.task=null; v.target=target.sheep.id; return; }
+  v.task=task;
+  v.target=null;
+  // Drop-anchor the gather tile: prefer the resource patch nearest this task's
+  // own drop-off (its camp/TC) — short round trips, and a freshly-placed camp
+  // gets used instead of hauling across the map. Falls back to the reachable
+  // tile the selection loop already found.
   let gc=GATHER_TASKS[v.task];
   if(gc){
     let drop=nearestDrop(v,gc.resource);
     if(drop){
       let anchor={x:drop.x+(drop.w||1)/2,y:drop.y+(drop.h||1)/2};
-      let tile=findNearTile(v,gc.terrain,null,anchor);
-      if(tile&&pathReaches(v.x,v.y,tile.x,tile.y,v.id)){v.gatherX=tile.x;v.gatherY=tile.y;}
+      let at=findNearTile(v,gc.terrain,null,anchor);
+      if(at&&pathReaches(v.x,v.y,at.x,at.y,v.id))target=at;
     }
+    if(target&&target.x!=null){v.gatherX=target.x;v.gatherY=target.y;}
   }
 }
 
@@ -1203,6 +1245,10 @@ function aiEcoPlan(ai,vilCount,profile){
 function countAIGatherers(vils){
   return vils.reduce((counts,v)=>{
     if(GATHER_TASKS[v.task])counts[v.task]=(counts[v.task]||0)+1;
+    // Sheep-hunters carry no gather task (target-based, like the player's sheep
+    // command) — credit them as forage so the plan sees food being gathered and
+    // doesn't pile still more hands onto food.
+    else if(v.target){ let t=entitiesById.get(v.target); if(t&&(t.utype==='sheep'||t.utype==='sheep_carcass'))counts.forage++; }
     return counts;
   },{forage:0,farm:0,chop:0,mine_gold:0,mine_stone:0});
 }
@@ -1292,16 +1338,19 @@ function findAIFarmSpot(ai,tc){
   return null;
 }
 
-function hasReachableResource(v,terrain){
-  return !!findNearTile(v,terrain,null,null,true); // probe only — don't claim the tile
-}
-
-// Current attack-wave size: starts at profile.attackSize and grows by
-// waveGrowth per wave already launched (AoE2-style escalation from an early
-// raid to progressively larger armies). Capped so the army goal always fits
-// under the 200 pop ceiling alongside the villager economy.
+// Current attack-wave size: tracks the ECONOMY, not a launch counter. AoE2
+// difficulty doesn't script an attack timeline — it throttles the eco, and an
+// attack is simply whatever army that eco can mass. So wave size is a fraction
+// of the villager count past a small base (armyPerVil beyond armyEcoFloor),
+// floored at attackSize and capped by waveCap. Waves still escalate over a
+// match — but only because villagers grow toward maxVils, then plateau — and
+// Easy stays gentle because its eco is capped low, NOT because a timer holds
+// back. (Previously: attackSize + waveCount*waveGrowth, a synthetic per-wave
+// ramp that overwhelmed Easy regardless of how stunted its economy was.)
 function aiWaveSize(ai,profile){
-  return Math.min(profile.waveCap||60, profile.attackSize+(ai.waveCount||0)*profile.waveGrowth);
+  let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
+  let ecoArmy=Math.floor(Math.max(0,vils-(profile.armyEcoFloor||0))*(profile.armyPerVil||0.5));
+  return Math.max(profile.attackSize, Math.min(profile.waveCap||60, ecoArmy));
 }
 
 const AI_MIL_TYPES=['militia','spearman','archer','scout','knight'];
@@ -1495,6 +1544,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     ai.waveCount=(ai.waveCount||0)+1;
     ai.lastWaveTick=ai.tick;
     ai.lastWaveGlobalTick=tick; // global-tick stamp for allied coordination
+    ai.lastWaveSize=launched; // telemetry only (sim samples it) — NOT in the determinism hash
   }
 }
 
