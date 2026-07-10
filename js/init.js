@@ -549,12 +549,11 @@ function onHostClicked(){
       if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
       return;
     }
-    // Rewrite the HOST's own URL to a resume link (?host=<id>, no reload):
-    // if this page ever dies mid-match, reopening it from browser history/
-    // tab-restore re-enters the match via enterHostResumeMode below —
-    // reclaim the same peer id, let the guest's retry loop reconnect, and
-    // recover the world from the guest's live mirror.
-    try { history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(peerId)); } catch (e) {}
+    // NOTE: the HOST's own ?host=<id> resume URL is deliberately NOT written
+    // here anymore — only once the match actually starts (setHostResumeUrl,
+    // called from hostStartLockstepMatch / the save-resume path). Otherwise a
+    // host refreshing during the LOBBY would boot straight into
+    // enterHostResumeMode and try to auto-recover a match that never began.
     let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
     // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
     // (js/lobby.js) only appears once a human guest actually connects (see
@@ -567,6 +566,21 @@ function onHostClicked(){
     showMpStatus('Could not start hosting — see console for details.');
     if (hostBtn) hostBtn.disabled = false;
   });
+}
+
+// Write the HOST's own ?host=<id> resume URL — but ONLY once the match has
+// actually started (called from hostStartLockstepMatch and the save-resume
+// path). If this page later dies mid-match, reopening it from history/tab-
+// restore re-enters the match via enterHostResumeMode (reclaim the same peer
+// id, let the guest's retry loop reconnect, recover the world from the guest's
+// live mirror). Deliberately NOT set during the lobby: a host refreshing
+// before Start should get a clean menu, not an auto-resume attempt.
+function setHostResumeUrl(){
+  try {
+    if (typeof netPeer !== 'undefined' && netPeer && netPeer.id) {
+      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id));
+    }
+  } catch (e) {}
 }
 
 // Set once the match actually starts (host's first restartGame() call) —
@@ -683,6 +697,7 @@ window.onNetConnectionOpen = function(){
         // gamePaused=true — clear it so the loop resumes. This flow skips
         // the lobby (it resumes an existing world, doesn't negotiate).
         mpMatchStarted = true;
+        setHostResumeUrl(); // match is live now → arm the ?host= resume URL
         showMpStatus('Opponent connected! Resuming match…');
         lockstepActive = true;
         lockstepResetState();
@@ -756,12 +771,20 @@ window.onNetConnectionClosed = function(){
       // re-enters onNetConnectionOpen → onGuestEnteredLobby re-seats them.
       if (typeof onGuestLeftLobby === 'function') onGuestLeftLobby();
     } else if (netRole === 'guest') {
-      // Host vanished from the lobby: keep retrying the same peer id in case
-      // it was a transient blip / the host is reloading (onNetConnectionOpen
-      // re-shows the lobby via a fresh lobby-open). If the host truly left,
-      // the retries just fail quietly and the user can Leave.
-      showMpStatus('Connection lost — reconnecting to host…');
-      attemptReconnect();
+      // Host left/closed the lobby: there's no match to resume, so tell the
+      // guest plainly instead of silently spinning. Drop the lobby, show the
+      // status, and offer a manual Retry (in case it was a transient blip and
+      // the host is still up) — onNetConnectionOpen re-enters the lobby if a
+      // reconnect lands.
+      window.__mpSession.inLobby = false;
+      lobbyState = null;
+      if (typeof showMenuPanel === 'function') showMenuPanel('main');
+      let menu = document.getElementById('tutorial');
+      if (menu) menu.style.display = 'flex';
+      showMpStatus('The host has disconnected.');
+      let retryBtn = document.getElementById('mp-retry-btn');
+      if (retryBtn) retryBtn.style.display = '';
+      if (typeof showMsg === 'function') showMsg('Host disconnected');
     }
     return;
   }

@@ -59,26 +59,22 @@ function setMapSize(sizeKey, alliances){
       {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
     ];
   } else {
-    // 2v2: allies share a map side. Team 0 keeps its random corner; its ALLY
-    // takes one of the two adjacent corners (one extra draw); the enemy pair
-    // gets the remaining (opposite) side. Which team is team 0's ally comes
-    // from the alliance array — [0,0,1,1] pairs 0+1 (classic layout, and the
-    // default), while a mixed [0,1,0,1] pairs 0+2, so mixed human+AI teams
-    // still spawn their allies adjacent. The RNG draw count is identical
-    // either way, so seeds stay comparable.
-    let al = alliances || [0,0,1,1];
-    let ally0 = [1,2,3].find(t=>al[t]===al[0]);
-    if(ally0===undefined)ally0=1; // degenerate alliance data — fall back to classic
-    let enemies=[1,2,3].filter(t=>t!==ally0);
-    let adjacent=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]];
-    let a=adjacent[simRandInt(0,1)];
+    // 3-4 players on TWO sides, ANY split (2v2, 3v1, 1v3, 2v1, 1v2). Lay the
+    // four corners out as a PERIMETER RING — [c, a, opp(c), opp(a)], where
+    // consecutive entries are edge-adjacent corners — then give each side a
+    // contiguous arc of the ring, so allies sit together no matter the split
+    // (a 3-player side takes 3 corners in an L, its lone opponent the 4th).
+    // Team 0's side goes first. RNG draw count (one for c, one for a) is fixed,
+    // so seeds stay comparable and SP 2v2 (default [0,0,1,1] → order [0,1,2,3])
+    // is byte-identical to before.
+    let al = alliances || Array.from({length:NUM_TEAMS},(_,t)=>t<2?0:1);
+    let a=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]][simRandInt(0,1)];
     let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
-    STARTS=[
-      {team:0,x:c[0],y:c[1]},
-      {team:ally0,x:a[0],y:a[1]},
-      {team:enemies[0],x:opp(c)[0],y:opp(c)[1]},
-      {team:enemies[1],x:opp(a)[0],y:opp(a)[1]}
-    ];
+    let ring=[c, a, opp(c), opp(a)];
+    let ordered=[];
+    for(let t=0;t<NUM_TEAMS;t++) if(al[t]===al[0]) ordered.push(t);
+    for(let t=0;t<NUM_TEAMS;t++) if(al[t]!==al[0]) ordered.push(t);
+    STARTS=ordered.map((team,i)=>({team,x:ring[i][0],y:ring[i][1]}));
   }
 }
 // How many PLAYER teams exist in a match. Every per-team structure

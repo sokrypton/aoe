@@ -87,10 +87,10 @@ function hostStartLockstepMatch(){
   let sizeKey = ls ? ls.mapSize : (function(){ let s = document.querySelector('input[name="mapsize"]:checked'); return s ? s.value : 'medium'; })();
   if (ls && typeof setGameSpeed === 'function') setGameSpeed(ls.speed);
   window.fogDisabled = false;
-  // Alliance layout drives the 4-team spawn adjacency (js/core.js setMapSize) —
-  // both peers must build STARTS from the SAME array, so it's derived from the
-  // lobby mode here and sent in lockstep-start below for the guest to reuse.
-  let al = (ls && typeof lobbyAlliancesFor === 'function') ? lobbyAlliancesFor(ls.mode) : undefined;
+  // Each player's SIDE drives the spawn adjacency (js/core.js setMapSize) —
+  // both peers must build STARTS from the SAME array, so it's taken from the
+  // lobby seats here and sent in lockstep-start below for the guest to reuse.
+  let al = (ls && ls.seats) ? ls.seats.map(s => s.side) : undefined;
   setMapSize(sizeKey, al); // draws the fresh matchSeed both peers will share
   restartGame('standard');
   // The lobby's agreed seats become the authoritative team layout + cosmetic
@@ -103,6 +103,9 @@ function hostStartLockstepMatch(){
   lockstepSeedSnapshot();
   mpMatchStarted = true;
   window.__mpSession.inLobby = false;
+  // Now that the match is truly underway, arm the host's ?host= resume URL
+  // (js/init.js) — not before, so a lobby refresh doesn't auto-resume.
+  if (typeof setHostResumeUrl === 'function') setHostResumeUrl();
   // names/colors are COSMETIC (never hashed/snapshotted) but must reach the
   // guest so both screens render the agreed labels/colors consistently.
   broadcastToGuest({ type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap });

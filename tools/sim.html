@@ -149,16 +149,6 @@ window.runSimulation = async function(opts){
         tcHp: (bldgs.find(b => b.btype === 'TC') || {}).hp | 0,
         waves: AI_STATES[t] ? AI_STATES[t].waveCount : 0,
         lastWaveSize: AI_STATES[t] ? (AI_STATES[t].lastWaveSize || 0) : 0,
-        // --- eco-diagnostic telemetry (gold-starvation investigation) ---
-        saving: AI_STATES[t] ? !!AI_STATES[t].savingForAge : false,
-        gath: (() => { const g={chop:0,mine_gold:0,forage:0,farm:0,mine_stone:0};
-          units.forEach(u => { if (u.utype==='villager' && g[u.task]!==undefined) g[u.task]++; }); return g; })(),
-        goldTiles: (() => { let n=0; for (let y=0;y<map.length;y++) for (let x=0;x<map[y].length;x++) { const c=map[y][x]; if (c && c.t===TERRAIN.GOLD && c.res>0) n++; } return n; })(),
-        goldReachable: (() => { const v=units.find(u=>u.utype==='villager'); if(!v) return null; const gt=findNearTile(v,TERRAIN.GOLD,null,null,true); return gt ? pathReaches(v.x,v.y,gt.x,gt.y,v.id) : 'no-tile'; })(),
-        gates: bldgs.filter(b => b.btype === 'GATE' || b.btype === 'SGATE').length,
-        builders: units.filter(u => u.utype==='villager' && (u.task==='build' || u.buildTarget)).length,
-        idle: units.filter(u => u.utype==='villager' && !u.task && !u.buildTarget && !u.target && u.path.length===0).length,
-        desired: (() => { try { const v=units.filter(u=>u.utype==='villager'); return AI_STATES[t] ? aiEcoPlan(AI_STATES[t], v.length, aiProfileFor(t)) : null; } catch(e){ return 'err:'+e.message; } })(),
         defeated: !!defeatedTeams[t],
       };
     };

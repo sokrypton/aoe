@@ -270,25 +270,15 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div id="menu-panel-lobby" style="display:none;">
       <div id="lobby-heading" class="menu-divider"></div>
       <div id="lobby-roster"></div>
-      <div class="setup-grid" id="lobby-settings-grid">
-        <div class="setup-row">
-          <div class="setup-col">
-            <h3>Teams</h3>
-            <div class="segmented" id="lobby-mode-seg">
-              <label class="segment"><input type="radio" name="lobbymode" value="1v1" checked><span title="Just the two of us">1v1</span></label>
-              <label class="segment"><input type="radio" name="lobbymode" value="humansVsAi"><span title="Both humans vs 2 AI">vs AI</span></label>
-              <label class="segment"><input type="radio" name="lobbymode" value="mixed"><span title="Human + AI on each side">Mixed</span></label>
-            </div>
-          </div>
-          <div class="setup-col" id="lobby-aidiff-col">
-            <h3>AI</h3>
-            <div class="segmented" id="lobby-aidiff-seg">
-              <label class="segment"><input type="radio" name="lobbyaidiff" value="easy"><span title="Easy">E</span></label>
-              <label class="segment"><input type="radio" name="lobbyaidiff" value="standard" checked><span title="Medium">M</span></label>
-              <label class="segment"><input type="radio" name="lobbyaidiff" value="hard"><span title="Hard">H</span></label>
-            </div>
-          </div>
+      <div class="lobby-addai-row" id="lobby-addai-row">
+        <button type="button" id="lobby-addai-btn" class="menu-action-btn" onclick="lobbyAddAi()">＋ Add AI</button>
+        <div class="segmented" id="lobby-aidiff-seg">
+          <label class="segment"><input type="radio" name="lobbyaidiff" value="easy"><span title="Easy">E</span></label>
+          <label class="segment"><input type="radio" name="lobbyaidiff" value="standard" checked><span title="Medium">M</span></label>
+          <label class="segment"><input type="radio" name="lobbyaidiff" value="hard"><span title="Hard">H</span></label>
         </div>
+      </div>
+      <div class="setup-grid" id="lobby-settings-grid">
         <div class="setup-row">
           <div class="setup-col">
             <h3>Map Size</h3>
@@ -312,6 +302,7 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div id="lobby-chat-input-wrap">
         <input id="lobby-chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Type a message…">
       </div>
+      <div id="lobby-hint" class="lobby-hint" style="display:none;"></div>
       <div class="menu-button-container">
         <button type="button" id="lobby-ready-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyReadyClicked()">✔ Ready</button>
         <button type="button" id="lobby-start-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyStartClicked()" disabled>Start Match</button>
