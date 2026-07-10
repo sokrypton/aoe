@@ -333,12 +333,13 @@ function restoreTeamState(src){
   if (!teamAlliance) resetTeamAlliance();
   if (!defeatedTeams) resetDefeatedTeams();
   if (!teamAge) resetTeamAge();
-  // Cosmetic seat labels/colors are NOT part of snapshot state (never hashed
-  // or captured) — the lobby / lockstep-start carries them separately. Only
-  // ensure they're non-null so teamColor()/teamName() never fault after a
-  // restore that happened before any lobby data arrived.
-  if (!teamColorMap) resetTeamColorMap();
-  if (!teamNames) resetTeamNames();
+  // Cosmetic seat labels/colors are NOT part of the lockstep snapshot (never
+  // hashed/captured) — rollback/resync src won't carry them, so those keep the
+  // current values. A SAVE file DOES carry them (js/save.js) so a loaded MP
+  // game shows the agreed names/colors; restore when present, else default so
+  // teamColor()/teamName() never fault.
+  if (src.teamColorMap) teamColorMap = src.teamColorMap; else if (!teamColorMap) resetTeamColorMap();
+  if (src.teamNames) teamNames = src.teamNames; else if (!teamNames) resetTeamNames();
 }
 // The controller layout for the two match shapes that exist today. The
 // single derivation point — restart, hosting transitions, and save-load
