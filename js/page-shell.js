@@ -82,14 +82,15 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div class="help-row"><span class="help-ico">🐑</span> Sheep &amp; <span class="help-ico">🍒</span> berries &amp; <span class="help-ico">🌾</span> farms &rarr; <b>Food</b> (train units)</div>
       <div class="help-row"><span class="help-ico">⛏️</span> Gold mines &rarr; <b>Gold</b> (soldiers)</div>
       <div class="help-row"><span class="help-ico">🪨</span> Stone &rarr; <b>Stone</b> (walls &amp; towers)</div>
-      <p>Select a villager, then click a resource. Full hands? They walk it home automatically. Build a <b>Lumber Camp 🪓 / Mill 🛞 / Mining Camp ⛏️</b> next to resources so the walk is short.</p>
+      <p>Select a villager, then click a resource. Full hands? They walk it home automatically. Build a <b>Lumber Camp 🪓 / Mill 🛞 / Mining Camp ⛏️</b> next to resources so the walk is short. Farms run dry over time — a soft chime marks an exhausted 🌾 farm; reseed it (a little wood) to keep the food coming.</p>
     </div>
 
     <div class="help-section">
       <h4>🏗️ Build</h4>
       <div class="help-row"><span class="help-ico">🏠</span> House &mdash; +5 population. Build these or you can't train more units!</div>
       <div class="help-row"><span class="help-ico">⚔️</span> Barracks &mdash; trains your army</div>
-      <div class="help-row"><span class="help-ico">🧱</span> Walls &amp; <span class="help-ico">🗼</span> Towers &mdash; keep raiders out (costs stone)</div>
+      <div class="help-row"><span class="help-ico">🧱</span> Walls &amp; <span class="help-ico">🗼</span> Towers &mdash; keep raiders out (costs stone). Select a palisade or gate and tap <b>To Stone</b> to rebuild it tougher.</div>
+      <div class="help-row"><span class="help-ico">🚪</span> Gates open automatically for your units &amp; allies. Select a gate and tap <b>🔒 Lock</b> to seal it shut &mdash; nothing passes, not even you &mdash; then <b>🔓 Unlock</b> to reopen. Handy for shutting a raider out of your wall.</div>
       <p>Select a villager &rarr; tap <b>Build Economic</b> or <b>Build Military</b> &rarr; pick a building &rarr; click the ground.</p>
     </div>
 
