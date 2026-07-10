@@ -76,6 +76,7 @@ canvas {
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
   height: 22px;
+  position:relative; /* anchors the .res-vils gatherer-count badge */
 }
 .res-icon{
   width:15px;
@@ -102,6 +103,31 @@ canvas {
   min-width:34px;
 }
 .res-val{min-width:32px;text-align:right}
+/* Gatherer count (AOE3-style) as a small badge on the lower-right corner of
+   the resource icon, slightly overlapping it. Absolutely positioned so it
+   never shifts the amount; invisible when nobody's on that resource. The
+   classic skin pads .res by 12px, so the icon sits further right. */
+.res-vils{
+  visibility:hidden;
+  position:absolute;
+  left:21px;    /* icon spans ~12–27px; sit on its lower-right, overlapping */
+  bottom:-3px;
+  box-sizing:border-box;
+  min-width:13px;
+  padding:0 2px;
+  background:rgba(20,12,6,0.9);
+  border:1px solid rgba(122,86,56,0.9);
+  border-radius:5px;
+  color:#ffe9b3;
+  font-size:8.5px;
+  font-weight:700;
+  line-height:1.4;
+  text-align:center;
+  text-shadow:0 1px 1px #000;
+  pointer-events:none;
+  z-index:5;
+}
+.res-vils.on{visibility:visible;}
 #pop-wrap {
   position: absolute;
   bottom: 84px;
@@ -214,7 +240,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   background-repeat: no-repeat;
 }
 #sel-portrait.cam-locked {
@@ -456,7 +482,7 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   7 columns x 7 rows. background-size:700%/700% makes each cell exactly
+   8 columns x 8 rows. background-size:800%/800% makes each cell exactly
    fill the element regardless of its box size, so background-position is
    expressed as fractions (c/6, r/6) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
@@ -465,55 +491,92 @@ canvas {
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:700% 700%; /* one 7x7 master sheet — see the labeled placeholder cells */
+  background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
 }
 .icon-villager            {background-position:0%        0%;}
-.icon-militia             {background-position:16.6667%  0%;}
-.icon-spearman            {background-position:33.3333%  0%;}
-.icon-archer              {background-position:50%       0%;}
-.icon-scout               {background-position:66.6667%  0%;}
-.icon-knight              {background-position:83.3333%  0%;}
-.icon-sheep               {background-position:100%      0%;}
-.icon-militia-feudal      {background-position:0%        16.6667%;}
-.icon-militia-castle      {background-position:16.6667%  16.6667%;}
-.icon-spearman-castle     {background-position:33.3333%  16.6667%;}
-.icon-archer-castle       {background-position:50%       16.6667%;}
-.icon-scout-castle        {background-position:66.6667%  16.6667%;}
-.icon-bear                {background-position:83.3333%  16.6667%;}
-.icon-pop                 {background-position:100%      16.6667%;}
-.icon-TC                  {background-position:0%        33.3333%;}
-.icon-HOUSE               {background-position:16.6667%  33.3333%;}
-.icon-BARRACKS            {background-position:33.3333%  33.3333%;}
-.icon-MILL                {background-position:50%       33.3333%;}
-.icon-LCAMP               {background-position:66.6667%  33.3333%;}
-.icon-MCAMP               {background-position:83.3333%  33.3333%;}
-.icon-FARM                {background-position:100%      33.3333%;}
-.icon-TOWER               {background-position:0%        50%;}
-.icon-WALL                {background-position:16.6667%  50%;}
-.icon-GATE                {background-position:33.3333%  50%;}
-.icon-SWALL               {background-position:50%       50%;}
-.icon-SGATE               {background-position:66.6667%  50%;}
-.icon-gate-lock           {background-position:83.3333%  50%;}
-.icon-gate-unlock         {background-position:100%      50%;}
-.icon-food                {background-position:0%        66.6667%;}
-.icon-wood                {background-position:16.6667%  66.6667%;}
-.icon-gold                {background-position:33.3333%  66.6667%;}
-.icon-stone               {background-position:50%       66.6667%;}
-.icon-cancel              {background-position:66.6667%  66.6667%;}
-.icon-econ                {background-position:83.3333%  66.6667%;}
-.icon-mil                 {background-position:100%      66.6667%;}
-.icon-back                {background-position:0%        83.3333%;}
-.icon-reseed              {background-position:16.6667%  83.3333%;}
-.icon-research            {background-position:33.3333%  83.3333%;}
-.icon-logo                {background-position:50%       83.3333%;}
-.icon-bell                {background-position:100%      83.3333%;}
-.icon-age-dark            {background-position:0%        100%;}
-.icon-age-feudal          {background-position:16.6667%  100%;}
-.icon-age-castle          {background-position:33.3333%  100%;}
-.icon-idle                {background-position:50%       100%;}
-.icon-rally               {background-position:66.6667%  100%;}
-.icon-map                 {background-position:83.3333%  100%;}
-.icon-home                {background-position:100%      100%;}
+.icon-militia             {background-position:14.2857%  0%;}
+.icon-spearman            {background-position:28.5714%  0%;}
+.icon-archer              {background-position:42.8571%       0%;}
+.icon-scout               {background-position:57.1429%  0%;}
+.icon-knight              {background-position:71.4286%  0%;}
+.icon-sheep               {background-position:85.7143%      0%;}
+.icon-militia-feudal      {background-position:0%        14.2857%;}
+.icon-militia-castle      {background-position:14.2857%  14.2857%;}
+.icon-spearman-castle     {background-position:28.5714%  14.2857%;}
+.icon-archer-castle       {background-position:42.8571%       14.2857%;}
+.icon-scout-castle        {background-position:57.1429%  14.2857%;}
+.icon-bear                {background-position:71.4286%  14.2857%;}
+.icon-pop                 {background-position:85.7143%      14.2857%;}
+.icon-TC                  {background-position:0%        28.5714%;}
+.icon-HOUSE               {background-position:14.2857%  28.5714%;}
+.icon-BARRACKS            {background-position:28.5714%  28.5714%;}
+.icon-MILL                {background-position:42.8571%       28.5714%;}
+.icon-LCAMP               {background-position:57.1429%  28.5714%;}
+.icon-MCAMP               {background-position:71.4286%  28.5714%;}
+.icon-FARM                {background-position:85.7143%      28.5714%;}
+.icon-TOWER               {background-position:0%        42.8571%;}
+.icon-WALL                {background-position:14.2857%  42.8571%;}
+.icon-GATE                {background-position:28.5714%  42.8571%;}
+.icon-SWALL               {background-position:42.8571%       42.8571%;}
+.icon-SGATE               {background-position:57.1429%  42.8571%;}
+.icon-gate-lock           {background-position:71.4286%  42.8571%;}
+.icon-gate-unlock         {background-position:85.7143%      42.8571%;}
+.icon-food                {background-position:0%        57.1429%;}
+.icon-wood                {background-position:14.2857%  57.1429%;}
+.icon-gold                {background-position:28.5714%  57.1429%;}
+.icon-stone               {background-position:42.8571%       57.1429%;}
+.icon-cancel              {background-position:57.1429%  57.1429%;}
+.icon-econ                {background-position:71.4286%  57.1429%;}
+.icon-mil                 {background-position:85.7143%      57.1429%;}
+.icon-back                {background-position:0%        71.4286%;}
+.icon-reseed              {background-position:14.2857%  71.4286%;}
+.icon-research            {background-position:28.5714%  71.4286%;}
+.icon-logo                {background-position:42.8571%       71.4286%;}
+.icon-bell                {background-position:85.7143%      71.4286%;}
+.icon-age-dark            {background-position:0%        85.7143%;}
+.icon-age-feudal          {background-position:14.2857%  85.7143%;}
+.icon-age-castle          {background-position:28.5714%  85.7143%;}
+.icon-idle                {background-position:42.8571%       85.7143%;}
+.icon-rally               {background-position:57.1429%  85.7143%;}
+.icon-map                 {background-position:71.4286%  85.7143%;}
+.icon-home                {background-position:85.7143%      85.7143%;}
+/* Cells that classic-style was missing (were falling back to 0% 0% = villager):
+   the ram, Market, and Trade Cart — plus the spare cells, kept in sync with
+   styles.css so the shared js/ui.js sprite classes resolve in the classic skin. */
+.icon-ram                 {background-position:57.1429%  71.4286%;}
+.icon-MARKET              {background-position:71.4286%  71.4286%;}
+.icon-tradecart           {background-position:100%      0%;}
+.icon-spare1              {background-position:100%      14.2857%;}
+.icon-spare2              {background-position:100%      28.5714%;}
+.icon-spare3              {background-position:100%      42.8571%;}
+.icon-spare4              {background-position:100%      57.1429%;}
+.icon-spare5              {background-position:100%      71.4286%;}
+.icon-spare6              {background-position:100%      85.7143%;}
+.icon-spare7              {background-position:100%      100%;}
+.icon-spare8              {background-position:0%        100%;}
+.icon-spare9              {background-position:14.2857%  100%;}
+.icon-spare10             {background-position:28.5714%  100%;}
+.icon-spare11             {background-position:42.8571%  100%;}
+.icon-spare12             {background-position:57.1429%  100%;}
+.icon-spare13             {background-position:71.4286%  100%;}
+.icon-spare14             {background-position:85.7143%  100%;}
+
+/* ---- MARKET buy/sell exchange (js/ui.js): two labeled rows (Buy / Sell) of
+   resource icons with the live gold price printed below each. Dedicated .mkt-*
+   classes (not .act-btn) so it stays visible in the classic skin, which hides
+   .btn-label / .cost. Spans the full command-grid width. ---- */
+.mkt-exchange{ width:100%; flex-basis:100%; grid-column:1 / -1; box-sizing:border-box;
+  display:flex; flex-direction:column; gap:2px; padding:2px; }
+.mkt-row{ display:flex; align-items:center; gap:4px; }
+.mkt-row-label{ flex:0 0 30px; font:bold 10px sans-serif; color:#e8dab0;
+  text-transform:uppercase; letter-spacing:0.5px; }
+.mkt-cell{ display:flex; flex-direction:column; align-items:center; cursor:pointer;
+  padding:1px 4px; border-radius:4px; background:rgba(0,0,0,0.28); }
+.mkt-cell:hover{ background:rgba(255,255,255,0.14); }
+.mkt-ico{ width:22px; height:22px; }
+.mkt-price{ display:flex; align-items:center; gap:2px;
+  font:bold 10px sans-serif; color:#ffe14d; }
+.mkt-price .res-mini-icon{ width:9px; height:9px; }
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -1668,25 +1731,25 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
 }
-.res-mini-icon.icon-food  { background-position: 0% 66.6667%; }
-.res-mini-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-.res-mini-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-.res-mini-icon.icon-stone { background-position: 50% 66.6667%; }
+.res-mini-icon.icon-food  { background-position: 0% 57.1429%; }
+.res-mini-icon.icon-wood  { background-position: 14.2857% 57.1429%; }
+.res-mini-icon.icon-gold  { background-position: 28.5714% 57.1429%; }
+.res-mini-icon.icon-stone { background-position: 42.8571% 57.1429%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   flex-shrink: 0;
 }
-#tooltip .tip-cost-icon.icon-food  { background-position: 0% 66.6667%; }
-#tooltip .tip-cost-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-#tooltip .tip-cost-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-#tooltip .tip-cost-icon.icon-stone { background-position: 50% 66.6667%; }
+#tooltip .tip-cost-icon.icon-food  { background-position: 0% 57.1429%; }
+#tooltip .tip-cost-icon.icon-wood  { background-position: 14.2857% 57.1429%; }
+#tooltip .tip-cost-icon.icon-gold  { background-position: 28.5714% 57.1429%; }
+#tooltip .tip-cost-icon.icon-stone { background-position: 42.8571% 57.1429%; }
 #tooltip .tip-cost-label {
   color: #ffebad;
 }
@@ -1881,7 +1944,7 @@ canvas {
    out every multi-select/garrison icon. */
 #sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   background-repeat: no-repeat;
 }
 #sel-name{

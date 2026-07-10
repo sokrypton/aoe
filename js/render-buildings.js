@@ -1349,6 +1349,102 @@ function drawBuilding(e, part = null){
       [[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]], darken);
     X.restore();
   }
+  else if(e.btype==='MARKET'){
+    // Open-air bazaar: a worn-dirt square with a few striped-awning stalls on
+    // posts, goods on the ground under each, and a central team banner. No
+    // enclosed hall (deliberate — see the market plan). 3x3 footprint, so
+    // bw=96/bhh=48; stalls are small props scattered across the tile.
+    bh=44;
+    drawCampClearing(sx, sy, bw, bhh, darken);
+
+    let canvasL = darken?darkenColor('#efe7d2'):'#efe7d2';
+    let canvasR = darken?darkenColor('#d6ccb2'):'#d6ccb2';
+    let postC   = darken?darkenColor(WOOD.post):WOOD.post;
+    let tccF    = darken?darkenColor(tc):tc;    // front-left eave (lit)
+    let tccR    = darken?darkenColor(tcD):tcD;  // front-right eave (shaded)
+
+    // Goods pile under a stall, centered on (cx,cy): 'crate' | 'sacks' | 'pots'.
+    let drawGood=(cx,cy,type)=>{
+      X.strokeStyle='#000';X.lineWidth=1.1;X.lineJoin='round';
+      if(type==='crate'){
+        const a=5,b=3,hh=6, UX=0.894,UY=0.447, VX=-0.894,VY=0.447;
+        let A=[cx-a*UX-b*VX, cy-a*UY-b*VY]; // back
+        let B=[cx+a*UX-b*VX, cy+a*UY-b*VY]; // right
+        let C=[cx+a*UX+b*VX, cy+a*UY+b*VY]; // front (near)
+        let D=[cx-a*UX+b*VX, cy-a*UY+b*VY]; // left
+        let wR=darken?darkenColor('#87673c'):'#87673c';
+        let wL=darken?darkenColor('#a07a48'):'#a07a48';
+        let wT=darken?darkenColor('#b58a52'):'#b58a52';
+        X.fillStyle=wR;X.beginPath();X.moveTo(B[0],B[1]-hh);X.lineTo(C[0],C[1]-hh);X.lineTo(C[0],C[1]);X.lineTo(B[0],B[1]);X.closePath();X.fill();X.stroke();
+        X.fillStyle=wL;X.beginPath();X.moveTo(C[0],C[1]-hh);X.lineTo(D[0],D[1]-hh);X.lineTo(D[0],D[1]);X.lineTo(C[0],C[1]);X.closePath();X.fill();X.stroke();
+        X.fillStyle=wT;X.beginPath();X.moveTo(A[0],A[1]-hh);X.lineTo(B[0],B[1]-hh);X.lineTo(C[0],C[1]-hh);X.lineTo(D[0],D[1]-hh);X.closePath();X.fill();X.stroke();
+        X.save();X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=0.8;
+        X.beginPath();X.moveTo(C[0],C[1]-hh*0.5);X.lineTo(D[0],D[1]-hh*0.5);X.stroke();X.restore();
+      } else if(type==='sacks'){
+        let sc =darken?darkenColor('#cdb98c'):'#cdb98c';
+        let sc2=darken?darkenColor('#b6a074'):'#b6a074';
+        [[-4,1.5,3.2],[3,2,3.0],[-0.5,-1.5,2.8]].forEach(([dx,dy,r])=>{
+          X.fillStyle=sc;X.beginPath();X.ellipse(cx+dx,cy+dy,r,r*1.15,0,0,Math.PI*2);X.fill();X.stroke();
+          X.fillStyle=sc2;X.beginPath();X.ellipse(cx+dx+0.7,cy+dy+0.9,r*0.5,r*0.6,0,0,Math.PI*2);X.fill();
+        });
+      } else { // pots
+        let pc =darken?darkenColor('#b5651d'):'#b5651d';
+        let pc2=darken?darkenColor('#8c4a12'):'#8c4a12';
+        [[-3.5,2,3.4],[2.5,2.5,3.0]].forEach(([dx,dy,r])=>{
+          X.fillStyle=pc;X.beginPath();
+          X.moveTo(cx+dx-r*0.7,cy+dy-r);X.quadraticCurveTo(cx+dx-r,cy+dy, cx+dx-r*0.5,cy+dy+r*0.6);
+          X.lineTo(cx+dx+r*0.5,cy+dy+r*0.6);X.quadraticCurveTo(cx+dx+r,cy+dy,cx+dx+r*0.7,cy+dy-r);
+          X.closePath();X.fill();X.stroke();
+          X.fillStyle=pc2;X.beginPath();X.ellipse(cx+dx,cy+dy-r,r*0.55,r*0.28,0,0,Math.PI*2);X.fill();X.stroke();
+        });
+      }
+    };
+
+    // One market stall: a raised striped-canvas canopy (a tile-aligned diamond
+    // lifted by H) on 4 posts, with goods underneath and a team-color fascia
+    // along the two front eaves.
+    let stall=(cx,cyc,good)=>{
+      const w=16,h=8,H=19;
+      let corners={T:[cx,cyc-h],R:[cx+w,cyc],B:[cx,cyc+h],L:[cx-w,cyc]};
+      let post=(g)=>{
+        X.lineCap='round';
+        X.strokeStyle='#000';X.lineWidth=3;X.beginPath();X.moveTo(g[0],g[1]);X.lineTo(g[0],g[1]-H);X.stroke();
+        X.strokeStyle=postC;X.lineWidth=1.4;X.beginPath();X.moveTo(g[0],g[1]);X.lineTo(g[0],g[1]-H);X.stroke();
+        X.lineCap='butt';
+      };
+      // back + side posts, then goods, then the near (front) post over them
+      post(corners.T);post(corners.L);post(corners.R);
+      drawGood(cx,cyc,good);
+      post(corners.B);
+      // raised canopy corners
+      let Tr=[corners.T[0],corners.T[1]-H],Rr=[corners.R[0],corners.R[1]-H],
+          Br=[corners.B[0],corners.B[1]-H],Lr=[corners.L[0],corners.L[1]-H];
+      X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
+      X.fillStyle=canvasL;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Lr[0],Lr[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();X.stroke();
+      X.fillStyle=canvasR;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();X.stroke();
+      X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Br[0],Br[1]);X.lineTo(Lr[0],Lr[1]);X.closePath();X.stroke();
+      // canvas stripes (light seams) running across the canopy
+      X.save();X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+      for(let t of [0.33,0.66]){
+        let a=[Lr[0]+(Tr[0]-Lr[0])*t, Lr[1]+(Tr[1]-Lr[1])*t];
+        let bb=[Br[0]+(Rr[0]-Br[0])*t, Br[1]+(Rr[1]-Br[1])*t];
+        X.beginPath();X.moveTo(a[0],a[1]);X.lineTo(bb[0],bb[1]);X.stroke();
+      }
+      X.restore();
+      // team-color fascia along the two FRONT eaves (Lr-Br lit, Br-Rr shaded)
+      let fs=3;
+      X.fillStyle=tccF;X.beginPath();X.moveTo(Lr[0],Lr[1]);X.lineTo(Br[0],Br[1]);X.lineTo(Br[0],Br[1]+fs);X.lineTo(Lr[0],Lr[1]+fs);X.closePath();X.fill();X.stroke();
+      X.fillStyle=tccR;X.beginPath();X.moveTo(Br[0],Br[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Rr[0],Rr[1]+fs);X.lineTo(Br[0],Br[1]+fs);X.closePath();X.fill();X.stroke();
+    };
+
+    // Central team banner at the back, drawn first so front stalls overlap its
+    // pole base; it flies clear above every canopy.
+    drawWavingFlag(sx, sy+16, 0, tc, tcD, 30);
+    // Stalls painted back → front (smaller ground-y first).
+    stall(sx-6,  sy+bhh*0.62, 'sacks');   // back-center
+    stall(sx-40, sy+bhh*1.05, 'crate');   // left, nearer
+    stall(sx+38, sy+bhh*1.18, 'pots');    // right-front, nearest
+  }
   else if(e.btype==='LCAMP'){
     bh=30;
     // Worn dirt clearing, enlarged past the tile so the oversized props

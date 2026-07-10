@@ -6,7 +6,8 @@ function createUnit(type,x,y,team){
     atk:u.atk,range:u.range,speed:u.speed,path:[],task:null,target:null,
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
     gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,
-    stance: (type !== 'villager' && type !== 'sheep' && type !== 'bear') ? 'aggressive' : undefined,
+    stance: (type !== 'villager' && type !== 'sheep' && type !== 'bear' && type !== 'tradecart') ? 'aggressive' : undefined,
+    autoScout: false, // player Auto Scout toggle (js/commands.js execAutoScout; behavior in js/logic.js)
     // Initial facing before first movement. Without this e.dir is undefined
     // and the face renderer draws NO eyes (its dir branches all miss), so
     // fresh units stared blankly. 1 = south, facing the viewer; the scout

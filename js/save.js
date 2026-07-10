@@ -44,7 +44,7 @@ function serializeGame(){
     // id+snapshot, so a mid-volley save no longer silently loses those hits.
     projectiles,
     cmdMarkers,
-    resources, popUsed, popCap,
+    resources, marketPrices, popUsed, popCap,
     gameStarted, gameOver, won, aiDifficulty,
     // Per-team controller layout + AI plan state + last-hit record
     // (js/core.js) — all plain data, sized by numTeams.
@@ -311,6 +311,9 @@ function applySavedGame(data, opts){
     selected = (data.selectedIds || []).map(id => entitiesById.get(id)).filter(Boolean);
 
     resources = data.resources || resources;
+    // Global commodity exchange prices (js/core.js); older saves without it
+    // fall back to fresh defaults so buy/sell still works.
+    marketPrices = data.marketPrices || freshMarketPrices();
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
 

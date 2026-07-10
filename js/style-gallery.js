@@ -139,13 +139,13 @@
                    aimTx: 450, rowH: 240 });
   };
 
-  const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','FARM','TOWER','WALL','GATE','SWALL','SGATE'];
+  const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','MARKET','FARM','TOWER','WALL','GATE','SWALL','SGATE'];
   BROW.forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
   mkFort('SWALL', 'SGATE', 'Stone fortification (walls + gates + towers)');
   mkFort('WALL', 'GATE', 'Palisade fortification (walls + gates)');
   mkU('villager', { female: false, label: 'Villager (male)' });
   mkU('villager', { female: true,  label: 'Villager (female)' });
-  ['militia','spearman','archer','scout','knight','ram','sheep','bear'].forEach(u => mkU(u));
+  ['militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear'].forEach(u => mkU(u));
 
   // ---- Controls ----
   let galleryAge = 0, galleryZoom = 1.5, walking = false, attacking = false, scrollY = 0;

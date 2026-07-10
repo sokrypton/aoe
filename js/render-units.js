@@ -765,6 +765,328 @@ function drawRamBody(e){
   X.restore();
 }
 
+// ---- DRAFT QUADRUPED (ox) ----
+// Horse-derived body/legs (see the mount block in drawUnit) RESHAPED via the
+// `p` profile so it reads as an OX rather than a recolored horse: a heavy
+// barrel, a shoulder hump, a short neck carried LOW, a blocky head, and curved
+// horns. Drawn in drawUnit's translated/mirrored/scaled context at the animal's
+// ground origin, same convention as the horse. Only the 5 right-facing poses
+// are authored ({0,1,5,6,7}); mirroredDir folds the left three onto them. Legs
+// plod on the shared clock while moving. `p` supplies colors + a few shape
+// knobs so the same routine can back other draft animals later.
+function drawQuadruped(e, p){
+  let useDir = mirroredDir(e);
+  let moving = e.path && e.path.length>0 && !e.corpseRot;
+  let walk = moving ? Math.sin(tick*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
+  let idle = !moving;
+  let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.18:0.07);
+  let nod = idle ? Math.sin(tick*0.05+e.id)*0.5 : 0;
+  const coat=p.coat, dark=p.maneC, legC=p.legC, hornC=p.hornC;
+  const LT=p.legTop, LB=p.legBot;
+  X.save(); X.translate(0,-1); X.scale(p.scale, p.scale);
+  X.lineJoin='round';
+
+  // Pair of thick bull horns: sweep OUT low from the poll, then the tip
+  // curls up — reads as horns, not antennae.
+  let horns=(hx,hy,s)=>{
+    [-1,1].forEach(sd=>{
+      X.lineCap='round';
+      let cpx=hx+sd*s*2.7, cpy=hy+0.3, ex=hx+sd*s*3.1, ey=hy-2.3;
+      X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE;
+      X.beginPath(); X.moveTo(hx,hy); X.quadraticCurveTo(cpx,cpy, ex,ey); X.stroke();
+      X.strokeStyle=hornC; X.lineWidth=1.7/UNIT_SCALE;
+      X.beginPath(); X.moveTo(hx,hy); X.quadraticCurveTo(cpx,cpy, ex,ey); X.stroke();
+    });
+    X.lineCap='butt';
+  };
+
+  // Tail (rump end): drawn first for profile/SE so the legs/body overlap it.
+  if(useDir===7||useDir===0){
+    let k = useDir===7?1:0.74;
+    X.save(); X.translate(-6.8*k,-7.5); X.rotate(swish);
+    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.4*k,3,-1.8*k,8.5);
+    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke();
+    X.fillStyle=dark; X.beginPath(); X.arc(-1.8*k,8.9,1.4,0,Math.PI*2); X.fill(); // tuft
+    X.lineCap='butt'; X.restore();
+  }
+
+  // Legs — shorter, stockier than the horse, same swing scheme.
+  {
+    X.beginPath();
+    if(useDir===1||useDir===5){
+      X.moveTo(-3.2,LT); X.lineTo(-3.2, LB+walk);
+      X.moveTo(3.2,LT);  X.lineTo(3.2, LB-walk);
+      X.moveTo(-4.6,LT); X.lineTo(-4.6, LB-1-walk);
+      X.moveTo(4.6,LT);  X.lineTo(4.6, LB-1+walk);
+    } else if(useDir===7){
+      X.moveTo(3.6,LT); X.lineTo(3.6+walk, LB);
+      X.moveTo(5.6,LT); X.lineTo(5.6-walk, LB);
+      X.moveTo(-4.6,LT);X.lineTo(-4.6+walk, LB);
+      X.moveTo(-6.6,LT);X.lineTo(-6.6-walk, LB);
+    } else {
+      let fy=useDir===6?LB-1:LB, ry=useDir===6?LB:LB-1;
+      X.moveTo(3.6,LT); X.lineTo(3.6+walk, fy);
+      X.moveTo(5.4,LT); X.lineTo(5.4-walk, fy);
+      X.moveTo(-3.4,LT);X.lineTo(-3.4+walk, ry);
+      X.moveTo(-5.0,LT);X.lineTo(-5.0-walk, ry);
+    }
+    X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
+    X.strokeStyle=legC; X.lineWidth=1.9/UNIT_SCALE; X.stroke(); X.lineCap='butt';
+    let hoof;
+    if(useDir===1||useDir===5) hoof=[[-3.2,LB+walk],[3.2,LB-walk],[-4.6,LB-1-walk],[4.6,LB-1+walk]];
+    else if(useDir===7) hoof=[[3.6+walk,LB],[5.6-walk,LB],[-4.6+walk,LB],[-6.6-walk,LB]];
+    else { let fy=useDir===6?LB-1:LB, ry=useDir===6?LB:LB-1; hoof=[[3.6+walk,fy],[5.4-walk,fy],[-3.4+walk,ry],[-5.0-walk,ry]]; }
+    X.fillStyle='#1e1408';
+    hoof.forEach(h=>{X.beginPath();X.ellipse(h[0],h[1]+0.4,1.6,1.2,0,0,Math.PI*2);X.fill();});
+  }
+
+  X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+
+  if(useDir===7||useDir===0){
+    let k=useDir===7?1:0.74;
+    // heavy barrel
+    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6.5, 8.0*k, 5.6, 0,0,Math.PI*2); X.fill(); X.stroke();
+    // short low neck into a blocky head, carried forward-down
+    X.save(); X.translate(2.4*k, nod);
+    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath();
+    X.moveTo(5.0*k,-9.2);                           // withers/neck top
+    X.quadraticCurveTo(10*k,-8.8, 12.8*k,-7.6);     // neck to poll
+    X.lineTo(15.4*k,-6.8);                          // forehead to muzzle top
+    X.lineTo(15.2*k,-3.0);                          // blunt muzzle front
+    X.quadraticCurveTo(11.6*k,-2.2, 8.2*k,-3.2);    // underjaw
+    X.quadraticCurveTo(6.0*k,-4.0, 4.6*k,-5.8);     // throat into chest
+    X.fill(); X.stroke();
+    X.fillStyle=dark; X.beginPath(); X.ellipse(14.4*k,-4.4,1.5,1.7,0,0,Math.PI*2); X.fill(); // muzzle
+    horns(12.6*k,-8.4, k);
+    X.fillStyle='#000'; X.beginPath(); X.arc(12.0*k,-6.1,0.6,0,Math.PI*2); X.fill(); // eye
+    X.restore();
+  } else if(useDir===6){
+    // NE back-diagonal: rump near, head recedes.
+    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6.5, 7.0, 5.6, 0,0,Math.PI*2); X.fill(); X.stroke();
+    X.save(); X.translate(-5.6,-7); X.rotate(swish); // near tail
+    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.2,3,-1.6,8.5);
+    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt'; X.restore();
+    X.save(); X.translate(1.4,nod);
+    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath();
+    X.moveTo(3.2,-8.2); X.quadraticCurveTo(4.4,-12, 5.6,-14.4);
+    X.lineTo(7.6,-14); X.quadraticCurveTo(6.8,-10, 5.8,-7);
+    X.fill(); X.stroke();
+    X.beginPath(); X.ellipse(6.6,-14.6,2.3,2.1,0.1,0,Math.PI*2); X.fill(); X.stroke(); // head
+    horns(6.6,-15.6, 0.9);
+    X.restore();
+  } else if(useDir===1){
+    // S head-on: body behind, blunt head + wide horns toward the viewer.
+    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6, 6.4,5.6,0,0,Math.PI*2); X.fill(); X.stroke();
+    X.save(); X.translate(0,nod);
+    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath();
+    X.moveTo(-3.4,-9.6);
+    X.quadraticCurveTo(-3.9,-5.4, -2.2,-3.1);
+    X.quadraticCurveTo(0,-1.9, 2.2,-3.1);
+    X.quadraticCurveTo(3.9,-5.4, 3.4,-9.6);
+    X.quadraticCurveTo(0,-11.8, -3.4,-9.6);
+    X.closePath(); X.fill(); X.stroke();
+    X.fillStyle=dark; X.beginPath(); X.ellipse(0,-3.5,2.2,1.6,0,0,Math.PI*2); X.fill(); X.stroke(); // muzzle
+    horns(0,-9.8, 1.7);
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(-1.9,-7.2,0.7,0,Math.PI*2); X.fill();
+    X.beginPath(); X.arc(1.9,-7.2,0.7,0,Math.PI*2); X.fill();
+    X.restore();
+  } else {
+    // N back view: neck/head face away; rump + tail nearest.
+    X.save(); X.translate(0,nod);
+    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath(); X.ellipse(0,-10,3.0,4.4,0,0,Math.PI*2); X.fill(); X.stroke(); // neck away
+    X.beginPath(); X.ellipse(0,-13.2,2.6,2.4,0,0,Math.PI*2); X.fill(); X.stroke(); // head
+    horns(0,-14.2,1.2);
+    X.restore();
+    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6,6.2,5.6,0,0,Math.PI*2); X.fill(); X.stroke(); // body
+    X.save(); X.translate(0,-3.5); X.rotate(swish); // tail down center
+    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-0.7,4,0,8);
+    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
+    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt'; X.restore();
+  }
+  X.restore();
+}
+
+// ---- TRADE CART: ox-drawn covered wagon ----
+// Reuses the ram's iso projection (RAM_AXES / mirroredDir) and wheel machinery,
+// swapping the ram shed for a covered canvas tilt and yoking an ox
+// (drawQuadruped) at the front. Gold cargo rides hidden under the canvas.
+// Drawn inside drawUnit's translated + mirrored + scaled context, coords local
+// px around the ground anchor.
+const CART_DIM = { L:8, WB:4.4, CB:2.4, CH:7.6, TILT:8.5, WR:2.6, WA:9, WTH:1.3, SCALE:1.2, GAP:3 };
+const OX_PROFILE = { coat:'#7a5a3a', maneC:'#4a3320', legC:'#5f4428', hornC:'#e6ddc4', scale:1.2, walkAmp:3.0, legTop:-4, legBot:3.8 };
+function drawTradeCartBody(e){
+  let useDir = mirroredDir(e);
+  let ax = RAM_AXES[useDir] || RAM_AXES[7];
+  let u = ax.u, v = ax.v;
+  let P = (a,b,c) => ({ x:a*u.x + b*v.x, y:a*u.y + b*v.y - c });
+  const { L, WB, CB, CH, TILT, WR, WA, WTH, SCALE, GAP } = CART_DIM;
+  let tc = teamColor(e.team), tcD = teamColorDark(e.team);
+  let rolling = e.path.length > 0;
+  // Whether the ox draws ON TOP of the wagon (ox nearer the camera). For the
+  // side profile (E/W, dir7) the cart reads better drawn in FRONT of the ox,
+  // so 7 is excluded here (ox drawn first, wagon laps over it).
+  let frontNear = (useDir===0 || useDir===1);
+
+  // Rolling creak — same cadence/counter as the ram.
+  if (rolling && !window._maskDraw && window.playSound) {
+    let ck = Math.floor((tick + e.id*7)/90);
+    if (ramCreakCycles.get(e.id) !== ck) {
+      if (ramCreakCycles.has(e.id) && (GAME_SPEED<4 || ck%2===0)) playSound('ram_creak', e.x, e.y);
+      ramCreakCycles.set(e.id, ck);
+    }
+  }
+
+  X.save();
+  if (rolling) X.translate(0, Math.sin(tick*0.2+e.id)*0.5);
+
+  // Ox yoked ahead along the movement axis. Drawn in its own UNIT_SCALE space
+  // (drawQuadruped applies its own scale); the offset uses the CART-scaled
+  // projection so it lines up with the wagon's front. Grounding: the ox's
+  // origin sits a hoof-height ABOVE its feet, and the wagon's near wheels sit a
+  // half-width BELOW the axle center — offset y by (nearWheelDrop − hoofDrop)
+  // so the ox's hooves land on the wagon's near-wheel contact line (level).
+  let hoofDrop = OX_PROFILE.legBot*OX_PROFILE.scale - 1;
+  let nearDrop = SCALE*(WB+0.4)*Math.abs(v.y);
+  let oxOff = { x: SCALE*(L+GAP)*u.x, y: SCALE*(L+GAP)*u.y + nearDrop - hoofDrop };
+  let drawOx = () => { X.save(); X.translate(oxOff.x, oxOff.y); drawQuadruped(e, OX_PROFILE); X.restore(); };
+  // Yoke/tongue beam from the wagon front up to the ox's back.
+  let yoke = () => {
+    let a1 = { x: SCALE*P(L,0,CB+2).x, y: SCALE*P(L,0,CB+2).y };
+    let a2 = { x: oxOff.x, y: oxOff.y - 6 };
+    X.lineCap='round';
+    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.beginPath(); X.moveTo(a1.x,a1.y); X.lineTo(a2.x,a2.y); X.stroke();
+    X.strokeStyle=WOOD.beam; X.lineWidth=1.5/UNIT_SCALE; X.beginPath(); X.moveTo(a1.x,a1.y); X.lineTo(a2.x,a2.y); X.stroke();
+    X.lineCap='butt';
+  };
+
+  if (!frontNear) { drawOx(); yoke(); }
+
+  X.save(); X.scale(SCALE, SCALE);
+  let lw = 1.2/UNIT_SCALE;
+  let poly = (pts, fill) => {
+    X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
+    X.strokeStyle='#000'; X.lineWidth=lw; X.lineJoin='round'; X.stroke();
+  };
+  // Wheels — the ram's cylinder wheel, cart dimensions. Two axles (±WA/2).
+  let wheelRot = tick*0.35 + e.id;
+  let wheel = (a,b,r) => {
+    let thin = (useDir===1||useDir===5);
+    if (thin) {
+      let p=P(a,b,r), w2=WTH*1.15, h2=r*0.7;
+      X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
+      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
+      X.fillStyle='#5a4630'; X.fillRect(p.x-0.6,p.y-h2+0.6,1.2,h2*2-1.2); return;
+    }
+    let bIn=b-Math.sign(b)*WTH, pIn=P(a,bIn,r), pF=P(a,b,r);
+    let discPath=(cx,cy)=>{X.save();X.transform(u.x,u.y,0,-1,cx,cy);X.beginPath();X.arc(0,0,r,0,Math.PI*2);X.restore();};
+    X.strokeStyle='#1d150c';X.lineWidth=1.8/UNIT_SCALE; discPath(pIn.x,pIn.y);X.stroke();
+    X.fillStyle='#33261a';
+    for(let t=0;t<=1.001;t+=0.25){discPath(pIn.x+(pF.x-pIn.x)*t,pIn.y+(pF.y-pIn.y)*t);X.fill();}
+    X.fillStyle='#5a4630';X.strokeStyle='#1d150c';X.lineWidth=0.9/UNIT_SCALE; discPath(pF.x,pF.y);X.fill();X.stroke();
+    let ang=(rolling?wheelRot:0.6);
+    let sp=t=>({x:pF.x+(Math.cos(ang)*u.x)*r*t, y:pF.y+(Math.cos(ang)*u.y+Math.sin(ang))*r*t});
+    let s1=sp(-0.7),s2=sp(0.7);
+    X.strokeStyle='#3a2c1c';X.lineWidth=1/UNIT_SCALE;X.beginPath();X.moveTo(s1.x,s1.y);X.lineTo(s2.x,s2.y);X.stroke();
+    X.fillStyle='#8a6a4a';X.beginPath();X.arc(pF.x,pF.y,0.7,0,Math.PI*2);X.fill();
+  };
+  let wheelPair = (bSide) => {
+    let thin=(useDir===1||useDir===5);
+    let nearA = useDir===5 ? -WA/2 : WA/2;
+    let m = a => thin ? nearA-(nearA-a)*0.6 : a;
+    [{a:-WA/2},{a:WA/2}].map(w=>({a:m(w.a), y:P(m(w.a),bSide,WR).y})).sort((p,q)=>p.y-q.y).forEach(w=>wheel(w.a,bSide,WR));
+  };
+  // OPEN wooden bed (no tarp) so the cargo shows. Colors:
+  let bedFar  = '#8a6a44';
+  let bedNear = '#a07c4c';
+  let bedTop  = '#b48c58';
+  let bedFloor= '#3a2c1c';
+  let wall = (sgn, fill) => poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WB,CH),P(-L,sgn*WB,CH)], fill);
+  let endBoard = (a, fill) => poly([P(a,-WB,CB),P(a,WB,CB),P(a,WB,CH),P(a,-WB,CH)], fill);
+  // Team-color trim along the near top rim (ownership read — the tarp band did
+  // this before).
+  let bandRim = () => {
+    X.strokeStyle=tc; X.lineWidth=2/UNIT_SCALE; X.lineCap='round';
+    let p1=P(-L,WB,CH), p2=P(L,WB,CH);
+    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke(); X.lineCap='butt';
+  };
+  // Cargo heaped in the open bed, centered on screen point (cx,cy) at the rim:
+  // a sack + crate ALWAYS (so it reads as a laden trade cart), plus a shiny
+  // gold heap on the loaded return leg (e.carrying>0 — gold is lumped at the
+  // destination market, see updateTradeCart). Drawn last so goods sit clearly
+  // above the open rim.
+  let drawCargoAt = (cx,cy) => {
+    X.lineJoin='round';
+    // sack
+    X.strokeStyle='#000'; X.lineWidth=lw;
+    X.fillStyle='#cdb98c'; X.beginPath(); X.ellipse(cx-2.6,cy-1.4,2.3,2.7,0,0,Math.PI*2); X.fill(); X.stroke();
+    X.fillStyle='#b6a074'; X.beginPath(); X.ellipse(cx-2.2,cy-0.6,1.0,1.3,0,0,Math.PI*2); X.fill();
+    // crate
+    X.fillStyle='#a07a48'; X.strokeStyle='#000'; X.lineWidth=lw;
+    X.beginPath(); X.rect(cx+0.4,cy-4.4,4.2,4.2); X.fill(); X.stroke();
+    X.strokeStyle='rgba(0,0,0,0.3)'; X.lineWidth=0.8/UNIT_SCALE;
+    X.beginPath(); X.moveTo(cx+0.4,cy-2.3); X.lineTo(cx+4.6,cy-2.3); X.stroke();
+    X.beginPath(); X.moveTo(cx+2.5,cy-4.4); X.lineTo(cx+2.5,cy-0.2); X.stroke();
+    // gold on the loaded return leg
+    if(e.carrying>0){
+      const nug=(nx,ny,r)=>{ X.strokeStyle='#000'; X.lineWidth=lw*0.8; X.fillStyle='#e8b90f';
+        X.beginPath(); X.arc(cx+nx,cy+ny,r,0,Math.PI*2); X.fill(); X.stroke();
+        X.fillStyle='#ffe14d'; X.beginPath(); X.arc(cx+nx-r*0.3,cy+ny-r*0.3,r*0.5,0,Math.PI*2); X.fill(); };
+      nug(-1.2,-2.2,1.7); nug(0.6,-1.6,1.5); nug(-0.4,-3.7,1.4); nug(1.9,-3.1,1.3);
+      let tw=(Math.sin(tick*0.25+e.id)+1)/2;
+      X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
+      X.beginPath(); X.arc(cx-0.2,cy-3.6,0.5+1.1*tw,0,Math.PI*2); X.fill();
+    }
+  };
+
+  // Assemble far→near. Near side is +WB for the authored right-facings.
+  let nearB = WB+0.4, farB = -(WB+0.4);
+  if (useDir===1 || useDir===5) {
+    // Head-on (S/N): a wide open box facing the camera (widened like the ram's
+    // head-on v so it doesn't read as a narrow spike), cargo heaped above the
+    // front board.
+    let frontA = useDir===5 ? -L : L; // the end toward the camera
+    let hw = WB*1.7;
+    // wheels as edge-on slabs at the bottom sides (behind the body)
+    [-1,1].forEach(sd=>{
+      let p=P(frontA*0.4, sd*hw, WR), w2=WTH*1.3, h2=WR*0.78;
+      X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
+      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
+    });
+    // wide wood front box (open top)
+    let bl=P(frontA,-hw,CB), br=P(frontA,hw,CB), tl=P(frontA,-hw,CH), tr=P(frontA,hw,CH);
+    poly([bl,br,tr,tl], bedTop);
+    // team band along the top rim
+    X.strokeStyle=tc; X.lineWidth=2.4/UNIT_SCALE; X.beginPath(); X.moveTo(tl.x,tl.y); X.lineTo(tr.x,tr.y); X.stroke();
+    // cargo heaped above the front board
+    drawCargoAt((tl.x+tr.x)/2, (tl.y+tr.y)/2);
+  } else {
+    let frontA = L, backA = -L;
+    wheelPair(farB);
+    wall(-1, bedFar);
+    endBoard(backA, bedFar);
+    // open interior floor
+    poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor);
+    // near structure (open top)
+    wall(1, bedNear);
+    endBoard(frontA, bedTop);
+    wheelPair(nearB);
+    bandRim();
+    // cargo heaped in the bed (drawn last so goods sit clearly above the rim)
+    let cc=P(0,0,CH); drawCargoAt(cc.x, cc.y);
+  }
+  X.restore();
+
+  if (frontNear) { yoke(); drawOx(); }
+  X.restore();
+}
+
 // Ground-shadow footprint per unit type, in TILE units: half-length along
 // the body's facing and half-width across it. Radially-symmetric units set
 // len==wid (facing then doesn't matter); elongated ones (mounts, bear) are
@@ -779,7 +1101,8 @@ const UNIT_SHADOW = {
   // Ram: big, elongated, and its wheels touch AT the anchor line (yoff),
   // unlike foot units whose feet sit ~6px above it. Goes through the same
   // rotated ground-oval path so its diagonal facings cast a tilted shadow.
-  ram:{len:0.62,wid:0.34,yoff:1.5}
+  ram:{len:0.62,wid:0.34,yoff:1.5},
+  tradecart:{len:0.7,wid:0.32,yoff:1.5}
 };
 // A grounded contact shadow: an oval lying on the iso ground plane,
 // oriented to the unit's heading. Drawn by mapping the canvas into ground
@@ -916,7 +1239,7 @@ function drawUnit(e){
   X.save();
   if(e.utype==='sheep'||e.utype==='bear') X.translate(sx, sy + sbob);
   // Vehicles don't head-bob — the ram applies its own subtle rolling sway
-  else if(e.utype==='sheep_carcass'||e.utype==='ram') X.translate(sx, sy);
+  else if(e.utype==='sheep_carcass'||e.utype==='ram'||e.utype==='tradecart') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
   X.scale(e.facing * UNIT_SCALE, UNIT_SCALE);
   // Corpse pose (see drawCorpse): the dead are drawn with this very
@@ -1033,6 +1356,8 @@ function drawUnit(e){
     return;
   } else if(e.utype==='ram'){
     drawRamBody(e);
+  } else if(e.utype==='tradecart'){
+    drawTradeCartBody(e);
   } else if(e.utype==='bear'){
     // Bear — heavy quadruped in the sheep's style: one black silhouette
     // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
@@ -2335,7 +2660,7 @@ function drawUnit(e){
   // HP bar floats clear above the head (higher for the scout — horse and
   // rider stand taller) so it never covers the unit's face.
   if(e.hp<e.maxHp){
-    let hpTop = isMountedUnit(e.utype) ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
+    let hpTop = (isMountedUnit(e.utype)||e.utype==='tradecart') ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
     X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);

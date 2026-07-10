@@ -266,7 +266,7 @@ let lockstepSnapshots = []; // {t, state} — state captured AFTER simming tick 
 
 function lockstepCaptureState(){
   return structuredClone({
-    entities, projectiles, corpses, resources, map,
+    entities, projectiles, corpses, resources, map, marketPrices,
     popUsed, popCap, tick, gameOver, won,
     nextId, nextProjectileId, simRngState,
     bellRinging: window.bellRinging,
@@ -296,6 +296,7 @@ function lockstepRestore(snap){
   projectiles = st.projectiles;
   corpses = st.corpses;
   resources = st.resources;
+  if (st.marketPrices) marketPrices = st.marketPrices; // global commodity exchange (js/core.js)
   map = st.map;
   popUsed = st.popUsed; popCap = st.popCap;
   tick = st.tick;
@@ -389,6 +390,7 @@ function lockstepApplyResync(state){
       c.ageAtSaveMs !== undefined ? {...c, ageAtSaveMs: undefined, deathTime: nowMs - c.ageAtSaveMs} : c);
   }
   resources = state.resources;
+  if (state.marketPrices) marketPrices = state.marketPrices; // global commodity exchange (js/core.js)
   map = state.map;
   popUsed = state.popUsed; popCap = state.popCap;
   tick = state.tick;

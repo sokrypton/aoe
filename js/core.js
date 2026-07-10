@@ -124,7 +124,8 @@ const AGES = [
 // Minimum age index per unit/building type; absent => available from Dark.
 const AGE_REQ = {
   spearman:1, archer:1, scout:1, knight:2, ram:2,
-  TOWER:1, SWALL:1, SGATE:1
+  TOWER:1, SWALL:1, SGATE:1,
+  MARKET:1, tradecart:1
 };
 function ageReq(type){ return AGE_REQ[type] || 0; }
 function isUnlocked(team, type){ return teamAge && isPlayerTeam(team) ? teamAge[team] >= ageReq(type) : true; }
@@ -502,7 +503,13 @@ const BLDGS={
   // only replaces stone wall segments (and palisade gate only palisades):
   // matching material keeps the consume/refund math and the art coherent.
   SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
-  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'}
+  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'},
+  // Feudal-age Market. Trains Trade Carts (which shuttle to any OTHER player's
+  // Market for gold, allied or enemy — see updateTradeCart in logic.js) and
+  // hosts the global commodity buy/sell exchange (see marketPrices / execMarketTrade
+  // in commands.js). The builds:['tradecart'] array is also what lets a Market
+  // accept a rally point (execRally bails when builds is empty).
+  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:1500,armor:{m:0,p:7},desc:'Trains Trade Carts and lets you buy and sell resources for gold. Trade Carts earn gold by travelling to another player’s Market. Requires the Feudal Age.',icon:'⚖️'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
@@ -532,7 +539,12 @@ const UNITS={
   // of militia put it down without drama.
   bear:{name:'Bear',hp:45,atk:7,range:0,speed:1.2,rof:60,armor:{m:1,p:0},cost:{f:0},trainTime:0,desc:'Wild animal. Attacks anyone who wanders too close.',icon:'🐻'},
   sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
-  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'}
+  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'},
+  // Trade Cart — Feudal (AGE_REQ), trained at the Market. Unarmed and
+  // defenceless: it shuttles between its home Market and another player's
+  // Market, delivering gold scaled by the distance between them (see
+  // updateTradeCart in logic.js). Costs 1 pop like any unit.
+  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:60,armor:{m:0,p:0},cost:{w:100},trainTime:750,desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
 };
 // AI pacing, authored against the AoE2-rate economy (30 ticks per
 // game-second; villager trains in 25 game-s, militia in 21 game-s).
@@ -557,14 +569,14 @@ const AI_LEVELS={
   // time to stabilise and siege almost never lands. Mirrors how AoE2's easiest
   // AI feels easy: it's played worse, not given weaker units. Harder levels tech
   // faster and push harder for the real threat.
-  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:32400,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,waveCap:6,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:32400,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,waveCap:6,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
   // Standard plays FAIR — no resource cheat (trickle all 0), like AoE2's
   // Moderate AI. It's still a real challenge (reaches Castle ~15min, fields
   // rams/knights, walls + a tower, pushes from ~10min) but wins on competent
   // play, not free resources. Only hard cheats — AoE2 reserves resource
   // handicaps for its hardest tiers.
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:18000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:12,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:14400,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:24,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:18000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:12,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:14400,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:24,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
@@ -664,6 +676,28 @@ function freshTeamResources(){
   return Array.from({length: NUM_TEAMS}, () => ({food:200,wood:200,gold:100,stone:200,prepaidFarms:0}));
 }
 let resources = freshTeamResources();
+// Global commodity exchange — ONE market shared by every player (AoE2 works
+// this way: buying/selling shifts the price for everyone). Gold is the
+// currency so it has no price. Buying a resource nudges its price up; selling
+// nudges it down; a buy/sell spread means round-tripping loses gold. Prices
+// are integer gold-per-100-units and are sim state: checksummed
+// (js/determinism.js) and saved (js/save.js), only mutated in execMarketTrade
+// (js/commands.js). See MARKET_* tuning constants below.
+function freshMarketPrices(){
+  return {food:100, wood:100, stone:130};
+}
+let marketPrices = freshMarketPrices();
+// Commodity exchange tuning (integer math for determinism). Trades move 100
+// units. SPREAD is applied so buying costs the full price and selling only
+// returns SELL_RATIO of it. STEP shifts the price after each 100-unit trade;
+// prices clamp to [MIN, MAX]. Mirrors AoE2's drifting commodity market.
+const MARKET_LOT = 100;
+const MARKET_PRICE_MIN = 25, MARKET_PRICE_MAX = 9999;
+const MARKET_PRICE_STEP = 3;   // price change per 100-unit trade
+const MARKET_SELL_RATIO = 70;  // sell returns 70% of price (÷100), a 30% spread
+// Trade Cart gold per round trip = round(distance-between-markets * this).
+// Farther-apart Markets pay more, rewarding spread-out trade (AoE2 behavior).
+const TRADE_GOLD_PER_TILE = 1.2;
 // Viewer-local convenience caches of MY team's population (see
 // refreshPopulationCounts, js/logic.js); per-team reads go through
 // teamPopUsed/teamPopCap directly. The old aiPop/aiPopCap/aiTick globals

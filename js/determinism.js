@@ -114,6 +114,13 @@ function detEntityHash(e){
   h = detMix(h, e.chaseProg ? e.chaseProg.since : -1);
   h = detMix(h, e.chaseProg ? e.chaseProg.id : -2);
   h = detMix(h, e.lastAtkTick == null ? -1 : e.lastAtkTick); // gates stuck-watchdog (js/logic.js)
+  // Trade cart route (updateTradeCart, js/logic.js): which Markets it shuttles
+  // between and which leg it's on decide its pathing and gold delivery on later
+  // ticks — unhashed, a diverged route is invisible until it moves gold/position.
+  h = detMix(h, e.tradeHomeId == null ? -1 : e.tradeHomeId);
+  h = detMix(h, e.tradeDestId == null ? -1 : e.tradeDestId);
+  h = detMixStr(h, e.tradePhase);
+  h = detMix(h, e.autoScout ? 1 : 0); // player Auto Scout mode (re-paths each tick, js/logic.js)
   return h >>> 0;
 }
 
@@ -128,6 +135,12 @@ function simChecksum(){
     h = detMixFloat(h, r.food); h = detMixFloat(h, r.wood);
     h = detMixFloat(h, r.gold); h = detMixFloat(h, r.stone);
     h = detMix(h, r.prepaidFarms || 0);
+  }
+  // Global commodity exchange prices (marketPrices, js/core.js) — shared sim
+  // state mutated by execMarketTrade; a diverged price desyncs every future
+  // buy/sell. Guarded for older states without a market.
+  if (typeof marketPrices !== 'undefined' && marketPrices) {
+    h = detMix(h, marketPrices.food); h = detMix(h, marketPrices.wood); h = detMix(h, marketPrices.stone);
   }
   for (let i = 0; i < projectiles.length; i++) {
     let p = projectiles[i];

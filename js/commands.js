@@ -203,7 +203,56 @@ function execCommand(cmd, team){
       if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
       if (typeof updateUI === 'function') updateUI();
       break;
+    case 'market-trade':
+      execMarketTrade(cmd, team);
+      break;
+    case 'auto-scout':
+      execAutoScout(cmd, team);
+      break;
   }
+}
+
+// Toggle the player's Auto Scout mode on the given scout units. When turned ON,
+// clear any target/path so it starts exploring immediately (the per-tick
+// behavior in js/logic.js drives the frontier wander). Mirrors execGateLock's
+// re-resolve-and-revalidate-by-id pattern for lockstep safety.
+function execAutoScout(cmd, team){
+  let on = !!cmd.on;
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.type === 'unit' && u.utype === 'scout' && u.team === team && u.hp > 0);
+  if (!units.length) return;
+  units.forEach(u => {
+    u.autoScout = on;
+    if (on) { u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u); }
+  });
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
+}
+
+// Commodity exchange: buy or sell 100 of a resource for gold at the current
+// global price (marketPrices, js/core.js — shared by all players). Mutates the
+// shared price so every player sees the drift, which is why it MUST run here in
+// the deterministic executor, never client-side. Integer math only.
+function execMarketTrade(cmd, team){
+  let res = cmd.resType;
+  if (res !== 'food' && res !== 'wood' && res !== 'stone') return;
+  // Authoritative gate: the team must actually own a completed Market.
+  let hasMarket = entities.some(b => b.type === 'building' && b.btype === 'MARKET' && b.team === team && b.complete && b.hp > 0);
+  if (!hasMarket) return;
+  let store = resourceStore(team);
+  let price = marketPrices[res];
+  if (cmd.dir === 'buy') {
+    if (store.gold < price) { feedbackFor(team, () => showMsg('Not enough gold.')); return; }
+    store.gold -= price;
+    store[res] += MARKET_LOT;
+    marketPrices[res] = Math.min(MARKET_PRICE_MAX, price + MARKET_PRICE_STEP);
+  } else if (cmd.dir === 'sell') {
+    if (store[res] < MARKET_LOT) { feedbackFor(team, () => showMsg('Not enough ' + res + ' to sell.')); return; }
+    store[res] -= MARKET_LOT;
+    store.gold += Math.floor(price * MARKET_SELL_RATIO / 100);
+    marketPrices[res] = Math.max(MARKET_PRICE_MIN, price - MARKET_PRICE_STEP);
+  }
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
 // ---- EXECUTORS ----
@@ -266,6 +315,34 @@ function execUnitCommand(cmd){
     s.followId = undefined;
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
+    s.autoScout = false; // any manual order cancels Auto Scout
+    if (s.utype === 'tradecart') {
+      // Trade carts route to a Market, they don't attack. Resolve the clicked
+      // entity directly from cmd (NOT the `target` var, which is nulled for
+      // allied/friendly buildings above) so trading with an ALLIED market — not
+      // just an enemy one — works, per AoE2. Any non-market order cancels the
+      // route and becomes a plain move.
+      let mkt = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+      let validMkt = mkt && mkt.type === 'building' && mkt.btype === 'MARKET' && mkt.complete && mkt.hp > 0 && mkt.team !== s.team && isPlayerTeam(mkt.team);
+      if (validMkt) {
+        let home = nearestMarket(s, true);
+        if (!home) {
+          feedbackFor(s.team, () => showMsg('Build your own Market before trading.'));
+        } else {
+          s.tradeDestId = mkt.id; s.tradeHomeId = home.id; s.tradePhase = 'toDest';
+          s.target = null; s.task = null; clearUnitPath(s);
+          let pt = nearestBldgPerimeter(s.x, s.y, mkt, s.id);
+          pathUnitTo(s, pt.x, pt.y);
+        }
+      } else {
+        s.tradeDestId = null; s.tradeHomeId = null; s.tradePhase = null;
+        s.carrying = 0; s.carryType = null; s.target = null; s.task = null;
+        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+        idx++;
+      }
+      return;
+    }
     if (buildTarget && s.utype === 'villager') {
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
       let b = BLDGS[buildTarget.btype];

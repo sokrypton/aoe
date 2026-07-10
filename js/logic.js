@@ -1096,6 +1096,71 @@ function soundAllClear(team){
   }
 }
 
+// Nearest completed Market for a trade cart. own=true finds the cart's own
+// team's Market (its home); own=false finds ANY other player's Market (the
+// trade destination — allied or enemy, per AoE2). Deterministic: scans
+// `entities` in array order, ties broken by first-found.
+function nearestMarket(e, own){
+  let best=null,bd=Infinity;
+  entities.forEach(b=>{
+    if(b.type!=='building'||b.btype!=='MARKET'||!b.complete||b.hp<=0)return;
+    let match = own ? (b.team===e.team) : (b.team!==e.team && isPlayerTeam(b.team));
+    if(!match)return;
+    let d=distToTarget(e,b);
+    if(d<bd){bd=d;best=b;}
+  });
+  return best;
+}
+
+// Trade cart state machine — shuttles between its home Market (tradeHomeId,
+// own team) and a foreign Market (tradeDestId, another player). Modeled on the
+// villager gather→return→dropoff loop: gold is loaded (into carrying/carryType,
+// both already checksummed) at the destination and deposited to the team's gold
+// on arrival home, sized by the distance between the two Markets. Sets the path
+// for the current leg; the shared movement step in updateUnit walks it. New
+// per-cart fields (tradeHomeId/tradeDestId/tradePhase) are hashed in
+// js/determinism.js. Idle carts (never ordered) fall through untouched.
+function updateTradeCart(e){
+  if(e.tradeDestId==null && e.tradeHomeId==null) return; // idle, not on a route
+  let home = e.tradeHomeId!=null ? entitiesById.get(e.tradeHomeId) : null;
+  let dest = e.tradeDestId!=null ? entitiesById.get(e.tradeDestId) : null;
+  let homeOk = home&&home.type==='building'&&home.btype==='MARKET'&&home.complete&&home.hp>0&&home.team===e.team;
+  let destOk = dest&&dest.type==='building'&&dest.btype==='MARKET'&&dest.complete&&dest.hp>0&&dest.team!==e.team&&isPlayerTeam(dest.team);
+  // A destroyed endpoint re-resolves to the nearest valid Market so an active
+  // route survives losing one market, rather than the cart going idle.
+  if(!homeOk){ home=nearestMarket(e,true);  e.tradeHomeId=home?home.id:null; homeOk=!!home; }
+  if(!destOk){ dest=nearestMarket(e,false); e.tradeDestId=dest?dest.id:null; destOk=!!dest; }
+  if(!homeOk||!destOk){
+    // No valid pair of Markets left — end the route and idle.
+    e.tradeHomeId=null; e.tradeDestId=null; e.tradePhase=null;
+    e.carrying=0; e.carryType=null; clearUnitPath(e);
+    feedbackFor(e.team, () => showMsg('Trade Cart needs your Market and another player’s Market.'));
+    return;
+  }
+  if(e.tradePhase==null) e.tradePhase='toDest';
+  let goal = e.tradePhase==='toDest' ? dest : home;
+  if(adjToBuilding(e.x,e.y,goal)){
+    if(e.tradePhase==='toDest'){
+      // Load gold sized by the separation between the two Markets, head home.
+      let g=Math.round(dist(home,dest)*TRADE_GOLD_PER_TILE);
+      e.carrying=Math.max(1,g); e.carryType='gold';
+      e.tradePhase='toHome';
+      let pt=nearestBldgPerimeter(e.x,e.y,home,e.id);
+      pathUnitTo(e,pt.x,pt.y);
+    } else {
+      resourceStore(e.team).gold += e.carrying;
+      e.carrying=0; e.carryType=null;
+      e.tradePhase='toDest';
+      let pt=nearestBldgPerimeter(e.x,e.y,dest,e.id);
+      pathUnitTo(e,pt.x,pt.y);
+    }
+  } else if(e.path.length===0){
+    // Not there and no route queued (fresh order, or a blocked leg) — (re)path.
+    let pt=nearestBldgPerimeter(e.x,e.y,goal,e.id);
+    pathUnitTo(e,pt.x,pt.y);
+  }
+}
+
 function updateUnit(e){
   if(e.hp<=0)return;
   if(e.garrisonedIn)return; // inside a building: no movement, tasks, or combat
@@ -1312,6 +1377,14 @@ function updateUnit(e){
         }
       }
     }
+  }
+
+  // Trade cart routing: sets the path for the current leg (to a Market) and
+  // delivers gold on arrival. Falls through to the shared movement step below,
+  // which walks whatever path this set. Carts have no target/gather task, so
+  // the combat and villager blocks below skip them.
+  if(e.utype==='tradecart'){
+    updateTradeCart(e);
   }
 
   if(e.path.length>0){
@@ -1831,6 +1904,23 @@ function updateUnit(e){
     }
     if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
   }
+  // Auto Scout (player toggle): a scout on auto-explore keeps moving to the
+  // most-unexplored frontier and AVOIDS combat (a dead scout stops scouting).
+  // Reuses the AI's frontier picker (pickExploreWaypoint, js/ai.js) off the
+  // deterministic per-team explored grid + simRandInt. The shared movement step
+  // above already walked/returned when a path existed, so we only reach here
+  // with an empty path (arrived); re-pick on a light cadence so a blocked pick
+  // doesn't churn every tick. Returns so it never falls into the auto-attack
+  // block below. Manual orders clear autoScout (execUnitCommand).
+  if(e.autoScout && e.utype==='scout'){
+    if(e.target){ e.target=null; e.explicitAttack=false; }
+    if(e.path.length===0 && (tick+e.id)%12===0){
+      let home=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===e.team)||null;
+      let pt=(typeof pickExploreWaypoint==='function')?pickExploreWaypoint(e.team, home):null;
+      if(pt)pathUnitTo(e,pt.x,pt.y);
+    }
+    return;
+  }
   // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
   // Bears are excluded: they use their own leashed aggro logic above, not
   // the never-give-up military chase here.
@@ -1838,7 +1928,9 @@ function updateUnit(e){
   // units, chasing a passing scout is pure suicide-by-distraction. They
   // attack only what they're explicitly ordered onto (or what the AI's
   // target planner assigns).
-  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear' && e.utype !== 'ram';
+  // Trade carts are unarmed haulers (atk 0) — never let them auto-engage, or an
+  // idle cart chases enemies it can't hurt instead of trading.
+  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear' && e.utype !== 'ram' && e.utype !== 'tradecart';
   // Note: followId isn't excluded here — a unit that has caught up to its
   // follow target and stopped (path empty) should still engage nearby
   // enemies like any idle unit; combat naturally takes precedence and the
@@ -2442,7 +2534,18 @@ function updateBuilding(e){
         if(e.rallyTargetId){
           let target=entitiesById.get(e.rallyTargetId);
           if(target){
-            if(unit.utype==='villager'&&target.type==='building'&&!target.complete&&target.team===e.team){
+            if(unit.utype==='tradecart'&&target.type==='building'&&target.btype==='MARKET'&&target.complete&&target.hp>0&&target.team!==unit.team&&isPlayerTeam(target.team)){
+              // Rallied onto a foreign Market: auto-start a trade route from
+              // the spawning Market (home) to it.
+              let home=nearestMarket(unit,true);
+              if(home){
+                unit.tradeDestId=target.id; unit.tradeHomeId=home.id; unit.tradePhase='toDest';
+                let pt=nearestBldgPerimeter(unit.x,unit.y,target,unit.id);
+                pathUnitTo(unit,pt.x,pt.y);
+              } else {
+                pathUnitTo(unit,e.rallyX,e.rallyY);
+              }
+            } else if(unit.utype==='villager'&&target.type==='building'&&!target.complete&&target.team===e.team){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);

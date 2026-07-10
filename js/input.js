@@ -209,6 +209,7 @@ document.addEventListener('keydown',e=>{
       else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); return; }
       else if(key==='r') { placing='MILL'; showMsg('Place Mill'); return; }
       else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); return; }
+      else if(key==='y' && isUnlocked(myTeam,'MARKET')) { placing='MARKET'; showMsg('Place Market'); return; }
     } else if(window.currentVillagerMenu === 'mil') {
       // Locked types are hidden from the menu, so their hotkeys are inert
       // (silent) too. E/R always place the BEST unlocked wall/gate material
@@ -250,6 +251,18 @@ document.addEventListener('keydown',e=>{
       else if (key === 'a') { train('archer'); return; }
       else if (key === 'c') { train('scout'); return; }
       else if (key === 'k') { train('knight'); return; }
+    } else if (bldg.btype === 'MARKET') {
+      if (key === 't') { if(isUnlocked(myTeam,'tradecart')) trainUnit(bldg,'tradecart'); return; }
+    }
+  }
+
+  // Auto Scout toggle ('e' = explore) when the selection is all own scouts.
+  if (selected.length > 0 && selected.every(s => s.type === 'unit' && s.utype === 'scout' && s.team === myTeam)) {
+    if (key === 'e') {
+      let ids = selected.map(s => s.id);
+      let wantOn = selected.some(s => !s.autoScout);
+      submitCommand({ kind: 'auto-scout', unitIds: ids, on: wantOn });
+      return;
     }
   }
 
@@ -1549,6 +1562,17 @@ function doCommand(sx,sy){
   if(!target){
     target = getBuildingUnderCursor(sx, sy, en => isEnemyOf(myTeam, en) && buildingFogLevel(en) === 2);
   }
+  // Trade cart onto an ALLY's Market: an allied market is same-side-but-not-own,
+  // so it's dropped by both the enemy-target and own-building filters — pass it
+  // as the target so execUnitCommand's tradecart branch can start the route.
+  // (Enemy markets are already picked above; gated on a cart being selected so
+  // nothing else changes.)
+  if(!target && selected.some(s => s.type === 'unit' && s.utype === 'tradecart' && s.team === myTeam)){
+    // No fog-level gate here (unlike enemy targets): you're sending your own
+    // cart to a KNOWN ally/other-player Market — if you can click it you can
+    // trade with it, and ally vision/distance shouldn't block a friendly route.
+    target = getBuildingUnderCursor(sx, sy, en => en.btype === 'MARKET' && en.team !== myTeam && isPlayerTeam(en.team));
+  }
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
     // merely standing near a damaged building shouldn't hijack the click.
@@ -1559,6 +1583,7 @@ function doCommand(sx,sy){
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';
+  else if(target && target.type==='building' && target.btype==='MARKET' && target.team!==myTeam)markerColor='#0af'; // trade, not attack
   else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';

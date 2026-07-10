@@ -106,10 +106,13 @@ function updateAI(ai){
   queueAIVillagers(ai,aiTC,vils,profile);
   ensureAIHousing(ai,aiTC,profile);
   planAIDropSites(ai,aiTC,vils,profile);
+  planAIMarket(ai,aiTC,vils,profile);          // Feudal Market — reserve wood BEFORE walls/towers/military drain it
   planAIFarming(ai,aiTC,vils,profile);
   planAIWalls(ai,aiTC,vils,profile); // AI defensive wall ring + gate
   planAITowers(ai,aiTC,vils,profile); // AI Watch Tower planning
   planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile);
+  queueAITradeCarts(ai,profile);               // team games only: train carts up to the cap
+  planAIMarketExchange(ai,profile);            // buy/sell commodities for gold
   queueAIMilitary(ai,readyBarracks,profile);
   ensureAIScout(ai,readyBarracks); // keep an explorer alive so the enemy actually gets found
   assignAIVillagers(ai,vils,profile);
@@ -117,6 +120,7 @@ function updateAI(ai){
   huntAIBears(ai,mils);
   controlAIMilitary(ai,mils,aiTC,profile);
   controlAIScouts(ai,mils,aiTC);
+  controlAITradeCarts(ai,aiUnits);             // route idle carts to an ally Market
 }
 
 // ---- RESIGNATION (AoE2-style) ----
@@ -846,6 +850,116 @@ function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
   if(pos)placeAIBuilding(ai,'BARRACKS',pos.x,pos.y);
+}
+
+// ---- TRADE ECONOMY (Market, Trade Carts, commodity exchange) ----
+// AoE2-style: the AI runs a Market for the commodity buy/sell exchange in
+// EVERY game, and — ONLY when it has an ally to trade with — builds Trade
+// Carts that shuttle to the ally's Market for gold. Carts are unarmed, so the
+// AI never trades into an enemy base (no 1v1 land trade). All difficulties
+// participate, so an easy ally still trades with its human partner in a 2v2.
+
+// Does this team have an ally (another player team on the same side)?
+function aiHasAlly(team){
+  for(let u=0;u<NUM_TEAMS;u++) if(u!==team && sameSide(team,u)) return true;
+  return false;
+}
+// The team's own Market (complete or a foundation), if any.
+function aiOwnMarket(team){
+  return entities.find(b=>b.type==='building'&&b.btype==='MARKET'&&b.team===team);
+}
+// Nearest COMPLETED Market owned by an ALLY (different player team, same side)
+// — the AI's trade-cart destination. Deterministic: entities in array order,
+// first-found tie-break (like nearestMarket, js/logic.js).
+function nearestAllyMarket(e){
+  let best=null,bd=Infinity;
+  for(let i=0;i<entities.length;i++){
+    let b=entities[i];
+    if(b.type!=='building'||b.btype!=='MARKET'||!b.complete||b.hp<=0)continue;
+    if(b.team===e.team||!sameSide(e.team,b.team))continue;
+    let d=distToTarget(e,b);
+    if(d<bd){bd=d;best=b;}
+  }
+  return best;
+}
+
+// Build ONE Market, OPPORTUNISTICALLY. The Market is a thriving-AI economic
+// add-on, never something to starve other systems for: it is placed only when
+// the AI is fully developed (max age reached — done teching), has a standing
+// army (defense first), and simply HAS the 175 spare wood right now. A rich
+// economy naturally banks that surplus (aiEcoPlan even halves chop above 600
+// wood); a struggling economy just never builds one — which is correct. There
+// is deliberately NO wood "reservation" that pauses walls/towers/farms/military
+// to force the purchase (that crippled tight-economy 2v2 AIs into never
+// attacking) — the market waits on genuine surplus instead.
+function planAIMarket(ai,aiTC,vils,profile){
+  if(!isUnlocked(ai.team,'MARKET'))return;               // Feudal-gated
+  if(aiOwnMarket(ai.team))return;                         // one is enough
+  if(teamAge[ai.team] < (profile.maxAge||2))return;      // finished teching first
+  if(vils.length<profile.marketVil)return;
+  let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
+  if(army<(profile.armyReserve||4))return;               // defense before trade
+  if(!canAfford(ai.team,BLDGS.MARKET.cost))return;       // only when the surplus is genuinely there
+  let pos=findAIBuildSpot(ai,aiTC,'MARKET');
+  if(pos)placeAIBuilding(ai,'MARKET',pos.x,pos.y);
+}
+
+// Team games only: train Trade Carts up to the difficulty cap once a Market
+// exists and there's an ally Market to trade with.
+function queueAITradeCarts(ai,profile){
+  if((profile.maxTradeCarts|0)<=0)return;
+  if(!aiHasAlly(ai.team))return;                          // carts are a team-game tool
+  let mkt=aiOwnMarket(ai.team);
+  if(!mkt||!mkt.complete)return;
+  if(!nearestAllyMarket(mkt))return;                     // nowhere to trade yet
+  if(ai.savingForAge&&!aiUnderRealPressure(ai)){
+    // don't distract from the age-up unless a cart line is already running
+    if(!entities.some(e=>e.team===ai.team&&e.utype==='tradecart'))return;
+  }
+  let carts=0;
+  for(let i=0;i<entities.length;i++){let e=entities[i];if(e.team===ai.team&&e.type==='unit'&&e.utype==='tradecart')carts++;}
+  carts+=mkt.queue.filter(u=>u==='tradecart').length;
+  if(carts>=profile.maxTradeCarts)return;
+  if(!canAfford(ai.team,UNITS.tradecart.cost))return;
+  queueUnit(mkt,'tradecart');
+}
+
+// Route idle carts (no active route) to the nearest ally Market. Once the
+// trade fields are set, updateTradeCart (js/logic.js) drives and self-heals
+// the shuttle; the AI only touches carts that are currently idle. Assign only
+// when BOTH a home and an ally market exist (else updateTradeCart would fire
+// its "needs a market" feedback and the cart would sit idle anyway).
+function controlAITradeCarts(ai,aiUnits){
+  for(let i=0;i<aiUnits.length;i++){
+    let c=aiUnits[i];
+    if(c.utype!=='tradecart')continue;
+    if(c.tradeDestId!=null||c.tradeHomeId!=null)continue;
+    let home=nearestMarket(c,true);
+    let dest=nearestAllyMarket(c);
+    if(!home||!dest)continue;                             // no enemy trade — leave idle
+    c.tradeHomeId=home.id; c.tradeDestId=dest.id; c.tradePhase='toDest';
+    c.target=null; c.task=null; clearUnitPath(c);
+    let pt=nearestBldgPerimeter(c.x,c.y,dest,c.id);
+    if(pt)pathUnitTo(c,pt.x,pt.y);
+  }
+}
+
+// Commodity exchange (all difficulties, 1v1 + team). At most one 100-lot per
+// decision tick so the shared marketPrices don't crater/spike; the buy and
+// sell conditions are mutually exclusive (gold-low vs gold-high) so no
+// oscillation. Selling prefers stone (classic AoE2); buying relieves the worst
+// non-gold bottleneck and never spends below the gold-rich threshold.
+function planAIMarketExchange(ai,profile){
+  let mkt=aiOwnMarket(ai.team);
+  if(!mkt||!mkt.complete)return;
+  let r=resourceStore(ai.team);
+  if(r.gold<80){
+    let res=r.stone>250?'stone':r.wood>500?'wood':r.food>400?'food':null;
+    if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
+  } else if(r.gold>300){
+    let res=r.wood<120?'wood':r.food<100?'food':null;
+    if(res&&r.gold-marketPrices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
+  }
 }
 
 function queueAIMilitary(ai,readyBarracks,profile){
@@ -1644,9 +1758,13 @@ function baseSurveyWaypoint(ai,aiTC){
 // deterministic explored grid) plus a small far-from-home bonus — random
 // wandering re-visited known ground and could take ages to find a cornered
 // enemy on larger maps. Deterministic: sim RNG + sim state only.
-function randomScoutWaypoint(ai,aiTC){
+//
+// Team-parameterized so the HUMAN player's Auto Scout (js/logic.js) reuses the
+// exact same frontier logic: `team` selects the explored grid, `homePt` is the
+// optional far-from-home anchor (a TC, or null).
+function pickExploreWaypoint(team, homePt){
   let margin=3;
-  let eg=teamExploredGrid&&teamExploredGrid[ai.team];
+  let eg=teamExploredGrid&&teamExploredGrid[team];
   let best=null,bestScore=-1;
   for(let attempt=0;attempt<8;attempt++){
     let x=simRandInt(margin,MAP-1-margin);
@@ -1659,11 +1777,12 @@ function randomScoutWaypoint(ai,aiTC){
         if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&eg[ny*MAP+nx]===0)score++;
       }
     }
-    if(aiTC)score+=dist({x,y},aiTC)/MAP; // <1: only breaks near-ties toward far ground
+    if(homePt)score+=dist({x,y},homePt)/MAP; // <1: only breaks near-ties toward far ground
     if(score>bestScore){bestScore=score;best={x,y};}
   }
   return best;
 }
+function randomScoutWaypoint(ai,aiTC){ return pickExploreWaypoint(ai.team, aiTC); }
 
 function findPlayerThreatNear(ai,aiTC,range){
   // Allied buildings count too: in 2v2 the AI's army answers a raid on its
@@ -1934,7 +2053,12 @@ function findAIBuildSpot(ai,tc,type){
   // farm slots. tcHalf is the TC's own half-extent.
   let tcHalf=Math.ceil(tc.w/2);
   let cx=tc.x+tc.w/2, cy=tc.y+tc.h/2;
-  let maxR=Math.round(14*aiScale()); // roomier core for the larger TC/Barracks
+  // Roomier core for the larger TC/Barracks. The MARKET is placed late (post-
+  // Feudal), by when the walled core is usually full — give it a much larger
+  // radius so it can sit at the base edge/outside (fine: it's an economy
+  // building and trade carts leave the base anyway), instead of failing to
+  // place and never trading.
+  let maxR=Math.round((type==='MARKET'?28:14)*aiScale());
   let minEdge=tcHalf+1;              // scan starts just outside the TC
   // AoE2-style placement: houses/barracks must stay out of the FARM BELT
   // around every food drop-off (TC AND each Mill) — that ring is reserved for

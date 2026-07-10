@@ -3,11 +3,11 @@
 // (no selection, cancel-only actions) falls back to the emoji glyph.
 const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
   'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
-  'knight','SWALL','SGATE','bear','logo','ram',
+  'knight','SWALL','SGATE','bear','logo','ram','MARKET','tradecart',
   // Age-look variant cells (AGE_ICON_VARIANTS below)
   'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle',
   // Age crests (also used as the idle info-box portrait — see updateUI)
-  'age-dark','age-feudal','age-castle']); // 7x7 master sheet cells
+  'age-dark','age-feudal','age-castle']); // 8x8 master sheet cells
 
 // Units whose LOOK changes with age get age-specific icon cells. Falls
 // back to the base key for missing ages. Militia's BASE cell (row 0,
@@ -75,6 +75,32 @@ function updateUI(){
   // Calculate idle villagers count
   let idleVils = entities.filter(e => e.team === myTeam && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
   let currentIdleCount = idleVils.length;
+
+  // Count of my villagers currently ASSIGNED to each resource, for the topbar
+  // indicator. This keys off the persistent assignment, not transient state, so
+  // the number holds steady while a villager walks to/from a drop-off rather
+  // than flickering. A gatherer's assignment lives in e.task; while it's making
+  // a drop-off run e.task is 'return' and the real job is stashed in e.prevTask.
+  // Only the final return after its resource is gone has no prevTask — there we
+  // fall back to the load in hand so it still counts until it goes idle.
+  // Sheep are the exception: hunting isn't a gather task at all, it's driven by
+  // e.target pointing at a sheep/sheep_carcass (task stays null), so we detect
+  // that separately — otherwise shepherds flickered in and out of the food count
+  // as they cycled between eating (no task) and returning (task 'return').
+  let vilRes = {food:0, wood:0, gold:0, stone:0};
+  let VIL_TASK_RES = {chop:'wood', mine_gold:'gold', mine_stone:'stone', forage:'food', farm:'food'};
+  for (let e of entities) {
+    if (e.team === myTeam && e.type === 'unit' && e.utype === 'villager') {
+      let r = e.task === 'return'
+        ? (VIL_TASK_RES[e.prevTask] || (e.carrying > 0 ? e.carryType : null))
+        : VIL_TASK_RES[e.task];
+      if (!r && e.target != null) {
+        let t = entitiesById.get(e.target);
+        if (t && (t.utype === 'sheep' || t.utype === 'sheep_carcass')) r = 'food';
+      }
+      if (r && vilRes[r] !== undefined) vilRes[r]++;
+    }
+  }
   
   // Selection key
   let currentSelListKey = selected.map(s => s.id).join(',');
@@ -91,6 +117,8 @@ function updateUI(){
     // Gate lock state, so the Lock/Unlock button label flips the instant the
     // toggle lands (the button is derived from selected gates' .locked).
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
+    // Auto Scout state, so the toggle button label flips the instant it lands.
+    if (e.type === 'unit' && e.utype === 'scout') currentSelectionDetails += ':as' + selected.filter(s => s.autoScout).length;
     if (e.queue) {
       // Structural signature only (queue contents), NOT trainTick: progress
       // changes every tick, and keying on it rebuilt the whole details panel
@@ -207,6 +235,15 @@ function updateUI(){
   document.getElementById('r-wood').textContent=currentWood;
   document.getElementById('r-gold').textContent=currentGold;
   document.getElementById('r-stone').textContent=currentStone;
+  for (let k of ['food','wood','gold','stone']) {
+    let el = document.getElementById('rv-'+k);
+    if (!el) continue;
+    let n = vilRes[k];
+    // Box always reserves its space (CSS toggles visibility, not display), so
+    // the resource numbers never shift when villagers move on/off a resource.
+    el.classList.toggle('on', n > 0);
+    if (n > 0) el.textContent = n;
+  }
   let popEl = document.getElementById('r-pop');
   if (popEl) popEl.textContent = `${myPopUsed}/${myPopCap}`;
   let ageEl = document.getElementById('r-age');
@@ -695,6 +732,42 @@ function updateUI(){
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
       }
+      // Market commodity exchange: two labeled rows (Buy / Sell) of resource
+      // icons with the live gold price printed below each. Prices drift as
+      // everyone trades (marketPrices, js/core.js); the transaction runs in
+      // execMarketTrade (deterministic) — this only submits the command. A
+      // self-contained widget (own .mkt-* classes, styled in styles.css AND
+      // classic-style.css) so it reads the same in both skins, which hide
+      // .act-btn labels/costs.
+      if(e.complete && e.btype === 'MARKET'){
+        const RES=['food','wood','stone'];
+        let wrap=document.createElement('div');wrap.className='mkt-exchange';
+        const makeRow=(dir)=>{
+          let row=document.createElement('div');row.className='mkt-row';
+          let lab=document.createElement('div');lab.className='mkt-row-label';
+          lab.textContent=dir==='buy'?'Buy':'Sell';
+          row.appendChild(lab);
+          RES.forEach(res=>{
+            let price=marketPrices[res];
+            let gold=dir==='buy'?price:Math.floor(price*MARKET_SELL_RATIO/100);
+            let resLabel=res.charAt(0).toUpperCase()+res.slice(1);
+            let cell=document.createElement('div');cell.className='mkt-cell';
+            cell.dataset.tipType='action';
+            cell.dataset.tipLabel=(dir==='buy'?'Buy 100 ':'Sell 100 ')+resLabel;
+            cell.dataset.tipDesc=dir==='buy'
+              ?('Spend '+price+' gold to receive 100 '+resLabel+'. Buying raises its price.')
+              :('Sell 100 '+resLabel+' for '+gold+' gold. Selling lowers its price.');
+            cell.innerHTML=`<div class="mkt-ico sprite-icon icon-${res}"></div>`
+              +`<div class="mkt-price"><span class="res-mini-icon icon-gold"></span>${gold}</div>`;
+            cell.onclick=()=>{ if(gameOver)return; submitCommand({kind:'market-trade',dir,resType:res}); };
+            row.appendChild(cell);
+          });
+          return row;
+        };
+        wrap.appendChild(makeRow('buy'));
+        wrap.appendChild(makeRow('sell'));
+        act.appendChild(wrap);
+      }
     }
   } else {
     if (port) {
@@ -767,6 +840,23 @@ function updateUI(){
     // Gating on just e here would show "Build Economic/Military" for a
     // mixed villager+scout selection merely because the villager happened
     // to be first in the array.
+    // Auto Scout toggle — shown only when the selection is all own scouts. The
+    // explore/stop glyph differs so the on/off state reads even in the classic
+    // skin (which hides button labels). Command is deterministic (js/commands.js).
+    let allScouts = selected.length>0 && selected.every(s=>s.type==='unit'&&s.utype==='scout'&&s.team===myTeam);
+    if(rebuildActions&&allScouts){
+      let ids = selected.map(s=>s.id);
+      let wantOn = selected.some(s=>!s.autoScout); // any off → turn all on; else turn off
+      let btn=document.createElement('div');btn.className='act-btn';
+      btn.dataset.tipType='action';
+      btn.dataset.tipLabel = wantOn?'Auto Scout':'Stop Auto Scout';
+      btn.dataset.tipDesc = wantOn
+        ? 'The scout automatically explores unmapped areas and avoids fights. Any manual order cancels it.'
+        : 'Stop automatically exploring.';
+      btn.innerHTML=`<div class="btn-emoji">${wantOn?'🧭':'✋'}</div><div class="btn-label">${wantOn?'Auto Scout':'Stop'}</div>`;
+      btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:wantOn}); };
+      act.appendChild(btn);
+    }
     let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
     if(rebuildActions&&allVillagers){
       window.currentVillagerMenu = window.currentVillagerMenu || 'main';
@@ -806,8 +896,9 @@ function updateUI(){
           {type:'FARM',label:'Farm',key:'W'},
           {type:'LCAMP',label:'Lumber Camp',key:'E'},
           {type:'MILL',label:'Mill',key:'R'},
-          {type:'MCAMP',label:'Mining Camp',key:'T'}
-        ].filter(bi=>isUnlocked(myTeam,bi.type)); // all Dark today; future-proof
+          {type:'MCAMP',label:'Mining Camp',key:'T'},
+          {type:'MARKET',label:'Market',key:'Y'} // Feudal-gated; hidden until then by the filter below
+        ].filter(bi=>isUnlocked(myTeam,bi.type)); // future-proofed via AGE_REQ
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='building';
@@ -815,7 +906,12 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
+          // Buildings without a sprites.png cell (MARKET) fall back to their
+          // emoji glyph — same rule as the train buttons above.
+          let bIcon=SPRITE_ICON_KEYS.has(iconKey(bi.type))
+            ?`<div class="btn-emoji sprite-icon icon-${bi.type}"></div>`
+            :`<div class="btn-emoji">${bData.icon||''}</div>`;
+          btn.innerHTML=`${bIcon}<div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;

@@ -1115,6 +1115,7 @@ function restartGame(difficulty){
   // opponents) gets the same start, not a handicap; AI difficulty is tuned
   // via gather rates/behavior (js/ai.js), not a lower resource floor.
   resources = freshTeamResources();
+  marketPrices = freshMarketPrices(); // global commodity exchange back to defaults (js/core.js)
   // Controllers for the two shapes a fresh world can take today (SP human
   // vs AI, or 1v1 lockstep human vs human), derived from netRole at
   // world-build time. A future match-setup UI replaces this derivation

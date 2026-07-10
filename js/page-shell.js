@@ -17,10 +17,10 @@ document.body.insertAdjacentHTML('afterbegin', `
 <canvas id="game"></canvas>
 <div id="ui">
 <div id="topbar">
-<div class="res"><div class="res-icon sprite-icon icon-food"></div><div class="res-val" id="r-food">200</div></div>
-<div class="res"><div class="res-icon sprite-icon icon-wood"></div><div class="res-val" id="r-wood">200</div></div>
-<div class="res"><div class="res-icon sprite-icon icon-gold"></div><div class="res-val" id="r-gold">100</div></div>
-<div class="res"><div class="res-icon sprite-icon icon-stone"></div><div class="res-val" id="r-stone">200</div></div>
+<div class="res"><div class="res-icon sprite-icon icon-food"></div><span class="res-vils" id="rv-food"></span><div class="res-val" id="r-food">200</div></div>
+<div class="res"><div class="res-icon sprite-icon icon-wood"></div><span class="res-vils" id="rv-wood"></span><div class="res-val" id="r-wood">200</div></div>
+<div class="res"><div class="res-icon sprite-icon icon-gold"></div><span class="res-vils" id="rv-gold"></span><div class="res-val" id="r-gold">100</div></div>
+<div class="res"><div class="res-icon sprite-icon icon-stone"></div><span class="res-vils" id="rv-stone"></span><div class="res-val" id="r-stone">200</div></div>
 <div class="res pop-res"><div class="res-icon sprite-icon icon-pop" aria-hidden="true"></div><div class="res-val" id="r-pop">4/10</div></div>
 <div class="res age-res"><div class="res-icon sprite-icon icon-age-dark" aria-hidden="true"></div><div class="res-val" id="r-age">Dark</div></div>
 <div id="net-stats" style="display:none;"></div>
