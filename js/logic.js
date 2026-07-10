@@ -514,6 +514,12 @@ function depleteGatherTile(pos,config,gatherer){
         farm.complete = false;
         farm.buildProgress = 0;
         tile.res = 0;
+        // AoE2-style audio cue: this farm ran dry and needs a reseed (or the
+        // farmer will idle). feedbackFor gates it to the owning human and stays
+        // silent during rollback resim; non-positional so it alerts wherever
+        // the view is. Rate-limited in playSound, so a wave of exhaustions on
+        // the same tick collapses to one chime.
+        feedbackFor(farm.team, () => window.playSound && window.playSound('farm_exhausted'));
         // Farmer continuity: hand the CURRENT farmer straight to the
         // reseed-on-approach machinery (it's already standing on the farm)
         // instead of letting it idle — that path handles prepaid → wood →

@@ -493,8 +493,8 @@ canvas {
 .icon-GATE                {background-position:33.3333%  50%;}
 .icon-SWALL               {background-position:50%       50%;}
 .icon-SGATE               {background-position:66.6667%  50%;}
-.icon-gate-open           {background-position:83.3333%  50%;}
-.icon-gate-close          {background-position:100%      50%;}
+.icon-gate-lock           {background-position:83.3333%  50%;}
+.icon-gate-unlock         {background-position:100%      50%;}
 .icon-food                {background-position:0%        66.6667%;}
 .icon-wood                {background-position:16.6667%  66.6667%;}
 .icon-gold                {background-position:33.3333%  66.6667%;}
@@ -966,6 +966,22 @@ canvas {
   font-size: 14px;
   padding: 5px 8px;
   outline: none;
+}
+/* Standalone game-over "See Map" button, centered just below the canvas
+   VICTORY/DEFEAT banner (banner spans the vertical middle). */
+#see-map-btn {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 74px);
+  transform: translateX(-50%);
+  z-index: 140; /* above the canvas banner, below the help/menu overlays */
+  width: auto;
+  min-width: 160px;
+}
+/* Preserve the centering transform on hover/press so the button doesn't jump
+   (the base :active swaps in translateY, dropping the horizontal centering). */
+#see-map-btn:hover, #see-map-btn:active {
+  transform: translateX(-50%);
 }
 /* ---- HOW TO PLAY overlay ---- */
 #help-overlay {

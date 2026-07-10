@@ -53,6 +53,10 @@ document.body.insertAdjacentHTML('afterbegin', `
   <span id="chat-input-prefix">To opponent:</span>
   <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false">
 </div>
+<!-- Standalone "See Map" button under the canvas VICTORY/DEFEAT banner. Shown
+     on game over (js/init.js gameLoop); dismisses the banner to reveal the map.
+     No menu is opened over the result. -->
+<button type="button" id="see-map-btn" class="menu-action-btn" style="display:none;" onclick="seeMap()">🔍 See Map</button>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">
     <div id="mp-disconnect-title">Connection Lost</div>

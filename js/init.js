@@ -997,14 +997,13 @@ function applyMenuMode(mode){
   }
 
   if (mode === 'gameover') {
-    // Same layout as prestart (Play Again = a fresh start), minus the MP
-    // host button when a (now finished) MP session is still attached.
-    // With a LIVE connection the host's button becomes "Rematch" — a fresh
-    // MP match over the same connection (see onStartClicked) — and the
-    // guest gets no button at all: only the host can start one; the
-    // guest's menu closes by itself when the rematch's 'lockstep-start'
-    // arrives (js/lockstep.js).
-    // Disconnected-or-single-player keeps plain local Play Again.
+    // This menu is NOT auto-opened on game over anymore (the end screen is the
+    // canvas banner + standalone "See Map" button, js/init.js gameLoop) — it
+    // only appears if the player clicks the ☰ button. When they do, it's the
+    // full post-game menu: Play Again (single-player / dead MP), or Rematch for
+    // a live-MP host (a fresh match over the same connection, see
+    // onStartClicked); the guest gets no button (its menu closes by itself when
+    // the rematch's 'lockstep-start' arrives), plus Load / Host as usual.
     let liveMp = !!netRole && netConnected;
     if (difficultyRow) difficultyRow.style.display = '';
     if (startBtn) {
@@ -1139,8 +1138,11 @@ function restartGame(difficulty){
   window.lastSelListKey = null;
   window.lastSelGridDetails = null;
   window.lastSelKey = null;
-  window.gameOverMenuShown = false; // re-arm the game-over auto-menu (gameLoop)
+  window.gameOverMenuShown = false; // re-arm the game-over "See Map" reveal (gameLoop)
   window.playedGameOverSound = false;
+  window.__gameOverBannerDismissed = false; // fresh match → banner armed again
+  window.seeMapMode = false; // exit the finished-map review mode
+  { let sm = document.getElementById('see-map-btn'); if (sm) sm.style.display = 'none'; }
 
   // Re-generate map and spawn starts
   init();
@@ -1158,6 +1160,37 @@ function toggleCameraFollow(){
 function toggleHelp(){
   let o=document.getElementById('help-overlay');
   if(o)o.style.display=(o.style.display==='none'||o.style.display==='')?'flex':'none';
+}
+
+// Game-over "See Map": dismiss the VICTORY/DEFEAT banner and let the player pan
+// over the finished, fully-revealed map (AoE2-style). No menu is involved.
+//   - window.seeMapMode re-enables the camera controls (pan/zoom/minimap/arrow
+//     keys) that are otherwise disabled once gameOver; command input stays off.
+//   - fog is turned off and every tile revealed so the whole map is visible.
+function seeMap(){
+  window.__gameOverBannerDismissed = true;
+  window.seeMapMode = true;
+  window.fogDisabled = true;
+  // Reveal every tile now (updateFog() no-ops while fogDisabled, so flip the
+  // grid directly — 2 = fully visible).
+  if (typeof fog !== 'undefined' && fog && fog.length) {
+    for (let y = 0; y < fog.length; y++) {
+      let row = fog[y];
+      for (let x = 0; x < row.length; x++) row[x] = 2;
+    }
+  }
+  // Enemy buildings render only once "scouted" (scoutedByMe, js/render.js) even
+  // under revealed fog — so mark every building scouted to actually show them.
+  if (typeof scoutedByMe !== 'undefined' && scoutedByMe && typeof entities !== 'undefined') {
+    entities.forEach(e => { if (e.type === 'building') scoutedByMe.add(e.id); });
+  }
+  // buildingFogLevel() caches per-building fog in _bflMemo, normally cleared by
+  // updateFog() — which doesn't run post-game. Clear it so the fog we just
+  // revealed above is actually seen (otherwise buildings keep their stale
+  // fog-level-0 and stay hidden).
+  if (typeof invalidateBuildingFogMemo === 'function') invalidateBuildingFogMemo();
+  let btn = document.getElementById('see-map-btn');
+  if (btn) btn.style.display = 'none';
 }
 
 function isFullscreen(){
@@ -1336,52 +1369,39 @@ function gameLoop(){
   }
   if(gameOver){
     let iWon = didIWin();
-    // Auto-open the menu in 'gameover' mode (Play Again / Load) a moment
-    // after the canvas VICTORY/DEFEAT banner lands — previously the banner
-    // just sat there and the only way to a new game was finding the ☰
-    // button. One-shot (reset in restartGame). Deliberately NOT
-    // broadcastMenuState(true): the opponent hits gameOver too and gets
-    // their own menu; flashing a "Game Paused" overlay over their result
-    // screen would be wrong (and there's nothing left to pause).
-    if (!window.gameOverMenuShown) {
-      window.gameOverMenuShown = true;
-      setTimeout(() => {
-        if (!gameOver) return;      // already restarted meanwhile
-        if (localMenuOpen) return;  // user beat us to the menu
-        let menu = document.getElementById('tutorial');
-        if (!menu) return;
-        menu.style.display = 'flex';
-        localMenuOpen = true;
-        recomputeGamePaused();
-        showMenuPanel('main');
-        applyMenuMode('gameover');
-      }, 2200);
-    }
     if (!window.playedGameOverSound) {
       window.playedGameOverSound = true;
       if (window.stopAmbientMusic) window.stopAmbientMusic(); // cut ambient so the ending piece stands alone
       if (window.startGameOverMusic) window.startGameOverMusic(iWon);
     }
-    X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
-    let cy=topH+H/2;
-
-    // Draw gold banner background
-    X.fillStyle='rgba(40,20,5,0.85)';
-    X.fillRect(0,cy-80,W,140);
-    X.strokeStyle='#bfa054';X.lineWidth=3;
-    X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
-    X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
-
-    // Main text using Cinzel
-    X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
-    X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
-    X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
-
-    // Subtext using Georgia
-    X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
-    X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
-    X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
-    X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
+    // The whole end screen is the VICTORY/DEFEAT banner plus a standalone
+    // "See Map" button under it — NO menu is opened over the result (and so no
+    // rematch/play-again). One-shot reveal of the button (reset in
+    // restartGame). See Map (seeMap()) dismisses the banner to show the map.
+    if (!window.gameOverMenuShown) {
+      window.gameOverMenuShown = true;
+      let sm = document.getElementById('see-map-btn');
+      if (sm) sm.style.display = '';
+    }
+    if (!window.__gameOverBannerDismissed) {
+      X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
+      let cy=topH+H/2;
+      // Gold banner background
+      X.fillStyle='rgba(40,20,5,0.85)';
+      X.fillRect(0,cy-80,W,140);
+      X.strokeStyle='#bfa054';X.lineWidth=3;
+      X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
+      X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
+      // Main text using Cinzel
+      X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
+      X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
+      X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
+      // Subtext using Georgia
+      X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
+      X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
+      X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
+      X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
+    }
   }
   requestAnimationFrame(gameLoop);
 }

@@ -107,6 +107,9 @@ function requestDeleteOwned(ownIds){
 }
 
 document.addEventListener('keydown',e=>{
+  // While reviewing the finished map (See Map), keep the arrow keys panning —
+  // but nothing else (no command hotkeys post-game).
+  if(gameOver && window.seeMapMode && (e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='ArrowLeft'||e.key==='ArrowRight')) keys[e.key]=true;
   if(gameOver)return;
   if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   // Multiplayer chat (js/chat.js) — classic RTS binding. Once the box is
@@ -369,7 +372,7 @@ window.addEventListener('mousemove',e=>{
 });
 
 C.addEventListener('mousedown',e=>{
-  if(gameOver||recentTouch())return; // ignore synthetic mouse events
+  if((gameOver && !window.seeMapMode)||recentTouch())return; // ignore synthetic mouse events (pan/select stay live in See Map)
   // Trust the event's own modifier snapshot over the keydown/keyup-tracked
   // keys map: OS-level shortcuts (e.g. macOS Cmd+Shift+5 for screen
   // recording) can swallow a key's keyup entirely, leaving keys['Shift']
@@ -407,7 +410,7 @@ C.addEventListener('mousedown',e=>{
   }
 });
 C.addEventListener('mousemove',e=>{
-  if(gameOver||recentTouch())return;
+  if((gameOver && !window.seeMapMode)||recentTouch())return;
   mouseX=e.clientX;mouseY=e.clientY;
   if(middleDrag && (e.buttons&4 || e.button===1)){
     if(middleDragLast){
@@ -438,7 +441,7 @@ C.addEventListener('mousemove',e=>{
   }
 });
 // Track mouse position globally so edge scroll works correctly when cursor is over UI panels
-document.addEventListener('mousemove',e=>{if(!gameOver){mouseX=e.clientX;mouseY=e.clientY;}});
+document.addEventListener('mousemove',e=>{if(!gameOver || window.seeMapMode){mouseX=e.clientX;mouseY=e.clientY;}});
 // A trackpad two-finger swipe and a literal mouse wheel notch both arrive
 // as plain 'wheel' events with no dedicated flag telling them apart —
 // pinch/spread is the only unambiguous case (browsers set ctrlKey:true
@@ -470,7 +473,7 @@ function isTrackpadWheel(e){
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{
-  if(gameOver)return;
+  if(gameOver && !window.seeMapMode)return; // zoom stays live in See Map
   e.preventDefault();
   if(e.ctrlKey){
     // Pinch/spread — zoom, regardless of device (trackpad gesture or an
@@ -579,7 +582,7 @@ let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-s
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
-  if(gameOver)return;
+  if(gameOver && !window.seeMapMode)return; // touch pan/pinch stay live in See Map
   lastTouchTime=performance.now();
   let touches=e.touches;
   if(touches.length===1){
@@ -1645,7 +1648,7 @@ C.addEventListener('mouseenter',()=>{mouseInGame=true;});
 C.addEventListener('mouseleave',()=>{mouseInGame=false;});
 
 function handleScroll(elapsed){
-  if(gameOver)return;
+  if(gameOver && !window.seeMapMode)return; // keep panning while reviewing the map
   let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;
   let spd = 12 * dt;
   let manualPan=false;

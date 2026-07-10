@@ -287,7 +287,9 @@ function updateGates(){
       }
     }
     e.gateProgress = e.gateProgress || 0;
-    if (friendlyNear) {
+    // A locked gate never swings open — it slides shut and stays sealed even
+    // with allies standing on it (they route around until it's unlocked).
+    if (friendlyNear && !e.locked) {
       e.gateProgress = Math.min(1.0, e.gateProgress + 0.08);
     } else {
       e.gateProgress = Math.max(0.0, e.gateProgress - 0.08);
