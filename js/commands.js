@@ -215,13 +215,37 @@ function execCommand(cmd, team){
   }
 }
 
-// Which units carry a guard post: military only — villagers, carts and
-// gaia animals never take one. Shared by execGuard and the move-order
-// re-pinning in execUnitCommand.
+// Which units carry a guard post: soldiers, plus RAMS — a ram doesn't
+// auto-engage (isSoldierUnit is false) but holding a position is a valid
+// order for it. THE single eligibility filter: the UI button (allGuardable,
+// js/ui.js), the rally-spawn pin (js/logic.js) and the move-order re-pin
+// (issueMoveOrder, js/pathfinding.js) all call this.
 function guardEligible(u){
-  return u.type === 'unit'
-    && u.utype !== 'villager' && u.utype !== 'sheep' && u.utype !== 'sheep_carcass'
-    && u.utype !== 'bear' && u.utype !== 'tradecart';
+  return isSoldierUnit(u) || (u.type === 'unit' && u.utype === 'ram');
+}
+
+// The one way to (re)place a guard post: clamps to the map (formation
+// offsets at the edge produced off-map posts whose -1 aliased the "no
+// guard" sentinel in the determinism hash) and resets the guard-return
+// attempt counter so a fresh post gets fresh return tries (see the settle
+// logic in js/logic.js).
+function setGuardPost(u, x, y, flagged){
+  u.guardX = Math.max(0, Math.min(MAP - 1, x));
+  u.guardY = Math.max(0, Math.min(MAP - 1, y));
+  u.guardFlagged = !!flagged;
+  if (u.retry && u.retry['guardret']) u.retry['guardret'].n = 0;
+}
+
+// Building rally targets are kept only where the BUILDING is the point:
+// one you can go INSIDE (TC / guard tower garrison), a Market (trade-cart
+// route), an own foundation (builders), or an enemy building (attack).
+// Shared by execRally (sim) and doCommand's click feedback (js/input.js)
+// so the message can never disagree with what actually got set.
+function isRallyBuildingTarget(b, team){
+  return canGarrisonIn(b, team)
+    || b.btype === 'MARKET'
+    || (b.team === team && !b.complete)
+    || !sameSide(b.team, team);
 }
 
 // AoE2-style Guard: ONE flag order, three target kinds —
@@ -242,9 +266,8 @@ function execGuard(cmd, team){
   // an enemy or gaia thing falls through to a ground post at that spot.
   let target = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
   if (target && (target.hp <= 0 || target.garrisonedIn || !sameSide(target.team, team))) target = null;
-  let finish = (u) => {
-    u.guardFlagged = true; // EXPLICIT flag: draws the in-world flag/line (render.js)
-    u.defendX = u.guardX; u.defendY = u.guardY;
+  let finish = (u, px, py) => {
+    setGuardPost(u, px, py, true); // EXPLICIT flag: draws the in-world flag/line (render.js)
     u.target = null; u.task = null;
     u.explicitAttack = false; u.autoScout = false;
     clearUnitPath(u);
@@ -255,16 +278,14 @@ function execGuard(cmd, team){
       if (u.id === target.id) return; // can't escort yourself
       u.guardTargetId = target.id;
       u.followId = target.id; // the existing follow leg does the walking
-      u.guardX = target.x; u.guardY = target.y;
-      finish(u);
+      finish(u, target.x, target.y);
     });
   } else if (target && target.type === 'building') {
     units.forEach(u => {
       let pt = nearestBldgPerimeter(u.x, u.y, target, u.id);
       u.guardTargetId = target.id; // liveness only — buildings don't move
       u.followId = undefined;
-      u.guardX = pt.x; u.guardY = pt.y;
-      finish(u);
+      finish(u, pt.x, pt.y);
     });
   } else {
     let x = Math.max(0, Math.min(MAP - 1, Math.round(cmd.x)));
@@ -274,9 +295,7 @@ function execGuard(cmd, team){
       let ox = offsets[i] ? offsets[i][0] : 0, oy = offsets[i] ? offsets[i][1] : 0;
       u.guardTargetId = null;
       u.followId = undefined;
-      u.guardX = Math.max(0, Math.min(MAP - 1, x + ox));
-      u.guardY = Math.max(0, Math.min(MAP - 1, y + oy));
-      finish(u);
+      finish(u, x + ox, y + oy);
     });
   }
   feedbackFor(team, () => { if (window.playSound) playSound('click'); });
@@ -353,8 +372,11 @@ function execRally(cmd){
   // extends above the feet). Building targets stay: rally into a garrison,
   // a trade-cart route onto a market, builders onto a foundation.
   if (rTarget && rTarget.type === 'unit') {
-    rx = Math.max(0, Math.min(MAP - 1, Math.floor(rTarget.x)));
-    ry = Math.max(0, Math.min(MAP - 1, Math.floor(rTarget.y)));
+    // round, not floor: resting units sit on integer path nodes, so a unit
+    // mid-step at x=5.6 is walking onto tile 6 — floor put the flag one
+    // tile behind it (and missed the resource tile it stands on).
+    rx = Math.max(0, Math.min(MAP - 1, Math.round(rTarget.x)));
+    ry = Math.max(0, Math.min(MAP - 1, Math.round(rTarget.y)));
     rTarget = null;
   }
   // Building rally targets are kept only where the BUILDING is the point:
@@ -362,12 +384,8 @@ function execRally(cmd){
   // Market (trade-cart route), an own foundation (builders), or an enemy
   // building (attack). A flag on any other friendly building is just a
   // flag on the ground there.
-  if (rTarget && rTarget.type === 'building') {
-    let keep = canGarrisonIn(rTarget, bldg.team)
-      || rTarget.btype === 'MARKET'
-      || (rTarget.team === bldg.team && !rTarget.complete)
-      || !sameSide(rTarget.team, bldg.team);
-    if (!keep) rTarget = null;
+  if (rTarget && rTarget.type === 'building' && !isRallyBuildingTarget(rTarget, bldg.team)) {
+    rTarget = null;
   }
   bldg.rallyX = rx;
   bldg.rallyY = ry;
@@ -463,7 +481,6 @@ function execUnitCommand(cmd){
         s.target = null;
         let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        if (guardEligible(s)) { s.guardX = tileX + ox; s.guardY = tileY + oy; s.guardFlagged = false; }
         idx++;
       } else {
         s.target = target.id; s.task = null; clearUnitPath(s); s.buildTarget = null;
@@ -493,15 +510,11 @@ function execUnitCommand(cmd){
           idx++;
         }
       } else {
-        // Military move: use formation offset. The destination becomes the
-        // unit's new guard post — a plain move means "this is your temp
-        // spot", so after any later fight it returns HERE, not to an old
-        // flag or its birth rally. guardFlagged=false: an IMPLICIT post,
-        // behaviorally identical but drawn without the flag visuals — a
-        // plain move must not look like it planted a flag.
+        // Military move: use formation offset. The guard-post relocation
+        // ("this is your temp spot") lives inside issueMoveOrder itself, so
+        // every plain-move site gets it without a paired re-pin line.
         let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        if (guardEligible(s)) { s.guardX = tileX + ox; s.guardY = tileY + oy; s.guardFlagged = false; }
         idx++;
       }
     }

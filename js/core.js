@@ -550,6 +550,25 @@ const UNITS={
   // updateTradeCart in logic.js). Costs 1 pop like any unit.
   tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:60,armor:{m:0,p:0},cost:{w:100},trainTime:750,desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
 };
+
+// ---- Unit classification: THE one place a new unit type gets sorted.
+// The sim used to spell these groups out as inline utype name-lists at
+// half a dozen sites (auto-engage, retaliation, defense responses, blood
+// vs timber death FX, guard eligibility) — adding the trade cart meant
+// finding and editing every list. Each predicate below names ONE semantic;
+// the sites read them.
+const HARMLESS_ANIMALS = new Set(['sheep', 'sheep_carcass']); // never fight back, no death cry
+const WOOD_VEHICLES = new Set(['ram', 'tradecart']);          // timber rigs: collapse sound, wreck corpse, no blood, never retaliate
+function isHarmlessAnimal(u){ return HARMLESS_ANIMALS.has(u.utype); }
+function isWoodVehicle(u){ return WOOD_VEHICLES.has(u.utype); }
+// A SOLDIER fights on its own initiative — auto-engages, answers a sieged
+// ally's call. Not a villager (works), not an animal (bears run their own
+// leashed aggro), not a vehicle (carts are unarmed; rams strike only what
+// they're ordered onto).
+function isSoldierUnit(u){
+  return u.type === 'unit' && u.utype !== 'villager' && u.utype !== 'bear'
+    && !isHarmlessAnimal(u) && !isWoodVehicle(u);
+}
 // AI pacing, authored against the AoE2-rate economy (30 ticks per
 // game-second; villager trains in 25 game-s, militia in 21 game-s).
 // AoE2-style attack plan: the first strike comes no earlier than attackTick,

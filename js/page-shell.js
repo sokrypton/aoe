@@ -8,6 +8,43 @@
 // The only variant difference left is the UI-switch link text (points at
 // the OTHER skin) — the button strip, including the idle-villager button
 // next to the bell, is identical in both skins.
+// ---- Sprite-sheet cell registry: THE one place an icon gets a cell. ----
+// sprites.png is a uniform 8x8 grid; every `.icon-<key>` rule is GENERATED
+// from this table at boot and injected as a <style> shared by both skins.
+// The background-position lists used to be hand-maintained in styles.css
+// AND classic-style.css, plus more copies for the mini/tooltip variants —
+// adding one unit meant four coordinated CSS edits. Now: draw into a spare
+// cell, rename it here, done. (js/ui.js derives SPRITE_ICON_KEYS from this.)
+window.SPRITE_CELLS = {
+  // row 0-1: units (+ age-look variants)
+  villager:[0,0], militia:[1,0], spearman:[2,0], archer:[3,0], scout:[4,0],
+  knight:[5,0], sheep:[6,0], tradecart:[7,0],
+  'militia-feudal':[0,1], 'militia-castle':[1,1], 'spearman-castle':[2,1],
+  'archer-castle':[3,1], 'scout-castle':[4,1], bear:[5,1], pop:[6,1], compass:[7,1],
+  // rows 2-3: buildings + gate states
+  TC:[0,2], HOUSE:[1,2], BARRACKS:[2,2], MILL:[3,2], LCAMP:[4,2], MCAMP:[5,2], FARM:[6,2],
+  TOWER:[0,3], WALL:[1,3], GATE:[2,3], SWALL:[3,3], SGATE:[4,3],
+  'gate-lock':[5,3], 'gate-unlock':[6,3],
+  // rows 4-6: resources, action glyphs, age crests, corner buttons
+  food:[0,4], wood:[1,4], gold:[2,4], stone:[3,4], cancel:[4,4], econ:[5,4], mil:[6,4],
+  back:[0,5], reseed:[1,5], research:[2,5], logo:[3,5], ram:[4,5], MARKET:[5,5], bell:[6,5],
+  'age-dark':[0,6], 'age-feudal':[1,6], 'age-castle':[2,6], idle:[3,6], rally:[4,6], map:[5,6], home:[6,6],
+  // column 7 / row 7: empty labeled boxes to draw future art into
+  spare2:[7,2], spare3:[7,3], spare4:[7,4], spare5:[7,5], spare6:[7,6], spare7:[7,7],
+  spare8:[0,7], spare9:[1,7], spare10:[2,7], spare11:[3,7], spare12:[4,7], spare13:[5,7], spare14:[6,7],
+};
+(function(){
+  let css = '';
+  for (const k in SPRITE_CELLS) {
+    const cell = SPRITE_CELLS[k];
+    css += `.icon-${k}{background-position:${(cell[0]/7*100).toFixed(4)}% ${(cell[1]/7*100).toFixed(4)}%;}\n`;
+  }
+  const st = document.createElement('style');
+  st.id = 'sprite-cells';
+  st.textContent = css;
+  document.head.appendChild(st);
+})();
+
 (function(){
 const variant = window.UI_VARIANT || 'mobile';
 

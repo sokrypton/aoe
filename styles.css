@@ -242,10 +242,8 @@ canvas {
   gap: 8px;
 }
 #sel-portrait {
-  /* Same act-btn-matched size as .sel-unit-icon at every breakpoint — the
-     idle age crest sits in the same visual rhythm as the selection tiles. */
-  width: 58px;
-  height: 58px;
+  width: var(--tile-size);
+  height: var(--tile-size);
   /* background-image (not the `background` shorthand) so it doesn't reset
      background-position/size/repeat — those are set by .sprite-icon /
      .icon-* below, at lower specificity, when a sprite icon is shown. */
@@ -299,12 +297,6 @@ canvas {
   max-height: 100%;
   text-shadow: 1px 1px 1px #000;
 }
-/* Selected card is portrait + name ONLY in this skin — HP bars and activity
-   are already visible in-world, so the details block is hidden while
-   something is selected. The no-selection state keeps #sel-details for the
-   "Tap to select…" hint and the age line. Classic shows the full readout. */
-#sel-info.has-selection #sel-details { display: none; }
-
 /* Grid-mode card sizes to its TILES and just keeps growing — one tile hugs
    it, each extra unit type widens it, and with enough types it eats the
    bar (the #sel-info border-left is the moving actions|selection divider).
@@ -363,8 +355,8 @@ canvas {
   /* One tile size everywhere, matching .act-btn at each breakpoint — the
      selection tiles and action buttons share a single visual rhythm,
      whether one thing or a group is selected. */
-  width: 58px;
-  height: 58px;
+  width: var(--tile-size);
+  height: var(--tile-size);
   border: 2px solid #bfa054;
   border-radius: 4px;
   background-image: radial-gradient(circle, #805c36 0%, #3e2612 100%);
@@ -464,11 +456,16 @@ canvas {
      whole row "jumping"). */
   padding: 8px;
 }
+/* ONE size for every square control in the bar — action buttons, selection
+   tiles, the idle age crest. Breakpoints change the variable, never the
+   selectors, so the pieces cannot drift apart. */
+:root { --tile-size: 58px; }
+
 .act-btn{
   position:relative; /* anchors the queue-cancel-hover badge, not the button itself */
   flex-shrink:0; /* keep full size when there's not enough row width, scroll instead of squeezing */
-  min-width:58px;
-  height:58px;
+  min-width:var(--tile-size);
+  height:var(--tile-size);
   /* Match the wooden-frame language of the baked-frame icons (.framed —
      back/eco/mil art): dark chocolate interior + thick rounded brown
      frame, gold reserved for hover/active. Before this, submenu building
@@ -593,73 +590,8 @@ canvas {
   background-repeat:no-repeat;
   background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
 }
-.icon-villager            {background-position:0%        0%;}
-.icon-militia             {background-position:14.2857%  0%;}
-.icon-spearman            {background-position:28.5714%  0%;}
-.icon-archer              {background-position:42.8571%  0%;}
-.icon-scout               {background-position:57.1429%  0%;}
-.icon-knight              {background-position:71.4286%  0%;}
-.icon-sheep               {background-position:85.7143%  0%;}
-.icon-tradecart           {background-position:100%      0%;} /* col 7 row 0 — "cart" placeholder, draw art here */
-.icon-militia-feudal      {background-position:0%        14.2857%;}
-.icon-militia-castle      {background-position:14.2857%  14.2857%;}
-.icon-spearman-castle     {background-position:28.5714%  14.2857%;}
-.icon-archer-castle       {background-position:42.8571%  14.2857%;}
-.icon-scout-castle        {background-position:57.1429%  14.2857%;}
-.icon-bear                {background-position:71.4286%  14.2857%;}
-.icon-pop                 {background-position:85.7143%  14.2857%;}
-.icon-TC                  {background-position:0%        28.5714%;}
-.icon-HOUSE               {background-position:14.2857%  28.5714%;}
-.icon-BARRACKS            {background-position:28.5714%  28.5714%;}
-.icon-MILL                {background-position:42.8571%  28.5714%;}
-.icon-LCAMP               {background-position:57.1429%  28.5714%;}
-.icon-MCAMP               {background-position:71.4286%  28.5714%;}
-.icon-FARM                {background-position:85.7143%  28.5714%;}
-.icon-TOWER               {background-position:0%        42.8571%;}
-.icon-WALL                {background-position:14.2857%  42.8571%;}
-.icon-GATE                {background-position:28.5714%  42.8571%;}
-.icon-SWALL               {background-position:42.8571%  42.8571%;}
-.icon-SGATE               {background-position:57.1429%  42.8571%;}
-.icon-gate-lock           {background-position:71.4286%  42.8571%;}
-.icon-gate-unlock         {background-position:85.7143%  42.8571%;}
-.icon-food                {background-position:0%        57.1429%;}
-.icon-wood                {background-position:14.2857%  57.1429%;}
-.icon-gold                {background-position:28.5714%  57.1429%;}
-.icon-stone               {background-position:42.8571%  57.1429%;}
-.icon-cancel              {background-position:57.1429%  57.1429%;}
-.icon-econ                {background-position:71.4286%  57.1429%;}
-.icon-mil                 {background-position:85.7143%  57.1429%;}
-.icon-back                {background-position:0%        71.4286%;}
-.icon-reseed              {background-position:14.2857%  71.4286%;}
-.icon-research            {background-position:28.5714%  71.4286%;}
-.icon-logo                {background-position:42.8571%  71.4286%;}
-.icon-ram                 {background-position:57.1429%  71.4286%;} /* rendered from drawRamBody (SE pose) */
-.icon-MARKET              {background-position:71.4286%  71.4286%;} /* cell right of the ram */
-.icon-bell                {background-position:85.7143%  71.4286%;}
-.icon-age-dark            {background-position:0%        85.7143%;}
-.icon-age-feudal          {background-position:14.2857%  85.7143%;}
-.icon-age-castle          {background-position:28.5714%  85.7143%;}
-.icon-idle                {background-position:42.8571%  85.7143%;}
-.icon-rally               {background-position:57.1429%  85.7143%;}
-.icon-map                 {background-position:71.4286%  85.7143%;}
-.icon-home                {background-position:85.7143%  85.7143%;}
 /* New spare cells (empty labeled boxes) — column 7 (rows 1-7) then row 7
    (cols 0-6). Wire any of these up by renaming the class + drawing its cell. */
-.icon-compass             {background-position:100%      14.2857%;} /* Auto Scout */
-.icon-spare2              {background-position:100%      28.5714%;}
-.icon-spare3              {background-position:100%      42.8571%;}
-.icon-spare4              {background-position:100%      57.1429%;}
-.icon-spare5              {background-position:100%      71.4286%;}
-.icon-spare6              {background-position:100%      85.7143%;}
-.icon-spare7              {background-position:100%      100%;}
-.icon-spare8              {background-position:0%        100%;}
-.icon-spare9              {background-position:14.2857%  100%;}
-.icon-spare10             {background-position:28.5714%  100%;}
-.icon-spare11             {background-position:42.8571%  100%;}
-.icon-spare12             {background-position:57.1429%  100%;}
-.icon-spare13             {background-position:71.4286%  100%;}
-.icon-spare14             {background-position:85.7143%  100%;}
-
 /* ---- MARKET buy/sell exchange (js/ui.js): two labeled rows (Buy / Sell) of
    resource icons with the live gold price printed below each. Dedicated .mkt-*
    classes (not .act-btn) so it stays visible in both skins, which hide
@@ -1420,7 +1352,6 @@ canvas {
     font-size: 28px;
     transform: scale(1.1);
   }
-  .sel-unit-icon{width:70px;height:70px}
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
   /* Corner minimap is gone at this width — the only way back to a map view
@@ -1432,9 +1363,10 @@ canvas {
     width: 96px;
     padding: 6px 8px;
   }
-  #sel-portrait{width:70px;height:70px;font-size:24px}
+  #sel-portrait{font-size:24px}
   #sel-details{font-size:10px}
-  .act-btn{min-width:70px;height:70px;font-size:13px}
+  :root{--tile-size:70px}
+  .act-btn{font-size:13px}
   #sel-info.multi-select{max-width:calc(100% - 102px)}
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
@@ -1446,10 +1378,10 @@ canvas {
     width: 88px;
     padding: 5px 7px;
   }
-  #sel-portrait{width:64px;height:64px;font-size:20px}
-  .sel-unit-icon{width:64px;height:64px}
+  #sel-portrait{font-size:20px}
   #sel-details{font-size:9px}
-  .act-btn{min-width:64px;height:64px;font-size:12px}
+  :root{--tile-size:64px}
+  .act-btn{font-size:12px}
   #sel-info.multi-select{max-width:calc(100% - 94px)}
   /* Even larger on the smallest phones — biggest tap target where fingers
      cover the most screen. */
@@ -1751,10 +1683,6 @@ canvas {
   background-repeat: no-repeat;
   background-size: 800% 800%;
 }
-.res-mini-icon.icon-food  { background-position: 0% 57.1429%; }
-.res-mini-icon.icon-wood  { background-position: 14.2857% 57.1429%; }
-.res-mini-icon.icon-gold  { background-position: 28.5714% 57.1429%; }
-.res-mini-icon.icon-stone { background-position: 42.8571% 57.1429%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;
@@ -1764,10 +1692,6 @@ canvas {
   background-size: 800% 800%;
   flex-shrink: 0;
 }
-#tooltip .tip-cost-icon.icon-food  { background-position: 0% 57.1429%; }
-#tooltip .tip-cost-icon.icon-wood  { background-position: 14.2857% 57.1429%; }
-#tooltip .tip-cost-icon.icon-gold  { background-position: 28.5714% 57.1429%; }
-#tooltip .tip-cost-icon.icon-stone { background-position: 42.8571% 57.1429%; }
 #tooltip .tip-cost-label {
   color: #ffebad;
 }
@@ -2080,7 +2004,7 @@ canvas {
     border-left: none;
     border-top: 1px solid #8b6c43;
   }
-  #sel-portrait { width: 64px; height: 64px; }
+
   #sel-stats { flex: 0 0 auto; width: 100%; }
   #sel-name { font-size: 11px; line-height: 1.15; margin: 0; }
   #sel-details { font-size: 9px; line-height: 1.3; }
@@ -2090,7 +2014,7 @@ canvas {
      the width-expansion cap above must not apply. */
   #sel-grid { justify-content: center; gap: 6px; }
   #sel-info.multi-select { width: 100%; max-width: none; }
-  #sel-info.multi-select .sel-unit-icon { width: 64px; height: 64px; }
+
   /* Actions below: single centered column, scrolls vertically */
   #actions {
     flex: 1 1 auto;
@@ -2102,7 +2026,7 @@ canvas {
     padding: 8px;
   }
   #actions::-webkit-scrollbar { height: auto; width: 5px; }
-  .act-btn { min-width: 64px; height: 64px; }
+  :root { --tile-size: 64px; }
   /* Market exchange in the 96px rail: the horizontal rows (label + 3 cells,
      ~130px) get clipped by overflow-x:hidden, so restack — Buy/Sell become
      section headers over full-width icon|price cells, scrolling vertically

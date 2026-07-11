@@ -532,31 +532,9 @@ C.addEventListener('mouseup',e=>{
       doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
     } else {
       if (window.settingRally) {
-        let bldg = selected[0];
-        let bData = bldg && BLDGS[bldg.btype];
-        if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
-          doCommand(e.clientX, e.clientY);
-        }
-        window.settingRally = false;
-        updateUI();
+        commitRallyAt(e.clientX, e.clientY);
       } else if (window.settingGuard) {
-        // Desktop click while setting a guard flag — same as the touch path:
-        // friendly unit = escort, own/allied building = stand watch, ground = hold.
-        let gt = screenToTile(e.clientX, e.clientY);
-        if(gt && selected.length>0){
-          let tgt = getUnitUnderCursor(e.clientX, e.clientY);
-          if(!tgt && map[gt.y] && map[gt.y][gt.x] && map[gt.y][gt.x].occupied){
-            let b = entitiesById.get(map[gt.y][gt.x].occupied);
-            if(b && b.type==='building') tgt = b;
-          }
-          if(tgt && !sameSide(tgt.team, myTeam)) tgt = null;
-          submitCommand({ kind:'guard',
-            unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
-            x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
-          showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
-        }
-        window.settingGuard = false;
-        updateUI();
+        dropGuardFlagAt(e.clientX, e.clientY);
       } else {
         doSelect(e.clientX,e.clientY,e.shiftKey);
       }
@@ -891,6 +869,39 @@ function finishMobileUnitCommand(){
   updateUI();
 }
 
+// Commit a rally-flag drop at a screen point — the ONE rally-drop path,
+// shared by the touch tap and desktop click handlers (same pattern as
+// dropGuardFlagAt below). doCommand resolves the click exactly like a
+// right-click rally would.
+function commitRallyAt(sx, sy){
+  let bldg = selected[0];
+  let bData = bldg && BLDGS[bldg.btype];
+  if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
+    doCommand(sx, sy);
+  }
+  window.settingRally = false;
+  updateUI();
+}
+
+// Resolve and submit a guard flag at a screen point — the ONE guard-drop
+// path, shared by the touch tap and desktop click handlers. A tap on a
+// friendly unit = ESCORT it, on an own/allied building = stand watch there
+// (sprite-geometry hit-test, same as every other click), anything else =
+// ground post at the tile (execGuard re-validates deterministically).
+function dropGuardFlagAt(sx, sy){
+  let gt = screenToTile(sx, sy);
+  if(gt && selected.length>0){
+    let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
+    if(tgt && !sameSide(tgt.team, myTeam)) tgt = null; // enemy tap → ground post
+    submitCommand({ kind:'guard',
+      unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
+      x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+    showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
+  }
+  window.settingGuard = false;
+  updateUI();
+}
+
 // Context-aware tap handler for mobile
 function handleTap(sx,sy){
   // 1. If placing a building, place it
@@ -901,34 +912,12 @@ function handleTap(sx,sy){
 
   // 2. If in rally-setting mode, set the rally point on tap
   if(window.settingRally){
-    let bldg = selected[0];
-    let bData = bldg && BLDGS[bldg.btype];
-    if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
-      doCommand(sx, sy);
-    }
-    window.settingRally = false;
-    updateUI();
+    commitRallyAt(sx, sy);
     return;
   }
-  // 2b. Guard-setting mode: the tap becomes the selection's guard flag —
-  // on a friendly unit = ESCORT it, on an own/allied building = stand watch
-  // there, on ground = hold that spot (execGuard, js/commands.js).
+  // 2b. Guard-setting mode: the tap becomes the selection's guard flag.
   if(window.settingGuard){
-    let gt = screenToTile(sx, sy);
-    if(gt && selected.length>0){
-      let tgt = getUnitUnderCursor(sx, sy);
-      if(!tgt && map[gt.y] && map[gt.y][gt.x] && map[gt.y][gt.x].occupied){
-        let b = entitiesById.get(map[gt.y][gt.x].occupied);
-        if(b && b.type==='building') tgt = b;
-      }
-      if(tgt && !sameSide(tgt.team, myTeam)) tgt = null; // enemy tap → ground post
-      submitCommand({ kind:'guard',
-        unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
-        x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
-      showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
-    }
-    window.settingGuard = false;
-    updateUI();
+    dropGuardFlagAt(sx, sy);
     return;
   }
 
@@ -1560,19 +1549,14 @@ function doCommand(sx,sy){
     // and the message reads as ground/resource, never "set to Villager".
     let rTarget = getUnitUnderCursor(sx, sy);
     if(rTarget){
-      tile = { x: Math.max(0, Math.min(MAP-1, Math.floor(rTarget.x))),
-               y: Math.max(0, Math.min(MAP-1, Math.floor(rTarget.y))) };
+      tile = { x: Math.max(0, Math.min(MAP-1, Math.round(rTarget.x))),
+               y: Math.max(0, Math.min(MAP-1, Math.round(rTarget.y))) };
       rTarget = null;
     } else {
       rTarget = getBuildingUnderCursor(sx, sy);
-      // Same building filter as execRally: only enterable buildings
-      // (TC/tower garrison), Markets, own foundations, or enemy buildings
-      // are targets — a flag on any other friendly building is ground.
-      if(rTarget){
-        let keep = canGarrisonIn(rTarget, myTeam) || rTarget.btype==='MARKET'
-          || (rTarget.team===myTeam && !rTarget.complete) || !sameSide(rTarget.team, myTeam);
-        if(!keep) rTarget = null;
-      }
+      // Same filter as execRally — the shared isRallyBuildingTarget
+      // (js/commands.js) keeps the message and the sim in agreement.
+      if(rTarget && !isRallyBuildingTarget(rTarget, myTeam)) rTarget = null;
     }
 
     feedbackFor(myTeam, () => {

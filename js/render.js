@@ -9,6 +9,38 @@ const _marketProxyPool = new Map(); // market entity id -> per-part proxies (wal
 const _farmProxyPool = new Map();   // farm entity id -> ground proxy + per-tile crop proxies
 let _poolMapSize = -1;
 
+// ---- Flag/post visuals: ONE vocabulary shared by rally points, guard
+// posts and the placement ghost (a rally IS the building's guard flag).
+// Module scope, not per-frame closures — same reuse discipline as the
+// scratch pools above. All inputs are globals (X, camX/camY, W/H, topH). ----
+const _drawnFlagsScratch = new Set(); // per-frame flag-cluster dedup
+function flagScreen(wx, wy){
+  let p = toIso(wx, wy);
+  return { x: p.ix - camX + W/2, y: p.iy - camY + H/2 + topH };
+}
+function drawFlagLine(x1, y1, x2, y2, alpha){
+  X.strokeStyle = '#ffd700';
+  X.globalAlpha = alpha;
+  X.lineWidth = 1.5;
+  X.setLineDash([4, 4]);
+  X.beginPath(); X.moveTo(x1, y1); X.lineTo(x2, y2); X.stroke();
+  X.setLineDash([]);
+  X.globalAlpha = 1;
+}
+function drawFlagMarker(x, y, tall){
+  let h = tall ? 16 : 12, w = tall ? 10 : 8;
+  X.globalAlpha = tall ? 0.9 : 1;
+  X.fillStyle = '#ffd700';
+  X.fillRect(x - 1, y - h, 2, h); // pole
+  X.beginPath();
+  X.moveTo(x + 1, y - h);
+  X.lineTo(x + w, y - h + (tall ? 4 : 3));
+  X.lineTo(x + 1, y - h + (tall ? 8 : 6));
+  X.closePath();
+  X.fill();
+  X.globalAlpha = 1;
+}
+
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
@@ -251,37 +283,6 @@ function render(){
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
 
-  // ---- Flag/post visuals: ONE vocabulary shared by rally points and guard
-  // posts (a rally IS the building's guard flag). drawFlagLine draws the
-  // faint dashed lead line; drawFlagMarker plants the pennant — `tall` is
-  // the cursor-ghost variant ("held", not planted). Screen coords helpers. ----
-  let flagScreen = (wx, wy) => {
-    let p = toIso(wx, wy);
-    return { x: p.ix - camX + W/2, y: p.iy - camY + H/2 + topH };
-  };
-  let drawFlagLine = (x1, y1, x2, y2, alpha) => {
-    X.strokeStyle = '#ffd700';
-    X.globalAlpha = alpha;
-    X.lineWidth = 1.5;
-    X.setLineDash([4, 4]);
-    X.beginPath(); X.moveTo(x1, y1); X.lineTo(x2, y2); X.stroke();
-    X.setLineDash([]);
-    X.globalAlpha = 1;
-  };
-  let drawFlagMarker = (x, y, tall) => {
-    let h = tall ? 16 : 12, w = tall ? 10 : 8;
-    X.globalAlpha = tall ? 0.9 : 1;
-    X.fillStyle = '#ffd700';
-    X.fillRect(x - 1, y - h, 2, h); // pole
-    X.beginPath();
-    X.moveTo(x + 1, y - h);
-    X.lineTo(x + w, y - h + (tall ? 4 : 3));
-    X.lineTo(x + 1, y - h + (tall ? 8 : 6));
-    X.closePath();
-    X.fill();
-    X.globalAlpha = 1;
-  };
-
   // Selected building's rally point (AoE2-style). Hidden while RE-placing
   // it (settingRally) — the old flag deactivates and only the cursor ghost
   // shows, so there's never two flags on screen fighting for attention.
@@ -304,7 +305,8 @@ function render(){
   // while RE-placing (settingGuard): old flags deactivate, only the cursor
   // ghost shows — same rule as the rally flag.
   if (!window.settingGuard && selected.length > 0 && selected[0].type === 'unit') {
-    let drawnFlags = new Set();
+    let drawnFlags = _drawnFlagsScratch;
+    drawnFlags.clear();
     selected.forEach(u => {
       if (u.type !== 'unit' || u.team !== myTeam || u.guardX == null || !u.guardFlagged) return;
       let from = flagScreen(u.x, u.y);
@@ -319,10 +321,15 @@ function render(){
   }
 
   // Flag placement GHOST — armed by EITHER the Guard button (units) or the
-  // Set Rally button (building): a taller flag rides the cursor (mouseX/Y
-  // also tracks touch drags, same as the building ghost) with faint preview
-  // lines from whatever will take the flag — click/tap drops it.
-  if ((window.settingGuard || window.settingRally) && selected.length > 0 && typeof mouseX === 'number') {
+  // Set Rally button (building): a taller flag rides the cursor with faint
+  // preview lines from whatever will take the flag — click/tap drops it.
+  // Hover-capable pointers only: on touch there is no hover, so mouseX is
+  // whatever the LAST canvas tap was and the ghost rendered as a phantom
+  // flag planted at a stale spot.
+  if (window.__hoverCapable === undefined) {
+    window.__hoverCapable = !!(window.matchMedia && matchMedia('(hover: hover)').matches);
+  }
+  if (window.__hoverCapable && (window.settingGuard || window.settingRally) && selected.length > 0 && typeof mouseX === 'number') {
     let mt = screenToTile(mouseX, mouseY);
     if (mt) {
       let g = flagScreen(mt.x + 0.5, mt.y + 0.5);

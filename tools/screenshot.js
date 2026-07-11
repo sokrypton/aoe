@@ -18,60 +18,10 @@
 // Static server + browser launch mirror tools/simulate.js (kept separate so
 // the sim driver stays single-purpose).
 
-const http = require('http');
-const fs = require('fs');
 const path = require('path');
-
-let chromium;
-try {
-  ({ chromium } = require('playwright-core'));
-} catch {
-  console.error('playwright-core is not installed. Run:  (cd tools && npm install)');
-  process.exit(2);
-}
-
-const ROOT = path.resolve(__dirname, '..');
-const MIME = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon',
-};
-
-function parseArgs(argv) {
-  const o = {};
-  for (const a of argv) {
-    const m = a.match(/^([\w-]+)=(.*)$/);
-    if (m) o[m[1]] = m[2];
-    else console.error(`ignoring unrecognized arg: ${a}`);
-  }
-  return o;
-}
-
-function startServer() {
-  return new Promise((resolve, reject) => {
-    const srv = http.createServer((req, res) => {
-      let rel = decodeURIComponent(req.url.split('?')[0]);
-      if (rel === '/') rel = '/tools/sim.html';
-      const fp = path.join(ROOT, rel);
-      if (!fp.startsWith(ROOT + path.sep) || !fs.existsSync(fp) || fs.statSync(fp).isDirectory()) {
-        res.writeHead(404); return res.end('not found');
-      }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream' });
-      fs.createReadStream(fp).pipe(res);
-    });
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => resolve(srv));
-  });
-}
-
-async function launchBrowser(headed) {
-  const attempts = [{ channel: 'chrome' }, { channel: 'chromium' }, {}];
-  let lastErr;
-  for (const opts of attempts) {
-    try { return await chromium.launch({ headless: !headed, ...opts }); }
-    catch (e) { lastErr = e; }
-  }
-  throw new Error('could not launch a browser (install Chrome, or: cd tools && npx playwright install chromium)\n' + lastErr.message);
-}
+const fs = require('fs');
+const { ROOT, requireChromium, parseArgs, startServer, launchBrowser } = require('./lib/harness');
+const chromium = requireChromium();
 
 // ---- page-side scene code (serialized into page.evaluate) ----
 // Builds a flat grass stage: no trees/resources/starting entities, fog lit.
@@ -175,9 +125,9 @@ const SCENES = {
 
   let srv, browser;
   try {
-    srv = await startServer();
+    srv = await startServer('/tools/sim.html');
     const base = 'http://127.0.0.1:' + srv.address().port;
-    browser = await launchBrowser(a.headed === '1');
+    browser = await launchBrowser(chromium, a.headed === '1');
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     const pageErrors = [];

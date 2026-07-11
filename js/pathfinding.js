@@ -316,5 +316,12 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
 function issueMoveOrder(e,x,y){
   e.moveGoalX=x;
   e.moveGoalY=y;
+  // A plain move RELOCATES a military unit's guard post to the destination
+  // ("this is your temp spot") — done here, in the one function every
+  // player move order funnels through, so no call site can forget the
+  // re-pin. guardFlagged=false: an implicit post, behaviorally identical
+  // to a flagged one but drawn without flag visuals (js/render.js).
+  // setGuardPost/guardEligible live in js/commands.js (same global scope).
+  if (typeof guardEligible === 'function' && guardEligible(e)) setGuardPost(e, x, y, false);
   return pathUnitTo(e,x,y);
 }

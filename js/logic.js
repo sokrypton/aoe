@@ -763,7 +763,7 @@ function damageEntity(attacker, target){
   // get the steel clash — slaughtering livestock isn't a sword fight; the
   // bleat on death (handleDeath) is the sheep's own audio.
   if (target.type === 'unit') {
-    if (window.playSound && target.utype !== 'sheep' && target.utype !== 'sheep_carcass') {
+    if (window.playSound && !isHarmlessAnimal(target)) {
       window.playSound('attack', target.x, target.y);
     }
     spawnParticles(target.x, target.y, '#990000', 4, 0.04, 1.5);
@@ -862,7 +862,7 @@ function damageEntity(attacker, target){
   // hacking at it just interrupts the wall it was ordered to break. Trade
   // carts can't fight at all (atk 0) — retaliating just made them chase
   // their attacker and bump into it uselessly.
-  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&target.utype!=='ram'&&target.utype!=='tradecart'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
+  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -898,7 +898,7 @@ function damageEntity(attacker, target){
     entities.forEach(en=>{
       if(en.type!=='unit'||!sameSide(en.team,target.team))return; // allies defend a sieged building too
       // non-combatants sit out: carts have atk 0, rams do 1-2 vs units
-      if(en.utype==='villager'||en.utype==='sheep'||en.utype==='sheep_carcass'||en.utype==='tradecart'||en.utype==='ram')return;
+      if(!isSoldierUnit(en))return;
       if(en.target||en.task||en.stance==='passive')return;
       if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
       if(distToTarget(en,target)>8)return;
@@ -1042,6 +1042,11 @@ function ejectGarrison(b,filter){
     if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
     u.fromX=u.x;u.fromY=u.y;
     clearUnitPath(u);
+    // Leaving shelter re-pins the guard post to the drop spot: the pre-
+    // garrison post is usually WHY the unit fled (a raid there), and the
+    // idle return would otherwise auto-march it back through the attackers
+    // with retaliation suppressed mid-path.
+    if(u.guardX!=null) setGuardPost(u, Math.round(u.x), Math.round(u.y), false);
     out++;
     // Villagers with a savedTask auto-resume via restoreSavedTask in updateUnit.
   });
@@ -1482,21 +1487,25 @@ function updateUnit(e){
       }
     }
 
-    // Defensive Stance / Guard anchor retreat check — a guard post pins the
-    // anchor regardless of stance, so guarding units leash their AUTO-
-    // acquired chases to the post. Explicit attack orders are exempt: the
-    // post survives every order now (a move just relocates it), so without
-    // the exemption a commanded assault would yank the army back 6 tiles in.
-    syncGuardPost(e); // escort posts track the guarded unit before the leash reads the anchor
-    if (e.guardX != null && e.guardTargetId != null) { e.defendX = e.guardX; e.defendY = e.guardY; }
-    if ((e.stance === 'defensive' || (e.guardX != null && !e.explicitAttack)) && e.defendX !== undefined) {
-      let adx = e.x - e.defendX, ady = e.y - e.defendY;
-      let dFromAnchor = Math.sqrt(adx*adx + ady*ady);
-      if (dFromAnchor > 6) {
-        e.target = null;
-        clearUnitPath(e);
-        pathUnitTo(e, Math.round(e.defendX), Math.round(e.defendY));
-        return;
+    // Anchor retreat check ("leash"): a guard post leashes AUTO-acquired
+    // chases to the post itself — explicit attack orders are exempt, or a
+    // commanded assault would get yanked back 6 tiles in — while defensive
+    // stance leashes to its drifting idle anchor (defendX/Y). The anchor is
+    // COMPUTED here; guard code never mirrors the post into defendX/Y, so
+    // each field keeps exactly one meaning.
+    syncGuardPost(e); // escort posts track the guarded unit before the leash reads the post
+    {
+      let guardLeash = e.guardX != null && !e.explicitAttack;
+      if (guardLeash || (e.stance === 'defensive' && e.defendX !== undefined)) {
+        let ax = guardLeash ? e.guardX : e.defendX;
+        let ay = guardLeash ? e.guardY : e.defendY;
+        let adx = e.x - ax, ady = e.y - ay;
+        if (Math.sqrt(adx*adx + ady*ady) > 6) {
+          e.target = null;
+          clearUnitPath(e);
+          pathUnitTo(e, Math.round(ax), Math.round(ay));
+          return;
+        }
       }
     }
 
@@ -1953,7 +1962,7 @@ function updateUnit(e){
   // target planner assigns).
   // Trade carts are unarmed haulers (atk 0) — never let them auto-engage, or an
   // idle cart chases enemies it can't hurt instead of trading.
-  let isMilitary = e.utype !== 'villager' && e.utype !== 'sheep' && e.utype !== 'sheep_carcass' && e.utype !== 'bear' && e.utype !== 'ram' && e.utype !== 'tradecart';
+  let isMilitary = isSoldierUnit(e);
   // Note: followId isn't excluded here — a unit that has caught up to its
   // follow target and stopped (path empty) should still engage nearby
   // enemies like any idle unit; combat naturally takes precedence and the
@@ -1964,20 +1973,35 @@ function updateUnit(e){
     // unit's anchor drifts to wherever it stands); an idle guard away from
     // its flag walks back. retryReady throttles the re-path so a blocked
     // return doesn't hammer the pathfinder every tick.
+    // Idle anchor drift (defensive-stance leash) — unconditional, exactly
+    // the pre-guard behavior: defendX/Y means "where this unit last idled"
+    // and NOTHING else. The guard leash reads guardX/Y directly.
+    e.defendX = e.x;
+    e.defendY = e.y;
     syncGuardPost(e);
     if(e.guardX != null){
-      e.defendX = e.guardX;
-      e.defendY = e.guardY;
       let gdx = e.x - e.guardX, gdy = e.y - e.guardY;
       // While ESCORTING (followId set), the follow leg does the walking —
       // don't compete with it for the path.
       if(e.followId == null && gdx*gdx + gdy*gdy > 2.25 && retryReady(e,'guardret')){
-        retryStamp(e,'guardret',30);
-        pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+        // SETTLE rule: a return must be able to fail permanently. Shared
+        // posts only seat ~9 units within the 1.5-tile radius, and a post
+        // can be built over, in forest, or inside a garrison footprint —
+        // without this, every surplus/blocked unit re-runs A* every 30
+        // ticks forever. After 3 fruitless attempts (retry .n, hashed for
+        // lockstep) or an outright no-path, the spot the unit actually
+        // stands becomes the post.
+        let r = e.retry && e.retry['guardret'];
+        if (r && r.n >= 3) {
+          e.guardX = Math.round(e.x); e.guardY = Math.round(e.y);
+          r.n = 0;
+        } else {
+          retryStamp(e,'guardret',30);
+          e.retry['guardret'].n++;
+          pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+          if (e.path.length === 0) { e.guardX = Math.round(e.x); e.guardY = Math.round(e.y); e.retry['guardret'].n = 0; }
+        }
       }
-    } else {
-      e.defendX = e.x;
-      e.defendY = e.y;
     }
     // Stagger the acquisition scan across 3 ticks by id: this scan (grid
     // walk + fog gate per candidate) ran for EVERY idle military unit EVERY
@@ -2257,7 +2281,7 @@ function handleDeath(e,killerTeam){
   // Bears get a heavier burst to match their bulk.
   // (wooden vehicles are excluded: they break apart in wood splinters
   // instead — see drawTradeCartCorpse / drawRamCorpse in js/render-units.js)
-  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&e.utype!=='tradecart'&&e.utype!=='ram'){
+  if(e.type==='unit'&&!isHarmlessAnimal(e)&&!isWoodVehicle(e)){
     spawnParticles(e.x,e.y,'#990000',e.utype==='bear'?12:7,0.05,1.8);
   }
   // Death/destruction audio (host side; the guest hears the same via its
@@ -2269,12 +2293,12 @@ function handleDeath(e,killerTeam){
     if(e.type==='building'&&e.complete) window.playSound('collapse', e.x+(e.w||1)/2, e.y+(e.h||1)/2);
     // Bears growl their own death; humans get the death cry.
     else if(e.type==='unit'&&e.utype==='bear') window.playSound('bear', e.x, e.y);
-    else if(e.type==='unit'&&(e.utype==='ram'||e.utype==='tradecart')) window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
-    else if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass') window.playSound('death', e.x, e.y);
+    else if(e.type==='unit'&&isWoodVehicle(e)) window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
+    else if(e.type==='unit'&&!isHarmlessAnimal(e)) window.playSound('death', e.x, e.y);
   }
   // Add to corpses list for AoE2-style decay (sheep are the exception —
   // they become a harvestable carcass entity instead, handled above)
-  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
+  if(e.type==='unit'&&!isHarmlessAnimal(e)){
     let corpse = {
       type: 'corpse',
       utype: e.utype,
@@ -2352,7 +2376,7 @@ function checkAllianceVictory(){
 
 function teamEliminated(team){
   return !entities.some(en=>en.team===team&&
-    (en.type==='building'||(en.type==='unit'&&en.utype!=='sheep'&&en.utype!=='sheep_carcass')));
+    (en.type==='building'||(en.type==='unit'&&!isHarmlessAnimal(en))));
 }
 
 // ---- STUCK-UNIT WATCHDOG ----
@@ -2577,11 +2601,14 @@ function updateBuilding(e){
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         // Fresh MILITARY units guard their rally flag (AoE2-style): where
         // they're flagged to becomes their default guard anchor, so after
-        // any fight they return to the flag instead of drifting off. The
-        // player can re-pin it with the Guard button (execGuard) and any
-        // manual order clears it (execUnitCommand).
-        if(unit.utype!=='villager'&&unit.utype!=='tradecart'){
-          unit.guardX=e.rallyX; unit.guardY=e.rallyY;
+        // any fight they return to the flag instead of drifting off.
+        // HUMAN teams only: the AI's military controller (js/ai.js) issues
+        // raw target/pathUnitTo assignments that never manage guard fields,
+        // so a post would leash its defenders 6 tiles from the barracks and
+        // the idle return would fight its forward posture — AI units keep
+        // the pre-guard behavior (drifting defend anchor, no post).
+        if(guardEligible(unit) && !isAITeam(e.team)){
+          setGuardPost(unit, e.rallyX, e.rallyY, false);
         }
         if(e.rallyTargetId){
           let target=entitiesById.get(e.rallyTargetId);

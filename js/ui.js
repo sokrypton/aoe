@@ -1,22 +1,50 @@
 // Sprite sheet (sprites.png) covers every BLDGS/UNITS key directly (class
 // names match btype/utype: icon-TC, icon-villager, etc). Anything else
 // (no selection, cancel-only actions) falls back to the emoji glyph.
-const SPRITE_ICON_KEYS = new Set(['villager','militia','spearman','archer','scout','sheep',
-  'TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','TOWER','WALL','GATE',
-  'knight','SWALL','SGATE','bear','logo','ram','MARKET','tradecart',
-  // Age-look variant cells (AGE_ICON_VARIANTS below)
-  'militia-feudal','militia-castle','spearman-castle','archer-castle','scout-castle',
-  // Age crests (also used as the idle info-box portrait — see updateUI)
-  'age-dark','age-feudal','age-castle']); // 8x8 master sheet cells
+// Derived from the ONE cell registry (SPRITE_CELLS, js/page-shell.js) —
+// naming a new cell there is the only step; this set follows. The extra
+// non-portrait keys (rally, bell, spares…) are harmless: the set is only
+// ever queried with unit/building/age keys.
+const SPRITE_ICON_KEYS = new Set(Object.keys(window.SPRITE_CELLS));
 
 // True when every selected thing is an own military unit that can take a
 // Guard Position flag — the same eligibility filter execGuard applies
 // deterministically (js/commands.js). Rams count: they never auto-engage,
 // but holding a spot is a valid order for them.
 function allGuardable(sel){
-  return sel.length>0 && sel.every(s=>s.type==='unit'&&s.team===myTeam
-    &&s.utype!=='villager'&&s.utype!=='sheep'&&s.utype!=='sheep_carcass'
-    &&s.utype!=='bear'&&s.utype!=='tradecart');
+  // Delegates to guardEligible (js/commands.js, same global scope) — the
+  // single eligibility filter, so the button can never drift from what
+  // execGuard actually accepts.
+  return sel.length>0 && sel.every(s=>s.team===myTeam&&guardEligible(s));
+}
+
+// Villager task -> resource carried, used by the selection card, the tile
+// tooltip and the topbar villager counts alike (was three inline copies).
+const TASK_RES = { chop: 'wood', mine_gold: 'gold', mine_stone: 'stone', forage: 'food', farm: 'food' };
+
+// THE skin-detection signal — everything in this file keys off this one
+// binding (page-shell.js sets both window.UI_VARIANT and the body class
+// from the same value; checking them interchangeably invited the two
+// mechanisms to disagree on a page that sets only one).
+let isClassicUI = document.body.classList.contains('classic-ui');
+
+// ---- Stat-chip formatting: ONE place for the ⚔️/🏹/🛡️/🏃 chips and the
+// TC/tower arrow numbers. Three consumers render these — the train-button
+// tooltip (descriptorForActBtn), the selection-tile tooltip
+// (descriptorForSelTile) and the classic info card (updateUI) — and they
+// must always show the same numbers for the same thing. ----
+function unitStatChips(u){
+  const chips = [];
+  if (u.atk > 0) chips.push(`⚔️ ${u.atk}`);
+  if (u.range > 0) chips.push(`🏹 ${u.range}`);
+  if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) chips.push(`🛡️ ${u.armor.m}/${u.armor.p}`);
+  if (u.speed > 0) chips.push(`🏃 ${u.speed.toFixed(2)}`);
+  return chips;
+}
+// TC and guard towers fire 5-damage arrows (AoE2); null for everything else.
+function buildingArrowStats(btype){
+  if (btype !== 'TC' && btype !== 'TOWER') return null;
+  return { atk: 5, range: btype === 'TC' ? 6 : BLDGS.TOWER.range };
 }
 
 // Units whose LOOK changes with age get age-specific icon cells. Falls
@@ -98,12 +126,11 @@ function updateUI(){
   // that separately — otherwise shepherds flickered in and out of the food count
   // as they cycled between eating (no task) and returning (task 'return').
   let vilRes = {food:0, wood:0, gold:0, stone:0};
-  let VIL_TASK_RES = {chop:'wood', mine_gold:'gold', mine_stone:'stone', forage:'food', farm:'food'};
   for (let e of entities) {
     if (e.team === myTeam && e.type === 'unit' && e.utype === 'villager') {
       let r = e.task === 'return'
-        ? (VIL_TASK_RES[e.prevTask] || (e.carrying > 0 ? e.carryType : null))
-        : VIL_TASK_RES[e.task];
+        ? (TASK_RES[e.prevTask] || (e.carrying > 0 ? e.carryType : null))
+        : TASK_RES[e.task];
       if (!r && e.target != null) {
         let t = entitiesById.get(e.target);
         if (t && (t.utype === 'sheep' || t.utype === 'sheep_carcass')) r = 'food';
@@ -454,18 +481,21 @@ function updateUI(){
   // one gold tile with an HP strip, no name, no separate portrait card. The
   // selection panel is one visual language whether 1 or 40 things are
   // selected. Classic keeps its AoE2 portrait + name + stats readout.
-  let singleGrid = window.UI_VARIANT !== 'classic' && !isMulti && !garrisonSel && selected.length===1;
+  // !gameOver everywhere below: the end-of-match branch writes VICTORY!/
+  // DEFEAT! into #sel-name/#sel-details, and a selection surviving into
+  // game over (the normal DEFEAT case) must not leave those hidden behind
+  // the grid classes.
+  let singleGrid = !isClassicUI && !isMulti && !garrisonSel && selected.length===1 && !gameOver;
   // NULL selection is a tile too: the age crest renders through the same
   // grid as any single selection — same style, same spacing, one language
   // for the panel in every state. (Classic keeps its title/portrait box.)
-  let idleCrest = window.UI_VARIANT !== 'classic' && selected.length===0 && gameStarted && !gameOver
+  let idleCrest = !isClassicUI && selected.length===0 && gameStarted && !gameOver
     && typeof teamAge !== 'undefined' && teamAge && isPlayerTeam(myTeam);
-  if(selInfo) selInfo.classList.toggle('multi-select', isMulti||!!garrisonSel||singleGrid||idleCrest);
-  // The mobile skin hides #sel-details behind this class (portrait + name
-  // only — HP bars and activity are already visible in-world); without it
-  // the no-selection hints ("Tap to select…", the age line) would vanish
-  // too. Classic (own stylesheet) keeps the full AoE2-style readout.
-  if(selInfo) selInfo.classList.toggle('has-selection', selected.length>0);
+  // (No separate 'has-selection' class: in the mobile skin EVERY selection
+  // state — single, group, garrison, idle crest — goes through the grid,
+  // and .multi-select already hides the whole #sel-stats card; classic
+  // never had a rule for it. One class, one meaning.)
+  if(selInfo) selInfo.classList.toggle('multi-select', (isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver);
   // The grid gets its OWN dirty key: only what it actually renders (selection
   // membership, per-unit HP, garrison members). Keying it on the full
   // currentSelectionDetails rebuilt every icon ~30×/s while watching a
@@ -475,8 +505,9 @@ function updateUI(){
   if (isMulti || singleGrid) gridKey += ':' + selected.map(s => s.id + '_' + s.hp).join(',')
     + ':cam' + (window.cameraFollowId || 0);
   if (idleCrest) {
-    let advTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
-    gridKey += ':idleage' + (advTC ? 'adv' + advTC.research.target : teamAge[myTeam]);
+    // myResearchTC was already computed for the age dirty-key at the top of
+    // this function — no second full-entities scan.
+    gridKey += ':idleage' + (myResearchTC ? 'adv' + myResearchTC.research.target : teamAge[myTeam]);
   }
   if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
     let u = entitiesById.get(id);
@@ -570,7 +601,7 @@ function updateUI(){
     } else if(idleCrest){
       // NULL SELECTION tile: the current age's crest (or the TARGET age's
       // while advancing) drawn as the exact same tile as a single selection.
-      let advTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
+      let advTC = myResearchTC; // computed once at the top of updateUI
       let crestIdx = advTC ? advTC.research.target : teamAge[myTeam];
       let icon = document.createElement('div');
       icon.className = 'sel-unit-icon';
@@ -601,7 +632,7 @@ function updateUI(){
     // AGE here — its top-bar age chip is hidden on mobile (cramped), so
     // this idle box is where age lives. More useful than the old game-name
     // placeholder, and harmless on desktop. Classic keeps the title.
-    let modern = !document.body.classList.contains('classic-ui');
+    let modern = !isClassicUI;
     if (modern && teamAge && isPlayerTeam(myTeam)) {
       let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
       let ageIdx = teamAge[myTeam];
@@ -642,10 +673,9 @@ function updateUI(){
       det=`HP: ${Math.ceil(e.hp)}/${e.maxHp}`;
       det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
 
-      let bAtk = (e.btype === 'TC' || e.btype === 'TOWER') ? 5 : 0; // both fire 5-damage arrows
-      let bRange = e.btype === 'TC' ? 6 : (e.btype === 'TOWER' ? BLDGS.TOWER.range : 0);
-      if(bAtk > 0) {
-        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;"><span class="sel-combat-stats">⚔️ ${bAtk}  🏹 ${bRange}</span></div>`;
+      let arrows = buildingArrowStats(e.btype);
+      if(arrows) {
+        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;"><span class="sel-combat-stats">⚔️ ${arrows.atk}  🏹 ${arrows.range}</span></div>`;
       }
       // The TC card skips the garrison line — its count already shows on the
       // building itself (the number by the flag) and in the garrison grid.
@@ -819,6 +849,11 @@ function updateUI(){
         let prepaid=resourceStore(myTeam).prepaidFarms||0;
         if(prepaid>0)btn.innerHTML+=`<div class="queue-count queue-count-static" title="${prepaid} reseed${prepaid>1?'s':''} prepaid">${prepaid}</div>`;
         btn.onclick=()=>prepayFarm();
+        // The static badge must be INERT: on train buttons the same-looking
+        // badge means "tap to cancel one", and letting a badge tap bubble
+        // into prepayFarm() silently bought ANOTHER reseed.
+        let staticBadge=btn.querySelector('.queue-count-static');
+        if(staticBadge)staticBadge.onclick=(ev)=>{ ev.stopPropagation(); };
         act.appendChild(btn);
       }
       if(b.isFarm && e.exhausted) {
@@ -913,18 +948,13 @@ function updateUI(){
       // (.sel-combat-stats{display:none} in styles.css — space is tight and
       // the long-press/hover tooltips carry the same numbers), while the
       // job/carrying/idle status icons after them stay visible everywhere.
-      let combat = [];
+      let combat = unitStatChips(uData);
       let stats = [];
-      if (uData.atk > 0) combat.push(`⚔️ ${uData.atk}`);
-      if (uData.range > 0) combat.push(`🏹 ${uData.range}`);
-      if (uData.armor && (uData.armor.m > 0 || uData.armor.p > 0)) combat.push(`🛡️ ${uData.armor.m}/${uData.armor.p}`);
-      combat.push(`🏃 ${uData.speed.toFixed(2)}`);
       if (combat.length) stats.push(`<span class="sel-combat-stats">${combat.join('  ')}</span>`);
       // Job shown purely as resource icon + carried amount, on the stats row
       // after the walk rate: [wood]0 = lumberjack heading out, [wood]7 =
       // hauling 7 wood. The resource comes from the task when the hands are
       // empty. Builders get 🔨 (no resource), idle villagers 💤.
-      let TASK_RES={chop:'wood',mine_gold:'gold',mine_stone:'stone',forage:'food',farm:'food'};
       let resType=e.carrying>0?e.carryType:TASK_RES[e.task];
       // Sheep work is target-driven (no task): a villager killing or
       // butchering a sheep is on food duty — show [food] with the live count.
@@ -1124,6 +1154,9 @@ function refreshActionAffordability(){
 }
 // Swallow clicks on disabled buttons before their own onclick fires.
 document.getElementById('actions').addEventListener('click', function(e){
+  // Queue-cancel badges always pass through: cancelling for the REFUND is
+  // most needed exactly when the train button is unaffordable-disabled.
+  if(e.target.closest && e.target.closest('.queue-count')) return;
   let btn = e.target.closest && e.target.closest('.act-btn.disabled, .mkt-cell.disabled');
   if(btn){
     e.stopPropagation();
@@ -1271,7 +1304,7 @@ window.selectIdleMilitary = function() {
   updateUI();
 };
 
-let isClassicUI = document.body.classList.contains('classic-ui');
+// (isClassicUI is declared once at the top of this file.)
 // Short landscape viewport (landscape phone OR a tiny desktop window): the
 // HUD moves from a bottom bar to a LEFT VERTICAL RAIL (see the matching
 // @media (orientation: landscape) and (max-height:500px) block in
@@ -1457,22 +1490,14 @@ window.reactivateFarm = reactivateFarm;
     if (tipType === 'unit') {
       const u = UNITS[tipKey];
       if (!u) return null;
-      const stats = [`❤️ ${u.hp}`];
-      if (u.atk > 0) stats.push(`⚔️ ${u.atk}`);
-      if (u.range > 0) stats.push(`🏹 ${u.range}`);
-      if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) stats.push(`🛡️ ${u.armor.m}/${u.armor.p}`);
-      if (u.speed > 0) stats.push(`🏃 ${u.speed.toFixed(2)}`);
+      const stats = [`❤️ ${u.hp}`, ...unitStatChips(u)];
       d = { name: u.name, desc: u.desc || null, stats, cost: u.cost };
     } else if (tipType === 'building') {
       const b = BLDGS[tipKey];
       if (!b) return null;
       const stats = [`❤️ ${b.hp}`];
-      if (tipKey === 'TC' || tipKey === 'TOWER') {
-        const atk = 5; // both fire 5-damage arrows (AoE2)
-        const rng = tipKey === 'TC' ? 6 : b.range;
-        if (atk > 0) stats.push(`⚔️ ${atk}`);
-        if (rng > 0) stats.push(`🏹 ${rng}`);
-      }
+      const arrows = buildingArrowStats(tipKey);
+      if (arrows) stats.push(`⚔️ ${arrows.atk}`, `🏹 ${arrows.range}`);
       if (b.armor && (b.armor.m > 0 || b.armor.p > 0)) stats.push(`🛡️ ${b.armor.m}/${b.armor.p}`);
       d = { name: b.name, desc: b.desc || null, stats, cost: b.cost };
     } else if (tipType === 'action') {
@@ -1501,14 +1526,8 @@ window.reactivateFarm = reactivateFarm;
     d.maxHp = e.maxHp;
     if (e.type === 'unit') {
       const u = UNITS[e.utype];
-      if (u) {
-        if (u.atk > 0) d.stats.push(`⚔️ ${u.atk}`);
-        if (u.range > 0) d.stats.push(`🏹 ${u.range}`);
-        if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) d.stats.push(`🛡️ ${u.armor.m}/${u.armor.p}`);
-        if (u.speed > 0) d.stats.push(`🏃 ${u.speed.toFixed(2)}`);
-      }
+      if (u) d.stats.push(...unitStatChips(u));
       if (members.length === 1 && e.utype === 'villager') {
-        const TASK_RES = { chop: 'wood', mine_gold: 'gold', mine_stone: 'stone', forage: 'food', farm: 'food' };
         let rt = e.carrying > 0 ? e.carryType : TASK_RES[e.task];
         if (rt) d.stats.push(`carrying ${e.carrying || 0} ${rt}`);
         else if (e.task === 'build') d.stats.push('🔨 building');
@@ -1516,9 +1535,8 @@ window.reactivateFarm = reactivateFarm;
       }
     } else if (e.type === 'building') {
       const b = BLDGS[e.btype];
-      if (e.btype === 'TC' || e.btype === 'TOWER') {
-        d.stats.push('⚔️ 5', `🏹 ${e.btype === 'TC' ? 6 : BLDGS.TOWER.range}`);
-      }
+      const arrows = buildingArrowStats(e.btype);
+      if (arrows) d.stats.push(`⚔️ ${arrows.atk}`, `🏹 ${arrows.range}`);
       if (b && b.armor && (b.armor.m > 0 || b.armor.p > 0)) d.stats.push(`🛡️ ${b.armor.m}/${b.armor.p}`);
       if (e.complete && garrisonCap(e) > 0) d.stats.push(`Garrison ${garrisonCount(e)}/${garrisonCap(e)}`);
       if (!e.complete && !e.exhausted) d.stats.push(`Building ${Math.floor(e.buildProgress / e.buildTime * 100)}%`);
@@ -1529,16 +1547,16 @@ window.reactivateFarm = reactivateFarm;
   document.getElementById('bottom').addEventListener('mouseover', function(e) {
     if (typeof recentTouch === 'function' && recentTouch()) { hideTip(); return; }
 
-    // Walk up from the hovered element to find a .act-btn or selection tile
-    let el = e.target;
-    while (el && el !== this) {
-      if (el.classList && (el.classList.contains('act-btn') || el.classList.contains('sel-unit-icon'))) break;
-      el = el.parentElement;
-    }
-    if (!el || el === this || !el.classList) { hideTip(); return; }
+    // Dispatch on the DATA, not on a class list: any element that carries
+    // tip dataset attributes gets a tooltip (act-btns, selection tiles,
+    // market cells, whatever comes next) — a hardcoded class walk silently
+    // orphaned the market cells' fully-authored tooltips.
+    let el = e.target.closest && e.target.closest('[data-tile-ids],[data-tip-name],[data-tip-type]');
+    if (!el || !this.contains(el)) { hideTip(); return; }
 
-    const d = el.classList.contains('sel-unit-icon') ? descriptorForSelTile(el)
-      : el.classList.contains('act-btn') ? descriptorForActBtn(el) : null;
+    const d = (el.dataset.tileIds != null || el.dataset.tipName != null)
+      ? descriptorForSelTile(el)
+      : descriptorForActBtn(el);
     if (d) showTip(buildTipHTML(d), el);
     else hideTip();
   });
