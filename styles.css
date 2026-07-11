@@ -1088,6 +1088,40 @@ canvas {
   color: #5c3b1e;
 }
 .lobby-seat-badge.lobby-ready { color: #1f6e30; }
+.lobby-team-select {
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-family: Georgia, serif;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 3px;
+  outline: none;
+}
+.lobby-team-select[disabled] { opacity: 0.6; }
+#lobby-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 6px;
+  font-size: 12px;
+  color: #5c3b1e;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+}
+#lobby-invite-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-size: 11px;
+  padding: 2px 6px;
+  outline: none;
+}
 .lobby-team-group {
   border: 2px dashed transparent;
   border-radius: 6px;

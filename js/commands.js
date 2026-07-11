@@ -33,11 +33,12 @@ function submitCommand(cmd){
   let execTick = tick + INPUT_DELAY_TICKS;
   let seq = ++localCmdSeq;
   scheduleCommand(execTick, myTeam, seq, cmd);
-  // Multiplayer: BOTH peers schedule the command at the issuer-stamped
-  // tick; the peer gets it via 'cmd-ls' (js/lockstep.js) and rolls back if
-  // it arrives late.
+  // Multiplayer: EVERY peer schedules the command at the issuer-stamped
+  // tick; peers get it via 'cmd-ls' (js/lockstep.js — guests' commands
+  // reach other guests through the host relay) and roll back if it
+  // arrives late.
   if (typeof lockstepEnabled === 'function' && lockstepEnabled()) {
-    sendToPeer({ type: 'cmd-ls', execTick, seq, cmd });
+    sendToAllPeers({ type: 'cmd-ls', execTick, seq, cmd });
   }
 }
 
@@ -174,6 +175,23 @@ function execCommand(cmd, team){
       if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
         setGameSpeed(cmd.v);
         if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
+      }
+      break;
+    case 'set-controller':
+      // Host-only (team 0): hand a kicked/abandoned player's seat to the
+      // AI mid-match. Rides the command stream — not a resync — because
+      // teamControllers/AI_STATES are sim state (checksummed, snapshotted,
+      // rolled back), so every peer must flip the seat at the same tick.
+      // The existing brain state is kept if one exists (a seat that began
+      // as AI in a loaded save resumes its plans); a never-AI seat gets a
+      // fresh brain.
+      if (team === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
+        let diff = AI_LEVELS[cmd.diff] ? cmd.diff : (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard');
+        teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
+        if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
+        // Everyone should see this, not just the issuer (feedbackFor would
+        // limit it to the host) — only a resim replay stays quiet.
+        if (!window.__resim && typeof showMsg === 'function') showMsg(teamName(cmd.t) + "'s seat was handed to the AI");
       }
       break;
     case 'dev-spawn':

@@ -121,6 +121,7 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div id="mp-disconnect-text"></div>
     <div id="mp-disconnect-spinner"></div>
     <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">💾 Save Game</button>
+    <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="kickDisconnectedPlayers()">🤖 Continue without them (AI takes over)</button>
   </div>
 </div>
 <div id="help-hint"></div>
@@ -316,7 +317,7 @@ document.body.insertAdjacentHTML('afterbegin', `
         <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
       </div>
       <div id="mp-qr" style="display:none;"></div>
-      <div id="mp-share-note" style="display:none;">⚠️ 1-on-1 only — share with just one person</div>
+      <div id="mp-share-note" style="display:none;">Share with up to 3 friends — everyone joins through this same link</div>
       <button type="button" id="mp-cancel-btn" class="menu-action-btn" style="display:none;" onclick="cancelHosting()">✖ Cancel</button>
       <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">↻ Retry Connection</button>
     </div>
@@ -331,6 +332,9 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div id="menu-panel-lobby" style="display:none;">
       <div id="lobby-heading" class="menu-divider"></div>
       <div id="lobby-roster"></div>
+      <!-- The invite link stays available inside the lobby while seats
+           remain (renderLobby toggles it) — more friends can join pre-Start. -->
+      <div id="lobby-invite-row" style="display:none;">Invite: <input type="text" id="lobby-invite-link" readonly onclick="this.select()"></div>
       <div class="lobby-addai-row" id="lobby-addai-row">
         <button type="button" id="lobby-addai-btn" class="menu-action-btn" onclick="lobbyAddAi()">＋ Add AI</button>
         <div class="segmented" id="lobby-aidiff-seg">

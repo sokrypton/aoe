@@ -1059,7 +1059,7 @@ function ejectGarrison(b,filter){
 // (messages, sound), which stays keyed to myTeam only.
 function ringTownBell(team){
   team=team===undefined?0:team;
-  // bellRinging is per-team world state (like resources/teamExploredEver),
+  // bellRinging is per-team world state (like resources/teamExploredGrid),
   // maintained HERE so no caller juggles its own flag — the sound+message
   // feedback below stays gated on myTeam (whichever team THIS browser tab
   // plays), so a multiplayer guest playing team 1 gets its own bell

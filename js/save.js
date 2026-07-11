@@ -5,32 +5,39 @@
 // snapshot object round-trips cleanly with no custom (de)serialization.
 function serializeGame(){
   return {
-    version: 2,
+    version: 3,
     savedAt: new Date().toISOString(),
     // A visible signature that this save came from a multiplayer match
     // (rather than single-player) — surfaced in the filename and the load
-    // confirmation message below, not just a hidden field. Both host AND
-    // guest can produce one: the guest's local entities/map are a live
-    // mirror of the host's (kept in sync — see js/net-sync.js), so a save
-    // taken from the guest's side is just as valid a snapshot. The point
-    // of tagging it is the same either way — whoever loads it later can
-    // click Host and pick up as the new host from that exact state,
-    // regardless of which role originally saved it.
+    // confirmation message below, not just a hidden field. MP FILE saves
+    // are HOST-only (saveGameToFile refuses on a guest); serializeGame
+    // itself still runs on guests for the crash-recovery wire handback
+    // (js/net-sync.js), which is a live mirror, not a file.
     wasMultiplayerGame: typeof netRole !== 'undefined' && (netRole === 'host' || netRole === 'guest'),
-    // The host's PeerJS peer id active at save time — captured from
-    // whichever side is doing the saving, since both know it (the host
-    // has it directly; the guest cached it as __mpSession.hostPeerId when
-    // it joined — see that object's comment, js/core.js). Letting a later
+    // The host's PeerJS peer id active at save time. Letting a later
     // re-host request this SAME id back (js/net.js's hostSession()) is what
-    // lets the original guest's own already-running reconnect loop succeed
+    // lets the guests' own already-running reconnect loops succeed
     // silently after the host reloads its whole page and re-hosts from this
     // save, instead of being permanently stranded retrying against an id
     // that no longer exists.
     hostPeerId: typeof netRole !== 'undefined' && netRole === 'host' && typeof netPeer !== 'undefined' && netPeer
       ? netPeer.id
       : (typeof netRole !== 'undefined' && netRole === 'guest' ? (window.__mpSession.hostPeerId || null) : null),
+    // Each guest's persistent identity token (js/net.js hello binding) —
+    // host-side knowledge, so a re-host from this file can pre-seed the
+    // registry and every rejoining guest lands back on its exact seat.
+    // `tab` rides along so several tabs of ONE browser (same token — the
+    // local-testing setup) still rebind to their exact seats on resume.
+    seatTokens: (typeof netRole !== 'undefined' && netRole === 'host' && typeof netGuests !== 'undefined')
+      ? [...netGuests.values()].map(r => ({ seat: r.seat, token: r.token, tab: r.tab, name: r.name, kicked: !!r.kicked }))
+      : null,
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
-    map, fog, entities, nextId,
+    map, entities, nextId,
+    // The EXACT deterministic per-team explored grids (sim state, all
+    // teams) — the loader's fog and every rejoining guest's fog rebuild
+    // from these, replacing the old lossy otherTeamExploredEver
+    // reconstruction. Uint8Array -> plain array for JSON.
+    teamExploredGrids: teamExploredGrid ? teamExploredGrid.map(g => Array.from(g)) : null,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
     // performance.now() (see render.js/render-units.js), which restarts
     // near 0 every page load — saving deathTime as-is would make every
@@ -73,33 +80,6 @@ function serializeGame(){
     // scoutedByMe Set, not stored on individual entities (see its comment
     // for why). Saved as a plain array since Sets aren't JSON-safe.
     scoutedByMe: Array.from(scoutedByMe),
-    // `fog` above is always THIS session's own team's live grid (team 0's
-    // if saved from the host, team 1's if saved from the guest) — but
-    // whoever LOADS this save always becomes the new host (see
-    // applySavedGame's comment), regardless of which side originally saved
-    // it. So a guest-originated save's `fog` is actually the WRONG team's
-    // grid for that future host. `savedByTeam` records which team `fog`
-    // actually belongs to, and `otherTeamExploredEver` carries the OTHER
-    // team's persistent "ever explored" memory (js/core.js's
-    // teamExploredEver/updateTeamExploredEver — whichever index this
-    // session tracks depends on whether it's host or guest) so
-    // applySavedGame can reconstruct team 0's fog correctly either way.
-    savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
-    // Union of the legacy per-tick memory AND the deterministic sim grid:
-    // teamExploredEver's guest-side updater for index 0 died with the
-    // legacy snapshot sync, so under lockstep the OTHER team's history
-    // lives (exactly) in teamExploredGrid — without it a host reloading
-    // mid-match rebuilt its fog from an empty set and lost its explored
-    // map (see applySavedGame's fromOpponentMirror branch).
-    otherTeamExploredEver: (() => {
-      let other = (typeof myTeam !== 'undefined' && myTeam === 1) ? 0 : 1;
-      let ever = new Set(teamExploredEver[other]);
-      if (teamExploredGrid && teamExploredGrid[other]) {
-        let eg = teamExploredGrid[other];
-        for (let k = 0; k < eg.length; k++) if (eg[k] === 1) ever.add(k);
-      }
-      return Array.from(ever);
-    })(),
     bellRinging: window.bellRinging || Array.from({length: NUM_TEAMS}, () => false)
   };
 }
@@ -114,6 +94,14 @@ function serializeGameForWire(){
 }
 
 function saveGameToFile(){
+  // Host-only in multiplayer: only the host can later reload+re-host a
+  // match (guests rejoin it by token), so a guest-side file would be a
+  // dead end — the save surfaces are hidden on guests, and this guard
+  // backstops any path that still calls it.
+  if (typeof netRole !== 'undefined' && netRole === 'guest') {
+    if (window.showMsg) showMsg('Only the host can save a multiplayer match');
+    return;
+  }
   try {
     let data = serializeGame();
     let blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
@@ -163,11 +151,13 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:2 — actually check it (the net layer's
-  // NET_PROTOCOL_VERSION exists for the same reason), so a future format
-  // change fails loudly here instead of misloading silently.
-  if (data.version !== 2) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ')');
+  // serializeGame stamps version:3 — actually check it (the net layer's
+  // NET_PROTOCOL_VERSION exists for the same reason), so a format change
+  // fails loudly here instead of misloading silently. v3 (exact per-team
+  // explored grids, host-only MP saves) deliberately drops v2 support —
+  // no back-compat shims.
+  if (data.version !== 3) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v3 saves only');
     return;
   }
   try {
@@ -195,91 +185,27 @@ function applySavedGame(data, opts){
     map = data.map;
     // Sized per-team structures follow the save's team count.
     NUM_TEAMS = data.numTeams || 2;
-    // Whoever loads a save always becomes the new host (see below), so the
-    // new session's `fog` must end up holding TEAM 0's grid regardless of
-    // which side originally saved. If the save came from the host
-    // (savedByTeam 0, or an older save predating this field), data.fog
-    // already IS team 0's grid — use it directly, and the saved
-    // otherTeamExploredEver is team 1's ("guest") memory. If it came from
-    // the guest (savedByTeam 1), data.fog is team 1's grid instead — that
-    // becomes the new teamExploredEver[1], while the saved
-    // otherTeamExploredEver (the guest's own locally-tracked team-0 memory)
-    // is what rebuilds team 0's fog here.
-    // A guest-originated save (savedByTeam 1) loaded from a FILE: the
-    // loader always becomes the HOST, and the host is team 0 everywhere in
-    // this 1v1 design — so without correction the loading guest would
-    // resume commanding their OPPONENT's civilization. Swap the two player
-    // teams wholesale (gaia untouched) so the loader keeps their own
-    // units/buildings/resources; they render blue now because team 0 IS
-    // blue, but they command their own side. After the swap the save is
-    // indistinguishable from a host-originated one (data.fog is the
-    // loader's own grid = team 0's).
-    // NOT for the crash-recovery handback (opts.fromOpponentMirror — see
-    // the 'request-state' handler, js/net-sync.js): there the loader is
-    // the ORIGINAL host recovering the world from the guest's live mirror,
-    // the guest is still connected as team 1, and teams must stay put.
-    if (data.savedByTeam === 1 && !(opts && opts.fromOpponentMirror)) {
-      data.entities.forEach(e => {
-        if (e.team === 0) e.team = 1;
-        else if (e.team === 1) e.team = 0;
-      });
-      (data.corpses || []).forEach(c => {
-        if (c.team === 0) c.team = 1;
-        else if (c.team === 1) c.team = 0;
-      });
-      if (Array.isArray(data.resources) && data.resources.length >= 2) {
-        [data.resources[0], data.resources[1]] = [data.resources[1], data.resources[0]];
-      }
-      if (Array.isArray(data.bellRinging) && data.bellRinging.length >= 2) {
-        [data.bellRinging[0], data.bellRinging[1]] = [data.bellRinging[1], data.bellRinging[0]];
-      }
-      (data.projectiles || []).forEach(pr => {
-        if (pr.attackerSnap) {
-          if (pr.attackerSnap.team === 0) pr.attackerSnap.team = 1;
-          else if (pr.attackerSnap.team === 1) pr.attackerSnap.team = 0;
-        }
-      });
-      // Per-team controller/AI/hit state swaps with the teams (an AI
-      // state's own `team` field must track its new slot). teamNames/
-      // teamColorMap swap too so the loader keeps its own name+color.
-      // (The two HUMAN slots swap; any AI slots 2+ stay put — humans are
-      // always the low team ids, host=0 / guest=1.)
-      ['teamControllers', 'aiStates', 'lastTeamHit', 'teamAlliance', 'defeatedTeams', 'teamAge', 'teamNames', 'teamColorMap'].forEach(k => {
-        if (Array.isArray(data[k]) && data[k].length >= 2) {
-          [data[k][0], data[k][1]] = [data[k][1], data[k][0]];
-        }
-      });
-      (data.aiStates || []).forEach((st, t) => { if (st) st.team = t; });
-      // `won` means "did team 0's side win" — after the swap the loader IS
-      // team 0, so a decided outcome must flip with the teams too.
-      if (data.gameOver) data.won = !data.won;
-      // teamExploredEver[1] (the rejoining opponent's memory) now comes
-      // from the saver's otherTeamExploredEver — same slot the
-      // host-originated path expects it in.
-      data.savedByTeam = 0;
+    // The loader is ALWAYS team 0: MP file saves are host-authored
+    // (host = team 0) and the loader re-hosts from them; the
+    // crash-recovery handback (opts.fromOpponentMirror, js/net-sync.js)
+    // is applied by the original host recovering its own team-0 world
+    // from a guest's mirror, teams in place. No team swap exists anymore.
+    // Fog rebuilds from the save's EXACT per-team explored grids: this
+    // viewer's own grid marks its explored tiles (updateFog() below
+    // re-lights the currently-visible ones), and rejoining guests get the
+    // same grids via the lockstep resume push.
+    resetTeamVision();
+    if (Array.isArray(data.teamExploredGrids)) {
+      teamExploredGrid = data.teamExploredGrids.map(g => Uint8Array.from(g));
     }
-    if (data.savedByTeam === 1 && opts && opts.fromOpponentMirror) {
-      // Guest-authored snapshot with teams left in place: data.fog is TEAM
-      // 1's live grid and otherTeamExploredEver is team 0's explored-ever
-      // memory (see serializeGame) — the mirror image of what the loading
-      // host (team 0) needs. Rebuild this side's fog from team 0's memory
-      // (explored, not currently-visible; updateFog() below re-lights the
-      // live tiles) and team 1's memory from the guest's own fog grid.
-      let hostEver = new Set(data.otherTeamExploredEver || []);
+    {
+      const myEg = teamExploredGrid[myTeam] || teamExploredGrid[0];
       fog = [];
       for (let y = 0; y < MAP; y++) {
         fog[y] = [];
-        for (let x = 0; x < MAP; x++) fog[y][x] = hostEver.has(y * MAP + x) ? 1 : 0;
+        for (let x = 0; x < MAP; x++) fog[y][x] = myEg[y * MAP + x] === 1 ? 1 : 0;
       }
-      teamExploredEver[1] = new Set();
-      (data.fog || []).forEach((row, y) => row.forEach((v, x) => {
-        if (v > 0) teamExploredEver[1].add(y * MAP + x);
-      }));
-    } else {
-      fog = data.fog || [];
-      teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
     }
-    teamExploredEver[0] = new Set();
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
     let loadNow = performance.now();
@@ -405,17 +331,6 @@ function applySavedGame(data, opts){
     // mid-match).
     let alreadyConnectedHost = typeof netRole !== 'undefined' && netRole === 'host' && netConnected;
 
-    // Seed the deterministic explored-grids from the save (they postdate
-    // the save format): team 0 from the restored fog, team 1 from the
-    // opponent's explored history. Approximate but deterministic — and a
-    // connected guest immediately receives the exact grids via the
-    // lockstep resume below, so both peers agree bit-for-bit.
-    resetTeamVision();
-    for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
-      if (fog[y] && fog[y][x] > 0) teamExploredGrid[0][y * MAP + x] = 1;
-    }
-    teamExploredEver[1].forEach(k => { teamExploredGrid[1][k] = 1; });
-
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
@@ -455,6 +370,10 @@ function applySavedGame(data, opts){
       // exact peer id back from PeerJS instead of a random one — see
       // hostPeerId's comment above (js/net.js's hostSession()).
       window.__mpSession.loadedHostPeerId = data.hostPeerId || null;
+      // Pre-seed the guest registry from the save's seat tokens so every
+      // returning guest's hello rebinds to its exact old seat (js/net.js);
+      // unknown identities are denied once the match resumes.
+      if (typeof netSeedGuestRecords === 'function') netSeedGuestRecords(data.seatTokens);
       onHostClicked();
     } else {
       let menu = document.getElementById('tutorial');

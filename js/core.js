@@ -59,21 +59,28 @@ function setMapSize(sizeKey, alliances){
       {team:1,x:c[0]===lo?hi:lo,y:c[1]===lo?hi:lo}
     ];
   } else {
-    // 3-4 players on TWO sides, ANY split (2v2, 3v1, 1v3, 2v1, 1v2). Lay the
-    // four corners out as a PERIMETER RING — [c, a, opp(c), opp(a)], where
-    // consecutive entries are edge-adjacent corners — then give each side a
-    // contiguous arc of the ring, so allies sit together no matter the split
-    // (a 3-player side takes 3 corners in an L, its lone opponent the 4th).
-    // Team 0's side goes first. RNG draw count (one for c, one for a) is fixed,
-    // so seeds stay comparable and SP 2v2 (default [0,0,1,1] → order [0,1,2,3])
-    // is byte-identical to before.
+    // 3-4 players in ANY alliance shape (2v2, 3v1, uneven splits, FFA,
+    // mixed). Lay the four corners out as a PERIMETER RING — [c, a,
+    // opp(c), opp(a)], where consecutive entries are edge-adjacent corners
+    // — then hand out corners alliance-GROUP by group, so each group gets
+    // a contiguous arc of the ring and allies sit together no matter the
+    // split (a 3-player side takes 3 corners in an L, its lone opponent
+    // the 4th; FFA groups are singletons so any order works). Team 0's
+    // group goes first, then groups in first-appearance order. RNG draw
+    // count (one for c, one for a) is fixed, so seeds stay comparable and
+    // the default [0,0,1,1] → order [0,1,2,3] is byte-identical to the
+    // old two-side version of this code.
     let al = alliances || Array.from({length:NUM_TEAMS},(_,t)=>t<2?0:1);
     let a=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]][simRandInt(0,1)];
     let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
     let ring=[c, a, opp(c), opp(a)];
-    let ordered=[];
-    for(let t=0;t<NUM_TEAMS;t++) if(al[t]===al[0]) ordered.push(t);
-    for(let t=0;t<NUM_TEAMS;t++) if(al[t]!==al[0]) ordered.push(t);
+    let ordered=[], seen=new Set();
+    for(let t=0;t<NUM_TEAMS;t++){
+      if(seen.has(t))continue;
+      for(let u=t;u<NUM_TEAMS;u++){
+        if(!seen.has(u)&&al[u]===al[t]){ordered.push(u);seen.add(u);}
+      }
+    }
     STARTS=ordered.map((team,i)=>({team,x:ring[i][0],y:ring[i][1]}));
   }
 }
@@ -81,8 +88,8 @@ function setMapSize(sizeKey, alliances){
 // (resources, vision grids, explored memory, bell state) must size itself
 // from this — never a literal 2 — so adding players is a data change here,
 // not a codebase hunt. Set per match by onStartClicked (SP Players picker:
-// 2 or 4) and forced to 2 by every MP path. Remaining >2-player STRUCTURAL
-// work: single peer connection and the 2-team save swap.
+// 2 or 4) or by the MP lobby's seat count (1 host + up to 3 guests/AI over
+// the js/net.js host-relay star).
 let NUM_TEAMS = 2;
 // "A real player team" (excludes gaia and garbage ids) — use this instead
 // of enumerating `team === 0 || team === 1`.
@@ -840,11 +847,10 @@ function initFog() {
   }
 }
 
-// Shared vision math used both by updateFog() (each client's own live fog,
-// for whichever team is "me" locally) and updateTeamExploredEver() below
-// (persistent memory of the OTHER team's explored history) — factored out
-// so the sight-radius table only lives in one place. Calls cb(x,y) for
-// every currently-visible tile around every entity on `team`.
+// Shared vision math used by updateFog() (each client's own live fog, for
+// whichever team is "me" locally) — the sight-radius table lives in one
+// place. Calls cb(x,y) for every currently-visible tile around every
+// entity on `team`.
 function forEachVisibleTile(team, cb){
   entities.forEach(e => {
     if (e.team !== team) return;
@@ -934,34 +940,6 @@ function updateFog() {
     }
   }
   forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
-}
-
-// Persistent record of every tile the OTHER team has ever seen, computed
-// the same way that team computes its own live fog, but from THIS client's
-// perspective. Unlike `fog`, this survives the other side's tab closing —
-// it feeds serializeGame's `otherTeamExploredEver` (js/save.js) so a
-// guest-originated save/handback can restore the host's fog. LEGACY under
-// lockstep: only the host-side index-1 updater still runs (js/loop.js);
-// the guest-side index-0 updater died with the old snapshot sync, so
-// serializeGame unions this with the deterministic teamExploredGrid
-// (below), which both lockstep peers maintain exactly.
-let teamExploredEver = {};
-for (let _t = 0; _t < NUM_TEAMS; _t++) teamExploredEver[_t] = new Set();
-// Host-only: team 1's LIVE visibility this tick (tile keys y*MAP+x),
-// rebuilt as a free by-product of the forEachVisibleTile walk below. This
-// is what gives the guest symmetric fog treatment in sim code (auto-attack
-// acquisition, build placement) — the host has no team-1 `fog` grid, and
-// this set is the live equivalent of fog===2 for team 1.
-let team1VisibleNow = new Set();
-function updateTeamExploredEver(team){
-  if (window.fogDisabled) return;
-  if (team === 1 && netRole !== 'host') return;
-  if (team === 0 && netRole !== 'guest') return;
-  if (team === 1) team1VisibleNow = new Set();
-  forEachVisibleTile(team, (tx, ty) => {
-    teamExploredEver[team].add(ty * MAP + tx);
-    if (team === 1) team1VisibleNow.add(ty * MAP + tx);
-  });
 }
 
 // ---- Deterministic per-team visibility (SIM state) ----
