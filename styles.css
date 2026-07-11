@@ -521,7 +521,7 @@ canvas {
   justify-content:center;
   line-height:1.2;
   text-align:center;
-  padding:4px;
+  padding:0; /* no inset — the sprite icon fills the button border-to-border */
   box-shadow: inset 0 0 5px #000, 1px 1px 3px rgba(0,0,0,0.5);
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;

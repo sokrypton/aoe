@@ -270,6 +270,44 @@ function pageSuite() {
     gameOver = false;
   });
 
+  T('hud: TC portrait icon changes with age (Dark=wood, Feudal=stone, Castle=base)', () => {
+    stage();
+    const tc = entities.find(e => e.btype === 'TC' && e.team === 0);
+    selected = [tc];
+    const iconCls = () => { updateUI(); const el = document.querySelector('#sel-portrait .tile-sprite-img'); return el ? el.className : ''; };
+    teamAge[0] = 0; { let c = iconCls(); assert(/icon-TC-dark/.test(c), 'Dark should be TC-dark, got: ' + c); }
+    teamAge[0] = 1; { let c = iconCls(); assert(/icon-TC-feudal/.test(c), 'Feudal should be TC-feudal, got: ' + c); }
+    teamAge[0] = 2; { let c = iconCls(); assert(/icon-TC-castle/.test(c), 'Castle should be TC-castle, got: ' + c); }
+    teamAge[0] = 0;
+  });
+
+  T('hud: Watch Tower icon is age-specific (Feudal variant, Castle keeps base) — portrait + build button', () => {
+    stage();
+    // portrait: select a TOWER, check the age variant (portrait rebuilds live)
+    const tower = createBuilding('TOWER', 10, 10, 0);
+    selected = [tower];
+    const portCls = () => { updateUI(); const el = document.querySelector('#sel-portrait .tile-sprite-img'); return el ? el.className : ''; };
+    teamAge[0] = 1; { let c = portCls(); assert(/icon-WT-feudal/.test(c), 'Feudal portrait should be WT-feudal, got: ' + c); }
+    teamAge[0] = 2; { let c = portCls(); assert(/icon-WT-castle/.test(c), 'Castle portrait should be WT-castle, got: ' + c); }
+    // build button: the villager military submenu's Watch Tower button uses the
+    // same age variant. A fresh villager per age forces the actions to rebuild
+    // (selKey doesn't include teamAge); then switch to the 'mil' submenu so the
+    // TOWER button renders at the current age.
+    const buildBtnClsAtAge = (age) => {
+      teamAge[0] = age;
+      selected = [createUnit('villager', 12, 12 + age, 0)];
+      updateUI();                          // new selection → submenu resets to 'main'
+      window.currentVillagerMenu = 'mil';
+      updateUI();                          // submenu changed → rebuild at current age
+      const btn = [...document.querySelectorAll('#actions .act-btn')].find(b => b.dataset.tipKey === 'TOWER');
+      const spr = btn && btn.querySelector('.sprite-icon');
+      return spr ? spr.className : (btn ? 'NO-SPRITE' : 'NO-BTN');
+    };
+    let f = buildBtnClsAtAge(1); assert(/icon-WT-feudal/.test(f), 'Feudal build button should be WT-feudal, got: ' + f);
+    let cst = buildBtnClsAtAge(2); assert(/icon-WT-castle/.test(cst), 'Castle build button should be WT-castle, got: ' + cst);
+    teamAge[0] = 0; window.currentVillagerMenu = 'main';
+  });
+
   // ---- Palisade Watch Tower (PTOWER): dark-age build-over-wall with
   // refund, garrison arrows, and the in-place Feudal upgrade to TOWER
   // (execUpgradeWalls' WALL_STONE_MATCH extension).
@@ -738,6 +776,45 @@ function pageSuite() {
       const r = await cpage.evaluate(`window.__cmds.find(c=>c.kind==='rally')`);
       if (!r) throw new Error('classic right-click must issue the rally command');
       assertEq(r.tileX, 30, 'rally tileX');
+      await cpage.close();
+    });
+
+    await tapT('classic: right-click move KEEPS the selection (AoE2-sticky, no deselect)', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(35.5, 30.5) });`));
+      await cpage.mouse.click(pts.g.x, pts.g.y, { button: 'right' });
+      const r = await cpage.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='command')||null})`);
+      if (!r.cmd) throw new Error('classic right-click should issue a move command');
+      assertEq(r.sel, 1, 'classic keeps the unit selected after an order (AoE2-sticky, unlike index)');
+      await cpage.close();
+    });
+
+    await tapT('classic: Guard button + click guards a building and KEEPS selection (shared guard, sticky)', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const b=createBuilding('BARRACKS',29,29,0);
+        const m=createUnit('militia',25,25,0); selected=[m];
+        window.settingGuard=true; // shared Guard button armed
+        window.__pts=(scr)=>{ const base=scr(b.x+b.w/2,b.y+b.h/2); let pt=base;
+          for(let dy=0;dy<=100;dy+=3){const c={x:base.x,y:base.y-dy}; if(getBuildingUnderCursor(c.x,c.y)===b){pt=c;break;}}
+          return { p: pt, bId: b.id }; };`));
+      await cpage.mouse.click(pts.p.x, pts.p.y); // LEFT-click drops the armed guard flag on classic
+      const r = await cpage.evaluate(`({g:window.__cmds.find(c=>c.kind==='guard')||null, sel:selected.length})`);
+      if (!r.g) throw new Error('classic Guard button + click should issue a guard command');
+      assertEq(r.g.targetId, pts.bId, 'guard targetId = the building');
+      assertEq(r.sel, 1, 'classic keeps the unit selected after guarding (sticky)');
       await cpage.close();
     });
 

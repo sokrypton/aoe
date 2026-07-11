@@ -1,10 +1,12 @@
-// Sprite sheet (sprites.png) covers every BLDGS/UNITS key directly (class
-// names match btype/utype: icon-TC, icon-villager, etc). Anything else
-// (no selection, cancel-only actions) falls back to the emoji glyph.
-// Derived from the ONE cell registry (SPRITE_CELLS, js/page-shell.js) —
-// naming a new cell there is the only step; this set follows. The extra
-// non-portrait keys (rally, bell, spares…) are harmless: the set is only
-// ever queried with unit/building/age keys.
+// Sprite sheet (sprites.png) covers most BLDGS/UNITS keys directly (class
+// names match btype/utype: icon-HOUSE, icon-villager, etc). Age-variant
+// buildings/units instead have age-suffixed cells (icon-TC-castle,
+// icon-WT-feudal, icon-militia-feudal…) and are always looked up through
+// iconKey()+AGE_ICON_VARIANTS — there is no bare icon-TC/icon-TOWER cell.
+// Anything with no cell (no selection, cancel-only actions) falls back to
+// the emoji glyph. Derived from the ONE cell registry (SPRITE_CELLS,
+// js/page-shell.js) — naming a new cell there is the only step; this set
+// follows.
 const SPRITE_ICON_KEYS = new Set(Object.keys(window.SPRITE_CELLS));
 
 // Market trade cell metadata shared by both skins' exchange UIs: tooltip
@@ -175,6 +177,12 @@ const AGE_ICON_VARIANTS = {
   spearman: {2:'spearman-castle'},
   archer:   {2:'archer-castle'},
   scout:    {2:'scout-castle'},
+  // Town Center portrait by age: Dark = wooden, Feudal = stone, Castle = the
+  // fortified blue-tent keep. Every age is mapped to an age-suffixed cell —
+  // there is no bare "TC" icon cell (see SPRITE_CELLS in page-shell.js).
+  TC:       {0:'TC-dark', 1:'TC-feudal', 2:'TC-castle'},
+  // Watch Tower by age (Feudal+; Dark has none — that's PTOWER). WT- cells.
+  TOWER:    {1:'WT-feudal', 2:'WT-castle'},
 };
 // Cost rendered as mini resource-icon+number chips overlaid on the action
 // button. Desktop keeps costs in the hover tooltip (.cost is display:none
@@ -588,7 +596,7 @@ function updateUI(){
         ?'Rebuild the selected palisade tower'+(ids.length>1?'s':'')+' as '+(ids.length>1?'stone Watch Towers.':'a stone Watch Tower.')
         :'Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone.')
         +' Salvages the old piece (refund scales with remaining HP) and starts construction — send villagers to build it. Cannot be cancelled once started.';
-      let upIcon=allTowers?'TOWER':(allGates?'SGATE':'SWALL');
+      let upIcon=allTowers?iconKey('TOWER'):(allGates?'SGATE':'SWALL'); // age-suffixed WT- cell; no bare TOWER icon
       let upBtn=document.createElement('div');
       upBtn.className='act-btn framed';
       upBtn.dataset.tipType='action';
@@ -823,7 +831,7 @@ function updateUI(){
   let e=selected[0];
   if(e.type==='building'){
     let b=BLDGS[e.btype];
-    if (port) { setPortraitIcon(port, e.btype, b.icon); port.classList.remove('cam-locked'); }
+    if (port) { setPortraitIcon(port, iconKey(e.btype, e.team), b.icon); port.classList.remove('cam-locked'); }
     document.getElementById('sel-name').textContent=b.name;
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
     // Cyan while under construction — the same one-bar consolidation as the
@@ -1281,7 +1289,7 @@ function updateUI(){
           // Buildings without a sprites.png cell (MARKET) fall back to their
           // emoji glyph — same rule as the train buttons above.
           let bIcon=SPRITE_ICON_KEYS.has(iconKey(bi.type))
-            ?`<div class="btn-emoji sprite-icon icon-${bi.type}"></div>`
+            ?`<div class="btn-emoji sprite-icon icon-${iconKey(bi.type)}"></div>`
             :`<div class="btn-emoji">${bData.icon||''}</div>`;
           btn.innerHTML=`${bIcon}<div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
@@ -1332,7 +1340,7 @@ function updateUI(){
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
           let costStr=formatCost(bData.cost);
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${bi.type}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${iconKey(bi.type)}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
             if(gameOver)return;
             placing=bi.type;

@@ -2,7 +2,6 @@
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%;overscroll-behavior:none}
-
 /* Custom SVGs for game cursors — AoE2 style */
 
 /* Default: classic cream arrow, no selection */
@@ -448,7 +447,7 @@ canvas {
   border-radius:4px;
   line-height:1.2;
   text-align:center;
-  padding:4px;
+  padding:0; /* no inset — the sprite icon fills the button border-to-border */
   box-shadow: inset 0 0 5px #000, 1px 1px 3px rgba(0,0,0,0.5);
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;
@@ -638,26 +637,17 @@ canvas {
 .queue-slot:hover{ border-color:#ffd700; }
 
 .btn-emoji.sprite-icon{
-  /* Fill the button's content box, same as #minimap{width:100%;height:100%}
-     fills #minimap-wrap — it auto-adapts to the button's current size
-     with no separate rules needed. The sprite sheet's cells carry baked-in
-     empty margins, so on top of the 100% box the icon is ZOOMED with a
-     transform — the parent's overflow:hidden crops the scaled margins and
-     the art itself fills the tile. transform doesn't affect layout, so
-     grid/flex neighbors are untouched. */
+  /* Fill the button's content box border-to-border (the button carries no
+     padding, see .act-btn) — auto-adapts to the button's current size, same
+     as #minimap fills #minimap-wrap. No zoom/crop: the sprite cell is shown
+     at its natural size within the box. */
   width:100%;
   height:100%;
   margin-bottom:0;
-  transform: scale(1.35);
 }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
 }
-.act-btn{ overflow: hidden; } /* crop the zoomed sprite at the button edge */
-.queue-slot .btn-emoji.sprite-icon{ transform: scale(1.35); } /* overflow:hidden already set */
-/* Same zoom for the portrait/group-grid tiles — their sprite lives on the
-   inner .tile-sprite-img (setPortraitIcon), clipped by .tile-sprite. */
-.tile-sprite-img{ transform: scale(1.35); }
 
 /* ---- MINIMAP ----
    The wrap is a square whose side = min(28vw, 220px) so it scales smoothly

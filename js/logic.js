@@ -229,7 +229,7 @@ function retryReady(e,key){
   let r=e.retry&&e.retry[key];
   return !r||tick>=r.next;
 }
-// Guard-on-unit/building (execGuard, js/commands.js): keeps a mobile post
+// Guard-on-unit/building (execGuard, js/commands.js): keeps a MOVING post
 // synced to the guarded target's live position — an escort's post rides on
 // the unit it guards. If the target dies (or garrisons away), the post
 // FREEZES at its last synced spot and becomes a plain ground post.
