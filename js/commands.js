@@ -209,7 +209,78 @@ function execCommand(cmd, team){
     case 'auto-scout':
       execAutoScout(cmd, team);
       break;
+    case 'guard':
+      execGuard(cmd, team);
+      break;
   }
+}
+
+// Which units carry a guard post: military only — villagers, carts and
+// gaia animals never take one. Shared by execGuard and the move-order
+// re-pinning in execUnitCommand.
+function guardEligible(u){
+  return u.type === 'unit'
+    && u.utype !== 'villager' && u.utype !== 'sheep' && u.utype !== 'sheep_carcass'
+    && u.utype !== 'bear' && u.utype !== 'tradecart';
+}
+
+// AoE2-style Guard: ONE flag order, three target kinds —
+//   ground:   hold that spot (formation offsets, like a group move)
+//   building: stand watch around it (per-unit perimeter posts)
+//   unit:     ESCORT — the post rides on the guarded unit (follow + leash,
+//             see syncGuardPost in js/logic.js); if it dies, the post
+//             freezes at its last position.
+// Guarding units engage enemies that come close and RETURN to the post
+// afterwards. The post is never CANCELLED: a plain ground move simply
+// relocates it ("this is your temp spot", execUnitCommand), and explicit
+// attacks are exempt from the leash.
+function execGuard(cmd, team){
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.team === team && u.hp > 0 && !u.garrisonedIn && guardEligible(u));
+  if (!units.length) return;
+  // Re-resolve and validate the flagged target: own/allied only — a tap on
+  // an enemy or gaia thing falls through to a ground post at that spot.
+  let target = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  if (target && (target.hp <= 0 || target.garrisonedIn || !sameSide(target.team, team))) target = null;
+  let finish = (u) => {
+    u.guardFlagged = true; // EXPLICIT flag: draws the in-world flag/line (render.js)
+    u.defendX = u.guardX; u.defendY = u.guardY;
+    u.target = null; u.task = null;
+    u.explicitAttack = false; u.autoScout = false;
+    clearUnitPath(u);
+    pathUnitTo(u, Math.round(u.guardX), Math.round(u.guardY));
+  };
+  if (target && target.type === 'unit') {
+    units.forEach(u => {
+      if (u.id === target.id) return; // can't escort yourself
+      u.guardTargetId = target.id;
+      u.followId = target.id; // the existing follow leg does the walking
+      u.guardX = target.x; u.guardY = target.y;
+      finish(u);
+    });
+  } else if (target && target.type === 'building') {
+    units.forEach(u => {
+      let pt = nearestBldgPerimeter(u.x, u.y, target, u.id);
+      u.guardTargetId = target.id; // liveness only — buildings don't move
+      u.followId = undefined;
+      u.guardX = pt.x; u.guardY = pt.y;
+      finish(u);
+    });
+  } else {
+    let x = Math.max(0, Math.min(MAP - 1, Math.round(cmd.x)));
+    let y = Math.max(0, Math.min(MAP - 1, Math.round(cmd.y)));
+    let offsets = getFormation(units.length);
+    units.forEach((u, i) => {
+      let ox = offsets[i] ? offsets[i][0] : 0, oy = offsets[i] ? offsets[i][1] : 0;
+      u.guardTargetId = null;
+      u.followId = undefined;
+      u.guardX = Math.max(0, Math.min(MAP - 1, x + ox));
+      u.guardY = Math.max(0, Math.min(MAP - 1, y + oy));
+      finish(u);
+    });
+  }
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
 // Toggle the player's Auto Scout mode on the given scout units. When turned ON,
@@ -223,7 +294,13 @@ function execAutoScout(cmd, team){
   if (!units.length) return;
   units.forEach(u => {
     u.autoScout = on;
-    if (on) { u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u); }
+    if (on) {
+      u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u);
+      // Exploring IS the new task — drop any guard post (flag, escort and
+      // all), or the guard leash/return would fight the frontier wander.
+      // Mirrors execGuard clearing autoScout.
+      u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
+    }
   });
   feedbackFor(team, () => { if (window.playSound) playSound('click'); });
   if (team === myTeam && typeof updateUI === 'function') updateUI();
@@ -266,14 +343,39 @@ function execRally(cmd){
   let bData = BLDGS[bldg.btype];
   if (!bData || !bData.builds || bData.builds.length === 0) return;
   if (!inMapBounds(cmd.tileX, cmd.tileY)) return;
-  bldg.rallyX = cmd.tileX;
-  bldg.rallyY = cmd.tileY;
+  let rx = cmd.tileX, ry = cmd.tileY;
   let rTarget = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  // Rally flags point at SPOTS, not units: a flag dropped on a unit (own,
+  // enemy, or a passing sheep) is just a flag on the ground underneath it —
+  // fresh units shouldn't inherit chase/attack orders from whoever happened
+  // to stand there. The flag snaps to the tile that unit is STANDING on
+  // (clicking its sprite can resolve to a neighboring tile, since the art
+  // extends above the feet). Building targets stay: rally into a garrison,
+  // a trade-cart route onto a market, builders onto a foundation.
+  if (rTarget && rTarget.type === 'unit') {
+    rx = Math.max(0, Math.min(MAP - 1, Math.floor(rTarget.x)));
+    ry = Math.max(0, Math.min(MAP - 1, Math.floor(rTarget.y)));
+    rTarget = null;
+  }
+  // Building rally targets are kept only where the BUILDING is the point:
+  // one you can go INSIDE (TC / guard tower garrison, canGarrisonIn), a
+  // Market (trade-cart route), an own foundation (builders), or an enemy
+  // building (attack). A flag on any other friendly building is just a
+  // flag on the ground there.
+  if (rTarget && rTarget.type === 'building') {
+    let keep = canGarrisonIn(rTarget, bldg.team)
+      || rTarget.btype === 'MARKET'
+      || (rTarget.team === bldg.team && !rTarget.complete)
+      || !sameSide(rTarget.team, bldg.team);
+    if (!keep) rTarget = null;
+  }
+  bldg.rallyX = rx;
+  bldg.rallyY = ry;
   if (rTarget) {
     bldg.rallyTargetId = rTarget.id;
     bldg.rallyResourceType = null;
   } else {
-    let t0 = map[cmd.tileY] && map[cmd.tileY][cmd.tileX];
+    let t0 = map[ry] && map[ry][rx];
     if (t0 && (t0.t === TERRAIN.FOREST || t0.t === TERRAIN.GOLD || t0.t === TERRAIN.STONE || t0.t === TERRAIN.BERRIES || t0.t === TERRAIN.FARM)) {
       bldg.rallyResourceType = t0.t;
       bldg.rallyTargetId = null;
@@ -316,6 +418,12 @@ function execUnitCommand(cmd){
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
     s.autoScout = false; // any manual order cancels Auto Scout
+    // The guard post is NOT cleared by manual orders — a plain ground move
+    // RELOCATES it instead ("this is your temp spot", assigned below at the
+    // move sites); attack/follow orders leave it where it was, and the unit
+    // walks back after the fight. An ESCORT (guard-on-unit) does end here,
+    // mirroring followId: the post freezes at its last synced spot.
+    s.guardTargetId = null;
     if (s.utype === 'tradecart') {
       // Trade carts route to a Market, they don't attack. Resolve the clicked
       // entity directly from cmd (NOT the `target` var, which is nulled for
@@ -355,6 +463,7 @@ function execUnitCommand(cmd){
         s.target = null;
         let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+        if (guardEligible(s)) { s.guardX = tileX + ox; s.guardY = tileY + oy; s.guardFlagged = false; }
         idx++;
       } else {
         s.target = target.id; s.task = null; clearUnitPath(s); s.buildTarget = null;
@@ -384,9 +493,15 @@ function execUnitCommand(cmd){
           idx++;
         }
       } else {
-        // Military move: use formation offset
+        // Military move: use formation offset. The destination becomes the
+        // unit's new guard post — a plain move means "this is your temp
+        // spot", so after any later fight it returns HERE, not to an old
+        // flag or its birth rally. guardFlagged=false: an IMPLICIT post,
+        // behaviorally identical but drawn without the flag visuals — a
+        // plain move must not look like it planted a flag.
         let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+        if (guardEligible(s)) { s.guardX = tileX + ox; s.guardY = tileY + oy; s.guardFlagged = false; }
         idx++;
       }
     }

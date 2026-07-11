@@ -97,6 +97,11 @@ function walkable(x,y,ignore,ignoreUnits){
     // for anyone — farmers stand on it, armies trample across it. Only the
     // origin tile carries the food; `occupied` still blocks construction.
     if(occ && occ.type === 'building' && occ.btype === 'FARM') return true;
+    // Walkable buildings (the Market's open-air plaza): the whole footprint
+    // passes units once complete — the stalls are props, not walls. Tiles
+    // stay `occupied` so nothing can be BUILT there; construction sites
+    // still block fully (same rule as the TC courtyard above).
+    if(occ && occ.type === 'building' && occ.complete && BLDGS[occ.btype].walkable) return true;
   }
 
   // Only resolve the walker entity (a Map lookup) when an exception could

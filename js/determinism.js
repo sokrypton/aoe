@@ -85,6 +85,9 @@ function detEntityHash(e){
   h = detMix(h, e.explicitAttack ? 1 : 0);
   h = detMixFloat(h, e.defendX || 0);
   h = detMixFloat(h, e.defendY || 0);
+  h = detMixFloat(h, e.guardX == null ? -1 : e.guardX); // guard flag pins the anchor
+  h = detMixFloat(h, e.guardY == null ? -1 : e.guardY);
+  h = detMix(h, e.guardTargetId == null ? -1 : e.guardTargetId); // escort target
   h = detMix(h, e.savedTask ? 1 : 0);
   h = detMix(h, e.buildBackoffUntil || 0); // AI assigners read this on later ticks
   // Retry/throttle/avoid umbrellas (js/logic.js retryFail/avoidAdd): they

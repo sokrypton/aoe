@@ -135,6 +135,25 @@ canvas {
   display: flex;
   gap: 6px;
 }
+/* "Back" arrow docked in the bottom-LEFT corner above the bar — the mirror
+   of the #pop-wrap shortcut cluster (chat/idle/bell/map/home) on the right,
+   matching its size and bottom offset at every breakpoint. It used to be
+   the leftmost action button, but it ate strip width that wide widgets
+   (the market exchange) need on phones. position:fixed escapes #actions'
+   overflow clipping; it only exists while something is selected (ui.js). */
+.act-btn.back-btn{
+  position: fixed;
+  left: 6px;
+  bottom: 84px;
+  z-index: 20;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+
 #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn, #menu-btn {
   /* Slightly translucent so the map reads through the corner controls */
   background: linear-gradient(180deg, rgba(92,61,36,0.82) 0%, rgba(48,31,16,0.82) 100%);
@@ -209,7 +228,9 @@ canvas {
 }
 
 #sel-info {
-  width: 220px;
+  /* Narrow: the card is tiles-only now (lone tile / grouped tiles / the age
+     crest when idle) — no name or detail text to make room for. */
+  width: 100px;
   padding: 6px;
   color: #ffebad;
   border-left: 2px double #5a3e1a;
@@ -221,6 +242,8 @@ canvas {
   gap: 8px;
 }
 #sel-portrait {
+  /* Same act-btn-matched size as .sel-unit-icon at every breakpoint — the
+     idle age crest sits in the same visual rhythm as the selection tiles. */
   width: 58px;
   height: 58px;
   /* background-image (not the `background` shorthand) so it doesn't reset
@@ -276,11 +299,36 @@ canvas {
   max-height: 100%;
   text-shadow: 1px 1px 1px #000;
 }
+/* Selected card is portrait + name ONLY in this skin — HP bars and activity
+   are already visible in-world, so the details block is hidden while
+   something is selected. The no-selection state keeps #sel-details for the
+   "Tap to select…" hint and the age line. Classic shows the full readout. */
+#sel-info.has-selection #sel-details { display: none; }
+
+/* Grid-mode card sizes to its TILES and just keeps growing — one tile hugs
+   it, each extra unit type widens it, and with enough types it eats the
+   bar (the #sel-info border-left is the moving actions|selection divider).
+   The cap only reserves ONE action-button slot, and .no-actions (js/ui.js:
+   strip built with no real buttons) lifts even that, letting the card take
+   the whole bar. Overrides per breakpoint match the act-btn sizes. */
+#sel-info.multi-select {
+  width: auto;
+  min-width: 88px;
+  max-width: calc(100% - 90px);
+  flex: 0 0 auto;
+}
+#bottom.no-actions #sel-info.multi-select { max-width: 100%; }
 #sel-stats {
   max-height: 100%;
 }
 #sel-details .hp-bar-bg {
-  width: 100px;
+  /* Fluid, NOT a fixed 100px: the narrowed portrait card can leave less
+     than 100px for the stats column, and a fixed-width bar overflowed it —
+     #sel-details{overflow-y:auto} forces overflow-x:auto too, so phones
+     drew a horizontal SCROLLBAR right under the HP bar (an "extra grey
+     bar" under every selection's health readout). */
+  width: auto;
+  max-width: 100px;
   margin-top: 3px;
   margin-bottom: 2px;
 }
@@ -294,7 +342,10 @@ canvas {
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 3px;
-  overflow: hidden;
+  /* Scrolls rather than clips: with act-btn-sized tiles a garrison of two
+     unit types can exceed the bar's height in the narrow card. */
+  overflow-y: auto;
+  overflow-x: hidden;
   height: 100%;
   /* Top/right padding must cover .sel-unit-count's negative overhang, or
      the count badge on the last icon in a row gets clipped. */
@@ -309,16 +360,24 @@ canvas {
 }
 .sel-unit-icon {
   position: relative;
-  width: 32px;
-  height: 32px;
-  border: 1px solid #5a3e1a;
-  border-radius: 2px;
+  /* One tile size everywhere, matching .act-btn at each breakpoint — the
+     selection tiles and action buttons share a single visual rhythm,
+     whether one thing or a group is selected. */
+  width: 58px;
+  height: 58px;
+  border: 2px solid #bfa054;
+  border-radius: 4px;
   background-image: radial-gradient(circle, #805c36 0%, #3e2612 100%);
+  box-shadow: inset 0 0 6px #000, 1px 1px 3px rgba(0,0,0,0.5);
   cursor: pointer;
   flex-shrink: 0;
 }
 .sel-unit-icon:hover {
   border-color: #ffd700;
+}
+.sel-unit-icon.cam-locked {
+  border-color: #4ade80;
+  box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);
 }
 .sel-unit-hp {
   position: absolute;
@@ -586,7 +645,7 @@ canvas {
 .icon-home                {background-position:85.7143%  85.7143%;}
 /* New spare cells (empty labeled boxes) — column 7 (rows 1-7) then row 7
    (cols 0-6). Wire any of these up by renaming the class + drawing its cell. */
-.icon-spare1              {background-position:100%      14.2857%;}
+.icon-compass             {background-position:100%      14.2857%;} /* Auto Scout */
 .icon-spare2              {background-position:100%      28.5714%;}
 .icon-spare3              {background-position:100%      42.8571%;}
 .icon-spare4              {background-position:100%      57.1429%;}
@@ -605,18 +664,43 @@ canvas {
    resource icons with the live gold price printed below each. Dedicated .mkt-*
    classes (not .act-btn) so it stays visible in both skins, which hide
    .act-btn labels/costs. Spans the full action area in either layout. ---- */
-.mkt-exchange{ width:100%; flex-basis:100%; grid-column:1 / -1; box-sizing:border-box;
+/* Sized to content (not width:100%): in the portrait bottom bar the rows are
+   wider than the visible action strip, and a 100%-wide box CLIPS them — at
+   max-content they extend the bar's normal horizontal scroll instead. */
+.mkt-exchange{ flex:0 0 auto; width:max-content; box-sizing:border-box;
   display:flex; flex-direction:column; gap:2px; padding:2px; }
 .mkt-row{ display:flex; align-items:center; gap:4px; }
 .mkt-row-label{ flex:0 0 30px; font:bold 10px sans-serif; color:#e8dab0;
   text-transform:uppercase; letter-spacing:0.5px; }
-.mkt-cell{ display:flex; flex-direction:column; align-items:center; cursor:pointer;
-  padding:1px 4px; border-radius:4px; background:rgba(0,0,0,0.28); }
+/* Icon-beside-price (not stacked): keeps the two rows short enough to fit
+   the classic skin's 80px bottom panel, so both skins share one shape.
+   Uniform min-width so the Buy and Sell rows form aligned equal columns. */
+.mkt-cell{ display:flex; align-items:center; justify-content:center; gap:4px;
+  cursor:pointer; min-width:60px; box-sizing:border-box;
+  padding:4px 7px; border-radius:4px; background:rgba(0,0,0,0.28); }
 .mkt-cell:hover{ background:rgba(255,255,255,0.14); }
-.mkt-ico{ width:22px; height:22px; }
-.mkt-price{ display:flex; align-items:center; gap:2px;
+.mkt-cell.disabled{ opacity:0.4; filter:grayscale(0.8); cursor:not-allowed; }
+.mkt-cell.disabled:hover{ background:rgba(0,0,0,0.28); }
+.mkt-ico{ width:20px; height:20px; }
+.mkt-price{ display:flex; align-items:center;
   font:bold 10px sans-serif; color:#ffe14d; }
-.mkt-price .res-mini-icon{ width:9px; height:9px; }
+
+/* ---- Queue/prepaid count badge on action buttons (js/ui.js): the number
+   of queued units sits ON the train button (progress fill along its bottom
+   edge shows the active one, same anatomy as Advance Age) — there is no
+   separate queue widget. Tapping the badge cancels one; the Mill's prepaid
+   variant is display-only. ---- */
+.act-btn .queue-count{
+  position:absolute; top:2px; right:2px; z-index:2;
+  min-width:20px; height:20px; padding:0 5px; box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:10px; background:#1d5c2e; border:1px solid #ffd700;
+  color:#fff; font:bold 12px sans-serif; cursor:pointer;
+  box-shadow:1px 1px 2px rgba(0,0,0,0.6);
+}
+.act-btn .queue-count:hover{ background:#a61c1c; }
+.act-btn .queue-count.queue-count-static{ cursor:default; }
+.act-btn .queue-count.queue-count-static:hover{ background:#1d5c2e; }
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -625,10 +709,6 @@ canvas {
   width:100%;
   height:100%;
   margin-bottom:0;
-}
-.queue-slot .queue-icon{
-  width:16px;
-  height:16px;
 }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
@@ -1334,12 +1414,13 @@ canvas {
      matter most. (Duplicate 30px override further down this block removed;
      this is the single source at ≤600px.) */
   #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:42px;width:42px}
+  .act-btn.back-btn{min-width:42px;width:42px;height:42px;bottom:100px}
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:28px}
   #bell-btn .btn-emoji{
     font-size: 28px;
     transform: scale(1.1);
   }
-  .sel-unit-icon{width:44px;height:44px}
+  .sel-unit-icon{width:70px;height:70px}
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
   /* Corner minimap is gone at this width — the only way back to a map view
@@ -1348,12 +1429,13 @@ canvas {
 
   #bottom{height:96px}
   #sel-info{
-    width: clamp(160px, 42vw, 260px);
+    width: 96px;
     padding: 6px 8px;
   }
-  #sel-portrait{width:50px;height:50px;font-size:24px}
+  #sel-portrait{width:70px;height:70px;font-size:24px}
   #sel-details{font-size:10px}
   .act-btn{min-width:70px;height:70px;font-size:13px}
+  #sel-info.multi-select{max-width:calc(100% - 102px)}
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
   #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
@@ -1361,19 +1443,26 @@ canvas {
 @media(max-width:480px){
   #bottom{height:90px}
   #sel-info{
-    width: clamp(140px, 44vw, 215px);
+    width: 88px;
     padding: 5px 7px;
   }
-  #sel-portrait{width:44px;height:44px;font-size:20px}
+  #sel-portrait{width:64px;height:64px;font-size:20px}
+  .sel-unit-icon{width:64px;height:64px}
   #sel-details{font-size:9px}
   .act-btn{min-width:64px;height:64px;font-size:12px}
+  #sel-info.multi-select{max-width:calc(100% - 94px)}
   /* Even larger on the smallest phones — biggest tap target where fingers
      cover the most screen. */
   #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:48px;width:48px}
+  .act-btn.back-btn{min-width:48px;width:48px;height:48px;bottom:94px}
   #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:32px}
   #bell-btn .btn-emoji{font-size:32px;transform:scale(1.1)}
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #pop-wrap{bottom:94px}
+  /* Market exchange: tighter cells so most of a row fits the narrow visible
+     strip before the horizontal scroll kicks in. */
+  .mkt-row-label{flex-basis:26px}
+  .mkt-cell{min-width:52px;padding:4px 5px}
 }
 
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
@@ -1437,83 +1526,6 @@ canvas {
   }
 }
 
-/* ---- TRAINING QUEUE STYLES ---- */
-.train-container {
-  margin-top: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid #5a3e1a;
-  border-radius: 4px;
-  padding: 6px;
-  box-shadow: inset 0 0 5px #000;
-}
-.train-title {
-  font-size: 11px;
-  color: #ffebad;
-  margin-bottom: 4px;
-  text-shadow: 1px 1px 1px #000;
-}
-.train-bar-bg {
-  width: 100%;
-  height: 6px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-.train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-queue-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.queue-slot {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 10px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 2px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.queue-slot:hover {
-  border-color: #ffd700;
-  background: linear-gradient(180deg, #a61c1c 0%, #5a0808 100%);
-}
-.queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 /* ---- STANCE / AUTO-ATTACK BUTTON STYLES ---- */
 .stance-status {
@@ -1668,74 +1680,6 @@ canvas {
   pointer-events: none;
 }
 
-
-/* ---- COMPACT TRAINING QUEUE STYLES ---- */
-.train-compact {
-  margin-top: 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.train-compact .train-bar-bg {
-  width: 100px;
-  height: 4px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 1px;
-  overflow: hidden;
-}
-.train-compact .train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-compact .train-queue-slots {
-  display: flex;
-  gap: 3px;
-}
-.train-compact .queue-slot {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 8px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 1px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.train-compact .queue-slot .queue-icon {
-  width: 12px;
-  height: 12px;
-}
-.train-compact .queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.train-compact .queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.train-compact .active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 
 /* ---- HOVER TOOLTIP (desktop only) ---- */
@@ -2136,14 +2080,17 @@ canvas {
     border-left: none;
     border-top: 1px solid #8b6c43;
   }
-  #sel-portrait { width: 40px; height: 40px; }
+  #sel-portrait { width: 64px; height: 64px; }
   #sel-stats { flex: 0 0 auto; width: 100%; }
   #sel-name { font-size: 11px; line-height: 1.15; margin: 0; }
   #sel-details { font-size: 9px; line-height: 1.3; }
   #sel-details .hp-bar-bg { margin: 2px auto; max-width: 80px; }
-  /* Multi-select: groups collapse by type, so few icons — make them big */
+  /* Multi-select: same act-btn-sized tiles as everywhere else. The rail is
+     a COLUMN — the card keeps the rail's full width and grows downward, so
+     the width-expansion cap above must not apply. */
   #sel-grid { justify-content: center; gap: 6px; }
-  #sel-info.multi-select .sel-unit-icon { width: 56px; height: 56px; }
+  #sel-info.multi-select { width: 100%; max-width: none; }
+  #sel-info.multi-select .sel-unit-icon { width: 64px; height: 64px; }
   /* Actions below: single centered column, scrolls vertically */
   #actions {
     flex: 1 1 auto;
@@ -2156,6 +2103,14 @@ canvas {
   }
   #actions::-webkit-scrollbar { height: auto; width: 5px; }
   .act-btn { min-width: 64px; height: 64px; }
+  /* Market exchange in the 96px rail: the horizontal rows (label + 3 cells,
+     ~130px) get clipped by overflow-x:hidden, so restack — Buy/Sell become
+     section headers over full-width icon|price cells, scrolling vertically
+     with the rest of the column. */
+  .mkt-exchange { width: 100%; gap: 4px; }
+  .mkt-row { flex-direction: column; align-items: stretch; gap: 2px; }
+  .mkt-row-label { flex: 0 0 auto; text-align: center; }
+  .mkt-cell { justify-content: space-between; padding: 6px 8px; }
   /* Submenu takeover: same trick as portrait but over the whole rail —
      identical padding in both states so the Back button never shifts. */
   #bottom.menu-active #actions {
@@ -2166,8 +2121,18 @@ canvas {
     height: 100%;
     padding: 8px;
   }
-  /* No bottom bar to clear anymore */
-  #pop-wrap { bottom: 6px; right: 6px; }
+  /* No bottom bar to clear anymore. The shortcut cluster becomes a VERTICAL
+     column hugging the right edge (thumb zone), portrait-sized 42px buttons,
+     with the back arrow docked below it in the very corner. Fixed offsets:
+     the column grows upward as chat/idle/bell toggle in, so the back button
+     never moves. */
+  #pop-wrap { bottom: 6px; right: 6px; flex-direction: column; gap: 6px; }
+  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn { height: 42px; width: 42px; }
+  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #chat-btn .btn-emoji { font-size: 28px; }
+  #bell-btn .btn-emoji { font-size: 28px; transform: scale(1.1); }
+  /* Back arrow in the UPPER-right, tucked under the topbar's ☰/⛶ corner —
+     the bottom-right corner stays with the shortcut column. */
+  .act-btn.back-btn { left: auto; right: 6px; top: 44px; bottom: auto; min-width: 42px; width: 42px; height: 42px; }
   /* Chat anchors clear of the rail */
   #chat-log { left: 104px; top: 44px; }
   #chat-input-wrap { left: 104px; bottom: 8px; }

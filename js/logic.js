@@ -230,6 +230,20 @@ function retryReady(e,key){
   let r=e.retry&&e.retry[key];
   return !r||tick>=r.next;
 }
+// Guard-on-unit/building (execGuard, js/commands.js): keeps a mobile post
+// synced to the guarded target's live position — an escort's post rides on
+// the unit it guards. If the target dies (or garrisons away), the post
+// FREEZES at its last synced spot and becomes a plain ground post.
+function syncGuardPost(e){
+  if (e.guardTargetId == null) return;
+  let t = entitiesById.get(e.guardTargetId);
+  if (t && t.hp > 0 && !t.garrisonedIn && sameSide(t.team, e.team)) {
+    if (t.type === 'unit') { e.guardX = t.x; e.guardY = t.y; }
+  } else {
+    e.guardTargetId = null;
+  }
+}
+
 // Stamp the throttle without counting a failure (pure repath cadence).
 function retryStamp(e,key,waitTicks){
   let m=e.retry||(e.retry={});
@@ -845,8 +859,10 @@ function damageEntity(attacker, target){
     }
   }
   // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
-  // hacking at it just interrupts the wall it was ordered to break.
-  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&target.utype!=='ram'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
+  // hacking at it just interrupts the wall it was ordered to break. Trade
+  // carts can't fight at all (atk 0) — retaliating just made them chase
+  // their attacker and bump into it uselessly.
+  if(target.type==='unit'&&target.utype!=='sheep'&&target.utype!=='sheep_carcass'&&target.utype!=='ram'&&target.utype!=='tradecart'&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -881,7 +897,8 @@ function damageEntity(attacker, target){
   if(target.type==='building'&&!sameSide(attacker.team,target.team)){
     entities.forEach(en=>{
       if(en.type!=='unit'||!sameSide(en.team,target.team))return; // allies defend a sieged building too
-      if(en.utype==='villager'||en.utype==='sheep'||en.utype==='sheep_carcass')return;
+      // non-combatants sit out: carts have atk 0, rams do 1-2 vs units
+      if(en.utype==='villager'||en.utype==='sheep'||en.utype==='sheep_carcass'||en.utype==='tradecart'||en.utype==='ram')return;
       if(en.target||en.task||en.stance==='passive')return;
       if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
       if(distToTarget(en,target)>8)return;
@@ -1465,8 +1482,14 @@ function updateUnit(e){
       }
     }
 
-    // Defensive Stance anchor retreat check
-    if (e.stance === 'defensive' && e.defendX !== undefined) {
+    // Defensive Stance / Guard anchor retreat check — a guard post pins the
+    // anchor regardless of stance, so guarding units leash their AUTO-
+    // acquired chases to the post. Explicit attack orders are exempt: the
+    // post survives every order now (a move just relocates it), so without
+    // the exemption a commanded assault would yank the army back 6 tiles in.
+    syncGuardPost(e); // escort posts track the guarded unit before the leash reads the anchor
+    if (e.guardX != null && e.guardTargetId != null) { e.defendX = e.guardX; e.defendY = e.guardY; }
+    if ((e.stance === 'defensive' || (e.guardX != null && !e.explicitAttack)) && e.defendX !== undefined) {
       let adx = e.x - e.defendX, ady = e.y - e.defendY;
       let dFromAnchor = Math.sqrt(adx*adx + ady*ady);
       if (dFromAnchor > 6) {
@@ -1937,8 +1960,25 @@ function updateUnit(e){
   // follow order resumes once the fight ends (followId itself isn't touched
   // by combat, only the per-leg pathing is).
   if(isMilitary && !e.target && e.path.length===0 && !e.task){
-    e.defendX = e.x;
-    e.defendY = e.y;
+    // A guard flag PINS the defend anchor to the flagged spot (a plain idle
+    // unit's anchor drifts to wherever it stands); an idle guard away from
+    // its flag walks back. retryReady throttles the re-path so a blocked
+    // return doesn't hammer the pathfinder every tick.
+    syncGuardPost(e);
+    if(e.guardX != null){
+      e.defendX = e.guardX;
+      e.defendY = e.guardY;
+      let gdx = e.x - e.guardX, gdy = e.y - e.guardY;
+      // While ESCORTING (followId set), the follow leg does the walking —
+      // don't compete with it for the path.
+      if(e.followId == null && gdx*gdx + gdy*gdy > 2.25 && retryReady(e,'guardret')){
+        retryStamp(e,'guardret',30);
+        pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+      }
+    } else {
+      e.defendX = e.x;
+      e.defendY = e.y;
+    }
     // Stagger the acquisition scan across 3 ticks by id: this scan (grid
     // walk + fog gate per candidate) ran for EVERY idle military unit EVERY
     // tick and dominated late-game tick cost. Worst added reaction delay is
@@ -2215,7 +2255,9 @@ function handleDeath(e,killerTeam){
   }
   // Death blood burst — bigger than the per-hit spatter, marks the kill.
   // Bears get a heavier burst to match their bulk.
-  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'){
+  // (wooden vehicles are excluded: they break apart in wood splinters
+  // instead — see drawTradeCartCorpse / drawRamCorpse in js/render-units.js)
+  if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&e.utype!=='tradecart'&&e.utype!=='ram'){
     spawnParticles(e.x,e.y,'#990000',e.utype==='bear'?12:7,0.05,1.8);
   }
   // Death/destruction audio (host side; the guest hears the same via its
@@ -2227,7 +2269,7 @@ function handleDeath(e,killerTeam){
     if(e.type==='building'&&e.complete) window.playSound('collapse', e.x+(e.w||1)/2, e.y+(e.h||1)/2);
     // Bears growl their own death; humans get the death cry.
     else if(e.type==='unit'&&e.utype==='bear') window.playSound('bear', e.x, e.y);
-    else if(e.type==='unit'&&e.utype==='ram') window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
+    else if(e.type==='unit'&&(e.utype==='ram'||e.utype==='tradecart')) window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
     else if(e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass') window.playSound('death', e.x, e.y);
   }
   // Add to corpses list for AoE2-style decay (sheep are the exception —
@@ -2241,7 +2283,9 @@ function handleDeath(e,killerTeam){
       team: e.team,
       id: e.id,
       facing: e.facing || 1,
+      dir: e.dir, // vehicles wreck in their death facing (corpseVehicleAxes)
       female: e.female, // villagers keep their hairdo in death
+      carrying: e.carrying || 0, // trade cart: gold spills from the wreck on the loaded leg
       // Wall-clock is safe here ONLY because corpses are cosmetic: nothing
       // in the sim ever reads them (render/save only, see simChecksum's
       // exclusions). Sim state must use `tick`, never performance.now().
@@ -2531,6 +2575,14 @@ function updateBuilding(e){
       // Auto-command the unit based on building's rally point — same
       // "both player teams, not myTeam" reasoning as the block above.
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
+        // Fresh MILITARY units guard their rally flag (AoE2-style): where
+        // they're flagged to becomes their default guard anchor, so after
+        // any fight they return to the flag instead of drifting off. The
+        // player can re-pin it with the Guard button (execGuard) and any
+        // manual order clears it (execUnitCommand).
+        if(unit.utype!=='villager'&&unit.utype!=='tradecart'){
+          unit.guardX=e.rallyX; unit.guardY=e.rallyY;
+        }
         if(e.rallyTargetId){
           let target=entitiesById.get(e.rallyTargetId);
           if(target){
@@ -2549,7 +2601,11 @@ function updateBuilding(e){
               unit.task='build';
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
-            } else if((!sameSide(target.team,e.team) && target.team!==GAIA_TEAM) || (target.team===e.team && target.utype==='sheep' && unit.utype==='villager')){
+            } else if(unit.utype!=='tradecart' && !sameSide(target.team,e.team) && target.team!==GAIA_TEAM){
+              // Rally onto an ENEMY BUILDING: fresh units attack it. (Unit
+              // rally targets no longer exist — execRally snaps a flag
+              // dropped on a unit to the ground tile under it — so this is
+              // buildings only. Trade carts never take attack targets.)
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {

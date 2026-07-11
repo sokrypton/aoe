@@ -69,6 +69,8 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   }
   entities.push(e);
   entitiesById.set(e.id, e);
-  if(!b.isFarm)pushUnitsOut(x,y,e.w,e.h);
+  // Walkable footprints (farms, the market plaza) never eject units — a
+  // unit standing there is standing on legal ground once the building is up.
+  if(!b.isFarm&&!b.walkable)pushUnitsOut(x,y,e.w,e.h);
   return e;
 }

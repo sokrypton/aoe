@@ -182,7 +182,7 @@ document.addEventListener('keydown',e=>{
     // the NEXT mouseup ran finalizeWallDrag() and built the wall the player
     // just tried to cancel.
     if(window.isDraggingWall)abortWallDrag();
-    placing=null;selected=[];window.settingRally=false;updateUI();
+    placing=null;selected=[];window.settingRally=false;window.settingGuard=false;updateUI();
   }
   if(e.key==='Delete'||e.key==='Backspace'){
     let ownIds = selected.filter(en=>en.team===myTeam).map(en=>en.id);
@@ -539,6 +539,24 @@ C.addEventListener('mouseup',e=>{
         }
         window.settingRally = false;
         updateUI();
+      } else if (window.settingGuard) {
+        // Desktop click while setting a guard flag — same as the touch path:
+        // friendly unit = escort, own/allied building = stand watch, ground = hold.
+        let gt = screenToTile(e.clientX, e.clientY);
+        if(gt && selected.length>0){
+          let tgt = getUnitUnderCursor(e.clientX, e.clientY);
+          if(!tgt && map[gt.y] && map[gt.y][gt.x] && map[gt.y][gt.x].occupied){
+            let b = entitiesById.get(map[gt.y][gt.x].occupied);
+            if(b && b.type==='building') tgt = b;
+          }
+          if(tgt && !sameSide(tgt.team, myTeam)) tgt = null;
+          submitCommand({ kind:'guard',
+            unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
+            x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+          showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
+        }
+        window.settingGuard = false;
+        updateUI();
       } else {
         doSelect(e.clientX,e.clientY,e.shiftKey);
       }
@@ -554,6 +572,7 @@ document.addEventListener('contextmenu',e=>{
   if(e.target===C){
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
+    window.settingGuard=false; // right-click issues a manual order instead
     doCommand(e.clientX,e.clientY);
   }
 });
@@ -868,6 +887,7 @@ function finishMobileUnitCommand(){
   if(hasSelectedMobileBuilder())return;
   selected=[];
   window.settingRally=false;
+  window.settingGuard=false;
   updateUI();
 }
 
@@ -887,6 +907,27 @@ function handleTap(sx,sy){
       doCommand(sx, sy);
     }
     window.settingRally = false;
+    updateUI();
+    return;
+  }
+  // 2b. Guard-setting mode: the tap becomes the selection's guard flag —
+  // on a friendly unit = ESCORT it, on an own/allied building = stand watch
+  // there, on ground = hold that spot (execGuard, js/commands.js).
+  if(window.settingGuard){
+    let gt = screenToTile(sx, sy);
+    if(gt && selected.length>0){
+      let tgt = getUnitUnderCursor(sx, sy);
+      if(!tgt && map[gt.y] && map[gt.y][gt.x] && map[gt.y][gt.x].occupied){
+        let b = entitiesById.get(map[gt.y][gt.x].occupied);
+        if(b && b.type==='building') tgt = b;
+      }
+      if(tgt && !sameSide(tgt.team, myTeam)) tgt = null; // enemy tap → ground post
+      submitCommand({ kind:'guard',
+        unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
+        x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+      showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
+    }
+    window.settingGuard = false;
     updateUI();
     return;
   }
@@ -1332,6 +1373,16 @@ function getUnitUnderCursor(sx, sy) {
         w = 22 * ZOOM + extraHit;
         hStart = 4 * ZOOM + extraHit;
         hEnd = -24 * ZOOM - extraHit;
+      } else if (en.utype === 'tradecart') {
+        // recentered wagon + yoked ox composite spans ~±42px around the
+        // anchor — clicking anywhere on it (incl. the ox head) selects
+        w = 44 * ZOOM + extraHit;
+        hStart = 5 * ZOOM + extraHit;
+        hEnd = -26 * ZOOM - extraHit;
+      } else if (en.utype === 'ram') {
+        w = 30 * ZOOM + extraHit;
+        hStart = 5 * ZOOM + extraHit;
+        hEnd = -32 * ZOOM - extraHit;
       }
 
       let dx = sx - scrx;
@@ -1503,15 +1554,30 @@ function doCommand(sx,sy){
     if(!bData || !bData.builds || bData.builds.length === 0) return;
     if(!inMapBounds(tile.x,tile.y))return;
 
-    // Find target entity under the click
+    // Find target entity under the click. UNITS are not rally targets —
+    // execRally snaps a flag dropped on one to the tile it's standing on,
+    // so mirror that here: adjust the feedback tile and drop the target,
+    // and the message reads as ground/resource, never "set to Villager".
     let rTarget = getUnitUnderCursor(sx, sy);
-    if(!rTarget){
+    if(rTarget){
+      tile = { x: Math.max(0, Math.min(MAP-1, Math.floor(rTarget.x))),
+               y: Math.max(0, Math.min(MAP-1, Math.floor(rTarget.y))) };
+      rTarget = null;
+    } else {
       rTarget = getBuildingUnderCursor(sx, sy);
+      // Same building filter as execRally: only enterable buildings
+      // (TC/tower garrison), Markets, own foundations, or enemy buildings
+      // are targets — a flag on any other friendly building is ground.
+      if(rTarget){
+        let keep = canGarrisonIn(rTarget, myTeam) || rTarget.btype==='MARKET'
+          || (rTarget.team===myTeam && !rTarget.complete) || !sameSide(rTarget.team, myTeam);
+        if(!keep) rTarget = null;
+      }
     }
 
     feedbackFor(myTeam, () => {
       if(rTarget){
-        showMsg('Rally point set to '+ (rTarget.type==='unit' ? UNITS[rTarget.utype].name : BLDGS[rTarget.btype].name));
+        showMsg('Rally point set to '+ BLDGS[rTarget.btype].name);
       } else {
         let t0=map[tile.y]&&map[tile.y][tile.x];
         if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM)){

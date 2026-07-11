@@ -139,6 +139,63 @@ function drawCampClearing(sx,sy,bw,bhh,darken=false){
   X.fill();X.stroke();
 }
 
+// Sortable market parts: tile-space anchors (offsets from e.x/e.y) for the
+// per-part draw proxies render.js emits for a complete market, back→front.
+// Each anchor is the tile under that prop's screen position in the MARKET
+// branch of drawBuilding — keep the two in step. 'ground' (the plaza) is
+// implicit and sorts under everything on the footprint.
+const MARKET_PART_ANCHORS = {
+  flag:    [0.5,  0.5],
+  stall_b: [0.84, 1.02],
+  stall_l: [0.95, 2.2],
+  stall_r: [2.36, 1.18],
+  wares:   [2.5,  2.21],
+};
+
+// Stone-paved plaza the market sits on — same footprint diamond as
+// drawCampClearing, but flagstone: running-bond joint lines and a few
+// lighter stones for tonal variety (seeded on the building id, no RNG).
+function drawMarketPlaza(sx,sy,bw,bhh,seed,darken=false){
+  // pt(a,b): bilinear point in the footprint diamond, a along N→E (tile x),
+  // b along N→W (tile y); the diamond is an affine cell so this is exact.
+  const pt=(a,b)=>({x:sx+(a-b)*bw, y:sy+(a+b)*bhh});
+  X.fillStyle = darken ? darkenColor('#b7b2a6') : '#b7b2a6';
+  X.strokeStyle = 'rgba(0,0,0,0.25)';
+  X.lineWidth = 1;
+  X.beginPath();
+  X.moveTo(sx,sy);X.lineTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.closePath();
+  X.fill();X.stroke();
+  const N=6; // 6x6 stone grid over the 3x3 footprint
+  // lighter stones first, so joints stroke over them
+  X.fillStyle='rgba(255,255,255,0.06)';
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+    if((i*3+j*5+seed)%5) continue;
+    let p0=pt(i/N,j/N),p1=pt((i+1)/N,j/N),p2=pt((i+1)/N,(j+1)/N),p3=pt(i/N,(j+1)/N);
+    X.beginPath();X.moveTo(p0.x,p0.y);X.lineTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.lineTo(p3.x,p3.y);X.closePath();X.fill();
+  }
+  // joints: full course lines one way, half-stone staggered cross joints
+  X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+  for(let j=1;j<N;j++){
+    let a=pt(0,j/N),b=pt(1,j/N);
+    X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b.x,b.y);X.stroke();
+  }
+  for(let j=0;j<N;j++){
+    for(let i=1;i<N+(j%2?1:0);i++){
+      let a=(i-(j%2)*0.5)/N; if(a<=0||a>=1) continue;
+      let p0=pt(a,j/N),p1=pt(a,(j+1)/N);
+      X.beginPath();X.moveTo(p0.x,p0.y);X.lineTo(p1.x,p1.y);X.stroke();
+    }
+  }
+  // seat the slab: a soft shadow band just inside the two lower (front) edges
+  X.save();
+  X.beginPath();
+  X.moveTo(sx,sy);X.lineTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.closePath();
+  X.clip();
+  X.strokeStyle='rgba(0,0,0,0.10)';X.lineWidth=5;
+  X.beginPath();X.moveTo(sx+bw,sy+bhh);X.lineTo(sx,sy+bhh*2);X.lineTo(sx-bw,sy+bhh);X.stroke();
+  X.restore();
+}
+
 // Open-sided "camp" shelter: a peaked roof on visible corner posts with no
 // wall faces, so the prop pile underneath reads through — distinguishes
 // resource camps from solid buildings (TC/Barracks/etc.) in silhouette.
@@ -604,6 +661,9 @@ const AGE_WALLS = [
 // a flat field — nothing to cast.
 function buildingShadowPath(e){
   if (e.btype === 'FARM') return;
+  // The market is open paving — a full 3x3 shadow diamond would read as a
+  // solid mass. Its stalls cast their own small ellipses (ground part).
+  if (e.btype === 'MARKET') return;
   let b = BLDGS[e.btype];
   // per-instance footprint: gates are 1x2 OR 2x1 depending on placement
   let fw = e.w !== undefined ? e.w : b.w;
@@ -1350,20 +1410,39 @@ function drawBuilding(e, part = null){
     X.restore();
   }
   else if(e.btype==='MARKET'){
-    // Open-air bazaar: a worn-dirt square with a few striped-awning stalls on
-    // posts, goods on the ground under each, and a central team banner. No
-    // enclosed hall (deliberate — see the market plan). 3x3 footprint, so
-    // bw=96/bhh=48; stalls are small props scattered across the tile.
+    // Open-air bazaar on a flagstone plaza: striped-awning stalls on posts,
+    // goods under each, a freestanding wares cluster, and a central team
+    // banner. No enclosed hall (deliberate — see the market plan). 3x3
+    // footprint, so bw=96/bhh=48; stalls are small props across the tile.
+    //
+    // The plaza is WALKABLE (see walkable() in pathfinding.js), so when the
+    // market is complete render.js pushes one sortable proxy per part
+    // (MARKET_PART_ANCHORS) instead of a single drawable — units then paint
+    // between the stalls correctly. `part` selects one piece; part===null
+    // (outlines, pixel-hit, construction site) draws everything back→front.
     bh=44;
-    drawCampClearing(sx, sy, bw, bhh, darken);
+    let only = p => part === null || part === p;
+    if(only('ground')){
+      drawMarketPlaza(sx, sy, bw, bhh, e.id, darken);
+      // Soft prop shadows on the pavement, in the ground layer so plaza
+      // walkers draw over them. Shadow, not shape — skip in the mask pass
+      // (the union building-shadow pass skips MARKET entirely).
+      if(!window._maskDraw){
+        X.fillStyle='rgba(0,0,0,0.16)';
+        [[-6,0.66,21],[-40,1.09,21],[38,1.22,21],[10,1.62,13]].forEach(([dx,k,rx])=>{
+          X.beginPath();X.ellipse(sx+dx,sy+bhh*k,rx,rx*0.45,0,0,Math.PI*2);X.fill();
+        });
+      }
+      if(part){ X.globalAlpha=1; return; }
+    }
 
     let canvasL = darken?darkenColor('#efe7d2'):'#efe7d2';
     let canvasR = darken?darkenColor('#d6ccb2'):'#d6ccb2';
     let postC   = darken?darkenColor(WOOD.post):WOOD.post;
-    let tccF    = darken?darkenColor(tc):tc;    // front-left eave (lit)
-    let tccR    = darken?darkenColor(tcD):tcD;  // front-right eave (shaded)
+    let tccF    = darken?darkenColor(tc):tc;    // lit (front-left) faces
+    let tccR    = darken?darkenColor(tcD):tcD;  // shaded (front-right) faces
 
-    // Goods pile under a stall, centered on (cx,cy): 'crate' | 'sacks' | 'pots'.
+    // Goods pile centered on (cx,cy): 'crate'|'sacks'|'basket'|'amphorae'.
     let drawGood=(cx,cy,type)=>{
       X.strokeStyle='#000';X.lineWidth=1.1;X.lineJoin='round';
       if(type==='crate'){
@@ -1383,28 +1462,71 @@ function drawBuilding(e, part = null){
       } else if(type==='sacks'){
         let sc =darken?darkenColor('#cdb98c'):'#cdb98c';
         let sc2=darken?darkenColor('#b6a074'):'#b6a074';
-        [[-4,1.5,3.2],[3,2,3.0],[-0.5,-1.5,2.8]].forEach(([dx,dy,r])=>{
-          X.fillStyle=sc;X.beginPath();X.ellipse(cx+dx,cy+dy,r,r*1.15,0,0,Math.PI*2);X.fill();X.stroke();
+        let tie=darken?darkenColor(WOOD.beam):WOOD.beam;
+        // grain sacks with a pinched, tied neck flopping over
+        [[-4,1.5,3.2],[3,2,3.0],[-0.5,-2,2.8]].forEach(([dx,dy,r])=>{
+          X.fillStyle=sc;X.beginPath();X.ellipse(cx+dx,cy+dy,r,r*1.1,0,0,Math.PI*2);X.fill();X.stroke();
+          X.fillStyle=sc;X.beginPath();X.ellipse(cx+dx+r*0.25,cy+dy-r*1.2,r*0.42,r*0.3,0.5,0,Math.PI*2);X.fill();X.stroke();
+          X.strokeStyle=tie;X.lineWidth=1;
+          X.beginPath();X.moveTo(cx+dx-r*0.3,cy+dy-r*0.95);X.lineTo(cx+dx+r*0.35,cy+dy-r*0.8);X.stroke();
+          X.strokeStyle='#000';X.lineWidth=1.1;
           X.fillStyle=sc2;X.beginPath();X.ellipse(cx+dx+0.7,cy+dy+0.9,r*0.5,r*0.6,0,0,Math.PI*2);X.fill();
         });
-      } else { // pots
-        let pc =darken?darkenColor('#b5651d'):'#b5651d';
-        let pc2=darken?darkenColor('#8c4a12'):'#8c4a12';
-        [[-3.5,2,3.4],[2.5,2.5,3.0]].forEach(([dx,dy,r])=>{
-          X.fillStyle=pc;X.beginPath();
-          X.moveTo(cx+dx-r*0.7,cy+dy-r);X.quadraticCurveTo(cx+dx-r,cy+dy, cx+dx-r*0.5,cy+dy+r*0.6);
-          X.lineTo(cx+dx+r*0.5,cy+dy+r*0.6);X.quadraticCurveTo(cx+dx+r,cy+dy,cx+dx+r*0.7,cy+dy-r);
-          X.closePath();X.fill();X.stroke();
-          X.fillStyle=pc2;X.beginPath();X.ellipse(cx+dx,cy+dy-r,r*0.55,r*0.28,0,0,Math.PI*2);X.fill();X.stroke();
+      } else if(type==='basket'){
+        // wicker basket heaped with produce
+        let wk =darken?darkenColor('#b58a52'):'#b58a52';
+        let rim=darken?darkenColor('#8a6a3e'):'#8a6a3e';
+        let produce=['#c94f39','#5f8c3a','#d97b28','#c94f39','#5f8c3a','#d97b28'];
+        X.fillStyle=wk;X.beginPath();
+        X.moveTo(cx-4.4,cy-1.6);X.quadraticCurveTo(cx-4.2,cy+2.6,cx-2.4,cy+3.2);
+        X.lineTo(cx+2.4,cy+3.2);X.quadraticCurveTo(cx+4.2,cy+2.6,cx+4.4,cy-1.6);
+        X.closePath();X.fill();X.stroke();
+        X.save();X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+        X.beginPath();X.moveTo(cx-4.2,cy+0.2);X.quadraticCurveTo(cx,cy+1.2,cx+4.2,cy+0.2);X.stroke();
+        X.beginPath();X.moveTo(cx-3.6,cy+1.9);X.quadraticCurveTo(cx,cy+2.8,cx+3.6,cy+1.9);X.stroke();
+        X.restore();
+        [[-2.6,-2.2],[0,-2.9],[2.6,-2.2],[-1.3,-1.7],[1.3,-1.7],[0,-1.2]].forEach(([dx,dy],i)=>{
+          X.fillStyle=darken?darkenColor(produce[i]):produce[i];
+          X.beginPath();X.arc(cx+dx,cy+dy,1.35,0,Math.PI*2);X.fill();X.stroke();
+          X.fillStyle='rgba(255,255,255,0.35)';
+          X.beginPath();X.arc(cx+dx-0.4,cy+dy-0.4,0.45,0,Math.PI*2);X.fill();
+        });
+        X.fillStyle=rim;X.beginPath();X.ellipse(cx,cy-1.6,4.5,1.4,0,0,Math.PI*2);X.fill();X.stroke();
+      } else { // amphorae — a tall terracotta pair, one smaller behind
+        let pc =darken?darkenColor('#c1703a'):'#c1703a';
+        let lip=darken?darkenColor('#8c4a12'):'#8c4a12';
+        [[2.8,-1.2,1.35],[-1.5,1.2,1.7]].forEach(([dx,dy,s])=>{
+          let ax=cx+dx, ay=cy+dy;
+          let body=()=>{X.beginPath();
+            X.moveTo(ax-1.1*s,ay-5.2*s);
+            X.quadraticCurveTo(ax-1.2*s,ay-3.6*s,ax-2.5*s,ay-2.4*s);
+            X.quadraticCurveTo(ax-3.3*s,ay-0.7*s,ax-1.4*s,ay+1.1*s);
+            X.lineTo(ax-0.9*s,ay+1.5*s);X.lineTo(ax+0.9*s,ay+1.5*s);X.lineTo(ax+1.4*s,ay+1.1*s);
+            X.quadraticCurveTo(ax+3.3*s,ay-0.7*s,ax+2.5*s,ay-2.4*s);
+            X.quadraticCurveTo(ax+1.2*s,ay-3.6*s,ax+1.1*s,ay-5.2*s);
+            X.closePath();};
+          X.fillStyle=pc;body();X.fill();X.stroke();
+          // handles: neck to shoulder
+          X.beginPath();X.moveTo(ax-1.15*s,ay-4.6*s);X.quadraticCurveTo(ax-2.7*s,ay-4.1*s,ax-2.2*s,ay-2.7*s);X.stroke();
+          X.beginPath();X.moveTo(ax+1.15*s,ay-4.6*s);X.quadraticCurveTo(ax+2.7*s,ay-4.1*s,ax+2.2*s,ay-2.7*s);X.stroke();
+          // clipped shade on the right of the belly + a lit stroke on the left
+          X.save();body();X.clip();
+          X.fillStyle='rgba(0,0,0,0.10)';X.fillRect(ax+0.5*s,ay-6*s,3.5*s,8*s);
+          X.restore();
+          X.save();X.strokeStyle='rgba(255,255,255,0.35)';X.lineWidth=1;
+          X.beginPath();X.moveTo(ax-1.6*s,ay-2.2*s);X.quadraticCurveTo(ax-2.2*s,ay-0.8*s,ax-1.1*s,ay+0.6*s);X.stroke();
+          X.restore();
+          // flared lip
+          X.fillStyle=lip;X.beginPath();X.ellipse(ax,ay-5.2*s,1.5*s,0.65*s,0,0,Math.PI*2);X.fill();X.stroke();
         });
       }
     };
 
-    // One market stall: a raised striped-canvas canopy (a tile-aligned diamond
-    // lifted by H) on 4 posts, with goods underneath and a team-color fascia
-    // along the two front eaves.
+    // One market stall: a striped-canvas canopy (a tile-aligned diamond
+    // lifted by H) on 4 posts, goods underneath, and a scalloped valance
+    // hanging from the two front eaves.
     let stall=(cx,cyc,good)=>{
-      const w=16,h=8,H=19;
+      const w=18,h=9,H=20;
       let corners={T:[cx,cyc-h],R:[cx+w,cyc],B:[cx,cyc+h],L:[cx-w,cyc]};
       let post=(g)=>{
         X.lineCap='round';
@@ -1412,38 +1534,60 @@ function drawBuilding(e, part = null){
         X.strokeStyle=postC;X.lineWidth=1.4;X.beginPath();X.moveTo(g[0],g[1]);X.lineTo(g[0],g[1]-H);X.stroke();
         X.lineCap='butt';
       };
-      // back + side posts, then goods, then the near (front) post over them
+      // back + side posts, then goods, then the near (front) post over them;
+      // goods sit slightly toward the front eave so the canopy doesn't hide
+      // them at game angle
       post(corners.T);post(corners.L);post(corners.R);
-      drawGood(cx,cyc,good);
+      drawGood(cx,cyc+3.5,good);
       post(corners.B);
       // raised canopy corners
       let Tr=[corners.T[0],corners.T[1]-H],Rr=[corners.R[0],corners.R[1]-H],
           Br=[corners.B[0],corners.B[1]-H],Lr=[corners.L[0],corners.L[1]-H];
+      let lerp=(p,q,t)=>[p[0]+(q[0]-p[0])*t, p[1]+(q[1]-p[1])*t];
+      // each triangular face: cream base + 2-of-5 team-color awning stripes
+      // fanning from the eave corner across the Tr→Br ridge (wedges lie
+      // exactly inside the face triangle, so no clip is needed)
       X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
-      X.fillStyle=canvasL;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Lr[0],Lr[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();X.stroke();
-      X.fillStyle=canvasR;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();X.stroke();
+      let face=(eave,base,stripe)=>{
+        X.fillStyle=base;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(eave[0],eave[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();
+        X.fillStyle=stripe;
+        for(let k of [1,3]){
+          let r0=lerp(Tr,Br,k/5), r1=lerp(Tr,Br,(k+1)/5);
+          X.beginPath();X.moveTo(eave[0],eave[1]);X.lineTo(r0[0],r0[1]);X.lineTo(r1[0],r1[1]);X.closePath();X.fill();
+        }
+        X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(eave[0],eave[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.stroke();
+      };
+      face(Lr, canvasL, tccF);   // lit front-left face
+      face(Rr, canvasR, tccR);   // shaded front-right face
       X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Br[0],Br[1]);X.lineTo(Lr[0],Lr[1]);X.closePath();X.stroke();
-      // canvas stripes (light seams) running across the canopy
-      X.save();X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
-      for(let t of [0.33,0.66]){
-        let a=[Lr[0]+(Tr[0]-Lr[0])*t, Lr[1]+(Tr[1]-Lr[1])*t];
-        let bb=[Br[0]+(Rr[0]-Br[0])*t, Br[1]+(Rr[1]-Br[1])*t];
-        X.beginPath();X.moveTo(a[0],a[1]);X.lineTo(bb[0],bb[1]);X.stroke();
-      }
-      X.restore();
-      // team-color fascia along the two FRONT eaves (Lr-Br lit, Br-Rr shaded)
-      let fs=3;
-      X.fillStyle=tccF;X.beginPath();X.moveTo(Lr[0],Lr[1]);X.lineTo(Br[0],Br[1]);X.lineTo(Br[0],Br[1]+fs);X.lineTo(Lr[0],Lr[1]+fs);X.closePath();X.fill();X.stroke();
-      X.fillStyle=tccR;X.beginPath();X.moveTo(Br[0],Br[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Rr[0],Rr[1]+fs);X.lineTo(Br[0],Br[1]+fs);X.closePath();X.fill();X.stroke();
+      // scalloped valance hanging from the two FRONT eaves (Lr-Br lit,
+      // Br-Rr shaded), scallop colors alternating canvas/team
+      let valance=(p,q,cCanvas,cTeam)=>{
+        X.lineWidth=1.1;
+        for(let k=0;k<4;k++){
+          let s0=lerp(p,q,k/4), s1=lerp(p,q,(k+1)/4);
+          let mx=(s0[0]+s1[0])/2, my=(s0[1]+s1[1])/2+4.6;
+          X.fillStyle=(k%2)?cTeam:cCanvas;
+          X.beginPath();X.moveTo(s0[0],s0[1]);X.quadraticCurveTo(mx,my,s1[0],s1[1]);X.closePath();X.fill();X.stroke();
+        }
+      };
+      valance(Lr,Br,canvasL,tccF);
+      valance(Br,Rr,canvasR,tccR);
     };
 
-    // Central team banner at the back, drawn first so front stalls overlap its
-    // pole base; it flies clear above every canopy.
-    drawWavingFlag(sx, sy+16, 0, tc, tcD, 30);
-    // Stalls painted back → front (smaller ground-y first).
-    stall(sx-6,  sy+bhh*0.62, 'sacks');   // back-center
-    stall(sx-40, sy+bhh*1.05, 'crate');   // left, nearer
-    stall(sx+38, sy+bhh*1.18, 'pots');    // right-front, nearest
+    // Parts painted back → front (in the proxy path each `only()` hits one).
+    // Screen offsets here must stay in step with MARKET_PART_ANCHORS.
+    if(only('flag'))    drawWavingFlag(sx, sy+16, 0, tc, tcD, 30); // central banner, clear above every canopy
+    if(only('stall_b')) stall(sx-6,  sy+bhh*0.62, 'sacks');    // back-center
+    if(only('stall_l')) stall(sx-40, sy+bhh*1.05, 'basket');   // left, nearer
+    if(only('stall_r')) stall(sx+38, sy+bhh*1.18, 'amphorae'); // right-front, nearest
+    if(only('wares')){ // open-ground wares by the front corner
+      drawGood(sx+16, sy+bhh*1.52, 'crate');
+      drawGood(sx+3,  sy+bhh*1.62, 'amphorae');
+    }
+    // Only the last-sorted part (wares) falls through to the shared tail
+    // (HP/progress bars), so those draw once per market, on top.
+    if(part !== null && part !== 'wares'){ X.globalAlpha=1; return; }
   }
   else if(e.btype==='LCAMP'){
     bh=30;
@@ -1936,6 +2080,14 @@ function drawBuilding(e, part = null){
   }
   else if(e.btype==='FARM'){
     bh=0;
+    // Depth-sliced draw (see render.js farm proxies): part==='ground' paints
+    // the flat soil bed (ground layer), part===[dx,dy] paints only the wheat
+    // clusters rooted in that tile so crops depth-sort per tile against
+    // neighboring buildings/units. part===null (gallery, ghost, outline
+    // mask) paints everything in one pass as before.
+    let groundPass = part === null || part === 'ground';
+    let cropPart = Array.isArray(part) ? part : null;
+    let cropPass = part === null || !!cropPart;
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
     let growth=tileRes/(e.maxFood||300);
     // Ground-level footprint corners and the raised bed (tilled soil sits
@@ -1953,6 +2105,13 @@ function drawBuilding(e, part = null){
     let sideSW  = dead ? '#5f5040' : '#5e4527'; // bed side, SW-facing (lit side)
     let sideSE  = dead ? '#4f4234' : '#4b371f'; // bed side, SE-facing (shaded)
     if(darken){ soil=darkenColor(soil); ridgeLt=darkenColor(ridgeLt); ridgeDk=darkenColor(ridgeDk); sideSW=darkenColor(sideSW); sideSE=darkenColor(sideSE); }
+    // Ridge/crop-row geometry, shared by the ground pass and the crop pass
+    const NR=5; // ridge count
+    let rowEnds=t=>[
+      {x:rT.x+(rL.x-rT.x)*t, y:rT.y+(rL.y-rT.y)*t},
+      {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
+    ];
+    if(groundPass){
     X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
     // bed side faces (front-left and front-right edges, extruded to ground)
     X.fillStyle=sideSW;X.beginPath();
@@ -1966,11 +2125,6 @@ function drawBuilding(e, part = null){
     // Plough ridges: alternating raised/trough bands parallel to the
     // top-right edge. Each ridge catches light on its upper-left flank
     // (band fill) and drops a furrow shadow line on its lower edge.
-    const NR=5; // ridge count
-    let rowEnds=t=>[
-      {x:rT.x+(rL.x-rT.x)*t, y:rT.y+(rL.y-rT.y)*t},
-      {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
-    ];
     for(let i=0;i<NR;i++){
       let t0=i/NR, t1=(i+1)/NR;
       let [a0,b0]=rowEnds(t0), [a1,b1]=rowEnds(t1);
@@ -1986,9 +2140,20 @@ function drawBuilding(e, part = null){
       X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
       X.beginPath();X.moveTo(a1.x,a1.y);X.lineTo(b1.x,b1.y);X.stroke();
     }
+    } // end groundPass (bed + ridges)
     // crop rows stand on the ridge crests
     let rows=[]; for(let i=0;i<NR;i++) rows.push((i+0.3)/NR);
+    // Which footprint tile a cluster is rooted in: invert the iso projection
+    // of the cluster base around the footprint's top corner (sx,sy), undoing
+    // the bedH raise. Exact partition — each cluster belongs to one tile.
+    let inCropTile=(px,py)=>{
+      if(!cropPart) return true;
+      let ix=px-sx, iy=py+bedH-sy;
+      return Math.floor((iy/HALF_TH+ix/HALF_TW)/2)===cropPart[0] &&
+             Math.floor((iy/HALF_TH-ix/HALF_TW)/2)===cropPart[1];
+    };
     if(growth>0 && !dead){
+      if(cropPass){
       // Wheat: clusters along each ridge. Sprouts (green, splayed) grow
       // into tall golden stalks that lean slightly and carry grain heads
       // with awn whiskers when ripe.
@@ -2002,6 +2167,7 @@ function drawBuilding(e, part = null){
         for(let i=1;i<=6;i++){
           let u=i/7+((ri%2)?0.03:-0.03);
           let px=a.x+(b2.x-a.x)*u, py=a.y+(b2.y-a.y)*u;
+          if(!inCropTile(px,py))continue;
           let lean=(((i*7+ri*13)%5)-2)*0.55; // deterministic per-cluster lean
           X.strokeStyle=stalkCol;X.lineWidth=1.3;
           X.beginPath();X.moveTo(px,py);X.lineTo(px+lean,py-cropH);X.stroke();
@@ -2020,9 +2186,11 @@ function drawBuilding(e, part = null){
           }
         }
       });
-    } else {
+      } // end cropPass
+    } else if(groundPass){
       // Harvested/exhausted: short cut stubble on the crests plus a few
-      // fallen straws lying along the furrows.
+      // fallen straws lying along the furrows. Flat enough to live in the
+      // ground layer with the bed.
       let stub = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
       rows.forEach((t,ri)=>{
         let [a,b2]=rowEnds(t);
@@ -2039,6 +2207,7 @@ function drawBuilding(e, part = null){
       });
     }
     // Low fence posts at the corners
+    if(groundPass){
     let pc = darken?darkenColor('#6e4f33'):'#6e4f33';
     [cT,cR,cB,cL].forEach(c=>{
       X.strokeStyle='#000';X.lineWidth=2.6;X.lineCap='round';
@@ -2047,28 +2216,25 @@ function drawBuilding(e, part = null){
       X.beginPath();X.moveTo(c.x,c.y);X.lineTo(c.x,c.y-5);X.stroke();
       X.lineCap='butt';
     });
+    }
   }
 
   X.globalAlpha=1;
 
   // Progress bars, HP, selection — only when actively visible (not in fog)
   if (!window._ghostDraw && (f === 2 || e.team === myTeam)) {
-  // Construction Progress Bar
-  if(!e.complete){
-    let bww=b.w*24;
-    let pct=e.buildProgress/e.buildTime;
-    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,sy-bh-15,bww+2,6); // black border box
-    X.fillStyle='#5c1505';X.fillRect(sx-bww/2,sy-bh-14,bww,4);
-    X.fillStyle='#00ffff';X.fillRect(sx-bww/2,sy-bh-14,bww*pct,4);
-  }
-
-  // HP bar — shift up by 8px when the construction bar is also showing to avoid overlap
+  // ONE bar per building: HP grows with construction (AoE2, logic.js), so
+  // the HP bar doubles as the progress bar while incomplete — cyan fill to
+  // read as "under construction" (the low fill would otherwise look like
+  // damage), and damage taken mid-build shows as the fill lagging the
+  // scaffold. Green/red is reserved for a completed, damaged building.
   if(e.hp<e.maxHp&&bh>0){
     let bww=b.w*24;
-    let hpY=!e.complete?sy-bh-19:sy-bh-11;
+    let hpY=sy-bh-11;
     X.fillStyle='#000000';X.fillRect(sx-bww/2-1,hpY,bww+2,6); // black border box
-    X.fillStyle='#300';X.fillRect(sx-bww/2,hpY+1,bww,4);
-    X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-bww/2,hpY+1,bww*e.hp/e.maxHp,4);
+    X.fillStyle=!e.complete?'#012c33':'#300';X.fillRect(sx-bww/2,hpY+1,bww,4);
+    X.fillStyle=!e.complete?'#00ffff':(e.hp/e.maxHp>0.5?'#0c0':'#c00');
+    X.fillRect(sx-bww/2,hpY+1,bww*e.hp/e.maxHp,4);
   }
   // Garrison count — just the number, planted beside this building's own
   // team flag (only TC and TOWER can ever hold a garrison, and both fly

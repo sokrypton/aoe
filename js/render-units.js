@@ -55,77 +55,9 @@ function drawBigSword(swinging, id){
 // Uniform size multiplier for every drawn character (units and corpses).
 const UNIT_SCALE = 1.25;
 
-function drawCorpse(c){
-  // Rams are art-only for now (design phase): a toppling-body + skeleton
-  // sequence makes no sense for a wooden vehicle. Placeholder: no corpse;
-  // proper break-apart debris comes with the gameplay phase.
-  if(c.utype==='ram') return;
-  let iso=toIso(c.x,c.y);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
-  if(isOffscreen(sx,sy,50))return;
-  
-  let { ox, oy } = getUnitGroupOffset(c.id);
-  sx += ox; sy += oy;
-  let tc=teamColor(c.team);
-  
-  let age = performance.now() - c.deathTime;
-
-  // AoE2-style death sequence, staged instead of popping in flat:
-  // (1) 0-600ms the body topples over its feet, accelerating, with a small
-  //     impact recoil and dust puff;
-  // (2) blood seeps out from under it and spreads over ~2s, drying to a
-  //     brown stain over time;
-  // (3) the corpse lies solid, per-unit-type art (a scout dies WITH its
-  //     horse, a bear is a bear-sized mound);
-  // (4) at CORPSE_SKEL it decays to bones (AoE2 skeleton stage), and only
-  //     fades away in the last seconds of CORPSE_LIFE.
-  const TOPPLE = 600;
-  let p = Math.min(1, age / TOPPLE);
-  let rot = (Math.PI / 2.25) * p * p; // accelerating fall
-  if (age > TOPPLE && age < TOPPLE + 300) {
-    rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
-  }
-  let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
-  let big = isMountedUnit(c.utype) || c.utype === 'bear'; // horse/bear-sized corpse
-
-  // Impact dust puff, once, the moment the body hits the ground (same
-  // render-side particle spawning the sheep's grass nibbling uses).
-  // Tracked in corpseImpactFxDone (js/core.js), not a `c.impactFx` field —
-  // corpses get wholesale-replaced by every sync, which used to wipe that
-  // flag and re-trigger the puff repeatedly instead of once.
-  if (age >= TOPPLE && !corpseImpactFxDone.has(c.id)) {
-    corpseImpactFxDone.add(c.id);
-    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', big ? 7 : 4, 0.02, big ? 2.2 : 1.6);
-  }
-
-  X.save();
-  X.globalAlpha = alpha;
-
-  // 1. Blood pool seeps out from under the body after impact, then dries
-  //    from fresh red to a brown stain as the corpse ages
-  let bp = Math.max(0, Math.min(1, (age - TOPPLE * 0.7) / 2000));
-  if (bp > 0) {
-    let spread = (1 - (1 - bp) * (1 - bp)) * (big ? 1.4 : 1); // ease-out growth
-    let dry = Math.max(0, Math.min(1, (age - 8000) / 8000));
-    let poolA = 0.7 * Math.min(1, bp * 3) * (1 - dry * 0.55);
-    X.fillStyle = 'rgba(' + Math.round(120 - 40*dry) + ', ' + Math.round(25*dry) + ', ' + Math.round(10*dry) + ', ' + poolA.toFixed(3) + ')';
-    X.beginPath();
-    X.ellipse(sx, sy + 3, 9*UNIT_SCALE*spread, 4.5*UNIT_SCALE*spread, 0, 0, Math.PI * 2);
-    X.fill();
-  }
-
-  // 2. Skeleton decay stage (AoE2): after CORPSE_SKEL the body is bones,
-  //    laid out flat by the same over-the-feet rotation the corpse used.
-  //    Humans get a round skull with two sockets and a ribcage; the horse
-  //    gets a full side-view horse skeleton (long muzzled skull on neck
-  //    vertebrae, arched spine, hanging ribcage, four leg bones, tail) at
-  //    the living horse's size, with the rider's small skeleton beside it.
-  if (age >= CORPSE_SKEL) {
-    X.translate(sx, sy);
-    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
-    X.rotate(Math.PI / 2.25);
-    const BONE='#e8e4d8';
-    const humanSkeleton=(ox2,oy2,ss)=>{
+// ---- skeleton decay art (shared by drawCorpse and the trade cart wreck) ----
+const BONE='#e8e4d8';
+function drawHumanSkeleton(ox2,oy2,ss){
       X.save();X.translate(ox2,oy2);
       X.fillStyle=BONE;
       X.beginPath();X.arc(0,-9*ss,2.8*ss,0,Math.PI*2);X.fill(); // skull — plain bone white, matching the ribs
@@ -138,8 +70,8 @@ function drawCorpse(c){
         X.beginPath();X.arc(0,(-4.5+i*2)*ss,2.2*ss,0.15*Math.PI,0.85*Math.PI);X.stroke();
       }
       X.restore();
-    };
-    const horseSkeleton=(hs)=>{
+}
+function drawHorseSkeleton(hs){
       X.save();X.scale(hs,hs); // spans the living horse's 1.35x footprint
       // Leg bones with hoof knobs, same stance as the living legs
       X.strokeStyle=BONE;X.lineWidth=1.6/UNIT_SCALE;X.lineCap='round';
@@ -180,16 +112,540 @@ function drawCorpse(c){
       X.fillStyle='#000';
       X.beginPath();X.arc(9.2,-12.8,0.6,0,Math.PI*2);X.fill();
       X.restore();
-    };
+}
+
+// ---- vehicle wreck helpers (trade cart + battering ram death) ----
+// Projection basis for a vehicle corpse: the same RAM_AXES bases the live
+// art uses, resolved from the corpse's stored dir/facing — 5 authored bases
+// + the sprite mirror give every death facing without per-view authoring.
+function corpseVehicleAxes(c){
+  let d = mirroredDir({ dir: c.dir !== undefined ? c.dir : 7, facing: c.facing || 1 });
+  if (d === 7) return SIDE_AXES; // E/W wrecks lie in true side elevation
+  return RAM_AXES[d] || SIDE_AXES;
+}
+// One detached wheel at the origin of the current (vehicle-scaled) space:
+// squash 0.85 ≈ still upright on its rim → 0.5 = lying flat on the ground.
+// Style matches the vehicle's LIVE wheels: the cart's are open spoked rims,
+// the ram's are solid wooden discs with a single spoke line (`solid`).
+function drawFallenWheel(R, squash, seed, weathered, lw, solid){
+  X.save(); X.scale(1, squash);
+  if (solid) {
+    X.fillStyle=weathered?'#8d8271':'#5a4630'; X.strokeStyle='#000'; X.lineWidth=lw;
+    X.beginPath();X.arc(0,0,R,0,Math.PI*2);X.fill();X.stroke();
+    X.strokeStyle=weathered?'#6f675a':'#3a2c1c'; X.lineWidth=1/UNIT_SCALE;
+    X.beginPath();X.moveTo(-Math.cos(seed)*R*0.8,-Math.sin(seed)*R*0.8);X.lineTo(Math.cos(seed)*R*0.8,Math.sin(seed)*R*0.8);X.stroke();
+  } else {
+    // see-through chariot ring: rim annulus + spokes, open between them
+    X.beginPath();
+    X.arc(0,0,R,0,Math.PI*2); X.arc(0,0,R-1.5,0,Math.PI*2,true);
+    X.fillStyle=weathered?'#8d8271':'#6b543a'; X.fill('evenodd');
+    X.strokeStyle='#000'; X.lineWidth=lw;
+    X.beginPath();X.arc(0,0,R,0,Math.PI*2);X.stroke();
+    X.beginPath();X.arc(0,0,R-1.5,0,Math.PI*2);X.stroke();
+    X.strokeStyle=weathered?'#9a917f':'#8a6a4a'; X.lineWidth=1.3/UNIT_SCALE;
+    for(let k=0;k<3;k++){
+      let A=seed+k*Math.PI/3;
+      X.beginPath();X.moveTo(-Math.cos(A)*R*0.85,-Math.sin(A)*R*0.85);X.lineTo(Math.cos(A)*R*0.85,Math.sin(A)*R*0.85);X.stroke();
+    }
+  }
+  X.fillStyle=weathered?'#9a917f':'#8a6a4a';
+  X.strokeStyle='#000'; X.lineWidth=0.7/UNIT_SCALE;
+  X.beginPath();X.arc(0,0,R*0.24,0,Math.PI*2);X.fill();X.stroke();
+  X.restore();
+}
+
+// Trade cart death — a staged physical fall in the cart's own projection
+// basis (facing-aware, not a canonical morph):
+//   wheels tip off their axles one by one (0–~600ms, staggered) →
+//   the unsupported bed drops to the ground with a dust thud (~280–580ms) →
+//   the walls and end boards fold outward flat (~600–1050ms), the cargo
+//   tumbling out beside the bed (gold scatter on the loaded leg).
+// The ox buckles separately (rigid topple, +350ms). At CORPSE_SKEL the wood
+// weathers gray in place (the final fold layout IS the decay layout — no
+// pop) and the cargo is gone. Render-only; one-time particle bursts gated
+// through corpseImpactFxDone so lockstep resyncs don't re-fire them.
+function drawTradeCartCorpse(c, sx, sy, age, alpha){
+  const { L, WB, CB, CH, WR, WA, WTH, SCALE } = CART_DIM;
+  const OXDELAY=350, OXFALL=700;
+  const WDUR=320, BSTART=280, BDUR=300, CSTART=600, CDUR=450;
+  let ax = corpseVehicleAxes(c), u = ax.u, v = ax.v;
+  let P = (a,b,h) => ({ x:a*u.x + b*v.x, y:a*u.y + b*v.y - h });
+  let vlen = Math.hypot(v.x, v.y), ulen = Math.hypot(u.x, u.y);
+  let clamp01 = x => Math.min(1, Math.max(0, x));
+  let eo = t => 1-(1-t)*(1-t);                 // ease-out (folding to rest)
+  let jit = n => { let s=Math.sin(c.id*7.3+n*13.7)*43758.5453; return s-Math.floor(s)-0.5; };
+  let weathered = age >= CORPSE_SKEL;
+  let tc = teamColor(c.team);
+
+  if (!corpseImpactFxDone.has(c.id)) {
+    corpseImpactFxDone.add(c.id);
+    spawnParticles(c.x, c.y, '#c9a15e', 8, 0.04, 1.8);              // wood chips
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 5, 0.02, 1.8); // dust
+  }
+  if (age >= BSTART+BDUR && !corpseImpactFxDone.has(c.id+':thud')) {
+    corpseImpactFxDone.add(c.id+':thud');
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 6, 0.03, 2.0); // bed hits the ground
+  }
+
+  // phase clocks (all pinned to 1 once weathered so the decay layout is
+  // exactly the settled wreck, weathered in place)
+  let tWheel = k => weathered ? 1 : clamp01((age - (CSTART + k*70))/WDUR); // wheels slide off WITH the collapse
+  let tBed   = weathered ? 1 : clamp01((age - BSTART)/BDUR);          // bed drop
+  let tFold  = weathered ? 1 : clamp01((age - CSTART)/CDUR);          // walls fold flat
+
+  // ox yoked ahead along the movement axis (hitch snaps at death — no rods)
+  let hoofDrop = OX_PROFILE.legBot*OX_PROFILE.scale - 1;
+  let oxOff = { x: SCALE*(L+10)*u.x, y: SCALE*(L+10)*u.y + SCALE*(WB+0.4)*Math.abs(v.y) - hoofDrop };
+
+  X.save();
+  X.globalAlpha = alpha;
+
+  // ox blood pool (screen coords, same recipe as the shared corpse pool)
+  let obp = clamp01((age-(OXDELAY+OXFALL*0.7))/2000);
+  if (obp > 0) {
+    let spread = eo(obp);
+    let dry = clamp01((age-8000)/8000);
+    let poolA = 0.6*Math.min(1,obp*3)*(1-dry*0.55);
+    X.fillStyle='rgba('+Math.round(120-40*dry)+', '+Math.round(25*dry)+', '+Math.round(10*dry)+', '+poolA.toFixed(3)+')';
+    X.beginPath();
+    X.ellipse(sx+c.facing*(oxOff.x-u.x*CART_RECENTER*SCALE)*UNIT_SCALE, sy+(oxOff.y-u.y*CART_RECENTER*SCALE)*UNIT_SCALE+3,
+              8*UNIT_SCALE*spread, 4*UNIT_SCALE*spread, 0, 0, Math.PI*2);
+    X.fill();
+  }
+
+  X.translate(sx, sy);
+  X.scale(c.facing*UNIT_SCALE, UNIT_SCALE);
+  X.translate(-u.x*CART_RECENTER*SCALE, -u.y*CART_RECENTER*SCALE); // same rig recentering as the live cart
+  let lw = 1.2/UNIT_SCALE;
+  X.lineJoin='round';
+
+  // The ox: buckles a beat after the cart, as a RIGID topple over the feet
+  // (any non-uniform scale mixed into a fall reads as squish/stretch).
+  let drawOx = () => {
+    let ot = age<=OXDELAY ? 0 : Math.min(1, (age-OXDELAY)/OXFALL);
+    let oxRot = (Math.PI/2.3)*ot*ot;
+    if (age>OXDELAY+OXFALL && age<OXDELAY+OXFALL+300)
+      oxRot *= 1+0.06*Math.sin((age-OXDELAY-OXFALL)/300*Math.PI); // impact recoil
+    X.save(); X.translate(oxOff.x, oxOff.y);
+    if (weathered) {
+      X.rotate(Math.PI/2.3);
+      drawHorseSkeleton(1.05); // squat ox bones (bear-style horse skeleton)
+    } else {
+      X.rotate(oxRot);
+      if(!c.oxPose) c.oxPose={id:c.id, dir:7, facing:1, facingNorth:false, path:[], corpseRot:1};
+      drawQuadruped(c.oxPose, OX_PROFILE);
+    }
+    X.restore();
+  };
+  let frontNear = (mirroredDir({dir: c.dir !== undefined ? c.dir : 7, facing: c.facing||1}) === 0 ||
+                   mirroredDir({dir: c.dir !== undefined ? c.dir : 7, facing: c.facing||1}) === 1);
+  if (!frontNear) drawOx();
+
+  X.save(); X.scale(SCALE, SCALE);
+  let lw2 = lw; // stroked inside the cart scale, same as the live cart
+  let poly = (pts, fill) => {
+    X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
+    X.strokeStyle='#000'; X.lineWidth=lw2; X.lineJoin='round'; X.stroke();
+  };
+  let wood = (fresh, gray) => weathered ? gray : fresh;
+  let bedInner= wood('#74593a', '#9a917f'); // shadowed inner faces (matches the live cart)
+  let bedNear = wood('#a07c4c', '#877e6c');
+  let bedTop  = wood('#b48c58', '#9a917f');
+  let bedFloor= wood('#3a2c1c', '#55503f');
+
+  // A wheel mid-tip: from its mounted axle position to flat on the ground
+  // just outside it, squashing from near-upright to the flat rest pose.
+  let wheelAt = (a, b, k) => {
+    let t = eo(tWheel(k));
+    // rest offset normalized by the axis length so wheels land a constant
+    // SCREEN distance outside the bed (they peek from under the folded
+    // walls in every facing, incl. the near-vertical side-elevation axis)
+    let bRest = b + Math.sign(b)*(0.8*(WB+0.4))*(vlen < 0.5 ? 0.55 : 1)/vlen; // damped in the compressed side view
+    let p0 = P(a, b, WR), p1 = P(a*(1+0.25*Math.abs(jit(k))), bRest, 0);
+    X.save();
+    X.translate(p0.x+(p1.x-p0.x)*t, p0.y+(p1.y-p0.y)*t);
+    X.rotate(jit(k+40)*0.45*t); // settles at a lazy lean, not flat
+    let raw = tWheel(k);
+    if (u.x === 0 && raw < 0.5) {
+      // head-on facings keep the live cart's SQUARE slab wheels until
+      // midway through the collapse tip-off
+      let w2 = WTH*1.3, h2 = WR*0.78;
+      X.fillStyle='#33261a'; X.fillRect(-w2, -h2, w2*2, h2*2);
+      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(-w2,-h2,w2*2,h2*2);
+      X.fillStyle='#5a4630'; X.fillRect(-0.6,-h2+0.6,1.2,h2*2-1.2);
+    } else {
+      // widening from the edge-on slab into the side-view disc
+      if (u.x === 0) X.scale(0.45+0.55*Math.min(1,(raw-0.5)*2), 1);
+      drawFallenWheel(WR*1.15, 0.9-0.18*t, 0.5+k+jit(k+20), weathered, lw2);
+    }
+    X.restore();
+  };
+  let nearB = Math.sign(v.y) || 1; // +v is the near side on every authored facing
+
+  // two-wheeler: ONE big wheel per side on the center axle.
+  // far wheel first (behind the bed)
+  wheelAt(0, -nearB*(WB+0.4), 0);
+
+  // Near wheel: in FRONT of the standing box while it tips off, but UNDER
+  // the near wall once it folds out over it — the order swaps mid-fold,
+  // when the wall is still mostly upright and the wheel is already at rest
+  // clear of it, so the two barely overlap and no pop reads.
+  // Head-on (u.x===0): both wheels behind the body, like the live cart.
+  let nearWheels = () => wheelAt(0, nearB*(WB+0.4), 2);
+  if (u.x === 0 || tFold > 0.3) nearWheels();
+
+  // the bed: rides at axle height while the wheels hold, then drops CB to
+  // the ground with a small landing recoil
+  let drop = CB*tBed*tBed;
+  if (!weathered && age>BSTART+BDUR && age<BSTART+BDUR+250)
+    drop -= 0.6*Math.sin((age-BSTART-BDUR)/250*Math.PI);
+  X.save(); X.translate(0, drop);
+  // walls/end boards fold outward flat as the fold clock runs: the bottom
+  // edge stays put, the top edge swings out into the ground plane. Fold
+  // reach is divided by the axis length so a board of height H covers ~H px
+  // on screen in EVERY facing — the head-on basis cheats (v widened to
+  // 1.25, u squashed to 0.55) otherwise splay the side walls way too far
+  // and barely fold the end boards (they read distorted).
+  let f = eo(tFold);
+  let reachB = (CH-CB)/vlen, reachA = (CH-CB)/ulen;
+  let wallQ = (sgn, fill) => poly([
+    P(-L, sgn*WB, CB), P(L, sgn*WB, CB),
+    P( L, sgn*(WB+reachB*f), CH-(CH-CB)*f), P(-L, sgn*(WB+reachB*f), CH-(CH-CB)*f)
+  ], fill);
+  let endQ = (aE, fill) => { let sA = Math.sign(aE); poly([
+    P(aE, -WB, CB), P(aE, WB, CB),
+    P(aE+sA*reachA*f, WB, CH-(CH-CB)*f), P(aE+sA*reachA*f, -WB, CH-(CH-CB)*f)
+  ], fill); };
+  // The SAME canonical load as the living cart rides inside the box, then
+  // tumbles out over the folding near wall as it opens: each piece lerps
+  // from its in-bed seat to its own spilled ground rest with the fold
+  // clock. In the bed's translated space the true ground sits at height CB
+  // once the bed has landed.
+  let cargoT = eo(tFold);
+  let drawCargo = () => {
+    let anchor = P(0, 0, CH-2.2);
+    let out = P(-L*0.3, nearB*(WB+reachB*0.7), CB); // the sack tumbles out over the near wall
+    drawCartLoad((k,dx,dy)=>({
+      x: (anchor.x+dx)+(out.x-(anchor.x+dx))*cargoT,
+      y: (anchor.y+dy)+(out.y-(anchor.y+dy))*cargoT
+    }), lw2);
+  };
+
+  wallQ(-nearB, bedInner);          // far side wall: inner face
+  endQ(u.y<0 ? L : -L, bedInner);   // far end (view-dependent): inner face
+  poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor); // floor
+  if (!weathered && cargoT < 0.55) drawCargo(); // still boxed in: walls occlude it
+  // near outer faces are TEAM-COLORED panels (the live cart's ownership
+  // read) — but once a wall folds past ~45° its blue outer face turns
+  // toward the ground, so the visible side becomes the brown INNER face
+  let faceFlipped = tFold > 0.5;
+  wallQ(nearB, wood(faceFlipped ? '#74593a' : teamColor(c.team), '#877e6c'));
+  endQ(u.y<0 ? -L : L, wood(faceFlipped ? '#74593a' : teamColorDark(c.team), '#877e6c'));
+  X.restore();
+
+  if (u.x !== 0 && tFold <= 0.3) nearWheels(); // still tipping: over the standing box
+
+  // once the walls have mostly folded open the spilled cargo lies ON them
+  if (!weathered && cargoT >= 0.55) {
+    X.save(); X.translate(0, drop);
+    drawCargo();
+    X.restore();
+  }
+  X.restore();
+
+  if (frontNear) drawOx();
+  X.restore();
+}
+
+// Battering ram death — a staged physical fall in the ram's own projection
+// basis (facing-aware, all 8 views from the live art's 5 bases + mirror):
+//   the six wheels tip off one by one (0–~650ms, staggered) →
+//   the unsupported shed drops its ground clearance with a dust thud →
+//   the roof caves (ridge falls), the skirt walls crush flat beneath it,
+//   the gable ends fold outward, the roof slopes settle as two flat slabs,
+//   and the all-wood log drops out of its slings to rest inside the
+//   wreck. The team fascia stays on the near roof edge through the fold.
+// At CORPSE_SKEL the wood weathers gray in place (the settled fold IS the
+// decay layout — no pop). Render-only;
+// one-time bursts gated through corpseImpactFxDone (resync-safe).
+function drawRamCorpse(c, sx, sy, age, alpha){
+  const { L, WE, WB, CB, CE, CR, RLOG, RHEAD, WR, WA, WTH, SCALE } = RAM_DIM;
+  const WDUR=320, BSTART=260, BDUR=280, CSTART=540, CDUR=380, SSTART=700, SDUR=450, LSTART=620, LDUR=430;
+  let ax = corpseVehicleAxes(c), u = ax.u, v = ax.v;
+  // Size constancy for the E/W side pose is baked into the PROJECTION
+  // (profK scales P's output), not a canvas scale — scaling the context
+  // also scaled every stroke width, so the side wreck's outlines rendered
+  // ~13% heavier than the other facings'.
+  let profK = (ax === SIDE_AXES) ? RAM_PROFILE_K : 1;
+  let P = (a,b,h) => ({ x:(a*u.x + b*v.x)*profK, y:(a*u.y + b*v.y - h)*profK });
+  let vlen = Math.hypot(v.x, v.y), ulen = Math.hypot(u.x, u.y);
+  let clamp01 = x => Math.min(1, Math.max(0, x));
+  let eo = t => 1-(1-t)*(1-t);
+  let jit = n => { let s=Math.sin(c.id*7.3+n*13.7)*43758.5453; return s-Math.floor(s)-0.5; };
+  let weathered = age >= CORPSE_SKEL;
+  let tc = teamColor(c.team);
+
+  if (!corpseImpactFxDone.has(c.id)) {
+    corpseImpactFxDone.add(c.id);
+    spawnParticles(c.x, c.y, '#c9a15e', 12, 0.05, 2.2);
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 8, 0.02, 2.4);
+  }
+  if (age >= BSTART+BDUR && !corpseImpactFxDone.has(c.id+':thud')) {
+    corpseImpactFxDone.add(c.id+':thud');
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 6, 0.03, 2.2); // shed hits the ground
+  }
+  if (age >= SSTART && !corpseImpactFxDone.has(c.id+':cave')) {
+    corpseImpactFxDone.add(c.id+':cave');
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 7, 0.03, 2.4); // roof comes down
+  }
+
+  let tWheel = k => weathered ? 1 : clamp01((age - (SSTART + k*60))/WDUR); // wheels slide off WITH the collapse
+  let tBed   = weathered ? 1 : clamp01((age - BSTART)/BDUR);   // shed drop
+  let tCave  = weathered ? 1 : clamp01((age - CSTART)/CDUR);   // ridge falls
+  let tSplay = weathered ? 1 : clamp01((age - SSTART)/SDUR);   // fold flat
+  let tLog   = weathered ? 1 : clamp01((age - LSTART)/LDUR);   // log slides out
+
+  X.save();
+  X.globalAlpha = alpha;
+  X.translate(sx, sy);
+  X.scale(c.facing*UNIT_SCALE, UNIT_SCALE);
+  X.lineJoin='round';
+
+  // profile wrecks match the live ram's side-pose size constancy scale
+  X.save(); X.scale(SCALE, SCALE);
+  let lw = 1.2/UNIT_SCALE;
+  let poly = (pts, fill) => {
+    X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
+    X.strokeStyle='#000'; X.lineWidth=lw; X.lineJoin='round'; X.stroke();
+  };
+  let wood = (fresh, gray) => weathered ? gray : fresh;
+  let roofC  = wood(WOOD.plankL, '#9a917f');
+  let gabC   = wood(WOOD.plankR, '#877e6c');
+  let nearB = Math.sign(v.y) || 1;
+  let farA  = (u.y > 0) ? -1 : 1;    // which shed end is farther up-screen
+
+  // wheels — 3 axles per side, tipping off staggered; far side behind the shed
+  let wheelAt = (a, b, k) => {
+    let t = eo(tWheel(k));
+    // rest offset normalized by the axis length: constant SCREEN distance
+    // outside the shed — damped in the side view, whose compressed wreck
+    // otherwise leaves the wheels looking flung far away from it
+    let bRest = b + Math.sign(b)*(0.85*WB)*(vlen < 0.5 ? 0.55 : 1)/vlen;
+    let p0 = P(a, b, WR), p1 = P(a*(1+0.18*Math.abs(jit(k))), bRest, 0);
+    X.save();
+    X.translate(p0.x+(p1.x-p0.x)*t, p0.y+(p1.y-p0.y)*t);
+    X.rotate(jit(k+40)*0.45*t); // settles at a lazy lean, not flat
+    let raw = tWheel(k);
+    if (u.x === 0 && raw < 0.5) {
+      // head-on facings keep the live ram's SQUARE slab wheels until
+      // midway through the collapse tip-off
+      let w2 = WTH*1.15, h2 = WR*0.7;
+      X.fillStyle='#33261a'; X.fillRect(-w2, -h2, w2*2, h2*2);
+      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(-w2,-h2,w2*2,h2*2);
+      X.fillStyle='#5a4630'; X.fillRect(-0.6,-h2+0.6,1.2,h2*2-1.2);
+    } else {
+      // widening from the edge-on slab into the side-view disc
+      if (u.x === 0) X.scale(0.45+0.55*Math.min(1,(raw-0.5)*2), 1);
+      drawFallenWheel(WR*1.05*profK, 0.9-0.18*t, 0.4+k+jit(k+20), weathered, lw, true); // solid: matches the live ram wheels
+    }
+    X.restore();
+  };
+  [-WA,0,WA].forEach((a,i)=>wheelAt(a, -nearB*WB, i));
+  // head-on: ALL wheels behind the body, like the live ram's assembly
+  if (u.x === 0) [-WA,0,WA].forEach((a,i)=>wheelAt(a, nearB*WB, i+3));
+
+  // the shed: its base rides at CB clearance while the wheels hold, then
+  // drops to true ground with a small landing recoil (heights below are
+  // measured from the ground, offset by hB — no translate, so the settled
+  // fold sits exactly ON the ground instead of sinking below it)
+  let hB = CB*(1-tBed*tBed);
+  if (!weathered && age>BSTART+BDUR && age<BSTART+BDUR+250)
+    hB += 0.7*Math.sin((age-BSTART-BDUR)/250*Math.PI);
+
+  // fold reach normalized by axis length so boards cover their true length
+  // on screen in every facing (the head-on basis widens v / squashes u)
+  // Shed heights are measured from the shed BASE (which rides at hB): the
+  // live art measures CE/CR from the ground, so subtract the CB clearance
+  // here or the standing wreck starts taller than the living ram.
+  let fS = eo(tSplay);
+  // The E/W side basis projects b nearly vertically, so the v-normalized
+  // splay that reads right in the other facings makes the settled flaps
+  // hang far below the ground line (the wreck read as still standing).
+  // Side view gets tighter rest targets that hug the ground.
+  let sideV = vlen < 0.5;
+  let hSkirt = (CE-CB)*(1-eo(tCave)*0.92);                // walls crush under the roof
+  let hEave  = (CE-CB)*(1-fS) + (sideV ? 0.3 : 0.8)*fS;   // eaves ride down to the ground
+  let eaveB  = (WE+1.5) + (sideV ? 2.5 : 3.2/vlen)*fS;    // slabs slide outward as they land
+  // The slabs rest on a LIGHT incline over the log's cylinder (ridge at
+  // ~RLOG-ish height, eaves on the ground) — enough lean to read as
+  // draped over a 3D log, but well short of the heavy bulge that sheared
+  // the slab faces into distortion.
+  let hRidge = ((CR-CB) - ((CR-CB)-CE*0.55)*eo(tCave)) * (1-fS) + (sideV ? 1.2 : RLOG*0.9)*fS;
+  let ridgeB = 1.4*fS;                                    // ridge line splits apart
+
+  // gable ends fold outward beyond the shed, PRESERVING the pentagon's
+  // proportions when flat: eave corners land at their true panel distance
+  // (CE-CB) and the apex at nearly the full panel height (CR-CB) — with a
+  // short apex reach the folded panel read as a box instead of a pentagon
+  let gable = (aE) => {
+    let sA = Math.sign(aE), g = eo(tSplay);
+    poly([
+      P(aE, -WB, hB), P(aE, WB, hB),
+      P(aE + sA*((CE-CB)*0.95/ulen)*g, WE*(1-g*0.15), hB+hEave*0.9),
+      P(aE + sA*((CR-CB)*0.85/ulen)*g, 0, hB+hRidge*0.9),
+      P(aE + sA*((CE-CB)*0.95/ulen)*g, -WE*(1-g*0.15), hB+hEave*0.9),
+    ], gabC);
+  };
+  let skirt = (sgn) => poly([
+    P(-L,sgn*WB,hB),P(L,sgn*WB,hB),P(L,sgn*WB,hB+hSkirt),P(-L,sgn*WB,hB+hSkirt)
+  ], gabC);
+  // the ram log drops straight down out of its slings — under the roof
+  // (which caves onto it), but ON TOP of the front panel in the
+  // toward-viewer facings (SE/S/SW), where its tip projects at the camera.
+  // No forward slide; gravity ease-in with a small landing bounce.
+  let drawLog = () => {
+    let t = tLog*tLog; // accelerating fall
+    let h = (hB + CE*0.5)*(1-t) + RLOG*0.75*t;
+    if (!weathered && age>LSTART+LDUR && age<LSTART+LDUR+220)
+      h += 0.8*Math.sin((age-LSTART-LDUR)/220*Math.PI); // bounce
+    let p0 = P(-L*0.35, 0, h), p1 = P(L*1.05, 0, h);
+    // ALL-WOOD shaft, like the living ram. The END EDGES run along the
+    // projected cross axis v — the same slant as the slabs' and end
+    // boards' short edges, so the cuts align with the wreck's facing —
+    // scaled so the silhouette thickness stays exactly RLOG*2.
+    let ldx=p1.x-p0.x, ldy=p1.y-p0.y, llen=Math.hypot(ldx,ldy)||1;
+    let lnX=-ldy/llen, lnY=ldx/llen;
+    let cvv = v.x*lnX + v.y*lnY;
+    let lk = RLOG*profK / (Math.abs(cvv) > 0.15 ? cvv : (cvv < 0 ? -0.15 : 0.15));
+    let Dx = v.x*lk, Dy = v.y*lk;
+    poly([
+      {x:p0.x+Dx,y:p0.y+Dy},{x:p1.x+Dx,y:p1.y+Dy},
+      {x:p1.x-Dx,y:p1.y-Dy},{x:p0.x-Dx,y:p0.y-Dy}
+    ], wood('#6e473b','#877e6c'));
+  };
+
+  gable(farA*L);
+  skirt(-nearB);
+  drawLog(); // inside the shed: the near skirt and front panel paint over it
+  skirt(nearB);
+  gable(-farA*L);
+  // near wheels BEFORE the roof: they tip off beside the shed while the
+  // roof is still high overhead (no overlap), and once the slabs splay
+  // outward they land ON the wheels — so the roof must paint over them
+  // (head-on already drew them behind the body above)
+  if (u.x !== 0) [-WA,0,WA].forEach((a,i)=>wheelAt(a, nearB*WB, i+3));
+  // roof slopes last — they land ON everything: log, crushed skirts, wheels.
+  // Plank seams run lengthwise like the live roof's (rgba .18 hairlines).
+  let slope = (sgn) => {
+    poly([
+      P(-L, sgn*eaveB, hB+hEave), P(L, sgn*eaveB, hB+hEave),
+      P(L, sgn*ridgeB, hB+hRidge), P(-L, sgn*ridgeB, hB+hRidge)
+    ], roofC);
+    // plank seams run ridge→eave (down the slope), like the live roof's
+    X.strokeStyle='rgba(0,0,0,0.18)'; X.lineWidth=0.8/UNIT_SCALE;
+    for (let a2 of [-L*0.5, 0, L*0.5]) {
+      let s1 = P(a2, sgn*ridgeB, hB+hRidge), s2 = P(a2, sgn*eaveB, hB+hEave);
+      X.beginPath(); X.moveTo(s1.x,s1.y); X.lineTo(s2.x,s2.y); X.stroke();
+    }
+  };
+  slope(-nearB);
+  slope(nearB);
+  // team fascia — thick enough to read at gameplay zoom. The NEAR eave
+  // carries it always (like the live ram); the FAR eave's stripe is hidden
+  // behind the standing roof, so it only appears once the collapse splays
+  // the slopes open — EXCEPT head-on (u.x===0), where both eaves are the
+  // roof's left/right edges and the live ram shows both stripes already.
+  if (!weathered) {
+    X.strokeStyle=tc; X.lineWidth=3.2/UNIT_SCALE; X.lineCap='round';
+    for (let sgn of (u.x === 0 || tSplay > 0.35 ? [-1, 1] : [nearB])) {
+      let e1 = P(-L*0.92, sgn*eaveB, hB+hEave), e2 = P(L*0.92, sgn*eaveB, hB+hEave);
+      X.beginPath(); X.moveTo(e1.x,e1.y); X.lineTo(e2.x,e2.y); X.stroke();
+    }
+    X.lineCap='butt';
+  }
+  X.restore();
+  X.restore();
+}
+
+function drawCorpse(c){
+  let iso=toIso(c.x,c.y);
+  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
+  if(isOffscreen(sx,sy,50))return;
+  
+  let { ox, oy } = getUnitGroupOffset(c.id);
+  sx += ox; sy += oy;
+  let tc=teamColor(c.team);
+  
+  let age = performance.now() - c.deathTime;
+
+  // AoE2-style death sequence, staged instead of popping in flat:
+  // (1) 0-600ms the body topples over its feet, accelerating, with a small
+  //     impact recoil and dust puff;
+  // (2) blood seeps out from under it and spreads over ~2s, drying to a
+  //     brown stain over time;
+  // (3) the corpse lies solid, per-unit-type art (a scout dies WITH its
+  //     horse, a bear is a bear-sized mound);
+  // (4) at CORPSE_SKEL it decays to bones (AoE2 skeleton stage), and only
+  //     fades away in the last seconds of CORPSE_LIFE.
+  const TOPPLE = 600;
+  let p = Math.min(1, age / TOPPLE);
+  let rot = (Math.PI / 2.25) * p * p; // accelerating fall
+  if (age > TOPPLE && age < TOPPLE + 300) {
+    rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
+  }
+  let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
+  let big = isMountedUnit(c.utype) || c.utype === 'bear'; // horse/bear-sized corpse
+
+  // Wooden vehicles get their own break-apart wreck sequences — they don't
+  // topple like bodies (the cart's ox falls separately; the ram caves in).
+  if (c.utype === 'tradecart') { drawTradeCartCorpse(c, sx, sy, age, alpha); return; }
+  if (c.utype === 'ram') { drawRamCorpse(c, sx, sy, age, alpha); return; }
+
+  // Impact dust puff, once, the moment the body hits the ground (same
+  // render-side particle spawning the sheep's grass nibbling uses).
+  // Tracked in corpseImpactFxDone (js/core.js), not a `c.impactFx` field —
+  // corpses get wholesale-replaced by every sync, which used to wipe that
+  // flag and re-trigger the puff repeatedly instead of once.
+  if (age >= TOPPLE && !corpseImpactFxDone.has(c.id)) {
+    corpseImpactFxDone.add(c.id);
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', big ? 7 : 4, 0.02, big ? 2.2 : 1.6);
+  }
+
+  X.save();
+  X.globalAlpha = alpha;
+
+  // 1. Blood pool seeps out from under the body after impact, then dries
+  //    from fresh red to a brown stain as the corpse ages
+  let bp = Math.max(0, Math.min(1, (age - TOPPLE * 0.7) / 2000));
+  if (bp > 0) {
+    let spread = (1 - (1 - bp) * (1 - bp)) * (big ? 1.4 : 1); // ease-out growth
+    let dry = Math.max(0, Math.min(1, (age - 8000) / 8000));
+    let poolA = 0.7 * Math.min(1, bp * 3) * (1 - dry * 0.55);
+    X.fillStyle = 'rgba(' + Math.round(120 - 40*dry) + ', ' + Math.round(25*dry) + ', ' + Math.round(10*dry) + ', ' + poolA.toFixed(3) + ')';
+    X.beginPath();
+    X.ellipse(sx, sy + 3, 9*UNIT_SCALE*spread, 4.5*UNIT_SCALE*spread, 0, 0, Math.PI * 2);
+    X.fill();
+  }
+
+  // 2. Skeleton decay stage (AoE2): after CORPSE_SKEL the body is bones,
+  //    laid out flat by the same over-the-feet rotation the corpse used.
+  //    Humans get a round skull with two sockets and a ribcage; the horse
+  //    gets a full side-view horse skeleton (long muzzled skull on neck
+  //    vertebrae, arched spine, hanging ribcage, four leg bones, tail) at
+  //    the living horse's size, with the rider's small skeleton beside it.
+  if (age >= CORPSE_SKEL) {
+    X.translate(sx, sy);
+    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
+    X.rotate(Math.PI / 2.25);
     if(isMountedUnit(c.utype)){
-      horseSkeleton(1.35);
-      humanSkeleton(-11,-11,1);     // the rider, beside his horse
+      drawHorseSkeleton(1.35);
+      drawHumanSkeleton(-11,-11,1);     // the rider, beside his horse
     } else if(c.utype==='bear'){
       // Bear remains: same construction as the horse but squatter — the
       // boulder ribcage is the read
-      horseSkeleton(1.15);
+      drawHorseSkeleton(1.15);
     } else {
-      humanSkeleton(0,0,1.25);
+      drawHumanSkeleton(0,0,1.25);
     }
     X.restore();
     return;
@@ -315,10 +771,10 @@ const RAM_DIM = {
   CR: 17,     // ridge height
   OV: 1.2,    // roof overhang past the gables
   RLOG: 2.6,  // log shaft radius → beam width 5.2 in EVERY projection
-  RHEAD: 3.2, // forged iron head radius (RLOG + collar)
-  HLEN: 2.8,  // iron head length along the shaft
+  RHEAD: 3.2, // (legacy head radius — the log is all wood now; kept for shadow math)
+  HLEN: 2.8,  // (legacy head length)
   WR: 3,      // wheel radius
-  WA: 8,      // axle spacing (axles at a = -WA, 0, +WA)
+  WA: 8,      // axle spacing (three axles at a = -WA, 0, +WA)
   WTH: 1.4,   // wheel tread width along the axle
   SCALE: 1.45 // overall ram scale vs the unit grid
 };
@@ -337,6 +793,13 @@ const RAM_DIM = {
 // full compensation overshot — the flat pose carries more solid mass than
 // the 3/4s, so equal bounding span reads LARGER. Split the difference.
 const RAM_PROFILE_K = (1 + 0.894 * (RAM_DIM.L + RAM_DIM.WE + RAM_DIM.WTH) / RAM_DIM.L) / 2; // ≈ 1.13
+// TRUE side-elevation basis for the E/W profile facing: the cross axis
+// projects nearly vertical (far side slightly up-screen, near side down),
+// so the vehicle reads straight-on — "portrait" — instead of slightly
+// rotated toward 3/4 like the generic dir-7 basis below. Used by the live
+// trade cart and both vehicle wrecks; the live ram has its own hand-drawn
+// profile pose that already reads straight.
+const SIDE_AXES = { u:{x:1,y:0}, v:{x:0,y:0.38} };
 const RAM_AXES = {
   7: { u:{x:1,y:0},          v:{x:-0.6,y:0.4} },
   0: { u:{x:0.894,y:0.447},  v:{x:-0.72,y:0.36} },
@@ -529,7 +992,7 @@ function drawRamBody(e){
   let skirt = (sgn, fill) => poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WE,CE),P(-L,sgn*WE,CE)], fill);
   // Team-color fascia board along a slope's eave edge (ownership read).
   let fascia = (sgn) => {
-    X.strokeStyle = tc; X.lineWidth = 2 / UNIT_SCALE;
+    X.strokeStyle = tc; X.lineWidth = 3.2 / UNIT_SCALE; // thick enough to read at gameplay zoom
     let p1 = P(-L-OV, sgn*(WE+1.5), CE-1.4), p2 = P(L+OV, sgn*(WE+1.5), CE-1.4);
     X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
   };
@@ -542,82 +1005,106 @@ function drawRamBody(e){
       X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
     }
   };
-  // The ram itself: a timber shaft ending in a FORGED IRON HEAD — collar
-  // slightly fatter than the shaft (RHEAD), flat lit striking face. One
-  // spec, four projections; every width comes from RLOG/RHEAD/HLEN so it
-  // can't drift. Kept deliberately clean: no rivets/ropes/grain at this
-  // sprite size (clean-over-busy).
+  // The ram itself: an ALL-WOOD timber shaft (the forged iron head was
+  // removed — a head redesign may come later). The tip shows plain end
+  // grain where it faces the viewer. One spec, four projections; every
+  // width comes from RLOG so it can't drift. Kept deliberately clean: no
+  // rivets/ropes/grain at this sprite size (clean-over-busy).
   // All beam widths are GEOMETRY units (no /UNIT_SCALE): the beam must
   // scale with the body polygons.
-  const IRON = '#71717a', IRON_HI = '#a9a9ae';
+  const GRAIN = '#8a6a4a'; // lighter end-grain wood at the cut tip
   let logBeam = () => {
     if (useDir === 5) return; // fully hidden from directly behind
     if (useDir === 6) {
-      // NE back-diagonal: only the head end pokes past the FAR gable,
-      // emerging from behind the roofline (called FIRST in the branch so
-      // the body occludes its base). Travel damped ×0.55 — most of the
-      // stroke happens on the hidden far side. From the rear the wood
-      // shaft is NEARER than the iron head, so the head draws first and
-      // the shaft laps the seam. No face highlight/rivets: the striking
-      // face points away.
-      // Hard damping (×0.35) and a short rest protrusion: at height CE the
-      // beam projects ABOVE the far roofline, so any long extension reads
-      // as a bar floating in mid-air behind the shed. From the rear you
-      // should mostly see the head nosing out a little further on the
-      // strike, not the shaft's whole travel.
+      // NE back-diagonal: only the tip pokes past the FAR gable, emerging
+      // from behind the roofline (called FIRST in the branch so the body
+      // occludes its base). Hard damping (×0.35) and a short rest
+      // protrusion: at height CE the beam projects ABOVE the far roofline,
+      // so any long extension reads as a bar floating in mid-air behind
+      // the shed.
       let d6 = dLog * 0.35;
       let tip = L + 5.2 + d6;
-      let q1 = P(L + 0.6, 0, CE), qh = P(tip - HLEN, 0, CE), q2 = P(tip, 0, CE);
-      X.strokeStyle = '#000'; X.lineWidth = RHEAD*2 + 1.4; X.lineCap = 'round';
-      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(q2.x,q2.y); X.stroke();
-      X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2; X.lineCap = 'butt';
-      X.beginPath(); X.moveTo(q1.x,q1.y); X.lineTo(qh.x,qh.y); X.stroke();
-      X.strokeStyle = IRON; X.lineWidth = RHEAD*2;
-      X.beginPath(); X.moveTo(qh.x,qh.y); X.lineTo(q2.x,q2.y); X.stroke();
-      // From behind, the tip shows the flat STRIKING FACE: a disc
-      // perpendicular to the shaft, i.e. a circle in the (v, vertical)
-      // plane — same transform trick as the wheel discs. Shaded iron: it
-      // faces away from the upper-left light.
-      X.save(); X.transform(v.x, v.y, 0, -1, q2.x, q2.y);
-      X.beginPath(); X.arc(0, 0, RHEAD, 0, Math.PI*2);
-      X.restore();
-      X.fillStyle = '#5c5c63'; X.fill();
-      X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
+      let q1 = P(L + 0.6, 0, CE), q2 = P(tip, 0, CE);
+      // outlined flat-ended quad; the shaft is WIDENED to the end disc's
+      // exact screen extent perpendicular to the shaft, so shaft and tip
+      // read as one radius
+      let qdx=q2.x-q1.x, qdy=q2.y-q1.y, ql=Math.hypot(qdx,qdy)||1;
+      let qux=-qdy/ql, quy=qdx/ql;
+      let qw = RLOG * Math.hypot(v.x*qux + v.y*quy, quy);
+      let qnx=qux*qw, qny=quy*qw;
+      // the cut face points AWAY from the viewer here — no end disc at
+      // all, just the shaft's clean outlined silhouette with a flat tip
+      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE; X.lineJoin='round';
+      X.beginPath();
+      X.moveTo(q1.x+qnx,q1.y+qny); X.lineTo(q2.x+qnx,q2.y+qny);
+      X.lineTo(q2.x-qnx,q2.y-qny); X.lineTo(q1.x-qnx,q1.y-qny);
+      X.closePath(); X.fill(); X.stroke();
       return;
     }
     if (useDir === 1) {
-      // Head-on: the forged head surges at the viewer — iron collar disc,
-      // lighter flat striking face, rivet dots on the collar ring. Swells
-      // slightly on the thrust, shrinks back into the opening on windup.
+      // Head-on: the log's end grain surges at the viewer. Swells slightly
+      // on the thrust, shrinks back into the opening on windup.
       let p = P(L + 1.5 + dLog*0.55, 0, CE);
-      let rr = Math.max(2, RHEAD + dLog*0.13);
-      X.fillStyle = IRON; X.strokeStyle = '#000'; X.lineWidth = lw;
+      let rr = Math.max(1.8, RLOG + dLog*0.13);
+      X.fillStyle = '#6e473b'; X.strokeStyle = '#000'; X.lineWidth = lw;
       X.beginPath(); X.arc(p.x, p.y, rr, 0, Math.PI*2); X.fill(); X.stroke();
-      X.fillStyle = IRON_HI;
-      X.beginPath(); X.arc(p.x, p.y, rr*0.68, 0, Math.PI*2); X.fill();
+      X.fillStyle = GRAIN;
+      X.beginPath(); X.arc(p.x, p.y, rr*0.62, 0, Math.PI*2); X.fill();
       return;
     }
     // SE front-diagonal. The shaft STARTS at the opening plane (a=L) — so
     // retracting genuinely slides it into the dark hole and the thrust
-    // makes it burst out. Rope lashings wrap the shaft just outside the
-    // opening; the head is a fatter iron collar with a lit striking face.
+    // makes it burst out. The cut face points toward the viewer here, so
+    // the tip shows the lit END GRAIN disc.
     let tip = L + 6 + dLog;
-    let p1 = P(L - 0.8, 0, CE), ph = P(tip - HLEN, 0, CE), p2 = P(tip, 0, CE), pf = P(tip - 0.7, 0, CE);
-    X.strokeStyle = '#000'; X.lineWidth = RHEAD*2 + 1.4; X.lineCap = 'round';
-    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke();
-    X.strokeStyle = '#6e473b'; X.lineWidth = RLOG*2;
-    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(ph.x,ph.y); X.stroke();
-    X.strokeStyle = IRON; X.lineWidth = RHEAD*2;
-    X.beginPath(); X.moveTo(ph.x,ph.y); X.lineTo(p2.x,p2.y); X.stroke();
-    X.strokeStyle = IRON_HI; X.lineWidth = RHEAD*2 - 1.6;
-    X.beginPath(); X.moveTo(pf.x,pf.y); X.lineTo(p2.x,p2.y); X.stroke();
-    X.lineCap = 'butt';
+    let p1 = P(L - 0.8, 0, CE), p2 = P(tip, 0, CE);
+    // outlined flat-ended quad, widened to the end disc's perpendicular
+    // screen extent (see NE note) — then the lit end-grain disc
+    let pdx=p2.x-p1.x, pdy=p2.y-p1.y, pl=Math.hypot(pdx,pdy)||1;
+    let pux=-pdy/pl, puy=pdx/pl;
+    let pw = RLOG * Math.hypot(v.x*pux + v.y*puy, puy);
+    let pnx=pux*pw, pny=puy*pw;
+    // fill the shaft but stroke ONLY the two long edges: the unstroked
+    // back end vanishes into the opening's dark ellipse, so the log reads
+    // as emerging from the hole instead of butting flat against the box
+    // (the tip's end disc covers the front edge)
+    X.fillStyle = '#6e473b';
+    X.beginPath();
+    X.moveTo(p1.x+pnx,p1.y+pny); X.lineTo(p2.x+pnx,p2.y+pny);
+    X.lineTo(p2.x-pnx,p2.y-pny); X.lineTo(p1.x-pnx,p1.y-pny);
+    X.closePath(); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE; X.lineCap='butt';
+    X.beginPath(); X.moveTo(p1.x+pnx,p1.y+pny); X.lineTo(p2.x+pnx,p2.y+pny); X.stroke();
+    X.beginPath(); X.moveTo(p1.x-pnx,p1.y-pny); X.lineTo(p2.x-pnx,p2.y-pny); X.stroke();
+    // true perpendicular end disc showing the lit END GRAIN (cut face
+    // points toward the viewer here)
+    X.save(); X.transform(v.x, v.y, 0, -1, p2.x, p2.y);
+    X.beginPath(); X.arc(0, 0, RLOG, 0, Math.PI*2);
+    X.restore();
+    X.fillStyle = GRAIN; X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
+    // exit seam: a short black line across the shaft at the panel plane
+    // (a=L), a touch wider than the shaft — pins the log to the front
+    // panel so it reads as coming out THROUGH it
+    // seam center shifted along the shaft's perpendicular (lower-left in
+    // SE, mirrored to lower-right in SW) to align with the shaft's axis
+    let ex = P(L, 0, CE + 0.4);
+    ex = { x: ex.x + pux*0.45, y: ex.y + puy*0.45 };
+    X.strokeStyle = '#000'; X.lineWidth = 1.3 / UNIT_SCALE; X.lineCap='round';
+    X.beginPath();
+    X.moveTo(ex.x+pux*(pw+1.1), ex.y+puy*(pw+1.1));
+    X.lineTo(ex.x-pux*(pw+1.1), ex.y-puy*(pw+1.1));
+    X.stroke(); X.lineCap='butt';
   };
-  // Dark opening in a gable face that the log emerges from.
+  // Dark opening in a gable face that the log emerges from. MUST be
+  // clearly larger than the log's screen cross-section (half-width
+  // ~RLOG*1.1) so a dark ring shows AROUND the shaft — a hole smaller than
+  // the log can never read as the log passing through it. Drawn BEHIND the
+  // log; the shaft's cut base hides inside the dark area.
   let opening = (a) => {
     let p = P(a, 0, CE);
     X.fillStyle = '#2a1f14';
-    X.beginPath(); X.ellipse(p.x, p.y, 3.6, 4, 0, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.ellipse(p.x, p.y, 4.6, 5.1, 0, 0, Math.PI*2); X.fill();
     X.strokeStyle = '#000'; X.lineWidth = 0.9 / UNIT_SCALE; X.stroke();
   };
   // Cross-brace X on the rear gable (plain planks otherwise).
@@ -669,20 +1156,12 @@ function drawRamBody(e){
     // Log BEHIND the body: in a true side view a cylinder IS a rectangle —
     // no end-face ellipse, no perspective. Drawn before the wall/roof so
     // the shed occludes its base and it reads as sliding out of the front.
-    // Same piston spec as every view: wood shaft + rope lashings + forged
-    // iron head (fatter collar, flat lit striking face, rivets).
+    // ALL WOOD (the iron head was removed; redesign may come later).
     {
-      let xTip = PL + 6 + dLog, xHd = null, h2 = RLOG, hh = 3.2, y0 = -PEAVE;
-      xHd = xTip - 2.8; // head base (HLEN)
+      let xTip = PL + 6 + dLog, h2 = RLOG, y0 = -PEAVE;
       X.fillStyle = '#6e473b';
       X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE;
-      X.beginPath(); X.rect(PL - 4, y0 - h2, xHd - (PL - 4), h2*2); X.fill(); X.stroke();
-      // forged head: iron collar, lit striking face, rivets
-      X.fillStyle = '#71717a';
-      X.strokeStyle = '#000'; X.lineWidth = 1 / UNIT_SCALE;
-      X.beginPath(); X.rect(xHd, y0 - hh, xTip - xHd, hh*2); X.fill(); X.stroke();
-      X.fillStyle = '#a9a9ae';
-      X.fillRect(xTip - 0.9, y0 - hh + 0.5, 0.9, hh*2 - 1);
+      X.beginPath(); X.rect(PL - 4, y0 - h2, xTip - (PL - 4), h2*2); X.fill(); X.stroke();
     }
     // side wall
     el([[-PL,-PWAL],[PL,-PWAL],[PL,-PEAVE],[-PL,-PEAVE]], WOOD.plankR);
@@ -697,8 +1176,8 @@ function drawRamBody(e){
       X.stroke();
     }
     // team fascia along the eave
-    X.strokeStyle = tc; X.lineWidth = 2.2 / UNIT_SCALE;
-    X.beginPath(); X.moveTo(-PL-1.2, -PEAVE+0.4); X.lineTo(PL+1.2, -PEAVE+0.4); X.stroke();
+    X.strokeStyle = tc; X.lineWidth = 3.2 / UNIT_SCALE; // thick enough to read at gameplay zoom
+    X.beginPath(); X.moveTo(-PL-1.2, -PEAVE+0.6); X.lineTo(PL+1.2, -PEAVE+0.6); X.stroke();
     // near wheel row, full circles with the rolling spoke
     [-PWA, 0, PWA].forEach(x2 => {
       X.fillStyle = '#5a4630';
@@ -714,15 +1193,19 @@ function drawRamBody(e){
       X.beginPath(); X.arc(x2, -PWR, 0.8, 0, Math.PI*2); X.fill();
     });
   } else if (useDir === 0) {
-    // SE front-diagonal: far wheels → far slope sliver →
-    // near skirt + front gable → near slope → log → near wheels.
+    // SE front-diagonal: far wheels → far slope sliver → near skirt +
+    // front gable → dark opening → LOG through it → near slope. The hole
+    // is bigger than the shaft, so its dark ring shows around the log and
+    // the log's cut base hides inside the darkness — clearly exiting the
+    // port.
     wheelPair(-wb);
     slope(-1, WOOD.plankL);
     skirt(1, WOOD.plankR);
+    // plank front panel, NO hole — the log simply rides over the face
+    // (the near slope drawn after laps its exit from above)
     gable(L, WOOD.plankR);
-    opening(L);
+    logBeam();
     wheelPair(wb); // exterior wheels over the skirt, under the roof overhang
-    logBeam();     // before the near slope: the roof overhang laps the beam's exit
     slope(1, WOOD.plankL); seams(1); fascia(1);
   } else if (useDir === 6) {
     // NE back-diagonal: log (far side, mostly hidden) → far wheels →
@@ -745,8 +1228,8 @@ function drawRamBody(e){
     wheelPair(-wbThin); wheelPair(wbThin);
     slope(-1, WOOD.plankL); slope(1, WOOD.plankR);
     seams(1); seams(-1);
+    // plank front panel, NO hole — the log's end disc rides over the face
     gable(L, WOOD.plankR);
-    opening(L);
     fascia(1); fascia(-1);
     logBeam();
   } else {
@@ -780,24 +1263,30 @@ function drawQuadruped(e, p){
   let walk = moving ? Math.sin(tick*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
   let idle = !moving;
   let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.18:0.07);
-  let nod = idle ? Math.sin(tick*0.05+e.id)*0.5 : 0;
+  let nod = (idle && !e.corpseRot) ? Math.sin(tick*0.05+e.id)*0.5 : 0; // a dead ox's head doesn't bob
   const coat=p.coat, dark=p.maneC, legC=p.legC, hornC=p.hornC;
   const LT=p.legTop, LB=p.legBot;
   X.save(); X.translate(0,-1); X.scale(p.scale, p.scale);
   X.lineJoin='round';
 
-  // Pair of thick bull horns: sweep OUT low from the poll, then the tip
-  // curls up — reads as horns, not antennae.
-  let horns=(hx,hy,s)=>{
-    [-1,1].forEach(sd=>{
-      X.lineCap='round';
-      let cpx=hx+sd*s*2.7, cpy=hy+0.3, ex=hx+sd*s*3.1, ey=hy-2.3;
-      X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE;
-      X.beginPath(); X.moveTo(hx,hy); X.quadraticCurveTo(cpx,cpy, ex,ey); X.stroke();
-      X.strokeStyle=hornC; X.lineWidth=1.7/UNIT_SCALE;
-      X.beginPath(); X.moveTo(hx,hy); X.quadraticCurveTo(cpx,cpy, ex,ey); X.stroke();
-    });
-    X.lineCap='butt';
+  // One FILLED crescent horn (single path, outer-silhouette stroke only —
+  // the old fat stroke-curls read as white bananas): broad at the poll,
+  // sweeping out along sd, tapering to an upturned tip.
+  let horn=(bx,by,sd,s,rot=0)=>{
+    X.save(); X.translate(bx,by); if(rot) X.rotate(rot);
+    X.fillStyle=hornC; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath();
+    X.moveTo(0, 1.0*s);
+    X.quadraticCurveTo(sd*3.1*s, 1.1*s, sd*4.0*s, -1.6*s);  // long outward sweep
+    X.quadraticCurveTo(sd*4.4*s, -3.0*s, sd*3.6*s, -3.4*s); // high upturned tip
+    X.quadraticCurveTo(sd*2.4*s, -1.3*s, 0, -0.5*s);
+    X.closePath(); X.fill(); X.stroke();
+    X.restore();
+  };
+  // small droopy ear, tucked behind/below the horn
+  let ear=(xx,yy,rot)=>{
+    X.fillStyle=dark; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath(); X.ellipse(xx,yy,1.5,0.9,rot,0,Math.PI*2); X.fill(); X.stroke();
   };
 
   // Tail (rump end): drawn first for profile/SE so the legs/body overlap it.
@@ -847,20 +1336,28 @@ function drawQuadruped(e, p){
     let k=useDir===7?1:0.74;
     // heavy barrel
     X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6.5, 8.0*k, 5.6, 0,0,Math.PI*2); X.fill(); X.stroke();
-    // short low neck into a blocky head, carried forward-down
-    X.save(); X.translate(2.4*k, nod);
+    // Working-ox head carriage: thick neck sloping DOWN from the withers,
+    // the head carried clearly BELOW the topline, with a long face ending
+    // in a broad blunt muzzle and a dewlap fold hanging under the throat.
+    // One open path (fill closes it invisibly inside the barrel; the
+    // stroke stays open so no seam cuts across the body).
+    X.save(); X.translate(1.2*k, nod); // head pulled back toward the body
     X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
     X.beginPath();
-    X.moveTo(5.0*k,-9.2);                           // withers/neck top
-    X.quadraticCurveTo(10*k,-8.8, 12.8*k,-7.6);     // neck to poll
-    X.lineTo(15.4*k,-6.8);                          // forehead to muzzle top
-    X.lineTo(15.2*k,-3.0);                          // blunt muzzle front
-    X.quadraticCurveTo(11.6*k,-2.2, 8.2*k,-3.2);    // underjaw
-    X.quadraticCurveTo(6.0*k,-4.0, 4.6*k,-5.8);     // throat into chest
+    X.moveTo(4.8*k,-10.8);                            // withers (inside the barrel)
+    X.quadraticCurveTo(8.5*k,-9.6, 11.2*k,-8.0);      // thick neck sloping down
+    X.quadraticCurveTo(12.5*k,-8.2, 12.9*k,-7.2);     // low poll / brow
+    X.quadraticCurveTo(15.0*k,-5.6, 15.4*k,-3.4);     // LONG face down to the muzzle
+    X.quadraticCurveTo(15.7*k,-2.2, 14.2*k,-2.2);     // broad blunt muzzle
+    X.quadraticCurveTo(11.8*k,-2.6, 9.6*k,-3.8);      // jaw back to the cheek
+    X.quadraticCurveTo(8.6*k,-2.7, 7.2*k,-3.3);       // dewlap: loose fold hanging
+    X.quadraticCurveTo(6.0*k,-3.0, 4.4*k,-4.8);       //   under the throat into the chest
     X.fill(); X.stroke();
-    X.fillStyle=dark; X.beginPath(); X.ellipse(14.4*k,-4.4,1.5,1.7,0,0,Math.PI*2); X.fill(); // muzzle
-    horns(12.6*k,-8.4, k);
-    X.fillStyle='#000'; X.beginPath(); X.arc(12.0*k,-6.1,0.6,0,Math.PI*2); X.fill(); // eye
+    ear(10.6*k,-7.5, -0.3);                           // droopy ear behind the poll
+    horn(11.6*k,-8.1, 1, 1.25*k, -0.5);               // near horn from the poll top, up-forward (exaggerated)
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(12.7*k,-6.0,0.7,0,Math.PI*2); X.fill();   // eye high on the long face
+    X.beginPath(); X.arc(14.7*k,-3.0,0.5,0,Math.PI*2); X.fill();   // nostril
     X.restore();
   } else if(useDir===6){
     // NE back-diagonal: rump near, head recedes.
@@ -870,39 +1367,50 @@ function drawQuadruped(e, p){
     X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
     X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt'; X.restore();
     X.save(); X.translate(1.4,nod);
+    // back-ish view of the low head (horse logic): short thick neck wedge,
+    // then the head ball seen from behind with BOTH horns sweeping out
     X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
     X.beginPath();
-    X.moveTo(3.2,-8.2); X.quadraticCurveTo(4.4,-12, 5.6,-14.4);
-    X.lineTo(7.6,-14); X.quadraticCurveTo(6.8,-10, 5.8,-7);
+    X.moveTo(1.0,-8.6); X.quadraticCurveTo(2.8,-11.3, 4.3,-11.9); // left edge pulled left: wider neck
+    X.lineTo(6.2,-11.5); X.quadraticCurveTo(5.7,-9.2, 5.1,-7.4);
     X.fill(); X.stroke();
-    X.beginPath(); X.ellipse(6.6,-14.6,2.3,2.1,0.1,0,Math.PI*2); X.fill(); X.stroke(); // head
-    horns(6.6,-15.6, 0.9);
+    // kept simple: just the head circle and the two horns
+    X.beginPath(); X.arc(5.6,-11.9,2.1,0,Math.PI*2); X.fill(); X.stroke(); // head, low
+    horn(4.3,-12.2, -1, 1.0, 0.15); horn(6.8,-12.4, 1, 1.0, -0.3); // both horns, out and up
     X.restore();
   } else if(useDir===1){
-    // S head-on: body behind, blunt head + wide horns toward the viewer.
+    // S head-on: body behind; the head hangs LOW in front of the chest —
+    // broad flat poll, long face tapering to a broad muzzle near the
+    // ground, horns from the poll's top corners, horizontal droopy ears.
     X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6, 6.4,5.6,0,0,Math.PI*2); X.fill(); X.stroke();
     X.save(); X.translate(0,nod);
+    // dewlap hint: a soft fold peeking below the muzzle
     X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath(); X.ellipse(0,-1.3,2.7,1.1,0,0,Math.PI*2); X.fill(); X.stroke();
     X.beginPath();
-    X.moveTo(-3.4,-9.6);
-    X.quadraticCurveTo(-3.9,-5.4, -2.2,-3.1);
-    X.quadraticCurveTo(0,-1.9, 2.2,-3.1);
-    X.quadraticCurveTo(3.9,-5.4, 3.4,-9.6);
-    X.quadraticCurveTo(0,-11.8, -3.4,-9.6);
+    X.moveTo(-3.6,-8.8);
+    X.quadraticCurveTo(-3.9,-5.2, -2.5,-2.8);         // cheeks taper down the long face
+    X.quadraticCurveTo(0,-1.5, 2.5,-2.8);             // broad blunt muzzle
+    X.quadraticCurveTo(3.9,-5.2, 3.6,-8.8);
+    X.quadraticCurveTo(0,-10.4, -3.6,-8.8);           // broad flat poll
     X.closePath(); X.fill(); X.stroke();
-    X.fillStyle=dark; X.beginPath(); X.ellipse(0,-3.5,2.2,1.6,0,0,Math.PI*2); X.fill(); X.stroke(); // muzzle
-    horns(0,-9.8, 1.7);
+    ear(-4.6,-8.4, 0.15); ear(4.6,-8.4, -0.15);       // ears held out horizontally
+    horn(-2.6,-9.0, -1, 1.5); horn(2.6,-9.0, 1, 1.5); // horn pair from the poll corners (exaggerated)
     X.fillStyle='#000';
-    X.beginPath(); X.arc(-1.9,-7.2,0.7,0,Math.PI*2); X.fill();
-    X.beginPath(); X.arc(1.9,-7.2,0.7,0,Math.PI*2); X.fill();
+    X.beginPath(); X.arc(-2.0,-6.6,0.7,0,Math.PI*2); X.fill();     // wide-set eyes
+    X.beginPath(); X.arc(2.0,-6.6,0.7,0,Math.PI*2); X.fill();
+    X.beginPath(); X.arc(-0.9,-2.9,0.5,0,Math.PI*2); X.fill();     // nostrils
+    X.beginPath(); X.arc(0.9,-2.9,0.5,0,Math.PI*2); X.fill();
     X.restore();
   } else {
-    // N back view: neck/head face away; rump + tail nearest.
+    // N back view: with the low head carriage the head hides behind the
+    // body — only the poll sliver, horn crescents and ear tips peek above
+    // the topline. Rump + tail nearest.
     X.save(); X.translate(0,nod);
     X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath(); X.ellipse(0,-10,3.0,4.4,0,0,Math.PI*2); X.fill(); X.stroke(); // neck away
-    X.beginPath(); X.ellipse(0,-13.2,2.6,2.4,0,0,Math.PI*2); X.fill(); X.stroke(); // head
-    horns(0,-14.2,1.2);
+    X.beginPath(); X.ellipse(0,-12.2,2.5,1.5,0,0,Math.PI*2); X.fill(); X.stroke(); // poll sliver
+    ear(-3.2,-11.9, 0.3); ear(3.2,-11.9, -0.3);
+    horn(-1.6,-12.6, -1, 1.2); horn(1.6,-12.6, 1, 1.2); // horn tips peek from behind
     X.restore();
     X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6,6.2,5.6,0,0,Math.PI*2); X.fill(); X.stroke(); // body
     X.save(); X.translate(0,-3.5); X.rotate(swish); // tail down center
@@ -919,11 +1427,35 @@ function drawQuadruped(e, p){
 // (drawQuadruped) at the front. Gold cargo rides hidden under the canvas.
 // Drawn inside drawUnit's translated + mirrored + scaled context, coords local
 // px around the ground anchor.
-const CART_DIM = { L:8, WB:4.4, CB:2.4, CH:7.6, TILT:8.5, WR:2.6, WA:9, WTH:1.3, SCALE:1.2, GAP:3 };
-const OX_PROFILE = { coat:'#7a5a3a', maneC:'#4a3320', legC:'#5f4428', hornC:'#e6ddc4', scale:1.2, walkAmp:3.0, legTop:-4, legBot:3.8 };
+// The trade cart's ONE canonical load: crate + sack + gold, drawn
+// identically on the living cart (every trade phase — kept constant for
+// visual consistency) and through the death sequence. `pos(key, dx, dy)`
+// maps each piece's local offset from the load anchor to its final center,
+// which lets the wreck spill the pieces apart along their own paths.
+function drawCartLoad(pos, lw){
+  X.lineJoin='round';
+  // one BIG plump grain sack, tied at the neck — clean over busy
+  let p = pos('sack', 0, -3.0);
+  X.strokeStyle='#000'; X.lineWidth=lw; X.fillStyle='#cdb98c';
+  X.beginPath(); X.ellipse(p.x, p.y, 5.2, 5.6, 0, 0, Math.PI*2); X.fill(); X.stroke();
+  X.fillStyle='#cdb98c';
+  X.beginPath(); X.ellipse(p.x+1.6, p.y-6.3, 1.9, 1.3, 0.5, 0, Math.PI*2); X.fill(); X.stroke();
+  X.strokeStyle=WOOD.beam; X.lineWidth=1.2/UNIT_SCALE;
+  X.beginPath(); X.moveTo(p.x-0.6, p.y-5.1); X.lineTo(p.x+2.4, p.y-4.5); X.stroke();
+  X.strokeStyle='#000'; X.lineWidth=lw; X.fillStyle='#b6a074';
+  X.beginPath(); X.ellipse(p.x+1.1, p.y+1.9, 2.2, 2.5, 0, 0, Math.PI*2); X.fill();
+}
+
+const CART_DIM = { L:8, WB:4.4, CB:2.4, CH:7.6, TILT:8.5, WR:5.4, WA:9, WTH:1.3, SCALE:1.32, GAP:3 };
+// Shift (in a-units) that recenters the whole bed+ox composite on the unit
+// anchor — half of the rig's span from the bed's rear to the ox's muzzle.
+const CART_RECENTER = 13.5;
+const OX_PROFILE = { coat:'#8d6b47', maneC:'#5a3f28', legC:'#705232', hornC:'#ece4cf', scale:1.2, walkAmp:3.0, legTop:-4, legBot:3.8 };
 function drawTradeCartBody(e){
   let useDir = mirroredDir(e);
-  let ax = RAM_AXES[useDir] || RAM_AXES[7];
+  // E/W uses the true side-elevation basis: straight-on profile, not the
+  // slightly-rotated generic dir-7 basis (matches the ram's profile pose)
+  let ax = useDir === 7 ? SIDE_AXES : (RAM_AXES[useDir] || SIDE_AXES);
   let u = ax.u, v = ax.v;
   let P = (a,b,c) => ({ x:a*u.x + b*v.x, y:a*u.y + b*v.y - c });
   const { L, WB, CB, CH, TILT, WR, WA, WTH, SCALE, GAP } = CART_DIM;
@@ -945,6 +1477,10 @@ function drawTradeCartBody(e){
 
   X.save();
   if (rolling) X.translate(0, Math.sin(tick*0.2+e.id)*0.5);
+  // Recenter the RIG on the unit anchor: the ox extends far ahead of the
+  // bed, so shift the whole drawing back along the facing axis — the
+  // anchor (pathing position, shadow, selection) sits mid-composite.
+  X.translate(-u.x*CART_RECENTER*SCALE, -u.y*CART_RECENTER*SCALE);
 
   // Ox yoked ahead along the movement axis. Drawn in its own UNIT_SCALE space
   // (drawQuadruped applies its own scale); the offset uses the CART-scaled
@@ -952,21 +1488,59 @@ function drawTradeCartBody(e){
   // origin sits a hoof-height ABOVE its feet, and the wagon's near wheels sit a
   // half-width BELOW the axle center — offset y by (nearWheelDrop − hoofDrop)
   // so the ox's hooves land on the wagon's near-wheel contact line (level).
+  //
+  // The hitch gap is per-facing: the projection compresses the offset along
+  // u (head-on |u.y|=0.55) but the drawn ART doesn't compress, so a single
+  // world-space GAP left the ox's hindquarters buried in the bed on some
+  // facings. Values tuned so the ox's rump just clears the wagon front with
+  // the shafts visibly bridging the gap.
+  const HITCH_GAP = {7:12.5, 0:10, 6:10, 1:14, 5:14};
+  let gap = HITCH_GAP[useDir] !== undefined ? HITCH_GAP[useDir] : GAP;
   let hoofDrop = OX_PROFILE.legBot*OX_PROFILE.scale - 1;
   let nearDrop = SCALE*(WB+0.4)*Math.abs(v.y);
-  let oxOff = { x: SCALE*(L+GAP)*u.x, y: SCALE*(L+GAP)*u.y + nearDrop - hoofDrop };
+  let oxOff = { x: SCALE*(L+gap)*u.x, y: SCALE*(L+gap)*u.y + nearDrop - hoofDrop };
   let drawOx = () => { X.save(); X.translate(oxOff.x, oxOff.y); drawQuadruped(e, OX_PROFILE); X.restore(); };
-  // Yoke/tongue beam from the wagon front up to the ox's back.
-  let yoke = () => {
-    let a1 = { x: SCALE*P(L,0,CB+2).x, y: SCALE*P(L,0,CB+2).y };
-    let a2 = { x: oxOff.x, y: oxOff.y - 6 };
+  // Hitch: a PARALLEL pair of shaft rods, one along each side of the ox,
+  // from the wagon's front top corners to the shoulder area. Same ±WB
+  // perpendicular offset at both ends keeps them parallel on screen, and
+  // riding high (bed top rim → just under the topline) lets the far rod
+  // show above the body silhouette instead of vanishing behind it. The +v
+  // side is nearer the camera on every authored facing: far rod draws
+  // before the ox, near rod after, lying visibly along the flank. Head-on
+  // (v.y=0, sides are pure left/right) both draw behind the ox so nothing
+  // crosses the face.
+  let rod = sgn => {
+    let a = { x: SCALE*P(L, sgn*WB, CH-1).x, y: SCALE*P(L, sgn*WB, CH-1).y };
+    // ox end rises to the withers (above the topline, ~-12.3 local) so the
+    // far rod is actually visible over the back instead of hiding behind
+    // it; the far rod gets extra lift — in iso the far side genuinely sits
+    // higher on screen, and without it the body swallows the whole rod
+    let lift = (sgn<0 && !headOn) ? 2.5 : 0;
+    let b = { x: oxOff.x + SCALE*(3.8*u.x + WB*v.x*sgn), y: oxOff.y + SCALE*(3.8*u.y + WB*v.y*sgn) - 12 - lift };
     X.lineCap='round';
-    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.beginPath(); X.moveTo(a1.x,a1.y); X.lineTo(a2.x,a2.y); X.stroke();
-    X.strokeStyle=WOOD.beam; X.lineWidth=1.5/UNIT_SCALE; X.beginPath(); X.moveTo(a1.x,a1.y); X.lineTo(a2.x,a2.y); X.stroke();
+    X.strokeStyle='#000'; X.lineWidth=2.8/UNIT_SCALE; X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
+    X.strokeStyle=WOOD.beam; X.lineWidth=1.4/UNIT_SCALE; X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
     X.lineCap='butt';
   };
+  let headOn = (useDir===1 || useDir===5);
+  // Paint order around the wagon: the far rod always sits behind the ox;
+  // the near rod lies over BOTH the ox and the wagon (it's the closest
+  // thing to the camera along its whole run), so on facings where the
+  // wagon draws after the ox (E/W profile, NE) it must wait for the wagon.
+  let hitchPre, hitchPost;
+  if (headOn) {
+    let grp = () => { rod(-1); rod(1); drawOx(); };
+    hitchPre  = useDir===5 ? grp : null;   // facing away: whole hitch behind the wagon
+    hitchPost = useDir===1 ? grp : null;   // facing viewer: whole hitch over the wagon
+  } else if (frontNear) { // SE diagonal: wagon first, hitch entirely on top
+    hitchPre  = null;
+    hitchPost = () => { rod(-1); drawOx(); rod(1); };
+  } else { // E/W profile, NE: far rod + ox behind the wagon, near rod over it
+    hitchPre  = () => { rod(-1); drawOx(); };
+    hitchPost = () => rod(1);
+  }
 
-  if (!frontNear) { drawOx(); yoke(); }
+  if (hitchPre) hitchPre();
 
   X.save(); X.scale(SCALE, SCALE);
   let lw = 1.2/UNIT_SCALE;
@@ -974,116 +1548,142 @@ function drawTradeCartBody(e){
     X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
     X.strokeStyle='#000'; X.lineWidth=lw; X.lineJoin='round'; X.stroke();
   };
-  // Wheels — the ram's cylinder wheel, cart dimensions. Two axles (±WA/2).
+  // Wheels — proper spoked cartwheels: wooden rim ring, dark interior seen
+  // through the spokes, 3 rotating spoke diameters, hub. Two axles (±WA/2).
   let wheelRot = tick*0.35 + e.id;
+  // Edge-on wheel slab for the head-on facings (also used by the head-on
+  // body assembly below).
+  let slab = (a,b,r,w2) => {
+    let p=P(a,b,r), h2=r*0.7;
+    X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
+    X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
+    X.fillStyle='#5a4630'; X.fillRect(p.x-0.6,p.y-h2+0.6,1.2,h2*2-1.2);
+  };
   let wheel = (a,b,r) => {
-    let thin = (useDir===1||useDir===5);
-    if (thin) {
-      let p=P(a,b,r), w2=WTH*1.15, h2=r*0.7;
-      X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
-      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
-      X.fillStyle='#5a4630'; X.fillRect(p.x-0.6,p.y-h2+0.6,1.2,h2*2-1.2); return;
-    }
-    let bIn=b-Math.sign(b)*WTH, pIn=P(a,bIn,r), pF=P(a,b,r);
-    let discPath=(cx,cy)=>{X.save();X.transform(u.x,u.y,0,-1,cx,cy);X.beginPath();X.arc(0,0,r,0,Math.PI*2);X.restore();};
-    X.strokeStyle='#1d150c';X.lineWidth=1.8/UNIT_SCALE; discPath(pIn.x,pIn.y);X.stroke();
-    X.fillStyle='#33261a';
-    for(let t=0;t<=1.001;t+=0.25){discPath(pIn.x+(pF.x-pIn.x)*t,pIn.y+(pF.y-pIn.y)*t);X.fill();}
-    X.fillStyle='#5a4630';X.strokeStyle='#1d150c';X.lineWidth=0.9/UNIT_SCALE; discPath(pF.x,pF.y);X.fill();X.stroke();
+    if (useDir===1||useDir===5) { slab(a,b,r,WTH*1.15); return; }
+    // CHARIOT wheel: a big open ring — wooden rim annulus, spokes, hub —
+    // with the world visible THROUGH the gaps (no solid interior disc, no
+    // swept 3D tread).
+    // the wheel's camera-side face: +v points toward the viewer, so the
+    // NEAR wheel (b>0) faces at its outer plane b, but the FAR wheel (b<0)
+    // faces at its inner plane b+WTH — getting this backwards drew the far
+    // wheel's lit face behind its own dark rim
+    let bF = b > 0 ? b : b + WTH, bB = b > 0 ? b - WTH : b;
+    let pF=P(a,bF,r), pIn=P(a,bB,r);
+    let discPath=(cx,cy,rr)=>{X.save();X.transform(u.x,u.y,0,-1,cx,cy);X.beginPath();X.arc(0,0,rr,0,Math.PI*2);X.restore();};
+    let annulus=(cx,cy,fill)=>{
+      X.save();X.transform(u.x,u.y,0,-1,cx,cy);
+      X.beginPath();
+      X.arc(0,0,r,0,Math.PI*2); X.arc(0,0,r-1.5,0,Math.PI*2,true);
+      X.restore();
+      X.fillStyle=fill; X.fill('evenodd');
+    };
+    // depth: the wheel's FAR rim face peeks behind the near one, dark
+    annulus(pIn.x, pIn.y, '#453522');
+    X.strokeStyle='#1d150c';X.lineWidth=0.7/UNIT_SCALE;
+    discPath(pIn.x,pIn.y,r);X.stroke();
+    // near rim face
+    annulus(pF.x, pF.y, '#6b543a');
+    X.strokeStyle='#1d150c';X.lineWidth=0.9/UNIT_SCALE;
+    discPath(pF.x,pF.y,r);X.stroke();
+    discPath(pF.x,pF.y,r-1.5);X.stroke();
+    // 3 spoke diameters (6 spokes) turning with the wheel
     let ang=(rolling?wheelRot:0.6);
-    let sp=t=>({x:pF.x+(Math.cos(ang)*u.x)*r*t, y:pF.y+(Math.cos(ang)*u.y+Math.sin(ang))*r*t});
-    let s1=sp(-0.7),s2=sp(0.7);
-    X.strokeStyle='#3a2c1c';X.lineWidth=1/UNIT_SCALE;X.beginPath();X.moveTo(s1.x,s1.y);X.lineTo(s2.x,s2.y);X.stroke();
-    X.fillStyle='#8a6a4a';X.beginPath();X.arc(pF.x,pF.y,0.7,0,Math.PI*2);X.fill();
+    let sp=(A,t)=>({x:pF.x+(Math.cos(A)*u.x)*r*t, y:pF.y+(Math.cos(A)*u.y+Math.sin(A))*r*t});
+    X.strokeStyle='#8a6a4a';X.lineWidth=1.4/UNIT_SCALE;
+    for(let k=0;k<3;k++){
+      let A=ang+k*Math.PI/3, s1=sp(A,-0.85), s2=sp(A,0.85);
+      X.beginPath();X.moveTo(s1.x,s1.y);X.lineTo(s2.x,s2.y);X.stroke();
+    }
+    X.fillStyle='#8a6a4a';X.strokeStyle='#1d150c';X.lineWidth=0.7/UNIT_SCALE;
+    X.beginPath();X.arc(pF.x,pF.y,r*0.2,0,Math.PI*2);X.fill();X.stroke();
   };
-  let wheelPair = (bSide) => {
-    let thin=(useDir===1||useDir===5);
-    let nearA = useDir===5 ? -WA/2 : WA/2;
-    let m = a => thin ? nearA-(nearA-a)*0.6 : a;
-    [{a:-WA/2},{a:WA/2}].map(w=>({a:m(w.a), y:P(m(w.a),bSide,WR).y})).sort((p,q)=>p.y-q.y).forEach(w=>wheel(w.a,bSide,WR));
-  };
-  // OPEN wooden bed (no tarp) so the cargo shows. Colors:
-  let bedFar  = '#8a6a44';
+  // Classic two-wheeler: ONE large wheel per side on a single center axle.
+  let wheelPair = (bSide) => wheel(0, bSide, WR);
+  // OPEN wooden bed (no tarp) so the cargo shows. Colors — pieces on the
+  // FAR side of the view show their shadowed INNER surface (bedInner);
+  // near-side pieces show lit outer wood:
+  let bedInner= '#74593a';
   let bedNear = '#a07c4c';
   let bedTop  = '#b48c58';
   let bedFloor= '#3a2c1c';
-  let wall = (sgn, fill) => poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WB,CH),P(-L,sgn*WB,CH)], fill);
-  let endBoard = (a, fill) => poly([P(a,-WB,CB),P(a,WB,CB),P(a,WB,CH),P(a,-WB,CH)], fill);
-  // Team-color trim along the near top rim (ownership read — the tarp band did
-  // this before).
-  let bandRim = () => {
-    X.strokeStyle=tc; X.lineWidth=2/UNIT_SCALE; X.lineCap='round';
-    let p1=P(-L,WB,CH), p2=P(L,WB,CH);
-    X.beginPath(); X.moveTo(p1.x,p1.y); X.lineTo(p2.x,p2.y); X.stroke(); X.lineCap='butt';
+  // Plank seams: light interior strokes (convention: rgba .13, never hard
+  // black inside one piece of timber).
+  let seam = (p,q) => {
+    X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=0.8/UNIT_SCALE;
+    X.beginPath();X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);X.stroke();
   };
-  // Cargo heaped in the open bed, centered on screen point (cx,cy) at the rim:
-  // a sack + crate ALWAYS (so it reads as a laden trade cart), plus a shiny
-  // gold heap on the loaded return leg (e.carrying>0 — gold is lumped at the
-  // destination market, see updateTradeCart). Drawn last so goods sit clearly
-  // above the open rim.
-  let drawCargoAt = (cx,cy) => {
-    X.lineJoin='round';
-    // sack
-    X.strokeStyle='#000'; X.lineWidth=lw;
-    X.fillStyle='#cdb98c'; X.beginPath(); X.ellipse(cx-2.6,cy-1.4,2.3,2.7,0,0,Math.PI*2); X.fill(); X.stroke();
-    X.fillStyle='#b6a074'; X.beginPath(); X.ellipse(cx-2.2,cy-0.6,1.0,1.3,0,0,Math.PI*2); X.fill();
-    // crate
-    X.fillStyle='#a07a48'; X.strokeStyle='#000'; X.lineWidth=lw;
-    X.beginPath(); X.rect(cx+0.4,cy-4.4,4.2,4.2); X.fill(); X.stroke();
-    X.strokeStyle='rgba(0,0,0,0.3)'; X.lineWidth=0.8/UNIT_SCALE;
-    X.beginPath(); X.moveTo(cx+0.4,cy-2.3); X.lineTo(cx+4.6,cy-2.3); X.stroke();
-    X.beginPath(); X.moveTo(cx+2.5,cy-4.4); X.lineTo(cx+2.5,cy-0.2); X.stroke();
-    // gold on the loaded return leg
-    if(e.carrying>0){
-      const nug=(nx,ny,r)=>{ X.strokeStyle='#000'; X.lineWidth=lw*0.8; X.fillStyle='#e8b90f';
-        X.beginPath(); X.arc(cx+nx,cy+ny,r,0,Math.PI*2); X.fill(); X.stroke();
-        X.fillStyle='#ffe14d'; X.beginPath(); X.arc(cx+nx-r*0.3,cy+ny-r*0.3,r*0.5,0,Math.PI*2); X.fill(); };
-      nug(-1.2,-2.2,1.7); nug(0.6,-1.6,1.5); nug(-0.4,-3.7,1.4); nug(1.9,-3.1,1.3);
-      let tw=(Math.sin(tick*0.25+e.id)+1)/2;
-      X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
-      X.beginPath(); X.arc(cx-0.2,cy-3.6,0.5+1.1*tw,0,Math.PI*2); X.fill();
-    }
+  let wall = (sgn, fill) => {
+    poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WB,CH),P(-L,sgn*WB,CH)], fill);
+    for(let t of [1/3,2/3]) seam(P(-L,sgn*WB,CB+(CH-CB)*t), P(L,sgn*WB,CB+(CH-CB)*t));
+    if (sgn===1) for(let a of [-0.45*L,0.45*L]) seam(P(a,WB,CB), P(a,WB,CH)); // stakes on the near wall
   };
+  let endBoard = (a, fill) => {
+    poly([P(a,-WB,CB),P(a,WB,CB),P(a,WB,CH),P(a,-WB,CH)], fill);
+    seam(P(a,0,CB), P(a,0,CH));
+  };
+  // Ownership read: the box's visible OUTER walls are painted flat team
+  // color (a solid panel reads far better at gameplay zoom than the old
+  // thin rim stripe). Interior faces/floor stay wood for contrast.
+  // (cargo is the shared drawCartLoad — one canonical load, identical in
+  // every trade phase and through the death sequence)
 
   // Assemble far→near. Near side is +WB for the authored right-facings.
   let nearB = WB+0.4, farB = -(WB+0.4);
   if (useDir===1 || useDir===5) {
-    // Head-on (S/N): a wide open box facing the camera (widened like the ram's
-    // head-on v so it doesn't read as a narrow spike), cargo heaped above the
-    // front board.
-    let frontA = useDir===5 ? -L : L; // the end toward the camera
-    let hw = WB*1.7;
-    // wheels as edge-on slabs at the bottom sides (behind the body)
-    [-1,1].forEach(sd=>{
-      let p=P(frontA*0.4, sd*hw, WR), w2=WTH*1.3, h2=WR*0.78;
-      X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
-      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
-    });
-    // wide wood front box (open top)
-    let bl=P(frontA,-hw,CB), br=P(frontA,hw,CB), tl=P(frontA,-hw,CH), tr=P(frontA,hw,CH);
-    poly([bl,br,tr,tl], bedTop);
-    // team band along the top rim
-    X.strokeStyle=tc; X.lineWidth=2.4/UNIT_SCALE; X.beginPath(); X.moveTo(tl.x,tl.y); X.lineTo(tr.x,tr.y); X.stroke();
-    // cargo heaped above the front board
-    drawCargoAt((tl.x+tr.x)/2, (tl.y+tr.y)/2);
+    // Head-on (S/N): a real shallow open box using the projection's depth
+    // (u.y=±0.55) instead of the old single flat plank — far board first,
+    // thin side rails, floor, cargo peeking over the far rim, then the near
+    // board and near wheels over it. Widened (like the ram's head-on v) so
+    // it doesn't read as a narrow spike.
+    let nearA = useDir===5 ? -L : L; // the end toward the camera
+    let farA  = -nearA;
+    // modest widening only (WB*1.25): the old 1.7 made the head-on cart
+    // read wider than every other view
+    let hw = WB*1.25, fw = hw*0.82, fh = CH*0.9; // far board slightly narrower/shorter (depth cue)
+    // the single axle's two big wheel slabs, behind the body at its sides
+    [-1,1].forEach(sd=>slab(0, sd*hw, WR, WTH*1.2));
+    // far board — we're looking INTO the box, so it shows its inner face
+    poly([P(farA,-fw,CB),P(farA,fw,CB),P(farA,fw,fh),P(farA,-fw,fh)], bedInner);
+    // side rails, edge-on slivers tapering far→near (inner faces too)
+    poly([P(farA,-fw,fh),P(nearA,-hw,CH),P(nearA,-hw,CB),P(farA,-fw,CB)], bedInner);
+    poly([P(farA, fw,fh),P(nearA, hw,CH),P(nearA, hw,CB),P(farA, fw,CB)], bedInner);
+    // interior floor
+    poly([P(farA,-fw,CB),P(farA,fw,CB),P(nearA,hw,CB),P(nearA,-hw,CB)], bedFloor);
+    // the load sits IN the box, sunk low between the boards: the near
+    // board occludes its base, the top rising only to the far rim
+    let cc=P(0,0,CH-3.4);
+    drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
+    // near board: team-colored outer face with plank seams
+    let bl=P(nearA,-hw,CB), br=P(nearA,hw,CB), tl=P(nearA,-hw,CH), tr=P(nearA,hw,CH);
+    poly([bl,br,tr,tl], tc);
+    seam(P(nearA,-hw,(CB+CH)/2), P(nearA,hw,(CB+CH)/2));
+    for(let t of [-0.5,0,0.5]) seam(P(nearA,hw*t,CB), P(nearA,hw*t,CH));
   } else {
-    let frontA = L, backA = -L;
+    // Which END faces away is view-dependent: for the up-facing diagonals
+    // (u.y<0, NE/NW) the +L end points away — hardcoding back=-L left the
+    // actually-near end painted early and buried under the floor, so the
+    // box read as open at the back. Far pieces show their INNER faces.
+    let farEnd = u.y < 0 ? L : -L, nearEnd = -farEnd;
     wheelPair(farB);
-    wall(-1, bedFar);
-    endBoard(backA, bedFar);
+    wall(-1, bedInner);        // far side wall: inner face
+    endBoard(farEnd, bedInner); // far end: inner face
     // open interior floor
     poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor);
-    // near structure (open top)
-    wall(1, bedNear);
-    endBoard(frontA, bedTop);
+    // the load sits INSIDE the open-topped box: drawn between the floor and
+    // the near wall, so the wall occludes its base and only the tops peek
+    // over the rim
+    let cc=P(0,0,CH-2.2);
+    drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
+    // near structure (open top): team-colored outer faces — side wall lit
+    // (tc), end board shaded (tcD)
+    wall(1, tc);
+    endBoard(nearEnd, tcD);
     wheelPair(nearB);
-    bandRim();
-    // cargo heaped in the bed (drawn last so goods sit clearly above the rim)
-    let cc=P(0,0,CH); drawCargoAt(cc.x, cc.y);
   }
   X.restore();
 
-  if (frontNear) { yoke(); drawOx(); }
+  if (hitchPost) hitchPost();
   X.restore();
 }
 
@@ -1127,6 +1727,26 @@ function drawUnitShadow(e, sx, sy){
   if(e.utype==='ram' && (e.dir===3 || e.dir===7)) yoff = -1.5;
   X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, sx, sy + yoff);
   X.rotate(ta);
+  if (e.utype === 'tradecart') {
+    // TWO shadows for the recentered rig: one under the bed (behind the
+    // anchor), one under the ox (ahead of it). The rig's recentering is a
+    // SCREEN-space shift, so the offsets are fixed screen px converted to
+    // tile units per facing (a tile-unit along the facing projects ~36px
+    // on the diagonals but ~45px on E/W — one tile constant sat off-center
+    // on SE/SW).
+    let fxv = Math.cos(ta), fyv = Math.sin(ta);
+    let slen = Math.hypot(fxv*HALF_TW - fyv*HALF_TW, fxv*HALF_TH + fyv*HALF_TH) || 1;
+    // the head-on basis compresses the facing axis (|u|=0.55), so the
+    // drawn rig only shifts ~55% as far on S/N — match it
+    let ulen = (e.dir === 1 || e.dir === 5) ? 0.55 : 1;
+    for (const [px, l, w2] of [[-22*ulen, 0.42, 0.30], [11.5*ulen, 0.30, 0.24]]) {
+      X.save(); X.translate(px/slen, 0); X.scale(l, w2);
+      X.beginPath(); X.arc(0, 0, 1, 0, Math.PI * 2); X.fill();
+      X.restore();
+    }
+    X.restore();
+    return;
+  }
   X.scale(f.len, f.wid);
   X.beginPath(); X.arc(0, 0, 1, 0, Math.PI * 2); X.fill();
   X.restore();
@@ -1361,7 +1981,7 @@ function drawUnit(e){
   } else if(e.utype==='bear'){
     // Bear — heavy quadruped in the sheep's style: one black silhouette
     // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
-    let attacking = e.target && e.path.length===0;
+    let attacking = (e.target||e.__animAttack) && e.path.length===0;
     // Chase/attack read: forward lunge while mauling, slight prowl sway walking
     let lunge = attacking ? Math.max(0, Math.sin(tick*0.35+e.id)) * 3 : 0;
     let sway = e.path.length>0 ? Math.sin(tick*0.25+e.id)*0.05 : 0;
@@ -1816,7 +2436,7 @@ function drawUnit(e){
       X.moveTo(-3.5+humanXOffset,-8+humanYOffset); X.lineTo(-5+humanXOffset-armSwing,-3.5+humanYOffset);
       // Militia mid-slash: the sword arm follows the pumping sword hand
       // (same swing phase as drawBigSword) instead of hanging loose.
-      let slashing = e.utype==='militia' && e.path.length===0 && e.target && !e.corpseRot;
+      let slashing = e.utype==='militia' && e.path.length===0 && (e.target||e.__animAttack) && !e.corpseRot;
       let sA = slashing ? Math.sin(swordSwingAngle(e.id)) : 0;
       X.moveTo(3.5+humanXOffset,-8+humanYOffset);
       if(gripping) X.lineTo(3,-8.8);
@@ -2375,7 +2995,7 @@ function drawUnit(e){
       // sword (drawCorpse draws it on the ground); the shield stays
       // strapped to the arm.
       if(!e.corpseRot){
-        let swinging=e.target&&e.path.length===0;
+        let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
         // Sword hand is fixed to the body — mirrored to the other screen
         // side when the militia faces away from the camera. While
         // swinging, the hand itself pumps with the slash (back and up on
@@ -2391,7 +3011,7 @@ function drawUnit(e){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
       // slow pull-back, fast jab along the shaft. (Corpses drop it —
       // drawCorpse lays it on the ground.)
-      let swinging=e.target&&e.path.length===0;
+      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       X.save(); X.translate(3, -6+humanYOffset);
       if(swinging){
         // Point the shaft at the target: un-mirror first (same trick as
@@ -2427,7 +3047,7 @@ function drawUnit(e){
       // when the real arrow leaves, so the flight reads as THE arrow off
       // the string. Works on the guest too — atkCooldown/target ride the
       // entity sync.
-      let swinging=e.target&&e.path.length===0;
+      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       let bowRof=(UNITS.archer&&UNITS.archer.rof)||60;
       let bowCd=e.atkCooldown||0;
       let justFired=bowCd>bowRof*0.85;                         // string still snapping forward
@@ -2477,7 +3097,7 @@ function drawUnit(e){
       // At rest it parks on the rider's LEFT side, mirrored — the right is
       // where the horse's head rises, and the blade would point into it.
       // (Corpses drop it — drawCorpse lays it on the ground.)
-      let swinging=e.target&&e.path.length===0;
+      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       X.save();
       if(swinging){
         X.translate(6+humanXOffset, -6+humanYOffset);

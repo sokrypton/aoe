@@ -23,7 +23,7 @@
 // they can't disagree — so this needs no manual ZOOM math at all, only
 // dpr (device pixel ratio, for crisp buffers on retina screens), which is
 // an orthogonal concern from gameplay zoom.
-const SIL_UNIT_SIZE = 84;  // logical px — covers any unit
+const SIL_UNIT_SIZE = 112; // logical px — covers any unit (widest: the trade cart's RECENTERED wagon+ox composite, ~±42)
 // Covers the largest building's full drawn silhouette. Measured extents of the
 // 4x4 Town Center from its anchor (footprint-top): ~129px each side, ~102px
 // above, ~94px below (the annex posts hang below the footprint). 340 with the
@@ -93,8 +93,8 @@ function _outlineExtent(e){
   if(f!==2) return null;
 
   const cssPx  = isUnit ? SIL_UNIT_SIZE : SIL_BLDG_SIZE;
-  const anchorX = isUnit ? 42 : cssPx/2;
-  const anchorY = isUnit ? 58 : cssPx*0.62; // 211px above / 129px below the footprint top
+  const anchorX = isUnit ? SIL_UNIT_SIZE/2 : cssPx/2;
+  const anchorY = isUnit ? 66 : cssPx*0.62; // 211px above / 129px below the footprint top
 
   let sx, sy;
   if(isUnit){

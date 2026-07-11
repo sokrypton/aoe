@@ -148,7 +148,7 @@
   ['militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear'].forEach(u => mkU(u));
 
   // ---- Controls ----
-  let galleryAge = 0, galleryZoom = 1.5, walking = false, attacking = false, scrollY = 0;
+  let galleryAge = 0, galleryZoom = 1.5, walking = false, attacking = false, dying = false, scrollY = 0;
   document.querySelectorAll('#style-controls button[data-age]').forEach(b => {
     b.onclick = () => {
       document.querySelectorAll('#style-controls button[data-age]').forEach(x => x.classList.remove('active'));
@@ -169,6 +169,11 @@
   // can't do both.
   let sgAtk = document.getElementById('sg-attack');
   if (sgAtk) sgAtk.onchange = e => { attacking = e.target.checked; };
+  // Death toggle: loops each unit's real corpse sequence (drawCorpse) —
+  // ~2.6s of the death action, then a beat of the ≥12s decay/skeleton
+  // stage, then restart. Wins over walking/attacking.
+  let sgDie = document.getElementById('sg-death');
+  if (sgDie) sgDie.onchange = e => { dying = e.target.checked; };
   window.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') scrollY += 60;
     if (e.key === 'ArrowUp') scrollY = Math.max(0, scrollY - 60);
@@ -261,6 +266,30 @@
               else if (d === 2 || d === 3)       { u.facing = -1; u.facingNorth = false; }
               else if (d === 4)                  { u.facing = -1; u.facingNorth = true;  }
               else                               { u.facing = 1;  u.facingNorth = true;  }
+              aim(u.x, u.y, 90 + i * CELL_W, cy + 55, true);
+              // death toggle: run the REAL corpse sequence on a loop. A
+              // pseudo-corpse per cell mirrors the cell's facing; the clock
+              // plays ~2.6s of death action, jumps to the ≥CORPSE_SKEL
+              // decay stage for 1.5s, then restarts. (Sheep are excluded —
+              // they become a carcass entity, not a corpse.)
+              if (dying && u.utype !== 'sheep') {
+                if (!g.corpses) g.corpses = g.ents.map(uu => ({
+                  type: 'corpse', utype: uu.utype, x: uu.x, y: uu.y, team: 0,
+                  id: uu.id, facing: 1, female: uu.female,
+                  dir: uu.__lockDir, // vehicle wrecks fall in the cell's facing
+                  carrying: uu.utype === 'tradecart' ? 40 : 0, // show the gold spill
+                  deathTime: 0,
+                }));
+                let c = g.corpses[i];
+                c.facing = u.facing;
+                let t = performance.now() % 4100;
+                c.deathTime = performance.now() - (t < 2600 ? t : 12500 + (t - 2600));
+                drawCorpse(c);
+                // gallery never runs the particle system — drop what the
+                // corpse bursts spawn so the array can't grow unbounded
+                if (typeof particles !== 'undefined') particles.length = 0;
+                return;
+              }
               // walking toggle: a dummy path in the facing direction keeps
               // the gait cycle going AND keeps drawUnit's dir derivation
               // pointing the way the cell is labelled
@@ -270,7 +299,6 @@
               } else {
                 u.path = [];
               }
-              aim(u.x, u.y, 90 + i * CELL_W, cy + 55, true);
               drawUnit(u);
             });
           });

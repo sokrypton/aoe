@@ -280,7 +280,12 @@ canvas {
   max-height: 100%;
 }
 #sel-details .hp-bar-bg {
-  width: 100px;
+  /* Fluid, not a fixed 100px — on narrow phone widths the stats column can
+     drop below 100px and a fixed bar overflows it, which (with the card's
+     overflow-y:auto) draws a horizontal scrollbar under the HP bar. Same
+     fix as styles.css. */
+  width: auto;
+  max-width: 100px;
   margin-top: 3px;
   margin-bottom: 2px;
 }
@@ -546,7 +551,7 @@ canvas {
 .icon-ram                 {background-position:57.1429%  71.4286%;}
 .icon-MARKET              {background-position:71.4286%  71.4286%;}
 .icon-tradecart           {background-position:100%      0%;}
-.icon-spare1              {background-position:100%      14.2857%;}
+.icon-compass             {background-position:100%      14.2857%;} /* Auto Scout */
 .icon-spare2              {background-position:100%      28.5714%;}
 .icon-spare3              {background-position:100%      42.8571%;}
 .icon-spare4              {background-position:100%      57.1429%;}
@@ -565,18 +570,43 @@ canvas {
    resource icons with the live gold price printed below each. Dedicated .mkt-*
    classes (not .act-btn) so it stays visible in the classic skin, which hides
    .btn-label / .cost. Spans the full command-grid width. ---- */
-.mkt-exchange{ width:100%; flex-basis:100%; grid-column:1 / -1; box-sizing:border-box;
+/* Sized to content (not width:100%) so overflow on a narrow panel extends the
+   action strip's horizontal scroll instead of clipping — see styles.css.
+   grid-column 1/-1: this skin's #actions is a 52px command GRID (desktop
+   layout below) — the exchange must span the full row or the next button
+   (rally) lands in an overlapping cell and draws on top of it. */
+.mkt-exchange{ flex:0 0 auto; width:max-content; box-sizing:border-box;
+  grid-column:1 / -1; grid-row:span 2;
   display:flex; flex-direction:column; gap:2px; padding:2px; }
 .mkt-row{ display:flex; align-items:center; gap:4px; }
 .mkt-row-label{ flex:0 0 30px; font:bold 10px sans-serif; color:#e8dab0;
   text-transform:uppercase; letter-spacing:0.5px; }
-.mkt-cell{ display:flex; flex-direction:column; align-items:center; cursor:pointer;
-  padding:1px 4px; border-radius:4px; background:rgba(0,0,0,0.28); }
+/* Icon-beside-price (not stacked): keeps the two rows short enough to fit
+   this skin's 80px bottom panel, so both skins share one shape.
+   Uniform min-width so the Buy and Sell rows form aligned equal columns. */
+.mkt-cell{ display:flex; align-items:center; justify-content:center; gap:4px;
+  cursor:pointer; min-width:60px; box-sizing:border-box;
+  padding:4px 7px; border-radius:4px; background:rgba(0,0,0,0.28); }
 .mkt-cell:hover{ background:rgba(255,255,255,0.14); }
-.mkt-ico{ width:22px; height:22px; }
-.mkt-price{ display:flex; align-items:center; gap:2px;
+.mkt-cell.disabled{ opacity:0.4; filter:grayscale(0.8); cursor:not-allowed; }
+.mkt-cell.disabled:hover{ background:rgba(0,0,0,0.28); }
+.mkt-ico{ width:20px; height:20px; }
+.mkt-price{ display:flex; align-items:center;
   font:bold 10px sans-serif; color:#ffe14d; }
-.mkt-price .res-mini-icon{ width:9px; height:9px; }
+
+/* ---- Queue/prepaid count badge on action buttons (js/ui.js) — see
+   styles.css. Slightly smaller here: the command-grid cells are 52px. ---- */
+.act-btn .queue-count{
+  position:absolute; top:1px; right:1px; z-index:2;
+  min-width:18px; height:18px; padding:0 4px; box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:9px; background:#1d5c2e; border:1px solid #ffd700;
+  color:#fff; font:bold 11px sans-serif; cursor:pointer;
+  box-shadow:1px 1px 2px rgba(0,0,0,0.6);
+}
+.act-btn .queue-count:hover{ background:#a61c1c; }
+.act-btn .queue-count.queue-count-static{ cursor:default; }
+.act-btn .queue-count.queue-count-static:hover{ background:#1d5c2e; }
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -585,10 +615,6 @@ canvas {
   width:100%;
   height:100%;
   margin-bottom:0;
-}
-.queue-slot .queue-icon{
-  width:16px;
-  height:16px;
 }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
@@ -1364,83 +1390,6 @@ canvas {
   }
 }
 
-/* ---- TRAINING QUEUE STYLES ---- */
-.train-container {
-  margin-top: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid #5a3e1a;
-  border-radius: 4px;
-  padding: 6px;
-  box-shadow: inset 0 0 5px #000;
-}
-.train-title {
-  font-size: 11px;
-  color: #ffebad;
-  margin-bottom: 4px;
-  text-shadow: 1px 1px 1px #000;
-}
-.train-bar-bg {
-  width: 100%;
-  height: 6px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-.train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-queue-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.queue-slot {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 10px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 2px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.queue-slot:hover {
-  border-color: #ffd700;
-  background: linear-gradient(180deg, #a61c1c 0%, #5a0808 100%);
-}
-.queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 /* ---- STANCE / AUTO-ATTACK BUTTON STYLES ---- */
 .stance-status {
@@ -1595,73 +1544,6 @@ canvas {
   pointer-events: none;
 }
 
-/* ---- COMPACT TRAINING QUEUE STYLES ---- */
-.train-compact {
-  margin-top: 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.train-compact .train-bar-bg {
-  width: 100px;
-  height: 4px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 1px;
-  overflow: hidden;
-}
-.train-compact .train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-compact .train-queue-slots {
-  display: flex;
-  gap: 3px;
-}
-.train-compact .queue-slot {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 8px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 1px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.train-compact .queue-slot .queue-icon {
-  width: 12px;
-  height: 12px;
-}
-.train-compact .queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.train-compact .queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.train-compact .active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 
 /* ---- HOVER TOOLTIP (desktop only) ---- */
@@ -1911,6 +1793,7 @@ canvas {
   align-items: stretch;
   padding-top: 6px;
 }
+
 #sel-grid{
   gap: 4px;
   padding: 2px;
@@ -1982,10 +1865,6 @@ canvas {
 #fs-btn:hover{
   background: linear-gradient(180deg, #726d5c 0%, #3c392f 100%);
   border-color: #e8d99a;
-}
-.queue-slot, .train-container, .train-bar-bg{
-  border-radius: 1px;
-  border-color: #8f8560;
 }
 #tooltip{
   background: radial-gradient(ellipse at top left, #45433c 0%, #201e1a 100%);

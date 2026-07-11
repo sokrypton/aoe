@@ -5,12 +5,14 @@ const _treesScratch = [];
 const _drawableScratch = [];
 const _treePool = new Map();      // tile key (y*MAP+x) -> tree record
 const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
+const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
+const _farmProxyPool = new Map();   // farm entity id -> ground proxy + per-tile crop proxies
 let _poolMapSize = -1;
 
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
-  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _poolMapSize = MAP; }
+  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _poolMapSize = MAP; }
   // Black background so unexplored fog (drawTile() skips drawing when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
@@ -102,11 +104,60 @@ function render(){
       prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1) + 0.3;
       allDrawable.push(prox.back);
       allDrawable.push(prox.front);
+    } else if (en.type === 'building' && en.btype === 'MARKET' && en.complete) {
+      // Walkable plaza: one proxy per part so units sort BETWEEN the stalls.
+      // Ground sits under everything on the footprint (FARM-style +0.05);
+      // each prop sorts at its own tile (MARKET_PART_ANCHORS) with the gate
+      // front's +0.3 tiebreak, so a prop draws over a unit sharing its tile.
+      // A construction site takes the plain single-drawable path below.
+      let prox = _marketProxyPool.get(en.id);
+      if(!prox){
+        prox = { ground: {type:'market_part', part:'ground', entity:en, x:0, y:0, sortVal:0} };
+        for (let p in MARKET_PART_ANCHORS)
+          prox[p] = {type:'market_part', part:p, entity:en, x:0, y:0, sortVal:0};
+        _marketProxyPool.set(en.id, prox);
+      }
+      prox.ground.entity = en;
+      prox.ground.x = en.x; prox.ground.y = en.y;
+      prox.ground.sortVal = en.y + en.x + 0.05 - 1000; // flat plaza: same ground layer as farms
+      allDrawable.push(prox.ground);
+      for (let p in MARKET_PART_ANCHORS) {
+        let [ax, ay] = MARKET_PART_ANCHORS[p];
+        prox[p].entity = en;
+        prox[p].x = en.x + ax; prox[p].y = en.y + ay;
+        prox[p].sortVal = en.y + ay + en.x + ax + 0.3;
+        allDrawable.push(prox[p]);
+      }
+    } else if (en.type === 'building' && en.btype === 'FARM') {
+      // The soil bed is flat — it can never occlude a 3D drawable, so it
+      // lives in a ground layer far below the depth contest. The wheat has
+      // height though: one crop proxy PER TILE, each sorting at its own
+      // tile's depth, so stalks beside a building win/lose the depth contest
+      // tile by tile (a single whole-farm key was always wrong on one side
+      // of an adjacent center-keyed building). +0.05 keeps a unit (+0.25)
+      // above its own tile's wheat while nearer tiles' wheat covers its feet.
+      let prox = _farmProxyPool.get(en.id);
+      if(!prox){
+        prox = { ground: {type:'farm_part', part:'ground', entity:en, x:0, y:0, sortVal:0}, crops: [] };
+        for (let dy = 0; dy < (en.h || 1); dy++)
+          for (let dx = 0; dx < (en.w || 1); dx++)
+            prox.crops.push({type:'farm_part', part:[dx,dy], entity:en, x:0, y:0, sortVal:0});
+        _farmProxyPool.set(en.id, prox);
+      }
+      prox.ground.entity = en;
+      prox.ground.x = en.x; prox.ground.y = en.y;
+      prox.ground.sortVal = en.y + en.x + 0.05 - 1000;
+      allDrawable.push(prox.ground);
+      for (const c of prox.crops) {
+        c.entity = en;
+        c.x = en.x + c.part[0]; c.y = en.y + c.part[1];
+        c.sortVal = c.y + c.x + 0.05;
+        allDrawable.push(c);
+      }
     } else {
       let sortVal;
       if (en.type === 'building') {
-        if (en.btype === 'FARM') sortVal = en.y + en.x + 0.05;
-        else sortVal = en.y + (en.h || 1) / 2 + en.x + (en.w || 1) / 2;
+        sortVal = en.y + (en.h || 1) / 2 + en.x + (en.w || 1) / 2;
       } else {
         if (en.utype === 'sheep_carcass') sortVal = en.y + en.x + 0.05;
         else sortVal = en.y + en.x + 0.25;
@@ -152,7 +203,7 @@ function render(){
     let f;
     if (e.type === 'building') {
       f = buildingFogLevel(e);
-    } else if (e.type === 'gate_back' || e.type === 'gate_front') {
+    } else if (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part') {
       f = buildingFogLevel(e.entity);
     } else {
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
@@ -164,7 +215,7 @@ function render(){
     // from the sim checksum, so this never affects lockstep.
     if (e.type === 'corpse' && f === 2) e.seen = true;
     // Resolve the actual entity and team for gate proxy objects
-    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front') ? e.entity : e;
+    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
@@ -182,6 +233,8 @@ function render(){
     if(e.type==='building') drawBuilding(e);
     else if(e.type==='gate_back') drawBuilding(e.entity, 'back');
     else if(e.type==='gate_front') drawBuilding(e.entity, 'front');
+    else if(e.type==='market_part') drawBuilding(e.entity, e.part);
+    else if(e.type==='farm_part') drawBuilding(e.entity, e.part);
     else if(e.type==='corpse') drawCorpse(e);
     else if(e.type==='tree') drawTreeEntity(e.x, e.y);
     else drawUnit(e);
@@ -198,38 +251,96 @@ function render(){
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
 
-  // Draw selected building's rally point flag & line (AoE2-style)
-  if (selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam) {
+  // ---- Flag/post visuals: ONE vocabulary shared by rally points and guard
+  // posts (a rally IS the building's guard flag). drawFlagLine draws the
+  // faint dashed lead line; drawFlagMarker plants the pennant — `tall` is
+  // the cursor-ghost variant ("held", not planted). Screen coords helpers. ----
+  let flagScreen = (wx, wy) => {
+    let p = toIso(wx, wy);
+    return { x: p.ix - camX + W/2, y: p.iy - camY + H/2 + topH };
+  };
+  let drawFlagLine = (x1, y1, x2, y2, alpha) => {
+    X.strokeStyle = '#ffd700';
+    X.globalAlpha = alpha;
+    X.lineWidth = 1.5;
+    X.setLineDash([4, 4]);
+    X.beginPath(); X.moveTo(x1, y1); X.lineTo(x2, y2); X.stroke();
+    X.setLineDash([]);
+    X.globalAlpha = 1;
+  };
+  let drawFlagMarker = (x, y, tall) => {
+    let h = tall ? 16 : 12, w = tall ? 10 : 8;
+    X.globalAlpha = tall ? 0.9 : 1;
+    X.fillStyle = '#ffd700';
+    X.fillRect(x - 1, y - h, 2, h); // pole
+    X.beginPath();
+    X.moveTo(x + 1, y - h);
+    X.lineTo(x + w, y - h + (tall ? 4 : 3));
+    X.lineTo(x + 1, y - h + (tall ? 8 : 6));
+    X.closePath();
+    X.fill();
+    X.globalAlpha = 1;
+  };
+
+  // Selected building's rally point (AoE2-style). Hidden while RE-placing
+  // it (settingRally) — the old flag deactivates and only the cursor ghost
+  // shows, so there's never two flags on screen fighting for attention.
+  if (!window.settingRally && selected.length > 0 && selected[0].type === 'building' && selected[0].team === myTeam) {
     let bldg = selected[0];
     let bData = BLDGS[bldg.btype];
     if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {
-      let bCenter = toIso(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
-      let rPos = toIso(bldg.rallyX + 0.5, bldg.rallyY + 0.5);
-      
-      let sx1 = bCenter.ix - camX + W/2;
-      let sy1 = bCenter.iy - camY + H/2 + topH;
-      let sx2 = rPos.ix - camX + W/2;
-      let sy2 = rPos.iy - camY + H/2 + topH;
-      
-      // Draw dotted rally line
-      X.strokeStyle = '#ffd700';
-      X.lineWidth = 1.5;
-      X.setLineDash([4, 4]);
-      X.beginPath();
-      X.moveTo(sx1, sy1);
-      X.lineTo(sx2, sy2);
-      X.stroke();
-      X.setLineDash([]);
-      
-      // Draw small gold rally flag
-      X.fillStyle = '#ffd700';
-      X.fillRect(sx2 - 1, sy2 - 12, 2, 12); // pole
-      X.beginPath();
-      X.moveTo(sx2 + 1, sy2 - 12);
-      X.lineTo(sx2 + 8, sy2 - 9);
-      X.lineTo(sx2 + 1, sy2 - 6);
-      X.closePath();
-      X.fill();
+      let from = flagScreen(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
+      let to = flagScreen(bldg.rallyX + 0.5, bldg.rallyY + 0.5);
+      drawFlagLine(from.x, from.y, to.x, to.y, 1);
+      drawFlagMarker(to.x, to.y, false);
+    }
+  }
+
+  // Selected units' GUARD posts — EXPLICIT flags only (guardFlagged):
+  // implicit posts from plain moves and rally spawns behave the same but
+  // stay invisible; a move order must not look like it planted a flag.
+  // One faint line per guarding unit; flags dedupe into 2-tile clusters so
+  // a formation reads as a shared post instead of a picket fence. Hidden
+  // while RE-placing (settingGuard): old flags deactivate, only the cursor
+  // ghost shows — same rule as the rally flag.
+  if (!window.settingGuard && selected.length > 0 && selected[0].type === 'unit') {
+    let drawnFlags = new Set();
+    selected.forEach(u => {
+      if (u.type !== 'unit' || u.team !== myTeam || u.guardX == null || !u.guardFlagged) return;
+      let from = flagScreen(u.x, u.y);
+      let to = flagScreen(u.guardX + 0.5, u.guardY + 0.5);
+      drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+      let key = Math.round(u.guardX / 2) + '_' + Math.round(u.guardY / 2);
+      if (!drawnFlags.has(key)) {
+        drawnFlags.add(key);
+        drawFlagMarker(to.x, to.y, false);
+      }
+    });
+  }
+
+  // Flag placement GHOST — armed by EITHER the Guard button (units) or the
+  // Set Rally button (building): a taller flag rides the cursor (mouseX/Y
+  // also tracks touch drags, same as the building ghost) with faint preview
+  // lines from whatever will take the flag — click/tap drops it.
+  if ((window.settingGuard || window.settingRally) && selected.length > 0 && typeof mouseX === 'number') {
+    let mt = screenToTile(mouseX, mouseY);
+    if (mt) {
+      let g = flagScreen(mt.x + 0.5, mt.y + 0.5);
+      if (window.settingGuard) {
+        selected.forEach(u => {
+          if (u.type !== 'unit' || u.team !== myTeam) return;
+          let from = flagScreen(u.x, u.y);
+          drawFlagLine(from.x, from.y, g.x, g.y, 0.45);
+        });
+      } else {
+        let bldg = selected[0];
+        let bData = bldg && BLDGS[bldg.btype];
+        if (bldg && bldg.type === 'building' && bldg.team === myTeam && bData) {
+          let from = flagScreen(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
+          drawFlagLine(from.x, from.y, g.x, g.y, 0.45);
+        }
+      }
+      drawFlagMarker(g.x, g.y, true);
     }
   }
 
