@@ -562,6 +562,11 @@ document.addEventListener('contextmenu',e=>{
     window.settingRally=false; // right-click itself handles rally; clear the flag
     window.settingGuard=false; // right-click issues a manual order instead
     doCommand(e.clientX,e.clientY);
+    // index.html has ONE interaction model: a right-click command applies
+    // the same keep/release rules as the left-click tap path (handleTap) —
+    // e.g. assigning villagers to a resource releases the selection.
+    // Classic keeps AoE2's sticky selection on right-click orders.
+    if(!isClassicUI && selected.some(s=>s.type==='unit'&&s.team===myTeam)) finishMobileUnitCommand();
   }
 });
 

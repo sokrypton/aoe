@@ -358,6 +358,33 @@ function pageSuite() {
       assertEq(r.sel, 0, 'selection must be RELEASED after a gather order');
     });
 
+    await tapT('desktop-tap: RIGHT-click resource assign also RELEASES (same rules as left)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        map[30][33].t=TERRAIN.BERRIES; map[30][33].res=100; markMapDirty(33,30);
+        window.__pts=(scr)=>({ b: scr(33.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y, { button: 'right' });
+      const r = await page.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='command')})`);
+      if (!r.cmd) throw new Error('no command captured');
+      assertEq(r.sel, 0, 'right-click gather order must RELEASE the selection on index.html');
+    });
+
+    await tapT('desktop-tap: advance-age button is display-only while researching (no tap-cancel)', async () => {
+      await page.evaluate(tapStage(`
+        const tc=entities.find(en=>en.btype==='TC'&&en.team===0)||createBuilding('TC',26,26,0);
+        tc.research={target:1,tick:50};
+        selected=[tc]; window.__pts=()=>({});`));
+      const r = await page.evaluate(`(()=>{ updateUI();
+        const btn=document.getElementById('advance-progress-btn');
+        if(!btn) return {found:false};
+        btn.click();
+        return {found:true, cancel:window.__cmds.find(c=>c.kind==='cancel-research')||null,
+                hasHandler:!!btn.onclick};
+      })()`);
+      if (!r.found) throw new Error('researching advance button not rendered');
+      if (r.hasHandler || r.cancel) throw new Error('tap skin must not cancel research from the button: ' + JSON.stringify(r));
+    });
+
     await tapT('desktop-tap: shift-click toggles a unit in and out of the selection', async () => {
       const pts = await page.evaluate(tapStage(`
         const a=createUnit('militia',28,30,0), b=createUnit('archer',33,27,0);

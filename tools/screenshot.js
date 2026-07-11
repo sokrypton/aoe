@@ -10,6 +10,7 @@
 //
 // Scenes:
 //   market  own Market on open grass, villagers standing on/near the plaza
+//   farm    growth ramp left→right: ripe → mid → young → harvested → exhausted
 //   carts   trade carts in all 8 facings + one loaded (carrying gold)
 //   fog     enemy Market under explored-not-visible fog (darken path) and
 //           the own Market selected (outline/mask path)
@@ -67,6 +68,19 @@ const SCENES = {
       const v = createUnit('villager', x, y, 0); v.dir = i % 8; v.female = i % 2 === 0;
     });
     (${pageLookAt})(29.5, 29.5);
+    render();`,
+  farm: `(${pageStage})();
+    // growth ramp left→right: ripe → mid → young → harvested-short →
+    // exhausted. Farms are 2x2; three tiles of lane between them. Farm food
+    // lives on the ANCHOR tile only (js/entities.js placeBuilding).
+    [[22,28,1.0],[25,28,0.65],[28,28,0.35],[31,28,0.12],[34,28,0]].forEach(([x,y,fr])=>{
+      const f = createBuilding('FARM', x, y, 0);
+      if (fr === 0) { f.exhausted = true; map[y][x].res = 0; }
+      else map[y][x].res = Math.round(f.maxFood * fr);
+    });
+    // depth-sort probe: a villager standing between crop rows
+    const v = createUnit('villager', 23, 29.5, 0); v.dir = 0;
+    (${pageLookAt})(29, 29);
     render();`,
   carts: `(${pageStage})();
     const F = ${pageCartFacing};

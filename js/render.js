@@ -6,7 +6,7 @@ const _drawableScratch = [];
 const _treePool = new Map();      // tile key (y*MAP+x) -> tree record
 const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
 const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
-const _farmProxyPool = new Map();   // farm entity id -> ground proxy + per-tile crop proxies
+const _farmProxyPool = new Map();   // farm entity id -> flat ground-layer proxy (bed + crops)
 let _poolMapSize = -1;
 
 // ---- Flag/post visuals: ONE vocabulary shared by rally points, guard
@@ -161,31 +161,21 @@ function render(){
         allDrawable.push(prox[p]);
       }
     } else if (en.type === 'building' && en.btype === 'FARM') {
-      // The soil bed is flat — it can never occlude a 3D drawable, so it
-      // lives in a ground layer far below the depth contest. The wheat has
-      // height though: one crop proxy PER TILE, each sorting at its own
-      // tile's depth, so stalks beside a building win/lose the depth contest
-      // tile by tile (a single whole-farm key was always wrong on one side
-      // of an adjacent center-keyed building). +0.05 keeps a unit (+0.25)
-      // above its own tile's wheat while nearer tiles' wheat covers its feet.
+      // AoE2-style: the farm is FLAT — bed, furrows and wheat all live in
+      // one ground-layer drawable far below the depth contest, so units
+      // (and everything else) always draw over the field. The wheat is
+      // short enough that no per-sheaf depth sorting is worth its
+      // complexity; a whole rabbit hole of proxy schemes fell to the fact
+      // that unit sprites are drawn well below their sort anchor anyway.
       let prox = _farmProxyPool.get(en.id);
       if(!prox){
-        prox = { ground: {type:'farm_part', part:'ground', entity:en, x:0, y:0, sortVal:0}, crops: [] };
-        for (let dy = 0; dy < (en.h || 1); dy++)
-          for (let dx = 0; dx < (en.w || 1); dx++)
-            prox.crops.push({type:'farm_part', part:[dx,dy], entity:en, x:0, y:0, sortVal:0});
+        prox = { ground: {type:'farm_part', part:'ground', entity:en, x:0, y:0, sortVal:0} };
         _farmProxyPool.set(en.id, prox);
       }
       prox.ground.entity = en;
       prox.ground.x = en.x; prox.ground.y = en.y;
       prox.ground.sortVal = en.y + en.x + 0.05 - 1000;
       allDrawable.push(prox.ground);
-      for (const c of prox.crops) {
-        c.entity = en;
-        c.x = en.x + c.part[0]; c.y = en.y + c.part[1];
-        c.sortVal = c.y + c.x + 0.05;
-        allDrawable.push(c);
-      }
     } else {
       let sortVal;
       if (en.type === 'building') {

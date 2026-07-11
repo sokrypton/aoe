@@ -208,8 +208,16 @@ function setSelHp(html){
 function setPortraitIcon(port, key, fallbackEmoji){
   [...port.classList].filter(c=>c==='sprite-icon'||c.startsWith('icon-')).forEach(c=>port.classList.remove(c));
   if (SPRITE_ICON_KEYS.has(key)) {
+    // The sprite renders on an INNER layer (clipper > img) instead of the
+    // tile's own background: skins can then ZOOM the img past the sheet
+    // cell's baked-in empty margins (the clipper crops the spill) without
+    // touching the tile's border/box. Mobile leaves it unscaled — pixel-
+    // identical to the old background-image approach.
     port.textContent='';
-    port.classList.add('sprite-icon','icon-'+key);
+    let s=document.createElement('div');
+    s.className='tile-sprite';
+    s.innerHTML='<div class="tile-sprite-img sprite-icon icon-'+key+'"></div>';
+    port.appendChild(s);
   } else {
     port.textContent = fallbackEmoji || '';
   }
@@ -933,15 +941,23 @@ function updateUI(){
           btn.dataset.tipType='action';
           if(e.research){
             btn.dataset.tipLabel='Researching '+AGES[e.research.target].name;
-            btn.dataset.tipDesc='The Town Center cannot train villagers while advancing. Click to cancel and refund the full cost.';
             btn.id='advance-progress-btn';
             // Keeps the age-crest icon (not a generic research glyph) so
-            // WHAT is being bought stays readable — the fill + Cancel line
-            // already say it's in progress.
-            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${AGES[e.research.target].key}"></div><div class="btn-label">${AGES[e.research.target].name}</div><span class="cost">Cancel</span>`
+            // WHAT is being bought stays readable — the fill (+ classic's
+            // Cancel line) already say it's in progress.
+            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${AGES[e.research.target].key}"></div><div class="btn-label">${AGES[e.research.target].name}</div>`
+              +(isClassicUI?`<span class="cost">Cancel</span>`:'')
               +`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:0%;"></div>`;
             btn.style.position='relative';
-            btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
+            if(isClassicUI){
+              // Classic keeps AoE2's cancel-by-clicking-again. The tap-model
+              // skin deliberately does NOT: on touch, a stray tap on the TC
+              // card silently refunded a whole age advance.
+              btn.dataset.tipDesc='The Town Center cannot train villagers while advancing. Click to cancel and refund the full cost.';
+              btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
+            } else {
+              btn.dataset.tipDesc='The Town Center cannot train villagers while advancing.';
+            }
           } else {
             btn.dataset.cost=JSON.stringify(next.cost);
             btn.dataset.tipLabel='Advance to '+next.name;
