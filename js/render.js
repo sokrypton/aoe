@@ -283,6 +283,17 @@ function render(){
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
 
+  // Just-clicked flag PREVIEWS (issuer-side, cosmetic): rally/guard
+  // commands execute INPUT_DELAY_TICKS after the click, and the planted
+  // flag would render at the STALE spot for those frames — a flicker-and-
+  // jump on every flag drop. While a preview is fresh, draw the flag at
+  // the clicked spot instead; expire once the exec tick has safely passed.
+  const PREVIEW_TICKS = (typeof INPUT_DELAY_TICKS === 'number' ? INPUT_DELAY_TICKS : 4) + 2;
+  let rallyPrev = window.pendingRallyPreview;
+  if (rallyPrev && tick - rallyPrev.at > PREVIEW_TICKS) { rallyPrev = window.pendingRallyPreview = null; }
+  let guardPrev = window.pendingGuardPreview;
+  if (guardPrev && tick - guardPrev.at > PREVIEW_TICKS) { guardPrev = window.pendingGuardPreview = null; }
+
   // Selected building's rally point (AoE2-style). Hidden while RE-placing
   // it (settingRally) — the old flag deactivates and only the cursor ghost
   // shows, so there's never two flags on screen fighting for attention.
@@ -290,8 +301,10 @@ function render(){
     let bldg = selected[0];
     let bData = BLDGS[bldg.btype];
     if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {
+      let rx = bldg.rallyX, ry = bldg.rallyY;
+      if (rallyPrev && rallyPrev.bldgId === bldg.id) { rx = rallyPrev.x; ry = rallyPrev.y; }
       let from = flagScreen(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
-      let to = flagScreen(bldg.rallyX + 0.5, bldg.rallyY + 0.5);
+      let to = flagScreen(rx + 0.5, ry + 0.5);
       drawFlagLine(from.x, from.y, to.x, to.y, 1);
       drawFlagMarker(to.x, to.y, false);
     }
@@ -308,7 +321,19 @@ function render(){
     let drawnFlags = _drawnFlagsScratch;
     drawnFlags.clear();
     selected.forEach(u => {
-      if (u.type !== 'unit' || u.team !== myTeam || u.guardX == null || !u.guardFlagged) return;
+      if (u.type !== 'unit' || u.team !== myTeam) return;
+      // Fresh guard preview: this unit's post was JUST re-flagged but the
+      // command hasn't executed yet — draw its line to the clicked spot
+      // instead of the stale (or absent) post.
+      if (guardPrev && guardPrev.ids.has(u.id)) {
+        let from = flagScreen(u.x, u.y);
+        let to = flagScreen(guardPrev.x + 0.5, guardPrev.y + 0.5);
+        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+        let key = 'prev';
+        if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
+        return;
+      }
+      if (u.guardX == null || !u.guardFlagged) return;
       let from = flagScreen(u.x, u.y);
       let to = flagScreen(u.guardX + 0.5, u.guardY + 0.5);
       drawFlagLine(from.x, from.y, to.x, to.y, 0.55);

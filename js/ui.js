@@ -1528,8 +1528,10 @@ window.reactivateFarm = reactivateFarm;
       const u = UNITS[e.utype];
       if (u) d.stats.push(...unitStatChips(u));
       if (members.length === 1 && e.utype === 'villager') {
+        // Same icon+count chip the classic card uses ([wood] 7), not prose —
+        // buildTipHTML injects stats as HTML, so the sprite chip just works.
         let rt = e.carrying > 0 ? e.carryType : TASK_RES[e.task];
-        if (rt) d.stats.push(`carrying ${e.carrying || 0} ${rt}`);
+        if (rt) d.stats.push(`<span class="res-mini-icon icon-${rt}"></span> ${e.carrying || 0}`);
         else if (e.task === 'build') d.stats.push('🔨 building');
         else if (!e.task && !e.target && e.path.length === 0) d.stats.push('💤 idle');
       }

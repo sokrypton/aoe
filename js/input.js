@@ -531,7 +531,17 @@ C.addEventListener('mouseup',e=>{
     if(isDragging&&dragStart&&dragEnd){
       doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
     } else {
-      if (window.settingRally) {
+      if (!isClassicUI) {
+        // index.html: a desktop click IS a tap — the page has ONE
+        // interaction model on every device. handleTap owns the rally/
+        // guard flag modes and the select-vs-command context decision
+        // (and, via finishMobileUnitCommand, the same keep/release rules
+        // as touch). Right-click still commands too (contextmenu below);
+        // left-drag box-select was dispatched above and is unaffected.
+        handleTap(e.clientX, e.clientY, e.shiftKey);
+      } else if (window.settingRally) {
+        // classic.html keeps the AoE2 contract: left selects, right
+        // commands — that fidelity is this page's reason to exist.
         commitRallyAt(e.clientX, e.clientY);
       } else if (window.settingGuard) {
         dropGuardFlagAt(e.clientX, e.clientY);
@@ -893,17 +903,24 @@ function dropGuardFlagAt(sx, sy){
   if(gt && selected.length>0){
     let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
     if(tgt && !sameSide(tgt.team, myTeam)) tgt = null; // enemy tap → ground post
-    submitCommand({ kind:'guard',
-      unitIds: selected.filter(s=>s.type==='unit').map(s=>s.id),
-      x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+    let ids = selected.filter(s=>s.type==='unit').map(s=>s.id);
+    submitCommand({ kind:'guard', unitIds: ids, x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+    // Issuer-side flag preview — same latency cover as the rally preview
+    // (see doCommand): guardX only updates at the exec tick, so without
+    // this the units' stale posts (or no flag at all) render for a few
+    // frames before jumping to the clicked spot.
+    window.pendingGuardPreview = { ids: new Set(ids), x: gt.x, y: gt.y, at: tick };
     showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
   }
   window.settingGuard = false;
   updateUI();
 }
 
-// Context-aware tap handler for mobile
-function handleTap(sx,sy){
+// Context-aware tap handler — the ONE decision tree for the tap-model skin:
+// touch taps on every device, AND desktop left-clicks on index.html (the
+// mouseup dispatch forks here when !isClassicUI). `shift` is only ever
+// passed by the desktop caller; touch leaves it undefined.
+function handleTap(sx,sy,shift){
   // 1. If placing a building, place it
   if(placing){
     doPlace(sx,sy);
@@ -940,6 +957,25 @@ function handleTap(sx,sy){
       if(tappedB.team===myTeam) tappedOwn = tappedB;
       else tappedEnemy = tappedB;
     }
+  }
+
+  // 2c. Desktop tap mode: Shift+click on an own UNIT toggles it in/out of
+  // the selection (AoE2-DE-style, and it matches the HUD grid's
+  // shift-click-to-remove). From a non-unit selection it starts a fresh
+  // selection with that unit. Shift over anything else falls through to
+  // the normal tap tree.
+  if (shift && tappedOwn && tappedOwn.type === 'unit') {
+    if (selected.length && selected.every(s => s.type === 'unit')) {
+      let i = selected.indexOf(tappedOwn);
+      if (i >= 0) selected.splice(i, 1); else selected.push(tappedOwn);
+    } else {
+      selected = [tappedOwn];
+    }
+    window.settingRally = false;
+    window.settingGuard = false;
+    if (window.playSound) playSound('click');
+    updateUI();
+    return;
   }
 
   // 3. Nothing selected → just select
@@ -1536,8 +1572,13 @@ function doCommand(sx,sy){
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
-  // If a friendly training building is selected, right-clicking sets its Rally Point
+  // If a friendly training building is selected, this is the RALLY path.
+  // classic.html: right-click sets the rally, exactly as AoE2 does. The
+  // tap skin (index.html) only reaches here through the Set Rally button's
+  // armed mode (commitRallyAt calls doCommand while settingRally is still
+  // true) — a stray right-click must NOT silently relocate the flag there.
   if(selected[0].type==='building'&&selected[0].team===myTeam){
+    if(!isClassicUI && !window.settingRally) return;
     let bldg=selected[0];
     let bData=BLDGS[bldg.btype];
     if(!bData || !bData.builds || bData.builds.length === 0) return;
@@ -1578,6 +1619,12 @@ function doCommand(sx,sy){
     // World-space command, scheduled on the tick queue (js/commands.js) —
     // the mutation itself happens in execRally at the stamped tick.
     submitCommand({ kind: 'rally', bldgId: bldg.id, tileX: tile.x, tileY: tile.y, targetId: rTarget ? rTarget.id : null });
+    // Issuer-side flag PREVIEW (cosmetic, never sim state): the command
+    // executes INPUT_DELAY_TICKS from now, and without this the planted
+    // flag renders at the OLD rally spot for those frames — a visible
+    // flicker-and-jump on every rally click. render.js draws the flag at
+    // the preview spot until the exec tick has safely passed.
+    window.pendingRallyPreview = { bldgId: bldg.id, x: tile.x, y: tile.y, at: tick };
     return;
   }
   // Visual command marker

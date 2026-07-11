@@ -50,6 +50,20 @@ const variant = window.UI_VARIANT || 'mobile';
 
 const SWITCH_LABEL = variant === 'classic' ? '📱 Switch to Mobile UI' : '🏰 Switch to Classic UI';
 
+// Desktop controls differ per skin: classic keeps the AoE2 left-select /
+// right-command contract; the mobile skin uses the TAP model on desktop
+// too (a left-click selects OR commands by context — see the mouseup
+// dispatch in js/input.js).
+const DESKTOP_HELP_ROWS = variant === 'classic'
+  ? `<div class="help-kv"><span class="help-k">Left-click</span><span class="help-v">select units</span></div>
+     <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">do stuff</span></div>
+     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>`
+  : `<div class="help-kv"><span class="help-k">Click</span><span class="help-v">select, or command selected units</span></div>
+     <div class="help-kv"><span class="help-k">Shift-click</span><span class="help-v">add/remove a unit</span></div>
+     <div class="help-kv"><span class="help-k">Drag</span><span class="help-v">box-select</span></div>
+     <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">also commands</span></div>
+     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>`;
+
 document.body.insertAdjacentHTML('afterbegin', `
 <canvas id="game"></canvas>
 <div id="ui">
@@ -150,9 +164,7 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div class="help-controls">
         <div class="help-controls-col">
           <div class="help-controls-title">🖱️ Desktop</div>
-          <div class="help-kv"><span class="help-k">Left-click</span><span class="help-v">select units</span></div>
-          <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">do stuff</span></div>
-          <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>
+          ${DESKTOP_HELP_ROWS}
         </div>
         <div class="help-controls-col">
           <div class="help-controls-title">📱 Mobile</div>

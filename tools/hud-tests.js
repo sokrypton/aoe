@@ -273,6 +273,155 @@ function pageSuite() {
     const tipVisible = await page.evaluate(`document.getElementById('tooltip').classList.contains('visible')`);
     results.push({ name: 'hud: market cell tooltip fires on hover', pass: !!tipVisible, detail: '' });
 
+    // ---- Desktop tap-mode (index.html): REAL mouse events through the
+    // mouseup dispatch. submitCommand is stubbed to capture commands (the
+    // sim is paused anyway); screen coords derive from the same transform
+    // screenToTile inverts. classic.html gets a regression guard at the end.
+    const tapStage = (code) => `(()=>{
+      NUM_TEAMS=2;window.__pendingMatchSeed=7;setMapSize('small');restartGame('standard');
+      gameStarted=true;gamePaused=true;window.playSound=()=>{};window.showMsg=()=>{};
+      document.getElementById('tutorial').style.display='none';
+      entities.length=0;entitiesById.clear();selected.length=0;
+      for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){const t=map[y][x];t.occupied=null;t.res=0;t.t=TERRAIN.GRASS;markMapDirty(x,y);}
+      window.fogDisabled=true;updateFog();gameOver=false;
+      createBuilding('TC',5,5,0);createBuilding('TC',52,52,1);
+      if(!window.__realSubmit) window.__realSubmit = window.submitCommand;
+      window.__cmds = []; window.submitCommand = (c)=>{ window.__cmds.push(c); };
+      const iso=toIso(30,30);camX=iso.ix;camY=iso.iy;window.targetCamX=camX;window.targetCamY=camY;
+      ${code}
+      updateUI(); try{render()}catch(e){}
+      const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+      return window.__pts(scr);
+    })()`;
+    const tapT = async (name, fn) => {
+      try { await fn(); results.push({ name, pass: true, detail: '' }); }
+      catch (err) { results.push({ name, pass: false, detail: String(err && err.message || err) }); }
+    };
+    const assertEq = (a, b, msg) => { if (a !== b) throw new Error(`${msg}: ${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
+
+    await tapT('desktop-tap: click own unit selects it (no command)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0);
+        window.__pts=(scr)=>({ m: scr(m.x, m.y) });`));
+      await page.mouse.click(pts.m.x, pts.m.y - 8);
+      const r = await page.evaluate(`({sel:selected.length, own:selected[0]&&selected[0].utype, cmds:window.__cmds.length})`);
+      assertEq(r.sel, 1, 'selection size'); assertEq(r.own, 'militia', 'selected type'); assertEq(r.cmds, 0, 'commands');
+    });
+
+    await tapT('desktop-tap: ground click commands the selection and KEEPS it (walk order)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='command')})`);
+      if (!r.cmd) throw new Error('no command captured');
+      assertEq(r.cmd.tileX, 35, 'tileX'); assertEq(r.cmd.tileY, 30, 'tileY');
+      assertEq(r.sel, 1, 'selection must be KEPT after a walk order');
+    });
+
+    await tapT('desktop-tap: resource click assigns villagers and RELEASES them', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        map[30][33].t=TERRAIN.BERRIES; map[30][33].res=100; markMapDirty(33,30);
+        window.__pts=(scr)=>({ b: scr(33.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='command')})`);
+      if (!r.cmd) throw new Error('no command captured');
+      assertEq(r.sel, 0, 'selection must be RELEASED after a gather order');
+    });
+
+    await tapT('desktop-tap: shift-click toggles a unit in and out of the selection', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('militia',28,30,0), b=createUnit('archer',33,27,0);
+        window.__pts=(scr)=>({ a: scr(a.x,a.y), b: scr(b.x,b.y) });`));
+      await page.mouse.click(pts.a.x, pts.a.y - 8);
+      await page.keyboard.down('Shift');
+      await page.mouse.click(pts.b.x, pts.b.y - 8);
+      const r1 = await page.evaluate(`selected.length`);
+      await page.mouse.click(pts.b.x, pts.b.y - 8);
+      await page.keyboard.up('Shift');
+      const r2 = await page.evaluate(`selected.length`);
+      assertEq(r1, 2, 'shift-click must ADD'); assertEq(r2, 1, 'second shift-click must REMOVE');
+    });
+
+    await tapT('desktop-tap: left-drag box-select still works', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const u1=createUnit('militia',29,30,0), u2=createUnit('archer',31,30,0);
+        // Box corners in SCREEN space around both sprites (world corners on
+        // the iso diagonal collapse to a zero-width screen rect).
+        window.__pts=(scr)=>{
+          const p1=scr(u1.x,u1.y), p2=scr(u2.x,u2.y);
+          return { tl:{x:Math.min(p1.x,p2.x)-50, y:Math.min(p1.y,p2.y)-60},
+                   br:{x:Math.max(p1.x,p2.x)+50, y:Math.max(p1.y,p2.y)+30} };
+        };`));
+      await page.mouse.move(pts.tl.x, pts.tl.y);
+      await page.mouse.down();
+      await page.mouse.move(pts.br.x, pts.br.y, { steps: 6 });
+      await page.mouse.up();
+      const r = await page.evaluate(`selected.length`);
+      assertEq(r, 2, 'box-select count');
+    });
+
+    await tapT('desktop-tap: rally click previews the flag at the clicked tile during command latency', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const bar=createBuilding('BARRACKS',26,26,0); bar.rallyX=40; bar.rallyY=12;
+        selected=[bar]; window.settingRally=true; window.pendingRallyPreview=null;
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({prev:window.pendingRallyPreview, stale:[selected[0].rallyX,selected[0].rallyY]})`);
+      if (!r.prev || r.prev.x !== 30 || r.prev.y !== 30) throw new Error('preview missing/wrong: ' + JSON.stringify(r.prev));
+      assertEq(r.stale[0], 40, 'rally must still be stale (command queued, not executed)');
+    });
+
+    await tapT('desktop-tap: right-click does NOT move a rally on index.html (button-armed mode only)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const bar=createBuilding('BARRACKS',26,26,0); bar.rallyX=40; bar.rallyY=12;
+        selected=[bar]; window.pendingRallyPreview=null;
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y, { button: 'right' });
+      const r = await page.evaluate(`({cmds:window.__cmds.filter(c=>c.kind==='rally').length, prev:window.pendingRallyPreview})`);
+      assertEq(r.cmds, 0, 'rally command must not be issued by right-click on the tap skin');
+      if (r.prev) throw new Error('preview must not appear');
+    });
+
+    await tapT('classic-guard: right-click DOES set the rally on classic.html (AoE2 standard)', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const bar=createBuilding('BARRACKS',26,26,0); bar.rallyX=40; bar.rallyY=12;
+        selected=[bar];
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`));
+      await cpage.mouse.click(pts.g.x, pts.g.y, { button: 'right' });
+      const r = await cpage.evaluate(`window.__cmds.find(c=>c.kind==='rally')`);
+      if (!r) throw new Error('classic right-click must issue the rally command');
+      assertEq(r.tileX, 30, 'rally tileX');
+      await cpage.close();
+    });
+
+    await tapT('classic-guard: left ground click never commands on classic.html', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(35.5, 30.5) });`));
+      await cpage.mouse.click(pts.g.x, pts.g.y);
+      const r = await cpage.evaluate(`({sel:selected.length, cmds:window.__cmds.filter(c=>c.kind==='command').length})`);
+      assertEq(r.cmds, 0, 'classic left-click must NOT command');
+      assertEq(r.sel, 0, 'classic empty click deselects');
+      await cpage.close();
+    });
+
+    // Un-stub for anything that runs after this section.
+    await page.evaluate(`if (window.__realSubmit) window.submitCommand = window.__realSubmit;`);
+
     let failed = 0;
     for (const r of results) {
       console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.name}${r.pass ? '' : '  — ' + r.detail}`);
