@@ -2253,22 +2253,26 @@ function drawBuilding(e, part = null){
     X.fillText(label,flagX+7,flagY+2);
     X.textAlign='left';
   }
-  // Train progress
+  // Train / research progress — stacked with the HP bar ABOVE the roof
+  // (they used to hang below the footprint, eating map space under every
+  // producing building). When the HP bar is showing (hp<max), the progress
+  // bar tucks in just beneath it; otherwise it takes the HP bar's spot.
+  let progY = (e.hp < e.maxHp && bh > 0) ? sy - bh - 4 : sy - bh - 11;
   if(e.queue&&e.queue.length>0){
     let pct=e.trainTick/(UNITS[e.queue[0]].trainTime);
     let bww=b.w*24;
-    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,sy+bhh*2+3,bww+2,5); // black border box
-    X.fillStyle='#003';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
-    X.fillStyle='#0af';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
+    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,progY,bww+2,5); // black border box
+    X.fillStyle='#003';X.fillRect(sx-bww/2,progY+1,bww,3);
+    X.fillStyle='#0af';X.fillRect(sx-bww/2,progY+1,bww*pct,3);
   }
-  // Age research progress — same bar as training, gold fill, updates every
-  // frame (smooth, unlike the throttled panel text).
+  // Age research — same bar, gold fill, updates every frame (smooth,
+  // unlike the throttled panel text).
   if(e.research){
     let pct=e.research.tick/AGES[e.research.target].researchTicks;
     let bww=b.w*24;
-    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,sy+bhh*2+3,bww+2,5);
-    X.fillStyle='#330';X.fillRect(sx-bww/2,sy+bhh*2+4,bww,3);
-    X.fillStyle='#fc0';X.fillRect(sx-bww/2,sy+bhh*2+4,bww*pct,3);
+    X.fillStyle='#000000';X.fillRect(sx-bww/2-1,progY,bww+2,5);
+    X.fillStyle='#330';X.fillRect(sx-bww/2,progY+1,bww,3);
+    X.fillStyle='#fc0';X.fillRect(sx-bww/2,progY+1,bww*pct,3);
   }
   } // end fog-aware UI
 }

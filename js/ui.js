@@ -7,6 +7,118 @@
 // ever queried with unit/building/age keys.
 const SPRITE_ICON_KEYS = new Set(Object.keys(window.SPRITE_CELLS));
 
+// Market trade cell metadata shared by both skins' exchange UIs: tooltip
+// text, affordability cost and the submit handler for one buy/sell cell.
+// Transactions run in execMarketTrade (deterministic, js/commands.js).
+function wireMktCell(cell, dir, res){
+  let price=marketPrices[res];
+  let gold=dir==='buy'?price:Math.floor(price*MARKET_SELL_RATIO/100);
+  let resLabel=res.charAt(0).toUpperCase()+res.slice(1);
+  cell.dataset.tipType='action';
+  cell.dataset.tipLabel=(dir==='buy'?'Buy 100 ':'Sell 100 ')+resLabel;
+  cell.dataset.tipDesc=dir==='buy'
+    ?('Spend '+price+' gold to receive 100 '+resLabel+'. Buying raises its price.')
+    :('Sell 100 '+resLabel+' for '+gold+' gold. Selling lowers its price.');
+  // Feeds refreshActionAffordability: buying costs gold, selling costs a
+  // full lot of the resource (same cost-key letters as BLDGS/UNITS costs).
+  cell.dataset.cost=JSON.stringify(dir==='buy'?{g:price}:{[res[0]]:MARKET_LOT});
+  cell.onclick=()=>{
+    if(gameOver)return;
+    if(cell.classList.contains('disabled')){
+      showMsg('Not enough resources!');
+      if(window.playSound)playSound('error');
+      return;
+    }
+    submitCommand({kind:'market-trade',dir,resType:res});
+  };
+  return gold;
+}
+
+// CLASSIC skin's exchange: AoE2-style rows of real 52px command buttons in
+// the grid — [Buy][food][wood][stone] / [Sell][food][wood][stone], the
+// live gold price printed on each button.
+function appendMktGridRows(act){
+  ['buy','sell'].forEach(dir=>{
+    let row=document.createElement('div');
+    row.className='mkt-grid-row';
+    let lab=document.createElement('div');
+    lab.className='mkt-lab';
+    lab.textContent=dir==='buy'?'Buy':'Sell';
+    row.appendChild(lab);
+    ['food','wood','stone'].forEach(res=>{
+      let cell=document.createElement('div');
+      cell.className='act-btn mkt-btn mkt-cell';
+      let gold=wireMktCell(cell, dir, res);
+      cell.innerHTML=`<div class="btn-emoji sprite-icon icon-${res}"></div>`
+        +`<div class="mkt-btn-price">${gold}</div>`;
+      row.appendChild(cell);
+    });
+    act.appendChild(row);
+  });
+}
+
+// MOBILE popup's exchange widget (two labeled rows of compact cells with
+// the price beside each icon) — see refreshMktPopup.
+function buildMktExchange(){
+  const RES=['food','wood','stone'];
+  let wrap=document.createElement('div');wrap.className='mkt-exchange';
+  const makeRow=(dir)=>{
+    let row=document.createElement('div');row.className='mkt-row';
+    let lab=document.createElement('div');lab.className='mkt-row-label';
+    lab.textContent=dir==='buy'?'Buy':'Sell';
+    row.appendChild(lab);
+    RES.forEach(res=>{
+      let cell=document.createElement('div');cell.className='mkt-cell';
+      let gold=wireMktCell(cell, dir, res);
+      cell.innerHTML=`<div class="mkt-ico sprite-icon icon-${res}"></div>`
+        +`<div class="mkt-price">${gold}</div>`;
+      row.appendChild(cell);
+    });
+    return row;
+  };
+  wrap.appendChild(makeRow('buy'));
+  wrap.appendChild(makeRow('sell'));
+  return wrap;
+}
+
+// Mobile-skin Market POPUP: a dismissible card over the battlefield (the
+// inline exchange filled the whole landscape rail). Auto-opens when a
+// Market is selected, ✕ hides it for that selection, the strip's Trade
+// button toggles it back. Pass null to hide (selection changed/game over);
+// the hidden flag resets then so the next Market selection opens fresh.
+function refreshMktPopup(mkt){
+  let pop=document.getElementById('mkt-popup');
+  if(!mkt){
+    window.__mktPopupHidden=false;
+    if(pop)pop.style.display='none';
+    return;
+  }
+  if(window.__mktPopupHidden){ if(pop)pop.style.display='none'; return; }
+  if(!pop){
+    pop=document.createElement('div');
+    pop.id='mkt-popup';
+    document.body.appendChild(pop);
+  }
+  pop.style.display='';
+  pop.innerHTML=`<div id="mkt-popup-head"><span class="sprite-icon icon-MARKET" id="mkt-popup-ico"></span><span>Market</span><button type="button" id="mkt-popup-x">✕</button></div>`;
+  pop.querySelector('#mkt-popup-x').onclick=()=>{ window.__mktPopupHidden=true; pop.style.display='none'; };
+  pop.appendChild(buildMktExchange());
+  refreshActionAffordability();
+}
+
+// Re-tapping an already-SELECTED Market reopens a dismissed exchange popup
+// — clicking the building again is the natural "show me the trade screen"
+// gesture, and since the selection doesn't change, no rebuild fires to do
+// it implicitly. Called from the canvas tap (js/input.js) and the HUD
+// selection tile. No-op in classic (inline exchange) and for anything
+// that isn't an own completed Market.
+function maybeReopenMktPopup(ent){
+  if(isClassicUI || !ent || ent.type!=='building' || ent.btype!=='MARKET'
+    || !ent.complete || ent.team!==myTeam) return;
+  window.__mktPopupHidden=false;
+  refreshMktPopup(ent);
+}
+
 // True when every selected thing is an own military unit that can take a
 // Guard Position flag — the same eligibility filter execGuard applies
 // deterministically (js/commands.js). Rams count: they never auto-engage,
@@ -33,12 +145,16 @@ let isClassicUI = document.body.classList.contains('classic-ui');
 // tooltip (descriptorForActBtn), the selection-tile tooltip
 // (descriptorForSelTile) and the classic info card (updateUI) — and they
 // must always show the same numbers for the same thing. ----
-function unitStatChips(u){
+// labeled=true spells the stats out as words ("⚔️ Attack 5") — the classic
+// selection card has the room and reads friendlier; tooltips and the mobile
+// card keep the compact emoji-only form (default).
+function unitStatChips(u, labeled){
   const chips = [];
-  if (u.atk > 0) chips.push(`⚔️ ${u.atk}`);
-  if (u.range > 0) chips.push(`🏹 ${u.range}`);
-  if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) chips.push(`🛡️ ${u.armor.m}/${u.armor.p}`);
-  if (u.speed > 0) chips.push(`🏃 ${u.speed.toFixed(2)}`);
+  const L = labeled ? {atk:'Attack ', range:'Range ', armor:'Armor ', speed:'Speed '} : {atk:'', range:'', armor:'', speed:''};
+  if (u.atk > 0) chips.push(`⚔️ ${L.atk}${u.atk}`);
+  if (u.range > 0) chips.push(`🏹 ${L.range}${u.range}`);
+  if (u.armor && (u.armor.m > 0 || u.armor.p > 0)) chips.push(`🛡️ ${L.armor}${u.armor.m}/${u.armor.p}`);
+  if (u.speed > 0) chips.push(`🏃 ${L.speed}${u.speed.toFixed(2)}`);
   return chips;
 }
 // TC and guard towers fire 5-damage arrows (AoE2); null for everything else.
@@ -80,6 +196,13 @@ function iconKey(type, team = myTeam){
 // AI's bell; in multiplayer it's the guest's own.
 function myBellActive(){
   return !!(window.bellRinging && window.bellRinging[myTeam]);
+}
+
+// Classic-only HP slot under the portrait (see #sel-hp in page-shell.js).
+// Mobile keeps the HP block inline in #sel-details and never fills this.
+function setSelHp(html){
+  let el=document.getElementById('sel-hp');
+  if(el) el.innerHTML=html;
 }
 
 function setPortraitIcon(port, key, fallbackEmoji){
@@ -250,8 +373,12 @@ function updateUI(){
     let u = UNITS[selected[0].queue[0]];
     if (u) {
       let pct = Math.floor(selected[0].trainTick / u.trainTime * 100);
-      let fill = document.querySelector('#actions .act-btn.training-active .btn-progress-fill');
-      if (fill) fill.style.width = pct + '%';
+      // querySelectorAll: the fill lives on the train button, and (classic
+      // skin) the front queue slot's darkness veil drains as it trains.
+      document.querySelectorAll('#actions .training-active .btn-progress-fill')
+        .forEach(fill => { fill.style.width = pct + '%'; });
+      document.querySelectorAll('#sel-queue .queue-slot .train-veil')
+        .forEach(veil => { veil.style.height = (100 - pct) + '%'; });
     }
   }
   // Same live patch for the Advance button's research fill — smooth every
@@ -368,7 +495,18 @@ function updateUI(){
   if (minimapWrap) {
     minimapWrap.classList.toggle('build-active', !!(placing || window.isDraggingWall));
   }
-  if(rebuildActions)act.innerHTML='';
+  if(rebuildActions){
+    act.innerHTML='';
+    // The classic queue lane (#sel-queue, center panel) is rebuilt in the
+    // same pass as the action buttons — clear it on the same cadence.
+    let sq=document.getElementById('sel-queue');
+    if(sq) sq.innerHTML='';
+    // Selection changed: unless the new selection is an own completed
+    // Market, retire the exchange popup (and reset its dismissed flag).
+    let mktSel = selected.length===1 && selected[0].type==='building'
+      && selected[0].btype==='MARKET' && selected[0].complete && selected[0].team===myTeam;
+    if(!isClassicUI && !mktSel) refreshMktPopup(null);
+  }
 
   // "Back" — leftmost action button whenever anything is selected, a
   // full-size mobile-friendly tap target (same size as every other action
@@ -589,7 +727,10 @@ function updateUI(){
             : `Click: select only this group. Shift-click: remove it from the selection.`,
           onClick: (g,ev)=>{
             if(ev.shiftKey) selected=selected.filter(u=>!g.members.includes(u));
-            else selected=g.members.slice();
+            else {
+              selected=g.members.slice();
+              if(g.members.length===1) maybeReopenMktPopup(g.members[0]);
+            }
             updateUI();
           },
           onRemove: (g)=>{
@@ -614,20 +755,24 @@ function updateUI(){
 
   let port = document.getElementById('sel-portrait');
   if(gameOver){
+    if(!isClassicUI) refreshMktPopup(null); // no trading over the end screen
     let iWon = didIWin();
     if (port) { setPortraitIcon(port, null, iWon ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
+    setSelHp('');
     document.getElementById('sel-name').textContent=iWon?'VICTORY!':'DEFEAT!';
     document.getElementById('sel-details').textContent=iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
     return;
   }
   if(!gameStarted){
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
+    setSelHp('');
     document.getElementById('sel-name').textContent='Choose Difficulty';
     document.getElementById('sel-details').textContent='Select Easy, Medium, or Hard to begin';
     return;
   }
 
   if(selected.length===0){
+    setSelHp('');
     // Nothing selected: the modern skin (index.html) surfaces the current
     // AGE here — its top-bar age chip is hidden on mobile (cramped), so
     // this idle box is where age lives. More useful than the old game-name
@@ -670,17 +815,27 @@ function updateUI(){
     // below), so the card always shows the normal HP/garrison/dropoff info.
     let det;
     {
-      det=`HP: ${Math.ceil(e.hp)}/${e.maxHp}`;
-      det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
+      // Classic: AoE2's read — the bar sits directly under the portrait at
+      // the portrait's width, numbers beneath it (#sel-hp). Mobile keeps
+      // the "HP: x/y" text + thin bar in the details column.
+      let hpBlock = isClassicUI
+        ? `<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div><div class="hp-num">${Math.ceil(e.hp)}/${e.maxHp}</div>`
+        : `HP: ${Math.ceil(e.hp)}/${e.maxHp}<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${hpColor};"></div></div>`;
+      setSelHp(isClassicUI ? hpBlock : '');
+      det = isClassicUI ? '' : hpBlock;
 
       let arrows = buildingArrowStats(e.btype);
       if(arrows) {
-        det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;"><span class="sel-combat-stats">⚔️ ${arrows.atk}  🏹 ${arrows.range}</span></div>`;
+        // Classic spells the stats out, one recessed chip per stat.
+        let aChips = isClassicUI
+          ? [`⚔️ Attack ${arrows.atk}`, `🏹 Range ${arrows.range}`]
+          : [`⚔️ ${arrows.atk}`, `🏹 ${arrows.range}`];
+        det += `<div class="det-stats"><span class="sel-combat-stats">${aChips.map(c=>`<span class="stat-chip">${c}</span>`).join('')}</span></div>`;
       }
       // The TC card skips the garrison line — its count already shows on the
       // building itself (the number by the flag) and in the garrison grid.
       if(e.complete && garrisonCap(e) > 0 && e.btype !== 'TC') {
-        det += `<div style="margin-top:1px;">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
+        det += `<div class="det-row">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
       }
       // (No "Building: X%" row while under construction — the cyan HP bar
       // above carries the progress, matching the in-world bar.)
@@ -690,17 +845,17 @@ function updateUI(){
         // the narrow portrait card these text rows read as extra grey bars
         // under the HP bar. Camp dropoffs keep their line for now.
         if(b.drop && e.btype !== 'MILL' && !b.pop) {
-          det+=`<div style="margin-top:1px;">Dropoff: ${b.drop}</div>`;
+          det+=`<div class="det-row">Dropoff: ${b.drop}</div>`;
         }
         else if(b.isFarm){
           if(e.exhausted){
-            det+=`<div style="color:#ff4444;font-weight:bold;margin-top:1px;">EXHAUSTED</div>`;
+            det+=`<div class="det-row det-alert">EXHAUSTED</div>`;
             if(e.buildProgress > 0) {
-              det+=`<div style="margin-top:1px;">Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
+              det+=`<div class="det-row">Reseeding: ${Math.floor(e.buildProgress/e.buildTime*100)}%</div>`;
             }
           } else {
             let tr=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
-            det+=`<div style="margin-top:1px;">Food remaining: ${tr}</div>`;
+            det+=`<div class="det-row">Food remaining: ${tr}</div>`;
           }
         }
       }
@@ -737,11 +892,14 @@ function updateUI(){
       if(e.complete && b.builds){
         // Locked (future-age) units are HIDDEN, not greyed — AoE2-style:
         // the menu only offers what you can actually train right now.
-        // Queue feedback lives ON each train button (no separate queue
-        // widget): the actively-training unit's button carries a bottom
-        // progress fill (same anatomy as Advance Age), and any queued unit
-        // shows a count badge — tapping the badge cancels one (refund),
-        // tapping the button queues one more.
+        // Queue feedback lives ON each train button: the actively-training
+        // unit's button carries a bottom progress fill (same anatomy as
+        // Advance Age), and any queued unit shows a count badge. The badge
+        // is DISPLAY-ONLY (pointer-events:none): a rapid second tap lands
+        // exactly where the badge appears, and a corner tap that CANCELLED
+        // the unit just queued was a nasty surprise — clicks pass through
+        // to the button, so double-tap = queue two. Cancelling lives in the
+        // classic skin's queue slots below.
         b.builds.filter(ut=>isUnlocked(myTeam,ut)).forEach(ut=>{
           let u=UNITS[ut];
           let btn=document.createElement('div');btn.className='act-btn';
@@ -756,7 +914,7 @@ function updateUI(){
           btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div>${costChips(u.cost)}`;
           let queued=e.queue?e.queue.filter(q=>q===ut).length:0;
           if(queued>0){
-            btn.innerHTML+=`<div class="queue-count" title="${queued} queued — tap to cancel one (refund)">${queued}</div>`;
+            btn.innerHTML+=`<div class="queue-count" title="${queued} queued">${queued}</div>`;
           }
           if(e.queue&&e.queue.length>0&&e.queue[0]===ut){
             let pct=Math.floor(e.trainTick/u.trainTime*100);
@@ -764,14 +922,9 @@ function updateUI(){
             btn.innerHTML+=`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:${pct}%;"></div>`;
           }
           btn.onclick=()=>trainUnit(e,ut);
-          let badge=btn.querySelector('.queue-count');
-          if(badge)badge.onclick=(ev)=>{
-            ev.stopPropagation();
-            let idx=e.queue.lastIndexOf(ut); // newest first: refunds the last one queued
-            if(idx>=0)cancelQueue(e.id,idx);
-          };
           act.appendChild(btn);
         });
+
 
         // ---- Advance Age (TC only) ----
         if(e.btype==='TC'&&teamAge&&teamAge[myTeam]<AGES.length-1){
@@ -834,6 +987,40 @@ function updateUI(){
             act.appendChild(rallyBtn);
           }
         }
+        // CLASSIC skin: the queue as its own STRIP of small slot buttons in
+        // the CENTER panel's #sel-queue lane (real AoE2 shows the training
+        // queue in the info panel, and the wide center card has the room).
+        // One recessed slot per queued unit, click cancels it (full
+        // refund); the front slot wears the training veil. Classic hides
+        // the count badge via CSS and shows this instead; the mobile skin
+        // gets no cancel affordance at all (deliberate — see badge comment
+        // above).
+        if (isClassicUI && e.queue && e.queue.length > 0) {
+          let strip = document.createElement('div');
+          strip.className = 'queue-strip-row';
+          e.queue.forEach((ut, idx) => {
+            let u = UNITS[ut];
+            let slot = document.createElement('div');
+            slot.className = 'queue-slot' + (idx === 0 ? ' training-active' : '');
+            slot.dataset.tipType = 'action';
+            slot.dataset.tipLabel = 'Queued: ' + (u ? u.name : ut);
+            slot.dataset.tipDesc = 'Click to cancel and refund.';
+            let icon = SPRITE_ICON_KEYS.has(iconKey(ut))
+              ? `<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div>`
+              : `<div class="btn-emoji">${u && u.icon || ''}</div>`;
+            // AoE2's training read: the un-trained fraction of the FRONT
+            // slot is veiled in darkness that drains upward as the unit
+            // trains (live-patched with the fills every frame).
+            slot.innerHTML = icon + `<div class="queue-x">✕</div>`
+              + (idx === 0
+                ? `<div class="train-veil" style="height:${100 - Math.floor(e.trainTick / UNITS[e.queue[0]].trainTime * 100)}%;"></div>`
+                : '');
+            slot.onclick = () => cancelQueue(e.id, idx);
+            strip.appendChild(slot);
+          });
+          let lane = document.getElementById('sel-queue');
+          (lane || act).appendChild(strip);
+        }
       }
 
       if(e.complete && e.btype === 'MILL') {
@@ -849,11 +1036,8 @@ function updateUI(){
         let prepaid=resourceStore(myTeam).prepaidFarms||0;
         if(prepaid>0)btn.innerHTML+=`<div class="queue-count queue-count-static" title="${prepaid} reseed${prepaid>1?'s':''} prepaid">${prepaid}</div>`;
         btn.onclick=()=>prepayFarm();
-        // The static badge must be INERT: on train buttons the same-looking
-        // badge means "tap to cancel one", and letting a badge tap bubble
-        // into prepayFarm() silently bought ANOTHER reseed.
-        let staticBadge=btn.querySelector('.queue-count-static');
-        if(staticBadge)staticBadge.onclick=(ev)=>{ ev.stopPropagation(); };
+        // (Badges are pointer-events:none — a tap here goes to the button,
+        // which is prepayFarm, i.e. exactly what the tap means.)
         act.appendChild(btn);
       }
       if(b.isFarm && e.exhausted) {
@@ -867,50 +1051,30 @@ function updateUI(){
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
       }
-      // Market commodity exchange: two labeled rows (Buy / Sell) of resource
-      // icons with the live gold price printed below each. Prices drift as
-      // everyone trades (marketPrices, js/core.js); the transaction runs in
-      // execMarketTrade (deterministic) — this only submits the command. A
-      // self-contained widget (own .mkt-* classes, styled in styles.css AND
-      // classic-style.css) so it reads the same in both skins, which hide
-      // .act-btn labels/costs.
+      // Market commodity exchange (buildMktExchange below): CLASSIC shows
+      // it inline in the command grid as before; the MOBILE skin shows a
+      // dismissible POPUP over the battlefield instead — the inline widget
+      // filled the whole landscape rail and buried the other buttons, and
+      // the popup has room for bigger prices. The strip gets a Trade
+      // button that reopens the popup after ✕.
       if(e.complete && e.btype === 'MARKET'){
-        const RES=['food','wood','stone'];
-        let wrap=document.createElement('div');wrap.className='mkt-exchange';
-        const makeRow=(dir)=>{
-          let row=document.createElement('div');row.className='mkt-row';
-          let lab=document.createElement('div');lab.className='mkt-row-label';
-          lab.textContent=dir==='buy'?'Buy':'Sell';
-          row.appendChild(lab);
-          RES.forEach(res=>{
-            let price=marketPrices[res];
-            let gold=dir==='buy'?price:Math.floor(price*MARKET_SELL_RATIO/100);
-            let resLabel=res.charAt(0).toUpperCase()+res.slice(1);
-            let cell=document.createElement('div');cell.className='mkt-cell';
-            cell.dataset.tipType='action';
-            cell.dataset.tipLabel=(dir==='buy'?'Buy 100 ':'Sell 100 ')+resLabel;
-            cell.dataset.tipDesc=dir==='buy'
-              ?('Spend '+price+' gold to receive 100 '+resLabel+'. Buying raises its price.')
-              :('Sell 100 '+resLabel+' for '+gold+' gold. Selling lowers its price.');
-            // Feeds refreshActionAffordability: buying costs gold, selling
-            // costs a full lot of the resource. Same cost-key letters as
-            // BLDGS/UNITS costs (RES_KEYS, js/core.js).
-            cell.dataset.cost=JSON.stringify(dir==='buy'?{g:price}:{[res[0]]:MARKET_LOT});
-            // Price is a bare number in gold-colored text — the gold-coin
-            // mini icon added noise, and every market price is gold anyway.
-            cell.innerHTML=`<div class="mkt-ico sprite-icon icon-${res}"></div>`
-              +`<div class="mkt-price">${gold}</div>`;
-            cell.onclick=()=>{ if(gameOver)return; submitCommand({kind:'market-trade',dir,resType:res}); };
-            row.appendChild(cell);
-          });
-          return row;
-        };
-        wrap.appendChild(makeRow('buy'));
-        wrap.appendChild(makeRow('sell'));
-        // Ahead of the rally button: the exchange is the Market's primary
-        // action, and on a narrow portrait strip whatever comes first is
-        // what's visible without scrolling.
-        act.insertBefore(wrap, act.querySelector('.rally-btn'));
+        if (isClassicUI) {
+          // AoE2-style: the exchange is two full-width rows of REAL square
+          // command buttons — Buy food/wood/stone, then Sell — price
+          // printed on each button, row label recessed like the queue
+          // lane. Appended last so the train/rally buttons stay put.
+          appendMktGridRows(act);
+        } else {
+          let pbtn=document.createElement('div');pbtn.className='act-btn';
+          pbtn.id='mkt-trade-btn';
+          pbtn.dataset.tipType='action';
+          pbtn.dataset.tipLabel='Trade';
+          pbtn.dataset.tipDesc='Open the Market exchange to buy and sell resources for gold.';
+          pbtn.innerHTML=`<div class="btn-emoji sprite-icon icon-gold"></div><div class="btn-label">Trade</div>`;
+          pbtn.onclick=()=>{ window.__mktPopupHidden=!window.__mktPopupHidden; refreshMktPopup(e); };
+          act.insertBefore(pbtn, act.querySelector('.rally-btn'));
+          refreshMktPopup(e);
+        }
       }
     }
   } else {
@@ -938,8 +1102,14 @@ function updateUI(){
     if (hpPct < 20) hpColor = '#cc3333';
     else if (hpPct < 50) hpColor = '#d9a711';
     let isCarcass = e.utype === 'sheep_carcass';
-    let det = isCarcass ? `Food remaining: ${e.hp}/${e.maxHp}` : `HP: ${e.hp}/${e.maxHp}`;
-    det+=`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${isCarcass ? '#e2b13c' : hpColor};"></div></div>`;
+    // Same classic-vs-mobile HP routing as the building card above:
+    // classic = portrait-width bar with numbers beneath, mobile = text + bar.
+    let hpBlock = isClassicUI
+      ? `<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${isCarcass ? '#e2b13c' : hpColor};"></div></div><div class="hp-num">${isCarcass ? 'Food ' : ''}${e.hp}/${e.maxHp}</div>`
+      : (isCarcass ? `Food remaining: ${e.hp}/${e.maxHp}` : `HP: ${e.hp}/${e.maxHp}`)
+        +`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${isCarcass ? '#e2b13c' : hpColor};"></div></div>`;
+    setSelHp(isClassicUI ? hpBlock : '');
+    let det = isClassicUI ? '' : hpBlock;
 
     // Display combat stats for military units
     let uData = UNITS[e.utype];
@@ -948,9 +1118,9 @@ function updateUI(){
       // (.sel-combat-stats{display:none} in styles.css — space is tight and
       // the long-press/hover tooltips carry the same numbers), while the
       // job/carrying/idle status icons after them stay visible everywhere.
-      let combat = unitStatChips(uData);
+      let combat = unitStatChips(uData, isClassicUI);
       let stats = [];
-      if (combat.length) stats.push(`<span class="sel-combat-stats">${combat.join('  ')}</span>`);
+      if (combat.length) stats.push(`<span class="sel-combat-stats">${combat.map(c=>`<span class="stat-chip">${c}</span>`).join('')}</span>`);
       // Job shown purely as resource icon + carried amount, on the stats row
       // after the walk rate: [wood]0 = lumberjack heading out, [wood]7 =
       // hauling 7 wood. The resource comes from the task when the hands are
@@ -962,12 +1132,15 @@ function updateUI(){
         let tgt=entitiesById.get(e.target);
         if(tgt&&(tgt.utype==='sheep'||tgt.utype==='sheep_carcass'))resType='food';
       }
+      // Status entries are .stat-chips too (classic renders every chip as
+      // its own recessed tile; mobile keeps the compact icon-only look —
+      // the word labels are classic-only).
       if(resType){
-        stats.push(`<span title="${resType}: carrying ${e.carrying}"><span class="res-mini-icon icon-${resType}"></span>${e.carrying}</span>`);
-      } else if(e.task==='build') stats.push(`<span title="Building">🔨</span>`);
-      else if(e.task==='garrison') stats.push(`<span title="Running to shelter">🏰</span>`);
-      else if(e.utype==='villager' && !e.task && !e.target && e.path.length===0) stats.push(`<span title="Idle">💤</span>`);
-      det += `<div style="color:#ffd700;font-weight:bold;font-size:11px;margin-top:1px;">${stats.join('  ')}</div>`;
+        stats.push(`<span class="stat-chip" title="${resType}: carrying ${e.carrying}"><span class="res-mini-icon icon-${resType}"></span>${isClassicUI?'Carrying ':''}${e.carrying}</span>`);
+      } else if(e.task==='build') stats.push(`<span class="stat-chip" title="Building">🔨${isClassicUI?' Building':''}</span>`);
+      else if(e.task==='garrison') stats.push(`<span class="stat-chip" title="Running to shelter">🏰${isClassicUI?' Sheltering':''}</span>`);
+      else if(e.utype==='villager' && !e.task && !e.target && e.path.length===0) stats.push(`<span class="stat-chip" title="Idle">💤${isClassicUI?' Idle':''}</span>`);
+      det += `<div class="det-stats">${stats.join('')}</div>`;
     }
 
     document.getElementById('sel-details').innerHTML=det;
@@ -1145,7 +1318,7 @@ function updateUI(){
 // dirty updateUI pass (resource totals are part of the dirty check), so
 // buttons wake up the moment the resources come in — no rebuild needed.
 function refreshActionAffordability(){
-  document.querySelectorAll('#actions .act-btn[data-cost], #actions .mkt-cell[data-cost]').forEach(btn=>{
+  document.querySelectorAll('#actions .act-btn[data-cost], .mkt-cell[data-cost]').forEach(btn=>{
     let cost;
     try{ cost=JSON.parse(btn.dataset.cost); }catch(_){ return; }
     btn.classList.toggle('disabled', !canAfford(myTeam,cost));
@@ -1154,9 +1327,6 @@ function refreshActionAffordability(){
 }
 // Swallow clicks on disabled buttons before their own onclick fires.
 document.getElementById('actions').addEventListener('click', function(e){
-  // Queue-cancel badges always pass through: cancelling for the REFUND is
-  // most needed exactly when the train button is unaffordable-disabled.
-  if(e.target.closest && e.target.closest('.queue-count')) return;
   let btn = e.target.closest && e.target.closest('.act-btn.disabled, .mkt-cell.disabled');
   if(btn){
     e.stopPropagation();
@@ -1318,11 +1488,12 @@ window.isMobileLandscape = function() {
 
 window.updateBottomHeight = function() {
   let w = window.innerWidth;
-  // The classic layout wraps its action buttons into a real 2-row grid
+  // The classic layout wraps its action buttons into a real 3-row grid
   // (see classic-style.css) instead of the mobile skin's single scrolling
   // row, so it needs a taller bar to fit them — not width-responsive since
-  // classic isn't trying to support small screens.
-  bottomH = isClassicUI ? 128 : (isMobile ? (w <= 380 ? 90 : 96) : 80);
+  // classic isn't trying to support small screens. 174 = 3 rows × 52px
+  // + 2 × 3px gaps + 2 × 6px #actions padding.
+  bottomH = isClassicUI ? 174 : (isMobile ? (w <= 380 ? 90 : 96) : 80);
   topH = isMobile ? (w <= 600 ? 46 : 36) : 36;
   // Landscape rail overlays the canvas' LEFT edge — there is no bottom bar
   // at all, so the world gets the full height below the topbar. No

@@ -1047,6 +1047,9 @@ function handleTap(sx,sy,shift){
     // Switching selection cancels rally mode
     window.settingRally=false;
     selected=[tappedOwn];
+    // Re-tapping the already-selected Market reopens a dismissed exchange
+    // popup (mobile skin) — no selection change means no rebuild would.
+    maybeReopenMktPopup(tappedOwn);
     if (window.playSound && tappedOwn.team === myTeam) {
       if (tappedOwn.type === 'unit') {
         if (tappedOwn.utype === 'villager') window.playSound('select_villager');

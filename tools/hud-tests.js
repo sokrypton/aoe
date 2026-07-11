@@ -201,21 +201,19 @@ function pageSuite() {
     assert(document.querySelector('#actions .act-btn.training-active .btn-progress-fill'), 'progress fill missing');
   });
 
-  T('hud: queue-cancel badge still works while the train button is disabled', () => {
+  T('hud: queue badge is display-only — no cancel handler, taps pass through', () => {
     stage();
     const bar = createBuilding('BARRACKS', 14, 14, 0);
     resourceStore(0).food = 500;
     selected = [bar]; updateUI();
-    bar.queue.push('militia'); resourceStore(0).food = 0;
+    bar.queue.push('militia');
     updateUI();
-    const badge = document.querySelector('#actions .act-btn.disabled .queue-count');
-    assert(badge, 'badge not inside a disabled button (staging assumption broke)');
-    let fired = false;
-    const orig = window.cancelQueue;
-    window.cancelQueue = (a, b) => { fired = true; orig(a, b); };
-    badge.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    window.cancelQueue = orig;
-    assert(fired, 'cancel swallowed by the disabled-click guard');
+    const badge = document.querySelector('#actions .queue-count');
+    assert(badge, 'badge missing');
+    assert(!badge.onclick, 'badge must have NO click handler');
+    assert(getComputedStyle(badge).pointerEvents === 'none', 'badge must be pointer-events:none');
+    // No queue slots in the mobile skin — cancelling is classic-only.
+    assert(!document.querySelector('#actions .queue-slot'), 'mobile skin must not render queue slots');
   });
 
   T('hud: game over shows the outcome card even with units selected', () => {
@@ -261,17 +259,47 @@ function pageSuite() {
 
     const results = await page.evaluate(`(${pageSuite})()`);
 
-    // Hover behavior needs a real pointer: market tooltip via the dataset
-    // dispatch (runs outside pageSuite because page.hover drives it).
+    // Hover behavior needs a real pointer (runs outside pageSuite because
+    // page.hover drives it): the dataset-dispatch tooltip on a train button.
     await page.evaluate(`(()=>{
       selected.length=0;
-      const mk=createBuilding('MARKET',24,24,0);
-      selected=[mk];updateUI();
+      const tc2=entities.find(u=>u.btype==='TC'&&u.team===0);
+      selected=[tc2];updateUI();
     })()`);
-    await page.hover('#actions .mkt-cell');
+    await page.hover('#actions .act-btn[data-tip-key="villager"]');
     await page.waitForTimeout(250);
     const tipVisible = await page.evaluate(`document.getElementById('tooltip').classList.contains('visible')`);
-    results.push({ name: 'hud: market cell tooltip fires on hover', pass: !!tipVisible, detail: '' });
+    results.push({ name: 'hud: action-button tooltip fires on hover (dataset dispatch)', pass: !!tipVisible, detail: '' });
+
+    // Mobile market POPUP: auto-opens on selection, ✕ dismisses, the strip's
+    // Trade button reopens, and deselecting retires it.
+    const popupOk = await page.evaluate(`(()=>{
+      selected.length=0; window.__mktPopupHidden=false;
+      const mk=createBuilding('MARKET',24,24,0);
+      selected=[mk];updateUI();
+      const pop=document.getElementById('mkt-popup');
+      const r={open: !!pop && pop.style.display!=='none',
+               cells: pop ? pop.querySelectorAll('.mkt-cell').length : 0,
+               stripHasExchange: !!document.querySelector('#actions .mkt-exchange'),
+               tradeBtn: !!document.getElementById('mkt-trade-btn')};
+      pop.querySelector('#mkt-popup-x').click();
+      r.closedByX = pop.style.display==='none';
+      document.getElementById('mkt-trade-btn').click();
+      r.reopened = pop.style.display!=='none';
+      selected=[entities.find(u=>u.btype==='TC'&&u.team===0)];updateUI();
+      r.retiredOnDeselect = pop.style.display==='none';
+      // Re-tapping the selected Market reopens a dismissed popup.
+      selected=[mk];updateUI();
+      pop.querySelector('#mkt-popup-x').click();
+      maybeReopenMktPopup(mk);
+      r.reopenOnRetap = pop.style.display!=='none';
+      selected.length=0;updateUI();
+      return r;
+    })()`);
+    const popupPass = popupOk.open && popupOk.cells===6 && !popupOk.stripHasExchange
+      && popupOk.tradeBtn && popupOk.closedByX && popupOk.reopened && popupOk.retiredOnDeselect
+      && popupOk.reopenOnRetap;
+    results.push({ name: 'hud: mobile market exchange is a dismissible popup (strip stays clear)', pass: popupPass, detail: popupPass?'':JSON.stringify(popupOk) });
 
     // ---- Desktop tap-mode (index.html): REAL mouse events through the
     // mouseup dispatch. submitCommand is stubbed to capture commands (the
@@ -416,6 +444,45 @@ function pageSuite() {
       const r = await cpage.evaluate(`({sel:selected.length, cmds:window.__cmds.filter(c=>c.kind==='command').length})`);
       assertEq(r.cmds, 0, 'classic left-click must NOT command');
       assertEq(r.sel, 0, 'classic empty click deselects');
+      await cpage.close();
+    });
+
+    await tapT('classic-guard: queue renders as AoE2 slot buttons and clicking one cancels it', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      await cpage.evaluate(tapStage(`
+        const bar=createBuilding('BARRACKS',26,26,0);
+        bar.queue.push('militia','spearman');
+        selected=[bar]; window.__pts=()=>({});`));
+      const r = await cpage.evaluate(`(()=>{
+        updateUI();
+        // Queue slots live in the CENTER panel's #sel-queue lane in classic
+        // (real AoE2 shows the training queue in the info panel).
+        const slots=[...document.querySelectorAll('#sel-queue .queue-slot')];
+        if(slots.length!==2) return {slots:slots.length};
+        slots[1].click(); // cancel the queued spearman
+        const cancel=window.__cmds.find(c=>c.kind==='cancel-queue');
+        // Classic: AoE2-style grid-button exchange in the command panel
+        // (two aligned rows of six price buttons), and no popup.
+        const mk=createBuilding('MARKET',40,40,0);
+        selected=[mk];updateUI();
+        const rows=document.querySelectorAll('#actions .mkt-grid-row').length;
+        const btns=[...document.querySelectorAll('#actions .mkt-btn')];
+        let tradeCmd=null;
+        if(btns.length===6){ btns[0].click(); tradeCmd=window.__cmds.find(c=>c.kind==='market-trade'); }
+        const noPopup=!document.getElementById('mkt-popup');
+        return {slots:2, cancel, frontHasVeil: !!slots[0].querySelector('.train-veil'),
+                rows, btnCount: btns.length, tradeCmd, noPopup};
+      })()`);
+      assertEq(r.slots, 2, 'slot count');
+      if (!r.cancel || r.cancel.idx !== 1) throw new Error('cancel command wrong: ' + JSON.stringify(r.cancel));
+      if (!r.frontHasVeil) throw new Error('front slot missing training veil');
+      if (r.rows!==2 || r.btnCount!==6 || !r.noPopup) throw new Error('classic exchange shape wrong: ' + JSON.stringify(r));
+      if (!r.tradeCmd || r.tradeCmd.dir!=='buy' || r.tradeCmd.resType!=='food') throw new Error('buy-food button wrong: ' + JSON.stringify(r.tradeCmd));
       await cpage.close();
     });
 

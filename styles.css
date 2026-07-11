@@ -268,6 +268,9 @@ canvas {
   border-color: #4ade80;
   box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);
 }
+/* Classic-only HP slot under the portrait (page-shell.js) — the mobile skin
+   keeps HP inline in #sel-details, so this stays empty AND hidden here. */
+#sel-hp { display: none; }
 #sel-stats {
   flex: 1;
   display: flex;
@@ -324,6 +327,27 @@ canvas {
   margin-top: 3px;
   margin-bottom: 2px;
 }
+/* Detail rows inside #sel-details (js/ui.js det strings) — same look the
+   old inline styles produced; classes so the classic skin can restyle
+   them as recessed chips without forking the markup. */
+.det-stats {
+  color: #ffd700;
+  font-weight: bold;
+  font-size: 11px;
+  margin-top: 1px;
+}
+.det-row { margin-top: 1px; }
+.det-alert {
+  color: #ff4444;
+  font-weight: bold;
+}
+/* Per-stat spans inside .det-stats/.sel-combat-stats — spacing matches the
+   old '  ' string join; the classic skin restyles them as recessed chips. */
+.stat-chip { margin-right: 6px; }
+.stat-chip:last-child { margin-right: 0; }
+/* Classic-only training-queue lane in the center panel (page-shell.js);
+   mobile shows queue state on the train-button badge instead. */
+#sel-queue { display: none; }
 /* ---- MULTI-SELECT GRID ----
    When >1 unit is selected, #sel-info swaps its single portrait+stats card
    for a scrollable grid of every selected unit's own icon (AoE2-style),
@@ -623,6 +647,57 @@ canvas {
 .mkt-price{ display:flex; align-items:center;
   font:bold 10px sans-serif; color:#ffe14d; }
 
+/* ---- Market exchange POPUP (mobile skin, js/ui.js refreshMktPopup): a
+   dismissible card over the battlefield — the inline exchange filled the
+   whole landscape rail and buried the other buttons. Bigger cells and
+   prices than the old strip widget. ---- */
+#mkt-popup{
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Clear of BOTH the bottom bar and the corner controls floating above
+     it (back arrow bottom-left, bell/map/home cluster bottom-right — their
+     top edges reach ~142px from the bottom at every breakpoint). */
+  bottom: 158px;
+  z-index: 60;
+  background: linear-gradient(180deg, #3d2310 0%, #1f0f04 100%);
+  border: 2px solid #bfa054;
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.65), inset 0 0 6px rgba(0,0,0,0.5);
+}
+#mkt-popup-head{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ffd700;
+  font: bold 14px 'Cinzel', Georgia, serif;
+  margin-bottom: 7px;
+}
+#mkt-popup-ico{ width: 20px; height: 20px; display: inline-block; }
+#mkt-popup-head span:nth-child(2){ flex: 1; }
+#mkt-popup-x{
+  background: none;
+  border: 1px solid #bfa054;
+  color: #ffebad;
+  border-radius: 4px;
+  width: 24px; height: 24px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+#mkt-popup-x:hover{ background: rgba(140,29,29,0.6); border-color: #fff; }
+#mkt-popup .mkt-exchange{ width: auto; }
+#mkt-popup .mkt-ico{ width: 26px; height: 26px; }
+#mkt-popup .mkt-price{ font-size: 14px; }
+#mkt-popup .mkt-cell{ min-width: 82px; padding: 7px 9px; justify-content: center; }
+#mkt-popup .mkt-row-label{ flex-basis: 34px; font-size: 11px; }
+/* Landscape rail: the bar is a left rail, so the popup can sit low and
+   centered over the remaining battlefield width. */
+@media (orientation: landscape) and (max-height: 500px) {
+  #mkt-popup{ bottom: 14px; left: calc(50% + 48px); }
+}
+
 /* ---- Queue/prepaid count badge on action buttons (js/ui.js): the number
    of queued units sits ON the train button (progress fill along its bottom
    edge shows the active one, same anatomy as Advance Age) — there is no
@@ -633,12 +708,14 @@ canvas {
   min-width:20px; height:20px; padding:0 5px; box-sizing:border-box;
   display:flex; align-items:center; justify-content:center;
   border-radius:10px; background:#1d5c2e; border:1px solid #ffd700;
-  color:#fff; font:bold 12px sans-serif; cursor:pointer;
+  color:#fff; font:bold 12px sans-serif;
   box-shadow:1px 1px 2px rgba(0,0,0,0.6);
+  /* DISPLAY-ONLY: taps pass through to the button underneath. A tappable
+     badge sat exactly where a rapid second tap lands and cancelled the
+     unit that tap meant to queue. Cancelling queued units is a classic-
+     skin affordance (its AoE2-style queue slots). */
+  pointer-events:none;
 }
-.act-btn .queue-count:hover{ background:#a61c1c; }
-.act-btn .queue-count.queue-count-static{ cursor:default; }
-.act-btn .queue-count.queue-count-static:hover{ background:#1d5c2e; }
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -1390,10 +1467,6 @@ canvas {
   .act-btn.back-btn{bottom:94px}
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #pop-wrap{bottom:94px}
-  /* Market exchange: tighter cells so most of a row fits the narrow visible
-     strip before the horizontal scroll kicks in. */
-  .mkt-row-label{flex-basis:26px}
-  .mkt-cell{min-width:52px;padding:4px 5px}
 }
 
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
@@ -2026,14 +2099,6 @@ canvas {
   }
   #actions::-webkit-scrollbar { height: auto; width: 5px; }
   :root { --tile-size: 64px; }
-  /* Market exchange in the 96px rail: the horizontal rows (label + 3 cells,
-     ~130px) get clipped by overflow-x:hidden, so restack — Buy/Sell become
-     section headers over full-width icon|price cells, scrolling vertically
-     with the rest of the column. */
-  .mkt-exchange { width: 100%; gap: 4px; }
-  .mkt-row { flex-direction: column; align-items: stretch; gap: 2px; }
-  .mkt-row-label { flex: 0 0 auto; text-align: center; }
-  .mkt-cell { justify-content: space-between; padding: 6px 8px; }
   /* Submenu takeover: same trick as portrait but over the whole rail —
      identical padding in both states so the Back button never shifts. */
   #bottom.menu-active #actions {

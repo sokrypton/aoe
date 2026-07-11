@@ -88,11 +88,18 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="actions"></div>
 <div id="sel-info">
   <div id="sel-portrait" ondblclick="toggleCameraFollow()" title="Double-click to lock camera on this unit">⚔️</div>
+  <!-- Classic-only HP readout slot, sits under the portrait (real AoE2
+       placement). Mobile keeps HP inline in #sel-details and hides this. -->
+  <div id="sel-hp"></div>
   <div id="sel-stats">
     <div id="sel-name">Age of Epochs II</div>
     <div id="sel-details">Tap to select, then tap map to command</div>
   </div>
   <div id="sel-grid"></div>
+  <!-- Classic-only training-queue lane (real AoE2 shows the queue in the
+       center panel). Mobile shows queue state on the train button badge
+       instead and keeps this hidden. -->
+  <div id="sel-queue"></div>
 </div>
 </div>
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
