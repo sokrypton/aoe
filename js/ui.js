@@ -157,10 +157,12 @@ function unitStatChips(u, labeled){
   if (u.speed > 0) chips.push(`🏃 ${L.speed}${u.speed.toFixed(2)}`);
   return chips;
 }
-// TC and guard towers fire 5-damage arrows (AoE2); null for everything else.
+// TC and towers auto-fire arrows; null for everything else. TC has no
+// atk/range in BLDGS (its literals live here), towers read their own entry.
 function buildingArrowStats(btype){
-  if (btype !== 'TC' && btype !== 'TOWER') return null;
-  return { atk: 5, range: btype === 'TC' ? 6 : BLDGS.TOWER.range };
+  if (!firesArrows(btype)) return null;
+  if (btype === 'TC') return { atk: 5, range: 6 };
+  return { atk: BLDGS[btype].atk, range: BLDGS[btype].range };
 }
 
 // Units whose LOOK changes with age get age-specific icon cells. Falls
@@ -542,7 +544,7 @@ function updateUI(){
     // foundations (the wall-chain double-tap/double-click produces exactly
     // this), one button refunds them all. The single-foundation Cancel
     // Build lives in the building card below; this is its multi twin.
-    if(selected.length>1 && selected.every(s=>s.type==='building'&&s.team===myTeam&&!s.complete&&!s.exhausted)){
+    if(selected.length>1 && selected.every(s=>s.type==='building'&&s.team===myTeam&&!s.complete&&!s.exhausted&&!s.upgrading)){
       let ids=selected.map(s=>s.id);
       let bulkBtn=document.createElement('div');
       bulkBtn.className='act-btn framed';
@@ -559,26 +561,41 @@ function updateUI(){
       act.appendChild(bulkBtn);
     }
 
-    // Upgrade to Stone — when the selection is entirely own COMPLETED wood
-    // wall pieces (walls and/or palisade gates; double-click/double-tap on
-    // a standing wall selects the whole connected run) and stone is
-    // unlocked (Feudal). Converts in place at the stone piece's build cost
-    // — execUpgradeWalls (js/commands.js) re-validates age, ownership and
-    // cost on exec tick.
-    if(selected.length>0 && isUnlocked(myTeam,'SWALL')
-       && selected.every(s=>s.type==='building'&&s.team===myTeam&&WALL_STONE_MATCH[s.btype]&&s.complete&&!s.exhausted)){
+    // Upgrade — when the selection is entirely own COMPLETED upgradeable
+    // wood pieces (walls / palisade gates / palisade watch towers;
+    // double-click/double-tap on a standing wall selects the whole
+    // connected run) and every piece's target is unlocked (Feudal).
+    // Instantly salvages the old piece (HP-scaled refund) and swaps it into
+    // a construction site of the target type that villagers build up — see
+    // execUpgradeWalls (js/commands.js). Once started it just proceeds
+    // (no cancel). The chips show the NET cost after salvage.
+    if(selected.length>0
+       && selected.every(s=>s.type==='building'&&s.team===myTeam&&WALL_STONE_MATCH[s.btype]&&s.complete&&!s.exhausted)
+       && selected.every(s=>isUnlocked(myTeam,WALL_STONE_MATCH[s.btype]))){
       let ids=selected.map(s=>s.id);
       let cost={};
-      selected.forEach(s=>Object.entries(BLDGS[WALL_STONE_MATCH[s.btype]].cost)
-        .forEach(([k,v])=>{cost[k]=(cost[k]||0)+v;}));
+      selected.forEach(s=>{
+        Object.entries(BLDGS[WALL_STONE_MATCH[s.btype]].cost)
+          .forEach(([k,v])=>{cost[k]=(cost[k]||0)+v;});
+        Object.entries(upgradeSalvage(s))
+          .forEach(([k,v])=>{cost[k]=(cost[k]||0)-v;});
+      });
+      Object.keys(cost).forEach(k=>{if(cost[k]<=0)delete cost[k];});
       let allGates=selected.every(s=>s.btype==='GATE');
+      let allTowers=selected.every(s=>s.btype==='PTOWER');
+      let tipLabel=allTowers?'Upgrade to Watch Tower':(allGates?'Upgrade to Stone Gate':'Upgrade to Stone Wall');
+      let tipDesc=(allTowers
+        ?'Rebuild the selected palisade tower'+(ids.length>1?'s':'')+' as '+(ids.length>1?'stone Watch Towers.':'a stone Watch Tower.')
+        :'Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone.')
+        +' Salvages the old piece (refund scales with remaining HP) and starts construction — send villagers to build it. Cannot be cancelled once started.';
+      let upIcon=allTowers?'TOWER':(allGates?'SGATE':'SWALL');
       let upBtn=document.createElement('div');
       upBtn.className='act-btn framed';
       upBtn.dataset.tipType='action';
-      upBtn.dataset.tipLabel=allGates?'Upgrade to Stone Gate':'Upgrade to Stone Wall';
-      upBtn.dataset.tipDesc='Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone. Damage carries over proportionally.';
+      upBtn.dataset.tipLabel=tipLabel;
+      upBtn.dataset.tipDesc=tipDesc;
       upBtn.dataset.cost=JSON.stringify(cost);
-      upBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-${allGates?'SGATE':'SWALL'}"></div><div class="btn-label">To Stone${ids.length>1?' ×'+ids.length:''}</div>${costChips(cost)}`;
+      upBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-${upIcon}"></div><div class="btn-label">${allTowers?'To Tower':'To Stone'}${ids.length>1?' ×'+ids.length:''}</div>${costChips(cost)}`;
       upBtn.onclick=()=>{
         submitCommand({kind:'upgrade-walls',unitIds:ids});
       };
@@ -875,8 +892,9 @@ function updateUI(){
       // Delete/Backspace path to deleteOwnedEntity; there is no key on a
       // phone). Full refund, same rule as the key (js/logic.js's
       // deleteOwnedEntity). Only for a genuine in-progress foundation —
-      // an exhausted farm mid-reseed is not a cancellable purchase.
-      if(!e.complete && !e.exhausted && selected.length===1){
+      // an exhausted farm mid-reseed is not a cancellable purchase, and a
+      // committed upgrade (e.upgrading) just proceeds, no cancel.
+      if(!e.complete && !e.exhausted && !e.upgrading && selected.length===1){
         let cancelBuildBtn=document.createElement('div');
         cancelBuildBtn.className='act-btn framed';
         cancelBuildBtn.dataset.tipType='action';
@@ -1208,7 +1226,7 @@ function updateUI(){
       btn.dataset.tipLabel = 'Auto Scout';
       btn.dataset.tipDesc = 'The scout automatically explores unmapped areas and avoids fights. To stop it, just order it somewhere.';
       btn.innerHTML=`<div class="btn-emoji sprite-icon icon-compass"></div><div class="btn-label">Auto Scout</div>`;
-      btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); };
+      btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); deselectAfterTask(); };
       act.appendChild(btn);
     }
     let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
@@ -1284,9 +1302,16 @@ function updateUI(){
         // (AoE2: cheap 2-wood, fast, never removed), so it's kept as separate
         // trailing entries (T/Y) rather than being hidden behind stone.
         let builds=[
-          {type:'BARRACKS',label:'Barracks',key:'Q'},
-          {type:'TOWER',label:'Watch Tower',key:'W'}
+          {type:'BARRACKS',label:'Barracks',key:'Q'}
         ];
+        // W = best unlocked tower (same convention as E/R walls): the stone
+        // Watch Tower takes the slot at Feudal, the wooden Palisade Watch
+        // Tower stays buildable in every age on a trailing key.
+        if(isUnlocked(myTeam,'TOWER')){
+          builds.push({type:'TOWER',label:'Watch Tower',key:'W'});
+        } else {
+          builds.push({type:'PTOWER',label:'Palisade Tower',key:'W'});
+        }
         if(isUnlocked(myTeam,'SWALL')){
           builds.push({type:'SWALL',label:'Stone Wall',key:'E'});
           builds.push({type:'SGATE',label:'Stone Gate',key:'R'});
@@ -1295,6 +1320,9 @@ function updateUI(){
         } else {
           builds.push({type:'WALL',label:'Palisade',key:'E'});
           builds.push({type:'GATE',label:'Palisade Gate',key:'R'});
+        }
+        if(isUnlocked(myTeam,'TOWER')){
+          builds.push({type:'PTOWER',label:'Palisade Tower',key:'U'});
         }
         builds=builds.filter(bi=>isUnlocked(myTeam,bi.type));
         builds.forEach(bi=>{

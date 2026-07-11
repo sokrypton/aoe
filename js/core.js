@@ -153,6 +153,11 @@ function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 // Wall/gate material families: palisade (Dark) and stone (Feudal).
 function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
 function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }
+// Tower family (wooden Palisade Watch Tower + stone Watch Tower): connects to
+// walls of either material and can be built over a wall tile.
+function isTowerBtype(bt){ return bt === 'TOWER' || bt === 'PTOWER'; }
+// Buildings that auto-fire arrows at nearby enemies (TC + every tower).
+function firesArrows(bt){ return bt === 'TC' || isTowerBtype(bt); }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
 // Given a clicked tile and an isWall(x,y) predicate (matching-material wall,
 // same team), pick the gate footprint: prefer a 3-tile run through the click
@@ -471,7 +476,7 @@ let GAME_SPEED = 2;
 // behind-a-building outline check in render.js).
 const BLDG_HEIGHTS = {
   TC: 80, BARRACKS: 32, HOUSE: 26, LCAMP: 26, MCAMP: 26,
-  MILL: 32, FARM: 6, TOWER: 58, WALL: 26, GATE: 32
+  MILL: 32, FARM: 6, TOWER: 58, PTOWER: 48, WALL: 26, GATE: 32
 };
 const TERRAIN={GRASS:0,FOREST:1,GOLD:2,STONE:3,WATER:4,FARM:5,BERRIES:6};
 const TCOL={
@@ -504,6 +509,11 @@ const BLDGS={
   // it also rides the fortified_wall upgrade (see UPGRADES / buildingMaxHpFor),
   // so a fully-fortified ring keeps its towers tougher than its segments.
   TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  // Dark-age wooden bastion in the same deliberate deviation: cheap all-wood
+  // lookout that anchors an early palisade ring, then upgrades IN PLACE to a
+  // Watch Tower once Feudal unlocks it (see WALL_STONE_MATCH / execUpgradeWalls
+  // in commands.js). No fortified_wall bonus — that tech is stone-only.
+  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:1500,garrisonCap:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
   WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
   GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
   // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
@@ -860,6 +870,7 @@ function forEachVisibleTile(team, cb){
       if (!e.complete) sight = 1;
       else if (e.btype === 'TC') sight = 8;
       else if (e.btype === 'TOWER') sight = 9;
+      else if (e.btype === 'PTOWER') sight = 8;
       else if (e.btype === 'HOUSE') sight = 4;
       else sight = 5;
     } else {
@@ -1024,6 +1035,13 @@ function teamCanSeeTile(team, k){
 }
 function teamHasExplored(team, k){
   return teamExploredGrid != null && teamExploredGrid[team][k] === 1;
+}
+// Deterministic "this human team can't act on tile k yet because it hasn't
+// been explored" gate — shared by canPlace (js/logic.js) and the villager
+// gather resolve (js/commands.js). AI teams are exempt (proximity vision,
+// not fog-based); fog-off (dev/sim) reveals everything.
+function tileHiddenForTeam(team, k){
+  return !window.fogDisabled && !isAITeam(team) && !teamHasExplored(team, k);
 }
 // Building visibility for sim decisions: any footprint tile visible to `team`.
 function buildingVisibleToTeam(b, team){

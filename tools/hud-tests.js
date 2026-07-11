@@ -164,6 +164,38 @@ function pageSuite() {
     assert(!sc.autoScout, 'manual order did not cancel auto-scout');
   });
 
+  T('auto-scout: enabling it releases an ESCORT immediately (clears followId, no lingering chase)', () => {
+    stage();
+    const sc = createUnit('scout', 30, 30, 0);
+    const vil = createUnit('villager', 31, 31, 0);
+    execCommand({ kind: 'guard', unitIds: [sc.id], x: 31, y: 31, targetId: vil.id }, 0);
+    assert(sc.guardTargetId === vil.id && sc.followId === vil.id, 'escort not bound');
+    execCommand({ kind: 'auto-scout', unitIds: [sc.id], on: true }, 0);
+    assert(sc.autoScout, 'auto-scout not on');
+    assert(sc.followId == null, 'followId not cleared — scout would keep escorting');
+    assert(sc.guardTargetId == null && sc.guardX == null && !sc.guardFlagged, 'guard/escort state not fully dropped');
+    // and it does not re-glue to the villager as the villager moves
+    pathUnitTo(vil, 40, 40);
+    step(60);
+    assert(sc.followId == null, 'escort re-bound after auto-scout');
+  });
+
+  T('villager sent to an UNSEEN resource just walks (no auto-gather); an explored one gathers', () => {
+    stage();
+    window.fogDisabled = false;
+    resetTeamVision(); // fresh per-team grids, everything unexplored
+    const v = createUnit('villager', 30, 30, 0);
+    map[30][40].t = TERRAIN.FOREST; map[30][40].res = 100; markMapDirty(40, 30);
+    // (40,30) has never been seen by team 0 → the click is a plain walk
+    execCommand({ kind: 'command', unitIds: [v.id], tileX: 40, tileY: 30 }, 0);
+    assert(v.task == null, 'villager auto-gathered an UNSEEN resource: task=' + v.task);
+    // once the tile is explored, the same click DOES start gathering
+    teamExploredGrid[0][30 * MAP + 40] = 1;
+    execCommand({ kind: 'command', unitIds: [v.id], tileX: 40, tileY: 30 }, 0);
+    assert(v.task === 'chop', 'villager did not gather an explored resource: task=' + v.task);
+    window.fogDisabled = true; // restore for later tests
+  });
+
   // ---- Rally targets ----
   T('rally: a flag dropped on a unit snaps to ITS tile as a ground flag', () => {
     stage();
@@ -236,6 +268,147 @@ function pageSuite() {
     updateUI();
     assert(!document.getElementById('bottom').classList.contains('no-actions'), 'military mix lost its Guard button');
     gameOver = false;
+  });
+
+  // ---- Palisade Watch Tower (PTOWER): dark-age build-over-wall with
+  // refund, garrison arrows, and the in-place Feudal upgrade to TOWER
+  // (execUpgradeWalls' WALL_STONE_MATCH extension).
+  T('ptower: builds over a palisade wall (tile consumed, wood refunded)', () => {
+    stage();
+    const store = resourceStore(0);
+    store.wood = 1000;
+    const wall = createBuilding('WALL', 30, 30, 0);
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'PTOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    assert(!entitiesById.get(wall.id), 'wall not consumed');
+    const pt = entities.find(e => e.type === 'building' && e.btype === 'PTOWER' && e.x === 30 && e.y === 30);
+    assert(pt, 'no PTOWER foundation placed');
+    // 110 wood minus the consumed palisade's own 2-wood refund
+    assert(store.wood === 1000 - (BLDGS.PTOWER.cost.w - BLDGS.WALL.cost.w), 'refund math off: ' + store.wood);
+  });
+
+  T('ptower: fires 1+garrison arrows at enemies in range', () => {
+    stage();
+    const pt = createBuilding('PTOWER', 30, 30, 0);
+    createUnit('militia', 33, 30, 1); // enemy in range 6
+    for (let i = 0; i < 3; i++) enterGarrison(createUnit('militia', 29, 30, 0), pt);
+    assert(garrisonCount(pt) === 3, 'garrison cap 3 not honored: ' + garrisonCount(pt));
+    projectiles.length = 0;
+    step(1);
+    assert(projectiles.length === 4, 'expected 4 arrows (1+3 garrison), got ' + projectiles.length);
+  });
+
+  T('ptower: upgrade = instant swap to a construction site — Dark-age rejected; salvage refunds; committed (no cancel); villagers finish a full TOWER', () => {
+    stage();
+    const store = resourceStore(0);
+    store.wood = 1000; store.stone = 1000;
+    const pt = createBuilding('PTOWER', 30, 30, 0);
+    execCommand({ kind: 'upgrade-walls', unitIds: [pt.id] }, 0);
+    assert(pt.btype === 'PTOWER' && pt.complete, 'upgraded in the Dark Age');
+    teamAge[0] = 1;
+    pt.hp = Math.round(pt.maxHp / 2); // half-damaged: salvage must halve → floor(110w * 0.5) = 55
+    execCommand({ kind: 'upgrade-walls', unitIds: [pt.id] }, 0);
+    assert(pt.btype === 'TOWER', 'did not swap to TOWER');
+    assert(!pt.complete && pt.hp === 1 && pt.upgrading, 'not a committed construction site: complete=' + pt.complete + ' hp=' + pt.hp + ' upgrading=' + pt.upgrading);
+    // salvage 55 wood credited before the full TOWER cost is charged
+    assert(store.wood === 1000 + 55 - BLDGS.TOWER.cost.w, 'wood salvage off: ' + store.wood);
+    assert(store.stone === 1000 - BLDGS.TOWER.cost.s, 'stone cost off: ' + store.stone);
+    // committed: deleting the site gives NO refund (can't cancel an upgrade)
+    const wBefore = store.wood, sBefore = store.stone;
+    deleteOwnedEntity(pt);
+    assert(store.wood === wBefore && store.stone === sBefore, 'cancelling a committed upgrade refunded: ' + store.wood + '/' + store.stone);
+    // fresh run: villagers build the swapped site up into a full Watch Tower
+    stage();
+    const s2 = resourceStore(0); s2.wood = 1000; s2.stone = 1000; teamAge[0] = 1;
+    const pt2 = createBuilding('PTOWER', 30, 30, 0);
+    execCommand({ kind: 'upgrade-walls', unitIds: [pt2.id] }, 0);
+    const v = createUnit('villager', 29.5, 30.5, 0);
+    v.task = 'build'; v.buildTarget = pt2.id;
+    step(BLDGS.TOWER.buildTime + 600);
+    assert(pt2.complete && !pt2.upgrading, 'villager never finished the upgrade');
+    assert(pt2.maxHp === buildingMaxHpFor(0, 'TOWER') && pt2.hp === pt2.maxHp, 'not full TOWER hp: ' + pt2.hp + '/' + pt2.maxHp);
+    assert(pt2.atk === BLDGS.TOWER.atk, 'atk not refreshed: ' + pt2.atk);
+  });
+
+  // ---- Building guard covers the WHOLE footprint, not one corner ----
+  T('guard: a building guard leashes to the whole footprint (chases across a 4x4 TC), but still leashes beyond it', () => {
+    stage();
+    const tc = createBuilding('TC', 20, 20, 0); // 4x4 → tiles 20..23
+    const g = createUnit('militia', 19, 19, 0);
+    // guard the TC; home post at the NW exterior corner
+    execCommand({ kind: 'guard', unitIds: [g.id], x: 19, y: 19, targetId: tc.id }, 0);
+    assert(g.guardTargetId === tc.id, 'not guarding the TC');
+    const foe = createUnit('militia', 24.5, 24.5, 1); // SE exterior corner of the TC
+    // simulate having chased to the far (SE) corner — ~7 tiles from the NW
+    // home post (old point-leash would yank it home) but adjacent to the
+    // footprint (new footprint-leash keeps it engaged)
+    g.guardX = 19; g.guardY = 19; g.explicitAttack = false;
+    g.x = 24; g.y = 24; clearUnitPath(g); g.target = foe.id;
+    step(3);
+    assert(g.target === foe.id, 'footprint guard was leash-yanked off a threat at the far side of its building');
+    // but a genuine over-leash (well beyond the footprint) still pulls home
+    const foe2 = createUnit('militia', 30.5, 30.5, 1);
+    g.x = 31; g.y = 31; clearUnitPath(g); g.target = foe2.id;
+    step(3);
+    assert(g.target === null, 'guard failed to leash back when dragged well beyond the building');
+  });
+
+  T('guard: a building guard ignores an enemy that is near the guard but far from the building (no wandering chase)', () => {
+    stage();
+    const tc = createBuilding('TC', 20, 20, 0); // 4x4 → edges x/y 19.5..23.5
+    const g = createUnit('militia', 19, 19, 0);
+    g.stance = 'defensive';
+    g.guardTargetId = tc.id; g.guardX = 19; g.guardY = 19; g.guardFlagged = true; g.explicitAttack = false;
+    // displace the guard east of the TC (still within its footprint leash),
+    // then drop an enemy that is close to the GUARD (~5 tiles) but well
+    // outside the building's guard zone (~9 tiles past its east edge)
+    g.x = 28; g.y = 20; g.target = null; g.task = null; clearUnitPath(g);
+    const foe = createUnit('militia', 33, 20, 1);
+    step(9); // spans several acquisition scan ticks
+    assert(g.target !== foe.id, 'guard chased an enemy that was not threatening its building');
+    // sanity: an enemy INSIDE the guard zone (near the TC) IS engaged
+    const near = createUnit('militia', 25, 21, 1); // ~1.5 tiles past the SE edge
+    g.x = 24; g.y = 22; g.target = null; g.task = null; clearUnitPath(g);
+    step(9);
+    assert(g.target === near.id, 'guard ignored an enemy right next to its building');
+  });
+
+  T('guard: multiple building guards fan out to distinct perimeter posts', () => {
+    stage();
+    const tc = createBuilding('TC', 20, 20, 0);
+    const squad = [createUnit('militia',18,18,0), createUnit('militia',18,19,0),
+                   createUnit('militia',18,20,0), createUnit('militia',18,21,0)];
+    execCommand({ kind: 'guard', unitIds: squad.map(s=>s.id), x: 19, y: 19, targetId: tc.id }, 0);
+    const posts = new Set(squad.map(s => s.guardX + ',' + s.guardY));
+    assert(squad.every(s => s.guardTargetId === tc.id), 'not all guarding the TC');
+    assert(posts.size === squad.length, 'guards piled onto shared posts: ' + [...posts].join(' '));
+  });
+
+  // ---- AI keeps building after an upgrade ----
+  // The wall→stone upgrade (execUpgradeWalls) now swaps the piece into a
+  // 1-HP construction site instead of finishing instantly, so the AI MUST
+  // route a villager to it or it leaves stranded 1-HP walls. Verifies the
+  // AI's own villager-assignment loop (assignAIVillagers) picks up the
+  // swapped site and finishes it.
+  T('ai: upgrading a wall to stone re-tasks an idle AI villager to finish the construction site', () => {
+    stage();
+    teamControllers[1] = { type: 'ai', difficulty: 'hard' };
+    AI_STATES[1] = freshAIState(1);
+    teamAge[1] = 1; // Feudal: stone unlocked
+    const store = resourceStore(1);
+    store.wood = 1000; store.stone = 1000;
+    const wall = createBuilding('WALL', 50, 50, 1); // beside the team-1 TC at 52,52
+    const vil = createUnit('villager', 49, 49, 1);
+    vil.task = null; vil.target = null; vil.buildTarget = null; clearUnitPath(vil);
+    // upgrade → instant swap to a committed SWALL construction site
+    execCommand({ kind: 'upgrade-walls', unitIds: [wall.id] }, 1);
+    assert(wall.btype === 'SWALL' && !wall.complete && wall.upgrading, 'upgrade did not create a construction site');
+    // the AI's decision loop should hand the idle villager this build
+    assignAIVillagers(AI_STATES[1], [vil], aiProfileFor(1));
+    assert(vil.task === 'build' && vil.buildTarget === wall.id, 'AI did not assign a builder to the upgrade site: task=' + vil.task + ' target=' + vil.buildTarget);
+    // and it actually finishes into a complete stone wall
+    step(BLDGS.SWALL.buildTime + 600);
+    assert(wall.complete && wall.btype === 'SWALL' && !wall.upgrading, 'AI never finished the upgraded wall: complete=' + wall.complete);
   });
 
   return results;
@@ -347,6 +520,43 @@ function pageSuite() {
       assertEq(r.sel, 1, 'selection must be KEPT after a walk order');
     });
 
+    await tapT('walk into UNEXPLORED territory KEEPS selection (even over a fogged resource — no task committed)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        window.fogDisabled=false;
+        for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){ if(fog[y]) fog[y][x]=2; }
+        map[30][40].t=TERRAIN.FOREST; map[30][40].res=100; markMapDirty(40,30);
+        fog[30][40]=0; // destination is unexplored
+        window.__pts=(scr)=>({ g: scr(40.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({sel:selected.length, marker:(cmdMarkers[cmdMarkers.length-1]||{}).color})`);
+      assertEq(r.sel, 1, 'walking into the unknown keeps the selection');
+      assertEq(r.marker, '#0f0', 'marker must be the GREEN walk color, not the yellow gather color, over unexplored terrain');
+    });
+
+    await tapT('build placement (no Shift) deselects the villager (build is a task)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(34.5,34.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='build-placement')||null})`);
+      if (!r.cmd) throw new Error('no build-placement command issued');
+      assertEq(r.sel, 0, 'placing a building deselects the villager');
+    });
+
+    await tapT('auto-scout button deselects the scout (auto-scout is a task)', async () => {
+      await page.evaluate(tapStage(`
+        const sc=createUnit('scout',30,30,0); selected=[sc]; window.__pts=()=>({});`));
+      const r = await page.evaluate(`(()=>{ updateUI();
+        const btn=[...document.querySelectorAll('#actions .act-btn')].find(b=>b.dataset.tipLabel==='Auto Scout');
+        if(!btn) return {found:false};
+        btn.click();
+        return {found:true, sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='auto-scout')||null}; })()`);
+      if (!r.found) throw new Error('Auto Scout button not found');
+      if (!r.cmd) throw new Error('no auto-scout command issued');
+      assertEq(r.sel, 0, 'enabling auto-scout deselects the scout');
+    });
+
     await tapT('desktop-tap: resource click assigns villagers and RELEASES them', async () => {
       const pts = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v];
@@ -367,6 +577,78 @@ function pageSuite() {
       const r = await page.evaluate(`({sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='command')})`);
       if (!r.cmd) throw new Error('no command captured');
       assertEq(r.sel, 0, 'right-click gather order must RELEASE the selection on index.html');
+    });
+
+    // ---- Right-click to plant a Guard/Escort flag (index.html) ----
+    // Right-clicking a friendly BUILDING guards it, a friendly UNIT escorts
+    // it; GROUND/ENEMY stay a normal walk/attack; and a villager selection
+    // never intercepts (repair-on-right-click is preserved). Building/unit
+    // click points are self-calibrated against the real hit-tests so the
+    // pixel geometry can't make the test flaky.
+    await tapT('right-click own building = Guard flag (military selected, deselects after tasking)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const b=createBuilding('BARRACKS',29,29,0);
+        const m=createUnit('militia',25,25,0); selected=[m];
+        window.__pts=(scr)=>{ const base=scr(b.x+b.w/2,b.y+b.h/2); let pt=base;
+          for(let dy=0;dy<=100;dy+=3){const c={x:base.x,y:base.y-dy}; if(getBuildingUnderCursor(c.x,c.y)===b){pt=c;break;}}
+          return { p: pt, bId: b.id }; };`));
+      await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
+      const r = await page.evaluate(`({g:window.__cmds.find(c=>c.kind==='guard')||null, other:window.__cmds.some(c=>c.kind==='command'), sel:selected.length})`);
+      if (!r.g) throw new Error('no guard command issued for own-building right-click');
+      assertEq(r.g.targetId, pts.bId, 'guard targetId = the building');
+      if (r.other) throw new Error('should NOT also issue a normal command');
+      assertEq(r.sel, 0, 'guard is a task → deselects');
+    });
+
+    await tapT('right-click friendly unit = Escort flag', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const ally=createUnit('militia',30,30,0); const m=createUnit('militia',25,25,0); selected=[m];
+        window.__pts=(scr)=>{ const base=scr(ally.x,ally.y); let pt={x:base.x,y:base.y-8};
+          for(let dy=0;dy<=24;dy+=2){const c={x:base.x,y:base.y-dy}; if(getUnitUnderCursor(c.x,c.y)===ally){pt=c;break;}}
+          return { p: pt, aId: ally.id }; };`));
+      await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
+      const g = await page.evaluate(`window.__cmds.find(c=>c.kind==='guard')||null`);
+      if (!g) throw new Error('no guard/escort command issued for friendly-unit right-click');
+      assertEq(g.targetId, pts.aId, 'escort targetId = the friendly unit');
+    });
+
+    await tapT('right-click ground = normal walk (NOT a guard flag)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(36.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y, { button: 'right' });
+      const r = await page.evaluate(`({guard:window.__cmds.some(c=>c.kind==='guard'), cmd:window.__cmds.find(c=>c.kind==='command')||null})`);
+      if (r.guard) throw new Error('ground right-click must NOT plant a guard flag');
+      if (!r.cmd) throw new Error('ground right-click should issue a walk command');
+      assertEq(r.cmd.tileX, 36, 'walk tileX');
+    });
+
+    await tapT('right-click enemy = normal attack (NOT a guard flag)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const foe=createUnit('militia',30,30,1); const m=createUnit('militia',25,25,0); selected=[m];
+        window.__pts=(scr)=>{ const base=scr(foe.x,foe.y); let pt={x:base.x,y:base.y-8};
+          for(let dy=0;dy<=24;dy+=2){const c={x:base.x,y:base.y-dy}; if(getUnitUnderCursor(c.x,c.y)===foe){pt=c;break;}}
+          return { p: pt, fId: foe.id }; };`));
+      await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
+      const r = await page.evaluate(`({guard:window.__cmds.some(c=>c.kind==='guard'), cmd:window.__cmds.find(c=>c.kind==='command')||null})`);
+      if (r.guard) throw new Error('enemy right-click must NOT plant a guard flag');
+      if (!r.cmd) throw new Error('enemy right-click should issue an attack command');
+      assertEq(r.cmd.targetId, pts.fId, 'attack targetId = the enemy');
+    });
+
+    await tapT('right-click own building with VILLAGERS = repair, not guard (feature does not hijack villagers)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const b=createBuilding('BARRACKS',29,29,0); b.hp=Math.round(b.maxHp/2); // damaged → repairable
+        const v=createUnit('villager',25,25,0); selected=[v];
+        window.__pts=(scr)=>{ const base=scr(b.x+b.w/2,b.y+b.h/2); let pt=base;
+          for(let dy=0;dy<=100;dy+=3){const c={x:base.x,y:base.y-dy}; if(getBuildingUnderCursor(c.x,c.y)===b){pt=c;break;}}
+          return { p: pt, bId: b.id }; };`));
+      await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
+      const r = await page.evaluate(`({guard:window.__cmds.some(c=>c.kind==='guard'), cmd:window.__cmds.find(c=>c.kind==='command')||null, sel:selected.length})`);
+      if (r.guard) throw new Error('villager right-click must NOT plant a guard flag');
+      if (!r.cmd) throw new Error('villager right-click on a damaged building should issue a repair command');
+      assertEq(r.cmd.buildTargetId, pts.bId, 'repair buildTargetId = the building');
+      assertEq(r.sel, 0, 'repair is a task → deselects');
     });
 
     await tapT('desktop-tap: advance-age button is display-only while researching (no tap-cancel)', async () => {
@@ -428,15 +710,17 @@ function pageSuite() {
       assertEq(r.stale[0], 40, 'rally must still be stale (command queued, not executed)');
     });
 
-    await tapT('desktop-tap: right-click does NOT move a rally on index.html (button-armed mode only)', async () => {
+    await tapT('right-click a training building = set rally on index.html (building half of right-click-to-flag)', async () => {
       const pts = await page.evaluate(tapStage(`
         const bar=createBuilding('BARRACKS',26,26,0); bar.rallyX=40; bar.rallyY=12;
         selected=[bar]; window.pendingRallyPreview=null;
         window.__pts=(scr)=>({ g: scr(30.5,30.5) });`));
       await page.mouse.click(pts.g.x, pts.g.y, { button: 'right' });
-      const r = await page.evaluate(`({cmds:window.__cmds.filter(c=>c.kind==='rally').length, prev:window.pendingRallyPreview})`);
-      assertEq(r.cmds, 0, 'rally command must not be issued by right-click on the tap skin');
-      if (r.prev) throw new Error('preview must not appear');
+      const r = await page.evaluate(`({rally:window.__cmds.find(c=>c.kind==='rally')||null, prev:window.pendingRallyPreview, sel:selected.length})`);
+      if (!r.rally) throw new Error('right-click on a training building should issue a rally command');
+      assertEq(r.rally.tileX, 30, 'rally tileX'); assertEq(r.rally.tileY, 30, 'rally tileY');
+      if (!r.prev || r.prev.x !== 30) throw new Error('rally preview should appear at the clicked tile');
+      assertEq(r.sel, 1, 'building stays selected after setting its rally');
     });
 
     await tapT('classic-guard: right-click DOES set the rally on classic.html (AoE2 standard)', async () => {

@@ -90,25 +90,23 @@
   //         (0,3) SWALL
   //         (0,4)(0,5)(0,6) GATE(N-S)
   //         (0,7) SWALL
-  const mkFort = (wallB, gateB, label) => {
+  const mkFort = (wallB, gateB, towerB, label) => {
     let p = { x: wx, y: wy }; wx = 4; wy += 12; // full-width slot on its own band
     let ents = [];
-    // Palisade is the Dark-age fortification (superseded by stone from
-    // Feudal), and towers only exist from Feudal — so the palisade fort
-    // is towerless and shows only at Dark; the stone fort takes over after.
-    let towers = wallB !== 'WALL';
+    // Each fort shows its own material's bastion: the Dark-age palisade
+    // ring gets the wooden PTOWER, the stone fort the Feudal TOWER.
     let put = (t, x, y, w, h) => { let b = createBuilding(t, p.x + x, p.y + y, 0, w, h); b.complete = true; ents.push(b); return b; };
     put(wallB, 0, 0); put(wallB, 0, 1);
-    put(towers ? 'TOWER' : wallB, 0, 2);
+    put(towerB, 0, 2);
     put(wallB, 1, 2); put(wallB, 2, 2);
     put(gateB, 3, 2, 3, 1).__animGate = true;   // E-W gate (3x1)
     put(wallB, 6, 2);
-    put(towers ? 'TOWER' : wallB, 7, 2);
+    put(towerB, 7, 2);
     put(wallB, 0, 3);
     put(gateB, 0, 4, 1, 3).__animGate = true;   // N-S gate (1x3)
     put(wallB, 0, 7);
     gallery.push({ kind: 'building', ents, label, anchor: ents[0],
-                   gateType: towers ? 'TOWER' : wallB,
+                   gateType: towerB,
                    maxAge: wallB === 'WALL' ? 0 : undefined,
                    aimX: p.x + 3.5, aimY: p.y + 3.5, rowH: 340 });
   };
@@ -139,10 +137,10 @@
                    aimTx: 450, rowH: 240 });
   };
 
-  const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','MARKET','FARM','TOWER','WALL','GATE','SWALL','SGATE'];
+  const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','MARKET','FARM','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
   BROW.forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
-  mkFort('SWALL', 'SGATE', 'Stone fortification (walls + gates + towers)');
-  mkFort('WALL', 'GATE', 'Palisade fortification (walls + gates)');
+  mkFort('SWALL', 'SGATE', 'TOWER', 'Stone fortification (walls + gates + towers)');
+  mkFort('WALL', 'GATE', 'PTOWER', 'Palisade fortification (walls + gates + towers)');
   mkU('villager', { female: false, label: 'Villager (male)' });
   mkU('villager', { female: true,  label: 'Villager (female)' });
   ['militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear'].forEach(u => mkU(u));

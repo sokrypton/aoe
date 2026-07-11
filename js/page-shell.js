@@ -23,14 +23,14 @@ window.SPRITE_CELLS = {
   'archer-castle':[3,1], 'scout-castle':[4,1], bear:[5,1], pop:[6,1], compass:[7,1],
   // rows 2-3: buildings + gate states
   TC:[0,2], HOUSE:[1,2], BARRACKS:[2,2], MILL:[3,2], LCAMP:[4,2], MCAMP:[5,2], FARM:[6,2],
-  TOWER:[0,3], WALL:[1,3], GATE:[2,3], SWALL:[3,3], SGATE:[4,3],
+  TOWER:[0,3], PTOWER:[7,2], WALL:[1,3], GATE:[2,3], SWALL:[3,3], SGATE:[4,3],
   'gate-lock':[5,3], 'gate-unlock':[6,3],
   // rows 4-6: resources, action glyphs, age crests, corner buttons
   food:[0,4], wood:[1,4], gold:[2,4], stone:[3,4], cancel:[4,4], econ:[5,4], mil:[6,4],
   back:[0,5], reseed:[1,5], research:[2,5], logo:[3,5], ram:[4,5], MARKET:[5,5], bell:[6,5],
   'age-dark':[0,6], 'age-feudal':[1,6], 'age-castle':[2,6], idle:[3,6], rally:[4,6], map:[5,6], home:[6,6],
   // column 7 / row 7: empty labeled boxes to draw future art into
-  spare2:[7,2], spare3:[7,3], spare4:[7,4], spare5:[7,5], spare6:[7,6], spare7:[7,7],
+  spare3:[7,3], spare4:[7,4], spare5:[7,5], spare6:[7,6], spare7:[7,7],
   spare8:[0,7], spare9:[1,7], spare10:[2,7], spare11:[3,7], spare12:[4,7], spare13:[5,7], spare14:[6,7],
 };
 (function(){

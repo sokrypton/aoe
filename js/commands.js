@@ -299,8 +299,13 @@ function execGuard(cmd, team){
       finish(u, target.x, target.y);
     });
   } else if (target && target.type === 'building') {
+    // Fan the guards OUT around the footprint (claimed set) so they cover the
+    // whole building instead of piling onto its nearest corner — the leash
+    // (js/logic.js) then anchors each to the building as a whole.
+    let claimed = new Set();
     units.forEach(u => {
-      let pt = nearestBldgPerimeter(u.x, u.y, target, u.id);
+      let pt = nearestBldgPerimeter(u.x, u.y, target, u.id, claimed);
+      claimed.add(pt.x + ',' + pt.y);
       u.guardTargetId = target.id; // liveness only — buildings don't move
       u.followId = undefined;
       finish(u, pt.x, pt.y);
@@ -335,8 +340,11 @@ function execAutoScout(cmd, team){
       u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u);
       // Exploring IS the new task — drop any guard post (flag, escort and
       // all), or the guard leash/return would fight the frontier wander.
-      // Mirrors execGuard clearing autoScout.
+      // Mirrors execGuard clearing autoScout. followId MUST clear too: an
+      // escort walks via followId, so leaving it set kept the scout glued to
+      // the escorted unit for a beat before the wander took over.
       u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
+      u.followId = undefined;
     }
   });
   feedbackFor(team, () => { if (window.playSound) playSound('click'); });
@@ -518,11 +526,18 @@ function execUnitCommand(cmd){
         // same loop via gatherX, so the group fans out tile by tile.
         let TASK_BY_TERRAIN = { [TERRAIN.FOREST]: 'chop', [TERRAIN.GOLD]: 'mine_gold', [TERRAIN.STONE]: 'mine_stone', [TERRAIN.BERRIES]: 'forage', [TERRAIN.FARM]: 'farm' };
         let gTask = TASK_BY_TERRAIN[t.t];
-        if (gTask) {
+        // A villager can only be TASKED onto a resource it can actually see:
+        // if the tile is still UNEXPLORED for this (human) team, the player
+        // doesn't know what's there, so the click is a plain WALK — the
+        // villager goes and stands idle instead of auto-gathering an unseen
+        // resource. Deterministic (teamExploredGrid is sim state); AI keeps
+        // its proximity-vision exemption, same rule as canPlace (js/logic.js).
+        let unseen = tileHiddenForTeam(s.team, tileY*MAP + tileX);
+        if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
           s.task = gTask; s.gatherX = g.x; s.gatherY = g.y; pathUnitTo(s, g.x, g.y);
         } else {
-          // Move command: use formation offset
+          // Move command (also the unexplored-tile case): use formation offset
           let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
           s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
           idx++;
@@ -579,7 +594,7 @@ function execBuildPlacement(cmd){
       // Stone-on-palisade upgrade: the footprint loop already collected the
       // palisade being replaced — refund its wood against the stone's cost.
       refundWalls(wallsToRemove);
-    } else if (btype === 'TOWER') {
+    } else if (isTowerBtype(btype)) {
       let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);
       if (existing) {
         wallsToRemove.push(existing);
@@ -688,39 +703,67 @@ function execResearchAge(tc){
 }
 
 // Upgrade completed palisade WALL/GATE pieces to their stone counterpart
-// (SWALL/SGATE) in place, paid at the stone piece's full build cost. Not
-// strict AoE2 — there palisades and stone walls are independent builds you
-// overlap — but the in-place conversion is this game's ergonomic
-// equivalent once the Feudal Age unlocks stone. Damage carries over as a
-// FRACTION (a half-burnt palisade becomes a half-damaged stone wall), so
-// upgrading mid-siege isn't also a free full repair.
-const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE' };
+// (SWALL/SGATE), and a Palisade Watch Tower to a Watch Tower — an instant
+// replacement: the old piece is salvaged on the spot (refund = its cost ×
+// remaining-HP fraction, `upgradeSalvage` — credited before the target's
+// full cost is charged, so surplus wood pays out and helps afford mixed
+// costs) and swaps into a construction site of the target type that
+// villagers build up at normal build rate. Its tiles keep blocking, but at
+// foundation HP it's fragile — upgrading mid-siege is a gamble, not a heal.
+// The `upgrading` flag marks it committed: once started an upgrade just
+// proceeds (no cancel/refund — see deleteOwnedEntity and the cancel UI in
+// js/ui.js), which is what keeps it from being an instant free salvage.
+const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE', PTOWER: 'TOWER' };
+// Shared by the exec below and the UI button's net-cost preview (js/ui.js).
+function upgradeSalvage(en){
+  let frac = Math.min(1, en.hp / en.maxHp), refund = {};
+  Object.entries(BLDGS[en.btype].cost).forEach(([k, v]) => { refund[k] = Math.floor(v * frac); });
+  return refund;
+}
 function execUpgradeWalls(cmd, team){
   let pieces = (cmd.unitIds || []).map(id => entitiesById.get(id))
     .filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
   if (!pieces.length) return;
-  if (pieces.some(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]))) {
-    feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq('SWALL')].name + '!'); if (window.playSound) playSound('error'); });
+  let locked = pieces.find(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]));
+  if (locked) {
+    feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq(WALL_STONE_MATCH[locked.btype])].name + '!'); if (window.playSound) playSound('error'); });
     return;
   }
-  let cost = {};
-  pieces.forEach(en => Object.entries(BLDGS[WALL_STONE_MATCH[en.btype]].cost)
-    .forEach(([k, v]) => { cost[k] = (cost[k] || 0) + v; }));
-  if (!canAfford(team, cost)) {
-    feedbackFor(team, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
+  let cost = {}, refund = {};
+  pieces.forEach(en => {
+    Object.entries(BLDGS[WALL_STONE_MATCH[en.btype]].cost)
+      .forEach(([k, v]) => { cost[k] = (cost[k] || 0) + v; });
+    Object.entries(upgradeSalvage(en))
+      .forEach(([k, v]) => { refund[k] = (refund[k] || 0) + v; });
+  });
+  // Afford check counts the salvage credit (it lands before the charge).
+  let store = resourceStore(team);
+  if (!Object.entries(cost).every(([k, v]) => store[resourceName(k)] + (refund[k] || 0) >= v)) {
+    feedbackFor(team, () => { showMsg('Not enough resources!'); if (window.playSound) playSound('error'); });
     return;
   }
+  Object.entries(refund).forEach(([k, v]) => { store[resourceName(k)] += v; });
   spendCost(team, cost);
   pieces.forEach(w => {
-    let stoneType = WALL_STONE_MATCH[w.btype];
-    let frac = w.hp / w.maxHp;
-    w.btype = stoneType; // gates keep their footprint/door state (w/h, gateProgress)
-    w.maxHp = buildingMaxHpFor(team, stoneType);
-    w.hp = Math.max(1, Math.round(w.maxHp * frac));
+    let upType = WALL_STONE_MATCH[w.btype];
+    if (w.garrison && w.garrison.length) ejectGarrison(w); // a tower under rebuild shelters no one
+    w.btype = upType; // gates keep their footprint/door state (w/h, gateProgress)
+    // Re-stamp the fields createBuilding snapshots from BLDGS (armor/range/
+    // garrisonCap are read live, but atk and buildTime are entity fields).
+    w.atk = BLDGS[upType].atk || 0;
+    w.buildTime = BLDGS[upType].buildTime || 200;
+    w.maxHp = buildingMaxHpFor(team, upType);
+    // Fresh construction site, same as execBuildPlacement foundations, but
+    // committed: `upgrading` blocks cancel/refund so it can't be undone.
+    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true; w.upgrading = true;
     markMapDirty(w.x, w.y);
   });
   feedbackFor(team, () => {
-    showMsg(pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' upgraded to stone');
+    let allTowers = pieces.every(p => p.btype === 'TOWER');
+    showMsg((allTowers
+      ? (pieces.length > 1 ? pieces.length + ' towers' : 'Tower') + ' salvaged — Watch Tower'
+      : pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' salvaged — stone')
+      + ' under construction, send villagers to build');
     if (window.playSound) playSound('build', pieces[0].x, pieces[0].y);
   });
   if (typeof updateUI === 'function') updateUI();

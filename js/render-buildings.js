@@ -585,7 +585,7 @@ function getConnectedBuilding(tx, ty){
   let en=entitiesById.get(id);
   return en&&en.type==='building'?en:undefined;
 }
-// 'wood' (palisade), 'stone', or null (TOWER — connects to both).
+// 'wood' (palisade), 'stone', or null (TOWER/PTOWER — connect to both).
 function wallMat(bt){
   if (bt === 'WALL' || bt === 'GATE') return 'wood';
   if (bt === 'SWALL' || bt === 'SGATE') return 'stone';
@@ -595,7 +595,7 @@ function wallMat(bt){
 // any wall-like neighbor.
 function isWallLike(b, mat){
   if (!b) return false;
-  if (b.btype === 'TOWER') return true;
+  if (isTowerBtype(b.btype)) return true;
   let m = wallMat(b.btype);
   if (!m) return false;
   return !mat || m === mat;
@@ -1933,6 +1933,41 @@ function drawBuilding(e, part = null){
     // TC. Feudal: pole rises from the peaked cap's apex (sy-42).
     if (e.complete && visible) drawWavingFlag(sx, sy, ownerAge >= 2 ? 32 : 40, tc, tcD);
   }
+  else if(e.btype==='PTOWER'){
+    bh=30;
+    let linkY = sy + 16;
+    let wallH = 14;
+
+    // Palisade Watch Tower — the TOWER's dark-age wooden kin: same base
+    // geometry (front-bottom vertex on linkY so wall links meet with no
+    // gap) but a shorter shaft in structural-timber browns, and it always
+    // wears the peaked team-color cap — no stone-merlon age progression,
+    // since upgrading swaps the btype to TOWER outright (execUpgradeWalls).
+    let pfS = [WOOD.L, WOOD.R, WOOD.top];
+    let towerH = 32;
+    drawBuildingBlock(sx, linkY-7, 14, 7, towerH, pfS[0], pfS[1], 'flat', 0, pfS[2], pfS[2], darken, true);
+    // arrow slits on BOTH visible faces — arrows can come from either side
+    X.fillStyle = '#1c1c1c';
+    X.save(); X.translate(sx-7, sy-2); X.transform(1,0.5,0,1,0,0);
+    X.fillRect(-1.2,-5,2.4,8); X.restore();
+    X.save(); X.translate(sx+7, sy-2); X.transform(1,-0.5,0,1,0,0);
+    X.fillRect(-1.2,-5,2.4,8); X.restore();
+    drawBuildingBlock(sx, linkY - towerH - 6, 12, 6, 4, pfS[0], pfS[1], 'peaked', 8, tc, tcD, darken);
+
+    // Wall links: same both-material stubs as TOWER (see its comment).
+    let sN = getConnectedBuilding(e.x, e.y + 1);
+    if (isWallLike(sN)) {
+      let m2 = wallMat(sN.btype) || 'wood', lt2 = m2==='stone'?4:3.5;
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2==='stone'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2);
+    }
+    let eN = getConnectedBuilding(e.x + 1, e.y);
+    if (isWallLike(eN)) {
+      let m3 = wallMat(eN.btype) || 'wood', lt3 = m3==='stone'?4:3.5;
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3==='stone'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3);
+    }
+
+    if (e.complete && visible) drawWavingFlag(sx, sy, 32, tc, tcD);
+  }
   else if(isWallBtype(e.btype)){
     bh=14;
     let pillarH = 22;
@@ -2234,12 +2269,13 @@ function drawBuilding(e, part = null){
     X.fillRect(sx-bww/2,hpY+1,bww*e.hp/e.maxHp,4);
   }
   // Garrison count — just the number, planted beside this building's own
-  // team flag (only TC and TOWER can ever hold a garrison, and both fly
-  // their flag at the very top of the structure using this same sx/sy).
+  // team flag (only the TC and towers can ever hold a garrison, and all
+  // fly their flag at the very top of the structure using this same sx/sy).
   if(e.team===myTeam&&e.garrison&&e.garrison.length>0){
     let flagX=sx, flagY;
     if(e.btype==='TC') flagY=sy-bh-28; // tracks the (age/size-scaled) keep top; sy-88 at 3x3
     else if(e.btype==='TOWER') flagY=sy-54;
+    else if(e.btype==='PTOWER') flagY=sy-46;
     else flagY=sy-bh-11; // fallback, shouldn't normally trigger
     let label=String(e.garrison.length);
     X.font='bold 12px sans-serif';X.textAlign='left';

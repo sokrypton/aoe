@@ -40,6 +40,31 @@ function drawFlagMarker(x, y, tall){
   X.fill();
   X.globalAlpha = 1;
 }
+// Dashed outline of a building's footprint diamond on the ground — the
+// "post" marker for a unit guarding a BUILDING, so the whole structure
+// reads as the assignment instead of a flag at one perimeter tile.
+function drawBuildingFootprintOutline(b, alpha){
+  let bd = BLDGS[b.btype];
+  let w = b.w || bd.w, h = b.h || bd.h;
+  let c = [flagScreen(b.x, b.y), flagScreen(b.x + w, b.y),
+           flagScreen(b.x + w, b.y + h), flagScreen(b.x, b.y + h)];
+  X.strokeStyle = '#ffd700';
+  X.globalAlpha = alpha;
+  X.lineWidth = 1.5;
+  X.setLineDash([4, 4]);
+  X.beginPath();
+  X.moveTo(c[0].x, c[0].y);
+  for (let i = 1; i < 4; i++) X.lineTo(c[i].x, c[i].y);
+  X.closePath();
+  X.stroke();
+  X.setLineDash([]);
+  X.globalAlpha = 1;
+}
+// Ground-plane center of a building's footprint, in screen space.
+function buildingCenterScreen(b){
+  let bd = BLDGS[b.btype];
+  return flagScreen(b.x + (b.w || bd.w) / 2, b.y + (b.h || bd.h) / 2);
+}
 
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
@@ -325,6 +350,31 @@ function render(){
       }
       if (u.guardX == null || !u.guardFlagged) return;
       let from = flagScreen(u.x, u.y);
+      // Guarding a BUILDING: outline the whole footprint and draw the line to
+      // its center, instead of a flag at the single perimeter post tile — the
+      // post IS the building (see the footprint leash in js/logic.js). Ground
+      // posts and escorts (guardTargetId is a unit, or none) keep the flag.
+      let gb = u.guardTargetId != null ? entitiesById.get(u.guardTargetId) : null;
+      if (gb && gb.type === 'building') {
+        let key = 'b' + gb.id;
+        if (!drawnFlags.has(key)) drawBuildingFootprintOutline(gb, 0.7); // once per building
+        drawnFlags.add(key);
+        let to = buildingCenterScreen(gb);
+        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+        return;
+      }
+      if (gb && gb.type === 'unit') {
+        // ESCORT: track the guarded unit's LIVE position (same source as its
+        // sprite) so the flag follows it smoothly. Reading guardX/guardY here
+        // instead lagged it — that field only re-syncs on sim ticks (and is
+        // the unit's raw x/y, so the +0.5 tile-centering below would offset
+        // the flag off the unit) — which read as the flag "skipping".
+        let to = flagScreen(gb.x, gb.y);
+        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+        let key = 'u' + gb.id;
+        if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
+        return;
+      }
       let to = flagScreen(u.guardX + 0.5, u.guardY + 0.5);
       drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
       let key = Math.round(u.guardX / 2) + '_' + Math.round(u.guardY / 2);

@@ -219,7 +219,12 @@ document.addEventListener('keydown',e=>{
         placing=type; showMsg('Place '+label);
       };
       if(key==='q') { tryPlace('BARRACKS','Barracks'); return; }
-      else if(key==='w') { tryPlace('TOWER','Watch Tower'); return; }
+      // W = best unlocked tower, matching the E/R wall convention below.
+      else if(key==='w') {
+        if(isUnlocked(myTeam,'TOWER')) tryPlace('TOWER','Watch Tower');
+        else tryPlace('PTOWER','Palisade Watch Tower');
+        return;
+      }
       else if(key==='e') {
         if(isUnlocked(myTeam,'SWALL')) tryPlace('SWALL','Stone Wall');
         else tryPlace('WALL','Palisade Wall');
@@ -234,6 +239,7 @@ document.addEventListener('keydown',e=>{
       // stone has taken the E/R slots.
       else if(key==='t' && isUnlocked(myTeam,'SWALL')) { tryPlace('WALL','Palisade Wall'); return; }
       else if(key==='y' && isUnlocked(myTeam,'SWALL')) { tryPlace('GATE','Palisade Gate'); return; }
+      else if(key==='u' && isUnlocked(myTeam,'TOWER')) { tryPlace('PTOWER','Palisade Watch Tower'); return; }
     }
   }
 
@@ -262,6 +268,7 @@ document.addEventListener('keydown',e=>{
       let ids = selected.map(s => s.id);
       let wantOn = selected.some(s => !s.autoScout);
       submitCommand({ kind: 'auto-scout', unitIds: ids, on: wantOn });
+      if(wantOn) deselectAfterTask(); // auto-scout is a task → deselect (index model)
       return;
     }
   }
@@ -561,6 +568,10 @@ document.addEventListener('contextmenu',e=>{
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
     window.settingGuard=false; // right-click issues a manual order instead
+    // index.html: right-click a friendly building/unit = Guard/Escort flag,
+    // then deselect (assign-and-move-on). Ground/enemy fall through to the
+    // normal walk/attack below.
+    if(!isClassicUI && tryRightClickGuard(e.clientX, e.clientY)) return;
     doCommand(e.clientX,e.clientY);
     // index.html has ONE interaction model: a right-click command applies
     // the same keep/release rules as the left-click tap path (handleTap) —
@@ -851,9 +862,6 @@ C.addEventListener('touchend',e=>{
   }
 },{passive:false});
 
-function hasSelectedMobileBuilder(){
-  return selected.some(s=>s.team===myTeam&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
-}
 // UI-only record of the LAST command submitted per unit, not yet EXECUTED —
 // the queue runs commands INPUT_DELAY_TICKS after the tap (js/commands.js),
 // so at tap time the unit's live task/target/moveGoal fields still describe
@@ -876,12 +884,22 @@ function hasSelectedMobileWalkOrder(){
   });
 }
 function finishMobileUnitCommand(){
+  // Only a plain walk keeps the selection (see the keep rule in doCommand);
+  // every committed task deselects.
   if(hasSelectedMobileWalkOrder())return;
-  if(hasSelectedMobileBuilder())return;
   selected=[];
   window.settingRally=false;
   window.settingGuard=false;
   updateUI();
+}
+// "Assign and move on": once a unit is given a real task via a BUTTON/keyboard
+// or flag drop (guard/escort, build placement, auto-scout) the index skin
+// clears the selection. classic.html stays AoE2-STICKY. One home for that
+// policy — the tap/left-click path uses finishMobileUnitCommand instead.
+function deselectAfterTask(){
+  if(isClassicUI)return;
+  selected=[];
+  if(typeof updateUI==='function')updateUI();
 }
 
 // Commit a rally-flag drop at a screen point — the ONE rally-drop path,
@@ -898,6 +916,12 @@ function commitRallyAt(sx, sy){
   updateUI();
 }
 
+// Feedback string for a guard/escort/ground flag — shared by both flag-drop
+// paths so the wording can't drift.
+function guardFlagMsg(tgt){
+  if(!tgt) return 'Guarding position';
+  return tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building');
+}
 // Resolve and submit a guard flag at a screen point — the ONE guard-drop
 // path, shared by the touch tap and desktop click handlers. A tap on a
 // friendly unit = ESCORT it, on an own/allied building = stand watch there
@@ -915,10 +939,32 @@ function dropGuardFlagAt(sx, sy){
     // this the units' stale posts (or no flag at all) render for a few
     // frames before jumping to the clicked spot.
     window.pendingGuardPreview = { ids: new Set(ids), x: gt.x, y: gt.y, at: tick };
-    showMsg(tgt ? (tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building')) : 'Guarding position');
+    showMsg(guardFlagMsg(tgt));
+    deselectAfterTask(); // guard is a task → deselect (index model); classic stays AoE2-sticky
   }
   window.settingGuard = false;
   updateUI();
+}
+
+// index.html right-click shortcut: a right-click on a friendly BUILDING
+// (guard it) or friendly UNIT (escort it) plants the flag directly — the
+// same command dropGuardFlagAt/execGuard use, no need to arm the Guard
+// button first. GROUND and ENEMY right-clicks are NOT intercepted (they
+// stay a normal walk/attack), and it only fires when the selection has
+// guard-eligible units — so villager repair/follow on right-click is
+// untouched. Returns true if it issued a guard flag (skip doCommand).
+function tryRightClickGuard(sx, sy){
+  if(!selected.some(s=>s.type==='unit'&&s.team===myTeam&&guardEligible(s)))return false;
+  let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
+  if(!tgt || !sameSide(tgt.team, myTeam))return false; // ground / enemy → normal command
+  let gt = screenToTile(sx, sy);
+  if(!gt)return false;
+  let ids = selected.filter(s=>s.type==='unit'&&guardEligible(s)).map(s=>s.id);
+  if(!ids.length)return false;
+  submitCommand({ kind:'guard', unitIds: ids, x: gt.x, y: gt.y, targetId: tgt.id });
+  showMsg(guardFlagMsg(tgt));
+  deselectAfterTask(); // guard is a task → deselect (index-only caller)
+  return true;
 }
 
 // Context-aware tap handler — the ONE decision tree for the tap-model skin:
@@ -1580,13 +1626,13 @@ function doCommand(sx,sy){
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
-  // If a friendly training building is selected, this is the RALLY path.
-  // classic.html: right-click sets the rally, exactly as AoE2 does. The
-  // tap skin (index.html) only reaches here through the Set Rally button's
-  // armed mode (commitRallyAt calls doCommand while settingRally is still
-  // true) — a stray right-click must NOT silently relocate the flag there.
+  // If a friendly training building is selected, this is the RALLY path —
+  // the building half of right-click-to-flag. Both skins now set the rally
+  // on a right-click (AoE2 standard), matching how right-clicking a unit
+  // selection plants a guard/escort flag. On index.html doCommand is only
+  // reached for a building via a right-click or the armed Set Rally button,
+  // both of which should relocate the flag — so no extra gate is needed.
   if(selected[0].type==='building'&&selected[0].team===myTeam){
-    if(!isClassicUI && !window.settingRally) return;
     let bldg=selected[0];
     let bData=BLDGS[bldg.btype];
     if(!bData || !bData.builds || bData.builds.length === 0) return;
@@ -1635,10 +1681,15 @@ function doCommand(sx,sy){
     window.pendingRallyPreview = { bldgId: bldg.id, x: tile.x, y: tile.y, at: tick };
     return;
   }
-  // Visual command marker
+  // Visual command marker. The gather (yellow) color only applies to an
+  // EXPLORED resource tile — a click on unexplored ground is a plain walk
+  // (the villager can't be tasked to an unseen resource, see execUnitCommand
+  // in js/commands.js), so it stays green. Mirrors that sim rule using the
+  // viewer's own fog (this marker is local cosmetic feedback).
   let t0=map[tile.y]&&map[tile.y][tile.x];
+  let seen = window.fogDisabled || (fog[tile.y] && fog[tile.y][tile.x] !== 0);
   let markerColor='#0f0';
-  if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
+  if(seen&&t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
   // Check if targeting enemy OR own sheep for harvesting OR own unit to follow
   let target=null;
   let buildTarget=null;
@@ -1706,18 +1757,20 @@ function doCommand(sx,sy){
     else if (first.utype !== 'sheep') window.playSound('select_military');
   }
 
-  // Record the keep-selection decision for THIS command (see pendingOrderUI):
-  // mirror execUnitCommand's rules — plain walk keeps selection; a villager
-  // sent to build/repair keeps (builder flow); gather/attack/follow deselect.
+  // Record the keep-selection decision for THIS command (see pendingOrderUI).
+  // The rule (index.html streamlined model): a real TASK — gather/farm,
+  // build, repair, attack, follow — deselects, so ordering a unit feels like
+  // "assign it and move on". The ONLY keep is a plain WALK: to explored
+  // ground where nothing is committed, OR to an UNEXPLORED tile (we can't
+  // know what's there yet, so it's a move into the unknown, not a task).
   {
     prunePendingOrders();
     let t0p = map[tile.y] && map[tile.y][tile.x];
     let GATHERABLE_T = t0p && (t0p.t === TERRAIN.FOREST || t0p.t === TERRAIN.GOLD || t0p.t === TERRAIN.STONE || t0p.t === TERRAIN.BERRIES || t0p.t === TERRAIN.FARM);
+    let unexplored = !seen; // `seen` (viewer fog) computed above for the marker color
     let plainWalk = !target && !buildTarget && !followTarget;
     movers.forEach(s => {
-      let keep = false;
-      if (buildTarget && s.utype === 'villager') keep = true; // hasSelectedMobileBuilder flow
-      else if (plainWalk && !(s.utype === 'villager' && GATHERABLE_T)) keep = true;
+      let keep = unexplored || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
       pendingOrderUI.set(s.id, { t: tick, keep });
     });
   }
@@ -1767,6 +1820,10 @@ function doPlace(sx,sy){
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){
     placing=null;
+    // Building is a task → deselect once the last foundation is placed
+    // (index model). Shift-placing keeps them for the next foundation, and
+    // classic stays AoE2-sticky.
+    deselectAfterTask();
   } else {
     showMsg('Place next foundation (release Shift to finish)');
   }

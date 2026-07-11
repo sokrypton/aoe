@@ -92,6 +92,48 @@ const SCENES = {
     F(loaded, 7); loaded.carrying = 40; loaded.carryType = 'gold';
     (${pageLookAt})(29.5, 30.5);
     render();`,
+  ptower: `(${pageStage})();
+    // standalone size/material comparison: wooden PTOWER beside stone TOWER
+    createBuilding('PTOWER', 25, 26, 0);
+    createBuilding('TOWER', 28, 26, 0);
+    // palisade run with an embedded PTOWER bastion, meeting a stone run —
+    // link stubs must take each neighbor's material on both sides
+    for (let x = 24; x <= 33; x++) if (x !== 29) createBuilding(x < 31 ? 'WALL' : 'SWALL', x, 31, 0);
+    createBuilding('PTOWER', 29, 31, 0);
+    // upgrade in progress: an instant-swapped construction site (btype is
+    // already the stone/tower target, complete=false, half-built HP) — the
+    // normal foundation render (alpha ramp + cyan HP bar) applies
+    const uw = createBuilding('SWALL', 25, 35, 0);
+    uw.complete = false; uw.buildProgress = uw.buildTime / 2; uw.hp = uw.maxHp / 2; uw.upgrading = true;
+    const ut = createBuilding('TOWER', 29, 35, 0);
+    ut.complete = false; ut.buildProgress = ut.buildTime / 2; ut.hp = ut.maxHp / 2; ut.upgrading = true;
+    (${pageLookAt})(28.5, 31);
+    render();`,
+  guardbldg: `(${pageStage})();
+    window.myTeam = 0;
+    // a 4x4 TC with three militia flagged to guard it, fanned around the
+    // footprint — selecting them should outline the whole building + draw a
+    // line from each guard to the building center (no per-tile flags)
+    const gtc = createBuilding('TC', 28, 28, 0);
+    const guards = [createUnit('militia', 26, 27, 0), createUnit('militia', 33, 30, 0), createUnit('militia', 29, 33, 0)];
+    guards.forEach(g => {
+      const pt = nearestBldgPerimeter(g.x, g.y, gtc, g.id);
+      g.guardTargetId = gtc.id; g.guardX = pt.x; g.guardY = pt.y; g.guardFlagged = true;
+    });
+    selected.length = 0; guards.forEach(g => selected.push(g));
+    (${pageLookAt})(30, 30);
+    render();`,
+  escort: `(${pageStage})();
+    window.myTeam = 0;
+    // a soldier escorting a villager: the guard flag/line must sit ON the
+    // villager (live position), not offset by half a tile
+    const vil = createUnit('villager', 31, 29, 0);
+    const sol = createUnit('militia', 28, 31, 0);
+    sol.guardTargetId = vil.id; sol.followId = vil.id;
+    sol.guardX = vil.x; sol.guardY = vil.y; sol.guardFlagged = true;
+    selected.length = 0; selected.push(sol);
+    (${pageLookAt})(29.5, 30);
+    render();`,
   fog: `(${pageStage})();
     const own = createBuilding('MARKET', 24, 29, 0);
     const foe = createBuilding('MARKET', 34, 29, 1);

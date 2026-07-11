@@ -36,8 +36,7 @@ function canPlace(type,x,y,team=0){
     // sim state computed identically on every peer — js/core.js). AI teams
     // keep their historic exemption (their "vision" is proximity-based,
     // not fog-based — js/ai.js); humans must have explored the tile.
-    if(!window.fogDisabled && !isAITeam(team)
-       && !teamHasExplored(team, ny*MAP+nx))return false;
+    if(tileHiddenForTeam(team, ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
     if(t.occupied){
@@ -50,7 +49,7 @@ function canPlace(type,x,y,team=0){
       // build, mirroring how a gate is built over walls).
       if (existing && existing.type === 'building' && existing.team === team &&
           ((isGateBtype(type) && existing.btype === GATE_WALL_MATCH[type]) ||
-           (type === 'TOWER' && isWallBtype(existing.btype)) ||
+           (isTowerBtype(type) && isWallBtype(existing.btype)) ||
            (type === 'SWALL' && existing.btype === 'WALL'))) {
         continue;
       }
@@ -412,32 +411,59 @@ function distToBuilding(px,py,bldg){
   return best;
 }
 
+// Euclidean distance from a point to a building's footprint RECT (0 inside).
+// The one clamped-rect distance helper — used by the guard leash (anchor a
+// building-guard to the whole structure, not one perimeter tile) and by
+// adjToBuilding below.
+function edgeDistToBuilding(px,py,bldg){
+  let dx=Math.max(bldg.x-0.5-px, 0, px-(bldg.x+bldg.w-0.5));
+  let dy=Math.max(bldg.y-0.5-py, 0, py-(bldg.y+bldg.h-0.5));
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
 // Check if unit is adjacent to a building (within 1.5 tiles of its nearest edge).
 // Uses the same nearest-edge distance as distToTarget() — a prior per-perimeter-tile
 // box test (|dx|<1.2 && |dy|<1.2) let units register as "adjacent" from up to
 // ~1.7 tiles past the nearest edge near corners, well beyond intended melee reach.
+// Perimeter tile centers sit 0.5 (orthogonal) to ~0.71 (diagonal corner) from
+// the rect, so 1.2 accepts every true perimeter tile while rejecting the next
+// ring out.
 function adjToBuilding(px,py,bldg){
-  // Tile-accurate footprint (see distToTarget). Perimeter tile centers sit
-  // 0.5 (orthogonal) to ~0.71 (diagonal corner) from this rect, so 1.2
-  // accepts every true perimeter tile while rejecting the next ring out —
-  // previously the inflated rect + 1.5 let melee hit from ~2 tiles away.
-  let dx=Math.max(bldg.x-0.5-px, 0, px-(bldg.x+bldg.w-0.5));
-  let dy=Math.max(bldg.y-0.5-py, 0, py-(bldg.y+bldg.h-0.5));
-  return Math.sqrt(dx*dx+dy*dy) <= 1.2;
+  return edgeDistToBuilding(px,py,bldg) <= 1.2;
 }
 
-// Find nearest walkable tile adjacent to building perimeter
-function nearestBldgPerimeter(px,py,bldg,ignore){
-  let best=null,bd=999;
+// A guarding unit's "zone" = the thing it protects: {b: building} when
+// escorting/guarding a building (measured to the whole footprint), else the
+// {x,y} post point (ground post, or an escorted unit synced onto guardX/Y).
+// guardZoneDist is the distance from a point to that zone. Shared by the
+// leash (js/logic.js) and the aggro scope so they stay in lock-step on both
+// the zone AND the GUARD_LEASH radius.
+const GUARD_LEASH = 6;
+function guardZoneOf(e){
+  let gb = e.guardTargetId != null ? entitiesById.get(e.guardTargetId) : null;
+  return (gb && gb.type === 'building') ? { b: gb } : { x: e.guardX, y: e.guardY };
+}
+function guardZoneDist(z, px, py){
+  return z.b ? edgeDistToBuilding(px, py, z.b) : Math.hypot(px - z.x, py - z.y);
+}
+
+// Find nearest walkable tile adjacent to building perimeter. Optional
+// `claimed` set (keys "x,y") lets a group of callers fan OUT around the
+// footprint instead of all picking the one nearest tile — a claimed tile is
+// only skipped while any unclaimed perimeter tile remains.
+function nearestBldgPerimeter(px,py,bldg,ignore,claimed){
+  let best=null,bd=999,bestAny=null,bdAny=999;
   for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
     if(dx>=0&&dx<bldg.w&&dy>=0&&dy<bldg.h)continue;
     let tx=bldg.x+dx, ty=bldg.y+dy;
     if(tx>=0&&tx<MAP&&ty>=0&&ty<MAP&&walkable(tx,ty,ignore)){
       let d=Math.abs(px-tx)+Math.abs(py-ty);
+      if(d<bdAny){bdAny=d;bestAny={x:tx,y:ty};}
+      if(claimed && claimed.has(tx+','+ty))continue;
       if(d<bd){bd=d;best={x:tx,y:ty};}
     }
   }
-  return best||{x:Math.min(bldg.x+bldg.w,MAP-1),y:Math.min(bldg.y+bldg.h,MAP-1)};
+  return best||bestAny||{x:Math.min(bldg.x+bldg.w,MAP-1),y:Math.min(bldg.y+bldg.h,MAP-1)};
 }
 
 
@@ -1496,14 +1522,24 @@ function updateUnit(e){
     syncGuardPost(e); // escort posts track the guarded unit before the leash reads the post
     {
       let guardLeash = e.guardX != null && !e.explicitAttack;
-      if (guardLeash || (e.stance === 'defensive' && e.defendX !== undefined)) {
-        let ax = guardLeash ? e.guardX : e.defendX;
-        let ay = guardLeash ? e.guardY : e.defendY;
-        let adx = e.x - ax, ady = e.y - ay;
-        if (Math.sqrt(adx*adx + ady*ady) > 6) {
+      if (guardLeash) {
+        // Guard post: measured to the whole footprint for a building (a threat
+        // at any side of a 4x4 TC is still "at post"), else to the post point
+        // (ground post, or escorted unit synced onto guardX/Y). Return to the
+        // post if dragged past the leash.
+        if (guardZoneDist(guardZoneOf(e), e.x, e.y) > GUARD_LEASH) {
           e.target = null;
           clearUnitPath(e);
-          pathUnitTo(e, Math.round(ax), Math.round(ay));
+          pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+          return;
+        }
+      } else if (e.stance === 'defensive' && e.defendX !== undefined) {
+        // Defensive stance drifts to its idle anchor (defendX/Y), not a post.
+        let adx = e.x - e.defendX, ady = e.y - e.defendY;
+        if (Math.sqrt(adx*adx + ady*ady) > GUARD_LEASH) {
+          e.target = null;
+          clearUnitPath(e);
+          pathUnitTo(e, Math.round(e.defendX), Math.round(e.defendY));
           return;
         }
       }
@@ -1801,6 +1837,7 @@ function updateUnit(e){
           if(bt.buildProgress>=bt.buildTime){
             bt.complete=true;
             bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
+            delete bt.upgrading; // committed-upgrade marker (execUpgradeWalls) — done its job
             e.buildTarget=null;
             if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
               window.playSound('train'); // play herald fanfare on building completed
@@ -2015,8 +2052,17 @@ function updateUnit(e){
     if (e.stance !== 'passive' && (tick + e.id) % 3 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let reachAtk=(e.range>0?e.range:1.6);
+      // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
+      // it only engages enemies inside its leash zone (GUARD_LEASH) of the
+      // post/building — same zone + radius as the leash above — so it never
+      // chases a foe that isn't threatening the guarded thing, and never
+      // oscillates re-grabbing one it was just leashed off of. Matches AoE2
+      // Guard (defend the target's vicinity), vs. plain defensive stance which
+      // aggros on anything near the unit. Explicit attacks are exempt.
+      let guardZone = (e.guardX != null && !e.explicitAttack) ? guardZoneOf(e) : null;
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
+        if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
         // Skip a foe we recently proved unreachable — UNLESS it is now within
         // attack range AND actually hittable (pathing is then moot; we hit it
         // where it stands). Without the range exception an idle unit ignored an
@@ -2076,10 +2122,11 @@ function updateUnit(e){
           let b = entities[bi];
           if (b.type !== 'building' || sameSide(b.team, e.team) || b.team === GAIA_TEAM || b.hp <= 0) continue;
           if (isWallBtype(b.btype) || isGateBtype(b.btype)) continue;
+          if (guardZone && guardZoneDist(guardZone, b.x + b.w/2, b.y + b.h/2) > GUARD_LEASH) continue; // outside the guard zone
           let d = distToTarget(e, b);
           if (d > scanRange + 0.1) continue;
           if (!window.fogDisabled && !buildingVisibleToTeam(b, e.team)) continue;
-          let pri = (b.btype === 'TOWER' || b.btype === 'TC') ? 1 : 0;
+          let pri = firesArrows(b.btype) ? 1 : 0;
           if (pri > bestPri || (pri === bestPri && (d < bestD || (d === bestD && bestB && b.id < bestB.id)))) {
             bestPri = pri; bestD = d; bestB = b;
           }
@@ -2198,7 +2245,11 @@ function deleteOwnedEntity(en){
   // recovery / quick-wall cancel). Completed buildings and units refund
   // nothing. (Slight over-refund if a gate/tower consumed wall tiles for
   // a stone discount — rare and in the player's favor, acceptable.)
-  if(en.type==='building'&&!en.complete&&!en.exhausted){
+  // A committed upgrade-in-progress (execUpgradeWalls, js/commands.js) is
+  // NOT cancellable — it already paid out its salvage, so refunding the new
+  // type's cost too would mint free resources; force-deleting one just
+  // destroys it for nothing.
+  if(en.type==='building'&&!en.complete&&!en.exhausted&&!en.upgrading){
     let store=resourceStore(en.team); // the OWNING team's resources, not always team 0's
     Object.entries(BLDGS[en.btype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
     // Feedback belongs to the OWNER's screen only — under lockstep both
@@ -2481,7 +2532,7 @@ function updateBuilding(e){
   if(!e.complete)return;
 
   // Tower / TC arrow fire (defensive structures auto-fire)
-  if (e.btype === 'TOWER' || e.btype === 'TC') {
+  if (firesArrows(e.btype)) {
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
       let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
