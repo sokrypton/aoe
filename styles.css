@@ -146,9 +146,9 @@ canvas {
   left: 6px;
   bottom: 84px;
   z-index: 20;
-  min-width: 28px;
-  width: 28px;
-  height: 28px;
+  min-width: var(--corner-size);
+  width: var(--corner-size);
+  height: var(--corner-size);
   padding: 0;
   align-items: center;
   justify-content: center;
@@ -159,8 +159,8 @@ canvas {
   background: linear-gradient(180deg, rgba(92,61,36,0.82) 0%, rgba(48,31,16,0.82) 100%);
   border: 1px solid #bfa054;
   border-radius: 4px;
-  height: 28px;
-  width: 28px;
+  height: var(--corner-size);
+  width: var(--corner-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -170,11 +170,11 @@ canvas {
   position: relative;
 }
 #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji, #chat-btn .btn-emoji, #menu-btn .btn-emoji{
-  font-size: 22px;
+  font-size: calc(var(--corner-size) * 0.68);
   line-height: 1;
 }
 #bell-btn .btn-emoji{
-  font-size: 22px;
+  font-size: calc(var(--corner-size) * 0.68);
   transform: scale(1.1);
   transform-origin: center;
   display: inline-block;
@@ -459,7 +459,13 @@ canvas {
 /* ONE size for every square control in the bar — action buttons, selection
    tiles, the idle age crest. Breakpoints change the variable, never the
    selectors, so the pieces cannot drift apart. */
-:root { --tile-size: 58px; }
+:root {
+  --tile-size: 58px;
+  /* Corner shortcut cluster (home/map/idle/bell/chat) + the back arrow —
+     one knob per breakpoint, same discipline as --tile-size. Bigger than
+     the old 28px even on desktop: these are frequent-use controls. */
+  --corner-size: 40px;
+}
 
 .act-btn{
   position:relative; /* anchors the queue-cancel-hover badge, not the button itself */
@@ -1345,13 +1351,8 @@ canvas {
      target, and it's exactly on small phones that these one-tap shortcuts
      matter most. (Duplicate 30px override further down this block removed;
      this is the single source at ≤600px.) */
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:42px;width:42px}
-  .act-btn.back-btn{min-width:42px;width:42px;height:42px;bottom:100px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:28px}
-  #bell-btn .btn-emoji{
-    font-size: 28px;
-    transform: scale(1.1);
-  }
+  :root{--corner-size:42px}
+  .act-btn.back-btn{bottom:100px}
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
   /* Corner minimap is gone at this width — the only way back to a map view
@@ -1385,10 +1386,8 @@ canvas {
   #sel-info.multi-select{max-width:calc(100% - 94px)}
   /* Even larger on the smallest phones — biggest tap target where fingers
      cover the most screen. */
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:48px;width:48px}
-  .act-btn.back-btn{min-width:48px;width:48px;height:48px;bottom:94px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:32px}
-  #bell-btn .btn-emoji{font-size:32px;transform:scale(1.1)}
+  :root{--corner-size:48px}
+  .act-btn.back-btn{bottom:94px}
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #pop-wrap{bottom:94px}
   /* Market exchange: tighter cells so most of a row fits the narrow visible
@@ -2051,12 +2050,10 @@ canvas {
      the column grows upward as chat/idle/bell toggle in, so the back button
      never moves. */
   #pop-wrap { bottom: 6px; right: 6px; flex-direction: column; gap: 6px; }
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn { height: 42px; width: 42px; }
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #chat-btn .btn-emoji { font-size: 28px; }
-  #bell-btn .btn-emoji { font-size: 28px; transform: scale(1.1); }
+  :root { --corner-size: 42px; }
   /* Back arrow in the UPPER-right, tucked under the topbar's ☰/⛶ corner —
      the bottom-right corner stays with the shortcut column. */
-  .act-btn.back-btn { left: auto; right: 6px; top: 44px; bottom: auto; min-width: 42px; width: 42px; height: 42px; }
+  .act-btn.back-btn { left: auto; right: 6px; top: 44px; bottom: auto; }
   /* Chat anchors clear of the rail */
   #chat-log { left: 104px; top: 44px; }
   #chat-input-wrap { left: 104px; bottom: 8px; }
