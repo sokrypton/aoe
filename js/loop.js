@@ -322,11 +322,13 @@ function separateUnits(){
   let minDist=0.5;
   // Per-unit flag computed once — the old all-pairs loop recomputed it,
   // including an entitiesById lookup, for every PAIR (n²/2 times per tick).
-  // Skip units actively gathering on a resource tile, building, or harvesting a sheep carcass
+  // Skip units working IN PLACE on a fixed tile (resource gather, construction)
+  // — they must not be slid off their claimed tile. Carcass harvesters are NOT
+  // skipped: they press onto the carcass (js/logic.js pressToContact) and need
+  // separation to spread them into a ring around it rather than stack.
   let gathering=units.map(a=>
     (a.gatherX >= 0 && a.path.length === 0) ||
-    (a.buildTarget !== null && a.path.length === 0) ||
-    (a.target !== null && a.path.length === 0 && entitiesById.get(a.target)?.utype === 'sheep_carcass'));
+    (a.buildTarget !== null && a.path.length === 0));
   // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be
   // within minDist (0.5), so each unit compares against its 3×3 cell
   // neighborhood instead of every other unit on the map. The j>i guard keeps

@@ -504,6 +504,34 @@ function siegePerimeterSpot(e,t){
   return nearestBldgPerimeter(e.x,e.y,t,e.id);
 }
 
+// Deterministic "press to contact": once a unit has SETTLED (path empty) in
+// attack/harvest range, nudge it one small step (<=0.08) toward (cx,cy) but
+// never inside contactDist. Pathfinding only ever drops a unit on the adjacent
+// integer TILE (~1.4 out); this closes that gap so attackers/gatherers pack
+// tight against the target, and separateUnits (js/loop.js) spreads co-pressers
+// into a ring. sqrt + division + arithmetic only (all IEEE-exact) — safe under
+// the lockstep checksum; no trig, no PRNG. The walkable(ignoreUnits=true) guard
+// means we never press into terrain/walls but DO press over other units
+// (separation resolves the overlap). contactDist>=minDist(0.5, separateUnits)
+// so a mobile unit target is never itself shoved out of its own surround.
+function pressToContact(e, cx, cy, contactDist){
+  if(e.path.length!==0)return;               // only when settled
+  let dx=cx-e.x, dy=cy-e.y;
+  let d=Math.sqrt(dx*dx+dy*dy);
+  if(d<=contactDist+0.02)return;             // deadband — already in the ring
+  // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
+  // follower advances unitMoveSpeed*UNIT_PX_PER_TICK screen-px/tick, i.e.
+  // unitMoveSpeed/30 tiles/tick (30 ticks per game-second) — match it so the
+  // unit strolls into contact instead of snapping (the old 0.08 was ~3x walk).
+  let walkStep = unitMoveSpeed(e)/30;
+  let step=Math.min(walkStep, d-contactDist);
+  let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
+  if(walkable(Math.round(nx),Math.round(ny),e.id,true)){
+    e.x=nx; e.y=ny;
+    e.pressWalk=tick;   // signal the renderer to show the walk cycle (js/render-units.js)
+  }
+}
+
 // AoE2 DE-style group spread: when several villagers are tasked onto one
 // resource tile, each claims its own tile of the same resource near the
 // click instead of the whole group piling onto one tree. Rings expand from
@@ -1592,6 +1620,11 @@ function updateUnit(e){
         }
       } else {
         clearUnitPath(e);
+        // Press tight against the carcass (see pressToContact) so the herding
+        // crew packs onto/around it instead of standing a tile back;
+        // separateUnits (with the carcass clause dropped from its exclusion)
+        // rings them.
+        pressToContact(e, t.x, t.y, 0.7);
         if(e.carrying>=e.carryMax){
           e.prevTask=null;
           e.task='return';
@@ -1765,9 +1798,16 @@ function updateUnit(e){
           // Adjacent but no clear line (sealed corner): step to a clear adjacent
           // tile — the plain to-target path redirects around the corner.
           if(!combatApproach(e,t,d,()=>pathUnitTo(e,Math.round(t.x),Math.round(t.y)))) return;
-        } else if(e.atkCooldown<=0){
-          damageEntity(e,t);
-          e.atkCooldown=UNITS[e.utype].rof;
+        } else {
+          // In range: press tight against the target (see pressToContact) so
+          // attackers pack into a ring instead of standing a tile back, then
+          // strike on cooldown. contactDist 0.7 >= separateUnits' minDist so a
+          // mobile target isn't shoved out of its own surround.
+          pressToContact(e, t.x, t.y, 0.7);
+          if(e.atkCooldown<=0){
+            damageEntity(e,t);
+            e.atkCooldown=UNITS[e.utype].rof;
+          }
         }
       }
     }
