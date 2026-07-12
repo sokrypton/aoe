@@ -139,6 +139,12 @@ function aggregate(reports) {
   const a = parseArgs(process.argv.slice(2));
   const runs = Math.max(1, parseInt(a.runs || '1', 10));
   const ticks = parseInt(a.ticks || '60000', 10);
+  // scenario=<path.json>: build a hand-authored world (js/scenario.js) instead
+  // of a procedural match. The JSON is read here and passed into the page.
+  // Resolve relative to the repo ROOT (simulate.sh cd's into tools/, so a path
+  // the user gives relative to the repo — e.g. scenarios/x.json — must anchor
+  // to ROOT, not tools/). Absolute paths pass through.
+  const scenario = a.scenario ? JSON.parse(fs.readFileSync(path.resolve(ROOT, a.scenario), 'utf8')) : null;
   const baseCfg = {
     mode: a.mode || '1v1',
     diff: a.diff || 'standard',
@@ -147,6 +153,7 @@ function aggregate(reports) {
     seed: a.seed != null ? parseInt(a.seed, 10) : null,
     rollback: a.rollback === '1',
     bears: a.bears, // 'bears=0' disables wild bears (isolate eco/wave behavior from fauna losses)
+    scenario, // parsed scenario spec, or null
   };
   // Generous evaluate timeout: the sim yields between batches, so this only
   // caps a genuinely wedged run. Scales with the tick budget.

@@ -147,6 +147,16 @@ function loadGameFromFile(file){
       if (window.showMsg) showMsg('Load failed: not a valid save file');
       return;
     }
+    // One "Load" button for both formats: a full save (serializeGame) has a 2D
+    // `map` grid; a compact scenario spec (js/scenario.js) has a string/absent
+    // `map` and u/b-shorthand entities. Route by the map shape.
+    if (typeof loadScenario === 'function' && !Array.isArray(data.map)) {
+      loadScenario(data);
+      window.fogDisabled = data.fog !== true; // reveal the authored map (loadScenario also sets this)
+      if (window.updateUI) updateUI();
+      if (window.showMsg) showMsg('Scenario loaded');
+      return;
+    }
     applySavedGame(data);
   };
   reader.onerror = () => { if (window.showMsg) showMsg('Load failed: could not read file'); };

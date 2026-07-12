@@ -45,6 +45,7 @@ window.addEventListener('unhandledrejection', e => window.__errors.push('unhandl
 <script src="../js/loop.js"></script>
 <script src="../js/ui.js"></script>
 <script src="../js/save.js"></script>
+<script src="../js/scenario.js"></script>
 <script src="../js/net.js"></script>
 <script src="../js/net-sync.js"></script>
 <script src="../js/lockstep.js"></script>
@@ -70,12 +71,21 @@ window.runSimulation = async function(opts){
     // self-play match isn't skewed by one AI's villagers being mauled (lets us
     // read pure eco/wave behavior). Sim-only — the real game never sets this.
     bears: !(opts.bears === '0' || opts.bears === 0 || opts.bears === false || opts.bears === 'false'),
+    scenario: opts.scenario || null, // parsed scenario spec (js/scenario.js); overrides the procedural match
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
   const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
 
   try {
-    // ---- match setup: every slot AI so the match plays itself ----
+    // ---- match setup ----
+    if (cfg.scenario) {
+      // Scenario mode: build the exact authored world (js/scenario.js) instead
+      // of a procedural all-AI match. Seed/map/teams/controllers come from the
+      // spec. Great for reproducible combat/gather test cases + measurement.
+      loadScenario(cfg.scenario);
+      report.config.scenarioLoaded = true;
+    } else {
+    // ---- procedural all-AI match: every slot AI so the match plays itself ----
     NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
@@ -84,6 +94,7 @@ window.runSimulation = async function(opts){
     const diffs = cfg.diff.split(',');
     teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
     resetAIStates();
+    }
     // gamePaused = TRUE: this loop drives update() manually. The game's own
     // requestAnimationFrame gameLoop (init.js) also calls update() when
     // !gamePaused, on a WALL-CLOCK accumulator — and because our batched
@@ -235,6 +246,15 @@ window.runSimulation = async function(opts){
       .map(e => ({team: e.team, ut: e.utype, x: +e.x.toFixed(0), y: +e.y.toFixed(0),
                   tgt: e.target || null, path: e.path.length, gs: e.groupSpeed || null,
                   retry: e.retry || null}));
+    // Scenario runs: full float-precision entity snapshot so a test can assert
+    // exact end positions (e.g. attackers ringed tight around a target).
+    if (cfg.scenario) {
+      report.end.entities = entities.map(e => ({
+        id: e.id, type: e.type, k: e.utype || e.btype, team: e.team,
+        x: +e.x.toFixed(3), y: +e.y.toFixed(3), hp: e.hp,
+        tgt: e.target || null, path: e.path ? e.path.length : 0
+      }));
+    }
 
     // ---- auto-analysis: anomalies worth a look ----
     const F = report.findings;

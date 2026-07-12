@@ -1,0 +1,26 @@
+{
+  "_comment": "Example scenario for js/scenario.js. Team-0 melee units on aggressive stance auto-acquire the team-1 knight (and then its Town Center) and should press into tight rings around them. Run headless: tools/simulate.sh scenario=scenarios/combat-ring.json ticks=1500 | (read end.entities). Inspect visually: index.html?scenario=scenarios/combat-ring.json",
+  "map": "small",
+  "seed": 1,
+  "numTeams": 2,
+  "controllers": ["human", "human"],
+  "terrain": [
+    {"t": "FOREST", "x": 12, "y": 30},
+    {"t": "FOREST", "x": 12, "y": 31},
+    {"t": "GOLD",   "x": 14, "y": 30},
+    {"t": "BERRIES","x": 12, "y": 28}
+  ],
+  "entities": [
+    {"b": "TC",      "x": 40, "y": 40, "team": 1},
+    {"u": "knight",  "x": 30, "y": 30, "team": 1, "stance": "standground"},
+
+    {"u": "militia", "x": 24, "y": 24, "team": 0, "stance": "aggressive"},
+    {"u": "militia", "x": 25, "y": 24, "team": 0, "stance": "aggressive"},
+    {"u": "militia", "x": 24, "y": 26, "team": 0, "stance": "aggressive"},
+    {"u": "spearman","x": 36, "y": 33, "team": 0, "stance": "aggressive"},
+    {"u": "spearman","x": 35, "y": 34, "team": 0, "stance": "aggressive"},
+    {"u": "knight",  "x": 30, "y": 36, "team": 0, "stance": "aggressive"},
+    {"u": "knight",  "x": 23, "y": 30, "team": 0, "stance": "aggressive"},
+    {"u": "knight",  "x": 37, "y": 27, "team": 0, "stance": "aggressive"}
+  ]
+}

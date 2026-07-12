@@ -9,6 +9,9 @@ function init(){
   window.lastWarTick=undefined;
   genMap();
   initFog(); // Initialize Fog of War grid
+  // Scenario loader (js/scenario.js) provides its OWN entities on the blank
+  // base — skip the default starting town + wildlife.
+  if(!window.__scenarioMode){
   STARTS.forEach(start=>{
     let tc=createBuilding('TC',start.x,start.y,start.team);
     tc.complete=true;
@@ -24,6 +27,7 @@ function init(){
   });
   placeStartingSheep();
   placeWildBears();
+  }
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
@@ -1599,6 +1603,14 @@ if (typeof window !== 'undefined' && window.location && window.location.search.i
   setMapSize('medium');
   window.fogDisabled = true;
   restartGame('standard');
+}
+
+// ?scenario=<url> — load a hand-authored / editor-exported scenario JSON
+// (js/scenario.js) in place of the default world, for visual testing. Fog off
+// so the whole authored map is visible. No-op without the param.
+if (typeof window !== 'undefined' && window.location && new URLSearchParams(window.location.search).get('scenario')) {
+  window.fogDisabled = true;
+  maybeLoadScenarioFromURL();
 }
 
 if (joinHostId) {
