@@ -948,7 +948,7 @@ function updateFog() {
     for (let y = 0; y < MAP; y++) {
       const row = fog[y], base = y * MAP;
       for (let x = 0; x < MAP; x++) {
-        if (vg[base + x] === visGen) row[x] = 2;
+        if (vg[base + x] > 0) row[x] = 2;
         else if (row[x] === 2) row[x] = 1;
       }
     }
@@ -968,19 +968,26 @@ function updateFog() {
 // decisions (auto-acquire fog gates, placement explored-rules, combat
 // target visibility) read these instead: recomputed every tick inside
 // update() from entities alone, so every peer agrees exactly.
-// Typed-array grids, not Sets: this runs for BOTH teams every tick and the
-// guest now runs the full sim on mobile — Set churn (two fresh Sets/tick +
-// ~80 adds per entity) was a measurable per-tick cost. visGen stamps make
-// "clearing" the visible grid a single counter increment.
-// teamVisGrid[team][k] === visGen  ->  tile k visible to team THIS tick.
-// teamExploredGrid[team][k] === 1  ->  team has EVER seen tile k
-// (deterministic accumulation — same commands => same history on every peer).
-let visGen = 0;
+// INCREMENTAL count grids: teamVisGrid[team][k] is the number of friendly
+// (ally-shared) entities whose sight disk currently covers tile k — visible
+// iff > 0. On each refresh tick we DIFF each entity against the disk it last
+// contributed (visStamps) and only add/remove the deltas for entities that
+// moved / were created / vanished, instead of re-stamping every entity's whole
+// disk every time (that full re-stamp was the single biggest sim cost, ~38% of
+// the headless tick). Reconciliation happens ONLY on refresh ticks, so a dead
+// or moved entity's vision persists exactly until the next refresh — bit-for-
+// bit identical to the old full re-stamp (verified by checksum equality).
+// teamExploredGrid[team][k] === 1  ->  team has EVER seen tile k (monotonic;
+// set on add, never cleared — deterministic history, same on every peer).
 let visionFreshTick = -1; // which sim tick the grids were computed for
 // How often the deterministic per-team vision grids are rebuilt (see
 // updateTeamVision). 2 is the shipped default; higher = faster/laggier vision.
 const VISION_REFRESH_TICKS = 2;
 let teamVisGrid = null, teamExploredGrid = null;
+let visStamps = new Map();  // entity id -> {t,cx,cy,s,gen} last-applied vision disk
+let visScanGen = 0;         // bumped each refresh; entities not re-marked this gen have vanished
+let visionRebuild = true;   // force a from-scratch recount (first run / rollback / load / alliance change)
+let visAllianceSig = '';    // detects an alliance change (removeDisk relies on stable ally groups)
 
 // ---- SIM-CACHE GENERATION COUNTER ----
 // Rollback/resync/save-load rewinds `tick`, so a cache keyed by
@@ -996,46 +1003,64 @@ let simGen = 0;
 const SIM_CACHES = []; // reset callbacks, one per registered cache
 function registerSimCache(fn){ SIM_CACHES.push(fn); }
 function bumpSimGen(){ simGen++; SIM_CACHES.forEach(fn => fn()); }
-registerSimCache(() => { visionFreshTick = -1; }); // force vision/fog recompute
+// Rollback/resync/load rewinds the world but the count grid isn't snapshotted
+// (it's a pure derived cache), so force a from-scratch recount next refresh.
+registerSimCache(() => { visionFreshTick = -1; visionRebuild = true; });
 function resetTeamVision(){
-  teamVisGrid = Array.from({length: NUM_TEAMS}, () => new Uint32Array(MAP * MAP));
+  teamVisGrid = Array.from({length: NUM_TEAMS}, () => new Int32Array(MAP * MAP));
   teamExploredGrid = Array.from({length: NUM_TEAMS}, () => new Uint8Array(MAP * MAP));
-  visGen = 0;
+  visStamps = new Map();
+  visionRebuild = true;
   visionFreshTick = -1;
 }
 function updateTeamVision(){
   if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
-  // Recompute every VISION_REFRESH_TICKS: the per-team vision walk is the
-  // single biggest sim cost at scale, and sim reads tolerating a tick or two
-  // (~33-66ms) of stale visibility is imperceptible. Deterministic — cadence
-  // is tick-derived, identical on every peer. (visGen/grids simply persist on
-  // off ticks.) Raising this trades vision latency for headless throughput;
-  // it changes match outcomes (still deterministic), so it is NOT
-  // behavior-neutral — keep at 2 unless you're tuning self-play speed.
+  // Rebuilt every VISION_REFRESH_TICKS (the per-team vision update is the
+  // biggest sim cost at scale; sim reads tolerating a tick or two of stale
+  // visibility are imperceptible). Deterministic — cadence is tick-derived.
   if (visionFreshTick >= 0 && tick - visionFreshTick < VISION_REFRESH_TICKS) return;
-  visGen++;
   visionFreshTick = tick;
-  // Shared vision: each team's visible tiles are written to every ALLIED
-  // team's grids too (teamCanSeeTile/teamHasExplored/updateFog all become
-  // ally-shared for free). Identity alliances (the default) take the plain
-  // single-grid path — bit-identical to the pre-alliance loop, and the
-  // entity walk count is one per team either way.
-  const allied = Array.from({length: NUM_TEAMS}, (_, t) => {
-    const g = [];
-    for (let u = 0; u < NUM_TEAMS; u++) if (sameSide(t, u)) g.push(u);
-    return g;
-  });
-  // Single pass over entities, writing the typed grids DIRECTLY. The old code
-  // called forEachVisibleTile once PER TEAM (re-scanning all entities 4× in a
-  // 2v2) and stamped through a per-tile cb(tx,ty) callback — ~16k function
-  // calls per update, which made this ~38% of headless tick time. The sight/
-  // center math below is identical to forEachVisibleTile (kept for updateFog),
-  // so this is behavior-neutral (same tiles, same visGen). Gaia (team 255,
-  // >= NUM_TEAMS) is skipped exactly as before (the old team loop never hit it).
+
+  // Ally-shared groups: an entity's disk is applied to its team AND every
+  // team allied with it (teamCanSeeTile/teamHasExplored become ally-shared).
+  const allied = [];
+  for (let t = 0; t < NUM_TEAMS; t++) { const g = []; for (let u = 0; u < NUM_TEAMS; u++) if (sameSide(t, u)) g.push(u); allied.push(g); }
+  // removeDisk() below uses the CURRENT ally group of the removed disk's team,
+  // so a changed alliance would mis-account stale counts — force a clean
+  // recount when the alliance layout changes (rare; usually never mid-match).
+  const sig = allied.map(g => g.join('.')).join('|');
+  if (sig !== visAllianceSig) { visionRebuild = true; visAllianceSig = sig; }
+
+  // Apply an entity's sight disk to the count grids. delta +1 adds vision (and
+  // marks explored), -1 removes it. Center/sight math is identical to
+  // forEachVisibleTile (kept for updateFog), so the visible SET this produces
+  // equals the old full re-stamp exactly.
+  const applyDisk = (t, cx, cy, s, delta) => {
+    const offs = sightOffsets(s), group = allied[t];
+    for (let i = 0; i < offs.length; i += 2) {
+      const tx = cx + offs[i], ty = cy + offs[i + 1];
+      if (tx < 0 || tx >= MAP || ty < 0 || ty >= MAP) continue;
+      const k = ty * MAP + tx;
+      for (let g = 0; g < group.length; g++) {
+        const u = group[g];
+        teamVisGrid[u][k] += delta;
+        if (delta > 0) teamExploredGrid[u][k] = 1; // monotonic; never cleared on removal
+      }
+    }
+  };
+
+  if (visionRebuild) { for (let t = 0; t < NUM_TEAMS; t++) teamVisGrid[t].fill(0); visStamps.clear(); visionRebuild = false; }
+
+  visScanGen++;
+  const gsig = visScanGen;
   for (let ei = 0; ei < entities.length; ei++) {
     const e = entities[ei];
     const team = e.team;
-    if (team < 0 || team >= NUM_TEAMS) continue;
+    const old = visStamps.get(e.id);
+    if (team < 0 || team >= NUM_TEAMS) { // gaia (255) never contributed vision
+      if (old) { applyDisk(old.t, old.cx, old.cy, old.s, -1); visStamps.delete(e.id); }
+      continue;
+    }
     let sight, cx, cy;
     if (e.type === 'building') {
       const b = BLDGS[e.btype];
@@ -1054,27 +1079,18 @@ function updateTeamVision(){
       cx = Math.round(e.x);
       cy = Math.round(e.y);
     }
-    const offs = sightOffsets(sight);
-    const group = allied[team];
-    if (group.length === 1) {
-      const vg = teamVisGrid[team], eg = teamExploredGrid[team];
-      for (let i = 0; i < offs.length; i += 2) {
-        const tx = cx + offs[i], ty = cy + offs[i + 1];
-        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) { const k = ty * MAP + tx; vg[k] = visGen; eg[k] = 1; }
-      }
-    } else {
-      for (let i = 0; i < offs.length; i += 2) {
-        const tx = cx + offs[i], ty = cy + offs[i + 1];
-        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) {
-          const k = ty * MAP + tx;
-          for (let g = 0; g < group.length; g++) { const u = group[g]; teamVisGrid[u][k] = visGen; teamExploredGrid[u][k] = 1; }
-        }
-      }
-    }
+    if (old && old.t === team && old.cx === cx && old.cy === cy && old.s === sight) { old.gen = gsig; continue; } // unchanged: keep its disk
+    if (old) applyDisk(old.t, old.cx, old.cy, old.s, -1); // moved / grew: drop the stale disk
+    applyDisk(team, cx, cy, sight, +1);
+    visStamps.set(e.id, { t: team, cx, cy, s: sight, gen: gsig });
   }
+  // Entities that vanished (died / removed) since the last refresh: their disk
+  // was left in place until now (matching the old grid's persist-until-refresh
+  // behavior) — remove it.
+  visStamps.forEach((st, id) => { if (st.gen !== gsig) { applyDisk(st.t, st.cx, st.cy, st.s, -1); visStamps.delete(id); } });
 }
 function teamCanSeeTile(team, k){
-  return teamVisGrid != null && teamVisGrid[team][k] === visGen;
+  return teamVisGrid != null && teamVisGrid[team][k] > 0;
 }
 function teamHasExplored(team, k){
   return teamExploredGrid != null && teamExploredGrid[team][k] === 1;
