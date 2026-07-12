@@ -1764,9 +1764,19 @@ function updateUnit(e){
             return;
           }
           combatApproach(e,t,d,()=>{let pt=siegePerimeterSpot(e,t);pathUnitTo(e,pt.x,pt.y);});
-        } else if(e.atkCooldown<=0){
-          damageEntity(e,t);
-          e.atkCooldown=UNITS[e.utype].rof;
+        } else {
+          // In range: press up against the nearest FOOTPRINT EDGE so attackers
+          // pack tight along the wall instead of standing a tile back on their
+          // siege-perimeter tile. cx,cy = the unit's position clamped to the
+          // footprint rect ([t.x-0.5 .. t.x+t.w-0.5]); the walkable guard in
+          // pressToContact keeps them off the building itself.
+          let cx=Math.max(t.x-0.5, Math.min(e.x, t.x+t.w-0.5));
+          let cy=Math.max(t.y-0.5, Math.min(e.y, t.y+t.h-0.5));
+          pressToContact(e, cx, cy, 0.5);
+          if(e.atkCooldown<=0){
+            damageEntity(e,t);
+            e.atkCooldown=UNITS[e.utype].rof;
+          }
         }
       } else {
         // Attack unit: path close and hit
