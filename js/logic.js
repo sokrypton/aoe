@@ -446,6 +446,12 @@ function adjToBuilding(px,py,bldg){
 // leash (js/logic.js) and the aggro scope so they stay in lock-step on both
 // the zone AND the GUARD_LEASH radius.
 const GUARD_LEASH = 6;
+// How long a unit avoids re-acquiring an enemy UNIT it just proved it can't
+// reach (a melee dogpile it can't slot into). Short, because a unit crowd
+// disperses quickly — long enough to break the give-up→re-acquire thrash, brief
+// enough to rejoin the fight once a slot opens. Buildings use a much longer
+// window (they don't move; a wall stays walled off).
+const UNREACH_UNIT_TICKS = 150;
 function guardZoneOf(e){
   let gb = e.guardTargetId != null ? entitiesById.get(e.guardTargetId) : null;
   return (gb && gb.type === 'building') ? { b: gb } : { x: e.guardX, y: e.guardY };
@@ -1685,7 +1691,9 @@ function updateUnit(e){
         if(w&&w.id!==stalledId&&!sameSide(w.team,u.team)){ u.target=w.id;u.explicitAttack=true;u.siegeSpot=null; }
         else { if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
           u.target=null;u.explicitAttack=false;u.siegeSpot=null;
-          u.unreachId=stalledId; u.unreachUntil=tick+900; }
+          // A walled-off building stays unreachable for a long time; a mobile
+          // UNIT's blockage (a melee dogpile) clears fast, so re-check it sooner.
+          u.unreachId=stalledId; u.unreachUntil=tick+(tgt.type==='building'?900:UNREACH_UNIT_TICKS); }
         retryClear(u,'chaseBlocked'); clearUnitPath(u); u.chaseProg=undefined;
       }
       return false;
@@ -2067,18 +2075,23 @@ function updateUnit(e){
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
-        // Skip a foe we recently proved unreachable — UNLESS it is now within
-        // attack range AND actually hittable (pathing is then moot; we hit it
-        // where it stands). Without the range exception an idle unit ignored an
-        // enemy that walked right up to it (a soldier "refusing" a fight). But a
-        // foe that's in range only DIAGONALLY across a sealed wall corner is NOT
-        // hittable (melee corner rule) and can't be pathed to either, so keep
-        // skipping it — otherwise the unit re-acquires and oscillates in place.
+        // Skip a foe we recently proved unreachable — UNLESS we can hit it RIGHT
+        // NOW without moving (pathing is then moot; we strike it where it stands).
+        // "Without moving" is the crux: for RANGED that's firing range; for MELEE
+        // it means actually adjacent (within strike distance ~1.5 AND on a clear
+        // line — no blocked corner). A foe that's merely CLOSE (1.6–2.1) but not
+        // strikable is the wedge itself: the melee unit can't slot in (a unit
+        // crowd or a corner blocks the last step), so re-grabbing it just thrashes
+        // give-up→re-acquire in place until the stuck-watchdog frees it. Keep
+        // skipping until the flag expires and the situation (crowd) may have
+        // changed. Without this a latecomer to a melee dogpile wedged forever.
         if(e.unreachUntil>tick && e.unreachId===en.id){
-          if(dist(e,en)>reachAtk+0.5)return false; // out of range → keep skipping
-          if(e.range<=0){ // melee: reject the sealed-corner diagonal (matches the attack corner rule)
+          if(e.range>0){
+            if(dist(e,en)>reachAtk+0.5)return false; // ranged: out of firing range → keep skipping
+          } else {
             let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(en.x)-ex,dy=Math.round(en.y)-ey;
-            if(dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true))return false;
+            let cornerBlocked=dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true);
+            if(dist(e,en)>1.5 || cornerBlocked)return false; // melee: can't strike without moving → keep skipping
           }
         }
         let ey=Math.round(en.y),ex=Math.round(en.x);
@@ -2110,7 +2123,7 @@ function updateUnit(e){
           let end=pth.length?pth[pth.length-1]:null;
           if(end && Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy))<=Math.max(2,reachAtk)){
             e.target=closest.id;
-          } else { e.unreachId=closest.id; e.unreachUntil=tick+900; }
+          } else { e.unreachId=closest.id; e.unreachUntil=tick+UNREACH_UNIT_TICKS; } // a unit's blockage clears fast — re-check soon
         }
       } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
