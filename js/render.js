@@ -216,7 +216,12 @@ function render(){
 
   corpses.forEach(c => {
     if (c.x >= minX - 2 && c.x <= maxX + 2 && c.y >= minY - 2 && c.y <= maxY + 2) {
-      c.sortVal = c.y + c.x;
+      // Corpses are flat ground decals — draw them BENEATH all living units,
+      // buildings and trees (a big -1000 offset, same ground band as farm/market
+      // ground) so a corpse on a front tile can never occlude a standing soldier
+      // behind it. Still ordered among themselves by y+x. Fixes the "dead bodies
+      // hide my current troops" clutter in a big melee.
+      c.sortVal = c.y + c.x - 1000;
       allDrawable.push(c);
     }
   });
