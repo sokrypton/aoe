@@ -977,6 +977,9 @@ function updateFog() {
 // (deterministic accumulation — same commands => same history on every peer).
 let visGen = 0;
 let visionFreshTick = -1; // which sim tick the grids were computed for
+// How often the deterministic per-team vision grids are rebuilt (see
+// updateTeamVision). 2 is the shipped default; higher = faster/laggier vision.
+const VISION_REFRESH_TICKS = 2;
 let teamVisGrid = null, teamExploredGrid = null;
 
 // ---- SIM-CACHE GENERATION COUNTER ----
@@ -1002,11 +1005,14 @@ function resetTeamVision(){
 }
 function updateTeamVision(){
   if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
-  // Recompute every 2nd tick: two full per-team vision walks were ~a quarter
-  // of the tick at scale, and sim reads tolerating 1 tick (16ms) of stale
-  // visibility is imperceptible. Deterministic — cadence is tick-derived,
-  // identical on every peer. (visGen/grids simply persist on off ticks.)
-  if (visionFreshTick >= 0 && tick - visionFreshTick < 2) return;
+  // Recompute every VISION_REFRESH_TICKS: the per-team vision walk is the
+  // single biggest sim cost at scale, and sim reads tolerating a tick or two
+  // (~33-66ms) of stale visibility is imperceptible. Deterministic — cadence
+  // is tick-derived, identical on every peer. (visGen/grids simply persist on
+  // off ticks.) Raising this trades vision latency for headless throughput;
+  // it changes match outcomes (still deterministic), so it is NOT
+  // behavior-neutral — keep at 2 unless you're tuning self-play speed.
+  if (visionFreshTick >= 0 && tick - visionFreshTick < VISION_REFRESH_TICKS) return;
   visGen++;
   visionFreshTick = tick;
   // Shared vision: each team's visible tiles are written to every ALLIED
@@ -1019,23 +1025,51 @@ function updateTeamVision(){
     for (let u = 0; u < NUM_TEAMS; u++) if (sameSide(t, u)) g.push(u);
     return g;
   });
-  for (let team = 0; team < NUM_TEAMS; team++) {
+  // Single pass over entities, writing the typed grids DIRECTLY. The old code
+  // called forEachVisibleTile once PER TEAM (re-scanning all entities 4× in a
+  // 2v2) and stamped through a per-tile cb(tx,ty) callback — ~16k function
+  // calls per update, which made this ~38% of headless tick time. The sight/
+  // center math below is identical to forEachVisibleTile (kept for updateFog),
+  // so this is behavior-neutral (same tiles, same visGen). Gaia (team 255,
+  // >= NUM_TEAMS) is skipped exactly as before (the old team loop never hit it).
+  for (let ei = 0; ei < entities.length; ei++) {
+    const e = entities[ei];
+    const team = e.team;
+    if (team < 0 || team >= NUM_TEAMS) continue;
+    let sight, cx, cy;
+    if (e.type === 'building') {
+      const b = BLDGS[e.btype];
+      if (!e.complete) sight = 1;
+      else if (e.btype === 'TC') sight = 8;
+      else if (e.btype === 'TOWER') sight = 9;
+      else if (e.btype === 'PTOWER') sight = 8;
+      else if (e.btype === 'HOUSE') sight = 4;
+      else sight = 5;
+      cx = Math.floor(e.x + (e.w || b.w) / 2);
+      cy = Math.floor(e.y + (e.h || b.h) / 2);
+    } else {
+      if (e.utype === 'sheep') sight = 3;
+      else if (e.utype === 'scout') sight = 7;
+      else sight = 5;
+      cx = Math.round(e.x);
+      cy = Math.round(e.y);
+    }
+    const offs = sightOffsets(sight);
     const group = allied[team];
     if (group.length === 1) {
       const vg = teamVisGrid[team], eg = teamExploredGrid[team];
-      forEachVisibleTile(team, (tx, ty) => {
-        const k = ty * MAP + tx;
-        vg[k] = visGen;
-        eg[k] = 1;
-      });
+      for (let i = 0; i < offs.length; i += 2) {
+        const tx = cx + offs[i], ty = cy + offs[i + 1];
+        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) { const k = ty * MAP + tx; vg[k] = visGen; eg[k] = 1; }
+      }
     } else {
-      forEachVisibleTile(team, (tx, ty) => {
-        const k = ty * MAP + tx;
-        for (const u of group) {
-          teamVisGrid[u][k] = visGen;
-          teamExploredGrid[u][k] = 1;
+      for (let i = 0; i < offs.length; i += 2) {
+        const tx = cx + offs[i], ty = cy + offs[i + 1];
+        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) {
+          const k = ty * MAP + tx;
+          for (let g = 0; g < group.length; g++) { const u = group[g]; teamVisGrid[u][k] = visGen; teamExploredGrid[u][k] = 1; }
         }
-      });
+      }
     }
   }
 }
