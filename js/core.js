@@ -273,6 +273,23 @@ function applyAgeUpgrades(team, age){
   });
   return names;
 }
+// Directly SET a team's age (editor / scenario / loader — the game itself only
+// advances age via TC research over time, there's no instant setter). Applies
+// each not-yet-reached age's one-time upgrade sweep over EXISTING units
+// (applyAgeUpgrades touches live entities) so they gain that age's
+// atk/range/speed bonuses, matching a normally-aged team. Only sweeps ages
+// ABOVE the team's current age: c.apply isn't idempotent (e.g. fortified_wall
+// ×1.5 hp), so re-applying would double it. Lowering age just sets the number —
+// bonuses already snapshotted on existing units aren't reverted, but units
+// built afterward read the lower age via hasUpgrade. Clamped to 0..2
+// (Dark/Feudal/Castle).
+function setTeamAge(team, age){
+  if(!teamAge)resetTeamAge();
+  age=Math.max(0,Math.min(2,age|0));
+  let cur=teamAge[team]||0;
+  for(let a=cur+1;a<=age;a++)applyAgeUpgrades(team,a);
+  teamAge[team]=age;
+}
 // +1 attack per Forging/Iron Casting held — spawn-time counterpart of the
 // apply() sweeps above (attack is snapshotted onto entities).
 function upgradeAtkBonus(team){

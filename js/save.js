@@ -135,6 +135,26 @@ function triggerLoadDialog(){
   if (input) input.click();
 }
 
+// THE single entry point for loading a world from a parsed data object,
+// transparently accepting either detail level of the unified format:
+//   - a FULL snapshot (serializeGame) — has a 2D `map` grid + verbatim entities
+//     → applySavedGame (exact restore incl. resources/age/controllers/rng/tick);
+//   - a COMPACT/constructive spec (js/scenario.js) — string/absent `map` and
+//     u/b-shorthand entities → loadScenario (rebuilds fresh, now also applies
+//     any `resources`/`ages`/`controllers` the compact file carries).
+// Route by the `map` shape. Used by the Load-Game button AND the editor, so
+// both read either kind of file. Returns 'save' | 'scenario'.
+function loadGame(data){
+  if (typeof loadScenario === 'function' && !Array.isArray(data.map)) {
+    loadScenario(data);
+    window.fogDisabled = data.fog !== true; // reveal the authored map (loadScenario also sets this)
+    if (window.updateUI) updateUI();
+    return 'scenario';
+  }
+  applySavedGame(data);
+  return 'save';
+}
+
 function loadGameFromFile(file){
   if (!file) return;
   let reader = new FileReader();
@@ -147,17 +167,8 @@ function loadGameFromFile(file){
       if (window.showMsg) showMsg('Load failed: not a valid save file');
       return;
     }
-    // One "Load" button for both formats: a full save (serializeGame) has a 2D
-    // `map` grid; a compact scenario spec (js/scenario.js) has a string/absent
-    // `map` and u/b-shorthand entities. Route by the map shape.
-    if (typeof loadScenario === 'function' && !Array.isArray(data.map)) {
-      loadScenario(data);
-      window.fogDisabled = data.fog !== true; // reveal the authored map (loadScenario also sets this)
-      if (window.updateUI) updateUI();
-      if (window.showMsg) showMsg('Scenario loaded');
-      return;
-    }
-    applySavedGame(data);
+    let kind = loadGame(data);
+    if (kind === 'scenario' && window.showMsg) showMsg('Scenario loaded');
   };
   reader.onerror = () => { if (window.showMsg) showMsg('Load failed: could not read file'); };
   reader.readAsText(file);

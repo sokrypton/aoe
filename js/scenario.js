@@ -13,11 +13,16 @@
 //     numTeams: 2,                        // default 2
 //     difficulty: 'hard',                 // AI difficulty for ai slots
 //     controllers: ['human','ai:hard'],   // per team; default P0 human, rest AI
+//     ages: [0, 2],                        // per-team age 0/1/2 (Dark/Feudal/Castle); default all 0
+//     resources: [ {food,wood,gold,stone,prepaidFarms?}, ... ], // per-team start stockpiles;
+//                                          //   default 200/200/100/200. Missing team/field → default.
 //     terrain: [ {t:'FOREST'|'GOLD'|'STONE'|'BERRIES'|'WATER'|'FARM', x, y, amount?} ],
 //     entities:[ {u:'knight', x, y, team, stance?}  // a unit
 //              | {b:'TC',     x, y, team, w?, h?} ]  // a (complete) building
 //                                                    // w/h: non-default footprint (e.g. a sized gate)
 //   }
+// `ages`/`resources` are the compact format's way to carry the per-team state a
+// full save (js/save.js) holds — so a minimal file round-trips team state too.
 // Coordinates are integer tiles (a settled unit rests on an integer — the tile
 // center; see js/pathfinding.js stepUnitAlongPath).
 const SCENARIO_RES_DEFAULT = { FOREST:100, GOLD:800, STONE:350, BERRIES:125, WATER:0, FARM:0, GRASS:0 };
@@ -60,6 +65,21 @@ function loadScenario(spec){
   if(spec.controllers && spec.controllers.length){
     teamControllers = Array.from({length: NUM_TEAMS}, (_, t) => parseScenarioController(spec.controllers[t]));
     if(typeof resetAIStates==='function') resetAIStates();
+  }
+
+  // Per-team AGE and RESOURCES (optional — the compact format's way to carry
+  // the team state a full save holds). Applied AFTER restartGame's defaults and
+  // BEFORE entities are created, so scenario-built units/walls snapshot the
+  // age's bonuses at creation (createUnit atk/range/speed, createBuilding
+  // fortified-wall hp — all read hasUpgrade/teamAge). setTeamAge also sweeps any
+  // existing units, so order-independence holds either way.
+  if(spec.ages){
+    for(let t=0;t<NUM_TEAMS;t++) if(spec.ages[t]!=null && typeof setTeamAge==='function') setTeamAge(t, spec.ages[t]);
+  }
+  if(spec.resources){
+    // Merge onto the existing per-team default object (restartGame already set
+    // resources = freshTeamResources()) — overwrite only the provided fields.
+    for(let t=0;t<NUM_TEAMS;t++) if(spec.resources[t] && resources[t]) Object.assign(resources[t], spec.resources[t]);
   }
 
   // Entities: buildings first (so unit spawn-out doesn't fight foundations),

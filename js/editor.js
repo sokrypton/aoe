@@ -29,9 +29,13 @@ Object.keys(TERRAIN).forEach(k => { TERRAIN_NAME[TERRAIN[k]] = k; });
 let tool = { kind:'unit', key:'villager', team:0, stance:'aggressive' };
 let editSeed = 1;
 let controllers = ['human','human','human','human']; // per team, up to 4
+let teamDiff = ['hard','hard','hard','hard'];         // per-team AI difficulty, kept when toggling human↔AI
+let saveDetail = 'full';  // 'full' = lossless v3 snapshot (serializeGame); 'compact' = scenario spec
 let running = false;      // true while the sim is unpaused (Play)
-let authoredSpec = null;  // snapshot of the authored scene, for Reset
-let simDirty = false;     // has the sim moved things since authoredSpec was taken?
+// Lossless snapshot (serializeGame, deep-cloned) captured at each edit→Play
+// transition. Reset restores it — the world exactly as it was when you last
+// pressed Play, INCLUDING any mid-game edits made while paused before that Play.
+let playCheckpoint = null;
 let painting = false;     // left-drag terrain paint
 let panning = false, panLastX = 0, panLastY = 0;
 let wallDragging = false; // left-drag wall run (reuses the game's wall-drag)
@@ -174,8 +178,16 @@ function buildPalette(){
   play.id = 'ed-play'; play.className = 'ed-act';
   play.textContent = '▶ Play'; play.onclick = togglePlay;
   p.appendChild(play);
-  p.appendChild(actBtn('↺ Reset', resetToAuthored));
-  p.appendChild(actRow(actBtn('📂 Load', loadScenarioFile), actBtn('💾 Save', exportScenario)));
+  let resetBtn = actBtn('↺ Reset', resetToAuthored);
+  resetBtn.title = 'Undo the simulation back to the last time you pressed ▶ Play (keeps your edits from before that Play)';
+  p.appendChild(resetBtn);
+  p.appendChild(actRow(actBtn('📂 Load', loadScenarioFile), actBtn('💾 Save', saveGame)));
+  // Save detail: Full = lossless game snapshot (round-trips a real game);
+  // Compact = scenario spec (fresh entities, carries ages/resources). One
+  // loader reads both.
+  let dBtn = actBtn('Save: ' + (saveDetail === 'full' ? 'Full' : 'Compact'), null);
+  dBtn.onclick = () => { saveDetail = saveDetail === 'full' ? 'compact' : 'full'; dBtn.textContent = 'Save: ' + (saveDetail === 'full' ? 'Full' : 'Compact'); };
+  p.appendChild(dBtn);
   p.appendChild(actBtn('🗑 Clear', clearWorld));
 
   // Sim speed (applies live, in edit or play). GAME_SPEED default is 2.
@@ -189,10 +201,15 @@ function buildPalette(){
   });
   p.appendChild(spd);
 
-  // Team picker (color swatches 0-3)
-  let h = document.createElement('h3'); h.textContent = 'Team'; p.appendChild(h);
+  // Team picker (color swatches). Clicking a color selects that team AND
+  // repopulates the whole per-team config block below (controller / difficulty /
+  // age / resources) for it — and everything you then place goes to that team.
+  let nTeams = Math.max(2, NUM_TEAMS);
+  if (tool.team >= nTeams) { tool.team = 0; myTeam = 0; } // clamp after loading a game with fewer teams
+  let h = document.createElement('h3'); h.textContent = 'Team ' + tool.team; p.appendChild(h);
+  h.style.color = teamColor(tool.team);
   let teamRow = document.createElement('div'); teamRow.className = 'ed-grid';
-  for (let t = 0; t < 4; t++){
+  for (let t = 0; t < nTeams; t++){
     let sw = document.createElement('div');
     sw.className = 'ed-swatch' + (t === tool.team ? ' sel' : '');
     sw.style.background = teamColor(t);
@@ -200,14 +217,43 @@ function buildPalette(){
     sw.onclick = () => {
       tool.team = t;
       myTeam = t; // building ghost color + the side you command in Play follow the picker
-      [...teamRow.children].forEach((c,i) => c.classList.toggle('sel', i === t));
+      rebuildPalette(); // repopulate the per-team config block for the newly selected team
     };
     teamRow.appendChild(sw);
   }
   p.appendChild(teamRow);
 
-  // Stance (for units)
-  p.appendChild(selectRow('Stance', STANCES, tool.stance, v => tool.stance = v));
+  // Selected team's config — controller / difficulty / age / resources. Applied
+  // LIVE (the editor runs the real engine) so a loaded game reflects edits at
+  // once; both Save formats + Reset capture them. Switch teams with the
+  // swatches above to configure another team.
+  let et = tool.team;
+  const applyController = () => {
+    controllers[et] = (controllers[et] === 'human') ? 'human' : ('ai:' + teamDiff[et]);
+    if (typeof teamControllers !== 'undefined' && teamControllers) {
+      teamControllers[et] = parseController(controllers[et]);
+      if (typeof resetAIStates === 'function') resetAIStates();
+    }
+  };
+  let isAI = controllers[et] !== 'human';
+  p.appendChild(selectRow('Plays', ['human','ai'], isAI ? 'ai' : 'human', v => {
+    controllers[et] = (v === 'ai') ? ('ai:' + teamDiff[et]) : 'human';
+    applyController(); rebuildPalette(); // show/hide the difficulty row
+  }));
+  if (isAI){
+    p.appendChild(selectRow('Difficulty', ['easy','standard','hard'], teamDiff[et], v => {
+      teamDiff[et] = v; controllers[et] = 'ai:' + v; applyController();
+    }));
+  }
+  const AGE_NAMES = ['Dark','Feudal','Castle'];
+  p.appendChild(selectRow('Age', AGE_NAMES,
+    AGE_NAMES[(typeof teamAge !== 'undefined' && teamAge ? teamAge[et] : 0) || 0],
+    v => { if (typeof setTeamAge === 'function') setTeamAge(et, AGE_NAMES.indexOf(v)); }));
+  let rs = (typeof resources !== 'undefined' && resources && resources[et]) || {};
+  ['food','wood','gold','stone'].forEach(k => {
+    p.appendChild(inputRow(k, rs[k] != null ? rs[k] : 0,
+      v => { if (resources && resources[et]) resources[et][k] = Math.max(0, v | 0); }));
+  });
 
   // Terrain
   addSection(p, 'Terrain', EDITOR_TERRAIN.map(t => {
@@ -217,12 +263,14 @@ function buildPalette(){
     return b;
   }));
 
-  // Units
+  // Units — plus the stance placed units get (a unit-only property, so it lives
+  // with the unit palette rather than floating up by the team config).
   addSection(p, 'Units', EDITOR_UNITS.map(u => {
     let b = mkIconBtn(u, UNITS[u].icon, UNITS[u].name, () => { setTool('unit', u); selectToolBtn(b); });
     b.dataset.tool = 'unit:' + u;
     return b;
   }));
+  p.appendChild(selectRow('Stance', STANCES, tool.stance, v => tool.stance = v));
 
   // Buildings
   addSection(p, 'Buildings', EDITOR_BLDGS.map(k => {
@@ -255,13 +303,6 @@ function buildPalette(){
   mmB.textContent = minimapOn ? 'On' : 'Off';
   mmB.onclick = () => { minimapOn = !minimapOn; applyMinimap(); mmB.textContent = minimapOn ? 'On' : 'Off'; mmB.classList.toggle('sel', minimapOn); };
   mmRow.appendChild(mmB); p.appendChild(mmRow);
-
-  // Controllers (per team) — who plays each team when you press Play
-  let hC = document.createElement('h3'); hC.textContent = 'Controllers'; p.appendChild(hC);
-  for (let t = 0; t < 4; t++){
-    p.appendChild(selectRow('Team ' + t, ['human','ai:hard','ai:standard','ai:easy'],
-      controllers[t], v => controllers[t] = v));
-  }
 
   let hint = document.createElement('div'); hint.className = 'ed-hint';
   hint.innerHTML = 'Left-click: place / paint · Right or middle drag: pan · Wheel: zoom · Arrows: pan · Space: Play/Pause';
@@ -344,7 +385,7 @@ function unitGhost(){
 // ------------------------------------------------------------------- world/boot
 function enterEditor(sizeKey){
   sizeKey = sizeKey || (MAP_SIZE_KEYS.find(k => MAP_SIZES[k] === MAP) || 'medium');
-  running = false; window.__editorPlaying = false; authoredSpec = null; simDirty = false;
+  running = false; window.__editorPlaying = false; playCheckpoint = null;
   NUM_TEAMS = 4;                      // author for up to 4 teams; export trims
   window.__scenarioMode = true;       // genMap()/init() skip default placement
   window.fogDisabled = true;          // whole authored map visible; combat engages
@@ -373,7 +414,6 @@ function enterEditor(sizeKey){
 // --------------------------------------------------------------------- placement
 function applyTool(tx, ty){
   if (tx < 0 || ty < 0 || tx >= MAP || ty >= MAP) return;
-  authoredSpec = null; // scene edited -> invalidate the Reset snapshot
   if (tool.kind === 'terrain'){
     let ty2 = TERRAIN[tool.key];
     let res = (typeof SCENARIO_RES_DEFAULT !== 'undefined' && SCENARIO_RES_DEFAULT[tool.key] != null)
@@ -420,7 +460,6 @@ function finalizeEditorWall(){
   if (start && end && typeof getWallElbowTiles === 'function'){
     // editorPlace → canPlace skips out-of-bounds / occupied / bad-terrain tiles.
     getWallElbowTiles(start, corner, end).forEach(t => editorPlace(btype, t.x, t.y));
-    authoredSpec = null;
   }
   if (typeof abortWallDrag === 'function') abortWallDrag();
 }
@@ -455,7 +494,11 @@ function eraseAt(tx, ty){
 // ----------------------------------------------------------------- play / export
 function togglePlay(){
   if (!running){
-    if (!authoredSpec) authoredSpec = buildSpec(); // snapshot authored scene for Reset
+    // Checkpoint the CURRENT world (lossless, deep-cloned so the running sim
+    // can't mutate it) — Reset returns here. Captured on EVERY Play, so it
+    // reflects whatever you last set up, including mid-game edits made while
+    // paused. serializeGame() returns live references, hence the clone.
+    if (typeof serializeGame === 'function') playCheckpoint = JSON.parse(JSON.stringify(serializeGame()));
     // Wire controllers so AI teams act; soldiers of any team auto-engage.
     teamControllers = controllers.slice(0, NUM_TEAMS).map(parseController);
     if (typeof resetAIStates === 'function') resetAIStates();
@@ -465,11 +508,12 @@ function togglePlay(){
     // order them around; the editor's placement input stands down. You drive
     // the team the picker is on (myTeam, set on team-swatch click).
     running = true; window.__editorPlaying = true;
-    simDirty = true; // the sim will move things; edits must rewind before applying
     selected.length = 0; syncPlacing();
     gamePaused = false;
   } else {
-    // Back to EDIT MODE.
+    // Back to EDIT MODE — on the LIVE simulated state. You can now place/delete
+    // units, edit team state, etc. mid-game; they apply to the running world,
+    // and pressing Play again continues from there (and re-checkpoints).
     running = false; window.__editorPlaying = false;
     selected.length = 0; syncPlacing();
     gamePaused = true;
@@ -490,34 +534,29 @@ function updatePlayBtn(){
   b.classList.toggle('running', running);
 }
 
-// Rebuild the world from the authored snapshot (undo all sim movement), keeping
-// the user's current camera view. Force 4 teams so loadScenario's restartGame
-// sizes EVERY per-team sim array (vision grids, AI states, lastTeamHit, …) for 4
-// up front — setting NUM_TEAMS after the rebuild left them sized for the spec's
-// team count and updateTeamVision crashed on teamVisGrid[2] (mirrors enterEditor).
-function restoreAuthoredWorld(){
-  let cx = camX, cy = camY, z = ZOOM; // loadScenario recenters — keep the view
-  silent(() => loadScenario(Object.assign({}, authoredSpec, { numTeams: 4 })));
+// Restore the last-Play checkpoint (undo the sim since then), keeping the user's
+// current camera view. The checkpoint is a full serializeGame snapshot, so this
+// is a lossless applySavedGame — exact entities/resources/age/rng/tick as they
+// were the moment Play was pressed. Deep-cloned again on restore so repeated
+// Resets keep working (applySavedGame assigns the arrays by reference).
+function restoreCheckpoint(){
+  if (!playCheckpoint) return false;
+  let cx = camX, cy = camY, z = ZOOM;
+  let nt = playCheckpoint.numTeams || NUM_TEAMS;
+  if (myTeam >= nt) myTeam = 0;
+  if (tool.team >= nt) tool.team = 0;
+  silent(() => applySavedGame(JSON.parse(JSON.stringify(playCheckpoint))));
   window.fogDisabled = true;
-  if (typeof resetTeamAlliance === 'function') resetTeamAlliance(); // FFA (see enterEditor)
-  if (typeof resetTeamColorMap === 'function') resetTeamColorMap();
   running = false; window.__editorPlaying = false; gameStarted = true; gamePaused = true;
-  simDirty = false; selected.length = 0; syncPlacing();
+  selected.length = 0; syncPlacing();
   camX = cx; camY = cy; ZOOM = z;
+  return true;
 }
 
 function resetToAuthored(){
-  if (!authoredSpec){ if (window.showMsg) showMsg('Nothing to reset to — press Play first'); return; }
-  restoreAuthoredWorld();
+  if (!restoreCheckpoint()){ if (window.showMsg) showMsg('Nothing to reset to — press Play first'); return; }
   updatePlayBtn(); rebuildPalette();
-}
-
-// Before an edit, if the sim has run since the snapshot, rewind to the authored
-// scene so edits apply to the CLEAN placed layout — never the sim-moved one.
-// (Otherwise editing after a Play, then Play again, would snapshot the moved
-// positions and Reset would send units to where they gathered, not where placed.)
-function ensureCleanForEdit(){
-  if (simDirty && authoredSpec) restoreAuthoredWorld();
+  if (window.showMsg) showMsg('Reset to last Play');
 }
 
 function clearWorld(){
@@ -552,7 +591,7 @@ function buildSpec(){
     }
   });
   let numTeams = Math.max(2, maxTeam + 1);
-  return {
+  let spec = {
     map: MAP_SIZE_KEYS.find(k => MAP_SIZES[k] === MAP) || MAP,
     seed: editSeed >>> 0,
     numTeams,
@@ -560,18 +599,52 @@ function buildSpec(){
     terrain,
     entities: ents,
   };
+  // Per-team AGE + RESOURCES from LIVE state — only when non-default, to keep a
+  // compact scenario compact. loadScenario applies these (js/scenario.js).
+  let ages = [], anyAge = false, res = [], anyRes = false;
+  let dflt = (typeof freshTeamResources === 'function') ? freshTeamResources()[0] : { food:200, wood:200, gold:100, stone:200 };
+  for (let t = 0; t < numTeams; t++){
+    let a = (typeof teamAge !== 'undefined' && teamAge && teamAge[t]) || 0;
+    ages.push(a); if (a) anyAge = true;
+    let r = (typeof resources !== 'undefined' && resources) ? resources[t] : null;
+    if (r){
+      let o = { food: r.food|0, wood: r.wood|0, gold: r.gold|0, stone: r.stone|0 };
+      if (r.prepaidFarms) o.prepaidFarms = r.prepaidFarms|0;
+      res.push(o);
+      if (o.food !== dflt.food || o.wood !== dflt.wood || o.gold !== dflt.gold || o.stone !== dflt.stone || o.prepaidFarms) anyRes = true;
+    } else res.push(null);
+  }
+  if (anyAge) spec.ages = ages;
+  if (anyRes) spec.resources = res;
+  return spec;
+}
+
+function downloadJson(json, name){
+  let blob = new Blob([json], { type: 'application/json' });
+  let a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function exportScenario(){
   let spec = buildSpec();
-  let json = JSON.stringify(spec, null, 2);
-  let blob = new Blob([json], { type: 'application/json' });
-  let a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'scenario.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  downloadJson(JSON.stringify(spec, null, 2), 'scenario.json');
   if (window.showMsg) showMsg('Saved scenario.json (' + spec.entities.length + ' entities)');
+}
+
+// The unified Save. 'full' → a lossless v3 snapshot (serializeGame) that
+// round-trips a real game (exact entities + resources/age/controllers/rng/tick).
+// 'compact' → the scenario spec (buildSpec, now carrying ages/resources). Both
+// files load back through the one loader (loadGame / editor Load).
+function saveGame(){
+  if (saveDetail === 'full' && typeof serializeGame === 'function'){
+    downloadJson(JSON.stringify(serializeGame()), 'aoe2-game.json');
+    if (window.showMsg) showMsg('Saved full game (' + entities.length + ' entities)');
+  } else {
+    exportScenario();
+  }
 }
 
 // Load a scenario .json from disk back INTO the editor (open a file picker,
@@ -584,14 +657,52 @@ function loadScenarioFile(){
     if (!f) return;
     let r = new FileReader();
     r.onload = () => {
-      let spec;
-      try { spec = JSON.parse(r.result); }
-      catch (e) { if (window.showMsg) showMsg('Invalid scenario JSON'); console.error('[editor] load failed:', e); return; }
-      loadEditorScenario(spec);
+      let data;
+      try { data = JSON.parse(r.result); }
+      catch (e) { if (window.showMsg) showMsg('Invalid game/scenario JSON'); console.error('[editor] load failed:', e); return; }
+      loadIntoEditor(data);
     };
     r.readAsText(f);
   };
   inp.click();
+}
+
+// Mirror the live sim's per-team controllers back into the editor's authoring
+// array (used by buildSpec + Play), e.g. after loading a full save.
+function syncControllersFromLive(){
+  for (let t = 0; t < controllers.length; t++){
+    let c = (typeof teamControllers !== 'undefined' && teamControllers) ? teamControllers[t] : null;
+    if (c && c.type === 'ai'){ teamDiff[t] = c.difficulty || 'standard'; controllers[t] = 'ai:' + teamDiff[t]; }
+    else controllers[t] = 'human';
+  }
+}
+
+// The editor's single Load entry — accepts EITHER detail level (the unification):
+//   - a full v3 snapshot (2D `map` grid) → applySavedGame, then drop back into
+//     EDIT mode so you can tweak the loaded game and re-save;
+//   - a compact scenario spec → loadEditorScenario (constructive, forces 4 teams).
+// Mirrors the game's loadGame() routing so the editor and the game read the
+// same files.
+function loadIntoEditor(data){
+  data = data || {};
+  if (Array.isArray(data.map)){
+    // Clamp the selected team to the incoming save's team count BEFORE
+    // applySavedGame — it runs updateUI, which reads resources[myTeam]; a stale
+    // myTeam/tool.team (e.g. 3, from the picker) past the loaded numTeams would
+    // crash there before rebuildPalette's clamp could fix it.
+    let nt = data.numTeams || 2;
+    if (myTeam >= nt) myTeam = 0;
+    if (tool.team >= nt) tool.team = 0;
+    silent(() => applySavedGame(data)); // exact restore: entities + resources/age/controllers/rng
+    if (typeof matchSeed !== 'undefined') editSeed = matchSeed >>> 0;
+    syncControllersFromLive();
+    running = false; window.__editorPlaying = false; gameStarted = true; gamePaused = true;
+    playCheckpoint = null; selected.length = 0;
+    syncPlacing(); updatePlayBtn(); rebuildPalette();
+    if (window.showMsg) showMsg('Loaded saved game (' + entities.length + ' entities)');
+  } else {
+    loadEditorScenario(data);
+  }
 }
 
 // Build the loaded scenario's world, then re-establish EDIT state (paused, FFA,
@@ -602,13 +713,15 @@ function loadEditorScenario(spec){
   spec = spec || {};
   editSeed = (spec.seed != null ? spec.seed : 1) >>> 0;
   controllers = ['human', 'human', 'human', 'human'];
-  if (Array.isArray(spec.controllers)) spec.controllers.forEach((c, i) => { if (i < 4) controllers[i] = c; });
+  if (Array.isArray(spec.controllers)) spec.controllers.forEach((c, i) => {
+    if (i < 4){ controllers[i] = c; let d = String(c).split(':')[1]; if (d) teamDiff[i] = d; }
+  });
   silent(() => loadScenario(Object.assign({}, spec, { numTeams: 4 }))); // centers camera on the authored content
   window.fogDisabled = true;
   if (typeof resetTeamAlliance === 'function') resetTeamAlliance();
   if (typeof resetTeamColorMap === 'function') resetTeamColorMap();
   running = false; window.__editorPlaying = false; gameStarted = true; gamePaused = true;
-  authoredSpec = null; selected.length = 0;
+  playCheckpoint = null; selected.length = 0;
   syncPlacing();
   updatePlayBtn(); rebuildPalette();
   if (window.showMsg) showMsg('Loaded scenario (' + (spec.entities ? spec.entities.length : 0) + ' entities)');
@@ -694,7 +807,8 @@ function bindInput(){
     }
     if (e.button !== 0) return;
     mouseX = e.clientX; mouseY = e.clientY;
-    ensureCleanForEdit(); // editing after a Play rewinds to the authored scene first
+    // (No rewind: edits after a Play apply to the LIVE simulated world — that's
+    // the mid-game-edit flow. Reset restores the last-Play checkpoint instead.)
     // Walls drag out a run in one gesture (a plain click = one tile). Reuses
     // the game's wall-drag state; render()'s drawGhost previews the line.
     if (tool.kind === 'building' && typeof isWallBtype === 'function' && isWallBtype(tool.key)){
@@ -711,12 +825,10 @@ function bindInput(){
     painting = false; panning = false;
   });
   C.addEventListener('contextmenu', e => e.preventDefault());
-  C.addEventListener('wheel', e => {
-    if (window.__editorPlaying) return; // Play mode: game handles zoom
-    e.preventDefault();
-    let f = e.deltaY < 0 ? 1.1 : 1/1.1;
-    ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, ZOOM * f));
-  }, { passive:false });
+  // Wheel/trackpad zoom+pan is handled by the GAME's wheel listener (input.js),
+  // which now runs in editor edit mode too — so pinch-zoom, two-finger-swipe
+  // pan and wheel-notch zoom-around-cursor match normal gameplay exactly. (No
+  // editor-specific wheel handler, to avoid double-zoom.)
   window.addEventListener('keydown', e => {
     let tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return; // don't hijack the Seed field etc.
@@ -759,5 +871,6 @@ enterEditor('medium'); // builds the world, then the palette (rebuildPalette)
 window.enterEditor = enterEditor;
 window.editorBuildSpec = buildSpec;
 window.loadEditorScenario = loadEditorScenario;
+window.loadIntoEditor = loadIntoEditor;
 
 })();

@@ -502,7 +502,10 @@ function isTrackpadWheel(e){
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{
-  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own zoom
+  // Camera-only (pan/zoom) — safe in the scenario editor too, so it runs in
+  // BOTH edit and play there (the editor no longer defines its own wheel
+  // handler): two-finger trackpad swipe pans, pinch/ctrl zooms around the
+  // cursor, wheel notch zooms — identical gestures to normal gameplay.
   if(gameOver && !window.seeMapMode)return; // zoom stays live in See Map
   e.preventDefault();
   if(e.ctrlKey){
