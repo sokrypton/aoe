@@ -2073,6 +2073,14 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
     if(map[y][x].t!==terrain||map[y][x].res<=0)continue;
+    // No omniscience: the AI may only found a camp at a resource patch it has
+    // actually SCOUTED (teamHasExplored — the deterministic per-team ever-seen
+    // grid, monotonic, same one its scout/frontier logic drives). Without this
+    // the AI read the true map and dropped camps on forest/gold it had never
+    // seen — a resource-placement cheat a human can't do. The area around its
+    // own TC is revealed from game start, so its opening eco is unaffected;
+    // farther patches now require sending a scout first, like a human.
+    if(!teamHasExplored(ai.team, x+y*MAP))continue;
     if(dist({x,y},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})>maxDist)continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
