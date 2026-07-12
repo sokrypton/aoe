@@ -142,12 +142,25 @@ function walkable(x,y,ignore,ignoreUnits){
   }
   return false;
 }
-function findPath(sx,sy,ex,ey,ignore){
+// stopDist>0: don't path ONTO (ex,ey) — path to the nearest reachable tile
+// WITHIN stopDist of it, and stop there. This is how an attacker approaches to
+// its own attack range instead of piling onto the target's tile: melee (~1.5)
+// ends up on an adjacent tile, ranged (its range) stops out in an arc. Distinct
+// approach directions land on distinct in-range tiles, so a group distributes
+// itself around the target with no per-unit-type logic and no forced ring.
+function findPath(sx,sy,ex,ey,ignore,stopDist){
   sx=Math.round(sx);sy=Math.round(sy);ex=Math.round(ex);ey=Math.round(ey);
   if(ex<0)ex=0;if(ey<0)ey=0;if(ex>=MAP)ex=MAP-1;if(ey>=MAP)ey=MAP-1;
-  // Only redirect for truly impassable destinations (water, buildings)
-  // Resource tiles (forest, gold, stone, berries) are valid destinations
-  if(!walkable(ex,ey,ignore)){
+  let sd=stopDist||0, sd2=sd*sd;
+  // Goal test: an exact tile normally, or "within stopDist of the goal" in
+  // range-approach mode. inGoal is the single place the two modes differ.
+  let inGoal = sd>0 ? (x,y)=>{let dx=x-ex,dy=y-ey;return dx*dx+dy*dy<=sd2;}
+                    : (x,y)=>x===ex&&y===ey;
+  if(sd>0){
+    if(inGoal(sx,sy))return []; // already in range — no move needed
+  } else if(!walkable(ex,ey,ignore)){
+    // Only redirect for truly impassable destinations (water, buildings)
+    // Resource tiles (forest, gold, stone, berries) are valid destinations
     let found=false;
     let t = map[ey] && map[ey][ex];
     let isRes = t && (t.t === TERRAIN.FOREST || t.t === TERRAIN.GOLD || t.t === TERRAIN.STONE || t.t === TERRAIN.BERRIES);
@@ -182,7 +195,7 @@ function findPath(sx,sy,ex,ey,ignore){
     for(let i=1;i<open.length;i++){if(open[i].f<open[minIdx].f)minIdx=i;}
     let cur=open[minIdx];
     open[minIdx]=open[open.length-1];open.pop();
-    if(cur.x===ex&&cur.y===ey){
+    if(inGoal(cur.x,cur.y)){
       let path=[];while(cur.p){path.unshift({x:cur.x,y:cur.y});cur=cur.p;}
       return path;
     }

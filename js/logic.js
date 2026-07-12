@@ -1634,14 +1634,21 @@ function updateUnit(e){
     // stuck-watchdog's 240 so the unit self-corrects (redirect/retarget/drop)
     // rather than freezing until the watchdog forcibly frees it.
     const CHASE_STALL_TICKS = 90;
-    function combatApproach(u,tgt,dist,pathFn){
+    function combatApproach(u,tgt,dist,pathFn,stopDist){
       // The 15-tick repath cooldown throttles re-pathing while a chase is in
       // motion. Repath immediately whenever there's no path left (else the unit
       // freezes until the cooldown clears — a stutter).
       if(u.path.length>0 && !retryReady(u,'chase')) return false; // waiting for a slot
       retryStamp(u,'chase',15);
+      // Default approach paths to the nearest reachable tile WITHIN the unit's
+      // attack range (stopDist), not onto the target's tile — see findPath. This
+      // is the general anti-dogpile: every attacker (melee or ranged) stops at
+      // its own range and distinct approach directions distribute them, so they
+      // never converge on one tile. This branch is only entered when the unit is
+      // OUT of range (callers gate on d>range), so an empty path here always
+      // means "can't reach a firing tile", never "already arrived".
       if(pathFn)pathFn();
-      else pathUnitTo(u,Math.round(tgt.x),Math.round(tgt.y));
+      else setUnitPath(u,findPath(Math.round(u.x),Math.round(u.y),Math.round(tgt.x),Math.round(tgt.y),u.id,stopDist||0));
       if(u.path.length>0){
         // A route exists — but "has a path" is NOT the same as "advancing".
         // findPath ignores MOVING units, so a unit can hold a perfectly valid
@@ -1706,7 +1713,7 @@ function updateUnit(e){
           e.target = null;
           return;
         }
-        if(!combatApproach(e,t,d)) return;
+        if(!combatApproach(e,t,d,null,range)) return; // approach only to firing range — not onto the target
       } else {
         clearUnitPath(e);
         if (e.atkCooldown <= 0) {
@@ -1740,12 +1747,24 @@ function updateUnit(e){
         { let ex=Math.round(e.x),ey=Math.round(e.y),tx=Math.round(t.x),ty=Math.round(t.y);
           let dx=tx-ex,dy=ty-ey;
           if(dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true))cornerBlocked=true; }
-        if(d>maxD||cornerBlocked){
+        if(d>maxD){
           if (e.stance === 'standground' && !e.explicitAttack) {
             e.target = null;
             return;
           }
-          if(!combatApproach(e,t,d)) return;
+          // Approach to strike range: findPath stops at the nearest reachable
+          // in-range (adjacent) tile, so a group rings the target naturally and
+          // an overflow attacker (no free adjacent tile reachable) gets an empty
+          // path → combatApproach disengages and retargets it.
+          if(!combatApproach(e,t,d,null,maxD)) return;
+        } else if(cornerBlocked){
+          if (e.stance === 'standground' && !e.explicitAttack) {
+            e.target = null;
+            return;
+          }
+          // Adjacent but no clear line (sealed corner): step to a clear adjacent
+          // tile — the plain to-target path redirects around the corner.
+          if(!combatApproach(e,t,d,()=>pathUnitTo(e,Math.round(t.x),Math.round(t.y)))) return;
         } else if(e.atkCooldown<=0){
           damageEntity(e,t);
           e.atkCooldown=UNITS[e.utype].rof;
