@@ -380,14 +380,28 @@ function planAIDropSites(ai,aiTC,vils,profile){
 }
 
 function planAITowers(ai,aiTC,vils,profile){
-  if(vils.length<8||!canAfford(ai.team,BLDGS.TOWER.cost))return;
-  let currentTowers=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='TOWER').length;
   let maxTowers=profile.maxTowers||0;
-  if(currentTowers>=maxTowers)return;
-  // Prefer building the tower directly into the wall ring (gate flank, then
-  // corners) once it's up, over a generic freestanding spot.
-  let pos=findAIWallDefenseSpot(ai)||findAIBuildSpot(ai,aiTC,'TOWER');
-  if(pos)placeAIBuilding(ai,'TOWER',pos.x,pos.y);
+  if(vils.length<8||maxTowers<=0)return;
+  // Combined bastion cap: stone Watch Towers AND wooden PTOWERs both count, so
+  // a PTOWER that later upgrades to a Tower still occupies its one slot.
+  let bastions=entities.filter(e=>e.type==='building'&&e.team===ai.team&&isTowerBtype(e.btype)).length;
+  if(bastions>=maxTowers)return;
+  // Prefer a stone Watch Tower once Feudal + stone allow it; otherwise fall back
+  // to the wooden PTOWER (dark-age bastion, wood-only). TOWER is AGE_REQ Feudal
+  // and costs 125 stone, so in the Dark Age or when stone-poor this naturally
+  // routes to PTOWER — which the wall stone-upgrade pass later promotes to a
+  // Tower (WALL_STONE_MATCH: PTOWER→TOWER).
+  let type=null;
+  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost))type='TOWER';
+  else if(canAfford(ai.team,BLDGS.PTOWER.cost))type='PTOWER';
+  if(!type)return;
+  // A waller's bastion MUST go on the wall (gate flank → corners → resource
+  // side) — that's the whole point ("towers on walls"). Wait for a wall segment
+  // rather than plopping a freestanding tower that would eat the cap and never
+  // land on the ring. Only a non-walling AI falls back to a freestanding spot.
+  let pos=findAIWallDefenseSpot(ai);
+  if(!pos&&!profile.walls)pos=findAIBuildSpot(ai,aiTC,type);
+  if(pos)placeAIBuilding(ai,type,pos.x,pos.y);
 }
 
 // ---- AI DEFENSIVE WALLS ----
@@ -461,12 +475,15 @@ function planAIWalls(ai,aiTC,vils,profile){
   // exactly with a small stone float so it never outbids towers.
   if(sealed&&ai.gateBuilt&&isUnlocked(ai.team,'SWALL')){
     let pals=entities.filter(en=>en.type==='building'&&en.team===ai.team&&
-      (en.btype==='WALL'||en.btype==='GATE')&&en.complete&&en.hp>0);
-    pals.sort((a,b)=>(a.btype==='GATE'?0:1)-(b.btype==='GATE'?0:1)||a.id-b.id);
+      (en.btype==='WALL'||en.btype==='GATE'||en.btype==='PTOWER')&&en.complete&&en.hp>0);
+    // GATES first (the funnel), then walls, then PTOWER bastions (PTOWER→TOWER
+    // via WALL_STONE_MATCH); id tiebreak keeps it deterministic.
+    let upOrder=b=>b.btype==='GATE'?0:(b.btype==='PTOWER'?2:1);
+    pals.sort((a,b)=>upOrder(a)-upOrder(b)||a.id-b.id);
     let pick=[],stoneCost=0,bank=resourceStore(ai.team).stone;
     for(let en of pals){
       if(pick.length>=4)break;
-      let c=BLDGS[en.btype==='GATE'?'SGATE':'SWALL'].cost.s||0;
+      let c=BLDGS[WALL_STONE_MATCH[en.btype]].cost.s||0;
       if(stoneCost+c+50>bank)continue; // skip what we can't afford (a pricey gate must not block cheap walls)
       stoneCost+=c;
       pick.push(en);
@@ -698,11 +715,26 @@ function computeAIWallRing(ai,tc,radius){
   // the base is never sealed and the army never has to go the long way.
   let camps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&(e.btype==='LCAMP'||e.btype==='MCAMP'||e.btype==='MILL'));
   let sideFor=(dx,dy)=>Math.abs(dx)>=Math.abs(dy)?(dx>=0?'E':'W'):(dy>=0?'S':'N');
-  let ecx=0,ecy=0;
-  if(camps.length){ camps.forEach(c=>{ecx+=(c.x+0.5)-cx;ecy+=(c.y+0.5)-cy;}); }
   let ed=getEnemyDirection(ai,tc);
-  let ecoSide=camps.length?sideFor(ecx,ecy):sideFor(ed.dx,ed.dy);
   let enemySide=sideFor(ed.dx,ed.dy);
+  // Eco gates, AoE2-style: a gate on EVERY side that has an active drop camp
+  // sitting AT/BEYOND the ring — not one averaged eco gate. Averaging a
+  // wood-camp-N + gold-camp-E to "NE" gave a single door on one side and walled
+  // the other resource's villagers out (Dark-Age collapse). Nearest-camp-first
+  // so the gate cap below keeps the most useful doors. Camps already inside the
+  // ring need no gate (villagers reach them without leaving the wall).
+  let ecoSideDist={};
+  camps.forEach(c=>{
+    let dcx=(c.x+0.5)-cx, dcy=(c.y+0.5)-cy;
+    if(Math.max(Math.abs(dcx),Math.abs(dcy))<r-0.5)return; // inside the ring already
+    let s=sideFor(dcx,dcy), d=Math.abs(dcx)+Math.abs(dcy);
+    if(ecoSideDist[s]===undefined||d<ecoSideDist[s])ecoSideDist[s]=d;
+  });
+  // Deterministic order: nearest camp first, then a fixed side order as tiebreak.
+  let ecoSides=Object.keys(ecoSideDist).sort((a,b)=>ecoSideDist[a]-ecoSideDist[b]||(a<b?-1:1));
+  // No camps beyond the ring yet (early wall) → put the eco gate away from the
+  // enemy, where the base/eco will grow, so egress and commute don't share one door.
+  if(!ecoSides.length)ecoSides=[sideFor(-ed.dx,-ed.dy)];
   // Reserve a 3-wide gate run on `side`; returns [left, centre, right] (or
   // top/mid/bottom) as close to the side's midpoint as possible, or null if 3
   // consecutive walkable ring tiles aren't available. Gates are a 3-tile
@@ -726,9 +758,14 @@ function computeAIWallRing(ai,tc,radius){
     return picked.map(t=>({x:t.x,y:t.y}));
   };
   ai.gatePairs=[];
-  let sides=ecoSide===enemySide?[ecoSide]:[ecoSide,enemySide];
-  for(let s of sides){ let g=reserveGate(s); if(g)ai.gatePairs.push(g); }
-  // If neither preferred side had a walkable run, fall back to any side.
+  // Enemy gate (army egress) first, then one per eco side — distinct, capped so
+  // the wall doesn't become Swiss cheese (each gate is a 3-tile breach point).
+  const MAX_GATES=3;
+  let wantSides=[];
+  for(let s of [enemySide,...ecoSides])if(!wantSides.includes(s))wantSides.push(s);
+  wantSides=wantSides.slice(0,MAX_GATES);
+  for(let s of wantSides){ let g=reserveGate(s); if(g)ai.gatePairs.push(g); }
+  // If none of the wanted sides had a walkable run, fall back to any side.
   if(!ai.gatePairs.length){ for(let s of ['E','W','S','N']){ let g=reserveGate(s); if(g){ai.gatePairs.push(g);break;} } }
   return tiles;
 }
@@ -814,11 +851,17 @@ function resolveAIGate(ai,plan,aiTC){
 function findAIWallDefenseSpot(ai){
   let plan=ai.wallPlan;
   if(!plan)return null;
-  let ringDone=plan.every(t=>t.done);
-  if(!ringDone)return null;
-  let hasTowerAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='TOWER'&&en.x===x&&en.y===y);
+  // NO ring-complete gate: put a bastion on each priority wall tile the moment
+  // it EXISTS as a finished wall (isWallAt per candidate), so towers actually
+  // appear on the wall during/after construction — not only once the whole ring
+  // is 100% sealed (which in a real game, with walls damaged or a tile
+  // perpetually unreachable, often never happens → towers fell back freestanding).
+  // hasTowerAt counts BOTH stone Towers and wooden PTOWER bastions so we never
+  // double-stack a spot.
+  let hasTowerAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isTowerBtype(en.btype)&&en.x===x&&en.y===y);
   let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isWallBtype(en.btype)&&en.x===x&&en.y===y);
 
+  // Priority 1: the gate flank — the one soft breach point in a solid wall.
   let gateTile=ai.gateTile;
   if(gateTile){
     let flanks=[{x:gateTile.x+1,y:gateTile.y},{x:gateTile.x-1,y:gateTile.y},{x:gateTile.x,y:gateTile.y+1},{x:gateTile.x,y:gateTile.y-1}];
@@ -826,10 +869,33 @@ function findAIWallDefenseSpot(ai){
     if(flank)return flank;
   }
 
+  // Priority 2: the four ring corners (natural sightline/ambush points).
   let xs=plan.map(t=>t.x),ys=plan.map(t=>t.y);
   let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   let corners=[{x:minX,y:minY},{x:maxX,y:minY},{x:minX,y:maxY},{x:maxX,y:maxY}];
-  return corners.find(c=>isWallAt(c.x,c.y)&&!hasTowerAt(c.x,c.y))||null;
+  let corner=corners.find(c=>isWallAt(c.x,c.y)&&!hasTowerAt(c.x,c.y));
+  if(corner)return corner;
+
+  // Priority 3 (AoE2 "tower the resource"): a wall tile on a side that has an
+  // exposed eco camp — cover the gathering line the enemy would raid. Reuse the
+  // ring's per-tile `side` tag and the cached ring geometry.
+  let cx=ai.wallCx, cy=ai.wallCy, r=ai.wallRadiusUsed;
+  if(cx!=null&&r){
+    let sideFor=(dx,dy)=>Math.abs(dx)>=Math.abs(dy)?(dx>=0?'E':'W'):(dy>=0?'S':'N');
+    let ecoSides=new Set();
+    entities.forEach(c=>{
+      if(c.type!=='building'||c.team!==ai.team)return;
+      if(c.btype!=='LCAMP'&&c.btype!=='MCAMP'&&c.btype!=='MILL')return;
+      let dcx=(c.x+0.5)-cx, dcy=(c.y+0.5)-cy;
+      if(Math.max(Math.abs(dcx),Math.abs(dcy))>=r-0.5)ecoSides.add(sideFor(dcx,dcy));
+    });
+    if(ecoSides.size){
+      let ecoTiles=plan.filter(t=>ecoSides.has(t.side)&&isWallAt(t.x,t.y)&&!hasTowerAt(t.x,t.y));
+      ecoTiles.sort((a,b)=>a.x-b.x||a.y-b.y); // deterministic pick
+      if(ecoTiles.length)return{x:ecoTiles[0].x,y:ecoTiles[0].y};
+    }
+  }
+  return null;
 }
 
 // "Real" pressure = a CORE hit (a villager or the TC actually taking damage)
@@ -1942,7 +2008,9 @@ function placeAIBuilding(ai,type,x,y){
   };
   if (type === 'GATE') {
     refundWalls(wallsToRemove);
-  } else if (type === 'TOWER') {
+  } else if (isTowerBtype(type)) {
+    // A bastion (stone TOWER or wooden PTOWER) consumes the palisade under it —
+    // remove + refund that wall, mirroring the human build-over-wall path.
     let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === ai.team);
     if (existing) {
       wallsToRemove.push(existing);
