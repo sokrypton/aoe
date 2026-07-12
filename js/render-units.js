@@ -23,6 +23,27 @@ function swordSwingAngle(id){
   let t=(ph-0.68)/0.32;return -1.1+1.6*(t*t*(3-2*t));                    // recover -> 0.5
 }
 
+// Should this unit be showing its attack/harvest ANIMATION right now? The
+// animation must match what the sim actually DOES: the sim only deals damage /
+// harvests when the unit is genuinely in range (see updateUnit — damageEntity
+// gated by adjToBuilding / distToTarget<=range, harvest by SHEEP_HARVEST_RANGE).
+// The old gates ("has a target and is standing still") let a unit that halted
+// just OUTSIDE range — or a surplus attacker with no reachable slot — swing at
+// thin air with nothing happening. This mirrors the sim's range checks EXACTLY,
+// so a swing always coincides with a real hit. Render-only: reads sim state,
+// never writes it.
+function inActionRange(e){
+  if(e.__animAttack) return true;            // style-gallery preview swings freely
+  if(!e.target) return false;
+  let t = entitiesById.get(e.target);
+  if(!t || t.hp<=0) return false;
+  let range = (typeof UNITS!=='undefined' && UNITS[e.utype] && UNITS[e.utype].range) || 0;
+  if(t.type==='building') return range>0 ? distToTarget(e,t)<=range : adjToBuilding(e.x,e.y,t);
+  let maxD = range>0 ? range
+           : (e.utype==='villager' && (t.utype==='sheep'||t.utype==='sheep_carcass')) ? SHEEP_HARVEST_RANGE : 1.5;
+  return distToTarget(e,t)<=maxD;
+}
+
 function drawBigSword(swinging, id){
   if(swinging){
     X.rotate(swordSwingAngle(id));
@@ -1981,7 +2002,7 @@ function drawUnit(e){
   } else if(e.utype==='bear'){
     // Bear — heavy quadruped in the sheep's style: one black silhouette
     // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
-    let attacking = (e.target||e.__animAttack) && e.path.length===0;
+    let attacking = inActionRange(e) && e.path.length===0;
     // Chase/attack read: forward lunge while mauling, slight prowl sway walking
     let lunge = attacking ? Math.max(0, Math.sin(tick*0.35+e.id)) * 3 : 0;
     let sway = e.path.length>0 ? Math.sin(tick*0.25+e.id)*0.05 : 0;
@@ -2802,6 +2823,10 @@ function drawUnit(e){
       } else if (e.task === 'build' && e.buildTarget) {
         let bt = entitiesById.get(e.buildTarget);
         atSite = !!bt && distToTarget(e, bt) < 1.8;
+      } else if (e.target) {
+        // Harvesting/attacking a target (sheep, carcass, enemy): only swing when
+        // actually in range to act on it — not while halted just short of it.
+        atSite = inActionRange(e);
       }
       let working = isActive && e.path.length===0 && atSite;
       let phRaw = tick*0.055 + e.id*0.37;
@@ -2995,7 +3020,7 @@ function drawUnit(e){
       // sword (drawCorpse draws it on the ground); the shield stays
       // strapped to the arm.
       if(!e.corpseRot){
-        let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
+        let swinging=inActionRange(e)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
         // Sword hand is fixed to the body — mirrored to the other screen
         // side when the militia faces away from the camera. While
         // swinging, the hand itself pumps with the slash (back and up on
@@ -3011,7 +3036,7 @@ function drawUnit(e){
       // Long spear with a big leaf-shaped head; the thrust is shaped —
       // slow pull-back, fast jab along the shaft. (Corpses drop it —
       // drawCorpse lays it on the ground.)
-      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
+      let swinging=inActionRange(e)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       X.save(); X.translate(3, -6+humanYOffset);
       if(swinging){
         // Point the shaft at the target: un-mirror first (same trick as
@@ -3047,7 +3072,7 @@ function drawUnit(e){
       // when the real arrow leaves, so the flight reads as THE arrow off
       // the string. Works on the guest too — atkCooldown/target ride the
       // entity sync.
-      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
+      let swinging=inActionRange(e)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       let bowRof=(UNITS.archer&&UNITS.archer.rof)||60;
       let bowCd=e.atkCooldown||0;
       let justFired=bowCd>bowRof*0.85;                         // string still snapping forward
@@ -3097,7 +3122,7 @@ function drawUnit(e){
       // At rest it parks on the rider's LEFT side, mirrored — the right is
       // where the horse's head rises, and the blade would point into it.
       // (Corpses drop it — drawCorpse lays it on the ground.)
-      let swinging=(e.target||e.__animAttack)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
+      let swinging=inActionRange(e)&&e.path.length===0; // __animAttack: style-gallery preview, silent like the ram's
       X.save();
       if(swinging){
         X.translate(6+humanXOffset, -6+humanYOffset);
