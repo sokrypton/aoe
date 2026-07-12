@@ -564,6 +564,28 @@ function nearestReachableWallLike(unit, team, excludeId){
     .find(w => w.id!==excludeId && !(unit.unreachId===w.id && unit.unreachUntil>tick) && isTargetReachable(unit, w)) || null;
 }
 
+// Is this unit completely boxed in by OTHER units (its own not-yet-moving
+// crowd), with terrain open somewhere it can't reach? True only when every
+// neighbour tile that is terrain-walkable currently holds a unit AND there is
+// no unit-free step at all. This is the interior of a freshly-commanded army
+// block: findPath returns [] not because the target is walled off but because
+// the unit's teammates surround it — a transient jam that clears as the outer
+// ranks march away. Callers use it to keep re-pathing (like a move order)
+// instead of giving up / backing off, which used to strand the interior units
+// of a large army at the spawn when the whole group was ordered to attack (all
+// of them hold a target, so none qualify as a pushable idle soldier). O(8),
+// deterministic (walkable is pure over the sim grid).
+function crowdedByUnits(u){
+  let ux=Math.round(u.x), uy=Math.round(u.y), terrainOpen=false;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy)continue;
+    let nx=ux+dx, ny=uy+dy;
+    if(walkable(nx,ny,u.id,false)) return false;      // a real step exists — not boxed
+    if(walkable(nx,ny,u.id,true)) terrainOpen=true;   // blocked only by a unit
+  }
+  return terrainOpen;
+}
+
 // A melee attacker's chase to `tgt` has STALLED (it can't path adjacent). One
 // shared response for AI and player units (AoE2: get as close as possible, then
 // attack what's blocking you): redirect to the nearest reachable connected
@@ -1758,8 +1780,15 @@ function updateUnit(e){
           pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
           return;
         }
-      } else if (e.stance === 'defensive' && e.defendX !== undefined) {
+      } else if (e.stance === 'defensive' && e.defendX !== undefined && !e.explicitAttack) {
         // Defensive stance drifts to its idle anchor (defendX/Y), not a post.
+        // EXPLICIT attacks are exempt (same as the guard leash above): the
+        // command sets defendX to wherever the unit stood when ordered, so
+        // without this a defensive army told to attack a distant target
+        // marches over, then gets dragged all the way back to its start —
+        // the "units slowly walk back instead of pressing the attack" bug.
+        // The leash still governs AUTO-acquired chases (a passing raider),
+        // which is its actual job.
         let adx = e.x - e.defendX, ady = e.y - e.defendY;
         if (Math.sqrt(adx*adx + ady*ady) > GUARD_LEASH) {
           e.target = null;
@@ -1892,6 +1921,14 @@ function updateUnit(e){
       // 2-strike tolerance absorbs a transient) instead of freezing, and hand off
       // to the shared resolver (breach the wall in the way / back off) — used by
       // AI and player units alike now.
+      // A unit walled in by its OWN not-yet-moving crowd (the interior of a
+      // freshly-commanded army block) hasn't hit a real dead end — its empty
+      // path is just the surrounding teammates, and it clears once the outer
+      // ranks march off. Don't escalate to the give-up/back-off (that stranded
+      // interior units at the spawn forever); keep re-pathing every tick like a
+      // move order until a neighbour frees up. Checked before retryFail so the
+      // transient jam never even counts toward the 2-strike deadline.
+      if(crowdedByUnits(u)) return false;
       // Only PLAYER units (AI or human) resolve a stall — gaia (wildlife) keeps
       // the original no-op so bears/sheep are unaffected (isPlayerTeam excludes
       // gaia; the old code's isAITeam gate excluded it too).
