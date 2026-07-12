@@ -878,12 +878,21 @@ function updateGatherTask(e,config){
     return;
   }
 
-  // In range. NO pressToContact here (unlike combat/carcass): the node is a
-  // SOLID tile, and pressing everyone toward its center biases them onto the 4
-  // orthogonal tiles (only those reach a uniform radius; a diagonal at that
-  // radius rounds onto the solid node), abandoning the corners. Villagers just
-  // hold the DISTINCT adjacent tile pickGatherStand gave them — an even 8-tile
-  // surround (corners included), AoE2-style.
+  // In range. Slide-to-contact so the villager visibly HUGS the node it works
+  // (clear feedback about which tile it's after) — but press toward the nearest
+  // point on the node's OWN EDGE (its position clamped to the tile's footprint
+  // box), NOT the node centre. Centre-pressing was removed once because it
+  // pulled diagonal gatherers onto the 4 orthogonal tiles and abandoned the
+  // corners; clamping to the edge instead keeps each villager squared up on the
+  // DISTINCT tile pickGatherStand assigned, so the even 8-tile surround (corners
+  // included) survives AND everyone tucks right against the resource. The
+  // walkable(ignoreUnits) guard in pressToContact keeps them off the solid node.
+  // Farms are walkable (the villager stands ON the plot) — no press there.
+  if(e.task!=='farm'){
+    let hx=Math.max(gatherTile.x-0.5, Math.min(e.x, gatherTile.x+0.5));
+    let hy=Math.max(gatherTile.y-0.5, Math.min(e.y, gatherTile.y+0.5));
+    pressToContact(e, hx, hy, 0.25);
+  }
 
   if(e.gatherCooldown>0)return;
   let tile=map[gatherTile.y][gatherTile.x];
@@ -2089,6 +2098,20 @@ function updateUnit(e){
         // until the watchdog broke it up. Only ARRIVAL clears (below).
       } else {
         retryClear(e,'build');
+        // Slide-to-contact so the builder visibly HUGS the foundation it works
+        // — same feedback as a gatherer on a resource or an attacker on a wall.
+        // Press to the nearest point on the building's OWN edge (position
+        // clamped to the footprint box), so co-builders on distinct perimeter
+        // tiles each tuck against their own side instead of drifting to one
+        // spot. Farms are walkable (the farmer stands ON the plot) — no press.
+        // Builders are separation-exempt (loop.js separateUnits), so the hug
+        // holds; pressToContact's walkable(ignoreUnits) guard keeps them off
+        // the footprint itself.
+        if(!isFarm){
+          let hx=Math.max(bt.x-0.5, Math.min(e.x, bt.x+bt.w-0.5));
+          let hy=Math.max(bt.y-0.5, Math.min(e.y, bt.y+bt.h-0.5));
+          pressToContact(e, hx, hy, 0.35);
+        }
         if (bt.btype === 'FARM' && bt.exhausted) {
           let store = resourceStore(e.team);
           if (store && store.prepaidFarms > 0) {
