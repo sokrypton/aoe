@@ -71,6 +71,19 @@ const SCENES = {
     (${pageLookAt})(30, 30);
     updateUI();
     try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  mill: `(${pageStage})();
+    const m = createBuilding('MILL', 28, 28, 0);
+    resourceStore(0).prepaidFarms = 3; // banked reseeds → badge (mobile) / cancellable slots (classic)
+    selected.push(m);
+    (${pageLookAt})(29, 29);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  build: `(${pageStage})();
+    const v = createUnit('villager', 28, 28, 0); selected.push(v);
+    (${pageLookAt})(28, 28);
+    updateUI();                                 // settle selection (menu → main)
+    window.currentVillagerMenu = 'eco'; updateUI(); // open economic build submenu (House, Mill, Farm…)
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
 };
 
 const VIEWPORTS = {

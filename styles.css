@@ -731,6 +731,10 @@ canvas {
   height:100%;
   margin-bottom:0;
 }
+/* The house cell art sits a touch small in its cell — nudge it up slightly so
+   it matches the visual weight of the other building icons (same per-icon
+   scale trick as #bell-btn). */
+.sprite-icon.icon-HOUSE{ transform: scale(1.1); }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
 }

@@ -449,6 +449,42 @@ function pageSuite() {
     assert(wall.complete && wall.btype === 'SWALL' && !wall.upgrading, 'AI never finished the upgraded wall: complete=' + wall.complete);
   });
 
+  T('farm: reseed prepay queues, and cancel refunds 60 wood (soldier-queue parity)', () => {
+    stage();
+    const store = resourceStore(0);
+    store.wood = 1000; store.prepaidFarms = 0;
+    execCommand({ kind: 'prepay-farm' }, 0);
+    execCommand({ kind: 'prepay-farm' }, 0);
+    assert(store.prepaidFarms === 2 && store.wood === 880, 'prepay ×2: ' + store.prepaidFarms + '/' + store.wood);
+    execCommand({ kind: 'cancel-reseed' }, 0);
+    assert(store.prepaidFarms === 1 && store.wood === 940, 'cancel refunds 60 wood: ' + store.prepaidFarms + '/' + store.wood);
+    execCommand({ kind: 'cancel-reseed' }, 0);
+    execCommand({ kind: 'cancel-reseed' }, 0); // empty queue → no-op, no over-refund
+    assert(store.prepaidFarms === 0 && store.wood === 1000, 'cancel to empty is a no-op: ' + store.prepaidFarms + '/' + store.wood);
+  });
+
+  T('gate: upgrading a LOCKED gate to stone does NOT inherit the lock', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1; // Feudal → stone unlocked
+    const gate = createBuilding('GATE', 30, 30, 0);
+    execCommand({ kind: 'gate-lock', bldgIds: [gate.id], locked: true }, 0);
+    assert(gate.locked === true, 'setup: gate should be locked');
+    execCommand({ kind: 'upgrade-walls', unitIds: [gate.id] }, 0);
+    assert(gate.btype === 'SGATE', 'gate did not upgrade to stone: ' + gate.btype);
+    assert(!gate.locked, 'upgraded gate wrongly inherited the lock');
+    teamAge[0] = 0;
+  });
+
+  T('hud: home button icon reflects the age (TC top-half: dark/feudal/castle)', () => {
+    stage();
+    const homeCls = () => { updateUI(); const el = document.querySelector('#home-btn .sprite-icon'); return el ? el.className : ''; };
+    teamAge[0] = 0; assert(/icon-home-dark/.test(homeCls()), 'Dark home icon: ' + homeCls());
+    teamAge[0] = 1; assert(/icon-home-feudal/.test(homeCls()), 'Feudal home icon: ' + homeCls());
+    teamAge[0] = 2; assert(/icon-home-castle/.test(homeCls()), 'Castle home icon: ' + homeCls());
+    teamAge[0] = 0;
+  });
+
   return results;
 }
 
@@ -871,6 +907,34 @@ function pageSuite() {
       if (!r.frontHasVeil) throw new Error('front slot missing training veil');
       if (r.rows!==2 || r.btnCount!==6 || !r.noPopup) throw new Error('classic exchange shape wrong: ' + JSON.stringify(r));
       if (!r.tradeCmd || r.tradeCmd.dir!=='buy' || r.tradeCmd.resType!=='food') throw new Error('buy-food button wrong: ' + JSON.stringify(r.tradeCmd));
+      await cpage.close();
+    });
+
+    await tapT('classic: prepaid reseeds are cancellable queue slots (parity) + reseed button keeps its border', async () => {
+      const cpage = await ctx.newPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      await cpage.evaluate(tapStage(`
+        const mill=createBuilding('MILL',26,26,0); mill.complete=true;
+        resourceStore(0).prepaidFarms=3;
+        selected=[mill]; window.__pts=()=>({});`));
+      const r = await cpage.evaluate(`(()=>{ updateUI();
+        const slots=[...document.querySelectorAll('#sel-queue .queue-slot')];
+        const reseed=slots.filter(s=>s.querySelector('.icon-reseed')).length;
+        const clickable=!!(slots[0]&&slots[0].onclick);
+        if(slots[0]) slots[0].click();
+        const cancel=window.__cmds.find(c=>c.kind==='cancel-reseed');
+        const prepay=[...document.querySelectorAll('#actions .act-btn')].find(b=>b.dataset.tipLabel==='Prepay Farm Reseed');
+        return { count:slots.length, reseed, clickable, cancel: !!cancel, prepayFramed: prepay?prepay.classList.contains('framed'):'no-btn' };
+      })()`);
+      assertEq(r.count, 3, 'three reseed queue slots');
+      assertEq(r.reseed, 3, 'every slot shows the reseed icon');
+      if (!r.clickable) throw new Error('reseed slots must be clickable');
+      if (!r.cancel) throw new Error('clicking a reseed slot must issue cancel-reseed');
+      if (r.prepayFramed !== false) throw new Error('Prepay Reseed button must NOT be .framed (needs its own border): ' + r.prepayFramed);
       await cpage.close();
     });
 

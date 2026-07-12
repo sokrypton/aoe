@@ -16,28 +16,40 @@
 // adding one unit meant four coordinated CSS edits. Now: draw into a spare
 // cell, rename it here, done. (js/ui.js derives SPRITE_ICON_KEYS from this.)
 window.SPRITE_CELLS = {
-  // row 0-1: units (+ age-look variants)
-  villager:[0,0], militia:[1,0], spearman:[2,0], archer:[3,0], scout:[4,0],
-  knight:[5,0], sheep:[6,0], tradecart:[7,0],
-  'militia-feudal':[0,1], 'militia-castle':[1,1], 'spearman-castle':[2,1],
-  'archer-castle':[3,1], 'scout-castle':[4,1], bear:[5,1], pop:[6,1], compass:[7,1],
-  // rows 2-3: buildings + gate states
-  HOUSE:[1,2], BARRACKS:[2,2], MILL:[3,2], LCAMP:[4,2], MCAMP:[5,2], FARM:[6,2],
-  PTOWER:[7,2], WALL:[1,3], GATE:[2,3], SWALL:[3,3], SGATE:[4,3],
-  'gate-lock':[5,3], 'gate-unlock':[6,3],
-  // Age-suffixed building icons (Town Center, Watch Tower). These have NO bare
-  // "TC"/"TOWER" cell on purpose — the icon key is always age-explicit so it
-  // never collides with the TC/TOWER btype. iconKey()+AGE_ICON_VARIANTS (ui.js)
-  // maps each age to one of these; WT- = Watch Tower.
-  'TC-dark':[7,3], 'TC-feudal':[7,4], 'TC-castle':[0,2],
-  'WT-feudal':[7,5], 'WT-castle':[0,3],
-  // rows 4-6: resources, action glyphs, age crests, corner buttons
-  food:[0,4], wood:[1,4], gold:[2,4], stone:[3,4], cancel:[4,4], econ:[5,4], mil:[6,4],
-  back:[0,5], reseed:[1,5], research:[2,5], logo:[3,5], ram:[4,5], MARKET:[5,5], bell:[6,5],
-  'age-dark':[0,6], 'age-feudal':[1,6], 'age-castle':[2,6], idle:[3,6], rally:[4,6], map:[5,6], home:[6,6],
-  // column 7 / row 7: empty labeled boxes to draw future art into
-  spare6:[7,6], spare7:[7,7],
-  spare8:[0,7], spare9:[1,7], spare10:[2,7], spare11:[3,7], spare12:[4,7], spare13:[5,7], spare14:[6,7],
+  // Sheet is grouped BY TYPE, with age progressions placed on adjacent cells
+  // (e.g. militia→feudal→castle, TC wood→stone→castle, tower PTOWER→WT-feudal
+  // →WT-castle, age crests dark→feudal→castle) so upgrades read left-to-right.
+  // Icons are content-centered in their cells (see tools/resheet-sprites.py,
+  // the one-shot that produced this layout). Age-variant buildings/units have
+  // NO bare icon-<btype> cell — always age-suffixed, resolved via iconKey().
+  // ---- rows 0-1: units. Row 0 infantry/archer lines (age variants adjacent).
+  villager:[0,0], militia:[1,0], 'militia-feudal':[2,0], 'militia-castle':[3,0],
+  spearman:[4,0], 'spearman-castle':[5,0], archer:[6,0], 'archer-castle':[7,0],
+  // Row 1: cavalry / siege / trade / gaia.
+  scout:[0,1], 'scout-castle':[1,1], knight:[2,1], ram:[3,1], tradecart:[4,1],
+  sheep:[5,1], bear:[6,1], pop:[7,1],
+  // ---- row 2: town / economy buildings (TC age progression first).
+  'TC-dark':[0,2], 'TC-feudal':[1,2], 'TC-castle':[2,2], HOUSE:[3,2], MILL:[4,2],
+  FARM:[5,2], LCAMP:[6,2], MCAMP:[7,2],
+  // ---- row 3: military + defenses (Watch Tower progression + walls adjacent).
+  BARRACKS:[0,3], MARKET:[1,3], PTOWER:[2,3], 'WT-feudal':[3,3], 'WT-castle':[4,3],
+  WALL:[5,3], SWALL:[6,3], GATE:[7,3],
+  // ---- row 4: gates (cont.) + resources.
+  SGATE:[0,4], 'gate-lock':[1,4], 'gate-unlock':[2,4], food:[3,4], wood:[4,4],
+  gold:[5,4], stone:[6,4],
+  // ---- row 5: action glyphs.
+  back:[0,5], cancel:[1,5], rally:[2,5], idle:[3,5], bell:[4,5], home:[5,5],
+  map:[6,5], compass:[7,5],
+  // ---- row 6: menu / tech glyphs + age crests (Dark→Feudal→Castle).
+  econ:[0,6], mil:[1,6], research:[2,6], reseed:[3,6], logo:[4,6],
+  'age-dark':[5,6], 'age-feudal':[6,6], 'age-castle':[7,6],
+  // Home button by age = the TOP of each age's Town Center (keep + flag, base
+  // cropped) so it reads clearly at button size. Base `home:[5,5]` is the
+  // pre-match/no-age fallback. Resolved via iconKey('home') (ui.js).
+  'home-dark':[0,7], 'home-feudal':[1,7], 'home-castle':[2,7],
+  // ---- free slots for future icons (row 4 tail + row 7).
+  spare1:[7,4], spare5:[3,7],
+  spare6:[4,7], spare7:[5,7], spare8:[6,7], spare9:[7,7],
 };
 (function(){
   let css = '';

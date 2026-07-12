@@ -145,6 +145,9 @@ function execCommand(cmd, team){
     case 'prepay-farm':
       withCommandContext(team, [], () => prepayFarmNow());
       break;
+    case 'cancel-reseed':
+      withCommandContext(team, [], () => cancelReseedNow());
+      break;
     case 'reactivate-farm': {
       let farm = entitiesById.get(cmd.bldgId);
       if (farm && farm.team === team) {
@@ -748,6 +751,10 @@ function execUpgradeWalls(cmd, team){
     let upType = WALL_STONE_MATCH[w.btype];
     if (w.garrison && w.garrison.length) ejectGarrison(w); // a tower under rebuild shelters no one
     w.btype = upType; // gates keep their footprint/door state (w/h, gateProgress)
+    // A rebuilt gate starts UNLOCKED — the lock is a per-gate toggle the
+    // player set on the OLD piece; the new one shouldn't silently inherit it
+    // (a locked foundation would also seal pathing while it builds).
+    w.locked = false;
     // Re-stamp the fields createBuilding snapshots from BLDGS (armor/range/
     // garrisonCap are read live, but atk and buildTime are entity fields).
     w.atk = BLDGS[upType].atk || 0;
@@ -820,6 +827,18 @@ function prepayFarmNow(){
   let store = resourceStore(myTeam);
   store.prepaidFarms = (store.prepaidFarms || 0) + 1;
   feedbackFor(myTeam, () => showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`));
+  if (typeof updateUI === 'function') updateUI();
+}
+
+// Cancel one banked reseed — refunds the 60 wood it was prepaid with, exactly
+// like cancelling a queued unit refunds its cost (queue parity). No-op when
+// the queue is empty.
+function cancelReseedNow(){
+  let store = resourceStore(myTeam);
+  if ((store.prepaidFarms || 0) <= 0) return;
+  store.prepaidFarms--;
+  store.wood += 60;
+  feedbackFor(myTeam, () => showMsg(`Reseed cancelled (+60 Wood). Queue: ${store.prepaidFarms}`));
   if (typeof updateUI === 'function') updateUI();
 }
 

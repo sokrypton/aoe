@@ -183,6 +183,9 @@ const AGE_ICON_VARIANTS = {
   TC:       {0:'TC-dark', 1:'TC-feudal', 2:'TC-castle'},
   // Watch Tower by age (Feudal+; Dark has none — that's PTOWER). WT- cells.
   TOWER:    {1:'WT-feudal', 2:'WT-castle'},
+  // Home button = the current age's Town Center top (keep + flag). Base
+  // 'home' cell is the fallback when teamAge is unknown (pre-match).
+  home:     {0:'home-dark', 1:'home-feudal', 2:'home-castle'},
 };
 // Cost rendered as mini resource-icon+number chips overlaid on the action
 // button. Desktop keeps costs in the hover tooltip (.cost is display:none
@@ -250,6 +253,14 @@ function updateUI(){
   // pure functions over `entities`, safe to call directly for any team).
   let myPopUsed = teamPopUsed(myTeam);
   let myPopCap = teamPopCap(myTeam);
+
+  // Home button reflects the current age's Town Center (top-half keep icon).
+  // Cheap: only rewrite the class when the age variant actually changes.
+  let homeIconEl = document.querySelector('#home-btn .sprite-icon');
+  if (homeIconEl) {
+    let hk = 'icon-' + iconKey('home');
+    if (!homeIconEl.classList.contains(hk)) homeIconEl.className = 'btn-emoji sprite-icon ' + hk;
+  }
 
   // Calculate idle villagers count
   let idleVils = entities.filter(e => e.team === myTeam && e.type === 'unit' && e.utype === 'villager' && !e.task && !e.target && !e.garrisonedIn && e.path.length === 0);
@@ -598,7 +609,7 @@ function updateUI(){
         +' Salvages the old piece (refund scales with remaining HP) and starts construction — send villagers to build it. Cannot be cancelled once started.';
       let upIcon=allTowers?iconKey('TOWER'):(allGates?'SGATE':'SWALL'); // age-suffixed WT- cell; no bare TOWER icon
       let upBtn=document.createElement('div');
-      upBtn.className='act-btn framed';
+      upBtn.className='act-btn'; // building icon has no baked frame → keep the button's own border
       upBtn.dataset.tipType='action';
       upBtn.dataset.tipLabel=tipLabel;
       upBtn.dataset.tipDesc=tipDesc;
@@ -1066,24 +1077,42 @@ function updateUI(){
       }
 
       if(e.complete && e.btype === 'MILL') {
-        let btn=document.createElement('div');btn.className='act-btn framed';
+        let prepaid=resourceStore(myTeam).prepaidFarms||0;
+        // reseed icon has no baked frame → plain act-btn (keeps its border),
+        // matching the train buttons rather than the framed action glyphs.
+        let btn=document.createElement('div');btn.className='act-btn';
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Prepay Farm Reseed';
         btn.dataset.tipDesc='Pre-pays 60 Wood to automatically reseed an exhausted farm. Queued reseeds are used before spending resources again.';
         btn.dataset.tipCost=JSON.stringify({w:60});
         btn.dataset.cost=JSON.stringify({w:60});
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div>${costChips({w:60})}`;
-        // Same count-badge language as the train buttons: how many reseeds
-        // are banked. Not tappable — prepaid reseeds can't be refunded.
-        let prepaid=resourceStore(myTeam).prepaidFarms||0;
-        if(prepaid>0)btn.innerHTML+=`<div class="queue-count queue-count-static" title="${prepaid} reseed${prepaid>1?'s':''} prepaid">${prepaid}</div>`;
+        // Banked reseeds use the SAME queue language as unit training: index
+        // shows a count badge on the button; classic shows one cancellable
+        // slot per reseed in the #sel-queue lane (click to refund 60 wood),
+        // exactly like the training queue.
+        if(!isClassicUI && prepaid>0)btn.innerHTML+=`<div class="queue-count queue-count-static" title="${prepaid} reseed${prepaid>1?'s':''} prepaid">${prepaid}</div>`;
         btn.onclick=()=>prepayFarm();
-        // (Badges are pointer-events:none — a tap here goes to the button,
-        // which is prepayFarm, i.e. exactly what the tap means.)
         act.appendChild(btn);
+        if(isClassicUI && prepaid>0){
+          let strip=document.createElement('div');
+          strip.className='queue-strip-row';
+          for(let i=0;i<prepaid;i++){
+            let slot=document.createElement('div');
+            slot.className='queue-slot'; // no training-active/veil — reseeds are instant banked credits
+            slot.dataset.tipType='action';
+            slot.dataset.tipLabel='Prepaid reseed';
+            slot.dataset.tipDesc='Click to cancel and refund 60 Wood.';
+            slot.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="queue-x">✕</div>`;
+            slot.onclick=()=>cancelReseed();
+            strip.appendChild(slot);
+          }
+          let lane=document.getElementById('sel-queue');
+          (lane||act).appendChild(strip);
+        }
       }
       if(b.isFarm && e.exhausted) {
-        let btn=document.createElement('div');btn.className='act-btn framed';
+        let btn=document.createElement('div');btn.className='act-btn'; // reseed icon has no baked frame → keep the button border
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Reactivate Farm';
         btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (175 Food).';
@@ -1595,8 +1624,16 @@ function reactivateFarm(farm) {
   submitCommand({ kind: 'reactivate-farm', bldgId: farm.id }); // mutation: reactivateFarmNow (js/commands.js)
 }
 
+// Cancel one banked reseed (classic queue-slot click) — refunds 60 wood, like
+// cancelling a queued unit. Mutation: cancelReseedNow (js/commands.js).
+function cancelReseed() {
+  if (gameOver) return;
+  submitCommand({ kind: 'cancel-reseed' });
+}
+
 window.prepayFarm = prepayFarm;
 window.reactivateFarm = reactivateFarm;
+window.cancelReseed = cancelReseed;
 
 // ==============================
 // ---- HOVER TOOLTIP SYSTEM ----
