@@ -25,6 +25,15 @@ function rebuildUnitBlock(){
   });
 }
 
+// Reused A* scratch — avoids a new Array(MAP²) + Uint8Array(MAP²) on EVERY
+// findPath call (27k+ calls/match; ~20k elements each on a large map — a major
+// per-tick GC source). Generation-stamped so "clearing" between calls is a
+// single counter bump, never an O(MAP²) fill: a cell is closed iff
+// _pfClosedGen[k]===_pfGen, and open iff _pfOpenGen[k]===_pfGen (its node is
+// _pfOpenNode[k]). Purely a storage change — the A* algorithm and the path it
+// returns are byte-for-byte identical (verified by checksum equality).
+let _pfGen=0, _pfClosedGen=null, _pfOpenGen=null, _pfOpenNode=null;
+
 function walkable(x,y,ignore,ignoreUnits){
   if(x<0||x>=MAP||y<0||y>=MAP)return false;
   // Stationary-unit collision (see rebuildUnitBlock above). ignoreUnits is
@@ -153,9 +162,13 @@ function findPath(sx,sy,ex,ey,ignore){
   let startH=Math.max(startAdx,startAdy)+0.41*Math.min(startAdx,startAdy);
   let startNode={x:sx,y:sy,g:0,h:startH,f:startH,p:null};
   let open=[startNode];
-  let openMap=new Array(MAP*MAP);
-  openMap[sx+sy*MAP]=startNode;
-  let closed=new Uint8Array(MAP*MAP);
+  // (Re)allocate scratch on first use / map-size change, then bump the
+  // generation so all prior stamps read as stale — no per-call clearing.
+  let N=MAP*MAP;
+  if(!_pfClosedGen||_pfClosedGen.length!==N){_pfClosedGen=new Int32Array(N);_pfOpenGen=new Int32Array(N);_pfOpenNode=new Array(N);_pfGen=0;}
+  if(++_pfGen>=2147483647){_pfClosedGen.fill(0);_pfOpenGen.fill(0);_pfGen=1;} // stamp overflow (astronomically rare) → reset
+  let gen=_pfGen;
+  _pfOpenGen[sx+sy*MAP]=gen;_pfOpenNode[sx+sy*MAP]=startNode;
   let iters=0;
   // Track the node that got closest to the goal so far. If the search runs out
   // of budget (large/obstructed maps can need more than the iteration cap) we
@@ -174,8 +187,8 @@ function findPath(sx,sy,ex,ey,ignore){
       return path;
     }
     let ck=cur.x+cur.y*MAP;
-    openMap[ck]=undefined;
-    closed[ck]=1;
+    _pfOpenNode[ck]=undefined; // popped from the open set
+    _pfClosedGen[ck]=gen;
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
       if(dx===0&&dy===0)continue;
       let nx=cur.x+dx,ny=cur.y+dy;
@@ -183,15 +196,15 @@ function findPath(sx,sy,ex,ey,ignore){
       // Block diagonal moves that cut through the gap between two touching obstacles
       if(dx&&dy&&(!walkable(cur.x+dx,cur.y,ignore)||!walkable(cur.x,cur.y+dy,ignore)))continue;
       let k=nx+ny*MAP;
-      if(closed[k])continue;
+      if(_pfClosedGen[k]===gen)continue;
       let g=cur.g+(dx&&dy?1.41:1);
-      let existing=openMap[k];
+      let existing=_pfOpenGen[k]===gen?_pfOpenNode[k]:undefined;
       if(existing){if(g<existing.g){existing.g=g;existing.f=g+existing.h;existing.p=cur;}}
       else{
         let adx=Math.abs(nx-ex),ady=Math.abs(ny-ey);
         let h=Math.max(adx,ady)+0.41*Math.min(adx,ady);
         let node={x:nx,y:ny,g,h,f:g+h,p:cur};
-        open.push(node);openMap[k]=node;
+        open.push(node);_pfOpenGen[k]=gen;_pfOpenNode[k]=node;
         if(h<bestNode.h)bestNode=node;
       }
     }
