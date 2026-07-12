@@ -1156,7 +1156,13 @@ function damageEntity(attacker, target){
   // hacking at it just interrupts the wall it was ordered to break. Trade
   // carts can't fight at all (atk 0) — retaliating just made them chase
   // their attacker and bump into it uselessly.
-  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase){
+  // An AI scout is pure recon — it must NOT retaliate against GAIA wildlife (a
+  // bear/wolf), or it gets pinned trading blows mid-explore instead of scouting
+  // (same spirit as the player's Auto Scout avoiding combat). It still defends
+  // against enemy-TEAM raiders. controlAIScouts also drops any gaia target that
+  // slips through, but suppressing the retaliation here stops it being acquired.
+  let scoutIgnoresGaia = target.utype==='scout' && isAITeam(target.team) && attacker.team===GAIA_TEAM;
+  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;

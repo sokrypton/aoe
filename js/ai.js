@@ -664,12 +664,30 @@ function armyCanReachEnemy(ai,aiTC){
 }
 
 function computeAIWallRing(ai,tc,radius){
-  let r=Math.max(4,Math.round(radius));
   let cx=tc.x+Math.floor(tc.w/2),cy=tc.y+Math.floor(tc.h/2); // build the ring around its center
-  // Remember the geometry so the honest seal-check (aiBaseSealed) can bound its
-  // flood to this base. (Economy-radius growth — enclosing far gold/stone — is a
-  // separate follow-up, gated on the seal metric; it must also widen the flood
-  // margin, so it is intentionally NOT enabled here.)
+  let baseR=Math.max(4,Math.round(radius));
+  // Economy-radius growth (AoE2 "wall along the treeline"): everything is
+  // deterministic — the ring is centered on the TC and we know each drop camp's
+  // exact tile — so grow the radius just enough to run the wall OUTSIDE the
+  // CLOSE resource camps instead of slicing between the TC and them. Those camps
+  // (and the resource lane they serve) end up INSIDE the ring — protected AND
+  // reachable — rather than walled out and reliant on a single gate.
+  // BOUNDED by GROW_CAP: a camp farther than that stays outside (gated per-side +
+  // towered, see planAITowers) so the wall never balloons into an indefensible
+  // perimeter or tries to swallow a whole forest. The grown radius is stored in
+  // ai.wallRadiusUsed below, and aiBaseSealed floods radius+6 — so its seal check
+  // widens in lock-step automatically; no separate flood-margin change needed.
+  const GROW_CAP=4;
+  let r=baseR;
+  entities.forEach(c=>{
+    if(c.type!=='building'||c.team!==ai.team)return;
+    if(c.btype!=='LCAMP'&&c.btype!=='MCAMP'&&c.btype!=='MILL')return;
+    let cheb=Math.max(Math.abs((c.x+0.5)-cx),Math.abs((c.y+0.5)-cy));
+    if(cheb>r&&cheb<=baseR+GROW_CAP)r=Math.ceil(cheb+1); // wall runs just beyond this camp
+  });
+  r=Math.min(r,baseR+GROW_CAP);
+  // Remember the geometry so the honest seal-check (aiBaseSealed) bounds its
+  // flood to this base (it reads ai.wallRadiusUsed via planAIWalls).
   ai.wallRadiusUsed=r; ai.wallCx=cx; ai.wallCy=cy;
   let tiles=[];
   let seen=new Set();
@@ -1798,8 +1816,12 @@ function controlAIScouts(ai,mils,aiTC){
       // target and get back to exploring. A real unit target (home defense,
       // a raider) is left alone.
       let tgt=entitiesById.get(s.target);
-      if(tgt&&tgt.type==='building'){ s.target=null; s.explicitAttack=false; clearUnitPath(s); }
-      else return; // legitimately engaging a unit — leave it
+      // Recon, not a hunter: drop a BUILDING target (the classic death trading
+      // blows with the enemy TC while exploring) AND any GAIA wildlife target (a
+      // bear/wolf it retaliated on) — get back to exploring, same as the player's
+      // Auto Scout avoids combat. A real ENEMY-team unit (a raider) is left alone.
+      if(tgt&&(tgt.type==='building'||tgt.team===GAIA_TEAM)){ s.target=null; s.explicitAttack=false; clearUnitPath(s); }
+      else return; // legitimately engaging an enemy unit — leave it
     }
     if(s.path&&s.path.length>0)return; // still travelling to its last waypoint
     // First, a lap around home: survey the base perimeter (the resource band /
