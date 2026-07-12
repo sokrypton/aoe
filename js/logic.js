@@ -449,6 +449,11 @@ function adjToBuilding(px,py,bldg){
 // leash (js/logic.js) and the aggro scope so they stay in lock-step on both
 // the zone AND the GUARD_LEASH radius.
 const GUARD_LEASH = 6;
+// After an explicitly-ordered attack target dies, a human unit continues the
+// assault onto the nearest reachable enemy building within this radius (see
+// updateUnit's dead-target branch) — enough to raze the base the army breached
+// into, small enough that it never marches across the map to a distant town.
+const ASSAULT_MOP_UP = 20;
 // How long a unit avoids re-acquiring an enemy UNIT it just proved it can't
 // reach (a melee dogpile it can't slot into). Short, because a unit crowd
 // disperses quickly — long enough to break the give-up→re-acquire thrash, brief
@@ -1697,21 +1702,35 @@ function updateUnit(e){
   if(e.target && e.task !== 'return'){
     let t=entitiesById.get(e.target);
     if(!t||t.hp<=0){
-      // Human sieging a wall: when the ordered segment dies, CONTINUE to the
-      // nearest reachable CONNECTED enemy wall segment (within ~3 tiles — the
-      // same wall the unit is breaching) instead of idling. Auto-acquire
-      // deliberately skips walls (see the enemy-building branch), so without
-      // this a player army breaches one tile then stops next to full segments.
-      // AI is unchanged — its planner reassigns.
+      // Human assault: when the ordered target dies, CONTINUE the attack
+      // instead of idling. Two tiers, nearest-reachable first:
+      //   1) A connected enemy wall/gate within ~3 tiles — seamlessly keep
+      //      breaching the same run (the original narrow rule).
+      //   2) Any enemy building within ASSAULT_MOP_UP tiles — once an army has
+      //      breached into a base, it razes what it reached (TC, houses,
+      //      barracks, the rest of the wall) rather than standing idle amid
+      //      intact buildings. Idle auto-acquire only ever targets enemy UNITS
+      //      (targetableUnitGrid), never buildings, so without this the whole
+      //      army goes inert the instant the ordered building falls, leaving
+      //      the base mostly standing. Bounded range so it razes the base it's
+      //      IN, not a march across the map to a distant town. Reachability is
+      //      probed on the nearest few candidates (findPath each) — cheap
+      //      because it only runs the tick a target dies, not every tick.
+      // AI is unchanged (isHumanTeam gate) — its planner reassigns targets.
       if(isHumanTeam(e.team) && e.explicitAttack){
-        let best=null, bd=Infinity;
+        let wall=null, wd=Infinity, cand=[];
         for(let i=0;i<entities.length;i++){ let bx=entities[i];
           if(bx.type!=='building'||bx.hp<=0||sameSide(bx.team,e.team))continue;
-          if(!(isWallBtype(bx.btype)||isGateBtype(bx.btype)))continue;
           let d=distToTarget(e,bx);
-          if(d<=3 && d<bd){ bd=d; best=bx; }
+          if((isWallBtype(bx.btype)||isGateBtype(bx.btype)) && d<=3 && d<wd){ wd=d; wall=bx; }
+          if(d<=ASSAULT_MOP_UP) cand.push({bx,d});
         }
-        if(best && isTargetReachable(e,best)){ e.target=best.id; e.siegeSpot=null; return; } // keep explicitAttack
+        let next = (wall && isTargetReachable(e,wall)) ? wall : null;
+        if(!next){
+          cand.sort((a,b)=>a.d-b.d);
+          for(let i=0;i<cand.length && i<8;i++){ if(isTargetReachable(e,cand[i].bx)){ next=cand[i].bx; break; } }
+        }
+        if(next){ e.target=next.id; e.siegeSpot=null; return; } // keep explicitAttack
       }
       if(window.__dropStats)window.__dropStats.killed=(window.__dropStats.killed||0)+1;
       e.target=null;
