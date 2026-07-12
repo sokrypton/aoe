@@ -1821,75 +1821,11 @@ function findPlayerThreatNear(ai,aiTC,range){
   return closestThreat;
 }
 
-// Can this militia actually reach (i.e. path adjacent to) the given target?
-// Priority-based target selection doesn't know about walls in the way, so
-// this is used to catch a walled-off pick before committing to it.
-// Ticks for `unit` to walk to `target` building's perimeter (0 = already
-// adjacent), or -1 if no path exists. Iteration-capped searches return a
-// partial path, so very long detours can be underestimated — fine for the
-// detour-vs-breach heuristic this feeds.
-function ticksToReachBuilding(unit, target){
-  if (adjToBuilding(unit.x, unit.y, target)) return 0;
-  let pt = nearestBldgPerimeter(unit.x, unit.y, target, unit.id);
-  let path = findPath(unit.x, unit.y, pt.x, pt.y, unit.id);
-  if (path.length === 0) return -1;
-  // findPath REDIRECTS unwalkable destinations up to 20 tiles — a path
-  // that doesn't actually END at the perimeter is a path to nowhere
-  // (see pathReaches, js/logic.js).
-  let last = path[path.length - 1];
-  if (Math.abs(last.x - pt.x) > 1.5 || Math.abs(last.y - pt.y) > 1.5) return -1;
-  return path.length / ((UNITS[unit.utype].speed || 1) / 30);
-}
-
-function isTargetReachable(unit, target){
-  if (target.type !== 'building') return true;
-  return ticksToReachBuilding(unit, target) >= 0;
-}
-
-// Expected ticks for THIS unit to smash through a wall-like building —
-// mirrors damageEntity's math exactly (building-class bonuses, pierce vs
-// melee armor, the max(1,...) damage floor) so the estimate matches what
-// combat will actually do. Uses CURRENT hp, so an already-damaged segment
-// scores better than a fresh one and the army converges on one breach
-// point instead of spreading damage along the ring (AoE2 clumping).
-function wallBreachTicks(unit, w){
-  let dmg = unit.atk || 0;
-  if (unit.utype === 'villager') dmg += 3;
-  if (unit.utype === 'militia') dmg += 2;
-  if (unit.utype === 'ram') dmg += 110; // mirrors damageEntity's building bonus
-  let armor = BLDGS[w.btype].armor || {m:0,p:0};
-  dmg = Math.max(1, dmg - (((unit.range || 0) > 0) ? armor.p : armor.m));
-  return Math.ceil(w.hp / dmg) * (UNITS[unit.utype].rof || 60);
-}
-
-// Cheapest-to-breach enemy wall/tower/gate that this militia can actually
-// path to. Candidates are scored by breach time + march time, which is
-// what makes the AI material-aware like AoE2's: a militia (6 dmg/hit vs
-// palisade) happily eats a 250hp palisade but a stone wall (1 dmg/hit,
-// ~900 hits) loses to a soft segment even a fair march away.
-function nearestReachableWallLike(unit, team, excludeId){
-  // sameSide, not ===: in 2v2 the blocking wall is often the ALLY's (human
-  // and ally AI share a base area) — matching only the target's own team
-  // left the attacking army stuck outside an allied wall with no target.
-  // Probe only the NEAREST few candidates: isTargetReachable runs a full
-  // findPath, and trying every wall on the map for every blocked unit in a
-  // marching army was a pathfinding storm that froze war-time ticks. If
-  // none of the closest 6 is reachable, the rest of the ring won't be
-  // either (it's one connected fortification).
-  // March time in ticks: speed is tiles per game-second, 30 ticks/sec.
-  let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / 30);
-  return entities.filter(en => en.type === 'building' && sameSide(en.team, team) && en.hp > 0 &&
-      (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
-    .sort((a, b) => dist(unit, a) - dist(unit, b))
-    .slice(0, 6)
-    .map(w => ({ w, score: wallBreachTicks(unit, w) + marchTicks(w) }))
-    .sort((a, b) => a.score - b.score)
-    .map(s => s.w)
-    // Skip the segment we just stalled on (excludeId) and any wall we recently
-    // gave up on (unreach memory) so a crowded breach point spreads the overflow
-    // to a neighbouring segment instead of re-picking the same un-slottable one.
-    .find(w => w.id!==excludeId && !(unit.unreachId===w.id && unit.unreachUntil>tick) && isTargetReachable(unit, w)) || null;
-}
+// ticksToReachBuilding / isTargetReachable / wallBreachTicks /
+// nearestReachableWallLike moved to js/logic.js (they're the shared
+// attack-pathing helpers, now used by BOTH the AI here and player units in
+// updateUnit's resolveStalledAttack). They stay global, so calls below are
+// unchanged.
 
 // If the chosen target is walled off and unreachable, attack the cheapest
 // reachable wall/tower/gate instead of marching toward something the unit

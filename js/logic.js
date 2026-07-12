@@ -507,6 +507,92 @@ function siegePerimeterSpot(e,t){
   return nearestBldgPerimeter(e.x,e.y,t,e.id);
 }
 
+// ---- Shared attack-pathing helpers (moved here from js/ai.js so BOTH the AI
+// and player units in updateUnit can use them; ai.js still calls them). ----
+
+// Ticks for `unit` to walk to `target` building's perimeter (0 = already
+// adjacent), or -1 if no path exists. Iteration-capped searches return a
+// partial path, so very long detours can be underestimated — fine for the
+// detour-vs-breach heuristic this feeds.
+function ticksToReachBuilding(unit, target){
+  if (adjToBuilding(unit.x, unit.y, target)) return 0;
+  let pt = nearestBldgPerimeter(unit.x, unit.y, target, unit.id);
+  let path = findPath(unit.x, unit.y, pt.x, pt.y, unit.id);
+  if (path.length === 0) return -1;
+  // findPath REDIRECTS unwalkable destinations up to 20 tiles — a path that
+  // doesn't actually END at the perimeter is a path to nowhere (pathReaches).
+  let last = path[path.length - 1];
+  if (Math.abs(last.x - pt.x) > 1.5 || Math.abs(last.y - pt.y) > 1.5) return -1;
+  return path.length / ((UNITS[unit.utype].speed || 1) / 30);
+}
+// Can this unit actually reach (path adjacent to) the given target? Priority-
+// based / explicit target selection doesn't know about walls in the way, so
+// this catches a walled-off pick before committing to it.
+function isTargetReachable(unit, target){
+  if (target.type !== 'building') return true;
+  return ticksToReachBuilding(unit, target) >= 0;
+}
+// Expected ticks for THIS unit to smash through a wall-like building — mirrors
+// damageEntity's math (building-class bonuses, pierce vs melee armor, the
+// max(1,...) floor) so the estimate matches what combat actually does. Uses
+// CURRENT hp, so an already-damaged segment scores better and the army
+// converges on one breach point (AoE2 clumping).
+function wallBreachTicks(unit, w){
+  let dmg = unit.atk || 0;
+  if (unit.utype === 'villager') dmg += 3;
+  if (unit.utype === 'militia') dmg += 2;
+  if (unit.utype === 'ram') dmg += 110; // mirrors damageEntity's building bonus
+  let armor = BLDGS[w.btype].armor || {m:0,p:0};
+  dmg = Math.max(1, dmg - (((unit.range || 0) > 0) ? armor.p : armor.m));
+  return Math.ceil(w.hp / dmg) * (UNITS[unit.utype].rof || 60);
+}
+// Cheapest-to-breach enemy wall/tower/gate that `unit` can actually path to,
+// scored by breach time + march time (material-aware like AoE2: a militia eats
+// a palisade but loses to a stone wall even a fair march away). Probes only the
+// nearest 6 (one connected fortification — if none of those is reachable the
+// rest of the ring isn't either), skipping the just-stalled segment and any
+// recently-given-up wall so a crowded breach spreads to a neighbour.
+function nearestReachableWallLike(unit, team, excludeId){
+  let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / 30);
+  return entities.filter(en => en.type === 'building' && sameSide(en.team, team) && en.hp > 0 &&
+      (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
+    .sort((a, b) => dist(unit, a) - dist(unit, b))
+    .slice(0, 6)
+    .map(w => ({ w, score: wallBreachTicks(unit, w) + marchTicks(w) }))
+    .sort((a, b) => a.score - b.score)
+    .map(s => s.w)
+    .find(w => w.id!==excludeId && !(unit.unreachId===w.id && unit.unreachUntil>tick) && isTargetReachable(unit, w)) || null;
+}
+
+// A melee attacker's chase to `tgt` has STALLED (it can't path adjacent). One
+// shared response for AI and player units (AoE2: get as close as possible, then
+// attack what's blocking you): redirect to the nearest reachable connected
+// enemy wall/gate/tower to breach TOWARD the target; if there's none, back off.
+// The no-wall fallback is the only AI/human split — an AI DROPS the impossible
+// target (its planner re-picks) while a human KEEPS the explicit order — but
+// BOTH record the target unreachable (unreachId/unreachUntil) so combatApproach
+// stops re-pathing it every tick (the pathfinding storm on a sealed-off target).
+// Humans only redirect for BUILDING targets (attacking the wall in the way
+// fulfils "attack this building"); a unit-chase is never hijacked onto a wall.
+// Scouts never breach (recon; controlAIScouts strips their building targets).
+function resolveStalledAttack(u, tgt){
+  let stalledId = tgt.id;
+  let mayRedirect = isAITeam(u.team) || tgt.type === 'building';
+  let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
+  if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
+    u.target = w.id; u.explicitAttack = true; u.siegeSpot = null;
+  } else if (isAITeam(u.team)) {
+    if (window.__dropStats) window.__dropStats.unreachable = (window.__dropStats.unreachable || 0) + 1;
+    u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+    // A walled-off building stays unreachable a long time; a mobile UNIT's
+    // blockage (a melee dogpile) clears fast, so re-check it sooner.
+    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 900 : UNREACH_UNIT_TICKS);
+  } else {
+    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 300 : UNREACH_UNIT_TICKS);
+  }
+  retryClear(u, 'chaseBlocked'); clearUnitPath(u); u.chaseProg = undefined;
+}
+
 // Deterministic "press to contact": once a unit has SETTLED (path empty) in
 // attack/harvest range, nudge it one small step (<=0.08) toward (cx,cy) but
 // never inside contactDist. Pathfinding only ever drops a unit on the adjacent
@@ -1589,6 +1675,22 @@ function updateUnit(e){
   if(e.target && e.task !== 'return'){
     let t=entitiesById.get(e.target);
     if(!t||t.hp<=0){
+      // Human sieging a wall: when the ordered segment dies, CONTINUE to the
+      // nearest reachable CONNECTED enemy wall segment (within ~3 tiles — the
+      // same wall the unit is breaching) instead of idling. Auto-acquire
+      // deliberately skips walls (see the enemy-building branch), so without
+      // this a player army breaches one tile then stops next to full segments.
+      // AI is unchanged — its planner reassigns.
+      if(isHumanTeam(e.team) && e.explicitAttack){
+        let best=null, bd=Infinity;
+        for(let i=0;i<entities.length;i++){ let bx=entities[i];
+          if(bx.type!=='building'||bx.hp<=0||sameSide(bx.team,e.team))continue;
+          if(!(isWallBtype(bx.btype)||isGateBtype(bx.btype)))continue;
+          let d=distToTarget(e,bx);
+          if(d<=3 && d<bd){ bd=d; best=bx; }
+        }
+        if(best && isTargetReachable(e,best)){ e.target=best.id; e.siegeSpot=null; return; } // keep explicitAttack
+      }
       if(window.__dropStats)window.__dropStats.killed=(window.__dropStats.killed||0)+1;
       e.target=null;
       e.explicitAttack=false;
@@ -1731,6 +1833,15 @@ function updateUnit(e){
     // rather than freezing until the watchdog forcibly frees it.
     const CHASE_STALL_TICKS = 90;
     function combatApproach(u,tgt,dist,pathFn,stopDist){
+      // Known-unreachable back-off — HUMANS only. Humans KEEP an explicit target
+      // (so target===unreachId persists), and without this a player army ordered
+      // onto a sealed-off target re-runs a full-map findPath every 15 ticks — a
+      // pathfinding storm that tanks the tick rate. The AI DROPS such targets
+      // (resolveStalledAttack), so it never has target===unreachId here and this
+      // is a no-op for it (keeps AI byte-identical); gating avoids idling the AI
+      // if its planner re-assigns a remembered-unreach target. Expires so a
+      // breach re-engages.
+      if(isHumanTeam(u.team) && u.unreachUntil>tick && u.unreachId===tgt.id){ clearUnitPath(u); return false; }
       // The 15-tick repath cooldown throttles re-pathing while a chase is in
       // motion. Repath immediately whenever there's no path left (else the unit
       // freezes until the cooldown clears — a stutter).
@@ -1778,27 +1889,13 @@ function updateUnit(e){
       // there". findPath returns [] only after fully exploring the reachable
       // region without touching the target, and moving units don't block pathing
       // — so this is a real wall/trap/deadlock, not a one-tick jam. Give up (a
-      // 2-strike tolerance absorbs a transient) instead of freezing (stuck-
-      // watchdog spam). An AI unit redirects to a DIFFERENT reachable enemy wall
-      // to breach (spreading a breach crowd along the ring instead of piling all
-      // onto one un-slottable segment); else it drops the impossible target and
-      // remembers it, so auto-acquire / threat-response won't instantly re-send
-      // it. Human units keep their explicit order (never hijack a player command).
-      if(retryFail(u,'chaseBlocked',15,2)&&isAITeam(u.team)){
-        // Scouts are recon (atk 3) — never redirect them to breach a wall:
-        // controlAIScouts strips building targets each decision, so a scout
-        // handed a wall just loses it, re-acquires the impossible foe, and
-        // oscillates in place (stuck-watchdog spam). Scouts always drop+remember.
-        let stalledId=tgt.id;
-        let w=(u.utype!=='scout'&&typeof nearestReachableWallLike==='function')?nearestReachableWallLike(u,tgt.team,stalledId):null;
-        if(w&&w.id!==stalledId&&!sameSide(w.team,u.team)){ u.target=w.id;u.explicitAttack=true;u.siegeSpot=null; }
-        else { if(window.__dropStats)window.__dropStats.unreachable=(window.__dropStats.unreachable||0)+1;
-          u.target=null;u.explicitAttack=false;u.siegeSpot=null;
-          // A walled-off building stays unreachable for a long time; a mobile
-          // UNIT's blockage (a melee dogpile) clears fast, so re-check it sooner.
-          u.unreachId=stalledId; u.unreachUntil=tick+(tgt.type==='building'?900:UNREACH_UNIT_TICKS); }
-        retryClear(u,'chaseBlocked'); clearUnitPath(u); u.chaseProg=undefined;
-      }
+      // 2-strike tolerance absorbs a transient) instead of freezing, and hand off
+      // to the shared resolver (breach the wall in the way / back off) — used by
+      // AI and player units alike now.
+      // Only PLAYER units (AI or human) resolve a stall — gaia (wildlife) keeps
+      // the original no-op so bears/sheep are unaffected (isPlayerTeam excludes
+      // gaia; the old code's isAITeam gate excluded it too).
+      if(retryFail(u,'chaseBlocked',15,2) && isPlayerTeam(u.team)) resolveStalledAttack(u, tgt);
       return false;
     }
 
