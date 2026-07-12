@@ -1638,6 +1638,36 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     });
     return;
   }
+  // Base perimeter UNDER SIEGE — defend instead of marching off to attack.
+  // findPlayerThreatNear + the reachability null-out above intentionally ignore
+  // a besieger our base is SEALED against (chasing an unreachable foe wedges the
+  // garrison at the wall), and a wall hit isn't "core" so the alarm/bell never
+  // fires — together those used to let the army leave on an OFFENSIVE while the
+  // wall was battered down (the "AI abandons the city" bug). lastTeamHit records
+  // every hit with a location, including a non-core wall/tower hit, so: if we
+  // took a hit near home recently, hold a defensive posture — recall the army
+  // that already marched off (far-from-home, non-siege units) back to the base,
+  // and rally the idle reserve at the gate — instead of launching a new wave.
+  // We still don't CHASE the sealed-out foe (no target set on it); we just stop
+  // abandoning the base. Siege ends (waves resume) once the hits stop for
+  // AI_GARRISON_HOLD_TICKS.
+  {
+    let sg=lastTeamHit&&lastTeamHit[ai.team];
+    let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+    let baseR=(ai.wallRadiusUsed||Math.round(profile.wallRadius*aiScale()))+3;
+    if(sg && tick-sg.tick<AI_GARRISON_HOLD_TICKS && Math.max(Math.abs(sg.x-tcx),Math.abs(sg.y-tcy))<=baseR){
+      mils.forEach(m=>{
+        if(m.utype==='scout')return;          // controlAIScouts owns scouts
+        if(holdsSiegeOrder(m))return;          // a committed ram/directed siege persists
+        if(dist(m,{x:tcx,y:tcy})<=22)return;   // already near home — leave it (rally handles it)
+        m.target=null; m.explicitAttack=false; // recall the far-off attacker to defend
+        let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
+        pathUnitTo(m,pt?pt.x:tcx,pt?pt.y:tcy);
+      });
+      rallyIdleMilitary(ai,mils,aiTC);         // hold the idle reserve at the gate
+      return;
+    }
+  }
   // Coordinated pushes: an allied AI that just launched (lastWaveGlobalTick,
   // global tick — per-AI decision ticks aren't comparable) lowers our commit
   // bar and halves the cooldown so waves cluster into joint attacks.
