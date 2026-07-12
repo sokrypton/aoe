@@ -449,6 +449,10 @@ function adjToBuilding(px,py,bldg){
 // leash (js/logic.js) and the aggro scope so they stay in lock-step on both
 // the zone AND the GUARD_LEASH radius.
 const GUARD_LEASH = 6;
+// How close (distance from the building's nearest edge) a hauler tucks in
+// before it deposits / trades — the slide-to-contact "touch" at a drop-off or
+// Market. See dropContactSettled.
+const DROP_CONTACT = 0.3;
 // After an explicitly-ordered attack target dies, a human unit continues the
 // assault onto the nearest reachable enemy building within this radius (see
 // updateUnit's dead-target branch) — enough to raze the base the army breached
@@ -646,6 +650,25 @@ function pressToContact(e, cx, cy, contactDist){
     e.x=nx; e.y=ny;
     e.pressWalk=tick;   // signal the renderer to show the walk cycle (js/render-units.js)
   }
+}
+
+// Deposit/trade "touch": once a hauler (villager returning a load, trade cart at
+// a Market) has SETTLED adjacent to building b, slide the last bit up against
+// its nearest edge BEFORE it hands the load over — so the exchange visibly
+// happens at the wall instead of from the perimeter tile ~half a tile out
+// followed by an instant about-face (the old "dump from a tile away" look).
+// Clamps to the footprint so a hauler at a corner tile tucks into the corner.
+// Returns true once tucked in OR unable to get closer this tick (deadband /
+// blocked / still has a path — pressToContact only acts when settled, so a
+// caller that hasn't finished walking in just completes as before): the caller
+// should finish the transaction now. Returns false while it's still visibly
+// sliding in, so the caller waits a tick.
+function dropContactSettled(e, b){
+  let hx=Math.max(b.x-0.5, Math.min(e.x, b.x+b.w-0.5));
+  let hy=Math.max(b.y-0.5, Math.min(e.y, b.y+b.h-0.5));
+  let px=e.x, py=e.y;
+  pressToContact(e, hx, hy, DROP_CONTACT);
+  return e.x===px && e.y===py; // didn't move → tucked in / blocked → done
 }
 
 // AoE2 DE-style group spread: when several villagers are tasked onto one
@@ -1433,6 +1456,12 @@ function updateTradeCart(e){
   if(e.tradePhase==null) e.tradePhase='toDest';
   let goal = e.tradePhase==='toDest' ? dest : home;
   if(adjToBuilding(e.x,e.y,goal)){
+    // Pull all the way up to the Market before the exchange (slide-to-contact),
+    // rather than trading from ~a tile out the moment we're "adjacent" and
+    // spinning around. Finish the approach leg first, then tuck in; the trade
+    // fires once the cart can get no closer (dropContactSettled true).
+    if(e.path.length>0) return;              // still rolling in — let the walk step advance
+    if(!dropContactSettled(e, goal)) return; // tuck up against the Market
     if(e.tradePhase==='toDest'){
       // Load gold sized by the separation between the two Markets, head home.
       let g=Math.round(dist(home,dest)*TRADE_GOLD_PER_TILE);
@@ -2274,6 +2303,13 @@ function updateUnit(e){
           retryStamp(e,'dropWait',30);
         }
       } else {
+        // Slide right up to the drop-off building and deposit AT the wall (the
+        // slide-to-contact touch), instead of dumping the load from the
+        // perimeter tile and turning away. The task branch only runs once
+        // settled (path empty — see the walk step above), so this just tucks
+        // the last bit in; dropContactSettled returns true when it can get no
+        // closer, so the deposit never hangs.
+        if(!dropContactSettled(e, drop)) return;
         resourceStore(e.team)[e.carryType]+=e.carrying;
         e.carrying=0;
         avoidClear(e,'drops');
