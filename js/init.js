@@ -283,6 +283,12 @@ function onStartClicked(){
   // (the guest's game-over menu dismisses in its lockstep-start handler).
   if (netRole === 'host' && netConnected && gameOver) {
     let speedSel = document.querySelector('input[name="gamespeed"]:checked');
+    // Set GAME_SPEED directly (not via applyGameSettings): hostStartLockstepMatch
+    // below reads GAME_SPEED into its start payload, and applyGameSettings's
+    // lockstep branch only ENQUEUES a set-speed command (executes ticks later)
+    // without updating GAME_SPEED now — so the payload would ship a stale speed.
+    // The set-speed command applyGameSettings then skips (v===GAME_SPEED) is
+    // intentional: this is a fresh-match start, not a mid-match speed change.
     setGameSpeed(speedSel ? parseFloat(speedSel.value) : 2);
     applyAudioSettings();
     applyGameSettings();
@@ -438,7 +444,9 @@ function kickDisconnectedPlayers(){
   for (const seat of missing) {
     if (typeof netCloseGuest === 'function') netCloseGuest(seat, 'kicked', true);
     guestMenuOpenBySeat.delete(seat);
-    submitCommand({ kind: 'set-controller', t: seat });
+    // Stamp the host's authoritative difficulty into the payload so the new
+    // AI brain is identical on every peer (commands.js set-controller).
+    submitCommand({ kind: 'set-controller', t: seat, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
   }
   hostBroadcastDcPause();
 }

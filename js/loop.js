@@ -99,6 +99,13 @@ function update(){
   }
   refreshPopulationCounts();
 
+  // Headless self-play never runs render() (js/render.js), the only place
+  // corpses (cosmetic, wall-clock lifetimed) get pruned — so trim them here by
+  // tick age to bound memory over long simulated matches. No-op with UI.
+  if (window.__headlessSim && corpses.length) {
+    corpses = corpses.filter(c => tick - (c.deathTick || 0) < CORPSE_LIFE_TICKS);
+  }
+
   detExitSim();
   if (DET.enabled) detAfterTick();
 }
@@ -119,6 +126,13 @@ function updateCosmetics(elapsedMs){
     window.__cosmeticSweepDone = true;
     buildingFxTick.forEach((_, id) => { if (!entitiesById.has(id)) buildingFxTick.delete(id); });
     workSwingCycles.forEach((_, id) => { if (!entitiesById.has(id)) workSwingCycles.delete(id); });
+    // Per-entity render caches keyed by entity id (render-units.js / render.js):
+    // these previously only cleared on a MAP-size change, so every dead
+    // vehicle/gate/market/farm leaked an entry for the whole session.
+    if (typeof ramCreakCycles !== 'undefined') ramCreakCycles.forEach((_, id) => { if (!entitiesById.has(id)) ramCreakCycles.delete(id); });
+    if (typeof _gateProxyPool !== 'undefined') _gateProxyPool.forEach((_, id) => { if (!entitiesById.has(id)) _gateProxyPool.delete(id); });
+    if (typeof _marketProxyPool !== 'undefined') _marketProxyPool.forEach((_, id) => { if (!entitiesById.has(id)) _marketProxyPool.delete(id); });
+    if (typeof _farmProxyPool !== 'undefined') _farmProxyPool.forEach((_, id) => { if (!entitiesById.has(id)) _farmProxyPool.delete(id); });
     let liveCorpses = new Set(corpses.map(c => c.id));
     corpseImpactFxDone.forEach(id => { if (!liveCorpses.has(id)) corpseImpactFxDone.delete(id); });
   } else if ((Math.floor(tick) % 600) !== 0) {

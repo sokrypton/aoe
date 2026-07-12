@@ -189,7 +189,11 @@ function execCommand(cmd, team){
       // as AI in a loaded save resumes its plans); a never-AI seat gets a
       // fresh brain.
       if (team === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
-        let diff = AI_LEVELS[cmd.diff] ? cmd.diff : (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard');
+        // Difficulty is stamped into the command payload by the host at submit
+        // time (see kickDisconnectedPlayers) so every peer applies the SAME
+        // value. Reading the client-local `aiDifficulty` global here instead
+        // would desync: it's set independently per peer from menus/lobby/saves.
+        let diff = AI_LEVELS[cmd.diff] ? cmd.diff : 'standard';
         teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
         if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
         // Everyone should see this, not just the issuer (feedbackFor would
@@ -795,9 +799,7 @@ function execGateLock(cmd, team){
 
 function execCancelResearch(tc){
   if (!tc.research) return;
-  let cost = AGES[tc.research.target].cost;
-  let store = resourceStore(tc.team);
-  Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
+  refundCost(tc.team, AGES[tc.research.target].cost);
   tc.research = undefined;
   feedbackFor(tc.team, () => showMsg('Age research cancelled (refunded)'));
   if (typeof updateUI === 'function') updateUI();
@@ -809,9 +811,7 @@ function execCancelQueue(bldgId, idx, team){
   let utype = bldg.queue[idx];
   if (!utype) return;
   bldg.queue.splice(idx, 1);
-  let cost = UNITS[utype].cost;
-  let store = resourceStore(bldg.team);
-  Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
+  refundCost(bldg.team, UNITS[utype].cost);
   if (idx === 0) bldg.trainTick = 0;
   feedbackFor(myTeam, () => showMsg(UNITS[utype].name + ' cancelled (refunded)'));
 }

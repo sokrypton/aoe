@@ -963,7 +963,10 @@ function planAIMarketExchange(ai,profile){
 }
 
 function queueAIMilitary(ai,readyBarracks,profile){
-  let currentArmy=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
+  // Exclude the recon scout: isArmyUnit counts it, but every attacker path
+  // (available/controlAIMilitary/rallyIdleMilitary) excludes it — counting it
+  // toward maxArmy here persistently under-trains real fighters by one.
+  let currentArmy=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype!=='scout'&&isArmyUnit(e.utype)).length;
   // Train toward the NEXT wave's size (plus home defense reserve) so the
   // army goal escalates with each wave launched, AoE2-style.
   let maxArmy=aiWaveSize(ai,profile)+profile.armyReserve;
@@ -1037,7 +1040,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // per-barracks `currentArmy + barracks.queue.length` check let 2 barracks
   // overshoot maxArmy by a full queue, double-spending food the villager
   // planner may have reserved.
-  let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.length,0);
+  let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.filter(q=>q!=='scout').length,0); // scout isn't army (see currentArmy)
   readyBarracks.forEach(barracks=>{
     while(barracks.queue.length<profile.queueLimit&&teamPopUsed(ai.team)+teamQueuedPop(ai.team)<teamPopCap(ai.team)&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
@@ -1742,6 +1745,12 @@ function controlAIScouts(ai,mils,aiTC){
 // null (and flips ai.baseSurveyed) once the lap is complete. Deterministic:
 // sequential index on AI_STATES, no RNG.
 function baseSurveyWaypoint(ai,aiTC){
+  // No TC to survey around (it was just destroyed — controlAIScouts is still
+  // called in the no-TC knockout branch). Nothing to circle; the caller falls
+  // back to randomScoutWaypoint, which tolerates a null home point. Without
+  // this guard the aiTC.x deref below throws and aborts the whole sim tick on
+  // this peer only — a hard lockstep desync instead of a graceful loss.
+  if(!aiTC)return null;
   const dirs=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
   let i=ai.surveyIdx||0;
   if(i>=dirs.length){ ai.baseSurveyed=true; return null; }
@@ -1930,7 +1939,7 @@ function chooseAIAttackTarget(ai,militia,spotted){
   let priority=e=>{
     // Rams ignore units entirely (1-2 dmg) — they exist to crack
     // structures; the escorting soldiers handle the defenders.
-    if(e.type==='unit')return militia.utype==='ram'?6:(dist(militia,e)<=engage?0:4);
+    if(e.type==='unit')return dist(militia,e)<=engage?0:4; // rams never see units here (cands is buildings-only for rams)
     if(e.btype==='TC')return 1;
     if(e.btype==='TOWER'||e.btype==='BARRACKS')return 2;
     return 3;
@@ -1978,13 +1987,24 @@ function placeAIBuilding(ai,type,x,y){
     }
   }
   let actualCost = {...b.cost};
+  // Refund each consumed wall's OWN cost against this building's cost — mirrors
+  // execBuildPlacement.refundWalls (js/commands.js) so the charge is correct for
+  // any wall type, not just palisade wood (the old hardcoded WALL.cost.w would
+  // mischarge if the AI ever dropped a stone gate/tower through here).
+  let refundWalls = (walls) => {
+    walls.forEach(w2 => {
+      Object.entries(BLDGS[w2.btype].cost).forEach(([k, amt]) => {
+        actualCost[k] = Math.max(0, (actualCost[k] || 0) - amt);
+      });
+    });
+  };
   if (type === 'GATE') {
-    actualCost.w = Math.max(0, (actualCost.w || 0) - wallsToRemove.length * (BLDGS.WALL.cost.w || 0));
+    refundWalls(wallsToRemove);
   } else if (type === 'TOWER') {
     let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === ai.team);
     if (existing) {
-      actualCost.w = Math.max(0, (actualCost.w || 0) - (BLDGS.WALL.cost.w || 0));
       wallsToRemove.push(existing);
+      refundWalls([existing]);
     }
   }
   if(!canPlace(type,x,y,ai.team)||!canAfford(ai.team,actualCost))return null;
@@ -1992,6 +2012,7 @@ function placeAIBuilding(ai,type,x,y){
   if (wallsToRemove.length > 0) {
     let ids = new Set(wallsToRemove.map(w => w.id));
     entities = entities.filter(en => !ids.has(en.id));
+    selected = selected.filter(s => !ids.has(s.id)); // mirror the player path: don't leave dangling refs in observer/self-match views
     ids.forEach(id => entitiesById.delete(id));
   }
   let building=createBuilding(type,ox,oy,ai.team,gw,gh);
@@ -2021,7 +2042,7 @@ function aiFarmBeltDrops(team){
 function aiInFarmBelt(bx,by,bw,bh,team,drops){
   drops=drops||aiFarmBeltDrops(team);
   let ccx=bx+bw/2, ccy=by+bh/2;
-  for(let d of drops){ if(Math.hypot(ccx-d.cx,ccy-d.cy)<d.r)return true; }
+  for(let d of drops){ if(simHypot(ccx-d.cx,ccy-d.cy)<d.r)return true; }
   return false;
 }
 
@@ -2105,7 +2126,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
   // of one camp forever and villagers trekking 20 tiles to the next treeline).
   let coveredBy=(x,y)=>existingDrops&&existingDrops.some(d=>{
     let ex=Math.max(d.x-x,0,x-(d.x+d.w-1)), ey=Math.max(d.y-y,0,y-(d.y+d.h-1));
-    return Math.hypot(ex,ey)<coverR;
+    return simHypot(ex,ey)<coverR;
   });
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){

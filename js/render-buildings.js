@@ -702,6 +702,8 @@ function buildingShadowPath(e){
 
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
+  if(!b)return; // unknown btype: skip this entity instead of crashing the whole frame on b.w
+
   let ownerAge = (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
   let aw = AGE_WALLS[ownerAge] || AGE_WALLS[1];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;

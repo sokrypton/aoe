@@ -123,6 +123,12 @@ function spendCost(team,cost){
   Object.entries(cost||{}).forEach(([key,amount])=>{store[resourceName(key)]-=amount;});
 }
 
+// Credit a cost back to a team's store (queue/research/foundation cancels).
+function refundCost(team,cost){
+  let store=resourceStore(team);
+  Object.entries(cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
+}
+
 function formatCost(cost){
   return Object.entries(cost||{}).map(([key,amount])=>key.toUpperCase()+':'+amount).join(' ');
 }
@@ -444,7 +450,7 @@ function guardZoneOf(e){
   return (gb && gb.type === 'building') ? { b: gb } : { x: e.guardX, y: e.guardY };
 }
 function guardZoneDist(z, px, py){
-  return z.b ? edgeDistToBuilding(px, py, z.b) : Math.hypot(px - z.x, py - z.y);
+  return z.b ? edgeDistToBuilding(px, py, z.b) : simHypot(px - z.x, py - z.y);
 }
 
 // Find nearest walkable tile adjacent to building perimeter. Optional
@@ -534,6 +540,25 @@ function rememberedGatherTile(e,terrain){
   let tile=map[e.gatherY]&&map[e.gatherY][e.gatherX];
   if(tile&&tile.t===terrain&&tile.res>0&&canGatherTile(e,terrain,e.gatherX,e.gatherY))return{x:e.gatherX,y:e.gatherY};
   return null;
+}
+
+// Bring an exhausted farm back to life once a reseed has been paid for, and
+// put the farmer `e` straight back on it. Shared verbatim by the prepaid and
+// AI-wood reseed branches in updateUnit's build handler (they differ only in
+// where the payment comes from).
+function reseedFarmForFarmer(bt, e){
+  bt.exhausted = false;
+  bt.complete = true;               // exhaustion had flagged it incomplete;
+  bt.buildProgress = bt.buildTime;  // without this, canGatherTile rejects the
+  bt.hp = bt.maxHp;                 // farm and the farmer silently goes idle
+  let tile = map[bt.y][bt.x];
+  tile.t = TERRAIN.FARM;
+  tile.res = farmFoodFor(bt.team);
+  markMapDirty(bt.x, bt.y);
+  e.task = 'farm';
+  e.gatherX = bt.x;
+  e.gatherY = bt.y;
+  e.buildTarget = null;
 }
 
 function depleteGatherTile(pos,config,gatherer){
@@ -1775,18 +1800,7 @@ function updateUnit(e){
           if (store && store.prepaidFarms > 0) {
             store.prepaidFarms--;
             feedbackFor(e.team, () => showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")"));
-            bt.exhausted = false;
-            bt.complete = true;               // exhaustion had flagged it incomplete;
-            bt.buildProgress = bt.buildTime;  // without this, canGatherTile rejects the
-            bt.hp = bt.maxHp;                 // farm and the farmer silently goes idle
-            let tile = map[bt.y][bt.x];
-            tile.t = TERRAIN.FARM;
-            tile.res = farmFoodFor(bt.team);
-            markMapDirty(bt.x,bt.y);
-            e.task = 'farm';
-            e.gatherX = bt.x;
-            e.gatherY = bt.y;
-            e.buildTarget = null;
+            reseedFarmForFarmer(bt, e);
             return;
           } else {
             // Direct-from-bank reseed is AI-ONLY (it's how the AI manages
@@ -1798,18 +1812,7 @@ function updateUnit(e){
             if (store && store.wood >= 60 && isAITeam(e.team)) {
               store.wood -= 60;
               feedbackFor(e.team, () => showMsg("Farm reseeded (-60 Wood)"));
-              bt.exhausted = false;
-              bt.complete = true;
-              bt.buildProgress = bt.buildTime;
-              bt.hp = bt.maxHp;
-              let tile = map[bt.y][bt.x];
-              tile.t = TERRAIN.FARM;
-              tile.res = farmFoodFor(bt.team);
-              markMapDirty(bt.x,bt.y);
-              e.task = 'farm';
-              e.gatherX = bt.x;
-              e.gatherY = bt.y;
-              e.buildTarget = null;
+              reseedFarmForFarmer(bt, e);
               return;
             } else {
               feedbackFor(e.team, () => showMsg(isAITeam(e.team) ? "Not enough wood to reseed farm!" : "Farm exhausted — reactivate it or prepay reseeds at the Mill"));
@@ -2250,8 +2253,7 @@ function deleteOwnedEntity(en){
   // type's cost too would mint free resources; force-deleting one just
   // destroys it for nothing.
   if(en.type==='building'&&!en.complete&&!en.exhausted&&!en.upgrading){
-    let store=resourceStore(en.team); // the OWNING team's resources, not always team 0's
-    Object.entries(BLDGS[en.btype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
+    refundCost(en.team, BLDGS[en.btype].cost); // the OWNING team's resources, not always team 0's
     // Feedback belongs to the OWNER's screen only — under lockstep both
     // peers execute this for either team's delete commands.
     feedbackFor(en.team, () => showMsg(BLDGS[en.btype].name+' cancelled (refunded)'));
@@ -2279,10 +2281,7 @@ function handleDeath(e,killerTeam){
     // building dies or is deleted. (Age research dying unrefunded with the
     // TC is intentional — see execResearchAge, js/commands.js.)
     if(e.queue&&e.queue.length>0&&isPlayerTeam(e.team)){
-      let store=resourceStore(e.team);
-      e.queue.forEach(utype=>{
-        Object.entries(UNITS[utype].cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
-      });
+      e.queue.forEach(utype=>refundCost(e.team, UNITS[utype].cost));
       e.queue=[];
     }
     // Units garrisoned inside a destroyed building perish with it (AoE2 rule)
@@ -2364,7 +2363,8 @@ function handleDeath(e,killerTeam){
       // Wall-clock is safe here ONLY because corpses are cosmetic: nothing
       // in the sim ever reads them (render/save only, see simChecksum's
       // exclusions). Sim state must use `tick`, never performance.now().
-      deathTime: performance.now()
+      deathTime: performance.now(),
+      deathTick: tick // headless-only tick-based prune (js/loop.js); render still fades by deathTime
     };
     corpses.push(corpse);
   }
@@ -2537,7 +2537,7 @@ function updateBuilding(e){
     if (e.atkCooldown <= 0) {
       let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
       let center = {x: e.x + e.w/2, y: e.y + e.h/2};
-      let targets = entities.filter(en => !sameSide(en.team, e.team) && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
+      let targets = entities.filter(en => !sameSide(en.team, e.team) && en.team !== GAIA_TEAM && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
                             .filter(en => dist(center, en) <= range)
                             .sort((a,b) => dist(center, a) - dist(center, b));
       if (targets.length > 0) {

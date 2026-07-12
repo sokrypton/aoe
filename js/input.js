@@ -13,6 +13,17 @@ let justPlaced=false; // flag to prevent mouseup selection clearing when placing
 let middleDrag=false;
 let middleDragLast=null;
 
+// Snap the camera to a map tile (viewer-local). Also releases camera-follow so
+// handleScroll() won't yank it back to a followed unit next frame — every
+// "jump to X" action needs this, so it lived copy-pasted in 6 places across
+// input.js/ui.js/init.js. Shared here (global scope; called at runtime).
+function jumpCameraToTile(tx, ty){
+  let iso = toIso(tx, ty);
+  camX = iso.ix; camY = iso.iy;
+  window.targetCamX = camX; window.targetCamY = camY;
+  window.cameraFollowId = null;
+}
+
 function selectTownCenter() {
   if (gameOver) return;
   let tcs = entities.filter(e => e.team === myTeam && e.type === 'building' && e.btype === 'TC');
@@ -25,13 +36,8 @@ function selectTownCenter() {
   selected = [tc];
   
   // Center camera on Town Center
-  let iso = toIso(tc.x + tc.w/2, tc.y + tc.h/2);
-  camX = iso.ix;
-  camY = iso.iy;
-  window.targetCamX = camX;
-  window.targetCamY = camY;
-  window.cameraFollowId = null;
-  
+  jumpCameraToTile(tc.x + tc.w/2, tc.y + tc.h/2);
+
   if (window.playSound) window.playSound('select_military');
   updateUI();
 }
@@ -514,7 +520,11 @@ C.addEventListener('wheel',e=>{
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
 C.addEventListener('mouseup',e=>{
-  if(gameOver||recentTouch())return;
+  // Match mousedown/mousemove/wheel: stay live in See-Map review mode even
+  // after gameOver. Selection is viewer-local (no commands), and bailing here
+  // skipped the drag cleanup at the end of this handler, leaving the minimap
+  // stuck dimmed (drag-select-active) until the next interaction.
+  if((gameOver && !window.seeMapMode)||recentTouch())return;
   if(e.button===1){
     middleDrag=false;
     middleDragLast=null;
@@ -606,7 +616,6 @@ window.addEventListener('blur',()=>{
 let touchAnchor=null;  // where the touch started (for tap detection)
 let touchLast=null;    // last touch position (for pan delta)
 let touchMoved=false;  // did finger travel > threshold?
-let touchId=null;      // track which finger is primary
 let pinchStartDist=null; // two-finger distance at pinch start, for pinch-zoom
 let pinchStartZoom=null; // ZOOM at pinch start
 let touchLongPressTimer=null; // arms box-select if the finger holds still on empty ground
@@ -630,7 +639,6 @@ C.addEventListener('touchstart',e=>{
       minimapJump(t.clientX,t.clientY);
       return;
     }
-    touchId=t.identifier;
     touchAnchor={x:t.clientX,y:t.clientY};
     touchLast={x:t.clientX,y:t.clientY};
     touchMoved=false;
@@ -846,7 +854,6 @@ C.addEventListener('touchend',e=>{
     touchAnchor=null;
     touchLast=null;
     touchMoved=false;
-    touchId=null;
     pinchStartDist=null;
     pinchStartZoom=null;
     touchBoxSelectMode=false;
@@ -1170,13 +1177,7 @@ function minimapJump(sx, sy) {
   // Clamp to map bounds so dragging past the edge snaps to the corner
   p.x = Math.max(0, Math.min(MAP, p.x));
   p.y = Math.max(0, Math.min(MAP, p.y));
-  let iso = toIso(p.x, p.y);
-  camX = iso.ix; camY = iso.iy;
-  window.targetCamX = camX; window.targetCamY = camY;
-  // Manual camera jump should release camera-follow, same as any other
-  // manual pan — otherwise handleScroll() snaps straight back to the
-  // followed unit on the very next frame and the minimap click does nothing.
-  window.cameraFollowId = null;
+  jumpCameraToTile(p.x, p.y);
 }
 
 function toggleMinimap(){
@@ -1232,22 +1233,14 @@ function centerCameraOnSelection(){
     let w=s.type==='building'?(s.w||1):0, h=s.type==='building'?(s.h||1):0;
     cx+=s.x+w/2; cy+=s.y+h/2; n++;
   });
-  let iso=toIso(cx/n,cy/n);
-  camX=iso.ix; camY=iso.iy;
-  window.targetCamX=camX; window.targetCamY=camY;
-  window.cameraFollowId=null;
+  jumpCameraToTile(cx/n, cy/n);
 }
 
 function focusTownCenter(){
   if(gameOver)return;
   let tc = entities.find(e => e.type === 'building' && e.team === myTeam && e.btype === 'TC');
   if(tc) {
-    let iso = toIso(tc.x + tc.w / 2, tc.y + tc.h / 2);
-    camX = iso.ix;
-    camY = iso.iy;
-    window.targetCamX = camX;
-    window.targetCamY = camY;
-    window.cameraFollowId = null;
+    jumpCameraToTile(tc.x + tc.w / 2, tc.y + tc.h / 2);
     if(window.playSound) window.playSound('click');
   }
 }
@@ -1830,10 +1823,6 @@ function doPlace(sx,sy){
 }
 
 // ---- CAMERA SCROLL (Desktop) ----
-let mouseInGame=false;
-C.addEventListener('mouseenter',()=>{mouseInGame=true;});
-C.addEventListener('mouseleave',()=>{mouseInGame=false;});
-
 function handleScroll(elapsed){
   if(gameOver && !window.seeMapMode)return; // keep panning while reviewing the map
   let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;

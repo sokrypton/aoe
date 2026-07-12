@@ -252,7 +252,10 @@ function drawParticles() {
   X.save();
   particles.forEach(p => {
     let px = Math.round(p.x), ppy = Math.round(p.y);
-    if (ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
+    // NaN guard: if a particle ever gets a degenerate coord, Math.round(NaN)=NaN
+    // and every bounds comparison below is false, so fog[NaN][NaN] would throw
+    // and kill the whole frame. Skip the particle instead.
+    if (!Number.isFinite(px) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
     
     let iso = toIso(p.x, p.y);
     let sx = iso.ix - camX + W/2;
@@ -320,7 +323,9 @@ function drawProjectiles() {
   X.save();
   projectiles.forEach(p => {
     let ppx = Math.round(p.x), ppy = Math.round(p.y);
-    if (ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
+    // NaN guard (see drawParticles): a degenerate projectile coord would make
+    // fog[NaN][NaN] throw and kill the frame — skip it.
+    if (!Number.isFinite(ppx) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
     // Arrows fly to a fixed aim point (p.tx/p.ty), not a tracked entity.
     let targetX = p.tx, targetY = p.ty;
     let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);

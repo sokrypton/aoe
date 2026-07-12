@@ -80,6 +80,14 @@ function detEntityHash(e){
   h = detMix(h, e.rallyY == null ? -1 : e.rallyY);
   h = detMix(h, e.rallyTargetId == null ? -1 : e.rallyTargetId);
   if (e.queue) { h = detMix(h, e.queue.length); for (let i = 0; i < e.queue.length; i++) h = detMixStr(h, e.queue[i]); }
+  // Building garrison roster (js/logic.js): sim-mutated as units enter/eject
+  // and drives arrow output + ejection order, so its contents ARE sim state.
+  if (e.garrison) { h = detMix(h, e.garrison.length); for (let i = 0; i < e.garrison.length; i++) h = detMix(h, e.garrison[i]); }
+  // Villager construction list (id order steers which foundation it builds
+  // next — read/mutated all over js/logic.js).
+  if (e.buildQueue) { h = detMix(h, e.buildQueue.length); for (let i = 0; i < e.buildQueue.length; i++) h = detMix(h, e.buildQueue[i]); }
+  h = detMix(h, e.locked ? 1 : 0); // gate lock: read by walkable()/updateGates on later ticks
+  h = detMix(h, e.rallyResourceType == null ? -1 : e.rallyResourceType); // auto-tasks spawned villagers (js/logic.js)
   h = detMix(h, e.gatherX == null ? -2 : e.gatherX); // villager tile claims steer OTHER villagers
   h = detMix(h, e.gatherY == null ? -2 : e.gatherY);
   h = detMix(h, e.explicitAttack ? 1 : 0);
@@ -163,6 +171,21 @@ function simChecksum(){
   }
   h = detMix(h, nextId);
   h = detMix(h, nextProjectileId);
+  // Per-team explored/visible grids (teamExploredGrid, js/core.js): sim state
+  // — tileHiddenForTeam gates villager auto-gather and feeds AI intel, so a
+  // divergent grid steers tasking before it ever moves a position. Fold only
+  // the set cells (position- and value-sensitive); the unexplored majority is
+  // skipped, so it's cheap early and grows with the front, like the map-res
+  // hash above. Tolerate absence for older states.
+  if (typeof teamExploredGrid !== 'undefined' && teamExploredGrid) {
+    for (let t = 0; t < teamExploredGrid.length; t++) {
+      let g = teamExploredGrid[t];
+      if (!g) continue;
+      let gh = t;
+      for (let i = 0; i < g.length; i++) if (g[i]) gh = detMix(gh, i * 4 + g[i]);
+      h = detMix(h, gh);
+    }
+  }
   // popUsed/popCap are deliberately NOT hashed: they are viewer-relative
   // caches of teamPopUsed(myTeam), legitimately different on host vs guest.
   // Seeded sim PRNG state (added with the PRNG migration); tolerate absence
@@ -230,18 +253,27 @@ function detDumpLog(){
   return JSON.stringify(DET.log);
 }
 
-// ---- Math.random tripwire ----
-// While the sim tick runs in strict mode, any un-migrated Math.random call
-// site throws immediately with a stack pointing at the offender. Cosmetic
-// code running outside update() is unaffected.
+// ---- Non-deterministic-math tripwires ----
+// While the sim tick runs in strict mode, any un-migrated call to an engine-
+// defined math function throws immediately with a stack pointing at the
+// offender. Math.random is non-deterministic; Math.hypot is spec'd as an
+// "implementation-dependent approximation" (unlike correctly-rounded
+// Math.sqrt), so it can differ in the last bits across engines and desync —
+// use simHypot() instead. Cosmetic code running outside update() is unaffected.
 const _detRealRandom = Math.random;
+const _detRealHypot = Math.hypot;
 function detEnterSim(){
   if (!DET.strict) return;
   Math.random = function(){
     detExitSim(); // restore before throwing so cosmetic code keeps working after the trap fires
     throw new Error('DET: Math.random called inside sim tick — migrate this call site to simRandom()');
   };
+  Math.hypot = function(){
+    detExitSim();
+    throw new Error('DET: Math.hypot called inside sim tick — migrate this call site to simHypot()');
+  };
 }
 function detExitSim(){
   Math.random = _detRealRandom;
+  Math.hypot = _detRealHypot;
 }

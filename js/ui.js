@@ -1314,7 +1314,6 @@ function updateUI(){
           btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
-          let costStr=formatCost(bData.cost);
           // Buildings without a sprites.png cell (MARKET) fall back to their
           // emoji glyph — same rule as the train buttons above.
           let bIcon=SPRITE_ICON_KEYS.has(iconKey(bi.type))
@@ -1368,7 +1367,6 @@ function updateUI(){
           btn.dataset.tipKey=bi.type;
           let bData=BLDGS[bi.type];
           btn.dataset.cost=JSON.stringify(bData.cost);
-          let costStr=formatCost(bData.cost);
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-${iconKey(bi.type)}"></div><div class="btn-label">${bi.label}</div>${costChips(bData.cost)}`;
           btn.onclick=()=>{
             if(gameOver)return;
@@ -1520,14 +1518,7 @@ window.selectIdleVillager = function() {
   selected = [vil];
   
   // Center camera
-  let iso = toIso(vil.x, vil.y);
-  camX = iso.ix;
-  camY = iso.iy;
-  window.targetCamX = camX;
-  window.targetCamY = camY;
-  // Manual camera jump should release camera-follow, same as any other
-  // manual pan — otherwise handleScroll() snaps straight back next frame.
-  window.cameraFollowId = null;
+  jumpCameraToTile(vil.x, vil.y);
 
   if (window.playSound) window.playSound('select_villager');
   showMsg('Selected idle villager');
@@ -1546,10 +1537,7 @@ window.selectIdleMilitary = function() {
   let u = mil[window.lastIdleMilIndex % mil.length];
   window.lastIdleMilIndex++;
   selected = [u];
-  let iso = toIso(u.x, u.y);
-  camX = iso.ix; camY = iso.iy;
-  window.targetCamX = camX; window.targetCamY = camY;
-  window.cameraFollowId = null;
+  jumpCameraToTile(u.x, u.y);
   if (window.playSound) window.playSound('select_military');
   showMsg('Selected idle soldier');
   updateUI();

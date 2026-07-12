@@ -33,6 +33,13 @@ function serializeGame(){
       : null,
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
     map, entities, nextId,
+    // The sim PRNG cursor (js/core.js) IS sim state: it's checksummed and
+    // rides lockstep snapshots, so a faithful snapshot must carry it too.
+    // Without it a loaded save is NOT reproducible — the next simRandom()
+    // draws from a fresh/stale cursor. matchSeed rides along for det-logging
+    // and as the seed of record. (nextProjectileId is derived from the saved
+    // projectiles in applySavedGame, so it needs no explicit field.)
+    simRngState, matchSeed,
     // The EXACT deterministic per-team explored grids (sim state, all
     // teams) — the loader's fog and every rejoining guest's fog rebuild
     // from these, replacing the old lossy otherTeamExploredEver
@@ -230,6 +237,14 @@ function applySavedGame(data, opts){
       entitiesById.set(e.id, e);
     });
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
+    // Restore the sim PRNG cursor so post-load randomness is reproducible and
+    // matches the peer that saved. Older saves (pre-field) fall back to
+    // reseeding from matchSeed, or leave the live cursor untouched as a last
+    // resort — both keep peers mutually consistent because a lockstep resume
+    // still force-pushes the host's simRngState afterward.
+    if (typeof data.simRngState === 'number') simRngState = data.simRngState >>> 0;
+    else if (typeof data.matchSeed === 'number') seedSimRng(data.matchSeed >>> 0);
+    if (typeof data.matchSeed === 'number') matchSeed = data.matchSeed >>> 0;
     // Re-resolve the saved selection/camera-lock against the just-rebuilt
     // entitiesById (by id, not by trusting any stale object reference) —
     // .filter(Boolean) drops anything that no longer exists (shouldn't

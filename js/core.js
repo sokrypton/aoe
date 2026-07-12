@@ -664,6 +664,11 @@ function simSin(x){
   return x * (1 + x2 * (-1/6 + x2 * (1/120 + x2 * (-1/5040 + x2 / 362880))));
 }
 function simCos(x){ return simSin(x + SIM_HALF_PI); }
+// Math.hypot is spec'd as an "implementation-dependent approximation" (NOT
+// correctly-rounded like Math.sqrt), so it differs in the last bits between
+// JS engines — same desync class as sin/cos/atan2. Sim code uses this instead:
+// Math.sqrt IS IEEE-754 correctly-rounded, so identical on every engine.
+function simHypot(dx, dy){ return Math.sqrt(dx * dx + dy * dy); }
 function simAtan2(y, x){
   if (x === 0 && y === 0) return 0;
   const ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
@@ -691,6 +696,10 @@ function newMatchSeed(seed){
 // before CORPSE_LIFE. See drawCorpse() in render-units.js and the corpse
 // cull in render.js.
 const CORPSE_SKEL=12000, CORPSE_LIFE=25000;
+// Tick-based corpse lifetime for the headless simulator only: render.js prunes
+// corpses by wall-clock (CORPSE_LIFE ms), but headless never runs render(), so
+// it prunes by tick age instead to bound memory (~CORPSE_LIFE at 30 tps).
+const CORPSE_LIFE_TICKS=750;
 
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
