@@ -67,7 +67,9 @@ function update(){
   // renderer viewport-culls, so buildings scouted while the camera was
   // elsewhere never got marked scouted and stayed invisible on the main
   // map even though the minimap (which ignores culling) showed them.
-  markScoutedBuildings(); // js/core.js — also called guest-side in js/net-sync.js
+  // Viewer-local memory of scouted enemy buildings — skip in headless self-play
+  // (no viewer, no minimap), like updateFog above. Also called guest-side in net-sync.js.
+  if (!window.__headlessSim) markScoutedBuildings(); // js/core.js
 
   rebuildUnitBlock(); // stationary-unit collision grid (see pathfinding.js)
   nudgeAside(); // villagers/sheep STEP OUT of approaching traffic's way
@@ -81,7 +83,6 @@ function update(){
   });
   separateUnits();
   updateStuckWatchdog(); // js/logic.js — general safety net over every task/path state machine
-  refreshPopulationCounts();
   // Run every AI-controlled team's brain. Which teams those are is DATA
   // (teamControllers, js/core.js): clicking "Host Game" flips slot 1 to
   // human before any guest connects (see onHostClicked), so the AI can't

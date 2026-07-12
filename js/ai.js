@@ -1041,8 +1041,13 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // overshoot maxArmy by a full queue, double-spending food the villager
   // planner may have reserved.
   let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.filter(q=>q!=='scout').length,0); // scout isn't army (see currentArmy)
+  // Hoist the population read out of the while-condition: used/cap don't change
+  // while we queue (no unit spawns/dies, no building completes here), and queued
+  // rises by exactly unitPop(placed) per successful queue — so track it
+  // incrementally instead of re-scanning all entities three times per iteration.
+  let popUsedT=teamPopUsed(ai.team), popCapT=teamPopCap(ai.team), popQueuedT=teamQueuedPop(ai.team);
   readyBarracks.forEach(barracks=>{
-    while(barracks.queue.length<profile.queueLimit&&teamPopUsed(ai.team)+teamQueuedPop(ai.team)<teamPopCap(ai.team)&&currentArmy+queuedArmy<maxArmy){
+    while(barracks.queue.length<profile.queueLimit&&popUsedT+popQueuedT<popCapT&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
       // Counter-pick first, then cheaper fallbacks if it's unaffordable.
       let placed = queueUnit(barracks,utype).ok ? utype
@@ -1050,6 +1055,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
                  : queueUnit(barracks,'militia').ok ? 'militia' : null;
       if(placed){
         queuedArmy++;
+        popQueuedT+=unitPop(placed); // keep the hoisted pop count in step with the queue
         if(placed==='ram'){ ramCount++; if(ramCount>=Math.ceil(maxArmy/6))wantRam=false; } // count only a CONFIRMED ram
       } else {
         break;

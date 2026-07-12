@@ -184,6 +184,7 @@ function queueUnit(bldg,utype){
 // any per-team read (AI planning, UI compare) goes through
 // teamPopUsed/teamPopCap directly with an explicit team.
 function refreshPopulationCounts(){
+  if(window.__headlessSim)return; // viewer-only HUD cache; sim reads teamPop* with an explicit team
   popUsed=teamPopUsed(myTeam);
   popCap=teamPopCap(myTeam);
 }
@@ -2537,10 +2538,32 @@ function updateBuilding(e){
     if (e.atkCooldown <= 0) {
       let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
       let center = {x: e.x + e.w/2, y: e.y + e.h/2};
-      let targets = entities.filter(en => !sameSide(en.team, e.team) && en.team !== GAIA_TEAM && en.type === 'unit' && en.hp > 0 && !en.garrisonedIn && en.utype !== 'sheep' && en.utype !== 'sheep_carcass')
-                            .filter(en => dist(center, en) <= range)
-                            .sort((a,b) => dist(center, a) - dist(center, b));
-      if (targets.length > 0) {
+      // Single pass collecting in-range enemy units with their distance computed
+      // ONCE. The old filter().filter().sort() allocated three arrays and
+      // recomputed dist inside the comparator; same deterministic target order
+      // (entities order preserved on ties: strict < below, stable sort above).
+      let inRange = [];
+      for (let i = 0; i < entities.length; i++) {
+        let en = entities[i];
+        if (en.type !== 'unit' || en.hp <= 0 || en.garrisonedIn) continue;
+        if (en.team === GAIA_TEAM || sameSide(en.team, e.team)) continue;
+        if (en.utype === 'sheep' || en.utype === 'sheep_carcass') continue;
+        let d = dist(center, en);
+        if (d <= range) inRange.push({en, d});
+      }
+      if (inRange.length > 0) {
+        // AoE2-style: garrisoned units add extra arrows (capped at +5), spread
+        // over the closest targets in range.
+        let arrows = 1 + Math.min(garrisonCount(e), 5);
+        if (arrows > 1) {
+          inRange.sort((a, b) => a.d - b.d); // need the closest N in order
+        } else {
+          // One arrow: a min-scan beats a full sort. Strict < keeps the
+          // earliest-in-entities-order target on ties, matching sort()[0].
+          let best = 0;
+          for (let i = 1; i < inRange.length; i++) if (inRange[i].d < inRange[best].d) best = i;
+          if (best !== 0) { let t = inRange[0]; inRange[0] = inRange[best]; inRange[best] = t; }
+        }
         let bCenter = {
           id: e.id,
           type: 'building',
@@ -2550,11 +2573,8 @@ function updateBuilding(e){
           team: e.team,
           atk: e.atk // AoE2: both TC and Watch Tower deal 5 pierce (set from BLDGS in createBuilding)
         };
-        // AoE2-style: garrisoned units add extra arrows (capped at +5),
-        // spread over the closest targets in range.
-        let arrows = 1 + Math.min(garrisonCount(e), 5);
         for (let i = 0; i < arrows; i++) {
-          spawnProjectile(bCenter, targets[i % targets.length]);
+          spawnProjectile(bCenter, inRange[i % inRange.length].en);
         }
         e.atkCooldown = 60; // fire every 2 game-seconds (AoE2 TC/tower reload)
       }
