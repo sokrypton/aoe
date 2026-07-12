@@ -119,8 +119,10 @@ function walkable(x,y,ignore,ignoreUnits){
   // thousands of times per search), and most of those checks are against
   // plain open/already-passable tiles where this lookup would be wasted.
   let walker=entitiesById.get(ignore);
-  // Allow villagers to walk onto the specific resource tile they are working on
-  if(walker && walker.gatherX === x && walker.gatherY === y) return true;
+  // AoE2: a resource (tree/gold/stone/berries) is SOLID — villagers gather it
+  // from an ADJACENT tile, never by standing on it. (Farms are walkable ground
+  // above; sheep are units with their own harvest exception.) This is what
+  // caps villagers-per-node and rings them around the tile instead of stacking.
   // Allow builders to stand on the building foundation they are constructing
   if(t.occupied && walker && walker.buildTarget === t.occupied) return true;
   if(isResource)return false;

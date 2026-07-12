@@ -31,6 +31,7 @@ let editSeed = 1;
 let controllers = ['human','human','human','human']; // per team, up to 4
 let running = false;      // true while the sim is unpaused (Play)
 let authoredSpec = null;  // snapshot of the authored scene, for Reset
+let simDirty = false;     // has the sim moved things since authoredSpec was taken?
 let painting = false;     // left-drag terrain paint
 let panning = false, panLastX = 0, panLastY = 0;
 let wallDragging = false; // left-drag wall run (reuses the game's wall-drag)
@@ -343,7 +344,7 @@ function unitGhost(){
 // ------------------------------------------------------------------- world/boot
 function enterEditor(sizeKey){
   sizeKey = sizeKey || (MAP_SIZE_KEYS.find(k => MAP_SIZES[k] === MAP) || 'medium');
-  running = false; window.__editorPlaying = false; authoredSpec = null;
+  running = false; window.__editorPlaying = false; authoredSpec = null; simDirty = false;
   NUM_TEAMS = 4;                      // author for up to 4 teams; export trims
   window.__scenarioMode = true;       // genMap()/init() skip default placement
   window.fogDisabled = true;          // whole authored map visible; combat engages
@@ -464,6 +465,7 @@ function togglePlay(){
     // order them around; the editor's placement input stands down. You drive
     // the team the picker is on (myTeam, set on team-swatch click).
     running = true; window.__editorPlaying = true;
+    simDirty = true; // the sim will move things; edits must rewind before applying
     selected.length = 0; syncPlacing();
     gamePaused = false;
   } else {
@@ -488,21 +490,34 @@ function updatePlayBtn(){
   b.classList.toggle('running', running);
 }
 
-function resetToAuthored(){
-  if (!authoredSpec){ if (window.showMsg) showMsg('Nothing to reset to — press Play first'); return; }
-  // Force 4 teams so loadScenario's restartGame sizes EVERY per-team sim array
-  // (vision grids, AI states, lastTeamHit, …) for 4 up front. Setting NUM_TEAMS
-  // AFTER the rebuild left those arrays sized for the spec's team count, and
-  // the next tick's updateTeamVision crashed on teamVisGrid[2] (undefined) —
-  // resetTeamVision only reallocates on a MAP-size change, not a team-count
-  // change. This mirrors enterEditor, which sets NUM_TEAMS before restartGame.
+// Rebuild the world from the authored snapshot (undo all sim movement), keeping
+// the user's current camera view. Force 4 teams so loadScenario's restartGame
+// sizes EVERY per-team sim array (vision grids, AI states, lastTeamHit, …) for 4
+// up front — setting NUM_TEAMS after the rebuild left them sized for the spec's
+// team count and updateTeamVision crashed on teamVisGrid[2] (mirrors enterEditor).
+function restoreAuthoredWorld(){
+  let cx = camX, cy = camY, z = ZOOM; // loadScenario recenters — keep the view
   silent(() => loadScenario(Object.assign({}, authoredSpec, { numTeams: 4 })));
   window.fogDisabled = true;
   if (typeof resetTeamAlliance === 'function') resetTeamAlliance(); // FFA (see enterEditor)
   if (typeof resetTeamColorMap === 'function') resetTeamColorMap();
   running = false; window.__editorPlaying = false; gameStarted = true; gamePaused = true;
-  selected.length = 0; syncPlacing();
+  simDirty = false; selected.length = 0; syncPlacing();
+  camX = cx; camY = cy; ZOOM = z;
+}
+
+function resetToAuthored(){
+  if (!authoredSpec){ if (window.showMsg) showMsg('Nothing to reset to — press Play first'); return; }
+  restoreAuthoredWorld();
   updatePlayBtn(); rebuildPalette();
+}
+
+// Before an edit, if the sim has run since the snapshot, rewind to the authored
+// scene so edits apply to the CLEAN placed layout — never the sim-moved one.
+// (Otherwise editing after a Play, then Play again, would snapshot the moved
+// positions and Reset would send units to where they gathered, not where placed.)
+function ensureCleanForEdit(){
+  if (simDirty && authoredSpec) restoreAuthoredWorld();
 }
 
 function clearWorld(){
@@ -679,6 +694,7 @@ function bindInput(){
     }
     if (e.button !== 0) return;
     mouseX = e.clientX; mouseY = e.clientY;
+    ensureCleanForEdit(); // editing after a Play rewinds to the authored scene first
     // Walls drag out a run in one gesture (a plain click = one tile). Reuses
     // the game's wall-drag state; render()'s drawGhost previews the line.
     if (tool.kind === 'building' && typeof isWallBtype === 'function' && isWallBtype(tool.key)){

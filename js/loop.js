@@ -326,6 +326,10 @@ function separateUnits(){
   // — they must not be slid off their claimed tile. Carcass harvesters are NOT
   // skipped: they press onto the carcass (js/logic.js pressToContact) and need
   // separation to spread them into a ring around it rather than stack.
+  // Gatherers and builders work IN PLACE (exempt from separation). Each
+  // gatherer stands on the DISTINCT adjacent tile pickGatherStand assigned it
+  // (js/logic.js) — an even surround around the solid node — so they never
+  // overlap and must not be shoved off their tile.
   let gathering=units.map(a=>
     (a.gatherX >= 0 && a.path.length === 0) ||
     (a.buildTarget !== null && a.path.length === 0));

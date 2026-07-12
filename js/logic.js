@@ -543,12 +543,16 @@ function pressToContact(e, cx, cy, contactDist){
 // correct fallback (AoE2 also lets villagers share a tile when it's all
 // that's left).
 function claimGatherTileNear(e,terrain,cx,cy){
-  let claimed=new Set();
+  // How many teammates already target each resource tile (COUNT, not just a
+  // set) — so once every tile has a claimant we can still balance the rest.
+  let counts={};
   entities.forEach(en=>{
     if(en.type==='unit'&&en.id!==e.id&&en.team===e.team&&en.gatherX>=0)
-      claimed.add(en.gatherX+','+en.gatherY);
+      counts[en.gatherX+','+en.gatherY]=(counts[en.gatherX+','+en.gatherY]||0)+1;
   });
-  if(!claimed.has(cx+','+cy))return{x:cx,y:cy};
+  // Pass 1: nearest UNCLAIMED tile of this resource, rings out from the click —
+  // a group first fans onto distinct tiles (one villager each).
+  if(!counts[cx+','+cy])return{x:cx,y:cy};
   for(let r=1;r<=5;r++){
     let best=null,bd=1e9;
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
@@ -557,14 +561,62 @@ function claimGatherTileNear(e,terrain,cx,cy){
       if(nx<0||nx>=MAP||ny<0||ny>=MAP)continue;
       let t=map[ny][nx];
       if(t.t!==terrain||t.res<=0)continue;
-      if(claimed.has(nx+','+ny))continue;
+      if(counts[nx+','+ny])continue;
       if(!canGatherTile(e,terrain,nx,ny))continue;
       let d=Math.abs(e.x-nx)+Math.abs(e.y-ny);
       if(d<bd){bd=d;best={x:nx,y:ny};}
     }
     if(best)return best;
   }
-  return{x:cx,y:cy};
+  // Pass 2: every nearby tile of this resource is already claimed — SPREAD
+  // evenly rather than piling the overflow onto the clicked tile: take the
+  // resource tile with the FEWEST claimants (nearest as tiebreak). So e.g. 6
+  // villagers sent to two gold tiles settle 3 and 3, not 5 and 1. Integer
+  // math + fixed iteration order → deterministic.
+  let best=null,bestScore=Infinity;
+  for(let r=0;r<=5;r++){
+    for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
+      let nx=cx+dx,ny=cy+dy;
+      if(nx<0||nx>=MAP||ny<0||ny>=MAP)continue;
+      let t=map[ny][nx];
+      if(t.t!==terrain||t.res<=0)continue;
+      if(!canGatherTile(e,terrain,nx,ny))continue;
+      let score=(counts[nx+','+ny]||0)*10000 + (Math.abs(e.x-nx)+Math.abs(e.y-ny));
+      if(score<bestScore){bestScore=score;best={x:nx,y:ny};}
+    }
+  }
+  return best||{x:cx,y:cy};
+}
+
+// Pick a DISTINCT adjacent tile to WALK to while gathering the solid resource
+// at (rx,ry). Resources aren't walkable (js/pathfinding.js), so villagers must
+// stand next to the node; sending each to a different neighbour is what makes
+// them approach from different sides and ring the node EVENLY (pressToContact
+// then pulls each tight against it). Scores each walkable neighbour by how many
+// co-gatherers of THIS node are already heading to / standing on it (a unit en
+// route counts at its path destination, else at its current tile), nearest as
+// the tiebreak. Returns null only if the node is fully walled in.
+function pickGatherStand(e, rx, ry){
+  let occ = {};
+  entities.forEach(en => {
+    if(en.type!=='unit' || en.id===e.id || en.team!==e.team) return;
+    if(en.gatherX!==rx || en.gatherY!==ry) return; // only co-gatherers of THIS node
+    let tx, ty;
+    if(en.path && en.path.length){ let d = en.path[en.path.length-1]; tx=d.x; ty=d.y; }
+    else { tx=Math.round(en.x); ty=Math.round(en.y); }
+    occ[tx+','+ty] = (occ[tx+','+ty]||0) + 1;
+  });
+  let best=null, bestScore=Infinity;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    if(dx===0 && dy===0) continue; // the node itself is solid
+    let nx=rx+dx, ny=ry+dy;
+    if(nx<0||ny<0||nx>=MAP||ny>=MAP) continue;
+    if(!walkable(nx,ny,e.id)) continue;
+    let score = (occ[nx+','+ny]||0)*100 + (Math.abs(e.x-nx)+Math.abs(e.y-ny));
+    if(score<bestScore){ bestScore=score; best={x:nx,y:ny}; }
+  }
+  return best;
 }
 
 function clearGatherTarget(e){
@@ -682,7 +734,8 @@ function updateGatherTask(e,config){
   let isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
   if(!isAdj){
     if(e.path.length === 0){
-      pathUnitTo(e,gatherTile.x,gatherTile.y);
+      let stand = e.task!=='farm' ? pickGatherStand(e, gatherTile.x, gatherTile.y) : null;
+      pathUnitTo(e, stand ? stand.x : gatherTile.x, stand ? stand.y : gatherTile.y);
       if(e.path.length===0){
         avoidAdd(e,'gather',gatherTile.x + gatherTile.y * MAP);
 
@@ -711,6 +764,13 @@ function updateGatherTask(e,config){
     }
     return;
   }
+
+  // In range. NO pressToContact here (unlike combat/carcass): the node is a
+  // SOLID tile, and pressing everyone toward its center biases them onto the 4
+  // orthogonal tiles (only those reach a uniform radius; a diagonal at that
+  // radius rounds onto the solid node), abandoning the corners. Villagers just
+  // hold the DISTINCT adjacent tile pickGatherStand gave them — an even 8-tile
+  // surround (corners included), AoE2-style.
 
   if(e.gatherCooldown>0)return;
   let tile=map[gatherTile.y][gatherTile.x];
@@ -2824,7 +2884,11 @@ function updateBuilding(e){
             }
             unit.gatherX=gx;
             unit.gatherY=gy;
-            pathUnitTo(unit,gx,gy);
+            // Walk to a DISTINCT adjacent tile (like the group-gather command +
+            // updateGatherTask), so units rallied onto a resource fan out and
+            // surround it instead of piling on the nearest tile.
+            let st=pickGatherStand(unit,gx,gy);
+            pathUnitTo(unit, st?st.x:gx, st?st.y:gy);
           }
         } else {
           pathUnitTo(unit,e.rallyX,e.rallyY);

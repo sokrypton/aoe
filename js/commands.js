@@ -542,7 +542,11 @@ function execUnitCommand(cmd){
         let unseen = tileHiddenForTeam(s.team, tileY*MAP + tileX);
         if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
-          s.task = gTask; s.gatherX = g.x; s.gatherY = g.y; pathUnitTo(s, g.x, g.y);
+          s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
+          // Walk to a DISTINCT adjacent tile of the node (resources are solid)
+          // so the group approaches from different sides and rings it evenly.
+          let stand = (typeof pickGatherStand === 'function') ? pickGatherStand(s, g.x, g.y) : null;
+          pathUnitTo(s, stand ? stand.x : g.x, stand ? stand.y : g.y);
         } else {
           // Move command (also the unexplored-tile case): use formation offset
           let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
