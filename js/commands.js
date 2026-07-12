@@ -563,6 +563,67 @@ function execUnitCommand(cmd){
 
 // Building placement (moved verbatim from doPlace's mutation half —
 // `placing` global replaced by cmd.btype, screen coords by cmd tile).
+// ---- Shared building-placement primitives ----
+// The geometry + wall-replacement rules for placing a WALL/GATE/TOWER/any
+// building live here so the player build command, the AI, and the scenario
+// editor (js/editor.js) all place identically — no reinvented gate-footprint
+// or wall-consume logic drifting between them. Two halves so a caller can
+// price the placement (refund consumed walls, afford-check) BEFORE committing:
+//   resolveBuildingPlacement() — PURE: where it sits + which walls it replaces.
+//   commitBuildingPlacement()  — mutates: removes those walls, creates the bldg.
+//
+// A gate sizes to the run of matching same-team walls through the click
+// (gateFootprint); a tower/stone-wall on a wall tile replaces it. `replaced`
+// is the same wall set the old inline code removed (deduped; order doesn't
+// affect the sim — removal is set-based and wall-cost refund is commutative).
+function resolveBuildingPlacement(btype, tx, ty, team){
+  let b = BLDGS[btype];
+  let ox = tx, oy = ty, gw = b ? b.w : 1, gh = b ? b.h : 1;
+  if (isGateBtype(btype)) {
+    ({ ox, oy, gw, gh } = gateFootprint(tx, ty, (x, y) => gateBaseAt(x, y, btype, team)));
+  }
+  let replaced = [];
+  for (let dy = 0; dy < gh; dy++) for (let dx = 0; dx < gw; dx++) {
+    let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && isWallBtype(en.btype) && en.team === team);
+    if (w && replaced.indexOf(w) < 0) replaced.push(w);
+  }
+  if (isTowerBtype(btype)) {
+    let ex = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && isWallBtype(en.btype) && en.team === team);
+    if (ex && replaced.indexOf(ex) < 0) replaced.push(ex);
+  }
+  if (isGateBtype(btype)) {
+    // Rebuilding a gate over an existing same-type gate (repair): collect it so
+    // it's replaced. Occupancy grid → finds the multi-tile gate on any tile.
+    for (let dy = 0; dy < gh; dy++) for (let dx = 0; dx < gw; dx++) {
+      let row = map[oy + dy]; let id = row && row[ox + dx] && row[ox + dx].occupied;
+      let g = id && entitiesById.get(id);
+      if (g && g.type === 'building' && g.btype === btype && g.team === team && replaced.indexOf(g) < 0) replaced.push(g);
+    }
+  }
+  return { ox, oy, gw, gh, replaced };
+}
+// Remove the replaced walls and create the building. `complete` → a finished
+// building at full HP (scenario editor); otherwise a foundation at hp 1 that
+// villagers build up (gameplay). Returns the new building (or null).
+function commitBuildingPlacement(btype, plan, team, complete){
+  if (plan.replaced.length) {
+    let ids = new Set(plan.replaced.map(w => w.id));
+    entities = entities.filter(en => !ids.has(en.id));
+    selected = selected.filter(s => !ids.has(s.id));
+    ids.forEach(id => entitiesById.delete(id));
+  }
+  let bldg = createBuilding(btype, plan.ox, plan.oy, team, plan.gw, plan.gh);
+  if (!bldg) return null;
+  if (complete) {
+    bldg.complete = true;
+  } else {
+    bldg.complete = false; bldg.buildProgress = 0;
+    bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
+    if (plan.replaced.length) bldg.wasWall = true;
+  }
+  return bldg;
+}
+
 function execBuildPlacement(cmd){
   let btype = cmd.btype;
   if (!BLDGS[btype]) return;
@@ -571,20 +632,7 @@ function execBuildPlacement(cmd){
   if (vils.length === 0) return;
   if (canPlace(btype, tile.x, tile.y, myTeam)) {
     let b = BLDGS[btype];
-    let gw = b.w, gh = b.h;
-    let ox = tile.x, oy = tile.y;
-    if (isGateBtype(btype)) {
-      let wallB = GATE_WALL_MATCH[btype];
-      let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === myTeam);
-      ({ ox, oy, gw, gh } = gateFootprint(tile.x, tile.y, isWall));
-    }
-    let wallsToRemove = [];
-    for (let dy = 0; dy < gh; dy++) {
-      for (let dx = 0; dx < gw; dx++) {
-        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && isWallBtype(en.btype) && en.team === myTeam);
-        if (w) wallsToRemove.push(w);
-      }
-    }
+    let plan = resolveBuildingPlacement(btype, tile.x, tile.y, myTeam);
     let actualCost = { ...b.cost };
     // Refund each consumed wall's OWN cost (palisades refund wood, stone
     // walls refund stone) against whatever this building costs.
@@ -595,40 +643,20 @@ function execBuildPlacement(cmd){
         });
       });
     };
-    if (isGateBtype(btype)) {
-      refundWalls(wallsToRemove);
-    } else if (btype === 'SWALL') {
-      // Stone-on-palisade upgrade: the footprint loop already collected the
-      // palisade being replaced — refund its wood against the stone's cost.
-      refundWalls(wallsToRemove);
-    } else if (isTowerBtype(btype)) {
-      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);
-      if (existing) {
-        wallsToRemove.push(existing);
-        refundWalls([existing]);
-      }
-    }
+    // Gates, stone-on-palisade upgrades, and towers all consume the walls they
+    // sit on (collected in plan.replaced) — refund those against the cost.
+    if (isGateBtype(btype) || btype === 'SWALL' || isTowerBtype(btype)) refundWalls(plan.replaced);
     if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
     spendCost(myTeam, actualCost);
-    if (wallsToRemove.length > 0) {
-      let ids = new Set(wallsToRemove.map(w => w.id));
-      entities = entities.filter(en => !ids.has(en.id));
-      selected = selected.filter(s => !ids.has(s.id));
-      ids.forEach(id => entitiesById.delete(id));
-    }
-    let bldg = createBuilding(btype, ox, oy, myTeam, gw, gh);
-    bldg.complete = false; bldg.buildProgress = 0;
-    bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-    if (wallsToRemove.length > 0) {
-      bldg.wasWall = true;
-    }
+    let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
+    if (!bldg) return;
     vils.forEach(v => {
       v.buildQueue = v.buildQueue || [];
       v.buildQueue.push(bldg.id);
       // Start construction task immediately if not already building
       if (v.task !== 'build' || !v.buildTarget) {
         v.task = 'build'; v.buildTarget = bldg.id; v.target = null; v.savedTask = null;
-        let pt = b.isFarm ? { x: ox, y: oy } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, bldg, v.id) : { x: ox + gw, y: oy + gh });
+        let pt = b.isFarm ? { x: plan.ox, y: plan.oy } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, bldg, v.id) : { x: plan.ox + plan.gw, y: plan.oy + plan.gh });
         pathUnitTo(v, pt.x, pt.y);
       }
     });

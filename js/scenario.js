@@ -15,7 +15,8 @@
 //     controllers: ['human','ai:hard'],   // per team; default P0 human, rest AI
 //     terrain: [ {t:'FOREST'|'GOLD'|'STONE'|'BERRIES'|'WATER'|'FARM', x, y, amount?} ],
 //     entities:[ {u:'knight', x, y, team, stance?}  // a unit
-//              | {b:'TC',     x, y, team} ]          // a (complete) building
+//              | {b:'TC',     x, y, team, w?, h?} ]  // a (complete) building
+//                                                    // w/h: non-default footprint (e.g. a sized gate)
 //   }
 // Coordinates are integer tiles (a settled unit rests on an integer — the tile
 // center; see js/pathfinding.js stepUnitAlongPath).
@@ -64,7 +65,9 @@ function loadScenario(spec){
   // Entities: buildings first (so unit spawn-out doesn't fight foundations),
   // then units. Buildings are created complete (createBuilding default).
   (spec.entities || []).filter(o=>o.b).forEach(o=>{
-    let b = createBuilding(o.b, o.x, o.y, o.team||0);
+    // o.w/o.h carry a non-default footprint (e.g. a multi-tile gate sized by
+    // gateFootprint in the editor); absent → createBuilding uses the BLDGS default.
+    let b = createBuilding(o.b, o.x, o.y, o.team||0, o.w != null ? o.w : null, o.h != null ? o.h : null);
     if(b) b.complete = true;
   });
   (spec.entities || []).filter(o=>o.u).forEach(o=>{

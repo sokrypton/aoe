@@ -311,6 +311,7 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div class="menu-row-pair">
       <div class="menu-button-container" id="save-load-row">
         <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+        <button type="button" id="editor-btn" class="menu-action-btn" onclick="location.href='editor.html'">🛠️ Scenario Editor</button>
       </div>
       <div class="menu-button-container" id="mp-row">
         <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Age of Epochs II — Scenario Editor</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<link rel="stylesheet" href="styles.css">
+</head><body class="editor-ui">
+<!-- Scenario editor. A thin sibling of index.html: it loads the SAME engine
+     (page-shell markup + full js/ stack) so restartGame / loadScenario /
+     gameLoop / the sim / gamePaused all work unmodified, then js/editor.js
+     hides the game HUD, swaps canvas input for click-to-place, and boots into
+     a blank scenario world instead of the menu. __editorMode (set below,
+     before any script) gates the additive guards in init.js and input.js. -->
+<script>window.UI_VARIANT='mobile'; window.__editorMode=true;</script>
+<script src="js/page-shell.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/core.js"></script>
+<script src="js/determinism.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/commands.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/loop.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/save.js"></script>
+<script src="js/scenario.js"></script>
+<script src="js/net.js"></script>
+<script src="js/net-sync.js"></script>
+<script src="js/lockstep.js"></script>
+<script src="js/lobby.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/input.js"></script>
+<script src="js/init.js"></script>
+<script src="js/editor.js"></script>
+</body></html>

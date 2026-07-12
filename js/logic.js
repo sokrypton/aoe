@@ -1,19 +1,22 @@
 // ---- GAME LOGIC ----
-function canPlace(type,x,y,team=0){
-  // Age gate — sim-authoritative (binds humans, relayed guests, and AI).
-  if(!isUnlocked(team,type))return false;
+function canPlace(type,x,y,team=0,ignoreAge=false){
+  // Age gate — sim-authoritative (binds humans, relayed guests, and AI). The
+  // scenario editor passes ignoreAge=true: authoring isn't age-bound, but every
+  // GEOMETRIC rule below (gate-on-wall, no build on water/resources, no overlap)
+  // still applies so the editor obeys the same placement restrictions as play.
+  if(!ignoreAge && !isUnlocked(team,type))return false;
   let b=BLDGS[type];
   let bw=b.w, bh=b.h;
   let ox=x, oy=y;
   if(isGateBtype(type)){
-    // A gate can ONLY be placed on an existing run of allied wall tiles of
-    // the MATCHING material (palisade gate on palisade, stone on stone).
-    // gateFootprint picks the run (prefers 3-tile, falls back to 2) — use it
-    // here so placement validation checks EXACTLY the tiles that get built.
-    let wallB = GATE_WALL_MATCH[type];
-    let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === team);
+    // A gate can ONLY be placed on an existing run of allied MATCHING-material
+    // tiles: walls (palisade gate on palisade, stone on stone) OR a same-type
+    // gate (rebuild/repair in place). gateFootprint picks the run (prefers
+    // 3-tile, falls back to 2) — use it here so placement validation checks
+    // EXACTLY the tiles that get built.
+    let isWall = (tx, ty) => gateBaseAt(tx, ty, type, team);
     ({ ox, oy, gw: bw, gh: bh } = gateFootprint(x, y, isWall));
-    if (bw === 1 && bh === 1) return false; // no matching wall run to build on
+    if (bw === 1 && bh === 1) return false; // no matching run to build on
   }
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
@@ -48,10 +51,10 @@ function canPlace(type,x,y,team=0){
       // palisade lets you reinforce a wooden wall in place (an upgrade you
       // build, mirroring how a gate is built over walls).
       if (existing && existing.type === 'building' && existing.team === team &&
-          ((isGateBtype(type) && existing.btype === GATE_WALL_MATCH[type]) ||
+          ((isGateBtype(type) && (existing.btype === GATE_WALL_MATCH[type] || existing.btype === type)) ||
            (isTowerBtype(type) && isWallBtype(existing.btype)) ||
            (type === 'SWALL' && existing.btype === 'WALL'))) {
-        continue;
+        continue; // gate on matching wall OR same-type gate (rebuild); tower/stone-wall on wall
       }
       return false;
     }

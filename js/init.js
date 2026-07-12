@@ -1594,7 +1594,13 @@ let bootParams = (typeof window !== 'undefined' && window.location)
 let joinHostId = bootParams.get('join');
 let resumeHostId = joinHostId ? null : bootParams.get('host');
 
-if (!joinHostId) {
+if (window.__editorMode) {
+  // Scenario editor (editor.html): skip the normal init()/menu. The editor
+  // boots its blank editable world via enterEditor() at the end of
+  // js/editor.js (loaded after this file). gameLoop() below still runs — the
+  // editor reuses it, rendering every frame and stepping the sim only when
+  // unpaused (Play).
+} else if (!joinHostId) {
   init();
 }
 gameLoop();

@@ -37,7 +37,7 @@ function drawGhost(){
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
-      let ok = canPlace(placing, t.x, t.y, myTeam);
+      let ok = canPlace(placing, t.x, t.y, myTeam, window.__editorMode);
       let iso = toIso(t.x, t.y);
       let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
@@ -53,14 +53,18 @@ function drawGhost(){
   let bw=b.w, bh_=b.h;
   let ox=tile.x, oy=tile.y;
   if(isGateBtype(placing)){
-    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype===GATE_WALL_MATCH[placing]&&en.team===myTeam);
+    let isWall = (tx, ty) => gateBaseAt(tx, ty, placing, myTeam);
     let fp = gateFootprint(tile.x, tile.y, isWall);
     ox=fp.ox; oy=fp.oy; bw=fp.gw; bh_=fp.gh;
-    // With no adjacent wall to snap to, preview the intended full 1x3 gate
-    // so the player sees the real size before committing.
-    if (bw===1 && bh_===1) { bw=1; bh_=3; }
+    // Show EXACTLY the footprint that will be built (gateFootprint) — no
+    // fabricated size. The old "preview a full 1x3 when there's no wall run"
+    // was misleading: a gate can't be built off a wall (canPlace is false),
+    // and it made the ghost JUMP + flip orientation the instant a gate was
+    // placed (the walls it consumed stop being a run, so the same cursor tile
+    // fell into this case) — a jarring artifact in both the editor and the
+    // real game. With no run it's a 1x1 red ghost: honestly "can't place here".
   }
-  let ok=canPlace(placing,tile.x,tile.y,myTeam);
+  let ok=canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode);
 
   // Draw ghost: actual building rendered semi-transparently
   let fakeE={

@@ -181,6 +181,22 @@ function gateFootprint(x, y, isWall){
   if (isWall(x, y-1) && isWall(x, y)) return { ox:x, oy:y-1, gw:1, gh:2 };
   return { ox:x, oy:y, gw:1, gh:1 };
 }
+// Tiles a gate of `btype` can span (the isWall predicate for gateFootprint):
+// an allied WALL of the gate's material, OR an allied gate of the SAME type.
+// The gate case lets a gate snap onto / rebuild over an existing gate — so
+// the placement ghost still reads as a gate when you hover an existing one
+// (its walls are gone), and it enables build-over-gate repair. The WALL check
+// is the original origin scan (unchanged → wall-based placement is byte-for-
+// byte identical); the gate check uses the occupancy grid so a multi-tile gate
+// is detected on ANY of its tiles, not just its origin. Shared by canPlace,
+// resolveBuildingPlacement, and drawGhost so snapping/validity/ghost agree.
+function gateBaseAt(x, y, btype, team){
+  if (entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === GATE_WALL_MATCH[btype] && en.team === team)) return true;
+  if (x < 0 || y < 0 || x >= MAP || y >= MAP) return false;
+  let id = map[y][x] && map[y][x].occupied;
+  let e = id && entitiesById.get(id);
+  return !!(e && e.type === 'building' && e.btype === btype && e.team === team);
+}
 function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 0; }
 
 // ---- AGE UPGRADES ("cards") ----

@@ -113,6 +113,7 @@ function requestDeleteOwned(ownIds){
 }
 
 document.addEventListener('keydown',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor supplies its own keys
   // While reviewing the finished map (See Map), keep the arrow keys panning —
   // but nothing else (no command hotkeys post-game).
   if(gameOver && window.seeMapMode && (e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='ArrowLeft'||e.key==='ArrowRight')) keys[e.key]=true;
@@ -398,6 +399,7 @@ window.addEventListener('mousemove',e=>{
 });
 
 C.addEventListener('mousedown',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if((gameOver && !window.seeMapMode)||recentTouch())return; // ignore synthetic mouse events (pan/select stay live in See Map)
   // Trust the event's own modifier snapshot over the keydown/keyup-tracked
   // keys map: OS-level shortcuts (e.g. macOS Cmd+Shift+5 for screen
@@ -436,6 +438,7 @@ C.addEventListener('mousedown',e=>{
   }
 });
 C.addEventListener('mousemove',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if((gameOver && !window.seeMapMode)||recentTouch())return;
   mouseX=e.clientX;mouseY=e.clientY;
   if(middleDrag && (e.buttons&4 || e.button===1)){
@@ -499,6 +502,7 @@ function isTrackpadWheel(e){
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own zoom
   if(gameOver && !window.seeMapMode)return; // zoom stays live in See Map
   e.preventDefault();
   if(e.ctrlKey){
@@ -520,6 +524,7 @@ C.addEventListener('wheel',e=>{
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
 C.addEventListener('mouseup',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   // Match mousedown/mousemove/wheel: stay live in See-Map review mode even
   // after gameOver. Selection is viewer-local (no commands), and bailing here
   // skipped the drag cleanup at the end of this handler, leaving the minimap
@@ -573,6 +578,7 @@ C.addEventListener('mouseup',e=>{
 });
 document.addEventListener('contextmenu',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if(gameOver||recentTouch())return;
   if(e.target===C){
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
@@ -627,6 +633,7 @@ let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-s
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if(gameOver && !window.seeMapMode)return; // touch pan/pinch stay live in See Map
   lastTouchTime=performance.now();
   let touches=e.touches;
@@ -701,6 +708,7 @@ C.addEventListener('touchstart',e=>{
 
 C.addEventListener('touchmove',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   lastTouchTime=performance.now(); // keep the mouse-suppression window alive through long drags
   let touches=e.touches;
   if(touches.length>=2){
@@ -793,6 +801,7 @@ C.addEventListener('touchmove',e=>{
 
 C.addEventListener('touchend',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   lastTouchTime=performance.now(); // synthetic mouse events fire right after touchend
   // Only process tap when all fingers are lifted
   if(e.touches.length===0){
@@ -1869,6 +1878,7 @@ window.addEventListener('resize',()=>{
 
 // Double click to select all units of same type on screen
 C.addEventListener('dblclick', e => {
+  if (window.__editorMode) return; // scenario editor handles its own canvas input
   if (gameOver || recentTouch()) return;
   let clicked = getUnitUnderCursor(e.clientX, e.clientY);
   if (clicked && clicked.team === myTeam) {
