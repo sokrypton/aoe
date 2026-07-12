@@ -2496,6 +2496,11 @@ function handleDeath(e,killerTeam){
 // tick resolve deterministically no matter the marking order.
 function checkAllianceVictory(){
   if(gameOver)return;
+  // Scenario editor: Play is a sandbox — never declare victory/defeat (no
+  // banner, no See-Map), so the fight keeps going past any elimination and
+  // you can watch it play all the way out. Inert in a real game (__editorMode
+  // is unset there → checksum unchanged).
+  if(window.__editorMode)return;
   // A defeat must have actually happened: the conquest hook calls this on
   // EVERY player-entity death, and a match where all teams share one
   // alliance (sandbox/testing) would otherwise end on the first casualty,

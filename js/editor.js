@@ -34,6 +34,15 @@ let authoredSpec = null;  // snapshot of the authored scene, for Reset
 let painting = false;     // left-drag terrain paint
 let panning = false, panLastX = 0, panLastY = 0;
 let wallDragging = false; // left-drag wall run (reuses the game's wall-drag)
+let minimapOn = false;    // upper-right minimap overlay toggle
+
+// Run fn with toasts suppressed. restartGame/startGame/loadScenario fire
+// showMsg (e.g. "Difficulty: Medium") on every editor rebuild — noise here.
+function silent(fn){
+  let s = window.showMsg;
+  window.showMsg = function(){};
+  try { fn(); } finally { window.showMsg = s; }
+}
 
 // ---- world coord -> screen pixel (matches render()'s post-restore space).
 // Inside render() a world point draws at (toIso().ix - camX + W/2) then the
@@ -52,9 +61,18 @@ function injectStyle(){
     body.editor-ui #ui, body.editor-ui #bottom, body.editor-ui #topbar,
     body.editor-ui #tutorial, body.editor-ui #pop-wrap, body.editor-ui #see-map-btn,
     body.editor-ui #chat-input-wrap, body.editor-ui #mp-status-panel,
-    body.editor-ui #minimap-wrap, body.editor-ui #menu-btn,
-    body.editor-ui #fs-btn { display: none !important; }
+    body.editor-ui #menu-btn, body.editor-ui #fs-btn { display: none !important; }
     body.editor-ui #game { cursor: crosshair; }
+    /* Minimap overlay: hidden by default, shown upper-right when toggled on
+       (body.ed-minimap). !important beats the game's #minimap-wrap position +
+       the mobile media-query hide. pointer-events:auto so it doesn't leak
+       clicks onto the map beneath (no accidental placement under it). */
+    body.editor-ui #minimap-wrap { display: none !important; }
+    body.editor-ui.ed-minimap #minimap-wrap {
+      display: block !important; position: fixed !important;
+      top: 8px !important; right: 8px !important; left: auto !important; bottom: auto !important;
+      width: 224px !important; height: 116px !important; margin: 0 !important;
+      z-index: 400 !important; overflow: hidden; pointer-events: auto !important; }
     #editor-panel { position: fixed; top: 0; left: 0; bottom: 0; width: 208px;
       background: #1c1712; color: #e8dcc5; font: 12px/1.35 system-ui, sans-serif;
       border-right: 2px solid #3a2f22; overflow-y: auto; z-index: 500;
@@ -156,7 +174,7 @@ function buildPalette(){
   play.textContent = '▶ Play'; play.onclick = togglePlay;
   p.appendChild(play);
   p.appendChild(actBtn('↺ Reset', resetToAuthored));
-  p.appendChild(actBtn('⬇ Export JSON', exportScenario));
+  p.appendChild(actRow(actBtn('📂 Load', loadScenarioFile), actBtn('💾 Save', exportScenario)));
   p.appendChild(actBtn('🗑 Clear', clearWorld));
 
   // Sim speed (applies live, in edit or play). GAME_SPEED default is 2.
@@ -229,6 +247,13 @@ function buildPalette(){
     enterEditor(v);
   }));
   p.appendChild(inputRow('Seed', editSeed, v => { editSeed = (parseInt(v,10) || 1) >>> 0; }));
+  // Minimap on/off (upper-right overlay)
+  let mmRow = document.createElement('div'); mmRow.className = 'ed-row';
+  let mmL = document.createElement('label'); mmL.textContent = 'Minimap'; mmRow.appendChild(mmL);
+  let mmB = document.createElement('button'); mmB.className = 'ed-spd' + (minimapOn ? ' sel' : '');
+  mmB.textContent = minimapOn ? 'On' : 'Off';
+  mmB.onclick = () => { minimapOn = !minimapOn; applyMinimap(); mmB.textContent = minimapOn ? 'On' : 'Off'; mmB.classList.toggle('sel', minimapOn); };
+  mmRow.appendChild(mmB); p.appendChild(mmRow);
 
   // Controllers (per team) — who plays each team when you press Play
   let hC = document.createElement('h3'); hC.textContent = 'Controllers'; p.appendChild(hC);
@@ -252,6 +277,8 @@ function rebuildPalette(){
   buildPalette();
 }
 function actBtn(label, fn){ let b = document.createElement('button'); b.className = 'ed-act'; b.textContent = label; b.onclick = fn; return b; }
+// Two (or more) action buttons side by side, each taking an equal share.
+function actRow(...btns){ let r = document.createElement('div'); r.style.display = 'flex'; r.style.gap = '4px'; btns.forEach(b => { b.style.flex = '1 1 0'; r.appendChild(b); }); return r; }
 function addSection(p, title, btns){
   let h = document.createElement('h3'); h.textContent = title; p.appendChild(h);
   let g = document.createElement('div'); g.className = 'ed-grid';
@@ -277,6 +304,14 @@ function inputRow(label, cur, fn){
 function setTool(kind, key){
   tool.kind = kind; tool.key = key;
   syncPlacing();
+}
+
+// Show/hide the upper-right minimap overlay (CSS in injectStyle). render()
+// draws the minimap every frame; toggling the body class resizes the wrap, so
+// force a dims re-read (the ResizeObserver in render-fx.js also catches it).
+function applyMinimap(){
+  document.body.classList.toggle('ed-minimap', minimapOn);
+  if (minimapOn && typeof miniDimsStale !== 'undefined') miniDimsStale = true;
 }
 
 // Drive the engine's own building ghost: setting the global `placing` to a
@@ -314,7 +349,7 @@ function enterEditor(sizeKey){
   window.fogDisabled = true;          // whole authored map visible; combat engages
   window.__pendingMatchSeed = editSeed >>> 0;
   setMapSize(sizeKey);
-  restartGame('standard');            // full reset -> blank grass world; hides menu
+  silent(() => restartGame('standard')); // full reset -> blank grass world; hides menu (no toast)
   window.__scenarioMode = false;      // mirror scenario.js (only genMap/init read it)
   // FFA: every team its own side. restartGame() sets 2v2 alliances for
   // NUM_TEAMS===4, which would make teams 0+1 (and 2+3) refuse to fight — not
@@ -329,6 +364,7 @@ function enterEditor(sizeKey){
   window.cameraFollowId = null;
   myTeam = tool.team; // building-ghost color + Play-mode controlled side
   syncPlacing();
+  applyMinimap();
   updatePlayBtn();
   rebuildPalette();
 }
@@ -460,7 +496,7 @@ function resetToAuthored(){
   // the next tick's updateTeamVision crashed on teamVisGrid[2] (undefined) —
   // resetTeamVision only reallocates on a MAP-size change, not a team-count
   // change. This mirrors enterEditor, which sets NUM_TEAMS before restartGame.
-  loadScenario(Object.assign({}, authoredSpec, { numTeams: 4 }));
+  silent(() => loadScenario(Object.assign({}, authoredSpec, { numTeams: 4 })));
   window.fogDisabled = true;
   if (typeof resetTeamAlliance === 'function') resetTeamAlliance(); // FFA (see enterEditor)
   if (typeof resetTeamColorMap === 'function') resetTeamColorMap();
@@ -520,7 +556,47 @@ function exportScenario(){
   a.download = 'scenario.json';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  if (window.showMsg) showMsg('Exported scenario.json (' + spec.entities.length + ' entities)');
+  if (window.showMsg) showMsg('Saved scenario.json (' + spec.entities.length + ' entities)');
+}
+
+// Load a scenario .json from disk back INTO the editor (open a file picker,
+// parse, hand to loadEditorScenario). Round-trips anything Save produced.
+function loadScenarioFile(){
+  let inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/json,.json';
+  inp.onchange = () => {
+    let f = inp.files && inp.files[0];
+    if (!f) return;
+    let r = new FileReader();
+    r.onload = () => {
+      let spec;
+      try { spec = JSON.parse(r.result); }
+      catch (e) { if (window.showMsg) showMsg('Invalid scenario JSON'); console.error('[editor] load failed:', e); return; }
+      loadEditorScenario(spec);
+    };
+    r.readAsText(f);
+  };
+  inp.click();
+}
+
+// Build the loaded scenario's world, then re-establish EDIT state (paused, FFA,
+// 4 teams so the palette works) and sync the palette selectors (seed,
+// controllers, map size) to what was loaded. Forces numTeams:4 up front so
+// every per-team sim array is sized for editing (same reason as resetToAuthored).
+function loadEditorScenario(spec){
+  spec = spec || {};
+  editSeed = (spec.seed != null ? spec.seed : 1) >>> 0;
+  controllers = ['human', 'human', 'human', 'human'];
+  if (Array.isArray(spec.controllers)) spec.controllers.forEach((c, i) => { if (i < 4) controllers[i] = c; });
+  silent(() => loadScenario(Object.assign({}, spec, { numTeams: 4 }))); // centers camera on the authored content
+  window.fogDisabled = true;
+  if (typeof resetTeamAlliance === 'function') resetTeamAlliance();
+  if (typeof resetTeamColorMap === 'function') resetTeamColorMap();
+  running = false; window.__editorPlaying = false; gameStarted = true; gamePaused = true;
+  authoredSpec = null; selected.length = 0;
+  syncPlacing();
+  updatePlayBtn(); rebuildPalette();
+  if (window.showMsg) showMsg('Loaded scenario (' + (spec.entities ? spec.entities.length : 0) + ' entities)');
 }
 
 // ----------------------------------------------------------------------- cursor
@@ -591,7 +667,7 @@ function bindInput(){
       return;
     }
     if (wallDragging){ updateWallDrag(mouseX, mouseY); return; } // extend the wall run (ghost previews it)
-    if (painting){ // drag-paint terrain or drag-place units (applyTool dispatches; units are one-per-tile)
+    if (painting){ // drag: paint terrain / place units (one-per-tile) / sweep-erase — applyTool dispatches
       let t = screenToTile(mouseX, mouseY);
       if (t) applyTool(t.x, t.y);
     }
@@ -611,7 +687,8 @@ function bindInput(){
     let t = screenToTile(mouseX, mouseY);
     if (!t) return;
     applyTool(t.x, t.y);
-    if (tool.kind === 'terrain' || tool.kind === 'unit') painting = true; // drag-paint both
+    // Drag to paint terrain, place a row of units, or sweep-erase.
+    if (tool.kind === 'terrain' || tool.kind === 'unit' || tool.kind === 'erase') painting = true;
   });
   window.addEventListener('mouseup', () => {
     if (wallDragging){ finalizeEditorWall(); wallDragging = false; }
@@ -636,6 +713,19 @@ function bindInput(){
     else if (e.key === 'ArrowDown'){ camX += pan; camY += pan; }
     else return;
   });
+  // Minimap navigation: click/drag the overlay to move the camera. The game's
+  // own minimap input lives inside the (editor-guarded) #game handlers, and the
+  // overlay is pointer-events:auto so clicks land on the minimap canvas (MC),
+  // not #game — so we start the drag here. The game's window-level mousemove +
+  // mouseup (input.js) then drive/end minimapDragging, unguarded, for free.
+  if (typeof MC !== 'undefined' && MC){
+    MC.addEventListener('mousedown', e => {
+      if (!minimapOn || typeof minimapJump !== 'function') return;
+      e.preventDefault(); e.stopPropagation();
+      minimapJump(e.clientX, e.clientY); // fresh click: respects the diamond hit-test
+      minimapDragging = true;            // subsequent window mousemoves keep panning
+    });
+  }
 }
 
 // ------------------------------------------------------------------------- boot
@@ -652,5 +742,6 @@ enterEditor('medium'); // builds the world, then the palette (rebuildPalette)
 // Expose for the init.js editor-boot branch and for debugging/tests.
 window.enterEditor = enterEditor;
 window.editorBuildSpec = buildSpec;
+window.loadEditorScenario = loadEditorScenario;
 
 })();
