@@ -681,7 +681,15 @@ function computeAIWallRing(ai,tc,radius){
   let r=baseR;
   entities.forEach(c=>{
     if(c.type!=='building'||c.team!==ai.team)return;
-    if(c.btype!=='LCAMP'&&c.btype!=='MCAMP'&&c.btype!=='MILL')return;
+    // Only COMPACT resources (gold/stone via MCAMP, berries via MILL) drive
+    // growth. NOT lumber camps: a forest is huge and always STRADDLES the wall,
+    // so enclosing an LCAMP puts the camp inside while its tree line runs
+    // outside — villagers then gather outside-forest and cross the wall every
+    // trip, tripping the rescue wall-break + self-heal rebuild oscillation
+    // ("gather wood outside, break wall to leave, drop off, rebuild on the way
+    // back"). AoE2 doesn't wall forests either — it walls the base and leaves
+    // the lumber line at/outside the wall.
+    if(c.btype!=='MCAMP'&&c.btype!=='MILL')return;
     let cheb=Math.max(Math.abs((c.x+0.5)-cx),Math.abs((c.y+0.5)-cy));
     if(cheb>r&&cheb<=baseR+GROW_CAP)r=Math.ceil(cheb+1); // wall runs just beyond this camp
   });
