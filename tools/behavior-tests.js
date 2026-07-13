@@ -242,6 +242,33 @@ async function withPage(browser, port, entry, fn){
       return { pass: [...a.pass, ...b.pass], fail: [...a.fail, ...b.fail] };
     },
 
+    // ---------------------------------- lane-shunt: no bulldozing idle units
+    'lane-shunt': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'human'], entities: [] });
+      gameStarted = true; gamePaused = false; myTeam = 0;
+      // A villager commutes the same lane 6+ times over an idle soldier
+      // standing on it. Separation must shunt the soldier SIDEWAYS once
+      // (perpendicular to the lane) — the old radial push scooted it ~0.3
+      // tiles DOWN the lane per pass, walking it across the map over a game.
+      const soldier = createUnit('militia', 30, 20, 0);
+      const vil = createUnit('villager', 10, 20, 0);
+      issueMoveOrder(vil, 50, 20);
+      let leg = 0;
+      for (let i = 0; i < 14000; i++) {
+        update();
+        if (vil.path.length === 0 && vil.moveGoalX === undefined) {
+          leg++;
+          issueMoveOrder(vil, leg % 2 ? 10 : 50, 20);
+        }
+      }
+      T.ok(`soldier not bulldozed along the lane (|dx| ${Math.abs(soldier.x - 30).toFixed(2)} < 1)`, Math.abs(soldier.x - 30) < 1);
+      T.ok(`soldier settled just beside the lane (total ${Math.hypot(soldier.x - 30, soldier.y - 20).toFixed(2)} < 1.5)`,
+           Math.hypot(soldier.x - 30, soldier.y - 20) < 1.5);
+      T.ok('villager commuted freely', leg >= 6);
+      return T;
+    })),
+
     // -------------------------------------------- large-army group move (ex repro)
     'large-army-move': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;

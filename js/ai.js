@@ -55,8 +55,8 @@ function updateAIGarrisonReaction(ai){
     // open for the rest of the window — cancel it, fall through to the bell.
     if(tick%30===0){
       let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
-      let threat=tc&&findPlayerThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
-      if(threat&&estimateLocalPlayerPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
+      let threat=tc&&findEnemyThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
+      if(threat&&estimateLocalEnemyPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
     }
     if(ai.militiaUntil>tick) return;
   }
@@ -91,9 +91,9 @@ function tryAIMilitiaResponse(ai){
   if(cap<=0)return false;
   let aiTC=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
   if(!aiTC)return false;
-  let threat=findPlayerThreatNear(ai,aiTC,AI_BASE_ALARM_RADIUS*aiScale());
+  let threat=findEnemyThreatNear(ai,aiTC,AI_BASE_ALARM_RADIUS*aiScale());
   if(!threat)return false;
-  let raidPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
+  let raidPower=estimateLocalEnemyPower(ai,threat,10*aiScale());
   if(raidPower>AI_MILITIA_MAX_THREAT)return false; // a real attack — hide, don't mob
   // The army handles it if it has comparable local strength — then the bell
   // still rings to tuck the villagers away while the soldiers fight.
@@ -337,7 +337,7 @@ function aiVisibleEnemies(ai,visionRange,pred){
   };
   return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e)&&near(e));
 }
-function getSpottedPlayerEntities(ai){
+function getSpottedEnemies(ai){
   return aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep');
 }
 
@@ -350,7 +350,7 @@ function unitPower(utype){
 function updateAIIntel(ai,aiTC,profile){
   let intel=ai.intel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0,tcTeam:null};
   let unitCounts={},strength=0,strengthByTeam={};
-  getSpottedPlayerEntities(ai).forEach(e=>{
+  getSpottedEnemies(ai).forEach(e=>{
     if(e.type==='unit'){
       unitCounts[e.utype]=(unitCounts[e.utype]||0)+1;
       let p=unitPower(e.utype);
@@ -376,7 +376,7 @@ function updateAIIntel(ai,aiTC,profile){
   ai.intel=intel;
 }
 
-function estimateLocalPlayerPower(ai,center,radius){
+function estimateLocalEnemyPower(ai,center,radius){
   return entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'&&dist(e,center)<=radius)
     .reduce((s,e)=>s+unitPower(e.utype),0);
 }
@@ -1813,13 +1813,13 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     let underMelee=m.lastMeleeHitTick!=null&&tick-m.lastMeleeHitTick<60;
     if(!t||arrived||underMelee)ejectGarrison(m);
   });
-  let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
+  let threat=findEnemyThreatNear(ai,aiTC,12*aiScale());
   // Ignore a threat our base is sealed against. A raider poking our ring from
   // OUTSIDE can't be reached, so chasing it freezes the garrison at the wall (the
   // stuck-watchdog spam). Reject ONLY on a DEFINITIVE no-route: findPath returns
   // [] only after fully exploring the reachable region without a path — a truly
   // sealed-out foe. A partial path (iteration-capped) means far-but-reachable —
-  // e.g. a raid on the ALLY's town across the map (findPlayerThreatNear includes
+  // e.g. a raid on the ALLY's town across the map (findEnemyThreatNear includes
   // ally buildings) — and MUST still draw a response, so we don't reject it. The
   // earlier "endpoint must land on the threat" test wrongly dropped those.
   if(threat){
@@ -1827,7 +1827,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     if(findPath(tcx,tcy,Math.round(threat.x),Math.round(threat.y),aiTC.id).length===0) threat=null;
   }
   if(threat){
-    let localEnemyPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
+    let localEnemyPower=estimateLocalEnemyPower(ai,threat,10*aiScale());
     let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0)
       +nearbyAlliedPower(ai,threat,10*aiScale());
     // Badly outmatched defending at home: pull back to the TC instead of
@@ -1873,7 +1873,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     return;
   }
   // Base perimeter UNDER SIEGE — defend instead of marching off to attack.
-  // findPlayerThreatNear + the reachability null-out above intentionally ignore
+  // findEnemyThreatNear + the reachability null-out above intentionally ignore
   // a besieger our base is SEALED against (chasing an unreachable foe wedges the
   // garrison at the wall), and a wall hit isn't "core" so the alarm/bell never
   // fires — together those used to let the army leave on an OFFENSIVE while the
@@ -2224,7 +2224,7 @@ function randomScoutWaypoint(ai,aiTC){ return pickExploreWaypoint(ai.team, aiTC)
 // ---- ANTI-FORWARD-BUILDING (AoE2 sn-safe-town-size) ----
 // An enemy BUILDING planted inside the AI's town radius (forward tower, a
 // wall creeping around the base, a foundation going up) is a threat even with
-// no enemy unit standing next to it — findPlayerThreatNear is units-only, so
+// no enemy unit standing next to it — findEnemyThreatNear is units-only, so
 // these were invisible and the AI let itself be towered/walled in. Nearest
 // arrow-firing structures first (they hurt), then other buildings, then
 // walls/gates; foundations count (killing the tower BEFORE it stands is the
@@ -2250,7 +2250,7 @@ function findEnemyForwardBuilding(ai,aiTC,profile){
   return best;
 }
 
-function findPlayerThreatNear(ai,aiTC,range){
+function findEnemyThreatNear(ai,aiTC,range){
   // Allied buildings count too: in 2v2 the AI's army answers a raid on its
   // ally's town, not just its own (villager garrison panic stays own-team).
   let aiBuildings = entities.filter(e=>sameSide(e.team,ai.team)&&e.type==='building'&&e.complete);

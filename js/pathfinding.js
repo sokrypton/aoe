@@ -13,17 +13,9 @@ const MAX_PATH_ITERS=2200;
 // ring the surrounding tiles and latecomers mill around outside.
 // Rebuilt once per tick in update(); Int32Array of unit ids (0 = free).
 let unitBlock=null;
-function rebuildUnitBlock(){
-  if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
-  else unitBlock.fill(0);
-  entities.forEach(e=>{
-    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)return;
-    if(e.utype==='sheep_carcass')return; // a corpse on the ground blocks nobody
-    if(e.path.length>0)return; // moving units don't block
-    let x=Math.round(e.x),y=Math.round(e.y);
-    if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
-  });
-}
+// The block grid is rebuilt by rebuildBlockAndNudge (js/loop.js) — one fused
+// walk also collects the nudge candidates. The grid semantics are unchanged:
+// stationary, living, non-garrisoned, non-carcass units block their tile.
 
 // Reused A* scratch — avoids a new Array(MAP²) + Uint8Array(MAP²) on EVERY
 // findPath call (27k+ calls/match; ~20k elements each on a large map — a major

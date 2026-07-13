@@ -71,17 +71,23 @@ function update(){
   // (no viewer, no minimap), like updateFog above. Also called guest-side in net-sync.js.
   if (!window.__headlessSim) markScoutedBuildings(); // js/core.js
 
-  rebuildUnitBlock(); // stationary-unit collision grid (see pathfinding.js)
-  nudgeAside(); // villagers/sheep STEP OUT of approaching traffic's way
+  rebuildBlockAndNudge(); // one walk: stationary units -> block grid, movers -> nudge list
 
   let current=[...entities];
-  current.forEach(e=>{
-    if(entitiesById.has(e.id)){
-      if(e.type==='unit')updateUnit(e);
-      else updateBuilding(e);
-    }
-  });
-  separateUnits();
+  for(let i=0;i<current.length;i++){
+    let e=current[i];
+    if(!entitiesById.has(e.id))continue; // removed earlier this tick
+    if(e.type==='unit')updateUnit(e);
+    else updateBuilding(e);
+  }
+  // Separation/nudging on a 2-tick cadence (alternating phases so the cost
+  // spreads): both passes CONVERGE over ticks anyway — overlapping units
+  // keep separating until clear, dodgers keep dodging while traffic
+  // approaches — so halving the cadence resolves the same situations one
+  // tick later (~33ms, imperceptible) for half the per-tick cost. The two
+  // heaviest fixed per-tick passes after updateUnit itself (profile:
+  // separate 17%, nudge 3%). Tick-derived, so lockstep-deterministic.
+  if(tick%2===0)separateUnits();
   updateStuckWatchdog(); // js/logic.js — general safety net over every task/path state machine
   // Run every AI-controlled team's brain. Which teams those are is DATA
   // (teamControllers, js/core.js): clicking "Host Game" flips slot 1 to
@@ -202,64 +208,89 @@ function updateBuildingDamageFx(){
 // once traffic has passed). Soldiers never step aside, and units locked on
 // a target (fighting, harvesting a carcass) hold their spot — the mover
 // simply passes through them transiently instead.
-function nudgeAside(){
-  entities.forEach(m=>{
-    if(m.type!=='unit'||m.garrisonedIn||m.hp<=0||m.path.length===0)return;
-    let next=m.path[0];
-    if(next.x<0||next.x>=MAP||next.y<0||next.y>=MAP)return;
-    let uid=unitBlock?unitBlock[next.x+next.y*MAP]:0;
-    if(!uid||uid===m.id)return;
-    let s=entitiesById.get(uid);
-    if(!s||s.hp<=0)return;
-    // Sheep and villagers actively DODGE (step aside). Idle soldiers are
-    // deliberately NOT in this set even though walkable() lets friendly
-    // traffic path through them: giving 50 clustered soldiers dodge steps
-    // turned the town square into a dodge/repath storm (each dodge briefly
-    // makes the soldier a blocking mover, forcing everyone else to repath —
-    // an infinite dance that also ate the tick budget). Movers walk through
-    // them; separateUnits resolves the momentary overlap softly.
-    let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,m.team));
-    if(!pushable||s.target)return;
-    // Never dodge a villager that's WORKING in place (farming/gathering/
-    // building): walkable() lets traffic pass straight through it instead
-    // (AoE2 farmers don't obstruct). Dodging it off its tile broke the work
-    // loop — it walked back, got dodged again, an infinite dance that never
-    // resumed farm duty.
-    if(s.utype==='villager'&&s.path.length===0&&(s.gatherX>=0||s.buildTarget))return;
-    if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
-    // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
-    // digs its heels in and stops yielding — isStubborn() below also makes
-    // it non-pushable, so the traffic re-routes around it instead. This
-    // breaks the endless "polite waltz" where two villagers displace each
-    // other forever (dodge → task re-path → counter-dodge → …), while
-    // one-off step-asides and the anti-trapping behavior stay intact.
-    if(isStubborn(s))return;
-    if(tick-(s.lastDodgeTick||0)>=300)s.dodgeCount=0; // peace resets the tally
-    // Step to an adjacent free tile that isn't on the mover's onward path,
-    // and never onto the mover's OWN tile — movers don't register in the
-    // block grid, so that tile looks free but is a guaranteed swap-collision
-    // (the classic trigger for the dance above).
-    let onward=new Set(m.path.slice(0,3).map(p=>p.x+','+p.y));
-    onward.add(Math.round(m.x)+','+Math.round(m.y));
-    let best=null;
-    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-      if(!dx&&!dy)continue;
-      let nx=next.x+dx,ny=next.y+dy;
-      if(onward.has(nx+','+ny))continue;
-      if(!walkable(nx,ny,s.id,true))continue;
-      if(unitBlock[nx+ny*MAP]&&unitBlock[nx+ny*MAP]!==s.id)continue;
-      let d=Math.abs(dx)+Math.abs(dy);
-      if(!best||d<best.d)best={x:nx,y:ny,d};
-    }
-    if(best){
-      s.lastDodgeTick=tick;
-      s.dodgeCount=(s.dodgeCount||0)+1;
-      setUnitPath(s,[{x:best.x,y:best.y}]); // a walked step, not a teleport/shove
-    }
-  });
+// Ask the stationary blocker on `mover`'s next waypoint to step aside (the
+// BLOCKER dodges — the mover keeps its path). Fed by rebuildBlockAndNudge's
+// fused walk; the old standalone nudgeAside() re-scanned all entities right
+// after the block grid had just walked them.
+function makeWayFor(mover){
+  let next=mover.path[0];
+  if(next.x<0||next.x>=MAP||next.y<0||next.y>=MAP)return;
+  let uid=unitBlock?unitBlock[next.x+next.y*MAP]:0;
+  if(!uid||uid===mover.id)return;
+  let s=entitiesById.get(uid);
+  if(!s||s.hp<=0)return;
+  // Sheep and villagers actively DODGE (step aside). Idle soldiers are
+  // deliberately NOT in this set even though walkable() lets friendly
+  // traffic path through them: giving 50 clustered soldiers dodge steps
+  // turned the town square into a dodge/repath storm (each dodge briefly
+  // makes the soldier a blocking mover, forcing everyone else to repath —
+  // an infinite dance that also ate the tick budget). Movers walk through
+  // them; separateUnits resolves the momentary overlap softly.
+  let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,mover.team));
+  if(!pushable||s.target)return;
+  // Never dodge a villager that's WORKING in place (farming/gathering/
+  // building): walkable() lets traffic pass straight through it instead
+  // (AoE2 farmers don't obstruct). Dodging it off its tile broke the work
+  // loop — it walked back, got dodged again, an infinite dance that never
+  // resumed farm duty.
+  if(s.utype==='villager'&&s.path.length===0&&(s.gatherX>=0||s.buildTarget))return;
+  if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
+  // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
+  // digs its heels in and stops yielding — isStubborn() below also makes
+  // it non-pushable, so the traffic re-routes around it instead. This
+  // breaks the endless "polite waltz" where two villagers displace each
+  // other forever (dodge → task re-path → counter-dodge → …), while
+  // one-off step-asides and the anti-trapping behavior stay intact.
+  if(isStubborn(s))return;
+  if(tick-(s.lastDodgeTick||0)>=300)s.dodgeCount=0; // peace resets the tally
+  // Step to an adjacent free tile that isn't on the mover's onward path,
+  // and never onto the mover's OWN tile — movers don't register in the
+  // block grid, so that tile looks free but is a guaranteed swap-collision
+  // (the classic trigger for the dance above).
+  let onward=new Set(mover.path.slice(0,3).map(p=>p.x+','+p.y));
+  onward.add(Math.round(mover.x)+','+Math.round(mover.y));
+  let best=null;
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy)continue;
+    let nx=next.x+dx,ny=next.y+dy;
+    if(onward.has(nx+','+ny))continue;
+    if(!walkable(nx,ny,s.id,true))continue;
+    if(unitBlock[nx+ny*MAP]&&unitBlock[nx+ny*MAP]!==s.id)continue;
+    let d=Math.abs(dx)+Math.abs(dy);
+    if(!best||d<best.d)best={x:nx,y:ny,d};
+  }
+  if(best){
+    s.lastDodgeTick=tick;
+    s.dodgeCount=(s.dodgeCount||0)+1;
+    setUnitPath(s,[{x:best.x,y:best.y}]); // a walked step, not a teleport/shove
+  }
 }
 
-// True while a much-displaced unit is holding its ground (see nudgeAside):
+// ---- Fused per-tick walk: block grid + nudge list ----
+// rebuildUnitBlock and the old nudgeAside() walked the same entities array
+// back-to-back with complementary filters (stationary units -> block grid,
+// moving units -> dodge checks); nothing runs between them, so one walk
+// serves both with identical content and order (checksum-verified).
+// Nudging keeps its 2-tick cadence; the grid rebuilds every tick. Movers are
+// nudged AFTER the walk completes — makeWayFor reads other units' grid entries.
+const _movers=[];
+function rebuildBlockAndNudge(){
+  if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
+  else unitBlock.fill(0);
+  let collect=tick%2===1; // nudge cadence (alternates with separateUnits)
+  _movers.length=0;
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)continue;
+    if(e.utype==='sheep_carcass')continue; // a corpse on the ground blocks nobody (and never moves)
+    if(e.path.length>0){ if(collect)_movers.push(e); continue; } // moving units don't block
+    let x=Math.round(e.x),y=Math.round(e.y);
+    if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
+  }
+  if(collect)for(let i=0;i<_movers.length;i++)makeWayFor(_movers[i]);
+}
+
+// True while a much-displaced unit is holding its ground (see makeWayFor):
 // it won't step aside and walkable() treats it as a hard obstacle so paths
 // route around it. Wears off after ~10s without being harassed.
 function isStubborn(u){
@@ -371,14 +402,39 @@ function separateUnits(){
     if(d<minDist&&d>0.01){
       let push=sep*(minDist-d)/d;
       let px=dx*push, py=dy*push;
+      // MOVER-vs-STATIONARY: push the stander PERPENDICULAR to the mover's
+      // heading (a sideways shunt out of the traffic lane), not radially.
+      // The radial push aims away from the mover — for a dead-ahead blocker
+      // that's straight DOWN THE LANE, so every villager commuting the same
+      // route scooted the same idle soldier another ~0.4 tiles forward per
+      // trip, walking it across the map over minutes (idle units have no
+      // return-to-post — their anchor drifts with them). One lateral shunt
+      // clears the lane instead, and later trips never touch the unit again.
+      // Deterministic: side = sign of the cross product (id-parity when
+      // exactly in lane center); exact ops only. Radial stays for
+      // stationary-stationary pairs (spawn stacks, combat rings).
+      let lanePush=(mover,stander,sdx,sdy)=>{
+        // sdx/sdy = stander - mover. Heading from the mover's next waypoint.
+        let n=mover.path[0];
+        let hx=n.x-mover.x, hy=n.y-mover.y;
+        let hl=Math.sqrt(hx*hx+hy*hy);
+        if(hl<0.0001)return null; // degenerate heading — radial fallback
+        hx/=hl; hy/=hl;
+        let cross=hx*sdy-hy*sdx; // which side of the lane the stander is on
+        let side=cross>0?1:cross<0?-1:(stander.id%2===0?1:-1);
+        let mag=sep*(minDist-d);
+        return {x:-hy*side*mag, y:hx*side*mag};
+      };
       // ignoreUnits=true: the overlapping units being separated must not
       // count each other's block-grid entries as walls.
       if(a.path.length===0&&!aGathering){
-        let nax=a.x+px, nay=a.y+py;
+        let lp=b.path.length>0?lanePush(b,a,dx,dy):null;
+        let nax=lp?a.x+lp.x:a.x+px, nay=lp?a.y+lp.y:a.y+py;
         if(walkable(Math.round(nax),Math.round(nay),a.id,true)){a.x=nax;a.y=nay;}
       }
       if(b.path.length===0&&!bGathering){
-        let nbx=b.x-px, nby=b.y-py;
+        let lp=a.path.length>0?lanePush(a,b,-dx,-dy):null;
+        let nbx=lp?b.x+lp.x:b.x-px, nby=lp?b.y+lp.y:b.y-py;
         if(walkable(Math.round(nbx),Math.round(nby),b.id,true)){b.x=nbx;b.y=nby;}
       }
     } else if(d<=0.01){

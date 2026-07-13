@@ -1071,8 +1071,11 @@ function updateFog() {
 // set on add, never cleared — deterministic history, same on every peer).
 let visionFreshTick = -1; // which sim tick the grids were computed for
 // How often the deterministic per-team vision grids are rebuilt (see
-// updateTeamVision). 2 is the shipped default; higher = faster/laggier vision.
-const VISION_REFRESH_TICKS = 2;
+// updateTeamVision). Higher = faster/laggier vision: 4 (~133ms at 30tps)
+// was measured imperceptible and worth ~2% sim throughput over the old 2
+// (2026-07 perf pass, alongside the 2-tick separation/nudge cadence in
+// js/loop.js). Sim reads tolerate the staleness by design.
+const VISION_REFRESH_TICKS = 4;
 let teamVisGrid = null, teamExploredGrid = null;
 let visStamps = new Map();  // entity id -> {t,cx,cy,s,gen} last-applied vision disk
 let visScanGen = 0;         // bumped each refresh; entities not re-marked this gen have vanished
