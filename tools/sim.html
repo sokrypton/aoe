@@ -153,7 +153,11 @@ window.runSimulation = async function(opts){
         age: teamAge[t], vils: units.filter(u => u.utype === 'villager').length,
         mil: units.filter(u => isArmyUnit(u.utype)).length,
         rams: units.filter(u => u.utype === 'ram').length,
-        idleVils: units.filter(u => u.utype === 'villager' && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
+        // idleVils EXCLUDES sheltering villagers — a bell-garrisoned villager has
+        // no task/target/path and was masquerading as "chronically idle", which
+        // made 20-min shelter lockdowns (an AI decision) unreadable in reports.
+        idleVils: units.filter(u => u.utype === 'villager' && !u.garrisonedIn && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
+        shelterVils: units.filter(u => u.utype === 'villager' && u.garrisonedIn).length,
         food: Math.round(st.food), wood: Math.round(st.wood), gold: Math.round(st.gold), stone: Math.round(st.stone),
         farms: farms.length, exhaustedFarms: farms.filter(f => f.exhausted).length,
         racks: bldgs.filter(b => b.btype === 'BARRACKS').length,
@@ -283,6 +287,12 @@ window.runSimulation = async function(opts){
         if (half.every(s => s.exhaustedFarms > 0 && s.exhaustedFarms >= s.farms - 1) && last.farms > 2)
           F.push(`team${t} farms stay exhausted (${last.exhaustedFarms}/${last.farms}) — reseed economy broken?`);
         if (half.every(s => s.idleVils >= 3)) F.push(`team${t} has ${last.idleVils} chronically idle villagers`);
+        // Shelter paralysis: most of the workforce bell-garrisoned across the
+        // whole second half — the economy is dead even though nobody is "idle"
+        // (sustained enemy wave pressure re-rings the bell faster than the
+        // all-clear releases workers; seed 7100 hid 9-14/14 for 20+ game-min).
+        if (half.every(s => s.shelterVils >= Math.max(3, s.vils / 2)) && last.vils > 0)
+          F.push(`team${t} economy sheltered (town bell) for the entire second half`);
         const waveSamples = samples.map(s => s.waves);
         const lastWaveGrowth = waveSamples[waveSamples.length-1] - waveSamples[Math.floor(waveSamples.length/2)];
         if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 26700 /* ~22 game-min */)
