@@ -589,8 +589,8 @@ function drawRamCorpse(c, sx, sy, age, alpha){
 }
 
 function drawCorpse(c){
-  let iso=toIso(c.x,c.y);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
+  let scr=mapToScreen(c.x,c.y);
+  let sx=Math.round(scr.sx), sy=Math.round(scr.sy+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
   
   let { ox, oy } = getUnitGroupOffset(c.id);
@@ -828,29 +828,6 @@ const RAM_AXES = {
   5: { u:{x:0,y:-0.55},      v:{x:1.25,y:0} },
   6: { u:{x:0.894,y:-0.447}, v:{x:0.72,y:0.36} }
 };
-// Footprint shadow half-extents (local px, before UNIT_SCALE): the ground
-// rectangle |a| ≤ L+OV, |b| ≤ WE+WTH projected through the view basis —
-// |a|·|u| + |b|·|v| per screen axis is exact for an axis-aligned box.
-// 0.92 tucks the shadow slightly inside the silhouette. Mirrored dirs
-// (2/3/4) share their right-facing twin's extents (all terms are |abs|).
-function ramShadowExtent(dir){
-  let m = dir === 2 ? 0 : dir === 3 ? 7 : dir === 4 ? 6 : dir;
-  let ax = RAM_AXES[m] || RAM_AXES[7];
-  // the profile pose is drawn RAM_PROFILE_K larger (size constancy) — its
-  // footprint shadow scales with it
-  let k = m === 7 ? RAM_PROFILE_K : 1;
-  let A = (RAM_DIM.L + RAM_DIM.OV) * RAM_DIM.SCALE * 0.78 * k;
-  let B = (RAM_DIM.WE + RAM_DIM.WTH) * RAM_DIM.SCALE * 0.78 * k;
-  // rx spans the full projected footprint, but ry is flattened to ~half:
-  // an ellipse tall enough to reach the footprint's far corners pools out
-  // BELOW the near wheels (it's centered on the anchor) and reads as the
-  // ram hovering over a puddle. Ground shadows hug the contact line.
-  return {
-    rx: A * Math.abs(ax.u.x) + B * Math.abs(ax.v.x),
-    ry: Math.max(3, (A * Math.abs(ax.u.y) + B * Math.abs(ax.v.y)) * 0.5)
-  };
-}
-
 // ---- BATTERING RAM (covered ram, AoE2 style) ----
 // A rigid wooden shed on four wheels with a suspended log protruding from
 // the front gable, drawn as a true iso box: every vertex is
@@ -1775,8 +1752,8 @@ function drawUnitShadow(e, sx, sy){
 
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
-  let iso=toIso(e.x,e.y);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
+  let scr=mapToScreen(e.x,e.y);
+  let sx=Math.round(scr.sx), sy=Math.round(scr.sy+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
   // Group spread: offset based on unit ID so stacked units are visible
   let { ox, oy } = getUnitGroupOffset(e.id);

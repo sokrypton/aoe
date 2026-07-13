@@ -265,6 +265,8 @@ function detStartLog(seed, settings){
 function detRecordCommand(execTick, team, seq, cmd){
   if (DET.log) DET.log.commands.push({ execTick: execTick, team: team, seq: seq, cmd: cmd });
 }
+// Console entry point (no in-code callers by design): paste `detDumpLog()`
+// in devtools to export the seed+command journal for replay/diffing.
 function detDumpLog(){
   return JSON.stringify(DET.log);
 }

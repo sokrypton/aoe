@@ -406,13 +406,11 @@ function showMpOverlay(title, text, spinner){
   // opponent-paused overlay): either side can bank the match to a file
   // right there while waiting, in case the reconnect never comes. A guest
   // save is just as valid as a host one (see js/save.js).
-  let saveBtn = document.getElementById('mp-disconnect-save');
-  if (saveBtn) saveBtn.style.display = (spinner && gameStarted && entities.length > 0 && netRole !== 'guest') ? '' : 'none';
+  show('mp-disconnect-save', (spinner && gameStarted && entities.length > 0 && netRole !== 'guest'));
   el.style.display = 'flex';
 }
 function hideMpOverlay(){
-  let el = document.getElementById('mp-disconnect-overlay');
-  if (el) el.style.display = 'none';
+  show('mp-disconnect-overlay', false);
 }
 function showDisconnectOverlay(text, showKick){
   showMpOverlay('Connection Lost', text, true);
@@ -420,8 +418,7 @@ function showDisconnectOverlay(text, showKick){
   if (kickBtn) kickBtn.style.display = showKick ? '' : 'none';
 }
 function hideDisconnectOverlay(){
-  let kickBtn = document.getElementById('mp-disconnect-kick');
-  if (kickBtn) kickBtn.style.display = 'none';
+  show('mp-disconnect-kick', false);
   hideMpOverlay();
 }
 
@@ -483,12 +480,9 @@ function kickDisconnectedPlayers(){
 function restoreMenuForMatch(){
   showMenuPanel('main');
   updateUiSwitchVisibility();
-  let startRow = document.getElementById('start-row');
-  if (startRow) startRow.style.display = '';
-  let statusPanel = document.getElementById('mp-status-panel');
-  if (statusPanel) statusPanel.style.display = 'none';
-  let startBtn = document.getElementById('start-game-btn');
-  if (startBtn) startBtn.style.display = 'none';
+  show('start-row', true);
+  show('mp-status-panel', false);
+  show('start-game-btn', false);
   let menu = document.getElementById('tutorial');
   // Options + Help ARE available mid-match now (unlike the pre-two-level
   // menu, which dropped Help to keep the single panel small). Explicitly
@@ -510,18 +504,15 @@ function restoreMenuForMatch(){
     if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
     menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
   }
-  let mpRow = document.getElementById('mp-row');
-  if (mpRow) mpRow.style.display = 'none';
-  let saveLoadRow = document.getElementById('save-load-row');
-  if (saveLoadRow) saveLoadRow.style.display = '';
+  show('mp-row', false);
+  show('save-load-row', true);
   // Save Game is hidden by default in the HTML (no match exists yet on the
   // pre-game screen) — now that one genuinely does, show it back. HOST
   // only in multiplayer: a guest can't reload+re-host a save (it rejoins
   // the host's reload by token instead), so offering it would be a lie.
   let saveBtn = document.getElementById('save-game-btn');
   if (saveBtn) saveBtn.style.display = netRole === 'guest' ? 'none' : '';
-  let loadBtn = document.getElementById('load-game-btn');
-  if (loadBtn) loadBtn.style.display = 'none';
+  show('load-game-btn', false);
 }
 
 function copyMpLink(){
@@ -582,8 +573,7 @@ function onHostClicked(){
   let hostBtn = document.getElementById('host-game-btn');
   if (hostBtn) hostBtn.disabled = true;
   showMpStatus('Starting host session…');
-  let cancelBtn = document.getElementById('mp-cancel-btn');
-  if (cancelBtn) cancelBtn.style.display = '';
+  show('mp-cancel-btn', true);
 
   // Hide the action rows so the "waiting for opponent" status/link panel
   // stands alone (the settings grid needs no hiding anymore — it lives in
@@ -696,10 +686,8 @@ function cancelHosting(){
   // state was kept, so a match resumed behind the menu continues seamlessly.
   teamControllers = defaultControllers(false);
   if (AI_STATES && !AI_STATES[1]) AI_STATES[1] = freshAIState(1);
-  let panel = document.getElementById('mp-status-panel');
-  if (panel) panel.style.display = 'none';
-  let cancelBtn = document.getElementById('mp-cancel-btn');
-  if (cancelBtn) cancelBtn.style.display = 'none';
+  show('mp-status-panel', false);
+  show('mp-cancel-btn', false);
   let qrEl = document.getElementById('mp-qr');
   if (qrEl) { qrEl.style.display = 'none'; qrEl.innerHTML = ''; }
   let hostBtn = document.getElementById('host-game-btn');
@@ -846,8 +834,7 @@ window.onNetConnectionClosed = function(){
     let menu = document.getElementById('tutorial');
     if (menu) menu.style.display = 'flex';
     showMpStatus('The host has disconnected.');
-    let retryBtn = document.getElementById('mp-retry-btn');
-    if (retryBtn) retryBtn.style.display = '';
+    show('mp-retry-btn', true);
     if (typeof showMsg === 'function') showMsg('Host disconnected');
     return;
   }
@@ -1564,8 +1551,7 @@ function gameLoop(){
     // restartGame). See Map (seeMap()) dismisses the banner to show the map.
     if (!window.gameOverMenuShown) {
       window.gameOverMenuShown = true;
-      let sm = document.getElementById('see-map-btn');
-      if (sm) sm.style.display = '';
+      show('see-map-btn', true);
     }
     if (!window.__gameOverBannerDismissed) {
       X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);

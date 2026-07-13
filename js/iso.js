@@ -9,6 +9,14 @@ function screenToMap(sx,sy){
   let ix=(sx-W/2)/ZOOM+camX, iy=(sy-(H/2+topH))/ZOOM+camY;
   return fromIso(ix,iy);
 }
+// Inverse of screenToMap for the RENDER pass, which draws into a context
+// already scaled by ZOOM — hence no ZOOM term here (input-side code keeps
+// screenToMap). THE one place the world->screen camera math lives; renderers
+// must not re-spell `iso.ix - camX + W/2` inline.
+function mapToScreen(x,y){
+  let iso=toIso(x,y);
+  return{sx:iso.ix-camX+W/2, sy:iso.iy-camY+H/2+topH};
+}
 function screenToTile(sx,sy){
   let p=screenToMap(sx,sy);
   return{x:Math.floor(p.x),y:Math.floor(p.y)};
@@ -29,12 +37,6 @@ function getMiniTransform(mw,mh){
   let diamondH = MAP * TH * scale;
   let oy = Math.max(pad, (mh - diamondH) / 2);
   return{scale,ox:mw/2,oy};
-}
-
-function mapToMini(x,y,mw,mh){
-  let t=getMiniTransform(mw,mh);
-  let iso=toIso(x,y);
-  return{x:t.ox+iso.ix*t.scale,y:t.oy+iso.iy*t.scale};
 }
 
 function miniToMap(sx,sy,mw,mh){

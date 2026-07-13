@@ -44,8 +44,8 @@ function drawTile(x,y){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (completely black)
 
-  let iso=toIso(x,y);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
+  let p=mapToScreen(x,y);
+  let sx=Math.round(p.sx), sy=Math.round(p.sy);
   if(isOffscreen(sx,sy,TW*2))return;
   let t=map[y][x];
   let cols=TCOL[t.t]||TCOL[0];
@@ -292,8 +292,8 @@ function drawTreeEntity(x,y){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (black)
 
-  let iso=toIso(x,y);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
+  let p=mapToScreen(x,y);
+  let sx=Math.round(p.sx), sy=Math.round(p.sy);
   let cy=sy+HALF_TH;
   let t=map[y][x];
   if(!t || t.res<=0) return;

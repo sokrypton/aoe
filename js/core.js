@@ -150,6 +150,14 @@ const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
 // a wall), but the AI's army control, wave sizing and the idle-military
 // hotkey must still treat it as a soldier.
 function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
+// ---- Building-center helpers: THE two spellings, do not inline them. ----
+// centerOf = the TRUE midpoint (fractional for even footprints — a 4-wide TC
+// centers at +2.0): feeds dist()/vector math. centerTile = the floored center
+// TILE: feeds map[y][x] indexing, pathfinding endpoints, and placement rings.
+// The floor/non-floor split is load-bearing — mixing them shifts distances by
+// up to half a tile and desyncs AI decisions.
+function centerOf(e){ return { x: e.x + e.w / 2, y: e.y + e.h / 2 }; }
+function centerTile(e){ return { x: e.x + Math.floor(e.w / 2), y: e.y + Math.floor(e.h / 2) }; }
 // Wall/gate material families: palisade (Dark) and stone (Feudal).
 function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
 function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }

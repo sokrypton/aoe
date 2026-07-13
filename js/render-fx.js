@@ -8,8 +8,8 @@ function drawGhost(){
     let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
     let pillarH = 22, wallH = 14;
     let toScr = (tx, ty) => {
-      let iso = toIso(tx + 0.5, ty + 0.5);
-      return { x: iso.ix - camX + W/2, y: iso.iy - camY + topH + H/2 - HALF_TH };
+      let p = mapToScreen(tx + 0.5, ty + 0.5);
+      return { x: p.sx, y: p.sy - HALF_TH };
     };
     X.globalAlpha = 0.55;
     window._ghostDraw = true;
@@ -38,8 +38,7 @@ function drawGhost(){
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
       let ok = canPlace(placing, t.x, t.y, myTeam, window.__editorMode);
-      let iso = toIso(t.x, t.y);
-      let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
+      let {sx, sy} = mapToScreen(t.x, t.y);
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
       X.beginPath();
       X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
@@ -82,8 +81,7 @@ function drawGhost(){
   // Tint footprint tiles green (valid) or red (invalid)
   X.fillStyle=ok?'rgba(0,200,80,0.28)':'rgba(220,30,0,0.28)';
   for(let dy=0;dy<bh_;dy++)for(let dx=0;dx<bw;dx++){
-    let iso=toIso(ox+dx,oy+dy);
-    let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+    let {sx, sy} = mapToScreen(ox+dx, oy+dy);
     X.beginPath();
     X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
     X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
@@ -261,9 +259,9 @@ function drawParticles() {
     // and kill the whole frame. Skip the particle instead.
     if (!Number.isFinite(px) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
     
-    let iso = toIso(p.x, p.y);
-    let sx = iso.ix - camX + W/2;
-    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    let scr = mapToScreen(p.x, p.y);
+    let sx = scr.sx;
+    let sy = scr.sy + HALF_TH;
     
     let pz = p.z || 0;
     sy -= pz * 35;
@@ -335,9 +333,9 @@ function drawProjectiles() {
     let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
 
-    let iso = toIso(p.x, p.y);
-    let sx = iso.ix - camX + W/2;
-    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    let scr = mapToScreen(p.x, p.y);
+    let sx = scr.sx;
+    let sy = scr.sy + HALF_TH;
     // Height along the flight: launch height (bow / battlements) blends to
     // impact height at the target's body, plus the ballistic arc.
     let startH = p.startH || 12;

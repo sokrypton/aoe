@@ -5,8 +5,11 @@ To play the game go to: [ageofepochs.com](https://ageofepochs.com)
 
 ## Development
 
-Headless all-AI self-play simulator for debugging and balance tuning — see [`tools/README.md`](tools/README.md).
+- **Codebase guide** (architecture, determinism rules, conventions): [`CLAUDE.md`](CLAUDE.md)
+- **Tooling & tests** (test battery, headless self-play simulator, MP tests): [`tools/README.md`](tools/README.md)
+- **AI behavior reference** (AoE2-DE comparison, fidelity decisions): [`docs/aoe2-ai-behavior.md`](docs/aoe2-ai-behavior.md)
 
 ```sh
-tools/simulate.sh runs=6 diff=hard        # 6 seeded matches, aggregate report
+tools/run-tests.sh                        # pre-commit test battery
+tools/simulate.sh runs=6 diff=hard        # 6 seeded self-play matches, aggregate report
 ```

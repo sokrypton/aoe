@@ -296,21 +296,6 @@ function drawDoorRight(sx,sy,bw,bhh,color,darken=false){
   X.strokeStyle='#000000';X.lineWidth=1;X.stroke();
 }
 
-// Draws a double gate wrapping the bottom corner of a building block
-function drawCornerDoubleGate(sx,sy,bhh,gateH,colorL,colorR,darken=false){
-  X.strokeStyle='#000000';X.lineWidth=1;
-  let cL = darken ? darkenColor(colorL) : colorL;
-  let cR = darken ? darkenColor(colorR) : colorR;
-  // Left leaf
-  X.fillStyle=cL;X.beginPath();
-  X.moveTo(sx-6,sy+bhh*2-3);X.lineTo(sx,sy+bhh*2);
-  X.lineTo(sx,sy+bhh*2-gateH);X.lineTo(sx-6,sy+bhh*2-gateH-3);X.closePath();X.fill();X.stroke();
-  // Right leaf
-  X.fillStyle=cR;X.beginPath();
-  X.moveTo(sx,sy+bhh*2);X.lineTo(sx+6,sy+bhh*2-3);
-  X.lineTo(sx+6,sy+bhh*2-gateH-3);X.lineTo(sx,sy+bhh*2-gateH);X.closePath();X.fill();X.stroke();
-}
-
 // Draws a flagpole and team-colored waving flag on top of a keep
 function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
   // Pole base sits at sy-bh-2; poleLen lets tall buildings (TC) plant the
@@ -674,8 +659,8 @@ function buildingShadowPath(e){
   let g = 1.06, ox = 3, oy = 1.5;
   if (fw === fh) {
     // square footprint: one diamond over the whole base
-    let iso = toIso(e.x + fw/2, e.y + fh/2);
-    let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
+    let p = mapToScreen(e.x + fw/2, e.y + fh/2);
+    let sx = Math.round(p.sx), sy = Math.round(p.sy);
     if (isOffscreen(sx, sy, 100)) return;
     let bw = fw * HALF_TW, bhh = fh * HALF_TH;
     X.moveTo(sx + ox, sy - bhh * g + oy);
@@ -688,8 +673,8 @@ function buildingShadowPath(e){
     // the parallelogram footprint — shadow each tile individually; the
     // union fill merges the overlap seamlessly.
     for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
-      let iso = toIso(e.x + dx + 0.5, e.y + dy + 0.5);
-      let sx = Math.round(iso.ix - camX + W/2), sy = Math.round(iso.iy - camY + topH + H/2);
+      let p = mapToScreen(e.x + dx + 0.5, e.y + dy + 0.5);
+      let sx = Math.round(p.sx), sy = Math.round(p.sy);
       if (isOffscreen(sx, sy, 100)) continue;
       X.moveTo(sx + ox, sy - HALF_TH * g + oy);
       X.lineTo(sx + HALF_TW * g + ox, sy + oy);
@@ -707,8 +692,8 @@ function drawBuilding(e, part = null){
   let ownerAge = (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
   let aw = AGE_WALLS[ownerAge] || AGE_WALLS[1];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
-  let iso=toIso(cx,cy);
-  let sx=Math.round(iso.ix-camX+W/2), sy=Math.round(iso.iy-camY+topH+H/2);
+  let p=mapToScreen(cx,cy);
+  let sx=Math.round(p.sx), sy=Math.round(p.sy);
   if(isOffscreen(sx,sy,100))return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
   sy-=bhh;

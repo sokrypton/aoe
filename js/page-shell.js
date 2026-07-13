@@ -1,4 +1,12 @@
 // Shared page markup for BOTH index.html (mobile skin) and classic.html.
+
+// ---- Tiny DOM helpers (page-shell loads first, so every file can use them) ----
+// THE show/hide idiom: null-safe, '' restores the stylesheet's display.
+function byId(id){ return document.getElementById(id); }
+function show(idOrEl, visible, mode){
+  let el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+  if (el) el.style.display = visible ? (mode || '') : 'none';
+}
 // The two pages used to be near-identical 292-line copies and had already
 // drifted; now each is a thin shell that sets window.UI_VARIANT and loads
 // this file, which injects the one true copy of the HUD/menus/overlays.

@@ -65,7 +65,6 @@ function lobbyRandomName(){
 let lobbyShareLink = null;
 
 // ---- Seat helpers ----
-function lobbyAiCount(seats){ return seats.filter(s => s.type === 'ai').length; }
 function lobbyFirstFreeColor(seats){
   let used = new Set(seats.map(s => s.colorIdx));
   for (let i = 0; i < lobbyPaletteSize(); i++) if (!used.has(i)) return i;
@@ -137,8 +136,7 @@ function hostEnterLobby(seat){
   window.__mpSession.inLobby = true;
   if (!lobbyState) seedHostLobby();
   hostEnsureLobbySeat(seat);
-  let status = document.getElementById('mp-status-panel');
-  if (status) status.style.display = 'none';
+  show('mp-status-panel', false);
   let menu = document.getElementById('tutorial');
   if (menu) menu.style.display = 'flex';
   showMenuPanel('lobby');
@@ -185,8 +183,7 @@ function onGuestLeftLobby(seat){
   if (typeof showMpStatus === 'function') {
     showMpStatus('Waiting for opponent to join…', lobbyShareLink || undefined);
   }
-  let cancelBtn = document.getElementById('mp-cancel-btn');
-  if (cancelBtn) cancelBtn.style.display = '';
+  show('mp-cancel-btn', true);
   if (typeof showMsg === 'function') showMsg('Opponent left — waiting for a new opponent');
 }
 
@@ -276,8 +273,7 @@ function applyLobbyState(msg, isOpen){
   if (msg.yourSeat != null) window.__mpSession.mySeat = msg.yourSeat;
   window.__mpSession.inLobby = true;
   if (isOpen) {
-    let status = document.getElementById('mp-status-panel');
-    if (status) status.style.display = 'none';
+    show('mp-status-panel', false);
     let menu = document.getElementById('tutorial');
     if (menu) menu.style.display = 'flex';
     showMenuPanel('lobby');
@@ -313,8 +309,7 @@ function renderLobby(){
   lobbySetSettingsEnabled(netRole === 'host');
 
   // Add-AI button (host only, when there's room).
-  let addRow = document.getElementById('lobby-addai-row');
-  if (addRow) addRow.style.display = (netRole === 'host') ? '' : 'none';
+  show('lobby-addai-row', (netRole === 'host'));
   let addBtn = document.getElementById('lobby-addai-btn');
   if (addBtn) addBtn.disabled = lobbyState.seats.length >= LOBBY_MAX_PLAYERS;
 

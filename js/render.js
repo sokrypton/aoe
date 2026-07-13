@@ -15,8 +15,8 @@ let _poolMapSize = -1;
 // scratch pools above. All inputs are globals (X, camX/camY, W/H, topH). ----
 const _drawnFlagsScratch = new Set(); // per-frame flag-cluster dedup
 function flagScreen(wx, wy){
-  let p = toIso(wx, wy);
-  return { x: p.ix - camX + W/2, y: p.iy - camY + H/2 + topH };
+  let p = mapToScreen(wx, wy);
+  return { x: p.sx, y: p.sy };
 }
 function drawFlagLine(x1, y1, x2, y2, alpha){
   X.strokeStyle = '#ffd700';
@@ -424,8 +424,7 @@ function render(){
   // Draw command markers (AoE2-style right-click feedback)
   cmdMarkers=cmdMarkers.filter(m=>tick-m.time<30);
   cmdMarkers.forEach(m=>{
-    let iso=toIso(m.x+0.5,m.y+0.5);
-    let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+    let {sx, sy} = mapToScreen(m.x+0.5, m.y+0.5);
     let age=(tick-m.time)/30;
     X.globalAlpha=1-age;
     X.strokeStyle=m.color;X.lineWidth=2;

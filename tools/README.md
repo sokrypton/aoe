@@ -1,3 +1,19 @@
+# Tools
+
+| tool | what it does | when to run |
+|---|---|---|
+| `run-tests.sh` | **the pre-commit battery**: syntax → behavior-tests → hud-tests → sim smoke (findings empty + run-to-run checksum equality). `fast` skips the sim smoke. | before every commit |
+| `behavior-tests.js` | PASS/FAIL assertions on **game mechanics**, headless: ram garrison (incl. the real right-click command shape), forward-building defense, walled-archer disengage (fixture: `scenarios/walled-archer.savegame.json`), save-v4 checksum-exact round-trip, the fog match option, large-army group moves, whole-army walled-TC assaults. `grep=<name>` runs one section. | after touching js/logic.js, js/ai.js, js/save.js, combat, garrison, fog |
+| `hud-tests.js` | commands + DOM assertions on the real `index.html` (guard posts, rally, auto-scout, selection panel) | after touching js/commands.js, js/ui.js, js/input.js |
+| `simulate.sh` | seeded all-AI self-play with a structured health report — the main debugging/balance workflow (documented below) | reproducing behavior, balance work, determinism checks |
+| `mp-tests.js` | LIVE lockstep multiplayer through PeerJS: lobby→match checksum agreement, rejoin, kick-to-AI, save/reload resume. **Needs network.** | when netcode, lockstep, or command/message shapes change |
+| `profile-sim.js` | V8 sampling profile of a headless sim run (self-time per function) — measure before optimizing | perf work |
+| `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
+| `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
+
+All Playwright drivers share `lib/harness.js` (static server over the repo +
+system-Chrome launch; first run does a one-time `cd tools && npm install`).
+
 # Headless self-play simulator
 
 `tools/simulate.sh` runs an **all-AI match with no browser UI**, as fast as the

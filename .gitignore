@@ -4,3 +4,6 @@ package-lock.json
 
 # Downloaded AoE2 AI scripting reference (docs/aoe2-ai-behavior.md is our synthesis)
 airef.github.io-master/
+
+# Ephemeral render-acceptance snapshots (tools/screenshot*.js output)
+tools/shots/

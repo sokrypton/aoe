@@ -316,8 +316,16 @@ function updateGates(){
 // Sheep are included so flocks keep natural spacing; carcasses are terrain.
 // This is now only the OVERLAP resolver of last resort — the polite
 // step-aside above handles normal traffic, so gatherers are never slid.
+// Scratch reused across ticks (cleared, never reallocated): this pass runs
+// every tick over every unit, and the three per-tick allocations (filtered
+// array, flags array, cell Map) were measurable GC pressure at scale.
+const _sepUnits=[], _sepGather=[], _sepCells=new Map();
 function separateUnits(){
-  let units=entities.filter(e=>e.type==='unit'&&!e.garrisonedIn&&e.utype!=='sheep_carcass');
+  let units=_sepUnits; units.length=0;
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type==='unit'&&!e.garrisonedIn&&e.utype!=='sheep_carcass')units.push(e);
+  }
   let sep=0.08;
   let minDist=0.5;
   // Per-unit flag computed once — the old all-pairs loop recomputed it,
@@ -330,14 +338,17 @@ function separateUnits(){
   // gatherer stands on the DISTINCT adjacent tile pickGatherStand assigned it
   // (js/logic.js) — an even surround around the solid node — so they never
   // overlap and must not be shoved off their tile.
-  let gathering=units.map(a=>
-    (a.gatherX >= 0 && a.path.length === 0) ||
-    (a.buildTarget !== null && a.path.length === 0));
+  let gathering=_sepGather; gathering.length=units.length;
+  for(let i=0;i<units.length;i++){
+    let a=units[i];
+    gathering[i]=(a.gatherX >= 0 && a.path.length === 0) ||
+                 (a.buildTarget !== null && a.path.length === 0);
+  }
   // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be
   // within minDist (0.5), so each unit compares against its 3×3 cell
   // neighborhood instead of every other unit on the map. The j>i guard keeps
   // each pair processed exactly once, like the old triangular loop.
-  let cells=new Map();
+  let cells=_sepCells; cells.clear();
   for(let i=0;i<units.length;i++){
     let u=units[i];
     let key=(u.x|0)*4096+(u.y|0);

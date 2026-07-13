@@ -160,7 +160,7 @@ function updateAI(ai){
   // path home makes assignAIVillagers leave it alone until it arrives, by
   // which time the recent-hit window has expired and it re-tasks normally.
   let alarmR=AI_BASE_ALARM_RADIUS*aiScale();
-  let tcCenter={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+  let tcCenter=centerOf(aiTC);
   // Window must exceed the decision interval or this (decision-tick-only) check
   // steps right over the hit: easy=240 / standard=180 / hard=120, so a fixed 120
   // meant the flee almost never fired for easy/standard.
@@ -632,7 +632,7 @@ function planAIWalls(ai,aiTC,vils,profile){
   // (the old code's bug: it marked `done` regardless, recording never-built
   // tiles as sealed → the 6/8 leak). Failed placements back off and retry.
   let placedThisCall=0, iters=0;
-  let wtcx=aiTC.x+Math.floor(aiTC.w/2), wtcy=aiTC.y+Math.floor(aiTC.h/2);
+  let {x:wtcx, y:wtcy} = centerTile(aiTC);
   let BACKOFF=Math.max(120,profile.decisionInterval*2);
   while(placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
     iters++;
@@ -715,7 +715,7 @@ function wallTileSealed(pt,team){
 // tested explicitly). `extraBlock` optionally treats one tile as if walled.
 // Returns true = SEALED.
 function aiBaseSealed(aiTC,team,radius,extraBlock){
-  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let {x:cx, y:cy} = centerTile(aiTC);
   let R=Math.round(radius)+6, slack=2;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
   let pass=(x,y)=>{
@@ -746,7 +746,7 @@ function aiBaseSealed(aiTC,team,radius,extraBlock){
 // block) and see if it escapes the ring box. Replaces the pathReaches egress
 // probe. A ring is healthy when aiBaseSealed && armyCanReachEnemy.
 function armyCanReachEnemy(ai,aiTC){
-  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let {x:cx, y:cy} = centerTile(aiTC);
   let R=(ai.wallRadiusUsed||8)+6;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
   let pass=(x,y)=>walkable(x,y,aiTC.id,true);
@@ -766,7 +766,7 @@ function armyCanReachEnemy(ai,aiTC){
 }
 
 function computeAIWallRing(ai,tc,radius){
-  let cx=tc.x+Math.floor(tc.w/2),cy=tc.y+Math.floor(tc.h/2); // build the ring around its center
+  let {x:cx, y:cy} = centerTile(tc); // build the ring around its center
   let baseR=Math.max(4,Math.round(radius));
   // Economy-radius growth (AoE2 "wall along the treeline"): everything is
   // deterministic — the ring is centered on the TC and we know each drop camp's
@@ -1655,7 +1655,7 @@ function findAIFarmSpot(ai,tc){
   // path to just parks it as unbuildable work and wedges the assigned
   // villager (stuck-watchdog). (The TC centre tile is on the walkable
   // courtyard edge, so it's a valid path source.)
-  let tcx=tc.x+Math.floor(tc.w/2), tcy=tc.y+Math.floor(tc.h/2);
+  let {x:tcx, y:tcy} = centerTile(tc);
   for(let c of cands){
     if(!canPlace('FARM',c.x,c.y,ai.team))continue;
     if(aiWouldBlockGate(c.x,c.y,F,F,ai.team))continue;
@@ -1754,7 +1754,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // every dispatch below on this same decision tick. Directed sieges persist
   // (a ram/committed sieger holds under fire — the escort handles defenders);
   // scouts are recon and already avoid combat via controlAIScouts.
-  let tcHome={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+  let tcHome=centerOf(aiTC);
   mils.forEach(m=>{
     if(m.utype==='scout'||holdsSiegeOrder(m))return;
     if(isRetreatingUnit(m)){
@@ -1823,7 +1823,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // ally buildings) — and MUST still draw a response, so we don't reject it. The
   // earlier "endpoint must land on the threat" test wrongly dropped those.
   if(threat){
-    let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+    let {x:tcx, y:tcy} = centerTile(aiTC);
     if(findPath(tcx,tcy,Math.round(threat.x),Math.round(threat.y),aiTC.id).length===0) threat=null;
   }
   if(threat){
@@ -1834,7 +1834,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     // feeding units one at a time into a fight that's already lost — a real
     // opponent disengages rather than dying in place for no gain.
     if(localAllyPower>0&&localEnemyPower>localAllyPower*1.6){
-      let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+      let {x:tcx, y:tcy} = centerTile(aiTC);
       mils.forEach(m=>{
         if(holdsSiegeOrder(m))return; // a directed siege persists — don't retreat it
         // Already home: stand and fight (auto-attack acquires targets for
@@ -1887,7 +1887,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // AI_GARRISON_HOLD_TICKS.
   {
     let sg=lastTeamHit&&lastTeamHit[ai.team];
-    let tcx=aiTC.x+Math.floor(aiTC.w/2), tcy=aiTC.y+Math.floor(aiTC.h/2);
+    let {x:tcx, y:tcy} = centerTile(aiTC);
     let baseR=(ai.wallRadiusUsed||Math.round(profile.wallRadius*aiScale()))+3;
     if(sg && tick-sg.tick<AI_GARRISON_HOLD_TICKS && Math.max(Math.abs(sg.x-tcx),Math.abs(sg.y-tcy))<=baseR){
       mils.forEach(m=>{
@@ -1949,7 +1949,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // Every decision tick, any target-less soldier far from home is pointed
   // at the next objective, independent of the wave cooldown.
   {
-    let tcC0={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+    let tcC0=centerOf(aiTC);
     // FIXED 22-tile radius, not scaled: hard's aiScale(2) stretched the
     // "near home" exemption to 36 tiles — mid-map camps of targetless wave
     // survivors sat just inside it and never got re-pointed at the enemy.
@@ -1991,7 +1991,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         }
       }
       let targetStrength=targetTeam!=null&&sbt[targetTeam]!=null?sbt[targetTeam]:intel.strength;
-      let tcC={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+      let tcC=centerOf(aiTC);
       let allyPower=nearbyAlliedPower(ai,tcC,20*aiScale());
       if(availablePower+allyPower*0.5<targetStrength*requiredFactor)holding=true;
     }
@@ -2182,7 +2182,7 @@ function baseSurveyWaypoint(ai,aiTC){
   ai.surveyIdx=i+1;
   let prof=aiProfileFor(ai.team);
   let R=Math.round(Math.max(6,(prof.wallRadius||6))*aiScale())+2; // just outside the ring band
-  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let {x:cx, y:cy} = centerTile(aiTC);
   let [dx,dy]=dirs[i];
   return { x:Math.max(1,Math.min(MAP-2,cx+dx*R)), y:Math.max(1,Math.min(MAP-2,cy+dy*R)) };
 }
@@ -2231,7 +2231,7 @@ function randomScoutWaypoint(ai,aiTC){ return pickExploreWaypoint(ai.team, aiTC)
 // whole point). Honest knowledge only: the tile must have been scouted
 // (teamHasExplored — around the town it always is).
 function findEnemyForwardBuilding(ai,aiTC,profile){
-  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let {x:cx, y:cy} = centerTile(aiTC);
   let wr=ai.wallRadiusUsed||Math.round((profile.wallRadius||0)*aiScale());
   let R=(wr||Math.round(AI_BASE_ALARM_RADIUS*aiScale()))+6;
   let best=null,bestPri=99,bestD=Infinity;
@@ -2261,7 +2261,7 @@ function findPlayerThreatNear(ai,aiTC,range){
   
   playerUnits.forEach(pu => {
     aiBuildings.forEach(ab => {
-      let d = dist({x: ab.x + ab.w/2, y: ab.y + ab.h/2}, pu);
+      let d = dist(centerOf(ab), pu);
       if (d <= range && d < minDist) {
         minDist = d;
         closestThreat = pu;
@@ -2379,29 +2379,12 @@ function placeAIBuilding(ai,type,x,y){
       if (w) wallsToRemove.push(w);
     }
   }
-  let actualCost = {...b.cost};
-  // Refund each consumed wall's OWN cost against this building's cost — mirrors
-  // execBuildPlacement.refundWalls (js/commands.js) so the charge is correct for
-  // any wall type, not just palisade wood (the old hardcoded WALL.cost.w would
-  // mischarge if the AI ever dropped a stone gate/tower through here).
-  let refundWalls = (walls) => {
-    walls.forEach(w2 => {
-      Object.entries(BLDGS[w2.btype].cost).forEach(([k, amt]) => {
-        actualCost[k] = Math.max(0, (actualCost[k] || 0) - amt);
-      });
-    });
-  };
-  if (type === 'GATE') {
-    refundWalls(wallsToRemove);
-  } else if (isTowerBtype(type)) {
-    // A bastion (stone TOWER or wooden PTOWER) consumes the palisade under it —
-    // remove + refund that wall, mirroring the human build-over-wall path.
-    let existing = entities.find(en => en.type === 'building' && en.x === x && en.y === y && en.btype === 'WALL' && en.team === ai.team);
-    if (existing) {
-      wallsToRemove.push(existing);
-      refundWalls([existing]);
-    }
-  }
+  // Consumed walls refund their own cost (effectiveBuildCost, js/logic.js —
+  // THE shared implementation with the player's execBuildPlacement, so the AI
+  // and human build-over-wall charges can never drift). Gates and bastions
+  // (stone TOWER / wooden PTOWER) consume the wall(s) under their footprint —
+  // the collection loop above already gathered exactly those.
+  let actualCost = effectiveBuildCost(type, (type === 'GATE' || isTowerBtype(type)) ? wallsToRemove : null);
   if(!canPlace(type,x,y,ai.team)||!canAfford(ai.team,actualCost))return null;
   spendCost(ai.team,actualCost);
   if (wallsToRemove.length > 0) {
@@ -2468,7 +2451,7 @@ function findAIBuildSpot(ai,tc,type){
   // sides, ~nothing on the +x/+y sides), so houses crowded the TC and ate
   // farm slots. tcHalf is the TC's own half-extent.
   let tcHalf=Math.ceil(tc.w/2);
-  let cx=tc.x+tc.w/2, cy=tc.y+tc.h/2;
+  let {x:cx, y:cy} = centerOf(tc);
   // Roomier core for the larger TC/Barracks. The MARKET is placed late (post-
   // Feudal), by when the walled core is usually full — give it a much larger
   // radius so it can sit at the base edge/outside (fine: it's an economy
@@ -2534,7 +2517,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
     // own TC is revealed from game start, so its opening eco is unaffected;
     // farther patches now require sending a scout first, like a human.
     if(!teamHasExplored(ai.team, x+y*MAP))continue;
-    if(dist({x,y},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)})>maxDist)continue;
+    if(dist({x,y},centerTile(tc))>maxDist)continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,ai.team))continue;
@@ -2548,7 +2531,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
       // founded 20+ tiles from town with commuters dying en route.
       // Sub-floor patches keep the density-weighted score as a fallback
       // ranking, but any adequate patch always outranks them (-1000 bias).
-      let d=dist({x:bx,y:by},{x:tc.x+Math.floor(tc.w/2),y:tc.y+Math.floor(tc.h/2)});
+      let d=dist({x:bx,y:by},centerTile(tc));
       let s=nearby>=8?d-1000:d-nearby*1.5;
       candidates.push({x:bx,y:by,s});
     }
@@ -2560,7 +2543,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
   // score first, then accept the best-ranked candidate that's actually
   // reachable from the TC (pathfinding is too costly to run on every one).
   candidates.sort((a,b)=>a.s-b.s || a.x-b.x || a.y-b.y); // positional tie-break: don't depend on Array.sort stability for a sim decision
-  let tcx=tc.x+Math.floor(tc.w/2), tcy=tc.y+Math.floor(tc.h/2);
+  let {x:tcx, y:tcy} = centerTile(tc);
   for(let i=0;i<candidates.length;i++){
     let c=candidates[i];
     // Keep camps OUT of the reserved farm belt (around the TC AND any Mill) so

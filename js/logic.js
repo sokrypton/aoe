@@ -116,6 +116,22 @@ function resourceName(key){
   return RES_KEYS[key]||key;
 }
 
+// The net cost of placing `btype` when it CONSUMES existing walls (a gate
+// dropped on two palisades, a stone wall upgrading a palisade, a tower built
+// over a wall tile): each consumed wall refunds its OWN cost — palisades
+// refund wood, stone walls stone — floored at 0 per resource. THE one
+// implementation; the AI's placeAIBuilding and the player's
+// execBuildPlacement must charge identically or the two paths drift.
+function effectiveBuildCost(btype, replacedWalls){
+  let cost = { ...BLDGS[btype].cost };
+  (replacedWalls || []).forEach(w => {
+    Object.entries(BLDGS[w.btype].cost).forEach(([k, amt]) => {
+      cost[k] = Math.max(0, (cost[k] || 0) - amt);
+    });
+  });
+  return cost;
+}
+
 function canAfford(team,cost){
   let store=resourceStore(team);
   return Object.entries(cost||{}).every(([key,amount])=>store[resourceName(key)]>=amount);
@@ -130,10 +146,6 @@ function spendCost(team,cost){
 function refundCost(team,cost){
   let store=resourceStore(team);
   Object.entries(cost||{}).forEach(([key,amount])=>{store[resourceName(key)]+=amount;});
-}
-
-function formatCost(cost){
-  return Object.entries(cost||{}).map(([key,amount])=>key.toUpperCase()+':'+amount).join(' ');
 }
 
 function unitPop(type){
@@ -273,7 +285,6 @@ function retryClear(e,key){
 }
 function retryActive(e,key){return !!(e.retry&&e.retry[key]);}
 function avoidAdd(e,key,v){let m=e.avoid||(e.avoid={});(m[key]||(m[key]=[])).push(v);}
-function avoidHas(e,key,v){return !!(e.avoid&&e.avoid[key]&&e.avoid[key].includes(v));}
 function avoidClear(e,key){
   if(e.avoid&&e.avoid[key]){delete e.avoid[key];if(Object.keys(e.avoid).length===0)e.avoid=undefined;}
 }
@@ -335,10 +346,15 @@ function distToTarget(a,b){
 }
 
 function buildingAtTile(x,y,filter){
-  return entities.find(en=>{
-    if(en.type!=='building')return false;
-    return x>=en.x&&x<en.x+en.w&&y>=en.y&&y<en.y+en.h&&(!filter||filter(en));
-  })||null;
+  // O(1) via the derived `occupied` tile index (stampBuildingFootprint,
+  // js/entities.js — every building footprint tile carries its id; death
+  // clears it). Replaces an O(entities) scan that sat inside canGatherTile's
+  // farm check, i.e. ran per gathering villager per tick. Footprints can't
+  // overlap, so "the" building at a tile is unique — result identical to the
+  // old entities.find. A stale id (already-removed entity) reads as null.
+  let t=map[y]&&map[y][x];
+  let b=t&&t.occupied!=null?entitiesById.get(t.occupied):null;
+  return (b&&b.type==='building'&&(!filter||filter(b)))?b:null;
 }
 
 function farmAtTile(x,y,team,requireComplete=true){
@@ -3033,31 +3049,48 @@ function updateBuilding(e){
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
     if (e.atkCooldown <= 0) {
       let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
-      let center = {x: e.x + e.w/2, y: e.y + e.h/2};
-      // Single pass collecting in-range enemy units with their distance computed
-      // ONCE. The old filter().filter().sort() allocated three arrays and
-      // recomputed dist inside the comparator; same deterministic target order
-      // (entities order preserved on ties: strict < below, stable sort above).
+      let center = centerOf(e);
+      // Scan only the unit-grid cells within range (targetableUnitGrid,
+      // cell=4) instead of the whole entities array — every idle tower/TC
+      // used to walk ALL entities EVERY tick while at cooldown 0 (no target
+      // -> cooldown stays 0 -> rescan next tick), which made peacetime
+      // buildings one of the biggest sim costs. Candidate set is identical
+      // (the grid holds exactly live, non-garrisoned, non-sheep units; the
+      // hp/garrison re-checks below cover units killed earlier THIS tick,
+      // same as closestUnitNear). Order is identical too: `entities` order
+      // is ascending-id (creation-ordered array, order-preserving removals),
+      // so the (d, id) tiebreaks below reproduce the old scan bit-for-bit.
       let inRange = [];
-      for (let i = 0; i < entities.length; i++) {
-        let en = entities[i];
-        if (en.type !== 'unit' || en.hp <= 0 || en.garrisonedIn) continue;
-        if (en.team === GAIA_TEAM || sameSide(en.team, e.team)) continue;
-        if (en.utype === 'sheep' || en.utype === 'sheep_carcass') continue;
-        let d = dist(center, en);
-        if (d <= range) inRange.push({en, d});
+      let grid = targetableUnitGrid(), c = UNIT_GRID_CELL;
+      let gcx = (center.x / c) | 0, gcy = (center.y / c) | 0, gcr = Math.ceil(range / c) + 1;
+      for (let gy = gcy - gcr; gy <= gcy + gcr; gy++) {
+        if (gy < 0) continue;
+        for (let gx = gcx - gcr; gx <= gcx + gcr; gx++) {
+          if (gx < 0) continue;
+          let cell = grid.get(gx * 4096 + gy);
+          if (!cell) continue;
+          for (let k = 0; k < cell.length; k++) {
+            let en = cell[k];
+            if (en.hp <= 0 || en.garrisonedIn) continue;
+            if (en.team === GAIA_TEAM || sameSide(en.team, e.team)) continue;
+            let d = dist(center, en);
+            if (d <= range) inRange.push({en, d});
+          }
+        }
       }
       if (inRange.length > 0) {
         // AoE2-style: garrisoned units add extra arrows (capped at +5), spread
         // over the closest targets in range.
         let arrows = 1 + Math.min(garrisonCount(e), 5);
         if (arrows > 1) {
-          inRange.sort((a, b) => a.d - b.d); // need the closest N in order
+          inRange.sort((a, b) => a.d - b.d || a.en.id - b.en.id); // (d, id) == the old stable entities-order sort
         } else {
-          // One arrow: a min-scan beats a full sort. Strict < keeps the
-          // earliest-in-entities-order target on ties, matching sort()[0].
+          // One arrow: a min-scan beats a full sort. (d, id) keeps the
+          // lowest-id target on ties, matching the old earliest-in-entities.
           let best = 0;
-          for (let i = 1; i < inRange.length; i++) if (inRange[i].d < inRange[best].d) best = i;
+          for (let i = 1; i < inRange.length; i++) {
+            if (inRange[i].d < inRange[best].d || (inRange[i].d === inRange[best].d && inRange[i].en.id < inRange[best].en.id)) best = i;
+          }
           if (best !== 0) { let t = inRange[0]; inRange[0] = inRange[best]; inRange[best] = t; }
         }
         let bCenter = {

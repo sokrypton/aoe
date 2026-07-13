@@ -711,19 +711,11 @@ function execBuildPlacement(cmd){
   if (canPlace(btype, tile.x, tile.y, myTeam)) {
     let b = BLDGS[btype];
     let plan = resolveBuildingPlacement(btype, tile.x, tile.y, myTeam);
-    let actualCost = { ...b.cost };
-    // Refund each consumed wall's OWN cost (palisades refund wood, stone
-    // walls refund stone) against whatever this building costs.
-    let refundWalls = (walls) => {
-      walls.forEach(w2 => {
-        Object.entries(BLDGS[w2.btype].cost).forEach(([k, amt]) => {
-          actualCost[k] = Math.max(0, (actualCost[k] || 0) - amt);
-        });
-      });
-    };
     // Gates, stone-on-palisade upgrades, and towers all consume the walls they
-    // sit on (collected in plan.replaced) — refund those against the cost.
-    if (isGateBtype(btype) || btype === 'SWALL' || isTowerBtype(btype)) refundWalls(plan.replaced);
+    // sit on (collected in plan.replaced) — their cost refunds against ours
+    // (effectiveBuildCost, js/logic.js — shared with the AI's placeAIBuilding).
+    let consumes = isGateBtype(btype) || btype === 'SWALL' || isTowerBtype(btype);
+    let actualCost = effectiveBuildCost(btype, consumes ? plan.replaced : null);
     if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
     spendCost(myTeam, actualCost);
     let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
