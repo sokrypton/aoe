@@ -1,0 +1,26 @@
+{
+  "_comment": "Repro 2: team-1 TC on an island, ringed by WATER, no walls. Melee team-0 units ordered to attack it have NO reachable wall to breach and NO path to the TC. Expected AoE2 behavior: march to the shore, then give up gracefully (record unreachable, stop re-pathing) — the archers still shoot across the water. NEVER an infinite full-map repath storm. Drive with tools/repro-unreachable.js scenario=island.",
+  "map": "small",
+  "seed": 1,
+  "numTeams": 2,
+  "controllers": ["human", "human"],
+  "terrain": [
+    {"t": "WATER", "x": 25, "y": 25}, {"t": "WATER", "x": 26, "y": 25}, {"t": "WATER", "x": 27, "y": 25}, {"t": "WATER", "x": 28, "y": 25}, {"t": "WATER", "x": 29, "y": 25}, {"t": "WATER", "x": 30, "y": 25}, {"t": "WATER", "x": 31, "y": 25}, {"t": "WATER", "x": 32, "y": 25}, {"t": "WATER", "x": 33, "y": 25}, {"t": "WATER", "x": 34, "y": 25},
+    {"t": "WATER", "x": 25, "y": 34}, {"t": "WATER", "x": 26, "y": 34}, {"t": "WATER", "x": 27, "y": 34}, {"t": "WATER", "x": 28, "y": 34}, {"t": "WATER", "x": 29, "y": 34}, {"t": "WATER", "x": 30, "y": 34}, {"t": "WATER", "x": 31, "y": 34}, {"t": "WATER", "x": 32, "y": 34}, {"t": "WATER", "x": 33, "y": 34}, {"t": "WATER", "x": 34, "y": 34},
+    {"t": "WATER", "x": 25, "y": 26}, {"t": "WATER", "x": 25, "y": 27}, {"t": "WATER", "x": 25, "y": 28}, {"t": "WATER", "x": 25, "y": 29}, {"t": "WATER", "x": 25, "y": 30}, {"t": "WATER", "x": 25, "y": 31}, {"t": "WATER", "x": 25, "y": 32}, {"t": "WATER", "x": 25, "y": 33},
+    {"t": "WATER", "x": 34, "y": 26}, {"t": "WATER", "x": 34, "y": 27}, {"t": "WATER", "x": 34, "y": 28}, {"t": "WATER", "x": 34, "y": 29}, {"t": "WATER", "x": 34, "y": 30}, {"t": "WATER", "x": 34, "y": 31}, {"t": "WATER", "x": 34, "y": 32}, {"t": "WATER", "x": 34, "y": 33}
+  ],
+  "entities": [
+    {"b": "TC", "x": 28, "y": 28, "team": 1},
+    {"u": "knight", "x": 15, "y": 15, "team": 0, "stance": "aggressive"},
+    {"u": "knight", "x": 16, "y": 15, "team": 0, "stance": "aggressive"},
+    {"u": "knight", "x": 15, "y": 16, "team": 0, "stance": "aggressive"},
+    {"u": "knight", "x": 16, "y": 16, "team": 0, "stance": "aggressive"},
+    {"u": "militia", "x": 14, "y": 15, "team": 0, "stance": "aggressive"},
+    {"u": "militia", "x": 14, "y": 16, "team": 0, "stance": "aggressive"},
+    {"u": "spearman", "x": 15, "y": 14, "team": 0, "stance": "aggressive"},
+    {"u": "spearman", "x": 16, "y": 14, "team": 0, "stance": "aggressive"},
+    {"u": "archer", "x": 13, "y": 15, "team": 0, "stance": "aggressive"},
+    {"u": "archer", "x": 13, "y": 16, "team": 0, "stance": "aggressive"}
+  ]
+}

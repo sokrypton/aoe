@@ -333,8 +333,14 @@ function pageSuite() {
     selected = [m]; updateUI();
     gameOver = true; updateUI();
     const si = document.getElementById('sel-info');
-    assert(!si.classList.contains('multi-select'), 'grid class still on at game over');
-    assert(/VICTORY|DEFEAT/.test(document.getElementById('sel-name').textContent), 'no outcome text');
+    // Mobile (index.html): the outcome renders as the SAME single grid tile as
+    // any selection — the panel KEEPS its multi-select shape so it doesn't
+    // slide/resize into the legacy portrait+stats card. Icon only, no words.
+    assert(si.classList.contains('multi-select'), 'panel dropped its grid shape at game over (would slide)');
+    const gridIcons = document.querySelectorAll('#sel-grid .sel-unit-icon');
+    assert(gridIcons.length === 1, 'expected exactly one outcome tile, got ' + gridIcons.length);
+    assert(/[🏆💀]/u.test(gridIcons[0].textContent), 'outcome tile has no trophy/skull icon');
+    assert(document.getElementById('sel-name').textContent === '', 'mobile should have no outcome text next to the icon');
     gameOver = false;
   });
 
@@ -708,6 +714,30 @@ function pageSuite() {
       if (!r.found) throw new Error('Auto Scout button not found');
       if (!r.cmd) throw new Error('no auto-scout command issued');
       assertEq(r.sel, 0, 'enabling auto-scout deselects the scout');
+    });
+
+    await tapT('game over: See Map is view-only — no select, box-select or command over the frozen map', async () => {
+      const r = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0);
+        window.__pts=()=>({});`) + `;(()=>{
+        gameOver = true; window.seeMapMode = true;
+        selected = [];
+        doSelect(500, 400, false);                 const selAfterSelect = selected.length;
+        doBoxSelect(0, 0, 2000, 2000);             const selAfterBox = selected.length;
+        handleTap(500, 400, false);                const selAfterTap = selected.length;
+        // command paths must also no-op even if something is (was) selected
+        const m = entities.find(e=>e.utype==='militia'); selected = [m];
+        window.__cmds = [];
+        doCommand(500, 400);
+        handleTap(600, 400, false);
+        const cmds = window.__cmds.length;
+        gameOver = false; window.seeMapMode = false;
+        return { selAfterSelect, selAfterBox, selAfterTap, cmds };
+      })()`);
+      assertEq(r.selAfterSelect, 0, 'doSelect selected a unit after game over');
+      assertEq(r.selAfterBox, 0, 'doBoxSelect selected units after game over');
+      assertEq(r.selAfterTap, 0, 'handleTap selected a unit after game over');
+      assertEq(r.cmds, 0, 'a command was issued over the frozen map');
     });
 
     await tapT('posture row: soldiers show NO Guard tile; a guard post folds into the stance highlight', async () => {

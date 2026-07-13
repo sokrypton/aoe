@@ -89,6 +89,12 @@ const SCENES = {
     (${pageLookAt})(28, 28);
     updateUI();
     try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  defeat: `(${pageStage})();
+    const m = createUnit('militia', 28, 28, 0); selected.push(m);
+    gameOver = true; window.didIWin = () => false; // force the DEFEAT card
+    (${pageLookAt})(28, 28);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
 };
 
 const VIEWPORTS = {

@@ -529,9 +529,10 @@ C.addEventListener('wheel',e=>{
 C.addEventListener('mouseup',e=>{
   if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   // Match mousedown/mousemove/wheel: stay live in See-Map review mode even
-  // after gameOver. Selection is viewer-local (no commands), and bailing here
-  // skipped the drag cleanup at the end of this handler, leaving the minimap
-  // stuck dimmed (drag-select-active) until the next interaction.
+  // after gameOver so PAN/ZOOM keep working and the drag cleanup at the end of
+  // this handler still runs (bailing here left the minimap stuck dimmed). The
+  // actual unit interaction is view-only after the match: doSelect/doBoxSelect/
+  // handleTap all bail on gameOver, so no selecting or commanding the frozen map.
   if((gameOver && !window.seeMapMode)||recentTouch())return;
   if(e.button===1){
     middleDrag=false;
@@ -991,6 +992,7 @@ function tryRightClickGuard(sx, sy){
 // mouseup dispatch forks here when !isClassicUI). `shift` is only ever
 // passed by the desktop caller; touch leaves it undefined.
 function handleTap(sx,sy,shift){
+  if(gameOver)return; // match is over — See Map is view-only (no select/command)
   // 1. If placing a building, place it
   if(placing){
     doPlace(sx,sy);
@@ -1547,6 +1549,7 @@ function getResourceUnderCursor(sx, sy) {
 }
 
 function doSelect(sx,sy,shift){
+  if(gameOver)return; // match is over — See Map is view-only (pan/zoom stay live)
   let tile=screenToTile(sx,sy);
   let clicked=getUnitUnderCursor(sx, sy);
   if(clicked && clicked.team!==myTeam){
@@ -1582,6 +1585,7 @@ function doSelect(sx,sy,shift){
 }
 
 function doBoxSelect(x1,y1,x2,y2){
+  if(gameOver)return; // match is over — no selecting over the frozen map
   let sx1=Math.min(x1,x2),sy1=Math.min(y1,y2);
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   selected=entities.filter(en=>{
@@ -1619,6 +1623,7 @@ function doBoxSelect(x1,y1,x2,y2){
 }
 
 function doCommand(sx,sy){
+  if(gameOver)return; // match is over — no commands over the frozen map
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
   // Clicks never mutate world state directly — this resolves the click to

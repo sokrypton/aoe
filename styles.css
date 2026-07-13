@@ -397,6 +397,17 @@ canvas {
 .sel-unit-icon:hover {
   border-color: #ffd700;
 }
+/* Outcome tile (game over): a big centered emoji (🏆/💀) instead of a sprite —
+   sized off the tile so it fills it like the old portrait did, at every
+   breakpoint. Not a clickable selection, so no hover recolor is needed. */
+.sel-unit-icon.outcome-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tile-size) * 0.56);
+  text-shadow: 1px 1px 2px #000;
+  cursor: default;
+}
 .sel-unit-icon.cam-locked {
   border-color: #4ade80;
   box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);

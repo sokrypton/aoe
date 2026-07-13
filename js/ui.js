@@ -687,11 +687,17 @@ function updateUI(){
   // for the panel in every state. (Classic keeps its title/portrait box.)
   let idleCrest = !isClassicUI && selected.length===0 && gameStarted && !gameOver
     && typeof teamAge !== 'undefined' && teamAge && isPlayerTeam(myTeam);
+  // Game over on mobile renders the outcome (🏆/💀) as the SAME single tile as
+  // every other selection state, so the panel keeps one width and position and
+  // never shifts ("slides") into the legacy portrait+stats card. Classic keeps
+  // its worded card.
+  let gameOverTile = !isClassicUI && gameOver;
+  let iWonOutcome = gameOver ? (typeof didIWin==='function' && didIWin()) : false;
   // (No separate 'has-selection' class: in the mobile skin EVERY selection
   // state — single, group, garrison, idle crest — goes through the grid,
   // and .multi-select already hides the whole #sel-stats card; classic
   // never had a rule for it. One class, one meaning.)
-  if(selInfo) selInfo.classList.toggle('multi-select', (isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver);
+  if(selInfo) selInfo.classList.toggle('multi-select', ((isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver) || gameOverTile);
   // The grid gets its OWN dirty key: only what it actually renders (selection
   // membership, per-unit HP, garrison members). Keying it on the full
   // currentSelectionDetails rebuilt every icon ~30×/s while watching a
@@ -705,6 +711,7 @@ function updateUI(){
     // this function — no second full-entities scan.
     gridKey += ':idleage' + (myResearchTC ? 'adv' + myResearchTC.research.target : teamAge[myTeam]);
   }
+  if (gameOverTile) gridKey += ':over' + (iWonOutcome ? 1 : 0);
   if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
     let u = entitiesById.get(id);
     return u ? id + '_' + u.hp : id;
@@ -808,6 +815,15 @@ function updateUI(){
       icon.dataset.tipName = advTC ? ('Advancing to ' + AGES[crestIdx].name + '…') : AGES[crestIdx].name;
       if (advTC) icon.dataset.tipDesc = 'Villager training is paused at the Town Center while advancing.';
       selGrid.appendChild(icon);
+    } else if(gameOverTile){
+      // OUTCOME tile: the trophy/skull drawn as the exact same single tile as
+      // any selection — icon only, no text — so the panel keeps its shape and
+      // doesn't slide into the old portrait+stats card at game over.
+      let icon = document.createElement('div');
+      icon.className = 'sel-unit-icon outcome-tile';
+      setPortraitIcon(icon, null, iWonOutcome ? '🏆' : '💀');
+      icon.dataset.tipName = iWonOutcome ? 'Victory' : 'Defeat';
+      selGrid.appendChild(icon);
     }
   }
 
@@ -817,8 +833,11 @@ function updateUI(){
     let iWon = didIWin();
     if (port) { setPortraitIcon(port, null, iWon ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
     setSelHp('');
-    document.getElementById('sel-name').textContent=iWon?'VICTORY!':'DEFEAT!';
-    document.getElementById('sel-details').textContent=iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!';
+    // Mobile (index.html): the trophy/skull icon alone carries the outcome —
+    // no text rows next to it. Classic keeps the AoE2-style worded card.
+    let modern = !isClassicUI;
+    document.getElementById('sel-name').textContent = modern ? '' : (iWon?'VICTORY!':'DEFEAT!');
+    document.getElementById('sel-details').textContent = modern ? '' : (iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!');
     return;
   }
   if(!gameStarted){
