@@ -1037,7 +1037,7 @@ function controlAITradeCarts(ai,aiUnits){
 }
 
 // Commodity exchange (all difficulties, 1v1 + team). At most one 100-lot per
-// decision tick so the shared marketPrices don't crater/spike; the buy and
+// decision tick so the team's own prices don't crater/spike; the buy and
 // sell conditions are mutually exclusive (gold-low vs gold-high) so no
 // oscillation. Selling prefers stone (classic AoE2); buying relieves the worst
 // non-gold bottleneck and never spends below the gold-rich threshold.
@@ -1050,7 +1050,7 @@ function planAIMarketExchange(ai,profile){
     if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
   } else if(r.gold>300){
     let res=r.wood<120?'wood':r.food<100?'food':null;
-    if(res&&r.gold-marketPrices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
+    if(res&&r.gold-marketPricesFor(ai.team)[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
   }
 }
 

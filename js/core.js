@@ -254,6 +254,9 @@ const UPGRADES = {
       b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
     }});
   }},
+  // No apply() sweep — a pure live hook read at trade time (marketSellRatio,
+  // read by execMarketTrade). AoE2's Guilds halves the market commission.
+  guilds: {age:2, name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
 };
 function hasUpgrade(team, key){
   let c = UPGRADES[key];
@@ -758,17 +761,22 @@ function freshTeamResources(){
   return Array.from({length: NUM_TEAMS}, () => ({food:200,wood:200,gold:100,stone:200,prepaidFarms:0}));
 }
 let resources = freshTeamResources();
-// Global commodity exchange — ONE market shared by every player (AoE2 works
-// this way: buying/selling shifts the price for everyone). Gold is the
+// Commodity exchange — PER-PLAYER prices, exactly like AoE2: each team has its
+// own market, and buying/selling only shifts THAT team's prices (you can't
+// crash a rival's market). Indexed by team (mirrors `resources`). Gold is the
 // currency so it has no price. Buying a resource nudges its price up; selling
 // nudges it down; a buy/sell spread means round-tripping loses gold. Prices
 // are integer gold-per-100-units and are sim state: checksummed
 // (js/determinism.js) and saved (js/save.js), only mutated in execMarketTrade
 // (js/commands.js). See MARKET_* tuning constants below.
 function freshMarketPrices(){
-  return {food:100, wood:100, stone:130};
+  return Array.from({length: NUM_TEAMS}, () => ({food:100, wood:100, stone:130}));
 }
 let marketPrices = freshMarketPrices();
+// A team's price table (accessor shared by the UI/AI reads).
+function marketPricesFor(team){
+  return marketPrices[team];
+}
 // Commodity exchange tuning (integer math for determinism). Trades move 100
 // units. SPREAD is applied so buying costs the full price and selling only
 // returns SELL_RATIO of it. STEP shifts the price after each 100-unit trade;
@@ -776,7 +784,13 @@ let marketPrices = freshMarketPrices();
 const MARKET_LOT = 100;
 const MARKET_PRICE_MIN = 25, MARKET_PRICE_MAX = 9999;
 const MARKET_PRICE_STEP = 3;   // price change per 100-unit trade
-const MARKET_SELL_RATIO = 70;  // sell returns 70% of price (÷100), a 30% spread
+const MARKET_SELL_RATIO = 70;  // sell returns 70% of price (÷100) — AoE2's 30% commission
+const MARKET_SELL_RATIO_GUILDS = 85; // Guilds halves the fee to 15% (sell returns 85%)
+// Percent of the buy price a team gets back when selling — AoE2's 30%
+// commission, halved to 15% once the team has the Guilds card (Castle age).
+function marketSellRatio(team){
+  return hasUpgrade(team, 'guilds') ? MARKET_SELL_RATIO_GUILDS : MARKET_SELL_RATIO;
+}
 // Trade Cart gold per round trip = round(distance-between-markets * this).
 // Farther-apart Markets pay more, rewarding spread-out trade (AoE2 behavior).
 const TRADE_GOLD_PER_TILE = 1.2;

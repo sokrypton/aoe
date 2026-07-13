@@ -148,11 +148,12 @@ function simChecksum(){
     h = detMixFloat(h, r.gold); h = detMixFloat(h, r.stone);
     h = detMix(h, r.prepaidFarms || 0);
   }
-  // Global commodity exchange prices (marketPrices, js/core.js) — shared sim
-  // state mutated by execMarketTrade; a diverged price desyncs every future
-  // buy/sell. Guarded for older states without a market.
-  if (typeof marketPrices !== 'undefined' && marketPrices) {
-    h = detMix(h, marketPrices.food); h = detMix(h, marketPrices.wood); h = detMix(h, marketPrices.stone);
+  // Per-team commodity exchange prices (marketPrices, js/core.js) — sim state
+  // mutated by execMarketTrade; a diverged price desyncs every future buy/sell.
+  // Hashed in team-index order so peers agree.
+  for (let t = 0; t < marketPrices.length; t++) {
+    let m = marketPrices[t];
+    h = detMix(h, m.food); h = detMix(h, m.wood); h = detMix(h, m.stone);
   }
   for (let i = 0; i < projectiles.length; i++) {
     let p = projectiles[i];

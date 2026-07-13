@@ -366,6 +366,55 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+  T('hud: mobile grid TILE icon upgrades on age advance while the TC stays selected', () => {
+    // The visible mobile element is the #sel-grid tile (a single selection goes
+    // through the grid), NOT #sel-portrait. Its dirty key keys on membership+hp,
+    // which don't change on Advance — so the tile must fold the age in or it
+    // renders the stale previous-age icon until the selection changes.
+    stage();
+    const tc = entities.find(e => e.btype === 'TC' && e.team === 0);
+    selected = [tc];
+    const gridCls = () => { updateUI(); const el = document.querySelector('#sel-grid .sel-unit-icon .tile-sprite-img'); return el ? el.className : ''; };
+    teamAge[0] = 0; { let c = gridCls(); assert(/icon-TC-dark/.test(c), 'Dark grid tile should be TC-dark, got: ' + c); }
+    // advance WITHOUT touching the selection — this is the reported bug
+    teamAge[0] = 1; { let c = gridCls(); assert(/icon-TC-feudal/.test(c), 'grid tile did not upgrade to Feudal on advance, got: ' + c); }
+    teamAge[0] = 2; { let c = gridCls(); assert(/icon-TC-castle/.test(c), 'grid tile did not upgrade to Castle on advance, got: ' + c); }
+    teamAge[0] = 0;
+  });
+
+  // ---- Market (AoE2-accurate: per-player prices + Guilds) ----
+  T('market: prices are PER-PLAYER — one team\'s trades never move a rival\'s prices', () => {
+    stage();
+    createBuilding('MARKET', 10, 10, 0);
+    createBuilding('MARKET', 50, 50, 1);
+    resourceStore(0).food = 1000; resourceStore(1).food = 1000;
+    const foodPrice = t => marketPricesFor(t).food;
+    const t0Before = foodPrice(0), t1Before = foodPrice(1);
+    for (let i = 0; i < 3; i++) execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
+    assert(foodPrice(0) === t0Before - 3 * MARKET_PRICE_STEP, 'team 0 food price did not drop by its own selling');
+    assert(foodPrice(1) === t1Before, 'team 1 food price moved from team 0 trading — prices must be per-player');
+  });
+
+  T('market: Guilds (Castle age) improves the sell return from 70% to 85%', () => {
+    // Feudal: no Guilds → 70% of the price.
+    stage();
+    createBuilding('MARKET', 10, 10, 0);
+    resourceStore(0).food = 1000; resourceStore(0).gold = 0;
+    teamAge[0] = 1;
+    let p1 = marketPricesFor(0).food;
+    execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
+    assert(resourceStore(0).gold === Math.floor(p1 * 70 / 100), 'pre-Guilds sell should return 70%, got ' + resourceStore(0).gold);
+    // Castle: Guilds → 85%.
+    stage();
+    createBuilding('MARKET', 10, 10, 0);
+    resourceStore(0).food = 1000; resourceStore(0).gold = 0;
+    teamAge[0] = 2;
+    let p2 = marketPricesFor(0).food;
+    execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
+    assert(resourceStore(0).gold === Math.floor(p2 * 85 / 100), 'Castle-age (Guilds) sell should return 85%, got ' + resourceStore(0).gold);
+    teamAge[0] = 0;
+  });
+
   T('hud: Watch Tower icon is age-specific (Feudal variant, Castle keeps base) — portrait + build button', () => {
     stage();
     // portrait: select a TOWER, check the age variant (portrait rebuilds live)

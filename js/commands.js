@@ -398,10 +398,10 @@ function execAutoScout(cmd, team){
   if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
-// Commodity exchange: buy or sell 100 of a resource for gold at the current
-// global price (marketPrices, js/core.js — shared by all players). Mutates the
-// shared price so every player sees the drift, which is why it MUST run here in
-// the deterministic executor, never client-side. Integer math only.
+// Commodity exchange: buy or sell 100 of a resource for gold at this team's
+// own current price (marketPrices[team], js/core.js — per-player, AoE2-style).
+// Mutates that team's price so its own future trades drift, which is why it
+// MUST run here in the deterministic executor, never client-side. Integer math.
 function execMarketTrade(cmd, team){
   let res = cmd.resType;
   if (res !== 'food' && res !== 'wood' && res !== 'stone') return;
@@ -409,17 +409,21 @@ function execMarketTrade(cmd, team){
   let hasMarket = entities.some(b => b.type === 'building' && b.btype === 'MARKET' && b.team === team && b.complete && b.hp > 0);
   if (!hasMarket) return;
   let store = resourceStore(team);
-  let price = marketPrices[res];
+  // PER-PLAYER prices (AoE2): the team's own table, and only its own prices
+  // move — never a rival's. marketSellRatio bakes in the Guilds discount.
+  let mp = marketPrices[team];
+  if (!mp) return; // no price table for this team (shouldn't happen mid-match)
+  let price = mp[res];
   if (cmd.dir === 'buy') {
     if (store.gold < price) { feedbackFor(team, () => showMsg('Not enough gold.')); return; }
     store.gold -= price;
     store[res] += MARKET_LOT;
-    marketPrices[res] = Math.min(MARKET_PRICE_MAX, price + MARKET_PRICE_STEP);
+    mp[res] = Math.min(MARKET_PRICE_MAX, price + MARKET_PRICE_STEP);
   } else if (cmd.dir === 'sell') {
     if (store[res] < MARKET_LOT) { feedbackFor(team, () => showMsg('Not enough ' + res + ' to sell.')); return; }
     store[res] -= MARKET_LOT;
-    store.gold += Math.floor(price * MARKET_SELL_RATIO / 100);
-    marketPrices[res] = Math.max(MARKET_PRICE_MIN, price - MARKET_PRICE_STEP);
+    store.gold += Math.floor(price * marketSellRatio(team) / 100);
+    mp[res] = Math.max(MARKET_PRICE_MIN, price - MARKET_PRICE_STEP);
   }
   if (team === myTeam && typeof updateUI === 'function') updateUI();
 }

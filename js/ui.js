@@ -13,8 +13,8 @@ const SPRITE_ICON_KEYS = new Set(Object.keys(window.SPRITE_CELLS));
 // text, affordability cost and the submit handler for one buy/sell cell.
 // Transactions run in execMarketTrade (deterministic, js/commands.js).
 function wireMktCell(cell, dir, res){
-  let price=marketPrices[res];
-  let gold=dir==='buy'?price:Math.floor(price*MARKET_SELL_RATIO/100);
+  let price=marketPricesFor(myTeam)[res];
+  let gold=dir==='buy'?price:Math.floor(price*marketSellRatio(myTeam)/100);
   let resLabel=res.charAt(0).toUpperCase()+res.slice(1);
   cell.dataset.tipType='action';
   cell.dataset.tipLabel=(dir==='buy'?'Buy 100 ':'Sell 100 ')+resLabel;
@@ -336,9 +336,10 @@ function updateUI(){
     }
     // Market exchange prices are global and drift when ANY player trades —
     // fold them into the dirty key so a selected Market's price labels (and
-    // the buy costs feeding affordability) refresh on someone else's trade.
+    // the buy costs feeding affordability) refresh when this team trades.
     if (e.btype === 'MARKET' && e.complete) {
-      currentSelectionDetails += `:mkt${marketPrices.food}_${marketPrices.wood}_${marketPrices.stone}`;
+      let mp = marketPricesFor(myTeam);
+      currentSelectionDetails += `:mkt${mp.food}_${mp.wood}_${mp.stone}`;
     }
     // Prepaid-reseed count: consuming a prepaid reseed moves no resources
     // (they were spent at prepay time), so the Mill's badge and card line
@@ -526,7 +527,7 @@ function updateUI(){
     // it) must refresh the strip when a guard/stance command lands.
     +':gd'+selected.filter(s=>s.type==='unit').map(s=>s.guardX!=null?1:0).join('')
     +':'+(selected[0]&&selected[0].btype==='MILL'?(resourceStore(myTeam).prepaidFarms||0):'')
-    +':'+(selected[0]&&selected[0].btype==='MARKET'?marketPrices.food+'.'+marketPrices.wood+'.'+marketPrices.stone:'');
+    +':'+(selected[0]&&selected[0].btype==='MARKET'?(mp=>mp.food+'.'+mp.wood+'.'+mp.stone)(marketPricesFor(myTeam)):'');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
@@ -705,7 +706,12 @@ function updateUI(){
   // farm res, carried amount, cam flag) the grid doesn't even display.
   let gridKey = currentSelListKey;
   if (isMulti || singleGrid) gridKey += ':' + selected.map(s => s.id + '_' + s.hp).join(',')
-    + ':cam' + (window.cameraFollowId || 0);
+    + ':cam' + (window.cameraFollowId || 0)
+    // Grid tiles draw age-variant icons (iconKey: TC/Tower/walls change with
+    // age). The selection membership + hp don't change on an age advance, so
+    // without folding the age in, a building kept selected through Advance
+    // rendered its stale (previous-age) tile until the selection changed.
+    + ':gage' + (teamAge && isPlayerTeam(myTeam) ? teamAge[myTeam] : '');
   if (idleCrest) {
     // myResearchTC was already computed for the age dirty-key at the top of
     // this function — no second full-entities scan.
