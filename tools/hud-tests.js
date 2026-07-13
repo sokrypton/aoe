@@ -697,7 +697,7 @@ function pageSuite() {
       assertEq(r.sel, 0, 'placing a building deselects the villager');
     });
 
-    await tapT('auto-scout is a posture: keeps the selection so you can keep adjusting', async () => {
+    await tapT('auto-scout button deselects the scout (auto-scout is a dispatch task)', async () => {
       await page.evaluate(tapStage(`
         const sc=createUnit('scout',30,30,0); selected=[sc]; window.__pts=()=>({});`));
       const r = await page.evaluate(`(()=>{ updateUI();
@@ -707,7 +707,7 @@ function pageSuite() {
         return {found:true, sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='auto-scout')||null}; })()`);
       if (!r.found) throw new Error('Auto Scout button not found');
       if (!r.cmd) throw new Error('no auto-scout command issued');
-      assertEq(r.sel, 1, 'auto-scout is a posture — selection is kept, not cleared');
+      assertEq(r.sel, 0, 'enabling auto-scout deselects the scout');
     });
 
     await tapT('posture row: soldiers show NO Guard tile; a guard post folds into the stance highlight', async () => {

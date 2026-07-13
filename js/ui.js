@@ -1321,7 +1321,10 @@ function updateUI(){
         btn.dataset.tipLabel='Auto Scout';
         btn.dataset.tipDesc='The scout automatically explores unmapped areas and avoids fights. To stop it, pick another stance or order it somewhere.';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-compass"></div><div class="btn-label">Auto Scout</div>`;
-        btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); };
+        // Auto Scout is a dispatch task, not an adjust-in-place toggle: like a
+        // build/gather order it DESELECTS the scout so the player can get on
+        // with other things (the highlight is for when you re-select it).
+        btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); deselectAfterTask(); };
         act.appendChild(btn);
       }
     }
