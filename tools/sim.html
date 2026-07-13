@@ -71,6 +71,10 @@ window.runSimulation = async function(opts){
     // self-play match isn't skewed by one AI's villagers being mauled (lets us
     // read pure eco/wave behavior). Sim-only — the real game never sets this.
     bears: !(opts.bears === '0' || opts.bears === 0 || opts.bears === false || opts.bears === 'false'),
+    // 'fog=off' runs an All-Visible match (window.fogDisabled=true): the AI is
+    // omniscient, the vision grids are unmaintained, snapshots/checksum skip
+    // them — the exact code paths the fog match-option enables.
+    fog: opts.fog === 'off' ? 'off' : 'on',
     scenario: opts.scenario || null, // parsed scenario spec (js/scenario.js); overrides the procedural match
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
@@ -89,6 +93,7 @@ window.runSimulation = async function(opts){
     NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
+    window.fogDisabled = cfg.fog === 'off'; // match fog setting — before restartGame (initFog reads it)
     setMapSize(cfg.map);
     restartGame(cfg.diff.split(',')[0]);
     const diffs = cfg.diff.split(',');

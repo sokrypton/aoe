@@ -1702,7 +1702,7 @@ function doCommand(sx,sy){
   // in js/commands.js), so it stays green. Mirrors that sim rule using the
   // viewer's own fog (this marker is local cosmetic feedback).
   let t0=map[tile.y]&&map[tile.y][tile.x];
-  let seen = window.fogDisabled || (fog[tile.y] && fog[tile.y][tile.x] !== 0);
+  let seen = window.fogDisabled || window.seeMapMode || (fog[tile.y] && fog[tile.y][tile.x] !== 0);
   let markerColor='#0f0';
   if(seen&&t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
   // Check if targeting enemy OR own sheep for harvesting OR own unit to follow
@@ -1727,6 +1727,16 @@ function doCommand(sx,sy){
       // Wild bear (gaia): right-click means attack, never follow
       target = clickedUnit;
     } else {
+      // Own RAM clicked with melee infantry selected: that's a BOARDING order
+      // (AoE2 garrison-rams), not a follow — ship the ram as targetId too so
+      // execUnitCommand's garrison-in-ram branch can see it (own-team targets
+      // are otherwise nulled there, and this else-branch is exactly why the
+      // boarding path was unreachable from the mouse). followTarget stays set:
+      // non-rider units in the same selection escort the ram instead.
+      if (clickedUnit.utype === 'ram' && clickedUnit.team === myTeam
+          && selected.some(s => s.type === 'unit' && canRideRam(s))) {
+        target = clickedUnit;
+      }
       followTarget = clickedUnit;
     }
   }
@@ -1755,6 +1765,7 @@ function doCommand(sx,sy){
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';
   else if(target && target.type==='building' && target.btype==='MARKET' && target.team!==myTeam)markerColor='#0af'; // trade, not attack
+  else if(target && target.utype==='ram' && target.team===myTeam)markerColor='#0af'; // board, not attack
   else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';

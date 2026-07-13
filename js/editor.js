@@ -678,14 +678,15 @@ function syncControllersFromLive(){
 }
 
 // The editor's single Load entry — accepts EITHER detail level (the unification):
-//   - a full v3 snapshot (2D `map` grid) → applySavedGame, then drop back into
-//     EDIT mode so you can tweak the loaded game and re-save;
-//   - a compact scenario spec → loadEditorScenario (constructive, forces 4 teams).
-// Mirrors the game's loadGame() routing so the editor and the game read the
-// same files.
+//   - a full v4 snapshot (carries a `version` stamp) → applySavedGame, then
+//     drop back into EDIT mode so you can tweak the loaded game and re-save;
+//   - a compact scenario spec (no version) → loadEditorScenario (constructive,
+//     forces 4 teams).
+// Mirrors the game's loadGame() routing (version stamp, NOT map shape — the
+// v4 map is a compact object) so the editor and the game read the same files.
 function loadIntoEditor(data){
   data = data || {};
-  if (Array.isArray(data.map)){
+  if (data.version != null){
     // Clamp the selected team to the incoming save's team count BEFORE
     // applySavedGame — it runs updateUI, which reads resources[myTeam]; a stale
     // myTeam/tool.team (e.g. 3, from the picker) past the loaded numTeams would

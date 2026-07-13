@@ -1,11 +1,34 @@
 // ---- SAVE / LOAD (to a local JSON file) ----
 // Every piece of state below is plain data (no functions, no DOM refs, no
-// circular structure) — entities/map/fog are already flat objects/arrays
-// from createUnit/createBuilding/genMap, so a straight JSON.stringify of a
-// snapshot object round-trips cleanly with no custom (de)serialization.
+// circular structure) — entities are already flat objects from
+// createUnit/createBuilding, so a straight JSON.stringify round-trips cleanly.
+// The two BULK grids get compact encodings (v4): the tile grid was ~80% of a
+// save serialized as 8100 x {"t":0,"res":0,"occupied":null}, and the per-team
+// explored grids another ~20% as plain 0/1 arrays.
+
+// RLE for large mostly-uniform numeric arrays (terrain ids, explored grids):
+// flat [value, runLength, value, runLength, ...] pairs.
+function rleEncode(arr){
+  let out = [];
+  for (let i = 0; i < arr.length;) {
+    let v = arr[i], j = i + 1;
+    while (j < arr.length && arr[j] === v) j++;
+    out.push(v, j - i); i = j;
+  }
+  return out;
+}
+function rleDecode(pairs, len){
+  let out = new Array(len), k = 0;
+  for (let i = 0; i < pairs.length; i += 2) {
+    let v = pairs[i], n = pairs[i + 1];
+    for (let j = 0; j < n; j++) out[k++] = v;
+  }
+  return out;
+}
+
 function serializeGame(){
   return {
-    version: 3,
+    version: 4,
     savedAt: new Date().toISOString(),
     // A visible signature that this save came from a multiplayer match
     // (rather than single-player) — surfaced in the filename and the load
@@ -32,7 +55,20 @@ function serializeGame(){
       ? [...netGuests.values()].map(r => ({ seat: r.seat, token: r.token, tab: r.tab, name: r.name, kicked: !!r.kicked }))
       : null,
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
-    map, entities, nextId,
+    // v4 compact map: terrain as RLE, resources as sparse [tileKey, amount]
+    // pairs. `occupied` is DERIVED state (building footprints — entities.js
+    // stamps it at creation) and is rebuilt from the saved entities on load,
+    // never serialized.
+    map: (() => {
+      let n = MAP * MAP, t = new Array(n), res = [];
+      for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
+        let c = map[y][x], k = y * MAP + x;
+        t[k] = c.t;
+        if (c.res > 0) res.push(k, c.res);
+      }
+      return { t: rleEncode(t), res };
+    })(),
+    entities, nextId,
     // The sim PRNG cursor (js/core.js) IS sim state: it's checksummed and
     // rides lockstep snapshots, so a faithful snapshot must carry it too.
     // Without it a loaded save is NOT reproducible — the next simRandom()
@@ -42,9 +78,12 @@ function serializeGame(){
     simRngState, matchSeed,
     // The EXACT deterministic per-team explored grids (sim state, all
     // teams) — the loader's fog and every rejoining guest's fog rebuild
-    // from these, replacing the old lossy otherTeamExploredEver
-    // reconstruction. Uint8Array -> plain array for JSON.
-    teamExploredGrids: teamExploredGrid ? teamExploredGrid.map(g => Array.from(g)) : null,
+    // from these. RLE-encoded (v4). Skipped entirely when fog is disabled:
+    // teamHasExplored (js/core.js) short-circuits to true in a no-fog match,
+    // so what's-been-seen carries no information there — fresh zero grids on
+    // load are equivalent (and identical on every loading peer).
+    teamExploredGrids: (!window.fogDisabled && teamExploredGrid)
+      ? teamExploredGrid.map(g => rleEncode(g)) : null,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
     // performance.now() (see render.js/render-units.js), which restarts
     // near 0 every page load — saving deathTime as-is would make every
@@ -137,15 +176,16 @@ function triggerLoadDialog(){
 
 // THE single entry point for loading a world from a parsed data object,
 // transparently accepting either detail level of the unified format:
-//   - a FULL snapshot (serializeGame) — has a 2D `map` grid + verbatim entities
+//   - a FULL snapshot (serializeGame) — carries a `version` stamp
 //     → applySavedGame (exact restore incl. resources/age/controllers/rng/tick);
-//   - a COMPACT/constructive spec (js/scenario.js) — string/absent `map` and
-//     u/b-shorthand entities → loadScenario (rebuilds fresh, now also applies
-//     any `resources`/`ages`/`controllers` the compact file carries).
-// Route by the `map` shape. Used by the Load-Game button AND the editor, so
-// both read either kind of file. Returns 'save' | 'scenario'.
+//   - a COMPACT/constructive spec (js/scenario.js) — no version, string/absent
+//     `map` and u/b-shorthand entities → loadScenario (rebuilds fresh, now also
+//     applies any `resources`/`ages`/`controllers` the compact file carries).
+// Route by the version stamp (v4 saves carry an OBJECT map, so the old
+// map-shape test would misroute them to the scenario loader). Used by the
+// Load-Game button AND the editor. Returns 'save' | 'scenario'.
 function loadGame(data){
-  if (typeof loadScenario === 'function' && !Array.isArray(data.map)) {
+  if (typeof loadScenario === 'function' && data.version == null) {
     loadScenario(data);
     window.fogDisabled = data.fog !== true; // reveal the authored map (loadScenario also sets this)
     if (window.updateUI) updateUI();
@@ -175,17 +215,17 @@ function loadGameFromFile(file){
 }
 
 function applySavedGame(data, opts){
-  if (!data || typeof data !== 'object' || !Array.isArray(data.entities) || !Array.isArray(data.map)) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.entities) || !data.map || !Array.isArray(data.map.t)) {
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:3 — actually check it (the net layer's
+  // serializeGame stamps version:4 — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a format change
-  // fails loudly here instead of misloading silently. v3 (exact per-team
-  // explored grids, host-only MP saves) deliberately drops v2 support —
-  // no back-compat shims.
-  if (data.version !== 3) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v3 saves only');
+  // fails loudly here instead of misloading silently. v4 (compact RLE map,
+  // derived `occupied` rebuilt from entities, RLE/omitted explored grids)
+  // deliberately drops v3 support — no back-compat shims, per convention.
+  if (data.version !== 4) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v4 saves only');
     return;
   }
   try {
@@ -210,7 +250,22 @@ function applySavedGame(data, opts){
     ZOOM = data.ZOOM || ZOOM;
     if (data.GAME_SPEED) setGameSpeed(data.GAME_SPEED);
 
-    map = data.map;
+    // Rebuild the tile grid from the compact encoding: terrain RLE + sparse
+    // res. `occupied` starts null everywhere and is re-stamped from building
+    // footprints after the entities are restored below.
+    {
+      let flatT = rleDecode(data.map.t, MAP * MAP);
+      map = [];
+      for (let y = 0; y < MAP; y++) {
+        map[y] = [];
+        for (let x = 0; x < MAP; x++) map[y][x] = { t: flatT[y * MAP + x], res: 0, occupied: null };
+      }
+      let rr = data.map.res || [];
+      for (let i = 0; i < rr.length; i += 2) {
+        let k = rr[i];
+        map[Math.floor(k / MAP)][k % MAP].res = rr[i + 1];
+      }
+    }
     // Sized per-team structures follow the save's team count.
     NUM_TEAMS = data.numTeams || 2;
     // The loader is ALWAYS team 0: MP file saves are host-authored
@@ -224,8 +279,11 @@ function applySavedGame(data, opts){
     // same grids via the lockstep resume push.
     resetTeamVision();
     if (Array.isArray(data.teamExploredGrids)) {
-      teamExploredGrid = data.teamExploredGrids.map(g => Uint8Array.from(g));
+      teamExploredGrid = data.teamExploredGrids.map(g => Uint8Array.from(rleDecode(g, MAP * MAP)));
     }
+    // null grids = the save was taken with fog disabled: teamHasExplored
+    // short-circuits to true there, so resetTeamVision's fresh zero grids
+    // (identical on every loading peer) are a faithful restore.
     {
       const myEg = teamExploredGrid[myTeam] || teamExploredGrid[0];
       fog = [];
@@ -256,6 +314,10 @@ function applySavedGame(data, opts){
       // deal 0 damage on arrow impact (js/loop.js prefers the live shooter).
       if (e.type === 'building' && e.atk === undefined) e.atk = BLDGS[e.btype].atk || 0;
       entitiesById.set(e.id, e);
+      // Re-derive tile occupancy from the building footprint — the SAME
+      // helper creation uses (js/entities.js), so the two can't drift.
+      // Not serialized in v4.
+      if (e.type === 'building') stampBuildingFootprint(e);
     });
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
     // Restore the sim PRNG cursor so post-load randomness is reproducible and

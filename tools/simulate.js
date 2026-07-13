@@ -13,7 +13,7 @@
 //
 // Args are key=value (order-independent):
 //   mode=1v1|2v2   diff=easy|standard|hard (or comma list: easy,hard)
-//   map=small|medium|large   ticks=N   seed=N   rollback=1
+//   map=small|medium|large   ticks=N   seed=N   rollback=1   fog=off
 //   runs=N         run N matches (seed varied per run) and print a summary
 //   timeout=MS     per-match evaluate timeout (default scales with ticks)
 //   headed=1       show the browser window (debugging)
@@ -153,6 +153,7 @@ function aggregate(reports) {
     seed: a.seed != null ? parseInt(a.seed, 10) : null,
     rollback: a.rollback === '1',
     bears: a.bears, // 'bears=0' disables wild bears (isolate eco/wave behavior from fauna losses)
+    fog: a.fog,     // 'fog=off' runs an All-Visible match (the fog match-option's no-fog paths)
     scenario, // parsed scenario spec, or null
   };
   // Generous evaluate timeout: the sim yields between batches, so this only

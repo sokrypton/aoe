@@ -375,15 +375,25 @@ function canGatherTile(e,terrain,x,y){
 // launches) so scouts don't sprint ahead and arrive alone. Combat releases
 // the cap: once a unit's own target is close it fights at full speed.
 function unitMoveSpeed(e){
-  if(e.groupSpeed&&e.groupSpeed<e.speed){
+  let sp=e.speed;
+  // Garrisoned rams speed up (AoE2 DE): each rider adds 8% — a full ram
+  // (4 riders) moves at ~0.66 instead of 0.5. Rams IGNORE groupSpeed: the
+  // ram is the group's pace-setter (slowest raw speed), so a cap could only
+  // ever hold it at/below its own speed — which nullified the rider boost
+  // for the whole march (group orders stamp min RAW speed before boarding).
+  if(e.utype==='ram'){
+    if(e.garrison&&e.garrison.length)sp*=1+0.08*e.garrison.length;
+    return sp;
+  }
+  if(e.groupSpeed&&e.groupSpeed<sp){
     if(e.target){
       let t=entitiesById.get(e.target);
-      if(t&&distToTarget(e,t)<10){e.groupSpeed=undefined;return e.speed;}
+      if(t&&distToTarget(e,t)<10){e.groupSpeed=undefined;return sp;}
     }
-    if(!e.target&&e.path.length===0&&e.moveGoalX===undefined){e.groupSpeed=undefined;return e.speed;} // arrived
+    if(!e.target&&e.path.length===0&&e.moveGoalX===undefined){e.groupSpeed=undefined;return sp;} // arrived
     return e.groupSpeed;
   }
-  return e.speed;
+  return sp;
 }
 
 // findPath() REDIRECTS unwalkable destinations to the nearest walkable
@@ -608,6 +618,7 @@ function crowdedByUnits(u){
 // Scouts never breach (recon; controlAIScouts strips their building targets).
 function resolveStalledAttack(u, tgt){
   let stalledId = tgt.id;
+  let disengage = null; // set below; walked after the shared cleanup
   let mayRedirect = isAITeam(u.team) || tgt.type === 'building';
   let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
   if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
@@ -619,9 +630,27 @@ function resolveStalledAttack(u, tgt){
     // blockage (a melee dogpile) clears fast, so re-check it sooner.
     u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 900 : UNREACH_UNIT_TICKS);
   } else {
+    // Human-team unit that acquired this target ITSELF (retaliation /
+    // auto-acquire) and can't reach it: if the unreachable foe is RANGED and
+    // we're parked inside its fire, DISENGAGE — drop the chase and step out
+    // of its range instead of soaking arrows until dead (the "knight standing
+    // under a walled-in archer" bug: retaliation re-locked the target on every
+    // arrow and the unreach back-off held the unit in place forever). An
+    // EXPLICIT attack keeps the player's order (they can micro); an
+    // unreachable MELEE foe can't hurt us from where it is, so the old
+    // wait-in-place stays for ordinary crowded-fight stalls.
+    let tr = tgt.type === 'unit' ? (UNITS[tgt.utype].range || 0) : 0;
+    if (!u.explicitAttack && tr > 0 && dist(u, tgt) <= tr + 1) {
+      u.target = null; u.siegeSpot = null;
+      let ux = u.x - tgt.x, uy = u.y - tgt.y, len = Math.sqrt(ux*ux + uy*uy) || 1;
+      let out = tr + 2; // first tile safely beyond the shooter's reach
+      disengage = { x: Math.round(tgt.x + ux/len*out), y: Math.round(tgt.y + uy/len*out) };
+    }
     u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 300 : UNREACH_UNIT_TICKS);
   }
   retryClear(u, 'chaseBlocked'); clearUnitPath(u); u.chaseProg = undefined;
+  // Issued AFTER the shared cleanup — clearUnitPath above would wipe it.
+  if (disengage) pathUnitTo(u, disengage.x, disengage.y);
 }
 
 // Deterministic "press to contact": once a unit has SETTLED (path empty) in
@@ -1074,6 +1103,16 @@ function damageEntity(attacker, target){
   // same trap as the rally-point bug — record it for either team
   // unconditionally, the READ side already filters to "mine" correctly.
   target.lastHitTick = tick;
+  // Enemy-PLAYER hits only (not wildlife): the AI's tactical retreat keys on
+  // this — running from a bear is the documented losing move (bears outrun
+  // infantry and pick off runners; the mob-fight wins), so a bear mauling
+  // must never trigger a retreat. Hashed in detEntityHash (sim-read).
+  if (target.type === 'unit' && isEnemyOf(target.team, attacker)) target.lastEnemyHitTick = tick;
+  // MELEE hits on a ram specifically (any attacker, wildlife included): the
+  // AI's rider-disembark keys on this — arrow chip damage (isPierce, 1/hit
+  // through the ram's 8 pierce armor) must never eject the riders into the
+  // exact arrow fire the garrison protects them from. Hashed in detEntityHash.
+  if (target.utype === 'ram' && !isPierce) target.lastMeleeHitTick = tick;
 
   // Feed the adaptive music: actual damage is the strongest mood signal —
   // it catches open-field battles that building-proximity checks miss.
@@ -1167,7 +1206,22 @@ function damageEntity(attacker, target){
   // acquire it as a target and march in to attack the building, the opposite of
   // what the stance promises ("Never attacks or retaliates").
   let passiveNoRetaliate = target.stance==='passive';
-  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate){
+  // Don't re-lock an attacker this victim has already PROVEN unreachable
+  // (unreachId, stamped by the stall resolver) — retaliation re-acquired a
+  // walled-in shooter on every arrow, undoing the disengage and parking the
+  // victim under fire forever. Same nuance as auto-acquire: if the attacker
+  // is strikable RIGHT NOW (in my range / melee-adjacent), pathing is moot
+  // and the stamp doesn't apply.
+  let unreachAttacker = false;
+  if(target.unreachUntil>tick && target.unreachId===attacker.id){
+    let ad = dist(target, attacker);
+    unreachAttacker = (target.range||0)>0 ? ad > target.range+0.5 : ad > 1.5;
+  }
+  // An AI unit in tactical retreat (retreatUntil, js/ai.js) keeps running:
+  // retaliating would cancel the disengage the moment the pursuer lands a
+  // hit — exactly the fight-to-the-death this stamp exists to break.
+  let retreating = isRetreatingUnit(target);
+  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -1180,16 +1234,7 @@ function damageEntity(attacker, target){
     }
     if(shouldRetaliate){
       // Save task details so they can resume after defending themselves
-      if (target.utype === 'villager' && target.task && !target.savedTask) {
-        target.savedTask = {
-          task: target.task,
-          gatherX: target.gatherX,
-          gatherY: target.gatherY,
-          buildTarget: target.buildTarget,
-          buildQueue: target.buildQueue ? [...target.buildQueue] : [],
-          prevTask: target.prevTask
-        };
-      }
+      if (target.utype === 'villager') stashVillagerTask(target);
       target.target = attacker.id;
       target.task = null; // drop gathering/farming/building tasks
       clearUnitPath(target);
@@ -1205,6 +1250,7 @@ function damageEntity(attacker, target){
       // non-combatants sit out: carts have atk 0, rams do 1-2 vs units
       if(!isSoldierUnit(en))return;
       if(en.target||en.task||en.stance==='passive')return;
+      if(isRetreatingUnit(en))return; // tactical retreat (js/ai.js) — keeps running
       if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
       if(distToTarget(en,target)>8)return;
       en.target=attacker.id;
@@ -1273,6 +1319,15 @@ function damageEntity(attacker, target){
   }
 }
 
+// THE one way a villager's work gets stashed before an interruption
+// (retaliation, town bell, civilian militia) — restoreSavedTask below reads
+// exactly these six fields back. buildQueue is CLONED: the live array keeps
+// mutating while the villager is interrupted.
+function stashVillagerTask(v){
+  if(v.savedTask||!(v.task||v.buildTarget||v.gatherX>=0))return;
+  v.savedTask={task:v.task,gatherX:v.gatherX,gatherY:v.gatherY,
+    buildTarget:v.buildTarget,buildQueue:v.buildQueue?[...v.buildQueue]:[],prevTask:v.prevTask};
+}
 function restoreSavedTask(e) {
   if (e.utype === 'villager' && e.savedTask) {
     e.task = e.savedTask.task;
@@ -1297,11 +1352,21 @@ function restoreSavedTask(e) {
   }
 }
 
-// ---- GARRISON (AoE2-style town bell & building garrison) ----
-function garrisonCap(b){return (b.btype&&BLDGS[b.btype].garrisonCap)||0;}
+// ---- GARRISON (AoE2-style town bell, building garrison & ram riders) ----
+// Containers are buildings with a garrisonCap (TC/towers) — or a RAM unit
+// (UNITS.ram.garrisonCap): melee infantry rides inside, AoE2 garrison-rams.
+function garrisonCap(b){
+  return (b.btype&&BLDGS[b.btype].garrisonCap)||(b.utype&&UNITS[b.utype].garrisonCap)||0;
+}
 function garrisonCount(b){return b.garrison?b.garrison.length:0;}
-function canGarrisonIn(b,team){
-  return b.type==='building'&&b.team===team&&b.complete&&b.hp>0&&garrisonCap(b)>0;
+// `u` (optional) is the unit that wants in: unit containers (rams) only admit
+// eligible riders. Callers that pass no unit (town-bell shelter scan, rally
+// targets) therefore never treat a ram as shelter — correct: villagers work,
+// they don't ride.
+function canGarrisonIn(b,team,u){
+  if(b.team!==team||b.hp<=0||garrisonCap(b)<=0)return false;
+  if(b.type==='building')return !!b.complete;
+  return b.utype==='ram'&&!!(u&&canRideRam(u));
 }
 function enterGarrison(e,b){
   b.garrison=b.garrison||[];
@@ -1312,13 +1377,15 @@ function enterGarrison(e,b){
   // a belled villager banks its wood the moment it enters the TC. Buildings
   // that aren't a drop-off for the carried type (towers) don't; the villager
   // keeps the load while sheltered and drops it off after the all-clear.
-  if(e.carrying>0&&e.carryType&&dropAccepts(b,e.carryType)){
+  if(e.carrying>0&&e.carryType&&b.type==='building'&&dropAccepts(b,e.carryType)){
     resourceStore(e.team)[e.carryType]+=e.carrying;
     e.carrying=0;
   }
   e.garrisonedIn=b.id;
-  // Park the unit at the building's center so fog/minimap stay sane while hidden.
-  e.x=b.x+b.w/2;e.y=b.y+b.h/2;e.fromX=e.x;e.fromY=e.y;
+  // Park the unit at the container's center so fog/minimap stay sane while
+  // hidden (a ram has no w/h — riders sit ON the ram, and updateUnit keeps
+  // them tracking it as it moves).
+  e.x=b.x+(b.w||0)/2;e.y=b.y+(b.h||0)/2;e.fromX=e.x;e.fromY=e.y;
   b.garrison.push(e.id);
   // If the entering unit was selected, hand the selection to the building
   // (once its last selected unit steps inside) so the garrison grid shows up.
@@ -1341,7 +1408,9 @@ function ejectGarrison(b,filter){
     let u=entitiesById.get(id);
     if(!u){return;}
     if(filter&&!filter(u)){keep.push(id);return;}
-    let spawn=findSpawnTile(b.x+b.w,b.y+b.h,8,taken)||findSpawnTile(b.x-1,b.y-1,8,taken);
+    // Unit containers (rams) have no w/h footprint — spawn around the wreck.
+    let bx=Math.round(b.x),by=Math.round(b.y);
+    let spawn=findSpawnTile(bx+(b.w||1),by+(b.h||1),8,taken)||findSpawnTile(bx-1,by-1,8,taken);
     if(spawn)taken.add(spawn.x+','+spawn.y);
     u.garrisonedIn=undefined;
     if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
@@ -1386,10 +1455,7 @@ function ringTownBell(team){
     });
     if(!best)return;
     best.room--;
-    if(!e.savedTask&&(e.task||e.buildTarget||e.gatherX>=0)){
-      e.savedTask={task:e.task,gatherX:e.gatherX,gatherY:e.gatherY,
-        buildTarget:e.buildTarget,buildQueue:e.buildQueue,prevTask:e.prevTask};
-    }
+    stashVillagerTask(e);
     e.target=null;e.followId=undefined;e.buildTarget=null;
     e.task='garrison';e.garrisonTarget=best.b.id;
     let pt=nearestBldgPerimeter(e.x,e.y,best.b,e.id);
@@ -1496,7 +1562,15 @@ function updateTradeCart(e){
 
 function updateUnit(e){
   if(e.hp<=0)return;
-  if(e.garrisonedIn)return; // inside a building: no movement, tasks, or combat
+  if(e.garrisonedIn)return; // inside a building/ram: no movement, tasks, or combat
+  // Riders track the ram they're inside: their parked x/y would otherwise go
+  // stale as it moves, skewing fog contribution and the eject anchor.
+  if(e.utype==='ram'&&e.garrison&&e.garrison.length){
+    for(let gi=0;gi<e.garrison.length;gi++){
+      let u=entitiesById.get(e.garrison[gi]);
+      if(u){u.x=e.x;u.y=e.y;u.fromX=u.x;u.fromY=u.y;}
+    }
+  }
   // Targets that garrisoned mid-fight become unattackable — drop them.
   if(e.target){
     let t=entitiesById.get(e.target);
@@ -1505,15 +1579,20 @@ function updateUnit(e){
   if(e.utype==='villager' && !e.target && e.savedTask && e.task!=='garrison'){
     restoreSavedTask(e);
   }
-  // Walking toward a building to garrison inside it
+  // Walking toward a building (or a ram — riders) to garrison inside it
   if(e.task==='garrison'){
     let b=e.garrisonTarget?entitiesById.get(e.garrisonTarget):null;
-    if(!b||b.hp<=0||!b.complete||garrisonCount(b)>=garrisonCap(b)){
+    // canGarrisonIn re-validates eligibility per WALKER (not just container
+    // state): a ram only admits melee infantry — without this, any unit
+    // handed the task boarded on arrival (enterGarrison checks capacity only).
+    if(!b||!canGarrisonIn(b,e.team,e)||b.garrisonedIn||garrisonCount(b)>=garrisonCap(b)){
       e.task=null;e.garrisonTarget=null; // savedTask (if any) resumes next tick
     } else if((()=>{
       // Arrival check: like adjToBuilding but accepts diagonal corner
       // perimeter tiles (~1.41 from the footprint), which nearestBldgPerimeter
-      // legitimately routes units to.
+      // legitimately routes units to. A unit container (ram) is a point —
+      // plain distance.
+      if(b.type==='unit')return dist(e,b)<=1.45;
       let gdx=Math.max(b.x-0.5-e.x,0,e.x-(b.x+b.w-0.5));
       let gdy=Math.max(b.y-0.5-e.y,0,e.y-(b.y+b.h-0.5));
       return Math.sqrt(gdx*gdx+gdy*gdy)<=1.45;
@@ -1521,7 +1600,9 @@ function updateUnit(e){
       enterGarrison(e,b);
       return;
     } else if(e.path.length===0&&retryReady(e,'garrison')){
-      let pt=nearestBldgPerimeter(e.x,e.y,b,e.id);
+      // A ram MOVES between re-paths: chase its current tile (riders are
+      // faster than the ram, so the pursuit converges).
+      let pt=b.type==='unit'?{x:Math.round(b.x),y:Math.round(b.y)}:nearestBldgPerimeter(e.x,e.y,b,e.id);
       if(pt)pathUnitTo(e,pt.x,pt.y);
       if(e.path.length===0){
         // Entrance likely crowded with other garrisoning villagers — keep
@@ -2012,6 +2093,21 @@ function updateUnit(e){
           return;
         }
         if(!combatApproach(e,t,d,null,range)) return; // approach only to firing range — not onto the target
+        // Wall-detour hold (self-acquired chases only): a firing tile exists
+        // but the walk to it is several times the straight-line distance —
+        // fortifications separate us, and the "nearest in-range tile" is out
+        // through the own gate. Arrows fly over walls, so the smart archer
+        // holds at the wall and shoots whatever actually comes into range,
+        // instead of filing out of the city to get a shot (the reported
+        // behavior). Same skew test as the melee breach decision
+        // (detourBreachThreshold, in tiles: path > 2x direct + 10). Explicit
+        // orders and attack waves (explicitAttack) still march the long way.
+        if(!e.explicitAttack && e.path.length > d*2+10){
+          e.target=null;
+          e.unreachId=t.id; e.unreachUntil=tick+UNREACH_UNIT_TICKS;
+          clearUnitPath(e); e.chaseProg=undefined;
+          return;
+        }
       } else {
         clearUnitPath(e);
         if (e.atkCooldown <= 0) {
@@ -2416,7 +2512,7 @@ function updateUnit(e){
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
     // A HUMAN scout still auto-acquires (the player expects it to fight).
-    if (e.stance !== 'passive' && (tick + e.id) % 3 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
+    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % 3 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let reachAtk=(e.range>0?e.range:1.6);
       // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
@@ -2476,7 +2572,29 @@ function updateUnit(e){
           let cx=Math.round(closest.x), cy=Math.round(closest.y);
           let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
           let end=pth.length?pth[pth.length-1]:null;
-          if(end && Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy))<=Math.max(2,reachAtk)){
+          // End-tile tolerance: ranged can fire from `range` out, so any end
+          // within range works. MELEE must end strike-ADJACENT (<=1): the old
+          // flat 2 counted "beside the wall" as reaching a walled-in target —
+          // one tile short of striking — so the unit re-locked an unreachable
+          // shooter every time the unreach stamp expired and marched back into
+          // its arrows (the walled-archer knight loop).
+          let endTol = e.range>0 ? reachAtk : 1;
+          let endD = end ? Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy)) : Infinity;
+          // Melee ending exactly one tile short: distinguish a CROWD from a
+          // WALL. If any tile adjacent to the target is blocked only by
+          // standing UNITS (walkable with units ignored, not without), the
+          // ring is a dogpile that clears — lock on and let combatApproach's
+          // crowd machinery queue us in (the pre-fix behavior for exactly
+          // this case). Terrain/buildings on every adjacent tile = genuinely
+          // walled → unreachable stamp.
+          let crowdRing=false;
+          if(end && e.range<=0 && endD===2){
+            for(let ady=-1;ady<=1&&!crowdRing;ady++)for(let adx=-1;adx<=1;adx++){
+              if(!adx&&!ady)continue;
+              if(!walkable(cx+adx,cy+ady,e.id)&&walkable(cx+adx,cy+ady,e.id,true)){crowdRing=true;break;}
+            }
+          }
+          if(end && (endD<=endTol || crowdRing)){
             e.target=closest.id;
           } else { e.unreachId=closest.id; e.unreachUntil=tick+UNREACH_UNIT_TICKS; } // a unit's blockage clears fast — re-check soon
         }
@@ -2634,6 +2752,11 @@ function deleteOwnedEntity(en){
 }
 
 function handleDeath(e,killerTeam){
+  // Riders survive a destroyed ram (AoE2: units pop out of the wreck) —
+  // unlike a building's garrison, which perishes with it below.
+  if(e.type==='unit'&&e.garrison&&e.garrison.length>0){
+    ejectGarrison(e);
+  }
   if(e.type==='unit'&&e.utype==='sheep'){
     e.utype = 'sheep_carcass';
     e.hp = 100;

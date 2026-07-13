@@ -169,11 +169,13 @@ function applyGameSettings(){
   if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let playersSel = document.querySelector('input[name="players"]:checked');
+  let fogSel = document.querySelector('input[name="fogmode"]:checked');
   try {
     if (diffSel) localStorage.setItem('aoeDifficulty', diffSel.value);
     if (sizeSel) localStorage.setItem('aoeMapSize', sizeSel.value);
     if (speedSel) localStorage.setItem('aoeGameSpeed', speedSel.value);
     if (playersSel) localStorage.setItem('aoePlayers', playersSel.value);
+    if (fogSel) localStorage.setItem('aoeFogMode', fogSel.value);
   } catch (e) {}
 }
 
@@ -202,7 +204,7 @@ function applyGameSettings(){
 // core.js having initialized.
 (function restoreGameSettings(){
   try {
-    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players']]
+    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players'], ['aoeFogMode','fogmode']]
       .forEach(([key, name]) => {
         let v = localStorage.getItem(key);
         if (!v) return;
@@ -321,7 +323,11 @@ function onStartClicked(){
   applyAudioSettings();
   applyGameSettings();
 
-  window.fogDisabled = false;
+  // Match-level fog setting (the "Map" option): Fog of War vs All Visible.
+  // Immutable for the whole match — sim reads, the AI's knowledge model,
+  // save format, lockstep snapshots and the checksum all key off it.
+  let fogSel = document.querySelector('input[name="fogmode"]:checked');
+  window.fogDisabled = !!(fogSel && fogSel.value === 'open');
 
   // Always regenerate the map (even on a fresh load) so the chosen size takes effect,
   // since init() already ran once at script load with the default size.
@@ -748,15 +754,13 @@ window.onNetConnectionOpen = function(seat){
       return;
     }
     if (!mpMatchStarted) {
-      // Real per-team fog now (updateFog() in js/core.js computes vision
-      // for `myTeam` — 0 on the host, 1 on the guest — instead of a
-      // hardcoded team 0). Force it on explicitly regardless of whatever
-      // a loaded save's own fogDisabled flag was — a live multiplayer
-      // match should always use real fog, not a leftover "reveal map"
-      // setting from single-player. The guest forces it too on its own
-      // start path (js/lockstep.js), and resync state carries the flag
-      // (it gates sim-visible checks), so both peers agree.
-      window.fogDisabled = false;
+      // Fog is a synced match setting now: a fresh lobby match gets it from
+      // lobbyState at start (hostStartLockstepMatch → lockstep-start, which
+      // the guest applies), so only DEFAULT it here; hosting from a loaded
+      // save keeps the save's own flag (applySavedGame restored it — a
+      // no-fog save resumes as a no-fog match on every peer via the resync
+      // state, which carries the flag).
+      if (!mpHostingFromExistingGame) window.fogDisabled = false;
       if (mpHostingFromExistingGame) {
         // Hosting from a save loaded before Host was clicked — keep that
         // exact state: hand it to the guest and enter lockstep from it
@@ -1346,9 +1350,12 @@ function toggleHelp(){
 //   - fog is turned off and every tile revealed so the whole map is visible.
 function seeMap(){
   window.__gameOverBannerDismissed = true;
+  // Viewer-only reveal: seeMapMode + flooding the fog grid below. It must NOT
+  // touch window.fogDisabled — that is now a match-start-immutable, peer-
+  // synced SIM setting (hashed in simChecksum); the post-game reveal is pure
+  // presentation. Input hit-testing reads seeMapMode alongside it (js/input.js).
   window.seeMapMode = true;
-  window.fogDisabled = true;
-  // Reveal every tile now (updateFog() no-ops while fogDisabled, so flip the
+  // Reveal every tile now (updateFog() doesn't run post-game, so flip the
   // grid directly — 2 = fully visible).
   if (typeof fog !== 'undefined' && fog && fog.length) {
     for (let y = 0; y < fog.length; y++) {

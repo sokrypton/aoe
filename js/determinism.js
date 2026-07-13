@@ -133,6 +133,10 @@ function detEntityHash(e){
   h = detMixStr(h, e.tradePhase);
   h = detMix(h, e.autoScout ? 1 : 0); // player Auto Scout mode (re-paths each tick, js/logic.js)
   h = detMixStr(h, e.stance);         // combat stance — now mid-game-settable via the HUD (set-stance cmd)
+  h = detMix(h, e.retreatUntil || 0); // AI tactical retreat: gates retaliation/auto-acquire/retasking (js/ai.js, js/logic.js)
+  h = detMix(h, e.lastEnemyHitTick == null ? -1 : e.lastEnemyHitTick); // retreat trigger (enemy-player hits only)
+  h = detMix(h, e.lastMeleeHitTick == null ? -1 : e.lastMeleeHitTick); // ram rider-disembark trigger (melee only)
+  h = detMix(h, e.waveId == null ? -1 : e.waveId); // AI wave membership (casualty-retreat counts it)
   return h >>> 0;
 }
 
@@ -179,7 +183,15 @@ function simChecksum(){
   // the set cells (position- and value-sensitive); the unexplored majority is
   // skipped, so it's cheap early and grows with the front, like the map-res
   // hash above. Tolerate absence for older states.
-  if (typeof teamExploredGrid !== 'undefined' && teamExploredGrid) {
+  // The fog setting is hashed WHEN SET (not as an unconditional 0/1): fog-on
+  // checksums stay byte-comparable across versions (the cross-version
+  // equivalence promise on end.checksum), while a peer disagreement still
+  // trips loudly — the fog-off peer mixes this extra value AND skips the grid
+  // fold the fog-on peer performs.
+  if (window.fogDisabled) h = detMix(h, 0x0F06);
+  // Skipped under All-Visible: the grids are unmaintained (updateTeamVision
+  // early-returns) and every read short-circuits, so they're dead state.
+  if (!window.fogDisabled && typeof teamExploredGrid !== 'undefined' && teamExploredGrid) {
     for (let t = 0; t < teamExploredGrid.length; t++) {
       let g = teamExploredGrid[t];
       if (!g) continue;
@@ -208,6 +220,8 @@ function simChecksum(){
       h = detMix(h, ai.gateBuilt ? 1 : 0);
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
+      h = detMix(h, ai.lastWaveSize || 0);                                  // wave-casualty retreat reads it
+      h = detMix(h, ai.militiaUntil == null ? -1 : ai.militiaUntil);        // civilian-militia window (bell suppression)
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
       h = detMix(h, ai.resignScore || 0);

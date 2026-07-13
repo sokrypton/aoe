@@ -669,9 +669,11 @@ function updateUI(){
   let selInfo=document.getElementById('sel-info');
   let selGrid=document.getElementById('sel-grid');
   let isMulti=selected.length>1;
-  // A selected own building with units inside reuses the multi-select grid to
-  // show its garrison (AoE2-style); clicking an icon releases one of them.
-  let garrisonSel = !isMulti && selected.length===1 && selected[0].type==='building'
+  // A selected own building — or a ram carrying riders (AoE2 garrison-rams) —
+  // with units inside reuses the multi-select grid to show its garrison
+  // (AoE2-style); clicking an icon releases one of them.
+  let garrisonSel = !isMulti && selected.length===1
+    && (selected[0].type==='building' || selected[0].utype==='ram')
     && selected[0].team===myTeam && selected[0].garrison && selected[0].garrison.length>0
     ? selected[0] : null;
   // Mobile skin: SINGLE selections render through the same grid as groups —
@@ -917,7 +919,7 @@ function updateUI(){
       }
       // The TC card skips the garrison line — its count already shows on the
       // building itself (the number by the flag) and in the garrison grid.
-      if(e.complete && garrisonCap(e) > 0 && e.btype !== 'TC') {
+      if((e.type!=='building'||e.complete) && garrisonCap(e) > 0 && e.btype !== 'TC') {
         det += `<div class="det-row">Garrison: ${garrisonCount(e)}/${garrisonCap(e)}${garrisonCount(e)>0?' (+'+Math.min(garrisonCount(e),5)+' arrows)':''}</div>`;
       }
       // (No "Building: X%" row while under construction — the cyan HP bar
@@ -1889,7 +1891,7 @@ window.cancelReseed = cancelReseed;
       const arrows = buildingArrowStats(e.btype);
       if (arrows) d.stats.push(`⚔️ ${arrows.atk}`, `🏹 ${arrows.range}`);
       if (b && b.armor && (b.armor.m > 0 || b.armor.p > 0)) d.stats.push(`🛡️ ${b.armor.m}/${b.armor.p}`);
-      if (e.complete && garrisonCap(e) > 0) d.stats.push(`Garrison ${garrisonCount(e)}/${garrisonCap(e)}`);
+      if ((e.type!=='building'||e.complete) && garrisonCap(e) > 0) d.stats.push(`Garrison ${garrisonCount(e)}/${garrisonCap(e)}`);
       if (!e.complete && !e.exhausted) d.stats.push(`Building ${Math.floor(e.buildProgress / e.buildTime * 100)}%`);
     }
     return d;

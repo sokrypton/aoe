@@ -259,6 +259,13 @@ document.body.insertAdjacentHTML('afterbegin', `
             <label class="segment"><input type="radio" name="mapsize" value="large"><span title="Large">L</span></label>
           </div>
         </div>
+        <div class="setup-col">
+          <h3>Map</h3>
+          <div class="segmented">
+            <label class="segment"><input type="radio" name="fogmode" value="fog" checked><span title="Fog of War">Fog</span></label>
+            <label class="segment"><input type="radio" name="fogmode" value="open"><span title="All Visible — the whole map is revealed for everyone (the AI included)">Open</span></label>
+          </div>
+        </div>
       </div>
       <div class="setup-row setup-row-audio">
         <div class="setup-col setup-col-speed">
@@ -384,6 +391,13 @@ document.body.insertAdjacentHTML('afterbegin', `
               <label class="segment"><input type="radio" name="lobbyspeed" value="1"><span>1</span></label>
               <label class="segment"><input type="radio" name="lobbyspeed" value="2" checked><span>2</span></label>
               <label class="segment"><input type="radio" name="lobbyspeed" value="4"><span>4</span></label>
+            </div>
+          </div>
+          <div class="setup-col">
+            <h3>Map</h3>
+            <div class="segmented" id="lobby-fog-seg">
+              <label class="segment"><input type="radio" name="lobbyfog" value="fog" checked><span title="Fog of War">Fog</span></label>
+              <label class="segment"><input type="radio" name="lobbyfog" value="open"><span title="All Visible — whole map revealed for every player and AI">Open</span></label>
             </div>
           </div>
         </div>

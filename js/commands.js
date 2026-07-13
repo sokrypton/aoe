@@ -496,6 +496,26 @@ function execUnitCommand(cmd){
   let followTarget = cmd.followId != null ? entitiesById.get(cmd.followId) : null;
   if (followTarget && (followTarget.hp <= 0 || followTarget.team !== myTeam)) followTarget = null;
 
+  // Garrison-in-ram (AoE2 garrison-rams): a right-click on an OWN ram with
+  // melee infantry selected loads them in (js/input.js ships the ram as
+  // targetId for exactly this case). Resolved directly from cmd (like the
+  // trade-cart Market click) because `target` is nulled for own-team
+  // entities above.
+  let ramTarget = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  if (!(ramTarget && ramTarget.type === 'unit' && ramTarget.utype === 'ram'
+        && ramTarget.team === myTeam && ramTarget.hp > 0 && !ramTarget.garrisonedIn)) ramTarget = null;
+  // Slot accounting across the whole selection (same idea as ringTownBell's
+  // per-container reservations): seats already taken plus riders already
+  // WALKING to board count against the cap, and each boarding order issued
+  // below consumes one — surplus infantry fall through to the follow branch
+  // (escort) instead of marching to a full ram and idling there.
+  let ramRoom = 0;
+  if (ramTarget) {
+    let walkers = 0;
+    for (const u of entities) if (u.type === 'unit' && u.task === 'garrison' && u.garrisonTarget === ramTarget.id) walkers++;
+    ramRoom = Math.max(0, garrisonCap(ramTarget) - garrisonCount(ramTarget) - walkers);
+  }
+
   let movers = selected.filter(s => s.type === 'unit');
   let offsets = getFormation(movers.length);
   // AoE2 formation pace: a group order moves everyone at the slowest
@@ -519,6 +539,16 @@ function execUnitCommand(cmd){
     // walks back after the fight. An ESCORT (guard-on-unit) does end here,
     // mirroring followId: the post freezes at its last synced spot.
     s.guardTargetId = null;
+    if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
+      // Ride the ram: same walk-to-container flow as the town bell
+      // (task='garrison' + garrisonTarget; updateUnit chases the moving ram
+      // and enterGarrison seats the rider on arrival). Surplus riders (seat
+      // count exhausted) fall through to the follow branch and escort it.
+      ramRoom--;
+      s.target = null; s.task = 'garrison'; s.garrisonTarget = ramTarget.id;
+      pathUnitTo(s, Math.round(ramTarget.x), Math.round(ramTarget.y));
+      return;
+    }
     if (s.utype === 'tradecart') {
       // Trade carts route to a Market, they don't attack. Resolve the clicked
       // entity directly from cmd (NOT the `target` var, which is nulled for

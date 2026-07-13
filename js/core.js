@@ -411,6 +411,12 @@ function freshAIState(team){
   return { team, tick: 0,
     intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
+    // Size of the last launched wave — the wave-casualty retreat compares
+    // far-from-home survivors against it (controlAIMilitary, js/ai.js).
+    lastWaveSize: 0,
+    // Civilian-militia response window: while set (> tick), villagers are
+    // fighting a small raid and the garrison bell stays suppressed.
+    militiaUntil: null,
     seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null,
     // Wildlife danger memory: gather tiles near a bear that mauled one of
     // our villagers are off-limits until the stamp expires or the bear is
@@ -588,7 +594,10 @@ const UNITS={
   // bonus in damageEntity (js/logic.js) — mirrored in the AI's
   // wallBreachTicks (js/ai.js). High pierce armor makes arrow fire (4-5
   // pierce) tick for 1; melee hits it at full damage, the AoE2 counter.
-  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:1080,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee.',icon:'🐏'},
+  // garrisonCap: melee infantry rides inside (AoE2 garrison-rams) — protected
+  // en route, each rider speeds the ram up (unitMoveSpeed, js/logic.js), and
+  // riders pop out unharmed when the ram is destroyed (handleDeath).
+  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:1080,garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -622,6 +631,15 @@ function isSoldierUnit(u){
   return u.type === 'unit' && u.utype !== 'villager' && u.utype !== 'bear'
     && !isHarmlessAnimal(u) && !isWoodVehicle(u);
 }
+// Who may ride inside a ram (AoE2 garrison-rams: melee infantry only —
+// archers need to shoot, cavalry doesn't fit, villagers work).
+const RAM_RIDER_TYPES = new Set(['militia', 'spearman']);
+function canRideRam(u){ return u.type === 'unit' && RAM_RIDER_TYPES.has(u.utype); }
+// Mid-tactical-retreat (retreatUntil stamp, js/ai.js aiRetreatUnit): the unit
+// is running home and must not be re-engaged by retaliation/auto-acquire or
+// re-dispatched by any AI pass. THE one predicate — the raw `retreatUntil >
+// tick` comparison must not be re-spelled at call sites.
+function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // AI pacing, authored against the AoE2-rate economy (30 ticks per
 // game-second; villager trains in 25 game-s, militia in 21 game-s).
 // AoE2-style attack plan: the first strike comes no earlier than attackTick,
@@ -645,14 +663,31 @@ const AI_LEVELS={
   // time to stabilise and siege almost never lands. Mirrors how AoE2's easiest
   // AI feels easy: it's played worse, not given weaker units. Harder levels tech
   // faster and push harder for the real threat.
-  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:32400,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,waveCap:6,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  // Difficulty model — DE-INFORMED, adapted to our engine. AoE2 DE scales ONLY
+  // attack aggression and shares one economy, but that flattened OUR gradient
+  // (Easy could out-turtle Hard: over-committing feeds units to defensive fire,
+  // and decisionInterval doesn't differentiate eco speed here). So we ALSO
+  // differentiate the ECONOMY per level (pop cap, aging speed, production,
+  // wall/tower use) so Hard genuinely out-develops Easy, while keeping the DE
+  // ideas that DID work: army-DRIVEN attacks (low attackTick, not a clock) and
+  // the commit-% mechanic (js/ai.js controlAIMilitary). The three DE aggression
+  // knobs still scale ~Hard 1.0 / Medium 0.75 / Easy 0.5:
+  //   attackSize    = sn-minimum-attack-group-size (soldiers needed to attack)
+  //   waveCap       = sn-maximum-attack-group-size (biggest group)
+  //   commitPercent = sn-percent-attack-soldiers (% of army sent; rest defends)
+  // Flat across difficulties (AoE2 does NOT difficulty-scale these two):
+  //   sightedResponsePercent = sn-percent-enemy-sighted-response [50] (% of
+  //     eligible troops that answer a sighted threat; the rest hold as home defense)
+  //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
+  //     to fight a small raid at the town when the army can't answer)
+  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveCap:6,commitPercent:38,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:10800,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
   // Standard plays FAIR — no resource cheat (trickle all 0), like AoE2's
   // Moderate AI. It's still a real challenge (reaches Castle ~15min, fields
   // rams/knights, walls + a tower, pushes from ~10min) but wins on competent
   // play, not free resources. Only hard cheats — AoE2 reserves resource
   // handicaps for its hardest tiers.
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:18000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,waveCap:12,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:14400,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:2,wood:2,gold:1,stone:1},maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,waveCap:24,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:6000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:3600,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
@@ -1061,6 +1096,12 @@ function resetTeamVision(){
   visionFreshTick = -1;
 }
 function updateTeamVision(){
+  // All-Visible match: every read of the grids is short-circuited
+  // (teamCanSeeTile/teamHasExplored return true, updateFog floods), so
+  // maintaining them is pure waste — historically the biggest sim cost at
+  // scale. The grids stay zeroed all match; snapshots/saves/checksum skip
+  // them under the same flag.
+  if (window.fogDisabled) return;
   if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
   // Rebuilt every VISION_REFRESH_TICKS (the per-team vision update is the
   // biggest sim cost at scale; sim reads tolerating a tick or two of stale
@@ -1137,9 +1178,19 @@ function updateTeamVision(){
   visStamps.forEach((st, id) => { if (st.gen !== gsig) { applyDisk(st.t, st.cx, st.cy, st.s, -1); visStamps.delete(id); } });
 }
 function teamCanSeeTile(team, k){
+  // All-Visible match: the grids are not maintained at all (updateTeamVision
+  // skips) — everything is visible by definition.
+  if (window.fogDisabled) return true;
   return teamVisGrid != null && teamVisGrid[team][k] > 0;
 }
 function teamHasExplored(team, k){
+  // No-fog match (scenarios, dev): full knowledge for EVERYONE — the explored
+  // grids carry no information, which is also why v4 saves omit them when fog
+  // is off (js/save.js). Sim-consistent: fogDisabled is a match-level setting
+  // that rides saves/scenarios identically on every peer, and it already
+  // gates the other sim visibility reads (tileHiddenForTeam,
+  // buildingVisibleToTeam, the auto-acquire fog check).
+  if (window.fogDisabled) return true;
   return teamExploredGrid != null && teamExploredGrid[team][k] === 1;
 }
 // Deterministic "this human team can't act on tile k yet because it hasn't

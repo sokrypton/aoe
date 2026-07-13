@@ -43,12 +43,83 @@ function updateAIGarrisonReaction(ai){
   // ?? not || : the tick can legitimately be 0 (a hit landed on tick 0),
   // and 0 is falsy — || would wrongly discard it and treat that as "never".
   let underAttack = tick - (ai.lastBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
+  // A live civilian-militia response suppresses the bell: the AI chose to
+  // FIGHT the small raid with villagers rather than hide the economy —
+  // ringing now would yank the fighters into shelter mid-swing and oscillate
+  // fight/hide. If the raid outlives the militia window and keeps landing
+  // core hits, the bell fires (escalation ladder below).
+  if(underAttack && ai.militiaUntil>tick){
+    // ESCALATION re-check (~1s cadence, tick-derived so lockstep-safe): the
+    // window was sized against the raid at bell-moment. If the real army
+    // arrived since, the villagers must not keep brawling knights in the
+    // open for the rest of the window — cancel it, fall through to the bell.
+    if(tick%30===0){
+      let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+      let threat=tc&&findPlayerThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
+      if(threat&&estimateLocalPlayerPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
+    }
+    if(ai.militiaUntil>tick) return;
+  }
   // ringTownBell/soundAllClear maintain bellRinging[ai.team] themselves.
   if(underAttack && !window.bellRinging[ai.team]){
+    // Fight-or-hide, decided at the exact moment the bell would ring (so the
+    // two responses can never race): a SMALL raid the army can't answer gets
+    // mobbed by villagers instead of emptying the whole economy into the TC.
+    // A raid that OUTLIVED its militia window escalates to the bell instead
+    // of re-arming militia forever — villagers (0.8 speed) never catch a
+    // kiting archer, and a perpetual re-arm suppressed the bell for the rest
+    // of the game. Militia is re-tried only after the fight fully quiets.
+    if(tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && tryAIMilitiaResponse(ai)) return;
     ringTownBell(ai.team);
   } else if(!underAttack && window.bellRinging[ai.team]){
     soundAllClear(ai.team);
   }
+}
+
+// ---- CIVILIAN MILITIA (AoE2 sn-number-civilian-militia [10]) ----
+// When actual core damage is landing at the town (the bell trigger) but the
+// raid is SMALL and the army can't answer, up to profile.civilianMilitia
+// villagers mob the raider — the same group defense that already beats bears
+// — instead of the whole workforce hiding from one scout. Returns true if a
+// militia response was dispatched (the caller then skips the bell). Only for
+// raid-sized threats the mob can genuinely win against; a real army at the
+// gates still rings the bell. The controlAIMilitary militia-recall pass
+// releases the mob once the raider dies or flees the town radius.
+function tryAIMilitiaResponse(ai){
+  let profile=aiProfileFor(ai.team);
+  let cap=profile.civilianMilitia||0;
+  if(cap<=0)return false;
+  let aiTC=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+  if(!aiTC)return false;
+  let threat=findPlayerThreatNear(ai,aiTC,AI_BASE_ALARM_RADIUS*aiScale());
+  if(!threat)return false;
+  let raidPower=estimateLocalPlayerPower(ai,threat,10*aiScale());
+  if(raidPower>AI_MILITIA_MAX_THREAT)return false; // a real attack — hide, don't mob
+  // The army handles it if it has comparable local strength — then the bell
+  // still rings to tuck the villagers away while the soldiers fight.
+  let armyPower=0;
+  for(let e of entities){
+    if(e.team!==ai.team||e.type!=='unit'||e.utype==='scout'||!isArmyUnit(e.utype))continue;
+    if(dist(e,threat)<=12*aiScale())armyPower+=unitPower(e.utype);
+  }
+  if(armyPower>=raidPower*0.5)return false;
+  let fighters=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager'
+    &&!e.garrisonedIn&&e.task!=='garrison');
+  let committed=fighters.filter(v=>v.target===threat.id).length;
+  let vcands=fighters.filter(v=>v.target!==threat.id);
+  vcands.sort((a,b)=>dist(a,threat)-dist(b,threat)||a.id-b.id);
+  let sent=0;
+  for(let v of vcands.slice(0,Math.max(0,cap-committed))){
+    // Same save/restore contract as retaliation (stashVillagerTask,
+    // js/logic.js): the villager resumes its task once the raider is dead.
+    stashVillagerTask(v);
+    v.target=threat.id;v.explicitAttack=true;
+    v.task=null;v.buildTarget=null;clearGatherTarget(v);clearUnitPath(v);
+    sent++;
+  }
+  if(committed+sent===0)return false;
+  ai.militiaUntil=tick+AI_MILITIA_WINDOW;
+  return true;
 }
 
 function updateAI(ai){
@@ -66,7 +137,7 @@ function updateAI(ai){
     // the brief window until checkAllianceVictory ends the match.
     addAITrickle(ai,profile);
     let vils=aiUnits.filter(u=>u.utype==='villager');
-    let mils=aiUnits.filter(u=>isArmyUnit(u.utype));
+    let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
     let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
     assignAIVillagers(ai,vils,profile);
     if(anchor)controlAIMilitary(ai,mils,anchor,profile);
@@ -78,7 +149,10 @@ function updateAI(ai){
   if(maybeResignAI(ai,aiUnits))return; // AoE2-style concession — nothing left to plan
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
-  let mils=aiUnits.filter(u=>isArmyUnit(u.utype));
+  // !garrisonedIn: a rider sealed inside a ram cannot act — enterGarrison
+  // clears its task/target, so it would otherwise pass every dispatch filter
+  // and absorb defense quotas / wave slots while physically unable to fight.
+  let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
 
   // Field flee: a villager taking hits AWAY from the base bubble runs home
@@ -98,6 +172,18 @@ function updateAI(ai){
     clearGatherTarget(v);
     let pt=nearestBldgPerimeter(v.x,v.y,aiTC,v.id);
     pathUnitTo(v,pt?pt.x:aiTC.x,pt?pt.y:aiTC.y);
+  });
+  // Militia recall: a raider that fled beyond the town radius is not worth the
+  // mob's time (villagers at 0.8 speed never catch a fleeing scout) — release
+  // the fighters back to work (savedTask restores in updateUnit). Villagers
+  // only ever carry explicitAttack from tryAIMilitiaResponse, so this pass
+  // can't cancel anything else.
+  vils.forEach(v=>{
+    if(!v.explicitAttack||!v.target)return;
+    let t=entitiesById.get(v.target);
+    if(!t||t.hp<=0||dist(t,tcCenter)>alarmR){
+      v.target=null;v.explicitAttack=false;clearUnitPath(v);
+    }
   });
   let readyBarracks=barracks.filter(b=>b.complete);
 
@@ -168,7 +254,10 @@ function huntAIBears(ai,mils){
   // (exempting scouts outright starved the Dark-Age eco: villagers died to
   // bears unchecked → stuck in Dark Age). Two passes: fighters first, scouts
   // only if nothing else answered.
-  let candidates=mils.filter(m=>!m.target);
+  // Retreating units sit the hunt out: re-sending a mauled hunter straight
+  // back at the bear is the fight-to-the-death ping-pong the retreat exists
+  // to break — another (healthy) candidate answers instead.
+  let candidates=mils.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
   let ordered=[...candidates.filter(m=>m.utype!=='scout'),...candidates.filter(m=>m.utype==='scout')];
   for(let m of ordered){
     if(sent>=3)break;
@@ -223,6 +312,10 @@ function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
 // into visionRange-sized cells once, then each candidate checks only its
 // 3x3 cell neighborhood. Identical results, same entity order.
 function aiVisibleEnemies(ai,visionRange,pred){
+  // All-Visible match: full knowledge for EVERYONE, the AI included — its
+  // intel, counter-picking, wave targeting and strength estimates all flow
+  // through this one choke point. (Also cheaper than the proximity hash.)
+  if(window.fogDisabled)return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e));
   let cell=Math.max(1,visionRange);
   let mine=new Map();
   for(let i=0;i<entities.length;i++){
@@ -418,6 +511,15 @@ function planAIWalls(ai,aiTC,vils,profile){
   // zero military for 40k ticks because of it. Defense that can't train a
   // single spearman defends nothing.
   if(!hasAIBuilding(ai,'BARRACKS'))return;
+  // Economy before fortifications (AoE2 build order): the palisade ring is a
+  // big WOOD sink, and building it in Dark/Feudal drained wood the AI needed to
+  // reseed farms — food then stalled below the 800 the Castle age costs, so the
+  // AI never advanced (sim: Feudal ~18min, Castle never, wood pinned near 0).
+  // Hold the ring until the AI has finished teching (reached maxAge); by then
+  // its eco is stable and wood spent on walls no longer starves the age climb.
+  // A base under active siege still gets its reactive defenses (planAITowers /
+  // findAIWallDefenseSpot run independently).
+  if((teamAge[ai.team]||0) < (profile.maxAge||2))return;
   if(!ai.wallPlan)ai.wallPlan=computeAIWallRing(ai,aiTC,profile.wallRadius*aiScale());
   let plan=ai.wallPlan;
 
@@ -1475,9 +1577,19 @@ function planAIFarming(ai,aiTC,vils,profile){
   // berry-less start never built one → never farmed → starved in the Dark Age
   // forever while wood piled up (sim seeds 4001/8001: age 0 at 90k, food ~10,
   // wood 3800, zero farms/mills). Farms tile around the TC just fine.
-  // Only worthwhile once military is underway (barracks up).
-  if(!hasAIBuilding(ai,'BARRACKS'))return;
+  // Start farming once the eco has legs. Normally that's when the barracks is
+  // up (military underway), BUT don't wait forever: Dark-age food is otherwise
+  // forage-only (sheep/berries), which DEPLETES — once it runs dry villager
+  // production stalls and the age climb crawls (Feudal ~15min). So also open
+  // farming at 8+ villagers even without a barracks, transitioning food off the
+  // depleting forage onto sustainable farms (AoE2 lays farms in late Dark age).
+  if(!hasAIBuilding(ai,'BARRACKS') && vils.length<8)return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
+  // Don't let early farms starve the BARRACKS of wood: until it exists, only
+  // spend on a farm if the 175-wood barracks fund is still intact. Otherwise
+  // the pre-barracks farming (above) ate the wood and pushed military +
+  // Feudal minutes late (barracks ~13min, first soldier ~13min in sim).
+  if(!hasAIBuilding(ai,'BARRACKS') && resourceStore(ai.team).wood < BLDGS.FARM.cost.w + BLDGS.BARRACKS.cost.w)return;
   // ACTIVE farms only (exhausted ones auto-reseed and shouldn't block new
   // plots), against a target that grows with the workforce — a fixed 2-4
   // farm cap starved the AI's food economy once the berries ran out.
@@ -1594,7 +1706,113 @@ function holdsSiegeOrder(m){
   return false;
 }
 
+// ---- TACTICAL RETREAT (AoE2 sn-percent-health-retreat) ----
+// A soldier low on HP that is ACTIVELY taking hits breaks off and runs home
+// instead of dying in place — AoE2's tactical AI pulls damaged units out of
+// losing fights. The "actively being hit" window is the crux: with no field
+// healing, a pure HP gate would permanently bench every wounded survivor
+// (it would re-retreat the moment it re-engaged); gating on recent damage
+// means a wounded-but-unengaged unit still marches with the next wave, and
+// only a unit LOSING a fight right now disengages.
+const AI_RETREAT_HP=0.30;        // retreat below 30% HP...
+const AI_RETREAT_HIT_WINDOW=90;  // ...while hit within the last ~3s
+const AI_RETREAT_TICKS=600;      // ~20s: run home, ignore re-acquire/retaliation
+// percent-death-retreat approximation: a wave that has lost ~2/3 of what it
+// launched pulls its survivors home to regroup with the next (bigger) wave
+// instead of trickling into the meat grinder one by one.
+const AI_WAVE_RETREAT_FRACTION=0.35;
+// Civilian-militia bounds: only a raid the workforce can genuinely beat is
+// worth fighting (~3 militia-equivalents of power — unitPower('militia')=60);
+// the response window is how long the bell stays suppressed while they fight.
+const AI_MILITIA_MAX_THREAT=180;
+const AI_MILITIA_WINDOW=900;
+function aiRetreatUnit(m,aiTC){
+  m.target=null;m.explicitAttack=false;m.groupSpeed=undefined;
+  if(m.task==='garrison'){m.task=null;m.garrisonTarget=null;} // abandon boarding a ram
+  m.retreatUntil=tick+AI_RETREAT_TICKS;
+  let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
+  pathUnitTo(m,pt?pt.x:aiTC.x,pt?pt.y:aiTC.y);
+}
+
+// AoE2 sn-percent-enemy-sighted-response [50]: dispatch the NEAREST
+// `sightedResponsePercent`% of `pool` (min 2) at target `tgt`, counting units
+// already on it toward the quota — the rest hold their posture as home
+// defense. Deterministic: dist sort, id tiebreak (lockstep peers identical).
+// `candFilter` trims which idle units may be pulled; `assign` issues the order.
+function aiDispatchQuota(pool,tgt,profile,candFilter,assign){
+  let pct=profile.sightedResponsePercent!=null?profile.sightedResponsePercent:50;
+  let want=Math.max(2,Math.ceil(pool.length*pct/100));
+  let engaged=pool.filter(m=>m.target===tgt.id).length;
+  if(engaged>=want)return;
+  let cands=pool.filter(m=>m.target!==tgt.id&&(!candFilter||candFilter(m)));
+  cands.sort((a,b)=>dist(a,tgt)-dist(b,tgt)||a.id-b.id);
+  cands.slice(0,want-engaged).forEach(assign);
+}
+
 function controlAIMilitary(ai,mils,aiTC,profile){
+  // Per-unit health retreat. Runs first so fresh retreaters are excluded from
+  // every dispatch below on this same decision tick. Directed sieges persist
+  // (a ram/committed sieger holds under fire — the escort handles defenders);
+  // scouts are recon and already avoid combat via controlAIScouts.
+  let tcHome={x:aiTC.x+aiTC.w/2,y:aiTC.y+aiTC.h/2};
+  mils.forEach(m=>{
+    if(m.utype==='scout'||holdsSiegeOrder(m))return;
+    if(isRetreatingUnit(m)){
+      // ARRIVAL ends the retreat: once home the unit must fight again —
+      // leaving the stamp running kept survivors pacifist at their own TC
+      // (retaliation/auto-acquire/dispatch all gate on it) while pursuers
+      // cut them down. The at-home exemption below stops an instant re-stamp.
+      if(dist(m,tcHome)<=6*aiScale())m.retreatUntil=0;
+      return;
+    }
+    // Already home: nowhere to run — stand and fight (retreating here would
+    // just stand the unit down under fire while raiders cut the town apart).
+    if(dist(m,tcHome)<=6*aiScale())return;
+    // lastEnemyHitTick, NOT lastHitTick: only damage from an enemy PLAYER
+    // counts. Retreating from wildlife is suicide (a bear outruns militia and
+    // eats the runner), and mauled hunters abandoning the bear hunt left
+    // danger-zoned resources locked — the mob-fight must press on.
+    if(m.hp<m.maxHp*AI_RETREAT_HP&&m.lastEnemyHitTick!=null&&tick-m.lastEnemyHitTick<AI_RETREAT_HIT_WINDOW){
+      aiRetreatUnit(m,aiTC);
+    }
+  });
+  // Wave-casualty retreat, by MEMBERSHIP not geography: every launched
+  // attacker carries the wave's number (m.waveId, stamped at launch, hashed).
+  // Counting "anyone far from home" instead recalled the vanguard of a
+  // healthy DEPARTING wave (the first few units to cross a distance radius
+  // looked like a gutted remnant) and yanked unrelated defenders. When the
+  // current wave's living members drop below the fraction of what launched,
+  // recall the far-out survivors and close out the wave (waveId cleared, so
+  // the collapse fires exactly once).
+  if(ai.lastWaveSize>0&&ai.lastWaveTick!=null&&ai.tick-ai.lastWaveTick<profile.waveCooldown*3){
+    // Count from entities, not `mils`: riders sealed inside a ram are alive
+    // wave members but are excluded from mils (garrisonedIn) — counting only
+    // the visible ones would read a healthy ram-borne wave as gutted.
+    let members=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.hp>0&&e.waveId===ai.waveCount);
+    if(members.length>0&&members.length<Math.ceil(ai.lastWaveSize*AI_WAVE_RETREAT_FRACTION)){
+      members.forEach(m=>{
+        m.waveId=undefined;
+        if(!holdsSiegeOrder(m)&&!m.garrisonedIn&&dist(m,tcHome)>22)aiRetreatUnit(m,aiTC);
+      });
+    }
+  }
+  // Ram riders disembark (AoE2 garrison-rams) when the siege ARRIVES (the
+  // ram is closing on its target) or the ram takes MELEE hits — melee eats
+  // an unescorted ram, so the infantry pops out to defend it. A ram whose
+  // objective died also unloads (nothing left to ride toward).
+  // lastMeleeHitTick, NOT lastHitTick: the ram's 8 pierce armor means towers
+  // shooting it for 1 chip damage would otherwise refresh the stamp forever
+  // and eject the riders into the exact arrow fire the garrison protects
+  // them from (the whole feature no-ops in any game with defensive towers).
+  // Ejected riders are targetless soldiers far from home: the stray-retask
+  // pass below points them at the next objective the same tick.
+  mils.forEach(m=>{
+    if(m.utype!=='ram'||!m.garrison||!m.garrison.length)return;
+    let t=m.target?entitiesById.get(m.target):null;
+    let arrived=t&&distToTarget(m,t)<=6;
+    let underMelee=m.lastMeleeHitTick!=null&&tick-m.lastMeleeHitTick<60;
+    if(!t||arrived||underMelee)ejectGarrison(m);
+  });
   let threat=findPlayerThreatNear(ai,aiTC,12*aiScale());
   // Ignore a threat our base is sealed against. A raider poking our ring from
   // OUTSIDE can't be reached, so chasing it freezes the garrison at the wall (the
@@ -1632,18 +1850,26 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       });
       return;
     }
-    mils.forEach(m=>{
-      if(m.utype==='scout')return; // scouts are recon — controlAIScouts owns them, don't pull into defense
-      if(holdsSiegeOrder(m))return; // rams / directed sieges don't chase raiders
+    // AoE2 sn-percent-enemy-sighted-response [50]: only ~half of the eligible
+    // troops rush a sighted threat — the rest hold their posture as home
+    // defense. Previously EVERY non-scout soldier retargeted, so a single
+    // raider poking the base dragged the whole army across town. Nearest
+    // responders first (id tiebreak keeps lockstep peers identical); units
+    // already on the threat count toward the quota.
+    let eligible=mils.filter(m=>{
+      if(m.utype==='scout')return false; // scouts are recon — controlAIScouts owns them
+      if(holdsSiegeOrder(m))return false; // rams / directed sieges don't chase raiders
+      if(isRetreatingUnit(m))return false;    // a fleeing unit keeps fleeing
+      if(m.task==='garrison')return false; // boarding a ram — committed to the siege
       // Don't re-send a unit to chase a raider it just proved it can't reach
       // (e.g. one poking the wall from outside our sealed ring) — that's the
       // wedge loop where the whole garrison freezes on an unreachable foe.
-      if(m.unreachUntil>tick&&m.unreachId===threat.id)return;
-      if(!m.target||dist(m,threat)<10*aiScale()){
-        m.target=threat.id;
-        clearUnitPath(m); // stop current movement so they engage immediately
-      }
+      if(m.unreachUntil>tick&&m.unreachId===threat.id)return false;
+      return true;
     });
+    aiDispatchQuota(eligible,threat,profile,
+      m=>!m.target||dist(m,threat)<10*aiScale(),
+      m=>{m.target=threat.id;clearUnitPath(m);}); // clearUnitPath: engage immediately
     return;
   }
   // Base perimeter UNDER SIEGE — defend instead of marching off to attack.
@@ -1674,6 +1900,23 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       });
       rallyIdleMilitary(ai,mils,aiTC);         // hold the idle reserve at the gate
       return;
+    }
+  }
+  // Anti-forward-building (AoE2 sn-safe-town-size): raze an enemy structure
+  // creeping on the town. Runs BELOW unit threats (fight the raiders first)
+  // and does NOT return — the wave machinery continues; dispatched defenders
+  // simply drop out of `available` by having a target. Top-up quota like the
+  // sighted response, so the whole army never dogpiles one foundation.
+  {
+    let fb=findEnemyForwardBuilding(ai,aiTC,profile);
+    if(fb){
+      let defenders=mils.filter(m=>m.utype!=='scout'&&!holdsSiegeOrder(m)&&!isRetreatingUnit(m)&&m.task!=='garrison');
+      aiDispatchQuota(defenders,fb,profile,m=>!m.target,m=>{
+        // resolveReachableAttackTarget handles a walled-off structure by
+        // routing through the cheapest breach instead of wedging the unit.
+        let t=resolveReachableAttackTarget(m,fb);
+        if(t){m.target=t.id;m.explicitAttack=true;clearUnitPath(m);}
+      });
     }
   }
   // Coordinated pushes: an allied AI that just launched (lastWaveGlobalTick,
@@ -1712,7 +1955,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     // survivors sat just inside it and never got re-pointed at the enemy.
     // The forward rally posture parks ~16 tiles out at most, so 22 keeps
     // home defenders exempt while catching every stalled march.
-    let strays=mils.filter(m=>!m.target&&m.utype!=='scout'&&dist(m,tcC0)>22);
+    let strays=mils.filter(m=>!m.target&&m.utype!=='scout'&&!isRetreatingUnit(m)&&m.task!=='garrison'&&dist(m,tcC0)>22);
     if(strays.length){
       let spotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
       strays.forEach(m=>{
@@ -1726,7 +1969,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // Scouts are recon, not wave fodder — controlAIScouts owns them (same
   // exemption the stray-retask and rally paths already apply). Committing the
   // lone explorer to the attack mob was the exact thing the scout rework fixed.
-  let available=mils.filter(m=>!m.target&&m.utype!=='scout');
+  let available=mils.filter(m=>!m.target&&m.utype!=='scout'&&!isRetreatingUnit(m)&&m.task!=='garrison');
   if(mils.length<waveSize||ai.tick<profile.attackTick)holding=true;
   // Minimum spacing between waves: after committing an attack, regroup and
   // rebuild before the next (larger) one instead of dribbling units out.
@@ -1771,25 +2014,74 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     return;
   }
 
-  let attackers=available.slice(0,Math.max(waveSize,mils.length-profile.armyReserve));
+  // AoE2 sn-percent-attack-soldiers: commit this % of the whole army, keep the
+  // rest home as defense (the difficulty lever — Hard 75% / Medium 56% / Easy
+  // 38%). Clamp to a valid group: at least the min group (attackSize), never
+  // more than the max group (waveCap). This replaces the old flat armyReserve
+  // hold, so a bigger army sends proportionally more (AoE2 behavior).
+  let commit=profile.commitPercent!=null?profile.commitPercent:75;
+  let sendN=Math.min(profile.waveCap||waveSize, Math.max(profile.attackSize||waveSize, Math.round(mils.length*commit/100)));
+  let attackers=available.slice(0,sendN);
   let launched=0;
-  // March in formation pace: the wave moves at its slowest member's speed
-  // (unitMoveSpeed, js/logic.js) — scouts arriving 20s before the spearmen
-  // just fed the enemy TC free kills.
-  let waveSpeed=attackers.length>1?Math.min(...attackers.map(m=>m.speed||1)):undefined;
   let waveSpotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
+  // Targets first, pace after: the formation speed depends on who marches
+  // and who RIDES (a loaded ram is faster than an empty one), so riders are
+  // planned before the group pace is computed.
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(ai,m,waveSpotted);
     // explicitAttack: this is a deliberate march on remembered intel — the
     // per-tick vision check in updateUnit() must not wipe the order just
     // because the destination is beyond current AI sight range.
-    if(target){m.target=target.id;m.explicitAttack=true;m.groupSpeed=waveSpeed;clearUnitPath(m);launched++;}
+    if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);launched++;}
   });
+  // AoE2 sn-garrison-rams [1]: the wave's melee infantry rides its rams to
+  // the front — protected from arrows en route, and each rider speeds the
+  // ram up (unitMoveSpeed, js/logic.js). Riders pop back out when the siege
+  // arrives or the ram takes melee hits (the disembark pass above), or
+  // unharmed from the wreck if it dies (handleDeath). Nearest riders board
+  // each ram; id tiebreak keeps lockstep peers identical.
+  let plannedRiders=new Map(); // ram id -> boarding count (for the pace below)
+  let waveRams=attackers.filter(m=>m.utype==='ram'&&m.target);
+  if(waveRams.length){
+    let riders=attackers.filter(m=>canRideRam(m)&&m.target);
+    waveRams.forEach(ram=>{
+      let room=garrisonCap(ram)-garrisonCount(ram);
+      if(room<=0||!riders.length)return;
+      riders.sort((a,b)=>dist(a,ram)-dist(b,ram)||a.id-b.id);
+      let take=riders.splice(0,room);
+      plannedRiders.set(ram.id,take.length);
+      take.forEach(r=>{
+        r.target=null;r.explicitAttack=false;r.groupSpeed=undefined;
+        r.task='garrison';r.garrisonTarget=ram.id;
+        clearUnitPath(r);
+        pathUnitTo(r,Math.round(ram.x),Math.round(ram.y));
+      });
+    });
+  }
+  // March in formation pace: MARCHERS (not the boarding riders) move at the
+  // slowest member's EFFECTIVE speed — a ram counts at its loaded speed
+  // (+8%/rider), or the whole wave would crawl at the empty-ram pace the
+  // boarding just bought it out of. The pace is stamped on marchers only:
+  // rams never receive groupSpeed (unitMoveSpeed exempts them — the ram IS
+  // the pace-setter; capping it at its own raw speed nullified the boost).
+  {
+    let marchers=attackers.filter(m=>m.target);
+    let eff=m=>m.utype==='ram'?(m.speed||1)*(1+0.08*(plannedRiders.get(m.id)||0)):(m.speed||1);
+    let waveSpeed=marchers.length>1?Math.min(...marchers.map(eff)):undefined;
+    marchers.forEach(m=>{
+      // Wave membership stamp: the casualty-retreat pass counts living
+      // members of THIS wave (hashed in detEntityHash). Riders are stamped
+      // too — sealed in the ram they still count as alive members.
+      m.waveId=(ai.waveCount||0)+1;
+      if(m.utype!=='ram')m.groupSpeed=waveSpeed;
+    });
+    attackers.forEach(m=>{ if(m.task==='garrison'&&m.garrisonTarget!=null)m.waveId=(ai.waveCount||0)+1; });
+  }
   if(launched>0){
     ai.waveCount=(ai.waveCount||0)+1;
     ai.lastWaveTick=ai.tick;
     ai.lastWaveGlobalTick=tick; // global-tick stamp for allied coordination
-    ai.lastWaveSize=launched; // telemetry only (sim samples it) — NOT in the determinism hash
+    ai.lastWaveSize=launched; // sim state: the wave-casualty retreat reads it (hashed in simChecksum)
   }
 }
 
@@ -1811,6 +2103,7 @@ function rallyIdleMilitary(ai,mils,aiTC){
   if(!walkable(rx,ry))return;
   mils.forEach(m=>{
     if(m.utype==='scout')return; // controlAIScouts owns scouts
+    if(isRetreatingUnit(m))return; // a fleeing unit rests at home until the stamp expires
     if(m.target||m.path.length>0)return;
     if(dist(m,{x:rx,y:ry})<=4)return;
     pathUnitTo(m,rx,ry);
@@ -1905,6 +2198,9 @@ function baseSurveyWaypoint(ai,aiTC){
 // optional far-from-home anchor (a TC, or null).
 function pickExploreWaypoint(team, homePt){
   let margin=3;
+  // All-Visible match: the explored grid is unmaintained (all zeros), so the
+  // frontier scoring degrades to distance-biased random wandering — fine:
+  // there's nothing to discover, the scout is kept only for flavor.
   let eg=teamExploredGrid&&teamExploredGrid[team];
   let best=null,bestScore=-1;
   for(let attempt=0;attempt<8;attempt++){
@@ -1924,6 +2220,35 @@ function pickExploreWaypoint(team, homePt){
   return best;
 }
 function randomScoutWaypoint(ai,aiTC){ return pickExploreWaypoint(ai.team, aiTC); }
+
+// ---- ANTI-FORWARD-BUILDING (AoE2 sn-safe-town-size) ----
+// An enemy BUILDING planted inside the AI's town radius (forward tower, a
+// wall creeping around the base, a foundation going up) is a threat even with
+// no enemy unit standing next to it — findPlayerThreatNear is units-only, so
+// these were invisible and the AI let itself be towered/walled in. Nearest
+// arrow-firing structures first (they hurt), then other buildings, then
+// walls/gates; foundations count (killing the tower BEFORE it stands is the
+// whole point). Honest knowledge only: the tile must have been scouted
+// (teamHasExplored — around the town it always is).
+function findEnemyForwardBuilding(ai,aiTC,profile){
+  let cx=aiTC.x+Math.floor(aiTC.w/2), cy=aiTC.y+Math.floor(aiTC.h/2);
+  let wr=ai.wallRadiusUsed||Math.round((profile.wallRadius||0)*aiScale());
+  let R=(wr||Math.round(AI_BASE_ALARM_RADIUS*aiScale()))+6;
+  let best=null,bestPri=99,bestD=Infinity;
+  for(let i=0;i<entities.length;i++){
+    let b=entities[i];
+    if(b.type!=='building'||b.hp<=0||!isEnemyOf(ai.team,b))continue;
+    let bx=b.x+(b.w||1)/2, by=b.y+(b.h||1)/2;
+    if(Math.max(Math.abs(bx-cx),Math.abs(by-cy))>R)continue;
+    if(!teamHasExplored(ai.team,Math.round(b.x)+Math.round(b.y)*MAP))continue;
+    let pri=firesArrows(b.btype)?0:(isWallBtype(b.btype)||isGateBtype(b.btype))?2:1;
+    let d=dist({x:bx,y:by},{x:cx,y:cy});
+    if(pri<bestPri||(pri===bestPri&&(d<bestD||(d===bestD&&best&&b.id<best.id)))){
+      bestPri=pri;bestD=d;best=b;
+    }
+  }
+  return best;
+}
 
 function findPlayerThreatNear(ai,aiTC,range){
   // Allied buildings count too: in 2v2 the AI's army answers a raid on its

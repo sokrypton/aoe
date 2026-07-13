@@ -105,6 +105,7 @@ function seedHostLobby(){
     aiDifficulty: (typeof aiDifficulty !== 'undefined' && aiDifficulty) ? aiDifficulty : 'standard',
     mapSize: lobbyReadMapSizeRadio(),
     speed: GAME_SPEED,
+    fog: false, // false = Fog of War (default), true = All Visible
     numTeams: 1,
   };
   if (!lobbyState.seats[0].name) lobbyState.seats[0].name = lobbyRandomName();
@@ -250,6 +251,7 @@ function lobbyPayload(){
     aiDifficulty: lobbyState.aiDifficulty,
     mapSize: lobbyState.mapSize,
     speed: lobbyState.speed,
+    fog: !!lobbyState.fog,
     numTeams: lobbyState.numTeams,
   };
 }
@@ -270,7 +272,7 @@ function lobbyBroadcast(){ lobbySendState(null); }
 // ---- Guest: apply the host's authoritative state ----
 function applyLobbyState(msg, isOpen){
   lobbyState = { seats: msg.seats || [], aiDifficulty: msg.aiDifficulty || 'standard',
-    mapSize: msg.mapSize, speed: msg.speed, numTeams: msg.numTeams || 2 };
+    mapSize: msg.mapSize, speed: msg.speed, fog: !!msg.fog, numTeams: msg.numTeams || 2 };
   if (msg.yourSeat != null) window.__mpSession.mySeat = msg.yourSeat;
   window.__mpSession.inLobby = true;
   if (isOpen) {
@@ -305,6 +307,7 @@ function renderLobby(){
   lobbySetRadio('lobbyaidiff', lobbyState.aiDifficulty || 'standard');
   lobbySetRadio('lobbymapsize', lobbyState.mapSize);
   lobbySetRadio('lobbyspeed', String(lobbyState.speed));
+  lobbySetRadio('lobbyfog', lobbyState.fog ? 'open' : 'fog');
   // AI difficulty always sits next to the Add AI button (applies to AI added now
   // or later).
   lobbySetSettingsEnabled(netRole === 'host');
@@ -523,6 +526,12 @@ function lobbyPickColor(idx){
 
 // Host-only: settings radios changed.
 function onLobbyMapSizeChange(){ if (!lobbyState || netRole !== 'host') return; lobbyState.mapSize = lobbyReadMapSizeRadio(); lobbyBroadcast(); }
+function onLobbyFogChange(){
+  if (!lobbyState || netRole !== 'host') return;
+  let sel = document.querySelector('input[name="lobbyfog"]:checked');
+  lobbyState.fog = !!(sel && sel.value === 'open');
+  lobbyBroadcast();
+}
 function onLobbySpeedChange(){
   if (!lobbyState || netRole !== 'host') return;
   let sel = document.querySelector('input[name="lobbyspeed"]:checked');
@@ -622,6 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="lobbyaidiff"]').forEach(el => el.addEventListener('change', onLobbyAiDiffChange));
   document.querySelectorAll('input[name="lobbymapsize"]').forEach(el => el.addEventListener('change', onLobbyMapSizeChange));
   document.querySelectorAll('input[name="lobbyspeed"]').forEach(el => el.addEventListener('change', onLobbySpeedChange));
+  document.querySelectorAll('input[name="lobbyfog"]').forEach(el => el.addEventListener('change', onLobbyFogChange));
   let input = document.getElementById('lobby-chat-input');
   if (input) {
     input.addEventListener('keydown', e => {

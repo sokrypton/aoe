@@ -305,7 +305,7 @@ async function assertChecksumsAgree(pages){
 
     // Host banks the match to a (in-memory) save, then the page dies.
     const save = await host.evaluate(() => serializeGameForWire());
-    if (save.version !== 3 || !save.seatTokens || save.seatTokens.length !== 2) {
+    if (save.version !== 4 || !save.seatTokens || save.seatTokens.length !== 2) {
       throw new Error('bad save meta: v' + save.version + ' tokens=' + JSON.stringify(save.seatTokens));
     }
     await host.close();

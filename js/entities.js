@@ -47,6 +47,15 @@ function pushUnitsOut(bx,by,bw,bh){
     }
   });
 }
+// THE one way tile occupancy is derived from a building's footprint:
+// creation stamps it here, and the save loader re-derives it from the saved
+// entities (occupied is never serialized — js/save.js v4). Keep any change
+// to the guard or the stamped rect in this one place.
+function stampBuildingFootprint(e){
+  for(let dy=0;dy<(e.h||1);dy++)for(let dx=0;dx<(e.w||1);dx++){
+    if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=e.id;markMapDirty(e.x+dx,e.y+dy);}
+  }
+}
 function createBuilding(type,x,y,team,customW=null,customH=null){
   let b=BLDGS[type];
   let bw = customW !== null ? customW : b.w;
@@ -59,14 +68,12 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   // cards arrive get the same HP multipliers the apply() sweeps gave
   // existing ones.
   e.hp = e.maxHp = buildingMaxHpFor(team, type);
-  for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
-    if(y+dy<MAP&&x+dx<MAP){map[y+dy][x+dx].occupied=e.id;markMapDirty(x+dx,y+dy);}
-    // Only the origin tile becomes actual harvestable farmland — the rest of
-    // a >1x1 footprint (see FARM in core.js) is just occupied ground under
-    // the tilled-plot art, matching AoE2 where a farm is one resource node
-    // regardless of how large its visual plot is.
-    if(b.isFarm&&dx===0&&dy===0){map[y+dy][x+dx].t=TERRAIN.FARM;map[y+dy][x+dx].res=farmFoodFor(team);markMapDirty(x,y);}
-  }
+  stampBuildingFootprint(e);
+  // Only the origin tile becomes actual harvestable farmland — the rest of
+  // a >1x1 footprint (see FARM in core.js) is just occupied ground under
+  // the tilled-plot art, matching AoE2 where a farm is one resource node
+  // regardless of how large its visual plot is.
+  if(b.isFarm&&y<MAP&&x<MAP){map[y][x].t=TERRAIN.FARM;map[y][x].res=farmFoodFor(team);markMapDirty(x,y);}
   entities.push(e);
   entitiesById.set(e.id, e);
   // Walkable footprints (farms, the market plaza) never eject units — a
