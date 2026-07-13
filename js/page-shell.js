@@ -47,9 +47,13 @@ window.SPRITE_CELLS = {
   // cropped) so it reads clearly at button size. Base `home:[5,5]` is the
   // pre-match/no-age fallback. Resolved via iconKey('home') (ui.js).
   'home-dark':[0,7], 'home-feudal':[1,7], 'home-castle':[2,7],
-  // ---- free slots for future icons (row 4 tail + row 7).
-  spare1:[7,4], spare5:[3,7],
-  spare6:[4,7], spare7:[5,7], spare8:[6,7], spare9:[7,7],
+  // ---- unit stance glyphs (HUD stance buttons, js/ui.js): the four cells
+  // right after the home buttons, in AoE2 order. The generated .icon-stance-*
+  // CSS + shared sprite-icon class cover both skins.
+  'stance-aggressive':[3,7], 'stance-defensive':[4,7],
+  'stance-standground':[5,7], 'stance-passive':[6,7],
+  // ---- free slots for future icons.
+  spare1:[7,4], spare9:[7,7],
 };
 (function(){
   let css = '';

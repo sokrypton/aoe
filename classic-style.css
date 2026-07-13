@@ -503,6 +503,12 @@ canvas {
   50%  { box-shadow: 0 0 18px rgba(255,215,0,1.0), inset 0 0 5px #000; }
   100% { box-shadow: 0 0 8px  rgba(255,215,0,0.6), inset 0 0 5px #000; }
 }
+/* The selection's CURRENT stance button — steady gold border (state, not action). */
+.act-btn.stance-on {
+  border-color: #ffd700 !important;
+  background: linear-gradient(180deg, #5a3800 0%, #2a1800 100%) !important;
+  box-shadow: 0 0 8px rgba(255,215,0,0.6), inset 0 0 5px #000 !important;
+}
 .btn-emoji{
   font-size:16px;
   margin-bottom:2px;

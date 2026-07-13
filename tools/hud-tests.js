@@ -180,6 +180,85 @@ function pageSuite() {
     assert(sc.followId == null, 'escort re-bound after auto-scout');
   });
 
+  // ---- Stance behavior (driven through the real sim) ----
+  // Each test stages a soldier + one enemy soldier on open grass and steps the
+  // sim, asserting the auto-acquire / movement rules that distinguish the four
+  // stances. fogDisabled (set by stage) makes the enemy visible.
+  T('stance aggressive: auto-acquires an enemy within radius 8, ignores one beyond it', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'aggressive';
+    const near = createUnit('militia', 37, 30, 1); // dist 7 < 8
+    step(9);
+    assert(m.target === near.id, 'aggressive did not acquire enemy at range 7: target=' + m.target);
+    // reset and place the foe beyond radius 8
+    stage();
+    const m2 = createUnit('militia', 30, 30, 0); m2.stance = 'aggressive';
+    createUnit('militia', 41, 30, 1); // dist 11 > 8
+    step(9);
+    assert(m2.target == null, 'aggressive acquired a foe beyond radius 8: target=' + m2.target);
+  });
+
+  T('stance defensive: aggros at radius 6 but NOT at 7 (tighter than aggressive)', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'defensive'; m.defendX = 30; m.defendY = 30;
+    createUnit('militia', 37, 30, 1); // dist 7 > 6 → defensive ignores (aggressive would grab)
+    step(9);
+    assert(m.target == null, 'defensive acquired at range 7 (should be radius 6): target=' + m.target);
+    stage();
+    const m2 = createUnit('militia', 30, 30, 0); m2.stance = 'defensive'; m2.defendX = 30; m2.defendY = 30;
+    const near = createUnit('militia', 35, 30, 1); // dist 5 < 6
+    step(9);
+    assert(m2.target === near.id, 'defensive did not acquire at range 5: target=' + m2.target);
+  });
+
+  T('stance defensive: leash keeps it near its anchor — never marches to a foe beyond the leash', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'defensive'; m.defendX = 30; m.defendY = 30;
+    const foe = createUnit('militia', 45, 30, 1); foe.stance = 'passive'; // sits still, 15 tiles away
+    m.target = foe.id; // force-engage a distant foe; the leash must reel it back in
+    step(200);
+    assert(Math.hypot(m.x - 30, m.y - 30) <= 8, 'defensive chased beyond its leash, now at ' + m.x.toFixed(1) + ',' + m.y.toFixed(1));
+    assert(Math.hypot(m.x - 45, m.y - 30) > 2, 'defensive marched all the way to a foe far past its leash');
+  });
+
+  T('stance stand-ground: holds position (no chase) for a STATIONARY foe out of weapon range', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'standground';
+    createUnit('militia', 34, 30, 1).stance = 'passive'; // dist 4, won't approach
+    step(120);
+    assert(Math.hypot(m.x - 30, m.y - 30) < 0.6, 'stand-ground moved to engage: at ' + m.x.toFixed(1) + ',' + m.y.toFixed(1));
+    assert(m.target == null, 'stand-ground acquired an out-of-range foe: target=' + m.target);
+  });
+
+  T('stance stand-ground: still attacks a foe that walks INTO weapon range', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'standground';
+    createUnit('militia', 31, 30, 1); // adjacent — inside melee range
+    step(9);
+    assert(m.target != null, 'stand-ground did not attack an adjacent foe');
+    assert(Math.hypot(m.x - 30, m.y - 30) < 0.6, 'stand-ground chased instead of holding: at ' + m.x.toFixed(1) + ',' + m.y.toFixed(1));
+  });
+
+  T('stance passive: never auto-acquires even with an enemy point-blank', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0); m.stance = 'passive';
+    createUnit('militia', 31, 30, 1); // adjacent
+    step(30);
+    assert(m.target == null, 'passive auto-acquired an adjacent enemy: target=' + m.target);
+  });
+
+  T('stance passive: setting it on a WALKING unit keeps the move order (only the fight is cancelled)', () => {
+    stage();
+    const m = createUnit('militia', 30, 30, 0);
+    execCommand({ kind: 'command', unitIds: [m.id], tileX: 45, tileY: 30 }, 0); // plain walk, no target
+    assert(m.path.length > 0, 'precondition: unit should be walking');
+    execCommand({ kind: 'set-stance', unitIds: [m.id], stance: 'passive' }, 0);
+    assert(m.path.length > 0, 'No Attack cancelled a plain walk order (should only cancel attacks)');
+    const xAtStance = m.x; // where the unit was when we switched to No Attack
+    step(300);
+    assert(m.x > xAtStance + 3, 'passive unit stopped walking after the stance change: ' + xAtStance.toFixed(1) + ' -> ' + m.x.toFixed(1));
+  });
+
   T('villager sent to an UNSEEN resource just walks (no auto-gather); an explored one gathers', () => {
     stage();
     window.fogDisabled = false;
@@ -618,7 +697,7 @@ function pageSuite() {
       assertEq(r.sel, 0, 'placing a building deselects the villager');
     });
 
-    await tapT('auto-scout button deselects the scout (auto-scout is a task)', async () => {
+    await tapT('auto-scout is a posture: keeps the selection so you can keep adjusting', async () => {
       await page.evaluate(tapStage(`
         const sc=createUnit('scout',30,30,0); selected=[sc]; window.__pts=()=>({});`));
       const r = await page.evaluate(`(()=>{ updateUI();
@@ -628,7 +707,85 @@ function pageSuite() {
         return {found:true, sel:selected.length, cmd:window.__cmds.find(c=>c.kind==='auto-scout')||null}; })()`);
       if (!r.found) throw new Error('Auto Scout button not found');
       if (!r.cmd) throw new Error('no auto-scout command issued');
-      assertEq(r.sel, 0, 'enabling auto-scout deselects the scout');
+      assertEq(r.sel, 1, 'auto-scout is a posture — selection is kept, not cleared');
+    });
+
+    await tapT('posture row: soldiers show NO Guard tile; a guard post folds into the stance highlight', async () => {
+      const r = await page.evaluate(tapStage(`
+        const sc=createUnit('scout',30,30,0); selected=[sc];
+        window.__pts=()=>({});`) + `;(()=>{
+        const lit=()=>[...document.querySelectorAll('#actions .act-btn.stance-on')].map(b=>b.dataset.tipLabel);
+        const has=(l)=>[...document.querySelectorAll('#actions .act-btn')].some(b=>b.dataset.tipLabel===l);
+        const sc=selected[0];
+        updateUI(); const dflt=lit(); const guardShown=has('Guard');
+        sc.stance='standground'; updateUI(); const st=lit();
+        sc.guardX=20; sc.guardY=20; updateUI(); const gd=lit();   // guard hidden → folds to stance
+        sc.autoScout=true; updateUI(); const au=lit();            // auto overrides everything
+        return {dflt, st, gd, au, guardShown};
+      })()`);
+      assertEq(r.guardShown, false, 'Guard tile is hidden for soldiers');
+      assertEq(JSON.stringify(r.dflt), JSON.stringify(['Aggressive']), 'default lit = Aggressive only');
+      assertEq(JSON.stringify(r.st), JSON.stringify(['Stand Ground']), 'stance lit follows stance');
+      assertEq(JSON.stringify(r.gd), JSON.stringify(['Stand Ground']), 'a guarding soldier stays lit on its stance (guard hidden)');
+      assertEq(JSON.stringify(r.au), JSON.stringify(['Auto Scout']), 'auto-scout overrides everything in the highlight');
+    });
+
+    await tapT('posture row: rams DO show a Guard tile, lit while holding a post', async () => {
+      const r = await page.evaluate(tapStage(`
+        const ram=createUnit('ram',30,30,0); selected=[ram];
+        window.__pts=()=>({});`) + `;(()=>{
+        const lit=()=>[...document.querySelectorAll('#actions .act-btn.stance-on')].map(b=>b.dataset.tipLabel);
+        const has=(l)=>[...document.querySelectorAll('#actions .act-btn')].some(b=>b.dataset.tipLabel===l);
+        const ram=selected[0];
+        updateUI(); const guardShown=has('Guard'); const stanceShown=has('Aggressive');
+        ram.guardX=20; ram.guardY=20; updateUI(); const gd=lit();
+        return {guardShown, stanceShown, gd};
+      })()`);
+      assertEq(r.guardShown, true, 'Guard tile IS shown for rams');
+      assertEq(r.stanceShown, false, 'rams get no stance tiles');
+      assertEq(JSON.stringify(r.gd), JSON.stringify(['Guard']), 'a guarding ram lights the Guard tile');
+    });
+
+    await tapT('No Attack (passive) DISENGAGES an in-progress attack, not just future ones', async () => {
+      const r = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); const b=createBuilding('HOUSE',34,34,1);
+        m.target=b.id; m.explicitAttack=true; selected=[m];
+        window.__pts=()=>({});`) + `;(()=>{
+        const m=selected[0];
+        const before={target:m.target, explicit:m.explicitAttack};
+        execCommand({kind:'set-stance', unitIds:[m.id], stance:'passive'}, 0);
+        return {before, target:m.target, explicit:m.explicitAttack, stance:m.stance};
+      })()`);
+      assertEq(!!r.before.target, true, 'precondition: unit was attacking a building');
+      assertEq(r.target, null, 'passive clears the current attack target');
+      assertEq(r.explicit, false, 'passive clears the explicit-attack flag');
+      assertEq(r.stance, 'passive', 'stance applied');
+    });
+
+    await tapT('No Attack (passive) does NOT retaliate when shot by an enemy building', async () => {
+      const r = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,1); m.stance='passive';
+        const tc=createBuilding('TC',33,33,0);   // enemy building "attacker"
+        window.__pts=()=>({});`) + `;(()=>{
+        const m=entities.find(e=>e.utype==='militia');
+        const tc=entities.find(e=>e.btype==='TC'&&e.team===0);
+        damageEntity(tc, m);   // building shoots the passive soldier
+        return {target:m.target||null, task:m.task||null, hp:m.hp};
+      })()`);
+      assertEq(r.target, null, 'passive soldier does not acquire the building that shot it');
+    });
+
+    await tapT('posture: picking a stance is the off-switch for an active guard + auto-scout', async () => {
+      const r = await page.evaluate(tapStage(`
+        const m=createUnit('scout',30,30,0); selected=[m]; m.guardX=20; m.guardY=20; m.autoScout=true;
+        window.__pts=()=>({});`) + `;(()=>{
+        const m=selected[0];
+        execCommand({kind:'set-stance', unitIds:[m.id], stance:'defensive'}, 0);
+        return {guardX:m.guardX, autoScout:m.autoScout, stance:m.stance};
+      })()`);
+      assertEq(r.guardX, null, 'set-stance clears the guard post');
+      assertEq(r.autoScout, false, 'set-stance clears auto-scout');
+      assertEq(r.stance, 'defensive', 'stance applied');
     });
 
     await tapT('desktop-tap: resource click assigns villagers and RELEASES them', async () => {

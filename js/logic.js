@@ -1162,7 +1162,12 @@ function damageEntity(attacker, target){
   // against enemy-TEAM raiders. controlAIScouts also drops any gaia target that
   // slips through, but suppressing the retaliation here stops it being acquired.
   let scoutIgnoresGaia = target.utype==='scout' && isAITeam(target.team) && attacker.team===GAIA_TEAM;
-  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia){
+  // No Attack (passive) means exactly that — the unit never retaliates, even
+  // under fire. Without this, a passive soldier shot by an enemy tower/TC would
+  // acquire it as a target and march in to attack the building, the opposite of
+  // what the stance promises ("Never attacks or retaliates").
+  let passiveNoRetaliate = target.stance==='passive';
+  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;

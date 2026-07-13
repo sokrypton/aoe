@@ -308,6 +308,13 @@ function updateUI(){
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
     // Auto Scout state, so the toggle button label flips the instant it lands.
     if (e.type === 'unit' && e.utype === 'scout') currentSelectionDetails += ':as' + selected.filter(s => s.autoScout).length;
+    // Stance, so the highlighted stance button moves the instant a set-stance
+    // command lands. This is the COARSE gate (updateUI early-returns unless
+    // stateChanged) — the selKey below then rebuilds the strip. Both need it.
+    if (e.type === 'unit') currentSelectionDetails += ':st' + selected.filter(s => s.type === 'unit').map(s => s.stance || '-').join('.');
+    // Guard state (posture highlight): whether each unit holds a post, so the
+    // Guard tile lights/unlights the instant a guard or stance command lands.
+    if (e.type === 'unit') currentSelectionDetails += ':gd' + selected.filter(s => s.type === 'unit').map(s => s.guardX != null ? 1 : 0).join('');
     if (e.queue) {
       // Structural signature only (queue contents), NOT trainTick: progress
       // changes every tick, and keying on it rebuilt the whole details panel
@@ -511,6 +518,13 @@ function updateUI(){
     // Auto Scout state: the button EXISTS only while some selected scout
     // isn't auto-scouting, so the strip must rebuild when the command lands.
     +':as'+selected.filter(s=>s.type==='unit'&&s.autoScout).length
+    // Stance: the highlighted stance button must refresh when a set-stance
+    // command lands (the button set is fixed, but which one is `stance-on`
+    // changes). Fold the selection's stances into the key.
+    +':st'+selected.filter(s=>s.type==='unit').map(s=>s.stance||'-').join('.')
+    // Guard state: the Guard tile's highlight (and the fact that a stance clears
+    // it) must refresh the strip when a guard/stance command lands.
+    +':gd'+selected.filter(s=>s.type==='unit').map(s=>s.guardX!=null?1:0).join('')
     +':'+(selected[0]&&selected[0].btype==='MILL'?(resourceStore(myTeam).prepaidFarms||0):'')
     +':'+(selected[0]&&selected[0].btype==='MARKET'?marketPrices.food+'.'+marketPrices.wood+'.'+marketPrices.stone:'');
   let rebuildActions=selKey!==lastSelKey;
@@ -1226,45 +1240,90 @@ function updateUI(){
     // Auto Scout toggle — shown only when the selection is all own scouts. The
     // explore/stop glyph differs so the on/off state reads even in the classic
     // skin (which hides button labels). Command is deterministic (js/commands.js).
-    // Guard Position — any all-military selection (mixed types included,
-    // AoE2-style): tap the flag button, then tap the map; the units hold
-    // that spot, leash their chases to it, and walk back after fights.
-    // Reuses the rally flag sprite — it IS a flag-the-ground order, just
-    // for units instead of a building. execGuard (js/commands.js) runs it
-    // deterministically; a manual order cancels, like Auto Scout.
-    if(rebuildActions && allGuardable(selected)){
-      if(window.settingGuard){
-        let btn=document.createElement('div');btn.className='act-btn rally-btn';
+    // Posture row (AoE2 stances + Guard + Auto Scout) — ONE mutually-exclusive
+    // set of dispositions, exactly one highlighted at a time. A unit's EFFECTIVE
+    // posture is: auto-scouting > guarding (a placed anchor) > its stance. The
+    // three off-switch each other in the sim (execSetStance/execGuard/
+    // execAutoScout each clear the others), so the highlight can never show two,
+    // and the behavior always matches the lit tile. Stances render for all-
+    // soldier selections; Guard for anything guardable (soldiers + rams); Auto
+    // Scout for all-scout selections. Reuses the rally flag sprite for Guard.
+    // Selection is KEPT so the player can keep adjusting (AoE2-style).
+    let allSoldiers = selected.length>0 && selected.every(s=>s.type==='unit'&&s.team===myTeam&&isSoldierUnit(s));
+    let allScouts   = selected.length>0 && selected.every(s=>s.type==='unit'&&s.utype==='scout'&&s.team===myTeam);
+    let guardRow    = allGuardable(selected);
+    if(rebuildActions && (allSoldiers || guardRow)){
+      let ids = selected.map(s=>s.id);
+      // Guard tile is HIDDEN for soldiers for now — the four stances already
+      // cover "hold this area" (Defensive/Stand Ground), so a separate flag
+      // just multiplied near-identical options. The whole guard implementation
+      // stays wired (execGuard, ram guard, rally-spawn posts); flip this to
+      // re-expose the soldier flag later. Rams keep it (no stance to fall back
+      // on). Note: soldiers can still CARRY a guard post (new units guard their
+      // rally flag) — we just don't surface the button.
+      const GUARD_FOR_SOLDIERS = false;
+      let showGuard = guardRow && (!allSoldiers || GUARD_FOR_SOLDIERS);
+      // Effective posture of a unit, and the common one across the selection
+      // (null if mixed) — drives which single tile is highlighted. When the
+      // Guard tile isn't shown, a guarding unit falls back to its stance so it
+      // still lights SOMETHING (rather than pointing at an absent Guard tile).
+      let posture = s => s.autoScout ? 'auto' : ((showGuard && s.guardX!=null) ? 'guard' : (s.stance||'aggressive'));
+      let common = selected.every(s=>posture(s)===posture(selected[0])) ? posture(selected[0]) : null;
+
+      // Stances (soldiers only — rams carry no stance).
+      if(allSoldiers){
+        let STANCE_BTNS=[
+          {stance:'aggressive', label:'Aggressive',   desc:'Attacks any enemy it sees and pursues.'},
+          {stance:'defensive',  label:'Defensive',    desc:'Attacks nearby enemies but returns to its post.'},
+          {stance:'standground',label:'Stand Ground', desc:'Holds position; attacks only what comes into range.'},
+          {stance:'passive',    label:'No Attack',    desc:'Never attacks or retaliates.'},
+        ];
+        STANCE_BTNS.forEach(sb=>{
+          let btn=document.createElement('div');btn.className='act-btn'+(common===sb.stance?' stance-on':'');
+          btn.dataset.tipType='action';
+          btn.dataset.tipLabel=sb.label;
+          btn.dataset.tipDesc=sb.desc;
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-stance-${sb.stance}"></div><div class="btn-label">${sb.label}</div>`;
+          btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-stance',unitIds:ids,stance:sb.stance}); };
+          act.appendChild(btn);
+        });
+      }
+
+      // Guard — a flag-the-ground order (rams for now; soldiers hidden via
+      // GUARD_FOR_SOLDIERS above). Highlighted while the selection holds a
+      // post; while arming it flips to a Cancel tile.
+      if(showGuard){
+        if(window.settingGuard){
+          let btn=document.createElement('div');btn.className='act-btn stance-on rally-btn';
+          btn.dataset.tipType='action';
+          btn.dataset.tipLabel='Cancel Guard';
+          btn.dataset.tipDesc='Click to stop setting the guard position.';
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Tap map to<br>guard</div>`;
+          btn.onclick=()=>{ window.settingGuard=false; showMsg('Guard cancelled'); updateUI(); };
+          act.appendChild(btn);
+        } else {
+          let btn=document.createElement('div');btn.className='act-btn'+(common==='guard'?' stance-on':'');
+          btn.dataset.tipType='action';
+          btn.dataset.tipLabel='Guard';
+          btn.dataset.tipDesc='Tap ground to hold that spot, a building to stand watch there, or one of your units to escort it. Guards chase enemies only a short way and return to their post; a plain move relocates the post, and picking another stance ends the guard.';
+          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Guard</div>`;
+          btn.onclick=()=>{ if(gameOver)return; window.settingGuard=true; showMsg('Tap the map to set guard position'); updateUI(); };
+          act.appendChild(btn);
+        }
+      }
+
+      // Auto Scout (scouts only) — frontier explore that avoids fights.
+      // Highlighted while active; pick another posture (or order it somewhere)
+      // to stop. Kept in the row so it reads as one of the dispositions.
+      if(allScouts){
+        let btn=document.createElement('div');btn.className='act-btn'+(common==='auto'?' stance-on':'');
         btn.dataset.tipType='action';
-        btn.dataset.tipLabel='Cancel Guard';
-        btn.dataset.tipDesc='Click to stop setting the guard position.';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Tap map to<br>guard</div>`;
-        btn.onclick=()=>{ window.settingGuard=false; showMsg('Guard cancelled'); updateUI(); };
-        act.appendChild(btn);
-      } else {
-        let btn=document.createElement('div');btn.className='act-btn';
-        btn.dataset.tipType='action';
-        btn.dataset.tipLabel='Guard';
-        btn.dataset.tipDesc='Tap ground to hold that spot, a building to stand watch there, or one of your units to escort it. Guards chase enemies only a short way and return to their post; a plain move order relocates the post. New units guard their rally flag automatically.';
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Guard</div>`;
-        btn.onclick=()=>{ if(gameOver)return; window.settingGuard=true; showMsg('Tap the map to set guard position'); updateUI(); };
+        btn.dataset.tipLabel='Auto Scout';
+        btn.dataset.tipDesc='The scout automatically explores unmapped areas and avoids fights. To stop it, pick another stance or order it somewhere.';
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-compass"></div><div class="btn-label">Auto Scout</div>`;
+        btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); };
         act.appendChild(btn);
       }
-    }
-
-    // Auto Scout — no Stop button: any manual order (just send the scout
-    // somewhere) already cancels it, so the button only shows while at
-    // least one selected scout ISN'T auto-scouting yet.
-    let allScouts = selected.length>0 && selected.every(s=>s.type==='unit'&&s.utype==='scout'&&s.team===myTeam);
-    if(rebuildActions&&allScouts&&selected.some(s=>!s.autoScout)){
-      let ids = selected.map(s=>s.id);
-      let btn=document.createElement('div');btn.className='act-btn';
-      btn.dataset.tipType='action';
-      btn.dataset.tipLabel = 'Auto Scout';
-      btn.dataset.tipDesc = 'The scout automatically explores unmapped areas and avoids fights. To stop it, just order it somewhere.';
-      btn.innerHTML=`<div class="btn-emoji sprite-icon icon-compass"></div><div class="btn-label">Auto Scout</div>`;
-      btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'auto-scout',unitIds:ids,on:true}); deselectAfterTask(); };
-      act.appendChild(btn);
     }
     let allVillagers = selected.every(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
     if(rebuildActions&&allVillagers){

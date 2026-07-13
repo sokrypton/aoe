@@ -132,6 +132,7 @@ function detEntityHash(e){
   h = detMix(h, e.tradeDestId == null ? -1 : e.tradeDestId);
   h = detMixStr(h, e.tradePhase);
   h = detMix(h, e.autoScout ? 1 : 0); // player Auto Scout mode (re-paths each tick, js/logic.js)
+  h = detMixStr(h, e.stance);         // combat stance — now mid-game-settable via the HUD (set-stance cmd)
   return h >>> 0;
 }
 

@@ -84,6 +84,11 @@ const SCENES = {
     updateUI();                                 // settle selection (menu → main)
     window.currentVillagerMenu = 'eco'; updateUI(); // open economic build submenu (House, Mill, Farm…)
     try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  posture: `(${pageStage})();
+    const sc = createUnit('scout', 28, 28, 0); selected.push(sc); // scout = widest posture row (4 stances + Guard + Auto Scout)
+    (${pageLookAt})(28, 28);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
 };
 
 const VIEWPORTS = {

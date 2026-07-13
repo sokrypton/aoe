@@ -237,7 +237,47 @@ function execCommand(cmd, team){
     case 'guard':
       execGuard(cmd, team);
       break;
+    case 'set-stance':
+      execSetStance(cmd, team);
+      break;
   }
+}
+
+// The 4 AoE2 stances (must match STANCES in js/editor.js and the reads in
+// js/logic.js). Set from the HUD stance buttons (js/ui.js) via this command —
+// lockstep-safe like auto-scout/guard: queued to a shared tick, ids re-resolved
+// against the local entitiesById + ownership-filtered on every peer.
+const VALID_STANCES = new Set(['aggressive', 'defensive', 'standground', 'passive']);
+function execSetStance(cmd, team){
+  if (!VALID_STANCES.has(cmd.stance)) return; // never trust a wire value
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.type === 'unit' && u.team === team && u.hp > 0 &&
+                 typeof isSoldierUnit === 'function' && isSoldierUnit(u));
+  if (!units.length) return;
+  units.forEach(u => {
+    u.stance = cmd.stance;
+    // Postures are mutually exclusive: picking a stance is the off-switch for
+    // the other two dispositions. Guard (a placed anchor + leash) and Auto
+    // Scout (frontier wander) each override how the unit reacts to enemies, so
+    // leaving them set would fight the stance the player just chose. Mirrors
+    // execGuard/execAutoScout clearing each other — the UI shows exactly one
+    // highlighted posture, and this keeps the behavior matching the highlight.
+    u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
+    u.autoScout = false;
+    // No Attack must DISENGAGE, not just stop acquiring new targets: the
+    // passive gate in js/logic.js only blocks the auto-acquire scan, so a unit
+    // that was already attacking (auto-acquired OR an explicit attack order)
+    // keeps hammering its target. Drop the current FIGHT so "No Attack" means
+    // what it says. AoE2 does the same — switching to No Attack halts attacks.
+    // But ONLY the fight: a unit merely walking to a destination (no target)
+    // keeps its move order — clearing the path would cancel a legitimate walk.
+    if (cmd.stance === 'passive' && (u.target != null || u.explicitAttack)) {
+      u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+      if (typeof clearUnitPath === 'function') clearUnitPath(u);
+    }
+  });
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
 // Which units carry a guard post: soldiers, plus RAMS — a ram doesn't
