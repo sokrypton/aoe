@@ -1147,7 +1147,11 @@ function planAIMarketExchange(ai,profile){
   let mkt=aiOwnMarket(ai.team);
   if(!mkt||!mkt.complete)return;
   let r=resourceStore(ai.team);
-  if(r.gold<80){
+  // Sell at gold<150, not gold<80: the old threshold let the AI hover JUST
+  // above starvation — 100–140 gold, 1600+ food floating — dribbling gold-cost
+  // units out one at a time while its attack never sustained (self-play seed
+  // 7200). 150 covers a ram's 75g plus a couple of gold units per cycle.
+  if(r.gold<150){
     let res=r.stone>250?'stone':r.wood>500?'wood':r.food>400?'food':null;
     if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
   } else if(r.gold>300){
@@ -1212,6 +1216,20 @@ function queueAIMilitary(ai,readyBarracks,profile){
     // accounting overstated and under-produce rams. The caller updates the count
     // only on a confirmed ram queue.
     if(wantRam&&canAfford(ai.team,UNITS.ram.cost)) return 'ram';
+    // Saving for a ram and only wood is missing (gold already banked):
+    // reserve wood the way gold is reserved below — train the wood-free
+    // militia (60f/20g) so wood banks toward the 160 a ram needs. Self-play
+    // showed wood is the chronic constraint (farm reseeds + walls + houses
+    // keep the bank under ~80 all game), so hard AIs reached Castle with
+    // 600+ gold and NEVER fielded a ram — attacks bounced off the enemy TC
+    // for 50+ game-min. ramWoodReserve (AI_LEVELS) scopes how long the
+    // banking lasts: hard sustains it for its whole siege train (big waves
+    // escort rams well), medium/easy only for the FIRST door-opener ram —
+    // an open-ended reserve kept medium mono-militia for ALL of Castle age
+    // (its gold banks easily, its wood never does), and predictable
+    // melee-only waves fed the defender's archer counter-pick.
+    {let store=resourceStore(ai.team);
+    if(wantRam&&ramCount<(profile.ramWoodReserve||0)&&store.gold>=ramGold&&store.wood<(UNITS.ram.cost.w||0)&&isUnlocked(ai.team,'militia'))return 'militia';}
     // Saving for a ram but gold-short: RESERVE gold for the siege — train the
     // gold-free spearman meanwhile so gold banks toward the 75 a ram needs,
     // instead of dribbling it into militia/knights. Gold-starved Castle AIs
