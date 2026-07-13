@@ -15,6 +15,8 @@
 //   mode=1v1|2v2   diff=easy|standard|hard (or comma list: easy,hard)
 //   map=small|medium|large   ticks=N   seed=N   rollback=1   fog=off
 //   runs=N         run N matches (seed varied per run) and print a summary
+//   jobs=N         parallel matches for runs>1 (default: min(runs, cores-2, 6);
+//                  jobs=1 = sequential — use for honest per-run tps numbers)
 //   timeout=MS     per-match evaluate timeout (default scales with ticks)
 //   headed=1       show the browser window (debugging)
 //
@@ -178,15 +180,32 @@ function aggregate(reports) {
       process.stdout.write(JSON.stringify(rep, null, 1) + '\n');
       process.exitCode = (rep.health.jsErrors || []).length ? 1 : 0;
     } else {
-      const reports = [];
+      // PARALLEL batch: every run is an independent deterministic match in
+      // its own page, so they scale with CPU cores instead of queueing.
+      // Concurrency defaults to min(runs, cores-2, 6) — each page is a full
+      // sim; beyond ~6 they contend and per-run tps drops (which would skew
+      // ticksPerSec health stats more than it already does under parallelism;
+      // findings/checksums/outcomes are unaffected — determinism is per-run).
+      // jobs=1 restores the old strictly-sequential behavior (for honest tps
+      // measurements).
+      const os = require('os');
+      const jobs = Math.max(1, Math.min(
+        parseInt(a.jobs || String(Math.min(runs, Math.max(1, os.cpus().length - 2), 6)), 10), runs));
       const base0 = baseCfg.seed != null ? baseCfg.seed : 1;
-      for (let i = 0; i < runs; i++) {
-        const rep = await runOne(browser, base, { ...baseCfg, seed: base0 + i * 1000 }, timeoutMs);
-        reports.push(rep);
-        process.stderr.write(`run ${i + 1}/${runs} (seed ${base0 + i * 1000}): ` +
-          `${rep.end.gameOver ? (rep.end.won ? 'team0 side won' : 'other side won') : 'unresolved'}` +
-          `, ${rep.findings.length} finding(s)\n`);
-      }
+      const reports = new Array(runs);
+      let next = 0;
+      const worker = async () => {
+        while (next < runs) {
+          const i = next++;
+          const seed = base0 + i * 1000;
+          const rep = await runOne(browser, base, { ...baseCfg, seed }, timeoutMs);
+          reports[i] = rep;
+          process.stderr.write(`run ${i + 1}/${runs} (seed ${seed}): ` +
+            `${rep.end.gameOver ? (rep.end.won ? 'team0 side won' : 'other side won') : 'unresolved'}` +
+            `, ${rep.findings.length} finding(s)\n`);
+        }
+      };
+      await Promise.all(Array.from({length: jobs}, worker));
       process.stdout.write(JSON.stringify(aggregate(reports), null, 1) + '\n');
       process.exitCode = reports.some(r => (r.health.jsErrors || []).length) ? 1 : 0;
     }

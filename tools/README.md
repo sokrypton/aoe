@@ -46,6 +46,7 @@ a thin wrapper around `node tools/simulate.js` (callable directly).
 | `seed` | random | fixed seed → reproducible match |
 | `rollback` | off | also run a snapshot→resim determinism check (`rollback=1`) |
 | `runs` | `1` | run N seeds (`seed`+1000·i) and print an aggregate summary |
+| `jobs` | min(runs, cores−2, 6) | parallel matches for `runs>1` (each in its own page — per-seed results identical to sequential); `jobs=1` for honest per-run tps |
 | `timeout` | scales w/ ticks | per-match evaluate cap (ms) |
 | `headed` | off | `headed=1` shows the browser window (debugging) |
 

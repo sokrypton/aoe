@@ -391,11 +391,6 @@ function separateUnits(){
     let a=units[i], b=units[j];
     let aGathering=gathering[i], bGathering=gathering[j];
     let dx=a.x-b.x, dy=a.y-b.y;
-    // Squared-distance early-out: the branches below only fire for d<minDist,
-    // so skip the sqrt entirely for the (vast majority of) neighborhood pairs
-    // that don't overlap. Math.sqrt is correctly-rounded and minDist²(0.25)/
-    // minDist(0.5) are exact, so d2>=minDist² ⟺ sqrt(d2)>=minDist bit-for-bit —
-    // behavior-neutral (verified by checksum equality).
     let d2=dx*dx+dy*dy;
     if(d2>=minDist*minDist)return;
     let d=Math.sqrt(d2);
