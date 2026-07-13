@@ -24,8 +24,8 @@ change the code, re-run the same seed, and compare.
 ## Quick start
 
 ```sh
-tools/simulate.sh                               # 1v1 standard, 60k ticks
-tools/simulate.sh mode=2v2 diff=hard ticks=120000 seed=42
+tools/simulate.sh                               # 1v1 standard, 40k ticks (~33 game-min)
+tools/simulate.sh mode=2v2 diff=hard ticks=80000 seed=42
 tools/simulate.sh runs=6 diff=hard              # 6 seeds, aggregate summary
 tools/simulate.sh rollback=1 | jq '.health.rollbackDeterministic'
 tools/simulate.sh diff=hard seed=2001 | jq '.findings'
@@ -42,7 +42,7 @@ a thin wrapper around `node tools/simulate.js` (callable directly).
 | `mode` | `1v1` | `1v1` (2 teams) or `2v2` (4 teams, allied) |
 | `diff` | `standard` | `easy`\|`standard`\|`hard`, or a comma list per team: `easy,hard` |
 | `map` | medium (1v1) / large (2v2) | `small`\|`medium`\|`large` |
-| `ticks` | `60000` | tick budget (30 ticks = 1 game-second) |
+| `ticks` | `40000` | tick budget (**20 ticks = 1 game-second** — the TPS build constant, js/core.js; ~33 game-min default) |
 | `seed` | random | fixed seed → reproducible match |
 | `rollback` | off | also run a snapshot→resim determinism check (`rollback=1`) |
 | `runs` | `1` | run N seeds (`seed`+1000·i) and print an aggregate summary |
@@ -88,7 +88,7 @@ Exit code: `0` clean · `1` findings or JS errors observed · `2` harness failur
 - **Single seeds mislead.** Map luck swings outcomes hard (an early bear cluster can wipe a team's villagers and doom its whole game). Use `runs=3+` before concluding anything; use larger batches for balance/pacing claims. A "regression" on one seed is often just variance — check the aggregate.
 - **Headless must stay behavior-identical to live.** Only strip *non-sim* work behind `window.__headlessSim` (fog, particles, sounds, per-tick determinism hashing). Never gate actual game logic on it.
 - **`startGame()` alone does NOT build the world / init `teamAge`.** The real match path is `onStartClicked → restartGame(diff) → startGame()`; `restartGame` is what calls `resetTeamAge()` etc. `runSimulation` uses the real path — if you script the game by hand, call `restartGame`.
-- **Stray Chrome processes.** Many concurrent runs can leave zombie `headless_shell`/Chrome processes that contend for CPU and make a run look "hung" (a 120k hard match is ~30s; if it's minutes, suspect strays). Clean up with `pkill -f "[s]imulate.js"; pkill -f "[h]eadless_shell"`.
+- **Stray Chrome processes.** Many concurrent runs can leave zombie `headless_shell`/Chrome processes that contend for CPU and make a run look "hung" (an 80k hard match is ~20s; if it's minutes, suspect strays). Clean up with `pkill -f "[s]imulate.js"; pkill -f "[h]eadless_shell"`.
 - **Resource 404s (favicon) are filtered** out of `jsErrors` by the driver — don't re-add them as sim errors.
 - **Shell pattern gotcha:** `pgrep -f`/`pkill -f` patterns match the *calling* script's own command line — use `[b]racketed` patterns or explicit PIDs; never chain waiters on `pgrep` polling.
 

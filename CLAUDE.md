@@ -26,6 +26,15 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `init.js` | boot, menus, match start paths |
 | `render*.js`, `ui.js`, `audio.js` | viewer-only (never read by the sim) |
 
+## Timebase
+
+`TPS` (js/core.js) = simulation ticks per game-second — a single BUILD
+constant (20; classic-AoE2-like). Every tick duration is authored at its
+canonical 30tps value and wrapped in `T30(x)`; never hardcode a tick-rate
+literal in a formula (use `TPS`) or a raw tick duration (wrap in `T30`).
+`TPS = 30` reproduces the pre-migration behavior bit-for-bit. Saves are
+TPS-stamped (v5) and refuse to load across timebases.
+
 ## Determinism rules (the ones that bite)
 
 The sim runs in lockstep on every peer; identical inputs must produce
@@ -69,8 +78,8 @@ full tooling guide. Working rules:
 - **Sim workflow**: reproduce with a fixed seed (`tools/simulate.sh seed=N`),
   fix, re-run the same seed. `end.checksum` is the cross-version equivalence
   signal: a behavior-neutral change reproduces it exactly.
-- **Combat features need wars**: peaceful 20–30k-tick sims never exercise
-  combat code. Use 80k runs, temporary `window.__aiProbe` counters (unhashed,
+- **Combat features need wars**: peaceful 14–20k-tick sims never exercise
+  combat code. Use 50k+ runs, temporary `window.__aiProbe` counters (unhashed,
   checksum-safe), or a staged scenario in behavior-tests.
 - **Test entry points, not just mechanisms**: drive the real command/input
   shape (see the ram-boarding regression — the engine worked, the click path

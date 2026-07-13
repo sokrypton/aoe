@@ -28,7 +28,11 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 4,
+    version: 5,
+    // The timebase this save's tick-stamps were written on (js/core.js TPS).
+    // Tick counts are meaningless on another clock — the loader rejects a
+    // mismatch instead of silently running every timer 1.5x fast/slow.
+    tps: TPS,
     savedAt: new Date().toISOString(),
     // A visible signature that this save came from a multiplayer match
     // (rather than single-player) — surfaced in the filename and the load
@@ -219,13 +223,19 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:4 — actually check it (the net layer's
+  // serializeGame stamps version:5 — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a format change
-  // fails loudly here instead of misloading silently. v4 (compact RLE map,
-  // derived `occupied` rebuilt from entities, RLE/omitted explored grids)
-  // deliberately drops v3 support — no back-compat shims, per convention.
-  if (data.version !== 4) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v4 saves only');
+  // fails loudly here instead of misloading silently. v5 (TPS-stamped ticks,
+  // on top of v4's compact RLE map + derived occupied + RLE grids)
+  // deliberately drops older versions — no back-compat shims, per convention.
+  if (data.version !== 5) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v5 saves only');
+    return;
+  }
+  // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,
+  // age clocks, AI windows) is denominated in the writing build's TPS.
+  if (data.tps !== TPS) {
+    if (window.showMsg) showMsg('Load failed: save was made at ' + data.tps + ' ticks/game-second, this build runs ' + TPS);
     return;
   }
   try {

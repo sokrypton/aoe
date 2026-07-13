@@ -1,3 +1,18 @@
+// ---- THE TIMEBASE ----
+// TPS = simulation ticks per GAME-second. A single BUILD constant, never a
+// runtime option (lockstep peers on the same build agree automatically).
+// 20 matches classic AoE2's effective ~15-20Hz world rate (GDC "1,500
+// Archers" paper) — proven sufficient for the genre — and simulates a match
+// in 1/3 fewer ticks than the original 30.
+// EVERY tick-denominated duration in the codebase is authored at the
+// CANONICAL 30tps value and wrapped in T30() below, so TPS=30 reproduces the
+// original behavior bit-for-bit (T30 is the identity at 30) and any other
+// rate is a one-line experiment. Never hardcode a tick-rate literal in a
+// formula — use TPS; never write a raw tick duration — wrap it in T30().
+const TPS = 20;
+// Canonical converter: `x` is a duration in ticks ON THE 30TPS CLOCK.
+function T30(x){ return Math.round(x * TPS / 30); }
+
 const C=document.getElementById('game');
 // X is reassignable (not const): drawSelectedUnitOutlines() briefly redirects
 // it to an offscreen buffer so it can reuse drawUnit() itself to capture a
@@ -125,8 +140,8 @@ function isEnemyOf(team, e){ return isPlayerTeam(e.team) && !sameSide(team, e.te
 const AGES = [
   {key:'dark',   name:'Dark Age'},
   // Research times match AoE2 (DE): Feudal 130s, Castle 160s (30 ticks/game-s).
-  {key:'feudal', name:'Feudal Age', cost:{f:500},         researchTicks:3900},
-  {key:'castle', name:'Castle Age', cost:{f:800, g:200},  researchTicks:4800}
+  {key:'feudal', name:'Feudal Age', cost:{f:500},         researchTicks:T30(3900)},
+  {key:'castle', name:'Castle Age', cost:{f:800, g:200},  researchTicks:T30(4800)}
 ];
 // Minimum age index per unit/building type; absent => available from Dark.
 const AGE_REQ = {
@@ -543,34 +558,34 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:4500,range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
-  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:750,armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
-  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
-  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
-  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:1050,armor:{m:0,p:7},desc:'Drop site for Food. Food drop-off point. Lets you prepay Farm reseeds.',icon:'🛞'},
+  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
+  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
+  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Food drop-off point. Lets you prepay Farm reseeds.',icon:'🛞'},
   // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
-  FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:450,armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:1500,armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
   // it also rides the fortified_wall upgrade (see UPGRADES / buildingMaxHpFor),
   // so a fully-fortified ring keeps its towers tougher than its segments.
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:2400,garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:T30(2400),garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   // Dark-age wooden bastion in the same deliberate deviation: cheap all-wood
   // lookout that anchors an early palisade ring, then upgrades IN PLACE to a
   // Watch Tower once Feudal unlocks it (see WALL_STONE_MATCH / execUpgradeWalls
   // in commands.js). No fortified_wall bonus — that tech is stone-only.
-  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:1500,garrisonCap:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
-  WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:150,armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
-  GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:900,armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
+  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:T30(1500),garrisonCap:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
+  WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:T30(150),armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
+  GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:T30(900),armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
   // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
   // only replaces stone wall segments (and palisade gate only palisades):
   // matching material keeps the consume/refund math and the art coherent.
-  SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:240,armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
-  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:2100,armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'},
+  SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:T30(240),armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
+  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:T30(2100),armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'},
   // Feudal-age Market. Trains Trade Carts (which shuttle to any OTHER player's
   // Market for gold, allied or enemy — see updateTradeCart in logic.js) and
   // hosts the global commodity buy/sell exchange (see marketPrices / execMarketTrade
@@ -580,21 +595,21 @@ const BLDGS={
   // footprint passes units (see walkable() in pathfinding.js and the
   // pushUnitsOut skip in entities.js); tiles stay `occupied` so nothing can
   // be built on it.
-  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:1500,armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and lets you buy and sell resources for gold. Trade Carts earn gold by travelling to another player’s Market. Requires the Feudal Age.',icon:'⚖️'}
+  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and lets you buy and sell resources for gold. Trade Carts earn gold by travelling to another player’s Market. Requires the Feudal Age.',icon:'⚖️'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
 // track AoE2 Dark/Feudal-age stats.
 const UNITS={
-  villager:{name:'Villager',hp:25,atk:3,range:0,speed:0.8,rof:60,armor:{m:0,p:0},cost:{f:50},trainTime:750,desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
-  militia:{name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:60,armor:{m:0,p:1},cost:{f:60,g:20},trainTime:630,desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
-  spearman:{name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:90,armor:{m:0,p:0},cost:{f:35,w:25},trainTime:660,desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
-  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:60,armor:{m:0,p:0},cost:{w:25,g:45},trainTime:1050,desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
+  villager:{name:'Villager',hp:25,atk:3,range:0,speed:0.8,rof:T30(60),armor:{m:0,p:0},cost:{f:50},trainTime:T30(750),desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
+  militia:{name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:T30(60),armor:{m:0,p:1},cost:{f:60,g:20},trainTime:T30(630),desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
+  spearman:{name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:T30(90),armor:{m:0,p:0},cost:{f:35,w:25},trainTime:T30(660),desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
+  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:T30(60),armor:{m:0,p:0},cost:{w:25,g:45},trainTime:T30(1050),desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
   // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2) — and
   // the scout IS Feudal-gated here now (AGE_REQ), so the speed fits.
-  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:60,armor:{m:0,p:2},cost:{f:80},trainTime:900,desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
+  scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:T30(60),armor:{m:0,p:2},cost:{f:80},trainTime:T30(900),desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
   // Castle-age heavy cavalry (AoE2-ish knight).
-  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:60,armor:{m:2,p:2},cost:{f:60,g:75},trainTime:900,desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
+  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:T30(60),armor:{m:2,p:2},cost:{f:60,g:75},trainTime:T30(900),desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
   // Battering ram — Castle-age siege (AGE_REQ), trained at the Barracks
   // (no siege workshop building exists). NOT in MILITARY on purpose (AoE2
   // rams get no blacksmith melee/armor techs — see isArmyUnit). The tiny
@@ -605,20 +620,20 @@ const UNITS={
   // garrisonCap: melee infantry rides inside (AoE2 garrison-rams) — protected
   // en route, each rider speeds the ram up (unitMoveSpeed, js/logic.js), and
   // riders pop out unharmed when the ram is destroyed (handleDeath).
-  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:150,armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:1080,garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
+  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
   // wolf (45hp/7atk vs 25/3) so a lone villager should run, but a couple
   // of militia put it down without drama.
-  bear:{name:'Bear',hp:45,atk:7,range:0,speed:1.2,rof:60,armor:{m:1,p:0},cost:{f:0},trainTime:0,desc:'Wild animal. Attacks anyone who wanders too close.',icon:'🐻'},
-  sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,food:100,desc:'Provides Food when harvested.',icon:'🐑'},
-  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:60,armor:{m:0,p:0},cost:{f:0},trainTime:0,desc:'Provides Food when harvested.',icon:'🍖'},
+  bear:{name:'Bear',hp:45,atk:7,range:0,speed:1.2,rof:T30(60),armor:{m:1,p:0},cost:{f:0},trainTime:T30(0),desc:'Wild animal. Attacks anyone who wanders too close.',icon:'🐻'},
+  sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:T30(60),armor:{m:0,p:0},cost:{f:0},trainTime:T30(0),food:100,desc:'Provides Food when harvested.',icon:'🐑'},
+  sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:T30(60),armor:{m:0,p:0},cost:{f:0},trainTime:T30(0),desc:'Provides Food when harvested.',icon:'🍖'},
   // Trade Cart — Feudal (AGE_REQ), trained at the Market. Unarmed and
   // defenceless: it shuttles between its home Market and another player's
   // Market, delivering gold scaled by the distance between them (see
   // updateTradeCart in logic.js). Costs 1 pop like any unit.
-  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:60,armor:{m:0,p:0},cost:{w:100},trainTime:750,desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
+  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:T30(60),armor:{m:0,p:0},cost:{w:100},trainTime:T30(750),desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
 };
 
 // ---- Unit classification: THE one place a new unit type gets sorted.
@@ -688,14 +703,14 @@ const AI_LEVELS={
   //     eligible troops that answer a sighted threat; the rest hold as home defense)
   //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
   //     to fight a small raid at the town when the army can't answer)
-  easy:{name:'Easy',decisionInterval:240,maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveCap:6,commitPercent:38,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:3600,attackTick:10800,armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:600,wallMaintInterval:600,allyJoinWindow:0,allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,21600,63000],ageSurgeWindow:0,ageSurgeFactor:1.0},
+  easy:{name:'Easy',decisionInterval:T30(240),maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveCap:6,commitPercent:38,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:T30(3600),attackTick:T30(10800),armyReserve:2,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:T30(600),wallMaintInterval:T30(600),allyJoinWindow:T30(0),allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(0),ageSurgeFactor:1.0},
   // Standard plays FAIR — no resource cheat (trickle all 0), like AoE2's
   // Moderate AI. It's still a real challenge (reaches Castle ~15min, fields
   // rams/knights, walls + a tower, pushes from ~10min) but wins on competent
   // play, not free resources. Only hard cheats — AoE2 reserves resource
   // handicaps for its hardest tiers.
-  standard:{name:'Medium',decisionInterval:180,maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:2100,attackTick:6000,armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:600,wallMaintInterval:300,allyJoinWindow:600,allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,12600,27000],ageSurgeWindow:3600,ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:120,maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:1500,attackTick:3600,armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:450,wallMaintInterval:240,allyJoinWindow:900,allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,9000,19800],ageSurgeWindow:3600,ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,trickle:{food:0,wood:0,gold:0,stone:0},maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
@@ -778,7 +793,7 @@ const CORPSE_SKEL=12000, CORPSE_LIFE=25000;
 // Tick-based corpse lifetime for the headless simulator only: render.js prunes
 // corpses by wall-clock (CORPSE_LIFE ms), but headless never runs render(), so
 // it prunes by tick age instead to bound memory (~CORPSE_LIFE at 30 tps).
-const CORPSE_LIFE_TICKS=750;
+const CORPSE_LIFE_TICKS=T30(750);
 
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;
@@ -1075,7 +1090,7 @@ let visionFreshTick = -1; // which sim tick the grids were computed for
 // was measured imperceptible and worth ~2% sim throughput over the old 2
 // (2026-07 perf pass, alongside the 2-tick separation/nudge cadence in
 // js/loop.js). Sim reads tolerate the staleness by design.
-const VISION_REFRESH_TICKS = 4;
+const VISION_REFRESH_TICKS = T30(4); // ~150ms of tolerated staleness
 let teamVisGrid = null, teamExploredGrid = null;
 let visStamps = new Map();  // entity id -> {t,cx,cy,s,gen} last-applied vision disk
 let visScanGen = 0;         // bumped each refresh; entities not re-marked this gen have vanished

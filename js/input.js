@@ -898,13 +898,13 @@ C.addEventListener('touchend',e=>{
 // desync lockstep peers).
 let pendingOrderUI = new Map(); // unit id -> {t: submit tick, keep: bool}
 function prunePendingOrders(){
-  pendingOrderUI.forEach((p, id) => { if (tick - p.t > INPUT_DELAY_TICKS + 30) pendingOrderUI.delete(id); });
+  pendingOrderUI.forEach((p, id) => { if (tick - p.t > INPUT_DELAY_TICKS + T30(30)) pendingOrderUI.delete(id); });
 }
 function hasSelectedMobileWalkOrder(){
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
   return movers.length>0 && movers.every(s=>{
     let p = pendingOrderUI.get(s.id);
-    if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + 30) return p.keep;
+    if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + T30(30)) return p.keep;
     return !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined;
   });
 }

@@ -1434,10 +1434,10 @@ let lastTime = performance.now();
 // Simulation runs at 30 ticks per game-second (all tick-count constants in
 // core.js/logic.js are authored against that), scaled by GAME_SPEED — like
 // AoE2, where "1.7x speed" just runs more game-seconds per real second.
-let timeStep = 1000 / (30 * GAME_SPEED);
+let timeStep = 1000 / (TPS * GAME_SPEED);
 function setGameSpeed(speed){
   GAME_SPEED = speed;
-  timeStep = 1000 / (30 * GAME_SPEED);
+  timeStep = 1000 / (TPS * GAME_SPEED);
 }
 let accumulator = 0;
 

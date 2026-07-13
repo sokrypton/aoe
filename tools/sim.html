@@ -64,7 +64,7 @@ window.runSimulation = async function(opts){
     mode: opts.mode || '1v1',
     diff: opts.diff || 'standard',       // single value, or comma list per team: 'easy,hard'
     map:  opts.map  || ((opts.mode||'1v1') === '2v2' ? 'large' : 'medium'),
-    ticks: parseInt(opts.ticks || 60000, 10),
+    ticks: parseInt(opts.ticks || 40000, 10), // 40k @ 20tps = ~33 game-min (was 60k @ 30tps)
     seed: (opts.seed !== undefined && opts.seed !== null && opts.seed !== '') ? parseInt(opts.seed, 10) : null,
     rollback: opts.rollback === true || opts.rollback === '1' || opts.rollback === 1,
     // bears default ON; 'bears=0'/false disables the wild-bear spawns so a
@@ -143,7 +143,7 @@ window.runSimulation = async function(opts){
       return realWarn.apply(console, a);
     };
 
-    const SAMPLE_EVERY = Math.max(500, Math.floor(cfg.ticks / 60)); // ~60 samples
+    const SAMPLE_EVERY = Math.max(333, Math.floor(cfg.ticks / 60)); // floor ~16.7 game-s at 20tps // ~60 samples
     const sampleTeam = t => {
       const units = entities.filter(e => e.team === t && e.type === 'unit');
       const bldgs = entities.filter(e => e.team === t && e.type === 'building');
@@ -278,19 +278,19 @@ window.runSimulation = async function(opts){
       // — false positives that mask real eco bugs. A team that lost the game
       // wasn't necessarily eco-broken; it just got out-produced and crushed.
       if (!last.defeated && !report.end.defeated[t]) {
-        if (last.age === 0 && tick > 55000) F.push(`team${t} never left Dark Age by tick ${tick}`);
+        if (last.age === 0 && tick > 36700 /* ~30.6 game-min at 20tps */) F.push(`team${t} never left Dark Age by tick ${tick}`);
         if (half.every(s => s.food < 60)) F.push(`team${t} food-starved for the entire second half`);
         if (half.every(s => s.exhaustedFarms > 0 && s.exhaustedFarms >= s.farms - 1) && last.farms > 2)
           F.push(`team${t} farms stay exhausted (${last.exhaustedFarms}/${last.farms}) — reseed economy broken?`);
         if (half.every(s => s.idleVils >= 3)) F.push(`team${t} has ${last.idleVils} chronically idle villagers`);
         const waveSamples = samples.map(s => s.waves);
         const lastWaveGrowth = waveSamples[waveSamples.length-1] - waveSamples[Math.floor(waveSamples.length/2)];
-        if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 40000)
+        if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 26700 /* ~22 game-min */)
           F.push(`team${t} launched no attack waves in the second half despite ${last.mil} military`);
-        if (half.every(s => s.mil === 0) && tick > 30000) F.push(`team${t} fields no military at all`);
+        if (half.every(s => s.mil === 0) && tick > 20000 /* ~16.7 game-min */) F.push(`team${t} fields no military at all`);
       }
     });
-    if (!gameOver && cfg.ticks >= 100000) F.push('match did not resolve — possible stalemate');
+    if (!gameOver && cfg.ticks >= 66700 /* ~55.6 game-min */) F.push('match did not resolve — possible stalemate');
     if (report.health.ticksPerSec != null && report.health.ticksPerSec < 500) F.push(`slow sim: ${report.health.ticksPerSec} ticks/sec (pathfinding storm?)`);
   } catch (err) {
     window.__errors.push(err.message + '\n' + (err.stack || '').split('\n').slice(0, 4).join('\n'));

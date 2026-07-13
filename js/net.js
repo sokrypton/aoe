@@ -202,7 +202,7 @@ let netBytesReceived = 0;
     const up = (netBytesSent - lastSent) / dt;
     const down = (netBytesReceived - lastRecv) / dt;
     // Sim pace: ticks actually produced per real second. Full rate is
-    // 30*GAME_SPEED (60 at the default 2x); lower means the lockstep gate
+    // TPS*GAME_SPEED (40 at the default 2x, TPS=20); lower means the lockstep gate
     // (connection) or the device itself can't keep up. d = current input
     // delay in ticks (the adaptive buffer, js/lockstep.js).
     const t = Math.floor(tick);

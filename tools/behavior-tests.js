@@ -7,7 +7,7 @@
 //   2. forward-building defense — AI attacks an enemy tower in its town
 //   3. walled-archer  — a self-acquired unreachable shooter is disengaged
 //                       from, not soaked (fixture: scenarios/walled-archer.savegame.json)
-//   4. save v4        — RLE map + derived occupied + explored grids
+//   4. save v5        — RLE map + derived occupied + explored grids + TPS stamp
 //                       round-trip checksum-exact; fog-off saves omit grids
 //   5. fog option     — All-Visible matches skip the vision grids, AI intel
 //                       goes omniscient, the SP menu radio drives the flag
@@ -166,7 +166,7 @@ async function withPage(browser, port, entry, fn){
         }
         T.ok('knight survives the boxed archer', knight.hp > 0);
         T.ok('knight disengaged out of range', dist(knight, archer) > archer.range + 0.5);
-        T.ok('knight stopped taking hits', tick - lastHitAt > 600);
+        T.ok('knight stopped taking hits', tick - lastHitAt > 400); // 20 game-s at 20tps
         T.ok('archer stayed in its box, alive', archer.hp > 0);
         return T;
       }, save));
@@ -185,7 +185,7 @@ async function withPage(browser, port, entry, fn){
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v4 stamp', save.version === 4);
+      T.ok('v5 stamp + tps', save.version === 5 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);
@@ -255,7 +255,7 @@ async function withPage(browser, port, entry, fn){
       const vil = createUnit('villager', 10, 20, 0);
       issueMoveOrder(vil, 50, 20);
       let leg = 0;
-      for (let i = 0; i < 14000; i++) {
+      for (let i = 0; i < 9400; i++) { // ~7.8 game-min soak at 20tps
         update();
         if (vil.path.length === 0 && vil.moveGoalX === undefined) {
           leg++;

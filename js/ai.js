@@ -17,7 +17,7 @@ function aiScale(){return MAP/60;}
 // AI's own attack wave trading hits at the enemy's base, so it can't gate
 // the bell directly (it would garrison the whole economy during every
 // offensive). Only hits near the AI's own TC count as "base under attack".
-const AI_GARRISON_HOLD_TICKS = 360; // ~12s at 30 ticks/sec: stay hidden briefly after the last hit
+const AI_GARRISON_HOLD_TICKS = T30(360); // ~12s at 30 ticks/sec: stay hidden briefly after the last hit
 const AI_BASE_ALARM_RADIUS = 18; // tiles from TC center (scaled by aiScale) that count as "home"
 function updateAIGarrisonReaction(ai){
   if(!gameStarted||gameOver)return;
@@ -53,7 +53,7 @@ function updateAIGarrisonReaction(ai){
     // window was sized against the raid at bell-moment. If the real army
     // arrived since, the villagers must not keep brawling knights in the
     // open for the rest of the window — cancel it, fall through to the bell.
-    if(tick%30===0){
+    if(tick%AI_ESCALATE_EVERY===0){
       let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
       let threat=tc&&findEnemyThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
       if(threat&&estimateLocalEnemyPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
@@ -164,7 +164,7 @@ function updateAI(ai){
   // Window must exceed the decision interval or this (decision-tick-only) check
   // steps right over the hit: easy=240 / standard=180 / hard=120, so a fixed 120
   // meant the flee almost never fired for easy/standard.
-  let fleeWindow=profile.decisionInterval+60;
+  let fleeWindow=profile.decisionInterval+T30(60);
   vils.forEach(v=>{
     if(v.lastHitTick==null||tick-v.lastHitTick>=fleeWindow)return;
     if(dist(v,tcCenter)<=alarmR)return;
@@ -221,7 +221,7 @@ function maybeResignAI(ai,aiUnits){
   let vils=0,mils=0;
   for(let u of aiUnits){if(u.utype==='villager')vils++;else if(isArmyUnit(u.utype))mils++;}
   let hit=lastTeamHit&&lastTeamHit[ai.team];
-  let hopeless=vils<4&&mils===0&&hit&&tick-hit.tick<1800&&
+  let hopeless=vils<4&&mils===0&&hit&&tick-hit.tick<T30(1800)&&
     !canAfford(ai.team,UNITS.villager.cost);
   ai.resignScore=hopeless?(ai.resignScore||0)+1:0;
   if(ai.resignScore>=3){
@@ -293,7 +293,7 @@ function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
     // recreating the wall" behavior. The gap is the worker's eco access; the
     // ring still has its gate(s) for defense.
     let pt=ai.wallPlan&&ai.wallPlan.find(t=>t.x===w.x&&t.y===w.y);
-    if(pt){pt.done=true;pt.rescueOpenUntil=tick+3000;}
+    if(pt){pt.done=true;pt.rescueOpenUntil=tick+T30(3000);}
   }
 }
 
@@ -633,7 +633,7 @@ function planAIWalls(ai,aiTC,vils,profile){
   // tiles as sealed → the 6/8 leak). Failed placements back off and retry.
   let placedThisCall=0, iters=0;
   let {x:wtcx, y:wtcy} = centerTile(aiTC);
-  let BACKOFF=Math.max(120,profile.decisionInterval*2);
+  let BACKOFF=Math.max(T30(120),profile.decisionInterval*2);
   while(placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
     iters++;
     let next=plan.find(t=>!t.done&&!(t.buildBackoffUntil>tick));
@@ -1035,7 +1035,7 @@ function findAIWallDefenseSpot(ai){
 // the second half of the Dark-Age stall. Same core-hit basis as the bell.
 function aiUnderRealPressure(ai){
   let h=lastTeamHit&&lastTeamHit[ai.team];
-  return !!(h&&h.core&&tick-h.tick<900);
+  return !!(h&&h.core&&tick-h.tick<T30(900));
 }
 
 function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
@@ -1383,7 +1383,7 @@ function assignAIBuilder(v,build){
   // stuck-watchdog then has to break up.
   let close=b.isFarm?dist(v,{x:build.x+0.5,y:build.y+0.5})<1.2:adjToBuilding(v.x,v.y,build);
   if(v.path.length===0&&!close){
-    build.buildBackoffUntil=tick+900;
+    build.buildBackoffUntil=tick+T30(900);
     v.task=null;
     v.buildTarget=null;
   }
@@ -1715,8 +1715,8 @@ function holdsSiegeOrder(m){
 // means a wounded-but-unengaged unit still marches with the next wave, and
 // only a unit LOSING a fight right now disengages.
 const AI_RETREAT_HP=0.30;        // retreat below 30% HP...
-const AI_RETREAT_HIT_WINDOW=90;  // ...while hit within the last ~3s
-const AI_RETREAT_TICKS=600;      // ~20s: run home, ignore re-acquire/retaliation
+const AI_RETREAT_HIT_WINDOW=T30(90);  // ...while hit within the last ~3s
+const AI_RETREAT_TICKS=T30(600);      // ~20s: run home, ignore re-acquire/retaliation
 // percent-death-retreat approximation: a wave that has lost ~2/3 of what it
 // launched pulls its survivors home to regroup with the next (bigger) wave
 // instead of trickling into the meat grinder one by one.
@@ -1725,7 +1725,8 @@ const AI_WAVE_RETREAT_FRACTION=0.35;
 // worth fighting (~3 militia-equivalents of power — unitPower('militia')=60);
 // the response window is how long the bell stays suppressed while they fight.
 const AI_MILITIA_MAX_THREAT=180;
-const AI_MILITIA_WINDOW=900;
+const AI_MILITIA_WINDOW=T30(900);
+const AI_ESCALATE_EVERY=T30(30); // militia-window escalation re-check (~1 game-second)
 function aiRetreatUnit(m,aiTC){
   m.target=null;m.explicitAttack=false;m.groupSpeed=undefined;
   if(m.task==='garrison'){m.task=null;m.garrisonTarget=null;} // abandon boarding a ram
@@ -1810,7 +1811,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     if(m.utype!=='ram'||!m.garrison||!m.garrison.length)return;
     let t=m.target?entitiesById.get(m.target):null;
     let arrived=t&&distToTarget(m,t)<=6;
-    let underMelee=m.lastMeleeHitTick!=null&&tick-m.lastMeleeHitTick<60;
+    let underMelee=m.lastMeleeHitTick!=null&&tick-m.lastMeleeHitTick<T30(60);
     if(!t||arrived||underMelee)ejectGarrison(m);
   });
   let threat=findEnemyThreatNear(ai,aiTC,12*aiScale());
@@ -2124,7 +2125,7 @@ function rallyIdleMilitary(ai,mils,aiTC){
 // for exploration AND ongoing vision, retraining a lost one just as a human
 // keeps re-scouting. A retrain cooldown stops a scout that keeps dying at the
 // enemy's doorstep from churning food on a still-fragile economy.
-const AI_SCOUT_RETRAIN_COOLDOWN=2400;
+const AI_SCOUT_RETRAIN_COOLDOWN=T30(2400);
 function ensureAIScout(ai,readyBarracks){
   if(!isUnlocked(ai.team,'scout'))return;      // Dark Age: no replacement possible, AoE2-accurate
   if(!readyBarracks.length)return;
@@ -2299,7 +2300,7 @@ function resolveReachableAttackTarget(militia, candidate){
   // walk is. Only consider breaching on a big skew (detour > 2x direct +
   // 10 tiles) — nearestReachableWallLike probes up to 6 findPaths, too
   // expensive to run for every ordinarily-reachable target.
-  let directTicks = dist(militia, candidate) / ((UNITS[militia.utype].speed || 1) / 30);
+  let directTicks = dist(militia, candidate) / ((UNITS[militia.utype].speed || 1) / TPS);
   let tileTicks = 30 / (UNITS[militia.utype].speed || 1);
   if (detour >= 0 && detour <= detourBreachThreshold(directTicks, tileTicks)) return candidate;
   let breach = nearestReachableWallLike(militia, candidate.team);

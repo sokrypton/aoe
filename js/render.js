@@ -422,10 +422,10 @@ function render(){
   }
 
   // Draw command markers (AoE2-style right-click feedback)
-  cmdMarkers=cmdMarkers.filter(m=>tick-m.time<30);
+  cmdMarkers=cmdMarkers.filter(m=>tick-m.time<TPS);
   cmdMarkers.forEach(m=>{
     let {sx, sy} = mapToScreen(m.x+0.5, m.y+0.5);
-    let age=(tick-m.time)/30;
+    let age=(tick-m.time)/TPS; // marker fades over 1 game-second
     X.globalAlpha=1-age;
     X.strokeStyle=m.color;X.lineWidth=2;
     // Cross marker

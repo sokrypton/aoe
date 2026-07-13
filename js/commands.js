@@ -54,7 +54,7 @@ function scheduleCommand(execTick, team, seq, cmd){
 // Entries are NOT deleted after execution: a lockstep rollback re-simulates
 // past ticks and must re-execute their commands from the queue. Pruned
 // once safely older than the rollback window.
-const COMMAND_KEEP_TICKS = 600;
+const COMMAND_KEEP_TICKS = T30(600);
 function runScheduledCommands(){
   let arr = commandQueue.get(tick);
   if (arr) {

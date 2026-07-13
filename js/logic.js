@@ -91,11 +91,11 @@ const RES_KEYS={f:'food',w:'wood',g:'gold',s:'stone'};
 // base gather rates: wood ~0.39/s, gold ~0.38/s, stone ~0.36/s, farm ~0.32/s,
 // forage ~0.31/s.
 const GATHER_TASKS={
-  chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:77,clearOccupied:true},
-  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:79},
-  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:83},
-  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:94,clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true},
-  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:97}
+  chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:T30(77),clearOccupied:true},
+  mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:T30(79)},
+  mine_stone:{terrain:TERRAIN.STONE,resource:'stone',cooldown:T30(83)},
+  farm:{terrain:TERRAIN.FARM,resource:'food',cooldown:T30(94),clearOccupied:true,removeFarm:true,requiresOwnCompleteFarm:true},
+  forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:T30(97)}
 };
 
 // Range at which a villager can slaughter a sheep / harvest a carcass. Must be
@@ -501,6 +501,40 @@ function adjToBuilding(px,py,bldg){
 // leash (js/logic.js) and the aggro scope so they stay in lock-step on both
 // the zone AND the GUARD_LEASH radius.
 const GUARD_LEASH = 6;
+// Reel a leashed unit (guard post, or defensive stance's idle anchor) back
+// home when a chase drags it past GUARD_LEASH — drops the target and paths
+// to the post/anchor; returns true if it did. EXPLICIT attacks are exempt
+// (the command sets the anchor to wherever the unit stood when ordered, so
+// without the exemption a defensive army told to attack a distant target
+// marches over and then gets dragged all the way back — the "units slowly
+// walk back instead of pressing the attack" bug). Called from BOTH the
+// combat block AND the movement phase: a chase toward a STATIONARY foe is
+// one long path leg, and the combat block never runs mid-leg — checking
+// only there let a leashed unit march arbitrarily far before being reeled
+// in (hidden at 30tps by short per-tick travel; exposed at 20).
+function enforceChaseLeash(e){
+  if(!e.target||e.explicitAttack)return false;
+  if(e.guardX!=null){
+    // Guard post: measured to the whole footprint for a building (a threat
+    // at any side of a 4x4 TC is still "at post"), else to the post point
+    // (ground post, or escorted unit synced onto guardX/Y).
+    if(guardZoneDist(guardZoneOf(e), e.x, e.y) > GUARD_LEASH){
+      e.target=null;
+      clearUnitPath(e);
+      pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+      return true;
+    }
+  } else if(e.stance==='defensive'&&e.defendX!==undefined){
+    let adx=e.x-e.defendX, ady=e.y-e.defendY;
+    if(Math.sqrt(adx*adx+ady*ady) > GUARD_LEASH){
+      e.target=null;
+      clearUnitPath(e);
+      pathUnitTo(e, Math.round(e.defendX), Math.round(e.defendY));
+      return true;
+    }
+  }
+  return false;
+}
 // How close (distance from the building's nearest edge) a hauler tucks in
 // before it deposits / trades — the slide-to-contact "touch" at a drop-off or
 // Market. See dropContactSettled.
@@ -515,7 +549,16 @@ const ASSAULT_MOP_UP = 20;
 // disperses quickly — long enough to break the give-up→re-acquire thrash, brief
 // enough to rejoin the fight once a slot opens. Buildings use a much longer
 // window (they don't move; a wall stays walled off).
-const UNREACH_UNIT_TICKS = 150;
+const UNREACH_UNIT_TICKS = T30(150);
+// Ambient-behavior cadences (game-time meaningful — T30-wrapped):
+const SHEEP_EAT_EVERY = T30(180);    // sheep pause to graze ~every 6 game-s
+const SHEEP_WANDER_EVERY = T30(120); // sheep wander ~every 4 game-s
+const BEAR_WANDER_EVERY = T30(150);  // bear den wander ~every 5 game-s
+const AUTOSCOUT_REPICK_EVERY = T30(12); // player Auto Scout waypoint cadence
+// Idle auto-acquire stagger: 4 => worst reaction 3 ticks = 150ms game-time at
+// TPS=20 (T30(6)=4 agrees with the pre-migration 6-tick stagger's intent of
+// staying under AoE2's 250ms command turns).
+const ACQUIRE_STAGGER = T30(6);
 function guardZoneOf(e){
   let gb = e.guardTargetId != null ? entitiesById.get(e.guardTargetId) : null;
   return (gb && gb.type === 'building') ? { b: gb } : { x: e.guardX, y: e.guardY };
@@ -584,7 +627,7 @@ function ticksToReachBuilding(unit, target){
   // doesn't actually END at the perimeter is a path to nowhere (pathReaches).
   let last = path[path.length - 1];
   if (Math.abs(last.x - pt.x) > 1.5 || Math.abs(last.y - pt.y) > 1.5) return -1;
-  return path.length / ((UNITS[unit.utype].speed || 1) / 30);
+  return path.length / ((UNITS[unit.utype].speed || 1) / TPS);
 }
 // Can this unit actually reach (path adjacent to) the given target? Priority-
 // based / explicit target selection doesn't know about walls in the way, so
@@ -614,7 +657,7 @@ function wallBreachTicks(unit, w){
 // rest of the ring isn't either), skipping the just-stalled segment and any
 // recently-given-up wall so a crowded breach spreads to a neighbour.
 function nearestReachableWallLike(unit, team, excludeId){
-  let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / 30);
+  let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / TPS);
   return entities.filter(en => en.type === 'building' && sameSide(en.team, team) && en.hp > 0 &&
       (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
     .sort((a, b) => dist(unit, a) - dist(unit, b))
@@ -670,7 +713,7 @@ function resolveStalledAttack(u, tgt){
     u.target = null; u.explicitAttack = false; u.siegeSpot = null;
     // A walled-off building stays unreachable a long time; a mobile UNIT's
     // blockage (a melee dogpile) clears fast, so re-check it sooner.
-    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 900 : UNREACH_UNIT_TICKS);
+    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? T30(900) : UNREACH_UNIT_TICKS);
   } else {
     // Human-team unit that acquired this target ITSELF (retaliation /
     // auto-acquire) and can't reach it: if the unreachable foe is RANGED and
@@ -688,7 +731,7 @@ function resolveStalledAttack(u, tgt){
       let out = tr + 2; // first tile safely beyond the shooter's reach
       disengage = { x: Math.round(tgt.x + ux/len*out), y: Math.round(tgt.y + uy/len*out) };
     }
-    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? 300 : UNREACH_UNIT_TICKS);
+    u.unreachId = stalledId; u.unreachUntil = tick + (tgt.type === 'building' ? T30(300) : UNREACH_UNIT_TICKS);
   }
   retryClear(u, 'chaseBlocked'); clearUnitPath(u); u.chaseProg = undefined;
   // Issued AFTER the shared cleanup — clearUnitPath above would wipe it.
@@ -712,9 +755,9 @@ function pressToContact(e, cx, cy, contactDist){
   if(d<=contactDist+0.02)return;             // deadband — already in the ring
   // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
   // follower advances unitMoveSpeed*UNIT_PX_PER_TICK screen-px/tick, i.e.
-  // unitMoveSpeed/30 tiles/tick (30 ticks per game-second) — match it so the
+  // unitMoveSpeed/TPS tiles/tick (TPS ticks per game-second) — match it so the
   // unit strolls into contact instead of snapping (the old 0.08 was ~3x walk).
-  let walkStep = unitMoveSpeed(e)/30;
+  let walkStep = unitMoveSpeed(e)/TPS;
   let step=Math.min(walkStep, d-contactDist);
   let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
   if(walkable(Math.round(nx),Math.round(ny),e.id,true)){
@@ -1221,7 +1264,7 @@ function damageEntity(attacker, target){
   // the AI doesn't RE-TASK fresh gatherers onto the bear's patch while the
   // fight/hunt plays out. The zone dies with the bear (canGatherTile).
   if(target.utype==='villager'&&attacker.utype==='bear'&&retryReady(target,'fleeBear')){
-    retryStamp(target,'fleeBear',90);
+    retryStamp(target,'fleeBear',T30(90));
     target.fledBearId=attacker.id;
     let dzAi=AI_STATES&&AI_STATES[target.team];
     if(dzAi&&dzAi.dangerZones){
@@ -1230,7 +1273,7 @@ function damageEntity(attacker, target){
         return tick<z.until&&b&&b.hp>0;
       }).slice(-7);
       if(!dzAi.dangerZones.some(z=>z.bearId===attacker.id))
-        dzAi.dangerZones.push({x:Math.round(attacker.x),y:Math.round(attacker.y),until:tick+6000,bearId:attacker.id});
+        dzAi.dangerZones.push({x:Math.round(attacker.x),y:Math.round(attacker.y),until:tick+T30(6000),bearId:attacker.id});
     }
   }
   // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
@@ -1649,7 +1692,7 @@ function updateUnit(e){
       if(e.path.length===0){
         // Entrance likely crowded with other garrisoning villagers — keep
         // trying a few rounds (10t apart) before abandoning shelter.
-        if(retryFail(e,'garrison',10,6)){e.task=null;e.garrisonTarget=null;}
+        if(retryFail(e,'garrison',T30(10),6)){e.task=null;e.garrisonTarget=null;}
       } else {
         retryClear(e,'garrison');
       }
@@ -1682,7 +1725,7 @@ function updateUnit(e){
       let d=dist(e,f);
       if(d>1.5){
         if(e.path.length===0 && retryReady(e,'follow')){
-          retryStamp(e,'follow',12);
+          retryStamp(e,'follow',T30(12));
           pathUnitTo(e,Math.round(f.x),Math.round(f.y));
         }
       } else if(e.path.length>0){
@@ -1701,7 +1744,7 @@ function updateUnit(e){
     if(atGoal){
       e.moveGoalX=undefined;e.moveGoalY=undefined;
     } else if(retryReady(e,'move')){
-      retryStamp(e,'move',10); // own key: garrison and move used to alias one stamp
+      retryStamp(e,'move',T30(10)); // own key: garrison and move used to alias one stamp
       let goalX=e.moveGoalX, goalY=e.moveGoalY;
       pathUnitTo(e,goalX,goalY);
       if(e.path.length===0){
@@ -1758,11 +1801,11 @@ function updateUnit(e){
 
     if(e.path.length===0 && !e.eatingGrass){
       // Periodically stop to eat grass (approx. every 4-8 seconds)
-      if(tick % 180 === 0 && simRandom() < 0.4){
-        e.eatTicks = simRandInt(60, 120);
+      if(tick % SHEEP_EAT_EVERY === 0 && simRandom() < 0.4){
+        e.eatTicks = simRandInt(T30(60), T30(120));
       }
       // Or wander around locally in tiny steps (within 1 tile)
-      else if(tick % 120 === 0 && simRandom() < 0.25){
+      else if(tick % SHEEP_WANDER_EVERY === 0 && simRandom() < 0.25){
         let wx=Math.round(e.x)+simRandInt(-1,1);
         let wy=Math.round(e.y)+simRandInt(-1,1);
         if(wx>=0&&wx<MAP&&wy>=0&&wy<MAP&&walkable(wx,wy)){
@@ -1831,7 +1874,7 @@ function updateUnit(e){
       }
       // Idle: slow wander around the den, like the sheep but ranging wider
       // and always drifting back toward home.
-      if(!e.target&&e.path.length===0&&tick%150===0&&simRandom()<0.3){
+      if(!e.target&&e.path.length===0&&tick%BEAR_WANDER_EVERY===0&&simRandom()<0.3){
         let wx=Math.round(home.x)+simRandInt(-3,3);
         let wy=Math.round(home.y)+simRandInt(-3,3);
         if(wx>=0&&wx<MAP&&wy>=0&&wy<MAP&&walkable(wx,wy)){
@@ -1869,6 +1912,11 @@ function updateUnit(e){
     }
   }
   if(e.path.length>0){
+    // Leash mid-leg too (see enforceChaseLeash): a chase path toward a
+    // stationary foe never re-enters the combat block until the leg ends.
+    if(enforceChaseLeash(e)){
+      // fall through with the freshly-planted return path this tick
+    }
     // Shared stepping math (stepUnitAlongPath, js/pathfinding.js) — the
     // guest's between-sync walker uses the same function, so host and
     // guest can never drift apart on movement. checkWalkable=true: only
@@ -1964,37 +2012,7 @@ function updateUnit(e){
     // COMPUTED here; guard code never mirrors the post into defendX/Y, so
     // each field keeps exactly one meaning.
     syncGuardPost(e); // escort posts track the guarded unit before the leash reads the post
-    {
-      let guardLeash = e.guardX != null && !e.explicitAttack;
-      if (guardLeash) {
-        // Guard post: measured to the whole footprint for a building (a threat
-        // at any side of a 4x4 TC is still "at post"), else to the post point
-        // (ground post, or escorted unit synced onto guardX/Y). Return to the
-        // post if dragged past the leash.
-        if (guardZoneDist(guardZoneOf(e), e.x, e.y) > GUARD_LEASH) {
-          e.target = null;
-          clearUnitPath(e);
-          pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
-          return;
-        }
-      } else if (e.stance === 'defensive' && e.defendX !== undefined && !e.explicitAttack) {
-        // Defensive stance drifts to its idle anchor (defendX/Y), not a post.
-        // EXPLICIT attacks are exempt (same as the guard leash above): the
-        // command sets defendX to wherever the unit stood when ordered, so
-        // without this a defensive army told to attack a distant target
-        // marches over, then gets dragged all the way back to its start —
-        // the "units slowly walk back instead of pressing the attack" bug.
-        // The leash still governs AUTO-acquired chases (a passing raider),
-        // which is its actual job.
-        let adx = e.x - e.defendX, ady = e.y - e.defendY;
-        if (Math.sqrt(adx*adx + ady*ady) > GUARD_LEASH) {
-          e.target = null;
-          clearUnitPath(e);
-          pathUnitTo(e, Math.round(e.defendX), Math.round(e.defendY));
-          return;
-        }
-      }
-    }
+    if (enforceChaseLeash(e)) return;
 
     if(e.utype==='villager' && t.utype==='sheep_carcass'){
       let d=distToTarget(e,t);
@@ -2005,7 +2023,7 @@ function updateUnit(e){
         // Full ring: wait for an eating spot instead of abandoning the sheep
         // (same patience pattern as combatApproach below).
         if(retryReady(e,'chase')){
-          retryStamp(e,'chase',15);
+          retryStamp(e,'chase',T30(15));
           pathUnitTo(e,Math.round(t.x),Math.round(t.y));
           if(e.path.length===0 && d>8)e.target=null;
         }
@@ -2030,8 +2048,8 @@ function updateUnit(e){
           e.carrying++;
           e.carryType='food';
           e.foodSrc='meat';
-          e.gatherCooldown=90; // ~0.33 food/game-second, AoE2 herding rate
-          if(window.playSound && tick % (GAME_SPEED >= 4 ? 60 : 30) === 0) window.playSound('forage', t.x, t.y);
+          e.gatherCooldown=T30(90); // ~0.33 food/game-second, AoE2 herding rate
+          if(window.playSound && tick % (GAME_SPEED >= 4 ? T30(60) : T30(30)) === 0) window.playSound('forage', t.x, t.y);
           spawnParticles(t.x, t.y, '#ebdcb8', 2, 0.02, 1.2);
           if(t.hp<=0){
             // Shepherd continuity for ALL harvesters (including this one)
@@ -2057,7 +2075,7 @@ function updateUnit(e){
     // (no closing, no damage dealt) before we call it a deadlock. Well under the
     // stuck-watchdog's 240 so the unit self-corrects (redirect/retarget/drop)
     // rather than freezing until the watchdog forcibly frees it.
-    const CHASE_STALL_TICKS = 90;
+    const CHASE_STALL_TICKS = T30(90);
     function combatApproach(u,tgt,dist,pathFn,stopDist){
       // Known-unreachable back-off — HUMANS only. Humans KEEP an explicit target
       // (so target===unreachId persists), and without this a player army ordered
@@ -2072,7 +2090,7 @@ function updateUnit(e){
       // motion. Repath immediately whenever there's no path left (else the unit
       // freezes until the cooldown clears — a stutter).
       if(u.path.length>0 && !retryReady(u,'chase')) return false; // waiting for a slot
-      retryStamp(u,'chase',15);
+      retryStamp(u,'chase',T30(15));
       // Default approach paths to the nearest reachable tile WITHIN the unit's
       // attack range (stopDist), not onto the target's tile — see findPath. This
       // is the general anti-dogpile: every attacker (melee or ranged) stops at
@@ -2129,7 +2147,7 @@ function updateUnit(e){
       // Only PLAYER units (AI or human) resolve a stall — gaia (wildlife) keeps
       // the original no-op so bears/sheep are unaffected (isPlayerTeam excludes
       // gaia; the old code's isAITeam gate excluded it too).
-      if(retryFail(u,'chaseBlocked',15,2) && isPlayerTeam(u.team)) resolveStalledAttack(u, tgt);
+      if(retryFail(u,'chaseBlocked',T30(15),2) && isPlayerTeam(u.team)) resolveStalledAttack(u, tgt);
       return false;
     }
 
@@ -2356,7 +2374,11 @@ function updateUnit(e){
         } else {
           // Repair completed but damaged building
           bt.repairCounter = (bt.repairCounter || 0) + 1;
-          if (bt.repairCounter >= 3) {
+          // 10 hp repaired per game-second: one hp per (TPS/10) villager
+          // work ticks — >=3 at the original 30tps, >=2 at 20. Keeping the
+          // GAME-TIME rate preserves the ram-DPS-vs-repair balance contract
+          // (a ram must out-damage a repairer; see damageEntity's ram bonus).
+          if (bt.repairCounter >= Math.round(TPS / 10)) {
             bt.repairCounter = 0;
 
             let bData = BLDGS[bt.btype];
@@ -2388,7 +2410,7 @@ function updateUnit(e){
               // Same general back-off as an unreachable site: stop feeding
               // villagers into a repair the bank can't pay for; the stamp
               // expires so the repair is retried once income catches up.
-              bt.buildBackoffUntil = tick + 900;
+              bt.buildBackoffUntil = tick + T30(900);
               e.buildTarget = null;
               e.task = null;
               bt.woodDebt = 0;
@@ -2455,7 +2477,7 @@ function updateUnit(e){
 
           // Every drop site unreachable right now — hold the load and retry
           // shortly (see the dropWait gate above) rather than giving up.
-          retryStamp(e,'dropWait',30);
+          retryStamp(e,'dropWait',T30(30));
         }
       } else {
         // Slide right up to the drop-off building and deposit AT the wall (the
@@ -2494,7 +2516,7 @@ function updateUnit(e){
   // block below. Manual orders clear autoScout (execUnitCommand).
   if(e.autoScout && e.utype==='scout'){
     if(e.target){ e.target=null; e.explicitAttack=false; }
-    if(e.path.length===0 && (tick+e.id)%12===0){
+    if(e.path.length===0 && (tick+e.id)%AUTOSCOUT_REPICK_EVERY===0){
       let home=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===e.team)||null;
       let pt=(typeof pickExploreWaypoint==='function')?pickExploreWaypoint(e.team, home):null;
       if(pt)pathUnitTo(e,pt.x,pt.y);
@@ -2544,7 +2566,7 @@ function updateUnit(e){
           e.guardX = Math.round(e.x); e.guardY = Math.round(e.y);
           r.n = 0;
         } else {
-          retryStamp(e,'guardret',30);
+          retryStamp(e,'guardret',T30(30));
           e.retry['guardret'].n++;
           pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
           if (e.path.length === 0) { e.guardX = Math.round(e.x); e.guardY = Math.round(e.y); e.retry['guardret'].n = 0; }
@@ -2560,7 +2582,7 @@ function updateUnit(e){
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
     // A HUMAN scout still auto-acquires (the player expects it to fight).
-    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % 6 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
+    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % ACQUIRE_STAGGER === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let reachAtk=(e.range>0?e.range:1.6);
       // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
@@ -2990,8 +3012,9 @@ function teamEliminated(team){
 // keeps changing (gathering increments `carrying`; fighting cycles the
 // path/target as combat repositions) or they're exempted (deliberate
 // drop-off waits, garrisoned units, wildlife).
-const STUCK_WATCHDOG_TICKS = 240;   // 8 game-seconds
-const STUCK_CHECK_EVERY = 30;       // sample once per game-second
+const STUCK_WATCHDOG_TICKS = T30(240);   // 8 game-seconds
+const GARRISON_HEAL_EVERY = T30(45);  // +1 hp per 1.5 game-seconds while garrisoned
+const STUCK_CHECK_EVERY = T30(30);       // sample once per game-second
 // Watch state lives ON the unit (e.stuck = {sig, since}) — plain sim data,
 // so it rides lockstep snapshots, resync payloads, and save files with zero
 // dedicated plumbing, and detEntityHash covers it (the watchdog force-clears
@@ -3026,7 +3049,7 @@ function updateStuckWatchdog(){
       // now (blocked lane, sealed pocket): back the site off too, or the
       // AI re-assigns the freed villager straight back into the same wedge.
       let wbt = e.buildTarget ? entitiesById.get(e.buildTarget) : null;
-      if (wbt && wbt.type === 'building') wbt.buildBackoffUntil = tick + 900;
+      if (wbt && wbt.type === 'building') wbt.buildBackoffUntil = tick + T30(900);
       console.warn('[stuck-watchdog] freeing unit', e.id, e.utype,
         'task=' + e.task, 'target=' + e.target, 'path=' + e.path.length,
         'buildTarget=' + e.buildTarget + (bt ? ('(' + bt.btype + '@' + bt.x + ',' + bt.y + ' prog=' + (bt.buildProgress||0) + '/' + bt.buildTime + ' complete=' + bt.complete + ')') : ''),
@@ -3137,13 +3160,13 @@ function updateBuilding(e){
         for (let i = 0; i < arrows; i++) {
           spawnProjectile(bCenter, inRange[i % inRange.length].en);
         }
-        e.atkCooldown = 60; // fire every 2 game-seconds (AoE2 TC/tower reload)
+        e.atkCooldown = T30(60); // fire every 2 game-seconds (AoE2 TC/tower reload)
       }
     }
   }
 
   // Garrisoned units slowly heal while sheltered
-  if (garrisonCount(e) > 0 && tick % 45 === 0) {
+  if (garrisonCount(e) > 0 && tick % GARRISON_HEAL_EVERY === 0) {
     e.garrison.forEach(id => {
       let u = entitiesById.get(id);
       if (u && u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 1);
@@ -3183,7 +3206,7 @@ function updateBuilding(e){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
       let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
       if(!spawn){
-        if(e.team===myTeam && tick % 180 === 0){
+        if(e.team===myTeam && tick % SHEEP_EAT_EVERY === 0){ // msg throttle (~6 game-s), reuses the cadence const
           showMsg("Spawn point blocked! Clear area near " + BLDGS[e.btype].name);
         }
         return;

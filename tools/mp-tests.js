@@ -161,7 +161,7 @@ async function assertChecksumsAgree(pages){
       await host.waitForTimeout(1500);
     }
     // let checksums (lagged by ~300 ticks) accumulate
-    await host.waitForTimeout(8000);
+    await host.waitForTimeout(12000);
     const h = await assertHealthy(host, 'host');
     const g = await assertHealthy(guest, 'guest');
     if (h.myTeam !== 0 || g.myTeam !== 1) throw new Error(`teams ${h.myTeam}/${g.myTeam}`);
@@ -196,7 +196,7 @@ async function assertChecksumsAgree(pages){
       for (const p of pages) await issueMove(p);
       await host.waitForTimeout(1500);
     }
-    await host.waitForTimeout(9000); // let lagged checksums accumulate
+    await host.waitForTimeout(12000); // let lagged checksums accumulate
     const teams = [];
     for (const p of pages) teams.push((await assertHealthy(p, 'page')).myTeam);
     if (new Set(teams).size !== 4) throw new Error('teams not distinct: ' + teams.join(','));
@@ -273,7 +273,7 @@ async function assertChecksumsAgree(pages){
     await gB.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
     await host.waitForFunction(s => teamControllers[s] && teamControllers[s].type === 'ai', seatA, { timeout: 15000 });
     await gB.waitForFunction(s => teamControllers[s] && teamControllers[s].type === 'ai', seatA, { timeout: 15000 });
-    await host.waitForTimeout(9000); // lagged checksums after the kick
+    await host.waitForTimeout(12000); // lagged checksums after the kick
     await assertHealthy(host, 'host');
     await assertHealthy(gB, 'guest B');
     await assertChecksumsAgree([host, gB]);
@@ -305,7 +305,7 @@ async function assertChecksumsAgree(pages){
 
     // Host banks the match to a (in-memory) save, then the page dies.
     const save = await host.evaluate(() => serializeGameForWire());
-    if (save.version !== 4 || !save.seatTokens || save.seatTokens.length !== 2) {
+    if (save.version !== 5 || !save.seatTokens || save.seatTokens.length !== 2) {
       throw new Error('bad save meta: v' + save.version + ' tokens=' + JSON.stringify(save.seatTokens));
     }
     await host.close();
@@ -315,7 +315,7 @@ async function assertChecksumsAgree(pages){
     // Give the PeerJS cloud time to release the host's peer id, then load
     // the save in a fresh tab — it re-hosts with the SAME id, so the
     // guests' own reconnect loops land without a new link.
-    await gA.waitForTimeout(8000);
+    await gA.waitForTimeout(12000);
     const h2 = await newGamePage();
     await h2.evaluate(s => applySavedGame(s), save);
     for (const g of [gA, gB]) {
@@ -326,7 +326,7 @@ async function assertChecksumsAgree(pages){
     if (teamsAfter.join() !== teamsBefore.join()) {
       throw new Error(`teams changed across reload: ${teamsBefore} -> ${teamsAfter}`);
     }
-    await h2.waitForTimeout(9000);
+    await h2.waitForTimeout(12000);
     await assertHealthy(h2, 'reloaded host');
     await assertHealthy(gA, 'guest A');
     await assertHealthy(gB, 'guest B');

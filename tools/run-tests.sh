@@ -26,9 +26,9 @@ echo "== hud-tests =="
 node tools/hud-tests.js
 
 if [ "$1" != "fast" ]; then
-  echo "== sim smoke (seed 2001, 20k ticks, x2 for determinism) =="
-  A=$(tools/simulate.sh seed=2001 diff=hard ticks=20000 2>/dev/null)
-  B=$(tools/simulate.sh seed=2001 diff=hard ticks=20000 2>/dev/null)
+  echo "== sim smoke (seed 2001, 14k ticks ~ 11.7 game-min, x2 for determinism) =="
+  A=$(tools/simulate.sh seed=2001 diff=hard ticks=14000 2>/dev/null)
+  B=$(tools/simulate.sh seed=2001 diff=hard ticks=14000 2>/dev/null)
   node -e '
     const a = JSON.parse(process.argv[1]), b = JSON.parse(process.argv[2]);
     const bad = [];

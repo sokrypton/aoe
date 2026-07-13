@@ -258,12 +258,15 @@ function pathUnitTo(e,x,y){
 }
 
 // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
-// covers sqrt(32²+16²) ≈ 35.78 screen px, and there are 30 ticks per
-// game-second, so px-per-tick = speed * 35.78/30 ≈ speed * 1.19.
-const UNIT_PX_PER_TICK = 1.19;
+// covers sqrt(32²+16²) ≈ 35.78 screen px and there are TPS ticks per
+// game-second. The historical shipped constant was the ROUNDED 1.19 at
+// 30tps (not 35.78/30 = 1.19267) — scale THAT basis, and as 1.19*(30/TPS),
+// so TPS=30 reproduces the original value bit-for-bit (30/30 is exactly 1).
+const UNIT_PX_PER_TICK = 1.19 * (30 / TPS);
 // Arrows fly a straight tile-space line at this rate (see update() and
 // advanceGuestProjectiles — both sides must agree on arrival timing).
-const PROJECTILE_TILES_PER_TICK = 0.25;
+// 7.5 tiles per game-second (0.25/tick on the original 30tps clock).
+const PROJECTILE_TILES_PER_TICK = 7.5 / TPS;
 
 // THE path-following step — the single source of truth for how a unit
 // physically advances along e.path, shared by the host's authoritative

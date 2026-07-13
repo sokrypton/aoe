@@ -6,8 +6,8 @@
 // --virtual-time-budget approach froze performance.now() and swallowed
 // crashes into a blank page).
 //
-//   node tools/simulate.js                          # 1v1 standard, 60k ticks
-//   node tools/simulate.js mode=2v2 diff=hard ticks=120000 seed=42
+//   node tools/simulate.js                          # 1v1 standard, 40k ticks (~33 game-min)
+//   node tools/simulate.js mode=2v2 diff=hard ticks=80000 seed=42
 //   node tools/simulate.js rollback=1 | jq '.health.rollbackDeterministic'
 //   node tools/simulate.js runs=5 mode=1v1          # 5 seeds, aggregated
 //
@@ -140,7 +140,7 @@ function aggregate(reports) {
 (async () => {
   const a = parseArgs(process.argv.slice(2));
   const runs = Math.max(1, parseInt(a.runs || '1', 10));
-  const ticks = parseInt(a.ticks || '60000', 10);
+  const ticks = parseInt(a.ticks || '40000', 10); // ~33 game-min at 20 ticks/game-second
   // scenario=<path.json>: build a hand-authored world (js/scenario.js) instead
   // of a procedural match. The JSON is read here and passed into the page.
   // Resolve relative to the repo ROOT (simulate.sh cd's into tools/, so a path
