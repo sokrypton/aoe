@@ -1664,11 +1664,25 @@ window.updateBottomHeight = function() {
     // Use the GLOBAL dpr (js/core.js) — it caps at 2x on mobile for render
     // cost; a raw devicePixelRatio here silently undid that cap on every
     // resize/rotate (this function runs at load too).
-    C.width = W * dpr;
-    C.height = window.innerHeight * dpr;
-    C.style.width = W + 'px';
-    C.style.height = window.innerHeight + 'px';
-    if (X) X.scale(dpr, dpr);
+    let needW = W * dpr, needH = window.innerHeight * dpr;
+    // ONLY touch the backing store when the pixel size actually changed:
+    // assigning C.width/C.height CLEARS the canvas and resets the transform.
+    // iOS Safari fires a stream of `resize` events (often with identical
+    // dimensions) as its toolbar animates in/out during a pan — re-clearing on
+    // each one made the whole screen flicker while reviewing the map. Guarding
+    // it (as the minimap already does) keeps the resize idempotent.
+    if (C.width !== needW || C.height !== needH) {
+      C.width = needW;
+      C.height = needH;
+      C.style.width = W + 'px';
+      C.style.height = window.innerHeight + 'px';
+      if (X) X.scale(dpr, dpr); // transform was reset by the width/height write
+    } else {
+      // Size unchanged — refresh the CSS box only (never clears), leaving the
+      // existing dpr transform intact.
+      C.style.width = W + 'px';
+      C.style.height = window.innerHeight + 'px';
+    }
   }
   // Exposes the current bar heights to CSS. Only classic-style.css reads
   // these (to size/place the corner minimap against the real bar height

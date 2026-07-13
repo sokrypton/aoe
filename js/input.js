@@ -433,7 +433,10 @@ C.addEventListener('mousedown',e=>{
       minimapJump(e.clientX,e.clientY);
       return;
     }
-    dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false;
+    // No box-select once the match is over (See Map is view-only): without this
+    // the drag rectangle still DRAWS over the frozen map even though the commit
+    // (doBoxSelect) is gated — the box just never resolves to a selection.
+    if(!gameOver){ dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false; }
     justPlaced=false;
   }
 });
@@ -674,7 +677,9 @@ C.addEventListener('touchstart',e=>{
       touchBoxSelectMode=false;
       let hitU=getUnitUnderCursor(t.clientX,t.clientY);
       let hitB=hitU?null:getBuildingUnderCursor(t.clientX,t.clientY);
-      if(!hitU&&!hitB){
+      // Never arm box-select over a finished match (See Map is view-only) —
+      // otherwise a long-press+drag paints a selection box that can't select.
+      if(!hitU&&!hitB&&!gameOver){
         let anchorAtArm=touchAnchor;
         touchLongPressTimer=setTimeout(()=>{
           if(touchAnchor===anchorAtArm && !touchMoved){

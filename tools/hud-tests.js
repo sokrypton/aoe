@@ -740,6 +740,21 @@ function pageSuite() {
       assertEq(r.cmds, 0, 'a command was issued over the frozen map');
     });
 
+    await tapT('game over: dragging on the map paints NO selection box (See Map view-only)', async () => {
+      await page.evaluate(tapStage(`
+        createUnit('militia',30,30,0);
+        gameOver=true; window.seeMapMode=true;
+        window.__pts=()=>({});`));
+      // A real left-drag across the canvas — the box-select must never arm.
+      await page.mouse.move(400, 400);
+      await page.mouse.down();
+      await page.mouse.move(620, 520);
+      const during = await page.evaluate(`!!document.getElementById('minimap-wrap') && document.getElementById('minimap-wrap').classList.contains('drag-select-active')`);
+      await page.mouse.up();
+      await page.evaluate(`gameOver=false; window.seeMapMode=false;`);
+      assertEq(during, false, 'a selection box armed (drag-select-active) over the frozen map');
+    });
+
     await tapT('posture row: soldiers show NO Guard tile; a guard post folds into the stance highlight', async () => {
       const r = await page.evaluate(tapStage(`
         const sc=createUnit('scout',30,30,0); selected=[sc];
