@@ -350,7 +350,7 @@ function updateGates(){
 // Scratch reused across ticks (cleared, never reallocated): this pass runs
 // every tick over every unit, and the three per-tick allocations (filtered
 // array, flags array, cell Map) were measurable GC pressure at scale.
-const _sepUnits=[], _sepGather=[], _sepCells=new Map();
+const _sepUnits=[], _sepGather=[], _sepCells=new Map(), _sepTouched=[];
 function separateUnits(){
   let units=_sepUnits; units.length=0;
   for(let i=0;i<entities.length;i++){
@@ -379,12 +379,17 @@ function separateUnits(){
   // within minDist (0.5), so each unit compares against its 3×3 cell
   // neighborhood instead of every other unit on the map. The j>i guard keeps
   // each pair processed exactly once, like the old triangular loop.
-  let cells=_sepCells; cells.clear();
+  // Pooled cell arrays (like targetableUnitGrid): Map.clear() dropped the
+  // arrays every tick — keep them, empty them via the touched-list instead.
+  let cells=_sepCells;
+  for(let i=0;i<_sepTouched.length;i++)_sepTouched[i].length=0;
+  _sepTouched.length=0;
   for(let i=0;i<units.length;i++){
     let u=units[i];
     let key=(u.x|0)*4096+(u.y|0);
     let arr=cells.get(key);
     if(!arr)cells.set(key,arr=[]);
+    if(arr.length===0)_sepTouched.push(arr);
     arr.push(i);
   }
   let processPair=(i,j)=>{

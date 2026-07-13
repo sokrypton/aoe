@@ -206,8 +206,18 @@ function refreshPopulationCounts(){
 
 // AoE2 drop-off rule: the TC accepts every resource, other buildings only
 // the kinds listed in their BLDGS drop spec (mill: food, camps: their own).
+// Per-btype drop sets, built once from the static BLDGS spec — the old
+// inline .split(',') allocated on every call (nearestDrop calls this for
+// every candidate building on every villager trip).
+const _dropSets={};
 function dropAccepts(b,resType){
-  return b.btype==='TC'||(BLDGS[b.btype].drop&&BLDGS[b.btype].drop.split(',').includes(resType));
+  if(b.btype==='TC')return true;
+  let ds=_dropSets[b.btype];
+  if(ds===undefined){
+    let spec=BLDGS[b.btype].drop;
+    ds=_dropSets[b.btype]=spec?new Set(spec.split(',')):null;
+  }
+  return !!(ds&&ds.has(resType));
 }
 
 function nearestDrop(e,resType,excludeIds=null){
@@ -293,21 +303,37 @@ const UNIT_GRID_CELL=4;
 // Dual-keyed on tick AND simGen (see registerSimCache, js/core.js): entries
 // are live entity references, so serving a pre-rollback grid after a restore
 // hands out orphaned objects from the abandoned timeline.
-let unitGridTick=-1, unitGridGen=-1, unitGrid=new Map();
+// FLAT pooled storage (2026-07 perf): a dense Array of pooled per-cell arrays
+// replaces the old Map — the per-tick rebuild was ~6% of the whole tick in
+// Map hashing + fresh-array churn. Cell arrays are cleared (length=0) via the
+// touched-list, never reallocated. Consumers index grid[gx*unitGridNY+gy] and
+// MUST bounds-check gx/gy (the Map returned undefined for any key; a flat
+// index would alias a neighboring column).
+let unitGridTick=-1, unitGridGen=-1;
+let unitGridNX=0, unitGridNY=0, _ugCells=null, _ugTouched=[];
 registerSimCache(()=>{unitGridTick=-1;});
 function targetableUnitGrid(){
-  if(unitGridTick===tick&&unitGridGen===simGen)return unitGrid;
+  if(unitGridTick===tick&&unitGridGen===simGen)return _ugCells;
   unitGridTick=tick;unitGridGen=simGen;
-  unitGrid.clear();
-  entities.forEach(en=>{
-    if(en.type!=='unit'||en.hp<=0||en.garrisonedIn)return;
-    if(en.utype==='sheep'||en.utype==='sheep_carcass')return;
-    let key=((en.x/UNIT_GRID_CELL)|0)*4096+((en.y/UNIT_GRID_CELL)|0);
-    let a=unitGrid.get(key);
-    if(!a)unitGrid.set(key,a=[]);
+  let n=((MAP/UNIT_GRID_CELL)|0)+1;
+  if(!_ugCells||unitGridNX!==n){
+    unitGridNX=n; unitGridNY=n;
+    _ugCells=new Array(n*n);
+    _ugTouched=[];
+  }
+  for(let i=0;i<_ugTouched.length;i++)_ugTouched[i].length=0;
+  _ugTouched.length=0;
+  for(let i=0;i<entities.length;i++){
+    let en=entities[i];
+    if(en.type!=='unit'||en.hp<=0||en.garrisonedIn)continue;
+    if(en.utype==='sheep'||en.utype==='sheep_carcass')continue;
+    let k=((en.x/UNIT_GRID_CELL)|0)*unitGridNY+((en.y/UNIT_GRID_CELL)|0);
+    let a=_ugCells[k];
+    if(!a)_ugCells[k]=a=[];
+    if(a.length===0)_ugTouched.push(a);
     a.push(en);
-  });
-  return unitGrid;
+  }
+  return _ugCells;
 }
 // Closest grid unit to `e` strictly within `range` that passes `pred`.
 function closestUnitNear(e,range,pred){
@@ -316,11 +342,11 @@ function closestUnitNear(e,range,pred){
   let cx=(e.x/c)|0, cy=(e.y/c)|0, cr=Math.ceil(range/c)+1;
   let closest=null, closestD=range;
   for(let gy=cy-cr;gy<=cy+cr;gy++){
-    if(gy<0)continue;
+    if(gy<0||gy>=unitGridNY)continue;
     for(let gx=cx-cr;gx<=cx+cr;gx++){
-      if(gx<0)continue;
-      let a=grid.get(gx*4096+gy);
-      if(!a)continue;
+      if(gx<0||gx>=unitGridNX)continue;
+      let a=grid[gx*unitGridNY+gy];
+      if(!a||a.length===0)continue;
       for(let k=0;k<a.length;k++){
         let en=a[k];
         if(en===e||en.hp<=0||en.garrisonedIn)continue;
@@ -1747,16 +1773,22 @@ function updateUnit(e){
 
     // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
     // and no friendly unit (except other sheep) is closer to guard them, they convert!
-    let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
-    if(closest && !sameSide(closest.team, e.team)){
-      let guarded = false;
-      if (isPlayerTeam(e.team)) {
-        let guardDist = dist(e,closest);
-        guarded = !!closestUnitNear(e,guardDist,en=>sameSide(en.team,e.team)); // allied guards protect too
-      }
-      if(!guarded){
-        e.team=closest.team;
-        clearUnitPath(e);
+    // 3-tick id-stagger: this radius-5 scan ran for EVERY sheep EVERY tick;
+    // a conversion detected up to 2 ticks (~66ms) later is imperceptible.
+    // WRAPPED, not an early return — the sheep branch falls through to the
+    // shared movement step below, which must still walk the wander path.
+    if((tick+e.id)%3===0){
+      let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
+      if(closest && !sameSide(closest.team, e.team)){
+        let guarded = false;
+        if (isPlayerTeam(e.team)) {
+          let guardDist = dist(e,closest);
+          guarded = !!closestUnitNear(e,guardDist,en=>sameSide(en.team,e.team)); // allied guards protect too
+        }
+        if(!guarded){
+          e.team=closest.team;
+          clearUnitPath(e);
+        }
       }
     }
   }
@@ -2519,16 +2551,16 @@ function updateUnit(e){
         }
       }
     }
-    // Stagger the acquisition scan across 3 ticks by id: this scan (grid
+    // Stagger the acquisition scan across 6 ticks by id: this scan (grid
     // walk + fog gate per candidate) ran for EVERY idle military unit EVERY
     // tick and dominated late-game tick cost. Worst added reaction delay is
-    // 2 ticks (~33ms) — imperceptible. (tick+id) keys it deterministically,
-    // identical on every lockstep peer.
+    // 5 ticks (~166ms) — still well under AoE2's 250ms command turns.
+    // (tick+id) keys it deterministically, identical on every lockstep peer.
     // AI scouts are pure recon (controlAIScouts owns them for exploration) —
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
     // A HUMAN scout still auto-acquires (the player expects it to fight).
-    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % 3 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
+    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % 6 === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
       let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
       let reachAtk=(e.range>0?e.range:1.6);
       // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
@@ -3064,11 +3096,11 @@ function updateBuilding(e){
       let grid = targetableUnitGrid(), c = UNIT_GRID_CELL;
       let gcx = (center.x / c) | 0, gcy = (center.y / c) | 0, gcr = Math.ceil(range / c) + 1;
       for (let gy = gcy - gcr; gy <= gcy + gcr; gy++) {
-        if (gy < 0) continue;
+        if (gy < 0 || gy >= unitGridNY) continue;
         for (let gx = gcx - gcr; gx <= gcx + gcr; gx++) {
-          if (gx < 0) continue;
-          let cell = grid.get(gx * 4096 + gy);
-          if (!cell) continue;
+          if (gx < 0 || gx >= unitGridNX) continue;
+          let cell = grid[gx * unitGridNY + gy];
+          if (!cell || cell.length === 0) continue;
           for (let k = 0; k < cell.length; k++) {
             let en = cell[k];
             if (en.hp <= 0 || en.garrisonedIn) continue;

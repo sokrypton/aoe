@@ -37,5 +37,20 @@ const chromium = requireChromium();
   const top = [...byFn.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
   console.log(`total samples: ${total}`);
   for (const [k, v] of top) console.log((100 * v / total).toFixed(1).padStart(5) + '%  ' + k);
+
+  // lines=<file substring>: line-level attribution within one file
+  if (args.lines) {
+    const byLine = new Map();
+    for (const n of profile.nodes) {
+      const f = n.callFrame;
+      if (!(f.url || '').includes(args.lines)) continue;
+      for (const pt of n.positionTicks || []) {
+        byLine.set(pt.line, (byLine.get(pt.line) || 0) + pt.ticks);
+      }
+    }
+    const lt = [...byLine.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
+    console.log(`\n-- hottest lines in *${args.lines}* --`);
+    for (const [line, v] of lt) console.log((100 * v / total).toFixed(2).padStart(6) + '%  line ' + line);
+  }
   await browser.close(); srv.close();
 })();
