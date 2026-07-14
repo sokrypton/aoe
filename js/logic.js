@@ -21,25 +21,13 @@ function canPlace(type,x,y,team=0,ignoreAge=false){
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
     if(nx<0||nx>=MAP||ny<0||ny>=MAP)return false;
-    // Can't build on unexplored tiles — but ONLY ever checked for team 0,
-    // not `team===myTeam` (tried that, reverted — see comment). `fog` is
-    // only ever valid for whichever team updateFog() actually computed on
-    // the machine currently running this code. The host's own machine
-    // ALWAYS computes team 0's fog every tick (myTeam is 0 there); when
-    // executing the other player's command via withCommandContext, myTeam
-    // gets temporarily swapped to 1 for the callback, but the underlying
-    // `fog` data itself is NOT recomputed for team 1 at that moment — it's
-    // still team 0's snapshot. `team===myTeam` inside that swapped
-    // callback would compare team 1's placement against team 0's fog,
-    // incorrectly blocking legitimate guest builds in areas team 0 hasn't
-    // scouted (caught by an actual two-browser-context build test, not
-    // code review — the host would silently refuse a placement the guest
-    // could clearly see and had every right to build on).
+    // Never gate placement on the viewer `fog` grid — it's only valid for
+    // the team updateFog() computed locally (a `team===myTeam` check inside
+    // a swapped command context silently blocked legitimate guest builds).
     // Deterministic explored-rule, symmetric per team (teamExploredGrid is
     // sim state computed identically on every peer — js/core.js). Applies
     // to EVERY team, AI included (information parity — the AI's wall ring
-    // waits for its scout's base-survey lap so ring tiles are explored
-    // before planning, js/ai.js planAIWalls).
+    // waits for its scout's base-survey lap, js/ai.js planAIWalls).
     if(tileHiddenForTeam(team, ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
@@ -76,8 +64,7 @@ function getLineTiles(p1, p2) {
     let tx = Math.round(p1.x + t * dx);
     let ty = Math.round(p1.y + t * dy);
     // Rounding along a straight line can only ever repeat the IMMEDIATELY
-    // previous tile, so comparing against the last one suffices (the old
-    // tiles.some() scan was O(n²) per wall drag).
+    // previous tile, so comparing against the last one suffices.
     let last = tiles[tiles.length - 1];
     if (!last || last.x !== tx || last.y !== ty) {
       tiles.push({x: tx, y: ty});
@@ -88,9 +75,8 @@ function getLineTiles(p1, p2) {
 
 
 const RES_KEYS={f:'food',w:'wood',g:'gold',s:'stone'};
-// cooldown is ticks (30/game-second) per 1 resource gathered, tuned to AoE2
-// base gather rates: wood ~0.39/s, gold ~0.38/s, stone ~0.36/s, farm ~0.32/s,
-// forage ~0.31/s.
+// cooldown = ticks per 1 resource, tuned to AoE2 base gather rates (wood
+// ~0.39/s, gold ~0.38/s, stone ~0.36/s, farm ~0.32/s, forage ~0.31/s).
 const GATHER_TASKS={
   chop:{terrain:TERRAIN.FOREST,resource:'wood',cooldown:T30(77),clearOccupied:true},
   mine_gold:{terrain:TERRAIN.GOLD,resource:'gold',cooldown:T30(79)},
@@ -99,14 +85,9 @@ const GATHER_TASKS={
   forage:{terrain:TERRAIN.BERRIES,resource:'food',cooldown:T30(97)}
 };
 
-// Range at which a villager can slaughter a sheep / harvest a carcass. Must be
-// >= the diagonal tile spacing (~1.41) so the whole RING of neighbours around
-// the carcass can eat at once, not just the one villager standing on its tile:
-// distToTarget is centre-to-centre, so an orthogonally-adjacent villager is 1.0
-// away and a diagonal one 1.41 — both beyond the old 0.9, which left every
-// villager after the first stuck out of range, "chasing" forever, jamming the
-// approach and tripping the stuck-watchdog (the classic whole-crew-on-one-sheep
-// opening was quietly broken for AI and human alike).
+// Range at which a villager can slaughter a sheep / harvest a carcass. Must
+// be >= the diagonal tile spacing (~1.41) so the whole RING of neighbours
+// around the carcass can eat at once, not just the one on its tile.
 const SHEEP_HARVEST_RANGE=1.5;
 
 function resourceStore(team){
@@ -207,9 +188,8 @@ function refreshPopulationCounts(){
 
 // AoE2 drop-off rule: the TC accepts every resource, other buildings only
 // the kinds listed in their BLDGS drop spec (mill: food, camps: their own).
-// Per-btype drop sets, built once from the static BLDGS spec — the old
-// inline .split(',') allocated on every call (nearestDrop calls this for
-// every candidate building on every villager trip).
+// Per-btype drop sets built once — nearestDrop calls this per candidate
+// building on every villager trip.
 const _dropSets={};
 function dropAccepts(b,resType){
   if(b.btype==='TC')return true;
@@ -228,8 +208,7 @@ function nearestDrop(e,resType,excludeIds=null){
     if(excludeIds && excludeIds.includes(b.id))return; // e.avoid array (see avoidAdd)
     if(dropAccepts(b,resType)){
       // Euclidean footprint distance (distToTarget), matching the approach/
-      // arrival logic — ranking by Manhattan distToBuilding could pick a
-      // drop site that's actually a longer diagonal walk away.
+      // arrival logic — Manhattan ranking could pick a longer diagonal walk.
       let d=distToTarget(e,b);
       if(d<bd){bd=d;best=b;}
     }
@@ -241,13 +220,10 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 
 // ---- PER-TICK SPATIAL INDEX (perf) ----
 // Coarse grid over targetable units (non-sheep/carcass, alive, not
-// garrisoned), rebuilt at most once per tick and shared by every proximity
-// scan that used to walk the whole entities array per scanning unit —
-// auto-attack acquisition, sheep conversion, bear aggro. Late-game that was
-// O(units × entities) per tick. Entries are live references, so positions
-// read at query time are current even if a unit moved after the grid was
-// built (units move far less than a cell per tick); hp/garrison are
-// re-checked at query time so mid-tick deaths can't be targeted.
+// garrisoned), rebuilt at most once per tick and shared by the proximity
+// scans (auto-attack acquisition, sheep conversion, bear aggro). Entries are
+// live references, so positions read at query time are current; hp/garrison
+// are re-checked at query time so mid-tick deaths can't be targeted.
 // ---- DETERMINISTIC RETRY / THROTTLE / AVOID PRIMITIVES ----
 // e.retry = { [key]: {n, next} }   n = consecutive failures, next = earliest
 //                                  tick the action may run again
@@ -258,6 +234,30 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 // the desync checksum at the source. NEVER touch e.retry/e.avoid directly:
 // the helpers own the empty-object→undefined invariant that keeps the hash
 // identical between "never retried" and "retried then cleared".
+
+// ---- RETRY KEY REGISTRY ----
+// Every retry/back-off key in the sim, in one place. The VALUES are frozen
+// history: e.retry is hashed per sorted key string (js/determinism.js), so
+// renaming a value is a checksum epoch — add new keys, never repurpose old
+// strings.
+//   CHASE          combat approach repath throttle          T30(15)
+//   CHASE_BLOCKED  2-strike give-up -> resolveStalledAttack T30(15), maxN 2
+//   HARVEST_WAIT   carcass-eating ring wait                 T30(15)
+//   FLEE_RAID      AI villager raid flee + danger zone      T30(90)
+//   FLEE_BEAR      mauled villager bear-hunt call-in        T30(90)
+//   GUARD_RETURN   guard-post return repath / back-off      T30(30) / T30(600)
+//   DROP_WAIT      all drop-off routes blocked patience     T30(30)
+//   GARRISON       crowded garrison entrance retry          T30(10), maxN 6
+//   FOLLOW         follow/escort repath cadence             T30(12)
+//   MOVE           multi-leg move repath cadence            T30(10)
+//   BUILD          crowded build-site retry                 maxN 6
+const RETRY = Object.freeze({
+  CHASE:'chase', CHASE_BLOCKED:'chaseBlocked', HARVEST_WAIT:'harvestWait',
+  FLEE_RAID:'fleeRaid', FLEE_BEAR:'fleeBear', GUARD_RETURN:'guardret',
+  DROP_WAIT:'dropWait', GARRISON:'garrison', FOLLOW:'follow',
+  MOVE:'move', BUILD:'build',
+});
+
 function retryReady(e,key){
   let r=e.retry&&e.retry[key];
   return !r||tick>=r.next;
@@ -290,11 +290,9 @@ const UNIT_GRID_CELL=4;
 // Dual-keyed on tick AND simGen (see registerSimCache, js/core.js): entries
 // are live entity references, so serving a pre-rollback grid after a restore
 // hands out orphaned objects from the abandoned timeline.
-// FLAT pooled storage (2026-07 perf): a dense Array of pooled per-cell arrays
-// replaces the old Map — the per-tick rebuild was ~6% of the whole tick in
-// Map hashing + fresh-array churn. Cell arrays are cleared (length=0) via the
-// touched-list, never reallocated. Consumers index grid[gx*unitGridNY+gy] and
-// MUST bounds-check gx/gy (the Map returned undefined for any key; a flat
+// Flat pooled storage (perf): a dense Array of pooled per-cell arrays; cell
+// arrays are cleared (length=0) via the touched-list, never reallocated.
+// Consumers index grid[gx*unitGridNY+gy] and MUST bounds-check gx/gy (a flat
 // index would alias a neighboring column).
 let unitGridTick=-1, unitGridGen=-1;
 let unitGridNX=0, unitGridNY=0, _ugCells=null, _ugTouched=[];
@@ -349,8 +347,7 @@ function closestUnitNear(e,range,pred){
 function distToTarget(a,b){
   if(b && b.type==='building'){
     // A w-wide building occupies tile centers [x .. x+w-1], so its
-    // geometric footprint spans [x-0.5, x+w-0.5]. Measuring against
-    // [x, x+w] (as before) overhangs the far sides by a full tile.
+    // geometric footprint spans [x-0.5, x+w-0.5] — not [x, x+w].
     let dx=Math.max(b.x-0.5-a.x, 0, a.x-(b.x+b.w-0.5));
     let dy=Math.max(b.y-0.5-a.y, 0, a.y-(b.y+b.h-0.5));
     return Math.sqrt(dx*dx+dy*dy);
@@ -360,11 +357,9 @@ function distToTarget(a,b){
 
 function buildingAtTile(x,y,filter){
   // O(1) via the derived `occupied` tile index (stampBuildingFootprint,
-  // js/entities.js — every building footprint tile carries its id; death
-  // clears it). Replaces an O(entities) scan that sat inside canGatherTile's
-  // farm check, i.e. ran per gathering villager per tick. Footprints can't
-  // overlap, so "the" building at a tile is unique — result identical to the
-  // old entities.find. A stale id (already-removed entity) reads as null.
+  // js/entities.js — every footprint tile carries its id; death clears it).
+  // Footprints can't overlap, so the building at a tile is unique; a stale
+  // id (already-removed entity) reads as null.
   let t=map[y]&&map[y][x];
   let b=t&&t.occupied!=null?entitiesById.get(t.occupied):null;
   return (b&&b.type==='building'&&(!filter||filter(b)))?b:null;
@@ -389,8 +384,7 @@ function farmAtTile(x,y,team,requireComplete=true){
 //   shelter / lurker-gated all-clear — unchanged, for raids at the town.
 // Humans manage their own safety: the predicate is a no-op for them.
 
-// THE zone writer — prune + dedup + push + cap in one place (was duplicated
-// between the bear and raid stamp sites, each drifting its own copy).
+// THE zone writer — prune + dedup + push + cap in one place.
 // bearId null = raid zone (expires by time only); set = bear zone (also
 // dies with its bear). Cap 7: the array is hashed per-zone in the AI digest.
 function stampDangerZone(dzAi,x,y,bearId){
@@ -427,23 +421,18 @@ function aiVillagerSafeAt(team,x,y){
         let bear=entitiesById.get(z.bearId);
         if(!bear||bear.hp<=0)continue;
       }
-      // Radius 4 around the spot: big den-radius zones (tried at 8) locked
-      // out whole resource regions and STARVED the team — worse than the
-      // threat. Small zones stop the immediate re-tasking loop; the hunt /
-      // the army is what actually reclaims the area.
+      // Radius 4: bigger zones locked out whole resource regions and starved
+      // the team; small zones stop the immediate re-tasking loop.
       if(Math.abs(x-z.x)<=4&&Math.abs(y-z.y)<=4)return false;
     }
   }
   // WAR-STATE GATHER CONTRACTION (sn-minimum-town-size spirit): while the
-  // base is taking core hits (aiRecentlyRaided — the persistent war-state),
-  // work only inside the alarm radius of the TC. The far camps are where
-  // raided AIs bled villagers 30-at-a-time: field gatherers beyond the
-  // town's defensive umbrella are indefensible, and a villager idling ALIVE
-  // near the TC beats one dying at a treeline. The TC center is memoized
-  // ONCE per team per tick (derived same-tick cache like intel.unitCounts —
-  // never carried, so never hashed; numbers only, AI_STATES is serialized;
-  // !==tick self-heals across rollback) because this predicate is
-  // measured-hot (per-villager per-tick + findNearTile ring scans).
+  // base is taking core hits (aiRecentlyRaided), work only inside the TC's
+  // alarm radius — field gatherers beyond the town's umbrella are
+  // indefensible (raided AIs bled villagers at far camps). TC center is
+  // memoized ONCE per team per tick (derived same-tick cache — never
+  // carried, so never hashed; numbers only, AI_STATES is serialized;
+  // !==tick self-heals across rollback) because this predicate is hot.
   if(typeof aiRecentlyRaided==='function'&&aiRecentlyRaided(ai)){
     if(ai._tcMemoTick!==tick){
       ai._tcMemoTick=tick;
@@ -484,9 +473,8 @@ function unitMoveSpeed(e){
   if(e.groupSpeed&&e.groupSpeed<sp){
     if(e.target){
       let t=entitiesById.get(e.target);
-      // Release on a DEAD/GONE target too: a truthy-but-dangling id matched
-      // neither branch and pinned the unit at the group's slowest pace for
-      // the rest of its walk.
+      // Release on a DEAD/GONE target too — a dangling id would pin the
+      // unit at group pace for the rest of its walk.
       if(!t||distToTarget(e,t)<10){e.groupSpeed=undefined;return sp;}
     }
     if(!e.target&&e.path.length===0&&!(e.order&&e.order.kind==='move')){e.groupSpeed=undefined;return sp;} // arrived
@@ -497,12 +485,10 @@ function unitMoveSpeed(e){
 
 // findPath() REDIRECTS unwalkable destinations to the nearest walkable
 // tile within 20 — good for click-forgiveness, but it means "path.length>0"
-// does NOT mean the destination is reachable. This asks the honest
-// question: does a path exist that actually ENDS within `tol` of (tx,ty)?
-// Every AI reachability probe must use this, or camps get founded in
-// forest pockets no villager can ever enter (the walk 'succeeds' to a
-// redirect point, the builder wedges, the watchdog frees it, the assigner
-// re-offers the site — forever).
+// does NOT mean the destination is reachable. This asks: does a path exist
+// that actually ENDS within `tol` of (tx,ty)? Every AI reachability probe
+// must use this, or camps get founded in forest pockets no villager can
+// ever enter.
 function pathReaches(sx,sy,tx,ty,ignore,tol=1.5){
   if(Math.abs(sx-tx)<=tol&&Math.abs(sy-ty)<=tol)return true;
   let p=findPath(sx,sy,tx,ty,ignore);
@@ -510,10 +496,9 @@ function pathReaches(sx,sy,tx,ty,ignore,tol=1.5){
   let last=p[p.length-1];
   if(Math.abs(last.x-tx)<=tol&&Math.abs(last.y-ty)<=tol)return true;
   // Iteration-capped partial path: A* ran out of BUDGET, not out of map.
-  // A long path that closed most of the gap is a truncated route — treat
-  // it as reachable (armies re-targeting the enemy TC from 60+ tiles away
-  // were getting 'unreachable' and yo-yoing home forever). Short queries
-  // (build/drop sites) always complete within budget, so the strict
+  // A long path that closed most of the gap is a truncated route — treat it
+  // as reachable (else distant army re-targets yo-yo home forever). Short
+  // queries (build/drop sites) always complete within budget, so the strict
   // end-adjacency test above still guards forest-pocket placements.
   let dEnd=Math.max(Math.abs(last.x-tx),Math.abs(last.y-ty));
   let dStart=Math.max(Math.abs(sx-tx),Math.abs(sy-ty));
@@ -540,13 +525,9 @@ function edgeDistToBuilding(px,py,bldg){
   return Math.sqrt(dx*dx+dy*dy);
 }
 
-// Check if unit is adjacent to a building (within 1.5 tiles of its nearest edge).
-// Uses the same nearest-edge distance as distToTarget() — a prior per-perimeter-tile
-// box test (|dx|<1.2 && |dy|<1.2) let units register as "adjacent" from up to
-// ~1.7 tiles past the nearest edge near corners, well beyond intended melee reach.
-// Perimeter tile centers sit 0.5 (orthogonal) to ~0.71 (diagonal corner) from
-// the rect, so 1.2 accepts every true perimeter tile while rejecting the next
-// ring out.
+// Adjacent = within 1.2 of the building's nearest edge (same clamped-rect
+// distance as distToTarget). Perimeter tile centers sit 0.5–0.71 from the
+// rect, so 1.2 accepts every true perimeter tile and rejects the next ring.
 function adjToBuilding(px,py,bldg){
   return edgeDistToBuilding(px,py,bldg) <= 1.2;
 }
@@ -589,12 +570,12 @@ const STANCES = {
 function stanceOf(e){ return STANCES[e.stance] || STANCES.aggressive; }
 
 // THE ONE "can this unit hit that foe WITHOUT MOVING" predicate. Ranged:
-// within firing range (+0.5 slack, matching every historical call site).
+// within firing range (+0.5 slack, same as every other reach test).
 // Melee: within strike distance (~1.5) AND not corner-blocked — a diagonal
 // foe with both orthogonal steps unwalkable can't actually be swung at, and
 // re-acquiring it just thrashes give-up→re-acquire until the watchdog fires.
 // Used by the acquire scan, the retaliation gate, and the stand-ground
-// reach test; before extraction each re-derived it with drifting constants.
+// reach test.
 function canStrikeInPlace(e, foe){
   if((e.range||0)>0) return dist(e,foe) <= e.range+0.5;
   let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(foe.x)-ex,dy=Math.round(foe.y)-ey;
@@ -605,14 +586,11 @@ function canStrikeInPlace(e, foe){
 // Reel a leashed unit (guard post, or defensive stance's idle anchor) back
 // home when a chase drags it past GUARD_LEASH — drops the target and paths
 // to the post/anchor; returns true if it did. EXPLICIT attacks are exempt
-// (the command sets the anchor to wherever the unit stood when ordered, so
-// without the exemption a defensive army told to attack a distant target
-// marches over and then gets dragged all the way back — the "units slowly
-// walk back instead of pressing the attack" bug). Called from BOTH the
-// combat block AND the movement phase: a chase toward a STATIONARY foe is
-// one long path leg, and the combat block never runs mid-leg — checking
-// only there let a leashed unit march arbitrarily far before being reeled
-// in (hidden at 30tps by short per-tick travel; exposed at 20).
+// (the command anchors the unit where it stood when ordered, so a defensive
+// army told to attack a distant target would otherwise get dragged home).
+// Called from BOTH the combat block AND the movement phase: a chase toward
+// a STATIONARY foe is one long path leg the combat block never sees
+// mid-leg, so checking only there lets the unit march arbitrarily far.
 function enforceChaseLeash(e){
   if(!e.target||e.explicitAttack)return false;
   let go=guardOrderOf(e);
@@ -720,8 +698,8 @@ function siegePerimeterSpot(e,t){
   return nearestBldgPerimeter(e.x,e.y,t,e.id);
 }
 
-// ---- Shared attack-pathing helpers (moved here from js/ai.js so BOTH the AI
-// and player units in updateUnit can use them; ai.js still calls them). ----
+// ---- Shared attack-pathing helpers — used by BOTH the AI (js/ai.js) and
+// player units in updateUnit. ----
 
 // Ticks for `unit` to walk to `target` building's perimeter (0 = already
 // adjacent), or -1 if no path exists. Iteration-capped searches return a
@@ -784,9 +762,7 @@ function nearestReachableWallLike(unit, team, excludeId){
 // block: findPath returns [] not because the target is walled off but because
 // the unit's teammates surround it — a transient jam that clears as the outer
 // ranks march away. Callers use it to keep re-pathing (like a move order)
-// instead of giving up / backing off, which used to strand the interior units
-// of a large army at the spawn when the whole group was ordered to attack (all
-// of them hold a target, so none qualify as a pushable idle soldier). O(8),
+// instead of giving up (else interior units strand at the spawn). O(8),
 // deterministic (walkable is pure over the sim grid).
 function crowdedByUnits(u){
   let ux=Math.round(u.x), uy=Math.round(u.y), terrainOpen=false;
@@ -822,9 +798,8 @@ function crowdedByUnits(u){
 // detEntityHash (js/determinism.js).
 // Shared approach-with-patience: pathing can fail TRANSIENTLY when the
 // spot around a target is collision-crowded (full melee ring, busy drop
-// site). Old behavior dropped the order on any empty path, leaving units
-// idle next to a fight. Now: retry on a cooldown, hold position while
-// near, and only give up when far away with genuinely no route (walled).
+// site) — retry on a cooldown, hold position while near, and only give up
+// when far away with genuinely no route (walled).
 // Returns false if the caller should stop processing this tick.
 // How long a unit may hold a target-with-a-path yet make ZERO real progress
 // (no closing, no damage dealt) before we call it a deadlock. Well under the
@@ -844,8 +819,8 @@ function combatApproach(u,tgt,dist,pathFn,stopDist){
   // The 15-tick repath cooldown throttles re-pathing while a chase is in
   // motion. Repath immediately whenever there's no path left (else the unit
   // freezes until the cooldown clears — a stutter).
-  if(u.path.length>0 && !retryReady(u,'chase')) return false; // waiting for a slot
-  retryStamp(u,'chase',T30(15));
+  if(u.path.length>0 && !retryReady(u,RETRY.CHASE)) return false; // waiting for a slot
+  retryStamp(u,RETRY.CHASE,T30(15));
   // Default approach paths to the nearest reachable tile WITHIN the unit's
   // attack range (stopDist), not onto the target's tile — see findPath. This
   // is the general anti-dogpile: every attacker (melee or ranged) stops at
@@ -856,27 +831,22 @@ function combatApproach(u,tgt,dist,pathFn,stopDist){
   if(pathFn)pathFn();
   else setUnitPath(u,findPath(Math.round(u.x),Math.round(u.y),Math.round(tgt.x),Math.round(tgt.y),u.id,stopDist||0));
   if(u.path.length>0){
-    // A route exists — but "has a path" is NOT the same as "advancing".
-    // findPath ignores MOVING units, so a unit can hold a perfectly valid
-    // path it physically can't walk because the tiles ahead are jammed with
-    // fellow attackers (the breach-point crowd: several units redirected onto
-    // one wall segment that has only a tile or two of walkable perimeter).
-    // A budget-capped PARTIAL path can likewise lead to a frontier the unit
-    // never gets past. Trust the path only while there is REAL progress:
-    // distance to the target falling, OR the target losing hp (we or a
-    // teammate are landing hits). A sustained no-progress window is a
-    // deadlock — fall through to the same give-up an empty path takes. This
-    // exempts the states that merely LOOK stationary: a long march still
-    // closes distance, and a second-rank melee waiting for a slot still sees
-    // its target's hp drop from the front rank's blows.
+    // "Has a path" is NOT "advancing": findPath ignores MOVING units, so a
+    // unit can hold a valid path it can't walk (breach-point crowd), and a
+    // budget-capped PARTIAL path can lead to a frontier it never passes.
+    // Trust the path only while there is REAL progress: distance falling OR
+    // the target losing hp (a long march still closes distance; a second-
+    // rank melee still sees the front rank's damage land). A sustained
+    // no-progress window is a deadlock — fall through to the empty-path
+    // give-up.
     let pr=u.chaseProg;
     if(!pr || pr.id!==tgt.id || dist < pr.d-0.25 || tgt.hp < pr.hp){
       u.chaseProg={id:tgt.id, d:dist, hp:tgt.hp, since:tick};
-      retryClear(u,'chaseBlocked');
+      retryClear(u,RETRY.CHASE_BLOCKED);
       return true;
     }
     if(tick - pr.since < CHASE_STALL_TICKS){
-      retryClear(u,'chaseBlocked');
+      retryClear(u,RETRY.CHASE_BLOCKED);
       return true;
     }
     // Stalled: a path exists but neither distance nor target-hp has moved for
@@ -884,25 +854,19 @@ function combatApproach(u,tgt,dist,pathFn,stopDist){
     // but DON'T reset chaseProg here, or the next call re-enters the progress
     // branch and the 2-strike give-up never accumulates.
   }
-  // EMPTY path (or a stalled non-empty one): the honest "can't actually get
-  // there". findPath returns [] only after fully exploring the reachable
-  // region without touching the target, and moving units don't block pathing
-  // — so this is a real wall/trap/deadlock, not a one-tick jam. Give up (a
-  // 2-strike tolerance absorbs a transient) instead of freezing, and hand off
-  // to the shared resolver (breach the wall in the way / back off) — used by
-  // AI and player units alike now.
-  // A unit walled in by its OWN not-yet-moving crowd (the interior of a
-  // freshly-commanded army block) hasn't hit a real dead end — its empty
-  // path is just the surrounding teammates, and it clears once the outer
-  // ranks march off. Don't escalate to the give-up/back-off (that stranded
-  // interior units at the spawn forever); keep re-pathing every tick like a
-  // move order until a neighbour frees up. Checked before retryFail so the
-  // transient jam never even counts toward the 2-strike deadline.
+  // EMPTY path (or a stalled non-empty one): findPath returns [] only after
+  // fully exploring the reachable region, and moving units don't block
+  // pathing — so this is a real wall/trap/deadlock, not a one-tick jam. Give
+  // up (a 2-strike tolerance absorbs a transient) and hand off to the shared
+  // resolver (breach the wall in the way / back off).
+  // A unit walled in by its OWN not-yet-moving crowd hasn't hit a real dead
+  // end — keep re-pathing every tick like a move order until a neighbour
+  // frees up. Checked before retryFail so the transient jam never counts
+  // toward the 2-strike deadline.
   if(crowdedByUnits(u)) return false;
   // Only PLAYER units (AI or human) resolve a stall — gaia (wildlife) keeps
-  // the original no-op so bears/sheep are unaffected (isPlayerTeam excludes
-  // gaia; the old code's isAITeam gate excluded it too).
-  if(retryFail(u,'chaseBlocked',T30(15),2) && isPlayerTeam(u.team)) resolveStalledAttack(u, tgt);
+  // the no-op so bears/sheep are unaffected.
+  if(retryFail(u,RETRY.CHASE_BLOCKED,T30(15),2) && isPlayerTeam(u.team)) resolveStalledAttack(u, tgt);
   return false;
 }
 
@@ -940,13 +904,12 @@ function resolveStalledAttack(u, tgt){
   } else {
     // Human-team unit that acquired this target ITSELF (retaliation /
     // auto-acquire) and can't reach it: if the unreachable foe is RANGED and
-    // we're parked inside its fire, DISENGAGE — drop the chase and step out
-    // of its range instead of soaking arrows until dead (the "knight standing
-    // under a walled-in archer" bug: retaliation re-locked the target on every
-    // arrow and the unreach back-off held the unit in place forever). An
-    // EXPLICIT attack keeps the player's order (they can micro); an
-    // unreachable MELEE foe can't hurt us from where it is, so the old
-    // wait-in-place stays for ordinary crowded-fight stalls.
+    // we're parked inside its fire, DISENGAGE — step out of its range instead
+    // of soaking arrows (retaliation would otherwise re-lock the target on
+    // every arrow and hold the unit in place until dead). An EXPLICIT attack
+    // keeps the player's order (they can micro); an unreachable MELEE foe
+    // can't hurt us from where it is, so wait-in-place stays for ordinary
+    // crowded-fight stalls.
     let tr = tgt.type === 'unit' ? (UNITS[tgt.utype].range || 0) : 0;
     if (!u.explicitAttack && tr > 0 && dist(u, tgt) <= tr + 1) {
       u.target = null; u.siegeSpot = null;
@@ -956,7 +919,7 @@ function resolveStalledAttack(u, tgt){
     }
     stampUnreachable(u, stalledId, tgt.type === 'building' ? T30(300) : UNREACH_UNIT_TICKS);
   }
-  retryClear(u, 'chaseBlocked'); clearUnitPath(u); u.chaseProg = undefined;
+  retryClear(u,RETRY.CHASE_BLOCKED); clearUnitPath(u); u.chaseProg = undefined;
   // Issued AFTER the shared cleanup — clearUnitPath above would wipe it.
   if (disengage) pathUnitTo(u, disengage.x, disengage.y);
 }
@@ -977,9 +940,8 @@ function pressToContact(e, cx, cy, contactDist){
   let d=Math.sqrt(dx*dx+dy*dy);
   if(d<=contactDist+0.02)return;             // deadband — already in the ring
   // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
-  // follower advances unitMoveSpeed*UNIT_PX_PER_TICK screen-px/tick, i.e.
-  // unitMoveSpeed/TPS tiles/tick (TPS ticks per game-second) — match it so the
-  // unit strolls into contact instead of snapping (the old 0.08 was ~3x walk).
+  // follower advances unitMoveSpeed/TPS tiles/tick — match it so the unit
+  // strolls into contact instead of snapping.
   let walkStep = unitMoveSpeed(e)/TPS;
   let step=Math.min(walkStep, d-contactDist);
   let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
@@ -989,12 +951,10 @@ function pressToContact(e, cx, cy, contactDist){
   }
 }
 
-// Deposit/trade "touch": once a hauler (villager returning a load, trade cart at
-// a Market) has SETTLED adjacent to building b, slide the last bit up against
-// its nearest edge BEFORE it hands the load over — so the exchange visibly
-// happens at the wall instead of from the perimeter tile ~half a tile out
-// followed by an instant about-face (the old "dump from a tile away" look).
-// Clamps to the footprint so a hauler at a corner tile tucks into the corner.
+// Deposit/trade "touch": once a hauler (villager returning a load, trade cart
+// at a Market) has SETTLED adjacent to building b, slide the last bit up
+// against its nearest edge BEFORE it hands the load over, clamped to the
+// footprint so a hauler at a corner tile tucks into the corner.
 // Returns true once tucked in OR unable to get closer this tick (deadband /
 // blocked / still has a path — pressToContact only acts when settled, so a
 // caller that hasn't finished walking in just completes as before): the caller
@@ -1182,10 +1142,8 @@ function updateGatherTask(e,config){
       // "Payable" must match who can actually PAY at the farm: prepaid credit
       // works for everyone, but the raw-wood reseed is AI-only (a human's
       // wood is spent via the Mill's prepay queue, updateVillagerBuild).
-      // Without the isAITeam gate a human farmer with 60+ wood and no
-      // prepaid ping-ponged build↔farm at the exhausted plot forever
-      // (169 task flips in 400 ticks in the repro) — never reseeding,
-      // never idling, invisible to the stuck-watchdog.
+      // Without the isAITeam gate a human farmer with wood but no prepaid
+      // ping-pongs build↔farm at the exhausted plot forever.
       if(store&&((store.prepaidFarms||0)>0||(isAITeam(e.team)&&store.wood>=60))){
         let ex=null,best=Infinity;
         entities.forEach(en=>{
@@ -1245,16 +1203,13 @@ function updateGatherTask(e,config){
     return;
   }
 
-  // In range. Slide-to-contact so the villager visibly HUGS the node it works
-  // (clear feedback about which tile it's after) — but press toward the nearest
-  // point on the node's OWN EDGE (its position clamped to the tile's footprint
-  // box), NOT the node centre. Centre-pressing was removed once because it
-  // pulled diagonal gatherers onto the 4 orthogonal tiles and abandoned the
-  // corners; clamping to the edge instead keeps each villager squared up on the
-  // DISTINCT tile pickGatherStand assigned, so the even 8-tile surround (corners
-  // included) survives AND everyone tucks right against the resource. The
-  // walkable(ignoreUnits) guard in pressToContact keeps them off the solid node.
-  // Farms are walkable (the villager stands ON the plot) — no press there.
+  // In range. Slide-to-contact so the villager visibly HUGS the node — press
+  // toward the nearest point on the node's OWN EDGE (position clamped to the
+  // tile's footprint box), NOT the centre: centre-pressing pulls diagonal
+  // gatherers onto the 4 orthogonal tiles and wrecks pickGatherStand's even
+  // 8-tile surround. The walkable(ignoreUnits) guard in pressToContact keeps
+  // them off the solid node. Farms are walkable (the villager stands ON the
+  // plot) — no press there.
   if(e.task!=='farm'){
     let hx=Math.max(gatherTile.x-0.5, Math.min(e.x, gatherTile.x+0.5));
     let hy=Math.max(gatherTile.y-0.5, Math.min(e.y, gatherTile.y+0.5));
@@ -1280,11 +1235,9 @@ function updateGatherTask(e,config){
   // Eco cards (Double-Bit Axe / Bow Saw / Gold Mining) shorten the cycle.
   e.gatherCooldown=gatherCooldownFor(e.team,config.resource,config.cooldown);
 
-  // Gathering audio: forage/farm only — they have no tool-swing animation,
-  // so extraction time is the natural cadence. Chop/mine sounds moved to
-  // the axe/pick's VISUAL impact in render-units.js (drawUnit), because the
-  // first extraction lags the first visible swing by up to a full gather
-  // cycle, which read as the sound starting late.
+  // Gathering audio: forage/farm only — no tool-swing animation, so
+  // extraction time is the natural cadence. Chop/mine sounds fire on the
+  // axe/pick's VISUAL impact in render-units.js (drawUnit).
   if (window.playSound && (e.task === 'forage' || e.task === 'farm')
       && (GAME_SPEED < 4 || e.carrying % 2 === 0)) { // every other cycle at 4x — keeps the 2x cadence
     window.playSound('forage', gatherTile.x + 0.5, gatherTile.y + 0.5);
@@ -1304,7 +1257,6 @@ function updateGatherTask(e,config){
 
 function checkNextBuild(e){
   e.buildQueue = e.buildQueue || [];
-  // Find all actual unfinished building entities in the queue
   let unfinishedInQueue = e.buildQueue
     .map(id => entitiesById.get(id))
     .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp));
@@ -1321,13 +1273,10 @@ function checkNextBuild(e){
   }
 
   if (unfinishedInQueue.length > 0) {
-    // Nearest first, but pick the nearest one this builder can ACTUALLY REACH.
-    // A foundation can be near in straight-line distance yet sealed off (wrong
-    // side of a closing wall ring, boxed by other foundations) — assigning it
-    // anyway makes the builder walk, fail, give up, get handed the same
-    // nearest one again, and churn until the stuck-watchdog frees it. Skipping
-    // unreachable ones breaks that loop and lets the builder fall through to a
-    // reachable job / gathering.
+    // Nearest first, but pick the nearest one this builder can ACTUALLY
+    // REACH: a foundation can be near in straight-line distance yet sealed
+    // off (wrong side of a closing wall ring) — assigning it anyway churns
+    // walk/fail/reassign until the stuck-watchdog fires.
     unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b));
     let bt = null, pt = null;
     for (let cand of unfinishedInQueue) {
@@ -1350,6 +1299,69 @@ function checkNextBuild(e){
   return false;
 }
 
+// THE retaliation verdict — "should `target`, just hit by `attacker`, take
+// it as its combat target?" One predicate for the one decision. Callers own
+// the commit side-effects (stashVillagerTask / target / clearUnitPath).
+// Deliberately NOT the same predicate as the two ACQUISITION sites — sieged-building
+// defense and the idle auto-acquire scan key on stanceOf().acquires and
+// isSoldierUnit (villagers retaliate but never acquire) and use plain
+// path-or-order move tests; folding them in would change behavior.
+function shouldRetaliate(target, attacker){
+  // A unit actively carrying out a player move order (a path in progress, or
+  // a pending multi-leg move goal — see updateUnit()) keeps obeying it
+  // instead of being yanked into combat; e.g. a retreating soldier should
+  // keep retreating. Note: a unit that's merely following another (but has
+  // already caught up and stopped, path.length===0) isn't "mid-order" in
+  // that sense and should still defend itself like any idle unit.
+  // For a villager, walking is usually TASK-walking (to the tree, to the
+  // drop-off) — that must not exempt it from defending itself, or gatherers
+  // get stabbed mid-commute without reacting. Only an explicit player move
+  // order ({kind:'move'}, set solely by issueMoveOrder) keeps a villager walking.
+  let hasActiveMoveOrder = target.type==='unit' && (
+    target.utype==='villager'
+      ? (target.order&&target.order.kind==='move')
+      : (target.path.length>0 || (target.order&&target.order.kind==='move')));
+  // AoE2: villagers fight back against melee attackers — INCLUDING bears:
+  // gatherers mob-retaliate as a group (a flee reflex instead let bears
+  // outrun and pick off runners one at a time). They don't chase ranged
+  // attackers (hopeless kiting) or buildings (tower/TC fire).
+  let hopelessChase = target.utype==='villager' &&
+    ((attacker.range||0)>0 || attacker.type==='building');
+  // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
+  // hacking at it just interrupts the wall it was ordered to break. Trade
+  // carts can't fight at all (atk 0) — isWoodVehicle below.
+  // An AI scout is pure recon — it must NOT retaliate against GAIA wildlife
+  // or it gets pinned trading blows mid-explore. It still defends against
+  // enemy-TEAM raiders (controlAIScouts also drops any gaia target that
+  // slips through; suppressing here stops it being acquired at all).
+  let scoutIgnoresGaia = target.utype==='scout' && isAITeam(target.team) && attacker.team===GAIA_TEAM;
+  // No Attack (passive) means exactly that — never retaliates, even under
+  // fire (else a passive soldier shot by a tower would march in to attack
+  // it, the opposite of what the stance promises).
+  let passiveNoRetaliate = !stanceOf(target).retaliates;
+  // Don't re-lock an attacker this victim has already PROVEN unreachable
+  // (unreachId, stamped by the stall resolver) — unless it's strikable
+  // RIGHT NOW (canStrikeInPlace), when pathing is moot and the stamp
+  // doesn't apply. Same nuance as auto-acquire.
+  let unreachAttacker = (target.unreachUntil>tick && target.unreachId===attacker.id)
+    && !canStrikeInPlace(target, attacker);
+  // An AI unit in tactical retreat (retreatUntil, js/ai.js) keeps running:
+  // retaliating would cancel the disengage the moment the pursuer lands a
+  // hit — exactly the fight-to-the-death this stamp exists to break.
+  let retreating = isRetreatingUnit(target);
+  // Stand Ground only retaliates against what it can hit FROM ITS SPOT —
+  // same reach test as the combat block's drop (else an acquire→drop churn
+  // every arrow).
+  let standgroundOutOfReach = target.stance==='standground' && !canStrikeInPlace(target, attacker);
+  if(!(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker&&!standgroundOutOfReach))return false;
+  if(!target.target)return true;
+  let curT = entitiesById.get(target.target);
+  // Switch target from buildings/sheep/WILDLIFE to focus the attacking
+  // soldier — a unit finishing off a bear must not ignore the enemy
+  // spearman now stabbing it (gaia is never the bigger threat).
+  return !curT || curT.type==='building'||curT.utype==='sheep'||curT.utype==='sheep_carcass'||curT.team===GAIA_TEAM;
+}
+
 function damageEntity(attacker, target){
   let dmg = attacker.atk || 0;
   // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
@@ -1359,14 +1371,10 @@ function damageEntity(attacker, target){
   // doesn't flag a unit that's actively fighting (e.g. sieging a wall an enemy
   // repairs in step, so the target's SAMPLED hp reads flat though blows land).
   attacker.lastAtkTick = tick;
-  // AoE2 attack bonuses, read from the per-unit `bonuses` table (UNITS,
-  // js/core.js) — the data-driven mirror of AoE2's attack-vs-armor-class
-  // pairs (openage .../game_mechanics/damage.md). Keys are target utypes,
-  // plus the pseudo-class 'building'. The other classic counters need no
-  // bonus — they emerge from the armor system: scouts beat archers because
-  // their 2 pierce armor halves arrow damage, militia beat spearmen on raw
-  // stats. Rationale for the values (incl. the ram's +110 vs the repair
-  // contract) lives with the data in core.js.
+  // AoE2 attack bonuses from the per-unit `bonuses` table (UNITS, js/core.js;
+  // openage game_mechanics/damage.md). Keys are target utypes plus the
+  // pseudo-class 'building'; the other classic counters emerge from the
+  // armor system. Value rationale lives with the data in core.js.
   if (attacker.utype) {
     let bonuses = UNITS[attacker.utype] && UNITS[attacker.utype].bonuses;
     if (bonuses) {
@@ -1391,9 +1399,8 @@ function damageEntity(attacker, target){
 
   target.hp -= dmg;
 
-  // Play combat sound and spawn particles. Sheep (live or carcass) don't
-  // get the steel clash — slaughtering livestock isn't a sword fight; the
-  // bleat on death (handleDeath) is the sheep's own audio.
+  // Combat sound + particles. Sheep don't get the steel clash — the bleat
+  // on death (handleDeath) is the sheep's own audio.
   if (target.type === 'unit') {
     if (window.playSound && !isHarmlessAnimal(target)) {
       window.playSound('attack', target.x, target.y);
@@ -1404,13 +1411,10 @@ function damageEntity(attacker, target){
     spawnParticles(target.x + (target.w||1)/2, target.y + (target.h||1)/2, '#8b6c43', 3, 0.03, 2);
   }
 
-  // Minimap raid alert: attacked player objects blink white for a moment
-  // (drawMinimap reads this via teamColor()'s myTeam-relative logic), AoE2-
-  // style. Not team-restricted here — this runs during the HOST's normal
-  // per-tick processing of both teams every tick, so `myTeam` would be
-  // constant (always 0) regardless of which team is actually being hit,
-  // same trap as the rally-point bug — record it for either team
-  // unconditionally, the READ side already filters to "mine" correctly.
+  // Minimap raid alert: attacked player objects blink white (drawMinimap
+  // via teamColor()'s myTeam-relative logic), AoE2-style. Not team-gated
+  // here — the sim processes both teams every tick, so record for either
+  // team unconditionally; the READ side filters to "mine".
   target.lastHitTick = tick;
   // Enemy-PLAYER hits only (not wildlife): the AI's tactical retreat keys on
   // this — running from a bear is the documented losing move (bears outrun
@@ -1419,17 +1423,13 @@ function damageEntity(attacker, target){
   if (target.type === 'unit' && isEnemyOf(target.team, attacker)) target.lastEnemyHitTick = tick;
   // RAID LEARNING (throttled, mirrors the wildlife branch below): an AI
   // villager hit by an enemy PLAYER stamps a danger zone at its own tile —
-  // the ground where gathering just proved deadly — learned on the FIRST
-  // hit, not on death (the old death-only stamp let the first victim die
-  // for free). Caught in the FIELD (beyond the town's alarm radius, where
-  // the bell can't help), it also drops everything and runs home — the
-  // event-driven replacement for the old per-decision-tick flee poller in
-  // js/ai.js (same action, decisionInterval-times faster reaction).
-  // Militia villagers (explicitAttack — fighting by order) and villagers
-  // already walking to shelter are exempt.
+  // learned on the FIRST hit, not on death. Caught in the FIELD (beyond the
+  // town's alarm radius, where the bell can't help), it also drops
+  // everything and runs home. Militia villagers (explicitAttack) and
+  // villagers already walking to shelter are exempt.
   if (target.utype === 'villager' && isAITeam(target.team) && attacker.team !== GAIA_TEAM
-      && isEnemyOf(target.team, attacker) && retryReady(target, 'fleeRaid')) {
-    retryStamp(target, 'fleeRaid', T30(90));
+      && isEnemyOf(target.team, attacker) && retryReady(target,RETRY.FLEE_RAID)) {
+    retryStamp(target,RETRY.FLEE_RAID, T30(90));
     let dzAi = AI_STATES && AI_STATES[target.team];
     if (dzAi && dzAi.dangerZones) stampDangerZone(dzAi, Math.round(target.x), Math.round(target.y));
     if (!target.explicitAttack && target.task !== 'garrison') {
@@ -1466,11 +1466,10 @@ function damageEntity(attacker, target){
   // (updateAIGarrisonReaction, js/ai.js), so it must be deterministic and
   // ride the lockstep snapshots (js/core.js's lastTeamHit).
   if (lastTeamHit && isEnemyOf(target.team, attacker) && isPlayerTeam(target.team)) {
-    // `core` = the hit actually threatens the economy: a villager or the Town
-    // Center itself. A hit on a peripheral WALL/other building is NOT core —
-    // the AI garrison reaction (updateAIGarrisonReaction) must not hide the
-    // whole workforce just because an army is poking the wall from outside a
-    // ring it can't breach (that froze the eco forever = the Dark-Age stall).
+    // `core` = the hit actually threatens the economy: a villager or the TC
+    // itself. A peripheral WALL hit is NOT core — the AI garrison reaction
+    // must not hide the whole workforce over an army poking a ring it can't
+    // breach (that froze the eco forever).
     let core = target.utype === 'villager' || target.btype === 'TC';
     lastTeamHit[target.team] = { tick, x: target.x, y: target.y, core };
   }
@@ -1487,92 +1486,27 @@ function damageEntity(attacker, target){
     }
   }
   
-  // Retaliation: attacked units fight back (not sheep, only opposing teams).
-  // A unit actively carrying out a player move order (a path in progress, or
-  // a pending multi-leg move goal — see updateUnit()) keeps obeying it
-  // instead of being yanked into combat; e.g. a retreating soldier should
-  // keep retreating. Note: a unit that's merely following another (but has
-  // already caught up and stopped, path.length===0) isn't "mid-order" in
-  // that sense and should still defend itself like any idle unit.
-  // For a villager, walking is usually TASK-walking (to the tree, to the
-  // drop-off) — that must not exempt it from defending itself, or gatherers
-  // get stabbed mid-commute without reacting. Only an explicit player move
-  // order ({kind:'move'}, set solely by issueMoveOrder) keeps a villager walking.
-  let hasActiveMoveOrder = target.type==='unit' && (
-    target.utype==='villager'
-      ? (target.order&&target.order.kind==='move')
-      : (target.path.length>0 || (target.order&&target.order.kind==='move')));
-  // AoE2: villagers fight back against melee attackers — INCLUDING bears:
-  // gatherers mob-retaliate as a group (five villagers beat a bear), which
-  // sim testing showed is what actually keeps wildlife losses low. An
-  // earlier flee-instead-of-fight reflex removed the group defense and
-  // bears picked off the runners one at a time (bear speed 1.2 outruns
-  // villager 0.8) — economies collapsed. They don't chase ranged attackers
-  // (hopeless kiting) or buildings (tower/TC fire).
-  let hopelessChase = target.utype==='villager' &&
-    ((attacker.range||0)>0 || attacker.type==='building');
   // Wildlife bookkeeping (throttled): a mauled villager still calls in the
   // military hunt (huntAIBears, js/ai.js) and stamps a small danger zone so
   // the AI doesn't RE-TASK fresh gatherers onto the bear's patch while the
   // fight/hunt plays out. The zone dies with the bear (canGatherTile).
-  if(target.utype==='villager'&&attacker.utype==='bear'&&retryReady(target,'fleeBear')){
-    retryStamp(target,'fleeBear',T30(90));
+  // (Independent of the retaliation verdict below — a villager both mobs
+  // the bear AND logs the danger.)
+  if(target.utype==='villager'&&attacker.utype==='bear'&&retryReady(target,RETRY.FLEE_BEAR)){
+    retryStamp(target,RETRY.FLEE_BEAR,T30(90));
     target.fledBearId=attacker.id;
     let dzAi=AI_STATES&&AI_STATES[target.team];
     if(dzAi&&dzAi.dangerZones)stampDangerZone(dzAi,Math.round(attacker.x),Math.round(attacker.y),attacker.id);
   }
-  // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
-  // hacking at it just interrupts the wall it was ordered to break. Trade
-  // carts can't fight at all (atk 0) — retaliating just made them chase
-  // their attacker and bump into it uselessly.
-  // An AI scout is pure recon — it must NOT retaliate against GAIA wildlife (a
-  // bear/wolf), or it gets pinned trading blows mid-explore instead of scouting
-  // (same spirit as the player's Auto Scout avoiding combat). It still defends
-  // against enemy-TEAM raiders. controlAIScouts also drops any gaia target that
-  // slips through, but suppressing the retaliation here stops it being acquired.
-  let scoutIgnoresGaia = target.utype==='scout' && isAITeam(target.team) && attacker.team===GAIA_TEAM;
-  // No Attack (passive) means exactly that — the unit never retaliates, even
-  // under fire. Without this, a passive soldier shot by an enemy tower/TC would
-  // acquire it as a target and march in to attack the building, the opposite of
-  // what the stance promises ("Never attacks or retaliates").
-  let passiveNoRetaliate = !stanceOf(target).retaliates;
-  // Don't re-lock an attacker this victim has already PROVEN unreachable
-  // (unreachId, stamped by the stall resolver) — retaliation re-acquired a
-  // walled-in shooter on every arrow, undoing the disengage and parking the
-  // victim under fire forever. Same nuance as auto-acquire: if the attacker
-  // is strikable RIGHT NOW (in my range / melee-adjacent), pathing is moot
-  // and the stamp doesn't apply.
-  let unreachAttacker = (target.unreachUntil>tick && target.unreachId===attacker.id)
-    && !canStrikeInPlace(target, attacker);
-  // An AI unit in tactical retreat (retreatUntil, js/ai.js) keeps running:
-  // retaliating would cancel the disengage the moment the pursuer lands a
-  // hit — exactly the fight-to-the-death this stamp exists to break.
-  let retreating = isRetreatingUnit(target);
-  // Stand Ground only retaliates against what it can hit FROM ITS SPOT:
-  // acquiring a shooter beyond its reach just target-flipped for one tick
-  // before the combat block's out-of-range drop reverted it (an acquire→
-  // drop churn every arrow). Same reach test as the combat block's drop.
-  let standgroundOutOfReach = target.stance==='standground' && !canStrikeInPlace(target, attacker);
-  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker&&!standgroundOutOfReach){
-    let shouldRetaliate = false;
-    if(!target.target){
-      shouldRetaliate = true;
-    } else {
-      let curT = entitiesById.get(target.target);
-      // Switch target from buildings/sheep/WILDLIFE to focus the attacking
-      // soldier — a unit finishing off a bear must not ignore the enemy
-      // spearman now stabbing it (gaia is never the bigger threat).
-      if(!curT || curT.type==='building'||curT.utype==='sheep'||curT.utype==='sheep_carcass'||curT.team===GAIA_TEAM){
-        shouldRetaliate = true;
-      }
-    }
-    if(shouldRetaliate){
-      // Save task details so they can resume after defending themselves
-      if (target.utype === 'villager') stashVillagerTask(target);
-      target.target = attacker.id;
-      target.task = null; // drop gathering/farming/building tasks
-      clearUnitPath(target);
-    }
+  // Retaliation: attacked units fight back — the full verdict lives in
+  // shouldRetaliate() (one predicate, one place); this site owns only the
+  // commit side-effects.
+  if(shouldRetaliate(target, attacker)){
+    // Save task details so they can resume after defending themselves
+    if (target.utype === 'villager') stashVillagerTask(target);
+    target.target = attacker.id;
+    target.task = null; // drop gathering/farming/building tasks
+    clearUnitPath(target);
   }
   
   // Defend sieged buildings: when a building is hit, nearby idle military
@@ -1677,8 +1611,7 @@ function restoreSavedTask(e) {
     e.buildQueue = e.savedTask.buildQueue;
     e.prevTask = e.savedTask.prevTask;
     e.savedTask = null;
-    
-    // Re-path them to their task!
+
     if (e.task === 'build' && e.buildTarget) {
       let bt = entitiesById.get(e.buildTarget);
       if (bt) {
@@ -1759,9 +1692,8 @@ function enterGarrison(e,b){
 function ejectGarrison(b,filter){
   if(!b.garrison||b.garrison.length===0)return 0;
   let keep=[],out=0;
-  // Tiles already handed out THIS call — unitBlock only rebuilds next tick,
-  // so without this a full TC dumped all 15 units onto one tile and left
-  // them to random separation shoving.
+  // Tiles already handed out THIS call — unitBlock only rebuilds next tick;
+  // without this a full TC dumps everyone onto one tile.
   let taken=new Set();
   b.garrison.forEach(id=>{
     let u=entitiesById.get(id);
@@ -1771,10 +1703,9 @@ function ejectGarrison(b,filter){
     let bx=Math.round(b.x),by=Math.round(b.y);
     let spawn=findSpawnTile(bx+(b.w||1),by+(b.h||1),8,taken)||findSpawnTile(bx-1,by-1,8,taken);
     // No free tile in the whole radius-8 ring: if the container still
-    // stands, the unit stays SHELTERED (ejecting onto the solid footprint
-    // parked it inside the building for separation to shove around). A
-    // DYING container has no such luxury — eject at the wreck and let
-    // separation sort it out, better than deleting the unit.
+    // stands the unit stays SHELTERED (ejecting onto the solid footprint
+    // parks it inside the building). A DYING container ejects at the wreck
+    // and lets separation sort it out — better than deleting the unit.
     if(!spawn && b.hp>0){keep.push(id);return;}
     if(spawn)taken.add(spawn.x+','+spawn.y);
     u.garrisonedIn=undefined;
@@ -1808,12 +1739,11 @@ function ringTownBell(team){
   // targeting one full building.
   let spots=entities.filter(en=>canGarrisonIn(en,team))
     .map(b=>({b,room:garrisonCap(b)-garrisonCount(b)}));
-  // AoE2 bell range (openage .../game_mechanics/town_bell.md): only
-  // villagers within 25 tiles of the TC answer — a gatherer at a far camp
-  // is not in danger and must keep working, not abandon its post across the
-  // map. Also the lever that softens AI shelter-paralysis: raids at the TC
-  // no longer freeze the whole distributed economy. No TC (razed) → no
-  // range anchor: everyone may shelter in whatever towers remain.
+  // AoE2 bell range (openage game_mechanics/town_bell.md): only villagers
+  // within 25 tiles of the TC answer — a far-camp gatherer keeps working.
+  // Also softens AI shelter-paralysis (a TC raid doesn't freeze the whole
+  // distributed economy). No TC (razed) → no range anchor: everyone may
+  // shelter in whatever towers remain.
   const BELL_RANGE=25;
   let bellTC=entities.find(b=>b.type==='building'&&b.team===team&&b.btype==='TC'&&b.complete);
   let sent=0;
@@ -1895,11 +1825,9 @@ function updateTradeCart(e){
   if(e.tradeDestId==null && e.tradeHomeId==null) return; // idle, not on a route
   let home = e.tradeHomeId!=null ? entitiesById.get(e.tradeHomeId) : null;
   let dest = e.tradeDestId!=null ? entitiesById.get(e.tradeDestId) : null;
-  // "Ok" here means alive-and-owned-right; completeness is checked separately
-  // — a route to a market still under construction is VALID, the cart just
-  // waits at the site until it finishes (the pre-existing "sent my carts to
-  // the ally while their market was still building and they never traded"
-  // bug: the old complete-required check dissolved the route instead).
+  // "Ok" here means alive-and-owned-right; completeness is checked
+  // separately — a route to a market still under construction is VALID, the
+  // cart just waits at the site until it finishes.
   let homeOk = home&&home.type==='building'&&home.btype==='MARKET'&&home.hp>0&&home.team===e.team;
   let destOk = dest&&dest.type==='building'&&dest.btype==='MARKET'&&dest.hp>0&&dest.team!==e.team&&isPlayerTeam(dest.team);
   // A destroyed endpoint re-resolves to the nearest valid Market so an active
@@ -1916,10 +1844,8 @@ function updateTradeCart(e){
   if(e.tradePhase==null) e.tradePhase='toDest';
   let goal = e.tradePhase==='toDest' ? dest : home;
   if(adjToBuilding(e.x,e.y,goal)){
-    // Pull all the way up to the Market before the exchange (slide-to-contact),
-    // rather than trading from ~a tile out the moment we're "adjacent" and
-    // spinning around. Finish the approach leg first, then tuck in; the trade
-    // fires once the cart can get no closer (dropContactSettled true).
+    // Pull all the way up to the Market before the exchange: finish the
+    // approach leg, tuck in, trade once the cart can get no closer.
     if(e.path.length>0) return;              // still rolling in — let the walk step advance
     if(!dropContactSettled(e, goal)) return; // tuck up against the Market
     if(!goal.complete) return;               // endpoint still building — wait for it
@@ -1961,16 +1887,12 @@ function countSiteWorker(bt){
 }
 
 
-  // Auto Scout (player toggle): a scout on auto-explore keeps moving to the
-  // most-unexplored frontier and AVOIDS combat (a dead scout stops scouting).
-  // Reuses the AI's frontier picker (pickExploreWaypoint, js/ai.js) off the
-  // deterministic per-team explored grid + simRandInt. The shared movement step
-  // above already walked/returned when a path existed, so we only reach here
-  // with an empty path (arrived); re-pick on a light cadence so a blocked pick
-  // doesn't churn every tick. Returns so it never falls into the auto-attack
-  // block below. Manual orders replace the scout order (execUnitCommand).
-// (Extracted from updateUnit; the dispatcher gates on the scout ORDER and
-// ends the tick after this runs.)
+// Auto Scout (player toggle): keep moving to the most-unexplored frontier
+// and AVOID combat (a dead scout stops scouting). Reuses the AI's frontier
+// picker (pickExploreWaypoint, js/ai.js) off the deterministic per-team
+// explored grid + simRandInt. Only reached with an empty path (arrived);
+// re-pick on a light cadence so a blocked pick doesn't churn every tick.
+// Manual orders replace the scout order (execUnitCommand).
 function updateAutoScoutTick(e){
   if(e.target){ e.target=null; e.explicitAttack=false; }
   if(e.path.length===0 && (tick+e.id)%AUTOSCOUT_REPICK_EVERY===0){
@@ -1982,32 +1904,22 @@ function updateAutoScoutTick(e){
 }
 
 // ---- IDLE MILITARY (auto-attack acquire + guard return + anchor drift) ----
-// Extracted verbatim from updateUnit (dispatcher below); runs only when the
-// unit reached the end of its tick with nothing else to do.
+// Runs only when the unit reached the end of its tick with nothing else to do.
 function updateIdleMilitary(e){
-  // Auto-attack: idle military units engage nearby enemies (always enabled for military, disabled for villagers)
-  // Bears are excluded: they use their own leashed aggro logic above, not
-  // the never-give-up military chase here.
-  // Rams are excluded too: AoE2 rams never auto-engage — with 1-2 dmg vs
-  // units, chasing a passing scout is pure suicide-by-distraction. They
-  // attack only what they're explicitly ordered onto (or what the AI's
-  // target planner assigns).
-  // Trade carts are unarmed haulers (atk 0) — never let them auto-engage, or an
-  // idle cart chases enemies it can't hurt instead of trading.
+  // Auto-attack: idle military engage nearby enemies. Bears are excluded
+  // (own leashed aggro logic, not this never-give-up chase). Rams never
+  // auto-engage (AoE2; 1-2 dmg vs units is suicide-by-distraction). Trade
+  // carts are unarmed haulers (atk 0) — never let them auto-engage.
   let isMilitary = isSoldierUnit(e);
-  // Note: followId isn't excluded here — a unit that has caught up to its
-  // follow target and stopped (path empty) should still engage nearby
-  // enemies like any idle unit; combat naturally takes precedence and the
-  // follow order resumes once the fight ends (followId itself isn't touched
-  // by combat, only the per-leg pathing is).
+  // followId isn't excluded: a follower that has caught up and stopped
+  // still engages like any idle unit — combat takes precedence and the
+  // follow resumes after (only the per-leg pathing is touched).
   if(isMilitary && !e.target && e.path.length===0 && !e.task){
-    // A guard flag PINS the defend anchor to the flagged spot (a plain idle
-    // unit's anchor drifts to wherever it stands); an idle guard away from
-    // its flag walks back. retryReady throttles the re-path so a blocked
-    // return doesn't hammer the pathfinder every tick.
-    // Idle anchor drift (defensive-stance leash) — unconditional, exactly
-    // the pre-guard behavior: defendX/Y means "where this unit last idled"
-    // and NOTHING else. The guard leash reads guardX/Y directly.
+    // A guard flag PINS the defend anchor to the flagged spot; an idle
+    // guard away from its flag walks back (retryReady throttles the
+    // re-path). Idle anchor drift is unconditional: defendX/Y means "where
+    // this unit last idled" and NOTHING else — the guard leash reads
+    // guardX/Y directly.
     e.defendX = e.x;
     e.defendY = e.y;
     let gRet = guardOrderOf(e);
@@ -2015,7 +1927,7 @@ function updateIdleMilitary(e){
     // walking — don't compete with it for the path.
     if(gRet && gRet.kind !== 'escort'){
       let gdx = e.x - gRet.x, gdy = e.y - gRet.y;
-      if(gdx*gdx + gdy*gdy > 2.25 && retryReady(e,'guardret')){
+      if(gdx*gdx + gdy*gdy > 2.25 && retryReady(e,RETRY.GUARD_RETURN)){
         // BACK-OFF rule: a blocked return must fail QUIETLY. Shared posts
         // only seat ~9 units within the 1.5-tile radius, and a post can be
         // built over, in forest, or inside a garrison footprint — without
@@ -2024,28 +1936,23 @@ function updateIdleMilitary(e){
         // lockstep) or an outright no-path: the post is the player's
         // explicit order and NEVER moves on its own — stop trying for a
         // long beat (T30(600)) and re-probe in case the blockage (crowd,
-        // construction) has cleared. (An unflagged-settle branch that moved
-        // the post to wherever the unit stood lived here for the old
-        // IMPLICIT posts; those no longer exist — every guardX today is an
-        // explicit flag or a live escort, and legacy saves are migrated on
-        // load, js/save.js.)
-        let r = e.retry && e.retry['guardret'];
-        let backOff = () => { retryStamp(e,'guardret',T30(600)); if (r) e.retry['guardret'].n = 0; };
+        // construction) has cleared.
+        let r = e.retry && e.retry[RETRY.GUARD_RETURN];
+        let backOff = () => { retryStamp(e,RETRY.GUARD_RETURN,T30(600)); if (r) e.retry[RETRY.GUARD_RETURN].n = 0; };
         if (r && r.n >= 3) {
           backOff();
         } else {
-          retryStamp(e,'guardret',T30(30));
-          e.retry['guardret'].n++;
+          retryStamp(e,RETRY.GUARD_RETURN,T30(30));
+          e.retry[RETRY.GUARD_RETURN].n++;
           pathUnitTo(e, Math.round(gRet.x), Math.round(gRet.y));
           if (e.path.length === 0) backOff();
         }
       }
     }
-    // Stagger the acquisition scan across 6 ticks by id: this scan (grid
-    // walk + fog gate per candidate) ran for EVERY idle military unit EVERY
-    // tick and dominated late-game tick cost. Worst added reaction delay is
-    // 5 ticks (~166ms) — still well under AoE2's 250ms command turns.
-    // (tick+id) keys it deterministically, identical on every lockstep peer.
+    // Stagger the acquisition scan across ticks by id (perf: grid walk +
+    // fog gate per candidate, per idle military unit). Worst added reaction
+    // delay ~166ms — still under AoE2's 250ms command turns. (tick+id) keys
+    // it deterministically, identical on every lockstep peer.
     // AI scouts are pure recon (controlAIScouts owns them for exploration) —
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
@@ -2054,29 +1961,23 @@ function updateIdleMilitary(e){
       let stanceScan = stanceOf(e).scan;
       let scanRange = stanceScan === 'range' ? (e.range > 0 ? e.range : 1.5) : stanceScan;
       let reachAtk=(e.range>0?e.range:1.6);
-      // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
-      // it only engages enemies inside its leash zone (GUARD_LEASH) of the
-      // post/building — same zone + radius as the leash above — so it never
-      // chases a foe that isn't threatening the guarded thing, and never
-      // oscillates re-grabbing one it was just leashed off of. Matches AoE2
-      // Guard (defend the target's vicinity), vs. plain defensive stance which
-      // aggros on anything near the unit. Explicit attacks are exempt.
-      // An explicit attack REPLACED any guard order (last order wins), so no
-      // explicitAttack exemption is needed here anymore.
+      // A guarding unit's aggro is scoped to what it PROTECTS, not to
+      // itself: it only engages enemies inside its leash zone (GUARD_LEASH)
+      // of the post/building — same zone + radius as the leash above — so
+      // it never chases a foe that isn't threatening the guarded thing.
+      // Matches AoE2 Guard, vs. plain defensive stance which aggros on
+      // anything near the unit. An explicit attack REPLACES any guard order
+      // (last order wins).
       let guardZone = guardOrderOf(e) ? guardZoneOf(e) : null;
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
-        // Skip a foe we recently proved unreachable — UNLESS we can hit it RIGHT
-        // NOW without moving (pathing is then moot; we strike it where it stands).
-        // "Without moving" is the crux: for RANGED that's firing range; for MELEE
-        // it means actually adjacent (within strike distance ~1.5 AND on a clear
-        // line — no blocked corner). A foe that's merely CLOSE (1.6–2.1) but not
-        // strikable is the wedge itself: the melee unit can't slot in (a unit
-        // crowd or a corner blocks the last step), so re-grabbing it just thrashes
-        // give-up→re-acquire in place until the stuck-watchdog frees it. Keep
-        // skipping until the flag expires and the situation (crowd) may have
-        // changed. Without this a latecomer to a melee dogpile wedged forever.
+        // Skip a foe we recently proved unreachable — UNLESS we can hit it
+        // RIGHT NOW without moving (canStrikeInPlace: firing range for
+        // ranged, strike-adjacent with a clear corner for melee). A foe
+        // that's merely CLOSE but not strikable is the wedge itself —
+        // re-grabbing it just thrashes give-up→re-acquire in place. Keep
+        // skipping until the flag expires and the crowd may have changed.
         if(e.unreachUntil>tick && e.unreachId===en.id && !canStrikeInPlace(e,en))return false;
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
@@ -2094,32 +1995,27 @@ function updateIdleMilitary(e){
           // skips the findPath below, the auto-acquire hotspot at a wall standoff).
           e.target=closest.id;
         } else {
-          // Only lock on if we can actually PATH to it. An idle unit grabbing a
-          // foe it can't reach — the classic case is a raider poking our wall from
-          // outside our sealed ring — is the wedge source: it re-acquires every
-          // few ticks and freezes chasing an impossible target (stuck-watchdog
-          // spam). The candidate is within scan range (<=8 tiles), so this findPath
-          // is short and unambiguous (a real block gives [] or a path that stops
-          // short). If unreachable, remember it long enough that a stalemate
-          // doesn't re-run this search every few ticks.
+          // Only lock on if we can actually PATH to it — an idle unit
+          // grabbing a foe it can't reach (a raider outside our sealed wall
+          // ring) re-acquires every few ticks and freezes chasing an
+          // impossible target. The candidate is within scan range, so this
+          // findPath is short and unambiguous. If unreachable, remember it
+          // long enough that a stalemate doesn't re-run this search.
           let cx=Math.round(closest.x), cy=Math.round(closest.y);
           let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
           let end=pth.length?pth[pth.length-1]:null;
           // End-tile tolerance: ranged can fire from `range` out, so any end
-          // within range works. MELEE must end strike-ADJACENT (<=1): the old
-          // flat 2 counted "beside the wall" as reaching a walled-in target —
-          // one tile short of striking — so the unit re-locked an unreachable
-          // shooter every time the unreach stamp expired and marched back into
-          // its arrows (the walled-archer knight loop).
+          // within range works. MELEE must end strike-ADJACENT (<=1) — a
+          // looser tolerance counts "beside the wall" as reaching a
+          // walled-in target, one tile short of striking.
           let endTol = e.range>0 ? reachAtk : 1;
           let endD = end ? Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy)) : Infinity;
           // Melee ending exactly one tile short: distinguish a CROWD from a
           // WALL. If any tile adjacent to the target is blocked only by
           // standing UNITS (walkable with units ignored, not without), the
           // ring is a dogpile that clears — lock on and let combatApproach's
-          // crowd machinery queue us in (the pre-fix behavior for exactly
-          // this case). Terrain/buildings on every adjacent tile = genuinely
-          // walled → unreachable stamp.
+          // crowd machinery queue us in. Terrain/buildings on every adjacent
+          // tile = genuinely walled → unreachable stamp.
           let crowdRing=false;
           if(end && e.range<=0 && endD===2){
             for(let ady=-1;ady<=1&&!crowdRing;ady++)for(let adx=-1;adx<=1;adx++){
@@ -2133,13 +2029,12 @@ function updateIdleMilitary(e){
         }
       } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
-        // behavior — soldiers parked in an enemy town shouldn't stand and
-        // soak tower/TC fire without answering). Attacking-capable
-        // structures (TOWER/TC) take priority over the rest; walls/gates
-        // are excluded so armies don't spontaneously whittle fortifications
-        // they're merely standing near. Same visibility gate as units;
-        // ties broken by lowest id (deterministic). The single-player AI
-        // (netRole null, team 1) keeps its own attack planning.
+        // behavior — soldiers parked in an enemy town shouldn't soak
+        // tower/TC fire without answering). Arrow-firing structures take
+        // priority; walls/gates are excluded so armies don't spontaneously
+        // whittle fortifications they're merely standing near. Same
+        // visibility gate as units; ties broken by lowest id
+        // (deterministic). The AI keeps its own attack planning.
         let bestB = null, bestD = Infinity, bestPri = -1;
         for (let bi = 0; bi < entities.length; bi++) {
           let b = entities[bi];
@@ -2171,15 +2066,14 @@ function updateIdleMilitary(e){
 
 
 // ---- VILLAGER DROP-OFF (task==='return') ----
-// Extracted verbatim from updateUnit; always ends the tick (dispatcher
-// returns after calling).
+// Always ends the tick (the dispatcher returns after calling).
 function updateVillagerDropoff(e){
   // Patience gate: when every route was blocked (usually a crowded drop
   // site, not a walled-off one), wait a beat and retry with a full load
   // instead of going idle and silently losing the carried resources.
-  if(retryActive(e,'dropWait')){
-    if(!retryReady(e,'dropWait'))return;
-    retryClear(e,'dropWait');
+  if(retryActive(e,RETRY.DROP_WAIT)){
+    if(!retryReady(e,RETRY.DROP_WAIT))return;
+    retryClear(e,RETRY.DROP_WAIT);
     avoidClear(e,'drops');
   }
   let drop=nearestDrop(e,e.carryType,e.avoid&&e.avoid.drops);
@@ -2215,14 +2109,12 @@ function updateVillagerDropoff(e){
 
       // Every drop site unreachable right now — hold the load and retry
       // shortly (see the dropWait gate above) rather than giving up.
-      retryStamp(e,'dropWait',T30(30));
+      retryStamp(e,RETRY.DROP_WAIT,T30(30));
     }
   } else {
-    // Slide right up to the drop-off building and deposit AT the wall (the
-    // slide-to-contact touch), instead of dumping the load from the
-    // perimeter tile and turning away. The task branch only runs once
-    // settled (path empty — see the walk step above), so this just tucks
-    // the last bit in; dropContactSettled returns true when it can get no
+    // Slide right up to the drop-off building and deposit AT the wall. This
+    // branch only runs once settled (path empty), so this just tucks the
+    // last bit in; dropContactSettled returns true when it can get no
     // closer, so the deposit never hangs.
     if(!dropContactSettled(e, drop)) return;
     resourceStore(e.team)[e.carryType]+=e.carrying;
@@ -2240,7 +2132,7 @@ function updateVillagerDropoff(e){
 }
 
 // ---- VILLAGER CONSTRUCTION/REPAIR (task==='build') ----
-// Extracted verbatim from updateUnit; always ends the tick.
+// Always ends the tick.
 function updateVillagerBuild(e){
   let bt=entitiesById.get(e.buildTarget);
   if(!bt||(bt.complete && bt.hp >= bt.maxHp && !(bt.btype==='FARM' && bt.exhausted))){
@@ -2265,7 +2157,7 @@ function updateVillagerBuild(e){
       if (!checkClose) {
         // Perimeter may just be crowded with other builders — retry a few
         // times before declaring the site unreachable and dropping it.
-        if(!retryFail(e,'build',0,6)) return;
+        if(!retryFail(e,RETRY.BUILD,0,6)) return;
         feedbackFor(e.team, () => showMsg('Building site is unreachable!'));
         // Back the foundation off (any team): assigners skip it until
         // the stamp expires (AI: neededAIBuildingWork) — without this,
@@ -2278,26 +2170,21 @@ function updateVillagerBuild(e){
           e.buildTarget=null;
         }
       } else {
-        retryClear(e,'build');
+        retryClear(e,RETRY.BUILD);
       }
     }
-    // NOTE: a successful pathUnitTo (path.length>0) deliberately does
-    // NOT clear the fail counter — "got a path" isn't progress. A path
-    // whose first step is permanently blocked (stubborn unit in a
-    // 1-wide lane) is rebuilt every tick and used to reset the counter
-    // forever: the give-up below never fired and the villager froze
-    // until the watchdog broke it up. Only ARRIVAL clears (below).
+    // NOTE: a successful pathUnitTo deliberately does NOT clear the fail
+    // counter — "got a path" isn't progress (a path whose first step is
+    // permanently blocked is rebuilt every tick and would reset the
+    // counter forever). Only ARRIVAL clears (below).
   } else {
-    retryClear(e,'build');
-    // Slide-to-contact so the builder visibly HUGS the foundation it works
-    // — same feedback as a gatherer on a resource or an attacker on a wall.
-    // Press to the nearest point on the building's OWN edge (position
-    // clamped to the footprint box), so co-builders on distinct perimeter
-    // tiles each tuck against their own side instead of drifting to one
-    // spot. Farms are walkable (the farmer stands ON the plot) — no press.
-    // Builders are separation-exempt (loop.js separateUnits), so the hug
-    // holds; pressToContact's walkable(ignoreUnits) guard keeps them off
-    // the footprint itself.
+    retryClear(e,RETRY.BUILD);
+    // Slide-to-contact so the builder visibly HUGS the foundation — press
+    // to the nearest point on the building's OWN edge so co-builders each
+    // tuck against their own side. Farms are walkable (the farmer stands ON
+    // the plot) — no press. Builders are separation-exempt (loop.js
+    // separateUnits); pressToContact's walkable(ignoreUnits) guard keeps
+    // them off the footprint itself.
     if(!isFarm){
       let hx=Math.max(bt.x-0.5, Math.min(e.x, bt.x+bt.w-0.5));
       let hy=Math.max(bt.y-0.5, Math.min(e.y, bt.y+bt.h-0.5));
@@ -2339,7 +2226,7 @@ function updateVillagerBuild(e){
     // game_mechanics/build_speed.md): time = 3·build_time/(builders+2),
     // NOT linear — the 2nd builder is worth +33%, not +100%. Each active
     // worker contributes (v+2)/(3v) progress per work tick so the site's
-    // total per-tick rate is (v+2)/3 (v=1 → exactly the old 1/tick).
+    // total per-tick rate is (v+2)/3 (v=1 → exactly 1/tick).
     // v comes from a per-building counter with a ONE-TICK LAG: workers
     // register as they're updated, and the rate uses last tick's count —
     // the value is identical no matter which worker updates first, which
@@ -2354,9 +2241,7 @@ function updateVillagerBuild(e){
       // during construction persists (the cap only limits, never heals).
       bt.hp=Math.min(bt.maxHp,bt.hp+workShare*bt.maxHp/bt.buildTime);
       // Construction hammer audio plays at the mallet's VISUAL impact in
-      // render-units.js (same treatment as chop/mine) — a sim-side
-      // tick%30 cadence here fought both the swing animation and the
-      // per-type rate limiter at 4x, which read as skipping.
+      // render-units.js (same treatment as chop/mine).
       if(bt.buildProgress>=bt.buildTime){
         bt.complete=true;
         bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
@@ -2366,8 +2251,7 @@ function updateVillagerBuild(e){
           window.playSound('train'); // play herald fanfare on building completed
         }
         if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
-        
-        // Auto-task villager after construction is finished (if no other buildings in queue)
+
         if(!checkNextBuild(e)){
           autoTaskBuilder(e, bt);
         }
@@ -2422,10 +2306,6 @@ function updateVillagerBuild(e){
           return;
         }
       }
-      // Construction hammer audio plays at the mallet's VISUAL impact in
-      // render-units.js (same treatment as chop/mine) — a sim-side
-      // tick%30 cadence here fought both the swing animation and the
-      // per-type rate limiter at 4x, which read as skipping.
       if (bt.hp >= bt.maxHp) {
         e.buildTarget = null;
         bt.woodDebt = 0;
@@ -2441,27 +2321,23 @@ function updateVillagerBuild(e){
 
 // ---- COMBAT (unit has a target; ranged fire / melee press / mop-up /
 // fog drop / leash) ----
-// Extracted verbatim from updateUnit; always ends the tick. The chase
-// give-up ladder it drives lives in the CHASE CONTROLLER section above
-// (combatApproach / resolveStalledAttack / stampUnreachable).
+// Always ends the tick. The chase give-up ladder it drives lives in the
+// CHASE CONTROLLER section above (combatApproach / resolveStalledAttack /
+// stampUnreachable).
 function updateUnitCombat(e){
   let t=entitiesById.get(e.target);
   if(!t||t.hp<=0){
     // Human assault: when the ordered target dies, CONTINUE the attack
     // instead of idling. Two tiers, nearest-reachable first:
-    //   1) A connected enemy wall/gate within ~3 tiles — seamlessly keep
-    //      breaching the same run (the original narrow rule).
-    //   2) Any enemy building within ASSAULT_MOP_UP tiles — once an army has
-    //      breached into a base, it razes what it reached (TC, houses,
-    //      barracks, the rest of the wall) rather than standing idle amid
-    //      intact buildings. Idle auto-acquire only ever targets enemy UNITS
-    //      (targetableUnitGrid), never buildings, so without this the whole
-    //      army goes inert the instant the ordered building falls, leaving
-    //      the base mostly standing. Bounded range so it razes the base it's
-    //      IN, not a march across the map to a distant town. Reachability is
-    //      probed on the nearest few candidates (findPath each) — cheap
-    //      because it only runs the tick a target dies, not every tick.
-    // AI is unchanged (isHumanTeam gate) — its planner reassigns targets.
+    //   1) A connected enemy wall/gate within ~3 tiles — keep breaching
+    //      the same run.
+    //   2) Any enemy building within ASSAULT_MOP_UP tiles. Idle auto-
+    //      acquire only ever targets enemy UNITS (targetableUnitGrid), so
+    //      without this the whole army goes inert the instant the ordered
+    //      building falls. Bounded range so it razes the base it's IN, not
+    //      a distant town. Reachability probes only run the tick a target
+    //      dies, not every tick.
+    // The AI is gated out (isHumanTeam) — its planner reassigns targets.
     if(isHumanTeam(e.team) && e.explicitAttack){
       let wall=null, wd=Infinity, cand=[];
       for(let i=0;i<entities.length;i++){ let bx=entities[i];
@@ -2483,19 +2359,16 @@ function updateUnitCombat(e){
     return;
   }
 
-  // Fog of War visibility check for combat targets. Uses the sim's own
-  // deterministic per-team visibility (entityVisibleToTeam, js/core.js) —
-  // NEVER the viewer-local `fog` grid, which differs between lockstep
-  // peers. ONE rule for humans and AI (information parity — the AI's old
-  // per-tick 15-tile proximity scan both cheated and was an O(entities)
-  // cost per unit per tick). Sole asymmetry: an AI EXPLICIT march keeps
-  // its target out of sight (controlAIMilitary attacks on the remembered
-  // enemy TC — the AI knows where the TC is even unseen, otherwise the
-  // army's attack order is wiped the tick after it's given and it never
-  // leaves home). A human's explicit attack instead drops on lost vision:
-  // the player is watching the fog and re-clicks.
-  // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its own
-  // aggro rules — the old human/AI branch pair skipped it implicitly.
+  // Fog gate for combat targets: the sim's own deterministic per-team
+  // visibility (entityVisibleToTeam, js/core.js) — NEVER the viewer-local
+  // `fog` grid, which differs between lockstep peers. ONE rule for humans
+  // and AI (information parity). Sole asymmetry: an AI EXPLICIT march keeps
+  // its target out of sight (controlAIMilitary attacks the remembered enemy
+  // TC — otherwise the army's attack order is wiped the tick after it's
+  // given and it never leaves home). A human's explicit attack instead
+  // drops on lost vision: the player is watching the fog and re-clicks.
+  // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its
+  // own aggro rules.
   if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
       && !(isAITeam(e.team) && e.explicitAttack)) {
     if (!entityVisibleToTeam(t, e.team)) {
@@ -2510,11 +2383,9 @@ function updateUnitCombat(e){
   // Anchor retreat check ("leash"): a guard post leashes AUTO-acquired
   // chases to the post itself — explicit attack orders are exempt, or a
   // commanded assault would get yanked back 6 tiles in — while defensive
-  // stance leashes to its drifting idle anchor (defendX/Y). The anchor is
-  // COMPUTED here; guard code never mirrors the post into defendX/Y, so
-  // each field keeps exactly one meaning.
-  // (escort zones read the escortee's LIVE position via guardZoneOf — no
-  // per-tick post syncing anymore)
+  // stance leashes to its drifting idle anchor (defendX/Y). Guard code
+  // never mirrors the post into defendX/Y, so each field keeps exactly one
+  // meaning (escort zones read the escortee's LIVE position via guardZoneOf).
   if (enforceChaseLeash(e)) return;
 
   if(e.utype==='villager' && t.utype==='sheep_carcass'){
@@ -2524,18 +2395,19 @@ function updateUnitCombat(e){
     // starting crew on the first sheep is the classic opening.
     if(d>SHEEP_HARVEST_RANGE){
       // Full ring: wait for an eating spot instead of abandoning the sheep
-      // (same patience pattern as combatApproach below).
-      if(retryReady(e,'chase')){
-        retryStamp(e,'chase',T30(15));
+      // (same patience pattern as combatApproach below). HARVEST_WAIT is
+      // its own registry entry: it historically ALIASED the combat 'chase'
+      // stamp — state-exclusive today, but a silent collision the moment
+      // any change lets a unit chase and harvest in one life phase.
+      if(retryReady(e,RETRY.HARVEST_WAIT)){
+        retryStamp(e,RETRY.HARVEST_WAIT,T30(15));
         pathUnitTo(e,Math.round(t.x),Math.round(t.y));
         if(e.path.length===0 && d>8)e.target=null;
       }
     } else {
       clearUnitPath(e);
-      // Press tight against the carcass (see pressToContact) so the herding
-      // crew packs onto/around it instead of standing a tile back;
-      // separateUnits (with the carcass clause dropped from its exclusion)
-      // rings them.
+      // Press tight against the carcass (pressToContact) so the herding
+      // crew packs onto/around it; separateUnits rings them.
       pressToContact(e, t.x, t.y, 0.7);
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
@@ -2544,8 +2416,7 @@ function updateUnitCombat(e){
       }
       if(e.gatherCooldown<=0){
         // Switching resource types drops the old load (same rule as
-        // updateGatherTask) — without this, a villager carrying 9 wood
-        // took one bite and deposited 10 FOOD, a free conversion exploit.
+        // updateGatherTask) — else one bite converts 9 wood into 10 food.
         if(e.carryType!=='food')e.carrying=0;
         t.hp--;
         e.carrying++;
@@ -2557,7 +2428,7 @@ function updateUnitCombat(e){
         if(t.hp<=0){
           // Shepherd continuity for ALL harvesters (including this one)
           // lives in handleDeath — it retargets or nulls e.target itself,
-          // so no null-out here (that used to wipe the killer's retarget).
+          // so no null-out here.
           handleDeath(t, e.team);
         }
       }
@@ -2570,15 +2441,13 @@ function updateUnitCombat(e){
 
 
   if (range > 0) {
-    // Ranged combat: stay within range and fire projectiles.
-    // Fire gate carries the +0.5 slack (same slack the acquire scan and
-    // retaliation reach tests use): findPath's stopDist goal test is
-    // ROUNDED-tile based, so a unit shoved to the far corner of an in-range
-    // tile could sit at float d≈range+0.4 where findPath returns []
-    // ("already in range") while a bare d>range gate refused to fire — a
-    // dead zone that stalled the chase into a spurious give-up. d is
-    // distToTarget (footprint-aware), so large buildings stay hittable
-    // from their edge.
+    // Ranged combat: stay within range and fire. The gate carries the +0.5
+    // slack (same as the acquire scan and retaliation reach tests):
+    // findPath's stopDist goal test is ROUNDED-tile based, so a unit can
+    // sit at float d≈range+0.4 where findPath returns [] ("already in
+    // range") while a bare d>range gate refuses to fire — a dead zone that
+    // stalls the chase into a spurious give-up. d is distToTarget
+    // (footprint-aware), so large buildings stay hittable from their edge.
     if (d > range + 0.5) {
       if (e.stance === 'standground' && !e.explicitAttack) {
         e.target = null;
@@ -2587,13 +2456,11 @@ function updateUnitCombat(e){
       if(!combatApproach(e,t,d,null,range)) return; // approach only to firing range — not onto the target
       // Wall-detour hold (self-acquired chases only): a firing tile exists
       // but the walk to it is several times the straight-line distance —
-      // fortifications separate us, and the "nearest in-range tile" is out
-      // through the own gate. Arrows fly over walls, so the smart archer
-      // holds at the wall and shoots whatever actually comes into range,
-      // instead of filing out of the city to get a shot (the reported
-      // behavior). Same skew test as the melee breach decision
-      // (detourBreachThreshold, in tiles: path > 2x direct + 10). Explicit
-      // orders and attack waves (explicitAttack) still march the long way.
+      // fortifications separate us. Arrows fly over walls, so hold at the
+      // wall and shoot what actually comes into range instead of filing out
+      // of the city for a shot. Same skew test as the melee breach decision
+      // (path > 2x direct + 10). Explicit orders and attack waves
+      // (explicitAttack) still march the long way.
       if(!e.explicitAttack && e.path.length > d*2+10){
         e.target=null;
         stampUnreachable(e, t.id, UNREACH_UNIT_TICKS);
@@ -2635,10 +2502,9 @@ function updateUnitCombat(e){
       // Attack unit: path close and hit
       let maxD = (e.utype==='villager' && t.utype==='sheep') ? SHEEP_HARVEST_RANGE : 1.5; // slaughter from the ring, see maxDist above
       // A melee swing can't cross a SEALED wall corner: if the target sits
-      // diagonally across a corner whose BOTH orthogonal tiles are impassable,
-      // there's no line to strike through — same no-corner-cut rule movement
-      // uses. Without this, a unit hit a foe diagonally through two walls it
-      // couldn't walk between (ignoreUnits: we mean terrain/walls, not units).
+      // diagonally across a corner whose BOTH orthogonal tiles are
+      // impassable, there's no line to strike through — same no-corner-cut
+      // rule movement uses (ignoreUnits: terrain/walls, not units).
       let cornerBlocked=false;
       { let ex=Math.round(e.x),ey=Math.round(e.y),tx=Math.round(t.x),ty=Math.round(t.y);
         let dx=tx-ex,dy=ty-ey;
@@ -2699,7 +2565,7 @@ function updateGarrisonWalk(e){
   })()){
     enterGarrison(e,b);
     return true;
-  } else if(e.path.length===0&&retryReady(e,'garrison')){
+  } else if(e.path.length===0&&retryReady(e,RETRY.GARRISON)){
     // A ram MOVES between re-paths: chase its current tile (riders are
     // faster than the ram, so the pursuit converges).
     let pt=b.type==='unit'?{x:Math.round(b.x),y:Math.round(b.y)}:nearestBldgPerimeter(e.x,e.y,b,e.id);
@@ -2707,18 +2573,16 @@ function updateGarrisonWalk(e){
     if(e.path.length===0){
       // Entrance likely crowded with other garrisoning villagers — keep
       // trying a few rounds (10t apart) before abandoning shelter.
-      if(retryFail(e,'garrison',T30(10),6)){e.task=null;e.garrisonTarget=null;}
+      if(retryFail(e,RETRY.GARRISON,T30(10),6)){e.task=null;e.garrisonTarget=null;}
     } else {
-      retryClear(e,'garrison');
+      retryClear(e,RETRY.GARRISON);
     }
   }
-  // Still heading for shelter: stop here. Falling through would let the
-  // full-carry check below flip a loaded villager to 'return', sending it
-  // on a drop-off run through the raid instead of into the TC — but the
-  // unit must still WALK: the shared movement step lives further down
-  // this function, so returning without stepping froze every belled
-  // villager that wasn't already within arrival radius ("only one goes
-  // in, the rest stand outside").
+  // Still heading for shelter: stop here — falling through would let the
+  // full-carry check flip a loaded villager to 'return', sending it on a
+  // drop-off run through the raid instead of into the TC. But the unit
+  // must still WALK (the shared movement step lives further down), so
+  // step it here.
   if(e.task==='garrison'){
     if(e.path.length>0) stepUnitAlongPath(e, unitMoveSpeed(e) * UNIT_PX_PER_TICK, true);
     return true;
@@ -2750,8 +2614,8 @@ function updateFollowOrder(e){
     let sy=Math.max(0,Math.min(MAP-1,Math.round(f.y)+(e.order.y||0)));
     let d=dist(e,{x:sx,y:sy});
     if(d>1.5){
-      if(e.path.length===0 && retryReady(e,'follow')){
-        retryStamp(e,'follow',T30(12));
+      if(e.path.length===0 && retryReady(e,RETRY.FOLLOW)){
+        retryStamp(e,RETRY.FOLLOW,T30(12));
         pathUnitTo(e,sx,sy);
       }
     } else if(e.path.length>0){
@@ -2770,8 +2634,8 @@ function resumeMultiLegMove(e){
   let atGoal = Math.round(e.x)===e.order.x && Math.round(e.y)===e.order.y;
   if(atGoal){
     e.order=null; // move order complete/unreachable
-  } else if(retryReady(e,'move')){
-    retryStamp(e,'move',T30(10)); // own key: garrison and move used to alias one stamp
+  } else if(retryReady(e,RETRY.MOVE)){
+    retryStamp(e,RETRY.MOVE,T30(10)); // own key — never alias with the garrison stamp
     let goalX=e.order.x, goalY=e.order.y;
     pathUnitTo(e,goalX,goalY);
     if(e.path.length===0){
@@ -2843,12 +2707,10 @@ function updateSheepBehavior(e){
     }
   }
 
-  // Convert/steal sheep (AoE2-style): if an opposing team's unit gets within 5 tiles
-  // and no friendly unit (except other sheep) is closer to guard them, they convert!
-  // 3-tick id-stagger: this radius-5 scan ran for EVERY sheep EVERY tick;
-  // a conversion detected up to 2 ticks (~66ms) later is imperceptible.
-  // WRAPPED, not an early return — the sheep branch falls through to the
-  // shared movement step below, which must still walk the wander path.
+  // Convert/steal sheep (AoE2): an opposing unit within 5 tiles converts it
+  // unless a friendly unit (other than sheep) is closer. 3-tick id-stagger
+  // (perf). WRAPPED, not an early return — the sheep branch falls through
+  // to the shared movement step below, which must still walk the wander path.
   if((tick+e.id)%3===0){
     let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
     if(closest && !sameSide(closest.team, e.team)){
@@ -2882,11 +2744,9 @@ function updateBearBehavior(e){
       e.target=null;
       clearUnitPath(e);
       pathUnitTo(e,Math.round(home.x),Math.round(home.y));
-      // Leash hysteresis: no re-aggro until the bear is actually back
-      // near its den. Without this, a bear parked exactly at the leash
-      // limit with prey in aggro range flip-flopped between "charge" and
-      // "trot home" every scan — twitching in place forever (and jittering
-      // out from under every tower arrow aimed at it).
+      // Leash hysteresis: no re-aggro until the bear is back near its den —
+      // else a bear parked at the leash limit with prey in range flip-flops
+      // between "charge" and "trot home" every scan.
       e.leashCooling=true;
     }
   } else {
@@ -2916,14 +2776,11 @@ function updateBearBehavior(e){
 
 function dropPathIfInPosition(e){
   if(e.path.length===0)return;
-  // A combat unit can reach attack position for its target BEFORE its path
-  // runs out — e.g. a siege spot behind the wall keeps the path pointing past
-  // a segment the unit is already adjacent to, or a chase path overshoots a
-  // foe that stopped. Blindly walking the leftover path then strands the unit
-  // in attack range yet not attacking (it tries to walk "through" to the stale
-  // goal, jams in the crowd, and freezes until the stuck-watchdog frees it).
-  // If we're already in position to hit the target, drop the path now and let
-  // the combat block below strike this same tick.
+  // A combat unit can reach attack position BEFORE its path runs out (a
+  // siege spot behind the wall, a chase overshooting a stopped foe) —
+  // walking the leftover path then strands it in attack range yet not
+  // attacking, jammed on the stale goal. If already in position, drop the
+  // path now and let the combat block strike this same tick.
   if(e.target && e.task!=='return'){
     let ct=entitiesById.get(e.target);
     if(ct && ct.hp>0){
@@ -2935,8 +2792,7 @@ function dropPathIfInPosition(e){
   }
 }
 
-// (Extracted from updateUnit; dispatcher gates on path.length>0 and ends
-// the tick after the step.)
+// The dispatcher gates on path.length>0 and ends the tick after the step.
 function walkUnitPath(e){
   // Leash mid-leg too (see enforceChaseLeash): a chase path toward a
   // stationary foe never re-enters the combat block until the leg ends.
@@ -2957,10 +2813,10 @@ function walkUnitPath(e){
 //   approach → species (sheep/bear/cart) → in-position path drop → THE
 //   movement step (returns whenever a path exists — everything after only
 //   runs on an empty path) → combat → villager work → auto-scout → idle
-//   military. Extracted helpers keep their bodies verbatim; entry conditions
-//   live HERE so the mutual-exclusion structure is visible in one screen.
-//   Cooldown decrements stay inline: they must tick before combat/gather
-//   reads but NOT for garrisoned units (the early-outs above skip them).
+//   military. Entry conditions live HERE so the mutual-exclusion structure
+//   is visible in one screen. Cooldown decrements stay inline: they must
+//   tick before combat/gather reads but NOT for garrisoned units (the
+//   early-outs above skip them).
 function updateUnit(e){
   if(e.hp<=0)return;
   if(e.garrisonedIn)return; // inside a building/ram: no movement, tasks, or combat
@@ -3020,14 +2876,11 @@ function updateUnit(e){
 }
 
 // Per-tick cache of gather-tile claims per team (tile key = x + y*MAP).
-// findNearTile used to rebuild this set from the whole entities array for
-// EVERY caller — per depleted-resource villager per tick. Claims granted
-// mid-tick are added to the cached set as findNearTile hands them out, so
+// Claims granted mid-tick are added as findNearTile hands them out, so
 // several villagers reassigned in the same tick still fan out; claims
-// RELEASED mid-tick linger until next tick, which is merely conservative.
-// (The cache can't exclude the asking villager's own claim the way the old
-// per-caller build did — harmless: findNearTile is only called to pick a
-// NEW tile, and the fallback pass ignores claims entirely.)
+// RELEASED mid-tick linger until next tick — merely conservative. The set
+// includes the asking villager's own claim — harmless: findNearTile is only
+// called to pick a NEW tile, and the fallback pass ignores claims entirely.
 // Dual-keyed on tick AND simGen (see registerSimCache, js/core.js) so a
 // rollback resim can never be served claims from the abandoned timeline.
 let gatherClaimTick=-1, gatherClaimGen=-1, gatherClaims=[null,null];
@@ -3051,27 +2904,22 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
   // so an AI villager works beside its camp/TC (short round trips) rather than
   // whatever patch is nearest to wherever it's standing. Validity/claim checks
   // still use the real unit e.
-  // noClaim=true: probe only (existence/reachability check) — do NOT reserve the
-  // tile in the per-tick claim set. The assigner calls this several times per
-  // villager for fulfillability/reachability checks (assignAIGatherTask's
-  // tileFor probes one candidate task after another); claiming on
-  // each one reserved 2-3 tiles per villager, falsely saturating the claim set
-  // and pushing later villagers to farther patches. Only the FINAL assigned tile
-  // should claim.
+  // noClaim=true: probe only (existence/reachability check) — do NOT
+  // reserve the tile in the per-tick claim set. Assigners probe several
+  // candidates per villager (assignAIGatherTask's tileFor); claiming each
+  // falsely saturates the set and pushes later villagers to farther
+  // patches. Only the FINAL assigned tile should claim.
   let bx=anchor?Math.round(anchor.x):Math.round(e.x),by=anchor?Math.round(anchor.y):Math.round(e.y);
   let best=null,bd=999;
   let claimed=claimedGatherSet(e.team);
-  // Two-stage search: the cheap 12-radius ring first (covers the normal
-  // "work near the drop site" case), then a wide 28-radius pass ONLY if
-  // that found nothing. Capping at 12 idled entire towns late-game: once
-  // the nearby forest was chopped out, villagers at the TC couldn't "see"
-  // the treeline 13 tiles away and a food-starved town sat on 1800 banked
-  // wood with 10 idle villagers (sim seed 7). AoE2 villagers walk.
+  // Two-stage search: the cheap 12-radius ring first (the normal "work near
+  // the drop site" case), then a wide 28-radius pass ONLY if that found
+  // nothing — a hard 12 cap idled whole towns once the near forest was
+  // chopped out. AoE2 villagers walk.
   let scan=(rLo,rHi)=>{
   // Ring-only scan: each radius pass visits just the new perimeter instead
-  // of rescanning the whole (2r+1)² square (the union of rings 0..r is that
-  // square, so the first radius that yields a hit returns the same tile the
-  // old full-square rescan did — at O(r²) total instead of O(r³)).
+  // of rescanning the whole (2r+1)² square — the first radius that yields a
+  // hit returns the same nearest tile, at O(r²) total instead of O(r³).
   for(let r=rLo;r<rHi;r++){
     for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
       if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
@@ -3079,9 +2927,7 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
         if(excludeList && excludeList.includes(nx+ny*MAP))continue; // e.avoid array (see avoidAdd)
         // Unexplored tiles are not candidates — the map-truth scan must not
-        // "discover" resources through fog (information parity, all teams:
-        // this also closes the human-side hole where the gather-exhaust
-        // retask / autoTaskBuilder could pick an unseen treeline).
+        // "discover" resources through fog (information parity, all teams).
         if(tileHiddenForTeam(e.team, ny*MAP+nx))continue;
         if(!canGatherTile(e,terrain,nx,ny))continue;
         if(claimed.has(nx+ny*MAP))continue; // skip claimed tiles
@@ -3146,7 +2992,6 @@ function handleDeath(e,killerTeam){
   // spot it fell — "guard this thing" degrades to "guard where it fell",
   // never a silent release mid-battle. A guarded BUILDING dying converts
   // its watchers to ground posts at their own assigned perimeter tiles.
-  // Event-site conversion replaced the old per-tick syncGuardPost copying.
   if(e.type==='unit'||e.type==='building'){
     let fx=Math.round(e.x), fy=Math.round(e.y);
     for(let gi=0;gi<entities.length;gi++){
@@ -3162,11 +3007,7 @@ function handleDeath(e,killerTeam){
     ejectGarrison(e);
   }
   // (Raid danger zones are stamped at HIT time — the RAID LEARNING branch
-  // in damageEntity, next to the wildlife branch — not here at death: the
-  // first hit already marked the ground, so the first victim no longer
-  // dies "for free". Accepted minor loss vs the old death-stamp: villagers
-  // perishing inside a razed shelter leave no zone at the building — those
-  // raids already put the town in war-state.)
+  // in damageEntity — not here at death.)
   if(e.type==='unit'&&e.utype==='sheep'){
     e.utype = 'sheep_carcass';
     e.hp = 100;
@@ -3200,17 +3041,12 @@ function handleDeath(e,killerTeam){
         if(b.isFarm)map[e.y+dy][e.x+dx].t=TERRAIN.GRASS;}
     }
     if(e.btype==='TC'){
-      // Victory condition: the Town Center is the heart of each side — lose
-      // it, lose the game. (Full-elimination conquest rules were tried and
-      // reverted; teamEliminated() below remains as a fallback for the
-      // no-TC-left edge cases.)
-      // Losing your (only) TC knocks YOUR TEAM out; the match ends when
-      // the surviving teams are all one alliance (checkAllianceVictory).
-      // Identity alliances + 2 teams reduce exactly to the old instant
-      // game-over. isPlayerTeam keeps gaia TCs (hypothetical) from ever
-      // ending the game.
-      // Each team has exactly ONE Town Center and it cannot be rebuilt —
-      // losing it is the knockout (AoE2-flavored regicide-on-the-TC).
+      // Victory condition: each team has exactly ONE Town Center and it
+      // cannot be rebuilt — losing it is the knockout (AoE2-flavored
+      // regicide-on-the-TC). teamEliminated() below remains a fallback for
+      // no-TC-left edge cases. The match ends when the surviving teams are
+      // all one alliance (checkAllianceVictory). isPlayerTeam keeps gaia
+      // TCs (hypothetical) from ever ending the game.
       if(isPlayerTeam(e.team)){
         defeatedTeams[e.team]=true;
         // The human's TC falling means DEFEAT for them — but if an allied
@@ -3271,11 +3107,10 @@ function handleDeath(e,killerTeam){
     corpses.push(corpse);
   }
   // Shepherd continuity: when a carcass is consumed, EVERY villager that
-  // was harvesting it moves on to the nearest remaining carcass or own/
-  // gaia sheep within herding range — not just the one whose bite finished
-  // it (the others used to be left with a dead target, idling). Runs
-  // before the removal below so `e` is excluded naturally by the hp gate.
-  // Deterministic: villagers in entities order, nearest pick with id ties.
+  // was harvesting it moves on to the nearest remaining carcass or own/gaia
+  // sheep within herding range — not just the one whose bite finished it.
+  // Runs before the removal below so `e` is excluded naturally by the hp
+  // gate. Deterministic: villagers in entities order, nearest pick, id ties.
   if(e.utype==='sheep_carcass'){
     entities.forEach(v=>{
       if(v.type!=='unit'||v.utype!=='villager'||v.target!==e.id)return;
@@ -3367,12 +3202,10 @@ function updateStuckWatchdog(){
     if (e.utype === 'sheep' || e.utype === 'sheep_carcass' || e.utype === 'bear') return;
     let busy = e.path.length > 0 || e.task || e.target || e.buildTarget;
     if (!busy) { e.stuck = undefined; return; }
-    if (e.task === 'return' && retryActive(e,'dropWait')) { e.stuck = undefined; return; } // deliberate wait
-    // Actively fighting: a unit that landed a hit within the watchdog window is
-    // making progress by definition, even if its target's SAMPLED hp looks flat
-    // (a wall an enemy repairs in step, a second target soaking between its own
-    // regen ticks). Freezing such a unit is a false-positive that yanks it off a
-    // live attack. A genuinely wedged unit never reaches its target to swing.
+    if (e.task === 'return' && retryActive(e,RETRY.DROP_WAIT)) { e.stuck = undefined; return; } // deliberate wait
+    // Actively fighting: a unit that landed a hit within the window is
+    // making progress even if its target's SAMPLED hp looks flat (a wall an
+    // enemy repairs in step). A genuinely wedged unit never gets to swing.
     if (e.lastAtkTick != null && tick - e.lastAtkTick < STUCK_WATCHDOG_TICKS) { e.stuck = undefined; return; }
     // The TARGET's hp / build progress is part of the signature: a
     // stationary attacker or builder is making progress exactly when its
@@ -3404,10 +3237,9 @@ function updateStuckWatchdog(){
 }
 
 function findSpawnTile(x,y,maxRadius=4,taken=null){
-  // Ring-only per radius (the old full-square rescan returned the first
-  // walkable tile in raster order — up to maxRadius-1 tiles up-left even
-  // when an adjacent tile was free). `taken` lets one call site spread a
-  // batch (e.g. ejectGarrison) across distinct tiles.
+  // Ring-only per radius so the NEAREST free tile wins (raster order over a
+  // full square can pick a tile up to maxRadius-1 away first). `taken` lets
+  // one call site spread a batch (e.g. ejectGarrison) across distinct tiles.
   for(let r=0;r<maxRadius;r++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
     if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
     if(taken&&taken.has((x+dx)+','+(y+dy)))continue;
@@ -3416,7 +3248,29 @@ function findSpawnTile(x,y,maxRadius=4,taken=null){
   return null;
 }
 
+// ---- BUILDING TICK (dispatcher) ----
+// Mirrors the updateUnit split; the ORDER is load-bearing. Farm reseed is
+// the only pre-complete logic; research returning true PAUSES the training
+// queue for the tick (the classic AoE2 advance-vs-villagers tension). NOT
+// here, by design: gate open/close (updateGates, js/loop.js), construction
+// progress (villager-side, updateVillagerBuild), farm growth/depletion
+// (gatherer-side, updateGatherTask).
 function updateBuilding(e){
+  updateBuildingFarmReseed(e);
+  if(!e.complete)return;
+  updateBuildingArrows(e);
+  // Garrisoned units slowly heal while sheltered
+  if (garrisonCount(e) > 0 && tick % GARRISON_HEAL_EVERY === 0) {
+    e.garrison.forEach(id => {
+      let u = entitiesById.get(id);
+      if (u && u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 1);
+    });
+  }
+  if(updateBuildingResearch(e))return; // research pauses the queue
+  updateBuildingTraining(e);
+}
+
+function updateBuildingFarmReseed(e){
   if (e.btype === 'FARM' && e.exhausted) {
     // AI auto-reseed — AI-controlled teams only. A human team (local or
     // remote) manages reseeding manually (js/ui.js's prepayFarm/
@@ -3436,9 +3290,9 @@ function updateBuilding(e){
       }
     }
   }
+}
 
-  if(!e.complete)return;
-
+function updateBuildingArrows(e){
   // Tower / TC arrow fire (defensive structures auto-fire)
   if (firesArrows(e.btype)) {
     e.atkCooldown = Math.max(0, (e.atkCooldown || 0) - 1);
@@ -3446,15 +3300,12 @@ function updateBuilding(e){
       let range = BLDGS[e.btype].range; // AoE2: TC range 6, Watch Tower 8
       let center = centerOf(e);
       // Scan only the unit-grid cells within range (targetableUnitGrid,
-      // cell=4) instead of the whole entities array — every idle tower/TC
-      // used to walk ALL entities EVERY tick while at cooldown 0 (no target
-      // -> cooldown stays 0 -> rescan next tick), which made peacetime
-      // buildings one of the biggest sim costs. Candidate set is identical
-      // (the grid holds exactly live, non-garrisoned, non-sheep units; the
-      // hp/garrison re-checks below cover units killed earlier THIS tick,
-      // same as closestUnitNear). Order is identical too: `entities` order
-      // is ascending-id (creation-ordered array, order-preserving removals),
-      // so the (d, id) tiebreaks below reproduce the old scan bit-for-bit.
+      // cell=4) instead of the whole entities array (perf: peacetime
+      // towers at cooldown 0 rescan every tick). Candidate set matches a
+      // full scan (the grid holds exactly live, non-garrisoned, non-sheep
+      // units; hp/garrison re-checks below cover units killed earlier THIS
+      // tick). `entities` order is ascending-id, so the (d, id) tiebreaks
+      // below reproduce a full-scan order bit-for-bit.
       let inRange = [];
       let grid = targetableUnitGrid(), c = UNIT_GRID_CELL;
       let gcx = (center.x / c) | 0, gcy = (center.y / c) | 0, gcr = Math.ceil(range / c) + 1;
@@ -3494,10 +3345,10 @@ function updateBuilding(e){
         let maxArrows = BLDGS[e.btype].maxArrows || 5;
         let arrows = Math.min(maxArrows, 1 + Math.floor(gDps / bDps));
         if (arrows > 1) {
-          inRange.sort((a, b) => a.d - b.d || a.en.id - b.en.id); // (d, id) == the old stable entities-order sort
+          inRange.sort((a, b) => a.d - b.d || a.en.id - b.en.id); // deterministic (d, id) tiebreak
         } else {
           // One arrow: a min-scan beats a full sort. (d, id) keeps the
-          // lowest-id target on ties, matching the old earliest-in-entities.
+          // lowest-id target on ties (deterministic).
           let best = 0;
           for (let i = 1; i < inRange.length; i++) {
             if (inRange[i].d < inRange[best].d || (inRange[i].d === inRange[best].d && inRange[i].en.id < inRange[best].en.id)) best = i;
@@ -3520,27 +3371,23 @@ function updateBuilding(e){
       }
     }
   }
+}
 
-  // Garrisoned units slowly heal while sheltered
-  if (garrisonCount(e) > 0 && tick % GARRISON_HEAL_EVERY === 0) {
-    e.garrison.forEach(id => {
-      let u = entitiesById.get(id);
-      if (u && u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 1);
-    });
-  }
 
   // Age research (TC only): while active, the unit queue is PAUSED — the
   // classic AoE2 tension of advancing vs more villagers. Completion is the
   // one place teamAge advances, plus the military attack sweep (attack is
   // snapshotted on entities; armor is added live in damageEntity).
-  if(e.research){
+// Returns true while research is active (the tick is consumed — training
+// pauses), false when there is none.
+function updateBuildingResearch(e){
+  if(!e.research)return false;
     e.research.tick++;
     if(e.research.tick>=AGES[e.research.target].researchTicks){
       teamAge[e.team]=e.research.target;
       // Baked-in tech: every card unlocked by the new age applies now (one-
       // time stat sweeps; live-read effects key off teamAge via hasUpgrade).
-      // This replaced the old inline "+1 atk per age" sweep — that exact
-      // sweep is now the forging/iron_casting cards. See UPGRADES, core.js.
+      // See UPGRADES, core.js.
       let cardNames=applyAgeUpgrades(e.team,e.research.target);
       // AoE2-style power-spike aggression: an AI that just advanced presses
       // its (freshly bumped) army — controlAIMilitary reads this stamp.
@@ -3553,8 +3400,10 @@ function updateBuilding(e){
       e.research=undefined;
       if(typeof updateUI==='function')updateUI();
     }
-    return;
-  }
+  return true;
+}
+
+function updateBuildingTraining(e){
   if(e.queue.length>0){
     let u=UNITS[e.queue[0]];
     if(e.trainTick<u.trainTime)e.trainTick++;
@@ -3570,24 +3419,25 @@ function updateBuilding(e){
       e.trainTick=0;
       let ut=e.queue.shift();
       let unit=createUnit(ut,spawn.x,spawn.y,e.team);
-      
-      // Play training complete fanfare sound (player team 0)
+
       if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
         window.playSound('train');
       }
-      
+      rallyNewUnit(e, unit);
+    }
+  }
+}
+
+// Rally handling for a freshly trained unit: garrison-into-rally-building
+// first (AoE2: spawn directly inside, no walking), else the rally
+// auto-command (trade route / build-assign / attack / gather / plain move).
+function rallyNewUnit(e, unit){
       // Rally point set on a garrisonable own building (including this one):
       // the fresh unit appears directly inside it, AoE2-style — no walking.
-      // NOTE: this whole block runs as part of the HOST's normal per-tick
-      // building-queue processing (js/loop.js's update()), for EVERY
-      // building regardless of team, every tick — `myTeam` is constant
-      // (always 0 on whichever machine is hosting) throughout this code,
-      // not a per-entity "whose perspective" signal the way it is in
-      // rendering/UI/input code. The old `e.team===0` restriction wasn't
-      // "my team" logic at all, just an unconditional rally point feature
-      // arbitrarily limited to team 0 — team 1 is a real player in
-      // multiplayer (the guest) who sets rally points too, so this now
-      // applies to all player teams (gaia/neutral has no buildings).
+      // NOTE: this runs as part of the HOST's per-tick building-queue
+      // processing for EVERY building regardless of team — `myTeam` is NOT
+      // a per-entity perspective signal here, so the rally feature applies
+      // to ALL player teams (the guest sets rally points too).
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         let rallyB=null;
         if(e.rallyTargetId){
@@ -3610,13 +3460,12 @@ function updateBuilding(e){
       // Auto-command the unit based on building's rally point — same
       // "both player teams, not myTeam" reasoning as the block above.
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
-        // Fresh MILITARY units guard their rally flag (AoE2-style): where
-        // they're flagged to becomes their default ANCHOR — meaningful only
-        // to DEFENSIVE stance (scoped acquire + leash). The old implicit
-        // guard POST here made every rally-spawned soldier a leashed guard
-        // regardless of stance — root of the "aggressive army walks home
-        // after attacking" bug. HUMAN teams only, same reason as before:
-        // the AI drives its units via raw target writes.
+        // Fresh MILITARY units anchor at their rally flag (AoE2-style) —
+        // meaningful only to DEFENSIVE stance (scoped acquire + leash); an
+        // implicit guard POST here would leash every rally-spawned soldier
+        // regardless of stance ("aggressive army walks home after
+        // attacking"). HUMAN teams only: the AI drives its units via raw
+        // target writes.
         if(guardEligible(unit) && !isAITeam(e.team)){
           unit.defendX=e.rallyX; unit.defendY=e.rallyY;
         }
@@ -3639,10 +3488,10 @@ function updateBuilding(e){
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else if(unit.utype!=='tradecart' && !sameSide(target.team,e.team) && target.team!==GAIA_TEAM){
-              // Rally onto an ENEMY BUILDING: fresh units attack it. (Unit
-              // rally targets no longer exist — execRally snaps a flag
-              // dropped on a unit to the ground tile under it — so this is
-              // buildings only. Trade carts never take attack targets.)
+              // Rally onto an ENEMY BUILDING: fresh units attack it.
+              // Buildings only — execRally snaps a flag dropped on a unit
+              // to the ground tile under it. Trade carts never take attack
+              // targets.
               unit.target=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else {
@@ -3665,8 +3514,7 @@ function updateBuilding(e){
               // The flagged resource is exhausted/blocked: send the fresh
               // villager to the nearest tile of the SAME type — searched
               // around the rally point first (where the player pointed),
-              // then around the spawn — instead of marching it to a dead
-              // tile and hoping the 12-tile gather fallback can see past it.
+              // then around the spawn — instead of marching it to a dead tile.
               let alt=findNearTile({x:gx,y:gy,team:unit.team},cfg.terrain)
                    ||findNearTile(unit,cfg.terrain);
               if(alt){gx=alt.x;gy=alt.y;}
@@ -3683,6 +3531,4 @@ function updateBuilding(e){
           pathUnitTo(unit,e.rallyX,e.rallyY);
         }
       }
-    }
-  }
 }

@@ -370,10 +370,8 @@ function topUpTeamFarms(team, bonus){
 // Who drives each team: {type:'human'} (this tab or a remote peer — the
 // wire mapping decides which) or {type:'ai', difficulty}. This is SIM
 // state: lockstep peers must agree on it (carried in snapshots/resync and
-// mixed into simChecksum), and it replaces every old "team 1 is the AI
-// when netRole===null" special case with data. Today's two shapes are
-// [human, ai] (single-player) and [human, human] (1v1 lockstep), but
-// nothing below assumes that — any slot may be either type.
+// mixed into simChecksum). Any slot may be either type — nothing below
+// assumes a fixed human/AI layout.
 let teamControllers = [{type:'human'}, {type:'ai', difficulty:'standard'}];
 function isAITeam(t){ return isPlayerTeam(t) && teamControllers[t] && teamControllers[t].type === 'ai'; }
 function isHumanTeam(t){ return isPlayerTeam(t) && !isAITeam(t); }
@@ -383,12 +381,10 @@ function aiProfileFor(t){
 }
 
 // ---- PER-TEAM AI STATE ----
-// One plan-state object per AI-controlled team (null for human slots) —
-// replaces the old single set of globals (aiTick, window.aiIntel/aiWallPlan/
-// aiGateBuilt/aiGateTile/aiWaveCount/aiLastWaveTick/aiSeenWarTick/
-// lastAIBaseHitTick), which could only ever drive ONE AI. Plain data:
-// structuredClone/JSON-safe so it rides the lockstep snapshot ring and the
-// save file unchanged — required for a deterministic AI under rollback.
+// One plan-state object per AI-controlled team (null for human slots).
+// Plain data: structuredClone/JSON-safe so it rides the lockstep snapshot
+// ring and the save file unchanged — required for a deterministic AI under
+// rollback.
 let AI_STATES = null;
 // One restore path for the per-team sim state above, shared by every
 // deserializer (lockstep rollback restore, resync apply, save load) so the
@@ -439,7 +435,7 @@ function defaultAlliances(mp){
 //   tcSeen/tcX/tcY/tcTeam — sticky remembered enemy TC (ghost-cleared when
 //     the spot is re-sighted empty)
 //   contactX/Y/Tick — sticky nearest-enemy-contact memory (feeds
-//     getEnemyDirection in place of the old STARTS start-position cheat)
+//     getEnemyDirection)
 //   unitCounts — DERIVED, rebuilt before every read each decision tick
 //     (deliberately unhashed; must be hashed if it ever becomes carried)
 function freshAIIntel(){
@@ -453,8 +449,7 @@ function freshAIState(team){
     intel: freshAIIntel(), wallPlan: null, gateBuilt: false, gateTile: null,
     // Scout bookkeeping (controlAIScouts/ensureAIScout, js/ai.js): the
     // base-survey lap progress and the retrain cooldown. Sim state read on
-    // later ticks — hashed in the AI digest (previously stamped ad hoc on
-    // the state object and unhashed: a latent desync hole).
+    // later ticks — hashed in the AI digest.
     baseSurveyed: false, surveyIdx: 0, lastScoutTrainTick: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
     // Size of the last launched wave — the wave-casualty retreat compares
@@ -464,11 +459,10 @@ function freshAIState(team){
     // fighting a small raid and the garrison bell stays suppressed.
     militiaUntil: null,
     seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null,
-    // Wildlife danger memory: gather tiles near a bear that mauled one of
-    // our villagers are off-limits until the stamp expires or the bear is
-    // hunted (canGatherTile, js/logic.js). AoE2 players route around
-    // wolves the same way; a 1.2-speed bear outruns 0.8-speed villagers,
-    // so avoidance — not fleeing — is what actually saves them.
+    // Wildlife danger memory: gather tiles near a bear that mauled a
+    // villager are off-limits until the stamp expires or the bear is hunted
+    // (canGatherTile, js/logic.js) — a 1.2-speed bear outruns 0.8-speed
+    // villagers, so avoidance (AoE2 wolf routing), not fleeing, saves them.
     dangerZones: [],
     // Consecutive "this is hopeless" decision ticks (maybeResignAI,
     // js/ai.js) — AoE2 AIs concede rather than make the winner grind
@@ -508,9 +502,8 @@ const GAIA_COLOR = '#cccc88';
 // by the sim and never hashed in simChecksum (js/determinism.js), so the two
 // lockstep peers may legitimately hold different maps with zero desync risk —
 // but in practice both apply the SAME agreed map (carried in lockstep-start)
-// so outlines/minimap read consistently on both screens. The default identity
-// map [0,1,2,3] reproduces the old fixed behavior exactly (team 0 blue, team 1
-// red). Never add this (or teamNames below) to lockstepCaptureState.
+// so outlines/minimap read consistently on both screens. Never add this (or
+// teamNames below) to lockstepCaptureState.
 let teamColorMap = null;
 function resetTeamColorMap(){ teamColorMap = Array.from({length: NUM_TEAMS}, (_, t) => t); }
 function teamColorIdx(team){
@@ -666,11 +659,9 @@ const UNITS={
 };
 
 // ---- Unit classification: THE one place a new unit type gets sorted.
-// The sim used to spell these groups out as inline utype name-lists at
-// half a dozen sites (auto-engage, retaliation, defense responses, blood
-// vs timber death FX, guard eligibility) — adding the trade cart meant
-// finding and editing every list. Each predicate below names ONE semantic;
-// the sites read them.
+// Each predicate below names ONE semantic (auto-engage, retaliation, death
+// FX, guard eligibility); the sites read the predicates — never re-spell
+// inline utype lists.
 const HARMLESS_ANIMALS = new Set(['sheep', 'sheep_carcass']); // never fight back, no death cry
 const WOOD_VEHICLES = new Set(['ram', 'tradecart']);          // timber rigs: collapse sound, wreck corpse, no blood, never retaliate
 function isHarmlessAnimal(u){ return HARMLESS_ANIMALS.has(u.utype); }
@@ -703,30 +694,18 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // mirroring how AoE2 throttles difficulty through the economy (a stunted eco
 // fields small attacks) rather than a scripted attack timeline.
 // attackTick reference points: hard rushes ~8 game-minutes (a classic drush
-// window), easy waits ~18. (A `trickle` free-resource mechanism existed for
-// AoE2-style hard-AI handicaps but was zeroed at every difficulty and has
-// been DELETED — parity rule: the AI plays with exactly the tools a human
-// has; difficulty comes from playing better, never from free resources.)
-// easy
-// gets none.
+// window), easy waits ~18. Parity rule: no free resources at any difficulty —
+// the AI plays with exactly the tools a human has.
 const AI_LEVELS={
-  // Easy is handicapped the AoE2 way — NOT by nerfing unit stats or capping the
-  // age, but by a weak economy and timid aggression. It CAN still reach Castle
-  // (maxAge:2) and build rams/knights, but so slowly (Castle age-up ~35min,
-  // needs 13 vils) and attacks so late/small/cautiously (first push ~18min,
-  // eco-capped waves of ~3, only commits at a 2x army advantage) that a beginner has ample
-  // time to stabilise and siege almost never lands. Mirrors how AoE2's easiest
-  // AI feels easy: it's played worse, not given weaker units. Harder levels tech
-  // faster and push harder for the real threat.
-  // Difficulty model — DE-INFORMED, adapted to our engine. AoE2 DE scales ONLY
-  // attack aggression and shares one economy, but that flattened OUR gradient
-  // (Easy could out-turtle Hard: over-committing feeds units to defensive fire,
-  // and decisionInterval doesn't differentiate eco speed here). So we ALSO
-  // differentiate the ECONOMY per level (pop cap, aging speed, production,
-  // wall/tower use) so Hard genuinely out-develops Easy, while keeping the DE
-  // ideas that DID work: army-DRIVEN attacks (low attackTick, not a clock) and
-  // the commit-% mechanic (js/ai.js controlAIMilitary). The three DE aggression
-  // knobs still scale ~Hard 1.0 / Medium 0.75 / Easy 0.5:
+  // Easy is handicapped the AoE2 way — a weak economy and timid aggression,
+  // never nerfed stats or an age cap: it still reaches Castle and builds
+  // rams/knights, just slowly and with late/small/cautious pushes.
+  // Difficulty model — DE-informed: AoE2 DE scales only attack aggression, but
+  // that flattened our gradient, so the ECONOMY (pop cap, aging speed,
+  // production, wall/tower use) is ALSO differentiated per level; army-DRIVEN
+  // attacks (low attackTick, not a clock) and the commit-% mechanic
+  // (controlAIMilitary, js/ai.js) are kept from DE. The three DE aggression
+  // knobs scale ~Hard 1.0 / Medium 0.75 / Easy 0.5:
   //   attackSize    = sn-minimum-attack-group-size (soldiers needed to attack)
   //   waveCap       = sn-maximum-attack-group-size (biggest group)
   //   commitPercent = sn-percent-attack-soldiers (% of army sent; rest defends)
@@ -736,11 +715,9 @@ const AI_LEVELS={
   //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
   //     to fight a small raid at the town when the army can't answer)
   easy:{name:'Easy',decisionInterval:T30(240),maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveCap:6,commitPercent:38,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:T30(3600),attackTick:T30(10800),armyReserve:2,ramWoodReserve:1,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:T30(600),wallMaintInterval:T30(600),allyJoinWindow:T30(0),allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(0),ageSurgeFactor:1.0},
-  // Standard plays FAIR — no resource cheat (trickle all 0), like AoE2's
-  // Moderate AI. It's still a real challenge (reaches Castle ~15min, fields
-  // rams/knights, walls + a tower, pushes from ~10min) but wins on competent
-  // play, not free resources. Only hard cheats — AoE2 reserves resource
-  // handicaps for its hardest tiers.
+  // Standard mirrors AoE2's Moderate: a real challenge (Castle ~15min,
+  // rams/knights, walls + a tower, pushes from ~10min) that wins on
+  // competent play, not free resources.
   standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,ramWoodReserve:3,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75},
   hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
 };
@@ -851,23 +828,19 @@ function freshTeamResources(){
   return Array.from({length: NUM_TEAMS}, () => ({food:200,wood:200,gold:100,stone:200,prepaidFarms:0}));
 }
 let resources = freshTeamResources();
-// Commodity exchange — PER-PLAYER prices, exactly like AoE2: each team has its
-// own market, and buying/selling only shifts THAT team's prices (you can't
-// crash a rival's market). Indexed by team (mirrors `resources`). Gold is the
-// currency so it has no price. Buying a resource nudges its price up; selling
-// nudges it down; a buy/sell spread means round-tripping loses gold. Prices
-// are integer gold-per-100-units and are sim state: checksummed
-// (js/determinism.js) and saved (js/save.js), only mutated in execMarketTrade
-// (js/commands.js). See MARKET_* tuning constants below.
-// GLOBAL, not per-team (AoE2, openage .../game_mechanics/market.md: "prices
-// are global to all players") — every player's trades move the one shared
-// price, so sell-spam by anyone tanks the price for everyone.
+// Commodity exchange prices — GLOBAL, not per-team (AoE2, openage
+// game_mechanics/market.md: "prices are global to all players"): every
+// player's trades move the one shared table. Gold is the currency so it has
+// no price; buying nudges a price up, selling down, and the buy/sell spread
+// means round-tripping loses gold. Integer gold-per-100-units, SIM state:
+// checksummed (js/determinism.js), saved (js/save.js), only mutated in
+// execMarketTrade (js/commands.js). See MARKET_* tuning constants below.
 function freshMarketPrices(){
   return {food:100, wood:100, stone:130};
 }
 let marketPrices = freshMarketPrices();
-// The (shared) price table. Keeps the per-team accessor signature so the
-// UI/AI call sites don't care that prices stopped being per-team.
+// The shared price table behind a per-team accessor signature (the UI/AI
+// call sites don't care that prices are global).
 function marketPricesFor(team){
   return marketPrices;
 }
@@ -890,13 +863,11 @@ function marketSellRatio(team){
 //   gold = 2·(d/mapSize + 0.3)·d·K + 0.5,  d = max(0.1, √(max(0,Δx−5)² + max(0,Δy−5)²))
 // Longer routes pay SUPERLINEARLY (the d² term) and the map-size divisor
 // keeps income comparable across map sizes. K calibrated so a typical
-// half-map route on the 120 map (~50 tiles) pays ~60 gold — the same income
-// the old linear 1.2/tile rule gave — so AI maxTradeCarts economics carry over.
+// half-map route on the 120 map (~50 tiles) pays ~60 gold.
 const TRADE_GOLD_FACTOR = 0.84;
 // Viewer-local convenience caches of MY team's population (see
 // refreshPopulationCounts, js/logic.js); per-team reads go through
-// teamPopUsed/teamPopCap directly. The old aiPop/aiPopCap/aiTick globals
-// are gone — AI bookkeeping lives in AI_STATES (above) per team.
+// teamPopUsed/teamPopCap directly.
 let popUsed=0, popCap=0;
 let placing=null, mouseX=0, mouseY=0, dragStart=null, dragEnd=null;
 let gameOver=false, won=false;
@@ -938,34 +909,21 @@ function feedbackFor(team, fn){
   fn();
 }
 let netConn=null, netConnected=false;
-// Legacy snapshot-sync is gone (lockstep everywhere — js/lockstep.js), but
-// markMapDirty stays as a no-op seam: every sim-side map mutation already
-// calls it, which is exactly the hook a future map-mutation journal (e.g.
-// cheaper rollback snapshots) would need.
+// No-op seam: every sim-side map mutation calls this — exactly the hook a
+// future map-mutation journal (e.g. cheaper rollback snapshots) would need.
 function markMapDirty(x,y){}
 
 // Which tile the falling-tree animation started on, and when — LOCAL-ONLY,
-// keyed by "x,y" rather than stored as a `fellTick` field directly on the
-// map tile object (js/render-terrain.js used to do this). Same bug shape
-// as scoutedByMe above: every wood-chop decrements a tile's `res`, which
-// calls markMapDirty() and sends that tile as a dirty-cell delta — on the
-// GUEST, applying that delta means `map[y][x] = cell` (a brand-new object
-// from the wire), wiping out whatever `fellTick` had been set on the OLD
-// object. Since the tree-falling trigger is `if (res<=60 && fellTick===
-// undefined)`, every single subsequent chop below that threshold saw a
-// fresh `undefined` and restarted the fall animation from scratch —
-// reported as "the tree falling sequence keeps repeating over and over".
+// keyed by "x,y" rather than a field on the map tile object: a synced tile
+// replacement wipes on-tile fields and restarts the fall animation on every
+// chop (js/render-terrain.js).
 let treeFellTicks = new Map();
 
-// Same shape of bug, two more instances found in the same audit:
-// - corpseImpactFxDone: which corpse ids have already played their one-time
-//   ground-impact dust puff (js/render-units.js's drawCorpse). Used to live
-//   as `c.impactFx` directly on the corpse object — corpses get wholesale-
-//   replaced by every sync (`corpses = data.corpses`, js/net-sync.js), so
-//   the guest kept re-triggering the puff on every sync instead of once.
-// - workSwingCycles: per-unit last work-swing cycle that already fired its
-//   impact particle (js/render-units.js) — was `e._swingCyc` directly on
-//   the entity, wiped by sync's wholesale entity replacement.
+// Same bug shape — one-shot render FX state kept OFF the synced objects
+// (corpses/entities get wholesale-replaced, re-triggering the FX):
+// - corpseImpactFxDone: corpse ids that played their ground-impact dust puff
+// - workSwingCycles: per-unit last work-swing cycle that fired its particle
+// (both js/render-units.js).
 let corpseImpactFxDone = new Set();
 let workSwingCycles = new Map();
 
@@ -1086,9 +1044,8 @@ function updateFog() {
   }
   // Single combined pass when the sim's per-team visibility is fresh
   // (updateTeamVision runs just before this in update()): downgrade stale
-  // active vision and set the new visible tiles in one sweep. A legacy
-  // (non-lockstep) guest never runs update(), so its grids are stale —
-  // fall back to the downgrade loop + its own vision walk.
+  // active vision and set the new visible tiles in one sweep; fall back to
+  // the downgrade loop + own vision walk when the grids are stale.
   if (visionFreshTick >= tick - 1 && visionFreshTick >= 0 && teamVisGrid) {
     const vg = teamVisGrid[myTeam];
     for (let y = 0; y < MAP; y++) {
@@ -1128,9 +1085,8 @@ function updateFog() {
 let visionFreshTick = -1; // which sim tick the grids were computed for
 // How often the deterministic per-team vision grids are rebuilt (see
 // updateTeamVision). Higher = faster/laggier vision: ~150ms was measured
-// imperceptible and worth ~2% sim throughput (2026-07 perf pass, alongside
-// the 2-tick separation/nudge cadence in js/loop.js). Sim reads tolerate
-// the staleness by design.
+// imperceptible and worth ~2% sim throughput. Sim reads tolerate the
+// staleness by design.
 //
 // The cadence is anchored to ABSOLUTE tick phase (tick % PERIOD === 1),
 // NOT "ticks since last refresh": rollback/resync reset visionFreshTick,
@@ -1279,9 +1235,8 @@ function teamHasExplored(team, k){
 // Deterministic "this team can't act on tile k yet because it hasn't been
 // explored" gate — shared by canPlace (js/logic.js), the villager gather
 // resolve (js/commands.js) and the gather-tile scan (findNearTile,
-// js/logic.js). Applies to EVERY team: the AI's old `!isAITeam` exemption
-// (a relic of its proximity-vision model) was the last placement/tasking
-// information cheat — parity rule. Fog-off (dev/sim) reveals everything.
+// js/logic.js). Applies to EVERY team — no AI exemption (information
+// parity). Fog-off (dev/sim) reveals everything.
 function tileHiddenForTeam(team, k){
   return !window.fogDisabled && !teamHasExplored(team, k);
 }

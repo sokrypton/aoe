@@ -95,8 +95,12 @@ full tooling guide. Working rules:
 
 ## Conventions
 
-- Comments explain constraints and *why* (often with the sim finding or bug
-  that motivated the code) — keep that density; it's the house style.
+- Comments state constraints and *why*, TERSELY — one to two lines. Sacred
+  and never cut: determinism/lockstep contracts (hashing, iteration order,
+  sim-vs-viewer, T30), AoE2 sn-* references. Never write: change-narration
+  ("replaced the old X", "used to", "no longer"), milestone datelines,
+  seed-by-seed war stories (keep the one-clause lesson), or line-number
+  references to other files (file/function pointers only).
 - One predicate/helper per concept (`isSoldierUnit`, `isRetreatingUnit`,
   `stashVillagerTask`, `stampBuildingFootprint`, `effectiveBuildCost`,
   `centerOf`/`centerTile` (fractional vs floored building centers — the split

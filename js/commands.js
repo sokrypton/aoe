@@ -19,9 +19,8 @@
 
 // ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
 // RTS (AoE2 ran 250ms command turns). Under rollback lockstep
-// (js/lockstep.js) a command arriving LATE is no longer fatal — the sim
-// rewinds and re-simulates — so this stays small and fixed; it only sets
-// how often rollbacks happen, not whether the game stalls.
+// (js/lockstep.js) a late command just triggers a rewind, so this stays
+// small and fixed — it only sets how often rollbacks happen.
 let INPUT_DELAY_TICKS = 4;
 const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 
@@ -164,9 +163,8 @@ function execCommand(cmd, team){
       break;
     }
     case 'set-delay':
-      // Manual lockstep input-delay override (host-only). Under rollback
-      // the delay only tunes how often rewinds happen — lateness is no
-      // longer fatal — so there's no automatic controller anymore.
+      // Manual lockstep input-delay override (host-only); under rollback
+      // the delay only tunes how often rewinds happen.
       if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
         INPUT_DELAY_TICKS = cmd.d;
       }
@@ -216,9 +214,8 @@ function execCommand(cmd, team){
       }
       break;
     case 'dev-destroy':
-      // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — the
-      // lockstep replacement for tests that used to set hp=0 directly on
-      // one peer (an out-of-band write is an instant desync now).
+      // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — an
+      // out-of-band hp write on one peer is an instant desync.
       if (window.DEV_TEST_COMMANDS) {
         let victim = entitiesById.get(cmd.id);
         if (victim) { victim.hp = 0; handleDeath(victim, team); }
@@ -256,22 +253,15 @@ function execSetStance(cmd, team){
   if (!units.length) return;
   units.forEach(u => {
     u.stance = cmd.stance;
-    // Postures are mutually exclusive: picking a stance is the off-switch for
-    // the other two dispositions. Guard (a placed anchor + leash) and Auto
-    // Scout (frontier wander) each override how the unit reacts to enemies, so
-    // leaving them set would fight the stance the player just chose. Mirrors
-    // execGuard/execAutoScout clearing each other — the UI shows exactly one
-    // highlighted posture, and this keeps the behavior matching the highlight.
+    // Postures are mutually exclusive: picking a stance clears Guard/Auto
+    // Scout (mirrors execGuard/execAutoScout clearing each other), keeping
+    // the behavior matching the UI's single highlighted posture.
     if (u.order && (GUARD_ORDER_KINDS.has(u.order.kind) || u.order.kind === 'scout')) issueOrder(u, null);
-    // No Attack must DISENGAGE, not just stop acquiring new targets: the
-    // (explicit attack ORDERS on a passive unit are still obeyed, matching
-    // AoE2 — passive suppresses AUTO-acquire and retaliation, not commands.)
-    // passive gate in js/logic.js only blocks the auto-acquire scan, so a unit
-    // that was already attacking (auto-acquired OR an explicit attack order)
-    // keeps hammering its target. Drop the current FIGHT so "No Attack" means
-    // what it says. AoE2 does the same — switching to No Attack halts attacks.
-    // But ONLY the fight: a unit merely walking to a destination (no target)
-    // keeps its move order — clearing the path would cancel a legitimate walk.
+    // No Attack must DISENGAGE, not just stop acquiring: the passive gate in
+    // js/logic.js only blocks the auto-acquire scan, so drop the current
+    // FIGHT too (AoE2 does the same; explicit attack orders issued to a
+    // passive unit are still obeyed). ONLY the fight: a unit merely walking
+    // keeps its move order.
     if (cmd.stance === 'passive' && (u.target != null || u.explicitAttack)) {
       u.target = null; u.explicitAttack = false; u.siegeSpot = null;
       if (typeof clearUnitPath === 'function') clearUnitPath(u);
@@ -281,14 +271,11 @@ function execSetStance(cmd, team){
   if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
-// Which units carry a guard post: SOLDIERS only. Rams were included once
-// ("holding a position is a valid order") but a ram already holds position
-// by nature — it never auto-engages — and the Guard tile on the one unit
-// whose defining interaction is GARRISONING read as a second garrison
-// button (user feedback). Rams remain escort TARGETS (troops guard the
-// ram) and riders still garrison inside; they just carry no post. THE
-// single eligibility filter: the UI button (allGuardable, js/ui.js), the
-// rally-spawn anchor (js/logic.js) and the move-order re-pin
+// Which units carry a guard post: SOLDIERS only. A ram already holds
+// position by nature (never auto-engages), and its Guard tile read as a
+// second garrison button; rams remain escort TARGETS and riders still
+// garrison inside. THE single eligibility filter: allGuardable (js/ui.js),
+// the rally-spawn anchor (js/logic.js) and the move-order re-pin
 // (issueMoveOrder, js/pathfinding.js) all call this.
 function guardEligible(u){
   return isSoldierUnit(u);
@@ -343,9 +330,8 @@ function assignAttack(u, target){
 //                                    x/y = this escort's ring offset)
 //   {kind:'scout'}                   auto-explore, ignores combat
 // TEAM-AGNOSTIC by construction (no isHumanTeam/myTeam in here): the human
-// command executors call this today; js/ai.js adopts it role-by-role
-// (Phase 5 of the order refactor). Stance stays the unit's REACTION POLICY
-// (STANCES, js/logic.js) — orders say WHAT, stance says HOW it reacts.
+// command executors and js/ai.js both call this. Stance stays the unit's
+// REACTION POLICY (STANCES, js/logic.js) — orders say WHAT, stance HOW.
 const ORDER_KINDS = new Set(['move','follow','guard','guardBuilding','escort','scout']);
 const GUARD_ORDER_KINDS = new Set(['guard','guardBuilding','escort']);
 function issueOrder(e, order){
@@ -394,11 +380,9 @@ function isRallyBuildingTarget(b, team){
 // compaction is what forms scattered units into a tight post cluster),
 // and follow/escort stations (anchor = the moving leader, offsets ride
 // the order's hashed x/y fields).
-// Two earlier generations generated a diamond of slots and ASSIGNED units
-// to them (positional, then greedy-nearest) — both looked near-random,
-// structurally: for a distant anchor every slot is roughly equidistant
-// from every unit, so any assignment degrades to arbitrary. Translating
-// the group's own shape has no assignment problem at all.
+// Slot-assignment formations are structurally arbitrary — for a distant
+// anchor every slot is roughly equidistant from every unit — so translating
+// the group's own shape sidesteps the assignment problem entirely.
 // Deterministic: command-payload/scan unit order, exact-order float math.
 function formationOffsets(units, excludeCenter){
   let off = new Map();
@@ -517,8 +501,7 @@ function execMarketTrade(cmd, team){
   let hasMarket = entities.some(b => b.type === 'building' && b.btype === 'MARKET' && b.team === team && b.complete && b.hp > 0);
   if (!hasMarket) return;
   let store = resourceStore(team);
-  // GLOBAL prices (AoE2): everyone trades against — and moves — the one
-  // shared table. marketSellRatio bakes in the per-team Guilds discount.
+  // marketSellRatio bakes in the per-team Guilds discount.
   let mp = marketPrices;
   let price = mp[res];
   if (cmd.dir === 'buy') {
@@ -563,11 +546,9 @@ function execRally(cmd){
     ry = Math.max(0, Math.min(MAP - 1, Math.round(rTarget.y)));
     rTarget = null;
   }
-  // Building rally targets are kept only where the BUILDING is the point:
-  // one you can go INSIDE (TC / guard tower garrison, canGarrisonIn), a
-  // Market (trade-cart route), an own foundation (builders), or an enemy
-  // building (attack). A flag on any other friendly building is just a
-  // flag on the ground there.
+  // Building targets: kept only where the BUILDING is the point (see
+  // isRallyBuildingTarget above); a flag on any other friendly building is
+  // just a flag on the ground there.
   if (rTarget && rTarget.type === 'building' && !isRallyBuildingTarget(rTarget, bldg.team)) {
     rTarget = null;
   }
@@ -622,8 +603,7 @@ function execUnitCommand(cmd){
   // Group-move destinations / follow stations: the shared formation
   // concept (formationOffsets above). Following a unit anchors the
   // arrangement on the LEADER (excludeCenter keeps its own tile free —
-  // a big group following one unit used to collapse into a dogpile
-  // chasing the leader's exact tile).
+  // otherwise a big group dogpiles the leader's exact tile).
   let formOff = formationOffsets(movers, !!followTarget);
   let slotFor = m => formOff.get(m.id) || [0, 0];
   // AoE2 formation pace: a group order moves everyone at the slowest
@@ -636,8 +616,6 @@ function execUnitCommand(cmd){
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
     // LAST ORDER WINS: every manual command replaces the standing order —
     // the branch below issues the new one (move→move, follow→follow, …).
-    // This is what kills the old stale-order bug class (a move goal
-    // surviving a gather redirect and resuming later).
     if (s.order) issueOrder(s, null);
     s.buildTarget = null;
     s.buildQueue = [];
@@ -645,9 +623,7 @@ function execUnitCommand(cmd){
     s.explicitAttack = false;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell
-      // (task='garrison' + garrisonTarget; updateUnit chases the moving ram
-      // and enterGarrison seats the rider on arrival). Surplus riders (seat
-      // count exhausted) fall through to the follow branch and escort it.
+      // (task='garrison' + garrisonTarget; enterGarrison seats on arrival).
       ramRoom--;
       s.target = null; s.task = 'garrison'; s.garrisonTarget = ramTarget.id;
       pathUnitTo(s, Math.round(ramTarget.x), Math.round(ramTarget.y));
@@ -753,8 +729,6 @@ function execUnitCommand(cmd){
   });
 }
 
-// Building placement (moved verbatim from doPlace's mutation half —
-// `placing` global replaced by cmd.btype, screen coords by cmd tile).
 // ---- Shared building-placement primitives ----
 // The geometry + wall-replacement rules for placing a WALL/GATE/TOWER/any
 // building live here so the player build command, the AI, and the scenario
@@ -849,7 +823,7 @@ function execBuildPlacement(cmd){
   }
 }
 
-// Wall drag (moved verbatim from finalizeWallDrag's mutation half).
+// Wall drag (resolver: finalizeWallDrag, js/input.js).
 function execWallDrag(cmd){
   let vils = selected.filter(s => s.type === 'unit' && s.utype === 'villager');
   if (vils.length === 0) return;
@@ -889,7 +863,7 @@ function execWallDrag(cmd){
   }
 }
 
-// Train / cancel (moved from ui.js's trainUnit/cancelQueue mutation halves).
+// Train / cancel (resolvers: trainUnit/cancelQueue, js/ui.js).
 function execTrainUnit(bldg, utype){
   let result = queueUnit(bldg, utype);
   feedbackFor(myTeam, () => {
@@ -1028,7 +1002,7 @@ function execCancelQueue(bldgId, idx, team){
   feedbackFor(myTeam, () => showMsg(UNITS[utype].name + ' cancelled (refunded)'));
 }
 
-// Farm economy (moved from ui.js's prepayFarm/reactivateFarm mutation halves).
+// Farm economy (resolvers: prepayFarm/reactivateFarm, js/ui.js).
 function prepayFarmNow(){
   let cost = { w: 60 };
   if (!canAfford(myTeam, cost)) {
