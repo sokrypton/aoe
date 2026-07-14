@@ -1826,20 +1826,9 @@ function doCommand(sx,sy){
   });
 }
 
-// AoE2-style formation: diamond spread around center tile
-function getFormation(n){
-  let offsets=[[0,0]];
-  if(n<=1)return offsets;
-  // Spiral outward in rings
-  for(let r=1;offsets.length<n;r++){
-    for(let dx=-r;dx<=r&&offsets.length<n;dx++){
-      for(let dy=-r;dy<=r&&offsets.length<n;dy++){
-        if(Math.abs(dx)+Math.abs(dy)===r) offsets.push([dx,dy]);
-      }
-    }
-  }
-  return offsets;
-}
+// (Group formations live in js/commands.js — formationOffsets, THE single
+// formation concept, consumed only by SIM code: the move/guard/escort
+// executors and the AI picket formation.)
 
 // Resolver only: screen->tile plus issuer-local UI concerns (placement
 // preview mode, Shift-to-repeat, "select a villager" nag). The actual

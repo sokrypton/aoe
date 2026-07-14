@@ -335,10 +335,12 @@ function assignAttack(u, target){
 // One standing order per unit (e.order); issuing ANY order replaces the old
 // one — "last order wins", no pairwise interaction rules. Kinds:
 //   {kind:'move', x, y}              multi-leg walk goal
-//   {kind:'follow', id}              keep up with a friendly unit
+//   {kind:'follow', id, x, y}        keep up with a friendly unit (x/y =
+//                                    this follower's formation offset from it)
 //   {kind:'guard', x, y}             hold a ground post (zone acquire + leash)
 //   {kind:'guardBuilding', id, x, y}  perimeter watch; x,y = assigned post tile
-//   {kind:'escort', id}              guard a moving unit (zone rides on it)
+//   {kind:'escort', id, x, y}        guard a moving unit (zone rides on it;
+//                                    x/y = this escort's ring offset)
 //   {kind:'scout'}                   auto-explore, ignores combat
 // TEAM-AGNOSTIC by construction (no isHumanTeam/myTeam in here): the human
 // command executors call this today; js/ai.js adopts it role-by-role
@@ -380,6 +382,55 @@ function isRallyBuildingTarget(b, team){
 // afterwards. The post is never CANCELLED: a plain ground move simply
 // relocates it ("this is your temp spot", execUnitCommand), and explicit
 // attacks are exempt from the leash.
+// THE formation concept — one function, used by every group order: a
+// group's destination shape IS its own current arrangement, translated to
+// the anchor. Offsets are unit − centroid, uniformly COMPACTED to a
+// ~sqrt(n) radius when the group is strung out (a loose gather line
+// arrives as a group, not a 20-tile string), and rounded collisions walk
+// the diamond ring outward to the nearest free tile (stacked rally output
+// fans out; excludeCenter keeps the anchor tile itself free — the leader's
+// tile under a follow/escort). Consumers: group moves (anchor = click),
+// ground guard flags + AI pickets (anchor = the flag/rally point — the
+// compaction is what forms scattered units into a tight post cluster),
+// and follow/escort stations (anchor = the moving leader, offsets ride
+// the order's hashed x/y fields).
+// Two earlier generations generated a diamond of slots and ASSIGNED units
+// to them (positional, then greedy-nearest) — both looked near-random,
+// structurally: for a distant anchor every slot is roughly equidistant
+// from every unit, so any assignment degrades to arbitrary. Translating
+// the group's own shape has no assignment problem at all.
+// Deterministic: command-payload/scan unit order, exact-order float math.
+function formationOffsets(units, excludeCenter){
+  let off = new Map();
+  if (!units.length) return off;
+  let taken = new Set(excludeCenter ? ['0,0'] : []);
+  let cx = 0, cy = 0;
+  units.forEach(m => { cx += m.x; cy += m.y; });
+  cx /= units.length; cy /= units.length;
+  let maxd = 0;
+  units.forEach(m => { maxd = Math.max(maxd, Math.abs(m.x - cx), Math.abs(m.y - cy)); });
+  let R = Math.ceil(Math.sqrt(units.length)) + 1;
+  let scale = maxd > R ? R / maxd : 1;
+  units.forEach(m => {
+    let ox = Math.round((m.x - cx) * scale), oy = Math.round((m.y - cy) * scale);
+    if (taken.has(ox + ',' + oy)) {
+      outer: for (let r = 1; r <= R + 2; r++) {
+        for (let i = 0; i < 4 * r; i++) {
+          let side = Math.floor(i / r), j = i % r, dx, dy;
+          if (side === 0) { dx = r - j; dy = j; }
+          else if (side === 1) { dx = -j; dy = r - j; }
+          else if (side === 2) { dx = -(r - j); dy = -j; }
+          else { dx = j; dy = -(r - j); }
+          if (!taken.has((ox + dx) + ',' + (oy + dy))) { ox += dx; oy += dy; break outer; }
+        }
+      }
+    }
+    taken.add(ox + ',' + oy);
+    off.set(m.id, [ox, oy]);
+  });
+  return off;
+}
+
 function execGuard(cmd, team){
   let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
     .filter(u => u && u.team === team && u.hp > 0 && !u.garrisonedIn && guardEligible(u));
@@ -396,11 +447,16 @@ function execGuard(cmd, team){
     pathUnitTo(u, Math.round(px), Math.round(py));
   };
   if (target && target.type === 'unit') {
+    // ESCORT: the zone rides on the escortee (guardZoneOf reads its live
+    // position); updateFollowOrder does the walking off order.id, aiming at
+    // escortee + this escort's station offset (order x/y — hashed) so a
+    // large escort holds a compact arrangement around the cart instead of
+    // dogpiling its tile (excludeCenter keeps the escortee's tile free).
+    let eOff = formationOffsets(units.filter(u => u.id !== target.id), true);
     units.forEach(u => {
       if (u.id === target.id) return; // can't escort yourself
-      // ESCORT: the zone rides on the escortee (guardZoneOf reads its live
-      // position); updateFollowOrder does the walking off order.id.
-      finish(u, {kind:'escort', id: target.id}, target.x, target.y);
+      let [ox, oy] = eOff.get(u.id) || [0, 0];
+      finish(u, {kind:'escort', id: target.id, x: ox, y: oy}, target.x + ox, target.y + oy);
     });
   } else if (target && target.type === 'building') {
     // Fan the guards OUT around the footprint (claimed set) so they cover the
@@ -416,9 +472,9 @@ function execGuard(cmd, team){
   } else {
     let x = Math.max(0, Math.min(MAP - 1, Math.round(cmd.x)));
     let y = Math.max(0, Math.min(MAP - 1, Math.round(cmd.y)));
-    let offsets = getFormation(units.length);
-    units.forEach((u, i) => {
-      let ox = offsets[i] ? offsets[i][0] : 0, oy = offsets[i] ? offsets[i][1] : 0;
+    let gOff = formationOffsets(units, false);
+    units.forEach(u => {
+      let [ox, oy] = gOff.get(u.id) || [0, 0];
       let px = Math.max(0, Math.min(MAP - 1, x + ox)), py = Math.max(0, Math.min(MAP - 1, y + oy));
       finish(u, {kind:'guard', x: px, y: py}, px, py);
     });
@@ -563,13 +619,18 @@ function execUnitCommand(cmd){
   let ramRoom = ramTarget ? ramSeatsFree(ramTarget) : 0;
 
   let movers = selected.filter(s => s.type === 'unit');
-  let offsets = getFormation(movers.length);
+  // Group-move destinations / follow stations: the shared formation
+  // concept (formationOffsets above). Following a unit anchors the
+  // arrangement on the LEADER (excludeCenter keeps its own tile free —
+  // a big group following one unit used to collapse into a dogpile
+  // chasing the leader's exact tile).
+  let formOff = formationOffsets(movers, !!followTarget);
+  let slotFor = m => formOff.get(m.id) || [0, 0];
   // AoE2 formation pace: a group order moves everyone at the slowest
   // member's speed (see unitMoveSpeed, js/logic.js) so the group arrives
   // together instead of trickling in fastest-first. Solo orders run free.
   let groupSpeed = movers.length > 1
     ? Math.min(...movers.map(m => m.speed || 1)) : undefined;
-  let idx = 0;
   movers.forEach(s => {
     s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
@@ -618,9 +679,8 @@ function execUnitCommand(cmd){
       } else {
         s.tradeDestId = null; s.tradeHomeId = null; s.tradePhase = null;
         s.carrying = 0; s.carryType = null; s.target = null; s.task = null;
-        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        let [ox, oy] = slotFor(s);
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        idx++;
       }
       return;
     }
@@ -634,18 +694,23 @@ function execUnitCommand(cmd){
       if ((target.utype === 'sheep' || target.utype === 'sheep_carcass') && s.utype !== 'villager') {
         // Sheep or carcass targeted by military unit: treat as move command!
         s.target = null;
-        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        let [ox, oy] = slotFor(s);
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        idx++;
       } else {
         assignAttack(s, target);
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
-      // position (updateFollowOrder in js/logic.js drives the re-pathing).
+      // position PLUS this follower's formation offset (updateFollowOrder in
+      // js/logic.js drives the re-pathing) — the group holds its arrangement
+      // AROUND the leader instead of mobbing its tile. The offset rides the
+      // order's x/y fields, which the detEntityHash order block already
+      // hashes for every kind.
       s.target = null; s.task = null;
-      issueOrder(s, {kind:'follow', id: followTarget.id});
-      pathUnitTo(s, Math.round(followTarget.x), Math.round(followTarget.y));
+      let [fox, foy] = slotFor(s);
+      issueOrder(s, {kind:'follow', id: followTarget.id, x: fox, y: foy});
+      pathUnitTo(s, Math.max(0, Math.min(MAP - 1, Math.round(followTarget.x) + fox)),
+                    Math.max(0, Math.min(MAP - 1, Math.round(followTarget.y) + foy)));
     } else {
       s.target = null;
       let t = map[tileY] && map[tileY][tileX];
@@ -671,18 +736,18 @@ function execUnitCommand(cmd){
           let stand = (typeof pickGatherStand === 'function') ? pickGatherStand(s, g.x, g.y) : null;
           pathUnitTo(s, stand ? stand.x : g.x, stand ? stand.y : g.y);
         } else {
-          // Move command (also the unexplored-tile case): use formation offset
-          let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+          // Move command (also the unexplored-tile case): keep the
+          // group's relative arrangement (see formOff above).
+          let [ox, oy] = slotFor(s);
           s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-          idx++;
         }
       } else {
-        // Military move: use formation offset. The guard-post relocation
-        // ("this is your temp spot") lives inside issueMoveOrder itself, so
-        // every plain-move site gets it without a paired re-pin line.
-        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        // Military move: keep the group's relative arrangement (formOff).
+        // The guard-post relocation ("this is your temp spot") lives inside
+        // issueMoveOrder itself, so every plain-move site gets it without a
+        // paired re-pin.
+        let [ox, oy] = slotFor(s);
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        idx++;
       }
     }
   });

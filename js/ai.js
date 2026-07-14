@@ -2470,16 +2470,18 @@ function rallyIdleMilitary(ai,mils,aiTC){
   for(let back=0;back<3&&!walkable(rx,ry);back++){rx=Math.round(rx-dir.dx);ry=Math.round(ry-dir.dy);}
   if(!walkable(rx,ry))return;
   // Deterministic picket: mils comes from the entities scan (ascending id),
-  // so offsets assign identically on every lockstep peer.
-  let offsets=getFormation(mils.length), oi=0;
+  // so the shared formation offsets (formationOffsets, js/commands.js —
+  // the army's own arrangement compacted onto the rally point) resolve
+  // identically on every lockstep peer.
+  let pOff=formationOffsets(mils,false);
   mils.forEach(m=>{
     if(m.utype==='scout')return; // controlAIScouts owns scouts
-    let ox=offsets[oi]?offsets[oi][0]:0, oy=offsets[oi]?offsets[oi][1]:0; oi++;
     if(isRetreatingUnit(m))return; // a fleeing unit rests at home until the stamp expires
     if(m.target||m.path.length>0)return;
-    let px=Math.max(1,Math.min(MAP-2,rx+ox)), py=Math.max(1,Math.min(MAP-2,ry+oy));
     if(m.order&&m.order.kind==='guard'&&Math.abs(m.order.x-rx)<=4&&Math.abs(m.order.y-ry)<=4)return;
     if(dist(m,{x:rx,y:ry})<=4&&!m.order)return;
+    let [ox,oy]=pOff.get(m.id)||[0,0];
+    let px=Math.max(1,Math.min(MAP-2,rx+ox)), py=Math.max(1,Math.min(MAP-2,ry+oy));
     issueOrder(m,{kind:'guard',x:px,y:py});
     pathUnitTo(m,px,py);
   });

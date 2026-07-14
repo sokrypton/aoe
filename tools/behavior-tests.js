@@ -491,10 +491,11 @@ async function withPage(browser, port, entry, fn){
       gameStarted = true; gamePaused = false; myTeam = 0;
       const n = 40, cols = Math.ceil(Math.sqrt(n)), army = [];
       for (let i = 0; i < n; i++) army.push(createUnit('knight', 12 + (i % cols), 12 + Math.floor(i / cols), 0));
-      const offsets = getFormation(n), gs = Math.min(...army.map(m => m.speed || 1));
-      army.forEach((s, i) => {
+      const fOff = formationOffsets(army, false), gs = Math.min(...army.map(m => m.speed || 1));
+      army.forEach(s => {
         s.groupSpeed = gs;
-        issueMoveOrder(s, 50 + (offsets[i] ? offsets[i][0] : 0), 50 + (offsets[i] ? offsets[i][1] : 0));
+        const [ox, oy] = fOff.get(s.id) || [0, 0];
+        issueMoveOrder(s, 50 + ox, 50 + oy);
       });
       T.ok('every unit got a path', army.every(u => u.path.length > 0 || (u.order && u.order.kind === 'move')));
       for (let i = 0; i < 1500; i++) update();

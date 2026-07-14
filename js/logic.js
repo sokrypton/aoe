@@ -2741,11 +2741,18 @@ function updateFollowOrder(e){
     // (a dead ESCORTEE is converted to a frozen ground post by the
     // handleDeath sweep — not cleared here)
   } else {
-    let d=dist(e,f);
+    // Station = the followed unit PLUS this follower's formation offset
+    // (order.x/y, assigned at command time from the group's arrangement —
+    // 0,0 for offset-less orders, e.g. the AI's ram-surplus riders): a big
+    // group holds its shape around the leader instead of every follower
+    // chasing the leader's exact tile in a dogpile.
+    let sx=Math.max(0,Math.min(MAP-1,Math.round(f.x)+(e.order.x||0)));
+    let sy=Math.max(0,Math.min(MAP-1,Math.round(f.y)+(e.order.y||0)));
+    let d=dist(e,{x:sx,y:sy});
     if(d>1.5){
       if(e.path.length===0 && retryReady(e,'follow')){
         retryStamp(e,'follow',T30(12));
-        pathUnitTo(e,Math.round(f.x),Math.round(f.y));
+        pathUnitTo(e,sx,sy);
       }
     } else if(e.path.length>0){
       // Close enough — stop walking but keep following so we resume if it moves away.
