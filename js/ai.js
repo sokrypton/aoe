@@ -1510,7 +1510,17 @@ function assignAIGatherTask(ai,v,vils,profile){
       let at=findNearTile(v,gc.terrain,null,anchor);
       if(at&&pathReaches(v.x,v.y,at.x,at.y,v.id))target=at;
     }
-    if(target&&target.x!=null){v.gatherX=target.x;v.gatherY=target.y;}
+    if(target&&target.x!=null){
+      // PARITY: claim + approach through THE shared helpers the human
+      // gather-click uses (claimGatherTileNear fans co-gatherers onto
+      // distinct tiles; pickGatherStand rings distinct adjacent stands).
+      // The AI's drop-anchored CHOICE above is decision-making; the
+      // claiming/standing MECHANICS are now identical to a player's.
+      let g=claimGatherTileNear(v, gc.terrain, target.x, target.y);
+      v.gatherX=g.x; v.gatherY=g.y;
+      let stand=(typeof pickGatherStand==='function')?pickGatherStand(v,g.x,g.y):null;
+      if(stand)pathUnitTo(v,stand.x,stand.y);
+    }
   }
 }
 
@@ -2085,7 +2095,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   if(waveRams.length){
     let riders=attackers.filter(m=>canRideRam(m)&&m.target);
     waveRams.forEach(ram=>{
-      let room=garrisonCap(ram)-garrisonCount(ram);
+      let room=ramSeatsFree(ram); // shared seat accounting (walkers-in-transit count) with the player's ram-click path
       if(room<=0||!riders.length)return;
       riders.sort((a,b)=>dist(a,ram)-dist(b,ram)||a.id-b.id);
       let take=riders.splice(0,room);
@@ -2432,42 +2442,19 @@ function hasAIBuilding(ai,type){
 }
 
 function placeAIBuilding(ai,type,x,y){
-  let b=BLDGS[type];
-  let gw = b.w, gh = b.h;
-  let ox = x, oy = y;
-  if (type === 'GATE') {
-    let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === 'WALL' && en.team === ai.team);
-    ({ ox, oy, gw, gh } = gateFootprint(x, y, isWall));
-  }
-  let wallsToRemove = [];
-  for (let dy = 0; dy < gh; dy++) {
-    for (let dx = 0; dx < gw; dx++) {
-      let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && en.btype === 'WALL' && en.team === ai.team);
-      if (w) wallsToRemove.push(w);
-    }
-  }
-  // Consumed walls refund their own cost (effectiveBuildCost, js/logic.js —
-  // THE shared implementation with the player's execBuildPlacement, so the AI
-  // and human build-over-wall charges can never drift). Gates and bastions
-  // (stone TOWER / wooden PTOWER) consume the wall(s) under their footprint —
-  // the collection loop above already gathered exactly those.
-  let actualCost = effectiveBuildCost(type, (type === 'GATE' || isTowerBtype(type)) ? wallsToRemove : null);
+  // PARITY: delegate to THE shared placement pipeline the player's
+  // execBuildPlacement uses — resolveBuildingPlacement (gate sizing,
+  // wall/gate/tower consume incl. SWALL runs and gate-over-gate rebuild)
+  // + effectiveBuildCost (consumed walls refund their own cost) +
+  // commitBuildingPlacement. The old hand-rolled copy here only matched
+  // literal 'WALL' pieces, so AI stone-wall/gate rebuilds drifted from the
+  // human rules. Costs/validation were already honest (canPlace/canAfford/
+  // spendCost); now the geometry can't drift either.
+  let plan = resolveBuildingPlacement(type, x, y, ai.team);
+  let actualCost = effectiveBuildCost(type, (isGateBtype(type) || isTowerBtype(type)) ? plan.replaced : null);
   if(!canPlace(type,x,y,ai.team)||!canAfford(ai.team,actualCost))return null;
   spendCost(ai.team,actualCost);
-  if (wallsToRemove.length > 0) {
-    let ids = new Set(wallsToRemove.map(w => w.id));
-    entities = entities.filter(en => !ids.has(en.id));
-    selected = selected.filter(s => !ids.has(s.id)); // mirror the player path: don't leave dangling refs in observer/self-match views
-    ids.forEach(id => entitiesById.delete(id));
-  }
-  let building=createBuilding(type,ox,oy,ai.team,gw,gh);
-  building.complete=false;
-  building.buildProgress=0;
-  building.hp=1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-  if (wallsToRemove.length > 0) {
-    building.wasWall = true;
-  }
-  return building;
+  return commitBuildingPlacement(type, plan, ai.team, false);
 }
 
 // Food drop-offs (the TC and every Mill) each reserve a farm belt around them

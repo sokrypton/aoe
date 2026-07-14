@@ -302,6 +302,16 @@ function unPassive(u){
   if (u.stance === 'passive') u.stance = 'aggressive';
 }
 
+// THE free-seat count for a garrison container: seats already taken PLUS
+// riders already WALKING to board count against the cap — shared by the
+// player's ram-click boarding and the AI's wave rider planner, so the two
+// can never double-book seats differently.
+function ramSeatsFree(container){
+  let walkers = 0;
+  for (const u of entities) if (u.type === 'unit' && u.task === 'garrison' && u.garrisonTarget === container.id) walkers++;
+  return Math.max(0, garrisonCap(container) - garrisonCount(container) - walkers);
+}
+
 // THE attack assignment — the ONE way any controller (a human command OR
 // js/ai.js) points a unit at a target, so AI attacks carry exactly the
 // semantics a player's attack-click does (parity: the AI can't do anything
@@ -550,12 +560,7 @@ function execUnitCommand(cmd){
   // WALKING to board count against the cap, and each boarding order issued
   // below consumes one — surplus infantry fall through to the follow branch
   // (escort) instead of marching to a full ram and idling there.
-  let ramRoom = 0;
-  if (ramTarget) {
-    let walkers = 0;
-    for (const u of entities) if (u.type === 'unit' && u.task === 'garrison' && u.garrisonTarget === ramTarget.id) walkers++;
-    ramRoom = Math.max(0, garrisonCap(ramTarget) - garrisonCount(ramTarget) - walkers);
-  }
+  let ramRoom = ramTarget ? ramSeatsFree(ramTarget) : 0;
 
   let movers = selected.filter(s => s.type === 'unit');
   let offsets = getFormation(movers.length);
