@@ -1191,13 +1191,15 @@ function planAIMarket(ai,aiTC,vils,profile){
   if(!isUnlocked(ai.team,'MARKET'))return;               // Feudal-gated
   if(aiOwnMarket(ai.team))return;                         // one is enough
   let r=resourceStore(ai.team);
-  // Need-based build fires on EITHER food-starved-with-gold OR simply being
-  // at war (aiRecentlyRaided): a raided AI wants the exchange as economic
-  // insurance BEFORE it is starving — the armyReserve gate below held the
-  // seed-2001 AI's market for its entire losing war. Every safety gate
-  // stays (Feudal unlock, one market, 175 wood affordable, barracks fund
-  // intact), so this starves nothing.
-  let emergency=((r.food<AI_MIN_FOOD&&r.gold>=300)||aiRecentlyRaided(ai))
+  // Need-based build fires on EITHER a floor breach with gold to convert
+  // (MARKET_FLOOR — the same table the exchange trades toward) OR simply
+  // being at war (aiRecentlyRaided): a raided AI wants the exchange as
+  // economic insurance BEFORE it is starving — the armyReserve gate below
+  // held the seed-2001 AI's market for its entire losing war. Every safety
+  // gate stays (Feudal unlock, one market, 175 wood affordable, barracks
+  // fund intact), so this starves nothing.
+  let starving=(r.food<MARKET_FLOOR.food||r.wood<MARKET_FLOOR.wood)&&r.gold>=300;
+  let emergency=(starving||aiRecentlyRaided(ai))
     &&canAfford(ai.team,BLDGS.MARKET.cost)&&aiBarracksFundClear(ai,BLDGS.MARKET.cost.w);
   if(!emergency){
     if(teamAge[ai.team] < (profile.maxAge||2))return;    // finished teching first
@@ -1251,54 +1253,53 @@ function controlAITradeCarts(ai,aiUnits){
   }
 }
 
-// Emergency resource floors (the minimal sn-minimum-<res> analog, AoE2 §9):
-// below these the economy is STARVING and banked gold converts at a much
-// smaller cushion than the normal gold-rich threshold. Static config — no
-// hash. Values: 100 food ≈ one TC villager + change; 80 wood ≈ a farm
-// reseed + a house.
-const AI_MIN_FOOD=100, AI_MIN_WOOD=80;
-const AI_EMERGENCY_GOLD_CUSHION=100; // vs the 300 gold-rich cushion below
+// THE market model — two tables and one rule (replaced a four-branch chain
+// that had grown a special case per incident).
+// FLOORS (the minimal sn-minimum-<res> analog, AoE2 §9): below these the
+// economy is STARVING — fix the worst breach every decision tick. Gold is
+// just another resource with a floor: 150 covers a ram's 75g plus a couple
+// of gold units per cycle (raised from 80 after self-play seed 7200 hovered
+// just above starvation). Food 100 ≈ one TC villager + change; wood 80 ≈ a
+// farm reseed + a house. Fixed priority food > wood > gold: food starves
+// both the army and villager production first.
+// SURPLUS: above these a resource is safe to SELL — stone first (no other
+// sink for a non-waller, and wall spending yields during a war-state).
+// Static config — no hash.
+const MARKET_FLOOR={food:100,wood:80,gold:150};
+const MARKET_SURPLUS={stone:200,wood:500,food:400};
+const AI_EMERGENCY_GOLD_CUSHION=100; // floor buys spend down to here (vs the 300 comfort cushion)
 
-// Commodity exchange (all difficulties, 1v1 + team). At most one 100-lot per
-// decision tick so the team's own prices don't crater/spike; the buy and
-// sell conditions are mutually exclusive (gold-low vs gold-high) so no
-// oscillation. Selling prefers stone (classic AoE2); buying relieves the worst
-// non-gold bottleneck and never spends below the gold-rich threshold —
-// EXCEPT at emergency floors: a raided economy with food pinned near 0 and
-// gold banked converts down to AI_EMERGENCY_GOLD_CUSHION (the seed-1001
-// spiral held 733 gold while food sat at 0-40 for 30k ticks). Still one lot
-// per decision tick — deterministic, and at hard's cadence 100 food per ~4
-// game-seconds outpaces ~8 farmers; the shared global price table
-// self-limits runaway conversion.
+// Commodity exchange (all difficulties, 1v1 + team). ONE deficit-driven
+// rule, at most one 100-lot per decision tick (the shared global price
+// table self-limits repeated conversion; ±3/lot drift):
+//   worst floor breach → BUY it with gold (small cushion); can't afford
+//   the buy (or gold itself is the breach) → SELL the first surplus in
+//   stone→wood→food order to raise gold; no breach → comfort top-up of
+//   wood from real gold riches.
+// No oscillation by construction: a floor (food<100/wood<80) can never
+// overlap its own surplus (food>400/wood>500), stone is never bought, a
+// resource is never sold to fix its own breach, and each trade moves its
+// resource away from the triggering condition. This is the bootstrap chain
+// the seed-1001/2001 collapses lacked: wealth locked in the wrong
+// commodity now converts toward whatever is starving, in at most two hops
+// (surplus → gold → need).
 function planAIMarketExchange(ai,profile){
   let mkt=aiOwnMarket(ai.team);
   if(!mkt||!mkt.complete)return;
   let r=resourceStore(ai.team);
   let prices=marketPricesFor(ai.team);
-  // One mutually-exclusive chain, one trade per decision tick. Emergency
-  // floors first (a starving economy converts BEFORE surplus bookkeeping):
-  // 1. below a floor with gold → BUY the floor resource (small cushion);
-  // 2. below a floor, gold too thin, stone banked → SELL STONE to fund the
-  //    buy next tick (stone has no other sink for a non-waller, and wall
-  //    spending yields during a war-state anyway) — this is the bootstrap
-  //    the seed-2001 collapse lacked: wood AND food starved with wealth
-  //    locked in the wrong commodity;
-  // 3. gold-hungry surplus sell (150 not 80: the old threshold hovered the
-  //    AI just above starvation, self-play seed 7200);
-  // 4. gold-rich comfort buy. No oscillation: floors (food<100/wood<80)
-  //    can't overlap their own surplus-sell thresholds (food>400/wood>500),
-  //    and stone is never bought.
-  let em=r.food<AI_MIN_FOOD?'food':(r.wood<AI_MIN_WOOD?'wood':null);
-  if(em&&r.gold-prices[em]>=AI_EMERGENCY_GOLD_CUSHION){
-    execMarketTrade({dir:'buy',resType:em},ai.team);     // emergency floor buy
-  } else if(em&&r.stone>200){
-    execMarketTrade({dir:'sell',resType:'stone'},ai.team); // liquidate stone to fund the floor buy
-  } else if(r.gold<150){
-    let res=r.stone>250?'stone':r.wood>500?'wood':r.food>400?'food':null;
-    if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
+  let need=['food','wood','gold'].find(k=>r[k]<MARKET_FLOOR[k])||null;
+  if(need&&need!=='gold'&&r.gold-prices[need]>=AI_EMERGENCY_GOLD_CUSHION){
+    execMarketTrade({dir:'buy',resType:need},ai.team);   // fix the breach directly
+  } else if(need){
+    // Gold-poor (or gold IS the breach): liquidate the first surplus.
+    let sell=['stone','wood','food'].find(k=>k!==need&&r[k]>MARKET_SURPLUS[k]);
+    if(sell)execMarketTrade({dir:'sell',resType:sell},ai.team);
   } else if(r.gold>300){
-    let res=r.wood<120?'wood':r.food<100?'food':null;
-    if(res&&r.gold-prices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
+    // Comfort top-up: keep the build economy liquid when genuinely rich.
+    // (Food needs no comfort branch — its floor buy above always fires
+    // first at these gold levels.)
+    if(r.wood<120&&r.gold-prices.wood>=300)execMarketTrade({dir:'buy',resType:'wood'},ai.team);
   }
 }
 
