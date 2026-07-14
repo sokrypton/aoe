@@ -323,7 +323,17 @@ function aiVisibleEnemies(ai,pred){
   // through this one choke point. (entityVisibleToTeam short-circuits on
   // fogDisabled itself; the grids are UNMAINTAINED under All-Visible, so a
   // bare grid read here would be blind — the inverse bug.)
-  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e)&&entityVisibleToTeam(e,ai.team));
+  // !garrisonedIn: a unit inside a building is not on the map — targeting a
+  // belled villager caused decision-cadence churn (assigned, then dropped by
+  // updateUnit's garrisoned-target check next tick), and with villagers as
+  // prime raid targets the bell must WORK as the counter: sheltered
+  // villagers vanish, the wave falls through to the TC siege. Intel
+  // strength memory losing garrisoned enemies is parity-correct (you can't
+  // count what's inside a building; the decayed memory snaps back up on
+  // re-sight). estimateLocalEnemyPower deliberately does NOT flow through
+  // here and keeps counting a garrisoned archer's arrows toward defense
+  // sizing.
+  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&!e.garrisonedIn&&pred(e)&&entityVisibleToTeam(e,ai.team));
 }
 function getSpottedEnemies(ai){
   return aiVisibleEnemies(ai,e=>e.utype!=='sheep');
@@ -1179,7 +1189,13 @@ function planAIMarket(ai,aiTC,vils,profile){
   if(!isUnlocked(ai.team,'MARKET'))return;               // Feudal-gated
   if(aiOwnMarket(ai.team))return;                         // one is enough
   let r=resourceStore(ai.team);
-  let emergency=r.food<AI_MIN_FOOD&&r.gold>=300
+  // Need-based build fires on EITHER food-starved-with-gold OR simply being
+  // at war (aiRecentlyRaided): a raided AI wants the exchange as economic
+  // insurance BEFORE it is starving — the armyReserve gate below held the
+  // seed-2001 AI's market for its entire losing war. Every safety gate
+  // stays (Feudal unlock, one market, 175 wood affordable, barracks fund
+  // intact), so this starves nothing.
+  let emergency=((r.food<AI_MIN_FOOD&&r.gold>=300)||aiRecentlyRaided(ai))
     &&canAfford(ai.team,BLDGS.MARKET.cost)&&aiBarracksFundClear(ai,BLDGS.MARKET.cost.w);
   if(!emergency){
     if(teamAge[ai.team] < (profile.maxAge||2))return;    // finished teching first
@@ -1256,22 +1272,31 @@ function planAIMarketExchange(ai,profile){
   let mkt=aiOwnMarket(ai.team);
   if(!mkt||!mkt.complete)return;
   let r=resourceStore(ai.team);
-  // Sell at gold<150, not gold<80: the old threshold let the AI hover JUST
-  // above starvation — 100–140 gold, 1600+ food floating — dribbling gold-cost
-  // units out one at a time while its attack never sustained (self-play seed
-  // 7200). 150 covers a ram's 75g plus a couple of gold units per cycle.
-  if(r.gold<150){
+  let prices=marketPricesFor(ai.team);
+  // One mutually-exclusive chain, one trade per decision tick. Emergency
+  // floors first (a starving economy converts BEFORE surplus bookkeeping):
+  // 1. below a floor with gold → BUY the floor resource (small cushion);
+  // 2. below a floor, gold too thin, stone banked → SELL STONE to fund the
+  //    buy next tick (stone has no other sink for a non-waller, and wall
+  //    spending yields during a war-state anyway) — this is the bootstrap
+  //    the seed-2001 collapse lacked: wood AND food starved with wealth
+  //    locked in the wrong commodity;
+  // 3. gold-hungry surplus sell (150 not 80: the old threshold hovered the
+  //    AI just above starvation, self-play seed 7200);
+  // 4. gold-rich comfort buy. No oscillation: floors (food<100/wood<80)
+  //    can't overlap their own surplus-sell thresholds (food>400/wood>500),
+  //    and stone is never bought.
+  let em=r.food<AI_MIN_FOOD?'food':(r.wood<AI_MIN_WOOD?'wood':null);
+  if(em&&r.gold-prices[em]>=AI_EMERGENCY_GOLD_CUSHION){
+    execMarketTrade({dir:'buy',resType:em},ai.team);     // emergency floor buy
+  } else if(em&&r.stone>200){
+    execMarketTrade({dir:'sell',resType:'stone'},ai.team); // liquidate stone to fund the floor buy
+  } else if(r.gold<150){
     let res=r.stone>250?'stone':r.wood>500?'wood':r.food>400?'food':null;
     if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
-  } else {
-    let prices=marketPricesFor(ai.team);
-    let em=r.food<AI_MIN_FOOD?'food':(r.wood<AI_MIN_WOOD?'wood':null);
-    if(em&&r.gold-prices[em]>=AI_EMERGENCY_GOLD_CUSHION){
-      execMarketTrade({dir:'buy',resType:em},ai.team);   // emergency floor buy
-    } else if(r.gold>300){
-      let res=r.wood<120?'wood':r.food<100?'food':null;
-      if(res&&r.gold-prices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
-    }
+  } else if(r.gold>300){
+    let res=r.wood<120?'wood':r.food<100?'food':null;
+    if(res&&r.gold-prices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
   }
 }
 
@@ -1687,6 +1712,17 @@ function aiEcoPlan(ai,vilCount,profile){
   if(store.wood>600&&base.chop)base.chop=Math.max(1,Math.floor(base.chop/2));
   if(store.gold>500&&base.mine_gold)base.mine_gold=Math.max(1,Math.floor(base.mine_gold/2));
   if(store.stone>400&&base.mine_stone)delete base.mine_stone;
+  // FOOD hoard sheds too (the rule was asymmetric — every other resource
+  // shed, food never did): farm share is sticky (one farmer per active
+  // farm), so a food-unit army composition banked 5000+ food while wood
+  // pinned at ~25 — no rams, no market, no buildings, and med-easy games
+  // stalled unresolvable (seed 1001). Halve farm/forage above 600 banked
+  // and push the freed hands to wood, the universal constructive sink.
+  if(store.food>600){
+    if(base.farm)base.farm=Math.max(1,Math.floor(base.farm/2));
+    if(base.forage)base.forage=Math.max(1,Math.floor(base.forage/2));
+    base.chop=(base.chop||1)+2;
+  }
   if(store.food<250){
     if(base.farm)base.farm*=2;
     if(base.forage)base.forage*=2;
@@ -2674,19 +2710,29 @@ function chooseAIAttackTarget(ai,militia,spotted){
   let spottedEnemies=spotted||aiVisibleEnemies(ai,
     e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
 
-  // Fallback to searching nearby player town centers if no units are spotted,
-  // but only head to their coordinate range (simulating exploration).
-  // Fight the army in your face before sieging buildings (marching past a
-  // defending force into the TC invites getting surrounded), then the TC,
-  // then military infrastructure, then the rest; distant units last.
+  // Fight the army in your face first (marching past a defending force into
+  // the TC invites getting surrounded), then RAID: spotted enemy villagers/
+  // trade carts at ANY distance outrank the TC — killing the economy is what
+  // makes attacks hurt (AoE2 raiding emerges from up-set-offense-priority
+  // scripts exactly like this; seed-2001 upset: 7 TC-sieging waves killed
+  // ZERO villagers while the enemy's raids bled 36). The bell is the
+  // counter: garrisoned villagers vanish from the spotted set
+  // (aiVisibleEnemies excludes garrisonedIn) and the wave falls through to
+  // the TC siege. Then TC, military infrastructure, the rest; distant
+  // non-eco units last. Chasing a fleeing villager into TC fire is
+  // authentic raiding — the <30% HP retreat and the wave-casualty recall
+  // are the counterweights.
   let engage=12*aiScale();
   let priority=e=>{
     // Rams ignore units entirely (1-2 dmg) — they exist to crack
     // structures; the escorting soldiers handle the defenders.
-    if(e.type==='unit')return dist(militia,e)<=engage?0:4; // rams never see units here (cands is buildings-only for rams)
-    if(e.btype==='TC')return 1;
-    if(e.btype==='TOWER'||e.btype==='BARRACKS')return 2;
-    return 3;
+    if(e.type==='unit'){
+      if(dist(militia,e)<=engage)return 0; // rams never see units here (cands is buildings-only for rams)
+      return (e.utype==='villager'||e.utype==='tradecart')?1:5; // hunt eco
+    }
+    if(e.btype==='TC')return 2;
+    if(e.btype==='TOWER'||e.btype==='BARRACKS')return 3;
+    return 4;
   };
   // Rams attack STRUCTURES only — 2 damage vs a unit is a wasted swing. Filter
   // the candidate set so a ram never picks a soldier/villager just because no

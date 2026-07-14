@@ -201,7 +201,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 | Commit % | 75%, keep 25% home | `commitPercent` + `armyReserve` | ✅ |
 | Stalemate valve | attacks eventually even outmatched | DELETED 2026-07 — it existed to unstick the eco-scaled launch bar, and its 8-unit floor was itself unreachable for a raided AI; the small scaled min group is always reachable | ✅ (by removal) |
 | March cohesion | group moves together | `groupSpeed` = slowest member | ✅ |
-| Target priority | script `up-set-offense-priority` | units-in-face → TC → tower/barracks → rest; rams = buildings only | ✅ reasonable equivalent |
+| Target priority | script `up-set-offense-priority` (raiding emerges from eco-priority scripts) | units-in-face → **spotted villagers/trade carts at any distance (raid tier)** → TC → tower/barracks → rest → distant other units; rams = buildings only; garrisoned units excluded from the spotted set (the bell is the counter — sheltered villagers vanish, the wave falls to the TC siege) | ✅ closed 2026-07 (raid economics) |
 | Wall handling | `building-targeting-mode` | detour-vs-breach cost compare (`resolveReachableAttackTarget`) | ✅ arguably better |
 | Garrison rams | infantry ride rams to the front (`garrison-rams [1]`) | melee infantry boards wave rams (cap 4, +8% speed each), disembarks at the objective/under melee fire, survives the wreck; player-usable via right-click + Ungarrison grid | ✅ closed 2026-07 |
 | Attack-intelligence (route around enemies) | **off by default** | not modeled | ✅ matches default |
@@ -225,8 +225,9 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 | Walling | situational, script-driven | full ring + eco/enemy gates, deferred until maxAge AND paused during a war-state (`aiRecentlyRaided` — core hit within 2 game-min; walls are preparation, not reaction; egress carving keeps running) | ✅ |
 | Stone upgrade | script | palisade→stone from Feudal, gates first | ✅ |
 | Towers | `auto-build-towers` / `max-towers` | `maxTowers` 0/1/2, wall-mounted (gate flank → corners → eco side) | ✅ |
-| Resource ceilings | `sn-maximum-<res>` | hoard thresholds (wood>600 shed, stone>800 stop, gold>500 shed) | ✅ |
-| Resource floors | `sn-minimum-<res>` | emergency market floors (2026-07): food<100 / wood<80 with gold banked → buy at a 100-gold cushion (vs 300 normally); a food-starved gold-rich AI may also build the market NEED-based; barracks rebuild fund (175w) outranks towers/market/new farms (`aiBarracksFundClear`) | ✅ minimal analog |
+| Resource ceilings | `sn-maximum-<res>` | hoard thresholds, ALL four resources (wood>600 shed, stone>400 stop, gold>500 shed, **food>600 shed → +2 chop** — food was asymmetric: sticky farm shares banked 5000+ food while wood pinned at 25, so no rams/market/buildings and med-easy games stalled unresolvable) | ✅ closed 2026-07 (raid economics) |
+| Resource floors | `sn-minimum-<res>` | emergency market floors (2026-07): food<100 / wood<80 with gold banked → buy at a 100-gold cushion (vs 300 normally); below a floor with thin gold and stone>200 → SELL STONE to fund the buy (the bootstrap the double-starved seed-2001 collapse lacked); a food-starved gold-rich OR war-state AI may build the market NEED-based; barracks rebuild fund (175w) outranks towers/market/new farms (`aiBarracksFundClear`) | ✅ minimal analog |
+| Town contraction under attack | `sn-minimum-town-size [12]` spirit (no direct SN) | war-state gather contraction: while `aiRecentlyRaided`, gather tiles beyond `AI_BASE_ALARM_RADIUS(18)·aiScale` of the TC are rejected (`canGatherTile`) — field gatherers pull inside the defensive umbrella; farms exempt (at-TC income). Plus RAID danger zones: a villager killed by an enemy stamps a bearless `dangerZones` entry so replacements aren't re-tasked onto the death tile | ✅ new ground (2026-07 raid economics) |
 
 ### Remaining gaps, in priority order
 

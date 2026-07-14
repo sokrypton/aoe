@@ -378,22 +378,54 @@ function farmAtTile(x,y,team,requireComplete=true){
 
 function canGatherTile(e,terrain,x,y){
   if(terrain===TERRAIN.FARM)return !!farmAtTile(x,y,e.team,true);
-  // AI wildlife avoidance: tiles inside a live danger zone (a bear mauled a
-  // villager there — see the fleeBear reflex below) are ungatherable for
-  // that team until the zone expires. Humans manage their own safety.
+  // AI danger avoidance: tiles inside a live danger zone are ungatherable
+  // for that team until the zone expires. Two zone kinds share the array:
+  // bear zones (bearId set — a bear mauled a villager, fleeBear reflex
+  // below) and RAID zones (no bearId — a villager was KILLED by an enemy
+  // player there, handleDeath; without them raided AIs re-tasked fresh
+  // gatherers straight onto the tile the last one died at, seed-2001).
+  // Humans manage their own safety.
   let ai=AI_STATES&&AI_STATES[e.team];
   if(ai&&ai.dangerZones&&ai.dangerZones.length){
     for(let z of ai.dangerZones){
       if(tick>=z.until)continue;
-      // Zone dies with its bear: a hunted bear frees the resource patch
-      // immediately (this is what makes dispatching the hunt worthwhile).
-      let bear=entitiesById.get(z.bearId);
-      if(!bear||bear.hp<=0)continue;
+      // A bear zone dies with its bear: a hunted bear frees the resource
+      // patch immediately (this is what makes dispatching the hunt
+      // worthwhile). Raid zones have no bearId and expire by time only —
+      // the raider may be long gone; the ground is still proven deadly.
+      if(z.bearId!=null){
+        let bear=entitiesById.get(z.bearId);
+        if(!bear||bear.hp<=0)continue;
+      }
       // Radius 4 around the mauling spot: big den-radius zones (tried at 8)
       // locked out whole resource regions and STARVED the team — worse than
       // the bear. Small zones stop the immediate re-tasking loop; the hunt
       // (js/ai.js huntAIBears) is what actually reclaims the area.
       if(Math.abs(x-z.x)<=4&&Math.abs(y-z.y)<=4)return false;
+    }
+  }
+  // WAR-STATE GATHER CONTRACTION (sn-minimum-town-size spirit): while the
+  // base is taking core hits (aiRecentlyRaided — the persistent war-state),
+  // gather only inside the alarm radius of the TC. The far camps are where
+  // raided AIs bled villagers 30-at-a-time: field gatherers beyond the
+  // town's defensive umbrella are indefensible, and a villager idling ALIVE
+  // near the TC beats one dying at a treeline. Farms bypass this via the
+  // FARM early-return above — deliberately: farms sit at the TC and are the
+  // protected income. The TC center is memoized ONCE per team per tick
+  // (derived same-tick cache like intel.unitCounts — never carried, so
+  // never hashed; numbers only, AI_STATES is serialized; !==tick self-heals
+  // across rollback) because this function is measured-hot (per-villager
+  // per-tick + findNearTile ring scans).
+  if(ai&&typeof aiRecentlyRaided==='function'&&aiRecentlyRaided(ai)){
+    if(ai._tcMemoTick!==tick){
+      ai._tcMemoTick=tick;
+      let tc=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===e.team&&b.hp>0);
+      if(tc){let c=centerOf(tc);ai._tcMemoX=c.x;ai._tcMemoY=c.y;}
+      else ai._tcMemoTick=-1; // no TC (razed = knocked out anyway): no contraction
+    }
+    if(ai._tcMemoTick===tick){
+      let R=AI_BASE_ALARM_RADIUS*aiScale(),dx=x-ai._tcMemoX,dy=y-ai._tcMemoY;
+      if(dx*dx+dy*dy>R*R)return false;
     }
   }
   return true;
@@ -1425,9 +1457,14 @@ function damageEntity(attacker, target){
     target.fledBearId=attacker.id;
     let dzAi=AI_STATES&&AI_STATES[target.team];
     if(dzAi&&dzAi.dangerZones){
+      // Prune expired/dead-bear zones — but KEEP bearless RAID zones (they
+      // expire by time only; the old bear-only predicate silently wiped
+      // every raid zone whenever a bear mauled anyone).
       dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
+        if(tick>=z.until)return false;
+        if(z.bearId==null)return true;
         let b=entitiesById.get(z.bearId);
-        return tick<z.until&&b&&b.hp>0;
+        return !!(b&&b.hp>0);
       }).slice(-7);
       if(!dzAi.dangerZones.some(z=>z.bearId===attacker.id))
         dzAi.dangerZones.push({x:Math.round(attacker.x),y:Math.round(attacker.y),until:tick+T30(6000),bearId:attacker.id});
@@ -3065,6 +3102,33 @@ function handleDeath(e,killerTeam){
   // unlike a building's garrison, which perishes with it below.
   if(e.type==='unit'&&e.garrison&&e.garrison.length>0){
     ejectGarrison(e);
+  }
+  // RAID MEMORY: an AI villager killed by an enemy player stamps a danger
+  // zone at the death tile — canGatherTile then refuses to re-task fresh
+  // gatherers onto the spot the last one just died at (seed-2001: raided
+  // AIs walked replacements straight back into the raiders, 30+ deaths).
+  // Same shape/array as the bear zones (hashed per-zone in the AI digest);
+  // no bearId → time-expiry only. Bears stamp their own zones (damageEntity
+  // fleeBear path) — GAIA is excluded here.
+  if(e.type==='unit'&&e.utype==='villager'&&isAITeam(e.team)
+     &&killerTeam!=null&&killerTeam!==GAIA_TEAM&&isEnemyOf(e.team,{team:killerTeam})){
+    let dzAi=AI_STATES&&AI_STATES[e.team];
+    if(dzAi&&dzAi.dangerZones){
+      let zx=Math.round(e.x),zy=Math.round(e.y);
+      dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
+        if(tick>=z.until)return false;
+        if(z.bearId==null)return true; // raid zones expire by time only
+        let b=entitiesById.get(z.bearId);
+        return !!(b&&b.hp>0);
+      });
+      // Dedup within the consume radius (Chebyshev 4): a massacre at one
+      // farm cluster refreshes ONE zone instead of pushing eight; cap 7
+      // like the bear path — the array is hashed per-zone, keep it bounded.
+      let near=dzAi.dangerZones.find(z=>Math.abs(z.x-zx)<=4&&Math.abs(z.y-zy)<=4);
+      if(near)near.until=tick+T30(6000);
+      else dzAi.dangerZones.push({x:zx,y:zy,until:tick+T30(6000)});
+      if(dzAi.dangerZones.length>7)dzAi.dangerZones=dzAi.dangerZones.slice(-7);
+    }
   }
   if(e.type==='unit'&&e.utype==='sheep'){
     e.utype = 'sheep_carcass';

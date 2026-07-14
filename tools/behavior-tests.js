@@ -225,6 +225,100 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------- counter-raid targeting
+    // Waves hunt the enemy ECONOMY: spotted villagers outrank the TC in
+    // chooseAIAttackTarget (raid economics milestone — seed-2001's waves
+    // sieged the TC past raidable villagers and killed zero all game).
+    'counter-raid': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 14, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          // Enemy villagers in the open, nearer the AI than the enemy TC.
+          { u: 'villager', x: 26, y: 26, team: 0 }, { u: 'villager', x: 27, y: 26, team: 0 },
+          { u: 'villager', x: 26, y: 27, team: 0 },
+          ...Array.from({ length: 5 }, (_, i) => ({ u: 'militia', x: 40 + (i % 3), y: 40 + Math.floor(i / 3), team: 1 })),
+        ],
+      });
+      window.fogDisabled = true; // All-Visible: targeting is deterministic at launch (every read short-circuits)
+      resources[1] = { food: 0, wood: 0, gold: 0, stone: 0, prepaidFarms: 0 };
+      const tc0 = entities.find(e => e.btype === 'TC' && e.team === 0);
+      const vilsAlive = () => entities.filter(e => e.team === 0 && e.utype === 'villager' && e.hp > 0).length;
+      let killed = false;
+      for (let i = 0; i < T30(6000) && !killed; i++) { update(); killed = vilsAlive() < 3; }
+      T.ok('wave hunts enemy villagers (kills at least one)', killed);
+      T.ok(`enemy TC not the raid's first meal (hp ${tc0.hp}/${tc0.maxHp})`, tc0.hp > tc0.maxHp * 0.9);
+      return T;
+    })),
+
+    // ---------------------------------------- raid danger memory
+    // An AI villager killed by an enemy stamps a bearless danger zone;
+    // canGatherTile refuses tiles near it; the zone SURVIVES a bear-maul
+    // prune (the old bear-only predicate wiped raid zones — regression).
+    'raid-memory': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 15, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          { u: 'villager', x: 30, y: 30, team: 1 },  // the victim, in the field
+          { u: 'knight', x: 31, y: 30, team: 0 },    // the raider, adjacent
+          { u: 'villager', x: 50, y: 50, team: 1 },  // bear bait (prune trigger)
+          { u: 'bear', x: 51, y: 50, team: 255 },
+        ],
+      });
+      const victim = entities.find(e => e.team === 1 && e.utype === 'villager' && e.x === 30);
+      for (let i = 0; i < T30(1200) && victim.hp > 0; i++) update();
+      T.ok('staging: raider kills the field villager', victim.hp <= 0);
+      const zones = () => (AI_STATES[1].dangerZones || []).filter(z => z.bearId == null);
+      T.ok('death stamps a bearless raid zone at the tile', zones().some(z => Math.abs(z.x - 30) <= 1 && Math.abs(z.y - 30) <= 1));
+      const probe = { team: 1, x: 30, y: 30 };
+      T.ok('canGatherTile rejects tiles inside the zone', !canGatherTile(probe, TERRAIN.FOREST, 30, 30));
+      // Let the bear maul the bait — the prune inside that stamp must KEEP
+      // the bearless raid zone (the old predicate required a live bear).
+      for (let i = 0; i < T30(1200) && zones().length && !AI_STATES[1].dangerZones.some(z => z.bearId != null); i++) update();
+      T.ok('raid zone survives a bear-maul prune', zones().length >= 1);
+      const z = zones()[0];
+      z.until = tick; // force expiry
+      // Also clear the war-state: the villager's death set a core hit, and
+      // the gather CONTRACTION (separate mechanism) would keep rejecting
+      // this far-from-TC tile even with the zone expired.
+      lastTeamHit[1] = null; AI_STATES[1].lastBaseHitTick = null;
+      T.ok('expired zone frees the tile', canGatherTile(probe, TERRAIN.FOREST, z.x, z.y));
+      return T;
+    })),
+
+    // ---------------------------------------- war-state gather contraction
+    // While the base takes core hits, gather tiles beyond the alarm radius
+    // of the TC are rejected (sn-minimum-town-size spirit); the contraction
+    // lifts once the war-state decays.
+    'gather-contraction': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 16, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 30, y: 30, team: 1 },
+        ],
+      });
+      const probe = { team: 1, x: 32, y: 32 };
+      const R = AI_BASE_ALARM_RADIUS * aiScale();
+      const farX = 32 + Math.ceil(R) + 8, nearX = 34;
+      AI_STATES[1].lastBaseHitTick = tick; // war-state on
+      T.ok('war-state: far tile rejected', !canGatherTile(probe, TERRAIN.FOREST, farX, 32));
+      T.ok('war-state: tile inside the umbrella accepted', canGatherTile(probe, TERRAIN.FOREST, nearX, 32));
+      AI_STATES[1].lastBaseHitTick = tick - T30(3600) - 1; // war-state decayed
+      lastTeamHit[1] = null;
+      T.ok('peace: far tile accepted again', canGatherTile(probe, TERRAIN.FOREST, farX, 32));
+      return T;
+    })),
+
     // ------------------------------------- bell task-resume (regression)
     // A bell cycle must not cost a villager its assignment: stashVillagerTask
     // at the ring, restoreSavedTask after the all-clear (farms included).
