@@ -436,7 +436,7 @@ function aiVillagerSafeAt(team,x,y){
   if(typeof aiRecentlyRaided==='function'&&aiRecentlyRaided(ai)){
     if(ai._tcMemoTick!==tick){
       ai._tcMemoTick=tick;
-      let tc=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===team&&b.hp>0);
+      let tc=teamTC(team);
       if(tc){let c=centerOf(tc);ai._tcMemoX=c.x;ai._tcMemoY=c.y;}
       else ai._tcMemoTick=-1; // no TC (razed = knocked out anyway): no contraction
     }
@@ -1433,7 +1433,7 @@ function damageEntity(attacker, target){
     let dzAi = AI_STATES && AI_STATES[target.team];
     if (dzAi && dzAi.dangerZones) stampDangerZone(dzAi, Math.round(target.x), Math.round(target.y));
     if (!target.explicitAttack && target.task !== 'garrison') {
-      let tc = entities.find(b => b.type === 'building' && b.btype === 'TC' && b.team === target.team && b.hp > 0);
+      let tc = teamTC(target.team);
       if (tc) {
         let c = centerOf(tc);
         if (dist(target, c) > AI_BASE_ALARM_RADIUS * aiScale()) {
@@ -1641,6 +1641,13 @@ function garrisonCount(b){return b.garrison?b.garrison.length:0;}
 // eligible riders. Callers that pass no unit (town-bell shelter scan, rally
 // targets) therefore never treat a ram as shelter — correct: villagers work,
 // they don't ride.
+// THE "this team's Town Center" lookup (first = lowest id, deterministic).
+// Dead buildings leave `entities` synchronously (handleDeath), so hp>0 is
+// a same-call-stack guard, not a liveness filter.
+function teamTC(team){
+  return entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===team&&b.hp>0);
+}
+
 function canGarrisonIn(b,team,u){
   if(b.team!==team||b.hp<=0||garrisonCap(b)<=0)return false;
   if(b.type==='building')return !!b.complete;
@@ -1896,7 +1903,7 @@ function countSiteWorker(bt){
 function updateAutoScoutTick(e){
   if(e.target){ e.target=null; e.explicitAttack=false; }
   if(e.path.length===0 && (tick+e.id)%AUTOSCOUT_REPICK_EVERY===0){
-    let home=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===e.team)||null;
+    let home=teamTC(e.team)||null;
     let pt=(typeof pickExploreWaypoint==='function')?pickExploreWaypoint(e.team, home):null;
     if(pt)pathUnitTo(e,pt.x,pt.y);
   }

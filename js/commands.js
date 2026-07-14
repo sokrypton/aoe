@@ -281,14 +281,6 @@ function guardEligible(u){
   return isSoldierUnit(u);
 }
 
-// Postures are mutually exclusive in BOTH directions: set-stance clears the
-// guard post (execStance), and a Guard order un-passives the unit — a
-// passive guard could neither auto-acquire nor retaliate, so it stood at
-// its post and died without fighting (the "inert guard" bug).
-function unPassive(u){
-  if (u.stance === 'passive') u.stance = 'aggressive';
-}
-
 // THE free-seat count for a garrison container: seats already taken PLUS
 // riders already WALKING to board count against the cap — shared by the
 // player's ram-click boarding and the AI's wave rider planner, so the two
@@ -338,7 +330,10 @@ function issueOrder(e, order){
   if (order != null && !ORDER_KINDS.has(order.kind)) return false;
   // A guard-family order un-passives (a passive guard is an inert
   // contradiction — it could neither acquire nor retaliate at its post).
-  if (order != null && GUARD_ORDER_KINDS.has(order.kind)) unPassive(e);
+  // Postures are mutually exclusive both ways: set-stance clears guard
+  // orders, and a guard order un-passives — a passive guard could neither
+  // acquire nor retaliate (the "inert guard" bug).
+  if (order != null && GUARD_ORDER_KINDS.has(order.kind) && e.stance === 'passive') e.stance = 'aggressive';
   e.order = order || null;
   // Fresh order → fresh guard-return attempts (a unit that backed off at an
   // old post must not ignore its new one for the T30(600) back-off).

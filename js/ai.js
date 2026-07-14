@@ -26,7 +26,7 @@ function updateAIGarrisonReaction(ai){
   // the walls were holding (the eco-stall bug).
   if(hit && hit.core && hit.tick!==ai.seenWarTick){
     ai.seenWarTick=hit.tick;
-    let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+    let tc=teamTC(ai.team);
     if(tc){
       let wdx=hit.x-(tc.x+tc.w/2), wdy=hit.y-(tc.y+tc.h/2);
       let d=Math.sqrt(wdx*wdx+wdy*wdy);
@@ -43,7 +43,7 @@ function updateAIGarrisonReaction(ai){
     // real army arrived since the window was sized, cancel it and fall
     // through to the bell.
     if(tick%AI_ESCALATE_EVERY===0){
-      let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+      let tc=teamTC(ai.team);
       let threat=tc&&findEnemyThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
       if(threat&&estimateLocalEnemyPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
     }
@@ -64,7 +64,7 @@ function updateAIGarrisonReaction(ai){
     // finding). Same visible-threat test as the soldier shelter recall, with
     // the same reachability null-out (a poker sealed OUTSIDE intact walls
     // must not hold the economy in shelter forever).
-    let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+    let tc=teamTC(ai.team);
     let lurking=tc&&findEnemyThreatNear(ai,tc,12*aiScale());
     if(lurking){
       let {x:tcx,y:tcy}=centerTile(tc);
@@ -87,7 +87,7 @@ function tryAIMilitiaResponse(ai){
   let profile=aiProfileFor(ai.team);
   let cap=profile.civilianMilitia||0;
   if(cap<=0)return false;
-  let aiTC=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+  let aiTC=teamTC(ai.team);
   if(!aiTC)return false;
   let threat=findEnemyThreatNear(ai,aiTC,AI_BASE_ALARM_RADIUS*aiScale());
   if(!threat)return false;
@@ -2247,7 +2247,7 @@ function controlAIScouts(ai,mils,aiTC){
     // A lap around home first: survey the base perimeter (the resource band /
     // where the wall ring will go) before ranging out, like a human checking
     // what's around the TC.
-    let pt = baseSurveyWaypoint(ai,aiTC) || randomScoutWaypoint(ai,aiTC);
+    let pt = baseSurveyWaypoint(ai,aiTC) || pickExploreWaypoint(ai.team, aiTC);
     if(pt)pathUnitTo(s,pt.x,pt.y);
   });
 }
@@ -2300,7 +2300,6 @@ function pickExploreWaypoint(team, homePt){
   }
   return best;
 }
-function randomScoutWaypoint(ai,aiTC){ return pickExploreWaypoint(ai.team, aiTC); }
 
 // ---- ANTI-FORWARD-BUILDING (AoE2 sn-safe-town-size) ----
 // An enemy BUILDING inside the AI's town radius is a threat even with no
