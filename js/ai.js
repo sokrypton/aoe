@@ -113,8 +113,8 @@ function tryAIMilitiaResponse(ai){
     // Same save/restore contract as retaliation (stashVillagerTask,
     // js/logic.js): the villager resumes its task once the raider is dead.
     stashVillagerTask(v);
-    v.target=threat.id;v.explicitAttack=true;
-    v.task=null;v.buildTarget=null;clearGatherTarget(v);clearUnitPath(v);
+    clearGatherTarget(v);
+    assignAttack(v,threat); // shared attack semantics; savedTask still resumes after (AI QoL, not a mutation cheat)
     sent++;
   }
   if(committed+sent===0)return false;
@@ -135,7 +135,6 @@ function updateAI(ai){
     // (handleDeath flags it; no rebuilding — AoE2-style, the town falls
     // with its center). Remaining units keep gathering/fighting only for
     // the brief window until checkAllianceVictory ends the match.
-    addAITrickle(ai,profile);
     let vils=aiUnits.filter(u=>u.utype==='villager');
     let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
     let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
@@ -171,7 +170,10 @@ function updateAI(ai){
     v.task=null;v.target=null;v.buildTarget=null;
     clearGatherTarget(v);
     let pt=nearestBldgPerimeter(v.x,v.y,aiTC,v.id);
-    pathUnitTo(v,pt?pt.x:aiTC.x,pt?pt.y:aiTC.y);
+    // Recall = the shared MOVE order (issueMoveOrder), exactly a human
+    // recall-click: order replaces any prior, move suppresses retaliation
+    // in transit (the flee), multi-leg resume finishes a blocked route.
+    issueMoveOrder(v,pt?pt.x:Math.round(aiTC.x),pt?pt.y:Math.round(aiTC.y));
   });
   // Militia recall: a raider that fled beyond the town radius is not worth the
   // mob's time (villagers at 0.8 speed never catch a fleeing scout) — release
@@ -187,7 +189,6 @@ function updateAI(ai){
   });
   let readyBarracks=barracks.filter(b=>b.complete);
 
-  addAITrickle(ai,profile);
   planAIAgeUp(ai,aiTC,vils,profile); // claims food/gold for the age before military spends it
   queueAIVillagers(ai,aiTC,vils,profile);
   ensureAIHousing(ai,aiTC,profile);
@@ -262,7 +263,7 @@ function huntAIBears(ai,mils){
   for(let m of ordered){
     if(sent>=3)break;
     if(m.utype==='scout'&&sent>0)break; // a fighter already went — spare the scout
-    m.target=bear.id;m.explicitAttack=true;clearUnitPath(m);
+    assignAttack(m,bear);
     sent++;
   }
   if(sent>0)vil.fledBearId=undefined; // hunt dispatched — don't re-trigger every decision
@@ -361,15 +362,13 @@ function updateAIIntel(ai,aiTC,profile){
       intel.tcX=e.x;intel.tcY=e.y;intel.tcTeam=e.team;
     }
   });
-  // Safety net: if scouting genuinely never finds the player (bad luck on a
-  // large map, player tucked in a corner, etc.), don't leave the AI passive
-  // forever once its army is ready — a real opponent eventually locates you
-  // through patrols/skirmishes even without perfect scouting.
-  if(!intel.tcSeen&&ai.tick>profile.attackTick*2){
-    let enemyTC=entities.filter(e=>isEnemyOf(ai.team,e)&&e.btype==='TC')
-      .sort((a,b)=>dist(a,aiTC)-dist(b,aiTC))[0];
-    if(enemyTC){intel.tcSeen=true;intel.tcX=enemyTC.x;intel.tcY=enemyTC.y;intel.tcTeam=enemyTC.team;}
-  }
+  // (The old "safety net" that read the nearest enemy TC's true coordinates
+  // straight out of `entities` after attackTick*2 was DELETED — a
+  // timer-gated map-truth read is an information cheat, parity rule. An AI
+  // whose scouting never found the enemy now sends ARMED RECONNAISSANCE
+  // instead: launchAIWave marches unassigned waves at the team's own
+  // explore frontier — exactly what a human does when they can't find the
+  // last enemy — and tcSeen is earned the honest way, by proximity.)
   intel.unitCounts=unitCounts;
   intel.strength=strength;
   intel.strengthByTeam=strengthByTeam; // per-enemy-team split — wave commits compare vs ONE target, not the sum
@@ -379,10 +378,6 @@ function updateAIIntel(ai,aiTC,profile){
 function estimateLocalEnemyPower(ai,center,radius){
   return entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'&&dist(e,center)<=radius)
     .reduce((s,e)=>s+unitPower(e.utype),0);
-}
-
-function addAITrickle(ai,profile){
-  Object.entries(profile.trickle).forEach(([resName,amount])=>{resourceStore(ai.team)[resName]+=amount;});
 }
 
 // Advance ages, difficulty-paced. Once thresholds pass, either start the
@@ -1870,9 +1865,11 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         if(dist(m,{x:tcx,y:tcy})<=6*aiScale())return;
         if(!m.target&&m.path.length>0)return; // already retreating — don't re-path
         m.target=null;
-        // Perimeter, not the TC's own occupied footprint tile.
+        // Perimeter, not the TC's own occupied footprint tile. Shared MOVE
+        // order (issueMoveOrder) = a human recall-click: replaces any
+        // standing order (picket included) and finishes blocked legs.
         let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
-        pathUnitTo(m,pt?pt.x:tcx,pt?pt.y:tcy);
+        issueMoveOrder(m,pt?pt.x:tcx,pt?pt.y:tcy);
       });
       return;
     }
@@ -1895,7 +1892,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     });
     aiDispatchQuota(eligible,threat,profile,
       m=>!m.target||dist(m,threat)<10*aiScale(),
-      m=>{m.target=threat.id;clearUnitPath(m);}); // clearUnitPath: engage immediately
+      m=>assignAttack(m,threat)); // THE shared attack assignment (parity with a human attack-click)
     return;
   }
   // Base perimeter UNDER SIEGE — defend instead of marching off to attack.
@@ -1922,7 +1919,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         if(dist(m,{x:tcx,y:tcy})<=22)return;   // already near home — leave it (rally handles it)
         m.target=null; m.explicitAttack=false; // recall the far-off attacker to defend
         let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
-        pathUnitTo(m,pt?pt.x:tcx,pt?pt.y:tcy);
+        issueMoveOrder(m,pt?pt.x:tcx,pt?pt.y:tcy); // shared move order, human-recall semantics
       });
       rallyIdleMilitary(ai,mils,aiTC);         // hold the idle reserve at the gate
       return;
@@ -1941,7 +1938,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         // resolveReachableAttackTarget handles a walled-off structure by
         // routing through the cheapest breach instead of wedging the unit.
         let t=resolveReachableAttackTarget(m,fb);
-        if(t){m.target=t.id;m.explicitAttack=true;clearUnitPath(m);}
+        if(t)assignAttack(m,t);
       });
     }
   }
@@ -1986,7 +1983,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       let spotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
       strays.forEach(m=>{
         let t=chooseAIAttackTarget(ai,m,spotted);
-        if(t){m.target=t.id;m.explicitAttack=true;clearUnitPath(m);}
+        if(t)assignAttack(m,t);
       });
     }
   }
@@ -2053,12 +2050,29 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   // Targets first, pace after: the formation speed depends on who marches
   // and who RIDES (a loaded ram is faster than an empty one), so riders are
   // planned before the group pace is computed.
+  // ARMED RECONNAISSANCE: no known target (scouting never found the enemy —
+  // the omniscient TC-reveal fallback is gone, parity rule) → the wave
+  // marches at the team's own explore frontier as a fighting patrol, the
+  // same thing a human does hunting the last enemy. Each recon wave earns
+  // intel honestly: proximity contact sets tcSeen via getSpottedEnemies.
+  let reconPt = null;
+  if(!ai.intel || !ai.intel.tcSeen){
+    let home = aiTC || null;
+    reconPt = (typeof pickExploreWaypoint==='function') ? pickExploreWaypoint(ai.team, home) : null;
+  }
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(ai,m,waveSpotted);
     // explicitAttack: this is a deliberate march on remembered intel — the
     // per-tick vision check in updateUnit() must not wipe the order just
     // because the destination is beyond current AI sight range.
-    if(target){m.target=target.id;m.explicitAttack=true;clearUnitPath(m);launched++;}
+    if(target){
+      assignAttack(m,target); // shared semantics incl. order clear + battlefield anchor
+      launched++;
+    } else if(reconPt){
+      issueOrder(m,{kind:'move', x:reconPt.x, y:reconPt.y}); // fighting patrol toward the frontier
+      pathUnitTo(m,reconPt.x,reconPt.y);
+      launched++;
+    }
   });
   // AoE2 sn-garrison-rams [1]: the wave's melee infantry rides its rams to
   // the front — protected from arrows en route, and each rider speeds the
@@ -2114,6 +2128,16 @@ function controlAIMilitary(ai,mils,aiTC,profile){
 // Idle army posture between waves: hold a forward point (the gate, stepped
 // toward the enemy; else a spot ahead of the TC) instead of loitering on
 // the TC where a raid reaches the eco before the army reacts.
+// THIRD AI ORDER ADOPTION (P5c): defenders hold GUARD orders in a formation
+// picket — zone-scoped acquisition (engage what threatens the line, not any
+// foe that wanders near), the 6-tile leash (unkiteable), guard-return
+// (re-form after each skirmish). Wave launches clear the posts (the
+// issueOrder(null) at the wave assign). NOTE: this correctly STRENGTHENS
+// defense and therefore raises AI-vs-AI stalemate counts — that exposes the
+// real structural problem (attackers lack a resolution mechanism: the
+// garrisoned-TC arrow curve + small waves + no Imperial siege). Fix
+// resolution at ITS root; do not weaken this posture to hide it
+// (first-principles rule — see the balance work).
 function rallyIdleMilitary(ai,mils,aiTC){
   let dir=getEnemyDirection(ai,aiTC);
   let rx,ry;
@@ -2127,12 +2151,19 @@ function rallyIdleMilitary(ai,mils,aiTC){
   rx=Math.max(1,Math.min(MAP-2,rx));ry=Math.max(1,Math.min(MAP-2,ry));
   for(let back=0;back<3&&!walkable(rx,ry);back++){rx=Math.round(rx-dir.dx);ry=Math.round(ry-dir.dy);}
   if(!walkable(rx,ry))return;
+  // Deterministic picket: mils comes from the entities scan (ascending id),
+  // so offsets assign identically on every lockstep peer.
+  let offsets=getFormation(mils.length), oi=0;
   mils.forEach(m=>{
     if(m.utype==='scout')return; // controlAIScouts owns scouts
+    let ox=offsets[oi]?offsets[oi][0]:0, oy=offsets[oi]?offsets[oi][1]:0; oi++;
     if(isRetreatingUnit(m))return; // a fleeing unit rests at home until the stamp expires
     if(m.target||m.path.length>0)return;
-    if(dist(m,{x:rx,y:ry})<=4)return;
-    pathUnitTo(m,rx,ry);
+    let px=Math.max(1,Math.min(MAP-2,rx+ox)), py=Math.max(1,Math.min(MAP-2,ry+oy));
+    if(m.order&&m.order.kind==='guard'&&Math.abs(m.order.x-rx)<=4&&Math.abs(m.order.y-ry)<=4)return;
+    if(dist(m,{x:rx,y:ry})<=4&&!m.order)return;
+    issueOrder(m,{kind:'guard',x:px,y:py});
+    pathUnitTo(m,px,py);
   });
 }
 

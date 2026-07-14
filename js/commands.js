@@ -302,6 +302,25 @@ function unPassive(u){
   if (u.stance === 'passive') u.stance = 'aggressive';
 }
 
+// THE attack assignment — the ONE way any controller (a human command OR
+// js/ai.js) points a unit at a target, so AI attacks carry exactly the
+// semantics a player's attack-click does (parity: the AI can't do anything
+// a human couldn't):
+//   - LAST ORDER WINS: the standing order is replaced (a guard picket must
+//     never leash a committed attacker home);
+//   - explicitAttack: committed — leash-exempt, survives fog loss per the
+//     human rules, mop-up on target death (human teams);
+//   - the ANCHOR moves to the target ("hold the ground you take"): a
+//     DEFENSIVE unit that finishes the assault leashes to the battlefield,
+//     not back to wherever it stood when ordered;
+//   - task/build/path cleared like any redirect.
+function assignAttack(u, target){
+  if (u.order) issueOrder(u, null);
+  u.target = target.id; u.task = null; clearUnitPath(u); u.buildTarget = null;
+  u.explicitAttack = true;
+  u.defendX = Math.round(target.x); u.defendY = Math.round(target.y);
+}
+
 // ---- THE EXCLUSIVE ORDER SLOT ----
 // One standing order per unit (e.order); issuing ANY order replaces the old
 // one — "last order wins", no pairwise interaction rules. Kinds:
@@ -614,14 +633,7 @@ function execUnitCommand(cmd){
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
         idx++;
       } else {
-        s.target = target.id; s.task = null; clearUnitPath(s); s.buildTarget = null;
-        s.explicitAttack = true;
-        // The ANCHOR moves to the target ("hold the ground you take"): a
-        // DEFENSIVE unit that finishes this assault leashes to the
-        // battlefield, not back to wherever it stood when ordered.
-        // Aggressive units ignore the anchor entirely. Guard posts don't
-        // relocate — the attack order REPLACED them (last order wins).
-        s.defendX = Math.round(target.x); s.defendY = Math.round(target.y);
+        assignAttack(s, target);
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
