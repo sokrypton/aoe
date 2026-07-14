@@ -982,6 +982,17 @@ function tryRightClickGuard(sx, sy){
   if(!selected.some(s=>s.type==='unit'&&s.team===myTeam&&guardEligible(s)))return false;
   let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
   if(!tgt || !sameSide(tgt.team, myTeam))return false; // ground / enemy → normal command
+  // Accidental-escort guards (user report: "sometimes I activate escort by
+  // right-clicking"). The cursor's unit-pick tolerance is ~a body wide, so a
+  // move order aimed near/into your own troops kept landing on a friendly
+  // unit and escorting it instead of moving:
+  //  - a unit in the CURRENT SELECTION is never an escort target (clicking
+  //    into your own selected blob means "move here");
+  //  - fellow SOLDIERS aren't right-click escort targets at all — the
+  //    designed escortees are the vulnerable support units (trade carts,
+  //    villagers, rams). Soldier-escort stays available via the explicit
+  //    Guard button (dropGuardFlagAt), where intent is unambiguous.
+  if(tgt.type==='unit' && (selected.includes(tgt) || isSoldierUnit(tgt)))return false;
   let gt = screenToTile(sx, sy);
   if(!gt)return false;
   let ids = selected.filter(s=>s.type==='unit'&&guardEligible(s)).map(s=>s.id);

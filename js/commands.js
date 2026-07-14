@@ -282,13 +282,17 @@ function execSetStance(cmd, team){
   if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
-// Which units carry a guard post: soldiers, plus RAMS — a ram doesn't
-// auto-engage (isSoldierUnit is false) but holding a position is a valid
-// order for it. THE single eligibility filter: the UI button (allGuardable,
-// js/ui.js), the rally-spawn pin (js/logic.js) and the move-order re-pin
+// Which units carry a guard post: SOLDIERS only. Rams were included once
+// ("holding a position is a valid order") but a ram already holds position
+// by nature — it never auto-engages — and the Guard tile on the one unit
+// whose defining interaction is GARRISONING read as a second garrison
+// button (user feedback). Rams remain escort TARGETS (troops guard the
+// ram) and riders still garrison inside; they just carry no post. THE
+// single eligibility filter: the UI button (allGuardable, js/ui.js), the
+// rally-spawn anchor (js/logic.js) and the move-order re-pin
 // (issueMoveOrder, js/pathfinding.js) all call this.
 function guardEligible(u){
-  return isSoldierUnit(u) || (u.type === 'unit' && u.utype === 'ram');
+  return isSoldierUnit(u);
 }
 
 // Postures are mutually exclusive in BOTH directions: set-stance clears the
@@ -554,8 +558,16 @@ function execUnitCommand(cmd){
     // attack orders RELOCATE it (the flag follows the player's latest
     // order; see issueMoveOrder and the attack branch below). Units without
     // a flag carry no post at all — their anchor is defendX/Y, meaningful
-    // only to DEFENSIVE stance. An ESCORT (guard-on-unit) does end here,
-    // mirroring followId: the post freezes at its last synced spot.
+    // only to DEFENSIVE stance.
+    // An ESCORT (guard-on-unit) ends here entirely, mirroring followId —
+    // POST INCLUDED: escort posts are flagged (they're explicit Guard
+    // orders), and leaving just the flag standing meant the very next
+    // ground click "relocated" it — a player right-clicking ground to
+    // CANCEL an escort found their troops guarding the clicked dirt
+    // instead (user report). Ending an escort ends the whole guard order.
+    if (s.guardTargetId != null) {
+      s.guardX = null; s.guardY = null; s.guardFlagged = false;
+    }
     s.guardTargetId = null;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell

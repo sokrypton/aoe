@@ -330,8 +330,11 @@ function applySavedGame(data, opts){
       // ping-pong at their old post while a raid burned the town around
       // them (repro: aoe2-save-2026-07-14T02-15-32-943Z, two knights).
       // Explicit (flagged) posts and live escorts load untouched.
-      if (e.type === 'unit' && e.guardX != null && !e.guardFlagged && e.guardTargetId == null) {
-        e.guardX = null; e.guardY = null;
+      // (also strips posts from units that are no longer guard-eligible —
+      // e.g. rams, whose guard option was removed as garrison-confusing)
+      if (e.type === 'unit' && e.guardX != null &&
+          ((!e.guardFlagged && e.guardTargetId == null) || !guardEligible(e))) {
+        e.guardX = null; e.guardY = null; e.guardTargetId = null; e.guardFlagged = false;
       }
       entitiesById.set(e.id, e);
       // Re-derive tile occupancy from the building footprint — the SAME

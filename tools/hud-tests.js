@@ -855,20 +855,16 @@ function pageSuite() {
       assertEq(JSON.stringify(r.au), JSON.stringify(['Auto Scout']), 'auto-scout overrides everything in the highlight');
     });
 
-    await tapT('posture row: rams DO show a Guard tile, lit while holding a post', async () => {
+    await tapT('posture row: rams show NO Guard tile (guard = soldiers only; garrison confusion)', async () => {
       const r = await page.evaluate(tapStage(`
         const ram=createUnit('ram',30,30,0); selected=[ram];
         window.__pts=()=>({});`) + `;(()=>{
-        const lit=()=>[...document.querySelectorAll('#actions .act-btn.stance-on')].map(b=>b.dataset.tipLabel);
         const has=(l)=>[...document.querySelectorAll('#actions .act-btn')].some(b=>b.dataset.tipLabel===l);
-        const ram=selected[0];
-        updateUI(); const guardShown=has('Guard'); const stanceShown=has('Aggressive');
-        ram.guardX=20; ram.guardY=20; updateUI(); const gd=lit();
-        return {guardShown, stanceShown, gd};
+        updateUI();
+        return {guardShown:has('Guard'), stanceShown:has('Aggressive')};
       })()`);
-      assertEq(r.guardShown, true, 'Guard tile IS shown for rams');
+      assertEq(r.guardShown, false, 'Guard tile must be hidden for rams (a ram holds position by nature; the tile read as a second garrison button)');
       assertEq(r.stanceShown, false, 'rams get no stance tiles');
-      assertEq(JSON.stringify(r.gd), JSON.stringify(['Guard']), 'a guarding ram lights the Guard tile');
     });
 
     await tapT('No Attack (passive) DISENGAGES an in-progress attack, not just future ones', async () => {
@@ -956,16 +952,28 @@ function pageSuite() {
       assertEq(r.sel, 0, 'guard is a task → deselects');
     });
 
-    await tapT('right-click friendly unit = Escort flag', async () => {
+    await tapT('right-click friendly SUPPORT unit = Escort flag; fellow soldier = plain move', async () => {
+      // Escort target must be a support unit (cart/villager/ram) — soldiers
+      // fell victim to accidental escorts when a move order landed on a
+      // friendly body (cursor tolerance ~a unit wide), so they now fall
+      // through to a normal move.
       const pts = await page.evaluate(tapStage(`
-        const ally=createUnit('militia',30,30,0); const m=createUnit('militia',25,25,0); selected=[m];
-        window.__pts=(scr)=>{ const base=scr(ally.x,ally.y); let pt={x:base.x,y:base.y-8};
-          for(let dy=0;dy<=24;dy+=2){const c={x:base.x,y:base.y-dy}; if(getUnitUnderCursor(c.x,c.y)===ally){pt=c;break;}}
-          return { p: pt, aId: ally.id }; };`));
-      await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
+        const cart=createUnit('tradecart',30,30,0); const sol=createUnit('militia',34,30,0);
+        const m=createUnit('militia',25,25,0); selected=[m];
+        window.__pts=(scr)=>{
+          const find=(u)=>{ const base=scr(u.x,u.y); let pt={x:base.x,y:base.y-8};
+            for(let dy=0;dy<=24;dy+=2){const c={x:base.x,y:base.y-dy}; if(getUnitUnderCursor(c.x,c.y)===u){pt=c;break;}}
+            return pt; };
+          return { cart: find(cart), sol: find(sol), cartId: cart.id }; };`));
+      await page.mouse.click(pts.cart.x, pts.cart.y, { button: 'right' });
       const g = await page.evaluate(`window.__cmds.find(c=>c.kind==='guard')||null`);
-      if (!g) throw new Error('no guard/escort command issued for friendly-unit right-click');
-      assertEq(g.targetId, pts.aId, 'escort targetId = the friendly unit');
+      if (!g) throw new Error('no escort command for friendly trade-cart right-click');
+      assertEq(g.targetId, pts.cartId, 'escort targetId = the trade cart');
+      // soldier target: NO guard command may be issued (falls through to move)
+      await page.evaluate(`window.__cmds.length = 0; selected=[entities.find(e=>e.utype==='militia'&&e.x<28)];`);
+      await page.mouse.click(pts.sol.x, pts.sol.y, { button: 'right' });
+      const g2 = await page.evaluate(`window.__cmds.find(c=>c.kind==='guard')||null`);
+      if (g2) throw new Error('friendly soldier right-click must NOT escort (accidental-escort guard)');
     });
 
     await tapT('right-click ground = normal walk (NOT a guard flag)', async () => {
