@@ -150,6 +150,121 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------- AoE2 army-size attack trigger
+    // Launches are army-size driven: a group of profile.attackSize (hard: 5)
+    // launches once attackTick passes; one soldier fewer holds. The old
+    // eco-scaled hold (aiWaveSize ≈ 14) + 8-unit stalemate valve locked a
+    // raided AI out of ever counter-attacking (under-attack doctrine).
+    // Zero resources = no training, so the staged group size IS the test.
+    'attack-trigger': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (n) => {
+        loadScenario({
+          map: 'small', seed: 11, numTeams: 2, controllers: ['human', 'ai:hard'],
+          ages: [1, 1],
+          entities: [
+            { b: 'TC', x: 8, y: 8, team: 0 },
+            { b: 'TC', x: 44, y: 44, team: 1 },
+            ...Array.from({ length: n }, (_, i) => ({ u: 'militia', x: 40 + (i % 3), y: 40 + Math.floor(i / 3), team: 1 })),
+          ],
+        });
+        resources[1] = { food: 0, wood: 0, gold: 0, stone: 0, prepaidFarms: 0 };
+      };
+      const horizon = T30(3600) + T30(600); // hard attackTick + a couple of decision intervals
+      stage(5); // == attackSize
+      let launched = false;
+      for (let i = 0; i < horizon && !launched; i++) { update(); launched = (AI_STATES[1].waveCount || 0) > 0; }
+      T.ok('attackSize soldiers: wave launches after attackTick', launched);
+      stage(4); // one below the minimum group
+      for (let i = 0; i < horizon; i++) update();
+      T.ok('attackSize-1 soldiers: launch holds', (AI_STATES[1].waveCount || 0) === 0);
+      return T;
+    })),
+
+    // ------------------------------------------ soldier garrison (doctrine)
+    // Outmatched home defenders SHELTER in the TC (AoE2 sn-number-garrison-
+    // units) instead of standing to die piecemeal, then eject on all-clear.
+    'soldier-garrison': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 12, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          // Militia AT the TC doorstep (one-tile garrison walk) so the shelter
+          // decision beats the knights' charge — the contract under test is
+          // the decision, not a footrace.
+          { u: 'militia', x: 43, y: 43, team: 1 }, { u: 'militia', x: 44, y: 43, team: 1 },
+          { u: 'militia', x: 43, y: 44, team: 1 },
+          // Overwhelming raid parked west of the TC: nearest knight (35,46) is
+          // 11 tiles from the TC CENTER (46,46) — inside the 12-tile threat
+          // scan (findEnemyThreatNear) — but 8.5+ from the militia at (43,43),
+          // outside BOTH sides' 8-tile auto-acquire, so the shelter decision
+          // runs before any melee starts. 6 knights ≈ 900 power vs 3 militia
+          // ≈ 180 — far over the 1.6x shelter bar.
+          ...Array.from({ length: 6 }, (_, i) => ({ u: 'knight', x: 33 + (i % 3), y: 45 + Math.floor(i / 3), team: 0 })),
+        ],
+      });
+      resources[1] = { food: 0, wood: 0, gold: 0, stone: 0, prepaidFarms: 0 };
+      const mine = () => entities.filter(e => e.team === 1 && e.utype === 'militia' && e.hp > 0);
+      let sheltered = 0;
+      for (let i = 0; i < T30(1200) && sheltered < 2; i++) {
+        update();
+        sheltered = mine().filter(m => m.garrisonedIn != null).length;
+      }
+      T.ok(`outmatched defenders garrison the TC (${sheltered}/3 sheltered, ${mine().length} alive)`, sheltered >= 2);
+      // Raid ends: knights die → all-clear window passes → recall ejects.
+      entities.forEach(e => { if (e.team === 0 && e.utype === 'knight') e.hp = 0; });
+      let out = false;
+      for (let i = 0; i < T30(1200) && !out; i++) {
+        update();
+        out = mine().length > 0 && mine().every(m => m.garrisonedIn == null && m.task !== 'garrison');
+      }
+      T.ok('all-clear: sheltered soldiers eject and survive', out);
+      return T;
+    })),
+
+    // ------------------------------------- bell task-resume (regression)
+    // A bell cycle must not cost a villager its assignment: stashVillagerTask
+    // at the ring, restoreSavedTask after the all-clear (farms included).
+    'bell-task-resume': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 13, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          { b: 'FARM', x: 41, y: 44, team: 1 },
+          { u: 'villager', x: 41, y: 45, team: 1 },
+        ],
+      });
+      const v = entities.find(e => e.team === 1 && e.utype === 'villager');
+      const farm = entities.find(e => e.team === 1 && e.btype === 'FARM');
+      v.task = 'farm'; v.gatherX = farm.x; v.gatherY = farm.y;
+      // Simulate an ongoing base raid: keep the core-hit stamp fresh so
+      // updateAIGarrisonReaction holds the bell (a bare ringTownBell would be
+      // all-cleared by the AI's own reaction machinery the very next tick).
+      ringTownBell(1);
+      let inTC = false;
+      for (let i = 0; i < T30(900) && !inTC; i++) {
+        AI_STATES[1].lastBaseHitTick = tick;
+        update();
+        inTC = v.garrisonedIn != null;
+      }
+      T.ok('bell: farmer shelters in the TC', inTC);
+      // Raid ends: stop stamping — the AI's own all-clear fires after the
+      // hold window and restoreSavedTask resumes the farm assignment.
+      let resumed = false;
+      for (let i = 0; i < T30(1200) && !resumed; i++) {
+        update();
+        resumed = v.garrisonedIn == null && v.task === 'farm' && v.gatherX === farm.x && v.gatherY === farm.y;
+      }
+      T.ok('all-clear: farmer resumes the SAME farm (stash/restore)', resumed);
+      return T;
+    })),
+
     // ------------------------------------------------------------ walled archer
     'walled-archer': async (page) => {
       const save = JSON.parse(fs.readFileSync(path.join(ROOT, 'scenarios/walled-archer.savegame.json'), 'utf8'));

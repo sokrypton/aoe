@@ -249,6 +249,9 @@ window.runSimulation = async function(opts){
     report.health.watchdogFires = watchdogLog.length;
     report.health.dancers = danceOffenders.size;
     report.health.jsErrors = window.__errors.slice();
+    // Optional AI diagnostics: unhashed, checksum-safe counters that ai.js
+    // bumps via window.__aiProbe (per-team keys). Null when none fired.
+    report.health.aiProbe = window.__aiProbe || null;
     // where every military unit stands at the end — is the army actually
     // reaching the enemy, or stalled somewhere en route?
     report.end.milSnapshot = entities.filter(e => e.type === 'unit' && isArmyUnit(e.utype))

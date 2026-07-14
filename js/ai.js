@@ -5,6 +5,11 @@
 // instead of staying clustered around its starting TC.
 function aiScale(){return MAP/60;}
 
+// Diagnostics counter — UNHASHED and never read by the sim (checksum-safe;
+// same contract as window.__dropStats). tools/sim.html reports the totals
+// as health.aiProbe so headless runs can show which AI doctrine paths fired.
+function aiProbe(k){let p=window.__aiProbe||(window.__aiProbe={});p[k]=(p[k]||0)+1;}
+
 // ---- AI GARRISON REACTION (town bell equivalent) ----
 // Mirrors the player's town-bell mechanic: when the AI's own base is taking
 // damage, its idle-able villagers run for cover in the nearest TC/tower with
@@ -69,9 +74,11 @@ function updateAIGarrisonReaction(ai){
     // of re-arming militia forever — villagers (0.8 speed) never catch a
     // kiting archer, and a perpetual re-arm suppressed the bell for the rest
     // of the game. Militia is re-tried only after the fight fully quiets.
-    if(tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && tryAIMilitiaResponse(ai)) return;
+    if(tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && tryAIMilitiaResponse(ai)){aiProbe('militia:t'+ai.team);return;}
+    aiProbe('bell:t'+ai.team);
     ringTownBell(ai.team);
   } else if(!underAttack && window.bellRinging[ai.team]){
+    aiProbe('allClear:t'+ai.team);
     soundAllClear(ai.team);
   }
 }
@@ -505,9 +512,12 @@ function planAITowers(ai,aiTC,vils,profile){
   // and costs 125 stone, so in the Dark Age or when stone-poor this naturally
   // routes to PTOWER — which the wall stone-upgrade pass later promotes to a
   // Tower (WALL_STONE_MATCH: PTOWER→TOWER).
+  // Barracks fund outranks bastions (aiBarracksFundClear): the 110-wood
+  // PTOWER is the spend that mattered — TOWER's 25 wood is near-noop but
+  // gated uniformly.
   let type=null;
-  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost))type='TOWER';
-  else if(canAfford(ai.team,BLDGS.PTOWER.cost))type='PTOWER';
+  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost)&&aiBarracksFundClear(ai,BLDGS.TOWER.cost.w||0))type='TOWER';
+  else if(canAfford(ai.team,BLDGS.PTOWER.cost)&&aiBarracksFundClear(ai,BLDGS.PTOWER.cost.w||0))type='PTOWER';
   if(!type)return;
   // A waller's bastion MUST go on the wall (gate flank → corners → resource
   // side) — that's the whole point ("towers on walls"). Wait for a wall segment
@@ -559,6 +569,17 @@ function planAIWalls(ai,aiTC,vils,profile){
   // ring closes (the collapse this fixes). A GATE can only be placed by
   // consuming two adjacent walls, which is exactly why they must be built
   // first rather than left as an open gap.
+  // UNDER-ATTACK DOCTRINE: walls are PREPARATION, not reaction. While the
+  // town is in a war-state (aiRecentlyRaided — a core hit within ~2 game-
+  // minutes, PERSISTENT across raid pulses), every wall SPEND path below
+  // pauses: in the seed-1001 death spiral the ring consumed the whole wood
+  // trickle between raid pulses (57 segments while villagers died 21→12)
+  // while the razed barracks needed 175 wood and farms needed reseeds — the
+  // wall wood bought nothing (raiders were already inside the perimeter)
+  // and the army faucet stayed dry. Bookkeeping, egress carving (the army
+  // must be able to exit to counter-attack) and the self-heal done-flag
+  // scan all KEEP running — only placements/upgrades pause.
+  let pressured=aiRecentlyRaided(ai);
   let gatePairs=ai.gatePairs||[];
   ai.gatesDone=ai.gatesDone||{};
   let isWallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&en.btype==='WALL'&&en.x===x&&en.y===y);
@@ -570,6 +591,7 @@ function planAIWalls(ai,aiTC,vils,profile){
       ai.gatesDone[gi]=false;          // gate was destroyed → rebuild it
     }
     if(isGateAt(gc.x,gc.y)){ai.gatesDone[gi]=true;return;}
+    if(pressured)return;               // spend path — paused under attack
     let allWalls=pair.every(p=>isWallAt(p.x,p.y));
     if(!allWalls){
       pair.forEach(p=>{
@@ -603,7 +625,7 @@ function planAIWalls(ai,aiTC,vils,profile){
   // Stone upgrade (AoE2: palisade → stone from Feudal on): only once actually
   // sealed and gated. GATES first (the funnel point), paced ≤4/decision, priced
   // exactly with a small stone float so it never outbids towers.
-  if(sealed&&ai.gateBuilt&&isUnlocked(ai.team,'SWALL')){
+  if(sealed&&ai.gateBuilt&&!pressured&&isUnlocked(ai.team,'SWALL')){
     let pals=entities.filter(en=>en.type==='building'&&en.team===ai.team&&
       (en.btype==='WALL'||en.btype==='GATE'||en.btype==='PTOWER')&&en.complete&&en.hp>0);
     // GATES first (the funnel), then walls, then PTOWER bastions (PTOWER→TOWER
@@ -662,7 +684,7 @@ function planAIWalls(ai,aiTC,vils,profile){
   let placedThisCall=0, iters=0;
   let {x:wtcx, y:wtcy} = centerTile(aiTC);
   let BACKOFF=Math.max(T30(120),profile.decisionInterval*2);
-  while(placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
+  while(!pressured&&placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
     iters++;
     let next=plan.find(t=>!t.done&&!(t.buildBackoffUntil>tick));
     if(!next)break;
@@ -1072,6 +1094,33 @@ function aiUnderRealPressure(ai){
   return !!(h&&h.core&&tick-h.tick<T30(900));
 }
 
+// WAR-STATE (persistent): a base core hit within the last ~2 game-minutes.
+// aiUnderRealPressure's 30-second window answers "does survival outrank
+// advancement RIGHT NOW"; raids PULSE though, and gating the wall ring on
+// it let construction restart in every quiet gap between pulses — seed-1001
+// placed 57 wall segments mid-collapse (villagers 21→12) because each pulse
+// gap out-waited the short window, draining the exact wood the under-attack
+// doctrine protects. Fortification and the +3 chop diversion wait for real
+// peace: no core hit near home for a full 2 minutes.
+function aiRecentlyRaided(ai){
+  return aiUnderRealPressure(ai)||tick-(ai.lastBaseHitTick??-1e9)<T30(3600);
+}
+
+// Army faucet first: while the team has NO barracks (never built, or razed),
+// discretionary wood spends (towers, market, NEW farm plots) yield until the
+// 175-wood rebuild fund is intact ON TOP of the spend. A razed sole barracks
+// stopped ALL military production forever in the seed-1001 death spiral —
+// raids kept wood pinned below the rebuild price while walls/farms consumed
+// the trickle. This is a GATE on each spender, not a reservation: reservation
+// webs that starve other systems were the savingForMarket anti-pattern
+// (deleted 2026-07); planAIFarming already used exactly this idiom
+// pre-barracks. The 60-wood bank reseeds of STANDING farms stay ungated —
+// standing farms are the food income the doctrine protects.
+function aiBarracksFundClear(ai,woodCost){
+  return hasAIBuilding(ai,'BARRACKS')||
+    resourceStore(ai.team).wood>=(woodCost||0)+BLDGS.BARRACKS.cost.w;
+}
+
 function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
   let pressured=aiUnderRealPressure(ai);
   if(ai.savingForAge&&!pressured&&barracks.length>0)return; // first barracks still allowed — needed for defense
@@ -1120,14 +1169,26 @@ function nearestAllyMarket(e){
 // is deliberately NO wood "reservation" that pauses walls/towers/farms/military
 // to force the purchase (that crippled tight-economy 2v2 AIs into never
 // attacking) — the market waits on genuine surplus instead.
+// ONE exception (need-based): food-starved with real gold banked. In the
+// seed-1001 death spiral 733 gold sat permanently unconvertible because the
+// surplus gates meant a raided AI could never own a market — the one
+// building that would have turned that gold back into food income. Fires
+// only when the wood exists ANYWAY (canAfford + barracks fund intact), so
+// it starves nothing.
 function planAIMarket(ai,aiTC,vils,profile){
   if(!isUnlocked(ai.team,'MARKET'))return;               // Feudal-gated
   if(aiOwnMarket(ai.team))return;                         // one is enough
-  if(teamAge[ai.team] < (profile.maxAge||2))return;      // finished teching first
-  if(vils.length<profile.marketVil)return;
-  let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
-  if(army<(profile.armyReserve||4))return;               // defense before trade
-  if(!canAfford(ai.team,BLDGS.MARKET.cost))return;       // only when the surplus is genuinely there
+  let r=resourceStore(ai.team);
+  let emergency=r.food<AI_MIN_FOOD&&r.gold>=300
+    &&canAfford(ai.team,BLDGS.MARKET.cost)&&aiBarracksFundClear(ai,BLDGS.MARKET.cost.w);
+  if(!emergency){
+    if(teamAge[ai.team] < (profile.maxAge||2))return;    // finished teching first
+    if(vils.length<profile.marketVil)return;
+    let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
+    if(army<(profile.armyReserve||4))return;             // defense before trade
+    if(!canAfford(ai.team,BLDGS.MARKET.cost))return;     // only when the surplus is genuinely there
+    if(!aiBarracksFundClear(ai,BLDGS.MARKET.cost.w))return; // army faucet first
+  }
   let pos=findAIBuildSpot(ai,aiTC,'MARKET');
   if(pos)placeAIBuilding(ai,'MARKET',pos.x,pos.y);
 }
@@ -1172,11 +1233,25 @@ function controlAITradeCarts(ai,aiUnits){
   }
 }
 
+// Emergency resource floors (the minimal sn-minimum-<res> analog, AoE2 §9):
+// below these the economy is STARVING and banked gold converts at a much
+// smaller cushion than the normal gold-rich threshold. Static config — no
+// hash. Values: 100 food ≈ one TC villager + change; 80 wood ≈ a farm
+// reseed + a house.
+const AI_MIN_FOOD=100, AI_MIN_WOOD=80;
+const AI_EMERGENCY_GOLD_CUSHION=100; // vs the 300 gold-rich cushion below
+
 // Commodity exchange (all difficulties, 1v1 + team). At most one 100-lot per
 // decision tick so the team's own prices don't crater/spike; the buy and
 // sell conditions are mutually exclusive (gold-low vs gold-high) so no
 // oscillation. Selling prefers stone (classic AoE2); buying relieves the worst
-// non-gold bottleneck and never spends below the gold-rich threshold.
+// non-gold bottleneck and never spends below the gold-rich threshold —
+// EXCEPT at emergency floors: a raided economy with food pinned near 0 and
+// gold banked converts down to AI_EMERGENCY_GOLD_CUSHION (the seed-1001
+// spiral held 733 gold while food sat at 0-40 for 30k ticks). Still one lot
+// per decision tick — deterministic, and at hard's cadence 100 food per ~4
+// game-seconds outpaces ~8 farmers; the shared global price table
+// self-limits runaway conversion.
 function planAIMarketExchange(ai,profile){
   let mkt=aiOwnMarket(ai.team);
   if(!mkt||!mkt.complete)return;
@@ -1188,9 +1263,15 @@ function planAIMarketExchange(ai,profile){
   if(r.gold<150){
     let res=r.stone>250?'stone':r.wood>500?'wood':r.food>400?'food':null;
     if(res)execMarketTrade({dir:'sell',resType:res},ai.team);
-  } else if(r.gold>300){
-    let res=r.wood<120?'wood':r.food<100?'food':null;
-    if(res&&r.gold-marketPricesFor(ai.team)[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
+  } else {
+    let prices=marketPricesFor(ai.team);
+    let em=r.food<AI_MIN_FOOD?'food':(r.wood<AI_MIN_WOOD?'wood':null);
+    if(em&&r.gold-prices[em]>=AI_EMERGENCY_GOLD_CUSHION){
+      execMarketTrade({dir:'buy',resType:em},ai.team);   // emergency floor buy
+    } else if(r.gold>300){
+      let res=r.wood<120?'wood':r.food<100?'food':null;
+      if(res&&r.gold-prices[res]>=300)execMarketTrade({dir:'buy',resType:res},ai.team);
+    }
   }
 }
 
@@ -1591,9 +1672,12 @@ function aiEcoPlan(ai,vilCount,profile){
     base.farm=Math.max(profile.farmShare,activeFarms);
   }
   // A palisade ring is a WOOD sink (2/tile, dozens of tiles, plus the 30-
-  // wood gate) — pull extra gatherers onto wood until it's finished.
+  // wood gate) — pull extra gatherers onto wood until it's finished. NOT
+  // while under real attack: wall placement pauses then (planAIWalls
+  // under-attack doctrine), so the +3 chop would divert hands from the food
+  // income the raid is bleeding for wood nothing will spend.
   let wallPlan=ai.wallPlan;
-  if(wallPlan&&!wallPlan.every(t=>t.done))base.chop=(base.chop||1)+3;
+  if(wallPlan&&!wallPlan.every(t=>t.done)&&!aiRecentlyRaided(ai))base.chop=(base.chop||1)+3;
   // Demand rebalancing (AoE2 AIs re-task gatherers by need): a fat
   // stockpile stops attracting hands and the binding resource pulls extra
   // shares. Without this a town sat on 3459 banked wood while food never
@@ -1652,11 +1736,12 @@ function planAIFarming(ai,aiTC,vils,profile){
   // depleting forage onto sustainable farms (AoE2 lays farms in late Dark age).
   if(!hasAIBuilding(ai,'BARRACKS') && vils.length<8)return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
-  // Don't let early farms starve the BARRACKS of wood: until it exists, only
-  // spend on a farm if the 175-wood barracks fund is still intact. Otherwise
-  // the pre-barracks farming (above) ate the wood and pushed military +
-  // Feudal minutes late (barracks ~13min, first soldier ~13min in sim).
-  if(!hasAIBuilding(ai,'BARRACKS') && resourceStore(ai.team).wood < BLDGS.FARM.cost.w + BLDGS.BARRACKS.cost.w)return;
+  // Don't let NEW farm plots starve the BARRACKS of wood — the shared
+  // army-faucet gate (aiBarracksFundClear): pre-barracks it kept early farms
+  // from delaying military/Feudal by minutes; it equally covers a RAZED
+  // barracks (rebuild fund first). Reseeds of standing farms are untouched
+  // (logic.js bank reseed) — standing farms are the protected food income.
+  if(!aiBarracksFundClear(ai,BLDGS.FARM.cost.w))return;
   // ACTIVE farms only (exhausted ones auto-reseed and shouldn't block new
   // plots), against a target that grows with the workforce — a fixed 2-4
   // farm cap starved the AI's food economy once the berries ran out.
@@ -1732,15 +1817,16 @@ function findAIFarmSpot(ai,tc){
   return null;
 }
 
-// Current attack-wave size: tracks the ECONOMY, not a launch counter. AoE2
-// difficulty doesn't script an attack timeline — it throttles the eco, and an
-// attack is simply whatever army that eco can mass. So wave size is a fraction
+// TRAINING target: how big an army this economy should field — a fraction
 // of the villager count past a small base (armyPerVil beyond armyEcoFloor),
-// floored at attackSize and capped by waveCap. Waves still escalate over a
-// match — but only because villagers grow toward maxVils, then plateau — and
-// Easy stays gentle because its eco is capped low, NOT because a timer holds
-// back. (Previously: attackSize + waveCount*waveGrowth, a synthetic per-wave
-// ramp that overwhelmed Easy regardless of how stunted its economy was.)
+// floored at attackSize and capped by waveCap. Used ONLY as the production
+// ceiling (maxArmy = aiWaveSize + armyReserve, queueAIMilitary): a bigger
+// eco fields a bigger standing army. DECOUPLED from the LAUNCH threshold —
+// launches are AoE2 army-size-driven (the scaled minGroup in
+// controlAIMilitary: attackSize + 1 per 10 game-min). Using this eco-scaled
+// number as the launch bar was the defensive-death-spiral lock: an AI whose
+// army kept dying at home defending could never reach it and never
+// counter-attacked.
 function aiWaveSize(ai,profile){
   let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
   let ecoArmy=Math.floor(Math.max(0,vils-(profile.armyEcoFloor||0))*(profile.armyPerVil||0.5));
@@ -1788,6 +1874,20 @@ const AI_RETREAT_TICKS=T30(600);      // ~20s: run home, ignore re-acquire/retal
 // launched pulls its survivors home to regroup with the next (bigger) wave
 // instead of trickling into the meat grinder one by one.
 const AI_WAVE_RETREAT_FRACTION=0.35;
+// AoE2 sn-scaling-frequency [10 game-minutes]: the minimum attack-group size
+// grows +1 (sn-scale-minimum-attack-group-size) each interval past
+// attackTick — see the launch hold in controlAIMilitary. NOT difficulty-
+// scaled (AoE2 doesn't; difficulty expresses through attackSize/attackTick/
+// commitPercent/attackAdvantage).
+const AI_ATTACK_SCALE_EVERY=T30(18000);
+// AoE2 sn-maximum-attack-group-size [10]: the ceiling the SCALED minimum
+// clamps to. Without it the minimum outgrew what a pop-capped army keeps
+// AVAILABLE (~2 game-hours in: 5 + 11 intervals = 16 vs a 20-cap army with
+// half committed/fighting) and second-half waves stopped — the exact freeze
+// the deleted "stalemate valve" used to paper over, reintroduced by the
+// scaling. Launches stay possible forever; waveCap still bounds the SENT
+// group size separately (sendN).
+const AI_ATTACK_MIN_GROUP_CAP=10;
 // Civilian-militia bounds: only a raid the workforce can genuinely beat is
 // worth fighting (~3 militia-equivalents of power — unitPower('militia')=60);
 // the response window is how long the bell stays suppressed while they fight.
@@ -1888,6 +1988,22 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     let underMelee=m.lastMeleeHitTick!=null&&tick-m.lastMeleeHitTick<T30(60);
     if(!t||arrived||underMelee)ejectGarrison(m);
   });
+  // ABANDON SHIP (shelter buildings): a garrison dies with its building
+  // (handleDeath, AoE2 rule), so soldiers sheltering in a TC/tower that is
+  // being MELEED down and has lost half its hp bail out and fight at the
+  // wreck — dying inside trades the whole squad for nothing. "Being meleed"
+  // is a live adjacency scan (an enemy melee arm at the footprint right
+  // now), not a stored timestamp — buildings carry no lastMeleeHitTick and
+  // this pass must not add carried state. Villagers stay: the bell owns
+  // them, and a TC loss is the knockout anyway.
+  entities.forEach(b=>{
+    if(b.type!=='building'||b.team!==ai.team||!b.garrison||!b.garrison.length)return;
+    if(b.hp>=b.maxHp*0.5)return;
+    if(!b.garrison.some(id=>{let u=entitiesById.get(id);return u&&isArmyUnit(u.utype);}))return;
+    let meleed=entities.some(u=>u.type==='unit'&&u.hp>0&&isEnemyOf(ai.team,u)
+      &&u.range<=0&&u.atk>0&&distToBuilding(u.x,u.y,b)<=1.6);
+    if(meleed)ejectGarrison(b,u=>isArmyUnit(u.utype)&&u.utype!=='scout');
+  });
   let threat=findEnemyThreatNear(ai,aiTC,12*aiScale());
   // Ignore a threat our base is sealed against. A raider poking our ring from
   // OUTSIDE can't be reached, so chasing it freezes the garrison at the wall (the
@@ -1901,21 +2017,96 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     let {x:tcx, y:tcy} = centerTile(aiTC);
     if(findPath(tcx,tcy,Math.round(threat.x),Math.round(threat.y),aiTC.id).length===0) threat=null;
   }
+  // SHELTERED-SOLDIER RECALL: soldiers who garrisoned when outmatched (the
+  // shelter-first branch below) come back out when EITHER the coast is clear
+  // (no reachable threat and no core hit for a full bell window — the same
+  // all-clear the villager bell uses) OR the power math flipped: the army
+  // that kept TRAINING while the survivors sheltered (queueAIMilitary counts
+  // garrisoned units toward maxArmy, so production continued) now matches
+  // the raid when combined. Hysteresis is structural — units enter at
+  // >1.6x enemy advantage measured WITHOUT the sheltered (mils excludes
+  // garrisonedIn), and exit at combined parity — so no flapping. Eject via
+  // ejectGarrison, the human Ungarrison button's function (parity).
+  {
+    let sheltered=[];
+    entities.forEach(b=>{
+      if(b.type!=='building'||b.team!==ai.team||!b.garrison||!b.garrison.length)return;
+      b.garrison.forEach(id=>{
+        let u=entitiesById.get(id);
+        if(u&&isArmyUnit(u.utype)&&u.utype!=='scout')sheltered.push({b,u});
+      });
+    });
+    if(sheltered.length){
+      let release=false;
+      if(!threat){
+        release=tick-(ai.lastBaseHitTick??-1e9)>=AI_GARRISON_HOLD_TICKS;
+      } else {
+        let enemyP=estimateLocalEnemyPower(ai,threat,10*aiScale());
+        let outsideP=mils.reduce((s,m)=>s+unitPower(m.utype),0)
+          +nearbyAlliedPower(ai,threat,10*aiScale());
+        let shelteredP=sheltered.reduce((s,x)=>s+unitPower(x.u.utype),0);
+        release=outsideP+shelteredP>=enemyP;
+      }
+      if(release){
+        aiProbe('shelterRecall:t'+ai.team);
+        let ids=new Set(sheltered.map(x=>x.u.id));
+        new Set(sheltered.map(x=>x.b)).forEach(b=>ejectGarrison(b,u=>ids.has(u.id)));
+        // Ejected units rejoin `mils` next decision tick (this pass reads
+        // the pre-eject snapshot) — one-interval lag, deliberate: they
+        // regroup at their guard posts before the dispatch pass commits them.
+      }
+    }
+  }
   if(threat){
     let localEnemyPower=estimateLocalEnemyPower(ai,threat,10*aiScale());
     let localAllyPower=mils.reduce((s,m)=>s+unitPower(m.utype),0)
       +nearbyAlliedPower(ai,threat,10*aiScale());
-    // Badly outmatched defending at home: pull back to the TC instead of
-    // feeding units one at a time into a fight that's already lost — a real
-    // opponent disengages rather than dying in place for no gain.
+    // Badly outmatched defending at home: SHELTER FIRST (AoE2
+    // sn-number-garrison-units — soldiers garrison under attack), fall back
+    // to the TC-perimeter pull-back only when no seat is free. Standing to
+    // fight (the old near-home behavior) fed the army into the raid two at
+    // a time as each unit trained — the piecemeal-death half of the
+    // defensive death spiral: the army never accumulated, so no
+    // counter-attack ever launched. Inside a garrison the squad is
+    // preserved (and archers/villagers add arrows; melee adds none —
+    // pierce-DPS arrow model, js/logic.js) while production keeps raising
+    // the release bar (recall pass above). Boarding uses the SHARED flow —
+    // identical to the town bell and the human ram click: task='garrison' →
+    // updateGarrisonWalk → enterGarrison; seats via ramSeatsFree (THE
+    // walker-aware free-seat helper, js/commands.js), so this pass can
+    // never double-book against belled villagers already walking in.
     if(localAllyPower>0&&localEnemyPower>localAllyPower*1.6){
       let {x:tcx, y:tcy} = centerTile(aiTC);
+      let spots=entities.filter(en=>en.type==='building'&&canGarrisonIn(en,ai.team))
+        .map(b=>({b,room:ramSeatsFree(b)})).filter(s=>s.room>0);
       mils.forEach(m=>{
         if(holdsSiegeOrder(m))return; // a directed siege persists — don't retreat it
-        // Already home: stand and fight (auto-attack acquires targets for
-        // idle units). Re-clearing targets here every decision tick used to
-        // pin the whole army in a retreat loop — shot at, never shooting
-        // back — whenever the enemy camped above the power threshold.
+        if(m.task==='garrison')return; // already boarding
+        // Scouts stay out (recon — controlAIScouts owns them; a sealed-in
+        // scout stops exploring): they use the move-retreat fallback only.
+        if(m.utype!=='scout'){
+          let best=null,bd=Infinity;
+          spots.forEach(s=>{
+            if(s.room<=0)return;
+            let d=distToBuilding(m.x,m.y,s.b);
+            if(d<bd||(d===bd&&(!best||s.b.id<best.b.id))){bd=d;best=s;}
+          });
+          if(best){
+            best.room--;
+            aiProbe('shelterSeat:t'+ai.team);
+            m.target=null;
+            m.task='garrison';m.garrisonTarget=best.b.id;
+            let pt=nearestBldgPerimeter(m.x,m.y,best.b,m.id);
+            if(pt)pathUnitTo(m,pt.x,pt.y);
+            return;
+          }
+          aiProbe('shelterNoSeat:t'+ai.team);
+        }
+        // No seat (or scout): the pre-doctrine behavior. Already home:
+        // stand and fight (auto-attack acquires targets for idle units).
+        // Re-clearing targets here every decision tick used to pin the
+        // whole army in a retreat loop — shot at, never shooting back —
+        // whenever the enemy camped above the power threshold.
         if(dist(m,{x:tcx,y:tcy})<=6*aiScale())return;
         if(!m.target&&m.path.length>0)return; // already retreating — don't re-path
         m.target=null;
@@ -1947,7 +2138,16 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     aiDispatchQuota(eligible,threat,profile,
       m=>!m.target||dist(m,threat)<10*aiScale(),
       m=>assignAttack(m,threat)); // THE shared attack assignment (parity with a human attack-click)
-    return;
+    aiProbe('dispatchThreat:t'+ai.team);
+    // NO return: defense and offense are PARALLEL systems (AoE2 — sighted
+    // response and attack-group formation run independently). Returning here
+    // froze the wave machinery whenever ANY enemy stood within the threat
+    // scan of any own building — with two forward picket lines in permanent
+    // border contact, BOTH AIs held forever (seed-1 census: ~400 threat-
+    // returns each in the frozen second half). The dispatched defenders
+    // drop out of `available` by having targets; a real base assault still
+    // hard-holds via the siege-posture block below and the outmatched
+    // shelter branch above (both return).
   }
   // Base perimeter UNDER SIEGE — defend instead of marching off to attack.
   // findEnemyThreatNear + the reachability null-out above intentionally ignore
@@ -1976,6 +2176,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
         issueMoveOrder(m,pt?pt.x:tcx,pt?pt.y:tcy); // shared move order, human-recall semantics
       });
       rallyIdleMilitary(ai,mils,aiTC);         // hold the idle reserve at the gate
+      aiProbe('holdSiege:t'+ai.team);
       return;
     }
   }
@@ -2054,15 +2255,36 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     }
   }
   let holding=false;
-  let waveSize=aiWaveSize(ai,profile);
   // Scouts are recon, not wave fodder — controlAIScouts owns them (same
   // exemption the stray-retask and rally paths already apply). Committing the
   // lone explorer to the attack mob was the exact thing the scout rework fixed.
   let available=mils.filter(m=>!m.target&&m.utype!=='scout'&&!isRetreatingUnit(m)&&m.task!=='garrison');
-  if(mils.length<waveSize||ai.tick<profile.attackTick)holding=true;
+  // AoE2 launch model: attacks are ARMY-SIZE driven — a group launches once
+  // it reaches sn-minimum-attack-group-size (profile.attackSize, 3/4/5),
+  // growing +1 every sn-scaling-frequency [10 game-min] past attackTick
+  // (sn-scale-minimum-attack-group-size). Capped at waveCap — AoE2's own
+  // scripts cap the scaled minimum or it outgrows the max group, the
+  // documented freeze trap. This REPLACED the old eco-scaled hold
+  // (mils.length < aiWaveSize ≈ 14 for hard) that needed a "stalemate
+  // valve" floored at 8: an AI whose small army kept dying at home
+  // defending could never reach either bar, so it never counter-attacked
+  // and the raider's economy was never touched — the defensive death
+  // spiral (hard-med seed 1001). Small persistent sorties ARE the
+  // resolution mechanism. Gated on `available` (not mils): units currently
+  // fighting, retreating or sheltering aren't launch-ready.
+  let minGroup=Math.min(profile.waveCap||60, AI_ATTACK_MIN_GROUP_CAP,
+    profile.attackSize+Math.floor(Math.max(0,ai.tick-profile.attackTick)/AI_ATTACK_SCALE_EVERY));
+  // Group trigger counts the ARMY (mils — garrisoned/dead excluded), not the
+  // momentarily-idle: AoE2 forms attack groups from its soldiers, it doesn't
+  // demand N units idle in the same instant. In a hot border war the sighted
+  // dispatch keeps ~half the army cycling through skirmish targets, so
+  // "available >= minGroup" was unreachable for a 21-strong army (seed-1
+  // census: 1275 group-holds) — the send list below still draws only from
+  // `available`, so a launched wave is whoever is actually free.
+  if(ai.tick<profile.attackTick||mils.length<minGroup){holding=true;if(ai.tick>=profile.attackTick)aiProbe('holdGroup:t'+ai.team);}
   // Minimum spacing between waves: after committing an attack, regroup and
   // rebuild before the next (larger) one instead of dribbling units out.
-  else if(ai.tick-(ai.lastWaveTick??-1e9)<cooldown)holding=true;
+  else if(ai.tick-(ai.lastWaveTick??-1e9)<cooldown){holding=true;aiProbe('holdCooldown:t'+ai.team);}
   else {
     let intel=ai.intel;
     if(intel&&intel.strength>0){
@@ -2086,22 +2308,13 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       let targetStrength=targetTeam!=null?sbt[targetTeam]:intel.strength;
       let tcC=centerOf(aiTC);
       let allyPower=nearbyAlliedPower(ai,tcC,20*aiScale());
-      if(availablePower+allyPower*0.5<targetStrength*requiredFactor)holding=true;
+      if(availablePower+allyPower*0.5<targetStrength*requiredFactor){holding=true;aiProbe('holdIntel:t'+ai.team);}
     }
   }
-  // Stalemate valve: the holds above (grow to escalated wave size, clear
-  // the intel strength bar) exist to shape attacks, NOT to freeze the
-  // match. The escalated waveSize can exceed what a pop-capped economy can
-  // ever field (6+4×17 waves = 74 troops vs a ~50-army ceiling), which
-  // used to deadlock EVERY AI into rallying at its own gate forever. If no
-  // wave has launched for 3 full cooldowns and there's a minimally viable
-  // force, push with what we have — a real AoE2 AI eventually attacks even
-  // outmatched.
-  if(holding && ai.tick>profile.attackTick &&
-     mils.length>=Math.max(profile.attackSize,8) &&
-     ai.tick-(ai.lastWaveTick??0)>cooldown*3){
-    holding=false;
-  }
+  // (The old "stalemate valve" — force a push after 3 quiet cooldowns with
+  // >= 8 troops — is GONE: it existed to unstick the eco-scaled waveSize
+  // hold, and its 8-unit floor was itself unreachable for a raided AI. The
+  // scaled minGroup above is always reachable, so no valve is needed.)
   if(holding){
     rallyIdleMilitary(ai,mils,aiTC); // forward defensive posture between waves
     return;
@@ -2109,11 +2322,12 @@ function controlAIMilitary(ai,mils,aiTC,profile){
 
   // AoE2 sn-percent-attack-soldiers: commit this % of the whole army, keep the
   // rest home as defense (the difficulty lever — Hard 75% / Medium 56% / Easy
-  // 38%). Clamp to a valid group: at least the min group (attackSize), never
-  // more than the max group (waveCap). This replaces the old flat armyReserve
-  // hold, so a bigger army sends proportionally more (AoE2 behavior).
+  // 38%). Clamp to a valid group: at least the SCALED min group (minGroup —
+  // attackSize would shrink late-game waves below the escalated minimum),
+  // never more than the max group (waveCap). This replaces the old flat
+  // armyReserve hold, so a bigger army sends proportionally more (AoE2).
   let commit=profile.commitPercent!=null?profile.commitPercent:75;
-  let sendN=Math.min(profile.waveCap||waveSize, Math.max(profile.attackSize||waveSize, Math.round(mils.length*commit/100)));
+  let sendN=Math.min(profile.waveCap||60, Math.max(minGroup, Math.round(mils.length*commit/100)));
   let attackers=available.slice(0,sendN);
   let launched=0;
   let waveSpotted=aiVisibleEnemies(ai,e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
@@ -2183,6 +2397,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     attackers.forEach(m=>{ if(m.task==='garrison'&&m.garrisonTarget!=null)m.waveId=(ai.waveCount||0)+1; });
   }
   if(launched>0){
+    aiProbe('waveGo:t'+ai.team);
     ai.waveCount=(ai.waveCount||0)+1;
     ai.lastWaveTick=ai.tick;
     ai.lastWaveGlobalTick=tick; // global-tick stamp for allied coordination
@@ -2198,11 +2413,10 @@ function controlAIMilitary(ai,mils,aiTC,profile){
 // foe that wanders near), the 6-tile leash (unkiteable), guard-return
 // (re-form after each skirmish). Wave launches clear the posts (the
 // issueOrder(null) at the wave assign). NOTE: this correctly STRENGTHENS
-// defense and therefore raises AI-vs-AI stalemate counts — that exposes the
-// real structural problem (attackers lack a resolution mechanism: the
-// garrisoned-TC arrow curve + small waves + no Imperial siege). Fix
-// resolution at ITS root; do not weaken this posture to hide it
-// (first-principles rule — see the balance work).
+// defense; the resolution mechanism it once exposed as missing now exists —
+// AoE2 army-size-driven launches (the scaled minGroup hold above): small
+// persistent sorties instead of waiting on an eco-scaled mass that a raided
+// AI could never assemble.
 function rallyIdleMilitary(ai,mils,aiTC){
   let dir=getEnemyDirection(ai,aiTC);
   let rx,ry;

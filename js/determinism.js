@@ -239,6 +239,12 @@ function simChecksum(){
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
       h = detMix(h, ai.resignScore || 0);
+      // War-state memory: the bell reads lastBaseHitTick EVERY tick and the
+      // under-attack doctrine (walls/eco/garrison-recall) gates on it —
+      // both were unhashed sim state (pre-existing gap; seenWarTick is its
+      // classifier cursor).
+      h = detMix(h, ai.lastBaseHitTick == null ? -1 : ai.lastBaseHitTick);
+      h = detMix(h, ai.seenWarTick == null ? -1 : ai.seenWarTick);
       // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
       h = detMix(h, ai.baseSurveyed ? 1 : 0);
       h = detMix(h, ai.surveyIdx || 0);

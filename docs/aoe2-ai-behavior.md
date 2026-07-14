@@ -186,7 +186,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 |---|---|---|---|
 | Sighted response | **50%** of idle troops within 25 tiles respond | `sightedResponsePercent [50]`: nearest ~half of eligible defenders dispatch, rest hold posture (`controlAIMilitary`) | ✅ closed 2026-07 |
 | Retreat | `percent-health-retreat` / `percent-death-retreat` per unit/group | per-unit: <30% HP under active enemy fire → runs home (`retreatUntil`, retaliation/auto-acquire suppressed); group: wave recalled when survivors <35% of launch (`lastWaveSize`); enemy-player hits only — never wildlife | ✅ closed 2026-07 |
-| Garrison under attack | `sn-number-garrison-units` | town-bell reaction (`updateAIGarrisonReaction`), core-hit gated | ✅ |
+| Garrison under attack | `sn-number-garrison-units` | villagers: town-bell reaction (`updateAIGarrisonReaction`), core-hit gated. SOLDIERS too (2026-07 under-attack doctrine): outmatched home defenders (>1.6x local enemy power) shelter in the TC/towers via the shared garrison flow, eject on all-clear or when trained-up combined power reaches parity; abandon-ship at melee+<50% hp (garrison dies with the building). Melee garrison adds no arrows (pierce-DPS model) — the win is army preservation. | ✅ closed 2026-07 |
 | Auto-repair | `object-repair-level` bit flags (TC/castle…) | any own building with hp<maxHp is builder work (`assignAIVillagers`) | ✅ broader than AoE2 default, fine |
 | Villagers fight back | up to 10 `civilian-militia` | `civilianMilitia [10]`: at the bell moment, a small raid the army can't answer gets mobbed instead of hiding the eco (`tryAIMilitiaResponse`); recall when the raider dies/flees the town radius | ✅ closed 2026-07 |
 | Anti-forward-building | `safe-town-size [255]` — enemy buildings near town get attacked | `findEnemyForwardBuilding`: enemy structures (incl. foundations) in the town radius draw the sighted-response fraction of defenders; arrow-firers first | ✅ closed 2026-07 |
@@ -196,10 +196,10 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 
 | Behavior | AoE2 DE | Ours | Verdict |
 |---|---|---|---|
-| Attack trigger | army-size (`min-attack-group-size [4]`), no clock | army-size (`attackSize`) + `attackTick` floor + intel strength bar (`attackAdvantage`) | 🟡 `attackTick` ≈ `initial-attack-delay` (exists in AoE2, default 0); strength-bar is smarter than AoE2 default |
-| Escalation | min group +1 per 10 min | eco-driven: `aiWaveSize` = fraction of villagers | 🔶 documented — escalates because eco grows |
+| Attack trigger | army-size (`min-attack-group-size [4]`), no clock | army-size: launch when the ARMY (`mils`, garrisoned excluded) reaches the scaled min group past `attackTick` + intel strength bar (`attackAdvantage`); the wave itself is drawn from currently-`available` units. Defense (sighted response) and offense run in PARALLEL — a sighted threat dispatches defenders but no longer freezes the wave machinery | ✅ closed 2026-07 (under-attack doctrine) — the old eco-scaled `aiWaveSize` launch bar locked raided AIs out of ever counter-attacking; `aiWaveSize` survives as the TRAINING ceiling only |
+| Escalation | min group +1 per 10 min (`sn-scaling-frequency`), max group 10 | min group +1 per 10 game-min past attackTick (`AI_ATTACK_SCALE_EVERY`), clamped to `min(waveCap, AI_ATTACK_MIN_GROUP_CAP=10)` — AoE2's own scaled-min>max freeze trap, hit and fixed in ladder runs | ✅ closed 2026-07 |
 | Commit % | 75%, keep 25% home | `commitPercent` + `armyReserve` | ✅ |
-| Stalemate valve | attacks eventually even outmatched | 3-cooldown force-push | ✅ |
+| Stalemate valve | attacks eventually even outmatched | DELETED 2026-07 — it existed to unstick the eco-scaled launch bar, and its 8-unit floor was itself unreachable for a raided AI; the small scaled min group is always reachable | ✅ (by removal) |
 | March cohesion | group moves together | `groupSpeed` = slowest member | ✅ |
 | Target priority | script `up-set-offense-priority` | units-in-face → TC → tower/barracks → rest; rams = buildings only | ✅ reasonable equivalent |
 | Wall handling | `building-targeting-mode` | detour-vs-breach cost compare (`resolveReachableAttackTarget`) | ✅ arguably better |
@@ -222,10 +222,11 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 
 | Behavior | AoE2 DE | Ours | Verdict |
 |---|---|---|---|
-| Walling | situational, script-driven | full ring + eco/enemy gates, deferred until maxAge (see [[ai-aoe2-attack-eco-alignment]]) | ✅ |
+| Walling | situational, script-driven | full ring + eco/enemy gates, deferred until maxAge AND paused during a war-state (`aiRecentlyRaided` — core hit within 2 game-min; walls are preparation, not reaction; egress carving keeps running) | ✅ |
 | Stone upgrade | script | palisade→stone from Feudal, gates first | ✅ |
 | Towers | `auto-build-towers` / `max-towers` | `maxTowers` 0/1/2, wall-mounted (gate flank → corners → eco side) | ✅ |
 | Resource ceilings | `sn-maximum-<res>` | hoard thresholds (wood>600 shed, stone>800 stop, gold>500 shed) | ✅ |
+| Resource floors | `sn-minimum-<res>` | emergency market floors (2026-07): food<100 / wood<80 with gold banked → buy at a 100-gold cushion (vs 300 normally); a food-starved gold-rich AI may also build the market NEED-based; barracks rebuild fund (175w) outranks towers/market/new farms (`aiBarracksFundClear`) | ✅ minimal analog |
 
 ### Remaining gaps, in priority order
 
