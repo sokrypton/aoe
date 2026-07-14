@@ -430,7 +430,10 @@ function unitMoveSpeed(e){
   if(e.groupSpeed&&e.groupSpeed<sp){
     if(e.target){
       let t=entitiesById.get(e.target);
-      if(t&&distToTarget(e,t)<10){e.groupSpeed=undefined;return sp;}
+      // Release on a DEAD/GONE target too: a truthy-but-dangling id matched
+      // neither branch and pinned the unit at the group's slowest pace for
+      // the rest of its walk.
+      if(!t||distToTarget(e,t)<10){e.groupSpeed=undefined;return sp;}
     }
     if(!e.target&&e.path.length===0&&e.moveGoalX===undefined){e.groupSpeed=undefined;return sp;} // arrived
     return e.groupSpeed;
@@ -689,10 +692,10 @@ function nearestReachableWallLike(unit, team, excludeId){
   let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / TPS);
   return entities.filter(en => en.type === 'building' && sameSide(en.team, team) && en.hp > 0 &&
       (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
-    .sort((a, b) => dist(unit, a) - dist(unit, b))
+    .sort((a, b) => dist(unit, a) - dist(unit, b) || a.id - b.id) // deterministic tiebreak
     .slice(0, 6)
     .map(w => ({ w, score: wallBreachTicks(unit, w) + marchTicks(w) }))
-    .sort((a, b) => a.score - b.score)
+    .sort((a, b) => a.score - b.score || a.w.id - b.w.id) // deterministic tiebreak
     .map(s => s.w)
     .find(w => w.id!==excludeId && !(unit.unreachId===w.id && unit.unreachUntil>tick) && isTargetReachable(unit, w)) || null;
 }
@@ -1099,7 +1102,14 @@ function updateGatherTask(e,config){
     // anyway. Deterministic pick: nearest, then lowest id.
     if(e.task==='farm'){
       let store=resourceStore(e.team);
-      if(store&&((store.prepaidFarms||0)>0||store.wood>=60)){
+      // "Payable" must match who can actually PAY at the farm: prepaid credit
+      // works for everyone, but the raw-wood reseed is AI-only (a human's
+      // wood is spent via the Mill's prepay queue, updateVillagerBuild).
+      // Without the isAITeam gate a human farmer with 60+ wood and no
+      // prepaid ping-ponged build↔farm at the exhausted plot forever
+      // (169 task flips in 400 ticks in the repro) — never reseeding,
+      // never idling, invisible to the stuck-watchdog.
+      if(store&&((store.prepaidFarms||0)>0||(isAITeam(e.team)&&store.wood>=60))){
         let ex=null,best=Infinity;
         entities.forEach(en=>{
           if(en.type!=='building'||en.btype!=='FARM'||en.team!==e.team||!en.exhausted)return;
@@ -1226,7 +1236,7 @@ function checkNextBuild(e){
     // Look for any unfinished allied foundations nearby (within 25 tiles)
     let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete);
     if (unfinished.length > 0) {
-      unfinished.sort((a, b) => dist(e, a) - dist(e, b));
+      unfinished.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id); // deterministic tiebreak
       if (dist(e, unfinished[0]) <= 25) {
         unfinishedInQueue.push(unfinished[0]);
       }
@@ -1451,8 +1461,10 @@ function damageEntity(attacker, target){
       shouldRetaliate = true;
     } else {
       let curT = entitiesById.get(target.target);
-      // Switch target from buildings/sheep to focus the attacking soldier
-      if(!curT || curT.type==='building'||curT.utype==='sheep'||curT.utype==='sheep_carcass'){
+      // Switch target from buildings/sheep/WILDLIFE to focus the attacking
+      // soldier — a unit finishing off a bear must not ignore the enemy
+      // spearman now stabbing it (gaia is never the bigger threat).
+      if(!curT || curT.type==='building'||curT.utype==='sheep'||curT.utype==='sheep_carcass'||curT.team===GAIA_TEAM){
         shouldRetaliate = true;
       }
     }
@@ -1477,6 +1489,13 @@ function damageEntity(attacker, target){
       if(isRetreatingUnit(en))return; // tactical retreat (js/ai.js) — keeps running
       if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
       if(distToTarget(en,target)>8)return;
+      // Same fog gate the acquire scan enforces (human teams only — the AI
+      // keeps its proximity model): don't lock a defender onto an attacker
+      // its team can't even see (a fogged sieger revealed only by its arrows).
+      if(!window.fogDisabled && isHumanTeam(en.team)){
+        let ax=Math.round(attacker.x), ay=Math.round(attacker.y);
+        if(ax<0||ax>=MAP||ay<0||ay>=MAP||!teamCanSeeTile(en.team, ay*MAP+ax))return;
+      }
       en.target=attacker.id;
     });
   }
@@ -1570,6 +1589,11 @@ function restoreSavedTask(e) {
         let pt = b.isFarm ? {x: bt.x, y: bt.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(e.x, e.y, bt, e.id) : {x: bt.x + bt.w, y: bt.y + bt.h});
         if (pt) pathUnitTo(e, pt.x, pt.y);
       }
+    } else if (e.task === 'return') {
+      // A loaded hauler resumes its DROP-OFF, not the resource tile: leave
+      // the path empty and updateVillagerDropoff (which runs on an empty
+      // path) routes to the nearest drop site. Pathing to gatherX here sent
+      // an interrupted hauler on a full round-trip back to the tree first.
     } else if (e.gatherX !== undefined && e.gatherX >= 0) {
       pathUnitTo(e, e.gatherX, e.gatherY);
     }
@@ -1635,6 +1659,12 @@ function ejectGarrison(b,filter){
     // Unit containers (rams) have no w/h footprint — spawn around the wreck.
     let bx=Math.round(b.x),by=Math.round(b.y);
     let spawn=findSpawnTile(bx+(b.w||1),by+(b.h||1),8,taken)||findSpawnTile(bx-1,by-1,8,taken);
+    // No free tile in the whole radius-8 ring: if the container still
+    // stands, the unit stays SHELTERED (ejecting onto the solid footprint
+    // parked it inside the building for separation to shove around). A
+    // DYING container has no such luxury — eject at the wreck and let
+    // separation sort it out, better than deleting the unit.
+    if(!spawn && b.hp>0){keep.push(id);return;}
     if(spawn)taken.add(spawn.x+','+spawn.y);
     u.garrisonedIn=undefined;
     if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
@@ -2329,7 +2359,7 @@ function updateUnitCombat(e){
       }
       let next = (wall && isTargetReachable(e,wall)) ? wall : null;
       if(!next){
-        cand.sort((a,b)=>a.d-b.d);
+        cand.sort((a,b)=>a.d-b.d||a.bx.id-b.bx.id); // deterministic tiebreak (house rule: never rely on sort stability)
         for(let i=0;i<cand.length && i<8;i++){ if(isTargetReachable(e,cand[i].bx)){ next=cand[i].bx; break; } }
       }
       if(next){ e.target=next.id; e.siegeSpot=null; return; } // keep explicitAttack
@@ -2443,8 +2473,16 @@ function updateUnitCombat(e){
 
 
   if (range > 0) {
-    // Ranged combat: stay within range and fire projectiles
-    if (d > range) {
+    // Ranged combat: stay within range and fire projectiles.
+    // Fire gate carries the +0.5 slack (same slack the acquire scan and
+    // retaliation reach tests use): findPath's stopDist goal test is
+    // ROUNDED-tile based, so a unit shoved to the far corner of an in-range
+    // tile could sit at float d≈range+0.4 where findPath returns []
+    // ("already in range") while a bare d>range gate refused to fire — a
+    // dead zone that stalled the chase into a spurious give-up. d is
+    // distToTarget (footprint-aware), so large buildings stay hittable
+    // from their edge.
+    if (d > range + 0.5) {
       if (e.stance === 'standground' && !e.explicitAttack) {
         e.target = null;
         return;

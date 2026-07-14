@@ -1373,6 +1373,10 @@ function spawnProjectile(attacker, target) {
     ty: targetY,
     // Buildings can't sidestep — a shot at a building always connects.
     targetBuildingId: target.type === 'building' ? target.id : null,
+    // Who the shot was AIMED at: the impact scan uses this to let a
+    // deliberately-hunted gaia animal take the hit while sparing wildlife
+    // from stray/dodged arrows meant for someone else (js/loop.js).
+    aimId: target.id,
     // Id + a plain-data snapshot instead of a live object reference: the
     // impact (js/loop.js) prefers the live entity by id, but the snapshot
     // means an arrow still lands with the right team/damage after its

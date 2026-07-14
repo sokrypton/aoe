@@ -337,8 +337,12 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
 // "busy" and skipping retaliation forever, and updateUnit()'s multi-leg
 // resume walking an idle unit back toward an old, no-longer-relevant tile.
 function issueMoveOrder(e,x,y){
-  e.moveGoalX=x;
-  e.moveGoalY=y;
+  // Clamped like the anchor below: edge-of-map formation offsets produce
+  // off-map goals findPath silently clamps — an unclamped moveGoal then
+  // never matches the arrival tile, so the "arrived, clear goal" check
+  // churned repaths until the empty-path fallback cleared it.
+  e.moveGoalX=Math.max(0,Math.min(MAP-1,x));
+  e.moveGoalY=Math.max(0,Math.min(MAP-1,y));
   // A plain move sets the unit's ANCHOR (defendX/Y) to the destination. The
   // anchor only means something to DEFENSIVE stance (scoped acquire + 6-tile
   // leash, js/logic.js); aggressive units chase freely and stand where the

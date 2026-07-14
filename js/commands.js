@@ -537,6 +537,13 @@ function execUnitCommand(cmd){
   movers.forEach(s => {
     s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
+    // Stale multi-leg goal: gather/build redirects path via pathUnitTo (which
+    // never touches moveGoal), so an old move destination survived the
+    // redirect and resumeMultiLegMove marched the unit back to it once the
+    // new task ended (repro: move villager, redirect to a tree, tree
+    // depletes → villager walks to the ancient move spot). The move branch
+    // re-sets it via issueMoveOrder.
+    s.moveGoalX = undefined; s.moveGoalY = undefined;
     s.buildTarget = null;
     s.buildQueue = [];
     s.followId = undefined;

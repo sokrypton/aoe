@@ -172,6 +172,7 @@ function simChecksum(){
     h = detMix(h, p.id);
     h = detMixFloat(h, p.x); h = detMixFloat(h, p.y);
     h = detMixFloat(h, p.tx); h = detMixFloat(h, p.ty);
+    h = detMix(h, p.aimId == null ? -1 : p.aimId); // gaia stray-arrow gate reads it at impact (js/loop.js)
   }
   // Map tiles: terrain + remaining resources are sim state (gather
   // depletion, farm exhaust/reseed rewrite them) — unhashed, a divergent

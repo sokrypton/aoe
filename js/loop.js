@@ -40,6 +40,11 @@ function update(){
         entities.forEach(en => {
           if (en.type !== 'unit' || sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) return; // no ally friendly fire
           if (en.utype === 'sheep' || en.utype === 'sheep_carcass') return; // arrows don't burn food (matches tower target acquisition)
+          // Gaia wildlife is not collateral: a stray/dodged arrow aimed at a
+          // raider must not wing a passing bear (which flips its aggro and
+          // perturbs the AI's hunt bookkeeping). A bear the shooter actually
+          // AIMED at (p.aimId, spawnProjectile) still takes the hit.
+          if (en.team === GAIA_TEAM && en.id !== p.aimId) return;
           let idx = en.x - p.tx, idy = en.y - p.ty;
           let d = Math.sqrt(idx*idx + idy*idy);
           if (d < vd) { vd = d; victim = en; }
