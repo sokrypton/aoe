@@ -36,9 +36,10 @@ function canPlace(type,x,y,team=0,ignoreAge=false){
     // code review — the host would silently refuse a placement the guest
     // could clearly see and had every right to build on).
     // Deterministic explored-rule, symmetric per team (teamExploredGrid is
-    // sim state computed identically on every peer — js/core.js). AI teams
-    // keep their historic exemption (their "vision" is proximity-based,
-    // not fog-based — js/ai.js); humans must have explored the tile.
+    // sim state computed identically on every peer — js/core.js). Applies
+    // to EVERY team, AI included (information parity — the AI's wall ring
+    // waits for its scout's base-survey lap so ring tiles are explored
+    // before planning, js/ai.js planAIWalls).
     if(tileHiddenForTeam(team, ny*MAP+nx))return false;
     let t=map[ny][nx];
     if(t.t===TERRAIN.WATER||t.t===TERRAIN.FOREST||t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE||t.t===TERRAIN.BERRIES)return false;
@@ -1498,13 +1499,12 @@ function damageEntity(attacker, target){
       if(isRetreatingUnit(en))return; // tactical retreat (js/ai.js) — keeps running
       if(en.path.length>0||(en.order&&en.order.kind==='move'))return; // obeying a move order
       if(distToTarget(en,target)>8)return;
-      // Same fog gate the acquire scan enforces (human teams only — the AI
-      // keeps its proximity model): don't lock a defender onto an attacker
-      // its team can't even see (a fogged sieger revealed only by its arrows).
-      if(!window.fogDisabled && isHumanTeam(en.team)){
-        let ax=Math.round(attacker.x), ay=Math.round(attacker.y);
-        if(ax<0||ax>=MAP||ay<0||ay>=MAP||!teamCanSeeTile(en.team, ay*MAP+ax))return;
-      }
+      // Same fog gate the acquire scan enforces — ONE rule for humans and
+      // AI (information parity): don't lock a defender onto an attacker
+      // its team can't even see (a fogged sieger revealed only by its
+      // arrows). Being HIT is still knowledge (the AI's bell/militia
+      // reactions key off lastTeamHit) — hide from a ghost, don't hunt it.
+      if(!entityVisibleToTeam(attacker, en.team))return;
       en.target=attacker.id;
     });
   }
@@ -1993,11 +1993,11 @@ function updateIdleMilitary(e){
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
-        // visibility (teamCanSeeTile, js/core.js) — never the viewer-local
-        // fog grid, which differs between lockstep peers. AI teams keep
-        // their own proximity-based aggro rules unchanged.
-        if(!window.fogDisabled && isHumanTeam(e.team)
-           && !teamCanSeeTile(e.team, ey*MAP+ex))return false;
+        // visibility (entityVisibleToTeam, js/core.js) — never the
+        // viewer-local fog grid, which differs between lockstep peers.
+        // ONE rule for humans and AI (information parity); gaia (bears)
+        // has no vision grid and keeps its own aggro rules.
+        if(e.team!==GAIA_TEAM && !entityVisibleToTeam(en, e.team))return false;
         return true;
       });
       if(closest) {
@@ -2060,7 +2060,7 @@ function updateIdleMilitary(e){
           if (guardZone && guardZoneDist(guardZone, b.x + b.w/2, b.y + b.h/2) > GUARD_LEASH) continue; // outside the guard zone
           let d = distToTarget(e, b);
           if (d > scanRange + 0.1) continue;
-          if (!window.fogDisabled && !buildingVisibleToTeam(b, e.team)) continue;
+          if (!entityVisibleToTeam(b, e.team)) continue;
           let pri = firesArrows(b.btype) ? 1 : 0;
           if (pri > bestPri || (pri === bestPri && (d < bestD || (d === bestD && bestB && b.id < bestB.id)))) {
             bestPri = pri; bestD = d; bestB = b;
@@ -2396,43 +2396,26 @@ function updateUnitCombat(e){
   }
 
   // Fog of War visibility check for combat targets. Uses the sim's own
-  // deterministic per-team visibility (teamCanSeeTile, js/core.js) —
+  // deterministic per-team visibility (entityVisibleToTeam, js/core.js) —
   // NEVER the viewer-local `fog` grid, which differs between lockstep
-  // peers. Applies to human teams; AI teams keep their distance-heuristic
-  // branch below (their "vision" is proximity, not fog — js/ai.js).
-  if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM) {
-    if (isHumanTeam(e.team)) {
-      let visible = false;
-      if (window.fogDisabled) {
-        visible = true;
-      } else if (t.type === 'unit') {
-        let tx = Math.round(t.x), ty = Math.round(t.y);
-        visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && teamCanSeeTile(e.team, ty*MAP+tx);
-      } else if (t.type === 'building') {
-        visible = buildingVisibleToTeam(t, e.team);
-      }
-      if (!visible) {
-        e.target = null;
-        e.explicitAttack = false;
-        clearUnitPath(e);
-        return;
-      }
-    } else if (isAITeam(e.team) && !e.explicitAttack) {
-      // Ordinary AI units drop targets they can no longer see. Explicit
-      // marches (controlAIMilitary attacks on the remembered enemy TC)
-      // are exempt — the AI knows where the TC is even out of sight,
-      // otherwise the army's attack order is wiped the tick after it's
-      // given and it never leaves home.
-      let visionRange = 15 * (typeof aiScale === 'function' ? aiScale() : 1.0);
-      let visible = entities.some(aiEnt => {
-        return aiEnt.team === e.team && dist(aiEnt, t) <= visionRange;
-      });
-      if (!visible) {
-        if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
-        e.target = null;
-        clearUnitPath(e);
-        return;
-      }
+  // peers. ONE rule for humans and AI (information parity — the AI's old
+  // per-tick 15-tile proximity scan both cheated and was an O(entities)
+  // cost per unit per tick). Sole asymmetry: an AI EXPLICIT march keeps
+  // its target out of sight (controlAIMilitary attacks on the remembered
+  // enemy TC — the AI knows where the TC is even unseen, otherwise the
+  // army's attack order is wiped the tick after it's given and it never
+  // leaves home). A human's explicit attack instead drops on lost vision:
+  // the player is watching the fog and re-clicks.
+  // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its own
+  // aggro rules — the old human/AI branch pair skipped it implicitly.
+  if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
+      && !(isAITeam(e.team) && e.explicitAttack)) {
+    if (!entityVisibleToTeam(t, e.team)) {
+      if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
+      e.target = null;
+      e.explicitAttack = false;
+      clearUnitPath(e);
+      return;
     }
   }
 
@@ -3000,6 +2983,11 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
         if(excludeList && excludeList.includes(nx+ny*MAP))continue; // e.avoid array (see avoidAdd)
+        // Unexplored tiles are not candidates — the map-truth scan must not
+        // "discover" resources through fog (information parity, all teams:
+        // this also closes the human-side hole where the gather-exhaust
+        // retask / autoTaskBuilder could pick an unseen treeline).
+        if(tileHiddenForTeam(e.team, ny*MAP+nx))continue;
         if(!canGatherTile(e,terrain,nx,ny))continue;
         if(claimed.has(nx+ny*MAP))continue; // skip claimed tiles
         let d=Math.abs(dx)+Math.abs(dy);
@@ -3019,6 +3007,7 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
       let nx=bx+dx,ny=by+dy;
       if(nx>=0&&nx<MAP&&ny>=0&&ny<MAP&&map[ny][nx].t===terrain&&map[ny][nx].res>0){
         if(excludeList && excludeList.includes(nx+ny*MAP))continue; // e.avoid array (see avoidAdd)
+        if(tileHiddenForTeam(e.team, ny*MAP+nx))continue; // same explored gate as the main scan
         if(!canGatherTile(e,terrain,nx,ny))continue;
         let d=Math.abs(dx)+Math.abs(dy);
         if(d<bd){bd=d;best={x:nx,y:ny};}

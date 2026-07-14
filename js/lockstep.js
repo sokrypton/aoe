@@ -42,6 +42,13 @@ const LOCKSTEP_REPORT_EVERY = 6;
 // effectively dead longer than the net-layer heartbeat tolerates anyway.
 const LOCKSTEP_SNAP_EVERY = 10;
 const LOCKSTEP_SNAP_KEEP = 30;
+// The vision refresh phase (VISION_REFRESH_PERIOD, js/core.js) relies on
+// every snapshot tick being a multiple of the refresh period so that a
+// rollback's forced grid rebuild lands on an aligned refresh tick — see
+// the comment at VISION_REFRESH_PERIOD. Fail loudly if someone retunes
+// one constant without the other.
+if (LOCKSTEP_SNAP_EVERY % VISION_REFRESH_PERIOD !== 0)
+  throw new Error('LOCKSTEP_SNAP_EVERY must be a multiple of VISION_REFRESH_PERIOD (vision rollback alignment)');
 // Checksums are only exchanged for ticks at least a full ROLLBACK WINDOW
 // old: any command that can still legally rewrite tick T arrives within
 // the window, so only then is T final on both sides. (This was 90 ticks —

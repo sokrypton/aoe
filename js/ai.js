@@ -300,46 +300,26 @@ function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
 
 // ---- AI INTEL ----
 // What the AI actually "knows" about the player, built from units/buildings
-// that have come within sight of an AI unit or building — not omniscient
-// lookups into the global entities list. Scouts wandering the map (see
-// controlAIScouts) are what feeds this: every tile they wander through
-// extends AI vision, so exploring is what lets the AI react to what the
-// player is building rather than playing blind. TC sighting is sticky (once
-// scouted, the AI remembers where it is, like a human player would).
-// Cell-hash proximity visibility: which enemy entities have any of MY
-// entities within `visionRange`? Replaces the O(entities^2)
-// filter(...entities.some(...)) scans that dominated late-game decision
-// ticks (~160k dist() calls per AI with 400 entities): bucket my entities
-// into visionRange-sized cells once, then each candidate checks only its
-// 3x3 cell neighborhood. Identical results, same entity order.
-function aiVisibleEnemies(ai,visionRange,pred){
+// standing inside the team's REAL vision — the same deterministic per-team
+// sight grid a human's screen is drawn from (teamCanSeeTile /
+// entityVisibleToTeam, js/core.js). Not omniscient lookups into the global
+// entities list, and no longer the old 15-tile proximity model either (that
+// gave the AI ~2-3x a unit's true sight radius and saw through anything —
+// an information cheat, parity rule). Scouts wandering the map (see
+// controlAIScouts) are what feeds this: every tile they cover extends team
+// vision, so exploring is what lets the AI react to what the player is
+// building rather than playing blind. TC sighting is sticky (once scouted,
+// the AI remembers where it is, like a human player would).
+function aiVisibleEnemies(ai,pred){
   // All-Visible match: full knowledge for EVERYONE, the AI included — its
   // intel, counter-picking, wave targeting and strength estimates all flow
-  // through this one choke point. (Also cheaper than the proximity hash.)
-  if(window.fogDisabled)return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e));
-  let cell=Math.max(1,visionRange);
-  let mine=new Map();
-  for(let i=0;i<entities.length;i++){
-    let en=entities[i];
-    if(en.team!==ai.team)continue;
-    let k=Math.floor(en.x/cell)*4096+Math.floor(en.y/cell);
-    let a=mine.get(k);if(!a)mine.set(k,a=[]);
-    a.push(en);
-  }
-  let r2=visionRange*visionRange;
-  let near=e=>{
-    let cx=Math.floor(e.x/cell),cy=Math.floor(e.y/cell);
-    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
-      let a=mine.get((cx+dx)*4096+(cy+dy));
-      if(!a)continue;
-      for(let j=0;j<a.length;j++){let m=a[j],ddx=m.x-e.x,ddy=m.y-e.y;if(ddx*ddx+ddy*ddy<=r2)return true;}
-    }
-    return false;
-  };
-  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e)&&near(e));
+  // through this one choke point. (entityVisibleToTeam short-circuits on
+  // fogDisabled itself; the grids are UNMAINTAINED under All-Visible, so a
+  // bare grid read here would be blind — the inverse bug.)
+  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.hp>0&&pred(e)&&entityVisibleToTeam(e,ai.team));
 }
 function getSpottedEnemies(ai){
-  return aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep');
+  return aiVisibleEnemies(ai,e=>e.utype!=='sheep');
 }
 
 function unitPower(utype){
@@ -349,34 +329,80 @@ function unitPower(utype){
 }
 
 function updateAIIntel(ai,aiTC,profile){
-  let intel=ai.intel||{unitCounts:{},strength:0,tcSeen:false,tcX:0,tcY:0,tcTeam:null};
-  let unitCounts={},strength=0,strengthByTeam={};
-  getSpottedEnemies(ai).forEach(e=>{
+  let intel=ai.intel||(ai.intel=freshAIIntel()); // shape lives in js/core.js (hashed sim state)
+  // GHOST-CLEARING (re-sight validation): TC memory is sticky, but when any
+  // tile of the remembered footprint is currently VISIBLE and no enemy TC
+  // stands at the remembered spot, the memory is a ghost — drop it and go
+  // back to scouting/recon, exactly what a human concludes looking at the
+  // empty ground. Under All-Visible teamCanSeeTile is always true, so this
+  // degenerates to live truth — correct for that mode. (The old code never
+  // cleared tcSeen, and the march path re-read the LIVE nearest enemy TC
+  // out of `entities` — leaking death knowledge and unscouted teams'
+  // positions. Both leaks close together: march on memory, verify by sight.)
+  if(intel.tcSeen){
+    let tcW=BLDGS.TC.w, tcH=BLDGS.TC.h, seen=false;
+    for(let dy=0;dy<tcH&&!seen;dy++)for(let dx=0;dx<tcW;dx++){
+      let tx=intel.tcX+dx, ty=intel.tcY+dy;
+      if(tx>=0&&tx<MAP&&ty>=0&&ty<MAP&&teamCanSeeTile(ai.team,ty*MAP+tx)){seen=true;break;}
+    }
+    if(seen&&!entities.some(e=>e.type==='building'&&e.btype==='TC'&&e.hp>0
+        &&e.team===intel.tcTeam&&e.x===intel.tcX&&e.y===intel.tcY)){
+      intel.tcSeen=false;intel.tcTeam=null;
+    }
+  }
+  let unitCounts={};
+  let observed=new Array(NUM_TEAMS).fill(0);
+  let spotted=getSpottedEnemies(ai);
+  spotted.forEach(e=>{
     if(e.type==='unit'){
       unitCounts[e.utype]=(unitCounts[e.utype]||0)+1;
-      let p=unitPower(e.utype);
-      strength+=p;
-      strengthByTeam[e.team]=(strengthByTeam[e.team]||0)+p;
+      observed[e.team]+=unitPower(e.utype);
     } else if(e.type==='building'&&e.btype==='TC'){
+      // Sticky TC memory (last-seen-wins across multiple enemies; single
+      // remembered TC is a v1 limitation, noted in the parity docs).
       intel.tcSeen=true;
       intel.tcX=e.x;intel.tcY=e.y;intel.tcTeam=e.team;
     }
   });
-  // (The old "safety net" that read the nearest enemy TC's true coordinates
-  // straight out of `entities` after attackTick*2 was DELETED — a
-  // timer-gated map-truth read is an information cheat, parity rule. An AI
-  // whose scouting never found the enemy now sends ARMED RECONNAISSANCE
-  // instead: launchAIWave marches unassigned waves at the team's own
-  // explore frontier — exactly what a human does when they can't find the
-  // last enemy — and tcSeen is earned the honest way, by proximity.)
+  // CONTACT MEMORY: remember the nearest spotted enemy to home (sticky) —
+  // the honest replacement for the old STARTS start-position read in
+  // getEnemyDirection. Walls/rally/wave direction point at where the enemy
+  // was actually ENCOUNTERED until a TC is found. Deterministic pick:
+  // min distance, id tiebreak.
+  if(aiTC&&spotted.length){
+    let tcC=centerOf(aiTC),best=null,bd=Infinity;
+    spotted.forEach(e=>{let d=dist(e,tcC);if(d<bd||(d===bd&&(!best||e.id<best.id))){bd=d;best=e;}});
+    intel.contactX=Math.round(best.x);intel.contactY=Math.round(best.y);intel.contactTick=tick;
+  }
+  // DECAYING STRENGTH MEMORY: dense per-team ints in fixed slot order
+  // (never key-iterate — determinism). Snaps UP to what is observed on
+  // contact and fades ~6% per decision tick otherwise, so a scouted army
+  // is remembered for a few game-minutes and then must be re-scouted.
+  // Pure integer math (engine-portable); hashed in the AI digest
+  // (js/determinism.js). Glimpsing PART of an army does not erase the
+  // memory of the whole — Math.max, not assignment. A team never contacted
+  // stays at 0: "no known defenses", so the wave-commit bar doesn't hold
+  // an army home against an enemy it has no information about (attacking
+  // into the unknown is the AoE2 default; armed recon earns the truth).
+  let mem=intel.strengthByTeam,strength=0;
+  for(let u=0;u<NUM_TEAMS;u++){
+    mem[u]=Math.max(observed[u]|0,Math.floor((mem[u]|0)*15/16));
+    if(isEnemyOf(ai.team,{team:u}))strength+=mem[u];
+  }
+  intel.strength=strength; // Σ remembered enemy power — the wave-commit bar reads this
+  // DERIVED (counter-picking): rebuilt here before any consumer runs each
+  // decision tick, never carried across ticks — deliberately unhashed; if
+  // it ever becomes carried state it must join the AI digest.
   intel.unitCounts=unitCounts;
-  intel.strength=strength;
-  intel.strengthByTeam=strengthByTeam; // per-enemy-team split — wave commits compare vs ONE target, not the sum
-  ai.intel=intel;
 }
 
 function estimateLocalEnemyPower(ai,center,radius){
-  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'&&dist(e,center)<=radius)
+  // entityVisibleToTeam: only enemies the team can actually SEE count
+  // (information parity — this fed militia/retreat sizing from raw map
+  // truth). A fogged half of a raid is genuinely underestimated, exactly
+  // like a human eyeballing the visible attackers.
+  return entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.hp>0&&e.utype!=='sheep'
+      &&dist(e,center)<=radius&&entityVisibleToTeam(e,ai.team))
     .reduce((s,e)=>s+unitPower(e.utype),0);
 }
 
@@ -515,6 +541,13 @@ function planAIWalls(ai,aiTC,vils,profile){
   // A base under active siege still gets its reactive defenses (planAITowers /
   // findAIWallDefenseSpot run independently).
   if((teamAge[ai.team]||0) < (profile.maxAge||2))return;
+  // Survey before fortifying: the ring is planned on tiles the team has
+  // actually SEEN. The scout's base-survey lap (controlAIScouts) walks
+  // exactly the ring band, so post-survey every ring tile is explored —
+  // without this gate, canPlace's explored check (tileHiddenForTeam, now
+  // applying to AI teams too) would reject unexplored ring segments forever
+  // and the plan could never complete.
+  if(!ai.baseSurveyed)return;
   if(!ai.wallPlan)ai.wallPlan=computeAIWallRing(ai,aiTC,profile.wallRadius*aiScale());
   let plan=ai.wallPlan;
 
@@ -904,11 +937,17 @@ function getEnemyDirection(ai,tc){
   let ex,ey;
   if(intel&&intel.tcSeen){
     ex=intel.tcX;ey=intel.tcY;
+  } else if(intel&&intel.contactTick>=0){
+    // No TC found yet but the enemy HAS been met: point at the remembered
+    // nearest-contact spot (updateAIIntel) — where trouble actually came from.
+    ex=intel.contactX;ey=intel.contactY;
   } else {
-    // Never scouted anyone: assume the nearest OTHER start position.
-    let plStart=STARTS.filter(s=>!sameSide(ai.team,s.team))
-      .sort((a,b)=>dist(a,tc)-dist(b,tc))[0];
-    ex=plStart?plStart.x:0;ey=plStart?plStart.y:0;
+    // No contact at all: neutral prior — the map center. The old fallback
+    // read STARTS (every team's start position): knowledge the team never
+    // scouted, an information cheat (parity rule). Pre-contact walls/gates
+    // may face the wrong way now; that's the honest cost, and it corrects
+    // itself on first contact.
+    ex=MAP>>1;ey=MAP>>1;
   }
   let vx=ex-(tc.x+Math.floor(tc.w/2)),vy=ey-(tc.y+Math.floor(tc.h/2));
   let len=Math.sqrt(vx*vx+vy*vy)||1;
@@ -1425,6 +1464,11 @@ function nearestAISheep(ai,v){
     if(e.hp<=0)continue;
     if(e.utype!=='sheep'&&e.utype!=='sheep_carcass')continue;
     if(e.team!==GAIA_TEAM&&e.team!==ai.team)continue; // gaia strays or our own flock; never poach an enemy's
+    // A stray must be SEEN before it can be claimed (information parity —
+    // the range leash alone let villagers walk at gaia sheep still under
+    // fog). Own-flock sheep light their own sight disk, so this only
+    // gates unseen gaia strays at the leash edge.
+    if(!entityVisibleToTeam(e,ai.team))continue;
     let d=Math.abs(e.x-v.x)+Math.abs(e.y-v.y);
     if(d<=AI_SHEEP_HUNT_RANGE)cands.push({e,d});
   }
@@ -1990,10 +2034,22 @@ function controlAIMilitary(ai,mils,aiTC,profile){
     // home defenders exempt while catching every stalled march.
     let strays=mils.filter(m=>!m.target&&m.utype!=='scout'&&!isRetreatingUnit(m)&&m.task!=='garrison'&&dist(m,tcC0)>22);
     if(strays.length){
-      let spotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
+      let spotted=aiVisibleEnemies(ai,e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
+      // Nothing spotted → march on memory (aiMarchPoint: remembered TC /
+      // frontier), mirroring the wave launch. Only for strays that are NOT
+      // already walking an order — re-issuing every decision tick would
+      // repath the whole camp each time. chooseAIAttackTarget no longer
+      // falls back into fog itself (that was the live-TC-coords leak).
+      let marchPt=null, marchPtComputed=false;
       strays.forEach(m=>{
         let t=chooseAIAttackTarget(ai,m,spotted);
-        if(t)assignAttack(m,t);
+        if(t){assignAttack(m,t);return;}
+        if(m.order&&m.order.kind==='move')return; // already marching
+        if(!marchPtComputed){marchPt=aiMarchPoint(ai,aiTC);marchPtComputed=true;}
+        if(marchPt){
+          issueOrder(m,{kind:'move', x:marchPt.x, y:marchPt.y});
+          pathUnitTo(m,marchPt.x,marchPt.y);
+        }
       });
     }
   }
@@ -2015,15 +2071,19 @@ function controlAIMilitary(ai,mils,aiTC,profile){
       // a team game meant no single AI ever cleared the bar), and credit
       // half of any allied army massed near our own base.
       let availablePower=available.reduce((s,m)=>s+unitPower(m.utype),0);
-      let sbt=intel.strengthByTeam||{};
+      let sbt=intel.strengthByTeam; // dense per-team DECAYED memory (0 = no memory of that team)
       let targetTeam=(intel.tcSeen&&intel.tcTeam!=null)?intel.tcTeam:null;
-      if(targetTeam==null||sbt[targetTeam]==null){
+      if(targetTeam==null){
+        // No known TC: compare against the weakest-REMEMBERED enemy. A team
+        // never contacted sits at 0 — "no known defenses" — so unknowns
+        // don't hold the army home (attacking into the unknown is the AoE2
+        // default; the march doubles as armed reconnaissance).
         for(let u=0;u<NUM_TEAMS;u++){
-          if(!isEnemyOf(ai.team,{team:u})||sbt[u]==null)continue;
-          if(targetTeam==null||sbt[u]<(sbt[targetTeam]??Infinity))targetTeam=u;
+          if(!isEnemyOf(ai.team,{team:u}))continue;
+          if(targetTeam==null||sbt[u]<sbt[targetTeam])targetTeam=u;
         }
       }
-      let targetStrength=targetTeam!=null&&sbt[targetTeam]!=null?sbt[targetTeam]:intel.strength;
+      let targetStrength=targetTeam!=null?sbt[targetTeam]:intel.strength;
       let tcC=centerOf(aiTC);
       let allyPower=nearbyAlliedPower(ai,tcC,20*aiScale());
       if(availablePower+allyPower*0.5<targetStrength*requiredFactor)holding=true;
@@ -2056,30 +2116,25 @@ function controlAIMilitary(ai,mils,aiTC,profile){
   let sendN=Math.min(profile.waveCap||waveSize, Math.max(profile.attackSize||waveSize, Math.round(mils.length*commit/100)));
   let attackers=available.slice(0,sendN);
   let launched=0;
-  let waveSpotted=aiVisibleEnemies(ai,15*aiScale(),e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
+  let waveSpotted=aiVisibleEnemies(ai,e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
   // Targets first, pace after: the formation speed depends on who marches
   // and who RIDES (a loaded ram is faster than an empty one), so riders are
   // planned before the group pace is computed.
-  // ARMED RECONNAISSANCE: no known target (scouting never found the enemy —
-  // the omniscient TC-reveal fallback is gone, parity rule) → the wave
-  // marches at the team's own explore frontier as a fighting patrol, the
-  // same thing a human does hunting the last enemy. Each recon wave earns
-  // intel honestly: proximity contact sets tcSeen via getSpottedEnemies.
-  let reconPt = null;
-  if(!ai.intel || !ai.intel.tcSeen){
-    let home = aiTC || null;
-    reconPt = (typeof pickExploreWaypoint==='function') ? pickExploreWaypoint(ai.team, home) : null;
-  }
+  // March on MEMORY, engage what's SEEN: a spotted target gets a committed
+  // attack; with nothing spotted the wave marches at aiMarchPoint — the
+  // remembered enemy TC, or the explore frontier when no TC was ever seen
+  // (armed reconnaissance) — as a fighting patrol. Contact en route enters
+  // the spotted set and the stray-retask pass engages it; tcSeen ghosts
+  // clear on re-sight (updateAIIntel). No live map-truth reads anywhere in
+  // the march path (parity rule).
+  let reconPt = aiMarchPoint(ai,aiTC);
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(ai,m,waveSpotted);
-    // explicitAttack: this is a deliberate march on remembered intel — the
-    // per-tick vision check in updateUnit() must not wipe the order just
-    // because the destination is beyond current AI sight range.
     if(target){
       assignAttack(m,target); // shared semantics incl. order clear + battlefield anchor
       launched++;
     } else if(reconPt){
-      issueOrder(m,{kind:'move', x:reconPt.x, y:reconPt.y}); // fighting patrol toward the frontier
+      issueOrder(m,{kind:'move', x:reconPt.x, y:reconPt.y}); // fighting patrol toward remembered TC / frontier
       pathUnitTo(m,reconPt.x,reconPt.y);
       launched++;
     }
@@ -2330,8 +2385,14 @@ function findEnemyForwardBuilding(ai,aiTC,profile){
 function findEnemyThreatNear(ai,aiTC,range){
   // Allied buildings count too: in 2v2 the AI's army answers a raid on its
   // ally's town, not just its own (villager garrison panic stays own-team).
+  // entityVisibleToTeam: the threat must be SEEN, not read from map truth
+  // (information parity). Ally vision is folded into the team grid, so a
+  // raid on the ally's town is still spotted through the ally's own eyes.
+  // An unseen sieger landing hits still rings the bell via lastTeamHit —
+  // being damaged is knowledge; hide from a ghost, don't hunt it.
   let aiBuildings = entities.filter(e=>sameSide(e.team,ai.team)&&e.type==='building'&&e.complete);
-  let playerUnits = entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.utype!=='sheep');
+  let playerUnits = entities.filter(e=>isEnemyOf(ai.team,e)&&e.type==='unit'&&e.utype!=='sheep'
+    &&entityVisibleToTeam(e,ai.team));
   
   let closestThreat = null;
   let minDist = 9999;
@@ -2390,14 +2451,13 @@ function detourBreachThreshold(directTicks, tileTicks){
 }
 
 function chooseAIAttackTarget(ai,militia,spotted){
-  // No global vision: only player entities "spotted" within sight range of
-  // ANY AI unit/building are targetable (there is no dedicated team-1 fog
-  // grid — proximity to AI entities stands in for it, same as aiIntel).
-  // `spotted` may be passed in prebuilt: a wave launch calls this for
-  // EVERY attacker, and the spotted set is attacker-independent — building
-  // it 40x per wave was the other O(n^2) hotspot.
-  let visionRange=15*aiScale();
-  let spottedEnemies=spotted||aiVisibleEnemies(ai,visionRange,
+  // No global vision: only enemies inside the team's real sight grid are
+  // targetable (aiVisibleEnemies → entityVisibleToTeam, same visibility a
+  // human's screen shows — information parity). `spotted` may be passed in
+  // prebuilt: a wave launch calls this for EVERY attacker, and the spotted
+  // set is attacker-independent — building it 40x per wave was an O(n^2)
+  // hotspot.
+  let spottedEnemies=spotted||aiVisibleEnemies(ai,
     e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
 
   // Fallback to searching nearby player town centers if no units are spotted,
@@ -2424,17 +2484,30 @@ function chooseAIAttackTarget(ai,militia,spotted){
     let best = cands.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
     return resolveReachableAttackTarget(militia, best);
   }
-  if (ai.intel && ai.intel.tcSeen) {
-    // Only head for an enemy TC if a scout/unit has actually seen one at
-    // some point this game — otherwise the AI would be marching on knowledge
-    // it has no in-fiction way of having.
-    let enemyTC = entities.filter(e => isEnemyOf(ai.team, e) && e.btype === 'TC')
-      .sort((a, b) => dist(militia, a) - dist(militia, b))[0];
-    if (enemyTC && dist(militia, enemyTC) > visionRange) {
-      return resolveReachableAttackTarget(militia, enemyTC); // Patrol/march towards the known enemy TC
-    }
-  }
+  // Nothing spotted → no target. NO fallback into the fog here: the old
+  // branch read the nearest enemy TC's LIVE coords out of `entities` —
+  // leaking unscouted teams' positions and death knowledge. The callers
+  // (launchAIWave, the stray-retask pass) march targetless attackers on
+  // REMEMBERED intel instead — aiMarchPoint: the remembered TC if one was
+  // ever seen, else the explore frontier. Arrival vision feeds the next
+  // decision tick's spotted set, which assigns real targets (walls included,
+  // via resolveReachableAttackTarget); a ghost memory is cleared on
+  // re-sight (updateAIIntel).
   return null;
+}
+
+// Where a wave/stray with NO visible target marches: the remembered enemy
+// TC's center (sticky intel, ghost-cleared on re-sight) if one was ever
+// seen, else the team's own explore frontier — ARMED RECONNAISSANCE, the
+// same thing a human does hunting an enemy they can't find. Either way the
+// march is a fighting patrol on a plain move order: enemies met en route
+// enter the spotted set and get engaged by the next decision tick.
+function aiMarchPoint(ai,aiTC){
+  let intel=ai.intel;
+  if(intel&&intel.tcSeen){
+    return {x:intel.tcX+Math.floor(BLDGS.TC.w/2), y:intel.tcY+Math.floor(BLDGS.TC.h/2)};
+  }
+  return (typeof pickExploreWaypoint==='function') ? pickExploreWaypoint(ai.team, aiTC||null) : null;
 }
 
 function hasAIBuilding(ai,type){

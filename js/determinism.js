@@ -190,8 +190,10 @@ function simChecksum(){
   h = detMix(h, nextId);
   h = detMix(h, nextProjectileId);
   // Per-team explored/visible grids (teamExploredGrid, js/core.js): sim state
-  // — tileHiddenForTeam gates villager auto-gather and feeds AI intel, so a
-  // divergent grid steers tasking before it ever moves a position. Fold only
+  // — tileHiddenForTeam gates placement/gather-tasking for EVERY team and
+  // teamVisGrid feeds all spotting (entityVisibleToTeam: acquire/retention
+  // and the AI's whole intel pipeline — information parity), so a divergent
+  // grid steers decisions before it ever moves a position. Fold only
   // the set cells (position- and value-sensitive); the unexplored majority is
   // skipped, so it's cheap early and grows with the front, like the map-res
   // hash above. Tolerate absence for older states.
@@ -237,9 +239,24 @@ function simChecksum(){
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
       h = detMix(h, ai.resignScore || 0);
+      // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
+      h = detMix(h, ai.baseSurveyed ? 1 : 0);
+      h = detMix(h, ai.surveyIdx || 0);
+      h = detMix(h, ai.lastScoutTrainTick == null ? -1 : ai.lastScoutTrainTick);
       if (ai.intel) {
+        // Intel MEMORY (information parity): remembered TC coords, contact
+        // memory and the decaying strength table are all read on later
+        // ticks (waves march on them) — every carried field folds in.
+        // unitCounts stays out BY DESIGN: rebuilt before every read within
+        // one updateAI call (derived, never carried — see freshAIIntel).
         h = detMix(h, ai.intel.strength || 0);
         h = detMix(h, ai.intel.tcSeen ? 1 : 0);
+        h = detMix(h, ai.intel.tcX || 0);
+        h = detMix(h, ai.intel.tcY || 0);
+        h = detMix(h, ai.intel.tcTeam == null ? -1 : ai.intel.tcTeam);
+        h = detMix(h, ai.intel.contactX == null ? -1 : ai.intel.contactX);
+        h = detMix(h, ai.intel.contactY == null ? -1 : ai.intel.contactY);
+        h = detMix(h, ai.intel.contactTick == null ? -1 : ai.intel.contactTick);
         for (let u = 0; u < NUM_TEAMS; u++) h = detMix(h, (ai.intel.strengthByTeam && ai.intel.strengthByTeam[u]) || 0);
       }
       if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));

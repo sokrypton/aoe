@@ -430,9 +430,32 @@ function defaultAlliances(mp){
   if (!mp && NUM_TEAMS === 4) return [0, 0, 1, 1];
   return Array.from({length: NUM_TEAMS}, (_, t) => t);
 }
+// The AI's knowledge memory (updateAIIntel, js/ai.js) — everything here is
+// EARNED through the team's real vision (information parity) and carried
+// across ticks, so it is sim state: hashed in the AI digest
+// (js/determinism.js), snapshot/save rides AI_STATES. Shapes:
+//   strengthByTeam — DENSE length-NUM_TEAMS int array (decaying memory of
+//     each team's observed army power; fixed slot order, never key-iterated)
+//   tcSeen/tcX/tcY/tcTeam — sticky remembered enemy TC (ghost-cleared when
+//     the spot is re-sighted empty)
+//   contactX/Y/Tick — sticky nearest-enemy-contact memory (feeds
+//     getEnemyDirection in place of the old STARTS start-position cheat)
+//   unitCounts — DERIVED, rebuilt before every read each decision tick
+//     (deliberately unhashed; must be hashed if it ever becomes carried)
+function freshAIIntel(){
+  return { unitCounts: {}, strength: 0,
+    strengthByTeam: new Array(NUM_TEAMS).fill(0),
+    tcSeen: false, tcX: 0, tcY: 0, tcTeam: null,
+    contactX: -1, contactY: -1, contactTick: -1 };
+}
 function freshAIState(team){
   return { team, tick: 0,
-    intel: null, wallPlan: null, gateBuilt: false, gateTile: null,
+    intel: freshAIIntel(), wallPlan: null, gateBuilt: false, gateTile: null,
+    // Scout bookkeeping (controlAIScouts/ensureAIScout, js/ai.js): the
+    // base-survey lap progress and the retrain cooldown. Sim state read on
+    // later ticks — hashed in the AI digest (previously stamped ad hoc on
+    // the state object and unhashed: a latent desync hole).
+    baseSurveyed: false, surveyIdx: 0, lastScoutTrainTick: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
     // Size of the last launched wave — the wave-casualty retreat compares
     // far-from-home survivors against it (controlAIMilitary, js/ai.js).
@@ -1104,11 +1127,26 @@ function updateFog() {
 // set on add, never cleared — deterministic history, same on every peer).
 let visionFreshTick = -1; // which sim tick the grids were computed for
 // How often the deterministic per-team vision grids are rebuilt (see
-// updateTeamVision). Higher = faster/laggier vision: 4 (~133ms at 30tps)
-// was measured imperceptible and worth ~2% sim throughput over the old 2
-// (2026-07 perf pass, alongside the 2-tick separation/nudge cadence in
-// js/loop.js). Sim reads tolerate the staleness by design.
-const VISION_REFRESH_TICKS = T30(4); // ~150ms of tolerated staleness
+// updateTeamVision). Higher = faster/laggier vision: ~150ms was measured
+// imperceptible and worth ~2% sim throughput (2026-07 perf pass, alongside
+// the 2-tick separation/nudge cadence in js/loop.js). Sim reads tolerate
+// the staleness by design.
+//
+// The cadence is anchored to ABSOLUTE tick phase (tick % PERIOD === 1),
+// NOT "ticks since last refresh": rollback/resync reset visionFreshTick,
+// and a relative cadence re-anchors the refresh phase to the rollback
+// tick — a peer that rolled back would then hold a differently-stale grid
+// than a peer that didn't, at the same tick. That diverges every
+// teamCanSeeTile/buildingVisibleToTeam SIM read (auto-acquire fog gates
+// today; every AI decision under information parity). Phase ≡ 1 because
+// lockstep snapshots are post-tick states taken at tick % LOCKSTEP_SNAP_EVERY
+// === 0 (js/lockstep.js): a restore re-executes from T+1 ≡ 1, so the forced
+// post-restore rebuild fires exactly on an aligned refresh tick and
+// reproduces what the original timeline computed there. PERIOD must divide
+// LOCKSTEP_SNAP_EVERY (asserted in js/lockstep.js) and is deliberately a
+// raw tick count, not T30(): the divisibility invariant must hold at every
+// TPS, and T30 rounding would break it.
+const VISION_REFRESH_PERIOD = 5; // ticks (250ms at TPS 20)
 let teamVisGrid = null, teamExploredGrid = null;
 let visStamps = new Map();  // entity id -> {t,cx,cy,s,gen} last-applied vision disk
 let visScanGen = 0;         // bumped each refresh; entities not re-marked this gen have vanished
@@ -1147,10 +1185,11 @@ function updateTeamVision(){
   // them under the same flag.
   if (window.fogDisabled) return;
   if (!teamVisGrid || teamVisGrid[0].length !== MAP * MAP) resetTeamVision();
-  // Rebuilt every VISION_REFRESH_TICKS (the per-team vision update is the
-  // biggest sim cost at scale; sim reads tolerating a tick or two of stale
-  // visibility are imperceptible). Deterministic — cadence is tick-derived.
-  if (visionFreshTick >= 0 && tick - visionFreshTick < VISION_REFRESH_TICKS) return;
+  // Refreshed on phase-anchored ticks only (see VISION_REFRESH_PERIOD above
+  // for why the anchor is absolute phase, not elapsed-since-last), except a
+  // forced rebuild (visionFreshTick < 0: first run / rollback / resync /
+  // load) which fires immediately.
+  if (visionFreshTick >= 0 && tick % VISION_REFRESH_PERIOD !== 1) return;
   visionFreshTick = tick;
 
   // Ally-shared groups: an entity's disk is applied to its team AND every
@@ -1237,12 +1276,14 @@ function teamHasExplored(team, k){
   if (window.fogDisabled) return true;
   return teamExploredGrid != null && teamExploredGrid[team][k] === 1;
 }
-// Deterministic "this human team can't act on tile k yet because it hasn't
-// been explored" gate — shared by canPlace (js/logic.js) and the villager
-// gather resolve (js/commands.js). AI teams are exempt (proximity vision,
-// not fog-based); fog-off (dev/sim) reveals everything.
+// Deterministic "this team can't act on tile k yet because it hasn't been
+// explored" gate — shared by canPlace (js/logic.js), the villager gather
+// resolve (js/commands.js) and the gather-tile scan (findNearTile,
+// js/logic.js). Applies to EVERY team: the AI's old `!isAITeam` exemption
+// (a relic of its proximity-vision model) was the last placement/tasking
+// information cheat — parity rule. Fog-off (dev/sim) reveals everything.
 function tileHiddenForTeam(team, k){
-  return !window.fogDisabled && !isAITeam(team) && !teamHasExplored(team, k);
+  return !window.fogDisabled && !teamHasExplored(team, k);
 }
 // Building visibility for sim decisions: any footprint tile visible to `team`.
 function buildingVisibleToTeam(b, team){
@@ -1253,6 +1294,19 @@ function buildingVisibleToTeam(b, team){
     if (teamCanSeeTile(team, (b.y + dy) * MAP + (b.x + dx))) return true;
   }
   return false;
+}
+// THE sim-side "can `team` see entity `t`?" predicate — target acquisition,
+// target retention, sieged-building defense and AI spotting all flow through
+// here, so humans and AI teams read the exact same visibility (information
+// parity). Units resolve at their rounded tile, buildings via any footprint
+// tile; All-Visible matches short-circuit to full knowledge. `team` must be
+// a real team (never GAIA — gaia has no vision grid; callers whose acting
+// entity can be gaia must exclude it first).
+function entityVisibleToTeam(t, team){
+  if (window.fogDisabled) return true;
+  if (t.type === 'building') return buildingVisibleToTeam(t, team);
+  const tx = Math.round(t.x), ty = Math.round(t.y);
+  return tx >= 0 && tx < MAP && ty >= 0 && ty < MAP && teamCanSeeTile(team, ty * MAP + tx);
 }
 
 // One-shot / session-lifecycle flags for the MP connection, consolidated

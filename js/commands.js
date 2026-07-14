@@ -656,11 +656,12 @@ function execUnitCommand(cmd){
         let TASK_BY_TERRAIN = { [TERRAIN.FOREST]: 'chop', [TERRAIN.GOLD]: 'mine_gold', [TERRAIN.STONE]: 'mine_stone', [TERRAIN.BERRIES]: 'forage', [TERRAIN.FARM]: 'farm' };
         let gTask = TASK_BY_TERRAIN[t.t];
         // A villager can only be TASKED onto a resource it can actually see:
-        // if the tile is still UNEXPLORED for this (human) team, the player
-        // doesn't know what's there, so the click is a plain WALK — the
-        // villager goes and stands idle instead of auto-gathering an unseen
-        // resource. Deterministic (teamExploredGrid is sim state); AI keeps
-        // its proximity-vision exemption, same rule as canPlace (js/logic.js).
+        // if the tile is still UNEXPLORED for this team, the player doesn't
+        // know what's there, so the click is a plain WALK — the villager
+        // goes and stands idle instead of auto-gathering an unseen resource.
+        // Deterministic (teamExploredGrid is sim state); one rule for every
+        // team (information parity), same gate as canPlace (js/logic.js)
+        // and findNearTile's gather scan.
         let unseen = tileHiddenForTeam(s.team, tileY*MAP + tileX);
         if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);

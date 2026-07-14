@@ -41,7 +41,7 @@ The DE AI does **not** get resource/production cheats by default — difficulty 
 
 - `sn-easier-reaction-percentage [100]` / `sn-easiest-reaction-percentage [100]` — on the easier single-player levels, a unit's effective reaction is a percentage of its normal line-of-sight, i.e. easier AIs notice threats/opportunities later. This is the other half of how easy AIs are made weaker (alongside §2).
 - The AI uses real line-of-sight/fog — it responds to what its units can see (sighted-response system, §6), not omniscient map vision.
-- *Ours (2026-07):* fogged matches keep the proximity-vision model; the **All Visible** match option (SP options / MP lobby, `window.fogDisabled`) makes knowledge global for everyone — the AI included (`aiVisibleEnemies` returns all enemies; `teamHasExplored` short-circuits) — and the whole fog machinery (vision grids, snapshot clones, checksum fold) is skipped for the match.
+- *Ours (2026-07, information-parity milestone):* the AI is **fully fog-honest** — every knowledge read flows through the same deterministic per-team vision grids a human's screen is drawn from. `aiVisibleEnemies`/target retention/auto-acquire use `entityVisibleToTeam` (js/core.js); placement and gather-tasking use `tileHiddenForTeam` with **no AI exemption**; the old 15-tile proximity model, the `STARTS` start-position fallback and the live enemy-TC coordinate reads are all deleted. What the AI acts on beyond current sight is deterministic **intel memory** (`ai.intel`, hashed): a sticky remembered TC (ghost-cleared when the spot is re-sighted empty), a nearest-contact direction memory, and a per-team decaying army-strength table (`Math.max(observed, floor(mem·15/16))` per decision tick). Being damaged stays legitimate knowledge (`lastTeamHit` — the bell can ring against an unseen attacker, but defenders won't hunt what they can't see). Accepted honest regressions: later tcSeen/first waves, bell-only response to unseen kiting raiders, pre-contact walls face map center, and a scout dead before Feudal leaves the AI temporarily blind. The **All Visible** match option (SP options / MP lobby, `window.fogDisabled`) makes knowledge global for everyone — the AI included — and the whole fog machinery (vision grids, snapshot clones, checksum fold) is skipped for the match.
 
 ---
 
@@ -215,8 +215,8 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 | Explorer count | up to 4 land explorers | exactly 1 scout, retrained on death (`ensureAIScout`) | 🟡 fewer, but persistent |
 | Home-first exploration | `home-exploration-time [300]` | `baseSurveyWaypoint` 8-point perimeter lap first | ✅ |
 | Frontier bias | `blot-exploration-map` re-explores | unexplored-tile-count scoring (`pickExploreWaypoint`) | ✅ |
-| Intel decay / re-scout | blot re-explores seen ground → stale intel refreshes | explored grid is monotonic; TC sighting sticky; army intel only from current proximity | 🟡 minor |
-| initial-exploration-required (2% before building) | notorious staller | n/a — we don't gate building on exploration | ✅ deliberately skipped |
+| Intel decay / re-scout | blot re-explores seen ground → stale intel refreshes | army-strength memory DECAYS (~6%/decision tick, `updateAIIntel`) and TC memory ghost-clears on re-sight — stale intel genuinely expires and re-scouting refreshes it | ✅ (2026-07 information parity) |
+| initial-exploration-required (2% before building) | notorious staller | building placement now requires the footprint EXPLORED (`tileHiddenForTeam`, all teams); walls additionally wait for the base-survey lap (`planAIWalls`) | ✅ (parity form of the same idea, no % staller) |
 
 ### Walls & towers (§9)
 

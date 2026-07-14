@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 7, // v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    version: 8, // v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -223,13 +223,13 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:7 — actually check it (the net layer's
+  // serializeGame stamps version:8 — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a format change
-  // fails loudly here instead of misloading silently. v5 (TPS-stamped ticks,
-  // on top of v4's compact RLE map + derived occupied + RLE grids)
-  // deliberately drops older versions — no back-compat shims, per convention.
-  if (data.version !== 7) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v7 saves only');
+  // fails loudly here instead of misloading silently. v8 (AI intel-memory
+  // shape + parity sim semantics) deliberately drops older versions — no
+  // back-compat shims, per convention.
+  if (data.version !== 8) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v8 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,
