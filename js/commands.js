@@ -265,6 +265,8 @@ function execSetStance(cmd, team){
     u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
     u.autoScout = false;
     // No Attack must DISENGAGE, not just stop acquiring new targets: the
+    // (explicit attack ORDERS on a passive unit are still obeyed, matching
+    // AoE2 — passive suppresses AUTO-acquire and retaliation, not commands.)
     // passive gate in js/logic.js only blocks the auto-acquire scan, so a unit
     // that was already attacking (auto-acquired OR an explicit attack order)
     // keeps hammering its target. Drop the current FIGHT so "No Attack" means
@@ -287,6 +289,14 @@ function execSetStance(cmd, team){
 // (issueMoveOrder, js/pathfinding.js) all call this.
 function guardEligible(u){
   return isSoldierUnit(u) || (u.type === 'unit' && u.utype === 'ram');
+}
+
+// Postures are mutually exclusive in BOTH directions: set-stance clears the
+// guard post (execStance), and a Guard order un-passives the unit — a
+// passive guard could neither auto-acquire nor retaliate, so it stood at
+// its post and died without fighting (the "inert guard" bug).
+function unPassive(u){
+  if (u.stance === 'passive') u.stance = 'aggressive';
 }
 
 // The one way to (re)place a guard post: clamps to the map (formation
@@ -335,6 +345,7 @@ function execGuard(cmd, team){
     setGuardPost(u, px, py, true); // EXPLICIT flag: draws the in-world flag/line (render.js)
     u.target = null; u.task = null;
     u.explicitAttack = false; u.autoScout = false;
+    unPassive(u); // a passive guard could neither acquire nor retaliate — inert
     clearUnitPath(u);
     pathUnitTo(u, Math.round(u.guardX), Math.round(u.guardY));
   };
@@ -398,10 +409,10 @@ function execAutoScout(cmd, team){
   if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
-// Commodity exchange: buy or sell 100 of a resource for gold at this team's
-// own current price (marketPrices[team], js/core.js — per-player, AoE2-style).
-// Mutates that team's price so its own future trades drift, which is why it
-// MUST run here in the deterministic executor, never client-side. Integer math.
+// Commodity exchange: buy or sell 100 of a resource for gold at the GLOBAL
+// price (marketPrices, js/core.js — one shared table, AoE2-style: everyone's
+// trades move the same market). Mutation MUST run here in the deterministic
+// executor, never client-side. Integer math.
 function execMarketTrade(cmd, team){
   let res = cmd.resType;
   if (res !== 'food' && res !== 'wood' && res !== 'stone') return;
@@ -409,10 +420,9 @@ function execMarketTrade(cmd, team){
   let hasMarket = entities.some(b => b.type === 'building' && b.btype === 'MARKET' && b.team === team && b.complete && b.hp > 0);
   if (!hasMarket) return;
   let store = resourceStore(team);
-  // PER-PLAYER prices (AoE2): the team's own table, and only its own prices
-  // move — never a rival's. marketSellRatio bakes in the Guilds discount.
-  let mp = marketPrices[team];
-  if (!mp) return; // no price table for this team (shouldn't happen mid-match)
+  // GLOBAL prices (AoE2): everyone trades against — and moves — the one
+  // shared table. marketSellRatio bakes in the per-team Guilds discount.
+  let mp = marketPrices;
   let price = mp[res];
   if (cmd.dir === 'buy') {
     if (store.gold < price) { feedbackFor(team, () => showMsg('Not enough gold.')); return; }
@@ -533,10 +543,11 @@ function execUnitCommand(cmd){
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
     s.autoScout = false; // any manual order cancels Auto Scout
-    // The guard post is NOT cleared by manual orders — a plain ground move
-    // RELOCATES it instead ("this is your temp spot", assigned below at the
-    // move sites); attack/follow orders leave it where it was, and the unit
-    // walks back after the fight. An ESCORT (guard-on-unit) does end here,
+    // A FLAGGED guard post is NOT cleared by manual orders — moves and
+    // attack orders RELOCATE it (the flag follows the player's latest
+    // order; see issueMoveOrder and the attack branch below). Units without
+    // a flag carry no post at all — their anchor is defendX/Y, meaningful
+    // only to DEFENSIVE stance. An ESCORT (guard-on-unit) does end here,
     // mirroring followId: the post freezes at its last synced spot.
     s.guardTargetId = null;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
@@ -556,9 +567,14 @@ function execUnitCommand(cmd){
       // just an enemy one — works, per AoE2. Any non-market order cancels the
       // route and becomes a plain move.
       let mkt = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
-      let validMkt = mkt && mkt.type === 'building' && mkt.btype === 'MARKET' && mkt.complete && mkt.hp > 0 && mkt.team !== s.team && isPlayerTeam(mkt.team);
+      // An UNDER-CONSTRUCTION market is a valid destination: the route is
+      // set and the cart waits at the site until it completes
+      // (updateTradeCart trades only against complete markets). Same for the
+      // home market — a route ordered while your own market is still going
+      // up starts the moment it finishes.
+      let validMkt = mkt && mkt.type === 'building' && mkt.btype === 'MARKET' && mkt.hp > 0 && mkt.team !== s.team && isPlayerTeam(mkt.team);
       if (validMkt) {
-        let home = nearestMarket(s, true);
+        let home = nearestMarket(s, true, true);
         if (!home) {
           feedbackFor(s.team, () => showMsg('Build your own Market before trading.'));
         } else {
@@ -592,6 +608,14 @@ function execUnitCommand(cmd){
       } else {
         s.target = target.id; s.task = null; clearUnitPath(s); s.buildTarget = null;
         s.explicitAttack = true;
+        // The ANCHOR moves to the target ("hold the ground you take"): a
+        // DEFENSIVE unit that finishes this assault leashes to the
+        // battlefield, not back to wherever it stood when ordered.
+        // Aggressive units ignore the anchor entirely. A FLAGGED guard post
+        // relocates too — an ordered assault supersedes the old flag spot,
+        // matching plain moves (issueMoveOrder, js/pathfinding.js).
+        s.defendX = Math.round(target.x); s.defendY = Math.round(target.y);
+        if (guardEligible(s) && s.guardFlagged) setGuardPost(s, Math.round(target.x), Math.round(target.y), true);
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current

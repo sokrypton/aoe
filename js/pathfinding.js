@@ -339,12 +339,16 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
 function issueMoveOrder(e,x,y){
   e.moveGoalX=x;
   e.moveGoalY=y;
-  // A plain move RELOCATES a military unit's guard post to the destination
-  // ("this is your temp spot") — done here, in the one function every
-  // player move order funnels through, so no call site can forget the
-  // re-pin. guardFlagged=false: an implicit post, behaviorally identical
-  // to a flagged one but drawn without flag visuals (js/render.js).
-  // setGuardPost/guardEligible live in js/commands.js (same global scope).
-  if (typeof guardEligible === 'function' && guardEligible(e)) setGuardPost(e, x, y, false);
+  // A plain move sets the unit's ANCHOR (defendX/Y) to the destination. The
+  // anchor only means something to DEFENSIVE stance (scoped acquire + 6-tile
+  // leash, js/logic.js); aggressive units chase freely and stand where the
+  // fight ends. This replaced the old implicit guard-post re-pin: silently
+  // planting a post on every move made "aggressive" soldiers behave like
+  // leashed guards — root of the "aggressive army walks home after
+  // attacking" bug. Guard posts now exist ONLY from the explicit Guard
+  // order; an existing FLAGGED post still relocates with a plain move
+  // ("this is your temp spot" — the player's flag follows their move).
+  e.defendX=Math.max(0,Math.min(MAP-1,x)); e.defendY=Math.max(0,Math.min(MAP-1,y)); // clamped like setGuardPost — formation offsets at the edge go off-map
+  if (typeof guardEligible === 'function' && guardEligible(e) && e.guardFlagged) setGuardPost(e, x, y, true);
   return pathUnitTo(e,x,y);
 }

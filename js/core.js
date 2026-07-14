@@ -558,7 +558,7 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
@@ -573,12 +573,12 @@ const BLDGS={
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
   // it also rides the fortified_wall upgrade (see UPGRADES / buildingMaxHpFor),
   // so a fully-fortified ring keeps its towers tougher than its segments.
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:T30(2400),garrisonCap:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:T30(2400),garrisonCap:5,maxArrows:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
   // Dark-age wooden bastion in the same deliberate deviation: cheap all-wood
   // lookout that anchors an early palisade ring, then upgrades IN PLACE to a
   // Watch Tower once Feudal unlocks it (see WALL_STONE_MATCH / execUpgradeWalls
   // in commands.js). No fortified_wall bonus — that tech is stone-only.
-  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:T30(1500),garrisonCap:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
+  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:T30(1500),garrisonCap:3,maxArrows:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
   WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:T30(150),armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
   GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:T30(900),armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
   // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
@@ -601,15 +601,15 @@ const BLDGS={
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
 // track AoE2 Dark/Feudal-age stats.
 const UNITS={
-  villager:{name:'Villager',hp:25,atk:3,range:0,speed:0.8,rof:T30(60),armor:{m:0,p:0},cost:{f:50},trainTime:T30(750),desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
-  militia:{name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:T30(60),armor:{m:0,p:1},cost:{f:60,g:20},trainTime:T30(630),desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
-  spearman:{name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:T30(90),armor:{m:0,p:0},cost:{f:35,w:25},trainTime:T30(660),desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
-  archer:{name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:T30(60),armor:{m:0,p:0},cost:{w:25,g:45},trainTime:T30(1050),desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
+  villager:{bonuses:{building:3},name:'Villager',hp:25,atk:3,range:0,speed:0.8,rof:T30(60),armor:{m:0,p:0},cost:{f:50},trainTime:T30(750),desc:'Gathers resources and constructs structures.',icon:'🧑‍🌾'},
+  militia:{bonuses:{building:2},name:'Militia',hp:40,atk:4,range:0,speed:0.9,rof:T30(60),armor:{m:0,p:1},cost:{f:60,g:20},trainTime:T30(630),desc:'Basic infantry soldier. Affordable defense.',icon:'🛡️'},
+  spearman:{bonuses:{scout:15,knight:15},name:'Spearman',hp:45,atk:3,range:0,speed:1.0,rof:T30(90),armor:{m:0,p:0},cost:{f:35,w:25},trainTime:T30(660),desc:'Anti-cavalry infantry. Strong counter to scouts.',icon:'🔱'},
+  archer:{bonuses:{spearman:3},name:'Archer',hp:30,atk:4,range:4,speed:0.96,rof:T30(60),armor:{m:0,p:0},cost:{w:25,g:45},trainTime:T30(1050),desc:'Ranged archer. Effective against infantry, weak to scouts.',icon:'🏹'},
   // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2) — and
   // the scout IS Feudal-gated here now (AGE_REQ), so the speed fits.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:T30(60),armor:{m:0,p:2},cost:{f:80},trainTime:T30(900),desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
   // Castle-age heavy cavalry (AoE2-ish knight).
-  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:T30(60),armor:{m:2,p:2},cost:{f:60,g:75},trainTime:T30(900),desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
+  knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:T30(54),armor:{m:2,p:2},cost:{f:60,g:75},trainTime:T30(900),desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
   // Battering ram — Castle-age siege (AGE_REQ), trained at the Barracks
   // (no siege workshop building exists). NOT in MILITARY on purpose (AoE2
   // rams get no blacksmith melee/armor techs — see isArmyUnit). The tiny
@@ -620,7 +620,13 @@ const UNITS={
   // garrisonCap: melee infantry rides inside (AoE2 garrison-rams) — protected
   // en route, each rider speeds the ram up (unitMoveSpeed, js/logic.js), and
   // riders pop out unharmed when the ram is destroyed (handleDeath).
-  ram:{name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:8},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
+  // bonuses.building 110: the ram IS its building bonus — tuned so one ram's
+  // net DPS (~20.8 hp/s after a wall's 8 melee armor, rof 150) clearly
+  // EXCEEDS a villager's repair, so sieges breach instead of bouncing (at
+  // +70, two repairers stalled a ram forever — the finishing stalemate).
+  // Keep in sync with wallBreachTicks (ai.js). All `bonuses` tables are the
+  // AoE2 attack-bonus data read by damageEntity (js/logic.js).
+  ram:{bonuses:{building:110},name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:180},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -633,7 +639,7 @@ const UNITS={
   // defenceless: it shuttles between its home Market and another player's
   // Market, delivering gold scaled by the distance between them (see
   // updateTradeCart in logic.js). Costs 1 pop like any unit.
-  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:T30(60),armor:{m:0,p:0},cost:{w:100},trainTime:T30(750),desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
+  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:T30(60),armor:{m:0,p:0},cost:{w:100,g:50},trainTime:T30(1530),desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
 };
 
 // ---- Unit classification: THE one place a new unit type gets sorted.
@@ -827,20 +833,24 @@ let resources = freshTeamResources();
 // are integer gold-per-100-units and are sim state: checksummed
 // (js/determinism.js) and saved (js/save.js), only mutated in execMarketTrade
 // (js/commands.js). See MARKET_* tuning constants below.
+// GLOBAL, not per-team (AoE2, openage .../game_mechanics/market.md: "prices
+// are global to all players") — every player's trades move the one shared
+// price, so sell-spam by anyone tanks the price for everyone.
 function freshMarketPrices(){
-  return Array.from({length: NUM_TEAMS}, () => ({food:100, wood:100, stone:130}));
+  return {food:100, wood:100, stone:130};
 }
 let marketPrices = freshMarketPrices();
-// A team's price table (accessor shared by the UI/AI reads).
+// The (shared) price table. Keeps the per-team accessor signature so the
+// UI/AI call sites don't care that prices stopped being per-team.
 function marketPricesFor(team){
-  return marketPrices[team];
+  return marketPrices;
 }
 // Commodity exchange tuning (integer math for determinism). Trades move 100
 // units. SPREAD is applied so buying costs the full price and selling only
 // returns SELL_RATIO of it. STEP shifts the price after each 100-unit trade;
 // prices clamp to [MIN, MAX]. Mirrors AoE2's drifting commodity market.
 const MARKET_LOT = 100;
-const MARKET_PRICE_MIN = 25, MARKET_PRICE_MAX = 9999;
+const MARKET_PRICE_MIN = 20, MARKET_PRICE_MAX = 9999; // AoE2 clamp (openage market.md): [20, 9999]
 const MARKET_PRICE_STEP = 3;   // price change per 100-unit trade
 const MARKET_SELL_RATIO = 70;  // sell returns 70% of price (÷100) — AoE2's 30% commission
 const MARKET_SELL_RATIO_GUILDS = 85; // Guilds halves the fee to 15% (sell returns 85%)
@@ -849,9 +859,14 @@ const MARKET_SELL_RATIO_GUILDS = 85; // Guilds halves the fee to 15% (sell retur
 function marketSellRatio(team){
   return hasUpgrade(team, 'guilds') ? MARKET_SELL_RATIO_GUILDS : MARKET_SELL_RATIO;
 }
-// Trade Cart gold per round trip = round(distance-between-markets * this).
-// Farther-apart Markets pay more, rewarding spread-out trade (AoE2 behavior).
-const TRADE_GOLD_PER_TILE = 1.2;
+// Trade Cart gold per round trip — The Conquerors formula (openage
+// doc/reverse_engineering/game_mechanics/market.md):
+//   gold = 2·(d/mapSize + 0.3)·d·K + 0.5,  d = max(0.1, √(max(0,Δx−5)² + max(0,Δy−5)²))
+// Longer routes pay SUPERLINEARLY (the d² term) and the map-size divisor
+// keeps income comparable across map sizes. K calibrated so a typical
+// half-map route on the 120 map (~50 tiles) pays ~60 gold — the same income
+// the old linear 1.2/tile rule gave — so AI maxTradeCarts economics carry over.
+const TRADE_GOLD_FACTOR = 0.84;
 // Viewer-local convenience caches of MY team's population (see
 // refreshPopulationCounts, js/logic.js); per-team reads go through
 // teamPopUsed/teamPopCap directly. The old aiPop/aiPopCap/aiTick globals

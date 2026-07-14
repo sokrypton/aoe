@@ -185,7 +185,7 @@ async function withPage(browser, port, entry, fn){
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v5 stamp + tps', save.version === 5 && save.tps === TPS);
+      T.ok('v6 stamp + tps', save.version === 6 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);
@@ -300,7 +300,9 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < n; i++) army.push(createUnit('knight', 10 + (i % cols), 10 + Math.floor(i / cols), 0));
       const tc = entities.find(e => e.btype === 'TC' && e.team === 1);
       const wallHp0 = entities.filter(e => isWallBtype(e.btype)).reduce((s, w) => s + w.hp, 0);
-      army.forEach(u => { u.target = tc.id; u.explicitAttack = true; clearUnitPath(u); });
+      // Drive the REAL attack command (not raw target pokes) — this is also
+      // what stamps the anchor/flag semantics the disposition tests cover.
+      execCommand({ kind: 'command', unitIds: army.map(u => u.id), targetId: tc.id, tileX: 29, tileY: 29 }, 0);
       let maxMs = 0;
       for (let i = 0; i < 4000 && tc.hp > 0; i++) {
         const t0 = performance.now();
@@ -312,6 +314,86 @@ async function withPage(browser, port, entry, fn){
       T.ok(`whole army engages the ring (${engaged}/${n} >= 27)`, engaged >= 27);
       T.ok('walls take real damage (breach in progress)', wallHp < wallHp0 - 300 || tc.hp <= 0);
       T.ok(`no pathfinding storm (worst tick ${maxMs.toFixed(0)}ms < 120ms)`, maxMs < 120);
+      return T;
+    })),
+
+    // ------------------------------------------------------- stance matrix
+    // THE disposition contract, one section per stance, driven through the
+    // REAL command pipeline (execCommand) — never raw field pokes. Guards
+    // against the class of bug where implicit posture systems (guard posts,
+    // anchors, leashes) fight the stance the player actually picked.
+    'stance-matrix': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'medium', seed: 9, numTeams: 2, controllers: ['human', 'human'],
+        entities: [
+          { b: 'TC', x: 4, y: 4, team: 0 },
+          { b: 'TC', x: 80, y: 80, team: 1 },
+        ],
+      });
+      gameStarted = true; gamePaused = false; myTeam = 0;
+      const mk = (ut, x, y, team) => createUnit(ut, x, y, team);
+      const order = (kind, u, extra) => execCommand(Object.assign({ kind, unitIds: [u.id] }, extra), u.team);
+      const run = (n) => { for (let i = 0; i < n; i++) update(); };
+
+      // AGGRESSIVE: acquires within 8, chases freely, holds ground where the
+      // fight ends — no post, no walk-home (the reported bug).
+      {
+        const m = mk('knight', 30, 30, 0);
+        order('command', m, { tileX: 30, tileY: 30 }); run(10); // ordered here: anchor=here
+        const foe = mk('militia', 36, 30, 1);
+        run(300);
+        T.ok('aggressive: acquired within 8', foe.hp <= 0);
+        const endX = m.x;
+        run(400);
+        T.ok('aggressive: no post planted by orders', m.guardX == null);
+        T.ok('aggressive: holds ground after the kill (no walk-home)', Math.abs(m.x - endX) < 2);
+        m.hp = 0; handleDeath(m, 1);
+      }
+
+      // DEFENSIVE: leashes to its anchor — chases, gets reeled back inside
+      // ~6 tiles of the ordered spot, never marches across the map.
+      {
+        const d = mk('knight', 30, 50, 0);
+        order('set-stance', d, { stance: 'defensive' });
+        order('command', d, { tileX: 30, tileY: 50 }); run(10);
+        const bait = mk('scout', 35, 50, 1); // faster than the knight: an endless chase if unleashed
+        bait.stance = 'passive';
+        pathUnitTo(bait, 75, 50); // flees across the map
+        run(900);
+        T.ok('defensive: leashed near its anchor', Math.hypot(d.x - 30, d.y - 50) < 10);
+        bait.hp = 0; handleDeath(bait, 0); d.hp = 0; handleDeath(d, 1);
+      }
+
+      // STANDGROUND: never moves to fight; no acquire→drop churn when shot
+      // from beyond its reach.
+      {
+        const sg = mk('militia', 30, 70, 0);
+        order('set-stance', sg, { stance: 'standground' });
+        const archerFoe = mk('archer', 36, 70, 1); // shoots from range 4+, militia reach 1.5
+        archerFoe.stance = 'standground'; // keep it parked
+        run(200);
+        T.ok('standground: does not chase its shooter', Math.hypot(sg.x - 30, sg.y - 70) < 1.5);
+        T.ok('standground: no target churn at unreachable shooter', sg.target == null);
+        archerFoe.hp = 0; handleDeath(archerFoe, 0); sg.hp = 0; handleDeath(sg, 1);
+      }
+
+      // PASSIVE: never auto-engages or retaliates — but an EXPLICIT attack
+      // order is still obeyed (AoE2), and a Guard order un-passives.
+      {
+        const pv = mk('knight', 50, 30, 0);
+        order('set-stance', pv, { stance: 'passive' });
+        const poker = mk('militia', 52, 30, 1);
+        run(150);
+        T.ok('passive: no auto-acquire, no retaliation', pv.target == null && poker.hp > 0);
+        order('command', pv, { targetId: poker.id, tileX: 52, tileY: 30 });
+        run(300);
+        T.ok('passive: explicit attack order still obeyed', poker.hp <= 0);
+        order('set-stance', pv, { stance: 'passive' });
+        order('guard', pv, { x: 50, y: 30 });
+        T.ok('guard order un-passives (no inert guards)', pv.stance !== 'passive');
+        pv.hp = 0; handleDeath(pv, 1);
+      }
       return T;
     })),
   };

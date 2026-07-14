@@ -19,6 +19,9 @@ echo "== syntax =="
 for f in js/*.js; do node --check "$f"; done
 echo "ok"
 
+echo "== stats-audit (informational — AoC reference diff, never gates) =="
+node tools/stats-audit.js
+
 echo "== behavior-tests =="
 node tools/behavior-tests.js
 

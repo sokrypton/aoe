@@ -76,6 +76,12 @@ function detEntityHash(e){
   h = detMix(h, e.exhausted ? 1 : 0);             // farm lifecycle
   h = detMix(h, e.trainTick || 0);                // training clock
   h = detMixFloat(h, e.buildProgress || 0);       // construction clock
+  // Multi-builder census (countSiteWorker, js/logic.js): lastWorkers sets the
+  // shared build/repair rate NEXT tick; curWorkers/workTick roll into it.
+  h = detMix(h, e.workTick || 0);
+  h = detMix(h, e.curWorkers || 0);
+  h = detMix(h, e.lastWorkers || 0);
+  h = detMixFloat(h, e.repairAccum || 0);         // fractional repair-hp accrual
   h = detMix(h, e.rallyX == null ? -1 : e.rallyX);
   h = detMix(h, e.rallyY == null ? -1 : e.rallyY);
   h = detMix(h, e.rallyTargetId == null ? -1 : e.rallyTargetId);
@@ -125,6 +131,11 @@ function detEntityHash(e){
   h = detMix(h, e.chaseProg ? e.chaseProg.since : -1);
   h = detMix(h, e.chaseProg ? e.chaseProg.id : -2);
   h = detMix(h, e.lastAtkTick == null ? -1 : e.lastAtkTick); // gates stuck-watchdog (js/logic.js)
+  // Proven-unreachable stamp (stall resolver, js/logic.js): gates whether
+  // retaliation and auto-acquire may re-lock that attacker — unhashed, a
+  // diverged stamp changes future targeting invisibly.
+  h = detMix(h, e.unreachUntil || 0);
+  h = detMix(h, e.unreachId == null ? -1 : e.unreachId);
   // Trade cart route (updateTradeCart, js/logic.js): which Markets it shuttles
   // between and which leg it's on decide its pathing and gold delivery on later
   // ticks — unhashed, a diverged route is invisible until it moves gold/position.
@@ -152,13 +163,10 @@ function simChecksum(){
     h = detMixFloat(h, r.gold); h = detMixFloat(h, r.stone);
     h = detMix(h, r.prepaidFarms || 0);
   }
-  // Per-team commodity exchange prices (marketPrices, js/core.js) — sim state
-  // mutated by execMarketTrade; a diverged price desyncs every future buy/sell.
-  // Hashed in team-index order so peers agree.
-  for (let t = 0; t < marketPrices.length; t++) {
-    let m = marketPrices[t];
-    h = detMix(h, m.food); h = detMix(h, m.wood); h = detMix(h, m.stone);
-  }
+  // GLOBAL commodity exchange prices (marketPrices, js/core.js) — one shared
+  // table (AoE2), sim state mutated by execMarketTrade; a diverged price
+  // desyncs every future buy/sell.
+  h = detMix(h, marketPrices.food); h = detMix(h, marketPrices.wood); h = detMix(h, marketPrices.stone);
   for (let i = 0; i < projectiles.length; i++) {
     let p = projectiles[i];
     h = detMix(h, p.id);

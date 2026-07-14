@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 5,
+    version: 6, // v6: marketPrices became one GLOBAL table (was per-team array)
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -223,13 +223,13 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:5 — actually check it (the net layer's
+  // serializeGame stamps version:6 — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a format change
   // fails loudly here instead of misloading silently. v5 (TPS-stamped ticks,
   // on top of v4's compact RLE map + derived occupied + RLE grids)
   // deliberately drops older versions — no back-compat shims, per convention.
-  if (data.version !== 5) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v5 saves only');
+  if (data.version !== 6) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v6 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,

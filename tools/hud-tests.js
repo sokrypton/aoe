@@ -80,30 +80,48 @@ function pageSuite() {
     assert(Math.hypot(m.x - m.guardX, m.y - m.guardY) < 1.6, 'did not return');
   });
 
-  T('guard: plain move RELOCATES the post (implicit, unflagged)', () => {
+  T('guard: plain move RELOCATES a FLAGGED post; unflagged units get only an anchor', () => {
     stage();
     const m = createUnit('militia', 20, 20, 0);
     execCommand({ kind: 'guard', unitIds: [m.id], x: 30, y: 30 }, 0);
     execCommand({ kind: 'command', unitIds: [m.id], tileX: 10, tileY: 10 }, 0);
-    assert(m.guardX === 10 && m.guardY === 10, 'post not relocated: ' + m.guardX + ',' + m.guardY);
-    assert(m.guardFlagged === false, 'implicit post must be unflagged');
+    assert(m.guardX === 10 && m.guardY === 10, 'flagged post not relocated: ' + m.guardX + ',' + m.guardY);
+    assert(m.guardFlagged === true, 'the flag survives its own relocation');
+    // A unit that never got a Guard order carries NO post — only the
+    // defendX/Y anchor (meaningful to defensive stance alone).
+    const plain = createUnit('militia', 20, 20, 0);
+    execCommand({ kind: 'command', unitIds: [plain.id], tileX: 12, tileY: 14 }, 0);
+    assert(plain.guardX == null, 'plain move must not plant a post');
+    assert(plain.defendX === 12 && plain.defendY === 14, 'anchor not set to destination');
   });
 
-  T('guard: edge-of-map formation posts are clamped on-map', () => {
+  T('guard: edge-of-map formation anchors/posts are clamped on-map', () => {
     stage();
     const squad = []; for (let i = 0; i < 8; i++) squad.push(createUnit('militia', 6 + i, 10, 0));
-    execCommand({ kind: 'command', unitIds: squad.map(s => s.id), tileX: 0, tileY: 0 }, 0);
+    execCommand({ kind: 'guard', unitIds: squad.map(s => s.id), x: 0, y: 0 }, 0);
     assert(squad.every(s => s.guardX >= 0 && s.guardY >= 0), 'negative post coords');
+    execCommand({ kind: 'command', unitIds: squad.map(s => s.id), tileX: 0, tileY: 0 }, 0);
+    assert(squad.every(s => s.defendX >= 0 && s.defendY >= 0), 'negative anchor coords');
   });
 
-  T('guard: unreachable post SETTLES instead of repathing forever', () => {
+  T('guard: unreachable FLAGGED post holds its spot without a repath storm', () => {
     stage();
     const m = createUnit('militia', 20, 20, 0);
     for (let y = 28; y <= 32; y++) for (let x = 28; x <= 32; x++) { map[y][x].t = TERRAIN.FOREST; map[y][x].res = 100; markMapDirty(x, y); }
     execCommand({ kind: 'guard', unitIds: [m.id], x: 30, y: 30 }, 0);
     step(600);
-    assert(!(m.guardX === 30 && m.guardY === 30), 'post never settled off the forest');
-    assert(Math.hypot(m.x - m.guardX, m.y - m.guardY) < 2, 'settled post not at the unit');
+    // The player's flag is an explicit order: it must NOT silently move.
+    assert(m.guardX === 30 && m.guardY === 30, 'flagged post moved: ' + m.guardX + ',' + m.guardY);
+    // The unit walked as close as the forest allows...
+    assert(Math.hypot(m.x - 30, m.y - 30) < 6, 'unit did not approach its flag');
+    // ...and is NOT re-running A* every 30 ticks forever: count real
+    // pathfinder calls over an 800-tick window — the long back-off allows a
+    // handful of probes; a storm would be ~27 (one per 30-tick retry).
+    const realFindPath = findPath; let calls = 0;
+    findPath = function(...a){ calls++; return realFindPath.apply(this, a); };
+    step(800);
+    findPath = realFindPath;
+    assert(calls <= 10, 'repath storm: ' + calls + ' findPath calls in 800 ticks');
   });
 
   T('guard: escort follows a moving unit, post freezes on its death', () => {
@@ -129,17 +147,18 @@ function pageSuite() {
     assert(Math.hypot(a.x - 31.5, a.y - 31.5) < 4, 'not standing watch at the building');
   });
 
-  T('guard: garrison release re-pins the post to the drop spot', () => {
+  T('guard: garrison release re-anchors at the drop spot; a FLAGGED post stays put', () => {
     stage();
     const m = createUnit('militia', 10, 10, 0);
-    m.guardX = 40; m.guardY = 40; m.guardFlagged = false;
+    execCommand({ kind: 'guard', unitIds: [m.id], x: 40, y: 40 }, 0);
     const tc = entities.find(u => u.btype === 'TC' && u.team === 0);
     enterGarrison(m, tc);
     ejectGarrison(tc);
-    assert(Math.hypot(m.guardX - 7, m.guardY - 7) < 6, 'post still at old spot: ' + m.guardX + ',' + m.guardY);
+    assert(m.guardX === 40 && m.guardY === 40, 'explicit flag must survive shelter: ' + m.guardX + ',' + m.guardY);
+    assert(Math.hypot(m.defendX - 7, m.defendY - 7) < 6, 'anchor not at drop spot: ' + m.defendX + ',' + m.defendY);
   });
 
-  T('guard: trained HUMAN units inherit the rally flag as their post; AI units do NOT', () => {
+  T('guard: trained HUMAN units inherit the rally flag as their ANCHOR; AI units do NOT', () => {
     stage();
     const hb = createBuilding('BARRACKS', 30, 10, 0);
     hb.rallyX = 40; hb.rallyY = 12; hb.queue = ['militia']; hb.trainTick = 1e9;
@@ -150,7 +169,8 @@ function pageSuite() {
     step(5);
     const hm = entities.find(u => u.utype === 'militia' && u.team === 0);
     const am = entities.find(u => u.utype === 'militia' && u.team === 1);
-    assert(hm && hm.guardX === 40 && hm.guardY === 12, 'human unit missing rally post');
+    assert(hm && hm.guardX == null, 'rally spawn must not plant a post');
+    assert(hm && hm.defendX === 40 && hm.defendY === 12, 'human unit missing rally anchor');
     assert(am && am.guardX == null, 'AI unit must not carry a guard post');
   });
 
@@ -382,17 +402,17 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
-  // ---- Market (AoE2-accurate: per-player prices + Guilds) ----
-  T('market: prices are PER-PLAYER — one team\'s trades never move a rival\'s prices', () => {
+  // ---- Market (AoE2-accurate: GLOBAL prices + Guilds) ----
+  T('market: prices are GLOBAL — one team\'s trades move the shared price everyone sees', () => {
     stage();
     createBuilding('MARKET', 10, 10, 0);
     createBuilding('MARKET', 50, 50, 1);
     resourceStore(0).food = 1000; resourceStore(1).food = 1000;
     const foodPrice = t => marketPricesFor(t).food;
-    const t0Before = foodPrice(0), t1Before = foodPrice(1);
+    const before = foodPrice(0);
     for (let i = 0; i < 3; i++) execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
-    assert(foodPrice(0) === t0Before - 3 * MARKET_PRICE_STEP, 'team 0 food price did not drop by its own selling');
-    assert(foodPrice(1) === t1Before, 'team 1 food price moved from team 0 trading — prices must be per-player');
+    assert(foodPrice(0) === before - 3 * MARKET_PRICE_STEP, 'shared food price did not drop from selling');
+    assert(foodPrice(1) === foodPrice(0), 'team 1 must see the same shared price (AoE2 global market)');
   });
 
   T('market: Guilds (Castle age) improves the sell return from 70% to 85%', () => {
@@ -459,15 +479,26 @@ function pageSuite() {
     assert(store.wood === 1000 - (BLDGS.PTOWER.cost.w - BLDGS.WALL.cost.w), 'refund math off: ' + store.wood);
   });
 
-  T('ptower: fires 1+garrison arrows at enemies in range', () => {
+  T('ptower: garrison arrows follow the AoE2 DPS model — villagers add, melee adds nothing', () => {
     stage();
+    // Melee garrison: safety only, NO extra firepower (AoE2 garrison.md).
     const pt = createBuilding('PTOWER', 30, 30, 0);
     createUnit('militia', 33, 30, 1); // enemy in range 6
     for (let i = 0; i < 3; i++) enterGarrison(createUnit('militia', 29, 30, 0), pt);
     assert(garrisonCount(pt) === 3, 'garrison cap 3 not honored: ' + garrisonCount(pt));
     projectiles.length = 0;
     step(1);
-    assert(projectiles.length === 4, 'expected 4 arrows (1+3 garrison), got ' + projectiles.length);
+    assert(projectiles.length === 1, 'melee garrison must not add arrows: got ' + projectiles.length);
+    // Villager garrison: 2.5 dps each vs the ptower's 2 dps (atk 4 / 2s) →
+    // floor(7.5/2)=3 extra, capped at maxArrows 3 → 3 arrows total.
+    const pt2 = createBuilding('PTOWER', 40, 30, 0);
+    createUnit('militia', 43, 30, 1);
+    for (let i = 0; i < 3; i++) enterGarrison(createUnit('villager', 39, 30, 0), pt2);
+    projectiles.length = 0;
+    step(1);
+    // Only pt2 fires this step (pt is mid-reload from the melee check above —
+    // towers fire every 2 game-seconds): 3 arrows = villagers at maxArrows(3).
+    assert(projectiles.length === 3, 'expected 3 arrows (villager pt2 at maxArrows), got ' + projectiles.length);
   });
 
   T('ptower: upgrade = instant swap to a construction site — Dark-age rejected; salvage refunds; committed (no cancel); villagers finish a full TOWER', () => {

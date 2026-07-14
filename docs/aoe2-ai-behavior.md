@@ -1,6 +1,6 @@
 # How Age of Empires II (Definitive Edition) AI Actually Works
 
-A detailed reference for how the real AoE2 **Definitive Edition** computer player behaves, synthesized from the AI-scripting reference at https://github.com/airef/airef.github.io (the `airef.github.io-master/` download, gitignored). Values in `[brackets]` are the engine **default** for that Strategic Number (SN). "AoE1 only" flags SNs that don't affect AoE2.
+A detailed reference for how the real AoE2 **Definitive Edition** computer player behaves, synthesized from the AI-scripting reference at https://github.com/airef/airef.github.io (consulted online; see the References section of the repo README for all sources). Values in `[brackets]` are the engine **default** for that Strategic Number (SN). "AoE1 only" flags SNs that don't affect AoE2.
 
 This documents *AoE2*, not our clone. A detailed side-by-side comparison with our AI (`js/ai.js`, `AI_LEVELS` in `js/core.js`) is a separate follow-up — see the scaffold at the end.
 
@@ -233,3 +233,29 @@ Gaps 1, 2, 4, 5, 6 of the original list (health/wave retreat, sighted-response %
 
 1. **Boar/deer hunting** — needs engine work first (no huntable wildlife besides sheep); AoE2's early food curve (and its fast Feudal) leans on hunt food. Sheep + early farms currently stand in.
 2. Second explorer / stale-intel re-scouting — cheap, low impact (deliberately skipped: any scout can already explore).
+
+## 12. Mechanics adopted from openage reverse-engineering (2026-07-13)
+
+Source: `docs/reference/openage-study.md` (+ `docs/reference/unit_stats_aoc.csv`,
+audited every test run by `tools/stats-audit.js`). Each row names the openage
+doc the value came from.
+
+| Mechanic | AoE2 value (source) | Adopted as | Deviation? |
+|---|---|---|---|
+| Multi-builder speed | `3·build_time/(builders+2)` (build_speed.md) | `countSiteWorker` census + per-worker share, js/logic.js | none |
+| Repair rate | 750 hp/min, +50% per extra villager (repair.md) | 12.5 hp/s first + 6.25 each, fractional accrual | none |
+| Market prices | GLOBAL table, clamp [20,9999], ±3/lot (market.md) | one shared `marketPrices` (save v6) | none |
+| Trade-cart gold | Conquerors `2·(d/size+0.3)·d·K` (market.md) | K=0.84 calibrated to old income on 120-map half routes | K is ours |
+| Attack bonuses | attack-vs-armor-class pairs (damage.md) | data-driven `UNITS.*.bonuses` (values unchanged; checksum-stable refactor) | ram +110 is our tuning (repair contract) |
+| Garrison arrows | `floor(Σ pierce_dps / bldg_dps)`, villager=2.5, TC 0/10 (garrison.md) | DPS model, melee adds nothing, **base arrow kept even ungarrisoned** (TC 1..10, tower 1..5, ptower 1..3) | default-arrow kept by design (user call: unmanned TC still shoots) |
+| Town bell range | 25 tiles from TC (town_bell.md) | `BELL_RANGE=25` in ringTownBell; no TC → no range limit | none |
+| Knight reload | 1.8s (unit_stats_aoc.csv) | rof T30(54) | none |
+| Ram pierce armor | 180 (csv) | 180 (behavior-identical under min-1 floor) | none |
+| Trade cart | 100W+50G, 51s train (csv) | adopted | none |
+| Scout speed | 1.2 Dark Age (csv) | kept 1.55 | deliberate: scout is Feudal-gated here, Feudal +0.35 baked in |
+
+Measured (6-seed medians, same seeds, vs pre-adoption): hard-vs-easy 52→57
+game-min, hard-vs-medium 52→57 (loaded-TC defense is genuinely stronger —
+the designed effect), medium-vs-easy 68→58 (25-tile bell keeps distributed
+economies working). Ladder stayed strictly monotonic; rollback determinism
+verified.

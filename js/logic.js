@@ -501,6 +501,35 @@ function adjToBuilding(px,py,bldg){
 // leash (js/logic.js) and the aggro scope so they stay in lock-step on both
 // the zone AND the GUARD_LEASH radius.
 const GUARD_LEASH = 6;
+// THE stance table — every per-stance number lives here, not inline at the
+// read sites. scan: auto-acquire radius ('range' = the unit's own attack
+// reach — Stand Ground fires at what walks in, never walks out); leashed:
+// whether the idle anchor (defendX/Y) reels a chase back (GUARD_LEASH
+// radius); acquires/retaliates: whether the unit ever engages on its own.
+// Explicit orders and flagged guard posts override per their own rules
+// (see enforceChaseLeash / the acquire scan).
+const STANCES = {
+  aggressive:  { scan: 8,       leashed: false, acquires: true,  retaliates: true  },
+  defensive:   { scan: 6,       leashed: true,  acquires: true,  retaliates: true  },
+  standground: { scan: 'range', leashed: false, acquires: true,  retaliates: true  }, // retaliation still reach-gated (canStrikeInPlace)
+  passive:     { scan: 0,       leashed: false, acquires: false, retaliates: false },
+};
+function stanceOf(e){ return STANCES[e.stance] || STANCES.aggressive; }
+
+// THE ONE "can this unit hit that foe WITHOUT MOVING" predicate. Ranged:
+// within firing range (+0.5 slack, matching every historical call site).
+// Melee: within strike distance (~1.5) AND not corner-blocked — a diagonal
+// foe with both orthogonal steps unwalkable can't actually be swung at, and
+// re-acquiring it just thrashes give-up→re-acquire until the watchdog fires.
+// Used by the acquire scan, the retaliation gate, and the stand-ground
+// reach test; before extraction each re-derived it with drifting constants.
+function canStrikeInPlace(e, foe){
+  if((e.range||0)>0) return dist(e,foe) <= e.range+0.5;
+  let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(foe.x)-ex,dy=Math.round(foe.y)-ey;
+  let cornerBlocked=dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true);
+  return dist(e,foe)<=1.5 && !cornerBlocked;
+}
+
 // Reel a leashed unit (guard post, or defensive stance's idle anchor) back
 // home when a chase drags it past GUARD_LEASH — drops the target and paths
 // to the post/anchor; returns true if it did. EXPLICIT attacks are exempt
@@ -524,7 +553,7 @@ function enforceChaseLeash(e){
       pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
       return true;
     }
-  } else if(e.stance==='defensive'&&e.defendX!==undefined){
+  } else if(stanceOf(e).leashed&&e.defendX!==undefined){
     let adx=e.x-e.defendX, ady=e.y-e.defendY;
     if(Math.sqrt(adx*adx+ady*ady) > GUARD_LEASH){
       e.target=null;
@@ -1129,26 +1158,20 @@ function damageEntity(attacker, target){
   // doesn't flag a unit that's actively fighting (e.g. sieging a wall an enemy
   // repairs in step, so the target's SAMPLED hp reads flat though blows land).
   attacker.lastAtkTick = tick;
-  // AoE2 attack bonuses. The other classic counters need no bonus — they
-  // emerge from the armor system: scouts beat archers because their 2 pierce
-  // armor halves arrow damage, and militia beat spearmen on raw stats.
-  if (attacker.utype === 'spearman' && (target.utype === 'scout' || target.utype === 'knight')) dmg += 15; // AoE2 spearman +15 vs cavalry
-  if (attacker.utype === 'archer' && target.utype === 'spearman') dmg += 3; // AoE2 archer +3 vs spearman
-  // Bonuses vs buildings (AoE2 building-class bonuses): there are no siege
-  // units (even in Castle), so these are what let an army crack structures
-  // at all now that buildings have real armor.
-  if (target.type === 'building') {
-    if (attacker.utype === 'villager') dmg += 3;
-    if (attacker.utype === 'militia') dmg += 2;
-    // The ram IS its building bonus: base atk 2 barely scratches a unit,
-    // +110 vs structures tears through walls. Tuned so one ram's net DPS
-    // (~20.8 hp/s after the wall's 8 melee armor, rof 150) clearly EXCEEDS a
-    // villager's repair (~10 hp/s) — matching AoE2, where a ram out-damages a
-    // repairer so a small siege force actually breaches instead of bouncing.
-    // (At +70 a ram did only ~12.8 hp/s: two repairing villagers stalled it
-    // forever, so no walled AI base ever fell — the finishing stalemate.)
-    // Keep in sync with wallBreachTicks (ai.js).
-    if (attacker.utype === 'ram') dmg += 110;
+  // AoE2 attack bonuses, read from the per-unit `bonuses` table (UNITS,
+  // js/core.js) — the data-driven mirror of AoE2's attack-vs-armor-class
+  // pairs (openage .../game_mechanics/damage.md). Keys are target utypes,
+  // plus the pseudo-class 'building'. The other classic counters need no
+  // bonus — they emerge from the armor system: scouts beat archers because
+  // their 2 pierce armor halves arrow damage, militia beat spearmen on raw
+  // stats. Rationale for the values (incl. the ram's +110 vs the repair
+  // contract) lives with the data in core.js.
+  if (attacker.utype) {
+    let bonuses = UNITS[attacker.utype] && UNITS[attacker.utype].bonuses;
+    if (bonuses) {
+      if (target.type === 'building') { if (bonuses.building) dmg += bonuses.building; }
+      else if (bonuses[target.utype]) dmg += bonuses[target.utype];
+    }
   }
 
   // AoE2 armor: damage = max(1, attack - armor). Ranged units and building
@@ -1290,23 +1313,25 @@ function damageEntity(attacker, target){
   // under fire. Without this, a passive soldier shot by an enemy tower/TC would
   // acquire it as a target and march in to attack the building, the opposite of
   // what the stance promises ("Never attacks or retaliates").
-  let passiveNoRetaliate = target.stance==='passive';
+  let passiveNoRetaliate = !stanceOf(target).retaliates;
   // Don't re-lock an attacker this victim has already PROVEN unreachable
   // (unreachId, stamped by the stall resolver) — retaliation re-acquired a
   // walled-in shooter on every arrow, undoing the disengage and parking the
   // victim under fire forever. Same nuance as auto-acquire: if the attacker
   // is strikable RIGHT NOW (in my range / melee-adjacent), pathing is moot
   // and the stamp doesn't apply.
-  let unreachAttacker = false;
-  if(target.unreachUntil>tick && target.unreachId===attacker.id){
-    let ad = dist(target, attacker);
-    unreachAttacker = (target.range||0)>0 ? ad > target.range+0.5 : ad > 1.5;
-  }
+  let unreachAttacker = (target.unreachUntil>tick && target.unreachId===attacker.id)
+    && !canStrikeInPlace(target, attacker);
   // An AI unit in tactical retreat (retreatUntil, js/ai.js) keeps running:
   // retaliating would cancel the disengage the moment the pursuer lands a
   // hit — exactly the fight-to-the-death this stamp exists to break.
   let retreating = isRetreatingUnit(target);
-  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker){
+  // Stand Ground only retaliates against what it can hit FROM ITS SPOT:
+  // acquiring a shooter beyond its reach just target-flipped for one tick
+  // before the combat block's out-of-range drop reverted it (an acquire→
+  // drop churn every arrow). Same reach test as the combat block's drop.
+  let standgroundOutOfReach = target.stance==='standground' && !canStrikeInPlace(target, attacker);
+  if(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker&&!standgroundOutOfReach){
     let shouldRetaliate = false;
     if(!target.target){
       shouldRetaliate = true;
@@ -1334,7 +1359,7 @@ function damageEntity(attacker, target){
       if(en.type!=='unit'||!sameSide(en.team,target.team))return; // allies defend a sieged building too
       // non-combatants sit out: carts have atk 0, rams do 1-2 vs units
       if(!isSoldierUnit(en))return;
-      if(en.target||en.task||en.stance==='passive')return;
+      if(en.target||en.task||!stanceOf(en).acquires)return;
       if(isRetreatingUnit(en))return; // tactical retreat (js/ai.js) — keeps running
       if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
       if(distToTarget(en,target)>8)return;
@@ -1501,11 +1526,11 @@ function ejectGarrison(b,filter){
     if(spawn){u.x=spawn.x+0.5;u.y=spawn.y+0.5;}
     u.fromX=u.x;u.fromY=u.y;
     clearUnitPath(u);
-    // Leaving shelter re-pins the guard post to the drop spot: the pre-
-    // garrison post is usually WHY the unit fled (a raid there), and the
-    // idle return would otherwise auto-march it back through the attackers
-    // with retaliation suppressed mid-path.
-    if(u.guardX!=null) setGuardPost(u, Math.round(u.x), Math.round(u.y), false);
+    // Leaving shelter re-anchors the unit at the drop spot (defensive units
+    // hold HERE, not the raided spot they fled). A FLAGGED guard post is the
+    // player's explicit order and stays put — walking back to the flag is
+    // exactly what that order means.
+    u.defendX=Math.round(u.x); u.defendY=Math.round(u.y);
     out++;
     // Villagers with a savedTask auto-resume via restoreSavedTask in updateUnit.
   });
@@ -1528,10 +1553,19 @@ function ringTownBell(team){
   // targeting one full building.
   let spots=entities.filter(en=>canGarrisonIn(en,team))
     .map(b=>({b,room:garrisonCap(b)-garrisonCount(b)}));
+  // AoE2 bell range (openage .../game_mechanics/town_bell.md): only
+  // villagers within 25 tiles of the TC answer — a gatherer at a far camp
+  // is not in danger and must keep working, not abandon its post across the
+  // map. Also the lever that softens AI shelter-paralysis: raids at the TC
+  // no longer freeze the whole distributed economy. No TC (razed) → no
+  // range anchor: everyone may shelter in whatever towers remain.
+  const BELL_RANGE=25;
+  let bellTC=entities.find(b=>b.type==='building'&&b.team===team&&b.btype==='TC'&&b.complete);
   let sent=0;
   entities.forEach(e=>{
     if(e.team!==team||e.type!=='unit'||e.utype!=='villager'||e.garrisonedIn)return;
     if(e.task==='garrison')return;
+    if(bellTC&&distToBuilding(e.x,e.y,bellTC)>BELL_RANGE)return;
     let best=null,bd=Infinity;
     spots.forEach(s=>{
       if(s.room<=0)return;
@@ -1578,10 +1612,14 @@ function soundAllClear(team){
 // team's Market (its home); own=false finds ANY other player's Market (the
 // trade destination — allied or enemy, per AoE2). Deterministic: scans
 // `entities` in array order, ties broken by first-found.
-function nearestMarket(e, own){
+// allowIncomplete: accept a Market still under construction — a trade route
+// may be ordered before the endpoint finishes; the cart waits at the site
+// (updateTradeCart trades only against COMPLETE markets).
+function nearestMarket(e, own, allowIncomplete){
   let best=null,bd=Infinity;
   entities.forEach(b=>{
-    if(b.type!=='building'||b.btype!=='MARKET'||!b.complete||b.hp<=0)return;
+    if(b.type!=='building'||b.btype!=='MARKET'||b.hp<=0)return;
+    if(!b.complete&&!allowIncomplete)return;
     let match = own ? (b.team===e.team) : (b.team!==e.team && isPlayerTeam(b.team));
     if(!match)return;
     let d=distToTarget(e,b);
@@ -1602,8 +1640,13 @@ function updateTradeCart(e){
   if(e.tradeDestId==null && e.tradeHomeId==null) return; // idle, not on a route
   let home = e.tradeHomeId!=null ? entitiesById.get(e.tradeHomeId) : null;
   let dest = e.tradeDestId!=null ? entitiesById.get(e.tradeDestId) : null;
-  let homeOk = home&&home.type==='building'&&home.btype==='MARKET'&&home.complete&&home.hp>0&&home.team===e.team;
-  let destOk = dest&&dest.type==='building'&&dest.btype==='MARKET'&&dest.complete&&dest.hp>0&&dest.team!==e.team&&isPlayerTeam(dest.team);
+  // "Ok" here means alive-and-owned-right; completeness is checked separately
+  // — a route to a market still under construction is VALID, the cart just
+  // waits at the site until it finishes (the pre-existing "sent my carts to
+  // the ally while their market was still building and they never traded"
+  // bug: the old complete-required check dissolved the route instead).
+  let homeOk = home&&home.type==='building'&&home.btype==='MARKET'&&home.hp>0&&home.team===e.team;
+  let destOk = dest&&dest.type==='building'&&dest.btype==='MARKET'&&dest.hp>0&&dest.team!==e.team&&isPlayerTeam(dest.team);
   // A destroyed endpoint re-resolves to the nearest valid Market so an active
   // route survives losing one market, rather than the cart going idle.
   if(!homeOk){ home=nearestMarket(e,true);  e.tradeHomeId=home?home.id:null; homeOk=!!home; }
@@ -1624,9 +1667,15 @@ function updateTradeCart(e){
     // fires once the cart can get no closer (dropContactSettled true).
     if(e.path.length>0) return;              // still rolling in — let the walk step advance
     if(!dropContactSettled(e, goal)) return; // tuck up against the Market
+    if(!goal.complete) return;               // endpoint still building — wait for it
     if(e.tradePhase==='toDest'){
-      // Load gold sized by the separation between the two Markets, head home.
-      let g=Math.round(dist(home,dest)*TRADE_GOLD_PER_TILE);
+      // Load gold sized by Market separation — Conquerors trade formula
+      // (see TRADE_GOLD_FACTOR, js/core.js). Math.sqrt is exact-IEEE and
+      // determinism-safe; the −5 per axis is AoE2's "adjacent markets earn
+      // nothing" deadzone.
+      let tdx=Math.max(0,Math.abs(home.x-dest.x)-5), tdy=Math.max(0,Math.abs(home.y-dest.y)-5);
+      let td=Math.max(0.1,Math.sqrt(tdx*tdx+tdy*tdy));
+      let g=Math.floor(2*(td/MAP+0.3)*td*TRADE_GOLD_FACTOR+0.5);
       e.carrying=Math.max(1,g); e.carryType='gold';
       e.tradePhase='toHome';
       let pt=nearestBldgPerimeter(e.x,e.y,home,e.id);
@@ -1643,6 +1692,17 @@ function updateTradeCart(e){
     let pt=nearestBldgPerimeter(e.x,e.y,goal,e.id);
     pathUnitTo(e,pt.x,pt.y);
   }
+}
+
+// Per-building active-worker census for the AoE2 diminishing-returns build/
+// repair rates. Workers register on the tick they actually work; the RATE
+// reads last tick's total (bt.lastWorkers) so it is identical regardless of
+// entity update order within the tick — order-independence is what makes the
+// shared-rate math lockstep-safe. All three fields are sim state read on a
+// later tick and are hashed in detEntityHash.
+function countSiteWorker(bt){
+  if(bt.workTick!==tick){ bt.lastWorkers=bt.curWorkers||0; bt.curWorkers=0; bt.workTick=tick; }
+  bt.curWorkers++;
 }
 
 function updateUnit(e){
@@ -2346,12 +2406,24 @@ function updateUnit(e){
             }
           }
         }
+        // AoE2 multi-builder rule (openage doc/reverse_engineering/
+        // game_mechanics/build_speed.md): time = 3·build_time/(builders+2),
+        // NOT linear — the 2nd builder is worth +33%, not +100%. Each active
+        // worker contributes (v+2)/(3v) progress per work tick so the site's
+        // total per-tick rate is (v+2)/3 (v=1 → exactly the old 1/tick).
+        // v comes from a per-building counter with a ONE-TICK LAG: workers
+        // register as they're updated, and the rate uses last tick's count —
+        // the value is identical no matter which worker updates first, which
+        // keeps the math order-independent (lockstep determinism).
+        countSiteWorker(bt);
+        let vWorkers=Math.max(1,bt.lastWorkers||1);
+        let workShare=(vWorkers+2)/(3*vWorkers);
         if (!bt.complete) {
-          bt.buildProgress++;
+          bt.buildProgress+=workShare;
           // HP grows with construction (AoE2): each work tick adds its share
           // of maxHp, so a half-built structure has half its HP. Damage taken
           // during construction persists (the cap only limits, never heals).
-          bt.hp=Math.min(bt.maxHp,bt.hp+bt.maxHp/bt.buildTime);
+          bt.hp=Math.min(bt.maxHp,bt.hp+workShare*bt.maxHp/bt.buildTime);
           // Construction hammer audio plays at the mallet's VISUAL impact in
           // render-units.js (same treatment as chop/mine) — a sim-side
           // tick%30 cadence here fought both the swing animation and the
@@ -2372,14 +2444,17 @@ function updateUnit(e){
             }
           }
         } else {
-          // Repair completed but damaged building
-          bt.repairCounter = (bt.repairCounter || 0) + 1;
-          // 10 hp repaired per game-second: one hp per (TPS/10) villager
-          // work ticks — >=3 at the original 30tps, >=2 at 20. Keeping the
-          // GAME-TIME rate preserves the ram-DPS-vs-repair balance contract
-          // (a ram must out-damage a repairer; see damageEntity's ram bonus).
-          if (bt.repairCounter >= Math.round(TPS / 10)) {
-            bt.repairCounter = 0;
+          // Repair (AoE2 rates, openage .../game_mechanics/repair.md):
+          // 750 hp/min = 12.5 hp/game-second for the FIRST villager, each
+          // additional adds 50% of that (6.25) — NOT linear per villager.
+          // Site total = 12.5·(v+1)/2 hp/s, split evenly per worker here:
+          // each worker accrues total/(v·TPS) hp per tick into repairAccum,
+          // and whole hp are paid+applied through the existing cost debt
+          // machinery below. The ram-vs-repair contract still holds: a ram's
+          // 22.4 hp/s building dps out-damages 12.5 (1 repairer) and 18.75 (2).
+          bt.repairAccum = (bt.repairAccum || 0) + (12.5 * (vWorkers + 1)) / (2 * vWorkers * TPS);
+          if (bt.repairAccum >= 1) {
+            bt.repairAccum -= 1;
 
             let bData = BLDGS[bt.btype];
             let bCost = (bData && bData.cost) || {};
@@ -2561,15 +2636,33 @@ function updateUnit(e){
         // ticks forever. After 3 fruitless attempts (retry .n, hashed for
         // lockstep) or an outright no-path, the spot the unit actually
         // stands becomes the post.
+        // A FLAGGED post is the player's explicit order and never moves on
+        // its own — a blocked flagged return just STOPS trying until the
+        // retry expires (the flag stays where the player put it; the unit
+        // stands as close as it got). Only unflagged posts (escort-frozen
+        // remnants) settle to where the unit stands.
         let r = e.retry && e.retry['guardret'];
-        if (r && r.n >= 3) {
+        let settle = () => {
+          if (e.guardFlagged) {
+            // Long back-off, NOT a reset: the flag holds its spot, the unit
+            // holds where it got to, and we re-try the walk occasionally in
+            // case the blockage (crowd, construction) has cleared. A plain
+            // reset re-ran A* every 30 ticks forever — the repath storm the
+            // settle rule exists to prevent.
+            retryStamp(e,'guardret',T30(600));
+            if (r) e.retry['guardret'].n = 0;
+            return;
+          }
           e.guardX = Math.round(e.x); e.guardY = Math.round(e.y);
-          r.n = 0;
+          if (r) r.n = 0;
+        };
+        if (r && r.n >= 3) {
+          settle();
         } else {
           retryStamp(e,'guardret',T30(30));
           e.retry['guardret'].n++;
           pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
-          if (e.path.length === 0) { e.guardX = Math.round(e.x); e.guardY = Math.round(e.y); e.retry['guardret'].n = 0; }
+          if (e.path.length === 0) settle();
         }
       }
     }
@@ -2582,8 +2675,9 @@ function updateUnit(e){
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
     // A HUMAN scout still auto-acquires (the player expects it to fight).
-    if (e.stance !== 'passive' && !isRetreatingUnit(e) && (tick + e.id) % ACQUIRE_STAGGER === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
-      let scanRange = e.stance === 'aggressive' ? 8 : (e.stance === 'standground' ? (e.range > 0 ? e.range : 1.5) : 6);
+    if (stanceOf(e).acquires && !isRetreatingUnit(e) && (tick + e.id) % ACQUIRE_STAGGER === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
+      let stanceScan = stanceOf(e).scan;
+      let scanRange = stanceScan === 'range' ? (e.range > 0 ? e.range : 1.5) : stanceScan;
       let reachAtk=(e.range>0?e.range:1.6);
       // A guarding unit's aggro is scoped to what it PROTECTS, not to itself:
       // it only engages enemies inside its leash zone (GUARD_LEASH) of the
@@ -2606,15 +2700,7 @@ function updateUnit(e){
         // give-up→re-acquire in place until the stuck-watchdog frees it. Keep
         // skipping until the flag expires and the situation (crowd) may have
         // changed. Without this a latecomer to a melee dogpile wedged forever.
-        if(e.unreachUntil>tick && e.unreachId===en.id){
-          if(e.range>0){
-            if(dist(e,en)>reachAtk+0.5)return false; // ranged: out of firing range → keep skipping
-          } else {
-            let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(en.x)-ex,dy=Math.round(en.y)-ey;
-            let cornerBlocked=dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true);
-            if(dist(e,en)>1.5 || cornerBlocked)return false; // melee: can't strike without moving → keep skipping
-          }
-        }
+        if(e.unreachUntil>tick && e.unreachId===en.id && !canStrikeInPlace(e,en))return false;
         let ey=Math.round(en.y),ex=Math.round(en.x);
         if(ey<0||ey>=MAP||ex<0||ex>=MAP)return false;
         // Fog gate, symmetric per team via the sim's deterministic
@@ -3134,9 +3220,25 @@ function updateBuilding(e){
         }
       }
       if (inRange.length > 0) {
-        // AoE2-style: garrisoned units add extra arrows (capped at +5), spread
-        // over the closest targets in range.
-        let arrows = 1 + Math.min(garrisonCount(e), 5);
+        // AoE2 garrison-arrow model (openage .../game_mechanics/garrison.md):
+        // extra arrows = floor(Σ garrisoned pierce-DPS / building DPS).
+        // Villagers count as a fixed 2.5 dps (≈ +1 TC arrow each); ranged
+        // pierce units contribute atk/reload; MELEE units add NOTHING — they
+        // garrison for safety, not firepower. One deliberate deviation from
+        // AoE2: the base arrow stays even ungarrisoned (AoE2's TC default is
+        // 0) — an unmanned TC that can't shoot at all felt wrong here.
+        // Capped by per-building maxArrows (BLDGS: TC 10, TOWER 5, PTOWER 3).
+        let bDps = e.atk / (T30(60) / TPS); // this building's own arrow dps (fires every 2 game-s)
+        let gDps = 0;
+        if (e.garrison) for (let gi = 0; gi < e.garrison.length; gi++) {
+          let g = entitiesById.get(e.garrison[gi]);
+          if (!g) continue;
+          if (g.utype === 'villager') gDps += 2.5;
+          // rof lives on the UNITS def, not the entity (atk IS stamped, with upgrades)
+          else if ((g.range || 0) > 0 && g.atk > 0) gDps += g.atk / (UNITS[g.utype].rof / TPS);
+        }
+        let maxArrows = BLDGS[e.btype].maxArrows || 5;
+        let arrows = Math.min(maxArrows, 1 + Math.floor(gDps / bDps));
         if (arrows > 1) {
           inRange.sort((a, b) => a.d - b.d || a.en.id - b.en.id); // (d, id) == the old stable entities-order sort
         } else {
@@ -3255,15 +3357,14 @@ function updateBuilding(e){
       // "both player teams, not myTeam" reasoning as the block above.
       if(unit && isPlayerTeam(e.team) && e.rallyX!==undefined && e.rallyY!==undefined){
         // Fresh MILITARY units guard their rally flag (AoE2-style): where
-        // they're flagged to becomes their default guard anchor, so after
-        // any fight they return to the flag instead of drifting off.
-        // HUMAN teams only: the AI's military controller (js/ai.js) issues
-        // raw target/pathUnitTo assignments that never manage guard fields,
-        // so a post would leash its defenders 6 tiles from the barracks and
-        // the idle return would fight its forward posture — AI units keep
-        // the pre-guard behavior (drifting defend anchor, no post).
+        // they're flagged to becomes their default ANCHOR — meaningful only
+        // to DEFENSIVE stance (scoped acquire + leash). The old implicit
+        // guard POST here made every rally-spawned soldier a leashed guard
+        // regardless of stance — root of the "aggressive army walks home
+        // after attacking" bug. HUMAN teams only, same reason as before:
+        // the AI drives its units via raw target writes.
         if(guardEligible(unit) && !isAITeam(e.team)){
-          setGuardPost(unit, e.rallyX, e.rallyY, false);
+          unit.defendX=e.rallyX; unit.defendY=e.rallyY;
         }
         if(e.rallyTargetId){
           let target=entitiesById.get(e.rallyTargetId);
