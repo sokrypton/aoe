@@ -1782,7 +1782,19 @@ function drawUnit(e){
   if(e.facing===undefined) e.facing = 1;
   let targetDx = 0;
   let tx = -1, ty = -1;
-  if(e.target){
+  // Facing priority: the PATH wins while the unit is actually walking —
+  // facing the target first made a unit on a detour route (pathing around a
+  // wall/forest toward a target on the far side) moonwalk: body toward the
+  // target, feet going the other way (repro: aoe2-game-test01.json, knight
+  // walking E around an obstacle while facing its ram target to the W).
+  // AoE2 units face their travel direction in transit and square up to the
+  // target only when the walk ends (in range / at the work site).
+  if(e.path && e.path.length > 0){
+    // Look 3 steps ahead to smooth out diagonal paths that alternate N+E or S+W steps
+    let ahead = Math.min(3, e.path.length - 1);
+    tx = e.path[ahead].x;
+    ty = e.path[ahead].y;
+  } else if(e.target){
     let t = entitiesById.get(e.target);
     if(t) { tx = t.x; ty = t.y; }
   } else if(e.buildTarget){
@@ -1791,11 +1803,6 @@ function drawUnit(e){
   } else if(e.gatherX !== undefined && e.gatherY !== undefined && e.task && e.task !== 'return'){
     tx = e.gatherX + 0.5;
     ty = e.gatherY + 0.5;
-  } else if(e.path && e.path.length > 0){
-    // Look 3 steps ahead to smooth out diagonal paths that alternate N+E or S+W steps
-    let ahead = Math.min(3, e.path.length - 1);
-    tx = e.path[ahead].x;
-    ty = e.path[ahead].y;
   }
   if(e.facingNorth===undefined) e.facingNorth = false;
   let dx = 0, dy = 0;

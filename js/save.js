@@ -323,6 +323,16 @@ function applySavedGame(data, opts){
       // Buildings saved before atk was stamped at creation (createBuilding)
       // deal 0 damage on arrow impact (js/loop.js prefers the live shooter).
       if (e.type === 'building' && e.atk === undefined) e.atk = BLDGS[e.btype].atk || 0;
+      // Strip LEGACY implicit guard posts (guardFlagged false, no escort):
+      // pre-disposition-refactor saves carry unflagged posts from the old
+      // rally/move re-pins. Nothing creates them anymore, but the leash
+      // honors any guardX — a stale one trapped units in an acquire→leash
+      // ping-pong at their old post while a raid burned the town around
+      // them (repro: aoe2-save-2026-07-14T02-15-32-943Z, two knights).
+      // Explicit (flagged) posts and live escorts load untouched.
+      if (e.type === 'unit' && e.guardX != null && !e.guardFlagged && e.guardTargetId == null) {
+        e.guardX = null; e.guardY = null;
+      }
       entitiesById.set(e.id, e);
       // Re-derive tile occupancy from the building footprint — the SAME
       // helper creation uses (js/entities.js), so the two can't drift.
