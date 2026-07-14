@@ -78,8 +78,24 @@ function updateAIGarrisonReaction(ai){
     aiProbe('bell:t'+ai.team);
     ringTownBell(ai.team);
   } else if(!underAttack && window.bellRinging[ai.team]){
-    aiProbe('allClear:t'+ai.team);
-    soundAllClear(ai.team);
+    // All-clear needs the raiders GONE, not merely a pause in hits: campers
+    // parked outside TC fire wait out the 12s hold window, the bell
+    // auto-clears, villagers walk back out and die — fresh-seed autopsies
+    // showed 57-70 shelter-CYCLE deaths per game. Same visible-threat test
+    // the soldier shelter recall uses, with the same reachability null-out
+    // as controlAIMilitary (a poker sealed OUTSIDE intact walls must not
+    // hold the whole economy in shelter forever — the eco-stall family).
+    // Runs only at the clear decision (bell ringing, hits quiet) — rare.
+    let tc=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='TC');
+    let lurking=tc&&findEnemyThreatNear(ai,tc,12*aiScale());
+    if(lurking){
+      let {x:tcx,y:tcy}=centerTile(tc);
+      if(findPath(tcx,tcy,Math.round(lurking.x),Math.round(lurking.y),tc.id).length===0)lurking=null;
+    }
+    if(!lurking){
+      aiProbe('allClear:t'+ai.team);
+      soundAllClear(ai.team);
+    }
   }
 }
 
