@@ -273,10 +273,16 @@ async function withPage(browser, port, entry, fn){
         ],
       });
       const victim = entities.find(e => e.team === 1 && e.utype === 'villager' && e.x === 30);
-      for (let i = 0; i < T30(1200) && victim.hp > 0; i++) update();
-      T.ok('staging: raider kills the field villager', victim.hp <= 0);
       const zones = () => (AI_STATES[1].dangerZones || []).filter(z => z.bearId == null);
-      T.ok('death stamps a bearless raid zone at the tile', zones().some(z => Math.abs(z.x - 30) <= 1 && Math.abs(z.y - 30) <= 1));
+      // HIT-stamped (not death-stamped): the zone must exist while the
+      // victim still lives — the first victim no longer dies "for free".
+      for (let i = 0; i < T30(1200) && !zones().length && victim.hp > 0; i++) update();
+      T.ok('FIRST hit stamps a bearless raid zone (victim still alive)', zones().length >= 1 && victim.hp > 0);
+      T.ok('zone sits at the villager tile', zones().some(z => Math.abs(z.x - 30) <= 2 && Math.abs(z.y - 30) <= 2));
+      // Field-hit flee is event-driven: same hit dropped its task and sent
+      // it walking home (the villager is ~22 tiles from its TC, beyond the
+      // 18-tile alarm radius — bell can't cover it).
+      T.ok('field-hit villager flees (task dropped, walking)', victim.task == null && victim.path.length > 0);
       const probe = { team: 1, x: 30, y: 30 };
       T.ok('canGatherTile rejects tiles inside the zone', !canGatherTile(probe, TERRAIN.FOREST, 30, 30));
       // Let the bear maul the bait — the prune inside that stamp must KEEP

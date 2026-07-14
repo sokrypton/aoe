@@ -376,17 +376,47 @@ function farmAtTile(x,y,team,requireComplete=true){
   );
 }
 
-function canGatherTile(e,terrain,x,y){
-  if(terrain===TERRAIN.FARM)return !!farmAtTile(x,y,e.team,true);
-  // AI danger avoidance: tiles inside a live danger zone are ungatherable
-  // for that team until the zone expires. Two zone kinds share the array:
-  // bear zones (bearId set — a bear mauled a villager, fleeBear reflex
-  // below) and RAID zones (no bearId — a villager was KILLED by an enemy
-  // player there, handleDeath; without them raided AIs re-tasked fresh
-  // gatherers straight onto the tile the last one died at, seed-2001).
-  // Humans manage their own safety.
-  let ai=AI_STATES&&AI_STATES[e.team];
-  if(ai&&ai.dangerZones&&ai.dangerZones.length){
+// ---- VILLAGER SAFETY (the AI's three-layer model) ----
+// LEARN: a villager HIT by a bear or an enemy player stamps a danger zone
+//   (stampDangerZone below; the two branches live in damageEntity) and, when
+//   caught in the field, flees home. One learning site per threat kind.
+// POLICY: aiVillagerSafeAt — THE predicate for "may an AI villager work at
+//   tile (x,y)": no live danger zone covers it, and under the war-state it
+//   sits inside the town's defensive umbrella. Consulted by canGatherTile
+//   (every gather scan + the per-tick current-tile revalidation) and by
+//   findAIDropSite (camps are never founded on proven-deadly ground).
+// REACT: the bell ladder (updateAIGarrisonReaction, js/ai.js) — militia /
+//   shelter / lurker-gated all-clear — unchanged, for raids at the town.
+// Humans manage their own safety: the predicate is a no-op for them.
+
+// THE zone writer — prune + dedup + push + cap in one place (was duplicated
+// between the bear and raid stamp sites, each drifting its own copy).
+// bearId null = raid zone (expires by time only); set = bear zone (also
+// dies with its bear). Cap 7: the array is hashed per-zone in the AI digest.
+function stampDangerZone(dzAi,x,y,bearId){
+  dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
+    if(tick>=z.until)return false;
+    if(z.bearId==null)return true;
+    let b=entitiesById.get(z.bearId);
+    return !!(b&&b.hp>0);
+  });
+  // Dedup: bear zones by bear id (one zone per bear); raid zones by the
+  // Chebyshev-4 consume radius (a massacre refreshes ONE zone, not eight).
+  if(bearId!=null){
+    if(dzAi.dangerZones.some(z=>z.bearId===bearId))return;
+    dzAi.dangerZones.push({x,y,until:tick+T30(6000),bearId});
+  } else {
+    let near=dzAi.dangerZones.find(z=>z.bearId==null&&Math.abs(z.x-x)<=4&&Math.abs(z.y-y)<=4);
+    if(near){near.until=tick+T30(6000);return;}
+    dzAi.dangerZones.push({x,y,until:tick+T30(6000)});
+  }
+  if(dzAi.dangerZones.length>7)dzAi.dangerZones=dzAi.dangerZones.slice(-7);
+}
+
+function aiVillagerSafeAt(team,x,y){
+  let ai=AI_STATES&&AI_STATES[team];
+  if(!ai)return true; // humans manage their own safety
+  if(ai.dangerZones&&ai.dangerZones.length){
     for(let z of ai.dangerZones){
       if(tick>=z.until)continue;
       // A bear zone dies with its bear: a hunted bear frees the resource
@@ -397,29 +427,27 @@ function canGatherTile(e,terrain,x,y){
         let bear=entitiesById.get(z.bearId);
         if(!bear||bear.hp<=0)continue;
       }
-      // Radius 4 around the mauling spot: big den-radius zones (tried at 8)
-      // locked out whole resource regions and STARVED the team — worse than
-      // the bear. Small zones stop the immediate re-tasking loop; the hunt
-      // (js/ai.js huntAIBears) is what actually reclaims the area.
+      // Radius 4 around the spot: big den-radius zones (tried at 8) locked
+      // out whole resource regions and STARVED the team — worse than the
+      // threat. Small zones stop the immediate re-tasking loop; the hunt /
+      // the army is what actually reclaims the area.
       if(Math.abs(x-z.x)<=4&&Math.abs(y-z.y)<=4)return false;
     }
   }
   // WAR-STATE GATHER CONTRACTION (sn-minimum-town-size spirit): while the
   // base is taking core hits (aiRecentlyRaided — the persistent war-state),
-  // gather only inside the alarm radius of the TC. The far camps are where
+  // work only inside the alarm radius of the TC. The far camps are where
   // raided AIs bled villagers 30-at-a-time: field gatherers beyond the
   // town's defensive umbrella are indefensible, and a villager idling ALIVE
-  // near the TC beats one dying at a treeline. Farms bypass this via the
-  // FARM early-return above — deliberately: farms sit at the TC and are the
-  // protected income. The TC center is memoized ONCE per team per tick
-  // (derived same-tick cache like intel.unitCounts — never carried, so
-  // never hashed; numbers only, AI_STATES is serialized; !==tick self-heals
-  // across rollback) because this function is measured-hot (per-villager
-  // per-tick + findNearTile ring scans).
-  if(ai&&typeof aiRecentlyRaided==='function'&&aiRecentlyRaided(ai)){
+  // near the TC beats one dying at a treeline. The TC center is memoized
+  // ONCE per team per tick (derived same-tick cache like intel.unitCounts —
+  // never carried, so never hashed; numbers only, AI_STATES is serialized;
+  // !==tick self-heals across rollback) because this predicate is
+  // measured-hot (per-villager per-tick + findNearTile ring scans).
+  if(typeof aiRecentlyRaided==='function'&&aiRecentlyRaided(ai)){
     if(ai._tcMemoTick!==tick){
       ai._tcMemoTick=tick;
-      let tc=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===e.team&&b.hp>0);
+      let tc=entities.find(b=>b.type==='building'&&b.btype==='TC'&&b.team===team&&b.hp>0);
       if(tc){let c=centerOf(tc);ai._tcMemoX=c.x;ai._tcMemoY=c.y;}
       else ai._tcMemoTick=-1; // no TC (razed = knocked out anyway): no contraction
     }
@@ -429,6 +457,13 @@ function canGatherTile(e,terrain,x,y){
     }
   }
   return true;
+}
+
+function canGatherTile(e,terrain,x,y){
+  if(terrain===TERRAIN.FARM)return !!farmAtTile(x,y,e.team,true);
+  // Farms bypass the safety predicate via the early-return above —
+  // deliberately: farms sit at the TC and are the protected income.
+  return aiVillagerSafeAt(e.team,x,y);
 }
 
 // AoE2 formation speed-matching: units ordered as a GROUP move at the
@@ -1382,6 +1417,34 @@ function damageEntity(attacker, target){
   // infantry and pick off runners; the mob-fight wins), so a bear mauling
   // must never trigger a retreat. Hashed in detEntityHash (sim-read).
   if (target.type === 'unit' && isEnemyOf(target.team, attacker)) target.lastEnemyHitTick = tick;
+  // RAID LEARNING (throttled, mirrors the wildlife branch below): an AI
+  // villager hit by an enemy PLAYER stamps a danger zone at its own tile —
+  // the ground where gathering just proved deadly — learned on the FIRST
+  // hit, not on death (the old death-only stamp let the first victim die
+  // for free). Caught in the FIELD (beyond the town's alarm radius, where
+  // the bell can't help), it also drops everything and runs home — the
+  // event-driven replacement for the old per-decision-tick flee poller in
+  // js/ai.js (same action, decisionInterval-times faster reaction).
+  // Militia villagers (explicitAttack — fighting by order) and villagers
+  // already walking to shelter are exempt.
+  if (target.utype === 'villager' && isAITeam(target.team) && attacker.team !== GAIA_TEAM
+      && isEnemyOf(target.team, attacker) && retryReady(target, 'fleeRaid')) {
+    retryStamp(target, 'fleeRaid', T30(90));
+    let dzAi = AI_STATES && AI_STATES[target.team];
+    if (dzAi && dzAi.dangerZones) stampDangerZone(dzAi, Math.round(target.x), Math.round(target.y));
+    if (!target.explicitAttack && target.task !== 'garrison') {
+      let tc = entities.find(b => b.type === 'building' && b.btype === 'TC' && b.team === target.team && b.hp > 0);
+      if (tc) {
+        let c = centerOf(tc);
+        if (dist(target, c) > AI_BASE_ALARM_RADIUS * aiScale()) {
+          target.task = null; target.target = null; target.buildTarget = null;
+          clearGatherTarget(target);
+          let pt = nearestBldgPerimeter(target.x, target.y, tc, target.id);
+          issueMoveOrder(target, pt ? pt.x : Math.round(c.x), pt ? pt.y : Math.round(c.y));
+        }
+      }
+    }
+  }
   // MELEE hits on a ram specifically (any attacker, wildlife included): the
   // AI's rider-disembark keys on this — arrow chip damage (isPierce, 1/hit
   // through the ram's 8 pierce armor) must never eject the riders into the
@@ -1456,19 +1519,7 @@ function damageEntity(attacker, target){
     retryStamp(target,'fleeBear',T30(90));
     target.fledBearId=attacker.id;
     let dzAi=AI_STATES&&AI_STATES[target.team];
-    if(dzAi&&dzAi.dangerZones){
-      // Prune expired/dead-bear zones — but KEEP bearless RAID zones (they
-      // expire by time only; the old bear-only predicate silently wiped
-      // every raid zone whenever a bear mauled anyone).
-      dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
-        if(tick>=z.until)return false;
-        if(z.bearId==null)return true;
-        let b=entitiesById.get(z.bearId);
-        return !!(b&&b.hp>0);
-      }).slice(-7);
-      if(!dzAi.dangerZones.some(z=>z.bearId===attacker.id))
-        dzAi.dangerZones.push({x:Math.round(attacker.x),y:Math.round(attacker.y),until:tick+T30(6000),bearId:attacker.id});
-    }
+    if(dzAi&&dzAi.dangerZones)stampDangerZone(dzAi,Math.round(attacker.x),Math.round(attacker.y),attacker.id);
   }
   // Rams never retaliate (1-2 dmg vs units): turning to poke the militia
   // hacking at it just interrupts the wall it was ordered to break. Trade
@@ -3103,33 +3154,12 @@ function handleDeath(e,killerTeam){
   if(e.type==='unit'&&e.garrison&&e.garrison.length>0){
     ejectGarrison(e);
   }
-  // RAID MEMORY: an AI villager killed by an enemy player stamps a danger
-  // zone at the death tile — canGatherTile then refuses to re-task fresh
-  // gatherers onto the spot the last one just died at (seed-2001: raided
-  // AIs walked replacements straight back into the raiders, 30+ deaths).
-  // Same shape/array as the bear zones (hashed per-zone in the AI digest);
-  // no bearId → time-expiry only. Bears stamp their own zones (damageEntity
-  // fleeBear path) — GAIA is excluded here.
-  if(e.type==='unit'&&e.utype==='villager'&&isAITeam(e.team)
-     &&killerTeam!=null&&killerTeam!==GAIA_TEAM&&isEnemyOf(e.team,{team:killerTeam})){
-    let dzAi=AI_STATES&&AI_STATES[e.team];
-    if(dzAi&&dzAi.dangerZones){
-      let zx=Math.round(e.x),zy=Math.round(e.y);
-      dzAi.dangerZones=dzAi.dangerZones.filter(z=>{
-        if(tick>=z.until)return false;
-        if(z.bearId==null)return true; // raid zones expire by time only
-        let b=entitiesById.get(z.bearId);
-        return !!(b&&b.hp>0);
-      });
-      // Dedup within the consume radius (Chebyshev 4): a massacre at one
-      // farm cluster refreshes ONE zone instead of pushing eight; cap 7
-      // like the bear path — the array is hashed per-zone, keep it bounded.
-      let near=dzAi.dangerZones.find(z=>Math.abs(z.x-zx)<=4&&Math.abs(z.y-zy)<=4);
-      if(near)near.until=tick+T30(6000);
-      else dzAi.dangerZones.push({x:zx,y:zy,until:tick+T30(6000)});
-      if(dzAi.dangerZones.length>7)dzAi.dangerZones=dzAi.dangerZones.slice(-7);
-    }
-  }
+  // (Raid danger zones are stamped at HIT time — the RAID LEARNING branch
+  // in damageEntity, next to the wildlife branch — not here at death: the
+  // first hit already marked the ground, so the first victim no longer
+  // dies "for free". Accepted minor loss vs the old death-stamp: villagers
+  // perishing inside a razed shelter leave no zone at the building — those
+  // raids already put the town in war-state.)
   if(e.type==='unit'&&e.utype==='sheep'){
     e.utype = 'sheep_carcass';
     e.hp = 100;

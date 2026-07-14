@@ -177,27 +177,13 @@ function updateAI(ai){
   let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
   let barracks=aiBuildings.filter(b=>b.btype==='BARRACKS');
 
-  // Field flee: a villager taking hits AWAY from the base bubble runs home
-  // (raids near the TC already ring the garrison bell). No new state — the
-  // path home makes assignAIVillagers leave it alone until it arrives, by
-  // which time the recent-hit window has expired and it re-tasks normally.
+  // (Field flee is EVENT-DRIVEN now: the RAID LEARNING branch in
+  // damageEntity, js/logic.js, stamps a danger zone and runs a field-hit
+  // villager home at the moment of the hit — the per-decision-tick poller
+  // that lived here reacted up to a full decision interval late and needed
+  // the fleeWindow cadence dance to work at all.)
   let alarmR=AI_BASE_ALARM_RADIUS*aiScale();
   let tcCenter=centerOf(aiTC);
-  // Window must exceed the decision interval or this (decision-tick-only) check
-  // steps right over the hit: easy=240 / standard=180 / hard=120, so a fixed 120
-  // meant the flee almost never fired for easy/standard.
-  let fleeWindow=profile.decisionInterval+T30(60);
-  vils.forEach(v=>{
-    if(v.lastHitTick==null||tick-v.lastHitTick>=fleeWindow)return;
-    if(dist(v,tcCenter)<=alarmR)return;
-    v.task=null;v.target=null;v.buildTarget=null;
-    clearGatherTarget(v);
-    let pt=nearestBldgPerimeter(v.x,v.y,aiTC,v.id);
-    // Recall = the shared MOVE order (issueMoveOrder), exactly a human
-    // recall-click: order replaces any prior, move suppresses retaliation
-    // in transit (the flee), multi-leg resume finishes a blocked route.
-    issueMoveOrder(v,pt?pt.x:Math.round(aiTC.x),pt?pt.y:Math.round(aiTC.y));
-  });
   // Militia recall: a raider that fled beyond the town radius is not worth the
   // mob's time (villagers at 0.8 speed never catch a fleeing scout) — release
   // the fighters back to work (savedTask restores in updateUnit). Villagers
@@ -2921,6 +2907,10 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
     // farther patches now require sending a scout first, like a human.
     if(!teamHasExplored(ai.team, x+y*MAP))continue;
     if(dist({x,y},centerTile(tc))>maxDist)continue;
+    // Safety: never found a camp on proven-deadly ground (a live danger
+    // zone — bear or raid) or outside the war-state umbrella. The shared
+    // villager-safety predicate (js/logic.js); commuters die otherwise.
+    if(!aiVillagerSafeAt(ai.team,x,y))continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,ai.team))continue;
