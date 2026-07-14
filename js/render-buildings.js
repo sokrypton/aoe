@@ -117,9 +117,9 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
   X.moveTo(sx - bw, sy + bhh - bh + 1.5); X.lineTo(sx, sy + bhh * 2 - bh + 1.5);
   X.lineTo(sx + bw, sy + bhh - bh + 1.5);
   X.stroke();
-  // (a white "ridge highlight" down peaked roofs' front edge used to be
-  // stroked here — at the small scale every peaked roof is drawn at, it
-  // read as a stray gray line rather than a specular edge)
+  // (no white "ridge highlight" down peaked roofs' front edge — at the
+  // small scale every peaked roof is drawn at, it reads as a stray gray
+  // line rather than a specular edge)
   X.restore();
 }
 
@@ -1000,11 +1000,9 @@ function drawBuilding(e, part = null){
     // Base spans the full tile diamond (W/hh = HALF_TW/HALF_TH), so all
     // four wall corners land exactly on the tile's edges.
     // Shared gable geometry (walls, gable end, team-colored roof slope,
-    // course lines) via drawGableBlock — the branch used to inline a
-    // line-for-line copy. House-only detailing: half-timber studs and
-    // mid-rails (painted via the afterWalls hook, i.e. between the walls
-    // and the roof, exactly where the old inline order put them), then a
-    // pennant and the chimney below.
+    // course lines) via drawGableBlock. House-only detailing: half-timber
+    // studs and mid-rails (painted via the afterWalls hook, i.e. between
+    // the walls and the roof), then a pennant and the chimney below.
     let W=32, hh=16, wallH=16, roofH=20;
     bh=32;
     let sy0=sy+bhh-hh; // center on tile
@@ -2049,8 +2047,8 @@ function drawBuilding(e, part = null){
         // extension (drawWallLink), just wood-brown and sliding up into
         // the bastion as gateProgress goes from closed (0) to open (1).
         // Symmetric trims (7,7) center the door between the two posts —
-        // the old (7,0) ran it all the way into the front post's center,
-        // so the raised door hung visibly closer to the front tower.
+        // an asymmetric trim hangs the raised door visibly closer to the
+        // front tower.
         // The slab stays exactly PARALLEL to the wall run (any per-end
         // twist read as the whole gate being rotated) and is instead
         // TRANSLATED in the GROUND PLANE. The ground-plane perpendicular
@@ -2274,8 +2272,8 @@ function drawBuilding(e, part = null){
     X.textAlign='left';
   }
   // Train / research progress — stacked with the HP bar ABOVE the roof
-  // (they used to hang below the footprint, eating map space under every
-  // producing building). When the HP bar is showing (hp<max), the progress
+  // (below the footprint they'd eat map space under every producing
+  // building). When the HP bar is showing (hp<max), the progress
   // bar tucks in just beneath it; otherwise it takes the HP bar's spot.
   let progY = (e.hp < e.maxHp && bh > 0) ? sy - bh - 4 : sy - bh - 11;
   if(e.queue&&e.queue.length>0){

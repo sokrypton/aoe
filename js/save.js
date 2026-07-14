@@ -97,8 +97,8 @@ function serializeGame(){
     // performance.now().
     corpses: corpses.map(c => ({...c, deathTime: undefined, ageAtSaveMs: performance.now() - c.deathTime})),
     // In-flight arrows carry real pending damage on the host (impact applies
-    // damageEntity, js/loop.js) — plain data since attacker became an
-    // id+snapshot, so a mid-volley save no longer silently loses those hits.
+    // damageEntity, js/loop.js) — plain data (attacker is an id+snapshot),
+    // so a mid-volley save doesn't silently lose those hits.
     projectiles,
     cmdMarkers,
     resources, marketPrices, popUsed, popCap,
@@ -138,7 +138,7 @@ function serializeGame(){
 // applies. Used both by the save file below and by the guest→host state
 // handback over the network (js/net-sync.js's 'request-state' handler).
 // Entity retry/avoid state is plain arrays/objects (js/logic.js primitives),
-// so no Set→null normalization is needed anymore.
+// so no Set→null normalization is needed.
 function serializeGameForWire(){
   return JSON.parse(JSON.stringify(serializeGame()));
 }
@@ -250,9 +250,7 @@ function applySavedGame(data, opts){
     // (every future tick is just += 1 from there) — and
     // every `tick % N === 0` cadence check (lockstep snapshots, checksum
     // reports, watchdog sweeps) then never evaluates true again, silently
-    // breaking them forever with no error anywhere. Caught by an actual
-    // end-to-end test hosting from a guest-originated save, not by
-    // inspecting the load code in isolation.
+    // breaking them forever with no error anywhere.
     tick = Math.round(data.tick) || 0;
     bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
     camX = data.camX || 0;
@@ -282,7 +280,7 @@ function applySavedGame(data, opts){
     // (host = team 0) and the loader re-hosts from them; the
     // crash-recovery handback (opts.fromOpponentMirror, js/net-sync.js)
     // is applied by the original host recovering its own team-0 world
-    // from a guest's mirror, teams in place. No team swap exists anymore.
+    // from a guest's mirror, teams in place — never a team swap.
     // Fog rebuilds from the save's EXACT per-team explored grids: this
     // viewer's own grid marks its explored tiles (updateFog() below
     // re-lights the currently-visible ones), and rejoining guests get the
@@ -355,11 +353,10 @@ function applySavedGame(data, opts){
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
     gamePaused = false;
     aiDifficulty = AI_LEVELS[data.aiDifficulty] ? data.aiDifficulty : aiDifficulty;
-    // Controller layout + per-team AI plan state + last-hit record. The
-    // crash-recovery handback (fromOpponentMirror) keeps teams in place so
-    // these apply verbatim; the file-load path team-swapped them above.
-    // (After the aiDifficulty restore above so the no-field fallback picks
-    // up the save's difficulty.)
+    // Controller layout + per-team AI plan state + last-hit record —
+    // applied verbatim, teams in place (the loader is always team 0, see
+    // above). (After the aiDifficulty restore above so the no-field
+    // fallback picks up the save's difficulty.)
     if (!data.teamControllers) data.teamControllers = defaultControllers(!!data.wasMultiplayerGame);
     restoreTeamState(data);
 

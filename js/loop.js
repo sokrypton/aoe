@@ -7,15 +7,15 @@ function update(){
   // order — the ONLY entry point for player mutations (js/commands.js).
   runScheduledCommands();
 
-  // Update gate open/close states (smoke/fire moved to updateCosmetics —
-  // purely visual, so it runs at frame cadence outside the deterministic
-  // sim tick and needs no lockstep agreement or rollback treatment).
-  // Was O(gates × entities) — a full entities.some() per gate per tick.
-  // Now: skip outright with no gates (the common case), otherwise index
-  // units into 1-tile cells once and run the EXACT same rect predicate on
-  // just the cells overlapping each gate's sensing rect. Boolean any-match
-  // is order-independent, so behavior (and lockstep determinism) is
-  // unchanged.
+  // Update gate open/close states (smoke/fire live in updateCosmetics —
+  // purely visual, so they run at frame cadence outside the deterministic
+  // sim tick and need no lockstep agreement or rollback treatment).
+  // A naive scan is O(gates × entities) — a full entities.some() per gate
+  // per tick. Instead: skip outright with no gates (the common case),
+  // otherwise index units into 1-tile cells once and run the EXACT same
+  // rect predicate on just the cells overlapping each gate's sensing rect.
+  // Boolean any-match is order-independent, so behavior (and lockstep
+  // determinism) is unchanged.
   updateGates();
 
   // Update projectiles: each arrow flies to its fixed aim point (see
@@ -139,8 +139,8 @@ function updateCosmetics(elapsedMs){
     buildingFxTick.forEach((_, id) => { if (!entitiesById.has(id)) buildingFxTick.delete(id); });
     workSwingCycles.forEach((_, id) => { if (!entitiesById.has(id)) workSwingCycles.delete(id); });
     // Per-entity render caches keyed by entity id (render-units.js / render.js):
-    // these previously only cleared on a MAP-size change, so every dead
-    // vehicle/gate/market/farm leaked an entry for the whole session.
+    // these otherwise only clear on a MAP-size change, so every dead
+    // vehicle/gate/market/farm would leak an entry for the whole session.
     if (typeof ramCreakCycles !== 'undefined') ramCreakCycles.forEach((_, id) => { if (!entitiesById.has(id)) ramCreakCycles.delete(id); });
     if (typeof _gateProxyPool !== 'undefined') _gateProxyPool.forEach((_, id) => { if (!entitiesById.has(id)) _gateProxyPool.delete(id); });
     if (typeof _marketProxyPool !== 'undefined') _marketProxyPool.forEach((_, id) => { if (!entitiesById.has(id)) _marketProxyPool.delete(id); });
@@ -215,8 +215,7 @@ function updateBuildingDamageFx(){
 // simply passes through them transiently instead.
 // Ask the stationary blocker on `mover`'s next waypoint to step aside (the
 // BLOCKER dodges — the mover keeps its path). Fed by rebuildBlockAndNudge's
-// fused walk; the old standalone nudgeAside() re-scanned all entities right
-// after the block grid had just walked them.
+// fused walk.
 function makeWayFor(mover){
   let next=mover.path[0];
   if(next.x<0||next.x>=MAP||next.y<0||next.y>=MAP)return;
@@ -272,10 +271,10 @@ function makeWayFor(mover){
 }
 
 // ---- Fused per-tick walk: block grid + nudge list ----
-// rebuildUnitBlock and the old nudgeAside() walked the same entities array
-// back-to-back with complementary filters (stationary units -> block grid,
-// moving units -> dodge checks); nothing runs between them, so one walk
-// serves both with identical content and order (checksum-verified).
+// The block grid and the dodge checks filter the same entities array with
+// complementary predicates (stationary units -> block grid, moving units ->
+// dodge checks); nothing runs between them, so one walk serves both with
+// identical content and order (checksum-verified).
 // Nudging keeps its 2-tick cadence; the grid rebuilds every tick. Movers are
 // nudged AFTER the walk completes — makeWayFor reads other units' grid entries.
 const _movers=[];
@@ -350,7 +349,7 @@ function updateGates(){
 
 // Soft unit separation: push overlapping units apart (AoE2 collision).
 // Sheep are included so flocks keep natural spacing; carcasses are terrain.
-// This is now only the OVERLAP resolver of last resort — the polite
+// This is only the OVERLAP resolver of last resort — the polite
 // step-aside above handles normal traffic, so gatherers are never slid.
 // Scratch reused across ticks (cleared, never reallocated): this pass runs
 // every tick over every unit, and the three per-tick allocations (filtered
@@ -364,8 +363,8 @@ function separateUnits(){
   }
   let sep=0.08;
   let minDist=0.5;
-  // Per-unit flag computed once — the old all-pairs loop recomputed it,
-  // including an entitiesById lookup, for every PAIR (n²/2 times per tick).
+  // Per-unit flag computed once, not per PAIR — recomputing it (with an
+  // entitiesById lookup) in the pair loop is n²/2 work per tick.
   // Skip units working IN PLACE on a fixed tile (resource gather, construction)
   // — they must not be slid off their claimed tile. Carcass harvesters are NOT
   // skipped: they press onto the carcass (js/logic.js pressToContact) and need
@@ -383,7 +382,7 @@ function separateUnits(){
   // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be
   // within minDist (0.5), so each unit compares against its 3×3 cell
   // neighborhood instead of every other unit on the map. The j>i guard keeps
-  // each pair processed exactly once, like the old triangular loop.
+  // each pair processed exactly once.
   // Pooled cell arrays (like targetableUnitGrid): Map.clear() dropped the
   // arrays every tick — keep them, empty them via the touched-list instead.
   let cells=_sepCells;

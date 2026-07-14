@@ -147,8 +147,8 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
     infos.forEach(info=>{
       const {e,isUnit,anchorX,anchorY,sx,sy}=info;
       // Where this entity's own anchor point lands inside the shared
-      // buffer — same idea as the old single-entity anchor, just offset by
-      // the buffer's screen origin instead of always (anchorX,anchorY).
+      // buffer — its anchor offset by the buffer's screen origin instead
+      // of always (anchorX,anchorY).
       const bufAnchorX = sx-originLeft, bufAnchorY = sy-originTop;
       if(isUnit){
         const {ox,oy}=getUnitGroupOffset(e.id);
@@ -237,12 +237,10 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
 // One shared buffer is used for ANY multi-entity selection, clamped to the
 // visible viewport. The buffer cost is bounded by the screen (one flatten +
 // dilate pass), not by the number selected — so selecting a 400-unit army
-// costs the same as selecting a screenful of anything else. (The old code
-// fell back to a PER-ENTITY buffer once the selection spanned more than a
-// threshold, which was O(N) offscreen churn: ~53ms to outline a spread-out
-// 400-unit selection. Every member is already on-screen — _outlineExtent
-// drops off-screen ones — so clamping the union box to the viewport loses
-// nothing, and far-apart rings still don't touch, exactly as before.)
+// costs the same as selecting a screenful of anything else. (Per-entity
+// buffers would be O(N) offscreen churn; every member is already on-screen
+// — _outlineExtent drops off-screen ones — so clamping the union box to
+// the viewport loses nothing, and far-apart rings still don't touch.)
 function drawOutlines(){
   if(!selected.length) return;
   let infos = selected.map(_outlineExtent).filter(Boolean);

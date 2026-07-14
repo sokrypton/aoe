@@ -129,8 +129,7 @@ document.addEventListener('keydown',e=>{
   }
   // OS key auto-repeat only matters for held-key panning, which reads the
   // keys map set on the FIRST keydown — action hotkeys below must fire once
-  // per physical press (holding 'a' with a barracks selected used to queue
-  // archers at repeat rate while the camera panned).
+  // per physical press (a held hotkey would queue units at repeat rate).
   if(e.repeat)return;
   let key = e.key.toLowerCase();
   
@@ -315,7 +314,7 @@ function getWallElbowTiles(start, corner, end){
 // be laid out in one gesture on both input methods, instead of one tile per
 // tap/click. A zero-length drag (touchstart+touchend with no movement, or a
 // plain click) degenerates to a single wall tile via getLineTiles' steps===0
-// case, so this also fully replaces the old single-tap-places-one-wall path.
+// case.
 function startWallDrag(sx,sy){
   let tile = screenToTile(sx, sy);
   window.wallDragBtype = placing; // WALL or SWALL — the drag places this material
@@ -463,9 +462,9 @@ C.addEventListener('mousemove',e=>{
     if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
       if(!isDragging){
         isDragging=true;
-        // Visual-only cue now (the minimap can't actually intercept the
-        // drag anymore — it's pointer-events:none) — dims it so it's clear
-        // dragging over it won't do anything special.
+        // Visual-only cue (the minimap is pointer-events:none, so it can't
+        // intercept the drag) — dims it so it's clear dragging over it
+        // won't do anything special.
         let mw=document.getElementById('minimap-wrap');
         if(mw)mw.classList.add('drag-select-active');
       }
@@ -494,20 +493,18 @@ function isTrackpadWheel(e){
     // Trackpad: wheelDeltaY ≈ -3·deltaY. A physical notch instead reports a
     // FIXED wheelDeltaY (±120) unrelated to deltaY's magnitude. The compare
     // must be TOLERANT, not exact: a precision trackpad reports a fractional
-    // deltaY (e.g. 4.0000009) against an integer wheelDeltaY (-12), so the
-    // old `wheelDeltaY === deltaY*-3` was false for every swipe and they all
-    // fell through to the zoom branch ("two-finger scroll zooms, won't pan").
-    // The two are the same underlying value, so the residual is ~1e-5 for a
-    // trackpad vs. hundreds for a wheel notch — a <1 window separates them
-    // cleanly at any swipe speed.
+    // deltaY (e.g. 4.0000009) against an integer wheelDeltaY (-12), so an
+    // exact ===-3× check fails for every swipe (they'd all zoom, not pan).
+    // The residual is ~1e-5 for a trackpad vs. hundreds for a wheel notch —
+    // a <1 window separates them cleanly at any swipe speed.
     return Math.abs(e.wheelDeltaY + 3*e.deltaY) < 1;
   }
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{
   // Camera-only (pan/zoom) — safe in the scenario editor too, so it runs in
-  // BOTH edit and play there (the editor no longer defines its own wheel
-  // handler): two-finger trackpad swipe pans, pinch/ctrl zooms around the
+  // BOTH edit and play there (the editor defines no wheel handler of its
+  // own): two-finger trackpad swipe pans, pinch/ctrl zooms around the
   // cursor, wheel notch zooms — identical gestures to normal gameplay.
   if(gameOver && !window.seeMapMode)return; // zoom stays live in See Map
   e.preventDefault();
@@ -661,13 +658,12 @@ C.addEventListener('touchstart',e=>{
     if(isWallBtype(placing)){
       startWallDrag(t.clientX,t.clientY);
     } else if(placing){
-      // Touch placement is DRAG-TO-POSITION: the finger carries the ghost
-      // (lifted above the fingertip once dragging, so it isn't hidden
-      // under the finger), and lifting the finger places the building at
-      // the ghost — a plain tap still places at the tap point, exactly as
-      // before. While this is active, single-finger camera panning is
-      // suspended (two-finger pan/pinch still works, and cancels the
-      // placement drag rather than building anything).
+      // Touch placement is DRAG-TO-POSITION: the finger carries the ghost,
+      // and lifting the finger places the building at the ghost — a plain
+      // tap places right at the tap point. While this is active,
+      // single-finger camera panning is suspended (two-finger pan/pinch
+      // still works, and cancels the placement drag rather than building
+      // anything).
       placingTouchDrag=true;
     } else {
       // Arm long-press box-select only when the touch starts on empty
@@ -820,11 +816,11 @@ C.addEventListener('touchend',e=>{
     } else if(window.isDraggingWall){
       finalizeWallDrag();
     } else if(placingTouchDrag){
-      // Release places at the ghost position (which handleTap's old path
-      // never sees — this branch owns ALL touch placement now). A plain
-      // tap places right at the tap point; a drag places at the lifted
-      // ghost. On an invalid spot doPlace() shows "Can't build here!" and
-      // stays in placement mode, so the user just drags again.
+      // Release places at the ghost position (this branch owns ALL touch
+      // placement). A plain tap places right at the tap point; a drag
+      // places at the lifted ghost. On an invalid spot doPlace() shows
+      // "Can't build here!" and stays in placement mode, so the user just
+      // drags again.
       placingTouchDrag=false;
       doPlace(mouseX,mouseY);
       updateUI();
@@ -1112,8 +1108,7 @@ function handleTap(sx,sy,shift){
     // One tap, both outcomes: ordering villagers onto an own UNFINISHED
     // foundation also selects the foundation itself, so its card (build
     // progress + the Cancel Build refund button) is immediately on screen
-    // — previously reaching Cancel Build took a deselect plus a second
-    // tap, which read as "clicking the foundation does nothing".
+    // rather than a deselect-plus-second-tap away.
     // Completed buildings (farm work, repairs) deliberately don't steal
     // the selection — those are repeat-order flows.
     if(tappedOwn&&tappedOwn.type==='building'&&!tappedOwn.complete&&!tappedOwn.exhausted
@@ -1296,7 +1291,7 @@ function focusTownCenter(){
 //            count, unlike the generic footprint-box test).
 // Gates get NO link zone on purpose: their stub links visually belong to
 // the adjoining wall run, and the gate selecting from half the wall line
-// is exactly the "wrong part selected" feel this replaces.
+// is exactly the "wrong part selected" feel this test exists to avoid.
 function wallGateHitPart(en, lx, ly){
   let b = BLDGS[en.btype];
   let iso = toIso(en.x + b.w / 2, en.y + b.h / 2);
@@ -1768,9 +1763,9 @@ function doCommand(sx,sy){
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
     // merely standing near a damaged building shouldn't hijack the click.
-    // Manual garrisoning-by-click was removed for simplicity: the town bell
-    // is now the only way villagers garrison, so clicking an own building
-    // always means "fix it" (repair if damaged, resume if unfinished).
+    // The town bell is the only way villagers garrison (no garrison-by-
+    // click), so clicking an own building always means "fix it" (repair if
+    // damaged, resume if unfinished).
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp));
   }
   if(buildTarget)followTarget=null;
@@ -1814,8 +1809,8 @@ function doCommand(sx,sy){
 
   // World-space command with all targets resolved to ids against THIS
   // client's view (its fog, its screen). Mutation happens in
-  // execUnitCommand (js/commands.js) at the scheduled tick — on the host's
-  // queue for now, on both peers' queues once lockstep lands.
+  // execUnitCommand (js/commands.js) at the scheduled tick on every peer's
+  // queue (lockstep).
   submitCommand({
     kind: 'command',
     unitIds: movers.map(s => s.id),

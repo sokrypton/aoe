@@ -27,7 +27,7 @@ function swordSwingAngle(id){
 // animation must match what the sim actually DOES: the sim only deals damage /
 // harvests when the unit is genuinely in range (see updateUnit — damageEntity
 // gated by adjToBuilding / distToTarget<=range, harvest by SHEEP_HARVEST_RANGE).
-// The old gates ("has a target and is standing still") let a unit that halted
+// A looser gate ("has a target and is standing still") lets a unit that halted
 // just OUTSIDE range — or a surplus attacker with no reachable slot — swing at
 // thin air with nothing happening. This mirrors the sim's range checks EXACTLY,
 // so a swing always coincides with a real hit. Render-only: reads sim state,
@@ -625,7 +625,7 @@ function drawCorpse(c){
   // Impact dust puff, once, the moment the body hits the ground (same
   // render-side particle spawning the sheep's grass nibbling uses).
   // Tracked in corpseImpactFxDone (js/core.js), not a `c.impactFx` field —
-  // corpses get wholesale-replaced by every sync, which used to wipe that
+  // corpses get wholesale-replaced by every sync, which would wipe that
   // flag and re-trigger the puff repeatedly instead of once.
   if (age >= TOPPLE && !corpseImpactFxDone.has(c.id)) {
     corpseImpactFxDone.add(c.id);
@@ -1268,7 +1268,7 @@ function drawQuadruped(e, p){
   X.lineJoin='round';
 
   // One FILLED crescent horn (single path, outer-silhouette stroke only —
-  // the old fat stroke-curls read as white bananas): broad at the poll,
+  // fat stroke-curls read as white bananas): broad at the poll,
   // sweeping out along sd, tapering to an upturned tip.
   let horn=(bx,by,sd,s,rot=0)=>{
     X.save(); X.translate(bx,by); if(rot) X.rotate(rot);
@@ -1630,14 +1630,14 @@ function drawTradeCartBody(e){
   let nearB = WB+0.4, farB = -(WB+0.4);
   if (useDir===1 || useDir===5) {
     // Head-on (S/N): a real shallow open box using the projection's depth
-    // (u.y=±0.55) instead of the old single flat plank — far board first,
+    // (u.y=±0.55) instead of a single flat plank — far board first,
     // thin side rails, floor, cargo peeking over the far rim, then the near
     // board and near wheels over it. Widened (like the ram's head-on v) so
     // it doesn't read as a narrow spike.
     let nearA = useDir===5 ? -L : L; // the end toward the camera
     let farA  = -nearA;
-    // modest widening only (WB*1.25): the old 1.7 made the head-on cart
-    // read wider than every other view
+    // modest widening only (WB*1.25): at 1.7 the head-on cart reads
+    // wider than every other view
     let hw = WB*1.25, fw = hw*0.82, fh = CH*0.9; // far board slightly narrower/shorter (depth cue)
     // the single axle's two big wheel slabs, behind the body at its sides
     [-1,1].forEach(sd=>slab(0, sd*hw, WR, WTH*1.2));
@@ -1689,7 +1689,7 @@ function drawTradeCartBody(e){
 // the body's facing and half-width across it. Radially-symmetric units set
 // len==wid (facing then doesn't matter); elongated ones (mounts, bear) are
 // longer along the body so their shadow stretches in profile and shortens
-// head-on. Tuned so the humanoid footprint matches the old 6×3-ish ellipse.
+// head-on. Tuned so the humanoid footprint matches a 6×3-ish ellipse.
 const UNIT_SHADOW = {
   villager:{len:0.17,wid:0.17}, militia:{len:0.18,wid:0.18},
   spearman:{len:0.18,wid:0.18}, archer:{len:0.18,wid:0.18},
@@ -2219,8 +2219,8 @@ function drawUnit(e){
 
       if (useDir === 7 || useDir === 0) {
         // East profile / Southeast diagonal (same construction, SE compressed)
-        // Profile k=1; diagonal k=0.72 — the old 0.85 was so close to the
-        // profile that SW/W read as the same sprite. The 3/4 view is sold
+        // Profile k=1; diagonal k=0.72 — at 0.85 the diagonal is so close
+        // to the profile that SW/W read as the same sprite. The 3/4 view is sold
         // by real foreshortening plus receding hindquarters (legs below).
         let k = useDir === 7 ? 1 : 0.72;
         // (tail drawn earlier in drawMountLayer, behind the legs)
@@ -2751,12 +2751,10 @@ function drawUnit(e){
     // TRUE screen-space angle from this unit to its combat target. Used to
     // point aimed weapons (bow, spear) along the real attack line. Callers
     // must first UNDO the facing mirror (X.scale(e.facing,1) inside the
-    // already-mirrored context cancels it) and then rotate by this — the
-    // old version instead expressed the angle in the mirrored frame and
-    // clamped it to ±1.15 rad, which meant a shot at anything steeply up/
-    // down or slightly across the body rendered up to ~130° off the real
-    // direction (an archer firing at a target up-screen showed its bow
-    // pointing down-forward). Exact rotation needs no fold-through-body
+    // already-mirrored context cancels it) and then rotate by this —
+    // expressing the angle in the mirrored frame with a ±1.15 rad clamp
+    // renders steep or across-the-body shots up to ~130° off the real
+    // direction. Exact rotation needs no fold-through-body
     // clamp: the body's facing already tracks the target's horizontal
     // side, so the weapon never has to point backward more than the small
     // sector-boundary overshoot. When the target entity is gone
@@ -2829,7 +2827,7 @@ function drawUnit(e){
       // dropped nondeterministically and the work sounds/particles
       // stuttered. Tracked in workSwingCycles (js/core.js), not
       // `e._swingCyc` — entities get wholesale-replaced by every sync,
-      // which used to wipe that field and fire extras. Never during the
+      // which would wipe that field and fire extras. Never during the
       // outline mask pass: it would consume this cycle's one impact (and
       // spawn duplicate particles) before the real draw.
       let swingCyc = Math.floor(phRaw);
@@ -3276,7 +3274,7 @@ function drawUnit(e){
       X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
       
       // Spawn tiny grass particle puffs (not in the outline mask pass —
-      // a SELECTED grazing sheep used to double-spawn them)
+      // a SELECTED grazing sheep would double-spawn them)
       if(tick % 24 === 0 && !window._maskDraw){
         spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
       }

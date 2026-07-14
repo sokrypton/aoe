@@ -13,9 +13,8 @@ function drawGhost(){
     };
     X.globalAlpha = 0.55;
     window._ghostDraw = true;
-    // Ghost in the material actually being placed — the pillar colors here
-    // used to be hardcoded stone, so dragging a Dark-age palisade briefly
-    // previewed as stone.
+    // Ghost in the material actually being placed — hardcoding stone here
+    // makes a dragged Dark-age palisade preview as stone.
     let gMat = wallMat(placing);
     let gpf = gMat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : ['#a5723a', '#8b5a2b', '#9c6c3f'];
     line.forEach((t, i) => {
@@ -56,12 +55,9 @@ function drawGhost(){
     let fp = gateFootprint(tile.x, tile.y, isWall);
     ox=fp.ox; oy=fp.oy; bw=fp.gw; bh_=fp.gh;
     // Show EXACTLY the footprint that will be built (gateFootprint) — no
-    // fabricated size. The old "preview a full 1x3 when there's no wall run"
-    // was misleading: a gate can't be built off a wall (canPlace is false),
-    // and it made the ghost JUMP + flip orientation the instant a gate was
-    // placed (the walls it consumed stop being a run, so the same cursor tile
-    // fell into this case) — a jarring artifact in both the editor and the
-    // real game. With no run it's a 1x1 red ghost: honestly "can't place here".
+    // fabricated size (a full-1x3 fallback made the ghost jump + flip the
+    // instant a gate consumed its wall run). With no run it's a 1x1 red
+    // ghost: honestly "can't place here".
   }
   let ok=canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode);
 

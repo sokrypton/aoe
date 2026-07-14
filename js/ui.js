@@ -133,7 +133,7 @@ function allGuardable(sel){
 }
 
 // Villager task -> resource carried, used by the selection card, the tile
-// tooltip and the topbar villager counts alike (was three inline copies).
+// tooltip and the topbar villager counts alike.
 const TASK_RES = { chop: 'wood', mine_gold: 'gold', mine_stone: 'stone', forage: 'food', farm: 'food' };
 
 // THE skin-detection signal — everything in this file keys off this one
@@ -224,8 +224,7 @@ function setPortraitIcon(port, key, fallbackEmoji){
     // The sprite renders on an INNER layer (clipper > img) instead of the
     // tile's own background: skins can then ZOOM the img past the sheet
     // cell's baked-in empty margins (the clipper crops the spill) without
-    // touching the tile's border/box. Mobile leaves it unscaled — pixel-
-    // identical to the old background-image approach.
+    // touching the tile's border/box. Mobile leaves it unscaled.
     port.textContent='';
     let s=document.createElement('div');
     s.className='tile-sprite';
@@ -557,8 +556,7 @@ function updateUI(){
   // button). A RETURN arrow, not an ✖: deselectAll() steps back ONE level
   // per press (cancel placement → cancel rally → leave submenu → deselect),
   // so for a villager the same arrow pressed repeatedly walks back out of
-  // the build submenus and finally exits — the submenus' own separate Back
-  // buttons are gone.
+  // the build submenus and finally exits.
   if(rebuildActions && selected.length>0 && gameStarted && !gameOver){
     let backBtn=document.createElement('div');
     backBtn.className='act-btn back-btn framed';
@@ -692,8 +690,8 @@ function updateUI(){
     && typeof teamAge !== 'undefined' && teamAge && isPlayerTeam(myTeam);
   // Game over on mobile renders the outcome (🏆/💀) as the SAME single tile as
   // every other selection state, so the panel keeps one width and position and
-  // never shifts ("slides") into the legacy portrait+stats card. Classic keeps
-  // its worded card.
+  // never shifts ("slides") into the portrait+stats card. Classic keeps its
+  // worded card.
   let gameOverTile = !isClassicUI && gameOver;
   let iWonOutcome = gameOver ? (typeof didIWin==='function' && didIWin()) : false;
   // (No separate 'has-selection' class: in the mobile skin EVERY selection
@@ -772,8 +770,8 @@ function updateUI(){
       icon.dataset.tipDesc=title(g);
       icon.onclick=(ev)=>onClick(g,ev);
       if(onRemove) icon.oncontextmenu=(ev)=>{ ev.preventDefault(); onRemove(g,ev); };
-      // Single-unit tile inherits the old portrait's double-click/tap
-      // camera-follow toggle (and its green lock glow).
+      // Single-unit tile: double-click/tap toggles camera follow (with the
+      // green lock glow).
       if(g.members.length===1 && g.members[0].type==='unit'){
         icon.ondblclick=()=>{ if(window.toggleCameraFollow) toggleCameraFollow(); };
         icon.classList.toggle('cam-locked', window.cameraFollowId===g.members[0].id);
@@ -825,8 +823,8 @@ function updateUI(){
       selGrid.appendChild(icon);
     } else if(gameOverTile){
       // OUTCOME tile: the trophy/skull drawn as the exact same single tile as
-      // any selection — icon only, no text — so the panel keeps its shape and
-      // doesn't slide into the old portrait+stats card at game over.
+      // any selection — icon only, no text — so the panel keeps its shape at
+      // game over.
       let icon = document.createElement('div');
       icon.className = 'sel-unit-icon outcome-tile';
       setPortraitIcon(icon, null, iWonOutcome ? '🏆' : '💀');
@@ -860,8 +858,7 @@ function updateUI(){
     setSelHp('');
     // Nothing selected: the modern skin (index.html) surfaces the current
     // AGE here — its top-bar age chip is hidden on mobile (cramped), so
-    // this idle box is where age lives. More useful than the old game-name
-    // placeholder, and harmless on desktop. Classic keeps the title.
+    // this idle box is where age lives. Classic keeps the title.
     let modern = !isClassicUI;
     if (modern && teamAge && isPlayerTeam(myTeam)) {
       let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
@@ -894,10 +891,9 @@ function updateUI(){
     if (!e.complete) hpColor = '#00e5ff';
     else if (hpPct < 20) hpColor = '#cc3333';
     else if (hpPct < 50) hpColor = '#d9a711';
-    // The training queue used to DISPLACE this card (bar + tiny slots where
-    // the HP readout goes) — queue state now lives on the train buttons
-    // themselves (count badge + progress fill, see the b.builds block
-    // below), so the card always shows the normal HP/garrison/dropoff info.
+    // Queue state lives on the train buttons themselves (count badge +
+    // progress fill, see the b.builds block below), so the card always
+    // shows the normal HP/garrison/dropoff info.
     let det;
     {
       // Classic: AoE2's read — the bar sits directly under the portrait at
@@ -961,8 +957,7 @@ function updateUI(){
         cancelBuildBtn.dataset.tipLabel='Cancel Construction';
         cancelBuildBtn.dataset.tipDesc='Stop building this and refund its full cost.';
         // Same anatomy as every other action button: sprite icon (the
-        // icon-cancel red X, freed up when the deselect button became the
-        // back arrow) + label + cost line.
+        // icon-cancel red X) + label + cost line.
         cancelBuildBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-cancel"></div><div class="btn-label">Cancel Build</div><span class="cost">full refund</span>`;
         cancelBuildBtn.onclick=()=>{
           requestDeleteOwned([e.id]);
@@ -1787,12 +1782,9 @@ window.cancelReseed = cancelReseed;
     return html;
   }
 
-  // Position the tooltip against the hovered BUTTON's rect — never over it.
-  // The old version chased the cursor with a fixed offset and flipped over
-  // it near the viewport edges, which is exactly where the buttons live —
-  // so the flipped tooltip landed on top of the very button being hovered.
-  // Anchored placement: centered above the button, flipping below when
-  // there's no room above, clamped inside the viewport horizontally.
+  // Position the tooltip against the hovered BUTTON's rect — never over it
+  // (cursor-chasing placement flipped onto the button at viewport edges).
+  // Centered above, flips below when there's no room, clamped horizontally.
   function positionTip(el) {
     const GAP = 8;
     const r = el.getBoundingClientRect();

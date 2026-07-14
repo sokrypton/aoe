@@ -330,8 +330,7 @@ function render(){
     }
   }
 
-  // Selected units' GUARD-family ORDERS (every guard order is explicit —
-  // implicit posts no longer exist).
+  // Selected units' GUARD-family ORDERS (every guard order is explicit).
   // One faint line per guarding unit; flags dedupe into 2-tile clusters so
   // a formation reads as a shared post instead of a picket fence. Hidden
   // while RE-placing (settingGuard): old flags deactivate, only the cursor

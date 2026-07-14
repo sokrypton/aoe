@@ -25,9 +25,8 @@
 // better than anything a hand-rolled key-shortening scheme would realistic-
 // ally achieve, for zero ongoing maintenance cost. Applied uniformly to
 // 'cmd' messages too (not just 'sync') for one code path — they're tiny
-// enough that compression overhead is negligible either way. (The 13KB
-// figure is from the deleted snapshot-sync mode; resync/recovery state
-// payloads are far larger and benefit even more.)
+// enough that compression overhead is negligible either way. (Resync/
+// recovery state payloads are far larger and benefit even more.)
 //
 // Since every send is already fully-encoded bytes, the connection uses
 // PeerJS's serialization:'none' — sending the ArrayBuffer/Uint8Array
@@ -321,8 +320,7 @@ function dispatchNetMessage(msg, src){
 // pipeline) so a fast interval costs nothing bandwidth-wise — the real
 // constraint is keeping enough margin over it that a single delayed/
 // dropped packet, or a backgrounded tab's setInterval throttling, doesn't
-// misfire as a false "disconnected". 4x margin, same ratio as the initial
-// (slower) values this replaced.
+// misfire as a false "disconnected" — hence the 4x margin.
 const NET_HEARTBEAT_MS = 1000;
 const NET_TIMEOUT_MS = 4000;
 let lastNetRecvAt = 0;

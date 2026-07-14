@@ -31,10 +31,10 @@ function init(){
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
-  // (The old "Drag to pan \u2022 Tap to select" mobile hint that used to show
-  // here was removed \u2014 it re-fired on every init(), i.e. every restart and
-  // rematch, not just first launch; the \u2753 Help overlay documents the same
-  // gestures. #help-hint itself stays: showMsg() still coordinates with it.)
+  // (No auto-shown mobile gesture hint here \u2014 anything fired from init()
+  // re-fires on every restart/rematch, not just first launch; the \u2753 Help
+  // overlay documents the gestures. #help-hint itself stays: showMsg()
+  // still coordinates with it.)
 }
 
 function placeStartingSheep(){
@@ -484,10 +484,9 @@ function restoreMenuForMatch(){
   show('mp-status-panel', false);
   show('start-game-btn', false);
   let menu = document.getElementById('tutorial');
-  // Options + Help ARE available mid-match now (unlike the pre-two-level
-  // menu, which dropped Help to keep the single panel small). Explicitly
-  // re-shown — a guest's enterGuestJoinMode broad-hid every
-  // .menu-button-container, including the ones inside #misc-row.
+  // Options + Help ARE available mid-match. Explicitly re-shown — a
+  // guest's enterGuestJoinMode broad-hid every .menu-button-container,
+  // including the ones inside #misc-row.
   if (menu) {
     menu.querySelectorAll('#misc-row, #misc-row .menu-button-container, #options-back-row')
       .forEach(el => { el.style.display = ''; });
@@ -537,10 +536,9 @@ function onHostClicked(){
   // Slot 1 becomes a (future) human guest the instant Host is clicked —
   // NOT when the guest connects — so the AI can't make irreversible
   // decisions (spend resources, queue units) during the waiting-for-
-  // opponent window. This is the data-driven successor to the old
-  // `netRole == null` gate around updateAI (js/loop.js). AI_STATES[1] is
-  // deliberately left in place: cancelHosting() flips the slot back and
-  // the AI resumes its plans exactly where it stopped.
+  // opponent window. AI_STATES[1] is deliberately left in place:
+  // cancelHosting() flips the slot back and the AI resumes its plans
+  // exactly where it stopped.
   // Hosting from an in-progress game: a loaded MP save already carries the
   // real human/AI seat layout — keep it verbatim (its guests rejoin their
   // own seats by token). Hosting a single-player game as MP is the one
@@ -576,8 +574,8 @@ function onHostClicked(){
   show('mp-cancel-btn', true);
 
   // Hide the action rows so the "waiting for opponent" status/link panel
-  // stands alone (the settings grid needs no hiding anymore — it lives in
-  // the separate options panel). #mp-row (this very button) is included
+  // stands alone (the settings grid lives in the separate options panel,
+  // so it needs no hiding). #mp-row (this very button) is included
   // too — disabling it alone still left it sitting there grayed out, which
   // reads as "you could still click this," not "you're already hosting."
   // Everything hidden here is restored by cancelHosting() below.
@@ -605,7 +603,7 @@ function onHostClicked(){
       return;
     }
     // NOTE: the HOST's own ?host=<id> resume URL is deliberately NOT written
-    // here anymore — only once the match actually starts (setHostResumeUrl,
+    // here — only once the match actually starts (setHostResumeUrl,
     // called from hostStartLockstepMatch / the save-resume path). Otherwise a
     // host refreshing during the LOBBY would boot straight into
     // enterHostResumeMode and try to auto-recover a match that never began.
@@ -675,9 +673,8 @@ function leaveMpSession(){
   recomputeGamePaused();
 }
 
-// Wired to #mp-cancel-btn on the "Waiting for opponent…" screen — before
-// this, clicking Host was irreversible: the setup UI was hidden and the
-// only way back was a page refresh.
+// Wired to #mp-cancel-btn on the "Waiting for opponent…" screen — without
+// it, clicking Host would be irreversible short of a page refresh.
 function cancelHosting(){
   let wasMidMatch = mpHostingFromExistingGame;
   leaveMpSession();
@@ -742,7 +739,7 @@ window.onNetConnectionOpen = function(seat){
       return;
     }
     if (!mpMatchStarted) {
-      // Fog is a synced match setting now: a fresh lobby match gets it from
+      // Fog is a synced match setting: a fresh lobby match gets it from
       // lobbyState at start (hostStartLockstepMatch → lockstep-start, which
       // the guest applies), so only DEFAULT it here; hosting from a loaded
       // save keeps the save's own flag (applySavedGame restored it — a
@@ -795,7 +792,7 @@ window.onNetConnectionOpen = function(seat){
     // the previous host session died (crash/reload) while a menu happened
     // to be open, the matching open:false can never arrive (the whole page
     // is gone), permanently stranding that guest paused with nothing on
-    // screen to explain why (confirmed by an actual test in the 1v1 era).
+    // screen to explain why.
     // The freshly recomputed verdict is always known-correct here. Only
     // meaningful once the match is live — during the lobby there's no sim
     // to pause, and a lobby panel isn't a "menu" the host should mirror.
@@ -887,8 +884,7 @@ function attemptReconnect(){
 // the connection is also mid-reconnect): this client's own #tutorial menu
 // being open, the OTHER peer's menu being open (either direction — see
 // the message handler below), and a disconnect/reconnect in progress. A
-// bug this exact shape already bit once (in the deleted snapshot-sync
-// code — a different unconditional overwrite): any
+// bug this exact shape already bit once: any
 // code path that just sets `gamePaused = false` directly, without
 // checking whether some OTHER reason is still active, will incorrectly
 // resume the game out from under a menu/overlay that's still visibly
@@ -1112,8 +1108,8 @@ function enterHostResumeMode(peerId){
 }
 
 // The guest's initial connection attempt, re-runnable via the Retry button
-// — the old inline version left "Could not connect" as a dead end with a
-// page refresh as the only recourse.
+// — otherwise "Could not connect" would be a dead end with a page refresh
+// as the only recourse.
 function attemptGuestJoin(){
   let retryBtn = document.getElementById('mp-retry-btn');
   if (retryBtn) retryBtn.style.display = 'none';
@@ -1168,7 +1164,7 @@ function applyMenuMode(mode){
   }
 
   if (mode === 'gameover') {
-    // This menu is NOT auto-opened on game over anymore (the end screen is the
+    // This menu is NOT auto-opened on game over (the end screen is the
     // canvas banner + standalone "See Map" button, js/init.js gameLoop) — it
     // only appears if the player clicks the ☰ button. When they do, it's the
     // full post-game menu: Play Again (single-player / dead MP), or Rematch for
@@ -1431,9 +1427,10 @@ function toggleMenu(){
 }
 
 let lastTime = performance.now();
-// Simulation runs at 30 ticks per game-second (all tick-count constants in
-// core.js/logic.js are authored against that), scaled by GAME_SPEED — like
-// AoE2, where "1.7x speed" just runs more game-seconds per real second.
+// Simulation runs at TPS ticks per game-second (tick-count constants are
+// authored at the canonical 30tps and wrapped in T30 — js/core.js), scaled
+// by GAME_SPEED — like AoE2, where "1.7x speed" just runs more
+// game-seconds per real second.
 let timeStep = 1000 / (TPS * GAME_SPEED);
 function setGameSpeed(speed){
   GAME_SPEED = speed;
@@ -1441,13 +1438,12 @@ function setGameSpeed(speed){
 }
 let accumulator = 0;
 
-// The on-screen bandwidth stats box was removed, but the underlying
-// counters (netBytesSent/netBytesReceived, js/net.js) still accumulate —
-// handy from the console when debugging sync traffic.
+// netBytesSent/netBytesReceived (js/net.js) accumulate with no on-screen
+// readout — handy from the console when debugging sync traffic.
 
 // requestAnimationFrame stops entirely in a hidden tab — fine in single-
-// player (the game just pauses with you), but a HOST alt-tabbing away used
-// to halt simulation and all sync broadcasts, leaving the guest frozen
+// player (the game just pauses with you), but a HOST alt-tabbing away
+// would halt simulation and all sync broadcasts, leaving the guest frozen
 // staring at a live-but-silent connection (and at risk of a false
 // heartbeat-timeout trip). This interval keeps the host's simulation
 // running while hidden. Background setInterval is throttled to ~1/sec —
@@ -1469,8 +1465,7 @@ setInterval(() => {
   // hidden host free-ran unbounded ahead of the guest (pacing/hard-stop
   // never enforced), the snapshot ring froze at pre-hidden ticks (guest
   // commands then forced fatal too-old rollbacks), and progress reports
-  // stopped. This interval predates lockstep — it was written for the
-  // legacy snapshot-sync broadcasts.
+  // stopped.
   while (accumulator >= timeStep) {
     if (lockstepEnabled()) {
       let surcharge = lockstepTickSurcharge();

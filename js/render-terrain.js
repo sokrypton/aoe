@@ -18,8 +18,8 @@ function isOffscreen(sx, sy, margin){
 //   1 = some explored but none currently visible (draw with shadow)
 //   2 = at least one tile actively visible (draw normally)
 // Memoized per building until the fog actually changes (updateFog in
-// js/core.js calls invalidateBuildingFogMemo) — the w×h tile scan used to
-// re-run 2-3× per building per FRAME (render collect + draw loops, outline
+// js/core.js calls invalidateBuildingFogMemo) — otherwise the w×h tile scan
+// re-runs 2-3× per building per FRAME (render collect + draw loops, outline
 // extent, minimap), pure waste since fog only mutates once per tick.
 let _bflMemo = new Map();
 function invalidateBuildingFogMemo(){ _bflMemo.clear(); }
@@ -127,7 +127,7 @@ function drawTile(x,y){
   if(t.t===TERRAIN.STONE){
     // Same discrete quarrying states as the gold vein above.
     let pct=Math.min(t.res/350,1);
-    let gy=cy-8; // centered on the tile, matching gold — was bottom-heavy
+    let gy=cy-8; // centered on the tile, matching gold
     // Granite cluster: two flanking boulders, one tall central spire
     if(pct>0.66) boulder(sx-9, gy+5, 6, '#b0b0b0', '#8c8c8c', '#686868');
     else rubble(sx-9, gy+7, '#9d9d9d', '#767678');
