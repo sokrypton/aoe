@@ -330,9 +330,8 @@ function render(){
     }
   }
 
-  // Selected units' GUARD posts — EXPLICIT flags only (guardFlagged):
-  // implicit posts from plain moves and rally spawns behave the same but
-  // stay invisible; a move order must not look like it planted a flag.
+  // Selected units' GUARD-family ORDERS (every guard order is explicit —
+  // implicit posts no longer exist).
   // One faint line per guarding unit; flags dedupe into 2-tile clusters so
   // a formation reads as a shared post instead of a picket fence. Hidden
   // while RE-placing (settingGuard): old flags deactivate, only the cursor
@@ -353,14 +352,15 @@ function render(){
         if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
         return;
       }
-      if (u.guardX == null || !u.guardFlagged) return;
+      let uo = u.order;
+      if (!uo || !(uo.kind === 'guard' || uo.kind === 'guardBuilding' || uo.kind === 'escort')) return;
       let from = flagScreen(u.x, u.y);
       // Guarding a BUILDING: outline the whole footprint and draw the line to
       // its center, instead of a flag at the single perimeter post tile — the
       // post IS the building (see the footprint leash in js/logic.js). Ground
-      // posts and escorts (guardTargetId is a unit, or none) keep the flag.
-      let gb = u.guardTargetId != null ? entitiesById.get(u.guardTargetId) : null;
-      if (gb && gb.type === 'building') {
+      // posts and escorts keep the flag.
+      let gb = (uo.kind === 'guardBuilding' || uo.kind === 'escort') ? entitiesById.get(uo.id) : null;
+      if (uo.kind === 'guardBuilding' && gb && gb.type === 'building') {
         let key = 'b' + gb.id;
         if (!drawnFlags.has(key)) drawBuildingFootprintOutline(gb, 0.7); // once per building
         drawnFlags.add(key);
@@ -368,7 +368,7 @@ function render(){
         drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
         return;
       }
-      if (gb && gb.type === 'unit') {
+      if (uo.kind === 'escort' && gb && gb.type === 'unit') {
         // ESCORT: track the guarded unit's LIVE position (same source as its
         // sprite) so the flag follows it smoothly. Reading guardX/guardY here
         // instead lagged it — that field only re-syncs on sim ticks (and is
@@ -380,9 +380,10 @@ function render(){
         if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
         return;
       }
-      let to = flagScreen(u.guardX + 0.5, u.guardY + 0.5);
+      if (uo.x == null) return; // escort whose escortee vanished mid-frame
+      let to = flagScreen(uo.x + 0.5, uo.y + 0.5);
       drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
-      let key = Math.round(u.guardX / 2) + '_' + Math.round(u.guardY / 2);
+      let key = Math.round(uo.x / 2) + '_' + Math.round(uo.y / 2);
       if (!drawnFlags.has(key)) {
         drawnFlags.add(key);
         drawFlagMarker(to.x, to.y, false);

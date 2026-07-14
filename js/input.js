@@ -273,7 +273,7 @@ document.addEventListener('keydown',e=>{
   if (selected.length > 0 && selected.every(s => s.type === 'unit' && s.utype === 'scout' && s.team === myTeam)) {
     if (key === 'e') {
       let ids = selected.map(s => s.id);
-      let wantOn = selected.some(s => !s.autoScout);
+      let wantOn = selected.some(s => !(s.order && s.order.kind === 'scout'));
       submitCommand({ kind: 'auto-scout', unitIds: ids, on: wantOn });
       if(wantOn) deselectAfterTask(); // auto-scout is a task → deselect (index model)
       return;
@@ -905,7 +905,7 @@ function hasSelectedMobileWalkOrder(){
   return movers.length>0 && movers.every(s=>{
     let p = pendingOrderUI.get(s.id);
     if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + T30(30)) return p.keep;
-    return !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined;
+    return !s.task && !s.target && !s.buildTarget && s.order && s.order.kind==='move';
   });
 }
 function finishMobileUnitCommand(){

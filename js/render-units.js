@@ -682,7 +682,7 @@ function drawCorpse(c){
   if(!c.pose){
     c.pose = {type:'unit', utype:c.utype, team:c.team, id:c.id, x:c.x, y:c.y,
       female:c.female, dir:7, facing:c.facing, facingNorth:false,
-      path:[], target:null, buildTarget:null, task:null, followId:undefined,
+      path:[], target:null, buildTarget:null, task:null, order:null,
       hp:1, maxHp:1, carrying:0, carryType:null,
       lastX:c.x, lastY:c.y, corpseRot:0};
   }

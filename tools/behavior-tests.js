@@ -120,8 +120,8 @@ async function withPage(browser, port, entry, fn){
       execUnitCommand({ targetId: ram2.id, followId: ram2.id, tileX: 20, tileY: 20 });
       const boarding = crew.filter(c => c.task === 'garrison' && c.garrisonTarget === ram2.id);
       T.ok('cmd: boards to capacity (4/5)', boarding.length === 4);
-      T.ok('cmd: surplus rider escorts', crew.filter(c => c.followId === ram2.id).length === 1);
-      T.ok('cmd: archer follows, never boards', bowman.followId === ram2.id && bowman.task !== 'garrison');
+      T.ok('cmd: surplus rider escorts', crew.filter(c => c.order && c.order.kind === 'follow' && c.order.id === ram2.id).length === 1);
+      T.ok('cmd: archer follows, never boards', bowman.order && bowman.order.kind === 'follow' && bowman.order.id === ram2.id && bowman.task !== 'garrison');
       for (let i = 0; i < 400 && boarding.some(c => !c.garrisonedIn); i++) update();
       T.ok('cmd: all 4 seated', garrisonCount(ram2) === 4);
       selected = [];
@@ -185,7 +185,7 @@ async function withPage(browser, port, entry, fn){
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v6 stamp + tps', save.version === 6 && save.tps === TPS);
+      T.ok('v7 stamp + tps', save.version === 7 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);
@@ -257,7 +257,7 @@ async function withPage(browser, port, entry, fn){
       let leg = 0;
       for (let i = 0; i < 9400; i++) { // ~7.8 game-min soak at 20tps
         update();
-        if (vil.path.length === 0 && vil.moveGoalX === undefined) {
+        if (vil.path.length === 0 && !(vil.order && vil.order.kind === 'move')) {
           leg++;
           issueMoveOrder(vil, leg % 2 ? 10 : 50, 20);
         }
@@ -281,7 +281,7 @@ async function withPage(browser, port, entry, fn){
         s.groupSpeed = gs;
         issueMoveOrder(s, 50 + (offsets[i] ? offsets[i][0] : 0), 50 + (offsets[i] ? offsets[i][1] : 0));
       });
-      T.ok('every unit got a path', army.every(u => u.path.length > 0 || u.moveGoalX !== undefined));
+      T.ok('every unit got a path', army.every(u => u.path.length > 0 || (u.order && u.order.kind === 'move')));
       for (let i = 0; i < 1500; i++) update();
       const arrived = army.filter(u => Math.hypot(u.x - 50, u.y - 50) < 6).length;
       T.ok(`whole block arrives (${arrived}/${n} >= 38)`, arrived >= 38);

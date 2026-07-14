@@ -1750,6 +1750,13 @@ function aiRetreatUnit(m,aiTC){
   if(m.task==='garrison'){m.task=null;m.garrisonTarget=null;} // abandon boarding a ram
   m.retreatUntil=tick+AI_RETREAT_TICKS;
   let pt=nearestBldgPerimeter(m.x,m.y,aiTC,m.id);
+  // SECOND AI ORDER ADOPTION: the retreat is a shared MOVE order — the
+  // multi-leg resume (resumeMultiLegMove) re-paths a blocked leg home, and
+  // the order's retaliation suppression matches what isRetreatingUnit
+  // already enforced. Any later AI assignment clears it for free: every
+  // wave/militia/bear assignment calls clearUnitPath, which kind-cancels
+  // move orders.
+  issueOrder(m,{kind:'move', x:pt?pt.x:Math.round(aiTC.x), y:pt?pt.y:Math.round(aiTC.y)});
   pathUnitTo(m,pt?pt.x:aiTC.x,pt?pt.y:aiTC.y);
 }
 
@@ -2159,26 +2166,36 @@ function ensureAIScout(ai,readyBarracks){
 function controlAIScouts(ai,mils,aiTC){
   let scouts=mils.filter(m=>m.utype==='scout');
   scouts.forEach(s=>{
+    // FIRST AI ORDER ADOPTION (the shared exclusive order slot,
+    // issueOrder/js/commands.js): once the home survey lap is done, the
+    // scout runs on the same {kind:'scout'} order a player's Auto Scout
+    // uses — frontier exploration (pickExploreWaypoint) with per-tick
+    // combat avoidance, driven by updateAutoScoutTick in js/logic.js. This
+    // DELETED the AI-only explore drive (randomScoutWaypoint was already
+    // just pickExploreWaypoint) and makes the scout fully combat-avoidant
+    // post-survey (it no longer trades blows with raiders — recon, not a
+    // hunter; ladder-validated).
+    if(ai.baseSurveyed){
+      if(!(s.order&&s.order.kind==='scout')){
+        issueOrder(s,{kind:'scout'});
+        s.target=null;s.explicitAttack=false;clearUnitPath(s);
+      }
+      return;
+    }
     if(s.target){
-      // A scout is recon, not siege. If it auto-acquired a BUILDING — the
-      // classic death is wandering next to the enemy TC while exploring and
-      // trading blows with it until the defenders finish it off — drop that
-      // target and get back to exploring. A real unit target (home defense,
-      // a raider) is left alone.
-      let tgt=entitiesById.get(s.target);
       // Recon, not a hunter: drop a BUILDING target (the classic death trading
       // blows with the enemy TC while exploring) AND any GAIA wildlife target (a
-      // bear/wolf it retaliated on) — get back to exploring, same as the player's
-      // Auto Scout avoids combat. A real ENEMY-team unit (a raider) is left alone.
+      // bear/wolf it retaliated on) — get back to surveying. A real ENEMY-team
+      // unit (a raider at home during the lap) is left alone.
+      let tgt=entitiesById.get(s.target);
       if(tgt&&(tgt.type==='building'||tgt.team===GAIA_TEAM)){ s.target=null; s.explicitAttack=false; clearUnitPath(s); }
       else return; // legitimately engaging an enemy unit — leave it
     }
     if(s.path&&s.path.length>0)return; // still travelling to its last waypoint
-    // First, a lap around home: survey the base perimeter (the resource band /
+    // A lap around home first: survey the base perimeter (the resource band /
     // where the wall ring will go) before ranging out, like a human checking
-    // what's around the TC. Once the lap is done, switch to far exploration.
-    let pt = ai.baseSurveyed ? randomScoutWaypoint(ai,aiTC)
-                             : (baseSurveyWaypoint(ai,aiTC) || randomScoutWaypoint(ai,aiTC));
+    // what's around the TC.
+    let pt = baseSurveyWaypoint(ai,aiTC) || randomScoutWaypoint(ai,aiTC);
     if(pt)pathUnitTo(s,pt.x,pt.y);
   });
 }

@@ -118,7 +118,7 @@ const SCENES = {
     const guards = [createUnit('militia', 26, 27, 0), createUnit('militia', 33, 30, 0), createUnit('militia', 29, 33, 0)];
     guards.forEach(g => {
       const pt = nearestBldgPerimeter(g.x, g.y, gtc, g.id);
-      g.guardTargetId = gtc.id; g.guardX = pt.x; g.guardY = pt.y; g.guardFlagged = true;
+      g.order = {kind:'guardBuilding', id: gtc.id, x: pt.x, y: pt.y};
     });
     selected.length = 0; guards.forEach(g => selected.push(g));
     (${pageLookAt})(30, 30);
@@ -129,8 +129,7 @@ const SCENES = {
     // villager (live position), not offset by half a tile
     const vil = createUnit('villager', 31, 29, 0);
     const sol = createUnit('militia', 28, 31, 0);
-    sol.guardTargetId = vil.id; sol.followId = vil.id;
-    sol.guardX = vil.x; sol.guardY = vil.y; sol.guardFlagged = true;
+    sol.order = {kind:'escort', id: vil.id};
     selected.length = 0; selected.push(sol);
     (${pageLookAt})(29.5, 30);
     render();`,

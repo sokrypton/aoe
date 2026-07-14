@@ -262,8 +262,7 @@ function execSetStance(cmd, team){
     // leaving them set would fight the stance the player just chose. Mirrors
     // execGuard/execAutoScout clearing each other — the UI shows exactly one
     // highlighted posture, and this keeps the behavior matching the highlight.
-    u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
-    u.autoScout = false;
+    if (u.order && (GUARD_ORDER_KINDS.has(u.order.kind) || u.order.kind === 'scout')) issueOrder(u, null);
     // No Attack must DISENGAGE, not just stop acquiring new targets: the
     // (explicit attack ORDERS on a passive unit are still obeyed, matching
     // AoE2 — passive suppresses AUTO-acquire and retaliation, not commands.)
@@ -303,16 +302,31 @@ function unPassive(u){
   if (u.stance === 'passive') u.stance = 'aggressive';
 }
 
-// The one way to (re)place a guard post: clamps to the map (formation
-// offsets at the edge produced off-map posts whose -1 aliased the "no
-// guard" sentinel in the determinism hash) and resets the guard-return
-// attempt counter so a fresh post gets fresh return tries (see the settle
-// logic in js/logic.js).
-function setGuardPost(u, x, y, flagged){
-  u.guardX = Math.max(0, Math.min(MAP - 1, x));
-  u.guardY = Math.max(0, Math.min(MAP - 1, y));
-  u.guardFlagged = !!flagged;
-  if (u.retry && u.retry['guardret']) u.retry['guardret'].n = 0;
+// ---- THE EXCLUSIVE ORDER SLOT ----
+// One standing order per unit (e.order); issuing ANY order replaces the old
+// one — "last order wins", no pairwise interaction rules. Kinds:
+//   {kind:'move', x, y}              multi-leg walk goal
+//   {kind:'follow', id}              keep up with a friendly unit
+//   {kind:'guard', x, y}             hold a ground post (zone acquire + leash)
+//   {kind:'guardBuilding', id, x, y}  perimeter watch; x,y = assigned post tile
+//   {kind:'escort', id}              guard a moving unit (zone rides on it)
+//   {kind:'scout'}                   auto-explore, ignores combat
+// TEAM-AGNOSTIC by construction (no isHumanTeam/myTeam in here): the human
+// command executors call this today; js/ai.js adopts it role-by-role
+// (Phase 5 of the order refactor). Stance stays the unit's REACTION POLICY
+// (STANCES, js/logic.js) — orders say WHAT, stance says HOW it reacts.
+const ORDER_KINDS = new Set(['move','follow','guard','guardBuilding','escort','scout']);
+const GUARD_ORDER_KINDS = new Set(['guard','guardBuilding','escort']);
+function issueOrder(e, order){
+  if (order != null && !ORDER_KINDS.has(order.kind)) return false;
+  // A guard-family order un-passives (a passive guard is an inert
+  // contradiction — it could neither acquire nor retaliate at its post).
+  if (order != null && GUARD_ORDER_KINDS.has(order.kind)) unPassive(e);
+  e.order = order || null;
+  // Fresh order → fresh guard-return attempts (a unit that backed off at an
+  // old post must not ignore its new one for the T30(600) back-off).
+  if (e.retry && e.retry['guardret']) e.retry['guardret'].n = 0;
+  return true;
 }
 
 // Building rally targets are kept only where the BUILDING is the point:
@@ -345,32 +359,30 @@ function execGuard(cmd, team){
   // an enemy or gaia thing falls through to a ground post at that spot.
   let target = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
   if (target && (target.hp <= 0 || target.garrisonedIn || !sameSide(target.team, team))) target = null;
-  let finish = (u, px, py) => {
-    setGuardPost(u, px, py, true); // EXPLICIT flag: draws the in-world flag/line (render.js)
+  let finish = (u, order, px, py) => {
+    issueOrder(u, order); // replaces any standing order; un-passives (no inert guards)
     u.target = null; u.task = null;
-    u.explicitAttack = false; u.autoScout = false;
-    unPassive(u); // a passive guard could neither acquire nor retaliate — inert
+    u.explicitAttack = false;
     clearUnitPath(u);
-    pathUnitTo(u, Math.round(u.guardX), Math.round(u.guardY));
+    pathUnitTo(u, Math.round(px), Math.round(py));
   };
   if (target && target.type === 'unit') {
     units.forEach(u => {
       if (u.id === target.id) return; // can't escort yourself
-      u.guardTargetId = target.id;
-      u.followId = target.id; // the existing follow leg does the walking
-      finish(u, target.x, target.y);
+      // ESCORT: the zone rides on the escortee (guardZoneOf reads its live
+      // position); updateFollowOrder does the walking off order.id.
+      finish(u, {kind:'escort', id: target.id}, target.x, target.y);
     });
   } else if (target && target.type === 'building') {
     // Fan the guards OUT around the footprint (claimed set) so they cover the
     // whole building instead of piling onto its nearest corner — the leash
-    // (js/logic.js) then anchors each to the building as a whole.
+    // (js/logic.js) anchors each to the building as a whole, but the RETURN
+    // walk targets each guard's own assigned tile (order.x/y).
     let claimed = new Set();
     units.forEach(u => {
       let pt = nearestBldgPerimeter(u.x, u.y, target, u.id, claimed);
       claimed.add(pt.x + ',' + pt.y);
-      u.guardTargetId = target.id; // liveness only — buildings don't move
-      u.followId = undefined;
-      finish(u, pt.x, pt.y);
+      finish(u, {kind:'guardBuilding', id: target.id, x: pt.x, y: pt.y}, pt.x, pt.y);
     });
   } else {
     let x = Math.max(0, Math.min(MAP - 1, Math.round(cmd.x)));
@@ -378,9 +390,8 @@ function execGuard(cmd, team){
     let offsets = getFormation(units.length);
     units.forEach((u, i) => {
       let ox = offsets[i] ? offsets[i][0] : 0, oy = offsets[i] ? offsets[i][1] : 0;
-      u.guardTargetId = null;
-      u.followId = undefined;
-      finish(u, x + ox, y + oy);
+      let px = Math.max(0, Math.min(MAP - 1, x + ox)), py = Math.max(0, Math.min(MAP - 1, y + oy));
+      finish(u, {kind:'guard', x: px, y: py}, px, py);
     });
   }
   feedbackFor(team, () => { if (window.playSound) playSound('click'); });
@@ -397,16 +408,13 @@ function execAutoScout(cmd, team){
     .filter(u => u && u.type === 'unit' && u.utype === 'scout' && u.team === team && u.hp > 0);
   if (!units.length) return;
   units.forEach(u => {
-    u.autoScout = on;
     if (on) {
+      issueOrder(u, {kind:'scout'}); // replaces any standing order — exploring IS the new order
       u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u);
-      // Exploring IS the new task — drop any guard post (flag, escort and
-      // all), or the guard leash/return would fight the frontier wander.
-      // Mirrors execGuard clearing autoScout. followId MUST clear too: an
-      // escort walks via followId, so leaving it set kept the scout glued to
-      // the escorted unit for a beat before the wander took over.
-      u.guardX = null; u.guardY = null; u.guardTargetId = null; u.guardFlagged = false;
-      u.followId = undefined;
+    } else if (u.order && u.order.kind === 'scout') {
+      // Toggle-off clears ONLY a scout order — never an unrelated order
+      // issued between the two commands in the same input-delay window.
+      issueOrder(u, null);
     }
   });
   feedbackFor(team, () => { if (window.playSound) playSound('click'); });
@@ -541,34 +549,15 @@ function execUnitCommand(cmd){
   movers.forEach(s => {
     s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
-    // Stale multi-leg goal: gather/build redirects path via pathUnitTo (which
-    // never touches moveGoal), so an old move destination survived the
-    // redirect and resumeMultiLegMove marched the unit back to it once the
-    // new task ended (repro: move villager, redirect to a tree, tree
-    // depletes → villager walks to the ancient move spot). The move branch
-    // re-sets it via issueMoveOrder.
-    s.moveGoalX = undefined; s.moveGoalY = undefined;
+    // LAST ORDER WINS: every manual command replaces the standing order —
+    // the branch below issues the new one (move→move, follow→follow, …).
+    // This is what kills the old stale-order bug class (a move goal
+    // surviving a gather redirect and resuming later).
+    if (s.order) issueOrder(s, null);
     s.buildTarget = null;
     s.buildQueue = [];
-    s.followId = undefined;
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
-    s.autoScout = false; // any manual order cancels Auto Scout
-    // A FLAGGED guard post is NOT cleared by manual orders — moves and
-    // attack orders RELOCATE it (the flag follows the player's latest
-    // order; see issueMoveOrder and the attack branch below). Units without
-    // a flag carry no post at all — their anchor is defendX/Y, meaningful
-    // only to DEFENSIVE stance.
-    // An ESCORT (guard-on-unit) ends here entirely, mirroring followId —
-    // POST INCLUDED: escort posts are flagged (they're explicit Guard
-    // orders), and leaving just the flag standing meant the very next
-    // ground click "relocated" it — a player right-clicking ground to
-    // CANCEL an escort found their troops guarding the clicked dirt
-    // instead (user report). Ending an escort ends the whole guard order.
-    if (s.guardTargetId != null) {
-      s.guardX = null; s.guardY = null; s.guardFlagged = false;
-    }
-    s.guardTargetId = null;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell
       // (task='garrison' + garrisonTarget; updateUnit chases the moving ram
@@ -630,16 +619,15 @@ function execUnitCommand(cmd){
         // The ANCHOR moves to the target ("hold the ground you take"): a
         // DEFENSIVE unit that finishes this assault leashes to the
         // battlefield, not back to wherever it stood when ordered.
-        // Aggressive units ignore the anchor entirely. A FLAGGED guard post
-        // relocates too — an ordered assault supersedes the old flag spot,
-        // matching plain moves (issueMoveOrder, js/pathfinding.js).
+        // Aggressive units ignore the anchor entirely. Guard posts don't
+        // relocate — the attack order REPLACED them (last order wins).
         s.defendX = Math.round(target.x); s.defendY = Math.round(target.y);
-        if (guardEligible(s) && s.guardFlagged) setGuardPost(s, Math.round(target.x), Math.round(target.y), true);
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
-      // position (see updateUnit() in logic.js for the continuous re-pathing).
-      s.target = null; s.task = null; s.followId = followTarget.id;
+      // position (updateFollowOrder in js/logic.js drives the re-pathing).
+      s.target = null; s.task = null;
+      issueOrder(s, {kind:'follow', id: followTarget.id});
       pathUnitTo(s, Math.round(followTarget.x), Math.round(followTarget.y));
     } else {
       s.target = null;

@@ -55,7 +55,6 @@ function detEntityHash(e){
   h = detMix(h, e.target == null ? -1 : e.target);
   h = detMix(h, e.buildTarget == null ? -1 : e.buildTarget);
   h = detMix(h, e.garrisonTarget == null ? -1 : e.garrisonTarget);
-  h = detMix(h, e.followId == null ? -1 : e.followId);
   h = detMix(h, e.path ? e.path.length : -1);
   h = detMixFloat(h, e.moveT || 0);
   h = detMixFloat(h, e.progress || 0);
@@ -99,9 +98,6 @@ function detEntityHash(e){
   h = detMix(h, e.explicitAttack ? 1 : 0);
   h = detMixFloat(h, e.defendX || 0);
   h = detMixFloat(h, e.defendY || 0);
-  h = detMixFloat(h, e.guardX == null ? -1 : e.guardX); // guard flag pins the anchor
-  h = detMixFloat(h, e.guardY == null ? -1 : e.guardY);
-  h = detMix(h, e.guardTargetId == null ? -1 : e.guardTargetId); // escort target
   h = detMix(h, e.savedTask ? 1 : 0);
   h = detMix(h, e.buildBackoffUntil || 0); // AI assigners read this on later ticks
   // Retry/throttle/avoid umbrellas (js/logic.js retryFail/avoidAdd): they
@@ -115,8 +111,16 @@ function detEntityHash(e){
     h = detMixStr(h, k); const a = e.avoid[k];
     h = detMix(h, a.length); for (let i = 0; i < a.length; i++) h = detMix(h, a[i]);
   }
-  h = detMixFloat(h, e.moveGoalX == null ? -1 : e.moveGoalX); // multi-leg move goal
-  h = detMixFloat(h, e.moveGoalY == null ? -1 : e.moveGoalY);
+  // THE exclusive standing order (issueOrder, js/commands.js) — explicit
+  // per-field mix, never key iteration (JSON round-trips reorder keys).
+  if (e.order) {
+    h = detMixStr(h, e.order.kind);
+    h = detMix(h, e.order.id == null ? -1 : e.order.id);
+    h = detMixFloat(h, e.order.x == null ? -1 : e.order.x);
+    h = detMixFloat(h, e.order.y == null ? -1 : e.order.y);
+  } else {
+    h = detMix(h, 0x51a17);
+  }
   h = detMixStr(h, e.prevTask);
   h = detMix(h, e.siegeSpot ? e.siegeSpot.x * 4096 + e.siegeSpot.y : -1); // cross-unit melee-ring claims
   // Stuck-watchdog watch entry (it force-clears tasks, so WHEN it fires is
@@ -142,7 +146,6 @@ function detEntityHash(e){
   h = detMix(h, e.tradeHomeId == null ? -1 : e.tradeHomeId);
   h = detMix(h, e.tradeDestId == null ? -1 : e.tradeDestId);
   h = detMixStr(h, e.tradePhase);
-  h = detMix(h, e.autoScout ? 1 : 0); // player Auto Scout mode (re-paths each tick, js/logic.js)
   h = detMixStr(h, e.stance);         // combat stance — now mid-game-settable via the HUD (set-stance cmd)
   h = detMix(h, e.retreatUntil || 0); // AI tactical retreat: gates retaliation/auto-acquire/retasking (js/ai.js, js/logic.js)
   h = detMix(h, e.lastEnemyHitTick == null ? -1 : e.lastEnemyHitTick); // retreat trigger (enemy-player hits only)

@@ -307,14 +307,14 @@ function updateUI(){
     // toggle lands (the button is derived from selected gates' .locked).
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
     // Auto Scout state, so the toggle button label flips the instant it lands.
-    if (e.type === 'unit' && e.utype === 'scout') currentSelectionDetails += ':as' + selected.filter(s => s.autoScout).length;
+    if (e.type === 'unit' && e.utype === 'scout') currentSelectionDetails += ':as' + selected.filter(s => s.order && s.order.kind === 'scout').length;
     // Stance, so the highlighted stance button moves the instant a set-stance
     // command lands. This is the COARSE gate (updateUI early-returns unless
     // stateChanged) — the selKey below then rebuilds the strip. Both need it.
     if (e.type === 'unit') currentSelectionDetails += ':st' + selected.filter(s => s.type === 'unit').map(s => s.stance || '-').join('.');
     // Guard state (posture highlight): whether each unit holds a post, so the
     // Guard tile lights/unlights the instant a guard or stance command lands.
-    if (e.type === 'unit') currentSelectionDetails += ':gd' + selected.filter(s => s.type === 'unit').map(s => s.guardX != null ? 1 : 0).join('');
+    if (e.type === 'unit') currentSelectionDetails += ':gd' + selected.filter(s => s.type === 'unit').map(s => (s.order && GUARD_ORDER_KINDS.has(s.order.kind)) ? 1 : 0).join('');
     if (e.queue) {
       // Structural signature only (queue contents), NOT trainTick: progress
       // changes every tick, and keying on it rebuilt the whole details panel
@@ -327,7 +327,7 @@ function updateUI(){
     // target OR a carried load — otherwise the card wouldn't refresh as a
     // butcher's food count ticks up.
     if (e.task || e.target || e.carrying) {
-      currentSelectionDetails += `:${e.task}:${e.carrying || 0}:${e.target || e.buildTarget || e.followId || 0}`;
+      currentSelectionDetails += `:${e.task}:${e.carrying || 0}:${e.target || e.buildTarget || (e.order && e.order.id) || 0}`;
     }
     let b = BLDGS[e.btype];
     if (b && b.isFarm) {
@@ -518,14 +518,14 @@ function updateUI(){
     +':'+(selected[0]&&selected[0].queue?selected[0].queue.join('.'):'')
     // Auto Scout state: the button EXISTS only while some selected scout
     // isn't auto-scouting, so the strip must rebuild when the command lands.
-    +':as'+selected.filter(s=>s.type==='unit'&&s.autoScout).length
+    +':as'+selected.filter(s=>s.type==='unit'&&s.order&&s.order.kind==='scout').length
     // Stance: the highlighted stance button must refresh when a set-stance
     // command lands (the button set is fixed, but which one is `stance-on`
     // changes). Fold the selection's stances into the key.
     +':st'+selected.filter(s=>s.type==='unit').map(s=>s.stance||'-').join('.')
     // Guard state: the Guard tile's highlight (and the fact that a stance clears
     // it) must refresh the strip when a guard/stance command lands.
-    +':gd'+selected.filter(s=>s.type==='unit').map(s=>s.guardX!=null?1:0).join('')
+    +':gd'+selected.filter(s=>s.type==='unit').map(s=>(s.order&&GUARD_ORDER_KINDS.has(s.order.kind))?1:0).join('')
     +':'+(selected[0]&&selected[0].btype==='MILL'?(resourceStore(myTeam).prepaidFarms||0):'')
     +':'+(selected[0]&&selected[0].btype==='MARKET'?(mp=>mp.food+'.'+mp.wood+'.'+mp.stone)(marketPricesFor(myTeam)):'');
   let rebuildActions=selKey!==lastSelKey;
@@ -1294,7 +1294,7 @@ function updateUI(){
       // (null if mixed) — drives which single tile is highlighted. When the
       // Guard tile isn't shown, a guarding unit falls back to its stance so it
       // still lights SOMETHING (rather than pointing at an absent Guard tile).
-      let posture = s => s.autoScout ? 'auto' : ((showGuard && s.guardX!=null) ? 'guard' : (s.stance||'aggressive'));
+      let posture = s => (s.order&&s.order.kind==='scout') ? 'auto' : ((showGuard && s.order && GUARD_ORDER_KINDS.has(s.order.kind)) ? 'guard' : (s.stance||'aggressive'));
       let common = selected.every(s=>posture(s)===posture(selected[0])) ? posture(selected[0]) : null;
 
       // Stances (soldiers only — rams carry no stance).

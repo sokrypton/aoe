@@ -235,14 +235,12 @@ function clearUnitPath(e){
   e.moveT=0;
   e.fromX=e.x;
   e.fromY=e.y;
-  // Explicitly halting movement also cancels any pending long-distance goal,
-  // so a unit pulled into combat doesn't later resume walking to a stale spot.
-  // followId deliberately survives: combat halts (in-range stop, retaliation)
-  // only touch the per-leg pathing, and the follow order resumes after the
-  // fight — see the auto-attack note in updateUnit. Explicit new orders clear
-  // followId themselves (doCommand in js/input.js).
-  e.moveGoalX=undefined;
-  e.moveGoalY=undefined;
+  // KIND-SCOPED order cancel: halting movement ends a MOVE order (a unit
+  // pulled into combat must not later resume marching to a stale spot), but
+  // every other standing order (guard/escort/follow/scout) survives a path
+  // clear — combat halts only touch the per-leg pathing, and those orders
+  // resume after the fight. followId likewise deliberately survives.
+  if(e.order&&e.order.kind==='move')e.order=null;
 }
 
 function setUnitPath(e,path){
@@ -338,21 +336,16 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
 // resume walking an idle unit back toward an old, no-longer-relevant tile.
 function issueMoveOrder(e,x,y){
   // Clamped like the anchor below: edge-of-map formation offsets produce
-  // off-map goals findPath silently clamps — an unclamped moveGoal then
-  // never matches the arrival tile, so the "arrived, clear goal" check
-  // churned repaths until the empty-path fallback cleared it.
-  e.moveGoalX=Math.max(0,Math.min(MAP-1,x));
-  e.moveGoalY=Math.max(0,Math.min(MAP-1,y));
+  // off-map goals findPath silently clamps — an unclamped goal then never
+  // matches the arrival tile, so the "arrived, clear order" check churned
+  // repaths until the empty-path fallback cleared it. issueOrder lives in
+  // js/commands.js (same global scope).
+  issueOrder(e, {kind:'move', x:Math.max(0,Math.min(MAP-1,x)), y:Math.max(0,Math.min(MAP-1,y))});
   // A plain move sets the unit's ANCHOR (defendX/Y) to the destination. The
   // anchor only means something to DEFENSIVE stance (scoped acquire + 6-tile
   // leash, js/logic.js); aggressive units chase freely and stand where the
-  // fight ends. This replaced the old implicit guard-post re-pin: silently
-  // planting a post on every move made "aggressive" soldiers behave like
-  // leashed guards — root of the "aggressive army walks home after
-  // attacking" bug. Guard posts now exist ONLY from the explicit Guard
-  // order; an existing FLAGGED post still relocates with a plain move
-  // ("this is your temp spot" — the player's flag follows their move).
-  e.defendX=Math.max(0,Math.min(MAP-1,x)); e.defendY=Math.max(0,Math.min(MAP-1,y)); // clamped like setGuardPost — formation offsets at the edge go off-map
-  if (typeof guardEligible === 'function' && guardEligible(e) && e.guardFlagged) setGuardPost(e, x, y, true);
+  // fight ends. Guard posts don't relocate — the move order issued above
+  // REPLACED any standing order (last order wins).
+  e.defendX=Math.max(0,Math.min(MAP-1,x)); e.defendY=Math.max(0,Math.min(MAP-1,y)); // clamped — formation offsets at the edge go off-map
   return pathUnitTo(e,x,y);
 }

@@ -261,20 +261,6 @@ function retryReady(e,key){
   let r=e.retry&&e.retry[key];
   return !r||tick>=r.next;
 }
-// Guard-on-unit/building (execGuard, js/commands.js): keeps a MOVING post
-// synced to the guarded target's live position — an escort's post rides on
-// the unit it guards. If the target dies (or garrisons away), the post
-// FREEZES at its last synced spot and becomes a plain ground post.
-function syncGuardPost(e){
-  if (e.guardTargetId == null) return;
-  let t = entitiesById.get(e.guardTargetId);
-  if (t && t.hp > 0 && !t.garrisonedIn && sameSide(t.team, e.team)) {
-    if (t.type === 'unit') { e.guardX = t.x; e.guardY = t.y; }
-  } else {
-    e.guardTargetId = null;
-  }
-}
-
 // Stamp the throttle without counting a failure (pure repath cadence).
 function retryStamp(e,key,waitTicks){
   let m=e.retry||(e.retry={});
@@ -435,7 +421,7 @@ function unitMoveSpeed(e){
       // the rest of its walk.
       if(!t||distToTarget(e,t)<10){e.groupSpeed=undefined;return sp;}
     }
-    if(!e.target&&e.path.length===0&&e.moveGoalX===undefined){e.groupSpeed=undefined;return sp;} // arrived
+    if(!e.target&&e.path.length===0&&!(e.order&&e.order.kind==='move')){e.groupSpeed=undefined;return sp;} // arrived
     return e.groupSpeed;
   }
   return sp;
@@ -497,13 +483,28 @@ function adjToBuilding(px,py,bldg){
   return edgeDistToBuilding(px,py,bldg) <= 1.2;
 }
 
-// A guarding unit's "zone" = the thing it protects: {b: building} when
-// escorting/guarding a building (measured to the whole footprint), else the
-// {x,y} post point (ground post, or an escorted unit synced onto guardX/Y).
-// guardZoneDist is the distance from a point to that zone. Shared by the
-// leash (js/logic.js) and the aggro scope so they stay in lock-step on both
-// the zone AND the GUARD_LEASH radius.
+// A guarding unit's "zone" = the thing its ORDER protects: {b: building}
+// for guardBuilding (measured to the whole footprint), the escortee's LIVE
+// position for escort, else the ground post point. guardZoneDist is the
+// distance from a point to that zone. Shared by the leash and the aggro
+// scope so they stay in lock-step on both the zone AND the radius.
 const GUARD_LEASH = 6;
+// Is this unit under a guard-family standing order? (GUARD_ORDER_KINDS —
+// guard/guardBuilding/escort — lives in js/commands.js, same global scope.)
+function guardOrderOf(e){
+  return (e.order && GUARD_ORDER_KINDS.has(e.order.kind)) ? e.order : null;
+}
+// Where a guard-family order RETURNS to / leashes toward: the assigned post
+// tile for guard/guardBuilding, the escortee's live position for escort
+// (null while the escortee is unresolvable — conversion sweeps in
+// handleDeath/enterGarrison normally rewrite the order first).
+function guardOrderPost(e, o){
+  if (o.kind === 'escort') {
+    let t = entitiesById.get(o.id);
+    return (t && t.hp > 0) ? { x: t.x, y: t.y } : null;
+  }
+  return { x: o.x, y: o.y };
+}
 // THE stance table — every per-stance number lives here, not inline at the
 // read sites. scan: auto-acquire radius ('range' = the unit's own attack
 // reach — Stand Ground fires at what walks in, never walks out); leashed:
@@ -546,14 +547,16 @@ function canStrikeInPlace(e, foe){
 // in (hidden at 30tps by short per-tick travel; exposed at 20).
 function enforceChaseLeash(e){
   if(!e.target||e.explicitAttack)return false;
-  if(e.guardX!=null){
+  let go=guardOrderOf(e);
+  if(go){
     // Guard post: measured to the whole footprint for a building (a threat
     // at any side of a 4x4 TC is still "at post"), else to the post point
     // (ground post, or escorted unit synced onto guardX/Y).
     if(guardZoneDist(guardZoneOf(e), e.x, e.y) > GUARD_LEASH){
       e.target=null;
       clearUnitPath(e);
-      pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+      let post=guardOrderPost(e, go);
+      if(post) pathUnitTo(e, Math.round(post.x), Math.round(post.y));
       return true;
     }
   } else if(stanceOf(e).leashed&&e.defendX!==undefined){
@@ -592,8 +595,14 @@ const AUTOSCOUT_REPICK_EVERY = T30(12); // player Auto Scout waypoint cadence
 // staying under AoE2's 250ms command turns).
 const ACQUIRE_STAGGER = T30(6);
 function guardZoneOf(e){
-  let gb = e.guardTargetId != null ? entitiesById.get(e.guardTargetId) : null;
-  return (gb && gb.type === 'building') ? { b: gb } : { x: e.guardX, y: e.guardY };
+  let o = guardOrderOf(e);
+  if (!o) return null;
+  if (o.kind === 'guardBuilding') {
+    let gb = entitiesById.get(o.id);
+    if (gb && gb.type === 'building' && gb.hp > 0) return { b: gb };
+    return { x: o.x, y: o.y }; // building gone mid-tick — fall back to the assigned tile
+  }
+  return guardOrderPost(e, o) || { x: e.x, y: e.y };
 }
 function guardZoneDist(z, px, py){
   return z.b ? edgeDistToBuilding(px, py, z.b) : simHypot(px - z.x, py - z.y);
@@ -1392,11 +1401,11 @@ function damageEntity(attacker, target){
   // For a villager, walking is usually TASK-walking (to the tree, to the
   // drop-off) — that must not exempt it from defending itself, or gatherers
   // get stabbed mid-commute without reacting. Only an explicit player move
-  // order (moveGoalX, set solely by issueMoveOrder) keeps a villager walking.
+  // order ({kind:'move'}, set solely by issueMoveOrder) keeps a villager walking.
   let hasActiveMoveOrder = target.type==='unit' && (
     target.utype==='villager'
-      ? target.moveGoalX!==undefined
-      : (target.path.length>0 || target.moveGoalX!==undefined));
+      ? (target.order&&target.order.kind==='move')
+      : (target.path.length>0 || (target.order&&target.order.kind==='move')));
   // AoE2: villagers fight back against melee attackers — INCLUDING bears:
   // gatherers mob-retaliate as a group (five villagers beat a bear), which
   // sim testing showed is what actually keeps wildlife losses low. An
@@ -1487,7 +1496,7 @@ function damageEntity(attacker, target){
       if(!isSoldierUnit(en))return;
       if(en.target||en.task||!stanceOf(en).acquires)return;
       if(isRetreatingUnit(en))return; // tactical retreat (js/ai.js) — keeps running
-      if(en.path.length>0||en.moveGoalX!==undefined)return; // obeying a move order
+      if(en.path.length>0||(en.order&&en.order.kind==='move'))return; // obeying a move order
       if(distToTarget(en,target)>8)return;
       // Same fog gate the acquire scan enforces (human teams only — the AI
       // keeps its proximity model): don't lock a defender onto an attacker
@@ -1620,7 +1629,21 @@ function enterGarrison(e,b){
   b.garrison=b.garrison||[];
   if(b.garrison.length>=garrisonCap(b))return false;
   clearUnitPath(e);
-  e.task=null;e.target=null;e.followId=undefined;e.garrisonTarget=null;
+  e.task=null;e.target=null;e.garrisonTarget=null;
+  // Order rules at the shelter door: transient orders (move/follow/escort/
+  // scout) end — the unit chose shelter over them. GUARD posts survive
+  // (asserted contract: a flag outlives a bell; the unit returns to it
+  // after the all-clear).
+  if(e.order && !(e.order.kind==='guard'||e.order.kind==='guardBuilding')) e.order=null;
+  // An ESCORTEE entering shelter freezes its escorts at the door (same
+  // conversion as death — they hold the spot until it re-emerges).
+  {
+    let fx=Math.round(e.x), fy=Math.round(e.y);
+    for(let gi=0;gi<entities.length;gi++){
+      let g=entities[gi], o=g.order;
+      if(o&&o.kind==='escort'&&o.id===e.id&&g.hp>0) g.order={kind:'guard',x:fx,y:fy};
+    }
+  }
   // AoE2: garrisoning into a drop-off deposits the carried load on entry —
   // a belled villager banks its wood the moment it enters the TC. Buildings
   // that aren't a drop-off for the carried type (towers) don't; the villager
@@ -1719,7 +1742,7 @@ function ringTownBell(team){
     if(!best)return;
     best.room--;
     stashVillagerTask(e);
-    e.target=null;e.followId=undefined;e.buildTarget=null;
+    e.target=null;e.buildTarget=null;
     e.task='garrison';e.garrisonTarget=best.b.id;
     let pt=nearestBldgPerimeter(e.x,e.y,best.b,e.id);
     if(pt)pathUnitTo(e,pt.x,pt.y);
@@ -1857,8 +1880,8 @@ function countSiteWorker(bt){
   // above already walked/returned when a path existed, so we only reach here
   // with an empty path (arrived); re-pick on a light cadence so a blocked pick
   // doesn't churn every tick. Returns so it never falls into the auto-attack
-  // block below. Manual orders clear autoScout (execUnitCommand).
-// (Extracted from updateUnit; the dispatcher gates on autoScout+scout and
+  // block below. Manual orders replace the scout order (execUnitCommand).
+// (Extracted from updateUnit; the dispatcher gates on the scout ORDER and
 // ends the tick after this runs.)
 function updateAutoScoutTick(e){
   if(e.target){ e.target=null; e.explicitAttack=false; }
@@ -1899,12 +1922,12 @@ function updateIdleMilitary(e){
     // and NOTHING else. The guard leash reads guardX/Y directly.
     e.defendX = e.x;
     e.defendY = e.y;
-    syncGuardPost(e);
-    if(e.guardX != null){
-      let gdx = e.x - e.guardX, gdy = e.y - e.guardY;
-      // While ESCORTING (followId set), the follow leg does the walking —
-      // don't compete with it for the path.
-      if(e.followId == null && gdx*gdx + gdy*gdy > 2.25 && retryReady(e,'guardret')){
+    let gRet = guardOrderOf(e);
+    // Escorts are skipped: the follow leg (updateFollowOrder) does the
+    // walking — don't compete with it for the path.
+    if(gRet && gRet.kind !== 'escort'){
+      let gdx = e.x - gRet.x, gdy = e.y - gRet.y;
+      if(gdx*gdx + gdy*gdy > 2.25 && retryReady(e,'guardret')){
         // BACK-OFF rule: a blocked return must fail QUIETLY. Shared posts
         // only seat ~9 units within the 1.5-tile radius, and a post can be
         // built over, in forest, or inside a garrison footprint — without
@@ -1925,7 +1948,7 @@ function updateIdleMilitary(e){
         } else {
           retryStamp(e,'guardret',T30(30));
           e.retry['guardret'].n++;
-          pathUnitTo(e, Math.round(e.guardX), Math.round(e.guardY));
+          pathUnitTo(e, Math.round(gRet.x), Math.round(gRet.y));
           if (e.path.length === 0) backOff();
         }
       }
@@ -1950,7 +1973,9 @@ function updateIdleMilitary(e){
       // oscillates re-grabbing one it was just leashed off of. Matches AoE2
       // Guard (defend the target's vicinity), vs. plain defensive stance which
       // aggros on anything near the unit. Explicit attacks are exempt.
-      let guardZone = (e.guardX != null && !e.explicitAttack) ? guardZoneOf(e) : null;
+      // An explicit attack REPLACED any guard order (last order wins), so no
+      // explicitAttack exemption is needed here anymore.
+      let guardZone = guardOrderOf(e) ? guardZoneOf(e) : null;
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
@@ -2417,7 +2442,8 @@ function updateUnitCombat(e){
   // stance leashes to its drifting idle anchor (defendX/Y). The anchor is
   // COMPUTED here; guard code never mirrors the post into defendX/Y, so
   // each field keeps exactly one meaning.
-  syncGuardPost(e); // escort posts track the guarded unit before the leash reads the post
+  // (escort zones read the escortee's LIVE position via guardZoneOf — no
+  // per-tick post syncing anymore)
   if (enforceChaseLeash(e)) return;
 
   if(e.utype==='villager' && t.utype==='sheep_carcass'){
@@ -2635,10 +2661,14 @@ function updateGarrisonWalk(e){
   // followId survives clearUnitPath, so the chase logic below owns pathing
   // during a fight and follow resumes once the target is gone.
 function updateFollowOrder(e){
-  if(!(e.followId && !e.target))return;
-  let f=entitiesById.get(e.followId);
+  // Drives the FOLLOW and ESCORT orders — the shared walking leg.
+  let fid = (e.order && (e.order.kind==='follow' || e.order.kind==='escort')) ? e.order.id : null;
+  if(!(fid && !e.target))return;
+  let f=entitiesById.get(fid);
   if(!f||f.hp<=0){
-    e.followId=undefined;
+    if(e.order && e.order.kind==='follow' && e.order.id===fid) e.order=null;
+    // (a dead ESCORTEE is converted to a frozen ground post by the
+    // handleDeath sweep — not cleared here)
   } else {
     let d=dist(e,f);
     if(d>1.5){
@@ -2658,17 +2688,17 @@ function updateFollowOrder(e){
   // automatically continue toward the original goal once the current leg ends,
   // instead of silently stopping partway like a stuck/unresponsive order.
 function resumeMultiLegMove(e){
-  if(!(e.path.length===0 && e.moveGoalX!==undefined && !e.target && !e.task && !e.followId))return;
-  let atGoal = Math.round(e.x)===e.moveGoalX && Math.round(e.y)===e.moveGoalY;
+  if(!(e.path.length===0 && e.order && e.order.kind==='move' && !e.target && !e.task))return;
+  let atGoal = Math.round(e.x)===e.order.x && Math.round(e.y)===e.order.y;
   if(atGoal){
-    e.moveGoalX=undefined;e.moveGoalY=undefined;
+    e.order=null; // move order complete/unreachable
   } else if(retryReady(e,'move')){
     retryStamp(e,'move',T30(10)); // own key: garrison and move used to alias one stamp
-    let goalX=e.moveGoalX, goalY=e.moveGoalY;
+    let goalX=e.order.x, goalY=e.order.y;
     pathUnitTo(e,goalX,goalY);
     if(e.path.length===0){
       // No progress possible from here; stop retrying every frame.
-      e.moveGoalX=undefined;e.moveGoalY=undefined;
+      e.order=null; // move order complete/unreachable
     }
   }
 }
@@ -2907,7 +2937,7 @@ function updateUnit(e){
     }
     if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
   }
-  if(e.autoScout && e.utype==='scout'){ updateAutoScoutTick(e); return; }
+  if(e.order && e.order.kind==='scout' && e.utype==='scout'){ updateAutoScoutTick(e); return; }
   updateIdleMilitary(e);
 }
 
@@ -3027,6 +3057,21 @@ function deleteOwnedEntity(en){
 }
 
 function handleDeath(e,killerTeam){
+  // Guard-order conversion sweep (same pattern as the shepherd retarget
+  // below): an ESCORTEE dying freezes each escort into a ground post at the
+  // spot it fell — "guard this thing" degrades to "guard where it fell",
+  // never a silent release mid-battle. A guarded BUILDING dying converts
+  // its watchers to ground posts at their own assigned perimeter tiles.
+  // Event-site conversion replaced the old per-tick syncGuardPost copying.
+  if(e.type==='unit'||e.type==='building'){
+    let fx=Math.round(e.x), fy=Math.round(e.y);
+    for(let gi=0;gi<entities.length;gi++){
+      let g=entities[gi], o=g.order;
+      if(!o||g.hp<=0)continue;
+      if(o.kind==='escort'&&o.id===e.id) g.order={kind:'guard',x:fx,y:fy};
+      else if(o.kind==='guardBuilding'&&o.id===e.id) g.order={kind:'guard',x:o.x,y:o.y};
+    }
+  }
   // Riders survive a destroyed ram (AoE2: units pop out of the wreck) —
   // unlike a building's garrison, which perishes with it below.
   if(e.type==='unit'&&e.garrison&&e.garrison.length>0){

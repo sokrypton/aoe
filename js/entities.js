@@ -5,9 +5,9 @@ function createUnit(type,x,y,team){
   let e={id:nextId++,type:'unit',utype:type,x,y,fromX:x,fromY:y,tx:x,ty:y,team,hp:u.hp,maxHp:u.hp,
     atk:u.atk,range:u.range,speed:u.speed,path:[],task:null,target:null,
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
+    order:null, // THE exclusive standing order (issueOrder, js/commands.js) — any new order replaces it
     gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,
     stance: (type !== 'villager' && type !== 'sheep' && type !== 'bear' && type !== 'tradecart') ? 'aggressive' : undefined,
-    autoScout: false, // player Auto Scout toggle (js/commands.js execAutoScout; behavior in js/logic.js)
     // Initial facing before first movement. Without this e.dir is undefined
     // and the face renderer draws NO eyes (its dir branches all miss), so
     // fresh units stared blankly. 1 = south, facing the viewer; the scout

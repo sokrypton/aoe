@@ -64,10 +64,10 @@ function pageSuite() {
     stage();
     const m = createUnit('militia', 20, 20, 0), a = createUnit('archer', 21, 20, 0);
     execCommand({ kind: 'guard', unitIds: [m.id, a.id], x: 30, y: 30 }, 0);
-    assert(m.guardFlagged && a.guardFlagged, 'posts not flagged');
+    assert(m.order && m.order.kind === 'guard' && a.order && a.order.kind === 'guard', 'guard orders not issued');
     step(600);
-    assert(Math.hypot(m.x - m.guardX, m.y - m.guardY) < 1.6, 'militia not at post');
-    assert(Math.hypot(a.x - a.guardX, a.y - a.guardY) < 1.6, 'archer not at post');
+    assert(Math.hypot(m.x - m.order.x, m.y - m.order.y) < 1.6, 'militia not at post');
+    assert(Math.hypot(a.x - a.order.x, a.y - a.order.y) < 1.6, 'archer not at post');
   });
 
   T('guard: displaced idle unit returns to its post', () => {
@@ -77,21 +77,19 @@ function pageSuite() {
     step(600);
     m.x = 24; m.y = 24; clearUnitPath(m); m.target = null; m.task = null;
     step(600);
-    assert(Math.hypot(m.x - m.guardX, m.y - m.guardY) < 1.6, 'did not return');
+    assert(Math.hypot(m.x - m.order.x, m.y - m.order.y) < 1.6, 'did not return');
   });
 
-  T('guard: plain move RELOCATES a FLAGGED post; unflagged units get only an anchor', () => {
+  T('order slot: LAST ORDER WINS — a plain move REPLACES a guard order', () => {
     stage();
     const m = createUnit('militia', 20, 20, 0);
     execCommand({ kind: 'guard', unitIds: [m.id], x: 30, y: 30 }, 0);
     execCommand({ kind: 'command', unitIds: [m.id], tileX: 10, tileY: 10 }, 0);
-    assert(m.guardX === 10 && m.guardY === 10, 'flagged post not relocated: ' + m.guardX + ',' + m.guardY);
-    assert(m.guardFlagged === true, 'the flag survives its own relocation');
-    // A unit that never got a Guard order carries NO post — only the
-    // defendX/Y anchor (meaningful to defensive stance alone).
+    assert(m.order && m.order.kind === 'move' && m.order.x === 10 && m.order.y === 10,
+      'move did not replace the guard order: ' + JSON.stringify(m.order));
+    // Plain units get only the defendX/Y anchor (defensive stance only).
     const plain = createUnit('militia', 20, 20, 0);
     execCommand({ kind: 'command', unitIds: [plain.id], tileX: 12, tileY: 14 }, 0);
-    assert(plain.guardX == null, 'plain move must not plant a post');
     assert(plain.defendX === 12 && plain.defendY === 14, 'anchor not set to destination');
   });
 
@@ -99,7 +97,7 @@ function pageSuite() {
     stage();
     const squad = []; for (let i = 0; i < 8; i++) squad.push(createUnit('militia', 6 + i, 10, 0));
     execCommand({ kind: 'guard', unitIds: squad.map(s => s.id), x: 0, y: 0 }, 0);
-    assert(squad.every(s => s.guardX >= 0 && s.guardY >= 0), 'negative post coords');
+    assert(squad.every(s => s.order && s.order.x >= 0 && s.order.y >= 0), 'negative post coords');
     execCommand({ kind: 'command', unitIds: squad.map(s => s.id), tileX: 0, tileY: 0 }, 0);
     assert(squad.every(s => s.defendX >= 0 && s.defendY >= 0), 'negative anchor coords');
   });
@@ -111,7 +109,7 @@ function pageSuite() {
     execCommand({ kind: 'guard', unitIds: [m.id], x: 30, y: 30 }, 0);
     step(600);
     // The player's flag is an explicit order: it must NOT silently move.
-    assert(m.guardX === 30 && m.guardY === 30, 'flagged post moved: ' + m.guardX + ',' + m.guardY);
+    assert(m.order && m.order.kind === 'guard' && m.order.x === 30 && m.order.y === 30, 'guard order moved: ' + JSON.stringify(m.order));
     // The unit walked as close as the forest allows...
     assert(Math.hypot(m.x - 30, m.y - 30) < 6, 'unit did not approach its flag');
     // ...and is NOT re-running A* every 30 ticks forever: count real
@@ -128,13 +126,13 @@ function pageSuite() {
     stage();
     const m = createUnit('militia', 20, 20, 0), v = createUnit('villager', 22, 20, 0);
     execCommand({ kind: 'guard', unitIds: [m.id], x: 22, y: 20, targetId: v.id }, 0);
-    assert(m.guardTargetId === v.id && m.followId === v.id, 'escort not bound');
+    assert(m.order && m.order.kind === 'escort' && m.order.id === v.id, 'escort not bound');
     pathUnitTo(v, 35, 30);
     step(700);
     assert(Math.hypot(m.x - v.x, m.y - v.y) < 4, 'escort lost its charge');
     v.hp = 0; handleDeath(v, 1);
     step(30);
-    assert(m.guardTargetId == null && m.guardX != null, 'post did not freeze on death');
+    assert(m.order && m.order.kind === 'guard', 'order did not freeze to a ground post on death: ' + JSON.stringify(m.order));
   });
 
   T('guard: building flag takes perimeter watch posts', () => {
@@ -143,7 +141,7 @@ function pageSuite() {
     const a = createUnit('archer', 20, 30, 0);
     execCommand({ kind: 'guard', unitIds: [a.id], x: 31, y: 31, targetId: bar.id }, 0);
     step(600);
-    assert(a.guardTargetId === bar.id, 'building not targeted');
+    assert(a.order && a.order.kind === 'guardBuilding' && a.order.id === bar.id, 'building not targeted');
     assert(Math.hypot(a.x - 31.5, a.y - 31.5) < 4, 'not standing watch at the building');
   });
 
@@ -154,7 +152,7 @@ function pageSuite() {
     const tc = entities.find(u => u.btype === 'TC' && u.team === 0);
     enterGarrison(m, tc);
     ejectGarrison(tc);
-    assert(m.guardX === 40 && m.guardY === 40, 'explicit flag must survive shelter: ' + m.guardX + ',' + m.guardY);
+    assert(m.order && m.order.kind === 'guard' && m.order.x === 40 && m.order.y === 40, 'guard order must survive shelter: ' + JSON.stringify(m.order));
     assert(Math.hypot(m.defendX - 7, m.defendY - 7) < 6, 'anchor not at drop spot: ' + m.defendX + ',' + m.defendY);
   });
 
@@ -169,9 +167,9 @@ function pageSuite() {
     step(5);
     const hm = entities.find(u => u.utype === 'militia' && u.team === 0);
     const am = entities.find(u => u.utype === 'militia' && u.team === 1);
-    assert(hm && hm.guardX == null, 'rally spawn must not plant a post');
+    assert(hm && hm.order == null, 'rally spawn must not plant an order');
     assert(hm && hm.defendX === 40 && hm.defendY === 12, 'human unit missing rally anchor');
-    assert(am && am.guardX == null, 'AI unit must not carry a guard post');
+    assert(am && am.order == null, 'AI unit must not carry an order');
   });
 
   T('auto-scout: turning it on drops the guard post; manual order cancels scouting', () => {
@@ -179,9 +177,9 @@ function pageSuite() {
     const sc = createUnit('scout', 30, 30, 0);
     execCommand({ kind: 'guard', unitIds: [sc.id], x: 35, y: 35 }, 0);
     execCommand({ kind: 'auto-scout', unitIds: [sc.id], on: true }, 0);
-    assert(sc.autoScout && sc.guardX == null && !sc.guardFlagged, 'guard not dropped');
+    assert(sc.order && sc.order.kind === 'scout', 'scout order did not replace the guard order');
     execCommand({ kind: 'command', unitIds: [sc.id], tileX: 20, tileY: 20 }, 0);
-    assert(!sc.autoScout, 'manual order did not cancel auto-scout');
+    assert(!(sc.order && sc.order.kind === 'scout'), 'manual order did not cancel auto-scout');
   });
 
   T('auto-scout: enabling it releases an ESCORT immediately (clears followId, no lingering chase)', () => {
@@ -189,15 +187,14 @@ function pageSuite() {
     const sc = createUnit('scout', 30, 30, 0);
     const vil = createUnit('villager', 31, 31, 0);
     execCommand({ kind: 'guard', unitIds: [sc.id], x: 31, y: 31, targetId: vil.id }, 0);
-    assert(sc.guardTargetId === vil.id && sc.followId === vil.id, 'escort not bound');
+    assert(sc.order && sc.order.kind === 'escort' && sc.order.id === vil.id, 'escort not bound');
     execCommand({ kind: 'auto-scout', unitIds: [sc.id], on: true }, 0);
-    assert(sc.autoScout, 'auto-scout not on');
-    assert(sc.followId == null, 'followId not cleared — scout would keep escorting');
-    assert(sc.guardTargetId == null && sc.guardX == null && !sc.guardFlagged, 'guard/escort state not fully dropped');
+    assert(sc.order && sc.order.kind === 'scout', 'auto-scout not on');
+    assert(sc.followId == null, 'legacy followId not cleared');
     // and it does not re-glue to the villager as the villager moves
     pathUnitTo(vil, 40, 40);
     step(60);
-    assert(sc.followId == null, 'escort re-bound after auto-scout');
+    assert(sc.order && sc.order.kind === 'scout', 'escort re-bound after auto-scout');
   });
 
   // ---- Stance behavior (driven through the real sim) ----
@@ -540,12 +537,12 @@ function pageSuite() {
     const g = createUnit('militia', 19, 19, 0);
     // guard the TC; home post at the NW exterior corner
     execCommand({ kind: 'guard', unitIds: [g.id], x: 19, y: 19, targetId: tc.id }, 0);
-    assert(g.guardTargetId === tc.id, 'not guarding the TC');
+    assert(g.order && g.order.kind === 'guardBuilding' && g.order.id === tc.id, 'not guarding the TC');
     const foe = createUnit('militia', 24.5, 24.5, 1); // SE exterior corner of the TC
     // simulate having chased to the far (SE) corner — ~7 tiles from the NW
     // home post (old point-leash would yank it home) but adjacent to the
     // footprint (new footprint-leash keeps it engaged)
-    g.guardX = 19; g.guardY = 19; g.explicitAttack = false;
+    g.explicitAttack = false;
     g.x = 24; g.y = 24; clearUnitPath(g); g.target = foe.id;
     step(3);
     assert(g.target === foe.id, 'footprint guard was leash-yanked off a threat at the far side of its building');
@@ -560,8 +557,9 @@ function pageSuite() {
     stage();
     const tc = createBuilding('TC', 20, 20, 0); // 4x4 → edges x/y 19.5..23.5
     const g = createUnit('militia', 19, 19, 0);
-    g.stance = 'defensive';
-    g.guardTargetId = tc.id; g.guardX = 19; g.guardY = 19; g.guardFlagged = true; g.explicitAttack = false;
+    execCommand({ kind: 'set-stance', unitIds: [g.id], stance: 'defensive' }, 0);
+    execCommand({ kind: 'guard', unitIds: [g.id], x: 19, y: 19, targetId: tc.id }, 0);
+    g.explicitAttack = false;
     // displace the guard east of the TC (still within its footprint leash),
     // then drop an enemy that is close to the GUARD (~5 tiles) but well
     // outside the building's guard zone (~9 tiles past its east edge)
@@ -582,8 +580,8 @@ function pageSuite() {
     const squad = [createUnit('militia',18,18,0), createUnit('militia',18,19,0),
                    createUnit('militia',18,20,0), createUnit('militia',18,21,0)];
     execCommand({ kind: 'guard', unitIds: squad.map(s=>s.id), x: 19, y: 19, targetId: tc.id }, 0);
-    const posts = new Set(squad.map(s => s.guardX + ',' + s.guardY));
-    assert(squad.every(s => s.guardTargetId === tc.id), 'not all guarding the TC');
+    const posts = new Set(squad.map(s => s.order.x + ',' + s.order.y));
+    assert(squad.every(s => s.order && s.order.kind === 'guardBuilding' && s.order.id === tc.id), 'not all guarding the TC');
     assert(posts.size === squad.length, 'guards piled onto shared posts: ' + [...posts].join(' '));
   });
 
@@ -845,7 +843,7 @@ function pageSuite() {
         updateUI(); const dflt=lit(); const guardShown=has('Guard');
         sc.stance='standground'; updateUI(); const st=lit();
         sc.guardX=20; sc.guardY=20; updateUI(); const gd=lit();   // guard hidden → folds to stance
-        sc.autoScout=true; updateUI(); const au=lit();            // auto overrides everything
+        sc.order={kind:'scout'}; updateUI(); const au=lit();            // auto overrides everything
         return {dflt, st, gd, au, guardShown};
       })()`);
       assertEq(r.guardShown, false, 'Guard tile is hidden for soldiers');
@@ -898,14 +896,14 @@ function pageSuite() {
 
     await tapT('posture: picking a stance is the off-switch for an active guard + auto-scout', async () => {
       const r = await page.evaluate(tapStage(`
-        const m=createUnit('scout',30,30,0); selected=[m]; m.guardX=20; m.guardY=20; m.autoScout=true;
+        const m=createUnit('scout',30,30,0); selected=[m]; m.order={kind:'scout'};
         window.__pts=()=>({});`) + `;(()=>{
         const m=selected[0];
         execCommand({kind:'set-stance', unitIds:[m.id], stance:'defensive'}, 0);
-        return {guardX:m.guardX, autoScout:m.autoScout, stance:m.stance};
+        return {order:m.order, scoutOrder:!!(m.order&&m.order.kind==='scout'), stance:m.stance};
       })()`);
-      assertEq(r.guardX, null, 'set-stance clears the guard post');
-      assertEq(r.autoScout, false, 'set-stance clears auto-scout');
+      assertEq(r.order, null, 'set-stance clears the standing order');
+      assertEq(r.scoutOrder, false, 'set-stance clears auto-scout');
       assertEq(r.stance, 'defensive', 'stance applied');
     });
 
