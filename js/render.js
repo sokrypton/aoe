@@ -8,6 +8,7 @@ const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
 const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
 const _farmProxyPool = new Map();   // farm entity id -> flat ground-layer proxy (bed + crops)
 const _tcProxyPool = new Map();     // TC entity id -> {back:keep, front:annex} depth proxies (see below)
+const _fadeSandwichPool = new Map(); // fade mode: building id -> {bg:opaque-back, fg:transparent-front}
 // Behind-building outline candidates, collected AT the dispatch draw call
 // sites so "candidate = exactly what was drawn this frame" (fog/scouted rules
 // inherited for free). Consumed by drawBehindBuildingOutlines().
@@ -78,7 +79,7 @@ function buildingCenterScreen(b){
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
-  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _poolMapSize = MAP; }
+  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _fadeSandwichPool.clear(); _poolMapSize = MAP; }
   // Black background so unexplored fog (drawTile() skips drawing when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
@@ -129,6 +130,15 @@ function render(){
     }
   }
 
+  // Occluder-fade mode (ON by default; window.__occluderFade=false → outline):
+  // buildings draw slightly transparent so units behind show through. Multi-part
+  // buildings are NOT split into proxies here (they'd fade per-part and show
+  // through themselves) — each draws whole via drawBuildingFaded.
+  const _fadeMode = window.__occluderFade !== false;
+  const _fadeAlpha = window.__occluderFadeAlpha || 0.72; // foundation fill α at FULL hp
+  const _fadeMin = window.__occluderFadeMin || 0.15;     // foundation fill α as hp→0
+  const _fadeFront = window.__occluderFrontAlpha || 0.5; // sandwich: front-copy reveal α over the opaque back
+
   let allDrawable = _drawableScratch; allDrawable.length = 0;
   entities.forEach(en => {
     // Only draw visible entities (either player's team or visible in fog)
@@ -149,7 +159,7 @@ function render(){
     }
     if (enX < minX - 4 || enX > maxX + 4 || enY < minY - 4 || enY > maxY + 4) return;
 
-    if (en.type === 'building' && isGateBtype(en.btype)) {
+    if (en.type === 'building' && isGateBtype(en.btype) && !_fadeMode) {
       let wallLineNS = en.h > en.w;
       // Pooled per gate id — same two proxy objects reused every frame.
       let prox = _gateProxyPool.get(en.id);
@@ -183,7 +193,7 @@ function render(){
       allDrawable.push(prox.back);
       allDrawable.push(prox.door);
       allDrawable.push(prox.front);
-    } else if (en.type === 'building' && en.btype === 'MARKET' && en.complete) {
+    } else if (en.type === 'building' && en.btype === 'MARKET' && en.complete && !_fadeMode) {
       // Walkable plaza: one proxy per part so units sort BETWEEN the stalls.
       // Ground sits under everything on the footprint (FARM-style +0.05);
       // each prop sorts at its own tile (MARKET_PART_ANCHORS) with the gate
@@ -223,7 +233,7 @@ function render(){
       prox.ground.x = en.x; prox.ground.y = en.y;
       prox.ground.sortVal = en.y + en.x + 0.05 - 1000;
       allDrawable.push(prox.ground);
-    } else if (en.type === 'building' && en.btype === 'TC') {
+    } else if (en.type === 'building' && en.btype === 'TC' && !_fadeMode) {
       // The keep tower rises from the footprint's BACK while its annex-roof
       // eaves reach toward the viewer — a single depth anchor can't put a
       // unit "under the tent yet in front of the keep block". Two proxies:
@@ -246,6 +256,35 @@ function render(){
       prox.front.sortVal = cSum + 2.5; // past the tent front eaves (~+1.4 tiles)
       allDrawable.push(prox.back);
       allDrawable.push(prox.front);
+    } else if (_fadeMode && en.type === 'building' && en.complete && en.btype !== 'FARM') {
+      // Fade SANDWICH: an OPAQUE copy at the footprint BACK + a TRANSPARENT copy
+      // at the FRONT, with the footprint's units drawn BETWEEN them. The front
+      // (transparent) over the identical opaque back reads as SOLID everywhere —
+      // EXCEPT where a unit sits between the layers, where the front reveals it.
+      // No occlusion test needed; the layering does it per-pixel.
+      let s = _fadeSandwichPool.get(en.id);
+      if(!s){ s = { bg:{type:'fade_bg',entity:en,x:0,y:0,sortVal:0}, fg:{type:'fade_fg',entity:en,part:null,x:0,y:0,sortVal:0}, fg2:{type:'fade_fg',entity:en,part:null,x:0,y:0,sortVal:0} }; _fadeSandwichPool.set(en.id,s); }
+      s.bg.entity=en; s.fg.entity=en; s.fg2.entity=en;
+      if(en.btype==='TC'){
+        // ONE opaque copy well BACK + ONE transparent WHOLE-building copy at the
+        // front (tent eaves). Single composites → no self-transparency (parts
+        // don't show through each other). The deep back copy means a unit BEHIND
+        // the keep isn't painted over before the transparent front reveals it,
+        // and the transparent front reveals units behind BOTH keep and tents.
+        let cSum = en.y+(en.h||1)/2 + en.x+(en.w||1)/2;
+        s.bg.sortVal = cSum - 9;                             // opaque whole, well behind the near-behind units
+        s.fg.part=null; s.fg.sortVal = cSum + 2.5;           // transparent whole TC, past the tent front eaves
+        allDrawable.push(s.bg); allDrawable.push(s.fg);
+      } else {
+        // Opaque copy well BACK so units BEHIND a tall occluder (tower, gate
+        // posts) aren't painted over before the transparent front reveals them;
+        // the building's own art extent limits how far back a unit actually
+        // shows. Transparent whole front just past the footprint (not into
+        // front-adjacent units). Single composites → no self-transparency.
+        s.bg.sortVal = en.y + en.x - 8;
+        s.fg.part=null; s.fg.sortVal = en.y+en.x+(en.h||1)+(en.w||1) - 1.25;
+        allDrawable.push(s.bg); allDrawable.push(s.fg);
+      }
     } else {
       let sortVal;
       if (en.type === 'building') {
@@ -285,8 +324,8 @@ function render(){
   X.fillStyle = 'rgba(0,0,0,0.16)';
   X.beginPath();
   allDrawable.forEach(e => {
-    if (e.type !== 'building' && e.type !== 'gate_back' && e.type !== 'tc_back') return;
-    let be = (e.type === 'gate_back' || e.type === 'tc_back') ? e.entity : e;
+    if (e.type !== 'building' && e.type !== 'gate_back' && e.type !== 'tc_back' && e.type !== 'fade_bg') return;
+    let be = (e.type === 'gate_back' || e.type === 'tc_back' || e.type === 'fade_bg') ? e.entity : e;
     let f = buildingFogLevel(be);
     if (f === 0) return;
     if (f === 1 && be.team !== myTeam && !scoutedByMe.has(be.id)) return;
@@ -301,7 +340,7 @@ function render(){
     let f;
     if (e.type === 'building') {
       f = buildingFogLevel(e);
-    } else if (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') {
+    } else if (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front' || e.type === 'fade_bg' || e.type === 'fade_fg') {
       f = buildingFogLevel(e.entity);
     } else {
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
@@ -313,7 +352,7 @@ function render(){
     // from the sim checksum, so this never affects lockstep.
     if (e.type === 'corpse' && f === 2) e.seen = true;
     // Resolve the actual entity and team for gate proxy objects
-    let realEntity = (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') ? e.entity : e;
+    let realEntity = (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front' || e.type === 'fade_bg' || e.type === 'fade_fg') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
@@ -328,8 +367,16 @@ function render(){
       if (realEntity && realEntity.type === 'building' && !scoutedByMe.has(realEntity.id)) return;
     }
 
-    if(e.type==='building'){
-      drawBuilding(e);
+    if(e.type==='fade_bg'){ drawBuilding(e.entity); }                          // opaque back copy of the sandwich
+    else if(e.type==='fade_fg'){ drawBuildingFaded(e.entity, _fadeFront, e.part); } // transparent front (whole, or annex-only for TC) → reveals units between the layers
+    else if(e.type==='building'){
+      // Non-fade → normal. In fade mode, complete buildings are the sandwich
+      // above; only FOUNDATIONS reach here — draw whole + transparent with FILL
+      // α tracking hp/maxHp (rises as it's built), outlines crisp.
+      if(_fadeMode){
+        let ratio=e.maxHp>0 ? Math.max(0,Math.min(1, e.hp/e.maxHp)) : 1;
+        drawBuildingFaded(e, _fadeMin + ratio*(_fadeAlpha-_fadeMin));
+      } else drawBuilding(e);
       if(e.complete) _silOccScratch.push(e); // foundations are translucent — never occlude
     }
     else if(e.type==='gate_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
@@ -355,8 +402,9 @@ function render(){
   });
 
   // Behind-building team-color outlines, before drawOutlines so the selection
-  // ring paints on top. Same active-ZOOM-transform requirement.
-  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
+  // ring paints on top. Same active-ZOOM-transform requirement. (Fade mode shows
+  // units through translucent occluders instead, so the outline is skipped.)
+  if(!_fadeMode) drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

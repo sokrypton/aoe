@@ -164,6 +164,45 @@ const SCENES = {
     window.fogDisabled = true; updateFog();
     (${pageLookAt})(32, 33);
     render();`,
+  fademode: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = true; // buildings slightly transparent, no outline
+    createBuilding('TC', 41, 40, 0);
+    const fu = createUnit('scout', 42, 42, 0); fu.dir = 7;   // behind the TC keep
+    createBuilding('BARRACKS', 45, 44, 0);
+    createUnit('militia', 46, 45, 0);                        // behind the barracks
+    (${pageLookAt})(44, 43);
+    render();`,
+  fadephase: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = true;
+    // fill α tracks hp/maxHp: RISES as a foundation builds, FALLS as a building
+    // is destroyed — outlines stay crisp throughout. Row (screen-horizontal,
+    // x+y≈64): building 5% → 45% → 90%, complete (full hp), complete-but-25%-hp.
+    let bld=(bx,by,frac,complete)=>{ let b=createBuilding('BARRACKS',bx,by,0); b.complete=!!complete; if(!complete)b.buildProgress=Math.round(b.buildTime*frac); b.hp=Math.max(1,Math.round(b.maxHp*frac)); return b; };
+    bld(24,40,0.05,false); bld(28,36,0.45,false); bld(32,32,0.90,false); bld(36,28,1,true); bld(40,24,0.25,true);
+    (${pageLookAt})(32,32);
+    render();`,
+  solidbarr: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = false; // reference: direct vector strokes (true black)
+    createBuilding('BARRACKS', 30, 30, 0);
+    (${pageLookAt})(31, 31);
+    render();`,
+  fadebarr: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = true;  // faded: strokes via the offscreen composite
+    createBuilding('BARRACKS', 30, 30, 0);
+    (${pageLookAt})(31, 31);
+    render();`,
+  tcfade: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = true;
+    // TC (4x4) with units at every depth: under each tent, courtyard, just in
+    // FRONT (should stay opaque/over the TC), and BEHIND (occluded).
+    createBuilding('TC', 30, 30, 0);
+    createUnit('scout', 31.5, 33.2, 0);  // under LEFT tent eave
+    createUnit('scout', 33.2, 31.5, 0);  // under RIGHT tent eave
+    createUnit('militia', 31.5, 31.5, 0);// courtyard centre
+    createUnit('militia', 34.5, 34.5, 0);// IN FRONT (south) — must NOT be revealed
+    createUnit('militia', 28.5, 28.5, 0);// BEHIND (north) — occluded
+    (${pageLookAt})(32, 32);
+    render();`,
   tctents: `(${pageStage})();
     window.myTeam = 0;
     // units sheltering under both tent canopies + the notch: the whole tent
@@ -338,6 +377,19 @@ const SCENES = {
     [[29,31.4],[29,32.4],[29,33.0],[29,33.6],[29,34.6]].forEach(([x,y],i)=>{
       const u=createUnit('militia',x,y,0); u.dir=1; });
     (${pageLookAt})(29, 33);
+    render();`,
+  wallfade: `(${pageStage})();
+    window.myTeam = 0; window.__occluderFade = true;
+    // E–W run: tower (W end) + walls + open gate (centre). Units BEHIND a wall,
+    // BEHIND the tower, and walking THROUGH the gate archway — all should reveal.
+    createBuilding('TOWER', 24, 33, 0);
+    for (let x=25;x<=34;x++) if (x<28||x>30) createBuilding('WALL',x,33,0);
+    const g=createBuilding('GATE',28,33,0,3,1); g.gateProgress=1; // OPEN
+    createUnit('militia', 24, 31.8, 0);   // behind the TOWER
+    createUnit('militia', 26.5, 31.8, 0); // behind a WALL
+    createUnit('scout', 29, 33.0, 0);     // in the gate ARCHWAY
+    createUnit('militia', 32.5, 31.8, 0); // behind a WALL (E side)
+    (${pageLookAt})(29, 32);
     render();`,
   gateclosed: `(${pageStage})();
     window.myTeam = 0;

@@ -723,6 +723,55 @@ function buildingShadowPath(e){
   }
 }
 
+// Occluder-fade mode: draw the WHOLE building (all parts) to an offscreen at
+// full opacity, then composite it so a unit behind shows through the FILLS while
+// the black OUTLINES stay solid. Render the building SOLID once (so its own
+// overlapping parts don't darken/show through, and back/interior edges are
+// painted over by the front fills exactly as on an opaque building — no
+// wireframe). Then blit twice:
+//   1) source-over at `alpha` → the whole building, faded (fills + strokes).
+//   2) 'darken' at full opacity → min(src,dst): the front black strokes (0,0,0)
+//      force those pixels to pure black, while the lighter fills keep their
+//      faded value. Net: see-through fills + pure-black front outlines, no
+//      edge-erosion (the earlier destination-out approach thinned/greyed them).
+// Offscreen at ceil(ZOOM*dpr) (dpr is baked into the main ctx, core.js) so thin
+// strokes stay crisp. One grow-only buffer reused per call.
+let _fbufC=null,_fbufX=null,_fbufW=0,_fbufH=0;
+function drawBuildingFaded(e, alpha, part=null){
+  let b=BLDGS[e.btype]; if(!b) return;
+  let fw=e.w||b.w, fh=e.h||b.h;
+  let p=mapToScreen(e.x+fw/2, e.y+fh/2);
+  let cxs=Math.round(p.sx), cys=Math.round(p.sy);          // footprint-centre screen (logical)
+  let halfW=(fw+fh)/2*HALF_TW + 24;                        // generous art box about the centre
+  let above=90 + 30*Math.max(fw,fh), below=fh*HALF_TH + 30;
+  let left=cxs-halfW, top=cys-above, wL=halfW*2, hL=above+below;
+  let ss=Math.max(1, Math.ceil(ZOOM*dpr));
+  let physW=Math.ceil(wL*ss), physH=Math.ceil(hL*ss);
+  if(!_fbufC || _fbufW<physW || _fbufH<physH){
+    _fbufC=document.createElement('canvas');
+    _fbufC.width=Math.max(physW,_fbufW); _fbufC.height=Math.max(physH,_fbufH);
+    _fbufX=_fbufC.getContext('2d'); _fbufW=_fbufC.width; _fbufH=_fbufC.height;
+  }
+  let sv=X, svZ=ZOOM, ga=X.globalAlpha;
+  // Render the ART at FULL opacity into the buffer no matter the phase — the
+  // blit alpha owns the transparency (a foundation's own buildProgress-driven
+  // globalAlpha would otherwise double-fade). Restored after; render-only, so
+  // mutating buildProgress here is safe.
+  let svProg=e.buildProgress; e.buildProgress=e.buildTime;
+  _fbufX.setTransform(1,0,0,1,0,0); _fbufX.clearRect(0,0,_fbufW,_fbufH);
+  _fbufX.setTransform(ss,0,0,ss,0,0); _fbufX.translate(-left,-top); // real screen coords → shifted into the buffer
+  X=_fbufX; ZOOM=1;
+  try { drawBuilding(e, part); } finally { X=sv; ZOOM=svZ; }
+  e.buildProgress=svProg;
+
+  X.globalAlpha=alpha;                                     // 1) faded whole building
+  X.drawImage(_fbufC, 0,0, physW,physH, left, top, wL, hL);
+  X.globalAlpha=1;
+  X.globalCompositeOperation='darken';                     // 2) front strokes → pure black
+  X.drawImage(_fbufC, 0,0, physW,physH, left, top, wL, hL);
+  X.globalCompositeOperation='source-over';
+  X.globalAlpha=ga;
+}
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   if(!b)return; // unknown btype: skip this entity instead of crashing the whole frame on b.w
