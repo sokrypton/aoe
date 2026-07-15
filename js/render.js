@@ -7,6 +7,12 @@ const _treePool = new Map();      // tile key (y*MAP+x) -> tree record
 const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
 const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
 const _farmProxyPool = new Map();   // farm entity id -> flat ground-layer proxy (bed + crops)
+const _tcProxyPool = new Map();     // TC entity id -> {back:keep, front:annex} depth proxies (see below)
+// Behind-building silhouette candidates, collected AT the dispatch draw call
+// sites so "candidate = exactly what was drawn this frame" (fog/scouted rules
+// inherited for free). Consumed by drawBehindBuildingSilhouettes().
+const _silUnitScratch = [];
+const _silOccScratch = [];
 let _poolMapSize = -1;
 
 // ---- Flag/post visuals: ONE vocabulary shared by rally points, guard
@@ -69,7 +75,7 @@ function buildingCenterScreen(b){
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
-  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _poolMapSize = MAP; }
+  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _poolMapSize = MAP; }
   // Black background so unexplored fog (drawTile() skips drawing when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
@@ -201,6 +207,29 @@ function render(){
       prox.ground.x = en.x; prox.ground.y = en.y;
       prox.ground.sortVal = en.y + en.x + 0.05 - 1000;
       allDrawable.push(prox.ground);
+    } else if (en.type === 'building' && en.btype === 'TC') {
+      // The keep tower rises from the footprint's BACK while its annex-roof
+      // eaves reach toward the viewer — a single depth anchor can't put a
+      // unit "under the tent yet in front of the keep block". Two proxies:
+      // BASE (foundation + keep tower + support posts) anchored a tile BACK
+      // of centre so a unit on the near half of the footprint draws over it;
+      // the ROOFS (both tent canopies + banner) anchored well FORWARD — past
+      // the tents' own front eaves — so the whole canopy reads as ABOVE any
+      // unit sheltering under it, not partially behind. null (outline/ghost/
+      // minimap) still draws the whole building.
+      let prox = _tcProxyPool.get(en.id);
+      if(!prox){
+        prox = { back: {type:'tc_back', entity:en, x:0, y:0, sortVal:0},
+                 front:{type:'tc_front', entity:en, x:0, y:0, sortVal:0} };
+        _tcProxyPool.set(en.id, prox);
+      }
+      let cSum = en.y + (en.h||1)/2 + en.x + (en.w||1)/2; // footprint-centre anchor
+      prox.back.entity = en;  prox.back.x = en.x; prox.back.y = en.y;
+      prox.back.sortVal = cSum - 1;
+      prox.front.entity = en; prox.front.x = en.x; prox.front.y = en.y;
+      prox.front.sortVal = cSum + 2.5; // past the tent front eaves (~+1.4 tiles)
+      allDrawable.push(prox.back);
+      allDrawable.push(prox.front);
     } else {
       let sortVal;
       if (en.type === 'building') {
@@ -240,8 +269,8 @@ function render(){
   X.fillStyle = 'rgba(0,0,0,0.16)';
   X.beginPath();
   allDrawable.forEach(e => {
-    if (e.type !== 'building' && e.type !== 'gate_back') return;
-    let be = e.type === 'gate_back' ? e.entity : e;
+    if (e.type !== 'building' && e.type !== 'gate_back' && e.type !== 'tc_back') return;
+    let be = (e.type === 'gate_back' || e.type === 'tc_back') ? e.entity : e;
     let f = buildingFogLevel(be);
     if (f === 0) return;
     if (f === 1 && be.team !== myTeam && !scoutedByMe.has(be.id)) return;
@@ -249,13 +278,14 @@ function render(){
   });
   X.fill();
 
+  _silUnitScratch.length = 0; _silOccScratch.length = 0;
   allDrawable.forEach(e=>{
     // Fog of War checks for entities
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f;
     if (e.type === 'building') {
       f = buildingFogLevel(e);
-    } else if (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part') {
+    } else if (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') {
       f = buildingFogLevel(e.entity);
     } else {
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
@@ -267,7 +297,7 @@ function render(){
     // from the sim checksum, so this never affects lockstep.
     if (e.type === 'corpse' && f === 2) e.seen = true;
     // Resolve the actual entity and team for gate proxy objects
-    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part') ? e.entity : e;
+    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
@@ -282,15 +312,34 @@ function render(){
       if (realEntity && realEntity.type === 'building' && !scoutedByMe.has(realEntity.id)) return;
     }
 
-    if(e.type==='building') drawBuilding(e);
-    else if(e.type==='gate_back') drawBuilding(e.entity, 'back');
-    else if(e.type==='gate_front') drawBuilding(e.entity, 'front');
-    else if(e.type==='market_part') drawBuilding(e.entity, e.part);
-    else if(e.type==='farm_part') drawBuilding(e.entity, e.part);
+    if(e.type==='building'){
+      drawBuilding(e);
+      if(e.complete) _silOccScratch.push(e); // foundations are translucent — never occlude
+    }
+    else if(e.type==='gate_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='gate_front'){ drawBuilding(e.entity, 'front'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='tc_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
+    // Both parts cast silhouettes: a unit walking under the tent canopy is
+    // genuinely hidden by it, so it should ghost through. The intersection is
+    // exact (only roof-covered pixels), and the foreground punch-out keeps a
+    // unit that poked out below the eave (drawn in front) from being tinted.
+    else if(e.type==='tc_front'){ drawBuilding(e.entity, 'front'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='market_part'){
+      drawBuilding(e.entity, e.part);
+      if(e.part!=='ground') _silOccScratch.push(e); // plaza ground sits in the -1000 band, never occludes
+    }
+    else if(e.type==='farm_part') drawBuilding(e.entity, e.part); // flat — never occludes
     else if(e.type==='corpse') drawCorpse(e);
     else if(e.type==='tree') drawTreeEntity(e.x, e.y);
-    else drawUnit(e);
+    else {
+      drawUnit(e);
+      if(!e.garrisonedIn && e.utype!=='sheep_carcass') _silUnitScratch.push(e);
+    }
   });
+
+  // Behind-building team-color silhouettes, before drawOutlines so the
+  // selection ring paints on top. Same active-ZOOM-transform requirement.
+  drawBehindBuildingSilhouettes(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

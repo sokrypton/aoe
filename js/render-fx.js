@@ -6,32 +6,24 @@ function drawGhost(){
   // (same ghost style as a single hovered wall), not just flat tint tiles.
   if (isWallBtype(placing) && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
     let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
-    let pillarH = 22, wallH = 14;
-    let toScr = (tx, ty) => {
-      let p = mapToScreen(tx + 0.5, ty + 0.5);
-      return { x: p.sx, y: p.sy - HALF_TH };
-    };
+    let b = BLDGS[placing];
+    // Render the drag preview through the REAL placed-wall path (drawBuilding's
+    // WALL branch), so pillars/materials/links/cross-rung suppression and joins
+    // to existing walls are all identical to what gets built — one code path,
+    // no separate ghost geometry to drift. The not-yet-placed tiles are exposed
+    // to getConnectedBuilding via a viewer-side overlay (no grid mutation).
+    let overlay = new Map();
+    line.forEach(t => overlay.set(t.y*MAP + t.x, {
+      type:'building', btype:placing, x:t.x, y:t.y, team:myTeam,
+      hp:b.hp, maxHp:b.hp, complete:true, buildProgress:0, buildTime:200,
+      queue:[], garrison:[], w:1, h:1
+    }));
     X.globalAlpha = 0.55;
-    window._ghostDraw = true;
-    // Ghost in the material actually being placed — hardcoding stone here
-    // makes a dragged Dark-age palisade preview as stone.
-    let gMat = wallMat(placing);
-    let gpf = gMat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : ['#a5723a', '#8b5a2b', '#9c6c3f'];
-    line.forEach((t, i) => {
-      let p = toScr(t.x, t.y);
-      let linkY = p.y + 16;
-      // pillar caps + link walkway tops are team-colored on the real
-      // wall — mirror it here (caps single flat color); pillar first so
-      // the walkway link connects visibly between towers, like the real wall
-      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, gpf[0], gpf[1], 'flat', 0, teamColor(myTeam), teamColor(myTeam), false);
-      let next = line[i+1];
-      if (next) {
-        let ddx = next.x - t.x, ddy = next.y - t.y;
-        let off = toIso(ddx, ddy);
-        drawWallLink(p.x, linkY - 0.5, off.ix, off.iy, wallH, false, 2.25*Math.sqrt(5), 2.25*Math.sqrt(5), null, teamColor(myTeam), 4.5, false, gMat);
-      }
-    });
-    window._ghostDraw = false;
+    window._ghostDraw = true; window._ghostValid = true; window._ghostTiles = overlay;
+    // Depth order: far tiles (smaller y+x) first so nearer pillars overlap.
+    line.slice().sort((a,c) => (a.y+a.x) - (c.y+c.x))
+        .forEach(t => drawBuilding(overlay.get(t.y*MAP + t.x)));
+    window._ghostTiles = null; window._ghostDraw = false;
     X.globalAlpha = 1;
 
     // Tint each tile green (valid) or red (invalid)
@@ -70,6 +62,7 @@ function drawGhost(){
   };
   X.globalAlpha=0.55;
   window._ghostDraw=true;
+  window._ghostValid=ok; // invalid ghosts draw no wall-connection stubs (getConnectedBuilding)
   drawBuilding(fakeE);
   window._ghostDraw=false;
   X.globalAlpha=1;

@@ -133,6 +133,216 @@ const SCENES = {
     selected.length = 0; selected.push(sol);
     (${pageLookAt})(29.5, 30);
     render();`,
+  tcdepth: `(${pageStage})();
+    window.myTeam = 0;
+    // repro of aoe2-game-error.json: scout at (42,42) beside a 4x4 TC at
+    // (41,40). Body should be IN FRONT of the near wall block but BEHIND the
+    // roof — single-anchor sort can't split it.
+    createBuilding('TC', 41, 40, 0);
+    const sc = createUnit('scout', 42, 42, 0); sc.dir = 7;
+    (${pageLookAt})(43, 42);
+    render();`,
+  tctents: `(${pageStage})();
+    window.myTeam = 0;
+    // units sheltering under both tent canopies + the notch: the whole tent
+    // roof must read as ABOVE them (posts behind, canopy in front), and a
+    // unit clearly OUT in front (beyond the eaves) must still draw over.
+    createBuilding('TC', 28, 28, 0);
+    createUnit('scout', 29.5, 29.5, 0);   // notch / centre
+    createUnit('militia', 30.4, 29.2, 0); // under RIGHT tent
+    createUnit('militia', 29.2, 30.4, 0); // under LEFT tent
+    createUnit('militia', 31.5, 31.5, 0); // clearly out front -> over the roof
+    createUnit('militia', 32.2, 30.3, 0); // just past RIGHT eave -> head must NOT clip
+    createUnit('militia', 30.3, 32.2, 0); // just past LEFT eave -> head must NOT clip
+    (${pageLookAt})(30.5, 31);
+    render();`,
+  parwalls: `(${pageStage})();
+    window.myTeam = 0;
+    // two parallel wall runs one tile apart (each orientation): should read as
+    // two separate lines, NOT a ladder of cross-links between them.
+    for (let x = 22; x <= 28; x++) { createBuilding('WALL', x, 24, 0); createBuilding('WALL', x, 25, 0); }
+    for (let y = 28; y <= 33; y++) { createBuilding('WALL', 22, y, 0); createBuilding('WALL', 23, y, 0); }
+    // regression: an L-corner + T-branch and a closed 4x4 ring must stay fully joined
+    ['L'].forEach(()=>{ for(let x=30;x<=34;x++)createBuilding('WALL',x,24,0); for(let y=25;y<=28;y++)createBuilding('WALL',34,y,0); createBuilding('WALL',32,25,0); createBuilding('WALL',32,26,0); });
+    for (let x = 30; x <= 33; x++) { createBuilding('WALL', x, 31, 0); createBuilding('WALL', x, 34, 0); }
+    for (let y = 32; y <= 33; y++) { createBuilding('WALL', 30, y, 0); createBuilding('WALL', 33, y, 0); }
+    (${pageLookAt})(28, 29);
+    render();`,
+  nestwalls: `(${pageStage})();
+    window.myTeam = 0;
+    const ring = (x0,y0,x1,y1) => {
+      for (let x=x0;x<=x1;x++){ createBuilding('WALL',x,y0,0); createBuilding('WALL',x,y1,0); }
+      for (let y=y0+1;y<y1;y++){ createBuilding('WALL',x0,y,0); createBuilding('WALL',x1,y,0); }
+    };
+    ring(20,20,30,30);        // outer
+    ring(23,23,27,27);        // inner, 2-tile gap -> two clean concentric rings
+    ring(34,22,40,28);        // outer of an ADJACENT pair
+    ring(35,23,39,27);        // inner, 1-tile gap (parallel sides) -> should read as two rings
+    (${pageLookAt})(30, 25);
+    render();`,
+  gatewalls: `(${pageStage})();
+    window.myTeam = 0;
+    // gate in a wall run, with a PARALLEL wall one tile away: the gate must
+    // not rung across to the parallel line (same fix as plain walls).
+    // E–W run row 24 with a 3-wide gate + parallel run row 25.
+    createBuilding('WALL',24,24,0); createBuilding('WALL',25,24,0);
+    createBuilding('GATE',26,24,0,3,1);
+    createBuilding('WALL',29,24,0); createBuilding('WALL',30,24,0);
+    for (let x=24;x<=30;x++) createBuilding('WALL',x,25,0);
+    // N–S run col 33 with a 3-tall gate + parallel run col 34.
+    createBuilding('WALL',33,28,0); createBuilding('WALL',33,29,0);
+    createBuilding('GATE',33,30,0,1,3);
+    createBuilding('WALL',33,33,0); createBuilding('WALL',33,34,0);
+    for (let y=28;y<=34;y++) createBuilding('WALL',34,y,0);
+    (${pageLookAt})(29, 29);
+    render();`,
+  towerwalls: `(${pageStage})();
+    window.myTeam = 0;
+    // towers in wall runs beside a parallel wall must not rung across either.
+    createBuilding('WALL',24,24,0); createBuilding('WALL',25,24,0);
+    createBuilding('TOWER',26,24,0);
+    createBuilding('WALL',27,24,0); createBuilding('WALL',28,24,0);
+    for (let x=24;x<=28;x++) createBuilding('WALL',x,25,0);
+    createBuilding('WALL',33,28,0); createBuilding('WALL',33,29,0);
+    createBuilding('TOWER',33,30,0);
+    createBuilding('WALL',33,31,0); createBuilding('WALL',33,32,0);
+    for (let y=28;y<=32;y++) createBuilding('WALL',34,y,0);
+    // regression: a tower at an L-corner must keep BOTH its wall links
+    createBuilding('TOWER',24,34,0); createBuilding('WALL',25,34,0); createBuilding('WALL',24,35,0);
+    (${pageLookAt})(29, 30);
+    render();`,
+  ghostgate: `(${pageStage})();
+    window.myTeam = 0;
+    // E–W wall run; the GATE placement cursor hovers one tile NORTH of it (off
+    // the wall) — it must NOT draw a connection stub down to the wall.
+    for (let x=24;x<=32;x++) createBuilding('WALL',x,26,0);
+    (${pageLookAt})(28, 26);
+    mouseX = (toIso(28.5,25.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(28.5,25.5).iy - camY)*ZOOM + H/2 + topH;
+    placing = 'GATE';
+    render();`,
+  ghosttower: `(${pageStage})();
+    window.myTeam = 0;
+    // TOWER placement cursor hovering one tile NORTH of a wall run.
+    for (let x=24;x<=32;x++) createBuilding('WALL',x,26,0);
+    (${pageLookAt})(28, 26);
+    mouseX = (toIso(28.5,25.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(28.5,25.5).iy - camY)*ZOOM + H/2 + topH;
+    placing = 'TOWER';
+    render();`,
+  ghostvalid: `(${pageStage})();
+    window.myTeam = 0;
+    // VALID gate placement (cursor ON the wall run): should still preview its
+    // connection to the flanking walls.
+    for (let x=24;x<=32;x++) createBuilding('WALL',x,26,0);
+    (${pageLookAt})(28, 26);
+    mouseX = (toIso(28.5,26.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(28.5,26.5).iy - camY)*ZOOM + H/2 + topH;
+    placing = 'GATE';
+    render();`,
+  dragghost: `(${pageStage})();
+    window.myTeam = 0;
+    // ACTUAL placed wood walls (row 28) vs the wall-DRAG ghost (row 25):
+    // the ghost must match the placed pillar/link size + material.
+    for (let x=24;x<=30;x++) createBuilding('WALL',x,28,0);
+    placing = 'WALL';
+    window.isDraggingWall = true;
+    window.wallDragStart = {x:24,y:25};
+    window.wallDragEnd = {x:30,y:25};
+    window.wallDragCorner = {x:30,y:25};
+    (${pageLookAt})(27, 26.5);
+    render();`,
+  ghostjoin: `(${pageStage})();
+    window.myTeam = 0;
+    // LEFT: two PLACED walls (the reference join). RIGHT: one wall + a ghost
+    // sliding IN FRONT of it (east). The ghost's join must match the placed
+    // reference — before the fix the ghost showed NO connection on that side.
+    createBuilding('WALL',26,26,0); createBuilding('WALL',27,26,0);
+    createBuilding('WALL',34,26,0);
+    (${pageLookAt})(30, 26.5);
+    placing = 'WALL';
+    mouseX = (toIso(35.5,26.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(35.5,26.5).iy - camY)*ZOOM + H/2 + topH;
+    render();`,
+  dragunify: `(${pageStage})();
+    window.myTeam = 0;
+    // existing wall run (row 26) + a collinear wall (23,25) west of the drag.
+    for (let x=24;x<=30;x++) createBuilding('WALL',x,26,0);
+    createBuilding('WALL',23,25,0);
+    // drag ghost along row 25 (parallel to row 26, 1 tile N): must NOT rung
+    // down to row 26, and MUST join the existing wall at (23,25).
+    placing = 'WALL';
+    window.isDraggingWall = true;
+    window.wallDragStart = {x:24,y:25};
+    window.wallDragEnd = {x:30,y:25};
+    window.wallDragCorner = {x:30,y:25};
+    (${pageLookAt})(27, 25.5);
+    render();`,
+  dragelbow: `(${pageStage})();
+    window.myTeam = 0;
+    // L-shaped drag (E then S) must render a connected corner via the unified path.
+    placing = 'WALL';
+    window.isDraggingWall = true;
+    window.wallDragStart = {x:24,y:25};
+    window.wallDragCorner = {x:30,y:25};
+    window.wallDragEnd = {x:30,y:31};
+    (${pageLookAt})(28, 28);
+    render();`,
+  towerjoin: `(${pageStage})();
+    window.myTeam = 0;
+    // PTOWER (dark-age tower, unlocked) ghost IN FRONT of (east of) an existing
+    // wall: must join it, same as TOWER does at Feudal.
+    createBuilding('WALL',28,26,0);
+    (${pageLookAt})(28.5, 26);
+    mouseX = (toIso(29.5,26.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(29.5,26.5).iy - camY)*ZOOM + H/2 + topH;
+    placing = 'PTOWER';
+    render();`,
+  gatejoin: `(${pageStage})();
+    window.myTeam = 0;
+    // gate ghost dropped into a wall run: must join walls on BOTH ends.
+    for (let x=24;x<=34;x++) createBuilding('WALL',x,26,0);
+    (${pageLookAt})(29, 26);
+    mouseX = (toIso(29.5,26.5).ix - camX)*ZOOM + W/2;
+    mouseY = (toIso(29.5,26.5).iy - camY)*ZOOM + H/2 + topH;
+    placing = 'GATE';
+    render();`,
+  frontpunch: `(${pageStage})();
+    window.myTeam = 0;
+    // foreground punch-out: a unit BEHIND a house (silhouette) and a unit
+    // just IN FRONT whose sprite overlaps the silhouette region — the front
+    // unit must stay clean (no ghost painted over it).
+    createBuilding('HOUSE', 30, 30, 0);
+    createUnit('militia', 30, 30, 0);     // dead centre, behind -> silhouette
+    createUnit('militia', 31.2, 31.2, 0); // just in front, overlapping
+    (${pageLookAt})(31, 31);
+    render();`,
+  tcstates: `(${pageStage})();
+    window.myTeam = 0;
+    // regression: selected TC (null-path whole-building gold outline) + a
+    // half-built foundation TC (alpha ramp must cover BOTH split parts).
+    const sel = createBuilding('TC', 26, 27, 0);
+    selected.length = 0; selected.push(sel);
+    const found = createBuilding('TC', 33, 27, 0);
+    found.complete = false; found.buildProgress = found.buildTime / 2; found.hp = found.maxHp / 2;
+    (${pageLookAt})(31, 31);
+    render();`,
+  occlude: `(${pageStage})();
+    window.myTeam = 0;
+    // behind-building silhouettes: own + enemy soldiers whose sortVal loses
+    // to the TC read as flat team-color silhouettes through its art
+    createBuilding('TC', 28, 26, 0);
+    createUnit('militia', 29.5, 27.2, 0);
+    createUnit('archer', 31.0, 26.6, 1);
+    // control: unit IN FRONT of the TC draws normally (no tint)
+    createUnit('militia', 31.5, 30.5, 0);
+    // gate archway: villager on the front tile is occluded ONLY by the near
+    // post — silhouette against it, none against the back post
+    for (let x = 24; x <= 34; x++) if (x < 28 || x > 30) createBuilding('WALL', x, 33, 0);
+    createBuilding('GATE', 28, 33, 0, 3, 1);
+    createUnit('villager', 29.7, 32.3, 0); // sortVal 62.25 < near post's 62.3, overlapping its art at tile (30,33)
+    (${pageLookAt})(29.5, 30);
+    render();`,
   fog: `(${pageStage})();
     const own = createBuilding('MARKET', 24, 29, 0);
     const foe = createBuilding('MARKET', 34, 29, 1);
