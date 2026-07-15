@@ -1278,9 +1278,7 @@ function focusTownCenter(){
 // ==============================
 // ---- SHARED INPUT ACTIONS ----
 // ==============================
-// Hit-test a wall/gate against its DRAWN parts, in the unzoomed local
-// coords drawBuilding works in (same anchor math: BLDGS dims, sy -= bhh).
-// Returns which part was hit:
+// Hit-test a wall/gate against its DRAWN parts. Returns which part was hit:
 //   'body' — a wall pillar, gate post, or the gate door: authoritative,
 //            the click is unambiguously on this entity.
 //   'link' — the wall's S/E extension slab toward a connected neighbor:
@@ -1289,56 +1287,17 @@ function focusTownCenter(){
 //            N/W owner), not whichever tile sorts last.
 //   null   — not on any drawn part (the rest of the ground tile doesn't
 //            count, unlike the generic footprint-box test).
-// Gates get NO link zone on purpose: their stub links visually belong to
-// the adjoining wall run, and the gate selecting from half the wall line
-// is exactly the "wrong part selected" feel this test exists to avoid.
+// Tests the REAL drawn pixels: drawBuilding renders just that part into the
+// offscreen mask (WALL 'body'=pillar / 'link'=slabs; GATE 'body'=posts+door,
+// no stubs), so this never re-derives geometry and can't drift from the art.
+// Because the parts are the actual render, a link that got cross-rung-
+// suppressed simply has no pixels — no bespoke suppression check needed here.
+// Gates get NO link zone on purpose: their stub links visually belong to the
+// adjoining wall run (drawBuilding's 'body' omits them), so a stub click
+// doesn't select the gate — the "wrong part selected" feel this test avoids.
 function wallGateHitPart(en, lx, ly){
-  let b = BLDGS[en.btype];
-  let iso = toIso(en.x + b.w / 2, en.y + b.h / 2);
-  let sx0 = iso.ix - camX + W / 2;
-  let sy0 = iso.iy - camY + topH + H / 2 - b.h * HALF_TH; // tile top vertex
-  let pad = isMobile ? 5 : 3;      // finger/cursor forgiveness, local px
-  let capPad = pad + 8;            // extra headroom above posts: caps/merlons/pennants
-  if (isWallBtype(en.btype)) {
-    // Pillar: drawBuildingBlock(sx, sy0+20-pw, pw, pw/2, 22) spans
-    // x ∈ sx±pw, y ∈ [sy0+20-pw-22, sy0+20].
-    let pw = wallMat(en.btype) === 'stone' ? 9 : 7;
-    if (Math.abs(lx - sx0) <= pw + pad && ly >= sy0 + 20 - pw - 22 - capPad && ly <= sy0 + 20 + pad) return 'body';
-    // Extension slabs: drawWallLink from this tile's front corner
-    // (sx, sy0+16) a full tile step toward the S (-32,+16) / E (+32,+16)
-    // neighbor, body rising wallH=14 above that line. Any wall-like
-    // neighbor counts — mirrors the render condition, which links across
-    // materials (mixed wood/stone runs stay visually continuous).
-    for (let [nx, ny, dirX] of [[en.x, en.y + 1, -32], [en.x + 1, en.y, 32]]) {
-      if (!isWallLike(getConnectedBuilding(nx, ny))) continue;
-      let t = dirX < 0 ? (sx0 - lx) / 32 : (lx - sx0) / 32;
-      if (t <= 0 || t > 1) continue;
-      let lineY = sy0 + 16 + 16 * t; // slab base at this point of the run
-      if (ly >= lineY - 14 - pad && ly <= lineY + pad + 2) return 'link';
-    }
-    return null;
-  }
-  // Gate (footprint 1xN / Nx1, anchored like a 1x1 — BLDGS dims): back
-  // post at (sx0, sy0+16), front post (n-1) tile steps along the run, door
-  // slab between them. Must mirror the render geometry (render-buildings.js).
-  // drawBuildingBlock(tx, ty-7, 14, 7, 28) spans x ∈ tx±14, y ∈ [ty-35, ty+7].
-  let ns = en.h > en.w;
-  let n = Math.max(en.w, en.h);
-  let runX = 32 * (n - 1);
-  let posts = [{ x: sx0, y: sy0 + 16 }, { x: ns ? sx0 - runX : sx0 + runX, y: sy0 + 16 + 16 * (n - 1) }];
-  for (let p of posts) {
-    // No horizontal pad: the posts are already 28px wide, and padding them
-    // sideways let the back post steal clicks from the last few px of the
-    // adjoining wall's extension slab (body outranks link).
-    if (Math.abs(lx - p.x) <= 14 && ly >= p.y - 35 - capPad && ly <= p.y + 7 + pad) return 'body';
-  }
-  // Door slab (tested at its CLOSED position: the doorway opening is gate
-  // body whether or not the door is currently slid up).
-  let t = ns ? (sx0 - lx) / runX : (lx - sx0) / runX;
-  if (t > 0 && t < 1) {
-    let lineY = sy0 + 16 + 16 * (n - 1) * t;
-    if (ly >= lineY - 16 - 9 - pad && ly <= lineY + pad) return 'body';
-  }
+  if (entityPixelHit(en, lx, ly, 'body')) return 'body';
+  if (isWallBtype(en.btype) && entityPixelHit(en, lx, ly, 'link')) return 'link';
   return null;
 }
 
@@ -1350,7 +1309,7 @@ function wallGateHitPart(en, lx, ly){
 // called on click/tap, and only for the 0-3 buildings whose extent box the
 // cursor falls in; the draw is clipped to a few pixels around the cursor.
 let _hitMaskC = null, _hitMaskX = null, _hitMaskWin = 0;
-function entityPixelHit(e, lx, ly) {
+function entityPixelHit(e, lx, ly, part) {
   let win = isMobile ? 9 : 5;             // sample window (logical px), = tap forgiveness
   let half = (win - 1) / 2;
   // Build the offscreen once (size is constant per device). willReadFrequently
@@ -1371,7 +1330,7 @@ function entityPixelHit(e, lx, ly) {
   camY = sv.camY + ly - half;
   window._maskDraw = true;
   try {
-    if (e.type === 'unit') drawUnit(e); else drawBuilding(e);
+    if (e.type === 'unit') drawUnit(e); else drawBuilding(e, part);
   } catch (err) {
     /* a draw failure shouldn't wedge selection — treat as miss */
   } finally {

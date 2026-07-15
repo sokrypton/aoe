@@ -2007,7 +2007,12 @@ function drawBuilding(e, part = null){
     let isWood = mat !== 'stone';
     let pw = isWood ? 7 : 9;
     let lthick = pw / 2;
-    drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
+    // part 'body' = pillar only, 'link' = the S/E slabs only — the hit test
+    // (input.js wallGateHitPart) renders each in isolation to tag a click as
+    // pillar vs walkway WITHOUT re-deriving the geometry. null draws both.
+    if (part !== 'link')
+      drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
+    if (part === 'body') { X.globalAlpha = 1; return; }
 
     // 2. Draw South and East links second (running towards the front, overlapping the pillar)
     // Slab half-thickness = pillar half-width/... matches the pillar's
@@ -2063,7 +2068,10 @@ function drawBuilding(e, part = null){
     let gp = visible ? (e.gateProgress || 0) : 0; // frozen closed in shroud
     let slideY = gp * 26;
 
-    if (part === 'back' || part === null) {
+    // part 'body' (hit test, input.js): the posts + door WITHOUT the wall
+    // stubs, which visually belong to the adjoining run — so a click on a stub
+    // doesn't select the gate. Enters both post blocks; stubs are skipped below.
+    if (part === 'back' || part === null || part === 'body') {
       // 1. Draw back post (Tower 1 - larger bastion centered at t1sy-7)
       // Pre-Castle the post top is team-colored like the wall walkways
       // (single flat color); at Castle the merlons take over the cap.
@@ -2074,29 +2082,10 @@ function drawBuilding(e, part = null){
       // plain post tops; the merlons are part of the Feudal upgrade look.
       if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t1sx, t1sy, '#e0d8c6', '#c4bba6', darken);
 
-      if (e.complete) {
-        // Sliding solid wood gate door — same style/placement as a wall
-        // extension (drawWallLink), just wood-brown and sliding up into
-        // the bastion as gateProgress goes from closed (0) to open (1).
-        // Symmetric trims (7,7) center the door between the two posts —
-        // an asymmetric trim hangs the raised door visibly closer to the
-        // front tower.
-        // The slab stays exactly PARALLEL to the wall run (any per-end
-        // twist read as the whole gate being rotated) and is instead
-        // TRANSLATED in the GROUND PLANE. The ground-plane perpendicular
-        // in iso is the run direction mirrored, (ux, -uy) — using a
-        // screen-space perpendicular here made the door dip below the
-        // ground line (it is mostly vertical).
-        {
-          let Lg = Math.hypot(dx, dy), ux = dx / Lg, uy = dy / Lg;
-          const GT = 1; // ground-plane shift away from the viewer, in px
-          drawWallLink(t1sx + ux * GT, t1sy - slideY - uy * GT, dx, dy,
-                       16, darken, 9, 9, '#8b5a2b', '#a5723a', 2, true);
-        }
-      }
-
-      // 1. Draw connection links for Post 1 (back post centered at t1sy)
+      // 1. Draw connection links for Post 1 (back post centered at t1sy).
+      // Skipped for 'body' (hit test): stubs belong to the adjoining run.
       let wallH = 14;
+      if (part !== 'body') {
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
         if (_wlLike(e.x + 1, e.y) && !wallEastRung(e.x, e.y)) {
@@ -2112,6 +2101,7 @@ function drawBuilding(e, part = null){
       // normally drawn by that neighbour wall — preview it so the ghost gate
       // reads as joined on both ends, like the placed one.
       drawGhostBackJoins(e.x, e.y, t1sx, t1sy, wallH, tc);
+      }
 
       if (part === 'back') {
         X.globalAlpha = 1;
@@ -2119,7 +2109,27 @@ function drawBuilding(e, part = null){
       }
     }
 
-    if (part === 'front' || part === null) {
+    // Sliding solid wood gate door — its OWN depth layer (gate_door proxy)
+    // anchored at the archway centre, so a unit on the far side sorts BEHIND
+    // it (occluded/silhouetted) instead of drawing in front of an origin-
+    // anchored slab. Same style/placement as a wall extension (drawWallLink),
+    // wood-brown, sliding up into the bastions as gateProgress 0->1. Stays
+    // exactly PARALLEL to the run (any per-end twist read as the whole gate
+    // rotating) and is TRANSLATED in the GROUND PLANE — the ground-plane
+    // perpendicular in iso is the run mirrored (ux,-uy); a screen-space
+    // perpendicular dipped the door below the ground line. null draws it here
+    // in back->door->front order; 'body' (hit test) includes it.
+    if (part === null || part === 'door' || part === 'body') {
+      if (e.complete) {
+        let Lg = Math.hypot(dx, dy), ux = dx / Lg, uy = dy / Lg;
+        const GT = 1; // ground-plane shift away from the viewer, in px
+        drawWallLink(t1sx + ux * GT, t1sy - slideY - uy * GT, dx, dy,
+                     16, darken, 9, 9, '#8b5a2b', '#a5723a', 2, true);
+      }
+      if (part === 'door') { X.globalAlpha = 1; return; }
+    }
+
+    if (part === 'front' || part === null || part === 'body') {
       // 2. Draw front post (Tower 2 - larger bastion centered at t2sy-7)
       let postTop2 = ownerAge >= 2 ? pf[2] : tc;
       drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop2, postTop2, darken, mat === 'stone' && ownerAge >= 2);
@@ -2127,8 +2137,10 @@ function drawBuilding(e, part = null){
       // Battlements only on the STONE gate (see back post above).
       if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t2sx, t2sy, '#e0d8c6', '#c4bba6', darken);
 
-      // Draw connection links for Post 2 (front post centered at t2sy)
+      // Draw connection links for Post 2 (front post centered at t2sy).
+      // Skipped for 'body' (hit test) — stubs belong to the adjoining run.
       let wallH = 14;
+      if (part !== 'body') {
       if (wallLineNS) {
         // N-S Gate: Post 2 is the far post at (e.x, e.y+n-1). Parallel goes
         // South (y+n), Perpendicular goes East (x+1, y+n-1).
@@ -2148,6 +2160,7 @@ function drawBuilding(e, part = null){
           drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
         }
       }
+      } // end stubs (skipped for 'body')
       // Locked-gate indicator: a small padlock floating over the sealed door,
       // so a locked gate reads differently from one that's merely swung shut.
       // Only when in view (never leak a lock state through the shroud).

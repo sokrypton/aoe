@@ -307,6 +307,27 @@ const SCENES = {
     mouseY = (toIso(29.5,26.5).iy - camY)*ZOOM + H/2 + topH;
     placing = 'GATE';
     render();`,
+  gatewalk: `(${pageStage})();
+    window.myTeam = 0;
+    // E–W wall (row 33) with a 3-wide gate; militia walking N->S through the
+    // archway at several depths — check post/door sort vs the unit.
+    for (let x=24;x<=34;x++) if (x<28||x>30) createBuilding('WALL',x,33,0);
+    const g=createBuilding('GATE',28,33,0,3,1); g.gateProgress=1; // OPEN
+    [[29,31.4],[29,32.4],[29,33.0],[29,33.6],[29,34.6]].forEach(([x,y],i)=>{
+      const u=createUnit('militia',x,y,0); u.dir=1; });
+    (${pageLookAt})(29, 33);
+    render();`,
+  gateclosed: `(${pageStage})();
+    window.myTeam = 0;
+    // CLOSED gate; an ENEMY (red) and an OWN (blue) unit fully BEHIND it —
+    // check the behind-building silhouette renders through the gate posts+door.
+    for (let x=24;x<=34;x++) if (x<28||x>30) createBuilding('WALL',x,33,0);
+    createBuilding('GATE',28,33,0,3,1); // gateProgress 0 = closed
+    createUnit('militia',29.7,32.4,1);  // enemy, behind near (E) post
+    createUnit('militia',28.6,32.5,0);  // own, behind W post/door
+    createUnit('militia',29.1,32.6,1);  // enemy, behind door centre
+    (${pageLookAt})(29, 33);
+    render();`,
   frontpunch: `(${pageStage})();
     window.myTeam = 0;
     // foreground punch-out: a unit BEHIND a house (silhouette) and a unit

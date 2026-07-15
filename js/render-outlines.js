@@ -333,6 +333,7 @@ function _bsilFillOccBox(rec, d){
   // of the keep but behind the roof.
   rec.part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
            : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
+           : (d.type==='gate_door') ? 'door'
            : (d.part||null);
   rec.sortVal = d.sortVal;
   rec.ax = ax; rec.ay = ay;

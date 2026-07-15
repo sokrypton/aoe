@@ -950,6 +950,32 @@ function pageSuite() {
       assertEq(r.sel, 0, 'guard is a task → deselects');
     });
 
+    await tapT('wall hit-test: link selects its N/W owner (not the other tile), pillar selects its own wall', async () => {
+      // A(30,30) draws the East link toward B(31,30), so A OWNS that link.
+      // Clicking the link must select A; clicking B's pillar must select B.
+      // Routing is derived from the REAL drawn pixels (drawBuilding part mask),
+      // so this guards against the hit-test drifting from the render.
+      const r = await page.evaluate(tapStage(`
+        ZOOM=1;
+        const A=createBuilding('WALL',30,30,0), B=createBuilding('WALL',31,30,0);
+        window.__pts=(scr)=>{
+          const hit=(en,c)=>wallGateHitPart(en,c.x,c.y);
+          const gid=(c)=>{const g=getBuildingUnderCursor(c.x,c.y);return g?g.id:null;};
+          // B's own pillar (scan up from its tile centre)
+          let bBody=null; { const base=scr(31.5,30.5);
+            for(let d=0;d<=60&&bBody===null;d++){const c={x:base.x,y:base.y-d}; if(hit(B,c)==='body') bBody=gid(c);} }
+          // a point on A's East link slab that is NOT anyone's pillar body
+          let linkOwner='none', ab=scr(30.5,30.5);
+          outer: for(let dx=8;dx<=26;dx+=2) for(let dy=-16;dy<=10;dy+=2){
+            const c={x:ab.x+dx,y:ab.y+dy};
+            if(hit(A,c)==='link' && hit(A,c)!=='body' && hit(B,c)!=='body'){ linkOwner=gid(c); break outer; }
+          }
+          return { aId:A.id, bId:B.id, bBody, linkOwner };
+        };`));
+      assertEq(r.bBody, r.bId, "B's pillar selects B");
+      assertEq(r.linkOwner, r.aId, 'the A→B link selects its owner A, not the neighbour');
+    });
+
     await tapT('right-click friendly SUPPORT unit = Escort flag; fellow soldier = plain move', async () => {
       // Escort target must be a support unit (cart/villager/ram) — soldiers
       // fell victim to accidental escorts when a move order landed on a

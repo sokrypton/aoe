@@ -152,10 +152,12 @@ function render(){
       let prox = _gateProxyPool.get(en.id);
       if(!prox){
         prox = { back: {type:'gate_back', entity:en, x:0, y:0, sortVal:0},
+                 door: {type:'gate_door', entity:en, x:0, y:0, sortVal:0},
                  front:{type:'gate_front', entity:en, x:0, y:0, sortVal:0} };
         _gateProxyPool.set(en.id, prox);
       }
-      prox.back.entity = en; prox.front.entity = en;
+      let gn = Math.max(en.w, en.h);
+      prox.back.entity = en; prox.door.entity = en; prox.front.entity = en;
       prox.back.x = en.x; prox.back.y = en.y;
       prox.back.sortVal = en.y + en.x + 0.1;
       prox.front.x = wallLineNS ? en.x : en.x + 1;
@@ -165,7 +167,18 @@ function render(){
       // must draw over it (it's closer to the viewer). Units a full tile
       // nearer still sort higher and correctly draw over the gate.
       prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1) + 0.3;
+      // The CLOSED door spans the archway, so it sorts at the run's CENTRE
+      // (not the origin like the back post) — otherwise a unit on the far
+      // side sorted ABOVE the origin-anchored door and drew in front of it.
+      // +0.2 seats it between the two posts (behind the near/front post).
+      // As it OPENS it slides up out of the way, so its depth eases back to
+      // the origin band (behind passing units) — otherwise the raised slab
+      // ghosted the head of a unit walking through the open archway.
+      prox.door.x = en.x; prox.door.y = en.y;
+      let gp = en.gateProgress || 0;
+      prox.door.sortVal = en.y + en.x + (1 - gp) * ((gn - 1) / 2 + 0.2) + gp * 0.15;
       allDrawable.push(prox.back);
+      allDrawable.push(prox.door);
       allDrawable.push(prox.front);
     } else if (en.type === 'building' && en.btype === 'MARKET' && en.complete) {
       // Walkable plaza: one proxy per part so units sort BETWEEN the stalls.
@@ -285,7 +298,7 @@ function render(){
     let f;
     if (e.type === 'building') {
       f = buildingFogLevel(e);
-    } else if (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') {
+    } else if (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') {
       f = buildingFogLevel(e.entity);
     } else {
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
@@ -297,7 +310,7 @@ function render(){
     // from the sim checksum, so this never affects lockstep.
     if (e.type === 'corpse' && f === 2) e.seen = true;
     // Resolve the actual entity and team for gate proxy objects
-    let realEntity = (e.type === 'gate_back' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') ? e.entity : e;
+    let realEntity = (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') ? e.entity : e;
     let eTeam = realEntity ? realEntity.team : e.team;
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
@@ -317,6 +330,7 @@ function render(){
       if(e.complete) _silOccScratch.push(e); // foundations are translucent — never occlude
     }
     else if(e.type==='gate_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='gate_door'){ drawBuilding(e.entity, 'door'); if(e.entity.complete) _silOccScratch.push(e); }
     else if(e.type==='gate_front'){ drawBuilding(e.entity, 'front'); if(e.entity.complete) _silOccScratch.push(e); }
     else if(e.type==='tc_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
     // Both parts cast silhouettes: a unit walking under the tent canopy is
