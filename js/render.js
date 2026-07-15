@@ -8,9 +8,9 @@ const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
 const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
 const _farmProxyPool = new Map();   // farm entity id -> flat ground-layer proxy (bed + crops)
 const _tcProxyPool = new Map();     // TC entity id -> {back:keep, front:annex} depth proxies (see below)
-// Behind-building silhouette candidates, collected AT the dispatch draw call
+// Behind-building outline candidates, collected AT the dispatch draw call
 // sites so "candidate = exactly what was drawn this frame" (fog/scouted rules
-// inherited for free). Consumed by drawBehindBuildingSilhouettes().
+// inherited for free). Consumed by drawBehindBuildingOutlines().
 const _silUnitScratch = [];
 const _silOccScratch = [];
 let _poolMapSize = -1;
@@ -24,8 +24,11 @@ function flagScreen(wx, wy){
   let p = mapToScreen(wx, wy);
   return { x: p.sx, y: p.sy };
 }
+// White, not gold: these are myTeam's own order flags and gold blended with
+// the yellow team (same reason the selection ring went white).
+const FLAG_COLOR = '#ffffff';
 function drawFlagLine(x1, y1, x2, y2, alpha){
-  X.strokeStyle = '#ffd700';
+  X.strokeStyle = FLAG_COLOR;
   X.globalAlpha = alpha;
   X.lineWidth = 1.5;
   X.setLineDash([4, 4]);
@@ -36,7 +39,7 @@ function drawFlagLine(x1, y1, x2, y2, alpha){
 function drawFlagMarker(x, y, tall){
   let h = tall ? 16 : 12, w = tall ? 10 : 8;
   X.globalAlpha = tall ? 0.9 : 1;
-  X.fillStyle = '#ffd700';
+  X.fillStyle = FLAG_COLOR;
   X.fillRect(x - 1, y - h, 2, h); // pole
   X.beginPath();
   X.moveTo(x + 1, y - h);
@@ -54,7 +57,7 @@ function drawBuildingFootprintOutline(b, alpha){
   let w = b.w || bd.w, h = b.h || bd.h;
   let c = [flagScreen(b.x, b.y), flagScreen(b.x + w, b.y),
            flagScreen(b.x + w, b.y + h), flagScreen(b.x, b.y + h)];
-  X.strokeStyle = '#ffd700';
+  X.strokeStyle = FLAG_COLOR;
   X.globalAlpha = alpha;
   X.lineWidth = 1.5;
   X.setLineDash([4, 4]);
@@ -351,9 +354,9 @@ function render(){
     }
   });
 
-  // Behind-building team-color silhouettes, before drawOutlines so the
-  // selection ring paints on top. Same active-ZOOM-transform requirement.
-  drawBehindBuildingSilhouettes(_silUnitScratch, _silOccScratch);
+  // Behind-building team-color outlines, before drawOutlines so the selection
+  // ring paints on top. Same active-ZOOM-transform requirement.
+  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

@@ -150,6 +150,78 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------- foundation build gate (no trap)
+    // AoE2: a foundation is walkable until work starts, and construction can't
+    // begin until the footprint is clear — so the tiles never harden under a
+    // unit and seal it in. Your OWN units scatter off the site when a builder
+    // commits; an ENEMY on it can't be shoved, so it just blocks the build.
+    'build-gate': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'human'],
+        ages: [4, 4], entities: [{ b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 44, y: 44, team: 1 }] });
+      const inFP = (u, bx, by) => { let x = Math.round(u.x), y = Math.round(u.y);
+        return x >= bx && x < bx + 3 && y >= by && y < by + 3; };
+
+      // (1) An OWN idle villager parked inside is auto-cleared; the site builds
+      //     itself and nobody is sealed in.
+      const bar = createBuilding('BARRACKS', 20, 20, 0); // 3x3 -> tiles 20..22
+      bar.complete = false; bar.buildProgress = 0; bar.hp = 1;
+      const builder = createUnit('villager', 19, 20, 0); // west edge, OFF the footprint
+      builder.task = 'build'; builder.buildTarget = bar.id;
+      const mine = createUnit('villager', 21, 21, 0); // own idle unit parked INSIDE
+      for (let i = 0; i < bar.buildTime + T30(600) && !bar.complete; i++) update();
+      T.ok('own unit is auto-cleared and the site finishes on its own', bar.complete);
+      T.ok('the cleared unit walked OUT (not teleported, not sealed)', mine.hp > 0 && !inFP(mine, 20, 20));
+
+      // (2) An ENEMY unit parked inside is NOT shoved — it blocks construction.
+      const bar2 = createBuilding('BARRACKS', 30, 30, 0);
+      bar2.complete = false; bar2.buildProgress = 0; bar2.hp = 1;
+      const b2 = createUnit('villager', 29, 30, 0); b2.task = 'build'; b2.buildTarget = bar2.id;
+      // A non-threatening enemy (villager) — the builder won't flee it, it just
+      // can't shove it, so the site is blocked. (An enemy SOLDIER would trigger
+      // flee instead, which is a separate, correct behavior.)
+      const foe = createUnit('villager', 31, 31, 1); // enemy parked INSIDE (team 1)
+      for (let i = 0; i < T30(240) + 60; i++) update(); // PAST the 8s stuck-watchdog window
+      T.ok('an enemy on the footprint blocks construction (no progress)', bar2.buildProgress === 0 && !bar2.complete);
+      T.ok('the enemy is NOT teleported away', inFP(foe, 30, 30));
+      T.ok('a lone blocked site: the builder WAITS (not abandoned by the watchdog)', b2.task === 'build' && b2.buildTarget === bar2.id);
+
+      // (3) With more work queued, a blocked site is skipped for the next one,
+      //     then circled back to once it clears.
+      loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'human'],
+        ages: [4, 4], entities: [{ b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 44, y: 44, team: 1 }] });
+      const h1 = createBuilding('HOUSE', 20, 20, 0); h1.complete = false; h1.buildProgress = 0; h1.hp = 1; // 1x1
+      const h2 = createBuilding('HOUSE', 24, 20, 0); h2.complete = false; h2.buildProgress = 0; h2.hp = 1;
+      const vb = createUnit('villager', 19, 20, 0); vb.task = 'build'; vb.buildTarget = h1.id; vb.buildQueue = [h1.id, h2.id];
+      const camper = createUnit('villager', 20, 20, 1); // enemy on h1's tile — blocks it
+      for (let i = 0; i < h2.buildTime + T30(600) && !h2.complete; i++) update();
+      T.ok('blocked site is skipped: builder finishes the next queued building', h2.complete);
+      T.ok('the blocked site stays unbuilt and still queued', !h1.complete && vb.buildQueue.includes(h1.id));
+      camper.x = camper.fromX = camper.lastX = 40; camper.y = camper.fromY = camper.lastY = 40; camper.path = [];
+      for (let i = 0; i < h1.buildTime + T30(1200) && !h1.complete; i++) update();
+      T.ok('builder circles back and finishes the once-blocked site', h1.complete);
+      return T;
+    })),
+
+    // ------------------------------------- editor: no build on occupied tile
+    // The editor drops an instantly-SOLID building, so it must refuse an
+    // occupied tile (canPlace rejectUnits) — no shove/teleport, the author
+    // clears the unit first. Gameplay leaves rejectUnits false: building over
+    // your own units is fine (foundation walkable + build-gate).
+    'editor-reject-occupied': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'human'],
+        ages: [4, 4], entities: [{ b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 44, y: 44, team: 1 }] });
+      createUnit('villager', 20.4, 20.4, 0); // sits on tile 20,20 of a 3x3 footprint at (20,20)
+      T.ok('editor (rejectUnits) refuses a footprint with a unit on it',
+        canPlace('BARRACKS', 20, 20, 0, true, true) === false);
+      T.ok('editor allows the SAME spot once no unit is on it',
+        canPlace('BARRACKS', 30, 30, 0, true, true) === true);
+      T.ok('gameplay (rejectUnits off) still allows building over your own unit',
+        canPlace('BARRACKS', 20, 20, 0, false, false) === true);
+      return T;
+    })),
+
     // ------------------------------------- AoE2 army-size attack trigger
     // Launches are army-size driven: a group of profile.attackSize (hard: 5)
     // launches once attackTick passes; one soldier fewer holds. The old

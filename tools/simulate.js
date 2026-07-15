@@ -129,9 +129,11 @@ function aggregate(reports) {
     findingsAcrossRuns: findingCounts,
     avgTicksPerSec: tps.length ? Math.round(tps.reduce((a, b) => a + b, 0) / tps.length) : null,
     anyErrors: reports.some(r => (r.health.jsErrors || []).length > 0),
+    watchdogFiresTotal: reports.reduce((a, r) => a + (r.health.watchdogFires || 0), 0),
     runs: reports.map(r => ({
       seed: r.config.seed, tick: r.end.tick, gameOver: r.end.gameOver, won: r.end.won,
       ages: r.end.ages, checksum: r.end.checksum, ticksPerSec: r.health.ticksPerSec,
+      watchdogFires: r.health.watchdogFires || 0, watchdogSamples: r.health.watchdogSamples || [],
       findings: r.findings, jsErrors: r.health.jsErrors,
     })),
   };

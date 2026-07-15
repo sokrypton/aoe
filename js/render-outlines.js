@@ -1,6 +1,6 @@
 // ---- True-silhouette selection outline ----
 // Renders the entity's exact silhouette into an offscreen buffer, dilates it
-// by 2px in 8 directions, then subtracts the original — leaving a clean gold
+// by 2px in 8 directions, then subtracts the original — leaving a clean
 // ring, which is blit onto the main canvas on top of everything drawn so far.
 //
 // This MUST be called from inside render()'s own X.save()/scale(ZOOM)/
@@ -127,7 +127,9 @@ function _outlineExtent(e){
 // visible seam where two individually-dilated rings overlap. `bufW`/`bufH`
 // is the buffer size (logical px); `originLeft`/`originTop` is where that
 // buffer's (0,0) sits on screen.
-function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
+// Default color WHITE for selection: the behind-building path passes a bright
+// team color, and a yellow selection ring collided with the yellow team's.
+function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffffff', clipC=null){
   _silEnsure(bufW,bufH);
   const ss = _silSuperSample();
   const physW = Math.ceil(bufW*ss), physH = Math.ceil(bufH*ss);
@@ -171,10 +173,10 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
   }
 
-  // ── Step 2: flatten mask to a solid gold silhouette ───────────────────
+  // ── Step 2: flatten mask to a solid-color silhouette ──────────────────
   _silFlatX.clearRect(0,0,physW,physH);
   _silFlatX.globalCompositeOperation='source-over';
-  _silFlatX.fillStyle='#ffd700';
+  _silFlatX.fillStyle=color;
   _silFlatX.fillRect(0,0,physW,physH);
   _silFlatX.globalCompositeOperation='destination-in';
   // 9-arg drawImage: copy only the first physW×physH pixels of the mask
@@ -215,6 +217,17 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
   _silRingX.drawImage(_silFlatC,0,0,physW,physH, 0,0,physW,physH);
   _silRingX.globalCompositeOperation='source-over';
 
+  // ── Step 3.5 (behind-building outline only): clip the ring to the
+  // occluder mask, so it shows ONLY where the unit is actually behind a
+  // building (not the parts hanging out over open ground). clipC is a
+  // viewport-space, ss=1 mask of the occluding buildings' pixels; the source
+  // rect is this buffer's screen region, upscaled to the ring's resolution.
+  if(clipC){
+    _silRingX.globalCompositeOperation='destination-in';
+    _silRingX.drawImage(clipC, originLeft, originTop, bufW, bufH, 0,0, physW, physH);
+    _silRingX.globalCompositeOperation='source-over';
+  }
+
   // ── Step 4: blit ring to screen at its logical-pixel size ─────────────
   // Destination is bufW×bufH logical pixels — the SAME units drawUnit/
   // drawBuilding draw in — so the active X.scale(ZOOM,ZOOM) transform
@@ -223,7 +236,35 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH){
   X.drawImage(_silRingC,0,0,physW,physH, originLeft, originTop, bufW, bufH);
 }
 
-// AoE2-style gold silhouette ring for selected units and buildings. Call
+// Viewport-space mask (ss=1) of all occluding buildings' pixels, rebuilt each
+// frame — clips the behind-building outline (drawBehindBuildingOutlines) to the
+// regions actually behind a building. Drawn at ZOOM=1 in logical screen coords
+// (matching _renderRingGroup's buffers), real camera so buildings land where
+// they render. One pass over the occluders — no per-group/per-unit work.
+let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0;
+function _buildOccMask(occs){
+  const needW=Math.ceil(W), needH=Math.ceil(H);
+  if(!_occMaskC || _occMaskW<needW || _occMaskH<needH){
+    _occMaskC=document.createElement('canvas');
+    _occMaskC.width=Math.max(needW,_occMaskW); _occMaskC.height=Math.max(needH,_occMaskH);
+    _occMaskX=_occMaskC.getContext('2d'); _occMaskW=_occMaskC.width; _occMaskH=_occMaskC.height;
+  }
+  _occMaskX.setTransform(1,0,0,1,0,0);
+  _occMaskX.clearRect(0,0,_occMaskW,_occMaskH);
+  const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
+  try{
+    for(const d of occs){
+      const en = d.type==='building' ? d : d.entity;
+      const part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
+                 : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
+                 : (d.type==='gate_door') ? 'door' : (d.part||null);
+      drawBuilding(en, part);
+    }
+  } finally { window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
+  return _occMaskC;
+}
+
+// AoE2-style white silhouette ring for selected units and buildings. Call
 // from inside render()'s active ZOOM transform (see the big comment above
 // _silSuperSample for why) — right after the main entity loop is the
 // natural spot, matching where the ring needs to land relative to
@@ -270,54 +311,22 @@ function drawOutlines(){
   _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
 }
 
-// ---- Behind-building team-color silhouettes ----
-// A unit whose sortVal loses to a building gets overpainted by it; AoE2 shows
-// a flat team-color silhouette of the unit through the building. Candidates
-// (units + occluders) are collected by render()'s dispatch loop AT the draw
-// call sites, so fog/scouted/garrison rules are inherited — anything not
-// drawn this frame can't silhouette or occlude.
-//
-// Buffer strategy: candidates are grouped by (team, exact occluder set); each
-// group shares one union-bbox buffer pair, so its occluding buildings re-draw
-// ONCE per group no matter how many units cluster behind them (a per-unit
-// scheme would re-run a Town Center's hundreds of vector calls per unit; a
-// shared screen-sized buffer can't be correct, since a building in front of
-// unit A may be behind unit B). Compositing only — no getImageData in the
-// frame path. Must be called inside render()'s active ZOOM transform (same
-// round-then-scale contract as the ring, see the top-of-file comment).
-const BSIL_ALPHA = 0.45;
-
-let _bsilAC=null,_bsilAX=null; // unit mask (logical space, scale(ss) applied)
-let _bsilBC=null,_bsilBX=null; // occluder mask (same space)
-let _bsilCC=null,_bsilCX=null; // foreground-unit mask (punched out of the silhouette)
-let _bsilSS=0,_bsilAllocW=0,_bsilAllocH=0;
-
-function _bsilEnsure(cssW,cssH){
-  // ss is dpr-only, NO ZOOM factor (unlike _silSuperSample): a flat translucent
-  // fill has no fine detail to keep crisp, and dropping ZOOM cuts mobile fill
-  // cost ~2.25x. Separate buffers from _sil* — different scale, same frame.
-  const ss=Math.min(dpr,2);
-  const needW=Math.max(_bsilAllocW,cssW), needH=Math.max(_bsilAllocH,cssH);
-  if(_bsilAC && _bsilSS===ss && _bsilAllocW>=needW && _bsilAllocH>=needH) return;
-  _bsilSS=ss; _bsilAllocW=needW; _bsilAllocH=needH;
-  const physW=Math.ceil(needW*ss), physH=Math.ceil(needH*ss);
-  function mk(){ let c=document.createElement('canvas'); c.width=physW; c.height=physH;
-    let x=c.getContext('2d'); x.scale(ss,ss); return [c,x]; }
-  [_bsilAC,_bsilAX]=mk(); [_bsilBC,_bsilBX]=mk(); [_bsilCC,_bsilCX]=mk();
-}
-
-// Frame scratch (grow-only pool / reused containers, render.js discipline).
-const _bsilOccBoxes = [];   // pooled bbox records, refilled each frame
-const _bsilGroups = new Map(); // "team|occIdxs" -> group record
-const _bsilIdxScratch = []; // per-unit matched-occluder indices
-const _bsilUnitInfo = [];   // pooled per-drawn-unit {e,sortVal,sx,sy,uL,uR,uT,uB}
-let _bsilNU = 0;            // live count in _bsilUnitInfo this frame
-const _bsilFrontScratch = []; // per-group foreground-unit infos to punch out
+// ---- Behind-building team-color OUTLINES ----
+// A unit whose sortVal loses to a building is hidden by it; like AoE2, show a
+// team-color OUTLINE of the occluded unit through the building. Candidate units
+// + occluders are collected by render()'s dispatch loop at the draw call sites,
+// so fog/scouted/garrison rules are inherited. Reuses the selection-ring path
+// (render shape -> dilate -> ring) clipped to the occluder pixels — no per-unit
+// intersection, no per-group offscreen compositing. Must run inside render()'s
+// active ZOOM transform (same round-then-scale contract as the ring).
+const _bsilOccBoxes = [];      // pooled occluder bbox records, refilled each frame
+const _bsilByTeam = new Map(); // team -> extent infos of its occluded units
 
 // Screen bbox of an occluder drawable (building or gate/market part proxy),
 // from the ENTITY footprint — deliberately generous: sortVal decides "in
-// front", pixels decide overlap, so a false positive only costs one building
-// draw whose intersection blits nothing.
+// front", pixels decide overlap (the clip mask trims the ring to real occluder
+// pixels), so a false positive costs nothing. The candidate sweep reads only
+// sortVal + the box; the exact part is re-derived in _buildOccMask.
 function _bsilFillOccBox(rec, d){
   const en = d.type==='building' ? d : d.entity;
   const b = BLDGS[en.btype];
@@ -326,158 +335,59 @@ function _bsilFillOccBox(rec, d){
   const ax = Math.round(iso.ix-camX+W/2);
   const ay = Math.round(iso.iy-camY+topH+H/2) - fh*HALF_TH; // footprint-top anchor, same as drawBuilding
   const halfW = (fw+fh)/2*HALF_TW + 14;
-  rec.en = en;
-  // Map each proxy type to the drawBuilding() part it paints, so mask B is
-  // JUST that part — not the whole building. Missing tc_back/tc_front here
-  // made them fall to null (whole TC), tinting a unit that was only in front
-  // of the keep but behind the roof.
-  rec.part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
-           : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
-           : (d.type==='gate_door') ? 'door'
-           : (d.part||null);
   rec.sortVal = d.sortVal;
-  rec.ax = ax; rec.ay = ay;
   rec.left = ax-halfW; rec.right = ax+halfW;
   rec.top = ay - (60 + 18*Math.max(fw,fh)); // conservative art-height pad
   rec.bottom = ay + (fh + (fw+fh)/2)*HALF_TH + 16; // footprint bottom + below-hang slack
 }
-
-function _bsilRenderGroup(g){
-  // Clamp the union of the group's UNIT boxes (the intersection can't exist
-  // outside them) to the viewport, like drawOutlines.
-  const M=2, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH;
-  const left = Math.max(g.minL, W/2-hw-M), right = Math.min(g.maxR, W/2+hw+M);
-  const top  = Math.max(g.minT, cyv-hh-M), bottom = Math.min(g.maxB, cyv+hh+M);
-  const bufW = right-left, bufH = bottom-top;
-  if(bufW<=0 || bufH<=0) return;
-  _bsilEnsure(bufW,bufH);
-  const ss=_bsilSS, physW=Math.ceil(bufW*ss), physH=Math.ceil(bufH*ss);
-
-  // Foreground units to punch out: anything drawn IN FRONT of ALL this
-  // group's occluders (sortVal past the frontmost) that overlaps the buffer.
-  // Without this, a nearer unit that legitimately occludes the building gets
-  // this group's ghost painted over it. Collected into _bsilCX below.
-  _bsilFrontScratch.length=0;
-  for(let i=0;i<_bsilNU;i++){
-    const info=_bsilUnitInfo[i];
-    if(info.sortVal<=g.frontSort) continue;
-    if(info.uR<left||info.uL>right||info.uB<top||info.uT>bottom) continue;
-    _bsilFrontScratch.push(info);
-  }
-  const hasFront=_bsilFrontScratch.length>0;
-
-  _bsilAX.clearRect(0,0,bufW,bufH);
-  _bsilBX.clearRect(0,0,bufW,bufH);
-  if(hasFront) _bsilCX.clearRect(0,0,bufW,bufH);
-  const sv={X,camX,camY,W,H,topH,ZOOM};
-  window._maskDraw=true; // suppress drawUnit/drawBuilding side effects + overlays
-  try{
-    W=2000; H=2000; topH=0; ZOOM=1;
-    const placeUnit=(e,sx,sy)=>{
-      const {ox,oy}=getUnitGroupOffset(e.id);
-      const iso=toIso(e.x,e.y);
-      camX=iso.ix+W/2-((sx-left)-ox);
-      camY=iso.iy+H/2+HALF_TH-((sy-top)-oy);
-      drawUnit(e);
-    };
-    // Units -> mask A (union). Same camera-fake placement as _renderRingGroup.
-    X=_bsilAX;
-    for(const u of g.units) placeUnit(u.e, u.sx, u.sy);
-    // Occluders -> mask B (union), each drawn ONCE for the whole group.
-    X=_bsilBX;
-    for(const idx of g.occIdxs){
-      const o=_bsilOccBoxes[idx];
-      const b=BLDGS[o.en.btype];
-      const fw=o.en.w||b.w, fh=o.en.h||b.h;
-      const iso=toIso(o.en.x+fw/2, o.en.y+fh/2);
-      camX=iso.ix+W/2-(o.ax-left);
-      camY=iso.iy+H/2-fh*HALF_TH-(o.ay-top);
-      drawBuilding(o.en, o.part);
-    }
-    // Foreground units -> mask C (union).
-    if(hasFront){ X=_bsilCX; for(const f of _bsilFrontScratch) placeUnit(f.e, f.sx, f.sy); }
-  } finally {
-    window._maskDraw=false;
-    X=sv.X; camX=sv.camX; camY=sv.camY;
-    W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
-  }
-
-  // unit ∩ buildings-in-front, minus foreground units, tinted. Each op clears
-  // pixels outside the painted region, so stale content from a previously-
-  // larger group is moot.
-  _bsilAX.globalCompositeOperation='destination-in';
-  _bsilAX.drawImage(_bsilBC,0,0,physW,physH, 0,0,bufW,bufH);
-  if(hasFront){
-    _bsilAX.globalCompositeOperation='destination-out';
-    _bsilAX.drawImage(_bsilCC,0,0,physW,physH, 0,0,bufW,bufH);
-  }
-  _bsilAX.globalCompositeOperation='source-in';
-  // Bright minimap palette, not the softer unit color: the silhouette is a
-  // "unit hiding here" cue like a minimap dot, so it needs max contrast (and
-  // the soft green ghost was muddy). See teamColorMinimap (js/core.js).
-  _bsilAX.fillStyle=teamColorMinimap(g.team);
-  _bsilAX.fillRect(0,0,bufW,bufH);
-  _bsilAX.globalCompositeOperation='source-over';
-
-  X.globalAlpha=BSIL_ALPHA;
-  X.drawImage(_bsilAC,0,0,physW,physH, left, top, bufW, bufH);
-  X.globalAlpha=1;
-}
-
-function drawBehindBuildingSilhouettes(units, occs){
-  if(!units.length || !occs.length) return; // common case: zero cost
-
+// Draw a team-color OUTLINE of each occluded unit (AoE2's mechanism for units
+// behind buildings/trees), reusing the selection-ring path. A unit is a
+// candidate if any building sorts in front of it and overlaps its box;
+// candidates are grouped by team and each team's set is outlined in one pass
+// (render shapes -> dilate -> ring), clipped to the occluder pixels so the ring
+// only shows where the unit is actually hidden. One dilate pass per team, no
+// per-unit occluder intersection — cheap enough for 200+ unit scenes.
+function drawBehindBuildingOutlines(units, occs){
+  if(!units.length || !occs.length) return;
   for(let i=0;i<occs.length;i++){
-    if(!_bsilOccBoxes[i]) _bsilOccBoxes[i]={en:null,part:null,sortVal:0,ax:0,ay:0,left:0,right:0,top:0,bottom:0};
+    if(!_bsilOccBoxes[i]) _bsilOccBoxes[i]={sortVal:0,left:0,right:0,top:0,bottom:0};
     _bsilFillOccBox(_bsilOccBoxes[i], occs[i]);
   }
   const nOcc=occs.length;
-
-  // Precompute every drawn unit's screen anchor + bbox once (same math/extents
-  // as _outlineExtent's unit branch — SIL_UNIT_SIZE box, group offset included
-  // or silhouettes drift). Reused for grouping AND the foreground punch-out.
-  _bsilNU=units.length;
-  for(let i=0;i<_bsilNU;i++){
-    const e=units[i];
-    if(!_bsilUnitInfo[i]) _bsilUnitInfo[i]={};
-    const info=_bsilUnitInfo[i];
-    const iso=toIso(e.x,e.y);
-    let sx=Math.round(iso.ix-camX+W/2);
-    let sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
-    const {ox,oy}=getUnitGroupOffset(e.id);
-    sx+=ox; sy+=oy;
-    info.e=e; info.sortVal=e.sortVal; info.sx=sx; info.sy=sy;
-    info.uL=sx-SIL_UNIT_SIZE/2; info.uR=sx+SIL_UNIT_SIZE/2;
-    info.uT=sy-66; info.uB=sy+(SIL_UNIT_SIZE-66);
-  }
-
-  _bsilGroups.clear();
-  for(let i=0;i<_bsilNU;i++){
-    const info=_bsilUnitInfo[i];
-    _bsilIdxScratch.length=0;
-    let frontSort=-Infinity;
+  // A selected unit already shows through the building via its white selection
+  // ring (drawOutlines blits on top of everything after this) — skip it here so
+  // it doesn't get a doubled team-color + white ring.
+  const sel = selected.length ? new Set(selected) : null;
+  _bsilByTeam.forEach(a=>a.length=0);
+  for(const e of units){
+    if(sel && sel.has(e)) continue;
+    const ext=_outlineExtent(e); if(!ext) continue;
+    let occluded=false;
     for(let j=0;j<nOcc;j++){
       const o=_bsilOccBoxes[j];
-      if(o.sortVal<=info.sortVal) continue;       // behind or same layer as the unit
-      if(o.right<info.uL || o.left>info.uR || o.bottom<info.uT || o.top>info.uB) continue;
-      _bsilIdxScratch.push(j);                     // ascending j — key is canonical without sorting
-      if(o.sortVal>frontSort) frontSort=o.sortVal;
+      if(o.sortVal<=e.sortVal) continue;
+      if(o.right<ext.left||o.left>ext.right||o.bottom<ext.top||o.top>ext.bottom) continue;
+      occluded=true; break;
     }
-    if(!_bsilIdxScratch.length) continue;
-
-    const key=info.e.team+'|'+_bsilIdxScratch.join(',');
-    let g=_bsilGroups.get(key);
-    if(!g){
-      g={team:info.e.team, occIdxs:_bsilIdxScratch.slice(), units:[], frontSort,
-         minL:info.uL, minT:info.uT, maxR:info.uR, maxB:info.uB};
-      _bsilGroups.set(key,g);
-    } else {
-      if(info.uL<g.minL)g.minL=info.uL; if(info.uT<g.minT)g.minT=info.uT;
-      if(info.uR>g.maxR)g.maxR=info.uR; if(info.uB>g.maxB)g.maxB=info.uB;
-    }
-    g.units.push({e:info.e, sx:info.sx, sy:info.sy});
+    if(!occluded) continue;
+    let arr=_bsilByTeam.get(e.team); if(!arr){ arr=[]; _bsilByTeam.set(e.team,arr); }
+    arr.push(ext);
   }
-
-  _bsilGroups.forEach(_bsilRenderGroup);
+  let any=false; _bsilByTeam.forEach(a=>{ if(a.length) any=true; });
+  if(!any) return;
+  const clip=_buildOccMask(occs); // occluder pixels — clips each ring to the occluded regions
+  const M=4, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH;
+  _bsilByTeam.forEach((infos, team)=>{
+    if(!infos.length) return;
+    let minL=Infinity,minT=Infinity,maxR=-Infinity,maxB=-Infinity;
+    for(const inf of infos){
+      if(inf.left<minL)minL=inf.left; if(inf.top<minT)minT=inf.top;
+      if(inf.right>maxR)maxR=inf.right; if(inf.bottom>maxB)maxB=inf.bottom;
+    }
+    minL=Math.max(minL,W/2-hw-M); maxR=Math.min(maxR,W/2+hw+M);
+    minT=Math.max(minT,cyv-hh-M); maxB=Math.min(maxB,cyv+hh+M);
+    const spanW=maxR-minL, spanH=maxB-minT;
+    if(spanW>0 && spanH>0) _renderRingGroup(infos, minL, minT, spanW, spanH, teamColorMinimap(team), clip);
+  });
 }
 

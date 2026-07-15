@@ -28,7 +28,7 @@ function drawGhost(){
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
-      let ok = canPlace(placing, t.x, t.y, myTeam, window.__editorMode);
+      let ok = canPlace(placing, t.x, t.y, myTeam, window.__editorMode, window.__editorMode);
       let {sx, sy} = mapToScreen(t.x, t.y);
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
       X.beginPath();
@@ -51,7 +51,7 @@ function drawGhost(){
     // instant a gate consumed its wall run). With no run it's a 1x1 red
     // ghost: honestly "can't place here".
   }
-  let ok=canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode);
+  let ok=canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode,window.__editorMode);
 
   // Draw ghost: actual building rendered semi-transparently
   let fakeE={

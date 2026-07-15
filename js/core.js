@@ -617,8 +617,8 @@ const BLDGS={
   // accept a rally point (execRally bails when builds is empty).
   // walkable: the market is an open-air plaza — once complete its whole
   // footprint passes units (see walkable() in pathfinding.js and the
-  // pushUnitsOut skip in entities.js); tiles stay `occupied` so nothing can
-  // be built on it.
+  // isFarm/walkable skip in clearFootprintForBuild); tiles stay `occupied` so
+  // nothing can be built on it.
   MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and lets you buy and sell resources for gold. Trade Carts earn gold by travelling to another player’s Market. Requires the Feudal Age.',icon:'⚖️'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).

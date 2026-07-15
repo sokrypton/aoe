@@ -776,11 +776,16 @@ function commitBuildingPlacement(btype, plan, team, complete){
   let bldg = createBuilding(btype, plan.ox, plan.oy, team, plan.gw, plan.gh);
   if (!bldg) return null;
   if (complete) {
+    // Instant, solid building (editor only — every gameplay caller passes
+    // complete=false). The editor's canPlace(rejectUnits) already refuses to
+    // place on an occupied tile, so the footprint is clear here: no shove.
     bldg.complete = true;
   } else {
     bldg.complete = false; bldg.buildProgress = 0;
     bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
     if (plan.replaced.length) bldg.wasWall = true;
+    // foundation: stays walkable; the build-gate clears the footprint gently
+    // when a builder commits (clearFootprintForBuild) — no placement shove.
   }
   return bldg;
 }

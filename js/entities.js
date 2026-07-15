@@ -29,24 +29,6 @@ function createUnit(type,x,y,team){
   entitiesById.set(e.id, e);
   return e;
 }
-function pushUnitsOut(bx,by,bw,bh){
-  entities.forEach(e=>{
-    if(e.type==='unit'&&!e.garrisonedIn){
-      let ux=Math.round(e.x), uy=Math.round(e.y);
-      if(ux>=bx&&ux<bx+bw&&uy>=by&&uy<by+bh){
-        if(typeof findSpawnTile==='function'){
-          let spawn=findSpawnTile(bx+bw,by+bh,8);
-          if(spawn){
-            e.x=spawn.x+0.5;e.y=spawn.y+0.5;
-            e.fromX=e.x;e.fromY=e.y;
-            if(typeof clearUnitPath==='function')clearUnitPath(e);
-            else e.path=[];
-          }
-        }
-      }
-    }
-  });
-}
 // THE one way tile occupancy is derived from a building's footprint:
 // creation stamps it here, and the save loader re-derives it from the saved
 // entities (occupied is never serialized — js/save.js v4). Keep any change
@@ -76,8 +58,11 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   if(b.isFarm&&y<MAP&&x<MAP){map[y][x].t=TERRAIN.FARM;map[y][x].res=farmFoodFor(team);markMapDirty(x,y);}
   entities.push(e);
   entitiesById.set(e.id, e);
-  // Walkable footprints (farms, the market plaza) never eject units — a
-  // unit standing there is standing on legal ground once the building is up.
-  if(!b.isFarm&&!b.walkable)pushUnitsOut(x,y,e.w,e.h);
+  // No displacement here: this stamps a COMPLETE building by default, but the
+  // gameplay foundation path flips it to complete=false right after, and a
+  // foundation stays walkable until work starts (the build-gate clears the
+  // footprint gently). Instant-solid placement is editor-only, and the editor's
+  // canPlace(rejectUnits) refuses an occupied tile up front — so no unit is
+  // ever standing where a solid building lands, and nothing needs shoving.
   return e;
 }

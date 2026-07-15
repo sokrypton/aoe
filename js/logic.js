@@ -1,5 +1,5 @@
 // ---- GAME LOGIC ----
-function canPlace(type,x,y,team=0,ignoreAge=false){
+function canPlace(type,x,y,team=0,ignoreAge=false,rejectUnits=false){
   // Age gate — sim-authoritative (binds humans, relayed guests, and AI). The
   // scenario editor passes ignoreAge=true: authoring isn't age-bound, but every
   // GEOMETRIC rule below (gate-on-wall, no build on water/resources, no overlap)
@@ -17,6 +17,19 @@ function canPlace(type,x,y,team=0,ignoreAge=false){
     let isWall = (tx, ty) => gateBaseAt(tx, ty, type, team);
     ({ ox, oy, gw: bw, gh: bh } = gateFootprint(x, y, isWall));
     if (bw === 1 && bh === 1) return false; // no matching run to build on
+  }
+  // rejectUnits (EDITOR only): the editor drops a COMPLETE, instantly-solid
+  // building, so refuse to place it on a unit — no shove/teleport, the author
+  // moves or erases the unit first. Gameplay leaves this false: a foundation is
+  // walkable and the build-gate clears the footprint gently, so building over
+  // your own units is fine (AoE2).
+  if(rejectUnits){
+    for(let i=0;i<entities.length;i++){
+      let u=entities[i];
+      if(u.type!=='unit'||u.garrisonedIn)continue;
+      let ux=Math.round(u.x), uy=Math.round(u.y);
+      if(ux>=ox&&ux<ox+bw&&uy>=oy&&uy<oy+bh)return false;
+    }
   }
   for(let dy=0;dy<bh;dy++)for(let dx=0;dx<bw;dx++){
     let nx=ox+dx,ny=oy+dy;
@@ -247,6 +260,7 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 //   FLEE_BEAR      mauled villager bear-hunt call-in        T30(90)
 //   GUARD_RETURN   guard-post return repath / back-off      T30(30) / T30(600)
 //   DROP_WAIT      all drop-off routes blocked patience     T30(30)
+//   DROP_TUCK      cosmetic slide-to-wall deposit bound      T30(30)
 //   GARRISON       crowded garrison entrance retry          T30(10), maxN 6
 //   FOLLOW         follow/escort repath cadence             T30(12)
 //   MOVE           multi-leg move repath cadence            T30(10)
@@ -254,7 +268,7 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 const RETRY = Object.freeze({
   CHASE:'chase', CHASE_BLOCKED:'chaseBlocked', HARVEST_WAIT:'harvestWait',
   FLEE_RAID:'fleeRaid', FLEE_BEAR:'fleeBear', GUARD_RETURN:'guardret',
-  DROP_WAIT:'dropWait', GARRISON:'garrison', FOLLOW:'follow',
+  DROP_WAIT:'dropWait', DROP_TUCK:'dropTuck', GARRISON:'garrison', FOLLOW:'follow',
   MOVE:'move', BUILD:'build',
 });
 
@@ -658,6 +672,42 @@ function guardZoneDist(z, px, py){
 // `claimed` set (keys "x,y") lets a group of callers fan OUT around the
 // footprint instead of all picking the one nearest tile — a claimed tile is
 // only skipped while any unclaimed perimeter tile remains.
+// True if any unit other than this site's own builders is standing on the
+// footprint — gates construction start (AoE2: "can't build until everyone's
+// out"). This site's builders hug the OUTSIDE edge (pressToContact keeps them
+// off the footprint), so they never block themselves; any other unit — idle,
+// passing through the still-walkable foundation, or enemy — pauses progress
+// until it clears, so the tiles never harden under a unit. Round()-based, same
+// tile convention as unitBlock/clearFootprintForBuild; includes movers
+// (unitBlock omits them, and a unit crossing must still hold off the hardening).
+function footprintOccupiedByOther(bt){
+  for(let i=0;i<entities.length;i++){
+    let u=entities[i];
+    if(u.type!=='unit'||u.hp<=0||u.garrisonedIn)continue;
+    if(u.buildTarget===bt.id)continue; // this site's builders stand at the edge
+    let ux=Math.round(u.x), uy=Math.round(u.y);
+    if(ux>=bt.x&&ux<bt.x+bt.w&&uy>=bt.y&&uy<bt.y+bt.h)return true;
+  }
+  return false;
+}
+// When a builder is ready but the footprint isn't clear, walk the NON-ENEMY
+// units off it (AoE2: your own units — and neutral animals — scatter when you
+// commit a foundation). ENEMY units are NOT shoved — you can't move their army,
+// so they block the build until they leave or die. A gentle walk order, not a
+// teleport; the unit keeps its task and paths back out over the still-walkable
+// foundation. Only nudges STATIONARY units (movers are already clearing), so it
+// never thrashes a path.
+function clearFootprintForBuild(bt){
+  for(let i=0;i<entities.length;i++){
+    let u=entities[i];
+    if(u.type!=='unit'||u.hp<=0||u.garrisonedIn)continue;
+    if(isEnemyOf(bt.team,u)||u.buildTarget===bt.id||u.path.length>0)continue;
+    let ux=Math.round(u.x), uy=Math.round(u.y);
+    if(ux<bt.x||ux>=bt.x+bt.w||uy<bt.y||uy>=bt.y+bt.h)continue;
+    let pt=nearestBldgPerimeter(u.x,u.y,bt,u.id);
+    pathUnitTo(u,pt.x,pt.y);
+  }
+}
 function nearestBldgPerimeter(px,py,bldg,ignore,claimed){
   let best=null,bd=999,bestAny=null,bdAny=999;
   for(let dy=-1;dy<=bldg.h;dy++)for(let dx=-1;dx<=bldg.w;dx++){
@@ -1257,13 +1307,18 @@ function updateGatherTask(e,config){
 
 function checkNextBuild(e){
   e.buildQueue = e.buildQueue || [];
+  // Honor buildBackoffUntil here too (as neededAIBuildingWork does): a site this
+  // builder just gave up on as UNREACHABLE must not be re-picked the same tick,
+  // or give-up → re-pick loops forever on a sealed foundation. The stamp
+  // expires, so a transient block heals.
+  let backedOff = bt => bt.buildBackoffUntil > tick;
   let unfinishedInQueue = e.buildQueue
     .map(id => entitiesById.get(id))
-    .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp));
+    .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp) && !backedOff(bt));
 
   if (unfinishedInQueue.length === 0) {
     // Look for any unfinished allied foundations nearby (within 25 tiles)
-    let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete);
+    let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete && !backedOff(en));
     if (unfinished.length > 0) {
       unfinished.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id); // deterministic tiebreak
       if (dist(e, unfinished[0]) <= 25) {
@@ -1296,6 +1351,37 @@ function checkNextBuild(e){
   }
 
   e.buildQueue = [];
+  return false;
+}
+
+// Site blocked (footprint occupied, can't start): don't idle — rotate to another
+// reachable, currently-UNBLOCKED unbuilt building and circle back later. The
+// blocked site stays in the queue (added if missing), so once it clears the
+// normal checkNextBuild sweep returns to it. Non-destructive: if nothing else
+// is workable, leaves the builder on its current target to wait. Candidates are
+// the queue plus nearby (≤25) allied foundations, same reach test as
+// checkNextBuild; deterministic id tiebreak.
+function tryBuildElsewhere(e, blockedId){
+  let seen = new Set(), cands = [];
+  for (let id of (e.buildQueue || [])) { let b = entitiesById.get(id);
+    if (b && b.type === 'building' && !b.complete && !seen.has(id)) { seen.add(id); cands.push(b); } }
+  for (let en of entities) { if (en.type === 'building' && en.team === e.team && !en.complete &&
+    !seen.has(en.id) && dist(e, en) <= 25) { seen.add(en.id); cands.push(en); } }
+  cands.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id);
+  for (let cand of cands) {
+    if (cand.id === blockedId) continue;
+    let b = BLDGS[cand.btype];
+    if (!b.isFarm && !b.walkable && cand.buildProgress === 0 && footprintOccupiedByOther(cand)) continue; // also blocked
+    let cpt = b.isFarm ? { x: cand.x, y: cand.y } : nearestBldgPerimeter(e.x, e.y, cand, e.id);
+    let close = b.isFarm ? dist(e, { x: cand.x + 0.5, y: cand.y + 0.5 }) < 1.2 : adjToBuilding(e.x, e.y, cand);
+    if (close || pathReaches(Math.round(e.x), Math.round(e.y), cpt.x, cpt.y, e.id)) {
+      e.buildQueue = e.buildQueue || [];
+      if (!e.buildQueue.includes(blockedId)) e.buildQueue.push(blockedId); // keep it to circle back
+      e.task = 'build'; e.buildTarget = cand.id; e.target = null;
+      pathUnitTo(e, cpt.x, cpt.y);
+      return true;
+    }
+  }
   return false;
 }
 
@@ -2119,11 +2205,20 @@ function updateVillagerDropoff(e){
       retryStamp(e,RETRY.DROP_WAIT,T30(30));
     }
   } else {
-    // Slide right up to the drop-off building and deposit AT the wall. This
-    // branch only runs once settled (path empty), so this just tucks the
-    // last bit in; dropContactSettled returns true when it can get no
-    // closer, so the deposit never hangs.
-    if(!dropContactSettled(e, drop)) return;
+    // Slide right up to the drop-off and deposit AT the wall. The tuck is
+    // COSMETIC — adjacency (checked above) already earns the deposit — so it
+    // must never HANG: at a crowded drop, unit separation can nudge the hauler
+    // back out each tick so dropContactSettled never reports "settled", spinning
+    // it forever holding its load. Bound it with DROP_TUCK — if it can't settle
+    // within the budget, deposit anyway.
+    if(!dropContactSettled(e, drop)){
+      if(!(retryActive(e,RETRY.DROP_TUCK) && retryReady(e,RETRY.DROP_TUCK))){
+        if(!retryActive(e,RETRY.DROP_TUCK)) retryStamp(e,RETRY.DROP_TUCK,T30(30));
+        return; // still sliding in, within budget
+      }
+      // budget elapsed without settling -> stop tucking, deposit now
+    }
+    retryClear(e,RETRY.DROP_TUCK);
     resourceStore(e.team)[e.carryType]+=e.carrying;
     e.carrying=0;
     avoidClear(e,'drops');
@@ -2166,11 +2261,11 @@ function updateVillagerBuild(e){
         // times before declaring the site unreachable and dropping it.
         if(!retryFail(e,RETRY.BUILD,0,6)) return;
         feedbackFor(e.team, () => showMsg('Building site is unreachable!'));
-        // Back the foundation off (any team): assigners skip it until
-        // the stamp expires (AI: neededAIBuildingWork) — without this,
-        // villagers get re-fed into the same unreachable site forever,
-        // a pathfinding storm that can freeze the game. Time-limited,
-        // not permanent: a site blocked by a passing crowd heals.
+        // Back the foundation off (any team): assigners skip it until the
+        // stamp expires (neededAIBuildingWork AND checkNextBuild) — without
+        // this, villagers get re-fed into the same unreachable site forever,
+        // a pathfinding storm that can freeze the game. Time-limited, not
+        // permanent: a site blocked by a passing crowd heals.
         bt.buildBackoffUntil=tick+900;
         if(!checkNextBuild(e)){
           e.task=null; // savedTask resume / AI reassignment reroutes from idle
@@ -2242,6 +2337,22 @@ function updateVillagerBuild(e){
     let vWorkers=Math.max(1,bt.lastWorkers||1);
     let workShare=(vWorkers+2)/(3*vWorkers);
     if (!bt.complete) {
+      // AoE2: a foundation is WALKABLE while buildProgress===0 (walkable() lets
+      // units cross an un-started site so a dropped foundation can't grief-block
+      // a lane), and construction can't START until the footprint is clear of
+      // everyone but its own builders. So the tiles only harden (buildProgress
+      // >0 → solid) once no one's standing on them, and can never seal a unit
+      // in — no teleporting anyone. Once solid they stay clear, so the gate only
+      // matters at 0. Farms/walkable buildings never harden, so they build
+      // regardless of who's on the plot.
+      if (bt.buildProgress === 0) {
+        let bd = BLDGS[bt.btype];
+        if (!bd.isFarm && !bd.walkable && footprintOccupiedByOther(bt)) {
+          clearFootprintForBuild(bt);     // walk non-enemies off; enemies just block
+          tryBuildElsewhere(e, bt.id);    // meanwhile go build the next site, circle back
+          return;
+        }
+      }
       bt.buildProgress+=workShare;
       // HP grows with construction (AoE2): each work tick adds its share
       // of maxHp, so a half-built structure has half its HP. Damage taken
@@ -3180,28 +3291,30 @@ function teamEliminated(team){
 }
 
 // ---- STUCK-UNIT WATCHDOG ----
-// General safety net over EVERY task/path state machine, host-only. Each
-// task loop is designed to either progress or clear itself (blocked steps
-// clear the path; repath branches give up after bounded retries) — the
-// watchdog exists for whatever escapes that design: a unit that stays
-// "busy" (path/task/target/buildTarget) while its ENTIRE observable state
-// is frozen for 8 game-seconds gets reset to idle. Idle is the honest
-// failure mode — visible via the "?" marker and idle button, military
-// re-acquires via auto-attack, villagers with a savedTask resume — and the
-// console.warn turns any silent freeze into a diagnosable report.
+// DIAGNOSTIC TRIPWIRE over EVERY task/path state machine, host-only, and
+// strictly REPORT-ONLY — it never alters gameplay. Each task loop is designed
+// to either progress or clear itself (blocked steps clear the path; repath
+// branches give up after bounded retries), so a unit that stays "busy"
+// (path/task/target/buildTarget) with its ENTIRE observable state frozen for 8
+// game-seconds is a BUG in one of those loops. The watchdog exists only to
+// SURFACE it — a console.warn (counted as health.watchdogFires in the headless
+// sim), never a reset. Fix the root instead: chase the warning to the wedged
+// state machine and make it progress or give up on its own.
 //
 // Legitimate stationary-busy states never trip it because their signature
 // keeps changing (gathering increments `carrying`; fighting cycles the
 // path/target as combat repositions) or they're exempted (deliberate
-// drop-off waits, garrisoned units, wildlife).
+// drop-off waits, garrisoned units, wildlife) — the exemptions keep the log
+// honest so a real freeze stands out.
 const STUCK_WATCHDOG_TICKS = T30(240);   // 8 game-seconds
 const GARRISON_HEAL_EVERY = T30(45);  // +1 hp per 1.5 game-seconds while garrisoned
 const STUCK_CHECK_EVERY = T30(30);       // sample once per game-second
 // Watch state lives ON the unit (e.stuck = {sig, since}) — plain sim data,
 // so it rides lockstep snapshots, resync payloads, and save files with zero
-// dedicated plumbing, and detEntityHash covers it (the watchdog force-clears
-// tasks, so WHEN it will fire is sim state). Dead units take their entry
-// with them — no side-table, no pruning pass.
+// dedicated plumbing. Recomputed deterministically each tick from hashed state;
+// it steers no gameplay (report-only), but detEntityHash still covers it so
+// peers' watch state stays in lockstep. Dead units take their entry with them —
+// no side-table, no pruning pass.
 function updateStuckWatchdog(){
   if (tick % STUCK_CHECK_EVERY !== 0) return;
   entities.forEach(e => {
@@ -3214,6 +3327,17 @@ function updateStuckWatchdog(){
     // making progress even if its target's SAMPLED hp looks flat (a wall an
     // enemy repairs in step). A genuinely wedged unit never gets to swing.
     if (e.lastAtkTick != null && tick - e.lastAtkTick < STUCK_WATCHDOG_TICKS) { e.stuck = undefined; return; }
+    // Builder deliberately waiting for its footprint to clear (AoE2: a build
+    // can't START until everyone's off the site — updateVillagerBuild gates the
+    // first buildProgress on this). A legitimate wait, not a wedge: own units
+    // auto-clear in a few ticks, and an enemy camping the site makes the builder
+    // WAIT (AoE2), not abandon the job.
+    if (e.buildTarget) {
+      let wb = entitiesById.get(e.buildTarget);
+      if (wb && wb.type === 'building' && !wb.complete && wb.buildProgress === 0 && footprintOccupiedByOther(wb)) {
+        e.stuck = undefined; return;
+      }
+    }
     // The TARGET's hp / build progress is part of the signature: a
     // stationary attacker or builder is making progress exactly when its
     // target's state is changing (including damage dealt by teammates —
@@ -3225,20 +3349,18 @@ function updateStuckWatchdog(){
       tgt ? tgt.hp : '', bt ? (bt.buildProgress || 0) + '_' + bt.hp : ''].join('|');
     if (!e.stuck || e.stuck.sig !== sig) { e.stuck = { sig, since: tick }; return; }
     if (tick - e.stuck.since >= STUCK_WATCHDOG_TICKS) {
-      // A wedged BUILDER means its site is effectively unreachable right
-      // now (blocked lane, sealed pocket): back the site off too, or the
-      // AI re-assigns the freed villager straight back into the same wedge.
-      let wbt = e.buildTarget ? entitiesById.get(e.buildTarget) : null;
-      if (wbt && wbt.type === 'building') wbt.buildBackoffUntil = tick + T30(900);
-      console.warn('[stuck-watchdog] freeing unit', e.id, e.utype,
+      // REPORT-ONLY: never touches gameplay, only logs. A freeze that reaches
+      // here is a state-machine BUG — fix it at the ROOT; do NOT reset the unit
+      // (that hides the cause and is itself interference). The warn, counted as
+      // health.watchdogFires (tools/sim.html), makes any freeze a loud,
+      // reproducible report; re-arm the timer so a persistent freeze re-warns
+      // once per window, not every tick.
+      console.warn('[stuck-watchdog] STUCK unit', e.id, e.utype,
         'task=' + e.task, 'target=' + e.target, 'path=' + e.path.length,
         'buildTarget=' + e.buildTarget + (bt ? ('(' + bt.btype + '@' + bt.x + ',' + bt.y + ' prog=' + (bt.buildProgress||0) + '/' + bt.buildTime + ' complete=' + bt.complete + ')') : ''),
         'gather=' + e.gatherX + ',' + e.gatherY, 'retry=' + JSON.stringify(e.retry||null),
         'at', e.x.toFixed(1) + ',' + e.y.toFixed(1));
-      clearUnitPath(e);
-      e.task = null; e.target = null; e.buildTarget = null; e.garrisonTarget = null;
-      clearGatherTarget(e);
-      e.stuck = undefined;
+      e.stuck.since = tick;
     }
   });
 }

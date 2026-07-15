@@ -446,7 +446,7 @@ function editorPlace(btype, tx, ty){
   // resources, no overlap) — only the age gate is bypassed (ignoreAge=true).
   // The ghost uses the same check (drawGhost passes window.__editorMode), so
   // what the green/red preview shows is exactly what places.
-  if (typeof canPlace === 'function' && !canPlace(btype, tx, ty, tool.team, true)) return null;
+  if (typeof canPlace === 'function' && !canPlace(btype, tx, ty, tool.team, true, true)) return null;
   let plan = resolveBuildingPlacement(btype, tx, ty, tool.team);
   return commitBuildingPlacement(btype, plan, tool.team, true);
 }

@@ -142,6 +142,16 @@ const SCENES = {
     const sc = createUnit('scout', 42, 42, 0); sc.dir = 7;
     (${pageLookAt})(43, 42);
     render();`,
+  selbehind: `(${pageStage})();
+    window.myTeam = 0;
+    // a SELECTED unit behind the TC: the white selection ring shows it through
+    // the roof, so the behind-building team outline must be SUPPRESSED (no
+    // doubled team-color + white ring).
+    createBuilding('TC', 41, 40, 0);
+    const sb = createUnit('scout', 42, 42, 0); sb.dir = 7;
+    selected.length = 0; selected.push(sb);
+    (${pageLookAt})(43, 42);
+    render();`,
   tctents: `(${pageStage})();
     window.myTeam = 0;
     // units sheltering under both tent canopies + the notch: the whole tent
