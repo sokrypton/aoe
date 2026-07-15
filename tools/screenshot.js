@@ -152,6 +152,18 @@ const SCENES = {
     selected.length = 0; selected.push(sb);
     (${pageLookAt})(43, 42);
     render();`,
+  treeoccl: `(${pageStage})();
+    window.myTeam = 0;
+    // units behind a stand of trees — team outline shows through the canopy
+    // where trees (in front, higher y+x) hide them, clipped to the tree pixels
+    // (not below/around on open grass). Both a mounted scout and a militia sit
+    // just behind the front trees.
+    for(let ty=30;ty<=35;ty++)for(let tx=30;tx<=35;tx++){ if(ty+tx>=63){ map[ty][tx].t=TERRAIN.FOREST; map[ty][tx].res=100; markMapDirty(tx,ty); } }
+    const ts = createUnit('scout', 31, 31, 0); ts.dir = 7;
+    createUnit('militia', 29, 33, 0);
+    window.fogDisabled = true; updateFog();
+    (${pageLookAt})(32, 33);
+    render();`,
   tctents: `(${pageStage})();
     window.myTeam = 0;
     // units sheltering under both tent canopies + the notch: the whole tent

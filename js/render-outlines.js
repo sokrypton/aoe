@@ -236,11 +236,13 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   X.drawImage(_silRingC,0,0,physW,physH, originLeft, originTop, bufW, bufH);
 }
 
-// Viewport-space mask (ss=1) of all occluding buildings' pixels, rebuilt each
-// frame — clips the behind-building outline (drawBehindBuildingOutlines) to the
-// regions actually behind a building. Drawn at ZOOM=1 in logical screen coords
-// (matching _renderRingGroup's buffers), real camera so buildings land where
-// they render. One pass over the occluders — no per-group/per-unit work.
+// Viewport-space mask (ss=1) of the pixels of the occluders that are actually
+// hiding a unit this frame — clips the behind-building outline
+// (drawBehindBuildingOutlines) to the regions really behind an occluder. Drawn
+// at ZOOM=1 in logical screen coords (matching _renderRingGroup's buffers), real
+// camera so occluders land where they render. `occs` is the candidate-driven
+// active set, so this is a handful of redraws even on a dense map — never all
+// on-screen occluders.
 let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0;
 function _buildOccMask(occs){
   const needW=Math.ceil(W), needH=Math.ceil(H);
@@ -254,6 +256,7 @@ function _buildOccMask(occs){
   const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
   try{
     for(const d of occs){
+      if(d.type==='tree'){ drawTreeEntity(d.x, d.y); continue; }
       const en = d.type==='building' ? d : d.entity;
       const part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
                  : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
@@ -311,23 +314,34 @@ function drawOutlines(){
   _renderRingGroup(infos, minLeft, minTop, spanW, spanH);
 }
 
-// ---- Behind-building team-color OUTLINES ----
-// A unit whose sortVal loses to a building is hidden by it; like AoE2, show a
-// team-color OUTLINE of the occluded unit through the building. Candidate units
-// + occluders are collected by render()'s dispatch loop at the draw call sites,
-// so fog/scouted/garrison rules are inherited. Reuses the selection-ring path
-// (render shape -> dilate -> ring) clipped to the occluder pixels — no per-unit
-// intersection, no per-group offscreen compositing. Must run inside render()'s
-// active ZOOM transform (same round-then-scale contract as the ring).
+// ---- Behind-occluder team-color OUTLINES ----
+// A unit whose sortVal loses to an occluder (building OR tree) is hidden by it;
+// like AoE2, show a team-color OUTLINE of the occluded unit through it. Candidate
+// units + occluders are collected by render()'s dispatch loop at the draw call
+// sites, so fog/scouted/garrison rules are inherited. Reuses the selection-ring
+// path (render shape -> dilate -> ring) clipped to the occluder pixels — no
+// per-unit intersection, no per-group offscreen compositing. Must run inside
+// render()'s active ZOOM transform (same round-then-scale contract as the ring).
 const _bsilOccBoxes = [];      // pooled occluder bbox records, refilled each frame
 const _bsilByTeam = new Map(); // team -> extent infos of its occluded units
+const _bsilActive = [];        // occluders actually hiding a unit THIS frame (mask input)
 
-// Screen bbox of an occluder drawable (building or gate/market part proxy),
-// from the ENTITY footprint — deliberately generous: sortVal decides "in
-// front", pixels decide overlap (the clip mask trims the ring to real occluder
-// pixels), so a false positive costs nothing. The candidate sweep reads only
-// sortVal + the box; the exact part is re-derived in _buildOccMask.
+// Screen bbox of an occluder drawable (building/gate/market part proxy, or a
+// tree) — deliberately generous: sortVal decides "in front", pixels decide
+// overlap (the clip mask trims the ring to real occluder pixels), so a false
+// positive costs nothing. The candidate sweep reads only sortVal + the box; the
+// exact draw is re-derived in _buildOccMask.
 function _bsilFillOccBox(rec, d){
+  rec.sortVal = d.sortVal;
+  if(d.type==='tree'){
+    // 1-tile canopy; box from the tile's screen anchor (mapToScreen, same as
+    // drawTreeEntity), padded up for the canopy and down to the trunk base.
+    const p = mapToScreen(d.x, d.y);
+    const ax = Math.round(p.sx), ay = Math.round(p.sy);
+    rec.left = ax-(HALF_TW+10); rec.right = ax+(HALF_TW+10);
+    rec.top = ay-64; rec.bottom = ay+TH+8;
+    return;
+  }
   const en = d.type==='building' ? d : d.entity;
   const b = BLDGS[en.btype];
   const fw = en.w||b.w, fh = en.h||b.h;
@@ -335,7 +349,6 @@ function _bsilFillOccBox(rec, d){
   const ax = Math.round(iso.ix-camX+W/2);
   const ay = Math.round(iso.iy-camY+topH+H/2) - fh*HALF_TH; // footprint-top anchor, same as drawBuilding
   const halfW = (fw+fh)/2*HALF_TW + 14;
-  rec.sortVal = d.sortVal;
   rec.left = ax-halfW; rec.right = ax+halfW;
   rec.top = ay - (60 + 18*Math.max(fw,fh)); // conservative art-height pad
   rec.bottom = ay + (fh + (fw+fh)/2)*HALF_TH + 16; // footprint bottom + below-hang slack
@@ -350,15 +363,17 @@ function _bsilFillOccBox(rec, d){
 function drawBehindBuildingOutlines(units, occs){
   if(!units.length || !occs.length) return;
   for(let i=0;i<occs.length;i++){
-    if(!_bsilOccBoxes[i]) _bsilOccBoxes[i]={sortVal:0,left:0,right:0,top:0,bottom:0};
+    if(!_bsilOccBoxes[i]) _bsilOccBoxes[i]={sortVal:0,left:0,right:0,top:0,bottom:0,active:false};
+    _bsilOccBoxes[i].active=false;
     _bsilFillOccBox(_bsilOccBoxes[i], occs[i]);
   }
   const nOcc=occs.length;
-  // A selected unit already shows through the building via its white selection
+  // A selected unit already shows through the occluder via its white selection
   // ring (drawOutlines blits on top of everything after this) — skip it here so
   // it doesn't get a doubled team-color + white ring.
   const sel = selected.length ? new Set(selected) : null;
   _bsilByTeam.forEach(a=>a.length=0);
+  _bsilActive.length=0;
   for(const e of units){
     if(sel && sel.has(e)) continue;
     const ext=_outlineExtent(e); if(!ext) continue;
@@ -367,7 +382,12 @@ function drawBehindBuildingOutlines(units, occs){
       const o=_bsilOccBoxes[j];
       if(o.sortVal<=e.sortVal) continue;
       if(o.right<ext.left||o.left>ext.right||o.bottom<ext.top||o.top>ext.bottom) continue;
-      occluded=true; break;
+      occluded=true;
+      // Candidate-driven: the clip mask redraws ONLY occluders that are actually
+      // hiding a unit this frame — a handful, whether the map holds 30 buildings
+      // or a forest of trees — not every occluder on screen. (No early break:
+      // a unit can be behind several occluders and the mask needs them all.)
+      if(!o.active){ o.active=true; _bsilActive.push(occs[j]); }
     }
     if(!occluded) continue;
     let arr=_bsilByTeam.get(e.team); if(!arr){ arr=[]; _bsilByTeam.set(e.team,arr); }
@@ -375,7 +395,7 @@ function drawBehindBuildingOutlines(units, occs){
   }
   let any=false; _bsilByTeam.forEach(a=>{ if(a.length) any=true; });
   if(!any) return;
-  const clip=_buildOccMask(occs); // occluder pixels — clips each ring to the occluded regions
+  const clip=_buildOccMask(_bsilActive); // occluder pixels — clips each ring to the occluded regions
   const M=4, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH;
   _bsilByTeam.forEach((infos, team)=>{
     if(!infos.length) return;

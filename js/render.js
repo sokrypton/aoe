@@ -347,7 +347,7 @@ function render(){
     }
     else if(e.type==='farm_part') drawBuilding(e.entity, e.part); // flat — never occludes
     else if(e.type==='corpse') drawCorpse(e);
-    else if(e.type==='tree') drawTreeEntity(e.x, e.y);
+    else if(e.type==='tree'){ drawTreeEntity(e.x, e.y); _silOccScratch.push(e); } // trees occlude units too (AoE2)
     else {
       drawUnit(e);
       if(!e.garrisonedIn && e.utype!=='sheep_carcass') _silUnitScratch.push(e);
