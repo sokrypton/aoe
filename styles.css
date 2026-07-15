@@ -697,6 +697,9 @@ canvas {
   color: #ffd700;
   font: bold 14px 'Cinzel', Georgia, serif;
   margin-bottom: 7px;
+  cursor: move;            /* drag handle (makeMktPopupDraggable, js/ui.js) */
+  touch-action: none;      /* claim touch-drag; don't let it scroll/gesture */
+  user-select: none;
 }
 #mkt-popup-ico{ width: 20px; height: 20px; display: inline-block; }
 #mkt-popup-head span:nth-child(2){ flex: 1; }

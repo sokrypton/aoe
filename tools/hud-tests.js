@@ -728,6 +728,30 @@ function pageSuite() {
       && popupOk.reopenOnRetap;
     results.push({ name: 'hud: mobile market exchange is a dismissible popup (strip stays clear)', pass: popupPass, detail: popupPass?'':JSON.stringify(popupOk) });
 
+    // Market popup drags by its header (pointer events) and keeps its dragged
+    // position across the innerHTML rebuild that fires on every price tick.
+    const dragOk = await page.evaluate(`(()=>{
+      selected.length=0; window.__mktPopupHidden=false; window.__mktPopupPos=null;
+      const mk=createBuilding('MARKET',26,26,0); selected=[mk]; updateUI();
+      const pop=document.getElementById('mkt-popup');
+      const head=pop.querySelector('#mkt-popup-head');
+      const before=pop.getBoundingClientRect();
+      const sx=before.left+20, sy=before.top+8;
+      head.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,clientX:sx,clientY:sy}));
+      head.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:1,clientX:sx-40,clientY:sy-30}));
+      const after=pop.getBoundingClientRect();
+      head.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1}));
+      const posSet=!!window.__mktPopupPos;
+      refreshMktPopup(mk); // price-tick rebuild must NOT reset the position
+      const afterRebuild=pop.getBoundingClientRect();
+      selected.length=0; updateUI();
+      return { movedX:Math.round(after.left-before.left), movedY:Math.round(after.top-before.top),
+               posSet, persistX:Math.round(afterRebuild.left-after.left), persistY:Math.round(afterRebuild.top-after.top) };
+    })()`);
+    const dragPass = dragOk.movedX===-40 && dragOk.movedY===-30 && dragOk.posSet
+      && Math.abs(dragOk.persistX)<=1 && Math.abs(dragOk.persistY)<=1;
+    results.push({ name: 'hud: market popup drags by its header + keeps position across rebuilds', pass: dragPass, detail: dragPass?'':JSON.stringify(dragOk) });
+
     // ---- Desktop tap-mode (index.html): REAL mouse events through the
     // mouseup dispatch. submitCommand is stubbed to capture commands (the
     // sim is paused anyway); screen coords derive from the same transform

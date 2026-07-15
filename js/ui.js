@@ -105,7 +105,45 @@ function refreshMktPopup(mkt){
   pop.innerHTML=`<div id="mkt-popup-head"><span class="sprite-icon icon-MARKET" id="mkt-popup-ico"></span><span>Market</span><button type="button" id="mkt-popup-x">✕</button></div>`;
   pop.querySelector('#mkt-popup-x').onclick=()=>{ window.__mktPopupHidden=true; pop.style.display='none'; };
   pop.appendChild(buildMktExchange());
+  applyMktPopupPos(pop);      // re-apply a dragged position (innerHTML rebuilds every price tick)
+  makeMktPopupDraggable(pop); // (re)wire the freshly-rebuilt header as the drag handle
   refreshActionAffordability();
+}
+
+// Re-apply a previously dragged position (window.__mktPopupPos), clamped to the
+// current viewport (window may have resized). No stored pos → the CSS default
+// (centered above the bottom bar) stands.
+function applyMktPopupPos(pop){
+  let p=window.__mktPopupPos; if(!p) return;
+  let r=pop.getBoundingClientRect();
+  let left=Math.max(0, Math.min(p.left, window.innerWidth - r.width));
+  let top =Math.max(0, Math.min(p.top,  window.innerHeight - r.height));
+  pop.style.left=left+'px'; pop.style.top=top+'px'; pop.style.right='auto'; pop.style.bottom='auto'; pop.style.transform='none';
+}
+
+// Drag the exchange popup by its header. Pointer events (mouse + touch); the ✕
+// and the tappable buy/sell cells are NOT handles, so taps on them are never
+// swallowed. Pointer capture + stopPropagation keep the drag off the canvas
+// (no pan). Position persists in window.__mktPopupPos across rebuilds/reopens.
+function makeMktPopupDraggable(pop){
+  let head=pop.querySelector('#mkt-popup-head'); if(!head) return;
+  head.addEventListener('pointerdown', e=>{
+    if(e.target.closest('#mkt-popup-x')) return; // the close button, not a drag
+    e.preventDefault(); e.stopPropagation();
+    let r=pop.getBoundingClientRect();
+    let startL=r.left, startT=r.top, px=e.clientX, py=e.clientY, w=r.width, h=r.height;
+    pop.style.left=startL+'px'; pop.style.top=startT+'px'; pop.style.right='auto'; pop.style.bottom='auto'; pop.style.transform='none';
+    try{ head.setPointerCapture(e.pointerId); }catch(_){} // synthetic/edge pointers may reject capture
+    let move=ev=>{
+      let nl=Math.max(0, Math.min(startL+(ev.clientX-px), window.innerWidth - w));
+      let nt=Math.max(0, Math.min(startT+(ev.clientY-py), window.innerHeight - h));
+      pop.style.left=nl+'px'; pop.style.top=nt+'px';
+      window.__mktPopupPos={left:nl, top:nt};
+    };
+    let up=()=>{ head.removeEventListener('pointermove',move); head.removeEventListener('pointerup',up); };
+    head.addEventListener('pointermove',move);
+    head.addEventListener('pointerup',up);
+  });
 }
 
 // Re-tapping an already-SELECTED Market reopens a dismissed exchange popup
