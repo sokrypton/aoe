@@ -3284,8 +3284,20 @@ function drawUnit(e){
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
 
-  // Floating overlays (HP bar, idle "?") are NOT part of the body silhouette
-  // — skip them in the outline mask pass, or a wounded selected unit gets a
+  // Idle indicator — part of the unit's SHAPE, so it draws in the mask pass
+  // too: the selection ring wraps it and the behind-building silhouette shows
+  // it (spot an idle villager hidden behind a building). Keep showing while
+  // walking, as long as no task/target is actually assigned (a bare move order
+  // isn't "working"). Absolute coords — not under UNIT_SCALE.
+  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
+    X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
+    X.font='bold 16px sans-serif';X.textAlign='center';
+    X.strokeText('?',sx,sy-20*UNIT_SCALE);
+    X.fillText('?',sx,sy-20*UNIT_SCALE);
+  }
+
+  // Remaining floating overlays (the HP bar) are NOT part of the body
+  // silhouette — skip them in the mask pass, or a wounded selected unit gets a
   // detached gold ring hovering around its HP bar rectangle.
   if(window._maskDraw) return;
 
@@ -3301,13 +3313,5 @@ function drawUnit(e){
   // pass after every building this frame, so it stays visible even when a
   // building is painted over this unit later in the depth sort (see there
   // for why: this codebase has no z-buffer, just one Y-sorted paint pass).
-  // Idle indicator — keep showing while walking too, as long as no
-  // task/target is actually assigned (a bare move order isn't "working").
-  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
-    X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2; // absolute coords — not under UNIT_SCALE
-    X.font='bold 16px sans-serif';X.textAlign='center';
-    X.strokeText('?',sx,sy-20*UNIT_SCALE);
-    X.fillText('?',sx,sy-20*UNIT_SCALE);
-  }
 }
 

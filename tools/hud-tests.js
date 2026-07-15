@@ -344,6 +344,23 @@ function pageSuite() {
     assert(!document.querySelector('#actions .queue-slot'), 'mobile skin must not render queue slots');
   });
 
+  T('hud: action strip rebuilds when a selected foundation finishes (Cancel Build -> train actions)', () => {
+    stage();
+    resourceStore(0).food = 500; resourceStore(0).wood = 500;
+    const b = createBuilding('BARRACKS', 14, 14, 0);
+    b.complete = false; b.buildProgress = Math.floor(b.buildTime * 0.5); b.hp = Math.floor(b.maxHp * 0.5);
+    selected = [b]; updateUI();
+    const hasCancel = () => [...document.querySelectorAll('#actions .btn-label')].some(l => l.textContent === 'Cancel Build');
+    const hasTrain = () => !!document.querySelector('#actions .act-btn[data-tip-type="unit"]');
+    assert(hasCancel(), 'in-progress foundation shows Cancel Build');
+    assert(!hasTrain(), 'in-progress foundation shows no train actions');
+    // Finish it the way the sim does, then refresh — the strip must rebuild.
+    b.complete = true; b.buildProgress = b.buildTime; b.hp = b.maxHp;
+    updateUI();
+    assert(!hasCancel(), 'finished building must drop the Cancel Build button');
+    assert(hasTrain(), 'finished building must show its train actions');
+  });
+
   T('hud: game over shows the outcome card even with units selected', () => {
     stage();
     const m = createUnit('militia', 20, 20, 0);

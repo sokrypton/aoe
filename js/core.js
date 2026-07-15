@@ -522,6 +522,14 @@ const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
   return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[teamColorIdx(team)];
 }
+// PURE, maxed-out player colors for the MINIMAP only (AoE2 does the same): a
+// few-px dot on green terrain needs maximum contrast, so the map uses vivid
+// primaries where the unit art uses the softer PLAYER_TEAM_COLORS above. Same
+// order (blue, red, green, yellow) and same teamColorMap remap.
+const PLAYER_TEAM_COLORS_MINIMAP = ['#0000ff', '#ff0000', '#00ff00', '#ffff00'];
+function teamColorMinimap(team){
+  return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS_MINIMAP[teamColorIdx(team)];
+}
 // Per-seat display names chosen in the lobby (js/lobby.js). teamNames[team] =
 // string | null (null = no name yet / AI / empty seat). Cosmetic and viewer-
 // independent — same rules as teamColorMap: never hashed, never snapshotted.

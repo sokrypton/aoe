@@ -328,6 +328,35 @@ const SCENES = {
     createUnit('militia',29.1,32.6,1);  // enemy, behind door centre
     (${pageLookAt})(29, 33);
     render();`,
+  idleq: `(${pageStage})();
+    window.myTeam = 0;
+    // LEFT: a SELECTED idle villager — the gold outline should wrap the "?".
+    const v1=createUnit('villager',24,31,0); selected.length=0; selected.push(v1);
+    // RIGHT: an idle villager BEHIND the TC keep — the silhouette should
+    // include the "?" so you can spot the hidden idle villager.
+    createBuilding('TC',28,28,0);
+    createUnit('villager',29,29,0);
+    (${pageLookAt})(27, 30);
+    render();`,
+  greenA: `(${pageStage})();
+    window.myTeam = 2; // green team's perspective (color index 2)
+    [[25,28],[27,30],[29,28],[26,31],[28,32]].forEach(([x,y])=>createUnit('militia',x,y,2));
+    createUnit('villager',27,28,2); createUnit('scout',30,30,2);
+    (${pageLookAt})(27, 30); render();`,
+  greenB: `(${pageStage})();
+    window.myTeam = 2;
+    PLAYER_TEAM_COLORS[2] = '#35c945'; PLAYER_TEAM_COLORS_DARK[2] = '#1f9433'; // AoE2-style vivid green
+    [[25,28],[27,30],[29,28],[26,31],[28,32]].forEach(([x,y])=>createUnit('militia',x,y,2));
+    createUnit('villager',27,28,2); createUnit('scout',30,30,2);
+    (${pageLookAt})(27, 30); render();`,
+  silcolor: `(${pageStage})();
+    window.myTeam = 0;
+    // blue/red/green units behind the TC keep — silhouettes should be BRIGHT.
+    createBuilding('TC',28,28,0);
+    createUnit('militia',29.4,28.6,0); // blue
+    createUnit('militia',28.6,29.4,1); // red
+    createUnit('militia',29.0,29.0,2); // green
+    (${pageLookAt})(28.5, 29); render();`,
   frontpunch: `(${pageStage})();
     window.myTeam = 0;
     // foreground punch-out: a unit BEHIND a house (silhouette) and a unit

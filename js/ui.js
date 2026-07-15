@@ -526,7 +526,14 @@ function updateUI(){
     // it) must refresh the strip when a guard/stance command lands.
     +':gd'+selected.filter(s=>s.type==='unit').map(s=>(s.order&&GUARD_ORDER_KINDS.has(s.order.kind))?1:0).join('')
     +':'+(selected[0]&&selected[0].btype==='MILL'?(resourceStore(myTeam).prepaidFarms||0):'')
-    +':'+(selected[0]&&selected[0].btype==='MARKET'?(mp=>mp.food+'.'+mp.wood+'.'+mp.stone)(marketPricesFor(myTeam)):'');
+    +':'+(selected[0]&&selected[0].btype==='MARKET'?(mp=>mp.food+'.'+mp.wood+'.'+mp.stone)(marketPricesFor(myTeam)):'')
+    // Construction state flips the whole strip: an in-progress foundation
+    // shows Cancel Build, a finished one shows its train/research actions. Key
+    // on the FLAGS (complete/exhausted/upgrading), NOT buildProgress — the
+    // latter changes every tick and would rebuild the strip 30×/s (eating
+    // queue-slot clicks). Without this the strip never refreshed when a
+    // building finished while still selected.
+    +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')+(s.upgrading?'u':'')).join('.');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');

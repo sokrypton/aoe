@@ -202,7 +202,7 @@ function drawMinimap(){
     // read as a deliberate alert rather than a flicker.
     let recentlyHit=e.team===myTeam&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
     let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
-    let color=(isSel||blinkOn)?'#ffffff':teamColor(e.team);
+    let color=(isSel||blinkOn)?'#ffffff':teamColorMinimap(e.team);
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;
       fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],color);

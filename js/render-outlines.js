@@ -412,7 +412,10 @@ function _bsilRenderGroup(g){
     _bsilAX.drawImage(_bsilCC,0,0,physW,physH, 0,0,bufW,bufH);
   }
   _bsilAX.globalCompositeOperation='source-in';
-  _bsilAX.fillStyle=teamColor(g.team);
+  // Bright minimap palette, not the softer unit color: the silhouette is a
+  // "unit hiding here" cue like a minimap dot, so it needs max contrast (and
+  // the soft green ghost was muddy). See teamColorMinimap (js/core.js).
+  _bsilAX.fillStyle=teamColorMinimap(g.team);
   _bsilAX.fillRect(0,0,bufW,bufH);
   _bsilAX.globalCompositeOperation='source-over';
 
