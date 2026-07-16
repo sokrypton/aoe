@@ -790,6 +790,11 @@ function updateUI(){
   // and .multi-select already hides the whole #sel-stats card; classic
   // never had a rule for it. One class, one meaning.)
   if(selInfo) selInfo.classList.toggle('multi-select', ((isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver) || gameOverTile);
+  // A single real unit/building OR the null-selection age crest: keep the one
+  // grid tile, but on desktop widths CSS reveals the already-populated
+  // #sel-stats readout beside it (the crest shows the age name). Genuine
+  // multi-select/garrison stay tiles-only.
+  if(selInfo) selInfo.classList.toggle('single-sel', singleGrid || idleCrest);
   // The grid gets its OWN dirty key: only what it actually renders (selection
   // membership, per-unit HP, garrison members). Keying it on the full
   // currentSelectionDetails rebuilt every icon ~30×/s while watching a
@@ -839,8 +844,12 @@ function updateUI(){
       // live HP, combat stats, a villager's job — resolved from these ids
       // at hover time (descriptorForSelTile). dataset, not title: a native
       // title would double up with the custom #tooltip.
-      icon.dataset.tileIds=g.members.map(m=>m.id).join(',');
-      icon.dataset.tipName=(g.data&&g.data.name||g.key)+(g.members.length>1?' ×'+g.members.length:'');
+      // A single selection now expands its own #sel-stats readout beside the
+      // tile (desktop), so skip the tooltip there — it would just duplicate it.
+      if(!singleGrid){
+        icon.dataset.tileIds=g.members.map(m=>m.id).join(',');
+        icon.dataset.tipName=(g.data&&g.data.name||g.key)+(g.members.length>1?' ×'+g.members.length:'');
+      }
       let avgHpPct=Math.max(0,Math.min(100,Math.round(
         g.members.reduce((sum,u)=>sum+u.hp/u.maxHp,0)/g.members.length*100)));
       let hpColor='#2b8a3e';
@@ -858,7 +867,7 @@ function updateUI(){
         badge.textContent=g.members.length;
         icon.appendChild(badge);
       }
-      icon.dataset.tipDesc=title(g);
+      if(!singleGrid) icon.dataset.tipDesc=title(g);
       icon.onclick=(ev)=>onClick(g,ev);
       if(onRemove) icon.oncontextmenu=(ev)=>{ ev.preventDefault(); onRemove(g,ev); };
       // Single-unit tile: double-click/tap toggles camera follow (with the
@@ -909,8 +918,8 @@ function updateUI(){
       let icon = document.createElement('div');
       icon.className = 'sel-unit-icon';
       setPortraitIcon(icon, 'age-' + AGES[crestIdx].key, '🏛️');
-      icon.dataset.tipName = advTC ? ('Advancing to ' + AGES[crestIdx].name + '…') : AGES[crestIdx].name;
-      if (advTC) icon.dataset.tipDesc = 'Villager training is paused at the Town Center while advancing.';
+      // No tooltip: the expanded card (desktop) shows the age name beside the
+      // crest; narrow widths keep the crest alone.
       selGrid.appendChild(icon);
     } else if(gameOverTile){
       // OUTCOME tile: the trophy/skull drawn as the exact same single tile as
@@ -959,8 +968,10 @@ function updateUI(){
       // Advance button).
       let crestIdx = myTC ? myTC.research.target : ageIdx;
       if (port) { setPortraitIcon(port, 'age-' + AGES[crestIdx].key, '🏛️'); port.classList.remove('cam-locked'); }
-      document.getElementById('sel-name').textContent = '';
-      document.getElementById('sel-details').textContent = '';
+      // Desktop card reveals these beside the crest (single-sel); narrow widths
+      // keep the crest alone (#sel-stats hidden). Age name + advancing status.
+      document.getElementById('sel-name').textContent = AGES[crestIdx].name;
+      document.getElementById('sel-details').textContent = myTC ? 'Advancing…' : '';
       return;
     }
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }

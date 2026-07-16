@@ -2426,6 +2426,23 @@ canvas {
 #ui-switch-link:hover { opacity: 1; }
 #ui-switch-link { color: #d8cba0; }
 
+/* Legal + open-source line in the dark backdrop below the menu box; width is
+   pinned to the menu box (fixed-size menu block) so it aligns edge-to-edge. */
+#menu-disclaimer {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  margin: 8px auto 0;
+  padding: 0 6px;
+  text-align: center;
+  font-family: Georgia, serif;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #96865c;
+  text-shadow: 0 1px 3px #000;
+}
+#menu-disclaimer a { color: #ccb069; text-decoration: underline; }
+#menu-disclaimer a:hover { color: #ffd700; }
+
 #mp-share-note {
   margin-top: 7px;
   font-family: Georgia, serif;
@@ -2464,6 +2481,8 @@ canvas {
   width: 390px !important;
   max-height: none !important;
 }
+#menu-disclaimer { width: 390px; }
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
   #tutorial-box { width: 720px !important; }
+  #menu-disclaimer { width: 720px; }
 }

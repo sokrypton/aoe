@@ -81,6 +81,12 @@ const variant = window.UI_VARIANT || 'mobile';
 
 const SWITCH_LABEL = variant === 'classic' ? '📱 Switch to Mobile UI' : '🏰 Switch to Classic UI';
 
+// Legal + provenance line shown under the main menu (the dark backdrop). One
+// copy, interpolated where needed.
+const DISCLAIMER_HTML = `A free, open-source fan game — not affiliated with Microsoft, Xbox Game
+  Studios, Ensemble Studios, or the Age of Empires franchise. Feedback welcome via
+  <a href="https://github.com/sokrypton/aoe" target="_blank" rel="noopener">GitHub</a>.`;
+
 // Desktop controls differ per skin: classic keeps the AoE2 left-select /
 // right-command contract; the mobile skin uses the TAP model on desktop
 // too (a left-click selects OR commands by context — see the mouseup
@@ -242,13 +248,6 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div class="help-section">
       <h4>🙏 Thanks</h4>
       <p>Beta testers who shaped the game with their feedback: <b>Jeremy Ilagan</b>, <b>Orr Ashenberg</b>, <b>Jordan Hoff</b>, and <b>Qing Feng</b>.</p>
-    </div>
-
-    <div class="help-disclaimer">
-      &ldquo;Age of Epochs II&rdquo; is a free, fan-made game inspired by classic
-      real-time strategy titles. It is not an official product and is not affiliated
-      with, endorsed by, or connected to Microsoft, Xbox Game Studios, Ensemble
-      Studios, or the Age of Empires franchise.
     </div>
   </div>
 </div>
@@ -455,6 +454,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 </div>
 </div>
 <div id="ui-switch-row"><a id="ui-switch-link" href="#">${SWITCH_LABEL}</a></div>
+<div id="menu-disclaimer">${DISCLAIMER_HTML}</div>
 </div>
 </div>
 `);

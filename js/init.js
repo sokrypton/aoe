@@ -267,6 +267,10 @@ function updateUiSwitchVisibility(){
   // very much wants the escape hatch back to the mobile UI.
   let wrongAudience = isMobile && !(typeof isClassicUI !== 'undefined' && isClassicUI);
   row.style.display = (preGame && !wrongAudience) ? '' : 'none';
+  // The disclaimer shares the pristine-pre-game-main-menu condition (all
+  // audiences) — it disappears on Options / Resume / in-game / any MP panel.
+  let disc = document.getElementById('menu-disclaimer');
+  if (disc) disc.style.display = preGame ? '' : 'none';
 }
 function menuPanelIsMain(){
   let opts = document.getElementById('menu-panel-options');
