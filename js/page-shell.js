@@ -192,11 +192,23 @@ document.body.insertAdjacentHTML('afterbegin', `
     </div>
 
     <div class="help-section">
+      <h4>⏳ Advance Through the Ages</h4>
+      <p>You start in the <b>Dark Age</b>. From your <b>Town Center 🏰</b>, advance to the <b>Feudal Age</b> (costs food) then the <b>Castle Age</b> (food &amp; gold). Each age unlocks stronger units and buildings — archers, scouts, towers and the Market in Feudal; knights and rams in Castle — and automatically upgrades the economy and army you already have. Getting ahead in ages is a real edge.</p>
+    </div>
+
+    <div class="help-section">
+      <h4>🛒 Market &amp; Trade</h4>
+      <p>Running low on a resource? Build a <b>Market 🛒</b> to buy and sell — prices shift with demand — or send <b>Trade Carts</b> to another player's Market to bring back a steady stream of <b>gold</b>.</p>
+    </div>
+
+    <div class="help-section">
       <h4>🛡️ Army &amp; Counters</h4>
-      <div class="help-row"><span class="help-ico">🔱</span> Spearman <b>beats</b> 🏇 Scout (big bonus damage)</div>
+      <div class="help-row"><span class="help-ico">🔱</span> Spearman <b>beats</b> 🏇 Scout &amp; 🐎 Knight — cavalry (big bonus damage)</div>
       <div class="help-row"><span class="help-ico">🏇</span> Scout <b>beats</b> 🏹 Archer (armor shrugs off arrows)</div>
       <div class="help-row"><span class="help-ico">🏹</span> Archer <b>beats</b> 🔱 Spearman (and all slow infantry)</div>
+      <div class="help-row"><span class="help-ico">🐎</span> Knight &mdash; strong, fast cavalry (Castle Age) &mdash; watch for spearmen</div>
       <div class="help-row"><span class="help-ico">🛡️</span> Militia &mdash; solid all-rounder, good vs buildings</div>
+      <div class="help-row"><span class="help-ico">🐏</span> Ram &mdash; siege: smashes buildings &amp; walls (Castle Age), but useless vs soldiers — bring an escort</div>
       <p>Mix your army! One unit type alone gets countered.</p>
     </div>
 
@@ -220,6 +232,16 @@ document.body.insertAdjacentHTML('afterbegin', `
           <div class="help-kv"><span class="help-k">Pinch</span><span class="help-v">zoom</span></div>
         </div>
       </div>
+    </div>
+
+    <div class="help-section">
+      <h4>👥 Play with Friends</h4>
+      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>4 players</b>, in any mix of humans and AI. Drop out and reconnect any time; the match pauses and you rejoin your spot.</p>
+    </div>
+
+    <div class="help-section">
+      <h4>🙏 Thanks</h4>
+      <p>Beta testers who shaped the game with their feedback: <b>Jeremy Ilagan</b>, <b>Orr Ashenberg</b>, <b>Jordan Hoff</b>, and <b>Qing Feng</b>.</p>
     </div>
 
     <div class="help-disclaimer">

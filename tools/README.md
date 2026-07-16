@@ -103,3 +103,32 @@ calls `window.runSimulation(cfg)` directly and reads the returned object.
 - The AI reaches Castle and builds **rams** only if its **gold** keeps pace — `aiEcoPlan` biases gatherers toward the next age's cost resources while `savingForAge` (Castle needs 200 gold; a turtled AI used to starve gold and stall at Feudal forever).
 - The wall ring reserves **two gates** (eco-facing + enemy-facing) built **gate-first**, so villagers are never sealed from their economy and the army never detours. A single gate → either eco-seal collapse or an army-detour pathfinding storm.
 - **Known-wash lever (don't re-add naively):** pausing wall construction while `savingForAge` helps over-wallers but removes defense from teams that need it — net-neutral across difficulties, regressed a clean hard seed. Finer wall-vs-eco balance (partial Dark-Age walls, smaller rings) is the open recalibration lever, and needs many-seed statistical batches.
+
+# Development
+
+- **Codebase guide** (architecture, determinism rules, conventions): [`CLAUDE.md`](../CLAUDE.md)
+- **AI behavior reference** (AoE2-DE comparison, fidelity decisions): [`../docs/aoe2-ai-behavior.md`](../docs/aoe2-ai-behavior.md)
+- **External-reference notes** (openage study, unit-stat fixture): [`../docs/reference/`](../docs/reference/)
+
+```sh
+tools/run-tests.sh                        # pre-commit test battery (run from repo root)
+tools/simulate.sh runs=6 diff=hard        # 6 seeded self-play matches, aggregate report
+```
+
+# References & credits
+
+Sources consulted for game-mechanics fidelity. None of their code or game
+assets is included in this repo; what we adopted is documented value-by-value
+in [`../docs/aoe2-ai-behavior.md`](../docs/aoe2-ai-behavior.md) (§11–12).
+
+| reference | what we used it for | where it lives here |
+|---|---|---|
+| [airef.github.io](https://github.com/airef/airef.github.io) — AoE2 AI-scripting reference | Strategic Number defaults and AI behavior semantics behind our difficulty profiles | synthesized into `../docs/aoe2-ai-behavior.md` |
+| [SFTtech/openage](https://github.com/SFTtech/openage) — open Genie-engine project (GPLv3 docs) | Their `doc/reverse_engineering/` notes: damage formula, build/repair rates, market pricing, trade-cart gold, garrison arrows, town-bell range | study notes in `../docs/reference/openage-study.md`; adopted values in `../docs/aoe2-ai-behavior.md` §12 |
+| Leif Ericson's unit stat tables ([AoK Heaven](https://aok.heavengames.com/university/game-info/stat-tables/units-table/), via openage) | Exact AoC unit stats, used as a regression fixture (`stats-audit.js`, runs in the test battery) | `../docs/reference/unit_stats_aoc.csv` |
+
+**Beta testers** who shaped the game with their feedback: Jeremy Ilagan, Orr
+Ashenberg, Jordan Hoff, Qing Feng.
+
+*Age of Empires II* is a Microsoft / Ensemble Studios title; this project is an
+independent fan reimplementation and includes no original game assets or data.
