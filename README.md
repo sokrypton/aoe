@@ -1,5 +1,5 @@
 # Age of Epochs
-<img width="800" height="580" alt="Gemini_Generated_Image_okjz9vokjz9vokjz" src="https://github.com/user-attachments/assets/07626a3f-291f-4d46-a00c-04f475f952d1" />
+<img width="800" height="580" alt="Gemini_Generated_Image_gimd2qgimd2qgimd" src="https://github.com/user-attachments/assets/87f59c49-ff82-48ed-a6f8-80153330a684" />
 
 
 To play the game go to: [ageofepochs.com](https://ageofepochs.com)
