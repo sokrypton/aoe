@@ -13,17 +13,18 @@ const MAX_PATH_ITERS=2200;
 // ring the surrounding tiles and latecomers mill around outside.
 // Rebuilt once per tick in update(); Int32Array of unit ids (0 = free).
 let unitBlock=null;
-function rebuildUnitBlock(){
-  if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
-  else unitBlock.fill(0);
-  entities.forEach(e=>{
-    if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)return;
-    if(e.utype==='sheep_carcass')return; // a corpse on the ground blocks nobody
-    if(e.path.length>0)return; // moving units don't block
-    let x=Math.round(e.x),y=Math.round(e.y);
-    if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
-  });
-}
+// The block grid is rebuilt by rebuildBlockAndNudge (js/loop.js) — one fused
+// walk also collects the nudge candidates. The grid semantics are unchanged:
+// stationary, living, non-garrisoned, non-carcass units block their tile.
+
+// Reused A* scratch — avoids a new Array(MAP²) + Uint8Array(MAP²) on EVERY
+// findPath call (27k+ calls/match; ~20k elements each on a large map — a major
+// per-tick GC source). Generation-stamped so "clearing" between calls is a
+// single counter bump, never an O(MAP²) fill: a cell is closed iff
+// _pfClosedGen[k]===_pfGen, and open iff _pfOpenGen[k]===_pfGen (its node is
+// _pfOpenNode[k]). Purely a storage change — the A* algorithm and the path it
+// returns are byte-for-byte identical (verified by checksum equality).
+let _pfGen=0, _pfClosedGen=null, _pfOpenGen=null, _pfOpenNode=null;
 
 function walkable(x,y,ignore,ignoreUnits){
   if(x<0||x>=MAP||y<0||y>=MAP)return false;
@@ -97,6 +98,11 @@ function walkable(x,y,ignore,ignoreUnits){
     // for anyone — farmers stand on it, armies trample across it. Only the
     // origin tile carries the food; `occupied` still blocks construction.
     if(occ && occ.type === 'building' && occ.btype === 'FARM') return true;
+    // Walkable buildings (the Market's open-air plaza): the whole footprint
+    // passes units once complete — the stalls are props, not walls. Tiles
+    // stay `occupied` so nothing can be BUILT there; construction sites
+    // still block fully (same rule as the TC courtyard above).
+    if(occ && occ.type === 'building' && occ.complete && BLDGS[occ.btype].walkable) return true;
   }
 
   // Only resolve the walker entity (a Map lookup) when an exception could
@@ -105,8 +111,10 @@ function walkable(x,y,ignore,ignoreUnits){
   // thousands of times per search), and most of those checks are against
   // plain open/already-passable tiles where this lookup would be wasted.
   let walker=entitiesById.get(ignore);
-  // Allow villagers to walk onto the specific resource tile they are working on
-  if(walker && walker.gatherX === x && walker.gatherY === y) return true;
+  // AoE2: a resource (tree/gold/stone/berries) is SOLID — villagers gather it
+  // from an ADJACENT tile, never by standing on it. (Farms are walkable ground
+  // above; sheep are units with their own harvest exception.) This is what
+  // caps villagers-per-node and rings them around the tile instead of stacking.
   // Allow builders to stand on the building foundation they are constructing
   if(t.occupied && walker && walker.buildTarget === t.occupied) return true;
   if(isResource)return false;
@@ -128,12 +136,25 @@ function walkable(x,y,ignore,ignoreUnits){
   }
   return false;
 }
-function findPath(sx,sy,ex,ey,ignore){
+// stopDist>0: don't path ONTO (ex,ey) — path to the nearest reachable tile
+// WITHIN stopDist of it, and stop there. This is how an attacker approaches to
+// its own attack range instead of piling onto the target's tile: melee (~1.5)
+// ends up on an adjacent tile, ranged (its range) stops out in an arc. Distinct
+// approach directions land on distinct in-range tiles, so a group distributes
+// itself around the target with no per-unit-type logic and no forced ring.
+function findPath(sx,sy,ex,ey,ignore,stopDist){
   sx=Math.round(sx);sy=Math.round(sy);ex=Math.round(ex);ey=Math.round(ey);
   if(ex<0)ex=0;if(ey<0)ey=0;if(ex>=MAP)ex=MAP-1;if(ey>=MAP)ey=MAP-1;
-  // Only redirect for truly impassable destinations (water, buildings)
-  // Resource tiles (forest, gold, stone, berries) are valid destinations
-  if(!walkable(ex,ey,ignore)){
+  let sd=stopDist||0, sd2=sd*sd;
+  // Goal test: an exact tile normally, or "within stopDist of the goal" in
+  // range-approach mode. inGoal is the single place the two modes differ.
+  let inGoal = sd>0 ? (x,y)=>{let dx=x-ex,dy=y-ey;return dx*dx+dy*dy<=sd2;}
+                    : (x,y)=>x===ex&&y===ey;
+  if(sd>0){
+    if(inGoal(sx,sy))return []; // already in range — no move needed
+  } else if(!walkable(ex,ey,ignore)){
+    // Only redirect for truly impassable destinations (water, buildings)
+    // Resource tiles (forest, gold, stone, berries) are valid destinations
     let found=false;
     let t = map[ey] && map[ey][ex];
     let isRes = t && (t.t === TERRAIN.FOREST || t.t === TERRAIN.GOLD || t.t === TERRAIN.STONE || t.t === TERRAIN.BERRIES);
@@ -148,9 +169,13 @@ function findPath(sx,sy,ex,ey,ignore){
   let startH=Math.max(startAdx,startAdy)+0.41*Math.min(startAdx,startAdy);
   let startNode={x:sx,y:sy,g:0,h:startH,f:startH,p:null};
   let open=[startNode];
-  let openMap=new Array(MAP*MAP);
-  openMap[sx+sy*MAP]=startNode;
-  let closed=new Uint8Array(MAP*MAP);
+  // (Re)allocate scratch on first use / map-size change, then bump the
+  // generation so all prior stamps read as stale — no per-call clearing.
+  let N=MAP*MAP;
+  if(!_pfClosedGen||_pfClosedGen.length!==N){_pfClosedGen=new Int32Array(N);_pfOpenGen=new Int32Array(N);_pfOpenNode=new Array(N);_pfGen=0;}
+  if(++_pfGen>=2147483647){_pfClosedGen.fill(0);_pfOpenGen.fill(0);_pfGen=1;} // stamp overflow (astronomically rare) → reset
+  let gen=_pfGen;
+  _pfOpenGen[sx+sy*MAP]=gen;_pfOpenNode[sx+sy*MAP]=startNode;
   let iters=0;
   // Track the node that got closest to the goal so far. If the search runs out
   // of budget (large/obstructed maps can need more than the iteration cap) we
@@ -164,13 +189,13 @@ function findPath(sx,sy,ex,ey,ignore){
     for(let i=1;i<open.length;i++){if(open[i].f<open[minIdx].f)minIdx=i;}
     let cur=open[minIdx];
     open[minIdx]=open[open.length-1];open.pop();
-    if(cur.x===ex&&cur.y===ey){
+    if(inGoal(cur.x,cur.y)){
       let path=[];while(cur.p){path.unshift({x:cur.x,y:cur.y});cur=cur.p;}
       return path;
     }
     let ck=cur.x+cur.y*MAP;
-    openMap[ck]=undefined;
-    closed[ck]=1;
+    _pfOpenNode[ck]=undefined; // popped from the open set
+    _pfClosedGen[ck]=gen;
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
       if(dx===0&&dy===0)continue;
       let nx=cur.x+dx,ny=cur.y+dy;
@@ -178,15 +203,15 @@ function findPath(sx,sy,ex,ey,ignore){
       // Block diagonal moves that cut through the gap between two touching obstacles
       if(dx&&dy&&(!walkable(cur.x+dx,cur.y,ignore)||!walkable(cur.x,cur.y+dy,ignore)))continue;
       let k=nx+ny*MAP;
-      if(closed[k])continue;
+      if(_pfClosedGen[k]===gen)continue;
       let g=cur.g+(dx&&dy?1.41:1);
-      let existing=openMap[k];
+      let existing=_pfOpenGen[k]===gen?_pfOpenNode[k]:undefined;
       if(existing){if(g<existing.g){existing.g=g;existing.f=g+existing.h;existing.p=cur;}}
       else{
         let adx=Math.abs(nx-ex),ady=Math.abs(ny-ey);
         let h=Math.max(adx,ady)+0.41*Math.min(adx,ady);
         let node={x:nx,y:ny,g,h,f:g+h,p:cur};
-        open.push(node);openMap[k]=node;
+        open.push(node);_pfOpenGen[k]=gen;_pfOpenNode[k]=node;
         if(h<bestNode.h)bestNode=node;
       }
     }
@@ -210,14 +235,12 @@ function clearUnitPath(e){
   e.moveT=0;
   e.fromX=e.x;
   e.fromY=e.y;
-  // Explicitly halting movement also cancels any pending long-distance goal,
-  // so a unit pulled into combat doesn't later resume walking to a stale spot.
-  // followId deliberately survives: combat halts (in-range stop, retaliation)
-  // only touch the per-leg pathing, and the follow order resumes after the
-  // fight — see the auto-attack note in updateUnit. Explicit new orders clear
-  // followId themselves (doCommand in js/input.js).
-  e.moveGoalX=undefined;
-  e.moveGoalY=undefined;
+  // KIND-SCOPED order cancel: halting movement ends a MOVE order (a unit
+  // pulled into combat must not later resume marching to a stale spot), but
+  // every other standing order (guard/escort/follow/scout) survives a path
+  // clear — combat halts only touch the per-leg pathing, and those orders
+  // resume after the fight. followId likewise deliberately survives.
+  if(e.order&&e.order.kind==='move')e.order=null;
 }
 
 function setUnitPath(e,path){
@@ -233,12 +256,15 @@ function pathUnitTo(e,x,y){
 }
 
 // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
-// covers sqrt(32²+16²) ≈ 35.78 screen px, and there are 30 ticks per
-// game-second, so px-per-tick = speed * 35.78/30 ≈ speed * 1.19.
-const UNIT_PX_PER_TICK = 1.19;
+// covers sqrt(32²+16²) ≈ 35.78 screen px and there are TPS ticks per
+// game-second. The historical shipped constant was the ROUNDED 1.19 at
+// 30tps (not 35.78/30 = 1.19267) — scale THAT basis, and as 1.19*(30/TPS),
+// so TPS=30 reproduces the original value bit-for-bit (30/30 is exactly 1).
+const UNIT_PX_PER_TICK = 1.19 * (30 / TPS);
 // Arrows fly a straight tile-space line at this rate (see update() and
 // advanceGuestProjectiles — both sides must agree on arrival timing).
-const PROJECTILE_TILES_PER_TICK = 0.25;
+// 7.5 tiles per game-second (0.25/tick on the original 30tps clock).
+const PROJECTILE_TILES_PER_TICK = 7.5 / TPS;
 
 // THE path-following step — the single source of truth for how a unit
 // physically advances along e.path, shared by the host's authoritative
@@ -309,7 +335,17 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
 // "busy" and skipping retaliation forever, and updateUnit()'s multi-leg
 // resume walking an idle unit back toward an old, no-longer-relevant tile.
 function issueMoveOrder(e,x,y){
-  e.moveGoalX=x;
-  e.moveGoalY=y;
+  // Clamped like the anchor below: edge-of-map formation offsets produce
+  // off-map goals findPath silently clamps — an unclamped goal then never
+  // matches the arrival tile, so the "arrived, clear order" check churned
+  // repaths until the empty-path fallback cleared it. issueOrder lives in
+  // js/commands.js (same global scope).
+  issueOrder(e, {kind:'move', x:Math.max(0,Math.min(MAP-1,x)), y:Math.max(0,Math.min(MAP-1,y))});
+  // A plain move sets the unit's ANCHOR (defendX/Y) to the destination. The
+  // anchor only means something to DEFENSIVE stance (scoped acquire + 6-tile
+  // leash, js/logic.js); aggressive units chase freely and stand where the
+  // fight ends. Guard posts don't relocate — the move order issued above
+  // REPLACED any standing order (last order wins).
+  e.defendX=Math.max(0,Math.min(MAP-1,x)); e.defendY=Math.max(0,Math.min(MAP-1,y)); // clamped — formation offsets at the edge go off-map
   return pathUnitTo(e,x,y);
 }

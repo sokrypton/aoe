@@ -13,6 +13,17 @@ let justPlaced=false; // flag to prevent mouseup selection clearing when placing
 let middleDrag=false;
 let middleDragLast=null;
 
+// Snap the camera to a map tile (viewer-local). Also releases camera-follow so
+// handleScroll() won't yank it back to a followed unit next frame — every
+// "jump to X" action needs this, so it lived copy-pasted in 6 places across
+// input.js/ui.js/init.js. Shared here (global scope; called at runtime).
+function jumpCameraToTile(tx, ty){
+  let iso = toIso(tx, ty);
+  camX = iso.ix; camY = iso.iy;
+  window.targetCamX = camX; window.targetCamY = camY;
+  window.cameraFollowId = null;
+}
+
 function selectTownCenter() {
   if (gameOver) return;
   let tcs = entities.filter(e => e.team === myTeam && e.type === 'building' && e.btype === 'TC');
@@ -25,13 +36,8 @@ function selectTownCenter() {
   selected = [tc];
   
   // Center camera on Town Center
-  let iso = toIso(tc.x + tc.w/2, tc.y + tc.h/2);
-  camX = iso.ix;
-  camY = iso.iy;
-  window.targetCamX = camX;
-  window.targetCamY = camY;
-  window.cameraFollowId = null;
-  
+  jumpCameraToTile(tc.x + tc.w/2, tc.y + tc.h/2);
+
   if (window.playSound) window.playSound('select_military');
   updateUI();
 }
@@ -107,6 +113,7 @@ function requestDeleteOwned(ownIds){
 }
 
 document.addEventListener('keydown',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor supplies its own keys
   // While reviewing the finished map (See Map), keep the arrow keys panning —
   // but nothing else (no command hotkeys post-game).
   if(gameOver && window.seeMapMode && (e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='ArrowLeft'||e.key==='ArrowRight')) keys[e.key]=true;
@@ -122,8 +129,7 @@ document.addEventListener('keydown',e=>{
   }
   // OS key auto-repeat only matters for held-key panning, which reads the
   // keys map set on the FIRST keydown — action hotkeys below must fire once
-  // per physical press (holding 'a' with a barracks selected used to queue
-  // archers at repeat rate while the camera panned).
+  // per physical press (a held hotkey would queue units at repeat rate).
   if(e.repeat)return;
   let key = e.key.toLowerCase();
   
@@ -182,7 +188,7 @@ document.addEventListener('keydown',e=>{
     // the NEXT mouseup ran finalizeWallDrag() and built the wall the player
     // just tried to cancel.
     if(window.isDraggingWall)abortWallDrag();
-    placing=null;selected=[];window.settingRally=false;updateUI();
+    placing=null;selected=[];window.settingRally=false;window.settingGuard=false;window.settingGarrison=null;updateUI();
   }
   if(e.key==='Delete'||e.key==='Backspace'){
     let ownIds = selected.filter(en=>en.team===myTeam).map(en=>en.id);
@@ -209,6 +215,7 @@ document.addEventListener('keydown',e=>{
       else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); return; }
       else if(key==='r') { placing='MILL'; showMsg('Place Mill'); return; }
       else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); return; }
+      else if(key==='y' && isUnlocked(myTeam,'MARKET')) { placing='MARKET'; showMsg('Place Market'); return; }
     } else if(window.currentVillagerMenu === 'mil') {
       // Locked types are hidden from the menu, so their hotkeys are inert
       // (silent) too. E/R always place the BEST unlocked wall/gate material
@@ -218,7 +225,12 @@ document.addEventListener('keydown',e=>{
         placing=type; showMsg('Place '+label);
       };
       if(key==='q') { tryPlace('BARRACKS','Barracks'); return; }
-      else if(key==='w') { tryPlace('TOWER','Watch Tower'); return; }
+      // W = best unlocked tower, matching the E/R wall convention below.
+      else if(key==='w') {
+        if(isUnlocked(myTeam,'TOWER')) tryPlace('TOWER','Watch Tower');
+        else tryPlace('PTOWER','Palisade Watch Tower');
+        return;
+      }
       else if(key==='e') {
         if(isUnlocked(myTeam,'SWALL')) tryPlace('SWALL','Stone Wall');
         else tryPlace('WALL','Palisade Wall');
@@ -233,6 +245,7 @@ document.addEventListener('keydown',e=>{
       // stone has taken the E/R slots.
       else if(key==='t' && isUnlocked(myTeam,'SWALL')) { tryPlace('WALL','Palisade Wall'); return; }
       else if(key==='y' && isUnlocked(myTeam,'SWALL')) { tryPlace('GATE','Palisade Gate'); return; }
+      else if(key==='u' && isUnlocked(myTeam,'TOWER')) { tryPlace('PTOWER','Palisade Watch Tower'); return; }
     }
   }
 
@@ -250,6 +263,19 @@ document.addEventListener('keydown',e=>{
       else if (key === 'a') { train('archer'); return; }
       else if (key === 'c') { train('scout'); return; }
       else if (key === 'k') { train('knight'); return; }
+    } else if (bldg.btype === 'MARKET') {
+      if (key === 't') { if(isUnlocked(myTeam,'tradecart')) trainUnit(bldg,'tradecart'); return; }
+    }
+  }
+
+  // Auto Scout toggle ('e' = explore) when the selection is all own scouts.
+  if (selected.length > 0 && selected.every(s => s.type === 'unit' && s.utype === 'scout' && s.team === myTeam)) {
+    if (key === 'e') {
+      let ids = selected.map(s => s.id);
+      let wantOn = selected.some(s => !(s.order && s.order.kind === 'scout'));
+      submitCommand({ kind: 'auto-scout', unitIds: ids, on: wantOn });
+      if(wantOn) deselectAfterTask(); // auto-scout is a task → deselect (index model)
+      return;
     }
   }
 
@@ -288,7 +314,7 @@ function getWallElbowTiles(start, corner, end){
 // be laid out in one gesture on both input methods, instead of one tile per
 // tap/click. A zero-length drag (touchstart+touchend with no movement, or a
 // plain click) degenerates to a single wall tile via getLineTiles' steps===0
-// case, so this also fully replaces the old single-tap-places-one-wall path.
+// case.
 function startWallDrag(sx,sy){
   let tile = screenToTile(sx, sy);
   window.wallDragBtype = placing; // WALL or SWALL — the drag places this material
@@ -372,6 +398,7 @@ window.addEventListener('mousemove',e=>{
 });
 
 C.addEventListener('mousedown',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if((gameOver && !window.seeMapMode)||recentTouch())return; // ignore synthetic mouse events (pan/select stay live in See Map)
   // Trust the event's own modifier snapshot over the keydown/keyup-tracked
   // keys map: OS-level shortcuts (e.g. macOS Cmd+Shift+5 for screen
@@ -405,11 +432,15 @@ C.addEventListener('mousedown',e=>{
       minimapJump(e.clientX,e.clientY);
       return;
     }
-    dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false;
+    // No box-select once the match is over (See Map is view-only): without this
+    // the drag rectangle still DRAWS over the frozen map even though the commit
+    // (doBoxSelect) is gated — the box just never resolves to a selection.
+    if(!gameOver){ dragStart={x:e.clientX,y:e.clientY};dragEnd=null;isDragging=false; }
     justPlaced=false;
   }
 });
 C.addEventListener('mousemove',e=>{
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if((gameOver && !window.seeMapMode)||recentTouch())return;
   mouseX=e.clientX;mouseY=e.clientY;
   if(middleDrag && (e.buttons&4 || e.button===1)){
@@ -431,9 +462,9 @@ C.addEventListener('mousemove',e=>{
     if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
       if(!isDragging){
         isDragging=true;
-        // Visual-only cue now (the minimap can't actually intercept the
-        // drag anymore — it's pointer-events:none) — dims it so it's clear
-        // dragging over it won't do anything special.
+        // Visual-only cue (the minimap is pointer-events:none, so it can't
+        // intercept the drag) — dims it so it's clear dragging over it
+        // won't do anything special.
         let mw=document.getElementById('minimap-wrap');
         if(mw)mw.classList.add('drag-select-active');
       }
@@ -462,17 +493,19 @@ function isTrackpadWheel(e){
     // Trackpad: wheelDeltaY ≈ -3·deltaY. A physical notch instead reports a
     // FIXED wheelDeltaY (±120) unrelated to deltaY's magnitude. The compare
     // must be TOLERANT, not exact: a precision trackpad reports a fractional
-    // deltaY (e.g. 4.0000009) against an integer wheelDeltaY (-12), so the
-    // old `wheelDeltaY === deltaY*-3` was false for every swipe and they all
-    // fell through to the zoom branch ("two-finger scroll zooms, won't pan").
-    // The two are the same underlying value, so the residual is ~1e-5 for a
-    // trackpad vs. hundreds for a wheel notch — a <1 window separates them
-    // cleanly at any swipe speed.
+    // deltaY (e.g. 4.0000009) against an integer wheelDeltaY (-12), so an
+    // exact ===-3× check fails for every swipe (they'd all zoom, not pan).
+    // The residual is ~1e-5 for a trackpad vs. hundreds for a wheel notch —
+    // a <1 window separates them cleanly at any swipe speed.
     return Math.abs(e.wheelDeltaY + 3*e.deltaY) < 1;
   }
   return e.deltaMode===0;
 }
 C.addEventListener('wheel',e=>{
+  // Camera-only (pan/zoom) — safe in the scenario editor too, so it runs in
+  // BOTH edit and play there (the editor defines no wheel handler of its
+  // own): two-finger trackpad swipe pans, pinch/ctrl zooms around the
+  // cursor, wheel notch zooms — identical gestures to normal gameplay.
   if(gameOver && !window.seeMapMode)return; // zoom stays live in See Map
   e.preventDefault();
   if(e.ctrlKey){
@@ -494,7 +527,13 @@ C.addEventListener('wheel',e=>{
   setZoomAroundPoint(ZOOM*factor,mouseX,mouseY);
 },{passive:false});
 C.addEventListener('mouseup',e=>{
-  if(gameOver||recentTouch())return;
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
+  // Match mousedown/mousemove/wheel: stay live in See-Map review mode even
+  // after gameOver so PAN/ZOOM keep working and the drag cleanup at the end of
+  // this handler still runs (bailing here left the minimap stuck dimmed). The
+  // actual unit interaction is view-only after the match: doSelect/doBoxSelect/
+  // handleTap all bail on gameOver, so no selecting or commanding the frozen map.
+  if((gameOver && !window.seeMapMode)||recentTouch())return;
   if(e.button===1){
     middleDrag=false;
     middleDragLast=null;
@@ -516,16 +555,25 @@ C.addEventListener('mouseup',e=>{
       return;
     }
     if(isDragging&&dragStart&&dragEnd){
-      doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
     } else {
-      if (window.settingRally) {
-        let bldg = selected[0];
-        let bData = bldg && BLDGS[bldg.btype];
-        if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
-          doCommand(e.clientX, e.clientY);
-        }
-        window.settingRally = false;
-        updateUI();
+      if (!isClassicUI) {
+        // index.html: a desktop click IS a tap — the page has ONE
+        // interaction model on every device. handleTap owns the rally/
+        // guard flag modes and the select-vs-command context decision
+        // (and, via finishMobileUnitCommand, the same keep/release rules
+        // as touch). Right-click still commands too (contextmenu below);
+        // left-drag box-select was dispatched above and is unaffected.
+        handleTap(e.clientX, e.clientY, e.shiftKey);
+      } else if (window.settingRally) {
+        // classic.html keeps the AoE2 contract: left selects, right
+        // commands — that fidelity is this page's reason to exist.
+        commitRallyAt(e.clientX, e.clientY);
+      } else if (window.settingGuard) {
+        dropGuardFlagAt(e.clientX, e.clientY);
+      } else if (window.settingGarrison) {
+        garrisonLoadTap(e.clientX, e.clientY);
       } else {
         doSelect(e.clientX,e.clientY,e.shiftKey);
       }
@@ -537,11 +585,23 @@ C.addEventListener('mouseup',e=>{
 });
 document.addEventListener('contextmenu',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if(gameOver||recentTouch())return;
   if(e.target===C){
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
+    window.settingGuard=false; // right-click issues a manual order instead
+    window.settingGarrison=null; // and cancels a pending garrison load
+    // index.html: right-click a friendly building/unit = Guard/Escort flag,
+    // then deselect (assign-and-move-on). Ground/enemy fall through to the
+    // normal walk/attack below.
+    if(!isClassicUI && tryRightClickGuard(e.clientX, e.clientY)) return;
     doCommand(e.clientX,e.clientY);
+    // index.html has ONE interaction model: a right-click command applies
+    // the same keep/release rules as the left-click tap path (handleTap) —
+    // e.g. assigning villagers to a resource releases the selection.
+    // Classic keeps AoE2's sticky selection on right-click orders.
+    if(!isClassicUI && selected.some(s=>s.type==='unit'&&s.team===myTeam)) finishMobileUnitCommand();
   }
 });
 
@@ -570,7 +630,6 @@ window.addEventListener('blur',()=>{
 let touchAnchor=null;  // where the touch started (for tap detection)
 let touchLast=null;    // last touch position (for pan delta)
 let touchMoved=false;  // did finger travel > threshold?
-let touchId=null;      // track which finger is primary
 let pinchStartDist=null; // two-finger distance at pinch start, for pinch-zoom
 let pinchStartZoom=null; // ZOOM at pinch start
 let touchLongPressTimer=null; // arms box-select if the finger holds still on empty ground
@@ -582,6 +641,7 @@ let touchLastTapWallId=null;  // unfinished wall foundation tapped last (chain-s
 
 C.addEventListener('touchstart',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   if(gameOver && !window.seeMapMode)return; // touch pan/pinch stay live in See Map
   lastTouchTime=performance.now();
   let touches=e.touches;
@@ -594,7 +654,6 @@ C.addEventListener('touchstart',e=>{
       minimapJump(t.clientX,t.clientY);
       return;
     }
-    touchId=t.identifier;
     touchAnchor={x:t.clientX,y:t.clientY};
     touchLast={x:t.clientX,y:t.clientY};
     touchMoved=false;
@@ -603,13 +662,12 @@ C.addEventListener('touchstart',e=>{
     if(isWallBtype(placing)){
       startWallDrag(t.clientX,t.clientY);
     } else if(placing){
-      // Touch placement is DRAG-TO-POSITION: the finger carries the ghost
-      // (lifted above the fingertip once dragging, so it isn't hidden
-      // under the finger), and lifting the finger places the building at
-      // the ghost — a plain tap still places at the tap point, exactly as
-      // before. While this is active, single-finger camera panning is
-      // suspended (two-finger pan/pinch still works, and cancels the
-      // placement drag rather than building anything).
+      // Touch placement is DRAG-TO-POSITION: the finger carries the ghost,
+      // and lifting the finger places the building at the ghost — a plain
+      // tap places right at the tap point. While this is active,
+      // single-finger camera panning is suspended (two-finger pan/pinch
+      // still works, and cancels the placement drag rather than building
+      // anything).
       placingTouchDrag=true;
     } else {
       // Arm long-press box-select only when the touch starts on empty
@@ -619,7 +677,9 @@ C.addEventListener('touchstart',e=>{
       touchBoxSelectMode=false;
       let hitU=getUnitUnderCursor(t.clientX,t.clientY);
       let hitB=hitU?null:getBuildingUnderCursor(t.clientX,t.clientY);
-      if(!hitU&&!hitB){
+      // Never arm box-select over a finished match (See Map is view-only) —
+      // otherwise a long-press+drag paints a selection box that can't select.
+      if(!hitU&&!hitB&&!gameOver){
         let anchorAtArm=touchAnchor;
         touchLongPressTimer=setTimeout(()=>{
           if(touchAnchor===anchorAtArm && !touchMoved){
@@ -657,6 +717,7 @@ C.addEventListener('touchstart',e=>{
 
 C.addEventListener('touchmove',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   lastTouchTime=performance.now(); // keep the mouse-suppression window alive through long drags
   let touches=e.touches;
   if(touches.length>=2){
@@ -749,6 +810,7 @@ C.addEventListener('touchmove',e=>{
 
 C.addEventListener('touchend',e=>{
   e.preventDefault();
+  if(window.__editorMode && !window.__editorPlaying)return; // scenario editor handles its own canvas input
   lastTouchTime=performance.now(); // synthetic mouse events fire right after touchend
   // Only process tap when all fingers are lifted
   if(e.touches.length===0){
@@ -758,16 +820,17 @@ C.addEventListener('touchend',e=>{
     } else if(window.isDraggingWall){
       finalizeWallDrag();
     } else if(placingTouchDrag){
-      // Release places at the ghost position (which handleTap's old path
-      // never sees — this branch owns ALL touch placement now). A plain
-      // tap places right at the tap point; a drag places at the lifted
-      // ghost. On an invalid spot doPlace() shows "Can't build here!" and
-      // stays in placement mode, so the user just drags again.
+      // Release places at the ghost position (this branch owns ALL touch
+      // placement). A plain tap places right at the tap point; a drag
+      // places at the lifted ghost. On an invalid spot doPlace() shows
+      // "Can't build here!" and stays in placement mode, so the user just
+      // drags again.
       placingTouchDrag=false;
       doPlace(mouseX,mouseY);
       updateUI();
     } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
-      doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
       let mw=document.getElementById('minimap-wrap');
       if(mw)mw.classList.remove('drag-select-active');
     } else if(!touchMoved&&touchAnchor){
@@ -810,7 +873,6 @@ C.addEventListener('touchend',e=>{
     touchAnchor=null;
     touchLast=null;
     touchMoved=false;
-    touchId=null;
     pinchStartDist=null;
     pinchStartZoom=null;
     touchBoxSelectMode=false;
@@ -826,9 +888,6 @@ C.addEventListener('touchend',e=>{
   }
 },{passive:false});
 
-function hasSelectedMobileBuilder(){
-  return selected.some(s=>s.team===myTeam&&s.type==='unit'&&s.utype==='villager'&&(s.task==='build'||!!s.buildTarget));
-}
 // UI-only record of the LAST command submitted per unit, not yet EXECUTED —
 // the queue runs commands INPUT_DELAY_TICKS after the tap (js/commands.js),
 // so at tap time the unit's live task/target/moveGoal fields still describe
@@ -840,26 +899,153 @@ function hasSelectedMobileBuilder(){
 // desync lockstep peers).
 let pendingOrderUI = new Map(); // unit id -> {t: submit tick, keep: bool}
 function prunePendingOrders(){
-  pendingOrderUI.forEach((p, id) => { if (tick - p.t > INPUT_DELAY_TICKS + 30) pendingOrderUI.delete(id); });
+  pendingOrderUI.forEach((p, id) => { if (tick - p.t > INPUT_DELAY_TICKS + T30(30)) pendingOrderUI.delete(id); });
 }
 function hasSelectedMobileWalkOrder(){
   let movers=selected.filter(s=>s.team===myTeam&&s.type==='unit');
   return movers.length>0 && movers.every(s=>{
     let p = pendingOrderUI.get(s.id);
-    if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + 30) return p.keep;
-    return !s.task && !s.target && !s.followId && !s.buildTarget && s.moveGoalX!==undefined;
+    if (p !== undefined && tick - p.t <= INPUT_DELAY_TICKS + T30(30)) return p.keep;
+    return !s.task && !s.target && !s.buildTarget && s.order && s.order.kind==='move';
   });
 }
 function finishMobileUnitCommand(){
+  // Only a plain walk keeps the selection (see the keep rule in doCommand);
+  // every committed task deselects.
   if(hasSelectedMobileWalkOrder())return;
-  if(hasSelectedMobileBuilder())return;
   selected=[];
   window.settingRally=false;
+  window.settingGuard=false;
+  window.settingGarrison=null;
+  updateUI();
+}
+// "Assign and move on": once a unit is given a real task via a BUTTON/keyboard
+// or flag drop (guard/escort, build placement, auto-scout) the index skin
+// clears the selection. classic.html stays AoE2-STICKY. One home for that
+// policy — the tap/left-click path uses finishMobileUnitCommand instead.
+function deselectAfterTask(){
+  if(isClassicUI)return;
+  selected=[];
+  if(typeof updateUI==='function')updateUI();
+}
+
+// Commit a rally-flag drop at a screen point — the ONE rally-drop path,
+// shared by the touch tap and desktop click handlers (same pattern as
+// dropGuardFlagAt below). doCommand resolves the click exactly like a
+// right-click rally would.
+function commitRallyAt(sx, sy){
+  let bldg = selected[0];
+  let bData = bldg && BLDGS[bldg.btype];
+  if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
+    doCommand(sx, sy);
+  }
+  window.settingRally = false;
   updateUI();
 }
 
-// Context-aware tap handler for mobile
-function handleTap(sx,sy){
+// Container-first garrison "load mode" (Garrison button, js/ui.js). UNLIKE the
+// one-shot rally/guard flags, this STAYS armed across taps: each tap on an
+// eligible own unit sends it into window.settingGarrison's container and keeps
+// the mode on (its garrison grid fills live); a tap on anything else — the
+// container itself, empty ground, an enemy, an ineligible unit — or a full/gone
+// container ENDS the mode, so the player is never trapped. The container stays
+// selected throughout so its per-unit eject grid is the visible reverse action.
+function garrisonLoadTap(sx, sy){
+  let c = window.settingGarrison != null ? entitiesById.get(window.settingGarrison) : null;
+  if(!c || c.hp<=0 || ramSeatsFree(c)<=0){
+    window.settingGarrison = null;
+    if(typeof showMsg==='function' && c) showMsg('Garrison full');
+    updateUI();
+    return;
+  }
+  let u = getUnitUnderCursor(sx, sy);
+  if(u && u.type==='unit' && u.team===myTeam && !u.garrisonedIn && canGarrisonIn(c, myTeam, u)){
+    submitCommand({ kind:'garrison', unitIds:[u.id], bldgId:c.id });
+    return; // stay armed for the next unit
+  }
+  window.settingGarrison = null; // tapped the container / ground / enemy → finish
+  updateUI();
+}
+
+// Feedback string for a guard/escort/ground flag — shared by both flag-drop
+// paths so the wording can't drift.
+function guardFlagMsg(tgt){
+  if(!tgt) return 'Guarding position';
+  return tgt.type==='unit' ? 'Escorting' : 'Guarding '+(BLDGS[tgt.btype]?BLDGS[tgt.btype].name:'building');
+}
+// Resolve and submit a guard flag at a screen point — the ONE guard-drop
+// path, shared by the touch tap and desktop click handlers. A tap on a
+// friendly unit = ESCORT it, on an own/allied building = stand watch there
+// (sprite-geometry hit-test, same as every other click), anything else =
+// ground post at the tile (execGuard re-validates deterministically).
+function dropGuardFlagAt(sx, sy){
+  let gt = screenToTile(sx, sy);
+  if(gt && selected.length>0){
+    let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
+    if(tgt && !sameSide(tgt.team, myTeam)) tgt = null; // enemy tap → ground post
+    let ids = selected.filter(s=>s.type==='unit').map(s=>s.id);
+    submitCommand({ kind:'guard', unitIds: ids, x: gt.x, y: gt.y, targetId: tgt ? tgt.id : undefined });
+    // Issuer-side flag preview — same latency cover as the rally preview
+    // (see doCommand): guardX only updates at the exec tick, so without
+    // this the units' stale posts (or no flag at all) render for a few
+    // frames before jumping to the clicked spot.
+    window.pendingGuardPreview = { ids: new Set(ids), x: gt.x, y: gt.y, at: tick };
+    showMsg(guardFlagMsg(tgt));
+    deselectAfterTask(); // guard is a task → deselect (index model); classic stays AoE2-sticky
+  }
+  window.settingGuard = false;
+  updateUI();
+}
+
+// index.html right-click shortcut: a right-click on a friendly BUILDING
+// (guard it) or friendly UNIT (escort it) plants the flag directly — the
+// same command dropGuardFlagAt/execGuard use, no need to arm the Guard
+// button first. GROUND and ENEMY right-clicks are NOT intercepted (they
+// stay a normal walk/attack), and it only fires when the selection has
+// guard-eligible units — so villager repair/follow on right-click is
+// untouched. Returns true if it issued a guard flag (skip doCommand).
+function tryRightClickGuard(sx, sy){
+  // DISABLED by request: no click-to-guard / click-to-escort. Right-clicking a
+  // friendly building or unit is a plain command (rally/repair/move) now.
+  // Garrison is the ram's Garrison button + the town bell (villagers). The rest
+  // of this function is kept wired so it's a one-line revert to bring it back.
+  return false;
+  // eslint-disable-next-line no-unreachable
+  if(!selected.some(s=>s.type==='unit'&&s.team===myTeam&&guardEligible(s)))return false;
+  let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
+  if(!tgt || !sameSide(tgt.team, myTeam))return false; // ground / enemy → normal command
+  // Accidental-escort guards (user report: "sometimes I activate escort by
+  // right-clicking"). The cursor's unit-pick tolerance is ~a body wide, so a
+  // move order aimed near/into your own troops kept landing on a friendly
+  // unit and escorting it instead of moving:
+  //  - a unit in the CURRENT SELECTION is never an escort target (clicking
+  //    into your own selected blob means "move here");
+  //  - fellow SOLDIERS aren't right-click escort targets at all — the
+  //    designed escortees are the vulnerable support units (trade carts,
+  //    villagers, rams). Soldier-escort stays available via the explicit
+  //    Guard button (dropGuardFlagAt), where intent is unambiguous.
+  if(tgt.type==='unit' && (selected.includes(tgt) || isSoldierUnit(tgt)))return false;
+  // An own RAM with riders selected BOARDS them — let doCommand handle it
+  // (it loads riders to capacity and auto-escorts the surplus/non-riders).
+  // Without this bail the ram (a wood-vehicle escortee) shortcuts to a pure
+  // escort here and the boarding branch in doCommand is never reached.
+  if(tgt.utype==='ram' && selected.some(s=>s.type==='unit'&&canRideRam(s)))return false;
+  let gt = screenToTile(sx, sy);
+  if(!gt)return false;
+  let ids = selected.filter(s=>s.type==='unit'&&guardEligible(s)).map(s=>s.id);
+  if(!ids.length)return false;
+  submitCommand({ kind:'guard', unitIds: ids, x: gt.x, y: gt.y, targetId: tgt.id });
+  showMsg(guardFlagMsg(tgt));
+  deselectAfterTask(); // guard is a task → deselect (index-only caller)
+  return true;
+}
+
+// Context-aware tap handler — the ONE decision tree for the tap-model skin:
+// touch taps on every device, AND desktop left-clicks on index.html (the
+// mouseup dispatch forks here when !isClassicUI). `shift` is only ever
+// passed by the desktop caller; touch leaves it undefined.
+function handleTap(sx,sy,shift){
+  if(gameOver)return; // match is over — See Map is view-only (no select/command)
   // 1. If placing a building, place it
   if(placing){
     doPlace(sx,sy);
@@ -868,13 +1054,17 @@ function handleTap(sx,sy){
 
   // 2. If in rally-setting mode, set the rally point on tap
   if(window.settingRally){
-    let bldg = selected[0];
-    let bData = bldg && BLDGS[bldg.btype];
-    if(bldg && bldg.type==='building' && bldg.team===myTeam && bData && bData.builds && bData.builds.length>0){
-      doCommand(sx, sy);
-    }
-    window.settingRally = false;
-    updateUI();
+    commitRallyAt(sx, sy);
+    return;
+  }
+  // 2b. Guard-setting mode: the tap becomes the selection's guard flag.
+  if(window.settingGuard){
+    dropGuardFlagAt(sx, sy);
+    return;
+  }
+  // 2c. Garrison load mode: each tap sends a unit into the container (stays armed).
+  if(window.settingGarrison){
+    garrisonLoadTap(sx, sy);
     return;
   }
 
@@ -897,6 +1087,25 @@ function handleTap(sx,sy){
       if(tappedB.team===myTeam) tappedOwn = tappedB;
       else tappedEnemy = tappedB;
     }
+  }
+
+  // 2c. Desktop tap mode: Shift+click on an own UNIT toggles it in/out of
+  // the selection (AoE2-DE-style, and it matches the HUD grid's
+  // shift-click-to-remove). From a non-unit selection it starts a fresh
+  // selection with that unit. Shift over anything else falls through to
+  // the normal tap tree.
+  if (shift && tappedOwn && tappedOwn.type === 'unit') {
+    if (selected.length && selected.every(s => s.type === 'unit')) {
+      let i = selected.indexOf(tappedOwn);
+      if (i >= 0) selected.splice(i, 1); else selected.push(tappedOwn);
+    } else {
+      selected = [tappedOwn];
+    }
+    window.settingRally = false;
+    window.settingGuard = false;
+    if (window.playSound) playSound('click');
+    updateUI();
+    return;
   }
 
   // 3. Nothing selected → just select
@@ -925,6 +1134,8 @@ function handleTap(sx,sy){
       finishMobileUnitCommand();
       return;
     }
+    // (Click-to-board a ram is disabled — tapping a ram just selects it, then
+    // use its Garrison button. Below, tapping any own unit re-selects it.)
     // Tapped on another own UNIT → switch selection (quick re-pick). Tapping
     // an own BUILDING instead falls through to doCommand below — so a
     // selected villager tapping a farm/mill/damaged building actually
@@ -945,8 +1156,7 @@ function handleTap(sx,sy){
     // One tap, both outcomes: ordering villagers onto an own UNFINISHED
     // foundation also selects the foundation itself, so its card (build
     // progress + the Cancel Build refund button) is immediately on screen
-    // — previously reaching Cancel Build took a deselect plus a second
-    // tap, which read as "clicking the foundation does nothing".
+    // rather than a deselect-plus-second-tap away.
     // Completed buildings (farm work, repairs) deliberately don't steal
     // the selection — those are repeat-order flows.
     if(tappedOwn&&tappedOwn.type==='building'&&!tappedOwn.complete&&!tappedOwn.exhausted
@@ -968,6 +1178,9 @@ function handleTap(sx,sy){
     // Switching selection cancels rally mode
     window.settingRally=false;
     selected=[tappedOwn];
+    // Re-tapping the already-selected Market reopens a dismissed exchange
+    // popup (mobile skin) — no selection change means no rebuild would.
+    maybeReopenMktPopup(tappedOwn);
     if (window.playSound && tappedOwn.team === myTeam) {
       if (tappedOwn.type === 'unit') {
         if (tappedOwn.utype === 'villager') window.playSound('select_villager');
@@ -1037,13 +1250,7 @@ function minimapJump(sx, sy) {
   // Clamp to map bounds so dragging past the edge snaps to the corner
   p.x = Math.max(0, Math.min(MAP, p.x));
   p.y = Math.max(0, Math.min(MAP, p.y));
-  let iso = toIso(p.x, p.y);
-  camX = iso.ix; camY = iso.iy;
-  window.targetCamX = camX; window.targetCamY = camY;
-  // Manual camera jump should release camera-follow, same as any other
-  // manual pan — otherwise handleScroll() snaps straight back to the
-  // followed unit on the very next frame and the minimap click does nothing.
-  window.cameraFollowId = null;
+  jumpCameraToTile(p.x, p.y);
 }
 
 function toggleMinimap(){
@@ -1099,22 +1306,14 @@ function centerCameraOnSelection(){
     let w=s.type==='building'?(s.w||1):0, h=s.type==='building'?(s.h||1):0;
     cx+=s.x+w/2; cy+=s.y+h/2; n++;
   });
-  let iso=toIso(cx/n,cy/n);
-  camX=iso.ix; camY=iso.iy;
-  window.targetCamX=camX; window.targetCamY=camY;
-  window.cameraFollowId=null;
+  jumpCameraToTile(cx/n, cy/n);
 }
 
 function focusTownCenter(){
   if(gameOver)return;
   let tc = entities.find(e => e.type === 'building' && e.team === myTeam && e.btype === 'TC');
   if(tc) {
-    let iso = toIso(tc.x + tc.w / 2, tc.y + tc.h / 2);
-    camX = iso.ix;
-    camY = iso.iy;
-    window.targetCamX = camX;
-    window.targetCamY = camY;
-    window.cameraFollowId = null;
+    jumpCameraToTile(tc.x + tc.w / 2, tc.y + tc.h / 2);
     if(window.playSound) window.playSound('click');
   }
 }
@@ -1127,9 +1326,7 @@ function focusTownCenter(){
 // ==============================
 // ---- SHARED INPUT ACTIONS ----
 // ==============================
-// Hit-test a wall/gate against its DRAWN parts, in the unzoomed local
-// coords drawBuilding works in (same anchor math: BLDGS dims, sy -= bhh).
-// Returns which part was hit:
+// Hit-test a wall/gate against its DRAWN parts. Returns which part was hit:
 //   'body' — a wall pillar, gate post, or the gate door: authoritative,
 //            the click is unambiguously on this entity.
 //   'link' — the wall's S/E extension slab toward a connected neighbor:
@@ -1138,56 +1335,17 @@ function focusTownCenter(){
 //            N/W owner), not whichever tile sorts last.
 //   null   — not on any drawn part (the rest of the ground tile doesn't
 //            count, unlike the generic footprint-box test).
-// Gates get NO link zone on purpose: their stub links visually belong to
-// the adjoining wall run, and the gate selecting from half the wall line
-// is exactly the "wrong part selected" feel this replaces.
+// Tests the REAL drawn pixels: drawBuilding renders just that part into the
+// offscreen mask (WALL 'body'=pillar / 'link'=slabs; GATE 'body'=posts+door,
+// no stubs), so this never re-derives geometry and can't drift from the art.
+// Because the parts are the actual render, a link that got cross-rung-
+// suppressed simply has no pixels — no bespoke suppression check needed here.
+// Gates get NO link zone on purpose: their stub links visually belong to the
+// adjoining wall run (drawBuilding's 'body' omits them), so a stub click
+// doesn't select the gate — the "wrong part selected" feel this test avoids.
 function wallGateHitPart(en, lx, ly){
-  let b = BLDGS[en.btype];
-  let iso = toIso(en.x + b.w / 2, en.y + b.h / 2);
-  let sx0 = iso.ix - camX + W / 2;
-  let sy0 = iso.iy - camY + topH + H / 2 - b.h * HALF_TH; // tile top vertex
-  let pad = isMobile ? 5 : 3;      // finger/cursor forgiveness, local px
-  let capPad = pad + 8;            // extra headroom above posts: caps/merlons/pennants
-  if (isWallBtype(en.btype)) {
-    // Pillar: drawBuildingBlock(sx, sy0+20-pw, pw, pw/2, 22) spans
-    // x ∈ sx±pw, y ∈ [sy0+20-pw-22, sy0+20].
-    let pw = wallMat(en.btype) === 'stone' ? 9 : 7;
-    if (Math.abs(lx - sx0) <= pw + pad && ly >= sy0 + 20 - pw - 22 - capPad && ly <= sy0 + 20 + pad) return 'body';
-    // Extension slabs: drawWallLink from this tile's front corner
-    // (sx, sy0+16) a full tile step toward the S (-32,+16) / E (+32,+16)
-    // neighbor, body rising wallH=14 above that line. Any wall-like
-    // neighbor counts — mirrors the render condition, which links across
-    // materials (mixed wood/stone runs stay visually continuous).
-    for (let [nx, ny, dirX] of [[en.x, en.y + 1, -32], [en.x + 1, en.y, 32]]) {
-      if (!isWallLike(getConnectedBuilding(nx, ny))) continue;
-      let t = dirX < 0 ? (sx0 - lx) / 32 : (lx - sx0) / 32;
-      if (t <= 0 || t > 1) continue;
-      let lineY = sy0 + 16 + 16 * t; // slab base at this point of the run
-      if (ly >= lineY - 14 - pad && ly <= lineY + pad + 2) return 'link';
-    }
-    return null;
-  }
-  // Gate (footprint 1xN / Nx1, anchored like a 1x1 — BLDGS dims): back
-  // post at (sx0, sy0+16), front post (n-1) tile steps along the run, door
-  // slab between them. Must mirror the render geometry (render-buildings.js).
-  // drawBuildingBlock(tx, ty-7, 14, 7, 28) spans x ∈ tx±14, y ∈ [ty-35, ty+7].
-  let ns = en.h > en.w;
-  let n = Math.max(en.w, en.h);
-  let runX = 32 * (n - 1);
-  let posts = [{ x: sx0, y: sy0 + 16 }, { x: ns ? sx0 - runX : sx0 + runX, y: sy0 + 16 + 16 * (n - 1) }];
-  for (let p of posts) {
-    // No horizontal pad: the posts are already 28px wide, and padding them
-    // sideways let the back post steal clicks from the last few px of the
-    // adjoining wall's extension slab (body outranks link).
-    if (Math.abs(lx - p.x) <= 14 && ly >= p.y - 35 - capPad && ly <= p.y + 7 + pad) return 'body';
-  }
-  // Door slab (tested at its CLOSED position: the doorway opening is gate
-  // body whether or not the door is currently slid up).
-  let t = ns ? (sx0 - lx) / runX : (lx - sx0) / runX;
-  if (t > 0 && t < 1) {
-    let lineY = sy0 + 16 + 16 * (n - 1) * t;
-    if (ly >= lineY - 16 - 9 - pad && ly <= lineY + pad) return 'body';
-  }
+  if (entityPixelHit(en, lx, ly, 'body')) return 'body';
+  if (isWallBtype(en.btype) && entityPixelHit(en, lx, ly, 'link')) return 'link';
   return null;
 }
 
@@ -1199,7 +1357,7 @@ function wallGateHitPart(en, lx, ly){
 // called on click/tap, and only for the 0-3 buildings whose extent box the
 // cursor falls in; the draw is clipped to a few pixels around the cursor.
 let _hitMaskC = null, _hitMaskX = null, _hitMaskWin = 0;
-function entityPixelHit(e, lx, ly) {
+function entityPixelHit(e, lx, ly, part) {
   let win = isMobile ? 9 : 5;             // sample window (logical px), = tap forgiveness
   let half = (win - 1) / 2;
   // Build the offscreen once (size is constant per device). willReadFrequently
@@ -1220,7 +1378,7 @@ function entityPixelHit(e, lx, ly) {
   camY = sv.camY + ly - half;
   window._maskDraw = true;
   try {
-    if (e.type === 'unit') drawUnit(e); else drawBuilding(e);
+    if (e.type === 'unit') drawUnit(e); else drawBuilding(e, part);
   } catch (err) {
     /* a draw failure shouldn't wedge selection — treat as miss */
   } finally {
@@ -1319,6 +1477,16 @@ function getUnitUnderCursor(sx, sy) {
         w = 22 * ZOOM + extraHit;
         hStart = 4 * ZOOM + extraHit;
         hEnd = -24 * ZOOM - extraHit;
+      } else if (en.utype === 'tradecart') {
+        // recentered wagon + yoked ox composite spans ~±42px around the
+        // anchor — clicking anywhere on it (incl. the ox head) selects
+        w = 44 * ZOOM + extraHit;
+        hStart = 5 * ZOOM + extraHit;
+        hEnd = -26 * ZOOM - extraHit;
+      } else if (en.utype === 'ram') {
+        w = 30 * ZOOM + extraHit;
+        hStart = 5 * ZOOM + extraHit;
+        hEnd = -32 * ZOOM - extraHit;
       }
 
       let dx = sx - scrx;
@@ -1399,6 +1567,7 @@ function getResourceUnderCursor(sx, sy) {
 }
 
 function doSelect(sx,sy,shift){
+  if(gameOver)return; // match is over — See Map is view-only (pan/zoom stay live)
   let tile=screenToTile(sx,sy);
   let clicked=getUnitUnderCursor(sx, sy);
   if(clicked && clicked.team!==myTeam){
@@ -1433,10 +1602,13 @@ function doSelect(sx,sy,shift){
   }
 }
 
-function doBoxSelect(x1,y1,x2,y2){
+// Own, non-garrisoned units whose sprite box overlaps a screen rectangle —
+// shared by drag-select and the garrison load-mode box add so the hit geometry
+// can't drift between them.
+function unitsInBox(x1,y1,x2,y2){
   let sx1=Math.min(x1,x2),sy1=Math.min(y1,y2);
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
-  selected=entities.filter(en=>{
+  return entities.filter(en=>{
     if(en.team!==myTeam)return false;
     if(en.type!=='unit'||en.garrisonedIn)return false;
     let iso=toIso(en.x,en.y);
@@ -1458,6 +1630,20 @@ function doBoxSelect(x1,y1,x2,y2){
     let verticalOverlap = Math.max(sy1, scry + hEnd) <= Math.min(sy2, scry + hStart);
     return horizontalOverlap && verticalOverlap;
   });
+}
+
+// Garrison-load box add (desktop drag while in load mode): send every eligible
+// own unit in the box into the container in one command; stays armed.
+function garrisonBoxLoad(x1,y1,x2,y2){
+  let c = window.settingGarrison != null ? entitiesById.get(window.settingGarrison) : null;
+  if(!c || c.hp<=0){ window.settingGarrison=null; updateUI(); return; }
+  let ids = unitsInBox(x1,y1,x2,y2).filter(u=>!u.garrisonedIn && canGarrisonIn(c, myTeam, u)).map(u=>u.id);
+  if(ids.length) submitCommand({ kind:'garrison', unitIds:ids, bldgId:c.id });
+}
+
+function doBoxSelect(x1,y1,x2,y2){
+  if(gameOver)return; // match is over — no selecting over the frozen map
+  selected=unitsInBox(x1,y1,x2,y2);
   let units=selected.filter(s=>s.type==='unit');
   if(units.length>0)selected=units;
 
@@ -1471,6 +1657,7 @@ function doBoxSelect(x1,y1,x2,y2){
 }
 
 function doCommand(sx,sy){
+  if(gameOver)return; // match is over — no commands over the frozen map
   placing=null; // cancel building placement preview when commanding units
   if(selected.length===0)return;
   // Clicks never mutate world state directly — this resolves the click to
@@ -1483,22 +1670,37 @@ function doCommand(sx,sy){
   let resTarget = getResourceUnderCursor(sx, sy);
   let tile = resTarget ? { x: resTarget.x, y: resTarget.y } : screenToTile(sx, sy);
 
-  // If a friendly training building is selected, right-clicking sets its Rally Point
+  // If a friendly training building is selected, this is the RALLY path —
+  // the building half of right-click-to-flag. Both skins now set the rally
+  // on a right-click (AoE2 standard), matching how right-clicking a unit
+  // selection plants a guard/escort flag. On index.html doCommand is only
+  // reached for a building via a right-click or the armed Set Rally button,
+  // both of which should relocate the flag — so no extra gate is needed.
   if(selected[0].type==='building'&&selected[0].team===myTeam){
     let bldg=selected[0];
     let bData=BLDGS[bldg.btype];
     if(!bData || !bData.builds || bData.builds.length === 0) return;
     if(!inMapBounds(tile.x,tile.y))return;
 
-    // Find target entity under the click
+    // Find target entity under the click. UNITS are not rally targets —
+    // execRally snaps a flag dropped on one to the tile it's standing on,
+    // so mirror that here: adjust the feedback tile and drop the target,
+    // and the message reads as ground/resource, never "set to Villager".
     let rTarget = getUnitUnderCursor(sx, sy);
-    if(!rTarget){
+    if(rTarget){
+      tile = { x: Math.max(0, Math.min(MAP-1, Math.round(rTarget.x))),
+               y: Math.max(0, Math.min(MAP-1, Math.round(rTarget.y))) };
+      rTarget = null;
+    } else {
       rTarget = getBuildingUnderCursor(sx, sy);
+      // Same filter as execRally — the shared isRallyBuildingTarget
+      // (js/commands.js) keeps the message and the sim in agreement.
+      if(rTarget && !isRallyBuildingTarget(rTarget, myTeam)) rTarget = null;
     }
 
     feedbackFor(myTeam, () => {
       if(rTarget){
-        showMsg('Rally point set to '+ (rTarget.type==='unit' ? UNITS[rTarget.utype].name : BLDGS[rTarget.btype].name));
+        showMsg('Rally point set to '+ BLDGS[rTarget.btype].name);
       } else {
         let t0=map[tile.y]&&map[tile.y][tile.x];
         if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM)){
@@ -1515,12 +1717,23 @@ function doCommand(sx,sy){
     // World-space command, scheduled on the tick queue (js/commands.js) —
     // the mutation itself happens in execRally at the stamped tick.
     submitCommand({ kind: 'rally', bldgId: bldg.id, tileX: tile.x, tileY: tile.y, targetId: rTarget ? rTarget.id : null });
+    // Issuer-side flag PREVIEW (cosmetic, never sim state): the command
+    // executes INPUT_DELAY_TICKS from now, and without this the planted
+    // flag renders at the OLD rally spot for those frames — a visible
+    // flicker-and-jump on every rally click. render.js draws the flag at
+    // the preview spot until the exec tick has safely passed.
+    window.pendingRallyPreview = { bldgId: bldg.id, x: tile.x, y: tile.y, at: tick };
     return;
   }
-  // Visual command marker
+  // Visual command marker. The gather (yellow) color only applies to an
+  // EXPLORED resource tile — a click on unexplored ground is a plain walk
+  // (the villager can't be tasked to an unseen resource, see execUnitCommand
+  // in js/commands.js), so it stays green. Mirrors that sim rule using the
+  // viewer's own fog (this marker is local cosmetic feedback).
   let t0=map[tile.y]&&map[tile.y][tile.x];
+  let seen = window.fogDisabled || window.seeMapMode || (fog[tile.y] && fog[tile.y][tile.x] !== 0);
   let markerColor='#0f0';
-  if(t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
+  if(seen&&t0&&(t0.t===TERRAIN.FOREST||t0.t===TERRAIN.GOLD||t0.t===TERRAIN.STONE||t0.t===TERRAIN.BERRIES||t0.t===TERRAIN.FARM))markerColor='#ff0';
   // Check if targeting enemy OR own sheep for harvesting OR own unit to follow
   let target=null;
   let buildTarget=null;
@@ -1543,22 +1756,38 @@ function doCommand(sx,sy){
       // Wild bear (gaia): right-click means attack, never follow
       target = clickedUnit;
     } else {
-      followTarget = clickedUnit;
+      // Click-to-board and click-to-escort are DISABLED: a friendly unit under
+      // the cursor is NOT a target — left/right-clicking it is a plain move.
+      // Garrison a ram via its Garrison button (load mode); the town bell
+      // garrisons villagers. (target & followTarget stay null → plain move.)
     }
   }
   if(!target){
     target = getBuildingUnderCursor(sx, sy, en => isEnemyOf(myTeam, en) && buildingFogLevel(en) === 2);
   }
+  // Trade cart onto an ALLY's Market: an allied market is same-side-but-not-own,
+  // so it's dropped by both the enemy-target and own-building filters — pass it
+  // as the target so execUnitCommand's tradecart branch can start the route.
+  // (Enemy markets are already picked above; gated on a cart being selected so
+  // nothing else changes.)
+  if(!target && selected.some(s => s.type === 'unit' && s.utype === 'tradecart' && s.team === myTeam)){
+    // No fog-level gate here (unlike enemy targets): you're sending your own
+    // cart to a KNOWN ally/other-player Market — if you can click it you can
+    // trade with it, and ally vision/distance shouldn't block a friendly route.
+    target = getBuildingUnderCursor(sx, sy, en => en.btype === 'MARKET' && en.team !== myTeam && isPlayerTeam(en.team));
+  }
   if(!target){
     // Repair/build-finish takes priority over "Follow" — a friendly unit
     // merely standing near a damaged building shouldn't hijack the click.
-    // Manual garrisoning-by-click was removed for simplicity: the town bell
-    // is now the only way villagers garrison, so clicking an own building
-    // always means "fix it" (repair if damaged, resume if unfinished).
+    // The town bell is the only way villagers garrison (no garrison-by-
+    // click), so clicking an own building always means "fix it" (repair if
+    // damaged, resume if unfinished).
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';
+  else if(target && target.type==='building' && target.btype==='MARKET' && target.team!==myTeam)markerColor='#0af'; // trade, not attack
+  else if(target && target.utype==='ram' && target.team===myTeam)markerColor='#0af'; // board, not attack
   else if(target)markerColor='#f44';
   else if(buildTarget)markerColor='#0af';
   else if(followTarget)markerColor='#0f8';
@@ -1576,26 +1805,28 @@ function doCommand(sx,sy){
     else if (first.utype !== 'sheep') window.playSound('select_military');
   }
 
-  // Record the keep-selection decision for THIS command (see pendingOrderUI):
-  // mirror execUnitCommand's rules — plain walk keeps selection; a villager
-  // sent to build/repair keeps (builder flow); gather/attack/follow deselect.
+  // Record the keep-selection decision for THIS command (see pendingOrderUI).
+  // The rule (index.html streamlined model): a real TASK — gather/farm,
+  // build, repair, attack, follow — deselects, so ordering a unit feels like
+  // "assign it and move on". The ONLY keep is a plain WALK: to explored
+  // ground where nothing is committed, OR to an UNEXPLORED tile (we can't
+  // know what's there yet, so it's a move into the unknown, not a task).
   {
     prunePendingOrders();
     let t0p = map[tile.y] && map[tile.y][tile.x];
     let GATHERABLE_T = t0p && (t0p.t === TERRAIN.FOREST || t0p.t === TERRAIN.GOLD || t0p.t === TERRAIN.STONE || t0p.t === TERRAIN.BERRIES || t0p.t === TERRAIN.FARM);
+    let unexplored = !seen; // `seen` (viewer fog) computed above for the marker color
     let plainWalk = !target && !buildTarget && !followTarget;
     movers.forEach(s => {
-      let keep = false;
-      if (buildTarget && s.utype === 'villager') keep = true; // hasSelectedMobileBuilder flow
-      else if (plainWalk && !(s.utype === 'villager' && GATHERABLE_T)) keep = true;
+      let keep = unexplored || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
       pendingOrderUI.set(s.id, { t: tick, keep });
     });
   }
 
   // World-space command with all targets resolved to ids against THIS
   // client's view (its fog, its screen). Mutation happens in
-  // execUnitCommand (js/commands.js) at the scheduled tick — on the host's
-  // queue for now, on both peers' queues once lockstep lands.
+  // execUnitCommand (js/commands.js) at the scheduled tick on every peer's
+  // queue (lockstep).
   submitCommand({
     kind: 'command',
     unitIds: movers.map(s => s.id),
@@ -1606,20 +1837,9 @@ function doCommand(sx,sy){
   });
 }
 
-// AoE2-style formation: diamond spread around center tile
-function getFormation(n){
-  let offsets=[[0,0]];
-  if(n<=1)return offsets;
-  // Spiral outward in rings
-  for(let r=1;offsets.length<n;r++){
-    for(let dx=-r;dx<=r&&offsets.length<n;dx++){
-      for(let dy=-r;dy<=r&&offsets.length<n;dy++){
-        if(Math.abs(dx)+Math.abs(dy)===r) offsets.push([dx,dy]);
-      }
-    }
-  }
-  return offsets;
-}
+// (Group formations live in js/commands.js — formationOffsets, THE single
+// formation concept, consumed only by SIM code: the move/guard/escort
+// executors and the AI picket formation.)
 
 // Resolver only: screen->tile plus issuer-local UI concerns (placement
 // preview mode, Shift-to-repeat, "select a villager" nag). The actual
@@ -1637,16 +1857,16 @@ function doPlace(sx,sy){
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){
     placing=null;
+    // Building is a task → deselect once the last foundation is placed
+    // (index model). Shift-placing keeps them for the next foundation, and
+    // classic stays AoE2-sticky.
+    deselectAfterTask();
   } else {
     showMsg('Place next foundation (release Shift to finish)');
   }
 }
 
 // ---- CAMERA SCROLL (Desktop) ----
-let mouseInGame=false;
-C.addEventListener('mouseenter',()=>{mouseInGame=true;});
-C.addEventListener('mouseleave',()=>{mouseInGame=false;});
-
 function handleScroll(elapsed){
   if(gameOver && !window.seeMapMode)return; // keep panning while reviewing the map
   let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;
@@ -1693,6 +1913,7 @@ window.addEventListener('resize',()=>{
 
 // Double click to select all units of same type on screen
 C.addEventListener('dblclick', e => {
+  if (window.__editorMode) return; // scenario editor handles its own canvas input
   if (gameOver || recentTouch()) return;
   let clicked = getUnitUnderCursor(e.clientX, e.clientY);
   if (clicked && clicked.team === myTeam) {

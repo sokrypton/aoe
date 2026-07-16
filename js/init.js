@@ -9,6 +9,9 @@ function init(){
   window.lastWarTick=undefined;
   genMap();
   initFog(); // Initialize Fog of War grid
+  // Scenario loader (js/scenario.js) provides its OWN entities on the blank
+  // base — skip the default starting town + wildlife.
+  if(!window.__scenarioMode){
   STARTS.forEach(start=>{
     let tc=createBuilding('TC',start.x,start.y,start.team);
     tc.complete=true;
@@ -24,13 +27,14 @@ function init(){
   });
   placeStartingSheep();
   placeWildBears();
+  }
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
-  // (The old "Drag to pan \u2022 Tap to select" mobile hint that used to show
-  // here was removed \u2014 it re-fired on every init(), i.e. every restart and
-  // rematch, not just first launch; the \u2753 Help overlay documents the same
-  // gestures. #help-hint itself stays: showMsg() still coordinates with it.)
+  // (No auto-shown mobile gesture hint here \u2014 anything fired from init()
+  // re-fires on every restart/rematch, not just first launch; the \u2753 Help
+  // overlay documents the gestures. #help-hint itself stays: showMsg()
+  // still coordinates with it.)
 }
 
 function placeStartingSheep(){
@@ -165,11 +169,13 @@ function applyGameSettings(){
   if (diffSel && AI_LEVELS[diffSel.value]) aiDifficulty = diffSel.value;
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let playersSel = document.querySelector('input[name="players"]:checked');
+  let fogSel = document.querySelector('input[name="fogmode"]:checked');
   try {
     if (diffSel) localStorage.setItem('aoeDifficulty', diffSel.value);
     if (sizeSel) localStorage.setItem('aoeMapSize', sizeSel.value);
     if (speedSel) localStorage.setItem('aoeGameSpeed', speedSel.value);
     if (playersSel) localStorage.setItem('aoePlayers', playersSel.value);
+    if (fogSel) localStorage.setItem('aoeFogMode', fogSel.value);
   } catch (e) {}
 }
 
@@ -198,7 +204,7 @@ function applyGameSettings(){
 // core.js having initialized.
 (function restoreGameSettings(){
   try {
-    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players']]
+    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players'], ['aoeFogMode','fogmode']]
       .forEach(([key, name]) => {
         let v = localStorage.getItem(key);
         if (!v) return;
@@ -283,6 +289,12 @@ function onStartClicked(){
   // (the guest's game-over menu dismisses in its lockstep-start handler).
   if (netRole === 'host' && netConnected && gameOver) {
     let speedSel = document.querySelector('input[name="gamespeed"]:checked');
+    // Set GAME_SPEED directly (not via applyGameSettings): hostStartLockstepMatch
+    // below reads GAME_SPEED into its start payload, and applyGameSettings's
+    // lockstep branch only ENQUEUES a set-speed command (executes ticks later)
+    // without updating GAME_SPEED now — so the payload would ship a stale speed.
+    // The set-speed command applyGameSettings then skips (v===GAME_SPEED) is
+    // intentional: this is a fresh-match start, not a mid-match speed change.
     setGameSpeed(speedSel ? parseFloat(speedSel.value) : 2);
     applyAudioSettings();
     applyGameSettings();
@@ -311,7 +323,11 @@ function onStartClicked(){
   applyAudioSettings();
   applyGameSettings();
 
-  window.fogDisabled = false;
+  // Match-level fog setting (the "Map" option): Fog of War vs All Visible.
+  // Immutable for the whole match — sim reads, the AI's knowledge model,
+  // save format, lockstep snapshots and the checksum all key off it.
+  let fogSel = document.querySelector('input[name="fogmode"]:checked');
+  window.fogDisabled = !!(fogSel && fogSel.value === 'open');
 
   // Always regenerate the map (even on a fresh load) so the chosen size takes effect,
   // since init() already ran once at script load with the default size.
@@ -390,19 +406,92 @@ function showMpOverlay(title, text, spinner){
   // opponent-paused overlay): either side can bank the match to a file
   // right there while waiting, in case the reconnect never comes. A guest
   // save is just as valid as a host one (see js/save.js).
-  let saveBtn = document.getElementById('mp-disconnect-save');
-  if (saveBtn) saveBtn.style.display = (spinner && gameStarted && entities.length > 0) ? '' : 'none';
+  show('mp-disconnect-save', (spinner && gameStarted && entities.length > 0 && netRole !== 'guest'));
   el.style.display = 'flex';
 }
 function hideMpOverlay(){
-  let el = document.getElementById('mp-disconnect-overlay');
-  if (el) el.style.display = 'none';
+  show('mp-disconnect-overlay', false);
 }
-function showDisconnectOverlay(text){
+function showDisconnectOverlay(text, showKick){
   showMpOverlay('Connection Lost', text, true);
+  let kickBtn = document.getElementById('mp-disconnect-kick');
+  if (kickBtn) kickBtn.style.display = showKick ? '' : 'none';
 }
 function hideDisconnectOverlay(){
+  show('mp-disconnect-kick', false);
   hideMpOverlay();
+}
+
+// Honor-system reconnect: the host couldn't auto-bind us by token, so it sent
+// the list of reclaimable seats (js/net.js). Let the player pick who they are;
+// the pick is sent as claim-seat, and the host rebinds this device's token so a
+// later plain refresh auto-rejoins without asking again.
+function showSeatPicker(seats){
+  if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; } // stop the blind retry loop
+  hideDisconnectOverlay();
+  let el = document.getElementById('mp-seat-picker');
+  let list = document.getElementById('mp-seat-picker-list');
+  let txt = document.getElementById('mp-seat-picker-text');
+  if (!el || !list) return;
+  if (txt) txt.textContent = 'Pick your player to reconnect:';
+  list.innerHTML = '';
+  (seats || []).forEach(s => {
+    let btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-action-btn';
+    let swatch = s.color ? '<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:'
+      + s.color + ';margin-right:8px;vertical-align:middle;"></span>' : '';
+    btn.innerHTML = swatch + (s.name || ('Player ' + (s.seat + 1)));
+    btn.onclick = () => claimSeat(s.seat);
+    list.appendChild(btn);
+  });
+  el.style.display = 'flex';
+}
+function hideSeatPicker(){ show('mp-seat-picker', false); }
+function claimSeat(seat){
+  sendToHost({ type: 'claim-seat', seat, token: mpClientToken(), tab: mpTabId(), name: (localPlayerName || '').trim() });
+  // Await welcome (success) or a fresh seat-list (we lost the race) — disable
+  // the buttons meanwhile so a double-tap can't fire two claims.
+  let list = document.getElementById('mp-seat-picker-list');
+  if (list) list.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  let txt = document.getElementById('mp-seat-picker-text');
+  if (txt) txt.textContent = 'Reconnecting…';
+}
+
+// HOST: recompute the "waiting for a disconnected player" pause and tell
+// every guest. One authority, one verdict — each guest mirrors it rather
+// than tracking connectivity it can't see. Also drives the host's own
+// overlay, with the kick option once someone is actually missing.
+function hostBroadcastDcPause(){
+  if (netRole !== 'host' || !mpMatchStarted || gameOver) return;
+  let missing = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
+  let waiting = missing.map(t => (typeof teamNames !== 'undefined' && teamNames && teamNames[t]) || ('Player ' + (t + 1)));
+  broadcastToGuests({ type: 'match-pause', kind: 'dc', paused: missing.length > 0, waiting });
+  disconnectedPause = missing.length > 0;
+  if (missing.length > 0) {
+    showDisconnectOverlay('Waiting for ' + waiting.join(', ') + ' to reconnect…', true);
+  } else if (!remoteMenuOpen) {
+    hideDisconnectOverlay();
+  }
+  recomputeGamePaused();
+}
+
+// HOST: the overlay's "Continue without them" button — every missing seat
+// is closed for good (kicked=true keeps its hello denied) and handed to
+// the AI via the deterministic set-controller command; then the pause
+// verdict is recomputed (nobody missing anymore -> everyone resumes, and
+// the command executes a few ticks later on every peer alike).
+function kickDisconnectedPlayers(){
+  if (netRole !== 'host') return;
+  let missing = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
+  for (const seat of missing) {
+    if (typeof netCloseGuest === 'function') netCloseGuest(seat, 'kicked', true);
+    guestMenuOpenBySeat.delete(seat);
+    // Stamp the host's authoritative difficulty into the payload so the new
+    // AI brain is identical on every peer (commands.js set-controller).
+    submitCommand({ kind: 'set-controller', t: seat, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
+  }
+  hostBroadcastDcPause();
 }
 
 // Once the match has genuinely started, the pre-match setup/connecting UI
@@ -427,17 +516,13 @@ function hideDisconnectOverlay(){
 function restoreMenuForMatch(){
   showMenuPanel('main');
   updateUiSwitchVisibility();
-  let startRow = document.getElementById('start-row');
-  if (startRow) startRow.style.display = '';
-  let statusPanel = document.getElementById('mp-status-panel');
-  if (statusPanel) statusPanel.style.display = 'none';
-  let startBtn = document.getElementById('start-game-btn');
-  if (startBtn) startBtn.style.display = 'none';
+  show('start-row', true);
+  show('mp-status-panel', false);
+  show('start-game-btn', false);
   let menu = document.getElementById('tutorial');
-  // Options + Help ARE available mid-match now (unlike the pre-two-level
-  // menu, which dropped Help to keep the single panel small). Explicitly
-  // re-shown — a guest's enterGuestJoinMode broad-hid every
-  // .menu-button-container, including the ones inside #misc-row.
+  // Options + Help ARE available mid-match. Explicitly re-shown — a
+  // guest's enterGuestJoinMode broad-hid every .menu-button-container,
+  // including the ones inside #misc-row.
   if (menu) {
     menu.querySelectorAll('#misc-row, #misc-row .menu-button-container, #options-back-row')
       .forEach(el => { el.style.display = ''; });
@@ -454,16 +539,15 @@ function restoreMenuForMatch(){
     if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
     menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
   }
-  let mpRow = document.getElementById('mp-row');
-  if (mpRow) mpRow.style.display = 'none';
-  let saveLoadRow = document.getElementById('save-load-row');
-  if (saveLoadRow) saveLoadRow.style.display = '';
+  show('mp-row', false);
+  show('save-load-row', true);
   // Save Game is hidden by default in the HTML (no match exists yet on the
-  // pre-game screen) — now that one genuinely does, show it back.
+  // pre-game screen) — now that one genuinely does, show it back. HOST
+  // only in multiplayer: a guest can't reload+re-host a save (it rejoins
+  // the host's reload by token instead), so offering it would be a lie.
   let saveBtn = document.getElementById('save-game-btn');
-  if (saveBtn) saveBtn.style.display = '';
-  let loadBtn = document.getElementById('load-game-btn');
-  if (loadBtn) loadBtn.style.display = 'none';
+  if (saveBtn) saveBtn.style.display = netRole === 'guest' ? 'none' : '';
+  show('load-game-btn', false);
 }
 
 function copyMpLink(){
@@ -488,15 +572,21 @@ function onHostClicked(){
   // Slot 1 becomes a (future) human guest the instant Host is clicked —
   // NOT when the guest connects — so the AI can't make irreversible
   // decisions (spend resources, queue units) during the waiting-for-
-  // opponent window. This is the data-driven successor to the old
-  // `netRole == null` gate around updateAI (js/loop.js). AI_STATES[1] is
-  // deliberately left in place: cancelHosting() flips the slot back and
-  // the AI resumes its plans exactly where it stopped.
-  // Hosting from an in-progress game (e.g. a 4-team 2v2 save): only slots
-  // 0/1 become human — slots 2/3 must KEEP their AI controllers, or those
-  // teams freeze forever (isAITeam false → their brains never run).
+  // opponent window. AI_STATES[1] is deliberately left in place:
+  // cancelHosting() flips the slot back and the AI resumes its plans
+  // exactly where it stopped.
+  // Hosting from an in-progress game: a loaded MP save already carries the
+  // real human/AI seat layout — keep it verbatim (its guests rejoin their
+  // own seats by token). Hosting a single-player game as MP is the one
+  // case with no human guest seat yet: seat 1 flips to human for the guest
+  // (its AI plan state is kept — cancelHosting flips it back and the AI
+  // resumes exactly where it stopped). AI slots always keep their
+  // controllers, or those teams freeze forever (isAITeam false → their
+  // brains never run).
   teamControllers = mpHostingFromExistingGame
-    ? teamControllers.map((c, t) => t <= 1 ? {type:'human'} : c)
+    ? (teamControllers.some((c, t) => t > 0 && c && c.type === 'human')
+        ? teamControllers
+        : teamControllers.map((c, t) => t === 1 ? {type:'human'} : c))
     : defaultControllers(true);
   if (!mpHostingFromExistingGame) {
     // Only apply the setup screen's map size/speed pickers when actually
@@ -504,7 +594,7 @@ function onHostClicked(){
     // exactly what was in that file, not silently override it with
     // whatever the (irrelevant, in that case) setup controls happen to
     // be set to.
-    NUM_TEAMS = 2; // MP is strictly 1v1 — the Players picker is SP-only
+    NUM_TEAMS = 2; // placeholder while waiting in the lobby (SP Players picker doesn't apply); hostStartLockstepMatch re-derives the real count from the lobby seats
     let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
     setMapSize(sizeSelected ? sizeSelected.value : 'medium');
     let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
@@ -517,12 +607,11 @@ function onHostClicked(){
   let hostBtn = document.getElementById('host-game-btn');
   if (hostBtn) hostBtn.disabled = true;
   showMpStatus('Starting host session…');
-  let cancelBtn = document.getElementById('mp-cancel-btn');
-  if (cancelBtn) cancelBtn.style.display = '';
+  show('mp-cancel-btn', true);
 
   // Hide the action rows so the "waiting for opponent" status/link panel
-  // stands alone (the settings grid needs no hiding anymore — it lives in
-  // the separate options panel). #mp-row (this very button) is included
+  // stands alone (the settings grid lives in the separate options panel,
+  // so it needs no hiding). #mp-row (this very button) is included
   // too — disabling it alone still left it sitting there grayed out, which
   // reads as "you could still click this," not "you're already hosting."
   // Everything hidden here is restored by cancelHosting() below.
@@ -550,7 +639,7 @@ function onHostClicked(){
       return;
     }
     // NOTE: the HOST's own ?host=<id> resume URL is deliberately NOT written
-    // here anymore — only once the match actually starts (setHostResumeUrl,
+    // here — only once the match actually starts (setHostResumeUrl,
     // called from hostStartLockstepMatch / the save-resume path). Otherwise a
     // host refreshing during the LOBBY would boot straight into
     // enterHostResumeMode and try to auto-recover a match that never began.
@@ -599,6 +688,8 @@ function leaveMpSession(){
   teardownNet();
   myTeam = 0;
   localHumanTeam = 0;
+  guestMenuOpenBySeat.clear();
+  window.__mpSession.mySeat = null;
   mpMatchStarted = false;
   mpHostingFromExistingGame = false;
   disconnectedPause = false;
@@ -618,9 +709,8 @@ function leaveMpSession(){
   recomputeGamePaused();
 }
 
-// Wired to #mp-cancel-btn on the "Waiting for opponent…" screen — before
-// this, clicking Host was irreversible: the setup UI was hidden and the
-// only way back was a page refresh.
+// Wired to #mp-cancel-btn on the "Waiting for opponent…" screen — without
+// it, clicking Host would be irreversible short of a page refresh.
 function cancelHosting(){
   let wasMidMatch = mpHostingFromExistingGame;
   leaveMpSession();
@@ -629,10 +719,8 @@ function cancelHosting(){
   // state was kept, so a match resumed behind the menu continues seamlessly.
   teamControllers = defaultControllers(false);
   if (AI_STATES && !AI_STATES[1]) AI_STATES[1] = freshAIState(1);
-  let panel = document.getElementById('mp-status-panel');
-  if (panel) panel.style.display = 'none';
-  let cancelBtn = document.getElementById('mp-cancel-btn');
-  if (cancelBtn) cancelBtn.style.display = 'none';
+  show('mp-status-panel', false);
+  show('mp-cancel-btn', false);
   let qrEl = document.getElementById('mp-qr');
   if (qrEl) { qrEl.style.display = 'none'; qrEl.innerHTML = ''; }
   let hostBtn = document.getElementById('host-game-btn');
@@ -648,15 +736,22 @@ function cancelHosting(){
   applyMenuMode(wasMidMatch && gameStarted && !gameOver && entities.length > 0 ? 'ingame' : 'prestart');
 }
 
-// Fired by js/net.js once the DataConnection actually opens (both host and
-// guest reach this — role-specific handling below).
-window.onNetConnectionOpen = function(){
+// Fired by js/net.js when a connection becomes usable. On a GUEST that's
+// the DataConnection to the host opening; on the HOST it fires once per
+// guest, AFTER that guest's hello has bound it to a seat (`seat` is only
+// passed on the host).
+window.onNetConnectionOpen = function(seat){
   if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
-  // Version handshake — both roles announce their wire-format version the
-  // moment the channel opens; the mismatch handler below tells BOTH
-  // players to refresh instead of letting a stale cached build surface as
-  // mystery desync.
-  queueSend(netConn, { type: 'proto', v: NET_PROTOCOL_VERSION });
+  if (netRole === 'guest') {
+    // Version handshake — announce our wire-format version the moment the
+    // channel opens (the host sends its own from wireHostConnection); the
+    // mismatch handler below tells BOTH players to refresh instead of
+    // letting a stale cached build surface as mystery desync. The hello
+    // right after it is what earns this connection a seat: the persistent
+    // token lets a reconnect land back on the same seat.
+    sendToHost({ type: 'proto', v: NET_PROTOCOL_VERSION });
+    sendToHost({ type: 'hello', token: mpClientToken(), tab: mpTabId(), name: (localPlayerName || '').trim() });
+  }
   if (netRole === 'host') {
     // ?host= resume: this rehosted page has NO world of its own — the only
     // current copy is the guest's live mirror. Ask for it instead of
@@ -666,7 +761,7 @@ window.onNetConnectionOpen = function(){
     // as requestFullSync) — the interval self-clears once the flag drops.
     if (window.__mpSession.awaitingStateFromGuest) {
       showMpStatus('Opponent reconnected! Recovering match…');
-      broadcastToGuest({ type: 'request-state' });
+      broadcastToGuests({ type: 'request-state' });
       if (!window.__mpSession.stateRequestTimer) {
         window.__mpSession.stateRequestTimer = setInterval(() => {
           if (!window.__mpSession.awaitingStateFromGuest || !netConnected) {
@@ -674,21 +769,19 @@ window.onNetConnectionOpen = function(){
             window.__mpSession.stateRequestTimer = null;
             return;
           }
-          broadcastToGuest({ type: 'request-state' });
+          broadcastToGuests({ type: 'request-state' });
         }, 5000);
       }
       return;
     }
     if (!mpMatchStarted) {
-      // Real per-team fog now (updateFog() in js/core.js computes vision
-      // for `myTeam` — 0 on the host, 1 on the guest — instead of a
-      // hardcoded team 0). Force it on explicitly regardless of whatever
-      // a loaded save's own fogDisabled flag was — a live multiplayer
-      // match should always use real fog, not a leftover "reveal map"
-      // setting from single-player. The guest forces it too on its own
-      // start path (js/lockstep.js), and resync state carries the flag
-      // (it gates sim-visible checks), so both peers agree.
-      window.fogDisabled = false;
+      // Fog is a synced match setting: a fresh lobby match gets it from
+      // lobbyState at start (hostStartLockstepMatch → lockstep-start, which
+      // the guest applies), so only DEFAULT it here; hosting from a loaded
+      // save keeps the save's own flag (applySavedGame restored it — a
+      // no-fog save resumes as a no-fog match on every peer via the resync
+      // state, which carries the flag).
+      if (!mpHostingFromExistingGame) window.fogDisabled = false;
       if (mpHostingFromExistingGame) {
         // Hosting from a save loaded before Host was clicked — keep that
         // exact state: hand it to the guest and enter lockstep from it
@@ -702,7 +795,7 @@ window.onNetConnectionOpen = function(){
         lockstepActive = true;
         lockstepResetState();
         DET.enabled = true;
-        lockstepResumeGuest();
+        lockstepResumeGuest(seat);
         let menu = document.getElementById('tutorial');
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
@@ -715,36 +808,31 @@ window.onNetConnectionOpen = function(){
         // does NOT start until the host clicks Start. Do NOT set mpMatchStarted
         // here: it gates every reconnect/resume branch and must only flip when
         // the match actually begins (hostStartLockstepMatch).
-        if (typeof hostEnterLobby === 'function') hostEnterLobby();
+        if (typeof hostEnterLobby === 'function') hostEnterLobby(seat);
       }
     } else {
-      // Reconnect: resume exactly where the match was paused. Lockstep:
-      // hand the (possibly brand-new) guest page the full sim state and
-      // re-enter lockstep — same machinery as desync recovery. Legacy: the
-      // guest gets caught back up by the forced full sync above. Only
-      // clears ITS OWN reason (disconnectedPause) — recomputeGamePaused()
-      // below still keeps the game paused if e.g. this host's own menu
-      // happens to be open at the exact moment the guest reconnects.
-      if (lockstepEnabled()) lockstepResumeGuest();
-      hideDisconnectOverlay();
-      disconnectedPause = false;
-      recomputeGamePaused();
+      // Reconnect: resume exactly where the match was paused. Hand the
+      // (possibly brand-new) guest page the full sim state and re-enter
+      // lockstep — same machinery as desync recovery; the OTHER guests get
+      // the same state as a resync so everyone stays bit-identical. Only
+      // clears the pause when no other guest is still out —
+      // recomputeGamePaused() also keeps the game paused if e.g. this
+      // host's own menu happens to be open at the exact moment of the
+      // reconnect.
+      if (lockstepEnabled()) lockstepResumeGuest(seat);
+      hostBroadcastDcPause(); // clears the pause once nobody is missing
     }
-    // Re-broadcast this session's actual current localMenuOpen regardless
-    // of which branch above ran. A (re)connecting guest's own remoteMenuOpen
-    // is a mirrored copy of whatever the LAST 'host-menu' message it ever
-    // received said — if the previous host session died (crash/reload)
-    // while its menu happened to be open, it can never send the matching
-    // open:false (the whole page is gone), permanently stranding that
-    // guest paused with remoteMenuOpen stuck true and nothing on screen to
-    // explain why (confirmed by an actual test: host reloads from a save
-    // while its own menu was open, guest auto-reconnects via the same peer
-    // id, and ends up stuck gamePaused with no visible cause). This new
-    // session's localMenuOpen is always known-correct at this point (freshly
-    // computed above), so just tell the guest what it actually is. Only
-    // meaningful once the match is live — during the lobby there's no sim to
-    // pause, and the guest's lobby panel isn't a "menu" the host should mirror.
-    if (mpMatchStarted) broadcastToGuest({ type: 'host-menu', open: localMenuOpen });
+    // Re-broadcast the aggregate pause verdict regardless of which branch
+    // above ran. A (re)connecting guest's own remoteMenuOpen is a mirrored
+    // copy of whatever the LAST 'match-pause' it ever received said — if
+    // the previous host session died (crash/reload) while a menu happened
+    // to be open, the matching open:false can never arrive (the whole page
+    // is gone), permanently stranding that guest paused with nothing on
+    // screen to explain why.
+    // The freshly recomputed verdict is always known-correct here. Only
+    // meaningful once the match is live — during the lobby there's no sim
+    // to pause, and a lobby panel isn't a "menu" the host should mirror.
+    if (mpMatchStarted) hostBroadcastPauseState();
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
       // First connect → wait for the host's lobby-open (js/lobby.js), which
@@ -760,32 +848,27 @@ window.onNetConnectionOpen = function(){
   }
 };
 
+// GUEST-only (js/net.js's handleConnectionLost): the single link to the
+// host died. The host's per-guest equivalent is onGuestConnectionClosed
+// below.
 window.onNetConnectionClosed = function(){
   // A drop while in the PRE-MATCH LOBBY (before mpMatchStarted) is its own
   // case — the mid-match disconnect overlay/reconnect below assumes a live
   // match. Handle the lobby here and return.
   if (window.__mpSession.inLobby) {
-    if (netRole === 'host') {
-      // Guest left the lobby: reopen seat 2, disable Start (js/lobby.js). The
-      // host's Peer stays alive, so the same guest reopening the link
-      // re-enters onNetConnectionOpen → onGuestEnteredLobby re-seats them.
-      if (typeof onGuestLeftLobby === 'function') onGuestLeftLobby();
-    } else if (netRole === 'guest') {
-      // Host left/closed the lobby: there's no match to resume, so tell the
-      // guest plainly instead of silently spinning. Drop the lobby, show the
-      // status, and offer a manual Retry (in case it was a transient blip and
-      // the host is still up) — onNetConnectionOpen re-enters the lobby if a
-      // reconnect lands.
-      window.__mpSession.inLobby = false;
-      lobbyState = null;
-      if (typeof showMenuPanel === 'function') showMenuPanel('main');
-      let menu = document.getElementById('tutorial');
-      if (menu) menu.style.display = 'flex';
-      showMpStatus('The host has disconnected.');
-      let retryBtn = document.getElementById('mp-retry-btn');
-      if (retryBtn) retryBtn.style.display = '';
-      if (typeof showMsg === 'function') showMsg('Host disconnected');
-    }
+    // Host left/closed the lobby: there's no match to resume, so tell the
+    // guest plainly instead of silently spinning. Drop the lobby, show the
+    // status, and offer a manual Retry (in case it was a transient blip and
+    // the host is still up) — onNetConnectionOpen re-enters the lobby if a
+    // reconnect lands.
+    window.__mpSession.inLobby = false;
+    lobbyState = null;
+    if (typeof showMenuPanel === 'function') showMenuPanel('main');
+    let menu = document.getElementById('tutorial');
+    if (menu) menu.style.display = 'flex';
+    showMpStatus('The host has disconnected.');
+    show('mp-retry-btn', true);
+    if (typeof showMsg === 'function') showMsg('Host disconnected');
     return;
   }
   // A drop before the match ever started, or after it's already over, is
@@ -794,10 +877,29 @@ window.onNetConnectionClosed = function(){
   if (!mpMatchStarted || gameOver) return;
   disconnectedPause = true;
   recomputeGamePaused();
-  showDisconnectOverlay(netRole === 'host'
-    ? 'Your opponent disconnected. Waiting for them to reconnect…'
-    : 'Connection to host lost. Attempting to reconnect…');
-  if (netRole === 'guest') attemptReconnect();
+  showDisconnectOverlay('Connection to host lost. Attempting to reconnect…');
+  attemptReconnect();
+};
+
+// HOST-only (js/net.js's handleGuestConnectionLost): ONE guest's
+// connection died; its registry record (token → seat) survives so the
+// same browser can reconnect into its seat.
+window.onGuestConnectionClosed = function(seat){
+  // A dropped guest's open menu must not keep everyone else paused after
+  // it's gone — the disconnect pause takes over as the reason.
+  if (guestMenuOpenBySeat.get(seat)) {
+    guestMenuOpenBySeat.delete(seat);
+    hostBroadcastPauseState();
+  }
+  if (window.__mpSession.inLobby) {
+    // Guest left the lobby: free their seat, disable Start (js/lobby.js).
+    // The host's Peer stays alive, so anyone reopening the link re-enters
+    // onNetConnectionOpen and gets re-seated.
+    if (typeof onGuestLeftLobby === 'function') onGuestLeftLobby(seat);
+    return;
+  }
+  if (!mpMatchStarted || gameOver) return;
+  hostBroadcastDcPause();
 };
 
 // Guest-only: retries joinSession() against the same host peer id every
@@ -818,8 +920,7 @@ function attemptReconnect(){
 // the connection is also mid-reconnect): this client's own #tutorial menu
 // being open, the OTHER peer's menu being open (either direction — see
 // the message handler below), and a disconnect/reconnect in progress. A
-// bug this exact shape already bit once (in the deleted snapshot-sync
-// code — a different unconditional overwrite): any
+// bug this exact shape already bit once: any
 // code path that just sets `gamePaused = false` directly, without
 // checking whether some OTHER reason is still active, will incorrectly
 // resume the game out from under a menu/overlay that's still visibly
@@ -834,28 +935,50 @@ function recomputeGamePaused(){
   gamePaused = localMenuOpen || remoteMenuOpen || disconnectedPause;
 }
 
-// Called from toggleMenu() — sends this client's own menu open/close state
-// to the other peer, whichever role we are. A no-op if not connected.
+// ANY player opening their menu pauses everyone — a player stepping away
+// to check settings must not leave the others free to keep building/
+// fighting in real time. The HOST is the pause authority in the star:
+// guests report their own menu state ('guest-menu'), the host aggregates
+// (its own menu + every guest's) and broadcasts one 'match-pause' verdict.
+// The channel is reliable-ordered, so a lost open:false can only mean a
+// disconnect, which has its own overlay/pause path.
+let guestMenuOpenBySeat = new Map(); // host-side: seat -> that guest's menu is open
+
+// Called from toggleMenu() — reports this client's own menu open/close.
 function broadcastMenuState(open){
   if (!netConnected) return;
-  if (netRole === 'host') broadcastToGuest({ type: 'host-menu', open });
+  if (netRole === 'host') hostBroadcastPauseState();
   else if (netRole === 'guest') sendToHost({ type: 'guest-menu', open });
 }
 
-// Symmetric both ways — either peer opening their menu pauses (and alerts)
-// the other, not just the host. Without this, a guest stepping away to
-// check settings would leave the host free to keep building/training/
-// fighting in real time while the guest sits frozen, unable to respond —
-// exactly the kind of one-sided advantage a 1v1 match shouldn't allow.
-// Driven by the one-shot menu messages below; the channel is reliable-
-// ordered, so a lost open:false can only mean a disconnect, which has its
-// own overlay/pause path.
-function setRemoteMenuOpen(open){
+// Host: recompute the aggregate menu-pause and tell every guest. byTeam
+// names the (first) responsible player so each guest can label the
+// overlay — or skip it when the culprit is itself.
+function hostBroadcastPauseState(){
+  if (netRole !== 'host') return;
+  let byTeam = localMenuOpen ? 0 : null;
+  if (byTeam == null) {
+    for (const [seat, open] of guestMenuOpenBySeat) { if (open) { byTeam = seat; break; } }
+  }
+  if (mpMatchStarted) {
+    broadcastToGuests({ type: 'match-pause', kind: 'menu', paused: byTeam != null, byTeam });
+  }
+  // The host's own "remote" reason is any GUEST's menu being open.
+  let anyGuest = false;
+  for (const [, open] of guestMenuOpenBySeat) { if (open) { anyGuest = true; break; } }
+  setRemoteMenuOpen(anyGuest, byTeam);
+}
+
+function pauseCulpritName(byTeam){
+  if (byTeam === 0) return 'The host';
+  let n = (typeof teamNames !== 'undefined' && teamNames && teamNames[byTeam]) || null;
+  return n || 'Another player';
+}
+
+function setRemoteMenuOpen(open, byTeam){
   remoteMenuOpen = !!open;
   if (remoteMenuOpen) {
-    showMpOverlay('Game Paused', netRole === 'guest'
-      ? 'The host has paused the game.'
-      : 'Your opponent has paused the game.', false);
+    showMpOverlay('Game Paused', pauseCulpritName(byTeam) + ' has paused the game.', false);
   } else if (!disconnectedPause) {
     // Don't blow away a disconnect overlay that's showing for an unrelated
     // reason — recomputeGamePaused() below still gets the pause state
@@ -865,18 +988,98 @@ function setRemoteMenuOpen(open){
   recomputeGamePaused();
 }
 
+// Which lobby seat (== sim team id) the host assigned this guest. Arrives
+// in the 'welcome' reply to our hello; the authoritative values for a
+// MATCH come later in lockstep-start/lockstep-resume (yourTeam), but the
+// lobby needs the seat immediately to know which roster row is "mine".
+onNetMessage((msg) => {
+  if (netRole !== 'guest') return;
+  if (msg.type === 'welcome') {
+    window.__mpSession.mySeat = msg.seat;
+    hideSeatPicker(); // an honor-system claim just succeeded (no-op otherwise)
+  } else if (msg.type === 'seat-list') {
+    // Unknown identity to the host (cross-device / cleared storage / a fresh
+    // page after save-load): pick which player we are (js/net.js reclaimableSeats).
+    showSeatPicker(msg.seats || []);
+  } else if (msg.type === 'join-denied') {
+    // The host turned this connection away (game full, match in progress,
+    // or we were kicked). Stop any reconnect loop — retrying would just be
+    // denied again — and say why.
+    if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
+    let why = msg.reason === 'kicked' ? 'You were removed from this game by the host.'
+      : msg.reason === 'in-progress' ? 'This match is already in progress.'
+      : msg.reason === 'version' ? 'Your game version differs from the host’s — hard-refresh (Ctrl/Cmd+Shift+R) and reconnect.'
+      : 'This game is full.';
+    window.__mpSession.inLobby = false;
+    lobbyState = null;
+    let menu = document.getElementById('tutorial');
+    if (menu) menu.style.display = 'flex';
+    if (typeof showMenuPanel === 'function') showMenuPanel('main');
+    hideDisconnectOverlay();
+    showMpStatus(why);
+  }
+});
+
+// Host-side seating rule for a hello whose token doesn't match any
+// existing record (js/net.js's hostHandleHello handles exact-token
+// reconnects before consulting this). Mid-match, unknown tokens are never
+// seated — no takeover heuristics. Pre-match, hand out the guest seat;
+// a stale disconnected record (guest left the lobby) is evicted first.
+window.assignGuestSeat = function(msg){
+  // Mid-match (and while recovering one) only an exact identity rebind may
+  // enter — handled before this hook is consulted (js/net.js). No
+  // seat-guessing heuristics.
+  if (mpMatchStarted || window.__mpSession.awaitingStateFromGuest) return null;
+  if (typeof lobbyState !== 'undefined' && lobbyState) {
+    return typeof lobbyNextFreeSeat === 'function' ? lobbyNextFreeSeat(msg) : null;
+  }
+  // Pre-lobby (no lobbyState yet): first guest gets seat 1. When hosting
+  // from a loaded MP save the registry is pre-seeded with that save's
+  // seats — those humans rebind by token above; an unknown identity may
+  // only take seat 1 if the save didn't reserve it.
+  let old = netGuestBySeat(1);
+  if (old && old.connected) return null;
+  if (old && old.token && mpHostingFromExistingGame) return null; // reserved for the original guest
+  if (old) netGuests.delete(1);
+  return 1;
+};
+
 onNetMessage((msg) => {
   if (msg.type === 'proto' && msg.v !== NET_PROTOCOL_VERSION) {
     console.error('Protocol mismatch: peer is v' + msg.v + ', this client is v' + NET_PROTOCOL_VERSION);
-    showMpOverlay('Version Mismatch',
-      'Your game version differs from your opponent’s — the match cannot run safely. '
-      + 'Both players should hard-refresh the page (Ctrl/Cmd+Shift+R) and reconnect.', false);
+    // The host turns a mismatched guest away at the hello gate (js/net.js) and
+    // keeps playing — only a guest (whose sole peer is the host) must refresh.
+    if (netRole !== 'host') {
+      showMpOverlay('Version Mismatch',
+        'Your game version differs from your opponent’s — the match cannot run safely. '
+        + 'Both players should hard-refresh the page (Ctrl/Cmd+Shift+R) and reconnect.', false);
+    }
     return;
   }
-  let isRemoteMenuMsg = (msg.type === 'host-menu' && netRole === 'guest')
-    || (msg.type === 'guest-menu' && netRole === 'host');
-  if (!isRemoteMenuMsg) return;
-  setRemoteMenuOpen(msg.open);
+});
+
+// Menu-pause plumbing: guests report their own menu; the host aggregates
+// and broadcasts the verdict (hostBroadcastPauseState above).
+onNetMessage((msg, src) => {
+  if (msg.type === 'guest-menu' && netRole === 'host') {
+    if (!src || src.seat == null) return;
+    guestMenuOpenBySeat.set(src.seat, !!msg.open);
+    hostBroadcastPauseState();
+  } else if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'menu') {
+    // Skip the "paused by X" flag when X is this very tab — its own
+    // localMenuOpen already pauses it (and the menu is on screen).
+    setRemoteMenuOpen(msg.paused && msg.byTeam !== myTeam, msg.byTeam);
+  } else if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'dc') {
+    // The host's disconnect-pause verdict: another guest dropped (or came
+    // back). Guests can't see each other's connectivity — mirror it.
+    disconnectedPause = !!msg.paused;
+    if (msg.paused) {
+      showDisconnectOverlay('Waiting for ' + ((msg.waiting || []).join(', ') || 'a player') + ' to reconnect…');
+    } else if (!remoteMenuOpen) {
+      hideDisconnectOverlay();
+    }
+    recomputeGamePaused();
+  }
 });
 
 // Guest entry point: called once at boot (see the bottom of this file) if
@@ -885,9 +1088,9 @@ onNetMessage((msg) => {
 // whole world over the network (Phase 2/net-sync.js), not generate its own
 // via init()'s local genMap()/STARTS spawn.
 function enterGuestJoinMode(hostPeerId){
-  NUM_TEAMS = 2; // MP is strictly 1v1 (the host's lockstep-start confirms)
-  myTeam = 1;
-  localHumanTeam = 1;
+  // No team/seat hardcoding here: the seat arrives in the host's 'welcome'
+  // (lobby identity) and the authoritative team in lockstep-start/-resume's
+  // yourTeam (js/lockstep.js).
   window.__mpSession.hostPeerId = hostPeerId; // remembered for attemptReconnect() above
   let menu = document.getElementById('tutorial');
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
@@ -914,6 +1117,16 @@ function enterGuestJoinMode(hostPeerId){
 // dead id forever).
 function enterHostResumeMode(peerId){
   window.__mpSession.awaitingStateFromGuest = true;
+  // This crashed page has no save file — the persisted session map
+  // (js/net.js persistMpSessionMap, written while the match ran) is what
+  // knows which token owns which seat. Seed the registry from it so each
+  // reconnecting guest's hello rebinds to its exact old seat.
+  try {
+    let m = JSON.parse(localStorage.getItem('aoeMpSessionMap') || 'null');
+    if (m && m.hostPeerId === peerId && typeof netSeedGuestRecords === 'function') {
+      netSeedGuestRecords(m.seatTokens);
+    }
+  } catch (e) {}
   setTimeout(updateUiSwitchVisibility, 0); // after netRole set by hostSession below
   let menu = document.getElementById('tutorial');
   if (menu) {
@@ -941,8 +1154,8 @@ function enterHostResumeMode(peerId){
 }
 
 // The guest's initial connection attempt, re-runnable via the Retry button
-// — the old inline version left "Could not connect" as a dead end with a
-// page refresh as the only recourse.
+// — otherwise "Could not connect" would be a dead end with a page refresh
+// as the only recourse.
 function attemptGuestJoin(){
   let retryBtn = document.getElementById('mp-retry-btn');
   if (retryBtn) retryBtn.style.display = 'none';
@@ -997,7 +1210,7 @@ function applyMenuMode(mode){
   }
 
   if (mode === 'gameover') {
-    // This menu is NOT auto-opened on game over anymore (the end screen is the
+    // This menu is NOT auto-opened on game over (the end screen is the
     // canvas banner + standalone "See Map" button, js/init.js gameLoop) — it
     // only appears if the player clicks the ☰ button. When they do, it's the
     // full post-game menu: Play Again (single-player / dead MP), or Rematch for
@@ -1084,10 +1297,6 @@ function restartGame(difficulty){
   tick = 0;
   bumpSimGen(); // tick rewound to 0 — invalidate every registered sim cache (js/core.js)
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
-  // Fresh map, stale explored-history memory no longer meaningful — see
-  // js/core.js. Rebuild (not just clear): the load-time object was sized
-  // for the default NUM_TEAMS, which may have grown since (2v2).
-  for (let t = 0; t < NUM_TEAMS; t++) teamExploredEver[t] = new Set();
   window.__mpSession.cameraCentered = false;
   window.__mpSession.hostJustLoadedSave = false;
   window.__mpSession.bottomHeightSet = false;
@@ -1115,6 +1324,7 @@ function restartGame(difficulty){
   // opponents) gets the same start, not a handicap; AI difficulty is tuned
   // via gather rates/behavior (js/ai.js), not a lower resource floor.
   resources = freshTeamResources();
+  marketPrices = freshMarketPrices(); // global commodity exchange back to defaults (js/core.js)
   // Controllers for the two shapes a fresh world can take today (SP human
   // vs AI, or 1v1 lockstep human vs human), derived from netRole at
   // world-build time. A future match-setup UI replaces this derivation
@@ -1169,9 +1379,12 @@ function toggleHelp(){
 //   - fog is turned off and every tile revealed so the whole map is visible.
 function seeMap(){
   window.__gameOverBannerDismissed = true;
+  // Viewer-only reveal: seeMapMode + flooding the fog grid below. It must NOT
+  // touch window.fogDisabled — that is now a match-start-immutable, peer-
+  // synced SIM setting (hashed in simChecksum); the post-game reveal is pure
+  // presentation. Input hit-testing reads seeMapMode alongside it (js/input.js).
   window.seeMapMode = true;
-  window.fogDisabled = true;
-  // Reveal every tile now (updateFog() no-ops while fogDisabled, so flip the
+  // Reveal every tile now (updateFog() doesn't run post-game, so flip the
   // grid directly — 2 = fully visible).
   if (typeof fog !== 'undefined' && fog && fog.length) {
     for (let y = 0; y < fog.length; y++) {
@@ -1260,23 +1473,23 @@ function toggleMenu(){
 }
 
 let lastTime = performance.now();
-// Simulation runs at 30 ticks per game-second (all tick-count constants in
-// core.js/logic.js are authored against that), scaled by GAME_SPEED — like
-// AoE2, where "1.7x speed" just runs more game-seconds per real second.
-let timeStep = 1000 / (30 * GAME_SPEED);
+// Simulation runs at TPS ticks per game-second (tick-count constants are
+// authored at the canonical 30tps and wrapped in T30 — js/core.js), scaled
+// by GAME_SPEED — like AoE2, where "1.7x speed" just runs more
+// game-seconds per real second.
+let timeStep = 1000 / (TPS * GAME_SPEED);
 function setGameSpeed(speed){
   GAME_SPEED = speed;
-  timeStep = 1000 / (30 * GAME_SPEED);
+  timeStep = 1000 / (TPS * GAME_SPEED);
 }
 let accumulator = 0;
 
-// The on-screen bandwidth stats box was removed, but the underlying
-// counters (netBytesSent/netBytesReceived, js/net.js) still accumulate —
-// handy from the console when debugging sync traffic.
+// netBytesSent/netBytesReceived (js/net.js) accumulate with no on-screen
+// readout — handy from the console when debugging sync traffic.
 
 // requestAnimationFrame stops entirely in a hidden tab — fine in single-
-// player (the game just pauses with you), but a HOST alt-tabbing away used
-// to halt simulation and all sync broadcasts, leaving the guest frozen
+// player (the game just pauses with you), but a HOST alt-tabbing away
+// would halt simulation and all sync broadcasts, leaving the guest frozen
 // staring at a live-but-silent connection (and at risk of a false
 // heartbeat-timeout trip). This interval keeps the host's simulation
 // running while hidden. Background setInterval is throttled to ~1/sec —
@@ -1298,8 +1511,7 @@ setInterval(() => {
   // hidden host free-ran unbounded ahead of the guest (pacing/hard-stop
   // never enforced), the snapshot ring froze at pre-hidden ticks (guest
   // commands then forced fatal too-old rollbacks), and progress reports
-  // stopped. This interval predates lockstep — it was written for the
-  // legacy snapshot-sync broadcasts.
+  // stopped.
   while (accumulator >= timeStep) {
     if (lockstepEnabled()) {
       let surcharge = lockstepTickSurcharge();
@@ -1380,8 +1592,7 @@ function gameLoop(){
     // restartGame). See Map (seeMap()) dismisses the banner to show the map.
     if (!window.gameOverMenuShown) {
       window.gameOverMenuShown = true;
-      let sm = document.getElementById('see-map-btn');
-      if (sm) sm.style.display = '';
+      show('see-map-btn', true);
     }
     if (!window.__gameOverBannerDismissed) {
       X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
@@ -1417,7 +1628,13 @@ let bootParams = (typeof window !== 'undefined' && window.location)
 let joinHostId = bootParams.get('join');
 let resumeHostId = joinHostId ? null : bootParams.get('host');
 
-if (!joinHostId) {
+if (window.__editorMode) {
+  // Scenario editor (editor.html): skip the normal init()/menu. The editor
+  // boots its blank editable world via enterEditor() at the end of
+  // js/editor.js (loaded after this file). gameLoop() below still runs — the
+  // editor reuses it, rendering every frame and stepping the sim only when
+  // unpaused (Play).
+} else if (!joinHostId) {
   init();
 }
 gameLoop();
@@ -1426,6 +1643,14 @@ if (typeof window !== 'undefined' && window.location && window.location.search.i
   setMapSize('medium');
   window.fogDisabled = true;
   restartGame('standard');
+}
+
+// ?scenario=<url> — load a hand-authored / editor-exported scenario JSON
+// (js/scenario.js) in place of the default world, for visual testing. Fog off
+// so the whole authored map is visible. No-op without the param.
+if (typeof window !== 'undefined' && window.location && new URLSearchParams(window.location.search).get('scenario')) {
+  window.fogDisabled = true;
+  maybeLoadScenarioFromURL();
 }
 
 if (joinHostId) {

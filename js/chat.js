@@ -40,16 +40,16 @@ function chatSeatName(team){
   return teamName(team);
 }
 
-// Sender identified by ROLE (host=team 0, guest=team 1 — only two peers in this
-// 1v1 design), labeled with the seat's chosen name in its chosen color. Routes
-// to the lobby's own log while in the lobby, else the in-match overlay log. All
-// text goes through textContent — names are remote-controlled strings, so they
-// must never be parsed as markup (same rule the body already followed).
-function addChatLine(senderRole, text){
+// Sender identified by TEAM (== seat index; the host derives it from the
+// sending connection, guests from the host's relay stamp), labeled with the
+// seat's chosen name in its chosen color. Routes to the lobby's own log
+// while in the lobby, else the in-match overlay log. All text goes through
+// textContent — names are remote-controlled strings, so they must never be
+// parsed as markup (same rule the body already followed).
+function addChatLine(team, text){
   let inLobby = window.__mpSession.inLobby;
   let log = document.getElementById(inLobby ? 'lobby-chat-log' : 'chat-log');
   if (!log) return;
-  let team = senderRole === 'host' ? 0 : 1;
   let line = document.createElement('div');
   line.className = 'chat-line';
   let name = document.createElement('span');
@@ -101,9 +101,11 @@ function sendChatMessage(text){
   text = text.trim().slice(0, CHAT_MAX_LEN);
   if (!text) return;
   let msg = { type: 'chat', text };
-  if (netRole === 'host') broadcastToGuest(msg);
-  else sendToHost(msg);
-  addChatLine(netRole, text);
+  if (netRole === 'host') broadcastToGuests(msg);
+  else sendToHost(msg); // the host's relay forwards it to the other guests
+  // In the lobby a guest's myTeam isn't assigned yet — the seat index is
+  // the identity there.
+  addChatLine(window.__mpSession.inLobby ? lobbyMySeatIndex() : myTeam, text);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -136,10 +138,13 @@ setInterval(() => {
   if (btn.style.display !== want) btn.style.display = want;
 }, 1000);
 
-onNetMessage((msg) => {
+onNetMessage((msg, src) => {
   if (msg.type !== 'chat') return;
   if (typeof msg.text !== 'string' || !msg.text.trim()) return;
-  // The sender is simply "the other role" — the only other peer there is.
-  addChatLine(netRole === 'host' ? 'guest' : 'host', msg.text);
+  // Sender: the connection's seat on the host; the relay stamp on a guest
+  // (absent = the host itself, team 0).
+  let team = netRole === 'host' ? (src && src.seat) : (msg.from != null ? msg.from : 0);
+  if (team == null) return;
+  addChatLine(team, msg.text);
   if (window.playSound) playSound('chat');
 });

@@ -6,15 +6,17 @@
 // --virtual-time-budget approach froze performance.now() and swallowed
 // crashes into a blank page).
 //
-//   node tools/simulate.js                          # 1v1 standard, 60k ticks
-//   node tools/simulate.js mode=2v2 diff=hard ticks=120000 seed=42
+//   node tools/simulate.js                          # 1v1 standard, 40k ticks (~33 game-min)
+//   node tools/simulate.js mode=2v2 diff=hard ticks=80000 seed=42
 //   node tools/simulate.js rollback=1 | jq '.health.rollbackDeterministic'
 //   node tools/simulate.js runs=5 mode=1v1          # 5 seeds, aggregated
 //
 // Args are key=value (order-independent):
 //   mode=1v1|2v2   diff=easy|standard|hard (or comma list: easy,hard)
-//   map=small|medium|large   ticks=N   seed=N   rollback=1
+//   map=small|medium|large   ticks=N   seed=N   rollback=1   fog=off
 //   runs=N         run N matches (seed varied per run) and print a summary
+//   jobs=N         parallel matches for runs>1 (default: min(runs, cores-2, 6);
+//                  jobs=1 = sequential — use for honest per-run tps numbers)
 //   timeout=MS     per-match evaluate timeout (default scales with ticks)
 //   headed=1       show the browser window (debugging)
 //
@@ -127,9 +129,11 @@ function aggregate(reports) {
     findingsAcrossRuns: findingCounts,
     avgTicksPerSec: tps.length ? Math.round(tps.reduce((a, b) => a + b, 0) / tps.length) : null,
     anyErrors: reports.some(r => (r.health.jsErrors || []).length > 0),
+    watchdogFiresTotal: reports.reduce((a, r) => a + (r.health.watchdogFires || 0), 0),
     runs: reports.map(r => ({
       seed: r.config.seed, tick: r.end.tick, gameOver: r.end.gameOver, won: r.end.won,
       ages: r.end.ages, checksum: r.end.checksum, ticksPerSec: r.health.ticksPerSec,
+      watchdogFires: r.health.watchdogFires || 0, watchdogSamples: r.health.watchdogSamples || [],
       findings: r.findings, jsErrors: r.health.jsErrors,
     })),
   };
@@ -138,7 +142,13 @@ function aggregate(reports) {
 (async () => {
   const a = parseArgs(process.argv.slice(2));
   const runs = Math.max(1, parseInt(a.runs || '1', 10));
-  const ticks = parseInt(a.ticks || '60000', 10);
+  const ticks = parseInt(a.ticks || '40000', 10); // ~33 game-min at 20 ticks/game-second
+  // scenario=<path.json>: build a hand-authored world (js/scenario.js) instead
+  // of a procedural match. The JSON is read here and passed into the page.
+  // Resolve relative to the repo ROOT (simulate.sh cd's into tools/, so a path
+  // the user gives relative to the repo — e.g. scenarios/x.json — must anchor
+  // to ROOT, not tools/). Absolute paths pass through.
+  const scenario = a.scenario ? JSON.parse(fs.readFileSync(path.resolve(ROOT, a.scenario), 'utf8')) : null;
   const baseCfg = {
     mode: a.mode || '1v1',
     diff: a.diff || 'standard',
@@ -147,6 +157,8 @@ function aggregate(reports) {
     seed: a.seed != null ? parseInt(a.seed, 10) : null,
     rollback: a.rollback === '1',
     bears: a.bears, // 'bears=0' disables wild bears (isolate eco/wave behavior from fauna losses)
+    fog: a.fog,     // 'fog=off' runs an All-Visible match (the fog match-option's no-fog paths)
+    scenario, // parsed scenario spec, or null
   };
   // Generous evaluate timeout: the sim yields between batches, so this only
   // caps a genuinely wedged run. Scales with the tick budget.
@@ -170,15 +182,32 @@ function aggregate(reports) {
       process.stdout.write(JSON.stringify(rep, null, 1) + '\n');
       process.exitCode = (rep.health.jsErrors || []).length ? 1 : 0;
     } else {
-      const reports = [];
+      // PARALLEL batch: every run is an independent deterministic match in
+      // its own page, so they scale with CPU cores instead of queueing.
+      // Concurrency defaults to min(runs, cores-2, 6) — each page is a full
+      // sim; beyond ~6 they contend and per-run tps drops (which would skew
+      // ticksPerSec health stats more than it already does under parallelism;
+      // findings/checksums/outcomes are unaffected — determinism is per-run).
+      // jobs=1 restores the old strictly-sequential behavior (for honest tps
+      // measurements).
+      const os = require('os');
+      const jobs = Math.max(1, Math.min(
+        parseInt(a.jobs || String(Math.min(runs, Math.max(1, os.cpus().length - 2), 6)), 10), runs));
       const base0 = baseCfg.seed != null ? baseCfg.seed : 1;
-      for (let i = 0; i < runs; i++) {
-        const rep = await runOne(browser, base, { ...baseCfg, seed: base0 + i * 1000 }, timeoutMs);
-        reports.push(rep);
-        process.stderr.write(`run ${i + 1}/${runs} (seed ${base0 + i * 1000}): ` +
-          `${rep.end.gameOver ? (rep.end.won ? 'team0 side won' : 'other side won') : 'unresolved'}` +
-          `, ${rep.findings.length} finding(s)\n`);
-      }
+      const reports = new Array(runs);
+      let next = 0;
+      const worker = async () => {
+        while (next < runs) {
+          const i = next++;
+          const seed = base0 + i * 1000;
+          const rep = await runOne(browser, base, { ...baseCfg, seed }, timeoutMs);
+          reports[i] = rep;
+          process.stderr.write(`run ${i + 1}/${runs} (seed ${seed}): ` +
+            `${rep.end.gameOver ? (rep.end.won ? 'team0 side won' : 'other side won') : 'unresolved'}` +
+            `, ${rep.findings.length} finding(s)\n`);
+        }
+      };
+      await Promise.all(Array.from({length: jobs}, worker));
       process.stdout.write(JSON.stringify(aggregate(reports), null, 1) + '\n');
       process.exitCode = reports.some(r => (r.health.jsErrors || []).length) ? 1 : 0;
     }

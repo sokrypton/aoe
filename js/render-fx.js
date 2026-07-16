@@ -6,40 +6,30 @@ function drawGhost(){
   // (same ghost style as a single hovered wall), not just flat tint tiles.
   if (isWallBtype(placing) && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
     let line = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd);
-    let pillarH = 22, wallH = 14;
-    let toScr = (tx, ty) => {
-      let iso = toIso(tx + 0.5, ty + 0.5);
-      return { x: iso.ix - camX + W/2, y: iso.iy - camY + topH + H/2 - HALF_TH };
-    };
+    let b = BLDGS[placing];
+    // Render the drag preview through the REAL placed-wall path (drawBuilding's
+    // WALL branch), so pillars/materials/links/cross-rung suppression and joins
+    // to existing walls are all identical to what gets built — one code path,
+    // no separate ghost geometry to drift. The not-yet-placed tiles are exposed
+    // to getConnectedBuilding via a viewer-side overlay (no grid mutation).
+    let overlay = new Map();
+    line.forEach(t => overlay.set(t.y*MAP + t.x, {
+      type:'building', btype:placing, x:t.x, y:t.y, team:myTeam,
+      hp:b.hp, maxHp:b.hp, complete:true, buildProgress:0, buildTime:200,
+      queue:[], garrison:[], w:1, h:1
+    }));
     X.globalAlpha = 0.55;
-    window._ghostDraw = true;
-    // Ghost in the material actually being placed — the pillar colors here
-    // used to be hardcoded stone, so dragging a Dark-age palisade briefly
-    // previewed as stone.
-    let gMat = wallMat(placing);
-    let gpf = gMat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : ['#a5723a', '#8b5a2b', '#9c6c3f'];
-    line.forEach((t, i) => {
-      let p = toScr(t.x, t.y);
-      let linkY = p.y + 16;
-      // pillar caps + link walkway tops are team-colored on the real
-      // wall — mirror it here (caps single flat color); pillar first so
-      // the walkway link connects visibly between towers, like the real wall
-      drawBuildingBlock(p.x, p.y+11, 9, 4.5, pillarH, gpf[0], gpf[1], 'flat', 0, teamColor(myTeam), teamColor(myTeam), false);
-      let next = line[i+1];
-      if (next) {
-        let ddx = next.x - t.x, ddy = next.y - t.y;
-        let off = toIso(ddx, ddy);
-        drawWallLink(p.x, linkY - 0.5, off.ix, off.iy, wallH, false, 2.25*Math.sqrt(5), 2.25*Math.sqrt(5), null, teamColor(myTeam), 4.5, false, gMat);
-      }
-    });
-    window._ghostDraw = false;
+    window._ghostDraw = true; window._ghostValid = true; window._ghostTiles = overlay;
+    // Depth order: far tiles (smaller y+x) first so nearer pillars overlap.
+    line.slice().sort((a,c) => (a.y+a.x) - (c.y+c.x))
+        .forEach(t => drawBuilding(overlay.get(t.y*MAP + t.x)));
+    window._ghostTiles = null; window._ghostDraw = false;
     X.globalAlpha = 1;
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
-      let ok = canPlace(placing, t.x, t.y, myTeam);
-      let iso = toIso(t.x, t.y);
-      let sx = iso.ix - camX + W/2, sy = iso.iy - camY + topH + H/2;
+      let ok = canPlace(placing, t.x, t.y, myTeam, window.__editorMode, window.__editorMode);
+      let {sx, sy} = mapToScreen(t.x, t.y);
       X.fillStyle = ok ? 'rgba(0,200,0,0.28)' : 'rgba(200,0,0,0.28)';
       X.beginPath();
       X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
@@ -53,14 +43,15 @@ function drawGhost(){
   let bw=b.w, bh_=b.h;
   let ox=tile.x, oy=tile.y;
   if(isGateBtype(placing)){
-    let isWall = (tx, ty) => !!entities.find(en=>en.type==='building'&&en.x===tx&&en.y===ty&&en.btype===GATE_WALL_MATCH[placing]&&en.team===myTeam);
+    let isWall = (tx, ty) => gateBaseAt(tx, ty, placing, myTeam);
     let fp = gateFootprint(tile.x, tile.y, isWall);
     ox=fp.ox; oy=fp.oy; bw=fp.gw; bh_=fp.gh;
-    // With no adjacent wall to snap to, preview the intended full 1x3 gate
-    // so the player sees the real size before committing.
-    if (bw===1 && bh_===1) { bw=1; bh_=3; }
+    // Show EXACTLY the footprint that will be built (gateFootprint) — no
+    // fabricated size (a full-1x3 fallback made the ghost jump + flip the
+    // instant a gate consumed its wall run). With no run it's a 1x1 red
+    // ghost: honestly "can't place here".
   }
-  let ok=canPlace(placing,tile.x,tile.y,myTeam);
+  let ok=canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode,window.__editorMode);
 
   // Draw ghost: actual building rendered semi-transparently
   let fakeE={
@@ -71,6 +62,7 @@ function drawGhost(){
   };
   X.globalAlpha=0.55;
   window._ghostDraw=true;
+  window._ghostValid=ok; // invalid ghosts draw no wall-connection stubs (getConnectedBuilding)
   drawBuilding(fakeE);
   window._ghostDraw=false;
   X.globalAlpha=1;
@@ -78,8 +70,7 @@ function drawGhost(){
   // Tint footprint tiles green (valid) or red (invalid)
   X.fillStyle=ok?'rgba(0,200,80,0.28)':'rgba(220,30,0,0.28)';
   for(let dy=0;dy<bh_;dy++)for(let dx=0;dx<bw;dx++){
-    let iso=toIso(ox+dx,oy+dy);
-    let sx=iso.ix-camX+W/2, sy=iso.iy-camY+topH+H/2;
+    let {sx, sy} = mapToScreen(ox+dx, oy+dy);
     X.beginPath();
     X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
     X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
@@ -211,7 +202,7 @@ function drawMinimap(){
     // read as a deliberate alert rather than a flicker.
     let recentlyHit=e.team===myTeam&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
     let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
-    let color=(isSel||blinkOn)?'#ffffff':teamColor(e.team);
+    let color=(isSel||blinkOn)?'#ffffff':teamColorMinimap(e.team);
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;
       fillDiamond([miniPoint(e.x,e.y),miniPoint(e.x+w,e.y),miniPoint(e.x+w,e.y+h),miniPoint(e.x,e.y+h)],color);
@@ -252,11 +243,14 @@ function drawParticles() {
   X.save();
   particles.forEach(p => {
     let px = Math.round(p.x), ppy = Math.round(p.y);
-    if (ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
+    // NaN guard: if a particle ever gets a degenerate coord, Math.round(NaN)=NaN
+    // and every bounds comparison below is false, so fog[NaN][NaN] would throw
+    // and kill the whole frame. Skip the particle instead.
+    if (!Number.isFinite(px) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || px < 0 || px >= MAP || fog[ppy][px] !== 2) return;
     
-    let iso = toIso(p.x, p.y);
-    let sx = iso.ix - camX + W/2;
-    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    let scr = mapToScreen(p.x, p.y);
+    let sx = scr.sx;
+    let sy = scr.sy + HALF_TH;
     
     let pz = p.z || 0;
     sy -= pz * 35;
@@ -320,15 +314,17 @@ function drawProjectiles() {
   X.save();
   projectiles.forEach(p => {
     let ppx = Math.round(p.x), ppy = Math.round(p.y);
-    if (ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
+    // NaN guard (see drawParticles): a degenerate projectile coord would make
+    // fog[NaN][NaN] throw and kill the frame — skip it.
+    if (!Number.isFinite(ppx) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
     // Arrows fly to a fixed aim point (p.tx/p.ty), not a tracked entity.
     let targetX = p.tx, targetY = p.ty;
     let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
 
-    let iso = toIso(p.x, p.y);
-    let sx = iso.ix - camX + W/2;
-    let sy = iso.iy - camY + topH + H/2 + HALF_TH;
+    let scr = mapToScreen(p.x, p.y);
+    let sx = scr.sx;
+    let sy = scr.sy + HALF_TH;
     // Height along the flight: launch height (bow / battlements) blends to
     // impact height at the target's body, plus the ballistic arc.
     let startH = p.startH || 12;

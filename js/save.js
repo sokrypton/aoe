@@ -1,36 +1,93 @@
 // ---- SAVE / LOAD (to a local JSON file) ----
 // Every piece of state below is plain data (no functions, no DOM refs, no
-// circular structure) — entities/map/fog are already flat objects/arrays
-// from createUnit/createBuilding/genMap, so a straight JSON.stringify of a
-// snapshot object round-trips cleanly with no custom (de)serialization.
+// circular structure) — entities are already flat objects from
+// createUnit/createBuilding, so a straight JSON.stringify round-trips cleanly.
+// The two BULK grids get compact encodings (v4): the tile grid was ~80% of a
+// save serialized as 8100 x {"t":0,"res":0,"occupied":null}, and the per-team
+// explored grids another ~20% as plain 0/1 arrays.
+
+// RLE for large mostly-uniform numeric arrays (terrain ids, explored grids):
+// flat [value, runLength, value, runLength, ...] pairs.
+function rleEncode(arr){
+  let out = [];
+  for (let i = 0; i < arr.length;) {
+    let v = arr[i], j = i + 1;
+    while (j < arr.length && arr[j] === v) j++;
+    out.push(v, j - i); i = j;
+  }
+  return out;
+}
+function rleDecode(pairs, len){
+  let out = new Array(len), k = 0;
+  for (let i = 0; i < pairs.length; i += 2) {
+    let v = pairs[i], n = pairs[i + 1];
+    for (let j = 0; j < n; j++) out[k++] = v;
+  }
+  return out;
+}
+
 function serializeGame(){
   return {
-    version: 2,
+    version: 8, // v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    // The timebase this save's tick-stamps were written on (js/core.js TPS).
+    // Tick counts are meaningless on another clock — the loader rejects a
+    // mismatch instead of silently running every timer 1.5x fast/slow.
+    tps: TPS,
     savedAt: new Date().toISOString(),
     // A visible signature that this save came from a multiplayer match
     // (rather than single-player) — surfaced in the filename and the load
-    // confirmation message below, not just a hidden field. Both host AND
-    // guest can produce one: the guest's local entities/map are a live
-    // mirror of the host's (kept in sync — see js/net-sync.js), so a save
-    // taken from the guest's side is just as valid a snapshot. The point
-    // of tagging it is the same either way — whoever loads it later can
-    // click Host and pick up as the new host from that exact state,
-    // regardless of which role originally saved it.
+    // confirmation message below, not just a hidden field. MP FILE saves
+    // are HOST-only (saveGameToFile refuses on a guest); serializeGame
+    // itself still runs on guests for the crash-recovery wire handback
+    // (js/net-sync.js), which is a live mirror, not a file.
     wasMultiplayerGame: typeof netRole !== 'undefined' && (netRole === 'host' || netRole === 'guest'),
-    // The host's PeerJS peer id active at save time — captured from
-    // whichever side is doing the saving, since both know it (the host
-    // has it directly; the guest cached it as __mpSession.hostPeerId when
-    // it joined — see that object's comment, js/core.js). Letting a later
+    // The host's PeerJS peer id active at save time. Letting a later
     // re-host request this SAME id back (js/net.js's hostSession()) is what
-    // lets the original guest's own already-running reconnect loop succeed
+    // lets the guests' own already-running reconnect loops succeed
     // silently after the host reloads its whole page and re-hosts from this
     // save, instead of being permanently stranded retrying against an id
     // that no longer exists.
     hostPeerId: typeof netRole !== 'undefined' && netRole === 'host' && typeof netPeer !== 'undefined' && netPeer
       ? netPeer.id
       : (typeof netRole !== 'undefined' && netRole === 'guest' ? (window.__mpSession.hostPeerId || null) : null),
+    // Each guest's persistent identity token (js/net.js hello binding) —
+    // host-side knowledge, so a re-host from this file can pre-seed the
+    // registry and every rejoining guest lands back on its exact seat.
+    // `tab` rides along so several tabs of ONE browser (same token — the
+    // local-testing setup) still rebind to their exact seats on resume.
+    seatTokens: (typeof netRole !== 'undefined' && netRole === 'host' && typeof netGuests !== 'undefined')
+      ? [...netGuests.values()].map(r => ({ seat: r.seat, token: r.token, tab: r.tab, name: r.name, kicked: !!r.kicked }))
+      : null,
     MAP, tick, camX, camY, ZOOM, GAME_SPEED,
-    map, fog, entities, nextId,
+    // v4 compact map: terrain as RLE, resources as sparse [tileKey, amount]
+    // pairs. `occupied` is DERIVED state (building footprints — entities.js
+    // stamps it at creation) and is rebuilt from the saved entities on load,
+    // never serialized.
+    map: (() => {
+      let n = MAP * MAP, t = new Array(n), res = [];
+      for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
+        let c = map[y][x], k = y * MAP + x;
+        t[k] = c.t;
+        if (c.res > 0) res.push(k, c.res);
+      }
+      return { t: rleEncode(t), res };
+    })(),
+    entities, nextId,
+    // The sim PRNG cursor (js/core.js) IS sim state: it's checksummed and
+    // rides lockstep snapshots, so a faithful snapshot must carry it too.
+    // Without it a loaded save is NOT reproducible — the next simRandom()
+    // draws from a fresh/stale cursor. matchSeed rides along for det-logging
+    // and as the seed of record. (nextProjectileId is derived from the saved
+    // projectiles in applySavedGame, so it needs no explicit field.)
+    simRngState, matchSeed,
+    // The EXACT deterministic per-team explored grids (sim state, all
+    // teams) — the loader's fog and every rejoining guest's fog rebuild
+    // from these. RLE-encoded (v4). Skipped entirely when fog is disabled:
+    // teamHasExplored (js/core.js) short-circuits to true in a no-fog match,
+    // so what's-been-seen carries no information there — fresh zero grids on
+    // load are equivalent (and identical on every loading peer).
+    teamExploredGrids: (!window.fogDisabled && teamExploredGrid)
+      ? teamExploredGrid.map(g => rleEncode(g)) : null,
     // Corpses fade out over CORPSE_LIFE (ms) measured against
     // performance.now() (see render.js/render-units.js), which restarts
     // near 0 every page load — saving deathTime as-is would make every
@@ -40,11 +97,11 @@ function serializeGame(){
     // performance.now().
     corpses: corpses.map(c => ({...c, deathTime: undefined, ageAtSaveMs: performance.now() - c.deathTime})),
     // In-flight arrows carry real pending damage on the host (impact applies
-    // damageEntity, js/loop.js) — plain data since attacker became an
-    // id+snapshot, so a mid-volley save no longer silently loses those hits.
+    // damageEntity, js/loop.js) — plain data (attacker is an id+snapshot),
+    // so a mid-volley save doesn't silently lose those hits.
     projectiles,
     cmdMarkers,
-    resources, popUsed, popCap,
+    resources, marketPrices, popUsed, popCap,
     gameStarted, gameOver, won, aiDifficulty,
     // Per-team controller layout + AI plan state + last-hit record
     // (js/core.js) — all plain data, sized by numTeams.
@@ -73,33 +130,6 @@ function serializeGame(){
     // scoutedByMe Set, not stored on individual entities (see its comment
     // for why). Saved as a plain array since Sets aren't JSON-safe.
     scoutedByMe: Array.from(scoutedByMe),
-    // `fog` above is always THIS session's own team's live grid (team 0's
-    // if saved from the host, team 1's if saved from the guest) — but
-    // whoever LOADS this save always becomes the new host (see
-    // applySavedGame's comment), regardless of which side originally saved
-    // it. So a guest-originated save's `fog` is actually the WRONG team's
-    // grid for that future host. `savedByTeam` records which team `fog`
-    // actually belongs to, and `otherTeamExploredEver` carries the OTHER
-    // team's persistent "ever explored" memory (js/core.js's
-    // teamExploredEver/updateTeamExploredEver — whichever index this
-    // session tracks depends on whether it's host or guest) so
-    // applySavedGame can reconstruct team 0's fog correctly either way.
-    savedByTeam: typeof myTeam !== 'undefined' ? myTeam : 0,
-    // Union of the legacy per-tick memory AND the deterministic sim grid:
-    // teamExploredEver's guest-side updater for index 0 died with the
-    // legacy snapshot sync, so under lockstep the OTHER team's history
-    // lives (exactly) in teamExploredGrid — without it a host reloading
-    // mid-match rebuilt its fog from an empty set and lost its explored
-    // map (see applySavedGame's fromOpponentMirror branch).
-    otherTeamExploredEver: (() => {
-      let other = (typeof myTeam !== 'undefined' && myTeam === 1) ? 0 : 1;
-      let ever = new Set(teamExploredEver[other]);
-      if (teamExploredGrid && teamExploredGrid[other]) {
-        let eg = teamExploredGrid[other];
-        for (let k = 0; k < eg.length; k++) if (eg[k] === 1) ever.add(k);
-      }
-      return Array.from(ever);
-    })(),
     bellRinging: window.bellRinging || Array.from({length: NUM_TEAMS}, () => false)
   };
 }
@@ -108,12 +138,20 @@ function serializeGame(){
 // applies. Used both by the save file below and by the guest→host state
 // handback over the network (js/net-sync.js's 'request-state' handler).
 // Entity retry/avoid state is plain arrays/objects (js/logic.js primitives),
-// so no Set→null normalization is needed anymore.
+// so no Set→null normalization is needed.
 function serializeGameForWire(){
   return JSON.parse(JSON.stringify(serializeGame()));
 }
 
 function saveGameToFile(){
+  // Host-only in multiplayer: only the host can later reload+re-host a
+  // match (guests rejoin it by token), so a guest-side file would be a
+  // dead end — the save surfaces are hidden on guests, and this guard
+  // backstops any path that still calls it.
+  if (typeof netRole !== 'undefined' && netRole === 'guest') {
+    if (window.showMsg) showMsg('Only the host can save a multiplayer match');
+    return;
+  }
   try {
     let data = serializeGame();
     let blob = new Blob([JSON.stringify(data)], {type: 'application/json'});
@@ -140,6 +178,27 @@ function triggerLoadDialog(){
   if (input) input.click();
 }
 
+// THE single entry point for loading a world from a parsed data object,
+// transparently accepting either detail level of the unified format:
+//   - a FULL snapshot (serializeGame) — carries a `version` stamp
+//     → applySavedGame (exact restore incl. resources/age/controllers/rng/tick);
+//   - a COMPACT/constructive spec (js/scenario.js) — no version, string/absent
+//     `map` and u/b-shorthand entities → loadScenario (rebuilds fresh, now also
+//     applies any `resources`/`ages`/`controllers` the compact file carries).
+// Route by the version stamp (v4 saves carry an OBJECT map, so the old
+// map-shape test would misroute them to the scenario loader). Used by the
+// Load-Game button AND the editor. Returns 'save' | 'scenario'.
+function loadGame(data){
+  if (typeof loadScenario === 'function' && data.version == null) {
+    loadScenario(data);
+    window.fogDisabled = data.fog !== true; // reveal the authored map (loadScenario also sets this)
+    if (window.updateUI) updateUI();
+    return 'scenario';
+  }
+  applySavedGame(data);
+  return 'save';
+}
+
 function loadGameFromFile(file){
   if (!file) return;
   let reader = new FileReader();
@@ -152,22 +211,31 @@ function loadGameFromFile(file){
       if (window.showMsg) showMsg('Load failed: not a valid save file');
       return;
     }
-    applySavedGame(data);
+    let kind = loadGame(data);
+    if (kind === 'scenario' && window.showMsg) showMsg('Scenario loaded');
   };
   reader.onerror = () => { if (window.showMsg) showMsg('Load failed: could not read file'); };
   reader.readAsText(file);
 }
 
 function applySavedGame(data, opts){
-  if (!data || typeof data !== 'object' || !Array.isArray(data.entities) || !Array.isArray(data.map)) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.entities) || !data.map || !Array.isArray(data.map.t)) {
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:2 — actually check it (the net layer's
-  // NET_PROTOCOL_VERSION exists for the same reason), so a future format
-  // change fails loudly here instead of misloading silently.
-  if (data.version !== 2) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ')');
+  // serializeGame stamps version:8 — actually check it (the net layer's
+  // NET_PROTOCOL_VERSION exists for the same reason), so a format change
+  // fails loudly here instead of misloading silently. v8 (AI intel-memory
+  // shape + parity sim semantics) deliberately drops older versions — no
+  // back-compat shims, per convention.
+  if (data.version !== 8) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v8 saves only');
+    return;
+  }
+  // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,
+  // age clocks, AI windows) is denominated in the writing build's TPS.
+  if (data.tps !== TPS) {
+    if (window.showMsg) showMsg('Load failed: save was made at ' + data.tps + ' ticks/game-second, this build runs ' + TPS);
     return;
   }
   try {
@@ -182,9 +250,7 @@ function applySavedGame(data, opts){
     // (every future tick is just += 1 from there) — and
     // every `tick % N === 0` cadence check (lockstep snapshots, checksum
     // reports, watchdog sweeps) then never evaluates true again, silently
-    // breaking them forever with no error anywhere. Caught by an actual
-    // end-to-end test hosting from a guest-originated save, not by
-    // inspecting the load code in isolation.
+    // breaking them forever with no error anywhere.
     tick = Math.round(data.tick) || 0;
     bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
     camX = data.camX || 0;
@@ -192,94 +258,48 @@ function applySavedGame(data, opts){
     ZOOM = data.ZOOM || ZOOM;
     if (data.GAME_SPEED) setGameSpeed(data.GAME_SPEED);
 
-    map = data.map;
+    // Rebuild the tile grid from the compact encoding: terrain RLE + sparse
+    // res. `occupied` starts null everywhere and is re-stamped from building
+    // footprints after the entities are restored below.
+    {
+      let flatT = rleDecode(data.map.t, MAP * MAP);
+      map = [];
+      for (let y = 0; y < MAP; y++) {
+        map[y] = [];
+        for (let x = 0; x < MAP; x++) map[y][x] = { t: flatT[y * MAP + x], res: 0, occupied: null };
+      }
+      let rr = data.map.res || [];
+      for (let i = 0; i < rr.length; i += 2) {
+        let k = rr[i];
+        map[Math.floor(k / MAP)][k % MAP].res = rr[i + 1];
+      }
+    }
     // Sized per-team structures follow the save's team count.
     NUM_TEAMS = data.numTeams || 2;
-    // Whoever loads a save always becomes the new host (see below), so the
-    // new session's `fog` must end up holding TEAM 0's grid regardless of
-    // which side originally saved. If the save came from the host
-    // (savedByTeam 0, or an older save predating this field), data.fog
-    // already IS team 0's grid — use it directly, and the saved
-    // otherTeamExploredEver is team 1's ("guest") memory. If it came from
-    // the guest (savedByTeam 1), data.fog is team 1's grid instead — that
-    // becomes the new teamExploredEver[1], while the saved
-    // otherTeamExploredEver (the guest's own locally-tracked team-0 memory)
-    // is what rebuilds team 0's fog here.
-    // A guest-originated save (savedByTeam 1) loaded from a FILE: the
-    // loader always becomes the HOST, and the host is team 0 everywhere in
-    // this 1v1 design — so without correction the loading guest would
-    // resume commanding their OPPONENT's civilization. Swap the two player
-    // teams wholesale (gaia untouched) so the loader keeps their own
-    // units/buildings/resources; they render blue now because team 0 IS
-    // blue, but they command their own side. After the swap the save is
-    // indistinguishable from a host-originated one (data.fog is the
-    // loader's own grid = team 0's).
-    // NOT for the crash-recovery handback (opts.fromOpponentMirror — see
-    // the 'request-state' handler, js/net-sync.js): there the loader is
-    // the ORIGINAL host recovering the world from the guest's live mirror,
-    // the guest is still connected as team 1, and teams must stay put.
-    if (data.savedByTeam === 1 && !(opts && opts.fromOpponentMirror)) {
-      data.entities.forEach(e => {
-        if (e.team === 0) e.team = 1;
-        else if (e.team === 1) e.team = 0;
-      });
-      (data.corpses || []).forEach(c => {
-        if (c.team === 0) c.team = 1;
-        else if (c.team === 1) c.team = 0;
-      });
-      if (Array.isArray(data.resources) && data.resources.length >= 2) {
-        [data.resources[0], data.resources[1]] = [data.resources[1], data.resources[0]];
-      }
-      if (Array.isArray(data.bellRinging) && data.bellRinging.length >= 2) {
-        [data.bellRinging[0], data.bellRinging[1]] = [data.bellRinging[1], data.bellRinging[0]];
-      }
-      (data.projectiles || []).forEach(pr => {
-        if (pr.attackerSnap) {
-          if (pr.attackerSnap.team === 0) pr.attackerSnap.team = 1;
-          else if (pr.attackerSnap.team === 1) pr.attackerSnap.team = 0;
-        }
-      });
-      // Per-team controller/AI/hit state swaps with the teams (an AI
-      // state's own `team` field must track its new slot). teamNames/
-      // teamColorMap swap too so the loader keeps its own name+color.
-      // (The two HUMAN slots swap; any AI slots 2+ stay put — humans are
-      // always the low team ids, host=0 / guest=1.)
-      ['teamControllers', 'aiStates', 'lastTeamHit', 'teamAlliance', 'defeatedTeams', 'teamAge', 'teamNames', 'teamColorMap'].forEach(k => {
-        if (Array.isArray(data[k]) && data[k].length >= 2) {
-          [data[k][0], data[k][1]] = [data[k][1], data[k][0]];
-        }
-      });
-      (data.aiStates || []).forEach((st, t) => { if (st) st.team = t; });
-      // `won` means "did team 0's side win" — after the swap the loader IS
-      // team 0, so a decided outcome must flip with the teams too.
-      if (data.gameOver) data.won = !data.won;
-      // teamExploredEver[1] (the rejoining opponent's memory) now comes
-      // from the saver's otherTeamExploredEver — same slot the
-      // host-originated path expects it in.
-      data.savedByTeam = 0;
+    // The loader is ALWAYS team 0: MP file saves are host-authored
+    // (host = team 0) and the loader re-hosts from them; the
+    // crash-recovery handback (opts.fromOpponentMirror, js/net-sync.js)
+    // is applied by the original host recovering its own team-0 world
+    // from a guest's mirror, teams in place — never a team swap.
+    // Fog rebuilds from the save's EXACT per-team explored grids: this
+    // viewer's own grid marks its explored tiles (updateFog() below
+    // re-lights the currently-visible ones), and rejoining guests get the
+    // same grids via the lockstep resume push.
+    resetTeamVision();
+    if (Array.isArray(data.teamExploredGrids)) {
+      teamExploredGrid = data.teamExploredGrids.map(g => Uint8Array.from(rleDecode(g, MAP * MAP)));
     }
-    if (data.savedByTeam === 1 && opts && opts.fromOpponentMirror) {
-      // Guest-authored snapshot with teams left in place: data.fog is TEAM
-      // 1's live grid and otherTeamExploredEver is team 0's explored-ever
-      // memory (see serializeGame) — the mirror image of what the loading
-      // host (team 0) needs. Rebuild this side's fog from team 0's memory
-      // (explored, not currently-visible; updateFog() below re-lights the
-      // live tiles) and team 1's memory from the guest's own fog grid.
-      let hostEver = new Set(data.otherTeamExploredEver || []);
+    // null grids = the save was taken with fog disabled: teamHasExplored
+    // short-circuits to true there, so resetTeamVision's fresh zero grids
+    // (identical on every loading peer) are a faithful restore.
+    {
+      const myEg = teamExploredGrid[myTeam] || teamExploredGrid[0];
       fog = [];
       for (let y = 0; y < MAP; y++) {
         fog[y] = [];
-        for (let x = 0; x < MAP; x++) fog[y][x] = hostEver.has(y * MAP + x) ? 1 : 0;
+        for (let x = 0; x < MAP; x++) fog[y][x] = myEg[y * MAP + x] === 1 ? 1 : 0;
       }
-      teamExploredEver[1] = new Set();
-      (data.fog || []).forEach((row, y) => row.forEach((v, x) => {
-        if (v > 0) teamExploredEver[1].add(y * MAP + x);
-      }));
-    } else {
-      fog = data.fog || [];
-      teamExploredEver[1] = new Set(data.otherTeamExploredEver || []);
     }
-    teamExploredEver[0] = new Set();
     // Rebase each corpse's saved age-so-far against THIS session's
     // performance.now() epoch (see the matching comment in serializeGame).
     let loadNow = performance.now();
@@ -302,8 +322,20 @@ function applySavedGame(data, opts){
       // deal 0 damage on arrow impact (js/loop.js prefers the live shooter).
       if (e.type === 'building' && e.atk === undefined) e.atk = BLDGS[e.btype].atk || 0;
       entitiesById.set(e.id, e);
+      // Re-derive tile occupancy from the building footprint — the SAME
+      // helper creation uses (js/entities.js), so the two can't drift.
+      // Not serialized in v4.
+      if (e.type === 'building') stampBuildingFootprint(e);
     });
     nextId = data.nextId || (entities.reduce((m, e) => Math.max(m, e.id), 0) + 1);
+    // Restore the sim PRNG cursor so post-load randomness is reproducible and
+    // matches the peer that saved. Older saves (pre-field) fall back to
+    // reseeding from matchSeed, or leave the live cursor untouched as a last
+    // resort — both keep peers mutually consistent because a lockstep resume
+    // still force-pushes the host's simRngState afterward.
+    if (typeof data.simRngState === 'number') simRngState = data.simRngState >>> 0;
+    else if (typeof data.matchSeed === 'number') seedSimRng(data.matchSeed >>> 0);
+    if (typeof data.matchSeed === 'number') matchSeed = data.matchSeed >>> 0;
     // Re-resolve the saved selection/camera-lock against the just-rebuilt
     // entitiesById (by id, not by trusting any stale object reference) —
     // .filter(Boolean) drops anything that no longer exists (shouldn't
@@ -311,6 +343,8 @@ function applySavedGame(data, opts){
     selected = (data.selectedIds || []).map(id => entitiesById.get(id)).filter(Boolean);
 
     resources = data.resources || resources;
+    // Per-team commodity exchange prices (js/core.js).
+    marketPrices = data.marketPrices || freshMarketPrices();
     popUsed = data.popUsed || 0;
     popCap = data.popCap || 0;
 
@@ -319,11 +353,10 @@ function applySavedGame(data, opts){
     gameStarted = data.gameStarted !== undefined ? !!data.gameStarted : true;
     gamePaused = false;
     aiDifficulty = AI_LEVELS[data.aiDifficulty] ? data.aiDifficulty : aiDifficulty;
-    // Controller layout + per-team AI plan state + last-hit record. The
-    // crash-recovery handback (fromOpponentMirror) keeps teams in place so
-    // these apply verbatim; the file-load path team-swapped them above.
-    // (After the aiDifficulty restore above so the no-field fallback picks
-    // up the save's difficulty.)
+    // Controller layout + per-team AI plan state + last-hit record —
+    // applied verbatim, teams in place (the loader is always team 0, see
+    // above). (After the aiDifficulty restore above so the no-field
+    // fallback picks up the save's difficulty.)
     if (!data.teamControllers) data.teamControllers = defaultControllers(!!data.wasMultiplayerGame);
     restoreTeamState(data);
 
@@ -402,17 +435,6 @@ function applySavedGame(data, opts){
     // mid-match).
     let alreadyConnectedHost = typeof netRole !== 'undefined' && netRole === 'host' && netConnected;
 
-    // Seed the deterministic explored-grids from the save (they postdate
-    // the save format): team 0 from the restored fog, team 1 from the
-    // opponent's explored history. Approximate but deterministic — and a
-    // connected guest immediately receives the exact grids via the
-    // lockstep resume below, so both peers agree bit-for-bit.
-    resetTeamVision();
-    for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
-      if (fog[y] && fog[y][x] > 0) teamExploredGrid[0][y * MAP + x] = 1;
-    }
-    teamExploredEver[1].forEach(k => { teamExploredGrid[1][k] = 1; });
-
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     updateFog();
@@ -452,6 +474,12 @@ function applySavedGame(data, opts){
       // exact peer id back from PeerJS instead of a random one — see
       // hostPeerId's comment above (js/net.js's hostSession()).
       window.__mpSession.loadedHostPeerId = data.hostPeerId || null;
+      // Pre-seed the guest registry from the save's seat tokens: a returning
+      // guest on its original browser rebinds to its exact old seat by token,
+      // and an unknown identity (a different device / cleared storage) is
+      // offered the honor-system seat picker over those seeded seats (js/net.js
+      // reclaimableSeats / hostHandleClaimSeat).
+      if (typeof netSeedGuestRecords === 'function') netSeedGuestRecords(data.seatTokens);
       onHostClicked();
     } else {
       let menu = document.getElementById('tutorial');

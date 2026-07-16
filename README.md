@@ -3,10 +3,5 @@
 
 To play the game go to: [ageofepochs.com](https://ageofepochs.com)
 
-## Development
-
-Headless all-AI self-play simulator for debugging and balance tuning — see [`tools/README.md`](tools/README.md).
-
-```sh
-tools/simulate.sh runs=6 diff=hard        # 6 seeded matches, aggregate report
-```
+Developer docs — codebase guide, tests, tooling, and references & credits — live
+in [`tools/README.md`](tools/README.md) and [`CLAUDE.md`](CLAUDE.md).

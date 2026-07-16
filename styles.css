@@ -76,6 +76,7 @@ canvas {
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
   height: 22px;
+  position:relative; /* anchors the .res-vils gatherer-count badge */
 }
 .res-icon{
   width:15px;
@@ -102,6 +103,30 @@ canvas {
   min-width:34px;
 }
 .res-val{min-width:32px;text-align:right}
+/* Gatherer count (AOE3-style) as a small badge on the lower-right corner of
+   the resource icon, slightly overlapping it. Absolutely positioned so it
+   never shifts the amount; invisible when nobody's on that resource. */
+.res-vils{
+  visibility:hidden;
+  position:absolute;
+  left:14px;    /* icon spans ~5–20px; sit on its lower-right, overlapping */
+  bottom:-3px;
+  box-sizing:border-box;
+  min-width:13px;
+  padding:0 2px;
+  background:rgba(20,12,6,0.9);
+  border:1px solid rgba(122,86,56,0.9);
+  border-radius:5px;
+  color:#ffe9b3;
+  font-size:8.5px;
+  font-weight:700;
+  line-height:1.4;
+  text-align:center;
+  text-shadow:0 1px 1px #000;
+  pointer-events:none;
+  z-index:5;
+}
+.res-vils.on{visibility:visible;}
 #pop-wrap {
   position: absolute;
   bottom: 84px;
@@ -110,13 +135,32 @@ canvas {
   display: flex;
   gap: 6px;
 }
+/* "Back" arrow docked in the bottom-LEFT corner above the bar — the mirror
+   of the #pop-wrap shortcut cluster (chat/idle/bell/map/home) on the right,
+   matching its size and bottom offset at every breakpoint. It used to be
+   the leftmost action button, but it ate strip width that wide widgets
+   (the market exchange) need on phones. position:fixed escapes #actions'
+   overflow clipping; it only exists while something is selected (ui.js). */
+.act-btn.back-btn{
+  position: fixed;
+  left: 6px;
+  bottom: 84px;
+  z-index: 20;
+  min-width: var(--corner-size);
+  width: var(--corner-size);
+  height: var(--corner-size);
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+
 #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn, #menu-btn {
   /* Slightly translucent so the map reads through the corner controls */
   background: linear-gradient(180deg, rgba(92,61,36,0.82) 0%, rgba(48,31,16,0.82) 100%);
   border: 1px solid #bfa054;
   border-radius: 4px;
-  height: 28px;
-  width: 28px;
+  height: var(--corner-size);
+  width: var(--corner-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -126,11 +170,11 @@ canvas {
   position: relative;
 }
 #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji, #chat-btn .btn-emoji, #menu-btn .btn-emoji{
-  font-size: 22px;
+  font-size: calc(var(--corner-size) * 0.68);
   line-height: 1;
 }
 #bell-btn .btn-emoji{
-  font-size: 22px;
+  font-size: calc(var(--corner-size) * 0.68);
   transform: scale(1.1);
   transform-origin: center;
   display: inline-block;
@@ -184,7 +228,9 @@ canvas {
 }
 
 #sel-info {
-  width: 220px;
+  /* Narrow: the card is tiles-only now (lone tile / grouped tiles / the age
+     crest when idle) — no name or detail text to make room for. */
+  width: 100px;
   padding: 6px;
   color: #ffebad;
   border-left: 2px double #5a3e1a;
@@ -196,8 +242,8 @@ canvas {
   gap: 8px;
 }
 #sel-portrait {
-  width: 58px;
-  height: 58px;
+  width: var(--tile-size);
+  height: var(--tile-size);
   /* background-image (not the `background` shorthand) so it doesn't reset
      background-position/size/repeat — those are set by .sprite-icon /
      .icon-* below, at lower specificity, when a sprite icon is shown. */
@@ -215,13 +261,22 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   background-repeat: no-repeat;
 }
+/* Sprite tiles render on an inner clipper>img pair (setPortraitIcon,
+   js/ui.js) so skins can zoom the art past the sheet cell's baked-in
+   margins without touching the tile's own border/box. */
+#sel-portrait{ position: relative; }
+.tile-sprite{ position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.tile-sprite-img{ width: 100%; height: 100%; }
 #sel-portrait.cam-locked {
   border-color: #4ade80;
   box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);
 }
+/* Classic-only HP slot under the portrait (page-shell.js) — the mobile skin
+   keeps HP inline in #sel-details, so this stays empty AND hidden here. */
+#sel-hp { display: none; }
 #sel-stats {
   flex: 1;
   display: flex;
@@ -251,14 +306,54 @@ canvas {
   max-height: 100%;
   text-shadow: 1px 1px 1px #000;
 }
+/* Grid-mode card sizes to its TILES and just keeps growing — one tile hugs
+   it, each extra unit type widens it, and with enough types it eats the
+   bar (the #sel-info border-left is the moving actions|selection divider).
+   The cap only reserves ONE action-button slot, and .no-actions (js/ui.js:
+   strip built with no real buttons) lifts even that, letting the card take
+   the whole bar. Overrides per breakpoint match the act-btn sizes. */
+#sel-info.multi-select {
+  width: auto;
+  min-width: 88px;
+  max-width: calc(100% - 90px);
+  flex: 0 0 auto;
+}
+#bottom.no-actions #sel-info.multi-select { max-width: 100%; }
 #sel-stats {
   max-height: 100%;
 }
 #sel-details .hp-bar-bg {
-  width: 100px;
+  /* Fluid, NOT a fixed 100px: the narrowed portrait card can leave less
+     than 100px for the stats column, and a fixed-width bar overflowed it —
+     #sel-details{overflow-y:auto} forces overflow-x:auto too, so phones
+     drew a horizontal SCROLLBAR right under the HP bar (an "extra grey
+     bar" under every selection's health readout). */
+  width: auto;
+  max-width: 100px;
   margin-top: 3px;
   margin-bottom: 2px;
 }
+/* Detail rows inside #sel-details (js/ui.js det strings) — same look the
+   old inline styles produced; classes so the classic skin can restyle
+   them as recessed chips without forking the markup. */
+.det-stats {
+  color: #ffd700;
+  font-weight: bold;
+  font-size: 11px;
+  margin-top: 1px;
+}
+.det-row { margin-top: 1px; }
+.det-alert {
+  color: #ff4444;
+  font-weight: bold;
+}
+/* Per-stat spans inside .det-stats/.sel-combat-stats — spacing matches the
+   old '  ' string join; the classic skin restyles them as recessed chips. */
+.stat-chip { margin-right: 6px; }
+.stat-chip:last-child { margin-right: 0; }
+/* Classic-only training-queue lane in the center panel (page-shell.js);
+   mobile shows queue state on the train-button badge instead. */
+#sel-queue { display: none; }
 /* ---- MULTI-SELECT GRID ----
    When >1 unit is selected, #sel-info swaps its single portrait+stats card
    for a scrollable grid of every selected unit's own icon (AoE2-style),
@@ -269,7 +364,10 @@ canvas {
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 3px;
-  overflow: hidden;
+  /* Scrolls rather than clips: with act-btn-sized tiles a garrison of two
+     unit types can exceed the bar's height in the narrow card. */
+  overflow-y: auto;
+  overflow-x: hidden;
   height: 100%;
   /* Top/right padding must cover .sel-unit-count's negative overhang, or
      the count badge on the last icon in a row gets clipped. */
@@ -284,16 +382,35 @@ canvas {
 }
 .sel-unit-icon {
   position: relative;
-  width: 32px;
-  height: 32px;
-  border: 1px solid #5a3e1a;
-  border-radius: 2px;
+  /* One tile size everywhere, matching .act-btn at each breakpoint — the
+     selection tiles and action buttons share a single visual rhythm,
+     whether one thing or a group is selected. */
+  width: var(--tile-size);
+  height: var(--tile-size);
+  border: 2px solid #bfa054;
+  border-radius: 4px;
   background-image: radial-gradient(circle, #805c36 0%, #3e2612 100%);
+  box-shadow: inset 0 0 6px #000, 1px 1px 3px rgba(0,0,0,0.5);
   cursor: pointer;
   flex-shrink: 0;
 }
 .sel-unit-icon:hover {
   border-color: #ffd700;
+}
+/* Outcome tile (game over): a big centered emoji (🏆/💀) instead of a sprite —
+   sized off the tile so it fills it like the old portrait did, at every
+   breakpoint. Not a clickable selection, so no hover recolor is needed. */
+.sel-unit-icon.outcome-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tile-size) * 0.56);
+  text-shadow: 1px 1px 2px #000;
+  cursor: default;
+}
+.sel-unit-icon.cam-locked {
+  border-color: #4ade80;
+  box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);
 }
 .sel-unit-hp {
   position: absolute;
@@ -380,11 +497,22 @@ canvas {
      whole row "jumping"). */
   padding: 8px;
 }
+/* ONE size for every square control in the bar — action buttons, selection
+   tiles, the idle age crest. Breakpoints change the variable, never the
+   selectors, so the pieces cannot drift apart. */
+:root {
+  --tile-size: 58px;
+  /* Corner shortcut cluster (home/map/idle/bell/chat) + the back arrow —
+     one knob per breakpoint, same discipline as --tile-size. Bigger than
+     the old 28px even on desktop: these are frequent-use controls. */
+  --corner-size: 40px;
+}
+
 .act-btn{
   position:relative; /* anchors the queue-cancel-hover badge, not the button itself */
   flex-shrink:0; /* keep full size when there's not enough row width, scroll instead of squeezing */
-  min-width:58px;
-  height:58px;
+  min-width:var(--tile-size);
+  height:var(--tile-size);
   /* Match the wooden-frame language of the baked-frame icons (.framed —
      back/eco/mil art): dark chocolate interior + thick rounded brown
      frame, gold reserved for hover/active. Before this, submenu building
@@ -404,7 +532,7 @@ canvas {
   justify-content:center;
   line-height:1.2;
   text-align:center;
-  padding:4px;
+  padding:0; /* no inset — the sprite icon fills the button border-to-border */
   box-shadow: inset 0 0 5px #000, 1px 1px 3px rgba(0,0,0,0.5);
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;
@@ -487,6 +615,13 @@ canvas {
   50%  { box-shadow: 0 0 18px rgba(255,215,0,1.0), inset 0 0 5px #000; }
   100% { box-shadow: 0 0 8px  rgba(255,215,0,0.6), inset 0 0 5px #000; }
 }
+/* The selection's CURRENT stance button — a steady gold border (no pulse; it's
+   a state indicator, not an action-in-progress). */
+.act-btn.stance-on {
+  border-color: #ffd700 !important;
+  background: linear-gradient(180deg, #5a3800 0%, #2a1800 100%) !important;
+  box-shadow: 0 0 8px rgba(255,215,0,0.6), inset 0 0 5px #000 !important;
+}
 .btn-emoji{
   font-size:16px;
   margin-bottom:2px;
@@ -494,65 +629,120 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   7 columns x 7 rows. background-size:700%/700% makes each cell exactly
+   8 columns x 8 rows. background-size:800%/800% makes each cell exactly
    fill the element regardless of its box size, so background-position is
-   expressed as fractions (c/4, r/4) rather than fixed pixel offsets — the
+   expressed as fractions (c/7, r/7) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
+   The original 7x7 art occupies cells (0..6, 0..6) unchanged; column 7 and
+   row 7 are the new cells: icon-tradecart (7,0, "cart" placeholder) plus
+   icon-spare1..14 — empty labeled boxes to draw future art into.
+   Step = 100/7 ≈ 14.2857%.
 */
 .sprite-icon{
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:700% 700%; /* one 7x7 master sheet — see the labeled placeholder cells */
+  background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
 }
-.icon-villager            {background-position:0%        0%;}
-.icon-militia             {background-position:16.6667%  0%;}
-.icon-spearman            {background-position:33.3333%  0%;}
-.icon-archer              {background-position:50%       0%;}
-.icon-scout               {background-position:66.6667%  0%;}
-.icon-knight              {background-position:83.3333%  0%;}
-.icon-sheep               {background-position:100%      0%;}
-.icon-militia-feudal      {background-position:0%        16.6667%;}
-.icon-militia-castle      {background-position:16.6667%  16.6667%;}
-.icon-spearman-castle     {background-position:33.3333%  16.6667%;}
-.icon-archer-castle       {background-position:50%       16.6667%;}
-.icon-scout-castle        {background-position:66.6667%  16.6667%;}
-.icon-bear                {background-position:83.3333%  16.6667%;}
-.icon-pop                 {background-position:100%      16.6667%;}
-.icon-TC                  {background-position:0%        33.3333%;}
-.icon-HOUSE               {background-position:16.6667%  33.3333%;}
-.icon-BARRACKS            {background-position:33.3333%  33.3333%;}
-.icon-MILL                {background-position:50%       33.3333%;}
-.icon-LCAMP               {background-position:66.6667%  33.3333%;}
-.icon-MCAMP               {background-position:83.3333%  33.3333%;}
-.icon-FARM                {background-position:100%      33.3333%;}
-.icon-TOWER               {background-position:0%        50%;}
-.icon-WALL                {background-position:16.6667%  50%;}
-.icon-GATE                {background-position:33.3333%  50%;}
-.icon-SWALL               {background-position:50%       50%;}
-.icon-SGATE               {background-position:66.6667%  50%;}
-.icon-gate-lock           {background-position:83.3333%  50%;}
-.icon-gate-unlock         {background-position:100%      50%;}
-.icon-food                {background-position:0%        66.6667%;}
-.icon-wood                {background-position:16.6667%  66.6667%;}
-.icon-gold                {background-position:33.3333%  66.6667%;}
-.icon-stone               {background-position:50%       66.6667%;}
-.icon-cancel              {background-position:66.6667%  66.6667%;}
-.icon-econ                {background-position:83.3333%  66.6667%;}
-.icon-mil                 {background-position:100%      66.6667%;}
-.icon-back                {background-position:0%        83.3333%;}
-.icon-reseed              {background-position:16.6667%  83.3333%;}
-.icon-research            {background-position:33.3333%  83.3333%;}
-.icon-logo                {background-position:50%       83.3333%;}
-.icon-bell                {background-position:100%      83.3333%;}
-.icon-age-dark            {background-position:0%        100%;}
-.icon-age-feudal          {background-position:16.6667%  100%;}
-.icon-ram                 {background-position:66.6667%  83.3333%;} /* rendered from drawRamBody (SE pose) into the sheet's spare cell */
-.icon-age-castle          {background-position:33.3333%  100%;}
-.icon-idle                {background-position:50%       100%;}
-.icon-rally               {background-position:66.6667%  100%;}
-.icon-map                 {background-position:83.3333%  100%;}
-.icon-home                {background-position:100%      100%;}
+/* New spare cells (empty labeled boxes) — column 7 (rows 1-7) then row 7
+   (cols 0-6). Wire any of these up by renaming the class + drawing its cell. */
+/* ---- MARKET buy/sell exchange (js/ui.js): two labeled rows (Buy / Sell) of
+   resource icons with the live gold price printed below each. Dedicated .mkt-*
+   classes (not .act-btn) so it stays visible in both skins, which hide
+   .act-btn labels/costs. Spans the full action area in either layout. ---- */
+/* Sized to content (not width:100%): in the portrait bottom bar the rows are
+   wider than the visible action strip, and a 100%-wide box CLIPS them — at
+   max-content they extend the bar's normal horizontal scroll instead. */
+.mkt-exchange{ flex:0 0 auto; width:max-content; box-sizing:border-box;
+  display:flex; flex-direction:column; gap:2px; padding:2px; }
+.mkt-row{ display:flex; align-items:center; gap:4px; }
+.mkt-row-label{ flex:0 0 30px; font:bold 10px sans-serif; color:#e8dab0;
+  text-transform:uppercase; letter-spacing:0.5px; }
+/* Icon-beside-price (not stacked): keeps the two rows short enough to fit
+   the classic skin's 80px bottom panel, so both skins share one shape.
+   Uniform min-width so the Buy and Sell rows form aligned equal columns. */
+.mkt-cell{ display:flex; align-items:center; justify-content:center; gap:4px;
+  cursor:pointer; min-width:60px; box-sizing:border-box;
+  padding:4px 7px; border-radius:4px; background:rgba(0,0,0,0.28); }
+.mkt-cell:hover{ background:rgba(255,255,255,0.14); }
+.mkt-cell.disabled{ opacity:0.4; filter:grayscale(0.8); cursor:not-allowed; }
+.mkt-cell.disabled:hover{ background:rgba(0,0,0,0.28); }
+.mkt-ico{ width:20px; height:20px; }
+.mkt-price{ display:flex; align-items:center;
+  font:bold 10px sans-serif; color:#ffe14d; }
+
+/* ---- Market exchange POPUP (mobile skin, js/ui.js refreshMktPopup): a
+   dismissible card over the battlefield — the inline exchange filled the
+   whole landscape rail and buried the other buttons. Bigger cells and
+   prices than the old strip widget. ---- */
+#mkt-popup{
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Clear of BOTH the bottom bar and the corner controls floating above
+     it (back arrow bottom-left, bell/map/home cluster bottom-right — their
+     top edges reach ~142px from the bottom at every breakpoint). */
+  bottom: 158px;
+  z-index: 60;
+  background: linear-gradient(180deg, #3d2310 0%, #1f0f04 100%);
+  border: 2px solid #bfa054;
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.65), inset 0 0 6px rgba(0,0,0,0.5);
+}
+#mkt-popup-head{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ffd700;
+  font: bold 14px 'Cinzel', Georgia, serif;
+  margin-bottom: 7px;
+  cursor: move;            /* drag handle (makeMktPopupDraggable, js/ui.js) */
+  touch-action: none;      /* claim touch-drag; don't let it scroll/gesture */
+  user-select: none;
+}
+#mkt-popup-ico{ width: 20px; height: 20px; display: inline-block; }
+#mkt-popup-head span:nth-child(2){ flex: 1; }
+#mkt-popup-x{
+  background: none;
+  border: 1px solid #bfa054;
+  color: #ffebad;
+  border-radius: 4px;
+  width: 24px; height: 24px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+#mkt-popup-x:hover{ background: rgba(140,29,29,0.6); border-color: #fff; }
+#mkt-popup .mkt-exchange{ width: auto; }
+#mkt-popup .mkt-ico{ width: 26px; height: 26px; }
+#mkt-popup .mkt-price{ font-size: 14px; }
+#mkt-popup .mkt-cell{ min-width: 82px; padding: 7px 9px; justify-content: center; }
+#mkt-popup .mkt-row-label{ flex-basis: 34px; font-size: 11px; }
+/* Landscape rail: the bar is a left rail, so the popup can sit low and
+   centered over the remaining battlefield width. */
+@media (orientation: landscape) and (max-height: 500px) {
+  #mkt-popup{ bottom: 14px; left: calc(50% + 48px); }
+}
+
+/* ---- Queue/prepaid count badge on action buttons (js/ui.js): the number
+   of queued units sits ON the train button (progress fill along its bottom
+   edge shows the active one, same anatomy as Advance Age) — there is no
+   separate queue widget. Tapping the badge cancels one; the Mill's prepaid
+   variant is display-only. ---- */
+.act-btn .queue-count{
+  position:absolute; top:2px; right:2px; z-index:2;
+  min-width:20px; height:20px; padding:0 5px; box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:10px; background:#1d5c2e; border:1px solid #ffd700;
+  color:#fff; font:bold 12px sans-serif;
+  box-shadow:1px 1px 2px rgba(0,0,0,0.6);
+  /* DISPLAY-ONLY: taps pass through to the button underneath. A tappable
+     badge sat exactly where a rapid second tap lands and cancelled the
+     unit that tap meant to queue. Cancelling queued units is a classic-
+     skin affordance (its AoE2-style queue slots). */
+  pointer-events:none;
+}
 
 .btn-emoji.sprite-icon{
   /* Fill the button's content box, same as #minimap{width:100%;height:100%}
@@ -562,10 +752,10 @@ canvas {
   height:100%;
   margin-bottom:0;
 }
-.queue-slot .queue-icon{
-  width:16px;
-  height:16px;
-}
+/* The house cell art sits a touch small in its cell — nudge it up slightly so
+   it matches the visual weight of the other building icons (same per-icon
+   scale trick as #bell-btn). */
+.sprite-icon.icon-HOUSE{ transform: scale(1.1); }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
 }
@@ -854,6 +1044,7 @@ canvas {
 .lobby-seat {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* tight rows wrap the team/ready controls instead of crushing the name box */
   gap: 8px;
   padding: 6px 8px;
   border: 2px solid #8b6c43;
@@ -900,8 +1091,8 @@ canvas {
 .lobby-swatch.lobby-swatch-sel { border-color: #ffebad; box-shadow: 0 0 0 2px #8c1d1d; }
 .lobby-swatch[disabled] { cursor: not-allowed; opacity: 0.35; }
 .lobby-seat-name {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 1 150px; /* wide enough for the longest generated name ("Marquis de Mangonel") */
+  min-width: 150px;
   background: rgba(255,255,255,0.35);
   border: 1px solid #8b6c43;
   border-radius: 3px;
@@ -923,6 +1114,52 @@ canvas {
   color: #5c3b1e;
 }
 .lobby-seat-badge.lobby-ready { color: #1f6e30; }
+/* Compact per-seat readiness dot (replaces the wide "Not ready" text that wrapped the row). */
+.lobby-seat-status {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #8b6c43;
+  box-sizing: border-box;
+}
+.lobby-seat-status.status-ready { background: #2e9c46; border-color: #1f6e30; }
+.lobby-seat-status.status-notready { background: #d9a53a; border-color: #a9761f; }
+.lobby-seat-status.status-waiting { background: transparent; border-style: dashed; opacity: 0.7; }
+.lobby-team-select {
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-family: Georgia, serif;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 3px;
+  outline: none;
+}
+.lobby-team-select[disabled] { opacity: 0.6; }
+#lobby-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 6px;
+  font-size: 12px;
+  color: #5c3b1e;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+}
+#lobby-invite-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-size: 11px;
+  padding: 2px 6px;
+  outline: none;
+}
 .lobby-team-group {
   border: 2px dashed transparent;
   border-radius: 6px;
@@ -1269,13 +1506,8 @@ canvas {
      target, and it's exactly on small phones that these one-tap shortcuts
      matter most. (Duplicate 30px override further down this block removed;
      this is the single source at ≤600px.) */
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:42px;width:42px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:28px}
-  #bell-btn .btn-emoji{
-    font-size: 28px;
-    transform: scale(1.1);
-  }
-  .sel-unit-icon{width:44px;height:44px}
+  :root{--corner-size:42px}
+  .act-btn.back-btn{bottom:100px}
   #pop-wrap{bottom:100px}
   #minimap-wrap:not(.minimap-expanded) { display: none; }
   /* Corner minimap is gone at this width — the only way back to a map view
@@ -1284,12 +1516,14 @@ canvas {
 
   #bottom{height:96px}
   #sel-info{
-    width: clamp(160px, 42vw, 260px);
+    width: 96px;
     padding: 6px 8px;
   }
-  #sel-portrait{width:50px;height:50px;font-size:24px}
+  #sel-portrait{font-size:24px}
   #sel-details{font-size:10px}
-  .act-btn{min-width:70px;height:70px;font-size:13px}
+  :root{--tile-size:70px}
+  .act-btn{font-size:13px}
+  #sel-info.multi-select{max-width:calc(100% - 102px)}
   /* Minimap sizing is handled by the base min(28vw,220px) rule — no override needed. */
   #msg{font-size:14px;top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
   #help-hint{top:56px;left:8px;transform:none;white-space:normal;max-width:52%;text-align:left}
@@ -1297,17 +1531,18 @@ canvas {
 @media(max-width:480px){
   #bottom{height:90px}
   #sel-info{
-    width: clamp(140px, 44vw, 215px);
+    width: 88px;
     padding: 5px 7px;
   }
-  #sel-portrait{width:44px;height:44px;font-size:20px}
+  #sel-portrait{font-size:20px}
   #sel-details{font-size:9px}
-  .act-btn{min-width:64px;height:64px;font-size:12px}
+  :root{--tile-size:64px}
+  .act-btn{font-size:12px}
+  #sel-info.multi-select{max-width:calc(100% - 94px)}
   /* Even larger on the smallest phones — biggest tap target where fingers
      cover the most screen. */
-  #home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn {height:48px;width:48px}
-  #home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji{font-size:32px}
-  #bell-btn .btn-emoji{font-size:32px;transform:scale(1.1)}
+  :root{--corner-size:48px}
+  .act-btn.back-btn{bottom:94px}
   #pop{font-size:12px;padding:3px 4px;height:27px}
   #pop-wrap{bottom:94px}
 }
@@ -1373,83 +1608,6 @@ canvas {
   }
 }
 
-/* ---- TRAINING QUEUE STYLES ---- */
-.train-container {
-  margin-top: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid #5a3e1a;
-  border-radius: 4px;
-  padding: 6px;
-  box-shadow: inset 0 0 5px #000;
-}
-.train-title {
-  font-size: 11px;
-  color: #ffebad;
-  margin-bottom: 4px;
-  text-shadow: 1px 1px 1px #000;
-}
-.train-bar-bg {
-  width: 100%;
-  height: 6px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-.train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-queue-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.queue-slot {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 10px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 2px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.queue-slot:hover {
-  border-color: #ffd700;
-  background: linear-gradient(180deg, #a61c1c 0%, #5a0808 100%);
-}
-.queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 /* ---- STANCE / AUTO-ATTACK BUTTON STYLES ---- */
 .stance-status {
@@ -1605,74 +1763,6 @@ canvas {
 }
 
 
-/* ---- COMPACT TRAINING QUEUE STYLES ---- */
-.train-compact {
-  margin-top: 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.train-compact .train-bar-bg {
-  width: 100px;
-  height: 4px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 1px;
-  overflow: hidden;
-}
-.train-compact .train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-compact .train-queue-slots {
-  display: flex;
-  gap: 3px;
-}
-.train-compact .queue-slot {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 8px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 1px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.train-compact .queue-slot .queue-icon {
-  width: 12px;
-  height: 12px;
-}
-.train-compact .queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.train-compact .queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.train-compact .active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
-
 
 /* ---- HOVER TOOLTIP (desktop only) ---- */
 #tooltip {
@@ -1741,25 +1831,17 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
 }
-.res-mini-icon.icon-food  { background-position: 0% 66.6667%; }
-.res-mini-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-.res-mini-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-.res-mini-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   flex-shrink: 0;
 }
-#tooltip .tip-cost-icon.icon-food  { background-position: 0% 66.6667%; }
-#tooltip .tip-cost-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-#tooltip .tip-cost-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-#tooltip .tip-cost-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-label {
   color: #ffebad;
 }
@@ -2072,14 +2154,17 @@ canvas {
     border-left: none;
     border-top: 1px solid #8b6c43;
   }
-  #sel-portrait { width: 40px; height: 40px; }
+
   #sel-stats { flex: 0 0 auto; width: 100%; }
   #sel-name { font-size: 11px; line-height: 1.15; margin: 0; }
   #sel-details { font-size: 9px; line-height: 1.3; }
   #sel-details .hp-bar-bg { margin: 2px auto; max-width: 80px; }
-  /* Multi-select: groups collapse by type, so few icons — make them big */
+  /* Multi-select: same act-btn-sized tiles as everywhere else. The rail is
+     a COLUMN — the card keeps the rail's full width and grows downward, so
+     the width-expansion cap above must not apply. */
   #sel-grid { justify-content: center; gap: 6px; }
-  #sel-info.multi-select .sel-unit-icon { width: 56px; height: 56px; }
+  #sel-info.multi-select { width: 100%; max-width: none; }
+
   /* Actions below: single centered column, scrolls vertically */
   #actions {
     flex: 1 1 auto;
@@ -2091,7 +2176,7 @@ canvas {
     padding: 8px;
   }
   #actions::-webkit-scrollbar { height: auto; width: 5px; }
-  .act-btn { min-width: 64px; height: 64px; }
+  :root { --tile-size: 64px; }
   /* Submenu takeover: same trick as portrait but over the whole rail —
      identical padding in both states so the Back button never shifts. */
   #bottom.menu-active #actions {
@@ -2102,8 +2187,16 @@ canvas {
     height: 100%;
     padding: 8px;
   }
-  /* No bottom bar to clear anymore */
-  #pop-wrap { bottom: 6px; right: 6px; }
+  /* No bottom bar to clear anymore. The shortcut cluster becomes a VERTICAL
+     column hugging the right edge (thumb zone), portrait-sized 42px buttons,
+     with the back arrow docked below it in the very corner. Fixed offsets:
+     the column grows upward as chat/idle/bell toggle in, so the back button
+     never moves. */
+  #pop-wrap { bottom: 6px; right: 6px; flex-direction: column; gap: 6px; }
+  :root { --corner-size: 42px; }
+  /* Back arrow in the UPPER-right, tucked under the topbar's ☰/⛶ corner —
+     the bottom-right corner stays with the shortcut column. */
+  .act-btn.back-btn { left: auto; right: 6px; top: 44px; bottom: auto; }
   /* Chat anchors clear of the rail */
   #chat-log { left: 104px; top: 44px; }
   #chat-input-wrap { left: 104px; bottom: 8px; }

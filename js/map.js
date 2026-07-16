@@ -5,6 +5,10 @@ function genMap(){
     map[y][x]={t:TERRAIN.GRASS,res:0,occupied:null};
   }}
 
+  // Scenario loader (js/scenario.js) wants a blank, deterministic grass base —
+  // it places its own terrain/resources — so skip all procedural generation.
+  if(window.__scenarioMode) return;
+
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
   // Resource distances below were tuned for the original 60x60 map; scale them
   // so larger maps spread bases/resources out instead of leaving empty grass.

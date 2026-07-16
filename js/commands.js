@@ -19,9 +19,8 @@
 
 // ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
 // RTS (AoE2 ran 250ms command turns). Under rollback lockstep
-// (js/lockstep.js) a command arriving LATE is no longer fatal — the sim
-// rewinds and re-simulates — so this stays small and fixed; it only sets
-// how often rollbacks happen, not whether the game stalls.
+// (js/lockstep.js) a late command just triggers a rewind, so this stays
+// small and fixed — it only sets how often rollbacks happen.
 let INPUT_DELAY_TICKS = 4;
 const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
 
@@ -33,11 +32,12 @@ function submitCommand(cmd){
   let execTick = tick + INPUT_DELAY_TICKS;
   let seq = ++localCmdSeq;
   scheduleCommand(execTick, myTeam, seq, cmd);
-  // Multiplayer: BOTH peers schedule the command at the issuer-stamped
-  // tick; the peer gets it via 'cmd-ls' (js/lockstep.js) and rolls back if
-  // it arrives late.
+  // Multiplayer: EVERY peer schedules the command at the issuer-stamped
+  // tick; peers get it via 'cmd-ls' (js/lockstep.js — guests' commands
+  // reach other guests through the host relay) and roll back if it
+  // arrives late.
   if (typeof lockstepEnabled === 'function' && lockstepEnabled()) {
-    sendToPeer({ type: 'cmd-ls', execTick, seq, cmd });
+    sendToAllPeers({ type: 'cmd-ls', execTick, seq, cmd });
   }
 }
 
@@ -53,7 +53,7 @@ function scheduleCommand(execTick, team, seq, cmd){
 // Entries are NOT deleted after execution: a lockstep rollback re-simulates
 // past ticks and must re-execute their commands from the queue. Pruned
 // once safely older than the rollback window.
-const COMMAND_KEEP_TICKS = 600;
+const COMMAND_KEEP_TICKS = T30(600);
 function runScheduledCommands(){
   let arr = commandQueue.get(tick);
   if (arr) {
@@ -144,6 +144,9 @@ function execCommand(cmd, team){
     case 'prepay-farm':
       withCommandContext(team, [], () => prepayFarmNow());
       break;
+    case 'cancel-reseed':
+      withCommandContext(team, [], () => cancelReseedNow());
+      break;
     case 'reactivate-farm': {
       let farm = entitiesById.get(cmd.bldgId);
       if (farm && farm.team === team) {
@@ -154,15 +157,15 @@ function execCommand(cmd, team){
     case 'eject-garrison': {
       let bldg = entitiesById.get(cmd.bldgId);
       if (bldg && bldg.team === team) {
-        ejectGarrison(bldg, gu => gu.id === cmd.unitId);
+        // cmd.all → release EVERYONE (falsy filter ejects all); else one unit.
+        ejectGarrison(bldg, cmd.all ? null : gu => gu.id === cmd.unitId);
         if (team === myTeam && typeof updateUI === 'function') updateUI();
       }
       break;
     }
     case 'set-delay':
-      // Manual lockstep input-delay override (host-only). Under rollback
-      // the delay only tunes how often rewinds happen — lateness is no
-      // longer fatal — so there's no automatic controller anymore.
+      // Manual lockstep input-delay override (host-only); under rollback
+      // the delay only tunes how often rewinds happen.
       if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
         INPUT_DELAY_TICKS = cmd.d;
       }
@@ -174,6 +177,27 @@ function execCommand(cmd, team){
       if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
         setGameSpeed(cmd.v);
         if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
+      }
+      break;
+    case 'set-controller':
+      // Host-only (team 0): hand a kicked/abandoned player's seat to the
+      // AI mid-match. Rides the command stream — not a resync — because
+      // teamControllers/AI_STATES are sim state (checksummed, snapshotted,
+      // rolled back), so every peer must flip the seat at the same tick.
+      // The existing brain state is kept if one exists (a seat that began
+      // as AI in a loaded save resumes its plans); a never-AI seat gets a
+      // fresh brain.
+      if (team === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
+        // Difficulty is stamped into the command payload by the host at submit
+        // time (see kickDisconnectedPlayers) so every peer applies the SAME
+        // value. Reading the client-local `aiDifficulty` global here instead
+        // would desync: it's set independently per peer from menus/lobby/saves.
+        let diff = AI_LEVELS[cmd.diff] ? cmd.diff : 'standard';
+        teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
+        if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
+        // Everyone should see this, not just the issuer (feedbackFor would
+        // limit it to the host) — only a resim replay stays quiet.
+        if (!window.__resim && typeof showMsg === 'function') showMsg(teamName(cmd.t) + "'s seat was handed to the AI");
       }
       break;
     case 'dev-spawn':
@@ -191,9 +215,8 @@ function execCommand(cmd, team){
       }
       break;
     case 'dev-destroy':
-      // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — the
-      // lockstep replacement for tests that used to set hp=0 directly on
-      // one peer (an out-of-band write is an instant desync now).
+      // Test-only deterministic kill (same DEV_TEST_COMMANDS gate) — an
+      // out-of-band hp write on one peer is an instant desync.
       if (window.DEV_TEST_COMMANDS) {
         let victim = entitiesById.get(cmd.id);
         if (victim) { victim.hp = 0; handleDeath(victim, team); }
@@ -203,7 +226,324 @@ function execCommand(cmd, team){
       if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
       if (typeof updateUI === 'function') updateUI();
       break;
+    case 'market-trade':
+      execMarketTrade(cmd, team);
+      break;
+    case 'auto-scout':
+      execAutoScout(cmd, team);
+      break;
+    case 'guard':
+      execGuard(cmd, team);
+      break;
+    case 'set-stance':
+      execSetStance(cmd, team);
+      break;
+    case 'garrison':
+      execGarrison(cmd, team);
+      break;
   }
+}
+
+// The 4 AoE2 stances (must match STANCES in js/editor.js and the reads in
+// js/logic.js). Set from the HUD stance buttons (js/ui.js) via this command —
+// lockstep-safe like auto-scout/guard: queued to a shared tick, ids re-resolved
+// against the local entitiesById + ownership-filtered on every peer.
+const VALID_STANCES = new Set(['aggressive', 'defensive', 'standground', 'passive']);
+function execSetStance(cmd, team){
+  if (!VALID_STANCES.has(cmd.stance)) return; // never trust a wire value
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.type === 'unit' && u.team === team && u.hp > 0 &&
+                 typeof isSoldierUnit === 'function' && isSoldierUnit(u));
+  if (!units.length) return;
+  units.forEach(u => {
+    u.stance = cmd.stance;
+    // Postures are mutually exclusive: picking a stance clears Guard/Auto
+    // Scout (mirrors execGuard/execAutoScout clearing each other), keeping
+    // the behavior matching the UI's single highlighted posture.
+    if (u.order && (GUARD_ORDER_KINDS.has(u.order.kind) || u.order.kind === 'scout')) issueOrder(u, null);
+    // No Attack must DISENGAGE, not just stop acquiring: the passive gate in
+    // js/logic.js only blocks the auto-acquire scan, so drop the current
+    // FIGHT too (AoE2 does the same; explicit attack orders issued to a
+    // passive unit are still obeyed). ONLY the fight: a unit merely walking
+    // keeps its move order.
+    if (cmd.stance === 'passive' && (u.target != null || u.explicitAttack)) {
+      u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+      if (typeof clearUnitPath === 'function') clearUnitPath(u);
+    }
+  });
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
+}
+
+// Which units carry a guard post: SOLDIERS only. A ram already holds
+// position by nature (never auto-engages), and its Guard tile read as a
+// second garrison button; rams remain escort TARGETS and riders still
+// garrison inside. THE single eligibility filter: allGuardable (js/ui.js),
+// the rally-spawn anchor (js/logic.js) and the move-order re-pin
+// (issueMoveOrder, js/pathfinding.js) all call this.
+function guardEligible(u){
+  return isSoldierUnit(u);
+}
+
+// THE free-seat count for a garrison container: seats already taken PLUS
+// riders already WALKING to board count against the cap — shared by the
+// player's ram-click boarding and the AI's wave rider planner, so the two
+// can never double-book seats differently.
+function ramSeatsFree(container){
+  let walkers = 0;
+  for (const u of entities) if (u.type === 'unit' && u.task === 'garrison' && u.garrisonTarget === container.id) walkers++;
+  return Math.max(0, garrisonCap(container) - garrisonCount(container) - walkers);
+}
+
+// Garrison INTO a container (TC/tower/ram) — the container-first "load mode"
+// (Garrison button js/ui.js + garrisonLoadTap js/input.js). canGarrisonIn is the
+// per-unit gate (ANY unit into a complete own building; only riders into a ram);
+// ramSeatsFree caps and counts walkers so repeated taps never double-book seats.
+// Writes the SAME field-set as the ram-board branch, so updateGarrisonWalk/
+// enterGarrison drive it with no new sim code.
+function execGarrison(cmd, team){
+  let b = cmd.bldgId != null ? entitiesById.get(cmd.bldgId) : null;
+  if (!(b && b.team === team && b.hp > 0 && garrisonCap(b) > 0 &&
+        (b.type !== 'building' || b.complete))) return; // never trust the wire
+  let room = ramSeatsFree(b), sent = 0;
+  (cmd.unitIds || []).forEach(id => {
+    if (room <= 0) return;
+    let u = entitiesById.get(id);
+    if (!(u && u.type === 'unit' && u.team === team && u.hp > 0 &&
+          !u.garrisonedIn && u.task !== 'garrison' && canGarrisonIn(b, team, u))) return;
+    if (u.order) issueOrder(u, null);        // LAST ORDER WINS (mirrors execUnitCommand)
+    u.target = null; u.buildTarget = null; u.buildQueue = []; u.explicitAttack = false;
+    u.task = 'garrison'; u.garrisonTarget = b.id;
+    // A ram is a moving point (no footprint perimeter); a building routes to its edge.
+    let pt = b.type === 'unit' ? { x: Math.round(b.x), y: Math.round(b.y) }
+                               : nearestBldgPerimeter(u.x, u.y, b, u.id);
+    if (pt) pathUnitTo(u, pt.x, pt.y);
+    room--; sent++;
+  });
+  feedbackFor(team, () => { if (!sent && typeof showMsg === 'function') showMsg('No room to garrison'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
+}
+
+// THE attack assignment — the ONE way any controller (a human command OR
+// js/ai.js) points a unit at a target, so AI attacks carry exactly the
+// semantics a player's attack-click does (parity: the AI can't do anything
+// a human couldn't):
+//   - LAST ORDER WINS: the standing order is replaced (a guard picket must
+//     never leash a committed attacker home);
+//   - explicitAttack: committed — leash-exempt, survives fog loss per the
+//     human rules, mop-up on target death (human teams);
+//   - the ANCHOR moves to the target ("hold the ground you take"): a
+//     DEFENSIVE unit that finishes the assault leashes to the battlefield,
+//     not back to wherever it stood when ordered;
+//   - task/build/path cleared like any redirect.
+function assignAttack(u, target){
+  if (u.order) issueOrder(u, null);
+  u.target = target.id; u.task = null; clearUnitPath(u); u.buildTarget = null;
+  u.explicitAttack = true;
+  u.defendX = Math.round(target.x); u.defendY = Math.round(target.y);
+}
+
+// ---- THE EXCLUSIVE ORDER SLOT ----
+// One standing order per unit (e.order); issuing ANY order replaces the old
+// one — "last order wins", no pairwise interaction rules. Kinds:
+//   {kind:'move', x, y}              multi-leg walk goal
+//   {kind:'follow', id, x, y}        keep up with a friendly unit (x/y =
+//                                    this follower's formation offset from it)
+//   {kind:'guard', x, y}             hold a ground post (zone acquire + leash)
+//   {kind:'guardBuilding', id, x, y}  perimeter watch; x,y = assigned post tile
+//   {kind:'escort', id, x, y}        guard a moving unit (zone rides on it;
+//                                    x/y = this escort's ring offset)
+//   {kind:'scout'}                   auto-explore, ignores combat
+// TEAM-AGNOSTIC by construction (no isHumanTeam/myTeam in here): the human
+// command executors and js/ai.js both call this. Stance stays the unit's
+// REACTION POLICY (STANCES, js/logic.js) — orders say WHAT, stance HOW.
+const ORDER_KINDS = new Set(['move','follow','guard','guardBuilding','escort','scout']);
+const GUARD_ORDER_KINDS = new Set(['guard','guardBuilding','escort']);
+function issueOrder(e, order){
+  if (order != null && !ORDER_KINDS.has(order.kind)) return false;
+  // A guard-family order un-passives (a passive guard is an inert
+  // contradiction — it could neither acquire nor retaliate at its post).
+  // Postures are mutually exclusive both ways: set-stance clears guard
+  // orders, and a guard order un-passives — a passive guard could neither
+  // acquire nor retaliate (the "inert guard" bug).
+  if (order != null && GUARD_ORDER_KINDS.has(order.kind) && e.stance === 'passive') e.stance = 'aggressive';
+  e.order = order || null;
+  // Fresh order → fresh guard-return attempts (a unit that backed off at an
+  // old post must not ignore its new one for the T30(600) back-off).
+  if (e.retry && e.retry['guardret']) e.retry['guardret'].n = 0;
+  return true;
+}
+
+// Building rally targets are kept only where the BUILDING is the point:
+// one you can go INSIDE (TC / guard tower garrison), a Market (trade-cart
+// route), an own foundation (builders), or an enemy building (attack).
+// Shared by execRally (sim) and doCommand's click feedback (js/input.js)
+// so the message can never disagree with what actually got set.
+function isRallyBuildingTarget(b, team){
+  return canGarrisonIn(b, team)
+    || b.btype === 'MARKET'
+    || (b.team === team && !b.complete)
+    || !sameSide(b.team, team);
+}
+
+// AoE2-style Guard: ONE flag order, three target kinds —
+//   ground:   hold that spot (formation offsets, like a group move)
+//   building: stand watch around it (per-unit perimeter posts)
+//   unit:     ESCORT — the post rides on the guarded unit (follow + leash,
+//             see syncGuardPost in js/logic.js); if it dies, the post
+//             freezes at its last position.
+// Guarding units engage enemies that come close and RETURN to the post
+// afterwards. The post is never CANCELLED: a plain ground move simply
+// relocates it ("this is your temp spot", execUnitCommand), and explicit
+// attacks are exempt from the leash.
+// THE formation concept — one function, used by every group order: a
+// group's destination shape IS its own current arrangement, translated to
+// the anchor. Offsets are unit − centroid, uniformly COMPACTED to a
+// ~sqrt(n) radius when the group is strung out (a loose gather line
+// arrives as a group, not a 20-tile string), and rounded collisions walk
+// the diamond ring outward to the nearest free tile (stacked rally output
+// fans out; excludeCenter keeps the anchor tile itself free — the leader's
+// tile under a follow/escort). Consumers: group moves (anchor = click),
+// ground guard flags + AI pickets (anchor = the flag/rally point — the
+// compaction is what forms scattered units into a tight post cluster),
+// and follow/escort stations (anchor = the moving leader, offsets ride
+// the order's hashed x/y fields).
+// Slot-assignment formations are structurally arbitrary — for a distant
+// anchor every slot is roughly equidistant from every unit — so translating
+// the group's own shape sidesteps the assignment problem entirely.
+// Deterministic: command-payload/scan unit order, exact-order float math.
+function formationOffsets(units, excludeCenter){
+  let off = new Map();
+  if (!units.length) return off;
+  let taken = new Set(excludeCenter ? ['0,0'] : []);
+  let cx = 0, cy = 0;
+  units.forEach(m => { cx += m.x; cy += m.y; });
+  cx /= units.length; cy /= units.length;
+  let maxd = 0;
+  units.forEach(m => { maxd = Math.max(maxd, Math.abs(m.x - cx), Math.abs(m.y - cy)); });
+  let R = Math.ceil(Math.sqrt(units.length)) + 1;
+  let scale = maxd > R ? R / maxd : 1;
+  units.forEach(m => {
+    let ox = Math.round((m.x - cx) * scale), oy = Math.round((m.y - cy) * scale);
+    if (taken.has(ox + ',' + oy)) {
+      outer: for (let r = 1; r <= R + 2; r++) {
+        for (let i = 0; i < 4 * r; i++) {
+          let side = Math.floor(i / r), j = i % r, dx, dy;
+          if (side === 0) { dx = r - j; dy = j; }
+          else if (side === 1) { dx = -j; dy = r - j; }
+          else if (side === 2) { dx = -(r - j); dy = -j; }
+          else { dx = j; dy = -(r - j); }
+          if (!taken.has((ox + dx) + ',' + (oy + dy))) { ox += dx; oy += dy; break outer; }
+        }
+      }
+    }
+    taken.add(ox + ',' + oy);
+    off.set(m.id, [ox, oy]);
+  });
+  return off;
+}
+
+function execGuard(cmd, team){
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.team === team && u.hp > 0 && !u.garrisonedIn && guardEligible(u));
+  if (!units.length) return;
+  // Re-resolve and validate the flagged target: own/allied only — a tap on
+  // an enemy or gaia thing falls through to a ground post at that spot.
+  let target = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  if (target && (target.hp <= 0 || target.garrisonedIn || !sameSide(target.team, team))) target = null;
+  let finish = (u, order, px, py) => {
+    issueOrder(u, order); // replaces any standing order; un-passives (no inert guards)
+    u.target = null; u.task = null;
+    u.explicitAttack = false;
+    clearUnitPath(u);
+    pathUnitTo(u, Math.round(px), Math.round(py));
+  };
+  if (target && target.type === 'unit') {
+    // ESCORT: the zone rides on the escortee (guardZoneOf reads its live
+    // position); updateFollowOrder does the walking off order.id, aiming at
+    // escortee + this escort's station offset (order x/y — hashed) so a
+    // large escort holds a compact arrangement around the cart instead of
+    // dogpiling its tile (excludeCenter keeps the escortee's tile free).
+    let eOff = formationOffsets(units.filter(u => u.id !== target.id), true);
+    units.forEach(u => {
+      if (u.id === target.id) return; // can't escort yourself
+      let [ox, oy] = eOff.get(u.id) || [0, 0];
+      finish(u, {kind:'escort', id: target.id, x: ox, y: oy}, target.x + ox, target.y + oy);
+    });
+  } else if (target && target.type === 'building') {
+    // Fan the guards OUT around the footprint (claimed set) so they cover the
+    // whole building instead of piling onto its nearest corner — the leash
+    // (js/logic.js) anchors each to the building as a whole, but the RETURN
+    // walk targets each guard's own assigned tile (order.x/y).
+    let claimed = new Set();
+    units.forEach(u => {
+      let pt = nearestBldgPerimeter(u.x, u.y, target, u.id, claimed);
+      claimed.add(pt.x + ',' + pt.y);
+      finish(u, {kind:'guardBuilding', id: target.id, x: pt.x, y: pt.y}, pt.x, pt.y);
+    });
+  } else {
+    let x = Math.max(0, Math.min(MAP - 1, Math.round(cmd.x)));
+    let y = Math.max(0, Math.min(MAP - 1, Math.round(cmd.y)));
+    let gOff = formationOffsets(units, false);
+    units.forEach(u => {
+      let [ox, oy] = gOff.get(u.id) || [0, 0];
+      let px = Math.max(0, Math.min(MAP - 1, x + ox)), py = Math.max(0, Math.min(MAP - 1, y + oy));
+      finish(u, {kind:'guard', x: px, y: py}, px, py);
+    });
+  }
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
+}
+
+// Toggle the player's Auto Scout mode on the given scout units. When turned ON,
+// clear any target/path so it starts exploring immediately (the per-tick
+// behavior in js/logic.js drives the frontier wander). Mirrors execGateLock's
+// re-resolve-and-revalidate-by-id pattern for lockstep safety.
+function execAutoScout(cmd, team){
+  let on = !!cmd.on;
+  let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
+    .filter(u => u && u.type === 'unit' && u.utype === 'scout' && u.team === team && u.hp > 0);
+  if (!units.length) return;
+  units.forEach(u => {
+    if (on) {
+      issueOrder(u, {kind:'scout'}); // replaces any standing order — exploring IS the new order
+      u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u);
+    } else if (u.order && u.order.kind === 'scout') {
+      // Toggle-off clears ONLY a scout order — never an unrelated order
+      // issued between the two commands in the same input-delay window.
+      issueOrder(u, null);
+    }
+  });
+  feedbackFor(team, () => { if (window.playSound) playSound('click'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
+}
+
+// Commodity exchange: buy or sell 100 of a resource for gold at the GLOBAL
+// price (marketPrices, js/core.js — one shared table, AoE2-style: everyone's
+// trades move the same market). Mutation MUST run here in the deterministic
+// executor, never client-side. Integer math.
+function execMarketTrade(cmd, team){
+  let res = cmd.resType;
+  if (res !== 'food' && res !== 'wood' && res !== 'stone') return;
+  // Authoritative gate: the team must actually own a completed Market.
+  let hasMarket = entities.some(b => b.type === 'building' && b.btype === 'MARKET' && b.team === team && b.complete && b.hp > 0);
+  if (!hasMarket) return;
+  let store = resourceStore(team);
+  // marketSellRatio bakes in the per-team Guilds discount.
+  let mp = marketPrices;
+  let price = mp[res];
+  if (cmd.dir === 'buy') {
+    if (store.gold < price) { feedbackFor(team, () => showMsg('Not enough gold.')); return; }
+    store.gold -= price;
+    store[res] += MARKET_LOT;
+    mp[res] = Math.min(MARKET_PRICE_MAX, price + MARKET_PRICE_STEP);
+  } else if (cmd.dir === 'sell') {
+    if (store[res] < MARKET_LOT) { feedbackFor(team, () => showMsg('Not enough ' + res + ' to sell.')); return; }
+    store[res] -= MARKET_LOT;
+    store.gold += Math.floor(price * marketSellRatio(team) / 100);
+    mp[res] = Math.max(MARKET_PRICE_MIN, price - MARKET_PRICE_STEP);
+  }
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
 // ---- EXECUTORS ----
@@ -217,14 +557,36 @@ function execRally(cmd){
   let bData = BLDGS[bldg.btype];
   if (!bData || !bData.builds || bData.builds.length === 0) return;
   if (!inMapBounds(cmd.tileX, cmd.tileY)) return;
-  bldg.rallyX = cmd.tileX;
-  bldg.rallyY = cmd.tileY;
+  let rx = cmd.tileX, ry = cmd.tileY;
   let rTarget = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  // Rally flags point at SPOTS, not units: a flag dropped on a unit (own,
+  // enemy, or a passing sheep) is just a flag on the ground underneath it —
+  // fresh units shouldn't inherit chase/attack orders from whoever happened
+  // to stand there. The flag snaps to the tile that unit is STANDING on
+  // (clicking its sprite can resolve to a neighboring tile, since the art
+  // extends above the feet). Building targets stay: rally into a garrison,
+  // a trade-cart route onto a market, builders onto a foundation.
+  if (rTarget && rTarget.type === 'unit') {
+    // round, not floor: resting units sit on integer path nodes, so a unit
+    // mid-step at x=5.6 is walking onto tile 6 — floor put the flag one
+    // tile behind it (and missed the resource tile it stands on).
+    rx = Math.max(0, Math.min(MAP - 1, Math.round(rTarget.x)));
+    ry = Math.max(0, Math.min(MAP - 1, Math.round(rTarget.y)));
+    rTarget = null;
+  }
+  // Building targets: kept only where the BUILDING is the point (see
+  // isRallyBuildingTarget above); a flag on any other friendly building is
+  // just a flag on the ground there.
+  if (rTarget && rTarget.type === 'building' && !isRallyBuildingTarget(rTarget, bldg.team)) {
+    rTarget = null;
+  }
+  bldg.rallyX = rx;
+  bldg.rallyY = ry;
   if (rTarget) {
     bldg.rallyTargetId = rTarget.id;
     bldg.rallyResourceType = null;
   } else {
-    let t0 = map[cmd.tileY] && map[cmd.tileY][cmd.tileX];
+    let t0 = map[ry] && map[ry][rx];
     if (t0 && (t0.t === TERRAIN.FOREST || t0.t === TERRAIN.GOLD || t0.t === TERRAIN.STONE || t0.t === TERRAIN.BERRIES || t0.t === TERRAIN.FARM)) {
       bldg.rallyResourceType = t0.t;
       bldg.rallyTargetId = null;
@@ -250,22 +612,82 @@ function execUnitCommand(cmd){
   let followTarget = cmd.followId != null ? entitiesById.get(cmd.followId) : null;
   if (followTarget && (followTarget.hp <= 0 || followTarget.team !== myTeam)) followTarget = null;
 
+  // Garrison-in-ram (AoE2 garrison-rams): a right-click on an OWN ram with
+  // melee infantry selected loads them in (js/input.js ships the ram as
+  // targetId for exactly this case). Resolved directly from cmd (like the
+  // trade-cart Market click) because `target` is nulled for own-team
+  // entities above.
+  let ramTarget = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+  if (!(ramTarget && ramTarget.type === 'unit' && ramTarget.utype === 'ram'
+        && ramTarget.team === myTeam && ramTarget.hp > 0 && !ramTarget.garrisonedIn)) ramTarget = null;
+  // Slot accounting across the whole selection (same idea as ringTownBell's
+  // per-container reservations): seats already taken plus riders already
+  // WALKING to board count against the cap, and each boarding order issued
+  // below consumes one — surplus infantry fall through to the follow branch
+  // (escort) instead of marching to a full ram and idling there.
+  let ramRoom = ramTarget ? ramSeatsFree(ramTarget) : 0;
+
   let movers = selected.filter(s => s.type === 'unit');
-  let offsets = getFormation(movers.length);
+  // Group-move destinations / follow stations: the shared formation
+  // concept (formationOffsets above). Following a unit anchors the
+  // arrangement on the LEADER (excludeCenter keeps its own tile free —
+  // otherwise a big group dogpiles the leader's exact tile).
+  let formOff = formationOffsets(movers, !!followTarget);
+  let slotFor = m => formOff.get(m.id) || [0, 0];
   // AoE2 formation pace: a group order moves everyone at the slowest
   // member's speed (see unitMoveSpeed, js/logic.js) so the group arrives
   // together instead of trickling in fastest-first. Solo orders run free.
   let groupSpeed = movers.length > 1
     ? Math.min(...movers.map(m => m.speed || 1)) : undefined;
-  let idx = 0;
   movers.forEach(s => {
     s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
+    // LAST ORDER WINS: every manual command replaces the standing order —
+    // the branch below issues the new one (move→move, follow→follow, …).
+    if (s.order) issueOrder(s, null);
     s.buildTarget = null;
     s.buildQueue = [];
-    s.followId = undefined;
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
+    if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
+      // Ride the ram: same walk-to-container flow as the town bell
+      // (task='garrison' + garrisonTarget; enterGarrison seats on arrival).
+      ramRoom--;
+      s.target = null; s.task = 'garrison'; s.garrisonTarget = ramTarget.id;
+      pathUnitTo(s, Math.round(ramTarget.x), Math.round(ramTarget.y));
+      return;
+    }
+    if (s.utype === 'tradecart') {
+      // Trade carts route to a Market, they don't attack. Resolve the clicked
+      // entity directly from cmd (NOT the `target` var, which is nulled for
+      // allied/friendly buildings above) so trading with an ALLIED market — not
+      // just an enemy one — works, per AoE2. Any non-market order cancels the
+      // route and becomes a plain move.
+      let mkt = cmd.targetId != null ? entitiesById.get(cmd.targetId) : null;
+      // An UNDER-CONSTRUCTION market is a valid destination: the route is
+      // set and the cart waits at the site until it completes
+      // (updateTradeCart trades only against complete markets). Same for the
+      // home market — a route ordered while your own market is still going
+      // up starts the moment it finishes.
+      let validMkt = mkt && mkt.type === 'building' && mkt.btype === 'MARKET' && mkt.hp > 0 && mkt.team !== s.team && isPlayerTeam(mkt.team);
+      if (validMkt) {
+        let home = nearestMarket(s, true, true);
+        if (!home) {
+          feedbackFor(s.team, () => showMsg('Build your own Market before trading.'));
+        } else {
+          s.tradeDestId = mkt.id; s.tradeHomeId = home.id; s.tradePhase = 'toDest';
+          s.target = null; s.task = null; clearUnitPath(s);
+          let pt = nearestBldgPerimeter(s.x, s.y, mkt, s.id);
+          pathUnitTo(s, pt.x, pt.y);
+        }
+      } else {
+        s.tradeDestId = null; s.tradeHomeId = null; s.tradePhase = null;
+        s.carrying = 0; s.carryType = null; s.target = null; s.task = null;
+        let [ox, oy] = slotFor(s);
+        s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+      }
+      return;
+    }
     if (buildTarget && s.utype === 'villager') {
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
       let b = BLDGS[buildTarget.btype];
@@ -276,18 +698,23 @@ function execUnitCommand(cmd){
       if ((target.utype === 'sheep' || target.utype === 'sheep_carcass') && s.utype !== 'villager') {
         // Sheep or carcass targeted by military unit: treat as move command!
         s.target = null;
-        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        let [ox, oy] = slotFor(s);
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        idx++;
       } else {
-        s.target = target.id; s.task = null; clearUnitPath(s); s.buildTarget = null;
-        s.explicitAttack = true;
+        assignAttack(s, target);
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
-      // position (see updateUnit() in logic.js for the continuous re-pathing).
-      s.target = null; s.task = null; s.followId = followTarget.id;
-      pathUnitTo(s, Math.round(followTarget.x), Math.round(followTarget.y));
+      // position PLUS this follower's formation offset (updateFollowOrder in
+      // js/logic.js drives the re-pathing) — the group holds its arrangement
+      // AROUND the leader instead of mobbing its tile. The offset rides the
+      // order's x/y fields, which the detEntityHash order block already
+      // hashes for every kind.
+      s.target = null; s.task = null;
+      let [fox, foy] = slotFor(s);
+      issueOrder(s, {kind:'follow', id: followTarget.id, x: fox, y: foy});
+      pathUnitTo(s, Math.max(0, Math.min(MAP - 1, Math.round(followTarget.x) + fox)),
+                    Math.max(0, Math.min(MAP - 1, Math.round(followTarget.y) + foy)));
     } else {
       s.target = null;
       let t = map[tileY] && map[tileY][tileX];
@@ -297,27 +724,105 @@ function execUnitCommand(cmd){
         // same loop via gatherX, so the group fans out tile by tile.
         let TASK_BY_TERRAIN = { [TERRAIN.FOREST]: 'chop', [TERRAIN.GOLD]: 'mine_gold', [TERRAIN.STONE]: 'mine_stone', [TERRAIN.BERRIES]: 'forage', [TERRAIN.FARM]: 'farm' };
         let gTask = TASK_BY_TERRAIN[t.t];
-        if (gTask) {
+        // A villager can only be TASKED onto a resource it can actually see:
+        // if the tile is still UNEXPLORED for this team, the player doesn't
+        // know what's there, so the click is a plain WALK — the villager
+        // goes and stands idle instead of auto-gathering an unseen resource.
+        // Deterministic (teamExploredGrid is sim state); one rule for every
+        // team (information parity), same gate as canPlace (js/logic.js)
+        // and findNearTile's gather scan.
+        let unseen = tileHiddenForTeam(s.team, tileY*MAP + tileX);
+        if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
-          s.task = gTask; s.gatherX = g.x; s.gatherY = g.y; pathUnitTo(s, g.x, g.y);
+          s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
+          // Walk to a DISTINCT adjacent tile of the node (resources are solid)
+          // so the group approaches from different sides and rings it evenly.
+          let stand = (typeof pickGatherStand === 'function') ? pickGatherStand(s, g.x, g.y) : null;
+          pathUnitTo(s, stand ? stand.x : g.x, stand ? stand.y : g.y);
         } else {
-          // Move command: use formation offset
-          let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+          // Move command (also the unexplored-tile case): keep the
+          // group's relative arrangement (see formOff above).
+          let [ox, oy] = slotFor(s);
           s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-          idx++;
         }
       } else {
-        // Military move: use formation offset
-        let ox = offsets[idx] ? offsets[idx][0] : 0, oy = offsets[idx] ? offsets[idx][1] : 0;
+        // Military move: keep the group's relative arrangement (formOff).
+        // The guard-post relocation ("this is your temp spot") lives inside
+        // issueMoveOrder itself, so every plain-move site gets it without a
+        // paired re-pin.
+        let [ox, oy] = slotFor(s);
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
-        idx++;
       }
     }
   });
 }
 
-// Building placement (moved verbatim from doPlace's mutation half —
-// `placing` global replaced by cmd.btype, screen coords by cmd tile).
+// ---- Shared building-placement primitives ----
+// The geometry + wall-replacement rules for placing a WALL/GATE/TOWER/any
+// building live here so the player build command, the AI, and the scenario
+// editor (js/editor.js) all place identically — no reinvented gate-footprint
+// or wall-consume logic drifting between them. Two halves so a caller can
+// price the placement (refund consumed walls, afford-check) BEFORE committing:
+//   resolveBuildingPlacement() — PURE: where it sits + which walls it replaces.
+//   commitBuildingPlacement()  — mutates: removes those walls, creates the bldg.
+//
+// A gate sizes to the run of matching same-team walls through the click
+// (gateFootprint); a tower/stone-wall on a wall tile replaces it. `replaced`
+// is the same wall set the old inline code removed (deduped; order doesn't
+// affect the sim — removal is set-based and wall-cost refund is commutative).
+function resolveBuildingPlacement(btype, tx, ty, team){
+  let b = BLDGS[btype];
+  let ox = tx, oy = ty, gw = b ? b.w : 1, gh = b ? b.h : 1;
+  if (isGateBtype(btype)) {
+    ({ ox, oy, gw, gh } = gateFootprint(tx, ty, (x, y) => gateBaseAt(x, y, btype, team)));
+  }
+  let replaced = [];
+  for (let dy = 0; dy < gh; dy++) for (let dx = 0; dx < gw; dx++) {
+    let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && isWallBtype(en.btype) && en.team === team);
+    if (w && replaced.indexOf(w) < 0) replaced.push(w);
+  }
+  if (isTowerBtype(btype)) {
+    let ex = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && isWallBtype(en.btype) && en.team === team);
+    if (ex && replaced.indexOf(ex) < 0) replaced.push(ex);
+  }
+  if (isGateBtype(btype)) {
+    // Rebuilding a gate over an existing same-type gate (repair): collect it so
+    // it's replaced. Occupancy grid → finds the multi-tile gate on any tile.
+    for (let dy = 0; dy < gh; dy++) for (let dx = 0; dx < gw; dx++) {
+      let row = map[oy + dy]; let id = row && row[ox + dx] && row[ox + dx].occupied;
+      let g = id && entitiesById.get(id);
+      if (g && g.type === 'building' && g.btype === btype && g.team === team && replaced.indexOf(g) < 0) replaced.push(g);
+    }
+  }
+  return { ox, oy, gw, gh, replaced };
+}
+// Remove the replaced walls and create the building. `complete` → a finished
+// building at full HP (scenario editor); otherwise a foundation at hp 1 that
+// villagers build up (gameplay). Returns the new building (or null).
+function commitBuildingPlacement(btype, plan, team, complete){
+  if (plan.replaced.length) {
+    let ids = new Set(plan.replaced.map(w => w.id));
+    entities = entities.filter(en => !ids.has(en.id));
+    selected = selected.filter(s => !ids.has(s.id));
+    ids.forEach(id => entitiesById.delete(id));
+  }
+  let bldg = createBuilding(btype, plan.ox, plan.oy, team, plan.gw, plan.gh);
+  if (!bldg) return null;
+  if (complete) {
+    // Instant, solid building (editor only — every gameplay caller passes
+    // complete=false). The editor's canPlace(rejectUnits) already refuses to
+    // place on an occupied tile, so the footprint is clear here: no shove.
+    bldg.complete = true;
+  } else {
+    bldg.complete = false; bldg.buildProgress = 0;
+    bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
+    if (plan.replaced.length) bldg.wasWall = true;
+    // foundation: stays walkable; the build-gate clears the footprint gently
+    // when a builder commits (clearFootprintForBuild) — no placement shove.
+  }
+  return bldg;
+}
+
 function execBuildPlacement(cmd){
   let btype = cmd.btype;
   if (!BLDGS[btype]) return;
@@ -326,64 +831,23 @@ function execBuildPlacement(cmd){
   if (vils.length === 0) return;
   if (canPlace(btype, tile.x, tile.y, myTeam)) {
     let b = BLDGS[btype];
-    let gw = b.w, gh = b.h;
-    let ox = tile.x, oy = tile.y;
-    if (isGateBtype(btype)) {
-      let wallB = GATE_WALL_MATCH[btype];
-      let isWall = (tx, ty) => !!entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && en.btype === wallB && en.team === myTeam);
-      ({ ox, oy, gw, gh } = gateFootprint(tile.x, tile.y, isWall));
-    }
-    let wallsToRemove = [];
-    for (let dy = 0; dy < gh; dy++) {
-      for (let dx = 0; dx < gw; dx++) {
-        let w = entities.find(en => en.type === 'building' && en.x === ox + dx && en.y === oy + dy && isWallBtype(en.btype) && en.team === myTeam);
-        if (w) wallsToRemove.push(w);
-      }
-    }
-    let actualCost = { ...b.cost };
-    // Refund each consumed wall's OWN cost (palisades refund wood, stone
-    // walls refund stone) against whatever this building costs.
-    let refundWalls = (walls) => {
-      walls.forEach(w2 => {
-        Object.entries(BLDGS[w2.btype].cost).forEach(([k, amt]) => {
-          actualCost[k] = Math.max(0, (actualCost[k] || 0) - amt);
-        });
-      });
-    };
-    if (isGateBtype(btype)) {
-      refundWalls(wallsToRemove);
-    } else if (btype === 'SWALL') {
-      // Stone-on-palisade upgrade: the footprint loop already collected the
-      // palisade being replaced — refund its wood against the stone's cost.
-      refundWalls(wallsToRemove);
-    } else if (btype === 'TOWER') {
-      let existing = entities.find(en => en.type === 'building' && en.x === tile.x && en.y === tile.y && isWallBtype(en.btype) && en.team === myTeam);
-      if (existing) {
-        wallsToRemove.push(existing);
-        refundWalls([existing]);
-      }
-    }
+    let plan = resolveBuildingPlacement(btype, tile.x, tile.y, myTeam);
+    // Gates, stone-on-palisade upgrades, and towers all consume the walls they
+    // sit on (collected in plan.replaced) — their cost refunds against ours
+    // (effectiveBuildCost, js/logic.js — shared with the AI's placeAIBuilding).
+    let consumes = isGateBtype(btype) || btype === 'SWALL' || isTowerBtype(btype);
+    let actualCost = effectiveBuildCost(btype, consumes ? plan.replaced : null);
     if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
     spendCost(myTeam, actualCost);
-    if (wallsToRemove.length > 0) {
-      let ids = new Set(wallsToRemove.map(w => w.id));
-      entities = entities.filter(en => !ids.has(en.id));
-      selected = selected.filter(s => !ids.has(s.id));
-      ids.forEach(id => entitiesById.delete(id));
-    }
-    let bldg = createBuilding(btype, ox, oy, myTeam, gw, gh);
-    bldg.complete = false; bldg.buildProgress = 0;
-    bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-    if (wallsToRemove.length > 0) {
-      bldg.wasWall = true;
-    }
+    let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
+    if (!bldg) return;
     vils.forEach(v => {
       v.buildQueue = v.buildQueue || [];
       v.buildQueue.push(bldg.id);
       // Start construction task immediately if not already building
       if (v.task !== 'build' || !v.buildTarget) {
         v.task = 'build'; v.buildTarget = bldg.id; v.target = null; v.savedTask = null;
-        let pt = b.isFarm ? { x: ox, y: oy } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, bldg, v.id) : { x: ox + gw, y: oy + gh });
+        let pt = b.isFarm ? { x: plan.ox, y: plan.oy } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, bldg, v.id) : { x: plan.ox + plan.gw, y: plan.oy + plan.gh });
         pathUnitTo(v, pt.x, pt.y);
       }
     });
@@ -392,7 +856,7 @@ function execBuildPlacement(cmd){
   }
 }
 
-// Wall drag (moved verbatim from finalizeWallDrag's mutation half).
+// Wall drag (resolver: finalizeWallDrag, js/input.js).
 function execWallDrag(cmd){
   let vils = selected.filter(s => s.type === 'unit' && s.utype === 'villager');
   if (vils.length === 0) return;
@@ -432,7 +896,7 @@ function execWallDrag(cmd){
   }
 }
 
-// Train / cancel (moved from ui.js's trainUnit/cancelQueue mutation halves).
+// Train / cancel (resolvers: trainUnit/cancelQueue, js/ui.js).
 function execTrainUnit(bldg, utype){
   let result = queueUnit(bldg, utype);
   feedbackFor(myTeam, () => {
@@ -465,39 +929,71 @@ function execResearchAge(tc){
 }
 
 // Upgrade completed palisade WALL/GATE pieces to their stone counterpart
-// (SWALL/SGATE) in place, paid at the stone piece's full build cost. Not
-// strict AoE2 — there palisades and stone walls are independent builds you
-// overlap — but the in-place conversion is this game's ergonomic
-// equivalent once the Feudal Age unlocks stone. Damage carries over as a
-// FRACTION (a half-burnt palisade becomes a half-damaged stone wall), so
-// upgrading mid-siege isn't also a free full repair.
-const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE' };
+// (SWALL/SGATE), and a Palisade Watch Tower to a Watch Tower — an instant
+// replacement: the old piece is salvaged on the spot (refund = its cost ×
+// remaining-HP fraction, `upgradeSalvage` — credited before the target's
+// full cost is charged, so surplus wood pays out and helps afford mixed
+// costs) and swaps into a construction site of the target type that
+// villagers build up at normal build rate. Its tiles keep blocking, but at
+// foundation HP it's fragile — upgrading mid-siege is a gamble, not a heal.
+// The `upgrading` flag marks it committed: once started an upgrade just
+// proceeds (no cancel/refund — see deleteOwnedEntity and the cancel UI in
+// js/ui.js), which is what keeps it from being an instant free salvage.
+const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE', PTOWER: 'TOWER' };
+// Shared by the exec below and the UI button's net-cost preview (js/ui.js).
+function upgradeSalvage(en){
+  let frac = Math.min(1, en.hp / en.maxHp), refund = {};
+  Object.entries(BLDGS[en.btype].cost).forEach(([k, v]) => { refund[k] = Math.floor(v * frac); });
+  return refund;
+}
 function execUpgradeWalls(cmd, team){
   let pieces = (cmd.unitIds || []).map(id => entitiesById.get(id))
     .filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
   if (!pieces.length) return;
-  if (pieces.some(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]))) {
-    feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq('SWALL')].name + '!'); if (window.playSound) playSound('error'); });
+  let locked = pieces.find(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]));
+  if (locked) {
+    feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq(WALL_STONE_MATCH[locked.btype])].name + '!'); if (window.playSound) playSound('error'); });
     return;
   }
-  let cost = {};
-  pieces.forEach(en => Object.entries(BLDGS[WALL_STONE_MATCH[en.btype]].cost)
-    .forEach(([k, v]) => { cost[k] = (cost[k] || 0) + v; }));
-  if (!canAfford(team, cost)) {
-    feedbackFor(team, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
+  let cost = {}, refund = {};
+  pieces.forEach(en => {
+    Object.entries(BLDGS[WALL_STONE_MATCH[en.btype]].cost)
+      .forEach(([k, v]) => { cost[k] = (cost[k] || 0) + v; });
+    Object.entries(upgradeSalvage(en))
+      .forEach(([k, v]) => { refund[k] = (refund[k] || 0) + v; });
+  });
+  // Afford check counts the salvage credit (it lands before the charge).
+  let store = resourceStore(team);
+  if (!Object.entries(cost).every(([k, v]) => store[resourceName(k)] + (refund[k] || 0) >= v)) {
+    feedbackFor(team, () => { showMsg('Not enough resources!'); if (window.playSound) playSound('error'); });
     return;
   }
+  Object.entries(refund).forEach(([k, v]) => { store[resourceName(k)] += v; });
   spendCost(team, cost);
   pieces.forEach(w => {
-    let stoneType = WALL_STONE_MATCH[w.btype];
-    let frac = w.hp / w.maxHp;
-    w.btype = stoneType; // gates keep their footprint/door state (w/h, gateProgress)
-    w.maxHp = buildingMaxHpFor(team, stoneType);
-    w.hp = Math.max(1, Math.round(w.maxHp * frac));
+    let upType = WALL_STONE_MATCH[w.btype];
+    if (w.garrison && w.garrison.length) ejectGarrison(w); // a tower under rebuild shelters no one
+    w.btype = upType; // gates keep their footprint/door state (w/h, gateProgress)
+    // A rebuilt gate starts UNLOCKED — the lock is a per-gate toggle the
+    // player set on the OLD piece; the new one shouldn't silently inherit it
+    // (a locked foundation would also seal pathing while it builds).
+    w.locked = false;
+    // Re-stamp the fields createBuilding snapshots from BLDGS (armor/range/
+    // garrisonCap are read live, but atk and buildTime are entity fields).
+    w.atk = BLDGS[upType].atk || 0;
+    w.buildTime = BLDGS[upType].buildTime || 200;
+    w.maxHp = buildingMaxHpFor(team, upType);
+    // Fresh construction site, same as execBuildPlacement foundations, but
+    // committed: `upgrading` blocks cancel/refund so it can't be undone.
+    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true; w.upgrading = true;
     markMapDirty(w.x, w.y);
   });
   feedbackFor(team, () => {
-    showMsg(pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' upgraded to stone');
+    let allTowers = pieces.every(p => p.btype === 'TOWER');
+    showMsg((allTowers
+      ? (pieces.length > 1 ? pieces.length + ' towers' : 'Tower') + ' salvaged — Watch Tower'
+      : pieces.length + ' wall piece' + (pieces.length > 1 ? 's' : '') + ' salvaged — stone')
+      + ' under construction, send villagers to build');
     if (window.playSound) playSound('build', pieces[0].x, pieces[0].y);
   });
   if (typeof updateUI === 'function') updateUI();
@@ -522,9 +1018,7 @@ function execGateLock(cmd, team){
 
 function execCancelResearch(tc){
   if (!tc.research) return;
-  let cost = AGES[tc.research.target].cost;
-  let store = resourceStore(tc.team);
-  Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
+  refundCost(tc.team, AGES[tc.research.target].cost);
   tc.research = undefined;
   feedbackFor(tc.team, () => showMsg('Age research cancelled (refunded)'));
   if (typeof updateUI === 'function') updateUI();
@@ -536,14 +1030,12 @@ function execCancelQueue(bldgId, idx, team){
   let utype = bldg.queue[idx];
   if (!utype) return;
   bldg.queue.splice(idx, 1);
-  let cost = UNITS[utype].cost;
-  let store = resourceStore(bldg.team);
-  Object.entries(cost).forEach(([key, amount]) => { store[resourceName(key)] += amount; });
+  refundCost(bldg.team, UNITS[utype].cost);
   if (idx === 0) bldg.trainTick = 0;
   feedbackFor(myTeam, () => showMsg(UNITS[utype].name + ' cancelled (refunded)'));
 }
 
-// Farm economy (moved from ui.js's prepayFarm/reactivateFarm mutation halves).
+// Farm economy (resolvers: prepayFarm/reactivateFarm, js/ui.js).
 function prepayFarmNow(){
   let cost = { w: 60 };
   if (!canAfford(myTeam, cost)) {
@@ -554,6 +1046,18 @@ function prepayFarmNow(){
   let store = resourceStore(myTeam);
   store.prepaidFarms = (store.prepaidFarms || 0) + 1;
   feedbackFor(myTeam, () => showMsg(`Farm reseed prepaid (Queue: ${store.prepaidFarms})`));
+  if (typeof updateUI === 'function') updateUI();
+}
+
+// Cancel one banked reseed — refunds the 60 wood it was prepaid with, exactly
+// like cancelling a queued unit refunds its cost (queue parity). No-op when
+// the queue is empty.
+function cancelReseedNow(){
+  let store = resourceStore(myTeam);
+  if ((store.prepaidFarms || 0) <= 0) return;
+  store.prepaidFarms--;
+  store.wood += 60;
+  feedbackFor(myTeam, () => showMsg(`Reseed cancelled (+60 Wood). Queue: ${store.prepaidFarms}`));
   if (typeof updateUI === 'function') updateUI();
 }
 

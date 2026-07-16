@@ -45,6 +45,7 @@ window.addEventListener('unhandledrejection', e => window.__errors.push('unhandl
 <script src="../js/loop.js"></script>
 <script src="../js/ui.js"></script>
 <script src="../js/save.js"></script>
+<script src="../js/scenario.js"></script>
 <script src="../js/net.js"></script>
 <script src="../js/net-sync.js"></script>
 <script src="../js/lockstep.js"></script>
@@ -63,27 +64,42 @@ window.runSimulation = async function(opts){
     mode: opts.mode || '1v1',
     diff: opts.diff || 'standard',       // single value, or comma list per team: 'easy,hard'
     map:  opts.map  || ((opts.mode||'1v1') === '2v2' ? 'large' : 'medium'),
-    ticks: parseInt(opts.ticks || 60000, 10),
+    ticks: parseInt(opts.ticks || 40000, 10), // 40k @ 20tps = ~33 game-min (was 60k @ 30tps)
     seed: (opts.seed !== undefined && opts.seed !== null && opts.seed !== '') ? parseInt(opts.seed, 10) : null,
     rollback: opts.rollback === true || opts.rollback === '1' || opts.rollback === 1,
     // bears default ON; 'bears=0'/false disables the wild-bear spawns so a
     // self-play match isn't skewed by one AI's villagers being mauled (lets us
     // read pure eco/wave behavior). Sim-only — the real game never sets this.
     bears: !(opts.bears === '0' || opts.bears === 0 || opts.bears === false || opts.bears === 'false'),
+    // 'fog=off' runs an All-Visible match (window.fogDisabled=true): the AI is
+    // omniscient, the vision grids are unmaintained, snapshots/checksum skip
+    // them — the exact code paths the fog match-option enables.
+    fog: opts.fog === 'off' ? 'off' : 'on',
+    scenario: opts.scenario || null, // parsed scenario spec (js/scenario.js); overrides the procedural match
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
   const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
 
   try {
-    // ---- match setup: every slot AI so the match plays itself ----
+    // ---- match setup ----
+    if (cfg.scenario) {
+      // Scenario mode: build the exact authored world (js/scenario.js) instead
+      // of a procedural all-AI match. Seed/map/teams/controllers come from the
+      // spec. Great for reproducible combat/gather test cases + measurement.
+      loadScenario(cfg.scenario);
+      report.config.scenarioLoaded = true;
+    } else {
+    // ---- procedural all-AI match: every slot AI so the match plays itself ----
     NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
+    window.fogDisabled = cfg.fog === 'off'; // match fog setting — before restartGame (initFog reads it)
     setMapSize(cfg.map);
     restartGame(cfg.diff.split(',')[0]);
     const diffs = cfg.diff.split(',');
     teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
     resetAIStates();
+    }
     // gamePaused = TRUE: this loop drives update() manually. The game's own
     // requestAnimationFrame gameLoop (init.js) also calls update() when
     // !gamePaused, on a WALL-CLOCK accumulator — and because our batched
@@ -127,7 +143,7 @@ window.runSimulation = async function(opts){
       return realWarn.apply(console, a);
     };
 
-    const SAMPLE_EVERY = Math.max(500, Math.floor(cfg.ticks / 60)); // ~60 samples
+    const SAMPLE_EVERY = Math.max(333, Math.floor(cfg.ticks / 60)); // floor ~16.7 game-s at 20tps // ~60 samples
     const sampleTeam = t => {
       const units = entities.filter(e => e.team === t && e.type === 'unit');
       const bldgs = entities.filter(e => e.team === t && e.type === 'building');
@@ -137,7 +153,11 @@ window.runSimulation = async function(opts){
         age: teamAge[t], vils: units.filter(u => u.utype === 'villager').length,
         mil: units.filter(u => isArmyUnit(u.utype)).length,
         rams: units.filter(u => u.utype === 'ram').length,
-        idleVils: units.filter(u => u.utype === 'villager' && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
+        // idleVils EXCLUDES sheltering villagers — a bell-garrisoned villager has
+        // no task/target/path and was masquerading as "chronically idle", which
+        // made 20-min shelter lockdowns (an AI decision) unreadable in reports.
+        idleVils: units.filter(u => u.utype === 'villager' && !u.garrisonedIn && !u.task && !u.target && !u.buildTarget && u.path.length === 0).length,
+        shelterVils: units.filter(u => u.utype === 'villager' && u.garrisonedIn).length,
         food: Math.round(st.food), wood: Math.round(st.wood), gold: Math.round(st.gold), stone: Math.round(st.stone),
         farms: farms.length, exhaustedFarms: farms.filter(f => f.exhausted).length,
         racks: bldgs.filter(b => b.btype === 'BARRACKS').length,
@@ -229,12 +249,24 @@ window.runSimulation = async function(opts){
     report.health.watchdogFires = watchdogLog.length;
     report.health.dancers = danceOffenders.size;
     report.health.jsErrors = window.__errors.slice();
+    // Optional AI diagnostics: unhashed, checksum-safe counters that ai.js
+    // bumps via window.__aiProbe (per-team keys). Null when none fired.
+    report.health.aiProbe = window.__aiProbe || null;
     // where every military unit stands at the end — is the army actually
     // reaching the enemy, or stalled somewhere en route?
     report.end.milSnapshot = entities.filter(e => e.type === 'unit' && isArmyUnit(e.utype))
       .map(e => ({team: e.team, ut: e.utype, x: +e.x.toFixed(0), y: +e.y.toFixed(0),
                   tgt: e.target || null, path: e.path.length, gs: e.groupSpeed || null,
                   retry: e.retry || null}));
+    // Scenario runs: full float-precision entity snapshot so a test can assert
+    // exact end positions (e.g. attackers ringed tight around a target).
+    if (cfg.scenario) {
+      report.end.entities = entities.map(e => ({
+        id: e.id, type: e.type, k: e.utype || e.btype, team: e.team,
+        x: +e.x.toFixed(3), y: +e.y.toFixed(3), hp: e.hp,
+        tgt: e.target || null, path: e.path ? e.path.length : 0
+      }));
+    }
 
     // ---- auto-analysis: anomalies worth a look ----
     const F = report.findings;
@@ -253,19 +285,25 @@ window.runSimulation = async function(opts){
       // — false positives that mask real eco bugs. A team that lost the game
       // wasn't necessarily eco-broken; it just got out-produced and crushed.
       if (!last.defeated && !report.end.defeated[t]) {
-        if (last.age === 0 && tick > 55000) F.push(`team${t} never left Dark Age by tick ${tick}`);
+        if (last.age === 0 && tick > 36700 /* ~30.6 game-min at 20tps */) F.push(`team${t} never left Dark Age by tick ${tick}`);
         if (half.every(s => s.food < 60)) F.push(`team${t} food-starved for the entire second half`);
         if (half.every(s => s.exhaustedFarms > 0 && s.exhaustedFarms >= s.farms - 1) && last.farms > 2)
           F.push(`team${t} farms stay exhausted (${last.exhaustedFarms}/${last.farms}) — reseed economy broken?`);
         if (half.every(s => s.idleVils >= 3)) F.push(`team${t} has ${last.idleVils} chronically idle villagers`);
+        // Shelter paralysis: most of the workforce bell-garrisoned across the
+        // whole second half — the economy is dead even though nobody is "idle"
+        // (sustained enemy wave pressure re-rings the bell faster than the
+        // all-clear releases workers; seed 7100 hid 9-14/14 for 20+ game-min).
+        if (half.every(s => s.shelterVils >= Math.max(3, s.vils / 2)) && last.vils > 0)
+          F.push(`team${t} economy sheltered (town bell) for the entire second half`);
         const waveSamples = samples.map(s => s.waves);
         const lastWaveGrowth = waveSamples[waveSamples.length-1] - waveSamples[Math.floor(waveSamples.length/2)];
-        if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 40000)
+        if (lastWaveGrowth === 0 && last.mil >= 10 && tick > 26700 /* ~22 game-min */)
           F.push(`team${t} launched no attack waves in the second half despite ${last.mil} military`);
-        if (half.every(s => s.mil === 0) && tick > 30000) F.push(`team${t} fields no military at all`);
+        if (half.every(s => s.mil === 0) && tick > 20000 /* ~16.7 game-min */) F.push(`team${t} fields no military at all`);
       }
     });
-    if (!gameOver && cfg.ticks >= 100000) F.push('match did not resolve — possible stalemate');
+    if (!gameOver && cfg.ticks >= 66700 /* ~55.6 game-min */) F.push('match did not resolve — possible stalemate');
     if (report.health.ticksPerSec != null && report.health.ticksPerSec < 500) F.push(`slow sim: ${report.health.ticksPerSec} ticks/sec (pathfinding storm?)`);
   } catch (err) {
     window.__errors.push(err.message + '\n' + (err.stack || '').split('\n').slice(0, 4).join('\n'));

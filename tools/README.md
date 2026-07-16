@@ -1,3 +1,19 @@
+# Tools
+
+| tool | what it does | when to run |
+|---|---|---|
+| `run-tests.sh` | **the pre-commit battery**: syntax → behavior-tests → hud-tests → sim smoke (findings empty + run-to-run checksum equality). `fast` skips the sim smoke. | before every commit |
+| `behavior-tests.js` | PASS/FAIL assertions on **game mechanics**, headless: ram garrison (incl. the real right-click command shape), forward-building defense, walled-archer disengage (fixture: `scenarios/walled-archer.savegame.json`), save-v4 checksum-exact round-trip, the fog match option, large-army group moves, whole-army walled-TC assaults. `grep=<name>` runs one section. | after touching js/logic.js, js/ai.js, js/save.js, combat, garrison, fog |
+| `hud-tests.js` | commands + DOM assertions on the real `index.html` (guard posts, rally, auto-scout, selection panel) | after touching js/commands.js, js/ui.js, js/input.js |
+| `simulate.sh` | seeded all-AI self-play with a structured health report — the main debugging/balance workflow (documented below) | reproducing behavior, balance work, determinism checks |
+| `mp-tests.js` | LIVE lockstep multiplayer through PeerJS: lobby→match checksum agreement, rejoin, kick-to-AI, save/reload resume. **Needs network.** | when netcode, lockstep, or command/message shapes change |
+| `profile-sim.js` | V8 sampling profile of a headless sim run (self-time per function) — measure before optimizing | perf work |
+| `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
+| `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
+
+All Playwright drivers share `lib/harness.js` (static server over the repo +
+system-Chrome launch; first run does a one-time `cd tools && npm install`).
+
 # Headless self-play simulator
 
 `tools/simulate.sh` runs an **all-AI match with no browser UI**, as fast as the
@@ -8,8 +24,8 @@ change the code, re-run the same seed, and compare.
 ## Quick start
 
 ```sh
-tools/simulate.sh                               # 1v1 standard, 60k ticks
-tools/simulate.sh mode=2v2 diff=hard ticks=120000 seed=42
+tools/simulate.sh                               # 1v1 standard, 40k ticks (~33 game-min)
+tools/simulate.sh mode=2v2 diff=hard ticks=80000 seed=42
 tools/simulate.sh runs=6 diff=hard              # 6 seeds, aggregate summary
 tools/simulate.sh rollback=1 | jq '.health.rollbackDeterministic'
 tools/simulate.sh diff=hard seed=2001 | jq '.findings'
@@ -26,10 +42,11 @@ a thin wrapper around `node tools/simulate.js` (callable directly).
 | `mode` | `1v1` | `1v1` (2 teams) or `2v2` (4 teams, allied) |
 | `diff` | `standard` | `easy`\|`standard`\|`hard`, or a comma list per team: `easy,hard` |
 | `map` | medium (1v1) / large (2v2) | `small`\|`medium`\|`large` |
-| `ticks` | `60000` | tick budget (30 ticks = 1 game-second) |
+| `ticks` | `40000` | tick budget (**20 ticks = 1 game-second** — the TPS build constant, js/core.js; ~33 game-min default) |
 | `seed` | random | fixed seed → reproducible match |
 | `rollback` | off | also run a snapshot→resim determinism check (`rollback=1`) |
 | `runs` | `1` | run N seeds (`seed`+1000·i) and print an aggregate summary |
+| `jobs` | min(runs, cores−2, 6) | parallel matches for `runs>1` (each in its own page — per-seed results identical to sequential); `jobs=1` for honest per-run tps |
 | `timeout` | scales w/ ticks | per-match evaluate cap (ms) |
 | `headed` | off | `headed=1` shows the browser window (debugging) |
 
@@ -71,7 +88,7 @@ Exit code: `0` clean · `1` findings or JS errors observed · `2` harness failur
 - **Single seeds mislead.** Map luck swings outcomes hard (an early bear cluster can wipe a team's villagers and doom its whole game). Use `runs=3+` before concluding anything; use larger batches for balance/pacing claims. A "regression" on one seed is often just variance — check the aggregate.
 - **Headless must stay behavior-identical to live.** Only strip *non-sim* work behind `window.__headlessSim` (fog, particles, sounds, per-tick determinism hashing). Never gate actual game logic on it.
 - **`startGame()` alone does NOT build the world / init `teamAge`.** The real match path is `onStartClicked → restartGame(diff) → startGame()`; `restartGame` is what calls `resetTeamAge()` etc. `runSimulation` uses the real path — if you script the game by hand, call `restartGame`.
-- **Stray Chrome processes.** Many concurrent runs can leave zombie `headless_shell`/Chrome processes that contend for CPU and make a run look "hung" (a 120k hard match is ~30s; if it's minutes, suspect strays). Clean up with `pkill -f "[s]imulate.js"; pkill -f "[h]eadless_shell"`.
+- **Stray Chrome processes.** Many concurrent runs can leave zombie `headless_shell`/Chrome processes that contend for CPU and make a run look "hung" (an 80k hard match is ~20s; if it's minutes, suspect strays). Clean up with `pkill -f "[s]imulate.js"; pkill -f "[h]eadless_shell"`.
 - **Resource 404s (favicon) are filtered** out of `jsErrors` by the driver — don't re-add them as sim errors.
 - **Shell pattern gotcha:** `pgrep -f`/`pkill -f` patterns match the *calling* script's own command line — use `[b]racketed` patterns or explicit PIDs; never chain waiters on `pgrep` polling.
 
@@ -86,3 +103,32 @@ calls `window.runSimulation(cfg)` directly and reads the returned object.
 - The AI reaches Castle and builds **rams** only if its **gold** keeps pace — `aiEcoPlan` biases gatherers toward the next age's cost resources while `savingForAge` (Castle needs 200 gold; a turtled AI used to starve gold and stall at Feudal forever).
 - The wall ring reserves **two gates** (eco-facing + enemy-facing) built **gate-first**, so villagers are never sealed from their economy and the army never detours. A single gate → either eco-seal collapse or an army-detour pathfinding storm.
 - **Known-wash lever (don't re-add naively):** pausing wall construction while `savingForAge` helps over-wallers but removes defense from teams that need it — net-neutral across difficulties, regressed a clean hard seed. Finer wall-vs-eco balance (partial Dark-Age walls, smaller rings) is the open recalibration lever, and needs many-seed statistical batches.
+
+# Development
+
+- **Codebase guide** (architecture, determinism rules, conventions): [`CLAUDE.md`](../CLAUDE.md)
+- **AI behavior reference** (AoE2-DE comparison, fidelity decisions): [`../docs/aoe2-ai-behavior.md`](../docs/aoe2-ai-behavior.md)
+- **External-reference notes** (openage study, unit-stat fixture): [`../docs/reference/`](../docs/reference/)
+
+```sh
+tools/run-tests.sh                        # pre-commit test battery (run from repo root)
+tools/simulate.sh runs=6 diff=hard        # 6 seeded self-play matches, aggregate report
+```
+
+# References & credits
+
+Sources consulted for game-mechanics fidelity. None of their code or game
+assets is included in this repo; what we adopted is documented value-by-value
+in [`../docs/aoe2-ai-behavior.md`](../docs/aoe2-ai-behavior.md) (§11–12).
+
+| reference | what we used it for | where it lives here |
+|---|---|---|
+| [airef.github.io](https://github.com/airef/airef.github.io) — AoE2 AI-scripting reference | Strategic Number defaults and AI behavior semantics behind our difficulty profiles | synthesized into `../docs/aoe2-ai-behavior.md` |
+| [SFTtech/openage](https://github.com/SFTtech/openage) — open Genie-engine project (GPLv3 docs) | Their `doc/reverse_engineering/` notes: damage formula, build/repair rates, market pricing, trade-cart gold, garrison arrows, town-bell range | study notes in `../docs/reference/openage-study.md`; adopted values in `../docs/aoe2-ai-behavior.md` §12 |
+| Leif Ericson's unit stat tables ([AoK Heaven](https://aok.heavengames.com/university/game-info/stat-tables/units-table/), via openage) | Exact AoC unit stats, used as a regression fixture (`stats-audit.js`, runs in the test battery) | `../docs/reference/unit_stats_aoc.csv` |
+
+**Beta testers** who shaped the game with their feedback: Jeremy Ilagan, Orr
+Ashenberg, Jordan Hoff, Qing Feng.
+
+*Age of Empires II* is a Microsoft / Ensemble Studios title; this project is an
+independent fan reimplementation and includes no original game assets or data.

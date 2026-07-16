@@ -2,7 +2,6 @@
 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0501;overflow:hidden;font-family:'Inter',sans-serif;user-select:none;touch-action:none;position:fixed;width:100%;height:100%;overscroll-behavior:none}
-
 /* Custom SVGs for game cursors — AoE2 style */
 
 /* Default: classic cream arrow, no selection */
@@ -76,6 +75,7 @@ canvas {
   box-shadow: inset 0 0 4px #000;
   text-shadow: 1px 1px 1px #000;
   height: 22px;
+  position:relative; /* anchors the .res-vils gatherer-count badge */
 }
 .res-icon{
   width:15px;
@@ -102,6 +102,31 @@ canvas {
   min-width:34px;
 }
 .res-val{min-width:32px;text-align:right}
+/* Gatherer count (AOE3-style) as a small badge on the lower-right corner of
+   the resource icon, slightly overlapping it. Absolutely positioned so it
+   never shifts the amount; invisible when nobody's on that resource. The
+   classic skin pads .res by 12px, so the icon sits further right. */
+.res-vils{
+  visibility:hidden;
+  position:absolute;
+  left:21px;    /* icon spans ~12–27px; sit on its lower-right, overlapping */
+  bottom:-3px;
+  box-sizing:border-box;
+  min-width:13px;
+  padding:0 2px;
+  background:rgba(20,12,6,0.9);
+  border:1px solid rgba(122,86,56,0.9);
+  border-radius:5px;
+  color:#ffe9b3;
+  font-size:8.5px;
+  font-weight:700;
+  line-height:1.4;
+  text-align:center;
+  text-shadow:0 1px 1px #000;
+  pointer-events:none;
+  z-index:5;
+}
+.res-vils.on{visibility:visible;}
 #pop-wrap {
   position: absolute;
   bottom: 84px;
@@ -214,13 +239,20 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   background-repeat: no-repeat;
 }
+/* Base-copy twins of the styles.css tile-sprite rules (setPortraitIcon). */
+#sel-portrait{ position: relative; }
+.tile-sprite{ position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.tile-sprite-img{ width: 100%; height: 100%; }
 #sel-portrait.cam-locked {
   border-color: #4ade80;
   box-shadow: inset 0 0 6px #000, 0 0 8px #4ade80, 1px 1px 3px rgba(0,0,0,0.5);
 }
+/* Base-copy twin of the styles.css rule; the classic layout block below
+   re-shows it as the under-portrait HP slot. */
+#sel-hp { display: none; }
 #sel-stats {
   flex: 1;
   display: flex;
@@ -254,10 +286,32 @@ canvas {
   max-height: 100%;
 }
 #sel-details .hp-bar-bg {
-  width: 100px;
+  /* Fluid, not a fixed 100px — on narrow phone widths the stats column can
+     drop below 100px and a fixed bar overflows it, which (with the card's
+     overflow-y:auto) draws a horizontal scrollbar under the HP bar. Same
+     fix as styles.css. */
+  width: auto;
+  max-width: 100px;
   margin-top: 3px;
   margin-bottom: 2px;
 }
+/* Base-copy twins of the styles.css detail-row/queue-lane rules; the
+   classic layout block below restyles them as recessed chips + the
+   center-panel queue lane. */
+.det-stats {
+  color: #ffd700;
+  font-weight: bold;
+  font-size: 11px;
+  margin-top: 1px;
+}
+.det-row { margin-top: 1px; }
+.det-alert {
+  color: #ff4444;
+  font-weight: bold;
+}
+.stat-chip { margin-right: 6px; }
+.stat-chip:last-child { margin-right: 0; }
+#sel-queue { display: none; }
 /* ---- MULTI-SELECT GRID ----
    When >1 unit is selected, #sel-info swaps its single portrait+stats card
    for a scrollable grid of every selected unit's own icon (AoE2-style),
@@ -393,7 +447,7 @@ canvas {
   border-radius:4px;
   line-height:1.2;
   text-align:center;
-  padding:4px;
+  padding:0; /* no inset — the sprite icon fills the button border-to-border */
   box-shadow: inset 0 0 5px #000, 1px 1px 3px rgba(0,0,0,0.5);
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;
@@ -449,6 +503,12 @@ canvas {
   50%  { box-shadow: 0 0 18px rgba(255,215,0,1.0), inset 0 0 5px #000; }
   100% { box-shadow: 0 0 8px  rgba(255,215,0,0.6), inset 0 0 5px #000; }
 }
+/* The selection's CURRENT stance button — steady gold border (state, not action). */
+.act-btn.stance-on {
+  border-color: #ffd700 !important;
+  background: linear-gradient(180deg, #5a3800 0%, #2a1800 100%) !important;
+  box-shadow: 0 0 8px rgba(255,215,0,0.6), inset 0 0 5px #000 !important;
+}
 .btn-emoji{
   font-size:16px;
   margin-bottom:2px;
@@ -456,7 +516,7 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   7 columns x 7 rows. background-size:700%/700% makes each cell exactly
+   8 columns x 8 rows. background-size:800%/800% makes each cell exactly
    fill the element regardless of its box size, so background-position is
    expressed as fractions (c/6, r/6) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
@@ -465,68 +525,136 @@ canvas {
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:700% 700%; /* one 7x7 master sheet — see the labeled placeholder cells */
+  background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
 }
-.icon-villager            {background-position:0%        0%;}
-.icon-militia             {background-position:16.6667%  0%;}
-.icon-spearman            {background-position:33.3333%  0%;}
-.icon-archer              {background-position:50%       0%;}
-.icon-scout               {background-position:66.6667%  0%;}
-.icon-knight              {background-position:83.3333%  0%;}
-.icon-sheep               {background-position:100%      0%;}
-.icon-militia-feudal      {background-position:0%        16.6667%;}
-.icon-militia-castle      {background-position:16.6667%  16.6667%;}
-.icon-spearman-castle     {background-position:33.3333%  16.6667%;}
-.icon-archer-castle       {background-position:50%       16.6667%;}
-.icon-scout-castle        {background-position:66.6667%  16.6667%;}
-.icon-bear                {background-position:83.3333%  16.6667%;}
-.icon-pop                 {background-position:100%      16.6667%;}
-.icon-TC                  {background-position:0%        33.3333%;}
-.icon-HOUSE               {background-position:16.6667%  33.3333%;}
-.icon-BARRACKS            {background-position:33.3333%  33.3333%;}
-.icon-MILL                {background-position:50%       33.3333%;}
-.icon-LCAMP               {background-position:66.6667%  33.3333%;}
-.icon-MCAMP               {background-position:83.3333%  33.3333%;}
-.icon-FARM                {background-position:100%      33.3333%;}
-.icon-TOWER               {background-position:0%        50%;}
-.icon-WALL                {background-position:16.6667%  50%;}
-.icon-GATE                {background-position:33.3333%  50%;}
-.icon-SWALL               {background-position:50%       50%;}
-.icon-SGATE               {background-position:66.6667%  50%;}
-.icon-gate-lock           {background-position:83.3333%  50%;}
-.icon-gate-unlock         {background-position:100%      50%;}
-.icon-food                {background-position:0%        66.6667%;}
-.icon-wood                {background-position:16.6667%  66.6667%;}
-.icon-gold                {background-position:33.3333%  66.6667%;}
-.icon-stone               {background-position:50%       66.6667%;}
-.icon-cancel              {background-position:66.6667%  66.6667%;}
-.icon-econ                {background-position:83.3333%  66.6667%;}
-.icon-mil                 {background-position:100%      66.6667%;}
-.icon-back                {background-position:0%        83.3333%;}
-.icon-reseed              {background-position:16.6667%  83.3333%;}
-.icon-research            {background-position:33.3333%  83.3333%;}
-.icon-logo                {background-position:50%       83.3333%;}
-.icon-bell                {background-position:100%      83.3333%;}
-.icon-age-dark            {background-position:0%        100%;}
-.icon-age-feudal          {background-position:16.6667%  100%;}
-.icon-age-castle          {background-position:33.3333%  100%;}
-.icon-idle                {background-position:50%       100%;}
-.icon-rally               {background-position:66.6667%  100%;}
-.icon-map                 {background-position:83.3333%  100%;}
-.icon-home                {background-position:100%      100%;}
+/* Cells that classic-style was missing (were falling back to 0% 0% = villager):
+   the ram, Market, and Trade Cart — plus the spare cells, kept in sync with
+   styles.css so the shared js/ui.js sprite classes resolve in the classic skin. */
+/* ---- MARKET exchange (js/ui.js appendMktGridRows): AoE2-style rows of
+   REAL 52px command buttons — [Buy][food][wood][stone] / [Sell][...] —
+   the live gold price printed on each button. Full-grid-row bands so the
+   columns always align; the recessed row label matches the queue lane. */
+.mkt-grid-row{
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+}
+.mkt-lab{
+  /* One act-btn-sized tile, so the label occupies grid column 1 and the
+     three resource buttons line up exactly with columns 2-4 of the command
+     grid above — same cell size everywhere, everything aligned. */
+  flex: 0 0 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: bold 10px 'Cinzel', Georgia, serif;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #e8d99a;
+  background: rgba(18,18,15,0.55);
+  border: 1px double #6e654a;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 4px rgba(0,0,0,0.7);
+}
+/* Same 52px cell as every action button (the bands fit the 3-row panel
+   because the #actions rows are auto-height and its padding is trimmed). */
+.act-btn.mkt-btn{
+  position: relative;
+  width: 52px;
+  height: 52px;
+}
+.mkt-btn .btn-emoji.sprite-icon{
+  /* Kept SQUARE (sprite cells are background-size:800% — a non-square box
+     distorts them) and pinned high in the cell so the price plate below
+     never overlaps the icon. */
+  width: 60%;
+  height: 60%;
+  margin: 2px auto 0;
+}
+.mkt-btn-price{
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  text-align: center;
+  font: bold 10px sans-serif;
+  color: #ffe14d;
+  background: rgba(0,0,0,0.55);
+  padding: 1px 0;
+  text-shadow: 1px 1px 1px #000;
+}
+
+/* ---- Queue/prepaid count badge on action buttons (js/ui.js) — see
+   styles.css. Slightly smaller here: the command-grid cells are 52px. ---- */
+.act-btn .queue-count{
+  position:absolute; top:1px; right:1px; z-index:2;
+  min-width:18px; height:18px; padding:0 4px; box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:9px; background:#1d5c2e; border:1px solid #ffd700;
+  color:#fff; font:bold 11px sans-serif;
+  box-shadow:1px 1px 2px rgba(0,0,0,0.6);
+  pointer-events:none; /* display-only, matches the mobile skin */
+}
+/* Train-button count badges are redundant here — the queue renders as REAL
+   slot buttons (below), AoE2-style. The Mill's static prepaid badge stays. */
+.act-btn .queue-count:not(.queue-count-static){ display:none; }
+
+/* Queue strip, AoE2-DE-style: a row of SMALL slot buttons in the center
+   card's queue lane — deliberately not command-button sized, so the queue
+   reads as state, not more actions. Bare icons: no band chrome around the
+   row, the slot tiles ARE the queue. Hover reveals the cancel ✕, clicking
+   refunds; the front slot carries the training veil. */
+.queue-strip-row{
+  grid-column: 1 / -1;
+  align-self: start;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.queue-slot{
+  position: relative;
+  width: 34px; height: 34px;
+  flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden; /* the training veil clips to the slot */
+  background: linear-gradient(180deg, #2f2c26 0%, #1b1915 100%);
+  border: 1px solid #6e654a;
+  border-radius: 2px;
+  box-shadow: inset 0 0 4px #000;
+}
+/* Waiting slots recede; the ACTIVE (training) slot pops with a gold frame. */
+.queue-slot:not(.training-active) .btn-emoji{ opacity: 0.7; }
+.queue-slot.training-active{ border-color: #bfa054; }
+/* AoE2's training read: darkness covering the un-trained fraction, draining
+   upward as the unit trains (height live-patched in js/ui.js). */
+.queue-slot .train-veil{
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  background: rgba(0,0,0,0.62);
+  pointer-events: none;
+}
+.queue-slot .btn-emoji.sprite-icon{ width:100%; height:100%; }
+.queue-slot .queue-x{
+  display:none; position:absolute; inset:0; z-index:2;
+  align-items:center; justify-content:center;
+  font:bold 15px sans-serif; color:#ff8b8b; background:rgba(0,0,0,0.55);
+}
+.queue-slot:hover .queue-x{ display:flex; }
+.queue-slot:hover{ border-color:#ffd700; }
 
 .btn-emoji.sprite-icon{
-  /* Fill the button's content box, same as #minimap{width:100%;height:100%}
-     fills #minimap-wrap — it auto-adapts to the button's current size
-     with no separate rules needed. */
+  /* Fill the button's content box border-to-border (the button carries no
+     padding, see .act-btn) — auto-adapts to the button's current size, same
+     as #minimap fills #minimap-wrap. No zoom/crop: the sprite cell is shown
+     at its natural size within the box. */
   width:100%;
   height:100%;
   margin-bottom:0;
 }
-.queue-slot .queue-icon{
-  width:16px;
-  height:16px;
-}
+/* The house cell art sits a touch small in its cell — nudge it up slightly so
+   it matches the visual weight of the other building icons (same per-icon
+   scale trick as #bell-btn). */
+.sprite-icon.icon-HOUSE{ transform: scale(1.1); }
 .btn-label{
   display:none; /* name is hidden to let the icon fill the button space */
 }
@@ -796,6 +924,7 @@ canvas {
 .lobby-seat {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* tight rows wrap the team/ready controls instead of crushing the name box */
   gap: 8px;
   padding: 6px 8px;
   border: 2px solid #8b6c43;
@@ -839,8 +968,8 @@ canvas {
 .lobby-swatch.lobby-swatch-sel { border-color: #ffebad; box-shadow: 0 0 0 2px #8c1d1d; }
 .lobby-swatch[disabled] { cursor: not-allowed; opacity: 0.35; }
 .lobby-seat-name {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 1 150px; /* wide enough for the longest generated name ("Marquis de Mangonel") */
+  min-width: 150px;
   background: rgba(255,255,255,0.35);
   border: 1px solid #8b6c43;
   border-radius: 3px;
@@ -862,6 +991,52 @@ canvas {
   color: #5c3b1e;
 }
 .lobby-seat-badge.lobby-ready { color: #1f6e30; }
+/* Compact per-seat readiness dot (replaces the wide "Not ready" text that wrapped the row). */
+.lobby-seat-status {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #8b6c43;
+  box-sizing: border-box;
+}
+.lobby-seat-status.status-ready { background: #2e9c46; border-color: #1f6e30; }
+.lobby-seat-status.status-notready { background: #d9a53a; border-color: #a9761f; }
+.lobby-seat-status.status-waiting { background: transparent; border-style: dashed; opacity: 0.7; }
+.lobby-team-select {
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-family: Georgia, serif;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 2px 3px;
+  outline: none;
+}
+.lobby-team-select[disabled] { opacity: 0.6; }
+#lobby-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 6px;
+  font-size: 12px;
+  color: #5c3b1e;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+}
+#lobby-invite-link {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(255,255,255,0.35);
+  border: 1px solid #8b6c43;
+  border-radius: 3px;
+  color: #3b220c;
+  font-size: 11px;
+  padding: 2px 6px;
+  outline: none;
+}
 .lobby-team-group {
   border: 2px dashed transparent;
   border-radius: 6px;
@@ -1301,83 +1476,6 @@ canvas {
   }
 }
 
-/* ---- TRAINING QUEUE STYLES ---- */
-.train-container {
-  margin-top: 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid #5a3e1a;
-  border-radius: 4px;
-  padding: 6px;
-  box-shadow: inset 0 0 5px #000;
-}
-.train-title {
-  font-size: 11px;
-  color: #ffebad;
-  margin-bottom: 4px;
-  text-shadow: 1px 1px 1px #000;
-}
-.train-bar-bg {
-  width: 100%;
-  height: 6px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 6px;
-}
-.train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-queue-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.queue-slot {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 10px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 2px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.queue-slot:hover {
-  border-color: #ffd700;
-  background: linear-gradient(180deg, #a61c1c 0%, #5a0808 100%);
-}
-.queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 /* ---- STANCE / AUTO-ATTACK BUTTON STYLES ---- */
 .stance-status {
@@ -1532,73 +1630,6 @@ canvas {
   pointer-events: none;
 }
 
-/* ---- COMPACT TRAINING QUEUE STYLES ---- */
-.train-compact {
-  margin-top: 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.train-compact .train-bar-bg {
-  width: 100px;
-  height: 4px;
-  background: #111;
-  border: 1px solid #bfa054;
-  border-radius: 1px;
-  overflow: hidden;
-}
-.train-compact .train-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #bfa054 0%, #ffd700 100%);
-  width: 0%;
-}
-.train-compact .train-queue-slots {
-  display: flex;
-  gap: 3px;
-}
-.train-compact .queue-slot {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  background: linear-gradient(180deg, #422d1a 0%, #22140b 100%);
-  border: 1px solid #bfa054;
-  color: #ffebad;
-  font-family: Georgia, serif;
-  font-size: 8px;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-radius: 1px;
-  box-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-  transition: all 0.15s;
-}
-.train-compact .queue-slot .queue-icon {
-  width: 12px;
-  height: 12px;
-}
-.train-compact .queue-slot .queue-cancel-hover {
-  display: none;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.65);
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: #ff8b8b;
-  font-weight: bold;
-}
-.train-compact .queue-slot:hover .queue-cancel-hover {
-  display: flex;
-}
-.train-compact .active-slot {
-  background: linear-gradient(180deg, #5c3b1e 0%, #301a0a 100%);
-  border-color: #ffd700;
-}
 
 
 /* ---- HOVER TOOLTIP (desktop only) ---- */
@@ -1668,25 +1699,17 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
 }
-.res-mini-icon.icon-food  { background-position: 0% 66.6667%; }
-.res-mini-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-.res-mini-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-.res-mini-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-icon {
   display: inline-block;
   width: 14px;
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   flex-shrink: 0;
 }
-#tooltip .tip-cost-icon.icon-food  { background-position: 0% 66.6667%; }
-#tooltip .tip-cost-icon.icon-wood  { background-position: 16.6667% 66.6667%; }
-#tooltip .tip-cost-icon.icon-gold  { background-position: 33.3333% 66.6667%; }
-#tooltip .tip-cost-icon.icon-stone { background-position: 50% 66.6667%; }
 #tooltip .tip-cost-label {
   color: #ffebad;
 }
@@ -1830,24 +1853,13 @@ canvas {
   border-top: 3px solid #8f8560;
 }
 #sel-info{
-  border-left-color: transparent;
+  /* Dividers on both sides of the CENTER panel (real AoE2 puts the
+     selection readout between the command grid and the minimap; the full
+     grid layout lives in the Layout section below). */
+  border-left: 3px double #6e654a;
   border-right: 3px double #6e654a;
-  align-items: flex-start;
-  padding-top: 10px;
-  /* AoE2 places the selection readout here too — bottom-left of the
-     command bar, before the button grid — for both the single-unit
-     portrait+stats card and (swapped in via .multi-select) the grid of
-     small unit icons; it isn't a separate panel, it's the same slot doing
-     double duty, same as the mobile skin already does. What mobile did
-     have to compromise on was room: 240px/96px-tall was squeezed for a
-     phone screen. Classic's bar is both wider and taller (128px), so the
-     grid gets to actually breathe instead of packing tiny icons. */
-  width: 280px;
 }
-#sel-info.multi-select{
-  align-items: stretch;
-  padding-top: 6px;
-}
+
 #sel-grid{
   gap: 4px;
   padding: 2px;
@@ -1881,7 +1893,7 @@ canvas {
    out every multi-select/garrison icon. */
 #sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 700% 700%;
+  background-size: 800% 800%;
   background-repeat: no-repeat;
 }
 #sel-name{
@@ -1920,10 +1932,6 @@ canvas {
   background: linear-gradient(180deg, #726d5c 0%, #3c392f 100%);
   border-color: #e8d99a;
 }
-.queue-slot, .train-container, .train-bar-bg{
-  border-radius: 1px;
-  border-color: #8f8560;
-}
 #tooltip{
   background: radial-gradient(ellipse at top left, #45433c 0%, #201e1a 100%);
   border-color: #8f8560;
@@ -1961,19 +1969,20 @@ canvas {
 }
 
 /* -- Layout --
-   The real AoE2 HUD arrangement: unit/building portrait at the far left of
-   the command bar, a fixed (non-scrolling) 2-row grid of command buttons
-   next to it, and the minimap docked flush in the bottom-right corner of
-   the bar itself — not floating over the battlefield like the mobile skin.
+   The real AoE2 HUD arrangement: fixed 5×3 command-button grid at the far
+   LEFT of the bar, the selection info panel in the CENTER (name centered
+   on top, portrait at the left with its HP bar directly beneath, details
+   to the right, the multi-select/garrison grid taking over the whole
+   card), and the minimap docked flush in the bottom-right corner of the
+   bar itself — not floating over the battlefield like the mobile skin.
    --bottom-h/--top-h are published from updateBottomHeight() in ui.js
-   (which gives classic a fixed taller bar to fit the 2-row grid), so this
+   (which gives classic a fixed taller bar to fit the 3-row grid), so this
    tracks the real bar height instead of duplicating a number here. Not
    trying to also support small/mobile screens — see index.html for that. */
 #bottom{
-  height: var(--bottom-h, 128px);
-  /* DOM order is #actions then #sel-info (right-docked info panel in the
-     mobile layout); flip it visually so the portrait sits at the far left,
-     command buttons in the middle, like the original HUD. */
+  height: var(--bottom-h, 174px);
+  /* DOM order is #actions then #sel-info — already the real HUD's
+     left-to-right order (command grid, then info panel), so no flip. */
   flex-direction: row;
   /* The minimap (below) is deliberately taller than this bar and protrudes
      above it — #bottom's own box still spans full width behind it for the
@@ -1983,30 +1992,155 @@ canvas {
   pointer-events: none;
 }
 #sel-info{
-  order: 1;
-  pointer-events: auto;
-}
-#actions{
-  order: 2;
-  /* A real fixed grid (not flex-wrap's line-packing) — uniform cell size,
-     tight gutter, packs left-to-right then top-to-bottom exactly like the
-     original's command grid. */
+  /* The CENTER card, between the fixed command grid and the minimap. A
+     grid so the AoE2 anatomy falls out of shared markup: name banner
+     spanning the top, portrait at the left with the #sel-hp readout
+     directly under it, the detail chips to their right, and the training
+     queue lane (#sel-queue) pinned along the bottom. #sel-stats is demoted
+     to display:contents below so #sel-name/#sel-details become grid items
+     themselves. The content block is capped at ~412px and centered in the
+     panel — a wide bar otherwise strands the chips in the far left corner
+     of a mostly empty card. */
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, 52px);
-  grid-auto-rows: 52px;
+  /* First column exactly matches the portrait's 64px (border-box) width,
+     so the HP bar filling it sits flush with the icon's edges. */
+  grid-template-columns: 64px minmax(0, 340px);
+  /* The queue row is a FIXED track (not auto): it exists whether or not
+     anything is queued, so the HP bar/portrait/stats never shift when
+     training starts — the lane just fills in place. 34px = the bare
+     .queue-slot tile height (the strip has no band chrome of its own). */
+  grid-template-rows: auto auto minmax(0, 1fr) 34px;
+  /* AoE2's read: the HP bar+numbers sit directly UNDER the portrait at the
+     portrait's own width; the stats list to the right. */
+  grid-template-areas: "name name" "portrait details" "hp details" "queue queue";
+  /* Anchored LEFT (like the original HUD reads), not centered — the card
+     starts right after the command grid's divider; the 340px details cap
+     keeps chip rows from straying far from the portrait on wide bars. */
+  justify-content: start;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 4px 14px 6px;
+  pointer-events: auto;
+  /* margin, not padding: padding would still be part of this element's own
+     hit-testable box (swallowing clicks meant for the minimap behind it),
+     where margin actually excludes that space from the box so those clicks
+     fall through #bottom's pointer-events:none to the canvas/minimap
+     beneath. (The minimap is --bottom-h tall × 2:1 wide.) */
+  margin-right: calc(var(--bottom-h, 174px) * 2);
+}
+#sel-stats{ display: contents; }
+#sel-name{
+  grid-area: name;
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding-bottom: 3px;
+  margin-bottom: 1px;
+  /* Hairline banner rule, fading out toward the edges. */
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, transparent 0%, #8f8560 50%, transparent 100%) 1;
+}
+#sel-portrait{ grid-area: portrait; align-self: start; }
+/* Portrait-width bar directly under the icon, the numbers on a small
+   centered line beneath it (markup from setSelHp/updateUI). */
+#sel-hp{
+  grid-area: hp;
+  display: block;
+  align-self: start;
+}
+#sel-hp .hp-bar-bg{
+  width: auto;   /* fill the portrait column, not the base rule's fixed 140px */
+  height: 7px;
+  margin: 2px 0 0;
+}
+#sel-hp .hp-num{
+  text-align: center;
+  font: bold 10px sans-serif;
+  color: #d1c499;
+  text-shadow: 1px 1px 1px #000;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+#sel-details{
+  grid-area: details;
+  overflow-y: auto;
+  align-self: start;
+  font-size: 11px;
+  padding-top: 2px;
+}
+/* Stats as a plain LIST, AoE2-style — one labeled line per stat, no boxes.
+   The .det-stats/.sel-combat-stats wrappers are demoted to display:contents
+   so each .stat-chip stacks as its own line. */
+#sel-details .det-stats,
+#sel-details .det-stats .sel-combat-stats{ display: contents; }
+#sel-details .stat-chip{
+  display: block;
+  margin: 0 0 1px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: bold;
+  color: #ffe9a8;
+}
+#sel-details .det-row{ margin: 0 0 1px; color: #d8cba0; }
+#sel-details .det-alert{ color: #ff6d6d; }
+/* Training queue lane, pinned along the card's bottom edge. The strip
+   element itself keeps its recessed band chrome (.queue-strip-row above)
+   and spans the FULL card width at all times — a constant-size lane that
+   slots fill left-to-right, rather than a band that grows per unit. */
+#sel-queue{
+  grid-area: queue;
+  display: block;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+#sel-queue .queue-strip-row{
+  width: auto;
+  box-sizing: border-box;
+}
+/* Multi-select/garrison: the icon grid takes over the entire card at full
+   panel width (an army's worth of tiles needs the room the centered
+   340px content cap would take away). The base .multi-select rules
+   display:none the portrait and #sel-stats (display:none on a
+   display:contents element still hides its subtree). */
+#sel-grid{ grid-area: 1 / 1 / -1 / -1; }
+#sel-info.multi-select{
+  grid-template-columns: 1fr;
+  grid-template-areas: none;
+  justify-content: stretch;
+}
+#sel-info.multi-select #sel-grid{ grid-area: 1 / 1 / -1 / -1; }
+#sel-info.multi-select #sel-hp,
+#sel-info.multi-select #sel-queue{ display: none; }
+#actions{
+  /* A real fixed grid (not flex-wrap's line-packing) — 5 columns × 3 rows
+     of uniform cells, tight gutter, packs left-to-right then top-to-bottom
+     exactly like the original's command grid, docked at the far left.
+     width = 5×52 + 4×3 gaps + 2×6 padding.
+     Rows are AUTO, not a fixed 52px: .act-btn carries its own 52px height,
+     so button rows still land at 52 — but the shorter market Buy/Sell
+     bands only take the height they need. With fixed tracks the market
+     panel (button row + 2 bands = 3×52 + gaps + padding) overflowed the
+     bar's inner height by a few px (#bottom's border-top), summoning a
+     vertical scrollbar whose width then squeezed the fixed 5×52 columns
+     into horizontal clipping. Vertical padding 4px for the same reason:
+     three full button rows must fit under the border. */
+  display: grid;
+  grid-template-columns: repeat(5, 52px);
+  grid-auto-rows: auto;
   gap: 3px;
+  flex: 0 0 284px;
+  width: 284px;
   align-content: flex-start;
   justify-content: start;
   overflow-x: hidden;
-  overflow-y: auto;
-  padding: 6px;
+  overflow-y: auto; /* escape hatch only — normal panels fit scroll-free */
+  scrollbar-width: thin;
+  padding: 4px 6px;
   pointer-events: auto;
-  /* margin, not padding: padding would still be part of this element's own
-     hit-testable box (still swallowing clicks meant for the minimap behind
-     it), where margin actually excludes that space from the box so those
-     clicks fall through #bottom's pointer-events:none to the canvas/
-     minimap beneath. */
-  margin-right: calc(var(--bottom-h, 128px) * 2);
 }
 .act-btn{
   min-width: 0;
@@ -2027,7 +2161,7 @@ canvas {
      the base file's #minimap-wrap for the mobile skin). */
   bottom: 0;
   right: 0;
-  height: var(--bottom-h, 128px);
+  height: var(--bottom-h, 174px);
   /* width MUST be auto here — the earlier #minimap-wrap rule (this file is
      a full copy of the base stylesheet, not an import) still sets an
      explicit width:min(45vw,380px). With both width and height explicit,
@@ -2044,14 +2178,17 @@ canvas {
    classic's taller bar (updateBottomHeight, js/ui.js) so the strip clears
    it instead of hardcoding the base file's 84px. */
 #pop-wrap{
-  bottom: calc(var(--bottom-h, 128px) + 6px);
+  bottom: calc(var(--bottom-h, 174px) + 6px);
   right: 6px;
   flex-direction: row;
 }
 /* The "Cancel"/deselect button (leftmost whenever a selection exists) is
    redundant here — classic already has room for a dedicated "Back" button
-   in submenus, and clicking empty ground deselects same as always. */
-#actions .act-btn:has(.icon-cancel){
+   in submenus, and clicking empty ground deselects same as always.
+   :not(.framed) because Cancel Construction and the bulk Cancel ×N button
+   reuse the same icon-cancel sprite (ui.js) but are real commands, not the
+   deselect affordance — without the guard they were silently hidden. */
+#actions .act-btn:has(.icon-cancel):not(.framed){
   display: none;
 }
 /* The base file's #bottom.menu-active #actions rule (further up, inherited
@@ -2067,12 +2204,12 @@ canvas {
    re-fighting it with more specificity. */
 #bottom.menu-active #actions{
   position: static;
-  width: auto;
+  width: 284px; /* the base-copy menu-active rule sets width:100% — keep the
+                   fixed left grid instead */
   height: auto;
   z-index: auto;
   background: none;
   padding: 6px;
-  margin-right: calc(var(--bottom-h, 128px) * 2);
 }
 /* The base file's narrow-viewport media query (this file is a full copy,
    not an import) hides the corner minimap under 600px in favor of a
