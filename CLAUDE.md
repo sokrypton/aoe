@@ -1,4 +1,4 @@
-# Age of Epochs II — codebase guide
+# Age of Epochs — codebase guide
 
 A JavaScript reimplementation of Age of Empires II with deterministic lockstep
 multiplayer. Two frontends share one engine: `index.html` (mobile + desktop,

@@ -159,7 +159,7 @@ function saveGameToFile(){
     let a = document.createElement('a');
     let stamp = data.savedAt.replace(/[:.]/g, '-');
     a.href = url;
-    a.download = `aoe2-save${data.wasMultiplayerGame ? '-mp' : ''}-${stamp}.json`;
+    a.download = `aoe-save${data.wasMultiplayerGame ? '-mp' : ''}-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();

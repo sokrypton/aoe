@@ -464,20 +464,15 @@ canvas {
   height: 100%;
   transition: width 0.15s ease, background-color 0.15s ease;
 }
-/* SINGLE-SELECTION EXPAND (desktop widths only)
-   A lone unit/building keeps its one gold grid tile; on a window wide enough
-   to have room, reveal the live name/HP/stats readout beside it. The content
-   is already written into #sel-stats every frame — the mobile card just hides
-   it (.multi-select). 601px, not 600, so it never overlaps the max-width:600
-   mobile breakpoint. Narrower portrait phones keep the one-icon card. */
+/* Single selection expands to a name/HP/stats readout beside the tile on
+   desktop widths (content is written to #sel-stats every frame; .multi-select
+   hides it on the mobile card). 601px avoids the max-width:600 mobile
+   breakpoint; narrower/portrait keeps the one-icon card. */
 @media (min-width: 601px) {
-  /* The icon tile is one tile; the readout hugs its content beside it (capped
-     at two tiles wide) so the icon sits right next to the text — a fixed
-     2-tile box left a wide empty gap for short cards like a lone sheep.
-     Top-align both so a shorter card grows/shrinks downward instead of
-     re-centering and shifting the name. gap:6px matches the chip spacing so
-     every seam in the card reads the same. .single-sel doubled with
-     .multi-select out-specifies `#sel-info.multi-select #sel-stats{display:none}`. */
+  /* Readout hugs its content (≤2 tiles) so the icon sits beside the text; both
+     top-aligned so a shorter card grows downward instead of re-centering.
+     gap:6px matches the chip spacing. .single-sel+.multi-select out-specifies
+     the base `#sel-info.multi-select #sel-stats{display:none}`. */
   #sel-info.multi-select.single-sel { align-items: flex-start; gap: 6px; }
   #sel-info.multi-select.single-sel #sel-stats {
     display: flex;
@@ -486,26 +481,18 @@ canvas {
     max-width: calc(var(--tile-size) * 2);
     min-width: 0;
   }
-  /* Lone tile hugs (no stretch, no grid padding) so the stats↔icon gap is just
-     the #sel-info gap — the grid's asymmetric padding is for the count-badge
-     overhang a single tile never has. */
+  /* One tile, no grid padding (the padding covers a count-badge overhang a lone
+     tile lacks) so stats↔icon spacing is just the #sel-info gap. */
   #sel-info.single-sel #sel-grid { flex: 0 0 auto; padding: 0; align-content: flex-start; }
-  /* Compact the readout so name + HP + bar + combat chips all clear the 80px
-     bar. The tiles-mode #sel-stats/#sel-details carry a percentage max-height +
-     overflow (for the narrow scrolling card) that collapses this centered
-     column and clipped the bar/chips to zero height — let it size to content
-     (name+HP+bar+chips ≈ 54px fits the 77px bar). */
+  /* Drop the tiles-mode percentage max-height/overflow: in this centered column
+     it collapsed the box and clipped the bar/chips. Content ≈54px fits the 77px bar. */
   #sel-info.single-sel #sel-stats { max-height: none; }
   #sel-info.single-sel #sel-details { max-height: none; overflow: visible; font-size: 10px; line-height: 1.25; }
   #sel-info.single-sel #sel-name { font-size: 12px; margin-bottom: 1px; }
   #sel-info.single-sel #sel-details .hp-bar-bg { margin: 2px 0; width: 100%; max-width: none; }
-  /* Uniform chip spacing: one flex gap between EVERY chip — combat numbers and
-     the villager's job/carry chip alike. The inline-margin approach zeroed the
-     last combat chip (:last-child of .sel-combat-stats), so the job chip jammed
-     against it while combat chips kept 6px. .sel-combat-stats → contents makes
-     each chip a direct flex item (and un-hides them: the mobile skin globally
-     hides combat numbers since the tooltip carried them — the card now IS that
-     readout and drops the tooltip). */
+  /* One flex gap between every chip (combat + job/carry). .sel-combat-stats →
+     contents flattens each chip to a direct flex item (and un-hides it: the
+     mobile skin hides combat numbers, but here the card replaces the tooltip). */
   #sel-info.single-sel .det-stats { margin-top: 2px; font-size: 11px; display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; }
   #sel-info.single-sel .det-stats .sel-combat-stats { display: contents; }
   #sel-info.single-sel .det-stats .stat-chip { margin: 0; }

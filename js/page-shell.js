@@ -81,8 +81,7 @@ const variant = window.UI_VARIANT || 'mobile';
 
 const SWITCH_LABEL = variant === 'classic' ? '📱 Switch to Mobile UI' : '🏰 Switch to Classic UI';
 
-// Legal + provenance line shown under the main menu (the dark backdrop). One
-// copy, interpolated where needed.
+// Legal + provenance line shown under the main menu (the dark backdrop).
 const DISCLAIMER_HTML = `A free, open-source fan game — not affiliated with Microsoft, Xbox Game
   Studios, Ensemble Studios, or the Age of Empires franchise. Feedback welcome via
   <a href="https://github.com/sokrypton/aoe" target="_blank" rel="noopener">GitHub</a>.`;
@@ -129,7 +128,7 @@ document.body.insertAdjacentHTML('afterbegin', `
        placement). Mobile keeps HP inline in #sel-details and hides this. -->
   <div id="sel-hp"></div>
   <div id="sel-stats">
-    <div id="sel-name">Age of Epochs II</div>
+    <div id="sel-name">Age of Epochs</div>
     <div id="sel-details">Tap to select, then tap map to command</div>
   </div>
   <div id="sel-grid"></div>
@@ -259,7 +258,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div class="menu-shell">
   <div class="menu-hero">
     <div class="title-pane">
-      <img id="title-logo" src="logo.png" alt="Age of Epochs II">
+      <img id="title-logo" src="logo.png" alt="Age of Epochs">
     </div>
   </div>
 

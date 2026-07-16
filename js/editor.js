@@ -640,7 +640,7 @@ function exportScenario(){
 // files load back through the one loader (loadGame / editor Load).
 function saveGame(){
   if (saveDetail === 'full' && typeof serializeGame === 'function'){
-    downloadJson(JSON.stringify(serializeGame()), 'aoe2-game.json');
+    downloadJson(JSON.stringify(serializeGame()), 'aoe-game.json');
     if (window.showMsg) showMsg('Saved full game (' + entities.length + ' entities)');
   } else {
     exportScenario();

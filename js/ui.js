@@ -790,10 +790,8 @@ function updateUI(){
   // and .multi-select already hides the whole #sel-stats card; classic
   // never had a rule for it. One class, one meaning.)
   if(selInfo) selInfo.classList.toggle('multi-select', ((isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver) || gameOverTile);
-  // A single real unit/building OR the null-selection age crest: keep the one
-  // grid tile, but on desktop widths CSS reveals the already-populated
-  // #sel-stats readout beside it (the crest shows the age name). Genuine
-  // multi-select/garrison stay tiles-only.
+  // Single unit/building or the age crest: desktop CSS reveals the #sel-stats
+  // readout beside the tile. Multi-select/garrison stay tiles-only.
   if(selInfo) selInfo.classList.toggle('single-sel', singleGrid || idleCrest);
   // The grid gets its OWN dirty key: only what it actually renders (selection
   // membership, per-unit HP, garrison members). Keying it on the full
@@ -844,8 +842,8 @@ function updateUI(){
       // live HP, combat stats, a villager's job — resolved from these ids
       // at hover time (descriptorForSelTile). dataset, not title: a native
       // title would double up with the custom #tooltip.
-      // A single selection now expands its own #sel-stats readout beside the
-      // tile (desktop), so skip the tooltip there — it would just duplicate it.
+      // A single selection shows the #sel-stats readout beside the tile, so
+      // skip its tooltip (it would duplicate that).
       if(!singleGrid){
         icon.dataset.tileIds=g.members.map(m=>m.id).join(',');
         icon.dataset.tipName=(g.data&&g.data.name||g.key)+(g.members.length>1?' ×'+g.members.length:'');
@@ -975,7 +973,7 @@ function updateUI(){
       return;
     }
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent='Age of Epochs II';
+    document.getElementById('sel-name').textContent='Age of Epochs';
     document.getElementById('sel-details').textContent='Select a unit or building';
     return;
   }
