@@ -1033,8 +1033,11 @@ function execCancelQueue(bldgId, idx, team){
   if (!bldg || bldg.type !== 'building' || bldg.team !== team) return;
   let utype = bldg.queue[idx];
   if (!utype) return;
+  // Refund exactly what was paid: the free rescue villager (first villager while
+  // 0 living) refunds nothing, so cancelling it can't mint resources.
+  let refund = unitTrainCost(bldg.team, utype, bldg.queue.slice(0, idx));
   bldg.queue.splice(idx, 1);
-  refundCost(bldg.team, UNITS[utype].cost);
+  refundCost(bldg.team, refund);
   if (idx === 0) bldg.trainTick = 0;
   feedbackFor(myTeam, () => showMsg(UNITS[utype].name + ' cancelled (refunded)'));
 }

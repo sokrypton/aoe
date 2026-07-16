@@ -125,6 +125,39 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------ free rescue villager
+    // Anti-softlock: the first villager queued while a team has 0 living
+    // villagers is FREE (unitTrainCost, js/logic.js) — reachable at 0 food, one
+    // at a time, and cancelling it refunds nothing (no resource mint).
+    'free-villager': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 3, numTeams: 2, controllers: ['human', 'ai'], ages: [0, 0], entities: [] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc0 = createBuilding('TC', 15, 15, 0);
+      const s0 = resourceStore(0); s0.food = 0; s0.wood = 0; s0.gold = 0; s0.stone = 0;
+      T.ok('rescue villager is free at 0 food / 0 villagers', queueUnit(tc0, 'villager').ok === true && s0.food === 0);
+      T.ok('only one free — second villager needs resources', queueUnit(tc0, 'villager').reason === 'resources');
+      // Give food, queue a paid 2nd, then cancel the FREE first — refund must be 0.
+      s0.food = 50;
+      queueUnit(tc0, 'villager'); // paid, food -> 0
+      const foodBeforeCancel = s0.food;
+      execCancelQueue(tc0.id, 0, 0); // cancel the free one (idx 0)
+      T.ok('cancelling the free villager refunds nothing (no mint)', s0.food === foodBeforeCancel);
+      // A team that still has a villager pays full price.
+      const tc1 = createBuilding('TC', 40, 40, 1);
+      createUnit('villager', 41, 41, 1);
+      resourceStore(1).food = 0;
+      T.ok('no free villager while one is still alive', queueUnit(tc1, 'villager').reason === 'resources');
+      // Losing the TC with the free villager still queued must not mint food.
+      const tc2 = createBuilding('TC', 20, 20, 0);
+      s0.food = 0;
+      queueUnit(tc2, 'villager'); // free (team 0 still has 0 living villagers)
+      tc2.hp = 1;
+      damageEntity({ atk: 9999, team: 1, range: 0, type: 'unit', utype: 'militia', id: 77777, x: tc2.x, y: tc2.y }, tc2);
+      T.ok('losing the TC with a free villager queued mints nothing', tc2.hp <= 0 && s0.food === 0);
+      return T;
+    })),
+
     // ---------------------------------------------- checksum-coverage guard
     // detEntityHash coverage is hand-maintained; an unhashed sim-read field is
     // an invisible desync. detEntityCoverageGaps flags any entity key that is

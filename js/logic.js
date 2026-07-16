@@ -175,17 +175,31 @@ function hasPopulationRoom(team,utype,includeQueue=true){
   return teamPopUsed(team)+(includeQueue?teamQueuedPop(team):0)+unitPop(utype)<=teamPopCap(team);
 }
 
+// AoE2-lite anti-softlock: the villager that climbs you OUT of a 0-villager hole
+// is FREE — the first villager queued at a building while the team has NO living
+// villager (garrisoned count as living) costs nothing. Human or AI (both come
+// through queueUnit). `priorQueue` is the building's queue BEFORE the entry in
+// question — the whole queue at train time, queue[0..idx) at cancel time — so the
+// train cost and the cancel refund agree and cancelling it can't mint resources.
+function unitTrainCost(team,utype,priorQueue){
+  if(utype==='villager'
+     && !priorQueue.some(u=>u==='villager')
+     && !entities.some(e=>e.team===team&&e.type==='unit'&&e.utype==='villager'&&e.hp>0))
+    return {}; // free
+  return UNITS[utype].cost;
+}
+
 function canQueueUnit(bldg,utype){
   if(!isUnlocked(bldg.team,utype))return {ok:false,reason:'age'};
   if(!hasPopulationRoom(bldg.team,utype,true))return{ok:false,reason:'pop'};
-  if(!canAfford(bldg.team,UNITS[utype].cost))return{ok:false,reason:'resources'};
+  if(!canAfford(bldg.team,unitTrainCost(bldg.team,utype,bldg.queue)))return{ok:false,reason:'resources'};
   return{ok:true};
 }
 
 function queueUnit(bldg,utype){
   let check=canQueueUnit(bldg,utype);
   if(!check.ok)return check;
-  spendCost(bldg.team,UNITS[utype].cost);
+  spendCost(bldg.team,unitTrainCost(bldg.team,utype,bldg.queue)); // bldg.queue is the prior queue (before the push below)
   bldg.queue.push(utype);
   return check;
 }
@@ -3142,7 +3156,9 @@ function handleDeath(e,killerTeam){
     // building dies or is deleted. (Age research dying unrefunded with the
     // TC is intentional — see execResearchAge, js/commands.js.)
     if(e.queue&&e.queue.length>0&&isPlayerTeam(e.team)){
-      e.queue.forEach(utype=>refundCost(e.team, UNITS[utype].cost));
+      // Refund what was actually paid: a free rescue villager (unitTrainCost)
+      // refunds nothing, so losing the TC with one queued can't mint resources.
+      e.queue.forEach((utype,i)=>refundCost(e.team, unitTrainCost(e.team, utype, e.queue.slice(0,i))));
       e.queue=[];
     }
     // Units garrisoned inside a destroyed building perish with it (AoE2 rule)

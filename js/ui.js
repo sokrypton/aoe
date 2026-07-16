@@ -1084,13 +1084,21 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='unit';
           btn.dataset.tipKey=ut;
-          btn.dataset.cost=JSON.stringify(u.cost);
+          // Show the RESCUE villager as "Free" (unitTrainCost, js/logic.js) so a
+          // broke player at 0 villagers sees it's a free way back in, not a
+          // 50-food cost they can't meet — cost chip AND hover tooltip.
+          let effCost = ut==='villager' ? unitTrainCost(myTeam, ut, e.queue||[]) : u.cost;
+          let isFree = ut==='villager' && !Object.keys(effCost).length;
+          btn.dataset.cost=JSON.stringify(effCost);
+          if(isFree) btn.dataset.free='1';
           // Units without a sprites.png cell (ram) fall back to their emoji
           // glyph, same rule as setPortraitIcon.
           let trainIcon=SPRITE_ICON_KEYS.has(iconKey(ut))
             ?`<div class="btn-emoji sprite-icon icon-${iconKey(ut)}"></div>`
             :`<div class="btn-emoji">${u.icon||''}</div>`;
-          btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div>${costChips(u.cost)}`;
+          // "Free" reuses the SAME cost-chip box (border/background) as a normal
+          // cost, just with text instead of a resource icon+number.
+          btn.innerHTML=`${trainIcon}<div class="btn-label">${u.name}</div>${isFree?'<span class="cost cost-chips"><span class="cost-chip cost-free">Free</span></span>':costChips(effCost)}`;
           let queued=e.queue?e.queue.filter(q=>q===ut).length:0;
           if(queued>0){
             btn.innerHTML+=`<div class="queue-count" title="${queued} queued">${queued}</div>`;
@@ -1865,8 +1873,10 @@ window.cancelReseed = cancelReseed;
       html += `<div style="font-size:10px;color:#d1c499;">HP: ${d.hp}/${d.maxHp}</div>`;
     }
 
-    // Cost breakdown with resource icons
-    if (d.cost) {
+    // Cost breakdown with resource icons ("Free" for the rescue villager).
+    if (d.free) {
+      html += '<div class="tip-cost"><div class="tip-cost-row">Free</div></div>';
+    } else if (d.cost) {
       const entries = Object.entries(d.cost);
       if (entries.length) {
         html += '<div class="tip-cost">';
@@ -1943,7 +1953,11 @@ window.cancelReseed = cancelReseed;
       const u = UNITS[tipKey];
       if (!u) return null;
       const stats = [`❤️ ${u.hp}`, ...unitStatChips(u)];
-      d = { name: u.name, desc: u.desc || null, stats, cost: u.cost };
+      // Prefer the button's EFFECTIVE cost (dataset.cost) so a free rescue
+      // villager reads "Free" here too, not its normal 50-food price.
+      let cost = u.cost;
+      if (el.dataset.cost) { try { cost = JSON.parse(el.dataset.cost); } catch(_){} }
+      d = { name: u.name, desc: u.desc || null, stats, cost, free: el.dataset.free === '1' };
     } else if (tipType === 'building') {
       const b = BLDGS[tipKey];
       if (!b) return null;
