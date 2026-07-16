@@ -1050,11 +1050,14 @@ function updateFog() {
     for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) fog[y][x] = 2;
     return;
   }
-  // Single combined pass when the sim's per-team visibility is fresh
-  // (updateTeamVision runs just before this in update()): downgrade stale
-  // active vision and set the new visible tiles in one sweep; fall back to
-  // the downgrade loop + own vision walk when the grids are stale.
-  if (visionFreshTick >= tick - 1 && visionFreshTick >= 0 && teamVisGrid) {
+  // Drive fog from the sim's per-team visibility grid, which is ALLY-SHARED
+  // (updateTeamVision applies every unit's sight to its team AND its allies).
+  // Read it every tick once it exists — it only changes on refresh ticks, so
+  // fog is stable in between. The own-vision fallback below is own-team ONLY,
+  // so using it whenever the grid was a couple ticks stale made ally-lit tiles
+  // flicker visible↔shroud every few ticks; it now runs only at cold start
+  // (before the first vision build: rollback/resync/load, visionFreshTick < 0).
+  if (visionFreshTick >= 0 && teamVisGrid) {
     const vg = teamVisGrid[myTeam];
     for (let y = 0; y < MAP; y++) {
       const row = fog[y], base = y * MAP;
