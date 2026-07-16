@@ -127,8 +127,5 @@ in [`../docs/aoe2-ai-behavior.md`](../docs/aoe2-ai-behavior.md) (§11–12).
 | [SFTtech/openage](https://github.com/SFTtech/openage) — open Genie-engine project (GPLv3 docs) | Their `doc/reverse_engineering/` notes: damage formula, build/repair rates, market pricing, trade-cart gold, garrison arrows, town-bell range | study notes in `../docs/reference/openage-study.md`; adopted values in `../docs/aoe2-ai-behavior.md` §12 |
 | Leif Ericson's unit stat tables ([AoK Heaven](https://aok.heavengames.com/university/game-info/stat-tables/units-table/), via openage) | Exact AoC unit stats, used as a regression fixture (`stats-audit.js`, runs in the test battery) | `../docs/reference/unit_stats_aoc.csv` |
 
-**Beta testers** who shaped the game with their feedback: Jeremy Ilagan, Orr
-Ashenberg, Jordan Hoff, Qing Feng.
-
 *Age of Empires II* is a Microsoft / Ensemble Studios title; this project is an
 independent fan reimplementation and includes no original game assets or data.

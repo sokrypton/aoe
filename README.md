@@ -3,5 +3,7 @@
 
 To play the game go to: [ageofepochs.com](https://ageofepochs.com)
 
-Developer docs — codebase guide, tests, tooling, and references & credits — live
-in [`tools/README.md`](tools/README.md) and [`CLAUDE.md`](CLAUDE.md).
+## Thanks
+
+Beta testers who shaped the game with their feedback: Jeremy Ilagan, Orr
+Ashenberg, Jordan Hoff, and Qing Feng.
