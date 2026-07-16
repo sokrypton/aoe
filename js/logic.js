@@ -3617,11 +3617,16 @@ function rallyNewUnit(e, unit){
               unit.buildTarget=target.id;
               pathUnitTo(unit,target.x,target.y);
             } else if(unit.utype!=='tradecart' && !sameSide(target.team,e.team) && target.team!==GAIA_TEAM){
-              // Rally onto an ENEMY BUILDING: fresh units attack it.
-              // Buildings only — execRally snaps a flag dropped on a unit
-              // to the ground tile under it. Trade carts never take attack
-              // targets.
+              // Rally onto an ENEMY BUILDING: fresh units attack it AS IF given
+              // an explicit attack order (assignAttack, js/commands.js) —
+              // explicitAttack drives the mop-up continuation when it falls, and
+              // the anchor moves to the target so a DEFENSIVE-stance unit leashes
+              // to the battlefield, not back to the rally flag. Buildings only —
+              // execRally snaps a flag dropped on a unit to the ground tile under
+              // it. Trade carts never take attack targets.
               unit.target=target.id;
+              unit.explicitAttack=true;
+              unit.defendX=Math.round(target.x); unit.defendY=Math.round(target.y);
               pathUnitTo(unit,target.x,target.y);
             } else {
               pathUnitTo(unit,e.rallyX,e.rallyY);

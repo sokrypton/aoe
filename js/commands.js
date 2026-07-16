@@ -947,7 +947,11 @@ function upgradeSalvage(en){
   return refund;
 }
 function execUpgradeWalls(cmd, team){
-  let pieces = (cmd.unitIds || []).map(id => entitiesById.get(id))
+  // De-dup ids first: a repeated id would double-charge and, worse, the second
+  // pass reads WALL_STONE_MATCH[already-swapped btype] === undefined and blanks
+  // the building's btype. The UI never emits dupes, but a malformed/replayed
+  // command must not corrupt sim state (→ desync).
+  let pieces = [...new Set(cmd.unitIds || [])].map(id => entitiesById.get(id))
     .filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
   if (!pieces.length) return;
   let locked = pieces.find(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]));
@@ -1071,10 +1075,11 @@ function reactivateFarmNow(farm){
   spendCost(myTeam, cost);
   farm.exhausted = false;
   farm.complete = true;
+  farm.buildProgress = farm.buildTime; // match the other reseed paths (reseedFarmForFarmer) — no odd complete-but-unhardened state
   farm.hp = farm.maxHp;
   let tile = map[farm.y][farm.x];
   tile.t = TERRAIN.FARM;
-  tile.res = BLDGS.FARM.food; // same refill as every other reseed path (fresh/prepaid/walk-up/AI)
+  tile.res = farmFoodFor(farm.team); // include Horse Collar / Heavy Plow food bonuses, like every other reseed path
   markMapDirty(farm.x, farm.y);
   feedbackFor(myTeam, () => showMsg('Farm reactivated!'));
   if (typeof updateUI === 'function') updateUI();
