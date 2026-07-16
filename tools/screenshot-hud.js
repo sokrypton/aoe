@@ -95,6 +95,31 @@ const SCENES = {
     (${pageLookAt})(28, 28);
     updateUI();
     try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  gateopen: `(${pageStage})();
+    const g = createBuilding('SGATE', 28, 28, 0); g.complete = true; g.hp = g.maxHp; g.locked = false;
+    selected.push(g);
+    (${pageLookAt})(29, 29);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  gatelocked: `(${pageStage})();
+    const g = createBuilding('SGATE', 28, 28, 0); g.complete = true; g.hp = g.maxHp; g.locked = true;
+    selected.push(g);
+    (${pageLookAt})(29, 29);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  ramgarrison: `(${pageStage})();
+    const ram = createUnit('ram', 28, 28, 0); ram.garrison = [];
+    for (let i = 0; i < 2; i++) { let u = createUnit('militia', 31 + i, 30, 0); u.garrisonedIn = ram.id; ram.garrison.push(u.id); }
+    selected.push(ram);
+    (${pageLookAt})(28, 28);
+    updateUI();
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  garrison: `(${pageStage})();
+    const t = createBuilding('TOWER', 28, 28, 0); t.complete = true; t.hp = t.maxHp;
+    selected.push(t);
+    (${pageLookAt})(29, 29);
+    updateUI();                                    // Garrison button in #actions
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
 };
 
 const VIEWPORTS = {

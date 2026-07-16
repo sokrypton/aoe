@@ -275,23 +275,37 @@ function makeWayFor(mover){
 // complementary predicates (stationary units -> block grid, moving units ->
 // dodge checks); nothing runs between them, so one walk serves both with
 // identical content and order (checksum-verified).
-// Nudging keeps its 2-tick cadence; the grid rebuilds every tick. Movers are
-// nudged AFTER the walk completes — makeWayFor reads other units' grid entries.
-const _movers=[];
-function rebuildBlockAndNudge(){
+// Grid-only pass: stamp stationary units into unitBlock. No path mutation, so
+// it is safe to run OUTSIDE the tick — the rollback/resync restore paths call
+// it so commands on the first replayed tick pathfind against the restored world
+// and not the abandoned-future grid left over from before the rewind. unitBlock
+// is a derived per-tick global, not part of the snapshot, so a restore must
+// rebuild it here (nulling it is wrong — walkable() would then ignore all units,
+// itself a divergence from the on-time run).
+function rebuildBlockGrid(){
   if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
   else unitBlock.fill(0);
-  let collect=tick%2===1; // nudge cadence (alternates with separateUnits)
-  _movers.length=0;
   for(let i=0;i<entities.length;i++){
     let e=entities[i];
     if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)continue;
     if(e.utype==='sheep_carcass')continue; // a corpse on the ground blocks nobody (and never moves)
-    if(e.path.length>0){ if(collect)_movers.push(e); continue; } // moving units don't block
+    if(e.path.length>0)continue; // moving units don't block
     let x=Math.round(e.x),y=Math.round(e.y);
     if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
   }
-  if(collect)for(let i=0;i<_movers.length;i++)makeWayFor(_movers[i]);
+}
+// Nudging keeps its 2-tick cadence; the grid rebuilds every tick. Movers are
+// nudged AFTER the grid is fully built — makeWayFor reads other units' entries.
+const _movers=[];
+function rebuildBlockAndNudge(){
+  rebuildBlockGrid();
+  if(tick%2!==1)return; // nudge cadence (alternates with separateUnits)
+  _movers.length=0;
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type==='unit'&&!e.garrisonedIn&&e.hp>0&&e.utype!=='sheep_carcass'&&e.path.length>0)_movers.push(e);
+  }
+  for(let i=0;i<_movers.length;i++)makeWayFor(_movers[i]);
 }
 
 // True while a much-displaced unit is holding its ground (see makeWayFor):

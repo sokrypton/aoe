@@ -60,7 +60,11 @@ function detEntityHash(e){
   h = detMixFloat(h, e.progress || 0);
   h = detMixFloat(h, e.carrying || 0);
   h = detMixStr(h, e.carryType);
-  h = detMix(h, e.cooldown || 0);
+  // Per-tick action clocks — decremented every tick and read to gate the NEXT
+  // attack / gather (logic.js updateUnit/updateBuilding). Unhashed, a diverged
+  // reload/gather cadence is invisible until it moves hp or a resource count.
+  h = detMix(h, e.atkCooldown || 0);
+  h = detMix(h, e.gatherCooldown || 0);
   h = detMix(h, e.garrisonedIn == null ? -1 : e.garrisonedIn);
   h = detMix(h, e.complete ? 1 : 0);
   // Age research rides the TC entity — hash it so a divergent research
@@ -72,6 +76,14 @@ function detEntityHash(e){
   // divergence here only tripped the checksum once it eventually moved
   // hp/x/y, often far outside the resync window.
   h = detMixFloat(h, e.atk || 0);                 // age-up sweep mutates this
+  // Sibling upgrade-mutated stats (UPGRADES, js/core.js), read on later ticks
+  // like atk: range (fletching), speed+carryMax (wheelbarrow), maxHp (masonry/
+  // fortified_wall). A diverged upgrade sweep is invisible until it moves a
+  // position (speed), a resource return (carryMax), or an hp cap (maxHp).
+  h = detMix(h, e.range || 0);
+  h = detMixFloat(h, e.speed || 0);
+  h = detMix(h, e.carryMax || 0);
+  h = detMix(h, e.maxHp || 0);
   h = detMix(h, e.exhausted ? 1 : 0);             // farm lifecycle
   h = detMix(h, e.trainTick || 0);                // training clock
   h = detMixFloat(h, e.buildProgress || 0);       // construction clock
@@ -152,6 +164,50 @@ function detEntityHash(e){
   h = detMix(h, e.lastMeleeHitTick == null ? -1 : e.lastMeleeHitTick); // ram rider-disembark trigger (melee only)
   h = detMix(h, e.waveId == null ? -1 : e.waveId); // AI wave membership (casualty-retreat counts it)
   return h >>> 0;
+}
+
+// ---- detEntityHash coverage guard (dev/test only — never the hot path) ----
+// detEntityHash's field coverage is maintained BY HAND: a new sim-read entity
+// field nobody folds in here desyncs invisibly (silent until it eventually
+// moves x/y). detEntityCoverageGaps walks live entities and flags any key that
+// is neither hashed nor on the viewer/derived allow-list, so a forgotten field
+// fails a test (tools/behavior-tests.js) instead of a mystery MP desync. When it
+// flags a key: fold it into detEntityHash AND list it in DET_HASHED_KEYS if the
+// sim reads it on a later tick; otherwise add it to DET_UNHASHED_KEYS.
+const DET_HASHED_KEYS = new Set([
+  'id','type','btype','utype','team','x','y','hp','task','target','buildTarget',
+  'garrisonTarget','path','moveT','progress','carrying','carryType','atkCooldown',
+  'gatherCooldown','garrisonedIn','complete','research','leashCooling','atk','range',
+  'speed','carryMax','maxHp','exhausted','trainTick','buildProgress','workTick',
+  'curWorkers','lastWorkers','repairAccum','rallyX','rallyY','rallyTargetId','queue',
+  'garrison','buildQueue','locked','rallyResourceType','gatherX','gatherY',
+  'explicitAttack','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
+  'order','prevTask','siegeSpot','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
+  'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
+]);
+// Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
+// state — legitimately NOT hashed:
+const DET_UNHASHED_KEYS = new Set([
+  'fromX','fromY',        // render interpolation anchor (derived from x/path/moveT)
+  'tx','ty',              // creation copy of x/y, not sim-mutated
+  'dir','facing','facingNorth','pendingDir','pendingDirT', // sprite facing (render-only)
+  'female','pressWalk','foodSrc','lastX','lastY','smoothX','smoothY', // cosmetic/render signals
+  'buildTime',            // = BLDGS[btype].buildTime (derived from hashed btype)
+  'food','maxFood',       // huntable/farm food capacity (constant, not sim-mutated)
+  'w','h',                // footprint dims (constant from type)
+  'homeX','homeY',        // animal wander anchor (set once to spawn pos, deterministic)
+]);
+// Entity keys present on live entities that are neither hashed nor allow-listed.
+// Empty array === full coverage. Call from tests, never inside the tick.
+function detEntityCoverageGaps(){
+  const gaps = new Set();
+  for (const e of entities) {
+    for (const k in e) {
+      if (!DET_HASHED_KEYS.has(k) && !DET_UNHASHED_KEYS.has(k)) gaps.add(k);
+    }
+  }
+  return Array.from(gaps).sort();
 }
 
 // Full sim-state checksum for the current tick. Order-sensitive over the
@@ -309,24 +365,30 @@ function detDumpLog(){
 // ---- Non-deterministic-math tripwires ----
 // While the sim tick runs in strict mode, any un-migrated call to an engine-
 // defined math function throws immediately with a stack pointing at the
-// offender. Math.random is non-deterministic; Math.hypot is spec'd as an
-// "implementation-dependent approximation" (unlike correctly-rounded
-// Math.sqrt), so it can differ in the last bits across engines and desync —
-// use simHypot() instead. Cosmetic code running outside update() is unaffected.
-const _detRealRandom = Math.random;
-const _detRealHypot = Math.hypot;
+// offender. Math.random is non-deterministic; Math.hypot and the trig
+// functions (sin/cos/tan/atan2) are spec'd as "implementation-dependent
+// approximations" (unlike correctly-rounded Math.sqrt), so they can differ in
+// the last bits across engines and desync — use the sim* replacements instead.
+// Cosmetic code running outside update() is unaffected.
+const _detTrapped = {}; // fn name -> original, captured lazily on first trap install
+const DET_TRAP_FNS = {
+  random: 'simRandom()',
+  hypot:  'simHypot()',
+  sin:    'simSin()',
+  cos:    'simCos()',
+  tan:    'simSin()/simCos()',
+  atan2:  'simAtan2()',
+};
 function detEnterSim(){
   if (!DET.strict) return;
-  Math.random = function(){
-    detExitSim(); // restore before throwing so cosmetic code keeps working after the trap fires
-    throw new Error('DET: Math.random called inside sim tick — migrate this call site to simRandom()');
-  };
-  Math.hypot = function(){
-    detExitSim();
-    throw new Error('DET: Math.hypot called inside sim tick — migrate this call site to simHypot()');
-  };
+  for (let name in DET_TRAP_FNS){
+    if (!(name in _detTrapped)) _detTrapped[name] = Math[name];
+    Math[name] = function(){
+      detExitSim(); // restore before throwing so cosmetic code keeps working after the trap fires
+      throw new Error('DET: Math.' + name + ' called inside sim tick — migrate this call site to ' + DET_TRAP_FNS[name]);
+    };
+  }
 }
 function detExitSim(){
-  Math.random = _detRealRandom;
-  Math.hypot = _detRealHypot;
+  for (let name in _detTrapped) Math[name] = _detTrapped[name];
 }

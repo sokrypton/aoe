@@ -474,9 +474,11 @@ function applySavedGame(data, opts){
       // exact peer id back from PeerJS instead of a random one — see
       // hostPeerId's comment above (js/net.js's hostSession()).
       window.__mpSession.loadedHostPeerId = data.hostPeerId || null;
-      // Pre-seed the guest registry from the save's seat tokens so every
-      // returning guest's hello rebinds to its exact old seat (js/net.js);
-      // unknown identities are denied once the match resumes.
+      // Pre-seed the guest registry from the save's seat tokens: a returning
+      // guest on its original browser rebinds to its exact old seat by token,
+      // and an unknown identity (a different device / cleared storage) is
+      // offered the honor-system seat picker over those seeded seats (js/net.js
+      // reclaimableSeats / hostHandleClaimSeat).
       if (typeof netSeedGuestRecords === 'function') netSeedGuestRecords(data.seatTokens);
       onHostClicked();
     } else {

@@ -422,6 +422,42 @@ function hideDisconnectOverlay(){
   hideMpOverlay();
 }
 
+// Honor-system reconnect: the host couldn't auto-bind us by token, so it sent
+// the list of reclaimable seats (js/net.js). Let the player pick who they are;
+// the pick is sent as claim-seat, and the host rebinds this device's token so a
+// later plain refresh auto-rejoins without asking again.
+function showSeatPicker(seats){
+  if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; } // stop the blind retry loop
+  hideDisconnectOverlay();
+  let el = document.getElementById('mp-seat-picker');
+  let list = document.getElementById('mp-seat-picker-list');
+  let txt = document.getElementById('mp-seat-picker-text');
+  if (!el || !list) return;
+  if (txt) txt.textContent = 'Pick your player to reconnect:';
+  list.innerHTML = '';
+  (seats || []).forEach(s => {
+    let btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-action-btn';
+    let swatch = s.color ? '<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:'
+      + s.color + ';margin-right:8px;vertical-align:middle;"></span>' : '';
+    btn.innerHTML = swatch + (s.name || ('Player ' + (s.seat + 1)));
+    btn.onclick = () => claimSeat(s.seat);
+    list.appendChild(btn);
+  });
+  el.style.display = 'flex';
+}
+function hideSeatPicker(){ show('mp-seat-picker', false); }
+function claimSeat(seat){
+  sendToHost({ type: 'claim-seat', seat, token: mpClientToken(), tab: mpTabId(), name: (localPlayerName || '').trim() });
+  // Await welcome (success) or a fresh seat-list (we lost the race) — disable
+  // the buttons meanwhile so a double-tap can't fire two claims.
+  let list = document.getElementById('mp-seat-picker-list');
+  if (list) list.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  let txt = document.getElementById('mp-seat-picker-text');
+  if (txt) txt.textContent = 'Reconnecting…';
+}
+
 // HOST: recompute the "waiting for a disconnected player" pause and tell
 // every guest. One authority, one verdict — each guest mirrors it rather
 // than tracking connectivity it can't see. Also drives the host's own
@@ -960,6 +996,11 @@ onNetMessage((msg) => {
   if (netRole !== 'guest') return;
   if (msg.type === 'welcome') {
     window.__mpSession.mySeat = msg.seat;
+    hideSeatPicker(); // an honor-system claim just succeeded (no-op otherwise)
+  } else if (msg.type === 'seat-list') {
+    // Unknown identity to the host (cross-device / cleared storage / a fresh
+    // page after save-load): pick which player we are (js/net.js reclaimableSeats).
+    showSeatPicker(msg.seats || []);
   } else if (msg.type === 'join-denied') {
     // The host turned this connection away (game full, match in progress,
     // or we were kicked). Stop any reconnect loop — retrying would just be
@@ -967,6 +1008,7 @@ onNetMessage((msg) => {
     if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; }
     let why = msg.reason === 'kicked' ? 'You were removed from this game by the host.'
       : msg.reason === 'in-progress' ? 'This match is already in progress.'
+      : msg.reason === 'version' ? 'Your game version differs from the host’s — hard-refresh (Ctrl/Cmd+Shift+R) and reconnect.'
       : 'This game is full.';
     window.__mpSession.inLobby = false;
     lobbyState = null;
@@ -1005,9 +1047,13 @@ window.assignGuestSeat = function(msg){
 onNetMessage((msg) => {
   if (msg.type === 'proto' && msg.v !== NET_PROTOCOL_VERSION) {
     console.error('Protocol mismatch: peer is v' + msg.v + ', this client is v' + NET_PROTOCOL_VERSION);
-    showMpOverlay('Version Mismatch',
-      'Your game version differs from your opponent’s — the match cannot run safely. '
-      + 'Both players should hard-refresh the page (Ctrl/Cmd+Shift+R) and reconnect.', false);
+    // The host turns a mismatched guest away at the hello gate (js/net.js) and
+    // keeps playing — only a guest (whose sole peer is the host) must refresh.
+    if (netRole !== 'host') {
+      showMpOverlay('Version Mismatch',
+        'Your game version differs from your opponent’s — the match cannot run safely. '
+        + 'Both players should hard-refresh the page (Ctrl/Cmd+Shift+R) and reconnect.', false);
+    }
     return;
   }
 });

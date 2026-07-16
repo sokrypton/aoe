@@ -157,7 +157,8 @@ function execCommand(cmd, team){
     case 'eject-garrison': {
       let bldg = entitiesById.get(cmd.bldgId);
       if (bldg && bldg.team === team) {
-        ejectGarrison(bldg, gu => gu.id === cmd.unitId);
+        // cmd.all → release EVERYONE (falsy filter ejects all); else one unit.
+        ejectGarrison(bldg, cmd.all ? null : gu => gu.id === cmd.unitId);
         if (team === myTeam && typeof updateUI === 'function') updateUI();
       }
       break;
@@ -237,6 +238,9 @@ function execCommand(cmd, team){
     case 'set-stance':
       execSetStance(cmd, team);
       break;
+    case 'garrison':
+      execGarrison(cmd, team);
+      break;
   }
 }
 
@@ -289,6 +293,35 @@ function ramSeatsFree(container){
   let walkers = 0;
   for (const u of entities) if (u.type === 'unit' && u.task === 'garrison' && u.garrisonTarget === container.id) walkers++;
   return Math.max(0, garrisonCap(container) - garrisonCount(container) - walkers);
+}
+
+// Garrison INTO a container (TC/tower/ram) — the container-first "load mode"
+// (Garrison button js/ui.js + garrisonLoadTap js/input.js). canGarrisonIn is the
+// per-unit gate (ANY unit into a complete own building; only riders into a ram);
+// ramSeatsFree caps and counts walkers so repeated taps never double-book seats.
+// Writes the SAME field-set as the ram-board branch, so updateGarrisonWalk/
+// enterGarrison drive it with no new sim code.
+function execGarrison(cmd, team){
+  let b = cmd.bldgId != null ? entitiesById.get(cmd.bldgId) : null;
+  if (!(b && b.team === team && b.hp > 0 && garrisonCap(b) > 0 &&
+        (b.type !== 'building' || b.complete))) return; // never trust the wire
+  let room = ramSeatsFree(b), sent = 0;
+  (cmd.unitIds || []).forEach(id => {
+    if (room <= 0) return;
+    let u = entitiesById.get(id);
+    if (!(u && u.type === 'unit' && u.team === team && u.hp > 0 &&
+          !u.garrisonedIn && u.task !== 'garrison' && canGarrisonIn(b, team, u))) return;
+    if (u.order) issueOrder(u, null);        // LAST ORDER WINS (mirrors execUnitCommand)
+    u.target = null; u.buildTarget = null; u.buildQueue = []; u.explicitAttack = false;
+    u.task = 'garrison'; u.garrisonTarget = b.id;
+    // A ram is a moving point (no footprint perimeter); a building routes to its edge.
+    let pt = b.type === 'unit' ? { x: Math.round(b.x), y: Math.round(b.y) }
+                               : nearestBldgPerimeter(u.x, u.y, b, u.id);
+    if (pt) pathUnitTo(u, pt.x, pt.y);
+    room--; sent++;
+  });
+  feedbackFor(team, () => { if (!sent && typeof showMsg === 'function') showMsg('No room to garrison'); });
+  if (team === myTeam && typeof updateUI === 'function') updateUI();
 }
 
 // THE attack assignment — the ONE way any controller (a human command OR

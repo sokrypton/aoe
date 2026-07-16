@@ -809,7 +809,7 @@ function computeAIWallRing(ai,tc,radius){
     let axis=t=>horiz?t.x:t.y;
     let st=tiles.filter(t=>t.side===side&&walkable(t.x,t.y)&&!t.isGatePair);
     if(st.length<3)return null;
-    st.sort((a,b)=>axis(a)-axis(b));
+    st.sort((a,b)=>axis(a)-axis(b)||a.x-b.x||a.y-b.y); // deterministic tiebreak (never lean on sort stability)
     let byAxis=new Map(st.map(t=>[axis(t),t]));
     let mid=st[Math.floor(st.length/2)];
     let run=c=>{ let l=byAxis.get(c-1),m=byAxis.get(c),r=byAxis.get(c+1); return (l&&m&&r)?[l,m,r]:null; };
@@ -1204,7 +1204,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
     if(wantRam&&resourceStore(ai.team).gold<ramGold&&isUnlocked(ai.team,'spearman'))return 'spearman';
     let counts=ai.intel&&ai.intel.unitCounts;
     if(counts){
-      let dominant=Object.keys(counts).filter(t=>counterMap[t]).sort((a,b)=>counts[b]-counts[a])[0];
+      let dominant=Object.keys(counts).filter(t=>counterMap[t]).sort((a,b)=>counts[b]-counts[a]||(a<b?-1:a>b?1:0))[0]; // lexical tiebreak (Object.keys order isn't a sim contract)
       // Counter-pick most of the time once there's real intel on what the
       // player is fielding — not always, so the matchup isn't perfectly
       // predictable/exploitable by the player switching unit types.
@@ -1382,7 +1382,7 @@ function nearestAISheep(ai,v){
     let d=Math.abs(e.x-v.x)+Math.abs(e.y-v.y);
     if(d<=AI_SHEEP_HUNT_RANGE)cands.push({e,d});
   }
-  cands.sort((a,b)=>a.d-b.d);
+  cands.sort((a,b)=>a.d-b.d||a.e.id-b.e.id); // deterministic tiebreak
   for(let c of cands)if(pathReaches(v.x,v.y,c.e.x,c.e.y,v.id))return c.e;
   return null;
 }
@@ -1413,7 +1413,7 @@ function assignAIGatherTask(ai,v,vils,profile){
   // while gold/food starved — the next REAL need takes the hand instead.
   let ranked=Object.keys(desired)
     .filter(t=>GATHER_TASKS[t])
-    .sort((a,b)=>(counts[a]||0)/desired[a]-(counts[b]||0)/desired[b]);
+    .sort((a,b)=>(counts[a]||0)/desired[a]-(counts[b]||0)/desired[b]||(a<b?-1:a>b?1:0)); // lexical tiebreak on task name
   let task=null, target=null;
   for(let t of ranked){ let tg=targetFor(t); if(tg){task=t;target=tg;break;} }
   if(!task){
@@ -2420,7 +2420,7 @@ function chooseAIAttackTarget(ai,militia,spotted){
   // The escorting soldiers handle the defenders (AoE2 siege doctrine).
   let cands = militia.utype==='ram' ? spottedEnemies.filter(e=>e.type==='building') : spottedEnemies;
   if (cands.length > 0) {
-    let best = cands.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b))[0];
+    let best = cands.sort((a,b)=>priority(a)-priority(b)||dist(militia,a)-dist(militia,b)||a.id-b.id)[0];
     return resolveReachableAttackTarget(militia, best);
   }
   // Nothing spotted → no target. NO fallback into the fog here (reading live

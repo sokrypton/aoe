@@ -60,8 +60,9 @@ window.SPRITE_CELLS = {
   // CSS + shared sprite-icon class cover both skins.
   'stance-aggressive':[3,7], 'stance-defensive':[4,7],
   'stance-standground':[5,7], 'stance-passive':[6,7],
-  // ---- free slots for future icons.
-  spare1:[7,4], spare9:[7,7],
+  // ---- garrison in/out glyphs (gate + directional arrow): load into / release
+  // from a container (ram Garrison / Ungarrison buttons, js/ui.js).
+  'garrison-in':[7,4], 'garrison-out':[7,7],
 };
 (function(){
   let css = '';
@@ -152,6 +153,13 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div id="mp-disconnect-spinner"></div>
     <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">💾 Save Game</button>
     <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="kickDisconnectedPlayers()">🤖 Continue without them (AI takes over)</button>
+  </div>
+</div>
+<div id="mp-seat-picker" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+  <div id="mp-seat-picker-box" style="background:#2b2b2b;border:2px solid #555;border-radius:8px;padding:22px 26px;max-width:90vw;text-align:center;color:#eee;">
+    <div id="mp-seat-picker-title" style="font-size:20px;font-weight:bold;margin-bottom:6px;">Rejoin the match</div>
+    <div id="mp-seat-picker-text" style="opacity:0.8;margin-bottom:14px;">Pick your player to reconnect:</div>
+    <div id="mp-seat-picker-list" style="display:flex;flex-direction:column;gap:8px;"></div>
   </div>
 </div>
 <div id="help-hint"></div>

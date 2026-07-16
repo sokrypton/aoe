@@ -235,6 +235,12 @@ onNetMessage((msg, src) => {
     } else {
       peerTeam = msg.from != null ? msg.from : 0;
     }
+    // Reject a malformed or absurd execTick before it hits commandQueue: a
+    // far-future value would bloat the queue unboundedly (pruning only drops
+    // OLD entries), and a non-integer key never matches a tick. A legit execTick
+    // is issuerTick+INPUT_DELAY, and a receiver trails the issuer by at most
+    // LOCKSTEP_HARD_AHEAD, so this ceiling never rejects a real command.
+    if (!Number.isInteger(msg.execTick) || msg.execTick > tick + LOCKSTEP_HARD_AHEAD + INPUT_DELAY_MAX) return;
     scheduleCommand(msg.execTick, peerTeam, msg.seq, msg.cmd);
     if (msg.execTick <= tick) {
       // Late: that tick already ran without this command. Rewind and replay
@@ -409,6 +415,11 @@ function lockstepRestore(snap){
   bumpSimGen(); // tick rewound — invalidate every registered sim cache (js/core.js)
   // UI object references now point at pre-restore objects — re-resolve by id.
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
+  // unitBlock is a derived per-tick global, not in the snapshot: rebuild it from
+  // the restored entities so commands on the first replayed tick (which run
+  // BEFORE update()'s own rebuild) pathfind against this world, not the grid
+  // left over from the tick we rewound FROM (js/loop.js).
+  rebuildBlockGrid();
   // History beyond the restore point gets recomputed during resim.
   while (DET.history.length && DET.history[DET.history.length - 1].tick > tick) DET.history.pop();
 }
@@ -518,6 +529,11 @@ function lockstepApplyResync(state){
   }
   bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
+  // Rebuild the derived unitBlock grid from the resynced entities (see
+  // lockstepRestore): each peer kept its own leftover grid from a different
+  // pre-resync tick, so a command on the first post-barrier tick would
+  // otherwise pathfind against a per-peer-divergent grid and re-desync (js/loop.js).
+  rebuildBlockGrid();
   // Prune only commands at/before the resync point — NOT the whole queue.
   // Commands scheduled past it (our own just-submitted ones included) were
   // already sent on the wire, and the peer's stale-guard keeps anything

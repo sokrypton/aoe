@@ -231,6 +231,44 @@ async function assertChecksumsAgree(pages){
     await host.close(); await guest.close();
   });
 
+  await scenario('1v1: unknown-identity rejoin -> honor-system seat picker -> resume', async () => {
+    const { host, joinQuery } = await hostGame();
+    let guest = await newGamePage(joinQuery);
+    await waitInLobby(host); await waitInLobby(guest);
+    await readyUp(guest);
+    await startMatch(host);
+    await waitMatchRunning(host); await waitMatchRunning(guest);
+    await host.waitForTimeout(2000);
+    const seat = await guest.evaluate(() => myTeam);
+    await guest.close();
+    await host.waitForFunction(() => disconnectedPause === true, { timeout: 15000 });
+    // Rejoin as an UNKNOWN identity: clear the shared per-browser token before
+    // the page connects, so the host can't token-rebind and must offer the
+    // honor-system picker (js/net.js reclaimableSeats) instead of denying.
+    const rejoin = await ctx.newPage();
+    rejoin.on('pageerror', err => log(`   [pageerror rejoin] ${err.stack || err.message}`));
+    await rejoin.addInitScript(() => { try { localStorage.removeItem('aoeMpClientId'); } catch (e) {} });
+    await rejoin.goto(base + '/index.html' + joinQuery, { waitUntil: 'load' });
+    await rejoin.evaluate(() => { window.playSound = () => {}; });
+    // The picker appears with the one reclaimable seat — pick it.
+    await rejoin.waitForFunction(() => {
+      const el = document.getElementById('mp-seat-picker');
+      return el && el.style.display === 'flex' && el.querySelectorAll('#mp-seat-picker-list button').length > 0;
+    }, { timeout: 30000 });
+    log('   [honor] picker shown; claiming the open seat');
+    await rejoin.evaluate(() => document.querySelector('#mp-seat-picker-list button').click());
+    // claim-seat -> welcome -> resume into the SAME seat.
+    await rejoin.waitForFunction(() =>
+      typeof lockstepActive !== 'undefined' && lockstepActive && gameStarted, { timeout: 30000 });
+    const seat2 = await rejoin.evaluate(() => myTeam);
+    if (seat2 !== seat) throw new Error(`reclaimed as team ${seat2}, was ${seat}`);
+    await host.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
+    await host.waitForTimeout(3000);
+    await assertHealthy(host, 'host');
+    await assertHealthy(rejoin, 'reclaimed guest');
+    await host.close(); await rejoin.close();
+  });
+
   await scenario('3p: drop pauses everyone -> rejoin resumes -> second drop -> kick hands seat to AI', async () => {
     const { host, joinQuery } = await hostGame();
     let gA = await newGamePage(joinQuery);

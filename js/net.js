@@ -60,6 +60,24 @@ function netConnectedGuestSeats(){
   for (const r of netGuests.values()) if (r.connected) seats.push(r.seat);
   return seats;
 }
+// Honor-system reclaim: seats a returning guest with an UNKNOWN identity may
+// pick from — a human seat whose guest is currently disconnected and not kicked.
+// (Loading a saved MP game seeds every human seat as disconnected, so all of
+// them are offerable.) The host still binds the claim, so it stays authoritative.
+function reclaimableSeats(){
+  let out = [];
+  for (const r of netGuests.values()) {
+    if (r.connected || r.kicked) continue;
+    if (typeof teamControllers !== 'undefined' && teamControllers[r.seat] && teamControllers[r.seat].type !== 'human') continue;
+    out.push({
+      seat: r.seat,
+      name: r.name || ((typeof teamNames !== 'undefined' && teamNames && teamNames[r.seat]) || ('Player ' + (r.seat + 1))),
+      color: (typeof teamColorMap !== 'undefined' && teamColorMap && teamColorMap[r.seat]) || null,
+    });
+  }
+  out.sort((a, b) => a.seat - b.seat);
+  return out;
+}
 // On the host, the netConnected global means "at least one guest is
 // connected" — kept true/false here so the many existing role-agnostic
 // `netConnected` checks (chat gate, net-stats, save resume) keep working.
@@ -113,7 +131,7 @@ function mpTabId(){
 // stale cached build while the other has today's is a very real failure
 // mode that otherwise surfaces as inexplicable desync instead of a clear
 // "refresh your page".
-const NET_PROTOCOL_VERSION = 14; // v14: AI information parity — vision-grid AI spotting (aiVisibleEnemies via entityVisibleToTeam), phase-anchored vision refresh cadence (VISION_REFRESH_PERIOD), intel memory (dense decaying strengthByTeam, contact + remembered-TC marches, ghost-clearing) and tileHiddenForTeam applying to AI teams: sim semantics changed, mixed versions would desync; v13: the exclusive order slot (e.order replaces guard*/followId/autoScout/moveGoal on entities; sim leash/acquire/order semantics changed — mixed versions would desync); v12: host-relay star for up to 4 players — 'hello'/'welcome' seat binding, relayed cmd-ls/tick/chat carry `from`, per-recipient yourSeat/yourTeam in lobby-sync/lockstep-start/lockstep-resume, match-pause/set-controller; v11: pre-match lobby handshake (lobby-open/lobby-sync/lobby-seat, js/lobby.js) + names/colors in lockstep-start/lockstep-resume; ALSO genMap main-stone/gold placement search widened (js/map.js) — same seed yields a different map than v10, so mixed versions would desync; v10: battering ram is a trainable sim unit (js/core.js UNITS.ram); v9: age-up upgrade cards change sim math (js/core.js UPGRADES); v8: age system — teamAge + TC research in snapshots and simChecksum (js/core.js AGES)
+const NET_PROTOCOL_VERSION = 15; // v15: honor-system seat reclaim — host offers a 'seat-list' of reclaimable (disconnected human) seats to an unknown-identity mid-match/save-load joiner instead of a flat denial, guest answers 'claim-seat'; ALSO the checksum now folds 6 more entity fields (atkCooldown/gatherCooldown/range/speed/carryMax/maxHp), so mixed versions would desync; v14: AI information parity — vision-grid AI spotting (aiVisibleEnemies via entityVisibleToTeam), phase-anchored vision refresh cadence (VISION_REFRESH_PERIOD), intel memory (dense decaying strengthByTeam, contact + remembered-TC marches, ghost-clearing) and tileHiddenForTeam applying to AI teams: sim semantics changed, mixed versions would desync; v13: the exclusive order slot (e.order replaces guard*/followId/autoScout/moveGoal on entities; sim leash/acquire/order semantics changed — mixed versions would desync); v12: host-relay star for up to 4 players — 'hello'/'welcome' seat binding, relayed cmd-ls/tick/chat carry `from`, per-recipient yourSeat/yourTeam in lobby-sync/lockstep-start/lockstep-resume, match-pause/set-controller; v11: pre-match lobby handshake (lobby-open/lobby-sync/lobby-seat, js/lobby.js) + names/colors in lockstep-start/lockstep-resume; ALSO genMap main-stone/gold placement search widened (js/map.js) — same seed yields a different map than v10, so mixed versions would desync; v10: battering ram is a trainable sim unit (js/core.js UNITS.ram); v9: age-up upgrade cards change sim math (js/core.js UPGRADES); v8: age system — teamAge + TC research in snapshots and simChecksum (js/core.js AGES)
 
 // CompressionStream/DecompressionStream are stream-based (write in, read
 // chunks out), so both directions are inherently async. A single already-
@@ -271,11 +289,18 @@ function queueReceive(data, conn){
       if (netRole === 'host' && conn) {
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'hello') { hostHandleHello(msg, conn); return; }
+        // A seat-picker answer arrives on a still-unbound conn (the joiner was
+        // offered a list, never seated) — handle it before the rec lookup.
+        if (msg.type === 'claim-seat') { hostHandleClaimSeat(msg, conn); return; }
         let rec = netGuestByConn(conn);
         if (!rec) {
           // Unbound connection: nothing but proto is meaningful before
           // its hello arrives — drop everything else unattributed.
-          if (msg.type === 'proto') dispatchNetMessage(msg, { conn });
+          if (msg.type === 'proto') {
+            let pend = netPendingConns.find(p => p.conn === conn);
+            if (pend) pend.protoV = msg.v; // gate seating on it in hostHandleHello
+            dispatchNetMessage(msg, { conn });
+          }
           return;
         }
         dispatchNetMessage(msg, { seat: rec.seat });
@@ -354,8 +379,11 @@ setInterval(() => {
       queueSend(rec.conn, { type: 'ping' });
       if (now - rec.lastRecvAt > NET_TIMEOUT_MS) handleGuestConnectionLost(rec.seat);
     }
-    // Sweep connections that opened but never sent their hello.
+    // Sweep connections that opened but never sent their hello. A conn parked
+    // on the seat-picker (awaitingClaim) has sent its hello and is waiting on a
+    // human — spare it.
     netPendingConns = netPendingConns.filter(p => {
+      if (p.awaitingClaim) return true;
       if (now - p.openedAt > NET_HELLO_DEADLINE_MS) {
         try { p.conn.close(); } catch (e) {}
         return false;
@@ -425,6 +453,15 @@ function wireHostConnection(conn){
 // ask the session layer (js/init.js / js/lobby.js own the seating rules)
 // for a fresh seat; null means denied.
 function hostHandleHello(msg, conn){
+  // A guest on a different protocol version would desync — turn it away at the
+  // seating gate rather than seat it into a doomed match. proto is FIFO-ordered
+  // ahead of hello, so its version is already recorded on the pending conn
+  // (queueReceive). A client that never announced proto falls through as before.
+  let pend = netPendingConns.find(p => p.conn === conn);
+  if (pend && pend.protoV != null && pend.protoV !== NET_PROTOCOL_VERSION) {
+    denyGuestConn(conn, 'version');
+    return;
+  }
   // Exact same tab (reload) → its record, even if still marked connected.
   // Same browser, different/new tab → only a DISCONNECTED record (a live
   // record with that token is a second local tab, which is a new client).
@@ -447,6 +484,17 @@ function hostHandleHello(msg, conn){
   } else {
     let seat = (typeof window.assignGuestSeat === 'function') ? window.assignGuestSeat(msg) : null;
     if (seat == null) {
+      // Mid-match unknown identity (cross-device / cleared storage / a fresh
+      // page after a save-load): offer the honor-system reclaim list instead of
+      // a flat denial. The conn stays pending (awaitingClaim spares it from the
+      // hello-deadline sweep) until it answers with claim-seat.
+      let seats = reclaimableSeats();
+      if (seats.length) {
+        let pend = netPendingConns.find(p => p.conn === conn);
+        if (pend) pend.awaitingClaim = true;
+        queueSend(conn, { type: 'seat-list', seats });
+        return;
+      }
       denyGuestConn(conn, (typeof mpMatchStarted !== 'undefined' && mpMatchStarted) ? 'in-progress' : 'full');
       return;
     }
@@ -461,6 +509,36 @@ function hostHandleHello(msg, conn){
     };
     netGuests.set(seat, rec);
   }
+  netPendingConns = netPendingConns.filter(p => p.conn !== conn);
+  updateHostConnected();
+  if (typeof mpMatchStarted !== 'undefined' && mpMatchStarted) persistMpSessionMap();
+  queueSend(conn, { type: 'welcome', seat: rec.seat });
+  if (window.onNetConnectionOpen) window.onNetConnectionOpen(rec.seat);
+}
+
+// Honor-system reclaim answer: the joiner picked a seat from the offered list.
+// Re-validate it's still open (another returning guest may have grabbed it in
+// the race — first claim wins), then bind THIS connection to the seat's record,
+// rebinding its token so the device auto-rejoins on a later plain refresh.
+function hostHandleClaimSeat(msg, conn){
+  let seat = msg.seat;
+  let rec = netGuestBySeat(seat);
+  let stillOpen = rec && !rec.connected && !rec.kicked &&
+    !(typeof teamControllers !== 'undefined' && teamControllers[seat] && teamControllers[seat].type !== 'human');
+  if (!stillOpen) {
+    // Taken or invalid — re-offer the updated list, or deny if nothing's left.
+    let seats = reclaimableSeats();
+    if (seats.length) queueSend(conn, { type: 'seat-list', seats });
+    else denyGuestConn(conn, (typeof mpMatchStarted !== 'undefined' && mpMatchStarted) ? 'in-progress' : 'full');
+    return;
+  }
+  if (rec.conn && rec.conn !== conn) { try { rec.conn.close(); } catch (e) {} }
+  rec.conn = conn;
+  rec.token = msg.token || rec.token; // honor-system rebind: later refreshes on this device auto-rejoin
+  rec.tab = msg.tab || rec.tab;
+  rec.connected = true;
+  rec.lastRecvAt = performance.now();
+  if (msg.name) rec.name = msg.name;
   netPendingConns = netPendingConns.filter(p => p.conn !== conn);
   updateHostConnected();
   if (typeof mpMatchStarted !== 'undefined' && mpMatchStarted) persistMpSessionMap();

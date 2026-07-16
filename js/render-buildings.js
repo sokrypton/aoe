@@ -739,7 +739,10 @@ function drawBuilding(e, part = null){
   let f = window._ghostDraw ? 2 : buildingFogLevel(e);
   let visible = f === 2; // actively in sight — show live animations
   let darken = !window._ghostDraw && f === 1;
-  if(!e.complete && !window._ghostDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
+  // Foundation scaffold fade — skipped in the occluder-mask pass (_maskDraw):
+  // the behind-building outline needs FULL footprint coverage to clip a crisp
+  // ring, even while the building itself renders translucent under construction.
+  if(!e.complete && !window._ghostDraw && !window._maskDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
   let tc=teamColor(e.team);
   let tcD=teamColorDark(e.team);
   let bh=10;

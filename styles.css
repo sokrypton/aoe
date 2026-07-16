@@ -1044,6 +1044,7 @@ canvas {
 .lobby-seat {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* tight rows wrap the team/ready controls instead of crushing the name box */
   gap: 8px;
   padding: 6px 8px;
   border: 2px solid #8b6c43;
@@ -1090,8 +1091,8 @@ canvas {
 .lobby-swatch.lobby-swatch-sel { border-color: #ffebad; box-shadow: 0 0 0 2px #8c1d1d; }
 .lobby-swatch[disabled] { cursor: not-allowed; opacity: 0.35; }
 .lobby-seat-name {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 1 150px; /* wide enough for the longest generated name ("Marquis de Mangonel") */
+  min-width: 150px;
   background: rgba(255,255,255,0.35);
   border: 1px solid #8b6c43;
   border-radius: 3px;
@@ -1113,6 +1114,18 @@ canvas {
   color: #5c3b1e;
 }
 .lobby-seat-badge.lobby-ready { color: #1f6e30; }
+/* Compact per-seat readiness dot (replaces the wide "Not ready" text that wrapped the row). */
+.lobby-seat-status {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #8b6c43;
+  box-sizing: border-box;
+}
+.lobby-seat-status.status-ready { background: #2e9c46; border-color: #1f6e30; }
+.lobby-seat-status.status-notready { background: #d9a53a; border-color: #a9761f; }
+.lobby-seat-status.status-waiting { background: transparent; border-style: dashed; opacity: 0.7; }
 .lobby-team-select {
   flex: 0 0 auto;
   background: rgba(255,255,255,0.35);

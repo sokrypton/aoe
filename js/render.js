@@ -249,7 +249,11 @@ function render(){
     } else {
       let sortVal;
       if (en.type === 'building') {
-        sortVal = en.y + (en.h || 1) / 2 + en.x + (en.w || 1) / 2;
+        // True footprint-CENTER tile (origin + (w-1)/2, (h-1)/2). The naive
+        // corner+(w+h)/2 overshoots forward by a full tile, so units hugging a
+        // small building's front-side edge sorted BEHIND it (drawn under the
+        // roof, then wrongly outlined) instead of in front.
+        sortVal = en.y + en.x + ((en.h || 1) + (en.w || 1)) / 2 - 1;
       } else {
         if (en.utype === 'sheep_carcass') sortVal = en.y + en.x + 0.05;
         else sortVal = en.y + en.x + 0.25;
@@ -330,17 +334,17 @@ function render(){
 
     if(e.type==='building'){
       drawBuilding(e);
-      if(e.complete) _silOccScratch.push(e); // foundations are translucent — never occlude
+      _silOccScratch.push(e); // foundations occlude too — a near-built (opaque) building hides units; outline them
     }
-    else if(e.type==='gate_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
-    else if(e.type==='gate_door'){ drawBuilding(e.entity, 'door'); if(e.entity.complete) _silOccScratch.push(e); }
-    else if(e.type==='gate_front'){ drawBuilding(e.entity, 'front'); if(e.entity.complete) _silOccScratch.push(e); }
-    else if(e.type==='tc_back'){ drawBuilding(e.entity, 'back'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='gate_back'){ drawBuilding(e.entity, 'back'); _silOccScratch.push(e); }
+    else if(e.type==='gate_door'){ drawBuilding(e.entity, 'door'); _silOccScratch.push(e); }
+    else if(e.type==='gate_front'){ drawBuilding(e.entity, 'front'); _silOccScratch.push(e); }
+    else if(e.type==='tc_back'){ drawBuilding(e.entity, 'back'); _silOccScratch.push(e); }
     // Both parts cast silhouettes: a unit walking under the tent canopy is
     // genuinely hidden by it, so it should ghost through. The intersection is
     // exact (only roof-covered pixels), and the foreground punch-out keeps a
     // unit that poked out below the eave (drawn in front) from being tinted.
-    else if(e.type==='tc_front'){ drawBuilding(e.entity, 'front'); if(e.entity.complete) _silOccScratch.push(e); }
+    else if(e.type==='tc_front'){ drawBuilding(e.entity, 'front'); _silOccScratch.push(e); }
     else if(e.type==='market_part'){
       drawBuilding(e.entity, e.part);
       if(e.part!=='ground') _silOccScratch.push(e); // plaza ground sits in the -1000 band, never occludes
@@ -454,6 +458,20 @@ function render(){
         drawFlagMarker(to.x, to.y, false);
       }
     });
+  }
+
+  // Garrison-boarding lines: an own unit walking INTO a ram (AoE2 garrison-rams)
+  // traces a white dashed line to it, so you see who's boarding + their route as
+  // it loads. Ram-only for now — TC/tower garrison is hidden (see js/ui.js); to
+  // bring it back, widen this to `garrisonCap(c)<=0` and aim at buildingCenterScreen
+  // for buildings.
+  for (let i = 0; i < entities.length; i++) {
+    let u = entities[i];
+    if (u.type !== 'unit' || u.team !== myTeam || u.task !== 'garrison' || u.garrisonedIn) continue;
+    let c = u.garrisonTarget != null ? entitiesById.get(u.garrisonTarget) : null;
+    if (!c || c.utype !== 'ram') continue;
+    let from = flagScreen(u.x, u.y), to = flagScreen(c.x, c.y);
+    drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
   }
 
   // Flag placement GHOST — armed by EITHER the Guard button (units) or the

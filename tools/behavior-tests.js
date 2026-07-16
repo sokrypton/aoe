@@ -59,6 +59,92 @@ async function withPage(browser, port, entry, fn){
 
   const sections = {
 
+    // ------------------------------------------------ rollback block-grid sync
+    // unitBlock is a derived per-tick pathfinding grid, NOT part of the snapshot.
+    // A rollback/resync restore must rebuild it from the restored entities, else
+    // a command on the first replayed tick (runScheduledCommands, before
+    // update()'s own rebuild) pathfinds against the abandoned-future grid and
+    // desyncs. AI self-play can't catch this (updateAI pathfinds AFTER the
+    // rebuild), so it's asserted here against the real lockstepRestore path.
+    'rollback-block-grid': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 11, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [0, 0],
+        resources: [{ f: 200, w: 200, g: 100, s: 200 }, { f: 200, w: 200, g: 100, s: 200 }],
+        entities: [{ b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 40, y: 40, team: 1 }],
+      });
+      const eqGrid = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+      createUnit('villager', 14, 20, 0);
+      const blockers = [];
+      for (let y = 17; y <= 23; y++) blockers.push(createUnit('villager', 20, y, 0));
+      update(); // stamp the stationary blockers into unitBlock
+      const snap = { t: tick, state: lockstepCaptureState() };
+      const gridSnap = Int32Array.from(unitBlock); // correct grid for the snapshot world
+      // Advance the world so the live grid diverges from the snapshot's.
+      for (const b of blockers) b.x = 30;
+      update(); // rebuilds unitBlock with the blockers now at x=30
+      T.ok('setup: live grid diverged from snapshot', !eqGrid(unitBlock, gridSnap) && gridSnap.some(v => v !== 0));
+      lockstepRestore(snap);
+      T.ok('rollback restore rebuilds unitBlock to match restored world', eqGrid(unitBlock, gridSnap));
+      return T;
+    })),
+
+    // --------------------------------------------- honor-system seat reclaim
+    // The host offers an unknown-identity mid-match/save-load joiner the list of
+    // reclaimable (disconnected, human, not-kicked) seats and binds their claim
+    // (js/net.js reclaimableSeats / hostHandleClaimSeat). Driven directly on the
+    // host decision logic with stub connections (the live multi-tab path is
+    // tools/mp-tests.js).
+    'seat-reclaim': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      netRole = 'host';
+      mpMatchStarted = false;               // skip persistMpSessionMap (needs a live peer)
+      window.onNetConnectionOpen = () => {}; // skip the heavy resume-state send
+      teamControllers = [{ type: 'human' }, { type: 'human' }, { type: 'ai' }, { type: 'human' }];
+      teamNames = ['Host', 'Red', 'CPU', 'Blue'];
+      const stubConn = () => ({ send() {}, close() {}, on() {} });
+      netGuests.clear();
+      netGuests.set(1, { conn: null, seat: 1, token: 't1', tab: null, name: 'Red', connected: false, kicked: false, lastRecvAt: 0 });
+      netGuests.set(2, { conn: null, seat: 2, token: 't2', tab: null, name: 'CPU', connected: false, kicked: false, lastRecvAt: 0 }); // AI seat
+      netGuests.set(3, { conn: stubConn(), seat: 3, token: 't3', tab: null, name: 'Blue', connected: true, kicked: false, lastRecvAt: 0 });
+
+      const list = reclaimableSeats();
+      T.ok('offers only disconnected human seats', list.length === 1 && list[0].seat === 1 && list[0].name === 'Red');
+
+      const conn = stubConn();
+      hostHandleClaimSeat({ type: 'claim-seat', seat: 1, token: 'newdevice', tab: 'tabX', name: 'Red' }, conn);
+      const r1 = netGuests.get(1);
+      T.ok('claim binds the seat and rebinds the device token', r1.connected === true && r1.conn === conn && r1.token === 'newdevice');
+      T.ok('claimed seat drops off the reclaimable list', reclaimableSeats().every(s => s.seat !== 1));
+
+      hostHandleClaimSeat({ type: 'claim-seat', seat: 1, token: 'other', tab: null, name: 'x' }, stubConn());
+      T.ok('a second claim cannot steal a taken seat', netGuests.get(1).conn === conn && netGuests.get(1).token === 'newdevice');
+
+      hostHandleClaimSeat({ type: 'claim-seat', seat: 2, token: 'z', tab: null, name: 'z' }, stubConn());
+      T.ok('an AI seat cannot be claimed', netGuests.get(2).connected === false && netGuests.get(2).conn === null);
+      return T;
+    })),
+
+    // ---------------------------------------------- checksum-coverage guard
+    // detEntityHash coverage is hand-maintained; an unhashed sim-read field is
+    // an invisible desync. detEntityCoverageGaps flags any entity key that is
+    // neither hashed nor allow-listed (js/determinism.js). Run a real war so
+    // combat/eco/AI/lifecycle fields all appear, then assert no gaps — a new
+    // field forces a classify-it-here decision instead of a mystery desync.
+    'checksum-coverage': (page) => withPage(browser, port, '/tools/sim.html?mode=1v1&diff=hard&seed=7100&ticks=1', p => p.evaluate(() => {
+      const T = window.__T;
+      let gaps = new Set();
+      for (let i = 0; i < 45000; i++) {
+        update();
+        if (i % 120 === 0) for (const g of detEntityCoverageGaps()) gaps.add(g);
+        if (typeof gameOver !== 'undefined' && gameOver) break;
+      }
+      for (const g of detEntityCoverageGaps()) gaps.add(g);
+      T.ok('all sim-read entity fields hashed or allow-listed'
+        + (gaps.size ? ' — UNCLASSIFIED: ' + Array.from(gaps).sort().join(', ') : ''), gaps.size === 0);
+      return T;
+    })),
+
     // ---------------------------------------------------------- ram garrison
     'ram-garrison': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
@@ -124,6 +210,136 @@ async function withPage(browser, port, entry, fn){
       T.ok('cmd: archer follows, never boards', bowman.order && bowman.order.kind === 'follow' && bowman.order.id === ram2.id && bowman.task !== 'garrison');
       for (let i = 0; i < 400 && boarding.some(c => !c.garrisonedIn); i++) update();
       T.ok('cmd: all 4 seated', garrisonCount(ram2) === 4);
+      selected = [];
+      return T;
+    })),
+
+    // Click-to-board a ram is DISABLED — the only way to board is the ram's
+    // Garrison button (load mode, see garrison-loadmode). A right-click/tap on a
+    // ram must NOT issue a garrison command; a tap just re-selects the ram (so
+    // its Garrison button shows), and the guard/escort shortcut is off.
+    'ram-input': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      window.fogDisabled = true; myTeam = 0;
+      const scrOf = (u) => {
+        const iso = toIso(u.x, u.y), { ox, oy } = getUnitGroupOffset(u.id);
+        return { sx: (iso.ix - camX + ox) * ZOOM + W / 2, sy: (iso.iy - camY + HALF_TH + oy) * ZOOM + H / 2 + topH };
+      };
+      const setup = (n) => {
+        entities.length = 0; entitiesById.clear(); selected.length = 0;
+        const ram = createUnit('ram', 40, 40, 0), crew = [];
+        for (let i = 0; i < n; i++) crew.push(createUnit('militia', 42 + (i % 3), 42 + ((i / 3) | 0), 0));
+        const iso = toIso(ram.x, ram.y); camX = iso.ix; camY = iso.iy; ZOOM = 2;
+        selected = [...crew];
+        return { ram, crew };
+      };
+      const capture = (fn) => {
+        const orig = window.submitCommand; let cmd = null;
+        window.submitCommand = (c) => { cmd = c; };
+        try { fn(); } finally { window.submitCommand = orig; }
+        return cmd;
+      };
+
+      // RIGHT-CLICK a ram: guard/escort shortcut off, doCommand does NOT board.
+      { const { ram, crew } = setup(2); const { sx, sy } = scrOf(ram);
+        T.ok('rightclick: guard/escort shortcut disabled', tryRightClickGuard(sx, sy) === false);
+        const cmd = capture(() => doCommand(sx, sy));
+        T.ok('rightclick: no garrison command', !cmd || cmd.kind !== 'garrison');
+        T.ok('rightclick: crew not tasked to board', crew.every(c => c.task !== 'garrison')); }
+
+      // TAP a ram: re-selects it (so its Garrison button appears), no board.
+      { const { ram, crew } = setup(2); const { sx, sy } = scrOf(ram);
+        const cmd = capture(() => handleTap(sx, sy));
+        T.ok('tap: no garrison command', !cmd || cmd.kind !== 'garrison');
+        T.ok('tap: re-selects the ram', selected.length === 1 && selected[0] === ram);
+        T.ok('tap: crew not tasked to board', crew.every(c => c.task !== 'garrison')); }
+
+      selected = [];
+      return T;
+    })),
+
+    // ------------------------------------------- garrison INTO a TC/tower/ram
+    // The 'garrison' command (container-first load mode): soldiers/villagers seat
+    // into a building, riders into a ram, capacity is reserved, invalid targets
+    // no-op. Drives the REAL execCommand (not raw field pokes).
+    'garrison-command': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      window.fogDisabled = true; myTeam = 0; localHumanTeam = 0;
+      gameStarted = true; gamePaused = false; // else update() no-ops unit movement
+      const mkBldg = (bt, x, y) => { let b = createBuilding(bt, x, y, 0); b.complete = true; b.hp = b.maxHp; return b; };
+      const reset = () => { entities.length = 0; entitiesById.clear(); selected.length = 0; };
+      const seatLoop = () => { for (let i = 0; i < 400 && entities.some(e => e.task === 'garrison'); i++) update(); };
+
+      // 1. Soldiers AND a villager seat into a forced tower (any unit into a building).
+      { reset();
+        const tower = mkBldg('TOWER', 30, 30);
+        const crew = [createUnit('militia', 33, 30, 0), createUnit('militia', 33, 31, 0), createUnit('villager', 34, 30, 0)];
+        execCommand({ kind: 'garrison', unitIds: crew.map(u => u.id), bldgId: tower.id }, 0);
+        T.ok('cmd: crew tasked to tower', crew.every(u => u.task === 'garrison' && u.garrisonTarget === tower.id));
+        seatLoop();
+        T.ok('cmd: all 3 seated (soldiers + villager)', garrisonCount(tower) === 3 && crew.every(u => u.garrisonedIn === tower.id)); }
+
+      // 2. Ram: rider (militia) tasked, non-rider (archer) rejected by canGarrisonIn.
+      { reset();
+        const ram = createUnit('ram', 30, 30, 0);
+        const mil = createUnit('militia', 32, 30, 0), arc = createUnit('archer', 32, 31, 0);
+        execCommand({ kind: 'garrison', unitIds: [mil.id, arc.id], bldgId: ram.id }, 0);
+        T.ok('ram: rider tasked, archer rejected', mil.task === 'garrison' && arc.task !== 'garrison'); }
+
+      // 3. Reservation: tower (cap 5) pre-filled to 4 → only 1 of 3 more boards.
+      { reset();
+        const tower = mkBldg('TOWER', 30, 30);
+        tower.garrison = [];
+        for (let i = 0; i < 4; i++) { let u = createUnit('militia', 35 + i, 35, 0); u.garrisonedIn = tower.id; tower.garrison.push(u.id); }
+        const extra = [createUnit('militia', 33, 30, 0), createUnit('militia', 33, 31, 0), createUnit('militia', 33, 32, 0)];
+        execCommand({ kind: 'garrison', unitIds: extra.map(u => u.id), bldgId: tower.id }, 0);
+        T.ok('reservation: only 1 of 3 boards (cap-1 free)', extra.filter(u => u.task === 'garrison').length === 1); }
+
+      // 4. Invalid bldgId → no-op (re-validation drop).
+      { reset();
+        const mil = createUnit('militia', 30, 30, 0);
+        execCommand({ kind: 'garrison', unitIds: [mil.id], bldgId: 99999 }, 0);
+        T.ok('invalid target: no-op', mil.task !== 'garrison'); }
+
+      // 5. Ungarrison ALL (the garrison-out button): eject-garrison {all:true}
+      //    releases everyone inside at once.
+      { reset();
+        const ram = createUnit('ram', 30, 30, 0); ram.garrison = [];
+        const riders = [];
+        for (let i = 0; i < 3; i++) { let u = createUnit('militia', 35 + i, 35, 0); u.garrisonedIn = ram.id; ram.garrison.push(u.id); riders.push(u); }
+        execCommand({ kind: 'eject-garrison', bldgId: ram.id, all: true }, 0);
+        T.ok('eject-all: ram emptied, riders freed', garrisonCount(ram) === 0 && riders.every(u => u.garrisonedIn == null)); }
+
+      selected = [];
+      return T;
+    })),
+
+    // ------------------------------------------- garrison load-mode dispatch
+    // The REAL persistent handler garrisonLoadTap (not just the command): a tap
+    // on a unit emits the garrison command and STAYS armed; a tap on empty
+    // ground ends the mode. Entry-point coverage (cf. the ram-boarding lesson).
+    'garrison-loadmode': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      window.fogDisabled = true; myTeam = 0;
+      window.updateUI = () => {}; window.showMsg = () => {};
+      entities.length = 0; entitiesById.clear(); selected.length = 0;
+      const tower = createBuilding('TOWER', 30, 30, 0); tower.complete = true; tower.hp = tower.maxHp;
+      const mil = createUnit('militia', 33, 30, 0);
+      const iso = toIso(mil.x, mil.y); camX = iso.ix; camY = iso.iy; ZOOM = 2;
+      const scr = (u) => { const i = toIso(u.x, u.y), { ox, oy } = getUnitGroupOffset(u.id); return { sx: (i.ix - camX + ox) * ZOOM + W / 2, sy: (i.iy - camY + HALF_TH + oy) * ZOOM + H / 2 + topH }; };
+
+      window.settingGarrison = tower.id;
+      let cap = null; const orig = window.submitCommand; window.submitCommand = (c) => { cap = c; };
+      const s = scr(mil);
+      try { garrisonLoadTap(s.sx, s.sy); } finally { window.submitCommand = orig; }
+      T.ok('loadmode: unit tap emits garrison cmd', !!cap && cap.kind === 'garrison' && cap.bldgId === tower.id && cap.unitIds[0] === mil.id);
+      T.ok('loadmode: stays armed after unit tap', window.settingGarrison === tower.id);
+
+      window.submitCommand = () => {};
+      garrisonLoadTap(4, 4); // top-left, no unit under cursor
+      window.submitCommand = orig;
+      T.ok('loadmode: empty-ground tap ends mode', window.settingGarrison == null);
+
       selected = [];
       return T;
     })),

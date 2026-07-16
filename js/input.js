@@ -188,7 +188,7 @@ document.addEventListener('keydown',e=>{
     // the NEXT mouseup ran finalizeWallDrag() and built the wall the player
     // just tried to cancel.
     if(window.isDraggingWall)abortWallDrag();
-    placing=null;selected=[];window.settingRally=false;window.settingGuard=false;updateUI();
+    placing=null;selected=[];window.settingRally=false;window.settingGuard=false;window.settingGarrison=null;updateUI();
   }
   if(e.key==='Delete'||e.key==='Backspace'){
     let ownIds = selected.filter(en=>en.team===myTeam).map(en=>en.id);
@@ -555,7 +555,8 @@ C.addEventListener('mouseup',e=>{
       return;
     }
     if(isDragging&&dragStart&&dragEnd){
-      doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
     } else {
       if (!isClassicUI) {
         // index.html: a desktop click IS a tap — the page has ONE
@@ -571,6 +572,8 @@ C.addEventListener('mouseup',e=>{
         commitRallyAt(e.clientX, e.clientY);
       } else if (window.settingGuard) {
         dropGuardFlagAt(e.clientX, e.clientY);
+      } else if (window.settingGarrison) {
+        garrisonLoadTap(e.clientX, e.clientY);
       } else {
         doSelect(e.clientX,e.clientY,e.shiftKey);
       }
@@ -588,6 +591,7 @@ document.addEventListener('contextmenu',e=>{
     if(isPointOnMinimap(e.clientX,e.clientY))return; // right-click over the minimap is a no-op, not a world command
     window.settingRally=false; // right-click itself handles rally; clear the flag
     window.settingGuard=false; // right-click issues a manual order instead
+    window.settingGarrison=null; // and cancels a pending garrison load
     // index.html: right-click a friendly building/unit = Guard/Escort flag,
     // then deselect (assign-and-move-on). Ground/enemy fall through to the
     // normal walk/attack below.
@@ -825,7 +829,8 @@ C.addEventListener('touchend',e=>{
       doPlace(mouseX,mouseY);
       updateUI();
     } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
-      doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
+      else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
       let mw=document.getElementById('minimap-wrap');
       if(mw)mw.classList.remove('drag-select-active');
     } else if(!touchMoved&&touchAnchor){
@@ -911,6 +916,7 @@ function finishMobileUnitCommand(){
   selected=[];
   window.settingRally=false;
   window.settingGuard=false;
+  window.settingGarrison=null;
   updateUI();
 }
 // "Assign and move on": once a unit is given a real task via a BUTTON/keyboard
@@ -934,6 +940,30 @@ function commitRallyAt(sx, sy){
     doCommand(sx, sy);
   }
   window.settingRally = false;
+  updateUI();
+}
+
+// Container-first garrison "load mode" (Garrison button, js/ui.js). UNLIKE the
+// one-shot rally/guard flags, this STAYS armed across taps: each tap on an
+// eligible own unit sends it into window.settingGarrison's container and keeps
+// the mode on (its garrison grid fills live); a tap on anything else — the
+// container itself, empty ground, an enemy, an ineligible unit — or a full/gone
+// container ENDS the mode, so the player is never trapped. The container stays
+// selected throughout so its per-unit eject grid is the visible reverse action.
+function garrisonLoadTap(sx, sy){
+  let c = window.settingGarrison != null ? entitiesById.get(window.settingGarrison) : null;
+  if(!c || c.hp<=0 || ramSeatsFree(c)<=0){
+    window.settingGarrison = null;
+    if(typeof showMsg==='function' && c) showMsg('Garrison full');
+    updateUI();
+    return;
+  }
+  let u = getUnitUnderCursor(sx, sy);
+  if(u && u.type==='unit' && u.team===myTeam && !u.garrisonedIn && canGarrisonIn(c, myTeam, u)){
+    submitCommand({ kind:'garrison', unitIds:[u.id], bldgId:c.id });
+    return; // stay armed for the next unit
+  }
+  window.settingGarrison = null; // tapped the container / ground / enemy → finish
   updateUI();
 }
 
@@ -975,6 +1005,12 @@ function dropGuardFlagAt(sx, sy){
 // guard-eligible units — so villager repair/follow on right-click is
 // untouched. Returns true if it issued a guard flag (skip doCommand).
 function tryRightClickGuard(sx, sy){
+  // DISABLED by request: no click-to-guard / click-to-escort. Right-clicking a
+  // friendly building or unit is a plain command (rally/repair/move) now.
+  // Garrison is the ram's Garrison button + the town bell (villagers). The rest
+  // of this function is kept wired so it's a one-line revert to bring it back.
+  return false;
+  // eslint-disable-next-line no-unreachable
   if(!selected.some(s=>s.type==='unit'&&s.team===myTeam&&guardEligible(s)))return false;
   let tgt = getUnitUnderCursor(sx, sy) || getBuildingUnderCursor(sx, sy);
   if(!tgt || !sameSide(tgt.team, myTeam))return false; // ground / enemy → normal command
@@ -989,6 +1025,11 @@ function tryRightClickGuard(sx, sy){
   //    villagers, rams). Soldier-escort stays available via the explicit
   //    Guard button (dropGuardFlagAt), where intent is unambiguous.
   if(tgt.type==='unit' && (selected.includes(tgt) || isSoldierUnit(tgt)))return false;
+  // An own RAM with riders selected BOARDS them — let doCommand handle it
+  // (it loads riders to capacity and auto-escorts the surplus/non-riders).
+  // Without this bail the ram (a wood-vehicle escortee) shortcuts to a pure
+  // escort here and the boarding branch in doCommand is never reached.
+  if(tgt.utype==='ram' && selected.some(s=>s.type==='unit'&&canRideRam(s)))return false;
   let gt = screenToTile(sx, sy);
   if(!gt)return false;
   let ids = selected.filter(s=>s.type==='unit'&&guardEligible(s)).map(s=>s.id);
@@ -1019,6 +1060,11 @@ function handleTap(sx,sy,shift){
   // 2b. Guard-setting mode: the tap becomes the selection's guard flag.
   if(window.settingGuard){
     dropGuardFlagAt(sx, sy);
+    return;
+  }
+  // 2c. Garrison load mode: each tap sends a unit into the container (stays armed).
+  if(window.settingGarrison){
+    garrisonLoadTap(sx, sy);
     return;
   }
 
@@ -1088,6 +1134,8 @@ function handleTap(sx,sy,shift){
       finishMobileUnitCommand();
       return;
     }
+    // (Click-to-board a ram is disabled — tapping a ram just selects it, then
+    // use its Garrison button. Below, tapping any own unit re-selects it.)
     // Tapped on another own UNIT → switch selection (quick re-pick). Tapping
     // an own BUILDING instead falls through to doCommand below — so a
     // selected villager tapping a farm/mill/damaged building actually
@@ -1554,11 +1602,13 @@ function doSelect(sx,sy,shift){
   }
 }
 
-function doBoxSelect(x1,y1,x2,y2){
-  if(gameOver)return; // match is over — no selecting over the frozen map
+// Own, non-garrisoned units whose sprite box overlaps a screen rectangle —
+// shared by drag-select and the garrison load-mode box add so the hit geometry
+// can't drift between them.
+function unitsInBox(x1,y1,x2,y2){
   let sx1=Math.min(x1,x2),sy1=Math.min(y1,y2);
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
-  selected=entities.filter(en=>{
+  return entities.filter(en=>{
     if(en.team!==myTeam)return false;
     if(en.type!=='unit'||en.garrisonedIn)return false;
     let iso=toIso(en.x,en.y);
@@ -1580,6 +1630,20 @@ function doBoxSelect(x1,y1,x2,y2){
     let verticalOverlap = Math.max(sy1, scry + hEnd) <= Math.min(sy2, scry + hStart);
     return horizontalOverlap && verticalOverlap;
   });
+}
+
+// Garrison-load box add (desktop drag while in load mode): send every eligible
+// own unit in the box into the container in one command; stays armed.
+function garrisonBoxLoad(x1,y1,x2,y2){
+  let c = window.settingGarrison != null ? entitiesById.get(window.settingGarrison) : null;
+  if(!c || c.hp<=0){ window.settingGarrison=null; updateUI(); return; }
+  let ids = unitsInBox(x1,y1,x2,y2).filter(u=>!u.garrisonedIn && canGarrisonIn(c, myTeam, u)).map(u=>u.id);
+  if(ids.length) submitCommand({ kind:'garrison', unitIds:ids, bldgId:c.id });
+}
+
+function doBoxSelect(x1,y1,x2,y2){
+  if(gameOver)return; // match is over — no selecting over the frozen map
+  selected=unitsInBox(x1,y1,x2,y2);
   let units=selected.filter(s=>s.type==='unit');
   if(units.length>0)selected=units;
 
@@ -1692,17 +1756,10 @@ function doCommand(sx,sy){
       // Wild bear (gaia): right-click means attack, never follow
       target = clickedUnit;
     } else {
-      // Own RAM clicked with melee infantry selected: that's a BOARDING order
-      // (AoE2 garrison-rams), not a follow — ship the ram as targetId too so
-      // execUnitCommand's garrison-in-ram branch can see it (own-team targets
-      // are otherwise nulled there, and this else-branch is exactly why the
-      // boarding path was unreachable from the mouse). followTarget stays set:
-      // non-rider units in the same selection escort the ram instead.
-      if (clickedUnit.utype === 'ram' && clickedUnit.team === myTeam
-          && selected.some(s => s.type === 'unit' && canRideRam(s))) {
-        target = clickedUnit;
-      }
-      followTarget = clickedUnit;
+      // Click-to-board and click-to-escort are DISABLED: a friendly unit under
+      // the cursor is NOT a target — left/right-clicking it is a plain move.
+      // Garrison a ram via its Garrison button (load mode); the town bell
+      // garrisons villagers. (target & followTarget stay null → plain move.)
     }
   }
   if(!target){

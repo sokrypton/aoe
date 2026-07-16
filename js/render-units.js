@@ -3309,6 +3309,22 @@ function drawUnit(e){
     X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
     X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);
   }
+  // A loaded ram flies a small team flag + rider count (own team only) so you
+  // can see at a glance it's manned — the unit-side echo of the building
+  // garrison-count flag (render-buildings.js).
+  if(e.utype==='ram' && e.team===myTeam && e.garrison && e.garrison.length>0){
+    // Plant the pole base at the ram body's center so the flag reads as
+    // stuck IN the ram (not floating above it), cloth flying clear of the roof.
+    let bh=14, poleLen=28;
+    drawWavingFlag(sx, sy, bh, teamColor(e.team), teamColorDark(e.team), poleLen);
+    let label=String(e.garrison.length);
+    let fy=sy-bh-2-poleLen; // pole top (matches drawWavingFlag's `top`)
+    X.font='bold 12px sans-serif';X.textAlign='left';
+    let tw=X.measureText(label).width+9;
+    X.fillStyle='rgba(0,0,0,0.6)';X.fillRect(sx+3,fy-2,tw,15);
+    X.fillStyle='#ffd700';X.fillText(label,sx+7,fy+9);
+    X.textAlign='left';
+  }
   // Selection is drawn separately, in drawUnitOutlines() — a final
   // pass after every building this frame, so it stays visible even when a
   // building is painted over this unit later in the depth sort (see there

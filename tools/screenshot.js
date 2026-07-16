@@ -152,6 +152,52 @@ const SCENES = {
     selected.length = 0; selected.push(sb);
     (${pageLookAt})(43, 42);
     render();`,
+  frontcorner: `(${pageStage})();
+    window.myTeam = 0;
+    // units ringed around a HOUSE — only the ones actually BEHIND (up-screen,
+    // lower x+y) should get an outline; front/side units must NOT.
+    createBuilding('HOUSE', 30, 30, 0);
+    [[29.5,30.6,'L-front-corner'],[30.6,29.5,'R-front-corner'],[30.6,30.6,'S-front'],
+     [28.9,30.9,'L-out'],[30.9,28.9,'R-out'],[29.3,29.3,'behind-should-outline']]
+      .forEach(([x,y])=>createUnit('militia',x,y,0));
+    (${pageLookAt})(30, 30);
+    render();`,
+  savescene: `(${pageStage})();
+    window.myTeam = 0;
+    createBuilding('HOUSE', 42, 42, 0);
+    createBuilding('HOUSE', 45, 44, 0);
+    createUnit('villager', 44, 43, 0);
+    createUnit('villager', 43, 42, 0);   // house1 RIGHT edge — the flagged case
+    createUnit('villager', 42, 41, 0);   // behind house1
+    (${pageLookAt})(43.5, 43);
+    render();`,
+  ramload: `(${pageStage})();
+    window.myTeam = 0;
+    const ram = createUnit('ram', 40, 40, 0); ram.dir = 7; ram.garrison = [];
+    for(let i=0;i<3;i++){ let u=createUnit('militia', 44+i, 44, 0); u.garrisonedIn=ram.id; ram.garrison.push(u.id); }
+    (${pageLookAt})(41, 41);
+    render();`,
+  towerload: `(${pageStage})();
+    window.myTeam = 0;
+    const t = createBuilding('TOWER', 40, 40, 0); t.complete = true; t.hp = t.maxHp;
+    [[45,45],[46,43],[43,46]].forEach(([x,y])=>{ let u=createUnit('militia',x,y,0); u.task='garrison'; u.garrisonTarget=t.id; });
+    (${pageLookAt})(43, 43);
+    render();`,
+  ramboard: `(${pageStage})();
+    window.myTeam = 0;
+    const ram = createUnit('ram', 40, 40, 0); ram.dir = 7;
+    [[45,45],[46,43],[44,47]].forEach(([x,y])=>{ let u=createUnit('militia',x,y,0); u.task='garrison'; u.garrisonTarget=ram.id; });
+    (${pageLookAt})(43, 43);
+    render();`,
+  foundoccl: `(${pageStage})();
+    window.myTeam = 0;
+    // partly-built TC (60%) with a scout behind it — the behind-building outline
+    // must show through the (translucent, under-construction) building too.
+    const b = createBuilding('TC', 41, 40, 0);
+    b.complete = false; b.buildProgress = Math.round(b.buildTime*0.6); b.hp = Math.round(b.maxHp*0.6);
+    const sc = createUnit('scout', 42, 42, 0); sc.dir = 7;
+    (${pageLookAt})(43, 42);
+    render();`,
   treeoccl: `(${pageStage})();
     window.myTeam = 0;
     // units behind a stand of trees — team outline shows through the canopy

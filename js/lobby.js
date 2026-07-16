@@ -39,7 +39,7 @@
 
 // Available color choices = every entry in the shared palette (js/core.js).
 function lobbyPaletteSize(){ return PLAYER_TEAM_COLORS.length; }
-const LOBBY_NAME_MAX = 24;
+const LOBBY_NAME_MAX = 40; // generous so long/funny names fit; the lobby name field flexes and doesn't ellipsis-clip
 const LOBBY_MAX_PLAYERS = 4;   // one per map corner, any human/AI mix
 
 // Every player starts with a random funny name (host, guests without a
@@ -386,21 +386,26 @@ function buildSeatRow(seat, t){
   row.dataset.seat = String(t);
   let mine = t === lobbyMySeatIndex();
 
-  // Color swatches: full palette for MY seat, single read-only swatch otherwise.
+  // Color: MY seat is a single click-to-cycle swatch (each click advances to
+  // the next colour no other human has), so the row stays one line; other seats
+  // show a read-only swatch.
   let swatches = document.createElement('div');
   swatches.className = 'lobby-seat-swatches';
   if (mine && seat.present) {
     let taken = lobbyTakenColors(t);
-    for (let i = 0; i < lobbyPaletteSize(); i++) {
-      let b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'lobby-swatch' + (i === seat.colorIdx ? ' lobby-swatch-sel' : '');
-      b.style.background = PLAYER_TEAM_COLORS[i];
-      if (taken.has(i) && i !== seat.colorIdx) b.disabled = true;
-      let idx = i;
-      b.onclick = () => lobbyPickColor(idx);
-      swatches.appendChild(b);
-    }
+    let b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'lobby-swatch lobby-swatch-sel';
+    b.style.background = PLAYER_TEAM_COLORS[seat.colorIdx];
+    b.title = 'Click to change colour';
+    b.onclick = () => {
+      let n = lobbyPaletteSize();
+      for (let step = 1; step <= n; step++) {
+        let next = (seat.colorIdx + step) % n;
+        if (!taken.has(next)) { lobbyPickColor(next); break; }
+      }
+    };
+    swatches.appendChild(b);
   } else {
     let sw = document.createElement('div');
     sw.className = 'lobby-swatch';
@@ -446,23 +451,22 @@ function buildSeatRow(seat, t){
   teamSel.onchange = () => lobbySetTeam(t, teamSel.value === '' ? null : parseInt(teamSel.value, 10));
   row.appendChild(teamSel);
 
-  // Status badge. (AI difficulty is the shared global control below the roster,
-  // not shown per-seat.)
-  let badge = document.createElement('span');
-  badge.className = 'lobby-seat-badge';
-  if (seat.type === 'ai') {
-    badge.textContent = 'AI';
-  } else if (t === 0) {
-    badge.textContent = 'Host';
-  } else if (!seat.present) {
-    badge.textContent = 'Waiting…';
-  } else if (seat.ready) {
-    badge.textContent = 'Ready';
-    badge.classList.add('lobby-ready');
+  // Status. AI/Host get a short text label; a guest's readiness is a compact
+  // colour dot (green = ready, amber = not ready, hollow = waiting) so a long
+  // name plus a "Not ready" label never wraps the row onto two lines. The label
+  // rides the dot's title for hover/screen-reader clarity.
+  if (seat.type === 'ai' || t === 0) {
+    let badge = document.createElement('span');
+    badge.className = 'lobby-seat-badge';
+    badge.textContent = seat.type === 'ai' ? 'AI' : 'Host';
+    row.appendChild(badge);
   } else {
-    badge.textContent = 'Not ready';
+    let dot = document.createElement('span');
+    let state = !seat.present ? 'waiting' : seat.ready ? 'ready' : 'notready';
+    dot.className = 'lobby-seat-status status-' + state;
+    dot.title = state === 'ready' ? 'Ready' : state === 'notready' ? 'Not ready' : 'Waiting for player';
+    row.appendChild(dot);
   }
-  row.appendChild(badge);
 
   // Host-only: remove an AI seat / kick a human guest (✕).
   if (netRole === 'host' && t !== 0) {

@@ -170,6 +170,45 @@ function allGuardable(sel){
   return sel.length>0 && sel.every(s=>s.team===myTeam&&guardEligible(s));
 }
 
+// Container-first Garrison "load mode" button (TC/tower/ram). Arming sets the
+// viewer-local window.settingGarrison; subsequent taps (garrisonLoadTap,
+// js/input.js) send units in until Done. Shown for a selected own container
+// with free seats; toggles Garrison<->Done while armed on THIS container.
+function appendGarrisonLoadBtn(act, container){
+  let armed = window.settingGarrison === container.id;
+  let btn=document.createElement('div');
+  // Highlighted while load mode is active; NO "Done" state — stop by pressing
+  // the return arrow (deselectAll clears settingGarrison), not this button.
+  btn.className='act-btn'+(armed?' stance-on':'');
+  btn.dataset.tipType='action';
+  btn.dataset.tipLabel='Garrison';
+  btn.dataset.tipDesc='Tap this, then tap your units to send them inside for shelter (garrisoned archers add arrows). Press the return arrow to stop. To send them back out, use Ungarrison.';
+  btn.innerHTML=`<div class="btn-emoji sprite-icon icon-garrison-in"></div><div class="btn-label">Garrison</div>`;
+  btn.onclick=()=>{
+    if(gameOver)return;
+    window.settingGarrison = container.id; // arm (idempotent); stop via the return arrow
+    if(typeof showMsg==='function') showMsg('Tap units to garrison — press the return arrow when done');
+    updateUI();
+  };
+  act.appendChild(btn);
+}
+
+// Ungarrison-ALL button: releases everyone inside a container at once (vs the
+// per-unit eject in the garrison grid). Shown for a loaded container.
+function appendGarrisonEjectBtn(act, container){
+  let btn=document.createElement('div');
+  btn.className='act-btn';
+  btn.dataset.tipType='action';
+  btn.dataset.tipLabel='Ungarrison';
+  btn.dataset.tipDesc='Send everyone inside back out.';
+  btn.innerHTML=`<div class="btn-emoji sprite-icon icon-garrison-out"></div><div class="btn-label">Ungarrison</div>`;
+  btn.onclick=()=>{
+    if(gameOver)return;
+    submitCommand({kind:'eject-garrison', bldgId:container.id, all:true});
+  };
+  act.appendChild(btn);
+}
+
 // Villager task -> resource carried, used by the selection card, the tile
 // tooltip and the topbar villager counts alike.
 const TASK_RES = { chop: 'wood', mine_gold: 'gold', mine_stone: 'stone', forage: 'food', farm: 'food' };
@@ -434,6 +473,7 @@ function updateUI(){
     window.currentVillagerMenu !== lu.currentVillagerMenu ||
     !!window.settingRally !== !!lu.settingRally ||
     !!window.settingGuard !== !!lu.settingGuard ||
+    window.settingGarrison !== lu.settingGarrison ||
     myBellActive() !== !!lu.bellActive ||
     ageKey !== lu.ageKey
   );
@@ -480,6 +520,7 @@ function updateUI(){
   lu.currentVillagerMenu = window.currentVillagerMenu;
   lu.settingRally = !!window.settingRally;
   lu.settingGuard = !!window.settingGuard;
+  lu.settingGarrison = window.settingGarrison;
   lu.bellActive = myBellActive();
   lu.ageKey = ageKey;
 
@@ -544,6 +585,7 @@ function updateUI(){
   let act=document.getElementById('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally+':'+!!window.settingGuard
     +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
+    +':garr'+(window.settingGarrison||0)
     // age + research flip which buttons EXIST (locked ones are hidden, wall/
     // gate slots upgrade to stone at Feudal) — the panel must rebuild then.
     +':'+(teamAge?teamAge[myTeam]:0)+':'+!!(selected[0]&&selected[0].research)
@@ -695,7 +737,11 @@ function updateUI(){
       lockBtn.dataset.tipDesc=wantLock
         ?'Seal the gate so nothing passes — including your own villagers and allies. Use it to shut a raider out.'
         :'Reopen the gate so your units and allies pass through again.';
-      lockBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-gate-${wantLock?'lock':'unlock'}"></div><div class="btn-label">${wantLock?'Lock':'Unlock'}${gateIds.length>1?' ×'+gateIds.length:''}</div>`;
+      // Icon shows current STATE (not the action): an OPEN padlock while the
+      // gate is unlocked, a CLOSED padlock while it's locked. The label still
+      // names the action (Lock/Unlock). wantLock is true when a gate is
+      // currently OPEN, so the icon is the opposite of the action.
+      lockBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-gate-${wantLock?'unlock':'lock'}"></div><div class="btn-label">${wantLock?'Lock':'Unlock'}${gateIds.length>1?' ×'+gateIds.length:''}</div>`;
       lockBtn.onclick=()=>{
         submitCommand({kind:'gate-lock',bldgIds:gateIds,locked:wantLock});
       };
@@ -988,6 +1034,13 @@ function updateUI(){
     }
     document.getElementById('sel-details').innerHTML=det;
     if(rebuildActions&&e.team===myTeam){
+      // Garrison (load mode) for BUILDINGS (TC/tower) — HIDDEN for now, kept
+      // fully wired so it's a one-line flip to bring back. The ram keeps its own
+      // Garrison button (block near the posture row). Would show for a complete
+      // container with free seats; reverse is the garrison grid's per-unit eject.
+      const GARRISON_LOADMODE_BUILDINGS = false;
+      if(GARRISON_LOADMODE_BUILDINGS && e.complete && garrisonCap(e)>0 && ramSeatsFree(e)>0 && selected.length===1)
+        appendGarrisonLoadBtn(act, e);
       // Cancel Construction — a full-size action button so touch players
       // can abort a mis-placed foundation (desktop always had the
       // Delete/Backspace path to deleteOwnedEntity; there is no key on a
@@ -1319,6 +1372,15 @@ function updateUI(){
     let allSoldiers = selected.length>0 && selected.every(s=>s.type==='unit'&&s.team===myTeam&&isSoldierUnit(s));
     let allScouts   = selected.length>0 && selected.every(s=>s.type==='unit'&&s.utype==='scout'&&s.team===myTeam);
     let guardRow    = allGuardable(selected);
+    // A selected own ram: Garrison-IN (load mode, while it has free seats) and
+    // Ungarrison (release everyone, while it holds riders). Both can show for a
+    // partially-loaded ram.
+    if(rebuildActions && selected.length===1 && selected[0].type==='unit'
+       && selected[0].utype==='ram' && selected[0].team===myTeam){
+      let ram=selected[0];
+      if(ramSeatsFree(ram)>0) appendGarrisonLoadBtn(act, ram);
+      if(ram.garrison && ram.garrison.length>0) appendGarrisonEjectBtn(act, ram);
+    }
     if(rebuildActions && (allSoldiers || guardRow)){
       let ids = selected.map(s=>s.id);
       // Guard tile is HIDDEN for soldiers for now — the four stances already
@@ -1623,6 +1685,8 @@ window.deselectAll = function() {
     window.settingRally = false;
   } else if (window.settingGuard) {
     window.settingGuard = false;
+  } else if (window.settingGarrison) {
+    window.settingGarrison = null;
   } else if (window.currentVillagerMenu === 'eco' || window.currentVillagerMenu === 'mil') {
     window.currentVillagerMenu = 'main';
   } else {

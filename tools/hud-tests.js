@@ -361,6 +361,35 @@ function pageSuite() {
     assert(hasTrain(), 'finished building must show its train actions');
   });
 
+  T('hud: Garrison button — HIDDEN for TC/tower, shown for a ram; stays "Garrison" when armed (no Done), hidden when full', () => {
+    stage();
+    const gbtn = () => [...document.querySelectorAll('#actions .act-btn')].find(b => { let l = b.querySelector('.btn-label'); return l && l.textContent === 'Garrison'; }) || null;
+    const label = () => { let b = [...document.querySelectorAll('#actions .btn-label')].find(l => l.textContent === 'Garrison' || l.textContent === 'Done'); return b ? b.textContent : null; };
+    // Deselect before each select so the strip rebuilds — stage() resets
+    // nextId, so a bare select could reuse a prior test's id (selKey collision →
+    // no rebuild); real play never reuses ids.
+    // TC/tower: the button is pulled back (hidden).
+    const tower = createBuilding('TOWER', 14, 14, 0); tower.complete = true; tower.hp = tower.maxHp;
+    selected = []; window.settingGarrison = null; updateUI();
+    selected = [tower]; updateUI();
+    assert(!gbtn(), 'tower must NOT show the Garrison button (hidden)');
+    // Ram: still has the button.
+    const ram = createUnit('ram', 20, 20, 0);
+    selected = []; updateUI();
+    selected = [ram]; updateUI();
+    assert(!!gbtn(), 'empty ram shows the Garrison button');
+    // Armed: NO "Done" state — the button stays "Garrison" and just highlights.
+    window.settingGarrison = ram.id; updateUI();
+    assert(label() !== 'Done', 'armed ram must NOT flip to Done');
+    assert(gbtn() && gbtn().classList.contains('stance-on'), 'armed ram highlights the Garrison button');
+    // Fill it → no free seats → button hidden.
+    window.settingGarrison = null;
+    ram.garrison = [];
+    for (let i = 0; i < garrisonCap(ram); i++) { let u = createUnit('militia', 30 + i, 30, 0); u.garrisonedIn = ram.id; ram.garrison.push(u.id); }
+    updateUI();
+    assert(!gbtn(), 'full ram hides the Garrison button');
+  });
+
   T('hud: game over shows the outcome card even with units selected', () => {
     stage();
     const m = createUnit('militia', 20, 20, 0);
@@ -970,25 +999,22 @@ function pageSuite() {
       assertEq(r.sel, 0, 'right-click gather order must RELEASE the selection on index.html');
     });
 
-    // ---- Right-click to plant a Guard/Escort flag (index.html) ----
-    // Right-clicking a friendly BUILDING guards it, a friendly UNIT escorts
-    // it; GROUND/ENEMY stay a normal walk/attack; and a villager selection
-    // never intercepts (repair-on-right-click is preserved). Building/unit
-    // click points are self-calibrated against the real hit-tests so the
-    // pixel geometry can't make the test flaky.
-    await tapT('right-click own building = Guard flag (military selected, deselects after tasking)', async () => {
+    // ---- Click-to-guard / click-to-escort is DISABLED (index.html) ----
+    // Right-clicking a friendly BUILDING or UNIT no longer guards/escorts — it
+    // falls through to a plain command (rally/repair/move). GROUND/ENEMY stay a
+    // normal walk/attack. Click points are self-calibrated against the real
+    // hit-tests so the pixel geometry can't make the test flaky.
+    await tapT('right-click own building does NOT guard (click-guard disabled)', async () => {
       const pts = await page.evaluate(tapStage(`
         const b=createBuilding('BARRACKS',29,29,0);
         const m=createUnit('militia',25,25,0); selected=[m];
         window.__pts=(scr)=>{ const base=scr(b.x+b.w/2,b.y+b.h/2); let pt=base;
           for(let dy=0;dy<=100;dy+=3){const c={x:base.x,y:base.y-dy}; if(getBuildingUnderCursor(c.x,c.y)===b){pt=c;break;}}
-          return { p: pt, bId: b.id }; };`));
+          return { p: pt }; };`));
       await page.mouse.click(pts.p.x, pts.p.y, { button: 'right' });
-      const r = await page.evaluate(`({g:window.__cmds.find(c=>c.kind==='guard')||null, other:window.__cmds.some(c=>c.kind==='command'), sel:selected.length})`);
-      if (!r.g) throw new Error('no guard command issued for own-building right-click');
-      assertEq(r.g.targetId, pts.bId, 'guard targetId = the building');
-      if (r.other) throw new Error('should NOT also issue a normal command');
-      assertEq(r.sel, 0, 'guard is a task → deselects');
+      const r = await page.evaluate(`({g:window.__cmds.some(c=>c.kind==='guard'), move:window.__cmds.some(c=>c.kind==='command')})`);
+      if (r.g) throw new Error('click-guard is disabled — own-building right-click must NOT guard');
+      if (!r.move) throw new Error('own-building right-click should fall through to a plain command');
     });
 
     await tapT('wall hit-test: link selects its N/W owner (not the other tile), pillar selects its own wall', async () => {
@@ -1017,11 +1043,9 @@ function pageSuite() {
       assertEq(r.linkOwner, r.aId, 'the A→B link selects its owner A, not the neighbour');
     });
 
-    await tapT('right-click friendly SUPPORT unit = Escort flag; fellow soldier = plain move', async () => {
-      // Escort target must be a support unit (cart/villager/ram) — soldiers
-      // fell victim to accidental escorts when a move order landed on a
-      // friendly body (cursor tolerance ~a unit wide), so they now fall
-      // through to a normal move.
+    await tapT('right-click friendly unit does NOT escort (click-escort disabled)', async () => {
+      // No click-to-escort: right-clicking ANY friendly unit (support cart OR
+      // soldier) issues a plain move command, never a guard/escort flag.
       const pts = await page.evaluate(tapStage(`
         const cart=createUnit('tradecart',30,30,0); const sol=createUnit('militia',34,30,0);
         const m=createUnit('militia',25,25,0); selected=[m];
@@ -1029,16 +1053,14 @@ function pageSuite() {
           const find=(u)=>{ const base=scr(u.x,u.y); let pt={x:base.x,y:base.y-8};
             for(let dy=0;dy<=24;dy+=2){const c={x:base.x,y:base.y-dy}; if(getUnitUnderCursor(c.x,c.y)===u){pt=c;break;}}
             return pt; };
-          return { cart: find(cart), sol: find(sol), cartId: cart.id }; };`));
-      await page.mouse.click(pts.cart.x, pts.cart.y, { button: 'right' });
-      const g = await page.evaluate(`window.__cmds.find(c=>c.kind==='guard')||null`);
-      if (!g) throw new Error('no escort command for friendly trade-cart right-click');
-      assertEq(g.targetId, pts.cartId, 'escort targetId = the trade cart');
-      // soldier target: NO guard command may be issued (falls through to move)
-      await page.evaluate(`window.__cmds.length = 0; selected=[entities.find(e=>e.utype==='militia'&&e.x<28)];`);
-      await page.mouse.click(pts.sol.x, pts.sol.y, { button: 'right' });
-      const g2 = await page.evaluate(`window.__cmds.find(c=>c.kind==='guard')||null`);
-      if (g2) throw new Error('friendly soldier right-click must NOT escort (accidental-escort guard)');
+          return { cart: find(cart), sol: find(sol) }; };`));
+      for (const key of ['cart', 'sol']) {
+        await page.evaluate(`window.__cmds.length = 0; selected=[entities.find(e=>e.utype==='militia'&&e.x<28)];`);
+        await page.mouse.click(pts[key].x, pts[key].y, { button: 'right' });
+        const r = await page.evaluate(`({g:window.__cmds.some(c=>c.kind==='guard'), move:window.__cmds.some(c=>c.kind==='command')})`);
+        if (r.g) throw new Error(key + ' right-click must NOT escort (click-escort disabled)');
+        if (!r.move) throw new Error(key + ' right-click should issue a plain move');
+      }
     });
 
     await tapT('right-click ground = normal walk (NOT a guard flag)', async () => {

@@ -1332,7 +1332,7 @@ function checkNextBuild(e){
     // REACH: a foundation can be near in straight-line distance yet sealed
     // off (wrong side of a closing wall ring) — assigning it anyway churns
     // walk/fail/reassign until the stuck-watchdog fires.
-    unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b));
+    unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id); // deterministic tiebreak
     let bt = null, pt = null;
     for (let cand of unfinishedInQueue) {
       let b = BLDGS[cand.btype];

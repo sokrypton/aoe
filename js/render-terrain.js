@@ -288,6 +288,32 @@ function drawFullTreeBody(sx, cy, s, darken = false) {
   });
 }
 
+// Tree-body art cache: re-running drawFullTreeBody (22 fills) per tree per frame
+// was the top render cost (a forest = hundreds of trees, redrawn again into the
+// behind-occluder clip mask). The body is static per (size-variant, darken), so
+// render it ONCE into an offscreen canvas and blit it — sway/fall stay a cheap
+// rotate around the blit. Cached at ceil(ZOOM*dpr) resolution (dpr is baked into
+// the main ctx, core.js) so the raster has ≥1 texel per on-screen pixel (crisp at
+// any zoom); only ~5 size × 2 darken × a couple zoom buckets ever exist, so no
+// eviction. Anchor (ax,ay) is where the tree's (sx,cy) lands in the canvas.
+// Render-only — no determinism impact.
+const _treeArtCache = new Map();
+function _treeArt(idx, s, darken, scale){
+  const key = idx + ':' + (darken?1:0) + ':' + scale;
+  let a = _treeArtCache.get(key);
+  if(a) return a;
+  const halfW = 18*s + 4, above = 38*s + 4, below = 2*s + 4; // drawFullTreeBody extent about (sx,cy)
+  const wL = 2*halfW, hL = above + below;
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(wL*scale); cv.height = Math.ceil(hL*scale);
+  const cx = cv.getContext('2d');
+  cx.scale(scale, scale);
+  const sv = X; X = cx;
+  try { drawFullTreeBody(halfW, above, s, darken); } finally { X = sv; }
+  a = { canvas: cv, ax: halfW, ay: above, wL, hL };
+  _treeArtCache.set(key, a);
+  return a;
+}
 function drawTreeEntity(x,y){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (black)
@@ -334,12 +360,14 @@ function drawTreeEntity(x,y){
   let darken = (f === 1);
 
   if(t.res > 60 || isFalling){
-    // Stage 1: Standing or falling full tree
+    // Stage 1: Standing or falling full tree — blit the cached body, sway/fall
+    // as a rotate about (sx,cy). Cache at ceil(ZOOM*dpr) so it stays crisp.
+    let idx = (x * 17 + y * 23) % 5;
+    let art = _treeArt(idx, s, darken, Math.max(1, Math.ceil(ZOOM*dpr))); // dpr: match the main ctx scale (core.js) for crisp edges
     X.save();
     X.translate(sx, cy);
     X.rotate(totalSway + fallAngle);
-    X.translate(-sx, -cy);
-    drawFullTreeBody(sx, cy, s, darken);
+    X.drawImage(art.canvas, -art.ax, -art.ay, art.wL, art.hL);
     X.restore();
   } else if(t.res > 20){
     // Stage 2: Standing stump AND fallen tree lying on the ground
