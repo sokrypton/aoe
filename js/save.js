@@ -437,6 +437,7 @@ function applySavedGame(data, opts){
 
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
+    updateTeamVision(); // build the per-team visibility grid before updateFog reads it (post-load cold start)
     updateFog();
     updateUI();
 

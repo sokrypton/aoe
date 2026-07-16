@@ -978,46 +978,6 @@ function initFog() {
   }
 }
 
-// Shared vision math used by updateFog() (each client's own live fog, for
-// whichever team is "me" locally) — the sight-radius table lives in one
-// place. Calls cb(x,y) for every currently-visible tile around every
-// entity on `team`.
-function forEachVisibleTile(team, cb){
-  entities.forEach(e => {
-    if (e.team !== team) return;
-
-    let sight = 5;
-    if (e.type === 'building') {
-      if (!e.complete) sight = 1;
-      else if (e.btype === 'TC') sight = 8;
-      else if (e.btype === 'TOWER') sight = 9;
-      else if (e.btype === 'PTOWER') sight = 8;
-      else if (e.btype === 'HOUSE') sight = 4;
-      else sight = 5;
-    } else {
-      if (e.utype === 'sheep') sight = 3;
-      else if (e.utype === 'scout') sight = 7;
-      else sight = 5;
-    }
-
-    let cx = Math.round(e.x);
-    let cy = Math.round(e.y);
-    if (e.type === 'building') {
-      let b = BLDGS[e.btype];
-      // Footprint spans [e.x, e.x+w) — center tile is Math.floor, not round
-      // (round pushes odd-sized buildings, incl. the 3x3 TC, one tile off).
-      cx = Math.floor(e.x + (e.w || b.w)/2);
-      cy = Math.floor(e.y + (e.h || b.h)/2);
-    }
-
-    let offs = sightOffsets(sight);
-    for (let i = 0; i < offs.length; i += 2) {
-      let tx = cx + offs[i];
-      let ty = cy + offs[i + 1];
-      if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) cb(tx, ty);
-    }
-  });
-}
 
 // Precomputed in-circle tile offsets per sight radius: the naive loop
 // tested (2s+1)^2 boxes per entity per tick (361 iterations at sight 9,
@@ -1050,30 +1010,22 @@ function updateFog() {
     for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) fog[y][x] = 2;
     return;
   }
-  // Drive fog from the sim's per-team visibility grid, which is ALLY-SHARED
-  // (updateTeamVision applies every unit's sight to its team AND its allies).
-  // Read it every tick once it exists — it only changes on refresh ticks, so
-  // fog is stable in between. The own-vision fallback below is own-team ONLY,
-  // so using it whenever the grid was a couple ticks stale made ally-lit tiles
-  // flicker visible↔shroud every few ticks; it now runs only at cold start
-  // (before the first vision build: rollback/resync/load, visionFreshTick < 0).
-  if (visionFreshTick >= 0 && teamVisGrid) {
-    const vg = teamVisGrid[myTeam];
-    for (let y = 0; y < MAP; y++) {
-      const row = fog[y], base = y * MAP;
-      for (let x = 0; x < MAP; x++) {
-        if (vg[base + x] > 0) row[x] = 2;
-        else if (row[x] === 2) row[x] = 1;
-      }
-    }
-    return;
-  }
+  // Drive fog SOLELY from the sim's per-team visibility grid, which is
+  // ALLY-SHARED (updateTeamVision applies every unit's sight to its team AND
+  // its allies). It runs just before us in the tick (js/loop.js) and the load
+  // path builds it explicitly (js/save.js); if it somehow isn't built yet
+  // (visionFreshTick < 0), leave fog untouched this frame rather than
+  // recomputing visibility a second, divergent way — an own-team-only fallback
+  // here used to make ally-lit tiles flicker visible↔shroud between refreshes.
+  if (visionFreshTick < 0 || !teamVisGrid) return;
+  const vg = teamVisGrid[myTeam];
   for (let y = 0; y < MAP; y++) {
+    const row = fog[y], base = y * MAP;
     for (let x = 0; x < MAP; x++) {
-      if (fog[y][x] === 2) fog[y][x] = 1;
+      if (vg[base + x] > 0) row[x] = 2;
+      else if (row[x] === 2) row[x] = 1;
     }
   }
-  forEachVisibleTile(myTeam, (tx, ty) => { fog[ty][tx] = 2; });
 }
 
 // ---- Deterministic per-team visibility (SIM state) ----
@@ -1170,9 +1122,9 @@ function updateTeamVision(){
   if (sig !== visAllianceSig) { visionRebuild = true; visAllianceSig = sig; }
 
   // Apply an entity's sight disk to the count grids. delta +1 adds vision (and
-  // marks explored), -1 removes it. Center/sight math is identical to
-  // forEachVisibleTile (kept for updateFog), so the visible SET this produces
-  // equals the old full re-stamp exactly.
+  // marks explored), -1 removes it. This is the ONE place the sight-radius table
+  // and center math live — updateFog reads the resulting grid rather than
+  // re-walking the entities a second (drift-prone) way.
   const applyDisk = (t, cx, cy, s, delta) => {
     const offs = sightOffsets(s), group = allied[t];
     for (let i = 0; i < offs.length; i += 2) {

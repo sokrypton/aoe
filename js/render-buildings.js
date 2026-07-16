@@ -2291,7 +2291,7 @@ function drawBuilding(e, part = null){
   X.globalAlpha=1;
 
   // Progress bars, HP, selection — only when actively visible (not in fog)
-  if (!window._ghostDraw && (f === 2 || e.team === myTeam)) {
+  if (!window._ghostDraw && (f === 2 || sameSide(e.team, myTeam))) {
   // ONE bar per building: HP grows with construction (AoE2, logic.js), so
   // the HP bar doubles as the progress bar while incomplete — cyan fill to
   // read as "under construction" (the low fill would otherwise look like

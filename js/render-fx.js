@@ -188,12 +188,12 @@ function drawMinimap(){
     let ex = Math.round(e.x), ey = Math.round(e.y);
     let f = e.type === 'building' ? buildingFogLevel(e) : ((fog[ey] && fog[ey][ex]) || 0);
     if (f === 0) return; // completely unexplored — hide everything
-    if (f === 1 && e.team !== myTeam && e.type !== 'building') return; // hide enemy units in shroud (buildings remembered)
+    if (f === 1 && !sameSide(e.team, myTeam) && e.type !== 'building') return; // hide ENEMY units in shroud (allies shared-visible; buildings remembered)
     // Enemy buildings in shroud are only "remembered" if they were actually
     // seen at some point — same scoutedByMe rule as the main map (js/core.js),
     // so the two views never disagree (and buildings put up after we left
     // aren't leaked).
-    if (f === 1 && e.team !== myTeam && e.type === 'building' && !scoutedByMe.has(e.id)) return;
+    if (f === 1 && !sameSide(e.team, myTeam) && e.type === 'building' && !scoutedByMe.has(e.id)) return;
 
     let isSel=selectedIds.has(e.id);
     // Under-attack blink (AoE2): a player object hit in the last ~4 game-s

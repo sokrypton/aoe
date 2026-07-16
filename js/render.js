@@ -293,7 +293,7 @@ function render(){
     let be = (e.type === 'gate_back' || e.type === 'tc_back') ? e.entity : e;
     let f = buildingFogLevel(be);
     if (f === 0) return;
-    if (f === 1 && be.team !== myTeam && !scoutedByMe.has(be.id)) return;
+    if (f === 1 && !sameSide(be.team, myTeam) && !scoutedByMe.has(be.id)) return;
     buildingShadowPath(be);
   });
   X.fill();
@@ -322,7 +322,7 @@ function render(){
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
     // it; it must not write to saved state.
-    if (f === 1 && eTeam !== myTeam) {
+    if (f === 1 && !sameSide(eTeam, myTeam)) {
       // explored but not visible: live enemy units are never shown, and
       // buildings only if previously scouted. A corpse shows if we WITNESSED it
       // (seen) so it finishes decaying on the map after we leave — but one that
