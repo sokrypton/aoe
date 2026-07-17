@@ -52,19 +52,19 @@ function collectUnfinishedWallChain(start){
   return collectWallChain(start, en => !en.complete && !en.exhausted);
 }
 
-// COMPLETED wall/gate run connected to `start` — the double-click unit for
-// bulk actions on a standing line (the Upgrade to Stone button, js/ui.js).
-// Includes same-material gates so the upgrade hits walls and gates together;
-// stops at a material change (see collectWallChain).
+// COMPLETED wall/gate/tower run connected to `start` — the double-click unit for
+// bulk actions on a standing line (the Upgrade to Stone button, js/ui.js). Spans
+// walls, gates AND towers of BOTH materials, so the whole fortification line is
+// grabbed and one Upgrade upgrades every wood piece in it (see collectWallChain).
 function collectCompletedWallRun(start){
   return collectWallChain(start, en => en.complete);
 }
 
-// A wall/gate double-click target: a wall or gate segment (either material),
-// not exhausted. Gates ride along with the walls they sit in so bulk actions
-// (e.g. Upgrade to Stone → SWALL/SGATE) hit the whole line at once.
+// A wall/gate/tower double-click target (either material), not exhausted. Gates
+// and towers ride along with the walls they sit in so a double-click grabs the
+// whole connected line and bulk actions (Upgrade to Stone) hit it all at once.
 function isWallSelectTarget(en){
-  return en.team === myTeam && (isWallBtype(en.btype) || isGateBtype(en.btype)) && !en.exhausted;
+  return en.team === myTeam && (isWallBtype(en.btype) || isGateBtype(en.btype) || isTowerBtype(en.btype)) && !en.exhausted;
 }
 // Two wall/gate pieces are connected if any tile of one is orthogonally
 // adjacent to any tile of the other — footprint-aware, so a 1x1 wall links to
@@ -77,12 +77,11 @@ function wallGateAdjacent(a, b){
   return false;
 }
 function collectWallChain(start, accept){
-  // Same material family only (wood: WALL+GATE, stone: SWALL+SGATE) — the art
-  // links mixed materials into one line, but bulk selection stops at a
-  // material change so double-clicking a wood stretch never sweeps stone
-  // segments into an upgrade order. Within a family, walls AND gates chain
-  // together.
-  let startMat = wallMat(start.btype);
+  // Walls, gates AND towers of EITHER material chain together into one connected
+  // fortification line — a double-click grabs the whole thing, so a bulk Upgrade
+  // to Stone hits every wood piece at once (already-stone pieces ride along and
+  // are simply skipped by the upgrade). `accept` splits a completed run from an
+  // unfinished foundation chain.
   let chain = [start];
   let seen = new Set([start.id]);
   let queue = [start];
@@ -90,8 +89,7 @@ function collectWallChain(start, accept){
     let cur = queue.pop();
     entities.forEach(en => {
       if (seen.has(en.id)) return;
-      if (en.type !== 'building' || en.team !== myTeam) return;
-      if (!(isWallBtype(en.btype) || isGateBtype(en.btype)) || wallMat(en.btype) !== startMat) return;
+      if (en.type !== 'building' || !isWallSelectTarget(en)) return;
       if (!accept(en)) return;
       if (!wallGateAdjacent(en, cur)) return;
       seen.add(en.id);

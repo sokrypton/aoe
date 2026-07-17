@@ -145,6 +145,7 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   // its floating overlays (HP bar, idle "?"), which would otherwise run
   // twice per frame for selected entities / be rasterized into the outline.
   window._maskDraw=true;
+  window._selOutline=true; // this pass IS a selection/behind outline — buildings drawn here skip their wall-link stubs (drawsWallStubs)
   try{
     infos.forEach(info=>{
       const {e,isUnit,anchorX,anchorY,sx,sy}=info;
@@ -169,6 +170,7 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
     });
   } finally {
     window._maskDraw=false;
+    window._selOutline=false;
     X=sv.X; camX=sv.camX; camY=sv.camY;
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
   }

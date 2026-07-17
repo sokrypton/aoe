@@ -182,6 +182,10 @@ function isTowerBtype(bt){ return bt === 'TOWER' || bt === 'PTOWER'; }
 // Buildings that auto-fire arrows at nearby enemies (TC + every tower).
 function firesArrows(bt){ return bt === 'TC' || isTowerBtype(bt); }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
+// Palisade→stone upgrade families: dropping the stone piece on its wooden
+// counterpart builds the upgrade in place (build-over), the same salvage-swap
+// the Upgrade button triggers (execUpgradeWalls, js/commands.js).
+const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE', PTOWER: 'TOWER' };
 // Given a clicked tile and an isWall(x,y) predicate (matching-material wall,
 // same team), pick the gate footprint: prefer a 3-tile run through the click
 // (centred, then shifted), then a 2-tile run, else a lone 1x1. Horizontal
@@ -218,7 +222,9 @@ function gateBaseAt(x, y, btype, team){
   if (x < 0 || y < 0 || x >= MAP || y >= MAP) return false;
   let id = map[y][x] && map[y][x].occupied;
   let e = id && entitiesById.get(id);
-  return !!(e && e.type === 'building' && e.btype === btype && e.team === team);
+  // Snap onto a same-type gate (rebuild) OR the palisade gate this stone gate
+  // upgrades (build-over) — both share the doorway's footprint.
+  return !!(e && e.type === 'building' && (e.btype === btype || WALL_STONE_MATCH[e.btype] === btype) && e.team === team);
 }
 function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 0; }
 
@@ -582,11 +588,11 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Town Center. Trains villagers and accepts resource dropoffs. Garrison up to 15 units for protection and extra arrows.',icon:'🏰'},
+  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Trains villagers and accepts resource drop-off. Garrison units for shelter and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
   LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
   MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
-  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Food drop-off point. Lets you prepay Farm reseeds.',icon:'🛞'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Lets you prepay Farm reseeds.',icon:'🛞'},
   // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
@@ -597,19 +603,19 @@ const BLDGS={
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
   // it also rides the fortified_wall upgrade (see UPGRADES / buildingMaxHpFor),
   // so a fully-fortified ring keeps its towers tougher than its segments.
-  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:T30(2400),garrisonCap:5,maxArrows:5,armor:{m:1,p:7},desc:'Defensive tower and wall bastion. Automatically shoots arrows at nearby enemies. Garrison up to 5 units for extra arrows.',icon:'🗼'},
+  TOWER:{name:'Watch Tower',w:1,h:1,hp:2000,cost:{w:25,s:125},range:8,atk:5,buildTime:T30(2400),garrisonCap:5,maxArrows:5,armor:{m:1,p:7},desc:'Shoots arrows at nearby enemies and anchors walls. Garrison units for extra arrows.',icon:'🗼'},
   // Dark-age wooden bastion in the same deliberate deviation: cheap all-wood
   // lookout that anchors an early palisade ring, then upgrades IN PLACE to a
   // Watch Tower once Feudal unlocks it (see WALL_STONE_MATCH / execUpgradeWalls
   // in commands.js). No fortified_wall bonus — that tech is stone-only.
-  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:T30(1500),garrisonCap:3,maxArrows:3,armor:{m:0,p:5},desc:'Wooden lookout and palisade bastion. Shoots arrows at nearby enemies; garrison up to 3 units for extra arrows. Upgrades in place to a Watch Tower.',icon:'🗼'},
-  WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:T30(150),armor:{m:2,p:5},desc:'Wooden barrier to slow attackers and block chokepoints. Cheap, but burns fast under melee.',icon:'🪵'},
-  GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:T30(900),armor:{m:2,p:2},desc:'Wall opening. Automatically opens for allied units.',icon:'🚪'},
+  PTOWER:{name:'Palisade Watch Tower',w:1,h:1,hp:850,cost:{w:110},range:6,atk:4,buildTime:T30(1500),garrisonCap:3,maxArrows:3,armor:{m:0,p:5},desc:'Wooden tower: shoots arrows and anchors palisade walls. Garrison units for extra arrows. Upgrades to a Watch Tower.',icon:'🗼'},
+  WALL:{name:'Palisade Wall',w:1,h:1,hp:250,cost:{w:2},buildTime:T30(150),armor:{m:2,p:5},desc:'Cheap wooden barrier. Blocks attackers, but burns fast under melee.',icon:'🪵'},
+  GATE:{name:'Palisade Gate',w:1,h:1,hp:400,cost:{w:30},buildTime:T30(900),armor:{m:2,p:2},desc:'Wall opening. Opens automatically for allies.',icon:'🚪'},
   // Feudal-age stone fortifications — the pre-palisade stats. A stone gate
   // only replaces stone wall segments (and palisade gate only palisades):
   // matching material keeps the consume/refund math and the art coherent.
-  SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:T30(240),armor:{m:8,p:10},desc:'Heavy stone defensive barrier. Requires the Feudal Age.',icon:'🧱'},
-  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:T30(2100),armor:{m:6,p:6},desc:'Stone wall opening. Automatically opens for allied units.',icon:'🚪'},
+  SWALL:{name:'Stone Wall',w:1,h:1,hp:1800,cost:{s:5},buildTime:T30(240),armor:{m:8,p:10},desc:'Heavy stone barrier. Requires the Feudal Age.',icon:'🧱'},
+  SGATE:{name:'Stone Gate',w:1,h:1,hp:2750,cost:{s:30},buildTime:T30(2100),armor:{m:6,p:6},desc:'Stone wall opening. Opens automatically for allies.',icon:'🚪'},
   // Feudal-age Market. Trains Trade Carts (which shuttle to any OTHER player's
   // Market for gold, allied or enemy — see updateTradeCart in logic.js) and
   // hosts the global commodity buy/sell exchange (see marketPrices / execMarketTrade
@@ -619,7 +625,7 @@ const BLDGS={
   // footprint passes units (see walkable() in pathfinding.js and the
   // isFarm/walkable skip in clearFootprintForBuild); tiles stay `occupied` so
   // nothing can be built on it.
-  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and lets you buy and sell resources for gold. Trade Carts earn gold by travelling to another player’s Market. Requires the Feudal Age.',icon:'⚖️'}
+  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and trades resources for gold. Requires the Feudal Age.',icon:'⚖️'}
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
@@ -650,7 +656,7 @@ const UNITS={
   // +70, two repairers stalled a ram forever — the finishing stalemate).
   // Keep in sync with wallBreachTicks (ai.js). All `bonuses` tables are the
   // AoE2 attack-bonus data read by damageEntity (js/logic.js).
-  ram:{bonuses:{building:110},name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:180},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Devastates buildings and walls; nearly immune to arrows but helpless against melee. Infantry can garrison inside to ride protected and speed it up.',icon:'🐏'},
+  ram:{bonuses:{building:110},name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:180},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Smashes buildings; immune to arrows but helpless in melee. Garrison infantry to ride protected and speed it up.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -663,7 +669,7 @@ const UNITS={
   // defenceless: it shuttles between its home Market and another player's
   // Market, delivering gold scaled by the distance between them (see
   // updateTradeCart in logic.js). Costs 1 pop like any unit.
-  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:T30(60),armor:{m:0,p:0},cost:{w:100,g:50},trainTime:T30(1530),desc:'Trades between your Market and another player’s Market to earn gold. The farther apart the Markets, the more gold per trip.',icon:'🛒'}
+  tradecart:{name:'Trade Cart',hp:70,atk:0,range:0,speed:1.0,rof:T30(60),armor:{m:0,p:0},cost:{w:100,g:50},trainTime:T30(1530),desc:'Earns gold trading between your Market and another player’s. Farther Markets pay more.',icon:'🛒'}
 };
 
 // ---- Unit classification: THE one place a new unit type gets sorted.

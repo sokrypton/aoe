@@ -48,15 +48,17 @@ function canPlace(type,x,y,team=0,ignoreAge=false,rejectUnits=false){
       let existing = entitiesById.get(t.occupied);
       // GATE, TOWER, and a STONE WALL upgrade may be placed on top of an
       // existing allied wall (they consume the wall tile(s) they're built on,
-      // see execBuildPlacement's wallsToRemove); anything else, including
-      // another palisade, must not overlap an existing building. Stone-on-
-      // palisade lets you reinforce a wooden wall in place (an upgrade you
-      // build, mirroring how a gate is built over walls).
+      // see execBuildPlacement's plan.replaced); anything else must not overlap
+      // an existing building. Dropping a stone piece on its palisade counterpart
+      // (WALL_STONE_MATCH: wall/gate/tower) is the upgrade: a COMPLETE piece
+      // salvage-swaps in place (like the Upgrade button); an UNBUILT one is
+      // cancelled (refunded) and overwritten with a fresh stone site — the exec
+      // paths split on `complete`, both handled, neither stacks.
       if (existing && existing.type === 'building' && existing.team === team &&
-          ((isGateBtype(type) && (existing.btype === GATE_WALL_MATCH[type] || existing.btype === type)) ||
-           (isTowerBtype(type) && isWallBtype(existing.btype)) ||
-           (type === 'SWALL' && existing.btype === 'WALL'))) {
-        continue; // gate on matching wall OR same-type gate (rebuild); tower/stone-wall on wall
+          (WALL_STONE_MATCH[existing.btype] === type ||
+           (isGateBtype(type) && (existing.btype === GATE_WALL_MATCH[type] || existing.btype === type)) ||
+           (isTowerBtype(type) && isWallBtype(existing.btype)))) {
+        continue; // wood→stone build-over; gate on matching wall / same-type gate; tower on wall
       }
       return false;
     }
@@ -2377,7 +2379,6 @@ function updateVillagerBuild(e){
       if(bt.buildProgress>=bt.buildTime){
         bt.complete=true;
         bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
-        delete bt.upgrading; // committed-upgrade marker (execUpgradeWalls) — done its job
         e.buildTarget=null;
         if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
           window.playSound('train'); // play herald fanfare on building completed
@@ -3100,13 +3101,11 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
 function deleteOwnedEntity(en){
   // AoE2: deleting an UNFINISHED foundation refunds its cost (mis-click
   // recovery / quick-wall cancel). Completed buildings and units refund
-  // nothing. (Slight over-refund if a gate/tower consumed wall tiles for
-  // a stone discount — rare and in the player's favor, acceptable.)
-  // A committed upgrade-in-progress (execUpgradeWalls, js/commands.js) is
-  // NOT cancellable — it already paid out its salvage, so refunding the new
-  // type's cost too would mint free resources; force-deleting one just
-  // destroys it for nothing.
-  if(en.type==='building'&&!en.complete&&!en.exhausted&&!en.upgrading){
+  // nothing. A stone upgrade-in-progress is a normal foundation too — it
+  // cancels and refunds its (new) cost like any other. (Slight over-refund if a
+  // gate/tower consumed wall tiles for a stone discount — in the player's favor,
+  // acceptable.)
+  if(en.type==='building'&&!en.complete&&!en.exhausted){
     refundCost(en.team, BLDGS[en.btype].cost); // the OWNING team's resources, not always team 0's
     // Feedback belongs to the OWNER's screen only — under lockstep both
     // peers execute this for either team's delete commands.

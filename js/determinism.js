@@ -87,6 +87,10 @@ function detEntityHash(e){
   h = detMix(h, e.exhausted ? 1 : 0);             // farm lifecycle
   h = detMix(h, e.trainTick || 0);                // training clock
   h = detMixFloat(h, e.buildProgress || 0);       // construction clock
+  // Build-over/upgrade foundation flag (applyStoneUpgrade + commitBuildingPlacement,
+  // js/commands.js): wasWall keeps the site SOLID for pathfinding (pathfinding.js),
+  // read on later ticks, so a divergence must trip the checksum here.
+  h = detMix(h, e.wasWall ? 1 : 0);
   // Multi-builder census (countSiteWorker, js/logic.js): lastWorkers sets the
   // shared build/repair rate NEXT tick; curWorkers/workTick roll into it.
   h = detMix(h, e.workTick || 0);
@@ -185,6 +189,7 @@ const DET_HASHED_KEYS = new Set([
   'order','prevTask','siegeSpot','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
   'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
+  'wasWall',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

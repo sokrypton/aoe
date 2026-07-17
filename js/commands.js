@@ -782,12 +782,15 @@ function resolveBuildingPlacement(btype, tx, ty, team){
     if (w && replaced.indexOf(w) < 0) replaced.push(w);
   }
   if (isTowerBtype(btype)) {
+    // A tower consumes the wall it sits on (palisade→stone upgrades never reach
+    // here — a complete counterpart swaps in place, an unbuilt one is overwritten;
+    // both handled in execBuildPlacement).
     let ex = entities.find(en => en.type === 'building' && en.x === tx && en.y === ty && isWallBtype(en.btype) && en.team === team);
     if (ex && replaced.indexOf(ex) < 0) replaced.push(ex);
   }
   if (isGateBtype(btype)) {
-    // Rebuilding a gate over an existing same-type gate (repair): collect it so
-    // it's replaced. Occupancy grid → finds the multi-tile gate on any tile.
+    // A gate over an existing same-type gate (repair): collect it so it's
+    // replaced. Occupancy grid → finds the multi-tile gate on any tile.
     for (let dy = 0; dy < gh; dy++) for (let dx = 0; dx < gw; dx++) {
       let row = map[oy + dy]; let id = row && row[ox + dx] && row[ox + dx].occupied;
       let g = id && entitiesById.get(id);
@@ -831,29 +834,68 @@ function execBuildPlacement(cmd){
   if (vils.length === 0) return;
   if (canPlace(btype, tile.x, tile.y, myTeam)) {
     let b = BLDGS[btype];
+    // Dropping a stone piece on its wooden counterpart IS the upgrade. A COMPLETE
+    // counterpart salvage-swaps in place via the shared applyStoneUpgrade (so
+    // hand-placement and the Upgrade button behave identically); an UNBUILT one
+    // is cancelled+refunded and overwritten with a fresh stone site (handled just
+    // below). Everything else keeps the build-placement path.
+    let counterpart = stoneCounterpartAt(tile.x, tile.y, btype, myTeam);
+    if (counterpart && counterpart.complete) {
+      if (applyStoneUpgrade([counterpart], myTeam)) dispatchBuilders(vils, counterpart);
+      return;
+    }
     let plan = resolveBuildingPlacement(btype, tile.x, tile.y, myTeam);
-    // Gates, stone-on-palisade upgrades, and towers all consume the walls they
-    // sit on (collected in plan.replaced) — their cost refunds against ours
-    // (effectiveBuildCost, js/logic.js — shared with the AI's placeAIBuilding).
-    let consumes = isGateBtype(btype) || btype === 'SWALL' || isTowerBtype(btype);
+    // The unbuilt counterpart is refunded+removed by overwriteUnbuiltFoundation
+    // below; drop it from plan.replaced (a 1x1 wall counterpart lands there via the
+    // wall scan) so commit treats the new piece as a fresh site, not a wall-consume.
+    if (counterpart) plan.replaced = plan.replaced.filter(w => w !== counterpart);
+    let consumes = isGateBtype(btype) || isTowerBtype(btype);
     let actualCost = effectiveBuildCost(btype, consumes ? plan.replaced : null);
     if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
+    if (counterpart) overwriteUnbuiltFoundation(counterpart, myTeam); // cancel the unbuilt piece before placing fresh
     spendCost(myTeam, actualCost);
     let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
     if (!bldg) return;
-    vils.forEach(v => {
-      v.buildQueue = v.buildQueue || [];
-      v.buildQueue.push(bldg.id);
-      // Start construction task immediately if not already building
-      if (v.task !== 'build' || !v.buildTarget) {
-        v.task = 'build'; v.buildTarget = bldg.id; v.target = null; v.savedTask = null;
-        let pt = b.isFarm ? { x: plan.ox, y: plan.oy } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, bldg, v.id) : { x: plan.ox + plan.gw, y: plan.oy + plan.gh });
-        pathUnitTo(v, pt.x, pt.y);
-      }
-    });
+    dispatchBuilders(vils, bldg, plan);
   } else {
     feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
   }
+}
+// Queue villagers onto a build target and send the first idle one to it. `plan`
+// (present for fresh placements) picks the walk-to point; an in-place upgrade
+// target has no plan → walk to its footprint edge.
+function dispatchBuilders(vils, target, plan){
+  vils.forEach(v => {
+    v.buildQueue = v.buildQueue || [];
+    v.buildQueue.push(target.id);
+    if (v.task !== 'build' || !v.buildTarget) {
+      v.task = 'build'; v.buildTarget = target.id; v.target = null; v.savedTask = null;
+      let pt = (plan && BLDGS[target.btype].isFarm) ? { x: plan.ox, y: plan.oy }
+        : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, target, v.id)
+          : { x: target.x + target.w, y: target.y + target.h });
+      pathUnitTo(v, pt.x, pt.y);
+    }
+  });
+}
+// Overwriting an UNBUILT foundation (a wall/gate/tower still under construction,
+// not yet a real piece): cancel it — full refund of what was paid to place it
+// (AoE2 foundation-cancel; the whole cost is spent up front), and drop the entity
+// so the new piece takes its tile as a fresh construction site. A COMPLETE piece
+// upgrades in place via applyStoneUpgrade instead. Direct delete, NOT handleDeath
+// — it isn't dying, and it can't hold garrison (incomplete).
+function overwriteUnbuiltFoundation(en, team){
+  refundCost(team, BLDGS[en.btype].cost);
+  entities = entities.filter(e => e !== en);
+  entitiesById.delete(en.id);
+  selected = selected.filter(s => s !== en);
+}
+// The allied wooden piece under (x,y) that `btype` upgrades (WALL_STONE_MATCH),
+// or null. Shared by the placement + wall-drag paths so both detect an upgrade
+// target identically (complete → salvage-swap, unbuilt → overwrite).
+function stoneCounterpartAt(x, y, btype, team){
+  let row = map[y]; let id = row && row[x] && row[x].occupied;
+  let e = id && entitiesById.get(id);
+  return (e && e.type === 'building' && e.team === team && WALL_STONE_MATCH[e.btype] === btype) ? e : null;
 }
 
 // Wall drag (resolver: finalizeWallDrag, js/input.js).
@@ -863,37 +905,43 @@ function execWallDrag(cmd){
   let line = getWallElbowTiles(cmd.start, cmd.corner || cmd.end, cmd.end);
   let wallB = isWallBtype(cmd.btype) ? cmd.btype : 'WALL';
   let b = BLDGS[wallB];
-  let placedCount = 0;
-  let lastBldg = null;
+  let targets = [];   // new foundations + in-place upgrades, in drag order
+  let upgrades = [];  // palisade counterparts to salvage-swap in one batch
   line.forEach(t => {
-    if (canPlace(wallB, t.x, t.y, myTeam)) {
-      let actualCost = { ...b.cost };
-      if (canAfford(myTeam, actualCost)) {
-        spendCost(myTeam, actualCost);
-        let bldg = createBuilding(wallB, t.x, t.y, myTeam);
-        bldg.complete = false;
-        bldg.buildProgress = 0;
-        lastBldg = bldg;
-        placedCount++;
-        vils.forEach(v => {
-          v.buildQueue = v.buildQueue || [];
-          v.buildQueue.push(bldg.id);
-        });
-      } else {
-        feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
-      }
+    if (!canPlace(wallB, t.x, t.y, myTeam)) return;
+    // A stone wall dragged over an allied palisade IS the upgrade: a COMPLETE one
+    // salvage-swaps in place (batched below), an UNBUILT one is cancelled+refunded
+    // and overwritten fresh — either way nothing stacks on the tile.
+    let counterpart = stoneCounterpartAt(t.x, t.y, wallB, myTeam);
+    if (counterpart && counterpart.complete) {
+      upgrades.push(counterpart); targets.push(counterpart);
+      return;
+    }
+    let actualCost = { ...b.cost };
+    if (canAfford(myTeam, actualCost)) {
+      if (counterpart) overwriteUnbuiltFoundation(counterpart, myTeam); // cancel the unbuilt palisade first
+      spendCost(myTeam, actualCost);
+      let bldg = createBuilding(wallB, t.x, t.y, myTeam);
+      bldg.complete = false;
+      bldg.buildProgress = 0;
+      targets.push(bldg);
+    } else {
+      feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
     }
   });
-  if (placedCount > 0 && lastBldg) {
-    vils.forEach(v => {
-      if (v.task !== 'build' || !v.buildTarget) {
-        v.task = 'build';
-        v.buildTarget = lastBldg.id;
-        v.target = null;
-        pathUnitTo(v, lastBldg.x + 1, lastBldg.y + 1);
-      }
-    });
-  }
+  // Batch the counterpart upgrades (one afford/salvage pass, like the button). A
+  // batch that can't afford aborts inside applyStoneUpgrade — drop those targets.
+  if (upgrades.length && !applyStoneUpgrade(upgrades, myTeam)) targets = targets.filter(t => upgrades.indexOf(t) < 0);
+  if (!targets.length) return;
+  vils.forEach(v => {
+    v.buildQueue = v.buildQueue || [];
+    targets.forEach(t => v.buildQueue.push(t.id));
+    if (v.task !== 'build' || !v.buildTarget) {
+      let last = targets[targets.length - 1];
+      v.task = 'build'; v.buildTarget = last.id; v.target = null;
+      pathUnitTo(v, last.x + 1, last.y + 1);
+    }
+  });
 }
 
 // Train / cancel (resolvers: trainUnit/cancelQueue, js/ui.js).
@@ -936,28 +984,33 @@ function execResearchAge(tc){
 // costs) and swaps into a construction site of the target type that
 // villagers build up at normal build rate. Its tiles keep blocking, but at
 // foundation HP it's fragile — upgrading mid-siege is a gamble, not a heal.
-// The `upgrading` flag marks it committed: once started an upgrade just
-// proceeds (no cancel/refund — see deleteOwnedEntity and the cancel UI in
-// js/ui.js), which is what keeps it from being an instant free salvage.
-const WALL_STONE_MATCH = { WALL: 'SWALL', GATE: 'SGATE', PTOWER: 'TOWER' };
+// The site is a normal foundation from here: villagers finish it and it
+// cancels/refunds like any other building (deleteOwnedEntity, js/logic.js).
+// WALL_STONE_MATCH (palisade→stone families) lives in js/core.js.
 // Shared by the exec below and the UI button's net-cost preview (js/ui.js).
 function upgradeSalvage(en){
   let frac = Math.min(1, en.hp / en.maxHp), refund = {};
   Object.entries(BLDGS[en.btype].cost).forEach(([k, v]) => { refund[k] = Math.floor(v * frac); });
   return refund;
 }
-function execUpgradeWalls(cmd, team){
-  // De-dup ids first: a repeated id would double-charge and, worse, the second
+// THE wood→stone mechanism. Salvage-swap palisade pieces to their stone
+// counterparts IN PLACE: HP-scaled refund credited before the full stone charge,
+// garrison ejected, each piece reset to a normal construction site villagers
+// build up. The Upgrade button (execUpgradeWalls), build-over placement
+// (execBuildPlacement) and wall-drag (execWallDrag) all funnel here, so a stone
+// piece dropped on its wooden counterpart behaves identically everywhere. Returns
+// true if the swap happened (a construction site now exists), false if it aborted
+// (age-locked/unaffordable) so callers know whether to dispatch builders.
+function applyStoneUpgrade(pieces, team){
+  // De-dup + validate: a repeated piece would double-charge and, worse, a second
   // pass reads WALL_STONE_MATCH[already-swapped btype] === undefined and blanks
-  // the building's btype. The UI never emits dupes, but a malformed/replayed
-  // command must not corrupt sim state (→ desync).
-  let pieces = [...new Set(cmd.unitIds || [])].map(id => entitiesById.get(id))
-    .filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
-  if (!pieces.length) return;
+  // the btype. Only own, complete, living palisade counterparts qualify.
+  pieces = [...new Set(pieces)].filter(en => en && en.type === 'building' && WALL_STONE_MATCH[en.btype] && en.team === team && en.complete && en.hp > 0);
+  if (!pieces.length) return false;
   let locked = pieces.find(en => !isUnlocked(team, WALL_STONE_MATCH[en.btype]));
   if (locked) {
     feedbackFor(team, () => { showMsg('Requires the ' + AGES[ageReq(WALL_STONE_MATCH[locked.btype])].name + '!'); if (window.playSound) playSound('error'); });
-    return;
+    return false;
   }
   let cost = {}, refund = {};
   pieces.forEach(en => {
@@ -970,7 +1023,7 @@ function execUpgradeWalls(cmd, team){
   let store = resourceStore(team);
   if (!Object.entries(cost).every(([k, v]) => store[resourceName(k)] + (refund[k] || 0) >= v)) {
     feedbackFor(team, () => { showMsg('Not enough resources!'); if (window.playSound) playSound('error'); });
-    return;
+    return false;
   }
   Object.entries(refund).forEach(([k, v]) => { store[resourceName(k)] += v; });
   spendCost(team, cost);
@@ -987,9 +1040,10 @@ function execUpgradeWalls(cmd, team){
     w.atk = BLDGS[upType].atk || 0;
     w.buildTime = BLDGS[upType].buildTime || 200;
     w.maxHp = buildingMaxHpFor(team, upType);
-    // Fresh construction site, same as execBuildPlacement foundations, but
-    // committed: `upgrading` blocks cancel/refund so it can't be undone.
-    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true; w.upgrading = true;
+    // A normal construction site, same as execBuildPlacement foundations:
+    // villagers build it up, and it cancels/refunds like any other (wasWall keeps
+    // its tile SOLID for pathfinding so the wall line isn't open mid-rebuild).
+    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true;
     markMapDirty(w.x, w.y);
   });
   feedbackFor(team, () => {
@@ -1001,6 +1055,11 @@ function execUpgradeWalls(cmd, team){
     if (window.playSound) playSound('build', pieces[0].x, pieces[0].y);
   });
   if (typeof updateUI === 'function') updateUI();
+  return true;
+}
+function execUpgradeWalls(cmd, team){
+  // Button path: the selected pieces' ids → the shared salvage-swap.
+  applyStoneUpgrade((cmd.unitIds || []).map(id => entitiesById.get(id)), team);
 }
 
 // Lock/unlock the selected own gates (AoE2). A locked gate seals the doorway to

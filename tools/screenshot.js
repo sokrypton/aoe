@@ -104,9 +104,9 @@ const SCENES = {
     // already the stone/tower target, complete=false, half-built HP) — the
     // normal foundation render (alpha ramp + cyan HP bar) applies
     const uw = createBuilding('SWALL', 25, 35, 0);
-    uw.complete = false; uw.buildProgress = uw.buildTime / 2; uw.hp = uw.maxHp / 2; uw.upgrading = true;
+    uw.complete = false; uw.buildProgress = uw.buildTime / 2; uw.hp = uw.maxHp / 2; uw.wasWall = true;
     const ut = createBuilding('TOWER', 29, 35, 0);
-    ut.complete = false; ut.buildProgress = ut.buildTime / 2; ut.hp = ut.maxHp / 2; ut.upgrading = true;
+    ut.complete = false; ut.buildProgress = ut.buildTime / 2; ut.hp = ut.maxHp / 2; ut.wasWall = true;
     (${pageLookAt})(28.5, 31);
     render();`,
   guardbldg: `(${pageStage})();
@@ -279,6 +279,23 @@ const SCENES = {
     createBuilding('TOWER',24,34,0); createBuilding('WALL',25,34,0); createBuilding('WALL',24,35,0);
     (${pageLookAt})(29, 30);
     render();`,
+  selwall: `(${pageStage})();
+    window.myTeam = 0;
+    // a SELECTED stone wall mid-run: its outline includes ITS OWN S/E link stubs
+    // (part of the wall — clicking a stub selects it), so the highlight matches
+    // what you clicked (drawsWallStubs).
+    let __sw;
+    for (let x=24;x<=32;x++){ let w=createBuilding('SWALL',x,26,0); if(x===28)__sw=w; }
+    selected.length = 0; selected.push(__sw);
+    (${pageLookAt})(28, 26); render();`,
+  seltower: `(${pageStage})();
+    window.myTeam = 0;
+    // a SELECTED tower in a wall run: outline traces just the tower body — its
+    // wall-link stubs belong to the adjoining run, not the tower (drawsWallStubs).
+    let __st;
+    for (let x=24;x<=32;x++){ if(x===28){__st=createBuilding('TOWER',x,26,0);} else createBuilding('SWALL',x,26,0); }
+    selected.length = 0; selected.push(__st);
+    (${pageLookAt})(28, 26); render();`,
   ghostgate: `(${pageStage})();
     window.myTeam = 0;
     // E–W wall run; the GATE placement cursor hovers one tile NORTH of it (off
@@ -300,8 +317,8 @@ const SCENES = {
     render();`,
   ghostvalid: `(${pageStage})();
     window.myTeam = 0;
-    // VALID gate placement (cursor ON the wall run): should still preview its
-    // connection to the flanking walls.
+    // VALID gate placement (cursor ON the wall run): the gate ghost shows only
+    // its posts + door — no wall-extension stubs into the flanking walls.
     for (let x=24;x<=32;x++) createBuilding('WALL',x,26,0);
     (${pageLookAt})(28, 26);
     mouseX = (toIso(28.5,26.5).ix - camX)*ZOOM + W/2;
@@ -375,6 +392,111 @@ const SCENES = {
     mouseY = (toIso(29.5,26.5).iy - camY)*ZOOM + H/2 + topH;
     placing = 'GATE';
     render();`,
+  gatereplace: `(${pageStage})();
+    window.myTeam = 0;
+    // REAL placement path: full wall run, then drop a gate on it the way the
+    // game does (resolve+commit) — checks the gate REPLACES the walls under it.
+    // top run: click gate on the MIDDLE of the run
+    for (let x=24;x<=34;x++) createBuilding('WALL',x,24,0);
+    { const plan = resolveBuildingPlacement('GATE', 29, 24, 0);
+      window.__log1 = JSON.stringify(plan.replaced.map(w=>w.x+','+w.y))+' fp='+plan.gw+'x'+plan.gh+' @'+plan.ox+','+plan.oy;
+      commitBuildingPlacement('GATE', plan, 0, true); }
+    // bottom run: click gate on the LAST tile of the run (edge case)
+    for (let x=24;x<=34;x++) createBuilding('WALL',x,28,0);
+    { const plan = resolveBuildingPlacement('GATE', 34, 28, 0);
+      window.__log2 = JSON.stringify(plan.replaced.map(w=>w.x+','+w.y))+' fp='+plan.gw+'x'+plan.gh+' @'+plan.ox+','+plan.oy;
+      commitBuildingPlacement('GATE', plan, 0, true); }
+    (${pageLookAt})(29, 26);
+    render();`,
+  gatestone: `(${pageStage})();
+    window.myTeam = 0;
+    // Repro of the user report: long STONE wall run with towers + a stone gate
+    // dropped in via the REAL placement path. Row 24: gate in the middle.
+    for (let x=22;x<=40;x++) createBuilding('SWALL',x,24,0);
+    createBuilding('TOWER',26,24,0); createBuilding('TOWER',36,24,0);
+    { const plan = resolveBuildingPlacement('SGATE', 31, 24, 0);
+      window.__log1 = 'mid: repl='+JSON.stringify(plan.replaced.map(w=>w.btype+w.x+','+w.y))+' fp='+plan.gw+'x'+plan.gh+' @'+plan.ox+','+plan.oy;
+      commitBuildingPlacement('SGATE', plan, 0, true); }
+    // Row 30: gate placed adjacent to a tower (click one tile off the tower)
+    for (let x=22;x<=40;x++) createBuilding('SWALL',x,30,0);
+    createBuilding('TOWER',30,30,0);
+    { const plan = resolveBuildingPlacement('SGATE', 32, 30, 0);
+      window.__log2 = 'nrtwr: repl='+JSON.stringify(plan.replaced.map(w=>w.btype+w.x+','+w.y))+' fp='+plan.gw+'x'+plan.gh+' @'+plan.ox+','+plan.oy;
+      commitBuildingPlacement('SGATE', plan, 0, true); }
+    (${pageLookAt})(31, 27);
+    render();`,
+  gatereal: `
+    NUM_TEAMS = 2;
+    window.__pendingMatchSeed = 7200;
+    setMapSize('medium');
+    restartGame('hard');
+    teamControllers = [{type:'ai',difficulty:'hard'},{type:'ai',difficulty:'hard'}];
+    resetAIStates();
+    gameStarted = true; gamePaused = true;
+    window.__headlessSim = true;
+    window.playSound = () => {}; window.showMsg = () => {}; window.updateUI = () => {};
+    let __gate = null;
+    for (let i = 0; i < 90000 && !gameOver; i++) {
+      update();
+      if (i % 500 === 0) {
+        __gate = entities.find(e => e.type==='building' && e.btype==='SGATE' && e.complete);
+        if (__gate) break;
+      }
+    }
+    __gate = entities.find(e => e.type==='building' && e.btype==='SGATE' && e.complete)
+          || entities.find(e => e.type==='building' && isGateBtype(e.btype) && e.complete)
+          || entities.find(e => e.type==='building' && isGateBtype(e.btype));
+    window.__headlessSim = false;
+    window.myTeam = __gate ? __gate.team : 0;
+    window.fogDisabled = true; updateFog();
+    if (__gate) {
+      window.__log1 = 'gate '+__gate.btype+' @'+__gate.x+','+__gate.y+' '+__gate.w+'x'+__gate.h+' complete='+__gate.complete+' tick='+tick;
+      (${pageLookAt})(__gate.x + __gate.w/2, __gate.y + __gate.h/2);
+    } else { window.__log1 = 'NO GATE built by tick '+tick; (${pageLookAt})(30,30); }
+    render();`,
+  gatefeudal: `(${pageStage})();
+    window.myTeam = 0;
+    teamAge[0] = 1; // Feudal: stone gate posts use blue flat tops (no merlons)
+    const G=(bt,cx,cy)=>{ const p=resolveBuildingPlacement(bt,cx,cy,0); commitBuildingPlacement(bt,p,0,true); return p; };
+    for (let x=22;x<=40;x++) createBuilding('SWALL',x,24,0);
+    createBuilding('TOWER',26,24,0);
+    G('SGATE',31,24);
+    (${pageLookAt})(31, 24.5); render();`,
+  gatecastle: `(${pageStage})();
+    window.myTeam = 0;
+    teamAge[0] = 2; // Castle: merlons on stone gate posts
+    const G=(bt,cx,cy)=>{ const p=resolveBuildingPlacement(bt,cx,cy,0); commitBuildingPlacement(bt,p,0,true); return p; };
+    // STONE wall + stone gate (the user's material), Castle age.
+    for (let x=22;x<=40;x++) createBuilding('SWALL',x,24,0);
+    createBuilding('TOWER',26,24,0);
+    G('SGATE',31,24);
+    // palisade wall + gate directly below for comparison
+    for (let x=22;x<=40;x++) createBuilding('WALL',x,30,0);
+    G('GATE',31,30);
+    (${pageLookAt})(31, 27); render();`,
+  gatejuncA: `(${pageStage})();
+    window.myTeam = 0;
+    const G=(bt,cx,cy)=>{ const p=resolveBuildingPlacement(bt,cx,cy,0); commitBuildingPlacement(bt,p,0,true); return p; };
+    // L-corner: E-W run row 22 + N-S run col 32, gate near the corner.
+    for(let x=24;x<=32;x++)createBuilding('SWALL',x,22,0);
+    for(let y=23;y<=30;y++)createBuilding('SWALL',32,y,0);
+    window.__log1='A '+JSON.stringify(G('SGATE',30,22).replaced.map(w=>w.x+','+w.y));
+    (${pageLookAt})(30, 25); render();`,
+  gatejuncB: `(${pageStage})();
+    window.myTeam = 0;
+    const G=(bt,cx,cy)=>{ const p=resolveBuildingPlacement(bt,cx,cy,0); commitBuildingPlacement(bt,p,0,true); return p; };
+    // parallel double wall (rows 26 & 27), gate on row 26.
+    for(let x=24;x<=34;x++){createBuilding('SWALL',x,26,0);createBuilding('SWALL',x,27,0);}
+    window.__log1='B '+JSON.stringify(G('SGATE',29,26).replaced.map(w=>w.x+','+w.y));
+    (${pageLookAt})(29, 26.5); render();`,
+  gatejuncC: `(${pageStage})();
+    window.myTeam = 0;
+    const G=(bt,cx,cy)=>{ const p=resolveBuildingPlacement(bt,cx,cy,0); commitBuildingPlacement(bt,p,0,true); return p; };
+    // T-junction: E-W run row 32 + perpendicular stub going S at x=29.
+    for(let x=24;x<=34;x++)createBuilding('SWALL',x,32,0);
+    for(let y=33;y<=35;y++)createBuilding('SWALL',29,y,0);
+    window.__log1='C '+JSON.stringify(G('SGATE',30,32).replaced.map(w=>w.x+','+w.y));
+    (${pageLookAt})(30, 33); render();`,
   gatewalk: `(${pageStage})();
     window.myTeam = 0;
     // E–W wall (row 33) with a 3-wide gate; militia walking N->S through the
@@ -534,6 +656,8 @@ const SCENES = {
         } else {
           await shoot(`${scene}-z${z}`);
         }
+        const logs = await page.evaluate(`[window.__log1||'', window.__log2||'']`);
+        if (logs[0] || logs[1]) console.error('  LOG:', logs.filter(Boolean).join(' | '));
       }
       console.error(`scene ${scene}: done`);
     }

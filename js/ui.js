@@ -182,7 +182,7 @@ function appendGarrisonLoadBtn(act, container){
   btn.className='act-btn'+(armed?' stance-on':'');
   btn.dataset.tipType='action';
   btn.dataset.tipLabel='Garrison';
-  btn.dataset.tipDesc='Tap this, then tap your units to send them inside for shelter (garrisoned archers add arrows). Press the return arrow to stop. To send them back out, use Ungarrison.';
+  btn.dataset.tipDesc='Tap this, then tap units to send them inside for shelter (archers add arrows). Use Ungarrison to send them back out.';
   btn.innerHTML=`<div class="btn-emoji sprite-icon icon-garrison-in"></div><div class="btn-label">Garrison</div>`;
   btn.onclick=()=>{
     if(gameOver)return;
@@ -609,11 +609,11 @@ function updateUI(){
     +':'+(selected[0]&&selected[0].btype==='MARKET'?(mp=>mp.food+'.'+mp.wood+'.'+mp.stone)(marketPricesFor(myTeam)):'')
     // Construction state flips the whole strip: an in-progress foundation
     // shows Cancel Build, a finished one shows its train/research actions. Key
-    // on the FLAGS (complete/exhausted/upgrading), NOT buildProgress — the
-    // latter changes every tick and would rebuild the strip 30×/s (eating
-    // queue-slot clicks). Without this the strip never refreshed when a
-    // building finished while still selected.
-    +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')+(s.upgrading?'u':'')).join('.');
+    // on the FLAGS (complete/exhausted), NOT buildProgress — the latter changes
+    // every tick and would rebuild the strip 30×/s (eating queue-slot clicks).
+    // Without this the strip never refreshed when a building finished while
+    // still selected.
+    +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')).join('.');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = document.getElementById('bottom');
@@ -663,7 +663,7 @@ function updateUI(){
     // foundations (the wall-chain double-tap/double-click produces exactly
     // this), one button refunds them all. The single-foundation Cancel
     // Build lives in the building card below; this is its multi twin.
-    if(selected.length>1 && selected.every(s=>s.type==='building'&&s.team===myTeam&&!s.complete&&!s.exhausted&&!s.upgrading)){
+    if(selected.length>1 && selected.every(s=>s.type==='building'&&s.team===myTeam&&!s.complete&&!s.exhausted)){
       let ids=selected.map(s=>s.id);
       let bulkBtn=document.createElement('div');
       bulkBtn.className='act-btn framed';
@@ -680,33 +680,32 @@ function updateUI(){
       act.appendChild(bulkBtn);
     }
 
-    // Upgrade — when the selection is entirely own COMPLETED upgradeable
-    // wood pieces (walls / palisade gates / palisade watch towers;
-    // double-click/double-tap on a standing wall selects the whole
-    // connected run) and every piece's target is unlocked (Feudal).
-    // Instantly salvages the old piece (HP-scaled refund) and swaps it into
-    // a construction site of the target type that villagers build up — see
-    // execUpgradeWalls (js/commands.js). Once started it just proceeds
-    // (no cancel). The chips show the NET cost after salvage.
-    if(selected.length>0
-       && selected.every(s=>s.type==='building'&&s.team===myTeam&&WALL_STONE_MATCH[s.btype]&&s.complete&&!s.exhausted)
-       && selected.every(s=>isUnlocked(myTeam,WALL_STONE_MATCH[s.btype]))){
-      let ids=selected.map(s=>s.id);
+    // Upgrade — shows when the selection holds ANY own COMPLETED upgradeable wood
+    // piece (wall / palisade gate / palisade watch tower) whose stone target is
+    // unlocked. Double-click a wall to grab the whole connected run — walls, gates
+    // AND towers, wood and stone — and this upgrades every wood piece at once;
+    // already-stone pieces ride along and are skipped (here and in
+    // execUpgradeWalls). Instantly salvages each old piece (HP-scaled refund) and
+    // swaps it into a normal construction site villagers build up. Chips show the
+    // NET cost after salvage.
+    let upg=selected.filter(s=>s.type==='building'&&s.team===myTeam&&WALL_STONE_MATCH[s.btype]&&s.complete&&!s.exhausted&&isUnlocked(myTeam,WALL_STONE_MATCH[s.btype]));
+    if(upg.length>0){
+      let ids=upg.map(s=>s.id);
       let cost={};
-      selected.forEach(s=>{
+      upg.forEach(s=>{
         Object.entries(BLDGS[WALL_STONE_MATCH[s.btype]].cost)
           .forEach(([k,v])=>{cost[k]=(cost[k]||0)+v;});
         Object.entries(upgradeSalvage(s))
           .forEach(([k,v])=>{cost[k]=(cost[k]||0)-v;});
       });
       Object.keys(cost).forEach(k=>{if(cost[k]<=0)delete cost[k];});
-      let allGates=selected.every(s=>s.btype==='GATE');
-      let allTowers=selected.every(s=>s.btype==='PTOWER');
-      let tipLabel=allTowers?'Upgrade to Watch Tower':(allGates?'Upgrade to Stone Gate':'Upgrade to Stone Wall');
+      let allGates=upg.every(s=>s.btype==='GATE');
+      let allTowers=upg.every(s=>s.btype==='PTOWER');
+      let tipLabel=allTowers?'Upgrade to Watch Tower':(allGates?'Upgrade to Stone Gate':'Upgrade to Stone');
       let tipDesc=(allTowers
         ?'Rebuild the selected palisade tower'+(ids.length>1?'s':'')+' as '+(ids.length>1?'stone Watch Towers.':'a stone Watch Tower.')
-        :'Rebuild the selected palisade '+(allGates?'gate':'piece'+(ids.length>1?'s':''))+' in stone.')
-        +' Salvages the old piece (refund scales with remaining HP) and starts construction — send villagers to build it. Cannot be cancelled once started.';
+        :'Rebuild the selected palisade '+(allGates?'gate'+(ids.length>1?'s':''):'piece'+(ids.length>1?'s':''))+' in stone.')
+        +' Salvages the old piece (refund scales with HP); villagers build the new one.';
       let upIcon=allTowers?iconKey('TOWER'):(allGates?'SGATE':'SWALL'); // age-suffixed WT- cell; no bare TOWER icon
       let upBtn=document.createElement('div');
       upBtn.className='act-btn'; // building icon has no baked frame → keep the button's own border
@@ -735,7 +734,7 @@ function updateUI(){
       lockBtn.dataset.tipType='action';
       lockBtn.dataset.tipLabel=wantLock?'Lock Gate':'Unlock Gate';
       lockBtn.dataset.tipDesc=wantLock
-        ?'Seal the gate so nothing passes — including your own villagers and allies. Use it to shut a raider out.'
+        ?'Seal the gate so nothing passes, including allies. Shuts a raider out.'
         :'Reopen the gate so your units and allies pass through again.';
       // Icon shows current STATE (not the action): an OPEN padlock while the
       // gate is unlocked, a CLOSED padlock while it's locked. The label still
@@ -1055,9 +1054,8 @@ function updateUI(){
       // Delete/Backspace path to deleteOwnedEntity; there is no key on a
       // phone). Full refund, same rule as the key (js/logic.js's
       // deleteOwnedEntity). Only for a genuine in-progress foundation —
-      // an exhausted farm mid-reseed is not a cancellable purchase, and a
-      // committed upgrade (e.upgrading) just proceeds, no cancel.
-      if(!e.complete && !e.exhausted && !e.upgrading && selected.length===1){
+      // an exhausted farm mid-reseed is not a cancellable purchase.
+      if(!e.complete && !e.exhausted && selected.length===1){
         let cancelBuildBtn=document.createElement('div');
         cancelBuildBtn.className='act-btn framed';
         cancelBuildBtn.dataset.tipType='action';
@@ -1141,10 +1139,10 @@ function updateUI(){
               // Classic keeps AoE2's cancel-by-clicking-again. The tap-model
               // skin deliberately does NOT: on touch, a stray tap on the TC
               // card silently refunded a whole age advance.
-              btn.dataset.tipDesc='The Town Center cannot train villagers while advancing. Click to cancel and refund the full cost.';
+              btn.dataset.tipDesc='Advancing to the next Age — no villagers meanwhile. Click to cancel and refund.';
               btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
             } else {
-              btn.dataset.tipDesc='The Town Center cannot train villagers while advancing.';
+              btn.dataset.tipDesc='Advancing to the next Age — no villagers meanwhile.';
             }
           } else {
             btn.dataset.cost=JSON.stringify(next.cost);
@@ -1180,7 +1178,7 @@ function updateUI(){
             rallyBtn.id='rally-set-btn';
             rallyBtn.dataset.tipType='action';
             rallyBtn.dataset.tipLabel='Set Rally Point';
-            rallyBtn.dataset.tipDesc='Newly trained units will automatically walk to the rally point after spawning.';
+            rallyBtn.dataset.tipDesc='New units walk to the rally point after training.';
             rallyBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Set Rally</div>`;
             rallyBtn.onclick=()=>{
               if(gameOver)return;
@@ -1234,7 +1232,7 @@ function updateUI(){
         let btn=document.createElement('div');btn.className='act-btn';
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Prepay Farm Reseed';
-        btn.dataset.tipDesc='Pre-pays 60 Wood to automatically reseed an exhausted farm. Queued reseeds are used before spending resources again.';
+        btn.dataset.tipDesc='Pre-pays 60 Wood to auto-reseed an exhausted farm. Queued reseeds are used first.';
         btn.dataset.tipCost=JSON.stringify({w:60});
         btn.dataset.cost=JSON.stringify({w:60});
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div>${costChips({w:60})}`;
@@ -1451,7 +1449,7 @@ function updateUI(){
           let btn=document.createElement('div');btn.className='act-btn'+(common==='guard'?' stance-on':'');
           btn.dataset.tipType='action';
           btn.dataset.tipLabel='Guard';
-          btn.dataset.tipDesc='Tap ground to hold that spot, a building to stand watch there, or one of your units to escort it. Guards chase enemies only a short way and return to their post; a plain move relocates the post, and picking another stance ends the guard.';
+          btn.dataset.tipDesc='Tap ground, a building, or a unit to guard it. Guards chase briefly, then return. Move relocates the post; another stance ends it.';
           btn.innerHTML=`<div class="btn-emoji sprite-icon icon-rally"></div><div class="btn-label">Guard</div>`;
           btn.onclick=()=>{ if(gameOver)return; window.settingGuard=true; showMsg('Tap the map to set guard position'); updateUI(); };
           act.appendChild(btn);
@@ -1465,7 +1463,7 @@ function updateUI(){
         let btn=document.createElement('div');btn.className='act-btn'+(common==='auto'?' stance-on':'');
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Auto Scout';
-        btn.dataset.tipDesc='The scout automatically explores unmapped areas and avoids fights. To stop it, pick another stance or order it somewhere.';
+        btn.dataset.tipDesc='The scout explores unmapped areas and avoids fights. Pick another stance or give an order to stop.';
         btn.innerHTML=`<div class="btn-emoji sprite-icon icon-compass"></div><div class="btn-label">Auto Scout</div>`;
         // Auto Scout is a dispatch task, not an adjust-in-place toggle: like a
         // build/gather order it DESELECTS the scout so the player can get on

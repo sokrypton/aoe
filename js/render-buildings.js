@@ -594,6 +594,19 @@ function isWallLike(b, mat){
 // joined double-wall corner reads better than a broken ring.) Shared by WALL,
 // TOWER, PTOWER and GATE — every structure that draws these link stubs.
 function _wlLike(tx, ty){ return isWallLike(getConnectedBuilding(tx, ty)); }
+// Whether to draw a piece's link stubs toward its neighbours this pass.
+// In a SELECTION OUTLINE, only a WALL keeps its stubs: they're part of the wall
+// (clicking a stub selects that wall, so the highlight must match what you
+// clicked). A TOWER or GATE is a discrete structure whose stubs belong to the
+// adjoining wall run, not the piece — its outline is just its own body. A GATE
+// placement ghost also drops them (a hovering gate shouldn't sprout wall stubs;
+// the transient neighbour lookup flashed a mismatched-material link). Normal
+// render always draws them.
+function drawsWallStubs(e){
+  if (window._selOutline && !isWallBtype(e.btype)) return false;
+  if (window._ghostDraw && isGateBtype(e.btype)) return false;
+  return true;
+}
 function wallSouthRung(x, y){ // vertical link (x,y) -> (x,y+1)
   return (_wlLike(x-1,y)   || _wlLike(x+1,y))
       && (_wlLike(x-1,y+1) || _wlLike(x+1,y+1))
@@ -1965,6 +1978,7 @@ function drawBuilding(e, part = null){
     // clear each other instead of clipping at the shared vertex.
     // South neighbor (y+1) — towers join runs of EITHER material; the link
     // stub takes the neighbor's material so it reads as that run continuing.
+    if (drawsWallStubs(e)) {
     let sN = getConnectedBuilding(e.x, e.y + 1);
     if (isWallLike(sN) && !wallSouthRung(e.x, e.y)) {
       let m2 = wallMat(sN.btype) || 'wood', lt2 = m2==='stone'?4:3.5;
@@ -1979,6 +1993,7 @@ function drawBuilding(e, part = null){
     }
     // Ghost-only: preview the N/W joins real neighbours will draw once placed.
     drawGhostBackJoins(e.x, e.y, sx, linkY, wallH, tc);
+    }
 
     // Castle: pole planted on the back merlon's cap (sy-40), matching the
     // TC. Feudal / palisade: pole rises from the peaked cap's apex (sy-42).
@@ -2034,10 +2049,12 @@ function drawBuilding(e, part = null){
     // and closed rings keep every join; only side-by-side parallels separate.
     // South link (vertical) and East link (horizontal); skip cross-rungs
     // between parallel runs (see wallSouthRung/wallEastRung).
+    if (drawsWallStubs(e)) {
     if (_wlLike(e.x, e.y+1) && !wallSouthRung(e.x, e.y)) drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     if (_wlLike(e.x+1, e.y) && !wallEastRung(e.x, e.y)) drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
     // Ghost-only: preview the N/W joins real neighbours will draw once placed.
     drawGhostBackJoins(e.x, e.y, sx, linkY - 0.5, wallH, tc);
+    }
   }
 
   else if(isGateBtype(e.btype)){
@@ -2086,9 +2103,10 @@ function drawBuilding(e, part = null){
       if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t1sx, t1sy, '#e0d8c6', '#c4bba6', darken);
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy).
-      // Skipped for 'body' (hit test): stubs belong to the adjoining run.
+      // Skipped for 'body' (hit test), the selection outline, and gate ghosts:
+      // the stubs belong to the adjoining run, not the gate (drawsWallStubs).
       let wallH = 14;
-      if (part !== 'body') {
+      if (part !== 'body' && drawsWallStubs(e)) {
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
         if (_wlLike(e.x + 1, e.y) && !wallEastRung(e.x, e.y)) {
@@ -2141,9 +2159,10 @@ function drawBuilding(e, part = null){
       if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t2sx, t2sy, '#e0d8c6', '#c4bba6', darken);
 
       // Draw connection links for Post 2 (front post centered at t2sy).
-      // Skipped for 'body' (hit test) — stubs belong to the adjoining run.
+      // Skipped for 'body' (hit test), the selection outline, and gate ghosts
+      // (drawsWallStubs) — the stubs belong to the adjoining run, not the gate.
       let wallH = 14;
-      if (part !== 'body') {
+      if (part !== 'body' && drawsWallStubs(e)) {
       if (wallLineNS) {
         // N-S Gate: Post 2 is the far post at (e.x, e.y+n-1). Parallel goes
         // South (y+n), Perpendicular goes East (x+1, y+n-1).

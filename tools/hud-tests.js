@@ -544,7 +544,7 @@ function pageSuite() {
     assert(projectiles.length === 3, 'expected 3 arrows (villager pt2 at maxArrows), got ' + projectiles.length);
   });
 
-  T('ptower: upgrade = instant swap to a construction site — Dark-age rejected; salvage refunds; committed (no cancel); villagers finish a full TOWER', () => {
+  T('ptower: upgrade = instant swap to a normal construction site — Dark-age rejected; salvage refunds; cancelable; villagers finish a full TOWER', () => {
     stage();
     const store = resourceStore(0);
     store.wood = 1000; store.stone = 1000;
@@ -555,14 +555,14 @@ function pageSuite() {
     pt.hp = Math.round(pt.maxHp / 2); // half-damaged: salvage must halve → floor(110w * 0.5) = 55
     execCommand({ kind: 'upgrade-walls', unitIds: [pt.id] }, 0);
     assert(pt.btype === 'TOWER', 'did not swap to TOWER');
-    assert(!pt.complete && pt.hp === 1 && pt.upgrading, 'not a committed construction site: complete=' + pt.complete + ' hp=' + pt.hp + ' upgrading=' + pt.upgrading);
+    assert(!pt.complete && pt.hp === 1, 'not a construction site: complete=' + pt.complete + ' hp=' + pt.hp);
     // salvage 55 wood credited before the full TOWER cost is charged
     assert(store.wood === 1000 + 55 - BLDGS.TOWER.cost.w, 'wood salvage off: ' + store.wood);
     assert(store.stone === 1000 - BLDGS.TOWER.cost.s, 'stone cost off: ' + store.stone);
-    // committed: deleting the site gives NO refund (can't cancel an upgrade)
+    // it's a NORMAL foundation now: cancelling it refunds its (new) TOWER cost
     const wBefore = store.wood, sBefore = store.stone;
     deleteOwnedEntity(pt);
-    assert(store.wood === wBefore && store.stone === sBefore, 'cancelling a committed upgrade refunded: ' + store.wood + '/' + store.stone);
+    assert(store.wood === wBefore + BLDGS.TOWER.cost.w && store.stone === sBefore + BLDGS.TOWER.cost.s, 'cancel did not refund the upgrade site: ' + store.wood + '/' + store.stone);
     // fresh run: villagers build the swapped site up into a full Watch Tower
     stage();
     const s2 = resourceStore(0); s2.wood = 1000; s2.stone = 1000; teamAge[0] = 1;
@@ -571,9 +571,173 @@ function pageSuite() {
     const v = createUnit('villager', 29.5, 30.5, 0);
     v.task = 'build'; v.buildTarget = pt2.id;
     step(BLDGS.TOWER.buildTime + 600);
-    assert(pt2.complete && !pt2.upgrading, 'villager never finished the upgrade');
+    assert(pt2.complete, 'villager never finished the upgrade');
     assert(pt2.maxHp === buildingMaxHpFor(0, 'TOWER') && pt2.hp === pt2.maxHp, 'not full TOWER hp: ' + pt2.hp + '/' + pt2.maxHp);
     assert(pt2.atk === BLDGS.TOWER.atk, 'atk not refreshed: ' + pt2.atk);
+  });
+
+  // ---- Wood→stone BUILD-OVER / drag: dropping a stone piece on its palisade
+  // counterpart funnels through the SAME salvage-swap as the Upgrade button
+  // (applyStoneUpgrade) — HP-scaled refund, in-place swap, committed. core.js.
+  T('build-over: a stone TOWER on a palisade tower salvage-swaps IN PLACE (same id, HP-scaled refund)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1; // Feudal → stone TOWER unlocked
+    const pt = createBuilding('PTOWER', 30, 30, 0); // complete, full HP
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'TOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    // in-place: same entity, now a normal TOWER construction site (not delete+recreate)
+    assert(entitiesById.get(pt.id) === pt, 'entity replaced instead of swapped in place');
+    assert(pt.btype === 'TOWER' && !pt.complete && pt.hp === 1, 'not a TOWER construction site: btype=' + pt.btype + ' complete=' + pt.complete + ' hp=' + pt.hp);
+    assert(!entities.some(e => e !== pt && e.type === 'building' && e.x === 30 && e.y === 30), 'a second building was stacked on the tile');
+    // full-HP PTOWER salvages its whole wood, credited before the TOWER charge
+    assert(store.wood === 1000 + BLDGS.PTOWER.cost.w - BLDGS.TOWER.cost.w, 'wood salvage off: ' + store.wood);
+    assert(store.stone === 1000 - BLDGS.TOWER.cost.s, 'stone cost off: ' + store.stone);
+    assert(v.buildTarget === pt.id || (v.buildQueue || []).includes(pt.id), 'villager not sent to the upgrade site');
+    teamAge[0] = 0;
+  });
+
+  T('build-over: a stone SGATE on a palisade gate swaps in place, keeping the 3-wide doorway footprint', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1; // Feudal → stone gate unlocked
+    const gate = createBuilding('GATE', 30, 30, 0, 3, 1); // complete 3-wide palisade gate
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'SGATE', tileX: 31, tileY: 30, unitIds: [v.id] }, 0);
+    assert(entitiesById.get(gate.id) === gate, 'gate replaced instead of swapped in place');
+    assert(gate.btype === 'SGATE' && gate.w === 3 && !gate.complete, 'not a 3-wide SGATE construction site: btype=' + gate.btype + ' w=' + gate.w + ' complete=' + gate.complete);
+    assert(store.wood === 1000 + BLDGS.GATE.cost.w - (BLDGS.SGATE.cost.w || 0), 'wood salvage off: ' + store.wood);
+    assert(store.stone === 1000 - BLDGS.SGATE.cost.s, 'stone cost off: ' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  T('build-over: garrison in a palisade tower is EJECTED (not orphaned) when a stone tower is built over it', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const pt = createBuilding('PTOWER', 30, 30, 0);
+    const g1 = createUnit('militia', 29, 30, 0), g2 = createUnit('militia', 29, 31, 0);
+    enterGarrison(g1, pt); enterGarrison(g2, pt);
+    assert(garrisonCount(pt) === 2, 'setup: 2 units should be garrisoned');
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'TOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    assert(garrisonCount(pt) === 0, 'garrison not cleared from the upgraded tower');
+    assert(!g1.garrisonedIn && !g2.garrisonedIn && g1.hp > 0 && g2.hp > 0, 'garrisoned units orphaned instead of ejected');
+    teamAge[0] = 0;
+  });
+
+  T('build-over: the upgrade site is a normal foundation — cancelling it refunds the stone cost', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const pt = createBuilding('PTOWER', 30, 30, 0);
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'TOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    assert(pt.btype === 'TOWER' && !pt.complete, 'setup: should be a TOWER construction site');
+    const w = store.wood, s = store.stone;
+    deleteOwnedEntity(pt);
+    assert(store.wood === w + BLDGS.TOWER.cost.w && store.stone === s + BLDGS.TOWER.cost.s, 'cancel did not refund the TOWER cost: ' + store.wood + '/' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  T('wall-drag: dragging a stone wall over a palisade run upgrades each tile IN PLACE (no stacking)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const walls = [];
+    for (let x = 30; x <= 32; x++) walls.push(createBuilding('WALL', x, 30, 0)); // complete palisades
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'wall-drag', btype: 'SWALL', start: { x: 30, y: 30 }, corner: { x: 32, y: 30 }, end: { x: 32, y: 30 }, unitIds: [v.id] }, 0);
+    walls.forEach(w => {
+      assert(entitiesById.get(w.id) === w && w.btype === 'SWALL' && !w.complete, 'palisade at ' + w.x + ' not upgraded in place: btype=' + w.btype + ' complete=' + w.complete);
+    });
+    for (let x = 30; x <= 32; x++) {
+      const here = entities.filter(e => e.type === 'building' && e.x === x && e.y === 30);
+      assert(here.length === 1, 'stacked building at x=' + x + ': ' + here.length);
+    }
+    assert(store.wood === 1000 + 3 * BLDGS.WALL.cost.w, 'wall salvage off: ' + store.wood);
+    assert(store.stone === 1000 - 3 * BLDGS.SWALL.cost.s, 'stone cost off: ' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  // Unbuilt counterpart: you can't upgrade a wall that isn't built yet, so the
+  // stone OVERWRITES it — the unbuilt piece is refunded in full, the stone is a
+  // fresh (cancelable) construction site. Complete → salvage-swap (above).
+  T('wall-drag: a stone wall dragged over a still-building palisade overwrites it (refunded, fresh site, no stack)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const other = createBuilding('WALL', 30, 30, 0); // complete → salvage-swap upgrade
+    const wall = createBuilding('WALL', 31, 30, 0); wall.complete = false; wall.hp = 1; wall.buildProgress = 0;
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'wall-drag', btype: 'SWALL', start: { x: 30, y: 30 }, corner: { x: 31, y: 30 }, end: { x: 31, y: 30 }, unitIds: [v.id] }, 0);
+    // unbuilt palisade replaced by a fresh, cancelable stone site (NOT the same entity, NOT committed)
+    assert(!entitiesById.get(wall.id), 'unbuilt palisade not removed by the overwrite');
+    const at31 = entities.filter(e => e.type === 'building' && e.x === 31 && e.y === 30);
+    assert(at31.length === 1 && at31[0].btype === 'SWALL' && !at31[0].complete, 'tile 31 not a fresh SWALL site: ' + JSON.stringify(at31.map(e => e.btype)));
+    assert(other.btype === 'SWALL' && !other.complete, 'complete neighbor did not salvage-swap: ' + other.btype);
+    // tile 30: full-HP palisade salvages 2 wood; tile 31: unbuilt palisade refunds its 2 wood; both tiles charge 5 stone
+    assert(store.wood === 1000 + 2 * BLDGS.WALL.cost.w, 'wood refund off: ' + store.wood);
+    assert(store.stone === 1000 - 2 * BLDGS.SWALL.cost.s, 'stone cost off: ' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  T('build-over: placing a stone wall on a still-building palisade overwrites it (unbuilt piece refunded)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const wall = createBuilding('WALL', 30, 30, 0); wall.complete = false; wall.hp = 1; wall.buildProgress = 0;
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'SWALL', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    assert(!entitiesById.get(wall.id), 'unbuilt palisade not removed');
+    const at30 = entities.filter(e => e.type === 'building' && e.x === 30 && e.y === 30);
+    assert(at30.length === 1 && at30[0].btype === 'SWALL' && !at30[0].complete, 'not a single fresh SWALL site: ' + JSON.stringify(at30.map(e => e.btype)));
+    assert(v.buildTarget === at30[0].id || (v.buildQueue || []).includes(at30[0].id), 'villager not queued onto the new stone wall');
+    // unbuilt palisade refunds its 2 wood; new stone wall charges 5 stone
+    assert(store.wood === 1000 + BLDGS.WALL.cost.w, 'wood refund off: ' + store.wood);
+    assert(store.stone === 1000 - BLDGS.SWALL.cost.s, 'stone cost off: ' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  T('build-over: overwriting an unbuilt PTOWER with a stone tower refunds it once (no double credit)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const pt = createBuilding('PTOWER', 30, 30, 0); pt.complete = false; pt.hp = 1; pt.buildProgress = 0;
+    const v = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'TOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
+    assert(!entitiesById.get(pt.id), 'unbuilt PTOWER not removed');
+    const at30 = entities.filter(e => e.type === 'building' && e.x === 30 && e.y === 30);
+    assert(at30.length === 1 && at30[0].btype === 'TOWER' && !at30[0].complete, 'not a single fresh TOWER site');
+    // PTOWER (110w) refunded IN FULL, TOWER (25w+125s) charged in full — exactly once each
+    assert(store.wood === 1000 + BLDGS.PTOWER.cost.w - BLDGS.TOWER.cost.w, 'wood off (double-credit?): ' + store.wood);
+    assert(store.stone === 1000 - BLDGS.TOWER.cost.s, 'stone off: ' + store.stone);
+    teamAge[0] = 0;
+  });
+
+  T('wall-run: double-click grabs the whole connected line through gates/towers + both materials; Upgrade hits every wood piece', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1; // Feudal → all stone upgrades unlocked
+    // one connected E-W line: wood wall, wood tower, wood gate, stone wall, stone tower, stone gate
+    const ww = createBuilding('WALL', 20, 30, 0);
+    const wt = createBuilding('PTOWER', 21, 30, 0);
+    const wg = createBuilding('GATE', 22, 30, 0);
+    const sw = createBuilding('SWALL', 23, 30, 0);
+    const st = createBuilding('TOWER', 24, 30, 0);
+    const sg = createBuilding('SGATE', 25, 30, 0);
+    // the run spans the whole line — passing THROUGH towers and the wood↔stone change
+    const run = collectCompletedWallRun(ww);
+    assert(run.length === 6, 'run did not span the whole line (towers/materials): ' + run.length);
+    // Upgrade the whole run: only the wood pieces convert; stone pieces ride along untouched
+    execCommand({ kind: 'upgrade-walls', unitIds: run.map(e => e.id) }, 0);
+    assert(ww.btype === 'SWALL' && !ww.complete, 'wood wall not upgraded: ' + ww.btype);
+    assert(wt.btype === 'TOWER' && !wt.complete, 'wood tower not upgraded: ' + wt.btype);
+    assert(wg.btype === 'SGATE' && !wg.complete, 'wood gate not upgraded: ' + wg.btype);
+    assert(sw.btype === 'SWALL' && sw.complete, 'stone wall wrongly touched');
+    assert(st.btype === 'TOWER' && st.complete, 'stone tower wrongly touched');
+    assert(sg.btype === 'SGATE' && sg.complete, 'stone gate wrongly touched');
+    teamAge[0] = 0;
   });
 
   // ---- Building guard covers the WHOLE footprint, not one corner ----
@@ -647,15 +811,15 @@ function pageSuite() {
     const wall = createBuilding('WALL', 50, 50, 1); // beside the team-1 TC at 52,52
     const vil = createUnit('villager', 49, 49, 1);
     vil.task = null; vil.target = null; vil.buildTarget = null; clearUnitPath(vil);
-    // upgrade → instant swap to a committed SWALL construction site
+    // upgrade → instant swap to a normal SWALL construction site
     execCommand({ kind: 'upgrade-walls', unitIds: [wall.id] }, 1);
-    assert(wall.btype === 'SWALL' && !wall.complete && wall.upgrading, 'upgrade did not create a construction site');
+    assert(wall.btype === 'SWALL' && !wall.complete, 'upgrade did not create a construction site');
     // the AI's decision loop should hand the idle villager this build
     assignAIVillagers(AI_STATES[1], [vil], aiProfileFor(1));
     assert(vil.task === 'build' && vil.buildTarget === wall.id, 'AI did not assign a builder to the upgrade site: task=' + vil.task + ' target=' + vil.buildTarget);
     // and it actually finishes into a complete stone wall
     step(BLDGS.SWALL.buildTime + 600);
-    assert(wall.complete && wall.btype === 'SWALL' && !wall.upgrading, 'AI never finished the upgraded wall: complete=' + wall.complete);
+    assert(wall.complete && wall.btype === 'SWALL', 'AI never finished the upgraded wall: complete=' + wall.complete);
   });
 
   T('farm: reseed prepay queues, and cancel refunds 60 wood (soldier-queue parity)', () => {
