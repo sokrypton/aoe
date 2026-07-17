@@ -267,7 +267,7 @@ function execSetStance(cmd, team){
     // passive unit are still obeyed). ONLY the fight: a unit merely walking
     // keeps its move order.
     if (cmd.stance === 'passive' && (u.target != null || u.explicitAttack)) {
-      u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+      u.target = null; u.explicitAttack = false;
       if (typeof clearUnitPath === 'function') clearUnitPath(u);
     }
   });
@@ -735,10 +735,9 @@ function execUnitCommand(cmd){
         if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
           s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
-          // Walk to a DISTINCT adjacent tile of the node (resources are solid)
-          // so the group approaches from different sides and rings it evenly.
-          let stand = (typeof pickGatherStand === 'function') ? pickGatherStand(s, g.x, g.y) : null;
-          pathUnitTo(s, stand ? stand.x : g.x, stand ? stand.y : g.y);
+          // Ring the solid node evenly: goalBldg + contactClaims sends each
+          // co-gatherer to a distinct cheapest contact tile.
+          pathToContact(s, {x:g.x, y:g.y, w:1, h:1}, contactClaims(s, p=>p.gatherX===g.x && p.gatherY===g.y));
         } else {
           // Move command (also the unexplored-tile case): keep the
           // group's relative arrangement (see formOff above).

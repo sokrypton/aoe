@@ -1452,14 +1452,13 @@ function assignAIGatherTask(ai,v,vils,profile){
     }
     if(target&&target.x!=null){
       // PARITY: claim + approach through THE shared helpers the human
-      // gather-click uses (claimGatherTileNear fans co-gatherers onto
-      // distinct tiles; pickGatherStand rings distinct adjacent stands).
+      // gather-click uses (claimGatherTileNear fans co-gatherers onto distinct
+      // NODES; pathToContact + contactClaims ring distinct adjacent STANDS).
       // The AI's drop-anchored CHOICE above is decision-making; the
       // claiming/standing MECHANICS are now identical to a player's.
       let g=claimGatherTileNear(v, gc.terrain, target.x, target.y);
       v.gatherX=g.x; v.gatherY=g.y;
-      let stand=(typeof pickGatherStand==='function')?pickGatherStand(v,g.x,g.y):null;
-      if(stand)pathUnitTo(v,stand.x,stand.y);
+      pathToContact(v, {x:g.x, y:g.y, w:1, h:1}, contactClaims(v, p=>p.gatherX===g.x && p.gatherY===g.y));
     }
   }
 }

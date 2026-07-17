@@ -138,7 +138,6 @@ function detEntityHash(e){
     h = detMix(h, 0x51a17);
   }
   h = detMixStr(h, e.prevTask);
-  h = detMix(h, e.siegeSpot ? e.siegeSpot.x * 4096 + e.siegeSpot.y : -1); // cross-unit melee-ring claims
   // Stuck-watchdog watch entry (it force-clears tasks, so WHEN it fires is
   // sim state — see updateStuckWatchdog, js/logic.js).
   h = detMix(h, e.fledBearId == null ? -1 : e.fledBearId); // bear-hunt trigger (js/ai.js reads it)
@@ -186,7 +185,7 @@ const DET_HASHED_KEYS = new Set([
   'curWorkers','lastWorkers','repairAccum','rallyX','rallyY','rallyTargetId','queue',
   'garrison','buildQueue','locked','rallyResourceType','gatherX','gatherY',
   'explicitAttack','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
-  'order','prevTask','siegeSpot','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
+  'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
   'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
   'wasWall',

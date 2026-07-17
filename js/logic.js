@@ -555,11 +555,16 @@ function edgeDistToBuilding(px,py,bldg){
   return Math.sqrt(dx*dx+dy*dy);
 }
 
-// Adjacent = within 1.2 of the building's nearest edge (same clamped-rect
-// distance as distToTarget). Perimeter tile centers sit 0.5–0.71 from the
-// rect, so 1.2 accepts every true perimeter tile and rejects the next ring.
+// In contact = within `d` of a target footprint's nearest edge (clamped-rect
+// distance, same as distToTarget). THE one adjacency test — a resource tile or
+// unit is passed as {x,y,w:1,h:1}. Perimeter tile centres sit 0.5–0.71 from a
+// footprint, so the default 1.2 accepts every true perimeter tile and rejects
+// the next ring.
+function inContact(px,py,t,d){
+  return edgeDistToBuilding(px,py,t) <= d;
+}
 function adjToBuilding(px,py,bldg){
-  return edgeDistToBuilding(px,py,bldg) <= 1.2;
+  return inContact(px,py,bldg,1.2);
 }
 
 // A guarding unit's "zone" = the thing its ORDER protects: {b: building}
@@ -739,30 +744,8 @@ function nearestBldgPerimeter(px,py,bldg,ignore,claimed){
   return best||bestAny||{x:Math.min(bldg.x+bldg.w,MAP-1),y:Math.min(bldg.y+bldg.h,MAP-1)};
 }
 
-
-// AoE2-style siege spread: each melee attacker of a building claims its own
-// perimeter tile, so a group fans out and surrounds the building instead of
-// stacking up behind whichever tile happens to be nearest.
-function siegePerimeterSpot(e,t){
-  let claimed=new Set();
-  entities.forEach(en=>{
-    if(en!==e&&en.type==='unit'&&en.target===t.id&&en.siegeSpot){
-      claimed.add(en.siegeSpot.x+','+en.siegeSpot.y);
-    }
-  });
-  let best=null,bd=1e9;
-  for(let dy=-1;dy<=t.h;dy++)for(let dx=-1;dx<=t.w;dx++){
-    if(dx>=0&&dx<t.w&&dy>=0&&dy<t.h)continue;
-    let tx=t.x+dx, ty=t.y+dy;
-    if(tx<0||tx>=MAP||ty<0||ty>=MAP)continue;
-    if(!walkable(tx,ty,e.id))continue;
-    let d=Math.abs(e.x-tx)+Math.abs(e.y-ty);
-    if(claimed.has(tx+','+ty))d+=100; // strongly prefer an unclaimed spot
-    if(d<bd){bd=d;best={x:tx,y:ty};}
-  }
-  if(best){e.siegeSpot=best;return best;}
-  return nearestBldgPerimeter(e.x,e.y,t,e.id);
-}
+// (siege surround is now goalBldg + contactClaims — a melee attacker paths to
+// the cheapest UNCLAIMED contact tile, so the group fans out automatically.)
 
 // ---- Shared attack-pathing helpers — used by BOTH the AI (js/ai.js) and
 // player units in updateUnit. ----
@@ -960,10 +943,10 @@ function resolveStalledAttack(u, tgt){
   let mayRedirect = isAITeam(u.team) || tgt.type === 'building';
   let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
   if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
-    u.target = w.id; u.explicitAttack = true; u.siegeSpot = null;
+    u.target = w.id; u.explicitAttack = true;
   } else if (isAITeam(u.team)) {
     if (window.__dropStats) window.__dropStats.unreachable = (window.__dropStats.unreachable || 0) + 1;
-    u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+    u.target = null; u.explicitAttack = false;
     // A walled-off building stays unreachable a long time; a mobile UNIT's
     // blockage (a melee dogpile) clears fast, so re-check it sooner.
     stampUnreachable(u, stalledId, tgt.type === 'building' ? T30(900) : UNREACH_UNIT_TICKS);
@@ -978,7 +961,7 @@ function resolveStalledAttack(u, tgt){
     // crowded-fight stalls.
     let tr = tgt.type === 'unit' ? (UNITS[tgt.utype].range || 0) : 0;
     if (!u.explicitAttack && tr > 0 && dist(u, tgt) <= tr + 1) {
-      u.target = null; u.siegeSpot = null;
+      u.target = null;
       let ux = u.x - tgt.x, uy = u.y - tgt.y, len = Math.sqrt(ux*ux + uy*uy) || 1;
       let out = tr + 2; // first tile safely beyond the shooter's reach
       disengage = { x: Math.round(tgt.x + ux/len*out), y: Math.round(tgt.y + uy/len*out) };
@@ -1017,21 +1000,41 @@ function pressToContact(e, cx, cy, contactDist){
   }
 }
 
-// Deposit/trade "touch": once a hauler (villager returning a load, trade cart
-// at a Market) has SETTLED adjacent to building b, slide the last bit up
-// against its nearest edge BEFORE it hands the load over, clamped to the
-// footprint so a hauler at a corner tile tucks into the corner.
-// Returns true once tucked in OR unable to get closer this tick (deadband /
-// blocked / still has a path — pressToContact only acts when settled, so a
-// caller that hasn't finished walking in just completes as before): the caller
-// should finish the transaction now. Returns false while it's still visibly
-// sliding in, so the caller waits a tick.
-function dropContactSettled(e, b){
-  let hx=Math.max(b.x-0.5, Math.min(e.x, b.x+b.w-0.5));
-  let hy=Math.max(b.y-0.5, Math.min(e.y, b.y+b.h-0.5));
+// THE slide-to-contact against a TARGET FOOTPRINT: press toward the nearest
+// point on the target's OWN edge box (clamped, NOT the centre — centre-pressing
+// pulls diagonal approachers onto the orthogonal tiles). A resource tile / unit
+// is passed as {x,y,w:1,h:1}. Returns true if it slid this tick (still closing),
+// false once it can get no closer (deadband / blocked → settled). Fire-and-
+// forget callers (build/gather) ignore the return; a hauler reads it to know the
+// tuck is done and the hand-over may happen.
+function slideToContact(e,t,d){
+  let hx=Math.max(t.x-0.5, Math.min(e.x, t.x+t.w-0.5));
+  let hy=Math.max(t.y-0.5, Math.min(e.y, t.y+t.h-0.5));
   let px=e.x, py=e.y;
-  pressToContact(e, hx, hy, DROP_CONTACT);
-  return e.x===px && e.y===py; // didn't move → tucked in / blocked → done
+  pressToContact(e,hx,hy,d);
+  return e.x!==px || e.y!==py;
+}
+// Deposit/trade "touch": tucked in (settled) once slideToContact can get no
+// closer — the caller finishes the transaction now.
+function dropContactSettled(e, b){ return !slideToContact(e, b, DROP_CONTACT); }
+
+// Contact tiles other units engaging the SAME target already hold or are heading
+// to — the `claim` Set for goalBldg (pathToContact), so a crowd fans OUT around
+// the target instead of converging on the single cheapest tile. THE one
+// distribution mechanism (replaces siegePerimeterSpot + pickGatherStand's claim
+// encodings). Derived from live state, no stored spot: a mover claims its path
+// DESTINATION, a settled unit its current tile. id-ordered scan → deterministic.
+function contactClaims(e, pred){
+  let claim=new Set();
+  for(let i=0;i<entities.length;i++){
+    let p=entities[i];
+    if(p===e||p.type!=='unit'||p.hp<=0||p.garrisonedIn||!pred(p))continue;
+    let tx,ty;
+    if(p.path&&p.path.length){let g=p.path[p.path.length-1];tx=g.x;ty=g.y;}
+    else{tx=Math.round(p.x);ty=Math.round(p.y);}
+    claim.add(ty*MAP+tx);
+  }
+  return claim;
 }
 
 // AoE2 DE-style group spread: when several villagers are tasked onto one
@@ -1088,35 +1091,8 @@ function claimGatherTileNear(e,terrain,cx,cy){
   return best||{x:cx,y:cy};
 }
 
-// Pick a DISTINCT adjacent tile to WALK to while gathering the solid resource
-// at (rx,ry). Resources aren't walkable (js/pathfinding.js), so villagers must
-// stand next to the node; sending each to a different neighbour is what makes
-// them approach from different sides and ring the node EVENLY (pressToContact
-// then pulls each tight against it). Scores each walkable neighbour by how many
-// co-gatherers of THIS node are already heading to / standing on it (a unit en
-// route counts at its path destination, else at its current tile), nearest as
-// the tiebreak. Returns null only if the node is fully walled in.
-function pickGatherStand(e, rx, ry){
-  let occ = {};
-  entities.forEach(en => {
-    if(en.type!=='unit' || en.id===e.id || en.team!==e.team) return;
-    if(en.gatherX!==rx || en.gatherY!==ry) return; // only co-gatherers of THIS node
-    let tx, ty;
-    if(en.path && en.path.length){ let d = en.path[en.path.length-1]; tx=d.x; ty=d.y; }
-    else { tx=Math.round(en.x); ty=Math.round(en.y); }
-    occ[tx+','+ty] = (occ[tx+','+ty]||0) + 1;
-  });
-  let best=null, bestScore=Infinity;
-  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
-    if(dx===0 && dy===0) continue; // the node itself is solid
-    let nx=rx+dx, ny=ry+dy;
-    if(nx<0||ny<0||nx>=MAP||ny>=MAP) continue;
-    if(!walkable(nx,ny,e.id)) continue;
-    let score = (occ[nx+','+ny]||0)*100 + (Math.abs(e.x-nx)+Math.abs(e.y-ny));
-    if(score<bestScore){ bestScore=score; best={x:nx,y:ny}; }
-  }
-  return best;
-}
+// (gatherer stand distribution is now goalBldg + contactClaims — pathToContact
+// on the 1×1 node with a claim Set of co-gatherers' tiles rings the node evenly.)
 
 function clearGatherTarget(e){
   e.gatherX=-1;
@@ -1238,8 +1214,11 @@ function updateGatherTask(e,config){
   let isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
   if(!isAdj){
     if(e.path.length === 0){
-      let stand = e.task!=='farm' ? pickGatherStand(e, gatherTile.x, gatherTile.y) : null;
-      pathUnitTo(e, stand ? stand.x : gatherTile.x, stand ? stand.y : gatherTile.y);
+      // Farmer stands ON the plot; every other gatherer approaches the solid
+      // node's cheapest UNCLAIMED contact tile (goalBldg + contactClaims), so
+      // co-gatherers of the same node fan out and surround it.
+      if(e.task==='farm') pathUnitTo(e, gatherTile.x, gatherTile.y);
+      else pathToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, contactClaims(e, p=>p.gatherX===gatherTile.x && p.gatherY===gatherTile.y));
       if(e.path.length===0){
         avoidAdd(e,'gather',gatherTile.x + gatherTile.y * MAP);
 
@@ -1272,15 +1251,11 @@ function updateGatherTask(e,config){
   // In range. Slide-to-contact so the villager visibly HUGS the node — press
   // toward the nearest point on the node's OWN EDGE (position clamped to the
   // tile's footprint box), NOT the centre: centre-pressing pulls diagonal
-  // gatherers onto the 4 orthogonal tiles and wrecks pickGatherStand's even
-  // 8-tile surround. The walkable(ignoreUnits) guard in pressToContact keeps
+  // gatherers onto the 4 orthogonal tiles and wrecks the even 8-tile surround
+  // (goalBldg + contactClaims). The walkable(ignoreUnits) guard in pressToContact keeps
   // them off the solid node. Farms are walkable (the villager stands ON the
   // plot) — no press there.
-  if(e.task!=='farm'){
-    let hx=Math.max(gatherTile.x-0.5, Math.min(e.x, gatherTile.x+0.5));
-    let hy=Math.max(gatherTile.y-0.5, Math.min(e.y, gatherTile.y+0.5));
-    pressToContact(e, hx, hy, 0.25);
-  }
+  if(e.task!=='farm') slideToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, 0.25);
 
   if(e.gatherCooldown>0)return;
   let tile=map[gatherTile.y][gatherTile.x];
@@ -1968,19 +1943,16 @@ function updateTradeCart(e){
       let g=Math.floor(2*(td/MAP+0.3)*td*TRADE_GOLD_FACTOR+0.5);
       e.carrying=Math.max(1,g); e.carryType='gold';
       e.tradePhase='toHome';
-      let pt=nearestBldgPerimeter(e.x,e.y,home,e.id);
-      pathUnitTo(e,pt.x,pt.y);
+      pathToContact(e,home);   // cheapest-to-walk Market edge, not the straight-line-nearest
     } else {
       resourceStore(e.team).gold += e.carrying;
       e.carrying=0; e.carryType=null;
       e.tradePhase='toDest';
-      let pt=nearestBldgPerimeter(e.x,e.y,dest,e.id);
-      pathUnitTo(e,pt.x,pt.y);
+      pathToContact(e,dest);
     }
   } else if(e.path.length===0){
     // Not there and no route queued (fresh order, or a blocked leg) — (re)path.
-    let pt=nearestBldgPerimeter(e.x,e.y,goal,e.id);
-    pathUnitTo(e,pt.x,pt.y);
+    pathToContact(e,goal);
   }
 }
 
@@ -2195,30 +2167,34 @@ function updateVillagerDropoff(e){
     return;
   }
   if(!adjToBuilding(e.x,e.y,drop)){
-    let pt=nearestBldgPerimeter(e.x,e.y,drop,e.id);
-    pathUnitTo(e,pt.x,pt.y);
+    // Path ONCE to the cheapest-to-WALK drop-off edge (goalBldg A*), then let
+    // movement + the block-wait queue carry the hauler — same discipline as the
+    // build loop and the trade cart. Recomputing every tick made returning
+    // haulers oscillate and wedge at chokepoints.
     if(e.path.length===0){
-      avoidAdd(e,'drops',drop.id);
+      pathToContact(e,drop);
+      if(e.path.length===0){
+        avoidAdd(e,'drops',drop.id);
 
-      let foundPath = false;
-      while (true) {
-        let nextDrop = nearestDrop(e, e.carryType, e.avoid&&e.avoid.drops);
-        if (!nextDrop) break;
+        let foundPath = false;
+        while (true) {
+          let nextDrop = nearestDrop(e, e.carryType, e.avoid&&e.avoid.drops);
+          if (!nextDrop) break;
 
-        let nextPt = nearestBldgPerimeter(e.x, e.y, nextDrop, e.id);
-        pathUnitTo(e, nextPt.x, nextPt.y);
-        if (e.path.length > 0) {
-          foundPath = true;
-          break;
+          pathToContact(e, nextDrop);
+          if (e.path.length > 0) {
+            foundPath = true;
+            break;
+          }
+          avoidAdd(e,'drops',nextDrop.id);
         }
-        avoidAdd(e,'drops',nextDrop.id);
+
+        if (foundPath) return;
+
+        // Every drop site unreachable right now — hold the load and retry
+        // shortly (see the dropWait gate above) rather than giving up.
+        retryStamp(e,RETRY.DROP_WAIT,T30(30));
       }
-
-      if (foundPath) return;
-
-      // Every drop site unreachable right now — hold the load and retry
-      // shortly (see the dropWait gate above) rather than giving up.
-      retryStamp(e,RETRY.DROP_WAIT,T30(30));
     }
   } else {
     // Slide right up to the drop-off and deposit AT the wall. The tuck is
@@ -2264,37 +2240,37 @@ function updateVillagerBuild(e){
   let isFarm=bt.btype==='FARM';
   let close=isFarm?dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2:adjToBuilding(e.x,e.y,bt);
   if(!close){
-    if(isFarm){
-      pathUnitTo(e,bt.x,bt.y);
-    } else {
-      let pt=nearestBldgPerimeter(e.x,e.y,bt,e.id);
-      pathUnitTo(e,pt.x,pt.y);
-    }
+    // Path ONCE toward the site, then let movement + the block-wait queue
+    // (stepBlocked, js/pathfinding.js) carry the builder there. Recomputing the
+    // route every tick makes a unit at a chokepoint abandon its queue slot to
+    // try an equally-short alternate as the crowd shifts — it oscillates and
+    // wedges, which is exactly the dance stepBlocked's wait was built to stop.
+    // Only (re)plan when the held route has emptied: stepBlocked has by then
+    // either delivered the builder (close, handled below) or given up on a
+    // truly blocked lane, so a fresh plan is warranted.
     if(e.path.length===0){
-      let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
-      if (!checkClose) {
-        // Perimeter may just be crowded with other builders — retry a few
-        // times before declaring the site unreachable and dropping it.
-        if(!retryFail(e,RETRY.BUILD,0,6)) return;
-        feedbackFor(e.team, () => showMsg('Building site is unreachable!'));
-        // Back the foundation off (any team): assigners skip it until the
-        // stamp expires (neededAIBuildingWork AND checkNextBuild) — without
-        // this, villagers get re-fed into the same unreachable site forever,
-        // a pathfinding storm that can freeze the game. Time-limited, not
-        // permanent: a site blocked by a passing crowd heals.
-        bt.buildBackoffUntil=tick+900;
-        if(!checkNextBuild(e)){
-          e.task=null; // savedTask resume / AI reassignment reroutes from idle
-          e.buildTarget=null;
+      if(isFarm){ pathUnitTo(e,bt.x,bt.y); }
+      else { pathToContact(e,bt); } // cheapest-to-WALK contact tile (goalBldg A*), reachable by construction
+      if(e.path.length===0){
+        // Still no route AND not adjacent → the site is unreachable right now.
+        let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
+        if (!checkClose) {
+          // Perimeter may just be crowded — retry a few times, then back the
+          // foundation off so assigners skip it until the stamp expires
+          // (neededAIBuildingWork AND checkNextBuild) instead of re-feeding
+          // villagers into an unreachable site forever (a pathfinding storm).
+          if(!retryFail(e,RETRY.BUILD,0,6)) return;
+          feedbackFor(e.team, () => showMsg('Building site is unreachable!'));
+          bt.buildBackoffUntil=tick+900;
+          if(!checkNextBuild(e)){
+            e.task=null; // savedTask resume / AI reassignment reroutes from idle
+            e.buildTarget=null;
+          }
+        } else {
+          retryClear(e,RETRY.BUILD);
         }
-      } else {
-        retryClear(e,RETRY.BUILD);
       }
     }
-    // NOTE: a successful pathUnitTo deliberately does NOT clear the fail
-    // counter — "got a path" isn't progress (a path whose first step is
-    // permanently blocked is rebuilt every tick and would reset the
-    // counter forever). Only ARRIVAL clears (below).
   } else {
     retryClear(e,RETRY.BUILD);
     // Slide-to-contact so the builder visibly HUGS the foundation — press
@@ -2303,11 +2279,7 @@ function updateVillagerBuild(e){
     // the plot) — no press. Builders are separation-exempt (loop.js
     // separateUnits); pressToContact's walkable(ignoreUnits) guard keeps
     // them off the footprint itself.
-    if(!isFarm){
-      let hx=Math.max(bt.x-0.5, Math.min(e.x, bt.x+bt.w-0.5));
-      let hy=Math.max(bt.y-0.5, Math.min(e.y, bt.y+bt.h-0.5));
-      pressToContact(e, hx, hy, 0.35);
-    }
+    if(!isFarm) slideToContact(e, bt, 0.35);
     if (bt.btype === 'FARM' && bt.exhausted) {
       let store = resourceStore(e.team);
       if (store && store.prepaidFarms > 0) {
@@ -2484,7 +2456,7 @@ function updateUnitCombat(e){
         cand.sort((a,b)=>a.d-b.d||a.bx.id-b.bx.id); // deterministic tiebreak (house rule: never rely on sort stability)
         for(let i=0;i<cand.length && i<8;i++){ if(isTargetReachable(e,cand[i].bx)){ next=cand[i].bx; break; } }
       }
-      if(next){ e.target=next.id; e.siegeSpot=null; return; } // keep explicitAttack
+      if(next){ e.target=next.id; return; } // keep explicitAttack
     }
     if(window.__dropStats)window.__dropStats.killed=(window.__dropStats.killed||0)+1;
     e.target=null;
@@ -2616,7 +2588,7 @@ function updateUnitCombat(e){
           e.target = null;
           return;
         }
-        combatApproach(e,t,d,()=>{let pt=siegePerimeterSpot(e,t);pathUnitTo(e,pt.x,pt.y);});
+        combatApproach(e,t,d,()=>pathToContact(e,t,contactClaims(e,p=>p.target===t.id)));
       } else {
         // In range: press up against the nearest FOOTPRINT EDGE so attackers
         // pack tight along the wall instead of standing a tile back on their
@@ -2686,23 +2658,17 @@ function updateGarrisonWalk(e){
   // handed the task boarded on arrival (enterGarrison checks capacity only).
   if(!b||!canGarrisonIn(b,e.team,e)||b.garrisonedIn||garrisonCount(b)>=garrisonCap(b)){
     e.task=null;e.garrisonTarget=null; // savedTask (if any) resumes next tick
-  } else if((()=>{
-    // Arrival check: like adjToBuilding but accepts diagonal corner
-    // perimeter tiles (~1.41 from the footprint), which nearestBldgPerimeter
-    // legitimately routes units to. A unit container (ram) is a point —
-    // plain distance.
-    if(b.type==='unit')return dist(e,b)<=1.45;
-    let gdx=Math.max(b.x-0.5-e.x,0,e.x-(b.x+b.w-0.5));
-    let gdy=Math.max(b.y-0.5-e.y,0,e.y-(b.y+b.h-0.5));
-    return Math.sqrt(gdx*gdx+gdy*gdy)<=1.45;
-  })()){
+  } else if(b.type==='unit' ? dist(e,b)<=1.45 : inContact(e.x,e.y,b,1.45)){
+    // Arrival: contact with the entrance — 1.45 accepts diagonal corner tiles.
+    // A unit container (ram) is a point → plain distance.
     enterGarrison(e,b);
     return true;
   } else if(e.path.length===0&&retryReady(e,RETRY.GARRISON)){
-    // A ram MOVES between re-paths: chase its current tile (riders are
-    // faster than the ram, so the pursuit converges).
-    let pt=b.type==='unit'?{x:Math.round(b.x),y:Math.round(b.y)}:nearestBldgPerimeter(e.x,e.y,b,e.id);
-    if(pt)pathUnitTo(e,pt.x,pt.y);
+    // A ram MOVES between re-paths: chase its current tile (riders are faster
+    // than the ram, so the pursuit converges). A building: cheapest-to-walk
+    // entrance via goalBldg (path once, queue carries it).
+    if(b.type==='unit') pathUnitTo(e,Math.round(b.x),Math.round(b.y));
+    else pathToContact(e,b);
     if(e.path.length===0){
       // Entrance likely crowded with other garrisoning villagers — keep
       // trying a few rounds (10t apart) before abandoning shelter.
@@ -3670,11 +3636,10 @@ function rallyNewUnit(e, unit){
             }
             unit.gatherX=gx;
             unit.gatherY=gy;
-            // Walk to a DISTINCT adjacent tile (like the group-gather command +
-            // updateGatherTask), so units rallied onto a resource fan out and
-            // surround it instead of piling on the nearest tile.
-            let st=pickGatherStand(unit,gx,gy);
-            pathUnitTo(unit, st?st.x:gx, st?st.y:gy);
+            // Fan out onto DISTINCT contact tiles (goalBldg + contactClaims,
+            // like updateGatherTask) so units rallied onto a resource surround
+            // it instead of piling on the nearest tile.
+            pathToContact(unit, {x:gx, y:gy, w:1, h:1}, contactClaims(unit, p=>p.gatherX===gx && p.gatherY===gy));
           }
         } else {
           pathUnitTo(unit,e.rallyX,e.rallyY);

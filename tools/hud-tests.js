@@ -740,6 +740,90 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+  T('build-path: a builder approaches a wall by nearest WALK-cost contact tile (own side), not routed across it', () => {
+    stage();
+    // vertical stone wall, open ground both sides; builder to the WEST
+    for (let y = 20; y <= 26; y++) createBuilding('SWALL', 25, y, 0);
+    const wall = entities.find(e => e.btype === 'SWALL' && e.x === 25 && e.y === 23);
+    const v = createUnit('villager', 22, 23, 0);
+    // goalBldg A*: stops at the cheapest-to-walk build-contact tile
+    const path = findPath(Math.round(v.x), Math.round(v.y), wall.x, wall.y, v.id, 0, wall);
+    const end = path.length ? path[path.length - 1] : { x: Math.round(v.x), y: Math.round(v.y) };
+    assert(adjToBuilding(end.x, end.y, wall), 'path did not end at a build-contact tile: ' + JSON.stringify(end));
+    assert(end.x < 25, 'builder crossed to the far side instead of approaching from its own: ' + JSON.stringify(end));
+  });
+
+  T('dock: goalBldg reaches the NEAREST edge of a 3x3 market from any side by the shortest path', () => {
+    stage();
+    const m = createBuilding('MARKET', 30, 30, 0); // 3x3, tiles 30..32, walkable plaza
+    const cases = [
+      { from: { x: 25, y: 31 }, side: e => e.x < 30, name: 'west' },
+      { from: { x: 37, y: 31 }, side: e => e.x > 32, name: 'east' },
+      { from: { x: 31, y: 25 }, side: e => e.y < 30, name: 'north' },
+      { from: { x: 31, y: 37 }, side: e => e.y > 32, name: 'south' },
+    ];
+    cases.forEach(c => {
+      const v = createUnit('tradecart', c.from.x, c.from.y, 0);
+      const path = findPath(Math.round(v.x), Math.round(v.y), m.x, m.y, v.id, 0, m);
+      const end = path.length ? path[path.length - 1] : { x: Math.round(v.x), y: Math.round(v.y) };
+      assert(adjToBuilding(end.x, end.y, m), c.name + ': did not dock adjacent: ' + JSON.stringify(end));
+      assert(c.side(end), c.name + ': docked on the far side: ' + JSON.stringify(end));
+      // shortest: straight approach, no detour → path length == chebyshev distance to the dock
+      const cheb = Math.max(Math.abs(Math.round(v.x) - end.x), Math.abs(Math.round(v.y) - end.y));
+      assert(path.length === cheb, c.name + ': not the shortest path: len ' + path.length + ' vs ' + cheb);
+    });
+  });
+
+  T('dock-obstacle: a cart routes through the GATE gap toward the market, not the long way around', () => {
+    stage();
+    // solid vertical wall at x=40 (y 20..40) with ONE gap: a gate at (40,30)
+    for (let y = 20; y <= 40; y++) { if (y === 30) continue; createBuilding('SWALL', 40, y, 0); }
+    createBuilding('SGATE', 40, 30, 0); // own team → the cart may pass the doorway
+    const m = createBuilding('MARKET', 55, 28, 0); // 3x3, east of the wall
+    const v = createUnit('tradecart', 25, 30, 0); // west of the wall, ~30 tiles out
+    const path = findPath(Math.round(v.x), Math.round(v.y), m.x, m.y, v.id, 0, m);
+    assert(path.length > 0, 'no path found at all');
+    const crossing = path.find(p => p.x === 40);
+    assert(crossing, 'path never reaches the wall line (partial/detour path): last=' + JSON.stringify(path[path.length - 1]) + ' len=' + path.length);
+    assert(Math.abs(crossing.y - 30) <= 1, 'cart went AROUND the wall instead of through the gate: crossed at ' + JSON.stringify(crossing) + ' len=' + path.length);
+    assert(path.length <= 40, 'path is a long detour: length ' + path.length);
+  });
+
+  T('gather-contact: a berry forager slides into contact with the node (not standing a tile off)', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 200; markMapDirty(30, 30);
+    const v = createUnit('villager', 25, 30, 0); // 5 tiles west — must walk over, then press
+    v.task = 'forage'; v.gatherX = 30; v.gatherY = 30;
+    step(300);
+    const dxr = Math.max(29.5 - v.x, 0, v.x - 30.5), dyr = Math.max(29.5 - v.y, 0, v.y - 30.5);
+    const edge = Math.sqrt(dxr * dxr + dyr * dyr);
+    assert(edge <= 0.5, 'forager did NOT slide into contact: edgeDist=' + edge.toFixed(2) + ' at ' + v.x.toFixed(2) + ',' + v.y.toFixed(2));
+    assert(map[30][30].res < 200, 'forager never gathered');
+  });
+
+  T('gather-contact-corner: a forager on a DIAGONAL tile presses into the node corner', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 200; markMapDirty(30, 30);
+    const v = createUnit('villager', 31, 29, 0); // NE diagonal tile of the berry
+    v.task = 'forage'; v.gatherX = 30; v.gatherY = 30;
+    const startEdge = Math.hypot(Math.max(29.5 - 31, 0, 31 - 30.5), Math.max(29.5 - 29, 0, 29 - 30.5));
+    step(60);
+    const edge = Math.hypot(Math.max(29.5 - v.x, 0, v.x - 30.5), Math.max(29.5 - v.y, 0, v.y - 30.5));
+    assert(edge <= 0.45, 'diagonal forager did not press into the corner: start edge=' + startEdge.toFixed(2) + ' end edge=' + edge.toFixed(2) + ' at ' + v.x.toFixed(2) + ',' + v.y.toFixed(2));
+  });
+
+  T('fan-out: co-gatherers of one node claim DISTINCT contact tiles (goalBldg + contactClaims)', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 500; markMapDirty(30, 30);
+    const node = { x: 30, y: 30, w: 1, h: 1 };
+    const vs = [];
+    for (let i = 0; i < 4; i++) { const v = createUnit('villager', 25, 28 + i, 0); v.gatherX = 30; v.gatherY = 30; vs.push(v); }
+    // path each in turn — each excludes the tiles peers already claimed
+    vs.forEach(v => pathToContact(v, node, contactClaims(v, p => p.gatherX === 30 && p.gatherY === 30)));
+    const dests = vs.map(v => v.path.length ? (v.path[v.path.length - 1].y * MAP + v.path[v.path.length - 1].x) : (Math.round(v.y) * MAP + Math.round(v.x)));
+    assert(new Set(dests).size === 4, 'gatherers did not fan out to distinct tiles: ' + JSON.stringify(dests.map(d => (d % MAP) + ',' + ((d / MAP) | 0))));
+  });
+
   // ---- Building guard covers the WHOLE footprint, not one corner ----
   T('guard: a building guard leashes to the whole footprint (chases across a 4x4 TC), but still leashes beyond it', () => {
     stage();
