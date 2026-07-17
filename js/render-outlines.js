@@ -225,8 +225,10 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   // viewport-space, ss=1 mask of the occluding buildings' pixels; the source
   // rect is this buffer's screen region, upscaled to the ring's resolution.
   if(clipC){
+    // clipC's (0,0) is logical (_occMaskOffX,_occMaskOffY), not (0,0) — subtract
+    // that anchor so the sampled region lines up with this ring's screen origin.
     _silRingX.globalCompositeOperation='destination-in';
-    _silRingX.drawImage(clipC, originLeft, originTop, bufW, bufH, 0,0, physW, physH);
+    _silRingX.drawImage(clipC, originLeft-_occMaskOffX, originTop-_occMaskOffY, bufW, bufH, 0,0, physW, physH);
     _silRingX.globalCompositeOperation='source-over';
   }
 
@@ -245,16 +247,28 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
 // camera so occluders land where they render. `occs` is the candidate-driven
 // active set, so this is a handful of redraws even on a dense map — never all
 // on-screen occluders.
-let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0;
+let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0, _occMaskOffX=0, _occMaskOffY=0;
 function _buildOccMask(occs){
-  const needW=Math.ceil(W), needH=Math.ceil(H);
+  // Occluders are drawn at ZOOM=1 LOGICAL coords, but the transform scales
+  // around screen-center (render.js), so when zoomed OUT the visible logical
+  // rect extends past [0,W]×[0,H] — even NEGATIVE near the top-left. A mask
+  // anchored at logical (0,0) with size W×H would drop those pixels, so a unit
+  // in the left/top of the screen loses its clip and the outline flickers as it
+  // crosses the x=0 boundary. Anchor the mask at the visible rect's top-left
+  // (same bounds drawBehindBuildingOutlines clamps groups to) and record the
+  // offset so the clip step samples the right region.
+  const hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH, M=48;
+  const offX=Math.floor(W/2-hw-M), offY=Math.floor(cyv-hh-M);
+  const needW=Math.ceil(2*(hw+M)), needH=Math.ceil(2*(hh+M));
+  _occMaskOffX=offX; _occMaskOffY=offY;
   if(!_occMaskC || _occMaskW<needW || _occMaskH<needH){
     _occMaskC=document.createElement('canvas');
     _occMaskC.width=Math.max(needW,_occMaskW); _occMaskC.height=Math.max(needH,_occMaskH);
     _occMaskX=_occMaskC.getContext('2d'); _occMaskW=_occMaskC.width; _occMaskH=_occMaskC.height;
   }
   _occMaskX.setTransform(1,0,0,1,0,0);
-  _occMaskX.clearRect(0,0,_occMaskW,_occMaskH);
+  _occMaskX.clearRect(0,0,needW,needH);
+  _occMaskX.setTransform(1,0,0,1,-offX,-offY); // logical (offX,offY) -> canvas (0,0)
   const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
   try{
     for(const d of occs){
