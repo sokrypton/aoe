@@ -1779,8 +1779,8 @@ function doCommand(sx,sy){
     // merely standing near a damaged building shouldn't hijack the click.
     // The town bell is the only way villagers garrison (no garrison-by-
     // click), so clicking an own building always means "fix it" (repair if
-    // damaged, resume if unfinished).
-    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp));
+    // damaged, resume if unfinished, reseed if an exhausted farm).
+    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';

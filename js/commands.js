@@ -648,6 +648,7 @@ function execUnitCommand(cmd){
     s.buildQueue = [];
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
+    s.explicitReseed = false;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell
       // (task='garrison' + garrisonTarget; enterGarrison seats on arrival).
@@ -688,6 +689,12 @@ function execUnitCommand(cmd){
     }
     if (buildTarget && s.utype === 'villager') {
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
+      // Clicking an exhausted farm is a deliberate "reseed it" order (like
+      // clicking a damaged building to repair) — flag it so the reseed pays
+      // wood directly, bypassing the Mill prepaid queue. Automatic reseed
+      // paths (exhaustion-continuity, auto-wander) leave this false and stay
+      // prepaid-only for humans, so wood is never spent behind their back.
+      s.explicitReseed = buildTarget.btype === 'FARM' && buildTarget.exhausted;
       pathToBuilding(s, buildTarget);
     } else if (target) {
       if (s.utype === 'sheep') { return; } // sheep don't attack

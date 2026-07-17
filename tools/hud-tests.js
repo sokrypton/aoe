@@ -824,6 +824,21 @@ function pageSuite() {
     assert(new Set(dests).size === 4, 'gatherers did not fan out to distinct tiles: ' + JSON.stringify(dests.map(d => (d % MAP) + ',' + ((d / MAP) | 0))));
   });
 
+  T('reinforce: a builder inside the base repairs a perimeter wall from INSIDE, never looping outside', () => {
+    stage();
+    // base wall line at y=30 (x 20..40); interior is SOUTH (y>30); one gate at (30,30)
+    for (let x = 20; x <= 40; x++) { if (x === 30) continue; createBuilding('SWALL', x, 30, 0); }
+    createBuilding('SGATE', 30, 30, 0);
+    const wall = entities.find(e => e.btype === 'SWALL' && e.x === 25 && e.y === 30);
+    wall.hp = wall.maxHp / 2; // damaged → a reinforce/repair
+    const v = createUnit('villager', 25, 35, 0); // INSIDE, south of the target
+    const path = findPath(Math.round(v.x), Math.round(v.y), wall.x, wall.y, v.id, 0, wall);
+    const end = path.length ? path[path.length - 1] : { x: 25, y: 35 };
+    assert(adjToBuilding(end.x, end.y, wall), 'did not reach the wall: ' + JSON.stringify(end));
+    assert(end.y > 30, 'approached from OUTSIDE (north) instead of inside (south): ' + JSON.stringify(end));
+    assert(!path.some(p => p.y < 30), 'path crossed to the outside of the wall: ' + JSON.stringify(path.filter(p => p.y < 30)));
+  });
+
   // ---- Building guard covers the WHOLE footprint, not one corner ----
   T('guard: a building guard leashes to the whole footprint (chases across a 4x4 TC), but still leashes beyond it', () => {
     stage();

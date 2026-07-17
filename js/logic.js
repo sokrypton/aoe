@@ -1191,9 +1191,10 @@ function updateGatherTask(e,config){
     // anyway. Deterministic pick: nearest, then lowest id.
     if(e.task==='farm'){
       let store=resourceStore(e.team);
-      // "Payable" must match who can actually PAY at the farm: prepaid credit
-      // works for everyone, but the raw-wood reseed is AI-only (a human's
-      // wood is spent via the Mill's prepay queue, updateVillagerBuild).
+      // "Payable" must match who can PAY here without a deliberate order:
+      // prepaid credit works for everyone, but auto-wandering to reseed with
+      // raw wood is AI-only — a human's wood is spent only on an EXPLICIT send
+      // (updateVillagerBuild) or via the Mill's prepay queue, never silently.
       // Without the isAITeam gate a human farmer with wood but no prepaid
       // ping-pongs build↔farm at the exhausted plot forever.
       if(store&&((store.prepaidFarms||0)>0||(isAITeam(e.team)&&store.wood>=60))){
@@ -2270,34 +2271,33 @@ function updateVillagerBuild(e){
     if(!isFarm) slideToContact(e, bt, 0.35);
     if (bt.btype === 'FARM' && bt.exhausted) {
       let store = resourceStore(e.team);
+      // Direct wood reseed applies to the AI (managing its own farms) and to a
+      // human's DELIBERATE send (explicitReseed, set by clicking the farm). The
+      // automatic paths — exhaustion-continuity and auto-wander — leave the flag
+      // false, so a human's wood is only ever spent on prepaid credit or an
+      // explicit order, never silently.
+      let payWood = isAITeam(e.team) || e.explicitReseed;
+      e.explicitReseed = false;
       if (store && store.prepaidFarms > 0) {
         store.prepaidFarms--;
         feedbackFor(e.team, () => showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")"));
         reseedFarmForFarmer(bt, e);
         return;
+      } else if (payWood && store && store.wood >= 60) {
+        store.wood -= 60;
+        feedbackFor(e.team, () => showMsg("Farm reseeded (-60 Wood)"));
+        reseedFarmForFarmer(bt, e);
+        return;
       } else {
-        // Direct-from-bank reseed is AI-ONLY (it's how the AI manages
-        // its farms). A HUMAN's farmer must not silently spend 60 wood
-        // — that made the Mill's prepaid queue pointless: the whole
-        // point of prepay (AoE2 DE) is choosing WHEN wood goes to
-        // farms. No prepaid credit → the farm stays exhausted until
-        // the player reactivates it or queues reseeds at the Mill.
-        if (store && store.wood >= 60 && isAITeam(e.team)) {
-          store.wood -= 60;
-          feedbackFor(e.team, () => showMsg("Farm reseeded (-60 Wood)"));
-          reseedFarmForFarmer(bt, e);
-          return;
-        } else {
-          feedbackFor(e.team, () => showMsg(isAITeam(e.team) ? "Not enough wood to reseed farm!" : "Farm exhausted — reactivate it or prepay reseeds at the Mill"));
-          // Look for another workable farm instead of idling — the
-          // farm-task fallback below (updateGatherTask) finds the next
-          // complete farm, or idles if none exists.
-          e.task = 'farm';
-          clearGatherTarget(e);
-          e.buildTarget = null;
-          clearGatherTarget(e);
-          return;
-        }
+        feedbackFor(e.team, () => showMsg(payWood ? "Not enough wood to reseed farm!" : "Farm exhausted — reactivate it or prepay reseeds at the Mill"));
+        // Look for another workable farm instead of idling — the
+        // farm-task fallback below (updateGatherTask) finds the next
+        // complete farm, or idles if none exists.
+        e.task = 'farm';
+        clearGatherTarget(e);
+        e.buildTarget = null;
+        clearGatherTarget(e);
+        return;
       }
     }
     // AoE2 multi-builder rule (openage doc/reverse_engineering/

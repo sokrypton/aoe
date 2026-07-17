@@ -112,6 +112,7 @@ function detEntityHash(e){
   h = detMix(h, e.gatherX == null ? -2 : e.gatherX); // villager tile claims steer OTHER villagers
   h = detMix(h, e.gatherY == null ? -2 : e.gatherY);
   h = detMix(h, e.explicitAttack ? 1 : 0);
+  h = detMix(h, e.explicitReseed ? 1 : 0);
   h = detMixFloat(h, e.defendX || 0);
   h = detMixFloat(h, e.defendY || 0);
   h = detMix(h, e.savedTask ? 1 : 0);
@@ -184,7 +185,7 @@ const DET_HASHED_KEYS = new Set([
   'speed','carryMax','maxHp','exhausted','trainTick','buildProgress','workTick',
   'curWorkers','lastWorkers','repairAccum','rallyX','rallyY','rallyTargetId','queue',
   'garrison','buildQueue','locked','rallyResourceType','gatherX','gatherY',
-  'explicitAttack','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
+  'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
   'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
