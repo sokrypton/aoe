@@ -296,6 +296,12 @@ function pathToContact(e,target,claim){
     path=findPath(sx,sy,target.x,target.y,e.id,0,target);
   return setUnitPath(e,path);
 }
+// Path a unit to INTERACT with a building: onto a FARM plot (walkable — the
+// villager stands on it), else the cheapest contact tile (pathToContact). THE
+// build/repair/dropoff approach, AI and player alike.
+function pathToBuilding(e,bldg){
+  return bldg.btype==='FARM' ? pathUnitTo(e,bldg.x,bldg.y) : pathToContact(e,bldg);
+}
 
 // e.speed is tiles per game-second (AoE2 stat). One orthogonal tile step
 // covers sqrt(32²+16²) ≈ 35.78 screen px and there are TPS ticks per

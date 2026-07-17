@@ -230,19 +230,23 @@ function dropAccepts(b,resType){
   return !!(ds&&ds.has(resType));
 }
 
-function nearestDrop(e,resType,excludeIds=null){
-  let best=null,bd=999;
-  entities.forEach(b=>{
-    if(b.type!=='building'||b.team!==e.team||!b.complete)return;
-    if(excludeIds && excludeIds.includes(b.id))return; // e.avoid array (see avoidAdd)
-    if(dropAccepts(b,resType)){
-      // Euclidean footprint distance (distToTarget), matching the approach/
-      // arrival logic — Manhattan ranking could pick a longer diagonal walk.
-      let d=distToTarget(e,b);
-      if(d<bd){bd=d;best=b;}
-    }
-  });
+// THE nearest own/matching building to `e`, ranked by Euclidean footprint
+// distance (distToTarget — matches the approach/arrival logic; Manhattan could
+// pick a longer diagonal walk). `pred(b)` selects the candidates. id-ordered
+// scan, strict `<` → deterministic first-wins tiebreak.
+function nearestBuildingWhere(e,pred){
+  let best=null,bd=Infinity;
+  for(let i=0;i<entities.length;i++){
+    let b=entities[i];
+    if(b.type!=='building'||b.hp<=0||!pred(b))continue;
+    let d=distToTarget(e,b);
+    if(d<bd){bd=d;best=b;}
+  }
   return best;
+}
+function nearestDrop(e,resType,excludeIds=null){
+  return nearestBuildingWhere(e, b=> b.team===e.team && b.complete
+    && !(excludeIds && excludeIds.includes(b.id)) && dropAccepts(b,resType));
 }
 
 function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
@@ -756,13 +760,10 @@ function nearestBldgPerimeter(px,py,bldg,ignore,claimed){
 // detour-vs-breach heuristic this feeds.
 function ticksToReachBuilding(unit, target){
   if (adjToBuilding(unit.x, unit.y, target)) return 0;
-  let pt = nearestBldgPerimeter(unit.x, unit.y, target, unit.id);
-  let path = findPath(unit.x, unit.y, pt.x, pt.y, unit.id);
+  // goalBldg only ever ends at a real contact tile (reachable by construction),
+  // so an empty path is a genuine "walled off" — no redirect-to-nowhere check.
+  let path = findPath(Math.round(unit.x), Math.round(unit.y), target.x, target.y, unit.id, 0, target);
   if (path.length === 0) return -1;
-  // findPath REDIRECTS unwalkable destinations up to 20 tiles — a path that
-  // doesn't actually END at the perimeter is a path to nowhere (pathReaches).
-  let last = path[path.length - 1];
-  if (Math.abs(last.x - pt.x) > 1.5 || Math.abs(last.y - pt.y) > 1.5) return -1;
   return path.length / ((UNITS[unit.utype].speed || 1) / TPS);
 }
 // Can this unit actually reach (path adjacent to) the given target? Priority-
@@ -1035,6 +1036,15 @@ function contactClaims(e, pred){
     claim.add(ty*MAP+tx);
   }
   return claim;
+}
+
+// Can `e` reach `bldg` to interact — already adjacent, on a farm plot, or a
+// path exists? Agrees with pathToBuilding/goalBldg on which tiles count (the
+// reachability probe that gates AI build/target assignment).
+function canReachBuilding(e,bldg){
+  let sx=Math.round(e.x), sy=Math.round(e.y);
+  if(bldg.btype==='FARM') return pathReaches(sx,sy,bldg.x,bldg.y,e.id);
+  return adjToBuilding(e.x,e.y,bldg) || findPath(sx,sy,bldg.x,bldg.y,e.id,0,bldg).length>0;
 }
 
 // AoE2 DE-style group spread: when several villagers are tasked onto one
@@ -1324,19 +1334,13 @@ function checkNextBuild(e){
     // off (wrong side of a closing wall ring) — assigning it anyway churns
     // walk/fail/reassign until the stuck-watchdog fires.
     unfinishedInQueue.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id); // deterministic tiebreak
-    let bt = null, pt = null;
-    for (let cand of unfinishedInQueue) {
-      let b = BLDGS[cand.btype];
-      let cpt = b.isFarm ? {x: cand.x, y: cand.y} : nearestBldgPerimeter(e.x, e.y, cand, e.id);
-      let close = b.isFarm ? dist(e,{x:cand.x+0.5,y:cand.y+0.5})<1.2 : adjToBuilding(e.x,e.y,cand);
-      if (close || pathReaches(Math.round(e.x), Math.round(e.y), cpt.x, cpt.y, e.id)) { bt = cand; pt = cpt; break; }
-    }
+    let bt = unfinishedInQueue.find(cand => canReachBuilding(e, cand));
     if (bt) {
       e.buildQueue = unfinishedInQueue.map(b => b.id);
       e.task = 'build';
       e.buildTarget = bt.id;
       e.target = null;
-      pathUnitTo(e, pt.x, pt.y);
+      pathToBuilding(e, bt);
       return true;
     }
   }
@@ -1363,13 +1367,11 @@ function tryBuildElsewhere(e, blockedId){
     if (cand.id === blockedId) continue;
     let b = BLDGS[cand.btype];
     if (!b.isFarm && !b.walkable && cand.buildProgress === 0 && footprintOccupiedByOther(cand)) continue; // also blocked
-    let cpt = b.isFarm ? { x: cand.x, y: cand.y } : nearestBldgPerimeter(e.x, e.y, cand, e.id);
-    let close = b.isFarm ? dist(e, { x: cand.x + 0.5, y: cand.y + 0.5 }) < 1.2 : adjToBuilding(e.x, e.y, cand);
-    if (close || pathReaches(Math.round(e.x), Math.round(e.y), cpt.x, cpt.y, e.id)) {
+    if (canReachBuilding(e, cand)) {
       e.buildQueue = e.buildQueue || [];
       if (!e.buildQueue.includes(blockedId)) e.buildQueue.push(blockedId); // keep it to circle back
       e.task = 'build'; e.buildTarget = cand.id; e.target = null;
-      pathUnitTo(e, cpt.x, cpt.y);
+      pathToBuilding(e, cand);
       return true;
     }
   }
@@ -1691,11 +1693,7 @@ function restoreSavedTask(e) {
 
     if (e.task === 'build' && e.buildTarget) {
       let bt = entitiesById.get(e.buildTarget);
-      if (bt) {
-        let b = BLDGS[bt.btype];
-        let pt = b.isFarm ? {x: bt.x, y: bt.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(e.x, e.y, bt, e.id) : {x: bt.x + bt.w, y: bt.y + bt.h});
-        if (pt) pathUnitTo(e, pt.x, pt.y);
-      }
+      if (bt) pathToBuilding(e, bt);
     } else if (e.task === 'return') {
       // A loaded hauler resumes its DROP-OFF, not the resource tile: leave
       // the path empty and updateVillagerDropoff (which runs on an empty
@@ -1846,8 +1844,7 @@ function ringTownBell(team){
     stashVillagerTask(e);
     e.target=null;e.buildTarget=null;
     e.task='garrison';e.garrisonTarget=best.b.id;
-    let pt=nearestBldgPerimeter(e.x,e.y,best.b,e.id);
-    if(pt)pathUnitTo(e,pt.x,pt.y);
+    pathToContact(e,best.b);
     sent++;
   });
   if(team===myTeam){
@@ -1885,16 +1882,8 @@ function soundAllClear(team){
 // may be ordered before the endpoint finishes; the cart waits at the site
 // (updateTradeCart trades only against COMPLETE markets).
 function nearestMarket(e, own, allowIncomplete){
-  let best=null,bd=Infinity;
-  entities.forEach(b=>{
-    if(b.type!=='building'||b.btype!=='MARKET'||b.hp<=0)return;
-    if(!b.complete&&!allowIncomplete)return;
-    let match = own ? (b.team===e.team) : (b.team!==e.team && isPlayerTeam(b.team));
-    if(!match)return;
-    let d=distToTarget(e,b);
-    if(d<bd){bd=d;best=b;}
-  });
-  return best;
+  return nearestBuildingWhere(e, b=> b.btype==='MARKET' && (b.complete||allowIncomplete)
+    && (own ? b.team===e.team : (b.team!==e.team && isPlayerTeam(b.team))));
 }
 
 // Trade cart state machine — shuttles between its home Market (tradeHomeId,
@@ -2249,8 +2238,7 @@ function updateVillagerBuild(e){
     // either delivered the builder (close, handled below) or given up on a
     // truly blocked lane, so a fresh plan is warranted.
     if(e.path.length===0){
-      if(isFarm){ pathUnitTo(e,bt.x,bt.y); }
-      else { pathToContact(e,bt); } // cheapest-to-WALK contact tile (goalBldg A*), reachable by construction
+      pathToBuilding(e,bt); // farm plot, else cheapest-to-WALK contact tile (goalBldg)
       if(e.path.length===0){
         // Still no route AND not adjacent → the site is unreachable right now.
         let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
@@ -3588,8 +3576,7 @@ function rallyNewUnit(e, unit){
               let home=nearestMarket(unit,true);
               if(home){
                 unit.tradeDestId=target.id; unit.tradeHomeId=home.id; unit.tradePhase='toDest';
-                let pt=nearestBldgPerimeter(unit.x,unit.y,target,unit.id);
-                pathUnitTo(unit,pt.x,pt.y);
+                pathToContact(unit,target);
               } else {
                 pathUnitTo(unit,e.rallyX,e.rallyY);
               }

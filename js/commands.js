@@ -314,10 +314,9 @@ function execGarrison(cmd, team){
     if (u.order) issueOrder(u, null);        // LAST ORDER WINS (mirrors execUnitCommand)
     u.target = null; u.buildTarget = null; u.buildQueue = []; u.explicitAttack = false;
     u.task = 'garrison'; u.garrisonTarget = b.id;
-    // A ram is a moving point (no footprint perimeter); a building routes to its edge.
-    let pt = b.type === 'unit' ? { x: Math.round(b.x), y: Math.round(b.y) }
-                               : nearestBldgPerimeter(u.x, u.y, b, u.id);
-    if (pt) pathUnitTo(u, pt.x, pt.y);
+    // A ram is a moving point (no footprint); a building routes to its edge.
+    if (b.type === 'unit') pathUnitTo(u, Math.round(b.x), Math.round(b.y));
+    else pathToContact(u, b);
     room--; sent++;
   });
   feedbackFor(team, () => { if (!sent && typeof showMsg === 'function') showMsg('No room to garrison'); });
@@ -677,8 +676,7 @@ function execUnitCommand(cmd){
         } else {
           s.tradeDestId = mkt.id; s.tradeHomeId = home.id; s.tradePhase = 'toDest';
           s.target = null; s.task = null; clearUnitPath(s);
-          let pt = nearestBldgPerimeter(s.x, s.y, mkt, s.id);
-          pathUnitTo(s, pt.x, pt.y);
+          pathToContact(s, mkt);
         }
       } else {
         s.tradeDestId = null; s.tradeHomeId = null; s.tradePhase = null;
@@ -690,9 +688,7 @@ function execUnitCommand(cmd){
     }
     if (buildTarget && s.utype === 'villager') {
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
-      let b = BLDGS[buildTarget.btype];
-      let pt = b.isFarm ? { x: buildTarget.x, y: buildTarget.y } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(s.x, s.y, buildTarget, s.id) : { x: buildTarget.x + buildTarget.w, y: buildTarget.y + buildTarget.h });
-      pathUnitTo(s, pt.x, pt.y);
+      pathToBuilding(s, buildTarget);
     } else if (target) {
       if (s.utype === 'sheep') { return; } // sheep don't attack
       if ((target.utype === 'sheep' || target.utype === 'sheep_carcass') && s.utype !== 'villager') {
@@ -869,10 +865,7 @@ function dispatchBuilders(vils, target, plan){
     v.buildQueue.push(target.id);
     if (v.task !== 'build' || !v.buildTarget) {
       v.task = 'build'; v.buildTarget = target.id; v.target = null; v.savedTask = null;
-      let pt = (plan && BLDGS[target.btype].isFarm) ? { x: plan.ox, y: plan.oy }
-        : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, target, v.id)
-          : { x: target.x + target.w, y: target.y + target.h });
-      pathUnitTo(v, pt.x, pt.y);
+      pathToBuilding(v, target);
     }
   });
 }
