@@ -611,6 +611,33 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+  T('upgrade foundations are open gaps: an unbuilt upgraded gate OR wall passes anyone (owner + enemy)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const cart = createUnit('tradecart', 5, 20, 0);
+    const enemy = createUnit('tradecart', 55, 20, 1);
+
+    // GATE → stone: whole 3-wide footprint is walkable while unbuilt, everyone.
+    const gate = createBuilding('GATE', 30, 30, 0, 3, 1);
+    const gv = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'SGATE', tileX: 31, tileY: 30, unitIds: [gv.id] }, 0);
+    assert(gate.btype === 'SGATE' && !gate.complete && !gate.buildProgress, 'setup: gate should be an unbuilt upgrade foundation');
+    assert(walkable(31, 30, cart.id), 'owner cannot pass through the unbuilt gate');
+    assert(walkable(30, 30, cart.id), 'owner blocked at a gate post tile while unbuilt');
+    assert(walkable(31, 30, enemy.id), 'enemy cannot pass through the unbuilt gate gap');
+
+    // WALL → stone: same rule — an upgraded wall is just a foundation, so the
+    // tile opens as a walkable gap until construction begins (no wasWall seal).
+    const wall = createBuilding('WALL', 40, 40, 0);
+    const wv = createUnit('villager', 39, 39, 0);
+    execCommand({ kind: 'build-placement', btype: 'SWALL', tileX: 40, tileY: 40, unitIds: [wv.id] }, 0);
+    assert(wall.btype === 'SWALL' && !wall.complete && !wall.buildProgress, 'setup: wall should be an unbuilt upgrade foundation');
+    assert(walkable(40, 40, cart.id), 'owner cannot pass through the unbuilt upgraded wall');
+    assert(walkable(40, 40, enemy.id), 'enemy cannot pass through the unbuilt upgraded wall');
+    teamAge[0] = 0;
+  });
+
   T('build-over: garrison in a palisade tower is EJECTED (not orphaned) when a stone tower is built over it', () => {
     stage();
     const store = resourceStore(0); store.wood = 1000; store.stone = 1000;

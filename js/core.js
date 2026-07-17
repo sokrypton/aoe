@@ -1102,6 +1102,9 @@ function resetTeamVision(){
   visionRebuild = true;
   visionFreshTick = -1;
 }
+// Watch towers double as scouting outposts: their line of sight scales with the
+// owner's age like AoE2's Outpost (indexed by teamAge — Dark/Feudal/Castle).
+const TOWER_LOS_BY_AGE = [6, 9, 12];
 function updateTeamVision(){
   // All-Visible match: every read of the grids is short-circuited
   // (teamCanSeeTile/teamHasExplored return true, updateFog floods), so
@@ -1162,8 +1165,7 @@ function updateTeamVision(){
       const b = BLDGS[e.btype];
       if (!e.complete) sight = 1;
       else if (e.btype === 'TC') sight = 8;
-      else if (e.btype === 'TOWER') sight = 9;
-      else if (e.btype === 'PTOWER') sight = 8;
+      else if (e.btype === 'TOWER' || e.btype === 'PTOWER') sight = TOWER_LOS_BY_AGE[Math.min(teamAge[team] || 0, 2)];
       else if (e.btype === 'HOUSE') sight = 4;
       else sight = 5;
       cx = Math.floor(e.x + (e.w || b.w) / 2);

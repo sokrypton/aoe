@@ -821,7 +821,6 @@ function commitBuildingPlacement(btype, plan, team, complete){
   } else {
     bldg.complete = false; bldg.buildProgress = 0;
     bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-    if (plan.replaced.length) bldg.wasWall = true;
     // foundation: stays walkable; the build-gate clears the footprint gently
     // when a builder commits (clearFootprintForBuild) — no placement shove.
   }
@@ -1039,9 +1038,9 @@ function applyStoneUpgrade(pieces, team){
     w.buildTime = BLDGS[upType].buildTime || 200;
     w.maxHp = buildingMaxHpFor(team, upType);
     // A normal construction site, same as execBuildPlacement foundations:
-    // villagers build it up, and it cancels/refunds like any other (wasWall keeps
-    // its tile SOLID for pathfinding so the wall line isn't open mid-rebuild).
-    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true;
+    // villagers build it up, it cancels/refunds like any other, and (unbuilt)
+    // its tile is a walkable gap in the wall line until construction begins.
+    w.complete = false; w.buildProgress = 0; w.hp = 1;
     markMapDirty(w.x, w.y);
   });
   feedbackFor(team, () => {

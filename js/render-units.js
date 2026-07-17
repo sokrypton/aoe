@@ -355,7 +355,7 @@ function drawTradeCartCorpse(c, sx, sy, age, alpha){
   wallQ(-nearB, bedInner);          // far side wall: inner face
   endQ(u.y<0 ? L : -L, bedInner);   // far end (view-dependent): inner face
   poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor); // floor
-  if (!weathered && cargoT < 0.55) drawCargo(); // still boxed in: walls occlude it
+  if (c.carrying > 0 && !weathered && cargoT < 0.55) drawCargo(); // still boxed in: walls occlude it
   // near outer faces are TEAM-COLORED panels (the live cart's ownership
   // read) — but once a wall folds past ~45° its blue outer face turns
   // toward the ground, so the visible side becomes the brown INNER face
@@ -367,7 +367,7 @@ function drawTradeCartCorpse(c, sx, sy, age, alpha){
   if (u.x !== 0 && tFold <= 0.3) nearWheels(); // still tipping: over the standing box
 
   // once the walls have mostly folded open the spilled cargo lies ON them
-  if (!weathered && cargoT >= 0.55) {
+  if (c.carrying > 0 && !weathered && cargoT >= 0.55) {
     X.save(); X.translate(0, drop);
     drawCargo();
     X.restore();
@@ -1425,11 +1425,12 @@ function drawQuadruped(e, p){
 // (drawQuadruped) at the front. Gold cargo rides hidden under the canvas.
 // Drawn inside drawUnit's translated + mirrored + scaled context, coords local
 // px around the ground anchor.
-// The trade cart's ONE canonical load: crate + sack + gold, drawn
-// identically on the living cart (every trade phase — kept constant for
-// visual consistency) and through the death sequence. `pos(key, dx, dy)`
-// maps each piece's local offset from the load anchor to its final center,
-// which lets the wreck spill the pieces apart along their own paths.
+// The trade cart's ONE canonical load: crate + sack + gold. Drawn only while
+// the cart is LOADED (carrying>0) — the sack appears when it picks up gold at
+// the far market and vanishes when it deposits at home, mirroring a villager's
+// carried resource. Shared by the living cart and the death-spill sequence.
+// `pos(key, dx, dy)` maps each piece's local offset from the load anchor to its
+// final center, which lets the wreck spill the pieces apart along their paths.
 function drawCartLoad(pos, lw){
   X.lineJoin='round';
   // one BIG plump grain sack, tied at the neck — clean over busy
@@ -1651,7 +1652,7 @@ function drawTradeCartBody(e){
     // the load sits IN the box, sunk low between the boards: the near
     // board occludes its base, the top rising only to the far rim
     let cc=P(0,0,CH-3.4);
-    drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
+    if (e.carrying > 0) drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
     // near board: team-colored outer face with plank seams
     let bl=P(nearA,-hw,CB), br=P(nearA,hw,CB), tl=P(nearA,-hw,CH), tr=P(nearA,hw,CH);
     poly([bl,br,tr,tl], tc);
@@ -1672,7 +1673,7 @@ function drawTradeCartBody(e){
     // the near wall, so the wall occludes its base and only the tops peek
     // over the rim
     let cc=P(0,0,CH-2.2);
-    drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
+    if (e.carrying > 0) drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
     // near structure (open top): team-colored outer faces — side wall lit
     // (tc), end board shaded (tcD)
     wall(1, tc);

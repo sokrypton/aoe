@@ -734,6 +734,30 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------- tower line of sight scales with age
+    // Watch towers double as scouting outposts (AoE2 Outpost): LOS 6 (Dark) →
+    // 9 (Feudal) → 12 (Castle), keyed off the owner's teamAge.
+    'tower-los-by-age': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [0, 0], entities: [ { b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 } ] });
+      window.fogDisabled = false;
+      const tx = 30, ty = 30;
+      const tower = createBuilding('PTOWER', tx, ty, 0); // 1x1 → disk centered on (tx,ty)
+      tower.complete = true; tower.hp = tower.maxHp;
+      // Recompute vision from scratch (forced rebuild) and read team 0's grid.
+      const seen = (x, y) => { visionFreshTick = -1; visionRebuild = true; updateTeamVision(); return teamVisGrid[0][y * MAP + x] > 0; };
+      teamAge[0] = 0;
+      T.ok('dark: sees 6 tiles out', seen(tx + 6, ty));
+      T.ok('dark: does NOT see 9 tiles out', !seen(tx + 9, ty));
+      teamAge[0] = 1;
+      T.ok('feudal: now sees 9 tiles out', seen(tx + 9, ty));
+      T.ok('feudal: does NOT see 12 tiles out', !seen(tx + 12, ty));
+      teamAge[0] = 2;
+      T.ok('castle: now sees 12 tiles out', seen(tx + 12, ty));
+      return T;
+    })),
+
     // ------------------------------------------------------------ walled archer
     'walled-archer': async (page) => {
       const save = JSON.parse(fs.readFileSync(path.join(ROOT, 'scenarios/walled-archer.savegame.json'), 'utf8'));

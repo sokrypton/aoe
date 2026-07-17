@@ -74,12 +74,13 @@ function walkable(x,y,ignore,ignoreUnits){
   if(!isResource&&!blockedByOccupant)return true;
 
   // A building foundation that no builder has started work on yet isn't a
-  // real obstacle — anyone (allied or enemy) can walk through it. Once
-  // construction has actually begun (buildProgress > 0) it blocks normally.
+  // real obstacle — anyone (allied or enemy) can walk through it, whether it
+  // was freshly placed or a wall/gate/tower upgraded in place (an upgrade is
+  // just a new foundation). Once construction begins (buildProgress > 0) it
+  // blocks normally.
   if(t.occupied){
     let occ = entitiesById.get(t.occupied);
     if(occ && occ.type === 'building' && !occ.complete && !occ.buildProgress) {
-      if (occ.wasWall) return false;
       return true;
     }
     // TC open courtyard: on the 4x4 footprint only the BACK 2x2 stone keep
