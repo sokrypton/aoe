@@ -225,8 +225,10 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   // viewport-space, ss=1 mask of the occluding buildings' pixels; the source
   // rect is this buffer's screen region, upscaled to the ring's resolution.
   if(clipC){
+    // clipC's (0,0) is logical (_occMaskOffX,_occMaskOffY), not (0,0) — subtract
+    // that anchor so the sampled region lines up with this ring's screen origin.
     _silRingX.globalCompositeOperation='destination-in';
-    _silRingX.drawImage(clipC, originLeft, originTop, bufW, bufH, 0,0, physW, physH);
+    _silRingX.drawImage(clipC, originLeft-_occMaskOffX, originTop-_occMaskOffY, bufW, bufH, 0,0, physW, physH);
     _silRingX.globalCompositeOperation='source-over';
   }
 
@@ -245,16 +247,75 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
 // camera so occluders land where they render. `occs` is the candidate-driven
 // active set, so this is a handful of redraws even on a dense map — never all
 // on-screen occluders.
-let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0;
+let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0, _occMaskOffX=0, _occMaskOffY=0;
+
+// ---- Cached SOLID-building occluder silhouettes ----
+// Buildings don't move, and the occluder mask is drawn at ZOOM=1 (logical
+// screen coords, upscaled by the clip step) so a building's silhouette is
+// zoom-invariant — bake it once and blit thereafter instead of re-rasterizing
+// its vector art per occluder-group every frame. Only the ALPHA SHAPE feeds
+// the clip, so team color / age tint / fog darken / build-progress alpha don't
+// vary it (build-progress alpha and the floating HP/progress UI are already
+// suppressed under _maskDraw). WALL-LIKE pieces (walls/gates/towers) are NOT
+// cached: their outline includes neighbour-dependent link stubs (instance
+// state not in the key) — they stay on the live drawBuilding path.
+// Key axes that DO change the shape: btype, depth-split part, footprint w/h,
+// the h override, owner age (materials/keep geometry), and complete (some
+// body geometry only draws when finished). Follows _treeArtCache; render-only,
+// no determinism impact.
+const _bldgSilCache = new Map();
+function _bldgSil(en, part){
+  const b = BLDGS[en.btype];
+  const age = (typeof teamAge!=='undefined' && teamAge && isPlayerTeam(en.team)) ? (teamAge[en.team]||0) : 0;
+  const key = en.btype+'|'+(part||'')+'|'+b.w+'|'+b.h+'|'+(en.h===undefined?'':en.h)+'|'+age+'|'+(en.complete?1:0);
+  let a = _bldgSilCache.get(key);
+  if(a) return a;
+  // Extents about the footprint-top corner — same generous box the candidate
+  // sweep uses (_bsilFillOccBox), so the whole silhouette always fits.
+  const halfW = (b.w+b.h)/2*HALF_TW + 14;
+  const above = 60 + 18*Math.max(b.w,b.h);
+  const below = (b.h + (b.w+b.h)/2)*HALF_TH + 16;
+  const ax = Math.ceil(halfW), ay = Math.ceil(above);
+  const cv = document.createElement('canvas');
+  cv.width = ax + Math.ceil(halfW); cv.height = ay + Math.ceil(below);
+  const cx = cv.getContext('2d');
+  // Position a synthetic camera so drawBuilding's footprint-top corner lands
+  // at (ax,ay) in the buffer. Big W/H keep isOffscreen (drawBuilding's early
+  // bail) from tripping on the far-from-centre anchor.
+  const isoC = toIso(en.x+b.w/2, en.y+b.h/2);
+  const sv={X,camX,camY,W,H,topH,ZOOM}, svMask=window._maskDraw;
+  X=cx; W=4000;H=4000;topH=0;ZOOM=1;
+  camX = isoC.ix + W/2 - ax;
+  camY = isoC.iy + H/2 - (ay + b.h*HALF_TH);
+  window._maskDraw=true;
+  try { drawBuilding(en, part); }
+  finally { window._maskDraw=svMask; X=sv.X;camX=sv.camX;camY=sv.camY;W=sv.W;H=sv.H;topH=sv.topH;ZOOM=sv.ZOOM; }
+  a = { canvas: cv, ax, ay };
+  _bldgSilCache.set(key, a);
+  return a;
+}
+
 function _buildOccMask(occs){
-  const needW=Math.ceil(W), needH=Math.ceil(H);
+  // Occluders are drawn at ZOOM=1 LOGICAL coords, but the transform scales
+  // around screen-center (render.js), so when zoomed OUT the visible logical
+  // rect extends past [0,W]×[0,H] — even NEGATIVE near the top-left. A mask
+  // anchored at logical (0,0) with size W×H would drop those pixels, so a unit
+  // in the left/top of the screen loses its clip and the outline flickers as it
+  // crosses the x=0 boundary. Anchor the mask at the visible rect's top-left
+  // (same bounds drawBehindBuildingOutlines clamps groups to) and record the
+  // offset so the clip step samples the right region.
+  const hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH, M=48;
+  const offX=Math.floor(W/2-hw-M), offY=Math.floor(cyv-hh-M);
+  const needW=Math.ceil(2*(hw+M)), needH=Math.ceil(2*(hh+M));
+  _occMaskOffX=offX; _occMaskOffY=offY;
   if(!_occMaskC || _occMaskW<needW || _occMaskH<needH){
     _occMaskC=document.createElement('canvas');
     _occMaskC.width=Math.max(needW,_occMaskW); _occMaskC.height=Math.max(needH,_occMaskH);
     _occMaskX=_occMaskC.getContext('2d'); _occMaskW=_occMaskC.width; _occMaskH=_occMaskC.height;
   }
   _occMaskX.setTransform(1,0,0,1,0,0);
-  _occMaskX.clearRect(0,0,_occMaskW,_occMaskH);
+  _occMaskX.clearRect(0,0,needW,needH);
+  _occMaskX.setTransform(1,0,0,1,-offX,-offY); // logical (offX,offY) -> canvas (0,0)
   const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
   try{
     for(const d of occs){
@@ -263,7 +324,17 @@ function _buildOccMask(occs){
       const part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
                  : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
                  : (d.type==='gate_door') ? 'door' : (d.part||null);
-      drawBuilding(en, part);
+      // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw
+      // live. Everything else blits its baked silhouette at the same
+      // footprint-top corner drawBuilding would have drawn it at (real camera,
+      // ZOOM=1 — the offX/offY shift is already on _occMaskX's transform).
+      if(isWallLike(en)){ drawBuilding(en, part); continue; }
+      const sil = _bldgSil(en, part);
+      const b = BLDGS[en.btype];
+      const isoC = toIso(en.x+b.w/2, en.y+b.h/2);
+      const rsx = Math.round(isoC.ix-camX+W/2);
+      const rsy = Math.round(isoC.iy-camY+H/2+topH) - b.h*HALF_TH;
+      X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
     }
   } finally { window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
   return _occMaskC;

@@ -58,6 +58,12 @@ function pageLookAt(x, y) {
 // render() throw (e.g. mid-edit art code) only costs the canvas backdrop,
 // so it's reported without killing the capture.
 const SCENES = {
+  restmp: `(${pageStage})();
+    ['forage','forage','forage','chop','chop','mine_gold','mine_stone','mine_stone'].forEach((t,i)=>{ const v=createUnit('villager',20+i,20,0); v.task=t; });
+    resourceStore(0).food=200; resourceStore(0).wood=150; resourceStore(0).gold=90; resourceStore(0).stone=175;
+    (${pageLookAt})(30,30);
+    updateUI();
+    try { render(); } catch (e) {}`,
   market: `(${pageStage})();
     const m = createBuilding('MARKET', 28, 28, 0);
     selected.push(m);

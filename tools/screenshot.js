@@ -104,9 +104,9 @@ const SCENES = {
     // already the stone/tower target, complete=false, half-built HP) — the
     // normal foundation render (alpha ramp + cyan HP bar) applies
     const uw = createBuilding('SWALL', 25, 35, 0);
-    uw.complete = false; uw.buildProgress = uw.buildTime / 2; uw.hp = uw.maxHp / 2; uw.wasWall = true;
+    uw.complete = false; uw.buildProgress = uw.buildTime / 2; uw.hp = uw.maxHp / 2;
     const ut = createBuilding('TOWER', 29, 35, 0);
-    ut.complete = false; ut.buildProgress = ut.buildTime / 2; ut.hp = ut.maxHp / 2; ut.wasWall = true;
+    ut.complete = false; ut.buildProgress = ut.buildTime / 2; ut.hp = ut.maxHp / 2;
     (${pageLookAt})(28.5, 31);
     render();`,
   guardbldg: `(${pageStage})();

@@ -251,8 +251,7 @@ function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
   let v=vils[Math.floor(ai.tick/profile.decisionInterval)%vils.length];
   if(v.garrisonedIn||v.task==='garrison')return;
   if(adjToBuilding(v.x,v.y,aiTC))return;
-  let pt=nearestBldgPerimeter(v.x,v.y,aiTC,v.id);
-  if(!pt||pathReaches(v.x,v.y,pt.x,pt.y,v.id))return;
+  if(canReachBuilding(v,aiTC))return;
   let w=nearestReachableWallLike(v,ai.team);
   if(w&&w.team===ai.team&&isWallBtype(w.btype)){
     deleteOwnedEntity(w);
@@ -1097,8 +1096,7 @@ function controlAITradeCarts(ai,aiUnits){
     if(!home||!dest)continue;                             // no enemy trade — leave idle
     c.tradeHomeId=home.id; c.tradeDestId=dest.id; c.tradePhase='toDest';
     c.target=null; c.task=null; clearUnitPath(c);
-    let pt=nearestBldgPerimeter(c.x,c.y,dest,c.id);
-    if(pt)pathUnitTo(c,pt.x,pt.y);
+    pathToContact(c,dest);
   }
 }
 
@@ -1324,13 +1322,7 @@ function neededAIBuildingWork(ai,incompleteBuilds,vils,profile,v){
     // pocket) must not be handed a foundation only the TC can reach — that's
     // the churn-until-watchdog loop. Falls back to the TC when no v is given.
     let src = v || entities.find(e => e.team === ai.team && e.btype === 'TC');
-    if (src) {
-      let b = BLDGS[build.btype];
-      let pt = b.isFarm ? {x: build.x, y: build.y} : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(src.x, src.y, build, src.id) : {x: build.x, y: build.y});
-      if (!pathReaches(Math.round(src.x), Math.round(src.y), pt.x, pt.y, src.id)) {
-        return false;
-      }
-    }
+    if (src && !canReachBuilding(src, build)) return false;
     return true;
   });
 }
@@ -1340,14 +1332,12 @@ function assignAIBuilder(v,build){
   v.buildTarget=build.id;
   v.target=null;
   clearGatherTarget(v);
-  let b=BLDGS[build.btype];
-  let pt=b.isFarm?{x:build.x,y:build.y}:(typeof nearestBldgPerimeter==='function'?nearestBldgPerimeter(v.x,v.y,build,v.id):{x:build.x+build.w,y:build.y+build.h});
-  pathUnitTo(v,pt.x,pt.y);
+  pathToBuilding(v,build);
   // No path and not already at the site (forest-locked pocket, sealed-in
   // ring tile): back the foundation off and stand down NOW — parking the
   // villager on an unreachable job feeds the retry/reassign loop that the
   // stuck-watchdog then has to break up.
-  let close=b.isFarm?dist(v,{x:build.x+0.5,y:build.y+0.5})<1.2:adjToBuilding(v.x,v.y,build);
+  let close=build.btype==='FARM'?dist(v,{x:build.x+0.5,y:build.y+0.5})<1.2:adjToBuilding(v.x,v.y,build);
   if(v.path.length===0&&!close){
     build.buildBackoffUntil=tick+T30(900);
     v.task=null;
@@ -1452,14 +1442,13 @@ function assignAIGatherTask(ai,v,vils,profile){
     }
     if(target&&target.x!=null){
       // PARITY: claim + approach through THE shared helpers the human
-      // gather-click uses (claimGatherTileNear fans co-gatherers onto
-      // distinct tiles; pickGatherStand rings distinct adjacent stands).
+      // gather-click uses (claimGatherTileNear fans co-gatherers onto distinct
+      // NODES; pathToContact + contactClaims ring distinct adjacent STANDS).
       // The AI's drop-anchored CHOICE above is decision-making; the
       // claiming/standing MECHANICS are now identical to a player's.
       let g=claimGatherTileNear(v, gc.terrain, target.x, target.y);
       v.gatherX=g.x; v.gatherY=g.y;
-      let stand=(typeof pickGatherStand==='function')?pickGatherStand(v,g.x,g.y):null;
-      if(stand)pathUnitTo(v,stand.x,stand.y);
+      pathToContact(v, {x:g.x, y:g.y, w:1, h:1}, contactClaims(v, p=>p.gatherX===g.x && p.gatherY===g.y));
     }
   }
 }
@@ -1881,8 +1870,7 @@ function aiThreatResponse(ai,mils,aiTC,profile){
             aiProbe('shelterSeat:t'+ai.team);
             m.target=null;
             m.task='garrison';m.garrisonTarget=best.b.id;
-            let pt=nearestBldgPerimeter(m.x,m.y,best.b,m.id);
-            if(pt)pathUnitTo(m,pt.x,pt.y);
+            pathToContact(m,best.b);
             return;
           }
           aiProbe('shelterNoSeat:t'+ai.team);

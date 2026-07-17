@@ -267,7 +267,7 @@ function execSetStance(cmd, team){
     // passive unit are still obeyed). ONLY the fight: a unit merely walking
     // keeps its move order.
     if (cmd.stance === 'passive' && (u.target != null || u.explicitAttack)) {
-      u.target = null; u.explicitAttack = false; u.siegeSpot = null;
+      u.target = null; u.explicitAttack = false;
       if (typeof clearUnitPath === 'function') clearUnitPath(u);
     }
   });
@@ -314,10 +314,9 @@ function execGarrison(cmd, team){
     if (u.order) issueOrder(u, null);        // LAST ORDER WINS (mirrors execUnitCommand)
     u.target = null; u.buildTarget = null; u.buildQueue = []; u.explicitAttack = false;
     u.task = 'garrison'; u.garrisonTarget = b.id;
-    // A ram is a moving point (no footprint perimeter); a building routes to its edge.
-    let pt = b.type === 'unit' ? { x: Math.round(b.x), y: Math.round(b.y) }
-                               : nearestBldgPerimeter(u.x, u.y, b, u.id);
-    if (pt) pathUnitTo(u, pt.x, pt.y);
+    // A ram is a moving point (no footprint); a building routes to its edge.
+    if (b.type === 'unit') pathUnitTo(u, Math.round(b.x), Math.round(b.y));
+    else pathToContact(u, b);
     room--; sent++;
   });
   feedbackFor(team, () => { if (!sent && typeof showMsg === 'function') showMsg('No room to garrison'); });
@@ -649,6 +648,7 @@ function execUnitCommand(cmd){
     s.buildQueue = [];
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
+    s.explicitReseed = false;
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell
       // (task='garrison' + garrisonTarget; enterGarrison seats on arrival).
@@ -677,8 +677,7 @@ function execUnitCommand(cmd){
         } else {
           s.tradeDestId = mkt.id; s.tradeHomeId = home.id; s.tradePhase = 'toDest';
           s.target = null; s.task = null; clearUnitPath(s);
-          let pt = nearestBldgPerimeter(s.x, s.y, mkt, s.id);
-          pathUnitTo(s, pt.x, pt.y);
+          pathToContact(s, mkt);
         }
       } else {
         s.tradeDestId = null; s.tradeHomeId = null; s.tradePhase = null;
@@ -690,9 +689,13 @@ function execUnitCommand(cmd){
     }
     if (buildTarget && s.utype === 'villager') {
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
-      let b = BLDGS[buildTarget.btype];
-      let pt = b.isFarm ? { x: buildTarget.x, y: buildTarget.y } : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(s.x, s.y, buildTarget, s.id) : { x: buildTarget.x + buildTarget.w, y: buildTarget.y + buildTarget.h });
-      pathUnitTo(s, pt.x, pt.y);
+      // Clicking an exhausted farm is a deliberate "reseed it" order (like
+      // clicking a damaged building to repair) — flag it so the reseed pays
+      // wood directly, bypassing the Mill prepaid queue. Automatic reseed
+      // paths (exhaustion-continuity, auto-wander) leave this false and stay
+      // prepaid-only for humans, so wood is never spent behind their back.
+      s.explicitReseed = buildTarget.btype === 'FARM' && buildTarget.exhausted;
+      pathToBuilding(s, buildTarget);
     } else if (target) {
       if (s.utype === 'sheep') { return; } // sheep don't attack
       if ((target.utype === 'sheep' || target.utype === 'sheep_carcass') && s.utype !== 'villager') {
@@ -735,10 +738,9 @@ function execUnitCommand(cmd){
         if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
           s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
-          // Walk to a DISTINCT adjacent tile of the node (resources are solid)
-          // so the group approaches from different sides and rings it evenly.
-          let stand = (typeof pickGatherStand === 'function') ? pickGatherStand(s, g.x, g.y) : null;
-          pathUnitTo(s, stand ? stand.x : g.x, stand ? stand.y : g.y);
+          // Ring the solid node evenly: goalBldg + contactClaims sends each
+          // co-gatherer to a distinct cheapest contact tile.
+          pathToContact(s, {x:g.x, y:g.y, w:1, h:1}, contactClaims(s, p=>p.gatherX===g.x && p.gatherY===g.y));
         } else {
           // Move command (also the unexplored-tile case): keep the
           // group's relative arrangement (see formOff above).
@@ -819,7 +821,6 @@ function commitBuildingPlacement(btype, plan, team, complete){
   } else {
     bldg.complete = false; bldg.buildProgress = 0;
     bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
-    if (plan.replaced.length) bldg.wasWall = true;
     // foundation: stays walkable; the build-gate clears the footprint gently
     // when a builder commits (clearFootprintForBuild) — no placement shove.
   }
@@ -856,24 +857,20 @@ function execBuildPlacement(cmd){
     spendCost(myTeam, actualCost);
     let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
     if (!bldg) return;
-    dispatchBuilders(vils, bldg, plan);
+    dispatchBuilders(vils, bldg);
   } else {
     feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
   }
 }
-// Queue villagers onto a build target and send the first idle one to it. `plan`
-// (present for fresh placements) picks the walk-to point; an in-place upgrade
-// target has no plan → walk to its footprint edge.
-function dispatchBuilders(vils, target, plan){
+// Queue villagers onto a build target and send each idle one to it (pathToBuilding:
+// farm plot, else cheapest-walk contact tile).
+function dispatchBuilders(vils, target){
   vils.forEach(v => {
     v.buildQueue = v.buildQueue || [];
     v.buildQueue.push(target.id);
     if (v.task !== 'build' || !v.buildTarget) {
       v.task = 'build'; v.buildTarget = target.id; v.target = null; v.savedTask = null;
-      let pt = (plan && BLDGS[target.btype].isFarm) ? { x: plan.ox, y: plan.oy }
-        : (typeof nearestBldgPerimeter === 'function' ? nearestBldgPerimeter(v.x, v.y, target, v.id)
-          : { x: target.x + target.w, y: target.y + target.h });
-      pathUnitTo(v, pt.x, pt.y);
+      pathToBuilding(v, target);
     }
   });
 }
@@ -1041,9 +1038,9 @@ function applyStoneUpgrade(pieces, team){
     w.buildTime = BLDGS[upType].buildTime || 200;
     w.maxHp = buildingMaxHpFor(team, upType);
     // A normal construction site, same as execBuildPlacement foundations:
-    // villagers build it up, and it cancels/refunds like any other (wasWall keeps
-    // its tile SOLID for pathfinding so the wall line isn't open mid-rebuild).
-    w.complete = false; w.buildProgress = 0; w.hp = 1; w.wasWall = true;
+    // villagers build it up, it cancels/refunds like any other, and (unbuilt)
+    // its tile is a walkable gap in the wall line until construction begins.
+    w.complete = false; w.buildProgress = 0; w.hp = 1;
     markMapDirty(w.x, w.y);
   });
   feedbackFor(team, () => {

@@ -87,10 +87,6 @@ function detEntityHash(e){
   h = detMix(h, e.exhausted ? 1 : 0);             // farm lifecycle
   h = detMix(h, e.trainTick || 0);                // training clock
   h = detMixFloat(h, e.buildProgress || 0);       // construction clock
-  // Build-over/upgrade foundation flag (applyStoneUpgrade + commitBuildingPlacement,
-  // js/commands.js): wasWall keeps the site SOLID for pathfinding (pathfinding.js),
-  // read on later ticks, so a divergence must trip the checksum here.
-  h = detMix(h, e.wasWall ? 1 : 0);
   // Multi-builder census (countSiteWorker, js/logic.js): lastWorkers sets the
   // shared build/repair rate NEXT tick; curWorkers/workTick roll into it.
   h = detMix(h, e.workTick || 0);
@@ -112,6 +108,7 @@ function detEntityHash(e){
   h = detMix(h, e.gatherX == null ? -2 : e.gatherX); // villager tile claims steer OTHER villagers
   h = detMix(h, e.gatherY == null ? -2 : e.gatherY);
   h = detMix(h, e.explicitAttack ? 1 : 0);
+  h = detMix(h, e.explicitReseed ? 1 : 0);
   h = detMixFloat(h, e.defendX || 0);
   h = detMixFloat(h, e.defendY || 0);
   h = detMix(h, e.savedTask ? 1 : 0);
@@ -138,7 +135,6 @@ function detEntityHash(e){
     h = detMix(h, 0x51a17);
   }
   h = detMixStr(h, e.prevTask);
-  h = detMix(h, e.siegeSpot ? e.siegeSpot.x * 4096 + e.siegeSpot.y : -1); // cross-unit melee-ring claims
   // Stuck-watchdog watch entry (it force-clears tasks, so WHEN it fires is
   // sim state — see updateStuckWatchdog, js/logic.js).
   h = detMix(h, e.fledBearId == null ? -1 : e.fledBearId); // bear-hunt trigger (js/ai.js reads it)
@@ -185,11 +181,10 @@ const DET_HASHED_KEYS = new Set([
   'speed','carryMax','maxHp','exhausted','trainTick','buildProgress','workTick',
   'curWorkers','lastWorkers','repairAccum','rallyX','rallyY','rallyTargetId','queue',
   'garrison','buildQueue','locked','rallyResourceType','gatherX','gatherY',
-  'explicitAttack','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
-  'order','prevTask','siegeSpot','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
+  'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
+  'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
   'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
-  'wasWall',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

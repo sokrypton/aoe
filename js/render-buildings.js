@@ -2207,7 +2207,13 @@ function drawBuilding(e, part = null){
     // the field. part is 'ground' (in-game) or null (gallery/ghost/mask) —
     // both mean "draw everything".
     let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
-    let growth=tileRes/(e.maxFood||300);
+    // Fraction of food LEFT — drives how much wheat still stands (below). Divide
+    // by the farm's CURRENT capacity (farmFoodFor, incl. horse-collar/heavy-plow
+    // bonuses the tile was seeded with); e.maxFood is only the un-upgraded base,
+    // so an upgraded farm would read >1.0 and sit visually full until its bonus
+    // food is gone. Each gather cycle drops tile.res by 1, so the field thins
+    // sheaf-by-sheaf as it's worked — roughly one per villager carry-trip.
+    let growth=tileRes/(farmFoodFor(e.team)||e.maxFood||300);
     // Ground-level footprint corners and the raised bed (tilled soil sits
     // a few px proud of the grass, with visible dirt sides on the two
     // camera-facing edges — that lift is what makes the field read 3D).
@@ -2255,62 +2261,71 @@ function drawBuilding(e, part = null){
       let u=farmSheafU(ri,i);
       return {x:a.x+(b2.x-a.x)*u, y:a.y+(b2.y-a.y)*u};
     };
-    if(growth>0 && !dead){
-      // Wheat as mini SHEAVES — the same read as the gathering villager's
-      // shoulder sheaf (js/render-units.js foodSrc==='wheat'): a few thick
-      // splayed stalks, each tipped with a fat outlined grain head once
-      // grown. 5 rows × 6 columns so the field feels FULL. Drawn flat in
-      // the ground layer: the crop is short, and units always walk OVER
-      // the field, AoE2-style.
-      let sheafH=2.5+growth*5;
-      let splay=1.6+growth*1.4;
-      let ripe=growth>0.55;
-      let stalkCol = ripe ? '#c9a227' : '#6fa03a';
-      let headCol  = ripe ? '#e8c84a' : '#8fbf55';
-      if(darken){ stalkCol=darkenColor(stalkCol); headCol=darkenColor(headCol); }
-      rows.forEach((t,ri)=>{
-        for(let i=0;i<COLS;i++){
-          let p=tuftAt(t,ri,i);
-          let lean=(((i*7+ri*13)%5)-2)*0.55; // deterministic per-sheaf lean
-          // three splayed stalks from one base
+    // AoE2-style HARVEST-DOWN: a farm is a full RIPE (golden) crop when fresh
+    // and is progressively CUT as its food is eaten — each sheaf stands at full
+    // height with grain heads until the food fraction drops past its own harvest
+    // threshold, then it becomes a stubble stump. Fresh = dense gold, worked =
+    // thinning to stubble, exhausted = all stubble on pale dirt. The crop never
+    // "un-grows" (no green stage): less food simply means less standing crop.
+    // Sheaf read matches the gathering villager's shoulder sheaf (render-units).
+    const NSHEAF=rows.length*COLS;
+    // Per-FARM seed (anchor tile — same scheme as the berry bushes) so adjacent
+    // farms aren't identical clones: it varies each field's sheaf jitter, lean,
+    // height and the ORDER sheaves are cut as the field is worked down.
+    let fseed=e.x*7+e.y*13;
+    let stalkCol = darken ? darkenColor('#c9a227') : '#c9a227';
+    let headCol  = darken ? darkenColor('#e8c84a') : '#e8c84a';
+    let stub     = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
+    rows.forEach((t,ri)=>{
+      for(let i=0;i<COLS;i++){
+        let n=ri*COLS+i;
+        let p=tuftAt(t,ri,i);
+        // Subtle off-grid jitter so sheaves look hand-sown, not stamped — small
+        // enough that the planted-in-rows read holds (the furrows stay straight).
+        p={x:p.x+(((n*5+fseed)%5)-2)*0.5, y:p.y+(((n*11+fseed)%3)-1)*0.5};
+        // Scattered harvest order: a coprime multiplier permutes the sheaves
+        // (gcd(7,NSHEAF)=1); +fseed rotates it per farm so each field thins in
+        // its own patchy pattern rather than every farm alike.
+        let thresh=(((n*7+fseed)%NSHEAF + 0.5)/NSHEAF);
+        if(!dead && growth>thresh){
+          // standing ripe sheaf: three splayed golden stalks, each grain-headed
+          let lean=(((n*13+fseed)%5)-2)*0.55; // deterministic per-sheaf lean
+          let sheafH=6+(((n*3+fseed)%3)-1)*0.7, splay=2.5;
           X.strokeStyle=stalkCol;X.lineWidth=1.4;X.lineCap='round';
           for(let k=-1;k<=1;k++){
             X.beginPath();X.moveTo(p.x,p.y);
             X.lineTo(p.x+k*splay+lean, p.y-sheafH*(k===0?1:0.78));X.stroke();
           }
           X.lineCap='butt';
-          // fat grain head on each stalk tip once the crop has headed out
-          if(growth>0.3){
-            X.fillStyle=headCol;X.strokeStyle='#000';X.lineWidth=0.8;
-            for(let k=-1;k<=1;k++){
-              let hx=p.x+k*splay+lean, hy=p.y-sheafH*(k===0?1:0.78);
-              X.beginPath();X.ellipse(hx,hy-0.8,1.05,1.9,k*0.18+lean*0.1,0,Math.PI*2);X.fill();X.stroke();
-            }
+          X.fillStyle=headCol;X.strokeStyle='#000';X.lineWidth=0.8;
+          for(let k=-1;k<=1;k++){
+            let hx=p.x+k*splay+lean, hy=p.y-sheafH*(k===0?1:0.78);
+            X.beginPath();X.ellipse(hx,hy-0.8,1.05,1.9,k*0.18+lean*0.1,0,Math.PI*2);X.fill();X.stroke();
           }
-        }
-      });
-      X.lineWidth=1.1;
-    } else {
-      // Harvested/exhausted: one stubble stump where each tuft stood plus
-      // a single fallen straw.
-      let stub = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
-      X.strokeStyle=stub;X.lineWidth=1.6;
-      rows.forEach((t,ri)=>{
-        for(let i=0;i<COLS;i++){
-          let p=tuftAt(t,ri,i);
+        } else {
+          // cut stubble stump where the sheaf stood
+          X.strokeStyle=stub;X.lineWidth=1.6;
           X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-0.5,p.y-2.5);X.stroke();
         }
-      });
+      }
+    });
+    // a fallen straw or two once the field has been worked down
+    if(!dead && growth<0.6){
+      X.strokeStyle=stub;X.lineWidth=1.6;
       let s=tuftAt(rows[1],1,0);
       X.beginPath();X.moveTo(s.x+2,s.y+2);X.lineTo(s.x+7.5,s.y+3.5);X.stroke();
     }
+    X.lineWidth=1.1;
     // (No corner fence posts — the raised bed alone frames the field.)
   }
 
   X.globalAlpha=1;
 
-  // Progress bars, HP, selection — only when actively visible (not in fog)
-  if (!window._ghostDraw && (f === 2 || sameSide(e.team, myTeam))) {
+  // Progress bars, HP, selection — only when actively visible (not in fog).
+  // Skipped in the mask pass (_maskDraw): these float ABOVE the roof and are
+  // UI, not body — a silhouette/occluder clip (and the baked-building cache)
+  // must not include them, and their per-frame values would freeze if baked.
+  if (!window._ghostDraw && !window._maskDraw && (f === 2 || sameSide(e.team, myTeam))) {
   // ONE bar per building: HP grows with construction (AoE2, logic.js), so
   // the HP bar doubles as the progress bar while incomplete — cyan fill to
   // read as "under construction" (the low fill would otherwise look like

@@ -611,6 +611,33 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+  T('upgrade foundations are open gaps: an unbuilt upgraded gate OR wall passes anyone (owner + enemy)', () => {
+    stage();
+    const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
+    teamAge[0] = 1;
+    const cart = createUnit('tradecart', 5, 20, 0);
+    const enemy = createUnit('tradecart', 55, 20, 1);
+
+    // GATE → stone: whole 3-wide footprint is walkable while unbuilt, everyone.
+    const gate = createBuilding('GATE', 30, 30, 0, 3, 1);
+    const gv = createUnit('villager', 29, 29, 0);
+    execCommand({ kind: 'build-placement', btype: 'SGATE', tileX: 31, tileY: 30, unitIds: [gv.id] }, 0);
+    assert(gate.btype === 'SGATE' && !gate.complete && !gate.buildProgress, 'setup: gate should be an unbuilt upgrade foundation');
+    assert(walkable(31, 30, cart.id), 'owner cannot pass through the unbuilt gate');
+    assert(walkable(30, 30, cart.id), 'owner blocked at a gate post tile while unbuilt');
+    assert(walkable(31, 30, enemy.id), 'enemy cannot pass through the unbuilt gate gap');
+
+    // WALL → stone: same rule — an upgraded wall is just a foundation, so the
+    // tile opens as a walkable gap until construction begins (no wasWall seal).
+    const wall = createBuilding('WALL', 40, 40, 0);
+    const wv = createUnit('villager', 39, 39, 0);
+    execCommand({ kind: 'build-placement', btype: 'SWALL', tileX: 40, tileY: 40, unitIds: [wv.id] }, 0);
+    assert(wall.btype === 'SWALL' && !wall.complete && !wall.buildProgress, 'setup: wall should be an unbuilt upgrade foundation');
+    assert(walkable(40, 40, cart.id), 'owner cannot pass through the unbuilt upgraded wall');
+    assert(walkable(40, 40, enemy.id), 'enemy cannot pass through the unbuilt upgraded wall');
+    teamAge[0] = 0;
+  });
+
   T('build-over: garrison in a palisade tower is EJECTED (not orphaned) when a stone tower is built over it', () => {
     stage();
     const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
@@ -738,6 +765,105 @@ function pageSuite() {
     assert(st.btype === 'TOWER' && st.complete, 'stone tower wrongly touched');
     assert(sg.btype === 'SGATE' && sg.complete, 'stone gate wrongly touched');
     teamAge[0] = 0;
+  });
+
+  T('build-path: a builder approaches a wall by nearest WALK-cost contact tile (own side), not routed across it', () => {
+    stage();
+    // vertical stone wall, open ground both sides; builder to the WEST
+    for (let y = 20; y <= 26; y++) createBuilding('SWALL', 25, y, 0);
+    const wall = entities.find(e => e.btype === 'SWALL' && e.x === 25 && e.y === 23);
+    const v = createUnit('villager', 22, 23, 0);
+    // goalBldg A*: stops at the cheapest-to-walk build-contact tile
+    const path = findPath(Math.round(v.x), Math.round(v.y), wall.x, wall.y, v.id, 0, wall);
+    const end = path.length ? path[path.length - 1] : { x: Math.round(v.x), y: Math.round(v.y) };
+    assert(adjToBuilding(end.x, end.y, wall), 'path did not end at a build-contact tile: ' + JSON.stringify(end));
+    assert(end.x < 25, 'builder crossed to the far side instead of approaching from its own: ' + JSON.stringify(end));
+  });
+
+  T('dock: goalBldg reaches the NEAREST edge of a 3x3 market from any side by the shortest path', () => {
+    stage();
+    const m = createBuilding('MARKET', 30, 30, 0); // 3x3, tiles 30..32, walkable plaza
+    const cases = [
+      { from: { x: 25, y: 31 }, side: e => e.x < 30, name: 'west' },
+      { from: { x: 37, y: 31 }, side: e => e.x > 32, name: 'east' },
+      { from: { x: 31, y: 25 }, side: e => e.y < 30, name: 'north' },
+      { from: { x: 31, y: 37 }, side: e => e.y > 32, name: 'south' },
+    ];
+    cases.forEach(c => {
+      const v = createUnit('tradecart', c.from.x, c.from.y, 0);
+      const path = findPath(Math.round(v.x), Math.round(v.y), m.x, m.y, v.id, 0, m);
+      const end = path.length ? path[path.length - 1] : { x: Math.round(v.x), y: Math.round(v.y) };
+      assert(adjToBuilding(end.x, end.y, m), c.name + ': did not dock adjacent: ' + JSON.stringify(end));
+      assert(c.side(end), c.name + ': docked on the far side: ' + JSON.stringify(end));
+      // shortest: straight approach, no detour → path length == chebyshev distance to the dock
+      const cheb = Math.max(Math.abs(Math.round(v.x) - end.x), Math.abs(Math.round(v.y) - end.y));
+      assert(path.length === cheb, c.name + ': not the shortest path: len ' + path.length + ' vs ' + cheb);
+    });
+  });
+
+  T('dock-obstacle: a cart routes through the GATE gap toward the market, not the long way around', () => {
+    stage();
+    // solid vertical wall at x=40 (y 20..40) with ONE gap: a gate at (40,30)
+    for (let y = 20; y <= 40; y++) { if (y === 30) continue; createBuilding('SWALL', 40, y, 0); }
+    createBuilding('SGATE', 40, 30, 0); // own team → the cart may pass the doorway
+    const m = createBuilding('MARKET', 55, 28, 0); // 3x3, east of the wall
+    const v = createUnit('tradecart', 25, 30, 0); // west of the wall, ~30 tiles out
+    const path = findPath(Math.round(v.x), Math.round(v.y), m.x, m.y, v.id, 0, m);
+    assert(path.length > 0, 'no path found at all');
+    const crossing = path.find(p => p.x === 40);
+    assert(crossing, 'path never reaches the wall line (partial/detour path): last=' + JSON.stringify(path[path.length - 1]) + ' len=' + path.length);
+    assert(Math.abs(crossing.y - 30) <= 1, 'cart went AROUND the wall instead of through the gate: crossed at ' + JSON.stringify(crossing) + ' len=' + path.length);
+    assert(path.length <= 40, 'path is a long detour: length ' + path.length);
+  });
+
+  T('gather-contact: a berry forager slides into contact with the node (not standing a tile off)', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 200; markMapDirty(30, 30);
+    const v = createUnit('villager', 25, 30, 0); // 5 tiles west — must walk over, then press
+    v.task = 'forage'; v.gatherX = 30; v.gatherY = 30;
+    step(300);
+    const dxr = Math.max(29.5 - v.x, 0, v.x - 30.5), dyr = Math.max(29.5 - v.y, 0, v.y - 30.5);
+    const edge = Math.sqrt(dxr * dxr + dyr * dyr);
+    assert(edge <= 0.5, 'forager did NOT slide into contact: edgeDist=' + edge.toFixed(2) + ' at ' + v.x.toFixed(2) + ',' + v.y.toFixed(2));
+    assert(map[30][30].res < 200, 'forager never gathered');
+  });
+
+  T('gather-contact-corner: a forager on a DIAGONAL tile presses into the node corner', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 200; markMapDirty(30, 30);
+    const v = createUnit('villager', 31, 29, 0); // NE diagonal tile of the berry
+    v.task = 'forage'; v.gatherX = 30; v.gatherY = 30;
+    const startEdge = Math.hypot(Math.max(29.5 - 31, 0, 31 - 30.5), Math.max(29.5 - 29, 0, 29 - 30.5));
+    step(60);
+    const edge = Math.hypot(Math.max(29.5 - v.x, 0, v.x - 30.5), Math.max(29.5 - v.y, 0, v.y - 30.5));
+    assert(edge <= 0.45, 'diagonal forager did not press into the corner: start edge=' + startEdge.toFixed(2) + ' end edge=' + edge.toFixed(2) + ' at ' + v.x.toFixed(2) + ',' + v.y.toFixed(2));
+  });
+
+  T('fan-out: co-gatherers of one node claim DISTINCT contact tiles (goalBldg + contactClaims)', () => {
+    stage();
+    map[30][30].t = TERRAIN.BERRIES; map[30][30].res = 500; markMapDirty(30, 30);
+    const node = { x: 30, y: 30, w: 1, h: 1 };
+    const vs = [];
+    for (let i = 0; i < 4; i++) { const v = createUnit('villager', 25, 28 + i, 0); v.gatherX = 30; v.gatherY = 30; vs.push(v); }
+    // path each in turn — each excludes the tiles peers already claimed
+    vs.forEach(v => pathToContact(v, node, contactClaims(v, p => p.gatherX === 30 && p.gatherY === 30)));
+    const dests = vs.map(v => v.path.length ? (v.path[v.path.length - 1].y * MAP + v.path[v.path.length - 1].x) : (Math.round(v.y) * MAP + Math.round(v.x)));
+    assert(new Set(dests).size === 4, 'gatherers did not fan out to distinct tiles: ' + JSON.stringify(dests.map(d => (d % MAP) + ',' + ((d / MAP) | 0))));
+  });
+
+  T('reinforce: a builder inside the base repairs a perimeter wall from INSIDE, never looping outside', () => {
+    stage();
+    // base wall line at y=30 (x 20..40); interior is SOUTH (y>30); one gate at (30,30)
+    for (let x = 20; x <= 40; x++) { if (x === 30) continue; createBuilding('SWALL', x, 30, 0); }
+    createBuilding('SGATE', 30, 30, 0);
+    const wall = entities.find(e => e.btype === 'SWALL' && e.x === 25 && e.y === 30);
+    wall.hp = wall.maxHp / 2; // damaged → a reinforce/repair
+    const v = createUnit('villager', 25, 35, 0); // INSIDE, south of the target
+    const path = findPath(Math.round(v.x), Math.round(v.y), wall.x, wall.y, v.id, 0, wall);
+    const end = path.length ? path[path.length - 1] : { x: 25, y: 35 };
+    assert(adjToBuilding(end.x, end.y, wall), 'did not reach the wall: ' + JSON.stringify(end));
+    assert(end.y > 30, 'approached from OUTSIDE (north) instead of inside (south): ' + JSON.stringify(end));
+    assert(!path.some(p => p.y < 30), 'path crossed to the outside of the wall: ' + JSON.stringify(path.filter(p => p.y < 30)));
   });
 
   // ---- Building guard covers the WHOLE footprint, not one corner ----
