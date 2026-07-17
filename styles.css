@@ -109,8 +109,9 @@ canvas {
 .res-vils{
   visibility:hidden;
   position:absolute;
-  left:14px;    /* icon spans ~5–20px; sit on its lower-right, overlapping */
-  bottom:-3px;
+  left:12px;                  /* icon center (~12.5px): sit directly UNDER it */
+  transform:translateX(-50%); /* centered exactly under the resource icon */
+  bottom:-10px;               /* sits BELOW the icon, only its top edge overlapping */
   box-sizing:border-box;
   min-width:13px;
   padding:0 2px;
