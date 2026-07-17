@@ -474,9 +474,11 @@ function planAIWalls(ai,aiTC,vils,profile){
   if(!hasAIBuilding(ai,'BARRACKS'))return;
   // Economy before fortifications: walling in Dark/Feudal drained the wood
   // farms needed and stalled the age climb (self-play finding). Hold the ring
-  // until maxAge is reached; reactive defenses (planAITowers /
+  // until the profile's `wallAge` (Castle for medium/hard — aging beats early
+  // fortifying, self-play-confirmed; easy walls at Feudal so its ring is
+  // visible before its slow Castle timing). Reactive defenses (planAITowers /
   // findAIWallDefenseSpot) still run independently.
-  if((teamAge[ai.team]||0) < (profile.maxAge||2))return;
+  if((teamAge[ai.team]||0) < (profile.wallAge!==undefined?profile.wallAge:(profile.maxAge||2)))return;
   // Survey before fortifying: the ring is planned on tiles the team has
   // actually SEEN. The scout's base-survey lap (controlAIScouts) walks the
   // ring band — without this gate, canPlace's explored check

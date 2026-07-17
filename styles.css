@@ -478,8 +478,12 @@ canvas {
   #sel-info.multi-select.single-sel #sel-stats {
     display: flex;
     justify-content: flex-start;
-    flex: 0 1 auto;
-    max-width: calc(var(--tile-size) * 2);
+    /* FIXED width (was max-width) so the whole card is a constant ~3-icon box:
+       2 tiles of info + the 1-tile portrait. The icon no longer shifts between
+       the idle age-crest and a single selection, or with different names/stats.
+       True multi-select (.multi-select WITHOUT .single-sel) still auto-grows. */
+    flex: 0 0 auto;
+    width: calc(var(--tile-size) * 2);
     min-width: 0;
   }
   /* One tile, no grid padding (the padding covers a count-badge overhang a lone

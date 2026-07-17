@@ -36,6 +36,9 @@ window.SPRITE_CELLS = {
   // Row 1: cavalry / siege / trade / gaia.
   scout:[0,1], 'scout-castle':[1,1], knight:[2,1], ram:[3,1], tradecart:[4,1],
   sheep:[5,1], bear:[6,1], pop:[7,1],
+  // A sheep carcass is a pile of food, so its HUD icon reuses the food (raw
+  // meat) resource cell [3,4] rather than getting its own drawn cell.
+  sheep_carcass:[3,4],
   // ---- row 2: town / economy buildings (TC age progression first).
   'TC-dark':[0,2], 'TC-feudal':[1,2], 'TC-castle':[2,2], HOUSE:[3,2], MILL:[4,2],
   FARM:[5,2], LCAMP:[6,2], MCAMP:[7,2],

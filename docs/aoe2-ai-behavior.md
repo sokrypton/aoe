@@ -160,7 +160,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 |---|---|---|---|
 | Aggression scaling | ×1.0/0.75/0.5 on min/max group + commit% | `attackSize` 3/4/5 (0.6/0.8/1.0), `commitPercent` 38/56/75 (0.5/0.75/1.0) | ✅ ratios match |
 | Max group size | 10, difficulty-scaled | `waveCap` 6/12/24 — Hard is 2.4× the AoE2 max | 🟡 ours steeper; but AoE2 also runs multiple simultaneous groups, we run one wave |
-| Economy per difficulty | identical across levels | `maxVils` 14/18/24, age pacing, walls/towers differ | 🔶 documented: commit-only scaling flattened our gradient |
+| Economy per difficulty | identical across levels | `maxVils` 18/18/24, age pacing differ; ALL levels now build a full walled town (easy = hard's build behaviour throttled by RATES: `armyPerVil` 0.3, timid attacks, slow reaction/aging) | 🔶 DE scales only aggression, but a full eco makes "easy" ~as strong as hard (self-play), so rates (esp. army size) are ALSO scaled — believable town, gradient preserved (self-play: easy<med<hard) |
 | Resource cheats | none | `trickle` all-zero on every level | ✅ |
 | Reaction speed | `easier-reaction-percentage` (LOS %) | `decisionInterval` 240/180/120 | 🟡 analogous lever, different axis |
 | Max age | Imperial | Castle (`maxAge:2`) for all levels | 🔶 engine roster scope, not an AI knob |
@@ -222,7 +222,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 
 | Behavior | AoE2 DE | Ours | Verdict |
 |---|---|---|---|
-| Walling | situational, script-driven | full ring + eco/enemy gates, deferred until maxAge AND paused during a war-state (`aiRecentlyRaided` — core hit within 2 game-min; walls are preparation, not reaction; egress carving keeps running) | ✅ |
+| Walling | situational, script-driven | full ring + eco/enemy gates, deferred until per-profile `wallAge` (Castle for medium/hard — aging beats early fortifying, self-play-confirmed; **easy walls at Feudal** so its ring shows before its slow Castle) AND paused during a war-state (`aiRecentlyRaided` — core hit within 2 game-min; walls are preparation, not reaction; egress carving keeps running) | ✅ |
 | Stone upgrade | script | palisade→stone from Feudal, gates first | ✅ |
 | Towers | `auto-build-towers` / `max-towers` | `maxTowers` 0/1/2, wall-mounted (gate flank → corners → eco side) | ✅ |
 | Resource ceilings | `sn-maximum-<res>` | hoard thresholds, ALL four resources (wood>600 shed, stone>400 stop, gold>500 shed, **food>600 shed → +2 chop** — food was asymmetric: sticky farm shares banked 5000+ food while wood pinned at 25, so no rams/market/buildings and med-easy games stalled unresolvable) | ✅ closed 2026-07 (raid economics) |

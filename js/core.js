@@ -711,9 +711,15 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // window), easy waits ~18. Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
 const AI_LEVELS={
-  // Easy is handicapped the AoE2 way — a weak economy and timid aggression,
-  // never nerfed stats or an age cap: it still reaches Castle and builds
-  // rams/knights, just slowly and with late/small/cautious pushes.
+  // Easy builds a full, believable AoE2 town — it inherits HARD's build
+  // behaviour (walls, two barracks, stone eco, full production) so it doesn't
+  // read as a passive stub, and is handicapped purely via RATES: a small army
+  // from its eco (armyPerVil 0.3), timid/infrequent attacks, slow reaction, and
+  // slow aging. Self-play verified easy < medium < hard holds with this. (Pure
+  // DE aggression-only scaling was tried and left "easy" ~as strong as hard —
+  // a full eco is the real strength — so the rate handicaps above are needed.)
+  // wallAge:1 lets easy wall at Feudal so the ring is visible before its slow
+  // Castle timing (medium/hard wall at Castle — aging beats early fortifying).
   // Difficulty model — DE-informed: AoE2 DE scales only attack aggression, but
   // that flattened our gradient, so the ECONOMY (pop cap, aging speed,
   // production, wall/tower use) is ALSO differentiated per level; army-DRIVEN
@@ -728,12 +734,12 @@ const AI_LEVELS={
   //     eligible troops that answer a sighted threat; the rest hold as home defense)
   //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
   //     to fight a small raid at the town when the army can't answer)
-  easy:{name:'Easy',decisionInterval:T30(240),maxVils:14,queueLimit:1,houseBuffer:1,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:3,waveCap:6,commitPercent:38,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.35,waveCooldown:T30(3600),attackTick:T30(10800),armyReserve:2,ramWoodReserve:1,militaryFoodReserve:0,dropSites:true,walls:false,wallVils:0,wallRadius:0,attackAdvantage:2.0,maxTowers:0,maxTradeCarts:3,marketVil:12,ecoRatios:{forage:3,chop:3,mine_gold:2},farmShare:3,targetFarms:4,wallCheckInterval:T30(600),wallMaintInterval:T30(600),allyJoinWindow:T30(0),allyJoinFactor:1.0,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(0),ageSurgeFactor:1.0},
+  easy:{name:'Easy',decisionInterval:T30(300),maxVils:18,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:3,waveCap:8,commitPercent:35,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.3,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:4,wallAge:1,attackAdvantage:0.9,maxTowers:1,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6},
   // Standard mirrors AoE2's Moderate: a real challenge (Castle ~15min,
   // rams/knights, walls + a tower, pushes from ~10min) that wins on
   // competent play, not free resources.
-  standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,ramWoodReserve:3,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,attackAdvantage:1.15,maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,ramWoodReserve:3,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,wallAge:2,attackAdvantage:1.15,maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75},
+  hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,wallAge:2,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
