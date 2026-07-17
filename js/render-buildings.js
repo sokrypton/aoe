@@ -2321,8 +2321,11 @@ function drawBuilding(e, part = null){
 
   X.globalAlpha=1;
 
-  // Progress bars, HP, selection — only when actively visible (not in fog)
-  if (!window._ghostDraw && (f === 2 || sameSide(e.team, myTeam))) {
+  // Progress bars, HP, selection — only when actively visible (not in fog).
+  // Skipped in the mask pass (_maskDraw): these float ABOVE the roof and are
+  // UI, not body — a silhouette/occluder clip (and the baked-building cache)
+  // must not include them, and their per-frame values would freeze if baked.
+  if (!window._ghostDraw && !window._maskDraw && (f === 2 || sameSide(e.team, myTeam))) {
   // ONE bar per building: HP grows with construction (AoE2, logic.js), so
   // the HP bar doubles as the progress bar while incomplete — cyan fill to
   // read as "under construction" (the low fill would otherwise look like
