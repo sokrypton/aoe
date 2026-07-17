@@ -851,15 +851,14 @@ function execBuildPlacement(cmd){
     spendCost(myTeam, actualCost);
     let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
     if (!bldg) return;
-    dispatchBuilders(vils, bldg, plan);
+    dispatchBuilders(vils, bldg);
   } else {
     feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
   }
 }
-// Queue villagers onto a build target and send the first idle one to it. `plan`
-// (present for fresh placements) picks the walk-to point; an in-place upgrade
-// target has no plan → walk to its footprint edge.
-function dispatchBuilders(vils, target, plan){
+// Queue villagers onto a build target and send each idle one to it (pathToBuilding:
+// farm plot, else cheapest-walk contact tile).
+function dispatchBuilders(vils, target){
   vils.forEach(v => {
     v.buildQueue = v.buildQueue || [];
     v.buildQueue.push(target.id);
