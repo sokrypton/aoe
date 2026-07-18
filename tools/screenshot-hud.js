@@ -126,6 +126,14 @@ const SCENES = {
     (${pageLookAt})(29, 29);
     updateUI();                                    // Garrison button in #actions
     try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
+  research: `(${pageStage})();
+    setTeamAge(0, 1);                              // Feudal → Barracks shows its Feudal techs
+    resourceStore(0).food=500; resourceStore(0).wood=500; resourceStore(0).gold=300; resourceStore(0).stone=300;
+    const b = createBuilding('BARRACKS', 28, 28, 0); b.complete = true; b.hp = b.maxHp;
+    selected.push(b);
+    (${pageLookAt})(29, 29);
+    updateUI();                                    // research parchment band bleeds above #actions
+    try { render(); } catch (e) { console.error('render failed (HUD still valid): ' + e); }`,
 };
 
 const VIEWPORTS = {

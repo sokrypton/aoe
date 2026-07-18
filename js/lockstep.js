@@ -379,7 +379,7 @@ function lockstepCaptureState(){
     // Per-team controller + AI plan state: SIM state (an AI team's brain
     // must rewind with a rollback and agree across peers — plain data,
     // clones fine). Same for lastTeamHit (AI garrison signal, js/core.js).
-    teamControllers, aiStates: AI_STATES, lastTeamHit, teamAlliance, defeatedTeams, teamAge,
+    teamControllers, aiStates: AI_STATES, lastTeamHit, teamAlliance, defeatedTeams, teamAge, teamTechs,
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,

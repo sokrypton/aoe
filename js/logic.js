@@ -3106,8 +3106,8 @@ function handleDeath(e,killerTeam){
   }
   if(e.type==='building'){
     // AoE2: queued units were prepaid (queueUnit) — refund them when the
-    // building dies or is deleted. (Age research dying unrefunded with the
-    // TC is intentional — see execResearchAge, js/commands.js.)
+    // building dies or is deleted. (Research dying unrefunded with its
+    // host building is intentional — see execResearch, js/commands.js.)
     if(e.queue&&e.queue.length>0&&isPlayerTeam(e.team)){
       // Refund what was actually paid: a free rescue villager (unitTrainCost)
       // refunds nothing, so losing the TC with one queued can't mint resources.
@@ -3472,28 +3472,39 @@ function updateBuildingArrows(e){
 }
 
 
-  // Age research (TC only): while active, the unit queue is PAUSED — the
-  // classic AoE2 tension of advancing vs more villagers. Completion is the
-  // one place teamAge advances, plus the military attack sweep (attack is
-  // snapshotted on entities; armor is added live in damageEntity).
+  // Research: while active, the building's unit queue (if any) is
+  // PAUSED. target is a numeric age index (age advancement — the one place
+  // teamAge advances) OR a string tech key (applyTech runs its one-time stat
+  // sweep; live-read effects key off the teamTechs bit via hasUpgrade).
 // Returns true while research is active (the tick is consumed — training
 // pauses), false when there is none.
 function updateBuildingResearch(e){
   if(!e.research)return false;
+    let target=e.research.target;
+    let isAge=typeof target==='number';
+    let ticks=isAge?AGES[target].researchTicks:UPGRADES[target].researchTicks;
     e.research.tick++;
-    if(e.research.tick>=AGES[e.research.target].researchTicks){
-      teamAge[e.team]=e.research.target;
-      // Baked-in tech: every card unlocked by the new age applies now (one-
-      // time stat sweeps; live-read effects key off teamAge via hasUpgrade).
-      // See UPGRADES, core.js.
-      let cardNames=applyAgeUpgrades(e.team,e.research.target);
-      // AoE2-style power-spike aggression: an AI that just advanced presses
-      // its (freshly bumped) army — controlAIMilitary reads this stamp.
-      if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
-      if(e.team===myTeam){
-        showMsg('You have advanced to the '+AGES[e.research.target].name+'!'+
-          (cardNames.length?' Gained: '+cardNames.join(', ')+'.':''));
-        if(window.playSound)playSound('victory');
+    if(e.research.tick>=ticks){
+      if(isAge){
+        teamAge[e.team]=target;
+        // TEMP (AUTO_APPLY_TECHS_AT_AGE): free auto-grant of the new age's techs,
+        // in registry order — the original behavior while paid manual research
+        // is tuned. Live-read effects key off the teamTechs bit via hasUpgrade.
+        let cardNames=AUTO_APPLY_TECHS_AT_AGE?applyAgeUpgrades(e.team,target):[];
+        // AoE2-style power-spike aggression: an AI that just advanced presses
+        // its (freshly bumped) army — controlAIMilitary reads this stamp.
+        if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
+        if(e.team===myTeam){
+          showMsg('You have advanced to the '+AGES[target].name+'!'+
+            (cardNames.length?' Gained: '+cardNames.join(', ')+'.':''));
+          if(window.playSound)playSound('victory');
+        }
+      }else{
+        applyTech(e.team,target); // one-time sweep + set the teamTechs bit
+        if(e.team===myTeam){
+          showMsg(UPGRADES[target].name+' researched!');
+          if(window.playSound)playSound('build');
+        }
       }
       e.research=undefined;
       if(typeof updateUI==='function')updateUI();

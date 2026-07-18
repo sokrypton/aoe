@@ -67,10 +67,13 @@ function detEntityHash(e){
   h = detMix(h, e.gatherCooldown || 0);
   h = detMix(h, e.garrisonedIn == null ? -1 : e.garrisonedIn);
   h = detMix(h, e.complete ? 1 : 0);
-  // Age research rides the TC entity — hash it so a divergent research
-  // clock trips the checksum before it silently lands a mistimed age-up.
+  // Research rides the building entity — hash it so a divergent
+  // research clock trips the checksum before it silently lands a mistimed
+  // age-up or tech. target is a numeric age index OR a string tech key; fold
+  // both slots so either divergence is caught.
   h = detMix(h, e.research ? e.research.tick : -1);
-  h = detMix(h, e.research ? e.research.target : -1);
+  h = detMix(h, e.research && typeof e.research.target === 'number' ? e.research.target : -1);
+  h = detMixStr(h, e.research && typeof e.research.target === 'string' ? e.research.target : null);
   h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
   // Fields the sim reads on later ticks that previously went unhashed — a
   // divergence here only tripped the checksum once it eventually moved
@@ -329,6 +332,7 @@ function simChecksum(){
     h = detMix(h, allianceOf(t));
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
     h = detMix(h, teamAge && teamAge[t] || 0);
+    h = detMix(h, teamTechs && teamTechs[t] || 0);
   }
   return h >>> 0;
 }

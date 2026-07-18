@@ -135,8 +135,8 @@ function isEnemyOf(team, e){ return isPlayerTeam(e.team) && !sameSide(team, e.te
 // ---- AGES ----
 // AoE2-lite age progression. teamAge[t] = 0 (Dark) / 1 (Feudal) / 2
 // (Castle). SIM state with the full teamAlliance treatment: snapshots,
-// resync, save, checksum. Advancing is TC research (see execResearchAge,
-// js/commands.js, and the TC tick in js/logic.js).
+// resync, save, checksum. Advancing is Town Center research (see execResearch,
+// js/commands.js, and updateBuildingResearch in js/logic.js).
 const AGES = [
   {key:'dark',   name:'Dark Age'},
   // Research times match AoE2 (DE): Feudal 130s, Castle 160s (30 ticks/game-s).
@@ -155,10 +155,17 @@ let teamAge = null;
 function resetTeamAge(){
   teamAge = Array.from({length: NUM_TEAMS}, () => 0);
 }
-// Military units get +1 attack and +1 melee/pierce armor per age past
-// Dark via the forging/iron_casting and scale_armor/chain_mail cards (see
-// UPGRADES below): attack applied at spawn + swept on age-up (attack is
-// snapshotted onto entities), armor added live in damageEntity.
+// Per-team researched-tech bitmask (bit = UPGRADE_BITS[key], set below). SIM
+// state with the full teamAge treatment: snapshots, resync, save, checksum.
+// Techs are researched at their owning building (execResearch), not granted on age-up.
+let teamTechs = null;
+function resetTeamTechs(){
+  teamTechs = Array.from({length: NUM_TEAMS}, () => 0);
+}
+// Military units get +1 attack and +1 melee/pierce armor per forging/
+// iron_casting and scale_armor/chain_mail tech researched at the Barracks
+// (see UPGRADES below): attack applied at spawn + swept on research (attack
+// is snapshotted onto entities), armor added live in damageEntity.
 const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
 // "Fights in the army" — MILITARY plus siege. The ram is deliberately NOT
 // in MILITARY (no blacksmith cards, no soft-push yielding: a parked ram is
@@ -235,41 +242,41 @@ function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 
 // createUnit/createBuilding spawn stats, gather cooldowns, farm food) that
 // read hasUpgrade(team, key) at the moment the stat matters.
 //
-// Today every card is baked into age-up: applyAgeUpgrades() runs from the
-// TC research completion (js/logic.js) and hasUpgrade derives from teamAge —
-// deliberately NO new sim state, since teamAge already rides snapshots,
-// saves and simChecksum. When cards become draftable later, replace
-// hasUpgrade/applyAgeUpgrades with a real per-team card set (with the full
-// teamAge sim-state treatment); every hook and apply() stays unchanged.
+// Each tech is researched at its owning building: execResearch charges its
+// cost/researchTicks, updateBuildingResearch runs applyTech() on completion.
+// hasUpgrade reads the per-team teamTechs bitmask — the "real per-team card
+// set" the original age-up bake anticipated. teamTechs gets the full teamAge
+// sim-state treatment (snapshots, resync, save, simChecksum); every apply()
+// and live hook is unchanged — only the trigger moved from age-up to research.
 const UPGRADES = {
   // -- Feudal --
-  forging: {age:1, name:'Forging', desc:'Military units +1 attack', apply(team){
+  forging: {age:1, cost:{f:80}, researchTicks:T30(500), name:'Forging', desc:'Military units +1 attack', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
   }},
-  scale_armor: {age:1, name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  fletching: {age:1, name:'Fletching', desc:'Archers +1 range', apply(team){
+  scale_armor: {age:1, cost:{f:50}, researchTicks:T30(500), name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  fletching: {age:1, cost:{f:50, g:30}, researchTicks:T30(500), name:'Fletching', desc:'Archers +1 range', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') u.range += 1; });
   }},
-  wheelbarrow: {age:1, name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
+  wheelbarrow: {age:1, cost:{f:90, w:30}, researchTicks:T30(600), name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='villager') {
       u.speed = UNITS.villager.speed * 1.1; u.carryMax += 3;
     }});
   }},
-  horse_collar: {age:1, name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
+  horse_collar: {age:1, cost:{f:40, w:40}, researchTicks:T30(500), name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
     topUpTeamFarms(team, 75); // future harvests: live via farmFoodFor
   }},
-  double_bit_axe: {age:1, name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
-  gold_mining: {age:1, name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
+  double_bit_axe: {age:1, cost:{w:50}, researchTicks:T30(500), name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
+  gold_mining: {age:1, cost:{f:50, w:40}, researchTicks:T30(500), name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
   // -- Castle --
-  iron_casting: {age:2, name:'Iron Casting', desc:'Military units +1 attack', apply(team){
+  iron_casting: {age:2, cost:{f:110, g:60}, researchTicks:T30(750), name:'Iron Casting', desc:'Military units +1 attack', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
   }},
-  chain_mail: {age:2, name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  bow_saw: {age:2, name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
-  heavy_plow: {age:2, name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
+  chain_mail: {age:2, cost:{f:100, g:50}, researchTicks:T30(750), name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  bow_saw: {age:2, cost:{w:80, g:50}, researchTicks:T30(750), name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
+  heavy_plow: {age:2, cost:{f:70, w:70}, researchTicks:T30(750), name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
     topUpTeamFarms(team, 125);
   }},
-  masonry: {age:2, name:'Masonry', desc:'Buildings +10% hit points', apply(team){
+  masonry: {age:2, cost:{f:80, w:90}, researchTicks:T30(750), name:'Masonry', desc:'Buildings +10% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0) {
       b.hp = Math.round(b.hp * 1.1); b.maxHp = Math.round(b.maxHp * 1.1);
     }});
@@ -278,48 +285,95 @@ const UPGRADES = {
   // bastion it (our tower-in-wall deviation, see BLDGS.TOWER). Keep the btype
   // set in sync with buildingMaxHpFor so a tower built after the tech founds at
   // the boosted HP too.
-  fortified_wall: {age:2, name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
+  fortified_wall: {age:2, cost:{f:100, s:50}, researchTicks:T30(750), name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE' || b.btype==='TOWER')) {
       b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
     }});
   }},
   // No apply() sweep — a pure live hook read at trade time (marketSellRatio,
   // read by execMarketTrade). AoE2's Guilds halves the market commission.
-  guilds: {age:2, name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
+  guilds: {age:2, cost:{f:100, g:50}, researchTicks:T30(750), name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
 };
+// Stable bit index per tech (UPGRADES registry order) — teamTechs is a
+// per-team bitmask of researched cards. 14 techs fit a 32-bit int.
+const UPGRADE_BITS = {};
+Object.keys(UPGRADES).forEach((k, i) => { UPGRADE_BITS[k] = i; });
+// Castle tech → the Feudal tech it upgrades (same blacksmith line). A Castle
+// upgrade can't be researched until its predecessor is (AoE2 blacksmith lines).
+const TECH_PREREQ = { iron_casting:'forging', chain_mail:'scale_armor', bow_saw:'double_bit_axe', heavy_plow:'horse_collar' };
+// A researched tech is a set bit in the per-team teamTechs bitmask.
 function hasUpgrade(team, key){
-  let c = UPGRADES[key];
-  return !!c && teamAge && isPlayerTeam(team) && teamAge[team] >= c.age;
+  let bit = UPGRADE_BITS[key];
+  return bit !== undefined && teamTechs && isPlayerTeam(team) && (teamTechs[team] & (1 << bit)) !== 0;
 }
-// One-time application of every card unlocked by reaching `age`; returns
-// the display names for the age-up message. Registry (insertion) order is
-// the application order — masonry before fortified_wall, so a stone wall
-// gets both multipliers the same way a wall built afterwards does.
+// Whether `team` may START researching `key` now: a known tech, not already
+// owned, within reach of its age, and its predecessor (if any) researched.
+// THE gate shared by execResearch and the button-list filter.
+// TESTING: a tech is researchable ONE AGE EARLY (age-1) — you can queue the
+// next age's upgrades at the owning building during the age right before, so they're
+// ready by age-up. (Age advancement itself stays at the Town Center.)
+function canResearch(team, key){
+  let c = UPGRADES[key];
+  if (!c || hasUpgrade(team, key)) return false;
+  if (teamAge && isPlayerTeam(team) && teamAge[team] < c.age - TECH_RESEARCH_LEAD) return false;
+  let pre = TECH_PREREQ[key];
+  return !pre || hasUpgrade(team, pre);
+}
+// Apply one researched card: run its one-time apply() sweep (if any) over
+// existing entities, then set the team's bit. Single-card analog of the old
+// age-up sweep; called from research completion (updateBuildingResearch).
+// apply() isn't idempotent (fortified_wall ×1.5 hp), but execResearch/
+// canResearch never let an owned tech re-research, so each fires exactly once.
+function applyTech(team, key){
+  let c = UPGRADES[key];
+  if (!c || !teamTechs) return;
+  if (c.apply) c.apply(team);
+  teamTechs[team] |= (1 << UPGRADE_BITS[key]);
+}
+// ---- Research economy (flags kept as kill-switches) ----
+// Age advancement is at the TOWN CENTER. Techs are researched at the building
+// that OWNS each one (AoE2-style, no University) — see the `researches` arrays
+// in BLDGS: Barracks (military/armor/fortification), Mill (farming), Lumber Camp
+// (wood), Mining Camp (gold), Market (Guilds), Town Center (Wheelbarrow).
+//   AUTO_APPLY_TECHS_AT_AGE — false: techs come only from research, not free at
+//     age-up (was a transitional safety net).
+//   INSTANT_TECH_RESEARCH — false: research is a timed clock (researchTicks).
+//   TECH_PRICES — true: research charges each tech's cost.
+//   TECH_RESEARCH_LEAD — 0: a tech is researchable only once its age is reached
+//     (AoE2-accurate — no Dark-age research). 1 would allow one age early.
+const AUTO_APPLY_TECHS_AT_AGE = false;
+const INSTANT_TECH_RESEARCH = false;
+const TECH_PRICES = true;
+const TECH_RESEARCH_LEAD = 0;
+// Apply every card unlocked by reaching `age`, in registry order (masonry
+// before fortified_wall), each via applyTech (sets the teamTechs bit + runs its
+// one-time sweep). Idempotent — skips cards already owned. Returns the display
+// names for the age-up message. Used by the auto-apply path above.
 function applyAgeUpgrades(team, age){
   let names = [];
   Object.keys(UPGRADES).forEach(k => {
-    let c = UPGRADES[k];
-    if (c.age !== age) return;
-    if (c.apply) c.apply(team);
-    names.push(c.name);
+    if (UPGRADES[k].age !== age || hasUpgrade(team, k)) return;
+    applyTech(team, k);
+    names.push(UPGRADES[k].name);
   });
   return names;
 }
-// Directly SET a team's age (editor / scenario / loader — the game itself only
-// advances age via TC research over time, there's no instant setter). Applies
-// each not-yet-reached age's one-time upgrade sweep over EXISTING units
-// (applyAgeUpgrades touches live entities) so they gain that age's
-// atk/range/speed bonuses, matching a normally-aged team. Only sweeps ages
-// ABOVE the team's current age: c.apply isn't idempotent (e.g. fortified_wall
-// ×1.5 hp), so re-applying would double it. Lowering age just sets the number —
-// bonuses already snapshotted on existing units aren't reverted, but units
-// built afterward read the lower age via hasUpgrade. Clamped to 0..2
+// Directly SET a team's age (editor / scenario / loader — the game itself
+// advances age via Town Center research over time, there's no instant setter).
+// Techs are now independent of age (researched at their owning building), so this only
+// sets the age number; it does NOT grant any upgrades. Clamped to 0..2
 // (Dark/Feudal/Castle).
 function setTeamAge(team, age){
   if(!teamAge)resetTeamAge();
+  if(!teamTechs)resetTeamTechs(); // applyAgeUpgrades→applyTech below needs a non-null bitmask
   age=Math.max(0,Math.min(2,age|0));
-  let cur=teamAge[team]||0;
-  for(let a=cur+1;a<=age;a++)applyAgeUpgrades(team,a);
+  // TEMP (AUTO_APPLY_TECHS_AT_AGE): sweep each newly-reached age's free techs,
+  // so an editor/scenario/loaded team at a higher age has them (applyAgeUpgrades
+  // is idempotent — skips owned cards, so lowering/reloading never doubles).
+  if(AUTO_APPLY_TECHS_AT_AGE){
+    let cur=teamAge[team]||0;
+    for(let a=cur+1;a<=age;a++)applyAgeUpgrades(team,a);
+  }
   teamAge[team]=age;
 }
 // +1 attack per Forging/Iron Casting held — spawn-time counterpart of the
@@ -352,7 +406,8 @@ function gatherCooldownFor(team, resource, baseCooldown){
 }
 // Max HP a building of this team founds at (or converts to — see
 // execUpgradeWalls): base stat plus the HP card multipliers, masonry first
-// then fortified_wall, matching applyAgeUpgrades' registry order.
+// then fortified_wall (a fixed order for new buildings; existing-building
+// sweeps in applyTech commute to the same result).
 function buildingMaxHpFor(team, btype){
   let hp = BLDGS[btype].hp;
   if (hasUpgrade(team, 'masonry')) hp = Math.round(hp * 1.1);
@@ -402,11 +457,13 @@ function restoreTeamState(src){
   teamAlliance = src.teamAlliance || null;
   defeatedTeams = src.defeatedTeams || null;
   teamAge = src.teamAge || null;
+  teamTechs = src.teamTechs || null;
   if (!AI_STATES) resetAIStates();
   if (!lastTeamHit) resetLastTeamHit();
   if (!teamAlliance) resetTeamAlliance();
   if (!defeatedTeams) resetDefeatedTeams();
   if (!teamAge) resetTeamAge();
+  if (!teamTechs) resetTeamTechs();
   // Cosmetic seat labels/colors are NOT part of the lockstep snapshot (never
   // hashed/captured) — rollback/resync src won't carry them, so those keep the
   // current values. A SAVE file DOES carry them (js/save.js) so a loaded MP
@@ -588,16 +645,16 @@ const BLDGS={
   // buildTime is villager-work ticks (1 builder = 1 tick of progress per game
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
-  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Trains villagers and accepts resource drop-off. Garrison units for shelter and extra arrows.',icon:'🏰'},
+  TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],researches:['wheelbarrow'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Trains villagers, advances ages, and accepts resource drop-off. Garrison units for shelter and extra arrows.',icon:'🏰'},
   HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
-  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood.',icon:'🪓'},
-  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone.',icon:'⛏️'},
-  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Lets you prepay Farm reseeds.',icon:'🛞'},
+  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',researches:['double_bit_axe','bow_saw'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood. Researches wood-gathering upgrades.',icon:'🪓'},
+  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',researches:['gold_mining'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone. Researches mining upgrades.',icon:'⛏️'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',researches:['horse_collar','heavy_plow'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Lets you prepay Farm reseeds and researches farming upgrades.',icon:'🛞'},
   // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains infantry, archers, and light cavalry.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
@@ -625,7 +682,11 @@ const BLDGS={
   // footprint passes units (see walkable() in pathfinding.js and the
   // isFarm/walkable skip in clearFootprintForBuild); tiles stay `occupied` so
   // nothing can be built on it.
-  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts and trades resources for gold. Requires the Feudal Age.',icon:'⚖️'}
+  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],researches:['guilds'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts, trades resources for gold, and researches Guilds. Requires the Feudal Age.',icon:'⚖️'}
+  // Research is distributed to the buildings that "own" each tech (AoE2-style):
+  // see the `researches` arrays above — Barracks (military/armor/fortification),
+  // Mill (farming), Lumber Camp (wood), Mining Camp (gold), Market (Guilds),
+  // Town Center (Wheelbarrow). Age advancement stays at the TC (execResearch).
 };
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
@@ -734,12 +795,12 @@ const AI_LEVELS={
   //     eligible troops that answer a sighted threat; the rest hold as home defense)
   //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
   //     to fight a small raid at the town when the army can't answer)
-  easy:{name:'Easy',decisionInterval:T30(300),maxVils:18,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:3,waveCap:8,commitPercent:35,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.3,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:4,wallAge:1,attackAdvantage:0.9,maxTowers:1,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6},
+  easy:{name:'Easy',decisionInterval:T30(300),maxVils:18,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:3,waveCap:8,commitPercent:35,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.3,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:4,wallAge:1,attackAdvantage:0.9,maxTowers:1,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6,maxTech:2},
   // Standard mirrors AoE2's Moderate: a real challenge (Castle ~15min,
   // rams/knights, walls + a tower, pushes from ~10min) that wins on
   // competent play, not free resources.
-  standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,ramWoodReserve:3,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,wallAge:2,attackAdvantage:1.15,maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75},
-  hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,wallAge:2,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
+  standard:{name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:2,houseBuffer:2,buildersPerBuilding:1,maxBarracks:1,barracksVil:8,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(2100),attackTick:T30(6000),armyReserve:4,ramWoodReserve:3,militaryFoodReserve:70,dropSites:true,walls:true,wallVils:10,wallRadius:6,wallAge:2,attackAdvantage:1.15,maxTowers:1,maxTradeCarts:5,marketVil:12,ecoRatios:{forage:4,chop:3,mine_gold:3,mine_stone:1},farmShare:3,targetFarms:3,wallCheckInterval:T30(600),wallMaintInterval:T30(300),allyJoinWindow:T30(600),allyJoinFactor:0.75,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.75,maxTech:7},
+  hard:{name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,wallAge:2,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,wallCheckInterval:T30(450),wallMaintInterval:T30(240),allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6,maxTech:14}
 };
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on

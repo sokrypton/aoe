@@ -8,6 +8,9 @@
 // js/page-shell.js) — naming a new cell there is the only step; this set
 // follows.
 const SPRITE_ICON_KEYS = new Set(Object.keys(window.SPRITE_CELLS));
+// Tech keys that have a full-cell research icon (`up-<key>` in SPRITE_CELLS,
+// rows 8-9). Shown via `sprite-icon icon-up-<key>` inside a .research-tile.
+const SPRITE_UP_KEYS = new Set(Object.keys(window.SPRITE_CELLS).filter(k => k.startsWith('up-')).map(k => k.slice(3)));
 
 // Market trade cell metadata shared by both skins' exchange UIs: tooltip
 // text, affordability cost and the submit handler for one buy/sell cell.
@@ -379,6 +382,11 @@ function updateUI(){
   if (selected.length > 0) {
     let e = selected[0];
     currentSelectionDetails = `${e.id}:${e.hp}:${e.maxHp}:${e.complete ? 1 : 0}:${e.buildProgress || 0}`;
+    // Research state (target only, NOT tick — tick changes every frame), so the
+    // strip rebuilds the instant research starts/ends on the selected building:
+    // train buttons grey out (paused) and the research grid refreshes. Covers any
+    // researching building (TC age-up, Barracks tech), not just the TC's ageKey.
+    if (e.type === 'building') currentSelectionDetails += ':r' + (e.research ? e.research.target : '-');
     // Gate lock state, so the Lock/Unlock button label flips the instant the
     // toggle lands (the button is derived from selected gates' .locked).
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
@@ -453,14 +461,14 @@ function updateUI(){
     };
   }
 
-  // Age signal for the dirty check: current age index + whether a TC is
-  // researching (and toward what) — so the age crest and the idle-box age
-  // display both refresh on advance/start/cancel, none of which touch the
-  // other tracked fields on their own.
-  let myResearchTC = (teamAge && isPlayerTeam(myTeam))
-    ? entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research) : null;
+  // Age signal for the dirty check: current age index + whether a Town Center
+  // is advancing the age (and toward what) — so the age crest and the idle-box
+  // age display both refresh on advance/start/cancel. Age-up lives at the TC
+  // (numeric research target); tech buildings host UPGRADES only.
+  let myAgeUpBldg = (teamAge && isPlayerTeam(myTeam))
+    ? entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research && typeof en.research.target === 'number') : null;
   let ageKey = (teamAge && isPlayerTeam(myTeam))
-    ? teamAge[myTeam] + ':' + (myResearchTC ? myResearchTC.research.target : '-') : '';
+    ? teamAge[myTeam] + ':' + (myAgeUpBldg ? myAgeUpBldg.research.target : '-') : '';
 
   let lu = window.lastUIState;
   let stateChanged = (
@@ -495,11 +503,15 @@ function updateUI(){
         .forEach(veil => { veil.style.height = (100 - pct) + '%'; });
     }
   }
-  // Same live patch for the Advance button's research fill — smooth every
-  // frame; the button itself only rebuilds on structural changes.
+  // Same live patch for the research fill (age-up Advance button OR
+  // an active tech cell — both carry .research-progress-fill) — smooth every
+  // frame; the buttons themselves only rebuild on structural changes. target
+  // is a numeric age index OR a string tech key.
   if (selected.length === 1 && selected[0].research) {
-    let fill = document.querySelector('#advance-progress-btn .btn-progress-fill');
-    if (fill) fill.style.width = (selected[0].research.tick / AGES[selected[0].research.target].researchTicks * 100).toFixed(1) + '%';
+    let r = selected[0].research;
+    let rt = typeof r.target === 'number' ? AGES[r.target].researchTicks : UPGRADES[r.target].researchTicks;
+    let pct = (r.tick / rt * 100).toFixed(1) + '%';
+    document.querySelectorAll('#actions .research-progress-fill').forEach(fill => { fill.style.width = pct; });
   }
 
   if (!stateChanged) return;
@@ -544,13 +556,12 @@ function updateUI(){
   if (ageEl && teamAge) {
     let crest = ageEl.parentElement.querySelector('.res-icon');
     if (crest) crest.className = 'res-icon sprite-icon icon-age-' + AGES[teamAge[myTeam]].key;
-    let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
-    ageEl.textContent = myTC
-      ? `→ ${AGES[myTC.research.target].name.replace(' Age','')}…`
+    ageEl.textContent = myAgeUpBldg
+      ? `→ ${AGES[myAgeUpBldg.research.target].name.replace(' Age','')}…`
       : AGES[teamAge[myTeam]].name.replace(' Age','');
-    ageEl.parentElement.title = myTC
-      ? 'Advancing to the ' + AGES[myTC.research.target].name + ' — villager training is paused at the Town Center.'
-      : 'Your current age. Advance from the Town Center to unlock new units and buildings.';
+    ageEl.parentElement.title = myAgeUpBldg
+      ? 'Advancing to the ' + AGES[myAgeUpBldg.research.target].name + ' — researching at the Town Center.'
+      : 'Your current age. Advance at the Town Center to unlock new units and buildings.';
   }
   
   let bellBtn = document.getElementById('bell-btn');
@@ -587,8 +598,12 @@ function updateUI(){
     +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
     +':garr'+(window.settingGarrison||0)
     // age + research flip which buttons EXIST (locked ones are hidden, wall/
-    // gate slots upgrade to stone at Feudal) — the panel must rebuild then.
-    +':'+(teamAge?teamAge[myTeam]:0)+':'+!!(selected[0]&&selected[0].research)
+    // gate slots upgrade to stone at Feudal, the tech list changes) —
+    // the panel must rebuild then. Fold the selected building's research TARGET
+    // (not just a bool: tech→tech switches) and the team's researched-tech
+    // bitmask (a tech completing anywhere drops it / reveals its successor).
+    +':'+(teamAge?teamAge[myTeam]:0)+':'+(selected[0]&&selected[0].research?selected[0].research.target:'-')
+    +':tech'+(teamTechs&&isPlayerTeam(myTeam)?teamTechs[myTeam]:0)
     // State the buttons DISPLAY that can change while the selection stays
     // put: the training queue (count badges + which button hosts the
     // progress fill), the Mill's banked-reseed badge, and market prices
@@ -806,9 +821,9 @@ function updateUI(){
     // rendered its stale (previous-age) tile until the selection changed.
     + ':gage' + (teamAge && isPlayerTeam(myTeam) ? teamAge[myTeam] : '');
   if (idleCrest) {
-    // myResearchTC was already computed for the age dirty-key at the top of
+    // myAgeUpBldg was already computed for the age dirty-key at the top of
     // this function — no second full-entities scan.
-    gridKey += ':idleage' + (myResearchTC ? 'adv' + myResearchTC.research.target : teamAge[myTeam]);
+    gridKey += ':idleage' + (myAgeUpBldg ? 'adv' + myAgeUpBldg.research.target : teamAge[myTeam]);
   }
   if (gameOverTile) gridKey += ':over' + (iWonOutcome ? 1 : 0);
   if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
@@ -910,8 +925,8 @@ function updateUI(){
     } else if(idleCrest){
       // NULL SELECTION tile: the current age's crest (or the TARGET age's
       // while advancing) drawn as the exact same tile as a single selection.
-      let advTC = myResearchTC; // computed once at the top of updateUI
-      let crestIdx = advTC ? advTC.research.target : teamAge[myTeam];
+      let advU = myAgeUpBldg; // computed once at the top of updateUI
+      let crestIdx = advU ? advU.research.target : teamAge[myTeam];
       let icon = document.createElement('div');
       icon.className = 'sel-unit-icon';
       setPortraitIcon(icon, 'age-' + AGES[crestIdx].key, '🏛️');
@@ -958,17 +973,16 @@ function updateUI(){
     // this idle box is where age lives. Classic keeps the title.
     let modern = !isClassicUI;
     if (modern && teamAge && isPlayerTeam(myTeam)) {
-      let myTC = entities.find(en => en.team === myTeam && en.btype === 'TC' && en.research);
       let ageIdx = teamAge[myTeam];
       // Crest ONLY — no age name text. While advancing, show the TARGET
-      // age's crest instead (the research progress itself lives on the TC's
-      // Advance button).
-      let crestIdx = myTC ? myTC.research.target : ageIdx;
+      // age's crest instead (the research progress itself lives on the
+      // TC's Advance button).
+      let crestIdx = myAgeUpBldg ? myAgeUpBldg.research.target : ageIdx;
       if (port) { setPortraitIcon(port, 'age-' + AGES[crestIdx].key, '🏛️'); port.classList.remove('cam-locked'); }
       // Desktop card reveals these beside the crest (single-sel); narrow widths
       // keep the crest alone (#sel-stats hidden). Age name + advancing status.
       document.getElementById('sel-name').textContent = AGES[crestIdx].name;
-      document.getElementById('sel-details').textContent = myTC ? 'Advancing…' : '';
+      document.getElementById('sel-details').textContent = myAgeUpBldg ? 'Advancing…' : '';
       return;
     }
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
@@ -1086,9 +1100,15 @@ function updateUI(){
         // the unit just queued was a nasty surprise — clicks pass through
         // to the button, so double-tap = queue two. Cancelling lives in the
         // classic skin's queue slots below.
+        // A building researching (age-up at the TC, a tech at the Barracks…)
+        // PAUSES its training (updateBuildingResearch, js/logic.js) — grey the
+        // train buttons out and swallow their clicks so you can't queue units
+        // that won't move. selKey folds in research state, so this rebuilds when
+        // research starts/ends.
+        let bldgResearching = !!e.research;
         b.builds.filter(ut=>isUnlocked(myTeam,ut)).forEach(ut=>{
           let u=UNITS[ut];
-          let btn=document.createElement('div');btn.className='act-btn';
+          let btn=document.createElement('div');btn.className='act-btn'+(bldgResearching?' upg-busy':'');
           btn.dataset.tipType='unit';
           btn.dataset.tipKey=ut;
           // Show the RESCUE villager as "Free" (unitTrainCost, js/logic.js) so a
@@ -1115,49 +1135,10 @@ function updateUI(){
             btn.classList.add('training-active');
             btn.innerHTML+=`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:${pct}%;"></div>`;
           }
-          btn.onclick=()=>trainUnit(e,ut);
+          if(!bldgResearching) btn.onclick=()=>trainUnit(e,ut);
           act.appendChild(btn);
         });
 
-
-        // ---- Advance Age (TC only) ----
-        if(e.btype==='TC'&&teamAge&&teamAge[myTeam]<AGES.length-1){
-          let next=AGES[teamAge[myTeam]+1];
-          let btn=document.createElement('div');btn.className='act-btn';
-          btn.dataset.tipType='action';
-          if(e.research){
-            btn.dataset.tipLabel='Researching '+AGES[e.research.target].name;
-            btn.id='advance-progress-btn';
-            // Keeps the age-crest icon (not a generic research glyph) so
-            // WHAT is being bought stays readable — the fill (+ classic's
-            // Cancel line) already say it's in progress.
-            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${AGES[e.research.target].key}"></div><div class="btn-label">${AGES[e.research.target].name}</div>`
-              +(isClassicUI?`<span class="cost">Cancel</span>`:'')
-              +`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:0%;"></div>`;
-            btn.style.position='relative';
-            if(isClassicUI){
-              // Classic keeps AoE2's cancel-by-clicking-again. The tap-model
-              // skin deliberately does NOT: on touch, a stray tap on the TC
-              // card silently refunded a whole age advance.
-              btn.dataset.tipDesc='Advancing to the next Age — no villagers meanwhile. Click to cancel and refund.';
-              btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
-            } else {
-              btn.dataset.tipDesc='Advancing to the next Age — no villagers meanwhile.';
-            }
-          } else {
-            btn.dataset.cost=JSON.stringify(next.cost);
-            btn.dataset.tipLabel='Advance to '+next.name;
-            // tipCost renders the same icon cost rows as building/unit tips.
-            btn.dataset.tipCost=JSON.stringify(next.cost);
-            btn.dataset.tipDesc=(teamAge[myTeam]===0
-              ? 'Unlocks spearmen, archers, scouts, watch towers, and stone walls. Military gains +1 attack and +1 armor.'
-              : 'Unlocks the knight. Military gains a further +1 attack and +1 armor.')
-              +' The Town Center pauses villager training while researching.';
-            btn.innerHTML=`<div class="btn-emoji sprite-icon icon-age-${next.key}"></div><div class="btn-label">Advance to ${next.name}</div>${costChips(next.cost)}`;
-            btn.onclick=()=>{ submitCommand({kind:'research-age',bldgId:e.id}); };
-          }
-          act.appendChild(btn);
-        }
 
         // Rally Point button — lets mobile players set rally without right-click
         if (e.complete) {
@@ -1222,6 +1203,79 @@ function updateUI(){
           });
           let lane = document.getElementById('sel-queue');
           (lane || act).appendChild(strip);
+        }
+      }
+
+      // ---- Research: everything you can research at this building sits together
+      // INSIDE one PARCHMENT box, styled as an unrolled SCROLL (rolled ends,
+      // spanning the panel) — visually distinct from the wooden unit-train
+      // buttons so ACTIONS read apart from UNITS. It holds the TC's Advance-Age
+      // tile (aging is a research action) plus the building's tech tiles
+      // (BLDGS.researches). canResearch hides owned/age-locked/prereq-missing (the
+      // "which replaces which" slots). A building researches ONE thing at a time —
+      // the in-progress tile shows a fill, the rest go busy.
+      if(e.complete && b.researches){
+        let r=e.research;
+        let techs=b.researches.filter(k=>canResearch(myTeam,k)||(r&&r.target===k));
+        let canAge=e.btype==='TC'&&teamAge&&teamAge[myTeam]<AGES.length-1;
+        if(canAge||techs.length){
+          let box=document.createElement('div');box.className='research-box';
+          // ONE builder for BOTH age-up and every tech, so their layout/states can't
+          // drift apart. Each entry = a .research-item COLUMN: an icon button
+          // (.research-tile, holds .research-icon = sprite + progress fill) with the
+          // price a SIBLING below it — so hover/click land on the icon only. `up-<key>`
+          // sprites are placeholders. state: 'progress' | 'busy' | 'ready'.
+          const PROG='<div class="btn-progress-fill research-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;width:0%;"></div>';
+          const addItem = (o) => {
+            let item=document.createElement('div');item.className='research-item';
+            let btn=document.createElement('div');btn.className='act-btn research-tile';
+            if(o.id) btn.id=o.id;
+            btn.dataset.tipType='action'; btn.dataset.tipLabel=o.tipLabel;
+            if(o.tipDesc) btn.dataset.tipDesc=o.tipDesc;
+            if(o.cost) btn.dataset.tipCost=JSON.stringify(o.cost);
+            btn.innerHTML=`<div class="research-icon">${o.icon}${o.state==='progress'?PROG:''}</div>`;
+            if(o.state==='progress'){
+              btn.classList.add('training-active');
+              if(isClassicUI) btn.onclick=()=>{ submitCommand({kind:'cancel-research',bldgId:e.id}); };
+            } else if(o.state==='busy'){
+              item.classList.add('upg-busy'); // building busy on another research
+            } else { // ready
+              if(o.cost) btn.dataset.cost=JSON.stringify(o.cost); // affordability greying
+              btn.onclick=()=>{ submitCommand({kind:'research',bldgId:e.id,target:o.target}); };
+            }
+            item.appendChild(btn);
+            // price BELOW the icon (mobile shows it, classic hides it); the in-progress
+            // tile shows the fill instead. Height is fixed in CSS so a price-less tile
+            // (e.g. age-up mid-research) doesn't shrink the band.
+            if(o.cost && o.state!=='progress') item.insertAdjacentHTML('beforeend', costChips(o.cost));
+            box.appendChild(item);
+          };
+          // Advance-Age (TC only) first; numeric research target = in progress.
+          if(canAge){
+            let next=AGES[teamAge[myTeam]+1];
+            if(r&&typeof r.target==='number'){
+              addItem({ id:'advance-progress-btn', state:'progress',
+                icon:`<div class="btn-emoji sprite-icon icon-age-${AGES[r.target].key}"></div>`,
+                tipLabel:'Researching '+AGES[r.target].name,
+                tipDesc:'Advancing to the next Age — villager training paused.'+(isClassicUI?' Click to cancel and refund.':'') });
+            } else {
+              addItem({ state:r?'busy':'ready', target:'age', cost:next.cost,
+                icon:`<div class="btn-emoji sprite-icon icon-age-${next.key}"></div>`,
+                tipLabel:'Advance to '+next.name,
+                tipDesc:(teamAge[myTeam]===0
+                  ? 'Unlocks spearmen, archers, scouts, watch towers, and stone walls.'
+                  : 'Unlocks the knight and Castle-age technologies.')
+                  +' The Town Center pauses villager training while researching.' });
+            }
+          }
+          techs.forEach(k=>{
+            let c=UPGRADES[k];
+            addItem({
+              state: (r&&r.target===k)?'progress':(r?'busy':'ready'), target:k, cost:c.cost,
+              icon: SPRITE_UP_KEYS.has(k)?`<div class="btn-emoji sprite-icon icon-up-${k}"></div>`:`<div class="btn-emoji">🔬</div>`,
+              tipLabel:c.name, tipDesc:c.desc });
+          });
+          act.appendChild(box);
         }
       }
 

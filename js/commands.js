@@ -127,17 +127,17 @@ function execCommand(cmd, team){
     case 'gate-lock':
       withCommandContext(team, [], () => execGateLock(cmd, team));
       break;
-    case 'research-age': {
-      let tc = entitiesById.get(cmd.bldgId);
-      if (tc && tc.type === 'building' && tc.team === team) {
-        withCommandContext(team, [], () => execResearchAge(tc));
+    case 'research': {
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.type === 'building' && bldg.team === team) {
+        withCommandContext(team, [], () => execResearch(bldg, cmd.target));
       }
       break;
     }
     case 'cancel-research': {
-      let tc = entitiesById.get(cmd.bldgId);
-      if (tc && tc.type === 'building' && tc.team === team) {
-        withCommandContext(team, [], () => execCancelResearch(tc));
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.type === 'building' && bldg.team === team) {
+        withCommandContext(team, [], () => execCancelResearch(bldg));
       }
       break;
     }
@@ -952,24 +952,53 @@ function execTrainUnit(bldg, utype){
   });
 }
 
-// Start advancing to the next age at this TC. The research is a plain
-// field on the TC entity ({target, tick}) so it rides saves and lockstep
-// rollbacks automatically, and dies (unrefunded, AoE2-style) with the TC.
-// While researching, the TC's unit queue is paused (js/logic.js).
-function execResearchAge(tc){
-  if (tc.btype !== 'TC' || !tc.complete || tc.research) return;
-  let next = teamAge[tc.team] + 1;
-  if (next >= AGES.length) return;
-  let cost = AGES[next].cost;
-  // feedbackFor handles the AI calling this directly from the sim
-  // (js/ai.js) — the human must not see the AI's advancement toasts.
-  if (!canAfford(tc.team, cost)) {
-    feedbackFor(tc.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
-    return;
+// Start a research at this building — age advancement (target 'age', stored
+// as the numeric next-age index; TC only) or a tech (target = an UPGRADES key,
+// stored as the string; at the building that OWNS it). The research is a plain
+// field on the building entity ({target, tick}) so it rides saves and lockstep
+// rollbacks, and dies (unrefunded on death, AoE2-style) with the building. ONE
+// research at a time per building; a second owner parallelizes. feedbackFor gates toasts so
+// the human never sees an AI's research messages (the AI calls this directly).
+function execResearch(bldg, target){
+  // Age advancement runs at the TOWN CENTER; a tech runs at the building that
+  // OWNS it (its BLDGS.researches list — Barracks/Mill/Lumber/Mining/Market/TC).
+  let okBldg = target === 'age'
+    ? bldg.btype === 'TC'
+    : !!(BLDGS[bldg.btype].researches && BLDGS[bldg.btype].researches.includes(target));
+  if (!okBldg || !bldg.complete || bldg.research) return;
+  if (target === 'age') {
+    let next = teamAge[bldg.team] + 1;
+    if (next >= AGES.length) return;
+    let cost = AGES[next].cost;
+    if (!canAfford(bldg.team, cost)) {
+      feedbackFor(bldg.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
+      return;
+    }
+    spendCost(bldg.team, cost);
+    bldg.research = { target: next, tick: 0 }; // numeric target = age-up (timed at the TC)
+    feedbackFor(bldg.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
+  } else {
+    let c = UPGRADES[target];
+    if (!c || !canResearch(bldg.team, target)) return; // unknown/owned/age-locked/prereq
+    // TESTING: instant + free — click applies the upgrade immediately, no timer
+    // and no cost (INSTANT_TECH_RESEARCH). The timed/paid path below returns
+    // when we re-add research duration + prices.
+    if (INSTANT_TECH_RESEARCH) {
+      applyTech(bldg.team, target);
+      feedbackFor(bldg.team, () => { showMsg(c.name + ' researched!'); if (window.playSound) playSound('build'); });
+    } else {
+      // TECH_PRICES gates cost — off = free (only the timed clock gates it).
+      if (TECH_PRICES) {
+        if (!canAfford(bldg.team, c.cost)) {
+          feedbackFor(bldg.team, () => { showMsg('Not enough resources to research!'); if (window.playSound) playSound('error'); });
+          return;
+        }
+        spendCost(bldg.team, c.cost);
+      }
+      bldg.research = { target: target, tick: 0 }; // string target = tech (timed on the owning building)
+      feedbackFor(bldg.team, () => showMsg('Researching ' + c.name + '…'));
+    }
   }
-  spendCost(tc.team, cost);
-  tc.research = { target: next, tick: 0 };
-  feedbackFor(tc.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
   if (typeof updateUI === 'function') updateUI();
 }
 
@@ -1076,11 +1105,17 @@ function execGateLock(cmd, team){
   if (typeof updateUI === 'function') updateUI();
 }
 
-function execCancelResearch(tc){
-  if (!tc.research) return;
-  refundCost(tc.team, AGES[tc.research.target].cost);
-  tc.research = undefined;
-  feedbackFor(tc.team, () => showMsg('Age research cancelled (refunded)'));
+// Cancel the in-progress research with a full refund (AoE2 refunds cancelled
+// research). Handles both target shapes: numeric = age (AGES cost), string =
+// tech (UPGRADES cost).
+function execCancelResearch(bldg){
+  if (!bldg.research) return;
+  let t = bldg.research.target;
+  let cost = (typeof t === 'number') ? AGES[t].cost : UPGRADES[t].cost;
+  let label = (typeof t === 'number') ? 'Age research' : UPGRADES[t].name;
+  refundCost(bldg.team, cost);
+  bldg.research = undefined;
+  feedbackFor(bldg.team, () => showMsg(label + ' cancelled (refunded)'));
   if (typeof updateUI === 'function') updateUI();
 }
 

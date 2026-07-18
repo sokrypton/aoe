@@ -2369,10 +2369,12 @@ function drawBuilding(e, part = null){
     X.fillStyle='#003';X.fillRect(sx-bww/2,progY+1,bww,3);
     X.fillStyle='#0af';X.fillRect(sx-bww/2,progY+1,bww*pct,3);
   }
-  // Age research — same bar, gold fill, updates every frame (smooth,
-  // unlike the throttled panel text).
+  // Research (age-up or tech) — same bar, gold fill, updates every frame
+  // (smooth, unlike the throttled panel text). target is a numeric age index
+  // OR a string tech key (js/commands.js execResearch).
   if(e.research){
-    let pct=e.research.tick/AGES[e.research.target].researchTicks;
+    let rt=typeof e.research.target==='number'?AGES[e.research.target].researchTicks:UPGRADES[e.research.target].researchTicks;
+    let pct=e.research.tick/rt;
     let bww=b.w*24;
     X.fillStyle='#000000';X.fillRect(sx-bww/2-1,progY,bww+2,5);
     X.fillStyle='#330';X.fillRect(sx-bww/2,progY+1,bww,3);

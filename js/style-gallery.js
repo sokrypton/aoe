@@ -20,6 +20,7 @@
   initFog();
   resetTeamVision();
   resetTeamAge();
+  resetTeamTechs(); // must accompany resetTeamAge (applyTech no-ops on null teamTechs)
   resetLastTeamHit();
   resetDefeatedTeams();
   resetAIStates();

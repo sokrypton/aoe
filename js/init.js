@@ -1340,6 +1340,8 @@ function restartGame(difficulty){
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
   resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
+  resetTeamTechs(); // fresh per-team researched-tech bitmask (js/core.js) — MUST accompany
+                    // resetTeamAge, or applyTech bails on null teamTechs and NO upgrade ever applies
   // Cosmetic seat labels/colors back to defaults (identity palette, no names).
   // Like teamControllers above, the lobby/lockstep paths re-apply the agreed
   // names+colors AFTER restartGame — see hostStartLockstepMatch / the

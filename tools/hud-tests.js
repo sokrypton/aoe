@@ -471,11 +471,11 @@ function pageSuite() {
     stage();
     createBuilding('MARKET', 10, 10, 0);
     resourceStore(0).food = 1000; resourceStore(0).gold = 0;
-    teamAge[0] = 2;
+    teamAge[0] = 2; applyTech(0, 'guilds'); // Castle + grant Guilds (techs are researched now, not auto-granted at age)
     let p2 = marketPricesFor(0).food;
     execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
     assert(resourceStore(0).gold === Math.floor(p2 * 85 / 100), 'Castle-age (Guilds) sell should return 85%, got ' + resourceStore(0).gold);
-    teamAge[0] = 0;
+    teamAge[0] = 0; teamTechs[0] = 0;
   });
 
   T('hud: Watch Tower icon is age-specific (Feudal variant, Castle keeps base) — portrait + build button', () => {

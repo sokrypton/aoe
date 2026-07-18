@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 8, // v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    version: 9, // v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -112,6 +112,7 @@ function serializeGame(){
     teamAlliance,
     defeatedTeams,
     teamAge,
+    teamTechs,
     // Cosmetic per-team labels/colors chosen in the lobby (js/core.js). Not sim
     // state (excluded from the checksum/snapshots), but a loaded MP game should
     // still show the players' agreed names and colors, so they ride the save.
@@ -228,8 +229,8 @@ function applySavedGame(data, opts){
   // fails loudly here instead of misloading silently. v8 (AI intel-memory
   // shape + parity sim semantics) deliberately drops older versions — no
   // back-compat shims, per convention.
-  if (data.version !== 8) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v8 saves only');
+  if (data.version !== 9) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v9 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,

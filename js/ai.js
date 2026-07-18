@@ -179,6 +179,7 @@ function updateAI(ai){
   planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile);
   queueAITradeCarts(ai,profile);               // team games only: train carts up to the cap
   planAIMarketExchange(ai,profile);            // buy/sell commodities for gold
+  planAIResearch(ai,profile);                  // techs at their owning buildings (age-up handled by planAIAgeUp above)
   queueAIMilitary(ai,readyBarracks,profile);
   ensureAIScout(ai,readyBarracks); // keep an explorer alive so the enemy actually gets found
   assignAIVillagers(ai,vils,profile);
@@ -359,9 +360,17 @@ function estimateLocalEnemyPower(ai,center,radius){
     .reduce((s,e)=>s+unitPower(e.utype),0);
 }
 
-// Advance ages, difficulty-paced. Once thresholds pass, either start the
-// research immediately or flag savingForAge so military spending yields
-// (villager production continues — eco first, AoE2-style).
+// A complete, idle (not researching) building of this team that OWNS tech `key`
+// (its BLDGS.researches list) and isn't already claimed this tick — where the AI
+// researches it (parity: same execResearch the human uses). find() keeps
+// entities' ascending-id order, so no tiebreak needed.
+function aiIdleResearchBuilding(team,key,used){
+  return entities.find(e=>e.type==='building'&&e.team===team&&e.complete&&e.hp>0&&!e.research
+    &&!used.has(e.id)&&BLDGS[e.btype].researches&&BLDGS[e.btype].researches.includes(key));
+}
+
+// Advance ages, difficulty-paced, at the Town Center (instant when affordable;
+// pauses TC villager training while researching — the classic tempo cost).
 function planAIAgeUp(ai,aiTC,vils,profile){
   let next=teamAge[ai.team]+1;
   if(next>=AGES.length||next>(profile.maxAge||0)){ai.savingForAge=false;return;}
@@ -369,10 +378,39 @@ function planAIAgeUp(ai,aiTC,vils,profile){
   if(vils.length<(profile.ageUpVils&&profile.ageUpVils[next]||Infinity))return;
   if(ai.tick<(profile.ageUpTick&&profile.ageUpTick[next]||Infinity))return;
   if(canAfford(ai.team,AGES[next].cost)){
-    execResearchAge(aiTC); // same exec path as the player's command
+    execResearch(aiTC,'age'); // same exec path as the player's command
     ai.savingForAge=false;
   } else {
     ai.savingForAge=true;
+  }
+}
+
+
+// Difficulty-scaled tech research order. Each profile pursues the first
+// `maxTech` of these; canResearch enforces age gate + prereq (the "which
+// replaces which" chains), so a slice can safely name both a Feudal card and
+// its Castle successor. `maxTech` is now the AI's ACTUAL tech count (techs come
+// only from research, not free age-up), so it's a monotonic strength knob like
+// armyPerVil. COMBAT-FIRST: attack/armor lead so even a low-maxTech (easy) army
+// gets +atk/+armor and can still break a wall — an eco-first order left easy
+// with zero military upgrades and unable to close out (perma-turtle stalemate).
+const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
+function planAIResearch(ai,profile){
+  if(ai.savingForAge)return;                               // hoarding for the age (TC) — don't drain resources
+  if(aiUnderRealPressure(ai))return;                       // spend on the army, not tech, while attacked
+  let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
+  // Techs live on the buildings that own them (Barracks/Mill/Lumber/Mining/
+  // Market/TC), so research runs in PARALLEL — start one per idle owning
+  // building this tick. `used` stops two techs racing for the same building;
+  // canAfford re-reads the store after each spend so we can't overspend.
+  let used=new Set();
+  for(let k of plan){
+    if(!canResearch(ai.team,k))continue;                   // owned / age-locked / prereq-missing
+    if(TECH_PRICES&&!canAfford(ai.team,UPGRADES[k].cost))continue;
+    let host=aiIdleResearchBuilding(ai.team,k,used);
+    if(!host)continue;                                     // its building is busy/training/absent — try later
+    execResearch(host,k);
+    used.add(host.id);
   }
 }
 
@@ -1509,7 +1547,7 @@ function aiEcoPlan(ai,vilCount,profile){
     let cost=(AGES[next]&&AGES[next].cost)||{};
     if(cost.g&&store.gold<cost.g)   base.mine_gold=(base.mine_gold||1)+4;
     if(cost.f&&store.food<cost.f){ if(base.farm)base.farm+=2; base.forage=(base.forage||1)+2; }
-    // don't keep pouring hands into wood/stone the age-up doesn't need
+    // don't keep pouring hands into wood/stone the age-up (food/gold) doesn't need
     if(base.chop)base.chop=Math.max(1,Math.floor(base.chop/2));
     if(base.mine_stone)delete base.mine_stone;
   }

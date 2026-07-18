@@ -16,7 +16,7 @@ function createUnit(type,x,y,team){
     // Villagers are randomly male or female (cosmetic only, like AoE2)
     female: type === 'villager' ? simRandom() < 0.5 : undefined};
   // Upgrade cards (see UPGRADES, js/core.js) — spawn-time counterpart of
-  // the one-time sweeps applyAgeUpgrades runs over existing units. Attack/
+  // the one-time sweeps applyTech runs over existing units. Attack/
   // range/speed are snapshotted here; armor is looked up live in
   // damageEntity, so no armor stamp is needed.
   if (MILITARY.has(type)) e.atk += upgradeAtkBonus(team);
