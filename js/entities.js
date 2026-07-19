@@ -1,5 +1,20 @@
 // ---- ENTITY HELPERS ----
 let nextId=1;
+// THE tech→unit-stat derivation (see UPGRADES, js/core.js): sets the
+// spawn-time stat snapshots from the base table + the team's CURRENT
+// techs. Called at spawn and by the editor's reversible tech toggles, so
+// it derives absolutely (base + bonus), never increments. Armor is
+// looked up live in damageEntity — no stamp needed.
+function applyUnitTechStats(e){
+  let base = UNITS[e.utype];
+  if (MILITARY.has(e.utype)) e.atk = base.atk + upgradeAtkBonus(e.team);
+  if (e.utype === 'archer') e.range = base.range + (hasUpgrade(e.team, 'fletching') ? 1 : 0);
+  if (e.utype === 'villager') {
+    e.speed = base.speed * (hasUpgrade(e.team, 'wheelbarrow') ? 1.1 : 1);
+    e.carryMax = 10 + (hasUpgrade(e.team, 'wheelbarrow') ? 3 : 0);
+  }
+}
+
 function createUnit(type,x,y,team){
   let u=UNITS[type];
   let e={id:nextId++,type:'unit',utype:type,x,y,fromX:x,fromY:y,tx:x,ty:y,team,hp:u.hp,maxHp:u.hp,
@@ -15,16 +30,7 @@ function createUnit(type,x,y,team){
     dir: (type === 'scout' || type === 'knight') ? 7 : 1, facing: 1, facingNorth: false,
     // Villagers are randomly male or female (cosmetic only, like AoE2)
     female: type === 'villager' ? simRandom() < 0.5 : undefined};
-  // Upgrade cards (see UPGRADES, js/core.js) — spawn-time counterpart of
-  // the one-time sweeps applyTech runs over existing units. Attack/
-  // range/speed are snapshotted here; armor is looked up live in
-  // damageEntity, so no armor stamp is needed.
-  if (MILITARY.has(type)) e.atk += upgradeAtkBonus(team);
-  if (type === 'archer' && hasUpgrade(team, 'fletching')) e.range += 1;
-  if (type === 'villager' && hasUpgrade(team, 'wheelbarrow')) {
-    e.speed = UNITS.villager.speed * 1.1;
-    e.carryMax += 3;
-  }
+  applyUnitTechStats(e);
   entities.push(e);
   entitiesById.set(e.id, e);
   return e;

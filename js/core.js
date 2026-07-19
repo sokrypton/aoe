@@ -587,6 +587,18 @@ const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
   return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[teamColorIdx(team)];
 }
+// Lightened team color for accents that must POP against team-colored
+// cloth (fletching feathers next to the tc cap/tunic). Viewer-only.
+const _teamColorLightCache = {};
+function teamColorLight(team){
+  let h = teamColor(team);
+  let v = _teamColorLightCache[h];
+  if (v) return v;
+  let r = parseInt(h.slice(1,3),16), g = parseInt(h.slice(3,5),16), b = parseInt(h.slice(5,7),16);
+  v = 'rgb(' + Math.round(r+(255-r)*0.45) + ',' + Math.round(g+(255-g)*0.45) + ',' + Math.round(b+(255-b)*0.45) + ')';
+  _teamColorLightCache[h] = v;
+  return v;
+}
 // PURE, maxed-out player colors for the MINIMAP only (AoE2 does the same): a
 // few-px dot on green terrain needs maximum contrast, so the map uses vivid
 // primaries where the unit art uses the softer PLAYER_TEAM_COLORS above. Same

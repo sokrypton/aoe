@@ -10,7 +10,10 @@
     .forEach(id => { let el = document.getElementById(id); if (el) el.style.display = 'none'; });
 
   // ---- Minimal world boot (enough for the draw code's reads) ----
-  MAP = 96;
+  // Big enough for every specimen band: slot() walks ~11 slots per 8-tile
+  // band and the full section list needs ~15 bands + the farm/fort
+  // full-width bands — indexing past MAP throws and blanks the page.
+  MAP = 192;
   map = [];
   for (let y = 0; y < MAP; y++) {
     map[y] = [];
@@ -25,6 +28,7 @@
   resetDefeatedTeams();
   resetAIStates();
   gameStarted = true;
+  window.playSound = null; // working specimens fire impact sounds otherwise
 
   // ---- Specimens ----
   // Buildings: each gets a far-apart world slot so wall-link neighbor
@@ -164,14 +168,64 @@
                    label: (UNITS[utype].name || utype) + ' — tech ladder', gateType: utype });
   };
 
-  const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','MARKET','FARM','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
-  BROW.forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
-  mkFort('SWALL', 'SGATE', 'TOWER', 'Stone fortification (walls + gates + towers)');
-  mkFort('WALL', 'GATE', 'PTOWER', 'Palisade fortification (walls + gates + towers)');
+  // Villager task row: work-swing/tool/carry anims only run with a real
+  // task + at-site state, which mkU's dummy 'gallery' task never triggers.
+  // gatherX/Y = own tile so the at-site gate passes.
+  const VIL_TASKS = [
+    { label: 'chop',   set: u => { u.task='chop';       u.gatherX=Math.floor(u.x); u.gatherY=Math.floor(u.y); } },
+    { label: 'gold',   set: u => { u.task='mine_gold';  u.gatherX=Math.floor(u.x); u.gatherY=Math.floor(u.y); } },
+    { label: 'stone',  set: u => { u.task='mine_stone'; u.gatherX=Math.floor(u.x); u.gatherY=Math.floor(u.y); } },
+    { label: 'build',  set: u => { u.task='build'; } },
+    { label: 'forage', set: u => { u.task='forage'; } },
+    { label: 'farm',   set: u => { u.task='farm'; } },
+    // Butchering runs off a REAL carcass target (the carcassTarget anim +
+    // harvest-range gate need a live entity) — drawn as a cell prop.
+    { label: 'butcher', set: u => { let c = createUnit('sheep_carcass', u.x + 0.7, u.y + 0.18, 0);
+                                    u.target = c.id; u.__prop = c; } },
+  ];
+  // Every carry variant the drop-off walk can show (what food looks like
+  // depends on its source: sheep wool bundle / wheat sheaf / berries).
+  const VIL_CARRIES = [
+    { label: 'wood',    set: u => { u.task='gallery'; u.carrying=10; u.carryType='wood'; } },
+    { label: 'gold',    set: u => { u.task='gallery'; u.carrying=10; u.carryType='gold'; } },
+    { label: 'stone',   set: u => { u.task='gallery'; u.carrying=10; u.carryType='stone'; } },
+    { label: 'meat',    set: u => { u.task='gallery'; u.carrying=10; u.carryType='food'; u.foodSrc='meat'; } },
+    { label: 'wheat',   set: u => { u.task='gallery'; u.carrying=10; u.carryType='food'; u.foodSrc='wheat'; } },
+    { label: 'berries', set: u => { u.task='gallery'; u.carrying=10; u.carryType='food'; u.foodSrc='berries'; } },
+  ];
+  const mkVilRow = (tasks, label) => {
+    let row = [];
+    tasks.forEach(t => {
+      let p = slot();
+      let u = createUnit('villager', p.x + 0.5, p.y + 0.5, 0);
+      delete u.gatherX; delete u.gatherY; // see mkU
+      u.dir = 0; u.facing = 1; u.facingNorth = false; u.__lockDir = 0;
+      t.set(u);
+      row.push(u);
+    });
+    gallery.push({ kind: 'unitrow', ents: row, vilRow: true,
+                   labels: tasks.map(t => t.label), label, gateType: 'villager' });
+  };
+
+  const mkHeader = (key, label) => gallery.push({ kind: 'header', key, label, rowH: 64 });
+
+  // ---- Gallery composition: themed sections, top to bottom ----
+  mkHeader('villagers', 'Villagers');
   mkU('villager', { female: false, label: 'Villager (male)' });
   mkU('villager', { female: true,  label: 'Villager (female)' });
-  ['militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear'].forEach(u => mkU(u));
-  ['militia','spearman','archer','scout','knight'].forEach(u => mkEquipRow(u));
+  mkVilRow(VIL_TASKS, 'Villager tasks');
+  mkVilRow(VIL_CARRIES, 'Villager carrying');
+  mkHeader('soldiers', 'Soldiers');
+  // each soldier's facing row is followed by its visual tech ladder
+  ['militia','spearman','archer','scout','knight'].forEach(u => { mkU(u); mkEquipRow(u); });
+  mkHeader('animals', 'Animals & vehicles');
+  ['ram','tradecart','sheep','bear'].forEach(u => mkU(u));
+  mkHeader('buildings', 'Buildings');
+  ['TC','HOUSE','MILL','LCAMP','MCAMP','MARKET','FARM','BARRACKS'].forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
+  mkHeader('forts', 'Fortifications');
+  ['TOWER','PTOWER','WALL','GATE','SWALL','SGATE'].forEach(t => mkB(t));
+  mkFort('SWALL', 'SGATE', 'TOWER', 'Stone fortification (walls + gates + towers)');
+  mkFort('WALL', 'GATE', 'PTOWER', 'Palisade fortification (walls + gates + towers)');
 
   // ---- Controls ----
   // Pose is exclusive by design: a specimen can't walk and attack at once,
@@ -213,6 +267,16 @@
   // Read once at boot too — browser form-state restore re-checks boxes
   // without firing change events.
   let galleryTechs = readTechBoxes();
+  // Jump-to-section: headers record their drawn y every frame (g.__cy),
+  // so a click scrolls by exactly the delta that parks the header just
+  // under the control bar — correct at any age/zoom without re-deriving
+  // the row layout.
+  document.querySelectorAll('#style-controls button[data-jump]').forEach(b => {
+    b.onclick = () => {
+      let g = gallery.find(x => x.kind === 'header' && x.key === b.dataset.jump);
+      if (g && g.__cy !== undefined) scrollY = Math.max(0, scrollY + g.__cy - 90);
+    };
+  });
   window.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') scrollY += 60;
     if (e.key === 'ArrowUp') scrollY = Math.max(0, scrollY - 60);
@@ -239,6 +303,9 @@
     teamAge[0] = galleryAge;
     teamTechs[0] = galleryTechs;
     invalidateBuildingFogMemo();
+    // gallery never runs the particle system — drop what working/dying
+    // specimens spawn so the array can't grow unbounded
+    if (typeof particles !== 'undefined') particles.length = 0;
 
     // background
     X.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -264,6 +331,19 @@
       // knight from Castle, etc).
       if (g.gateType && ageReq(g.gateType) > galleryAge) return;
       if (g.maxAge !== undefined && galleryAge > g.maxAge) return;
+      g.__cy = cy; // drawn position this frame — the jump nav scrolls by it
+      if (g.kind === 'header') {
+        // section divider — one advance site for on- AND off-screen headers
+        if (cy > -260 && cy < window.innerHeight + 260) {
+          X.setTransform(dpr, 0, 0, dpr, 0, 0);
+          X.fillStyle = '#ffe9b0'; X.font = 'bold 20px sans-serif'; X.textAlign = 'left';
+          X.fillText(g.label.toUpperCase(), 16, cy + 30);
+          X.strokeStyle = 'rgba(255,233,176,0.35)'; X.lineWidth = 1;
+          X.beginPath(); X.moveTo(12, cy + 40); X.lineTo(W - 20, cy + 40); X.stroke();
+        }
+        cy += g.rowH;
+        return;
+      }
       if (cy > -260 && cy < window.innerHeight + 260) {
         // label
         X.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -297,7 +377,7 @@
             // facing labels
             X.setTransform(dpr, 0, 0, dpr, 0, 0);
             X.fillStyle = 'rgba(255,255,255,0.7)'; X.font = '11px sans-serif'; X.textAlign = 'center';
-            X.fillText(g.equipRow ? EQUIP_COLS[i].label : DIR_LABELS[i], 90 + i * CELL_W, cy + 92);
+            X.fillText(g.equipRow ? EQUIP_COLS[i].label : g.labels ? g.labels[i] : DIR_LABELS[i], 90 + i * CELL_W, cy + 92);
             withZoom(() => {
               // restore locked facing (drawUnit's hysteresis may mutate it)
               let d = u.__lockDir;
@@ -336,9 +416,6 @@
                 let t = performance.now() % 4100;
                 c.deathTime = performance.now() - (t < 2600 ? t : 12500 + (t - 2600));
                 drawCorpse(c);
-                // gallery never runs the particle system — drop what the
-                // corpse bursts spawn so the array can't grow unbounded
-                if (typeof particles !== 'undefined') particles.length = 0;
                 unforce();
                 return;
               }
@@ -346,12 +423,23 @@
               // the gait cycle going AND keeps drawUnit's dir derivation
               // pointing the way the cell is labelled
               u.__animAttack = pose === 'attack';
+              // Archer draw, bear maul and sword swings ride the REAL
+              // reload clock, which gallery specimens don't have —
+              // synthesize one so the attack pose plays the full cycle
+              // instead of freezing. (atkCooldown counts down; a reset to
+              // rof = the arrow/bite/slash landing.)
+              if (pose === 'attack' && (u.utype === 'archer' || u.utype === 'bear' ||
+                  u.utype === 'militia' || u.utype === 'scout' || u.utype === 'knight')) {
+                let rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60);
+                u.atkCooldown = rof - (tick % (rof + 1));
+              }
               if (pose === 'walk') {
                 u.path = [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }];
               } else {
                 u.path = [];
               }
               drawUnit(u);
+              if (u.__prop) drawUnit(u.__prop); // cell prop (butcher carcass), in front
               unforce();
             });
           });

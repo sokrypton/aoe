@@ -365,19 +365,24 @@ function drawProjectiles() {
     X.lineTo(sx - ca*1.5 + px2*2.3, sy - sa*1.5 + py2*2.3);
     X.lineTo(sx - ca*1.5 - px2*2.3, sy - sa*1.5 - py2*2.3);
     X.closePath(); X.fill(); X.stroke();
-    // Red fletching fins
-    let tx2 = sx - ca*L, ty2 = sy - sa*L;
-    X.fillStyle = '#cc4444';
-    X.beginPath();
-    X.moveTo(tx2 + ca*2, ty2 + sa*2);
-    X.lineTo(tx2 - ca*3 + px2*2.8, ty2 - sa*3 + py2*2.8);
-    X.lineTo(tx2, ty2);
-    X.closePath(); X.fill();
-    X.beginPath();
-    X.moveTo(tx2 + ca*2, ty2 + sa*2);
-    X.lineTo(tx2 - ca*3 - px2*2.8, ty2 - sa*3 - py2*2.8);
-    X.lineTo(tx2, ty2);
-    X.closePath(); X.fill();
+    // Fletching is LITERAL: bare shafts until the shooter's team has the
+    // tech, TEAM-COLOR feather vanes after (archer arrows only; tower/TC
+    // bolts always fly bare). attackerSnap rides every projectile,
+    // render-only read.
+    if (p.attackerSnap && p.attackerSnap.utype === 'archer' &&
+        hasUpgrade(p.attackerSnap.team, 'fletching')) {
+      let tx2 = sx - ca*L, ty2 = sy - sa*L;
+      X.fillStyle = teamColorLight(p.attackerSnap.team);
+      X.strokeStyle = '#000'; X.lineWidth = 1; X.lineJoin = 'round';
+      for (const sgn of [-1, 1]) {
+        X.beginPath();
+        X.moveTo(tx2 + ca*5.2 + px2*sgn*0.6, ty2 + sa*5.2 + py2*sgn*0.6); // front, hugging the shaft
+        X.lineTo(tx2 + ca*1.4 + px2*sgn*3.1, ty2 + sa*1.4 + py2*sgn*3.1); // swept outer edge
+        X.lineTo(tx2 - ca*2.6 + px2*sgn*3.1, ty2 - sa*2.6 + py2*sgn*3.1); // feather back edge
+        X.lineTo(tx2 - ca*0.8 + px2*sgn*0.6, ty2 - sa*0.8 + py2*sgn*0.6); // notch into the nock
+        X.closePath(); X.fill(); X.stroke();
+      }
+    }
   });
   X.restore();
 }

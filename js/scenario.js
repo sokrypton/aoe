@@ -76,6 +76,13 @@ function loadScenario(spec){
   if(spec.ages){
     for(let t=0;t<NUM_TEAMS;t++) if(spec.ages[t]!=null && typeof setTeamAge==='function') setTeamAge(t, spec.ages[t]);
   }
+  // Per-team STARTING TECHS (teamTechs bitmask per team, editor-authored).
+  // Set before entities for the same reason as ages: spawn-time stat
+  // snapshots (createUnit atk/range/speed, buildingMaxHpFor) bake the
+  // bonuses at creation — no post-hoc sweep needed.
+  if(spec.techs && typeof teamTechs!=='undefined' && teamTechs){
+    for(let t=0;t<NUM_TEAMS;t++) if(spec.techs[t]!=null) teamTechs[t] = spec.techs[t]|0;
+  }
   if(spec.resources){
     // Merge onto the existing per-team default object (restartGame already set
     // resources = freshTeamResources()) — overwrite only the provided fields.

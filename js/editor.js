@@ -255,6 +255,56 @@ function buildPalette(){
       v => { if (resources && resources[et]) resources[et][k] = Math.max(0, v | 0); }));
   });
 
+  // Selected team's STARTING TECHS — toggle buttons grouped by age, applied
+  // LIVE like age/resources. Checking a Castle tech auto-checks its Feudal
+  // prerequisite (TECH_PREREQ); unchecking a prerequisite drops its
+  // dependent. Toggles re-derive existing entity stats (see
+  // rederiveTeamStats) so they're fully reversible, unlike applyTech's
+  // one-time sweeps.
+  const setTeamTech = (key, on) => {
+    if (typeof teamTechs === 'undefined' || !teamTechs) return;
+    let bit = 1 << UPGRADE_BITS[key];
+    if (on){
+      teamTechs[et] |= bit;
+      let pre = TECH_PREREQ[key];
+      if (pre) teamTechs[et] |= (1 << UPGRADE_BITS[pre]);
+    } else {
+      teamTechs[et] &= ~bit;
+      Object.entries(TECH_PREREQ).forEach(([dep, pre]) => {
+        if (pre === key) teamTechs[et] &= ~(1 << UPGRADE_BITS[dep]);
+      });
+    }
+    rederiveTeamStats(et);
+    rebuildPalette();
+  };
+  let hT = document.createElement('h3'); hT.textContent = 'Techs'; p.appendChild(hT);
+  [[1,'Feudal'],[2,'Castle']].forEach(([age, ageName]) => {
+    let sub = document.createElement('div');
+    sub.textContent = ageName;
+    sub.style.cssText = 'font-size:11px;opacity:.6;margin:4px 0 2px;text-transform:uppercase';
+    p.appendChild(sub);
+    let grid = document.createElement('div'); grid.className = 'ed-grid';
+    Object.keys(UPGRADES).filter(k => UPGRADES[k].age === age).forEach(k => {
+      let c = UPGRADES[k];
+      let on = !!(typeof teamTechs !== 'undefined' && teamTechs && (teamTechs[et] & (1 << UPGRADE_BITS[k])));
+      let b = document.createElement('button');
+      b.className = 'ed-spd' + (on ? ' sel' : '');
+      b.textContent = c.name.replace(' Mail Armor','').replace(' Armor','');
+      b.title = c.name + ' — ' + c.desc;
+      b.onclick = () => setTeamTech(k, !on);
+      grid.appendChild(b);
+    });
+    p.appendChild(grid);
+  });
+  let tAll = document.createElement('div'); tAll.className = 'ed-grid';
+  [['All techs', () => { if (teamTechs) { Object.keys(UPGRADES).forEach(k => teamTechs[et] |= (1 << UPGRADE_BITS[k])); rederiveTeamStats(et); rebuildPalette(); } }],
+   ['No techs',  () => { if (teamTechs) { teamTechs[et] = 0; rederiveTeamStats(et); rebuildPalette(); } }]]
+    .forEach(([txt, fn]) => {
+      let b = document.createElement('button'); b.className = 'ed-spd';
+      b.textContent = txt; b.onclick = fn; tAll.appendChild(b);
+    });
+  p.appendChild(tAll);
+
   // Terrain
   addSection(p, 'Terrain', EDITOR_TERRAIN.map(t => {
     let b = mkBtn(t.slice(0,3), t, 'terr', () => { setTool('terrain', t); selectToolBtn(b); });
@@ -590,6 +640,14 @@ function buildSpec(){
       ents.push(o);
     }
   });
+  // A team configured (age/techs/non-default controller) but with no placed
+  // entities still counts — deriving numTeams from entities alone silently
+  // dropped its per-team state from the spec.
+  for (let t = maxTeam + 1; t < 4; t++){
+    let hasTech = (typeof teamTechs !== 'undefined' && teamTechs && teamTechs[t]);
+    let hasAge = (typeof teamAge !== 'undefined' && teamAge && teamAge[t]);
+    if (hasTech || hasAge || (controllers[t] && controllers[t] !== 'human')) maxTeam = t;
+  }
   let numTeams = Math.max(2, maxTeam + 1);
   let spec = {
     map: MAP_SIZE_KEYS.find(k => MAP_SIZES[k] === MAP) || MAP,
@@ -616,7 +674,38 @@ function buildSpec(){
   }
   if (anyAge) spec.ages = ages;
   if (anyRes) spec.resources = res;
+  // Per-team starting techs (teamTechs bitmask) — only when any are set.
+  let techs = [], anyTech = false;
+  for (let t = 0; t < numTeams; t++){
+    let m = (typeof teamTechs !== 'undefined' && teamTechs) ? (teamTechs[t]|0) : 0;
+    techs.push(m); if (m) anyTech = true;
+  }
+  if (anyTech) spec.techs = techs;
   return spec;
+}
+
+// Editor tech toggles must be REVERSIBLE, so instead of applyTech's one-time
+// +N sweeps this re-derives every spawn-time stat snapshot from the base
+// tables + the CURRENT teamTechs mask — applyUnitTechStats (entities.js, the
+// same derivation createUnit runs) for units, buildingMaxHpFor + farmFoodFor
+// for buildings. Armor, gather rates and market fees are live hasUpgrade
+// reads: nothing to re-derive for them.
+function rederiveTeamStats(t){
+  entities.forEach(e => {
+    if (e.team !== t || e.hp <= 0) return;
+    if (e.type === 'unit'){
+      if (UNITS[e.utype]) applyUnitTechStats(e);
+    } else if (e.type === 'building' && typeof buildingMaxHpFor === 'function'){
+      let newMax = buildingMaxHpFor(t, e.btype);
+      if (!e.complete) e.maxHp = newMax; // foundation hp IS build progress, not damage — leave it
+      else if (e.hp === e.maxHp) { e.hp = newMax; e.maxHp = newMax; } // undamaged: exact, no rounding drift
+      else { let f = e.hp / e.maxHp; e.maxHp = newMax; e.hp = Math.round(newMax * f); }
+      // Farm food is a spawn-time snapshot too (farmFoodFor at creation);
+      // authored farms start full, so standing crop follows the toggle.
+      if (e.btype === 'FARM' && e.complete && !e.exhausted && map[e.y] && map[e.y][e.x])
+        map[e.y][e.x].res = farmFoodFor(t);
+    }
+  });
 }
 
 function downloadJson(json, name){
