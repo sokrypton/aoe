@@ -5,35 +5,59 @@
 <title>Style Gallery — Age of Epochs</title>
 <style>
   /* The gallery drives the game's own canvas + draw code; the page-shell
-     chrome is hidden by style-gallery.js. Controls live in a fixed bar. */
+     chrome is hidden by style-gallery.js. Controls live in a fixed bar of
+     labeled groups; .sg-group keeps each cluster intact when the bar wraps. */
   #style-controls{
     position:fixed; top:0; left:0; right:0; z-index:500;
     background:#2a1c10; color:#e8d9b0; font:13px sans-serif;
-    padding:6px 10px; display:flex; gap:8px; align-items:center;
+    padding:6px 10px; display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center;
   }
+  #style-controls .sg-group{ display:flex; gap:5px; align-items:center; }
+  #style-controls .sg-group + .sg-group{ border-left:1px solid #4a3419; padding-left:18px; }
+  #style-controls .sg-label{ opacity:.6; text-transform:uppercase; font-size:11px; margin-right:2px; }
   #style-controls button{
     background:#4a3419; color:#e8d9b0; border:1px solid #7a5a38;
     padding:3px 10px; cursor:pointer; font:13px sans-serif;
   }
   #style-controls button.active{ background:#7a5a38; color:#fff; }
-  #style-controls label{ margin-left:12px; }
+  #style-controls button.sg-mini{ padding:1px 6px; font-size:11px; opacity:.8; }
+  #style-controls label{ display:flex; gap:3px; align-items:center; cursor:pointer; }
+  #sg-hint{ opacity:.6; margin-left:auto; }
 </style>
 </head>
 <body>
 <div id="style-controls">
   <strong>Style Gallery</strong>
-  <span>Age:</span>
-  <button data-age="0" class="active">Dark</button>
-  <button data-age="1">Feudal</button>
-  <button data-age="2">Castle</button>
-  <label><input type="checkbox" id="sg-walk"> walking</label>
-  <label><input type="checkbox" id="sg-attack"> attacking</label>
-  <label><input type="checkbox" id="sg-death"> death</label>
-  <span>Zoom:</span>
-  <button data-zoom="1">1x</button>
-  <button data-zoom="1.5" class="active">1.5x</button>
-  <button data-zoom="2">2x</button>
-  <span id="sg-hint" style="opacity:.7">scroll the page canvas with arrow keys</span>
+  <span class="sg-group">
+    <span class="sg-label">Age</span>
+    <button data-age="0" class="active">Dark</button>
+    <button data-age="1">Feudal</button>
+    <button data-age="2">Castle</button>
+  </span>
+  <span class="sg-group">
+    <span class="sg-label">Pose</span>
+    <button data-pose="idle" class="active">Idle</button>
+    <button data-pose="walk">Walking</button>
+    <button data-pose="attack">Attacking</button>
+    <button data-pose="death">Death</button>
+  </span>
+  <span class="sg-group">
+    <span class="sg-label">Techs</span>
+    <label><input type="checkbox" id="sg-t-forging"> Forging</label>
+    <label><input type="checkbox" id="sg-t-iron"> Iron Casting</label>
+    <label><input type="checkbox" id="sg-t-scale"> Scale Armor</label>
+    <label><input type="checkbox" id="sg-t-chain"> Chain Mail</label>
+    <label><input type="checkbox" id="sg-t-fletch"> Fletching</label>
+    <button id="sg-t-all" class="sg-mini">all</button>
+    <button id="sg-t-none" class="sg-mini">none</button>
+  </span>
+  <span class="sg-group">
+    <span class="sg-label">Zoom</span>
+    <button data-zoom="1">1x</button>
+    <button data-zoom="1.5" class="active">1.5x</button>
+    <button data-zoom="2">2x</button>
+  </span>
+  <span id="sg-hint">scroll: mouse wheel or ↑/↓ keys</span>
 </div>
 <script src="js/page-shell.js"></script>
 <script src="js/audio.js"></script>

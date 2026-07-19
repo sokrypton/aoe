@@ -298,6 +298,8 @@ const UPGRADES = {
 // per-team bitmask of researched cards. 14 techs fit a 32-bit int.
 const UPGRADE_BITS = {};
 Object.keys(UPGRADES).forEach((k, i) => { UPGRADE_BITS[k] = i; });
+// teamTechs-shaped bitmask for a list of tech keys.
+function techMask(keys){ return keys.reduce((m, k) => m | (1 << UPGRADE_BITS[k]), 0); }
 // Castle tech → the Feudal tech it upgrades (same blacksmith line). A Castle
 // upgrade can't be researched until its predecessor is (AoE2 blacksmith lines).
 const TECH_PREREQ = { iron_casting:'forging', chain_mail:'scale_armor', bow_saw:'double_bit_axe', heavy_plow:'horse_collar' };

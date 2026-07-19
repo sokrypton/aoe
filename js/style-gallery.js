@@ -138,6 +138,32 @@
                    aimTx: 450, rowH: 240 });
   };
 
+  // Equipment matrix: one row per soldier type, columns stepping through the
+  // visual tech ladder. Techs/age are FORCED per column at draw time (see the
+  // equipRow branch in frame), so the row ignores the header tech checkboxes.
+  const EQUIP_COLS = [
+    { label: 'base',    techs: [] },
+    { label: 'forging', techs: ['forging'] },
+    { label: '+scale',  techs: ['forging','scale_armor'] },
+    { label: '+chain',  techs: ['forging','scale_armor','chain_mail'] },
+    { label: '+iron',   techs: ['forging','iron_casting','scale_armor','chain_mail'] },
+    { label: 'all',     techs: ['forging','iron_casting','scale_armor','chain_mail','fletching'] },
+  ];
+  const mkEquipRow = (utype) => {
+    let row = [];
+    for (let c = 0; c < EQUIP_COLS.length; c++) {
+      let p = slot();
+      let u = createUnit(utype, p.x + 0.5, p.y + 0.5, 0);
+      u.task = 'gallery';
+      delete u.gatherX; delete u.gatherY; // see mkU
+      u.dir = 0; u.facing = 1; u.facingNorth = false; u.__lockDir = 0;
+      u.__equipMask = techMask(EQUIP_COLS[c].techs);
+      row.push(u);
+    }
+    gallery.push({ kind: 'unitrow', ents: row, equipRow: true,
+                   label: (UNITS[utype].name || utype) + ' — tech ladder', gateType: utype });
+  };
+
   const BROW = ['TC','HOUSE','BARRACKS','MILL','LCAMP','MCAMP','MARKET','FARM','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
   BROW.forEach(t => t === 'FARM' ? mkFarmStages() : mkB(t));
   mkFort('SWALL', 'SGATE', 'TOWER', 'Stone fortification (walls + gates + towers)');
@@ -145,34 +171,48 @@
   mkU('villager', { female: false, label: 'Villager (male)' });
   mkU('villager', { female: true,  label: 'Villager (female)' });
   ['militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear'].forEach(u => mkU(u));
+  ['militia','spearman','archer','scout','knight'].forEach(u => mkEquipRow(u));
 
   // ---- Controls ----
-  let galleryAge = 0, galleryZoom = 1.5, walking = false, attacking = false, dying = false, scrollY = 0;
-  document.querySelectorAll('#style-controls button[data-age]').forEach(b => {
-    b.onclick = () => {
-      document.querySelectorAll('#style-controls button[data-age]').forEach(x => x.classList.remove('active'));
+  // Pose is exclusive by design: a specimen can't walk and attack at once,
+  // and death replaces the living sprite — so it's a button group, not
+  // stackable checkboxes. 'death' loops each unit's real corpse sequence
+  // (drawCorpse): ~2.6s of the death action, a beat of the ≥12s
+  // decay/skeleton stage, then restart.
+  let galleryAge = 0, galleryZoom = 1.5, pose = 'idle', scrollY = 0;
+  // One wiring per exclusive button group: click activates within the
+  // group and reports the button's data-<attr> value.
+  const wireButtonGroup = (attr, onPick) => {
+    let btns = document.querySelectorAll(`#style-controls button[data-${attr}]`);
+    btns.forEach(b => b.onclick = () => {
+      btns.forEach(x => x.classList.remove('active'));
       b.classList.add('active');
-      galleryAge = +b.dataset.age;
-    };
+      onPick(b.dataset[attr]);
+    });
+  };
+  wireButtonGroup('age',  v => { galleryAge = +v; });
+  wireButtonGroup('zoom', v => { galleryZoom = +v; });
+  wireButtonGroup('pose', v => { pose = v; });
+  // Tech checkboxes drive team 0's teamTechs bitmask (set each frame) so
+  // every normal unit row previews the equipment those techs grant.
+  const TECH_BOXES = { 'sg-t-forging': 'forging', 'sg-t-iron': 'iron_casting',
+    'sg-t-scale': 'scale_armor', 'sg-t-chain': 'chain_mail', 'sg-t-fletch': 'fletching' };
+  const readTechBoxes = () => techMask(Object.entries(TECH_BOXES)
+    .filter(([id]) => document.getElementById(id)?.checked).map(([, key]) => key));
+  Object.keys(TECH_BOXES).forEach(id => {
+    let el = document.getElementById(id);
+    if (el) el.onchange = () => { galleryTechs = readTechBoxes(); };
   });
-  document.querySelectorAll('#style-controls button[data-zoom]').forEach(b => {
-    b.onclick = () => {
-      document.querySelectorAll('#style-controls button[data-zoom]').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-      galleryZoom = +b.dataset.zoom;
-    };
-  });
-  document.getElementById('sg-walk').onchange = e => { walking = e.target.checked; };
-  // Attack toggle: previews attack cycles without a target (today only the
-  // ram's drawRamBody reads __animAttack). Wins over walking — a specimen
-  // can't do both.
-  let sgAtk = document.getElementById('sg-attack');
-  if (sgAtk) sgAtk.onchange = e => { attacking = e.target.checked; };
-  // Death toggle: loops each unit's real corpse sequence (drawCorpse) —
-  // ~2.6s of the death action, then a beat of the ≥12s decay/skeleton
-  // stage, then restart. Wins over walking/attacking.
-  let sgDie = document.getElementById('sg-death');
-  if (sgDie) sgDie.onchange = e => { dying = e.target.checked; };
+  const setAllTechs = on => {
+    Object.keys(TECH_BOXES).forEach(id => { let el = document.getElementById(id); if (el) el.checked = on; });
+    galleryTechs = readTechBoxes();
+  };
+  let sgAll = document.getElementById('sg-t-all'), sgNone = document.getElementById('sg-t-none');
+  if (sgAll) sgAll.onclick = () => setAllTechs(true);
+  if (sgNone) sgNone.onclick = () => setAllTechs(false);
+  // Read once at boot too — browser form-state restore re-checks boxes
+  // without firing change events.
+  let galleryTechs = readTechBoxes();
   window.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') scrollY += 60;
     if (e.key === 'ArrowUp') scrollY = Math.max(0, scrollY - 60);
@@ -197,6 +237,7 @@
   function frame(){
     tick++;
     teamAge[0] = galleryAge;
+    teamTechs[0] = galleryTechs;
     invalidateBuildingFogMemo();
 
     // background
@@ -256,7 +297,7 @@
             // facing labels
             X.setTransform(dpr, 0, 0, dpr, 0, 0);
             X.fillStyle = 'rgba(255,255,255,0.7)'; X.font = '11px sans-serif'; X.textAlign = 'center';
-            X.fillText(DIR_LABELS[i], 90 + i * CELL_W, cy + 92);
+            X.fillText(g.equipRow ? EQUIP_COLS[i].label : DIR_LABELS[i], 90 + i * CELL_W, cy + 92);
             withZoom(() => {
               // restore locked facing (drawUnit's hysteresis may mutate it)
               let d = u.__lockDir;
@@ -266,14 +307,25 @@
               else if (d === 4)                  { u.facing = -1; u.facingNorth = true;  }
               else                               { u.facing = 1;  u.facingNorth = true;  }
               aim(u.x, u.y, 90 + i * CELL_W, cy + 55, true);
+              // Equip rows force this column's tech mask (and the selected
+              // age) onto the specimen's team for EVERY draw path — corpses
+              // read unitEquipment too (dropped-weapon tier) — then restore.
+              let forced = null;
+              if (g.equipRow) {
+                forced = { tm: u.team, techs: teamTechs[u.team], age: teamAge[u.team] };
+                teamTechs[u.team] = u.__equipMask; teamAge[u.team] = galleryAge;
+              }
+              const unforce = () => {
+                if (forced) { teamTechs[forced.tm] = forced.techs; teamAge[forced.tm] = forced.age; }
+              };
               // death toggle: run the REAL corpse sequence on a loop. A
               // pseudo-corpse per cell mirrors the cell's facing; the clock
               // plays ~2.6s of death action, jumps to the ≥CORPSE_SKEL
               // decay stage for 1.5s, then restarts. (Sheep are excluded —
               // they become a carcass entity, not a corpse.)
-              if (dying && u.utype !== 'sheep') {
+              if (pose === 'death' && u.utype !== 'sheep') {
                 if (!g.corpses) g.corpses = g.ents.map(uu => ({
-                  type: 'corpse', utype: uu.utype, x: uu.x, y: uu.y, team: 0,
+                  type: 'corpse', utype: uu.utype, x: uu.x, y: uu.y, team: uu.team,
                   id: uu.id, facing: 1, female: uu.female,
                   dir: uu.__lockDir, // vehicle wrecks fall in the cell's facing
                   carrying: uu.utype === 'tradecart' ? 40 : 0, // show the gold spill
@@ -287,18 +339,20 @@
                 // gallery never runs the particle system — drop what the
                 // corpse bursts spawn so the array can't grow unbounded
                 if (typeof particles !== 'undefined') particles.length = 0;
+                unforce();
                 return;
               }
-              // walking toggle: a dummy path in the facing direction keeps
+              // walking pose: a dummy path in the facing direction keeps
               // the gait cycle going AND keeps drawUnit's dir derivation
               // pointing the way the cell is labelled
-              u.__animAttack = attacking;
-              if (walking && !attacking) {
+              u.__animAttack = pose === 'attack';
+              if (pose === 'walk') {
                 u.path = [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }];
               } else {
                 u.path = [];
               }
               drawUnit(u);
+              unforce();
             });
           });
         }
