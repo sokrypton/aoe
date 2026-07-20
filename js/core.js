@@ -1471,6 +1471,14 @@ function isUnitOnScreen(en) {
 // time was measurable GC churn on mobile.
 const _unitGroupOffset = { ox: 0, oy: 0 };
 function getUnitGroupOffset(entityId) {
+  // VIEWER-ONLY anti-stack scatter (never steers the sim): overlapping
+  // units draw a few px apart so a pile stays readable.
+  // window.unitScatterOff (e.g. the style gallery, where the scatter
+  // made specimen rows sit un-level) disables it entirely.
+  if (window.unitScatterOff) {
+    _unitGroupOffset.ox = 0; _unitGroupOffset.oy = 0;
+    return _unitGroupOffset;
+  }
   let idOff = entityId % 7;
   _unitGroupOffset.ox = (idOff % 3 - 1) * 6;
   _unitGroupOffset.oy = (Math.floor(idOff / 3) - 1) * 4;

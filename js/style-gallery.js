@@ -20,6 +20,7 @@
     for (let x = 0; x < MAP; x++) map[y][x] = { t: TERRAIN.GRASS, res: 0, occupied: null };
   }
   window.fogDisabled = true;
+  window.unitScatterOff = true; // anti-stack draw scatter would un-level the specimen rows
   initFog();
   resetTeamVision();
   resetTeamAge();
@@ -227,6 +228,15 @@
   mkFort('SWALL', 'SGATE', 'TOWER', 'Stone fortification (walls + gates + towers)');
   mkFort('WALL', 'GATE', 'PTOWER', 'Palisade fortification (walls + gates + towers)');
 
+  // LAST, after the FULL composition (a mid-list pass misses every
+  // specimen created below it — soldiers kept their id-seeded phases,
+  // user caught it twice): every bob/sway/work phase is id-seeded, so
+  // one shared id runs all specimens in lockstep and rows stay level.
+  // (The anti-stack draw scatter is off via window.unitScatterOff.)
+  // entitiesById keeps the ORIGINAL keys and targets (butcher carcass)
+  // were captured at build time, so lookups still resolve.
+  entities.forEach(u => { if (u.type === 'unit') u.id = 4; });
+
   // ---- Controls ----
   // Pose is exclusive by design: a specimen can't walk and attack at once,
   // and death replaces the living sprite — so it's a button group, not
@@ -247,6 +257,9 @@
   wireButtonGroup('age',  v => { galleryAge = +v; });
   wireButtonGroup('zoom', v => { galleryZoom = +v; });
   wireButtonGroup('pose', v => { pose = v; });
+  // Weapon-arm override: [L]eft / [R]ight / [B]oth-hands — confirms all
+  // three rig modes; Auto = the per-age default (dark-age B, else L).
+  wireButtonGroup('warm', v => { window.__weaponArm = v || null; });
   // Tech checkboxes drive team 0's teamTechs bitmask (set each frame) so
   // every normal unit row previews the equipment those techs grant.
   const TECH_BOXES = { 'sg-t-forging': 'forging', 'sg-t-iron': 'iron_casting',

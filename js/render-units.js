@@ -38,7 +38,9 @@ function unitEquipment(e){
   };
   switch(e.utype){
     case 'militia':
-      v.helmet = age >= 2 ? 'norman' : age === 1 ? 'kettle' : 'hood-leather';
+      // helmetless tiers wear the team cap — ONE bare-head read for all
+      // military (matches archer/scout)
+      v.helmet = age >= 2 ? 'norman' : age === 1 ? 'kettle' : 'hood-team';
       v.shield = age >= 2 ? 'kite' : age === 1 ? 'round' : null;
       break;
     case 'spearman':
@@ -63,32 +65,61 @@ function unitEquipment(e){
 // the human offsets, id feeds the feather's flutter phase; assumes
 // strokeStyle '#000' / lineWidth 1 on entry (the torso pass contract) and
 // leaves them that way.
-function drawHelmet(v, hx, hy, back, team, id){
+// hturn = the head's lateral turn on screen (0 face-on, .707 on the
+// diagonals, 1 in profile), from e.facing·RIG[dir].sx — the facing mirror
+// puts the face side at +x, so hturn is never negative here and ONE
+// profile variant serves both W and E. The crown/dome is ~spherical so
+// it stays put; FACE-attached details (nose bar, ridge, eye slit, brim
+// tilt) slide toward the facing by fx — the same rule the eyes follow —
+// and profiles (hturn ≥ .9) get dedicated side reads. Lighting
+// highlights are world-fixed (upper-left) and never shift.
+function drawHelmet(v, hx, hy, back, team, id, hturn = 0){
   let tc = teamColor(team);
+  let fx = hturn * 2.4;                    // face-detail lateral shift (matches the eyes)
+  let prof = !back && hturn > 0.9;         // true side view (W/E)
   if (v.helmet === 'kettle') {
+    // Iron kettle hat (chapel-de-fer): dome seated ON the head, brim
+    // tilted BACK so it flares out BEHIND the dome — never a floating
+    // halo over the brow, and the face/eyes stay fully open.
     X.fillStyle = v.metal;
     if (back) {
       // Dome first, brim ON TOP — seen from behind, the near side of the
       // brim crosses the head.
-      X.beginPath();X.arc(hx,-14.5+hy,4,0,Math.PI*2);X.fill();X.stroke();
-      X.beginPath();X.ellipse(hx,-13.2+hy,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.arc(hx,-15.2+hy,4,0,Math.PI*2);X.fill();X.stroke();
+      X.beginPath();X.ellipse(hx,-13.9+hy,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
+    } else if (prof) {
+      // Profile: the brim is a disk seen EDGE-ON at the dome's base —
+      // tilted BACK, so its FRONT rim foreshortens (short raised stub
+      // over the brow) while the back rim trails long and low behind
+      // the head: the board sits shifted rearward with a gentle slope.
+      X.beginPath();X.arc(hx-0.2,-15.4+hy,3.9,Math.PI,0);X.fill();X.stroke();
+      X.beginPath();X.ellipse(hx-0.8,-15.5+hy,5.2,0.85,-0.14,0,Math.PI*2);X.fill();X.stroke();
     } else {
-      // Iron kettle hat TILTED BACK on the head — the raised brim sits
-      // above the brow (drawn behind the crown), face and eyes fully open.
-      X.beginPath();X.ellipse(hx,-16.2+hy,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
-      X.beginPath();X.arc(hx,-15.4+hy,3.8,Math.PI,0);X.fill();X.stroke();
+      // Front: the BACK RIM (upper half-disk) flares behind the dome —
+      // visible as brim wings past its sides at brow height; the brim
+      // mass eases toward the back of the head as it turns.
+      let bx = hx - fx*0.3;
+      X.beginPath();X.ellipse(bx,-15.4+hy,5.6,1.7,0,Math.PI,0);X.closePath();X.fill();X.stroke();
+      X.beginPath();X.arc(hx,-15.4+hy,3.9,Math.PI,0);X.fill();X.stroke();
+      // hard line at the helm's base so the lower edge reads on the face
+      X.beginPath();X.moveTo(hx-3.9,-15.4+hy);X.lineTo(hx+3.9,-15.4+hy);X.stroke();
     }
   } else if (v.helmet === 'norman') {
     // Norman iron helm: dome with ridge + highlight, riveted gold band,
-    // nose bar (front view only).
-    let cy0 = back ? -14 : -15, bandY = back ? cy0 - 0.5 : cy0;
+    // nose bar (front hemisphere only, turning with the head).
+    let cy0 = -15, bandY = back ? cy0 - 0.5 : cy0; // one crown height in EVERY view
     X.fillStyle = v.metal;
     X.beginPath();
     if (back) X.arc(hx,cy0+hy,4.5,0,Math.PI*2); else X.arc(hx,cy0+hy,4.5,Math.PI,0);
     X.fill();X.stroke();
     X.save();
     X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
-    X.beginPath();X.moveTo(hx,cy0-4.4+hy);X.lineTo(hx,cy0+(back?-0.6:-0.2)+hy);X.stroke();
+    if (prof) {
+      // side-on the center ridge descends the dome's FRONT curve
+      X.beginPath();X.moveTo(hx+2.6,cy0-3.4+hy);X.quadraticCurveTo(hx+3.8,cy0-1.8+hy,hx+4.1,cy0-0.2+hy);X.stroke();
+    } else {
+      X.beginPath();X.moveTo(hx+fx,cy0-4.4+hy);X.lineTo(hx+fx,cy0+(back?-0.6:-0.2)+hy);X.stroke();
+    }
     X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
     X.beginPath();X.arc(hx,cy0+hy,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
     X.lineCap='butt';X.restore();
@@ -97,13 +128,16 @@ function drawHelmet(v, hx, hy, back, team, id){
     X.fillStyle='rgba(0,0,0,0.45)';
     [-3,0,3].forEach(rx=>{X.beginPath();X.arc(hx+rx,bandY+0.75+hy,0.4,0,Math.PI*2);X.fill();});
     if (!back) {
+      // nose bar rides the head turn; in profile it's the thin guard
+      // hanging edge-on off the helm's leading rim
       X.fillStyle=v.metal;
-      X.beginPath();X.rect(hx-0.75,cy0+hy,1.5,4);X.fill();X.stroke();
+      if (prof) { X.beginPath();X.rect(hx+3.7,cy0+1.2+hy,1.2,2.8);X.fill();X.stroke(); }
+      else { X.beginPath();X.rect(hx+fx-0.75,cy0+hy,1.5,4);X.fill();X.stroke(); }
     }
   } else if (v.helmet === 'greathelm') {
     // Blocky GREAT HELM — flat-topped box covering the whole face:
     // team-color plume, brighter crown band; front adds the face ridge,
-    // dark eye slit and breath holes.
+    // dark eye slit and breath holes (all turning with the head).
     X.fillStyle=tc;
     X.beginPath();
     X.moveTo(hx-1.2,-18.5+hy);
@@ -114,21 +148,30 @@ function drawHelmet(v, hx, hy, back, team, id){
     X.beginPath();X.rect(hx-4,-18.5+hy,8,7.5);X.fill();X.stroke();
     X.fillStyle='rgba(255,255,255,0.28)';
     X.fillRect(hx-4,-18.5+hy,8,1.6);
-    if (!back) {
+    if (!back && prof) {
+      // Profile: the face plate is edge-on — a SHORT slit wraps the
+      // leading corner and only the forward breath holes show; the
+      // center ridge vanishes with the plate.
+      X.fillStyle='#1c1c1c';
+      X.fillRect(hx+1.4,-15.4+hy,2.6,1.2);
+      X.fillStyle='rgba(0,0,0,0.45)';
+      X.beginPath();X.arc(hx+2.1,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(hx+3.3,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+    } else if (!back) {
       X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=1.1/UNIT_SCALE;
-      X.beginPath();X.moveTo(hx,-16.9+hy);X.lineTo(hx,-11+hy);X.stroke();
+      X.beginPath();X.moveTo(hx+fx,-16.9+hy);X.lineTo(hx+fx,-11+hy);X.stroke();
       X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
       X.fillStyle='#1c1c1c';
-      X.fillRect(hx-2.6,-15.4+hy,5.2,1.2);
+      X.fillRect(hx+fx-2.6,-15.4+hy,5.2,1.2);
       X.fillStyle='rgba(0,0,0,0.45)';
-      X.beginPath();X.arc(hx-1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(hx,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(hx+1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(hx+fx-1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(hx+fx,-12.4+hy,0.4,0,Math.PI*2);X.fill();
+      X.beginPath();X.arc(hx+fx+1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
     }
   } else if (v.helmet === 'spiked') {
     // Spiked cavalry helm — open face, small spike on top; distinct from
     // the knight's flat-topped great helm.
-    let cy0 = back ? -14 : -15, sb = back ? -17.6 : -18.6;
+    let cy0 = -15, sb = -18.6; // one crown height in EVERY view
     X.fillStyle=v.metal;
     X.beginPath();
     X.moveTo(hx-0.8,sb+hy);
@@ -140,7 +183,7 @@ function drawHelmet(v, hx, hy, back, team, id){
     if (back) X.arc(hx,cy0+hy,4.2,0,Math.PI*2); else X.arc(hx,cy0+hy,4.2,Math.PI,0);
     X.fill();X.stroke();
     // hard BLACK line at the helm's lower edge so the boundary reads
-    if (back) { X.beginPath();X.moveTo(hx-3.7,-12+hy);X.lineTo(hx+3.7,-12+hy);X.stroke(); }
+    if (back) { X.beginPath();X.moveTo(hx-3.7,-13+hy);X.lineTo(hx+3.7,-13+hy);X.stroke(); }
     else { X.beginPath();X.moveTo(hx-4.2,cy0+hy);X.lineTo(hx+4.2,cy0+hy);X.stroke(); }
     X.save();
     X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.1/UNIT_SCALE;X.lineCap='round';
@@ -150,16 +193,25 @@ function drawHelmet(v, hx, hy, back, team, id){
     // Hoods: archer's green, everyone else's peasant leather.
     X.fillStyle = v.helmet === 'hood-team' ? tc : '#4a2e1b';
     X.beginPath();
-    if (back) X.arc(hx,-14+hy,4.5,0,Math.PI*2); else X.arc(hx,-15+hy,4.5,Math.PI,0);
+    if (back) X.arc(hx,-15+hy,4.5,0,Math.PI*2); else X.arc(hx,-15+hy,4.5,Math.PI,0); // one crown height in EVERY view
     X.fill();X.stroke();
+    if (prof && v.helmet !== 'hood-team') {
+      // side-on the leather hood drapes down the NAPE behind the head
+      // (the team CAP is brimless and close-fitting — no flap)
+      X.beginPath();
+      X.moveTo(hx-4.4,-15.2+hy);
+      X.quadraticCurveTo(hx-5.5,-12.4+hy,hx-3.9,-10.4+hy); // outer drape curve
+      X.quadraticCurveTo(hx-2.9,-11.6+hy,hx-3.2,-14.6+hy); // tucks back to the crown
+      X.closePath();X.fill();X.stroke();
+    }
     if (v.helmet === 'hood-team' && v.feather) {
       // Fletching tell: a tall team-color plume pinned in the cap, fluttering
       // gently (idle-anim idiom: tick + id phase) — the tech's only
       // always-visible mark, so it's deliberately exaggerated.
-      let fy = back ? 1 : 0;
+      let fy = 0; // crowns align in every view
       let sway = Math.sin(tick*0.12 + id*0.7)*0.16;
       X.save();
-      X.translate(hx, -18.6+fy+hy); X.rotate(0.08 + sway); // centered on the crown
+      X.translate(hx+fx*0.5, -18.6+fy+hy); X.rotate(0.08 + sway); // rides the crown as the head turns
       X.fillStyle=teamColorLight(team); // lighter than the cap so it pops
       X.beginPath();
       X.moveTo(0,0);
@@ -244,8 +296,7 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
     X.strokeStyle='#5c3d24';X.lineWidth=1.6/UNIT_SCALE;
     X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.4);X.stroke();
     X.lineCap='butt';
-    X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-    X.beginPath();X.arc(0.5,6.6,1.5,0,Math.PI*2);X.fill();X.stroke();
+    // (no pommel — simplified silhouette, user call)
     return;
   }
   X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
@@ -264,20 +315,17 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
     X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=0.9/UNIT_SCALE;
     X.beginPath();X.moveTo(0.5,-3.5);X.lineTo(0.5,-16.5-ext);X.stroke();
   }
-  // Rounded gold crossguard
-  X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
-  X.beginPath();X.moveTo(-4.2,-0.7);X.lineTo(5.2,-0.7);X.stroke();
-  X.strokeStyle='#daa520';X.lineWidth=1.8/UNIT_SCALE;
-  X.beginPath();X.moveTo(-3.9,-0.7);X.lineTo(4.9,-0.7);X.stroke();
+  // FLAT rectangular crossguard (a rounded capsule read as tilted
+  // toward the screen, user call)
+  X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+  X.beginPath();X.rect(-4.2,-1.6,9.4,1.8);X.fill();X.stroke();
   // Grip
   X.strokeStyle='#000';X.lineWidth=3/UNIT_SCALE;
   X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.6);X.stroke();
   X.strokeStyle='#5c3d24';X.lineWidth=1.6/UNIT_SCALE;
   X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.4);X.stroke();
   X.lineCap='butt';
-  // Pommel
-  X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-  X.beginPath();X.arc(0.5,6.6,1.5,0,Math.PI*2);X.fill();X.stroke();
+  // (no pommel — simplified silhouette, user call)
 }
 
 // Recurve bow about the archer's grip anchor (+x = shoot direction). f is
@@ -339,13 +387,14 @@ const GRIP_REST = { militia:{x:6.5,y:-6}, spearman:{x:3,y:-6}, archer:{x:4,y:-8}
 // they can't drift, same contract as GRIP_REST.
 const TOOL_GRIP = { x: 3, y: -9 };
 // Swing-orbit neutral pose (angle 0.5): constants of anchoring the orbit
-// center onto GRIP_REST. rot is the blade angle at neutral — the REST
-// pose draws exactly this, so idle IS the swing's neutral frame (same
-// grip, same blade angle, same side) and engage can't pop.
+// center onto GRIP_REST, so idle IS the swing's neutral frame (same
+// grip, same side) and engage can't pop. The blade-angle constant in the
+// swing (see the seam) is chosen so the NEUTRAL blade stands DEAD
+// VERTICAL — matching the rest draw — and the windup tips PAST vertical
+// backward before the strike sweeps forward.
 const SWING_NEUTRAL = (() => {
   let p0 = -0.8 - 0.96*0.5;
-  return { rs: 1.2*Math.sin(0.5), cos: Math.cos(p0), sin: Math.sin(p0),
-           rot: p0 + Math.PI/2 + 0.2 };
+  return { rs: 1.2*Math.sin(0.5), cos: Math.cos(p0), sin: Math.sin(p0) };
 })();
 // Face-on (S/N) chop model — see the sword pose seam. REACH = elevation
 // driven past vertical at the strike; DOWN_K = a down-pointing blade
@@ -353,6 +402,84 @@ const SWING_NEUTRAL = (() => {
 // falls over the chop. The grip NEVER moves inward — the arm hangs at
 // the shoulder line and the whole chop happens straight down out there.
 const CHOP = { REACH: 2.4, DOWN_K: 0.75, DROP: 2.2 };
+
+// ---- POSE RIG ----
+// Body-local 3D anchors (lat = the unit's RIGHT, fwd = the facing
+// direction, up) projected per dir through the iso camera: screen
+// position, DEPTH (draw order) and arm choice DERIVE from one 3D pose
+// instead of per-dir tables. RIG_OVERRIDES (rig coords) carries the
+// deliberate artistic exceptions — an overridden mount still gets its
+// depth/arm derived, so overrides can't go stale against the sort.
+// C1 = 1/√2 makes profile forward = 1 screen px per body px (how all
+// existing art offsets were authored); C2 = C1·(HALF_TH/HALF_TW).
+// Depth = world (x+y) toward the camera; the body center is depth 0.
+const RIG_DIRV = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]; // SE,S,SW,W,NW,N,NE,E
+const RIG_C1 = Math.SQRT1_2, RIG_C2 = RIG_C1 * 0.5;
+// Vertical PARALLAX damping for mounts: the full iso projection puts a
+// near-side grip ~2px lower than a far-side one — 3D-correct, but at
+// ~20px sprites the ±2px reads as units sitting UN-LEVEL across dirs.
+// Keep a hint of the depth cue, not the full effect.
+const RIG_YK = 0.35;
+// Per-dir FORWARD screen basis {sx,sy,d}; the RIGHT basis is row
+// (d+2)&7 — the right of facing d is the facing two dirs clockwise.
+const RIG = RIG_DIRV.map(([wx, wy]) => {
+  let n = Math.hypot(wx, wy), x = wx / n, y = wy / n;
+  return { sx: (x - y) * RIG_C1, sy: (x + y) * RIG_C2, d: (x + y) * RIG_C1 };
+});
+// Sword mount per silhouette (rig coords), FITTED so the projections
+// reproduce the hand-approved per-dir anchors.
+// ONE sword hold for both silhouettes — the mount is relative to the
+// HUMAN body origin, and the rider's humanX/YOffset already seats that
+// origin on the horse, so foot and rider grip the sword identically.
+// ONE sword placement for EVERY weapon-arm mode (user call): the
+// UNHANDED centerline mount. L/R/B render the sword identically — only
+// the arms differ — and because lat = 0 every mirror-dir pair places
+// the sword symmetrically (S/N dead-center falls out free). The old
+// handed per-dir table (cross-body SW, E far-stretch, NW/NE pins) was
+// one-hand-LEFT choreography and died with this decision.
+const SWORD_MOUNT = { lat: 0, fwd: 8.0, up: 7.1 }; // fwd keeps the blade clear of the face in every dir
+// Shield mount: ALWAYS strapped to the off forearm (side = −gripS folds
+// the L/R flip in), in every view and mode — the plate turns with the
+// body: full face at the profiles, edge-on STRIP at S/N (the sword's
+// edge convention, user call), back face on the away quarters. A
+// separate slung-on-back mode was built and cut — one mount is honest
+// and covers every read.
+const SHIELD_MOUNT = { lat: 6.2, fwd: 0.8, up: 5.5 }; // lat clears the hanging arm at S/N
+const RIG_MOUNTS = {
+  militia: { sword: SWORD_MOUNT },
+  mounted: { sword: SWORD_MOUNT },
+  // held-item DEPTH mounts for the other humanoids (lat/fwd only —
+  // their draw anchors stay where they are; these place the item in the
+  // sort: forward-held kit sorts over the body facing camera, behind it
+  // facing away, from the F.d sign alone)
+  spearman: { spear: { lat: 0, fwd: 4.2, up: 6 } }, // centerline like the sword — S/N center free
+  archer:   { bow:   { lat: -1, fwd: 6 } },
+  villager: { tool:  { lat: 0,  fwd: 3 } },
+};
+// Artistic overrides per character per dir: dLat/dFwd/dUp move the
+// mount, arm forces the binding arm, depthBias nudges sort depth,
+// armStyle 'cross' = the cross-body wrap choreography.
+const RIG_OVERRIDES = {
+  // heldDepth/armDepth/shieldDepth PIN a part's sort depth where the
+  // approved art beats the projection (rig-space, same scale as the
+  // derived depths).
+  militia: {
+    // profiles: the forward-held sword stays clear OVER the body side-on
+    3: { heldDepth: 0.5 },
+    7: { heldDepth: 0.5 },
+  },
+  mounted: {
+    3: { heldDepth: 0.5 },
+    7: { heldDepth: 0.5 },
+  },
+  // profile (E, and W where the mount's lat can't lift it) pins: the
+  // forward-held kit stays clear OVER the body side-on
+  spearman: { 3: { heldDepth: 1.5 }, 7: { heldDepth: 1.5 } },
+  // archer: NO pins — the derived depth puts the bow BEHIND the body at
+  // E side-on, nocked arrow furthest back (user call)
+  archer: {},
+  villager: { 3: { heldDepth: 1 }, 7: { heldDepth: 1 } },
+};
 // Tool-head frames: +x along the drawn handle (fixed handle geometry).
 const AXE_HEAD_ROT = Math.atan2(-14, 9);
 const MALLET_HEAD_ROT = Math.atan2(-12, 7.5);
@@ -2439,7 +2566,10 @@ function drawUnit(e){
   } else if(e.utype!=='sheep'){
     // Seated over the saddle center; face-on (S) the saddle reads at
     // body center, so the rider sits right of the -2 profile seat.
-    let humanXOffset = isMountedUnit(e.utype) ? (e.dir === 1 ? 0.5 : -2) : 0;
+    // face-on riders sit CENTERED on the horse (S 0.5 / N 0 — the head
+    // is centered there too); the side/diagonal views keep the saddle
+    // seat back at −2
+    let humanXOffset = isMountedUnit(e.utype) ? (e.dir === 1 ? 0.5 : e.dir === 5 ? 0 : -2) : 0;
     let humanYOffset = isMountedUnit(e.utype) ? -11 : 0;
     let eq = unitEquipment(e); // null for non-soldiers (villager)
     let weaponTier = eq ? eq.weapon : 0;
@@ -2451,15 +2581,18 @@ function drawUnit(e){
     // already-mirrored context cancels it) and then rotate by this — never
     // clamp the angle to the mirrored frame (a clamp renders steep or
     // across-the-body shots up to ~130° off). When the target entity is
-    // gone mid-swing, fall back to "straight ahead" in screen terms.
+    // gone mid-swing (or a preview has none), fall back to the FACING
+    // projected through the rig — NOT horizontal: a horizontal fallback
+    // made the NW/NE diagonals swing sideways instead of up-screen.
+    const facingAim = () => Math.atan2(RIG[e.dir].sy, RIG[e.dir].sx);
     let aimAngle = () => {
       let t = entitiesById.get(e.target);
-      if (!t) return e.facing === -1 ? Math.PI : 0;
+      if (!t) return facingAim();
       let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
       let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
       let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
       let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
-      if (dix === 0 && diy === 0) return e.facing === -1 ? Math.PI : 0;
+      if (dix === 0 && diy === 0) return facingAim();
       return Math.atan2(diy, dix);
     };
     // Archer variant: the LAUNCH tangent of the ballistic arc, not the flat
@@ -2468,15 +2601,27 @@ function drawUnit(e){
     // must stay in sync with spawnProjectile/drawProjectiles.
     let aimAngleBallistic = () => {
       let t = entitiesById.get(e.target);
-      if (!t) return e.facing === -1 ? Math.PI : 0;
+      if (!t) return facingAim();
       let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
       let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
       let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
       let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
       let A = 35 * (Math.hypot(tcx - e.x, tcy - e.y) / 5); // arc amplitude
       diy -= Math.PI * A + (8 - 12); // + endH − startH (units launch at 12, impact at 8)
-      if (dix === 0 && diy === 0) return e.facing === -1 ? Math.PI : 0;
+      if (dix === 0 && diy === 0) return facingAim();
       return Math.atan2(diy, dix);
+    };
+    // ---- ARM-STATE MODEL ----
+    // Arms are BODY sides (s: −1 left, +1 right); this maps a body side
+    // to its mirrored-frame hand target. Profiles (lateral axis edge-on)
+    // keep FIXED sides (left→rear, right→front — the approved reads).
+    // One helper replaces every front/rear choice heuristic; it
+    // reproduces all 8 previously hand-picked sword-arm choices.
+    const armFrameSide = (s) => {
+      let v = e.facing * s * RIG[(e.dir + 2) & 7].sx;
+      if (v > 0.1) return 'front';
+      if (v < -0.1) return 'rear';
+      return s > 0 ? 'front' : 'rear';
     };
 
     // Per-frame animation snapshot shared by the ARM pass (body layer) and
@@ -2490,6 +2635,20 @@ function drawUnit(e){
     // centerline (consumers: legs in drawBodyLayer, shoulders in
     // computeHandTargets). Other dirs keep the 3/4 read.
     anim.profile = e.dir === 3 || e.dir === 7;
+    // POSE-RIG shoulders — EVERY humanoid (villager convention adopted
+    // unit-wide): both shoulders project to the rotated rim (face-on
+    // wide, diagonals tucked, profiles on the centerline) and the near
+    // shoulder rides slightly lower, damped like the weapon mounts
+    // (RIG_YK). The FAR arm keeps its true anchor even where the body
+    // hides it. (Arm layering itself is the parts pass — the old
+    // farArm flag is gone.)
+    {
+      let R = RIG[(e.dir + 2) & 7];
+      // sPlus = which body side (±lat) lands on the mirrored frame's +x
+      let sPlus = R.sx > 0.1 ? e.facing : R.sx < -0.1 ? -e.facing : 0;
+      anim.shDx = Math.abs(R.sx);        // shoulder rim scale per dir
+      anim.shDy = sPlus * R.sy * RIG_YK; // frame-front shoulder drop, per unit of rim width
+    }
     // One spelling of "mid-attack-animation" for every weapon branch
     // (inActionRange already honors the gallery's __animAttack preview).
     if (MILITARY.has(e.utype))
@@ -2544,6 +2703,22 @@ function drawUnit(e){
       anim.carcassTarget = !e.task&&e.target&&entitiesById.get(e.target)?.utype==='sheep_carcass';
       let jabPh = ((tick*0.06 + e.id*0.41) % 1 + 1) % 1;
       anim.jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
+      // arm states: the tool-side hand grips while a tool is swinging
+      // (the tool mirrors to the FAR side facing away — its frame target
+      // is 'rear' there, 'front' facing the camera; gripS = whichever
+      // body side maps onto that target); everything else is IDLE — the
+      // picking/fighting/carry binds override targets, never states
+      let toolTarget = e.facingNorth ? 'rear' : 'front';
+      anim.gripS = armFrameSide(-1) === toolTarget ? -1 : 1;
+      let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe;
+      anim.armState = {};
+      anim.armState[anim.gripS] = toolHeld ? 'grip' : 'idle';
+      anim.armState[-anim.gripS] = 'idle';
+      {
+        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+        let M = RIG_MOUNTS.villager.tool, OV = RIG_OVERRIDES.villager[e.dir] || 0;
+        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
+      }
     } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
       // Sword pose seam — TWO models by view, both anchored on GRIP_REST
       // so idle IS the swing's frame at its neutral phase (offset-free
@@ -2557,33 +2732,72 @@ function drawUnit(e){
       //    tipped back over the shoulder), drawn as the EDGE-ON art
       //    scaled by cos θ — the blade never sweeps sideways.
       anim.faceOn = e.dir === 1 || e.dir === 5;
-      // Sword pose is ART-DIRECTED PER DIR (frame-x anchor + which arm
-      // holds it; screen side = facing·frame) — ONE mechanism for foot
-      // AND mounted (rider anchors sized so the pommel clears the drape).
-      // Through-line: the sword reads on the RIGHT for front-facing dirs
-      // and on the LEFT for back-facing ones, switching arms as needed
-      // instead of teleporting across the body while the unit turns.
-      // Rows: SE · S(face-on) · SW(cross-body) · W(profile stretch) ·
-      //       NW(mirror→left) · N(face-on left) · NE(left) · E(far arm)
-      const MS = (e.utype === 'militia' ? [
-        { x:  6.5, arm: 'front' }, { x:  4.5, arm: 'front' },
-        { x:  2.5, arm: 'rear'  }, { x:  4.5, arm: 'rear'  },
-        { x:  6.5, arm: 'front' }, { x: -4.5, arm: 'rear'  },
-        { x:  0.8, arm: 'rear'  }, { x:  6.5, arm: 'rear'  },
-      ] : [
-        { x:  5.5, arm: 'front' }, { x:  4.0, arm: 'front' },
-        { x:  0.5, arm: 'rear'  }, { x:  4.0, arm: 'rear'  },
-        { x:  5.5, arm: 'front' }, { x: -4.0, arm: 'rear'  },
-        { x: -5.5, arm: 'rear'  }, { x:  5.5, arm: 'rear'  },
-      ])[e.dir];
-      let rest0 = { x: MS.x,
-                    y: (e.utype === 'militia' ? GRIP_REST.militia : GRIP_REST.mountedRest).y };
-      anim.swArm = MS.arm;
-      // cross-body holds (SW, and NE for militia — the same wrap seen
-      // from behind) + facing-stretch (W): their own arm choreography —
-      // sagging elbow, arm sequenced against the held layer
-      anim.swMirror = e.dir === 2 || e.dir === 3 || (e.utype === 'militia' && e.dir === 6);
-      anim.restRot = anim.faceOn ? 0 : SWING_NEUTRAL.rot; // face-on rest stands dead vertical
+      // POSE RIG: the rest anchor, binding arm and sort depth all derive
+      // from ONE 3D sword mount projected through the per-dir basis (see
+      // the RIG consts); RIG_OVERRIDES carries the artistic exceptions.
+      {
+        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+        let kind = e.utype === 'militia' ? 'militia' : 'mounted';
+        let M = RIG_MOUNTS[kind].sword;
+        let OV = RIG_OVERRIDES[kind][e.dir] || 0;
+        // ARM-STATE RESOLVER. The SWORD placement per dir is CANONICAL
+        // (one mount + override table; it NEVER moves with the mode —
+        // user call). The mode picks the ARMS only: 'L' left-hand grip
+        // (default), 'R' right-hand (the other arm reaches the same
+        // grip), 'B' both (grip + support; dark-age militia default).
+        // Every arm is in exactly ONE state — grip | support | shield |
+        // idle — and an idle arm is IDENTICAL to the idle pose at all
+        // times, attacks included (no counterswing, no special cases).
+        // window.__weaponArm (gallery [L]/[R]/[B] toggle) forces a mode.
+        let armMode = window.__weaponArm ||
+            (e.utype === 'militia' && !(eq && eq.shield) ? 'B' : 'L');
+        anim.gripS = armMode === 'R' ? 1 : -1; // body side of the gripping hand
+        anim.twoHand = armMode === 'B';
+        anim.armState = {};
+        anim.armState[anim.gripS] = 'grip';
+        anim.armState[-anim.gripS] = anim.twoHand ? 'support'
+            : (eq && eq.shield && !e.facingNorth) ? 'shield' : 'idle';
+        let mLat = M.lat + (OV.dLat || 0), mFwd = M.fwd + (OV.dFwd || 0), mUp = M.up + (OV.dUp || 0);
+        // face-on views (S/N), militia AND mounted: one-handed grips
+        // shift the sword (and its arm) to the GRIP hand's side, shield-
+        // spaced — L right / R left on screen — clearing the centered
+        // horse head / body line; two-handed stays DEAD-CENTER (user
+        // call; the one deliberate mode-dependent placement)
+        if (e.dir === 1 || e.dir === 5) mLat = anim.twoHand ? 0 : 6.2 * anim.gripS;
+        var rest0 = { x: e.facing * (mLat * R.sx + mFwd * F.sx),
+                      y: (mLat * R.sy + mFwd * F.sy) * RIG_YK - mUp };
+        // pinned sort depths, resolved ONCE here for the parts pass
+        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth
+                   : mLat * R.d + mFwd * F.d + (OV.depthBias || 0);
+        anim.armDPin = OV.armDepth;
+        // ---- SHIELD RIG ----
+        // BRACED on the off forearm when that arm is in shield state;
+        // SLUNG across the back when nobody can brace it (facing away,
+        // or mode B — both hands on the sword). Position projects from
+        // the mount like the sword's rest0; the plate's outward normal
+        // is the LATERAL axis, so face (front iff normal toward camera)
+        // and width foreshortening derive from R.d — full face at the
+        // profiles, floored at 0.55 face-on so it never goes sliver.
+        if (eq && eq.shield) {
+          let side = -anim.gripS, SM = SHIELD_MOUNT;
+          anim.shieldState = 'braced'; // strapped to the off forearm in EVERY view
+          anim.shieldRest = { x: e.facing * (side * SM.lat * R.sx + SM.fwd * F.sx),
+                              y: (side * SM.lat * R.sy + SM.fwd * F.sy) * RIG_YK - SM.up };
+          anim.shieldD = side * SM.lat * R.d + SM.fwd * F.d;
+          anim.shieldFace = side * R.d > 0 ? 'front' : 'back';
+          anim.shieldWK = 0.55 + 0.45 * Math.abs(R.d);
+          // S/N: the plate's normal is perpendicular to the view —
+          // EDGE-ON, drawn as a thin strip (the sword's convention)
+          anim.shieldEdge = Math.abs(R.d) < 0.3;
+        } else anim.shieldState = null;
+        // the gripping hand's frame target (derived — armFrameSide
+        // reproduces every previously hand-picked choice)
+        anim.swArm = armFrameSide(anim.gripS);
+        anim.swMirror = OV.armStyle === 'cross'; // cross-body wrap choreography
+      }
+      // idle blade leans ~30° toward the facing (user call); the S/N
+      // edge views stay dead vertical — the chop model pivots there
+      anim.restRot = anim.faceOn ? 0 : 0.52;
       // θ → blade scale + grip. fwdChop(0) IS the rest pose (fwdK 1,
       // grip = rest0), so idle/engage continuity is structural.
       const fwdChop = (th) => {
@@ -2602,13 +2816,18 @@ function drawUnit(e){
           let t = -anim.s, t0 = -Math.sin(0.5);
           fwdChop((t - t0) / (1 - t0) * CHOP.REACH);
         } else {
-          let phi = -0.8 - 0.96*ssa;
-          // Radius breathes with the swing: arm cocked short at the
-          // windup, fully EXTENDED at the strike — the blade follows as
-          // its extension. The orbit is placed so the cycle's NEUTRAL
-          // angle (0.5 — the rest draw angle) lands exactly ON GRIP_REST.
+          // wide DRAMATIC arc (user call): the grip rises up over the
+          // head at the windup and drives down through the strike; the
+          // neutral angle (0.5) still lands exactly on the rest anchor
+          let phi = -0.63 - 1.3*ssa;
+          // Radius: extended at the strike, and BOOSTED past the neutral
+          // on the windup side so the HAND genuinely rises over the head
+          // (a short cocked radius left the overhead drama all wrist —
+          // the arm barely moved, user caught it). The boost is zero AT
+          // the neutral (s = sin 0.5), so the orbit still lands exactly
+          // ON the rest anchor and engage can't pop.
           let base = e.utype === 'militia' ? 4.2 : 3.4;
-          let r = base - 1.2*anim.s;
+          let r = base - 1.2*anim.s + 9*Math.max(0, anim.s - 0.479);
           let r0 = base - SWING_NEUTRAL.rs;
           let ox = -r0*SWING_NEUTRAL.cos + r*Math.cos(phi);
           let oy = -r0*SWING_NEUTRAL.sin + r*Math.sin(phi);
@@ -2620,7 +2839,12 @@ function drawUnit(e){
           anim.swordAimM = Math.atan2(Math.sin(aim), e.facing*Math.cos(aim));
           let cr = Math.cos(anim.swordAimM), nr = Math.sin(anim.swordAimM);
           anim.grip = { x: rest0.x + ox*cr - oy*nr, y: rest0.y + ox*nr + oy*cr };
-          anim.swordRot = phi + Math.PI/2 + 0.2; // blade = the arm's extension, in the aim frame
+          // blade sweep: OVER THE HEAD at the windup (tipped back ~−69°),
+          // down through vertical, HORIZONTAL (90°) at the strike — never
+          // past it into the ground. Quadratic in ssa through all three
+          // user-set constraints incl. neutral(0.5) = the ~30° rest lean
+          // (engage can't pop). (ssa: windup ~1.15 → strike −1.35.)
+          anim.swordRot = 1.366 - 1.275*ssa - 0.831*ssa*ssa;
         }
         // Weight shifts back on windup, into the strike — but the BODY is
         // segmented: legs plant (stance), the torso leans hard from the
@@ -2637,6 +2861,18 @@ function drawUnit(e){
         }
       } else { anim.s = 0; anim.grip = { x: rest0.x, y: rest0.y }; }
     } else if (e.utype === 'spearman') {
+      // arm states: BOTH hands always on the shaft
+      anim.gripS = -1;
+      anim.armState = { '-1': 'grip', '1': 'support' };
+      {
+        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+        let M = RIG_MOUNTS.spearman.spear, OV = RIG_OVERRIDES.spearman[e.dir] || 0;
+        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
+        // spear REST anchor projected from the same mount (the sword's
+        // rest0 convention) — centerline, so S/N hold it dead-center
+        anim.spearRest = { x: e.facing * M.fwd * F.sx,
+                           y: M.fwd * F.sy * RIG_YK - M.up };
+      }
       if (anim.swinging) {
         anim.theta = aimAngle() + Math.PI/4;
         // Shaped thrust: slow pull-back, fast jab along the shaft
@@ -2655,6 +2891,16 @@ function drawUnit(e){
       anim.justFired = cd > rof*0.85;
       anim.snapT = Math.max(0, (cd - rof*0.85)/(rof*0.15)); // string still snapping forward
       anim.pull = -1.6 - 4.4*anim.drawT;
+      // arm states: bow always in the left fist; the right hand is on
+      // the string only while drawing — otherwise it IS the idle arm
+      anim.gripS = -1;
+      anim.armState = { '-1': 'grip',
+        '1': (anim.swinging && !anim.justFired) ? 'support' : 'idle' };
+      {
+        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+        let M = RIG_MOUNTS.archer.bow, OV = RIG_OVERRIDES.archer[e.dir] || 0;
+        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
+      }
       if (anim.swinging) {
         anim.theta = aimAngleBallistic();
         anim.upperLean = -0.10*anim.drawT;  // torso braces back into the draw
@@ -2696,14 +2942,23 @@ function drawUnit(e){
       // drawn behind the torso still shows its shoulder cap and hanging
       // length instead of vanishing into the body's cover.
       let shx = (e.utype==='villager' && e.female) ? 3.9 : 4.5;
-      // profile (E/W): both shoulders project onto the body centerline
-      if (anim.profile) shx = 0;
+      // rig-projected shoulders for EVERY humanoid — rim width and
+      // near/far drop scale with the direction (anim.shDx/shDy from the
+      // pose seam); profiles collapse to the centerline via shDx = 0
+      let shdy = anim.shDy * shx;
+      shx *= anim.shDx;
       let shF = shx+hxo, shR = -shx+hxo;
+      let shFy = -8 + shdy + hyo, shRy = -8 - shdy + hyo;
       // Cross-body hold (SW/NE): the body is 3/4 ROTATED and the
       // shoulders ride the rotation — the loose shoulder tucks INWARD,
       // the sword shoulder rides toward the facing. At SW the ENTIRE
       // sword arm (shoulder included) sits left of the body's center.
       if (anim.swMirror && !anim.profile) { shF -= 1.2; shR += (e.dir === 2 ? 2.6 : 2.4); }
+      // SE reads slightly TURNED: the sword-side shoulder rides a touch
+      // toward the facing (user call). Two-handed (dark-age) also applies
+      // it at SW — the same shift in the mirrored frame — so the pair
+      // stays an EXACT mirror; feudal SW keeps its cross-body shifts.
+      if (e.utype === 'militia' && (e.dir === 0 || (e.dir === 2 && anim.twoHand))) shF += 0.8;
       // The walk swing is FORWARD/BACK motion. Facing the camera or away
       // (S/N) that axis is depth, not screen-x — an x swing there drags
       // the hands across the torso silhouette (vanishing behind it, or
@@ -2717,13 +2972,13 @@ function drawUnit(e){
       // point INWARD toward the hips, elbows bowed outward (bend signs
       // flip per side — armPath's bend is path-direction-relative).
       let front = nsView ? { x: shF-0.9, y: -3.2+bobY+hyo, bend: -0.35 }
-                         : { x: shF+0.9+axial, y: -3.2+hyo, bend: 0.3 };
+                         : { x: shF+0.9+axial, y: -3.2+shdy+hyo, bend: 0.3 };
       let rear  = nsView ? { x: shR+0.9, y: -3.2-bobY+hyo, bend: 0.35 }
-                         : { x: shR-0.9-axial, y: -3.2+hyo, bend: 0.3 };
+                         : { x: shR-0.9-axial, y: -3.2-shdy+hyo, bend: 0.3 };
       // Corpses keep the hanging default: drawCorpse suppresses the held
       // weapon and lays it on the ground — a grip target would leave the
       // toppled arms clutching empty air.
-      if (e.corpseRot) return { front, rear, shF, shR };
+      if (e.corpseRot) return { front, rear, shF, shR, shFy, shRy };
       // A weapon-local grip point mapped into the mirrored body frame,
       // riding the aim rotation while swinging. The facing un-mirror
       // (X.scale(e.facing,1) in the held layer) folds ONLY into the x
@@ -2733,14 +2988,13 @@ function drawUnit(e){
         let c = Math.cos(anim.theta), n = Math.sin(anim.theta);
         return { x: A.x + e.facing*(px*c - py*n) + hxo, y: A.y + px*n + py*c + hyo };
       };
-      // Rear hand strapped to the shield's INNER face (the shield draws
-      // LAST, covering the hand). Facing north the shield is slung across
-      // the back — no hand binds: the arm would be torso-occluded with its
-      // hand under the shield, so the hanging silhouette wins.
+      // Off hand strapped to the BRACED shield's inner face — bound to
+      // the SHIELD RIG's projected center, so the arm follows the plate
+      // wherever the mount lands (the shield draws over, covering the
+      // hand). Slung shields bind nothing (the off arm is idle).
       const shieldGrip = () => ({
-        // always the arm OPPOSITE the sword, on that arm's natural side
-        x: (anim.swArm === 'rear' ? 5.2 : -5.2) + hxo,
-        y: (eq.shield === 'kite' && !isMountedUnit(e.utype)) ? -6 : -5 + hyo,
+        x: anim.shieldRest.x + hxo,
+        y: anim.shieldRest.y + hyo,
         bend: anim.swArm === 'rear' ? 0.5 : -0.5
       });
       if (e.utype === 'villager') {
@@ -2769,6 +3023,8 @@ function drawUnit(e){
           else front = { x: gx, y: gy, bend: 0.5 };
         }
         else if (picking)   front = { x: 5.6+anim.pick*0.8, y: -5.5-anim.pick*3.5, bend: 0.6 };
+        // (the rear arm keeps its IDLE hang during the jab — idle-state
+        // arms never take attack-specific poses, user call)
         else if (fighting)  front = { x: 4.5+anim.jab*4.5, y: -6.5-anim.jab*1.5, bend: 0.6 };
         if (e.carrying > 0) rear = { x: -5.8, y: -6.3, bend: -0.6 }; // hugs the shouldered load
       } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
@@ -2780,20 +3036,34 @@ function drawUnit(e){
                       : anim.faceOn ? (anim.swArm === 'rear' ? 0.35 : -0.35)
                       : 0.5 };
         if (anim.swArm === 'rear') rear = g; else front = g;
-        // counterswing: shieldless foot soldiers only (riders' loose arm
-        // just hangs — no reins bind)
-        if (anim.swinging && e.utype === 'militia' && anim.swArm === 'front' && !anim.faceOn && !(eq && eq.shield) && !e.facingNorth)
-          rear = { x: -5-1.1*anim.s+hxo, y: -4+0.7*anim.s+hyo, bend: 0.5 };
-        if (eq && eq.shield && !e.facingNorth) {
-          let sg = shieldGrip(); // opposite arm from the sword
+        // DARK-AGE militia (no shield yet): the off hand JOINS the sword
+        // — a TWO-HANDED grip, the second fist stacked 1.5 down the
+        // handle. Its offset runs through the same rot→foreshorten→aim
+        // chain drawSwordHeld applies, so it rides rest, orbit swings
+        // and the face-on chop alike. (Riders keep a hanging off arm —
+        // reins; shielded tiers strap it below.)
+        if (anim.twoHand) {
+          let rot = anim.swinging ? anim.swordRot : anim.restRot;
+          let k = (anim.swinging && anim.fwdK !== undefined) ? anim.fwdK : 1;
+          let px = -1.5*Math.sin(rot), py = 1.5*Math.cos(rot)*k;
+          let am = anim.swinging ? anim.swordAimM : 0, c2 = Math.cos(am), n2 = Math.sin(am);
+          let g2 = { x: g.x + px*c2 - py*n2, y: g.y + px*n2 + py*c2, bend: 0.4 };
+          if (anim.swArm === 'rear') front = g2; else rear = g2;
+        }
+        // the non-grip arm: shield state binds it to the shield's inner
+        // face; support (two-hand) bound to g2 above; IDLE arms keep the
+        // hanging defaults untouched — identical to the idle pose at all
+        // times, attacks included (the counterswing was deleted, user call)
+        if (anim.armState[-anim.gripS] === 'shield') {
+          let sg = shieldGrip();
           if (anim.swArm === 'rear') front = sg; else rear = sg;
         }
       } else if (e.utype === 'spearman') {
         // Two-hand grip ON the shaft (drawn along y=-x+2 locally): thrust
         // rides the shaft before the aim rotation, matching the held layer.
         const onShaft = (px, py) => anim.swinging
-          ? gripAt(GRIP_REST.spearman, px + 0.75*anim.off, py - 0.75*anim.off)
-          : gripAt(GRIP_REST.spearman, px, py);
+          ? gripAt(anim.spearRest, px + 0.75*anim.off, py - 0.75*anim.off)
+          : gripAt(anim.spearRest, px, py);
         front = { ...onShaft(4, -2),     bend: 0.4 };
         rear  = { ...onShaft(-2.5, 4.5), bend: 0.4 };
       } else if (e.utype === 'archer') {
@@ -2801,10 +3071,15 @@ function drawUnit(e){
         // over the hand, not through it) — closer grip keeps the arm bent;
         // rear hand tracks the string nock while drawing (the release
         // reads for free when it lets go).
-        front = { ...gripAt(GRIP_REST.archer, 7.2, 1.8), bend: 0.55 };
+        // the fist always reads at the BOTTOM of the riser: the grip's
+        // bow-local side flips with the aim's cos so the rotated hand
+        // never rides the upper handle (user call); ±90° aims converge
+        // on the riser center gracefully
+        let gy = 1.8 * ((anim.swinging ? Math.cos(anim.theta) : 1) >= 0 ? 1 : -1);
+        front = { ...gripAt(GRIP_REST.archer, 7.2, gy), bend: 0.55 };
         if (anim.swinging && !anim.justFired) rear = { ...gripAt(GRIP_REST.archer, anim.pull, 0), bend: 0.9 };
       }
-      return { front, rear, shF, shR };
+      return { front, rear, shF, shR, shFy, shRy };
     };
     // Upper-body pose: torso-and-up (arms, gear, head) leans/lunges from
     // a pivot — the hips on foot, the saddle when mounted — while legs or
@@ -3053,9 +3328,10 @@ function drawUnit(e){
         drawHorseBody(0,-5.5,5.6,5.2);
         horseHeadFront = () => {
           let nod2 = (!moving) ? Math.sin(tick*0.05+e.id)*0.8 : 0;
-          // head hangs on the LEFT — the rider's sword rests on the right
-          // (per-dir table) and must not run into it
-          X.save(); X.translate(0,-1+nod2); X.scale(-1.35,1.35);
+          // the head hangs CENTERED — the sword clears it by moving to
+          // the grip hand's side instead (user call)
+          X.save(); X.translate(0,-1+nod2);
+          X.scale(1.35, 1.35); X.translate(-4.1, 0);
           X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
           ear(2.4,-12.6,-0.3); ear(5.8,-12.4,0.3);
           // Rounded skull narrowing into a short hanging muzzle
@@ -3082,14 +3358,15 @@ function drawUnit(e){
           X.restore();
         };
       } else {
-        // North (back view): neck/head face away, body and tail closest
+        // North (back view): neck/head face away, CENTERED on the body
+        // (they sat +3 off-center, user caught it), body and tail closest
         X.save(); X.translate(0,nod);
         X.fillStyle=coat;
-        X.beginPath(); X.ellipse(3,-10,2.9,4.6,0,0,Math.PI*2); X.fill(); X.stroke(); // neck
-        ear(1.5,-15,-0.25); ear(4.7,-14.9,0.25);
-        X.beginPath(); X.ellipse(3,-13.1,2.6,2.8,0,0,Math.PI*2); X.fill(); X.stroke(); // back of head
+        X.beginPath(); X.ellipse(0,-10,2.9,4.6,0,0,Math.PI*2); X.fill(); X.stroke(); // neck
+        ear(-1.5,-15,-0.25); ear(1.7,-14.9,0.25);
+        X.beginPath(); X.ellipse(0,-13.1,2.6,2.8,0,0,Math.PI*2); X.fill(); X.stroke(); // back of head
         X.fillStyle=maneC;
-        X.beginPath(); X.ellipse(3,-11.8,1.3,4.2,0,0,Math.PI*2); X.fill(); // mane down the crest
+        X.beginPath(); X.ellipse(0,-11.8,1.3,4.2,0,0,Math.PI*2); X.fill(); // mane down the crest
         X.restore();
         // Body drawn over the neck base
         drawHorseBody(0,-5,5.8,5.3);
@@ -3113,21 +3390,36 @@ function drawUnit(e){
     if(!isMountedUnit(e.utype)){
       // Human legs: planted — they do NOT ride the upper-body lean. During
       // actions the stance spreads (front foot steps out, rear braces).
+      // POSE-RIG legs: hips sit ±lat on the body's lateral axis and the
+      // stride swings along the FACING, both projected per dir — profile
+      // walkers scissor full screen-x strides, face-on walkers read as a
+      // small vertical alternation, and on diagonals the NEAR leg stands
+      // slightly lower (closer to the camera) than the far one.
+      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       let walk = moving ? Math.sin(tick*0.4+e.id)*2.5 : 0;
       let st = anim.stance || 0;
-      // profile: legs under the center, scissoring fore-aft in the walk
-      let spread = anim.profile ? 0.6 : 2;
-      let fx = spread+walk+st+humanXOffset, rx = -spread-walk-st*0.6+humanXOffset;
-      X.beginPath();
-      X.moveTo(-spread+humanXOffset, -bob); X.lineTo(rx, 3-bob);
-      X.moveTo(spread+humanXOffset, -bob); X.lineTo(fx, 3-bob);
-      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-      X.strokeStyle = '#5b3a1e'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
-      // Boots
-      X.fillStyle='#3a2412';
-      X.beginPath();X.arc(rx,3.4-bob,1.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(fx,3.4-bob,1.4,0,Math.PI*2);X.fill();
-      X.lineCap='butt';
+      // lateral screen separation, floored so profile legs don't merge
+      let latX = 2.8 * R.sx, latY = 2.8 * R.sy;
+      if (Math.abs(latX) < 0.6) latX = 0.6;
+      const leg = (s, stride) => { // s = ±1 lateral side; stride rides the facing
+        let hx2 = e.facing * (s * latX) + humanXOffset;
+        let fx2 = e.facing * (s * latX + stride * F.sx) + humanXOffset;
+        let fy2 = 3 + s * latY + stride * F.sy;
+        X.beginPath();
+        // hip anchored INSIDE the torso (bottom edge ≈ −1; legs draw
+        // behind it) so the lowered-side leg never detaches from the body
+        X.moveTo(hx2, -2 - bob); X.lineTo(fx2, fy2 - bob);
+        X.strokeStyle = '#000000'; X.lineWidth = 3.0/UNIT_SCALE; X.lineCap = 'round'; X.stroke();
+        X.strokeStyle = '#5b3a1e'; X.lineWidth = 1.5/UNIT_SCALE; X.stroke();
+        X.fillStyle = '#3a2412';
+        X.beginPath(); X.arc(fx2, fy2 + 0.4 - bob, 1.4, 0, Math.PI*2); X.fill();
+      };
+      // far leg first, near leg over it (near side = the lateral side
+      // whose depth points at the camera; equal at S/N — order moot)
+      let sNear = (2.8 * R.d) >= 0 ? 1 : -1;
+      leg(-sNear, -sNear * (walk + (sNear > 0 ? 0.6 : 1) * st));
+      leg(sNear, sNear * (walk + (sNear > 0 ? 1 : 0.6) * st));
+      X.lineCap = 'butt';
     }
     // (mounted riders stay legless — legs over the drape read as clutter
     // at this scale; the saddle cloth carries the seated silhouette)
@@ -3141,9 +3433,9 @@ function drawUnit(e){
       let hands = handTargets();
       X.beginPath();
       if (which !== 'front')
-        armPath(hands.shR, -8+humanYOffset, hands.rear.x, hands.rear.y, hands.rear.bend, hands.rear.reach);
+        armPath(hands.shR, hands.shRy, hands.rear.x, hands.rear.y, hands.rear.bend, hands.rear.reach);
       if (which !== 'rear')
-        armPath(hands.shF, -8+humanYOffset, hands.front.x, hands.front.y, hands.front.bend, hands.front.reach);
+        armPath(hands.shF, hands.shFy, hands.front.x, hands.front.y, hands.front.bend, hands.front.reach);
       // Fatter than the legs on purpose — chunky lego-limb read keeps the
       // arm legible even where it brushes the torso edge.
       X.strokeStyle='#000000';X.lineWidth=4.2/UNIT_SCALE;X.lineCap='round';X.stroke();
@@ -3155,30 +3447,8 @@ function drawUnit(e){
     };
     const drawUpperBody = () => {
     upperly(() => {
-    // Arms: facing away they hang on the FAR side, so they draw before
-    // the torso and the body paints over them (same rule as the held-
-    // items layer order); facing the camera they draw after it. Mounted,
-    // only the LOOSE (rear) arm draws here — the sword arm is sequenced
-    // against the held layer at the layer block (hand behind the sword
-    // facing camera, in front of it facing away).
-    if (!isMountedUnit(e.utype) && e.facingNorth) {
-      // NW militia: loose arm only — the sword arm renders in front of
-      // the body at the layer block. NE: nothing here — sword arm behind
-      // the body (layer block), loose arm IN FRONT (after the torso).
-      if (e.utype === 'militia' && e.dir === 6) { /* see after-torso */ }
-      else if (e.utype === 'militia' && e.dir === 4) drawArms(anim.swArm === 'front' ? 'rear' : 'front');
-      else drawArms();
-    }
-    // sword units' LOOSE arm draws BEHIND the body in the SW cross-body
-    // turn (militia + rider alike); riders also tuck it back when facing
-    // away (their sword arm is sequenced at the layer block instead)
-    else if (e.utype === 'militia' && anim.swMirror && !anim.profile) drawArms('front');
-    else if (isMountedUnit(e.utype) && ((e.facingNorth && e.dir !== 6) || (anim.swMirror && !anim.profile)))
-      drawArms(anim.swArm === 'front' ? 'rear' : 'front');
-    // villagers at 3/4 front (SE/SW): the far (rear-target) arm tucks
-    // BEHIND the body
-    else if (e.utype === 'villager' && !e.facingNorth && !anim.profile && e.dir !== 1) drawArms('rear');
-
+    // (Arms are NEVER drawn inside the body layer — every humanoid's
+    // arms are depth-sorted parts at the layer block.)
     // The archer's CASTLE-age quiver rides on the back: facing the camera
     // it peeks BEHIND the shoulder (drawn before the torso); facing away
     // it's strapped across the near side (drawn after, see below).
@@ -3286,46 +3556,35 @@ function drawUnit(e){
       X.restore();
     }
 
-    // (facing away, the arms were already drawn under the torso above)
-    // riders: the loose arm over the torso on front views + NE (back
-    // views + cross-body drew it behind the body above; W hides it —
-    // same conventions as the militia)
-    if (isMountedUnit(e.utype)) { if ((!e.facingNorth || e.dir === 6) && !anim.swMirror) drawArms(anim.swArm === 'front' ? 'rear' : 'front'); }
-    // militia PROFILE (E): only the near (sword) arm renders — the loose
-    // arm is fully behind the body side-on
-    else if (e.utype === 'militia' && anim.profile && !anim.swMirror) drawArms('front');
-    // militia SE + NE: loose arm only, IN FRONT — sword + its arm render
-    // behind the body
-    else if (e.utype === 'militia' && (e.dir === 0 || e.dir === 6)) {
-      drawArms(anim.swArm === 'front' ? 'rear' : 'front');
-    }
-    // militia cross-body (SW/W): loose arm already handled — SW draws it
-    // BEFORE the torso (behind the body), W hides it entirely
-    else if (e.utype === 'militia' && !e.facingNorth && anim.swMirror) { /* sword arm draws after the held layer */ }
-    // villagers in PROFILE (W/E): the far arm is fully behind the body
-    // side-on — only the near (front) arm renders
-    else if (e.utype === 'villager' && anim.profile) drawArms('front');
-    // villagers at 3/4 front (SE/SW): the far (rear-target) arm was
-    // already drawn behind the torso above — only the near arm here
-    else if (e.utype === 'villager' && !e.facingNorth && e.dir !== 1) drawArms('front');
-    else if (!e.facingNorth) drawArms();
+    // (no arm draws here — arms are depth-sorted parts for every humanoid)
+    // Head lateral turn on screen (0 face-on, ±.707 diagonal, ±1 profile)
+    // — the helmet's face details ride it through all 8 dirs.
+    let hturn = e.facing * RIG[e.dir].sx;
     headly(() => {
     if (e.facingNorth) {
       // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
       if(eq){
-        drawHelmet(eq, humanXOffset, humanYOffset, true, e.team, e.id);
+        drawHelmet(eq, humanXOffset, humanYOffset, true, e.team, e.id, hturn);
       } else {
         // Villager (the only hatless humanoid): back of blonde hair
         X.fillStyle = '#b58e3d';
         if(e.female){
-          // One continuous silhouette: over the back of the head and
-          // tapering down the back to the waist (single fill + stroke so
-          // head and fall can't read as two pieces).
+          // Back view shares the FRONT hairdo's silhouette (one crown
+          // height in EVERY view; same outer edges and shoulder-length
+          // tips), solid across the back of the head, ending in a soft
+          // nape curve at the shoulders so the dress reads below it.
+          // POSE-RIG turn bias: on the back quarters (NW/NE) the hair
+          // mass shifts toward the back-of-head side, matching the front
+          // views' strand asymmetry (N stays symmetric).
+          let bs = -0.5 * Math.abs(RIG[e.dir].sx), hx = humanXOffset + bs, hy = humanYOffset;
           X.beginPath();
-          X.arc(humanXOffset,-14+humanYOffset,4.2,Math.PI,0);                                          // over the top of the head
-          X.quadraticCurveTo(4.4+humanXOffset,-9+humanYOffset,3+humanXOffset,-4.8+humanYOffset);       // right edge tapering down
-          X.quadraticCurveTo(0+humanXOffset,-3.6+humanYOffset,-3+humanXOffset,-4.8+humanYOffset);      // rounded hair ends
-          X.quadraticCurveTo(-4.4+humanXOffset,-9+humanYOffset,-4.2+humanXOffset,-14+humanYOffset);    // left edge back up
+          X.moveTo(-3.4+hx,-6.6+hy);                             // left tip at the shoulder
+          X.quadraticCurveTo(-4.6+hx,-8+hy,-4.7+hx,-10.5+hy);    // left outer edge up
+          X.quadraticCurveTo(-5+hx,-14+hy,-4.2+hx,-15.4+hy);     // into the crown's left end
+          X.arc(hx,-15.4+hy,4.2,Math.PI,0);                      // over the top of the head
+          X.quadraticCurveTo(5+hx,-14+hy,4.7+hx,-10.5+hy);       // right outer edge down
+          X.quadraticCurveTo(4.6+hx,-8+hy,3.4+hx,-6.6+hy);       // right tip
+          X.quadraticCurveTo(0+hx,-4.9+hy,-3.4+hx,-6.6+hy);      // soft nape curve
           X.closePath();X.fill();X.stroke();
         } else {
           X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
@@ -3356,7 +3615,7 @@ function drawUnit(e){
       
       // Headwear Cap
       if(eq){
-        drawHelmet(eq, humanXOffset, humanYOffset, false, e.team, e.id);
+        drawHelmet(eq, humanXOffset, humanYOffset, false, e.team, e.id, hturn);
       } else {
         // Villager (the only hatless humanoid): natural blonde hair
         X.fillStyle = '#b58e3d';
@@ -3366,37 +3625,29 @@ function drawUnit(e){
           // the pieces can't read as disconnected. The crown arc runs over
           // the top of the head between the strands' upper ends; the
           // hairline height matches the male cap so the face stays visible.
-          if(e.dir===7||e.dir===3){
-            // Profile: all the hair falls behind the head as one thick
-            // strand (local -x is always the back of the head, since the
-            // context is mirrored to the facing direction).
-            X.beginPath();
-            X.moveTo(-3.6+humanXOffset,-6.4+humanYOffset);                                                // strand tip at the shoulder
-            X.quadraticCurveTo(-4.7+humanXOffset,-7.8+humanYOffset,-4.9+humanXOffset,-10.5+humanYOffset); // outer edge up
-            X.quadraticCurveTo(-5.2+humanXOffset,-14+humanYOffset,-4.2+humanXOffset,-15.4+humanYOffset);  // into the crown's back end
-            X.arc(humanXOffset,-15.4+humanYOffset,4.2,Math.PI,0);                                         // over the top of the head
-            X.lineTo(-2.4+humanXOffset,-15.4+humanYOffset);                                               // hairline back across the forehead
-            X.quadraticCurveTo(-2.8+humanXOffset,-11.5+humanYOffset,-2.5+humanXOffset,-8+humanYOffset);   // inner edge down
-            X.closePath();
-            X.fill();X.stroke();
-          } else {
-            // Front/back-quarter: strands fall along BOTH sides of the head
-            // down to the shoulders, leaving the face fully open between.
-            X.beginPath();
-            X.moveTo(-3.4+humanXOffset,-6.6+humanYOffset);                                                // left strand tip
-            X.quadraticCurveTo(-4.6+humanXOffset,-8+humanYOffset,-4.7+humanXOffset,-10.5+humanYOffset);   // left outer edge up
-            X.quadraticCurveTo(-5+humanXOffset,-14+humanYOffset,-4.2+humanXOffset,-15.4+humanYOffset);    // into the crown's left end
-            X.arc(humanXOffset,-15.4+humanYOffset,4.2,Math.PI,0);                                         // over the top of the head
-            X.quadraticCurveTo(5+humanXOffset,-14+humanYOffset,4.7+humanXOffset,-10.5+humanYOffset);      // right outer edge down
-            X.quadraticCurveTo(4.6+humanXOffset,-8+humanYOffset,3.4+humanXOffset,-6.6+humanYOffset);      // right strand tip
-            X.quadraticCurveTo(2.9+humanXOffset,-8.5+humanYOffset,3+humanXOffset,-11+humanYOffset);       // right inner edge up
-            X.quadraticCurveTo(3.1+humanXOffset,-14+humanYOffset,2.7+humanXOffset,-15.4+humanYOffset);
-            X.lineTo(-2.7+humanXOffset,-15.4+humanYOffset);                                               // hairline across the forehead
-            X.quadraticCurveTo(-3.1+humanXOffset,-14+humanYOffset,-3+humanXOffset,-11+humanYOffset);      // left inner edge down
-            X.quadraticCurveTo(-2.9+humanXOffset,-8.5+humanYOffset,-3.4+humanXOffset,-6.6+humanYOffset);
-            X.closePath();
-            X.fill();X.stroke();
-          }
+          // POSE-RIG hair: the hairdo anchors to the BACK of the head and
+          // rides its rotation. u = |F.sx| is the head's turn off face-on
+          // (0 = S, .707 = 3/4, 1 = profile); the mirrored frame keeps
+          // the back of the head at −x, so ONE parametric path covers
+          // every front direction: the back strand stays full while the
+          // front strand recedes to a rim hugging the head edge, and the
+          // face opening biases toward the facing (with the eyes).
+          let u = Math.abs(RIG[e.dir].sx), hx = humanXOffset, hy = humanYOffset;
+          const L = (a, b) => a + (b - a) * u;
+          X.beginPath();
+          X.moveTo(L(-3.4,-3.6)+hx, L(-6.6,-6.4)+hy);                                          // back strand tip
+          X.quadraticCurveTo(L(-4.6,-4.7)+hx, -8+hy, L(-4.7,-4.9)+hx, -10.5+hy);               // back outer edge up
+          X.quadraticCurveTo(L(-5,-5.2)+hx, -14+hy, -4.2+hx, -15.4+hy);                        // into the crown's back end
+          X.arc(hx, -15.4+hy, 4.2, Math.PI, 0);                                                // over the top of the head
+          X.quadraticCurveTo(L(5,4.4)+hx, L(-14,-15)+hy, L(4.7,4.3)+hx, L(-10.5,-14.6)+hy);    // front outer edge down
+          X.quadraticCurveTo(L(4.6,4.2)+hx, L(-8,-14.4)+hy, L(3.4,4.1)+hx, L(-6.6,-14.5)+hy);  // front strand tip (recedes with the turn)
+          X.quadraticCurveTo(L(2.9,4)+hx, L(-8.5,-14.7)+hy, L(3,4)+hx, L(-11,-14.9)+hy);       // front inner edge up
+          X.quadraticCurveTo(L(3.1,3.9)+hx, L(-14,-15.1)+hy, L(2.7,3.8)+hx, -15.4+hy);
+          X.lineTo(L(-2.7,-2.4)+hx, -15.4+hy);                                                 // hairline across the forehead
+          X.quadraticCurveTo(L(-3.1,-2.8)+hx, L(-14,-11.5)+hy, L(-3,-2.5)+hx, L(-11,-8)+hy);   // back inner edge down
+          X.quadraticCurveTo(L(-2.9,-2.6)+hx, L(-8.5,-7)+hy, L(-3.4,-3.6)+hx, L(-6.6,-6.4)+hy);
+          X.closePath();
+          X.fill();X.stroke();
         } else {
           X.beginPath();
           X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
@@ -3441,9 +3692,12 @@ function drawUnit(e){
       // Work-swing phase and the at-site gate live at the hand-pose seam
       // (anim.*) — shared with the arm pass.
       let atSite = anim.atSite, working = anim.working, swing = anim.swing;
-      // Same mirror convention as the sword: facing away the tool works
-      // on the FAR side of the body (the flip also mirrors the swing arc).
-      let twf = e.facingNorth ? -1 : 1;
+      // Same mirror convention as the sword: the tool works on the side
+      // the FACING's depth points at — toward the camera in front views,
+      // the FAR side facing away (the flip also mirrors the swing arc).
+      // Profiles (depth 0) keep the near side. POSE-RIG predicate: one
+      // sign read replaces the facingNorth special case.
+      let twf = RIG[e.dir].d >= 0 ? 1 : -1;
       // One impact burst per cycle, right as the tool lands. Detected by the
       // cycle COUNTER advancing between frames, not by a frame happening to
       // land inside the narrow strike window — at 4x speed that window (7%
@@ -3714,7 +3968,7 @@ function drawUnit(e){
       // slow pull-back, fast jab along the shaft. (Corpses drop it —
       // drawCorpse lays it on the ground.)
       let swinging = anim.swinging; // gate + thrust phase from the hand-pose seam
-      X.save(); X.translate(GRIP_REST.spearman.x, GRIP_REST.spearman.y+humanYOffset);
+      X.save(); X.translate(anim.spearRest.x, anim.spearRest.y+humanYOffset);
       if(swinging){
         // Point the shaft at the target: un-mirror first (same trick as
         // the bow above), then rotate. The spear is drawn along -45°
@@ -3799,14 +4053,17 @@ function drawUnit(e){
           vane(-1); vane(1);
         }
       };
-      if (swinging && !justFired && e.facingNorth) drawNockedArrow();
+      // the arrow rides the bow's FAR side whenever the bow itself is
+      // behind the body (facing away + E profile): arrow furthest back
+      let arrowBack = anim.heldD < 0;
+      if (swinging && !justFired && arrowBack) drawNockedArrow();
       let bowTip = drawRecurveBow(f, weaponTier);
       let tipX = bowTip.tx, tipY = bowTip.ty;
       if(swinging && !justFired){
         // Drawn string
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(anim.pull, 0); X.lineTo(tipX, tipY); X.stroke();
-        if (!e.facingNorth) drawNockedArrow();
+        if (!arrowBack) drawNockedArrow();
       } else {
         // String at rest — vibrates briefly right after the release, decaying
         // over the first 15% of the reload window
@@ -3823,59 +4080,76 @@ function drawUnit(e){
     }
     }; // end drawHeldLayer
 
-    // Shields render on top in EVERY facing: facing the camera the shield
-    // arm is the near side; facing away it reads as slung across the back
-    // (which is also the near side). One shared drawing for militia
-    // (Feudal+, on foot) and knight (mounted).
-    // Steel kite shield with the team cross (militia Castle / knight)
-    const drawKiteShield = (shx, shy, back = false) => {
-      // White field with a team-color cross — the shield IS the team's
-      // heraldry (a metal shield made team ID vanish under full mail).
-      // Seen from BEHIND (back=true) it's plain wood, no heraldry.
-      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle = back ? '#a5723a' : '#f5f5f0';X.beginPath();
-      X.moveTo(shx-4.2, shy-5.5);X.lineTo(shx+4.2, shy-5.5);
-      X.lineTo(shx+5.6, shy);X.lineTo(shx, shy+8.5);X.lineTo(shx-5.6, shy);X.closePath();X.fill();X.stroke();
-      if (!back) {
+    // Shield faces, drawn AT THE ORIGIN (drawShieldPiece places, turns
+    // and scales them). Front face carries the identity art (boss /
+    // team-cross heraldry — a metal shield made team ID vanish under
+    // full mail); the back face is plain wood.
+    // rimFill draws the bare silhouette in the rim wood — the offset
+    // back copy that gives the plate its THICKNESS read; strokeC lets
+    // the BRIDGE copy hide its outline (stroke = fill → seamless side
+    // wall, so rim + face read as ONE cylinder, not two circles).
+    const drawKiteShield = (back = false, rimFill = null, strokeC = '#000000') => {
+      X.strokeStyle=strokeC;X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+      X.fillStyle = rimFill || (back ? '#a5723a' : '#f5f5f0');X.beginPath();
+      X.moveTo(-4.2, -5.5);X.lineTo(4.2, -5.5);
+      X.lineTo(5.6, 0);X.lineTo(0, 8.5);X.lineTo(-5.6, 0);X.closePath();X.fill();X.stroke();
+      if (!back && !rimFill) {
         X.fillStyle=tc;
-        X.fillRect(shx-4.2, shy-0.8, 8.4, 1.7);
-        X.fillRect(shx-0.85, shy-4.5, 1.7, 9);
+        X.fillRect(-4.2, -0.8, 8.4, 1.7);
+        X.fillRect(-0.85, -4.5, 1.7, 9);
       }
     };
-    // Round WOODEN shield with a white center boss (militia Feudal /
-    // scout Castle) — the team color lives on the tunic/saddle, the
-    // simple gear stays wood. The back face drops the boss.
-    const drawRoundShield = (shx, shy, back = false) => {
-      X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle='#a5723a';
-      X.beginPath();X.arc(shx,shy,4.8,0,Math.PI*2);X.fill();X.stroke();
-      if (!back) {
+    const drawRoundShield = (back = false, rimFill = null, strokeC = '#000000') => {
+      X.strokeStyle=strokeC;X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+      X.fillStyle = rimFill || '#a5723a';
+      X.beginPath();X.arc(0,0,4.8,0,Math.PI*2);X.fill();X.stroke();
+      if (!back && !rimFill) {
         X.fillStyle='#f5f5f0';
-        X.beginPath();X.arc(shx,shy,1.6,0,Math.PI*2);X.fill();X.stroke();
+        X.beginPath();X.arc(0,0,1.6,0,Math.PI*2);X.fill();X.stroke();
       }
     };
-    const drawShieldLayer = (back = false) => {
-      // Shield rides the arm OPPOSITE the sword (foot + mounted alike —
-      // the sword arm comes from the per-dir table at the seam). Militia
-      // SW/W: that arm is on the FAR side — the shield renders BEHIND
-      // the body showing its BACK face (the early back=true call in the
-      // layer block); the final on-top call skips it, and vice versa.
-      if (!eq || !eq.shield) return;
-      // Militia turned-away holds draw the shield EARLY (behind the
-      // character — SW/W/NW/N at the layer block, NE inside the body
-      // layer just under the loose front arm); everything else keeps
-      // the on-top read. The paired-call gate: early callers pass
-      // back=true, the final on-top call passes false.
-      let behind = e.utype === 'militia' &&
-                   ((anim.swMirror && !e.facingNorth) || e.dir === 4 || e.dir === 5);
-      if (behind !== back) return;
-      // behind-the-body dirs show the shield's BACK face; NE's on-top
-      // slung shield shows the FRONT (boss and all — user call)
-      let backFace = back;
-      let shx = anim.swArm === 'rear' ? 6 : -6;
-      // The foot kite rides 1 higher so the taller shield clears the arm.
-      let shy = (eq.shield === 'kite' && !isMountedUnit(e.utype)) ? -6 : -5 + humanYOffset;
-      (eq.shield === 'kite' ? drawKiteShield : drawRoundShield)(shx + humanXOffset, shy, backFace);
+    // The shield plate: position, face and width all come from the
+    // SHIELD RIG at the seam (braced = on the off forearm; slung = across
+    // the back) — the width scale is the plate turning with the body.
+    const drawShieldPiece = () => {
+      if (!anim.shieldState) return;
+      X.save();
+      X.translate(anim.shieldRest.x + humanXOffset, anim.shieldRest.y + humanYOffset);
+      // the plate has THICKNESS (user call): a dark rim copy offset
+      // along the projected plate NORMAL peeks past the face — the SAME
+      // vector in every view (fully lateral at the S/N edge strips,
+      // diagonal on the quarters, zero at the dead-on profiles). Seeing
+      // the BACK face, the visible rim is the FRONT rim — the offset
+      // flips sides with the face (user caught the inversion at NW).
+      let R2 = RIG[(e.dir + 2) & 7], sd = -anim.gripS;
+      let rs = anim.shieldFace === 'back' ? -1 : 1;
+      let nx = rs * e.facing * sd * R2.sx * 1.7, ny = rs * sd * R2.sy * 1.7 * RIG_YK;
+      if (anim.shieldEdge) {
+        // edge-on (S/N): a plain slim RECTANGLE — one slab, one fill,
+        // one outline, nothing else (user call)
+        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
+        let ky = eq.shield === 'kite' ? 1.5 : 0, ry = eq.shield === 'kite' ? 7.6 : 5.6;
+        X.fillStyle='#a5723a';
+        X.beginPath();X.rect(-1.1, ky-ry, 2.2, 2*ry);X.fill();X.stroke();
+      } else {
+        // CYLINDER read: back rim outline → strokeless bridge sweeping
+        // the side wall → face on top (an outlined rim alone read as a
+        // second circle, user caught it)
+        const face = eq.shield === 'kite' ? drawKiteShield : drawRoundShield;
+        X.save(); X.translate(-nx, -ny); X.scale(anim.shieldWK, 1);
+        face(true, '#7a5230'); X.restore();
+        X.save(); X.translate(-nx/2, -ny/2); X.scale(anim.shieldWK, 1);
+        face(true, '#7a5230', '#7a5230'); X.restore();
+        X.scale(anim.shieldWK, 1);
+        face(anim.shieldFace === 'back');
+      }
+      X.restore();
+    };
+    const drawShieldLayer = () => {
+      // On-top shield for branch-drawn units only — militia + mounted
+      // shields are depth-sorted parts at the layer block.
+      if (e.utype === 'militia' || isMountedUnit(e.utype)) return;
+      drawShieldPiece();
     };
 
     // Facing away → held weapons/tools are on the far side of the torso,
@@ -3895,71 +4169,152 @@ function drawUnit(e){
     }
 
     if (isMountedUnit(e.utype)) {
-      // Rider's sword hand: facing the camera it's the FAR hand — the
-      // sword hangs on the horse's far flank and horse + rider paint
-      // over it; facing away that same hand is the NEAR one, so the
-      // sword draws over both. (Inverse of the foot rule below.)
-      // The sword ARM (front target) is sequenced against the held layer
-      // so the hand sits on its true depth side: facing the camera it's
-      // the FAR hand (arm deepest, then sword, then horse+rider over
-      // both); facing away it's the NEAR hand (sword over the body, arm
-      // on top of it).
-      if (e.dir === 1) {
-        // face-on (S): vertical sword IN FRONT of horse + rider, hand
-        // UNDER the handle — same read as the militia's S
-        drawMountLayer(); drawBodyLayer(); upperly(() => drawArms(anim.swArm)); upperly(drawHeldLayer);
+      // POSE-RIG parts draw (Stage B): same sort as the militia's, with
+      // the HORSE as the depth reference (0), the rider just over it,
+      // and two horse-side facts kept as fixed depths — the S hanging
+      // head in front of everything (nearest the camera), the shield
+      // always on top (worn on the near arm, user call).
+      {
+        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+        // pinned depths from the seam (mode/mount/overrides resolved there)
+        let held = anim.heldD;
+        // The GRIP hand's shoulder side picks the sword's side of the
+        // HORSE (user calls): FAR hand (L at SE/E, R at SW/W) → sword
+        // and arm swing BEHIND the horse's head/neck, arm deepest with
+        // the blade over it (the blade still peeks above the silhouette
+        // through the arc); NEAR hand (L at NW, R at NE) → sword in
+        // FRONT of the horse and its head. No near side at S/N.
+        let farGrip = anim.gripS * R.d < -0.05;
+        if (farGrip) held = Math.min(held, -0.2);
+        else if (anim.gripS * R.d > 0.05) held = Math.max(held, 0.2);
+        // shield from the SHIELD RIG — far-side braces render BEHIND the
+        // horse like the far-side sword (user call at NW; edges still
+        // peek past the silhouette)
+        let shield = anim.shieldState ? anim.shieldD : -99;
+        // same STATE depth rule as the militia's, plus the same horse
+        // fact for the IDLE (rein) arm — it hangs ON the flank
+        const armDepth = (s) => {
+          let st = anim.armState[s];
+          if (st === 'grip' || st === 'support') {
+            if (farGrip && st === 'grip') return held - 0.1; // deepest, behind the horse
+            let d = (st === 'grip' && anim.armDPin !== undefined) ? anim.armDPin
+                  : (st === 'grip' && anim.swMirror) ? held + 0.5
+                  : (s * 4.5 * R.d + held) / 2;
+            // shoulder side decides occlusion at all times: near reaches
+            // around, its hand wrapping the handle viewer-side (over body
+            // AND sword); far tucks behind the torso
+            if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
+            else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
+            return d;
+          }
+          if (st === 'shield') return shield - 0.002; // just under its plate
+          let hang = s * 4.5 * R.d + 0.15 * F.d;
+          return hang < 0.01 ? 0.005 : hang; // the flank clamp
+        };
+        // the plate straps OUTSIDE its arm — but ONLY on the near side:
+        // a far-side (behind-the-horse) shield must not get dragged on
+        // top by the idle arm's flank clamp (user caught it at NW)
+        if (anim.shieldState && shield > 0 && anim.armState[-anim.gripS] !== 'shield') {
+          let ad = armDepth(-anim.gripS);
+          if (shield < ad + 0.03) shield = ad + 0.03;
+        }
+        let loose = anim.swArm === 'front' ? 'rear' : 'front';
+        let parts = [
+          [held, () => upperly(drawHeldLayer)],
+          [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
+          [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
+          [0, drawMountLayer],
+          [0.01, drawBodyLayer],
+          [8, () => { if (horseHeadFront) horseHeadFront(); }],
+          [shield, () => upperly(drawShieldPiece)],
+        ];
+        parts.sort((a, b) => a[0] - b[0]);
+        for (let i = 0; i < parts.length; i++) parts[i][1]();
       }
-      else if (e.dir === 4 || anim.swMirror) {
-        // NW — sword near-side over everything; the SW/W cross-body
-        // hold rides OVER the horse (other arm, like the militia), the
-        // arm topping the handle
-        drawMountLayer(); drawBodyLayer(); upperly(drawHeldLayer); upperly(() => drawArms(anim.swArm));
+    }
+    else if (e.utype === 'militia') {
+      // POSE-RIG parts draw (Stage A2): every part takes a camera depth
+      // from its rig anchors and the ascending sort IS the draw order —
+      // the per-dir layer branches this replaces survive only as depth
+      // pins in RIG_OVERRIDES (heldDepth/armDepth/shieldDepth).
+      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+      // mount/overrides/mode were resolved ONCE at the seam — the parts
+      // pass reads the pinned depths (anim.heldD/armDPin) + shield rig
+      let held = anim.heldD;
+      // shield depth from the SHIELD RIG (braced forearm mount or the
+      // back sling — resolved at the seam with position/face/width)
+      let shield = anim.shieldState ? anim.shieldD : -99;
+      // ONE depth rule per arm STATE: grip/support span THEIR OWN
+      // shoulder to the grip (cross-body wraps top the handle; pins win;
+      // mode-B swings ride the sword — a rest-split far arm read as
+      // missing mid-attack, user caught it); shield hands sit just under
+      // the shield they strap; idle arms use the hanging rule — the SAME
+      // rule at all times, attacks included.
+      const armDepth = (s) => {
+        let st = anim.armState[s];
+        if (st === 'grip' || st === 'support') {
+          let d = (st === 'grip' && anim.armDPin !== undefined) ? anim.armDPin
+                : (st === 'grip' && anim.swMirror) ? held + 0.5
+                : (s * 4.5 * R.d + held) / 2;
+          // shoulder side decides the occlusion AT ALL TIMES, rest and
+          // swing alike (user calls): a camera-side shoulder's arm reaches
+          // around visibly and its hand wraps the handle from the viewer
+          // side — over body AND sword; a far shoulder's arm tucks BEHIND
+          // the torso (its fist still sweeps past the silhouette).
+          if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
+          else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
+          return d;
+        }
+        if (st === 'shield') return shield - 0.05;
+        return s * 4.5 * R.d + 0.15 * F.d; // idle hang (villager-standard)
+      };
+      // the plate straps OUTSIDE its arm — never under it (bites facing
+      // away, where the off arm is IDLE and hangs at the plate's side)
+      if (anim.shieldState && anim.armState[-anim.gripS] !== 'shield') {
+        let ad = armDepth(-anim.gripS);
+        if (shield < ad + 0.03) shield = ad + 0.03;
       }
-      else if (e.dir === 5 || e.dir === 6) {
-        // N + NE: sword DEEPEST (behind body/head/horse), its arm over
-        // the handle, horse+rider over both
-        upperly(drawHeldLayer); upperly(() => drawArms(anim.swArm)); drawMountLayer(); drawBodyLayer();
-      }
-      // SE/E: arm deepest, sword over it, horse+rider over both
-      else { upperly(() => drawArms(anim.swArm)); upperly(drawHeldLayer); drawMountLayer(); drawBodyLayer(); }
+      let loose = anim.swArm === 'front' ? 'rear' : 'front';
+      let parts = [
+        [held, () => upperly(drawHeldLayer)],
+        [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
+        [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
+        [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
+        [shield, () => upperly(drawShieldPiece)],
+      ];
+      parts.sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < parts.length; i++) parts[i][1]();
     }
-    else if (e.utype === 'militia' && anim.swMirror && !e.facingNorth) {
-      // cross-body holds (SW/W): the shield hangs DEEPEST on the far arm
-      // (its back face shows), then body — the sword arm stretches
-      // ACROSS the torso and draws OVER the handle: body first without
-      // it (see drawUpperBody), then the sword, then that arm on top.
-      upperly(() => drawShieldLayer(true));
-      drawMountLayer(); drawBodyLayer(); upperly(drawHeldLayer); upperly(() => drawArms(anim.swArm));
+    else {
+      // spearman / archer / villager — the SAME depth-sorted parts pass:
+      // arms are BODY sides whose depths come from their STATE (grip/
+      // support span their shoulder to the held item; idle/carry arms
+      // use the hanging rule — identical at all times, attacks included);
+      // the held item sorts by its rig-mount depth (over the body facing
+      // camera, behind it facing away, straight from the F.d sign).
+      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
+      let held = anim.heldD !== undefined ? anim.heldD : 0.005;
+      const armDepth = (s) => {
+        let st = anim.armState ? anim.armState[s] : 'idle';
+        if (st === 'grip' || st === 'support') {
+          let d = (s * 4.5 * R.d + held) / 2;
+          // shoulder side decides occlusion: near reaches around, hand
+          // wrapping the shaft viewer-side; far tucks behind the torso
+          if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
+          else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
+          return d;
+        }
+        return s * 4.5 * R.d + 0.15 * F.d; // idle/carry hang
+      };
+      let parts = [
+        [held, () => upperly(drawHeldLayer)],
+        [armDepth(-1), () => upperly(() => drawArms(armFrameSide(-1)))],
+        [armDepth(1), () => upperly(() => drawArms(armFrameSide(1)))],
+        [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
+      ];
+      parts.sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < parts.length; i++) parts[i][1]();
     }
-    else if (e.utype === 'militia' && e.dir === 6) {
-      // NE: sword at the VERY back, its arm over it, body over both;
-      // loose arm with the body; shield on top (the final slung call).
-      upperly(drawHeldLayer);
-      upperly(() => drawArms(anim.swArm)); drawMountLayer(); drawBodyLayer();
-    }
-    else if (e.utype === 'militia' && (anim.profile || e.dir === 0)) {
-      // SE + E profile: the sword AND its arm render BEHIND the body —
-      // arm deepest (behind the sword), sword over it, body over both;
-      // the loose arm draws with the body.
-      upperly(() => drawArms(anim.swArm)); upperly(drawHeldLayer); drawMountLayer(); drawBodyLayer();
-    }
-    else if (e.utype === 'militia' && e.dir === 4) {
-      // NW: shield deepest, sword behind the body, but its ARM renders
-      // IN FRONT of it
-      upperly(() => drawShieldLayer(true));
-      upperly(drawHeldLayer); drawMountLayer(); drawBodyLayer(); upperly(() => drawArms(anim.swArm));
-    }
-    else if (e.utype === 'militia' && e.facingNorth && e.dir === 5) {
-      // N: shield deepest, behind the character
-      upperly(() => drawShieldLayer(true));
-      upperly(drawHeldLayer); drawMountLayer(); drawBodyLayer();
-    }
-    else if (e.facingNorth) { upperly(drawHeldLayer); drawMountLayer(); drawBodyLayer(); }
-    else { drawMountLayer(); drawBodyLayer(); upperly(drawHeldLayer); }
-    // Front-facing horse head over rider + weapons (it's the nearest thing
-    // to the camera); shield last — worn on the near arm.
-    if (horseHeadFront) horseHeadFront();
-    upperly(drawShieldLayer);
   } else {
     // Sheep — scalloped wool cloud; head tracks movement direction
     let waddle = e.path.length > 0 ? Math.sin(tick * 0.2 + e.id) * 0.06 : 0;
