@@ -72,6 +72,7 @@
       let u = createUnit(utype, p.x + 0.5, p.y + 0.5, 0);
       if (opts.female !== undefined) u.female = opts.female;
       u.task = 'gallery'; // any truthy task suppresses the idle '?' marker; unknown task = default pose
+      u.__dirCell = true; // 8-dir row specimen (the attack pose animates villagers WORKING here)
       // createUnit seeds gatherX/gatherY = -1; with a truthy task drawUnit
       // treats them as a facing target (map corner!) and the turn
       // hysteresis then fights the locked dir — delete so dx/dy stay 0.
@@ -448,6 +449,31 @@
                   u.utype === 'militia' || u.utype === 'scout' || u.utype === 'knight')) {
                 let rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60);
                 u.atkCooldown = rof - (tick % (rof + 1));
+              }
+              // villager \"attack\" = WORK: the 8-dir rows swing the wood
+              // axe (chop at the own tile passes the at-site gate) so
+              // the tool action previews in every view; other poses
+              // restore the plain gallery stance. Task-row specimens
+              // keep their real tasks (no __dirCell tag).
+              if (u.utype === 'villager' && u.__dirCell) {
+                if (pose === 'attack') {
+                  // WORKING read: two-handed tool swing (loads only show
+                  // while hauling). gatherX/Y are TILE indices: floor
+                  // them (a fractional target sits half a tile off and
+                  // the turn hysteresis fights the locked dir — every
+                  // cell twitched toward SE)
+                  u.task = 'chop';
+                  u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y);
+                  u.carrying = 0; u.carryType = null;
+                } else if (pose === 'walk') {
+                  // HAULING read — walking with the load is the most
+                  // common in-game villager view
+                  u.task = 'gallery'; delete u.gatherX; delete u.gatherY;
+                  u.carrying = 5; u.carryType = 'wood';
+                } else {
+                  u.task = 'gallery'; delete u.gatherX; delete u.gatherY;
+                  u.carrying = 0; u.carryType = null;
+                }
               }
               if (pose === 'walk') {
                 u.path = [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }];

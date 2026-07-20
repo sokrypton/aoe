@@ -276,7 +276,10 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
   // The anchor (= the gripping hand) sits at the CENTER of the handle —
   // grip runs local y 0..5.4, so shift the whole sword up half that along
   // the blade axis; swings then rotate about the fist, not the crossguard.
-  X.translate(0,-2.7);
+  // The art's blade axis is drawn at local x +0.5 — the −0.5 centers it
+  // on the anchor so the fist sits exactly ON the blade line (visible at
+  // the dead-center S rest, user caught it).
+  X.translate(-0.5,-2.7);
   if (edgeOn){
     // The sword ROTATED 90° about its long axis — seen down the guard
     // (face-on idle: the flat rests against the leg, the camera sees the
@@ -385,7 +388,12 @@ const GRIP_REST = { militia:{x:6.5,y:-6}, spearman:{x:3,y:-6}, archer:{x:4,y:-8}
 // Villager work-tool anchor: the handle rotates about this point and the
 // gripping hand rides the same anchor (hand-pose seam) — one spelling so
 // they can't drift, same contract as GRIP_REST.
-const TOOL_GRIP = { x: 3, y: -9 };
+// (tool anchor lives in RIG_MOUNTS.villager.tool — projected per dir
+// at the seam as anim.toolRest)
+// Carried-resource mount: the load rides OVERHEAD, centered above the
+// head with both arms raised to steady it — identical in every
+// direction by construction (user call: dir-independent and clear).
+const CARRY_UP = 20.5;
 // Swing-orbit neutral pose (angle 0.5): constants of anchoring the orbit
 // center onto GRIP_REST, so idle IS the swing's neutral frame (same
 // grip, same side) and engage can't pop. The blade-angle constant in the
@@ -454,7 +462,7 @@ const RIG_MOUNTS = {
   // facing away, from the F.d sign alone)
   spearman: { spear: { lat: 0, fwd: 4.2, up: 6 } }, // centerline like the sword — S/N center free
   archer:   { bow:   { lat: -1, fwd: 6 } },
-  villager: { tool:  { lat: 0,  fwd: 3 } },
+  villager: { tool:  { lat: 0,  fwd: 3, up: 9 } },
 };
 // Artistic overrides per character per dir: dLat/dFwd/dUp move the
 // mount, arm forces the binding arm, depthBias nudges sort depth,
@@ -2677,7 +2685,11 @@ function drawUnit(e){
       let u = ph < 0.7 ? ph/0.7 : 1-(ph-0.7)/0.3;
       // gripTask-gated like every consumer — a working forager/farmer has
       // no swinging tool, and an ungated value invites wiring one on.
-      anim.swing = (anim.working && anim.gripTask) ? (0.5 - 1.6*u) : 0;
+      // DRAMATIC overhead arc (the sword-swing treatment): the windup
+      // raises the tool head well over the shoulder before the strike;
+      // the impact angle (+0.5) is unchanged, so sound/particle sync and
+      // the work cycle counter are untouched.
+      anim.swing = (anim.working && anim.gripTask) ? (0.5 - 2.4*u) : 0;
       // Bow Saw replaces the chopping AXE with a literal bow saw: the
       // motion becomes a horizontal SAWING stroke (translation along the
       // blade), not a rotation — sawOff drives tool + hand + body alike.
@@ -2696,28 +2708,50 @@ function drawUnit(e){
         // gentle: the DRAMA lives in the oversized saw's travel, the
         // body keeps the same quiet work rock as every other task
         if (anim.sawing) { anim.upperLean = 0.02*anim.sawOff; anim.upperLunge = 0.31*anim.sawOff; }
-        else { anim.upperLean = 0.08*anim.swing; anim.upperLunge = 0.2*anim.swing; }
+        // rock rescaled for the wider overhead swing (±2.4 vs the old
+        // ±1.6) — same perceived body sway, no twitch
+        else { anim.upperLean = 0.05*anim.swing; anim.upperLunge = 0.12*anim.swing; }
         anim.upperPivot = -2.5; anim.stance = 1.2;
       }
       anim.pick = Math.sin(tick*0.18+e.id);
       anim.carcassTarget = !e.task&&e.target&&entitiesById.get(e.target)?.utype==='sheep_carcass';
       let jabPh = ((tick*0.06 + e.id*0.41) % 1 + 1) % 1;
       anim.jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
-      // arm states: the tool-side hand grips while a tool is swinging
-      // (the tool mirrors to the FAR side facing away — its frame target
-      // is 'rear' there, 'front' facing the camera; gripS = whichever
-      // body side maps onto that target); everything else is IDLE — the
-      // picking/fighting/carry binds override targets, never states
-      let toolTarget = e.facingNorth ? 'rear' : 'front';
-      anim.gripS = armFrameSide(-1) === toolTarget ? -1 : 1;
+      // TOOL RIG — the weapon conventions adopted: tools live in the
+      // LEFT hand (rig convention), swung TWO-HANDED (grip + support on
+      // the shaft, like the militia's B mode); the anchor projects from
+      // the tool mount per dir, and the face-on views (S/N) shift it to
+      // the grip side exactly like the sword's rule — a centered screen-
+      // plane swing would read sideways. Saws/scythes stay one-handed
+      // in art terms (their support hand is on the frame/snath grip).
+      anim.gripS = -1;
       let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe;
       anim.armState = {};
-      anim.armState[anim.gripS] = toolHeld ? 'grip' : 'idle';
-      anim.armState[-anim.gripS] = 'idle';
+      // the LOAD shows only while HAULING (collected, walking to the
+      // drop-off) — never during ANY work action (user call, keeps the
+      // reads simple): tool swings stay two-handed, and butchering/
+      // foraging keep their poses too (they work via TARGET, not task —
+      // a toolHeld-only gate let the carry pose hijack the butcher jab,
+      // user caught it). anim.working covers them all.
+      anim.carryShow = e.carrying > 0 && !anim.working;
+      anim.armState[anim.gripS] = anim.carryShow ? 'carry'
+        : toolHeld ? 'grip' : 'idle';
+      anim.armState[-anim.gripS] = anim.carryShow ? 'carry'
+        : (toolHeld && !anim.sawing && !anim.scythe) ? 'support' : 'idle';
       {
         let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
         let M = RIG_MOUNTS.villager.tool, OV = RIG_OVERRIDES.villager[e.dir] || 0;
         anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
+        let mLat = (e.dir === 1 || e.dir === 5) ? 4 * anim.gripS : 0;
+        anim.toolRest = { x: e.facing * (mLat * R.sx + M.fwd * F.sx),
+                          y: (mLat * R.sy + M.fwd * F.sy) * RIG_YK - M.up };
+        // CARRY RIG: overhead — centered above the head, the SAME spot
+        // in every direction. Facing the camera the assembly rides over
+        // everything; dead-away (N) the load AND both raised arms render
+        // BEHIND the character (user call) — the carry-arm rule
+        // (carryD + 0.03) follows the flip automatically.
+        anim.carryRest = { x: 0, y: -CARRY_UP };
+        anim.carryD = F.d < -0.9 ? -2 : 2;
       }
     } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
       // Sword pose seam — TWO models by view, both anchored on GRIP_REST
@@ -2968,12 +3002,13 @@ function drawUnit(e){
       let axial = nsView ? 0 : anim.armSwing;
       let bobY  = nsView ? anim.armSwing*0.4 : 0;
       // Idle/walk: arms hang extended, symmetric about the shoulders. In
-      // the N/S views both arms are fully visible, so they mirror: hands
-      // point INWARD toward the hips, elbows bowed outward (bend signs
-      // flip per side — armPath's bend is path-direction-relative).
-      let front = nsView ? { x: shF-0.9, y: -3.2+bobY+hyo, bend: -0.35 }
+      // the N/S views both arms hang RELAXED, straight down from the
+      // shoulders with barely-bowed elbows (an inward point toward the
+      // hips was tried and read tense, user call; bend signs flip per
+      // side — armPath's bend is path-direction-relative).
+      let front = nsView ? { x: shF-0.1, y: -3+bobY+hyo, bend: -0.15 }
                          : { x: shF+0.9+axial, y: -3.2+shdy+hyo, bend: 0.3 };
-      let rear  = nsView ? { x: shR+0.9, y: -3.2-bobY+hyo, bend: 0.35 }
+      let rear  = nsView ? { x: shR+0.1, y: -3-bobY+hyo, bend: 0.15 }
                          : { x: shR-0.9-axial, y: -3.2-shdy+hyo, bend: 0.3 };
       // Corpses keep the hanging default: drawCorpse suppresses the held
       // weapon and lays it on the ground — a grip target would leave the
@@ -3001,32 +3036,58 @@ function drawUnit(e){
         let picking  = !moving && (e.task==='forage'||anim.carcassTarget); // farmers hold the scythe instead
         let fighting = !moving && !e.task && e.target && !picking && !anim.carcassTarget;
         if (anim.gripTask && anim.working) {
-          // Hand rides the swinging handle: grip point partway up the
-          // shaft, rotated by the tool's swing about TOOL_GRIP.
-          // Facing away the tool mirrors to the FAR side (held layer's
-          // twf) and the REAR hand rides it — same convention as the
-          // sword; the other arm hangs loose. (No tool is drawn when not
-          // working, so unbound hands keep the hanging default.)
+          // TWO-HANDED tool grip riding the swinging handle (the militia
+          // B-mode treatment): grip fist partway up the shaft, support
+          // fist below it, both rotated by the swing about the rig-
+          // projected toolRest; twf mirrors the swing offsets with the
+          // tool art. Saws stay one-handed (frame grip).
+          // (same predicate as the tool draw: frame-forward sign, ties
+          // by depth — the hands must mirror WITH the art)
+          let fFx = e.facing * RIG[e.dir].sx;
+          let twf = fFx > 0.05 ? 1 : fFx < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
           let c = Math.cos(anim.swing), n = Math.sin(anim.swing);
-          let gx = TOOL_GRIP.x + 2.2*c + 2.4*n, gy = TOOL_GRIP.y + 2.2*n - 2.4*c;
+          let gx = anim.toolRest.x + twf*(2.2*c + 2.4*n), gy = anim.toolRest.y + 2.2*n - 2.4*c;
           let bend = 0.8;
           if (anim.sawing) { // hand wraps the saw's near frame upright, riding the stroke
-            gx = TOOL_GRIP.x + anim.sawOff + 0.5; gy = TOOL_GRIP.y + 1.5; bend = 0.5;
+            gx = anim.toolRest.x + twf*(anim.sawOff + 0.5); gy = anim.toolRest.y + 1.5; bend = 0.5;
           }
-          if (e.facingNorth) rear = { x: -gx, y: gy, bend: -bend };
+          let gT = armFrameSide(anim.gripS);
+          if (gT === 'rear') rear = { x: gx, y: gy, bend: -bend };
           else front = { x: gx, y: gy, bend };
+          if (anim.armState[-anim.gripS] === 'support') {
+            // support fist further DOWN the handle
+            let sx2 = anim.toolRest.x + twf*(-1.5*c + 1.7*n), sy2 = anim.toolRest.y - 1.5*n - 1.7*c;
+            let s2 = { x: sx2, y: sy2, bend: 0.5 };
+            if (gT === 'rear') front = s2; else rear = s2;
+          }
         }
-        else if (anim.scythe) { // hand rides the snath through the sweep (anchor (2,-8))
+        else if (anim.scythe) {
+          // hand rides the snath through the sweep, about the RIG-
+          // projected tool anchor (same predicate/side as every tool —
+          // the fixed (2,−8) + facingNorth mirror was the last pre-rig
+          // hand bind)
+          let fFx2 = e.facing * RIG[e.dir].sx;
+          let twf2 = fFx2 > 0.05 ? 1 : fFx2 < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
           let c2 = Math.cos(anim.sweep), n2 = Math.sin(anim.sweep);
-          let gx = 2 + 1.2*c2 - 2.2*n2, gy = -8 + 1.2*n2 + 2.2*c2;
-          if (e.facingNorth) rear = { x: -gx, y: gy, bend: -0.5 };
+          let gx = anim.toolRest.x + twf2*(1.2*c2 - 2.2*n2);
+          let gy = anim.toolRest.y + 1 + 1.2*n2 + 2.2*c2;
+          if (armFrameSide(anim.gripS) === 'rear') rear = { x: gx, y: gy, bend: -0.5 };
           else front = { x: gx, y: gy, bend: 0.5 };
         }
         else if (picking)   front = { x: 5.6+anim.pick*0.8, y: -5.5-anim.pick*3.5, bend: 0.6 };
         // (the rear arm keeps its IDLE hang during the jab — idle-state
         // arms never take attack-specific poses, user call)
         else if (fighting)  front = { x: 4.5+anim.jab*4.5, y: -6.5-anim.jab*1.5, bend: 0.6 };
-        if (e.carrying > 0) rear = { x: -5.8, y: -6.3, bend: -0.6 }; // hugs the shouldered load
+        if (anim.carryShow) {
+          // BOTH hands under the overhead load, elbows bowed outward —
+          // hands and resource can never drift apart, every direction.
+          // The spread rides the lateral axis's visible width: widest
+          // face-on (S/N — arms clearly OUT holding the load, user
+          // call), tapering to the profiles.
+          let w = 2.2 + 2.3 * Math.abs(RIG[(e.dir + 2) & 7].sx);
+          front = { x: w, y: anim.carryRest.y + 2.2, bend: -0.3 };
+          rear  = { x: -w, y: anim.carryRest.y + 2.2, bend: 0.3 };
+        }
       } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
         // ONE sword-hand bind for foot + mounted. bend per pose: the
         // cross-body arm SAGS (0.45); face-on vertical arms bow OUTWARD
@@ -3043,6 +3104,9 @@ function drawUnit(e){
         // and the face-on chop alike. (Riders keep a hanging off arm —
         // reins; shielded tiers strap it below.)
         if (anim.twoHand) {
+          // support fist stacked 1.5 down the handle, both hands ON the
+          // blade axis (lateral straddle variants were tried in both
+          // orientations and reverted — the centered stack wins)
           let rot = anim.swinging ? anim.swordRot : anim.restRot;
           let k = (anim.swinging && anim.fwdK !== undefined) ? anim.fwdK : 1;
           let px = -1.5*Math.sin(rot), py = 1.5*Math.cos(rot)*k;
@@ -3440,6 +3504,28 @@ function drawUnit(e){
       // arm legible even where it brushes the torso edge.
       X.strokeStyle='#000000';X.lineWidth=4.2/UNIT_SCALE;X.lineCap='round';X.stroke();
       X.strokeStyle='#edc9a0';X.lineWidth=2.6/UNIT_SCALE;X.stroke();
+      // SHORT SLEEVE over the upper arm: the first stretch of the SAME
+      // quadratic (de Casteljau split), stroked in the tunic's team
+      // color — every humanoid gets clothed shoulders and the arm reads
+      // as attached to the outfit, not bare from the joint.
+      const sleeve = (sx0, sy0, hx2, hy2, bend, reach = 8) => {
+        let dx = hx2-sx0, dy = hy2-sy0, d = Math.hypot(dx, dy) || 0.01;
+        let off = bend ? bend * 2.6 * Math.max(0, 1 - d/reach) : 0;
+        let cx = (sx0+hx2)/2 - dy/d*2*off, cy = (sy0+hy2)/2 + dx/d*2*off;
+        const t = 0.18;
+        let ax = sx0+(cx-sx0)*t, ay = sy0+(cy-sy0)*t;
+        let bx2 = cx+(hx2-cx)*t, by2 = cy+(hy2-cy)*t;
+        X.beginPath(); X.moveTo(sx0, sy0);
+        X.quadraticCurveTo(ax, ay, ax+(bx2-ax)*t, ay+(by2-ay)*t);
+        // PUFFY on purpose — slightly wider than the arm so the sleeve
+        // reads as cloth over the limb (user call, after trying slim)
+        X.strokeStyle='#000000';X.lineWidth=5.4/UNIT_SCALE;X.stroke();
+        X.strokeStyle=tc;X.lineWidth=3.6/UNIT_SCALE;X.stroke();
+      };
+      if (which !== 'front')
+        sleeve(hands.shR, hands.shRy, hands.rear.x, hands.rear.y, hands.rear.bend, hands.rear.reach);
+      if (which !== 'rear')
+        sleeve(hands.shF, hands.shFy, hands.front.x, hands.front.y, hands.front.bend, hands.front.reach);
       X.lineCap='butt';
       // Head/headwear drawing below relies on the black outline stroke —
       // restore it after the skin-colored arm pass.
@@ -3686,18 +3772,126 @@ function drawUnit(e){
       X.restore();
     };
 
+    // Carried resource at the CARRY RIG's mount — its OWN depth-sorted
+    // part (independent of the tool, so chop-while-carrying sorts the
+    // axe and the load separately). Each art keeps its shape; anchors
+    // are small offsets about anim.carryRest.
+    const drawCarriedLoad = () => {
+      if (!anim.carryShow) return;
+      X.save();
+      X.translate(anim.carryRest.x, anim.carryRest.y);
+        X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+        if(e.carryType==='wood'){
+          // Two logs over the shoulder, one atop the other so BOTH round
+          // end grains face the camera — side-by-side logs overlap and
+          // read as one thick log with a single grain.
+          X.save();X.translate(0.5,0);X.rotate(-0.18);
+          const log=(lx,ly)=>{
+            // body: flat at the grain end, ROUNDED cap at the far end —
+            // a sawn log is blunt, not square-cut on both faces
+            X.fillStyle='#6e473b';X.beginPath();
+            X.moveTo(lx+0.5,ly-1.7);X.lineTo(lx-8.6,ly-1.7);
+            X.arc(lx-8.6,ly,1.7,-Math.PI/2,Math.PI/2,true);
+            X.lineTo(lx+0.5,ly+1.7);X.closePath();X.fill();X.stroke();
+            X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+0.5,ly,1.8,2.0,0,0,Math.PI*2);X.fill();X.stroke();
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
+            X.beginPath();X.arc(lx+0.5,ly,0.8,0,Math.PI*2);X.stroke();
+            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+          };
+          log(4,1.6); log(2.2,-1.6);
+          X.restore();
+        } else if(e.carryType==='stone'){
+          // Comically oversized haul: a big cut block with a smaller one
+          // stacked on top, hoisted on the shoulder.
+          X.save();X.translate(-1,-1);
+          const block=(bx,by,s)=>{
+            X.fillStyle='#b3b3b3';X.beginPath(); // top face
+            X.moveTo(bx,by-2.2*s);X.lineTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx-3.4*s,by-0.6*s);X.closePath();X.fill();X.stroke();
+            X.fillStyle='#8f8f8f';X.beginPath(); // left face
+            X.moveTo(bx-3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx-3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
+            X.fillStyle='#787878';X.beginPath(); // right face
+            X.moveTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx+3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
+            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE; // crack
+            X.beginPath();X.moveTo(bx-1.8*s,by+1.2*s);X.lineTo(bx-1.2*s,by+2.6*s);X.lineTo(bx-1.9*s,by+3.6*s);X.stroke();
+            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+          };
+          block(0,0,1.5);          // big base block
+          block(1.2,-4.6,0.95);    // smaller block stacked on top
+          X.restore();
+        } else if(e.carryType==='gold'){
+          // Overflowing armful of gold: heaped shiny nuggets with twinkles
+          X.save();X.translate(0,0.5);
+          const nug=(nx,ny,r)=>{
+            X.fillStyle='#e8b90f';X.beginPath();X.arc(nx,ny,r,0,Math.PI*2);X.fill();X.stroke();
+            X.fillStyle='#ffe14d';X.beginPath();X.arc(nx-r*0.3,ny-r*0.3,r*0.5,0,Math.PI*2);X.fill();
+          };
+          nug(-2.2,0.5,2.2); nug(2,0.8,2.0); nug(0,-0.6,2.4);
+          nug(-1,-2.6,1.9); nug(1.6,-2.2,1.7); nug(0.3,-4,1.5);
+          // Twinkling 4-point sparkles
+          let tw=(Math.sin(tick*0.25+e.id)+1)/2;
+          X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
+          const spark=(px,py,r)=>{
+            X.beginPath();
+            X.moveTo(px,py-r);X.lineTo(px+r*0.3,py-r*0.3);X.lineTo(px+r,py);X.lineTo(px+r*0.3,py+r*0.3);
+            X.lineTo(px,py+r);X.lineTo(px-r*0.3,py+r*0.3);X.lineTo(px-r,py);X.lineTo(px-r*0.3,py-r*0.3);
+            X.closePath();X.fill();
+          };
+          spark(-1.5,-3.6,0.6+1.6*tw); spark(2.4,-0.6,0.5+1.2*(1-tw));
+          X.restore();
+        } else {
+          // Food — carry the goods themselves, big and readable, no basket.
+          // What shows depends on where the food came from.
+          X.save();X.translate(-0.5,1);
+          if(e.foodSrc==='meat'){
+            // Fluffy white wool bundle (from sheep): scalloped cloud like
+            // the sheep's own coat — silhouette pass, then wool fill
+            let puffs=[[-1.8,-0.8,1.9],[1.8,-1,1.9],[0,-2.8,1.9],[0,0.6,2.0]];
+            X.fillStyle='#000';
+            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2]+1,0,Math.PI*2);X.fill();});
+            X.fillStyle='#f2eddd';
+            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2],0,Math.PI*2);X.fill();});
+            X.fillStyle='rgba(255,255,255,0.5)';
+            X.beginPath();X.arc(-0.6,-2.2,1.2,0,Math.PI*2);X.fill();
+          } else if(e.foodSrc==='wheat'){
+            // Tied wheat sheaf over the shoulder
+            X.save();X.rotate(-0.25);
+            X.strokeStyle='#c9a227';X.lineWidth=1.4/UNIT_SCALE;
+            for(let i=-2;i<=2;i++){
+              X.beginPath();X.moveTo(0,3);X.lineTo(i*1.7,-4);X.stroke();
+            }
+            X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;
+            X.beginPath();X.moveTo(-1.7,1);X.lineTo(1.7,1);X.stroke();
+            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8/UNIT_SCALE;
+            for(let i=-2;i<=2;i++){
+              X.beginPath();X.ellipse(i*1.7,-4.7,0.9,1.7,i*0.15,0,Math.PI*2);X.fill();X.stroke();
+            }
+            X.restore();
+          } else {
+            // Armful of big glossy berries
+            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+            [[-1.6,-0.8],[1.6,-1.1],[0,-3.2],[0,1]].forEach(([bx2,by2])=>{
+              X.beginPath();X.arc(bx2,by2,2.2,0,Math.PI*2);X.fill();X.stroke();
+            });
+            X.fillStyle='#ff99a8';
+            X.beginPath();X.arc(-2.2,-1.4,0.7,0,Math.PI*2);X.fill();
+            X.beginPath();X.arc(-0.6,-3.8,0.7,0,Math.PI*2);X.fill();
+          }
+          X.restore();
+        }
+      X.restore();
+    };
     // Tools & weapons (animated swinging swings during active tasks)
     const drawHeldLayer = () => {
     if(e.utype==='villager'){
       // Work-swing phase and the at-site gate live at the hand-pose seam
       // (anim.*) — shared with the arm pass.
       let atSite = anim.atSite, working = anim.working, swing = anim.swing;
-      // Same mirror convention as the sword: the tool works on the side
-      // the FACING's depth points at — toward the camera in front views,
-      // the FAR side facing away (the flip also mirrors the swing arc).
-      // Profiles (depth 0) keep the near side. POSE-RIG predicate: one
-      // sign read replaces the facingNorth special case.
-      let twf = RIG[e.dir].d >= 0 ? 1 : -1;
+      // The tool POINTS ALONG THE FACING: art mirror = the facing's
+      // frame-forward sign (a depth-sign flip inverted NW/NE, user
+      // caught it); the face-on ties (S/N, no lateral forward) fall to
+      // the depth sign — S ahead, N mirrored away.
+      let fFx = e.facing * RIG[e.dir].sx;
+      let twf = fFx > 0.05 ? 1 : fFx < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
       // One impact burst per cycle, right as the tool lands. Detected by the
       // cycle COUNTER advancing between frames, not by a frame happening to
       // land inside the narrow strike window — at 4x speed that window (7%
@@ -3734,7 +3928,7 @@ function drawUnit(e){
           // the same value the hand target rides). Local +x = forward.
           // Comically OVERSIZED on purpose (same exaggeration as the
           // stone haul) — a Castle tech should read at one glance.
-          X.save();X.translate((TOOL_GRIP.x+anim.sawOff)*twf, TOOL_GRIP.y);X.scale(twf,1);
+          X.save();X.translate(anim.toolRest.x+anim.sawOff*twf, anim.toolRest.y);X.scale(twf,1);
           X.strokeStyle='#000000';X.lineWidth=3.6/UNIT_SCALE;X.lineCap='round';X.lineJoin='round';
           X.beginPath();X.moveTo(0,4.5);X.quadraticCurveTo(0.8,-4.5,7.5,-4.5);X.quadraticCurveTo(14.2,-4.5,15,4.5);X.stroke();
           X.strokeStyle='#8B4513';X.lineWidth=2.0/UNIT_SCALE;X.stroke();
@@ -3749,7 +3943,7 @@ function drawUnit(e){
           X.lineCap='butt';
           X.restore();
         } else {
-        X.save();X.translate(TOOL_GRIP.x*twf,TOOL_GRIP.y);X.scale(twf,1);X.rotate(swing);
+        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Long handle
         X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
@@ -3793,7 +3987,7 @@ function drawUnit(e){
           // Synced to the pick's visual impact; every other swing at 4x (see chop above)
           if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('mine', hitX, hitY);
         }
-        X.save();X.translate(TOOL_GRIP.x*twf,TOOL_GRIP.y);X.scale(twf,1);X.rotate(swing);
+        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Long handle
         X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
@@ -3816,7 +4010,7 @@ function drawUnit(e){
           // at 4x (see chop above for both rationales)
           if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('build', e.x + e.facing*0.35, e.y - 0.1);
         }
-        X.save();X.translate(TOOL_GRIP.x*twf,TOOL_GRIP.y);X.scale(twf,1);X.rotate(swing);
+        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Handle
         X.strokeStyle='#000000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
         X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();
@@ -3847,7 +4041,7 @@ function drawUnit(e){
         // the grip anchor (anim.sweep — the hand rides the same value).
         // OVERSIZED like the bow saw — the drama lives in the tool's
         // reach and travel, the body keeps its quiet work rock.
-        X.save();X.translate(2*twf,-8);X.scale(twf,1);X.rotate(anim.sweep);
+        X.save();X.translate(anim.toolRest.x,anim.toolRest.y+1);X.scale(twf,1);X.rotate(anim.sweep);
         X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';X.lineJoin='round';
         X.beginPath();X.moveTo(0,-1.5);X.quadraticCurveTo(4,3.5,7,12);X.stroke();
         X.strokeStyle='#8B4513';X.lineWidth=1.9/UNIT_SCALE;X.stroke();
@@ -3857,106 +4051,6 @@ function drawUnit(e){
         X.strokeStyle='#dde3ea';X.lineWidth=2.4/UNIT_SCALE;X.stroke();
         X.lineCap='butt';
         X.restore();
-      }
-      if(e.carrying>0){
-        X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-        if(e.carryType==='wood'){
-          // Two logs over the shoulder, one atop the other so BOTH round
-          // end grains face the camera — side-by-side logs overlap and
-          // read as one thick log with a single grain.
-          X.save();X.translate(-6,-8);X.rotate(-0.18);
-          const log=(lx,ly)=>{
-            // body: flat at the grain end, ROUNDED cap at the far end —
-            // a sawn log is blunt, not square-cut on both faces
-            X.fillStyle='#6e473b';X.beginPath();
-            X.moveTo(lx+0.5,ly-1.7);X.lineTo(lx-8.6,ly-1.7);
-            X.arc(lx-8.6,ly,1.7,-Math.PI/2,Math.PI/2,true);
-            X.lineTo(lx+0.5,ly+1.7);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+0.5,ly,1.8,2.0,0,0,Math.PI*2);X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
-            X.beginPath();X.arc(lx+0.5,ly,0.8,0,Math.PI*2);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-          };
-          log(4,1.6); log(2.2,-1.6);
-          X.restore();
-        } else if(e.carryType==='stone'){
-          // Comically oversized haul: a big cut block with a smaller one
-          // stacked on top, hoisted on the shoulder.
-          X.save();X.translate(-7.5,-9);
-          const block=(bx,by,s)=>{
-            X.fillStyle='#b3b3b3';X.beginPath(); // top face
-            X.moveTo(bx,by-2.2*s);X.lineTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx-3.4*s,by-0.6*s);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#8f8f8f';X.beginPath(); // left face
-            X.moveTo(bx-3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx-3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#787878';X.beginPath(); // right face
-            X.moveTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx+3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE; // crack
-            X.beginPath();X.moveTo(bx-1.8*s,by+1.2*s);X.lineTo(bx-1.2*s,by+2.6*s);X.lineTo(bx-1.9*s,by+3.6*s);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-          };
-          block(0,0,1.5);          // big base block
-          block(1.2,-4.6,0.95);    // smaller block stacked on top
-          X.restore();
-        } else if(e.carryType==='gold'){
-          // Overflowing armful of gold: heaped shiny nuggets with twinkles
-          X.save();X.translate(-6.5,-7.5);
-          const nug=(nx,ny,r)=>{
-            X.fillStyle='#e8b90f';X.beginPath();X.arc(nx,ny,r,0,Math.PI*2);X.fill();X.stroke();
-            X.fillStyle='#ffe14d';X.beginPath();X.arc(nx-r*0.3,ny-r*0.3,r*0.5,0,Math.PI*2);X.fill();
-          };
-          nug(-2.2,0.5,2.2); nug(2,0.8,2.0); nug(0,-0.6,2.4);
-          nug(-1,-2.6,1.9); nug(1.6,-2.2,1.7); nug(0.3,-4,1.5);
-          // Twinkling 4-point sparkles
-          let tw=(Math.sin(tick*0.25+e.id)+1)/2;
-          X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
-          const spark=(px,py,r)=>{
-            X.beginPath();
-            X.moveTo(px,py-r);X.lineTo(px+r*0.3,py-r*0.3);X.lineTo(px+r,py);X.lineTo(px+r*0.3,py+r*0.3);
-            X.lineTo(px,py+r);X.lineTo(px-r*0.3,py+r*0.3);X.lineTo(px-r,py);X.lineTo(px-r*0.3,py-r*0.3);
-            X.closePath();X.fill();
-          };
-          spark(-1.5,-3.6,0.6+1.6*tw); spark(2.4,-0.6,0.5+1.2*(1-tw));
-          X.restore();
-        } else {
-          // Food — carry the goods themselves, big and readable, no basket.
-          // What shows depends on where the food came from.
-          X.save();X.translate(-7,-7);
-          if(e.foodSrc==='meat'){
-            // Fluffy white wool bundle (from sheep): scalloped cloud like
-            // the sheep's own coat — silhouette pass, then wool fill
-            let puffs=[[-1.8,-0.8,1.9],[1.8,-1,1.9],[0,-2.8,1.9],[0,0.6,2.0]];
-            X.fillStyle='#000';
-            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2]+1,0,Math.PI*2);X.fill();});
-            X.fillStyle='#f2eddd';
-            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2],0,Math.PI*2);X.fill();});
-            X.fillStyle='rgba(255,255,255,0.5)';
-            X.beginPath();X.arc(-0.6,-2.2,1.2,0,Math.PI*2);X.fill();
-          } else if(e.foodSrc==='wheat'){
-            // Tied wheat sheaf over the shoulder
-            X.save();X.rotate(-0.25);
-            X.strokeStyle='#c9a227';X.lineWidth=1.4/UNIT_SCALE;
-            for(let i=-2;i<=2;i++){
-              X.beginPath();X.moveTo(0,3);X.lineTo(i*1.7,-4);X.stroke();
-            }
-            X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;
-            X.beginPath();X.moveTo(-1.7,1);X.lineTo(1.7,1);X.stroke();
-            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8/UNIT_SCALE;
-            for(let i=-2;i<=2;i++){
-              X.beginPath();X.ellipse(i*1.7,-4.7,0.9,1.7,i*0.15,0,Math.PI*2);X.fill();X.stroke();
-            }
-            X.restore();
-          } else {
-            // Armful of big glossy berries
-            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-            [[-1.6,-0.8],[1.6,-1.1],[0,-3.2],[0,1]].forEach(([bx2,by2])=>{
-              X.beginPath();X.arc(bx2,by2,2.2,0,Math.PI*2);X.fill();X.stroke();
-            });
-            X.fillStyle='#ff99a8';
-            X.beginPath();X.arc(-2.2,-1.4,0.7,0,Math.PI*2);X.fill();
-            X.beginPath();X.arc(-0.6,-3.8,0.7,0,Math.PI*2);X.fill();
-          }
-          X.restore();
-        }
       }
     } else if(e.utype==='militia'){
       // Militia broadsword — pose entirely from the sword seam (a corpse
@@ -4304,13 +4398,22 @@ function drawUnit(e){
           else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
           return d;
         }
-        return s * 4.5 * R.d + 0.15 * F.d; // idle/carry hang
+        if (st === 'carry') {
+          // raised arms follow the SHOULDER-SIDE rule (the idle/militia
+          // both-hands convention): the near arm grips OVER the load —
+          // visibly holding it up, the sword's viewer-side-wrap rule —
+          // and the far arm rises BEHIND the body and head to reach it
+          return s * R.d < -0.05 ? 0.005 : anim.carryD + 0.03;
+        }
+        return s * 4.5 * R.d + 0.15 * F.d; // idle hang
       };
       let parts = [
         [held, () => upperly(drawHeldLayer)],
         [armDepth(-1), () => upperly(() => drawArms(armFrameSide(-1)))],
         [armDepth(1), () => upperly(() => drawArms(armFrameSide(1)))],
         [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
+        // the carried load is its OWN part, shown only while hauling
+        [anim.carryShow ? anim.carryD : -99, () => upperly(drawCarriedLoad)],
       ];
       parts.sort((a, b) => a[0] - b[0]);
       for (let i = 0; i < parts.length; i++) parts[i][1]();
