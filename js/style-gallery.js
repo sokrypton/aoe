@@ -250,7 +250,8 @@
   // Tech checkboxes drive team 0's teamTechs bitmask (set each frame) so
   // every normal unit row previews the equipment those techs grant.
   const TECH_BOXES = { 'sg-t-forging': 'forging', 'sg-t-iron': 'iron_casting',
-    'sg-t-scale': 'scale_armor', 'sg-t-chain': 'chain_mail', 'sg-t-fletch': 'fletching' };
+    'sg-t-scale': 'scale_armor', 'sg-t-chain': 'chain_mail', 'sg-t-fletch': 'fletching',
+    'sg-t-dbaxe': 'double_bit_axe', 'sg-t-bowsaw': 'bow_saw', 'sg-t-goldmine': 'gold_mining' };
   const readTechBoxes = () => techMask(Object.entries(TECH_BOXES)
     .filter(([id]) => document.getElementById(id)?.checked).map(([, key]) => key));
   Object.keys(TECH_BOXES).forEach(id => {
@@ -295,7 +296,9 @@
     camY = iso.iy - (rawY - (topH + H / 2) + (unitAnchor ? -HALF_TH : 0));
   };
 
-  const DIR_LABELS = ['SE','S','SW','W','NW','N','NE','E'];
+  // Arrow = the facing's SCREEN direction (world dir through the iso
+  // projection: world S renders straight down-screen, world E right, …)
+  const DIR_LABELS = ['SE ↘','S ↓','SW ↙','W ←','NW ↖','N ↑','NE ↗','E →'];
   const DIRV = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]; // rough world vectors per dir
 
   function frame(){
