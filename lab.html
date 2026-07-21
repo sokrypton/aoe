@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Unit Lab — Age of Epochs</title>
+<style>
+  body { margin: 0; background: #2b2019; font: 13px monospace; color: #e8dcc8; }
+  #lab-bar { padding: 8px 10px; background: #1d1610; border-bottom: 1px solid #6b5335;
+             display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+             position: fixed; top: 0; left: 0; right: 0; z-index: 1000; }
+  #lab-bar select, #lab-bar button { font: 12px monospace; background: #3a2c1f;
+             color: #e8dcc8; border: 1px solid #6b5335; border-radius: 4px; padding: 3px 8px; }
+  #lab-bar button.on { background: #6b5335; }
+  #lab-bar label { display: flex; gap: 4px; align-items: center; }
+  .grp { display: flex; gap: 3px; }
+</style>
+</head>
+<body>
+<div id="lab-bar">
+  <select id="lab-unit">
+    <option value="villager">villager</option>
+    <option value="villager-f">villager (f)</option>
+    <option value="militia">militia</option>
+    <option value="spearman" selected>spearman</option>
+    <option value="archer">archer</option>
+    <option value="scout">scout</option>
+    <option value="knight">knight</option>
+  </select>
+  <div class="grp" id="lab-pose">
+    <button data-pose="idle">Idle</button>
+    <button data-pose="walk" class="on">Walk</button>
+    <button data-pose="attack">Attack</button>
+    <button data-pose="carry">Carry</button>
+  </div>
+  <select id="lab-carry">
+    <option>wood</option><option>gold</option><option>stone</option>
+    <option>meat</option><option>wheat</option><option>berries</option>
+  </select>
+  <div class="grp" id="lab-dir"></div>
+  <div class="grp" id="lab-age">
+    <button data-age="0">Dark</button>
+    <button data-age="1" class="on">Feudal</button>
+    <button data-age="2">Castle</button>
+  </div>
+  <label><input type="checkbox" id="lab-techs"> all techs</label>
+  <div class="grp" id="lab-zoom">
+    <button data-z="3">3x</button><button data-z="5" class="on">5x</button><button data-z="8">8x</button>
+  </div>
+  <button id="lab-pause">⏸</button>
+  <button id="lab-step">⏭</button>
+  <label><input type="checkbox" id="lab-guides" checked> guides</label>
+</div>
+<script>
+// cache-busted script stack — the whole point of this page: what you
+// see is ALWAYS the code on disk, never a stale cached bundle.
+(function(){
+  const v = Date.now();
+  ['page-shell','audio','core','map','entities','pathfinding','iso',
+   'render-terrain','render-buildings','render-units','render-outlines',
+   'render-fx','render','logic'].forEach(n =>
+    document.write('<script src="js/' + n + '.js?t=' + v + '"><\/script>'));
+})();
+</script>
+<script>
+// ---- UNIT LAB driver ----
+// One HUGE specimen, minimal knobs, and a scriptable window.LAB API
+// (LAB.set({unit,pose,dir,age,techs,carry}), LAB.pause(), LAB.step(n)).
+(function(){
+  // hide the injected game chrome; the lab owns the canvas
+  ['tutorial','bottom','topbar','minimap','help-hint','net-stats','tooltip','chat-panel']
+    .forEach(id => { let el = document.getElementById(id); if (el) el.style.display = 'none'; });
+
+  // minimal world boot (the style-gallery recipe)
+  MAP = 32;
+  map = [];
+  for (let y = 0; y < MAP; y++) {
+    map[y] = [];
+    for (let x = 0; x < MAP; x++) map[y][x] = { t: TERRAIN.GRASS, res: 0, occupied: null };
+  }
+  window.fogDisabled = true;
+  window.unitScatterOff = true;
+  initFog(); resetTeamVision(); resetTeamAge(); resetTeamTechs();
+  resetLastTeamHit(); resetDefeatedTeams(); resetAIStates();
+  gameStarted = true;
+  window.playSound = null;
+
+  const S = window.LAB = {
+    unit: 'spearman', pose: 'walk', dir: 0, age: 1, techs: false,
+    carry: 'wood', zoom: 5, paused: false, guides: true,
+    set(o){ Object.assign(S, o); build(); syncBar(); },
+    pause(p){ S.paused = p === undefined ? !S.paused : p; syncBar(); },
+    step(n){ for (let i = 0; i < (n || 1); i++) tick++; },
+  };
+
+  const DIRL = ['SE','S','SW','W','NW','N','NE','E'];
+  const DIRV = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  let u = null;
+
+  function build(){
+    entitiesById.clear();
+    entities.length = 0;
+    let utype = S.unit === 'villager-f' ? 'villager' : S.unit;
+    u = createUnit(utype, MAP/2 + 0.5, MAP/2 + 0.5, 0);
+    if (S.unit === 'villager-f') u.female = true;
+    delete u.gatherX; delete u.gatherY;
+    u.task = 'gallery';
+    let d = S.dir;
+    u.dir = d;
+    u.facing = (d === 2 || d === 3 || d === 4) ? -1 : 1;
+    u.facingNorth = d >= 4 && d <= 6;
+    u.__lockDir = d;
+    if (S.pose === 'walk' || S.pose === 'carry')
+      u.path = [{ x: u.x + DIRV[d][0]*4, y: u.y + DIRV[d][1]*4 }];
+    if (S.pose === 'carry') {
+      u.carrying = 10; u.task = 'chop';
+      // food arts key on foodSrc, not carryType (the game sets both)
+      if (S.carry === 'meat' || S.carry === 'wheat' || S.carry === 'berries') {
+        u.carryType = 'food'; u.foodSrc = S.carry;
+      } else u.carryType = S.carry;
+    }
+    if (S.pose === 'attack') {
+      u.__animAttack = true;
+      if (utype === 'villager') { u.task = 'chop'; u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y); }
+    }
+  }
+
+  function frame(){
+    if (!S.paused) tick++;
+    teamAge[0] = S.age;
+    teamTechs[0] = S.techs ? techMask(Object.keys(UPGRADES)) : 0;
+    if (S.pose === 'attack' && u && u.utype !== 'villager') {
+      let rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60);
+      u.atkCooldown = rof - (tick % (rof + 1));
+    }
+    invalidateBuildingFogMemo();
+    if (typeof particles !== 'undefined') particles.length = 0;
+
+    // page-shell owns the canvas + the W/H/topH globals mapToScreen reads
+    let dpr = window.devicePixelRatio || 1;
+    X.setTransform(dpr, 0, 0, dpr, 0, 0);
+    X.fillStyle = '#3e7a24'; X.fillRect(0, 0, W, window.innerHeight);
+
+    // center-zoom about the map anchor point, camera dead on the unit
+    let cx = W/2, cy = H/2 + topH;
+    X.save();
+    X.translate(cx, cy); X.scale(S.zoom, S.zoom); X.translate(-cx, -cy);
+    let iso = toIso(u.x, u.y);
+    camX = iso.ix; camY = iso.iy;
+    if (S.guides) { // ground line at the unit's FEET (anchor + foot drop)
+      let scr = mapToScreen(u.x, u.y);
+      let gy = scr.sy + HALF_TH + 15;
+      X.strokeStyle = 'rgba(255,255,255,0.3)'; X.lineWidth = 0.4;
+      X.beginPath(); X.moveTo(scr.sx - 80, gy); X.lineTo(scr.sx + 80, gy); X.stroke();
+    }
+    drawUnitShadow(u, mapToScreen(u.x,u.y).sx, mapToScreen(u.x,u.y).sy + HALF_TH);
+    drawUnit(u);
+    X.restore();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ----
+  const $ = id => document.getElementById(id);
+  const wire = (boxId, attr, key, num) => {
+    $(boxId).addEventListener('click', e => {
+      let b = e.target.closest('button'); if (!b) return;
+      S[key] = num ? +b.dataset[attr] : b.dataset[attr];
+      build(); syncBar();
+    });
+  };
+  DIRL.forEach((l, i) => {
+    let b = document.createElement('button');
+    b.textContent = l; b.dataset.d = i;
+    $('lab-dir').appendChild(b);
+  });
+  wire('lab-pose', 'pose', 'pose');
+  wire('lab-dir', 'd', 'dir', true);
+  wire('lab-age', 'age', 'age', true);
+  wire('lab-zoom', 'z', 'zoom', true);
+  $('lab-unit').onchange = () => { S.unit = $('lab-unit').value; build(); };
+  $('lab-carry').onchange = () => { S.carry = $('lab-carry').value; build(); };
+  $('lab-techs').onchange = () => { S.techs = $('lab-techs').checked; };
+  $('lab-guides').onchange = () => { S.guides = $('lab-guides').checked; };
+  $('lab-pause').onclick = () => S.pause();
+  $('lab-step').onclick = () => S.step();
+  function syncBar(){
+    document.querySelectorAll('#lab-pose button').forEach(b => b.classList.toggle('on', b.dataset.pose === S.pose));
+    document.querySelectorAll('#lab-dir button').forEach(b => b.classList.toggle('on', +b.dataset.d === S.dir));
+    document.querySelectorAll('#lab-age button').forEach(b => b.classList.toggle('on', +b.dataset.age === S.age));
+    document.querySelectorAll('#lab-zoom button').forEach(b => b.classList.toggle('on', +b.dataset.z === S.zoom));
+    $('lab-pause').textContent = S.paused ? '▶' : '⏸';
+    $('lab-unit').value = S.unit; $('lab-carry').value = S.carry;
+    $('lab-techs').checked = S.techs; $('lab-guides').checked = S.guides;
+  }
+  build(); syncBar(); frame();
+})();
+</script>
+</body>
+</html>
