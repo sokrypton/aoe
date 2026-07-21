@@ -261,6 +261,39 @@
   // Weapon-arm override: [L]eft / [R]ight / [B]oth-hands — confirms all
   // three rig modes; Auto = the per-age default (dark-age B, else L).
   wireButtonGroup('warm', v => { window.__weaponArm = v || null; });
+  // ---- SPEAR TUNE PANEL (dev): live knobs for the thrust pose — the
+  // spearman seam in render-units reads window.__spearTune each frame;
+  // a knob only overrides once touched (untouched = the code default).
+  {
+    const panel = document.createElement('div');
+    panel.style.cssText = 'position:fixed;right:10px;top:110px;z-index:50;' +
+      'background:#2b2019;color:#e8dcc8;padding:10px 12px;border:1px solid #6b5335;' +
+      'border-radius:6px;font:12px monospace;width:190px';
+    panel.innerHTML = '<b>SPEAR TUNE</b>';
+    window.__spearTune = {};
+    const knob = (key, label, min, max, step, def) => {
+      const lab = document.createElement('div');
+      lab.style.cssText = 'margin-top:6px';
+      const val = document.createElement('span');
+      val.style.cssText = 'float:right'; val.textContent = def;
+      lab.textContent = label; lab.appendChild(val);
+      const inp = document.createElement('input');
+      inp.type = 'range'; inp.min = min; inp.max = max; inp.step = step; inp.value = def;
+      inp.style.cssText = 'width:100%;margin:0';
+      inp.oninput = () => { window.__spearTune[key] = +inp.value; val.textContent = inp.value; };
+      panel.appendChild(lab); panel.appendChild(inp);
+    };
+    knob('tiltDeg', 'TILT °',     0, 70, 1, 45);
+    knob('drop',    'DROP S-SIDE', -8, 10, 0.5, 3.5);
+    knob('dropN',   'DROP N-SIDE', -8, 10, 0.5, -2);
+    knob('slen',    'SLEN',       0.4, 1, 0.05, 0.75);
+    knob('back',    'PULL-BACK',  0, 14, 0.5, 7);
+    knob('fwd',     'DRIVE',      0, 14, 0.5, 5);
+    knob('exp',     'SNAP',       1, 3, 0.1, 1.6);
+    knob('ty',      'LINE HEIGHT', -24, 0, 0.2, -6.4); // crown ~-18.6: overhead explorable
+    knob('basek',   'HOLD-IN',    0, 1, 0.05, 0.4);
+    document.body.appendChild(panel);
+  }
   // Tech checkboxes drive team 0's teamTechs bitmask (set each frame) so
   // every normal unit row previews the equipment those techs grant.
   const TECH_BOXES = { 'sg-t-forging': 'forging', 'sg-t-iron': 'iron_casting',
@@ -446,7 +479,8 @@
               // instead of freezing. (atkCooldown counts down; a reset to
               // rof = the arrow/bite/slash landing.)
               if (pose === 'attack' && (u.utype === 'archer' || u.utype === 'bear' ||
-                  u.utype === 'militia' || u.utype === 'scout' || u.utype === 'knight')) {
+                  u.utype === 'militia' || u.utype === 'spearman' ||
+                  u.utype === 'scout' || u.utype === 'knight')) {
                 let rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60);
                 u.atkCooldown = rof - (tick % (rof + 1));
               }

@@ -268,6 +268,16 @@ function inActionRange(e){
   return distToTarget(e,t)<=maxD;
 }
 
+// attack-tech steel ramp: 0 crude grey iron, 1 forged steel, 2 polished
+const tierSteel = t => t >= 2 ? '#f2f6fb' : t >= 1 ? '#dde3ea' : '#a7abb0';
+// two-stroke wooden shaft: black round-cap outline + timber core
+function strokeShaft(x1, y1, x2, y2, wOut, wIn){
+  X.strokeStyle='#000';X.lineWidth=wOut/UNIT_SCALE;X.lineCap='round';
+  X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
+  X.strokeStyle='#8B4513';X.lineWidth=wIn/UNIT_SCALE;
+  X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
+  X.lineCap='butt';
+}
 function drawBigSword(rot, tier = 0, edgeOn = false){
   // rot 0 = blade straight up; rest passes the seam's anim.restRot;
   // swings pass anim.swordRot so the blade is the ARM'S EXTENSION — it
@@ -287,18 +297,15 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
     // chop keeps the wide face — the edge leads a strike, turning the
     // flat toward the camera.
     let ext = tier >= 2 ? 3 : tier >= 1 ? 1.5 : 0;
-    X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
-    X.beginPath();X.moveTo(0.5,-2);X.lineTo(0.5,-21-ext);X.stroke();
-    X.strokeStyle = tier >= 2 ? '#f2f6fb' : tier >= 1 ? '#dde3ea' : '#a7abb0';
-    X.lineWidth=1.6/UNIT_SCALE;
-    X.beginPath();X.moveTo(0.5,-2);X.lineTo(0.5,-20.6-ext);X.stroke();X.lineCap='butt';
-    X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-    X.beginPath();X.ellipse(0.5,-0.7,1.7,1.1,0,0,Math.PI*2);X.fill();X.stroke();
-    X.strokeStyle='#000';X.lineWidth=3/UNIT_SCALE;X.lineCap='round';
-    X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.6);X.stroke();
-    X.strokeStyle='#5c3d24';X.lineWidth=1.6/UNIT_SCALE;
-    X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.4);X.stroke();
-    X.lineCap='butt';
+    // THREE flat rectangles — grey blade, gold guard, brown grip (user
+    // call: no round caps or beads; the edge-on sword is pure silhouette)
+    X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
+    X.fillStyle = tier >= 2 ? '#f2f6fb' : tier >= 1 ? '#dde3ea' : '#a7abb0';
+    X.beginPath();X.rect(-0.3,-21-ext,1.6,19+ext);X.fill();X.stroke();
+    X.fillStyle='#daa520';
+    X.beginPath();X.rect(-1.2,-1.6,3.4,1.8);X.fill();X.stroke();
+    X.fillStyle='#5c3d24';
+    X.beginPath();X.rect(-0.3,0.2,1.6,5.2);X.fill();X.stroke();
     // (no pommel — simplified silhouette, user call)
     return;
   }
@@ -310,7 +317,7 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
   // grey iron, 1 forged steel (a touch longer), 2 iron-cast polish
   // (+fuller groove, longer again).
   let ext = tier >= 2 ? 3 : tier >= 1 ? 1.5 : 0;
-  X.fillStyle = tier >= 2 ? '#f2f6fb' : tier >= 1 ? '#dde3ea' : '#a7abb0';
+  X.fillStyle = tierSteel(tier);
   X.beginPath();
   X.moveTo(-1.7,-2);X.lineTo(-1.4,-17-ext);X.lineTo(0.5,-22-ext);
   X.lineTo(2.4,-17-ext);X.lineTo(2.7,-2);X.closePath();X.fill();X.stroke();
@@ -331,6 +338,35 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
   // (no pommel — simplified silhouette, user call)
 }
 
+// The spearman's long spear in drawBigSword's frame (the spearman rides
+// the whole sword pose seam): rot 0 = shaft straight up, the anchor (=
+// the gripping hand) 12 up from the butt — most of the spear above the
+// fist. Butt +12 → head base −16 → tip −24 (total 36). k foreshortens
+// the shaft along its own axis about the grip (a tilted thrust points
+// into the iso depth — drawn full-length it overshoots both ways).
+function drawBigSpear(rot, tier = 0, k = 1){
+  X.rotate(rot);
+  if (k !== 1) X.scale(1, k);
+  X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
+  X.beginPath();X.moveTo(0,12);X.lineTo(0,-16);X.stroke();
+  X.strokeStyle='#8B4513';X.lineWidth=1.6/UNIT_SCALE;
+  X.beginPath();X.moveTo(0,12);X.lineTo(0,-16);X.stroke();
+  X.lineCap='butt';
+  // Spearhead tier (attack techs), dark→bright like the sword: 0 crude
+  // grey iron, 1 forged steel (leaf head), 2 polished DIAMOND head.
+  X.fillStyle = tierSteel(tier);
+  X.strokeStyle='#000';X.lineWidth=1.1/UNIT_SCALE;X.lineJoin='round';
+  if(tier >= 2){
+    // diamond symmetric about the shaft: back overlaps the shaft end
+    X.beginPath();X.moveTo(0,-15.2);X.lineTo(-2.5,-19.6);X.lineTo(0,-24);X.lineTo(2.5,-19.6);
+    X.closePath();X.fill();X.stroke();
+  } else {
+    // leaf head: base corners at the shaft end ± perpendicular
+    X.beginPath();X.moveTo(-2.8,-16);X.lineTo(0,-24);X.lineTo(2.8,-16);X.closePath();
+    X.fill();X.stroke();
+  }
+}
+
 // Recurve bow about the archer's grip anchor (+x = shoot direction). f is
 // the flex: 0 braced rest, →1 at full draw (tips pull back and inward,
 // limb curvature deepens), <0 during the forward release snap. Tier
@@ -339,17 +375,25 @@ function drawBigSword(rot, tier = 0, edgeOn = false){
 // siyahs + horn nocks — while the string always attaches at the tips, so
 // the nock/pull math is tier-invariant. Returns the tip position.
 function drawRecurveBow(f, tier){
-  let tx = 0.9 - 2.6*f, ty = 7.9 - 1.5*f;      // limb tips (string ends)
-  let cx0 = 5.75 + 0.9*f, cy0 = 7.2 - 1.6*f;   // limb curvature control
-  let sa = 0.32 + 0.5*f;                        // siyah angle rides the flex
-  let sux = tx + 2.4*Math.cos(sa), suy = ty - 2.4*Math.sin(sa);
+  // BIG dramatic recurve with a REAL-bow silhouette (user calls, both):
+  // TALL limbs sweep back from the riser through a deep belly and curl
+  // OUTWARD at the tips (an S per limb — cubic), while the string still
+  // braces only ~4 behind the riser so the draw arm never overstretches
+  // (the old deep-C put the brace ~7 back and the arm read rubber).
+  let tx = 4.6 - 2.6*f, ty = 10.6 - 1.8*f;     // limb tips (string ends)
+  let c1x = 5.6 + 0.8*f, c1y = 7.2 - 1.4*f;    // back-sweep (belly) control
+  // tip-curl control PINNED to the tip (fixed offset): the flex bends the
+  // BELLY only — a drawn recurve keeps its outward tip curls (user call);
+  // an f-term here flattened the S at full draw. (The old tier-2 siyah
+  // tip segments are gone — stacked on the built-in curls they kinked
+  // the silhouette; the horn nocks carry the tier-2 read.)
+  let c2x = tx - 2.2, c2y = ty - 1.0;
   const path = () => {
     X.beginPath();
-    if (tier >= 2) { X.moveTo(sux, -suy); X.lineTo(tx, -ty); } else X.moveTo(tx, -ty);
-    X.quadraticCurveTo(cx0, -cy0, 7.6, -2.6);  // upper limb into the riser
-    X.quadraticCurveTo(8.5, 0, 7.6, 2.6);      // rigid riser (never flexes)
-    X.quadraticCurveTo(cx0, cy0, tx, ty);      // lower limb
-    if (tier >= 2) X.lineTo(sux, suy);
+    X.moveTo(tx, -ty);
+    X.bezierCurveTo(c2x, -c2y, c1x, -c1y, 7.6, -2.6); // upper limb: curl out, sweep in
+    X.quadraticCurveTo(8.5, 0, 7.6, 2.6);             // rigid riser (never flexes)
+    X.bezierCurveTo(c1x, c1y, c2x, c2y, tx, ty);      // lower limb
   };
   const riser = () => {
     X.beginPath(); X.moveTo(7.6, -2.6); X.quadraticCurveTo(8.5, 0, 7.6, 2.6);
@@ -407,17 +451,18 @@ const SWING_NEUTRAL = (() => {
 // Face-on (S/N) chop model — see the sword pose seam. REACH = elevation
 // driven past vertical at the strike; DOWN_K = a down-pointing blade
 // reads shorter (it's coming at the camera); DROP = how far the grip
-// falls over the chop. The grip NEVER moves inward — the arm hangs at
+// falls over the chop; RISE = how high the hands climb on the windup
+// (th < 0) — a FULL overhead swing, fists up over the head before the
+// blade drives down. The grip NEVER moves inward — the arm hangs at
 // the shoulder line and the whole chop happens straight down out there.
-const CHOP = { REACH: 2.4, DOWN_K: 0.75, DROP: 2.2 };
+const CHOP = { REACH: 2.4, DOWN_K: 0.75, DROP: 2.2, RISE: 10 };
 
 // ---- POSE RIG ----
 // Body-local 3D anchors (lat = the unit's RIGHT, fwd = the facing
 // direction, up) projected per dir through the iso camera: screen
 // position, DEPTH (draw order) and arm choice DERIVE from one 3D pose
-// instead of per-dir tables. RIG_OVERRIDES (rig coords) carries the
-// deliberate artistic exceptions — an overridden mount still gets its
-// depth/arm derived, so overrides can't go stale against the sort.
+// instead of per-dir tables; the mounts' profileHeld carries the one
+// deliberate exception (profile sort pin).
 // C1 = 1/√2 makes profile forward = 1 screen px per body px (how all
 // existing art offsets were authored); C2 = C1·(HALF_TH/HALF_TW).
 // Depth = world (x+y) toward the camera; the body center is depth 0.
@@ -445,7 +490,12 @@ const RIG = RIG_DIRV.map(([wx, wy]) => {
 // the sword symmetrically (S/N dead-center falls out free). The old
 // handed per-dir table (cross-body SW, E far-stretch, NW/NE pins) was
 // one-hand-LEFT choreography and died with this decision.
-const SWORD_MOUNT = { lat: 0, fwd: 8.0, up: 7.1 }; // fwd keeps the blade clear of the face in every dir
+// profileHeld: at the dead-on profiles (W/E) the forward depth projects
+// to 0 and would TIE with the body — the field pins the forward-held kit
+// just over it. One value; any pin in (0.01, ~2.5) sorts identically.
+// (The archer's bow deliberately has NONE: it derives BEHIND the body at
+// E side-on, nocked arrow furthest back — user call.)
+const SWORD_MOUNT = { lat: 0, fwd: 8.0, up: 7.1, profileHeld: 0.5 }; // fwd keeps the blade clear of the face in every dir
 // Shield mount: ALWAYS strapped to the off forearm (side = −gripS folds
 // the L/R flip in), in every view and mode — the plate turns with the
 // body: full face at the profiles, edge-on STRIP at S/N (the sword's
@@ -454,39 +504,16 @@ const SWORD_MOUNT = { lat: 0, fwd: 8.0, up: 7.1 }; // fwd keeps the blade clear 
 // and covers every read.
 const SHIELD_MOUNT = { lat: 6.2, fwd: 0.8, up: 5.5 }; // lat clears the hanging arm at S/N
 const RIG_MOUNTS = {
-  militia: { sword: SWORD_MOUNT },
-  mounted: { sword: SWORD_MOUNT },
+  // (militia/spearman/mounted read SWORD_MOUNT directly)
   // held-item DEPTH mounts for the other humanoids (lat/fwd only —
   // their draw anchors stay where they are; these place the item in the
   // sort: forward-held kit sorts over the body facing camera, behind it
   // facing away, from the F.d sign alone)
-  spearman: { spear: { lat: 0, fwd: 4.2, up: 6 } }, // centerline like the sword — S/N center free
+  // (spearman: pose + heldD fully derived at its seam — no mount entry)
   archer:   { bow:   { lat: -1, fwd: 6 } },
-  villager: { tool:  { lat: 0,  fwd: 3, up: 9 } },
-};
-// Artistic overrides per character per dir: dLat/dFwd/dUp move the
-// mount, arm forces the binding arm, depthBias nudges sort depth,
-// armStyle 'cross' = the cross-body wrap choreography.
-const RIG_OVERRIDES = {
-  // heldDepth/armDepth/shieldDepth PIN a part's sort depth where the
-  // approved art beats the projection (rig-space, same scale as the
-  // derived depths).
-  militia: {
-    // profiles: the forward-held sword stays clear OVER the body side-on
-    3: { heldDepth: 0.5 },
-    7: { heldDepth: 0.5 },
-  },
-  mounted: {
-    3: { heldDepth: 0.5 },
-    7: { heldDepth: 0.5 },
-  },
-  // profile (E, and W where the mount's lat can't lift it) pins: the
-  // forward-held kit stays clear OVER the body side-on
-  spearman: { 3: { heldDepth: 1.5 }, 7: { heldDepth: 1.5 } },
-  // archer: NO pins — the derived depth puts the bow BEHIND the body at
-  // E side-on, nocked arrow furthest back (user call)
-  archer: {},
-  villager: { 3: { heldDepth: 1 }, 7: { heldDepth: 1 } },
+  // fwd 6.5: the tool swings clearly IN FRONT of the body — lower values
+  // put the NE/E grips backward past the shoulder (user calls, twice)
+  villager: { tool:  { lat: 0,  fwd: 6.5, up: 9, profileHeld: 0.5 } },
 };
 // Tool-head frames: +x along the drawn handle (fixed handle geometry).
 const AXE_HEAD_ROT = Math.atan2(-14, 9);
@@ -1144,21 +1171,10 @@ function drawCorpse(c){
     X.translate(wx, wy);
     X.rotate(wa);
     if(c.utype==='spearman'){
-      // The spear, lying loose (static shapes of the living spear)
-      X.save();X.scale(0.8,0.8);
-      X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
-      X.beginPath();X.moveTo(-8,10);X.lineTo(12,-10);X.stroke();
-      X.strokeStyle='#8B4513';X.lineWidth=1.6/UNIT_SCALE;
-      X.beginPath();X.moveTo(-8,10);X.lineTo(12,-10);X.stroke();
-      X.lineCap='butt';
-      // Head matches the owner's forged tier (see the held-spear pass)
-      let wt = (unitEquipment(c.pose) || {}).weapon || 0;
-      X.fillStyle = wt >= 2 ? '#f2f6fb' : wt >= 1 ? '#dde3ea' : '#a7abb0';
-      X.strokeStyle='#000';X.lineWidth=1.1/UNIT_SCALE;X.lineJoin='round';
-      X.beginPath();
-      if(wt >= 2){ X.moveTo(19.4,-17.4);X.lineTo(13.0,-15.6);X.lineTo(11.2,-9.2);X.lineTo(17.6,-11.0); }
-      else { X.moveTo(10,-12);X.lineTo(17.6,-15.6);X.lineTo(13.9,-8.1); }
-      X.closePath();X.fill();X.stroke();
+      // The spear, lying loose — the LIVING art fn at the owner's tier
+      // (a static copy here went stale against two shaft rewrites)
+      X.save();X.scale(0.8,0.8);X.rotate(0.785);
+      drawBigSpear(0, (unitEquipment(c.pose) || {}).weapon || 0);
       X.restore();
     } else if(c.utype==='archer'){
       // The bow, lying loose at its braced rest profile (owner's tier)
@@ -2153,7 +2169,8 @@ function drawUnitShadow(e, sx, sy){
     let slen = Math.hypot(fxv*HALF_TW - fyv*HALF_TW, fxv*HALF_TH + fyv*HALF_TH) || 1;
     // the head-on basis compresses the facing axis (|u|=0.55), so the
     // drawn rig only shifts ~55% as far on S/N — match it
-    let ulen = (e.dir === 1 || e.dir === 5) ? 0.55 : 1;
+    const faceOnView = e.dir === 1 || e.dir === 5; // S/N — forward is the view axis
+    let ulen = faceOnView ? 0.55 : 1;
     for (const [px, l, w2] of [[-22*ulen, 0.42, 0.30], [11.5*ulen, 0.30, 0.24]]) {
       X.save(); X.translate(px/slen, 0); X.scale(l, w2);
       X.beginPath(); X.arc(0, 0, 1, 0, Math.PI * 2); X.fill();
@@ -2169,6 +2186,7 @@ function drawUnitShadow(e, sx, sy){
 
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
+  const faceOnView = e.dir === 1 || e.dir === 5; // S/N — forward is the view axis
   let scr=mapToScreen(e.x,e.y);
   let sx=Math.round(scr.sx), sy=Math.round(scr.sy+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
@@ -2593,13 +2611,14 @@ function drawUnit(e){
     // projected through the rig — NOT horizontal: a horizontal fallback
     // made the NW/NE diagonals swing sideways instead of up-screen.
     const facingAim = () => Math.atan2(RIG[e.dir].sy, RIG[e.dir].sx);
+    const targetCenter = (t) => t.type === 'building'
+      ? { x: t.x + (t.w || 1) / 2, y: t.y + (t.h || 1) / 2 } : { x: t.x, y: t.y };
     let aimAngle = () => {
       let t = entitiesById.get(e.target);
       if (!t) return facingAim();
-      let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
-      let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
-      let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
-      let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
+      let tc = targetCenter(t);
+      let dix = ((tc.x - e.x) - (tc.y - e.y)) * HALF_TW;
+      let diy = ((tc.x - e.x) + (tc.y - e.y)) * HALF_TH;
       if (dix === 0 && diy === 0) return facingAim();
       return Math.atan2(diy, dix);
     };
@@ -2610,11 +2629,10 @@ function drawUnit(e){
     let aimAngleBallistic = () => {
       let t = entitiesById.get(e.target);
       if (!t) return facingAim();
-      let tcx = t.type === 'building' ? t.x + (t.w || 1) / 2 : t.x;
-      let tcy = t.type === 'building' ? t.y + (t.h || 1) / 2 : t.y;
-      let dix = ((tcx - e.x) - (tcy - e.y)) * HALF_TW;
-      let diy = ((tcx - e.x) + (tcy - e.y)) * HALF_TH;
-      let A = 35 * (Math.hypot(tcx - e.x, tcy - e.y) / 5); // arc amplitude
+      let tc = targetCenter(t);
+      let dix = ((tc.x - e.x) - (tc.y - e.y)) * HALF_TW;
+      let diy = ((tc.x - e.x) + (tc.y - e.y)) * HALF_TH;
+      let A = 35 * (Math.hypot(tc.x - e.x, tc.y - e.y) / 5); // arc amplitude
       diy -= Math.PI * A + (8 - 12); // + endH − startH (units launch at 12, impact at 8)
       if (dix === 0 && diy === 0) return facingAim();
       return Math.atan2(diy, dix);
@@ -2630,6 +2648,62 @@ function drawUnit(e){
       if (v > 0.1) return 'front';
       if (v < -0.1) return 'rear';
       return s > 0 ? 'front' : 'rear';
+    };
+    // ---- SHARED PARTS-PASS RULES (one copy for every humanoid family;
+    // per-family riders come in as flags — see each parts block) ----
+    // frame-forward sign for tool mirroring: facing-projected forward,
+    // ties broken by the lateral axis depth.
+    const frameFwdSign = () => {
+      let v = e.facing * RIG[e.dir].sx;
+      return v > 0.05 ? 1 : v < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
+    };
+    // held-item sort depth from a mount; at the dead-on profiles the
+    // forward depth ties with the body, so profileHeld pins it just over
+    // (lat parameter for the militia's mode-adjusted lateral)
+    const mountHeldD = (M, R, F, lat = M.lat) =>
+      (Math.abs(F.d) < 0.05 && M.profileHeld !== undefined) ? M.profileHeld
+        : lat * R.d + M.fwd * F.d;
+    // ONE arm-depth rule: grip/support arms span THEIR OWN shoulder to
+    // the held item; the shoulder side decides occlusion AT ALL TIMES
+    // (user calls) — a camera-side shoulder's arm reaches around visibly,
+    // its hand wrapping the handle viewer-side over body AND weapon; a
+    // far shoulder's arm tucks BEHIND the torso (its fist still sweeps
+    // past the silhouette). Pins win; shield hands sit just under their
+    // plate; carry arms ride the load; idle arms hang. o riders:
+    //   farGripPin    (mounted)  far grip arm pinned just under the sword
+    //   farBehindHeld (militia)  far arm deepens UNDER a behind-body sword
+    //   flankClamp    (mounted)  the idle rein arm hangs ON the flank
+    //   shieldGap     per-family gap under the plate
+    const armDepthRule = (s, o) => {
+      let st = anim.armState ? anim.armState[s] : 'idle';
+      if (st === 'grip' || st === 'support') {
+        if (o.farGripPin && st === 'grip' && anim.gripS * o.R.d < -0.05)
+          return o.held - 0.1;
+        let d = (s * 4.5 * o.R.d + o.held) / 2;
+        if (s * o.R.d > 0.05) d = Math.max(d, o.held + 0.1, 0.02);
+        else if (s * o.R.d < -0.05)
+          d = d > 0.005 ? 0.005 : o.farBehindHeld ? Math.min(d, o.held - 0.1) : d;
+        return d;
+      }
+      if (st === 'shield') return o.shield - o.shieldGap;
+      if (st === 'carry') return s * o.R.d < -0.05 ? 0.005 : anim.carryD + 0.03;
+      let hang = s * 4.5 * o.R.d + 0.15 * o.F.d;
+      return o.flankClamp && hang < 0.01 ? 0.005 : hang;
+    };
+    // the plate straps OUTSIDE its (idle) arm; nearOnly skips far-side
+    // (behind-the-horse) braces so the flank clamp can't drag them on top
+    const strapShieldOut = (shield, armDepth, nearOnly) => {
+      if (anim.shieldState && (!nearOnly || shield > 0) &&
+          anim.armState[-anim.gripS] !== 'shield') {
+        let ad = armDepth(-anim.gripS);
+        if (shield < ad + 0.03) shield = ad + 0.03;
+      }
+      return shield;
+    };
+    // ascending depth sort IS the draw order
+    const runParts = (parts) => {
+      parts.sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < parts.length; i++) parts[i][1]();
     };
 
     // Per-frame animation snapshot shared by the ARM pass (body layer) and
@@ -2724,7 +2798,16 @@ function drawUnit(e){
       // the grip side exactly like the sword's rule — a centered screen-
       // plane swing would read sideways. Saws/scythes stay one-handed
       // in art terms (their support hand is on the frame/snath grip).
-      anim.gripS = -1;
+      // grip side follows the NEAR shoulder per dir: with a fixed left
+      // grip the viewer-side arm held the handle TOP at NW but the
+      // BOTTOM at NE — mirror pairs read asymmetric (user caught NE).
+      // Tools have no visible handedness, so the near hand always takes
+      // the grip; face-on (R.d 0) keeps the left-grip convention, which
+      // drives the S/N grip-side shift.
+      {
+        let Rd = RIG[(e.dir + 2) & 7].d;
+        anim.gripS = Math.abs(Rd) > 0.05 ? (Rd > 0 ? 1 : -1) : -1;
+      }
       let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe;
       anim.armState = {};
       // the LOAD shows only while HAULING (collected, walking to the
@@ -2740,9 +2823,11 @@ function drawUnit(e){
         : (toolHeld && !anim.sawing && !anim.scythe) ? 'support' : 'idle';
       {
         let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
-        let M = RIG_MOUNTS.villager.tool, OV = RIG_OVERRIDES.villager[e.dir] || 0;
-        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
-        let mLat = (e.dir === 1 || e.dir === 5) ? 4 * anim.gripS : 0;
+        let M = RIG_MOUNTS.villager.tool;
+        anim.heldD = mountHeldD(M, R, F);
+        // face-on side shift kept SMALL — 4 read as the tool drifting off
+        // the body; near-center with just enough offset to clear the head
+        let mLat = faceOnView ? 2 * anim.gripS : 0;
         anim.toolRest = { x: e.facing * (mLat * R.sx + M.fwd * F.sx),
                           y: (mLat * R.sy + M.fwd * F.sy) * RIG_YK - M.up };
         // CARRY RIG: overhead — centered above the head, the SAME spot
@@ -2753,8 +2838,11 @@ function drawUnit(e){
         anim.carryRest = { x: 0, y: -CARRY_UP };
         anim.carryD = F.d < -0.9 ? -2 : 2;
       }
-    } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
-      // Sword pose seam — TWO models by view, both anchored on GRIP_REST
+    } else if (e.utype === 'militia' || e.utype === 'spearman' || isMountedUnit(e.utype)) {
+      // Sword pose seam — the spearman rides it WHOLESALE (user call:
+      // exact replication, spear art in the sword's hands; only the
+      // swing choreography is spear-tuned later) — TWO models by view,
+      // both anchored on GRIP_REST
       // so idle IS the swing's frame at its neutral phase (offset-free
       // body coords; consumers add humanX/YOffset):
       //  side/diagonal — the grip ORBITS (φ linear in the swing angle:
@@ -2765,18 +2853,15 @@ function drawUnit(e){
       //    camera, CHOP.REACH = driven down past the target, negative =
       //    tipped back over the shoulder), drawn as the EDGE-ON art
       //    scaled by cos θ — the blade never sweeps sideways.
-      anim.faceOn = e.dir === 1 || e.dir === 5;
+      anim.faceOn = faceOnView;
       // POSE RIG: the rest anchor, binding arm and sort depth all derive
       // from ONE 3D sword mount projected through the per-dir basis (see
-      // the RIG consts); RIG_OVERRIDES carries the artistic exceptions.
+      // the RIG consts).
       {
         let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
-        let kind = e.utype === 'militia' ? 'militia' : 'mounted';
-        let M = RIG_MOUNTS[kind].sword;
-        let OV = RIG_OVERRIDES[kind][e.dir] || 0;
+        let M = SWORD_MOUNT; // militia, spearman AND mounted share it
         // ARM-STATE RESOLVER. The SWORD placement per dir is CANONICAL
-        // (one mount + override table; it NEVER moves with the mode —
-        // user call). The mode picks the ARMS only: 'L' left-hand grip
+        // (one mount; it NEVER moves with the mode — user call). The mode picks the ARMS only: 'L' left-hand grip
         // (default), 'R' right-hand (the other arm reaches the same
         // grip), 'B' both (grip + support; dark-age militia default).
         // Every arm is in exactly ONE state — grip | support | shield |
@@ -2784,26 +2869,24 @@ function drawUnit(e){
         // times, attacks included (no counterswing, no special cases).
         // window.__weaponArm (gallery [L]/[R]/[B] toggle) forces a mode.
         let armMode = window.__weaponArm ||
-            (e.utype === 'militia' && !(eq && eq.shield) ? 'B' : 'L');
+            (!isMountedUnit(e.utype) && !(eq && eq.shield) ? 'B' : 'L');
         anim.gripS = armMode === 'R' ? 1 : -1; // body side of the gripping hand
         anim.twoHand = armMode === 'B';
         anim.armState = {};
         anim.armState[anim.gripS] = 'grip';
         anim.armState[-anim.gripS] = anim.twoHand ? 'support'
             : (eq && eq.shield && !e.facingNorth) ? 'shield' : 'idle';
-        let mLat = M.lat + (OV.dLat || 0), mFwd = M.fwd + (OV.dFwd || 0), mUp = M.up + (OV.dUp || 0);
+        let mLat = M.lat, mFwd = M.fwd, mUp = M.up;
         // face-on views (S/N), militia AND mounted: one-handed grips
         // shift the sword (and its arm) to the GRIP hand's side, shield-
         // spaced — L right / R left on screen — clearing the centered
         // horse head / body line; two-handed stays DEAD-CENTER (user
         // call; the one deliberate mode-dependent placement)
-        if (e.dir === 1 || e.dir === 5) mLat = anim.twoHand ? 0 : 6.2 * anim.gripS;
+        if (faceOnView) mLat = anim.twoHand ? 0 : 6.2 * anim.gripS;
         var rest0 = { x: e.facing * (mLat * R.sx + mFwd * F.sx),
                       y: (mLat * R.sy + mFwd * F.sy) * RIG_YK - mUp };
-        // pinned sort depths, resolved ONCE here for the parts pass
-        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth
-                   : mLat * R.d + mFwd * F.d + (OV.depthBias || 0);
-        anim.armDPin = OV.armDepth;
+        // sort depth resolved ONCE here for the parts pass
+        anim.heldD = mountHeldD(M, R, F, mLat);
         // ---- SHIELD RIG ----
         // BRACED on the off forearm when that arm is in shield state;
         // SLUNG across the back when nobody can brace it (facing away,
@@ -2827,7 +2910,6 @@ function drawUnit(e){
         // the gripping hand's frame target (derived — armFrameSide
         // reproduces every previously hand-picked choice)
         anim.swArm = armFrameSide(anim.gripS);
-        anim.swMirror = OV.armStyle === 'cross'; // cross-body wrap choreography
       }
       // idle blade leans ~30° toward the facing (user call); the S/N
       // edge views stay dead vertical — the chop model pivots there
@@ -2838,30 +2920,114 @@ function drawUnit(e){
         anim.swordRot = 0; anim.swordAimM = 0;
         anim.fwdK = Math.cos(th) * (th > Math.PI/2 ? CHOP.DOWN_K : 1);
         anim.grip = { x: rest0.x, // straight down — never inward
-                      y: rest0.y + CHOP.DROP*(1 - Math.cos(Math.max(0, th))) };
+                      y: rest0.y + CHOP.DROP*(1 - Math.cos(Math.max(0, th)))
+                                 - CHOP.RISE*Math.sin(-Math.min(0, th)) };
       };
       if (anim.swinging) {
         let ssa = swordSwingAngle(e); // one phase read per frame — everything derives from it
         anim.s = Math.sin(ssa);
         if (anim.faceOn) {
-          // elevation runs from the rest pose at the cycle's neutral
-          // (t = −anim.s, t0 at the rest angle 0.5) up to CHOP.REACH at
-          // the strike; the windup goes negative — blade tips back.
-          let t = -anim.s, t0 = -Math.sin(0.5);
-          fwdChop((t - t0) / (1 - t0) * CHOP.REACH);
+          if (e.utype === 'spearman') {
+            // face-on STAB: no overhead cock (the chop's rise/sweep read
+            // as swinging) — the SPRING drive runs the show instead.
+            let t = Math.sin(0.5) - anim.s;
+            let drive = t < 0 ? 7*t : 5*Math.pow(t, 1.6);
+            // straight POKES, elevation FIXED (an elevation sweep read
+            // as swinging, user call); the spring drive pushes along the
+            // view axis. S: the shaft FLIPS tip-down (rot π) — the enemy
+            // stands down-screen, an up-pointing poke never read as an
+            // attack — heavily foreshortened, tip striking toward the
+            // viewer, butt clearing the chin. N: tip up, driving away.
+            if (e.dir === 1) {
+              fwdChop(0.9);
+              anim.swordRot = Math.PI;
+              anim.grip.y += 0.55*drive;
+            } else {
+              fwdChop(0.7);
+              anim.grip.y -= 0.55*drive;
+            }
+          } else {
+            // elevation runs from the rest pose at the cycle's neutral
+            // (t = −anim.s, t0 at the rest angle 0.5) up to CHOP.REACH at
+            // the strike; the windup goes negative — blade tips back.
+            let t = -anim.s, t0 = -Math.sin(0.5);
+            fwdChop((t - t0) / (1 - t0) * CHOP.REACH);
+          }
+        } else if (e.utype === 'spearman') {
+          // SPEAR STAB — a PIERCE, not a sweep: the shaft lies DEAD
+          // LEVEL (aimM 0; the facing mirror gives left/right — the iso
+          // aim slope ran the back of the shaft up OVER the shoulder on
+          // the S-side diagonals, user call) at a height pinned just
+          // UNDER the shoulder line, constant 90° the whole engagement.
+          // Only the linear drive animates, like a SPRING: it compresses
+          // back past the rest point, then releases in an accelerating
+          // extension — t^1.6 keeps the early travel slow and the last
+          // stretch a SNAP.
+          // Tilted thrust knobs (live-tunable from the gallery's SPEAR
+          // TUNE panel via window.__spearTune; untouched knobs keep
+          // these defaults): TILT the shaft angle on the diagonals;
+          // SLEN = foreshortening along the shaft — a tilted thrust
+          // points INTO the iso depth, so it projects shorter, shrinking
+          // the butt-over-shoulder AND tip-into-ground overshoots at
+          // once; BACK/FWD/EXP the spring drive; TY the line height
+          // (all dirs); DROP = how much LOWER the tilted diagonals ride
+          // than the level profiles (one height dial per concern — the
+          // old rotation-pivot knob had degenerated into a second,
+          // overlapping height, user caught it).
+          let TN = window.__spearTune || 0;
+          // per-dir tilt: down-forward on the S-side diagonals, up-forward
+          // on the N-side (pointing at an up-screen enemy), dead level at
+          // the E/W profiles — the sign rides the facing's screen slope
+          // (F.sy, mirror-invariant), the magnitude is the TILT knob.
+          let tiltBase = TN.tiltDeg !== undefined ? TN.tiltDeg*Math.PI/180 : Math.PI/4;
+          let fsy = RIG[e.dir].sy;
+          let tilt = (fsy > 0.05 ? 1 : fsy < -0.05 ? -1 : 0) * tiltBase;
+          // per-side height offsets from LINE HEIGHT: the down- and
+          // up-tilts arrange the shaft oppositely around the shoulder
+          // (S-side butt-high behind, N-side tip-high ahead) — one
+          // shared offset kept fixing one side and breaking the other.
+          let DROP  = TN.drop  !== undefined ? TN.drop  : 3.5; // S-side (down-tilts)
+          let DROPN = TN.dropN !== undefined ? TN.dropN : -2;  // N-side (up-tilts)
+          anim.spearLen = tilt ? (TN.slen !== undefined ? TN.slen : 0.75) : 1;
+          anim.swordAimM = tilt;
+          let t = Math.sin(0.5) - anim.s; // −0.43 compressed … +1.48 extended
+          let drive = t < 0 ? (TN.back !== undefined ? TN.back : 7)*t
+                            : (TN.fwd !== undefined ? TN.fwd : 5)*Math.pow(t, TN.exp !== undefined ? TN.exp : 1.6);
+          let cr = Math.cos(tilt), nr = Math.sin(tilt);
+          // HOLD-IN: the hold base pulled toward the chest (fraction of
+          // the sword mount's forward offset) — at full offset the arms
+          // were ALREADY stretched straight before the drive, so the
+          // spring read as rubber; pulled in, compression = bent elbows
+          // and full extension lands exactly on the snap.
+          let bx = rest0.x * (TN.basek !== undefined ? TN.basek : 0.4);
+          // up-tilts ride a touch FORWARD: their extension climbs, so the
+          // same path read as starting BEHIND the body and ending at
+          // center (caught at NE vs SW) — biased ahead, compression sits
+          // at the center and the drive reads forward like the S-side.
+          if (nr < -0.05) bx += 2.5;
+          // TY is authoritative (no rest0.y floor — it blocked exploring
+          // overhead lines; crown ~ -18.6, shoulder -8, waist -3)
+          // The drive follows the tilt line through the WHOLE cycle: any
+          // phase-split height term made the grip bounce mid-cycle and
+          // each stab read as two motions.
+          anim.grip = { x: bx + drive*cr,
+                        y: (TN.ty !== undefined ? TN.ty : -6.4)
+                           + drive*nr + (nr > 0.05 ? DROP : nr < -0.05 ? DROPN : 0) };
+          anim.swordRot = Math.PI/2;
         } else {
           // wide DRAMATIC arc (user call): the grip rises up over the
           // head at the windup and drives down through the strike; the
           // neutral angle (0.5) still lands exactly on the rest anchor
           let phi = -0.63 - 1.3*ssa;
           // Radius: extended at the strike, and BOOSTED past the neutral
-          // on the windup side so the HAND genuinely rises over the head
+          // on the windup side so the HAND genuinely rises OVER the head
+          // — the fist crests slightly above and behind it at full windup
           // (a short cocked radius left the overhead drama all wrist —
           // the arm barely moved, user caught it). The boost is zero AT
           // the neutral (s = sin 0.5), so the orbit still lands exactly
           // ON the rest anchor and engage can't pop.
-          let base = e.utype === 'militia' ? 4.2 : 3.4;
-          let r = base - 1.2*anim.s + 9*Math.max(0, anim.s - 0.479);
+          let base = isMountedUnit(e.utype) ? 3.4 : 4.2;
+          let r = base - 1.2*anim.s + 18*Math.max(0, anim.s - 0.479);
           let r0 = base - SWING_NEUTRAL.rs;
           let ox = -r0*SWING_NEUTRAL.cos + r*Math.cos(phi);
           let oy = -r0*SWING_NEUTRAL.sin + r*Math.sin(phi);
@@ -2890,33 +3056,13 @@ function drawUnit(e){
           anim.lean = lean*0.18; anim.lunge = -0.5*anim.s;      // horse surge
           anim.upperLean = lean*0.8; anim.upperPivot = -12;     // rider from the saddle
         } else {
-          anim.upperLean = lean; anim.upperLunge = -1.0*anim.s; // torso from the hips
+          // spearman: NO lean — the upperly rotation tilted the level
+          // pierce line (caught at E/W); the lunge alone drives the body
+          anim.upperLean = e.utype === 'spearman' ? 0 : lean;
+          anim.upperLunge = -1.0*anim.s; // torso from the hips
           anim.upperPivot = -2.5; anim.stance = 1.6;
         }
       } else { anim.s = 0; anim.grip = { x: rest0.x, y: rest0.y }; }
-    } else if (e.utype === 'spearman') {
-      // arm states: BOTH hands always on the shaft
-      anim.gripS = -1;
-      anim.armState = { '-1': 'grip', '1': 'support' };
-      {
-        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
-        let M = RIG_MOUNTS.spearman.spear, OV = RIG_OVERRIDES.spearman[e.dir] || 0;
-        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
-        // spear REST anchor projected from the same mount (the sword's
-        // rest0 convention) — centerline, so S/N hold it dead-center
-        anim.spearRest = { x: e.facing * M.fwd * F.sx,
-                           y: M.fwd * F.sy * RIG_YK - M.up };
-      }
-      if (anim.swinging) {
-        anim.theta = aimAngle() + Math.PI/4;
-        // Shaped thrust: slow pull-back, fast jab along the shaft
-        let ph = ((tick*0.07+e.id*0.4)%1+1)%1;
-        let u = ph<0.72?ph/0.72:1-(ph-0.72)/0.28;
-        anim.off = -2.5*u + 4.5*(1-u);
-        anim.upperLean = 0.05*anim.off;  // torso drives the jab from the hips
-        anim.upperLunge = 0.45*anim.off;
-        anim.upperPivot = -2.5; anim.stance = 1.6;
-      }
     } else if (e.utype === 'archer') {
       // Draw cycle rides the REAL reload timer, so the nocked arrow
       // releases exactly when the real arrow leaves (works on MP guests).
@@ -2924,7 +3070,10 @@ function drawUnit(e){
       anim.drawT = Math.min(1, Math.max(0, 1 - cd/(rof*0.85)));
       anim.justFired = cd > rof*0.85;
       anim.snapT = Math.max(0, (cd - rof*0.85)/(rof*0.15)); // string still snapping forward
-      anim.pull = -1.6 - 4.4*anim.drawT;
+      // draw starts ON the brace string (x 4.6, matching the rest bow)
+      // and anchors at the chest — the old -6 full draw dragged the rear
+      // arm way past the shoulder (overstretched, user call)
+      anim.pull = 4.6 - 7.6*anim.drawT;
       // arm states: bow always in the left fist; the right hand is on
       // the string only while drawing — otherwise it IS the idle arm
       anim.gripS = -1;
@@ -2932,8 +3081,8 @@ function drawUnit(e){
         '1': (anim.swinging && !anim.justFired) ? 'support' : 'idle' };
       {
         let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
-        let M = RIG_MOUNTS.archer.bow, OV = RIG_OVERRIDES.archer[e.dir] || 0;
-        anim.heldD = OV.heldDepth !== undefined ? OV.heldDepth : M.lat * R.d + M.fwd * F.d;
+        let M = RIG_MOUNTS.archer.bow;
+        anim.heldD = mountHeldD(M, R, F);
       }
       if (anim.swinging) {
         anim.theta = aimAngleBallistic();
@@ -2983,22 +3132,18 @@ function drawUnit(e){
       shx *= anim.shDx;
       let shF = shx+hxo, shR = -shx+hxo;
       let shFy = -8 + shdy + hyo, shRy = -8 - shdy + hyo;
-      // Cross-body hold (SW/NE): the body is 3/4 ROTATED and the
-      // shoulders ride the rotation — the loose shoulder tucks INWARD,
-      // the sword shoulder rides toward the facing. At SW the ENTIRE
-      // sword arm (shoulder included) sits left of the body's center.
-      if (anim.swMirror && !anim.profile) { shF -= 1.2; shR += (e.dir === 2 ? 2.6 : 2.4); }
       // SE reads slightly TURNED: the sword-side shoulder rides a touch
       // toward the facing (user call). Two-handed (dark-age) also applies
       // it at SW — the same shift in the mirrored frame — so the pair
       // stays an EXACT mirror; feudal SW keeps its cross-body shifts.
-      if (e.utype === 'militia' && (e.dir === 0 || (e.dir === 2 && anim.twoHand))) shF += 0.8;
+      if ((e.utype === 'militia' || e.utype === 'spearman') &&
+          (e.dir === 0 || (e.dir === 2 && anim.twoHand))) shF += 0.8;
       // The walk swing is FORWARD/BACK motion. Facing the camera or away
       // (S/N) that axis is depth, not screen-x — an x swing there drags
       // the hands across the torso silhouette (vanishing behind it, or
       // smearing over the unit's back), so it maps to a small antiphase
       // bob instead.
-      let nsView = e.dir === 1 || e.dir === 5;
+      let nsView = faceOnView;
       let axial = nsView ? 0 : anim.armSwing;
       let bobY  = nsView ? anim.armSwing*0.4 : 0;
       // Idle/walk: arms hang extended, symmetric about the shoulders. In
@@ -3043,8 +3188,7 @@ function drawUnit(e){
           // tool art. Saws stay one-handed (frame grip).
           // (same predicate as the tool draw: frame-forward sign, ties
           // by depth — the hands must mirror WITH the art)
-          let fFx = e.facing * RIG[e.dir].sx;
-          let twf = fFx > 0.05 ? 1 : fFx < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
+          let twf = frameFwdSign();
           let c = Math.cos(anim.swing), n = Math.sin(anim.swing);
           let gx = anim.toolRest.x + twf*(2.2*c + 2.4*n), gy = anim.toolRest.y + 2.2*n - 2.4*c;
           let bend = 0.8;
@@ -3055,8 +3199,11 @@ function drawUnit(e){
           if (gT === 'rear') rear = { x: gx, y: gy, bend: -bend };
           else front = { x: gx, y: gy, bend };
           if (anim.armState[-anim.gripS] === 'support') {
-            // support fist further DOWN the handle
-            let sx2 = anim.toolRest.x + twf*(-1.5*c + 1.7*n), sy2 = anim.toolRest.y - 1.5*n - 1.7*c;
+            // support fist further DOWN the handle — ON the handle LINE
+            // (collinear with the grip vector (2.2,-2.4) about the
+            // anchor; the old (-1.5,-1.7) sat up-back OFF the shaft and
+            // the near arm floated misaligned, caught at NE)
+            let sx2 = anim.toolRest.x + twf*(-0.9*c - 1.0*n), sy2 = anim.toolRest.y - 0.9*n + 1.0*c;
             let s2 = { x: sx2, y: sy2, bend: 0.5 };
             if (gT === 'rear') front = s2; else rear = s2;
           }
@@ -3066,8 +3213,7 @@ function drawUnit(e){
           // projected tool anchor (same predicate/side as every tool —
           // the fixed (2,−8) + facingNorth mirror was the last pre-rig
           // hand bind)
-          let fFx2 = e.facing * RIG[e.dir].sx;
-          let twf2 = fFx2 > 0.05 ? 1 : fFx2 < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
+          let twf2 = frameFwdSign();
           let c2 = Math.cos(anim.sweep), n2 = Math.sin(anim.sweep);
           let gx = anim.toolRest.x + twf2*(1.2*c2 - 2.2*n2);
           let gy = anim.toolRest.y + 1 + 1.2*n2 + 2.2*c2;
@@ -3088,30 +3234,22 @@ function drawUnit(e){
           front = { x: w, y: anim.carryRest.y + 2.2, bend: -0.3 };
           rear  = { x: -w, y: anim.carryRest.y + 2.2, bend: 0.3 };
         }
-      } else if (e.utype === 'militia' || isMountedUnit(e.utype)) {
-        // ONE sword-hand bind for foot + mounted. bend per pose: the
+      } else if (e.utype === 'militia' || e.utype === 'spearman' || isMountedUnit(e.utype)) {
+        // ONE sword-hand bind for foot + spearman + mounted. bend per pose: the
         // cross-body arm SAGS (0.45); face-on vertical arms bow OUTWARD
         // (sign flips with the arm); else the standard reach bow.
         let g = { x: anim.grip.x+hxo, y: anim.grip.y+hyo,
-                  bend: anim.swMirror ? 0.45
-                      : anim.faceOn ? (anim.swArm === 'rear' ? 0.35 : -0.35)
-                      : 0.5 };
+                  bend: anim.faceOn ? (anim.swArm === 'rear' ? 0.35 : -0.35) : 0.5 };
         if (anim.swArm === 'rear') rear = g; else front = g;
         // DARK-AGE militia (no shield yet): the off hand JOINS the sword
-        // — a TWO-HANDED grip, the second fist stacked 1.5 down the
-        // handle. Its offset runs through the same rot→foreshorten→aim
-        // chain drawSwordHeld applies, so it rides rest, orbit swings
-        // and the face-on chop alike. (Riders keep a hanging off arm —
+        // — a TWO-HANDED grip, both fists on the SAME grip point in every
+        // view (a 1.5 down-the-handle stack was tried and reverted — it
+        // dragged one arm visibly lower, read as broken, user call).
+        // Face-on the support elbow mirrors the grip's bend so the two
+        // arms are exact mirrors. (Riders keep a hanging off arm —
         // reins; shielded tiers strap it below.)
         if (anim.twoHand) {
-          // support fist stacked 1.5 down the handle, both hands ON the
-          // blade axis (lateral straddle variants were tried in both
-          // orientations and reverted — the centered stack wins)
-          let rot = anim.swinging ? anim.swordRot : anim.restRot;
-          let k = (anim.swinging && anim.fwdK !== undefined) ? anim.fwdK : 1;
-          let px = -1.5*Math.sin(rot), py = 1.5*Math.cos(rot)*k;
-          let am = anim.swinging ? anim.swordAimM : 0, c2 = Math.cos(am), n2 = Math.sin(am);
-          let g2 = { x: g.x + px*c2 - py*n2, y: g.y + px*n2 + py*c2, bend: 0.4 };
+          let g2 = { x: g.x, y: g.y, bend: anim.faceOn ? -g.bend : 0.4 };
           if (anim.swArm === 'rear') front = g2; else rear = g2;
         }
         // the non-grip arm: shield state binds it to the shield's inner
@@ -3122,14 +3260,6 @@ function drawUnit(e){
           let sg = shieldGrip();
           if (anim.swArm === 'rear') front = sg; else rear = sg;
         }
-      } else if (e.utype === 'spearman') {
-        // Two-hand grip ON the shaft (drawn along y=-x+2 locally): thrust
-        // rides the shaft before the aim rotation, matching the held layer.
-        const onShaft = (px, py) => anim.swinging
-          ? gripAt(anim.spearRest, px + 0.75*anim.off, py - 0.75*anim.off)
-          : gripAt(anim.spearRest, px, py);
-        front = { ...onShaft(4, -2),     bend: 0.4 };
-        rear  = { ...onShaft(-2.5, 4.5), bend: 0.4 };
       } else if (e.utype === 'archer') {
         // Front fist wraps the riser BELOW the arrow line (the arrow skims
         // over the hand, not through it) — closer grip keeps the arm bent;
@@ -3151,7 +3281,7 @@ function drawUnit(e){
     const upperly = (fn) => {
       if (!anim.upperLean && !anim.upperLunge) { fn(); return; }
       X.save();
-      if (e.dir === 1 || e.dir === 5) {
+      if (faceOnView) {
         // Facing the camera (S) or away (N): forward is down/up-screen —
         // a sideways rotate reads as a SIDE attack. Lunge shifts along
         // the view axis; the lean foreshortens the torso instead.
@@ -3168,7 +3298,7 @@ function drawUnit(e){
     };
     const headly = (fn) => {
       // no counter-rotation in the S/N views — the torso doesn't rotate there
-      if (!anim.headLean || e.dir === 1 || e.dir === 5) { fn(); return; }
+      if (!anim.headLean || faceOnView) { fn(); return; }
       X.save();
       X.translate(humanXOffset, -11+humanYOffset);
       X.rotate(anim.headLean);
@@ -3452,8 +3582,9 @@ function drawUnit(e){
     // wrapped in closures so the invocation order can flip per facing.
     const drawBodyLayer = () => {
     if(!isMountedUnit(e.utype)){
-      // Human legs: planted — they do NOT ride the upper-body lean. During
-      // actions the stance spreads (front foot steps out, rear braces).
+      // Human legs: they never ride the upper-body LEAN (rotation), but
+      // they do follow the LUNGE below. During actions the stance spreads
+      // (front foot steps out, rear braces).
       // POSE-RIG legs: hips sit ±lat on the body's lateral axis and the
       // stride swings along the FACING, both projected per dir — profile
       // walkers scissor full screen-x strides, face-on walkers read as a
@@ -3462,17 +3593,38 @@ function drawUnit(e){
       let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       let walk = moving ? Math.sin(tick*0.4+e.id)*2.5 : 0;
       let st = anim.stance || 0;
+      // legs FOLLOW the attack lunge, on the SAME axis upperly translates
+      // the torso (view-axis y at S/N, screen-x else): hips ride half of
+      // it, the front foot steps fully with it, the rear foot stays
+      // planted — the segmented torso can no longer detach from standing
+      // legs. upperLunge is only set by action seams: idle/walk exact.
+      let lgx = 0, lgy = 0;
+      if (anim.upperLunge) {
+        if (faceOnView) lgy = (e.dir === 1 ? 1 : -1)*anim.upperLunge*0.6;
+        else lgx = anim.upperLunge;
+      }
       // lateral screen separation, floored so profile legs don't merge
       let latX = 2.8 * R.sx, latY = 2.8 * R.sy;
       if (Math.abs(latX) < 0.6) latX = 0.6;
       const leg = (s, stride) => { // s = ±1 lateral side; stride rides the facing
-        let hx2 = e.facing * (s * latX) + humanXOffset;
-        let fx2 = e.facing * (s * latX + stride * F.sx) + humanXOffset;
-        let fy2 = 3 + s * latY + stride * F.sy;
+        let f = stride > 0 ? 1 : 0; // the stride-forward leg does the stepping
+        let hx2 = e.facing * (s * latX) + humanXOffset + lgx*0.5;
+        let hy2 = -2 - bob + lgy*0.5;
+        let fx2 = e.facing * (s * latX + stride * F.sx) + humanXOffset + lgx*f;
+        let fy2 = 3 + s * latY + stride * F.sy + lgy*f;
+        // KNEE: the elbow treatment — one quadratic, control point pushed
+        // along the FACING (foreshortens at S/N for free). The forward-
+        // swinging leg flexes on the walk, the front leg crouches under
+        // an attack lunge; a braced rear leg stays STRAIGHT (kneeK 0 =
+        // straight line, so the idle stance is bit-identical).
+        let kneeK = Math.min(2, Math.max(0, stride)*0.5 + f*Math.hypot(lgx, lgy)*0.35);
         X.beginPath();
         // hip anchored INSIDE the torso (bottom edge ≈ −1; legs draw
         // behind it) so the lowered-side leg never detaches from the body
-        X.moveTo(hx2, -2 - bob); X.lineTo(fx2, fy2 - bob);
+        X.moveTo(hx2, hy2);
+        if (kneeK) X.quadraticCurveTo((hx2+fx2)/2 + e.facing*F.sx*kneeK,
+                                      (hy2 + fy2 - bob)/2 + F.sy*kneeK, fx2, fy2 - bob);
+        else X.lineTo(fx2, fy2 - bob);
         X.strokeStyle = '#000000'; X.lineWidth = 3.0/UNIT_SCALE; X.lineCap = 'round'; X.stroke();
         X.strokeStyle = '#5b3a1e'; X.lineWidth = 1.5/UNIT_SCALE; X.stroke();
         X.fillStyle = '#3a2412';
@@ -3768,7 +3920,9 @@ function drawUnit(e){
         X.rotate(anim.swordAimM);
         if (anim.fwdK !== undefined) X.scale(1, anim.fwdK);
       }
-      drawBigSword(anim.swinging ? anim.swordRot : anim.restRot, weaponTier, anim.faceOn);
+      let rot = anim.swinging ? anim.swordRot : anim.restRot;
+      if (e.utype === 'spearman') drawBigSpear(rot, weaponTier, anim.spearLen || 1);
+      else drawBigSword(rot, weaponTier, anim.faceOn);
       X.restore();
     };
 
@@ -3890,8 +4044,7 @@ function drawUnit(e){
       // frame-forward sign (a depth-sign flip inverted NW/NE, user
       // caught it); the face-on ties (S/N, no lateral forward) fall to
       // the depth sign — S ahead, N mirrored away.
-      let fFx = e.facing * RIG[e.dir].sx;
-      let twf = fFx > 0.05 ? 1 : fFx < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
+      let twf = frameFwdSign();
       // One impact burst per cycle, right as the tool lands. Detected by the
       // cycle COUNTER advancing between frames, not by a frame happening to
       // land inside the narrow strike window — at 4x speed that window (7%
@@ -3945,10 +4098,7 @@ function drawUnit(e){
         } else {
         X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Long handle
-        X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
-        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.8/UNIT_SCALE;
-        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
+        strokeShaft(0, 1, 9, -13, 3.4, 1.8);
         // Felling-axe head, authored in a shaft-aligned frame (+x along
         // the handle, +y toward the strike): socket wraps the shaft end,
         // cheeks flare into a curved cutting edge facing the swing, small
@@ -3989,10 +4139,7 @@ function drawUnit(e){
         }
         X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Long handle
-        X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';
-        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.8/UNIT_SCALE;
-        X.beginPath();X.moveTo(0,1);X.lineTo(9,-13);X.stroke();X.lineCap='butt';
+        strokeShaft(0, 1, 9, -13, 3.4, 1.8);
         // Big curved pick head, points tapering both ways. Gold Mining
         // reads on the GOLD miner's pick as the polished tier (dark→
         // bright); stone mining has no tech, so its pick stays plain.
@@ -4012,10 +4159,7 @@ function drawUnit(e){
         }
         X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Handle
-        X.strokeStyle='#000000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
-        X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.7/UNIT_SCALE;
-        X.beginPath();X.moveTo(0,1);X.lineTo(7.5,-11);X.stroke();X.lineCap='butt';
+        strokeShaft(0, 1, 7.5, -11, 3.2, 1.7);
         // Two-faced wooden mallet, authored in a shaft-aligned frame so
         // the barrel stays PERPENDICULAR to the handle at every swing
         // angle: slight belly bulge, iron bands at both ends, bright
@@ -4052,49 +4196,12 @@ function drawUnit(e){
         X.lineCap='butt';
         X.restore();
       }
-    } else if(e.utype==='militia'){
-      // Militia broadsword — pose entirely from the sword seam (a corpse
-      // has dropped its sword; the shield stays strapped to the arm).
+    } else if(e.utype==='militia' || e.utype==='spearman'){
+      // Militia broadsword / spearman long spear — pose entirely from the
+      // shared sword seam; only the art differs (a corpse has dropped its
+      // weapon; the militia shield stays strapped to the arm).
       if(!e.corpseRot) drawSwordHeld(0, 0);
       // (kite shield drawn in drawShieldLayer — always on top)
-    } else if(e.utype==='spearman'&&!e.corpseRot){
-      // Long spear with a big leaf-shaped head; the thrust is shaped —
-      // slow pull-back, fast jab along the shaft. (Corpses drop it —
-      // drawCorpse lays it on the ground.)
-      let swinging = anim.swinging; // gate + thrust phase from the hand-pose seam
-      X.save(); X.translate(anim.spearRest.x, anim.spearRest.y+humanYOffset);
-      if(swinging){
-        // Point the shaft at the target: un-mirror first (same trick as
-        // the bow above), then rotate. The spear is drawn along -45°
-        // locally, so rotating by aim+45° lays it on the attack line; the
-        // thrust offset below is along the shaft, so it follows for free.
-        X.scale(e.facing,1);
-        X.rotate(anim.theta);
-        X.translate(anim.off*0.75, -anim.off*0.75);
-      }
-      X.strokeStyle='#000'; X.lineWidth=3.2/UNIT_SCALE; X.lineCap='round';
-      X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
-      X.strokeStyle='#8B4513'; X.lineWidth=1.6/UNIT_SCALE;
-      X.beginPath(); X.moveTo(-8, 10); X.lineTo(12, -10); X.stroke();
-      X.lineCap='butt';
-      // Spearhead tier (attack techs), dark→bright like the sword: 0 crude
-      // grey iron, 1 forged steel (leaf head), 2 polished DIAMOND head.
-      X.fillStyle = weaponTier >= 2 ? '#f2f6fb' : weaponTier >= 1 ? '#dde3ea' : '#a7abb0';
-      X.strokeStyle='#000'; X.lineWidth=1.1/UNIT_SCALE; X.lineJoin='round';
-      if(weaponTier >= 2){
-        // Diamond symmetric about the shaft axis: back point overlaps the
-        // shaft end, widest at mid-head, tip along the shaft direction.
-        X.beginPath();
-        X.moveTo(19.4, -17.4); X.lineTo(13.0, -15.6); X.lineTo(11.2, -9.2); X.lineTo(17.6, -11.0);
-        X.closePath(); X.fill(); X.stroke();
-      } else {
-        // Leaf head symmetric about the shaft axis: base corners sit at
-        // shaft-end ± perpendicular, tip continues along the shaft direction.
-        X.beginPath();
-        X.moveTo(10, -12); X.lineTo(17.6, -15.6); X.lineTo(13.9, -8.1); X.closePath();
-        X.fill(); X.stroke();
-      }
-      X.restore();
     } else if(e.utype==='archer'&&!e.corpseRot){
       // Big bow with a full draw cycle: nock and pull back slowly, release,
       // string snaps forward and vibrates until the next arrow. (Corpses
@@ -4159,11 +4266,13 @@ function drawUnit(e){
         X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(anim.pull, 0); X.lineTo(tipX, tipY); X.stroke();
         if (!arrowBack) drawNockedArrow();
       } else {
-        // String at rest — vibrates briefly right after the release, decaying
-        // over the first 15% of the reload window
+        // String at rest — STRAIGHT between the tips (ctrl on the chord;
+        // the old ctrl-at-0 relied on tips sitting near x 0 and would sag
+        // slack against the shallow bow) — vibrating briefly right after
+        // the release, decaying over the first 15% of the reload window
         let vib = swinging ? Math.sin(tick*1.2)*1.8*anim.snapT : 0;
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(vib, 0, tipX, tipY); X.stroke();
+        X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(tipX + vib, 0, tipX, tipY); X.stroke();
       }
       X.restore();
     } else if(isMountedUnit(e.utype)&&!e.corpseRot){
@@ -4255,7 +4364,7 @@ function drawUnit(e){
     // Origin = the ground point; the facing mirror flips both. Corpses
     // never set these. S/N views surge along the view axis instead of
     // sideways.
-    if (e.dir === 1 || e.dir === 5) {
+    if (faceOnView) {
       if (anim.lunge) X.translate(0, (e.dir === 1 ? 1 : -1)*anim.lunge*0.6);
     } else {
       if (anim.lean) X.rotate(anim.lean);
@@ -4278,42 +4387,20 @@ function drawUnit(e){
         // the blade over it (the blade still peeks above the silhouette
         // through the arc); NEAR hand (L at NW, R at NE) → sword in
         // FRONT of the horse and its head. No near side at S/N.
-        let farGrip = anim.gripS * R.d < -0.05;
-        if (farGrip) held = Math.min(held, -0.2);
+        if (anim.gripS * R.d < -0.05) held = Math.min(held, -0.2);
         else if (anim.gripS * R.d > 0.05) held = Math.max(held, 0.2);
         // shield from the SHIELD RIG — far-side braces render BEHIND the
         // horse like the far-side sword (user call at NW; edges still
         // peek past the silhouette)
         let shield = anim.shieldState ? anim.shieldD : -99;
-        // same STATE depth rule as the militia's, plus the same horse
-        // fact for the IDLE (rein) arm — it hangs ON the flank
-        const armDepth = (s) => {
-          let st = anim.armState[s];
-          if (st === 'grip' || st === 'support') {
-            if (farGrip && st === 'grip') return held - 0.1; // deepest, behind the horse
-            let d = (st === 'grip' && anim.armDPin !== undefined) ? anim.armDPin
-                  : (st === 'grip' && anim.swMirror) ? held + 0.5
-                  : (s * 4.5 * R.d + held) / 2;
-            // shoulder side decides occlusion at all times: near reaches
-            // around, its hand wrapping the handle viewer-side (over body
-            // AND sword); far tucks behind the torso
-            if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
-            else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
-            return d;
-          }
-          if (st === 'shield') return shield - 0.002; // just under its plate
-          let hang = s * 4.5 * R.d + 0.15 * F.d;
-          return hang < 0.01 ? 0.005 : hang; // the flank clamp
-        };
-        // the plate straps OUTSIDE its arm — but ONLY on the near side:
-        // a far-side (behind-the-horse) shield must not get dragged on
-        // top by the idle arm's flank clamp (user caught it at NW)
-        if (anim.shieldState && shield > 0 && anim.armState[-anim.gripS] !== 'shield') {
-          let ad = armDepth(-anim.gripS);
-          if (shield < ad + 0.03) shield = ad + 0.03;
-        }
+        // the shared rule + horse riders: far grip pinned just under the
+        // sword ("arm deepest with the blade over it"), the idle rein
+        // arm hangs ON the flank; nearOnly strap-out (user caught NW)
+        const armDepth = (s) => armDepthRule(s, { held, R, F,
+          farGripPin: true, flankClamp: true, shield, shieldGap: 0.002 });
+        shield = strapShieldOut(shield, armDepth, true);
         let loose = anim.swArm === 'front' ? 'rear' : 'front';
-        let parts = [
+        runParts([
           [held, () => upperly(drawHeldLayer)],
           [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
           [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
@@ -4321,63 +4408,48 @@ function drawUnit(e){
           [0.01, drawBodyLayer],
           [8, () => { if (horseHeadFront) horseHeadFront(); }],
           [shield, () => upperly(drawShieldPiece)],
-        ];
-        parts.sort((a, b) => a[0] - b[0]);
-        for (let i = 0; i < parts.length; i++) parts[i][1]();
+        ]);
       }
     }
-    else if (e.utype === 'militia') {
+    else if (e.utype === 'militia' || e.utype === 'spearman') {
       // POSE-RIG parts draw (Stage A2): every part takes a camera depth
       // from its rig anchors and the ascending sort IS the draw order —
-      // the per-dir layer branches this replaces survive only as depth
-      // pins in RIG_OVERRIDES (heldDepth/armDepth/shieldDepth).
+      // the per-dir layer branches this replaces survive only as the
+      // mounts' profileHeld sort pin.
       let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
-      // mount/overrides/mode were resolved ONCE at the seam — the parts
-      // pass reads the pinned depths (anim.heldD/armDPin) + shield rig
+      // mount/mode were resolved ONCE at the seam — the parts pass
+      // reads the resolved depth (anim.heldD) + shield rig
       let held = anim.heldD;
+      // single-hand grip, the mounted near/far convention: a far-side
+      // grip (L at SE/E, R at SW/W) swings the cross-body sword BEHIND
+      // the body, drawn right after its own arm; a near-side grip (L at
+      // NW, R at NE) holds it in FRONT — body, then sword, then the
+      // active arm wrapping it.
+      if (!anim.twoHand) {
+        if (anim.gripS * R.d < -0.05) held = Math.min(held, -0.2);
+        else if (anim.gripS * R.d > 0.05) held = Math.max(held, 0.2);
+      }
+      // two-handed, facing away with a near side (NW/NE): same front
+      // hold — body, then sword, then the near active arm + shoulder
+      // wrapping it; the far active arm stays tucked behind the torso.
+      else if (held < -0.05 && Math.abs(R.d) > 0.05) held = Math.max(held, 0.2);
       // shield depth from the SHIELD RIG (braced forearm mount or the
       // back sling — resolved at the seam with position/face/width)
       let shield = anim.shieldState ? anim.shieldD : -99;
-      // ONE depth rule per arm STATE: grip/support span THEIR OWN
-      // shoulder to the grip (cross-body wraps top the handle; pins win;
-      // mode-B swings ride the sword — a rest-split far arm read as
-      // missing mid-attack, user caught it); shield hands sit just under
-      // the shield they strap; idle arms use the hanging rule — the SAME
-      // rule at all times, attacks included.
-      const armDepth = (s) => {
-        let st = anim.armState[s];
-        if (st === 'grip' || st === 'support') {
-          let d = (st === 'grip' && anim.armDPin !== undefined) ? anim.armDPin
-                : (st === 'grip' && anim.swMirror) ? held + 0.5
-                : (s * 4.5 * R.d + held) / 2;
-          // shoulder side decides the occlusion AT ALL TIMES, rest and
-          // swing alike (user calls): a camera-side shoulder's arm reaches
-          // around visibly and its hand wraps the handle from the viewer
-          // side — over body AND sword; a far shoulder's arm tucks BEHIND
-          // the torso (its fist still sweeps past the silhouette).
-          if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
-          else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
-          return d;
-        }
-        if (st === 'shield') return shield - 0.05;
-        return s * 4.5 * R.d + 0.15 * F.d; // idle hang (villager-standard)
-      };
-      // the plate straps OUTSIDE its arm — never under it (bites facing
-      // away, where the off arm is IDLE and hangs at the plate's side)
-      if (anim.shieldState && anim.armState[-anim.gripS] !== 'shield') {
-        let ad = armDepth(-anim.gripS);
-        if (shield < ad + 0.03) shield = ad + 0.03;
-      }
+      // the shared rule + the sword rider: where the sword rides behind
+      // the body (N-side dirs) the far arm draws FIRST, under it too, so
+      // the grip wraps the handle from the far side
+      const armDepth = (s) => armDepthRule(s, { held, R, F,
+        farBehindHeld: true, shield, shieldGap: 0.05 });
+      shield = strapShieldOut(shield, armDepth, false);
       let loose = anim.swArm === 'front' ? 'rear' : 'front';
-      let parts = [
+      runParts([
         [held, () => upperly(drawHeldLayer)],
         [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
         [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
         [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
         [shield, () => upperly(drawShieldPiece)],
-      ];
-      parts.sort((a, b) => a[0] - b[0]);
-      for (let i = 0; i < parts.length; i++) parts[i][1]();
+      ]);
     }
     else {
       // spearman / archer / villager — the SAME depth-sorted parts pass:
@@ -4388,35 +4460,17 @@ function drawUnit(e){
       // camera, behind it facing away, straight from the F.d sign).
       let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       let held = anim.heldD !== undefined ? anim.heldD : 0.005;
-      const armDepth = (s) => {
-        let st = anim.armState ? anim.armState[s] : 'idle';
-        if (st === 'grip' || st === 'support') {
-          let d = (s * 4.5 * R.d + held) / 2;
-          // shoulder side decides occlusion: near reaches around, hand
-          // wrapping the shaft viewer-side; far tucks behind the torso
-          if (s * R.d > 0.05) d = Math.max(d, held + 0.1, 0.02);
-          else if (s * R.d < -0.05 && d > 0.005) d = 0.005;
-          return d;
-        }
-        if (st === 'carry') {
-          // raised arms follow the SHOULDER-SIDE rule (the idle/militia
-          // both-hands convention): the near arm grips OVER the load —
-          // visibly holding it up, the sword's viewer-side-wrap rule —
-          // and the far arm rises BEHIND the body and head to reach it
-          return s * R.d < -0.05 ? 0.005 : anim.carryD + 0.03;
-        }
-        return s * 4.5 * R.d + 0.15 * F.d; // idle hang
-      };
-      let parts = [
+      // the shared rule, no riders (carry arms follow the shoulder-side
+      // rule inside it: near grips OVER the load, far rises behind)
+      const armDepth = (s) => armDepthRule(s, { held, R, F, shieldGap: 0.05 });
+      runParts([
         [held, () => upperly(drawHeldLayer)],
         [armDepth(-1), () => upperly(() => drawArms(armFrameSide(-1)))],
         [armDepth(1), () => upperly(() => drawArms(armFrameSide(1)))],
         [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
         // the carried load is its OWN part, shown only while hauling
         [anim.carryShow ? anim.carryD : -99, () => upperly(drawCarriedLoad)],
-      ];
-      parts.sort((a, b) => a[0] - b[0]);
-      for (let i = 0; i < parts.length; i++) parts[i][1]();
+      ]);
     }
   } else {
     // Sheep — scalloped wool cloud; head tracks movement direction
