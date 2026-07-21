@@ -2187,6 +2187,9 @@ function drawUnitShadow(e, sx, sy){
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   const faceOnView = e.dir === 1 || e.dir === 5; // S/N — forward is the view axis
+  // the per-dir rig bases, fixed for the whole draw: F = the facing's
+  // screen projection, R = the lateral (unit-right) axis
+  const F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
   let scr=mapToScreen(e.x,e.y);
   let sx=Math.round(scr.sx), sy=Math.round(scr.sy+HALF_TH);
   if(isOffscreen(sx,sy,50))return;
@@ -2725,7 +2728,6 @@ function drawUnit(e){
     // hides it. (Arm layering itself is the parts pass — the old
     // farArm flag is gone.)
     {
-      let R = RIG[(e.dir + 2) & 7];
       // sPlus = which body side (±lat) lands on the mirrored frame's +x
       let sPlus = R.sx > 0.1 ? e.facing : R.sx < -0.1 ? -e.facing : 0;
       anim.shDx = Math.abs(R.sx);        // shoulder rim scale per dir
@@ -2822,7 +2824,6 @@ function drawUnit(e){
       anim.armState[-anim.gripS] = anim.carryShow ? 'carry'
         : (toolHeld && !anim.sawing && !anim.scythe) ? 'support' : 'idle';
       {
-        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
         let M = RIG_MOUNTS.villager.tool;
         anim.heldD = mountHeldD(M, R, F);
         // face-on side shift kept SMALL — 4 read as the tool drifting off
@@ -2858,7 +2859,6 @@ function drawUnit(e){
       // from ONE 3D sword mount projected through the per-dir basis (see
       // the RIG consts).
       {
-        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
         let M = SWORD_MOUNT; // militia, spearman AND mounted share it
         // ARM-STATE RESOLVER. The SWORD placement per dir is CANONICAL
         // (one mount; it NEVER moves with the mode — user call). The mode picks the ARMS only: 'L' left-hand grip
@@ -3080,7 +3080,6 @@ function drawUnit(e){
       anim.armState = { '-1': 'grip',
         '1': (anim.swinging && !anim.justFired) ? 'support' : 'idle' };
       {
-        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
         let M = RIG_MOUNTS.archer.bow;
         anim.heldD = mountHeldD(M, R, F);
       }
@@ -3590,7 +3589,6 @@ function drawUnit(e){
       // walkers scissor full screen-x strides, face-on walkers read as a
       // small vertical alternation, and on diagonals the NEAR leg stands
       // slightly lower (closer to the camera) than the far one.
-      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       let walk = moving ? Math.sin(tick*0.4+e.id)*2.5 : 0;
       let st = anim.stance || 0;
       // legs FOLLOW the attack lunge, on the SAME axis upperly translates
@@ -4059,6 +4057,11 @@ function drawUnit(e){
       let prevCyc = workSwingCycles.get(e.id);
       let impact = !window._maskDraw && working && prevCyc !== undefined && swingCyc !== prevCyc;
       if(!window._maskDraw && working) workSwingCycles.set(e.id, swingCyc);
+      // work audio at the tool's VISUAL impact; every other swing at 4x
+      // (at speed the full rate reads as machine-gun clatter)
+      const workSound = (name, x, y) => {
+        if (window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound(name, x, y);
+      };
       // Impact point in tile coords: the gather tile if known, else just ahead
       let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
       let hitY = (e.gatherY >= 0 && e.gatherY !== undefined) ? e.gatherY + 0.3 : e.y;
@@ -4073,7 +4076,7 @@ function drawUnit(e){
           // pile into the global rate limiter, which then drops them
           // ARBITRARILY — the texture turns inconsistent. Sounding every
           // OTHER swing at 4x restores the deterministic 2x cadence.
-          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('chop', hitX, hitY);
+          workSound('chop', hitX, hitY);
         }
         if (anim.sawing) {
           // Bow saw: bowed wooden frame over a straight bright blade,
@@ -4134,8 +4137,7 @@ function drawUnit(e){
       } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0&&atSite){
         if(impact){
           spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
-          // Synced to the pick's visual impact; every other swing at 4x (see chop above)
-          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('mine', hitX, hitY);
+          workSound('mine', hitX, hitY); // synced to the pick's visual impact
         }
         X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Long handle
@@ -4153,9 +4155,7 @@ function drawUnit(e){
       } else if(e.task==='build'&&e.path.length===0&&atSite){
         if(impact){
           spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
-          // Hammer audio at the mallet's visual impact; every other swing
-          // at 4x (see chop above for both rationales)
-          if(window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound('build', e.x + e.facing*0.35, e.y - 0.1);
+          workSound('build', e.x + e.facing*0.35, e.y - 0.1); // at the mallet's visual impact
         }
         X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
         // Handle
@@ -4378,7 +4378,6 @@ function drawUnit(e){
       // head in front of everything (nearest the camera), the shield
       // always on top (worn on the near arm, user call).
       {
-        let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
         // pinned depths from the seam (mode/mount/overrides resolved there)
         let held = anim.heldD;
         // The GRIP hand's shoulder side picks the sword's side of the
@@ -4416,7 +4415,6 @@ function drawUnit(e){
       // from its rig anchors and the ascending sort IS the draw order —
       // the per-dir layer branches this replaces survive only as the
       // mounts' profileHeld sort pin.
-      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       // mount/mode were resolved ONCE at the seam — the parts pass
       // reads the resolved depth (anim.heldD) + shield rig
       let held = anim.heldD;
@@ -4458,7 +4456,6 @@ function drawUnit(e){
       // use the hanging rule — identical at all times, attacks included);
       // the held item sorts by its rig-mount depth (over the body facing
       // camera, behind it facing away, straight from the F.d sign).
-      let F = RIG[e.dir], R = RIG[(e.dir + 2) & 7];
       let held = anim.heldD !== undefined ? anim.heldD : 0.005;
       // the shared rule, no riders (carry arms follow the shoulder-side
       // rule inside it: near grips OVER the load, far rises behind)
