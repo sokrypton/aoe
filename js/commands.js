@@ -773,6 +773,13 @@ function execUnitCommand(cmd){
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
       } else {
         assignAttack(s, target);
+        // Butchering yields FOOD: a mismatched load is lost the instant the
+        // order lands (same AoE2 rule as the gather-task paths) — butcher is
+        // target-based, so the GATHER_TASKS retask backstop never covers it.
+        if (s.utype === 'villager' && (target.utype === 'sheep' || target.utype === 'sheep_carcass')
+            && s.carrying > 0 && s.carryType !== 'food') {
+          s.carrying = 0; s.carryType = null;
+        }
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
