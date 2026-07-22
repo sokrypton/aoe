@@ -413,6 +413,21 @@ function aiEcoFund(ai,profile,skipBastion){
   if(!skipBastion&&(profile.maxTowers||0)>0&&ai.lastBaseHitTick!=null
      &&entities.filter(e=>e.type==='building'&&e.team===ai.team&&isTowerBtype(e.btype)).length<(profile.maxTowers||0))
     add(isUnlocked(ai.team,'TOWER')?BLDGS.TOWER.cost:BLDGS.PTOWER.cost);
+  // SIEGE-TRAIN claim while a camp stands: rams are the resolution
+  // weapon, but the wall/tower builders drained the wood the ram bank
+  // saved (med-easy 3001 autopsy: 45 waves, 62 stone walls, 0 rams,
+  // enemy TC at 60% at timeout). One ram's cost is reserved until the
+  // camped army's train reaches its deepened share.
+  if(ai.campSince!=null&&isUnlocked(ai.team,'ram')){
+    let rams=0,army=0;
+    for(let i=0;i<entities.length;i++){
+      let u=entities[i];
+      if(u.type!=='unit'||u.team!==ai.team||u.hp<=0)continue;
+      if(u.utype==='ram')rams++;
+      else if(isArmyUnit(u.utype)&&u.utype!=='scout')army++;
+    }
+    if(rams<Math.ceil((army+(profile.armyReserve||0))/3))add(UNITS.ram.cost);
+  }
   let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
   for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
   return fund;
