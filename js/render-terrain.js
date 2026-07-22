@@ -350,9 +350,9 @@ function drawTreeEntity(x,y){
   let fellTick = treeFellTicks.get(fellKey);
   if(f === 2 && fellTick !== undefined && fellTick > 0){
     let dt = tick - fellTick;
-    if(dt < 40){
+    if(dt < T30(40)){
       isFalling = true;
-      let progress = dt / 40;
+      let progress = dt / T30(40);
       fallAngle = progress * (Math.PI / 2.15); // Fall sideways
     }
   }
