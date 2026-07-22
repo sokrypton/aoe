@@ -1288,22 +1288,23 @@ function barrowAxes(e){
   let k = useDir === 1 || useDir === 5 ? 1 : 0.4;
   return { useDir, ax: { u: { x: ax.u.x, y: ax.u.y * k }, v: ax.v } };
 }
-function barrowGrips(e, tilt){
+function barrowGrips(e, tilt, shift){
   const { WB, WR, AXA, HA, HZ, FWD } = BARROW_DIM;
   let { ax } = barrowAxes(e);
-  let u = ax.u, v = ax.v;
-  const P = (a,b,c) => ({ x: (a+FWD)*u.x + b*v.x, y: (a+FWD)*u.y + b*v.y - c });
+  let u = ax.u, v = ax.v, sh = shift || 0;
+  const P = (a,b,c) => ({ x: (a+sh+FWD)*u.x + b*v.x, y: (a+sh+FWD)*u.y + b*v.y - c });
   let axle = P(AXA, 0, WR), ca = Math.cos(tilt || 0), sa = Math.sin(tilt || 0);
   let nearB = Math.sign(v.y) || 1;
   const rot = p => ({ x: axle.x + (p.x-axle.x)*ca - (p.y-axle.y)*sa,
                       y: axle.y + (p.x-axle.x)*sa + (p.y-axle.y)*ca });
   return [rot(P(HA, nearB*WB, HZ)), rot(P(HA, -nearB*WB, HZ))]; // [near, far]
 }
-function drawBarrow(e, rolling, tilt, loadFn, part){
+function drawBarrow(e, rolling, tilt, loadFn, part, kind, shift){
   const { TB, TF, WB, CB, CH, WR, AXA, HA, HZ, FWD, WTH } = BARROW_DIM;
   let { useDir, ax } = barrowAxes(e);
   let u = ax.u, v = ax.v, headOn = useDir === 1 || useDir === 5;
-  const P = (a,b,c) => ({ x: (a+FWD)*u.x + b*v.x, y: (a+FWD)*u.y + b*v.y - c });
+  let plow = kind === 'plow', sh = shift || 0;
+  const P = (a,b,c) => ({ x: (a+sh+FWD)*u.x + b*v.x, y: (a+sh+FWD)*u.y + b*v.y - c });
   let axle0 = P(AXA, 0, WR);
   X.save();
   X.translate(axle0.x, axle0.y); X.rotate(tilt || 0); X.translate(-axle0.x, -axle0.y);
@@ -1322,13 +1323,13 @@ function drawBarrow(e, rolling, tilt, loadFn, part){
     X.beginPath(); X.moveTo(p.x,p.y); X.lineTo(q.x,q.y); X.stroke();
     X.lineCap='butt';
   };
+  // wheel ground drop: at the PROFILE the near leg dips v.y·WB below
+  // the anchor plane but the centered wheel doesn't; the up-screen
+  // diagonals (NE/NW) hover worse — the damped push axis lifts the far
+  // wheel off its ground line (user caught both). Hoisted so the plow
+  // beam can aim at the REAL wheel center, not the undropped axle.
+  const wDrop = useDir === 7 ? WB*0.85*Math.abs(v.y) : useDir === 6 ? 2.2 : 0;
   const wheel = () => {
-    // PROFILE: the near leg dips v.y·WB below the anchor plane but the
-    // centered wheel doesn't — drop it to the same ground line so it
-    // isn't hovering next to the planted leg (user caught it). The
-    // up-screen diagonals (NE/NW) hover worse — the damped push axis
-    // lifts the far wheel off its ground line, so they drop further.
-    let wDrop = useDir === 7 ? WB*0.85*Math.abs(v.y) : useDir === 6 ? 2.2 : 0;
     let axle = { x: axle0.x, y: axle0.y + wDrop };
     if (headOn) { // edge-on slab — the cart's S/N wheel convention.
       // full WR height: the 0.8 shave read as a smaller wheel at S
@@ -1363,7 +1364,8 @@ function drawBarrow(e, rolling, tilt, loadFn, part){
     ringAt(axle.x, axle.y, '#6b543a');
     X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE;
     disc(axle.x, axle.y, WR); X.stroke(); disc(axle.x, axle.y, WR-1.2); X.stroke();
-    let ang = rolling ? tick*0.35 + e.id : 0.6;
+    let ang = typeof rolling === 'number' ? rolling
+            : rolling ? tick*0.35 + e.id : 0.6;
     X.strokeStyle='#8a6a4a'; X.lineWidth=1.2/UNIT_SCALE;
     for (let k = 0; k < 3; k++){
       let A = ang + k*Math.PI/3, c2 = Math.cos(A), s2 = Math.sin(A), t = WR - 0.9;
@@ -1379,11 +1381,71 @@ function drawBarrow(e, rolling, tilt, loadFn, part){
   // the FAR handle rod is its own depth part (drawn BEHIND the villager
   // on the front facings — the poles straddle the body, user call)
   if (part === 'farRod') {
-    rod(P(TB, -nearB*WB, CH), P(HA, -nearB*WB, HZ), 2.2, 1.1);
+    // plow handles fan from ONE beam root (no tray corners on a plow)
+    rod(P(TB, plow ? 0 : -nearB*WB, CH), P(HA, -nearB*WB, HZ), 2.2, 1.1);
     X.restore(); return;
   }
   let wheelFar = u.y < -0.05;        // pushing up-screen: the wheel is far
   if (wheelFar) wheel();
+  if (plow) {
+    // PLOW body on the barrow frame: beam from the handle root to the
+    // axle, a polished-steel share digging at the ground line (the
+    // plow IS the Heavy Plow tier tell — always tierSteel(2)), and the
+    // twin handles fanning back from the beam root to the same grips
+    // the barrow uses (fists weld via the shared barrowGrips).
+    // the share is a MOLDBOARD blade in the WHEEL's full convention
+    // (user call): push-plane transform, own projected anchor, two
+    // faces offset along v (the back-rim treatment), a face-on SLAB
+    // shape at S/N (the plane is edge-on there and the true
+    // projection collapses to a sliver), and painter order by the
+    // same far/near rule as the wheel.
+    // V-WEDGE share (user call): both faces meet on one shared KEEL
+    // line at the ground (closed bottom) and spread apart upward along
+    // v — the far face draws BEHIND the beam, the near face in front.
+    // No blade at S/N: the wedge is edge-on there, beam+wheel carry
+    // the head-on read alone.
+    // ONE triangle in plane coordinates for every view (the wheel's
+    // one-circle-one-transform rule); the anchor rides wDrop so blade
+    // and wheel share the same ground line in every facing — the NE
+    // collision was the wheel dropping out from under the blade, not
+    // a shape problem.
+    // the blade takes the BEAM's local share of the wheel drop (~40%
+    // at this a-position), not the full drop: constant triangle height
+    // and constant beam overlap in every view (full drop grew the
+    // blade at NE/E, user caught it); the keel floats a hair above the
+    // dropped-wheel ground there, hidden behind the wheel.
+    // up-screen the dropped wheel leans back over the blade's ground
+    // slot — the blade steps back ~2 along the axis there so the tip
+    // clears the rim (user call)
+    let shB0 = P(useDir === 6 ? 3.6 : 4.6, 0, 0);
+    let shB = { x: shB0.x, y: shB0.y + wDrop*0.39
+                   - (useDir === 6 ? 1.0 : useDir === 0 ? 0.6 : useDir === 7 ? 0.6 : 0) };
+    const shareFace = (ox, oy, fill) => {
+      X.beginPath();
+      X.save(); X.transform(u.x, u.y, 0, -1, shB.x, shB.y);
+      // NE/NW: slight clockwise turn about the apex — counters most of
+      // the axis slope so the keel runs near-parallel to the ground
+      // (user call); other views keep the pure plane keel
+      if (useDir === 6) { X.moveTo(-3.5, 0.15); X.lineTo(3.8, -0.75); }
+      // E/W: ~8deg clockwise about the apex (user call) — the front
+      // tip dips into the soil, the back corner rises
+      else if (useDir === 7) { X.moveTo(-4.15, 0.05); X.lineTo(3.05, -1.0); }
+      else { X.moveTo(-3.5, -0.3); X.lineTo(3.8, -0.3); }
+      X.restore();
+      X.save(); X.transform(u.x, u.y, 0, -1, shB.x + ox, shB.y + oy);
+      X.lineTo(-1.4, 4.6);                             // spread top corner
+      X.restore();
+      X.closePath();
+      X.fillStyle = fill; X.fill();
+      X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
+    };
+    if (!headOn) shareFace(-v.x*WTH, -v.y*WTH, '#8f8f8f');            // far, shadowed
+    rod(P(TB, 0, CH), { x: axle0.x, y: axle0.y + wDrop }, 3.4, 2.0);
+    if (!headOn) shareFace(v.x*WTH*0.7, v.y*WTH*0.7, tierSteel(2));    // near, polished
+    rod(P(TB, 0, CH), P(HA, nearB*WB, HZ), 2.2, 1.1);
+    if (!wheelFar || useDir === 6) wheel();
+    X.restore(); return;
+  }
   // rear legs to the ground — at the PROFILE the two legs project
   // nearly on top of each other and read as clutter (user caught it):
   // keep only the NEAR leg there (same geometry as every other view,
@@ -2854,10 +2916,10 @@ function drawUnit(e){
         // body with the barrow (user call) — near arm still over far.
         // N is where sx≈0 with sy<0 (F.d is strongly NEGATIVE there,
         // not ~0 — the first cut keyed on d and never fired)
-        if (anim.barrow && Math.abs(o.F.sx) < 0.05 && o.F.sy < -0.05)
+        if ((anim.barrow || anim.plowRig) && Math.abs(o.F.sx) < 0.05 && o.F.sy < -0.05)
           return anim.carryD + 0.03 + (s > 0 ? 0.01 : 0);
         return s * o.R.d < -0.05 ? 0.005
-          : anim.barrow ? Math.max(anim.carryD + 0.03, 0.02)
+          : (anim.barrow || anim.plowRig) ? Math.max(anim.carryD + 0.03, 0.02)
           : anim.carryD + 0.03;
       }
       let hang = s * 4.5 * o.R.d + 0.15 * o.F.d;
@@ -2948,6 +3010,9 @@ function drawUnit(e){
       // drag on the 30% — plowOff drives tool + hands + body alike.
       anim.plowing = anim.working && e.task === 'farm' && hasUpgrade(e.team, 'heavy_plow');
       anim.plowOff = anim.plowing ? u*4 - 2 : 0;
+      // the plow RIDES the barrow rig (same projected frame, wheel,
+      // grips, depth rules): a wheelbarrow minus the tray plus a share
+      anim.plowRig = anim.plowing;
       // Farmers below Heavy Plow work a SCYTHE: a horizontal sweep
       // (rotation about the grip anchor) at the standard work-cycle
       // rate; sweep drives tool + hand from one value.
@@ -2989,7 +3054,7 @@ function drawUnit(e){
         let Rd = RIG[(e.dir + 2) & 7].d;
         anim.gripS = Math.abs(Rd) > 0.05 ? (Rd > 0 ? 1 : -1) : -1;
       }
-      let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe || anim.plowing;
+      let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe;
       anim.armState = {};
       // the LOAD shows only while HAULING (collected, walking to the
       // drop-off) — never during ANY work action (user call, keeps the
@@ -3003,9 +3068,9 @@ function drawUnit(e){
       // the resource (user call; builders keep bare hands).
       anim.barrow = hasUpgrade(e.team, 'wheelbarrow') && !anim.working &&
         (e.carrying > 0 || (e.path.length > 0 && BARROW_TASKS.has(e.task)));
-      anim.armState[anim.gripS] = (anim.barrow || anim.carryShow) ? 'carry'
+      anim.armState[anim.gripS] = (anim.barrow || anim.plowRig || anim.carryShow) ? 'carry'
         : toolHeld ? 'grip' : 'idle';
-      anim.armState[-anim.gripS] = (anim.barrow || anim.carryShow) ? 'carry'
+      anim.armState[-anim.gripS] = (anim.barrow || anim.plowRig || anim.carryShow) ? 'carry'
         : (toolHeld && !anim.sawing && !anim.scythe) ? 'support' : 'idle';
       {
         let M = RIG_MOUNTS.villager.tool;
@@ -3023,7 +3088,7 @@ function drawUnit(e){
         // With the BARROW the anchor is the unit's GROUND CENTER — the
         // barrow rig (drawBarrow/barrowGrips) owns all directionality
         // through its projected axes; sorting by the forward sign.
-        if (anim.barrow) {
+        if (anim.barrow || anim.plowRig) {
           anim.carryRest = { x: 0, y: 4.6 };
           // sort by the barrow's own push axis, not F.d — at dead-away
           // N the face depth is ~0 but the barrow still extends
@@ -3036,7 +3101,7 @@ function drawUnit(e){
           // small angle already moves them visibly — 0.013 keeps the
           // rock under ~0.4px (0.05 swung a full bob-height at E/W and
           // the hands read as bouncing, user caught it)
-          anim.barrowTilt = moving ? bob * 0.013 : 0;
+          anim.barrowTilt = anim.plowRig ? 0 : moving ? bob * 0.013 : 0;
         } else {
           anim.carryRest = { x: 0, y: -CARRY_UP };
           anim.carryD = F.d < -0.9 ? -2 : 2;
@@ -3410,19 +3475,6 @@ function drawUnit(e){
             if (gT === 'rear') front = s2; else rear = s2;
           }
         }
-        else if (anim.plowing) {
-          // BOTH fists on the plow's twin HANDLES, riding the push
-          // stroke — the handle tops in the plow's local frame (see the
-          // held layer's geometry), stacked for the 3/4 read
-          let twp = frameFwdSign();
-          let hf = { x: anim.toolRest.x + twp*(anim.plowOff - 4.2),
-                     y: anim.toolRest.y + 2.0, bend: 0.5 };
-          let hr = { x: anim.toolRest.x + twp*(anim.plowOff - 3.0),
-                     y: anim.toolRest.y + 3.4, bend: 0.5 };
-          let gT = armFrameSide(anim.gripS);
-          if (gT === 'rear') { rear = hf; front = hr; }
-          else { front = hf; rear = hr; }
-        }
         else if (anim.scythe) {
           // hand rides the snath through the sweep, about the RIG-
           // projected tool anchor (same predicate/side as every tool —
@@ -3439,13 +3491,15 @@ function drawUnit(e){
         // (the rear arm keeps its IDLE hang during the jab — idle-state
         // arms never take attack-specific poses, user call)
         else if (fighting)  front = { x: 4.5+anim.jab*4.5, y: -6.5-anim.jab*1.5, bend: 0.6 };
-        if (anim.barrow) {
+        if (anim.barrow || anim.plowRig) {
           // both fists on the barrow's projected handle ends (barrowGrips
           // rides the same axes + axle rock drawBarrow draws with, so
-          // hands and barrow can never drift apart in any facing).
+          // hands and barrow can never drift apart in any facing) — the
+          // PLOW rides the same weld, its work stroke fed in as the
+          // shared rig shift so the arms pump with the drive.
           // -bob: fists pin to the COUNTER-BOBBED handles — the barrow
           // stays grounded while the shoulders bob, the arms absorb it.
-          let g = barrowGrips(e, anim.barrowTilt || 0);
+          let g = barrowGrips(e, anim.barrowTilt || 0, anim.plowRig ? anim.plowOff : 0);
           let by = anim.carryRest.y - bob/UNIT_SCALE;
           // each fist takes the handle on ITS OWN side of the frame
           // (assigning near-handle-to-front-arm crossed the arms on the
@@ -4180,8 +4234,8 @@ function drawUnit(e){
     // axe and the load separately). Each art keeps its shape; anchors
     // are small offsets about anim.carryRest.
     const drawCarriedLoad = (part) => {
-      if (!anim.carryShow && !anim.barrow) return;
-      if (part === 'farRod' && !anim.barrow) return;
+      if (!anim.carryShow && !anim.barrow && !anim.plowRig) return;
+      if (part === 'farRod' && !anim.barrow && !anim.plowRig) return;
       X.save();
       // the barrow COUNTER-BOBS like the legs: the whole unit origin
       // rides the walk bob (drawUnit's translate), so without this the
@@ -4191,24 +4245,29 @@ function drawUnit(e){
       // runs INSIDE the 1.25x art frame — unscaled it over-cancelled by
       // 25% and a sub-pixel bounce survived (user caught it)
       X.translate(anim.carryRest.x, anim.carryRest.y - (anim.barrow ? bob/UNIT_SCALE : 0));
-      if (anim.barrow) {
+      if (anim.barrow || anim.plowRig) {
         // the projected-box barrow rig (see drawBarrow) — the cargo art
         // draws INSIDE the tray at the slot the painter order provides,
         // shrunk and recentered (the arts keep their overhead centroids;
         // the logs hang way off the back)
-        drawBarrow(e, moving, anim.barrowTilt || 0, anim.carryShow ? (p) => {
+        drawBarrow(e, anim.plowRig ? anim.plowOff/3.6 : moving,
+                   anim.barrowTilt || 0, anim.barrow && anim.carryShow ? (p) => {
           X.save();
           // per-art seating: the tall stone stack lifts clear of the
-          // tray's underside; head-on the log stack drops back into the
-          // tray mouth (it floated above the rim at S, user call)
-          X.translate(p.x + (e.carryType === 'stone' ? 1.6 : 0),
-                      p.y - (e.carryType === 'stone' ? 1.6 : 0)
+          // tray's underside AND shrinks to the tray footprint (full
+          // size overflowed the front rim and tangled with the near
+          // arm at E, user call); head-on the log stack drops back
+          // into the tray mouth (it floated above the rim at S)
+          X.translate(p.x + (e.carryType === 'stone' ? 0.8 : 0),
+                      p.y - (e.carryType === 'stone' ? 1.2 : 0)
                           + (e.carryType === 'wood' && faceOnView ? 1.7 : 0));
+          if (e.carryType === 'stone') X.scale(0.8, 0.8);
           // full-size, icon-readable (0.75 made the resource illegible
           // at game zoom, user call) — the tray walls crop the base
           drawLoadArt();
           X.restore();
-        } : null, part);
+        } : null, part, anim.plowRig ? 'plow' : 'barrow',
+                   anim.plowRig ? anim.plowOff : 0);
         X.restore(); return;
       }
       drawLoadArt();
@@ -4505,37 +4564,6 @@ function drawUnit(e){
         X.lineWidth=2.4/UNIT_SCALE;X.stroke();
         X.lineCap='butt';
         X.restore();
-      } else if(anim.plowing){
-        // HEAVY PLOW (replaces the scythe, the Bow Saw treatment): a
-        // wheeled plow pushed along the facing — beam from the steel
-        // share up-back to twin handles at the fists, the front wheel
-        // in the ram's solid-disc idiom, rolling with the stroke.
-        X.save();X.translate(anim.toolRest.x + anim.plowOff*twf, anim.toolRest.y+1);X.scale(twf,1);
-        // OVERSIZED like the saw/scythe — at sprite scale the first cut
-        // of this art read as mush (user call): big wheel, chunky beam,
-        // a share you can't mistake.
-        strokeShaft(7, 12, -1.5, 4.5, 4.0, 2.2);     // beam
-        strokeShaft(-1.5, 4.5, -4.6, 0.6, 2.6, 1.3); // upper handle (grip fist)
-        strokeShaft(-0.4, 6.2, -3.4, 2.0, 2.6, 1.3); // lower handle (support fist)
-        // share: a BIG bright moldboard blade digging at the ground line
-        // — always polished steel (the plow IS the tier tell)
-        X.fillStyle = tierSteel(2); X.strokeStyle='#000';
-        X.lineWidth=1.2/UNIT_SCALE; X.lineJoin='round';
-        X.beginPath();X.moveTo(2.2,9.5);X.lineTo(10.2,16.2);X.lineTo(1.6,15.2);
-        X.closePath();X.fill();X.stroke();
-        // front wheel: wooden disc + rotating cross-spokes + hub (the
-        // ram's solid-disc idiom, scaled up so the wheel reads FIRST)
-        X.fillStyle='#b3874a'; X.lineWidth=1.4/UNIT_SCALE;
-        X.beginPath();X.arc(13, 10.6, 4.2, 0, Math.PI*2);X.fill();X.stroke();
-        let wr = anim.plowOff / 4.2; // roll angle from the push stroke
-        X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1.1/UNIT_SCALE;
-        X.beginPath();
-        X.moveTo(13-3.4*Math.cos(wr), 10.6-3.4*Math.sin(wr));
-        X.lineTo(13+3.4*Math.cos(wr), 10.6+3.4*Math.sin(wr));
-        X.moveTo(13+3.4*Math.sin(wr), 10.6-3.4*Math.cos(wr));
-        X.lineTo(13-3.4*Math.sin(wr), 10.6+3.4*Math.cos(wr));X.stroke();
-        X.fillStyle='#3a2412';X.beginPath();X.arc(13,10.6,0.9,0,Math.PI*2);X.fill();
-        X.restore();
       }
     } else if(e.utype==='militia' || e.utype==='spearman'){
       // Militia broadsword / spearman long spear — pose entirely from the
@@ -4809,11 +4837,11 @@ function drawUnit(e){
         // the carried load is its OWN part, shown while hauling (or
         // pushing the post-tech barrow, loaded or empty); the barrow's
         // FAR handle rod splits out to draw behind the villager
-        [(anim.barrow || anim.carryShow) ? anim.carryD : -99, () => upperly(() => drawCarriedLoad('main'))],
+        [(anim.barrow || anim.plowRig || anim.carryShow) ? anim.carryD : -99, () => upperly(() => drawCarriedLoad('main'))],
         // the poles STRADDLE the body (far rod behind) everywhere except
         // dead-on S, where the handles both come toward the viewer and
         // render in front (user call)
-        [anim.barrow ? (mirroredDir(e) === 1 ? anim.carryD - 0.01
+        [(anim.barrow || anim.plowRig) ? (mirroredDir(e) === 1 ? anim.carryD - 0.01
                         : anim.carryD > 0 ? 0.004 : anim.carryD - 0.03) : -99,
           () => upperly(() => drawCarriedLoad('farRod'))],
       ]);

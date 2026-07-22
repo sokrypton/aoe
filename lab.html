@@ -120,7 +120,20 @@
     }
     if (S.pose === 'attack') {
       u.__animAttack = true;
-      if (utype === 'villager') { u.task = 'chop'; u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y); }
+      if (utype === 'villager') {
+        // the carry select doubles as the JOB select: villager attack =
+        // the matching work animation (farm shows scythe, or the plow
+        // rig with Heavy Plow; meat butchers a spawned carcass)
+        const TASKMAP = { wood:'chop', gold:'mine_gold', stone:'mine_stone',
+                          wheat:'farm', berries:'forage' };
+        if (S.carry === 'meat') {
+          let c = createUnit('sheep_carcass', u.x + 1, u.y, 0);
+          u.task = null; u.target = c.id;
+        } else {
+          u.task = TASKMAP[S.carry] || 'chop';
+          u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y);
+        }
+      }
     }
   }
 
