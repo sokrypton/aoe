@@ -134,6 +134,10 @@ function detEntityHash(e){
     h = detMix(h, e.order.id == null ? -1 : e.order.id);
     h = detMixFloat(h, e.order.x == null ? -1 : e.order.x);
     h = detMixFloat(h, e.order.y == null ? -1 : e.order.y);
+    // Convoy destination (follow → move conversion on leader death/arrival,
+    // updateFollowOrder) — read on later ticks, so it IS sim state.
+    h = detMix(h, e.order.gx == null ? -1 : e.order.gx);
+    h = detMix(h, e.order.gy == null ? -1 : e.order.gy);
   } else {
     h = detMix(h, 0x51a17);
   }

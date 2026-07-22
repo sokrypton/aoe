@@ -2738,7 +2738,13 @@ function updateFollowOrder(e){
   if(!(fid && !e.target))return;
   let f=entitiesById.get(fid);
   if(!f||f.hp<=0){
-    if(e.order && e.order.kind==='follow' && e.order.id===fid) e.order=null;
+    if(e.order && e.order.kind==='follow' && e.order.id===fid){
+      // A CONVOY follow (gx/gy stamped by execUnitCommand) carries its own
+      // destination: the leader dying must not drop the player's move order
+      // for the whole group — finish the march as a plain move.
+      if(e.order.gx!=null) issueMoveOrder(e, e.order.gx, e.order.gy);
+      else e.order=null;
+    }
     // (a dead ESCORTEE is converted to a frozen ground post by the
     // handleDeath sweep — not cleared here)
   } else {
@@ -2755,6 +2761,15 @@ function updateFollowOrder(e){
     let lead=f.path&&f.path.length?f.path[Math.min(3,f.path.length-1)]:f;
     let sx=Math.max(0,Math.min(MAP-1,Math.round(lead.x)+(e.order.x||0)));
     let sy=Math.max(0,Math.min(MAP-1,Math.round(lead.y)+(e.order.y||0)));
+    // A CONVOY follow (gx stamped) is ONE-SHOT: once the leader settles,
+    // the march is over — hand the follower a plain move to its station,
+    // which clears itself on arrival. A standing follow here meant moving
+    // the ex-leader alone later dragged every former follower along
+    // (deliberate click-to-follow orders have no gx and persist).
+    if(e.order.gx!=null && !f.target && !(f.path&&f.path.length) && !(f.order&&f.order.kind==='move')){
+      issueMoveOrder(e,sx,sy);
+      return;
+    }
     let d=dist(e,{x:sx,y:sy});
     if(d>1.5){
       // Re-path when idle OR when the station has drifted well away from

@@ -835,7 +835,13 @@ function execUnitCommand(cmd){
           // actually close on a moving leader.
           let rx = ox - leaderSlot[0], ry = oy - leaderSlot[1];
           s.task = null; s.groupSpeed = undefined;
-          issueOrder(s, {kind:'follow', id: convoyLeader.id, x: rx, y: ry});
+          // gx/gy = this follower's OWN destination tile: a convoy follow is
+          // a one-shot group move, not a standing bond — it converts to a
+          // plain move if the leader dies (the destination must not die with
+          // it) and dissolves on arrival (updateFollowOrder, js/logic.js).
+          issueOrder(s, {kind:'follow', id: convoyLeader.id, x: rx, y: ry,
+                         gx: Math.max(0, Math.min(MAP - 1, tileX + ox)),
+                         gy: Math.max(0, Math.min(MAP - 1, tileY + oy))});
           pathUnitTo(s, Math.max(0, Math.min(MAP - 1, Math.round(convoyLeader.x) + rx)),
                         Math.max(0, Math.min(MAP - 1, Math.round(convoyLeader.y) + ry)));
         } else {
