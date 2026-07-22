@@ -2966,7 +2966,19 @@ function updateUnit(e){
     if(e.carrying>=e.carryMax){
       e.prevTask=e.task;e.task='return';return;
     }
-    if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
+    if(GATHER_TASKS[e.task]){
+      let gcfg=GATHER_TASKS[e.task];
+      // AoE2: a PARTIAL load of a DIFFERENT resource is lost at retask.
+      // Drop it the moment the new task is active — not at the first
+      // extraction (gatherFromTile's guard) — so the carry visual matches
+      // the new assignment while the villager walks over (user caught the
+      // stale carry read). A FULL mismatched load still banks first via
+      // the return-then-resume above: kinder than AoE2, long established.
+      if(e.carrying>0&&e.carryType&&e.carryType!==gcfg.resource){
+        e.carrying=0;e.carryType=null;
+      }
+      updateGatherTask(e,gcfg);
+    }
   }
   if(e.order && e.order.kind==='scout' && e.utype==='scout'){ updateAutoScoutTick(e); return; }
   updateIdleMilitary(e);
