@@ -359,8 +359,9 @@ function render(){
   });
 
   // Behind-building team-color outlines, before drawOutlines so the selection
-  // ring paints on top. Same active-ZOOM-transform requirement.
-  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
+  // ring paints on top. Same active-ZOOM-transform requirement. Cached:
+  // recomputed on alternate frames, delta-blitted between (see the wrapper).
+  drawBehindBuildingOutlinesCached(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

@@ -490,3 +490,33 @@ function drawBehindBuildingOutlines(units, occs){
   });
 }
 
+
+// ---- Every-other-frame cache for the behind-occluder pass ----
+// The outline layer is decorative (units hidden behind buildings/trees) and
+// by far the most expensive render pass (~85% of a dense frame, profiled).
+// Recompute it on alternate frames into an offscreen layer; skip frames blit
+// the cached layer shifted by the camera delta (same ZOOM), so panning never
+// ghosts and the one-frame content lag is invisible behind occluders.
+let _bsilFrameNo=0, _bsilLayer=null;
+const _bsilCam={x:0,y:0,zoom:0,topH:0,empty:true};
+function drawBehindBuildingOutlinesCached(units,occs){
+  _bsilFrameNo++;
+  const cv=X.canvas, dpr=window.devicePixelRatio||1;
+  if(!_bsilLayer||_bsilLayer.width!==cv.width||_bsilLayer.height!==cv.height){
+    _bsilLayer=document.createElement('canvas');
+    _bsilLayer.width=cv.width; _bsilLayer.height=cv.height;
+    _bsilCam.empty=true;
+  }
+  // zoom/layout changes can't be delta-blitted — recompute those frames
+  if(_bsilFrameNo%2===1||_bsilCam.zoom!==ZOOM||_bsilCam.topH!==topH||_bsilCam.empty){
+    const lc=_bsilLayer.getContext('2d');
+    lc.setTransform(1,0,0,1,0,0); lc.clearRect(0,0,_bsilLayer.width,_bsilLayer.height);
+    lc.setTransform(X.getTransform()); // the caller's dpr+ZOOM transform, verbatim
+    const sv=X; X=lc;
+    try{ drawBehindBuildingOutlines(units,occs); } finally{ X=sv; }
+    _bsilCam.x=camX; _bsilCam.y=camY; _bsilCam.zoom=ZOOM; _bsilCam.topH=topH; _bsilCam.empty=false;
+  }
+  // blit in device space, shifted by the camera pan since the layer was built
+  const dx=(_bsilCam.x-camX)*ZOOM*dpr, dy=(_bsilCam.y-camY)*ZOOM*dpr;
+  X.save(); X.setTransform(1,0,0,1,0,0); X.drawImage(_bsilLayer,dx,dy); X.restore();
+}
