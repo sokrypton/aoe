@@ -164,6 +164,8 @@ window.runSimulation = async function(opts){
         swalls: bldgs.filter(b => b.btype === 'SWALL' || b.btype === 'SGATE').length,
         pwalls: bldgs.filter(b => b.btype === 'WALL' || b.btype === 'GATE').length,
         mills: bldgs.filter(b => b.btype === 'MILL').length,
+        ptowers: bldgs.filter(b => b.btype === 'PTOWER').length,
+        towers: bldgs.filter(b => b.btype === 'TOWER').length,
         houses: bldgs.filter(b => b.btype === 'HOUSE').length,
         tcs: bldgs.filter(b => b.btype === 'TC' && b.complete).length,
         tcHp: (bldgs.find(b => b.btype === 'TC') || {}).hp | 0,

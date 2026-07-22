@@ -2505,7 +2505,13 @@ function updateUnitCombat(e){
       if(retryReady(e,RETRY.HARVEST_WAIT)){
         retryStamp(e,RETRY.HARVEST_WAIT,T30(15));
         pathUnitTo(e,Math.round(t.x),Math.round(t.y));
-        if(e.path.length===0 && d>8)e.target=null;
+        if(e.path.length===0){
+          if(d>8)e.target=null;
+          // Near but DEFINITIVELY unreachable (walled off since the kill):
+          // release, or the butcher waits at 8 tiles forever (watchdog-
+          // proven wedge). A full-but-reachable ring keeps its patience.
+          else if(findPath(Math.round(e.x),Math.round(e.y),Math.round(t.x),Math.round(t.y)).length===0)e.target=null;
+        }
       }
     } else {
       clearUnitPath(e);

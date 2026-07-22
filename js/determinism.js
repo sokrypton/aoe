@@ -304,6 +304,12 @@ function simChecksum(){
       // classifier cursor).
       h = detMix(h, ai.lastBaseHitTick == null ? -1 : ai.lastBaseHitTick);
       h = detMix(h, ai.seenWarTick == null ? -1 : ai.seenWarTick);
+      // Attacker siege camp: read every decision tick (hold/assault/recall).
+      h = detMix(h, ai.campX == null ? -1 : ai.campX);
+      h = detMix(h, ai.campY == null ? -1 : ai.campY);
+      h = detMix(h, ai.campSince == null ? -1 : ai.campSince);
+      h = detMix(h, ai.campTeam == null ? -1 : ai.campTeam);
+      h = detMix(h, ai.campAssault ? 1 : 0);
       // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
       h = detMix(h, ai.baseSurveyed ? 1 : 0);
       h = detMix(h, ai.surveyIdx || 0);

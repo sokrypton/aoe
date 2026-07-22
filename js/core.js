@@ -536,6 +536,10 @@ function freshAIState(team){
     // (canGatherTile, js/logic.js) — a 1.2-speed bear outruns 0.8-speed
     // villagers, so avoidance (AoE2 wolf routing), not fleeing, saves them.
     dangerZones: [],
+    // Attacker siege camp (aiAttackCampControl, js/ai.js): where the army
+    // regroups AT the enemy town instead of cycling home — the resolution
+    // posture. campAssault latches once the assault begins.
+    campX: null, campY: null, campSince: null, campTeam: null, campAssault: false,
     // Consecutive "this is hopeless" decision ticks (maybeResignAI,
     // js/ai.js) — AoE2 AIs concede rather than make the winner grind
     // down every last wall segment.
