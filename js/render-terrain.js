@@ -331,9 +331,9 @@ function drawTreeEntity(x,y){
   // 2. Dynamic Wind Sway — frozen in shroud (static snapshot when out of sight)
   let totalSway = 0;
   if (f === 2) {
-    let windPhase = tick * 0.015 + x * 0.45 + y * 0.35;
+    let windPhase = animTick * 0.015 + x * 0.45 + y * 0.35;
     let sway = Math.sin(windPhase) * 0.035;
-    let gust = Math.max(0, Math.sin(tick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
+    let gust = Math.max(0, Math.sin(animTick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
     totalSway = sway + gust;
   }
 

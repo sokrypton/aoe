@@ -12,6 +12,13 @@
 const TPS = 20;
 // Canonical converter: `x` is a duration in ticks ON THE 30TPS CLOCK.
 function T30(x){ return Math.round(x * TPS / 30); }
+// Render-side mirror of T30: cosmetic animation PHASES are authored in
+// 30tps units (rad per authored tick). animTick advances 1 per authored
+// tick regardless of the build TPS, so animation speed is timebase-
+// invariant like the sim's T30 durations. Live getter — the gallery/lab
+// pages drive `tick` directly and stay correct. VIEWER-ONLY: the sim
+// must never read it.
+Object.defineProperty(window, 'animTick', { get: () => tick * (30 / TPS) });
 
 const C=document.getElementById('game');
 // X is reassignable (not const): drawSelectedUnitOutlines() briefly redirects
@@ -907,11 +914,14 @@ let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0
 function setZoomAroundPoint(newZoom, sx, sy){
   newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
   if(newZoom === ZOOM) return;
-  let isoX = (sx - W/2)/ZOOM + camX;
-  let isoY = (sy - (H/2 + topH))/ZOOM + camY;
+  // Same ROUNDED anchor as render()'s transform and screenToMap — mixing
+  // rounded/unrounded centers drifts the zoom focal point sub-pixel.
+  const ax = Math.round(W/2), ay = Math.round(H/2 + topH);
+  let isoX = ax + (sx - ax)/ZOOM - W/2 + camX;
+  let isoY = ay + (sy - ay)/ZOOM - (H/2 + topH) + camY;
   ZOOM = newZoom;
-  camX = isoX - (sx - W/2)/ZOOM;
-  camY = isoY - (sy - (H/2 + topH))/ZOOM;
+  camX = isoX - (ax + (sx - ax)/ZOOM - W/2);
+  camY = isoY - (ay + (sy - ay)/ZOOM - (H/2 + topH));
   window.cameraFollowId = null;
 }
 

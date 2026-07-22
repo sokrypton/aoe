@@ -209,7 +209,7 @@ function drawHelmet(v, hx, hy, back, team, id, hturn = 0){
       // gently (idle-anim idiom: tick + id phase) — the tech's only
       // always-visible mark, so it's deliberately exaggerated.
       let fy = 0; // crowns align in every view
-      let sway = Math.sin(tick*0.12 + id*0.7)*0.16;
+      let sway = Math.sin(animTick*0.12 + id*0.7)*0.16;
       X.save();
       X.translate(hx+fx*0.5, -18.6+fy+hy); X.rotate(0.08 + sway); // rides the crown as the head turns
       X.fillStyle=teamColorLight(team); // lighter than the cap so it pops
@@ -1366,7 +1366,7 @@ function drawBarrow(e, rolling, tilt, loadFn, part, kind, shift){
     X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE;
     disc(axle.x, axle.y, WR); X.stroke(); disc(axle.x, axle.y, WR-1.2); X.stroke();
     let ang = typeof rolling === 'number' ? rolling
-            : rolling ? tick*0.35 + e.id : 0.6;
+            : rolling ? animTick*0.35 + e.id : 0.6;
     X.strokeStyle='#8a6a4a'; X.lineWidth=1.2/UNIT_SCALE;
     for (let k = 0; k < 3; k++){
       let A = ang + k*Math.PI/3, c2 = Math.cos(A), s2 = Math.sin(A), t = WR - 0.9;
@@ -1517,7 +1517,7 @@ function drawRamBody(e){
   if (ramming) {
     // ~45-tick cycle (1.5 game-s): a heavy ram swings SLOWLY (AoE2), and
     // the per-cycle impact boom needs the slower cadence to not spam.
-    let phRaw = tick*0.022 + e.id*0.4;
+    let phRaw = animTick*0.022 + e.id*0.4;
     let ph = ((phRaw % 1) + 1) % 1;
     if (ph < 0.7) dLog = -4 * (ph/0.7);
     else { let t = (ph-0.7)/0.3; dLog = -4 + 8 * (1 - Math.pow(1-t,3)); }
@@ -1537,7 +1537,7 @@ function drawRamBody(e){
     }
   }
   // Idle log sway — the only idle motion; a vehicle sits still.
-  else if (!rolling) dLog = Math.sin(tick*0.05 + e.id) * 0.4;
+  else if (!rolling) dLog = Math.sin(animTick*0.05 + e.id) * 0.4;
 
   // Rolling creak: a slow wooden groan while the ram is moving — sparse
   // (every ~3 game-s, staggered per unit), skipped at 4x speed on odd
@@ -1545,7 +1545,7 @@ function drawRamBody(e){
   // (ramCreakCycles), not by a frame landing on an exact tick — frames
   // skip ticks, and an equality check dropped most creaks.
   if (rolling && !window._maskDraw && window.playSound) {
-    let ck = Math.floor((tick + e.id * 7) / 90);
+    let ck = Math.floor((animTick + e.id * 7) / 90);
     if (ramCreakCycles.get(e.id) !== ck) {
       if (ramCreakCycles.has(e.id) && (GAME_SPEED < 4 || ck % 2 === 0)) playSound('ram_creak', e.x, e.y);
       ramCreakCycles.set(e.id, ck);
@@ -1554,7 +1554,7 @@ function drawRamBody(e){
 
   X.save();
   // Rolling: gentle sway, no head-bob (suppressed in drawUnit's translate)
-  if (rolling) X.translate(0, Math.sin(tick*0.2 + e.id) * 0.5);
+  if (rolling) X.translate(0, Math.sin(animTick*0.2 + e.id) * 0.5);
   X.translate(recoil * u.x, recoil * u.y);
   X.scale(SCALE, SCALE); // the ram out-bulks even the horse units
 
@@ -1570,7 +1570,7 @@ function drawRamBody(e){
   // v), then the lit wooden face with rotating cross-spokes and a hub sits
   // on the outer end. Head-on facings see a wheel edge-on: only the tread
   // shows, a dark rounded slab.
-  let wheelRot = tick*0.35 + e.id;
+  let wheelRot = animTick*0.35 + e.id;
   let wheel = (a, b, r) => {
     let thin = (useDir === 1 || useDir === 5);
     if (thin) {
@@ -1908,10 +1908,10 @@ function drawRamBody(e){
 function drawQuadruped(e, p){
   let useDir = mirroredDir(e);
   let moving = e.path && e.path.length>0 && !e.corpseRot;
-  let walk = moving ? Math.sin(tick*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
+  let walk = moving ? Math.sin(animTick*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
   let idle = !moving;
-  let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.18:0.07);
-  let nod = (idle && !e.corpseRot) ? Math.sin(tick*0.05+e.id)*0.5 : 0; // a dead ox's head doesn't bob
+  let swish = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idle?0.18:0.07);
+  let nod = (idle && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.5 : 0; // a dead ox's head doesn't bob
   const coat=p.coat, dark=p.maneC, legC=p.legC, hornC=p.hornC;
   const LT=p.legTop, LB=p.legBot;
   X.save(); X.translate(0,-1); X.scale(p.scale, p.scale);
@@ -2117,7 +2117,7 @@ function drawTradeCartBody(e){
 
   // Rolling creak — same cadence/counter as the ram.
   if (rolling && !window._maskDraw && window.playSound) {
-    let ck = Math.floor((tick + e.id*7)/90);
+    let ck = Math.floor((animTick + e.id*7)/90);
     if (ramCreakCycles.get(e.id) !== ck) {
       if (ramCreakCycles.has(e.id) && (GAME_SPEED<4 || ck%2===0)) playSound('ram_creak', e.x, e.y);
       ramCreakCycles.set(e.id, ck);
@@ -2125,7 +2125,7 @@ function drawTradeCartBody(e){
   }
 
   X.save();
-  if (rolling) X.translate(0, Math.sin(tick*0.2+e.id)*0.5);
+  if (rolling) X.translate(0, Math.sin(animTick*0.2+e.id)*0.5);
   // Recenter the RIG on the unit anchor: the ox extends far ahead of the
   // bed, so shift the whole drawing back along the facing axis — the
   // anchor (pathing position, shadow, selection) sits mid-composite.
@@ -2199,7 +2199,7 @@ function drawTradeCartBody(e){
   };
   // Wheels — proper spoked cartwheels: wooden rim ring, dark interior seen
   // through the spokes, 3 rotating spoke diameters, hub. Two axles (±WA/2).
-  let wheelRot = tick*0.35 + e.id;
+  let wheelRot = animTick*0.35 + e.id;
   // Edge-on wheel slab for the head-on facings (also used by the head-on
   // body assembly below).
   let slab = (a,b,r,w2) => {
@@ -2517,8 +2517,8 @@ function drawUnit(e){
   e.lastY = e.y;
 
   // Torso / Head bobbing
-  let bob=moving?Math.sin(tick*0.3+e.id)*1.5:0;
-  let sbob=moving?Math.sin(tick*0.2+e.id)*1:0;
+  let bob=moving?Math.sin(animTick*0.3+e.id)*1.5:0;
+  let sbob=moving?Math.sin(animTick*0.2+e.id)*1:0;
 
   // Save context and apply horizontal flipping based on facing direction
   X.save();
@@ -2545,7 +2545,7 @@ function drawUnit(e){
       X.rotate(progress * (Math.PI / 2.2));
       
       // Draw 4 legs twitching/kicking
-      let legKick = Math.sin(tick * 0.7 + e.id) * 3 * (1 - progress);
+      let legKick = Math.sin(animTick * 0.7 + e.id) * 3 * (1 - progress);
       X.strokeStyle='#000000'; X.lineWidth=1.8/UNIT_SCALE;
       X.beginPath();
       X.moveTo(-4, 0); X.lineTo(-4 + legKick, 5 * (1 - progress));
@@ -2659,9 +2659,9 @@ function drawUnit(e){
     if (justBit) { lunge = 4.5; jaw = Math.max(0, bsnap*2 - 1); rear = -0.2; } // CHOMP: jaws snap shut as the bite lands
     else if (attacking && bp > 0.85) { let t = (bp-0.85)/0.15; lunge = -1.2+5.7*t*t; rear = 0.8*(1-t)-0.2; jaw = t; }
     else if (attacking && bp > 0.55) { let t = (bp-0.55)/0.3; lunge = -1.2*t; rear = 0.8*t; }
-    let sway = moving ? Math.sin(tick*0.25+e.id)*0.05 : 0;
-    sway += Math.sin(tick*1.4)*0.05*bsnap; // worrying the prey — decays after the bite
-    let breath = (!moving && !attacking && !e.corpseRot) ? Math.sin(tick*0.05+e.id)*0.25 : 0;
+    let sway = moving ? Math.sin(animTick*0.25+e.id)*0.05 : 0;
+    sway += Math.sin(animTick*1.4)*0.05*bsnap; // worrying the prey — decays after the bite
+    let breath = (!moving && !attacking && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.25 : 0;
 
     // Direction resolution (same scheme as the sheep): the canvas is already
     // mirrored via X.scale(e.facing,…), so left-pointing dirs map onto their
@@ -2696,7 +2696,7 @@ function drawUnit(e){
 
     // Stub-leg walk cycle: comically short, thick legs mostly hidden
     // under the body mass — just paws scuttling along
-    let lw1 = moving ? Math.sin(tick*0.5+e.id)*1.8 : 0;
+    let lw1 = moving ? Math.sin(animTick*0.5+e.id)*1.8 : 0;
     let lw2 = -lw1;
     // Pounce stance: front paws reach into the strike, hind paws brace back
     let pounce = Math.max(0, Math.min(1, jaw));
@@ -2947,7 +2947,7 @@ function drawUnit(e){
     // facing, so any phase math they share must live here, not in either
     // closure. Pure reads only (safe under the outline mask pass); sounds/
     // particles stay in drawHeldLayer behind their _maskDraw guards.
-    const anim = { armSwing: moving ? Math.sin(tick*0.4+e.id)*1.5 : 0 };
+    const anim = { armSwing: moving ? Math.sin(animTick*0.4+e.id)*1.5 : 0 };
     // TRUE PROFILE views (E/W): the body is seen exactly side-on —
     // legs align under the center and the shoulders sit ON the
     // centerline (consumers: legs in drawBodyLayer, shoulders in
@@ -2989,7 +2989,7 @@ function drawUnit(e){
       anim.gripTask = e.task==='chop'||e.task==='mine_gold'||e.task==='mine_stone'||e.task==='build';
       // Shaped work swing: slow wind-up (70% of the cycle), fast strike
       // (30%). swing is the tool's rotation: -1.1 raised, +0.5 at impact.
-      anim.phRaw = tick*0.055 + e.id*0.37;
+      anim.phRaw = animTick*0.055 + e.id*0.37;
       let ph = ((anim.phRaw % 1) + 1) % 1;
       let u = ph < 0.7 ? ph/0.7 : 1-(ph-0.7)/0.3;
       // gripTask-gated like every consumer — a working forager/farmer has
@@ -3034,9 +3034,9 @@ function drawUnit(e){
         else { anim.upperLean = 0.05*anim.swing; anim.upperLunge = 0.12*anim.swing; }
         anim.upperPivot = -2.5; anim.stance = 1.2;
       }
-      anim.pick = Math.sin(tick*0.18+e.id);
+      anim.pick = Math.sin(animTick*0.18+e.id);
       anim.carcassTarget = !e.task&&e.target&&entitiesById.get(e.target)?.utype==='sheep_carcass';
-      let jabPh = ((tick*0.06 + e.id*0.41) % 1 + 1) % 1;
+      let jabPh = ((animTick*0.06 + e.id*0.41) % 1 + 1) % 1;
       anim.jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
       // TOOL RIG — the weapon conventions adopted: tools live in the
       // LEFT hand (rig convention), swung TWO-HANDED (grip + support on
@@ -3628,7 +3628,7 @@ function drawUnit(e){
       if (useDirM === 7 || useDirM === 0) {
         const coatM = e.utype==='knight'?'#9a948a':'#3f2810';
         let idleM = !moving && !e.corpseRot;
-        let swishM = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idleM?0.2:0.08);
+        let swishM = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idleM?0.2:0.08);
         let kM = useDirM === 7 ? 1 : 0.72;
         X.save(); X.translate(0,-1); X.scale(1.35,1.35);
         X.translate(-6.6*kM,-7); X.rotate(swishM);
@@ -3640,7 +3640,7 @@ function drawUnit(e){
     }
     // Walking leg cycle (swinging legs with constant leg length)
     if(isMountedUnit(e.utype)){
-      let walk = moving ? Math.sin(tick*0.45+e.id)*4.5 : 0;
+      let walk = moving ? Math.sin(animTick*0.45+e.id)*4.5 : 0;
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
       X.beginPath();
       
@@ -3702,8 +3702,8 @@ function drawUnit(e){
       // Knight rides a WHITE charger (unmistakable vs the scout's bay).
       const coat=e.utype==='knight'?'#e9e6de':'#8b5a2b', maneC=e.utype==='knight'?'#9a948a':'#3f2810';
       let idle = !moving && !e.corpseRot;
-      let nod = idle ? Math.sin(tick*0.05+e.id)*0.8 : 0;
-      let swish = e.corpseRot ? 0 : Math.sin(tick*0.08+e.id)*(idle?0.2:0.08);
+      let nod = idle ? Math.sin(animTick*0.05+e.id)*0.8 : 0;
+      let swish = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idle?0.2:0.08);
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // match the enlarged legs
       const ear=(x,y,ang)=>{ X.save(); X.translate(x,y); X.rotate(ang);
         // Rounded leaf-shaped ear (a bare triangle reads as a horn)
@@ -3826,7 +3826,7 @@ function drawUnit(e){
         // deferred so it renders in front of the rider.
         drawHorseBody(0,-5.5,5.6,5.2);
         horseHeadFront = () => {
-          let nod2 = (!moving) ? Math.sin(tick*0.05+e.id)*0.8 : 0;
+          let nod2 = (!moving) ? Math.sin(animTick*0.05+e.id)*0.8 : 0;
           // the head hangs CENTERED — the sword clears it by moving to
           // the grip hand's side instead (user call)
           X.save(); X.translate(0,-1+nod2);
@@ -3895,7 +3895,7 @@ function drawUnit(e){
       // walkers scissor full screen-x strides, face-on walkers read as a
       // small vertical alternation, and on diagonals the NEAR leg stands
       // slightly lower (closer to the camera) than the far one.
-      let walk = moving ? Math.sin(tick*0.4+e.id)*2.5 : 0;
+      let walk = moving ? Math.sin(animTick*0.4+e.id)*2.5 : 0;
       let st = anim.stance || 0;
       // legs FOLLOW the attack lunge, on the SAME axis upperly translates
       // the torso (view-axis y at S/N, screen-x else): hips ride half of
@@ -4023,7 +4023,7 @@ function drawUnit(e){
       // rounded bodice (smaller than the male torso) flowing into a
       // bell-shaped skirt wider than the shoulders, with a single outline
       // so there's no seam at the waist. Boots peek out below the hem.
-      let sway = moving ? Math.sin(tick*0.4+e.id)*0.7 : 0;
+      let sway = moving ? Math.sin(animTick*0.4+e.id)*0.7 : 0;
       X.fillStyle=tc;
       X.beginPath();
       X.arc(0,-6,4.1,Math.PI,0);                        // rounded bodice over the chest
@@ -4348,7 +4348,7 @@ function drawUnit(e){
           nug(-2.2,0.5,2.2); nug(2,0.8,2.0); nug(0,-0.6,2.4);
           nug(-1,-2.6,1.9); nug(1.6,-2.2,1.7); nug(0.3,-4,1.5);
           // Twinkling 4-point sparkles
-          let tw=(Math.sin(tick*0.25+e.id)+1)/2;
+          let tw=(Math.sin(animTick*0.25+e.id)+1)/2;
           X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
           const spark=(px,py,r)=>{
             X.beginPath();
@@ -4640,7 +4640,7 @@ function drawUnit(e){
         // the old ctrl-at-0 relied on tips sitting near x 0 and would sag
         // slack against the shallow bow) — vibrating briefly right after
         // the release, decaying over the first 15% of the reload window
-        let vib = swinging ? Math.sin(tick*1.2)*1.8*anim.snapT : 0;
+        let vib = swinging ? Math.sin(animTick*1.2)*1.8*anim.snapT : 0;
         X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
         X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(tipX + vib, 0, tipX, tipY); X.stroke();
       }
@@ -4849,14 +4849,14 @@ function drawUnit(e){
     }
   } else {
     // Sheep — scalloped wool cloud; head tracks movement direction
-    let waddle = e.path.length > 0 ? Math.sin(tick * 0.2 + e.id) * 0.06 : 0;
-    let breath = e.path.length === 0 ? Math.sin(tick * 0.06 + e.id) * 0.12 : 0;
+    let waddle = e.path.length > 0 ? Math.sin(animTick * 0.2 + e.id) * 0.06 : 0;
+    let breath = e.path.length === 0 ? Math.sin(animTick * 0.06 + e.id) * 0.12 : 0;
 
     X.save();
     X.rotate(waddle);
 
     // 4-leg walk cycle: outlined stubby legs with hooves
-    let hw1 = e.path.length > 0 ? Math.sin(tick * 0.45 + e.id) * 3.0 : 0;
+    let hw1 = e.path.length > 0 ? Math.sin(animTick * 0.45 + e.id) * 3.0 : 0;
     let hw2 = -hw1;
     let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
     X.beginPath();
@@ -4868,7 +4868,7 @@ function drawUnit(e){
 
     // Waggable wool-puff tail at the rear
     let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
-    let tailAngle = Math.sin(tick * tailRate + e.id) * 0.4;
+    let tailAngle = Math.sin(animTick * tailRate + e.id) * 0.4;
     X.save();
     X.translate(-7.5, -4);
     X.rotate(tailAngle - 0.2);
@@ -4890,7 +4890,7 @@ function drawUnit(e){
     X.fillStyle='rgba(110,95,70,0.20)';
     X.beginPath(); X.ellipse(0, 1.6, 5.8, 2, 0, 0, Math.PI*2); X.fill();
 
-    let earWiggle = e.eatingGrass ? Math.sin(tick * 0.5 + e.id) * 1.2 : Math.sin(tick * 0.1 + e.id) * 0.4;
+    let earWiggle = e.eatingGrass ? Math.sin(animTick * 0.5 + e.id) * 1.2 : Math.sin(animTick * 0.1 + e.id) * 0.4;
 
     // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
     // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
@@ -4917,7 +4917,7 @@ function drawUnit(e){
 
     let headX = 0, headY = 0;
     if (e.eatingGrass) {
-      let chew = Math.sin(tick * 0.6);
+      let chew = Math.sin(animTick * 0.6);
       headX = 6; headY = 2 + chew;
       sheepHead(headX, headY, 'side');
     } else if (e.dir === 1) {

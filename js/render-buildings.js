@@ -310,7 +310,7 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
   // plus a slight quadratic sag. Two superposed sines keep the motion from
   // looking metronomic.
   const L=17, H=8.5, N=8;
-  let t=tick*0.13;
+  let t=animTick*0.13;
   let lift=(u)=>Math.sin(t-u*4.2)*3.0*u + Math.sin(t*0.63-u*7.0)*0.9*u + 2.4*u*u;
   let pts=[];
   for(let i=0;i<=N;i++){
@@ -468,15 +468,15 @@ function drawPennant(px,py,color,darken){
 // Draws animated chimney smoke puffs
 function drawChimneySmoke(cx,cy){
   X.fillStyle='rgba(180,180,180,0.4)';
-  let smokeOffset = (tick % 60) / 60;
+  let smokeOffset = (animTick % 60) / 60;
   let syy = cy - smokeOffset * 18;
-  let sxx = cx + Math.sin(tick*0.08)*2;
+  let sxx = cx + Math.sin(animTick*0.08)*2;
   X.beginPath();X.arc(sxx,syy,2.5+smokeOffset*4,0,Math.PI*2);X.fill();
 }
 
 // Draws animated rotating windmill sails
 function drawWindmillSails(hx,hy,id,scale=1,canvasCol='#f0ead8',canvasCol2=null){
-  let rot = tick * 0.012 + id*0.5; // slow, ponderous turn — mills are heavy
+  let rot = animTick * 0.012 + id*0.5; // slow, ponderous turn — mills are heavy
 
   // Front-facing rotor: the fan spins in a (slightly flattened)
   // screen-plane circle, sails alternating canvas colors around the hub.
@@ -1179,8 +1179,8 @@ function drawBuilding(e, part = null){
       let legC=coat==='#e9e6de'?'#b3ada1':'#6e4520';
       if(darken) legC=darkenColor(legC);
       // over-driven clamped sine: dwells at head-down / head-up
-      let g=(graze&&visible)?Math.min(1,Math.max(0,Math.sin(tick*0.02+e.id)*1.5+0.4)):0;
-      let swish=visible?Math.sin(tick*0.08+e.id)*0.2:0;
+      let g=(graze&&visible)?Math.min(1,Math.max(0,Math.sin(animTick*0.02+e.id)*1.5+0.4)):0;
+      let swish=visible?Math.sin(animTick*0.08+e.id)*0.2:0;
       X.save();X.translate(hx,hy-5.2);X.scale(1.05,1.05);
       X.lineJoin='round';
       // tail (farthest — behind the legs)

@@ -6,7 +6,13 @@ function fromIso(ix,iy){
   return{x,y};
 }
 function screenToMap(sx,sy){
-  let ix=(sx-W/2)/ZOOM+camX, iy=(sy-(H/2+topH))/ZOOM+camY;
+  // Exact inverse of render()'s zoom transform, which scales about the
+  // ROUNDED viewport center — inverting about the unrounded center left a
+  // constant sub-pixel click-vs-visual offset at ZOOM != 1 (odd W / a
+  // fractional topH). At ZOOM 1 this reduces to the old expression.
+  const ax=Math.round(W/2), ay=Math.round(H/2+topH);
+  let ix=ax+(sx-ax)/ZOOM - W/2 + camX;
+  let iy=ay+(sy-ay)/ZOOM - (H/2+topH) + camY;
   return fromIso(ix,iy);
 }
 // Inverse of screenToMap for the RENDER pass, which draws into a context
