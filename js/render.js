@@ -104,10 +104,12 @@ function render(){
   let maxY = Math.min(MAP - 1, Math.ceil(Math.max(p1.y, p2.y, p3.y, p4.y)) + 2);
   
   X.save();
-  // Center zoom scale around viewport camera center
-  X.translate(Math.round(W/2), Math.round(H/2 + topH));
+  // Zoom scale about THE shared anchor (zoomAnchor, js/iso.js — same one
+  // screenToMap inverts and setZoomAroundPoint solves against)
+  {const {ax, ay} = zoomAnchor();
+  X.translate(ax, ay);
   X.scale(ZOOM, ZOOM);
-  X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
+  X.translate(-ax, -ay);}
 
   // Draw ground tiles (only visible ones)
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);

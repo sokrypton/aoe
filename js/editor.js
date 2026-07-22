@@ -820,12 +820,13 @@ function loadEditorScenario(spec){
 // ----------------------------------------------------------------------- cursor
 // Apply render()'s own ZOOM+camera transform, run fn, restore. Lets us reuse
 // engine draw helpers (drawUnit) that expect the in-render transform, from our
-// post-restore overlay. Mirrors render.js:97-100.
+// post-restore overlay. Mirrors render()'s zoom transform (js/render.js).
 function inWorldTransform(fn){
   X.save();
-  X.translate(Math.round(W/2), Math.round(H/2 + topH));
+  const {ax, ay} = zoomAnchor();
+  X.translate(ax, ay);
   X.scale(ZOOM, ZOOM);
-  X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
+  X.translate(-ax, -ay);
   fn();
   X.restore();
 }

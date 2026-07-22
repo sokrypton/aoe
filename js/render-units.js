@@ -4073,6 +4073,11 @@ function drawUnit(e){
         // forge-tier scale — so the armor tiers read as coverage +
         // brightness steps of one idea.
         X.fillStyle='#dde3ea';X.globalAlpha=ga*0.95;
+        X.fillRect(acx-5,acy-5,10,10);
+        // Slight team-color wash over the steel (user call: a full-mail
+        // torso hid the team at a glance). Low alpha keeps chain brighter
+        // than any scale tier so the armor-ladder brightness read survives.
+        X.fillStyle=tc;X.globalAlpha=ga*0.2;
         X.fillRect(acx-5,acy-5,10,10);X.globalAlpha=ga;
         X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
         for(let ry=0;ry<7;ry++){

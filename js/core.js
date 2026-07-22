@@ -918,9 +918,9 @@ let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0
 function setZoomAroundPoint(newZoom, sx, sy){
   newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
   if(newZoom === ZOOM) return;
-  // Same ROUNDED anchor as render()'s transform and screenToMap — mixing
-  // rounded/unrounded centers drifts the zoom focal point sub-pixel.
-  const ax = Math.round(W/2), ay = Math.round(H/2 + topH);
+  // THE shared anchor (zoomAnchor, js/iso.js) — mixing rounded/unrounded
+  // centers drifts the zoom focal point sub-pixel.
+  const {ax, ay} = zoomAnchor();
   let isoX = ax + (sx - ax)/ZOOM - W/2 + camX;
   let isoY = ay + (sy - ay)/ZOOM - (H/2 + topH) + camY;
   ZOOM = newZoom;

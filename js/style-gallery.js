@@ -369,9 +369,10 @@
 
     const withZoom = (fn) => {
       X.save();
-      X.translate(Math.round(W/2), Math.round(H/2 + topH));
+      const {ax, ay} = zoomAnchor();
+      X.translate(ax, ay);
       X.scale(galleryZoom, galleryZoom);
-      X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
+      X.translate(-ax, -ay);
       fn();
       X.restore();
     };

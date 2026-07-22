@@ -5,14 +5,29 @@ function fromIso(ix,iy){
   let y=(iy/HALF_TH-ix/HALF_TW)/2;
   return{x,y};
 }
+// DISPLAY CAMERA: the authoritative camera (camX/camY) stays FRACTIONAL —
+// pan accumulation and pinch-zoom anchoring need the precision — but the
+// screen only ever sees it quantized to whole logical pixels. Every
+// drawable rounds its own screen position (Math.round(mapToScreen)), each
+// with its own fractional phase; against a fractional camera those
+// roundings flip at different pan offsets, so stationary units visibly
+// vibrate ±1px against the ground while scrolling. Quantizing HERE — the
+// single world<->screen seam — keeps the whole scene rigid under pans and
+// makes hit-tests agree exactly with what was drawn.
+function camDX(){return Math.round(camX);}
+function camDY(){return Math.round(camY);}
+// THE zoom/scale anchor: the rounded viewport center every ZOOM transform
+// scales about. render()'s transform, screenToMap's inverse and
+// setZoomAroundPoint's solve must all use THIS — two spellings disagreeing
+// by a sub-pixel is exactly the class of bug that made clicks miss at
+// ZOOM!=1 and the zoom focal point drift.
+function zoomAnchor(){return{ax:Math.round(W/2),ay:Math.round(H/2+topH)};}
 function screenToMap(sx,sy){
-  // Exact inverse of render()'s zoom transform, which scales about the
-  // ROUNDED viewport center — inverting about the unrounded center left a
-  // constant sub-pixel click-vs-visual offset at ZOOM != 1 (odd W / a
-  // fractional topH). At ZOOM 1 this reduces to the old expression.
-  const ax=Math.round(W/2), ay=Math.round(H/2+topH);
-  let ix=ax+(sx-ax)/ZOOM - W/2 + camX;
-  let iy=ay+(sy-ay)/ZOOM - (H/2+topH) + camY;
+  // Exact inverse of render()'s zoom transform. At ZOOM 1 this reduces to
+  // the plain translate.
+  const {ax,ay}=zoomAnchor();
+  let ix=ax+(sx-ax)/ZOOM - W/2 + camDX();
+  let iy=ay+(sy-ay)/ZOOM - (H/2+topH) + camDY();
   return fromIso(ix,iy);
 }
 // Inverse of screenToMap for the RENDER pass, which draws into a context
@@ -21,7 +36,7 @@ function screenToMap(sx,sy){
 // must not re-spell `iso.ix - camX + W/2` inline.
 function mapToScreen(x,y){
   let iso=toIso(x,y);
-  return{sx:iso.ix-camX+W/2, sy:iso.iy-camY+H/2+topH};
+  return{sx:iso.ix-camDX()+W/2, sy:iso.iy-camDY()+H/2+topH};
 }
 function screenToTile(sx,sy){
   let p=screenToMap(sx,sy);
