@@ -988,7 +988,10 @@ function pressToContact(e, cx, cy, contactDist){
   if(e.path.length!==0)return;               // only when settled
   let dx=cx-e.x, dy=cy-e.y;
   let d=Math.sqrt(dx*dx+dy*dy);
-  if(d<=contactDist+0.02)return;             // deadband — already in the ring
+  // Deadband LARGER than separateUnits' 0.08 nudge: a shoved unit must
+  // settle where it lands, or press and separation alternate forever —
+  // the whole crowd vibrates around one target (user caught it).
+  if(d<=contactDist+0.2)return;              // deadband — already in the ring
   // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
   // follower advances unitMoveSpeed/TPS tiles/tick — match it so the unit
   // strolls into contact instead of snapping.
@@ -1612,13 +1615,25 @@ function damageEntity(attacker, target){
   }
 
   if(target.hp<=0) handleDeath(target, attacker.team);
-}function autoTaskBuilder(e, bt){
+}// Auto-task at a work building — fires both when a builder FINISHES a site
+// and when a villager is DISPATCHED to a complete drop-off ("send to the
+// wood camp = become a lumberjack", user call). Resource searches anchor
+// on the BUILDING (findNearTile anchor), not the villager: dispatch fired
+// on the order tick, so self-anchored searches grabbed whatever was near
+// the villager's old spot and the camp was never reached.
+function autoTaskBuilder(e, bt, dispatched){
+  // Anchor the resource search on the BUILDING only for a human dispatch
+  // ("send to the wood camp") — the no-op branch can also fire with a
+  // FAR-OFF completed buildTarget (drained build queues), and anchoring
+  // there marched AI villagers across the map (sim-smoke food starvation).
+  let A = dispatched ? bt : null;
+  let ax = dispatched ? bt.x : e.x, ay = dispatched ? bt.y : e.y;
   if(bt.btype==='FARM'){
     e.task='farm';
     e.gatherX=bt.x;
     e.gatherY=bt.y;
   } else if(bt.btype==='LCAMP'){
-    let nearWood = findNearTile(e, TERRAIN.FOREST);
+    let nearWood = findNearTile(e, TERRAIN.FOREST, null, A);
     if (nearWood) {
       e.task = 'chop';
       e.gatherX = nearWood.x;
@@ -1628,7 +1643,20 @@ function damageEntity(attacker, target){
       e.task = null;
     }
   } else if(bt.btype==='MILL'){
-    let nearBerries = findNearTile(e, TERRAIN.BERRIES);
+    // DISPATCHED to the mill = "make me a farmer" (user call): nearest
+    // unstaffed farm plot by the mill first, berries as the fallback.
+    // Post-CONSTRUCTION keeps forage-first: the mill founds ON a berry
+    // patch, and pulling its builder to a distant farm food-starved the
+    // AI (sim-smoke regression).
+    let nearFarm = dispatched ? findNearTile(e, TERRAIN.FARM, null, A) : null;
+    if (nearFarm) {
+      e.task = 'farm';
+      e.gatherX = nearFarm.x;
+      e.gatherY = nearFarm.y;
+      pathUnitTo(e, nearFarm.x, nearFarm.y);
+      return;
+    }
+    let nearBerries = findNearTile(e, TERRAIN.BERRIES, null, A);
     if (nearBerries) {
       e.task = 'forage';
       e.gatherX = nearBerries.x;
@@ -1638,13 +1666,13 @@ function damageEntity(attacker, target){
       e.task = null;
     }
   } else if(bt.btype==='MCAMP'){
-    let nearGold = findNearTile(e, TERRAIN.GOLD);
-    let nearStone = findNearTile(e, TERRAIN.STONE);
+    let nearGold = findNearTile(e, TERRAIN.GOLD, null, A);
+    let nearStone = findNearTile(e, TERRAIN.STONE, null, A);
     let targetTile = null;
     let targetTask = null;
     if (nearGold && nearStone) {
-      let dGold = Math.abs(nearGold.x - e.x) + Math.abs(nearGold.y - e.y);
-      let dStone = Math.abs(nearStone.x - e.x) + Math.abs(nearStone.y - e.y);
+      let dGold = Math.abs(nearGold.x - ax) + Math.abs(nearGold.y - ay);
+      let dStone = Math.abs(nearStone.x - ax) + Math.abs(nearStone.y - ay);
       if (dGold <= dStone) {
         targetTile = nearGold;
         targetTask = 'mine_gold';
@@ -2233,7 +2261,7 @@ function updateVillagerBuild(e){
     if(!checkNextBuild(e)){
       e.task=null;
       e.buildTarget=null;
-      if(bt) autoTaskBuilder(e, bt);
+      if(bt) autoTaskBuilder(e, bt, !isAITeam(e.team)); // human dispatch ("send to camp") — the AI's own assigner owns its villagers
     }
     return;
   }
@@ -2593,6 +2621,12 @@ function updateUnitCombat(e){
           return;
         }
         combatApproach(e,t,d,()=>pathToContact(e,t,contactClaims(e,p=>p.target===t.id)));
+      } else if(e.path.length>2){
+        // Adjacent but still EN ROUTE to a farther assigned ring tile:
+        // finish the walk (same explicit step as the garrison leg) —
+        // attacking at FIRST touch stacked the whole group on the
+        // approach faces and left the far ring empty (user caught it).
+        stepUnitAlongPath(e, unitMoveSpeed(e) * UNIT_PX_PER_TICK, true);
       } else {
         // In range: press up against the nearest FOOTPRINT EDGE so attackers
         // pack tight along the wall instead of standing a tile back on their
@@ -2713,11 +2747,23 @@ function updateFollowOrder(e){
     // 0,0 for offset-less orders, e.g. the AI's ram-surplus riders): a big
     // group holds its shape around the leader instead of every follower
     // chasing the leader's exact tile in a dogpile.
-    let sx=Math.max(0,Math.min(MAP-1,Math.round(f.x)+(e.order.x||0)));
-    let sy=Math.max(0,Math.min(MAP-1,Math.round(f.y)+(e.order.y||0)));
+    // INTERCEPT, don't chase: project the leader ~4 tiles ahead along its
+    // own path so followers cut the corner toward where it's GOING —
+    // pathing to its live tile meant equal-speed followers never closed
+    // and the convoy only assembled on arrival (user caught the
+    // scattered march). A stopped leader projects to itself (exact).
+    let lead=f.path&&f.path.length?f.path[Math.min(3,f.path.length-1)]:f;
+    let sx=Math.max(0,Math.min(MAP-1,Math.round(lead.x)+(e.order.x||0)));
+    let sy=Math.max(0,Math.min(MAP-1,Math.round(lead.y)+(e.order.y||0)));
     let d=dist(e,{x:sx,y:sy});
     if(d>1.5){
-      if(e.path.length===0 && retryReady(e,RETRY.FOLLOW)){
+      // Re-path when idle OR when the station has drifted well away from
+      // this walk's goal — a follower otherwise finishes its ENTIRE stale
+      // muster path before ever consulting the moving station (the
+      // convoy's scattered-march dominator).
+      let goal=e.path.length?e.path[e.path.length-1]:null;
+      let stale=goal&&Math.abs(goal.x-sx)+Math.abs(goal.y-sy)>3;
+      if((e.path.length===0||stale) && retryReady(e,RETRY.FOLLOW)){
         retryStamp(e,RETRY.FOLLOW,T30(12));
         pathUnitTo(e,sx,sy);
       }

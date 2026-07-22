@@ -1538,7 +1538,7 @@ function getResourceUnderCursor(sx, sy) {
         } else if (isGold || isStone) {
           w = 16 * ZOOM;
           hStart = 2 * ZOOM;
-          hEnd = -18 * ZOOM;
+          hEnd = -28 * ZOOM; // the spire + glints top out ~24px up — clicking the visible rock's top fell through to the tile behind (user caught it)
         } else if (isBerries) {
           w = 14 * ZOOM;
           hStart = 2 * ZOOM;
@@ -1780,7 +1780,13 @@ function doCommand(sx,sy){
     // The town bell is the only way villagers garrison (no garrison-by-
     // click), so clicking an own building always means "fix it" (repair if
     // damaged, resume if unfinished, reseed if an exhausted farm).
-    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)));
+    // Own buildings resolve as a build/repair target when there's work to
+    // do — and the WORK CAMPS (LCAMP/MCAMP/MILL) always resolve, so
+    // sending villagers to a camp auto-tasks them onto its resource
+    // (autoTaskBuilder dispatch). A healthy camp used to fall through to
+    // a plain walk (user caught it: "clicking the camp does nothing").
+    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)
+      || en.btype === 'LCAMP' || en.btype === 'MCAMP' || en.btype === 'MILL'));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';

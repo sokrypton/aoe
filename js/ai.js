@@ -1902,7 +1902,7 @@ function aiAttackCampControl(ai,mils,aiTC,profile){
     }
     return !m.garrisonedIn;
   });
-  let pOff=formationOffsets(holders,false);
+  let pOff=formationOffsets(holders,false,{dx:etc.x-camp.x,dy:etc.y-camp.y}); // ranks face the town
   holders.forEach(m=>{
     if(m.order&&m.order.kind==='guard'&&Math.abs(m.order.x-camp.x)<=4&&Math.abs(m.order.y-camp.y)<=4)return;
     let [ox,oy]=pOff.get(m.id)||[0,0];
@@ -2404,7 +2404,7 @@ function rallyIdleMilitary(ai,mils,aiTC){
   // so the shared formation offsets (formationOffsets, js/commands.js —
   // the army's own arrangement compacted onto the rally point) resolve
   // identically on every lockstep peer.
-  let pOff=formationOffsets(mils,false);
+  let pOff=formationOffsets(mils,false,{dx:dir.dx,dy:dir.dy}); // ranks face the enemy
   mils.forEach(m=>{
     if(m.utype==='scout')return; // controlAIScouts owns scouts
     if(isRetreatingUnit(m))return; // a fleeing unit rests at home until the stamp expires
