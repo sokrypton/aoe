@@ -394,9 +394,47 @@ function planAIAgeUp(ai,aiTC,vils,profile){
 // armyPerVil. COMBAT-FIRST: attack/armor lead so even a low-maxTech (easy) army
 // gets +atk/+armor and can still break a wall — an eco-first order left easy
 // with zero military upgrades and unable to close out (perma-turtle stalemate).
+// One-time ECO CLAIMS still outstanding — the missing Mill and the next
+// planned tech. Discretionary spenders (walls, towers, extra barracks,
+// army growth beyond the standing defense) leave this fund untouched so
+// the claims actually fill: without it they were starved for entire
+// matches (probe: mill gate hit 839 decision ticks, affordable on 0).
+function aiEcoFund(ai,profile){
+  let fund={};
+  const add=c=>{for(let[k,v]of Object.entries(c||{}))fund[k]=(fund[k]||0)+v;};
+  // Feudal+: the mill's techs are Feudal cards; claiming dark-age wood
+  // for it choked the opening eco (age-1-at-40k regression, sim-proven)
+  if(teamAge[ai.team]>=1&&hasAIBuilding(ai,'BARRACKS')&&!hasAIBuilding(ai,'MILL'))add(BLDGS.MILL.cost);
+  let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
+  for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
+  return fund;
+}
+// Can `cost` (optional) be spent while leaving the eco fund intact?
+function aiEcoFundClear(ai,profile,cost){
+  let st=resourceStore(ai.team);
+  let need={};
+  for(let c of [cost,aiEcoFund(ai,profile)])
+    for(let[k,v]of Object.entries(c||{}))need[resourceName(k)]=(need[resourceName(k)]||0)+v;
+  return Object.entries(need).every(([k,v])=>st[k]>=v);
+}
+// Both costs at once (tech + the age fund being hoarded) — key-wise sum.
+function aiCanAffordBoth(team,a,b){
+  let st=resourceStore(team);
+  let need={};
+  for(let c of [a,b])for(let[k,v]of Object.entries(c||{}))need[k]=(need[k]||0)+v;
+  return Object.entries(need).every(([k,v])=>st[resourceName(k)]>=v);
+}
 const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
 function planAIResearch(ai,profile){
-  if(ai.savingForAge)return;                               // hoarding for the age (TC) — don't drain resources
+  // While hoarding for the age-up, techs may still fire if the bank covers
+  // the AGE COST *and* the tech — a hard stop here starved everything past
+  // the first cheap cards for the whole climb (user caught it: hard AIs
+  // ended 40k-tick games with 3 of 14 techs, no wheelbarrow).
+  let reserve=null;
+  if(ai.savingForAge){
+    let next=teamAge[ai.team]+1;
+    reserve=(next<AGES.length&&AGES[next].cost)||null;
+  }
   if(aiUnderRealPressure(ai))return;                       // spend on the army, not tech, while attacked
   let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
   // Techs live on the buildings that own them (Barracks/Mill/Lumber/Mining/
@@ -407,6 +445,7 @@ function planAIResearch(ai,profile){
   for(let k of plan){
     if(!canResearch(ai.team,k))continue;                   // owned / age-locked / prereq-missing
     if(TECH_PRICES&&!canAfford(ai.team,UPGRADES[k].cost))continue;
+    if(reserve&&!aiCanAffordBoth(ai.team,UPGRADES[k].cost,reserve))continue; // never break the age fund
     let host=aiIdleResearchBuilding(ai.team,k,used);
     if(!host)continue;                                     // its building is busy/training/absent — try later
     execResearch(host,k);
@@ -461,6 +500,12 @@ function planAIDropSites(ai,aiTC,vils,profile){
   if(!hasBarracks&&vils.length>=profile.barracksVil-1&&!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
   if(vils.length>=6&&hasBarracks&&!hasAIBuilding(ai,'MILL')&&canAfford(ai.team,BLDGS.MILL.cost)){
     let pos=findAIDropSite(ai,TERRAIN.BERRIES,'MILL',aiTC);
+    // No workable berry patch (eaten out, unscouted, or unplaceable): once
+    // the team FARMS, the Mill founds by the farm belt instead — without
+    // this the mill (and its farm techs, horse_collar/heavy_plow) never
+    // existed in whole matches (user caught it: 0 mills at 40k ticks).
+    if(!pos&&entities.some(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'))
+      pos=findAIBuildSpot(ai,aiTC,'MILL');
     if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
   // Mining camps serve BOTH gold and stone: one at a far gold deposit AND one
@@ -489,8 +534,8 @@ function planAITowers(ai,aiTC,vils,profile){
   // pass later promotes (WALL_STONE_MATCH: PTOWER→TOWER).
   // Barracks fund outranks bastions (aiBarracksFundClear).
   let type=null;
-  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost)&&aiBarracksFundClear(ai,BLDGS.TOWER.cost.w||0))type='TOWER';
-  else if(canAfford(ai.team,BLDGS.PTOWER.cost)&&aiBarracksFundClear(ai,BLDGS.PTOWER.cost.w||0))type='PTOWER';
+  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost)&&aiBarracksFundClear(ai,BLDGS.TOWER.cost.w||0)&&aiEcoFundClear(ai,profile,BLDGS.TOWER.cost))type='TOWER';
+  else if(canAfford(ai.team,BLDGS.PTOWER.cost)&&aiBarracksFundClear(ai,BLDGS.PTOWER.cost.w||0)&&aiEcoFundClear(ai,profile,BLDGS.PTOWER.cost))type='PTOWER';
   if(!type)return;
   // A waller's bastion MUST go on the wall (gate flank → corners → resource
   // side); wait for a wall segment rather than eating the cap on a
@@ -635,7 +680,8 @@ function planAIWalls(ai,aiTC,vils,profile){
   let placedThisCall=0, iters=0;
   let {x:wtcx, y:wtcy} = centerTile(aiTC);
   let BACKOFF=Math.max(T30(120),profile.decisionInterval*2);
-  while(!pressured&&placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
+  while(!pressured&&placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)
+        &&aiEcoFundClear(ai,profile,BLDGS.WALL.cost)){
     iters++;
     let next=plan.find(t=>!t.done&&!(t.buildBackoffUntil>tick));
     if(!next)break;
@@ -1035,6 +1081,7 @@ function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
   let pressured=aiUnderRealPressure(ai);
   if(ai.savingForAge&&!pressured&&barracks.length>0)return; // first barracks still allowed — needed for defense
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
+  if(barracks.length>0&&!aiEcoFundClear(ai,profile,BLDGS.BARRACKS.cost))return; // fund first
   let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
   if(pos)placeAIBuilding(ai,'BARRACKS',pos.x,pos.y);
 }
@@ -1197,6 +1244,9 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // standing defense (half the army reserve); a blanket pause left AIs
   // sitting on banked wood with a barracks and ZERO soldiers.
   if(ai.savingForAge&&!underPressure&&currentArmy>=Math.ceil(profile.armyReserve/2))return;
+  // Eco claims (mill + next tech) fill before army growth beyond the
+  // standing defense — pressure overrides, survival first.
+  if(!underPressure&&currentArmy>=Math.ceil(profile.armyReserve/2)&&!aiEcoFundClear(ai,profile,null))return;
   // Eco-first (AoE2): below the next age's villager benchmark, food belongs
   // to the TC — militia spend otherwise drains food faster than it
   // regenerates and every AI sits in the Dark Age forever. A small standing
@@ -1573,6 +1623,11 @@ function planAIFarming(ai,aiTC,vils,profile){
   // villager production (AoE2 lays farms in late Dark age).
   if(!hasAIBuilding(ai,'BARRACKS') && vils.length<8)return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
+  // A due Mill outranks the NEXT farm plot: continuous 60w farm spends
+  // otherwise keep the bank under the mill's 100w forever (probe-proven).
+  // Wood-only check — farms must never yield to food-priced techs.
+  if(teamAge[ai.team]>=1&&hasAIBuilding(ai,'BARRACKS')&&!hasAIBuilding(ai,'MILL')
+     &&resourceStore(ai.team).wood<(BLDGS.FARM.cost.w||0)+(BLDGS.MILL.cost.w||0))return;
   // Don't let NEW farm plots starve the BARRACKS of wood — the shared
   // army-faucet gate (aiBarracksFundClear) covers both pre-barracks and a
   // RAZED barracks. Reseeds of standing farms are untouched (logic.js bank

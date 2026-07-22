@@ -576,6 +576,12 @@ function wallMat(bt){
   if (bt === 'SWALL' || bt === 'SGATE') return 'stone';
   return null;
 }
+// Entity-aware material: stone walls owned by a Fortified Wall team render
+// as 'stonef' (crenellated — the tech's visual tell, drawWallLink).
+function wallMatOf(b){
+  let m = wallMat(b.btype);
+  return m === 'stone' && hasUpgrade(b.team, 'fortified_wall') ? 'stonef' : m;
+}
 // mat: restrict to one material family (towers always connect). Omitted =>
 // any wall-like neighbor.
 function isWallLike(b, mat){
@@ -630,7 +636,7 @@ function drawGhostBackJoins(x, y, sx, linkY, wallH, tc){
     if(window._ghostTiles && window._ghostTiles.has(ny*MAP+nx)) return; // a ghost neighbour draws its own S+E
     let nb = getConnectedBuilding(nx, ny);
     if(!isWallLike(nb) || isRung) return;
-    let nm = wallMat(nb.btype) || 'wood', nlt = (nm==='stone'?9:7)/2;
+    let nm = wallMatOf(nb) || 'wood', nlt = (nm!=='wood'?9:7)/2;
     drawWallLink(sx, linkY, dx, dy, wallH, false, nlt*Math.sqrt(5)/2, nlt*Math.sqrt(5)/2, null, tc, nlt, false, nm);
   };
   join(x, y-1,  32, -16, wallSouthRung(x, y-1)); // N neighbour's South link
@@ -1981,15 +1987,15 @@ function drawBuilding(e, part = null){
     if (drawsWallStubs(e)) {
     let sN = getConnectedBuilding(e.x, e.y + 1);
     if (isWallLike(sN) && !wallSouthRung(e.x, e.y)) {
-      let m2 = wallMat(sN.btype) || 'wood', lt2 = m2==='stone'?4:3.5;
-      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2==='stone'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2);
+      let m2 = wallMatOf(sN) || 'wood', lt2 = m2!=='wood'?4:3.5;
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2!=='wood'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2);
     }
 
     // East neighbor (x+1)
     let eN = getConnectedBuilding(e.x + 1, e.y);
     if (isWallLike(eN) && !wallEastRung(e.x, e.y)) {
-      let m3 = wallMat(eN.btype) || 'wood', lt3 = m3==='stone'?4:3.5;
-      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3==='stone'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3);
+      let m3 = wallMatOf(eN) || 'wood', lt3 = m3!=='wood'?4:3.5;
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3!=='wood'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3);
     }
     // Ghost-only: preview the N/W joins real neighbours will draw once placed.
     drawGhostBackJoins(e.x, e.y, sx, linkY, wallH, tc);
@@ -2008,8 +2014,8 @@ function drawBuilding(e, part = null){
     // wall-like neighbor — each tile draws its own S/E slab in its OWN
     // material, so a mixed run (partially upgraded to stone) reads as one
     // continuous line with wood-meets-stone junctions at the pillars.
-    let mat = wallMat(e.btype);
-    let pf = mat === 'stone' ? ['#cfc8b6', '#aca392', '#b7ad97'] : [WOOD.L, WOOD.R, WOOD.top];
+    let mat = wallMatOf(e);
+    let pf = mat !== 'wood' ? ['#cfc8b6', '#aca392', '#b7ad97'] : [WOOD.L, WOOD.R, WOOD.top];
 
     // 1. Draw central pillar first (centered concentrically at sy+16) —
     // links draw AFTER so the walkway visibly connects between the
@@ -2022,7 +2028,7 @@ function drawBuilding(e, part = null){
     // 9px pillars); the link geometry below scales with it so the
     // edge-coincidence math still holds (thick = pillar half-width/2,
     // d1 = thick*sqrt(5)/2 * 2 = thick/cos, bottom vertex kept at sy+20).
-    let isWood = mat !== 'stone';
+    let isWood = mat === 'wood';
     let pw = isWood ? 7 : 9;
     let lthick = pw / 2;
     // part 'body' = pillar only, 'link' = the S/E slabs only — the hit test
@@ -2058,13 +2064,13 @@ function drawBuilding(e, part = null){
   }
 
   else if(isGateBtype(e.btype)){
-    let mat = wallMat(e.btype);
-    let pf = mat === 'stone' ? ['#c8c0ae', '#a89f8d', '#b0b0a4'] : [WOOD.L, WOOD.R, WOOD.top];
+    let mat = wallMatOf(e);
+    let pf = mat !== 'wood' ? ['#c8c0ae', '#a89f8d', '#b0b0a4'] : [WOOD.L, WOOD.R, WOOD.top];
     // Link stubs must match the wall runs they join: the palisade is
     // skinnier (3.5 half-thickness) than stone (4.5), and the far-end
     // trim is the matching pillar-face distance so no gap opens.
-    let lth = mat === 'stone' ? 4 : 3.5;
-    let dEnd = mat === 'stone' ? 5 : lth * Math.sqrt(5) / 2;
+    let lth = mat !== 'wood' ? 4 : 3.5;
+    let dEnd = mat !== 'wood' ? 5 : lth * Math.sqrt(5) / 2;
     let pillarH = 28;
     bh = pillarH;
     let t1sx, t1sy, t2sx, t2sy;
@@ -2096,11 +2102,11 @@ function drawBuilding(e, part = null){
       // Pre-Castle the post top is team-colored like the wall walkways
       // (single flat color); at Castle the merlons take over the cap.
       let postTop = ownerAge >= 2 ? pf[2] : tc;
-      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop, postTop, darken, mat === 'stone' && ownerAge >= 2);
+      drawBuildingBlock(t1sx, t1sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop, postTop, darken, mat !== 'wood' && ownerAge >= 2);
 
       // Battlements only on the STONE gate — a timber palisade gate has
       // plain post tops; the merlons are part of the Feudal upgrade look.
-      if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t1sx, t1sy, '#e0d8c6', '#c4bba6', darken);
+      if (mat !== 'wood' && ownerAge >= 2) drawBastionMerlons(t1sx, t1sy, '#e0d8c6', '#c4bba6', darken);
 
       // 1. Draw connection links for Post 1 (back post centered at t1sy).
       // Skipped for 'body' (hit test), the selection outline, and gate ghosts:
@@ -2153,10 +2159,10 @@ function drawBuilding(e, part = null){
     if (part === 'front' || part === null || part === 'body') {
       // 2. Draw front post (Tower 2 - larger bastion centered at t2sy-7)
       let postTop2 = ownerAge >= 2 ? pf[2] : tc;
-      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop2, postTop2, darken, mat === 'stone' && ownerAge >= 2);
+      drawBuildingBlock(t2sx, t2sy - 7, 14, 7, pillarH, pf[0], pf[1], 'flat', 0, postTop2, postTop2, darken, mat !== 'wood' && ownerAge >= 2);
 
       // Battlements only on the STONE gate (see back post above).
-      if (mat === 'stone' && ownerAge >= 2) drawBastionMerlons(t2sx, t2sy, '#e0d8c6', '#c4bba6', darken);
+      if (mat !== 'wood' && ownerAge >= 2) drawBastionMerlons(t2sx, t2sy, '#e0d8c6', '#c4bba6', darken);
 
       // Draw connection links for Post 2 (front post centered at t2sy).
       // Skipped for 'body' (hit test), the selection outline, and gate ghosts

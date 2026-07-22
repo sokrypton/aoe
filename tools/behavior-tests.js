@@ -686,6 +686,41 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------- bell butcher-resume (regression)
+    // The sheep line rides TARGET with no task — the stash must carry it
+    // too, or a bell cycle left released villagers idle by their carcass.
+    'bell-butcher-resume': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 14, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          { u: 'sheep_carcass', x: 41, y: 45, team: 1 },
+          { u: 'villager', x: 41, y: 44, team: 1 },
+        ],
+      });
+      const v = entities.find(e => e.team === 1 && e.utype === 'villager');
+      const car = entities.find(e => e.utype === 'sheep_carcass');
+      v.target = car.id; // butchering = target-with-no-task (the sheep line)
+      ringTownBell(1);
+      let inTC = false;
+      for (let i = 0; i < T30(900) && !inTC; i++) {
+        AI_STATES[1].lastBaseHitTick = tick;
+        update();
+        inTC = v.garrisonedIn != null;
+      }
+      T.ok('bell: butcher shelters in the TC', inTC);
+      let resumed = false;
+      for (let i = 0; i < T30(1200) && !resumed; i++) {
+        update();
+        resumed = v.garrisonedIn == null && v.target === car.id;
+      }
+      T.ok('all-clear: butcher resumes the SAME carcass (stash/restore)', resumed);
+      return T;
+    })),
+
     // -------------------------------------------- explicit farm reseed (wood)
     // Sending a villager to an exhausted farm pays wood directly (like fixing
     // a building), bypassing the Mill prepaid queue. The AUTOMATIC paths must

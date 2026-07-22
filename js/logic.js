@@ -1678,9 +1678,15 @@ function damageEntity(attacker, target){
 // exactly these six fields back. buildQueue is CLONED: the live array keeps
 // mutating while the villager is interrupted.
 function stashVillagerTask(v){
-  if(v.savedTask||!(v.task||v.buildTarget||v.gatherX>=0))return;
+  // the sheep line (herding/butchering) rides TARGET with no task — it
+  // must stash too, or bell/militia interruptions dropped the job and
+  // released villagers stood idle by their carcass (user caught it)
+  let tgt=v.target&&entitiesById.get(v.target);
+  let workTarget=tgt&&(tgt.utype==='sheep'||tgt.utype==='sheep_carcass')?v.target:null;
+  if(v.savedTask||!(v.task||v.buildTarget||v.gatherX>=0||workTarget))return;
   v.savedTask={task:v.task,gatherX:v.gatherX,gatherY:v.gatherY,
-    buildTarget:v.buildTarget,buildQueue:v.buildQueue?[...v.buildQueue]:[],prevTask:v.prevTask};
+    buildTarget:v.buildTarget,buildQueue:v.buildQueue?[...v.buildQueue]:[],prevTask:v.prevTask,
+    target:workTarget};
 }
 function restoreSavedTask(e) {
   if (e.utype === 'villager' && e.savedTask) {
@@ -1690,6 +1696,10 @@ function restoreSavedTask(e) {
     e.buildTarget = e.savedTask.buildTarget;
     e.buildQueue = e.savedTask.buildQueue;
     e.prevTask = e.savedTask.prevTask;
+    // sheep-line work target: resume only if the sheep/carcass still
+    // exists — updateUnit re-paths and the butcher loop handles the rest
+    if (e.savedTask.target && entitiesById.get(e.savedTask.target))
+      e.target = e.savedTask.target;
     e.savedTask = null;
 
     if (e.task === 'build' && e.buildTarget) {

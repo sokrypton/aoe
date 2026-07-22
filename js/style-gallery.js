@@ -299,7 +299,8 @@
   const TECH_BOXES = { 'sg-t-forging': 'forging', 'sg-t-iron': 'iron_casting',
     'sg-t-scale': 'scale_armor', 'sg-t-chain': 'chain_mail', 'sg-t-fletch': 'fletching',
     'sg-t-dbaxe': 'double_bit_axe', 'sg-t-bowsaw': 'bow_saw', 'sg-t-goldmine': 'gold_mining',
-    'sg-t-collar': 'horse_collar', 'sg-t-plow': 'heavy_plow', 'sg-t-wbarrow': 'wheelbarrow' };
+    'sg-t-collar': 'horse_collar', 'sg-t-plow': 'heavy_plow', 'sg-t-wbarrow': 'wheelbarrow',
+    'sg-t-fwall': 'fortified_wall' };
   const readTechBoxes = () => techMask(Object.entries(TECH_BOXES)
     .filter(([id]) => document.getElementById(id)?.checked).map(([, key]) => key));
   Object.keys(TECH_BOXES).forEach(id => {

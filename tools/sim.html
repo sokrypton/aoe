@@ -167,6 +167,7 @@ window.runSimulation = async function(opts){
         houses: bldgs.filter(b => b.btype === 'HOUSE').length,
         tcs: bldgs.filter(b => b.btype === 'TC' && b.complete).length,
         tcHp: (bldgs.find(b => b.btype === 'TC') || {}).hp | 0,
+        techs: Object.keys(UPGRADES).filter(k => hasUpgrade(t, k)),
         waves: AI_STATES[t] ? AI_STATES[t].waveCount : 0,
         lastWaveSize: AI_STATES[t] ? (AI_STATES[t].lastWaveSize || 0) : 0,
         defeated: !!defeatedTeams[t],
@@ -235,6 +236,7 @@ window.runSimulation = async function(opts){
 
     // ---- end state ----
     report.end = {
+      probe: window.__aiProbe || null,
       checksum: simChecksum(), // cross-version equivalence: a behavior-neutral optimization must reproduce this exactly for the same seed
       tick, gameOver, won,
       defeated: defeatedTeams.slice(),
