@@ -1212,6 +1212,7 @@ function mirroredDir(e){
 // Per-ram last rolling-creak period that already played (render-side
 // cosmetic state, like workSwingCycles for the villagers' work swing).
 let ramCreakCycles = new Map();
+let grazeCycles = new Map(); // per-sheep grazing-puff cycle (same pattern)
 
 // ---- BATTERING RAM: one physical model, projected per view ----
 // Every facing AND the ground shadow derive from these numbers, so
@@ -4941,8 +4942,12 @@ function drawUnit(e){
       X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
       
       // Spawn tiny grass particle puffs (not in the outline mask pass —
-      // a SELECTED grazing sheep would double-spawn them)
-      if(tick % 24 === 0 && !window._maskDraw){
+      // a SELECTED grazing sheep would double-spawn them). Counter-advance
+      // guard (the workSwingCycles pattern): a bare tick%N renders the
+      // same tick 2-3 rAF frames in a row and fired a triple puff.
+      let gcyc = Math.floor(tick / T30(24));
+      if(!window._maskDraw && grazeCycles.get(e.id) !== gcyc){
+        grazeCycles.set(e.id, gcyc);
         spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
       }
     }

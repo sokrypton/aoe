@@ -516,7 +516,9 @@ function drawBehindBuildingOutlinesCached(units,occs){
     try{ drawBehindBuildingOutlines(units,occs); } finally{ X=sv; }
     _bsilCam.x=camX; _bsilCam.y=camY; _bsilCam.zoom=ZOOM; _bsilCam.topH=topH; _bsilCam.empty=false;
   }
-  // blit in device space, shifted by the camera pan since the layer was built
-  const dx=(_bsilCam.x-camX)*ZOOM*dpr, dy=(_bsilCam.y-camY)*ZOOM*dpr;
+  // blit in device space, shifted by the camera pan since the layer was
+  // built — ROUNDED: a fractional offset resamples the layer and the
+  // outlines shimmer every other frame while scrolling
+  const dx=Math.round((_bsilCam.x-camX)*ZOOM*dpr), dy=Math.round((_bsilCam.y-camY)*ZOOM*dpr);
   X.save(); X.setTransform(1,0,0,1,0,0); X.drawImage(_bsilLayer,dx,dy); X.restore();
 }

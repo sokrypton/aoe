@@ -201,7 +201,7 @@ function drawMinimap(){
     // 60-tick cycle ≈ 1 blink per real second at 2x speed — slow enough to
     // read as a deliberate alert rather than a flicker.
     let recentlyHit=e.team===myTeam&&e.lastHitTick!==undefined&&tick-e.lastHitTick<120;
-    let blinkOn=recentlyHit&&(tick-e.lastHitTick)%60<30;
+    let blinkOn=recentlyHit&&(tick-e.lastHitTick)%T30(60)<T30(30);
     let color=(isSel||blinkOn)?'#ffffff':teamColorMinimap(e.team);
     if(e.type==='building'){
       let w=e.w||1,h=e.h||1;

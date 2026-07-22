@@ -1881,25 +1881,34 @@ function handleScroll(elapsed){
 
 
 
-  // Camera-follow: any manual pan input releases the lock; otherwise keep
-  // re-centering on the followed unit every frame (see toggleCameraFollow()).
-  if(manualPan){
-    window.cameraFollowId=null;
-  } else if(window.cameraFollowId){
-    let f=entitiesById.get(window.cameraFollowId);
-    if(f&&f.hp>0){
-      let iso=toIso(f.x,f.y);
-      camX=iso.ix;camY=iso.iy;
-    } else {
-      window.cameraFollowId=null;
-    }
-  }
+  // Camera-follow: any manual pan input releases the lock. The actual
+  // re-centering lives in syncCameraFollow(), called right before render —
+  // handleScroll runs BEFORE the frame's sim ticks, so centering here left
+  // the unit one tick off-center on tick frames and snapped it back on the
+  // next (a 20Hz vibration on the followed unit, user caught it).
+  if(manualPan)window.cameraFollowId=null;
 
   // Clamp camera to map bounds (with a margin of 200 pixels in screen/iso coordinates)
   let maxW = MAP * HALF_TW + 200;
   let maxH = MAP * TH + 200;
   camX = Math.max(-maxW, Math.min(maxW, camX));
   camY = Math.max(-200, Math.min(maxH, camY));
+}
+
+// Re-center on the followed unit with the unit's POST-sim-tick position —
+// must run after update(), immediately before render() (see handleScroll).
+function syncCameraFollow(){
+  if(!window.cameraFollowId)return;
+  let f=entitiesById.get(window.cameraFollowId);
+  if(f&&f.hp>0){
+    let iso=toIso(f.x,f.y);
+    camX=iso.ix;camY=iso.iy;
+    let maxW=MAP*HALF_TW+200, maxH=MAP*TH+200;
+    camX=Math.max(-maxW,Math.min(maxW,camX));
+    camY=Math.max(-200,Math.min(maxH,camY));
+  } else {
+    window.cameraFollowId=null;
+  }
 }
 
 // ---- RESIZE ----
