@@ -1785,8 +1785,13 @@ function doCommand(sx,sy){
     // sending villagers to a camp auto-tasks them onto its resource
     // (autoTaskBuilder dispatch). A healthy camp used to fall through to
     // a plain walk (user caught it: "clicking the camp does nothing").
+    // FARM always resolves too: only the plot's ORIGIN tile is
+    // TERRAIN.FARM, so terrain-clicks on the other 3 tiles of a healthy
+    // farm fell through to a plain walk ("clicking the farm sometimes
+    // does nothing", user caught it) — the dispatch branch auto-tasks
+    // the farmer wherever on the 2×2 the click lands.
     buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)
-      || en.btype === 'LCAMP' || en.btype === 'MCAMP' || en.btype === 'MILL'));
+      || en.btype === 'LCAMP' || en.btype === 'MCAMP' || en.btype === 'MILL' || en.btype === 'FARM'));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';

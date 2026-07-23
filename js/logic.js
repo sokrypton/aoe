@@ -1120,6 +1120,24 @@ function rememberedGatherTile(e,terrain){
   return null;
 }
 
+// The farmer's next stand tile on its 2×2 plot (origin = gatherX/Y) — a
+// pure function of the current rounded position + hashed bite count, so
+// the AoE2 farm stroll needs no stored state and no RNG. Every plot tile
+// is within the Chebyshev-1 extraction bound of the origin, so working
+// from any of them is identical to working from the origin.
+// Farmers work STRAIGHT FURROWS along the grain (user call — the farm
+// art's crop strips run along world X): passes pace E/W along the
+// current row, with a short N/S headland shift every 3rd bite. carrying
+// is the bite counter; it resets each load, which just restarts the row
+// phase. Off-plot positions clamp onto the plot.
+function farmPlotNextTile(e){
+  let dx=Math.min(1,Math.max(0,Math.round(e.x)-e.gatherX));
+  let dy=Math.min(1,Math.max(0,Math.round(e.y)-e.gatherY));
+  let row=Math.floor(e.carrying/3)&1;
+  if(dy!==row)return{x:e.gatherX+dx,y:e.gatherY+row};  // headland shift
+  return{x:e.gatherX+(1-dx),y:e.gatherY+row};          // furrow pass
+}
+
 // Bring an exhausted farm back to life once a reseed has been paid for, and
 // put the farmer `e` straight back on it. Shared verbatim by the prepaid and
 // AI-wood reseed branches in updateUnit's build handler (they differ only in
@@ -1307,6 +1325,18 @@ function updateGatherTask(e,config){
   if(tile.res<=0){
     depleteGatherTile(gatherTile,config,e);
     clearGatherTarget(e);
+  }
+  // AoE2 farm stroll: after each bite the farmer walks one ring leg to a
+  // different tile of its 2×2 plot (farmPlotNextTile) and works there.
+  // The leg (~T30(38)) is far shorter than the cycle (T30(94)) and the
+  // cooldown keeps ticking mid-walk, so extraction stays cooldown-bound —
+  // food rate unchanged. Gates: a depleting bite above already cleared
+  // gatherX or flipped task (no stroll into a reseed), and a FULL load
+  // goes straight to the drop-off instead of wasting a leg. A blocked
+  // corner just yields an empty path — work in place this cycle.
+  if(e.task==='farm'&&e.gatherX>=0&&e.carrying<e.carryMax){
+    let n=farmPlotNextTile(e);
+    pathUnitTo(e,n.x,n.y);
   }
 }
 

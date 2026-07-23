@@ -10,35 +10,20 @@
      a blank scenario world instead of the menu. __editorMode (set below,
      before any script) gates the additive guards in init.js and input.js. -->
 <script>window.UI_VARIANT='mobile'; window.__editorMode=true;</script>
-<script src="js/page-shell.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/core.js"></script>
-<script src="js/determinism.js"></script>
-<script src="js/map.js"></script>
-<script src="js/entities.js"></script>
-<script src="js/pathfinding.js"></script>
-<script src="js/iso.js"></script>
-<script src="js/render-terrain.js"></script>
-<script src="js/render-buildings.js"></script>
-<script src="js/render-units.js"></script>
-<script src="js/render-outlines.js"></script>
-<script src="js/render-fx.js"></script>
-<script src="js/render.js"></script>
-<script src="js/logic.js"></script>
-<script src="js/commands.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/loop.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/save.js"></script>
-<script src="js/scenario.js"></script>
-<script src="js/net.js"></script>
-<script src="js/net-sync.js"></script>
-<script src="js/lockstep.js"></script>
-<script src="js/lobby.js"></script>
-<script src="js/chat.js"></script>
-<script src="js/input.js"></script>
-<script src="js/init.js"></script>
-<script src="js/editor.js"></script>
+<script>
+// Cache-busted local includes (the lab.html loader): the editor is a DEV
+// tool — a stale cached logic.js here means "the feature doesn't work in
+// the editor" bug reports that are really the browser cache (bit twice).
+// document.write preserves load order. CDN scripts above stay cacheable.
+(function(){
+  const v = Date.now();
+  ['page-shell','audio','core','determinism','map','entities','pathfinding',
+   'iso','render-terrain','render-buildings','render-units','render-outlines',
+   'render-fx','render','logic','commands','ai','loop','ui','save','scenario',
+   'net','net-sync','lockstep','lobby','chat','input','init','editor'].forEach(n =>
+    document.write('<script src="js/' + n + '.js?t=' + v + '"><\/script>'));
+})();
+</script>
 </body></html>

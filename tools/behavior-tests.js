@@ -769,6 +769,76 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ----------------------------------------------------- farm stroll parity
+    // Farmers walk a ring over their 2×2 plot between bites (AoE2 stroll).
+    // The legs must not change the food rate: extraction stays cooldown-bound
+    // (the leg is far shorter than the cycle and the cooldown ticks mid-walk).
+    'farm-stroll': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'FARM', x: 11, y: 9, team: 0 },
+          { u: 'villager', x: 13, y: 9, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farm = entities.find(e => e.team === 0 && e.btype === 'FARM');
+      const v = entities.find(e => e.team === 0 && e.utype === 'villager');
+      v.task = 'farm'; v.gatherX = farm.x; v.gatherY = farm.y;
+      const biteTicks = [], visited = new Set();
+      let prevCarry = 0, returnAfterFull = false;
+      for (let i = 0; i < T30(1600); i++) {
+        update();
+        if (v.task === 'farm') visited.add(Math.round(v.x) + ',' + Math.round(v.y));
+        if (v.carrying > prevCarry) biteTicks.push(i);
+        if (prevCarry < v.carryMax && v.carrying >= v.carryMax) returnAfterFull = v.task === 'return' || v.path.length === 0;
+        prevCarry = v.carrying;
+        if (biteTicks.length >= 6) break;
+      }
+      // (a) rate parity: every inter-bite delta equals the cooldown formula
+      const cd = gatherCooldownFor(0, 'food', T30(94));
+      const deltas = biteTicks.slice(1).map((t, k) => t - biteTicks[k]);
+      T.ok('stroll keeps extraction cooldown-bound (deltas=' + deltas.join(',') + ' cd=' + cd + ')',
+           deltas.length >= 4 && deltas.every(d => d === cd));
+      // (b) the ring actually covers the whole 2×2 plot
+      const plot = [[0,0],[1,0],[1,1],[0,1]].map(([dx,dy]) => (farm.x+dx) + ',' + (farm.y+dy));
+      T.ok('farmer visits all 4 plot tiles', plot.every(k => visited.has(k)));
+      // (c) HEAVY PLOW works straight furrows: passes pace E/W along the
+      // grain (world X), headland shifts N/S only every 3rd bite.
+      applyTech(0, 'heavy_plow');
+      // Measure ONE clean load from the origin (deposit boundaries reset
+      // the row phase and this farm deposits IN PLACE at the adjacent TC,
+      // so mid-stream windows mix haul legs into the count).
+      v.carrying = 0; v.carryType = null;
+      v.x = farm.x; v.y = farm.y; clearUnitPath(v);
+      const stands = [];
+      let pc = 0;
+      for (let i = 0; i < T30(2400); i++) {
+        update();
+        if (v.carrying === pc + 1) { stands.push({ x: Math.round(v.x), y: Math.round(v.y), c: v.carrying }); pc = v.carrying; }
+        if (stands.length >= 10) break;
+      }
+      const pairs = stands.slice(1).map((s, k) => ({ ax: Math.abs(s.x - stands[k].x), ay: Math.abs(s.y - stands[k].y) }));
+      const passes = pairs.filter(l => l.ax === 1 && l.ay === 0).length;
+      const shifts = pairs.filter(l => l.ax === 0 && l.ay === 1).length;
+      T.ok('plow furrows: grain passes 2:1 over headland shifts (' + passes + ':' + shifts + ' of ' + pairs.length + ')',
+           passes === 6 && shifts === 3 && pairs.length === 9);
+      T.ok('plow still covers both rows', new Set(stands.map(s => s.y)).size === 2);
+      // (d) a depleting bite hands the farmer to the reseed flow (no stroll)
+      resources[0].prepaidFarms = 0;
+      map[farm.y][farm.x].res = 1;
+      let flipped = false;
+      for (let i = 0; i < T30(400) && !flipped; i++) {
+        update();
+        flipped = farm.exhausted && v.task === 'build' && v.buildTarget === farm.id;
+      }
+      T.ok('depleting bite flips straight to the reseed flow', flipped);
+      return T;
+    })),
+
     // ------------------------------------- tower line of sight scales with age
     // Watch towers double as scouting outposts (AoE2 Outpost): LOS 6 (Dark) →
     // 9 (Feudal) → 12 (Castle), keyed off the owner's teamAge.

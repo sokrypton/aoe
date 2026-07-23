@@ -2986,6 +2986,13 @@ function drawUnit(e){
       }
       anim.atSite = atSite;
       anim.working = isActive && e.path.length===0 && atSite;
+      // ON-PLOT STROLL (the sim's farm stroll legs): a farmer walking
+      // between tiles of its own 2×2 plot keeps its farm tool — rolling
+      // plow / held scythe — not the hauling reads (barrow / overhead
+      // carry). Off-plot trips (to the mill and back) haul as usual;
+      // the Chebyshev bound is what separates the two.
+      anim.farmWalk = e.task==='farm' && moving && e.gatherX >= 0 &&
+        Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
       anim.gripTask = e.task==='chop'||e.task==='mine_gold'||e.task==='mine_stone'||e.task==='build';
       // Shaped work swing: slow wind-up (70% of the cycle), fast strike
       // (30%). swing is the tool's rotation: -1.1 raised, +0.5 at impact.
@@ -3012,13 +3019,14 @@ function drawUnit(e){
       anim.plowing = anim.working && e.task === 'farm' && hasUpgrade(e.team, 'heavy_plow');
       anim.plowOff = anim.plowing ? u*4 - 2 : 0;
       // the plow RIDES the barrow rig (same projected frame, wheel,
-      // grips, depth rules): a wheelbarrow minus the tray plus a share
-      anim.plowRig = anim.plowing;
+      // grips, depth rules): a wheelbarrow minus the tray plus a share.
+      // On stroll legs the rig stays out (wheel rolling, no dig stroke).
+      anim.plowRig = anim.plowing || (anim.farmWalk && hasUpgrade(e.team, 'heavy_plow'));
       // Farmers below Heavy Plow work a SCYTHE: a horizontal sweep
       // (rotation about the grip anchor) at the standard work-cycle
       // rate; sweep drives tool + hand from one value.
-      anim.scythe = anim.working && e.task === 'farm' && !anim.plowing;
-      anim.sweep = anim.scythe ? Math.sin(anim.phRaw * Math.PI * 2) * 0.3 : 0;
+      anim.scythe = (anim.working || anim.farmWalk) && e.task === 'farm' && !anim.plowRig;
+      anim.sweep = anim.scythe && anim.working ? Math.sin(anim.phRaw * Math.PI * 2) * 0.3 : 0; // held static on stroll legs
       // The rock accompanies the TOOL swing only (gripTask + the plow):
       // 'working' alone is true for any truthy task standing at-site
       // (foragers, fighters, the gallery's dummy task) — no shake there.
@@ -3063,11 +3071,13 @@ function drawUnit(e){
       // foraging keep their poses too (they work via TARGET, not task —
       // a toolHeld-only gate let the carry pose hijack the butcher jab,
       // user caught it). anim.working covers them all.
-      anim.carryShow = e.carrying > 0 && !anim.working;
+      anim.carryShow = e.carrying > 0 && !anim.working && !anim.farmWalk;
       // WHEELBARROW (the tech's literal tell): hauling villagers push a
       // barrow — load in the tray outbound, EMPTY on the walk back to
-      // the resource (user call; builders keep bare hands).
-      anim.barrow = hasUpgrade(e.team, 'wheelbarrow') && !anim.working &&
+      // the resource (user call; builders keep bare hands). Never on the
+      // plot itself (farmWalk): the farm tool is the read there, and the
+      // plow rig has no tray for the wheat anyway.
+      anim.barrow = hasUpgrade(e.team, 'wheelbarrow') && !anim.working && !anim.farmWalk &&
         (e.carrying > 0 || (e.path.length > 0 && BARROW_TASKS.has(e.task)));
       anim.armState[anim.gripS] = (anim.barrow || anim.plowRig || anim.carryShow) ? 'carry'
         : toolHeld ? 'grip' : 'idle';
@@ -4256,7 +4266,10 @@ function drawUnit(e){
         // draws INSIDE the tray at the slot the painter order provides,
         // shrunk and recentered (the arts keep their overhead centroids;
         // the logs hang way off the back)
-        drawBarrow(e, anim.plowRig ? anim.plowOff/3.6 : moving,
+        // plow roll: stroke-tied spoke angle while digging (number),
+        // free animTick spin on the stroll legs (true) — the
+        // wheelbarrow's exact rolling convention
+        drawBarrow(e, anim.plowRig ? (anim.plowing ? anim.plowOff/3.6 : true) : moving,
                    anim.barrowTilt || 0, anim.barrow && anim.carryShow ? (p) => {
           X.save();
           // per-art seating: the tall stone stack lifts clear of the
