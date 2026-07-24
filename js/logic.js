@@ -2575,7 +2575,23 @@ function updateUnitCombat(e){
       clearUnitPath(e);
       // Press tight against the carcass (pressToContact) so the herding
       // crew packs onto/around it; separateUnits rings them.
-      pressToContact(e, t.x, t.y, 0.7);
+      // PRESS TIEBREAKER (user call — press and separation are otherwise
+      // two independent controllers contesting the same band, and the
+      // crowd visibly vibrates while they fight): a settled co-harvester
+      // STRICTLY CLOSER to the carcass (id breaks exact ties) owns the
+      // lane — the outer unit holds its spot (any d<=1.5 harvests just
+      // as well; the 0.7 press is cosmetic packing) so press can never
+      // walk one butcher into another and hand separation an overlap.
+      let laneHeld=false;
+      for(let pi=0;pi<entities.length&&!laneHeld;pi++){
+        let p=entities[pi];
+        if(p===e||p.type!=='unit'||p.hp<=0||p.garrisonedIn||p.target!==e.target)continue;
+        if(p.utype!=='villager'||p.path.length>0)continue;   // movers hold no slot
+        if(dist(p,e)>=0.75)continue;                         // not in my lane
+        let pd=distToTarget(p,t);
+        if(pd<d||(pd===d&&p.id<e.id))laneHeld=true;
+      }
+      if(!laneHeld)pressToContact(e, t.x, t.y, 0.7);
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
         e.task='return';
