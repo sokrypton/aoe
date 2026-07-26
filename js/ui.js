@@ -456,7 +456,7 @@ function updateUI(){
       food: -1, wood: -1, gold: -1, stone: -1,
       popUsed: -1, popCap: -1, idleCount: -1,
       gameOver: null, gameStarted: null, selectedKey: null,
-      selectionDetails: null, placing: null, currentVillagerMenu: null,
+      selectionDetails: null, placing: null, currentVillagerMenu: null, undoAvail: false,
       settingRally: null
     };
   }
@@ -471,6 +471,7 @@ function updateUI(){
     ? teamAge[myTeam] + ':' + (myAgeUpBldg ? myAgeUpBldg.research.target : '-') : '';
 
   let lu = window.lastUIState;
+  let undoNow = typeof window.undoAvailable==='function' && window.undoAvailable();
   let stateChanged = (
     currentFood !== lu.food || currentWood !== lu.wood ||
     currentGold !== lu.gold || currentStone !== lu.stone ||
@@ -483,7 +484,13 @@ function updateUI(){
     !!window.settingGuard !== !!lu.settingGuard ||
     window.settingGarrison !== lu.settingGarrison ||
     myBellActive() !== !!lu.bellActive ||
-    ageKey !== lu.ageKey
+    ageKey !== lu.ageKey ||
+    // Undo availability is computed BELOW the gate (it feeds selKey), so it
+    // has to be part of the dirty check too — otherwise the Undo arrow only
+    // appears when something ELSE happens to dirty the HUD. A placement's
+    // foundation arrives a few ticks after the click (lockstep delay), so
+    // without this the button never showed for "send a villager to build".
+    undoNow !== !!lu.undoAvail
   );
 
   // Live training-progress patch: runs every frame on the EXISTING DOM (bar
@@ -530,6 +537,7 @@ function updateUI(){
   lu.selectionDetails = currentSelectionDetails;
   lu.placing = placing;
   lu.currentVillagerMenu = window.currentVillagerMenu;
+  lu.undoAvail = undoNow;
   lu.settingRally = !!window.settingRally;
   lu.settingGuard = !!window.settingGuard;
   lu.settingGarrison = window.settingGarrison;
@@ -595,7 +603,7 @@ function updateUI(){
 
   let act=byId('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally+':'+!!window.settingGuard
-    +':u'+(typeof window.undoAvailable==='function'&&window.undoAvailable()?1:0)
+    +':u'+(undoNow?1:0)
     +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
     +':garr'+(window.settingGarrison||0)
     // age + research flip which buttons EXIST (locked ones are hidden, wall/
@@ -662,7 +670,7 @@ function updateUI(){
   // the build submenus and finally exits.
   let undoReady = !placing && !window.settingRally && !window.settingGuard && !window.settingGarrison
     && !(window.currentVillagerMenu==='eco'||window.currentVillagerMenu==='mil')
-    && typeof window.undoAvailable==='function' && window.undoAvailable();
+    && undoNow;
   if(rebuildActions && (selected.length>0 || undoReady) && gameStarted && !gameOver){
     let backBtn=document.createElement('div');
     backBtn.className='act-btn back-btn framed';

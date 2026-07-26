@@ -1208,6 +1208,25 @@ function pageSuite() {
       assertEq(r.afterBuilt, false, 'undo lapses once the building is finished');
     });
 
+    await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);      // build is a task -> deselects
+        updateUI();
+        const beforeExec = !!document.querySelector('#actions .back-btn');
+        // the foundation lands a few ticks later (lockstep delay)
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        updateUI();
+        return { sel:selected.length, beforeExec, shown: !!document.querySelector('#actions .back-btn'),
+                 label:(document.querySelector('#actions .back-btn .btn-label')||{}).textContent||'' };
+      })()`);
+      assertEq(r.sel, 0, 'placing a building deselects (index model)');
+      assertEq(r.shown, true, 'the Undo arrow must render once the foundation exists, with nothing selected');
+      assertEq(r.label, 'Undo', 'and it reads as Undo, not Back');
+    });
+
     await tapT('walk into UNEXPLORED territory KEEPS selection (even over a fogged resource — no task committed)', async () => {
       const pts = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v];

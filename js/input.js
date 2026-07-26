@@ -934,8 +934,11 @@ function findUndoFoundation(){
   if(!lastUndo || lastUndo.kind!=='place') return null;
   for(let i=0;i<entities.length;i++){
     let e=entities[i];
-    if(e.type==='building' && e.team===myTeam && !e.complete && e.hp>0
-       && e.x===lastUndo.tileX && e.y===lastUndo.tileY) return e;
+    if(e.type!=='building' || e.team!==myTeam || e.complete || e.hp<=0) continue;
+    // Footprint, not origin: a gate resolves its own origin off the clicked
+    // tile (gateFootprint), so an origin-only match missed it.
+    let w=e.w||BLDGS[e.btype].w||1, h=e.h||BLDGS[e.btype].h||1;
+    if(lastUndo.tileX>=e.x && lastUndo.tileX<e.x+w && lastUndo.tileY>=e.y && lastUndo.tileY<e.y+h) return e;
   }
   return null;
 }
