@@ -943,6 +943,20 @@ function findUndoFoundation(u){
   }
   return null;
 }
+// Put units back where the undone action found them: a unit that was GATHERING
+// is re-tasked to its resource tile (the same command a click there would
+// issue), everything else walks back to the tile it stood on. One command per
+// unit so a group returns to its own shape, not a formation blob.
+function sendUnitsBack(prev){
+  let alive = (prev||[]).filter(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
+  alive.forEach(p=>{
+    let tx = (p.gx >= 0 ? p.gx : p.x), ty = (p.gy >= 0 ? p.gy : p.y);
+    submitCommand({ kind:'command', unitIds:[p.id],
+      tileX:tx, tileY:ty, targetId:null, buildTargetId:null, followId:null });
+  });
+  return alive;
+}
+
 window.undoLastAction = function(){
   if(gameOver || !undoAvailable()) return;
   let u = lastUndo;
@@ -958,16 +972,17 @@ window.undoLastAction = function(){
   if(u.kind==='place'){
     let f = findUndoFoundation(u);   // pass `u`: lastUndo is already consumed
     if(f) requestDeleteOwned([f.id]);    // the existing cancel-build refund path
+    sendUnitsBack(u.prev);
+    selected = (u.prev||[]).map(p=>entitiesById.get(p.id)).filter(e=>e && e.hp>0);
     if(window.showMsg) showMsg('Construction cancelled');
+    if(window.playSound) window.playSound('click');
     updateUI();
     return;
   }
   // 'orders': send each unit back to ITS OWN tile (one command per unit, so
   // a group returns to its original shape rather than a formation blob) and
   // re-select them, per the request.
-  let back = u.prev.filter(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
-  back.forEach(p=>submitCommand({ kind:'command', unitIds:[p.id],
-    tileX:p.x, tileY:p.y, targetId:null, buildTargetId:null, followId:null }));
+  let back = sendUnitsBack(u.prev);
   selected = back.map(p=>entitiesById.get(p.id)).filter(Boolean);
   if(window.showMsg) showMsg('Order undone');
   if(window.playSound) window.playSound('click');
@@ -1950,7 +1965,8 @@ function doCommand(sx,sy){
   // pointing at a stale action.
   if(committedTask){
     recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
-      x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))) })) });
+      x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))),
+      gx: (s.gatherX >= 0 ? s.gatherX : -1), gy: (s.gatherY >= 0 ? s.gatherY : -1) })) });
   } else {
     lastUndo = null;
   }
@@ -1980,7 +1996,14 @@ function doPlace(sx,sy){
     placing=null;
     return;
   }
-  recordUndo({ kind:'place', btype: placing, tileX: tile.x, tileY: tile.y });
+  // Capture the builders' prior state too: undoing a placement must not leave
+  // them standing at the cancelled site. A villager that was GATHERING goes
+  // back to that resource tile (re-tasked exactly as a click would); anything
+  // else just walks back to where it stood.
+  recordUndo({ kind:'place', btype: placing, tileX: tile.x, tileY: tile.y,
+    prev: vils.map(v => ({ id: v.id,
+      x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
+      gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1) })) });
   submitCommand({ kind: 'build-placement', btype: placing, tileX: tile.x, tileY: tile.y, unitIds: vils.map(s=>s.id) });
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){

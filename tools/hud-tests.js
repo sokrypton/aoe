@@ -1226,6 +1226,29 @@ function pageSuite() {
       assertEq(c.del[0], c.fid, 'cancels the foundation that was placed');
     });
 
+    await tapT('undo: cancelling a placement also sends the builder back to its prior task', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        v.task='chop'; v.gatherX=26; v.gatherY=30;      // was chopping before we sent it to build
+        placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(c=>c.kind==='delete-units');
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return {del:!!del, back:back&&{x:back.tileX,y:back.tileY,ids:back.unitIds},
+                sel:selected.length, selId:selected[0]&&selected[0].id, vid:window.__vid};
+      })()`);
+      assertEq(r.del, true, 'the foundation is cancelled');
+      if(!r.back) throw new Error('builder was left standing at the cancelled site');
+      assertEq(r.back.x, 26, 'villager is sent back to its PRIOR GATHER tile x');
+      assertEq(r.back.y, 30, 'villager is sent back to its PRIOR GATHER tile y');
+      assertEq(r.selId, r.vid, 'and is re-selected');
+    });
+
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
       const r = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
