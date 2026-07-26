@@ -1151,27 +1151,35 @@ function pageSuite() {
       assertEq(r.sel, 1, 'selection size');
     });
 
-    await tapT('undo: a walk order sends the unit BACK and re-selects it', async () => {
+    await tapT('undo: a plain WALK is NOT undoable (the arrow still means deselect)', async () => {
       const pts = await page.evaluate(tapStage(`
-        const m=createUnit('militia',30,30,0); selected=[m]; window.__mid=m.id;
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(38.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({sel:selected.length, avail:window.undoAvailable()})`);
+      assertEq(r.sel, 1, 'a walk keeps the selection');
+      assertEq(r.avail, false, 'a walk records no undo — Back must still just deselect');
+    });
+
+    await tapT('undo: a committed TASK sends the villager BACK and re-selects it', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
         window.__pts=(scr)=>({ g: scr(38.5, 30.5) });`));
       await page.mouse.click(pts.g.x, pts.g.y);
       const r = await page.evaluate(`(()=>{
-        const go=window.__cmds.find(c=>c.kind==='command');
-        window.__cmds.length=0;
         const avail=window.undoAvailable();
+        window.__cmds.length=0;
         window.undoLastAction();
         const back=window.__cmds.find(c=>c.kind==='command');
-        return {go:go&&{x:go.tileX,y:go.tileY}, avail, back:back&&{x:back.tileX,y:back.tileY,ids:back.unitIds},
-                sel:selected.length, selId:selected[0]&&selected[0].id, mid:window.__mid, still:window.undoAvailable()};
+        return {avail, back:back&&{x:back.tileX,y:back.tileY}, sel:selected.length,
+                selId:selected[0]&&selected[0].id, vid:window.__vid, still:window.undoAvailable()};
       })()`);
-      if(!r.go) throw new Error('no walk order captured');
-      assertEq(r.avail, true, 'undo must be available after a command');
+      assertEq(r.avail, true, 'a gather task IS undoable');
       if(!r.back) throw new Error('undo issued no return command');
       assertEq(r.back.x, 30, 'returns to the ORIGINAL tile x');
       assertEq(r.back.y, 30, 'returns to the ORIGINAL tile y');
-      assertEq(r.sel, 1, 'unit is re-selected by the undo');
-      assertEq(r.selId, r.mid, 'the same unit');
+      assertEq(r.selId, r.vid, 'the villager is re-selected by the undo');
       assertEq(r.still, false, 'single-level undo is consumed on use');
     });
 
@@ -1206,6 +1214,16 @@ function pageSuite() {
       })()`);
       assertEq(r.withFoundation, true, 'undo is available while the foundation stands');
       assertEq(r.afterBuilt, false, 'undo lapses once the building is finished');
+      const c = await page.evaluate(`(()=>{
+        const f=entities.find(e=>e.type==='building'&&e.btype==='HOUSE');
+        if(f) f.complete=false;   // the step above marked it built; put it back
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(x=>x.kind==='delete-units');
+        return {del: del&&del.unitIds, fid: f&&f.id};
+      })()`);
+      if(!c.del) throw new Error('undo issued no delete-units for the foundation');
+      assertEq(c.del[0], c.fid, 'cancels the foundation that was placed');
     });
 
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {

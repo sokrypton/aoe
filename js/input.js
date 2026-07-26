@@ -930,15 +930,16 @@ window.undoAvailable = undoAvailable;
 // The foundation a 'place' undo refers to: our own, still unfinished, on the
 // tile it was placed at. Resolved by position because the building does not
 // exist yet when the command is issued (it is created at the exec tick).
-function findUndoFoundation(){
-  if(!lastUndo || lastUndo.kind!=='place') return null;
+function findUndoFoundation(u){
+  u = u || lastUndo;
+  if(!u || u.kind!=='place') return null;
   for(let i=0;i<entities.length;i++){
     let e=entities[i];
     if(e.type!=='building' || e.team!==myTeam || e.complete || e.hp<=0) continue;
     // Footprint, not origin: a gate resolves its own origin off the clicked
     // tile (gateFootprint), so an origin-only match missed it.
     let w=e.w||BLDGS[e.btype].w||1, h=e.h||BLDGS[e.btype].h||1;
-    if(lastUndo.tileX>=e.x && lastUndo.tileX<e.x+w && lastUndo.tileY>=e.y && lastUndo.tileY<e.y+h) return e;
+    if(u.tileX>=e.x && u.tileX<e.x+w && u.tileY>=e.y && u.tileY<e.y+h) return e;
   }
   return null;
 }
@@ -955,7 +956,7 @@ window.undoLastAction = function(){
     return;
   }
   if(u.kind==='place'){
-    let f = findUndoFoundation();
+    let f = findUndoFoundation(u);   // pass `u`: lastUndo is already consumed
     if(f) requestDeleteOwned([f.id]);    // the existing cancel-build refund path
     if(window.showMsg) showMsg('Construction cancelled');
     updateUI();
@@ -1925,6 +1926,7 @@ function doCommand(sx,sy){
   // "assign it and move on". The ONLY keep is a plain WALK: to explored
   // ground where nothing is committed, OR to an UNEXPLORED tile (we can't
   // know what's there yet, so it's a move into the unknown, not a task).
+  let committedTask = false;
   {
     prunePendingOrders();
     let t0p = map[tile.y] && map[tile.y][tile.x];
@@ -1933,6 +1935,7 @@ function doCommand(sx,sy){
     let plainWalk = !target && !buildTarget && !followTarget;
     movers.forEach(s => {
       let keep = unexplored || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
+      if(!keep) committedTask = true;
       pendingOrderUI.set(s.id, { t: tick, keep });
     });
   }
@@ -1941,9 +1944,16 @@ function doCommand(sx,sy){
   // client's view (its fog, its screen). Mutation happens in
   // execUnitCommand (js/commands.js) at the scheduled tick on every peer's
   // queue (lockstep).
-  // Snapshot where these units stood BEFORE the order — the undo target.
-  recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
-    x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))) })) });
+  // Only a committed TASK is undoable. A plain WALK keeps the selection, and
+  // there the return arrow must keep its old meaning — deselect — so a walk
+  // records nothing and CLEARS any older entry rather than leaving the arrow
+  // pointing at a stale action.
+  if(committedTask){
+    recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
+      x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))) })) });
+  } else {
+    lastUndo = null;
+  }
   submitCommand({
     kind: 'command',
     unitIds: movers.map(s => s.id),
