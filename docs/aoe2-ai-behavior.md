@@ -212,7 +212,8 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 
 | Behavior | AoE2 DE | Ours | Verdict |
 |---|---|---|---|
-| Explorer count | up to 4 land explorers | exactly 1 scout, retrained on death (`ensureAIScout`) | 🟡 fewer, but persistent |
+| Explorer count | up to 4 land explorers | 1 scout, retrained on death (`ensureAIScout`), plus one civilian stand-in below | 🟡 fewer, but persistent |
+| Civilian explorers | `percent-civilian-explorers [34]`, `cap-civilian-explorers [2]` | ONE villager (`ensureAICivilianExplorer`), only while no scout can be fielded at all — Dark Age has no cavalry, so a lost starting scout otherwise means total blindness AND (fog on) a base-survey band that never becomes explored, i.e. an AI that never walls again. Released the moment a scout is possible. DE's *percentage* self-limits on a small eco; ours uses an absolute floor (≥10 villagers) after self-play showed a flat "always take one" cannibalising a Dark-Age team down to 8 villagers | 🟡 much narrower window, same purpose — closes the blindness hole, but measured strength effect is within noise (6-run aggregate: avg age 0.92→0.96) |
 | Home-first exploration | `home-exploration-time [300]` | `baseSurveyWaypoint` 8-point perimeter lap first | ✅ |
 | Frontier bias | `blot-exploration-map` re-explores | unexplored-tile-count scoring (`pickExploreWaypoint`) | ✅ |
 | Intel decay / re-scout | blot re-explores seen ground → stale intel refreshes | army-strength memory DECAYS (~6%/decision tick, `updateAIIntel`) and TC memory ghost-clears on re-sight — stale intel genuinely expires and re-scouting refreshes it | ✅ (2026-07 information parity) |

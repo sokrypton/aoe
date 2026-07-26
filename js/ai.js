@@ -182,6 +182,7 @@ function updateAI(ai){
   planAIResearch(ai,profile);                  // techs at their owning buildings (age-up handled by planAIAgeUp above)
   queueAIMilitary(ai,readyBarracks,profile);
   ensureAIScout(ai,readyBarracks); // keep an explorer alive so the enemy actually gets found
+  ensureAICivilianExplorer(ai,vils,readyBarracks,aiTC); // DE civilian explorer: cover the window where no scout is possible
   assignAIVillagers(ai,vils,profile);
   rescueTrappedAIVillagers(ai,aiTC,vils,profile);
   huntAIBears(ai,mils);
@@ -1401,6 +1402,7 @@ function assignAIVillagers(ai,vils,profile){
     // town bell) are off-limits: re-tasking them while immobile can claim
     // them as the sole builder of something they can't reach.
     if(v.garrisonedIn||v.task==='garrison')return;
+    if(ai.civExplorerId===v.id)return; // on recon duty (ensureAICivilianExplorer)
     if(v.path.length>0||v.target)return;
     if(v.task==='build'){
       // isAIGatherTaskStale() doesn't know 'build' as a task type — treating
@@ -2456,6 +2458,52 @@ function ensureAIScout(ai,readyBarracks){
   if(!canAfford(ai.team,UNITS.scout.cost))return;
   queueUnit(readyBarracks[0],'scout');
   ai.lastScoutTrainTick=tick;
+}
+
+// DE fields CIVILIAN explorers so a dead scout never blinds it
+// (sn-percent-civilian-explorers 34, capped at 2 — docs/aoe2-ai-behavior.md §8).
+// Ours is the narrow form: ONE villager, and only while the team has no scout
+// AND cannot field one — Dark Age has no cavalry (AoE2-accurate), so before
+// Feudal a lost starting scout otherwise means total blindness for the rest of
+// the Dark Age, and with fog on the base-survey band never becomes explored
+// either. Bounding it to that window keeps the eco cost off the mid-game,
+// where DE's 34% would just be villagers not gathering.
+const AI_CIV_EXPLORER_MIN_VILS=10;   // below this the eco cannot spare a pair of hands
+function ensureAICivilianExplorer(ai,vils,readyBarracks,aiTC){
+  let cur=ai.civExplorerId!=null?entitiesById.get(ai.civExplorerId):null;
+  if(cur&&(cur.hp<=0||cur.team!==ai.team||cur.utype!=='villager'))cur=null;
+  let hasScout=entities.some(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='scout'&&e.hp>0);
+  // A barracks + Feudal means ensureAIScout can cover it — hand recon back.
+  let canFieldScout=isUnlocked(ai.team,'scout')&&readyBarracks.length>0;
+  if(hasScout||canFieldScout){
+    if(cur){ clearUnitPath(cur); cur.task=null; }   // back to the eco pool next assign pass
+    ai.civExplorerId=null;
+    return;
+  }
+  // DE's is a PERCENTAGE (34%, cap 2), so a small economy yields few or no
+  // civilian explorers. A flat "always take one" cannibalises exactly the AI
+  // that can least afford it — self-play showed a Dark-Age team stuck at 8
+  // villagers permanently down one to recon. Same spirit, absolute floor.
+  if(vils.length<AI_CIV_EXPLORER_MIN_VILS)return;
+  if(!cur){
+    // Lowest id among free villagers — deterministic, and never one that is
+    // building, hauling a load or sheltering.
+    let pick=null;
+    for(let i=0;i<vils.length;i++){
+      let v=vils[i];
+      if(v.garrisonedIn||v.task==='build'||v.task==='garrison'||v.carrying>0)continue;
+      if(!pick||v.id<pick.id)pick=v;
+    }
+    if(!pick)return;
+    cur=pick;
+    stashVillagerTask(cur);
+    cur.task=null; cur.target=null; clearUnitPath(cur);
+    ai.civExplorerId=cur.id;
+  }
+  if(cur.path.length===0){
+    let pt=pickExploreWaypoint(ai.team,aiTC);
+    if(pt)pathUnitTo(cur,pt.x,pt.y);
+  }
 }
 
 function controlAIScouts(ai,mils,aiTC){
