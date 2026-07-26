@@ -771,196 +771,6 @@ function updateUI(){
   // unit's HP changes (see currentSelectionDetails).
   renderSelectionGrid(currentSelListKey, myAgeUpBldg);
 
-  renderSelectionCard(act, rebuildActions, myAgeUpBldg);
-}
-
-// The selection GRID (the multi-select tile strip and its garrison row).
-// Keyed rebuilds off currentSelListKey; myAgeUpBldg feeds the age tile.
-function renderSelectionGrid(currentSelListKey, myAgeUpBldg){
-  let selInfo=byId('sel-info');
-  let selGrid=byId('sel-grid');
-  let isMulti=selected.length>1;
-  // A selected own building — or a ram carrying riders (AoE2 garrison-rams) —
-  // with units inside reuses the multi-select grid to show its garrison
-  // (AoE2-style); clicking an icon releases one of them.
-  let garrisonSel = !isMulti && selected.length===1
-    && (selected[0].type==='building' || selected[0].utype==='ram')
-    && selected[0].team===myTeam && selected[0].garrison && selected[0].garrison.length>0
-    ? selected[0] : null;
-  // Mobile skin: SINGLE selections render through the same grid as groups —
-  // one gold tile with an HP strip, no name, no separate portrait card. The
-  // selection panel is one visual language whether 1 or 40 things are
-  // selected. Classic keeps its AoE2 portrait + name + stats readout.
-  // !gameOver everywhere below: the end-of-match branch writes VICTORY!/
-  // DEFEAT! into #sel-name/#sel-details, and a selection surviving into
-  // game over (the normal DEFEAT case) must not leave those hidden behind
-  // the grid classes.
-  let singleGrid = !isClassicUI && !isMulti && !garrisonSel && selected.length===1 && !gameOver;
-  // NULL selection is a tile too: the age crest renders through the same
-  // grid as any single selection — same style, same spacing, one language
-  // for the panel in every state. (Classic keeps its title/portrait box.)
-  let idleCrest = !isClassicUI && selected.length===0 && gameStarted && !gameOver
-    && typeof teamAge !== 'undefined' && teamAge && isPlayerTeam(myTeam);
-  // Game over on mobile renders the outcome (🏆/💀) as the SAME single tile as
-  // every other selection state, so the panel keeps one width and position and
-  // never shifts ("slides") into the portrait+stats card. Classic keeps its
-  // worded card.
-  let gameOverTile = !isClassicUI && gameOver;
-  let iWonOutcome = gameOver ? (typeof didIWin==='function' && didIWin()) : false;
-  // (No separate 'has-selection' class: in the mobile skin EVERY selection
-  // state — single, group, garrison, idle crest — goes through the grid,
-  // and .multi-select already hides the whole #sel-stats card; classic
-  // never had a rule for it. One class, one meaning.)
-  if(selInfo) selInfo.classList.toggle('multi-select', ((isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver) || gameOverTile);
-  // Single unit/building or the age crest: desktop CSS reveals the #sel-stats
-  // readout beside the tile. Multi-select/garrison stay tiles-only.
-  if(selInfo) selInfo.classList.toggle('single-sel', singleGrid || idleCrest);
-  // The grid gets its OWN dirty key: only what it actually renders (selection
-  // membership, per-unit HP, garrison members). Keying it on the full
-  // currentSelectionDetails rebuilt every icon ~30×/s while watching a
-  // construction or a gathering villager — per-tick fields (buildProgress,
-  // farm res, carried amount, cam flag) the grid doesn't even display.
-  let gridKey = currentSelListKey;
-  if (isMulti || singleGrid) gridKey += ':' + selected.map(s => s.id + '_' + s.hp).join(',')
-    + ':cam' + (window.cameraFollowId || 0)
-    // Grid tiles draw age-variant icons (iconKey: TC/Tower/walls change with
-    // age). The selection membership + hp don't change on an age advance, so
-    // without folding the age in, a building kept selected through Advance
-    // rendered its stale (previous-age) tile until the selection changed.
-    + ':gage' + (teamAge && isPlayerTeam(myTeam) ? teamAge[myTeam] : '');
-  if (idleCrest) {
-    // myAgeUpBldg was already computed for the age dirty-key at the top of
-    // this function — no second full-entities scan.
-    gridKey += ':idleage' + (myAgeUpBldg ? 'adv' + myAgeUpBldg.research.target : teamAge[myTeam]);
-  }
-  if (gameOverTile) gridKey += ':over' + (iWonOutcome ? 1 : 0);
-  if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
-    let u = entitiesById.get(id);
-    return u ? id + '_' + u.hp : id;
-  }).join(',');
-  if(selGrid && gridKey!==(window.lastSelGridDetails||'')){
-    window.lastSelGridDetails=gridKey;
-    selGrid.innerHTML='';
-    // Buckets a flat unit/building list into same-type groups, preserving
-    // first-seen order so the grid doesn't reshuffle every refresh.
-    let groupByType=(list)=>{
-      let order=[], groups=new Map();
-      list.forEach(s=>{
-        let key=s.type==='building'?s.btype:s.utype;
-        if(!groups.has(key)){ groups.set(key,[]); order.push(key); }
-        groups.get(key).push(s);
-      });
-      return order.map(key=>{
-        let members=groups.get(key);
-        let data=members[0].type==='building'?BLDGS[key]:UNITS[key];
-        return {key,data,members};
-      });
-    };
-    let renderGroup=(g, {title, onClick, onRemove})=>{
-      let icon=document.createElement('div');
-      icon.className='sel-unit-icon';
-      setPortraitIcon(icon, iconKey(g.key, g.members[0].team), g.data&&g.data.icon);
-      // Rich hover tooltip (desktop): the classic skin's full readout —
-      // live HP, combat stats, a villager's job — resolved from these ids
-      // at hover time (descriptorForSelTile). dataset, not title: a native
-      // title would double up with the custom #tooltip.
-      // A single selection shows the #sel-stats readout beside the tile, so
-      // skip its tooltip (it would duplicate that).
-      if(!singleGrid){
-        icon.dataset.tileIds=g.members.map(m=>m.id).join(',');
-        icon.dataset.tipName=(g.data&&g.data.name||g.key)+(g.members.length>1?' ×'+g.members.length:'');
-      }
-      let avgHpPct=Math.max(0,Math.min(100,Math.round(
-        g.members.reduce((sum,u)=>sum+u.hp/u.maxHp,0)/g.members.length*100)));
-      let hpColor='#2b8a3e';
-      if(avgHpPct<20) hpColor='#cc3333';
-      else if(avgHpPct<50) hpColor='#d9a711';
-      let bar=document.createElement('div');bar.className='sel-unit-hp';
-      let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
-      fill.style.width=avgHpPct+'%';
-      fill.style.background=hpColor;
-      bar.appendChild(fill);
-      icon.appendChild(bar);
-      if(g.members.length>1){
-        let badge=document.createElement('div');
-        badge.className='sel-unit-count';
-        badge.textContent=g.members.length;
-        icon.appendChild(badge);
-      }
-      if(!singleGrid) icon.dataset.tipDesc=title(g);
-      icon.onclick=(ev)=>onClick(g,ev);
-      if(onRemove) icon.oncontextmenu=(ev)=>{ ev.preventDefault(); onRemove(g,ev); };
-      // Single-unit tile: double-click/tap toggles camera follow (with the
-      // green lock glow).
-      if(g.members.length===1 && g.members[0].type==='unit'){
-        icon.ondblclick=()=>{ if(window.toggleCameraFollow) toggleCameraFollow(); };
-        icon.classList.toggle('cam-locked', window.cameraFollowId===g.members[0].id);
-      }
-      selGrid.appendChild(icon);
-    };
-    if(garrisonSel){
-      let members=garrisonSel.garrison.map(id=>entitiesById.get(id)).filter(Boolean);
-      groupByType(members).forEach(g=>{
-        renderGroup(g, {
-          title: ()=>`Click to release one from garrison.`,
-          onClick: (g)=>{
-            if(gameOver)return;
-            let victim=g.members[0];
-            submitCommand({ kind: 'eject-garrison', bldgId: garrisonSel.id, unitId: victim.id });
-          }
-        });
-      });
-    } else if(isMulti || singleGrid){
-      groupByType(selected).forEach(g=>{
-        renderGroup(g, {
-          title: g=>g.members.length===1
-            ? '' // no hint text on a single tile — stats speak for themselves
-            : `Click: select only this group. Shift-click: remove it from the selection.`,
-          onClick: (g,ev)=>{
-            if(ev.shiftKey) selected=selected.filter(u=>!g.members.includes(u));
-            else {
-              selected=g.members.slice();
-              if(g.members.length===1) maybeReopenMktPopup(g.members[0]);
-            }
-            updateUI();
-          },
-          onRemove: (g)=>{
-            selected=selected.filter(u=>!g.members.includes(u));
-            updateUI();
-          }
-        });
-      });
-    } else if(idleCrest){
-      // NULL SELECTION tile: the current age's crest (or the TARGET age's
-      // while advancing) drawn as the exact same tile as a single selection.
-      let advU = myAgeUpBldg; // computed once at the top of updateUI
-      let crestIdx = advU ? advU.research.target : teamAge[myTeam];
-      let icon = document.createElement('div');
-      icon.className = 'sel-unit-icon';
-      setPortraitIcon(icon, 'age-' + AGES[crestIdx].key, '🏛️');
-      // No tooltip: the expanded card (desktop) shows the age name beside the
-      // crest; narrow widths keep the crest alone.
-      selGrid.appendChild(icon);
-    } else if(gameOverTile){
-      // OUTCOME tile: the trophy/skull drawn as the exact same single tile as
-      // any selection — icon only, no text — so the panel keeps its shape at
-      // game over.
-      let icon = document.createElement('div');
-      icon.className = 'sel-unit-icon outcome-tile';
-      setPortraitIcon(icon, null, iWonOutcome ? '🏆' : '💀');
-      icon.dataset.tipName = iWonOutcome ? 'Victory' : 'Defeat';
-      selGrid.appendChild(icon);
-    }
-  }
-}
-
-// The selection card (portrait, name, stats) AND the rest of the action
-// strip for the selected entity — the two are interleaved from the garrison
-// button down, so they extract together. `act`/`rebuildActions` are the
-// strip's handles from updateUI; myAgeUpBldg feeds the idle-state age crest.
-// refreshActionAffordability() stays INSIDE, after the early returns: the
-// gameOver / not-started / empty-selection paths deliberately skip it.
-function renderSelectionCard(act, rebuildActions, myAgeUpBldg){
   let port = byId('sel-portrait');
   if(gameOver){
     if(!isClassicUI) refreshMktPopup(null); // no trading over the end screen
@@ -1667,6 +1477,186 @@ function renderSelectionCard(act, rebuildActions, myAgeUpBldg){
   }
 
   refreshActionAffordability();
+}
+
+// The selection GRID (the multi-select tile strip and its garrison row).
+// Keyed rebuilds off currentSelListKey; myAgeUpBldg feeds the age tile.
+function renderSelectionGrid(currentSelListKey, myAgeUpBldg){
+  let selInfo=byId('sel-info');
+  let selGrid=byId('sel-grid');
+  let isMulti=selected.length>1;
+  // A selected own building — or a ram carrying riders (AoE2 garrison-rams) —
+  // with units inside reuses the multi-select grid to show its garrison
+  // (AoE2-style); clicking an icon releases one of them.
+  let garrisonSel = !isMulti && selected.length===1
+    && (selected[0].type==='building' || selected[0].utype==='ram')
+    && selected[0].team===myTeam && selected[0].garrison && selected[0].garrison.length>0
+    ? selected[0] : null;
+  // Mobile skin: SINGLE selections render through the same grid as groups —
+  // one gold tile with an HP strip, no name, no separate portrait card. The
+  // selection panel is one visual language whether 1 or 40 things are
+  // selected. Classic keeps its AoE2 portrait + name + stats readout.
+  // !gameOver everywhere below: the end-of-match branch writes VICTORY!/
+  // DEFEAT! into #sel-name/#sel-details, and a selection surviving into
+  // game over (the normal DEFEAT case) must not leave those hidden behind
+  // the grid classes.
+  let singleGrid = !isClassicUI && !isMulti && !garrisonSel && selected.length===1 && !gameOver;
+  // NULL selection is a tile too: the age crest renders through the same
+  // grid as any single selection — same style, same spacing, one language
+  // for the panel in every state. (Classic keeps its title/portrait box.)
+  let idleCrest = !isClassicUI && selected.length===0 && gameStarted && !gameOver
+    && typeof teamAge !== 'undefined' && teamAge && isPlayerTeam(myTeam);
+  // Game over on mobile renders the outcome (🏆/💀) as the SAME single tile as
+  // every other selection state, so the panel keeps one width and position and
+  // never shifts ("slides") into the portrait+stats card. Classic keeps its
+  // worded card.
+  let gameOverTile = !isClassicUI && gameOver;
+  let iWonOutcome = gameOver ? (typeof didIWin==='function' && didIWin()) : false;
+  // (No separate 'has-selection' class: in the mobile skin EVERY selection
+  // state — single, group, garrison, idle crest — goes through the grid,
+  // and .multi-select already hides the whole #sel-stats card; classic
+  // never had a rule for it. One class, one meaning.)
+  if(selInfo) selInfo.classList.toggle('multi-select', ((isMulti||!!garrisonSel||singleGrid||idleCrest) && !gameOver) || gameOverTile);
+  // Single unit/building or the age crest: desktop CSS reveals the #sel-stats
+  // readout beside the tile. Multi-select/garrison stay tiles-only.
+  if(selInfo) selInfo.classList.toggle('single-sel', singleGrid || idleCrest);
+  // The grid gets its OWN dirty key: only what it actually renders (selection
+  // membership, per-unit HP, garrison members). Keying it on the full
+  // currentSelectionDetails rebuilt every icon ~30×/s while watching a
+  // construction or a gathering villager — per-tick fields (buildProgress,
+  // farm res, carried amount, cam flag) the grid doesn't even display.
+  let gridKey = currentSelListKey;
+  if (isMulti || singleGrid) gridKey += ':' + selected.map(s => s.id + '_' + s.hp).join(',')
+    + ':cam' + (window.cameraFollowId || 0)
+    // Grid tiles draw age-variant icons (iconKey: TC/Tower/walls change with
+    // age). The selection membership + hp don't change on an age advance, so
+    // without folding the age in, a building kept selected through Advance
+    // rendered its stale (previous-age) tile until the selection changed.
+    + ':gage' + (teamAge && isPlayerTeam(myTeam) ? teamAge[myTeam] : '');
+  if (idleCrest) {
+    // myAgeUpBldg was already computed for the age dirty-key at the top of
+    // this function — no second full-entities scan.
+    gridKey += ':idleage' + (myAgeUpBldg ? 'adv' + myAgeUpBldg.research.target : teamAge[myTeam]);
+  }
+  if (gameOverTile) gridKey += ':over' + (iWonOutcome ? 1 : 0);
+  if (garrisonSel) gridKey += ':gar' + garrisonSel.garrison.map(id => {
+    let u = entitiesById.get(id);
+    return u ? id + '_' + u.hp : id;
+  }).join(',');
+  if(selGrid && gridKey!==(window.lastSelGridDetails||'')){
+    window.lastSelGridDetails=gridKey;
+    selGrid.innerHTML='';
+    // Buckets a flat unit/building list into same-type groups, preserving
+    // first-seen order so the grid doesn't reshuffle every refresh.
+    let groupByType=(list)=>{
+      let order=[], groups=new Map();
+      list.forEach(s=>{
+        let key=s.type==='building'?s.btype:s.utype;
+        if(!groups.has(key)){ groups.set(key,[]); order.push(key); }
+        groups.get(key).push(s);
+      });
+      return order.map(key=>{
+        let members=groups.get(key);
+        let data=members[0].type==='building'?BLDGS[key]:UNITS[key];
+        return {key,data,members};
+      });
+    };
+    let renderGroup=(g, {title, onClick, onRemove})=>{
+      let icon=document.createElement('div');
+      icon.className='sel-unit-icon';
+      setPortraitIcon(icon, iconKey(g.key, g.members[0].team), g.data&&g.data.icon);
+      // Rich hover tooltip (desktop): the classic skin's full readout —
+      // live HP, combat stats, a villager's job — resolved from these ids
+      // at hover time (descriptorForSelTile). dataset, not title: a native
+      // title would double up with the custom #tooltip.
+      // A single selection shows the #sel-stats readout beside the tile, so
+      // skip its tooltip (it would duplicate that).
+      if(!singleGrid){
+        icon.dataset.tileIds=g.members.map(m=>m.id).join(',');
+        icon.dataset.tipName=(g.data&&g.data.name||g.key)+(g.members.length>1?' ×'+g.members.length:'');
+      }
+      let avgHpPct=Math.max(0,Math.min(100,Math.round(
+        g.members.reduce((sum,u)=>sum+u.hp/u.maxHp,0)/g.members.length*100)));
+      let hpColor='#2b8a3e';
+      if(avgHpPct<20) hpColor='#cc3333';
+      else if(avgHpPct<50) hpColor='#d9a711';
+      let bar=document.createElement('div');bar.className='sel-unit-hp';
+      let fill=document.createElement('div');fill.className='sel-unit-hp-fill';
+      fill.style.width=avgHpPct+'%';
+      fill.style.background=hpColor;
+      bar.appendChild(fill);
+      icon.appendChild(bar);
+      if(g.members.length>1){
+        let badge=document.createElement('div');
+        badge.className='sel-unit-count';
+        badge.textContent=g.members.length;
+        icon.appendChild(badge);
+      }
+      if(!singleGrid) icon.dataset.tipDesc=title(g);
+      icon.onclick=(ev)=>onClick(g,ev);
+      if(onRemove) icon.oncontextmenu=(ev)=>{ ev.preventDefault(); onRemove(g,ev); };
+      // Single-unit tile: double-click/tap toggles camera follow (with the
+      // green lock glow).
+      if(g.members.length===1 && g.members[0].type==='unit'){
+        icon.ondblclick=()=>{ if(window.toggleCameraFollow) toggleCameraFollow(); };
+        icon.classList.toggle('cam-locked', window.cameraFollowId===g.members[0].id);
+      }
+      selGrid.appendChild(icon);
+    };
+    if(garrisonSel){
+      let members=garrisonSel.garrison.map(id=>entitiesById.get(id)).filter(Boolean);
+      groupByType(members).forEach(g=>{
+        renderGroup(g, {
+          title: ()=>`Click to release one from garrison.`,
+          onClick: (g)=>{
+            if(gameOver)return;
+            let victim=g.members[0];
+            submitCommand({ kind: 'eject-garrison', bldgId: garrisonSel.id, unitId: victim.id });
+          }
+        });
+      });
+    } else if(isMulti || singleGrid){
+      groupByType(selected).forEach(g=>{
+        renderGroup(g, {
+          title: g=>g.members.length===1
+            ? '' // no hint text on a single tile — stats speak for themselves
+            : `Click: select only this group. Shift-click: remove it from the selection.`,
+          onClick: (g,ev)=>{
+            if(ev.shiftKey) selected=selected.filter(u=>!g.members.includes(u));
+            else {
+              selected=g.members.slice();
+              if(g.members.length===1) maybeReopenMktPopup(g.members[0]);
+            }
+            updateUI();
+          },
+          onRemove: (g)=>{
+            selected=selected.filter(u=>!g.members.includes(u));
+            updateUI();
+          }
+        });
+      });
+    } else if(idleCrest){
+      // NULL SELECTION tile: the current age's crest (or the TARGET age's
+      // while advancing) drawn as the exact same tile as a single selection.
+      let advU = myAgeUpBldg; // computed once at the top of updateUI
+      let crestIdx = advU ? advU.research.target : teamAge[myTeam];
+      let icon = document.createElement('div');
+      icon.className = 'sel-unit-icon';
+      setPortraitIcon(icon, 'age-' + AGES[crestIdx].key, '🏛️');
+      // No tooltip: the expanded card (desktop) shows the age name beside the
+      // crest; narrow widths keep the crest alone.
+      selGrid.appendChild(icon);
+    } else if(gameOverTile){
+      // OUTCOME tile: the trophy/skull drawn as the exact same single tile as
+      // any selection — icon only, no text — so the panel keeps its shape at
+      // game over.
+      let icon = document.createElement('div');
+      icon.className = 'sel-unit-icon outcome-tile';
+      setPortraitIcon(icon, null, iWonOutcome ? '🏆' : '💀');
+      icon.dataset.tipName = iWonOutcome ? 'Victory' : 'Defeat';
+      selGrid.appendChild(icon);
+    }
+  }
 }
 
 // Grey out action buttons whose cost can't currently be paid. Runs on every
