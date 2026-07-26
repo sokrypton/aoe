@@ -8,6 +8,8 @@
 | `simulate.sh` | seeded all-AI self-play with a structured health report — the main debugging/balance workflow (documented below) | reproducing behavior, balance work, determinism checks |
 | `mp-tests.js` | LIVE lockstep multiplayer through PeerJS: lobby→match checksum agreement, rejoin, kick-to-AI, save/reload resume. **Needs network.** | when netcode, lockstep, or command/message shapes change |
 | `profile-sim.js` | V8 sampling profile of a headless sim run (self-time per function) — measure before optimizing | perf work |
+| `profile-render.js` | ms/frame + per-component breakdown of `render()` on a dense staged scene. Fresh page per zoom and re-baselined per stub — sharing one page inflated whichever zoom ran second ~15x | render perf work |
+| `render-parity.js` | renders a SAVE at several zooms and hashes the pixels; `baseline=<ref>` diffs against a throwaway worktree and exits non-zero on any change. The check that a viewer-side refactor moved no pixels | before/after any render refactor |
 | `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
 | `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
 
