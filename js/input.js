@@ -1879,7 +1879,10 @@ function doPlace(sx,sy){
 function handleScroll(elapsed){
   if(gameOver && !window.seeMapMode)return; // keep panning while reviewing the map
   let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;
-  let spd = 12 * dt;
+  // /ZOOM for the same reason the wheel- and drag-pan paths do it: camX/camY
+  // are pre-zoom iso units, so a fixed step pans the SCREEN at 12·ZOOM px —
+  // dragging when zoomed out (0.6 ≈ 40% slower) and racing when zoomed in.
+  let spd = 12 * dt / ZOOM;
   let manualPan=false;
 
   // Arrow keys only, like AoE2 — WASD are (grid) command hotkeys, and letting
