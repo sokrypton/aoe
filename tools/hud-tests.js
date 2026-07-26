@@ -984,6 +984,8 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+
+
   return results;
 }
 
@@ -994,6 +996,20 @@ function pageSuite() {
     const base = 'http://127.0.0.1:' + srv.address().port;
     browser = await launchBrowser(chromium);
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+    // Aux pages (classic.html) used to be opened bare, so a JS error there
+    // passed the suite silently — only the index page below had listeners.
+    const auxErrors = [];
+    const newAuxPage = async () => {
+      const p = await ctx.newPage();
+      p.on('pageerror', e => auxErrors.push('pageerror: ' + String(e.message || e)));
+      p.on('console', m => {
+        if (m.type() !== 'error') return;
+        const t = m.text();
+        if (/Failed to load resource|favicon\.ico/i.test(t)) return;
+        auxErrors.push('console.error: ' + t.slice(0, 180));
+      });
+      return p;
+    };
     const page = await ctx.newPage();
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(String(e.message || e)));
@@ -1666,7 +1682,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: right-click DOES set the rally on classic.html (AoE2 standard)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1683,8 +1699,53 @@ function pageSuite() {
       await cpage.close();
     });
 
+    await tapT('classic: right-click repairs a DAMAGED own building (shared work-target rule)', async () => {
+      const cpage = await newAuxPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const dmg=createBuilding('HOUSE',35,30,0); dmg.complete=true; dmg.hp=Math.floor(dmg.maxHp/2);
+        window.__dmg=dmg.id;
+        window.__pts=(scr)=>({ b: scr(35.5,30.5) });`));
+      await cpage.mouse.click(pts.b.x, pts.b.y, { button: 'right' });
+      const r = await cpage.evaluate(`(()=>{
+        const c=window.__cmds.find(x=>x.kind==='command');
+        return {bt:c&&c.buildTargetId, dmg:window.__dmg, sel:selected.length};
+      })()`);
+      assertEq(r.bt, r.dmg, 'classic right-click still resolves the damaged building as a repair target');
+      assertEq(r.sel, 1, 'classic stays AoE2-sticky — the villager keeps its selection');
+      await cpage.close();
+    });
+
+    await tapT('classic: right-click a HEALTHY own building is a MOVE, not a selection (index rule must not leak)', async () => {
+      const cpage = await newAuxPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=h.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5,30.5) });`));
+      await cpage.mouse.click(pts.b.x, pts.b.y, { button: 'right' });
+      const r = await cpage.evaluate(`(()=>{
+        const c=window.__cmds.find(x=>x.kind==='command');
+        return {have:!!c, bt:c&&c.buildTargetId, selType:selected[0]&&selected[0].type, selId:selected[0]&&selected[0].id, vid:window.__vid};
+      })()`);
+      assertEq(r.have, true, 'classic issues a command, not a selection change');
+      assertEq(r.bt, null, 'a healthy building offers no work');
+      assertEq(r.selType, 'unit', 'the villager is still selected — classic did NOT adopt the index select-the-building rule');
+      assertEq(r.selId, r.vid, 'same villager');
+      await cpage.close();
+    });
+
     await tapT('classic: right-click move KEEPS the selection (AoE2-sticky, no deselect)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1701,7 +1762,7 @@ function pageSuite() {
     });
 
     await tapT('classic: Guard button + click guards a building and KEEPS selection (shared guard, sticky)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1723,7 +1784,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: left ground click never commands on classic.html', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1740,7 +1801,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: queue renders as AoE2 slot buttons and clicking one cancels it', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1779,7 +1840,7 @@ function pageSuite() {
     });
 
     await tapT('classic: prepaid reseeds are cancellable queue slots (parity) + reseed button keeps its border', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1816,6 +1877,13 @@ function pageSuite() {
     }
     if (pageErrors.length) {
       console.error('JS ERRORS:\n  ' + pageErrors.join('\n  '));
+      failed++;
+    }
+    // Same gate for the AUX (classic.html) pages, which newAuxPage listens on.
+    // Must be checked HERE, after every test has run — pushed earlier it reads
+    // an empty array and passes even when classic is throwing.
+    if (auxErrors.length) {
+      console.error('CLASSIC.HTML JS ERRORS:\n  ' + auxErrors.join('\n  '));
       failed++;
     }
     console.log(`\n${results.length - failed}/${results.length} passed`);
