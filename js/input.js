@@ -1042,6 +1042,18 @@ function tryRightClickGuard(sx, sy){
 // touch taps on every device, AND desktop left-clicks on index.html (the
 // mouseup dispatch forks here when !isClassicUI). `shift` is only ever
 // passed by the desktop caller; touch leaves it undefined.
+// A building this SELECTION has work at: unfinished, damaged, an exhausted
+// farm, or a drop-off/farm a villager can be tasked to. Anything else (a
+// healthy complete house/TC/tower, or any building at all when no villager is
+// selected) has no job to offer. Shared by handleTap and doCommand so the tap
+// and the command can never disagree about what counts as work.
+function selectionWorkTarget(en, haveVillagers){
+  if(!en || en.type!=='building' || en.team!==myTeam) return false;
+  if(!haveVillagers) return false;
+  return !en.complete || en.hp < en.maxHp || (en.btype==='FARM' && en.exhausted)
+      || en.btype==='LCAMP' || en.btype==='MCAMP' || en.btype==='MILL' || en.btype==='FARM';
+}
+
 function handleTap(sx,sy,shift){
   if(gameOver)return; // match is over — See Map is view-only (no select/command)
   // 1. If placing a building, place it
@@ -1148,8 +1160,22 @@ function handleTap(sx,sy,shift){
       }
       return;
     }
-    // Tapped on enemy, own building, or empty map → command (move/gather/
-    // build/repair/attack) — doCommand resolves the exact target itself.
+    // Tapped an own BUILDING with no work to offer (healthy + complete, or
+    // no villager selected) → this is a SELECTION, not a walk order: the
+    // units drop out of the selection and the building's card comes up.
+    // A building that DOES have work (repair, build, farm, drop-off) keeps
+    // taking the command below — the villager is sent to work and the
+    // building deliberately does NOT steal the selection.
+    if(tappedOwn && tappedOwn.type==='building' && !selectionWorkTarget(tappedOwn, haveVillagers)){
+      window.settingRally=false;
+      selected=[tappedOwn];
+      maybeReopenMktPopup(tappedOwn);
+      if (window.playSound) window.playSound('click');
+      updateUI();
+      return;
+    }
+    // Tapped on enemy, own building with work, or empty map → command
+    // (move/gather/build/repair/attack) — doCommand resolves the target.
     doCommand(sx,sy);
     // One tap, both outcomes: ordering villagers onto an own UNFINISHED
     // foundation also selects the foundation itself, so its card (build
@@ -1790,8 +1816,7 @@ function doCommand(sx,sy){
     // farm fell through to a plain walk ("clicking the farm sometimes
     // does nothing", user caught it) — the dispatch branch auto-tasks
     // the farmer wherever on the 2×2 the click lands.
-    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)
-      || en.btype === 'LCAMP' || en.btype === 'MCAMP' || en.btype === 'MILL' || en.btype === 'FARM'));
+    buildTarget = getBuildingUnderCursor(sx, sy, en => selectionWorkTarget(en, true));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';

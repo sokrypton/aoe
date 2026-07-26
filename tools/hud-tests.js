@@ -1117,6 +1117,40 @@ function pageSuite() {
       assertEq(r.sel, 1, 'selection must be KEPT after a walk order');
     });
 
+    await tapT('desktop-tap: villager tapping a HEALTHY own building selects it (villager drops out)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=h.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({sel:selected.length, t:selected[0]&&selected[0].btype, cmds:window.__cmds.length})`);
+      assertEq(r.t, 'HOUSE', 'a building with no work to offer becomes the selection');
+      assertEq(r.sel, 1, 'selection size');
+      assertEq(r.cmds, 0, 'no walk order is issued at it');
+    });
+
+    await tapT('desktop-tap: villager tapping a DAMAGED own building repairs it and does NOT select it', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=Math.floor(h.maxHp/2);
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({selB:selected.some(s=>s.type==='building'), cmd:window.__cmds.find(c=>c.kind==='command')})`);
+      if (!r.cmd) throw new Error('no repair command captured');
+      assertEq(r.selB, false, 'a repair target must NOT steal the selection');
+    });
+
+    await tapT('desktop-tap: SOLDIER tapping an own drop-off selects it (no villager = no work)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        const c=createBuilding('LCAMP',35,30,0); c.complete=true; c.hp=c.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({t:selected[0]&&selected[0].btype, sel:selected.length})`);
+      assertEq(r.t, 'LCAMP', 'a drop-off is work only for villagers; a soldier just selects it');
+      assertEq(r.sel, 1, 'selection size');
+    });
+
     await tapT('walk into UNEXPLORED territory KEEPS selection (even over a fogged resource — no task committed)', async () => {
       const pts = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v];
