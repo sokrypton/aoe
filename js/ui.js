@@ -769,6 +769,14 @@ function updateUI(){
   // five identical icons — and only fans out to one-icon-per-type when the
   // selection is mixed. Rebuilt only when the selection or any selected
   // unit's HP changes (see currentSelectionDetails).
+  renderSelectionGrid(currentSelListKey, myAgeUpBldg);
+
+  renderSelectionCard(act, rebuildActions, myAgeUpBldg);
+}
+
+// The selection GRID (the multi-select tile strip and its garrison row).
+// Keyed rebuilds off currentSelListKey; myAgeUpBldg feeds the age tile.
+function renderSelectionGrid(currentSelListKey, myAgeUpBldg){
   let selInfo=byId('sel-info');
   let selGrid=byId('sel-grid');
   let isMulti=selected.length>1;
@@ -944,8 +952,6 @@ function updateUI(){
       selGrid.appendChild(icon);
     }
   }
-
-  renderSelectionCard(act, rebuildActions, myAgeUpBldg);
 }
 
 // The selection card (portrait, name, stats) AND the rest of the action
