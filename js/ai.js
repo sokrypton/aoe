@@ -1165,11 +1165,17 @@ function planAIMarket(ai,aiTC,vils,profile){
   let starving=(r.food<MARKET_FLOOR.food||r.wood<MARKET_FLOOR.wood)&&r.gold>=300;
   let emergency=(starving||aiRecentlyRaided(ai))
     &&canAfford(ai.team,BLDGS.MARKET.cost)&&aiBarracksFundClear(ai,BLDGS.MARKET.cost.w);
+  // An ally Market already standing is its own trigger: the cart line pays
+  // from the moment ours completes. Without this an AI that stalls in Feudal
+  // never reaches the Castle gate below, so it never trades — and in a team
+  // game that also leaves its ALLY (often the human) with no trade partner at
+  // all. Affordability gates below still apply; only "tech/army first" yields.
+  let partnerWaiting = aiHasAlly(ai.team) && !!nearestAllyMarket(aiTC);
   if(!emergency){
-    if(teamAge[ai.team] < (profile.maxAge||2))return;    // finished teching first
+    if(!partnerWaiting && teamAge[ai.team] < (profile.maxAge||2))return; // finished teching first
     if(vils.length<profile.marketVil)return;
     let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
-    if(army<(profile.armyReserve||4))return;             // defense before trade
+    if(!partnerWaiting && army<(profile.armyReserve||4))return; // defense before trade
     if(!canAfford(ai.team,BLDGS.MARKET.cost))return;     // only when the surplus is genuinely there
     if(!aiBarracksFundClear(ai,BLDGS.MARKET.cost.w))return; // army faucet first
   }

@@ -158,6 +158,38 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- ally market / trade route
+    // An AI that stalls below its maxAge used to never build a Market, so it
+    // never traded — and in a team game that left its ALLY (often the human)
+    // with no trade partner either. A standing ally Market is now its own
+    // trigger. The Castle-age gate must still hold when there's no partner.
+    'ally-market': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (withAllyMarket) => {
+        loadScenario({ map: 'medium', seed: 5, numTeams: 4,
+                       controllers: ['ai', 'ai', 'ai', 'ai'], ages: [1, 1, 1, 1], entities: [] });
+        gameStarted = true; window.__headlessSim = true;
+        teamAlliance = [0, 0, 1, 1];              // 0+1 allied vs 2+3
+        teamAge[0] = 1; teamAge[1] = 1;           // Feudal: Market unlocked, below maxAge (2)
+        const tc0 = createBuilding('TC', 20, 20, 0);
+        const tc1 = createBuilding('TC', 44, 44, 1);
+        if (withAllyMarket) { const m = createBuilding('MARKET', 24, 20, 0); m.complete = true; }
+        // Team 1: plenty of villagers + resources, deliberately NO army, so the
+        // only thing that can gate it is the tech/army rule under test.
+        const vils = [];
+        for (let i = 0; i < 12; i++) vils.push(createUnit('villager', 42 + (i % 4), 42 + ((i / 4) | 0), 1));
+        const r = resourceStore(1);
+        r.food = 500; r.wood = 600; r.gold = 400; r.stone = 200;   // not starving -> emergency path off
+        const ai = AI_STATES[1];
+        const profile = AI_LEVELS[(teamControllers[1] && teamControllers[1].difficulty) || 'easy'];
+        planAIMarket(ai, tc1, vils.filter(Boolean), profile);
+        return !!aiOwnMarket(1);
+      };
+      T.ok('ally Market standing -> a Feudal AI builds its own (trade route opens)', stage(true) === true);
+      T.ok('no ally Market -> the Castle-age gate still holds', stage(false) === false);
+      return T;
+    })),
+
     // ---------------------------------------------- checksum-coverage guard
     // detEntityHash coverage is hand-maintained; an unhashed sim-read field is
     // an invisible desync. detEntityCoverageGaps flags any entity key that is
