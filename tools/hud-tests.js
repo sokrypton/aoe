@@ -1249,6 +1249,42 @@ function pageSuite() {
       assertEq(r.selId, r.vid, 'and is re-selected');
     });
 
+    await tapT('undo: a GROUP task returns every unit to its OWN tile (shape kept)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('villager',28,28,0), b=createUnit('villager',31,29,0), c=createUnit('villager',29,32,0);
+        selected=[a,b,c]; window.__ids=[a.id,b.id,c.id];
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
+        window.__pts=(scr)=>({ g: scr(38.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`(()=>{
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const cs=window.__cmds.filter(c=>c.kind==='command');
+        return {n:cs.length, at:cs.map(c=>c.unitIds[0]+'@'+c.tileX+','+c.tileY).sort(),
+                ids:window.__ids, sel:selected.length};
+      })()`);
+      assertEq(r.n, 3, 'one command PER UNIT, not one group order');
+      const want = [r.ids[0]+'@28,28', r.ids[1]+'@31,29', r.ids[2]+'@29,32'].sort();
+      assertEq(JSON.stringify(r.at), JSON.stringify(want), 'each unit returns to its own original tile');
+      assertEq(r.sel, 3, 'the whole group is re-selected');
+    });
+
+    await tapT('undo: a GROUP selection is restored whole', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('militia',28,28,0), b=createUnit('militia',31,29,0);
+        const c=createUnit('militia',34,30,0);
+        selected=[a,b]; window.__ab=[a.id,b.id];
+        window.__pts=(scr)=>({ c: scr(34.2,30.2) });`));
+      await page.mouse.click(pts.c.x, pts.c.y);
+      const r = await page.evaluate(`(()=>{
+        const afterTap=selected.length;
+        window.undoLastAction();
+        return {afterTap, ids:selected.map(s=>s.id).sort(), ab:window.__ab.slice().sort()};
+      })()`);
+      assertEq(r.afterTap, 1, 'tapping one unit collapses the selection to it');
+      assertEq(JSON.stringify(r.ids), JSON.stringify(r.ab), 'undo restores BOTH previously selected units');
+    });
+
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
       const r = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
