@@ -1315,6 +1315,53 @@ function pageSuite() {
       assertEq(r.after, false, 'restarting the match clears it (no stale entry from last game)');
     });
 
+    await tapT('undo: a wall DRAG cancels every foundation it laid', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        v.task='chop'; v.gatherX=24; v.gatherY=30;
+        window.wallDragBtype='WALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:38,y:30}; window.wallDragCorner={x:38,y:30};
+        window.isDraggingWall=true; placing='WALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        const armedBeforeExec = window.undoAvailable();
+        // the run of foundations lands a few ticks later (lockstep)
+        const tiles=getWallElbowTiles({x:34,y:30},{x:38,y:30},{x:38,y:30});
+        tiles.forEach(t=>{ const b=createBuilding('WALL',t.x,t.y,0); b.complete=false; b.hp=1; });
+        const armed = window.undoAvailable();
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(c=>c.kind==='delete-units');
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return { n:tiles.length, armedBeforeExec, armed, deleted: del && del.unitIds.length,
+                 back: back && {x:back.tileX,y:back.tileY},
+                 selId: selected[0] && selected[0].id, vid: window.__vid,
+                 after: window.undoAvailable() };
+      })()`);
+      assertEq(r.armed, true, 'a wall drag is undoable once its foundations exist');
+      assertEq(r.deleted, r.n, 'EVERY segment the drag laid is cancelled');
+      if(!r.back) throw new Error('builder was left at the cancelled wall');
+      assertEq(r.back.x, 24, 'villager returns to its prior gather tile');
+      assertEq(r.selId, r.vid, 'and is re-selected');
+      assertEq(r.after, false, 'undo is consumed');
+    });
+
+    await tapT('undo: a drag over our OWN walls records nothing (upgrades are not cancellable)', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        // the whole run already holds our palisade — a stone drag here is an
+        // in-place UPGRADE (salvage-swap), never a fresh foundation
+        for(let x=34;x<=38;x++){ const b=createBuilding('WALL',x,30,0); b.complete=true; b.hp=b.maxHp; }
+        window.wallDragBtype='SWALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:38,y:30}; window.wallDragCorner={x:38,y:30};
+        window.isDraggingWall=true; placing='SWALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        return { armed: window.undoAvailable() };
+      })()`);
+      assertEq(r.armed, false, 'an upgrade-only drag arms no undo — cancelling it would refund a consumed palisade');
+    });
+
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
       const r = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';

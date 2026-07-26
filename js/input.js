@@ -367,6 +367,24 @@ function finalizeWallDrag(){
   }
   // Mutation half is execWallDrag (js/commands.js), run at the scheduled
   // tick — start/corner/end are already world tiles.
+  // Undo target: only the tiles that were EMPTY at drag time become fresh
+  // foundations. A tile already holding one of our walls is a stone UPGRADE
+  // (salvage-swap, deliberately non-cancellable) — cancelling those would
+  // refund the new cost for a palisade that is already consumed, so they are
+  // excluded and a drag that only upgraded records nothing.
+  {
+    let dragBtype = window.wallDragBtype || 'WALL';
+    let fresh = getWallElbowTiles(start, corner, end)
+      .filter(t => !buildingAtTile(t.x, t.y, en => en.team === myTeam));
+    if(fresh.length){
+      recordUndo({ kind:'walldrag', btype: dragBtype, tiles: fresh.map(t=>({x:t.x,y:t.y})),
+        prev: vils.map(v => ({ id: v.id,
+          x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
+          gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1) })) });
+    } else {
+      lastUndo = null;
+    }
+  }
   submitCommand({ kind: 'wall-drag', btype: window.wallDragBtype || 'WALL', start, end, corner, unitIds: vils.map(s=>s.id) });
 
   // keys['Shift'] (hold to place multiple lines) is desktop-only — on touch
@@ -924,6 +942,8 @@ function undoAvailable(){
     return lastUndo.prev.some(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
   if(lastUndo.kind==='place')
     return !!findUndoFoundation();
+  if(lastUndo.kind==='walldrag')
+    return undoWallDragFoundations(lastUndo).length > 0;
   return true;  // 'select' is always undoable (restoring an empty selection = deselect)
 }
 window.undoAvailable = undoAvailable;
@@ -957,6 +977,17 @@ function sendUnitsBack(prev){
   return alive;
 }
 
+// The still-unfinished foundations this drag created, by tile. Complete ones
+// have been BUILT — like a finished building, they are past undoing.
+function undoWallDragFoundations(u){
+  let out=[];
+  (u.tiles||[]).forEach(t=>{
+    let b = buildingAtTile(t.x, t.y, en => en.team===myTeam && !en.complete && en.hp>0 && en.btype===u.btype);
+    if(b) out.push(b);
+  });
+  return out;
+}
+
 window.undoLastAction = function(){
   if(gameOver || !undoAvailable()) return;
   let u = lastUndo;
@@ -965,6 +996,16 @@ window.undoLastAction = function(){
     let alive = (u.prevIds||[]).map(id=>entitiesById.get(id)).filter(e=>e && e.hp>0);
     selected = alive;
     window.currentVillagerMenu = 'main';
+    if(window.playSound) window.playSound('click');
+    updateUI();
+    return;
+  }
+  if(u.kind==='walldrag'){
+    let fs = undoWallDragFoundations(u);
+    if(fs.length) requestDeleteOwned(fs.map(b=>b.id));
+    sendUnitsBack(u.prev);
+    selected = (u.prev||[]).map(p=>entitiesById.get(p.id)).filter(e=>e && e.hp>0);
+    if(window.showMsg) showMsg(fs.length+' wall segment'+(fs.length===1?'':'s')+' cancelled');
     if(window.playSound) window.playSound('click');
     updateUI();
     return;
