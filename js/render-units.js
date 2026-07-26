@@ -2402,6 +2402,291 @@ function drawUnitShadow(e, sx, sy){
   X.restore();
 }
 
+// Walking THIS frame: a queued path, or the press-to-contact ring re-armed
+// on this exact tick (js/logic.js).
+function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
+
+// Bear body — same per-archetype seam as drawRamBody/drawTradeCartBody, which
+// drawUnit's dispatch already delegates to.
+function drawBearBody(e){
+  let moving = isUnitMoving(e);
+  // Bear — heavy quadruped in the sheep's style: one black silhouette
+  // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
+  let attacking = inActionRange(e) && !moving;
+  // The maul rides the REAL bite clock (atkCooldown, like the archer's
+  // draw): crouch back → rear up on the haunches → explosive pounce
+  // landing EXACTLY when the damage tick fires → jaws-in hold with a
+  // worrying head-shake that decays.
+  let bearRof = (UNITS.bear && UNITS.bear.rof) || T30(60), bcd = e.atkCooldown || 0;
+  let bp = attacking ? 1 - bcd/bearRof : 0;   // 0 just bitten → 1 next bite
+  let justBit = attacking && bcd > bearRof*0.85;
+  let bsnap = attacking ? Math.max(0, (bcd - bearRof*0.85)/(bearRof*0.15)) : 0;
+  let lunge = 0, rear = 0, jaw = 0;
+  if (justBit) { lunge = 4.5; jaw = Math.max(0, bsnap*2 - 1); rear = -0.2; } // CHOMP: jaws snap shut as the bite lands
+  else if (attacking && bp > 0.85) { let t = (bp-0.85)/0.15; lunge = -1.2+5.7*t*t; rear = 0.8*(1-t)-0.2; jaw = t; }
+  else if (attacking && bp > 0.55) { let t = (bp-0.55)/0.3; lunge = -1.2*t; rear = 0.8*t; }
+  let sway = moving ? Math.sin(animTick*0.25+e.id)*0.05 : 0;
+  sway += Math.sin(animTick*1.4)*0.05*bsnap; // worrying the prey — decays after the bite
+  let breath = (!moving && !attacking && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.25 : 0;
+
+  // Direction resolution (same scheme as the sheep): the canvas is already
+  // mirrored via X.scale(e.facing,…), so left-pointing dirs map onto their
+  // right-pointing twins and we only author 4 poses:
+  //   'front' (S: face to camera), 'back' (N: rump to camera),
+  //   'side'  (E/SE profile),      'backside' (NE: profile from behind)
+  let useDir = mirroredDir(e);
+  let pose = e.dir === 1 ? 'front' : e.dir === 5 ? 'back' :
+             (useDir === 6) ? 'backside' : 'side';
+  // Profile head sits a touch lower when heading SE (downhill toward camera)
+  let hx = useDir === 0 ? 7.8 : 8.6;
+  let hy = useDir === 0 ? -3.2 : -4.2;
+
+  X.save();
+  X.rotate(sway);
+  // Pounce along the view axis when facing the camera/away — a sideways
+  // lunge in the S/N poses reads as a side attack.
+  if (pose === 'front') X.translate(0, lunge*0.7);
+  else if (pose === 'back') X.translate(0, -lunge*0.7);
+  else X.translate(lunge, 0);
+  // Cartoon proportions: one huge boulder of a body on tiny stub legs.
+  X.scale(1.4, 1.4);
+  // Rearing up on the haunches: profiles pivot at the hind paws; head-on
+  // poses stretch tall instead (anchored at the paws).
+  if (rear) {
+    if (pose === 'side' || pose === 'backside') {
+      X.translate(-7, 4); X.rotate(-rear*0.22); X.translate(7, -4);
+    } else {
+      X.translate(0, 5); X.scale(1, 1 + rear*0.12); X.translate(0, -5);
+    }
+  }
+
+  // Stub-leg walk cycle: comically short, thick legs mostly hidden
+  // under the body mass — just paws scuttling along
+  let lw1 = moving ? Math.sin(animTick*0.5+e.id)*1.8 : 0;
+  let lw2 = -lw1;
+  // Pounce stance: front paws reach into the strike, hind paws brace back
+  let pounce = Math.max(0, Math.min(1, jaw));
+  let legPts = [[-6,2,lw1-1.8*pounce],[-3,2.5,lw2-1.2*pounce],[2.5,2.5,lw1+1.6*pounce],[5.5,2,lw2+2.2*pounce]];
+  X.beginPath();
+  legPts.forEach(p=>{ X.moveTo(p[0],p[1]); X.lineTo(p[0]+p[2],5); });
+  X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round'; X.stroke();
+  X.strokeStyle='#4e3520'; X.lineWidth=2.6/UNIT_SCALE; X.stroke(); X.lineCap='butt';
+  X.fillStyle='#241a10';
+  legPts.forEach(p=>{ X.beginPath(); X.ellipse(p[0]+p[2],5.2,1.6,1,0,0,Math.PI*2); X.fill(); });
+
+  // Body silhouette pass (black, slightly inflated), then fur fill —
+  // one giant boulder body with a high shoulder hump; head/ears/tail
+  // move with the pose, the boulder itself barely changes (that's the
+  // luxury of cartoon mass: it reads from every angle).
+  const bearShapes = (grow)=>{
+    if(pose==='front'||pose==='back'){
+      X.beginPath(); X.ellipse(-0.2,-4.5,8.4+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // body (narrower head-on)
+      X.beginPath(); X.arc(0,-9.8,5+grow+breath,0,Math.PI*2); X.fill();       // hump reads as shoulders
+      if(pose==='front'){
+        X.beginPath(); X.arc(0,-4.2,4.4+grow,0,Math.PI*2); X.fill();          // head, face to camera
+        X.beginPath(); X.arc(-3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();       // ears
+        X.beginPath(); X.arc(3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();
+      } else {
+        X.beginPath(); X.arc(0,-11.2,3.6+grow,0,Math.PI*2); X.fill();         // back of head over the hump
+        X.beginPath(); X.arc(-3,-13.6,1.6+grow,0,Math.PI*2); X.fill();        // ears
+        X.beginPath(); X.arc(3,-13.6,1.6+grow,0,Math.PI*2); X.fill();
+        X.beginPath(); X.arc(0,1.2,2.2+grow,0,Math.PI*2); X.fill();           // stub tail on the rump
+      }
+    } else {
+      X.beginPath(); X.ellipse(-0.5,-4.5,9.6+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // huge body
+      X.beginPath(); X.arc(-3.5,-9.5,4.6+grow+breath,0,Math.PI*2); X.fill();  // shoulder hump
+      X.beginPath(); X.arc(-10.2,-4,2+grow,0,Math.PI*2); X.fill();            // stub tail
+      if(pose==='backside'){
+        X.beginPath(); X.arc(6.4,-7.2,3.2+grow,0,Math.PI*2); X.fill();        // head turned away, higher
+        X.beginPath(); X.arc(4.8,-10.4,1.6+grow,0,Math.PI*2); X.fill();       // ear
+      } else {
+        X.beginPath(); X.arc(hx,hy,3.4+grow,0,Math.PI*2); X.fill();           // head (small, set low)
+        X.beginPath(); X.ellipse(hx+2.8,hy+0.8,2.2+grow,1.6+grow,0.2,0,Math.PI*2); X.fill(); // snout
+        X.beginPath(); X.arc(hx-1.6,hy-3.2,1.6+grow,0,Math.PI*2); X.fill();   // tiny ear
+      }
+    }
+  };
+  X.fillStyle='#000';
+  bearShapes(1.1);
+  X.fillStyle='#6b4a2c';
+  bearShapes(0);
+  // Fur shading: light along the massive back, ground shade under the belly
+  X.fillStyle='rgba(255,235,200,0.28)';
+  if(pose==='front'||pose==='back') X.beginPath(), X.ellipse(0,-10.2,4.4,2.4,0,0,Math.PI*2), X.fill();
+  else X.beginPath(), X.ellipse(-2.5,-9.5,5.8,2.6,0.15,0,Math.PI*2), X.fill();
+  X.fillStyle='rgba(40,25,10,0.30)';
+  X.beginPath(); X.ellipse(-0.5,0.8,7.6,2.2,0,0,Math.PI*2); X.fill();
+
+  // Face per pose: tan muzzle, black nose, tiny eyes (cartoon rule: the
+  // smaller the eyes on the bigger the body, the better), inner ears
+  if(pose==='front'){
+    X.fillStyle='#4a3018';
+    X.beginPath(); X.arc(-3.4,-8.2,0.9,0,Math.PI*2); X.fill();  // inner ears
+    X.beginPath(); X.arc(3.4,-8.2,0.9,0,Math.PI*2); X.fill();
+    X.fillStyle='#c9a578';
+    X.beginPath(); X.ellipse(0,-2.6,2.4,1.9,0,0,Math.PI*2); X.fill(); // muzzle
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(0,-3.4,1.05,0,Math.PI*2); X.fill();    // nose
+    X.beginPath(); X.arc(-1.9,-5.4,0.65,0,Math.PI*2); X.fill(); // eyes
+    X.beginPath(); X.arc(1.9,-5.4,0.65,0,Math.PI*2); X.fill();
+  } else if(pose==='back'){
+    X.fillStyle='#4a3018';
+    X.beginPath(); X.arc(-3,-13.6,0.85,0,Math.PI*2); X.fill();  // inner ears
+    X.beginPath(); X.arc(3,-13.6,0.85,0,Math.PI*2); X.fill();
+    X.fillStyle='#c9a578';
+    X.beginPath(); X.arc(0,1.2,1.3,0,Math.PI*2); X.fill();      // tail tuft
+  } else if(pose==='backside'){
+    X.fillStyle='#4a3018';
+    X.beginPath(); X.arc(4.8,-10.4,0.85,0,Math.PI*2); X.fill(); // inner ear
+  } else {
+    X.fillStyle='#c9a578';
+    X.beginPath(); X.ellipse(hx+2.8,hy+0.8,1.6,1.1,0.2,0,Math.PI*2); X.fill();
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(hx+4.3,hy+0.5,1,0,Math.PI*2); X.fill();    // nose
+    X.beginPath(); X.arc(hx+0.4,hy-0.8,0.65,0,Math.PI*2); X.fill(); // eye
+    X.fillStyle='#4a3018';
+    X.beginPath(); X.arc(hx-1.6,hy-3.2,0.85,0,Math.PI*2); X.fill(); // inner ear
+  }
+
+  // Mauling: articulated jaw — opens through the pounce, snaps shut on
+  // the bite. front: mouth gapes; side: lower-jaw wedge hinges down off
+  // the snout over the red mouth.
+  if(jaw > 0.05){
+    X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.lineJoin='round';
+    if(pose==='front'){
+      X.fillStyle='#a03030';
+      X.beginPath(); X.ellipse(0,-2.2,1.6,0.3+1.5*jaw,0,0,Math.PI*2); X.fill(); X.stroke();
+    } else if(pose==='side'){
+      // Gape + lower jaw share ONE hinge at the snout base: the red
+      // mouth is the fan between the upper gum line and the jaw tip,
+      // and the fur jaw wedge rides the same rotation.
+      let ja = 0.7*jaw;
+      X.save(); X.translate(hx+1.6, hy+1.2);
+      X.fillStyle='#a03030';
+      X.beginPath();
+      X.moveTo(0,0);
+      X.lineTo(3.9,-0.4);                                  // upper gum line
+      X.lineTo(3.7*Math.cos(ja), 3.7*Math.sin(ja));        // jaw tip
+      X.closePath(); X.fill(); X.stroke();
+      X.rotate(ja);
+      X.fillStyle='#6b4a2c';
+      X.beginPath(); X.moveTo(-0.2,0); X.lineTo(3.7,0); X.lineTo(3.1,1.4); X.lineTo(-0.2,1.2); X.closePath();
+      X.fill(); X.stroke();
+      X.restore();
+    }
+  }
+  X.restore();
+}
+
+// Sheep body — the last self-contained archetype block; see drawBearBody.
+function drawSheepBody(e){
+  let tc = teamColor(e.team);
+  // Sheep — scalloped wool cloud; head tracks movement direction
+  let waddle = e.path.length > 0 ? Math.sin(animTick * 0.2 + e.id) * 0.06 : 0;
+  let breath = e.path.length === 0 ? Math.sin(animTick * 0.06 + e.id) * 0.12 : 0;
+
+  X.save();
+  X.rotate(waddle);
+
+  // 4-leg walk cycle: outlined stubby legs with hooves
+  let hw1 = e.path.length > 0 ? Math.sin(animTick * 0.45 + e.id) * 3.0 : 0;
+  let hw2 = -hw1;
+  let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
+  X.beginPath();
+  legPts.forEach(p => { X.moveTo(p[0], p[1]); X.lineTo(p[0] + p[2], 5); });
+  X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round'; X.stroke();
+  X.strokeStyle='#8a8378'; X.lineWidth=1.3/UNIT_SCALE; X.stroke(); X.lineCap='butt';
+  X.fillStyle='#241f18';
+  legPts.forEach(p => { X.beginPath(); X.ellipse(p[0] + p[2], 5.3, 1.2, 0.9, 0, 0, Math.PI*2); X.fill(); });
+
+  // Waggable wool-puff tail at the rear
+  let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
+  let tailAngle = Math.sin(animTick * tailRate + e.id) * 0.4;
+  X.save();
+  X.translate(-7.5, -4);
+  X.rotate(tailAngle - 0.2);
+  X.fillStyle='#000';
+  X.beginPath(); X.arc(-1.5, 0, 2.6, 0, Math.PI*2); X.fill();
+  X.fillStyle='#f2eddd';
+  X.beginPath(); X.arc(-1.5, 0, 1.7, 0, Math.PI*2); X.fill();
+  X.restore();
+
+  // Scalloped wool cloud: black silhouette pass, then wool fill pass
+  let puffs = [[-4.5,-3.5,3.4],[-1.5,-6.5,3.5],[2.5,-6,3.4],[5,-3,3.2],[2,-0.5,3.3],[-2,-0.5,3.4],[0,-3.5,4.4]];
+  X.fillStyle='#000';
+  puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+1.1+breath, 0, Math.PI*2); X.fill(); });
+  X.fillStyle='#f2eddd';
+  puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+breath, 0, Math.PI*2); X.fill(); });
+  // Wool shading: highlight on top, ground shade underneath
+  X.fillStyle='rgba(255,255,255,0.5)';
+  X.beginPath(); X.arc(-1, -6.5, 2.6, 0, Math.PI*2); X.fill();
+  X.fillStyle='rgba(110,95,70,0.20)';
+  X.beginPath(); X.ellipse(0, 1.6, 5.8, 2, 0, 0, Math.PI*2); X.fill();
+
+  let earWiggle = e.eatingGrass ? Math.sin(animTick * 0.5 + e.id) * 1.2 : Math.sin(animTick * 0.1 + e.id) * 0.4;
+
+  // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
+  // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
+  const sheepHead = (hx, hy, mode) => {
+    X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
+    // Team bandana under the chin
+    X.fillStyle=tc;
+    X.beginPath(); X.ellipse(hx, hy+3.6, 3, 1.8, 0, 0, Math.PI*2); X.fill();
+    // Droopy ears
+    X.fillStyle = mode==='back' ? '#4a463e' : '#57534a';
+    X.save(); X.translate(hx-2.6, hy-0.6+earWiggle); X.rotate(-0.5);
+    X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
+    X.save(); X.translate(hx+2.6, hy-0.6-earWiggle); X.rotate(0.5);
+    X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
+    // Head
+    X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
+    X.beginPath(); X.ellipse(hx, hy, 2.7, 3.1, 0, 0, Math.PI*2); X.fill(); X.stroke();
+    // Wool tuft on top of the head
+    X.fillStyle='#000';
+    X.beginPath(); X.arc(hx, hy-2.9, 2.2, 0, Math.PI*2); X.fill();
+    X.fillStyle='#f2eddd';
+    X.beginPath(); X.arc(hx, hy-2.9, 1.6, 0, Math.PI*2); X.fill();
+  };
+
+  let headX = 0, headY = 0;
+  if (e.eatingGrass) {
+    let chew = Math.sin(animTick * 0.6);
+    headX = 6; headY = 2 + chew;
+    sheepHead(headX, headY, 'side');
+  } else if (e.dir === 1) {
+    // Strictly South: head center-front
+    headX = 0; headY = 1.5;
+    sheepHead(headX, headY, 'front');
+  } else if (e.dir === 5) {
+    // Strictly North: head center-back, no face
+    headX = 0; headY = -8;
+    sheepHead(headX, headY, 'back');
+  } else {
+    // Side and diagonal directions
+    let useDir = mirroredDir(e);
+    if (useDir === 7)      { headX = 6.5; headY = -3.5; sheepHead(headX, headY, 'side'); }
+    else if (useDir === 0) { headX = 5.5; headY = -1.5; sheepHead(headX, headY, 'side'); }
+    else                   { headX = 3.5; headY = -7.5; sheepHead(headX, headY, 'back'); }
+  }
+
+  if(e.eatingGrass){
+    X.strokeStyle='#4e8c2d'; X.lineWidth=1.2/UNIT_SCALE;
+    X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
+    X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
+    
+    // Spawn tiny grass particle puffs (not in the outline mask pass —
+    // a SELECTED grazing sheep would double-spawn them). Counter-advance
+    // guard (the workSwingCycles pattern): a bare tick%N renders the
+    // same tick 2-3 rAF frames in a row and fired a triple puff.
+    let gcyc = Math.floor(tick / T30(24));
+    if(!window._maskDraw && grazeCycles.get(e.id) !== gcyc){
+      grazeCycles.set(e.id, gcyc);
+      spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
+    }
+  }
+  X.restore();
+}
+
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   const faceOnView = e.dir === 1 || e.dir === 5; // S/N — forward is the view axis
@@ -2420,7 +2705,7 @@ function drawUnit(e){
   // tick (js/logic.js pressToContact sets e.pressWalk=tick when it steps). A
   // pressing unit walks at its normal pace now, so it should show the walk
   // cycle (legs), not the planted attack/idle pose, until it settles at contact.
-  let moving = e.path.length>0 || e.pressWalk===tick;
+  let moving = isUnitMoving(e);
 
   // Shadow — not part of the body silhouette: the outline mask pass must
   // skip it or the selection ring traces the shadow blob too.
@@ -2644,172 +2929,7 @@ function drawUnit(e){
   } else if(e.utype==='tradecart'){
     drawTradeCartBody(e);
   } else if(e.utype==='bear'){
-    // Bear — heavy quadruped in the sheep's style: one black silhouette
-    // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
-    let attacking = inActionRange(e) && !moving;
-    // The maul rides the REAL bite clock (atkCooldown, like the archer's
-    // draw): crouch back → rear up on the haunches → explosive pounce
-    // landing EXACTLY when the damage tick fires → jaws-in hold with a
-    // worrying head-shake that decays.
-    let bearRof = (UNITS.bear && UNITS.bear.rof) || T30(60), bcd = e.atkCooldown || 0;
-    let bp = attacking ? 1 - bcd/bearRof : 0;   // 0 just bitten → 1 next bite
-    let justBit = attacking && bcd > bearRof*0.85;
-    let bsnap = attacking ? Math.max(0, (bcd - bearRof*0.85)/(bearRof*0.15)) : 0;
-    let lunge = 0, rear = 0, jaw = 0;
-    if (justBit) { lunge = 4.5; jaw = Math.max(0, bsnap*2 - 1); rear = -0.2; } // CHOMP: jaws snap shut as the bite lands
-    else if (attacking && bp > 0.85) { let t = (bp-0.85)/0.15; lunge = -1.2+5.7*t*t; rear = 0.8*(1-t)-0.2; jaw = t; }
-    else if (attacking && bp > 0.55) { let t = (bp-0.55)/0.3; lunge = -1.2*t; rear = 0.8*t; }
-    let sway = moving ? Math.sin(animTick*0.25+e.id)*0.05 : 0;
-    sway += Math.sin(animTick*1.4)*0.05*bsnap; // worrying the prey — decays after the bite
-    let breath = (!moving && !attacking && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.25 : 0;
-
-    // Direction resolution (same scheme as the sheep): the canvas is already
-    // mirrored via X.scale(e.facing,…), so left-pointing dirs map onto their
-    // right-pointing twins and we only author 4 poses:
-    //   'front' (S: face to camera), 'back' (N: rump to camera),
-    //   'side'  (E/SE profile),      'backside' (NE: profile from behind)
-    let useDir = mirroredDir(e);
-    let pose = e.dir === 1 ? 'front' : e.dir === 5 ? 'back' :
-               (useDir === 6) ? 'backside' : 'side';
-    // Profile head sits a touch lower when heading SE (downhill toward camera)
-    let hx = useDir === 0 ? 7.8 : 8.6;
-    let hy = useDir === 0 ? -3.2 : -4.2;
-
-    X.save();
-    X.rotate(sway);
-    // Pounce along the view axis when facing the camera/away — a sideways
-    // lunge in the S/N poses reads as a side attack.
-    if (pose === 'front') X.translate(0, lunge*0.7);
-    else if (pose === 'back') X.translate(0, -lunge*0.7);
-    else X.translate(lunge, 0);
-    // Cartoon proportions: one huge boulder of a body on tiny stub legs.
-    X.scale(1.4, 1.4);
-    // Rearing up on the haunches: profiles pivot at the hind paws; head-on
-    // poses stretch tall instead (anchored at the paws).
-    if (rear) {
-      if (pose === 'side' || pose === 'backside') {
-        X.translate(-7, 4); X.rotate(-rear*0.22); X.translate(7, -4);
-      } else {
-        X.translate(0, 5); X.scale(1, 1 + rear*0.12); X.translate(0, -5);
-      }
-    }
-
-    // Stub-leg walk cycle: comically short, thick legs mostly hidden
-    // under the body mass — just paws scuttling along
-    let lw1 = moving ? Math.sin(animTick*0.5+e.id)*1.8 : 0;
-    let lw2 = -lw1;
-    // Pounce stance: front paws reach into the strike, hind paws brace back
-    let pounce = Math.max(0, Math.min(1, jaw));
-    let legPts = [[-6,2,lw1-1.8*pounce],[-3,2.5,lw2-1.2*pounce],[2.5,2.5,lw1+1.6*pounce],[5.5,2,lw2+2.2*pounce]];
-    X.beginPath();
-    legPts.forEach(p=>{ X.moveTo(p[0],p[1]); X.lineTo(p[0]+p[2],5); });
-    X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle='#4e3520'; X.lineWidth=2.6/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-    X.fillStyle='#241a10';
-    legPts.forEach(p=>{ X.beginPath(); X.ellipse(p[0]+p[2],5.2,1.6,1,0,0,Math.PI*2); X.fill(); });
-
-    // Body silhouette pass (black, slightly inflated), then fur fill —
-    // one giant boulder body with a high shoulder hump; head/ears/tail
-    // move with the pose, the boulder itself barely changes (that's the
-    // luxury of cartoon mass: it reads from every angle).
-    const bearShapes = (grow)=>{
-      if(pose==='front'||pose==='back'){
-        X.beginPath(); X.ellipse(-0.2,-4.5,8.4+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // body (narrower head-on)
-        X.beginPath(); X.arc(0,-9.8,5+grow+breath,0,Math.PI*2); X.fill();       // hump reads as shoulders
-        if(pose==='front'){
-          X.beginPath(); X.arc(0,-4.2,4.4+grow,0,Math.PI*2); X.fill();          // head, face to camera
-          X.beginPath(); X.arc(-3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();       // ears
-          X.beginPath(); X.arc(3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();
-        } else {
-          X.beginPath(); X.arc(0,-11.2,3.6+grow,0,Math.PI*2); X.fill();         // back of head over the hump
-          X.beginPath(); X.arc(-3,-13.6,1.6+grow,0,Math.PI*2); X.fill();        // ears
-          X.beginPath(); X.arc(3,-13.6,1.6+grow,0,Math.PI*2); X.fill();
-          X.beginPath(); X.arc(0,1.2,2.2+grow,0,Math.PI*2); X.fill();           // stub tail on the rump
-        }
-      } else {
-        X.beginPath(); X.ellipse(-0.5,-4.5,9.6+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // huge body
-        X.beginPath(); X.arc(-3.5,-9.5,4.6+grow+breath,0,Math.PI*2); X.fill();  // shoulder hump
-        X.beginPath(); X.arc(-10.2,-4,2+grow,0,Math.PI*2); X.fill();            // stub tail
-        if(pose==='backside'){
-          X.beginPath(); X.arc(6.4,-7.2,3.2+grow,0,Math.PI*2); X.fill();        // head turned away, higher
-          X.beginPath(); X.arc(4.8,-10.4,1.6+grow,0,Math.PI*2); X.fill();       // ear
-        } else {
-          X.beginPath(); X.arc(hx,hy,3.4+grow,0,Math.PI*2); X.fill();           // head (small, set low)
-          X.beginPath(); X.ellipse(hx+2.8,hy+0.8,2.2+grow,1.6+grow,0.2,0,Math.PI*2); X.fill(); // snout
-          X.beginPath(); X.arc(hx-1.6,hy-3.2,1.6+grow,0,Math.PI*2); X.fill();   // tiny ear
-        }
-      }
-    };
-    X.fillStyle='#000';
-    bearShapes(1.1);
-    X.fillStyle='#6b4a2c';
-    bearShapes(0);
-    // Fur shading: light along the massive back, ground shade under the belly
-    X.fillStyle='rgba(255,235,200,0.28)';
-    if(pose==='front'||pose==='back') X.beginPath(), X.ellipse(0,-10.2,4.4,2.4,0,0,Math.PI*2), X.fill();
-    else X.beginPath(), X.ellipse(-2.5,-9.5,5.8,2.6,0.15,0,Math.PI*2), X.fill();
-    X.fillStyle='rgba(40,25,10,0.30)';
-    X.beginPath(); X.ellipse(-0.5,0.8,7.6,2.2,0,0,Math.PI*2); X.fill();
-
-    // Face per pose: tan muzzle, black nose, tiny eyes (cartoon rule: the
-    // smaller the eyes on the bigger the body, the better), inner ears
-    if(pose==='front'){
-      X.fillStyle='#4a3018';
-      X.beginPath(); X.arc(-3.4,-8.2,0.9,0,Math.PI*2); X.fill();  // inner ears
-      X.beginPath(); X.arc(3.4,-8.2,0.9,0,Math.PI*2); X.fill();
-      X.fillStyle='#c9a578';
-      X.beginPath(); X.ellipse(0,-2.6,2.4,1.9,0,0,Math.PI*2); X.fill(); // muzzle
-      X.fillStyle='#000';
-      X.beginPath(); X.arc(0,-3.4,1.05,0,Math.PI*2); X.fill();    // nose
-      X.beginPath(); X.arc(-1.9,-5.4,0.65,0,Math.PI*2); X.fill(); // eyes
-      X.beginPath(); X.arc(1.9,-5.4,0.65,0,Math.PI*2); X.fill();
-    } else if(pose==='back'){
-      X.fillStyle='#4a3018';
-      X.beginPath(); X.arc(-3,-13.6,0.85,0,Math.PI*2); X.fill();  // inner ears
-      X.beginPath(); X.arc(3,-13.6,0.85,0,Math.PI*2); X.fill();
-      X.fillStyle='#c9a578';
-      X.beginPath(); X.arc(0,1.2,1.3,0,Math.PI*2); X.fill();      // tail tuft
-    } else if(pose==='backside'){
-      X.fillStyle='#4a3018';
-      X.beginPath(); X.arc(4.8,-10.4,0.85,0,Math.PI*2); X.fill(); // inner ear
-    } else {
-      X.fillStyle='#c9a578';
-      X.beginPath(); X.ellipse(hx+2.8,hy+0.8,1.6,1.1,0.2,0,Math.PI*2); X.fill();
-      X.fillStyle='#000';
-      X.beginPath(); X.arc(hx+4.3,hy+0.5,1,0,Math.PI*2); X.fill();    // nose
-      X.beginPath(); X.arc(hx+0.4,hy-0.8,0.65,0,Math.PI*2); X.fill(); // eye
-      X.fillStyle='#4a3018';
-      X.beginPath(); X.arc(hx-1.6,hy-3.2,0.85,0,Math.PI*2); X.fill(); // inner ear
-    }
-
-    // Mauling: articulated jaw — opens through the pounce, snaps shut on
-    // the bite. front: mouth gapes; side: lower-jaw wedge hinges down off
-    // the snout over the red mouth.
-    if(jaw > 0.05){
-      X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.lineJoin='round';
-      if(pose==='front'){
-        X.fillStyle='#a03030';
-        X.beginPath(); X.ellipse(0,-2.2,1.6,0.3+1.5*jaw,0,0,Math.PI*2); X.fill(); X.stroke();
-      } else if(pose==='side'){
-        // Gape + lower jaw share ONE hinge at the snout base: the red
-        // mouth is the fan between the upper gum line and the jaw tip,
-        // and the fur jaw wedge rides the same rotation.
-        let ja = 0.7*jaw;
-        X.save(); X.translate(hx+1.6, hy+1.2);
-        X.fillStyle='#a03030';
-        X.beginPath();
-        X.moveTo(0,0);
-        X.lineTo(3.9,-0.4);                                  // upper gum line
-        X.lineTo(3.7*Math.cos(ja), 3.7*Math.sin(ja));        // jaw tip
-        X.closePath(); X.fill(); X.stroke();
-        X.rotate(ja);
-        X.fillStyle='#6b4a2c';
-        X.beginPath(); X.moveTo(-0.2,0); X.lineTo(3.7,0); X.lineTo(3.1,1.4); X.lineTo(-0.2,1.2); X.closePath();
-        X.fill(); X.stroke();
-        X.restore();
-      }
-    }
-    X.restore();
+    drawBearBody(e);
   } else if(e.utype!=='sheep'){
     // Seated over the saddle center; face-on (S) the saddle reads at
     // body center, so the rider sits right of the -2 profile seat.
@@ -4866,110 +4986,7 @@ function drawUnit(e){
       ]);
     }
   } else {
-    // Sheep — scalloped wool cloud; head tracks movement direction
-    let waddle = e.path.length > 0 ? Math.sin(animTick * 0.2 + e.id) * 0.06 : 0;
-    let breath = e.path.length === 0 ? Math.sin(animTick * 0.06 + e.id) * 0.12 : 0;
-
-    X.save();
-    X.rotate(waddle);
-
-    // 4-leg walk cycle: outlined stubby legs with hooves
-    let hw1 = e.path.length > 0 ? Math.sin(animTick * 0.45 + e.id) * 3.0 : 0;
-    let hw2 = -hw1;
-    let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
-    X.beginPath();
-    legPts.forEach(p => { X.moveTo(p[0], p[1]); X.lineTo(p[0] + p[2], 5); });
-    X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle='#8a8378'; X.lineWidth=1.3/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-    X.fillStyle='#241f18';
-    legPts.forEach(p => { X.beginPath(); X.ellipse(p[0] + p[2], 5.3, 1.2, 0.9, 0, 0, Math.PI*2); X.fill(); });
-
-    // Waggable wool-puff tail at the rear
-    let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
-    let tailAngle = Math.sin(animTick * tailRate + e.id) * 0.4;
-    X.save();
-    X.translate(-7.5, -4);
-    X.rotate(tailAngle - 0.2);
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(-1.5, 0, 2.6, 0, Math.PI*2); X.fill();
-    X.fillStyle='#f2eddd';
-    X.beginPath(); X.arc(-1.5, 0, 1.7, 0, Math.PI*2); X.fill();
-    X.restore();
-
-    // Scalloped wool cloud: black silhouette pass, then wool fill pass
-    let puffs = [[-4.5,-3.5,3.4],[-1.5,-6.5,3.5],[2.5,-6,3.4],[5,-3,3.2],[2,-0.5,3.3],[-2,-0.5,3.4],[0,-3.5,4.4]];
-    X.fillStyle='#000';
-    puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+1.1+breath, 0, Math.PI*2); X.fill(); });
-    X.fillStyle='#f2eddd';
-    puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+breath, 0, Math.PI*2); X.fill(); });
-    // Wool shading: highlight on top, ground shade underneath
-    X.fillStyle='rgba(255,255,255,0.5)';
-    X.beginPath(); X.arc(-1, -6.5, 2.6, 0, Math.PI*2); X.fill();
-    X.fillStyle='rgba(110,95,70,0.20)';
-    X.beginPath(); X.ellipse(0, 1.6, 5.8, 2, 0, 0, Math.PI*2); X.fill();
-
-    let earWiggle = e.eatingGrass ? Math.sin(animTick * 0.5 + e.id) * 1.2 : Math.sin(animTick * 0.1 + e.id) * 0.4;
-
-    // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
-    // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
-    const sheepHead = (hx, hy, mode) => {
-      X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-      // Team bandana under the chin
-      X.fillStyle=tc;
-      X.beginPath(); X.ellipse(hx, hy+3.6, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-      // Droopy ears
-      X.fillStyle = mode==='back' ? '#4a463e' : '#57534a';
-      X.save(); X.translate(hx-2.6, hy-0.6+earWiggle); X.rotate(-0.5);
-      X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
-      X.save(); X.translate(hx+2.6, hy-0.6-earWiggle); X.rotate(0.5);
-      X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
-      // Head
-      X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
-      X.beginPath(); X.ellipse(hx, hy, 2.7, 3.1, 0, 0, Math.PI*2); X.fill(); X.stroke();
-      // Wool tuft on top of the head
-      X.fillStyle='#000';
-      X.beginPath(); X.arc(hx, hy-2.9, 2.2, 0, Math.PI*2); X.fill();
-      X.fillStyle='#f2eddd';
-      X.beginPath(); X.arc(hx, hy-2.9, 1.6, 0, Math.PI*2); X.fill();
-    };
-
-    let headX = 0, headY = 0;
-    if (e.eatingGrass) {
-      let chew = Math.sin(animTick * 0.6);
-      headX = 6; headY = 2 + chew;
-      sheepHead(headX, headY, 'side');
-    } else if (e.dir === 1) {
-      // Strictly South: head center-front
-      headX = 0; headY = 1.5;
-      sheepHead(headX, headY, 'front');
-    } else if (e.dir === 5) {
-      // Strictly North: head center-back, no face
-      headX = 0; headY = -8;
-      sheepHead(headX, headY, 'back');
-    } else {
-      // Side and diagonal directions
-      let useDir = mirroredDir(e);
-      if (useDir === 7)      { headX = 6.5; headY = -3.5; sheepHead(headX, headY, 'side'); }
-      else if (useDir === 0) { headX = 5.5; headY = -1.5; sheepHead(headX, headY, 'side'); }
-      else                   { headX = 3.5; headY = -7.5; sheepHead(headX, headY, 'back'); }
-    }
-
-    if(e.eatingGrass){
-      X.strokeStyle='#4e8c2d'; X.lineWidth=1.2/UNIT_SCALE;
-      X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
-      X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
-      
-      // Spawn tiny grass particle puffs (not in the outline mask pass —
-      // a SELECTED grazing sheep would double-spawn them). Counter-advance
-      // guard (the workSwingCycles pattern): a bare tick%N renders the
-      // same tick 2-3 rAF frames in a row and fired a triple puff.
-      let gcyc = Math.floor(tick / T30(24));
-      if(!window._maskDraw && grazeCycles.get(e.id) !== gcyc){
-        grazeCycles.set(e.id, gcyc);
-        spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
-      }
-    }
-    X.restore();
+    drawSheepBody(e);
   }
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored
