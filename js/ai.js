@@ -2460,6 +2460,18 @@ function ensureAIScout(ai,readyBarracks){
 
 function controlAIScouts(ai,mils,aiTC){
   let scouts=mils.filter(m=>m.utype==='scout');
+  // NO scout to walk the lap (killed early, or none yet): surveyIdx only
+  // advances inside the loop below, so ai.baseSurveyed would stay false for
+  // the REST OF THE MATCH and planAIWalls would block on it — the AI silently
+  // never walls at all. Fall back to what the lap actually establishes: are
+  // the ring-band waypoints explored? Town/villager vision usually covers
+  // them, so a scoutless AI self-heals as its base grows instead of being
+  // permanently unwalled. Found via self-play (a wider ring made scout death
+  // common enough to see; the block predates it).
+  if(!scouts.length){
+    if(!ai.baseSurveyed && aiTC && baseSurveyRingExplored(ai,aiTC)) ai.baseSurveyed=true;
+    return;
+  }
   scouts.forEach(s=>{
     // Once the home survey lap is done, the scout runs on the same
     // {kind:'scout'} order a player's Auto Scout uses — frontier exploration
@@ -2494,6 +2506,22 @@ function controlAIScouts(ai,mils,aiTC){
 // resources and the ground the wall will enclose before wandering off. Returns
 // null (and flips ai.baseSurveyed) once the lap is complete. Deterministic:
 // sequential index on AI_STATES, no RNG.
+// The 8 ring-band waypoints the survey lap would have VISITED, tested for
+// exploration instead of walked — the scoutless fallback for baseSurveyed.
+// Same dirs/radius/clamping as baseSurveyWaypoint, so it asks exactly the
+// question the lap answers. Deterministic (per-team explored grid only).
+function baseSurveyRingExplored(ai,aiTC){
+  const dirs=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+  let prof=aiProfileFor(ai.team);
+  let R=Math.round(Math.max(6,(prof.wallRadius||6))*aiScale())+2;
+  let {x:cx, y:cy} = centerTile(aiTC);
+  for(let i=0;i<dirs.length;i++){
+    let x=Math.max(1,Math.min(MAP-2,cx+dirs[i][0]*R)), y=Math.max(1,Math.min(MAP-2,cy+dirs[i][1]*R));
+    if(tileHiddenForTeam(ai.team, y*MAP+x)) return false;
+  }
+  return true;
+}
+
 function baseSurveyWaypoint(ai,aiTC){
   // No TC to survey around (controlAIScouts is still called in the no-TC
   // knockout branch): without this guard the aiTC.x deref throws and aborts

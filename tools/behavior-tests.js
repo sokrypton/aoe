@@ -158,6 +158,39 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- scoutless base survey
+    // ai.baseSurveyed only advanced inside controlAIScouts' per-scout loop, so
+    // an AI whose scout died early never completed the lap — and planAIWalls
+    // blocks on it, meaning that AI silently never walled again for the whole
+    // match. Scoutless AIs now fall back to testing whether the ring band is
+    // explored (which is what the lap establishes).
+    'scoutless-survey': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 9, numTeams: 2,
+                     controllers: ['ai', 'ai'], ages: [1, 1], entities: [] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc = createBuilding('TC', 30, 30, 0);
+      const ai = AI_STATES[0];
+      ai.baseSurveyed = false; ai.surveyIdx = 0;
+      // Fog OFF makes every tile count as explored, so the ring band reads as
+      // surveyed — the same state a real base's own vision reaches.
+      window.fogDisabled = true;
+      controlAIScouts(ai, [], tc);                       // no scouts at all
+      T.ok('scoutless AI with an explored ring band completes the survey',
+           ai.baseSurveyed === true);
+      // With the band genuinely unknown it must NOT claim to be surveyed.
+      const ai2 = AI_STATES[1];
+      const tc2 = createBuilding('TC', 70, 70, 1);
+      ai2.baseSurveyed = false; ai2.surveyIdx = 0;
+      window.fogDisabled = false;
+      if (typeof teamExploredGrid !== 'undefined' && teamExploredGrid && teamExploredGrid[1])
+        teamExploredGrid[1].fill(0);
+      controlAIScouts(ai2, [], tc2);
+      T.ok('unexplored ring band does NOT count as surveyed', ai2.baseSurveyed === false);
+      window.fogDisabled = true;
+      return T;
+    })),
+
     // ---------------------------------------------- ally market / trade route
     // An AI that stalls below its maxAge used to never build a Market, so it
     // never traded — and in a team game that left its ALLY (often the human)
