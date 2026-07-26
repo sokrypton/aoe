@@ -945,6 +945,16 @@ function updateUI(){
     }
   }
 
+  renderSelectionCard(act, rebuildActions, myAgeUpBldg);
+}
+
+// The selection card (portrait, name, stats) AND the rest of the action
+// strip for the selected entity — the two are interleaved from the garrison
+// button down, so they extract together. `act`/`rebuildActions` are the
+// strip's handles from updateUI; myAgeUpBldg feeds the idle-state age crest.
+// refreshActionAffordability() stays INSIDE, after the early returns: the
+// gameOver / not-started / empty-selection paths deliberately skip it.
+function renderSelectionCard(act, rebuildActions, myAgeUpBldg){
   let port = byId('sel-portrait');
   if(gameOver){
     if(!isClassicUI) refreshMktPopup(null); // no trading over the end screen

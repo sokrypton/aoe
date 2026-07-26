@@ -10,6 +10,7 @@
 | `profile-sim.js` | V8 sampling profile of a headless sim run (self-time per function) — measure before optimizing | perf work |
 | `profile-render.js` | ms/frame + per-component breakdown of `render()` on a dense staged scene. Fresh page per zoom and re-baselined per stub — sharing one page inflated whichever zoom ran second ~15x | render perf work |
 | `render-parity.js` | hashes rendered pixels and diffs against a git ref (throwaway worktree, exits non-zero on any change) — the check that a viewer-side refactor moved no pixels. `save=<f.json>` renders a real match at several zooms; **`gallery=1`** drives style.html over every unit type × 8 facings × idle/walk/attack/death (56 probes) via `window.GALLERY` — use that one for unit-art refactors, since no single save contains every unit type | before/after any render refactor |
+| `free-vars.js` | for a line range, lists identifiers it reads but doesn't declare, split into globals vs **enclosing-scope locals** — the ones that turn an extract-a-function refactor into a runtime `ReferenceError`. Heuristic (no parser), so eyeball it; validated against the two known traps in git history | before cutting a block out of a long function |
 | `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
 | `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
 
