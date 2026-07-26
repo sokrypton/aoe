@@ -1298,6 +1298,9 @@ function restartGame(difficulty){
   entitiesById.clear();
   corpses = [];
   selected = [];
+  // The undo entry points at last match's entities — a stale 'select' entry
+  // would otherwise light the Undo arrow on a brand-new game.
+  if (window.__clearUndo) window.__clearUndo();
   tick = 0;
   bumpSimGen(); // tick rewound to 0 — invalidate every registered sim cache (js/core.js)
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js

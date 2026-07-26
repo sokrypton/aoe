@@ -1285,6 +1285,20 @@ function pageSuite() {
       assertEq(JSON.stringify(r.ids), JSON.stringify(r.ab), 'undo restores BOTH previously selected units');
     });
 
+    await tapT('undo: a new match does not inherit the previous one\'s undo', async () => {
+      const r = await page.evaluate(tapStage(`
+        const a=createUnit('militia',28,28,0), b=createUnit('militia',31,29,0);
+        selected=[a]; window.__pts=(scr)=>({ b: scr(31.2,29.2) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(31.2,29.2); handleTap(g.x,g.y,false);   // a selection change = an undoable action
+        const before = window.undoAvailable();
+        restartGame('standard');
+        return { before, after: window.undoAvailable() };
+      })()`);
+      assertEq(r.before, true, 'a selection change arms the undo');
+      assertEq(r.after, false, 'restarting the match clears it (no stale entry from last game)');
+    });
+
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
       const r = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
