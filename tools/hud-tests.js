@@ -1151,6 +1151,63 @@ function pageSuite() {
       assertEq(r.sel, 1, 'selection size');
     });
 
+    await tapT('undo: a walk order sends the unit BACK and re-selects it', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m]; window.__mid=m.id;
+        window.__pts=(scr)=>({ g: scr(38.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`(()=>{
+        const go=window.__cmds.find(c=>c.kind==='command');
+        window.__cmds.length=0;
+        const avail=window.undoAvailable();
+        window.undoLastAction();
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return {go:go&&{x:go.tileX,y:go.tileY}, avail, back:back&&{x:back.tileX,y:back.tileY,ids:back.unitIds},
+                sel:selected.length, selId:selected[0]&&selected[0].id, mid:window.__mid, still:window.undoAvailable()};
+      })()`);
+      if(!r.go) throw new Error('no walk order captured');
+      assertEq(r.avail, true, 'undo must be available after a command');
+      if(!r.back) throw new Error('undo issued no return command');
+      assertEq(r.back.x, 30, 'returns to the ORIGINAL tile x');
+      assertEq(r.back.y, 30, 'returns to the ORIGINAL tile y');
+      assertEq(r.sel, 1, 'unit is re-selected by the undo');
+      assertEq(r.selId, r.mid, 'the same unit');
+      assertEq(r.still, false, 'single-level undo is consumed on use');
+    });
+
+    await tapT('undo: selecting is an action — undo restores the PREVIOUS selection', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('militia',30,30,0); const b=createUnit('militia',34,30,0);
+        selected=[a]; window.__a=a.id; window.__b=b.id;
+        window.__pts=(scr)=>({ b: scr(34.2, 30.2) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`(()=>{
+        const afterTap=selected[0]&&selected[0].id;
+        window.undoLastAction();
+        return {afterTap, restored:selected[0]&&selected[0].id, n:selected.length, a:window.__a, b:window.__b};
+      })()`);
+      assertEq(r.afterTap, r.b, 'tapping the other unit selects it');
+      assertEq(r.n, 1, 'selection size after undo');
+      assertEq(r.restored, r.a, 'undo restores the previously selected unit');
+    });
+
+    await tapT('undo: a placed foundation is cancelled, and undo lapses once it is BUILT', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const armed=window.undoAvailable();
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        const withFoundation=window.undoAvailable();
+        f.complete=true;
+        return {armed, withFoundation, afterBuilt:window.undoAvailable()};
+      })()`);
+      assertEq(r.withFoundation, true, 'undo is available while the foundation stands');
+      assertEq(r.afterBuilt, false, 'undo lapses once the building is finished');
+    });
+
     await tapT('walk into UNEXPLORED territory KEEPS selection (even over a fogged resource — no task committed)', async () => {
       const pts = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v];

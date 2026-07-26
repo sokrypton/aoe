@@ -907,6 +907,69 @@ function hasSelectedMobileWalkOrder(){
     return !s.task && !s.target && !s.buildTarget && s.order && s.order.kind==='move';
   });
 }
+// ---- SINGLE-LEVEL UNDO ("back" = undo the last action) ----
+// Selecting, commanding and placing are all ACTIONS; the return arrow undoes
+// the most recent one. VIEWER-LOCAL state only — the sim is never rewound
+// (lockstep replays commands on every peer, so there is nothing to roll back
+// to). Undo therefore issues a COMPENSATING command: units walk back to where
+// they stood, a foundation is cancelled through the normal refund path. That
+// is also why a finished building can't be undone — nothing to cancel.
+let lastUndo = null;   // {kind:'select'|'orders'|'place', ...}
+function recordUndo(entry){ lastUndo = entry; }
+window.__clearUndo = () => { lastUndo = null; };
+// Still undoable? A dead selection or an already-built foundation isn't.
+function undoAvailable(){
+  if(!lastUndo) return false;
+  if(lastUndo.kind==='orders')
+    return lastUndo.prev.some(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
+  if(lastUndo.kind==='place')
+    return !!findUndoFoundation();
+  return true;  // 'select' is always undoable (restoring an empty selection = deselect)
+}
+window.undoAvailable = undoAvailable;
+// The foundation a 'place' undo refers to: our own, still unfinished, on the
+// tile it was placed at. Resolved by position because the building does not
+// exist yet when the command is issued (it is created at the exec tick).
+function findUndoFoundation(){
+  if(!lastUndo || lastUndo.kind!=='place') return null;
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type==='building' && e.team===myTeam && !e.complete && e.hp>0
+       && e.x===lastUndo.tileX && e.y===lastUndo.tileY) return e;
+  }
+  return null;
+}
+window.undoLastAction = function(){
+  if(gameOver || !undoAvailable()) return;
+  let u = lastUndo;
+  lastUndo = null;                       // one level only — consumed on use
+  if(u.kind==='select'){
+    let alive = (u.prevIds||[]).map(id=>entitiesById.get(id)).filter(e=>e && e.hp>0);
+    selected = alive;
+    window.currentVillagerMenu = 'main';
+    if(window.playSound) window.playSound('click');
+    updateUI();
+    return;
+  }
+  if(u.kind==='place'){
+    let f = findUndoFoundation();
+    if(f) requestDeleteOwned([f.id]);    // the existing cancel-build refund path
+    if(window.showMsg) showMsg('Construction cancelled');
+    updateUI();
+    return;
+  }
+  // 'orders': send each unit back to ITS OWN tile (one command per unit, so
+  // a group returns to its original shape rather than a formation blob) and
+  // re-select them, per the request.
+  let back = u.prev.filter(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
+  back.forEach(p=>submitCommand({ kind:'command', unitIds:[p.id],
+    tileX:p.x, tileY:p.y, targetId:null, buildTargetId:null, followId:null }));
+  selected = back.map(p=>entitiesById.get(p.id)).filter(Boolean);
+  if(window.showMsg) showMsg('Order undone');
+  if(window.playSound) window.playSound('click');
+  updateUI();
+};
+
 function finishMobileUnitCommand(){
   // Only a plain walk keeps the selection (see the keep rule in doCommand);
   // every committed task deselects.
@@ -1056,6 +1119,20 @@ function selectionWorkTarget(en, haveVillagers){
 
 function handleTap(sx,sy,shift){
   if(gameOver)return; // match is over — See Map is view-only (no select/command)
+  // Selecting IS an action: snapshot the outgoing selection so the return
+  // arrow can restore it. doCommand/doPlace overwrite lastUndo with their own
+  // entry, so a tap that commands records the command, not the selection.
+  const __prevSel = selected.map(s=>s.id);
+  const __undoBefore = lastUndo;
+  const __selUndo = () => {
+    if(lastUndo !== __undoBefore) return;                 // a command already claimed it
+    const now = selected.map(s=>s.id);
+    if(now.length===__prevSel.length && now.every((id,i)=>id===__prevSel[i])) return; // unchanged
+    recordUndo({ kind:'select', prevIds: __prevSel });
+  };
+  try { return __handleTapInner(sx,sy,shift); } finally { __selUndo(); }
+}
+function __handleTapInner(sx,sy,shift){
   // 1. If placing a building, place it
   if(placing){
     doPlace(sx,sy);
@@ -1861,6 +1938,9 @@ function doCommand(sx,sy){
   // client's view (its fog, its screen). Mutation happens in
   // execUnitCommand (js/commands.js) at the scheduled tick on every peer's
   // queue (lockstep).
+  // Snapshot where these units stood BEFORE the order — the undo target.
+  recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
+    x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))) })) });
   submitCommand({
     kind: 'command',
     unitIds: movers.map(s => s.id),
@@ -1887,6 +1967,7 @@ function doPlace(sx,sy){
     placing=null;
     return;
   }
+  recordUndo({ kind:'place', btype: placing, tileX: tile.x, tileY: tile.y });
   submitCommand({ kind: 'build-placement', btype: placing, tileX: tile.x, tileY: tile.y, unitIds: vils.map(s=>s.id) });
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){

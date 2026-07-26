@@ -595,6 +595,7 @@ function updateUI(){
 
   let act=byId('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally+':'+!!window.settingGuard
+    +':u'+(typeof window.undoAvailable==='function'&&window.undoAvailable()?1:0)
     +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
     +':garr'+(window.settingGarrison||0)
     // age + research flip which buttons EXIST (locked ones are hidden, wall/
@@ -659,7 +660,10 @@ function updateUI(){
   // per press (cancel placement → cancel rally → leave submenu → deselect),
   // so for a villager the same arrow pressed repeatedly walks back out of
   // the build submenus and finally exits.
-  if(rebuildActions && selected.length>0 && gameStarted && !gameOver){
+  let undoReady = !placing && !window.settingRally && !window.settingGuard && !window.settingGarrison
+    && !(window.currentVillagerMenu==='eco'||window.currentVillagerMenu==='mil')
+    && typeof window.undoAvailable==='function' && window.undoAvailable();
+  if(rebuildActions && (selected.length>0 || undoReady) && gameStarted && !gameOver){
     let backBtn=document.createElement('div');
     backBtn.className='act-btn back-btn framed';
     // Inside a villager build SUBMENU the back arrow is the only way back
@@ -668,10 +672,18 @@ function updateUI(){
     // tag it (see .submenu-back in classic-style.css).
     if(window.currentVillagerMenu==='eco'||window.currentVillagerMenu==='mil') backBtn.classList.add('submenu-back');
     backBtn.dataset.tipType='action';
-    backBtn.dataset.tipLabel='Back';
-    backBtn.dataset.tipDesc='Go back one step: cancel placement or targeting, leave a submenu, or deselect.';
-    backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div>`;
-    backBtn.onclick=()=>{ if(window.deselectAll)window.deselectAll(); };
+    // Selecting, commanding and placing are all ACTIONS — with no mode armed
+    // the arrow UNDOES the last one (restore the previous selection, walk the
+    // units back, or cancel the foundation) instead of merely deselecting.
+    backBtn.dataset.tipLabel=undoReady?'Undo':'Back';
+    backBtn.dataset.tipDesc=undoReady
+      ? 'Undo the last action: restore the previous selection, send units back where they were, or cancel the foundation just placed.'
+      : 'Go back one step: cancel placement or targeting, leave a submenu, or deselect.';
+    backBtn.innerHTML=`<div class="btn-emoji sprite-icon icon-back"></div>`+(undoReady?`<div class="btn-label">Undo</div>`:``);
+    backBtn.onclick=()=>{
+      if(undoReady && window.undoLastAction) window.undoLastAction();
+      else if(window.deselectAll) window.deselectAll();
+    };
     act.appendChild(backBtn);
 
     // Bulk Cancel Build — when the whole selection is own unfinished
