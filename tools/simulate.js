@@ -132,7 +132,7 @@ function aggregate(reports) {
     watchdogFiresTotal: reports.reduce((a, r) => a + (r.health.watchdogFires || 0), 0),
     runs: reports.map(r => ({
       seed: r.config.seed, tick: r.end.tick, gameOver: r.end.gameOver, won: r.end.won,
-      ages: r.end.ages, checksum: r.end.checksum, ticksPerSec: r.health.ticksPerSec,
+      ages: r.end.ages, ageUpTicks: r.end.ageUpTicks, checksum: r.end.checksum, ticksPerSec: r.health.ticksPerSec,
       watchdogFires: r.health.watchdogFires || 0, watchdogSamples: r.health.watchdogSamples || [],
       findings: r.findings, jsErrors: r.health.jsErrors,
     })),

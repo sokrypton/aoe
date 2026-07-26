@@ -243,6 +243,17 @@ window.runSimulation = async function(opts){
       tick, gameOver, won,
       defeated: defeatedTeams.slice(),
       ages: teamAge.slice(),
+      // First tick each team reached each age. A CONTINUOUS metric: comparing
+      // end-state `ages` (a 0/1/2 snapshot) needs ~85 runs/arm to resolve a
+      // small eco change, while age-up TIMING resolves a 10% shift in ~38 —
+      // and batch mode drops events/timeline, so it has to ride `end`.
+      ageUpTicks: (() => {
+        const out = teamAge.map(() => ({}));
+        report.events.forEach(e => {
+          if (e.ev === 'age-up' && out[e.team] && out[e.team][e.to] === undefined) out[e.team][e.to] = e.t;
+        });
+        return out;
+      })(),
       winnerSide: gameOver ? (won ? 'alliance-of-team0' : 'other') : null,
       final: teams().map(sampleTeam),
     };
