@@ -133,6 +133,10 @@ function aggregate(reports) {
     runs: reports.map(r => ({
       seed: r.config.seed, tick: r.end.tick, gameOver: r.end.gameOver, won: r.end.won,
       ages: r.end.ages, ageUpTicks: r.end.ageUpTicks, checksum: r.end.checksum, ticksPerSec: r.health.ticksPerSec,
+      // Compact per-team end state — batch mode drops `final`, but wall/tower
+      // counts are exactly what defensive-AI comparisons are measured on.
+      final: (r.end.final || []).map(t => ({ age: t.age, vils: t.vils, walls: t.swalls + t.pwalls,
+        towers: t.towers, mills: t.mills, wood: t.wood, stone: t.stone, defeated: t.defeated })),
       watchdogFires: r.health.watchdogFires || 0, watchdogSamples: r.health.watchdogSamples || [],
       findings: r.findings, jsErrors: r.health.jsErrors,
     })),
