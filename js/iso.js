@@ -43,6 +43,29 @@ function screenToTile(sx,sy){
   return{x:Math.floor(p.x),y:Math.floor(p.y)};
 }
 
+// ---- Pre-zoom LOGICAL space ----
+// Everything is drawn in logical px inside render()'s scale(ZOOM) transform,
+// so hit-tests work there too. These two invert/apply ONLY that transform,
+// about the same rounded anchor render() scales around — spelling it inline
+// with a bare W/2 puts the clickable spot half a rounding off the pixels.
+function screenToLogical(sx,sy){
+  const {ax,ay}=zoomAnchor();
+  return{x:ax+(sx-ax)/ZOOM, y:ay+(sy-ay)/ZOOM};
+}
+function logicalToScreen(lx,ly){
+  const {ax,ay}=zoomAnchor();
+  return{sx:ax+(lx-ax)*ZOOM, sy:ay+(ly-ay)*ZOOM};
+}
+// Where a unit's sprite anchor actually lands, in logical px — the SAME
+// round-then-offset path drawUnit/_outlineExtent take (round through the
+// quantized display camera, THEN add the anti-stack scatter). Hit-tests must
+// come through here or they drift from the drawn sprite as the camera pans.
+function unitAnchorLogical(en){
+  const p=mapToScreen(en.x,en.y);
+  const {ox,oy}=getUnitGroupOffset(en.id);
+  return{x:Math.round(p.sx)+ox, y:Math.round(p.sy+HALF_TH)+oy};
+}
+
 function getMiniTransform(mw,mh){
   // Small padding just keeps the thin border stroke from clipping.
   let pad=4;

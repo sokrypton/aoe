@@ -101,11 +101,8 @@ function _outlineExtent(e){
   // used, or the ring sits 1px off its sprite at some pan offsets.
   let sx, sy;
   if(isUnit){
-    const p=mapToScreen(e.x,e.y);
-    sx=Math.round(p.sx);
-    sy=Math.round(p.sy+HALF_TH);
-    const {ox,oy}=getUnitGroupOffset(e.id);
-    sx+=ox; sy+=oy;
+    const a=unitAnchorLogical(e); // shared with the input hit-tests, so they agree by construction
+    sx=a.x; sy=a.y;
   } else {
     const b=BLDGS[e.btype];
     const p=mapToScreen(e.x+b.w/2, e.y+b.h/2);

@@ -1397,8 +1397,8 @@ function getBuildingUnderCursor(sx, sy, filter) {
   // Wall-likes are hit-tested against drawn geometry in unzoomed local
   // space; invert the render zoom (which scales around (W/2, H/2+topH),
   // see render.js) once here.
-  let lx = (sx - W / 2) / ZOOM + W / 2;
-  let ly = (sy - H / 2 - topH) / ZOOM + H / 2 + topH;
+  let _l = screenToLogical(sx, sy);
+  let lx = _l.x, ly = _l.y;
   entities.forEach(en=>{
     if(en.type==='building' && (!filter || filter(en))){
       let w = en.w !== undefined ? en.w : BLDGS[en.btype].w;
@@ -1426,9 +1426,11 @@ function getBuildingUnderCursor(sx, sy, filter) {
       // geometry can never match the art (e.g. the TC's annex posts hang well
       // outside the 4x4 footprint) — testing the real pixels means the click
       // area always agrees with the selection outline, by construction.
-      let bIso = toIso(cx, cy);
-      let aX = bIso.ix - camX + W/2;                       // logical anchor x (footprint centre)
-      let aY = bIso.iy - camY + topH + H/2 - h * HALF_TH;  // logical anchor y (footprint top)
+      // Rounded exactly as drawBuilding anchors it (mapToScreen -> round,
+      // then lift by the footprint height), so the box tracks the art.
+      let bp = mapToScreen(cx, cy);
+      let aX = Math.round(bp.sx);                // logical anchor x (footprint centre)
+      let aY = Math.round(bp.sy) - h * HALF_TH;  // logical anchor y (footprint top)
       if (lx >= aX - 175 && lx <= aX + 175 && ly >= aY - 216 && ly <= aY + 134) {
         if (entityPixelHit(en, lx, ly)) {
           let sortY = cy + cx;
@@ -1457,10 +1459,9 @@ function getUnitUnderCursor(sx, sy) {
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
       if (en.team !== myTeam && uf !== 2) return;
 
-      let iso = toIso(en.x, en.y);
-      let { ox, oy } = getUnitGroupOffset(en.id);
-      let scrx = (iso.ix - camX + ox) * ZOOM + W/2;
-      let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H/2 + topH;
+      let ua = unitAnchorLogical(en);
+      let us = logicalToScreen(ua.x, ua.y);
+      let scrx = us.sx, scry = us.sy;
 
       let w = 10 * ZOOM + extraHit;
       let hStart = 2 * ZOOM + extraHit;
@@ -1523,9 +1524,9 @@ function getResourceUnderCursor(sx, sy) {
       let isFarm = t0.t === TERRAIN.FARM;
       
       if (isForest || isGold || isStone || isBerries || isFarm) {
-        let iso = toIso(tx + 0.5, ty + 0.5);
-        let scrx = (iso.ix - camX) * ZOOM + W/2;
-        let scry = (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH;
+        let tp = mapToScreen(tx + 0.5, ty + 0.5);
+        let ts = logicalToScreen(Math.round(tp.sx), Math.round(tp.sy) + HALF_TH);
+        let scrx = ts.sx, scry = ts.sy;
         
         let w = 12 * ZOOM;
         let hStart = 2 * ZOOM;
@@ -1609,10 +1610,9 @@ function unitsInBox(x1,y1,x2,y2){
   return entities.filter(en=>{
     if(en.team!==myTeam)return false;
     if(en.type!=='unit'||en.garrisonedIn)return false;
-    let iso=toIso(en.x,en.y);
-    let { ox, oy } = getUnitGroupOffset(en.id);
-    let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-    let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
+    let ua=unitAnchorLogical(en);
+    let us=logicalToScreen(ua.x,ua.y);
+    let scrx=us.sx, scry=us.sy;
 
     let w = 10 * ZOOM;
     let hStart = 2 * ZOOM;
