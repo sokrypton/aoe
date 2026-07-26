@@ -20,12 +20,12 @@ function T30(x){ return Math.round(x * TPS / 30); }
 // must never read it.
 Object.defineProperty(window, 'animTick', { get: () => tick * (30 / TPS) });
 
-const C=document.getElementById('game');
+const C=byId('game');
 // X is reassignable (not const): drawSelectedUnitOutlines() briefly redirects
 // it to an offscreen buffer so it can reuse drawUnit() itself to capture a
 // unit's exact silhouette, instead of maintaining a separate outline shape.
 let X=C.getContext('2d');
-const MC=document.getElementById('minimap'),MX=MC.getContext('2d');
+const MC=byId('minimap'),MX=MC.getContext('2d');
 const isMobile='ontouchstart' in window||navigator.maxTouchPoints>0;
 // Command markers (visual feedback when you issue a command)
 let cmdMarkers=[]; // {x,y,time,color}
@@ -1019,7 +1019,8 @@ function feedbackFor(team, fn){
 }
 let netConn=null, netConnected=false;
 // No-op seam: every sim-side map mutation calls this — exactly the hook a
-// future map-mutation journal (e.g. cheaper rollback snapshots) would need.
+// future map-mutation journal (e.g. cheaper rollback snapshots) or a cached
+// terrain-art layer would need to invalidate.
 function markMapDirty(x,y){}
 
 // Which tile the falling-tree animation started on, and when — LOCAL-ONLY,

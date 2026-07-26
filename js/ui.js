@@ -92,7 +92,7 @@ function buildMktExchange(){
 // button toggles it back. Pass null to hide (selection changed/game over);
 // the hidden flag resets then so the next Market selection opens fresh.
 function refreshMktPopup(mkt){
-  let pop=document.getElementById('mkt-popup');
+  let pop=byId('mkt-popup');
   if(!mkt){
     window.__mktPopupHidden=false;
     if(pop)pop.style.display='none';
@@ -294,7 +294,7 @@ function myBellActive(){
 // Classic-only HP slot under the portrait (see #sel-hp in page-shell.js).
 // Mobile keeps the HP block inline in #sel-details and never fills this.
 function setSelHp(html){
-  let el=document.getElementById('sel-hp');
+  let el=byId('sel-hp');
   if(el) el.innerHTML=html;
 }
 
@@ -537,12 +537,12 @@ function updateUI(){
   lu.ageKey = ageKey;
 
   // Perform actual DOM updates
-  document.getElementById('r-food').textContent=currentFood;
-  document.getElementById('r-wood').textContent=currentWood;
-  document.getElementById('r-gold').textContent=currentGold;
-  document.getElementById('r-stone').textContent=currentStone;
+  byId('r-food').textContent=currentFood;
+  byId('r-wood').textContent=currentWood;
+  byId('r-gold').textContent=currentGold;
+  byId('r-stone').textContent=currentStone;
   for (let k of ['food','wood','gold','stone']) {
-    let el = document.getElementById('rv-'+k);
+    let el = byId('rv-'+k);
     if (!el) continue;
     let n = vilRes[k];
     // Box always reserves its space (CSS toggles visibility, not display), so
@@ -550,9 +550,9 @@ function updateUI(){
     el.classList.toggle('on', n > 0);
     if (n > 0) el.textContent = n;
   }
-  let popEl = document.getElementById('r-pop');
+  let popEl = byId('r-pop');
   if (popEl) popEl.textContent = `${myPopUsed}/${myPopCap}`;
-  let ageEl = document.getElementById('r-age');
+  let ageEl = byId('r-age');
   if (ageEl && teamAge) {
     let crest = ageEl.parentElement.querySelector('.res-icon');
     if (crest) crest.className = 'res-icon sprite-icon icon-age-' + AGES[teamAge[myTeam]].key;
@@ -564,7 +564,7 @@ function updateUI(){
       : 'Your current age. Advance at the Town Center to unlock new units and buildings.';
   }
   
-  let bellBtn = document.getElementById('bell-btn');
+  let bellBtn = byId('bell-btn');
   if(bellBtn) {
     if(gameStarted && !gameOver) {
       bellBtn.style.display = 'flex';
@@ -579,7 +579,7 @@ function updateUI(){
     }
   }
 
-  let idleBtn = document.getElementById('idle-btn');
+  let idleBtn = byId('idle-btn');
   if(idleBtn) {
     if(currentIdleCount > 0) {
       idleBtn.style.display = 'flex';
@@ -593,7 +593,7 @@ function updateUI(){
     }
   }
 
-  let act=document.getElementById('actions');
+  let act=byId('actions');
   let selKey=currentSelListKey+':'+placing+':'+(window.currentVillagerMenu||'main')+':'+currentIdleCount+':'+!!window.settingRally+':'+!!window.settingGuard
     +':'+myBellActive()+':'+(selected[0]&&selected[0].garrison?selected[0].garrison.length:0)
     +':garr'+(window.settingGarrison||0)
@@ -631,12 +631,12 @@ function updateUI(){
     +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')).join('.');
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
-  let bottomEl = document.getElementById('bottom');
+  let bottomEl = byId('bottom');
   if (bottomEl) {
     let isSubMenu = window.currentVillagerMenu === 'eco' || window.currentVillagerMenu === 'mil';
     bottomEl.classList.toggle('menu-active', isSubMenu);
   }
-  let minimapWrap = document.getElementById('minimap-wrap');
+  let minimapWrap = byId('minimap-wrap');
   if (minimapWrap) {
     minimapWrap.classList.toggle('build-active', !!(placing || window.isDraggingWall));
   }
@@ -644,7 +644,7 @@ function updateUI(){
     act.innerHTML='';
     // The classic queue lane (#sel-queue, center panel) is rebuilt in the
     // same pass as the action buttons — clear it on the same cadence.
-    let sq=document.getElementById('sel-queue');
+    let sq=byId('sel-queue');
     if(sq) sq.innerHTML='';
     // Selection changed: unless the new selection is an own completed
     // Market, retire the exchange popup (and reset its dismissed flag).
@@ -769,8 +769,8 @@ function updateUI(){
   // five identical icons — and only fans out to one-icon-per-type when the
   // selection is mixed. Rebuilt only when the selection or any selected
   // unit's HP changes (see currentSelectionDetails).
-  let selInfo=document.getElementById('sel-info');
-  let selGrid=document.getElementById('sel-grid');
+  let selInfo=byId('sel-info');
+  let selGrid=byId('sel-grid');
   let isMulti=selected.length>1;
   // A selected own building — or a ram carrying riders (AoE2 garrison-rams) —
   // with units inside reuses the multi-select grid to show its garrison
@@ -945,7 +945,7 @@ function updateUI(){
     }
   }
 
-  let port = document.getElementById('sel-portrait');
+  let port = byId('sel-portrait');
   if(gameOver){
     if(!isClassicUI) refreshMktPopup(null); // no trading over the end screen
     let iWon = didIWin();
@@ -954,15 +954,15 @@ function updateUI(){
     // Mobile (index.html): the trophy/skull icon alone carries the outcome —
     // no text rows next to it. Classic keeps the AoE2-style worded card.
     let modern = !isClassicUI;
-    document.getElementById('sel-name').textContent = modern ? '' : (iWon?'VICTORY!':'DEFEAT!');
-    document.getElementById('sel-details').textContent = modern ? '' : (iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!');
+    byId('sel-name').textContent = modern ? '' : (iWon?'VICTORY!':'DEFEAT!');
+    byId('sel-details').textContent = modern ? '' : (iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!');
     return;
   }
   if(!gameStarted){
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
     setSelHp('');
-    document.getElementById('sel-name').textContent='Choose Difficulty';
-    document.getElementById('sel-details').textContent='Select Easy, Medium, or Hard to begin';
+    byId('sel-name').textContent='Choose Difficulty';
+    byId('sel-details').textContent='Select Easy, Medium, or Hard to begin';
     return;
   }
 
@@ -981,20 +981,20 @@ function updateUI(){
       if (port) { setPortraitIcon(port, 'age-' + AGES[crestIdx].key, '🏛️'); port.classList.remove('cam-locked'); }
       // Desktop card reveals these beside the crest (single-sel); narrow widths
       // keep the crest alone (#sel-stats hidden). Age name + advancing status.
-      document.getElementById('sel-name').textContent = AGES[crestIdx].name;
-      document.getElementById('sel-details').textContent = myAgeUpBldg ? 'Advancing…' : '';
+      byId('sel-name').textContent = AGES[crestIdx].name;
+      byId('sel-details').textContent = myAgeUpBldg ? 'Advancing…' : '';
       return;
     }
     if (port) { setPortraitIcon(port, 'logo', '⚔️'); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent='Age of Epochs';
-    document.getElementById('sel-details').textContent='Select a unit or building';
+    byId('sel-name').textContent='Age of Epochs';
+    byId('sel-details').textContent='Select a unit or building';
     return;
   }
   let e=selected[0];
   if(e.type==='building'){
     let b=BLDGS[e.btype];
     if (port) { setPortraitIcon(port, iconKey(e.btype, e.team), b.icon); port.classList.remove('cam-locked'); }
-    document.getElementById('sel-name').textContent=b.name;
+    byId('sel-name').textContent=b.name;
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
     // Cyan while under construction — the same one-bar consolidation as the
     // in-world bar (render-buildings.js): HP grows with construction, so
@@ -1054,7 +1054,7 @@ function updateUI(){
         }
       }
     }
-    document.getElementById('sel-details').innerHTML=det;
+    byId('sel-details').innerHTML=det;
     if(rebuildActions&&e.team===myTeam){
       // Garrison (load mode) for BUILDINGS (TC/tower) — HIDDEN for now, kept
       // fully wired so it's a one-line flip to bring back. The ram keeps its own
@@ -1201,7 +1201,7 @@ function updateUI(){
             slot.onclick = () => cancelQueue(e.id, idx);
             strip.appendChild(slot);
           });
-          let lane = document.getElementById('sel-queue');
+          let lane = byId('sel-queue');
           (lane || act).appendChild(strip);
         }
       }
@@ -1310,7 +1310,7 @@ function updateUI(){
             slot.onclick=()=>cancelReseed();
             strip.appendChild(slot);
           }
-          let lane=document.getElementById('sel-queue');
+          let lane=byId('sel-queue');
           (lane||act).appendChild(strip);
         }
       }
@@ -1370,7 +1370,7 @@ function updateUI(){
         unitName = selected.every(s => s.utype !== 'villager' && s.utype !== 'sheep' && s.utype !== 'sheep_carcass') ? 'Army' : 'Mixed Group';
       }
     }
-    document.getElementById('sel-name').textContent = unitName + (selected.length > 1 ? ` (${selected.length})` : '');
+    byId('sel-name').textContent = unitName + (selected.length > 1 ? ` (${selected.length})` : '');
     let hpPct = Math.max(0, Math.min(100, Math.floor(e.hp / e.maxHp * 100)));
     let hpColor = '#2b8a3e';
     if (hpPct < 20) hpColor = '#cc3333';
@@ -1417,7 +1417,7 @@ function updateUI(){
       det += `<div class="det-stats">${stats.join('')}</div>`;
     }
 
-    document.getElementById('sel-details').innerHTML=det;
+    byId('sel-details').innerHTML=det;
 
     // The build menu requires EVERY selected unit to be a buildable-capable
     // villager, not just selected[0] — AoE2 only offers an action when all
@@ -1645,8 +1645,8 @@ function updateUI(){
   // arrow is corner-docked, not a strip occupant — this class lifts the cap
   // and the card may take the whole bar.
   {
-    let actEl = document.getElementById('actions');
-    let barEl = document.getElementById('bottom');
+    let actEl = byId('actions');
+    let barEl = byId('bottom');
     if (actEl && barEl) barEl.classList.toggle('no-actions', !actEl.querySelector(':scope > *:not(.back-btn)'));
   }
 
@@ -1665,7 +1665,7 @@ function refreshActionAffordability(){
 
 }
 // Swallow clicks on disabled buttons before their own onclick fires.
-document.getElementById('actions').addEventListener('click', function(e){
+byId('actions').addEventListener('click', function(e){
   let btn = e.target.closest && e.target.closest('.act-btn.disabled, .mkt-cell.disabled');
   if(btn){
     e.stopPropagation();
@@ -1680,7 +1680,7 @@ document.getElementById('actions').addEventListener('click', function(e){
 // threshold suppresses the click that would otherwise fire on the button
 // under the cursor when the mouse is released.
 (function(){
-  let bar=document.getElementById('actions');
+  let bar=byId('actions');
   if(!bar||!bar.addEventListener)return;
   let dragging=false,dragMoved=false,startX=0,startScroll=0;
   bar.addEventListener('mousedown',e=>{
@@ -1720,9 +1720,9 @@ function cancelQueue(bldgId,idx){
 
 function showMsg(txt){
   if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
-  let el=document.getElementById('msg');el.textContent=txt;el.style.opacity='1';
+  let el=byId('msg');el.textContent=txt;el.style.opacity='1';
   // The help hint shares the same screen spot — yield to the message
-  let hint=document.getElementById('help-hint');
+  let hint=byId('help-hint');
   if(hint)hint.style.opacity='0';
   // Cancel the previous message's hide timer, or a message shown ~1.9s
   // after another gets hidden almost immediately by the stale timer.
@@ -1839,7 +1839,7 @@ window.updateBottomHeight = function() {
   H = window.innerHeight - bottomH;
   W = w;
   
-  let C = document.getElementById('game');
+  let C = byId('game');
   if (C) {
     let X = C.getContext('2d');
     // Use the GLOBAL dpr (js/core.js) — it caps at 2x on mobile for render
@@ -1909,7 +1909,7 @@ window.cancelReseed = cancelReseed;
 // ==============================
 
 (function() {
-  const TIP = document.getElementById('tooltip');
+  const TIP = byId('tooltip');
   if (!TIP) return;
 
   // Resource key → human-readable label
@@ -2073,7 +2073,7 @@ window.cancelReseed = cancelReseed;
     return d;
   }
 
-  document.getElementById('bottom').addEventListener('mouseover', function(e) {
+  byId('bottom').addEventListener('mouseover', function(e) {
     if (typeof recentTouch === 'function' && recentTouch()) { hideTip(); return; }
 
     // Dispatch on the DATA, not on a class list: any element that carries
@@ -2090,7 +2090,7 @@ window.cancelReseed = cancelReseed;
     else hideTip();
   });
 
-  document.getElementById('bottom').addEventListener('mouseout', function(e) {
+  byId('bottom').addEventListener('mouseout', function(e) {
     // Only hide when leaving #bottom entirely (not just moving between children)
     if (!this.contains(e.relatedTarget)) hideTip();
   });
@@ -2115,9 +2115,9 @@ window.cancelReseed = cancelReseed;
       if (!this.contains(e.relatedTarget)) hideTip();
     });
   }
-  attachSimpleTips(document.getElementById('pop-wrap'));
-  attachSimpleTips(document.getElementById('menu-btn'));
-  attachSimpleTips(document.getElementById('fs-btn'));
-  attachSimpleTips(document.getElementById('chat-btn'));
+  attachSimpleTips(byId('pop-wrap'));
+  attachSimpleTips(byId('menu-btn'));
+  attachSimpleTips(byId('fs-btn'));
+  attachSimpleTips(byId('chat-btn'));
 
 })();

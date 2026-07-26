@@ -203,7 +203,7 @@ let netBytesReceived = 0;
     ? (bps / (1024 * 1024)).toFixed(2) + ' MB/s'
     : (bps / 1024).toFixed(1) + ' KB/s';
   setInterval(() => {
-    const el = document.getElementById('net-stats');
+    const el = byId('net-stats');
     if (!el) return;
     const ls = typeof lockstepEnabled === 'function' && lockstepEnabled();
     // The net/sim readout is a CLASSIC-skin feature only. The modern skin
@@ -237,7 +237,7 @@ let netBytesReceived = 0;
   // The 1s cadence would leave the box overlapping the resource bar for up
   // to a second after a shrink — hide immediately on resize instead.
   window.addEventListener('resize', () => {
-    const el = document.getElementById('net-stats');
+    const el = byId('net-stats');
     if (el && window.innerWidth < 700) el.style.display = 'none';
   });
 })();

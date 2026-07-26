@@ -322,10 +322,8 @@ function _buildOccMask(occs){
   try{
     for(const d of occs){
       if(d.type==='tree'){ drawTreeEntity(d.x, d.y); continue; }
-      const en = d.type==='building' ? d : d.entity;
-      const part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
-                 : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
-                 : (d.type==='gate_door') ? 'door' : (d.part||null);
+      const en = proxyEntity(d);
+      const part = proxyPart(d);
       // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw
       // live. Everything else blits its baked silhouette at the same
       // footprint-top corner drawBuilding would have drawn it at (real camera,
@@ -422,7 +420,7 @@ function _bsilFillOccBox(rec, d){
     rec.top = ay-64; rec.bottom = ay+TH+8;
     return;
   }
-  const en = d.type==='building' ? d : d.entity;
+  const en = proxyEntity(d);
   const b = BLDGS[en.btype];
   const fw = en.w||b.w, fh = en.h||b.h;
   const p = mapToScreen(en.x+fw/2, en.y+fh/2);

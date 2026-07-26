@@ -7,7 +7,7 @@
 (function(){
   // Hide the injected game chrome; the gallery owns the whole canvas.
   ['tutorial','bottom','topbar','minimap','help-hint','net-stats','tooltip','chat-panel']
-    .forEach(id => { let el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    .forEach(id => { let el = byId(id); if (el) el.style.display = 'none'; });
 
   // ---- Minimal world boot (enough for the draw code's reads) ----
   // Big enough for every specimen band: slot() walks ~11 slots per 8-tile
@@ -302,16 +302,16 @@
     'sg-t-collar': 'horse_collar', 'sg-t-plow': 'heavy_plow', 'sg-t-wbarrow': 'wheelbarrow',
     'sg-t-fwall': 'fortified_wall' };
   const readTechBoxes = () => techMask(Object.entries(TECH_BOXES)
-    .filter(([id]) => document.getElementById(id)?.checked).map(([, key]) => key));
+    .filter(([id]) => byId(id)?.checked).map(([, key]) => key));
   Object.keys(TECH_BOXES).forEach(id => {
-    let el = document.getElementById(id);
+    let el = byId(id);
     if (el) el.onchange = () => { galleryTechs = readTechBoxes(); };
   });
   const setAllTechs = on => {
-    Object.keys(TECH_BOXES).forEach(id => { let el = document.getElementById(id); if (el) el.checked = on; });
+    Object.keys(TECH_BOXES).forEach(id => { let el = byId(id); if (el) el.checked = on; });
     galleryTechs = readTechBoxes();
   };
-  let sgAll = document.getElementById('sg-t-all'), sgNone = document.getElementById('sg-t-none');
+  let sgAll = byId('sg-t-all'), sgNone = byId('sg-t-none');
   if (sgAll) sgAll.onclick = () => setAllTechs(true);
   if (sgNone) sgNone.onclick = () => setAllTechs(false);
   // Read once at boot too — browser form-state restore re-checks boxes

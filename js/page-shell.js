@@ -4,7 +4,7 @@
 // THE show/hide idiom: null-safe, '' restores the stylesheet's display.
 function byId(id){ return document.getElementById(id); }
 function show(idOrEl, visible, mode){
-  let el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+  let el = typeof idOrEl === 'string' ? byId(idOrEl) : idOrEl;
   if (el) el.style.display = visible ? (mode || '') : 'none';
 }
 // The two pages used to be near-identical 292-line copies and had already

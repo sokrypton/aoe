@@ -48,7 +48,7 @@ function chatSeatName(team){
 // parsed as markup (same rule the body already followed).
 function addChatLine(team, text){
   let inLobby = window.__mpSession.inLobby;
-  let log = document.getElementById(inLobby ? 'lobby-chat-log' : 'chat-log');
+  let log = byId(inLobby ? 'lobby-chat-log' : 'chat-log');
   if (!log) return;
   let line = document.createElement('div');
   line.className = 'chat-line';
@@ -78,8 +78,8 @@ function openChatInput(){
   // panel has its own always-visible input (js/lobby.js).
   if (chatOpen || !chatAvailable() || window.__mpSession.inLobby) return;
   chatOpen = true;
-  let wrap = document.getElementById('chat-input-wrap');
-  let input = document.getElementById('chat-input');
+  let wrap = byId('chat-input-wrap');
+  let input = byId('chat-input');
   if (!wrap || !input) return;
   wrap.style.display = 'flex';
   input.value = '';
@@ -88,8 +88,8 @@ function openChatInput(){
 
 function closeChatInput(){
   chatOpen = false;
-  let wrap = document.getElementById('chat-input-wrap');
-  let input = document.getElementById('chat-input');
+  let wrap = byId('chat-input-wrap');
+  let input = byId('chat-input');
   if (wrap) wrap.style.display = 'none';
   // Return keyboard focus to the game so hotkeys work immediately — an
   // input left focused would swallow every game key (the keydown handler
@@ -109,7 +109,7 @@ function sendChatMessage(text){
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  let input = document.getElementById('chat-input');
+  let input = byId('chat-input');
   if (!input) return;
   input.addEventListener('keydown', e => {
     // Stop game hotkeys from also seeing these; the guard in js/input.js
@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // Visibility follows chatAvailable() on a coarse poll rather than hooking
 // every connect/disconnect/game-over code path.
 setInterval(() => {
-  let btn = document.getElementById('chat-btn');
+  let btn = byId('chat-btn');
   if (!btn) return;
   // Hidden in the lobby (it has its own input) — only the in-match overlay.
   let want = (chatAvailable() && !window.__mpSession.inLobby) ? 'flex' : 'none';

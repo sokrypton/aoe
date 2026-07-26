@@ -29,6 +29,9 @@ function loadCore() {
   const sandbox = {
     window: windowStub,
     document: { getElementById: canvasStub, createElement: canvasStub, addEventListener: () => {} },
+    // page-shell.js defines byId/show and loads first on every real page; this
+    // sandbox runs core.js alone, so it has to stand in for that shell.
+    byId: canvasStub, show: () => {},
     navigator: { userAgent: 'node', maxTouchPoints: 0 },
     localStorage: { getItem: () => null, setItem: () => {} },
     location: { search: '', href: '' },

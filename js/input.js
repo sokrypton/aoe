@@ -463,7 +463,7 @@ C.addEventListener('mousemove',e=>{
         // Visual-only cue (the minimap is pointer-events:none, so it can't
         // intercept the drag) — dims it so it's clear dragging over it
         // won't do anything special.
-        let mw=document.getElementById('minimap-wrap');
+        let mw=byId('minimap-wrap');
         if(mw)mw.classList.add('drag-select-active');
       }
     }
@@ -577,7 +577,7 @@ C.addEventListener('mouseup',e=>{
       }
     }
     dragStart=null;dragEnd=null;isDragging=false;
-    let mw=document.getElementById('minimap-wrap');
+    let mw=byId('minimap-wrap');
     if(mw)mw.classList.remove('drag-select-active');
   }
 });
@@ -784,7 +784,7 @@ C.addEventListener('touchmove',e=>{
       if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
         if(!isDragging){
           isDragging=true;
-          let mw=document.getElementById('minimap-wrap');
+          let mw=byId('minimap-wrap');
           if(mw)mw.classList.add('drag-select-active');
         }
       }
@@ -829,7 +829,7 @@ C.addEventListener('touchend',e=>{
     } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
       if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
       else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
-      let mw=document.getElementById('minimap-wrap');
+      let mw=byId('minimap-wrap');
       if(mw)mw.classList.remove('drag-select-active');
     } else if(!touchMoved&&touchAnchor){
       // It's a tap! Double-tap on the same own unit type selects every
@@ -1252,12 +1252,12 @@ function minimapJump(sx, sy) {
 }
 
 function toggleMinimap(){
-  let wrap = document.getElementById('minimap-wrap');
+  let wrap = byId('minimap-wrap');
   if(wrap) {
     let expanded = wrap.classList.toggle('minimap-expanded');
     // Light the map button up while expanded so it clearly reads as an
     // active toggle that can be pressed again to exit.
-    let btn = document.getElementById('map-btn');
+    let btn = byId('map-btn');
     if(btn) btn.classList.toggle('map-active', expanded);
     // Redraw at the new size before the browser paints this click's frame —
     // otherwise the canvas shows one frame at the old size (visible flicker).
@@ -1287,10 +1287,10 @@ function minimapToggleModeActive(){
 
 function collapseMinimapIfWide(){
   if(minimapToggleModeActive()) return;
-  let wrap = document.getElementById('minimap-wrap');
+  let wrap = byId('minimap-wrap');
   if(wrap && wrap.classList.contains('minimap-expanded')){
     wrap.classList.remove('minimap-expanded');
-    let btn = document.getElementById('map-btn');
+    let btn = byId('map-btn');
     if(btn) btn.classList.remove('map-active');
   }
 }

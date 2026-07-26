@@ -11,6 +11,6 @@
 // and executed (that's what makes plain synchronous script tags useful
 // here) — so this is the correct, simplest point to flip it back on.
 (function(){
-  var btn = document.getElementById('start-game-btn');
+  var btn = byId('start-game-btn');
   if (btn) { btn.disabled = false; btn.textContent = 'Start'; }
 })();

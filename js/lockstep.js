@@ -218,7 +218,7 @@ onNetMessage((msg, src) => {
       window.__mpSession.cameraCentered = true;
     }
     if (typeof showMpStatus === 'function') showMpStatus('Connected! Lockstep match started.');
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
   } else if (msg.type === 'cmd-ls' && lockstepActive) {
@@ -280,7 +280,7 @@ onNetMessage((msg, src) => {
     if (typeof hideDisconnectOverlay === 'function') hideDisconnectOverlay();
     disconnectedPause = false;
     if (typeof recomputeGamePaused === 'function') recomputeGamePaused();
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
     if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');

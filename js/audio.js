@@ -1046,7 +1046,7 @@ window.stopAmbientMusic = stopAmbientMusic;
 window.audioMuted = false;
 function toggleMute() {
   window.audioMuted = !window.audioMuted;
-  let btn = document.getElementById('mute-btn');
+  let btn = byId('mute-btn');
   if (btn) {
     btn.textContent = window.audioMuted ? '🔇' : '🔊';
   }

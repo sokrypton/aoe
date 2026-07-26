@@ -163,7 +163,7 @@ function selectToolBtn(btn){
 // used after a palette rebuild (map-size change / Reset / Clear) so the
 // active tool stays visibly selected regardless of kind.
 function selectByTool(){
-  let root = document.getElementById('editor-panel'); if (!root) return;
+  let root = byId('editor-panel'); if (!root) return;
   let want = tool.kind + ':' + (tool.key == null ? '' : tool.key);
   let btn = [...root.querySelectorAll('.ed-btn')].find(b => b.dataset.tool === want);
   selectToolBtn(btn || null);
@@ -363,7 +363,7 @@ function buildPalette(){
 }
 
 function rebuildPalette(){
-  let old = document.getElementById('editor-panel');
+  let old = byId('editor-panel');
   if (old) old.remove();
   selBtn = null;
   buildPalette();
@@ -578,7 +578,7 @@ function parseController(c){
   return { type:'human' };
 }
 function updatePlayBtn(){
-  let b = document.getElementById('ed-play');
+  let b = byId('ed-play');
   if (!b) return;
   b.textContent = running ? '⏸ Pause' : '▶ Play';
   b.classList.toggle('running', running);

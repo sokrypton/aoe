@@ -175,7 +175,7 @@ function saveGameToFile(){
 }
 
 function triggerLoadDialog(){
-  let input = document.getElementById('load-file-input');
+  let input = byId('load-file-input');
   if (input) input.click();
 }
 
@@ -451,7 +451,7 @@ function applySavedGame(data, opts){
       lockstepResetState();
       DET.enabled = true;
       lockstepResumeGuest();
-      let menu = document.getElementById('tutorial');
+      let menu = byId('tutorial');
       if (menu) menu.style.display = 'none';
       if (typeof localMenuOpen !== 'undefined') {
         localMenuOpen = false;
@@ -466,7 +466,7 @@ function applySavedGame(data, opts){
       // do — same localMenuOpen/gamePaused bookkeeping, see js/init.js) and
       // kick off hosting immediately so the user lands directly on the
       // shareable-link screen instead of having to go find it themselves.
-      let menu = document.getElementById('tutorial');
+      let menu = byId('tutorial');
       if (menu) menu.style.display = 'flex';
       if (typeof localMenuOpen !== 'undefined') {
         localMenuOpen = true;
@@ -484,7 +484,7 @@ function applySavedGame(data, opts){
       if (typeof netSeedGuestRecords === 'function') netSeedGuestRecords(data.seatTokens);
       onHostClicked();
     } else {
-      let menu = document.getElementById('tutorial');
+      let menu = byId('tutorial');
       if (menu) menu.style.display = 'none';
       if (window.showMsg) showMsg('Game loaded');
     }

@@ -137,7 +137,7 @@ function hostEnterLobby(seat){
   if (!lobbyState) seedHostLobby();
   hostEnsureLobbySeat(seat);
   show('mp-status-panel', false);
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   if (menu) menu.style.display = 'flex';
   showMenuPanel('lobby');
   lobbySendState(seat);
@@ -274,7 +274,7 @@ function applyLobbyState(msg, isOpen){
   window.__mpSession.inLobby = true;
   if (isOpen) {
     show('mp-status-panel', false);
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'flex';
     showMenuPanel('lobby');
   }
@@ -293,7 +293,7 @@ function renderLobby(){
   // The guest's enterGuestJoinMode (js/init.js) broad-hides EVERY
   // .menu-button-container / .setup-grid / .menu-divider in the menu at boot —
   // re-show the lobby panel's own structural children.
-  let panel = document.getElementById('menu-panel-lobby');
+  let panel = byId('menu-panel-lobby');
   if (panel) panel.querySelectorAll('.menu-button-container, .setup-grid, .menu-divider')
     .forEach(el => { el.style.display = ''; });
 
@@ -310,13 +310,13 @@ function renderLobby(){
 
   // Add-AI button (host only, when there's room).
   show('lobby-addai-row', (netRole === 'host'));
-  let addBtn = document.getElementById('lobby-addai-btn');
+  let addBtn = byId('lobby-addai-btn');
   if (addBtn) addBtn.disabled = lobbyState.seats.length >= LOBBY_MAX_PLAYERS;
 
   // Buttons.
-  let readyBtn = document.getElementById('lobby-ready-btn');
-  let startBtn = document.getElementById('lobby-start-btn');
-  let leaveBtn = document.getElementById('lobby-leave-btn');
+  let readyBtn = byId('lobby-ready-btn');
+  let startBtn = byId('lobby-start-btn');
+  let leaveBtn = byId('lobby-leave-btn');
   if (leaveBtn) leaveBtn.style.display = netRole === 'guest' ? 'none' : '';
   if (netRole === 'guest') {
     if (readyBtn) {
@@ -334,7 +334,7 @@ function renderLobby(){
     }
   }
   // Why-can't-I-start hint (host only).
-  let hint = document.getElementById('lobby-hint');
+  let hint = byId('lobby-hint');
   if (hint) {
     let msg = '';
     if (netRole === 'host' && !lobbyCanStart()) {
@@ -346,11 +346,11 @@ function renderLobby(){
   }
   // The invite link stays visible inside the lobby while seats remain —
   // more friends can join until Start.
-  let inviteRow = document.getElementById('lobby-invite-row');
+  let inviteRow = byId('lobby-invite-row');
   if (inviteRow) {
     let show = netRole === 'host' && lobbyShareLink && lobbyState.seats.length < LOBBY_MAX_PLAYERS;
     inviteRow.style.display = show ? '' : 'none';
-    let linkEl = document.getElementById('lobby-invite-link');
+    let linkEl = byId('lobby-invite-link');
     if (linkEl && show && linkEl.value !== lobbyShareLink) linkEl.value = lobbyShareLink;
   }
   if (typeof scaleMenuToFit === 'function') scaleMenuToFit();
@@ -359,7 +359,7 @@ function renderLobby(){
 // Flat roster, one row per seat — alliances are the per-row Team pick
 // (AoE2-style), not a grouped layout.
 function renderLobbyRoster(){
-  let roster = document.getElementById('lobby-roster');
+  let roster = byId('lobby-roster');
   if (!roster) return;
   // Preserve the caret if a name input is focused (all peers re-render on sync).
   let active = document.activeElement;
@@ -620,7 +620,7 @@ function lobbySetRadio(name, value){
 }
 function lobbySetSettingsEnabled(enabled){
   document.querySelectorAll('#lobby-settings-grid input[type="radio"]').forEach(el => { el.disabled = !enabled; });
-  let grid = document.getElementById('lobby-settings-grid');
+  let grid = byId('lobby-settings-grid');
   if (grid) grid.style.opacity = enabled ? '' : '0.75';
 }
 
@@ -631,7 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="lobbymapsize"]').forEach(el => el.addEventListener('change', onLobbyMapSizeChange));
   document.querySelectorAll('input[name="lobbyspeed"]').forEach(el => el.addEventListener('change', onLobbySpeedChange));
   document.querySelectorAll('input[name="lobbyfog"]').forEach(el => el.addEventListener('change', onLobbyFogChange));
-  let input = document.getElementById('lobby-chat-input');
+  let input = byId('lobby-chat-input');
   if (input) {
     input.addEventListener('keydown', e => {
       e.stopPropagation();
