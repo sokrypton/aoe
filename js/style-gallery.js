@@ -528,5 +528,20 @@
     });
     requestAnimationFrame(frame);
   }
+
+  // Scriptable handle, same idea as lab.html's window.LAB: tools/render-parity.js
+  // drives pose/age/scroll and steps EXACTLY one frame, so a pixel-parity run is
+  // reproducible instead of riding rAF timing (frame() advances `tick` itself).
+  window.GALLERY = {
+    set(o){
+      if (o.pose   !== undefined) pose        = o.pose;
+      if (o.age    !== undefined) galleryAge  = +o.age;
+      if (o.zoom   !== undefined) galleryZoom = +o.zoom;
+      if (o.scroll !== undefined) scrollY     = Math.max(0, +o.scroll);
+      if (o.tick   !== undefined) tick        = +o.tick;
+    },
+    frame,
+  };
+
   requestAnimationFrame(frame);
 })();

@@ -71,6 +71,55 @@ const PROBE = (zooms) => `(() => {
   return out;
 })()`;
 
+// Gallery mode: style.html stages EVERY unit type in all 8 facings across
+// idle/walk/attack/death, plus tech ladders and villager task/carry rows —
+// the coverage a drawUnit refactor actually needs (any one save is missing
+// whole unit types). Driven through window.GALLERY so frame count, tick and
+// scroll are exact rather than rAF-timed.
+const POSES = ['idle', 'walk', 'attack', 'death'];
+const SCROLL_STEP = 400, SCROLL_STEPS = 14;   // overshoot is blank frames, which are harmless
+
+async function hashGallery(browser, root) {
+  const srv = await serve(root);
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await ctx.addInitScript(() => {
+      window.requestAnimationFrame = () => 0;   // GALLERY.frame() is the only driver
+      let s = 12345;
+      Math.random = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      // Death/corpse art ages off the WALL CLOCK (render-units.js dying-unit
+      // dt, drawCorpse age, and style-gallery's own corpse-cycle math), so a
+      // frozen clock is what makes the death pose comparable at all.
+      performance.now = () => 100000;
+    });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on('pageerror', e => errs.push(String(e.message || e).slice(0, 200)));
+    await page.goto('http://127.0.0.1:' + srv.address().port + '/style.html', { waitUntil: 'load' });
+    await page.waitForFunction(() => !!window.GALLERY, { timeout: 20000 })
+      .catch(() => { throw new Error('window.GALLERY missing' + (errs.length ? ' — ' + errs[0] : '')); });
+    const out = await page.evaluate(`(() => {
+      const out = [];
+      for (const pose of ${JSON.stringify(POSES)}) {
+        for (let i = 0; i < ${SCROLL_STEPS}; i++) {
+          GALLERY.set({ pose, scroll: i * ${SCROLL_STEP}, tick: 5000 });
+          GALLERY.frame();
+          const d = X.getImageData(0, 0, X.canvas.width, X.canvas.height).data;
+          let h = 2166136261 >>> 0;
+          for (let k = 0; k < d.length; k += 4) {
+            h ^= d[k] | (d[k+1] << 8) | (d[k+2] << 16) | (d[k+3] << 24);
+            h = Math.imul(h, 16777619) >>> 0;
+          }
+          out.push(pose + '@' + (i * ${SCROLL_STEP}) + ':' + h.toString(16));
+        }
+      }
+      return out;
+    })()`);
+    await ctx.close();
+    return out;
+  } finally { srv.close(); }
+}
+
 async function hashTree(browser, root, saveText, zooms) {
   const srv = await serve(root);
   try {
@@ -98,27 +147,33 @@ async function hashTree(browser, root, saveText, zooms) {
 
 (async () => {
   const a = parseArgs(process.argv.slice(2));
-  if (!a.save) { console.error('usage: node tools/render-parity.js save=<file.json> [baseline=<ref>] [zooms=..]'); process.exit(2); }
-  const saveText = fs.readFileSync(a.save, 'utf8');
+  if (!a.save && !a.gallery) {
+    console.error('usage: node tools/render-parity.js (save=<file.json> | gallery=1) [baseline=<ref>] [zooms=..]');
+    process.exit(2);
+  }
+  const saveText = a.save ? fs.readFileSync(a.save, 'utf8') : null;
   const zooms = (a.zooms || '0.35,0.61,1,2').split(',').map(Number).join(',');
-
   const browser = await launchBrowser(chromium, false);
+  const probe = (root) => a.gallery ? hashGallery(browser, root) : hashTree(browser, root, saveText, zooms);
   let wt = null;
   try {
-    const cur = await hashTree(browser, ROOT, saveText, zooms);
+    const cur = await probe(ROOT);
     if (!a.baseline) { console.log(cur.join('\n')); return; }
 
     wt = fs.mkdtempSync(path.join(require('os').tmpdir(), 'aoe-parity-'));
     execFileSync('git', ['worktree', 'add', '-q', '--detach', wt, a.baseline], { cwd: ROOT });
-    const base = await hashTree(browser, wt, saveText, zooms);
+    const base = await probe(wt);
 
-    const bad = cur.filter((h, i) => h !== base[i]);
-    console.log('zoom          ' + a.baseline.padEnd(12) + 'working');
+    // Only mismatches are worth printing — gallery mode compares ~56 cells.
+    const bad = [];
     cur.forEach((h, i) => {
-      const [z, hh] = h.split(':');
-      console.log('  ' + z.padEnd(12) + base[i].split(':')[1].padEnd(12) + hh + (h === base[i] ? '' : '   <-- DIFFERS'));
+      if (h === base[i]) return;
+      bad.push(h.split(':')[0]);
+      console.log(`  ${h.split(':')[0].padEnd(16)} ${a.baseline} ${base[i].split(':')[1]}  ->  working ${h.split(':')[1]}`);
     });
-    console.log(bad.length ? `\nFAIL — ${bad.length}/${cur.length} zooms differ` : '\nPASS — pixel-identical');
+    console.log(bad.length
+      ? `\nFAIL — ${bad.length}/${cur.length} differ vs ${a.baseline}`
+      : `\nPASS — pixel-identical vs ${a.baseline} (${cur.length} probes)`);
     if (bad.length) process.exitCode = 1;
   } finally {
     await browser.close();

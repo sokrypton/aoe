@@ -9,7 +9,7 @@
 | `mp-tests.js` | LIVE lockstep multiplayer through PeerJS: lobby→match checksum agreement, rejoin, kick-to-AI, save/reload resume. **Needs network.** | when netcode, lockstep, or command/message shapes change |
 | `profile-sim.js` | V8 sampling profile of a headless sim run (self-time per function) — measure before optimizing | perf work |
 | `profile-render.js` | ms/frame + per-component breakdown of `render()` on a dense staged scene. Fresh page per zoom and re-baselined per stub — sharing one page inflated whichever zoom ran second ~15x | render perf work |
-| `render-parity.js` | renders a SAVE at several zooms and hashes the pixels; `baseline=<ref>` diffs against a throwaway worktree and exits non-zero on any change. The check that a viewer-side refactor moved no pixels | before/after any render refactor |
+| `render-parity.js` | hashes rendered pixels and diffs against a git ref (throwaway worktree, exits non-zero on any change) — the check that a viewer-side refactor moved no pixels. `save=<f.json>` renders a real match at several zooms; **`gallery=1`** drives style.html over every unit type × 8 facings × idle/walk/attack/death (56 probes) via `window.GALLERY` — use that one for unit-art refactors, since no single save contains every unit type | before/after any render refactor |
 | `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
 | `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
 
