@@ -523,10 +523,6 @@ function freshAIState(team){
     // base-survey lap progress and the retrain cooldown. Sim state read on
     // later ticks — hashed in the AI digest.
     baseSurveyed: false, surveyIdx: 0, lastScoutTrainTick: null,
-    // The villager currently standing in as explorer while no scout can be
-    // fielded (ensureAICivilianExplorer, js/ai.js — DE's civilian explorers).
-    // Sim state read on later ticks — hashed in the AI digest.
-    civExplorerId: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
     // Size of the last launched wave — the wave-casualty retreat compares
     // far-from-home survivors against it (controlAIMilitary, js/ai.js).

@@ -317,7 +317,6 @@ function simChecksum(){
       // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
       h = detMix(h, ai.baseSurveyed ? 1 : 0);
       h = detMix(h, ai.surveyIdx || 0);
-      h = detMix(h, ai.civExplorerId || 0);
       h = detMix(h, ai.lastScoutTrainTick == null ? -1 : ai.lastScoutTrainTick);
       if (ai.intel) {
         // Intel MEMORY (information parity): remembered TC coords, contact

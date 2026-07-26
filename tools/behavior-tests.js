@@ -158,38 +158,6 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
-    // ---------------------------------------------- civilian explorer (DE §8)
-    // Scouts are Feudal-gated, so a Dark-Age AI that loses its starting scout
-    // has NO way to field an explorer — blind, and (fog on) its survey band
-    // never becomes explored, so it never walls again. One villager stands in
-    // until a scout is possible, but only if the eco can spare it.
-    'civilian-explorer': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
-      const T = window.__T;
-      const stage = (nVils) => {
-        loadScenario({ map: 'medium', seed: 11, numTeams: 2,
-                       controllers: ['ai', 'ai'], ages: [0, 0], entities: [] });
-        gameStarted = true; window.__headlessSim = true;
-        teamAge[0] = 0;                                  // Dark Age: no scout possible
-        const tc = createBuilding('TC', 30, 30, 0);
-        const vils = [];
-        for (let i = 0; i < nVils; i++) vils.push(createUnit('villager', 28 + (i % 5), 28 + ((i / 5) | 0), 0));
-        return { ai: AI_STATES[0], tc, vils: vils.filter(Boolean) };
-      };
-      let s = stage(12);
-      ensureAICivilianExplorer(s.ai, s.vils, [], s.tc);   // no barracks, no scout
-      T.ok('Dark-Age AI with no scout puts ONE villager on recon',
-           s.ai.civExplorerId != null && s.vils.some(v => v.id === s.ai.civExplorerId));
-      // A real scout appearing hands recon back to it.
-      createUnit('scout', 31, 31, 0);
-      ensureAICivilianExplorer(s.ai, s.vils, [], s.tc);
-      T.ok('a real scout releases the civilian explorer', s.ai.civExplorerId === null);
-      // Too small an economy must not lose a pair of hands (DE's % self-limits).
-      let small = stage(6);
-      ensureAICivilianExplorer(small.ai, small.vils, [], small.tc);
-      T.ok('a tiny economy is never cannibalised for recon', small.ai.civExplorerId == null);
-      return T;
-    })),
-
     // ---------------------------------------------- scoutless base survey
     // ai.baseSurveyed only advanced inside controlAIScouts' per-scout loop, so
     // an AI whose scout died early never completed the lap — and planAIWalls

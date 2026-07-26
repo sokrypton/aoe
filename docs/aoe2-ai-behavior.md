@@ -176,7 +176,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 | Dropsite separation | `[10]` (advice: 3–4) | `AI_DROP_COVER = 10` coverage radius | ✅ |
 | Camp placement knowledge | real LOS | `teamHasExplored` gate — no omniscient camps | ✅ |
 | Builder cap | `cap-civilian-builders [2]` | `buildersPerBuilding` 1–2 + wall-crew cap (⅓ workforce) | ✅ |
-| Civilian explorers | ~2 villagers scout early | none — villagers never explore | 🟡 minor; our scout survey covers it |
+| Civilian explorers | `percent-civilian-explorers [34]`, `cap-civilian-explorers [2]` | none — villagers never explore. **Tried and REJECTED (2026-07):** one villager standing in while no scout could be fielded (Dark Age / no Barracks, ≥10-villager floor) measured **significantly worse** at 40 runs/arm — +1855 ticks to Feudal (t=4.41) and Dark-Age stalls 6.9%→16.9% (z=2.76). It fires exactly in the tightest eco window, and stalling in Dark Age keeps it firing: a feedback loop. A 6-run check had read as a slight *improvement* — the underpowered test had the wrong sign | ✅ divergence is correct; DE's % self-limits on a small eco, an absolute stand-in does not |
 | Age-up trigger | script build-order benchmark (vils/resources) | `ageUpVils` benchmark + `savingForAge` reserve | ✅ same mechanism |
 | Age-up clock | none (no engine SN) | `ageUpTick` floor per difficulty | 🔶 pacing floor is our difficulty lever |
 
@@ -212,8 +212,7 @@ Legend: ✅ match (same behavior, possibly different mechanism) · 🟡 approxim
 
 | Behavior | AoE2 DE | Ours | Verdict |
 |---|---|---|---|
-| Explorer count | up to 4 land explorers | 1 scout, retrained on death (`ensureAIScout`), plus one civilian stand-in below | 🟡 fewer, but persistent |
-| Civilian explorers | `percent-civilian-explorers [34]`, `cap-civilian-explorers [2]` | ONE villager (`ensureAICivilianExplorer`), only while no scout can be fielded at all — Dark Age has no cavalry, so a lost starting scout otherwise means total blindness AND (fog on) a base-survey band that never becomes explored, i.e. an AI that never walls again. Released the moment a scout is possible. DE's *percentage* self-limits on a small eco; ours uses an absolute floor (≥10 villagers) after self-play showed a flat "always take one" cannibalising a Dark-Age team down to 8 villagers | 🟡 much narrower window, same purpose — closes the blindness hole, but measured strength effect is within noise (6-run aggregate: avg age 0.92→0.96) |
+| Explorer count | up to 4 land explorers | exactly 1 scout, retrained on death (`ensureAIScout`) | 🟡 fewer, but persistent |
 | Home-first exploration | `home-exploration-time [300]` | `baseSurveyWaypoint` 8-point perimeter lap first | ✅ |
 | Frontier bias | `blot-exploration-map` re-explores | unexplored-tile-count scoring (`pickExploreWaypoint`) | ✅ |
 | Intel decay / re-scout | blot re-explores seen ground → stale intel refreshes | army-strength memory DECAYS (~6%/decision tick, `updateAIIntel`) and TC memory ghost-clears on re-sight — stale intel genuinely expires and re-scouting refreshes it | ✅ (2026-07 information parity) |
