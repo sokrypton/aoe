@@ -742,7 +742,11 @@ function planAIWalls(ai,aiTC,vils,profile){
 // army can leave a ring that ended up fully sealed (no walkable opening and
 // no placeable gate). A real player would delete a wall segment here too.
 function breachAIWallRing(ai,plan,aiTC){
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
+  // Equal-scoring sides are common on a symmetric base, and the winner decides
+  // where a gate goes. Tiebreak on the ORIGINAL N/S/E/W index, which is what a
+  // stable sort gives today — deterministic on every engine, same behaviour.
+  let ranked=AI_WALL_SIDES.slice().sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC)
+    ||AI_WALL_SIDES.indexOf(a)-AI_WALL_SIDES.indexOf(b));
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     let mid=Math.floor(sideTiles.length/2);
@@ -1037,6 +1041,7 @@ function getEnemyDirection(ai,tc){
 // sites — so villagers have a short, direct walk out to gather/return — and
 // (b) the enemy direction, weighted higher since the attack/defense route
 // matters more than gathering convenience.
+const AI_WALL_SIDES=['N','S','E','W'];
 function scoreWallSide(ai,side,tc){
   let dir=WALL_SIDE_DIR[side];
   let score=0;
@@ -1058,7 +1063,11 @@ function resolveAIGate(ai,plan,aiTC){
   let wallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isWallBtype(en.btype)&&en.x===x&&en.y===y);
   let hasWallNeighbor=(x,y)=>wallAt(x+1,y)||wallAt(x-1,y)||wallAt(x,y+1)||wallAt(x,y-1);
 
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
+  // Equal-scoring sides are common on a symmetric base, and the winner decides
+  // where a gate goes. Tiebreak on the ORIGINAL N/S/E/W index, which is what a
+  // stable sort gives today — deterministic on every engine, same behaviour.
+  let ranked=AI_WALL_SIDES.slice().sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC)
+    ||AI_WALL_SIDES.indexOf(a)-AI_WALL_SIDES.indexOf(b));
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     if(sideTiles.length===0)continue; // fully clamped-away side: nothing to gate
@@ -1605,7 +1614,7 @@ function assignAIGatherTask(ai,v,vils,profile){
     // tile) so the rest of the map opens up, then re-evaluate next decision.
     let gates=(ai.gatePairs||[]).map(p=>p[Math.floor(p.length/2)]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
     if(gates.length){
-      gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
+      gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y))||a.x-b.x||a.y-b.y); // positional tiebreak
       v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
       pathUnitTo(v,gates[0].x,gates[0].y);
       return;
@@ -2860,7 +2869,7 @@ function findAIBuildSpot(ai,tc,type){
   if(type==='BARRACKS'){
     let ed=getEnemyDirection(ai,tc);
     let dot=a=>simCos(a*Math.PI*2/16)*ed.dx+simSin(a*Math.PI*2/16)*ed.dy;
-    angles.sort((a1,a2)=>dot(a2)-dot(a1));
+    angles.sort((a1,a2)=>dot(a2)-dot(a1)||a1-a2); // equal dots come in symmetric pairs — order them
   }
   let scan=(respectBelt)=>{
     for(let r=minEdge;r<maxR;r++){
