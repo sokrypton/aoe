@@ -158,6 +158,32 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- wall ring vs buildings
+    // Placement only asked canPlace, so a house could land ON a planned ring
+    // tile after the ring was planned; the wall loop then marked it done
+    // ("already our building") and the perimeter got a 550hp house where a
+    // 1800hp wall belonged.
+    'ring-not-houses': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:3, numTeams:2, controllers:['ai','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true; window.fogDisabled = true; updateFog();
+      const tc = createBuilding('TC', 30, 30, 0);
+      const ai = AI_STATES[0];
+      ai.wallPlan = computeAIWallRing(ai, tc, 6);
+      const onRing = ai.wallPlan[0];
+      T.ok('a plan exists to test against', !!onRing);
+      // a HOUSE may not be sited on a ring tile...
+      T.ok('house placement is refused on the wall ring',
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'HOUSE') === true);
+      // ...but the ring pieces themselves are exempt
+      T.ok('walls/gates/towers are exempt (they ARE the ring)',
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'WALL') === false &&
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'TOWER') === false);
+      // a tile well inside the ring is fine
+      T.ok('inside the ring is still buildable', aiOnWallRing(ai, 30, 30, 1, 1, 'HOUSE') === false);
+      return T;
+    })),
+
     // ---------------------------------------------- scoutless base survey
     // ai.baseSurveyed only advanced inside controlAIScouts' per-scout loop, so
     // an AI whose scout died early never completed the lap — and planAIWalls

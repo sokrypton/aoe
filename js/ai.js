@@ -873,14 +873,27 @@ function computeAIWallRing(ai,tc,radius){
   // anchoring on forest safe here.
   const SIDE_BAND=6;
   let rr={N:r,S:r,W:r,E:r};
+  // Cost of one candidate side. Barrier tiles are FREE (terrain seals them).
+  // A tile already holding one of our own non-wall buildings is worse than
+  // open ground, not equal to it: the wall loop marks it done and the
+  // perimeter inherits a 550hp house where an 1800hp wall belongs. Weighted
+  // rather than forbidden, so a base boxed in by its own town still gets a
+  // ring — it just prefers a line that misses the houses.
+  const OWN_BLDG_PENALTY=4;
+  const tileCost=(x,y)=>{
+    if(terrainBarrier(x,y)) return 0;
+    let b=buildingAtTile(x,y,en=>en.team===ai.team);
+    if(b && !isWallBtype(b.btype) && !isGateBtype(b.btype) && !isTowerBtype(b.btype)) return OWN_BLDG_PENALTY;
+    return 1;
+  };
   const sideBuilt=(side,off)=>{
     let built=0;
     if(side==='N'||side==='S'){
       let y=side==='N'?cy-off:cy+off;
-      for(let x=cx-rr.W;x<=cx+rr.E;x++) if(!terrainBarrier(x,y)) built++;
+      for(let x=cx-rr.W;x<=cx+rr.E;x++) built+=tileCost(x,y);
     } else {
       let x=side==='W'?cx-off:cx+off;
-      for(let y=cy-rr.N;y<=cy+rr.S;y++) if(!terrainBarrier(x,y)) built++;
+      for(let y=cy-rr.N;y<=cy+rr.S;y++) built+=tileCost(x,y);
     }
     return built;
   };
@@ -2802,6 +2815,22 @@ function aiWouldBlockGate(bx,by,bw,bh,team){
   return false;
 }
 
+// Would this footprint sit ON the planned wall ring? Nothing stopped it before:
+// placement only asked canPlace, so a house dropped on a ring tile AFTER the
+// ring was planned, and the wall loop then marked that tile done ("already our
+// building"). The perimeter silently got a 550hp house where a 1800hp stone
+// wall belonged — the soft segment attackers break first. Walls/gates/towers
+// are exempt: those ARE the ring.
+function aiOnWallRing(ai,tx,ty,w,h,btype){
+  let plan=ai.wallPlan; if(!plan||!plan.length) return false;
+  if(isWallBtype(btype)||isGateBtype(btype)||isTowerBtype(btype)) return false;
+  for(let i=0;i<plan.length;i++){
+    let t=plan[i];
+    if(t.x>=tx && t.x<tx+w && t.y>=ty && t.y<ty+h) return true;
+  }
+  return false;
+}
+
 function findAIBuildSpot(ai,tc,type){
   let b=BLDGS[type];
   // Measure from the TC CENTRE, not its origin corner — an origin-based
@@ -2832,6 +2861,7 @@ function findAIBuildSpot(ai,tc,type){
         let tx=Math.round(cx+simCos(ang)*r);
         let ty=Math.round(cy+simSin(ang)*r);
         if(!canPlace(type,tx,ty,ai.team))continue;
+        if(aiOnWallRing(ai,tx,ty,b.w,b.h,type))continue;   // keep the perimeter walls, not houses
         if(aiWouldBlockGate(tx,ty,b.w,b.h,ai.team))continue;
         if(respectBelt&&reserve&&aiInFarmBelt(tx,ty,b.w,b.h,ai.team,drops))continue;
         if(pathReaches(Math.floor(cx),Math.floor(cy),tx,ty,tc.id))return{x:tx,y:ty};
