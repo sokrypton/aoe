@@ -33,11 +33,29 @@ they do is compress the tech ladder — techs kept vs halved prices: easy 95%
 slowdown is regressive, not uniform. Ladder re-checked 1v1 x20: hard beat
 medium 11-0 of decided, so the ordering is intact.
 
-**Research times are still NOT faithful.** Ours collapse to two values —
-16.7s Feudal, 25s Castle — while DE varies per technology from 25s
-(Double-Bit Axe) to 75s (Iron Casting, Wheelbarrow). Every per-tech
-distinction is lost, and the ratio to DE is inconsistent (0.27-0.67).
-Restoring them is untouched work.
+**Research times now match DE per technology** (restored 2026-07-27). They had
+collapsed to two values (16.65s Feudal / 25s Castle); DE varies 20s (Horse
+Collar) to 75s (Wheelbarrow, Iron Casting).
+
+Authoring rule: `researchTicks: T30(seconds * 30)`. `T30(x) = x*TPS/30` and
+game-seconds = ticks/TPS, so `T30(seconds*30)` is exactly `seconds` of game
+time at ANY TPS — and because seconds*30*TPS/30 = seconds*TPS, it divides
+without rounding. The old flat values did not: `T30(500)` = 333 ticks = 16.65s,
+a residue that is now gone from all 17 durations (15 techs + 2 ages).
+Game time is tick-driven, so render framerate never enters this.
+
+| tech | DE | tech | DE |
+|---|---|---|---|
+| Horse Collar | 20s | Heavy Plow | 40s |
+| Double-Bit Axe | 25s | Bow Saw | 50s |
+| Fletching | 30s | Forging | 50s |
+| Gold Mining | 30s | Masonry | 50s |
+| Bodkin Arrow | 35s | Fortified Wall | 50s |
+| Scale Mail Armor | 40s | Guilds | 50s |
+| Chain Mail Armor | 55s | Iron Casting / Wheelbarrow | 75s |
+
+**Ages already matched** and were not touched: Feudal 500F / 130s, Castle
+800F+200G / 160s.
 
 ## Reading
 
@@ -95,6 +113,12 @@ farms are flat in DE and carry no `hpAge`.
 
 - **Watch Tower cost.** Ours is 25W 125S; DE may be 50W 125S. Both Liquipedia
   URLs tried returned 404, so this is UNCONFIRMED — do not "fix" it from memory.
+- **Fortified Wall resource.** The Liquipedia *technology* page gives 200F +
+  100 **wood**; an earlier search summary said 100 **stone**. Ours charges
+  stone. Left as-is deliberately: our Fortified Wall does a different thing
+  (+50% HP to stone walls/gates/towers rather than a wall-type upgrade), and
+  our walls are stone-priced, so stone is the coherent charge here. Flagged
+  rather than silently "corrected".
 - Mining Camp per-age HP is assumed identical to Lumber Camp, not separately
   sourced.
 - Gates (palisade/stone) and our invented PTOWER were not checked.

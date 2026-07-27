@@ -270,33 +270,33 @@ function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 
 // and live hook is unchanged — only the trigger moved from age-up to research.
 const UPGRADES = {
   // -- Feudal --
-  forging: {age:1, cost:{f:150}, researchTicks:T30(500), name:'Forging', desc:'Infantry and cavalry +1 attack', apply(team){
+  forging: {age:1, cost:{f:150}, researchTicks:T30(1500), name:'Forging', desc:'Infantry and cavalry +1 attack', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && FORGE_UNITS.has(u.utype)) u.atk += 1; });
   }},
-  scale_armor: {age:1, cost:{f:100}, researchTicks:T30(500), name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  fletching: {age:1, cost:{f:100, g:50}, researchTicks:T30(500), name:'Fletching', desc:'Archers +1 attack, +1 range', apply(team){
+  scale_armor: {age:1, cost:{f:100}, researchTicks:T30(1200), name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  fletching: {age:1, cost:{f:100, g:50}, researchTicks:T30(900), name:'Fletching', desc:'Archers +1 attack, +1 range', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') { u.atk += 1; u.range += 1; } });
   }},
-  wheelbarrow: {age:1, cost:{f:175, w:50}, researchTicks:T30(600), name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
+  wheelbarrow: {age:1, cost:{f:175, w:50}, researchTicks:T30(2250), name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='villager') {
       u.speed = UNITS.villager.speed * 1.1; u.carryMax += 3;
     }});
   }},
-  horse_collar: {age:1, cost:{f:75, w:75}, researchTicks:T30(500), name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
+  horse_collar: {age:1, cost:{f:75, w:75}, researchTicks:T30(600), name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
     topUpTeamFarms(team, 75); // future harvests: live via farmFoodFor
   }},
-  double_bit_axe: {age:1, cost:{f:100, w:50}, researchTicks:T30(500), name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
-  gold_mining: {age:1, cost:{f:100, w:75}, researchTicks:T30(500), name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
+  double_bit_axe: {age:1, cost:{f:100, w:50}, researchTicks:T30(750), name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
+  gold_mining: {age:1, cost:{f:100, w:75}, researchTicks:T30(900), name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
   // -- Castle --
-  iron_casting: {age:2, cost:{f:220, g:120}, researchTicks:T30(750), name:'Iron Casting', desc:'Infantry and cavalry +1 attack', apply(team){
+  iron_casting: {age:2, cost:{f:220, g:120}, researchTicks:T30(2250), name:'Iron Casting', desc:'Infantry and cavalry +1 attack', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && FORGE_UNITS.has(u.utype)) u.atk += 1; });
   }},
-  chain_mail: {age:2, cost:{f:200, g:100}, researchTicks:T30(750), name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  bow_saw: {age:2, cost:{f:150, w:100}, researchTicks:T30(750), name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
-  heavy_plow: {age:2, cost:{f:125, w:125}, researchTicks:T30(750), name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
+  chain_mail: {age:2, cost:{f:200, g:100}, researchTicks:T30(1650), name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  bow_saw: {age:2, cost:{f:150, w:100}, researchTicks:T30(1500), name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
+  heavy_plow: {age:2, cost:{f:125, w:125}, researchTicks:T30(1200), name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
     topUpTeamFarms(team, 125);
   }},
-  masonry: {age:2, cost:{f:150, w:175}, researchTicks:T30(750), name:'Masonry', desc:'Buildings +10% hit points', apply(team){
+  masonry: {age:2, cost:{f:150, w:175}, researchTicks:T30(1500), name:'Masonry', desc:'Buildings +10% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0) {
       b.hp = Math.round(b.hp * 1.1); b.maxHp = Math.round(b.maxHp * 1.1);
     }});
@@ -305,20 +305,20 @@ const UPGRADES = {
   // bastion it (our tower-in-wall deviation, see BLDGS.TOWER). Keep the btype
   // set in sync with buildingMaxHpFor so a tower built after the tech founds at
   // the boosted HP too.
-  fortified_wall: {age:2, cost:{f:200, s:100}, researchTicks:T30(750), name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
+  fortified_wall: {age:2, cost:{f:200, s:100}, researchTicks:T30(1500), name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE' || b.btype==='TOWER')) {
       b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
     }});
   }},
   // No apply() sweep — a pure live hook read at trade time (marketSellRatio,
   // read by execMarketTrade). AoE2's Guilds halves the market commission.
-  guilds: {age:2, cost:{f:300, g:200}, researchTicks:T30(750), name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
+  guilds: {age:2, cost:{f:300, g:200}, researchTicks:T30(1500), name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
   // APPENDED, not inserted: UPGRADE_BITS indexes this registry by ORDER, so a
   // mid-list insert would shift every later tech's bit and misread saves.
   // The archers' second attack card — without it, splitting Forging/Iron
   // Casting off archers (DE-correct) would leave them a net attack behind
   // melee, which DE avoids precisely by giving them their own two-step line.
-  bodkin_arrow: {age:2, cost:{f:200, g:100}, researchTicks:T30(750), name:'Bodkin Arrow', desc:'Archers +1 attack, +1 range', apply(team){
+  bodkin_arrow: {age:2, cost:{f:200, g:100}, researchTicks:T30(1050), name:'Bodkin Arrow', desc:'Archers +1 attack, +1 range', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') { u.atk += 1; u.range += 1; } });
   }},
 };
