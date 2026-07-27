@@ -2379,7 +2379,7 @@ function drawBuilding(e, part = null){
   // (smooth, unlike the throttled panel text). target is a numeric age index
   // OR a string tech key (js/commands.js execResearch).
   if(e.research){
-    let rt=typeof e.research.target==='number'?AGES[e.research.target].researchTicks:UPGRADES[e.research.target].researchTicks;
+    let rt=researchDurationFor(e.team, e.research.target);
     let pct=e.research.tick/rt;
     let bww=b.w*24;
     X.fillStyle='#000000';X.fillRect(sx-bww/2-1,progY,bww+2,5);

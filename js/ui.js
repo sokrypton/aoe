@@ -516,7 +516,7 @@ function updateUI(){
   // is a numeric age index OR a string tech key.
   if (selected.length === 1 && selected[0].research) {
     let r = selected[0].research;
-    let rt = typeof r.target === 'number' ? AGES[r.target].researchTicks : UPGRADES[r.target].researchTicks;
+    let rt = researchDurationFor(selected[0].team, r.target);
     let pct = (r.tick / rt * 100).toFixed(1) + '%';
     document.querySelectorAll('#actions .research-progress-fill').forEach(fill => { fill.style.width = pct; });
   }

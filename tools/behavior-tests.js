@@ -158,6 +158,42 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- human clocks are unscaled
+    // aiTimeMult must never touch a HUMAN team, and the research progress bar
+    // must finish at exactly the tick the research applies (reported: "the
+    // upgrade is applied faster than the progress bar").
+    'human-clocks': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:7, numTeams:2, controllers:['human','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      T.ok('human team has aiTimeMult 1', aiTimeMult(0) === 1);
+      T.ok('AI team is scaled', aiTimeMult(1) > 1);
+      // a human research must run exactly the authored ticks...
+      T.ok('human research duration is unscaled',
+           researchDurationFor(0,'forging') === UPGRADES.forging.researchTicks);
+      T.ok('AI research duration IS scaled',
+           researchDurationFor(1,'forging') > UPGRADES.forging.researchTicks);
+      // ...and human unit training too
+      const tc0 = createBuilding('TC', 30, 30, 0); tc0.complete = true;   // pop space, or queueUnit refuses
+      const b = createBuilding('BARRACKS', 20, 20, 0); b.complete = true;
+      resourceStore(0).food = 9999; resourceStore(0).gold = 9999; resourceStore(0).wood = 9999;
+      queueUnit(b, 'militia');
+      let ticks = 0; const before = entities.filter(e => e.utype === 'militia' && e.team === 0).length;
+      while (ticks < UNITS.militia.trainTime * 3 &&
+             entities.filter(e => e.utype === 'militia' && e.team === 0).length === before) {
+        updateBuildingTraining(b); ticks++;
+      }
+      T.ok('a human militia trains in exactly its authored time',
+           ticks === UNITS.militia.trainTime, 'took ' + ticks + ' vs ' + UNITS.militia.trainTime);
+      // bar vs completion: the fill must read 100% on the tick it applies
+      tc0.research = { target: 'forging', tick: 0 };
+      const dur = researchDurationFor(0, 'forging');
+      let t2 = 0;
+      while (tc0.research && t2 < dur * 3) { updateBuildingResearch(tc0); t2++; }
+      T.ok('research applies on exactly the bar\'s final tick', t2 === dur, 'applied at ' + t2 + ', bar length ' + dur);
+      return T;
+    })),
+
     // ---------------------------------------------- age-scaled building HP
     // AoE2 buildings gain HP each age (House 550/750/900, Barracks
     // 1200/1500/1800). Ours were flat at the Dark-Age figure forever.

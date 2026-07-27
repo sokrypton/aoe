@@ -1103,6 +1103,17 @@ function markScoutedBuildings(){
 // a FRACTION so a half-ruined barracks stays half-ruined; an untouched one
 // stays exactly full (no rounding drift). A foundation's hp IS its build
 // progress, so only its ceiling moves. Mirrors the editor's rederiveTeamStats.
+// THE research duration for a team: the authored ticks, scaled by that team's
+// aiTimeMult. Three places computed this — the completion check (logic.js) and
+// BOTH progress bars (ui.js, render-buildings.js) — and only the completion
+// applied the multiplier, so an AI building's bar ran on a different clock from
+// its research. One spelling; a bar can no longer disagree with the thing it
+// is drawing.
+function researchDurationFor(team, target){
+  let base = (typeof target === 'number') ? AGES[target].researchTicks : UPGRADES[target].researchTicks;
+  return Math.round(base * aiTimeMult(team));
+}
+
 function rescaleTeamBuildingHp(team){
   entities.forEach(e => {
     if (e.type !== 'building' || e.team !== team || e.hp <= 0) return;
