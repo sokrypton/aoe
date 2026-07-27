@@ -624,7 +624,13 @@ function planAIWalls(ai,aiTC,vils,profile){
     let allWalls=pair.every(p=>isWallAt(p.x,p.y));
     if(!allWalls){
       pair.forEach(p=>{
-        if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)){
+        // SAME spend gate as the rest of the ring (the while-loop below).
+        // Without aiEcoFundClear here the gate tiles were the one wall the AI
+        // could always afford — 2 wood, no eco-fund reserve — so a starved
+        // base built its gates and none of the wall they belong to. Orphan
+        // gates: 3 gates, 0 walls, wood spent on a door with no house.
+        if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)
+           &&aiEcoFundClear(ai,profile,BLDGS.WALL.cost)){
           let b=placeAIBuilding(ai,'WALL',p.x,p.y);
           if(b){let pt=plan.find(t=>t.x===p.x&&t.y===p.y); if(pt)pt.done=true;}
         }
