@@ -91,8 +91,9 @@ Exit code: `0` clean · `1` findings or JS errors observed · `2` harness failur
 - **Single seeds mislead.** Map luck swings outcomes hard (an early bear cluster can wipe a team's villagers and doom its whole game). A "regression" on one seed is often just variance — check the aggregate.
 - **Underpowered comparisons give the WRONG SIGN, not just a wide interval.** Measured protocol (2026-07): per-run *end-state* average age has sd ≈ 0.12, so 6 runs can only resolve effects ≥ 0.2 age — and the civilian-explorer experiment read as a slight *improvement* at 6 runs while being significantly *worse* at 40 (+1855 ticks to Feudal, t=4.41). Rules:
   - **3 runs**: only "did this crash or obviously break". Never a behavior claim.
-  - **40 runs/arm**: the default for any AI/balance claim (~10% sensitivity). A run is ~4.9s, so this is ~98s at `jobs=2` — there is no reason to compare on fewer.
-  - **150 runs/arm**: subtle changes, and anything touching the difficulty ladder.
+  - **40 runs/arm**: the first real measurement for any AI/balance claim (~10% sensitivity). A run is ~4.9s, so this is ~98s at `jobs=2` — there is no reason to compare on fewer.
+  - **Then SIZE THE NEXT RUN FROM THAT RESULT, don't reach for a tier.** With an observed `t`, significance needs about `n × (1.96/t)²`. A 40-run arm showing `t=1.58` needs ~62/arm, not 150 — reaching for the "subtle" tier over-ran one comparison by 2.5x. The same arithmetic run the other way is a warning: 6 runs showing a tiny effect implies ~85/arm, i.e. the test never could have seen it.
+  - A non-significant result on a change whose case is **consistency** (two code paths disagreeing about the same rule) is still shippable — say so plainly in the commit rather than buying a star with machine time.
   - Compare on **`end.ageUpTicks`** (continuous: first tick each team reached each age, present in batch runs) rather than end-state `ages` — the timing metric resolves a 10% shift in ~38 runs where the snapshot needs ~85.
   - Always report the effect size **and** what the test could have detected, so "no difference" is never confused with "couldn't tell".
 - **Headless must stay behavior-identical to live.** Only strip *non-sim* work behind `window.__headlessSim` (fog, particles, sounds, per-tick determinism hashing). Never gate actual game logic on it.
