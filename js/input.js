@@ -380,7 +380,8 @@ function finalizeWallDrag(){
       recordUndo({ kind:'walldrag', btype: dragBtype, tiles: fresh.map(t=>({x:t.x,y:t.y})),
         prev: vils.map(v => ({ id: v.id,
           x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
-          gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1) })) });
+          gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1),
+          tid: (v.target != null ? v.target : null) })) });
     } else {
       lastUndo = null;
     }
@@ -392,6 +393,7 @@ function finalizeWallDrag(){
   // placing mode after one drag, which is the right default for mobile.
   if (!keys['Shift']) {
     placing = null;
+    deselectAfterTask();   // a dragged wall run is a build task, same as doPlace
   }
 }
 
@@ -970,9 +972,15 @@ function findUndoFoundation(u){
 function sendUnitsBack(prev){
   let alive = (prev||[]).filter(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
   alive.forEach(p=>{
-    let tx = (p.gx >= 0 ? p.gx : p.x), ty = (p.gy >= 0 ? p.gy : p.y);
+    // A remembered TARGET wins: hunting a sheep is e.target with no task and
+    // no gather tile, so restoring by tile alone silently dropped the hunt.
+    let tgt = (p.tid != null) ? entitiesById.get(p.tid) : null;
+    if(tgt && tgt.hp <= 0) tgt = null;
+    let tx = tgt ? Math.round(tgt.x) : (p.gx >= 0 ? p.gx : p.x);
+    let ty = tgt ? Math.round(tgt.y) : (p.gy >= 0 ? p.gy : p.y);
     submitCommand({ kind:'command', unitIds:[p.id],
-      tileX:tx, tileY:ty, targetId:null, buildTargetId:null, followId:null });
+      tileX:Math.max(0,Math.min(MAP-1,tx)), tileY:Math.max(0,Math.min(MAP-1,ty)),
+      targetId: tgt ? tgt.id : null, buildTargetId:null, followId:null });
   });
   return alive;
 }
@@ -2007,7 +2015,8 @@ function doCommand(sx,sy){
   if(committedTask){
     recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
       x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))),
-      gx: (s.gatherX >= 0 ? s.gatherX : -1), gy: (s.gatherY >= 0 ? s.gatherY : -1) })) });
+      gx: (s.gatherX >= 0 ? s.gatherX : -1), gy: (s.gatherY >= 0 ? s.gatherY : -1),
+      tid: (s.target != null ? s.target : null) })) });
   } else {
     lastUndo = null;
   }
@@ -2044,7 +2053,8 @@ function doPlace(sx,sy){
   recordUndo({ kind:'place', btype: placing, tileX: tile.x, tileY: tile.y,
     prev: vils.map(v => ({ id: v.id,
       x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
-      gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1) })) });
+      gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1),
+      tid: (v.target != null ? v.target : null) })) });
   submitCommand({ kind: 'build-placement', btype: placing, tileX: tile.x, tileY: tile.y, unitIds: vils.map(s=>s.id) });
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){

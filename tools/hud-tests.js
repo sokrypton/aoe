@@ -1362,6 +1362,53 @@ function pageSuite() {
       assertEq(r.armed, false, 'an upgrade-only drag arms no undo — cancelling it would refund a consumed palisade');
     });
 
+    await tapT('undo: a wall drag DESELECTS the villager (build is a task)', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        window.wallDragBtype='WALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:36,y:30}; window.wallDragCorner={x:36,y:30};
+        window.isDraggingWall=true; placing='WALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        return { sel: selected.length };
+      })()`);
+      assertEq(r.sel, 0, 'a dragged wall run deselects, same as placing a single foundation');
+    });
+
+    await tapT('undo: hunting a SHEEP is restored by the undo (target, not gather tile)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const sh=createUnit('sheep',26,30,4); window.__sheep=sh.id;
+        v.target=sh.id; v.task=null;              // hunting: target set, task null
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
+        window.__pts=(scr)=>({ g: scr(38.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);   // send it to chop instead
+      const r = await page.evaluate(`(()=>{
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return { tid: back && back.targetId, sheep: window.__sheep };
+      })()`);
+      assertEq(r.tid, r.sheep, 'undo re-targets the SHEEP it was hunting');
+    });
+
+    await tapT('undo: the arrow DISAPPEARS once the action stops being undoable', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        updateUI();
+        const whileFoundation = !!document.querySelector('#actions .act-btn.back-btn');
+        f.complete=true; f.hp=f.maxHp;            // it finished building
+        updateUI();
+        return { whileFoundation, afterBuilt: !!document.querySelector('#actions .act-btn.back-btn') };
+      })()`);
+      assertEq(r.whileFoundation, true, 'arrow shows while the foundation stands');
+      assertEq(r.afterBuilt, false, 'arrow is GONE once the building finished — nothing left to undo');
+    });
+
     await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
       const r = await page.evaluate(tapStage(`
         const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
