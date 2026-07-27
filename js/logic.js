@@ -3617,7 +3617,7 @@ function updateBuildingResearch(e){
   if(!e.research)return false;
     let target=e.research.target;
     let isAge=typeof target==='number';
-    let ticks=isAge?AGES[target].researchTicks:UPGRADES[target].researchTicks;
+    let ticks=Math.round((isAge?AGES[target].researchTicks:UPGRADES[target].researchTicks)*aiResearchTimeMult(e.team));
     e.research.tick++;
     if(e.research.tick>=ticks){
       if(isAge){
