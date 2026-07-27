@@ -177,14 +177,15 @@ const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
 // DE's Forging/Iron Casting are INFANTRY + CAVALRY only — archers have their
 // own attack line (Fletching -> Bodkin Arrow), so they must not take both.
 const FORGE_UNITS = new Set(['militia','spearman','scout','knight']);
-// DE scales the AI's unit-training and RESEARCH TIME by difficulty (Easiest
+// DE scales the AI's unit-training AND research time by difficulty (Easiest
 // 200%, Easy 133%, Moderate+ 100%) and never caps WHICH technologies it may
-// take — an easy AI gets the whole list, just later. Ours mirrors that: the
-// multiplier applies to AI teams only (a human's research is never slowed).
-function aiResearchTimeMult(team){
+// take — an easy AI gets the whole list, just later. Ours mirrors that on both
+// clocks: a weaker AI is slow at everything, the way a beginner is. AI teams
+// only — a human's training and research are never slowed.
+function aiTimeMult(team){
   if(!isAITeam(team)) return 1;
   let p = aiProfileFor(team);
-  return (p && p.researchTimeMult) || 1;
+  return (p && p.aiTimeMult) || 1;
 }
 // "Fights in the army" — MILITARY plus siege. The ram is deliberately NOT
 // in MILITARY (no blacksmith cards, no soft-push yielding: a parked ram is
@@ -816,37 +817,48 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // attackTick reference points: hard rushes ~8 game-minutes (a classic drush
 // window), easy waits ~18. Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
-const AI_LEVELS={
-  // Easy builds a full, believable AoE2 town — it inherits HARD's build
-  // behaviour (walls, two barracks, stone eco, full production) so it doesn't
-  // read as a passive stub, and is handicapped purely via RATES: a small army
-  // from its eco (armyPerVil 0.3), timid/infrequent attacks, slow reaction, and
-  // slow aging. Self-play verified easy < medium < hard holds with this. (Pure
-  // DE aggression-only scaling was tried and left "easy" ~as strong as hard —
-  // a full eco is the real strength — so the rate handicaps above are needed.)
-  // wallAge:1 lets easy wall at Feudal so the ring is visible before its slow
-  // Castle timing (medium/hard wall at Castle — aging beats early fortifying).
-  // Difficulty model — DE-informed: AoE2 DE scales only attack aggression, but
-  // that flattened our gradient, so the ECONOMY (pop cap, aging speed,
-  // production, wall/tower use) is ALSO differentiated per level; army-DRIVEN
-  // attacks (low attackTick, not a clock) and the commit-% mechanic
-  // (controlAIMilitary, js/ai.js) are kept from DE. The three DE aggression
-  // knobs scale ~Hard 1.0 / Medium 0.75 / Easy 0.5:
-  //   attackSize    = sn-minimum-attack-group-size (soldiers needed to attack)
-  //   waveCap       = sn-maximum-attack-group-size (biggest group)
-  //   commitPercent = sn-percent-attack-soldiers (% of army sent; rest defends)
-  // Flat across difficulties (AoE2 does NOT difficulty-scale these two):
-  //   sightedResponsePercent = sn-percent-enemy-sighted-response [50] (% of
-  //     eligible troops that answer a sighted threat; the rest hold as home defense)
-  //   civilianMilitia = sn-number-civilian-militia [10] (max villagers pulled
-  //     to fight a small raid at the town when the army can't answer)
-  easy:{researchTimeMult:2,name:'Easy',decisionInterval:T30(300),maxVils:18,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:3,waveCap:8,commitPercent:35,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.3,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:4,wallAge:1,attackAdvantage:0.9,maxTowers:1,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,13],ageUpTick:[0,T30(21600),T30(63000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6},
-  // Standard mirrors AoE2's Moderate: a real challenge (Castle ~15min,
-  // rams/knights, walls + a tower, pushes from ~10min) that wins on
-  // competent play, not free resources.
-  standard:{researchTimeMult:1.33,name:'Medium',decisionInterval:T30(180),maxVils:18,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:4,waveCap:12,commitPercent:56,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.6,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:6,wallAge:2,attackAdvantage:0.9,maxTowers:1,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,12,16],ageUpTick:[0,T30(12600),T30(27000)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6},
-  hard:{researchTimeMult:1,name:'Hard',decisionInterval:T30(120),maxVils:24,queueLimit:3,houseBuffer:3,buildersPerBuilding:2,maxBarracks:2,barracksVil:7,attackSize:5,waveCap:24,commitPercent:75,sightedResponsePercent:50,civilianMilitia:10,armyEcoFloor:8,armyPerVil:0.9,waveCooldown:T30(1500),attackTick:T30(3600),armyReserve:6,ramWoodReserve:99,militaryFoodReserve:120,dropSites:true,walls:true,wallVils:8,wallRadius:7,wallAge:2,attackAdvantage:0.9,maxTowers:2,maxTradeCarts:8,marketVil:10,ecoRatios:{forage:4,chop:4,mine_gold:4,mine_stone:1},farmShare:4,targetFarms:4,allyJoinWindow:T30(900),allyJoinFactor:0.6,maxAge:2,ageUpVils:[0,10,14],ageUpTick:[0,T30(9000),T30(19800)],ageSurgeWindow:T30(3600),ageSurgeFactor:0.6}
+// ONE base profile; a difficulty is BASE plus the handful of knobs that
+// actually scale. Three full copies is how `standard` silently drifted on 20
+// knobs (economy, production, attack timing) while easy and hard were retuned
+// together — divergence is now impossible by construction, because anything
+// absent from an override IS the shared value. Per DE (§2 + the time-multiplier
+// correction) only aggression, reaction and the AI time multiplier scale;
+// maxVils/wallRadius/wallAge/maxTowers/ageUp* are our deliberate additions.
+const AI_BASE = {
+  queueLimit: 3,
+  houseBuffer: 3,
+  buildersPerBuilding: 2,
+  maxBarracks: 2,
+  barracksVil: 7,
+  sightedResponsePercent: 50,
+  civilianMilitia: 10,
+  armyEcoFloor: 8,
+  waveCooldown: T30(1500),
+  attackTick: T30(3600),
+  armyReserve: 6,
+  ramWoodReserve: 99,
+  militaryFoodReserve: 120,
+  dropSites: true,
+  walls: true,
+  wallVils: 8,
+  attackAdvantage: 0.9,
+  maxTradeCarts: 8,
+  marketVil: 10,
+  ecoRatios: {forage:4,chop:4,mine_gold:4,mine_stone:1},
+  farmShare: 4,
+  targetFarms: 4,
+  allyJoinWindow: T30(900),
+  allyJoinFactor: 0.6,
+  maxAge: 2,
+  ageSurgeWindow: T30(3600),
+  ageSurgeFactor: 0.6,
 };
+const AI_LEVELS = {
+  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:18, attackSize:3, waveCap:8, commitPercent:35, armyPerVil:0.3, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,10,13], ageUpTick:[0,T30(21600),T30(63000)] },
+  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:18, attackSize:4, waveCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,12,16], ageUpTick:[0,T30(12600),T30(27000)] },
+  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:24, attackSize:5, waveCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,10,14], ageUpTick:[0,T30(9000),T30(19800)] },
+};
+
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on
 // a later tick must use simRandom/simRandInt below instead — the lockstep

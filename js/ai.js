@@ -386,15 +386,14 @@ function planAIAgeUp(ai,aiTC,vils,profile){
 }
 
 
-// Tech research ORDER (no longer a per-difficulty count cap). DE never limits
-// WHICH technologies an AI may take — it scales research TIME instead (Easiest
-// 200% / Easy 133% / Moderate+ 100%), so an easier AI gets the whole list, just
-// later; `researchTimeMult` (js/core.js) is our version of that. canResearch
-// enforces age gate + prereq (the "which replaces which" chains), so the order
-// can safely name both a Feudal card and its Castle successor.
-// COMBAT-FIRST: attack/armor lead so even a slow-teching easy army gets
-// +atk/+armor and can still break a wall — an eco-first order left easy with
-// zero military upgrades and unable to close out (perma-turtle stalemate).
+// Difficulty-scaled tech research order. Each profile pursues the first
+// `maxTech` of these; canResearch enforces age gate + prereq (the "which
+// replaces which" chains), so a slice can safely name both a Feudal card and
+// its Castle successor. `maxTech` is now the AI's ACTUAL tech count (techs come
+// only from research, not free age-up), so it's a monotonic strength knob like
+// armyPerVil. COMBAT-FIRST: attack/armor lead so even a low-maxTech (easy) army
+// gets +atk/+armor and can still break a wall — an eco-first order left easy
+// with zero military upgrades and unable to close out (perma-turtle stalemate).
 // One-time ECO CLAIMS still outstanding — the missing Mill and the next
 // planned tech. Discretionary spenders (walls, towers, extra barracks,
 // army growth beyond the standing defense) leave this fund untouched so
@@ -429,7 +428,7 @@ function aiEcoFund(ai,profile,skipBastion){
     }
     if(rams<Math.ceil((army+(profile.armyReserve||0))/3))add(UNITS.ram.cost);
   }
-  let plan=AI_TECH_ORDER.slice();
+  let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
   for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
   return fund;
 }
@@ -460,7 +459,7 @@ function planAIResearch(ai,profile){
     reserve=(next<AGES.length&&AGES[next].cost)||null;
   }
   if(aiUnderRealPressure(ai))return;                       // spend on the army, not tech, while attacked
-  let plan=AI_TECH_ORDER.slice();
+  let plan=AI_TECH_ORDER.slice(0,profile.maxTech||0);
   // Techs live on the buildings that own them (Barracks/Mill/Lumber/Mining/
   // Market/TC), so research runs in PARALLEL — start one per idle owning
   // building this tick. `used` stops two techs racing for the same building;

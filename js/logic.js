@@ -3617,7 +3617,7 @@ function updateBuildingResearch(e){
   if(!e.research)return false;
     let target=e.research.target;
     let isAge=typeof target==='number';
-    let ticks=Math.round((isAge?AGES[target].researchTicks:UPGRADES[target].researchTicks)*aiResearchTimeMult(e.team));
+    let ticks=Math.round((isAge?AGES[target].researchTicks:UPGRADES[target].researchTicks)*aiTimeMult(e.team));
     e.research.tick++;
     if(e.research.tick>=ticks){
       if(isAge){
@@ -3650,8 +3650,12 @@ function updateBuildingResearch(e){
 function updateBuildingTraining(e){
   if(e.queue.length>0){
     let u=UNITS[e.queue[0]];
-    if(e.trainTick<u.trainTime)e.trainTick++;
-    if(e.trainTick>=u.trainTime){
+    // DE scales the AI's UNIT and research times together (aiTimeMult) — a
+    // weaker computer player is slow at everything, the way a beginner is,
+    // not selectively slow at one subsystem.
+    let trainTime=Math.round(u.trainTime*aiTimeMult(e.team));
+    if(e.trainTick<trainTime)e.trainTick++;
+    if(e.trainTick>=trainTime){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
       let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
       if(!spawn){
