@@ -497,6 +497,7 @@ function ensureAIHousing(ai,aiTC,profile){
   let plannedCap=teamPopCap(ai.team,true);
   let pendingHouses=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='HOUSE'&&!e.complete).length;
   if(requested<plannedCap-profile.houseBuffer||pendingHouses>1||!canAfford(ai.team,BLDGS.HOUSE.cost))return;
+  if(!aiEcoFundClear(ai,profile,BLDGS.HOUSE.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'HOUSE');
   if(pos)placeAIBuilding(ai,'HOUSE',pos.x,pos.y);
 }
@@ -511,7 +512,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
   // existing camp, up to a cap — short walks to a wood drop. Camps stay OUT
   // of any food drop-off's farm belt.
   let lcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP');
-  if(lcamps.length<AI_MAX_LCAMP&&canAfford(ai.team,BLDGS.LCAMP.cost)){
+  if(lcamps.length<AI_MAX_LCAMP&&canAfford(ai.team,BLDGS.LCAMP.cost)&&aiEcoFundClear(ai,profile,BLDGS.LCAMP.cost)){
     let woodDrops=[aiTC,...lcamps];
     let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true,woodDrops,AI_DROP_COVER);
     if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
@@ -538,7 +539,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
   if(vils.length>=7&&hasBarracks&&mcamps.length<AI_MAX_MCAMP){
     let drops=[aiTC,...mcamps];
     for(let ore of [TERRAIN.GOLD,TERRAIN.STONE]){
-      if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost))break;
+      if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost)||!aiEcoFundClear(ai,profile,BLDGS.MCAMP.cost))break;
       let pos=findAIDropSite(ai,ore,'MCAMP',aiTC,true,drops,AI_DROP_COVER);
       if(pos){ let b=placeAIBuilding(ai,'MCAMP',pos.x,pos.y); if(b){mcamps.push(b);drops.push(b);} }
     }
@@ -1725,6 +1726,7 @@ function planAIFarming(ai,aiTC,vils,profile){
   // villager production (AoE2 lays farms in late Dark age).
   if(!hasAIBuilding(ai,'BARRACKS') && vils.length<8)return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
+  if(!aiEcoFundClear(ai,profile,BLDGS.FARM.cost))return;
   // A due Mill outranks the NEXT farm plot: continuous 60w farm spends
   // otherwise keep the bank under the mill's 100w forever (probe-proven).
   // Wood-only check — farms must never yield to food-priced techs.
