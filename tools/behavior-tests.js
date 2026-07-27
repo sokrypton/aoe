@@ -158,6 +158,35 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- attack-line split (DE)
+    // DE's Forging/Iron Casting are infantry+cavalry only; archers have their
+    // own line (Fletching -> Bodkin Arrow). Ours gave archers BOTH, so they
+    // double-dipped the melee cards.
+    'attack-lines': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:4, numTeams:2, controllers:['human','ai'], ages:[2,2], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      const mk = t => ({ mil: createUnit('militia',20,20,t), arc: createUnit('archer',22,20,t) });
+      const base = mk(0);
+      const baseMilAtk = base.mil.atk, baseArcAtk = base.arc.atk, baseArcRange = base.arc.range;
+      const give = k => { teamTechs[0] |= (1 << UPGRADE_BITS[k]); UPGRADES[k].apply && UPGRADES[k].apply(0); };
+      give('forging');
+      T.ok('Forging gives MELEE +1 attack', base.mil.atk === baseMilAtk + 1);
+      T.ok('Forging does NOT touch archers (DE: infantry+cavalry only)', base.arc.atk === baseArcAtk);
+      give('iron_casting');
+      T.ok('Iron Casting is melee-only too', base.mil.atk === baseMilAtk + 2 && base.arc.atk === baseArcAtk);
+      give('fletching');
+      T.ok('Fletching gives archers +1 attack AND +1 range',
+           base.arc.atk === baseArcAtk + 1 && base.arc.range === baseArcRange + 1);
+      give('bodkin_arrow');
+      T.ok('Bodkin Arrow adds the second archer step',
+           base.arc.atk === baseArcAtk + 2 && base.arc.range === baseArcRange + 2);
+      T.ok('archer and melee attack lines end level (+2 each)',
+           (base.arc.atk - baseArcAtk) === (base.mil.atk - baseMilAtk));
+      T.ok('Bodkin needs Fletching first', TECH_PREREQ.bodkin_arrow === 'fletching');
+      return T;
+    })),
+
     // ---------------------------------------------- wall ring vs buildings
     // Placement only asked canPlace, so a house could land ON a planned ring
     // tile after the ring was planned; the wall loop then marked it done

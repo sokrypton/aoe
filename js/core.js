@@ -174,6 +174,9 @@ function resetTeamTechs(){
 // (see UPGRADES below): attack applied at spawn + swept on research (attack
 // is snapshotted onto entities), armor added live in damageEntity.
 const MILITARY = new Set(['militia','spearman','archer','scout','knight']);
+// DE's Forging/Iron Casting are INFANTRY + CAVALRY only — archers have their
+// own attack line (Fletching -> Bodkin Arrow), so they must not take both.
+const FORGE_UNITS = new Set(['militia','spearman','scout','knight']);
 // "Fights in the army" — MILITARY plus siege. The ram is deliberately NOT
 // in MILITARY (no blacksmith cards, no soft-push yielding: a parked ram is
 // a wall), but the AI's army control, wave sizing and the idle-military
@@ -257,33 +260,33 @@ function ageBonus(team){ return teamAge && isPlayerTeam(team) ? teamAge[team] : 
 // and live hook is unchanged — only the trigger moved from age-up to research.
 const UPGRADES = {
   // -- Feudal --
-  forging: {age:1, cost:{f:80}, researchTicks:T30(500), name:'Forging', desc:'Military units +1 attack', apply(team){
-    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
+  forging: {age:1, cost:{f:150}, researchTicks:T30(500), name:'Forging', desc:'Infantry and cavalry +1 attack', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && FORGE_UNITS.has(u.utype)) u.atk += 1; });
   }},
-  scale_armor: {age:1, cost:{f:50}, researchTicks:T30(500), name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  fletching: {age:1, cost:{f:50, g:30}, researchTicks:T30(500), name:'Fletching', desc:'Archers +1 range', apply(team){
-    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') u.range += 1; });
+  scale_armor: {age:1, cost:{f:100}, researchTicks:T30(500), name:'Scale Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  fletching: {age:1, cost:{f:100, g:50}, researchTicks:T30(500), name:'Fletching', desc:'Archers +1 attack, +1 range', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') { u.atk += 1; u.range += 1; } });
   }},
-  wheelbarrow: {age:1, cost:{f:90, w:30}, researchTicks:T30(600), name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
+  wheelbarrow: {age:1, cost:{f:175, w:50}, researchTicks:T30(600), name:'Wheelbarrow', desc:'Villagers move 10% faster, carry +3', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='villager') {
       u.speed = UNITS.villager.speed * 1.1; u.carryMax += 3;
     }});
   }},
-  horse_collar: {age:1, cost:{f:40, w:40}, researchTicks:T30(500), name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
+  horse_collar: {age:1, cost:{f:75, w:75}, researchTicks:T30(500), name:'Horse Collar', desc:'Farms hold +75 food', apply(team){
     topUpTeamFarms(team, 75); // future harvests: live via farmFoodFor
   }},
-  double_bit_axe: {age:1, cost:{w:50}, researchTicks:T30(500), name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
-  gold_mining: {age:1, cost:{f:50, w:40}, researchTicks:T30(500), name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
+  double_bit_axe: {age:1, cost:{f:100, w:50}, researchTicks:T30(500), name:'Double-Bit Axe', desc:'Villagers chop wood 20% faster'}, // live: gatherCooldownFor
+  gold_mining: {age:1, cost:{f:100, w:75}, researchTicks:T30(500), name:'Gold Mining', desc:'Villagers mine gold 15% faster'}, // live: gatherCooldownFor
   // -- Castle --
-  iron_casting: {age:2, cost:{f:110, g:60}, researchTicks:T30(750), name:'Iron Casting', desc:'Military units +1 attack', apply(team){
-    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && MILITARY.has(u.utype)) u.atk += 1; });
+  iron_casting: {age:2, cost:{f:220, g:120}, researchTicks:T30(750), name:'Iron Casting', desc:'Infantry and cavalry +1 attack', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && FORGE_UNITS.has(u.utype)) u.atk += 1; });
   }},
-  chain_mail: {age:2, cost:{f:100, g:50}, researchTicks:T30(750), name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
-  bow_saw: {age:2, cost:{w:80, g:50}, researchTicks:T30(750), name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
-  heavy_plow: {age:2, cost:{f:70, w:70}, researchTicks:T30(750), name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
+  chain_mail: {age:2, cost:{f:200, g:100}, researchTicks:T30(750), name:'Chain Mail Armor', desc:'Military units +1/+1 armor'}, // live: damageEntity
+  bow_saw: {age:2, cost:{f:150, w:100}, researchTicks:T30(750), name:'Bow Saw', desc:'Villagers chop wood another 20% faster'}, // live: gatherCooldownFor
+  heavy_plow: {age:2, cost:{f:125, w:125}, researchTicks:T30(750), name:'Heavy Plow', desc:'Farms hold +125 food', apply(team){
     topUpTeamFarms(team, 125);
   }},
-  masonry: {age:2, cost:{f:80, w:90}, researchTicks:T30(750), name:'Masonry', desc:'Buildings +10% hit points', apply(team){
+  masonry: {age:2, cost:{f:150, w:175}, researchTicks:T30(750), name:'Masonry', desc:'Buildings +10% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0) {
       b.hp = Math.round(b.hp * 1.1); b.maxHp = Math.round(b.maxHp * 1.1);
     }});
@@ -292,14 +295,22 @@ const UPGRADES = {
   // bastion it (our tower-in-wall deviation, see BLDGS.TOWER). Keep the btype
   // set in sync with buildingMaxHpFor so a tower built after the tech founds at
   // the boosted HP too.
-  fortified_wall: {age:2, cost:{f:100, s:50}, researchTicks:T30(750), name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
+  fortified_wall: {age:2, cost:{f:200, s:100}, researchTicks:T30(750), name:'Fortified Wall', desc:'Stone walls, gates, and towers +50% hit points', apply(team){
     entities.forEach(b => { if (b.type==='building' && b.team===team && b.hp>0 && (b.btype==='SWALL' || b.btype==='SGATE' || b.btype==='TOWER')) {
       b.hp = Math.round(b.hp * 1.5); b.maxHp = Math.round(b.maxHp * 1.5);
     }});
   }},
   // No apply() sweep — a pure live hook read at trade time (marketSellRatio,
   // read by execMarketTrade). AoE2's Guilds halves the market commission.
-  guilds: {age:2, cost:{f:100, g:50}, researchTicks:T30(750), name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
+  guilds: {age:2, cost:{f:300, g:200}, researchTicks:T30(750), name:'Guilds', desc:'Market fee halved — selling returns 85% instead of 70%'},
+  // APPENDED, not inserted: UPGRADE_BITS indexes this registry by ORDER, so a
+  // mid-list insert would shift every later tech's bit and misread saves.
+  // The archers' second attack card — without it, splitting Forging/Iron
+  // Casting off archers (DE-correct) would leave them a net attack behind
+  // melee, which DE avoids precisely by giving them their own two-step line.
+  bodkin_arrow: {age:2, cost:{f:200, g:100}, researchTicks:T30(750), name:'Bodkin Arrow', desc:'Archers +1 attack, +1 range', apply(team){
+    entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') { u.atk += 1; u.range += 1; } });
+  }},
 };
 // Stable bit index per tech (UPGRADES registry order) — teamTechs is a
 // per-team bitmask of researched cards. 14 techs fit a 32-bit int.
@@ -309,7 +320,7 @@ Object.keys(UPGRADES).forEach((k, i) => { UPGRADE_BITS[k] = i; });
 function techMask(keys){ return keys.reduce((m, k) => m | (1 << UPGRADE_BITS[k]), 0); }
 // Castle tech → the Feudal tech it upgrades (same blacksmith line). A Castle
 // upgrade can't be researched until its predecessor is (AoE2 blacksmith lines).
-const TECH_PREREQ = { iron_casting:'forging', chain_mail:'scale_armor', bow_saw:'double_bit_axe', heavy_plow:'horse_collar' };
+const TECH_PREREQ = { iron_casting:'forging', chain_mail:'scale_armor', bow_saw:'double_bit_axe', heavy_plow:'horse_collar', bodkin_arrow:'fletching' };
 // A researched tech is a set bit in the per-team teamTechs bitmask.
 function hasUpgrade(team, key){
   let bit = UPGRADE_BITS[key];
@@ -679,7 +690,7 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and

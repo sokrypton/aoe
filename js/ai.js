@@ -447,7 +447,7 @@ function aiCanAffordBoth(team,a,b){
   for(let c of [a,b])for(let[k,v]of Object.entries(c||{}))need[k]=(need[k]||0)+v;
   return Object.entries(need).every(([k,v])=>st[resourceName(k)]>=v);
 }
-const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
+const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','bodkin_arrow','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
 function planAIResearch(ai,profile){
   // While hoarding for the age-up, techs may still fire if the bank covers
   // the AGE COST *and* the tech — a hard stop here starved everything past
