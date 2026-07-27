@@ -1908,12 +1908,21 @@ function ringTownBell(team){
       let d=distToBuilding(e.x,e.y,s.b);
       if(d<bd){bd=d;best=s;}
     });
-    if(!best)return;
-    best.room--;
+    // FULL shelters (a TC holds 15, a tower 5) used to leave the villager doing
+    // whatever it was doing — including standing and fighting, which is the one
+    // thing the bell must never permit. Send it to the nearest shelter anyway:
+    // it stops working, disengages, and takes a slot the moment one frees.
+    let refuge=best?best.b:null, dd=bd;
+    if(!refuge){
+      spots.forEach(s=>{ let d=distToBuilding(e.x,e.y,s.b); if(d<dd){dd=d;refuge=s.b;} });
+      if(!refuge)refuge=bellTC;
+    }
+    if(!refuge)return;                 // nowhere to run at all (no TC, no towers)
+    if(best)best.room--;
     stashVillagerTask(e);
     e.target=null;e.buildTarget=null;
-    e.task='garrison';e.garrisonTarget=best.b.id;
-    pathToContact(e,best.b);
+    e.task='garrison';e.garrisonTarget=refuge.id;
+    pathToContact(e,refuge);
     sent++;
   });
   if(team===myTeam){

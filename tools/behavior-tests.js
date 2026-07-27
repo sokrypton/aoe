@@ -158,6 +158,37 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- town bell: nobody stays
+    // Reported: "when I hit the bell some villagers stay to fight". A TC holds
+    // 15 and a tower 5, so the overflow hit `if(!best) return` and carried on
+    // doing whatever it was doing — including fighting.
+    'bell-overflow': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:8, numTeams:2, controllers:['human','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc = createBuilding('TC', 30, 30, 0); tc.complete = true;
+      const cap = garrisonCap(tc);
+      const foe = createUnit('militia', 33, 33, 1);
+      const vils = [];
+      for (let i = 0; i < cap + 6; i++) {            // MORE villagers than slots
+        const v = createUnit('villager', 28 + (i % 6), 28 + ((i / 6) | 0), 0);
+        if (v) { v.target = foe.id; vils.push(v); }  // every one of them is fighting
+      }
+      T.ok('staged more villagers than the TC can hold', vils.length > cap);
+      ringTownBell(0);
+      const fighting = vils.filter(v => v.target != null);
+      const running  = vils.filter(v => v.task === 'garrison');
+      T.ok('NO villager is still fighting after the bell', fighting.length === 0);
+      T.ok('every villager is running for cover, not just the first ' + cap,
+           running.length === vils.length);
+      // out-of-range villagers are still exempt (AoE2 bell range)
+      const far = createUnit('villager', 30, 30 + 40, 0);
+      if (far) { far.target = foe.id; ringTownBell(0);
+        T.ok('a villager beyond the bell range is left working (AoE2 range rule)',
+             far.task !== 'garrison'); }
+      return T;
+    })),
+
     // ---------------------------------------------- human clocks are unscaled
     // aiTimeMult must never touch a HUMAN team, and the research progress bar
     // must finish at exactly the tick the research applies (reported: "the
