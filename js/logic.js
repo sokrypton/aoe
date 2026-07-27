@@ -3622,6 +3622,7 @@ function updateBuildingResearch(e){
     if(e.research.tick>=ticks){
       if(isAge){
         teamAge[e.team]=target;
+        rescaleTeamBuildingHp(e.team);   // the new age raises every building's ceiling
         // TEMP (AUTO_APPLY_TECHS_AT_AGE): free auto-grant of the new age's techs,
         // in registry order — the original behavior while paid manual research
         // is tuned. Live-read effects key off the teamTechs bit via hasUpgrade.

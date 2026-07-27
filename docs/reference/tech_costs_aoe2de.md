@@ -1,4 +1,4 @@
-# AoE2 (DE / The Conquerors) research costs — reference
+# AoE2 (DE / The Conquerors) research + building reference
 
 Sourced from [Liquipedia's Age of Empires wiki](https://liquipedia.net/ageofempires)
 (per-technology infoboxes), one page per row, July 2026. Same role as
@@ -64,3 +64,37 @@ building armor. Wheelbarrow gives +3 flat carry where DE gives +25%.
 - Masonry was 175W/150 stone in The Age of Kings, changed to 150F/175W in The
   Conquerors. The Conquerors value is the one tabulated.
 - Research *times* are not tabulated here — only costs were checked.
+
+
+---
+
+# Building stats
+
+Same sourcing (Liquipedia infoboxes, July 2026). Ours live in `BLDGS` (js/core.js).
+
+| building | DE cost | DE build | DE HP Dark/Feudal/Castle | ours |
+|---|---|---|---|---|
+| Town Center | 275W 100S | 2:30 | 2400 **flat** | matches |
+| House | 25W | 0:25 | 550 / 750 / 900 | matches (age-scaled 2026-07-27) |
+| Mill | 100W | 0:35 | 600 / 800 / 1000 | matches |
+| Lumber Camp | 100W | 0:35 | 600 / 800 / 1000 | matches |
+| Mining Camp | 100W | 0:35 | 600 / 800 / 1000 | matches (assumed same family as Lumber Camp — not separately sourced) |
+| Barracks | 175W | 0:50 | 1200 / 1500 / 1800 | matches |
+| Market | 175W | **1:00** | — / 1800 / 2100 | HP matches; **build time is 0:50, should be 1:00** |
+| Farm | 60W | 0:15 | flat | matches |
+| Palisade Wall | 2W | **0:07** | 250 **flat** | HP matches; **build time is 0:05, should be 0:07** |
+| Stone Wall | 5S | — | 1800 flat | matches |
+
+**Age-scaled HP was missing entirely until 2026-07-27**: every building sat at
+its Dark-Age figure forever, so buildings grew relatively weaker as a match ran
+on, and Masonry's +10% was covering for an ageing bonus DE grants free.
+Economic and military buildings scale; the Town Centre, walls, gates, towers and
+farms are flat in DE and carry no `hpAge`.
+
+## Known-unverified
+
+- **Watch Tower cost.** Ours is 25W 125S; DE may be 50W 125S. Both Liquipedia
+  URLs tried returned 404, so this is UNCONFIRMED — do not "fix" it from memory.
+- Mining Camp per-age HP is assumed identical to Lumber Camp, not separately
+  sourced.
+- Gates (palisade/stone) and our invented PTOWER were not checked.

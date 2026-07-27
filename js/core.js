@@ -438,8 +438,16 @@ function gatherCooldownFor(team, resource, baseCooldown){
 // execUpgradeWalls): base stat plus the HP card multipliers, masonry first
 // then fortified_wall (a fixed order for new buildings; existing-building
 // sweeps in applyTech commute to the same result).
+// AoE2 buildings gain HP with every age — House 550/750/900, Barracks
+// 1200/1500/1800, Mill and camps 600/800/1000 (docs/reference). Ours were flat
+// at the Dark-Age figure, so buildings got relatively WEAKER as a match ran on
+// and Masonry's +10% was papering over an ageing bonus DE grants for free.
+// Walls, gates, towers, farms and the Town Centre are flat in DE too, so they
+// simply carry no hpAge.
 function buildingMaxHpFor(team, btype){
-  let hp = BLDGS[btype].hp;
+  let b = BLDGS[btype];
+  let age = (teamAge && isPlayerTeam(team)) ? (teamAge[team] || 0) : 0;
+  let hp = (b.hpAge && b.hpAge[age] !== undefined) ? b.hpAge[age] : b.hp;
   if (hasUpgrade(team, 'masonry')) hp = Math.round(hp * 1.1);
   if ((btype === 'SWALL' || btype === 'SGATE' || btype === 'TOWER') && hasUpgrade(team, 'fortified_wall')) hp = Math.round(hp * 1.5);
   return hp;
@@ -692,15 +700,15 @@ const BLDGS={
   // tick, 30 ticks/game-second), matching AoE2 1-villager build times.
   // armor is {m: melee, p: pierce} — see damageEntity() in logic.js.
   TC:{name:'Town Center',w:4,h:4,hp:2400,cost:{w:275,s:100},builds:['villager'],researches:['wheelbarrow'],buildTime:T30(4500),range:6,atk:5,garrisonCap:15,maxArrows:10,armor:{m:3,p:5},desc:'Trains villagers, advances ages, and accepts resource drop-off. Garrison units for shelter and extra arrows.',icon:'🏰'},
-  HOUSE:{name:'House',w:1,h:1,hp:550,cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
-  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,cost:{w:100},drop:'wood',researches:['double_bit_axe','bow_saw'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood. Researches wood-gathering upgrades.',icon:'🪓'},
-  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,cost:{w:100},drop:'gold,stone',researches:['gold_mining'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone. Researches mining upgrades.',icon:'⛏️'},
-  MILL:{name:'Mill',w:2,h:2,hp:600,cost:{w:100},drop:'food',researches:['horse_collar','heavy_plow'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Lets you prepay Farm reseeds and researches farming upgrades.',icon:'🛞'},
+  HOUSE:{name:'House',w:1,h:1,hp:550,hpAge:[550,750,900],cost:{w:25},pop:5,buildTime:T30(750),armor:{m:0,p:7},desc:'Increases population capacity by 5.',icon:'🏠'},
+  LCAMP:{name:'Lumber Camp',w:1,h:1,hp:600,hpAge:[600,800,1000],cost:{w:100},drop:'wood',researches:['double_bit_axe','bow_saw'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Wood. Researches wood-gathering upgrades.',icon:'🪓'},
+  MCAMP:{name:'Mining Camp',w:1,h:1,hp:600,hpAge:[600,800,1000],cost:{w:100},drop:'gold,stone',researches:['gold_mining'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Gold and Stone. Researches mining upgrades.',icon:'⛏️'},
+  MILL:{name:'Mill',w:2,h:2,hp:600,hpAge:[600,800,1000],cost:{w:100},drop:'food',researches:['horse_collar','heavy_plow'],buildTime:T30(1050),armor:{m:0,p:7},desc:'Drop site for Food. Lets you prepay Farm reseeds and researches farming upgrades.',icon:'🛞'},
   // isFarm buildings only turn their ORIGIN tile (x,y) into actual farmland
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,hpAge:[1200,1500,1800],cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
@@ -728,7 +736,7 @@ const BLDGS={
   // footprint passes units (see walkable() in pathfinding.js and the
   // isFarm/walkable skip in clearFootprintForBuild); tiles stay `occupied` so
   // nothing can be built on it.
-  MARKET:{name:'Market',w:3,h:3,hp:1200,cost:{w:175},builds:['tradecart'],researches:['guilds'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts, trades resources for gold, and researches Guilds. Requires the Feudal Age.',icon:'⚖️'}
+  MARKET:{name:'Market',w:3,h:3,hp:1800,hpAge:[1800,1800,2100],cost:{w:175},builds:['tradecart'],researches:['guilds'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts, trades resources for gold, and researches Guilds. Requires the Feudal Age.',icon:'⚖️'}
   // Research is distributed to the buildings that "own" each tech (AoE2-style):
   // see the `researches` arrays above — Barracks (military/armor/fortification),
   // Mill (farming), Lumber Camp (wood), Mining Camp (gold), Market (Guilds),
@@ -1088,6 +1096,21 @@ function markScoutedBuildings(){
     if (e.type === 'building' && e.team !== myTeam && !scoutedByMe.has(e.id) && buildingFogLevel(e) === 2) {
       scoutedByMe.add(e.id);
     }
+  });
+}
+
+// Advancing an age raises every standing building's ceiling. Damage is kept as
+// a FRACTION so a half-ruined barracks stays half-ruined; an untouched one
+// stays exactly full (no rounding drift). A foundation's hp IS its build
+// progress, so only its ceiling moves. Mirrors the editor's rederiveTeamStats.
+function rescaleTeamBuildingHp(team){
+  entities.forEach(e => {
+    if (e.type !== 'building' || e.team !== team || e.hp <= 0) return;
+    let newMax = buildingMaxHpFor(team, e.btype);
+    if (newMax === e.maxHp) return;
+    if (!e.complete) { e.maxHp = newMax; return; }
+    if (e.hp === e.maxHp) { e.hp = newMax; e.maxHp = newMax; }
+    else { let f = e.hp / e.maxHp; e.maxHp = newMax; e.hp = Math.max(1, Math.round(newMax * f)); }
   });
 }
 

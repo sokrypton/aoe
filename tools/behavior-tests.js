@@ -158,6 +158,36 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- age-scaled building HP
+    // AoE2 buildings gain HP each age (House 550/750/900, Barracks
+    // 1200/1500/1800). Ours were flat at the Dark-Age figure forever.
+    'building-hp-by-age': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:6, numTeams:2, controllers:['human','ai'], ages:[0,0], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      teamAge[0] = 0;
+      const h = createBuilding('HOUSE', 20, 20, 0); h.complete = true;
+      const b = createBuilding('BARRACKS', 24, 20, 0); b.complete = true;
+      const tc = createBuilding('TC', 30, 30, 0); tc.complete = true;
+      T.ok('Dark Age house is 550', h.maxHp === 550);
+      T.ok('Dark Age barracks is 1200', b.maxHp === 1200);
+      // half-wreck the barracks, then advance — damage must stay proportional
+      b.hp = b.maxHp / 2;
+      teamAge[0] = 1; rescaleTeamBuildingHp(0);
+      T.ok('Feudal house rises to 750', h.maxHp === 750);
+      T.ok('Feudal barracks rises to 1500', b.maxHp === 1500);
+      T.ok('an UNDAMAGED building is topped up exactly', h.hp === 750);
+      T.ok('a half-wrecked building stays half-wrecked', b.hp === 750);
+      T.ok('the Town Centre does NOT scale (flat in DE)', tc.maxHp === 2400);
+      teamAge[0] = 2; rescaleTeamBuildingHp(0);
+      T.ok('Castle house rises to 900', h.maxHp === 900);
+      T.ok('Castle barracks rises to 1800', b.maxHp === 1800);
+      // a building founded later starts at the current age's ceiling
+      const h2 = createBuilding('HOUSE', 26, 26, 0);
+      T.ok('a house built IN Castle starts at 900', h2.maxHp === 900);
+      return T;
+    })),
+
     // ---------------------------------------------- attack-line split (DE)
     // DE's Forging/Iron Casting are infantry+cavalry only; archers have their
     // own line (Fletching -> Bodkin Arrow). Ours gave archers BOTH, so they
