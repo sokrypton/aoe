@@ -32,6 +32,10 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 constant (20; classic-AoE2-like). Every tick duration is authored at its
 canonical 30tps value and wrapped in `T30(x)`; never hardcode a tick-rate
 literal in a formula (use `TPS`) or a raw tick duration (wrap in `T30`).
+Render-side cosmetic PHASES (walk bob, wheel spin, sway — `sin(rate·t)`)
+use `animTick` (core.js, the render mirror of T30: 1/authored-tick at any
+TPS); never `tick` directly, or animation speed silently rides the build
+TPS. `animTick` is viewer-only — the sim must never read it.
 `TPS = 30` reproduces the pre-migration behavior bit-for-bit. Saves are
 TPS-stamped (v5) and refuse to load across timebases.
 

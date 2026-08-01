@@ -331,9 +331,9 @@ function drawTreeEntity(x,y){
   // 2. Dynamic Wind Sway — frozen in shroud (static snapshot when out of sight)
   let totalSway = 0;
   if (f === 2) {
-    let windPhase = tick * 0.015 + x * 0.45 + y * 0.35;
+    let windPhase = animTick * 0.015 + x * 0.45 + y * 0.35;
     let sway = Math.sin(windPhase) * 0.035;
-    let gust = Math.max(0, Math.sin(tick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
+    let gust = Math.max(0, Math.sin(animTick * 0.004 - (x + y) * 0.07) - 0.4) * 0.16;
     totalSway = sway + gust;
   }
 
@@ -350,9 +350,9 @@ function drawTreeEntity(x,y){
   let fellTick = treeFellTicks.get(fellKey);
   if(f === 2 && fellTick !== undefined && fellTick > 0){
     let dt = tick - fellTick;
-    if(dt < 40){
+    if(dt < T30(40)){
       isFalling = true;
-      let progress = dt / 40;
+      let progress = dt / T30(40);
       fallAngle = progress * (Math.PI / 2.15); // Fall sideways
     }
   }
@@ -409,7 +409,10 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   // Default palette by material: palisade wood (Dark age WALL/GATE) or the
   // stone greys (Feudal SWALL/SGATE — the original Stone Wall palette).
-  let pal = mat === 'stone'
+  // 'stonef' = FORTIFIED stone (the Fortified Wall tech tell): same
+  // masonry plus crenellation merlons on the walkway below.
+  let stone = mat === 'stone' || mat === 'stonef';
+  let pal = stone
     ? { a: '#aca392', b: '#cfc8b6', top: '#b7ad97' }
     : { a: WOOD.R, b: WOOD.L, top: WOOD.top }; // shared timber palette (render-buildings.js)
   let fillL = colorL || (isAlongIsoY ? pal.a : pal.b);
@@ -444,7 +447,7 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   // Stone masonry texture: horizontal course lines with staggered vertical
   // joints (light strokes per the seam-weight convention — hard black is
   // reserved for silhouettes)
-  if (mat === 'stone' && !colorL) {
+  if (stone && !colorL) {
     X.save();
     X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
     let courses = 3;
@@ -485,6 +488,30 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   X.lineTo(nex + px, ney + py - wallH);
   X.lineTo(nex - px, ney - py - wallH);
   X.closePath(); X.fill(); X.stroke();
+
+  // Fortified crenellation: two mini merlons riding the walkway, built
+  // from the link's own face math (side at +px/+py, cap full thickness)
+  // so they read as the wall's masonry continuing upward. Caps keep the
+  // walkway's team color (ownership read).
+  if (mat === 'stonef') {
+    const mh = 4, w = 3.2;
+    for (let t of [0.3, 0.7]) {
+      let cxm = nsx + (nex - nsx) * t, cym = nsy + (ney - nsy) * t;
+      let ax2 = ux * w, ay2 = uy * w;
+      X.fillStyle = fillL; X.beginPath();
+      X.moveTo(cxm - ax2 + px, cym - ay2 + py - wallH);
+      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH);
+      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH - mh);
+      X.lineTo(cxm - ax2 + px, cym - ay2 + py - wallH - mh);
+      X.closePath(); X.fill(); X.stroke();
+      X.fillStyle = fillTop; X.beginPath();
+      X.moveTo(cxm - ax2 - px, cym - ay2 - py - wallH - mh);
+      X.lineTo(cxm - ax2 + px, cym - ay2 + py - wallH - mh);
+      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH - mh);
+      X.lineTo(cxm + ax2 - px, cym + ay2 - py - wallH - mh);
+      X.closePath(); X.fill(); X.stroke();
+    }
+  }
 
   // 3. End cap face — closes the cut end exposed when d1/d2 trims the
   // link back from its endpoint (e.g. the gate door not reaching its post).

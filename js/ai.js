@@ -44,7 +44,7 @@ function updateAIGarrisonReaction(ai){
     // through to the bell.
     if(tick%AI_ESCALATE_EVERY===0){
       let tc=teamTC(ai.team);
-      let threat=tc&&findEnemyThreatNear(ai,tc,AI_BASE_ALARM_RADIUS*aiScale());
+      let threat=tc&&findEnemyThreatNear(ai,AI_BASE_ALARM_RADIUS*aiScale());
       if(threat&&estimateLocalEnemyPower(ai,threat,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
     }
     if(ai.militiaUntil>tick) return;
@@ -65,7 +65,7 @@ function updateAIGarrisonReaction(ai){
     // the same reachability null-out (a poker sealed OUTSIDE intact walls
     // must not hold the economy in shelter forever).
     let tc=teamTC(ai.team);
-    let lurking=tc&&findEnemyThreatNear(ai,tc,12*aiScale());
+    let lurking=tc&&findEnemyThreatNear(ai,12*aiScale());
     if(lurking){
       let {x:tcx,y:tcy}=centerTile(tc);
       if(findPath(tcx,tcy,Math.round(lurking.x),Math.round(lurking.y),tc.id).length===0)lurking=null;
@@ -89,7 +89,7 @@ function tryAIMilitiaResponse(ai){
   if(cap<=0)return false;
   let aiTC=teamTC(ai.team);
   if(!aiTC)return false;
-  let threat=findEnemyThreatNear(ai,aiTC,AI_BASE_ALARM_RADIUS*aiScale());
+  let threat=findEnemyThreatNear(ai,AI_BASE_ALARM_RADIUS*aiScale());
   if(!threat)return false;
   let raidPower=estimateLocalEnemyPower(ai,threat,10*aiScale());
   if(raidPower>AI_MILITIA_MAX_THREAT)return false; // a real attack — hide, don't mob
@@ -141,7 +141,7 @@ function updateAI(ai){
     return;
   }
 
-  updateAIIntel(ai,aiTC,profile); // what has scouting/combat actually revealed about the player this tick
+  updateAIIntel(ai,aiTC); // what has scouting/combat actually revealed about the player this tick
   if(maybeResignAI(ai,aiUnits))return; // AoE2-style concession — nothing left to plan
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
@@ -178,7 +178,8 @@ function updateAI(ai){
   planAITowers(ai,aiTC,vils,profile); // AI Watch Tower planning
   planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile);
   queueAITradeCarts(ai,profile);               // team games only: train carts up to the cap
-  planAIMarketExchange(ai,profile);            // buy/sell commodities for gold
+  planAIMarketExchange(ai);            // buy/sell commodities for gold
+  planAIResearch(ai,profile);                  // techs at their owning buildings (age-up handled by planAIAgeUp above)
   queueAIMilitary(ai,readyBarracks,profile);
   ensureAIScout(ai,readyBarracks); // keep an explorer alive so the enemy actually gets found
   assignAIVillagers(ai,vils,profile);
@@ -186,7 +187,7 @@ function updateAI(ai){
   huntAIBears(ai,mils);
   controlAIMilitary(ai,mils,aiTC,profile);
   controlAIScouts(ai,mils,aiTC);
-  controlAITradeCarts(ai,aiUnits);             // route idle carts to an ally Market
+  controlAITradeCarts(aiUnits);             // route idle carts to an ally Market
 }
 
 // ---- RESIGNATION (AoE2-style) ----
@@ -291,7 +292,7 @@ function unitPower(utype){
   return u.hp+u.atk*5;
 }
 
-function updateAIIntel(ai,aiTC,profile){
+function updateAIIntel(ai,aiTC){
   let intel=ai.intel||(ai.intel=freshAIIntel()); // shape lives in js/core.js (hashed sim state)
   // GHOST-CLEARING (re-sight validation): TC memory is sticky, but when the
   // remembered footprint is currently VISIBLE and no enemy TC stands there,
@@ -359,9 +360,17 @@ function estimateLocalEnemyPower(ai,center,radius){
     .reduce((s,e)=>s+unitPower(e.utype),0);
 }
 
-// Advance ages, difficulty-paced. Once thresholds pass, either start the
-// research immediately or flag savingForAge so military spending yields
-// (villager production continues — eco first, AoE2-style).
+// A complete, idle (not researching) building of this team that OWNS tech `key`
+// (its BLDGS.researches list) and isn't already claimed this tick — where the AI
+// researches it (parity: same execResearch the human uses). find() keeps
+// entities' ascending-id order, so no tiebreak needed.
+function aiIdleResearchBuilding(team,key,used){
+  return entities.find(e=>e.type==='building'&&e.team===team&&e.complete&&e.hp>0&&!e.research
+    &&!used.has(e.id)&&BLDGS[e.btype].researches&&BLDGS[e.btype].researches.includes(key));
+}
+
+// Advance ages, difficulty-paced, at the Town Center (instant when affordable;
+// pauses TC villager training while researching — the classic tempo cost).
 function planAIAgeUp(ai,aiTC,vils,profile){
   let next=teamAge[ai.team]+1;
   if(next>=AGES.length||next>(profile.maxAge||0)){ai.savingForAge=false;return;}
@@ -369,10 +378,102 @@ function planAIAgeUp(ai,aiTC,vils,profile){
   if(vils.length<(profile.ageUpVils&&profile.ageUpVils[next]||Infinity))return;
   if(ai.tick<(profile.ageUpTick&&profile.ageUpTick[next]||Infinity))return;
   if(canAfford(ai.team,AGES[next].cost)){
-    execResearchAge(aiTC); // same exec path as the player's command
+    execResearch(aiTC,'age'); // same exec path as the player's command
     ai.savingForAge=false;
   } else {
     ai.savingForAge=true;
+  }
+}
+
+
+// Tech research ORDER (no longer a per-difficulty count cap). DE never limits
+// WHICH technologies an AI may take — it scales research TIME instead (Easiest
+// 200% / Easy 133% / Moderate+ 100%), so an easier AI gets the whole list, just
+// later; `aiTimeMult` (js/core.js) is our version of that, applied to training too. canResearch
+// enforces age gate + prereq (the "which replaces which" chains), so the order
+// can safely name both a Feudal card and its Castle successor.
+// COMBAT-FIRST: attack/armor lead so even a slow-teching easy army gets
+// +atk/+armor and can still break a wall — an eco-first order left easy with
+// zero military upgrades and unable to close out (perma-turtle stalemate).
+// One-time ECO CLAIMS still outstanding — the missing Mill and the next
+// planned tech. Discretionary spenders (walls, towers, extra barracks,
+// army growth beyond the standing defense) leave this fund untouched so
+// the claims actually fill: without it they were starved for entire
+// matches (probe: mill gate hit 839 decision ticks, affordable on 0).
+function aiEcoFund(ai,profile,skipBastion){
+  let fund={};
+  const add=c=>{for(let[k,v]of Object.entries(c||{}))fund[k]=(fund[k]||0)+v;};
+  // Feudal+: the mill's techs are Feudal cards; claiming dark-age wood
+  // for it choked the opening eco (age-1-at-40k regression, sim-proven)
+  if(teamAge[ai.team]>=1&&hasAIBuilding(ai,'BARRACKS')&&!hasAIBuilding(ai,'MILL'))add(BLDGS.MILL.cost);
+  // REACTIVE bastion claim: once the town has been raided, save for the
+  // defensive tower (PTOWER in the dark, TOWER from Feudal) — its 110w
+  // never survived the open wood race (probe: affordable on 8 of 479
+  // planning ticks). skipBastion: planAITowers itself must not be
+  // blocked by its own claim.
+  if(!skipBastion&&(profile.maxTowers||0)>0&&ai.lastBaseHitTick!=null
+     &&entities.filter(e=>e.type==='building'&&e.team===ai.team&&isTowerBtype(e.btype)).length<(profile.maxTowers||0))
+    add(isUnlocked(ai.team,'TOWER')?BLDGS.TOWER.cost:BLDGS.PTOWER.cost);
+  // SIEGE-TRAIN claim while a camp stands: rams are the resolution
+  // weapon, but the wall/tower builders drained the wood the ram bank
+  // saved (med-easy 3001 autopsy: 45 waves, 62 stone walls, 0 rams,
+  // enemy TC at 60% at timeout). One ram's cost is reserved until the
+  // camped army's train reaches its deepened share.
+  if(ai.campSince!=null&&isUnlocked(ai.team,'ram')){
+    let rams=0,army=0;
+    for(let i=0;i<entities.length;i++){
+      let u=entities[i];
+      if(u.type!=='unit'||u.team!==ai.team||u.hp<=0)continue;
+      if(u.utype==='ram')rams++;
+      else if(isArmyUnit(u.utype)&&u.utype!=='scout')army++;
+    }
+    if(rams<Math.ceil((army+(profile.armyReserve||0))/3))add(UNITS.ram.cost);
+  }
+  let plan=AI_TECH_ORDER.slice();
+  for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
+  return fund;
+}
+// Can `cost` (optional) be spent while leaving the eco fund intact?
+function aiEcoFundClear(ai,profile,cost,skipBastion){
+  let st=resourceStore(ai.team);
+  let need={};
+  for(let c of [cost,aiEcoFund(ai,profile,skipBastion)])
+    for(let[k,v]of Object.entries(c||{}))need[resourceName(k)]=(need[resourceName(k)]||0)+v;
+  return Object.entries(need).every(([k,v])=>st[k]>=v);
+}
+// Both costs at once (tech + the age fund being hoarded) — key-wise sum.
+function aiCanAffordBoth(team,a,b){
+  let st=resourceStore(team);
+  let need={};
+  for(let c of [a,b])for(let[k,v]of Object.entries(c||{}))need[k]=(need[k]||0)+v;
+  return Object.entries(need).every(([k,v])=>st[resourceName(k)]>=v);
+}
+const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','bodkin_arrow','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
+function planAIResearch(ai,profile){
+  // While hoarding for the age-up, techs may still fire if the bank covers
+  // the AGE COST *and* the tech — a hard stop here starved everything past
+  // the first cheap cards for the whole climb (user caught it: hard AIs
+  // ended 40k-tick games with 3 of 14 techs, no wheelbarrow).
+  let reserve=null;
+  if(ai.savingForAge){
+    let next=teamAge[ai.team]+1;
+    reserve=(next<AGES.length&&AGES[next].cost)||null;
+  }
+  if(aiUnderRealPressure(ai))return;                       // spend on the army, not tech, while attacked
+  let plan=AI_TECH_ORDER.slice();
+  // Techs live on the buildings that own them (Barracks/Mill/Lumber/Mining/
+  // Market/TC), so research runs in PARALLEL — start one per idle owning
+  // building this tick. `used` stops two techs racing for the same building;
+  // canAfford re-reads the store after each spend so we can't overspend.
+  let used=new Set();
+  for(let k of plan){
+    if(!canResearch(ai.team,k))continue;                   // owned / age-locked / prereq-missing
+    if(TECH_PRICES&&!canAfford(ai.team,UPGRADES[k].cost))continue;
+    if(reserve&&!aiCanAffordBoth(ai.team,UPGRADES[k].cost,reserve))continue; // never break the age fund
+    let host=aiIdleResearchBuilding(ai.team,k,used);
+    if(!host)continue;                                     // its building is busy/training/absent — try later
+    execResearch(host,k);
+    used.add(host.id);
   }
 }
 
@@ -397,6 +498,7 @@ function ensureAIHousing(ai,aiTC,profile){
   let plannedCap=teamPopCap(ai.team,true);
   let pendingHouses=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='HOUSE'&&!e.complete).length;
   if(requested<plannedCap-profile.houseBuffer||pendingHouses>1||!canAfford(ai.team,BLDGS.HOUSE.cost))return;
+  if(!aiEcoFundClear(ai,profile,BLDGS.HOUSE.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'HOUSE');
   if(pos)placeAIBuilding(ai,'HOUSE',pos.x,pos.y);
 }
@@ -411,7 +513,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
   // existing camp, up to a cap — short walks to a wood drop. Camps stay OUT
   // of any food drop-off's farm belt.
   let lcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP');
-  if(lcamps.length<AI_MAX_LCAMP&&canAfford(ai.team,BLDGS.LCAMP.cost)){
+  if(lcamps.length<AI_MAX_LCAMP&&canAfford(ai.team,BLDGS.LCAMP.cost)&&aiEcoFundClear(ai,profile,BLDGS.LCAMP.cost)){
     let woodDrops=[aiTC,...lcamps];
     let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true,woodDrops,AI_DROP_COVER);
     if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
@@ -423,6 +525,12 @@ function planAIDropSites(ai,aiTC,vils,profile){
   if(!hasBarracks&&vils.length>=profile.barracksVil-1&&!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
   if(vils.length>=6&&hasBarracks&&!hasAIBuilding(ai,'MILL')&&canAfford(ai.team,BLDGS.MILL.cost)){
     let pos=findAIDropSite(ai,TERRAIN.BERRIES,'MILL',aiTC);
+    // No workable berry patch (eaten out, unscouted, or unplaceable): once
+    // the team FARMS, the Mill founds by the farm belt instead — without
+    // this the mill (and its farm techs, horse_collar/heavy_plow) never
+    // existed in whole matches (user caught it: 0 mills at 40k ticks).
+    if(!pos&&entities.some(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'))
+      pos=findAIBuildSpot(ai,aiTC,'MILL');
     if(pos)placeAIBuilding(ai,'MILL',pos.x,pos.y);
   }
   // Mining camps serve BOTH gold and stone: one at a far gold deposit AND one
@@ -432,7 +540,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
   if(vils.length>=7&&hasBarracks&&mcamps.length<AI_MAX_MCAMP){
     let drops=[aiTC,...mcamps];
     for(let ore of [TERRAIN.GOLD,TERRAIN.STONE]){
-      if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost))break;
+      if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost)||!aiEcoFundClear(ai,profile,BLDGS.MCAMP.cost))break;
       let pos=findAIDropSite(ai,ore,'MCAMP',aiTC,true,drops,AI_DROP_COVER);
       if(pos){ let b=placeAIBuilding(ai,'MCAMP',pos.x,pos.y); if(b){mcamps.push(b);drops.push(b);} }
     }
@@ -451,14 +559,20 @@ function planAITowers(ai,aiTC,vils,profile){
   // pass later promotes (WALL_STONE_MATCH: PTOWER→TOWER).
   // Barracks fund outranks bastions (aiBarracksFundClear).
   let type=null;
-  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost)&&aiBarracksFundClear(ai,BLDGS.TOWER.cost.w||0))type='TOWER';
-  else if(canAfford(ai.team,BLDGS.PTOWER.cost)&&aiBarracksFundClear(ai,BLDGS.PTOWER.cost.w||0))type='PTOWER';
+  if(isUnlocked(ai.team,'TOWER')&&canAfford(ai.team,BLDGS.TOWER.cost)&&aiBarracksFundClear(ai,BLDGS.TOWER.cost.w||0)&&aiEcoFundClear(ai,profile,BLDGS.TOWER.cost,true))type='TOWER';
+  else if(canAfford(ai.team,BLDGS.PTOWER.cost)&&aiBarracksFundClear(ai,BLDGS.PTOWER.cost.w||0)&&aiEcoFundClear(ai,profile,BLDGS.PTOWER.cost,true))type='PTOWER';
   if(!type)return;
   // A waller's bastion MUST go on the wall (gate flank → corners → resource
   // side); wait for a wall segment rather than eating the cap on a
   // freestanding tower. Only a non-walling AI falls back to a freestanding spot.
   let pos=findAIWallDefenseSpot(ai);
-  if(!pos&&!profile.walls)pos=findAIBuildSpot(ai,aiTC,type);
+  // Pre-wall there ARE no wall spots (walls come at wallAge) — the wall-
+  // spot gate alone meant no bastion of either kind before Castle (sim-
+  // proven: 0 ever built). Freestanding by the TC is correct for the
+  // dark-age PTOWER always, and for a stone TOWER once the town has
+  // actually been raided; the wall ring later grows around it.
+  if(!pos&&(type==='PTOWER'||ai.lastBaseHitTick!=null||!profile.walls))
+    pos=findAIBuildSpot(ai,aiTC,type);
   if(pos)placeAIBuilding(ai,type,pos.x,pos.y);
 }
 
@@ -512,7 +626,13 @@ function planAIWalls(ai,aiTC,vils,profile){
     let allWalls=pair.every(p=>isWallAt(p.x,p.y));
     if(!allWalls){
       pair.forEach(p=>{
-        if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)){
+        // SAME spend gate as the rest of the ring (the while-loop below).
+        // Without aiEcoFundClear here the gate tiles were the one wall the AI
+        // could always afford — 2 wood, no eco-fund reserve — so a starved
+        // base built its gates and none of the wall they belong to. Orphan
+        // gates: 3 gates, 0 walls, wood spent on a door with no house.
+        if(!isWallAt(p.x,p.y)&&canAfford(ai.team,BLDGS.WALL.cost)
+           &&aiEcoFundClear(ai,profile,BLDGS.WALL.cost)){
           let b=placeAIBuilding(ai,'WALL',p.x,p.y);
           if(b){let pt=plan.find(t=>t.x===p.x&&t.y===p.y); if(pt)pt.done=true;}
         }
@@ -534,7 +654,7 @@ function planAIWalls(ai,aiTC,vils,profile){
   // `sealed` = an enemy genuinely CANNOT flood-reach the TC; egress = our own
   // army genuinely CAN flood-reach outside. Computed once per call, reused below.
   let wr=ai.wallRadiusUsed||Math.round(profile.wallRadius*aiScale());
-  let sealed=aiBaseSealed(aiTC,ai.team,wr);
+  let sealed=aiBaseSealed(aiTC,wr);
   let rescueActive=plan.some(pt=>pt.rescueOpenUntil&&tick<pt.rescueOpenUntil);
 
   // Stone upgrade (AoE2: palisade → stone from Feudal on): only once actually
@@ -597,7 +717,8 @@ function planAIWalls(ai,aiTC,vils,profile){
   let placedThisCall=0, iters=0;
   let {x:wtcx, y:wtcy} = centerTile(aiTC);
   let BACKOFF=Math.max(T30(120),profile.decisionInterval*2);
-  while(!pressured&&placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)){
+  while(!pressured&&placedThisCall<8&&iters<40&&canAfford(ai.team,BLDGS.WALL.cost)
+        &&aiEcoFundClear(ai,profile,BLDGS.WALL.cost)){
     iters++;
     let next=plan.find(t=>!t.done&&!(t.buildBackoffUntil>tick));
     if(!next)break;
@@ -607,7 +728,7 @@ function planAIWalls(ai,aiTC,vils,profile){
     // this tile — otherwise it's a real hole we just can't reach yet, so back off
     // and retry rather than lying that it's sealed.
     if(!pathReaches(wtcx,wtcy,next.x,next.y,aiTC.id)){
-      if(aiBaseSealed(aiTC,ai.team,wr,next)){ next.done=true; }
+      if(aiBaseSealed(aiTC,wr,next)){ next.done=true; }
       else next.buildBackoffUntil=tick+BACKOFF;
       continue;
     }
@@ -622,7 +743,7 @@ function planAIWalls(ai,aiTC,vils,profile){
 // army can leave a ring that ended up fully sealed (no walkable opening and
 // no placeable gate). A real player would delete a wall segment here too.
 function breachAIWallRing(ai,plan,aiTC){
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
+  let ranked=rankedWallSides(ai,aiTC);
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     let mid=Math.floor(sideTiles.length/2);
@@ -670,7 +791,7 @@ function wallTileSealed(pt,team){
 // OPEN gate is passable to anyone, so it counts as a hole (walkable(-1) reads
 // every gate as closed, so isOpen is tested explicitly). `extraBlock`
 // optionally treats one tile as walled. Returns true = SEALED.
-function aiBaseSealed(aiTC,team,radius,extraBlock){
+function aiBaseSealed(aiTC,radius,extraBlock){
   let {x:cx, y:cy} = centerTile(aiTC);
   let R=Math.round(radius)+6, slack=2;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
@@ -746,7 +867,59 @@ function computeAIWallRing(ai,tc,radius){
   r=Math.min(r,baseR+GROW_CAP);
   // Remember the geometry so the honest seal-check (aiBaseSealed) bounds its
   // flood to this base (it reads ai.wallRadiusUsed via planAIWalls).
-  ai.wallRadiusUsed=r; ai.wallCx=cx; ai.wallCy=cy;
+  // ---- BARRIER-ANCHORED SIDES ----
+  // A ring tile on impassable terrain needs NO wall: terrainBarrier already
+  // seals it and the placement loop marks it done without spending. So each
+  // side slides outward within a band and takes the offset needing the FEWEST
+  // BUILT tiles — the ring hugs forest/water/ore instead of running a full
+  // square across open ground. On this map that buys up to 1.9x the enclosed
+  // area for a THIRD fewer tiles (measured); where no cover exists it simply
+  // returns the old square, so it never costs more than before.
+  // Still a RECTANGLE: sides stay N/S/W/E so gate-by-side, the seal flood and
+  // the egress carve all keep working. Chopped-forest seams are already
+  // re-queued by the self-heal pass (wallTileSealed), which is what makes
+  // anchoring on forest safe here.
+  const SIDE_BAND=6;
+  let rr={N:r,S:r,W:r,E:r};
+  // Cost of one candidate side. Barrier tiles are FREE (terrain seals them).
+  // A tile already holding one of our own non-wall buildings is worse than
+  // open ground, not equal to it: the wall loop marks it done and the
+  // perimeter inherits a 550hp house where an 1800hp wall belongs. Weighted
+  // rather than forbidden, so a base boxed in by its own town still gets a
+  // ring — it just prefers a line that misses the houses.
+  const OWN_BLDG_PENALTY=4;
+  const tileCost=(x,y)=>{
+    if(terrainBarrier(x,y)) return 0;
+    let b=buildingAtTile(x,y,en=>en.team===ai.team);
+    if(b && !isWallBtype(b.btype) && !isGateBtype(b.btype) && !isTowerBtype(b.btype)) return OWN_BLDG_PENALTY;
+    return 1;
+  };
+  const sideBuilt=(side,off)=>{
+    let built=0;
+    if(side==='N'||side==='S'){
+      let y=side==='N'?cy-off:cy+off;
+      for(let x=cx-rr.W;x<=cx+rr.E;x++) built+=tileCost(x,y);
+    } else {
+      let x=side==='W'?cx-off:cx+off;
+      for(let y=cy-rr.N;y<=cy+rr.S;y++) built+=tileCost(x,y);
+    }
+    return built;
+  };
+  for(const side of ['N','S','W','E']){      // fixed order — deterministic
+    let bestOff=r, bestC=Infinity;
+    for(let off=r;off<=r+SIDE_BAND;off++){
+      if(side==='N'&&cy-off<1)break;
+      if(side==='S'&&cy+off>MAP-2)break;
+      if(side==='W'&&cx-off<1)break;
+      if(side==='E'&&cx+off>MAP-2)break;
+      let c=sideBuilt(side,off);
+      if(c<bestC){bestC=c;bestOff=off;}      // strict < : ties keep the TIGHTER ring
+    }
+    rr[side]=bestOff;
+  }
+  // The seal flood is bounded by a single radius — use the widest side so the
+  // box still contains the whole ring.
+  ai.wallRadiusUsed=Math.max(rr.N,rr.S,rr.W,rr.E); ai.wallCx=cx; ai.wallCy=cy;
   let tiles=[];
   let seen=new Set();
   // Each tile remembers which side of the ring it's on, so the gate can be
@@ -767,13 +940,13 @@ function computeAIWallRing(ai,tc,radius){
   // A corner TC: the map edge is already a wall, so a side that would land
   // on/past the border is OMITTED; the perpendicular sides extend to the edge
   // to close the corridor.
-  let hasN=cy-r>=1, hasS=cy+r<=MAP-2, hasW=cx-r>=1, hasE=cx+r<=MAP-2;
-  let xLo=hasW?cx-r:0, xHi=hasE?cx+r:MAP-1;
-  let yLo=hasN?cy-r:0, yHi=hasS?cy+r:MAP-1;
-  if(hasN)for(let x=xLo;x<=xHi;x++)addTile(x,cy-r,'N');
-  if(hasS)for(let x=xLo;x<=xHi;x++)addTile(x,cy+r,'S');
-  if(hasW)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx-r,y,'W');
-  if(hasE)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx+r,y,'E');
+  let hasN=cy-rr.N>=1, hasS=cy+rr.S<=MAP-2, hasW=cx-rr.W>=1, hasE=cx+rr.E<=MAP-2;
+  let xLo=hasW?cx-rr.W:0, xHi=hasE?cx+rr.E:MAP-1;
+  let yLo=hasN?cy-rr.N:0, yHi=hasS?cy+rr.S:MAP-1;
+  if(hasN)for(let x=xLo;x<=xHi;x++)addTile(x,cy-rr.N,'N');
+  if(hasS)for(let x=xLo;x<=xHi;x++)addTile(x,cy+rr.S,'S');
+  if(hasW)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx-rr.W,y,'W');
+  if(hasE)for(let y=hasN?yLo+1:yLo;y<=(hasS?yHi-1:yHi);y++)addTile(cx+rr.E,y,'E');
   // ---- Reserve TWO gates: one toward the ECONOMY, one toward the ENEMY ----
   // A single gate either seals villagers from their camps (Dark-Age collapse)
   // or forces the army to detour around the ring (pathfinding storm) — so
@@ -865,6 +1038,15 @@ function getEnemyDirection(ai,tc){
 // sites — so villagers have a short, direct walk out to gather/return — and
 // (b) the enemy direction, weighted higher since the attack/defense route
 // matters more than gathering convenience.
+// Ring sides best-first. Equal scores are common on a symmetric base and the
+// winner decides where a gate goes, so the tiebreak is the ORIGINAL N/S/E/W
+// index — what a stable sort gives today, deterministic on every engine.
+function rankedWallSides(ai,aiTC){
+  return AI_WALL_SIDES.slice().sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC)
+    ||AI_WALL_SIDES.indexOf(a)-AI_WALL_SIDES.indexOf(b));
+}
+
+const AI_WALL_SIDES=['N','S','E','W'];
 function scoreWallSide(ai,side,tc){
   let dir=WALL_SIDE_DIR[side];
   let score=0;
@@ -886,7 +1068,7 @@ function resolveAIGate(ai,plan,aiTC){
   let wallAt=(x,y)=>entities.some(en=>en.type==='building'&&en.team===ai.team&&isWallBtype(en.btype)&&en.x===x&&en.y===y);
   let hasWallNeighbor=(x,y)=>wallAt(x+1,y)||wallAt(x-1,y)||wallAt(x,y+1)||wallAt(x,y-1);
 
-  let ranked=['N','S','E','W'].sort((a,b)=>scoreWallSide(ai,b,aiTC)-scoreWallSide(ai,a,aiTC));
+  let ranked=rankedWallSides(ai,aiTC);
   for(let side of ranked){
     let sideTiles=plan.filter(t=>t.side===side);
     if(sideTiles.length===0)continue; // fully clamped-away side: nothing to gate
@@ -997,6 +1179,7 @@ function planAIMilitaryBuildings(ai,aiTC,vils,barracks,profile){
   let pressured=aiUnderRealPressure(ai);
   if(ai.savingForAge&&!pressured&&barracks.length>0)return; // first barracks still allowed — needed for defense
   if(vils.length<profile.barracksVil||barracks.length>=profile.maxBarracks||!canAfford(ai.team,BLDGS.BARRACKS.cost))return;
+  if(barracks.length>0&&!aiEcoFundClear(ai,profile,BLDGS.BARRACKS.cost))return; // fund first
   let pos=findAIBuildSpot(ai,aiTC,'BARRACKS');
   if(pos)placeAIBuilding(ai,'BARRACKS',pos.x,pos.y);
 }
@@ -1051,11 +1234,17 @@ function planAIMarket(ai,aiTC,vils,profile){
   let starving=(r.food<MARKET_FLOOR.food||r.wood<MARKET_FLOOR.wood)&&r.gold>=300;
   let emergency=(starving||aiRecentlyRaided(ai))
     &&canAfford(ai.team,BLDGS.MARKET.cost)&&aiBarracksFundClear(ai,BLDGS.MARKET.cost.w);
+  // An ally Market already standing is its own trigger: the cart line pays
+  // from the moment ours completes. Without this an AI that stalls in Feudal
+  // never reaches the Castle gate below, so it never trades — and in a team
+  // game that also leaves its ALLY (often the human) with no trade partner at
+  // all. Affordability gates below still apply; only "tech/army first" yields.
+  let partnerWaiting = aiHasAlly(ai.team) && !!nearestAllyMarket(aiTC);
   if(!emergency){
-    if(teamAge[ai.team] < (profile.maxAge||2))return;    // finished teching first
+    if(!partnerWaiting && teamAge[ai.team] < (profile.maxAge||2))return; // finished teching first
     if(vils.length<profile.marketVil)return;
     let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)).length;
-    if(army<(profile.armyReserve||4))return;             // defense before trade
+    if(!partnerWaiting && army<(profile.armyReserve||4))return; // defense before trade
     if(!canAfford(ai.team,BLDGS.MARKET.cost))return;     // only when the surplus is genuinely there
     if(!aiBarracksFundClear(ai,BLDGS.MARKET.cost.w))return; // army faucet first
   }
@@ -1088,7 +1277,7 @@ function queueAITradeCarts(ai,profile){
 // the shuttle; the AI only touches carts that are currently idle. Assign only
 // when BOTH a home and an ally market exist (else updateTradeCart would fire
 // its "needs a market" feedback and the cart would sit idle anyway).
-function controlAITradeCarts(ai,aiUnits){
+function controlAITradeCarts(aiUnits){
   for(let i=0;i<aiUnits.length;i++){
     let c=aiUnits[i];
     if(c.utype!=='tradecart')continue;
@@ -1122,7 +1311,7 @@ const AI_EMERGENCY_GOLD_CUSHION=100; // floor buys spend down to here (vs the 30
 // stone is never bought, a resource is never sold to fix its own breach, and
 // each trade moves its resource away from the trigger. Wealth locked in the
 // wrong commodity converts toward whatever is starving in at most two hops.
-function planAIMarketExchange(ai,profile){
+function planAIMarketExchange(ai){
   let mkt=aiOwnMarket(ai.team);
   if(!mkt||!mkt.complete)return;
   let r=resourceStore(ai.team);
@@ -1159,6 +1348,11 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // standing defense (half the army reserve); a blanket pause left AIs
   // sitting on banked wood with a barracks and ZERO soldiers.
   if(ai.savingForAge&&!underPressure&&currentArmy>=Math.ceil(profile.armyReserve/2))return;
+  // Army growth NEVER yields to the eco fund: research runs before
+  // training every decision tick, and the construction yields (walls/
+  // towers/extra rax/farm-vs-mill) are what actually fill the claims.
+  // Gating the army starved hard through shooting wars (holdGroup 917/
+  // 1000 ticks) and exempting-at-war flipped hard-med — both sim-proven.
   // Eco-first (AoE2): below the next age's villager benchmark, food belongs
   // to the TC — militia spend otherwise drains food faster than it
   // regenerates and every AI sits in the Dark Age forever. A small standing
@@ -1183,7 +1377,11 @@ function queueAIMilitary(ai,readyBarracks,profile){
   let ramCount=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='ram').length
     +readyBarracks.reduce((s2,b)=>s2+b.queue.filter(q=>q==='ram').length,0);
   let ramGold=UNITS.ram.cost.g||0;
-  let wantRam=isUnlocked(ai.team,'ram')&&ramCount<Math.ceil(maxArmy/6);
+  // A standing siege camp is the resolution phase: rams are the weapon that
+  // out-damages the repair treadmill (22.4 vs 18.75 hp/s), so the train
+  // deepens from 1-per-6 slots to 1-per-3 while the camp stands.
+  let ramShare=ai.campSince!=null?3:6;
+  let wantRam=isUnlocked(ai.team,'ram')&&ramCount<Math.ceil(maxArmy/ramShare);
   let pickUnitType=()=>{
     // NOTE: don't mutate ramCount/wantRam here — the actual queueUnit can still
     // fail (pop cap) and fall back to spearman/militia, which would leave ram
@@ -1197,7 +1395,10 @@ function queueAIMilitary(ai,readyBarracks,profile){
     // its whole siege train, medium/easy only for the FIRST door-opener ram —
     // an open-ended reserve kept medium mono-militia for all of Castle age.
     {let store=resourceStore(ai.team);
-    if(wantRam&&ramCount<(profile.ramWoodReserve||0)&&store.gold>=ramGold&&store.wood<(UNITS.ram.cost.w||0)&&isUnlocked(ai.team,'militia'))return 'militia';}
+    // While the camp stands, the banking scope covers the DEEPENED train —
+    // medium's first-ram-only reserve otherwise stops feeding the siege.
+    let ramBankScope=ai.campSince!=null?Math.max(profile.ramWoodReserve||0,Math.ceil(maxArmy/3)):(profile.ramWoodReserve||0);
+    if(wantRam&&ramCount<ramBankScope&&store.gold>=ramGold&&store.wood<(UNITS.ram.cost.w||0)&&isUnlocked(ai.team,'militia'))return 'militia';}
     // Saving for a ram but gold-short: train the gold-free spearman so gold
     // banks toward the ram instead of dribbling into militia/knights —
     // otherwise attacks bounce off walls forever (the finishing stalemate).
@@ -1414,7 +1615,7 @@ function assignAIGatherTask(ai,v,vils,profile){
     // tile) so the rest of the map opens up, then re-evaluate next decision.
     let gates=(ai.gatePairs||[]).map(p=>p[Math.floor(p.length/2)]).filter(g=>(Math.abs(v.x-g.x)+Math.abs(v.y-g.y))>1.5&&pathReaches(v.x,v.y,g.x,g.y,v.id));
     if(gates.length){
-      gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y)));
+      gates.sort((a,b)=>(Math.abs(v.x-a.x)+Math.abs(v.y-a.y))-(Math.abs(v.x-b.x)+Math.abs(v.y-b.y))||a.x-b.x||a.y-b.y); // positional tiebreak
       v.task=null;v.target=null;v.buildTarget=null;clearGatherTarget(v);
       pathUnitTo(v,gates[0].x,gates[0].y);
       return;
@@ -1509,7 +1710,7 @@ function aiEcoPlan(ai,vilCount,profile){
     let cost=(AGES[next]&&AGES[next].cost)||{};
     if(cost.g&&store.gold<cost.g)   base.mine_gold=(base.mine_gold||1)+4;
     if(cost.f&&store.food<cost.f){ if(base.farm)base.farm+=2; base.forage=(base.forage||1)+2; }
-    // don't keep pouring hands into wood/stone the age-up doesn't need
+    // don't keep pouring hands into wood/stone the age-up (food/gold) doesn't need
     if(base.chop)base.chop=Math.max(1,Math.floor(base.chop/2));
     if(base.mine_stone)delete base.mine_stone;
   }
@@ -1535,6 +1736,19 @@ function planAIFarming(ai,aiTC,vils,profile){
   // villager production (AoE2 lays farms in late Dark age).
   if(!hasAIBuilding(ai,'BARRACKS') && vils.length<8)return;
   if(vils.length<6||!canAfford(ai.team,BLDGS.FARM.cost))return;
+  if(!aiEcoFundClear(ai,profile,BLDGS.FARM.cost))return;
+  // A due Mill outranks the NEXT farm plot: continuous 60w farm spends
+  // otherwise keep the bank under the mill's 100w forever (probe-proven).
+  // Wood-only check — farms must never yield to food-priced techs.
+  if(teamAge[ai.team]>=1&&hasAIBuilding(ai,'BARRACKS')&&!hasAIBuilding(ai,'MILL')
+     &&resourceStore(ai.team).wood<(BLDGS.FARM.cost.w||0)+(BLDGS.MILL.cost.w||0))return;
+  // Same yield for a RAIDED town's due bastion (PTOWER 110w in the dark,
+  // TOWER's 25w later) — defense-after-harassment outranks the next plot.
+  if((profile.maxTowers||0)>0&&ai.lastBaseHitTick!=null
+     &&entities.filter(e=>e.type==='building'&&e.team===ai.team&&isTowerBtype(e.btype)).length<(profile.maxTowers||0)){
+    let bw=(isUnlocked(ai.team,'TOWER')?BLDGS.TOWER.cost.w:BLDGS.PTOWER.cost.w)||0;
+    if(resourceStore(ai.team).wood<(BLDGS.FARM.cost.w||0)+bw)return;
+  }
   // Don't let NEW farm plots starve the BARRACKS of wood — the shared
   // army-faucet gate (aiBarracksFundClear) covers both pre-barracks and a
   // RAZED barracks. Reseeds of standing farms are untouched (logic.js bank
@@ -1544,7 +1758,7 @@ function planAIFarming(ai,aiTC,vils,profile){
   // plots), against a target that grows with the workforce — a fixed 2-4
   // farm cap starved the AI's food economy once the berries ran out.
   let activeFarms=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='FARM'&&!e.exhausted).length;
-  let targetFarms=aiFarmTarget(ai,vils,profile);
+  let targetFarms=aiFarmTarget(vils,profile);
   // Deadlock breaker: farm target scales with villagers, villagers are gated
   // by food, food by farms — a town that lost its forage locked at N farms
   // forever. Idle hands + spare wood = plant more farms.
@@ -1561,7 +1775,7 @@ function planAIFarming(ai,aiTC,vils,profile){
 
 // Farms wanted right now: the profile floor plus one per two villagers
 // beyond a starting workforce of 8, capped at 3x the floor.
-function aiFarmTarget(ai,vils,profile){
+function aiFarmTarget(vils,profile){
   return Math.min(profile.targetFarms*3,
     profile.targetFarms+Math.max(0,Math.floor((vils.length-8)/2)));
 }
@@ -1704,12 +1918,98 @@ function aiDispatchQuota(pool,tgt,profile,candFilter,assign){
 // and the base-under-siege posture — everything after them must not run that
 // tick. Defense and offense are otherwise PARALLEL systems: a sighted-threat
 // dispatch does NOT stop the wave machinery.
+// ---- ATTACKER SIEGE CAMP (the resolution posture) ----
+// The charge-retreat-repair loop: waves that couldn't finish cycled home on
+// the casualty recall, gifting the defender a free repair/eco window every
+// cycle (the med-easy stalemate autopsy). Instead, soldiers reaching a KNOWN
+// enemy town CAMP outside defensive fire (TC range 6 / tower 9), merge with
+// reinforcements streaming in via the stray-retask march, and assault when
+// the local power math clears the profile's attack bar — or when patience
+// runs out. campAssault LATCHES: once the assault starts it presses until
+// the camp itself collapses (flipping back to hold IS the retreat cycle).
+const AI_CAMP_R=12;               // picket distance from the enemy TC
+const AI_CAMP_NEAR=24;            // census radius: these soldiers are "at the town"
+const AI_CAMP_MIN=3;              // fewer arrivals: no camp, prior systems drive
+const AI_CAMP_TIMEOUT=T30(3600);  // 2 game-min held → assault anyway
+function aiCampHolding(ai){return ai.campSince!=null&&!ai.campAssault;}
+// Camped: the town's buildings wait for the coordinated assault — vetoing
+// piecemeal building attacks is what stops the army dribbling into arrow
+// fire one unit at a time. Unit fights (skirmish) are never vetoed.
+function aiCampVeto(ai,t){
+  if(!aiCampHolding(ai)||!t||t.type!=='building')return false;
+  return dist(centerOf(t),{x:ai.campX,y:ai.campY})<=AI_CAMP_R+10;
+}
+function aiAttackCampControl(ai,mils,aiTC,profile){
+  let intel=ai.intel;
+  const clear=()=>{ai.campX=null;ai.campY=null;ai.campSince=null;ai.campTeam=null;ai.campAssault=false;};
+  if(!intel||!intel.tcSeen||intel.tcTeam==null||!isEnemyOf(ai.team,{team:intel.tcTeam})
+     ||(ai.campTeam!=null&&ai.campTeam!==intel.tcTeam)){clear();return;}
+  let etc={x:intel.tcX,y:intel.tcY};
+  let campers=mils.filter(m=>m.utype!=='scout'&&!isRetreatingUnit(m)&&dist(m,etc)<=AI_CAMP_NEAR);
+  if(campers.length<AI_CAMP_MIN){clear();return;}
+  if(ai.campSince==null){
+    // Establish: a walkable picket on OUR side of the town, outside fire.
+    let home=centerOf(aiTC);
+    let dx=home.x-etc.x, dy=home.y-etc.y, L=Math.max(0.001,simHypot(dx,dy));
+    let cx=Math.round(etc.x+dx/L*AI_CAMP_R), cy=Math.round(etc.y+dy/L*AI_CAMP_R);
+    cx=Math.max(1,Math.min(MAP-2,cx));cy=Math.max(1,Math.min(MAP-2,cy));
+    for(let back=0;back<4&&!walkable(cx,cy);back++){cx=Math.round(cx+dx/L);cy=Math.round(cy+dy/L);}
+    if(!walkable(cx,cy))return;
+    ai.campX=cx;ai.campY=cy;ai.campSince=ai.tick;ai.campTeam=intel.tcTeam;ai.campAssault=false;
+  }
+  if(!ai.campAssault){
+    // Assault when the intel ledger says we win (same decayed currency as
+    // the launch gate — no omniscient reads). Patience running out forces
+    // the issue only near PARITY; a genuinely outmatched camp withdraws
+    // home to rebuild — the timeout-assault-always version fed hard's army
+    // into medium's turtle in repeated suicide charges (hard-med 3/8).
+    let myPower=campers.reduce((s2,m)=>s2+unitPower(m.utype),0);
+    let sbt=intel.strengthByTeam;
+    let enemyPower=(sbt&&sbt[intel.tcTeam])||0;
+    let bar=profile.attackAdvantage!=null?profile.attackAdvantage:1;
+    if(myPower>=enemyPower*bar){
+      ai.campAssault=true;aiProbe('campAssault:t'+ai.team);
+    } else if(ai.tick-ai.campSince>=AI_CAMP_TIMEOUT){
+      if(myPower>=enemyPower*0.6){
+        ai.campAssault=true;aiProbe('campAssault:t'+ai.team);
+      } else {
+        aiProbe('campWithdraw:t'+ai.team);
+        campers.forEach(m=>{if(!m.garrisonedIn)aiRetreatUnit(m,aiTC);});
+        clear(); // retreat stamps drop the census below MIN — no instant re-camp
+        return;
+      }
+    }
+  }
+  if(ai.campAssault)return; // veto lifted — the stray pass points everyone at the town
+  aiProbe('campHold:t'+ai.team);
+  // HOLD: town-building objectives stand down to the picket (live unit
+  // fights continue); the formation picket mirrors the home rally.
+  let camp={x:ai.campX,y:ai.campY};
+  let holders=campers.filter(m=>{
+    if(m.target){
+      let t=entitiesById.get(m.target);
+      if(!t||!aiCampVeto(ai,t))return false;
+      m.target=null;m.explicitAttack=false;clearUnitPath(m);
+    }
+    return !m.garrisonedIn;
+  });
+  let pOff=formationOffsets(holders,false,{dx:etc.x-camp.x,dy:etc.y-camp.y}); // ranks face the town
+  holders.forEach(m=>{
+    if(m.order&&m.order.kind==='guard'&&Math.abs(m.order.x-camp.x)<=4&&Math.abs(m.order.y-camp.y)<=4)return;
+    let [ox,oy]=pOff.get(m.id)||[0,0];
+    let px=Math.max(1,Math.min(MAP-2,camp.x+ox)), py=Math.max(1,Math.min(MAP-2,camp.y+oy));
+    issueOrder(m,{kind:'guard',x:px,y:py});
+    pathUnitTo(m,px,py);
+  });
+}
+
 function controlAIMilitary(ai,mils,aiTC,profile){
   aiRetreatControl(ai,mils,aiTC,profile);        // HP + wave-casualty retreats
-  aiRamRiderControl(ai,mils,aiTC);               // rider disembark + shelter abandon-ship
+  aiRamRiderControl(ai,mils);               // rider disembark + shelter abandon-ship
   if(aiThreatResponse(ai,mils,aiTC,profile))return; // threat scan + sheltered recall + outmatched-shelter/dispatch
   if(aiSiegePostureHold(ai,mils,aiTC,profile))return; // hits landing at home: defend, don't launch
   aiForwardBuildingResponse(ai,mils,aiTC,profile);   // raze the creeping tower (deliberately fall-through)
+  aiAttackCampControl(ai,mils,aiTC,profile);     // siege camp at the enemy town (resolution posture)
   launchAIWave(ai,mils,aiTC,profile);            // stray retask + holds + commit + riders + pace
 }
 
@@ -1753,13 +2053,17 @@ function aiRetreatControl(ai,mils,aiTC,profile){
     if(members.length>0&&members.length<Math.ceil(ai.lastWaveSize*AI_WAVE_RETREAT_FRACTION)){
       members.forEach(m=>{
         m.waveId=undefined;
-        if(!holdsSiegeOrder(m)&&!m.garrisonedIn&&dist(m,tcHome)>22)aiRetreatUnit(m,aiTC);
+        if(holdsSiegeOrder(m)||m.garrisonedIn||dist(m,tcHome)<=22)return;
+        // A standing camp is the regroup point — retreating HOME instead
+        // handed the defender a free repair window every cycle.
+        if(ai.campSince!=null&&dist(m,{x:ai.campX,y:ai.campY})<=AI_CAMP_NEAR)return;
+        aiRetreatUnit(m,aiTC);
       });
     }
   }
 }
 
-function aiRamRiderControl(ai,mils,aiTC){
+function aiRamRiderControl(ai,mils){
   // Ram riders disembark (AoE2 garrison-rams) when the siege ARRIVES or the
   // ram takes MELEE hits; a ram whose objective died also unloads.
   // lastMeleeHitTick, NOT lastHitTick: tower chip damage would refresh the
@@ -1792,7 +2096,7 @@ function aiRamRiderControl(ai,mils,aiTC){
 // Returns true when the outmatched-shelter branch consumed the tick; the
 // sighted-response DISPATCH deliberately falls through (parallel systems).
 function aiThreatResponse(ai,mils,aiTC,profile){
-  let threat=findEnemyThreatNear(ai,aiTC,12*aiScale());
+  let threat=findEnemyThreatNear(ai,12*aiScale());
   // Ignore a threat our base is sealed against — chasing an unreachable poker
   // freezes the garrison at the wall (stuck-watchdog spam). Reject ONLY on a
   // DEFINITIVE no-route: findPath returns [] only after fully exploring the
@@ -2014,9 +2318,16 @@ function launchAIWave(ai,mils,aiTC,profile){
       let marchPt=null, marchPtComputed=false;
       strays.forEach(m=>{
         let t=chooseAIAttackTarget(ai,m,spotted);
+        if(t&&aiCampVeto(ai,t))t=null;   // camped: town buildings wait for the assault
         if(t){assignAttack(m,t);return;}
         if(m.order&&m.order.kind==='move')return; // already marching
-        if(!marchPtComputed){marchPt=aiMarchPoint(ai,aiTC);marchPtComputed=true;}
+        if(m.order&&m.order.kind==='guard'&&aiCampHolding(ai))return; // holding the picket
+        if(!marchPtComputed){
+          // Reinforcements stream to the CAMP while one stands — merging
+          // into the siege instead of marching solo into the town.
+          marchPt=ai.campSince!=null?{x:ai.campX,y:ai.campY}:aiMarchPoint(ai,aiTC);
+          marchPtComputed=true;
+        }
         if(marchPt){
           issueOrder(m,{kind:'move', x:marchPt.x, y:marchPt.y});
           pathUnitTo(m,marchPt.x,marchPt.y);
@@ -2053,7 +2364,12 @@ function launchAIWave(ai,mils,aiTC,profile){
       // the CHOSEN TARGET's team, not the sum of every enemy army (which in
       // a team game meant no single AI ever cleared the bar), and credit
       // half of any allied army massed near our own base.
-      let availablePower=available.reduce((s,m)=>s+unitPower(m.utype),0);
+      // The WHOLE army's power, not the momentarily-idle: in a hot border
+      // war half the army is engaged (has targets), and counting only
+      // `available` read a 2:1 advantage as too-weak-to-launch forever
+      // (holdIntel 749/1000 deadlock, hard-med seed 23001) — the same
+      // undercount the group trigger above already corrects for.
+      let availablePower=mils.reduce((s,m)=>m.utype==='scout'?s:s+unitPower(m.utype),0);
       let sbt=intel.strengthByTeam; // dense per-team DECAYED memory (0 = no memory of that team)
       let targetTeam=(intel.tcSeen&&intel.tcTeam!=null)?intel.tcTeam:null;
       if(targetTeam==null){
@@ -2094,9 +2410,10 @@ function launchAIWave(ai,mils,aiTC,profile){
   // reconnaissance) as a fighting patrol; contact en route enters the
   // spotted set and the stray-retask pass engages it. No live map-truth
   // reads anywhere in the march path.
-  let reconPt = aiMarchPoint(ai,aiTC);
+  let reconPt = ai.campSince!=null?{x:ai.campX,y:ai.campY}:aiMarchPoint(ai,aiTC);
   attackers.forEach(m=>{
     let target=chooseAIAttackTarget(ai,m,waveSpotted);
+    if(target&&aiCampVeto(ai,target))target=null; // camped: join the picket, assault together
     if(target){
       assignAttack(m,target); // shared semantics incl. order clear + battlefield anchor
       launched++;
@@ -2178,7 +2495,7 @@ function rallyIdleMilitary(ai,mils,aiTC){
   // so the shared formation offsets (formationOffsets, js/commands.js —
   // the army's own arrangement compacted onto the rally point) resolve
   // identically on every lockstep peer.
-  let pOff=formationOffsets(mils,false);
+  let pOff=formationOffsets(mils,false,{dx:dir.dx,dy:dir.dy}); // ranks face the enemy
   mils.forEach(m=>{
     if(m.utype==='scout')return; // controlAIScouts owns scouts
     if(isRetreatingUnit(m))return; // a fleeing unit rests at home until the stamp expires
@@ -2213,6 +2530,18 @@ function ensureAIScout(ai,readyBarracks){
 
 function controlAIScouts(ai,mils,aiTC){
   let scouts=mils.filter(m=>m.utype==='scout');
+  // NO scout to walk the lap (killed early, or none yet): surveyIdx only
+  // advances inside the loop below, so ai.baseSurveyed would stay false for
+  // the REST OF THE MATCH and planAIWalls would block on it — the AI silently
+  // never walls at all. Fall back to what the lap actually establishes: are
+  // the ring-band waypoints explored? Town/villager vision usually covers
+  // them, so a scoutless AI self-heals as its base grows instead of being
+  // permanently unwalled. Found via self-play (a wider ring made scout death
+  // common enough to see; the block predates it).
+  if(!scouts.length){
+    if(!ai.baseSurveyed && aiTC && baseSurveyRingExplored(ai,aiTC)) ai.baseSurveyed=true;
+    return;
+  }
   scouts.forEach(s=>{
     // Once the home survey lap is done, the scout runs on the same
     // {kind:'scout'} order a player's Auto Scout uses — frontier exploration
@@ -2247,6 +2576,22 @@ function controlAIScouts(ai,mils,aiTC){
 // resources and the ground the wall will enclose before wandering off. Returns
 // null (and flips ai.baseSurveyed) once the lap is complete. Deterministic:
 // sequential index on AI_STATES, no RNG.
+// The 8 ring-band waypoints the survey lap would have VISITED, tested for
+// exploration instead of walked — the scoutless fallback for baseSurveyed.
+// Same dirs/radius/clamping as baseSurveyWaypoint, so it asks exactly the
+// question the lap answers. Deterministic (per-team explored grid only).
+function baseSurveyRingExplored(ai,aiTC){
+  const dirs=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+  let prof=aiProfileFor(ai.team);
+  let R=Math.round(Math.max(6,(prof.wallRadius||6))*aiScale())+2;
+  let {x:cx, y:cy} = centerTile(aiTC);
+  for(let i=0;i<dirs.length;i++){
+    let x=Math.max(1,Math.min(MAP-2,cx+dirs[i][0]*R)), y=Math.max(1,Math.min(MAP-2,cy+dirs[i][1]*R));
+    if(tileHiddenForTeam(ai.team, y*MAP+x)) return false;
+  }
+  return true;
+}
+
 function baseSurveyWaypoint(ai,aiTC){
   // No TC to survey around (controlAIScouts is still called in the no-TC
   // knockout branch): without this guard the aiTC.x deref throws and aborts
@@ -2317,7 +2662,7 @@ function findEnemyForwardBuilding(ai,aiTC,profile){
   return best;
 }
 
-function findEnemyThreatNear(ai,aiTC,range){
+function findEnemyThreatNear(ai,range){
   // Allied buildings count too: in 2v2 the army answers a raid on its ally's
   // town (villager garrison panic stays own-team). The threat must be SEEN
   // (entityVisibleToTeam — information parity; ally vision folds into the
@@ -2488,6 +2833,22 @@ function aiWouldBlockGate(bx,by,bw,bh,team){
   return false;
 }
 
+// Would this footprint sit ON the planned wall ring? Nothing stopped it before:
+// placement only asked canPlace, so a house dropped on a ring tile AFTER the
+// ring was planned, and the wall loop then marked that tile done ("already our
+// building"). The perimeter silently got a 550hp house where a 1800hp stone
+// wall belonged — the soft segment attackers break first. Walls/gates/towers
+// are exempt: those ARE the ring.
+function aiOnWallRing(ai,tx,ty,w,h,btype){
+  let plan=ai.wallPlan; if(!plan||!plan.length) return false;
+  if(isWallBtype(btype)||isGateBtype(btype)||isTowerBtype(btype)) return false;
+  for(let i=0;i<plan.length;i++){
+    let t=plan[i];
+    if(t.x>=tx && t.x<tx+w && t.y>=ty && t.y<ty+h) return true;
+  }
+  return false;
+}
+
 function findAIBuildSpot(ai,tc,type){
   let b=BLDGS[type];
   // Measure from the TC CENTRE, not its origin corner — an origin-based
@@ -2499,16 +2860,17 @@ function findAIBuildSpot(ai,tc,type){
   // failing to place and never trading.
   let maxR=Math.round((type==='MARKET'?28:14)*aiScale());
   let minEdge=tcHalf+1;              // scan starts just outside the TC
-  // AoE2-style placement: houses/barracks stay out of the FARM BELT around
-  // every food drop-off. Barracks additionally prefers the enemy-facing side
-  // (the army rallies toward the front, not inside the eco).
-  let reserve=(type==='HOUSE'||type==='BARRACKS');
+  // AoE2-style placement: houses/barracks/mills/bastions stay out of the
+  // FARM BELT around every food drop-off (freestanding towers were eating
+  // future farm plots, user caught it). Barracks additionally prefers the
+  // enemy-facing side (the army rallies toward the front, not the eco).
+  let reserve=(type==='HOUSE'||type==='BARRACKS'||type==='MILL'||isTowerBtype(type));
   let drops=reserve?aiFarmBeltDrops(ai.team):null;
   let angles=[...Array(16).keys()];
   if(type==='BARRACKS'){
     let ed=getEnemyDirection(ai,tc);
     let dot=a=>simCos(a*Math.PI*2/16)*ed.dx+simSin(a*Math.PI*2/16)*ed.dy;
-    angles.sort((a1,a2)=>dot(a2)-dot(a1));
+    angles.sort((a1,a2)=>dot(a2)-dot(a1)||a1-a2); // equal dots come in symmetric pairs — order them
   }
   let scan=(respectBelt)=>{
     for(let r=minEdge;r<maxR;r++){
@@ -2517,6 +2879,7 @@ function findAIBuildSpot(ai,tc,type){
         let tx=Math.round(cx+simCos(ang)*r);
         let ty=Math.round(cy+simSin(ang)*r);
         if(!canPlace(type,tx,ty,ai.team))continue;
+        if(aiOnWallRing(ai,tx,ty,b.w,b.h,type))continue;   // keep the perimeter walls, not houses
         if(aiWouldBlockGate(tx,ty,b.w,b.h,ai.team))continue;
         if(respectBelt&&reserve&&aiInFarmBelt(tx,ty,b.w,b.h,ai.team,drops))continue;
         if(pathReaches(Math.floor(cx),Math.floor(cy),tx,ty,tc.id))return{x:tx,y:ty};

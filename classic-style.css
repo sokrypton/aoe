@@ -239,7 +239,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
   background-repeat: no-repeat;
 }
 /* Base-copy twins of the styles.css tile-sprite rules (setPortraitIcon). */
@@ -516,7 +516,7 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   8 columns x 8 rows. background-size:800%/800% makes each cell exactly
+   8 columns x 10 rows. background-size:800%/1000% makes each cell exactly
    fill the element regardless of its box size, so background-position is
    expressed as fractions (c/6, r/6) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
@@ -525,7 +525,7 @@ canvas {
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
+  background-size:800% 1000%; /* one 8x10 master sheet — see the labeled placeholder cells */
 }
 /* Cells that classic-style was missing (were falling back to 0% 0% = villager):
    the ram, Market, and Trade Cart — plus the spare cells, kept in sync with
@@ -1699,7 +1699,7 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
 }
 #tooltip .tip-cost-icon {
   display: inline-block;
@@ -1707,7 +1707,7 @@ canvas {
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
   flex-shrink: 0;
 }
 #tooltip .tip-cost-label {
@@ -1893,7 +1893,7 @@ canvas {
    out every multi-select/garrison icon. */
 #sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
   background-repeat: no-repeat;
 }
 #sel-name{
@@ -2147,6 +2147,29 @@ canvas {
   width: 52px;
   height: 52px;
 }
+/* Research techs are plain AoE2-style COMMAND BUTTONS in the grid — NO scroll, no
+   parchment. They look and behave exactly like the train buttons: icon only, the
+   standard .act-btn frame + hover, cost shown in the tooltip (`.cost` is hidden on
+   every classic command button). The box just lets them wrap in the grid. */
+#actions .research-box{
+  grid-column: 1 / -1;
+  display:flex; flex-wrap:wrap; gap:3px;
+  margin:2px 0 0;
+}
+/* shared DOM wraps each entry in .research-item (icon button + a price sibling);
+   classic hides the price (shown in the tooltip, AoE2-style), so the item is just
+   the icon button. (The price sits OUTSIDE .act-btn now, so the base
+   `.act-btn .cost{display:none}` no longer reaches it — hide it here.) */
+.research-item{ display:flex; flex-direction:column; align-items:center; }
+.research-item .cost{ display:none; }
+.research-item.upg-busy{ opacity:0.42; filter:grayscale(0.6); pointer-events:none; }
+.act-btn.research-tile{ min-width:0; width:52px; height:52px; }   /* same as a train button */
+/* .research-icon just fills the button (it anchors the research progress fill). */
+.act-btn.research-tile .research-icon{ position:relative; width:100%; height:100%; }
+.act-btn.research-tile .btn-emoji.sprite-icon{ width:100%; height:100%; }
+.research-progress-fill{ background:#2f9e3f; }   /* green (matches the mobile skin) */
+/* BUSY: one research at a time — the OTHER tiles + paused train buttons dim. */
+.act-btn.upg-busy{ opacity:0.42; filter:grayscale(0.6); pointer-events:none; }
 #minimap-wrap{
   top: auto;
   /* AoE2 places the minimap flush against the command bar, filling its

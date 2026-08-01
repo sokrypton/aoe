@@ -262,7 +262,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
   background-repeat: no-repeat;
 }
 /* Sprite tiles render on an inner clipper>img pair (setPortraitIcon,
@@ -508,7 +508,7 @@ canvas {
   display: flex;
   /* single row: overflow scrolls horizontally — swipe on touch, drag or
      mouse-wheel on desktop (see the drag-to-scroll handlers in ui.js). The
-     thin scrollbar below makes the overflow discoverable. */
+     research scroll band lives INSIDE the bar (clipped to it, no bleed). */
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
@@ -575,6 +575,118 @@ canvas {
   transition: all 0.15s ease-in-out;
   -webkit-tap-highlight-color:transparent;
 }
+/* Research box: a flat piece of OLD PAPER — matte parchment band spanning the
+   bar's cross-axis END TO END (full HEIGHT in the horizontal row, edge to edge
+   via the negative margin cancelling #actions' padding; full WIDTH in the
+   landscape left-rail). Holds the research tiles, set apart from the wooden
+   unit-train buttons so ACTIONS read distinctly from UNITS. FLAT: only a faint
+   edge-darken for an aged look — no sheen, emboss, or gloss. Square ends (no
+   radius): sprite scroll-rollers will cap left/right later. */
+.research-box{
+  position:relative;
+  flex-shrink:0; align-self:center;    /* size to the tiles (shorter than the bar) … */
+  margin:0 4px 4px;                    /* … nudged down a bit while keeping a little space below the scroll */
+  display:flex; flex-direction:row; align-items:center; gap:4px;
+  padding:0 18px;                       /* room for the roll caps (::before/::after) at each end */
+  /* SCROLL = CSS paper gradient (matched to the sprite paper tone) + sheet roll
+     caps (::before/::after). The paper is inset so the roll CYLINDERS protrude
+     past its top/bottom, meeting the roll's own paper edge. --paper-top /
+     --paper-bot are the two TWEAK KNOBS: how far the paper sits below the band top
+     / above the band bottom (i.e. how much the rolls protrude at each end). */
+  --paper-top:3.3px;
+  --paper-bot:0px;
+  background-image:linear-gradient(180deg, #f0dec5 0%, #ecd8bb 50%, #e7d2b2 100%);
+  background-repeat:no-repeat;
+  background-position:center var(--paper-top);
+  background-size:calc(100% - 28px) calc(100% - var(--paper-top) - var(--paper-bot));   /* width tucks under the L/R caps */
+  color:#4a3410;
+}
+/* roll caps: the scroll-roll cell (6,9) — the roll PLUS its cast shadow and the
+   paper transition, so it fades into the gradient. Fixed width, full band height;
+   the right cap is the same cell mirrored. */
+.research-box::before, .research-box::after{
+  content:''; position:absolute; top:0; bottom:0; width:18px; z-index:0;
+  background-image:url('sprites.png'); background-size:800% 1000%;
+  background-position:85.7143% 100%;    /* scroll-roll cell (6,9) */
+  background-repeat:no-repeat;
+}
+.research-box::before{ left:0; }
+.research-box::after{ right:0; transform:scaleX(-1); }
+/* Each research entry is a COLUMN (.research-item): an icon BUTTON with the price
+   as a SIBLING below it — NOT inside the button. So hover/click land on the icon
+   only, never the price. */
+.research-item{
+  flex-shrink:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:1px;
+  min-width:calc(var(--tile-size) - 12px);   /* icon width; grows if a wide multi-resource price needs it */
+  /* FIXED height (icon + top pad + a reserved price row) so the band DOESN'T shrink
+     for a price-less tile — e.g. the Advance-Age tile mid-research, which otherwise
+     shortened the paper and opened a gap at the top. Top pad seats the icon; the
+     reserved row below holds the price (or stays empty, keeping the height). */
+  height:calc(var(--tile-size) + 8px);
+  padding-top:7px;
+  color:#4a3410;
+}
+.research-item.upg-busy{ opacity:0.42; filter:grayscale(0.6); pointer-events:none; }   /* dim while the building is busy on another research */
+/* the icon BUTTON: icon-sized, frameless (drawn icon art is the whole button; the
+   scroll paper is its only backing). Hover/click cover exactly this — nothing else. */
+.act-btn.research-tile{
+  min-width:0; width:calc(var(--tile-size) - 12px); height:calc(var(--tile-size) - 12px);
+  padding:0; background:transparent; border:none; box-shadow:none;
+}
+.act-btn.research-tile:hover, .act-btn.research-tile:active{ background:none; border:none; box-shadow:none; }
+/* icon square fills the button, anchors the progress fill, and takes the hover
+   tint (the button IS the icon; the price is a sibling outside it). */
+.act-btn.research-tile .research-icon{
+  position:relative; width:100%; height:100%; border-radius:3px; overflow:hidden;
+}
+.act-btn.research-tile:hover .research-icon, .act-btn.research-tile:active .research-icon{
+  box-shadow: inset 0 0 0 999px rgba(255,235,160,0.16);   /* tint painted over the sprite */
+}
+.act-btn.research-tile .btn-emoji.sprite-icon{ width:100%; height:100%; margin:0; }
+/* price BELOW the button — dark ink on the paper, compact chips so a 2-resource
+   cost stays narrow. */
+.research-item .cost.cost-chips{
+  display:flex; flex-direction:row; justify-content:center; white-space:nowrap;
+  position:static; margin:0; color:#4a3410; text-shadow:none; font-size:9px; font-weight:700; gap:2px;
+}
+.research-item .cost-chip{ background:none; border:none; padding:0; gap:1px; text-shadow:none; }
+.research-item .cost-chip .res-mini-icon{ width:8px; height:8px; }
+/* research progress fill: GREEN — yellow was invisible on the cream paper. */
+.research-progress-fill{ background:#2f9e3f; }
+/* Landscape mobile: #bottom is a vertical LEFT RAIL and #actions stacks in a
+   column, so the paper band runs VERTICALLY — full WIDTH end to end (negative
+   H-margin cancels #actions' 8px padding), tiles stacked; the plain ends (for
+   future sprite rollers) are now top/bottom. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .research-box{
+    flex-direction:column; align-self:stretch;   /* fill the rail width, stays WITHIN it (no bleed) */
+    margin:4px 3px; padding:18px 4px; gap:6px;    /* top/bottom room for the roll caps */
+    /* VERTICAL scroll: gradient paper down the rail (inset top/bottom so the rolls'
+       rounded ends sit on the bar, not on a cream rectangle); rolls are TOP/BOTTOM
+       caps (rotated roll cell) — the bottom bar's composition turned 90°. */
+    /* rail rolls are TOP/BOTTOM, so the protrusion knobs here are LEFT/RIGHT. */
+    --paper-left:3.3px;
+    --paper-right:0px;
+    background-image:linear-gradient(90deg, #f0dec5 0%, #ecd8bb 50%, #e7d2b2 100%);   /* 90°: cross-shading runs L→R, matching the rotated rolls */
+    background-repeat:no-repeat;
+    background-position:var(--paper-left) center;
+    background-size:calc(100% - var(--paper-left) - var(--paper-right)) calc(100% - 28px);   /* height tucks under the top/bottom caps */
+  }
+  /* roll caps run TOP and BOTTOM here — full width, from the rotated roll cell. */
+  .research-box::before, .research-box::after{
+    left:0; right:0; top:auto; bottom:auto; width:auto; height:18px;
+    background-position:100% 100%;               /* scroll-roll-h cell (7,9) */
+  }
+  .research-box::before{ top:0; transform:scaleY(-1); }   /* top roll: opening faces DOWN */
+  .research-box::after{ bottom:0; transform:none; }        /* bottom roll: opening faces UP */
+  /* the horizontal bar's top-pad + fixed height aren't needed when items STACK in
+     the scrolling rail — drop them so there's no dead space above/below each icon. */
+  .research-item{ padding-top:0; height:auto; }
+}
+/* BUSY: a building researches one thing at a time — the OTHER tiles and the
+   paused train buttons dim (pointer-events:none swallows the click). */
+.act-btn.upg-busy{ opacity:0.42; filter:grayscale(0.6); pointer-events:none; }
 .act-btn:hover, .act-btn:active{
   background: linear-gradient(180deg, #5c4028 0%, #362413 100%);
   border-color:#d9b45e;
@@ -667,9 +779,9 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   8 columns x 8 rows. background-size:800%/800% makes each cell exactly
+   8 columns x 10 rows. background-size:800%/1000% makes each cell exactly
    fill the element regardless of its box size, so background-position is
-   expressed as fractions (c/7, r/7) rather than fixed pixel offsets — the
+   expressed as fractions (c/7, r/9) rather than fixed pixel offsets — the
    same .icon-* class works at any display size (button icon, portrait, etc).
    The original 7x7 art occupies cells (0..6, 0..6) unchanged; column 7 and
    row 7 are the new cells: icon-tradecart (7,0, "cart" placeholder) plus
@@ -680,7 +792,7 @@ canvas {
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:800% 800%; /* one 8x8 master sheet — see the labeled placeholder cells */
+  background-size:800% 1000%; /* one 8x10 master sheet — see the labeled placeholder cells */
 }
 /* New spare cells (empty labeled boxes) — column 7 (rows 1-7) then row 7
    (cols 0-6). Wire any of these up by renaming the class + drawing its cell. */
@@ -1869,7 +1981,7 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
 }
 #tooltip .tip-cost-icon {
   display: inline-block;
@@ -1877,7 +1989,7 @@ canvas {
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 800%;
+  background-size: 800% 1000%;
   flex-shrink: 0;
 }
 #tooltip .tip-cost-label {
@@ -2223,7 +2335,8 @@ canvas {
      readout) — the min-width:601 expand rule doesn't fit a ~96px column. */
   #sel-info.multi-select.single-sel #sel-stats { display: none; }
 
-  /* Actions below: single centered column, scrolls vertically */
+  /* Actions below: single centered column, scrolls vertically. The research band
+     lives INSIDE the rail (clipped to it, no bleed). */
   #actions {
     flex: 1 1 auto;
     flex-direction: column;

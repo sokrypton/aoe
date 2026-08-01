@@ -126,7 +126,7 @@ function startGame(difficulty){
     console.warn('Music failed to start:', err);
   }
   
-  let menu=document.getElementById('tutorial');
+  let menu=byId('tutorial');
   if(menu)menu.style.display='none';
   showMsg('Difficulty: '+AI_LEVELS[aiDifficulty].name);
 }
@@ -223,9 +223,9 @@ function applyGameSettings(){
 // are visible for the current game state; menuPanel decides which of the
 // two panels is showing. Every path that opens the menu resets to 'main'.
 function showMenuPanel(which){
-  let main = document.getElementById('menu-panel-main');
-  let opts = document.getElementById('menu-panel-options');
-  let lobby = document.getElementById('menu-panel-lobby');
+  let main = byId('menu-panel-main');
+  let opts = byId('menu-panel-options');
+  let lobby = byId('menu-panel-lobby');
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
@@ -239,7 +239,7 @@ function showMenuPanel(which){
 // doesn't affect offsetWidth/Height), so it must re-run whenever the
 // menu's content changes height (panel switch, host status/QR, menu mode).
 function scaleMenuToFit(){
-  let wrap = document.getElementById('menu-scale-wrap');
+  let wrap = byId('menu-scale-wrap');
   if (!wrap) return;
   wrap.style.transform = 'none';
   let w = wrap.offsetWidth, h = wrap.offsetHeight;
@@ -257,7 +257,7 @@ window.addEventListener('orientationchange', scaleMenuToFit);
 // changes menu state funnels through showMenuPanel/applyMenuMode, plus the
 // explicit MP entry points below.
 function updateUiSwitchVisibility(){
-  let row = document.getElementById('ui-switch-row');
+  let row = byId('ui-switch-row');
   if (!row) return;
   let preGame = (window.menuMode === undefined || window.menuMode === 'prestart')
     && !netRole && !gameStarted && menuPanelIsMain();
@@ -269,11 +269,11 @@ function updateUiSwitchVisibility(){
   row.style.display = (preGame && !wrongAudience) ? '' : 'none';
   // The disclaimer shares the pristine-pre-game-main-menu condition (all
   // audiences) — it disappears on Options / Resume / in-game / any MP panel.
-  let disc = document.getElementById('menu-disclaimer');
+  let disc = byId('menu-disclaimer');
   if (disc) disc.style.display = preGame ? '' : 'none';
 }
 function menuPanelIsMain(){
-  let opts = document.getElementById('menu-panel-options');
+  let opts = byId('menu-panel-options');
   return !opts || opts.style.display === 'none';
 }
 
@@ -346,12 +346,12 @@ function scheduleMenuRescale(){
 }
 
 function showMpStatus(text, link){
-  let panel = document.getElementById('mp-status-panel');
-  let textEl = document.getElementById('mp-status-text');
-  let linkRow = document.getElementById('mp-link-row');
-  let linkBox = document.getElementById('mp-link-box');
-  let qrEl = document.getElementById('mp-qr');
-  let noteEl = document.getElementById('mp-share-note');
+  let panel = byId('mp-status-panel');
+  let textEl = byId('mp-status-text');
+  let linkRow = byId('mp-link-row');
+  let linkBox = byId('mp-link-box');
+  let qrEl = byId('mp-qr');
+  let noteEl = byId('mp-share-note');
   if (!panel) return;
   panel.style.display = 'block';
   if (textEl) textEl.textContent = text;
@@ -398,10 +398,10 @@ function showMpStatus(text, link){
 // look, different title/text, and the spinner only makes sense for the
 // "trying to reconnect" case.
 function showMpOverlay(title, text, spinner){
-  let el = document.getElementById('mp-disconnect-overlay');
-  let titleEl = document.getElementById('mp-disconnect-title');
-  let textEl = document.getElementById('mp-disconnect-text');
-  let spinnerEl = document.getElementById('mp-disconnect-spinner');
+  let el = byId('mp-disconnect-overlay');
+  let titleEl = byId('mp-disconnect-title');
+  let textEl = byId('mp-disconnect-text');
+  let spinnerEl = byId('mp-disconnect-spinner');
   if (!el) return;
   if (titleEl) titleEl.textContent = title;
   if (textEl) textEl.textContent = text;
@@ -418,7 +418,7 @@ function hideMpOverlay(){
 }
 function showDisconnectOverlay(text, showKick){
   showMpOverlay('Connection Lost', text, true);
-  let kickBtn = document.getElementById('mp-disconnect-kick');
+  let kickBtn = byId('mp-disconnect-kick');
   if (kickBtn) kickBtn.style.display = showKick ? '' : 'none';
 }
 function hideDisconnectOverlay(){
@@ -433,9 +433,9 @@ function hideDisconnectOverlay(){
 function showSeatPicker(seats){
   if (mpReconnectTimer) { clearTimeout(mpReconnectTimer); mpReconnectTimer = null; } // stop the blind retry loop
   hideDisconnectOverlay();
-  let el = document.getElementById('mp-seat-picker');
-  let list = document.getElementById('mp-seat-picker-list');
-  let txt = document.getElementById('mp-seat-picker-text');
+  let el = byId('mp-seat-picker');
+  let list = byId('mp-seat-picker-list');
+  let txt = byId('mp-seat-picker-text');
   if (!el || !list) return;
   if (txt) txt.textContent = 'Pick your player to reconnect:';
   list.innerHTML = '';
@@ -456,9 +456,9 @@ function claimSeat(seat){
   sendToHost({ type: 'claim-seat', seat, token: mpClientToken(), tab: mpTabId(), name: (localPlayerName || '').trim() });
   // Await welcome (success) or a fresh seat-list (we lost the race) — disable
   // the buttons meanwhile so a double-tap can't fire two claims.
-  let list = document.getElementById('mp-seat-picker-list');
+  let list = byId('mp-seat-picker-list');
   if (list) list.querySelectorAll('button').forEach(b => { b.disabled = true; });
-  let txt = document.getElementById('mp-seat-picker-text');
+  let txt = byId('mp-seat-picker-text');
   if (txt) txt.textContent = 'Reconnecting…';
 }
 
@@ -523,7 +523,7 @@ function restoreMenuForMatch(){
   show('start-row', true);
   show('mp-status-panel', false);
   show('start-game-btn', false);
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   // Options + Help ARE available mid-match. Explicitly re-shown — a
   // guest's enterGuestJoinMode broad-hid every .menu-button-container,
   // including the ones inside #misc-row.
@@ -549,13 +549,13 @@ function restoreMenuForMatch(){
   // pre-game screen) — now that one genuinely does, show it back. HOST
   // only in multiplayer: a guest can't reload+re-host a save (it rejoins
   // the host's reload by token instead), so offering it would be a lie.
-  let saveBtn = document.getElementById('save-game-btn');
+  let saveBtn = byId('save-game-btn');
   if (saveBtn) saveBtn.style.display = netRole === 'guest' ? 'none' : '';
   show('load-game-btn', false);
 }
 
 function copyMpLink(){
-  let box = document.getElementById('mp-link-box');
+  let box = byId('mp-link-box');
   if (!box) return;
   box.select();
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -608,7 +608,7 @@ function onHostClicked(){
   }
   applyAudioSettings();
 
-  let hostBtn = document.getElementById('host-game-btn');
+  let hostBtn = byId('host-game-btn');
   if (hostBtn) hostBtn.disabled = true;
   showMpStatus('Starting host session…');
   show('mp-cancel-btn', true);
@@ -619,7 +619,7 @@ function onHostClicked(){
   // too — disabling it alone still left it sitting there grayed out, which
   // reads as "you could still click this," not "you're already hosting."
   // Everything hidden here is restored by cancelHosting() below.
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   if (menu) {
     menu.querySelectorAll('#save-load-row, #start-row, #mp-row, #misc-row').forEach(el => { el.style.display = 'none'; });
   }
@@ -725,15 +725,15 @@ function cancelHosting(){
   if (AI_STATES && !AI_STATES[1]) AI_STATES[1] = freshAIState(1);
   show('mp-status-panel', false);
   show('mp-cancel-btn', false);
-  let qrEl = document.getElementById('mp-qr');
+  let qrEl = byId('mp-qr');
   if (qrEl) { qrEl.style.display = 'none'; qrEl.innerHTML = ''; }
-  let hostBtn = document.getElementById('host-game-btn');
+  let hostBtn = byId('host-game-btn');
   if (hostBtn) hostBtn.disabled = false;
   // Restore exactly the rows onHostClicked hid, then let applyMenuMode
   // re-derive per-button visibility for wherever we actually are (hosting
   // from a loaded save means a match is live behind the menu → 'ingame').
   ['save-load-row', 'start-row', 'mp-row', 'misc-row'].forEach(id => {
-    let el = document.getElementById(id);
+    let el = byId(id);
     if (el) el.style.display = '';
   });
   showMenuPanel('main');
@@ -800,7 +800,7 @@ window.onNetConnectionOpen = function(seat){
         lockstepResetState();
         DET.enabled = true;
         lockstepResumeGuest(seat);
-        let menu = document.getElementById('tutorial');
+        let menu = byId('tutorial');
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
         recomputeGamePaused();
@@ -868,7 +868,7 @@ window.onNetConnectionClosed = function(){
     window.__mpSession.inLobby = false;
     lobbyState = null;
     if (typeof showMenuPanel === 'function') showMenuPanel('main');
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'flex';
     showMpStatus('The host has disconnected.');
     show('mp-retry-btn', true);
@@ -1016,7 +1016,7 @@ onNetMessage((msg) => {
       : 'This game is full.';
     window.__mpSession.inLobby = false;
     lobbyState = null;
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'flex';
     if (typeof showMenuPanel === 'function') showMenuPanel('main');
     hideDisconnectOverlay();
@@ -1096,7 +1096,7 @@ function enterGuestJoinMode(hostPeerId){
   // (lobby identity) and the authoritative team in lockstep-start/-resume's
   // yourTeam (js/lockstep.js).
   window.__mpSession.hostPeerId = hostPeerId; // remembered for attemptReconnect() above
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
   // none of it applies to a guest, who inherits the host's match settings.
   if (menu) {
@@ -1132,7 +1132,7 @@ function enterHostResumeMode(peerId){
     }
   } catch (e) {}
   setTimeout(updateUiSwitchVisibility, 0); // after netRole set by hostSession below
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   if (menu) {
     menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
@@ -1161,7 +1161,7 @@ function enterHostResumeMode(peerId){
 // — otherwise "Could not connect" would be a dead end with a page refresh
 // as the only recourse.
 function attemptGuestJoin(){
-  let retryBtn = document.getElementById('mp-retry-btn');
+  let retryBtn = byId('mp-retry-btn');
   if (retryBtn) retryBtn.style.display = 'none';
   showMpStatus('Connecting to host…');
   joinSession(window.__mpSession.hostPeerId).catch(err => {
@@ -1185,24 +1185,24 @@ function handleStartButton(){
 }
 
 function applyMenuMode(mode){
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   let difficultyRow = menu ? menu.querySelector('.setup-grid .setup-row:first-child') : null;
-  let startBtn = document.getElementById('start-game-btn');
-  let resumeBtn = document.getElementById('resume-game-btn');
-  let mpRow = document.getElementById('mp-row');
-  let saveBtn = document.getElementById('save-game-btn');
-  let loadBtn = document.getElementById('load-game-btn');
+  let startBtn = byId('start-game-btn');
+  let resumeBtn = byId('resume-game-btn');
+  let mpRow = byId('mp-row');
+  let saveBtn = byId('save-game-btn');
+  let loadBtn = byId('load-game-btn');
   if (!menu) return;
   window.menuMode = mode;
 
   // The VICTORY/DEFEAT banner block only exists in 'gameover' mode.
-  let banner = document.getElementById('game-over-banner');
+  let banner = byId('game-over-banner');
   if (banner) {
     banner.style.display = mode === 'gameover' ? '' : 'none';
     if (mode === 'gameover') {
       let iWon = didIWin();
-      let title = document.getElementById('game-over-title');
-      let sub = document.getElementById('game-over-sub');
+      let title = byId('game-over-title');
+      let sub = byId('game-over-sub');
       if (title) {
         title.textContent = iWon ? '🏆 Victory!' : '💀 Defeat';
         title.className = iWon ? 'game-over-victory' : 'game-over-defeat';
@@ -1228,7 +1228,7 @@ function applyMenuMode(mode){
       startBtn.textContent = (liveMp && netRole === 'host') ? '🔄 Rematch' : '🔄 Play Again';
     }
     if (liveMp && netRole === 'guest') {
-      let sub = document.getElementById('game-over-sub');
+      let sub = byId('game-over-sub');
       if (sub) sub.textContent = 'Waiting for the host to start a rematch…';
     }
     if (resumeBtn) resumeBtn.style.display = 'none';
@@ -1281,7 +1281,7 @@ function applyMenuMode(mode){
 }
 
 function openRestartMenu(){
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   if (!menu) return;
   menu.style.display = 'flex';
   localMenuOpen = true;
@@ -1298,6 +1298,9 @@ function restartGame(difficulty){
   entitiesById.clear();
   corpses = [];
   selected = [];
+  // The undo entry points at last match's entities — a stale 'select' entry
+  // would otherwise light the Undo arrow on a brand-new game.
+  if (window.__clearUndo) window.__clearUndo();
   tick = 0;
   bumpSimGen(); // tick rewound to 0 — invalidate every registered sim cache (js/core.js)
   scoutedByMe.clear(); // fresh map, fresh fog memory — see js/core.js
@@ -1340,6 +1343,8 @@ function restartGame(difficulty){
   teamAlliance = defaultAlliances(netRole != null); // [0,0,1,1] for SP 2v2, else identity (js/core.js)
   resetDefeatedTeams();
   resetTeamAge(); // everyone starts in the Dark Age (js/core.js)
+  resetTeamTechs(); // fresh per-team researched-tech bitmask (js/core.js) — MUST accompany
+                    // resetTeamAge, or applyTech bails on null teamTechs and NO upgrade ever applies
   // Cosmetic seat labels/colors back to defaults (identity palette, no names).
   // Like teamControllers above, the lobby/lockstep paths re-apply the agreed
   // names+colors AFTER restartGame — see hostStartLockstepMatch / the
@@ -1356,7 +1361,7 @@ function restartGame(difficulty){
   window.playedGameOverSound = false;
   window.__gameOverBannerDismissed = false; // fresh match → banner armed again
   window.seeMapMode = false; // exit the finished-map review mode
-  { let sm = document.getElementById('see-map-btn'); if (sm) sm.style.display = 'none'; }
+  { let sm = byId('see-map-btn'); if (sm) sm.style.display = 'none'; }
 
   // Re-generate map and spawn starts
   init();
@@ -1372,7 +1377,7 @@ function toggleCameraFollow(){
 }
 
 function toggleHelp(){
-  let o=document.getElementById('help-overlay');
+  let o=byId('help-overlay');
   if(o)o.style.display=(o.style.display==='none'||o.style.display==='')?'flex':'none';
 }
 
@@ -1406,7 +1411,7 @@ function seeMap(){
   // revealed above is actually seen (otherwise buildings keep their stale
   // fog-level-0 and stay hidden).
   if (typeof invalidateBuildingFogMemo === 'function') invalidateBuildingFogMemo();
-  let btn = document.getElementById('see-map-btn');
+  let btn = byId('see-map-btn');
   if (btn) btn.style.display = 'none';
 }
 
@@ -1434,14 +1439,14 @@ async function toggleFullscreen(){
 }
 
 window.addEventListener('fullscreenchange', ()=>{
-  let btn = document.getElementById('fs-btn');
+  let btn = byId('fs-btn');
   if (btn) btn.dataset.tipDesc = isFullscreen()
     ? 'Exit fullscreen mode.'
     : 'Enter fullscreen mode.';
 });
 
 function toggleMenu(){
-  let menu = document.getElementById('tutorial');
+  let menu = byId('tutorial');
   if (menu) {
     if (menu.style.display === 'none' || menu.style.display === '') {
       menu.style.display = 'flex';
@@ -1580,6 +1585,7 @@ function gameLoop(){
   const RENDER_MIN_MS = isMobile ? 1000 / 30 - 2 : 0; // -2ms slack so a 33.4ms rAF gap doesn't drop to 20fps
   if (now - window.__lastRenderAt >= RENDER_MIN_MS) {
     window.__lastRenderAt = now;
+    if (gameStarted) syncCameraFollow(); // after sim ticks — a pre-tick recenter vibrates the followed unit
     render();
     updateUI();
   }
@@ -1668,7 +1674,7 @@ if (joinHostId) {
 // guest who opened a ?join= link (or a host resuming via ?host=) lands in
 // the other skin still connected to the same match flow.
 (function wireUiSwitchLink(){
-  let link = document.getElementById('ui-switch-link');
+  let link = byId('ui-switch-link');
   if (!link) return;
   let target = location.pathname.endsWith('classic.html') ? 'index.html' : 'classic.html';
   link.href = target + location.search;

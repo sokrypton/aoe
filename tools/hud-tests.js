@@ -471,11 +471,11 @@ function pageSuite() {
     stage();
     createBuilding('MARKET', 10, 10, 0);
     resourceStore(0).food = 1000; resourceStore(0).gold = 0;
-    teamAge[0] = 2;
+    teamAge[0] = 2; applyTech(0, 'guilds'); // Castle + grant Guilds (techs are researched now, not auto-granted at age)
     let p2 = marketPricesFor(0).food;
     execCommand({ kind: 'market-trade', dir: 'sell', resType: 'food' }, 0);
     assert(resourceStore(0).gold === Math.floor(p2 * 85 / 100), 'Castle-age (Guilds) sell should return 85%, got ' + resourceStore(0).gold);
-    teamAge[0] = 0;
+    teamAge[0] = 0; teamTechs[0] = 0;
   });
 
   T('hud: Watch Tower icon is age-specific (Feudal variant, Castle keeps base) — portrait + build button', () => {
@@ -984,6 +984,8 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+
+
   return results;
 }
 
@@ -994,6 +996,20 @@ function pageSuite() {
     const base = 'http://127.0.0.1:' + srv.address().port;
     browser = await launchBrowser(chromium);
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+    // Aux pages (classic.html) used to be opened bare, so a JS error there
+    // passed the suite silently — only the index page below had listeners.
+    const auxErrors = [];
+    const newAuxPage = async () => {
+      const p = await ctx.newPage();
+      p.on('pageerror', e => auxErrors.push('pageerror: ' + String(e.message || e)));
+      p.on('console', m => {
+        if (m.type() !== 'error') return;
+        const t = m.text();
+        if (/Failed to load resource|favicon\.ico/i.test(t)) return;
+        auxErrors.push('console.error: ' + t.slice(0, 180));
+      });
+      return p;
+    };
     const page = await ctx.newPage();
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(String(e.message || e)));
@@ -1115,6 +1131,301 @@ function pageSuite() {
       if (!r.cmd) throw new Error('no command captured');
       assertEq(r.cmd.tileX, 35, 'tileX'); assertEq(r.cmd.tileY, 30, 'tileY');
       assertEq(r.sel, 1, 'selection must be KEPT after a walk order');
+    });
+
+    await tapT('desktop-tap: villager tapping a HEALTHY own building selects it (villager drops out)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=h.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({sel:selected.length, t:selected[0]&&selected[0].btype, cmds:window.__cmds.length})`);
+      assertEq(r.t, 'HOUSE', 'a building with no work to offer becomes the selection');
+      assertEq(r.sel, 1, 'selection size');
+      assertEq(r.cmds, 0, 'no walk order is issued at it');
+    });
+
+    await tapT('desktop-tap: villager tapping a DAMAGED own building repairs it and does NOT select it', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=Math.floor(h.maxHp/2);
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({selB:selected.some(s=>s.type==='building'), cmd:window.__cmds.find(c=>c.kind==='command')})`);
+      if (!r.cmd) throw new Error('no repair command captured');
+      assertEq(r.selB, false, 'a repair target must NOT steal the selection');
+    });
+
+    await tapT('desktop-tap: SOLDIER tapping an own drop-off selects it (no villager = no work)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        const c=createBuilding('LCAMP',35,30,0); c.complete=true; c.hp=c.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5, 30.5) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`({t:selected[0]&&selected[0].btype, sel:selected.length})`);
+      assertEq(r.t, 'LCAMP', 'a drop-off is work only for villagers; a soldier just selects it');
+      assertEq(r.sel, 1, 'selection size');
+    });
+
+    await tapT('undo: a plain WALK is NOT undoable (the arrow still means deselect)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const m=createUnit('militia',30,30,0); selected=[m];
+        window.__pts=(scr)=>({ g: scr(38.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`({sel:selected.length, avail:window.undoAvailable()})`);
+      assertEq(r.sel, 1, 'a walk keeps the selection');
+      assertEq(r.avail, false, 'a walk records no undo — Back must still just deselect');
+    });
+
+    await tapT('undo: a committed TASK sends the villager BACK and re-selects it', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
+        window.__pts=(scr)=>({ g: scr(38.5, 30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`(()=>{
+        const avail=window.undoAvailable();
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return {avail, back:back&&{x:back.tileX,y:back.tileY}, sel:selected.length,
+                selId:selected[0]&&selected[0].id, vid:window.__vid, still:window.undoAvailable()};
+      })()`);
+      assertEq(r.avail, true, 'a gather task IS undoable');
+      if(!r.back) throw new Error('undo issued no return command');
+      assertEq(r.back.x, 30, 'returns to the ORIGINAL tile x');
+      assertEq(r.back.y, 30, 'returns to the ORIGINAL tile y');
+      assertEq(r.selId, r.vid, 'the villager is re-selected by the undo');
+      assertEq(r.still, false, 'single-level undo is consumed on use');
+    });
+
+    await tapT('undo: selecting is an action — undo restores the PREVIOUS selection', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('militia',30,30,0); const b=createUnit('militia',34,30,0);
+        selected=[a]; window.__a=a.id; window.__b=b.id;
+        window.__pts=(scr)=>({ b: scr(34.2, 30.2) });`));
+      await page.mouse.click(pts.b.x, pts.b.y);
+      const r = await page.evaluate(`(()=>{
+        const afterTap=selected[0]&&selected[0].id;
+        window.undoLastAction();
+        return {afterTap, restored:selected[0]&&selected[0].id, n:selected.length, a:window.__a, b:window.__b};
+      })()`);
+      assertEq(r.afterTap, r.b, 'tapping the other unit selects it');
+      assertEq(r.n, 1, 'selection size after undo');
+      assertEq(r.restored, r.a, 'undo restores the previously selected unit');
+    });
+
+    await tapT('undo: a placed foundation is cancelled, and undo lapses once it is BUILT', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const armed=window.undoAvailable();
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        const withFoundation=window.undoAvailable();
+        f.complete=true;
+        return {armed, withFoundation, afterBuilt:window.undoAvailable()};
+      })()`);
+      assertEq(r.withFoundation, true, 'undo is available while the foundation stands');
+      assertEq(r.afterBuilt, false, 'undo lapses once the building is finished');
+      const c = await page.evaluate(`(()=>{
+        const f=entities.find(e=>e.type==='building'&&e.btype==='HOUSE');
+        if(f) f.complete=false;   // the step above marked it built; put it back
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(x=>x.kind==='delete-units');
+        return {del: del&&del.unitIds, fid: f&&f.id};
+      })()`);
+      if(!c.del) throw new Error('undo issued no delete-units for the foundation');
+      assertEq(c.del[0], c.fid, 'cancels the foundation that was placed');
+    });
+
+    await tapT('undo: cancelling a placement also sends the builder back to its prior task', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        v.task='chop'; v.gatherX=26; v.gatherY=30;      // was chopping before we sent it to build
+        placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(c=>c.kind==='delete-units');
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return {del:!!del, back:back&&{x:back.tileX,y:back.tileY,ids:back.unitIds},
+                sel:selected.length, selId:selected[0]&&selected[0].id, vid:window.__vid};
+      })()`);
+      assertEq(r.del, true, 'the foundation is cancelled');
+      if(!r.back) throw new Error('builder was left standing at the cancelled site');
+      assertEq(r.back.x, 26, 'villager is sent back to its PRIOR GATHER tile x');
+      assertEq(r.back.y, 30, 'villager is sent back to its PRIOR GATHER tile y');
+      assertEq(r.selId, r.vid, 'and is re-selected');
+    });
+
+    await tapT('undo: a GROUP task returns every unit to its OWN tile (shape kept)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('villager',28,28,0), b=createUnit('villager',31,29,0), c=createUnit('villager',29,32,0);
+        selected=[a,b,c]; window.__ids=[a.id,b.id,c.id];
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
+        window.__pts=(scr)=>({ g: scr(38.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);
+      const r = await page.evaluate(`(()=>{
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const cs=window.__cmds.filter(c=>c.kind==='command');
+        return {n:cs.length, at:cs.map(c=>c.unitIds[0]+'@'+c.tileX+','+c.tileY).sort(),
+                ids:window.__ids, sel:selected.length};
+      })()`);
+      assertEq(r.n, 3, 'one command PER UNIT, not one group order');
+      const want = [r.ids[0]+'@28,28', r.ids[1]+'@31,29', r.ids[2]+'@29,32'].sort();
+      assertEq(JSON.stringify(r.at), JSON.stringify(want), 'each unit returns to its own original tile');
+      assertEq(r.sel, 3, 'the whole group is re-selected');
+    });
+
+    await tapT('undo: a GROUP selection is restored whole', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const a=createUnit('militia',28,28,0), b=createUnit('militia',31,29,0);
+        const c=createUnit('militia',34,30,0);
+        selected=[a,b]; window.__ab=[a.id,b.id];
+        window.__pts=(scr)=>({ c: scr(34.2,30.2) });`));
+      await page.mouse.click(pts.c.x, pts.c.y);
+      const r = await page.evaluate(`(()=>{
+        const afterTap=selected.length;
+        window.undoLastAction();
+        return {afterTap, ids:selected.map(s=>s.id).sort(), ab:window.__ab.slice().sort()};
+      })()`);
+      assertEq(r.afterTap, 1, 'tapping one unit collapses the selection to it');
+      assertEq(JSON.stringify(r.ids), JSON.stringify(r.ab), 'undo restores BOTH previously selected units');
+    });
+
+    await tapT('undo: a new match does not inherit the previous one\'s undo', async () => {
+      const r = await page.evaluate(tapStage(`
+        const a=createUnit('militia',28,28,0), b=createUnit('militia',31,29,0);
+        selected=[a]; window.__pts=(scr)=>({ b: scr(31.2,29.2) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(31.2,29.2); handleTap(g.x,g.y,false);   // a selection change = an undoable action
+        const before = window.undoAvailable();
+        restartGame('standard');
+        return { before, after: window.undoAvailable() };
+      })()`);
+      assertEq(r.before, true, 'a selection change arms the undo');
+      assertEq(r.after, false, 'restarting the match clears it (no stale entry from last game)');
+    });
+
+    await tapT('undo: a wall DRAG cancels every foundation it laid', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        v.task='chop'; v.gatherX=24; v.gatherY=30;
+        window.wallDragBtype='WALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:38,y:30}; window.wallDragCorner={x:38,y:30};
+        window.isDraggingWall=true; placing='WALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        const armedBeforeExec = window.undoAvailable();
+        // the run of foundations lands a few ticks later (lockstep)
+        const tiles=getWallElbowTiles({x:34,y:30},{x:38,y:30},{x:38,y:30});
+        tiles.forEach(t=>{ const b=createBuilding('WALL',t.x,t.y,0); b.complete=false; b.hp=1; });
+        const armed = window.undoAvailable();
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const del=window.__cmds.find(c=>c.kind==='delete-units');
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return { n:tiles.length, armedBeforeExec, armed, deleted: del && del.unitIds.length,
+                 back: back && {x:back.tileX,y:back.tileY},
+                 selId: selected[0] && selected[0].id, vid: window.__vid,
+                 after: window.undoAvailable() };
+      })()`);
+      assertEq(r.armed, true, 'a wall drag is undoable once its foundations exist');
+      assertEq(r.deleted, r.n, 'EVERY segment the drag laid is cancelled');
+      if(!r.back) throw new Error('builder was left at the cancelled wall');
+      assertEq(r.back.x, 24, 'villager returns to its prior gather tile');
+      assertEq(r.selId, r.vid, 'and is re-selected');
+      assertEq(r.after, false, 'undo is consumed');
+    });
+
+    await tapT('undo: a drag over our OWN walls records nothing (upgrades are not cancellable)', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        // the whole run already holds our palisade — a stone drag here is an
+        // in-place UPGRADE (salvage-swap), never a fresh foundation
+        for(let x=34;x<=38;x++){ const b=createBuilding('WALL',x,30,0); b.complete=true; b.hp=b.maxHp; }
+        window.wallDragBtype='SWALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:38,y:30}; window.wallDragCorner={x:38,y:30};
+        window.isDraggingWall=true; placing='SWALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        return { armed: window.undoAvailable() };
+      })()`);
+      assertEq(r.armed, false, 'an upgrade-only drag arms no undo — cancelling it would refund a consumed palisade');
+    });
+
+    await tapT('undo: a wall drag DESELECTS the villager (build is a task)', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        window.wallDragBtype='WALL'; window.wallDragStart={x:34,y:30};
+        window.wallDragEnd={x:36,y:30}; window.wallDragCorner={x:36,y:30};
+        window.isDraggingWall=true; placing='WALL';
+        window.__pts=(scr)=>({ g: scr(30.5,30.5) });`) + `;(()=>{
+        finalizeWallDrag();
+        return { sel: selected.length };
+      })()`);
+      assertEq(r.sel, 0, 'a dragged wall run deselects, same as placing a single foundation');
+    });
+
+    await tapT('undo: hunting a SHEEP is restored by the undo (target, not gather tile)', async () => {
+      const pts = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const sh=createUnit('sheep',26,30,4); window.__sheep=sh.id;
+        v.target=sh.id; v.task=null;              // hunting: target set, task null
+        map[30][38].t=TERRAIN.FOREST; map[30][38].res=100; markMapDirty(38,30);
+        window.__pts=(scr)=>({ g: scr(38.5,30.5) });`));
+      await page.mouse.click(pts.g.x, pts.g.y);   // send it to chop instead
+      const r = await page.evaluate(`(()=>{
+        window.__cmds.length=0;
+        window.undoLastAction();
+        const back=window.__cmds.find(c=>c.kind==='command');
+        return { tid: back && back.targetId, sheep: window.__sheep };
+      })()`);
+      assertEq(r.tid, r.sheep, 'undo re-targets the SHEEP it was hunting');
+    });
+
+    await tapT('undo: the arrow DISAPPEARS once the action stops being undoable', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        updateUI();
+        const whileFoundation = !!document.querySelector('#actions .act-btn.back-btn');
+        f.complete=true; f.hp=f.maxHp;            // it finished building
+        updateUI();
+        return { whileFoundation, afterBuilt: !!document.querySelector('#actions .act-btn.back-btn') };
+      })()`);
+      assertEq(r.whileFoundation, true, 'arrow shows while the foundation stands');
+      assertEq(r.afterBuilt, false, 'arrow is GONE once the building finished — nothing left to undo');
+    });
+
+    await tapT('undo: the arrow APPEARS in the HUD once a placed foundation exists', async () => {
+      const r = await page.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; placing='HOUSE';
+        window.__pts=(scr)=>({ g: scr(36.5,30.5) });`) + `;(()=>{
+        const scr=(x,y)=>{const p=toIso(x,y);return{x:(p.ix-camX)*ZOOM+W/2,y:(p.iy-camY)*ZOOM+H/2+topH};};
+        const g=scr(36.5,30.5); doPlace(g.x,g.y);      // build is a task -> deselects
+        updateUI();
+        const beforeExec = !!document.querySelector('#actions .back-btn');
+        // the foundation lands a few ticks later (lockstep delay)
+        const f=createBuilding('HOUSE',36,30,0); f.complete=false; f.hp=1;
+        updateUI();
+        return { sel:selected.length, beforeExec, shown: !!document.querySelector('#actions .back-btn'),
+                 label:(document.querySelector('#actions .back-btn .btn-label')||{}).textContent||'' };
+      })()`);
+      assertEq(r.sel, 0, 'placing a building deselects (index model)');
+      assertEq(r.shown, true, 'the Undo arrow must render once the foundation exists, with nothing selected');
+      assertEq(r.label, 'Undo', 'and it reads as Undo, not Back');
     });
 
     await tapT('walk into UNEXPLORED territory KEEPS selection (even over a fogged resource — no task committed)', async () => {
@@ -1465,7 +1776,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: right-click DOES set the rally on classic.html (AoE2 standard)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1482,8 +1793,53 @@ function pageSuite() {
       await cpage.close();
     });
 
+    await tapT('classic: right-click repairs a DAMAGED own building (shared work-target rule)', async () => {
+      const cpage = await newAuxPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v];
+        const dmg=createBuilding('HOUSE',35,30,0); dmg.complete=true; dmg.hp=Math.floor(dmg.maxHp/2);
+        window.__dmg=dmg.id;
+        window.__pts=(scr)=>({ b: scr(35.5,30.5) });`));
+      await cpage.mouse.click(pts.b.x, pts.b.y, { button: 'right' });
+      const r = await cpage.evaluate(`(()=>{
+        const c=window.__cmds.find(x=>x.kind==='command');
+        return {bt:c&&c.buildTargetId, dmg:window.__dmg, sel:selected.length};
+      })()`);
+      assertEq(r.bt, r.dmg, 'classic right-click still resolves the damaged building as a repair target');
+      assertEq(r.sel, 1, 'classic stays AoE2-sticky — the villager keeps its selection');
+      await cpage.close();
+    });
+
+    await tapT('classic: right-click a HEALTHY own building is a MOVE, not a selection (index rule must not leak)', async () => {
+      const cpage = await newAuxPage();
+      await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
+      await cpage.waitForFunction(() => {
+        const b = document.getElementById('start-game-btn');
+        return b && !b.disabled;
+      }, { timeout: 15000 });
+      const pts = await cpage.evaluate(tapStage(`
+        const v=createUnit('villager',30,30,0); selected=[v]; window.__vid=v.id;
+        const h=createBuilding('HOUSE',35,30,0); h.complete=true; h.hp=h.maxHp;
+        window.__pts=(scr)=>({ b: scr(35.5,30.5) });`));
+      await cpage.mouse.click(pts.b.x, pts.b.y, { button: 'right' });
+      const r = await cpage.evaluate(`(()=>{
+        const c=window.__cmds.find(x=>x.kind==='command');
+        return {have:!!c, bt:c&&c.buildTargetId, selType:selected[0]&&selected[0].type, selId:selected[0]&&selected[0].id, vid:window.__vid};
+      })()`);
+      assertEq(r.have, true, 'classic issues a command, not a selection change');
+      assertEq(r.bt, null, 'a healthy building offers no work');
+      assertEq(r.selType, 'unit', 'the villager is still selected — classic did NOT adopt the index select-the-building rule');
+      assertEq(r.selId, r.vid, 'same villager');
+      await cpage.close();
+    });
+
     await tapT('classic: right-click move KEEPS the selection (AoE2-sticky, no deselect)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1500,7 +1856,7 @@ function pageSuite() {
     });
 
     await tapT('classic: Guard button + click guards a building and KEEPS selection (shared guard, sticky)', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1522,7 +1878,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: left ground click never commands on classic.html', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1539,7 +1895,7 @@ function pageSuite() {
     });
 
     await tapT('classic-guard: queue renders as AoE2 slot buttons and clicking one cancels it', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1578,7 +1934,7 @@ function pageSuite() {
     });
 
     await tapT('classic: prepaid reseeds are cancellable queue slots (parity) + reseed button keeps its border', async () => {
-      const cpage = await ctx.newPage();
+      const cpage = await newAuxPage();
       await cpage.goto(base + '/classic.html', { waitUntil: 'load' });
       await cpage.waitForFunction(() => {
         const b = document.getElementById('start-game-btn');
@@ -1615,6 +1971,13 @@ function pageSuite() {
     }
     if (pageErrors.length) {
       console.error('JS ERRORS:\n  ' + pageErrors.join('\n  '));
+      failed++;
+    }
+    // Same gate for the AUX (classic.html) pages, which newAuxPage listens on.
+    // Must be checked HERE, after every test has run — pushed earlier it reads
+    // an empty array and passes even when classic is throwing.
+    if (auxErrors.length) {
+      console.error('CLASSIC.HTML JS ERRORS:\n  ' + auxErrors.join('\n  '));
       failed++;
     }
     console.log(`\n${results.length - failed}/${results.length} passed`);

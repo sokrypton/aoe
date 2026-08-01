@@ -367,6 +367,25 @@ function finalizeWallDrag(){
   }
   // Mutation half is execWallDrag (js/commands.js), run at the scheduled
   // tick — start/corner/end are already world tiles.
+  // Undo target: only the tiles that were EMPTY at drag time become fresh
+  // foundations. A tile already holding one of our walls is a stone UPGRADE
+  // (salvage-swap, deliberately non-cancellable) — cancelling those would
+  // refund the new cost for a palisade that is already consumed, so they are
+  // excluded and a drag that only upgraded records nothing.
+  {
+    let dragBtype = window.wallDragBtype || 'WALL';
+    let fresh = getWallElbowTiles(start, corner, end)
+      .filter(t => !buildingAtTile(t.x, t.y, en => en.team === myTeam));
+    if(fresh.length){
+      recordUndo({ kind:'walldrag', btype: dragBtype, tiles: fresh.map(t=>({x:t.x,y:t.y})),
+        prev: vils.map(v => ({ id: v.id,
+          x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
+          gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1),
+          tid: (v.target != null ? v.target : null) })) });
+    } else {
+      lastUndo = null;
+    }
+  }
   submitCommand({ kind: 'wall-drag', btype: window.wallDragBtype || 'WALL', start, end, corner, unitIds: vils.map(s=>s.id) });
 
   // keys['Shift'] (hold to place multiple lines) is desktop-only — on touch
@@ -374,6 +393,7 @@ function finalizeWallDrag(){
   // placing mode after one drag, which is the right default for mobile.
   if (!keys['Shift']) {
     placing = null;
+    deselectAfterTask();   // a dragged wall run is a build task, same as doPlace
   }
 }
 
@@ -463,7 +483,7 @@ C.addEventListener('mousemove',e=>{
         // Visual-only cue (the minimap is pointer-events:none, so it can't
         // intercept the drag) — dims it so it's clear dragging over it
         // won't do anything special.
-        let mw=document.getElementById('minimap-wrap');
+        let mw=byId('minimap-wrap');
         if(mw)mw.classList.add('drag-select-active');
       }
     }
@@ -577,7 +597,7 @@ C.addEventListener('mouseup',e=>{
       }
     }
     dragStart=null;dragEnd=null;isDragging=false;
-    let mw=document.getElementById('minimap-wrap');
+    let mw=byId('minimap-wrap');
     if(mw)mw.classList.remove('drag-select-active');
   }
 });
@@ -784,7 +804,7 @@ C.addEventListener('touchmove',e=>{
       if(Math.abs(dragEnd.x-dragStart.x)+Math.abs(dragEnd.y-dragStart.y)>8){
         if(!isDragging){
           isDragging=true;
-          let mw=document.getElementById('minimap-wrap');
+          let mw=byId('minimap-wrap');
           if(mw)mw.classList.add('drag-select-active');
         }
       }
@@ -829,7 +849,7 @@ C.addEventListener('touchend',e=>{
     } else if(touchBoxSelectMode && isDragging && dragStart && dragEnd){
       if(window.settingGarrison) garrisonBoxLoad(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
       else doBoxSelect(dragStart.x,dragStart.y,dragEnd.x,dragEnd.y);
-      let mw=document.getElementById('minimap-wrap');
+      let mw=byId('minimap-wrap');
       if(mw)mw.classList.remove('drag-select-active');
     } else if(!touchMoved&&touchAnchor){
       // It's a tap! Double-tap on the same own unit type selects every
@@ -907,6 +927,117 @@ function hasSelectedMobileWalkOrder(){
     return !s.task && !s.target && !s.buildTarget && s.order && s.order.kind==='move';
   });
 }
+// ---- SINGLE-LEVEL UNDO ("back" = undo the last action) ----
+// Selecting, commanding and placing are all ACTIONS; the return arrow undoes
+// the most recent one. VIEWER-LOCAL state only — the sim is never rewound
+// (lockstep replays commands on every peer, so there is nothing to roll back
+// to). Undo therefore issues a COMPENSATING command: units walk back to where
+// they stood, a foundation is cancelled through the normal refund path. That
+// is also why a finished building can't be undone — nothing to cancel.
+let lastUndo = null;   // {kind:'select'|'orders'|'place', ...}
+function recordUndo(entry){ lastUndo = entry; }
+window.__clearUndo = () => { lastUndo = null; };
+// Still undoable? A dead selection or an already-built foundation isn't.
+function undoAvailable(){
+  if(!lastUndo) return false;
+  if(lastUndo.kind==='orders')
+    return lastUndo.prev.some(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
+  if(lastUndo.kind==='place')
+    return !!findUndoFoundation();
+  if(lastUndo.kind==='walldrag')
+    return undoWallDragFoundations(lastUndo).length > 0;
+  return true;  // 'select' is always undoable (restoring an empty selection = deselect)
+}
+window.undoAvailable = undoAvailable;
+// The foundation a 'place' undo refers to: our own, still unfinished, on the
+// tile it was placed at. Resolved by position because the building does not
+// exist yet when the command is issued (it is created at the exec tick).
+function findUndoFoundation(u){
+  u = u || lastUndo;
+  if(!u || u.kind!=='place') return null;
+  for(let i=0;i<entities.length;i++){
+    let e=entities[i];
+    if(e.type!=='building' || e.team!==myTeam || e.complete || e.hp<=0) continue;
+    // Footprint, not origin: a gate resolves its own origin off the clicked
+    // tile (gateFootprint), so an origin-only match missed it.
+    let w=e.w||BLDGS[e.btype].w||1, h=e.h||BLDGS[e.btype].h||1;
+    if(u.tileX>=e.x && u.tileX<e.x+w && u.tileY>=e.y && u.tileY<e.y+h) return e;
+  }
+  return null;
+}
+// Put units back where the undone action found them: a unit that was GATHERING
+// is re-tasked to its resource tile (the same command a click there would
+// issue), everything else walks back to the tile it stood on. One command per
+// unit so a group returns to its own shape, not a formation blob.
+function sendUnitsBack(prev){
+  let alive = (prev||[]).filter(p=>{ let e=entitiesById.get(p.id); return e && e.hp>0; });
+  alive.forEach(p=>{
+    // A remembered TARGET wins: hunting a sheep is e.target with no task and
+    // no gather tile, so restoring by tile alone silently dropped the hunt.
+    let tgt = (p.tid != null) ? entitiesById.get(p.tid) : null;
+    if(tgt && tgt.hp <= 0) tgt = null;
+    let tx = tgt ? Math.round(tgt.x) : (p.gx >= 0 ? p.gx : p.x);
+    let ty = tgt ? Math.round(tgt.y) : (p.gy >= 0 ? p.gy : p.y);
+    submitCommand({ kind:'command', unitIds:[p.id],
+      tileX:Math.max(0,Math.min(MAP-1,tx)), tileY:Math.max(0,Math.min(MAP-1,ty)),
+      targetId: tgt ? tgt.id : null, buildTargetId:null, followId:null });
+  });
+  return alive;
+}
+
+// The still-unfinished foundations this drag created, by tile. Complete ones
+// have been BUILT — like a finished building, they are past undoing.
+function undoWallDragFoundations(u){
+  let out=[];
+  (u.tiles||[]).forEach(t=>{
+    let b = buildingAtTile(t.x, t.y, en => en.team===myTeam && !en.complete && en.hp>0 && en.btype===u.btype);
+    if(b) out.push(b);
+  });
+  return out;
+}
+
+window.undoLastAction = function(){
+  if(gameOver || !undoAvailable()) return;
+  let u = lastUndo;
+  lastUndo = null;                       // one level only — consumed on use
+  if(u.kind==='select'){
+    let alive = (u.prevIds||[]).map(id=>entitiesById.get(id)).filter(e=>e && e.hp>0);
+    selected = alive;
+    window.currentVillagerMenu = 'main';
+    if(window.playSound) window.playSound('click');
+    updateUI();
+    return;
+  }
+  if(u.kind==='walldrag'){
+    let fs = undoWallDragFoundations(u);
+    if(fs.length) requestDeleteOwned(fs.map(b=>b.id));
+    sendUnitsBack(u.prev);
+    selected = (u.prev||[]).map(p=>entitiesById.get(p.id)).filter(e=>e && e.hp>0);
+    if(window.showMsg) showMsg(fs.length+' wall segment'+(fs.length===1?'':'s')+' cancelled');
+    if(window.playSound) window.playSound('click');
+    updateUI();
+    return;
+  }
+  if(u.kind==='place'){
+    let f = findUndoFoundation(u);   // pass `u`: lastUndo is already consumed
+    if(f) requestDeleteOwned([f.id]);    // the existing cancel-build refund path
+    sendUnitsBack(u.prev);
+    selected = (u.prev||[]).map(p=>entitiesById.get(p.id)).filter(e=>e && e.hp>0);
+    if(window.showMsg) showMsg('Construction cancelled');
+    if(window.playSound) window.playSound('click');
+    updateUI();
+    return;
+  }
+  // 'orders': send each unit back to ITS OWN tile (one command per unit, so
+  // a group returns to its original shape rather than a formation blob) and
+  // re-select them, per the request.
+  let back = sendUnitsBack(u.prev);
+  selected = back.map(p=>entitiesById.get(p.id)).filter(Boolean);
+  if(window.showMsg) showMsg('Order undone');
+  if(window.playSound) window.playSound('click');
+  updateUI();
+};
+
 function finishMobileUnitCommand(){
   // Only a plain walk keeps the selection (see the keep rule in doCommand);
   // every committed task deselects.
@@ -1042,8 +1173,34 @@ function tryRightClickGuard(sx, sy){
 // touch taps on every device, AND desktop left-clicks on index.html (the
 // mouseup dispatch forks here when !isClassicUI). `shift` is only ever
 // passed by the desktop caller; touch leaves it undefined.
+// A building this SELECTION has work at: unfinished, damaged, an exhausted
+// farm, or a drop-off/farm a villager can be tasked to. Anything else (a
+// healthy complete house/TC/tower, or any building at all when no villager is
+// selected) has no job to offer. Shared by handleTap and doCommand so the tap
+// and the command can never disagree about what counts as work.
+function selectionWorkTarget(en, haveVillagers){
+  if(!en || en.type!=='building' || en.team!==myTeam) return false;
+  if(!haveVillagers) return false;
+  return !en.complete || en.hp < en.maxHp || (en.btype==='FARM' && en.exhausted)
+      || en.btype==='LCAMP' || en.btype==='MCAMP' || en.btype==='MILL' || en.btype==='FARM';
+}
+
 function handleTap(sx,sy,shift){
   if(gameOver)return; // match is over — See Map is view-only (no select/command)
+  // Selecting IS an action: snapshot the outgoing selection so the return
+  // arrow can restore it. doCommand/doPlace overwrite lastUndo with their own
+  // entry, so a tap that commands records the command, not the selection.
+  const __prevSel = selected.map(s=>s.id);
+  const __undoBefore = lastUndo;
+  const __selUndo = () => {
+    if(lastUndo !== __undoBefore) return;                 // a command already claimed it
+    const now = selected.map(s=>s.id);
+    if(now.length===__prevSel.length && now.every((id,i)=>id===__prevSel[i])) return; // unchanged
+    recordUndo({ kind:'select', prevIds: __prevSel });
+  };
+  try { return __handleTapInner(sx,sy,shift); } finally { __selUndo(); }
+}
+function __handleTapInner(sx,sy,shift){
   // 1. If placing a building, place it
   if(placing){
     doPlace(sx,sy);
@@ -1148,8 +1305,22 @@ function handleTap(sx,sy,shift){
       }
       return;
     }
-    // Tapped on enemy, own building, or empty map → command (move/gather/
-    // build/repair/attack) — doCommand resolves the exact target itself.
+    // Tapped an own BUILDING with no work to offer (healthy + complete, or
+    // no villager selected) → this is a SELECTION, not a walk order: the
+    // units drop out of the selection and the building's card comes up.
+    // A building that DOES have work (repair, build, farm, drop-off) keeps
+    // taking the command below — the villager is sent to work and the
+    // building deliberately does NOT steal the selection.
+    if(tappedOwn && tappedOwn.type==='building' && !selectionWorkTarget(tappedOwn, haveVillagers)){
+      window.settingRally=false;
+      selected=[tappedOwn];
+      maybeReopenMktPopup(tappedOwn);
+      if (window.playSound) window.playSound('click');
+      updateUI();
+      return;
+    }
+    // Tapped on enemy, own building with work, or empty map → command
+    // (move/gather/build/repair/attack) — doCommand resolves the target.
     doCommand(sx,sy);
     // One tap, both outcomes: ordering villagers onto an own UNFINISHED
     // foundation also selects the foundation itself, so its card (build
@@ -1252,12 +1423,12 @@ function minimapJump(sx, sy) {
 }
 
 function toggleMinimap(){
-  let wrap = document.getElementById('minimap-wrap');
+  let wrap = byId('minimap-wrap');
   if(wrap) {
     let expanded = wrap.classList.toggle('minimap-expanded');
     // Light the map button up while expanded so it clearly reads as an
     // active toggle that can be pressed again to exit.
-    let btn = document.getElementById('map-btn');
+    let btn = byId('map-btn');
     if(btn) btn.classList.toggle('map-active', expanded);
     // Redraw at the new size before the browser paints this click's frame —
     // otherwise the canvas shows one frame at the old size (visible flicker).
@@ -1287,10 +1458,10 @@ function minimapToggleModeActive(){
 
 function collapseMinimapIfWide(){
   if(minimapToggleModeActive()) return;
-  let wrap = document.getElementById('minimap-wrap');
+  let wrap = byId('minimap-wrap');
   if(wrap && wrap.classList.contains('minimap-expanded')){
     wrap.classList.remove('minimap-expanded');
-    let btn = document.getElementById('map-btn');
+    let btn = byId('map-btn');
     if(btn) btn.classList.remove('map-active');
   }
 }
@@ -1397,8 +1568,8 @@ function getBuildingUnderCursor(sx, sy, filter) {
   // Wall-likes are hit-tested against drawn geometry in unzoomed local
   // space; invert the render zoom (which scales around (W/2, H/2+topH),
   // see render.js) once here.
-  let lx = (sx - W / 2) / ZOOM + W / 2;
-  let ly = (sy - H / 2 - topH) / ZOOM + H / 2 + topH;
+  let _l = screenToLogical(sx, sy);
+  let lx = _l.x, ly = _l.y;
   entities.forEach(en=>{
     if(en.type==='building' && (!filter || filter(en))){
       let w = en.w !== undefined ? en.w : BLDGS[en.btype].w;
@@ -1426,9 +1597,11 @@ function getBuildingUnderCursor(sx, sy, filter) {
       // geometry can never match the art (e.g. the TC's annex posts hang well
       // outside the 4x4 footprint) — testing the real pixels means the click
       // area always agrees with the selection outline, by construction.
-      let bIso = toIso(cx, cy);
-      let aX = bIso.ix - camX + W/2;                       // logical anchor x (footprint centre)
-      let aY = bIso.iy - camY + topH + H/2 - h * HALF_TH;  // logical anchor y (footprint top)
+      // Rounded exactly as drawBuilding anchors it (mapToScreen -> round,
+      // then lift by the footprint height), so the box tracks the art.
+      let bp = mapToScreen(cx, cy);
+      let aX = Math.round(bp.sx);                // logical anchor x (footprint centre)
+      let aY = Math.round(bp.sy) - h * HALF_TH;  // logical anchor y (footprint top)
       if (lx >= aX - 175 && lx <= aX + 175 && ly >= aY - 216 && ly <= aY + 134) {
         if (entityPixelHit(en, lx, ly)) {
           let sortY = cy + cx;
@@ -1457,10 +1630,9 @@ function getUnitUnderCursor(sx, sy) {
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
       if (en.team !== myTeam && uf !== 2) return;
 
-      let iso = toIso(en.x, en.y);
-      let { ox, oy } = getUnitGroupOffset(en.id);
-      let scrx = (iso.ix - camX + ox) * ZOOM + W/2;
-      let scry = (iso.iy - camY + HALF_TH + oy) * ZOOM + H/2 + topH;
+      let ua = unitAnchorLogical(en);
+      let us = logicalToScreen(ua.x, ua.y);
+      let scrx = us.sx, scry = us.sy;
 
       let w = 10 * ZOOM + extraHit;
       let hStart = 2 * ZOOM + extraHit;
@@ -1523,9 +1695,9 @@ function getResourceUnderCursor(sx, sy) {
       let isFarm = t0.t === TERRAIN.FARM;
       
       if (isForest || isGold || isStone || isBerries || isFarm) {
-        let iso = toIso(tx + 0.5, ty + 0.5);
-        let scrx = (iso.ix - camX) * ZOOM + W/2;
-        let scry = (iso.iy - camY + HALF_TH) * ZOOM + H/2 + topH;
+        let tp = mapToScreen(tx + 0.5, ty + 0.5);
+        let ts = logicalToScreen(Math.round(tp.sx), Math.round(tp.sy) + HALF_TH);
+        let scrx = ts.sx, scry = ts.sy;
         
         let w = 12 * ZOOM;
         let hStart = 2 * ZOOM;
@@ -1538,7 +1710,7 @@ function getResourceUnderCursor(sx, sy) {
         } else if (isGold || isStone) {
           w = 16 * ZOOM;
           hStart = 2 * ZOOM;
-          hEnd = -18 * ZOOM;
+          hEnd = -28 * ZOOM; // the spire + glints top out ~24px up — clicking the visible rock's top fell through to the tile behind (user caught it)
         } else if (isBerries) {
           w = 14 * ZOOM;
           hStart = 2 * ZOOM;
@@ -1609,10 +1781,9 @@ function unitsInBox(x1,y1,x2,y2){
   return entities.filter(en=>{
     if(en.team!==myTeam)return false;
     if(en.type!=='unit'||en.garrisonedIn)return false;
-    let iso=toIso(en.x,en.y);
-    let { ox, oy } = getUnitGroupOffset(en.id);
-    let scrx=(iso.ix-camX+ox)*ZOOM+W/2;
-    let scry=(iso.iy-camY+HALF_TH+oy)*ZOOM+H/2+topH;
+    let ua=unitAnchorLogical(en);
+    let us=logicalToScreen(ua.x,ua.y);
+    let scrx=us.sx, scry=us.sy;
 
     let w = 10 * ZOOM;
     let hStart = 2 * ZOOM;
@@ -1780,7 +1951,17 @@ function doCommand(sx,sy){
     // The town bell is the only way villagers garrison (no garrison-by-
     // click), so clicking an own building always means "fix it" (repair if
     // damaged, resume if unfinished, reseed if an exhausted farm).
-    buildTarget = getBuildingUnderCursor(sx, sy, en => en.team === myTeam && (!en.complete || en.hp < en.maxHp || (en.btype === 'FARM' && en.exhausted)));
+    // Own buildings resolve as a build/repair target when there's work to
+    // do — and the WORK CAMPS (LCAMP/MCAMP/MILL) always resolve, so
+    // sending villagers to a camp auto-tasks them onto its resource
+    // (autoTaskBuilder dispatch). A healthy camp used to fall through to
+    // a plain walk (user caught it: "clicking the camp does nothing").
+    // FARM always resolves too: only the plot's ORIGIN tile is
+    // TERRAIN.FARM, so terrain-clicks on the other 3 tiles of a healthy
+    // farm fell through to a plain walk ("clicking the farm sometimes
+    // does nothing", user caught it) — the dispatch branch auto-tasks
+    // the farmer wherever on the 2×2 the click lands.
+    buildTarget = getBuildingUnderCursor(sx, sy, en => selectionWorkTarget(en, true));
   }
   if(buildTarget)followTarget=null;
   if(target && target.utype==='sheep_carcass')markerColor='#ff0';
@@ -1809,6 +1990,7 @@ function doCommand(sx,sy){
   // "assign it and move on". The ONLY keep is a plain WALK: to explored
   // ground where nothing is committed, OR to an UNEXPLORED tile (we can't
   // know what's there yet, so it's a move into the unknown, not a task).
+  let committedTask = false;
   {
     prunePendingOrders();
     let t0p = map[tile.y] && map[tile.y][tile.x];
@@ -1817,6 +1999,7 @@ function doCommand(sx,sy){
     let plainWalk = !target && !buildTarget && !followTarget;
     movers.forEach(s => {
       let keep = unexplored || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
+      if(!keep) committedTask = true;
       pendingOrderUI.set(s.id, { t: tick, keep });
     });
   }
@@ -1825,6 +2008,18 @@ function doCommand(sx,sy){
   // client's view (its fog, its screen). Mutation happens in
   // execUnitCommand (js/commands.js) at the scheduled tick on every peer's
   // queue (lockstep).
+  // Only a committed TASK is undoable. A plain WALK keeps the selection, and
+  // there the return arrow must keep its old meaning — deselect — so a walk
+  // records nothing and CLEARS any older entry rather than leaving the arrow
+  // pointing at a stale action.
+  if(committedTask){
+    recordUndo({ kind:'orders', prev: movers.map(s => ({ id:s.id,
+      x: Math.max(0,Math.min(MAP-1,Math.round(s.x))), y: Math.max(0,Math.min(MAP-1,Math.round(s.y))),
+      gx: (s.gatherX >= 0 ? s.gatherX : -1), gy: (s.gatherY >= 0 ? s.gatherY : -1),
+      tid: (s.target != null ? s.target : null) })) });
+  } else {
+    lastUndo = null;
+  }
   submitCommand({
     kind: 'command',
     unitIds: movers.map(s => s.id),
@@ -1851,6 +2046,15 @@ function doPlace(sx,sy){
     placing=null;
     return;
   }
+  // Capture the builders' prior state too: undoing a placement must not leave
+  // them standing at the cancelled site. A villager that was GATHERING goes
+  // back to that resource tile (re-tasked exactly as a click would); anything
+  // else just walks back to where it stood.
+  recordUndo({ kind:'place', btype: placing, tileX: tile.x, tileY: tile.y,
+    prev: vils.map(v => ({ id: v.id,
+      x: Math.max(0,Math.min(MAP-1,Math.round(v.x))), y: Math.max(0,Math.min(MAP-1,Math.round(v.y))),
+      gx: (v.gatherX >= 0 ? v.gatherX : -1), gy: (v.gatherY >= 0 ? v.gatherY : -1),
+      tid: (v.target != null ? v.target : null) })) });
   submitCommand({ kind: 'build-placement', btype: placing, tileX: tile.x, tileY: tile.y, unitIds: vils.map(s=>s.id) });
   // Hold Shift to place multiple building foundations
   if(!keys['Shift']){
@@ -1868,7 +2072,10 @@ function doPlace(sx,sy){
 function handleScroll(elapsed){
   if(gameOver && !window.seeMapMode)return; // keep panning while reviewing the map
   let dt = elapsed !== undefined ? elapsed / 16.67 : 1.0;
-  let spd = 12 * dt;
+  // /ZOOM for the same reason the wheel- and drag-pan paths do it: camX/camY
+  // are pre-zoom iso units, so a fixed step pans the SCREEN at 12·ZOOM px —
+  // dragging when zoomed out (0.6 ≈ 40% slower) and racing when zoomed in.
+  let spd = 12 * dt / ZOOM;
   let manualPan=false;
 
   // Arrow keys only, like AoE2 — WASD are (grid) command hotkeys, and letting
@@ -1881,25 +2088,34 @@ function handleScroll(elapsed){
 
 
 
-  // Camera-follow: any manual pan input releases the lock; otherwise keep
-  // re-centering on the followed unit every frame (see toggleCameraFollow()).
-  if(manualPan){
-    window.cameraFollowId=null;
-  } else if(window.cameraFollowId){
-    let f=entitiesById.get(window.cameraFollowId);
-    if(f&&f.hp>0){
-      let iso=toIso(f.x,f.y);
-      camX=iso.ix;camY=iso.iy;
-    } else {
-      window.cameraFollowId=null;
-    }
-  }
+  // Camera-follow: any manual pan input releases the lock. The actual
+  // re-centering lives in syncCameraFollow(), called right before render —
+  // handleScroll runs BEFORE the frame's sim ticks, so centering here left
+  // the unit one tick off-center on tick frames and snapped it back on the
+  // next (a 20Hz vibration on the followed unit, user caught it).
+  if(manualPan)window.cameraFollowId=null;
 
   // Clamp camera to map bounds (with a margin of 200 pixels in screen/iso coordinates)
   let maxW = MAP * HALF_TW + 200;
   let maxH = MAP * TH + 200;
   camX = Math.max(-maxW, Math.min(maxW, camX));
   camY = Math.max(-200, Math.min(maxH, camY));
+}
+
+// Re-center on the followed unit with the unit's POST-sim-tick position —
+// must run after update(), immediately before render() (see handleScroll).
+function syncCameraFollow(){
+  if(!window.cameraFollowId)return;
+  let f=entitiesById.get(window.cameraFollowId);
+  if(f&&f.hp>0){
+    let iso=toIso(f.x,f.y);
+    camX=iso.ix;camY=iso.iy;
+    let maxW=MAP*HALF_TW+200, maxH=MAP*TH+200;
+    camX=Math.max(-maxW,Math.min(maxW,camX));
+    camY=Math.max(-200,Math.min(maxH,camY));
+  } else {
+    window.cameraFollowId=null;
+  }
 }
 
 // ---- RESIZE ----

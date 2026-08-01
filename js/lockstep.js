@@ -218,7 +218,7 @@ onNetMessage((msg, src) => {
       window.__mpSession.cameraCentered = true;
     }
     if (typeof showMpStatus === 'function') showMpStatus('Connected! Lockstep match started.');
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
   } else if (msg.type === 'cmd-ls' && lockstepActive) {
@@ -280,7 +280,7 @@ onNetMessage((msg, src) => {
     if (typeof hideDisconnectOverlay === 'function') hideDisconnectOverlay();
     disconnectedPause = false;
     if (typeof recomputeGamePaused === 'function') recomputeGamePaused();
-    let menu = document.getElementById('tutorial');
+    let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
     if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');
@@ -379,7 +379,7 @@ function lockstepCaptureState(){
     // Per-team controller + AI plan state: SIM state (an AI team's brain
     // must rewind with a rollback and agree across peers — plain data,
     // clones fine). Same for lastTeamHit (AI garrison signal, js/core.js).
-    teamControllers, aiStates: AI_STATES, lastTeamHit, teamAlliance, defeatedTeams, teamAge,
+    teamControllers, aiStates: AI_STATES, lastTeamHit, teamAlliance, defeatedTeams, teamAge, teamTechs,
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,

@@ -15,6 +15,24 @@ const _silUnitScratch = [];
 const _silOccScratch = [];
 let _poolMapSize = -1;
 
+// ---- Building depth PROXIES: THE vocabulary ----
+// Gates/markets/farms/TCs each split into several drawables so units can sort
+// BETWEEN their parts (see the proxy pools above). A proxy carries `entity`
+// (the real building) and, for the multi-part kinds, its own `part`. These
+// three helpers are the only place the proxy type list is spelled — adding a
+// proxy kind means touching PROXY_PARTS and nothing else. A `null` value means
+// "the proxy names its own part"; `undefined` (absent) means "not a proxy".
+const PROXY_PARTS = {
+  gate_back: 'back', gate_door: 'door', gate_front: 'front',
+  tc_back: 'back', tc_front: 'front',
+  market_part: null, farm_part: null,
+};
+function isBuildingProxy(e){ return !!e && PROXY_PARTS[e.type] !== undefined; }
+// The real building behind a drawable — itself, when it isn't a proxy.
+function proxyEntity(e){ return isBuildingProxy(e) ? e.entity : e; }
+// Which part drawBuilding should paint for this drawable (null = the whole building).
+function proxyPart(e){ return isBuildingProxy(e) ? (PROXY_PARTS[e.type] || e.part || null) : null; }
+
 // ---- Flag/post visuals: ONE vocabulary shared by rally points, guard
 // posts and the placement ghost (a rally IS the building's guard flag).
 // Module scope, not per-frame closures — same reuse discipline as the
@@ -104,10 +122,12 @@ function render(){
   let maxY = Math.min(MAP - 1, Math.ceil(Math.max(p1.y, p2.y, p3.y, p4.y)) + 2);
   
   X.save();
-  // Center zoom scale around viewport camera center
-  X.translate(Math.round(W/2), Math.round(H/2 + topH));
+  // Zoom scale about THE shared anchor (zoomAnchor, js/iso.js — same one
+  // screenToMap inverts and setZoomAroundPoint solves against)
+  {const {ax, ay} = zoomAnchor();
+  X.translate(ax, ay);
   X.scale(ZOOM, ZOOM);
-  X.translate(-Math.round(W/2), -Math.round(H/2 + topH));
+  X.translate(-ax, -ay);}
 
   // Draw ground tiles (only visible ones)
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);
@@ -290,7 +310,7 @@ function render(){
   X.beginPath();
   allDrawable.forEach(e => {
     if (e.type !== 'building' && e.type !== 'gate_back' && e.type !== 'tc_back') return;
-    let be = (e.type === 'gate_back' || e.type === 'tc_back') ? e.entity : e;
+    let be = proxyEntity(e);
     let f = buildingFogLevel(be);
     if (f === 0) return;
     if (f === 1 && !sameSide(be.team, myTeam) && !scoutedByMe.has(be.id)) return;
@@ -305,7 +325,7 @@ function render(){
     let f;
     if (e.type === 'building') {
       f = buildingFogLevel(e);
-    } else if (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') {
+    } else if (isBuildingProxy(e)) {
       f = buildingFogLevel(e.entity);
     } else {
       f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
@@ -316,8 +336,8 @@ function render(){
     // scoutedByMe. Cosmetic/local (fog is per-viewer); corpses are excluded
     // from the sim checksum, so this never affects lockstep.
     if (e.type === 'corpse' && f === 2) e.seen = true;
-    // Resolve the actual entity and team for gate proxy objects
-    let realEntity = (e.type === 'gate_back' || e.type === 'gate_door' || e.type === 'gate_front' || e.type === 'market_part' || e.type === 'farm_part' || e.type === 'tc_back' || e.type === 'tc_front') ? e.entity : e;
+    // Resolve the actual entity and team behind a depth proxy
+    let realEntity = proxyEntity(e);
     let eTeam = realEntity ? realEntity.team : e.team;
     // scoutedByMe (js/core.js) is maintained by markScoutedBuildings() on
     // both host (js/loop.js) and guest (js/net-sync.js) — render only READS
@@ -359,8 +379,9 @@ function render(){
   });
 
   // Behind-building team-color outlines, before drawOutlines so the selection
-  // ring paints on top. Same active-ZOOM-transform requirement.
-  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
+  // ring paints on top. Same active-ZOOM-transform requirement. Cached:
+  // recomputed on alternate frames, delta-blitted between (see the wrapper).
+  drawBehindBuildingOutlinesCached(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

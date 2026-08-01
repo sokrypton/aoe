@@ -127,17 +127,17 @@ function execCommand(cmd, team){
     case 'gate-lock':
       withCommandContext(team, [], () => execGateLock(cmd, team));
       break;
-    case 'research-age': {
-      let tc = entitiesById.get(cmd.bldgId);
-      if (tc && tc.type === 'building' && tc.team === team) {
-        withCommandContext(team, [], () => execResearchAge(tc));
+    case 'research': {
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.type === 'building' && bldg.team === team) {
+        withCommandContext(team, [], () => execResearch(bldg, cmd.target));
       }
       break;
     }
     case 'cancel-research': {
-      let tc = entitiesById.get(cmd.bldgId);
-      if (tc && tc.type === 'building' && tc.team === team) {
-        withCommandContext(team, [], () => execCancelResearch(tc));
+      let bldg = entitiesById.get(cmd.bldgId);
+      if (bldg && bldg.type === 'building' && bldg.team === team) {
+        withCommandContext(team, [], () => execCancelResearch(bldg));
       }
       break;
     }
@@ -411,33 +411,52 @@ function isRallyBuildingTarget(b, team){
 // anchor every slot is roughly equidistant from every unit — so translating
 // the group's own shape sidesteps the assignment problem entirely.
 // Deterministic: command-payload/scan unit order, exact-order float math.
-function formationOffsets(units, excludeCenter){
+// AoE2 LINE formation: crisp RANKS perpendicular to the march direction —
+// melee front, archers behind, siege rear, everyone else last; each rank a
+// centered row, rows stacked from the front and centered on the target.
+// `dir` (optional world vector) orients the front; omitted → SE. Replaces
+// the compact-own-arrangement scheme, under which a scattered selection
+// arrived still scattered — "formations don't work" (user caught it).
+function formationOffsets(units, excludeCenter, dir){
   let off = new Map();
   if (!units.length) return off;
+  let dx = (dir && (dir.dx || dir.dy)) ? dir.dx : 1;
+  let dy = (dir && (dir.dx || dir.dy)) ? dir.dy : 1;
+  let L = simHypot(dx, dy) || 1; dx /= L; dy /= L;
+  let px = -dy, py = dx;                       // the rank (row) axis
+  const rankOf = u => u.utype === 'archer' ? 1 : u.utype === 'ram' ? 2 : isArmyUnit(u.utype) ? 0 : 3;
+  let sorted = [...units].sort((a, b) => rankOf(a) - rankOf(b) || a.id - b.id);
+  let W = Math.max(2, Math.ceil(Math.sqrt(sorted.length) * 1.6));
+  // Rows fill to W and break at class boundaries so ranks stay pure.
+  let rows = [], row = [], rowRank = rankOf(sorted[0]);
+  for (const u of sorted) {
+    let r = rankOf(u);
+    if (row.length >= W || r !== rowRank) { rows.push(row); row = []; rowRank = r; }
+    row.push(u);
+  }
+  if (row.length) rows.push(row);
   let taken = new Set(excludeCenter ? ['0,0'] : []);
-  let cx = 0, cy = 0;
-  units.forEach(m => { cx += m.x; cy += m.y; });
-  cx /= units.length; cy /= units.length;
-  let maxd = 0;
-  units.forEach(m => { maxd = Math.max(maxd, Math.abs(m.x - cx), Math.abs(m.y - cy)); });
   let R = Math.ceil(Math.sqrt(units.length)) + 1;
-  let scale = maxd > R ? R / maxd : 1;
-  units.forEach(m => {
-    let ox = Math.round((m.x - cx) * scale), oy = Math.round((m.y - cy) * scale);
-    if (taken.has(ox + ',' + oy)) {
-      outer: for (let r = 1; r <= R + 2; r++) {
-        for (let i = 0; i < 4 * r; i++) {
-          let side = Math.floor(i / r), j = i % r, dx, dy;
-          if (side === 0) { dx = r - j; dy = j; }
-          else if (side === 1) { dx = -j; dy = r - j; }
-          else if (side === 2) { dx = -(r - j); dy = -j; }
-          else { dx = j; dy = -(r - j); }
-          if (!taken.has((ox + dx) + ',' + (oy + dy))) { ox += dx; oy += dy; break outer; }
+  rows.forEach((r, ri) => {
+    let back = ri - (rows.length - 1) / 2;     // rows centered on the target
+    r.forEach((u, ci) => {
+      let side = ci - (r.length - 1) / 2;
+      let ox = Math.round(px * side - dx * back), oy = Math.round(py * side - dy * back);
+      if (taken.has(ox + ',' + oy)) {
+        outer: for (let rr = 1; rr <= R + 2; rr++) {
+          for (let i = 0; i < 4 * rr; i++) {
+            let sideq = Math.floor(i / rr), j = i % rr, qx, qy;
+            if (sideq === 0) { qx = rr - j; qy = j; }
+            else if (sideq === 1) { qx = -j; qy = rr - j; }
+            else if (sideq === 2) { qx = -(rr - j); qy = -j; }
+            else { qx = j; qy = -(rr - j); }
+            if (!taken.has((ox + qx) + ',' + (oy + qy))) { ox += qx; oy += qy; break outer; }
+          }
         }
       }
-    }
-    taken.add(ox + ',' + oy);
-    off.set(m.id, [ox, oy]);
+      taken.add(ox + ',' + oy);
+      off.set(u.id, [ox, oy]);
+    });
   });
   return off;
 }
@@ -631,8 +650,33 @@ function execUnitCommand(cmd){
   // concept (formationOffsets above). Following a unit anchors the
   // arrangement on the LEADER (excludeCenter keeps its own tile free —
   // otherwise a big group dogpiles the leader's exact tile).
-  let formOff = formationOffsets(movers, !!followTarget);
+  // Ranks face the march: toward the clicked tile (or the followed leader).
+  let fcx = 0, fcy = 0;
+  movers.forEach(m => { fcx += m.x; fcy += m.y; });
+  fcx /= movers.length || 1; fcy /= movers.length || 1;
+  let fDir = followTarget ? { dx: followTarget.x - fcx, dy: followTarget.y - fcy }
+           : { dx: (tileX + 0.5) - fcx, dy: (tileY + 0.5) - fcy };
+  let formOff = formationOffsets(movers, !!followTarget, fDir);
   let slotFor = m => formOff.get(m.id) || [0, 0];
+  // CONVOY: a plain group move marches as a BODY — the most central unit
+  // leads with the move order, the rest hold their formation offsets
+  // relative to it via FOLLOW stations (updateFollowOrder), so the group
+  // musters at once and travels together instead of each unit walking its
+  // own line and only meeting at the destination (user caught the
+  // scattered march). Deterministic leader: smallest slot, id tiebreak.
+  let convoyLeader = null, leaderSlot = [0, 0];
+  if (!target && !buildTarget && !followTarget && !ramTarget) {
+    let mil = movers.filter(m => isArmyUnit(m.utype) || m.utype === 'ram');
+    if (mil.length > 1) {
+      let best = null, bestD = Infinity;
+      for (const m of mil) {
+        let [ox, oy] = slotFor(m), d = Math.abs(ox) + Math.abs(oy);
+        if (d < bestD || (d === bestD && best && m.id < best.id)) { best = m; bestD = d; }
+      }
+      convoyLeader = best;
+      leaderSlot = slotFor(convoyLeader);
+    }
+  }
   // AoE2 formation pace: a group order moves everyone at the slowest
   // member's speed (see unitMoveSpeed, js/logic.js) so the group arrives
   // together instead of trickling in fastest-first. Solo orders run free.
@@ -688,6 +732,30 @@ function execUnitCommand(cmd){
       return;
     }
     if (buildTarget && s.utype === 'villager') {
+      // Dispatch to a HEALTHY work building skips the build march: the
+      // villager tasks straight onto the camp's resource at order time
+      // (autoTaskBuilder) instead of walking to the camp first and
+      // re-tasking there (user call). Anything needing work — unbuilt,
+      // damaged, exhausted farm — keeps the build/repair order below.
+      if (buildTarget.complete && buildTarget.hp >= buildTarget.maxHp
+          && !(buildTarget.btype === 'FARM' && buildTarget.exhausted)) {
+        s.target = null; s.task = null; s.buildTarget = null;
+        autoTaskBuilder(s, buildTarget, !isAITeam(s.team));
+        if (!s.task) { pathToBuilding(s, buildTarget); return; } // no resource found: plain walk to the camp
+        // A MATCHING load banks first (the deposit is on the way — the
+        // return leg resumes the gather via prevTask); a MISMATCHED one
+        // is lost the instant the order lands (AoE2), so the carry
+        // visual never survives into the new job (user call).
+        if (s.carrying > 0) {
+          let gres = GATHER_TASKS[s.task] && GATHER_TASKS[s.task].resource;
+          if (s.carryType === gres && nearestDrop(s, s.carryType)) {
+            s.prevTask = s.task; s.task = 'return'; clearUnitPath(s);
+          } else if (s.carryType !== gres) {
+            s.carrying = 0; s.carryType = null;
+          }
+        }
+        return;
+      }
       s.target = null; s.task = 'build'; s.buildTarget = buildTarget.id;
       // Clicking an exhausted farm is a deliberate "reseed it" order (like
       // clicking a damaged building to repair) — flag it so the reseed pays
@@ -705,6 +773,13 @@ function execUnitCommand(cmd){
         s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
       } else {
         assignAttack(s, target);
+        // Butchering yields FOOD: a mismatched load is lost the instant the
+        // order lands (same AoE2 rule as the gather-task paths) — butcher is
+        // target-based, so the GATHER_TASKS retask backstop never covers it.
+        if (s.utype === 'villager' && (target.utype === 'sheep' || target.utype === 'sheep_carcass')
+            && s.carrying > 0 && s.carryType !== 'food') {
+          s.carrying = 0; s.carryType = null;
+        }
       }
     } else if (followTarget && followTarget.id !== s.id && s.utype !== 'sheep') {
       // AoE2-style "Follow": keep pathing toward the followed unit's current
@@ -738,6 +813,12 @@ function execUnitCommand(cmd){
         if (gTask && !unseen) {
           let g = claimGatherTileNear(s, t.t, tileX, tileY);
           s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
+          // AoE2: a mismatched load is lost the INSTANT the gather order
+          // lands — zeroing on the next sim tick left one rendered frame
+          // of the stale carry (user call).
+          if (s.carrying > 0 && s.carryType && s.carryType !== GATHER_TASKS[gTask].resource) {
+            s.carrying = 0; s.carryType = null;
+          }
           // Ring the solid node evenly: goalBldg + contactClaims sends each
           // co-gatherer to a distinct cheapest contact tile.
           pathToContact(s, {x:g.x, y:g.y, w:1, h:1}, contactClaims(s, p=>p.gatherX===g.x && p.gatherY===g.y));
@@ -753,7 +834,32 @@ function execUnitCommand(cmd){
         // issueMoveOrder itself, so every plain-move site gets it without a
         // paired re-pin.
         let [ox, oy] = slotFor(s);
-        s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+        if (convoyLeader && s.id !== convoyLeader.id && (isArmyUnit(s.utype) || s.utype === 'ram')) {
+          // Follower: station = leader + (own slot − leader slot); the
+          // leader's arrival composes the exact destination formation.
+          // Followers run at NATURAL speed (no group clamp) — station-
+          // holding paces them, and the headroom is what lets stragglers
+          // actually close on a moving leader.
+          let rx = ox - leaderSlot[0], ry = oy - leaderSlot[1];
+          s.task = null; s.groupSpeed = undefined;
+          // gx/gy = this follower's OWN destination tile: a convoy follow is
+          // a one-shot group move, not a standing bond — it converts to a
+          // plain move if the leader dies (the destination must not die with
+          // it) and dissolves on arrival (updateFollowOrder, js/logic.js).
+          issueOrder(s, {kind:'follow', id: convoyLeader.id, x: rx, y: ry,
+                         gx: Math.max(0, Math.min(MAP - 1, tileX + ox)),
+                         gy: Math.max(0, Math.min(MAP - 1, tileY + oy))});
+          pathUnitTo(s, Math.max(0, Math.min(MAP - 1, Math.round(convoyLeader.x) + rx)),
+                        Math.max(0, Math.min(MAP - 1, Math.round(convoyLeader.y) + ry)));
+        } else {
+          // The leader marches at 85% of the slowest member (AoE2
+          // formations move slower than solo units): equal speeds meant
+          // followers chasing a moving station never closed the gap and
+          // the "formation" only assembled on arrival.
+          if (convoyLeader && s.id === convoyLeader.id && groupSpeed !== undefined)
+            s.groupSpeed = groupSpeed * 0.85;
+          s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
+        }
       }
     }
   });
@@ -921,6 +1027,7 @@ function execWallDrag(cmd){
       let bldg = createBuilding(wallB, t.x, t.y, myTeam);
       bldg.complete = false;
       bldg.buildProgress = 0;
+      bldg.hp = 1; // AoE2 foundation HP — the drag path skipped this and unbuilt walls soaked full maxHp (user caught it)
       targets.push(bldg);
     } else {
       feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
@@ -952,24 +1059,53 @@ function execTrainUnit(bldg, utype){
   });
 }
 
-// Start advancing to the next age at this TC. The research is a plain
-// field on the TC entity ({target, tick}) so it rides saves and lockstep
-// rollbacks automatically, and dies (unrefunded, AoE2-style) with the TC.
-// While researching, the TC's unit queue is paused (js/logic.js).
-function execResearchAge(tc){
-  if (tc.btype !== 'TC' || !tc.complete || tc.research) return;
-  let next = teamAge[tc.team] + 1;
-  if (next >= AGES.length) return;
-  let cost = AGES[next].cost;
-  // feedbackFor handles the AI calling this directly from the sim
-  // (js/ai.js) — the human must not see the AI's advancement toasts.
-  if (!canAfford(tc.team, cost)) {
-    feedbackFor(tc.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
-    return;
+// Start a research at this building — age advancement (target 'age', stored
+// as the numeric next-age index; TC only) or a tech (target = an UPGRADES key,
+// stored as the string; at the building that OWNS it). The research is a plain
+// field on the building entity ({target, tick}) so it rides saves and lockstep
+// rollbacks, and dies (unrefunded on death, AoE2-style) with the building. ONE
+// research at a time per building; a second owner parallelizes. feedbackFor gates toasts so
+// the human never sees an AI's research messages (the AI calls this directly).
+function execResearch(bldg, target){
+  // Age advancement runs at the TOWN CENTER; a tech runs at the building that
+  // OWNS it (its BLDGS.researches list — Barracks/Mill/Lumber/Mining/Market/TC).
+  let okBldg = target === 'age'
+    ? bldg.btype === 'TC'
+    : !!(BLDGS[bldg.btype].researches && BLDGS[bldg.btype].researches.includes(target));
+  if (!okBldg || !bldg.complete || bldg.research) return;
+  if (target === 'age') {
+    let next = teamAge[bldg.team] + 1;
+    if (next >= AGES.length) return;
+    let cost = AGES[next].cost;
+    if (!canAfford(bldg.team, cost)) {
+      feedbackFor(bldg.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
+      return;
+    }
+    spendCost(bldg.team, cost);
+    bldg.research = { target: next, tick: 0 }; // numeric target = age-up (timed at the TC)
+    feedbackFor(bldg.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
+  } else {
+    let c = UPGRADES[target];
+    if (!c || !canResearch(bldg.team, target)) return; // unknown/owned/age-locked/prereq
+    // TESTING: instant + free — click applies the upgrade immediately, no timer
+    // and no cost (INSTANT_TECH_RESEARCH). The timed/paid path below returns
+    // when we re-add research duration + prices.
+    if (INSTANT_TECH_RESEARCH) {
+      applyTech(bldg.team, target);
+      feedbackFor(bldg.team, () => { showMsg(c.name + ' researched!'); if (window.playSound) playSound('build'); });
+    } else {
+      // TECH_PRICES gates cost — off = free (only the timed clock gates it).
+      if (TECH_PRICES) {
+        if (!canAfford(bldg.team, c.cost)) {
+          feedbackFor(bldg.team, () => { showMsg('Not enough resources to research!'); if (window.playSound) playSound('error'); });
+          return;
+        }
+        spendCost(bldg.team, c.cost);
+      }
+      bldg.research = { target: target, tick: 0 }; // string target = tech (timed on the owning building)
+      feedbackFor(bldg.team, () => showMsg('Researching ' + c.name + '…'));
+    }
   }
-  spendCost(tc.team, cost);
-  tc.research = { target: next, tick: 0 };
-  feedbackFor(tc.team, () => showMsg('Advancing to the ' + AGES[next].name + '…'));
   if (typeof updateUI === 'function') updateUI();
 }
 
@@ -1076,11 +1212,17 @@ function execGateLock(cmd, team){
   if (typeof updateUI === 'function') updateUI();
 }
 
-function execCancelResearch(tc){
-  if (!tc.research) return;
-  refundCost(tc.team, AGES[tc.research.target].cost);
-  tc.research = undefined;
-  feedbackFor(tc.team, () => showMsg('Age research cancelled (refunded)'));
+// Cancel the in-progress research with a full refund (AoE2 refunds cancelled
+// research). Handles both target shapes: numeric = age (AGES cost), string =
+// tech (UPGRADES cost).
+function execCancelResearch(bldg){
+  if (!bldg.research) return;
+  let t = bldg.research.target;
+  let cost = (typeof t === 'number') ? AGES[t].cost : UPGRADES[t].cost;
+  let label = (typeof t === 'number') ? 'Age research' : UPGRADES[t].name;
+  refundCost(bldg.team, cost);
+  bldg.research = undefined;
+  feedbackFor(bldg.team, () => showMsg(label + ' cancelled (refunded)'));
   if (typeof updateUI === 'function') updateUI();
 }
 

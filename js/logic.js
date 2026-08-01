@@ -988,7 +988,10 @@ function pressToContact(e, cx, cy, contactDist){
   if(e.path.length!==0)return;               // only when settled
   let dx=cx-e.x, dy=cy-e.y;
   let d=Math.sqrt(dx*dx+dy*dy);
-  if(d<=contactDist+0.02)return;             // deadband — already in the ring
+  // Deadband LARGER than separateUnits' 0.08 nudge: a shoved unit must
+  // settle where it lands, or press and separation alternate forever —
+  // the whole crowd vibrates around one target (user caught it).
+  if(d<=contactDist+0.2)return;              // deadband — already in the ring
   // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
   // follower advances unitMoveSpeed/TPS tiles/tick — match it so the unit
   // strolls into contact instead of snapping.
@@ -1115,6 +1118,24 @@ function rememberedGatherTile(e,terrain){
   let tile=map[e.gatherY]&&map[e.gatherY][e.gatherX];
   if(tile&&tile.t===terrain&&tile.res>0&&canGatherTile(e,terrain,e.gatherX,e.gatherY))return{x:e.gatherX,y:e.gatherY};
   return null;
+}
+
+// The farmer's next stand tile on its 2×2 plot (origin = gatherX/Y) — a
+// pure function of the current rounded position + hashed bite count, so
+// the AoE2 farm stroll needs no stored state and no RNG. Every plot tile
+// is within the Chebyshev-1 extraction bound of the origin, so working
+// from any of them is identical to working from the origin.
+// Farmers work STRAIGHT FURROWS along the grain (user call — the farm
+// art's crop strips run along world X): passes pace E/W along the
+// current row, with a short N/S headland shift every 3rd bite. carrying
+// is the bite counter; it resets each load, which just restarts the row
+// phase. Off-plot positions clamp onto the plot.
+function farmPlotNextTile(e){
+  let dx=Math.min(1,Math.max(0,Math.round(e.x)-e.gatherX));
+  let dy=Math.min(1,Math.max(0,Math.round(e.y)-e.gatherY));
+  let row=Math.floor(e.carrying/3)&1;
+  if(dy!==row)return{x:e.gatherX+dx,y:e.gatherY+row};  // headland shift
+  return{x:e.gatherX+(1-dx),y:e.gatherY+row};          // furrow pass
 }
 
 // Bring an exhausted farm back to life once a reseed has been paid for, and
@@ -1304,6 +1325,18 @@ function updateGatherTask(e,config){
   if(tile.res<=0){
     depleteGatherTile(gatherTile,config,e);
     clearGatherTarget(e);
+  }
+  // AoE2 farm stroll: after each bite the farmer walks one ring leg to a
+  // different tile of its 2×2 plot (farmPlotNextTile) and works there.
+  // The leg (~T30(38)) is far shorter than the cycle (T30(94)) and the
+  // cooldown keeps ticking mid-walk, so extraction stays cooldown-bound —
+  // food rate unchanged. Gates: a depleting bite above already cleared
+  // gatherX or flipped task (no stroll into a reseed), and a FULL load
+  // goes straight to the drop-off instead of wasting a leg. A blocked
+  // corner just yields an empty path — work in place this cycle.
+  if(e.task==='farm'&&e.gatherX>=0&&e.carrying<e.carryMax){
+    let n=farmPlotNextTile(e);
+    pathUnitTo(e,n.x,n.y);
   }
 }
 
@@ -1612,13 +1645,25 @@ function damageEntity(attacker, target){
   }
 
   if(target.hp<=0) handleDeath(target, attacker.team);
-}function autoTaskBuilder(e, bt){
+}// Auto-task at a work building — fires both when a builder FINISHES a site
+// and when a villager is DISPATCHED to a complete drop-off ("send to the
+// wood camp = become a lumberjack", user call). Resource searches anchor
+// on the BUILDING (findNearTile anchor), not the villager: dispatch fired
+// on the order tick, so self-anchored searches grabbed whatever was near
+// the villager's old spot and the camp was never reached.
+function autoTaskBuilder(e, bt, dispatched){
+  // Anchor the resource search on the BUILDING only for a human dispatch
+  // ("send to the wood camp") — the no-op branch can also fire with a
+  // FAR-OFF completed buildTarget (drained build queues), and anchoring
+  // there marched AI villagers across the map (sim-smoke food starvation).
+  let A = dispatched ? bt : null;
+  let ax = dispatched ? bt.x : e.x, ay = dispatched ? bt.y : e.y;
   if(bt.btype==='FARM'){
     e.task='farm';
     e.gatherX=bt.x;
     e.gatherY=bt.y;
   } else if(bt.btype==='LCAMP'){
-    let nearWood = findNearTile(e, TERRAIN.FOREST);
+    let nearWood = findNearTile(e, TERRAIN.FOREST, null, A);
     if (nearWood) {
       e.task = 'chop';
       e.gatherX = nearWood.x;
@@ -1628,7 +1673,20 @@ function damageEntity(attacker, target){
       e.task = null;
     }
   } else if(bt.btype==='MILL'){
-    let nearBerries = findNearTile(e, TERRAIN.BERRIES);
+    // DISPATCHED to the mill = "make me a farmer" (user call): nearest
+    // unstaffed farm plot by the mill first, berries as the fallback.
+    // Post-CONSTRUCTION keeps forage-first: the mill founds ON a berry
+    // patch, and pulling its builder to a distant farm food-starved the
+    // AI (sim-smoke regression).
+    let nearFarm = dispatched ? findNearTile(e, TERRAIN.FARM, null, A) : null;
+    if (nearFarm) {
+      e.task = 'farm';
+      e.gatherX = nearFarm.x;
+      e.gatherY = nearFarm.y;
+      pathUnitTo(e, nearFarm.x, nearFarm.y);
+      return;
+    }
+    let nearBerries = findNearTile(e, TERRAIN.BERRIES, null, A);
     if (nearBerries) {
       e.task = 'forage';
       e.gatherX = nearBerries.x;
@@ -1638,13 +1696,13 @@ function damageEntity(attacker, target){
       e.task = null;
     }
   } else if(bt.btype==='MCAMP'){
-    let nearGold = findNearTile(e, TERRAIN.GOLD);
-    let nearStone = findNearTile(e, TERRAIN.STONE);
+    let nearGold = findNearTile(e, TERRAIN.GOLD, null, A);
+    let nearStone = findNearTile(e, TERRAIN.STONE, null, A);
     let targetTile = null;
     let targetTask = null;
     if (nearGold && nearStone) {
-      let dGold = Math.abs(nearGold.x - e.x) + Math.abs(nearGold.y - e.y);
-      let dStone = Math.abs(nearStone.x - e.x) + Math.abs(nearStone.y - e.y);
+      let dGold = Math.abs(nearGold.x - ax) + Math.abs(nearGold.y - ay);
+      let dStone = Math.abs(nearStone.x - ax) + Math.abs(nearStone.y - ay);
       if (dGold <= dStone) {
         targetTile = nearGold;
         targetTask = 'mine_gold';
@@ -1678,9 +1736,15 @@ function damageEntity(attacker, target){
 // exactly these six fields back. buildQueue is CLONED: the live array keeps
 // mutating while the villager is interrupted.
 function stashVillagerTask(v){
-  if(v.savedTask||!(v.task||v.buildTarget||v.gatherX>=0))return;
+  // the sheep line (herding/butchering) rides TARGET with no task — it
+  // must stash too, or bell/militia interruptions dropped the job and
+  // released villagers stood idle by their carcass (user caught it)
+  let tgt=v.target&&entitiesById.get(v.target);
+  let workTarget=tgt&&(tgt.utype==='sheep'||tgt.utype==='sheep_carcass')?v.target:null;
+  if(v.savedTask||!(v.task||v.buildTarget||v.gatherX>=0||workTarget))return;
   v.savedTask={task:v.task,gatherX:v.gatherX,gatherY:v.gatherY,
-    buildTarget:v.buildTarget,buildQueue:v.buildQueue?[...v.buildQueue]:[],prevTask:v.prevTask};
+    buildTarget:v.buildTarget,buildQueue:v.buildQueue?[...v.buildQueue]:[],prevTask:v.prevTask,
+    target:workTarget};
 }
 function restoreSavedTask(e) {
   if (e.utype === 'villager' && e.savedTask) {
@@ -1690,6 +1754,10 @@ function restoreSavedTask(e) {
     e.buildTarget = e.savedTask.buildTarget;
     e.buildQueue = e.savedTask.buildQueue;
     e.prevTask = e.savedTask.prevTask;
+    // sheep-line work target: resume only if the sheep/carcass still
+    // exists — updateUnit re-paths and the butcher loop handles the rest
+    if (e.savedTask.target && entitiesById.get(e.savedTask.target))
+      e.target = e.savedTask.target;
     e.savedTask = null;
 
     if (e.task === 'build' && e.buildTarget) {
@@ -1840,12 +1908,21 @@ function ringTownBell(team){
       let d=distToBuilding(e.x,e.y,s.b);
       if(d<bd){bd=d;best=s;}
     });
-    if(!best)return;
-    best.room--;
+    // FULL shelters (a TC holds 15, a tower 5) used to leave the villager doing
+    // whatever it was doing — including standing and fighting, which is the one
+    // thing the bell must never permit. Send it to the nearest shelter anyway:
+    // it stops working, disengages, and takes a slot the moment one frees.
+    let refuge=best?best.b:null, dd=bd;
+    if(!refuge){
+      spots.forEach(s=>{ let d=distToBuilding(e.x,e.y,s.b); if(d<dd){dd=d;refuge=s.b;} });
+      if(!refuge)refuge=bellTC;
+    }
+    if(!refuge)return;                 // nowhere to run at all (no TC, no towers)
+    if(best)best.room--;
     stashVillagerTask(e);
     e.target=null;e.buildTarget=null;
-    e.task='garrison';e.garrisonTarget=best.b.id;
-    pathToContact(e,best.b);
+    e.task='garrison';e.garrisonTarget=refuge.id;
+    pathToContact(e,refuge);
     sent++;
   });
   if(team===myTeam){
@@ -2223,7 +2300,7 @@ function updateVillagerBuild(e){
     if(!checkNextBuild(e)){
       e.task=null;
       e.buildTarget=null;
-      if(bt) autoTaskBuilder(e, bt);
+      if(bt) autoTaskBuilder(e, bt, !isAITeam(e.team)); // human dispatch ("send to camp") — the AI's own assigner owns its villagers
     }
     return;
   }
@@ -2495,13 +2572,35 @@ function updateUnitCombat(e){
       if(retryReady(e,RETRY.HARVEST_WAIT)){
         retryStamp(e,RETRY.HARVEST_WAIT,T30(15));
         pathUnitTo(e,Math.round(t.x),Math.round(t.y));
-        if(e.path.length===0 && d>8)e.target=null;
+        if(e.path.length===0){
+          if(d>8)e.target=null;
+          // Near but DEFINITIVELY unreachable (walled off since the kill):
+          // release, or the butcher waits at 8 tiles forever (watchdog-
+          // proven wedge). A full-but-reachable ring keeps its patience.
+          else if(findPath(Math.round(e.x),Math.round(e.y),Math.round(t.x),Math.round(t.y)).length===0)e.target=null;
+        }
       }
     } else {
       clearUnitPath(e);
       // Press tight against the carcass (pressToContact) so the herding
       // crew packs onto/around it; separateUnits rings them.
-      pressToContact(e, t.x, t.y, 0.7);
+      // PRESS TIEBREAKER (user call — press and separation are otherwise
+      // two independent controllers contesting the same band, and the
+      // crowd visibly vibrates while they fight): a settled co-harvester
+      // STRICTLY CLOSER to the carcass (id breaks exact ties) owns the
+      // lane — the outer unit holds its spot (any d<=1.5 harvests just
+      // as well; the 0.7 press is cosmetic packing) so press can never
+      // walk one butcher into another and hand separation an overlap.
+      let laneHeld=false;
+      for(let pi=0;pi<entities.length&&!laneHeld;pi++){
+        let p=entities[pi];
+        if(p===e||p.type!=='unit'||p.hp<=0||p.garrisonedIn||p.target!==e.target)continue;
+        if(p.utype!=='villager'||p.path.length>0)continue;   // movers hold no slot
+        if(dist(p,e)>=0.75)continue;                         // not in my lane
+        let pd=distToTarget(p,t);
+        if(pd<d||(pd===d&&p.id<e.id))laneHeld=true;
+      }
+      if(!laneHeld)pressToContact(e, t.x, t.y, 0.7);
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
         e.task='return';
@@ -2577,6 +2676,12 @@ function updateUnitCombat(e){
           return;
         }
         combatApproach(e,t,d,()=>pathToContact(e,t,contactClaims(e,p=>p.target===t.id)));
+      } else if(e.path.length>2){
+        // Adjacent but still EN ROUTE to a farther assigned ring tile:
+        // finish the walk (same explicit step as the garrison leg) —
+        // attacking at FIRST touch stacked the whole group on the
+        // approach faces and left the far ring empty (user caught it).
+        stepUnitAlongPath(e, unitMoveSpeed(e) * UNIT_PX_PER_TICK, true);
       } else {
         // In range: press up against the nearest FOOTPRINT EDGE so attackers
         // pack tight along the wall instead of standing a tile back on their
@@ -2688,7 +2793,13 @@ function updateFollowOrder(e){
   if(!(fid && !e.target))return;
   let f=entitiesById.get(fid);
   if(!f||f.hp<=0){
-    if(e.order && e.order.kind==='follow' && e.order.id===fid) e.order=null;
+    if(e.order && e.order.kind==='follow' && e.order.id===fid){
+      // A CONVOY follow (gx/gy stamped by execUnitCommand) carries its own
+      // destination: the leader dying must not drop the player's move order
+      // for the whole group — finish the march as a plain move.
+      if(e.order.gx!=null) issueMoveOrder(e, e.order.gx, e.order.gy);
+      else e.order=null;
+    }
     // (a dead ESCORTEE is converted to a frozen ground post by the
     // handleDeath sweep — not cleared here)
   } else {
@@ -2697,11 +2808,32 @@ function updateFollowOrder(e){
     // 0,0 for offset-less orders, e.g. the AI's ram-surplus riders): a big
     // group holds its shape around the leader instead of every follower
     // chasing the leader's exact tile in a dogpile.
-    let sx=Math.max(0,Math.min(MAP-1,Math.round(f.x)+(e.order.x||0)));
-    let sy=Math.max(0,Math.min(MAP-1,Math.round(f.y)+(e.order.y||0)));
+    // INTERCEPT, don't chase: project the leader ~4 tiles ahead along its
+    // own path so followers cut the corner toward where it's GOING —
+    // pathing to its live tile meant equal-speed followers never closed
+    // and the convoy only assembled on arrival (user caught the
+    // scattered march). A stopped leader projects to itself (exact).
+    let lead=f.path&&f.path.length?f.path[Math.min(3,f.path.length-1)]:f;
+    let sx=Math.max(0,Math.min(MAP-1,Math.round(lead.x)+(e.order.x||0)));
+    let sy=Math.max(0,Math.min(MAP-1,Math.round(lead.y)+(e.order.y||0)));
+    // A CONVOY follow (gx stamped) is ONE-SHOT: once the leader settles,
+    // the march is over — hand the follower a plain move to its station,
+    // which clears itself on arrival. A standing follow here meant moving
+    // the ex-leader alone later dragged every former follower along
+    // (deliberate click-to-follow orders have no gx and persist).
+    if(e.order.gx!=null && !f.target && !(f.path&&f.path.length) && !(f.order&&f.order.kind==='move')){
+      issueMoveOrder(e,sx,sy);
+      return;
+    }
     let d=dist(e,{x:sx,y:sy});
     if(d>1.5){
-      if(e.path.length===0 && retryReady(e,RETRY.FOLLOW)){
+      // Re-path when idle OR when the station has drifted well away from
+      // this walk's goal — a follower otherwise finishes its ENTIRE stale
+      // muster path before ever consulting the moving station (the
+      // convoy's scattered-march dominator).
+      let goal=e.path.length?e.path[e.path.length-1]:null;
+      let stale=goal&&Math.abs(goal.x-sx)+Math.abs(goal.y-sy)>3;
+      if((e.path.length===0||stale) && retryReady(e,RETRY.FOLLOW)){
         retryStamp(e,RETRY.FOLLOW,T30(12));
         pathUnitTo(e,sx,sy);
       }
@@ -2956,7 +3088,19 @@ function updateUnit(e){
     if(e.carrying>=e.carryMax){
       e.prevTask=e.task;e.task='return';return;
     }
-    if(GATHER_TASKS[e.task])updateGatherTask(e,GATHER_TASKS[e.task]);
+    if(GATHER_TASKS[e.task]){
+      let gcfg=GATHER_TASKS[e.task];
+      // AoE2: a PARTIAL load of a DIFFERENT resource is lost at retask.
+      // Drop it the moment the new task is active — not at the first
+      // extraction (gatherFromTile's guard) — so the carry visual matches
+      // the new assignment while the villager walks over (user caught the
+      // stale carry read). A FULL mismatched load still banks first via
+      // the return-then-resume above: kinder than AoE2, long established.
+      if(e.carrying>0&&e.carryType&&e.carryType!==gcfg.resource){
+        e.carrying=0;e.carryType=null;
+      }
+      updateGatherTask(e,gcfg);
+    }
   }
   if(e.order && e.order.kind==='scout' && e.utype==='scout'){ updateAutoScoutTick(e); return; }
   updateIdleMilitary(e);
@@ -3106,8 +3250,8 @@ function handleDeath(e,killerTeam){
   }
   if(e.type==='building'){
     // AoE2: queued units were prepaid (queueUnit) — refund them when the
-    // building dies or is deleted. (Age research dying unrefunded with the
-    // TC is intentional — see execResearchAge, js/commands.js.)
+    // building dies or is deleted. (Research dying unrefunded with its
+    // host building is intentional — see execResearch, js/commands.js.)
     if(e.queue&&e.queue.length>0&&isPlayerTeam(e.team)){
       // Refund what was actually paid: a free rescue villager (unitTrainCost)
       // refunds nothing, so losing the TC with one queued can't mint resources.
@@ -3472,28 +3616,40 @@ function updateBuildingArrows(e){
 }
 
 
-  // Age research (TC only): while active, the unit queue is PAUSED — the
-  // classic AoE2 tension of advancing vs more villagers. Completion is the
-  // one place teamAge advances, plus the military attack sweep (attack is
-  // snapshotted on entities; armor is added live in damageEntity).
+  // Research: while active, the building's unit queue (if any) is
+  // PAUSED. target is a numeric age index (age advancement — the one place
+  // teamAge advances) OR a string tech key (applyTech runs its one-time stat
+  // sweep; live-read effects key off the teamTechs bit via hasUpgrade).
 // Returns true while research is active (the tick is consumed — training
 // pauses), false when there is none.
 function updateBuildingResearch(e){
   if(!e.research)return false;
+    let target=e.research.target;
+    let isAge=typeof target==='number';
+    let ticks=researchDurationFor(e.team, target);
     e.research.tick++;
-    if(e.research.tick>=AGES[e.research.target].researchTicks){
-      teamAge[e.team]=e.research.target;
-      // Baked-in tech: every card unlocked by the new age applies now (one-
-      // time stat sweeps; live-read effects key off teamAge via hasUpgrade).
-      // See UPGRADES, core.js.
-      let cardNames=applyAgeUpgrades(e.team,e.research.target);
-      // AoE2-style power-spike aggression: an AI that just advanced presses
-      // its (freshly bumped) army — controlAIMilitary reads this stamp.
-      if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
-      if(e.team===myTeam){
-        showMsg('You have advanced to the '+AGES[e.research.target].name+'!'+
-          (cardNames.length?' Gained: '+cardNames.join(', ')+'.':''));
-        if(window.playSound)playSound('victory');
+    if(e.research.tick>=ticks){
+      if(isAge){
+        teamAge[e.team]=target;
+        rescaleTeamBuildingHp(e.team);   // the new age raises every building's ceiling
+        // TEMP (AUTO_APPLY_TECHS_AT_AGE): free auto-grant of the new age's techs,
+        // in registry order — the original behavior while paid manual research
+        // is tuned. Live-read effects key off the teamTechs bit via hasUpgrade.
+        let cardNames=AUTO_APPLY_TECHS_AT_AGE?applyAgeUpgrades(e.team,target):[];
+        // AoE2-style power-spike aggression: an AI that just advanced presses
+        // its (freshly bumped) army — controlAIMilitary reads this stamp.
+        if(AI_STATES&&AI_STATES[e.team])AI_STATES[e.team].lastAgeUpTick=tick;
+        if(e.team===myTeam){
+          showMsg('You have advanced to the '+AGES[target].name+'!'+
+            (cardNames.length?' Gained: '+cardNames.join(', ')+'.':''));
+          if(window.playSound)playSound('victory');
+        }
+      }else{
+        applyTech(e.team,target); // one-time sweep + set the teamTechs bit
+        if(e.team===myTeam){
+          showMsg(UPGRADES[target].name+' researched!');
+          if(window.playSound)playSound('build');
+        }
       }
       e.research=undefined;
       if(typeof updateUI==='function')updateUI();
@@ -3504,8 +3660,12 @@ function updateBuildingResearch(e){
 function updateBuildingTraining(e){
   if(e.queue.length>0){
     let u=UNITS[e.queue[0]];
-    if(e.trainTick<u.trainTime)e.trainTick++;
-    if(e.trainTick>=u.trainTime){
+    // DE scales the AI's UNIT and research times together (aiTimeMult) — a
+    // weaker computer player is slow at everything, the way a beginner is,
+    // not selectively slow at one subsystem.
+    let trainTime=Math.round(u.trainTime*aiTimeMult(e.team));
+    if(e.trainTick<trainTime)e.trainTick++;
+    if(e.trainTick>=trainTime){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;
       let spawn=findSpawnTile(e.x+e.w,e.y+e.h) || findSpawnTile(e.x,e.y);
       if(!spawn){

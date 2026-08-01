@@ -158,6 +158,223 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- town bell: nobody stays
+    // Reported: "when I hit the bell some villagers stay to fight". A TC holds
+    // 15 and a tower 5, so the overflow hit `if(!best) return` and carried on
+    // doing whatever it was doing — including fighting.
+    'bell-overflow': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:8, numTeams:2, controllers:['human','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc = createBuilding('TC', 30, 30, 0); tc.complete = true;
+      const cap = garrisonCap(tc);
+      const foe = createUnit('militia', 33, 33, 1);
+      const vils = [];
+      for (let i = 0; i < cap + 6; i++) {            // MORE villagers than slots
+        const v = createUnit('villager', 28 + (i % 6), 28 + ((i / 6) | 0), 0);
+        if (v) { v.target = foe.id; vils.push(v); }  // every one of them is fighting
+      }
+      T.ok('staged more villagers than the TC can hold', vils.length > cap);
+      ringTownBell(0);
+      const fighting = vils.filter(v => v.target != null);
+      const running  = vils.filter(v => v.task === 'garrison');
+      T.ok('NO villager is still fighting after the bell', fighting.length === 0);
+      T.ok('every villager is running for cover, not just the first ' + cap,
+           running.length === vils.length);
+      // out-of-range villagers are still exempt (AoE2 bell range)
+      const far = createUnit('villager', 30, 30 + 40, 0);
+      if (far) { far.target = foe.id; ringTownBell(0);
+        T.ok('a villager beyond the bell range is left working (AoE2 range rule)',
+             far.task !== 'garrison'); }
+      return T;
+    })),
+
+    // ---------------------------------------------- human clocks are unscaled
+    // aiTimeMult must never touch a HUMAN team, and the research progress bar
+    // must finish at exactly the tick the research applies (reported: "the
+    // upgrade is applied faster than the progress bar").
+    'human-clocks': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:7, numTeams:2, controllers:['human','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      T.ok('human team has aiTimeMult 1', aiTimeMult(0) === 1);
+      T.ok('AI team is scaled', aiTimeMult(1) > 1);
+      // a human research must run exactly the authored ticks...
+      T.ok('human research duration is unscaled',
+           researchDurationFor(0,'forging') === UPGRADES.forging.researchTicks);
+      T.ok('AI research duration IS scaled',
+           researchDurationFor(1,'forging') > UPGRADES.forging.researchTicks);
+      // ...and human unit training too
+      const tc0 = createBuilding('TC', 30, 30, 0); tc0.complete = true;   // pop space, or queueUnit refuses
+      const b = createBuilding('BARRACKS', 20, 20, 0); b.complete = true;
+      resourceStore(0).food = 9999; resourceStore(0).gold = 9999; resourceStore(0).wood = 9999;
+      queueUnit(b, 'militia');
+      let ticks = 0; const before = entities.filter(e => e.utype === 'militia' && e.team === 0).length;
+      while (ticks < UNITS.militia.trainTime * 3 &&
+             entities.filter(e => e.utype === 'militia' && e.team === 0).length === before) {
+        updateBuildingTraining(b); ticks++;
+      }
+      T.ok('a human militia trains in exactly its authored time',
+           ticks === UNITS.militia.trainTime, 'took ' + ticks + ' vs ' + UNITS.militia.trainTime);
+      // bar vs completion: the fill must read 100% on the tick it applies
+      tc0.research = { target: 'forging', tick: 0 };
+      const dur = researchDurationFor(0, 'forging');
+      let t2 = 0;
+      while (tc0.research && t2 < dur * 3) { updateBuildingResearch(tc0); t2++; }
+      T.ok('research applies on exactly the bar\'s final tick', t2 === dur, 'applied at ' + t2 + ', bar length ' + dur);
+      return T;
+    })),
+
+    // ---------------------------------------------- age-scaled building HP
+    // AoE2 buildings gain HP each age (House 550/750/900, Barracks
+    // 1200/1500/1800). Ours were flat at the Dark-Age figure forever.
+    'building-hp-by-age': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:6, numTeams:2, controllers:['human','ai'], ages:[0,0], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      teamAge[0] = 0;
+      const h = createBuilding('HOUSE', 20, 20, 0); h.complete = true;
+      const b = createBuilding('BARRACKS', 24, 20, 0); b.complete = true;
+      const tc = createBuilding('TC', 30, 30, 0); tc.complete = true;
+      T.ok('Dark Age house is 550', h.maxHp === 550);
+      T.ok('Dark Age barracks is 1200', b.maxHp === 1200);
+      // half-wreck the barracks, then advance — damage must stay proportional
+      b.hp = b.maxHp / 2;
+      teamAge[0] = 1; rescaleTeamBuildingHp(0);
+      T.ok('Feudal house rises to 750', h.maxHp === 750);
+      T.ok('Feudal barracks rises to 1500', b.maxHp === 1500);
+      T.ok('an UNDAMAGED building is topped up exactly', h.hp === 750);
+      T.ok('a half-wrecked building stays half-wrecked', b.hp === 750);
+      T.ok('the Town Centre does NOT scale (flat in DE)', tc.maxHp === 2400);
+      teamAge[0] = 2; rescaleTeamBuildingHp(0);
+      T.ok('Castle house rises to 900', h.maxHp === 900);
+      T.ok('Castle barracks rises to 1800', b.maxHp === 1800);
+      // a building founded later starts at the current age's ceiling
+      const h2 = createBuilding('HOUSE', 26, 26, 0);
+      T.ok('a house built IN Castle starts at 900', h2.maxHp === 900);
+      return T;
+    })),
+
+    // ---------------------------------------------- attack-line split (DE)
+    // DE's Forging/Iron Casting are infantry+cavalry only; archers have their
+    // own line (Fletching -> Bodkin Arrow). Ours gave archers BOTH, so they
+    // double-dipped the melee cards.
+    'attack-lines': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:4, numTeams:2, controllers:['human','ai'], ages:[2,2], entities:[] });
+      gameStarted = true; window.__headlessSim = true;
+      const mk = t => ({ mil: createUnit('militia',20,20,t), arc: createUnit('archer',22,20,t) });
+      const base = mk(0);
+      const baseMilAtk = base.mil.atk, baseArcAtk = base.arc.atk, baseArcRange = base.arc.range;
+      const give = k => { teamTechs[0] |= (1 << UPGRADE_BITS[k]); UPGRADES[k].apply && UPGRADES[k].apply(0); };
+      give('forging');
+      T.ok('Forging gives MELEE +1 attack', base.mil.atk === baseMilAtk + 1);
+      T.ok('Forging does NOT touch archers (DE: infantry+cavalry only)', base.arc.atk === baseArcAtk);
+      give('iron_casting');
+      T.ok('Iron Casting is melee-only too', base.mil.atk === baseMilAtk + 2 && base.arc.atk === baseArcAtk);
+      give('fletching');
+      T.ok('Fletching gives archers +1 attack AND +1 range',
+           base.arc.atk === baseArcAtk + 1 && base.arc.range === baseArcRange + 1);
+      give('bodkin_arrow');
+      T.ok('Bodkin Arrow adds the second archer step',
+           base.arc.atk === baseArcAtk + 2 && base.arc.range === baseArcRange + 2);
+      T.ok('archer and melee attack lines end level (+2 each)',
+           (base.arc.atk - baseArcAtk) === (base.mil.atk - baseMilAtk));
+      T.ok('Bodkin needs Fletching first', TECH_PREREQ.bodkin_arrow === 'fletching');
+      return T;
+    })),
+
+    // ---------------------------------------------- wall ring vs buildings
+    // Placement only asked canPlace, so a house could land ON a planned ring
+    // tile after the ring was planned; the wall loop then marked it done
+    // ("already our building") and the perimeter got a 550hp house where a
+    // 1800hp wall belonged.
+    'ring-not-houses': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map:'medium', seed:3, numTeams:2, controllers:['ai','ai'], ages:[1,1], entities:[] });
+      gameStarted = true; window.__headlessSim = true; window.fogDisabled = true; updateFog();
+      const tc = createBuilding('TC', 30, 30, 0);
+      const ai = AI_STATES[0];
+      ai.wallPlan = computeAIWallRing(ai, tc, 6);
+      const onRing = ai.wallPlan[0];
+      T.ok('a plan exists to test against', !!onRing);
+      // a HOUSE may not be sited on a ring tile...
+      T.ok('house placement is refused on the wall ring',
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'HOUSE') === true);
+      // ...but the ring pieces themselves are exempt
+      T.ok('walls/gates/towers are exempt (they ARE the ring)',
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'WALL') === false &&
+           aiOnWallRing(ai, onRing.x, onRing.y, 1, 1, 'TOWER') === false);
+      // a tile well inside the ring is fine
+      T.ok('inside the ring is still buildable', aiOnWallRing(ai, 30, 30, 1, 1, 'HOUSE') === false);
+      return T;
+    })),
+
+    // ---------------------------------------------- scoutless base survey
+    // ai.baseSurveyed only advanced inside controlAIScouts' per-scout loop, so
+    // an AI whose scout died early never completed the lap — and planAIWalls
+    // blocks on it, meaning that AI silently never walled again for the whole
+    // match. Scoutless AIs now fall back to testing whether the ring band is
+    // explored (which is what the lap establishes).
+    'scoutless-survey': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 9, numTeams: 2,
+                     controllers: ['ai', 'ai'], ages: [1, 1], entities: [] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc = createBuilding('TC', 30, 30, 0);
+      const ai = AI_STATES[0];
+      ai.baseSurveyed = false; ai.surveyIdx = 0;
+      // Fog OFF makes every tile count as explored, so the ring band reads as
+      // surveyed — the same state a real base's own vision reaches.
+      window.fogDisabled = true;
+      controlAIScouts(ai, [], tc);                       // no scouts at all
+      T.ok('scoutless AI with an explored ring band completes the survey',
+           ai.baseSurveyed === true);
+      // With the band genuinely unknown it must NOT claim to be surveyed.
+      const ai2 = AI_STATES[1];
+      const tc2 = createBuilding('TC', 70, 70, 1);
+      ai2.baseSurveyed = false; ai2.surveyIdx = 0;
+      window.fogDisabled = false;
+      if (typeof teamExploredGrid !== 'undefined' && teamExploredGrid && teamExploredGrid[1])
+        teamExploredGrid[1].fill(0);
+      controlAIScouts(ai2, [], tc2);
+      T.ok('unexplored ring band does NOT count as surveyed', ai2.baseSurveyed === false);
+      window.fogDisabled = true;
+      return T;
+    })),
+
+    // ---------------------------------------------- ally market / trade route
+    // An AI that stalls below its maxAge used to never build a Market, so it
+    // never traded — and in a team game that left its ALLY (often the human)
+    // with no trade partner either. A standing ally Market is now its own
+    // trigger. The Castle-age gate must still hold when there's no partner.
+    'ally-market': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (withAllyMarket) => {
+        loadScenario({ map: 'medium', seed: 5, numTeams: 4,
+                       controllers: ['ai', 'ai', 'ai', 'ai'], ages: [1, 1, 1, 1], entities: [] });
+        gameStarted = true; window.__headlessSim = true;
+        teamAlliance = [0, 0, 1, 1];              // 0+1 allied vs 2+3
+        teamAge[0] = 1; teamAge[1] = 1;           // Feudal: Market unlocked, below maxAge (2)
+        const tc0 = createBuilding('TC', 20, 20, 0);
+        const tc1 = createBuilding('TC', 44, 44, 1);
+        if (withAllyMarket) { const m = createBuilding('MARKET', 24, 20, 0); m.complete = true; }
+        // Team 1: plenty of villagers + resources, deliberately NO army, so the
+        // only thing that can gate it is the tech/army rule under test.
+        const vils = [];
+        for (let i = 0; i < 12; i++) vils.push(createUnit('villager', 42 + (i % 4), 42 + ((i / 4) | 0), 1));
+        const r = resourceStore(1);
+        r.food = 500; r.wood = 600; r.gold = 400; r.stone = 200;   // not starving -> emergency path off
+        const ai = AI_STATES[1];
+        const profile = AI_LEVELS[(teamControllers[1] && teamControllers[1].difficulty) || 'easy'];
+        planAIMarket(ai, tc1, vils.filter(Boolean), profile);
+        return !!aiOwnMarket(1);
+      };
+      T.ok('ally Market standing -> a Feudal AI builds its own (trade route opens)', stage(true) === true);
+      T.ok('no ally Market -> the Castle-age gate still holds', stage(false) === false);
+      return T;
+    })),
+
     // ---------------------------------------------- checksum-coverage guard
     // detEntityHash coverage is hand-maintained; an unhashed sim-read field is
     // an invisible desync. detEntityCoverageGaps flags any entity key that is
@@ -686,6 +903,41 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------- bell butcher-resume (regression)
+    // The sheep line rides TARGET with no task — the stash must carry it
+    // too, or a bell cycle left released villagers idle by their carcass.
+    'bell-butcher-resume': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 14, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+          { u: 'sheep_carcass', x: 41, y: 45, team: 1 },
+          { u: 'villager', x: 41, y: 44, team: 1 },
+        ],
+      });
+      const v = entities.find(e => e.team === 1 && e.utype === 'villager');
+      const car = entities.find(e => e.utype === 'sheep_carcass');
+      v.target = car.id; // butchering = target-with-no-task (the sheep line)
+      ringTownBell(1);
+      let inTC = false;
+      for (let i = 0; i < T30(900) && !inTC; i++) {
+        AI_STATES[1].lastBaseHitTick = tick;
+        update();
+        inTC = v.garrisonedIn != null;
+      }
+      T.ok('bell: butcher shelters in the TC', inTC);
+      let resumed = false;
+      for (let i = 0; i < T30(1200) && !resumed; i++) {
+        update();
+        resumed = v.garrisonedIn == null && v.target === car.id;
+      }
+      T.ok('all-clear: butcher resumes the SAME carcass (stash/restore)', resumed);
+      return T;
+    })),
+
     // -------------------------------------------- explicit farm reseed (wood)
     // Sending a villager to an exhausted farm pays wood directly (like fixing
     // a building), bypassing the Mill prepaid queue. The AUTOMATIC paths must
@@ -731,6 +983,76 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < T30(600); i++) update();
       T.ok('auto path does NOT spend a human\'s wood without prepaid', resources[0].wood === 100);
       T.ok('farm stays exhausted until reseeded deliberately', farm.exhausted);
+      return T;
+    })),
+
+    // ----------------------------------------------------- farm stroll parity
+    // Farmers walk a ring over their 2×2 plot between bites (AoE2 stroll).
+    // The legs must not change the food rate: extraction stays cooldown-bound
+    // (the leg is far shorter than the cycle and the cooldown ticks mid-walk).
+    'farm-stroll': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'FARM', x: 11, y: 9, team: 0 },
+          { u: 'villager', x: 13, y: 9, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farm = entities.find(e => e.team === 0 && e.btype === 'FARM');
+      const v = entities.find(e => e.team === 0 && e.utype === 'villager');
+      v.task = 'farm'; v.gatherX = farm.x; v.gatherY = farm.y;
+      const biteTicks = [], visited = new Set();
+      let prevCarry = 0, returnAfterFull = false;
+      for (let i = 0; i < T30(1600); i++) {
+        update();
+        if (v.task === 'farm') visited.add(Math.round(v.x) + ',' + Math.round(v.y));
+        if (v.carrying > prevCarry) biteTicks.push(i);
+        if (prevCarry < v.carryMax && v.carrying >= v.carryMax) returnAfterFull = v.task === 'return' || v.path.length === 0;
+        prevCarry = v.carrying;
+        if (biteTicks.length >= 6) break;
+      }
+      // (a) rate parity: every inter-bite delta equals the cooldown formula
+      const cd = gatherCooldownFor(0, 'food', T30(94));
+      const deltas = biteTicks.slice(1).map((t, k) => t - biteTicks[k]);
+      T.ok('stroll keeps extraction cooldown-bound (deltas=' + deltas.join(',') + ' cd=' + cd + ')',
+           deltas.length >= 4 && deltas.every(d => d === cd));
+      // (b) the ring actually covers the whole 2×2 plot
+      const plot = [[0,0],[1,0],[1,1],[0,1]].map(([dx,dy]) => (farm.x+dx) + ',' + (farm.y+dy));
+      T.ok('farmer visits all 4 plot tiles', plot.every(k => visited.has(k)));
+      // (c) HEAVY PLOW works straight furrows: passes pace E/W along the
+      // grain (world X), headland shifts N/S only every 3rd bite.
+      applyTech(0, 'heavy_plow');
+      // Measure ONE clean load from the origin (deposit boundaries reset
+      // the row phase and this farm deposits IN PLACE at the adjacent TC,
+      // so mid-stream windows mix haul legs into the count).
+      v.carrying = 0; v.carryType = null;
+      v.x = farm.x; v.y = farm.y; clearUnitPath(v);
+      const stands = [];
+      let pc = 0;
+      for (let i = 0; i < T30(2400); i++) {
+        update();
+        if (v.carrying === pc + 1) { stands.push({ x: Math.round(v.x), y: Math.round(v.y), c: v.carrying }); pc = v.carrying; }
+        if (stands.length >= 10) break;
+      }
+      const pairs = stands.slice(1).map((s, k) => ({ ax: Math.abs(s.x - stands[k].x), ay: Math.abs(s.y - stands[k].y) }));
+      const passes = pairs.filter(l => l.ax === 1 && l.ay === 0).length;
+      const shifts = pairs.filter(l => l.ax === 0 && l.ay === 1).length;
+      T.ok('plow furrows: grain passes 2:1 over headland shifts (' + passes + ':' + shifts + ' of ' + pairs.length + ')',
+           passes === 6 && shifts === 3 && pairs.length === 9);
+      T.ok('plow still covers both rows', new Set(stands.map(s => s.y)).size === 2);
+      // (d) a depleting bite hands the farmer to the reseed flow (no stroll)
+      resources[0].prepaidFarms = 0;
+      map[farm.y][farm.x].res = 1;
+      let flipped = false;
+      for (let i = 0; i < T30(400) && !flipped; i++) {
+        update();
+        flipped = farm.exhausted && v.task === 'build' && v.buildTarget === farm.id;
+      }
+      T.ok('depleting bite flips straight to the reseed flow', flipped);
       return T;
     })),
 
@@ -793,7 +1115,7 @@ async function withPage(browser, port, entry, fn){
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v8 stamp + tps', save.version === 8 && save.tps === TPS);
+      T.ok('v9 stamp + tps', save.version === 9 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);

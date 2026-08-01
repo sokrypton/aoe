@@ -96,20 +96,19 @@ function _outlineExtent(e){
   const anchorX = isUnit ? SIL_UNIT_SIZE/2 : cssPx/2;
   const anchorY = isUnit ? 66 : cssPx*0.62; // 211px above / 129px below the footprint top
 
+  // mapToScreen (js/iso.js), never inline camera math: the anchors must
+  // round through the SAME quantized display camera drawUnit/drawBuilding
+  // used, or the ring sits 1px off its sprite at some pan offsets.
   let sx, sy;
   if(isUnit){
-    const iso=toIso(e.x,e.y);
-    sx=Math.round(iso.ix-camX+W/2);
-    sy=Math.round(iso.iy-camY+topH+H/2+HALF_TH);
-    const {ox,oy}=getUnitGroupOffset(e.id);
-    sx+=ox; sy+=oy;
+    const a=unitAnchorLogical(e); // shared with the input hit-tests, so they agree by construction
+    sx=a.x; sy=a.y;
   } else {
     const b=BLDGS[e.btype];
-    const cx=e.x+b.w/2, cy=e.y+b.h/2;
-    const iso=toIso(cx,cy);
+    const p=mapToScreen(e.x+b.w/2, e.y+b.h/2);
     const bhh=(e.h||b.h)*HALF_TH;
-    sx=Math.round(iso.ix-camX+W/2);
-    sy=Math.round(iso.iy-camY+topH+H/2-bhh);
+    sx=Math.round(p.sx);
+    sy=Math.round(p.sy-bhh);
   }
   if(isOffscreen(sx,sy,cssPx)) return null;
 
@@ -320,10 +319,8 @@ function _buildOccMask(occs){
   try{
     for(const d of occs){
       if(d.type==='tree'){ drawTreeEntity(d.x, d.y); continue; }
-      const en = d.type==='building' ? d : d.entity;
-      const part = (d.type==='gate_back'||d.type==='tc_back') ? 'back'
-                 : (d.type==='gate_front'||d.type==='tc_front') ? 'front'
-                 : (d.type==='gate_door') ? 'door' : (d.part||null);
+      const en = proxyEntity(d);
+      const part = proxyPart(d);
       // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw
       // live. Everything else blits its baked silhouette at the same
       // footprint-top corner drawBuilding would have drawn it at (real camera,
@@ -331,9 +328,12 @@ function _buildOccMask(occs){
       if(isWallLike(en)){ drawBuilding(en, part); continue; }
       const sil = _bldgSil(en, part);
       const b = BLDGS[en.btype];
-      const isoC = toIso(en.x+b.w/2, en.y+b.h/2);
-      const rsx = Math.round(isoC.ix-camX+W/2);
-      const rsy = Math.round(isoC.iy-camY+H/2+topH) - b.h*HALF_TH;
+      // mapToScreen, matching drawBuilding's rounding exactly — the live
+      // wall-like branch above draws through it, so the baked blits must
+      // quantize through the same display camera.
+      const p = mapToScreen(en.x+b.w/2, en.y+b.h/2);
+      const rsx = Math.round(p.sx);
+      const rsy = Math.round(p.sy) - b.h*HALF_TH;
       X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
     }
   } finally { window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
@@ -417,12 +417,12 @@ function _bsilFillOccBox(rec, d){
     rec.top = ay-64; rec.bottom = ay+TH+8;
     return;
   }
-  const en = d.type==='building' ? d : d.entity;
+  const en = proxyEntity(d);
   const b = BLDGS[en.btype];
   const fw = en.w||b.w, fh = en.h||b.h;
-  const iso = toIso(en.x+fw/2, en.y+fh/2);
-  const ax = Math.round(iso.ix-camX+W/2);
-  const ay = Math.round(iso.iy-camY+topH+H/2) - fh*HALF_TH; // footprint-top anchor, same as drawBuilding
+  const p = mapToScreen(en.x+fw/2, en.y+fh/2);
+  const ax = Math.round(p.sx);
+  const ay = Math.round(p.sy) - fh*HALF_TH; // footprint-top anchor, same as drawBuilding
   const halfW = (fw+fh)/2*HALF_TW + 14;
   rec.left = ax-halfW; rec.right = ax+halfW;
   rec.top = ay - (60 + 18*Math.max(fw,fh)); // conservative art-height pad
@@ -490,3 +490,37 @@ function drawBehindBuildingOutlines(units, occs){
   });
 }
 
+
+// ---- Every-other-frame cache for the behind-occluder pass ----
+// The outline layer is decorative (units hidden behind buildings/trees) and
+// by far the most expensive render pass (~85% of a dense frame, profiled).
+// Recompute it on alternate frames into an offscreen layer; skip frames blit
+// the cached layer shifted by the camera delta (same ZOOM), so panning never
+// ghosts and the one-frame content lag is invisible behind occluders.
+let _bsilFrameNo=0, _bsilLayer=null;
+const _bsilCam={x:0,y:0,zoom:0,topH:0,empty:true};
+function drawBehindBuildingOutlinesCached(units,occs){
+  _bsilFrameNo++;
+  const cv=X.canvas, dpr=window.devicePixelRatio||1;
+  if(!_bsilLayer||_bsilLayer.width!==cv.width||_bsilLayer.height!==cv.height){
+    _bsilLayer=document.createElement('canvas');
+    _bsilLayer.width=cv.width; _bsilLayer.height=cv.height;
+    _bsilCam.empty=true;
+  }
+  // zoom/layout changes can't be delta-blitted — recompute those frames
+  if(_bsilFrameNo%2===1||_bsilCam.zoom!==ZOOM||_bsilCam.topH!==topH||_bsilCam.empty){
+    const lc=_bsilLayer.getContext('2d');
+    lc.setTransform(1,0,0,1,0,0); lc.clearRect(0,0,_bsilLayer.width,_bsilLayer.height);
+    lc.setTransform(X.getTransform()); // the caller's dpr+ZOOM transform, verbatim
+    const sv=X; X=lc;
+    try{ drawBehindBuildingOutlines(units,occs); } finally{ X=sv; }
+    _bsilCam.x=camDX(); _bsilCam.y=camDY(); _bsilCam.zoom=ZOOM; _bsilCam.topH=topH; _bsilCam.empty=false;
+  }
+  // blit in device space, shifted by the camera pan since the layer was
+  // built. The layer's content was positioned through the quantized display
+  // camera (camDX/camDY, js/iso.js), so the shift is measured in the same
+  // currency — whole logical pixels; ·ZOOM·dpr is then exact in device px
+  // whenever ZOOM·dpr is integral (no resample shimmer).
+  const dx=Math.round((_bsilCam.x-camDX())*ZOOM*dpr), dy=Math.round((_bsilCam.y-camDY())*ZOOM*dpr);
+  X.save(); X.setTransform(1,0,0,1,0,0); X.drawImage(_bsilLayer,dx,dy); X.restore();
+}
