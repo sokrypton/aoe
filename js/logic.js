@@ -388,6 +388,32 @@ function distToTarget(a,b){
   }
   return dist(a,b);
 }
+// THE work-reach predicates, one per action, shared by the sim and the RENDERER
+// (js/render-units.js). One spelling only: a looser render copy mimes work that
+// isn't happening, a tighter one hides work that is. Pure reads.
+//
+// At the build site: a FARM is walkable and the builder stands ON the plot, so
+// it measures to the plot centre; everything else is the footprint contact ring.
+function atBuildSite(e, bt){
+  return bt.btype==='FARM' ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2
+                           : adjToBuilding(e.x,e.y,bt);
+}
+// At the resource tile: gathering reaches one ROUNDED tile in any direction.
+function atGatherTile(e, tx, ty){
+  return Math.abs(Math.round(e.x)-tx)<=1 && Math.abs(Math.round(e.y)-ty)<=1;
+}
+// "Can I hit it from where I stand" — the sim's damage gates and the renderer's
+// swing gate (inActionRange, js/render-units.js) both call this.
+function inWeaponRange(e, t){
+  let range = (UNITS[e.utype] && UNITS[e.utype].range) || 0;
+  // +0.5: findPath's goal test is tile-rounded, so a unit legitimately settles a
+  // fraction past its nominal range — the ranged gate accepts that, so does this.
+  if(range > 0) return distToTarget(e,t) <= range + 0.5;
+  if(t.type === 'building') return adjToBuilding(e.x, e.y, t);
+  let maxD = (e.utype==='villager' && (t.utype==='sheep' || t.utype==='sheep_carcass'))
+    ? SHEEP_HARVEST_RANGE : 1.5;
+  return distToTarget(e,t) <= maxD;
+}
 
 function buildingAtTile(x,y,filter){
   // O(1) via the derived `occupied` tile index (stampBuildingFootprint,
@@ -615,11 +641,15 @@ function stanceOf(e){ return STANCES[e.stance] || STANCES.aggressive; }
 // re-acquiring it just thrashes give-up→re-acquire until the watchdog fires.
 // Used by the acquire scan, the retaliation gate, and the stand-ground
 // reach test.
+// Reach comes from inWeaponRange (footprint-aware): the foe is often a BUILDING
+// (a tower or TC shooting us), and center distance reads a militia standing
+// AGAINST a 4x4 TC as out of reach — Stand Ground would soak the fire in silence.
 function canStrikeInPlace(e, foe){
-  if((e.range||0)>0) return dist(e,foe) <= e.range+0.5;
+  if(!inWeaponRange(e, foe)) return false;
+  if((e.range||0)>0 || foe.type==='building') return true;
   let ex=Math.round(e.x),ey=Math.round(e.y),dx=Math.round(foe.x)-ex,dy=Math.round(foe.y)-ey;
   let cornerBlocked=dx&&dy&&!walkable(ex+dx,ey,e.id,true)&&!walkable(ex,ey+dy,e.id,true);
-  return dist(e,foe)<=1.5 && !cornerBlocked;
+  return !cornerBlocked;
 }
 
 // Reel a leashed unit (guard post, or defensive stance's idle anchor) back
@@ -794,10 +824,12 @@ function wallBreachTicks(unit, w){
 // rest of the ring isn't either), skipping the just-stalled segment and any
 // recently-given-up wall so a crowded breach spreads to a neighbour.
 function nearestReachableWallLike(unit, team, excludeId){
-  let marchTicks = w => dist(unit, w) / ((UNITS[unit.utype].speed || 1) / TPS);
+  // distToTarget, not dist: towers and gates are multi-tile, so measuring to
+  // their ORIGIN corner ranks them by which way the unit approaches from.
+  let marchTicks = w => distToTarget(unit, w) / ((UNITS[unit.utype].speed || 1) / TPS);
   return entities.filter(en => en.type === 'building' && sameSide(en.team, team) && en.hp > 0 &&
       (isWallBtype(en.btype) || en.btype === 'TOWER' || isGateBtype(en.btype)))
-    .sort((a, b) => dist(unit, a) - dist(unit, b) || a.id - b.id) // deterministic tiebreak
+    .sort((a, b) => distToTarget(unit, a) - distToTarget(unit, b) || a.id - b.id) // deterministic tiebreak
     .slice(0, 6)
     .map(w => ({ w, score: wallBreachTicks(unit, w) + marchTicks(w) }))
     .sort((a, b) => a.score - b.score || a.w.id - b.w.id) // deterministic tiebreak
@@ -967,11 +999,10 @@ function resolveStalledAttack(u, tgt){
       let out = tr + 2; // first tile safely beyond the shooter's reach
       disengage = { x: Math.round(tgt.x + ux/len*out), y: Math.round(tgt.y + uy/len*out) };
     } else if (u.explicitAttack) {
-      // ORDERED onto something with no reachable firing tile (across water, sealed
-      // behind walls). AoE2 closes to the obstacle rather than ignoring the order;
-      // standing where the order was given reads as "my archers did nothing". One
-      // best-effort search per stall — the unreach stamp keeps it off the repath
-      // treadmill, and the walk pays off when the target drifts into range.
+      // ORDERED onto something with no reachable firing tile (across water,
+      // sealed away): AoE2 closes to the obstacle rather than ignoring the
+      // order. One best-effort search per stall — the unreach stamp keeps it
+      // off the repath treadmill; the walk pays off if the target drifts in.
       approach = true;
     }
     stampUnreachable(u, stalledId, tgt.type === 'building' ? T30(300) : UNREACH_UNIT_TICKS);
@@ -1258,8 +1289,7 @@ function updateGatherTask(e,config){
 
   e.gatherX=gatherTile.x;
   e.gatherY=gatherTile.y;
-  let isAdj = Math.abs(Math.round(e.x) - gatherTile.x) <= 1 && Math.abs(Math.round(e.y) - gatherTile.y) <= 1;
-  if(!isAdj){
+  if(!atGatherTile(e, gatherTile.x, gatherTile.y)){
     if(e.path.length === 0){
       // Farmer stands ON the plot; every other gatherer approaches the solid
       // node's cheapest UNCLAIMED contact tile (goalBldg + contactClaims), so
@@ -2165,30 +2195,37 @@ function updateIdleMilitary(e){
           // findPath is short and unambiguous. If unreachable, remember it
           // long enough that a stalemate doesn't re-run this search.
           let cx=Math.round(closest.x), cy=Math.round(closest.y);
-          let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
-          let end=pth.length?pth[pth.length-1]:null;
-          // End-tile tolerance: ranged can fire from `range` out, so any end
-          // within range works. MELEE must end strike-ADJACENT (<=1) — a
-          // looser tolerance counts "beside the wall" as reaching a
-          // walled-in target, one tile short of striking.
-          let endTol = e.range>0 ? reachAtk : 1;
-          let endD = end ? Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy)) : Infinity;
-          // Melee ending exactly one tile short: distinguish a CROWD from a
-          // WALL. If any tile adjacent to the target is blocked only by
-          // standing UNITS (walkable with units ignored, not without), the
-          // ring is a dogpile that clears — lock on and let combatApproach's
-          // crowd machinery queue us in. Terrain/buildings on every adjacent
-          // tile = genuinely walled → unreachable stamp.
-          let crowdRing=false;
-          if(end && e.range<=0 && endD===2){
-            for(let ady=-1;ady<=1&&!crowdRing;ady++)for(let adx=-1;adx<=1;adx++){
-              if(!adx&&!ady)continue;
-              if(!walkable(cx+adx,cy+ady,e.id)&&walkable(cx+adx,cy+ady,e.id,true)){crowdRing=true;break;}
+          if(e.range>0){
+            // RANGED: ask "can I reach a FIRING TILE", not "can I walk onto
+            // its tile" — inside our own walls only the first is ever true.
+            // Empty still means no firing tile: the anti-wedge no-acquire.
+            let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id,reachAtk+0.5);
+            if(pth.length) e.target=closest.id;
+            else stampUnreachable(e, closest.id, UNREACH_UNIT_TICKS);
+          } else {
+            let pth=findPath(Math.round(e.x),Math.round(e.y),cx,cy,e.id);
+            let end=pth.length?pth[pth.length-1]:null;
+            // MELEE must end strike-ADJACENT (<=1): a looser tolerance counts
+            // "beside the wall" as reaching a walled-in target, one tile short
+            // of striking.
+            let endD = end ? Math.max(Math.abs(end.x-cx),Math.abs(end.y-cy)) : Infinity;
+            // Melee ending exactly one tile short: distinguish a CROWD from a
+            // WALL. If any tile adjacent to the target is blocked only by
+            // standing UNITS (walkable with units ignored, not without), the
+            // ring is a dogpile that clears — lock on and let combatApproach's
+            // crowd machinery queue us in. Terrain/buildings on every adjacent
+            // tile = genuinely walled → unreachable stamp.
+            let crowdRing=false;
+            if(end && endD===2){
+              for(let ady=-1;ady<=1&&!crowdRing;ady++)for(let adx=-1;adx<=1;adx++){
+                if(!adx&&!ady)continue;
+                if(!walkable(cx+adx,cy+ady,e.id)&&walkable(cx+adx,cy+ady,e.id,true)){crowdRing=true;break;}
+              }
             }
+            if(end && (endD<=1 || crowdRing)){
+              e.target=closest.id;
+            } else { stampUnreachable(e, closest.id, UNREACH_UNIT_TICKS); } // a unit's blockage clears fast — re-check soon
           }
-          if(end && (endD<=endTol || crowdRing)){
-            e.target=closest.id;
-          } else { stampUnreachable(e, closest.id, UNREACH_UNIT_TICKS); } // a unit's blockage clears fast — re-check soon
         }
       } else if (isHumanTeam(e.team)) {
         // No enemy unit in range: engage enemy BUILDINGS (AoE2 aggressive
@@ -2218,9 +2255,17 @@ function updateIdleMilitary(e){
           // building behind a wall makes it wall-hump forever. Require a path
           // that lands adjacent to the building's footprint.
           let bx=Math.round(bestB.x+bestB.w/2), by=Math.round(bestB.y+bestB.h/2);
-          let pth=findPath(Math.round(e.x),Math.round(e.y),bx,by,e.id);
-          let end=pth.length?pth[pth.length-1]:null;
-          if(end && Math.max(Math.abs(end.x-bx),Math.abs(end.y-by))<=Math.max(bestB.w,bestB.h)+1) e.target=bestB.id;
+          if(e.range>0){
+            // Ranged: a reachable tile within firing range of the FOOTPRINT is
+            // the commit test (same geometry as the ordered approach) — walking
+            // adjacent to the building isn't required to shoot it.
+            if(inWeaponRange(e,bestB) ||
+               findPath(Math.round(e.x),Math.round(e.y),bx,by,e.id,e.range+0.5,bestB).length) e.target=bestB.id;
+          } else {
+            let pth=findPath(Math.round(e.x),Math.round(e.y),bx,by,e.id);
+            let end=pth.length?pth[pth.length-1]:null;
+            if(end && Math.max(Math.abs(end.x-bx),Math.abs(end.y-by))<=Math.max(bestB.w,bestB.h)+1) e.target=bestB.id;
+          }
         }
       }
     }
@@ -2319,9 +2364,7 @@ function updateVillagerBuild(e){
     }
     return;
   }
-  let isFarm=bt.btype==='FARM';
-  let close=isFarm?dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2:adjToBuilding(e.x,e.y,bt);
-  if(!close){
+  if(!atBuildSite(e,bt)){
     // Path ONCE toward the site, then let movement + the block-wait queue
     // (stepBlocked, js/pathfinding.js) carry the builder there. Recomputing the
     // route every tick makes a unit at a chokepoint abandon its queue slot to
@@ -2334,8 +2377,7 @@ function updateVillagerBuild(e){
       pathToBuilding(e,bt); // farm plot, else cheapest-to-WALK contact tile (goalBldg)
       if(e.path.length===0){
         // Still no route AND not adjacent → the site is unreachable right now.
-        let checkClose = isFarm ? dist(e,{x:bt.x+0.5,y:bt.y+0.5})<1.2 : adjToBuilding(e.x,e.y,bt);
-        if (!checkClose) {
+        if (!atBuildSite(e,bt)) {
           // Perimeter may just be crowded — retry a few times, then back the
           // foundation off so assigners skip it until the stamp expires
           // (neededAIBuildingWork AND checkNextBuild) instead of re-feeding
@@ -2360,7 +2402,7 @@ function updateVillagerBuild(e){
     // the plot) — no press. Builders are separation-exempt (loop.js
     // separateUnits); pressToContact's walkable(ignoreUnits) guard keeps
     // them off the footprint itself.
-    if(!isFarm) slideToContact(e, bt, 0.35);
+    if(bt.btype!=='FARM') slideToContact(e, bt, 0.35);
     if (bt.btype === 'FARM' && bt.exhausted) {
       let store = resourceStore(e.team);
       // Direct wood reseed applies to the AI (managing its own farms) and to a
@@ -2648,19 +2690,26 @@ function updateUnitCombat(e){
 
 
   if (range > 0) {
-    // Ranged combat: stay within range and fire. The gate carries the +0.5
-    // slack (same as the acquire scan and retaliation reach tests):
-    // findPath's stopDist goal test is ROUNDED-tile based, so a unit can
-    // sit at float d≈range+0.4 where findPath returns [] ("already in
-    // range") while a bare d>range gate refuses to fire — a dead zone that
-    // stalls the chase into a spurious give-up. d is distToTarget
-    // (footprint-aware), so large buildings stay hittable from their edge.
-    if (d > range + 0.5) {
+    // Ranged combat: stay within range and fire. inWeaponRange carries the +0.5
+    // slack (same as the acquire scan and retaliation reach tests): findPath's
+    // stopDist goal test is ROUNDED-tile based, so a unit can sit at float
+    // d≈range+0.4 where findPath returns [] ("already in range") while a bare
+    // d>range gate refuses to fire — a dead zone that stalls the chase into a
+    // spurious give-up. It measures footprint-aware, so large buildings stay
+    // hittable from their edge — and the render swing gate reads the SAME call.
+    if (!inWeaponRange(e, t)) {
       if (e.stance === 'standground' && !e.explicitAttack) {
         e.target = null;
         return;
       }
-      if(!combatApproach(e,t,d,null,range)) return; // approach only to firing range — not onto the target
+      // A BUILDING is approached by its FOOTPRINT (goalBldg + stopDist), with the
+      // same +0.5 slack the fire gate uses — so every tile the walk aims at is a
+      // tile this unit actually shoots from. Plain stopDist measures to the
+      // origin tile and parked archers a tile short of a 2x2 mill, silent.
+      let approachFn = t.type==='building'
+        ? () => setUnitPath(e, findPath(Math.round(e.x),Math.round(e.y),Math.round(t.x),Math.round(t.y),e.id,range+0.5,t))
+        : null;
+      if(!combatApproach(e,t,d,approachFn,range)) return; // approach only to firing range — not onto the target
       // Wall-detour hold (self-acquired chases only): a firing tile exists
       // but the walk to it is several times the straight-line distance —
       // fortifications separate us. Arrows fly over walls, so hold at the
@@ -2871,9 +2920,12 @@ function resumeMultiLegMove(e){
   } else if(retryReady(e,RETRY.MOVE)){
     retryStamp(e,RETRY.MOVE,T30(10)); // own key — never alias with the garrison stamp
     let goalX=e.order.x, goalY=e.order.y;
-    pathUnitTo(e,goalX,goalY);
+    pathUnitToGoal(e,goalX,goalY);
     if(e.path.length===0){
-      // No progress possible from here; stop retrying every frame.
+      // No progress possible from here; stop retrying every frame. For a human
+      // that also means the closest-approach walk is finished (bestEffort only
+      // returns [] once no reachable tile is nearer), so the order retires with
+      // the unit parked against the obstacle.
       e.order=null; // move order complete/unreachable
     }
   }
@@ -2909,13 +2961,10 @@ function adjustTargetApproach(e){
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
       let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
       if(dToDest > 1.5){
-        // Re-aim at the moved target, but never trade a walk for nothing: an
-        // UNREACHABLE foe re-paths to [] and the old code dropped the path,
-        // which froze the unit wherever the 15-tick tick caught it instead of
-        // letting it close on the obstacle (across water / sealed behind
-        // walls). HUMAN teams only — the AI drops such targets on its own
-        // (resolveStalledAttack) and its trajectories stay bit-identical.
-        let keep = isHumanTeam(e.team) ? e.path : null;
+        // Never trade a walk for nothing: an UNREACHABLE foe re-paths to [],
+        // and dropping the path there strands the unit mid-approach instead of
+        // closing on the obstacle.
+        let keep = e.path;
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
         if(keep && e.path.length === 0) setUnitPath(e, keep);
       }

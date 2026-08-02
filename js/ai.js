@@ -448,7 +448,7 @@ function aiCanAffordBoth(team,a,b){
   for(let c of [a,b])for(let[k,v]of Object.entries(c||{}))need[k]=(need[k]||0)+v;
   return Object.entries(need).every(([k,v])=>st[resourceName(k)]>=v);
 }
-const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','bodkin_arrow','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
+const AI_TECH_ORDER=['forging','scale_armor','fletching','wheelbarrow','double_bit_axe','horse_collar','gold_mining','iron_casting','bodkin_arrow','ballistics','chain_mail','bow_saw','heavy_plow','masonry','fortified_wall','guilds'];
 function planAIResearch(ai,profile){
   // While hoarding for the age-up, techs may still fire if the bank covers
   // the AGE COST *and* the tech — a hard stop here starved everything past
@@ -2709,7 +2709,9 @@ function resolveReachableAttackTarget(militia, candidate){
   // walk is. Only consider breaching on a big skew (detour > 2x direct +
   // 10 tiles) — nearestReachableWallLike probes up to 6 findPaths, too
   // expensive to run for every ordinarily-reachable target.
-  let directTicks = dist(militia, candidate) / ((UNITS[militia.utype].speed || 1) / TPS);
+  // distToTarget: the candidate is a BUILDING — origin-corner distance would
+  // swing this threshold by which side of a 4x4 TC the army stands on.
+  let directTicks = distToTarget(militia, candidate) / ((UNITS[militia.utype].speed || 1) / TPS);
   let tileTicks = 30 / (UNITS[militia.utype].speed || 1);
   if (detour >= 0 && detour <= detourBreachThreshold(directTicks, tileTicks)) return candidate;
   let breach = nearestReachableWallLike(militia, candidate.team);

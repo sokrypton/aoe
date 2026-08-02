@@ -247,25 +247,18 @@ function swordSwingAngle(e){
   let t=(ph-0.68)/0.32;return -1.1+1.6*(t*t*(3-2*t));                    // recover -> 0.5
 }
 
-// Should this unit be showing its attack/harvest ANIMATION right now? The
-// animation must match what the sim actually DOES: the sim only deals damage /
-// harvests when the unit is genuinely in range (see updateUnit — damageEntity
-// gated by adjToBuilding / distToTarget<=range, harvest by SHEEP_HARVEST_RANGE).
-// A looser gate ("has a target and is standing still") lets a unit that halted
-// just OUTSIDE range — or a surplus attacker with no reachable slot — swing at
-// thin air with nothing happening. This mirrors the sim's range checks EXACTLY,
-// so a swing always coincides with a real hit. Render-only: reads sim state,
+// Should this unit be showing its attack/harvest ANIMATION right now? It must
+// be the SAME predicate the sim fires on — inWeaponRange (js/logic.js) — never a
+// re-spelling: a looser gate swings at thin air, a tighter one shoots in silence
+// (this file's own copy omitted the ranged +0.5 slack, so an archer hitting a
+// mill from range+0.4 played no draw at all). Render-only: reads sim state,
 // never writes it.
 function inActionRange(e){
   if(e.__animAttack) return true;            // style-gallery preview swings freely
   if(!e.target) return false;
   let t = entitiesById.get(e.target);
   if(!t || t.hp<=0) return false;
-  let range = (typeof UNITS!=='undefined' && UNITS[e.utype] && UNITS[e.utype].range) || 0;
-  if(t.type==='building') return range>0 ? distToTarget(e,t)<=range : adjToBuilding(e.x,e.y,t);
-  let maxD = range>0 ? range
-           : (e.utype==='villager' && (t.utype==='sheep'||t.utype==='sheep_carcass')) ? SHEEP_HARVEST_RANGE : 1.5;
-  return distToTarget(e,t)<=maxD;
+  return inWeaponRange(e, t);                // THE shared gate (js/logic.js)
 }
 
 // attack-tech steel ramp: 0 crude grey iron, 1 forged steel, 2 polished
@@ -3096,11 +3089,10 @@ function drawUnit(e){
       // the tool or swing it; require actual proximity to the work.
       let atSite = true;
       if (e.task === 'chop' || e.task === 'mine_gold' || e.task === 'mine_stone') {
-        atSite = e.gatherX >= 0 &&
-          Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
+        atSite = e.gatherX >= 0 && atGatherTile(e, e.gatherX, e.gatherY);
       } else if (e.task === 'build' && e.buildTarget) {
         let bt = entitiesById.get(e.buildTarget);
-        atSite = !!bt && distToTarget(e, bt) < 1.8;
+        atSite = !!bt && atBuildSite(e, bt);
       } else if (e.target) {
         atSite = inActionRange(e);
       }

@@ -164,7 +164,11 @@ function findPath(sx,sy,ex,ey,ignore,stopDist,goalBldg,claim,bestEffort){
   let inGoal;
   if(goalBldg){
     let bx=goalBldg.x, by=goalBldg.y, bw=goalBldg.w, bh=goalBldg.h;
-    inGoal=(x,y)=>{let dx=Math.max(bx-0.5-x,0,x-(bx+bw-0.5)),dy=Math.max(by-0.5-y,0,y-(by+bh-0.5));return dx*dx+dy*dy<=1.44 && (!claim||!claim.has(y*MAP+x));};
+    // goalBldg + stopDist = a RANGED approach on a footprint: stop within sd of
+    // the building's EDGE. Plain stopDist measures to its origin tile, which
+    // hides real firing tiles on anything bigger than 1x1.
+    let reach2 = sd>0 ? sd2 : 1.44;   // 1.44 = the melee contact ring (edgeDist<=1.2)
+    inGoal=(x,y)=>{let dx=Math.max(bx-0.5-x,0,x-(bx+bw-0.5)),dy=Math.max(by-0.5-y,0,y-(by+bh-0.5));return dx*dx+dy*dy<=reach2 && (!claim||!claim.has(y*MAP+x));};
     ex=Math.max(0,Math.min(MAP-1,Math.round(bx+bw/2))); ey=Math.max(0,Math.min(MAP-1,Math.round(by+bh/2))); // heuristic aims at the footprint centre
     if(inGoal(sx,sy))return []; // already adjacent — no move needed
   } else if(sd>0){
@@ -289,6 +293,13 @@ function setUnitPath(e,path){
 function pathUnitTo(e,x,y){
   return setUnitPath(e,findPath(Math.round(e.x),Math.round(e.y),x,y,e.id));
 }
+// THE "go to this spot" walk (issueMoveOrder + its multi-leg resume), on
+// findPath's bestEffort: AoE2 never ignores the order — an unreachable spot
+// walks the unit as close as the terrain allows, then stops. Same for the AI:
+// its recall/retreat goals behind a wall would otherwise leave it standing.
+function pathUnitToGoal(e,x,y){
+  return setUnitPath(e,findPath(Math.round(e.x),Math.round(e.y),x,y,e.id,0,null,null,true));
+}
 // THE approach primitive: path to the CHEAPEST-to-reach tile in a target
 // footprint's contact ring (findPath goalBldg mode). Any unit heading to a
 // building/resource thus approaches from whichever side is a shorter walk —
@@ -378,6 +389,26 @@ function stepUnitAlongPath(e, distPx, checkWalkable){
   }
 }
 
+// Tiles/tick this unit is CURRENTLY moving (null when settled). Mirrors
+// stepUnitAlongPath exactly: the walker advances distPx along the ISO segment,
+// so the tile-space rate is that distance scaled by the leg's tile-length over
+// its screen-length. Ballistics (spawnProjectile) leads its aim by this.
+// sqrt + arithmetic only — no trig, no PRNG, safe inside the tick.
+function unitVelocityPerTick(e){
+  if(!e.path || e.path.length===0) return null;
+  let next=e.path[0];
+  let tdx=next.x-e.x, tdy=next.y-e.y;
+  let tileLen=Math.sqrt(tdx*tdx+tdy*tdy);
+  if(tileLen<0.000001) return null;
+  let p1=toIso(e.fromX,e.fromY), p2=toIso(next.x,next.y);
+  let sdx=p2.ix-p1.ix, sdy=p2.iy-p1.iy;
+  let screenDist=Math.sqrt(sdx*sdx+sdy*sdy)||1.0;
+  let ldx=next.x-e.fromX, ldy=next.y-e.fromY;
+  let legTile=Math.sqrt(ldx*ldx+ldy*ldy)||1.0;
+  let step=unitMoveSpeed(e)*UNIT_PX_PER_TICK*legTile/screenDist;   // tiles per tick
+  return {vx:tdx/tileLen*step, vy:tdy/tileLen*step};
+}
+
 // Use for genuine player "go to this spot" move orders only — NOT for
 // gather/build/combat-approach pathing, which already have their own
 // per-tick retry logic (see updateGatherTask, the combat-chase code in
@@ -402,5 +433,5 @@ function issueMoveOrder(e,x,y){
   // fight ends. Guard posts don't relocate — the move order issued above
   // REPLACED any standing order (last order wins).
   e.defendX=Math.max(0,Math.min(MAP-1,x)); e.defendY=Math.max(0,Math.min(MAP-1,y)); // clamped — formation offsets at the edge go off-map
-  return pathUnitTo(e,x,y);
+  return pathUnitToGoal(e,x,y);
 }

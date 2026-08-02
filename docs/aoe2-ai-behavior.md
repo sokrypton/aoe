@@ -259,6 +259,7 @@ doc the value came from.
 | Ram pierce armor | 180 (csv) | 180 (behavior-identical under min-1 floor) | none |
 | Trade cart | 100W+50G, 51s train (csv) | adopted | none |
 | Scout speed | 1.2 Dark Age (csv) | kept 1.55 | deliberate: scout is Feudal-gated here, Feudal +0.35 baked in |
+| Ballistics | Castle, 300F 175W, 60s — projectiles LEAD moving targets | `ballistics` (js/core.js) leads the aim by the target's per-tick velocity × flight time (`unitVelocityPerTick`) | home is the **Barracks**, not the University (we have none — see §"Manual research"). Measured: a scout crossing an archer's envelope goes 44%→81% hits, the same ceiling a standing target sits at |
 
 Measured (6-seed medians, same seeds, vs pre-adoption): hard-vs-easy 52→57
 game-min, hard-vs-medium 52→57 (loaded-TC defense is genuinely stronger —

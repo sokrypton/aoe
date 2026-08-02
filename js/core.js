@@ -321,9 +321,14 @@ const UPGRADES = {
   bodkin_arrow: {age:2, cost:{f:200, g:100}, researchTicks:T30(1050), name:'Bodkin Arrow', desc:'Archers +1 attack, +1 range', apply(team){
     entities.forEach(u => { if (u.type==='unit' && u.team===team && u.hp>0 && u.utype==='archer') { u.atk += 1; u.range += 1; } });
   }},
+  // Arrows LEAD a moving target (spawnProjectile). Untrained, a shot flies at
+  // the spot the target left — a scout drifts 0.83 tiles during a 4-tile flight
+  // against a 0.45 impact radius, so cavalry outruns arrows. No apply sweep:
+  // the aim point is computed per shot.
+  ballistics: {age:2, cost:{f:300, w:175}, researchTicks:T30(1800), name:'Ballistics', desc:'Archers and towers lead moving targets'},
 };
 // Stable bit index per tech (UPGRADES registry order) — teamTechs is a
-// per-team bitmask of researched cards. 14 techs fit a 32-bit int.
+// per-team bitmask of researched cards. 16 techs fit a 32-bit int.
 const UPGRADE_BITS = {};
 Object.keys(UPGRADES).forEach((k, i) => { UPGRADE_BITS[k] = i; });
 // teamTechs-shaped bitmask for a list of tech keys.
@@ -708,7 +713,7 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,hpAge:[1200,1500,1800],cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,hpAge:[1200,1500,1800],cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','ballistics','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
@@ -1485,6 +1490,18 @@ function spawnProjectile(attacker, target) {
   attacker.lastAtkTick = tick; // combat activity — see stuck-watchdog exemption (js/logic.js)
   let targetX = target.type === 'building' ? target.x + (target.w || BLDGS[target.btype].w)/2 : target.x;
   let targetY = target.type === 'building' ? target.y + (target.h || BLDGS[target.btype].h)/2 : target.y;
+  // BALLISTICS: aim where the target WILL be. One solve pass — flight time off
+  // the un-led distance (DE's own approximation), and √ + arithmetic only, so
+  // it stays deterministic inside the tick.
+  if (target.type === 'unit' && hasUpgrade(attacker.team, 'ballistics')) {
+    let v = unitVelocityPerTick(target);
+    if (v) {
+      let adx = targetX - attacker.x, ady = targetY - attacker.y;
+      let flight = Math.sqrt(adx*adx + ady*ady) / PROJECTILE_TILES_PER_TICK; // ticks in the air
+      targetX += v.vx * flight;
+      targetY += v.vy * flight;
+    }
+  }
   let accuracy = attacker.type === 'building' ? 1.0 : 0.8;
   if (target.type !== 'building' && simRandom() > accuracy) {
     let ang = simRandom() * Math.PI * 2;

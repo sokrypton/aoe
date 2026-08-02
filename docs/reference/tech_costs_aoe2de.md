@@ -24,6 +24,7 @@ recollection. Our values live in `UPGRADES` (js/core.js).
 | Fortified Wall | 200F 100S | **matches** | — / 25s |
 | Guilds | 300F 200G | **matches** | 50s / 25s |
 | Bodkin Arrow | 200F 100G | **matches** | — / 25s |
+| Ballistics | 300F 175W | **matches** (added 2026-08) | — / 60s |
 
 Costs were restored to DE on 2026-07-27 (they had been uniformly ~halved).
 Measured at 80k ticks, 2v2 medium, 20 runs/arm: aging is UNAFFECTED (feudal
@@ -51,6 +52,7 @@ Game time is tick-driven, so render framerate never enters this.
 | Fletching | 30s | Forging | 50s |
 | Gold Mining | 30s | Masonry | 50s |
 | Bodkin Arrow | 35s | Fortified Wall | 50s |
+| Ballistics | 60s | | |
 | Scale Mail Armor | 40s | Guilds | 50s |
 | Chain Mail Armor | 55s | Iron Casting / Wheelbarrow | 75s |
 

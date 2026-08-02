@@ -1220,6 +1220,86 @@ async function withPage(browser, port, entry, fn){
     })),
 
     // ------------------------------- select-all assault on a sealed TC (ex repro)
+    // ------------------------------------------------------------ ballistics
+    // AoE2's answer to cavalry outrunning arrows: without the tech a shot flies
+    // at the spot the target occupied at launch (a scout drifts ~0.83 tiles
+    // during a 4-tile flight vs a 0.45 impact radius); with it the aim leads.
+    'ballistics': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const rate = (utype, researched) => {
+        loadScenario({ map: 'small', seed: 11, numTeams: 2, controllers: ['human', 'human'],
+                       entities: [{ b: 'TC', x: 2, y: 2, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 }] });
+        gameStarted = true; gamePaused = false; myTeam = 0;
+        for (let y = 18; y < 48; y++) for (let x = 18; x < 48; x++) { const c = map[y][x]; c.t = TERRAIN.GRASS; c.res = 0; markMapDirty(x, y); }
+        const a = createUnit('archer', 30, 30, 0); a.stance = 'aggressive';
+        if (researched) applyTech(0, 'ballistics');
+        const t = createUnit(utype, 27, 22, 1); t.stance = 'passive'; t.hp = 100000; t.maxHp = 100000;
+        let shots = 0, hits = 0, prevCd = a.atkCooldown, prevHp = t.hp;
+        for (let i = 0; i < 3000; i++) {
+          if (t.path.length === 0) issueMoveOrder(t, 27, (Math.floor(i / 400) % 2) ? 22 : 40);
+          update();
+          if (a.atkCooldown > prevCd) shots++;
+          prevCd = a.atkCooldown;
+          if (t.hp < prevHp) hits++;
+          prevHp = t.hp;
+        }
+        return shots ? hits / shots : 0;
+      };
+      const scoutOff = rate('scout', false), scoutOn = rate('scout', true);
+      T.ok(`cavalry outruns un-led arrows (${Math.round(scoutOff * 100)}% hits, want <60%)`, scoutOff < 0.6);
+      T.ok(`Ballistics leads them (${Math.round(scoutOn * 100)}% hits, want >75%)`, scoutOn > 0.75);
+      T.ok('Ballistics is a real improvement (+20pts or better)', scoutOn - scoutOff >= 0.2);
+      // and it is a Castle-age Barracks card, not a freebie
+      T.ok('researched at the Barracks', BLDGS.BARRACKS.researches.includes('ballistics'));
+      T.ok('Castle age, 300F 175W (DE)', UPGRADES.ballistics.age === 2 &&
+           UPGRADES.ballistics.cost.f === 300 && UPGRADES.ballistics.cost.w === 175);
+      return T;
+    })),
+
+    // ------------------------------------------- work-vs-animation parity
+    // The renderer's "is this unit working" gates call the SIM's predicates
+    // (atBuildSite / atGatherTile / inWeaponRange) rather than re-spelling
+    // them. Assert the contract they encode: work only ever happens while its
+    // predicate is true, so a swing never lands in silence and a villager
+    // never mimes work that isn't happening.
+    'work-anim-parity': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'human'],
+                     entities: [{ b: 'TC', x: 4, y: 4, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }] });
+      gameStarted = true; gamePaused = false; myTeam = 0;
+      const run = (n, fn) => { for (let i = 0; i < n; i++) { update(); fn && fn(); } };
+
+      // BUILD: progress must never tick while the render gate reads "not at site"
+      {
+        const v = createUnit('villager', 20, 20, 0);
+        const store = resourceStore(0); store.wood = 900; store.stone = 900;
+        const site = createBuilding('HOUSE', 26, 20, 0); site.complete = false; site.buildProgress = 0;
+        v.task = 'build'; v.buildTarget = site.id;
+        let prog = site.buildProgress, ticks = 0, silent = 0;
+        run(900, () => {
+          if (site.buildProgress > prog) { ticks++; if (!atBuildSite(v, site)) silent++; }
+          prog = site.buildProgress;
+        });
+        T.ok(`build: progress only while at the site (${ticks} work ticks, ${silent} off-site)`, ticks > 0 && silent === 0);
+      }
+
+      // GATHER: same for chopping — carrying only rises while at the tile
+      {
+        const v = createUnit('villager', 30, 30, 0);
+        let tile = null;
+        for (let y = 26; y < 36 && !tile; y++) for (let x = 26; x < 36; x++)
+          if (map[y][x].t === TERRAIN.GRASS) { map[y][x].t = TERRAIN.FOREST; map[y][x].res = 200; markMapDirty(x, y); tile = { x, y }; break; }
+        v.task = 'chop';
+        let carried = v.carrying, ticks = 0, silent = 0;
+        run(900, () => {
+          if (v.carrying > carried) { ticks++; if (!atGatherTile(v, v.gatherX, v.gatherY)) silent++; }
+          carried = v.carrying;
+        });
+        T.ok(`chop: carrying only rises at the tile (${ticks} work ticks, ${silent} off-tile)`, ticks > 0 && silent === 0);
+      }
+      return T;
+    })),
+
     'walled-tc-assault': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
       const ents = [{ b: 'TC', x: 28, y: 28, team: 1 }];
@@ -1307,7 +1387,85 @@ async function withPage(browser, port, entry, fn){
         T.ok(`sealed pen: archer walks to the wall (y=${a.y.toFixed(1)}, want <=42)`, a.y <= 42);
       }
 
-      // 3. control: a REACHABLE foe is still closed on and engaged
+      // 3. a plain MOVE order out of a sealed pen: walk to the wall, park, and
+      //    retire the order (same AoE2 rule as the attack order above)
+      {
+        const pen = [];
+        for (let y = 40; y <= 50; y++) for (let x = 25; x <= 35; x++)
+          if (x === 25 || x === 35 || y === 40 || y === 50) pen.push({ b: 'SWALL', x, y, team: 0 });
+        flatScenario(pen);
+        const squad = [];
+        for (let i = 0; i < 6; i++) squad.push(createUnit('militia', 28 + i, 48, 0));
+        execCommand({ kind: 'command', unitIds: squad.map(u => u.id), tileX: 30, tileY: 20 }, 0);
+        run(900);
+        const atWall = squad.filter(u => u.y <= 43).length;
+        T.ok(`sealed pen move: squad walks to the wall (${atWall}/6 within 3 tiles of it)`, atWall === 6);
+        T.ok('sealed pen move: order retired, nobody still churning', squad.every(u => !u.order && u.path.length === 0));
+        const parked = squad.map(u => [u.x, u.y]);
+        run(600);
+        T.ok('sealed pen move: they stay put',
+             squad.every((u, i) => Math.hypot(u.x - parked[i][0], u.y - parked[i][1]) < 0.3));
+        // the same order with a hole in the pen still walks all the way out
+        const gap = entities.find(e => e.btype === 'SWALL' && e.x === 30 && e.y === 40);
+        gap.hp = 0; handleDeath(gap, 1);
+        const runner = createUnit('militia', 30, 48, 0);
+        execCommand({ kind: 'command', unitIds: [runner.id], tileX: 30, tileY: 20 }, 0);
+        run(1200);
+        T.ok(`pen with a hole: walks out to the goal (y=${runner.y.toFixed(1)})`, runner.y <= 22);
+      }
+
+      // 4. shooting a BUILDING from inside your own wall box (the user's save):
+      //    the firing tile exists only under footprint geometry — measuring range
+      //    to the mill's origin tile hides it and the archer parks a tile short.
+      {
+        const box = [];
+        for (let y = 38; y <= 43; y++) for (let x = 36; x <= 41; x++)
+          if (x === 36 || x === 41 || y === 38 || y === 43) box.push({ b: 'WALL', x, y, team: 0 });
+        flatScenario(box.concat([{ b: 'MILL', x: 31, y: 42, team: 1 }]));
+        const a = createUnit('archer', 40, 40, 0);
+        const mill = entities.find(e => e.btype === 'MILL');
+        const hp0 = mill.hp;
+        order(a, mill);
+        run(1200);
+        T.ok(`boxed archer walks to the near wall (${a.x.toFixed(0)},${a.y.toFixed(0)})`, a.x <= 37.5);
+        T.ok(`boxed archer shoots the mill over the wall (hp ${hp0}->${mill.hp})`, mill.hp < hp0);
+        // Every shot must coincide with the DRAW ANIMATION: the render gate and
+        // the sim gate are one predicate (inWeaponRange), and this is the
+        // geometry that caught them drifting — damage landing in total silence.
+        let shots = 0, silent = 0;
+        for (let i = 0; i < 600; i++) {
+          const cd = a.atkCooldown;
+          update();
+          if (a.atkCooldown > cd) { shots++; if (!inActionRange(a)) silent++; }
+        }
+        T.ok(`every shot plays the attack animation (${shots} shots, ${silent} silent)`, shots > 0 && silent === 0);
+      }
+
+      // 5. AUTO attack/defense from inside the box — no order at all. Acquiring
+      //    asks "can I reach a firing tile", not "can I walk onto its tile", so
+      //    a boxed archer repositions to shoot a raider it could never reach.
+      {
+        const box = [];
+        for (let y = 38; y <= 43; y++) for (let x = 36; x <= 41; x++)
+          if (x === 36 || x === 41 || y === 38 || y === 43) box.push({ b: 'WALL', x, y, team: 0 });
+        for (const [stance, wantMove] of [['aggressive', true], ['defensive', true], ['standground', false]]) {
+          flatScenario(box);
+          const a = createUnit('archer', 40, 40, 0); a.stance = stance;
+          const foe = createUnit('militia', 34, 40, 1); foe.stance = 'standground';
+          run(600);
+          const moved = Math.hypot(a.x - 40, a.y - 40);
+          if (wantMove) {
+            T.ok(`${stance}: boxed archer repositions and engages unordered (moved ${moved.toFixed(1)}, foe ${foe.hp}/${foe.maxHp})`,
+                 moved > 0.5 && foe.hp < foe.maxHp);
+          } else {
+            // Stand Ground never repositions — it only fires at what is already
+            // in range. Pinning it here so the acquire change can't erode it.
+            T.ok(`${stance}: holds position (moved ${moved.toFixed(1)})`, moved < 0.3);
+          }
+        }
+      }
+
+      // 6. control: a REACHABLE foe is still closed on and engaged
       {
         flatScenario([]);
         const foe = createUnit('militia', 30, 30, 1); foe.stance = 'standground';
