@@ -1069,8 +1069,8 @@ function updateUI(){
           // ONE builder for BOTH age-up and every tech, so their layout/states can't
           // drift apart. Each entry = a .research-item COLUMN: an icon button
           // (.research-tile, holds .research-icon = sprite + progress fill) with the
-          // price a SIBLING below it — so hover/click land on the icon only. `up-<key>`
-          // sprites are placeholders. state: 'progress' | 'busy' | 'ready'.
+          // price a SIBLING below it — so hover/click land on the icon only.
+          // state: 'progress' | 'busy' | 'ready'.
           // The fill rides in a TRACK: a bare 3px bar reading 0% at kickoff was
           // indistinguishable from no bar at all, so the sunk track (outlined,
           // full width) is what says "this one is running".

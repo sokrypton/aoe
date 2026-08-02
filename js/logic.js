@@ -940,7 +940,7 @@ function stampUnreachable(e, id, ticks){
 
 function resolveStalledAttack(u, tgt){
   let stalledId = tgt.id;
-  let disengage = null; // set below; walked after the shared cleanup
+  let disengage = null, approach = false; // set below; walked after the shared cleanup
   let mayRedirect = isAITeam(u.team) || tgt.type === 'building';
   let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
   if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
@@ -966,12 +966,27 @@ function resolveStalledAttack(u, tgt){
       let ux = u.x - tgt.x, uy = u.y - tgt.y, len = Math.sqrt(ux*ux + uy*uy) || 1;
       let out = tr + 2; // first tile safely beyond the shooter's reach
       disengage = { x: Math.round(tgt.x + ux/len*out), y: Math.round(tgt.y + uy/len*out) };
+    } else if (u.explicitAttack) {
+      // ORDERED onto something with no reachable firing tile (across water, sealed
+      // behind walls). AoE2 closes to the obstacle rather than ignoring the order;
+      // standing where the order was given reads as "my archers did nothing". One
+      // best-effort search per stall — the unreach stamp keeps it off the repath
+      // treadmill, and the walk pays off when the target drifts into range.
+      approach = true;
     }
     stampUnreachable(u, stalledId, tgt.type === 'building' ? T30(300) : UNREACH_UNIT_TICKS);
   }
   retryClear(u,RETRY.CHASE_BLOCKED); clearUnitPath(u); u.chaseProg = undefined;
   // Issued AFTER the shared cleanup — clearUnitPath above would wipe it.
   if (disengage) pathUnitTo(u, disengage.x, disengage.y);
+  else if (approach) {
+    let p = findPath(Math.round(u.x), Math.round(u.y), Math.round(tgt.x), Math.round(tgt.y),
+                     u.id, 0, null, null, true);
+    // >1 tile only: once parked at the obstacle there is always some adjacent
+    // tile a hair closer, and taking it every time the unreach stamp expires
+    // is a permanent twitch, not an approach.
+    if (p.length > 1) setUnitPath(u, p);
+  }
 }
 
 // Deterministic "press to contact": once a unit has SETTLED (path empty) in
@@ -2894,7 +2909,15 @@ function adjustTargetApproach(e){
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
       let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
       if(dToDest > 1.5){
+        // Re-aim at the moved target, but never trade a walk for nothing: an
+        // UNREACHABLE foe re-paths to [] and the old code dropped the path,
+        // which froze the unit wherever the 15-tick tick caught it instead of
+        // letting it close on the obstacle (across water / sealed behind
+        // walls). HUMAN teams only — the AI drops such targets on its own
+        // (resolveStalledAttack) and its trajectories stay bit-identical.
+        let keep = isHumanTeam(e.team) ? e.path : null;
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
+        if(keep && e.path.length === 0) setUnitPath(e, keep);
       }
     }
   }

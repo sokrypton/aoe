@@ -143,7 +143,10 @@ function walkable(x,y,ignore,ignoreUnits){
 // ends up on an adjacent tile, ranged (its range) stops out in an arc. Distinct
 // approach directions land on distinct in-range tiles, so a group distributes
 // itself around the target with no per-unit-type logic and no forced ring.
-function findPath(sx,sy,ex,ey,ignore,stopDist,goalBldg,claim){
+// bestEffort: when the goal turns out to be unreachable, return the path to the
+// closest tile the search DID reach instead of []. Opt-in — every other caller
+// relies on the empty path to mean "no route, give up".
+function findPath(sx,sy,ex,ey,ignore,stopDist,goalBldg,claim,bestEffort){
   sx=Math.round(sx);sy=Math.round(sy);ex=Math.round(ex);ey=Math.round(ey);
   if(ex<0)ex=0;if(ey<0)ey=0;if(ex>=MAP)ex=MAP-1;if(ey>=MAP)ey=MAP-1;
   let sd=stopDist||0, sd2=sd*sd;
@@ -252,7 +255,10 @@ function findPath(sx,sy,ex,ey,ignore,stopDist,goalBldg,claim){
   // that's a genuine "no path exists" (walled off / isolated), and callers
   // rely on an empty path here to detect that and give up instead of
   // retrying against the same dead end forever.
-  if(iters>=MAX_PATH_ITERS && bestNode!==startNode){
+  // bestEffort callers want that same partial path for the EXHAUSTED case too:
+  // "walk as close to it as the terrain allows" (AoE2's answer to an order on a
+  // target across water / sealed away).
+  if((bestEffort || iters>=MAX_PATH_ITERS) && bestNode!==startNode){
     let path=[];let cur=bestNode;while(cur.p){path.unshift({x:cur.x,y:cur.y});cur=cur.p;}
     return path;
   }

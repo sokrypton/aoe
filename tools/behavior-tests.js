@@ -1248,6 +1248,78 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------- ordered onto an unreachable foe
+    // AoE2: an attack order on something you can't walk to still WALKS the unit
+    // as close as the terrain allows (and it fires the moment the foe drifts
+    // into range). Two ways the old code left units standing where the order was
+    // given: the 15-tick re-aim replaced a good approach with an empty path, and
+    // a unit whose reachable region is small enough to search exhaustively never
+    // got a path at all.
+    'unreachable-approach': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const run = (n) => { for (let i = 0; i < n; i++) update(); };
+      const flatScenario = (ents) => {
+        loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'human'],
+                       entities: [{ b: 'TC', x: 2, y: 2, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }].concat(ents) });
+        gameStarted = true; gamePaused = false; myTeam = 0;
+      };
+      const order = (u, t) => execCommand({ kind: 'command', unitIds: [u.id], targetId: t.id,
+                                            tileX: Math.round(t.x), tileY: Math.round(t.y) }, 0);
+
+      // 1. foe on an island: close to the shore, hold there, keep the order
+      {
+        flatScenario([]);
+        for (let y = 24; y <= 36; y++) for (let x = 24; x <= 36; x++)
+          if (x === 24 || x === 36 || y === 24 || y === 36) { map[y][x].t = TERRAIN.WATER; markMapDirty(x, y); }
+        const foe = createUnit('militia', 30, 30, 1);
+        const a = createUnit('archer', 30, 45, 0);
+        run(900);
+        T.ok('island: no approach yet (nothing ordered)', Math.abs(a.y - 45) < 0.5);
+        order(a, foe);
+        run(900);
+        // The moat is 6 tiles out from the foe, so "as close as possible" is a
+        // shore tile ~7 away — from 15 at the start, and still out of range.
+        const closed = Math.hypot(a.x - foe.x, a.y - foe.y);
+        T.ok(`island: archer closed to the shore (d=${closed.toFixed(1)}, want <=7.5)`, closed <= 7.5);
+        T.ok('island: keeps the ordered target', a.target === foe.id);
+        // and then HOLDS: no twitching between equally-close tiles forever
+        const parked = [a.x, a.y];
+        run(900);
+        T.ok('island: parks and stays put', Math.hypot(a.x - parked[0], a.y - parked[1]) < 0.3);
+        // and it shoots the moment the foe comes within range
+        foe.x = 30; foe.y = 34.5;
+        const hp0 = foe.hp;
+        run(300);
+        T.ok('island: fires once the foe drifts into range', foe.hp < hp0);
+      }
+
+      // 2. archer sealed inside its own pen (small reachable region — the case
+      //    where A* finishes the search and reports "no route")
+      {
+        const pen = [];
+        for (let y = 40; y <= 50; y++) for (let x = 25; x <= 35; x++)
+          if (x === 25 || x === 35 || y === 40 || y === 50) pen.push({ b: 'SWALL', x, y, team: 0 });
+        flatScenario(pen);
+        const foe = createUnit('militia', 30, 20, 1);
+        const a = createUnit('archer', 30, 48, 0);
+        order(a, foe);
+        run(900);
+        T.ok(`sealed pen: archer walks to the wall (y=${a.y.toFixed(1)}, want <=42)`, a.y <= 42);
+      }
+
+      // 3. control: a REACHABLE foe is still closed on and engaged
+      {
+        flatScenario([]);
+        const foe = createUnit('militia', 30, 30, 1); foe.stance = 'standground';
+        const a = createUnit('archer', 30, 45, 0);
+        order(a, foe);
+        run(600);
+        T.ok('reachable foe: closed to firing range', distToTarget(a, foe) <= UNITS.archer.range + 0.5);
+        T.ok('reachable foe: taking damage', foe.hp < foe.maxHp);
+      }
+      return T;
+    })),
+
     // ------------------------------------------------------- stance matrix
     // THE disposition contract, one section per stance, driven through the
     // REAL command pipeline (execCommand) — never raw field pokes. Guards
