@@ -2164,7 +2164,13 @@ canvas {
 /* .research-icon just fills the button (it anchors the research progress fill). */
 .act-btn.research-tile .research-icon{ position:relative; width:100%; height:100%; }
 .act-btn.research-tile .btn-emoji.sprite-icon{ width:100%; height:100%; }
-.research-progress-fill{ background:#2f9e3f; }   /* green (matches the mobile skin) */
+/* Same sunk, black-outlined track as the mobile skin: at 0% the track is what
+   shows a research actually started. */
+.research-progress-track{
+  position:absolute; left:0; right:0; bottom:0; height:5px;
+  background:rgba(24,14,4,0.7); box-shadow:inset 0 0 0 1px #000;
+}
+.research-progress-fill{ height:100%; background:#2f9e3f; box-shadow:inset 0 0 0 1px rgba(0,0,0,0.5); }   /* green (matches the mobile skin) */
 /* BUSY: one research at a time — the OTHER tiles + paused train buttons dim. */
 .act-btn.upg-busy{ opacity:0.42; filter:grayscale(0.6); pointer-events:none; }
 #minimap-wrap{

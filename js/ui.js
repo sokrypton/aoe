@@ -272,9 +272,9 @@ const AGE_ICON_VARIANTS = {
 // there so icons stay big); coarse-pointer devices show the chips instead,
 // because touch has no hover tooltip and costs were simply invisible on
 // mobile. CSS: .cost-chips in styles.css.
-function costChips(cost){
+function costChips(cost, extraCls){
   const CLS = { f:'food', w:'wood', g:'gold', s:'stone' };
-  return '<span class="cost cost-chips">' + Object.entries(cost||{})
+  return '<span class="cost cost-chips' + (extraCls ? ' ' + extraCls : '') + '">' + Object.entries(cost||{})
     .map(([k,v])=>`<span class="cost-chip"><span class="res-mini-icon icon-${CLS[k]||k}"></span>${v}</span>`)
     .join('') + '</span>';
 }
@@ -1071,7 +1071,10 @@ function updateUI(){
           // (.research-tile, holds .research-icon = sprite + progress fill) with the
           // price a SIBLING below it — so hover/click land on the icon only. `up-<key>`
           // sprites are placeholders. state: 'progress' | 'busy' | 'ready'.
-          const PROG='<div class="btn-progress-fill research-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;width:0%;"></div>';
+          // The fill rides in a TRACK: a bare 3px bar reading 0% at kickoff was
+          // indistinguishable from no bar at all, so the sunk track (outlined,
+          // full width) is what says "this one is running".
+          const PROG='<div class="research-progress-track"><div class="btn-progress-fill research-progress-fill" style="width:0%;"></div></div>';
           const addItem = (o) => {
             let item=document.createElement('div');item.className='research-item';
             let btn=document.createElement('div');btn.className='act-btn research-tile';
@@ -1090,17 +1093,18 @@ function updateUI(){
               btn.onclick=()=>{ submitCommand({kind:'research',bldgId:e.id,target:o.target}); };
             }
             item.appendChild(btn);
-            // price BELOW the icon (mobile shows it, classic hides it); the in-progress
-            // tile shows the fill instead. Height is fixed in CSS so a price-less tile
-            // (e.g. age-up mid-research) doesn't shrink the band.
-            if(o.cost && o.state!=='progress') item.insertAdjacentHTML('beforeend', costChips(o.cost));
+            // price BELOW the icon (mobile shows it, classic hides it). The in-progress
+            // tile keeps its price in the layout but INVISIBLE (.cost-reserved): the
+            // chips are what set an item's width, so dropping them mid-research
+            // narrowed the tile and slid the rest of the band sideways on click.
+            if(o.cost) item.insertAdjacentHTML('beforeend', costChips(o.cost, o.state==='progress' ? 'cost-reserved' : ''));
             box.appendChild(item);
           };
           // Advance-Age (TC only) first; numeric research target = in progress.
           if(canAge){
             let next=AGES[teamAge[myTeam]+1];
             if(r&&typeof r.target==='number'){
-              addItem({ id:'advance-progress-btn', state:'progress',
+              addItem({ id:'advance-progress-btn', state:'progress', cost:AGES[r.target].cost,
                 icon:`<div class="btn-emoji sprite-icon icon-age-${AGES[r.target].key}"></div>`,
                 tipLabel:'Researching '+AGES[r.target].name,
                 tipDesc:'Advancing to the next Age — villager training paused.'+(isClassicUI?' Click to cancel and refund.':'') });

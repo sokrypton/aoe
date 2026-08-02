@@ -998,6 +998,27 @@ function pageSuite() {
     return { cells: Object.keys(cells).length, techs: Object.keys(UPGRADES).length };
   });
 
+  // Starting a research must not move the other tiles: the price chips set an
+  // item's width, so the running tile keeps its (invisible) price to hold the
+  // band's geometry. The track proves a 0% research still reads as started.
+  T('research: starting one holds the band geometry and shows a progress track', () => {
+    stage();
+    setTeamAge(0, 1);
+    const store = resourceStore(0);
+    store.food = 900; store.wood = 900; store.gold = 900; store.stone = 900;
+    const b = createBuilding('BARRACKS', 30, 30, 0); b.complete = true; b.hp = b.maxHp;
+    selected.length = 0; selected.push(b); updateUI();
+    const geo = () => [...document.querySelectorAll('.research-item')]
+      .map(el => Math.round(el.getBoundingClientRect().x)).join(',');
+    const before = geo();
+    assert(before, 'setup: no research tiles rendered');
+    execCommand({ kind: 'research', bldgId: b.id, target: 'fletching' }, 0);
+    updateUI();
+    assert(geo() === before, 'tiles shifted on research start: ' + before + ' -> ' + geo());
+    assert(document.querySelector('.research-progress-track'), 'running tile has no progress track');
+    teamAge[0] = 0;
+  });
+
   T('hud: home button icon reflects the age (TC top-half: dark/feudal/castle)', () => {
     stage();
     const homeCls = () => { updateUI(); const el = document.querySelector('#home-btn .sprite-icon'); return el ? el.className : ''; };

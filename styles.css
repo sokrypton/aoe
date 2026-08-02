@@ -634,13 +634,21 @@ canvas {
   min-width:0; width:calc(var(--tile-size) - 12px); height:calc(var(--tile-size) - 12px);
   padding:0; background:transparent; border:none; box-shadow:none;
 }
-.act-btn.research-tile:hover, .act-btn.research-tile:active{ background:none; border:none; box-shadow:none; }
+/* frameless in EVERY state — .disabled:hover is a later rule that would otherwise
+   paint the wooden button gradient behind an unaffordable tile. */
+.act-btn.research-tile:hover, .act-btn.research-tile:active,
+.act-btn.research-tile.disabled:hover, .act-btn.research-tile.disabled:active{
+  background:none; border:none; box-shadow:none;
+}
 /* icon square fills the button, anchors the progress fill, and takes the hover
    tint (the button IS the icon; the price is a sibling outside it). */
 .act-btn.research-tile .research-icon{
   position:relative; width:100%; height:100%; border-radius:3px; overflow:hidden;
 }
-.act-btn.research-tile:hover .research-icon, .act-btn.research-tile:active .research-icon{
+/* :not(.disabled) — an unaffordable tile must not light up under the cursor; it
+   swallows the click (JS) and only says "Not enough resources!". */
+.act-btn.research-tile:not(.disabled):hover .research-icon,
+.act-btn.research-tile:not(.disabled):active .research-icon{
   box-shadow: inset 0 0 0 999px rgba(255,235,160,0.16);   /* tint painted over the sprite */
 }
 .act-btn.research-tile .btn-emoji.sprite-icon{ width:100%; height:100%; margin:0; }
@@ -652,8 +660,16 @@ canvas {
 }
 .research-item .cost-chip{ background:none; border:none; padding:0; gap:1px; text-shadow:none; }
 .research-item .cost-chip .res-mini-icon{ width:8px; height:8px; }
-/* research progress fill: GREEN — yellow was invisible on the cream paper. */
-.research-progress-fill{ background:#2f9e3f; }
+/* The running tile keeps its price in the layout, just unseen — the chips are what
+   set the item's width, so hiding them outright shifted the whole band on click. */
+.research-item .cost.cost-reserved{ visibility:hidden; }
+/* research progress: a sunk, black-outlined TRACK so an in-progress tile is
+   obvious at 0%, with the GREEN fill inside — yellow vanished on cream paper. */
+.research-progress-track{
+  position:absolute; left:0; right:0; bottom:0; height:5px;
+  background:rgba(24,14,4,0.7); box-shadow:inset 0 0 0 1px #000;
+}
+.research-progress-fill{ height:100%; background:#2f9e3f; box-shadow:inset 0 0 0 1px rgba(0,0,0,0.5); }
 /* Landscape mobile: #bottom is a vertical LEFT RAIL and #actions stacks in a
    column, so the paper band runs VERTICALLY — full WIDTH end to end (negative
    H-margin cancels #actions' 8px padding), tiles stacked; the plain ends (for
