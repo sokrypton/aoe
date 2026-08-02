@@ -66,15 +66,16 @@ window.SPRITE_CELLS = {
   // ---- garrison in/out glyphs (gate + directional arrow): load into / release
   // from a container (ram Garrison / Ungarrison buttons, js/ui.js).
   'garrison-in':[7,4], 'garrison-out':[7,7],
-  // ---- rows 8-9 (sheet grown 8x8 -> 8x10): the 14 research/tech icons as FULL
-  // cells (`up-<techkey>`), grouped by host building (keep in sync with
+  // ---- rows 8-10 (sheet grown 8x8 -> 8x10 -> 8x11): the research/tech icons as
+  // FULL cells (`up-<techkey>`), grouped by host building (keep in sync with
   // expand-sprites.py + BLDGS.researches). Shown as .research-tile icons — on the
   // parchment scroll (mobile) or plain command buttons (classic). Row 9 cols 6-7
-  // hold the scroll roll caps (scroll-roll, scroll-roll-h).
+  // hold the scroll roll caps (scroll-roll, scroll-roll-h); rows 8-9 filled up, so
+  // Bodkin Arrow opens row 10 (cols 1-7 spare — draw there before growing again).
   'up-forging':[0,8], 'up-iron_casting':[1,8], 'up-scale_armor':[2,8], 'up-chain_mail':[3,8],
   'up-fletching':[4,8], 'up-masonry':[5,8], 'up-fortified_wall':[6,8], 'up-horse_collar':[7,8],
   'up-heavy_plow':[0,9], 'up-double_bit_axe':[1,9], 'up-bow_saw':[2,9], 'up-gold_mining':[3,9],
-  'up-guilds':[4,9], 'up-wheelbarrow':[5,9],
+  'up-guilds':[4,9], 'up-wheelbarrow':[5,9], 'up-bodkin_arrow':[0,10],
   // research SCROLL roll caps (baked from scroll-ui.png): a vertical-cylinder roll
   // for the horizontal bottom-bar band (L/R caps, right one mirrored), and the
   // same roll rotated 90° for the vertical rail band (top/bottom caps). The paper
@@ -82,19 +83,26 @@ window.SPRITE_CELLS = {
   // so no paper cell is needed. Replaces the standalone scroll PNGs.
   'scroll-roll':[6,9], 'scroll-roll-h':[7,9],
 };
-// Sheet grid: 8 columns x 10 rows of 256px cells. The shared .sprite-icon
-// (background-size below) scales the sheet so one cell fills the element, so
-// position is a fraction col/(COLS-1), row/(ROWS-1).
-const SHEET_COLS = 8, SHEET_ROWS = 10;
+// Sheet grid: 8 columns x 11 rows of 256px cells. background-size scales the
+// sheet so one cell fills the element, so position is a fraction col/(COLS-1),
+// row/(ROWS-1) — i.e. EVERY cell's position shifts when a row is added.
+// Growing the sheet must therefore change nothing but these two numbers, so the
+// derived values are published as custom properties: --sprite-bg-size plus one
+// --cell-<key> per cell. CSS that can't carry an .icon-<key> class (::before /
+// ::after, e.g. the research scroll's roll caps) uses var(--cell-<key>) and
+// never a literal percentage.
+const SHEET_COLS = 8, SHEET_ROWS = 11;
 (function(){
-  let css = '';
+  let vars = `--sprite-bg-size:${SHEET_COLS * 100}% ${SHEET_ROWS * 100}%;`, rules = '';
   for (const k in SPRITE_CELLS) {
     const cell = SPRITE_CELLS[k];
-    css += `.icon-${k}{background-position:${(cell[0]/(SHEET_COLS-1)*100).toFixed(4)}% ${(cell[1]/(SHEET_ROWS-1)*100).toFixed(4)}%;}\n`;
+    const pos = `${(cell[0]/(SHEET_COLS-1)*100).toFixed(4)}% ${(cell[1]/(SHEET_ROWS-1)*100).toFixed(4)}%`;
+    vars += `--cell-${k}:${pos};`;
+    rules += `.icon-${k}{background-position:${pos};}\n`;
   }
   const st = document.createElement('style');
   st.id = 'sprite-cells';
-  st.textContent = css;
+  st.textContent = `:root{${vars}}\n${rules}`;
   document.head.appendChild(st);
 })();
 

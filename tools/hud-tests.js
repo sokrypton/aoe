@@ -975,6 +975,29 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
+  // A tech/unit/building with no sheet cell silently degrades to an emoji tile
+  // (Bodkin Arrow shipped that way for a while) — assert the registry covers
+  // every key the HUD can ask for, so the gap fails here instead of on screen.
+  T('sprites: every unit, building, age variant and tech has a sheet cell', () => {
+    const cells = window.SPRITE_CELLS;
+    const gaps = [];
+    const check = (key, what) => { if (!cells[key]) gaps.push(what + ' -> ' + key); };
+    for (const u in UNITS) {
+      const v = AGE_ICON_VARIANTS[u];
+      if (!v) check(u, 'unit ' + u);
+      else for (const a of [0, 1, 2]) check(v[a] || u, 'unit ' + u + ' @age' + a);
+    }
+    for (const b in BLDGS) {
+      const v = AGE_ICON_VARIANTS[b];
+      if (!v) check(b, 'building ' + b);
+      // TOWER has no Dark-age look on purpose (that's PTOWER), so skip age 0.
+      else for (const a of (b === 'TOWER' ? [1, 2] : [0, 1, 2])) check(v[a] || b, 'building ' + b + ' @age' + a);
+    }
+    for (const t in UPGRADES) check('up-' + t, 'tech ' + t);
+    assert(!gaps.length, 'missing sprite cells: ' + gaps.join(', '));
+    return { cells: Object.keys(cells).length, techs: Object.keys(UPGRADES).length };
+  });
+
   T('hud: home button icon reflects the age (TC top-half: dark/feudal/castle)', () => {
     stage();
     const homeCls = () => { updateUI(); const el = document.querySelector('#home-btn .sprite-icon'); return el ? el.className : ''; };

@@ -262,7 +262,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
   background-repeat: no-repeat;
 }
 /* Sprite tiles render on an inner clipper>img pair (setPortraitIcon,
@@ -606,8 +606,8 @@ canvas {
    the right cap is the same cell mirrored. */
 .research-box::before, .research-box::after{
   content:''; position:absolute; top:0; bottom:0; width:18px; z-index:0;
-  background-image:url('sprites.png'); background-size:800% 1000%;
-  background-position:85.7143% 100%;    /* scroll-roll cell (6,9) */
+  background-image:url('sprites.png'); background-size:var(--sprite-bg-size);
+  background-position:var(--cell-scroll-roll);
   background-repeat:no-repeat;
 }
 .research-box::before{ left:0; }
@@ -676,7 +676,7 @@ canvas {
   /* roll caps run TOP and BOTTOM here — full width, from the rotated roll cell. */
   .research-box::before, .research-box::after{
     left:0; right:0; top:auto; bottom:auto; width:auto; height:18px;
-    background-position:100% 100%;               /* scroll-roll-h cell (7,9) */
+    background-position:var(--cell-scroll-roll-h);
   }
   .research-box::before{ top:0; transform:scaleY(-1); }   /* top roll: opening faces DOWN */
   .research-box::after{ bottom:0; transform:none; }        /* bottom roll: opening faces UP */
@@ -779,23 +779,18 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   8 columns x 10 rows. background-size:800%/1000% makes each cell exactly
-   fill the element regardless of its box size, so background-position is
-   expressed as fractions (c/7, r/9) rather than fixed pixel offsets — the
-   same .icon-* class works at any display size (button icon, portrait, etc).
-   The original 7x7 art occupies cells (0..6, 0..6) unchanged; column 7 and
-   row 7 are the new cells: icon-tradecart (7,0, "cart" placeholder) plus
-   icon-spare1..14 — empty labeled boxes to draw future art into.
-   Step = 100/7 ≈ 14.2857%.
+   --sprite-bg-size (from SHEET_COLS/SHEET_ROWS, js/page-shell.js) makes each
+   cell exactly fill the element regardless of its box size, so the generated
+   .icon-* background-positions are fractions rather than pixel offsets — the
+   same class works at any display size (button icon, portrait, etc). Never
+   spell the sheet dimensions here: the registry owns them.
 */
 .sprite-icon{
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:800% 1000%; /* one 8x10 master sheet — see the labeled placeholder cells */
+  background-size:var(--sprite-bg-size);
 }
-/* New spare cells (empty labeled boxes) — column 7 (rows 1-7) then row 7
-   (cols 0-6). Wire any of these up by renaming the class + drawing its cell. */
 /* ---- MARKET buy/sell exchange (js/ui.js): two labeled rows (Buy / Sell) of
    resource icons with the live gold price printed below each. Dedicated .mkt-*
    classes (not .act-btn) so it stays visible in both skins, which hide
@@ -1981,7 +1976,7 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
 }
 #tooltip .tip-cost-icon {
   display: inline-block;
@@ -1989,7 +1984,7 @@ canvas {
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
   flex-shrink: 0;
 }
 #tooltip .tip-cost-label {

@@ -239,7 +239,7 @@ canvas {
 }
 #sel-portrait.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
   background-repeat: no-repeat;
 }
 /* Base-copy twins of the styles.css tile-sprite rules (setPortraitIcon). */
@@ -516,20 +516,17 @@ canvas {
 }
 
 /* ---- SPRITE ICONS (sprites.png) ----
-   8 columns x 10 rows. background-size:800%/1000% makes each cell exactly
-   fill the element regardless of its box size, so background-position is
-   expressed as fractions (c/6, r/6) rather than fixed pixel offsets — the
-   same .icon-* class works at any display size (button icon, portrait, etc).
+   --sprite-bg-size (from SHEET_COLS/SHEET_ROWS, js/page-shell.js) makes each
+   cell exactly fill the element regardless of its box size; the .icon-* cell
+   positions are generated from the same registry, so both skins stay in sync
+   and the sheet dimensions are never spelled here.
 */
 .sprite-icon{
   display:inline-block;
   background-image:url('sprites.png');
   background-repeat:no-repeat;
-  background-size:800% 1000%; /* one 8x10 master sheet — see the labeled placeholder cells */
+  background-size:var(--sprite-bg-size);
 }
-/* Cells that classic-style was missing (were falling back to 0% 0% = villager):
-   the ram, Market, and Trade Cart — plus the spare cells, kept in sync with
-   styles.css so the shared js/ui.js sprite classes resolve in the classic skin. */
 /* ---- MARKET exchange (js/ui.js appendMktGridRows): AoE2-style rows of
    REAL 52px command buttons — [Buy][food][wood][stone] / [Sell][...] —
    the live gold price printed on each button. Full-grid-row bands so the
@@ -1699,7 +1696,7 @@ canvas {
   vertical-align: -2px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
 }
 #tooltip .tip-cost-icon {
   display: inline-block;
@@ -1707,7 +1704,7 @@ canvas {
   height: 14px;
   background-image: url('sprites.png');
   background-repeat: no-repeat;
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
   flex-shrink: 0;
 }
 #tooltip .tip-cost-label {
@@ -1893,7 +1890,7 @@ canvas {
    out every multi-select/garrison icon. */
 #sel-portrait.sprite-icon, .sel-unit-icon.sprite-icon{
   background-image: url('sprites.png');
-  background-size: 800% 1000%;
+  background-size:var(--sprite-bg-size);
   background-repeat: no-repeat;
 }
 #sel-name{
