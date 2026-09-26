@@ -125,8 +125,17 @@ async function maybeLoadScenarioFromURL(){
   let src;
   try { src = new URLSearchParams(location.search).get('scenario'); } catch(e){ return false; }
   if(!src) return false;
+  // CWE-918: only allow same-origin http(s) URLs — a raw attacker-controlled
+  // URL here would let the browser fetch arbitrary internal/external
+  // endpoints (SSRF) whose response is fed straight into loadScenario().
+  let url;
+  try { url = new URL(src, location.href); } catch(e){ return false; }
+  if(url.origin !== location.origin || (url.protocol!=='http:' && url.protocol!=='https:')){
+    console.error('[scenario] rejected cross-origin scenario URL:', src);
+    return false;
+  }
   try {
-    let spec = await (await fetch(src)).json();
+    let spec = await (await fetch(url.href)).json();
     loadScenario(spec); // centers the camera itself
     if(typeof updateUI==='function') updateUI();
     return true;
