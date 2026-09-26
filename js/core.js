@@ -1405,6 +1405,8 @@ function entityVisibleToTeam(t, team){
 //                          waiting to recover the world from the guest's
 //                          live mirror (see enterHostResumeMode, js/init.js)
 //   stateRequestTimer   — the 5s re-request interval for the above
+//   emptyMirrorSeats    — guest seats that answered with no world (a fresh
+//                          page); skipped by the recovery request
 //   inLobby             — a connection is open and both peers are in the
 //                          pre-match lobby (js/lobby.js), before Start. This
 //                          is deliberately NOT mpMatchStarted (js/init.js) —
@@ -1419,6 +1421,7 @@ window.__mpSession = {
   guestInitialMenuHidden: false,
   awaitingStateFromGuest: false,
   stateRequestTimer: null,
+  emptyMirrorSeats: [],
   inLobby: false,
 };
 

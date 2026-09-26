@@ -662,11 +662,15 @@ function onHostClicked(){
 
 // Host crash recovery: ask ONE connected guest for its world mirror,
 // rotating through seats on each retry in case that one can't answer.
+// Seats that already answered empty-handed are skipped; returns false when
+// no connected guest is left to ask.
 let stateRequestRotation = 0;
 function requestStateFromOneGuest(){
-  let seats = netConnectedGuestSeats().sort((a, b) => a - b);
-  if (!seats.length) return;
+  let empty = window.__mpSession.emptyMirrorSeats;
+  let seats = netConnectedGuestSeats().filter(s => !empty.includes(s)).sort((a, b) => a - b);
+  if (!seats.length) return false;
   sendToGuest(seats[stateRequestRotation++ % seats.length], { type: 'request-state' });
+  return true;
 }
 
 // Write the HOST's own ?host=<id> resume URL — but ONLY once the match has
@@ -1130,6 +1134,7 @@ function enterGuestJoinMode(hostPeerId){
 // dead id forever).
 function enterHostResumeMode(peerId){
   window.__mpSession.awaitingStateFromGuest = true;
+  window.__mpSession.emptyMirrorSeats = [];
   // This crashed page has no save file — the persisted session map
   // (js/net.js persistMpSessionMap, written while the match ran) is what
   // knows which token owns which seat. Seed the registry from it so each

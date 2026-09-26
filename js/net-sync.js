@@ -12,12 +12,21 @@
 // post-normalization state right back to the guest so both peers are
 // bit-identical again.
 
-onNetMessage((msg) => {
+onNetMessage((msg, src) => {
   if (msg.type === 'request-state' && netRole === 'guest') {
     let hasWorld = gameStarted && map.length > 0 && entities.length > 0;
     sendToHost({ type: 'state-snapshot', data: hasWorld ? serializeGameForWire() : null });
   }
   if (msg.type === 'state-snapshot' && netRole === 'host' && window.__mpSession.awaitingStateFromGuest) {
+    // A guest with no world (its page reloaded too) can't be the source while
+    // another connected guest may still hold one — ask the next before
+    // starting over, or a live world would be discarded.
+    if (!(msg.data && typeof msg.data === 'object')) {
+      if (src && src.seat != null && !window.__mpSession.emptyMirrorSeats.includes(src.seat)) {
+        window.__mpSession.emptyMirrorSeats.push(src.seat);
+      }
+      if (requestStateFromOneGuest()) return;
+    }
     window.__mpSession.awaitingStateFromGuest = false;
     if (window.__mpSession.stateRequestTimer) {
       clearInterval(window.__mpSession.stateRequestTimer);

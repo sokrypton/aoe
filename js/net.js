@@ -637,15 +637,17 @@ let netSessionEpoch = 0;
 const NET_SIGNAL_FATAL = new Set(['browser-incompatible', 'invalid-id', 'invalid-key', 'ssl-unavailable']);
 let netSignalTimer = 0, netSignalBackoff = 1000;
 function netClearSignalRetry(){ clearTimeout(netSignalTimer); netSignalTimer = 0; netSignalBackoff = 1000; }
-function netSignalAgain(){
-  let p = netPeer;
-  if (!p || p.destroyed || !p.disconnected) return;
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) { netSignalTimer = setTimeout(netSignalAgain, 2000); return; }
+// Bound to the peer it was scheduled for: PeerJS's destroy() emits
+// 'disconnected' before marking itself destroyed, so a teardown can schedule
+// one last retry that must not touch a later session's peer.
+function netSignalAgain(p){
+  if (!p || p !== netPeer || p.destroyed || !p.disconnected) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(p); }, 2000); return; }
   try { p.reconnect(); } catch (e) { console.warn('PeerJS reconnect:', e); }
 }
 function netScheduleSignal(p){
   if (p !== netPeer || p.destroyed || netSignalTimer) return;
-  netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(); }, netSignalBackoff);
+  netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(p); }, netSignalBackoff);
   netSignalBackoff = Math.min(15000, netSignalBackoff * 2);
 }
 function netKeepSignaling(p){
@@ -660,7 +662,7 @@ function netKeepSignaling(p){
   });
 }
 if (typeof window !== 'undefined') {
-  let wake = () => { if (netPeer && !netPeer.destroyed && netPeer.disconnected) { netClearSignalRetry(); netSignalAgain(); } };
+  let wake = () => { if (netPeer && !netPeer.destroyed && netPeer.disconnected) { netClearSignalRetry(); netSignalAgain(netPeer); } };
   window.addEventListener('online', wake);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
 }
@@ -782,7 +784,6 @@ function joinSession(hostPeerId){
 // leaveMpSession(), which wraps this.
 function teardownNet(){
   netSessionEpoch++;
-  netClearSignalRetry();
   netConnected = false;
   if (netConn) { try { netConn.close(); } catch (e) {} }
   netConn = null;
@@ -793,6 +794,7 @@ function teardownNet(){
   netPendingConns.forEach(p => { try { p.conn.close(); } catch (e) {} });
   netPendingConns = [];
   if (netPeer) { try { netPeer.destroy(); } catch (e) {} netPeer = null; }
+  netClearSignalRetry(); // after destroy: it schedules one via 'disconnected'
   netRole = null;
 }
 
