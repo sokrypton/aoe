@@ -646,7 +646,7 @@ function onHostClicked(){
     // called from hostStartLockstepMatch / the save-resume path). Otherwise a
     // host refreshing during the LOBBY would boot straight into
     // enterHostResumeMode and try to auto-recover a match that never began.
-    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId) + netTurnQuery();
+    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
     // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
     // (js/lobby.js) only appears once a human guest actually connects (see
     // onNetConnectionOpen → hostEnterLobby). Remember the link so a guest
@@ -670,7 +670,7 @@ function onHostClicked(){
 function setHostResumeUrl(){
   try {
     if (typeof netPeer !== 'undefined' && netPeer && netPeer.id) {
-      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id) + netTurnQuery());
+      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id));
     }
   } catch (e) {}
 }

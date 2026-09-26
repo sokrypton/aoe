@@ -583,36 +583,21 @@ function denyGuestConn(conn, reason){
 // STUN from two providers (one blocked still leaves the other), plus
 // Cloudflare TURN for pairs with no direct route (cellular, client-isolated
 // Wi-Fi, strict NAT). PeerJS's own default TURN hosts no longer resolve.
-// Credentials are minted by worker/ (aoe-turn). ?turn=turn:host:port&tu=&tp=
-// supplies your own relay instead; ?relay=1 forces relay-only. Both ride the
-// join link (netTurnQuery) so host and guest agree.
+// Credentials are minted by worker/ (aoe-turn). ?relay=1 forces relay-only on
+// that page (a debug switch; one side forcing it routes the whole link).
 const NET_TURN_ENDPOINT = 'https://aoe-turn.sokrypton.workers.dev/';
 const NET_TURN_WAIT_MS = 5000;
-const netUrlParams = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
-const netManualTurn = netUrlParams.get('turn') ? {
-  urls: netUrlParams.get('turn').split(',').map(s => s.trim()),
-  username: netUrlParams.get('tu') || '', credential: netUrlParams.get('tp') || '',
-} : null;
 const NET_STUN = { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] };
 // One object shared by every Peer: PeerJS reads it at each negotiation, so
 // credentials that land late still serve the next connection.
-const NET_ICE = { iceServers: netManualTurn ? [NET_STUN, netManualTurn] : [NET_STUN] };
-if (netUrlParams.get('relay')) NET_ICE.iceTransportPolicy = 'relay';
-let netRelay = netManualTurn; // the TURN server in use, if any
-
-function netTurnQuery(){
-  let q = '';
-  if (netManualTurn) q += '&turn=' + encodeURIComponent(netManualTurn.urls.join(',')) +
-    '&tu=' + encodeURIComponent(netManualTurn.username) + '&tp=' + encodeURIComponent(netManualTurn.credential);
-  if (netUrlParams.get('relay')) q += '&relay=1';
-  return q;
-}
+const NET_ICE = { iceServers: [NET_STUN] };
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('relay')) NET_ICE.iceTransportPolicy = 'relay';
+let netRelay = null; // the TURN server in use, if any
 
 // Fetched on the first connect, not at page load (solo play never needs it).
 // A failed fetch is retried on the next connect.
 let netTurnFetch = null;
 function netFetchTurn(){
-  if (netManualTurn) return Promise.resolve();
   if (!netTurnFetch) {
     netTurnFetch = fetch(NET_TURN_ENDPOINT)
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
