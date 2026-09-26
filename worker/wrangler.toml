@@ -1,0 +1,8 @@
+name = "aoe-turn"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+[vars]
+# Public id of the Cloudflare TURN key; its API token is the TURN_KEY_SECRET secret
+# (`npx wrangler secret put TURN_KEY_SECRET`), never committed.
+TURN_KEY_ID = "bc740f0efa06961bf4c1fd595361fec0"

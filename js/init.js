@@ -366,9 +366,8 @@ function showMpStatus(text, link){
     if (linkBox) linkBox.value = link;
     // QR of the join link, for the sitting-across-the-table case — the
     // guest points their phone camera at the host's screen instead of
-    // anyone typing/sending a URL. qrcode-generator is loaded from unpkg
-    // like PeerJS; if the CDN is unreachable the link box still works, so
-    // this degrades silently. Error level M, auto type — a localhost or
+    // anyone typing/sending a URL. qrcode-generator is vendored (vendor/);
+    // if it fails to load the link box still works, so this degrades silently. Error level M, auto type — a localhost or
     // github.io join URL fits comfortably.
     if (qrEl) {
       try {
@@ -647,7 +646,7 @@ function onHostClicked(){
     // called from hostStartLockstepMatch / the save-resume path). Otherwise a
     // host refreshing during the LOBBY would boot straight into
     // enterHostResumeMode and try to auto-recover a match that never began.
-    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId);
+    let link = location.origin + location.pathname + '?join=' + encodeURIComponent(peerId) + netTurnQuery();
     // The host waits here with just the shareable link/QR — the PRE-MATCH LOBBY
     // (js/lobby.js) only appears once a human guest actually connects (see
     // onNetConnectionOpen → hostEnterLobby). Remember the link so a guest
@@ -671,7 +670,7 @@ function onHostClicked(){
 function setHostResumeUrl(){
   try {
     if (typeof netPeer !== 'undefined' && netPeer && netPeer.id) {
-      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id));
+      history.replaceState(null, '', location.pathname + '?host=' + encodeURIComponent(netPeer.id) + netTurnQuery());
     }
   } catch (e) {}
 }

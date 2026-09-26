@@ -579,23 +579,120 @@ function denyGuestConn(conn, reason){
 // retries after a delay instead (the signaling server takes a few seconds
 // to release a dead session's id). The save-file re-host flow keeps the
 // non-strict fallback: a brand-new guest just uses whatever link is shown.
+// ---- ICE: how two browsers find a route ----
+// STUN from two providers (one blocked still leaves the other), plus
+// Cloudflare TURN for pairs with no direct route (cellular, client-isolated
+// Wi-Fi, strict NAT). PeerJS's own default TURN hosts no longer resolve.
+// Credentials are minted by worker/ (aoe-turn). ?turn=turn:host:port&tu=&tp=
+// supplies your own relay instead; ?relay=1 forces relay-only. Both ride the
+// join link (netTurnQuery) so host and guest agree.
+const NET_TURN_ENDPOINT = 'https://aoe-turn.sokrypton.workers.dev/';
+const NET_TURN_WAIT_MS = 5000;
+const netUrlParams = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
+const netManualTurn = netUrlParams.get('turn') ? {
+  urls: netUrlParams.get('turn').split(',').map(s => s.trim()),
+  username: netUrlParams.get('tu') || '', credential: netUrlParams.get('tp') || '',
+} : null;
+const NET_STUN = { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] };
+// One object shared by every Peer: PeerJS reads it at each negotiation, so
+// credentials that land late still serve the next connection.
+const NET_ICE = { iceServers: netManualTurn ? [NET_STUN, netManualTurn] : [NET_STUN] };
+if (netUrlParams.get('relay')) NET_ICE.iceTransportPolicy = 'relay';
+let netRelay = netManualTurn; // the TURN server in use, if any
+
+function netTurnQuery(){
+  let q = '';
+  if (netManualTurn) q += '&turn=' + encodeURIComponent(netManualTurn.urls.join(',')) +
+    '&tu=' + encodeURIComponent(netManualTurn.username) + '&tp=' + encodeURIComponent(netManualTurn.credential);
+  if (netUrlParams.get('relay')) q += '&relay=1';
+  return q;
+}
+
+// Fetched on the first connect, not at page load (solo play never needs it).
+// A failed fetch is retried on the next connect.
+let netTurnFetch = null;
+function netFetchTurn(){
+  if (netManualTurn) return Promise.resolve();
+  if (!netTurnFetch) {
+    netTurnFetch = fetch(NET_TURN_ENDPOINT)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(data => {
+        let servers = Array.isArray(data.iceServers) ? data.iceServers : data.iceServers ? [data.iceServers] : [];
+        let turn = servers.find(s => s && s.username && s.credential);
+        if (!turn) throw new Error('no TURN in the answer');
+        netRelay = turn;
+        NET_ICE.iceServers = [NET_STUN, ...servers];
+      })
+      .catch(e => { console.warn('TURN credentials:', e); netTurnFetch = null; });
+  }
+  return netTurnFetch;
+}
+// The wait is measured from the fetch, never from page load: a race from load
+// loses to boot on a slow device and leaves the host with no relay at all.
+function netTurnReady(){
+  return Promise.race([netFetchTurn(), new Promise(r => setTimeout(r, NET_TURN_WAIT_MS))]);
+}
+function netNewPeer(id){ return id ? new Peer(id, { config: NET_ICE }) : new Peer({ config: NET_ICE }); }
+// Bumped by teardownNet: a session begun before a teardown never creates its
+// Peer once the TURN wait ends (its promise just stays pending).
+let netSessionEpoch = 0;
+
+// Keep the HOST's signaling registration alive. Losing the signaling socket
+// (sleep, backgrounded tab, server hiccup) doesn't touch live DataConnections,
+// but the host's id dies with it, so any later (re)join would target a dead id.
+// reconnect() re-registers the same id; retried with backoff 1s→15s, and at
+// once on wake/online. 'unavailable-id' = the server still holds the old
+// session (released after ~a minute): retried like any drop.
+const NET_SIGNAL_FATAL = new Set(['browser-incompatible', 'invalid-id', 'invalid-key', 'ssl-unavailable']);
+let netSignalTimer = 0, netSignalBackoff = 1000;
+function netClearSignalRetry(){ clearTimeout(netSignalTimer); netSignalTimer = 0; netSignalBackoff = 1000; }
+function netSignalAgain(){
+  let p = netPeer;
+  if (!p || p.destroyed || !p.disconnected) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) { netSignalTimer = setTimeout(netSignalAgain, 2000); return; }
+  try { p.reconnect(); } catch (e) { console.warn('PeerJS reconnect:', e); }
+}
+function netScheduleSignal(p){
+  if (p !== netPeer || p.destroyed || netSignalTimer) return;
+  netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(); }, netSignalBackoff);
+  netSignalBackoff = Math.min(15000, netSignalBackoff * 2);
+}
+function netKeepSignaling(p){
+  p.on('disconnected', () => netScheduleSignal(p));
+  p.on('open', () => { if (p === netPeer) netClearSignalRetry(); });
+  p.on('error', (err) => {
+    if (p !== netPeer) return;
+    let type = (err && err.type) || String(err);
+    if (NET_SIGNAL_FATAL.has(type)) { console.error('PeerJS fatal:', type, err); return; }
+    console.warn('PeerJS (signaling, ridden out):', type, (err && err.message) || '');
+    if (p.disconnected) netScheduleSignal(p);
+  });
+}
+if (typeof window !== 'undefined') {
+  let wake = () => { if (netPeer && !netPeer.destroyed && netPeer.disconnected) { netClearSignalRetry(); netSignalAgain(); } };
+  window.addEventListener('online', wake);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
+}
+
+// Why a DataConnection didn't open, from its RTCPeerConnection.
+function netIceWhy(conn){
+  let pc = conn && conn.peerConnection;
+  if (!pc) return 'no connection attempted';
+  return 'ICE ' + pc.iceConnectionState + ', connection ' + pc.connectionState + (netRelay ? '' : ', no relay');
+}
+
 function hostSession(desiredId, strict){
-  return new Promise((resolve, reject) => {
+  let epoch = netSessionEpoch;
+  if (typeof Peer !== 'undefined') netRole = 'host';
+  return netTurnReady().then(() => new Promise((resolve, reject) => {
+    if (epoch !== netSessionEpoch) return; // torn down during the TURN wait
     if (typeof Peer === 'undefined') { reject(new Error('PeerJS library not loaded')); return; }
     netRole = 'host';
 
     let finish = (peer) => {
       netPeer = peer;
-      // 'disconnected' = lost the SIGNALING server (PeerJS cloud), not the
-      // game DataConnection — laptop sleep or a wifi blip is enough. An
-      // established match keeps playing without signaling, but this host's
-      // peer id dies with the socket, so any FUTURE (re)join attempt from
-      // the guest would retry against an id that no longer exists, forever.
-      // reconnect() re-registers the same id on the same Peer object; no-op
-      // guard on destroyed covers a deliberate teardown racing the event.
-      peer.on('disconnected', () => {
-        if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
-      });
+      netClearSignalRetry();
+      netKeepSignaling(peer);
       netPeer.on('connection', (conn) => {
         // Star topology: every incoming connection is wired as pending and
         // earns a seat via its 'hello' (token → same seat on reconnect,
@@ -606,7 +703,7 @@ function hostSession(desiredId, strict){
     };
 
     let settled = false;
-    let peer = desiredId ? new Peer(desiredId) : new Peer();
+    let peer = netNewPeer(desiredId);
     peer.on('open', () => { settled = true; finish(peer); });
     peer.on('error', (err) => {
       if (settled) return;
@@ -622,7 +719,7 @@ function hostSession(desiredId, strict){
         // random one instead of failing hosting outright. Only the
         // ORIGINAL guest's reconnect benefits from the exact id match; a
         // brand-new guest just uses whatever link is shown regardless.
-        let fallback = new Peer();
+        let fallback = netNewPeer();
         fallback.on('open', () => { settled = true; finish(fallback); });
         fallback.on('error', (err2) => {
           console.error('PeerJS host error (fallback):', err2);
@@ -633,20 +730,23 @@ function hostSession(desiredId, strict){
       console.error('PeerJS host error:', err);
       reject(err);
     });
-  });
+  }));
 }
 
 // Guest side: create our own Peer, then connect directly to the host's id
 // (obtained from the ?join= URL param — see autoJoinFromUrl in init.js).
 function joinSession(hostPeerId){
-  return new Promise((resolve, reject) => {
+  let epoch = netSessionEpoch;
+  if (typeof Peer !== 'undefined') netRole = 'guest';
+  return netTurnReady().then(() => new Promise((resolve, reject) => {
+    if (epoch !== netSessionEpoch) return; // torn down during the TURN wait
     if (typeof Peer === 'undefined') { reject(new Error('PeerJS library not loaded')); return; }
     netRole = 'guest';
     // A reconnect attempt calls this again with a previous (now-dead) Peer
     // still sitting in netPeer — destroy it first so its signaling socket
     // doesn't linger, rather than just silently orphaning it.
     if (netPeer) { try { netPeer.destroy(); } catch (e) {} }
-    netPeer = new Peer();
+    netPeer = netNewPeer();
     // The promise otherwise only settles on the DataConnection's 'open' or a
     // Peer-level 'error'. An ICE/connection failure where neither ever fires
     // (host id alive but the connection hangs) would leave attemptReconnect's
@@ -655,10 +755,14 @@ function joinSession(hostPeerId){
     // deadline covering both the signaling handshake and the connect.
     let settled = false;
     const settle = (fn, arg) => { if (!settled) { settled = true; clearTimeout(joinDeadline); fn(arg); } };
+    // 15s: a relayed (TURN over TCP/TLS) route can take several seconds to open.
+    let conn = null;
     const joinDeadline = setTimeout(() => {
+      let why = netIceWhy(conn);
+      console.error('PeerJS join timed out:', why);
       try { netPeer.destroy(); } catch (e) {}
-      settle(reject, new Error('join timed out'));
-    }, 10000);
+      settle(reject, new Error('join timed out (' + why + ')'));
+    }, 15000);
     netPeer.on('open', () => {
       // serialization:'binary' (PeerJS's bundled BinaryPack/msgpack encoder)
       // — 'none' isn't a constructor this PeerJS build actually registers
@@ -668,7 +772,7 @@ function joinSession(hostPeerId){
       // not re-inflating it), so this is still nearly all of the deflate
       // win. Host's inbound `connection` listener just inherits whatever
       // mode the connecting peer — us — requested.
-      let conn = netPeer.connect(hostPeerId, { reliable: true, serialization: 'binary' });
+      conn = netPeer.connect(hostPeerId, { reliable: true, serialization: 'binary' });
       wireGuestConnection(conn);
       conn.on('open', () => settle(resolve));
     });
@@ -676,7 +780,7 @@ function joinSession(hostPeerId){
       console.error('PeerJS guest error:', err);
       settle(reject, err);
     });
-  });
+  }));
 }
 
 // Tear the whole transport down: connection, peer, role. The complement of
@@ -686,6 +790,8 @@ function joinSession(hostPeerId){
 // level cleanup (reconnect timer, myTeam, match flags) lives in init.js's
 // leaveMpSession(), which wraps this.
 function teardownNet(){
+  netSessionEpoch++;
+  netClearSignalRetry();
   netConnected = false;
   if (netConn) { try { netConn.close(); } catch (e) {} }
   netConn = null;

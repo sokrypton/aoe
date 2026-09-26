@@ -2,7 +2,7 @@
 // ---- MULTIPLAYER tests (Playwright driver) ----
 // Drives REAL multi-tab matches through the host-relay star: one host page
 // plus 1-3 guest pages in the same browser context, connected through the
-// live PeerJS cloud signaling server (index.html loads PeerJS from a CDN,
+// live PeerJS cloud signaling server and the aoe-turn credential worker,
 // so these tests need network access — they'll fail fast without it).
 // Complements tools/hud-tests.js (single-page HUD/command probes) and
 // tools/simulate.sh (headless whole-match health).
