@@ -660,19 +660,6 @@ function onHostClicked(){
   });
 }
 
-// Host crash recovery: ask ONE connected guest for its world mirror,
-// rotating through seats on each retry in case that one can't answer.
-// Seats that already answered empty-handed are skipped; returns false when
-// no connected guest is left to ask.
-let stateRequestRotation = 0;
-function requestStateFromOneGuest(){
-  let empty = window.__mpSession.emptyMirrorSeats;
-  let seats = netConnectedGuestSeats().filter(s => !empty.includes(s)).sort((a, b) => a - b);
-  if (!seats.length) return false;
-  sendToGuest(seats[stateRequestRotation++ % seats.length], { type: 'request-state' });
-  return true;
-}
-
 // Write the HOST's own ?host=<id> resume URL — but ONLY once the match has
 // actually started (called from hostStartLockstepMatch and the save-resume
 // path). If this page later dies mid-match, reopening it from history/tab-
@@ -774,11 +761,10 @@ window.onNetConnectionOpen = function(seat){
     // wiping the match with a fresh restartGame(); the 'state-snapshot'
     // reply (js/net-sync.js) applies it and finishes match setup. Repeat
     // the request every 5s until one lands — the interval self-clears once
-    // the flag drops. One guest at a time (every mirror is a full ~15KB
-    // world); each retry rotates to the next connected guest.
+    // the flag drops.
     if (window.__mpSession.awaitingStateFromGuest) {
       showMpStatus('Opponent reconnected! Recovering match…');
-      requestStateFromOneGuest();
+      broadcastToGuests({ type: 'request-state' });
       if (!window.__mpSession.stateRequestTimer) {
         window.__mpSession.stateRequestTimer = setInterval(() => {
           if (!window.__mpSession.awaitingStateFromGuest || !netConnected) {
@@ -786,7 +772,7 @@ window.onNetConnectionOpen = function(seat){
             window.__mpSession.stateRequestTimer = null;
             return;
           }
-          requestStateFromOneGuest();
+          broadcastToGuests({ type: 'request-state' });
         }, 5000);
       }
       return;
@@ -1134,7 +1120,6 @@ function enterGuestJoinMode(hostPeerId){
 // dead id forever).
 function enterHostResumeMode(peerId){
   window.__mpSession.awaitingStateFromGuest = true;
-  window.__mpSession.emptyMirrorSeats = [];
   // This crashed page has no save file — the persisted session map
   // (js/net.js persistMpSessionMap, written while the match ran) is what
   // knows which token owns which seat. Seed the registry from it so each

@@ -264,14 +264,13 @@ function queueSend(conn, msg){
         setTimeout(() => {
           if (!netConnected || !conn) return;
           netBytesSent += delayed.length;
-          try { conn.send(delayed); conn.netLastSentAt = performance.now(); } catch (e) {}
+          try { conn.send(delayed); } catch (e) {}
         }, window.NET_TEST_LATENCY_MS);
         return;
       }
       if (window.NET_TEST_DROP_RATE && Math.random() < window.NET_TEST_DROP_RATE) return;
       netBytesSent += bytes.length;
       conn.send(bytes);
-      conn.netLastSentAt = performance.now();
     })
     .catch(err => console.error('Net send failed (message dropped):', err));
 }
@@ -350,11 +349,6 @@ function dispatchNetMessage(msg, src){
 const NET_HEARTBEAT_MS = 1000;
 const NET_TIMEOUT_MS = 4000;
 let lastNetRecvAt = 0;
-// Any message proves liveness to the receiver, so a ping only goes out on a
-// link that has been quiet a full beat (in-match tick reports make it rare).
-function netPingIfQuiet(conn, now){
-  if (now - (conn.netLastSentAt || 0) >= NET_HEARTBEAT_MS) queueSend(conn, { type: 'ping' });
-}
 
 // GUEST-side loss of the (single) host link. The host's per-guest
 // equivalent is handleGuestConnectionLost below.
@@ -382,7 +376,7 @@ setInterval(() => {
   if (netRole === 'host') {
     for (const rec of netGuests.values()) {
       if (!rec.connected) continue;
-      netPingIfQuiet(rec.conn, now);
+      queueSend(rec.conn, { type: 'ping' });
       if (now - rec.lastRecvAt > NET_TIMEOUT_MS) handleGuestConnectionLost(rec.seat);
     }
     // Sweep connections that opened but never sent their hello. A conn parked
@@ -397,7 +391,7 @@ setInterval(() => {
       return true;
     });
   } else if (netConnected) {
-    netPingIfQuiet(netConn, now);
+    queueSend(netConn, { type: 'ping' });
     if (now - lastNetRecvAt > NET_TIMEOUT_MS) handleConnectionLost();
   }
 }, NET_HEARTBEAT_MS);
@@ -560,31 +554,6 @@ function denyGuestConn(conn, reason){
   setTimeout(() => { try { conn.close(); } catch (e) {} }, 500);
 }
 
-// Host side: create a Peer, wait for a guest to connect to it.
-// Resolves with this host's peerId (to embed in the shareable link) once
-// PeerJS's cloud signaling server has assigned one.
-//
-// `desiredId`, when given, asks PeerJS's signaling server for that EXACT
-// id instead of a random one — used when re-hosting from a loaded save
-// (js/save.js's serializeGame() stores the host peer id that was active at
-// save time). Requesting the same id back lets the ORIGINAL guest's own
-// already-running attemptReconnect() loop (js/init.js, which keeps retrying
-// against its cached host id every few seconds) silently succeed on its
-// own, with no new link needed — otherwise a host reloading its whole page
-// and re-hosting always got a fresh random id, permanently stranding that
-// guest's tab retrying against an id that no longer exists (confirmed by
-// an actual two-browser-context test: the guest sat showing "Attempting to
-// reconnect…" forever). The id might not be immediately available again
-// right after the old session dies (server-side cleanup lag, or someone
-// else's tab happening to hold it) — falls back to a fresh random id
-// rather than failing hosting outright if so.
-// `strict`: reject on 'unavailable-id' instead of falling back to a random
-// id. The ?host= resume flow (js/init.js's enterHostResumeMode) NEEDS the
-// exact id back — the guest's reconnect loop is retrying that id and only
-// that id, so a silent random fallback would strand it forever; the caller
-// retries after a delay instead (the signaling server takes a few seconds
-// to release a dead session's id). The save-file re-host flow keeps the
-// non-strict fallback: a brand-new guest just uses whatever link is shown.
 // ---- ICE: how two browsers find a route ----
 // STUN from two providers (one blocked still leaves the other), plus
 // Cloudflare TURN for pairs with no direct route (cellular, client-isolated
@@ -630,41 +599,26 @@ let netSessionEpoch = 0;
 
 // Keep the HOST's signaling registration alive. Losing the signaling socket
 // (sleep, backgrounded tab, server hiccup) doesn't touch live DataConnections,
-// but the host's id dies with it, so any later (re)join would target a dead id.
-// reconnect() re-registers the same id; retried with backoff 1s→15s, and at
-// once on wake/online. 'unavailable-id' = the server still holds the old
-// session (released after ~a minute): retried like any drop.
-const NET_SIGNAL_FATAL = new Set(['browser-incompatible', 'invalid-id', 'invalid-key', 'ssl-unavailable']);
+// but the host's id dies with it, so a later (re)join would target a dead id.
+// reconnect() re-registers the same id; a failed attempt surfaces as another
+// 'disconnected'/'error', retried with backoff 1s→15s. PeerJS re-emits 'open'
+// after every reconnect, so session setup on 'open' must run once.
 let netSignalTimer = 0, netSignalBackoff = 1000;
 function netClearSignalRetry(){ clearTimeout(netSignalTimer); netSignalTimer = 0; netSignalBackoff = 1000; }
-// Bound to the peer it was scheduled for: PeerJS's destroy() emits
-// 'disconnected' before marking itself destroyed, so a teardown can schedule
-// one last retry that must not touch a later session's peer.
-function netSignalAgain(p){
-  if (!p || p !== netPeer || p.destroyed || !p.disconnected) return;
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) { netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(p); }, 2000); return; }
-  try { p.reconnect(); } catch (e) { console.warn('PeerJS reconnect:', e); }
-}
-function netScheduleSignal(p){
-  if (p !== netPeer || p.destroyed || netSignalTimer) return;
-  netSignalTimer = setTimeout(() => { netSignalTimer = 0; netSignalAgain(p); }, netSignalBackoff);
-  netSignalBackoff = Math.min(15000, netSignalBackoff * 2);
-}
 function netKeepSignaling(p){
-  p.on('disconnected', () => netScheduleSignal(p));
+  // Checked when the timer fires, not when scheduled: PeerJS's destroy()
+  // emits 'disconnected' before it marks itself destroyed.
+  let retry = () => {
+    if (netSignalTimer) return;
+    netSignalTimer = setTimeout(() => {
+      netSignalTimer = 0;
+      if (p === netPeer && !p.destroyed && p.disconnected) p.reconnect();
+    }, netSignalBackoff);
+    netSignalBackoff = Math.min(15000, netSignalBackoff * 2);
+  };
+  p.on('disconnected', retry);
+  p.on('error', () => { if (p.disconnected) retry(); });
   p.on('open', () => { if (p === netPeer) netClearSignalRetry(); });
-  p.on('error', (err) => {
-    if (p !== netPeer) return;
-    let type = (err && err.type) || String(err);
-    if (NET_SIGNAL_FATAL.has(type)) { console.error('PeerJS fatal:', type, err); return; }
-    console.warn('PeerJS (signaling, ridden out):', type, (err && err.message) || '');
-    if (p.disconnected) netScheduleSignal(p);
-  });
-}
-if (typeof window !== 'undefined') {
-  let wake = () => { if (netPeer && !netPeer.destroyed && netPeer.disconnected) { netClearSignalRetry(); netSignalAgain(netPeer); } };
-  window.addEventListener('online', wake);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
 }
 
 // Why a DataConnection didn't open, from its RTCPeerConnection.
@@ -674,6 +628,31 @@ function netIceWhy(conn){
   return 'ICE ' + pc.iceConnectionState + ', connection ' + pc.connectionState + (netRelay ? '' : ', no relay');
 }
 
+// Host side: create a Peer, wait for a guest to connect to it.
+// Resolves with this host's peerId (to embed in the shareable link) once
+// PeerJS's cloud signaling server has assigned one.
+//
+// `desiredId`, when given, asks PeerJS's signaling server for that EXACT
+// id instead of a random one — used when re-hosting from a loaded save
+// (js/save.js's serializeGame() stores the host peer id that was active at
+// save time). Requesting the same id back lets the ORIGINAL guest's own
+// already-running attemptReconnect() loop (js/init.js, which keeps retrying
+// against its cached host id every few seconds) silently succeed on its
+// own, with no new link needed — otherwise a host reloading its whole page
+// and re-hosting always got a fresh random id, permanently stranding that
+// guest's tab retrying against an id that no longer exists (confirmed by
+// an actual two-browser-context test: the guest sat showing "Attempting to
+// reconnect…" forever). The id might not be immediately available again
+// right after the old session dies (server-side cleanup lag, or someone
+// else's tab happening to hold it) — falls back to a fresh random id
+// rather than failing hosting outright if so.
+// `strict`: reject on 'unavailable-id' instead of falling back to a random
+// id. The ?host= resume flow (js/init.js's enterHostResumeMode) NEEDS the
+// exact id back — the guest's reconnect loop is retrying that id and only
+// that id, so a silent random fallback would strand it forever; the caller
+// retries after a delay instead (the signaling server takes a few seconds
+// to release a dead session's id). The save-file re-host flow keeps the
+// non-strict fallback: a brand-new guest just uses whatever link is shown.
 function hostSession(desiredId, strict){
   let epoch = netSessionEpoch;
   if (typeof Peer !== 'undefined') netRole = 'host';
@@ -697,7 +676,7 @@ function hostSession(desiredId, strict){
 
     let settled = false;
     let peer = netNewPeer(desiredId);
-    peer.on('open', () => { settled = true; finish(peer); });
+    peer.on('open', () => { if (settled) return; settled = true; finish(peer); });
     peer.on('error', (err) => {
       if (settled) return;
       if (desiredId && err.type === 'unavailable-id') {
@@ -713,7 +692,7 @@ function hostSession(desiredId, strict){
         // ORIGINAL guest's reconnect benefits from the exact id match; a
         // brand-new guest just uses whatever link is shown regardless.
         let fallback = netNewPeer();
-        fallback.on('open', () => { settled = true; finish(fallback); });
+        fallback.on('open', () => { if (settled) return; settled = true; finish(fallback); });
         fallback.on('error', (err2) => {
           console.error('PeerJS host error (fallback):', err2);
           reject(err2);
@@ -757,6 +736,7 @@ function joinSession(hostPeerId){
       settle(reject, new Error('join timed out (' + why + ')'));
     }, 15000);
     netPeer.on('open', () => {
+      if (conn) return; // re-'open' after a signaling reconnect: already connecting
       // serialization:'binary' (PeerJS's bundled BinaryPack/msgpack encoder)
       // — 'none' isn't a constructor this PeerJS build actually registers
       // (confirmed by hitting "this._serializers[t.serialization] is not a
