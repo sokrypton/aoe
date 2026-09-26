@@ -264,13 +264,14 @@ function queueSend(conn, msg){
         setTimeout(() => {
           if (!netConnected || !conn) return;
           netBytesSent += delayed.length;
-          try { conn.send(delayed); } catch (e) {}
+          try { conn.send(delayed); conn.netLastSentAt = performance.now(); } catch (e) {}
         }, window.NET_TEST_LATENCY_MS);
         return;
       }
       if (window.NET_TEST_DROP_RATE && Math.random() < window.NET_TEST_DROP_RATE) return;
       netBytesSent += bytes.length;
       conn.send(bytes);
+      conn.netLastSentAt = performance.now();
     })
     .catch(err => console.error('Net send failed (message dropped):', err));
 }
@@ -349,6 +350,11 @@ function dispatchNetMessage(msg, src){
 const NET_HEARTBEAT_MS = 1000;
 const NET_TIMEOUT_MS = 4000;
 let lastNetRecvAt = 0;
+// Any message proves liveness to the receiver, so a ping only goes out on a
+// link that has been quiet a full beat (in-match tick reports make it rare).
+function netPingIfQuiet(conn, now){
+  if (now - (conn.netLastSentAt || 0) >= NET_HEARTBEAT_MS) queueSend(conn, { type: 'ping' });
+}
 
 // GUEST-side loss of the (single) host link. The host's per-guest
 // equivalent is handleGuestConnectionLost below.
@@ -376,7 +382,7 @@ setInterval(() => {
   if (netRole === 'host') {
     for (const rec of netGuests.values()) {
       if (!rec.connected) continue;
-      queueSend(rec.conn, { type: 'ping' });
+      netPingIfQuiet(rec.conn, now);
       if (now - rec.lastRecvAt > NET_TIMEOUT_MS) handleGuestConnectionLost(rec.seat);
     }
     // Sweep connections that opened but never sent their hello. A conn parked
@@ -391,7 +397,7 @@ setInterval(() => {
       return true;
     });
   } else if (netConnected) {
-    queueSend(netConn, { type: 'ping' });
+    netPingIfQuiet(netConn, now);
     if (now - lastNetRecvAt > NET_TIMEOUT_MS) handleConnectionLost();
   }
 }, NET_HEARTBEAT_MS);

@@ -660,6 +660,15 @@ function onHostClicked(){
   });
 }
 
+// Host crash recovery: ask ONE connected guest for its world mirror,
+// rotating through seats on each retry in case that one can't answer.
+let stateRequestRotation = 0;
+function requestStateFromOneGuest(){
+  let seats = netConnectedGuestSeats().sort((a, b) => a - b);
+  if (!seats.length) return;
+  sendToGuest(seats[stateRequestRotation++ % seats.length], { type: 'request-state' });
+}
+
 // Write the HOST's own ?host=<id> resume URL — but ONLY once the match has
 // actually started (called from hostStartLockstepMatch and the save-resume
 // path). If this page later dies mid-match, reopening it from history/tab-
@@ -760,11 +769,12 @@ window.onNetConnectionOpen = function(seat){
     // current copy is the guest's live mirror. Ask for it instead of
     // wiping the match with a fresh restartGame(); the 'state-snapshot'
     // reply (js/net-sync.js) applies it and finishes match setup. Repeat
-    // the request every 5s until one lands (same belt-and-suspenders idea
-    // as requestFullSync) — the interval self-clears once the flag drops.
+    // the request every 5s until one lands — the interval self-clears once
+    // the flag drops. One guest at a time (every mirror is a full ~15KB
+    // world); each retry rotates to the next connected guest.
     if (window.__mpSession.awaitingStateFromGuest) {
       showMpStatus('Opponent reconnected! Recovering match…');
-      broadcastToGuests({ type: 'request-state' });
+      requestStateFromOneGuest();
       if (!window.__mpSession.stateRequestTimer) {
         window.__mpSession.stateRequestTimer = setInterval(() => {
           if (!window.__mpSession.awaitingStateFromGuest || !netConnected) {
@@ -772,7 +782,7 @@ window.onNetConnectionOpen = function(seat){
             window.__mpSession.stateRequestTimer = null;
             return;
           }
-          broadcastToGuests({ type: 'request-state' });
+          requestStateFromOneGuest();
         }, 5000);
       }
       return;
@@ -1543,11 +1553,8 @@ function gameLoop(){
 
   if(gameStarted && !gamePaused) {
     handleScroll(elapsed);
-    // A multiplayer guest never runs its own simulation tick — its
-    // `entities`/`map`/etc. get wholesale-overwritten by the host's next
-    // sync payload anyway (see net-sync.js), so locally advancing a copy
-    // that's about to be discarded is wasted work and can look glitchy
-    // (e.g. a cooldown ticking down locally then snapping back on sync).
+    // A guest simulates only once lockstep is running: before lockstep-start
+    // (or lockstep-resume) its world is a placeholder that message replaces.
     // Camera scroll above stays local either way — that's pure UI.
     if (netRole !== 'guest' || lockstepEnabled()) {
       accumulator += elapsed;

@@ -34,7 +34,7 @@ let lastReportedSimTick = -1;
 let lockstepDesyncedAt = null;
 let lockstepRollbacks = 0; // stats: rewinds this match
 
-// Report every 6th tick (~10/s at default speed): enough for drift control
+// Report every 6th tick (TPS*GAME_SPEED/6 ≈ 6.7/s at defaults): enough for drift control
 // and checksum exchange; per-message compress+send is real CPU on mobile.
 const LOCKSTEP_REPORT_EVERY = 6;
 // Snapshot ring: every SNAP_EVERY ticks, keep SNAP_KEEP — a ~5s rewind

@@ -17,7 +17,7 @@
 // tick+delay and mirrors them to the other peer as 'cmd-ls'
 // (js/lockstep.js), which schedules them at the same issuer-stamped tick.
 
-// ~67ms at the default GAME_SPEED=2 (60 ticks/sec): imperceptible for an
+// 4 ticks = 100ms at defaults (TPS*GAME_SPEED = 40 ticks/sec): imperceptible for an
 // RTS (AoE2 ran 250ms command turns). Under rollback lockstep
 // (js/lockstep.js) a late command just triggers a rewind, so this stays
 // small and fixed — it only sets how often rollbacks happen.
