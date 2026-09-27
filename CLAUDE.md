@@ -25,7 +25,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `loop.js` | the per-tick `update()` orchestrator |
 | `init.js` | boot, menus, match start paths |
 | `render*.js`, `ui.js`, `audio.js` | viewer-only (never read by the sim) |
-| `pov3d.js` | Eye View / character mode: three.js billboards of the 2D art; steering goes through `autopilot`/`possess` commands |
+| `pov3d.js` | Eye View / character mode: three.js — unit billboards of the 2D art; buildings and resources (trees, ore, berries) as simple 3D models; steering goes through `autopilot`/`possess` commands |
 
 ## Timebase
 

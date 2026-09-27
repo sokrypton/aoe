@@ -2950,8 +2950,15 @@ function drawUnit(e){
     // projected through the rig — NOT horizontal: a horizontal fallback
     // made the NW/NE diagonals swing sideways instead of up-screen.
     const facingAim = () => Math.atan2(RIG[e.dir].sy, RIG[e.dir].sx);
-    const targetCenter = (t) => t.type === 'building'
-      ? { x: t.x + (t.w || 1) / 2, y: t.y + (t.h || 1) / 2 } : { x: t.x, y: t.y };
+    // Character mode (pov3d) redraws a unit turned to face its camera and sets
+    // window._povAimRot so the target offset turns with the body (viewer-only).
+    const targetCenter = (t) => {
+      const c = t.type === 'building' ? { x: t.x + (t.w || 1) / 2, y: t.y + (t.h || 1) / 2 } : { x: t.x, y: t.y };
+      const r = window._povAimRot;
+      if (!r) return c;
+      const dx = c.x - e.x, dy = c.y - e.y, cs = Math.cos(r), sn = Math.sin(r);
+      return { x: e.x + dx * cs - dy * sn, y: e.y + dx * sn + dy * cs };
+    };
     let aimAngle = () => {
       let t = entitiesById.get(e.target);
       if (!t) return facingAim();
