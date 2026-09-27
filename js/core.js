@@ -479,6 +479,13 @@ function topUpTeamFarms(team, bonus){
 let teamControllers = [{type:'human'}, {type:'ai', difficulty:'standard'}];
 function isAITeam(t){ return isPlayerTeam(t) && teamControllers[t] && teamControllers[t].type === 'ai'; }
 function isHumanTeam(t){ return isPlayerTeam(t) && !isAITeam(t); }
+// The AI drives this unit: an AI team's unit, unless a player is steering it
+// in character mode (e.possessed, js/pov3d.js) — then the human rules apply.
+function aiDrives(u){ return isAITeam(u.team) && !u.possessed; }
+// A person sits at this seat: a human controller, or one who handed the town
+// to the AI (autopilot) and is still there. Net presence only (pacing, pause,
+// reclaim) — the sim never reads it, so `autopilot` is not hashed.
+function seatHasPerson(t){ let c = teamControllers[t]; return !!c && (c.type === 'human' || !!c.autopilot); }
 function aiProfileFor(t){
   let c = teamControllers[t];
   return AI_LEVELS[c && c.difficulty] || AI_LEVELS[aiDifficulty] || AI_LEVELS.standard;

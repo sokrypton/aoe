@@ -1489,6 +1489,20 @@ function updateUI(){
     }
   }
 
+  // Eye View (js/pov3d.js, viewer-only) for any single own unit; last in the
+  // strip so it never shifts the classic grid's authored slots.
+  if(rebuildActions && selected.length===1 && selected[0].type==='unit' && selected[0].team===myTeam && !gameOver
+     && window.currentVillagerMenu!=='eco' && window.currentVillagerMenu!=='mil' && typeof povToggle==='function'){
+    let u=selected[0];
+    let btn=document.createElement('div');btn.className='act-btn';
+    btn.dataset.tipType='action';
+    btn.dataset.tipLabel='Eye View';
+    btn.dataset.tipDesc='See the world through this unit\'s eyes in a 3D window. Shortcut: V.';
+    btn.innerHTML=`<div class="btn-emoji">👁️</div><div class="btn-label">Eye View</div>`;
+    btn.onclick=()=>povToggle(u.id);
+    act.appendChild(btn);
+  }
+
   // One bar, one divider: actions left, selection right. The selection card
   // grows with its tile count (styles.css caps it at the bar minus one
   // action-button slot); when the strip has NO real buttons — the back

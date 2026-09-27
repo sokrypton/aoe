@@ -726,6 +726,7 @@ canvas {
   transition:opacity .3s;
   white-space:nowrap;
   z-index:10000;
+  pointer-events:none; /* a toast never takes taps, even faded out */
 }
 #help-hint{
   position:fixed;

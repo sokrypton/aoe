@@ -170,6 +170,7 @@ function detEntityHash(e){
   h = detMix(h, e.lastEnemyHitTick == null ? -1 : e.lastEnemyHitTick); // retreat trigger (enemy-player hits only)
   h = detMix(h, e.lastMeleeHitTick == null ? -1 : e.lastMeleeHitTick); // ram rider-disembark trigger (melee only)
   h = detMix(h, e.waveId == null ? -1 : e.waveId); // AI wave membership (casualty-retreat counts it)
+  if (e.possessed) h = detMix(h, 0x9055); // player-steered (the AI skips it); folded only when set
   return h >>> 0;
 }
 
@@ -191,7 +192,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

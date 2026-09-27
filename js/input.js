@@ -266,6 +266,13 @@ document.addEventListener('keydown',e=>{
     }
   }
 
+  // Eye View ('v') for a single own unit — viewer-only 3D window (js/pov3d.js).
+  if (key === 'v' && selected.length === 1 && selected[0].type === 'unit' && selected[0].team === myTeam
+      && typeof povToggle === 'function') {
+    povToggle(selected[0].id);
+    return;
+  }
+
   // Auto Scout toggle ('e' = explore) when the selection is all own scouts.
   if (selected.length > 0 && selected.every(s => s.type === 'unit' && s.utype === 'scout' && s.team === myTeam)) {
     if (key === 'e') {

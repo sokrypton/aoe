@@ -973,11 +973,11 @@ function stampUnreachable(e, id, ticks){
 function resolveStalledAttack(u, tgt){
   let stalledId = tgt.id;
   let disengage = null, approach = false; // set below; walked after the shared cleanup
-  let mayRedirect = isAITeam(u.team) || tgt.type === 'building';
+  let mayRedirect = aiDrives(u) || tgt.type === 'building';
   let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
   if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
     u.target = w.id; u.explicitAttack = true;
-  } else if (isAITeam(u.team)) {
+  } else if (aiDrives(u)) {
     if (window.__dropStats) window.__dropStats.unreachable = (window.__dropStats.unreachable || 0) + 1;
     u.target = null; u.explicitAttack = false;
     // A walled-off building stays unreachable a long time; a mobile UNIT's
@@ -1585,7 +1585,7 @@ function damageEntity(attacker, target){
   // town's alarm radius, where the bell can't help), it also drops
   // everything and runs home. Militia villagers (explicitAttack) and
   // villagers already walking to shelter are exempt.
-  if (target.utype === 'villager' && isAITeam(target.team) && attacker.team !== GAIA_TEAM
+  if (target.utype === 'villager' && aiDrives(target) && attacker.team !== GAIA_TEAM
       && isEnemyOf(target.team, attacker) && retryReady(target,RETRY.FLEE_RAID)) {
     retryStamp(target,RETRY.FLEE_RAID, T30(90));
     let dzAi = AI_STATES && AI_STATES[target.team];
@@ -2150,7 +2150,7 @@ function updateIdleMilitary(e){
     // they must NOT auto-acquire attack targets, or they wedge chasing a foe
     // near the enemy base they can't reach (partial-path jiggle → stuck-watchdog).
     // A HUMAN scout still auto-acquires (the player expects it to fight).
-    if (stanceOf(e).acquires && !isRetreatingUnit(e) && (tick + e.id) % ACQUIRE_STAGGER === 0 && !(e.utype==='scout'&&isAITeam(e.team))) {
+    if (stanceOf(e).acquires && !isRetreatingUnit(e) && (tick + e.id) % ACQUIRE_STAGGER === 0 && !(e.utype==='scout'&&aiDrives(e))) {
       let stanceScan = stanceOf(e).scan;
       let scanRange = stanceScan === 'range' ? (e.range > 0 ? e.range : 1.5) : stanceScan;
       let reachAtk=(e.range>0?e.range:1.6);
@@ -2360,7 +2360,7 @@ function updateVillagerBuild(e){
     if(!checkNextBuild(e)){
       e.task=null;
       e.buildTarget=null;
-      if(bt) autoTaskBuilder(e, bt, !isAITeam(e.team)); // human dispatch ("send to camp") — the AI's own assigner owns its villagers
+      if(bt) autoTaskBuilder(e, bt, !aiDrives(e)); // human dispatch ("send to camp") — the AI's own assigner owns its villagers
     }
     return;
   }
@@ -2597,7 +2597,7 @@ function updateUnitCombat(e){
   // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its
   // own aggro rules.
   if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
-      && !(isAITeam(e.team) && e.explicitAttack)) {
+      && !(aiDrives(e) && e.explicitAttack)) {
     if (!entityVisibleToTeam(t, e.team)) {
       if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
       e.target = null;

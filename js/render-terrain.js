@@ -40,24 +40,9 @@ function buildingFogLevel(e) {
   return maxF;
 }
 
-function drawTile(x,y){
-  let f = fog[y] && fog[y][x];
-  if (f === 0) return; // unexplored (completely black)
-
-  let p=mapToScreen(x,y);
-  let sx=Math.round(p.sx), sy=Math.round(p.sy);
-  if(isOffscreen(sx,sy,TW*2))return;
-  let t=map[y][x];
-  let cols=TCOL[t.t]||TCOL[0];
-  let col=cols[(x*7+y*13)%cols.length];
-
-  X.fillStyle=col;
-  X.beginPath();
-  X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
-  X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
-  X.closePath();X.fill();
-  let cy=sy+HALF_TH;
-
+// The gold / stone / berry art standing on a tile, ground point (sx, cy).
+// Shared by the map (drawTile) and the 3D eye view's billboards (js/pov3d.js).
+function drawTileResource(t, x, y, sx, cy){
   // Faceted 3D boulder — a low-poly rock spire with a bright top facet, a
   // lit left face, and a shadowed right face, instead of a flat painted
   // dome. The apex sits well above the ground-contact point so, like the
@@ -190,6 +175,27 @@ function drawTile(x,y){
       X.fillStyle='#ff99a8';X.beginPath();X.arc(bx-0.7,by-0.7,0.85,0,Math.PI*2);X.fill(); // shiny glint
     }
   }
+}
+
+function drawTile(x,y){
+  let f = fog[y] && fog[y][x];
+  if (f === 0) return; // unexplored (completely black)
+
+  let p=mapToScreen(x,y);
+  let sx=Math.round(p.sx), sy=Math.round(p.sy);
+  if(isOffscreen(sx,sy,TW*2))return;
+  let t=map[y][x];
+  let cols=TCOL[t.t]||TCOL[0];
+  let col=cols[(x*7+y*13)%cols.length];
+
+  X.fillStyle=col;
+  X.beginPath();
+  X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
+  X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
+  X.closePath();X.fill();
+  let cy=sy+HALF_TH;
+
+  drawTileResource(t, x, y, sx, cy);
 
   // Draw fog of war overlay to darken the tile and its static resources
   if (f === 1) {

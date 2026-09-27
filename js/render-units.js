@@ -1193,6 +1193,20 @@ function drawCorpse(c){
 // left, so left-pointing directions map onto their right-pointing twins and
 // only right-facing poses ever need authoring. Was copy-pasted at every
 // posed-sprite branch (bear, horse legs, scout).
+// 8-direction index (0: SE, 1: S, 2: SW, 3: W, 4: NW, 5: N, 6: NE, 7: E) to
+// the sprite's mirror (facing) and front/back (facingNorth) quadrant.
+function setFacingFromDir(e, dir){
+  if (dir === 0 || dir === 1 || dir === 7) {
+    e.facing = 1; e.facingNorth = false; // SE, S, E (facing front-right)
+  } else if (dir === 2 || dir === 3) {
+    e.facing = -1; e.facingNorth = false; // SW, W (facing front-left)
+  } else if (dir === 4) {
+    e.facing = -1; e.facingNorth = true; // NW (facing back-left)
+  } else if (dir === 5 || dir === 6) {
+    e.facing = 1; e.facingNorth = true; // N, NE (facing back-right)
+  }
+}
+
 function mirroredDir(e){
   if (e.facing === -1) {
     if (e.dir === 2) return 0;      // SW -> SE
@@ -2780,16 +2794,7 @@ function drawUnit(e){
       e.dir = dir;
     }
 
-    // Map 8-direction index (0: SE, 1: S, 2: SW, 3: W, 4: NW, 5: N, 6: NE, 7: E) to quadrants:
-    if (dir === 0 || dir === 1 || dir === 7) {
-      e.facing = 1; e.facingNorth = false; // SE, S, E (facing front-right)
-    } else if (dir === 2 || dir === 3) {
-      e.facing = -1; e.facingNorth = false; // SW, W (facing front-left)
-    } else if (dir === 4) {
-      e.facing = -1; e.facingNorth = true; // NW (facing back-left)
-    } else if (dir === 5 || dir === 6) {
-      e.facing = 1; e.facingNorth = true; // N, NE (facing back-right)
-    }
+    setFacingFromDir(e, dir);
   }
   e.lastX = e.x;
   e.lastY = e.y;
@@ -4987,8 +4992,9 @@ function drawUnit(e){
   // too: the selection ring wraps it and the behind-building silhouette shows
   // it (spot an idle villager hidden behind a building). Keep showing while
   // walking, as long as no task/target is actually assigned (a bare move order
-  // isn't "working"). Absolute coords — not under UNIT_SCALE.
-  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot){
+  // isn't "working"). Absolute coords — not under UNIT_SCALE. A HUD cue, so
+  // the 3D eye view (window._povDraw, js/pov3d.js) leaves it out.
+  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot&&!window._povDraw){
     X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
     X.font='bold 16px sans-serif';X.textAlign='center';
     X.strokeText('?',sx,sy-20*UNIT_SCALE);

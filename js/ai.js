@@ -102,7 +102,7 @@ function tryAIMilitiaResponse(ai){
   }
   if(armyPower>=raidPower*0.5)return false;
   let fighters=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager'
-    &&!e.garrisonedIn&&e.task!=='garrison');
+    &&!e.garrisonedIn&&e.task!=='garrison'&&!e.possessed);
   let committed=fighters.filter(v=>v.target===threat.id).length;
   let vcands=fighters.filter(v=>v.target!==threat.id);
   vcands.sort((a,b)=>dist(a,threat)-dist(b,threat)||a.id-b.id);
@@ -143,6 +143,8 @@ function updateAI(ai){
 
   updateAIIntel(ai,aiTC); // what has scouting/combat actually revealed about the player this tick
   if(maybeResignAI(ai,aiUnits))return; // AoE2-style concession — nothing left to plan
+  // A player-steered unit (character mode, e.possessed) is never dispatched.
+  aiUnits=aiUnits.filter(u=>!u.possessed);
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
   // !garrisonedIn: a rider sealed inside a ram cannot act — enterGarrison
@@ -2049,7 +2051,7 @@ function aiRetreatControl(ai,mils,aiTC,profile){
     // Count from entities, not `mils`: riders sealed inside a ram are alive
     // wave members but are excluded from mils (garrisonedIn) — counting only
     // the visible ones would read a healthy ram-borne wave as gutted.
-    let members=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.hp>0&&e.waveId===ai.waveCount);
+    let members=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.hp>0&&e.waveId===ai.waveCount&&!e.possessed);
     if(members.length>0&&members.length<Math.ceil(ai.lastWaveSize*AI_WAVE_RETREAT_FRACTION)){
       members.forEach(m=>{
         m.waveId=undefined;

@@ -169,6 +169,59 @@ async function assertChecksumsAgree(pages){
     await host.close(); await guest.close();
   });
 
+  await scenario('1v1 character mode: guest on Town AI steers a unit -> paced, agree -> drop pauses -> rejoin', async () => {
+    const { host, joinQuery } = await hostGame();
+    let guest = await newGamePage(joinQuery);
+    await waitInLobby(host);
+    await waitInLobby(guest);
+    await readyUp(guest);
+    await startMatch(host);
+    await waitMatchRunning(host);
+    await waitMatchRunning(guest);
+    // The same commands the character-mode buttons send (js/pov3d.js).
+    const vid = await guest.evaluate(() => {
+      const v = entities.filter(e => e.team === myTeam && e.utype === 'villager').sort((a, b) => a.id - b.id)[0];
+      submitCommand({ kind: 'autopilot', on: true });
+      submitCommand({ kind: 'possess', unitId: v.id, on: true });
+      return v.id;
+    });
+    for (const p of [host, guest]) {
+      await p.waitForFunction(id => teamControllers[1].type === 'ai' && teamControllers[1].autopilot && entitiesById.get(id).possessed === true, vid, { timeout: 10000 });
+    }
+    for (let i = 0; i < 5; i++) { // steering: short hops, like held W
+      await guest.evaluate(id => {
+        const v = entitiesById.get(id);
+        submitCommand({ kind: 'command', unitIds: [id], tileX: Math.round(v.x) + (i => i % 2 ? 1 : -1)(Math.floor(tick / 40)), tileY: Math.round(v.y) });
+      }, vid);
+      await guest.waitForTimeout(700);
+    }
+    const paced = await host.evaluate(() => lockstepExpectedSeats().includes(1));
+    if (!paced) throw new Error('host stopped pacing against the autopilot guest');
+    await host.waitForTimeout(12000);
+    for (const [p, label] of [[host, 'host'], [guest, 'guest']]) {
+      await assertHealthy(p, label);
+      const s = await p.evaluate(id => ({ task: entitiesById.get(id).task,
+        aiWorking: entities.some(e => e.team === 1 && e.utype === 'villager' && e.id !== id && e.task) }), vid);
+      if (s.task) throw new Error(`${label}: the AI retasked the steered villager (${s.task})`);
+      if (!s.aiWorking) throw new Error(`${label}: the AI is not running the guest's town`);
+    }
+    await assertChecksumsAgree([host, guest]);
+    // A person is still at an autopilot seat: dropping it pauses for them.
+    await guest.close();
+    await host.waitForFunction(() => disconnectedPause === true, { timeout: 15000 });
+    guest = await newGamePage(joinQuery);
+    await guest.waitForFunction(() => typeof lockstepActive !== 'undefined' && lockstepActive && gameStarted, { timeout: 30000 });
+    await host.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
+    const back = await guest.evaluate(() => ({ team: myTeam, auto: !!teamControllers[1].autopilot }));
+    if (back.team !== 1 || !back.auto) throw new Error('rejoin lost the seat or autopilot: ' + JSON.stringify(back));
+    // The fresh page steers nothing, so it hands the villager back to the AI.
+    for (const p of [host, guest]) await p.waitForFunction(id => !entitiesById.get(id).possessed, vid, { timeout: 10000 });
+    await host.waitForTimeout(4000);
+    await assertHealthy(host, 'host');
+    await assertHealthy(guest, 'rejoined guest');
+    await host.close(); await guest.close();
+  });
+
   await scenario('4p 2v2: four tabs -> teams -> match -> checksums agree', async () => {
     const { host, joinQuery } = await hostGame();
     const guests = [];

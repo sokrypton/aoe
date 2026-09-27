@@ -125,6 +125,42 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------ character mode
+    // With the town on autopilot, a player-steered unit (possess) is never
+    // dispatched by the AI; release hands it back; a save load clears it.
+    'character-mode': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      window.__pendingMatchSeed = 21;
+      setMapSize('small');
+      restartGame('hard');
+      gameStarted = true; gamePaused = true;
+      const vils = entities.filter(e => e.team === 0 && e.utype === 'villager').sort((a, b) => a.id - b.id);
+      const steered = vils[0];
+      execCommand({ kind: 'autopilot', on: true }, 0);
+      execCommand({ kind: 'possess', unitId: steered.id, on: true }, 0);
+      T.ok('autopilot hands the seat to the AI', teamControllers[0].type === 'ai');
+      for (let i = 0; i < 1500; i++) update();
+      T.ok('the AI is dispatching the other villagers', vils.slice(1).some(v => v.task || v.buildTarget != null));
+      T.ok('the steered villager was left alone', steered.possessed && !steered.task && steered.target == null);
+      execCommand({ kind: 'possess', unitId: vils[1].id, on: true }, 0);
+      T.ok('one steered unit per team', !steered.possessed && vils[1].possessed);
+      execCommand({ kind: 'possess', unitId: vils[1].id, on: false }, 0);
+      for (let i = 0; i < 1500; i++) update();
+      T.ok('released, the AI takes it back', !!steered.task);
+      execCommand({ kind: 'possess', unitId: steered.id, on: true }, 0);
+      applySavedGame(serializeGameForWire());
+      T.ok('a save load clears steering', entities.every(e => !e.possessed));
+      T.ok('autopilot marks a person present', seatHasPerson(0) && teamControllers[0].autopilot === true);
+      execCommand({ kind: 'autopilot', on: false }, 0);
+      T.ok('autopilot off returns the seat', teamControllers[0].type === 'human' && seatHasPerson(0));
+      // Kicking a player hands the seat to the AI and frees their steered unit.
+      const v1 = entities.find(e => e.team === 1 && e.type === 'unit');
+      execCommand({ kind: 'possess', unitId: v1.id, on: true }, 1);
+      execCommand({ kind: 'set-controller', t: 1, diff: 'hard' }, 0);
+      T.ok('a kick releases the steered unit', !v1.possessed && teamControllers[1].type === 'ai' && !seatHasPerson(1));
+      return T;
+    })),
+
     // ------------------------------------------------ free rescue villager
     // Anti-softlock: the first villager queued while a team has 0 living
     // villagers is FREE (unitTrainCost, js/logic.js) — reachable at 0 food, one

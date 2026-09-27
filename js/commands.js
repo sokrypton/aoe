@@ -195,11 +195,39 @@ function execCommand(cmd, team){
         let diff = AI_LEVELS[cmd.diff] ? cmd.diff : 'standard';
         teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
         if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
+        // Nobody is left to steer a unit the kicked player possessed.
+        for (const u of entities) if (u.team === cmd.t && u.possessed) u.possessed = false;
         // Everyone should see this, not just the issuer (feedbackFor would
         // limit it to the host) — only a resim replay stays quiet.
         if (!window.__resim && typeof showMsg === 'function') showMsg(teamName(cmd.t) + "'s seat was handed to the AI");
       }
       break;
+    case 'autopilot':
+      // A player hands its OWN seat to the AI or takes it back (character
+      // mode, js/pov3d.js). Sim state like set-controller, so it rides the
+      // command stream. 'hard' is the one level with no time handicap
+      // (aiTimeMult 1); a fresh brain adopts the town as it stands.
+      if (isPlayerTeam(team)) {
+        if (cmd.on) {
+          teamControllers[team] = { type: 'ai', difficulty: 'hard', autopilot: true };
+          AI_STATES[team] = freshAIState(team);
+        } else {
+          teamControllers[team] = { type: 'human' };
+        }
+        feedbackFor(team, () => showMsg(cmd.on ? 'The AI is running your town' : 'You are back in command'));
+      }
+      break;
+    case 'possess': {
+      // Character mode (js/pov3d.js): the player steers ONE own unit, which
+      // the AI (autopilot) must leave alone — aiDrives / updateAI read it.
+      for (const u of entities) if (u.team === team && u.possessed) u.possessed = false;
+      let u = entitiesById.get(cmd.unitId);
+      if (cmd.on && u && u.type === 'unit' && u.team === team && u.hp > 0) {
+        u.possessed = true;
+        u.waveId = undefined; // out of any AI wave it was marching with
+      }
+      break;
+    }
     case 'dev-spawn':
       // Test-only scenario injection for multiplayer measurement: spawns
       // a deterministic army through the queue so both lockstep peers

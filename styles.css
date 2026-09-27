@@ -103,6 +103,15 @@ canvas {
   min-width:34px;
 }
 .res-val{min-width:32px;text-align:right}
+/* Phone portrait (~390px): the chips must clear the fixed fullscreen/menu
+   buttons at the right edge (#fs-btn starts 70px from it), with room for a
+   late-game "45/100". */
+@media(max-width:420px){
+  #topbar{padding-left:6px}
+  .res{padding:1px 3px;margin-right:2px}
+  .res-val{min-width:26px}
+  .pop-res .res-val{min-width:28px}
+}
 /* Gatherer count (AOE3-style) as a small badge on the lower-right corner of
    the resource icon, slightly overlapping it. Absolutely positioned so it
    never shifts the amount; invisible when nobody's on that resource. */
@@ -996,6 +1005,7 @@ canvas {
   transition:opacity .3s;
   white-space:nowrap;
   z-index:10000;
+  pointer-events:none; /* a toast never takes taps, even faded out */
 }
 #help-hint{
   position:fixed;

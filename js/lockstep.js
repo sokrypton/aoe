@@ -78,7 +78,7 @@ function lockstepExpectedSeatsMissing(){
   let out = [];
   if (netRole !== 'host') return out;
   for (let t = 1; t < NUM_TEAMS; t++) {
-    if (!teamControllers[t] || teamControllers[t].type !== 'human') continue;
+    if (!seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot
     let rec = typeof netGuestBySeat === 'function' ? netGuestBySeat(t) : null;
     if (rec && rec.kicked) continue; // being handed to the AI — not awaited
     if (!rec || !rec.connected) out.push(t);
@@ -95,7 +95,7 @@ function lockstepExpectedSeats(){
   let seats = [];
   for (let t = 0; t < NUM_TEAMS; t++) {
     if (t === myTeam) continue;
-    if (!teamControllers[t] || teamControllers[t].type !== 'human') continue;
+    if (!seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot
     if (netRole === 'host') {
       let rec = typeof netGuestBySeat === 'function' ? netGuestBySeat(t) : null;
       if (!rec || !rec.connected) continue;
@@ -284,6 +284,11 @@ onNetMessage((msg, src) => {
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
     if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');
+    // A fresh page steers nothing: release a unit our team left possessed
+    // (character mode, js/pov3d.js), or the AI would ignore it for good.
+    if (entities.some(e => e.team === myTeam && e.possessed) && !(typeof povSteering === 'function' && povSteering())) {
+      submitCommand({ kind: 'possess', on: false });
+    }
   } else if (msg.type === 'lockstep-resync-request' && netRole === 'host' && lockstepActive) {
     lockstepStartResync();
   } else if (msg.type === 'tick' && lockstepActive) {

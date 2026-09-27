@@ -317,6 +317,7 @@ function applySavedGame(data, opts){
     particles = [];
 
     entities = data.entities;
+    entities.forEach(e => { if (e.possessed) e.possessed = false; }); // nobody is steering after a load
     entitiesById.clear();
     entities.forEach(e => {
       // Buildings saved before atk was stamped at creation (createBuilding)
