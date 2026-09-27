@@ -2517,6 +2517,10 @@ function drawBearBody(e){
   bearShapes(1.1);
   X.fillStyle='#6b4a2c';
   bearShapes(0);
+  // Lighter belly fur low on the body (subtle: a real fur tone, not a band)
+  X.fillStyle='#775233';
+  if(pose==='side'||pose==='backside') X.beginPath(), X.ellipse(0.5,-0.4,6,2,0,0,Math.PI*2), X.fill();
+  else if(pose==='front') X.beginPath(), X.ellipse(0,-0.2,4,1.8,0,0,Math.PI*2), X.fill();
   // Fur shading: light along the massive back, ground shade under the belly
   X.fillStyle='rgba(255,235,200,0.28)';
   if(pose==='front'||pose==='back') X.beginPath(), X.ellipse(0,-10.2,4.4,2.4,0,0,Math.PI*2), X.fill();
@@ -2555,31 +2559,14 @@ function drawBearBody(e){
     X.beginPath(); X.arc(hx-1.6,hy-3.2,0.85,0,Math.PI*2); X.fill(); // inner ear
   }
 
-  // Mauling: articulated jaw — opens through the pounce, snaps shut on
-  // the bite. front: mouth gapes; side: lower-jaw wedge hinges down off
-  // the snout over the red mouth.
+  // Mauling: the mouth opens through the pounce and snaps shut on the bite —
+  // one plain red shape (head-on an oval, in profile a wedge off the snout).
   if(jaw > 0.05){
-    X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.lineJoin='round';
-    if(pose==='front'){
-      X.fillStyle='#a03030';
-      X.beginPath(); X.ellipse(0,-2.2,1.6,0.3+1.5*jaw,0,0,Math.PI*2); X.fill(); X.stroke();
-    } else if(pose==='side'){
-      // Gape + lower jaw share ONE hinge at the snout base: the red
-      // mouth is the fan between the upper gum line and the jaw tip,
-      // and the fur jaw wedge rides the same rotation.
-      let ja = 0.7*jaw;
-      X.save(); X.translate(hx+1.6, hy+1.2);
-      X.fillStyle='#a03030';
-      X.beginPath();
-      X.moveTo(0,0);
-      X.lineTo(3.9,-0.4);                                  // upper gum line
-      X.lineTo(3.7*Math.cos(ja), 3.7*Math.sin(ja));        // jaw tip
-      X.closePath(); X.fill(); X.stroke();
-      X.rotate(ja);
-      X.fillStyle='#6b4a2c';
-      X.beginPath(); X.moveTo(-0.2,0); X.lineTo(3.7,0); X.lineTo(3.1,1.4); X.lineTo(-0.2,1.2); X.closePath();
-      X.fill(); X.stroke();
-      X.restore();
+    X.fillStyle='#a03030';
+    if(pose==='front'){ X.beginPath(); X.ellipse(0,-2.2,1.4,0.3+1.3*jaw,0,0,Math.PI*2); X.fill(); }
+    else if(pose==='side'){
+      let ja = 0.6*jaw;
+      X.beginPath(); X.moveTo(hx+1.6,hy+1.2); X.lineTo(hx+5.2,hy+0.9); X.lineTo(hx+1.6+3.4*Math.cos(ja),hy+1.2+3.4*Math.sin(ja)); X.closePath(); X.fill();
     }
   }
   X.restore();
@@ -2647,12 +2634,12 @@ function drawSheepBody(e){
     X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
     // Head
     X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
-    X.beginPath(); X.ellipse(hx, hy, 2.7, 3.1, 0, 0, Math.PI*2); X.fill(); X.stroke();
+    X.beginPath(); X.ellipse(hx, hy, 3, 3.4, 0, 0, Math.PI*2); X.fill(); X.stroke();
     // Wool tuft on top of the head
     X.fillStyle='#000';
-    X.beginPath(); X.arc(hx, hy-2.9, 2.2, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.arc(hx, hy-3.2, 2.2, 0, Math.PI*2); X.fill();
     X.fillStyle='#f2eddd';
-    X.beginPath(); X.arc(hx, hy-2.9, 1.6, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.arc(hx, hy-3.2, 1.6, 0, Math.PI*2); X.fill();
   };
 
   let headX = 0, headY = 0;

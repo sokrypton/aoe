@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Animation Lab — Age of Epochs</title>
+<style>
+  /* The lab drives js/pov3d.js's own model + animation builders (the ones the
+     character view uses); controls in a fixed bar, the view fills the rest. */
+  html, body { margin: 0; height: 100%; background: #9fc8e6; overflow: hidden; font: 13px sans-serif; }
+  #lab-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10; background: #2a1c10; color: #e8d9b0;
+    padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  }
+  #lab-bar .g { display: flex; gap: 5px; align-items: center; }
+  #lab-bar .g + .g { border-left: 1px solid #4a3419; padding-left: 18px; }
+  #lab-actions { flex-wrap: wrap; }
+  #lab-bar .l { opacity: .6; text-transform: uppercase; font-size: 11px; margin-right: 2px; }
+  #lab-bar button { background: #4a3419; color: #e8d9b0; border: 1px solid #7a5a38; padding: 3px 10px; cursor: pointer; font: 13px sans-serif; }
+  #lab-bar button.on { background: #7a5a38; color: #fff; }
+  #lab-bar input[type=range] { width: 160px; }
+  #lab-view { position: fixed; inset: 0; z-index: 0; }
+  #lab-view canvas { position: absolute !important; inset: 0; z-index: 0 !important; }
+  #lab-readout { position: fixed; left: 10px; bottom: 10px; z-index: 10; background: rgba(42,28,16,.85); color: #e8d9b0;
+    padding: 6px 10px; white-space: pre; font: 12px monospace; border-radius: 4px; }
+  #lab-hint { position: fixed; right: 10px; bottom: 10px; z-index: 10; color: #2a1c10; opacity: .7; }
+</style>
+</head>
+<body>
+<div id="lab-bar">
+  <strong>3D Animation Lab</strong>
+  <span class="g" id="lab-actions"><span class="l">Action</span></span>
+  <span class="g"><span class="l">Play</span>
+    <button id="lab-play" class="on">❚❚</button>
+    <label>speed <input id="lab-speed" type="range" min="0.1" max="2" step="0.05" value="1"></label>
+  </span>
+  <span class="g"><span class="l">Phase</span><input id="lab-phase" type="range" min="0" max="1" step="0.005" value="0"><span id="lab-pv">0.00</span></span>
+  <span class="g"><span class="l">View</span>
+    <button data-cam="side">Side</button><button data-cam="front">Front</button><button data-cam="q" class="on">¾</button><button data-cam="back">Behind</button>
+  </span>
+  <span class="g"><span class="l">Villager</span><button id="lab-female">♀ female</button>
+    <label>resource <select id="lab-load"><option>wood</option><option>stone</option><option>gold</option><option value="food">wheat</option><option>wool</option><option>berries</option></select></label>
+    <label>held tool <select id="lab-tool"><option value="">none</option><option>axe</option><option>pick</option><option>mallet</option><option>scythe</option></select></label></span>
+</div>
+<div id="lab-view"></div>
+<div id="lab-readout"></div>
+<div id="lab-hint">drag to orbit · scroll to zoom</div>
+
+<script src="js/page-shell.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/pov3d.js"></script>
+<script>
+(async () => {
+  // page-shell injects the game's HUD (the core scripts need its canvas); the lab hides all of it.
+  for (const el of [...document.body.children]) if (!['lab-bar', 'lab-view', 'lab-readout', 'lab-hint'].includes(el.id) && el.tagName !== 'SCRIPT') el.style.display = 'none';
+  const LAB = window.__pov3dLab, THREE = await LAB.load();
+  const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8 }; // seconds per cycle
+  const $ = id => document.getElementById(id);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  $('lab-view').appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#9fc8e6');
+  // The character view's calibrated light (pov3d initScene).
+  scene.add(new THREE.AmbientLight('#ffffff', 0.69 * Math.PI));
+  const sun = new THREE.DirectionalLight('#ffffff', Math.hypot(0.31, 0.36) * Math.PI); sun.position.set(0, 0.36, 0.31); scene.add(sun);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#5f9b4a' }));
+  ground.position.y = -0.001; scene.add(ground);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 50);
+  const orbit = { yaw: Math.PI / 4, pitch: 0.28, dist: 2.3, target: new THREE.Vector3(0.12, 0.33, 0) };
+  const placeCam = () => {
+    const { yaw, pitch, dist, target } = orbit;
+    camera.position.set(target.x + Math.sin(yaw) * Math.cos(pitch) * dist, target.y + Math.sin(pitch) * dist, target.z + Math.cos(yaw) * Math.cos(pitch) * dist);
+    camera.lookAt(target);
+  };
+  const resize = () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
+  addEventListener('resize', resize); resize();
+  // Orbit: drag, pinch-free wheel zoom.
+  let drag = null;
+  renderer.domElement.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+  renderer.domElement.addEventListener('pointermove', e => {
+    if (!drag) return;
+    orbit.yaw -= (e.clientX - drag.x) * 0.008; orbit.pitch = Math.max(-0.2, Math.min(1.4, orbit.pitch + (e.clientY - drag.y) * 0.006));
+    drag = { x: e.clientX, y: e.clientY }; setCamButtons(null);
+  });
+  renderer.domElement.addEventListener('pointerup', () => { drag = null; });
+  renderer.domElement.addEventListener('wheel', e => { orbit.dist = Math.max(0.8, Math.min(6, orbit.dist * (1 + e.deltaY * 0.001))); e.preventDefault(); }, { passive: false });
+  const CAMS = { side: [0, 0.2], front: [Math.PI / 2, 0.2], q: [Math.PI / 4, 0.28], back: [-Math.PI / 2, 0.35] };
+  const setCamButtons = k => document.querySelectorAll('[data-cam]').forEach(b => b.classList.toggle('on', b.dataset.cam === k));
+  document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { [orbit.yaw, orbit.pitch] = CAMS[b.dataset.cam]; setCamButtons(b.dataset.cam); });
+
+  let kind = 'chop', t = 0, playing = true, current = null, key = '', female = false;
+  const opts = { load: 'wood', tool: '' };
+  // Targets the tools really meet: each sits where its tool's head lands
+  // (LAB.toolHead at the moment of impact), and reacts the way the material would.
+  const up = new THREE.Vector3(0, 1, 0), bits = [], puffs = [];
+  const burst = (at, dir, cols, n, spd = 1) => { // chips: tumble out, fall, settle, fade
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.014, 0.024), new THREE.MeshLambertMaterial({ color: cols[i % cols.length] })); m.position.copy(at); scene.add(m);
+      bits.push({ m, v: dir.clone().multiplyScalar(0.5 * spd).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.5 + Math.random() * 0.6, (Math.random() - 0.5) * 0.8).multiplyScalar(spd)), born: performance.now() });
+    }
+  };
+  const dust = (at, n = 4) => { for (let i = 0; i < n; i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), new THREE.MeshBasicMaterial({ color: '#cbb892', transparent: true, opacity: 0.7 }));
+    m.position.copy(at).add(new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.02, (Math.random() - 0.5) * 0.12)); scene.add(m); puffs.push({ m, born: performance.now() }); } };
+  const T = {};
+  { // chop → a tree: it shakes along the strike and settles; the crown lags; wood chips fly
+    const tree = LAB.tree(), hit = LAB.toolHead('chop', 0.9999)[0], dir = new THREE.Vector3(-0.34, 0, -0.94).normalize();
+    tree.root.position.set(hit.x + dir.x * tree.trunkR, 0, hit.z + dir.z * tree.trunkR);
+    const axis = up.clone().cross(dir).normalize(); let at0 = -1e9;
+    T.chop = { obj: tree.root, hit: now => { at0 = now; burst(hit, dir.clone().negate(), ['#d8b98a', '#b88a52'], 6); },
+      tick: now => { const a = (now - at0) / 1000;
+        tree.sway.quaternion.setFromAxisAngle(axis, a < 2 ? 0.07 * Math.exp(-a * 3.2) * Math.sin(a * 26) : 0);
+        tree.crown.quaternion.setFromAxisAngle(axis, a < 2 ? 0.1 * Math.exp(-a * 2.4) * Math.sin(a * 18 - 0.8) : 0); } };
+  }
+  { // mine → a rock under the pick tip (gold, or stone with resource = stone): a sharp jolt, chips of the ore
+    const hit = LAB.toolHead('mine', 0.9999)[0], holder = new THREE.Group(); let rock = null, at0 = -1e9, stone = false;
+    const build = () => { if (rock) { holder.remove(rock); LAB.dispose(rock); } stone = opts.load === 'stone'; rock = LAB.rock(stone); rock.position.set(hit.x + 0.08, 0, hit.z); rock.scale.y = Math.max(0.5, hit.y / 0.26); holder.add(rock); };
+    T.mine = { obj: holder, rebuild: build, hit: now => { at0 = now; burst(hit, new THREE.Vector3(-1, 0.4, 0), stone ? ['#9d9d9d', '#bdbdbd', '#7c7c7c'] : ['#e8b90f', '#f5d44a', '#9d9d9d'], 7, 1.1); },
+      tick: now => { const a = (now - at0) / 1000; rock.position.y = a < 0.3 ? -0.012 * Math.exp(-a * 14) * Math.cos(a * 60) : 0; } };
+  }
+  { // build → a post under the mallet's face: driven a little deeper each blow (it jolts), dust at its foot; a fresh one after five
+    const st = LAB.stake(), hit = LAB.toolHead('build', 0.9999)[0]; let hits = 0, at0 = -1e9;
+    st.g.position.set(hit.x, 0, hit.z); const top = hit.y - 0.3 - 0.012;          // the post's top just under the face at impact
+    T.build = { obj: st.g, hit: now => { at0 = now; hits = (hits + 1) % 6; dust(new THREE.Vector3(hit.x, 0.01, hit.z), 5); },
+      tick: now => { const a = Math.min(1, (now - at0) / 70); st.post.position.y = top - 0.02 * (hits ? hits - 1 + a : 0) - 0.004 * Math.sin(Math.min(1, (now - at0) / 150) * Math.PI); } };
+  }
+  { // farm → wheat in the scythe's path: each stalk bends away as the blade passes, then springs back
+    const w = LAB.wheat(); const lean = w.stalks.map(() => ({ a: 0, v: 0 }));
+    T.farm = { obj: w.g, tick: (now, dt) => {
+      const blade = LAB.toolHead('farm', t);
+      w.stalks.forEach((st, i) => {
+        const L = lean[i], p = st.position; let push = 0, px = 0, pz = 0;
+        for (const b of blade) { const d = Math.hypot(b.x - p.x, b.z - p.z); if (d < 0.09 && b.y < 0.2) { push = 1; px = p.x - b.x; pz = p.z - b.z; } }
+        if (push) { L.a = Math.min(0.9, L.a + dt * 14); L.dir = Math.atan2(pz, px); }
+        L.v += (-L.a * 60 - L.v * 6) * dt; L.a = Math.max(0, L.a + L.v * dt);            // a damped spring back up
+        st.rotation.set(0, -(L.dir || 0), -L.a);
+      }); } };
+  }
+  { // saw → a tree, the teeth biting its bark: sawdust sprays from the kerf, the tree shivers
+    const tree = LAB.tree(), at = LAB.sawBlade(0); tree.root.position.set(at.x + tree.trunkR * 0.8, 0, at.z); let last = 0;
+    T.saw = { obj: tree.root, tick: now => {
+      if (now - last > 80) { last = now; burst(at, new THREE.Vector3(-0.6, -0.2, Math.sign(Math.cos(2 * Math.PI * t)) * 0.6), ['#e8cfa0', '#d8b98a'], 2, 0.4); }
+      const q = 0.006 * Math.sin(now / 1000 * 40); tree.sway.rotation.set(q, 0, q * 0.6); } };
+  }
+  { // forage → a berry bush: it jiggles as each hand pushes in and plucks
+    const b = LAB.bush();
+    T.forage = { obj: b, tick: () => { const u = (t % 0.5) / 0.5, j = u > 0.35 && u < 0.65 ? Math.sin((u - 0.35) / 0.3 * Math.PI) : 0;
+      b.rotation.set(0.04 * j * (t < 0.5 ? 1 : -1), 0, -0.03 * j); b.scale.setScalar(1 - 0.02 * j); } };
+  }
+  { // butcher → a sheep carcass: each jab jolts it and the meat comes off, down to the bones, then a fresh one
+    const c = LAB.carcass(), tip = LAB.knifeTip('butcher'); let left = 1, at0 = -1e9;
+    T.butcher = { obj: c.g, at: [[0.25, now => { at0 = now; left -= 0.035; if (left < -0.25) left = 1; c.set(Math.max(0, left));
+        burst(tip, new THREE.Vector3(-0.5, 0.3, 0), left > 0.12 ? ['#f2eddd', '#e8e0cc'] : ['#b33', '#e8e0cc'], 2, 0.5); }]],
+      tick: now => { const a = (now - at0) / 1000; c.g.position.y = a < 0.25 ? -0.006 * Math.exp(-a * 16) * Math.cos(a * 50) : 0; } };
+    c.set(1);
+  }
+  { // repair → a plank wall: each blow shakes it and knocks out a puff of dust
+    const w = LAB.wall(), hit = LAB.wallHit(); let at0 = -1e9;
+    T.repair = { obj: w, hit: now => { at0 = now; dust(hit, 3); burst(hit, new THREE.Vector3(-0.6, 0.2, 0), ['#c8a878', '#a07850'], 2, 0.5); },
+      tick: now => { const a = (now - at0) / 1000; w.position.x = a < 0.3 ? 0.004 * Math.exp(-a * 14) * Math.cos(a * 70) : 0; } };
+  }
+  { // drop → the pile: the logs land on it with a puff of dust
+    const holder = new THREE.Group(), at = LAB.dropAt().setY(0.05); let pile = null;
+    T.drop = { obj: holder, rebuild: () => { if (pile) { holder.remove(pile); LAB.dispose(pile); } pile = LAB.pile(opts.load); holder.add(pile); }, at: [[0.66, () => dust(at, 6)]] };
+  }
+  { // fight → a straw dummy: each jab knocks it back on its post, straw flies
+    const d = LAB.dummy(), tip = LAB.knifeTip('fight'); let at0 = -1e9;
+    T.fight = { obj: d.root, at: [[0.25, now => { at0 = now; burst(tip, new THREE.Vector3(1, 0.3, 0), ['#e8d9a0', '#cdb98c'], 4, 0.6); }]],
+      tick: now => { const a = (now - at0) / 1000; d.g.rotation.z = a < 1.5 ? -0.12 * Math.exp(-a * 4) * Math.cos(a * 14) : 0; } };
+  }
+  { // plow → the share turns the soil: clods and dust roll off it as it goes
+    const share = LAB.plowShare(); let last = 0;
+    T.plow = { obj: new THREE.Group(), tick: now => { if (now - last > 120) { last = now; burst(share, new THREE.Vector3(-0.3, 0.2, Math.random() < 0.5 ? -0.5 : 0.5), ['#6b4a2b', '#8a6440'], 2, 0.35); if (Math.random() < 0.4) dust(share, 1); } } };
+  }
+  { // die → dust where the body lands, and again as it gives way to bones
+    const D = LAB.die, at = D.at();
+    T.die = { obj: new THREE.Group(), at: [[D.land, () => dust(at, 7)], [D.skel, () => dust(at, 4)]] };
+  }
+  for (const k in T) { scene.add(T[k].obj); if (T[k].rebuild) T[k].rebuild(); }
+  let lastT = 0;
+  for (const k of LAB.kinds) {
+    const b = document.createElement('button'); b.textContent = k; b.dataset.kind = k; if (k === kind) b.classList.add('on');
+    b.onclick = () => { kind = k; document.querySelectorAll('[data-kind]').forEach(x => x.classList.toggle('on', x === b)); };
+    $('lab-actions').appendChild(b);
+  }
+  for (const [id, key2] of [['lab-load', 'load'], ['lab-tool', 'tool']])
+    $(id).onchange = e => { opts[key2] = e.target.value; for (const k in T) if (T[k].rebuild) T[k].rebuild(); };
+  $('lab-female').onclick = () => { female = !female; $('lab-female').classList.toggle('on', female); };
+  $('lab-play').onclick = () => { playing = !playing; $('lab-play').textContent = playing ? '❚❚' : '▶'; $('lab-play').classList.toggle('on', playing); };
+  $('lab-phase').oninput = e => { t = +e.target.value; playing = false; $('lab-play').textContent = '▶'; $('lab-play').classList.remove('on'); };
+  $('lab-readout').textContent = 'collision check (≥0 = clear)\n' + LAB.check();
+
+  // Poses are rebuilt per frame from the phase (quantized to 1/120 of a cycle,
+  // so a paused or slow view doesn't rebuild the same pose over and over).
+  let last = performance.now();
+  const frame = now => {
+    requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing) { t = (t + dt * +$('lab-speed').value / PERIOD[kind]) % 1; $('lab-phase').value = t; }
+    for (const k in T) T[k].obj.visible = k === kind;
+    const tg = T[kind];
+    if (tg && tg.hit && t < lastT && lastT > 0.85) tg.hit(now);            // the phase wrapped: the tool just struck
+    if (tg && tg.at) for (const [ph, fn] of tg.at) if ((lastT < ph && t >= ph) || (t < lastT && (lastT < ph || t >= ph))) fn(now); // crossed ph (through the wrap too)
+    if (tg && tg.tick) tg.tick(now, dt);
+    lastT = t;
+    for (let i = bits.length - 1; i >= 0; i--) {
+      const c = bits[i], a = (now - c.born) / 1000;
+      c.v.y -= 9.8 * dt * 0.35; c.m.position.addScaledVector(c.v, dt); c.m.rotation.x += dt * 12; c.m.rotation.z += dt * 9;
+      if (c.m.position.y < 0.006) { c.m.position.y = 0.006; c.v.set(0, 0, 0); }
+      if (a > 1.6) { scene.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose(); bits.splice(i, 1); }
+    }
+    for (let i = puffs.length - 1; i >= 0; i--) {
+      const p = puffs[i], a = (now - p.born) / 1000; p.m.scale.setScalar(1 + a * 3); p.m.position.y += dt * 0.08; p.m.material.opacity = Math.max(0, 0.7 - a);
+      if (a > 0.8) { scene.remove(p.m); p.m.geometry.dispose(); p.m.material.dispose(); puffs.splice(i, 1); }
+    }
+    const k2 = kind + female + opts.load + opts.tool + ':' + Math.round(t * 120);
+    if (k2 !== key) {
+      if (current) { scene.remove(current); LAB.dispose(current); }
+      current = LAB.frame(kind, Math.round(t * 120) / 120, female, opts); scene.add(current); key = k2;
+    }
+    placeCam(); renderer.render(scene, camera);
+  };
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
