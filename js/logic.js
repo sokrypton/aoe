@@ -3731,11 +3731,10 @@ function updateBuildingResearch(e){
 
 function updateBuildingTraining(e){
   if(e.queue.length>0){
-    let u=UNITS[e.queue[0]];
     // DE scales the AI's UNIT and research times together (aiTimeMult) — a
     // weaker computer player is slow at everything, the way a beginner is,
     // not selectively slow at one subsystem.
-    let trainTime=Math.round(u.trainTime*aiTimeMult(e.team));
+    let trainTime=trainDurationFor(e.team,e.queue[0]);
     if(e.trainTick<trainTime)e.trainTick++;
     if(e.trainTick>=trainTime){
       if(!hasPopulationRoom(e.team,e.queue[0],false))return;

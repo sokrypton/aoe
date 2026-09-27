@@ -501,7 +501,7 @@ function updateUI(){
   if (selected.length === 1 && selected[0].queue && selected[0].queue.length > 0) {
     let u = UNITS[selected[0].queue[0]];
     if (u) {
-      let pct = Math.floor(selected[0].trainTick / u.trainTime * 100);
+      let pct = Math.floor(selected[0].trainTick / trainDurationFor(selected[0].team, selected[0].queue[0]) * 100);
       // querySelectorAll: the fill lives on the train button, and (classic
       // skin) the front queue slot's darkness veil drains as it trains.
       document.querySelectorAll('#actions .training-active .btn-progress-fill')
@@ -977,7 +977,7 @@ function updateUI(){
             btn.innerHTML+=`<div class="queue-count" title="${queued} queued">${queued}</div>`;
           }
           if(e.queue&&e.queue.length>0&&e.queue[0]===ut){
-            let pct=Math.floor(e.trainTick/u.trainTime*100);
+            let pct=Math.floor(e.trainTick/trainDurationFor(e.team,ut)*100);
             btn.classList.add('training-active');
             btn.innerHTML+=`<div class="btn-progress-fill" style="position:absolute;left:0;bottom:0;height:3px;background:#fc0;width:${pct}%;"></div>`;
           }
@@ -1042,7 +1042,7 @@ function updateUI(){
             // trains (live-patched with the fills every frame).
             slot.innerHTML = icon + `<div class="queue-x">✕</div>`
               + (idx === 0
-                ? `<div class="train-veil" style="height:${100 - Math.floor(e.trainTick / UNITS[e.queue[0]].trainTime * 100)}%;"></div>`
+                ? `<div class="train-veil" style="height:${100 - Math.floor(e.trainTick / trainDurationFor(e.team, e.queue[0]) * 100)}%;"></div>`
                 : '');
             slot.onclick = () => cancelQueue(e.id, idx);
             strip.appendChild(slot);

@@ -1125,6 +1125,11 @@ function researchDurationFor(team, target){
   let base = (typeof target === 'number') ? AGES[target].researchTicks : UPGRADES[target].researchTicks;
   return Math.round(base * aiTimeMult(team));
 }
+// THE training duration for a team (same aiTimeMult scaling): the completion
+// check and every training progress display read this one spelling.
+function trainDurationFor(team, utype){
+  return Math.round(UNITS[utype].trainTime * aiTimeMult(team));
+}
 
 function rescaleTeamBuildingHp(team){
   entities.forEach(e => {

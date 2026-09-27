@@ -2369,7 +2369,7 @@ function drawBuilding(e, part = null){
   // bar tucks in just beneath it; otherwise it takes the HP bar's spot.
   let progY = (e.hp < e.maxHp && bh > 0) ? sy - bh - 4 : sy - bh - 11;
   if(e.queue&&e.queue.length>0){
-    let pct=e.trainTick/(UNITS[e.queue[0]].trainTime);
+    let pct=e.trainTick/trainDurationFor(e.team,e.queue[0]);
     let bww=b.w*24;
     X.fillStyle='#000000';X.fillRect(sx-bww/2-1,progY,bww+2,5); // black border box
     X.fillStyle='#003';X.fillRect(sx-bww/2,progY+1,bww,3);

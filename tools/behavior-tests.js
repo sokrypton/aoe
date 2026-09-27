@@ -258,6 +258,20 @@ async function withPage(browser, port, entry, fn){
       let t2 = 0;
       while (tc0.research && t2 < dur * 3) { updateBuildingResearch(tc0); t2++; }
       T.ok('research applies on exactly the bar\'s final tick', t2 === dur, 'applied at ' + t2 + ', bar length ' + dur);
+      // AI training: the progress bars read trainDurationFor, so a scaled
+      // (slower) AI unit's bar never overshoots and fills on its spawn tick.
+      createBuilding('TC', 60, 60, 1).complete = true;
+      const b1 = createBuilding('BARRACKS', 50, 50, 1); b1.complete = true;
+      resourceStore(1).food = 9999; resourceStore(1).gold = 9999; resourceStore(1).wood = 9999;
+      queueUnit(b1, 'militia');
+      const n1 = entities.filter(e => e.utype === 'militia' && e.team === 1).length, len = trainDurationFor(1, 'militia');
+      let t3 = 0, maxFill = 0;
+      while (t3 < len * 3 && entities.filter(e => e.utype === 'militia' && e.team === 1).length === n1) {
+        updateBuildingTraining(b1); t3++;
+        if (b1.queue.length) maxFill = Math.max(maxFill, b1.trainTick / trainDurationFor(1, b1.queue[0]));
+      }
+      T.ok('an AI unit spawns on exactly its bar\'s final tick', t3 === len, 'spawned at ' + t3 + ', bar length ' + len);
+      T.ok('an AI training bar never runs past full', maxFill <= 1, 'peaked at ' + maxFill);
       return T;
     })),
 
