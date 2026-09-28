@@ -4139,6 +4139,16 @@
                        a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right' };
   const held = new Set(), joy = { x: 0, y: 0 };
   let steering = false, lastMove = null, lastMoveAt = 0, lastActAt = 0, lastNow = 0, lastPossessAt = 0;
+  // Space / ACT held: the act again at the unit's own attack rhythm — on the move a melee character keeps swinging;
+  // standing, the order isn't resent while its job lasts, and once it ends (prey dead, tree felled) the next thing in
+  // front is taken on. A press acts at once.
+  let actHeld = false, heldActAt = 0;
+  function actNow(e){ heldActAt = performance.now(); if (act(e) !== false) swingAt = heldActAt; }
+  function actHeldTick(e, now){
+    if (!actHeld || !e) return;
+    const period = Math.max(SWING_MS, (UNITS[e.utype] ? UNITS[e.utype].rof : T30(60)) / (TPS * GAME_SPEED) * 1000);
+    if (now - heldActAt >= period && (isUnitMoving(e) || (!e.target && !e.task))) actNow(e);
+  }
   function possess(id, on){ submitCommand({ kind: 'possess', unitId: id, on }); lastPossessAt = performance.now(); }
 
   let steerId = null; // the unit being driven (released by id: the follow may already have moved on)
@@ -4153,7 +4163,7 @@
     steering = on;
     const id = on ? followId : steerId; steerId = on ? followId : null;
     if (id != null) possess(id, on);
-    held.clear(); joy.x = joy.y = 0; lastMove = null;
+    held.clear(); joy.x = joy.y = 0; lastMove = null; actHeld = false;
     refreshButtons();
   }
 
@@ -4396,7 +4406,7 @@
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1;
-    if (steering && e) steer(e, dt);
+    if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
     camDt = dt || 1 / 60; updateCamera(e);
@@ -4865,7 +4875,8 @@
     joyEl.addEventListener('pointermove', ev => { if (joyEl.hasPointerCapture(ev.pointerId)) joyMove(ev); });
     const joyEnd = () => { joy.x = joy.y = 0; knob.style.transform = ''; };
     joyEl.addEventListener('pointerup', joyEnd); joyEl.addEventListener('pointercancel', joyEnd);
-    actEl.addEventListener('pointerdown', () => { const e = entitiesById.get(followId); if (e && act(e) !== false) swingAt = performance.now(); });
+    actEl.addEventListener('pointerdown', ev => { actEl.setPointerCapture(ev.pointerId); const e = entitiesById.get(followId); actHeld = true; if (e) actNow(e); });
+    for (const t of ['pointerup', 'pointercancel']) actEl.addEventListener(t, () => { actHeld = false; });
     btnFull.onclick = () => { if (world) povClose(); else openWorld(); };
     btnClose.onclick = () => povClose();
     document.body.appendChild(pip);
@@ -4878,7 +4889,8 @@
       if (steering) {
         if (ev.key === 'Escape') { if (world) leaveToMap(); else povClose(); }
         else if (STEER_KEYS[k]) held.add(STEER_KEYS[k]);
-        else if (ev.key === ' ') { const e = entitiesById.get(followId); if (e && act(e) !== false) swingAt = performance.now(); }
+        else if (ev.key === ' ') { // held: the auto-repeat is ignored — actHeldTick keeps the rhythm (a repeat would restart the swing)
+          if (!ev.repeat) { const e = entitiesById.get(followId); actHeld = true; if (e) actNow(e); } }
         else return;
       } else if (ev.key === 'Escape' && world && followId != null && mode !== 'orbit') leaveToMap();   // on another's unit (not driving): Esc still leaves
       else return;
@@ -4886,9 +4898,10 @@
     }, true);
     window.addEventListener('keyup', ev => {
       const k = ev.key.toLowerCase();
+      if (ev.key === ' ') actHeld = false;
       if ((STEER_KEYS[k] && held.delete(STEER_KEYS[k])) || (steering && ev.key === ' ')) { ev.stopPropagation(); ev.preventDefault(); } // Space's key-up would click a focused HUD button
     }, true);
-    window.addEventListener('blur', () => held.clear());
+    window.addEventListener('blur', () => { held.clear(); actHeld = false; });
   }
   // Wire the world view's pointer input to the canvas (once the renderer exists).
   function wireCanvas(){
