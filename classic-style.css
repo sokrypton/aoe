@@ -514,6 +514,7 @@ canvas {
   margin-bottom:2px;
   line-height:1;
 }
+.btn-emoji.ai-emoji{ font-size:36px; line-height:1; margin:0; } /* fills the tile like the sprite icons */
 
 /* ---- SPRITE ICONS (sprites.png) ----
    --sprite-bg-size (from SHEET_COLS/SHEET_ROWS, js/page-shell.js) makes each

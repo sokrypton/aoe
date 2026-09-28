@@ -22,7 +22,11 @@ function camDY(){return Math.round(camY);}
 // by a sub-pixel is exactly the class of bug that made clicks miss at
 // ZOOM!=1 and the zoom focal point drift.
 function zoomAnchor(){return{ax:Math.round(W/2),ay:Math.round(H/2+topH)};}
+// The 3D view (js/pov3d.js) resolves a click in 3D and hands the ordinary
+// input functions its result through window.__pick3D, set only for the call:
+// { unit, building, resource, tile, map, box } — every rule stays in input.js.
 function screenToMap(sx,sy){
+  if(window.__pick3D) return window.__pick3D.map;
   // Exact inverse of render()'s zoom transform. At ZOOM 1 this reduces to
   // the plain translate.
   const {ax,ay}=zoomAnchor();
@@ -39,6 +43,7 @@ function mapToScreen(x,y){
   return{sx:iso.ix-camDX()+W/2, sy:iso.iy-camDY()+H/2+topH};
 }
 function screenToTile(sx,sy){
+  if(window.__pick3D) return window.__pick3D.tile;
   let p=screenToMap(sx,sy);
   return{x:Math.floor(p.x),y:Math.floor(p.y)};
 }

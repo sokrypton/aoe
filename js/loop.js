@@ -230,7 +230,9 @@ function makeWayFor(mover){
   // makes the soldier a blocking mover, forcing everyone else to repath —
   // an infinite dance that also ate the tick budget). Movers walk through
   // them; separateUnits resolves the momentary overlap softly.
-  let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,mover.team));
+  // A stopped trade cart makes way for anyone — but not while it's trading at a Market.
+  let pushable=s.utype==='sheep'||(s.utype==='villager'&&sameSide(s.team,mover.team))||
+    (s.utype==='tradecart'&&!cartAtMarket(s));
   if(!pushable||s.target)return;
   // Never dodge a villager that's WORKING in place (farming/gathering/
   // building): walkable() lets traffic pass straight through it instead
@@ -308,6 +310,11 @@ function rebuildBlockAndNudge(){
   for(let i=0;i<_movers.length;i++)makeWayFor(_movers[i]);
 }
 
+// A trade cart pulled up to the Market of its current leg (trading, not waiting in traffic).
+function cartAtMarket(c){
+  let m=entitiesById.get(c.tradePhase==='toHome'?c.tradeHomeId:c.tradeDestId);
+  return !!m&&adjToBuilding(c.x,c.y,m);
+}
 // True while a much-displaced unit is holding its ground (see makeWayFor):
 // it won't step aside and walkable() treats it as a hard obstacle so paths
 // route around it. Wears off after ~10s without being harassed.

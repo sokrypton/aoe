@@ -104,7 +104,7 @@ canvas {
 }
 .res-val{min-width:32px;text-align:right}
 /* Phone portrait (~390px): the chips must clear the fixed fullscreen/menu
-   buttons at the right edge (#fs-btn starts 70px from it), with room for a
+   buttons at the right edge (#view-btn starts 104px from it), with room for a
    late-game "45/100". */
 @media(max-width:420px){
   #topbar{padding-left:6px}
@@ -802,6 +802,7 @@ canvas {
   margin-bottom:2px;
   line-height:1;
 }
+.btn-emoji.ai-emoji{ font-size:40px; line-height:40px; margin:0; } /* the size of the strip's sprite icons */
 
 /* ---- SPRITE ICONS (sprites.png) ----
    --sprite-bg-size (from SHEET_COLS/SHEET_ROWS, js/page-shell.js) makes each
@@ -1862,7 +1863,7 @@ canvas {
   }
 }
 
-#menu-btn, #fs-btn {
+#menu-btn, #fs-btn, #view-btn {
   color: #ffd700;
   font-family: 'Cinzel', serif;
   font-size: 13px;
@@ -1886,7 +1887,7 @@ canvas {
   z-index: 30;
   pointer-events: auto;
 }
-#menu-btn .btn-emoji, #fs-btn .btn-emoji{
+#menu-btn .btn-emoji, #fs-btn .btn-emoji, #view-btn .btn-emoji{
   display:flex;
   align-items:center;
   justify-content:center;
@@ -1898,13 +1899,17 @@ canvas {
   position: relative;
   top: 1px;
 }
-#menu-btn:hover, #fs-btn:hover {
+#menu-btn:hover, #fs-btn:hover, #view-btn:hover {
   border-color: #fff;
   background: rgba(140, 29, 29, 0.65);
   box-shadow: 0 0 6px rgba(229, 193, 88, 0.4), inset 0 0 4px #000;
 }
 #fs-btn{
   right: 42px;
+}
+#view-btn{
+  right: 76px;
+  font-size: 11px;
 }
 #menu-btn{
   right: 8px;

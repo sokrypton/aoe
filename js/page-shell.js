@@ -171,6 +171,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
+<div id="view-btn" onclick="window.toggleView3D && toggleView3D()" data-tip-label="2D / 3D" data-tip-desc="Switch the map between the 2D view and the 3D world view."><span class="btn-emoji">3D</span></div>
 <div id="msg"></div>
 <div id="chat-log"></div>
 <div id="chat-input-wrap" style="display:none;">

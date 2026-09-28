@@ -38,6 +38,11 @@
   <span class="g"><span class="l">View</span>
     <button data-cam="side">Side</button><button data-cam="front">Front</button><button data-cam="q" class="on">¾</button><button data-cam="back">Behind</button>
   </span>
+  <span class="g"><span class="l">Unit</span><select id="lab-unit"><option>villager</option><option>militia</option><option>spearman</option><option>archer</option><option>scout</option><option>knight</option><option>ram</option><option value="tradecart">trade cart</option></select>
+    <label>age <select id="lab-age"><option value="0">Dark</option><option value="1">Feudal</option><option value="2">Castle</option></select></label>
+    <label>attack <select id="lab-atk"><option value="0">base</option><option value="1">Forging</option><option value="2">Iron Casting</option></select></label>
+    <label>armor <select id="lab-arm"><option value="0">tunic</option><option value="1">scale</option><option value="2">chain</option></select></label>
+    <label><input type="checkbox" id="lab-fletch"> fletching</label></span>
   <span class="g"><span class="l">Villager</span><button id="lab-female">♀ female</button>
     <label>resource <select id="lab-load"><option>wood</option><option>stone</option><option>gold</option><option value="food">wheat</option><option>wool</option><option>berries</option></select></label>
     <label>held tool <select id="lab-tool"><option value="">none</option><option>axe</option><option>pick</option><option>mallet</option><option>scythe</option></select></label></span>
@@ -66,7 +71,7 @@
   // page-shell injects the game's HUD (the core scripts need its canvas); the lab hides all of it.
   for (const el of [...document.body.children]) if (!['lab-bar', 'lab-view', 'lab-readout', 'lab-hint'].includes(el.id) && el.tagName !== 'SCRIPT') el.style.display = 'none';
   const LAB = window.__pov3dLab, THREE = await LAB.load();
-  const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8 }; // seconds per cycle
+  const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8, attack: 1.3, gallop: 0.62 }; // seconds per cycle
   const $ = id => document.getElementById(id);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
@@ -77,9 +82,10 @@
   scene.add(new THREE.AmbientLight('#ffffff', 0.69 * Math.PI));
   const sun = new THREE.DirectionalLight('#ffffff', Math.hypot(0.31, 0.36) * Math.PI); sun.position.set(0, 0.36, 0.31); scene.add(sun);
   const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#5f9b4a' }));
-  ground.position.y = -0.001; scene.add(ground);
+  ground.position.y = -0.001; ground.material.depthWrite = false; ground.renderOrder = -1; scene.add(ground); // as the game's ground: drawn first, blocking nothing (outlines show under feet)
   const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 50);
   const orbit = { yaw: Math.PI / 4, pitch: 0.28, dist: 2.3, target: new THREE.Vector3(0.12, 0.33, 0) };
+  window.__labOrbit = orbit; // dev: scripted cameras
   const placeCam = () => {
     const { yaw, pitch, dist, target } = orbit;
     camera.position.set(target.x + Math.sin(yaw) * Math.cos(pitch) * dist, target.y + Math.sin(pitch) * dist, target.z + Math.cos(yaw) * Math.cos(pitch) * dist);
@@ -102,7 +108,7 @@
   document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { [orbit.yaw, orbit.pitch] = CAMS[b.dataset.cam]; setCamButtons(b.dataset.cam); });
 
   let kind = 'chop', t = 0, playing = true, current = null, key = '', female = false;
-  const opts = { load: 'wood', tool: '' };
+  const opts = { load: 'wood', tool: '', unit: 'villager', eq: null };
   // Targets the tools really meet: each sits where its tool's head lands
   // (LAB.toolHead at the moment of impact), and reacts the way the material would.
   const up = new THREE.Vector3(0, 1, 0), bits = [], puffs = [];
@@ -190,11 +196,21 @@
   }
   for (const k in T) { scene.add(T[k].obj); if (T[k].rebuild) T[k].rebuild(); }
   let lastT = 0;
-  for (const k of LAB.kinds) {
-    const b = document.createElement('button'); b.textContent = k; b.dataset.kind = k; if (k === kind) b.classList.add('on');
-    b.onclick = () => { kind = k; document.querySelectorAll('[data-kind]').forEach(x => x.classList.toggle('on', x === b)); };
-    $('lab-actions').appendChild(b);
-  }
+  const buttons = list => {
+    document.querySelectorAll('[data-kind]').forEach(b => b.remove());
+    if (!list.includes(kind)) kind = list.includes('attack') ? 'attack' : list[0];
+    for (const k of list) {
+      const b = document.createElement('button'); b.textContent = k; b.dataset.kind = k; if (k === kind) b.classList.add('on');
+      b.onclick = () => { kind = k; document.querySelectorAll('[data-kind]').forEach(x => x.classList.toggle('on', x === b)); };
+      $('lab-actions').appendChild(b);
+    }
+  };
+  buttons(LAB.kinds);
+  // Unit and gear: a soldier's gear follows its age and the Blacksmith lines (unitEquipment's rules).
+  const gear = () => { opts.unit = $('lab-unit').value;
+    opts.eq = opts.unit === 'villager' || opts.unit === 'ram' || opts.unit === 'tradecart' ? null : LAB.equip(opts.unit, +$('lab-age').value, +$('lab-atk').value, +$('lab-arm').value, $('lab-fletch').checked); };
+  $('lab-unit').onchange = () => { gear(); buttons(LAB.unitKinds[opts.unit] || LAB.kinds); };
+  for (const id of ['lab-age', 'lab-atk', 'lab-arm', 'lab-fletch']) $(id).onchange = gear;
   for (const [id, key2] of [['lab-load', 'load'], ['lab-tool', 'tool']])
     $(id).onchange = e => { opts[key2] = e.target.value; for (const k in T) if (T[k].rebuild) T[k].rebuild(); };
   $('lab-female').onclick = () => { female = !female; $('lab-female').classList.toggle('on', female); };
@@ -209,8 +225,8 @@
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (playing) { t = (t + dt * +$('lab-speed').value / PERIOD[kind]) % 1; $('lab-phase').value = t; }
-    for (const k in T) T[k].obj.visible = k === kind;
-    const tg = T[kind];
+    for (const k in T) T[k].obj.visible = k === kind && opts.unit === 'villager';
+    const tg = opts.unit === 'villager' ? T[kind] : null;
     if (tg && tg.hit && t < lastT && lastT > 0.85) tg.hit(now);            // the phase wrapped: the tool just struck
     if (tg && tg.at) for (const [ph, fn] of tg.at) if ((lastT < ph && t >= ph) || (t < lastT && (lastT < ph || t >= ph))) fn(now); // crossed ph (through the wrap too)
     if (tg && tg.tick) tg.tick(now, dt);
@@ -225,7 +241,7 @@
       const p = puffs[i], a = (now - p.born) / 1000; p.m.scale.setScalar(1 + a * 3); p.m.position.y += dt * 0.08; p.m.material.opacity = Math.max(0, 0.7 - a);
       if (a > 0.8) { scene.remove(p.m); p.m.geometry.dispose(); p.m.material.dispose(); puffs.splice(i, 1); }
     }
-    const k2 = kind + female + opts.load + opts.tool + ':' + Math.round(t * 120);
+    const k2 = kind + female + opts.load + opts.tool + opts.unit + JSON.stringify(opts.eq) + ':' + Math.round(t * 120);
     if (k2 !== key) {
       if (current) { scene.remove(current); LAB.dispose(current); }
       current = LAB.frame(kind, Math.round(t * 120) / 120, female, opts); scene.add(current); key = k2;

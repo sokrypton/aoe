@@ -266,13 +266,6 @@ document.addEventListener('keydown',e=>{
     }
   }
 
-  // Eye View ('v') for a single own unit — viewer-only 3D window (js/pov3d.js).
-  if (key === 'v' && selected.length === 1 && selected[0].type === 'unit' && selected[0].team === myTeam
-      && typeof povToggle === 'function') {
-    povToggle(selected[0].id);
-    return;
-  }
-
   // Auto Scout toggle ('e' = explore) when the selection is all own scouts.
   if (selected.length > 0 && selected.every(s => s.type === 'unit' && s.utype === 'scout' && s.team === myTeam)) {
     if (key === 'e') {
@@ -1567,6 +1560,7 @@ function entityPixelHit(e, lx, ly, part) {
 }
 
 function getBuildingUnderCursor(sx, sy, filter) {
+  if (window.__pick3D) { const b = window.__pick3D.building; return b && (!filter || filter(b)) ? b : null; } // 3D view (iso.js)
   // BLDG_HEIGHTS is a shared global — see core.js.
   let bestB = null;
   let bestSortY = -9999;
@@ -1624,6 +1618,7 @@ function getBuildingUnderCursor(sx, sy, filter) {
 }
 
 function getUnitUnderCursor(sx, sy) {
+  if (window.__pick3D) return window.__pick3D.unit || null; // 3D view (iso.js)
   let bestU = null;
   let bestSortY = -9999;
   // Units render tiny at normal zoom, so give clicks a bit of forgiveness
@@ -1681,6 +1676,7 @@ function getUnitUnderCursor(sx, sy) {
 }
 
 function getResourceUnderCursor(sx, sy) {
+  if (window.__pick3D) return window.__pick3D.resource || null; // 3D view (iso.js)
   let tile = screenToTile(sx, sy);
   let bestRes = null;
   let bestSortY = -9999;
@@ -1783,6 +1779,7 @@ function doSelect(sx,sy,shift){
 // shared by drag-select and the garrison load-mode box add so the hit geometry
 // can't drift between them.
 function unitsInBox(x1,y1,x2,y2){
+  if(window.__pick3D&&window.__pick3D.box)return window.__pick3D.box; // 3D view (iso.js)
   let sx1=Math.min(x1,x2),sy1=Math.min(y1,y2);
   let sx2=Math.max(x1,x2),sy2=Math.max(y1,y2);
   return entities.filter(en=>{
@@ -2136,7 +2133,12 @@ window.addEventListener('resize',()=>{
 C.addEventListener('dblclick', e => {
   if (window.__editorMode) return; // scenario editor handles its own canvas input
   if (gameOver || recentTouch()) return;
-  let clicked = getUnitUnderCursor(e.clientX, e.clientY);
+  doubleSelectAt(e.clientX, e.clientY);
+});
+// Double-click / double-tap: every own unit of that type on screen, or a wall's
+// chain (unfinished) or run (completed). Shared with the 3D view (js/pov3d.js).
+function doubleSelectAt(sx, sy){
+  let clicked = getUnitUnderCursor(sx, sy);
   if (clicked && clicked.team === myTeam) {
     selected = entities.filter(en => en.team === myTeam && en.type === 'unit' && en.utype === clicked.utype && isUnitOnScreen(en));
     if (window.playSound) {
@@ -2150,7 +2152,7 @@ C.addEventListener('dblclick', e => {
   // wall foundation to select its whole connected chain for bulk cancel,
   // or a COMPLETED wood wall to select its connected run (bulk actions
   // like Upgrade to Stone).
-  let wallB = getBuildingUnderCursor(e.clientX, e.clientY, isWallSelectTarget);
+  let wallB = getBuildingUnderCursor(sx, sy, isWallSelectTarget);
   if (wallB) {
     if (wallB.complete) {
       selected = collectCompletedWallRun(wallB);
@@ -2161,4 +2163,4 @@ C.addEventListener('dblclick', e => {
     }
     updateUI();
   }
-});
+}

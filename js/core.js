@@ -1559,6 +1559,7 @@ function spawnProjectile(attacker, target) {
 }
 
 function isUnitOnScreen(en) {
+  if (window.world3D && window.__povOnScreen) return window.__povOnScreen(en); // the 3D world view is the screen
   let a = unitAnchorLogical(en);
   let { sx, sy } = logicalToScreen(a.x, a.y);
   return sx >= -50 * ZOOM && sx <= W + 50 * ZOOM && sy >= -50 * ZOOM && sy <= H + 50 * ZOOM;

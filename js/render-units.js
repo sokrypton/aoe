@@ -1226,6 +1226,15 @@ let grazeCycles = new Map(); // per-sheep grazing-puff cycle (same pattern)
 // proportions cannot drift between views. World units are local px at
 // scale 1 (RAM_SCALE applied at draw time): X = movement axis (a),
 // Y = width axis (b), Z = up (c).
+// A rolling wheel's turn (rad) for a vehicle whose wheel radius is rPx art px
+// (before UNIT_SCALE): rolled, not spun — the ground it covers (speed ×
+// UNIT_PX_PER_TICK screen px a tick, animTick running at the authored 30/s)
+// over its radius. Viewer-only: never unitMoveSpeed, which can clear the hashed
+// groupSpeed (a render-side write would desync); the ram's rider boost is read here.
+function wheelSpin(e, rPx){
+  const sp = e.speed * (e.utype === 'ram' && e.garrison ? 1 + 0.08 * e.garrison.length : 1);
+  return animTick * sp * UNIT_PX_PER_TICK * (TPS / 30) / (rPx * UNIT_SCALE) + e.id;
+}
 const RAM_DIM = {
   L: 12,      // body half-length (gable planes at a=±L)
   WE: 7,      // eave half-width
@@ -1577,7 +1586,7 @@ function drawRamBody(e){
   // v), then the lit wooden face with rotating cross-spokes and a hub sits
   // on the outer end. Head-on facings see a wheel edge-on: only the tread
   // shows, a dark rounded slab.
-  let wheelRot = animTick*0.35 + e.id;
+  let wheelRot = wheelSpin(e, RAM_DIM.WR * RAM_DIM.SCALE);
   let wheel = (a, b, r) => {
     let thin = (useDir === 1 || useDir === 5);
     if (thin) {
@@ -2206,7 +2215,7 @@ function drawTradeCartBody(e){
   };
   // Wheels — proper spoked cartwheels: wooden rim ring, dark interior seen
   // through the spokes, 3 rotating spoke diameters, hub. Two axles (±WA/2).
-  let wheelRot = animTick*0.35 + e.id;
+  let wheelRot = wheelSpin(e, CART_DIM.WR * CART_DIM.SCALE);
   // Edge-on wheel slab for the head-on facings (also used by the head-on
   // body assembly below).
   let slab = (a,b,r,w2) => {

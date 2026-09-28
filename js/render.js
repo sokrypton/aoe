@@ -109,6 +109,8 @@ function render(){
   // tile-drawing loop below indexes map[y][x] assuming a fully populated
   // MAP x MAP grid, so bail out before that rather than crash.
   if (map.length === 0) return;
+  // The 3D view is the world view (js/pov3d.js): the 2D map isn't drawn under it; the minimap still is.
+  if (window.world3D) { drawMinimap(); return; }
 
   // Viewport culling: calculate visible map tile range
   let p1 = screenToMap(0, 0);
@@ -394,6 +396,22 @@ function render(){
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
 
+  drawOrderOverlays();
+
+  X.restore();
+
+  drawSelection();
+
+
+  drawMinimap();
+}
+
+// Order overlays: rally and guard flags with their lines, the flag-placement
+// ghost, garrison boarding lines, right-click command markers. Drawn into X via
+// mapToScreen — the 2D map calls it inside its zoom transform; the 3D view
+// (js/pov3d.js) calls it on its overlay canvas with mapToScreen projecting
+// through the 3D camera, so both views show the same overlays from one code path.
+function drawOrderOverlays(){
   // Just-clicked flag PREVIEWS (issuer-side, cosmetic): rally/guard
   // commands execute INPUT_DELAY_TICKS after the click, and the planted
   // flag would render at the STALE spot for those frames — a flicker-and-
@@ -541,11 +559,4 @@ function render(){
     X.beginPath();X.arc(sx,sy,sz+4,0,Math.PI*2);X.stroke();
     X.globalAlpha=1;
   });
-
-  X.restore();
-
-  drawSelection();
-
-
-  drawMinimap();
 }

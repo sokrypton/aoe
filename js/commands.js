@@ -228,6 +228,28 @@ function execCommand(cmd, team){
       }
       break;
     }
+    case 'strike': {
+      // A steered character's swing on the move (character mode, js/pov3d.js): one melee hit on an enemy in reach,
+      // on its own reload, leaving its walk and order alone. Possessed units only; every other unit fights by AoE2 rules.
+      const u = entitiesById.get(cmd.unitId), t = entitiesById.get(cmd.targetId);
+      if (!u || u.type !== 'unit' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn || (u.range || 0) > 0 || !(u.atk > 0)) break;
+      if (!t || t.hp <= 0 || t.garrisonedIn || sameSide(t.team, u.team) || (t.type === 'unit' && isHarmlessAnimal(t))) break;
+      if (u.utype === 'ram' && t.type !== 'building') break;
+      const inReach = t.type === 'building' ? adjToBuilding(u.x, u.y, t) : dist(u, t) <= 1.5;
+      if (!inReach || u.atkCooldown > 0) break;
+      damageEntity(u, t); u.atkCooldown = UNITS[u.utype].rof;
+      break;
+    }
+    case 'deposit': {
+      // A steered villager against a drop-off banks its load on the spot (character mode, js/pov3d.js); the same
+      // banking as a return trip (logic.js updateVillagerDropoff), without walking one.
+      const u = entitiesById.get(cmd.unitId), b = entitiesById.get(cmd.bldgId);
+      if (!u || u.utype !== 'villager' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn || !(u.carrying > 0) || !u.carryType) break;
+      if (!b || b.type !== 'building' || b.team !== u.team || !b.complete || b.hp <= 0 || !dropAccepts(b, u.carryType) || !adjToBuilding(u.x, u.y, b)) break;
+      resourceStore(u.team)[u.carryType] += u.carrying; u.carrying = 0;
+      if (u.task === 'return') { u.task = u.prevTask || null; u.prevTask = null; }
+      break;
+    }
     case 'dev-spawn':
       // Test-only scenario injection for multiplayer measurement: spawns
       // a deterministic army through the queue so both lockstep peers

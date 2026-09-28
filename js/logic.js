@@ -1330,9 +1330,10 @@ function updateGatherTask(e,config){
   // tile's footprint box), NOT the centre: centre-pressing pulls diagonal
   // gatherers onto the 4 orthogonal tiles and wrecks the even 8-tile surround
   // (goalBldg + contactClaims). The walkable(ignoreUnits) guard in pressToContact keeps
-  // them off the solid node. Farms are walkable (the villager stands ON the
-  // plot) — no press there.
-  if(e.task!=='farm') slideToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, 0.25);
+  // them off the solid node: aimed just past the edge (under press's 0.2
+  // deadband), it halts at the very edge — the tool meets the trunk / rock in
+  // both views. Farms are walkable (the villager stands ON the plot) — no press.
+  if(e.task!=='farm') slideToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, -0.18);
 
   if(e.gatherCooldown>0)return;
   let tile=map[gatherTile.y][gatherTile.x];
@@ -2646,7 +2647,7 @@ function updateUnitCombat(e){
       // crowd visibly vibrates while they fight): a settled co-harvester
       // STRICTLY CLOSER to the carcass (id breaks exact ties) owns the
       // lane — the outer unit holds its spot (any d<=1.5 harvests just
-      // as well; the 0.7 press is cosmetic packing) so press can never
+      // as well; the 0.35 press is cosmetic packing) so press can never
       // walk one butcher into another and hand separation an overlap.
       let laneHeld=false;
       for(let pi=0;pi<entities.length&&!laneHeld;pi++){
@@ -2657,7 +2658,7 @@ function updateUnitCombat(e){
         let pd=distToTarget(p,t);
         if(pd<d||(pd===d&&p.id<e.id))laneHeld=true;
       }
-      if(!laneHeld)pressToContact(e, t.x, t.y, 0.7);
+      if(!laneHeld)pressToContact(e, t.x, t.y, 0.35); // kneel at it (a carcass isn't separated, loop.js separateUnits)
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
         e.task='return';

@@ -171,6 +171,8 @@ function detEntityHash(e){
   h = detMix(h, e.lastMeleeHitTick == null ? -1 : e.lastMeleeHitTick); // ram rider-disembark trigger (melee only)
   h = detMix(h, e.waveId == null ? -1 : e.waveId); // AI wave membership (casualty-retreat counts it)
   if (e.possessed) h = detMix(h, 0x9055); // player-steered (the AI skips it); folded only when set
+  h = detMix(h, e.lastDodgeTick || 0); // step-aside pacing (makeWayFor, js/loop.js): gates the next dodge
+  h = detMix(h, e.dodgeCount || 0);   // …and the anti-dance stubbornness (isStubborn)
   return h >>> 0;
 }
 
@@ -191,7 +193,7 @@ const DET_HASHED_KEYS = new Set([
   'garrison','buildQueue','locked','rallyResourceType','gatherX','gatherY',
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
-  'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase',
+  'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
   'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed

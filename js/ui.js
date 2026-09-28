@@ -387,6 +387,7 @@ function updateUI(){
     // train buttons grey out (paused) and the research grid refreshes. Covers any
     // researching building (TC age-up, Barracks tech), not just the TC's ageKey.
     if (e.type === 'building') currentSelectionDetails += ':r' + (e.research ? e.research.target : '-');
+    if (e.type === 'building' && e.btype === 'TC') currentSelectionDetails += ':ap' + (teamControllers[myTeam] && teamControllers[myTeam].type === 'ai' ? 1 : 0); // the Town AI button's state
     // Gate lock state, so the Lock/Unlock button label flips the instant the
     // toggle lands (the button is derived from selected gates' .locked).
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
@@ -637,7 +638,9 @@ function updateUI(){
     // every tick and would rebuild the strip 30×/s (eating queue-slot clicks).
     // Without this the strip never refreshed when a building finished while
     // still selected.
-    +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')).join('.');
+    +':bld'+selected.filter(s=>s.type==='building').map(s=>(s.complete?'c':'')+(s.exhausted?'e':'')).join('.')
+    // the TC's Town AI button lights while the AI runs the town
+    +':ap'+(selected[0]&&selected[0].btype==='TC'&&teamControllers[myTeam]&&teamControllers[myTeam].type==='ai'?1:0);
   let rebuildActions=selKey!==lastSelKey;
   lastSelKey=selKey;
   let bottomEl = byId('bottom');
@@ -1015,6 +1018,18 @@ function updateUI(){
             };
             act.appendChild(rallyBtn);
           }
+        }
+        // Town AI: hand the town to the AI and back (the 'autopilot' command) — lit while it runs.
+        if (e.btype === 'TC' && e.team === myTeam && e.complete && !gameOver) {
+          const on = !!(teamControllers[myTeam] && teamControllers[myTeam].type === 'ai');
+          let aiBtn=document.createElement('div');
+          aiBtn.className='act-btn'+(on?' stance-on':'');
+          aiBtn.dataset.tipType='action';
+          aiBtn.dataset.tipLabel='Town AI';
+          aiBtn.dataset.tipDesc=on?'The AI is running your town. Click to take it back.':'Let the AI run your town (economy, building, army) while you play a character.';
+          aiBtn.innerHTML=`<div class="btn-emoji ai-emoji">🤖</div><div class="btn-label">Town AI<br>${on?'on':'off'}</div>`;
+          aiBtn.onclick=()=>{ if(!gameOver) submitCommand({ kind: 'autopilot', on: !on }); };
+          act.appendChild(aiBtn);
         }
         // CLASSIC skin: the queue as its own STRIP of small slot buttons in
         // the CENTER panel's #sel-queue lane (real AoE2 shows the training
@@ -1487,20 +1502,6 @@ function updateUI(){
         });
       }
     }
-  }
-
-  // Eye View (js/pov3d.js, viewer-only) for any single own unit; last in the
-  // strip so it never shifts the classic grid's authored slots.
-  if(rebuildActions && selected.length===1 && selected[0].type==='unit' && selected[0].team===myTeam && !gameOver
-     && window.currentVillagerMenu!=='eco' && window.currentVillagerMenu!=='mil' && typeof povToggle==='function'){
-    let u=selected[0];
-    let btn=document.createElement('div');btn.className='act-btn';
-    btn.dataset.tipType='action';
-    btn.dataset.tipLabel='Eye View';
-    btn.dataset.tipDesc='See the world through this unit\'s eyes in a 3D window. Shortcut: V.';
-    btn.innerHTML=`<div class="btn-emoji">👁️</div><div class="btn-label">Eye View</div>`;
-    btn.onclick=()=>povToggle(u.id);
-    act.appendChild(btn);
   }
 
   // One bar, one divider: actions left, selection right. The selection card
