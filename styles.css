@@ -164,7 +164,7 @@ canvas {
   justify-content: center;
 }
 
-#home-btn, #map-btn, #idle-btn, #bell-btn, #chat-btn, #menu-btn {
+#home-btn, #map-btn, #idle-btn, #bell-btn, #eye-btn, #chat-btn, #menu-btn {
   /* Slightly translucent so the map reads through the corner controls */
   background: linear-gradient(180deg, rgba(92,61,36,0.82) 0%, rgba(48,31,16,0.82) 100%);
   border: 1px solid #bfa054;
@@ -179,7 +179,7 @@ canvas {
   transition: all 0.15s;
   position: relative;
 }
-#home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji, #chat-btn .btn-emoji, #menu-btn .btn-emoji{
+#home-btn .btn-emoji, #map-btn .btn-emoji, #idle-btn .btn-emoji, #bell-btn .btn-emoji, #eye-btn .btn-emoji, #chat-btn .btn-emoji, #menu-btn .btn-emoji{
   font-size: calc(var(--corner-size) * 0.68);
   line-height: 1;
 }
@@ -196,6 +196,7 @@ canvas {
   display: none;
 }
 #bell-btn:hover, #bell-btn:active,
+#eye-btn:hover, #eye-btn:active,
 #chat-btn:hover, #chat-btn:active,
 #home-btn:hover, #home-btn:active,
 #map-btn:hover, #map-btn:active,
@@ -2450,3 +2451,9 @@ canvas {
   #tutorial-box { width: 720px !important; }
   #menu-disclaimer { width: 720px; }
 }
+
+/* Character mode's corner button (js/ui.js): a drawn eye; green while in a unit's eyes (tap = back to the map). */
+#eye-btn .btn-emoji { display: flex; align-items: center; justify-content: center; width: 70%; height: 70%; color: #f3e3b5; }
+#eye-btn svg { width: 100%; height: 100%; display: block; }
+#eye-btn.eye-on { border-color: #4ade80 !important; box-shadow: 0 0 8px #4ade80, inset 0 0 4px #000; }
+#eye-btn.eye-on .btn-emoji { color: #4ade80; }

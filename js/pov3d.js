@@ -1234,14 +1234,6 @@
     if (color) f.mesh.setColorAt(f.n, _c.set(color));
     f.tiles[f.n++] = putTile;
   }
-  // Within a tile of the sight line from the camera to the character (or of
-  // the camera itself): a tree there would fill the view.
-  function blocksView(x, z){
-    if (mode !== 'eye') return false;                         // only through the eyes (a canopy at the head fills the view); chase rides above the trees
-    const ex = eye.x - camAt.x, ez = eye.y - camAt.y, L2 = ex * ex + ez * ez || 1;
-    const t = Math.max(0, Math.min(1, ((x - camAt.x) * ex + (z - camAt.y) * ez) / L2));
-    return (x - camAt.x - t * ex) ** 2 + (z - camAt.y - t * ez) ** 2 < 1;
-  }
   // A fixed 0..1 value per tile and channel n: natural variety that never flickers.
   const tileHash = (x, y, n) => { let v = (x * 73856093) ^ (y * 19349663) ^ (n * 83492791); v = Math.imul(v ^ (v >>> 13), 1274126177); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; };
   // Rebuild every instance list from the map (fog: explored tiles, like the ground).
@@ -1254,7 +1246,6 @@
       if (!t.res || t.res <= 0 || !(fog[y] && fog[y][x])) continue;
       const wx = x + 0.5, wz = y + 0.5; putTile = y * MAP + x;
       if (t.t === TERRAIN.FOREST) {
-        if (t.res > 60 && blocksView(wx, wz)) continue; // never a canopy round the camera or between it and the character (stumps and felled trunks lie low: always shown)
         const k = 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08); // the art's per-tree size noise
         const shade = (r, x0 = wx, z0 = wz) => put('shadow', x0, 0.006, z0, 2 * r, 1, 2 * r);
         if (t.res > 60) { // each tree its own: crown shape, turn, proportions, shade, a nudge off the grid
@@ -4027,7 +4018,7 @@
     for (const e of entities) {
       if (e.type !== 'unit' || (e.id === followId && mode === 'eye' && !RIG_UNITS(e.utype))) continue; // seen through its eyes: a rig shows its arms and tool (fp), anything else nothing
       const dx = e.x + 0.5 - camAt.x, dy = e.y + 0.5 - camAt.y, d2 = dx * dx + dy * dy;
-      if (d2 > RANGE * RANGE || (mode !== 'orbit' && d2 < 0.5 && e.id !== followId) || !unitVisible(e)) continue; // not ones standing on the camera (orbit: camAt is the anchor; eyes: the anchor shows its arms)
+      if (d2 > RANGE * RANGE || !unitVisible(e)) continue; // (nothing near the camera is hidden: a tree or unit in the way blocks the view, as it would)
       near.push({ e, d2, k: world ? (e.x + 0.5 - camera.position.x) ** 2 + (e.y + 0.5 - camera.position.z) ** 2 : d2 }); // the world view keeps those nearest the camera
     }
     near.sort((a, b) => a.k - b.k || a.e.id - b.e.id);
@@ -4290,29 +4281,19 @@
   // The frame's wheel steps, at once and about the cursor (as 2D): the camera slides along its sight line, so the
   // ground scales about the view centre by the same factor — the centre shifts to hold the point under the cursor.
   // Measured on the camera last drawn, so a burst of events can't mix states.
-  // Zoomed through: pushed in past the map camera's nearest (or the chase view's), it glides into a unit's eyes (the
-  // followed one, else the selected, else yours nearest the view's middle); pushed out of the eyes, back behind it.
-  // Zooming out never lets go of the unit — Esc does.
-  // The push must be deliberate — ZOOM_PUSH steps past the limit — so a zoom that just hits the stop stays put.
+  // Behind a unit (the eye buttons), zooming in past the nearest glides into its eyes; out of them, back behind it
+  // (the map camera never zooms into a unit). The push must be
+  // deliberate — ZOOM_PUSH steps past the limit — so a zoom that just hits the stop stays put.
   const CHASE_MIN = 0.55, CHASE_MAX = 2.2, ZOOM_PUSH = 5;
   let zoomPush = 0;
-  function zoomTarget(){
-    const sel = selected.find(s => s && s.type === 'unit' && s.hp > 0 && unitVisible(s));
-    if (sel) return sel;
-    const c = mapCenter(); let best = null, bd = 16;
-    for (const u of entities) if (u.type === 'unit' && u.team === myTeam && u.hp > 0 && !u.garrisonedIn) { const d = (u.x - c.x) ** 2 + (u.y - c.y) ** 2; if (d < bd) { bd = d; best = u; } }
-    return best;
-  }
-  function zoomIn(now = false){ // pushed in past the nearest: into the unit's eyes
-    if (zoomPush < 0) zoomPush = 0;
-    if (!now && ++zoomPush < ZOOM_PUSH) return;
-    zoomPush = 0;
-    const u = followId != null ? entitiesById.get(followId) : zoomTarget();
-    if (u) { blendMs = 1000; anchorTo(u); mode = 'eye'; refreshButtons(); }             // (a slower glide: the whole angle turns)
-  }
-  function zoomOut(now = false){ // pushed out of the eyes: back behind the unit, at its nearest
+  function zoomIn(now = false){ // pushed in past the chase view's nearest: into the unit's eyes
     if (zoomPush > 0) zoomPush = 0;
     if (!now && --zoomPush > -ZOOM_PUSH) return;
+    zoomPush = 0; blendMs = 1000; mode = 'eye'; refreshButtons();
+  }
+  function zoomOut(now = false){ // pushed out of the eyes: back behind the unit, at its nearest
+    if (zoomPush < 0) zoomPush = 0;
+    if (!now && ++zoomPush < ZOOM_PUSH) return;
     zoomPush = 0; blendMs = 1000; mode = 'chase'; chaseK = CHASE_MIN;
     if (document.pointerLockElement) document.exitPointerLock();
     refreshButtons();
@@ -4460,7 +4441,8 @@
     pip.classList.toggle('world', on);
     pip.style.top = on ? topH + 'px' : '';
     pip.style.bottom = on ? '0' : (bottomH + 10) + 'px';
-    for (const el of [joyEl, actEl, hintEl]) el.style.bottom = on ? (bottomH + 24) + 'px' : '';
+    const pw = document.getElementById('pop-wrap'), lift = pw ? Math.min(pw.offsetHeight, 70) + 8 : 0;   // above the corner buttons (idle/bell/eye/home)
+    for (const el of [joyEl, actEl, hintEl]) el.style.bottom = on ? (bottomH + 24 + lift) + 'px' : '';
     if (on && followId == null) mode = 'orbit';
     if (!on && mode === 'orbit') mode = 'chase';
     if (!on) hideSelectionFx();
@@ -4597,8 +4579,7 @@
     if (drag.kind === 'pinch' && ptrs.size >= 2) { const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
       const r = drag.d / Math.max(20, d);                                                                // pinch: zoom (no rotation, as 2D)
       if (followId != null && mode === 'eye') { if (r > 1.3) { zoomOut(true); drag = null; } return; }
-      if (followId != null && mode !== 'orbit') { if (drag.k * r < CHASE_MIN * 0.75) { zoomIn(true); drag = null; } else chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, drag.k * r)); return; }
-      if (drag.dist * r < ORBIT_MIN * 0.75) { zoomIn(true); drag = null; return; }                  // pinched well past the nearest: into a unit's view
+      if (followId != null && mode !== 'orbit') { if (drag.k * r < CHASE_MIN * 0.75) { zoomIn(true); drag = null; return; } chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, drag.k * r)); return; }
       oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, drag.dist * r)); return; }
     const dx = x - drag.x, dy = y - drag.y;
     if (drag.kind === 'wall') { withPick(pick(x, y), () => updateWallDrag(x, y)); return; }
@@ -4899,7 +4880,7 @@
         else if (STEER_KEYS[k]) held.add(STEER_KEYS[k]);
         else if (ev.key === ' ') { const e = entitiesById.get(followId); if (e && act(e) !== false) swingAt = performance.now(); }
         else return;
-      } else if (ev.key === 'Escape' && world && followId != null && mode === 'eye') leaveToMap();   // in another's eyes (not driving): Esc still leaves
+      } else if (ev.key === 'Escape' && world && followId != null && mode !== 'orbit') leaveToMap();   // on another's unit (not driving): Esc still leaves
       else return;
       ev.stopPropagation(); ev.preventDefault();
     }, true);
@@ -4919,12 +4900,11 @@
     cv.addEventListener('pointerleave', () => { hoverXY = null; });
     cv.addEventListener('wheel', ev => { // the 2D rules: pinch/ctrl or a wheel notch zooms, a trackpad two-finger swipe pans (the map camera, which the 3D view follows)
       if (!world) return; ev.preventDefault();
-      if (followId != null && mode === 'eye') { if (ev.deltaY > 0) zoomOut(); return; }                         // in its eyes: out, back behind it
+      if (followId != null && mode === 'eye') { if (ev.deltaY > 0) zoomOut(); else zoomPush = 0; return; }                         // in its eyes: out, back behind it
       if (followId != null && mode !== 'orbit') { // riding a character: any scroll / pinch zooms the chase camera
         if (ev.deltaY < 0 && chaseK <= CHASE_MIN) { zoomIn(); return; }                                       // in past its nearest: into its eyes
         zoomPush = 0; chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, chaseK * (ev.deltaY < 0 ? 1 / 1.03 : 1.03))); return; }
       if (!ev.ctrlKey && isTrackpadWheel(ev)) { camX += ev.deltaX / ZOOM; camY += ev.deltaY / ZOOM; window.cameraFollowId = null; return; }
-      if (mode === 'orbit' && ev.deltaY < 0 && oDist * zoomBy <= ORBIT_MIN + 1e-6) { zoomIn(); return; }          // in past the nearest: into a unit's view
       if (mode === 'orbit') { zoomPush = 0; zoomBy *= ev.deltaY < 0 ? 1 / 1.02 : 1.02; zoomAt = { x: ev.clientX, y: ev.clientY }; } // a fixed 2% a step, as 2D; applied next frame
     }, { passive: false });
   }
@@ -5001,6 +4981,17 @@
     if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld();
   };
   window.povWorld = () => world;
+  // The eye button: into character mode on a unit — the camera standing behind it (zoom in for its eyes) — opening
+  // the world view if need be; again, back to the map.
+  const inEyes = id => world && followId === id && mode !== 'orbit';
+  window.povEyesUnit = () => world && mode !== 'orbit' ? followId : null;   // whose character mode, if any (the corner eye button)
+  window.povEyes = id => {
+    const u = entitiesById.get(id);
+    if (!u || u.type !== 'unit' || u.hp <= 0) return;
+    if (inEyes(id)) { leaveToMap(); return; }
+    if (!world) openWorld();
+    blendMs = 1000; anchorTo(u); mode = 'chase'; chaseK = 1; refreshButtons();
+  };
   window.__povOnScreen = u => { if (!renderer) return false; _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); _v3.set(x, 0.3, z).project(camera); return _v3.z < 1 && Math.abs(_v3.x) <= 1.05 && Math.abs(_v3.y) <= 1.05; };
   window.__povProject = u => { _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); return project(x, (PICK_H[u.utype] || 0.32), z); }; // dev: a unit's screen spot (tests)
   window.__povPick = (x, y) => { const p = pick(x, y); return { unit: p.unit && p.unit.id, building: p.building && p.building.id, resource: p.resource, map: p.map }; }; // dev: what a click there hits (tests)

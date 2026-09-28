@@ -298,6 +298,14 @@ function setSelHp(html){
   if(el) el.innerHTML=html;
 }
 
+// Character mode's corner button (#eye-btn, beside idle/bell/home): a drawn eye, not the emoji.
+const EYE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.3" fill="currentColor"/></svg>';
+function eyeBtnClick(){
+  let inEyes = window.povEyesUnit ? window.povEyesUnit() : null;
+  if (inEyes != null) window.povEyes(inEyes);                                                     // out
+  else if (selected.length === 1 && selected[0].type === 'unit') window.povEyes(selected[0].id);  // in
+  updateUI();
+}
 function setPortraitIcon(port, key, fallbackEmoji){
   [...port.classList].filter(c=>c==='sprite-icon'||c.startsWith('icon-')).forEach(c=>port.classList.remove(c));
   if (SPRITE_ICON_KEYS.has(key)) {
@@ -457,7 +465,7 @@ function updateUI(){
       food: -1, wood: -1, gold: -1, stone: -1,
       popUsed: -1, popCap: -1, idleCount: -1,
       gameOver: null, gameStarted: null, selectedKey: null,
-      selectionDetails: null, placing: null, currentVillagerMenu: null, undoAvail: false,
+      selectionDetails: null, placing: null, currentVillagerMenu: null, undoAvail: false, eyesUnit: null,
       settingRally: null
     };
   }
@@ -473,6 +481,7 @@ function updateUI(){
 
   let lu = window.lastUIState;
   let undoNow = typeof window.undoAvailable==='function' && window.undoAvailable();
+  let eyesNow = window.povEyesUnit ? window.povEyesUnit() : null;   // character mode on/off (the corner eye button)
   let stateChanged = (
     currentFood !== lu.food || currentWood !== lu.wood ||
     currentGold !== lu.gold || currentStone !== lu.stone ||
@@ -491,7 +500,8 @@ function updateUI(){
     // appears when something ELSE happens to dirty the HUD. A placement's
     // foundation arrives a few ticks after the click (lockstep delay), so
     // without this the button never showed for "send a villager to build".
-    undoNow !== !!lu.undoAvail
+    undoNow !== !!lu.undoAvail ||
+    eyesNow !== lu.eyesUnit
   );
 
   // Live training-progress patch: runs every frame on the EXISTING DOM (bar
@@ -539,6 +549,7 @@ function updateUI(){
   lu.placing = placing;
   lu.currentVillagerMenu = window.currentVillagerMenu;
   lu.undoAvail = undoNow;
+  lu.eyesUnit = eyesNow;
   lu.settingRally = !!window.settingRally;
   lu.settingGuard = !!window.settingGuard;
   lu.settingGarrison = window.settingGarrison;
@@ -585,6 +596,22 @@ function updateUI(){
         : 'Ring the town bell: all villagers run to garrison in the nearest Town Center or tower.';
     } else {
       bellBtn.style.display = 'none';
+    }
+  }
+
+  // Character mode's corner button: there whenever it can act — a single unit selected (in), or you're in character
+  // mode (out, lit green) even after the selection moved on, so the way back is always one tap.
+  let eyeBtn = byId('eye-btn');
+  if(eyeBtn) {
+    let inEyes = window.povEyesUnit ? window.povEyesUnit() : null;
+    let one = selected.length===1 && selected[0].type==='unit' && selected[0].hp>0 ? selected[0] : null;
+    let show = gameStarted && !gameOver && !!window.povEyes && (inEyes!=null || !!one);
+    eyeBtn.style.display = show ? 'flex' : 'none';
+    if (show) {
+      if (!eyeBtn.firstChild) eyeBtn.innerHTML = '<span class="btn-emoji">' + EYE_SVG + '</span>';
+      eyeBtn.classList.toggle('eye-on', inEyes!=null);
+      eyeBtn.dataset.tipLabel = 'Character mode';
+      eyeBtn.dataset.tipDesc = inEyes!=null ? 'Leave character mode and return to the map (Esc).' : 'Follow the selected unit in 3D from right behind it — steer your own with W/A/S/D, zoom in for its eyes.';
     }
   }
 
