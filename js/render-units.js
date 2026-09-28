@@ -1053,7 +1053,7 @@ function drawCorpse(c){
     rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
   }
   let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
-  let big = isMountedUnit(c.utype) || c.utype === 'bear'; // horse/bear-sized corpse
+  let big = isMountedUnit(c.utype) || isWildPredator(c); // horse/bear-sized corpse
 
   // Wooden vehicles get their own break-apart wreck sequences — they don't
   // topple like bodies (the cart's ox falls separately; the ram caves in).
@@ -1103,6 +1103,8 @@ function drawCorpse(c){
       // Bear remains: same construction as the horse but squatter — the
       // boulder ribcage is the read
       drawHorseSkeleton(1.15);
+    } else if(c.utype==='dragon'){
+      drawHorseSkeleton(2.1);             // a great beast's bones
     } else {
       drawHumanSkeleton(0,0,1.25);
     }
@@ -2361,7 +2363,7 @@ const UNIT_SHADOW = {
   villager:{len:0.17,wid:0.17}, militia:{len:0.18,wid:0.18},
   spearman:{len:0.18,wid:0.18}, archer:{len:0.18,wid:0.18},
   scout:{len:0.42,wid:0.19},    knight:{len:0.44,wid:0.21},
-  bear:{len:0.34,wid:0.26},     sheep:{len:0.17,wid:0.17},
+  bear:{len:0.34,wid:0.26},     sheep:{len:0.17,wid:0.17},     dragon:{len:1.2,wid:0.8},
   sheep_carcass:{len:0.22,wid:0.2},
   // Ram: big, elongated, and its wheels touch AT the anchor line (yoff),
   // unlike foot units whose feet sit ~6px above it. Goes through the same
@@ -2378,7 +2380,7 @@ const UNIT_SHADOW = {
 // upper-left light, matching the building shadows (buildingShadowPath).
 function drawUnitShadow(e, sx, sy){
   let f = UNIT_SHADOW[e.utype] || {len:0.18, wid:0.18};
-  let ta = (e.dir || 0) * Math.PI / 4; // facing angle in TILE space
+  let ta = e.faceAng !== undefined ? e.faceAng : (e.dir || 0) * Math.PI / 4; // facing angle in TILE space (the dragon: its own smooth heading)
   X.save();
   X.fillStyle = 'rgba(0,0,0,0.28)';
   // No horizontal nudge: units are small enough that the buildings' cast-
@@ -2526,10 +2528,6 @@ function drawBearBody(e){
   bearShapes(1.1);
   X.fillStyle='#6b4a2c';
   bearShapes(0);
-  // Lighter belly fur low on the body (subtle: a real fur tone, not a band)
-  X.fillStyle='#775233';
-  if(pose==='side'||pose==='backside') X.beginPath(), X.ellipse(0.5,-0.4,6,2,0,0,Math.PI*2), X.fill();
-  else if(pose==='front') X.beginPath(), X.ellipse(0,-0.2,4,1.8,0,0,Math.PI*2), X.fill();
   // Fur shading: light along the massive back, ground shade under the belly
   X.fillStyle='rgba(255,235,200,0.28)';
   if(pose==='front'||pose==='back') X.beginPath(), X.ellipse(0,-10.2,4.4,2.4,0,0,Math.PI*2), X.fill();
@@ -2578,6 +2576,399 @@ function drawBearBody(e){
       X.beginPath(); X.moveTo(hx+1.6,hy+1.2); X.lineTo(hx+5.2,hy+0.9); X.lineTo(hx+1.6+3.4*Math.cos(ja),hy+1.2+3.4*Math.sin(ja)); X.closePath(); X.fill();
     }
   }
+  X.restore();
+}
+
+// ---- The dragon's animation, shared by the 2D art (drawDragonBody) and the 3D model (js/pov3d.js) ----
+// Viewer-only: nothing here is read by the sim. dragonAnim advances one dragon's animation state `a` by dt seconds
+// and returns its pose numbers — the same numbers both views draw — plus this frame's events (footfalls, the slam,
+// smoke) for each view's own dust and shake. The caller keeps a.phase / a.gait (its stride, from how far the
+// dragon was drawn to move) and may set a.roarT (a scripted roar, 0..1), a.noRoar, a.lab.
+const DRAGON_LEG_PHASE = [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI); // legs 0/1 hind, 2/3 fore
+// The stride: each leg's foot, x −1 (back) … 1 (ahead), its lift, and the heel roll (late stance heel up, toes down
+// in the swing).
+function dragonStride(phase, i){
+  const q = (((phase + DRAGON_LEG_PHASE[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  if (q < Math.PI) return { q, x: 1 - 2 * q / Math.PI, up: 0, roll: Math.max(0, (q / Math.PI - 0.75) / 0.25) * 0.5 };
+  const u = q / Math.PI - 1; return { q, x: -Math.cos(u * Math.PI), up: Math.sin(u * Math.PI), roll: -0.45 * Math.sin(u * Math.PI) };
+}
+function dragonAnim(e, a, dt){
+  const D = a.dr || (a.dr = { ck: 0, sp: {}, q: [0, 0, 0, 0] }); D.ck += dt; const ck = D.ck, idp = e.id || 0;
+  const spring = (k, target, K, z) => { let S = D.sp[k]; if (!S) S = D.sp[k] = { x: target, v: 0 };
+    const w = Math.sqrt(K); for (let left = dt; left > 1e-6; left -= 0.02) { const h = Math.min(0.02, left); S.v += (-K * (S.x - target) - 2 * z * w * S.v) * h; S.x += S.v * h; } return S.x; };
+  const kick = (k, v) => { if (D.sp[k]) D.sp[k].v += v; };
+  const moving = isUnitMoving(e), asleep = !e.awake && !moving, rof = UNITS.dragon.rof, cd = e.atkCooldown || 0;
+  const since = e.breathTick !== undefined ? tick - e.breathTick : 1e9, blast = since < T30(26) ? since / T30(26) : 1;
+  const bl = blast < 1 ? Math.sin(Math.min(1, blast * 3) * Math.PI / 2) * (1 - blast) ** 0.6 : 0;   // the thrust: snaps in, fades
+  const inhale = e.target && !moving && blast >= 1 && cd > 0 && cd < rof * 0.35 ? 1 - cd / (rof * 0.35) : 0;
+  if (e.target && e.target !== D.prey && a.roarT === undefined && !a.noRoar) D.roarAt = ck; D.prey = e.target;
+  const ro = a.roarT ?? (D.roarAt !== undefined ? Math.min(1, (ck - D.roarAt) / 1.9) : 1);
+  const sm = x => x * x * (3 - 2 * x), rr = ro < 0.3 ? sm(ro / 0.3) : ro < 0.62 ? 1 : ro < 0.74 ? 1 - ((ro - 0.62) / 0.12) ** 2 : 0; // rear up, hold, drop
+  const roarJaw = ro > 0.18 && ro < 0.8 ? Math.sin((ro - 0.18) / 0.62 * Math.PI) : 0;
+  a.sleep = (a.sleep ?? (asleep ? 1 : 0)) + ((asleep ? 1 : 0) - (a.sleep ?? 0)) * Math.min(1, dt * 0.7);  // heavy: wakes and settles slowly
+  const sl = sm(Math.max(0, Math.min(1, a.sleep))), g = a.gait, awake = 1 - sl;
+  // breathing: slow and deep asleep, the chest swelling for the breath
+  const bp = ck / (sl > 0.5 ? 4.6 : 3.2) * 2 * Math.PI + idp, br0 = 0.5 + 0.5 * Math.sin(bp);
+  const chest = (0.045 * sl + 0.035 * awake) * br0 + 0.08 * inhale - 0.04 * bl;
+  // footfalls: each leg's touchdown (its stride phase wrapping) sinks the body and rolls it
+  const ev = { steps: [], slam: false, snore: false, smoke: false };
+  for (let i = 0; i < 4; i++) { const q = dragonStride(a.phase, i).q;
+    if (g > 0.5 && q < D.q[i] - Math.PI) { kick('sink', -0.55); kick('roll', (i % 2 ? 1 : -1) * 0.25); ev.steps.push(i); }
+    D.q[i] = q; }
+  if (D.lastRo !== undefined && D.lastRo < 0.74 && ro >= 0.74) { kick('sink', -1.6); kick('pitch', -0.6); kick('tailZ1', 1.4); kick('tailZ2', 2); ev.slam = true; } // the slam (the tail bounces)
+  D.lastRo = ro;
+  // body: sink and bounce, roll with the steps and an idle weight shift, pitch about the hind feet (rear up / lurch)
+  const sink = spring('sink', 0, 55, 0.3);
+  const shift = Math.sin(ck * 0.33 + idp) * awake * (1 - g);                              // idle: the weight rocks from side to side
+  const roll = spring('roll', Math.sin(a.phase) * 0.05 * g + shift * 0.04, 14, 0.45);
+  const pitch = spring('pitch', 0.22 * rr + 0.05 * inhale - 0.09 * bl + Math.sin(2 * a.phase) * 0.02 * g, 22, 0.42);
+  // neck and head: lag behind the body (a head of that weight swings through), look round slowly when idle
+  const lookT = (0.45 * Math.sin(ck * 0.29 + idp) + 0.2 * Math.sin(ck * 0.71 + 2)) * awake * (1 - g * 0.6) * (1 - rr) * (1 - bl);
+  const neck = spring('neck', -1.25 * sl + 0.12 * inhale - 0.4 * bl + 0.12 * rr - 0.5 * pitch - Math.sin(2 * a.phase + 0.6) * 0.12 * g + Math.sin(ck * 0.5 + idp) * 0.06 * awake * (1 - g), 16, 0.42);
+  const neckY = spring('neckY', lookT, 7, 0.55);
+  const head = spring('head', 0.8 * sl - 0.22 * inhale + 0.3 * bl - 0.3 * roarJaw, 26, 0.45);
+  const headX = spring('headX', Math.sin(ck * 23) * 0.05 * roarJaw, 60, 0.3);                  // the roar shakes it
+  const snore = sl * 0.07 * Math.max(0, Math.sin(bp + Math.PI));
+  const jaw = spring('jaw', 0.65 * bl + 0.75 * roarJaw + snore + 0.06 * inhale, 70, 0.55);
+  const blink = Math.max(0, Math.sin(ck * 0.83 + idp)) ** 60, eyeShut = Math.max(sl, blink);
+  // tail, three joints: the swing travels down it — each joint later and wider than the last, on a softer spring,
+  // so the tip whips; pressed down when it rears (and bounced by the slam); curled round the body asleep
+  const wave = k => Math.sin(ck * 0.45 + idp - k * 0.9) * (0.16 + 0.07 * k) * awake * (1 - g) - Math.sin(a.phase - k * 0.8) * (0.14 + 0.06 * k) * g
+    + Math.sin(ck * 4 - k * 1.2) * 0.12 * bl * k;                                                // (the breath's recoil lashes the tip)
+  const tail = [0, 1, 2].map(k => spring('tail' + k, wave(k) + [0.6, 0.65, 0.7][k] * sl, [5, 7, 9][k], [0.35, 0.3, 0.25][k]));
+  const tailZ = [0, 1, 2].map(k => spring('tailZ' + k, [-0.12 * sl - 0.4 * rr + 0.12 * bl, -0.1 * sl - 0.12 * rr + 0.06 * bl, 0.08 * sl + 0.1 * rr][k], [9, 8, 10][k], [0.4, 0.35, 0.3][k]));
+  const spade = spring('spade', 0.6 * sl * Math.max(0, Math.sin(ck * 0.3 + idp)) ** 12 * Math.sin(ck * 9) + 0.3 * tail[2], 40, 0.3); // twitching in its sleep
+  // wings: open to the roar and the breath (half at the inhale), beating as it roars; folded they rise with the breathing
+  const shuffle = 0.3 * Math.max(0, Math.sin(ck * 0.17 + idp)) ** 10 * (1 - g);                // now and then it resettles its wings
+  const open = Math.max(0, Math.min(1, spring('wing', Math.max(bl, rr, 0.55 * inhale, e.target && !moving ? 0.3 : 0, shuffle) * awake, 12, 0.5)));
+  const beat = Math.sin(ck * 7) * 0.35 * rr + spring('wingBob', 0, 30, 0.3) * 0.5 + Math.sin(2 * a.phase - 0.8) * 0.08 * g; // folded wings bounce with the steps
+  if (g > 0.5) kick('wingBob', -Math.abs(D.sp.sink ? D.sp.sink.v : 0) * dt * 3);
+  const flame = bl > 0.02 ? Math.min(1, blast * 6) : 0;
+  ev.snore = sl > 0.8 && D.lastBp !== undefined && Math.sin(D.lastBp + Math.PI) < 0.95 && Math.sin(bp + Math.PI) >= 0.95;
+  ev.smoke = blast > 0.6 && blast < 1 && Math.random() < dt * 6;
+  D.lastBp = bp;
+  const reach = rr * (0.7 + 0.3 * Math.sin(ck * 5)) + 0.3 * inhale;                              // fore legs paw the air as it rears
+  a.lie = sl;
+  // the body's offset: pitched about the hind feet, lurched by the breath, crouched by the inhale, lowered asleep
+  const hind = -0.45, bodyX = hind - hind * Math.cos(pitch) + 0.1 * bl - 0.04 * inhale, bodyY = -hind * Math.sin(pitch) + sink * 0.12 - 0.07 * inhale - 0.4 * sl;
+  return { ck, sl, awake, g, rr, inhale, bl, blast, chest, sink, roll, pitch, bodyX, bodyY, neck, neckY, head, headX, jaw, eyeShut,
+    tail, tailZ, spade, open, beat, flame, reach, ev };
+}
+// The dragon's wing, bat-style, laid out for fold fd (0 spread … 1 folded; tuck 0..1 tighter still, asleep): joints
+// shoulder S → elbow E → wrist W, fingertips F0..F2, the hip attach B, and the membrane's scallop points M*. In the
+// wing's own plane: x chord (back −), y span (out), z its normal (the pleats step out of it in turn, by side sd).
+const DRAGON_WING = { S: [0.05, 0], LU: 0.38, LF: 0.5, LK: [0.82, 0.74, 0.6], B: [-0.78, 0.04],
+  // joint angles from the span axis, + toward the back: spread (arm out, fingers fanned) → folded (upper arm back,
+  // forearm doubled forward, fingers doubled back along it, drawn together)
+  spread: { u: -0.1, f: -0.05, k: [0.05, 0.62, 1.2] }, folded: { u: 1.15, f: -1.35, k: [1.72, 1.8, 1.88] },
+  tucked: { u: 1.4, f: -1.62, k: [1.92, 1.97, 2.02] },                                    // asleep: folded tighter still, fingers pulled in
+  pleat: [0.07, 0.02, 0.07] };                                                             // folded, the fingers step out of the plane in turn: the membrane between zig-zags
+function dragonWingJoints(fd, tuck, sd){
+  const WG = DRAGON_WING, e = fd * fd * (3 - 2 * fd), A = (a, b) => a + (b - a) * e, P = WG.spread, T = WG.tucked, F0 = WG.folded;
+  const mixQ = (a, b) => a + (b - a) * tuck, Q = { u: mixQ(F0.u, T.u), f: mixQ(F0.f, T.f), k: F0.k.map((v, k) => mixQ(v, T.k[k])) }; // the fold, tucked tighter as it sleeps
+  const dir = th => [-Math.sin(th), Math.cos(th)], at = (o, th, L, z = 0) => { const v = dir(th); return [o[0] + v[0] * L, o[1] + v[1] * L, z]; };
+  const S = [WG.S[0], WG.S[1], 0], u = A(P.u, Q.u), E = at(S, u, WG.LU), f = u + A(P.f, Q.f), W = at(E, f, WG.LF);
+  const F = WG.LK.map((L, k) => at(W, f + A(P.k[k], Q.k[k]), L * A(1, 0.72 - 0.15 * tuck), sd * WG.pleat[k] * e));
+  const B = [WG.B[0], WG.B[1], 0], mid = (a, b, t, z) => [(a[0] + b[0]) / 2 + (W[0] - (a[0] + b[0]) / 2) * t, (a[1] + b[1]) / 2 + (W[1] - (a[1] + b[1]) / 2) * t, z];
+  return { S, E, W, B, F0: F[0], F1: F[1], F2: F[2], M01: mid(F[0], F[1], 0.28, (F[0][2] + F[1][2]) / 2 - sd * 0.03 * e), M23: mid(F[1], F[2], 0.28, (F[1][2] + F[2][2]) / 2 - sd * 0.03 * e), M3: mid(F[2], B, 0.2, F[2][2] / 2) };
+}
+// The dragon's legs: a two-bone reach (thigh th, shin sh, the knee bending by `bend`: hind forward +1, fore back −1)
+// from the hip to a foot at (tx, ty) (hip-relative, y up): the hip and knee angles, 0 = straight down, + toward +x.
+const DRAGON_FOOT = 0.1; // the ankle's height over the sole
+const DRAGON_LEG = { hind: { th: 0.31, sh: 0.33, bend: 1 }, fore: { th: 0.28, sh: 0.32, bend: -1 } };
+// Lying: the hip ~0.22 over the ground, so each joint rests ON it beside the body. Hind: thigh down-forward to the
+// knee on the ground at the flank, shin folded straight back along it (the foot under it). Fore, a sphinx's: upper
+// arm down-back to the elbow at the chest's side, forearm out forward along the ground.
+const DRAGON_TUCK = { hind: { hip: 0.78, knee: -Math.PI / 2 - 0.78, out: 0.42 }, fore: { hip: -0.67, knee: Math.PI / 2 + 0.67, out: 0.36 } };
+function dragonLegIK(L, tx, ty){
+  const d = Math.max(Math.abs(L.th - L.sh) + 0.02, Math.min(L.th + L.sh - 1e-3, Math.hypot(tx, ty)));
+  const base = Math.atan2(tx, -ty), a1 = Math.acos((L.th * L.th + d * d - L.sh * L.sh) / (2 * L.th * d)), k = Math.acos((L.th * L.th + L.sh * L.sh - d * d) / (2 * L.th * L.sh));
+  return [base + L.bend * a1, -L.bend * (Math.PI - k)];
+}
+// The dragon's animation sounds (its footfalls, the slam, snoring), from the view that draws it — the 2D map or the
+// 3D world view, never both. Viewer-only.
+function dragonSounds(e, ev){
+  if (!window.playSound) return;
+  if (ev.steps.length) playSound('dragon_step', e.x, e.y);
+  if (ev.slam) playSound('dragon_slam', e.x, e.y);
+  if (ev.snore) playSound('dragon_snore', e.x, e.y);
+}
+const DRAGON_COL = { plate: '#2c5a28', plateLit: '#4b8341', plateDark: '#24491f', body: '#3f7a3a', dark: '#35693a', bone: '#2c5a28', belly: '#dcc47e', membrane: '#6f9e4c', horn: '#efe3c4', eye: '#ffd23a' };
+// The dragon in 2D: the 3D model's own shape (the same model numbers as js/pov3d.js), posed by the same dragonAnim
+// numbers, and projected at its real heading into the map's isometric view — so it reads from every direction as
+// it turns (side, three-quarter, front, back). Round parts project to ellipses, limbs to tubes, plates and wings to
+// polygons; they're painted far to near under one black silhouette, with a flat cel shadow on each rounded part.
+// (to scale with the map, as the 3D model: a model unit is a tile — HALF_TW across the iso view, the 3D view's HPX
+// tall — divided by the UNIT_SCALE drawUnit applies)
+// the underside shade: its tint, and each group's lift (model units: the band's depth under a level part)
+const DRAGON_SHADE = { col: '#0c280c', alpha: 0.2, trunk: 0.2, neck: 0.07, face: 0.07, tail: 0.08, leg: 0.06, wing: 0.14 };
+let dragonShadeC = null;
+const DRAGON_K = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2 / UNIT_SCALE, DRAGON_C = HALF_TW / UNIT_SCALE, dragon2D = new Map();
+const DRAGON_STRIDE = 0.5 * Math.sin(0.42), DRAGON_LIFT = 0.08; // (GAIT.dragon, js/pov3d.js)
+function drawDragonBody(e){
+  // the animation: its own clock and stride per dragon; the selection/outline mask pass re-draws the last pose
+  let a = dragon2D.get(e.id);
+  if (!a) dragon2D.set(e.id, a = { phase: 0, gait: 0, px: e.x, py: e.y, last: 0 });
+  if (!window._maskDraw || !a.P) {
+    const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
+    const moved = Math.hypot(e.x - a.px, e.y - a.py); a.px = e.x; a.py = e.y;
+    a.gait += ((moved > 1e-4 ? 1 : 0) - a.gait) * Math.min(1, dt * 8);
+    a.phase += moved / (4 * DRAGON_STRIDE) * 2 * Math.PI;
+    a.P = dragonAnim(e, a, dt);
+    if (!e.corpseRot) {
+      for (const i of a.P.ev.steps) spawnParticles(e.x, e.y, '#b7a27a', 2, 0.02, 0.6);
+      if (a.P.ev.slam) spawnParticles(e.x, e.y, '#b7a27a', 8, 0.04, 1.4);
+      dragonSounds(e, a.P.ev);
+    }
+  }
+  const P = a.P, C = DRAGON_COL, K = DRAGON_K, cos = Math.cos, sin = Math.sin, TAU = Math.PI * 2;
+  X.save(); if (e.facing === -1) X.scale(-1, 1);                                                     // (it draws its own heading: undo drawUnit's mirror)
+  // --- the projection: model (x forward, y up, z to its left) → world by its heading → the isometric screen (px) ---
+  const hd0 = e.faceAng !== undefined ? e.faceAng : (e.dir !== undefined ? e.dir : 7) * Math.PI / 4;
+  const fx = cos(hd0), fy = sin(hd0), sx = -fy, sy = fx, Cc = DRAGON_C, RR = Cc * Math.SQRT2;          // (a tube's thickness: the across-the-view scale, not the vertical)
+  const Pf = [(fx - fy) * Cc, (fx + fy) * Cc / 2], Ps = [(sx - sy) * Cc, (sx + sy) * Cc / 2];
+  const pj = (x, y, z) => [x * Pf[0] + z * Ps[0], x * Pf[1] + z * Ps[1] - y * K];
+  const depth = (x, z) => x * (fx + fy) + z * (sx + sy);                                             // nearer the viewer = larger
+  const cp = cos(P.pitch), spc = sin(P.pitch);
+  const bm = (x, y, z = 0) => [P.bodyX + x * cp - y * spc, P.bodyY + x * spc + y * cp, z];           // body frame → model
+  // --- path helpers (screen px); every subpath wound one way, so overlapping pieces of one path never cut holes ---
+  const polyP = pts => { let a2 = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a2 += p[0] * q[1] - q[0] * p[1]; }
+    const o = a2 < 0 ? pts.slice().reverse() : pts; X.moveTo(o[0][0], o[0][1]); for (let i = 1; i < o.length; i++) X.lineTo(o[i][0], o[i][1]); X.closePath(); };
+  const ellP = (cx, cy, rx, ry, rot = 0) => { X.moveTo(cx + rx * cos(rot), cy + rx * sin(rot)); X.ellipse(cx, cy, Math.max(0.5, rx), Math.max(0.5, ry), rot, 0, TAU); };
+  // An ellipsoid in a frame f (f(x, y, z) → model point: the body's, the head's, the jaw's) seen on screen: its three
+  // radii projected as vectors, and the ellipse they span (from their covariance) — turned with the part, not boxed
+  // upright, so a long jaw seen at a slant stays a slim slanted oval.
+  const ellOf = (f, x, y, z, rx, ry, rz) => { const o = pj(...f(x, y, z));
+    const ax = [f(x + rx, y, z), f(x, y + ry, z), f(x, y, z + rz)].map(m => { const q = pj(...m); return [q[0] - o[0], q[1] - o[1]]; });
+    let sxx = 0, sxy = 0, syy = 0; for (const [u, v] of ax) { sxx += u * u; sxy += u * v; syy += v * v; }
+    const tr = (sxx + syy) / 2, dd = Math.sqrt(((sxx - syy) / 2) ** 2 + sxy * sxy), rot = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    return [o[0], o[1], Math.sqrt(tr + dd), Math.sqrt(Math.max(0, tr - dd)), rot, f(x, y, z)]; };
+  const tubeP = (a0, a1, ra, rb) => { const dx = a1[0] - a0[0], dy = a1[1] - a0[1], l = Math.hypot(dx, dy) || 1e-6, nx = -dy / l, ny = dx / l;
+    ellP(a0[0], a0[1], ra, ra); ellP(a1[0], a1[1], rb, rb);
+    polyP([[a0[0] + nx * ra, a0[1] + ny * ra], [a1[0] + nx * rb, a1[1] + ny * rb], [a1[0] - nx * rb, a1[1] - ny * rb], [a0[0] - nx * ra, a0[1] - ny * ra]]); };
+  // the parts: { col, path, d (depth), clip }
+  // (grp: the shading group — trunk, head, tail, a leg — the parts added now belong to)
+  let grp = null; const parts = [], add = (col, d, path, clip) => { const p = { col, d, path, clip, g: grp }; parts.push(p); return p; };
+  // an ellipsoid (model centre, radii along its x / y / z) → the ellipse it projects to
+  const blob = (col, m, rx, ry, rz) => { const [cx, cy] = pj(...m);
+    const hx = Math.hypot(rx * Pf[0], rz * Ps[0]), hy = Math.hypot(rx * Pf[1], ry * K, rz * Ps[1]);
+    add(col, depth(m[0], m[2]), () => ellP(cx, cy, hx, hy)).bb = [cx - hx, cy - hy, cx + hx, cy + hy]; };
+  // (bb: a part's screen box, for its group's underside shade — see the paint pass)
+  const blobF = (col, f, x, y, z, rx, ry, rz, dBias = 0) => { const [cx, cy, a, b2, rot, m] = ellOf(f, x, y, z, rx, ry, rz);
+    add(col, depth(m[0], m[2]) + dBias, () => ellP(cx, cy, a, b2, rot)).bb = [cx - a, cy - a, cx + a, cy + a]; };
+  const tube = (col, m0, m1, r0, r1, dBias = 0) => { const a0 = pj(...m0), a1 = pj(...m1), r = Math.max(r0, r1) * RR;
+    add(col, (depth(m0[0], m0[2]) + depth(m1[0], m1[2])) / 2 + dBias, () => tubeP(a0, a1, r0 * RR, r1 * RR)).bb =
+      [Math.min(a0[0], a1[0]) - r, Math.min(a0[1], a1[1]) - r, Math.max(a0[0], a1[0]) + r, Math.max(a0[1], a1[1]) + r]; };
+  const poly = (col, ms, dBias = 0) => { const pts = ms.map(m => pj(...m)), xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+    add(col, ms.reduce((s, m) => s + depth(m[0], m[2]), 0) / ms.length + dBias, () => polyP(pts)).bb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
+  const s1 = 1 + P.chest * 0.35, s2 = 1 + P.chest;
+  // body: haunch, barrel, chest (model 3D's blobs), the back plates
+  grp = 'trunk';
+  blobF(C.body, bm, -0.52 * s1, 0.72 * s2, 0, 0.36 * s1, 0.36 * s2, 0.4 * s1);
+  blobF(C.body, bm, -0.12 * s1, 0.74 * s2, 0, 0.62 * s1, 0.42 * s2, 0.44 * s1);
+  blobF(C.body, bm, 0.28 * s1, 0.8 * s2, 0, 0.5 * s1, 0.46 * s2, 0.46 * s1); grp = null;
+  const bodyD = depth(bm(0, 0)[0], 0);
+  // the back plates: a row of fins stood along the spine — each set on the body's top line where it stands (so the row
+  // follows the back in one line), a triangle ±0.5·h at the base, h tall, leaning back, with a little thickness so seen
+  // end-on they're slim wedges, not lines; tallest mid-back, in the dark plate colour
+  const topAt = x => Math.max(...[[-0.52, 0.72, 0.36, 0.36], [-0.12, 0.74, 0.62, 0.42], [0.28, 0.8, 0.5, 0.46]]
+    .map(([cx, cy, rx, ry]) => { const u = (x - cx * s1) / (rx * s1); return u * u < 1 ? cy * s2 + ry * s2 * Math.sqrt(1 - u * u) : -9; }));
+  const hull2 = pts => { pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = []; for (const q of pts) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+    for (let n = pts.length - 1; n >= 0; n--) { const q = pts[n]; while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+    return lo.slice(0, -1).concat(up.slice(0, -1)); };
+  // Set where the 3D model sets them (the front ones sunk deep in the chest): only what stands above the back line
+  // shows, so each triangle is clipped to the body's top — else the buried ones read as saw-teeth up the neck.
+  for (let k = 0; k < 5; k++) { const x = 0.42 - k * 0.24, h = (0.36 - Math.abs(k - 2) * 0.07) * s2, y = (1.14 - Math.abs(k - 2) * 0.05) * s2, ln = 0.3;
+    // the 3D plate's shape: a three-sided cone (base corners at radius 0.55·h, squashed to 0.35 across), so edge-on it's a spike
+    const r = 0.55 * h, base = [[0, 0.35 * r], [0.866 * r, -0.175 * r], [-0.866 * r, -0.175 * r]], pts = [];
+    const put = (u, v, w) => { const px = x + u * cos(ln) - v * sin(ln), py = y + u * sin(ln) + v * cos(ln); pts.push([px, Math.max(py, topAt(px) - 0.03), w]); };
+    for (let n = 0; n < 3; n++) for (let t = 0; t <= 8; t++) { const [u0, w0] = base[n], [u1, w1] = base[(n + 1) % 3];
+      put(u0 * (1 - t / 8), h * t / 8, w0 * (1 - t / 8)); put(u0 + (u1 - u0) * t / 8, 0, w0 + (w1 - w0) * t / 8); }
+    if (pts.every(([px, py]) => py <= topAt(px) - 0.02)) continue;
+    const ms = pts.map(([px, py, w]) => bm(px, py, w));
+    const out = hull2(ms.map(m => pj(...m)));
+    // two-tone, split down its ridge (apex to the middle of its base): the half toward the light (the view's left) lit,
+    // the other dark — so every spike reads as a solid from any side, never a flat cut-out lost against the wing bones
+    const P3 = (u, v) => { const px = x + u * cos(ln) - v * sin(ln), py = y + u * sin(ln) + v * cos(ln); return pj(...bm(px, Math.max(py, topAt(px) - 0.03), 0)); };
+    const ap = P3(0, h), bs = P3(0, 0);
+    add(C.plate, Math.max(ms.reduce((a, m) => a + depth(m[0], m[2]), 0) / ms.length + 0.01, bodyD + 0.037), () => polyP(out)).draw = () => { // (over the far wing's root, under the near one's)
+      X.save(); X.beginPath(); polyP(out); X.clip(); X.fillStyle = C.plateDark; X.fill();
+      X.fillStyle = C.plateLit; X.beginPath(); X.moveTo(ap[0], ap[1] - 50); X.lineTo(ap[0], ap[1]); X.lineTo(bs[0], bs[1]); X.lineTo(bs[0], bs[1] + 50); X.lineTo(Math.min(ap[0], bs[0]) - 80, bs[1] + 50);
+      X.lineTo(Math.min(ap[0], bs[0]) - 80, ap[1] - 50); X.closePath(); X.fill(); X.restore(); };
+    parts[parts.length - 1].strokeOnly = () => polyP(out); }
+  // the belly, as the 3D model's: a pale ellipsoid pressed into the body, seen only where its surface lies outside the
+  // body's blobs (from the side a strip along the underside, from the front the bottom of the chest, from above nothing).
+  // Traced as a smooth outline: its viewer-facing half, laid out polar (ρ from the silhouette rim at 1 in to the middle at
+  // 0, round by φ); along each spoke the visible run starts at the rim and ends where it enters the body (found by
+  // bisection). Its whole ellipse joins the silhouette (where it pokes below the body, that's the outline).
+  { const B = [0.02 * s1, 0.46 * s2, 0, 0.62 * s1, 0.2 * s2, 0.34 * s1];
+    const bodies = [[-0.52 * s1, 0.72 * s2, 0.36 * s1, 0.36 * s2, 0.4 * s1], [-0.12 * s1, 0.74 * s2, 0.62 * s1, 0.42 * s2, 0.44 * s1], [0.28 * s1, 0.8 * s2, 0.5 * s1, 0.46 * s2, 0.46 * s1]];
+    const hv = [(fx + fy) / Math.SQRT2 * cos(Math.PI / 6), sin(Math.PI / 6), (sx + sy) / Math.SQRT2 * cos(Math.PI / 6)];  // toward the viewer (model), the iso 30°
+    const hb2 = [hv[0] * cp + hv[1] * spc, -hv[0] * spc + hv[1] * cp, hv[2]];                                          // … in the body frame
+    // the unit-sphere frame: w the facing pole (a surface point u faces the viewer when u·w > 0), e1/e2 across it
+    let w = [hb2[0] / B[3], hb2[1] / B[4], hb2[2] / B[5]]; const wl = Math.hypot(...w); w = w.map(v => v / wl);
+    const ax = Math.abs(w[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let e1 = cr(w, ax); const l1 = Math.hypot(...e1); e1 = e1.map(v => v / l1); const e2 = cr(w, e1);
+    const at = (r, f) => { const c = cos(f) * r, sn = sin(f) * r, h = Math.sqrt(Math.max(0, 1 - r * r));
+      return [0, 1, 2].map(n => B[n] + B[n + 3] * (c * e1[n] + sn * e2[n] + h * w[n])); };
+    const seen = c => !bodies.some(([x, y, rx, ry, rz]) => ((c[0] - x) / rx) ** 2 + ((c[1] - y) / ry) ** 2 + (c[2] / rz) ** 2 < 1);
+    const scr = (r, f) => pj(...bm(...at(r, f)));
+    const inner = f => { let r = 1; while (r > 0 && seen(at(r - 0.05, f))) r -= 0.05; if (r <= 0) return 0;          // the run's inner end
+      let lo = r - 0.05, hi = r; for (let n = 0; n < 7; n++) { const m = (lo + hi) / 2; if (seen(at(m, f))) hi = m; else lo = m; } return hi; };
+    const NF = 72, fs = Array.from({ length: NF }, (_, n) => n / NF * TAU), rim = fs.map(f => seen(at(1, f)));
+    const edge = (f0, f1) => { let lo = f0, hi = f1; const s0 = seen(at(1, f0)); for (let n = 0; n < 7; n++) { const m = (lo + hi) / 2; if (seen(at(1, m)) === s0) lo = m; else hi = m; } return (lo + hi) / 2; };
+    const loops = [];
+    if (rim.every(Boolean)) {                                                    // the whole rim shows (seen head-on): the ellipse, less any hidden middle
+      const inn = fs.map(inner); loops.push(fs.map(f => scr(1, f)));
+      if (inn.some(r => r > 0.02)) loops.push(fs.map((f, n) => scr(inn[n], f)).reverse());
+    } else if (rim.some(Boolean)) {                                              // runs of spokes whose rim shows: rim out, inner ends back
+      const k0 = rim.indexOf(false);
+      for (let j = 0; j < NF; j++) { const k = (k0 + j) % NF; if (!rim[k] || rim[(k + NF - 1) % NF]) continue;
+        const run = []; let m = k; while (rim[m % NF] && run.length < NF) { run.push(m % NF); m++; }
+        const fa = edge(fs[(k + NF - 1) % NF] + (k === 0 ? -TAU : 0), fs[k]), fb = edge(fs[(m - 1) % NF], fs[(m - 1) % NF] + TAU / NF);
+        const out = [scr(1, fa)], back = [];
+        for (const q of run) { out.push(scr(1, fs[q])); back.push(scr(inner(fs[q]), fs[q])); }
+        loops.push(out.concat([scr(1, fb)], back.reverse())); }
+    }
+    const [ecx, ecy, ea, eb, erot] = ellOf(bm, B[0], B[1], B[2], B[3], B[4], B[5]);
+    // (loops drawn as given — a hidden middle is wound against the rim, so nonzero fill leaves it a hole)
+    const lp = L => { X.moveTo(L[0][0], L[0][1]); for (let n = 1; n < L.length; n++) X.lineTo(L[n][0], L[n][1]); X.closePath(); };
+    if (loops.length) parts.push({ col: C.belly, d: bodyD + 0.02, strokeOnly: () => ellP(ecx, ecy, ea, eb, erot), path: () => { for (const L of loops) lp(L); } }); }
+  // tail: from inside the haunch, three joints (their swing turning it sideways, their lift bending it), the spade
+  { let x = -0.8, y = 0.74, z = 0, yaw = 0, pit = 0;
+    grp = 'tail'; tube(C.body, bm(-0.45, 0.74), bm(-0.8, 0.74), 0.34, 0.26);
+    [[-0.6, -0.16, 0.26, 0.17], [-0.6, -0.2, 0.17, 0.1], [-0.55, 0.02, 0.1, 0.05]].forEach(([dx, dy, r0, r1], k) => {
+      yaw += P.tail[k]; pit += P.tailZ[k]; const L = Math.hypot(dx, dy), ang = Math.atan2(dy, dx) + pit;
+      const nx = x + cos(ang) * L * cos(yaw), ny = y + sin(ang) * L, nz = z + L * sin(yaw);
+      tube(C.body, bm(x, y, z), bm(nx, ny, nz), r0, r1); x = nx; y = ny; z = nz; }); grp = null;
+    // the spade, as the 3D one: a dark arrowhead on the tail's tip pointing on along it — a flattened cone (its
+    // base round the tip, 0.13 across, its point 0.3 on), the outline of its projected corners, so it reads from any side
+    const back = [-cos(pit) * cos(yaw), -sin(pit), sin(yaw)], bl = Math.hypot(...back); back.forEach((v, n) => back[n] = v / bl);
+    const up0 = [0, 1, 0], sdv = [back[1] * up0[2] - back[2] * up0[1], back[2] * up0[0] - back[0] * up0[2], back[0] * up0[1] - back[1] * up0[0]];
+    const sl = Math.hypot(...sdv) || 1; sdv.forEach((v, n) => sdv[n] = v / sl);
+    const upv = [sdv[1] * back[2] - sdv[2] * back[1], sdv[2] * back[0] - sdv[0] * back[2], sdv[0] * back[1] - sdv[1] * back[0]];
+    const at = (d, a, b2) => bm(x + back[0] * d + sdv[0] * a + upv[0] * b2, y + back[1] * d + sdv[1] * a + upv[1] * b2, z + back[2] * d + sdv[2] * a + upv[2] * b2);
+    const cone = [at(0.3, 0, 0)]; for (let n = 0; n < 8; n++) { const t = n / 8 * TAU; cone.push(at(-0.02, cos(t) * 0.1, sin(t) * 0.14)); }
+    const cp2 = hull2(cone.map(m => pj(...m)));
+    add(C.plate, cone.reduce((a, m) => a + depth(m[0], m[2]), 0) / cone.length + 0.02, () => polyP(cp2)); }
+  // neck and head: the neck swings by P.neck, turns by P.neckY (a yaw at its root), the head by P.head, the jaw by P.jaw
+  const nr = P.neck, ny = P.neckY;
+  const nk = (x, y) => { const lx = x * cos(nr) - y * sin(nr), ly = x * sin(nr) + y * cos(nr); return bm(0.6 + lx * cos(ny), 0.95 + ly, -lx * sin(ny)); };
+  const hr = nr + P.head, hb = [0.5 * cos(nr) - 0.78 * sin(nr), 0.5 * sin(nr) + 0.78 * cos(nr)];
+  const hdp = (x, y, z = 0) => { const lx = hb[0] + x * cos(hr) - y * sin(hr), ly = hb[1] + x * sin(hr) + y * cos(hr); return bm(0.6 + lx * cos(ny) - z * sin(ny), 0.95 + ly, -lx * sin(ny) + z * cos(ny)); };
+  const jaw2 = Math.min(0.6, P.jaw), jr = hr - jaw2, jb = [0.08, -0.12];                             // (as the 3D jaw, capped: never gaping into a big pale patch)
+  const jwp = (x, y, z = 0) => { const hx = jb[0] + x * cos(jr - hr) - y * sin(jr - hr), hy = jb[1] + x * sin(jr - hr) + y * cos(jr - hr); return hdp(hx, hy, z); };
+  { const pts = [[-0.25, -0.2], [0, 0], [0.18, 0.3], [0.3, 0.58], [0.42, 0.74]].map(q => nk(...q)), r = [0.3, 0.26, 0.22, 0.18, 0.15];
+    grp = 'neck'; for (let i = 0; i < 4; i++) tube(C.body, pts[i], pts[i + 1], r[i], r[i + 1]); }
+  // the mouth, simply: the pale lower jaw (as the 3D model's) swings down on its hinge under the snout — a rigid oval
+  // turning, nothing else drawn, so it never stretches or warps as it opens
+  { const [cx, cy, a2, b2, rot] = ellOf(jwp, 0.2, -0.02, 0, 0.2, 0.045, 0.09), sm = hdp(0.32, -0.02);   // the jaw: always just behind the snout
+    add(C.belly, depth(sm[0], sm[2]) - 0.005, () => ellP(cx, cy, a2, b2, rot)); }                     // (it hangs under it: the snout covers its top from every side)
+  grp = 'face';                                                                                       // (its own band: in the neck's it'd fall inside the neck)
+  blobF(C.body, hdp, 0.06, 0.02, 0, 0.24, 0.19, 0.2);                                                // skull
+  blobF(C.body, hdp, 0.32, -0.02, 0, 0.24, 0.12, 0.14); grp = null;                                  // snout
+  // the horns, exactly the 3D model's: an even round tube (radius 0.042, round-ended) along its curve from the top back
+  // of the skull, both of them, each sorted by its own depth (the far one's root tucks behind the skull, as in 3D)
+  for (const zs of [-1, 1]) { const q = t => hdp((1 - t) ** 2 * -0.02 + 2 * (1 - t) * t * -0.15 + t * t * -0.28, (1 - t) ** 2 * 0.15 + 2 * (1 - t) * t * 0.27 + t * t * 0.25,
+      zs * ((1 - t) ** 2 * 0.1 + 2 * (1 - t) * t * 0.15 + t * t * 0.19));
+    for (let k = 0; k < 3; k++) tube(C.horn, q(k / 3), q((k + 1) / 3), 0.042, 0.042); }
+  // legs: the shared reach in the body frame (x, y), each on its side (z), splaying out as it lies down
+  const leg = (i, z) => {
+    const hind = i < 2, L = DRAGON_LEG[hind ? 'hind' : 'fore'], hx = hind ? -0.45 : 0.36, hy = 0.62, st = dragonStride(a.phase, i);
+    const hw = bm(hx, hy), tw = [hw[0] + st.x * DRAGON_STRIDE * P.g, DRAGON_FOOT + DRAGON_LIFT * 1.8 * st.up * P.g];
+    const bx = tw[0] - P.bodyX, by = tw[1] - P.bodyY; let tx = bx * cp + by * spc - hx, ty = -bx * spc + by * cp - hy;
+    if (!hind && P.reach > 0.2) { const pw = P.ck * 5.5 + (z > 0 ? 0 : Math.PI), px = 0.2 + 0.14 * sin(pw), py = -0.3 + 0.1 * cos(pw), w = Math.min(1, (P.reach - 0.2) * 2);
+      tx += (px - tx) * w; ty += (Math.max(ty, py) - ty) * w; }
+    let [h, k] = dragonLegIK(L, tx, ty); const T = DRAGON_TUCK[hind ? 'hind' : 'fore']; h += (T.hip - h) * P.sl; k += (T.knee - k) * P.sl;
+    const kx = hx + sin(h) * L.th, ky = hy - cos(h) * L.th, ax = kx + sin(h + k) * L.sh, ay = ky - cos(h + k) * L.sh;
+    const out = T.out * P.sl * Math.sign(z) * 0.5, zk = z + out * 0.6, za = z + out;
+    const col = C.body, r0 = hind ? 0.17 : 0.13, r1 = hind ? 0.11 : 0.095; grp = 'leg' + i;
+    blob(col, bm(hx, hy - 0.03, z), hind ? 0.21 : 0.16, hind ? 0.22 : 0.17, hind ? 0.17 : 0.14);   // the haunch / shoulder at the leg's top (as 3D)
+    tube(col, bm(hx, hy, z), bm(kx, ky, zk), r0, r1, -0.05); tube(col, bm(kx, ky, zk), bm(ax, ay, za), r1, 0.065, -0.04);
+    const A = bm(ax, ay, za), fa = -P.pitch + dragonStride(a.phase, i).roll * P.g * (1 - P.sl);
+    const ft = (x, y) => [A[0] + x * cos(fa) - y * sin(fa), A[1] + x * sin(fa) + y * cos(fa), za];      // the foot, flat on the ground
+    const fF = (x, y, z) => { const q = ft(x, y); return [q[0], q[1], za + z]; };                    // the foot's frame (turned with it)
+    blobF(col, fF, 0.07, -DRAGON_FOOT * 0.5, 0, 0.17, DRAGON_FOOT * 0.55, 0.14); grp = null;         // a broad round foot
+    for (const cz of [-0.06, 0.06]) tube(C.horn, fF(0.19, -DRAGON_FOOT * 0.62, cz), fF(0.27, -DRAGON_FOOT * 0.95, cz * 1.15), 0.04, 0.014, 0.02); // two fat claws
+  };
+  leg(0, -0.34); leg(1, 0.34); leg(2, -0.32); leg(3, 0.32);
+  // wings: the shared joints; the plane stood up by its angle, out from its side as it spreads
+  const wingAng = (1.35 + (0.35 + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl;
+  for (const sd of [-1, 1]) {
+    const J = dragonWingJoints(1 - P.open, P.sl, sd), up = sin(wingAng), outw = cos(wingAng);
+    const at = q => bm(0.1 + q[0], 1.08 + q[1] * up, sd * (0.32 + q[1] * outw));
+    const Q = {}; for (const k in J) Q[k] = at(J[k]);
+    const fo = Math.max(0, Math.min(1, (P.open - 0.15) / 0.35));                                       // folded: one clean fold; the hand opens out of it
+    const n0 = parts.length; grp = 'wing' + (sd > 0 ? 1 : 0);                                        // (the membrane's band: along its trailing edge)
+    poly(C.membrane, [Q.S, Q.E, Q.W, fo > 0 ? Q.F2 : Q.W, Q.M3, Q.B], 0.05 * sd);
+    if (fo > 0) poly(C.membrane, [Q.W, Q.F0, Q.M01, Q.F1, Q.M23, Q.F2], 0.05 * sd); grp = null;
+    tube(C.bone, Q.S, Q.E, 0.045, 0.04, 0.06 * sd); tube(C.bone, Q.E, Q.W, 0.04, 0.032, 0.06 * sd);
+    for (const f of ['F0', 'F1', 'F2']) tube(C.bone, Q.W, Q[f], 0.024, 0.018, 0.06 * sd);          // dark bones rim the wing (as 3D): its edge reads even folded
+    // (it's rooted on top of the back: the far wing too stands over the barrel, so it never sorts behind it — its
+    // root stays attached to the body instead of the membrane floating free above it)
+    // the far one (by where its root sits, this view) just under the back plates, the near one over them
+    const r0 = at([0, 0]), r1 = bm(0.1, 1.08, -sd * 0.32), far = depth(r0[0], r0[2]) < depth(r1[0], r1[2]);
+    for (let n = n0; n < parts.length; n++) parts[n].d = Math.max(parts[n].d, bodyD + (far ? 0.03 : 0.045));
+  }
+  // the flame: a flickering cone from the jaws along the head's line — a part like the rest, sorted just past the mouth
+  // (seen from behind, the head and body cover it; from the front it's over everything), never outlined
+  if (P.flame > 0 && !window._maskDraw) {
+    const len = 2.1 * P.flame, f0 = pj(...jwp(0.45, 0.02)), f1 = pj(...jwp(0.45 + len, 0.02)), fm = jwp(0.75, 0.02);
+    const dx = f1[0] - f0[0], dy = f1[1] - f0[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l, ny2 = dx / l, fl = n => sin(P.ck * 30 + n * 2.1) * 1.5;
+    const cone = (col, w, k) => { const tx = f0[0] + dx * k, ty = f0[1] + dy * k; X.fillStyle = col; X.beginPath(); X.moveTo(f0[0], f0[1]);
+      X.quadraticCurveTo(f0[0] + dx * k * 0.5 + nx * w * 0.5, f0[1] + dy * k * 0.5 + ny2 * w * 0.5 + fl(1), tx + nx * w, ty + ny2 * w + fl(2));
+      X.quadraticCurveTo(tx + dx / l * 3, ty + dy / l * 3 + fl(3), tx - nx * w, ty - ny2 * w + fl(4));
+      X.quadraticCurveTo(f0[0] + dx * k * 0.5 - nx * w * 0.5, f0[1] + dy * k * 0.5 - ny2 * w * 0.5 + fl(5), f0[0], f0[1]); X.closePath(); X.fill(); };
+    parts.push({ d: depth(fm[0], fm[2]), draw: () => { X.save(); X.globalAlpha *= 0.9; cone('#c8280a', 0.5 * K, 1); cone('#ff8a1e', 0.34 * K, 0.85); cone('#ffe36a', 0.18 * K, 0.6); X.restore(); } });
+  }
+  // --- paint: every part stroked black (the silhouette), then filled far to near (flat colours: kept simple) ---
+  parts.sort((p, q) => p.d - q.d);
+  // the bear's idiom, lightly: a flat darker band along each group's underside — the group's outline less itself lifted
+  // (trunk, neck+head, tail, each leg: one band per group, so tube joints don't scallop). Masked on a scratch canvas,
+  // laid on as its group's nearest part is painted (nearer parts then cover it).
+  const last = new Map(); for (const pt of parts) if (pt.g) last.set(pt.g, pt);
+  const shadeGroup = g => { if (window._maskDraw) return;
+    const ms = parts.filter(p => p.g === g && p.bb && (p.col === C.body || p.col === C.dark || p.col === C.membrane)); if (!ms.length) return;
+    const lift = DRAGON_SHADE[g.replace(/\d/, '')] * K, m = X.getTransform();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of ms) for (const [u, v] of [[p.bb[0], p.bb[1]], [p.bb[2], p.bb[1]], [p.bb[0], p.bb[3]], [p.bb[2], p.bb[3]]]) {
+      const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
+    x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
+    if (!dragonShadeC) dragonShadeC = document.createElement('canvas');
+    if (dragonShadeC.width < w || dragonShadeC.height < h) { dragonShadeC.width = Math.max(dragonShadeC.width, w); dragonShadeC.height = Math.max(dragonShadeC.height, h); }
+    const O = dragonShadeC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
+    O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                                   // (the path helpers draw on X)
+    try { O.fillStyle = DRAGON_SHADE.col; O.beginPath(); for (const p of ms) p.path(); O.fill();
+      O.globalCompositeOperation = 'destination-out';
+      // parts already painted in front of a group member (a horn over the skull) keep their colour: cut from the band
+      const d0 = Math.min(...parts.filter(p => p.g === g).map(p => p.d)), upto = parts.indexOf(last.get(g));
+      O.beginPath(); for (let j = 0; j < upto; j++) { const p = parts[j]; if (p.g !== g && p.d > d0 && !p.clip && (!p.draw || p.strokeOnly)) (p.strokeOnly || p.path)(); } O.fill();
+      O.translate(0, -lift); O.beginPath(); for (const p of ms) p.path(); O.fill();
+      O.globalCompositeOperation = 'source-over'; } finally { X = X0; }
+    X.save(); X.setTransform(1, 0, 0, 1, 0, 0); X.globalAlpha *= DRAGON_SHADE.alpha; X.drawImage(dragonShadeC, 0, 0, w, h, x0, y0, w, h); X.restore(); };
+  X.lineJoin = 'round'; X.strokeStyle = '#000'; X.lineWidth = 2.2 / UNIT_SCALE;
+  for (const pt of parts) if (!pt.clip && (!pt.draw || pt.strokeOnly)) { X.beginPath(); (pt.strokeOnly || pt.path)(); X.stroke(); }
+  for (const pt of parts) {
+    if (pt.draw) { pt.draw(); continue; }
+    if (pt.clip) { X.save(); X.beginPath(); pt.clip(); X.clip(); X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill(); X.restore(); continue; }
+    X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill();
+    if (pt.g && last.get(pt.g) === pt) shadeGroup(pt.g);
+    if (pt.seam) { X.save(); X.strokeStyle = pt.col; X.lineWidth = 0.8; X.stroke(); X.restore(); }  // (closes the hairline seams between cells)
+  }
+  // the eyes: each set in its side of the skull, looking out sideways and a little forward (turned with the head). An
+  // eye shows when it looks toward the viewer — and the far one only when the head faces the viewer nearly head-on
+  // (the eyes side by side in depth); otherwise the skull hides it. A plain yellow dot on the skull's surface.
+  // shut (asleep, a blink) it squashes to a thin slit along the head, as the 3D eye's scale.y
+  { const o0 = hdp(0, 0, 0), dirD = v => { const m = hdp(...v); return depth(m[0] - o0[0], m[2] - o0[2]) + (m[1] - o0[1]) * 0.5; }; // (+ up: the view looks down)
+    const E = zs => hdp(0.17, 0.08, zs * 0.16), dE = zs => { const m = E(zs); return depth(m[0], m[2]); };
+    for (const zs of [-1, 1]) {
+      if (dirD([0.35, 0.1, zs * 0.93]) < 0.3) continue;                                             // looking away
+      if (dE(zs) < dE(-zs) && dE(-zs) - dE(zs) > 0.09) continue;                                     // the far eye, behind the skull
+      const [ex, ey] = pj(...E(zs)), [fx2, fy2] = pj(...hdp(0.3, 0.08, zs * 0.16)), rot = Math.atan2(fy2 - ey, fx2 - ex);
+      X.fillStyle = C.eye; X.beginPath(); X.ellipse(ex, ey, 1.1 + 0.3 * P.eyeShut, Math.max(0.35, 1.1 * (1 - 0.92 * P.eyeShut)), fx2 === ex ? 0 : rot, 0, TAU); X.fill();
+    } }
   X.restore();
 }
 
@@ -2749,6 +3140,7 @@ function drawUnit(e){
   }
   if(e.facingNorth===undefined) e.facingNorth = false;
   let dx = 0, dy = 0;
+  if(e.faceAng!==undefined){ tx = e.x + Math.cos(e.faceAng); ty = e.y + Math.sin(e.faceAng); } // the dragon faces its own slow heading (its fire goes that way)
   if(tx !== -1 && ty !== -1){
     dx = tx - e.x;
     dy = ty - e.y;
@@ -2801,7 +3193,7 @@ function drawUnit(e){
 
   // Save context and apply horizontal flipping based on facing direction
   X.save();
-  if(e.utype==='sheep'||e.utype==='bear') X.translate(sx, sy + sbob);
+  if(e.utype==='sheep'||e.utype==='bear'||e.utype==='dragon') X.translate(sx, sy + sbob);
   // Vehicles don't head-bob — the ram applies its own subtle rolling sway
   else if(e.utype==='sheep_carcass'||e.utype==='ram'||e.utype==='tradecart') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
@@ -2924,6 +3316,8 @@ function drawUnit(e){
     drawTradeCartBody(e);
   } else if(e.utype==='bear'){
     drawBearBody(e);
+  } else if(e.utype==='dragon'){
+    drawDragonBody(e);
   } else if(e.utype!=='sheep'){
     // Seated over the saddle center; face-on (S) the saddle reads at
     // body center, so the rider sits right of the -2 profile seat.
@@ -5012,10 +5406,11 @@ function drawUnit(e){
   // HP bar floats clear above the head (higher for the scout — horse and
   // rider stand taller) so it never covers the unit's face.
   if(e.hp<e.maxHp){
-    let hpTop = (isMountedUnit(e.utype)||e.utype==='tradecart') ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE;
-    X.fillStyle='#000000';X.fillRect(sx-9,hpTop,18,5);
-    X.fillStyle='#300';X.fillRect(sx-8,hpTop+1,16,3);
-    X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(sx-8,hpTop+1,16*e.hp/e.maxHp,3);
+    let bx = e.utype==='dragon' ? sx + 40*UNIT_SCALE*(e.facing||1) : sx;   // (the dragon's over its head, which leads)
+    let hpTop = e.utype==='dragon' ? sy-80*UNIT_SCALE : (isMountedUnit(e.utype)||e.utype==='tradecart') ? sy-40*UNIT_SCALE : sy-30*UNIT_SCALE; // (the dragon's: over its raised head)
+    X.fillStyle='#000000';X.fillRect(bx-9,hpTop,18,5);
+    X.fillStyle='#300';X.fillRect(bx-8,hpTop+1,16,3);
+    X.fillStyle=e.hp/e.maxHp>0.5?'#0c0':'#c00';X.fillRect(bx-8,hpTop+1,16*e.hp/e.maxHp,3);
   }
   // A loaded ram flies a small team flag + rider count (own team only) so you
   // can see at a glance it's manned — the unit-side echo of the building

@@ -125,6 +125,8 @@ function updateAI(ai){
   let profile=aiProfileFor(ai.team);
   if(ai.tick%profile.decisionInterval!==0)return;
 
+  // The dragon's lair is off limits: a standing danger zone (it can't be killed, so the zone never lapses for good).
+  for(const d of entities) if(d.utype==='dragon'&&d.homeX!==undefined&&ai.dangerZones) stampDangerZone(ai,Math.round(d.homeX),Math.round(d.homeY),d.id);
   let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===ai.team);
   let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team);
   let aiTC=aiBuildings.find(b=>b.btype==='TC');

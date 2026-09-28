@@ -24,6 +24,8 @@
 // dpr (device pixel ratio, for crisp buffers on retina screens), which is
 // an orthogonal concern from gameplay zoom.
 const SIL_UNIT_SIZE = 112; // logical px — covers any unit (widest: the trade cart's RECENTERED wagon+ox composite, ~±42)
+// the dragon outgrows it (tail ~±120 across, wings ~110 up at the 2D model's scale): its own box, anchor 200 from the top
+const SIL_DRAGON_SIZE = 320, SIL_DRAGON_ANCHOR_Y = 200;
 // Covers the largest building's full drawn silhouette. Measured extents of the
 // 4x4 Town Center from its anchor (footprint-top): ~129px each side, ~102px
 // above, ~94px below (the annex posts hang below the footprint). 340 with the
@@ -92,9 +94,10 @@ function _outlineExtent(e){
   })();
   if(f!==2) return null;
 
-  const cssPx  = isUnit ? SIL_UNIT_SIZE : SIL_BLDG_SIZE;
-  const anchorX = isUnit ? SIL_UNIT_SIZE/2 : cssPx/2;
-  const anchorY = isUnit ? 66 : cssPx*0.62; // 211px above / 129px below the footprint top
+  const big = isUnit && e.utype === 'dragon';
+  const cssPx  = big ? SIL_DRAGON_SIZE : isUnit ? SIL_UNIT_SIZE : SIL_BLDG_SIZE;
+  const anchorX = cssPx/2;
+  const anchorY = big ? SIL_DRAGON_ANCHOR_Y : isUnit ? 66 : cssPx*0.62; // 211px above / 129px below the footprint top
 
   // mapToScreen (js/iso.js), never inline camera math: the anchors must
   // round through the SAME quantized display camera drawUnit/drawBuilding

@@ -22,7 +22,7 @@ function createUnit(type,x,y,team){
     carrying:0,carryType:null,carryMax:10,atkCooldown:0,moveT:0,
     order:null, // THE exclusive standing order (issueOrder, js/commands.js) — any new order replaces it
     gatherCooldown:0,buildTarget:null,gatherX:-1,gatherY:-1,
-    stance: (type !== 'villager' && type !== 'sheep' && type !== 'bear' && type !== 'tradecart') ? 'aggressive' : undefined,
+    stance: (type !== 'villager' && type !== 'sheep' && type !== 'bear' && type !== 'dragon' && type !== 'tradecart') ? 'aggressive' : undefined,
     // Initial facing before first movement. Without this e.dir is undefined
     // and the face renderer draws NO eyes (its dir branches all miss), so
     // fresh units stared blankly. 1 = south, facing the viewer; the scout

@@ -31,7 +31,11 @@ function getMaster() {
     masterOut.ratio.value = 5;
     masterOut.attack.value = 0.003;
     masterOut.release.value = 0.2;
-    masterOut.connect(audioCtx.destination);
+    // Tame the treble for the whole mix (constant high clangs and hiss are fatiguing): a shelf cutting above ~2.2 kHz,
+    // and a gentle roll-off past 6 kHz. The body of every sound stays.
+    const shelf = audioCtx.createBiquadFilter(); shelf.type = 'highshelf'; shelf.frequency.value = 2200; shelf.gain.value = -9;
+    const roll = audioCtx.createBiquadFilter(); roll.type = 'lowpass'; roll.frequency.value = 6000; roll.Q.value = 0.5;
+    masterOut.connect(shelf); shelf.connect(roll); roll.connect(audioCtx.destination);
   }
   return masterOut;
 }
@@ -122,6 +126,15 @@ const ALERT_ONLY_SOUNDS = new Set(['alert', 'victory', 'defeat', 'bell', 'bell_c
 // MP), the menu's own clicks, and the end-of-game stingers.
 const PAUSE_EXEMPT_SOUNDS = new Set(['chat', 'alert', 'click', 'error', 'victory', 'defeat', 'bell', 'bell_clear']);
 
+const SOUND_MIX_DEFAULT = 0.85;
+const SOUND_MIX = (() => { const m = {};
+  for (const t of ['chop', 'mine', 'farm', 'forage', 'build']) m[t] = 0.5;
+  for (const t of ['attack', 'arrow', 'death', 'collapse', 'ram_hit', 'ram_creak']) m[t] = 0.65;
+  m.sheep = 0.6; m.bear = 0.45;
+  for (const t of ['bell', 'bell_clear']) m[t] = 0.28;                                         // (authored hot, into the compressor: still the loudest cue)
+  m.train = 0.45; m.select_villager = 0.45; m.alert = 0.55; m.victory = 0.55; m.defeat = 0.55; m.farm_exhausted = 0.6;
+  for (const t of ['fire', 'dragon', 'dragon_step', 'dragon_slam', 'dragon_snore', 'dragon_groan']) m[t] = 0.33;   // (authored big: ≈ 60% of their level on the rest's scale)
+  return m; })();
 function playSound(type, wx, wy) {
   if (window.__resim) return; // rollback resim replays past ticks silently (js/lockstep.js)
   if (window.audioMuted) return;
@@ -162,6 +175,9 @@ function playSound(type, wx, wy) {
     }
 
     let now = audioCtx.currentTime;
+    // The mix, kept subtle: the sounds that play constantly (work) sit lowest, combat and creatures under
+    // them, and the cues you must not miss (alerts, the bell, the interface) near full.
+    { const k = SOUND_MIX[type] ?? SOUND_MIX_DEFAULT; if (k !== 1) { const mg = audioCtx.createGain(); mg.gain.value = k; mg.connect(out); out = mg; } }
     // Every effect gets a fresh pitch factor so repetitive work never plays
     // the exact same sound twice — the single biggest "organic" win.
     let p = rnd(0.9, 1.12);
@@ -192,7 +208,8 @@ function playSound(type, wx, wy) {
       case 'build': {
         // Hammer on frame: woody knock + mallet noise, sometimes a double tap
         const knock = (t0) => {
-          tone(out, now, { type: 'square', f0: 95 * p, f1: 34, t0, dur: 0.09, vol: 0.13 });
+          tone(out, now, { type: 'square', f0: 95 * p, f1: 34, t0, dur: 0.09, vol: 0.1 });
+          noiseHit(out, now, { t0, dur: 0.05, vol: 0.025, type: 'bandpass', f0: 620 * p, q: 4, att: 0.001 });     // a faint woody ring
           noiseHit(out, now, { t0, dur: 0.05, vol: 0.16, type: 'lowpass', f0: 650, q: 0.7 });
         };
         knock(0);
@@ -201,9 +218,10 @@ function playSound(type, wx, wy) {
       }
       case 'forage':
       case 'farm': {
+        const leafy = type === 'forage' ? 1.35 : 0.85;                                                   // (berry leaves higher, the field's soil lower)
         // Leafy rustle: two staggered soft noise brushes
-        noiseHit(out, now, { dur: 0.13, vol: 0.11, type: 'bandpass', f0: rnd(420, 720), q: 1.8 });
-        noiseHit(out, now, { t0: 0.07, dur: 0.1, vol: 0.07, type: 'bandpass', f0: rnd(600, 900), q: 2.2 });
+        noiseHit(out, now, { dur: 0.13, vol: 0.11, type: 'bandpass', f0: rnd(420, 720) * leafy, q: 1.8 });
+        noiseHit(out, now, { t0: 0.07, dur: 0.1, vol: 0.07, type: 'bandpass', f0: rnd(600, 900) * leafy, q: 2.2 });
         break;
       }
       case 'farm_exhausted': {
@@ -246,15 +264,16 @@ function playSound(type, wx, wy) {
       case 'attack': {
         // Steel clash: bright inharmonic ring + metal scrape
         const base = 520 * p;
-        tone(out, now, { type: 'sawtooth', f0: base, f1: base * 0.25, dur: 0.14, vol: 0.07 });
+        tone(out, now, { type: 'sawtooth', f0: base, f1: base * 0.25, dur: 0.14, vol: 0.055 });
         tone(out, now, { type: 'sine', f0: base * 1.83, f1: base * 0.6, dur: 0.11, vol: 0.06, detune: rnd(-12, 12) });
         tone(out, now, { type: 'sine', f0: base * 2.79, f1: base * 1.1, dur: 0.09, vol: 0.04 });
-        noiseHit(out, now, { dur: 0.09, vol: 0.13, type: 'highpass', f0: 1900, q: 0.7 });
+        noiseHit(out, now, { dur: 0.09, vol: 0.09, type: 'bandpass', f0: 1700, q: 0.8 });                      // (the strike's hiss, not a treble spray)
         break;
       }
       case 'arrow': {
         // Airy whoosh: rising band-swept noise, not a synth beep
         noiseHit(out, now, { dur: 0.16, vol: 0.2, type: 'bandpass', f0: 600 * p, f1: 2600 * p, q: 2.4, att: 0.03 });
+        tone(out, now, { type: 'triangle', f0: 140 * p, f1: 110 * p, dur: 0.07, vol: 0.025, att: 0.002 });     // the string, faintly
         break;
       }
       case 'select_villager': {
@@ -419,6 +438,70 @@ function playSound(type, wx, wy) {
         lfo.start(now); lfo.stop(now + 0.62);
         break;
       }
+      case 'dragon': {
+        // The roar: a gritty growl (detuned saws, vibrato, waveshaped) through a throat formant sweeping down, a
+        // sub rumble under it and a hot breath hiss over it — long, and falling away
+        const bp = rnd(0.92, 1.08), T = 1.7;
+        const grit = audioCtx.createWaveShaper(); grit.curve = (() => { const c = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; c[i] = Math.tanh(x * 2.5); } return c; })();
+        const form = audioCtx.createBiquadFilter(); form.type = 'bandpass'; form.Q.value = 2.2;
+        form.frequency.setValueAtTime(420 * bp, now); form.frequency.linearRampToValueAtTime(820 * bp, now + 0.35); form.frequency.exponentialRampToValueAtTime(240 * bp, now + T);
+        const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(1600, now); lp.frequency.exponentialRampToValueAtTime(400, now + T);
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(0.16, now + 0.18); g.gain.setValueAtTime(0.15, now + 0.9); g.gain.exponentialRampToValueAtTime(0.001, now + T);
+        const vib = audioCtx.createOscillator(), vibG = audioCtx.createGain(); vib.frequency.value = rnd(7, 9); vibG.gain.value = 4 * bp; vib.connect(vibG);
+        grit.connect(form); form.connect(lp); lp.connect(g); g.connect(out);
+        [55, 55 * 1.04, 82, 110].forEach(freq => {
+          const o = audioCtx.createOscillator(); o.type = 'sawtooth';
+          o.frequency.setValueAtTime(freq * bp * 0.9, now); o.frequency.linearRampToValueAtTime(freq * bp * 1.15, now + 0.3); o.frequency.exponentialRampToValueAtTime(freq * bp * 0.7, now + T);
+          vibG.connect(o.frequency); o.connect(grit); o.start(now); o.stop(now + T + 0.05);
+        });
+        vib.start(now); vib.stop(now + T + 0.05);
+        const sub = audioCtx.createOscillator(), sg = audioCtx.createGain(); sub.type = 'sine';                     // the rumble you feel
+        sub.frequency.setValueAtTime(48 * bp, now); sub.frequency.exponentialRampToValueAtTime(32, now + T);
+        sg.gain.setValueAtTime(0.0001, now); sg.gain.linearRampToValueAtTime(0.14, now + 0.2); sg.gain.exponentialRampToValueAtTime(0.001, now + T);
+        sub.connect(sg); sg.connect(out); sub.start(now); sub.stop(now + T + 0.05);
+        noiseHit(out, now, { t0: 0.05, dur: 1.3, vol: 0.045, type: 'bandpass', f0: 1400, f1: 500, q: 0.8, att: 0.2 });   // the breath
+        break;
+      }
+      case 'fire': {
+        // The breath: a sharp intake, then a roaring whoosh swelling and dying, with crackles through it
+        noiseHit(out, now, { dur: 0.18, vol: 0.03, type: 'bandpass', f0: 1200, f1: 1800, q: 0.7, att: 0.12 });
+        noiseHit(out, now, { t0: 0.12, dur: 1.0, vol: 0.3, type: 'lowpass', f0: 600, f1: 2600, q: 0.6, att: 0.15 });
+        noiseHit(out, now, { t0: 0.2, dur: 0.8, vol: 0.14, type: 'bandpass', f0: 1800, f1: 900, q: 1.1, att: 0.1 });
+        for (let i = 0; i < 7; i++) noiseHit(out, now, { t0: 0.18 + rnd(0, 0.75), dur: 0.03, vol: rnd(0.025, 0.045), type: 'bandpass', f0: rnd(1100, 2000), q: 1.5, att: 0.002 });
+        break;
+      }
+      case 'dragon_step': case 'dragon_slam': {
+        // A footfall of something enormous: a deep thump (a falling sine) and the dirt it knocks; the slam bigger, rolling on
+        const big = type === 'dragon_slam', T = big ? 0.9 : 0.32, bp = rnd(0.9, 1.1);
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = 'sine';
+        o.frequency.setValueAtTime((big ? 70 : 80) * bp, now); o.frequency.exponentialRampToValueAtTime((big ? 26 : 38) * bp, now + T);
+        g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(big ? 0.3 : 0.14, now + 0.008); g.gain.exponentialRampToValueAtTime(0.001, now + T);
+        o.connect(g); g.connect(out); o.start(now); o.stop(now + T + 0.05);
+        noiseHit(out, now, { dur: big ? 0.5 : 0.15, vol: big ? 0.12 : 0.05, type: 'lowpass', f0: big ? 700 : 500, f1: 120, q: 0.7, att: 0.004 });
+        if (big) noiseHit(out, now, { t0: 0.1, dur: 0.8, vol: 0.05, type: 'lowpass', f0: 180, f1: 60, q: 0.5, att: 0.1 });  // the ground rolling on
+        break;
+      }
+      case 'dragon_snore': {
+        // Asleep: a slow, quiet, fluttering rumble on the out-breath
+        const T = 1.4, lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260; lp.Q.value = 3;
+        const g = audioCtx.createGain(), flut = audioCtx.createOscillator(), fg = audioCtx.createGain();
+        g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(0.02, now + 0.5); g.gain.exponentialRampToValueAtTime(0.001, now + T);
+        flut.frequency.value = rnd(22, 30); fg.gain.value = 0.012; flut.connect(fg); fg.connect(g.gain);
+        const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(rnd(52, 60), now); o.frequency.linearRampToValueAtTime(44, now + T);
+        o.connect(lp); lp.connect(g); g.connect(out); o.start(now); o.stop(now + T + 0.05); flut.start(now); flut.stop(now + T + 0.05);
+        noiseHit(out, now, { t0: 0.3, dur: 1.0, vol: 0.008, type: 'bandpass', f0: 700, f1: 400, q: 0.8, att: 0.4 });
+        break;
+      }
+      case 'dragon_groan': {
+        // Knocked out: a long falling moan, dropping into the rumble of it hitting the ground
+        const T = 1.8, lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.setValueAtTime(900, now); lp.frequency.exponentialRampToValueAtTime(200, now + T);
+        const g = audioCtx.createGain(); g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(0.12, now + 0.15); g.gain.exponentialRampToValueAtTime(0.001, now + T);
+        lp.connect(g); g.connect(out);
+        [100, 101.5, 150].forEach(f => { const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, now); o.frequency.exponentialRampToValueAtTime(f * 0.45, now + T); o.connect(lp); o.start(now); o.stop(now + T + 0.05); });
+        noiseHit(out, now, { t0: 1.0, dur: 0.7, vol: 0.1, type: 'lowpass', f0: 400, f1: 80, q: 0.6, att: 0.01 });
+        break;
+      }
       case 'sheep': {
         // Bleat with random pitch so the flock doesn't sound cloned
         const bp = rnd(0.85, 1.3);
@@ -524,17 +607,18 @@ function playSound(type, wx, wy) {
       }
       case 'error': {
         // "Denied" blip: two quick descending low tones, AoE2-style refusal.
-        tone(out, now, { type: 'square', f0: 220 * p, f1: 200, dur: 0.07, vol: 0.05 });
-        tone(out, now, { type: 'square', f0: 165 * p, f1: 150, t0: 0.09, dur: 0.1, vol: 0.055 });
+        tone(out, now, { type: 'square', f0: 220 * p, f1: 200, dur: 0.07, vol: 0.04 });
+        tone(out, now, { type: 'square', f0: 165 * p, f1: 150, t0: 0.09, dur: 0.1, vol: 0.044 });
         break;
       }
       case 'death': {
         // Unit death: short falling cry + a soft body thud. Kept quick and
         // low-key — battles produce many of these (rate limiter helps too).
         // Cry sits in the mids so it carries on small speakers.
-        tone(out, now, { type: 'sawtooth', f0: 340 * p, f1: 120, dur: 0.22, vol: 0.075, att: 0.01 });
+        tone(out, now, { type: 'sawtooth', f0: 340 * p, f1: 120, dur: 0.22, vol: 0.06, att: 0.01 });
         tone(out, now, { type: 'triangle', f0: 150 * p, f1: 60, t0: 0.1, dur: 0.15, vol: 0.06 });
         noiseHit(out, now, { t0: 0.16, dur: 0.07, vol: 0.1, type: 'bandpass', f0: 550, q: 1 });
+        tone(out, now, { type: 'sine', f0: 80, f1: 45, t0: 0.2, dur: 0.12, vol: 0.04, att: 0.003 });           // the body landing
         break;
       }
       case 'collapse': {

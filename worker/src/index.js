@@ -2,7 +2,7 @@
 // Only the game's own pages may ask, so strangers can't relay on our bill.
 const SITE = 'https://ageofepochs.com';
 const allowed = origin =>
-  origin === SITE || origin === 'https://www.ageofepochs.com' ||
+  origin === SITE || origin === 'https://www.ageofepochs.com' || origin === 'https://beta.ageofepochs.com' ||
   /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
 export default {

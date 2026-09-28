@@ -71,11 +71,13 @@ window.SPRITE_CELLS = {
   // expand-sprites.py + BLDGS.researches). Shown as .research-tile icons — on the
   // parchment scroll (mobile) or plain command buttons (classic). Row 9 cols 6-7
   // hold the scroll roll caps (scroll-roll, scroll-roll-h); rows 8-9 filled up, so
-  // Bodkin Arrow opens row 10 (cols 1-7 spare — draw there before growing again).
+  // Bodkin Arrow opens row 10 (cols 3-7 spare — draw there before growing again).
   'up-forging':[0,8], 'up-iron_casting':[1,8], 'up-scale_armor':[2,8], 'up-chain_mail':[3,8],
   'up-fletching':[4,8], 'up-masonry':[5,8], 'up-fortified_wall':[6,8], 'up-horse_collar':[7,8],
   'up-heavy_plow':[0,9], 'up-double_bit_axe':[1,9], 'up-bow_saw':[2,9], 'up-gold_mining':[3,9],
   'up-guilds':[4,9], 'up-wheelbarrow':[5,9], 'up-bodkin_arrow':[0,10], 'up-ballistics':[1,10],
+  // the map's dragon (gaia): its 2D art rendered into the cell (drawDragonBody)
+  dragon:[2,10],
   // research SCROLL roll caps (baked from scroll-ui.png): a vertical-cylinder roll
   // for the horizontal bottom-bar band (L/R caps, right one mirrored), and the
   // same roll rotated 90° for the vertical rail band (top/bottom caps). The paper

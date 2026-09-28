@@ -790,6 +790,9 @@ const UNITS={
   // wolf (45hp/7atk vs 25/3) so a lone villager should run, but a couple
   // of militia put it down without drama.
   bear:{name:'Bear',hp:45,atk:7,range:0,speed:1.2,rof:T30(60),armor:{m:1,p:0},cost:{f:0},trainTime:T30(0),desc:'Wild animal. Attacks anyone who wanders too close.',icon:'🐻'},
+  // The map's hazard: asleep at the centre; woken, its breath (updateDragonBehavior) burns everything in a cone.
+  // It can't be killed — a killing blow knocks it out to sleep it off (damageEntity). A place to steer round.
+  dragon:{name:'Dragon',hp:800,atk:14,range:0,speed:1.0,rof:T30(75),armor:{m:2,p:3},bonuses:{building:24},cost:{f:0},trainTime:T30(0),desc:'Sleeps at the heart of the map — wake it and it breathes fire on everything near. It cannot be killed: beat it down and it only sleeps it off, healing. Keep away.',icon:'🐉'},
   sheep:{name:'Sheep',hp:7,atk:0,range:0,speed:0.7,rof:T30(60),armor:{m:0,p:0},cost:{f:0},trainTime:T30(0),food:100,desc:'Provides Food when harvested.',icon:'🐑'},
   sheep_carcass:{name:'Sheep Carcass',hp:100,atk:0,range:0,speed:0.0,rof:T30(60),armor:{m:0,p:0},cost:{f:0},trainTime:T30(0),desc:'Provides Food when harvested.',icon:'🍖'},
   // Trade Cart — Feudal (AGE_REQ), trained at the Market. Unarmed and
@@ -806,13 +809,15 @@ const UNITS={
 const HARMLESS_ANIMALS = new Set(['sheep', 'sheep_carcass']); // never fight back, no death cry
 const WOOD_VEHICLES = new Set(['ram', 'tradecart']);          // timber rigs: collapse sound, wreck corpse, no blood, never retaliate
 function isHarmlessAnimal(u){ return HARMLESS_ANIMALS.has(u.utype); }
+// Gaia hunters with their own leashed behaviour (bear, dragon): not soldiers, no pop, no stance.
+function isWildPredator(u){ return u.utype === 'bear' || u.utype === 'dragon'; }
 function isWoodVehicle(u){ return WOOD_VEHICLES.has(u.utype); }
 // A SOLDIER fights on its own initiative — auto-engages, answers a sieged
 // ally's call. Not a villager (works), not an animal (bears run their own
 // leashed aggro), not a vehicle (carts are unarmed; rams strike only what
 // they're ordered onto).
 function isSoldierUnit(u){
-  return u.type === 'unit' && u.utype !== 'villager' && u.utype !== 'bear'
+  return u.type === 'unit' && u.utype !== 'villager' && !isWildPredator(u)
     && !isHarmlessAnimal(u) && !isWoodVehicle(u);
 }
 // Who may ride inside a ram (AoE2 garrison-rams: melee infantry only —

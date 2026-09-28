@@ -75,6 +75,7 @@ function detEntityHash(e){
   h = detMix(h, e.research && typeof e.research.target === 'number' ? e.research.target : -1);
   h = detMixStr(h, e.research && typeof e.research.target === 'string' ? e.research.target : null);
   h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
+  h = detMix(h, e.awake ? 1 : 0); h = detMix(h, e.spent ? 1 : 0); if (e.faceAng !== undefined) h = detMixFloat(h, e.faceAng); h = detMix(h, e.calmSince === undefined ? -1 : e.calmSince); // the dragon's sleep (sim-read)
   // Fields the sim reads on later ticks that previously went unhashed — a
   // divergence here only tripped the checksum once it eventually moved
   // hp/x/y, often far outside the resync window.
@@ -194,7 +195,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','awake','calmSince','spent','faceAng',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:
@@ -207,6 +208,7 @@ const DET_UNHASHED_KEYS = new Set([
   'food','maxFood',       // huntable/farm food capacity (constant, not sim-mutated)
   'w','h',                // footprint dims (constant from type)
   'homeX','homeY',        // animal wander anchor (set once to spawn pos, deterministic)
+  'breathTick','breathX','breathY', // the dragon's flame for the renderers (the sim never reads them)
 ]);
 // Entity keys present on live entities that are neither hashed nor allow-listed.
 // Empty array === full coverage. Call from tests, never inside the tick.

@@ -221,6 +221,7 @@ onNetMessage((msg, src) => {
     let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
+    if (window.enterDefaultView) window.enterDefaultView(); // the 3D world view by default (js/pov3d.js)
   } else if (msg.type === 'cmd-ls' && lockstepActive) {
     // Commands from before a resync point are stale on BOTH sides — the
     // resync state already reflects (or deliberately drops) them.
@@ -283,6 +284,7 @@ onNetMessage((msg, src) => {
     let menu = byId('tutorial');
     if (menu) menu.style.display = 'none';
     if (typeof restoreMenuForMatch === 'function') restoreMenuForMatch();
+    if (window.enterDefaultView) window.enterDefaultView(); // the 3D world view by default (js/pov3d.js)
     if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');
     // A fresh page steers nothing: release a unit our team left possessed
     // (character mode, js/pov3d.js), or the AI would ignore it for good.

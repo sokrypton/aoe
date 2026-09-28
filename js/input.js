@@ -1649,6 +1649,11 @@ function getUnitUnderCursor(sx, sy) {
         w = 22 * ZOOM + extraHit;
         hStart = 4 * ZOOM + extraHit;
         hEnd = -24 * ZOOM - extraHit;
+      } else if (en.utype === 'dragon') {
+        // The dragon (drawDragonBody): long and tall, wings up
+        w = 70 * ZOOM + extraHit;
+        hStart = 8 * ZOOM + extraHit;
+        hEnd = -80 * ZOOM - extraHit;
       } else if (en.utype === 'tradecart') {
         // recentered wagon + yoked ox composite spans ~±42px around the
         // anchor — clicking anywhere on it (incl. the ox head) selects
@@ -1925,8 +1930,8 @@ function doCommand(sx,sy){
       target = clickedUnit;
     } else if (clickedUnit.utype === 'sheep' || clickedUnit.utype === 'sheep_carcass') {
       target = clickedUnit;
-    } else if (clickedUnit.utype === 'bear') {
-      // Wild bear (gaia): right-click means attack, never follow
+    } else if (isWildPredator(clickedUnit)) {
+      // Wild bear / dragon (gaia): right-click means attack, never follow
       target = clickedUnit;
     } else {
       // Click-to-board and click-to-escort are DISABLED: a friendly unit under

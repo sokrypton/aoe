@@ -27,6 +27,7 @@ function init(){
   });
   placeStartingSheep();
   placeWildBears();
+  placeDragonLair();
   }
   let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
@@ -102,6 +103,23 @@ function placeWildBears(){
   }
 }
 
+// One unkillable dragon asleep at the heart of the map: the nearest clear 5×5 of grass to the map's centre, 16+
+// tiles from every town — a hazard every army and scout has to steer round.
+function placeDragonLair(){
+  if(window.__noDragon)return; // headless-sim opt-out (tools/sim.html 'dragon=0') — never set by the real game
+  let starts=STARTS.map(s=>({x:s.x+2,y:s.y+2}));
+  let cx=Math.floor(MAP/2), cy=Math.floor(MAP/2);
+  const clear=(x,y)=>{ for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){ let t=map[y+dy]&&map[y+dy][x+dx]; if(!t||t.t!==TERRAIN.GRASS||t.occupied!=null)return false; } return true; };
+  for(let r=0;r<MAP/2;r++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+    if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
+    let x=cx+dx, y=cy+dy;
+    if(x<4||y<4||x>=MAP-4||y>=MAP-4||!clear(x,y))continue;
+    if(starts.some(s=>Math.hypot(s.x-x,s.y-y)<16))continue;
+    let d=createUnit('dragon',x,y,GAIA_TEAM); d.homeX=x; d.homeY=y; d.awake=false; d.calmSince=0;
+    return;
+  }
+}
+
 function startGame(difficulty){
   aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
   // Sync the AI slots' difficulty to the menu pick (per-team difficulty is
@@ -125,6 +143,7 @@ function startGame(difficulty){
   } catch (err) {
     console.warn('Music failed to start:', err);
   }
+  if (window.enterDefaultView) window.enterDefaultView(); // the 3D world view by default (js/pov3d.js)
   
   let menu=byId('tutorial');
   if(menu)menu.style.display='none';

@@ -146,7 +146,7 @@ function refundCost(team,cost){
 }
 
 function unitPop(type){
-  return (type==='sheep'||type==='bear')?0:1;
+  return (type==='sheep'||type==='bear'||type==='dragon')?0:1;
 }
 
 function teamPopUsed(team){
@@ -1512,7 +1512,9 @@ function shouldRetaliate(target, attacker){
   // same reach test as the combat block's drop (else an acquire→drop churn
   // every arrow).
   let standgroundOutOfReach = target.stance==='standground' && !canStrikeInPlace(target, attacker);
-  if(!(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!passiveNoRetaliate&&!retreating&&!unreachAttacker&&!standgroundOutOfReach))return false;
+  // The AI never trades blows with the dragon (it can't be killed): its units run instead (dragonScatter).
+  let aiShunsDragon = attacker.utype==='dragon' && aiDrives(target);
+  if(!(target.type==='unit'&&!isHarmlessAnimal(target)&&!isWoodVehicle(target)&&!sameSide(attacker.team,target.team)&&!hasActiveMoveOrder&&!hopelessChase&&!scoutIgnoresGaia&&!aiShunsDragon&&!passiveNoRetaliate&&!retreating&&!unreachAttacker&&!standgroundOutOfReach))return false;
   if(!target.target)return true;
   let curT = entitiesById.get(target.target);
   // Switch target from buildings/sheep/WILDLIFE to focus the attacking
@@ -1522,6 +1524,8 @@ function shouldRetaliate(target, attacker){
 }
 
 function damageEntity(attacker, target){
+  // The dragon can be hurt but not killed: knocked out (spent), blows don't land until it has slept itself whole.
+  if (target.utype === 'dragon' && target.spent) return;
   let dmg = attacker.atk || 0;
   // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
   // carcasses) into 1 real damage — no attack stat means no damage at all.
@@ -1557,6 +1561,9 @@ function damageEntity(attacker, target){
   dmg = Math.max(1, dmg - ((isPierce ? armor.p : armor.m) + ageArm));
 
   target.hp -= dmg;
+  // A killing blow only knocks the dragon out: it keeps 1 hp and drops asleep where it stands (updateDragonBehavior).
+  if (target.utype === 'dragon' && target.hp <= 0) { target.hp = 1; target.spent = true; target.awake = false; target.target = null; clearUnitPath(target);
+    if (window.playSound) window.playSound('dragon_groan', target.x, target.y); }
 
   // Combat sound + particles. Sheep don't get the steel clash — the bleat
   // on death (handleDeath) is the sheep's own audio.
@@ -1651,12 +1658,14 @@ function damageEntity(attacker, target){
   // fight/hunt plays out. The zone dies with the bear (canGatherTile).
   // (Independent of the retaliation verdict below — a villager both mobs
   // the bear AND logs the danger.)
-  if(target.utype==='villager'&&attacker.utype==='bear'&&retryReady(target,RETRY.FLEE_BEAR)){
+  if(target.utype==='villager'&&isWildPredator(attacker)&&retryReady(target,RETRY.FLEE_BEAR)){
     retryStamp(target,RETRY.FLEE_BEAR,T30(90));
     target.fledBearId=attacker.id;
     let dzAi=AI_STATES&&AI_STATES[target.team];
     if(dzAi&&dzAi.dangerZones)stampDangerZone(dzAi,Math.round(attacker.x),Math.round(attacker.y),attacker.id);
   }
+  // An AI unit the dragon hits runs straight away from it (~7 tiles), dropping its task — the AI never fights it.
+  if(attacker.utype==='dragon'&&target.type==='unit'&&aiDrives(target)&&!isHarmlessAnimal(target)&&!isRetreatingUnit(target)) dragonScatter(target,attacker);
   // Retaliation: attacked units fight back — the full verdict lives in
   // shouldRetaliate() (one predicate, one place); this site owns only the
   // commit side-effects.
@@ -2165,6 +2174,7 @@ function updateIdleMilitary(e){
       let guardZone = guardOrderOf(e) ? guardZoneOf(e) : null;
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
+        if(en.utype==='dragon')return false; // never picked a fight with on its own: only an explicit order attacks the dragon
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
         // Skip a foe we recently proved unreachable — UNLESS we can hit it
         // RIGHT NOW without moving (canStrikeInPlace: firing range for
@@ -3066,6 +3076,84 @@ function updateBearBehavior(e){
   }
 }
 
+// The lair dragon: asleep on its hoard until someone walks right up or hits it; awake, it takes on whoever comes
+// within reach, burning a cone in front of it on its reload (the breath lands before the generic strike, which the
+// cooldown then keeps off), leashes back to the lair, and settles to sleep after a quiet spell there.
+const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                                       // (turns 30° a game-second)
+      DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600);
+function updateDragonBehavior(e){
+  if(e.utype!=='dragon')return;
+  if(e.homeX===undefined){e.homeX=e.x;e.homeY=e.y;}
+  // Asleep it heals, 1 hp every DRAGON_REGEN ticks; knocked out (spent) it stays down, deaf to everything, till whole.
+  if(!e.awake&&e.hp<e.maxHp&&tick%DRAGON_REGEN===0)e.hp++;
+  if(e.spent){ if(e.hp>=e.maxHp)e.spent=false; else { e.target=null; clearUnitPath(e); return; } }
+  let home={x:e.homeX,y:e.homeY}, hit=e.lastEnemyHitTick!==undefined&&tick-e.lastEnemyHitTick<3; // (hashed; lastHitTick is the minimap's)
+  if(!e.awake){
+    if(!e.target&&!hit&&!(tick%10===e.id%10&&closestUnitNear(e,DRAGON_WAKE_R,en=>isPlayerTeam(en.team)))){ clearUnitPath(e); return; } // still asleep
+    e.awake=true; e.calmSince=tick; e.leashCooling=false;
+    if(window.playSound)window.playSound('dragon',e.x,e.y);
+  }
+  if(e.target){
+    let t=entitiesById.get(e.target);
+    if(!t||t.hp<=0||t.garrisonedIn||dist(e,t)>10||dist(e,home)>DRAGON_LEASH){
+      e.target=null; clearUnitPath(e); pathUnitTo(e,Math.round(home.x),Math.round(home.y)); e.leashCooling=true;
+    } else {
+      // It fights only with its fire, where it FACES: it turns slowly toward its prey (dragonTurn) and breathes once the
+      // prey is in the cone before it. Out of reach it lumbers closer; in reach it stands and turns — a runner quick
+      // enough round its flank stays out of the fire.
+      let d=distToTarget(e,t), a=simAtan2(t.y-e.y,t.x-e.x);
+      if(d>DRAGON_BREATH_R-0.4){ if(e.path.length===0&&tick%10===e.id%10)pathUnitTo(e,Math.round(t.x),Math.round(t.y)); }
+      else clearUnitPath(e);
+      dragonTurn(e, e.path.length?simAtan2(e.path[0].y-e.y,e.path[0].x-e.x):a);
+      let off=e.faceAng-a; off=simAtan2(simSin(off),simCos(off));
+      if(e.atkCooldown<=0&&d<=DRAGON_BREATH_R&&simCos(off)>=DRAGON_BREATH_COS){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; }
+    }
+    e.calmSince=tick;
+    return;
+  }
+  if(e.leashCooling&&dist(e,home)<3)e.leashCooling=false;
+  if(!e.leashCooling&&(hit||tick%10===e.id%10)){
+    let prey=closestUnitNear(e,hit?9:DRAGON_AGGRO_R,en=>isPlayerTeam(en.team));
+    if(prey){ e.target=prey.id; clearUnitPath(e); e.calmSince=tick; if(window.playSound)window.playSound('dragon',e.x,e.y); return; }
+  }
+  if(e.path.length===0&&dist(e,home)>1.5)pathUnitTo(e,Math.round(home.x),Math.round(home.y));
+  if(e.path.length)dragonTurn(e,simAtan2(e.path[0].y-e.y,e.path[0].x-e.x));
+  if(e.path.length===0&&tick-e.calmSince>DRAGON_SLEEP_AFTER)e.awake=false;             // back on the hoard, quiet: sleeps
+}
+function dragonScatter(u,d){
+  let dx=u.x-d.x, dy=u.y-d.y, l=Math.sqrt(dx*dx+dy*dy)||1;
+  let sp=findSpawnTile(Math.round(u.x+dx/l*7),Math.round(u.y+dy/l*7),4); if(!sp)return;
+  if(u.utype==='villager'){ u.task=null; u.buildTarget=null; clearGatherTarget(u); }
+  u.target=null; u.explicitAttack=false; clearUnitPath(u); pathUnitTo(u,sp.x,sp.y);
+  u.retreatUntil=tick+T30(120);
+}
+// Its heading (faceAng, hashed) turns toward `a` at DRAGON_TURN a tick at most: huge, and slow to come round.
+function dragonTurn(e,a){
+  if(e.faceAng===undefined){ e.faceAng=a; return; }
+  let off=a-e.faceAng; off=simAtan2(simSin(off),simCos(off));
+  e.faceAng+=Math.max(-DRAGON_TURN,Math.min(DRAGON_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
+}
+// Fire in a cone along its heading: every player unit and building within reach and angle takes the dragon's hit
+// (buildings its bonus). Entities in id order — the order damage lands in is part of the sim.
+function dragonBreath(e){
+  let fx=simCos(e.faceAng), fy=simSin(e.faceAng);
+  e.breathTick=tick; e.breathX=fx; e.breathY=fy; // (the renderers' flame; the sim never reads them)
+  for(let i=0;i<entities.length;i++){
+    let o=entities[i];
+    if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team))continue;
+    if(o.type==='unit'&&isHarmlessAnimal(o))continue;
+    let ox, oy, d;
+    if(o.type==='building'){ let b=BLDGS[o.btype], w=o.w||b.w, h=o.h||b.h;
+      ox=Math.max(o.x-0.5,Math.min(e.x,o.x+w-0.5)); oy=Math.max(o.y-0.5,Math.min(e.y,o.y+h-0.5)); }
+    else if(o.type==='unit'){ ox=o.x; oy=o.y; } else continue;
+    let dx=ox-e.x, dy=oy-e.y; d=Math.sqrt(dx*dx+dy*dy);
+    if(d>DRAGON_BREATH_R)continue;
+    if(d>0.6&&(dx*fx+dy*fy)/d<DRAGON_BREATH_COS)continue;
+    damageEntity(e,o);
+  }
+  if(window.playSound)window.playSound('fire',e.x,e.y);
+}
+
 function dropPathIfInPosition(e){
   if(e.path.length===0)return;
   // A combat unit can reach attack position BEFORE its path runs out (a
@@ -3142,6 +3230,8 @@ function updateUnit(e){
 
   updateBearBehavior(e);
 
+  updateDragonBehavior(e);
+
   // Trade cart routing: sets the path for the current leg (to a Market) and
   // delivers gold on arrival. Falls through to the shared movement step below,
   // which walks whatever path this set. Carts have no target/gather task, so
@@ -3152,6 +3242,7 @@ function updateUnit(e){
 
   dropPathIfInPosition(e);
   if(e.path.length>0){ walkUnitPath(e); return; }
+  if(e.utype==='dragon')return;   // it fights with its fire alone (updateDragonBehavior), never the generic strike
 
   if(e.target && e.task !== 'return'){ updateUnitCombat(e); return; }
 
@@ -3374,7 +3465,7 @@ function handleDeath(e,killerTeam){
   // (wooden vehicles are excluded: they break apart in wood splinters
   // instead — see drawTradeCartCorpse / drawRamCorpse in js/render-units.js)
   if(e.type==='unit'&&!isHarmlessAnimal(e)&&!isWoodVehicle(e)){
-    spawnParticles(e.x,e.y,'#990000',e.utype==='bear'?12:7,0.05,1.8);
+    spawnParticles(e.x,e.y,'#990000',e.utype==='dragon'?24:e.utype==='bear'?12:7,0.05,1.8);
   }
   // Death/destruction audio (host side; the guest hears the same via its
   // new-corpse sync hook in js/net-sync.js). Fog + stereo pan are handled
@@ -3384,7 +3475,7 @@ function handleDeath(e,killerTeam){
     // refund/cancel action, not a demolition — silence is right there.
     if(e.type==='building'&&e.complete) window.playSound('collapse', e.x+(e.w||1)/2, e.y+(e.h||1)/2);
     // Bears growl their own death; humans get the death cry.
-    else if(e.type==='unit'&&e.utype==='bear') window.playSound('bear', e.x, e.y);
+    else if(e.type==='unit'&&isWildPredator(e)) window.playSound(e.utype, e.x, e.y);
     else if(e.type==='unit'&&isWoodVehicle(e)) window.playSound('collapse', e.x, e.y); // timber breaking apart, not a human cry
     else if(e.type==='unit'&&!isHarmlessAnimal(e)) window.playSound('death', e.x, e.y);
   }
@@ -3505,7 +3596,7 @@ function updateStuckWatchdog(){
   if (tick % STUCK_CHECK_EVERY !== 0) return;
   entities.forEach(e => {
     if (e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn) return;
-    if (e.utype === 'sheep' || e.utype === 'sheep_carcass' || e.utype === 'bear') return;
+    if (e.utype === 'sheep' || e.utype === 'sheep_carcass' || isWildPredator(e)) return;
     let busy = e.path.length > 0 || e.task || e.target || e.buildTarget;
     if (!busy) { e.stuck = undefined; return; }
     if (e.task === 'return' && retryActive(e,RETRY.DROP_WAIT)) { e.stuck = undefined; return; } // deliberate wait

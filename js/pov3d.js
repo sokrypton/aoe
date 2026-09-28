@@ -24,7 +24,7 @@
   let eye = null, yaw = 0;           // smoothed unit position / heading
   let camAt = { x: 0, y: 0 };        // where the camera stands (world tiles)
   let mode = 'chase', world = false;   // 'orbit' (the world view's RTS camera), 'chase' = behind the unit, 'eye' = first person; world: the 3D world view
-  let btnMode, btnFull, btnNext, btnClose, hintEl, joyEl, actEl;
+  let btnFull, btnClose, hintEl, joyEl, actEl;
   let swingAt = 0; const SWING_MS = 650;   // a swing the player asked for (first person), played at once
 
   // A classic <script>, not import(): module loads are CORS-blocked on file://.
@@ -1493,6 +1493,121 @@
     blob(jaw, fur, 0.08, -0.01, 0, 0.08, 0.025, 0.06);
     return g;
   }
+  // The dragon, from the same kit and as simple as the others (drawDragonBody, render-units, is its 2D twin): a
+  // chest and haunch on four legs, a tapering neck up to a horned head with a hinged jaw, a long tail to a spade,
+  // a few plates along the back, two membrane wings on bones. The flame (hidden till it breathes) rides the jaw.
+  const DRAGON3D = { body: '#3f7a3a', dark: '#2c5a28', belly: '#dcc47e', membrane: '#6f9e4c', horn: '#efe3c4', eye: '#ffd23a' };
+  let dragonPlateGeo = null, dragonClawGeo = null;
+  // leg bones (thigh, shin) and the knee's bend: hind knees forward (+1), fore back (−1); a little longer than the hip's
+  // height, so standing they're a touch bent
+  // A tube along a smooth path through pts, its radius easing r0 → r1 (a neck, a tail); outlined like a blob.
+  function taper(g, col, pts, r0, r1){
+    const path = new THREE.CatmullRomCurve3(pts.map(p => V3(p))), N = segs(20), R = segs(10);
+    const geo = own(new THREE.TubeGeometry(path, N, 1, R, false)), P = geo.attributes.position, c = new THREE.Vector3(), v = new THREE.Vector3();
+    for (let i = 0; i <= N; i++) { const u = i / N, r = r0 + (r1 - r0) * u * u * (3 - 2 * u); path.getPointAt(u, c);
+      for (let k = 0; k <= R; k++) { const q = i * (R + 1) + k; v.fromBufferAttribute(P, q).sub(c).multiplyScalar(r).add(c); P.setXYZ(q, v.x, v.y, v.z); } }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat(col)); m.userData.hullGeo = geo; g.add(m);
+    for (const [p, r] of [[pts[0], r0], [pts[pts.length - 1], r1]]) blob(g, col, p[0], p[1], p[2], r); // round ends
+    return path;
+  }
+  function dragonModel(){
+    const C = DRAGON3D, g = new THREE.Group(), body = pivot(g, 0, 0, 0, 'body');
+    if (!dragonClawGeo) { dragonClawGeo = new THREE.ConeGeometry(1, 1, 6).translate(0, 0.5, 0); dragonClawGeo.userData.kept = true; } // a claw: base at its root, tip +y
+    if (!dragonPlateGeo) { dragonPlateGeo = new THREE.ConeGeometry(1, 1, 3).translate(0, 0.5, 0).scale(1, 1, 0.35); dragonPlateGeo.userData.kept = true; }
+    const plate = (par, x, y, z, h, lean = -0.35) => { const m = new THREE.Mesh(dragonPlateGeo, mat(C.dark)); m.position.set(x, y, z); m.scale.set(h * 0.55, h, h * 0.55); m.rotation.z = lean; m.userData.hullGeo = dragonPlateGeo; par.add(m); };
+    // the trunk: chest, barrel, haunch; a banded belly
+    blob(body, C.body, 0.28, 0.8, 0, 0.5, 0.46, 0.46);
+    blob(body, C.body, -0.12, 0.74, 0, 0.62, 0.42, 0.44);
+    blob(body, C.body, -0.52, 0.72, 0, 0.36, 0.36, 0.4);
+    blob(body, C.belly, 0.02, 0.46, 0, 0.62, 0.2, 0.34);                                   // belly
+    for (let k = 0; k < 5; k++) plate(body, 0.42 - k * 0.24, 1.14 - Math.abs(k - 2) * 0.05, 0, 0.36 - Math.abs(k - 2) * 0.07, -0.3); // big back plates, tallest mid-back
+    // legs, jointed: a muscled thigh from the hip (leg i) to the knee, a shin to the ankle, a flat foot — posed by
+    // placing the foot on the ground (animateAnimal: dragonLegs). Hind 0/1 heavier.
+    [[-0.45, -0.34], [-0.45, 0.34], [0.36, -0.32], [0.36, 0.32]].forEach(([x, z], i) => {
+      const hind = i < 2, L = DRAGON_LEG[hind ? 'hind' : 'fore'], leg = pivot(body, x, 0.62, z, 'leg' + i);
+      blob(leg, C.body, 0, -0.03, 0, hind ? 0.21 : 0.16, hind ? 0.22 : 0.17, hind ? 0.17 : 0.14);   // the haunch / shoulder
+      taper(leg, C.body, [[0, -0.05, 0], [0, -L.th / 2, 0], [0, -L.th, 0]], hind ? 0.17 : 0.13, hind ? 0.11 : 0.095);  // stout: it carries tons
+      const knee = pivot(leg, 0, -L.th, 0, 'knee'); knee.userData.leg = L;
+      taper(knee, C.body, [[0, 0, 0], [0, -L.sh / 2, 0], [0, -L.sh + 0.03, 0]], hind ? 0.11 : 0.095, 0.065); // ends inside the foot
+      const ankle = pivot(knee, 0, -L.sh, 0, 'ankle');
+      // the foot: a heel pad round the shin's end, three toes splayed forward, a pale claw hooking down at each tip to the ground
+      blob(ankle, C.dark, 0.02, -DRAGON_FOOT * 0.5, 0, 0.12, DRAGON_FOOT * 0.5, 0.11);
+      for (const z of [-1, 0, 1]) {
+        const tz = z * (hind ? 0.075 : 0.065), tx = 0.1 - Math.abs(z) * 0.015;
+        blob(ankle, C.dark, tx, -DRAGON_FOOT * 0.65, tz, 0.07, 0.035, 0.036);
+        const cl = new THREE.Mesh(dragonClawGeo, mat(C.horn)); cl.userData.hullGeo = dragonClawGeo;
+        cl.position.set(tx + 0.065, -DRAGON_FOOT * 0.72, tz * 1.12); cl.rotation.set(0, -tz * 2.2, -Math.PI / 2 - 0.55); cl.scale.set(0.028, 0.075, 0.028); ankle.add(cl);
+      }
+    });
+    // tail: three jointed segments tapering down and back to a spade (the joints' round ends hide the seams as it bends)
+    const tail = pivot(body, -0.8, 0.74, 0, 'tail');
+    taper(tail, C.body, [[0, 0, 0], [-0.3, -0.05, 0], [-0.6, -0.16, 0]], 0.26, 0.17);
+    const tail2 = pivot(tail, -0.6, -0.16, 0, 'tail2');
+    taper(tail2, C.body, [[0, 0, 0], [-0.3, -0.09, 0], [-0.6, -0.2, 0]], 0.17, 0.1);
+    const tail3 = pivot(tail2, -0.6, -0.2, 0, 'tail3');
+    taper(tail3, C.body, [[0, 0, 0], [-0.28, -0.02, 0], [-0.55, 0.02, 0]], 0.1, 0.05);
+    const spade = pivot(tail3, -0.55, 0.02, 0, 'spade');
+    const sp = new THREE.Mesh(dragonPlateGeo, mat(C.dark)); sp.scale.set(0.16, 0.26, 0.18); sp.rotation.z = Math.PI / 2 + 0.15; sp.userData.hullGeo = dragonPlateGeo; spade.add(sp);
+    // neck up to the head, plates down its back
+    const neck = pivot(body, 0.62, 0.95, 0, 'neck');
+    taper(neck, C.body, [[0, 0, 0], [0.18, 0.3, 0], [0.3, 0.58, 0], [0.42, 0.74, 0]], 0.26, 0.15);
+    const head = pivot(neck, 0.5, 0.78, 0, 'head');
+    blob(head, C.body, 0.06, 0.02, 0, 0.24, 0.19, 0.2);                                    // skull
+    blob(head, C.body, 0.32, -0.02, 0, 0.24, 0.12, 0.14);                                  // snout
+    for (const z of [-1, 1]) {
+      const eye = blob(head, C.eye, 0.17, 0.08, z * 0.14, 0.045, 0.04, 0.02); eye.name = 'eye';
+      blob(eye, '#111', 0.3, 0, z * 0.6, 0.45, 0.55, 0.4);                                 // pupil
+      tube(head, C.horn, [-0.02, 0.15, z * 0.1], [-0.15, 0.27, z * 0.15], [-0.28, 0.25, z * 0.19], 0.042);   // horn swept back
+    }
+    const jaw = pivot(head, 0.08, -0.12, 0, 'jaw');
+    blob(jaw, C.belly, 0.2, -0.02, 0, 0.2, 0.04, 0.09);
+    // the fire: nested cones out of the mouth (+x), glowing where they overlap, no outline
+    const flame = pivot(jaw, 0.5, 0.02, 0, 'flame');
+    const cone = (col, r, L, op) => { const m = new THREE.Mesh(new THREE.ConeGeometry(r, L, 16, 1, true).rotateZ(Math.PI / 2).translate(L / 2, 0, 0),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+      m.material.onBeforeCompile = function(){}; m.material.onBeforeCompile.fow = true; m.renderOrder = 3; flame.add(m); return m; };
+    cone('#b82a0c', 0.5, 2.1, 0.7); cone('#ff7a18', 0.34, 1.8, 0.8); cone('#ffd24a', 0.2, 1.3, 0.9); cone('#fff6c8', 0.09, 0.8, 0.9);
+    flame.visible = false;
+    for (const side of [1, -1]) dragonWing(body, side);
+    return g;
+  }
+  // A wing, built as a bat's: bones shoulder → elbow → wrist, three fingers fanning from the wrist, and one membrane
+  // stretched between them and the hip — the flank panel (shoulder, elbow, wrist, last finger, hip) and the panels
+  // between the fingers, scalloped at their edges. The membrane is rebuilt each frame from where the bones are
+  // (poseDragonWing), so it can't come loose. All in the wing's own plane: x chord (back −), y span (out), z its
+  // normal; 'fold' turns that plane out of the flank.
+  // the flank panel (shoulder, elbow, wrist, last finger, hip) and the two panels between the fingers, each scalloped (M*)
+  const WING_TRIS = [['S', 'E', 'B'], ['E', 'W', 'B'], ['W', 'M3', 'B'], ['W', 'F2', 'M3'], ['W', 'F2', 'M23'], ['W', 'M23', 'F1'], ['W', 'F0', 'M01'], ['W', 'M01', 'F1']];
+  function dragonWing(body, side){
+    const C = DRAGON3D, w = pivot(body, 0.1, 1.08, 0.32 * side, side > 0 ? 'wingL' : 'wingR');
+    const fold = pivot(w, 0, 0, 0, 'fold'); fold.rotation.x = side * Math.PI / 2;
+    const n = WING_TRIS.length * 3, pos = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+    const gm = new THREE.BufferGeometry(); gm.setAttribute('position', pos); gm.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3).map((_, k) => k % 3 === 2 ? 1 : 0), 3));
+    const gh = new THREE.BufferGeometry(); gh.setAttribute('position', pos); gh.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); // the outline's push directions
+    const mem = new THREE.Mesh(gm, mat(C.membrane, true)); mem.frustumCulled = false; mem.renderOrder = 2; fold.add(mem);
+    dragonHullDS = dragonHullDS || (HULL_MATS.add(dragonHullDS = screenHull(new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, depthWrite: false }), HULL, 1.5)), dragonHullDS);
+    const hull = new THREE.Mesh(gh, dragonHullDS); hull.frustumCulled = false; fold.add(hull);
+    const bones = [[0.045], [0.04], [0.032], [0.024], [0.022]].map(([r]) => { const b = pole(fold, C.dark, [0, 0, 0], [0, 1, 0], r); b.userData.r = r; return b; });
+    const knob = blob(fold, C.dark, 0, 0, 0, 0.055);                                         // the wrist knuckle
+    w.userData.wing = { pos, gh, bones, knob, side, hull, mem };
+  }
+  let dragonHullDS = null; const _wv = {};
+  // Lay the wing out for fold fd (0 spread … 1 folded): joints from the blended angles, then the membrane triangles
+  // between them, the outline pushed out from the wing's middle, the bones set end to end.
+  function poseDragonWing(w, fd, tuck = 0){
+    const d = w.userData.wing, pt = dragonWingJoints(fd, tuck, d.side), { S, E, W } = pt, F = [pt.F0, pt.F1, pt.F2]; // (render-units: shared with the 2D art)
+    let cx = 0, cy = 0; for (const k of ['S', 'E', 'W', 'B', 'F0', 'F1', 'F2']) { cx += pt[k][0] / 7; cy += pt[k][1] / 7; }
+    const P3 = d.pos.array, N = d.gh.attributes.normal.array; let i = 0;
+    for (const tri of WING_TRIS) for (const k of tri) { const p = pt[k]; P3[i] = p[0]; P3[i + 1] = p[1]; P3[i + 2] = p[2];
+      const nx = p[0] - cx, ny = p[1] - cy, nl = Math.hypot(nx, ny) || 1; N[i] = nx / nl; N[i + 1] = ny / nl; N[i + 2] = 0; i += 3; }
+    d.pos.needsUpdate = true; d.gh.attributes.normal.needsUpdate = true;
+    d.hull.renderOrder = 1; d.mem.renderOrder = 2;                                                // (addHulls' union pass levels every mesh: the outline must go first)
+    const set = (b, a, c) => { _wv.a = _wv.a || new THREE.Vector3(); _wv.d = _wv.d || new THREE.Vector3(); _wv.a.set(a[0], a[1], a[2]); _wv.d.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+      const L = _wv.d.length() || 1e-4; b.scale.set(2 * b.userData.r, L, 2 * b.userData.r); b.position.copy(_wv.a).addScaledVector(_wv.d, 0.5); b.quaternion.setFromUnitVectors(_wv.y = _wv.y || new THREE.Vector3(0, 1, 0), _wv.d.normalize()); };
+    set(d.bones[0], S, E); set(d.bones[1], E, W); for (let k = 0; k < 3; k++) set(d.bones[2 + k], W, F[k]);
+    d.knob.position.set(W[0], W[1], W[2]);
+  }
   // Pose an animal from its state (viewer-only). A four-beat walk — hind,
   // fore, other hind, other fore — with each leg lifting on its forward
   // swing and a bob at every footfall; the phase advances by the distance
@@ -1500,8 +1615,9 @@
   // half the cycle while it sweeps its whole arc (2·L·sin A), so the body must
   // cover twice that per cycle for planted feet not to slide. a.gait eases
   // in/out, so legs settle when it stops.
-  const GAIT = { sheep: { A: 0.55, L: 0.14, lift: 0.03, bob: 0.01 }, bear: { A: 0.45, L: 0.28, lift: 0.05, bob: 0.02 } };
+  const GAIT = { sheep: { A: 0.55, L: 0.14, lift: 0.03, bob: 0.01 }, bear: { A: 0.45, L: 0.28, lift: 0.05, bob: 0.02 }, dragon: { A: 0.42, L: 0.5, lift: 0.08, bob: 0.03 } };
   const LEG_PHASE = [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI); // legs 0/1 hind, 2/3 fore
+  let _dv = null;
   function animateAnimal(model, e, a, dt){
     const G = GAIT[e.utype], b = model.getObjectByName('body'), neck = model.getObjectByName('neck'), idp = e.id || 0;
     const legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i));
@@ -1517,6 +1633,31 @@
       neck.rotation.z = -0.95 * a.graze + Math.sin(aTick * 0.6) * 0.05 * a.graze; // head down, chewing
       neck.rotation.y = look * (1 - a.graze);
       model.getObjectByName('tail').rotation.y = Math.sin(aTick * (e.eatingGrass ? 0.35 : a.gait > 0.5 ? 0.25 : 0.08) + idp) * 0.4;
+    } else if (e.utype === 'dragon') {
+      // A huge, heavy beast: its pose comes from dragonAnim (render-units, shared with the 2D art) — here set on the
+      // model, with the dust and the ground's shake at its footfalls and slam, and smoke from its nostrils.
+      const P = dragonAnim(e, a, dt), head = model.getObjectByName('head');
+      b.scale.set(1 + P.chest * 0.35, 1 + P.chest, 1 + P.chest * 0.8);
+      b.rotation.set(P.roll, 0, P.pitch);
+      b.position.set(P.bodyX, P.bodyY + bob * 0.4, 0);
+      neck.rotation.z = P.neck; neck.rotation.y = P.neckY;
+      head.rotation.z = P.head; head.rotation.x = P.headX;
+      model.getObjectByName('jaw').rotation.z = -P.jaw;
+      for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * P.eyeShut); }
+      ['tail', 'tail2', 'tail3'].forEach((n, k) => { const j = model.getObjectByName(n); j.rotation.y = P.tail[k]; j.rotation.z = P.tailZ[k]; });
+      model.getObjectByName('spade').rotation.y = P.spade;
+      for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
+        poseDragonWing(w, 1 - P.open, P.sl);
+        w.rotation.set(-sd * ((1.35 + (0.35 + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl), 0, 0); }
+      const fl = model.getObjectByName('flame'); fl.visible = P.flame > 0;
+      if (fl.visible) fl.scale.set(P.flame * (0.92 + 0.08 * Math.sin(P.ck * 40)), 0.85 + 0.15 * Math.sin(P.ck * 33), 0.85 + 0.15 * Math.cos(P.ck * 29));
+      if (!a.lab) {
+        for (const i of P.ev.steps) { const f = legs[i].getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 3, '#b7a27a'); shakeFrom(f.x, f.z, 0.03); }
+        if (P.ev.slam) { for (const l of [legs[2], legs[3]]) { const f = l.getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 7, '#b7a27a'); } shakeFrom(a.x, a.z, 0.12); }
+        if (world) dragonSounds(e, P.ev);                                                  // (the 2D map is off while the world view shows)
+        if (P.ev.snore || P.ev.smoke) { const n = head.localToWorld((_dv || (_dv = new THREE.Vector3())).set(0.52, 0.04, 0)); puffBurst(n.x, n.y, n.z, 2, '#9a9a9a'); }
+      }
+      reach = P.reach;
     } else {
       // The maul rides the real bite clock (atkCooldown, drawBearBody): crouch
       // back, rear up on the planted hind paws, pounce landing as the damage
@@ -1538,14 +1679,66 @@
     }
     // Each leg: half the cycle planted, its foot sweeping back at an even pace (it keeps pace with the ground),
     // half swinging forward through the air.
+    if (e.utype === 'dragon') { dragonLegs(model, a, legs, reach, G); return; }
     legs.forEach((l, i) => {
       if (l.userData.y0 === undefined) l.userData.y0 = l.position.y;
       const q = (((a.phase + LEG_PHASE[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
       let x, up = 0;                                                                   // x: the foot, −1 (back) … 1 (ahead)
       if (q < Math.PI) x = 1 - 2 * q / Math.PI; else { const u = q / Math.PI - 1; x = -Math.cos(u * Math.PI); up = Math.sin(u * Math.PI); }
-      l.rotation.z = Math.asin(Math.sin(G.A) * x) * a.gait + (i < 2 ? -0.35 : 0.45) * reach;
+      l.rotation.z = Math.asin(Math.sin(G.A) * x) * a.gait + (i < 2 ? -0.35 : 0.45) * reach + (a.lie ? (i < 2 ? -1.3 : 1.3) * a.lie : 0); // (a lying dragon tucks its legs)
       l.position.y = l.userData.y0 + G.lift * up * a.gait;
     });
+  }
+  // The dragon's legs: each foot's spot is found — under the hip on the ground, swept back through the stance, lifted
+  // and brought forward on the swing — and the hip and knee solved to reach it (two-bone IK in the leg's plane). So
+  // the feet stay planted as the heavy body sinks and rolls over them. The foot rolls: heel up at toe-off, toes down
+  // through the swing. Rearing, the fore feet paw the air; lying (a.lie) the legs blend to a resting pose splayed
+  // beside the body — forelegs out in front like a sphinx's, hind legs folded knee-forward.
+  let _lw = null;
+  function dragonLegs(model, a, legs, reach, G, lie = a.lie || 0){
+    const body = model.getObjectByName('body'), ck = a.dr ? a.dr.ck : 0; model.updateMatrixWorld(true);
+    _lw = _lw || new THREE.Vector3();
+    legs.forEach((l, i) => {
+      const knee = l.getObjectByName('knee'), ankle = l.getObjectByName('ankle'), L = knee.userData.leg, hind = i < 2, side = Math.sign(l.position.z);
+      const { x, up, roll } = dragonStride(a.phase, i);                                  // (render-units: the stride, shared with the 2D art)
+      l.getWorldPosition(_lw); _lw.y = DRAGON_FOOT + G.lift * 1.8 * up * a.gait; body.worldToLocal(_lw);
+      let tx = _lw.x - l.position.x + x * G.L * Math.sin(G.A) * a.gait, ty = _lw.y - l.position.y;
+      if (!hind && reach > 0.2) { const pw = ck * 5.5 + (side > 0 ? 0 : Math.PI);     // rearing: the fore feet paw the air, alternately
+        const px = 0.2 + 0.14 * Math.sin(pw), py = -0.3 + 0.1 * Math.cos(pw), w = Math.min(1, (reach - 0.2) * 2);
+        tx += (px - tx) * w; ty += (Math.max(ty, py) - ty) * w; }
+      let [hip, kn] = dragonLegIK(L, tx, ty);
+      const T = DRAGON_TUCK[hind ? 'hind' : 'fore'];
+      hip += (T.hip - hip) * lie; kn += (T.knee - kn) * lie;
+      l.rotation.set(-side * T.out * lie, 0, hip); l.position.y = l.userData.y0 ??= l.position.y;
+      knee.rotation.z = kn;
+      ankle.rotation.z = -(hip + kn) + roll * a.gait * (1 - lie);                         // the foot flat, rolling through the step
+    });
+  }
+  // The dragon's death: it collapses where it stands. The legs buckle and the body drops under gravity, bouncing once
+  // as it lands; a beat later the neck topples and the head slams down (and bounces); the wings flare as it falls and
+  // then sprawl; the tail and jaw go slack, the eyes close. age: ms since death.
+  function dragonDeath(model, age){
+    const body = model.getObjectByName('body'), neck = model.getObjectByName('neck'), head = model.getObjectByName('head');
+    const fall = (t0, dur) => { const u = Math.max(0, Math.min(1, (age - t0) / dur)); return u * u; };        // accelerating
+    const bounce = (t0, amp) => age > t0 ? amp * Math.exp(-(age - t0) / 160) * Math.sin((age - t0) / 55) : 0;
+    const fb = fall(80, 620), fn = fall(420, 560), ft = fall(250, 700);
+    model.rotation.x = 0;
+    body.position.set(0, -0.4 * fb + bounce(700, 0.05), 0); body.rotation.set(0.05 * fb, 0, -0.07 * fb + bounce(700, 0.03));
+    body.scale.set(1 + 0.04 * fb, 1 - 0.05 * fb + bounce(700, 0.03), 1 + 0.03 * fb);                          // it slumps
+    const legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i)), a = { phase: 0, gait: 0, dr: null };
+    dragonLegs(model, a, legs, 0, GAIT.dragon, Math.min(1, fb * 1.4));
+    neck.rotation.set(0, 0.25 * fn, 0.1 - 1.45 * fn + bounce(980, 0.12));
+    head.rotation.set(0.15 * fn, 0, 0.35 * fn + bounce(1000, 0.1));
+    model.getObjectByName('jaw').rotation.z = -0.3 * fall(900, 400);
+    for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * fall(700, 300)); }
+    model.getObjectByName('tail').rotation.set(0, 0.2 * ft, -0.22 * ft + bounce(950, 0.06));                 // the tail drapes limp, joint by joint
+    model.getObjectByName('tail2').rotation.set(0, 0.15 * ft, -0.12 * ft + bounce(1050, 0.08));
+    model.getObjectByName('tail3').rotation.set(0, 0.2 * ft, 0.12 * ft + bounce(1150, 0.1));
+    const flare = Math.sin(Math.min(1, age / 900) * Math.PI) * 0.35, sprawl = fall(500, 700);
+    for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
+      poseDragonWing(w, 1 - Math.max(flare, 0.45 * sprawl), 0);
+      w.rotation.set(-sd * (1.35 * (1 - sprawl) + 0.12 * sprawl + 0.15 * flare), 0, 0); }              // stood up → slumped out over the ground
+    model.getObjectByName('flame').visible = false;
   }
   // ---- Characters in 3D (design stage: __povCharMock) ----
   // One kit for every unit, from the 2D rig's numbers (drawBodyLayer /
@@ -2686,6 +2879,27 @@
     load: () => loadThree().then(() => { initShared(); return THREE; }),
     unitKinds: { villager: null, militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'], archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'gallop', 'attack', 'die'], knight: ['idle', 'walk', 'gallop', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'], tradecart: ['idle', 'walk', 'die'] },
     equip: soldierEquip,
+    // Animals: built once, posed live by animateAnimal from a stand-in entity (their game path), one action at phase t.
+    animals: { sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'idle', 'walk', 'roar', 'breathe', 'die'] },
+    animal: kind => { const g = ANIMAL_MODELS[kind](VIL_TC); addHulls(g, true); return g; },
+    poseAnimal: (g, kind, action, t) => {
+      g.position.set(0, 0, 0); g.rotation.set(0, 0, 0);
+      if (action === 'die') { if (kind === 'dragon') dragonDeath(g, t * 3000); else deathPose(g, kind, t * 3000); return; }
+      const walk = action === 'walk', att = action === 'attack' || action === 'roar' || action === 'breathe';
+      const e = { utype: kind, id: 1, awake: action !== 'sleep', path: walk ? [{ x: 0, y: 0 }] : [], target: att ? -1 : null, eatingGrass: action === 'graze',
+        __animAttack: action === 'attack', atkCooldown: action === 'attack' ? UNITS[kind].rof * (1 - t) : 0, breathTick: action === 'breathe' ? tick - t * T30(22) : undefined };
+      const a = g.userData.lab || (g.userData.lab = { phase: 0, gait: 0, graze: 0, lab: true });
+      a.moved = walk ? 1e-3 : 0; a.phase = walk ? t * 2 * Math.PI : 0;
+      if (kind !== 'dragon') { animateAnimal(g, e, a, 1); return; }                // dt 1: every ease snaps to the action
+      // the dragon plays in real time (its springs and clocks need it): restarted on a new action, the phase driving
+      // the walk, the roar and the breath (inhale over the first 40%, then the blast)
+      const now = performance.now(), dt = a.lastNow ? Math.min(0.05, (now - a.lastNow) / 1000) : 1 / 60; a.lastNow = now;
+      if (a.action !== action) { a.action = action; a.dr = null; a.sleep = undefined; a.gait = walk ? 1 : 0; }
+      a.roarT = action === 'roar' ? t : undefined; a.noRoar = action !== 'roar';             // (the lab plays one thing at a time)
+      if (action === 'breathe') { const rof = UNITS.dragon.rof;
+        if (t < 0.4) { e.atkCooldown = rof * 0.35 * (1 - t / 0.4); e.breathTick = undefined; } else { e.atkCooldown = rof; e.breathTick = tick - (t - 0.4) / 0.6 * T30(26); } }
+      animateAnimal(g, e, a, dt);
+    },
     kinds: ['idle', 'walk', 'flee', 'carry', 'barrow', 'chop', 'saw', 'mine', 'farm', 'plow', 'forage', 'butcher', 'build', 'repair', 'drop', 'fight', 'die'],
     frame: animFrame,
     check: () => window.__povAnimCheck(),
@@ -2842,12 +3056,12 @@
       r.render(sc, cam); const u = r.domElement.toDataURL(); r.dispose(); return u;
     });
   };
-  const ANIMAL_MODELS = { sheep: sheepModel, sheep_carcass: sheepModel, bear: () => bearModel() };
+  const ANIMAL_MODELS = { sheep: sheepModel, sheep_carcass: sheepModel, bear: () => bearModel(), dragon: () => dragonModel() };
   // Death, as drawCorpse stages it: topple over the feet accelerating (600ms)
   // with a small impact recoil — here a roll onto the side about the body's
   // own axis, coming to rest lying on the ground, legs stiff and splayed,
   // head limp. half: how far the flank sits from the ground once down.
-  const DEAD_HALF = { sheep: 0.19, bear: 0.27 };
+  const DEAD_HALF = { sheep: 0.19, bear: 0.27, dragon: 0.5 };
   function deathPose(model, kind, age){
     const TOPPLE = 600, p = Math.min(1, age / TOPPLE);
     let rot = (Math.PI / 2.1) * p * p;
@@ -2946,7 +3160,7 @@
   function updateCorpses(used){
     const now = performance.now();
     for (const c of corpses) {
-      if (c.utype !== 'bear' && c.utype !== 'villager' && !MIL3D.has(c.utype)) continue;
+      if (c.utype !== 'bear' && c.utype !== 'dragon' && c.utype !== 'villager' && !MIL3D.has(c.utype)) continue;
       const gx = Math.round(c.x), gy = Math.round(c.y);
       if (!fog[gy] || fog[gy][gx] !== 2 || (c.x - camAt.x) ** 2 + (c.y - camAt.y) ** 2 > RANGE * RANGE) continue;
       const age = now - c.deathTime;
@@ -2955,7 +3169,7 @@
       if (c.utype === 'villager' || MIL3D.has(c.utype)) { villagerCorpse(c, age); continue; }
       let r = corpseModels.get(c.id);
       if (!r) {
-        const g = bearModel(); addHulls(g, true); scene.add(g);
+        const g = c.utype === 'dragon' ? dragonModel() : bearModel(); addHulls(g, true); scene.add(g);
         // The pool lies on the ground on its own (the body lifts as it rolls).
         const blood = new THREE.Mesh(new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#6b0f0f' }));
         scene.add(blood);
@@ -2963,12 +3177,12 @@
         corpseModels.set(c.id, r = { obj: g, blood, yaw: -Math.atan2(v[1], v[0]) });
       }
       r.obj.position.set(c.x + 0.5, 0, c.y + 0.5); r.obj.rotation.y = r.yaw;
-      deathPose(r.obj, 'bear', age);
-      r.blood.position.set(c.x + 0.5, -HULL * 1.5, c.y + 0.5); bloodPool(r.blood, age, 400, 0.45);
+      if (c.utype === 'dragon') dragonDeath(r.obj, age); else deathPose(r.obj, c.utype, age);
+      r.blood.position.set(c.x + 0.5, -HULL * 1.5, c.y + 0.5); bloodPool(r.blood, age, 400, c.utype === 'dragon' ? 0.9 : 0.45);
       // Skeleton stage: the body gives way to its bones, which fade over the last 3s, as the 2D art does.
       const bones = age >= CORPSE_SKEL;
       r.obj.visible = !bones;
-      if (bones && !r.skel) { r.skel = bearSkeleton(); addHulls(r.skel); scene.add(r.skel); // its spine where the rolled body lay (a roll carries the body a body-height sideways)
+      if (bones && !r.skel) { r.skel = bearSkeleton(); if (c.utype === 'dragon') r.skel.scale.setScalar(2.2); addHulls(r.skel); scene.add(r.skel); // its spine where the rolled body lay (a roll carries the body a body-height sideways)
         const b = r.obj.getObjectByName('body'), c = new THREE.Vector3(); (b && b.children[0] || r.obj).getWorldPosition(c); r.skelAt = [c.x, c.z]; }
       if (r.skel) {
         const fade = Math.max(0, Math.min(1, (CORPSE_LIFE - age) / 3000));
@@ -3298,6 +3512,7 @@
     if (world && e.dir !== dir) { e.dir = dir; if (typeof setFacingFromDir === 'function') setFacingFromDir(e, dir); }
   }
   function worldFacing(e){
+    if (e.faceAng !== undefined) return e.faceAng;                                        // the dragon's own slow heading (its fire goes where it faces)
     let tx, ty;
     if (e.path && e.path.length) { const a = e.path[Math.min(3, e.path.length - 1)]; tx = a.x; ty = a.y; }
     else if (e.target && entitiesById.get(e.target)) { const t = entitiesById.get(e.target); tx = t.x; ty = t.y; }
@@ -3576,7 +3791,7 @@
       ty = -Math.atan2(dz, dx); p = { kind: 'walk', t: ((v.stride / WALK_TILES.walk) % 1 + 1) % 1, opt: p.opt };
     } else { const f = T ? Math.min(1, dt * 10) : Math.min(1, dt * 14); nx = v.x + (tx - v.x) * f; nz = v.z + (tz - v.z) * f; }
     v.ptx = tx; v.ptz = tz;
-    if (steerActive() && e.id === followId && (mv || (!e.target && !T && !e.task))) { ty = -yaw; setHeading(e, yaw); } // the steered character faces where it's steered, and keeps it
+    if (steerActive() && e.id === followId && (mv || (!e.target && !T && !e.task)) || (!T && steeredFacing(e))) { ty = -yaw; setHeading(e, yaw); } // the steered character faces where it's steered, and keeps it
     if (!T) v.stride += Math.hypot(nx - v.x, nz - v.z);
     v.x = nx; v.z = nz;
     v.yaw += Math.atan2(Math.sin(ty - v.yaw), Math.cos(ty - v.yaw)) * Math.min(1, dt * 8);
@@ -3828,7 +4043,8 @@
       if (e.utype !== 'sheep_carcass') { // a soft contact shadow under every standing unit
         const r = e.utype === 'bear' ? 0.42 : e.utype === 'sheep' ? 0.3 : isMountedUnit(e.utype) || e.utype === 'ram' || e.utype === 'tradecart' ? 0.4 : 0.2;
         const a = animals.get(e.id) || villagers.get(e.id);
-        put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * r, 1, 2 * r);
+        if (e.utype === 'dragon') put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * UNIT_SHADOW.dragon.len, 1, 2 * UNIT_SHADOW.dragon.wid, -worldFacing(e)); // (2D's oval, along its heading)
+        else put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * r, 1, 2 * r);
       }
       if (ANIMAL_MODELS[e.utype]) { // 3D, posed live from its state
         const dead = e.utype === 'sheep_carcass', kind = dead ? 'sheep' : e.utype; // a carcass keeps its sheep, toppled
@@ -3917,25 +4133,9 @@
   }
 
   let camDt = 1 / 60;
-  // Own units in id order (stable), for Next and for taking over on death.
-  function ownUnits(){
-    return entities.filter(u => u.type === 'unit' && u.team === myTeam && u.hp > 0 && !u.garrisonedIn)
-      .sort((a, b) => a.id - b.id);
-  }
-  // In character mode a fallen character hands over to the nearest own unit,
-  // preferring the same kind (the corner window just closes instead).
-  function successor(){
-    const own = ownUnits();
-    if (!own.length || !eye) return null;
-    const last = lastUtype;
-    const d = u => (u.x + 0.5 - eye.x) ** 2 + (u.y + 0.5 - eye.y) ** 2;
-    const pool = own.some(u => u.utype === last) ? own.filter(u => u.utype === last) : own;
-    return pool.reduce((best, u) => d(u) < d(best) ? u : best);
-  }
-  let lastUtype = null;
   function follow(e){
     if (steering && followId !== e.id) { possess(e.id, true); steerId = e.id; }
-    followId = e.id; lastUtype = e.utype;
+    followId = e.id;
     titleEl.textContent = (UNITS[e.utype] && UNITS[e.utype].name) || e.utype;
   }
 
@@ -3954,6 +4154,9 @@
   // The player is at the controls right now (keys, joystick, or a steering step just sent) — not merely in control.
   // Only then does the character face the steering direction; else it faces its way, and the steering turns with it.
   const steerActive = () => steering && (held.size > 0 || Math.abs(joy.x) > 0.25 || Math.abs(joy.y) > 0.25 || (lastMove != null && performance.now() - lastMoveAt < 700));
+  // Driven and free (no job, no target): it keeps facing the steering heading — stopped, or taking its last step
+  // after the keys let go — not the way the tile path happened to zigzag (a diagonal walk steps off-axis)
+  const steeredFacing = e => steering && e.id === followId && !e.target && !e.task && (!isUnitMoving(e) || steerActive() || !e.path || e.path.length <= 2);
   function setSteering(on){
     if (on === steering) return;
     steering = on;
@@ -3982,8 +4185,11 @@
         }
         return;
       }
-    } else if (lastMove) { // let go: stop here
-      submitCommand({ kind: 'command', unitIds: [e.id], tileX: ux, tileY: uy });
+    } else if (lastMove) { // let go: stop here — on the nearest tile not behind it (walking a diagonal, the rounded tile
+      // is often half a step back on one axis: stopping there would turn it round), else the next one it's stepping to
+      const n = e.path && e.path.length ? e.path[0] : null;
+      const back = n && (ux - e.x) * (n.x - e.x) + (uy - e.y) * (n.y - e.y) < -0.01;
+      submitCommand({ kind: 'command', unitIds: [e.id], tileX: back ? n.x : ux, tileY: back ? n.y : uy });
       lastMove = null;
     }
   }
@@ -4063,6 +4269,7 @@
   // The world view's camera, AoE III-style: the 2D view's side (looking toward −x −z), a fixed downward angle
   // and a narrow lens, so the map fills the screen and the horizon never shows; no tilt, zoom by distance.
   const ORBIT_PITCH = 0.66, ORBIT_FOV = 36, ORBIT_MIN = 12, ORBIT_MAX = 34;
+  let chaseK = 1, lookUntil = 0; // the chase camera's distance (scroll zooms it); a drag-look holds its view a while
   let oYaw = Math.PI / 4, oPitch = ORBIT_PITCH, oDist = 21, zoomBy = 1, zoomAt = null, fpPitch = -0.3, anchorEase = 0, camH = 14, clearH = 0;
   const mapCenter = () => fromIso(camX, camY);                          // map coords of the 2D camera, unrounded (screenToMap rounds to whole pixels: a fine swipe would step)
   function panTo(x, y){ // map coords
@@ -4083,6 +4290,40 @@
   // The frame's wheel steps, at once and about the cursor (as 2D): the camera slides along its sight line, so the
   // ground scales about the view centre by the same factor — the centre shifts to hold the point under the cursor.
   // Measured on the camera last drawn, so a burst of events can't mix states.
+  // Zoomed through: pushed in past the map camera's nearest (or the chase view's), it glides into a unit's eyes (the
+  // followed one, else the selected, else yours nearest the view's middle); pushed out of the eyes, back behind it.
+  // Zooming out never lets go of the unit — Esc does.
+  // The push must be deliberate — ZOOM_PUSH steps past the limit — so a zoom that just hits the stop stays put.
+  const CHASE_MIN = 0.55, CHASE_MAX = 2.2, ZOOM_PUSH = 5;
+  let zoomPush = 0;
+  function zoomTarget(){
+    const sel = selected.find(s => s && s.type === 'unit' && s.hp > 0 && unitVisible(s));
+    if (sel) return sel;
+    const c = mapCenter(); let best = null, bd = 16;
+    for (const u of entities) if (u.type === 'unit' && u.team === myTeam && u.hp > 0 && !u.garrisonedIn) { const d = (u.x - c.x) ** 2 + (u.y - c.y) ** 2; if (d < bd) { bd = d; best = u; } }
+    return best;
+  }
+  function zoomIn(now = false){ // pushed in past the nearest: into the unit's eyes
+    if (zoomPush < 0) zoomPush = 0;
+    if (!now && ++zoomPush < ZOOM_PUSH) return;
+    zoomPush = 0;
+    const u = followId != null ? entitiesById.get(followId) : zoomTarget();
+    if (u) { blendMs = 1000; anchorTo(u); mode = 'eye'; refreshButtons(); }             // (a slower glide: the whole angle turns)
+  }
+  function zoomOut(now = false){ // pushed out of the eyes: back behind the unit, at its nearest
+    if (zoomPush > 0) zoomPush = 0;
+    if (!now && --zoomPush > -ZOOM_PUSH) return;
+    zoomPush = 0; blendMs = 1000; mode = 'chase'; chaseK = CHASE_MIN;
+    if (document.pointerLockElement) document.exitPointerLock();
+    refreshButtons();
+  }
+  // Released (Esc): the map camera centred on the character — not where the 2D map was left — gliding up to its angle.
+  function leaveToMap(){
+    const e = followId != null ? entitiesById.get(followId) : null, at = e && posOf(e);
+    if (document.pointerLockElement) document.exitPointerLock();
+    blendMs = 1000; unfollow(); oDist = ORBIT_MIN;
+    if (at) { panTo(at[0] - 0.5, at[1] - 0.5); eye = { x: at[0], y: at[1] }; }
+  }
   function applyZoom(){
     const f = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, oDist * zoomBy)) / oDist; zoomBy = 1;
     if (f !== 1 && followId == null && eye && zoomAt) { const g = pick(zoomAt.x, zoomAt.y).map, cx = eye.x - 0.5, cy = eye.y - 0.5;
@@ -4091,12 +4332,12 @@
   }
   // A mode or character switch glides the camera from where it was to the new view (position, the shortest turn, lens)
   // rather than cutting; each frame blends toward the live target, so the view it lands on is the one it keeps.
-  const BLEND_MS = 600; let camFrom = null, camKey = null, camLast = null, _bq = null;
+  const BLEND_MS = 600; let camFrom = null, camKey = null, camLast = null, _bq = null, blendMs = BLEND_MS;
   function blendCamera(){
     const key = mode + '|' + followId;
-    if (key !== camKey) { if (camLast) camFrom = { pos: camLast.pos.clone(), quat: camLast.quat.clone(), fov: camLast.fov, t0: performance.now() }; camKey = key; } // from the last DRAWN view
+    if (key !== camKey) { if (camLast) camFrom = { pos: camLast.pos.clone(), quat: camLast.quat.clone(), fov: camLast.fov, t0: performance.now(), ms: blendMs }; camKey = key; blendMs = BLEND_MS; } // from the last DRAWN view
     if (camFrom) {
-      const t = (performance.now() - camFrom.t0) / BLEND_MS;
+      const t = (performance.now() - camFrom.t0) / camFrom.ms;
       if (t >= 1) camFrom = null;
       else { const k = t * t * (3 - 2 * t); _bq = _bq || new THREE.Quaternion();
         camera.position.lerpVectors(camFrom.pos, camera.position, k);
@@ -4106,6 +4347,10 @@
     if (!camLast) camLast = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), fov: 0 };
     camLast.pos.copy(camera.position); camLast.quat.copy(camera.quaternion); camLast.fov = camera.fov;
   }
+  // The ground shakes under something huge (the dragon's footfalls and slams): an offset on the drawn camera that dies
+  // away fast, strongest near the camera's focus. Viewer-only.
+  let camShake = 0;
+  function shakeFrom(x, z, amp){ if (!camAt) return; const d = Math.hypot(x - camAt.x, z - camAt.y); camShake = Math.max(camShake, amp * Math.max(0, 1 - d / 18)); }
   function updateCamera(e){
     if (zoomBy !== 1) applyZoom();
     const k = 1 - Math.exp(-camDt / (performance.now() < anchorEase ? 0.25 : e ? 0.05 : 0.08)); // a new anchor eases in; a unit is followed tight; the free map camera a touch softer (pan input arrives in bursts)
@@ -4114,7 +4359,7 @@
     else { const c = mapCenter(); tx = c.x + 0.5; ty = c.y + 0.5; }
     if (!eye) { eye = { x: tx, y: ty }; yaw = e ? worldFacing(e) : 0; }
     eye.x += (tx - eye.x) * k; eye.y += (ty - eye.y) * k;
-    if (e && !steerActive()) { let dy = worldFacing(e) - yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); yaw += dy * 0.12; } // riding along: turn with the unit
+    if (e && !steerActive() && !steeredFacing(e) && performance.now() > lookUntil) { let dy = worldFacing(e) - yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); yaw += dy * 0.12; } // riding along: turn with the unit
     const cx = Math.cos(yaw), cy = Math.sin(yaw);
     let far = RANGE + 6;
     if (mode === 'orbit' || !e) {
@@ -4127,8 +4372,8 @@
       camAt = { x: eye.x, y: eye.y };                                          // culling and the tree cut-away centre on the anchor
       far = RANGE + oDist + 6;
     } else if (mode === 'chase') {
-      camAt = { x: eye.x - cx * 4.2, y: eye.y - cy * 4.2 };                      // above and behind the character, looking down past it
-      camH += (Math.max(4.6, obstacleTop(camAt.x, camAt.y) + 0.3) - camH) * Math.min(1, camDt * 8);
+      camAt = { x: eye.x - cx * 4.2 * chaseK, y: eye.y - cy * 4.2 * chaseK };                      // above and behind the character, looking down past it
+      camH += (Math.max(4.6 * chaseK, obstacleTop(camAt.x, camAt.y) + 0.3) - camH) * Math.min(1, camDt * 8);
       camera.position.set(camAt.x, camH, camAt.y);
       camera.lookAt(eye.x + cx * 1.5, 0.3, eye.y + cy * 1.5);
     } else { // through the eyes: at the head (a rider's up in the saddle), looking where it faces, pitched by mouse-look
@@ -4144,6 +4389,9 @@
     if (scene.background !== VOID) { scene.background = VOID; scene.fog.color = VOID; } // no sky or clouds, in every mode: beyond the map is black, as 2D
     clouds.visible = false;
     blendCamera();
+    if (camShake > 1e-3) { const t = performance.now() * 0.001;
+      camera.position.x += Math.sin(t * 71) * camShake; camera.position.y += Math.sin(t * 93 + 1) * camShake * 0.7; camera.position.z += Math.sin(t * 57 + 2) * camShake;
+      camShake *= Math.exp(-camDt * 7); }
   }
 
   function loop(now){
@@ -4151,9 +4399,8 @@
     if (!gameStarted) { povClose(); return; }
     let e = followId != null ? entitiesById.get(followId) : null;
     if (followId != null && (!e || e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn)) {
-      const next = steering ? successor() : null; // a fallen character hands over when steering; else the view lets go
-      if (next) { follow(next); e = next; if (world) window.cameraFollowId = next.id; }
-      else if (world) { unfollow(); e = null; }
+      // fallen (or gone): the view lets go — no handover to another unit; the world view back to its map camera
+      if (world) { unfollow(); e = null; }
       else { povClose(); return; }
     }
     frame++;
@@ -4192,15 +4439,11 @@
   }
   const stats = { js: 0, gl: 0 };
 
-  const MODE_LABEL = { orbit: '🛰 Orbit', chase: '🎥 Chase', eye: '👁 Eyes' };
   function refreshButtons(){
     if (!pip) return;
     const e = followId != null ? entitiesById.get(followId) : null, own = !!e && e.team === myTeam;
     if (steering !== own) { setSteering(own); return; }                         // following your own unit = driving it, in every mode
-    btnMode.textContent = MODE_LABEL[mode];
-    btnMode.style.display = world || e ? '' : 'none';
     btnFull.textContent = '⛶ 3D'; btnFull.style.display = world ? 'none' : '';     // in the world view the top bar's switch does it
-    btnNext.style.display = world ? '' : 'none';
     btnClose.style.display = world ? 'none' : '';
     titleEl.textContent = e ? ((UNITS[e.utype] && UNITS[e.utype].name) || e.utype) : '';
     const touch = typeof isMobile !== 'undefined' && isMobile;
@@ -4224,16 +4467,6 @@
     refreshButtons();
     if (renderer) resize();
   }
-  function cycleMode(){
-    if (world && followId == null) { // nothing anchored: take the selected own unit
-      const u = selected.find(s => s && s.type === 'unit' && s.team === myTeam && s.hp > 0 && !s.garrisonedIn);
-      if (u) anchorTo(u);
-    }
-    const order = world ? (followId != null ? ['orbit', 'chase', 'eye'] : ['orbit']) : ['chase', 'eye'];
-    mode = order[(order.indexOf(mode) + 1) % order.length];
-    if (mode !== 'eye' && document.pointerLockElement) document.exitPointerLock();
-    refreshButtons();
-  }
   function unfollow(){
     followId = null; if (world) { mode = 'orbit'; window.cameraFollowId = null; }
     if (steering) setSteering(false);
@@ -4244,7 +4477,7 @@
   // the ordinary input functions through window.__pick3D (iso.js / input.js),
   // so selection, commands, placement, rally/guard/garrison stay one set of rules.
   let _ray = null, _ndc = null, _v3 = null;
-  const PICK_H = { villager: 0.32, militia: 0.32, spearman: 0.32, archer: 0.32, scout: 0.55, knight: 0.55, sheep: 0.2, sheep_carcass: 0.12, bear: 0.35, ram: 0.35, tradecart: 0.35 };
+  const PICK_H = { villager: 0.32, militia: 0.32, spearman: 0.32, archer: 0.32, scout: 0.55, knight: 0.55, sheep: 0.2, sheep_carcass: 0.12, bear: 0.35, ram: 0.35, tradecart: 0.35, dragon: 1.0 }; // (half the drawn height: the HP bar sits over the head)
   function project(x, y, z){ _v3.set(x, y, z).project(camera); const r = renderer.domElement.getBoundingClientRect();
     return { x: r.left + (_v3.x + 1) / 2 * r.width, y: r.top + (1 - _v3.y) / 2 * r.height, z: _v3.z }; }
   // Where a unit is drawn (its model / billboard), else its interpolated spot.
@@ -4274,7 +4507,7 @@
     // units: their drawn box on screen (the rigs pose on the GPU, so no mesh raycast)
     let unit = null, ud = Infinity;
     for (const { u, d: dd } of pickUnits((u, b, t, hp) => {
-      const w = hp * (u.utype === 'scout' || u.utype === 'knight' || u.utype === 'ram' || u.utype === 'tradecart' || u.utype === 'bear' ? 0.9 : 0.55) + slack;
+      const w = hp * (u.utype === 'dragon' ? 1.6 : u.utype === 'scout' || u.utype === 'knight' || u.utype === 'ram' || u.utype === 'tradecart' || u.utype === 'bear' ? 0.9 : 0.55) + slack;
       if (Math.abs(cx - b.x) > w && Math.abs(cx - t.x) > w) return null;
       if (cy < t.y - slack || cy > b.y + slack) return null;
       return camera.position.distanceTo(_v3.set(drawnAt(u)[0], PICK_H[u.utype] || 0.32, drawnAt(u)[1])); // its body, not its feet
@@ -4338,7 +4571,7 @@
     const cv = renderer.domElement; cv.setPointerCapture(ev.pointerId);
     ptrs.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     const x = ev.clientX, y = ev.clientY, touch = ev.pointerType !== 'mouse';
-    if (ptrs.size === 2) { if (drag && drag.kind === 'wall') abortWallDrag(); const [a, b] = [...ptrs.values()]; drag = { kind: 'pinch', d: Math.hypot(a.x - b.x, a.y - b.y), ang: Math.atan2(b.y - a.y, b.x - a.x), dist: oDist }; return; }
+    if (ptrs.size === 2) { if (drag && drag.kind === 'wall') abortWallDrag(); const [a, b] = [...ptrs.values()]; drag = { kind: 'pinch', d: Math.hypot(a.x - b.x, a.y - b.y), ang: Math.atan2(b.y - a.y, b.x - a.x), dist: oDist, k: chaseK }; return; }
     if (!touch && ev.button === 2) { drag = { kind: 'cmd', x, y }; return; }          // right button: a command on release (as 2D)
     if (!touch && ev.button === 1) { drag = { kind: 'pan', x, y, moved: false }; return; }
     if (ev.button !== 0 && !touch) return;
@@ -4362,7 +4595,11 @@
     if (pp) { pp.x = x; pp.y = y; }
     if (!drag) return;
     if (drag.kind === 'pinch' && ptrs.size >= 2) { const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
-      oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, drag.dist * drag.d / Math.max(20, d))); return; } // pinch: zoom (no rotation, as 2D)
+      const r = drag.d / Math.max(20, d);                                                                // pinch: zoom (no rotation, as 2D)
+      if (followId != null && mode === 'eye') { if (r > 1.3) { zoomOut(true); drag = null; } return; }
+      if (followId != null && mode !== 'orbit') { if (drag.k * r < CHASE_MIN * 0.75) { zoomIn(true); drag = null; } else chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, drag.k * r)); return; }
+      if (drag.dist * r < ORBIT_MIN * 0.75) { zoomIn(true); drag = null; return; }                  // pinched well past the nearest: into a unit's view
+      oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, drag.dist * r)); return; }
     const dx = x - drag.x, dy = y - drag.y;
     if (drag.kind === 'wall') { withPick(pick(x, y), () => updateWallDrag(x, y)); return; }
     if (drag.kind === 'cmd') return;
@@ -4370,6 +4607,9 @@
     if (drag.kind === 'place') return;
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 8) drag.moved = true;
     if (!drag.moved) return;
+    if (drag.kind === 'pan' && followId != null && mode !== 'orbit') {  // riding a character: a drag turns the view, never pans off it
+      yaw += (x - drag.x) * 0.006; if (mode === 'eye') fpPitch = Math.max(-1.1, Math.min(0.6, fpPitch - (y - drag.y) * 0.004));
+      drag.x = x; drag.y = y; lookUntil = performance.now() + 2500; return; }
     if (drag.kind === 'pan') { const k = oDist / (renderer.domElement.clientHeight * 0.9), fx = -Math.cos(oYaw), fz = -Math.sin(oYaw); // grab the ground: the map follows the finger
       panBy((-fz * -dx + fx * dy) * k, (fx * -dx + fz * dy) * k); }
     if (drag.kind !== 'box') { drag.x = x; drag.y = y; } else { drag.x = x; drag.y = y; showBox(drag); }
@@ -4624,15 +4864,13 @@
     pip = document.createElement('div');
     pip.id = 'pov-pip';
     pip.innerHTML = '<div class="pov-bar"><span class="pov-title"></span>'
-      + '<span class="pov-btn" data-a="next" title="Anchor to your next unit">⏭ Next</span>'
-      + '<span class="pov-btn" data-a="mode" title="Camera: orbit / behind the unit / through its eyes"></span>'
       + '<span class="pov-btn" data-a="full" title="Switch between the 2D map and the 3D world view"></span>'
       + '<span class="pov-btn" data-a="close" title="Close">✕</span></div>'
       + '<div class="pov-hint"></div>'
       + '<div class="pov-joy"><i></i></div><div class="pov-act">ACT</div>';
     titleEl = pip.querySelector('.pov-title');
     const b = a => pip.querySelector(`[data-a="${a}"]`);
-    btnNext = b('next'); btnMode = b('mode'); btnFull = b('full'); btnClose = b('close');
+    btnFull = b('full'); btnClose = b('close');
     hintEl = pip.querySelector('.pov-hint'); joyEl = pip.querySelector('.pov-joy'); actEl = pip.querySelector('.pov-act');
     const knob = joyEl.querySelector('i');
     const joyMove = ev => {
@@ -4647,14 +4885,7 @@
     const joyEnd = () => { joy.x = joy.y = 0; knob.style.transform = ''; };
     joyEl.addEventListener('pointerup', joyEnd); joyEl.addEventListener('pointercancel', joyEnd);
     actEl.addEventListener('pointerdown', () => { const e = entitiesById.get(followId); if (e && act(e) !== false) swingAt = performance.now(); });
-    btnMode.onclick = cycleMode;
     btnFull.onclick = () => { if (world) povClose(); else openWorld(); };
-    btnNext.onclick = () => {
-      const own = ownUnits();
-      if (!own.length) return;
-      const next = own.find(u => u.id > (followId ?? -1)) || own[0];
-      anchorTo(next); eye = null;
-    };
     btnClose.onclick = () => povClose();
     document.body.appendChild(pip);
     window.addEventListener('resize', () => { if (renderer && pip.style.display !== 'none') setWorld(world); });
@@ -4664,11 +4895,12 @@
       if (!pip || pip.style.display === 'none' || typing(ev)) return;
       const k = ev.key.toLowerCase();
       if (steering) {
-        if (ev.key === 'Escape') { if (world) unfollow(); else povClose(); }
+        if (ev.key === 'Escape') { if (world) leaveToMap(); else povClose(); }
         else if (STEER_KEYS[k]) held.add(STEER_KEYS[k]);
         else if (ev.key === ' ') { const e = entitiesById.get(followId); if (e && act(e) !== false) swingAt = performance.now(); }
         else return;
-      } else return;
+      } else if (ev.key === 'Escape' && world && followId != null && mode === 'eye') leaveToMap();   // in another's eyes (not driving): Esc still leaves
+      else return;
       ev.stopPropagation(); ev.preventDefault();
     }, true);
     window.addEventListener('keyup', ev => {
@@ -4687,8 +4919,13 @@
     cv.addEventListener('pointerleave', () => { hoverXY = null; });
     cv.addEventListener('wheel', ev => { // the 2D rules: pinch/ctrl or a wheel notch zooms, a trackpad two-finger swipe pans (the map camera, which the 3D view follows)
       if (!world) return; ev.preventDefault();
+      if (followId != null && mode === 'eye') { if (ev.deltaY > 0) zoomOut(); return; }                         // in its eyes: out, back behind it
+      if (followId != null && mode !== 'orbit') { // riding a character: any scroll / pinch zooms the chase camera
+        if (ev.deltaY < 0 && chaseK <= CHASE_MIN) { zoomIn(); return; }                                       // in past its nearest: into its eyes
+        zoomPush = 0; chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, chaseK * (ev.deltaY < 0 ? 1 / 1.03 : 1.03))); return; }
       if (!ev.ctrlKey && isTrackpadWheel(ev)) { camX += ev.deltaX / ZOOM; camY += ev.deltaY / ZOOM; window.cameraFollowId = null; return; }
-      if (mode === 'orbit') { zoomBy *= ev.deltaY < 0 ? 1 / 1.02 : 1.02; zoomAt = { x: ev.clientX, y: ev.clientY }; } // a fixed 2% a step, as 2D; applied next frame
+      if (mode === 'orbit' && ev.deltaY < 0 && oDist * zoomBy <= ORBIT_MIN + 1e-6) { zoomIn(); return; }          // in past the nearest: into a unit's view
+      if (mode === 'orbit') { zoomPush = 0; zoomBy *= ev.deltaY < 0 ? 1 / 1.02 : 1.02; zoomAt = { x: ev.clientX, y: ev.clientY }; } // a fixed 2% a step, as 2D; applied next frame
     }, { passive: false });
   }
 
@@ -4706,12 +4943,13 @@
     });
   }
   // The corner window on a unit (the 👁 button / V), or — in the world view — anchor to it and look through its eyes.
+  // No mode switch: the corner window rides behind its unit; the world view zooms between its map camera and a unit's eyes.
   function povOpen(id){
     const e = entitiesById.get(id);
     if (!e || e.type !== 'unit') return;
     if (world) { anchorTo(e); mode = 'chase'; refreshButtons(); return; }
     ensurePip();
-    follow(e); eye = null;
+    follow(e); eye = null; mode = 'chase';
     pip.style.display = 'block';
     setWorld(false);
     startLoop(() => followId === e.id);
@@ -4756,6 +4994,12 @@
   window.povClose = povClose;
   window.povToggle = povToggle;
   window.toggleView3D = () => { if (world) povClose(); else openWorld(); };
+  // A match opens in the 3D world view. ?view=2d|3d picks; automated browsers (the test battery drives the 2D map)
+  // default to 2D.
+  window.enterDefaultView = () => {
+    const v = new URLSearchParams(location.search).get('view');
+    if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld();
+  };
   window.povWorld = () => world;
   window.__povOnScreen = u => { if (!renderer) return false; _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); _v3.set(x, 0.3, z).project(camera); return _v3.z < 1 && Math.abs(_v3.x) <= 1.05 && Math.abs(_v3.y) <= 1.05; };
   window.__povProject = u => { _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); return project(x, (PICK_H[u.utype] || 0.32), z); }; // dev: a unit's screen spot (tests)
