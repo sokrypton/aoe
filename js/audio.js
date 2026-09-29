@@ -724,9 +724,11 @@ function detectMusicMood() {
     entities.forEach(en => {
       if (en.type === 'building') (en.team === myTeam ? myBldgs : theirBldgs).push(en);
     });
-    // The dragon awake and in sight (your own view: fog is viewer-local, and so is the music) outranks every other mood.
-    let dragonUp = entities.some(en => en.utype === 'dragon' && en.hp > 0 && en.awake && !en.spent &&
-      fog[Math.round(en.y)] && fog[Math.round(en.y)][Math.round(en.x)] === 2);
+    // The dragon awake — in your sight (fog is viewer-local, and so is the music) or after one of yours — outranks every
+    // other mood; held a phrase after.
+    let dragonUp = entities.some(en => { if (en.utype !== 'dragon' || en.hp <= 0 || !en.awake || en.spent) return false;
+      const row = fog[Math.round(en.y)], t = en.target != null && entitiesById.get(en.target);
+      return (row && row[Math.round(en.x)] === 2) || (!!t && t.hp > 0 && t.team === myTeam); });
     if (dragonUp) _moodHold.dragon = ambientSeq + 1;
     if (dragonUp || ambientSeq < (_moodHold.dragon || 0)) return 'dragon';
     let danger = false, war = false;

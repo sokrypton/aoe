@@ -178,7 +178,7 @@
         .replace('#include <project_vertex>', `#include <project_vertex>
           vec4 fowW = vec4(transformed, 1.0);
           #ifdef USE_INSTANCING
-            fowW = instanceMatrix * fowW;
+            fowW = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);   // (a tree, a rock: lit by the fog of the tile it stands on — a crown over unexplored ground doesn't go black)
           #endif
           fowW = modelMatrix * fowW; vFowUv = vec2(fowW.x / ${MAP}.0, 1.0 - fowW.z / ${MAP}.0);`);
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D fowMap; varying vec2 vFowUv;')
@@ -3248,7 +3248,7 @@
       const bones = age >= CORPSE_SKEL;
       r.obj.visible = !bones;
       if (bones && !r.skel) { r.skel = bearSkeleton(); if (c.utype === 'dragon') r.skel.scale.setScalar(2.2); addHulls(r.skel); scene.add(r.skel); // its spine where the rolled body lay (a roll carries the body a body-height sideways)
-        const b = r.obj.getObjectByName('body'), c = new THREE.Vector3(); (b && b.children[0] || r.obj).getWorldPosition(c); r.skelAt = [c.x, c.z]; }
+        const b = r.obj.getObjectByName('body'), at = new THREE.Vector3(); (b && b.children[0] || r.obj).getWorldPosition(at); r.skelAt = [at.x, at.z]; }
       if (r.skel) {
         const fade = Math.max(0, Math.min(1, (CORPSE_LIFE - age) / 3000));
         r.skel.position.set(r.skelAt[0], 0, r.skelAt[1]); r.skel.rotation.y = r.yaw; fadeTo(r.skel, fade);
@@ -4926,8 +4926,10 @@
     }
     if (!resource) { const ix = Math.floor(gx), iz = Math.floor(gz), tl = map[iz] && map[iz][ix]; // the ground at its foot (2D's click box is as forgiving)
       if (tl && tl.res > 0 && RES_TILE.has(tl.t) && fog[iz][ix]) { resource = { x: ix, y: iz, type: tl.t }; rd = tg; } }
-    // a unit comes first (as 2D) unless a building or tree clearly stands in front of it; else the nearest thing
-    if (unit && bd > ud - 0.6 && rd > ud - 0.6) { building = null; resource = null; }
+    // a unit comes first (as 2D): one hidden behind a building or tree shows its outline (updateXray) and a click there
+    // takes it; only through the eyes (no outlines) does something clearly in front of it stand in the way
+    const outlined = world && mode !== 'eye';
+    if (unit && (outlined || (bd > ud - 0.6 && rd > ud - 0.6))) { building = null; resource = null; }
     else { unit = null; if (bd <= rd) resource = null; else building = null; }
     const mx = gx - 0.5, my = gz - 0.5;
     return { unit, building, resource, map: { x: mx, y: my }, tile: { x: Math.round(mx), y: Math.round(my) } };
