@@ -958,10 +958,43 @@ function newMatchSeed(seed){
 }
 
 // Corpse decay timeline (wall-clock ms, AoE2-style): fresh body until
-// CORPSE_SKEL, then a bone/skeleton stage, fading out over the last 3s
-// before CORPSE_LIFE. See drawCorpse() in render-units.js and the corpse
-// cull in render.js.
-const CORPSE_SKEL=12000, CORPSE_LIFE=25000;
+// CORPSE_SKEL, then bones that stay on the map (CORPSE_LIFE = never fades) —
+// the oldest dropped once CORPSE_MAX lie about (logic.js), bounding memory and
+// saves. See drawCorpse() in render-units.js.
+const CORPSE_SKEL=12000, CORPSE_LIFE=Infinity, CORPSE_MAX=200;
+// Arrows that landed stay stuck where they hit — the ground (a miss), a unit's body (riding with it; they drop where
+// it falls), a building's wall — then fade. Cosmetic like corpses: the sim never reads them; keyed by the projectile's
+// id, so a lockstep rollback replaying the impact doesn't stick it twice. At most STUCK_PER_HOST in any one target.
+const STUCK_ARROWS=false; // off for now (the feature is complete: flip to bring it back)
+const STUCK_LIFE=20000, STUCK_FADE=3000, STUCK_MAX=200, STUCK_PER_HOST=5;
+let stuckArrows=[];
+function stickArrow(p, host){
+  if (!STUCK_ARROWS || window.__headlessSim || stuckArrows.some(a => a.pid === p.id)) return;
+  let gx=p.tx-p.startX, gy=p.ty-p.startY, gl=Math.sqrt(gx*gx+gy*gy)||1, sn=p.attackerSnap;
+  let a={ type:'stuckArrow', pid:p.id, team:-1, dx:gx/gl, dy:gy/gl, t:performance.now(), x:p.tx, y:p.ty, h:0, hostId:null, ox:0, oy:0,
+    tilt:0.45+cosmeticRandom()*0.35, fl:(sn && sn.utype==='archer' && hasUpgrade(sn.team,'fletching')) ? sn.team : null };
+  if (host) {
+    a.hostId=host.id;
+    if (host.type==='building') { let b=BLDGS[host.btype], hw=(host.w||b.w)/2, hh=(host.h||b.h)/2, k=Math.min(hw/Math.max(1e-6,Math.abs(a.dx)), hh/Math.max(1e-6,Math.abs(a.dy)));
+      a.x=p.tx-a.dx*k; a.y=p.ty-a.dy*k; a.h=8+cosmeticRandom()*16; }                  // on the wall facing the shot
+    else { a.ox=(cosmeticRandom()-0.5)*0.22; a.oy=(cosmeticRandom()-0.5)*0.22; a.x=host.x+a.ox; a.y=host.y+a.oy; a.h=5+cosmeticRandom()*6; }
+    let mine=stuckArrows.filter(s => s.hostId===host.id); if (mine.length>=STUCK_PER_HOST) stuckArrows.splice(stuckArrows.indexOf(mine[0]),1);
+  }
+  stuckArrows.push(a); if (stuckArrows.length>STUCK_MAX) stuckArrows.shift();
+}
+// Once per frame (either view): drop the faded, ride the hosts, and let a dead host's arrows fall where it lay.
+// Returns each live arrow's opacity (1, then fading out) in a.alpha; a.hidden while its host is garrisoned.
+function tendStuckArrows(){
+  let now=performance.now();
+  stuckArrows=stuckArrows.filter(a => now-a.t < STUCK_LIFE+STUCK_FADE);
+  for (let a of stuckArrows) {
+    let age=now-a.t; a.alpha=age<STUCK_LIFE ? 1 : 1-(age-STUCK_LIFE)/STUCK_FADE; a.hidden=false;
+    if (a.hostId==null) continue;
+    let h=entitiesById.get(a.hostId);
+    if (!h || h.hp<=0) { a.hostId=null; a.h=Math.min(a.h,1.5); continue; }       // its host fell: on the ground where it lay
+    if (h.type==='unit') { if (h.garrisonedIn) a.hidden=true; a.x=h.x+a.ox; a.y=h.y+a.oy; }
+  }
+}
 // Tick-based corpse lifetime for the headless simulator only: render.js prunes
 // corpses by wall-clock (CORPSE_LIFE ms), but headless never runs render(), so
 // it prunes by tick age instead to bound memory (~CORPSE_LIFE at 30 tps).

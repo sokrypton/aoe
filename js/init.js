@@ -1315,6 +1315,7 @@ function restartGame(difficulty){
   entities = [];
   entitiesById.clear();
   corpses = [];
+  stuckArrows = [];
   selected = [];
   // The undo entry points at last match's entities — a stale 'select' entry
   // would otherwise light the Undo arrow on a brand-new game.

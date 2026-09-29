@@ -94,7 +94,11 @@ function drawSelection(){
 // changes as fog is revealed / terrain mutates, and a ~4Hz refresh is
 // imperceptible on a minimap, so it's painted to an offscreen canvas and
 // blitted. Entities, blink, and the viewport rectangle stay per-frame.
-let miniTerrain=null, miniTerrainAt=-1e9;
+let miniTerrain=null, miniTerrainAt=-1e9, miniTiles=null, miniTilesImg=null;
+// Minimap tile colours as little-endian RGBA words: [1] explored-not-visible, [2] in view (per terrain; grass the default).
+const MINI_RGBA=(()=>{ const w=h=>{ let v=parseInt(h.slice(1),16); return (0xff000000|((v&0xff)<<16)|(v&0xff00)|(v>>16))>>>0; };
+  const pal=(g,fo,go,st,wa,fa)=>({grass:w(g),[TERRAIN.GRASS]:w(g),[TERRAIN.FOREST]:w(fo),[TERRAIN.GOLD]:w(go),[TERRAIN.STONE]:w(st),[TERRAIN.WATER]:w(wa),[TERRAIN.FARM]:w(fa)});
+  return {1:pal('#254615','#0d2008','#6d5210','#404040','#224c6e','#453d28'), 2:pal('#4a8c2a','#1a4010','#daa520','#808080','#4499dd','#8a7a50')}; })();
 let miniW=0, miniH=0, miniDimsStale=true;
 window.addEventListener('resize',()=>{miniDimsStale=true;});
 // The wrap's size also changes WITHOUT a window resize — most importantly
@@ -147,32 +151,23 @@ function drawMinimap(){
     if(miniTerrain.width!==mw*dpr)miniTerrain.width=mw*dpr;
     if(miniTerrain.height!==mh*dpr)miniTerrain.height=mh*dpr;
     let TX=miniTerrain.getContext('2d');
-    TX.setTransform(dpr,0,0,dpr,0,0);
-    TX.clearRect(0,0,mw,mh);
+    // One pixel per tile on a MAP×MAP image, laid onto the diamond by the minimap's own iso transform in one draw —
+    // a path fill per tile (MAP² of them) cost ~5ms a refresh, a visible hitch in the 3D view every quarter second.
+    if(!miniTiles||miniTiles.width!==MAP){ miniTiles=document.createElement('canvas'); miniTiles.width=miniTiles.height=MAP; miniTilesImg=null; }
+    let MT=miniTiles.getContext('2d');
+    if(!miniTilesImg) miniTilesImg=MT.createImageData(MAP,MAP);
+    let px=new Uint32Array(miniTilesImg.data.buffer);
     for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++){
       let f = fog[y] && fog[y][x];
-      let c = '#000000'; // unexplored is black
-      if (f === 1) {
-        let t=map[y][x];
-        c=t.t===TERRAIN.GRASS?'#254615':t.t===TERRAIN.FOREST?'#0d2008':
-          t.t===TERRAIN.GOLD?'#6d5210':t.t===TERRAIN.STONE?'#404040':
-          t.t===TERRAIN.WATER?'#224c6e':t.t===TERRAIN.FARM?'#453d28':'#254615';
-      } else if (f === 2) {
-        let t=map[y][x];
-        c=t.t===TERRAIN.GRASS?'#4a8c2a':t.t===TERRAIN.FOREST?'#1a4010':
-          t.t===TERRAIN.GOLD?'#daa520':t.t===TERRAIN.STONE?'#808080':
-          t.t===TERRAIN.WATER?'#4499dd':t.t===TERRAIN.FARM?'#8a7a50':'#4a8c2a';
-      }
-      // Inflate each tile slightly so neighbors overlap — without this,
-      // anti-aliased edges leave hairline transparent seams that show the
-      // battlefield through the (semi-transparent) minimap as cracks.
-      let p0=miniPoint(x-0.06,y-0.06),p1=miniPoint(x+1.06,y-0.06),
-          p2=miniPoint(x+1.06,y+1.06),p3=miniPoint(x-0.06,y+1.06);
-      TX.fillStyle=c;
-      TX.beginPath();
-      TX.moveTo(p0.x,p0.y);TX.lineTo(p1.x,p1.y);TX.lineTo(p2.x,p2.y);TX.lineTo(p3.x,p3.y);
-      TX.closePath();TX.fill();
+      px[y*MAP+x] = f===1 ? MINI_RGBA[1][map[y][x].t]||MINI_RGBA[1].grass : f===2 ? MINI_RGBA[2][map[y][x].t]||MINI_RGBA[2].grass : 0xff000000; // unexplored is black
     }
+    MT.putImageData(miniTilesImg,0,0);
+    TX.setTransform(1,0,0,1,0,0);
+    TX.clearRect(0,0,miniTerrain.width,miniTerrain.height);
+    let k=mt.scale*dpr;
+    TX.setTransform(k*HALF_TW,k*HALF_TH,-k*HALF_TW,k*HALF_TH,mt.ox*dpr,mt.oy*dpr); // tile (x, y) → toIso → the minimap, as miniPoint
+    TX.imageSmoothingEnabled=false;                                                  // crisp tiles, as the per-tile fills were
+    TX.drawImage(miniTiles,0,0);
     miniTerrainAt=performance.now();
   }
   MX.clearRect(0,0,mw,mh);
@@ -307,6 +302,22 @@ function drawParticles() {
       X.fill();
     }
   });
+  X.restore();
+}
+
+// An arrow stuck where it landed (stickArrow, js/core.js): the flying arrow's shaft (same pale shaft on a black
+// outline), its head buried, tail up and back along the way it came; Fletching's team vanes at the tail.
+function drawStuckArrow(a){
+  let s = mapToScreen(a.x, a.y), tx = s.sx, ty = s.sy + HALF_TH - a.h;
+  let iso = toIso(a.dx, a.dy), il = Math.hypot(iso.ix, iso.iy) || 1, L = 10;
+  let ex = tx - iso.ix / il * L * Math.cos(a.tilt), ey = ty - iso.iy / il * L * Math.cos(a.tilt) - L * Math.sin(a.tilt);
+  X.save(); X.globalAlpha *= a.alpha; X.lineCap = 'round';
+  X.strokeStyle = '#000'; X.lineWidth = 3; X.beginPath(); X.moveTo(tx, ty); X.lineTo(ex, ey); X.stroke();
+  X.strokeStyle = '#f5f2e9'; X.lineWidth = 1.3; X.beginPath(); X.moveTo(tx, ty); X.lineTo(ex, ey); X.stroke();
+  if (a.fl != null) { let ux = (ex - tx) / L, uy = (ey - ty) / L;
+    X.strokeStyle = teamColorLight(a.fl); X.lineWidth = 1.6;
+    X.beginPath(); X.moveTo(ex - ux * 3, ey - uy * 3); X.lineTo(ex - ux * 0.5 - uy * 2.2, ey - uy * 0.5 + ux * 2.2);
+    X.moveTo(ex - ux * 3, ey - uy * 3); X.lineTo(ex - ux * 0.5 + uy * 2.2, ey - uy * 0.5 - ux * 2.2); X.stroke(); }
   X.restore();
 }
 

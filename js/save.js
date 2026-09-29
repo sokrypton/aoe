@@ -88,7 +88,7 @@ function serializeGame(){
     // load are equivalent (and identical on every loading peer).
     teamExploredGrids: (!window.fogDisabled && teamExploredGrid)
       ? teamExploredGrid.map(g => rleEncode(g)) : null,
-    // Corpses fade out over CORPSE_LIFE (ms) measured against
+    // Corpses decay by age (ms) measured against
     // performance.now() (see render.js/render-units.js), which restarts
     // near 0 every page load — saving deathTime as-is would make every
     // corpse look freshly killed (or worse, glitch on a negative age)

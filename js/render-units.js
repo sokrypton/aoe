@@ -2426,156 +2426,199 @@ function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
 
 // Bear body — same per-archetype seam as drawRamBody/drawTradeCartBody, which
 // drawUnit's dispatch already delegates to.
+// ---- The bear: one model and one animation for both views ----
+// The 3D bear's shape (bearModel, js/pov3d.js — same numbers, tiles: x forward, y up, z across) posed by bearAnim,
+// which the 3D view sets on the model and the 2D view projects at the bear's heading (as the dragon). A heavy lumbering
+// walk: each paw planted DUTY of the stride and keeping pace with the ground (the leg reaches it, stretching a hair),
+// the shoulders rolling, the head swinging low; idle, it breathes, sniffs and looks round; the maul rides the real bite
+// clock — crouch, rear up on the hind paws with the fore paws raised, a pounce landing as the damage fires, a worry.
+const BEAR = { fur: '#6b4a2c', belly: '#7c5836', legCol: '#62432a', legFar: '#4e3421', paw: '#3a2a1c', pawFar: '#2c2016', muzzle: '#c9a578', nose: '#141414', ear: '#4a3018', mouth: '#a03030', mouthIn: '#3a1f14',
+  hips: [[-0.22, -0.17], [-0.22, 0.17], [0.2, -0.17], [0.2, 0.17]], hipY: 0.22, leg: 0.2, stride: 0.1, lift: 0.06, legR: 0.085, duty: 0.62,
+  legPhase: [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI) };                       // 0/1 hind, 2/3 fore
+function bearStride(phase, i){
+  const q = (((phase + BEAR.legPhase[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI), st = 2 * Math.PI * BEAR.duty;
+  if (q < st) return { q, x: 1 - 2 * q / st, up: 0 };
+  const u = (q - st) / (2 * Math.PI - st); return { q, x: -1 + 2 * u * u * (3 - 2 * u), up: Math.sin(Math.PI * u ** 0.8) };
+}
+// a: per-bear state (phase, gait, clock); moved: tiles walked since the last frame.
+function bearAnim(e, a, dt, moved){
+  a.ck = (a.ck || 0) + dt; const ck = a.ck, idp = e.id || 0;
+  // walking, held across the tick or two between a chaser's re-plans (else the walk pose — head low — flickered off
+  // and on: the head bobbed) unless it's at its prey
+  const moving = isUnitMoving(e); if (moving) a.walkClk = ck;
+  const walking = moving || (ck - (a.walkClk ?? -9) < 0.4 && !inActionRange(e));
+  a.gait = (a.gait || 0) + ((walking ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 4);
+  a.phase = (a.phase || 0) + moved * Math.PI * BEAR.duty / BEAR.stride;
+  const g = a.gait, ph = a.phase;
+  const rof = (UNITS.bear && UNITS.bear.rof) || T30(60), cd = e.atkCooldown || 0, att = !e.corpseRot && inActionRange(e) && !moving;
+  const bp = att ? 1 - cd / rof : 0, snap = att ? Math.max(0, (cd - rof * 0.85) / (rof * 0.15)) : 0;   // bp: 0 just bitten → 1 the next bite
+  const sm = x => x * x * (3 - 2 * x);
+  // The maul, in beats on the bite clock: settle back after the bite → crouch low, weight back, head down → rear up on
+  // the hind paws, fore paws raised, jaws opening → slam down and forward onto the prey, the bite landing with the
+  // damage → jaws clamped, a worrying shake as it eases back. Lunge in art px (as the 2D art had it).
+  let crouch = 0, rear = 0, lunge = 0, jaw = 0, paws = 0, slam = 0;
+  if (att) {
+    // (it bites every couple of seconds: kept a heavy, readable swing, not a violent one — full-size it read as shaking)
+    if (bp < 0.15) { const t = sm(bp / 0.15); lunge = 2.5 - 1 * t; rear = -0.06 * (1 - t); slam = 1 - t; }
+    else if (bp < 0.5) { const t = sm((bp - 0.15) / 0.35); lunge = 1.5 * (1 - t); }
+    else if (bp < 0.75) { const t = sm((bp - 0.5) / 0.25); crouch = t; lunge = -0.8 * t; }
+    else if (bp < 0.9) { const t = sm((bp - 0.75) / 0.15); crouch = 1 - t; rear = 0.38 * t; paws = t; jaw = 0.8 * t; lunge = -0.8 + 0.3 * t; }
+    else { const t = sm((bp - 0.9) / 0.1); rear = 0.38 * (1 - t) - 0.06 * t; paws = 1 - t; jaw = 0.85; lunge = -0.5 + 3 * t; }
+  }
+  // idle: breathing, a slow look round, now and then a sniff (the head lifts, the nose bobs)
+  const idle = (1 - g) * (att ? 0 : 1), sniff = Math.max(0, Math.sin(ck * 0.37 + idp)) ** 8 * idle;
+  const breath = Math.sin(ck * 1.6 + idp) * 0.018 * idle;
+  const look = 0.4 * Math.sin(ck * 0.23 + idp) ** 3 * idle;
+  // walk: the body rides the stance (a low bob twice a stride), the shoulders roll, the head swings low and side to side
+  const bob = -0.006 * g * (1 - Math.cos(2 * ph)) - 0.035 * crouch - 0.02 * slam, roll = Math.sin(ph) * 0.03 * g;
+  const pitch = rear - 0.1 * crouch + Math.sin(2 * ph + 0.5) * 0.012 * g;
+  const neckYaw = look + Math.sin(ph) * 0.04 * g;
+  const neckPitch = -0.12 * g + 0.18 * sniff + Math.sin(ck * 18) * 0.03 * sniff - 0.25 * crouch + 0.2 * paws - 0.1 * slam;
+  const shake = Math.sin(ck * 12) * 0.06 * snap;                                         // worrying the prey (a few slow tugs)
+  const lungeT = lunge * 1.4 * UNIT_SCALE / (HALF_TW * Math.SQRT2);                       // (tiles)
+  // legs: each paw's spot on the GROUND (in the model's frame: planted paws stay put however the body pitches and
+  // lunges over them — the stance sweeping back, the swing lifting), turned into the body's frame for the leg's angle
+  // and stretch; rearing, the fore paws come up off the ground, raised and reaching
+  const hindX = -0.22, cp = Math.cos(pitch), spp = Math.sin(pitch);
+  const legs = BEAR.hips.map(([hx], i) => {
+    const s2 = bearStride(ph, i), hind = i < 2, dx0 = hx - hindX;
+    const Hx = hindX + dx0 * cp - BEAR.hipY * spp + lungeT, Hy = dx0 * spp + BEAR.hipY * cp + bob;   // the hip, in the model
+    let fx = hx + BEAR.stride * s2.x * g + lungeT * (hind ? 0.5 : 1), fy = 0.02 + BEAR.lift * s2.up * g;
+    let vx = fx - Hx, vy = fy - Hy, bx = vx * cp + vy * spp, by = -vx * spp + vy * cp;              // → the body's frame
+    if (!hind && paws > 0) { bx += (0.17 - bx) * paws; by += (-0.1 - by) * paws; }                    // raised, reaching
+    const d = Math.min(BEAR.leg * 1.2, Math.max(BEAR.leg * 0.55, Math.hypot(bx, by)));
+    return { ang: Math.atan2(bx, -by), len: d / BEAR.leg };
+  });
+  const reach = paws;
+  return { g, pitch, lunge: lungeT, bob, roll, breath, neckYaw, neckPitch, shake, jaw, reach, legs, att };
+}
+const bear2D = new Map(); let bearShadeC = null;
 function drawBearBody(e){
-  let moving = isUnitMoving(e);
-  // Bear — heavy quadruped in the sheep's style: one black silhouette
-  // pass, then fur fill. Side profile; X.scale(e.facing,…) flips it.
-  let attacking = inActionRange(e) && !moving;
-  // The maul rides the REAL bite clock (atkCooldown, like the archer's
-  // draw): crouch back → rear up on the haunches → explosive pounce
-  // landing EXACTLY when the damage tick fires → jaws-in hold with a
-  // worrying head-shake that decays.
-  let bearRof = (UNITS.bear && UNITS.bear.rof) || T30(60), bcd = e.atkCooldown || 0;
-  let bp = attacking ? 1 - bcd/bearRof : 0;   // 0 just bitten → 1 next bite
-  let justBit = attacking && bcd > bearRof*0.85;
-  let bsnap = attacking ? Math.max(0, (bcd - bearRof*0.85)/(bearRof*0.15)) : 0;
-  let lunge = 0, rear = 0, jaw = 0;
-  if (justBit) { lunge = 4.5; jaw = Math.max(0, bsnap*2 - 1); rear = -0.2; } // CHOMP: jaws snap shut as the bite lands
-  else if (attacking && bp > 0.85) { let t = (bp-0.85)/0.15; lunge = -1.2+5.7*t*t; rear = 0.8*(1-t)-0.2; jaw = t; }
-  else if (attacking && bp > 0.55) { let t = (bp-0.55)/0.3; lunge = -1.2*t; rear = 0.8*t; }
-  let sway = moving ? Math.sin(animTick*0.25+e.id)*0.05 : 0;
-  sway += Math.sin(animTick*1.4)*0.05*bsnap; // worrying the prey — decays after the bite
-  let breath = (!moving && !attacking && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.25 : 0;
-
-  // Direction resolution (same scheme as the sheep): the canvas is already
-  // mirrored via X.scale(e.facing,…), so left-pointing dirs map onto their
-  // right-pointing twins and we only author 4 poses:
-  //   'front' (S: face to camera), 'back' (N: rump to camera),
-  //   'side'  (E/SE profile),      'backside' (NE: profile from behind)
-  let useDir = mirroredDir(e);
-  let pose = e.dir === 1 ? 'front' : e.dir === 5 ? 'back' :
-             (useDir === 6) ? 'backside' : 'side';
-  // Profile head sits a touch lower when heading SE (downhill toward camera)
-  let hx = useDir === 0 ? 7.8 : 8.6;
-  let hy = useDir === 0 ? -3.2 : -4.2;
-
-  X.save();
-  X.rotate(sway);
-  // Pounce along the view axis when facing the camera/away — a sideways
-  // lunge in the S/N poses reads as a side attack.
-  if (pose === 'front') X.translate(0, lunge*0.7);
-  else if (pose === 'back') X.translate(0, -lunge*0.7);
-  else X.translate(lunge, 0);
-  // Cartoon proportions: one huge boulder of a body on tiny stub legs.
-  X.scale(1.4, 1.4);
-  // Rearing up on the haunches: profiles pivot at the hind paws; head-on
-  // poses stretch tall instead (anchored at the paws).
-  if (rear) {
-    if (pose === 'side' || pose === 'backside') {
-      X.translate(-7, 4); X.rotate(-rear*0.22); X.translate(7, -4);
-    } else {
-      X.translate(0, 5); X.scale(1, 1 + rear*0.12); X.translate(0, -5);
-    }
+  let a = bear2D.get(e.id);
+  if (!a) bear2D.set(e.id, a = { px: e.x, py: e.y, last: 0, hd: undefined });
+  const target = (e.dir !== undefined ? e.dir : 1) * Math.PI / 4;
+  if (!window._maskDraw || !a.P) {
+    const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
+    const mx = e.x - a.px, my = e.y - a.py, moved = Math.hypot(mx, my); a.px = e.x; a.py = e.y;
+    // walking, it faces its smoothed course (the tile path zigzags in 8 directions: facing each step swung it side to
+    // side); standing, its facing (toward its prey) — turning at a heavy animal's pace
+    // (the course averaged over the last ~1.5 tiles walked, not over time: at 2× speed a time average followed each zig)
+    if (moved > 1e-4) { const c = Math.min(1, moved / 1.5), ux = mx / moved, uy = my / moved; a.cx = (a.cx ?? ux) + (ux - (a.cx ?? ux)) * c; a.cy = (a.cy ?? uy) + (uy - (a.cy ?? uy)) * c; }
+    // (walking by the sim's state: the sim ticks slower than frames, so most frames it moved nothing — reading that
+    // as standing pulled the heading back toward its 8-way facing and forth again, every tick: the face shook)
+    // (and across the tick or two between a chaser's re-plans, unless it's at its prey: else it snapped to face the
+    // prey and back, every re-plan)
+    if (isUnitMoving(e)) a.walkT = now; const walking = now - (a.walkT || -1e9) < 400 && !inActionRange(e);
+    const want = walking && a.cx !== undefined ? Math.atan2(a.cy, a.cx) : target;
+    if (a.hd === undefined) a.hd = want;
+    a.hd += Math.atan2(Math.sin(want - a.hd), Math.cos(want - a.hd)) * Math.min(1, dt * 4);
+    a.P = bearAnim(e, a, dt, moved);
   }
-
-  // Stub-leg walk cycle: comically short, thick legs mostly hidden
-  // under the body mass — just paws scuttling along
-  let lw1 = moving ? Math.sin(animTick*0.5+e.id)*1.8 : 0;
-  let lw2 = -lw1;
-  // Pounce stance: front paws reach into the strike, hind paws brace back
-  let pounce = Math.max(0, Math.min(1, jaw));
-  let legPts = [[-6,2,lw1-1.8*pounce],[-3,2.5,lw2-1.2*pounce],[2.5,2.5,lw1+1.6*pounce],[5.5,2,lw2+2.2*pounce]];
-  X.beginPath();
-  legPts.forEach(p=>{ X.moveTo(p[0],p[1]); X.lineTo(p[0]+p[2],5); });
-  X.strokeStyle='#000'; X.lineWidth=4.2/UNIT_SCALE; X.lineCap='round'; X.stroke();
-  X.strokeStyle='#4e3520'; X.lineWidth=2.6/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-  X.fillStyle='#241a10';
-  legPts.forEach(p=>{ X.beginPath(); X.ellipse(p[0]+p[2],5.2,1.6,1,0,0,Math.PI*2); X.fill(); });
-
-  // Body silhouette pass (black, slightly inflated), then fur fill —
-  // one giant boulder body with a high shoulder hump; head/ears/tail
-  // move with the pose, the boulder itself barely changes (that's the
-  // luxury of cartoon mass: it reads from every angle).
-  const bearShapes = (grow)=>{
-    if(pose==='front'||pose==='back'){
-      X.beginPath(); X.ellipse(-0.2,-4.5,8.4+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // body (narrower head-on)
-      X.beginPath(); X.arc(0,-9.8,5+grow+breath,0,Math.PI*2); X.fill();       // hump reads as shoulders
-      if(pose==='front'){
-        X.beginPath(); X.arc(0,-4.2,4.4+grow,0,Math.PI*2); X.fill();          // head, face to camera
-        X.beginPath(); X.arc(-3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();       // ears
-        X.beginPath(); X.arc(3.4,-8.2,1.7+grow,0,Math.PI*2); X.fill();
-      } else {
-        X.beginPath(); X.arc(0,-11.2,3.6+grow,0,Math.PI*2); X.fill();         // back of head over the hump
-        X.beginPath(); X.arc(-3,-13.6,1.6+grow,0,Math.PI*2); X.fill();        // ears
-        X.beginPath(); X.arc(3,-13.6,1.6+grow,0,Math.PI*2); X.fill();
-        X.beginPath(); X.arc(0,1.2,2.2+grow,0,Math.PI*2); X.fill();           // stub tail on the rump
-      }
-    } else {
-      X.beginPath(); X.ellipse(-0.5,-4.5,9.6+grow+breath,7.4+grow+breath,0,0,Math.PI*2); X.fill(); // huge body
-      X.beginPath(); X.arc(-3.5,-9.5,4.6+grow+breath,0,Math.PI*2); X.fill();  // shoulder hump
-      X.beginPath(); X.arc(-10.2,-4,2+grow,0,Math.PI*2); X.fill();            // stub tail
-      if(pose==='backside'){
-        X.beginPath(); X.arc(6.4,-7.2,3.2+grow,0,Math.PI*2); X.fill();        // head turned away, higher
-        X.beginPath(); X.arc(4.8,-10.4,1.6+grow,0,Math.PI*2); X.fill();       // ear
-      } else {
-        X.beginPath(); X.arc(hx,hy,3.4+grow,0,Math.PI*2); X.fill();           // head (small, set low)
-        X.beginPath(); X.ellipse(hx+2.8,hy+0.8,2.2+grow,1.6+grow,0.2,0,Math.PI*2); X.fill(); // snout
-        X.beginPath(); X.arc(hx-1.6,hy-3.2,1.6+grow,0,Math.PI*2); X.fill();   // tiny ear
-      }
-    }
-  };
-  X.fillStyle='#000';
-  bearShapes(1.1);
-  X.fillStyle='#6b4a2c';
-  bearShapes(0);
-  // Fur shading: light along the massive back, ground shade under the belly
-  X.fillStyle='rgba(255,235,200,0.28)';
-  if(pose==='front'||pose==='back') X.beginPath(), X.ellipse(0,-10.2,4.4,2.4,0,0,Math.PI*2), X.fill();
-  else X.beginPath(), X.ellipse(-2.5,-9.5,5.8,2.6,0.15,0,Math.PI*2), X.fill();
-  X.fillStyle='rgba(40,25,10,0.30)';
-  X.beginPath(); X.ellipse(-0.5,0.8,7.6,2.2,0,0,Math.PI*2); X.fill();
-
-  // Face per pose: tan muzzle, black nose, tiny eyes (cartoon rule: the
-  // smaller the eyes on the bigger the body, the better), inner ears
-  if(pose==='front'){
-    X.fillStyle='#4a3018';
-    X.beginPath(); X.arc(-3.4,-8.2,0.9,0,Math.PI*2); X.fill();  // inner ears
-    X.beginPath(); X.arc(3.4,-8.2,0.9,0,Math.PI*2); X.fill();
-    X.fillStyle='#c9a578';
-    X.beginPath(); X.ellipse(0,-2.6,2.4,1.9,0,0,Math.PI*2); X.fill(); // muzzle
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(0,-3.4,1.05,0,Math.PI*2); X.fill();    // nose
-    X.beginPath(); X.arc(-1.9,-5.4,0.65,0,Math.PI*2); X.fill(); // eyes
-    X.beginPath(); X.arc(1.9,-5.4,0.65,0,Math.PI*2); X.fill();
-  } else if(pose==='back'){
-    X.fillStyle='#4a3018';
-    X.beginPath(); X.arc(-3,-13.6,0.85,0,Math.PI*2); X.fill();  // inner ears
-    X.beginPath(); X.arc(3,-13.6,0.85,0,Math.PI*2); X.fill();
-    X.fillStyle='#c9a578';
-    X.beginPath(); X.arc(0,1.2,1.3,0,Math.PI*2); X.fill();      // tail tuft
-  } else if(pose==='backside'){
-    X.fillStyle='#4a3018';
-    X.beginPath(); X.arc(4.8,-10.4,0.85,0,Math.PI*2); X.fill(); // inner ear
-  } else {
-    X.fillStyle='#c9a578';
-    X.beginPath(); X.ellipse(hx+2.8,hy+0.8,1.6,1.1,0.2,0,Math.PI*2); X.fill();
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(hx+4.3,hy+0.5,1,0,Math.PI*2); X.fill();    // nose
-    X.beginPath(); X.arc(hx+0.4,hy-0.8,0.65,0,Math.PI*2); X.fill(); // eye
-    X.fillStyle='#4a3018';
-    X.beginPath(); X.arc(hx-1.6,hy-3.2,0.85,0,Math.PI*2); X.fill(); // inner ear
-  }
-
-  // Mauling: the mouth opens through the pounce and snaps shut on the bite —
-  // one plain red shape (head-on an oval, in profile a wedge off the snout).
-  if(jaw > 0.05){
-    X.fillStyle='#a03030';
-    if(pose==='front'){ X.beginPath(); X.ellipse(0,-2.2,1.4,0.3+1.3*jaw,0,0,Math.PI*2); X.fill(); }
-    else if(pose==='side'){
-      let ja = 0.6*jaw;
-      X.beginPath(); X.moveTo(hx+1.6,hy+1.2); X.lineTo(hx+5.2,hy+0.9); X.lineTo(hx+1.6+3.4*Math.cos(ja),hy+1.2+3.4*Math.sin(ja)); X.closePath(); X.fill();
-    }
-  }
+  const P = a.P, C = BEAR, K = DRAGON_K, Cc = DRAGON_C, RR = Cc * Math.SQRT2, cos = Math.cos, sin = Math.sin, TAU = Math.PI * 2;
+  X.save(); if (e.facing === -1) X.scale(-1, 1);                                      // (it draws its own heading: undo drawUnit's mirror)
+  const fx = cos(a.hd), fy = sin(a.hd), sx = -fy, sy = fx;
+  const Pf = [(fx - fy) * Cc, (fx + fy) * Cc / 2], Ps = [(sx - sy) * Cc, (sx + sy) * Cc / 2];
+  const pj = (x, y, z) => [x * Pf[0] + z * Ps[0], x * Pf[1] + z * Ps[1] - y * K];
+  const depth = (x, z) => x * (fx + fy) + z * (sx + sy);
+  // frames: the body pitched about the hind paws (rearing), lunged, rolled; the neck turned and nodded on it; the jaw
+  const hindX = -0.22, cp = cos(P.pitch), spp = sin(P.pitch), cr = cos(P.roll), sr = sin(P.roll);
+  const bm = (x, y, z = 0) => { const y1 = y * cr - z * sr, z1 = y * sr + z * cr;                      // roll about the body's long axis
+    const dx = x - hindX; return [hindX + dx * cp - y1 * spp + P.lunge, dx * spp + y1 * cp + P.bob, z1]; };
+  const ny = P.neckYaw, np = P.neckPitch + P.shake * 0.3;
+  const nk = (x, y, z = 0) => { const x1 = x * cos(np) - y * sin(np), y1 = x * sin(np) + y * cos(np);
+    return bm(0.32 + x1 * cos(ny) - z * sin(ny), 0.46 + y1, x1 * sin(ny) + z * cos(ny) + P.shake * 0.02); };
+  const jw = (x, y, z = 0) => { const j = -0.7 * P.jaw, x1 = x * cos(j) - y * sin(j), y1 = x * sin(j) + y * cos(j); return nk(0.24 + x1, snY - 0.015 + y1, z); };
+  let ccw = false;                                                                    // (the shade's cut-out: wound the other way, so overlapping parts stay one hole)
+  const ellP = (cx, cy, rx, ry, rot = 0) => { X.moveTo(cx + rx * cos(rot), cy + rx * sin(rot)); X.ellipse(cx, cy, Math.max(0.5, rx), Math.max(0.5, ry), rot, 0, TAU, ccw); };
+  const ellOf = (f, x, y, z, rx, ry, rz) => { const o = pj(...f(x, y, z));
+    const ax = [f(x + rx, y, z), f(x, y + ry, z), f(x, y, z + rz)].map(m => { const q = pj(...m); return [q[0] - o[0], q[1] - o[1]]; });
+    let sxx = 0, sxy = 0, syy = 0; for (const [u, v] of ax) { sxx += u * u; sxy += u * v; syy += v * v; }
+    const tr = (sxx + syy) / 2, dd = Math.sqrt(((sxx - syy) / 2) ** 2 + sxy * sxy), rot = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    return [o[0], o[1], Math.sqrt(tr + dd), Math.sqrt(Math.max(0, tr - dd)), rot, f(x, y, z)]; };
+  let grp = null; const parts = [], add = (col, d, path, outline = true) => parts.push({ col, d, path, outline, g: grp });
+  const blob = (col, f, x, y, z, rx, ry = rx, rz = rx, bias = 0, outline = true) => { const [cx, cy, a2, b2, rot, m] = ellOf(f, x, y, z, rx, ry, rz);
+    add(col, depth(m[0], m[2]) + bias, () => ellP(cx, cy, a2, b2, rot), outline); parts[parts.length - 1].bb = [cx - a2, cy - a2, cx + a2, cy + a2]; };
+  const tube = (col, m0, m1, r, bias = 0) => { const a0 = pj(...m0), a1 = pj(...m1), rr = r * RR, dx = a1[0] - a0[0], dy = a1[1] - a0[1], l = Math.hypot(dx, dy) || 1e-6, nx = -dy / l * rr, ny2 = dx / l * rr;
+    // (the side quad wound as the end circles are: opposite windings cancelled where they overlap — holes in the leg)
+    const q = [[a0[0] + nx, a0[1] + ny2], [a1[0] + nx, a1[1] + ny2], [a1[0] - nx, a1[1] - ny2], [a0[0] - nx, a0[1] - ny2]];
+    let ar = 0; for (let k = 0; k < 4; k++) { const u = q[k], v = q[(k + 1) % 4]; ar += u[0] * v[1] - v[0] * u[1]; }
+    const qq = (ar < 0) !== ccw ? q.slice().reverse() : q;
+    add(col, (depth(m0[0], m0[2]) + depth(m1[0], m1[2])) / 2 + bias, () => { ellP(a0[0], a0[1], rr, rr); ellP(a1[0], a1[1], rr, rr);
+      X.moveTo(qq[0][0], qq[0][1]); for (let k = 1; k < 4; k++) X.lineTo(qq[k][0], qq[k][1]); X.closePath(); }); };
+  const bodyD = depth(...(m => [m[0], m[2]])(bm(-0.01, 0.42, 0)));
+  // body: the boulder, the shoulder hump, a lighter belly, a stub tail (breathing swells it)
+  const br = 1 + P.breath;
+  grp = 'body';
+  blob(C.fur, bm, -0.01, 0.38, 0, 0.42 * br, 0.36 * br, 0.33 * br);                        // (a fat cartoon boulder on stubby legs)
+  blob(C.fur, bm, -0.1, 0.6, 0, 0.23, 0.2, 0.22, 0.02);
+  grp = null;
+  blob(C.fur, bm, -0.43, 0.4, 0, 0.065);
+  // legs: from each hip to its paw (the pose's angle and reach), a dark paw on the end
+  // (sorted behind the body, so only what hangs below it shows — sorted by its own depth, a near leg painted over the belly)
+  BEAR.hips.forEach(([hx, hz], i) => { const L = P.legs[i], ux = sin(L.ang), uy = -cos(L.ang), len = BEAR.leg * L.len;
+    const px = hx + ux * len, py = BEAR.hipY + uy * len, t0 = Math.min(0.06, len * 0.2), p = bm(px, py, hz);
+    const far = depth(p[0], p[2]) < bodyD;                                              // the far pair a shade darker: in the body's shadow
+    // (the leg ends inside its paw: its round cap below the paw showed as a brown rim under the foot)
+    tube(far ? C.legFar : C.legCol, bm(hx + ux * t0, BEAR.hipY + uy * t0, hz), bm(px - ux * 0.075, py - uy * 0.075, hz), BEAR.legR, 0); parts[parts.length - 1].d = bodyD - 0.02 + (depth(p[0], p[2]) - bodyD) * 0.01; // (just behind the body: its top tucks up inside; a head turned away stays behind them)
+    const legD = parts[parts.length - 1].d;
+        blob(far ? C.pawFar : C.paw, bm, px + 0.015, py - 0.01, hz, 0.1, 0.032, 0.088);   // (the 3D paw: centred under the leg, a hair forward)
+    // sorted just behind its own leg: the leg always stands over its paw (and by its own depth a far paw drew over a near leg)
+    parts[parts.length - 1].d = legD - 1e-4; });
+  // head: a big round head, tan muzzle, black nose, round ears (dark inside), the eyes; the jaw hinges under it
+  const hx = 0.13, hy = 0.02, R = 0.2;
+  const snY = -0.005;                                                                  // the snout's height on the face (as bearModel)
+  grp = 'head'; blob(C.fur, nk, hx, hy, 0, R, R, R, 0.03); parts[parts.length - 1].line = true; grp = null; // (its own line where it sits over the body)
+  // (only the part standing off the head shows: in 3D the rest sinks into it)
+  blob(C.muzzle, nk, hx + 0.21, hy + snY - 0.005, 0, 0.082, 0.06, 0.085, 0.05);
+  // the mouth: a tan lower jaw hinging down under the muzzle, dark inside as it gapes — always just behind the muzzle
+  // (the muzzle covers its top from every side; sorted by their own centres they poked through it as a red smear)
+  { const md = parts[parts.length - 1].d;
+    if (P.jaw > 0.05) { blob(C.mouthIn, nk, hx + 0.19, hy + snY - 0.04 - 0.03 * P.jaw, 0, 0.075, 0.035 + 0.035 * P.jaw, 0.06, 0, false); parts[parts.length - 1].d = md - 0.002; }
+    blob(C.muzzle, jw, 0.07, -0.01, 0, 0.075, 0.028, 0.058); parts[parts.length - 1].d = md - 0.001; }
+  blob(C.nose, nk, hx + 0.285, hy + snY + 0.03, 0, 0.04, 0.032, 0.045, 0.06, false);
+  // ears: lined, so they read against the fur-coloured body behind them (head-on they vanished)
+  // (on top of the head, a touch back — lower down they sat on its side as rings)
+  // round ears on the top corners of the head, cupped forward (thin front to back: as a flat side-facing disc they
+  // were slivers head-on and rings on the cheek from the side); the dark inside on the front face, seen only facing us.
+  // Sorted by their own depth, as the 3D model draws them: the near ear a round bump over the head, the far one peeking
+  // past it. The inside just over its ear when the ear faces us, else under it.
+  { const e0 = nk(hx, hy), e1 = nk(hx + 1, hy), facing = depth(e1[0] - e0[0], e1[2] - e0[2]) > 0;
+    for (const z of [-1, 1]) { blob(C.fur, nk, hx - 0.03, hy + 0.185, z * 0.13, 0.04, 0.066, 0.062); const ed = parts[parts.length - 1].d; parts[parts.length - 1].line = true;
+      blob(C.ear, nk, hx - 0.005, hy + 0.185, z * 0.13, 0.012, 0.038, 0.036, 0, false); parts[parts.length - 1].d = ed + (facing ? 0.0005 : -0.0005); } }
+  // paint: silhouette strokes far to near, fills far to near
+  parts.sort((p, q) => p.d - q.d);
+  X.lineJoin = 'round'; X.strokeStyle = '#000'; X.lineWidth = 2 / UNIT_SCALE;
+  for (const pt of parts) if (pt.outline) { X.beginPath(); pt.path(); X.stroke(); }
+  // fills far to near; each group (the body, the head) gets the dragon's light underside shade as its last part is
+  // painted — the shape less itself lifted — so nearer parts cover it
+  const last = new Map(); for (const pt of parts) if (pt.g) last.set(pt.g, pt);
+  // A band of a group's merged outline (so overlapping parts leave no seams): the shape less itself moved by lift
+  // (+ up: the underside band; −: the top), masked on a scratch canvas and laid on at alpha.
+  const band = (ms, lift, col, alpha) => { if (window._maskDraw) return;
+    const m = X.getTransform(); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of ms) for (const [u, v] of [[p.bb[0], p.bb[1]], [p.bb[2], p.bb[1]], [p.bb[0], p.bb[3]], [p.bb[2], p.bb[3]]]) {
+      const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
+    x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
+    if (!bearShadeC) bearShadeC = document.createElement('canvas');
+    if (bearShadeC.width < w || bearShadeC.height < h) { bearShadeC.width = Math.max(bearShadeC.width, w); bearShadeC.height = Math.max(bearShadeC.height, h); }
+    const O = bearShadeC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
+    O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                         // (the path helpers draw on X)
+    try { O.fillStyle = col; O.beginPath(); for (const p of ms) p.path(); O.fill();
+      O.globalCompositeOperation = 'destination-out'; O.translate(0, -lift); O.beginPath(); for (const p of ms) p.path(); O.fill();
+      O.globalCompositeOperation = 'source-over'; } finally { X = X0; }
+    X.save(); X.setTransform(1, 0, 0, 1, 0, 0); X.globalAlpha *= alpha; X.drawImage(bearShadeC, 0, 0, w, h, x0, y0, w, h); X.restore(); };
+  // the light from above: a lit band along the top, the underside in shade
+  const shade = g => { const ms = parts.filter(p => p.g === g && p.outline), k = g === 'head' ? 0.09 : 0.13;
+    band(ms, k * K, '#140a00', 0.22); band(ms, -k * 0.55 * K, '#ffe1b4', 0.16); };
+  for (const pt of parts) { X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill();
+    if (pt.line) { X.save(); X.lineWidth = 1 / UNIT_SCALE; X.strokeStyle = 'rgba(0,0,0,0.55)'; X.stroke(); X.restore(); }
+    if (pt.g && last.get(pt.g) === pt) shade(pt.g); }
+  // eyes: little black dots on the side of the head that faces us (both, head-on)
+  const o0 = nk(hx, hy, 0);
+  // (the 3D model's eyes: on the head's surface, toward the snout — eyes(), js/pov3d.js)
+  for (const zs of [-1, 1]) { const m = nk(hx + 0.15, hy + 0.09, zs * 0.096), toward = depth(m[0] - o0[0], m[2] - o0[2]);
+    if (toward < 0.02) continue; const [ex, ey] = pj(...m); X.fillStyle = '#000'; X.beginPath(); X.arc(ex, ey, 1.25, 0, TAU); X.fill(); } // (plain black dots, as the 3D model's)
   X.restore();
 }
 
@@ -2585,12 +2628,28 @@ function drawBearBody(e){
 // smoke) for each view's own dust and shake. The caller keeps a.phase / a.gait (its stride, from how far the
 // dragon was drawn to move) and may set a.roarT (a scripted roar, 0..1), a.noRoar, a.lab.
 const DRAGON_LEG_PHASE = [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI); // legs 0/1 hind, 2/3 fore
-// The stride: each leg's foot, x −1 (back) … 1 (ahead), its lift, and the heel roll (late stance heel up, toes down
-// in the swing).
+// The stride: each leg's foot, x −1 (back) … 1 (ahead), its lift, and the heel roll. A heavy walk: each foot is down
+// DRAGON_DUTY of the cycle (weight on three feet most of the time); the heel peels up only at the end of the stance;
+// the swing picks the foot up quickly and high, carries it, and sets it down deliberately — toes hanging in the air,
+// flattening just before it lands.
+const DRAGON_DUTY = 0.6;
 function dragonStride(phase, i){
-  const q = (((phase + DRAGON_LEG_PHASE[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-  if (q < Math.PI) return { q, x: 1 - 2 * q / Math.PI, up: 0, roll: Math.max(0, (q / Math.PI - 0.75) / 0.25) * 0.5 };
-  const u = q / Math.PI - 1; return { q, x: -Math.cos(u * Math.PI), up: Math.sin(u * Math.PI), roll: -0.45 * Math.sin(u * Math.PI) };
+  const q = (((phase + DRAGON_LEG_PHASE[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI), st = 2 * Math.PI * DRAGON_DUTY;
+  if (q < st) { const u = q / st; return { q, x: 1 - 2 * u, up: 0, roll: Math.max(0, (u - 0.72) / 0.28) * 0.45 }; }
+  const u = (q - st) / (2 * Math.PI - st), s = u * u * (3 - 2 * u);
+  return { q, x: -1 + 2 * s, up: Math.sin(Math.PI * u ** 0.8), roll: -0.35 * Math.sin(Math.PI * u) * (1 - u) };
+}
+// The dragon's stride clock (both views): distance walked — and, pivoting in place, the arc its feet sweep round
+// (≈0.9 tiles out) — drives the legs, so a turn steps round instead of sliding its planted feet. The walk eases in and
+// out slowly (a heavy body getting going); a.turn is the smoothed turn rate (rad/s) the body reads (dragonAnim).
+function dragonGaitStep(e, a, moved, dt, strideLen){
+  const f = e.faceAng || 0, dth = a.lastFace === undefined ? 0 : Math.atan2(Math.sin(f - a.lastFace), Math.cos(f - a.lastFace));
+  a.lastFace = f;
+  a.turn = (a.turn || 0) + ((dt > 1e-4 ? dth / dt : 0) - (a.turn || 0)) * Math.min(1, dt * 5);
+  const go = moved + Math.abs(dth) * 0.9;
+  const on = isUnitMoving(e) || Math.abs(a.turn) > 0.15;                            // (from the sim's state: a frame without a tick moved nothing)
+  a.gait = (a.gait || 0) + ((on ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 3.5);
+  a.phase = (a.phase || 0) + go * Math.PI * DRAGON_DUTY / strideLen;              // a stance sweeps 2·strideLen in DRAGON_DUTY of the cycle: planted feet keep pace with the ground
 }
 function dragonAnim(e, a, dt){
   const D = a.dr || (a.dr = { ck: 0, sp: {}, q: [0, 0, 0, 0] }); D.ck += dt; const ck = D.ck, idp = e.id || 0;
@@ -2605,7 +2664,10 @@ function dragonAnim(e, a, dt){
   const ro = a.roarT ?? (D.roarAt !== undefined ? Math.min(1, (ck - D.roarAt) / 1.9) : 1);
   const sm = x => x * x * (3 - 2 * x), rr = ro < 0.3 ? sm(ro / 0.3) : ro < 0.62 ? 1 : ro < 0.74 ? 1 - ((ro - 0.62) / 0.12) ** 2 : 0; // rear up, hold, drop
   const roarJaw = ro > 0.18 && ro < 0.8 ? Math.sin((ro - 0.18) / 0.62 * Math.PI) : 0;
-  a.sleep = (a.sleep ?? (asleep ? 1 : 0)) + ((asleep ? 1 : 0) - (a.sleep ?? 0)) * Math.min(1, dt * 0.7);  // heavy: wakes and settles slowly
+  // heavy: wakes and settles slowly — but knocked out (spent) it drops, fast, and hits the ground hard
+  const ko = !!e.spent && asleep;
+  a.sleep = (a.sleep ?? (asleep ? 1 : 0)) + ((asleep ? 1 : 0) - (a.sleep ?? 0)) * Math.min(1, dt * (ko ? 3 : 0.7));
+  if (ko && !D.ko) { D.koAt = ck; D.koSlam = false; } D.ko = ko;
   const sl = sm(Math.max(0, Math.min(1, a.sleep))), g = a.gait, awake = 1 - sl;
   // breathing: slow and deep asleep, the chest swelling for the breath
   const bp = ck / (sl > 0.5 ? 4.6 : 3.2) * 2 * Math.PI + idp, br0 = 0.5 + 0.5 * Math.sin(bp);
@@ -2613,19 +2675,23 @@ function dragonAnim(e, a, dt){
   // footfalls: each leg's touchdown (its stride phase wrapping) sinks the body and rolls it
   const ev = { steps: [], slam: false, snore: false, smoke: false };
   for (let i = 0; i < 4; i++) { const q = dragonStride(a.phase, i).q;
-    if (g > 0.5 && q < D.q[i] - Math.PI) { kick('sink', -0.55); kick('roll', (i % 2 ? 1 : -1) * 0.25); ev.steps.push(i); }
+    if (g > 0.5 && q < D.q[i] - Math.PI) { kick('sink', -0.95); kick('roll', (i % 2 ? 1 : -1) * 0.42); kick('pitch', i >= 2 ? -0.32 : 0.22); ev.steps.push(i); }
     D.q[i] = q; }
   if (D.lastRo !== undefined && D.lastRo < 0.74 && ro >= 0.74) { kick('sink', -1.6); kick('pitch', -0.6); kick('tailZ1', 1.4); kick('tailZ2', 2); ev.slam = true; } // the slam (the tail bounces)
   D.lastRo = ro;
+  if (D.koAt !== undefined && !D.koSlam && ck - D.koAt > 0.35) { D.koSlam = true; kick('sink', -2.2); kick('pitch', -0.9); kick('roll', 0.8); kick('tailZ1', 1.6); kick('tailZ2', 2.2); ev.slam = true; } // the knockout lands
   // body: sink and bounce, roll with the steps and an idle weight shift, pitch about the hind feet (rear up / lurch)
   const sink = spring('sink', 0, 55, 0.3);
   const shift = Math.sin(ck * 0.33 + idp) * awake * (1 - g);                              // idle: the weight rocks from side to side
-  const roll = spring('roll', Math.sin(a.phase) * 0.05 * g + shift * 0.04, 14, 0.45);
+  // its turn rate (rad/s, + toward the model's +z, its left): the body leans in (+roll), the head leads (−neckY turns
+  // it that way), the tail swings out wide (−tail yaw) and whips back after
+  const tr = Math.max(-0.6, Math.min(0.6, a.turn || 0)) * awake;
+  const roll = spring('roll', Math.sin(a.phase) * 0.08 * g + shift * 0.04 + tr * 0.18, 11, 0.42);
   const pitch = spring('pitch', 0.22 * rr + 0.05 * inhale - 0.09 * bl + Math.sin(2 * a.phase) * 0.02 * g, 22, 0.42);
   // neck and head: lag behind the body (a head of that weight swings through), look round slowly when idle
   const lookT = (0.45 * Math.sin(ck * 0.29 + idp) + 0.2 * Math.sin(ck * 0.71 + 2)) * awake * (1 - g * 0.6) * (1 - rr) * (1 - bl);
   const neck = spring('neck', -1.25 * sl + 0.12 * inhale - 0.4 * bl + 0.12 * rr - 0.5 * pitch - Math.sin(2 * a.phase + 0.6) * 0.12 * g + Math.sin(ck * 0.5 + idp) * 0.06 * awake * (1 - g), 16, 0.42);
-  const neckY = spring('neckY', lookT, 7, 0.55);
+  const neckY = spring('neckY', lookT * (1 - Math.min(1, Math.abs(tr) * 3)) - tr * 0.9, 6, 0.55);
   const head = spring('head', 0.8 * sl - 0.22 * inhale + 0.3 * bl - 0.3 * roarJaw, 26, 0.45);
   const headX = spring('headX', Math.sin(ck * 23) * 0.05 * roarJaw, 60, 0.3);                  // the roar shakes it
   const snore = sl * 0.07 * Math.max(0, Math.sin(bp + Math.PI));
@@ -2635,7 +2701,7 @@ function dragonAnim(e, a, dt){
   // so the tip whips; pressed down when it rears (and bounced by the slam); curled round the body asleep
   const wave = k => Math.sin(ck * 0.45 + idp - k * 0.9) * (0.16 + 0.07 * k) * awake * (1 - g) - Math.sin(a.phase - k * 0.8) * (0.14 + 0.06 * k) * g
     + Math.sin(ck * 4 - k * 1.2) * 0.12 * bl * k;                                                // (the breath's recoil lashes the tip)
-  const tail = [0, 1, 2].map(k => spring('tail' + k, wave(k) + [0.6, 0.65, 0.7][k] * sl, [5, 7, 9][k], [0.35, 0.3, 0.25][k]));
+  const tail = [0, 1, 2].map(k => spring('tail' + k, wave(k) + [0.6, 0.65, 0.7][k] * sl - tr * [0.5, 0.45, 0.4][k], [5, 7, 9][k], [0.35, 0.3, 0.25][k]));
   const tailZ = [0, 1, 2].map(k => spring('tailZ' + k, [-0.12 * sl - 0.4 * rr + 0.12 * bl, -0.1 * sl - 0.12 * rr + 0.06 * bl, 0.08 * sl + 0.1 * rr][k], [9, 8, 10][k], [0.4, 0.35, 0.3][k]));
   const spade = spring('spade', 0.6 * sl * Math.max(0, Math.sin(ck * 0.3 + idp)) ** 12 * Math.sin(ck * 9) + 0.3 * tail[2], 40, 0.3); // twitching in its sleep
   // wings: open to the roar and the breath (half at the inhale), beating as it roars; folded they rise with the breathing
@@ -2679,7 +2745,10 @@ const DRAGON_LEG = { hind: { th: 0.31, sh: 0.33, bend: 1 }, fore: { th: 0.28, sh
 // Lying: the hip ~0.22 over the ground, so each joint rests ON it beside the body. Hind: thigh down-forward to the
 // knee on the ground at the flank, shin folded straight back along it (the foot under it). Fore, a sphinx's: upper
 // arm down-back to the elbow at the chest's side, forearm out forward along the ground.
-const DRAGON_TUCK = { hind: { hip: 0.78, knee: -Math.PI / 2 - 0.78, out: 0.42 }, fore: { hip: -0.67, knee: Math.PI / 2 + 0.67, out: 0.36 } };
+// (the shin / forearm lifts DRAGON_TUCK_UP off level, so its end — the ankle, DRAGON_FOOT over the sole — sits at foot
+// height: lying flat along the ground put the ankle AT the ground, sinking each foot and poking its claws through)
+const DRAGON_TUCK_UP = Math.asin(DRAGON_FOOT / 0.33);
+const DRAGON_TUCK = { hind: { hip: 0.78, knee: -Math.PI / 2 - 0.78 - DRAGON_TUCK_UP, out: 0.75 }, fore: { hip: -0.67, knee: Math.PI / 2 + 0.67 + DRAGON_TUCK_UP, out: 0.36 } };
 function dragonLegIK(L, tx, ty){
   const d = Math.max(Math.abs(L.th - L.sh) + 0.02, Math.min(L.th + L.sh - 1e-3, Math.hypot(tx, ty)));
   const base = Math.atan2(tx, -ty), a1 = Math.acos((L.th * L.th + d * d - L.sh * L.sh) / (2 * L.th * d)), k = Math.acos((L.th * L.th + L.sh * L.sh - d * d) / (2 * L.th * L.sh));
@@ -2704,7 +2773,7 @@ const DRAGON_COL = { plate: '#2c5a28', plateLit: '#4b8341', plateDark: '#24491f'
 const DRAGON_SHADE = { col: '#0c280c', alpha: 0.2, trunk: 0.2, neck: 0.07, face: 0.07, tail: 0.08, leg: 0.06, wing: 0.14 };
 let dragonShadeC = null;
 const DRAGON_K = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2 / UNIT_SCALE, DRAGON_C = HALF_TW / UNIT_SCALE, dragon2D = new Map();
-const DRAGON_STRIDE = 0.5 * Math.sin(0.42), DRAGON_LIFT = 0.08; // (GAIT.dragon, js/pov3d.js)
+const DRAGON_STRIDE = 0.5 * Math.sin(0.6), DRAGON_LIFT = 0.12; // (GAIT.dragon, js/pov3d.js — keep the two equal)
 function drawDragonBody(e){
   // the animation: its own clock and stride per dragon; the selection/outline mask pass re-draws the last pose
   let a = dragon2D.get(e.id);
@@ -2712,8 +2781,7 @@ function drawDragonBody(e){
   if (!window._maskDraw || !a.P) {
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
     const moved = Math.hypot(e.x - a.px, e.y - a.py); a.px = e.x; a.py = e.y;
-    a.gait += ((moved > 1e-4 ? 1 : 0) - a.gait) * Math.min(1, dt * 8);
-    a.phase += moved / (4 * DRAGON_STRIDE) * 2 * Math.PI;
+    dragonGaitStep(e, a, moved, dt, DRAGON_STRIDE);
     a.P = dragonAnim(e, a, dt);
     if (!e.corpseRot) {
       for (const i of a.P.ev.steps) spawnParticles(e.x, e.y, '#b7a27a', 2, 0.02, 0.6);
@@ -2888,13 +2956,14 @@ function drawDragonBody(e){
     tube(col, bm(hx, hy, z), bm(kx, ky, zk), r0, r1, -0.05); tube(col, bm(kx, ky, zk), bm(ax, ay, za), r1, 0.065, -0.04);
     const A = bm(ax, ay, za), fa = -P.pitch + dragonStride(a.phase, i).roll * P.g * (1 - P.sl);
     const ft = (x, y) => [A[0] + x * cos(fa) - y * sin(fa), A[1] + x * sin(fa) + y * cos(fa), za];      // the foot, flat on the ground
-    const fF = (x, y, z) => { const q = ft(x, y); return [q[0], q[1], za + z]; };                    // the foot's frame (turned with it)
+    const toe = (hind ? 1.25 : 0.35) * P.sl * Math.sign(z);                                            // lying, the toes turn out to its side (as 3D)
+    const fF = (x, y, z2) => { const q = ft(x * Math.cos(toe), y); return [q[0], q[1], za + z2 + x * Math.sin(toe)]; }; // the foot's frame (turned with it)
     blobF(col, fF, 0.07, -DRAGON_FOOT * 0.5, 0, 0.17, DRAGON_FOOT * 0.55, 0.14); grp = null;         // a broad round foot
     for (const cz of [-0.06, 0.06]) tube(C.horn, fF(0.19, -DRAGON_FOOT * 0.62, cz), fF(0.27, -DRAGON_FOOT * 0.95, cz * 1.15), 0.04, 0.014, 0.02); // two fat claws
   };
   leg(0, -0.34); leg(1, 0.34); leg(2, -0.32); leg(3, 0.32);
   // wings: the shared joints; the plane stood up by its angle, out from its side as it spreads
-  const wingAng = (1.35 + (0.35 + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl;
+  const wingAng = (1.35 + (0.35 + 0.6 * P.rr + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl;
   for (const sd of [-1, 1]) {
     const J = dragonWingJoints(1 - P.open, P.sl, sd), up = sin(wingAng), outw = cos(wingAng);
     const at = q => bm(0.1 + q[0], 1.08 + q[1] * up, sd * (0.32 + q[1] * outw));
@@ -3019,13 +3088,11 @@ function drawSheepBody(e){
 
   let earWiggle = e.eatingGrass ? Math.sin(animTick * 0.5 + e.id) * 1.2 : Math.sin(animTick * 0.1 + e.id) * 0.4;
 
-  // Sheep head: dark face, droopy ears, wool tuft on top, team bandana.
+  // Sheep head: dark face, droopy ears, and the wool tuft on top in its owner's colour (white: nobody's yet — gaia).
+  const tuft = e.team === GAIA_TEAM ? '#f2eddd' : tc;
   // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
   const sheepHead = (hx, hy, mode) => {
     X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-    // Team bandana under the chin
-    X.fillStyle=tc;
-    X.beginPath(); X.ellipse(hx, hy+3.6, 3, 1.8, 0, 0, Math.PI*2); X.fill();
     // Droopy ears
     X.fillStyle = mode==='back' ? '#4a463e' : '#57534a';
     X.save(); X.translate(hx-2.6, hy-0.6+earWiggle); X.rotate(-0.5);
@@ -3035,11 +3102,11 @@ function drawSheepBody(e){
     // Head
     X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
     X.beginPath(); X.ellipse(hx, hy, 3, 3.4, 0, 0, Math.PI*2); X.fill(); X.stroke();
-    // Wool tuft on top of the head
+    // Wool tuft on top of the head: the owner's colour
     X.fillStyle='#000';
-    X.beginPath(); X.arc(hx, hy-3.2, 2.2, 0, Math.PI*2); X.fill();
-    X.fillStyle='#f2eddd';
-    X.beginPath(); X.arc(hx, hy-3.2, 1.6, 0, Math.PI*2); X.fill();
+    X.beginPath(); X.arc(hx, hy-3.2, 2.5, 0, Math.PI*2); X.fill();
+    X.fillStyle=tuft;
+    X.beginPath(); X.arc(hx, hy-3.2, 1.9, 0, Math.PI*2); X.fill();
   };
 
   let headX = 0, headY = 0;
@@ -3193,7 +3260,8 @@ function drawUnit(e){
 
   // Save context and apply horizontal flipping based on facing direction
   X.save();
-  if(e.utype==='sheep'||e.utype==='bear'||e.utype==='dragon') X.translate(sx, sy + sbob);
+  if(e.utype==='sheep') X.translate(sx, sy + sbob);
+  else if(e.utype==='bear'||e.utype==='dragon') X.translate(sx, sy); // (they bob with their own step)
   // Vehicles don't head-bob — the ram applies its own subtle rolling sway
   else if(e.utype==='sheep_carcass'||e.utype==='ram'||e.utype==='tradecart') X.translate(sx, sy);
   else X.translate(sx, sy + bob);
@@ -3283,13 +3351,12 @@ function drawUnit(e){
     let headX = 6, headY = 1.0;
     let earX = 7, earY = -0.5;
 
-    // Team bandana just below head
-    X.fillStyle = tc;
-    X.beginPath(); X.ellipse(headX, headY + 3, 3, 1.8, 0, 0, Math.PI*2); X.fill();
-
     X.fillStyle='#333';
     X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
     X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;X.stroke();
+    // its owner's tuft, still on the head
+    X.fillStyle = e.team === GAIA_TEAM ? '#f2eddd' : tc;
+    X.beginPath(); X.arc(headX - 1.2, headY - 2.2, 1.5, 0, Math.PI*2); X.fill(); X.stroke();
     X.fillStyle='#e0d8c0';
     X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
 

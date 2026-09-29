@@ -667,7 +667,8 @@ const MUSIC_PHRASE_BEATS = 8;
 const MUSIC_SCALES = {
   dorian:     [293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25], // D E F G A B C
   mixolydian: [392.00, 440.00, 493.88, 523.25, 587.33, 659.25, 698.46], // G A B C D E F
-  phrygian:   [329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33]  // E F G A B C D
+  phrygian:   [329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33], // E F G A B C D
+  harmonic:   [293.66, 329.63, 349.23, 392.00, 440.00, 466.16, 554.37]  // D E F G A Bb C# — the dragon's: the raised 7th's old, dark pull
 };
 // Peacetime scale preference (kept from before): 'mixolydian' | 'dorian'
 window.musicMode = window.musicMode || 'mixolydian';
@@ -688,7 +689,9 @@ const MUSIC_MOODS = {
   // Combat moods play noticeably louder — they have to cut through the
   // clash/arrow SFX of the very battles that trigger them.
   war:    { scale: 'dorian',   bpm: 100, droneVol: 0.024, melVol: 1.7, drum: 'march',  drumVol: 1.8 },
-  danger: { scale: 'phrygian', bpm: 116, droneVol: 0.03,  melVol: 1.9, drum: 'urgent', drumVol: 2.0 }
+  danger: { scale: 'phrygian', bpm: 116, droneVol: 0.03,  melVol: 1.9, drum: 'urgent', drumVol: 2.0 },
+  // the dragon awake in view: its own theme (playDragonTheme) — slow, heavy, low brass, choir, war drums
+  dragon: { scale: 'harmonic', bpm: 72,  droneVol: 0,     melVol: 1.0, drum: 'dragon', drumVol: 1.0 }
 };
 let _moodHold = { war: 0, danger: 0 };
 let _currentMoodName = 'peace';
@@ -721,6 +724,11 @@ function detectMusicMood() {
     entities.forEach(en => {
       if (en.type === 'building') (en.team === myTeam ? myBldgs : theirBldgs).push(en);
     });
+    // The dragon awake and in sight (your own view: fog is viewer-local, and so is the music) outranks every other mood.
+    let dragonUp = entities.some(en => en.utype === 'dragon' && en.hp > 0 && en.awake && !en.spent &&
+      fog[Math.round(en.y)] && fog[Math.round(en.y)][Math.round(en.x)] === 2);
+    if (dragonUp) _moodHold.dragon = ambientSeq + 1;
+    if (dragonUp || ambientSeq < (_moodHold.dragon || 0)) return 'dragon';
     let danger = false, war = false;
     // Strongest signal: actual damage in the last ~8 seconds (set by
     // damageEntity) — catches open-field battles far from any building.
@@ -832,6 +840,7 @@ function playAmbientChord() {
   _currentMoodName = moodName;
   let bus = newPhraseBus();
   let now = audioCtx.currentTime;
+  if (moodName === 'dragon') { playDragonTheme(bus, now, beat, ambientSeq++); return phraseDur; }
   let phraseIdx = PHRASE_ORDER[ambientSeq % PHRASE_ORDER.length];
   let verse = Math.floor(ambientSeq / PHRASE_ORDER.length);
   ambientSeq++;
@@ -918,6 +927,73 @@ function playAmbientChord() {
   return phraseDur;
 }
 
+// ---- THE DRAGON'S THEME ----
+// Four 8-beat phrases in D harmonic minor: an ominous low call, a sinking answer, a heroic climb, a cadence that
+// hangs on the leading tone and pulls back to the top. Low brass (detuned saws through a lowpass that opens on each
+// note's attack — the "blat"), a wordless "aah" choir on the chords (saws through two vowel formants), and big drums.
+// All of it sits low: nothing up where the harsh top end was.
+const DRAGON_THEME = [
+  // [melody [deg, beat, len]], [chords: [root deg, beats]]
+  { mel: [[0,0,2],[0,2,0.5],[2,2.5,0.5],[1,3,1],[4,4,3],[3,7,0.5],[2,7.5,0.5]], ch: [[0,4],[5,4]] },   // i  — VI
+  { mel: [[2,0,1.5],[1,1.5,0.5],[0,2,2],[-1,4,3],[0,7,1]],                       ch: [[3,4],[4,4]] },   // iv — V
+  { mel: [[4,0,1],[5,1,1],[6,2,1],[7,3,3],[9,6,1],[7,7,1]],                      ch: [[0,4],[3,4]] },   // i  — iv
+  { mel: [[8,0,2],[7,2,1],[6,3,1],[7,4,1],[4,5,1],[6,6,2]],                      ch: [[5,4],[4,4]] }    // VI — V (hangs)
+];
+function dragonBrass(out, now, t0, freq, dur, vol) {
+  const fl = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+  fl.type = 'lowpass'; fl.Q.value = 1.2;
+  fl.frequency.setValueAtTime(freq * 1.5, now + t0);
+  fl.frequency.linearRampToValueAtTime(Math.min(1400, freq * 5), now + t0 + 0.09);   // the blat of the attack
+  fl.frequency.exponentialRampToValueAtTime(Math.min(900, freq * 3), now + t0 + 0.5);
+  g.gain.setValueAtTime(0.0001, now + t0);
+  g.gain.linearRampToValueAtTime(vol, now + t0 + 0.07);
+  g.gain.setValueAtTime(vol * 0.85, now + t0 + Math.max(0.1, dur - 0.2));
+  g.gain.exponentialRampToValueAtTime(0.0001, now + t0 + dur + 0.15);
+  fl.connect(g); g.connect(out);
+  for (const [m, det] of [[1, -6], [1, 6], [0.5, 0]]) {                       // a section: two players, and one an octave down
+    const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.detune.value = det + rnd(-2, 2);
+    o.frequency.setValueAtTime(freq * m, now + t0); o.connect(fl);
+    o.start(now + t0); o.stop(now + t0 + dur + 0.25);
+  }
+}
+function dragonChoir(out, now, t0, freqs, dur, vol) {
+  const g = audioCtx.createGain(), mix = audioCtx.createGain();
+  g.gain.setValueAtTime(0.0001, now + t0);
+  g.gain.linearRampToValueAtTime(vol, now + t0 + Math.min(0.8, dur * 0.35));        // voices swell in
+  g.gain.setValueAtTime(vol, now + t0 + dur * 0.8);
+  g.gain.linearRampToValueAtTime(0.0001, now + t0 + dur + 0.4);
+  for (const [f, q, k] of [[720, 5, 1], [1150, 7, 0.55]]) {                          // "aah": the first two formants
+    const bp = audioCtx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+    const kg = audioCtx.createGain(); kg.gain.value = k; mix.connect(bp); bp.connect(kg); kg.connect(g);
+  }
+  g.connect(out);
+  for (const freq of freqs) for (const det of [-9, 0, 9]) {
+    const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.detune.value = det;
+    o.frequency.setValueAtTime(freq, now + t0);
+    const vib = audioCtx.createOscillator(), vg = audioCtx.createGain(); vib.frequency.value = rnd(4.5, 5.8); vg.gain.value = freq * 0.006;
+    vib.connect(vg); vg.connect(o.frequency);
+    o.connect(mix); o.start(now + t0); vib.start(now + t0); o.stop(now + t0 + dur + 0.5); vib.stop(now + t0 + dur + 0.5);
+  }
+}
+function dragonDrum(out, now, t0, vol) {                                                  // a big war drum: a deep pitched boom and its skin
+  tone(out, now, { type: 'sine', f0: 72, f1: 42, t0, dur: 0.75, vol, att: 0.004 });
+  tone(out, now, { type: 'sine', f0: 118, f1: 70, t0, dur: 0.25, vol: vol * 0.45, att: 0.003 });
+  noiseHit(out, now, { t0, dur: 0.09, vol: vol * 0.55, type: 'lowpass', f0: 600, q: 0.7 });
+}
+function playDragonTheme(bus, now, beat, seq) {
+  const P = DRAGON_THEME[seq % DRAGON_THEME.length], lo = d => degFreq(d, 'harmonic') / 2, out = bus;
+  // choir on the chords (root, third, fifth of the scale — the V comes out major on the C#)
+  let at = 0;
+  for (const [root, len] of P.ch) { dragonChoir(out, now, at * beat, [0, 2, 4].map(k => lo(root + k) / 2), len * beat, 0.018); at += len; }
+  // a low pedal drone under it all
+  tone(out, now, { type: 'triangle', f0: lo(P.ch[0][0]) / 4, t0: 0, dur: 8 * beat, vol: 0.034, att: 0.6 });
+  // the brass
+  for (const [d, b, l] of P.mel) dragonBrass(out, now, Math.max(0, b * beat + rnd(-0.01, 0.01)), lo(d), l * beat * 0.95, 0.042);
+  // the drums: BOOM . . boom | BOOM . b b — and a roll into the cadence
+  for (const [b, v] of [[0, 0.12], [3, 0.072], [4, 0.11], [6, 0.056], [6.5, 0.064]]) dragonDrum(out, now, b * beat, v);
+  if (seq % DRAGON_THEME.length === 3) for (let k = 0; k < 6; k++) dragonDrum(out, now, (7 + k / 6) * beat, 0.032 + k * 0.01);
+}
+
 // One-shot low horn hit for the peace→combat mood transition — the same
 // detuned-sawtooth recipe as the 'alert' war horn, but shorter and quieter
 // (it accompanies the music, it isn't an alert the player must act on).
@@ -951,7 +1027,7 @@ function startAmbientMusic() {
   if (ambientTimer) clearTimeout(ambientTimer);
   if (_moodWatcher) clearInterval(_moodWatcher);
   ambientSeq = 0;
-  _moodHold = { war: 0, danger: 0 };
+  _moodHold = { war: 0, danger: 0, dragon: 0 };
   _currentMoodName = 'peace';
   const loop = () => {
     let dur = playAmbientChord();
@@ -973,7 +1049,7 @@ function startAmbientMusic() {
       // Entering combat from peace gets a one-shot horn stinger over the
       // crossfade, so the mood change lands as an event instead of the
       // soundtrack just quietly changing gears.
-      if (_currentMoodName === 'peace' && (m === 'war' || m === 'danger')) moodStinger();
+      if ((_currentMoodName === 'peace' && (m === 'war' || m === 'danger')) || m === 'dragon') moodStinger();
       fadeOutPhrase(0.3);
       clearTimeout(ambientTimer);
       ambientTimer = setTimeout(loop, 320);

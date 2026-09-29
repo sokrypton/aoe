@@ -134,8 +134,6 @@ function render(){
   // Draw ground tiles (only visible ones)
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);
 
-  // Filter out expired corpses using wall-clock time so they still fade after game over
-  corpses = corpses.filter(c => performance.now() - c.deathTime < CORPSE_LIFE);
   
   // Find visible trees with wood resource remaining to depth-sort them
   // dynamically. The per-tile tree records are pooled (keyed by tile) and
@@ -297,6 +295,15 @@ function render(){
     }
   });
 
+  // stuck arrows: just after the unit they're in (drawn over it), else by their own spot
+  tendStuckArrows();
+  stuckArrows.forEach(a => {
+    if (a.hidden || a.x < minX - 2 || a.x > maxX + 2 || a.y < minY - 2 || a.y > maxY + 2) return;
+    let h = a.hostId != null ? entitiesById.get(a.hostId) : null;
+    a.sortVal = h && h.type === 'unit' && h.sortVal != null ? h.sortVal + 0.001 : a.y + a.x + 0.02;
+    allDrawable.push(a);
+  });
+
   trees.forEach(t => {
     t.sortVal = t.y + t.x + 0.1;
     allDrawable.push(t);
@@ -337,7 +344,7 @@ function render(){
     // decaying on the map after we leave (AoE2), like buildings via
     // scoutedByMe. Cosmetic/local (fog is per-viewer); corpses are excluded
     // from the sim checksum, so this never affects lockstep.
-    if (e.type === 'corpse' && f === 2) e.seen = true;
+    if ((e.type === 'corpse' || e.type === 'stuckArrow') && f === 2) e.seen = true;
     // Resolve the actual entity and team behind a depth proxy
     let realEntity = proxyEntity(e);
     let eTeam = realEntity ? realEntity.team : e.team;
@@ -350,7 +357,7 @@ function render(){
       // (seen) so it finishes decaying on the map after we leave — but one that
       // died entirely in the fog stays hidden (no fog-death info leak).
       if (e.type === 'unit') return;
-      if (e.type === 'corpse' && !e.seen) return;
+      if ((e.type === 'corpse' || e.type === 'stuckArrow') && !e.seen) return;
       if (realEntity && realEntity.type === 'building' && !scoutedByMe.has(realEntity.id)) return;
     }
 
@@ -373,6 +380,7 @@ function render(){
     }
     else if(e.type==='farm_part') drawBuilding(e.entity, e.part); // flat — never occludes
     else if(e.type==='corpse') drawCorpse(e);
+    else if(e.type==='stuckArrow') drawStuckArrow(e);
     else if(e.type==='tree'){ drawTreeEntity(e.x, e.y); _silOccScratch.push(e); } // trees occlude units too (AoE2)
     else {
       drawUnit(e);

@@ -379,6 +379,8 @@ function closestUnitNear(e,range,pred){
 }
 
 function distToTarget(a,b){
+  // The dragon is a body, not a point: measured to its oval's edge, plus the half tile any unit's "surface" is.
+  if(b && b.utype==='dragon'){ let d=dist(a,b); return Math.max(0, d-dragonBodyRadius(b,a.x,a.y))+0.5; }
   if(b && b.type==='building'){
     // A w-wide building occupies tile centers [x .. x+w-1], so its
     // geometric footprint spans [x-0.5, x+w-0.5] — not [x, x+w].
@@ -632,7 +634,9 @@ const STANCES = {
   standground: { scan: 'range', leashed: false, acquires: true,  retaliates: true  }, // retaliation still reach-gated (canStrikeInPlace)
   passive:     { scan: 0,       leashed: false, acquires: false, retaliates: false },
 };
-function stanceOf(e){ return STANCES[e.stance] || STANCES.aggressive; }
+// A player-steered unit (character mode, e.possessed) fights only when told (Space / ACT): it neither auto-acquires
+// nor retaliates on its own, or the sim's retargeting and the steering's move orders flip-flop it (a vibrating unit).
+function stanceOf(e){ return e.possessed ? STANCES.passive : STANCES[e.stance] || STANCES.aggressive; }
 
 // THE ONE "can this unit hit that foe WITHOUT MOVING" predicate. Ranged:
 // within firing range (+0.5 slack, same as every other reach test).
@@ -3079,8 +3083,40 @@ function updateBearBehavior(e){
 // The lair dragon: asleep on its hoard until someone walks right up or hits it; awake, it takes on whoever comes
 // within reach, burning a cone in front of it on its reload (the breath lands before the generic strike, which the
 // cooldown then keeps off), leashes back to the lair, and settles to sleep after a quiet spell there.
+// The dragon's body on the ground: an oval DRAGON_BODY[0] (half-length, along its heading) by [1] (half-width).
+// Every tile whose centre lies in it is blocked, walking or asleep (rebuildBlockGrid, js/loop.js); units caught in
+// it are pushed out to its edge (dragonShove); others measure to its edge (distToTarget). simCos/simSin: in the tick.
+const DRAGON_BODY=[1.3,0.85], DRAGON_SHOVE=0.12;
+function dragonAxes(d){ let a=d.faceAng||0; return [simCos(a), simSin(a)]; }
+function inDragonBody(d,x,y,grow){
+  let [c,s]=dragonAxes(d), dx=x-d.x, dy=y-d.y, u=(dx*c+dy*s)/(DRAGON_BODY[0]+grow), v=(-dx*s+dy*c)/(DRAGON_BODY[1]+grow);
+  return u*u+v*v<1;
+}
+// Its oval's radius toward (x, y), from its centre.
+function dragonBodyRadius(d,x,y){
+  let [c,s]=dragonAxes(d), dx=x-d.x, dy=y-d.y, l=Math.sqrt(dx*dx+dy*dy);
+  if(l<1e-6) return DRAGON_BODY[1];
+  let u=(dx*c+dy*s)/l/DRAGON_BODY[0], v=(-dx*s+dy*c)/l/DRAGON_BODY[1];
+  return 1/Math.sqrt(u*u+v*v);
+}
+// Standing units the dragon has come down on (it walked, turned or woke over them) step out of its body, a little
+// each tick, straight away from it — onto open ground only. Movers aren't pushed: its blocked tiles stop and re-route them.
+function dragonShove(){
+  for(let i=0;i<entities.length;i++){
+    let d=entities[i]; if(d.utype!=='dragon'||d.hp<=0||d.garrisonedIn)continue;
+    for(let j=0;j<entities.length;j++){
+      let u=entities[j];
+      if(u===d||u.type!=='unit'||u.hp<=0||u.garrisonedIn||u.utype==='sheep_carcass'||u.utype==='dragon'||u.path.length)continue;
+      if(Math.abs(u.x-d.x)>2.5||Math.abs(u.y-d.y)>2.5||!inDragonBody(d,u.x,u.y,0.35))continue;
+      let dx=u.x-d.x, dy=u.y-d.y, l=Math.sqrt(dx*dx+dy*dy);
+      if(l<1e-6){ let [c,s]=dragonAxes(d); dx=-s; dy=c; l=1; }                  // dead centre: out to its left side
+      let nx=u.x+dx/l*DRAGON_SHOVE, ny=u.y+dy/l*DRAGON_SHOVE;
+      if(walkable(Math.round(nx),Math.round(ny),u.id,true)){ u.x=nx; u.y=ny; }
+    }
+  }
+}
 const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                                       // (turns 30° a game-second)
-      DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600);
+      DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600), DRAGON_STEP_COS=0.82;
 function updateDragonBehavior(e){
   if(e.utype!=='dragon')return;
   if(e.homeX===undefined){e.homeX=e.x;e.homeY=e.y;}
@@ -3179,6 +3215,10 @@ function walkUnitPath(e){
   if(enforceChaseLeash(e)){
     // fall through with the freshly-planted return path this tick
   }
+  // The dragon turns before it walks: more than DRAGON_STEP_COS off the way to its next step, it stands and comes
+  // round (updateDragonBehavior turns it every tick) — a beast that size doesn't crab sideways along its path.
+  if(e.utype==='dragon'&&e.faceAng!==undefined){ let n=e.path[0], dx=n.x-e.x, dy=n.y-e.y, l=Math.sqrt(dx*dx+dy*dy);
+    if(l>1e-6&&(dx*simCos(e.faceAng)+dy*simSin(e.faceAng))/l<DRAGON_STEP_COS) return; }
   // Shared stepping math (stepUnitAlongPath, js/pathfinding.js) — the
   // guest's between-sync walker uses the same function, so host and
   // guest can never drift apart on movement. checkWalkable=true: only
@@ -3500,6 +3540,7 @@ function handleDeath(e,killerTeam){
       deathTick: tick // headless-only tick-based prune (js/loop.js); render still fades by deathTime
     };
     corpses.push(corpse);
+    if (corpses.length > CORPSE_MAX) corpses.splice(0, corpses.length - CORPSE_MAX); // oldest bones go (cosmetic: never hashed)
   }
   // Shepherd continuity: when a carcass is consumed, EVERY villager that
   // was harvesting it moves on to the nearest remaining carcass or own/gaia

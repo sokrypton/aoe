@@ -17,6 +17,7 @@
   const BLDG_TOP = 230, BLDG_BASE = 10; // px of headroom above / margin below a footprint
 
   let THREE = null, loading = null;
+  let unrevealed = false;   // the world view opened, its first frame not drawn yet (window.world3D waits for it)
   let renderer, scene, camera, groundTex, groundData, groundMesh, groundFor = null, fowTex, fowData, SKY, VOID;
   const unitSprites = new Map(), solids = new Map(), mats = new Map(), footRow = new Map(), animals = new Map(); // animals: id → 3D sheep/bear // footRow: utype → lowest painted canvas row
   let unitBox = null, unitRod = null;
@@ -73,6 +74,7 @@
   }
   function initScene(){
     renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true }); // stencil: the behind-building outlines
+    renderer.localClippingEnabled = true;                                   // construction sites (constructionSite)
     renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1)); // full screen on phones gets heavy
     pip.insertBefore(renderer.domElement, pip.firstChild);
     scene = new THREE.Scene();
@@ -221,6 +223,7 @@
     if (!c) { const n = parseInt(hex.slice(1), 16); c = [n >> 16, (n >> 8) & 255, n & 255]; rgbCache.set(hex, c); }
     return c;
   }
+  const shadowed = new Set();
   function refreshGround(){
     for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
       const f = (fog[y] && fog[y][x]) || 0;
@@ -231,6 +234,18 @@
       const c = rgb(cols[(x * 7 + y * 13) % cols.length]);
       groundData[i] = c[0]; groundData[i + 1] = c[1]; groundData[i + 2] = c[2]; groundData[i + 3] = 255;
     }
+    // Building shadows baked into the ground, tile by tile (16% darker under each footprint, as 2D's 16% black): on the
+    // grid, once per tile however many pieces meet there (a wall run never doubles up); farms and the open market none.
+    for (const e of entities) {
+      if (e.type !== 'building' || e.hp <= 0 || e.btype === 'FARM' || e.btype === 'MARKET' || !bldgVisible(e)) continue;
+      const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
+      for (let y = e.y; y < e.y + h; y++) for (let x = e.x; x < e.x + w; x++) {
+        if (x < 0 || y < 0 || x >= MAP || y >= MAP || shadowed.has(y * MAP + x)) continue;
+        shadowed.add(y * MAP + x); const i = ((MAP - 1 - y) * MAP + x) * 4;
+        for (let k = 0; k < 3; k++) groundData[i + k] = Math.round(groundData[i + k] * 0.84);
+      }
+    }
+    shadowed.clear();
     groundTex.needsUpdate = true; fowTex.needsUpdate = true;
   }
 
@@ -254,6 +269,7 @@
       // surfaces over the outline hulls (else they fight at grazing angles).
       m = new THREE.MeshLambertMaterial({ color, side: twoSided ? THREE.DoubleSide : THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       if (detail) withDetail(m, detail);
+      m.userData.detail = detail;
       mats.set(k, m);
       // made in the cached poses' placeholder team colour (or its light tint): a clone swaps it for the real team's
       if (color === VIL_TC) tcSwaps.set(m, t => mat(t + col.slice(VIL_TC.length), twoSided));
@@ -341,24 +357,36 @@
     if (!along) for (const x of [x0, x1]) for (const z of [z0, z1]) seg([x, y0, z], [x, y1, z]);
     const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.add(new THREE.LineSegments(geo, softInk));
   }
+  const occupantAt = (x, y) => { const row = map[y], cell = row && row[x]; return cell && cell.occupied != null ? entitiesById.get(cell.occupied) : null; };
   function refreshWall(e){
-    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, gate = isGateBtype(e.btype);
-    const stone = e.btype === 'SWALL' || e.btype === 'SGATE', a = ageOf(e), tc = teamColor(e.team);
-    const k = e.complete ? 1 : Math.max(0.15, e.buildProgress / e.buildTime);
-    const arms = [];
+    const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), key = wallKey(e, arms);
+    let rec = solids.get(e.id);
+    if (rec && rec.key === key) return;
+    if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
+    const r = wallModel(e, arms); r.obj.userData.bid = e.id;
+    if (!e.complete) { const b = BLDGS[e.btype]; r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
+    scene.add(r.obj); solids.set(e.id, { ...r, key });
+  }
+  // The links a wall/gate e draws to its same-team wall-like neighbors (at(x, y) → the entity there); shared(n):
+  // n draws that link itself, so e leaves its -x/-z one to it.
+  function wallArms(e, at, shared){
+    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, arms = [];
     for (let fy = e.y; fy < e.y + h; fy++) for (let fx = e.x; fx < e.x + w; fx++) {
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const row = map[fy + dy], cell = row && row[fx + dx], n = cell && cell.occupied != null && entitiesById.get(cell.occupied);
-        if (!n || n.id === e.id || n.team !== e.team || !isWallLike(n)) continue;
-        if (dx + dy < 0 && !isTowerBtype(n.btype)) continue; // the -x/-z neighbor draws the link we share (towers draw none)
+        const n = at(fx + dx, fy + dy);
+        if (!n || n === e || n.id === e.id || n.team !== e.team || !isWallLike(n)) continue;
+        if (dx + dy < 0 && shared(n)) continue;
         arms.push(fx, fy, dx, dy, pillarHalf(e), pillarHalf(n));
       }
     }
-    const key = k.toFixed(2) + ':' + a + ':' + tc + ':' + arms.join(',');
-    let rec = solids.get(e.id);
-    if (rec && rec.key === key) return;
-    if (rec) dropSolid(rec);
-    const g = new THREE.Group(), body = stone ? '#cfc8b6|stone' : WOOD.L + '|stakes'; g.userData.bid = e.id;
+    return arms;
+  }
+  const wallKey = (e, arms) => (e.complete ? 1 : 0) + ':' + ageOf(e) + ':' + teamColor(e.team) + ':' + arms.join(',');
+  function wallModel(e, arms){
+    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, gate = isGateBtype(e.btype);
+    const stone = e.btype === 'SWALL' || e.btype === 'SGATE', a = ageOf(e), tc = teamColor(e.team);
+    const k = 1; // (full height: a site rises by its cut — constructionSite)
+    const g = new THREE.Group(), body = stone ? '#cfc8b6|stone' : WOOD.L + '|stakes';
     const pw = (stone ? 9 : 7) / 32, T = pw, linkH = 14 / HPX * k; // links as thick as the pillars (drawWallLink thick = pw/2 px each side)
     // A link from this pillar's face to the neighbor's (half-widths o1, o2): a slab with a team top.
     for (let i = 0; i < arms.length; i += 6) {
@@ -374,8 +402,7 @@
         boxAt(g, topped(body, tc), cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH, 'hull'); softEdges(g, cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH);
       }
       addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
-      scene.add(g); solids.set(e.id, { obj: g, key });
-      return;
+      return { obj: g };
     }
     // Gate: end pillars on the first and last tile of its line, a door between.
     const alongZ = h > w, n = Math.max(w, h), P = 14 / 32, pH = 28 / HPX * k;
@@ -386,13 +413,12 @@
         boxAt(g, '#e0d8c6', cx - P / 2 + mx * (P - 0.1), cz - P / 2 + mz * (P - 0.1), cx - P / 2 + mx * (P - 0.1) + 0.1, cz - P / 2 + mz * (P - 0.1) + 0.1, pH, pH + 6 / HPX, 'hull');
     }
     const [a0, a1] = ends, doorH = 16 / HPX * k, dt = 2 / 32; // the door slab: drawWallLink thick 2 each side
-    const door = new THREE.Group(), span0 = (alongZ ? a0[1] : a0[0]) + P / 2 - 0.02, span1 = (alongZ ? a1[1] : a1[0]) - P / 2 + 0.02; // tucked into the pillars: no end face lying on theirs
+    const door = new THREE.Group(), span0 = (alongZ ? a0[1] : a0[0]) + P / 2 + 0.004, span1 = (alongZ ? a1[1] : a1[0]) - P / 2 - 0.004; // a hair short of the pillars: no end face lying on theirs, none inside them (an open site shows their inside)
     const dx0 = alongZ ? a0[0] - dt : span0, dx1 = alongZ ? a0[0] + dt : span1, dz0 = alongZ ? span0 : a0[1] - dt, dz1 = alongZ ? span1 : a0[1] + dt;
     boxAt(door, topped('#8b5a2b|stakes', '#a5723a'), dx0, dz0, dx1, dz1, 0, doorH, 'hull'); softEdges(door, dx0, dz0, dx1, dz1, 0, doorH, alongZ ? 'z' : 'x');
     g.add(door);
     addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
-    scene.add(g);
-    solids.set(e.id, { obj: g, key, door, doorOf: e.id });
+    return { obj: g, door, doorOf: e.id };
   }
   // ---- 3D building models, detailed after the 2D art ----
   // Real, lit 3D in the art's palette (WOOD / AGE_WALLS / team colors) with
@@ -411,6 +437,7 @@
     if (rec.trainees) for (const t of rec.trainees) dropVillager(t);
     scene.remove(rec.obj);
     rec.obj.traverse(o => {
+      if (o.userData.siteOwn) [].concat(o.material).forEach(m => m.dispose());
       if (o.geometry && o.geometry.userData.own) {
         const eg = edgeCache.get(o.geometry);
         if (eg) { eg.dispose(); edgeCache.delete(o.geometry); }
@@ -565,11 +592,18 @@
   // [x,y,z], w, h}) is cut through its face and tunnels T deep (reveal in the
   // face's color) to a dark back plate — the unlit interior. One mesh, so no
   // joint lines; hull from the unpierced faces so openings stay unstroked.
-  const INTERIOR = '#140e08', V3 = (a) => new THREE.Vector3(...a);
-  function solidGeo(faces, T, nMats, pierce, rims = []){
+  const V3 = (a) => new THREE.Vector3(...a);
+  // What an opening looks into: the wall's own colour inside, in the walls' shade (SITE_SHADE — as a site's inside), not black.
+  const INTERIOR_MATS = new Set();
+  function interiorMat(col){
+    const [c, detail] = col.split('|'), n = parseInt(c.slice(1), 16), ch = v => Math.round(v * SITE_SHADE).toString(16).padStart(2, '0'); // (on the screen colour, as the site's shade)
+    const m = mat('#' + ch(n >> 16) + ch((n >> 8) & 255) + ch(n & 255) + (detail ? '|' + detail : ''));
+    INTERIOR_MATS.add(m); return m; }
+  function solidGeo(faces, T, nMats, pierce, rims = [], level = false){ // level: openings tunnel straight in (a site's slabs: thickGeo)
     const buckets = Array.from({ length: nMats + 1 }, () => []);
     const tri = (b, p0, p1, p2, want, smooth) => { // flat-shaded unless smooth(p) gives the vertex normal
       const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
+      if (n.lengthSq() < 1e-12) return;                                   // (a sliver from the triangulation: no facing, so no outline to grow)
       if (n.dot(want) < 0) { n.negate(); [p1, p2] = [p2, p1]; }
       n.normalize();
       for (const q of [p0, p1, p2]) b.push(q, smooth ? smooth(q) : n);
@@ -591,7 +625,7 @@
       const all = contour.concat(...holes), b = buckets[f.mat || 0];
       for (const [i0, i1, i2] of THREE.ShapeUtils.triangulateShape(contour, holes)) tri(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, f.smooth);
       for (const h of holes) {
-        const out3 = h.map(to3), in3 = out3.map(p => p.clone().addScaledVector(n, -T)), mid = out3[0].clone().add(out3[2]).multiplyScalar(0.5);
+        const nIn = level ? new THREE.Vector3(n.x, 0, n.z).normalize() : n, out3 = h.map(to3), in3 = out3.map(p => p.clone().addScaledVector(nIn, -T)), mid = out3[0].clone().add(out3[2]).multiplyScalar(0.5);
         for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges
         for (let k = 0; k < 4; k++) {
           const k1 = (k + 1) % 4, want = mid.clone().sub(out3[k].clone().add(out3[k1]).multiplyScalar(0.5));
@@ -612,13 +646,15 @@
   }
   // Ink comes from the unpierced solid plus each opening's rims: edges traced
   // on the cut faces would catch the triangulation's slivers between openings.
-  function solid(g, cols, faces, { T = 0.06, thresh } = {}){
+  function solid(g, cols, faces, { T = 0.06, thresh, depth = T } = {}){ // depth: the wall's thickness (a site's cut shows it)
     cols = [].concat(cols);
-    const rims = [], m = new THREE.Mesh(solidGeo(faces, T, cols.length, true, rims), cols.concat(INTERIOR).map(c => mat(c)));
+    const rims = [], m = new THREE.Mesh(solidGeo(faces, T, cols.length, true, rims), cols.map(c => mat(c)).concat(interiorMat(cols[0])));
     const plain = solidGeo(faces, T, cols.length, false);
     m.add(new THREE.LineSegments(own(new THREE.EdgesGeometry(plain, thresh)), ink));
-    if (rims.length) m.add(new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), ink));
-    m.userData.hullGeo = plain;
+    if (rims.length) { const rl = new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), ink); rl.userData.rims = true; m.add(rl); }
+    m.userData.hullGeo = plain; m.userData.T = depth;
+    m.userData.slab = () => thickGeo(faces, depth, cols.length);                    // (a site's walls: real slabs)
+    m.userData.slabRims = () => { const r = []; solidGeo(faces, depth, cols.length, true, r, true); return r; }; // (their openings' frames, back edge on the inner face)
     g.add(m); return m;
   }
   // Face sets. boxFaces: named x0/x1/z0/z1/top/bottom (holes go on f.<name>.holes).
@@ -635,7 +671,8 @@
   }
   // Gable-walled block (ridge along x, or z): the box with its gable ends
   // (faces across the ridge) raised to a pentagon; the top becomes two slopes.
-  function houseFaces(x0, z0, x1, z1, wallH, rise, alongX = true){
+  // open: a construction site's — no sloped top (the roof closes it as it goes on)
+  function houseFaces(x0, z0, x1, z1, wallH, rise, alongX = true, open = false){
     const f = boxFaces(x0, z0, x1, z1, 0, wallH), R = wallH + rise, xm = (x0 + x1) / 2, zm = (z0 + z1) / 2;
     delete f.top;
     if (alongX) {
@@ -647,6 +684,7 @@
       f.s0 = { loop: [[x0, wallH, z0], [x0, wallH, z1], [xm, R, z1], [xm, R, z0]], out: [-1, 1, 0] };
       f.s1 = { loop: [[x1, wallH, z0], [x1, wallH, z1], [xm, R, z1], [xm, R, z0]], out: [1, 1, 0] };
     }
+    if (open) { delete f.s0; delete f.s1; }
     return f;
   }
   // Tapered n-sided tower (bottom radius r0, top r1) centred on (cx, cz), facet
@@ -811,6 +849,8 @@
 
   const ageOf = e => (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
 
+  // A part set in place whole on a construction site (a roof, a cap, an awning), not built up course by course.
+  const piece = g => { const p = new THREE.Group(); p.userData.piece = true; g.add(p); return p; };
   const MODELS = {
     // A flat tilled field (walkable: units stand on the ground, so the bed is
     // paint, not a raised block), a low planting ridge under each crop row, and
@@ -852,7 +892,7 @@
       const a = ageOf(e), x0 = e.x, z0 = e.y, x1 = e.x + 1, z1 = e.y + 1, box = [x0, z0, x1, z1];
       const wallH = 16 / HPX, roofH = 20 / HPX, tc = teamColor(e.team);
       const wall = a === 0 ? WOOD.plankL : AGE_WALLS[Math.min(a, 2)].gl, beam = a >= 2 ? '#57432e' : WOOD.beam;
-      const thick = 0.035, rise = roofH - thick, f = houseFaces(x0, z0, x1, z1, wallH, rise);
+      const thick = 0.035, rise = roofH - thick, f = houseFaces(x0, z0, x1, z1, wallH, rise, true, !e.complete);
       f.z0.holes.push(hole('z0', box, 0.5, SILL, 0.2, wallH * 0.85)); // the door, round the back: the art shows none
       solid(g, wall + (a === 0 ? '|planks' : '|plaster'), Object.values(f));
       if (a > 0) for (const f of FACES) { // half-timber frame: two studs, a mid-rail between them
@@ -863,11 +903,11 @@
       // rests on the gable walls, overhanging 13% past the front (+x) gable,
       // 10% past the back and 5% past the eaves — so the overhang and the back
       // slope's end edge show beyond the gable, as in the art.
-      roofOn(g, tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13);
+      roofOn(piece(g), tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13);
       if (a >= 1) { // chimney: 30% along the ridge, 30% down the +z slope, 16px proud
-        const cx = x0 + 0.3, cz = z0 + 0.665, top = wallH + 0.67 * roofH + 16 / HPX;
-        boxAt(g, '#9a4a34', cx - 0.08, cz - 0.08, cx + 0.08, cz + 0.08, wallH, top);
-        boxAt(g, '#8d857a', cx - 0.11, cz - 0.11, cx + 0.11, cz + 0.11, top, top + 3 / HPX);
+        const cx = x0 + 0.3, cz = z0 + 0.665, top = wallH + 0.67 * roofH + 16 / HPX, ch = piece(g);
+        boxAt(ch, '#9a4a34', cx - 0.08, cz - 0.08, cx + 0.08, cz + 0.08, wallH, top);
+        boxAt(ch, '#8d857a', cx - 0.11, cz - 0.11, cx + 0.11, cz + 0.11, top, top + 3 / HPX);
       }
     },
     // Keep in the back quadrant: plank (Dark) or stone, a
@@ -890,7 +930,7 @@
         [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
         [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
       ].map(loop => ({ loop, out: [0, 1, 0] }));
-      solid(g, [kL, kT], [...FACES.map(f => outer[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08 });
+      solid(g, [kL, kT], [...FACES.map(f => outer[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08, depth: rimW * 0.97 }); // (walls nearly as thick as the parapet: inside, straight up to the rim; the parapet's back stays a hair inside the outer face, not on it)
       if (a >= 2) for (let mx = 0; mx < 4; mx++) for (let mz = 0; mz < 4; mz++) { // flush on the parapet, corners once
         if (mx % 3 && mz % 3) continue;
         const px = x + (mid - rimW) * mx / 3, pz = z + (mid - rimW) * mz / 3;
@@ -901,14 +941,14 @@
       // end and the sloping front edge (+x/+z in the slab's frame) that meet
       // in a V below the keep's front corner.
       const fascia = top => [tc, top, top, top, tc, top];
-      leanTo(g, fascia(WOOD.plankR + '|planks'), x + mid, z, x + W, z + mid, hK, hO, true, fas);   // boards run down each slope
-      leanTo(g, fascia(WOOD.plankL + '|planksR'), x, z + mid, x + mid, z + W, hK, hO, false, fas);
+      leanTo(piece(g), fascia(WOOD.plankR + '|planks'), x + mid, z, x + W, z + mid, hK, hO, true, fas);   // boards run down each slope
+      leanTo(piece(g), fascia(WOOD.plankL + '|planksR'), x, z + mid, x + mid, z + W, hK, hO, false, fas);
       // Posts under the outer corners, up to the slab's underside (the keep carries the inner edge).
       const run = W - mid, under = d => hK + (hO - hK) * d / run - fas * Math.hypot(run, hK - hO) / run;
       for (const [px, pz] of [[x + W - 0.12, z + 0.12], [x + W - 0.12, z + mid - 0.12]]) post(g, px, pz, under(px - x - mid), WOOD.post, 0.06);
       for (const [px, pz] of [[x + 0.12, z + W - 0.12], [x + mid - 0.12, z + W - 0.12]]) post(g, px, pz, under(pz - z - mid), WOOD.post, 0.06);
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).
-      flag(g, x + mid / 2, z + mid / 2, F, a >= 2 ? keepH + 28 * k / HPX - F : 42 * k / HPX, tc, k);
+      if (e.complete) flag(g, x + mid / 2, z + mid / 2, F, a >= 2 ? keepH + 28 * k / HPX - F : 42 * k / HPX, tc, k);
     },
     // A plaster hall under a team gable along the back (door in the lit gable
     // end, four windows facing the yard), a fenced training yard with straw
@@ -920,11 +960,11 @@
       const BP = (A, B) => ({ x: x + s + (0.406 + B / 32 - 1) * s, z: z + s + (1.031 - A / 32 - 1) * s });
       const h0 = BP(30, -13), h1 = BP(-30, 13), wallH = 24 * s / HPX, roofH = 12 * s / HPX;
       const wall = AGE_WALLS[Math.min(a, 2)].gl, hall = [h0.x, h0.z, h1.x, h1.z];
-      const f = houseFaces(...hall, wallH, roofH, false);
+      const f = houseFaces(...hall, wallH, roofH, false, !e.complete);
       f.z1.holes.push(hole('z1', hall, 0.5, SILL, 0.42, wallH * 0.7));                 // door, lit gable end
       for (const u of [0.18, 0.38, 0.62, 0.82]) f.x1.holes.push(hole('x1', hall, u, wallH * 0.46, 0.2, 0.19));
       solid(g, wall + '|plaster', Object.values(f));
-      roofOn(g, tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
+      roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
       patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                                    // yard
       const fh = 9 * s / HPX, posts = [[-30, 13], [-30, 26], [-30, 38.5], [-30, 51], [-15, 51], [0, 51], [15, 51], [30, 51], [30, 13], [30, 26], [30, 38.5]];
@@ -938,16 +978,17 @@
         pole(g, WOOD.post, [frontX, hy, farZ], [frontX, hy, nearZ], 0.018);
         pole(g, WOOD.post, [backX, hy, farZ], [frontX, hy, farZ], 0.018);
       }
-      for (const [A, B] of a === 0 ? [[-12, 32], [12, 32]] : [[0, 30]]) { // straw dummy on a post: oval body, head, arm bar through the shoulders
+      // The yard's gear (dummies, target, rack, hay, the horse) and the flags arrive with the finished building.
+      if (e.complete) for (const [A, B] of a === 0 ? [[-12, 32], [12, 32]] : [[0, 30]]) { // straw dummy on a post: oval body, head, arm bar through the shoulders
         const p = BP(A, B), bodyY = 0.37, bodyH = 0.126, headY = bodyY + bodyH + 0.06;
         pole(g, WOOD.beam, [p.x, 0, p.z], [p.x, headY, p.z], 0.02);
-        if (e.complete) { const q = BP(A, B + 10), dx = q.x - p.x, dz = q.z - p.z, L = Math.hypot(dx, dz) || 1; // a trainee a spear's reach out toward the fence, stabbing it
+        { const q = BP(A, B + 10), dx = q.x - p.x, dz = q.z - p.z, L = Math.hypot(dx, dz) || 1; // a trainee a spear's reach out toward the fence, stabbing it
           (g.userData.trainees = g.userData.trainees || []).push({ x: p.x + dx / L * 0.66, z: p.z + dz / L * 0.66, yaw: -Math.atan2(-dz, -dx), seed: (A + B) * 0.13 }); }
         pole(g, WOOD.beam, [p.x, bodyY + bodyH * 0.6, p.z - 0.17], [p.x, bodyY + bodyH * 0.6, p.z + 0.17], 0.02);
         ball(g, '#c8a878', p.x, bodyY, p.z, 0.09, 1.4);
         ball(g, '#e2c046', p.x, headY, p.z, 0.07);
       }
-      if (a >= 1) {
+      if (a >= 1 && e.complete) {
         // Target: a straw butt, its rings painted on the face, leaning on a splayed A-frame.
         const tp = BP(-15, 40), ty = 0.36;
         for (const dz of [-1, 1]) pole(g, WOOD.beam, [tp.x, 0, tp.z + dz * 0.14], [tp.x, ty + 0.02, tp.z + dz * 0.01], 0.015);
@@ -965,7 +1006,7 @@
         horse(g, BP(14, 33), a >= 2 ? '#e9e6de' : '#8b5a2b', a >= 2 ? '#9a948a' : '#3f2810', e.id * 0.37 % 1, tc);
       }
       const fp = BP(30, 0); // on the far gable's ridge end
-      flag(g, fp.x, fp.z + 0.02, wallH + roofH, 22 * s / HPX, tc);
+      if (e.complete) flag(g, fp.x, fp.z + 0.02, wallH + roofH, 22 * s / HPX, tc);
     },
     // Hut with a door in its right face and a team pennant; in front, a log
     // pile (three logs along SE) and a chopping stump (drawBuilding LCAMP).
@@ -1011,7 +1052,7 @@
       faces[0].holes.push({ at: [c.x + d, SILL, c.y + d], w: 9 / 32, h: 13 / HPX });
       solid(g, a === 0 ? WOOD.plankL + '|planks' : '#cfc8b6|plaster', faces, { T: 0.1, thresh: 31 });
       const cap = own(new THREE.ConeGeometry(r1 + 0.03, 22 / HPX, a === 0 ? 8 : 16).rotateY(Math.PI / 8).translate(0, 11 / HPX, 0)); // corners over the octagon's
-      g.add(inked(cap, mat(WOOD.L + '|shingles'), c.x, H, c.y, 1, 1, 1, 30));
+      piece(g).add(inked(cap, mat(WOOD.L + '|shingles'), c.x, H, c.y, 1, 1, 1, 30));
       if (!e.complete) return;
       // Sails face the iso front (+x,+z); the 'sails' group turns in loop().
       // The hub stands out on a windshaft far enough that a sail pointing
@@ -1048,13 +1089,13 @@
       if (!isP && a >= 2) {
         for (const [mx, mz] of [[0, 0], [1, 0], [0, 1], [1, 1]])
           boxAt(g, '#e0d8c6', box[0] + mx * 0.32, box[1] + mz * 0.32, box[0] + mx * 0.32 + 0.12, box[1] + mz * 0.32 + 0.12, H, H + 7 / HPX);
-        flag(g, x + 0.5, z + 0.5, H, null, tc);
+        if (e.complete) flag(g, x + 0.5, z + 0.5, H, null, tc);
       } else {
         const c0 = [x + 0.31, z + 0.31, x + 0.69, z + 0.69], cy = H + 4 / HPX;
         boxAt(g, col, ...c0, H, cy);
         const rise = 14 / HPX; // 'peaked': roofH 8 + bhh 6 above the cap slab
-        pyramid(g, tc + '|shingles', ...c0, cy, rise);
-        flag(g, x + 0.5, z + 0.5, cy + rise, null, tc);
+        pyramid(piece(g), tc + '|shingles', ...c0, cy, rise);
+        if (e.complete) flag(g, x + 0.5, z + 0.5, cy + rise, null, tc);
       }
     },
     // Paved plaza; on three corner tiles a stall — four posts
@@ -1068,7 +1109,8 @@
       for (const [tx, tz, good] of [[0, 0, 'sacks'], [0, W - 1, 'gold'], [W - 1, 0, 'stone']]) {
         const cx = x + tx + 0.5, cz = z + tz + 0.5;
         for (const [px, pz] of [[-r, -r], [r, -r], [-r, r], [r, r]]) post(g, cx + px, cz + pz, H - 0.025, WOOD.post, 0.028); // under the canopy, outline included
-        awning(g, cx, cz, r + 0.02, H, '#efe7d2', tc);
+        awning(piece(g), cx, cz, r + 0.02, H, '#efe7d2', tc);
+        if (!e.complete) continue;                                                            // (the goods come with the finished market)
         // drawGood: plump grain sacks / a pyramid of gold bars / squared stone blocks
         if (good === 'sacks') for (const [dx, dz] of [[-0.14, 0.03], [0.14, -0.03]]) ball(g, '#c9a86a', cx + dx, 0.12, cz + dz, 0.13, 0.92);
         if (good === 'gold') for (const [i, layer] of [[0, 0], [1, 0], [2, 0], [0.5, 1], [1.5, 1], [1, 2]]) {
@@ -1078,6 +1120,7 @@
         if (good === 'stone') for (const [dx, dz, sz, y] of [[-0.13, -0.05, 0.11, 0], [0.13, 0.05, 0.11, 0], [0, 0, 0.1, 0.2]]) // two blocks, one across them
           boxAt(g, '#9a9a9a', cx + dx - sz, cz + dz - sz, cx + dx + sz, cz + dz + sz, y, y + 0.2);
       }
+      if (!e.complete) return;
       const cr = { x: x + 2.47, z: z + 2.22 }, lg = { x: x + 2.52, z: z + 2.64 }; // on the front tile, clear of each other
       boxAt(g, WOOD.plankL + '|planks', cr.x - 0.2, cr.z - 0.2, cr.x + 0.2, cr.z + 0.2, 0, 0.36);
       for (const [dz, y] of [[-0.1, 0.09], [0.1, 0.09], [0, 0.09 + Math.sqrt(0.18 * 0.18 - 0.1 * 0.1)]]) log(g, '#6e473b', lg.x, lg.z + dz, 0.55, 0.09, true, y, '#ebd2b0');
@@ -1396,6 +1439,21 @@
       const a = p.attackerSnap; // bare shafts until the archer's team has Fletching (tower/TC bolts fly bare)
       if (a && a.utype === 'archer' && hasUpgrade(a.team, 'fletching')) { V.mesh.setMatrixAt(V.n, _m); V.mesh.setColorAt(V.n++, _c.set(teamColorLight(a.team))); }
     }
+    // stuck arrows (stickArrow, js/core.js): the tip a little into what it hit, the shaft up and back along the flight;
+    // on a unit they ride its drawn spot; fading, they sink and shrink away
+    tendStuckArrows();
+    for (const a of stuckArrows) {
+      if (a.hidden || S.n >= FEAT_CAP) continue;
+      const gx = Math.round(a.x), gy = Math.round(a.y), f = fog[gy] && fog[gy][gx];
+      if (f === 2) a.seen = true;
+      if (!f || (f === 1 && !a.seen)) continue;
+      const hv = a.hostId != null ? villagers.get(a.hostId) || animals.get(a.hostId) : null;
+      const x = hv ? hv.x + a.ox : a.x + 0.5, z = hv ? hv.z + a.oy : a.y + 0.5, k = a.alpha;
+      const c = Math.cos(a.tilt); dir.set(a.dx * c, -Math.sin(a.tilt), a.dy * c);
+      _m.compose(_p.set(x + dir.x * 0.03, a.h / HPX - (1 - k) * 0.12 + dir.y * 0.03, z + dir.z * 0.03), _q.setFromUnitVectors(_s.set(0, 1, 0), dir), _s.set(k, k, k));
+      S.mesh.setMatrixAt(S.n++, _m);
+      if (a.fl != null) { V.mesh.setMatrixAt(V.n, _m); V.mesh.setColorAt(V.n++, _c.set(teamColorLight(a.fl))); }
+    }
     for (const f of [S, Hd, V]) {
       f.mesh.count = f.n; if (f.hull) f.hull.count = f.n;
       f.mesh.instanceMatrix.needsUpdate = true; if (f.mesh.instanceColor) f.mesh.instanceColor.needsUpdate = true;
@@ -1450,9 +1508,8 @@
     blob(neck, '#3f3b34', hx, hy, 0, 0.1, 0.115, 0.09);
     eyes(neck, hx, hy, 0, 0.1, 0.115, 0.09, 0.55, 0.35, 0.55, 0.027, true);
     for (const z of [-1, 1]) { const ear = blob(neck, '#4d4940', hx - 0.025, hy + 0.04, z * 0.105, 0.033, 0.015, 0.06); ear.rotation.x = z * -0.35; }
-    blob(neck, wool, hx - 0.01, hy + 0.105, 0, 0.05); // fringe
-    const band = new THREE.Mesh(own(new THREE.TorusGeometry(0.055, 0.017, 8, 16)), mat(tc)); band.name = 'band'; // bandana round the neck
-    band.position.set(0.035, -0.035, 0); band.rotation.y = Math.PI / 2; band.rotation.x = 0.3; band.userData.hullGeo = band.geometry; neck.add(band);
+    // the fringe of wool on its head, in its owner's colour (white: gaia, nobody's yet) — 'band' (sheepBones plucks it with the fleece)
+    blob(neck, tc === teamColor(GAIA_TEAM) ? wool : tc, hx - 0.01, hy + 0.11, 0, 0.058).name = 'band';
     return g;
   }
   // The 2D bear's cartoon mass in the round: a boulder body with a shoulder
@@ -1461,27 +1518,26 @@
   // big black nose, shiny eyes and round ears; the lower jaw hinges to maul.
   function bearModel(){
     const g = new THREE.Group(), body = pivot(g, 0, 0, 0, 'body'), fur = '#6b4a2c';
-    blob(body, fur, -0.01, 0.42, 0, 0.37, 0.32, 0.27);
-    blob(body, fur, -0.1, 0.6, 0, 0.21, 0.19, 0.19);            // shoulder hump
-    blob(body, '#86623e', 0.02, 0.27, 0, 0.29, 0.19, 0.21);      // lighter belly
-    blob(body, fur, -0.37, 0.44, 0, 0.06);                       // stub tail
-    [[-0.22, -0.14], [-0.22, 0.14], [0.2, -0.14], [0.2, 0.14]].forEach(([x, z], i) => {
-      const leg = pivot(body, x, 0.3, z, 'leg' + i);
-      pole(leg, '#4e3520', [0, 0, 0], [0, -0.28, 0], 0.07);
-      blob(leg, '#241a10', 0.015, -0.29, 0, 0.085, 0.03, 0.075);
+    // (BEAR in render-units: the same fat cartoon boulder on stubby legs the 2D art draws)
+    blob(body, fur, -0.01, 0.38, 0, 0.42, 0.36, 0.33);
+    blob(body, fur, -0.1, 0.6, 0, 0.23, 0.2, 0.22);             // shoulder hump
+    blob(body, fur, -0.43, 0.4, 0, 0.065);                       // stub tail
+    BEAR.hips.forEach(([x, z], i) => {
+      const leg = pivot(body, x, BEAR.hipY, z, 'leg' + i);
+      pole(leg, BEAR.legCol, [0, 0, 0], [0, -BEAR.leg + 0.01, 0], BEAR.legR);
+      blob(leg, BEAR.paw, 0.015, -BEAR.leg, 0, 0.1, 0.032, 0.088);
     });
-    const neck = pivot(body, 0.28, 0.5, 0, 'neck'), hx = 0.12, hy = 0.02, R = 0.17;
+    const neck = pivot(body, 0.32, 0.46, 0, 'neck'), hx = 0.13, hy = 0.02, R = 0.2;
     blob(neck, fur, hx, hy, 0, R);
-    blob(neck, '#c9a578', hx + 0.14, hy - 0.04, 0, 0.09, 0.07, 0.085);    // muzzle
-    blob(neck, '#141414', hx + 0.225, hy - 0.015, 0, 0.035, 0.028, 0.04);  // big black nose
+    blob(neck, '#c9a578', hx + 0.19, hy - 0.005, 0, 0.1, 0.065, 0.09);     // muzzle (as 2D)
+    blob(neck, '#141414', hx + 0.285, hy + 0.025, 0, 0.04, 0.032, 0.045);  // big black nose
     eyes(neck, hx, hy, 0, R, R, R, 0.75, 0.45, 0.48, 0.022);
     for (const z of [-1, 1]) {
-      blob(neck, fur, hx - 0.03, hy + 0.14, z * 0.1, 0.055, 0.055, 0.03);   // round ears
-      blob(neck, '#4a3018', hx - 0.01, hy + 0.14, z * 0.1, 0.03, 0.035, 0.012);
+      blob(neck, fur, hx - 0.03, hy + 0.185, z * 0.13, 0.04, 0.066, 0.062); // round ears, cupped forward (as 2D)
+      blob(neck, '#4a3018', hx - 0.005, hy + 0.185, z * 0.13, 0.012, 0.038, 0.036);
     }
-    const jaw = pivot(neck, hx + 0.07, hy - 0.08, 0, 'jaw');
-    blob(jaw, '#a03030', 0.08, 0.02, 0, 0.07, 0.02, 0.055);   // mouth, seen when it gapes
-    blob(jaw, fur, 0.08, -0.01, 0, 0.08, 0.025, 0.06);
+    const jaw = pivot(neck, hx + 0.11, hy - 0.04, 0, 'jaw');
+    blob(jaw, '#c9a578', 0.08, -0.01, 0, 0.085, 0.028, 0.065);               // tan lower jaw (as 2D)
     return g;
   }
   // The dragon, from the same kit and as simple as the others (drawDragonBody, render-units, is its 2D twin): a
@@ -1555,10 +1611,10 @@
     blob(jaw, C.belly, 0.2, -0.02, 0, 0.2, 0.04, 0.09);
     // the fire: nested cones out of the mouth (+x), glowing where they overlap, no outline
     const flame = pivot(jaw, 0.5, 0.02, 0, 'flame');
-    const cone = (col, r, L, op) => { const m = new THREE.Mesh(new THREE.ConeGeometry(r, L, 16, 1, true).rotateZ(Math.PI / 2).translate(L / 2, 0, 0),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
-      m.material.onBeforeCompile = function(){}; m.material.onBeforeCompile.fow = true; m.renderOrder = 3; flame.add(m); return m; };
-    cone('#b82a0c', 0.5, 2.1, 0.7); cone('#ff7a18', 0.34, 1.8, 0.8); cone('#ffd24a', 0.2, 1.3, 0.9); cone('#fff6c8', 0.09, 0.8, 0.9);
+    const cone = (col, r, L, op, add) => { const m = new THREE.Mesh(new THREE.ConeGeometry(r, L, 16, 1, true).rotateZ(Math.PI / 2).translate(L / 2, 0, 0),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending }));
+      m.material.onBeforeCompile = function(){}; m.material.onBeforeCompile.fow = true; m.renderOrder = add ? 4 : 3; flame.add(m); return m; }; // (the glowing core over the solid fire)
+    cone('#e0441a', 0.5, 2.1, 0.7); cone('#ff8a1e', 0.34, 1.8, 0.85); cone('#ffd24a', 0.2, 1.3, 0.9, true); cone('#fff6c8', 0.09, 0.8, 0.9, true); // (outer fire solid: it read washed-out white against the sky)
     flame.visible = false;
     for (const side of [1, -1]) dragonWing(body, side);
     return g;
@@ -1606,14 +1662,15 @@
   // half the cycle while it sweeps its whole arc (2·L·sin A), so the body must
   // cover twice that per cycle for planted feet not to slide. a.gait eases
   // in/out, so legs settle when it stops.
-  const GAIT = { sheep: { A: 0.55, L: 0.14, lift: 0.03, bob: 0.01 }, bear: { A: 0.45, L: 0.28, lift: 0.05, bob: 0.02 }, dragon: { A: 0.42, L: 0.5, lift: 0.08, bob: 0.03 } };
+  const GAIT = { sheep: { A: 0.55, L: 0.14, lift: 0.03, bob: 0.01 }, bear: { A: 0.45, L: 0.28, lift: 0.05, bob: 0.02 }, dragon: { A: 0.6, L: 0.5, lift: 0.12, bob: 0.03 } }; // (the dragon: long, slow strides — a heavy, unhurried walk; DRAGON_STRIDE in render-units matches)
   const LEG_PHASE = [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI); // legs 0/1 hind, 2/3 fore
   let _dv = null;
   function animateAnimal(model, e, a, dt){
     const G = GAIT[e.utype], b = model.getObjectByName('body'), neck = model.getObjectByName('neck'), idp = e.id || 0;
     const legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i));
-    a.gait += ((a.moved > 1e-4 ? 1 : 0) - a.gait) * Math.min(1, dt * 8);
-    a.phase += a.moved / (4 * G.L * Math.sin(G.A)) * 2 * Math.PI;
+    if (e.utype === 'dragon') dragonGaitStep(e, a, a.moved, dt, G.L * Math.sin(G.A));   // (its pivots step too)
+    else if (e.utype !== 'bear') { a.gait += ((a.moved > 1e-4 ? 1 : 0) - a.gait) * Math.min(1, dt * 8);
+      a.phase += a.moved / (4 * G.L * Math.sin(G.A)) * 2 * Math.PI; }
     const look = 0.35 * Math.sin(aTick * 0.013 + idp) ** 3 * (1 - a.gait); // now and then a slow look round
     const bob = G.bob * Math.abs(Math.sin(2 * a.phase)) * a.gait;
     let reach = 0; // bear pounce: fore legs reach, hind brace
@@ -1639,7 +1696,7 @@
       model.getObjectByName('spade').rotation.y = P.spade;
       for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
         poseDragonWing(w, 1 - P.open, P.sl);
-        w.rotation.set(-sd * ((1.35 + (0.35 + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl), 0, 0); }
+        w.rotation.set(-sd * ((1.35 + (0.35 + 0.6 * P.rr + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl), 0, 0); } // (roaring, spread high in a V)
       const fl = model.getObjectByName('flame'); fl.visible = P.flame > 0;
       if (fl.visible) fl.scale.set(P.flame * (0.92 + 0.08 * Math.sin(P.ck * 40)), 0.85 + 0.15 * Math.sin(P.ck * 33), 0.85 + 0.15 * Math.cos(P.ck * 29));
       if (!a.lab) {
@@ -1650,23 +1707,14 @@
       }
       reach = P.reach;
     } else {
-      // The maul rides the real bite clock (atkCooldown, drawBearBody): crouch
-      // back, rear up on the planted hind paws, pounce landing as the damage
-      // fires, jaws snapping shut, then a worrying head-shake that decays.
-      const rof = (UNITS.bear && UNITS.bear.rof) || T30(60), cd = e.atkCooldown || 0, att = inActionRange(e) && !isUnitMoving(e);
-      const bp = att ? 1 - cd / rof : 0, justBit = att && cd > rof * 0.85, snap = att ? Math.max(0, (cd - rof * 0.85) / (rof * 0.15)) : 0;
-      let lunge = 0, rear = 0, jaw = 0;
-      if (justBit) { lunge = 4.5; jaw = Math.max(0, snap * 2 - 1); rear = -0.2; }
-      else if (att && bp > 0.85) { const t = (bp - 0.85) / 0.15; lunge = -1.2 + 5.7 * t * t; rear = 0.8 * (1 - t) - 0.2; jaw = t; }
-      else if (att && bp > 0.55) { const t = (bp - 0.55) / 0.3; lunge = -1.2 * t; rear = 0.8 * t; }
-      const hind = -0.22, ang = rear * 0.62, c = Math.cos(ang), sn = Math.sin(ang); // rotate about the hind paws (hind, 0): up to ~30°
-      b.rotation.z = ang; b.position.set(hind - hind * c + ax(lunge, 1.4), -hind * sn + bob, 0);
-      b.rotation.x = Math.sin(a.phase) * 0.04 * a.gait; // a bear's rolling walk
-      b.scale.y = 1 + Math.sin(aTick * 0.05 + idp) * 0.012 * (1 - a.gait) * (att ? 0 : 1);
-      neck.rotation.x = Math.sin(aTick * 1.4) * 0.12 * snap; // worrying the prey
-      neck.rotation.y = att ? 0 : look;
-      model.getObjectByName('jaw').rotation.z = -0.7 * jaw;
-      reach = Math.max(0, Math.min(1, jaw));
+      // bearAnim (render-units, shared with the 2D art): a lumbering planted-paw walk, the maul on the real bite clock
+      const P = bearAnim(e, a, dt, a.moved), hind = -0.22, c = Math.cos(P.pitch), sn = Math.sin(P.pitch);
+      b.rotation.set(P.roll, 0, P.pitch); b.position.set(hind - hind * c + P.lunge, -hind * sn + P.bob, 0);   // pitched about the hind paws
+      b.scale.set(1 + P.breath, 1 + P.breath, 1 + P.breath);
+      neck.rotation.set(P.shake, -P.neckYaw, P.neckPitch);
+      model.getObjectByName('jaw').rotation.z = -0.7 * P.jaw;
+      legs.forEach((l, i) => { l.userData.y0 ??= l.position.y; l.position.y = l.userData.y0; l.rotation.z = P.legs[i].ang; l.scale.y = P.legs[i].len; });
+      return;
     }
     // Each leg: half the cycle planted, its foot sweeping back at an even pace (it keeps pace with the ground),
     // half swinging forward through the air.
@@ -1685,11 +1733,11 @@
   // the feet stay planted as the heavy body sinks and rolls over them. The foot rolls: heel up at toe-off, toes down
   // through the swing. Rearing, the fore feet paw the air; lying (a.lie) the legs blend to a resting pose splayed
   // beside the body — forelegs out in front like a sphinx's, hind legs folded knee-forward.
-  let _lw = null;
-  function dragonLegs(model, a, legs, reach, G, lie = a.lie || 0){
+  let _lw = null, _qa = null, _qb = null, _ea = null;
+  function dragonLegs(model, a, legs, reach, G, lie = a.lie || 0, i0 = 0){
     const body = model.getObjectByName('body'), ck = a.dr ? a.dr.ck : 0; model.updateMatrixWorld(true);
     _lw = _lw || new THREE.Vector3();
-    legs.forEach((l, i) => {
+    legs.forEach((l, j) => { const i = j + i0;
       const knee = l.getObjectByName('knee'), ankle = l.getObjectByName('ankle'), L = knee.userData.leg, hind = i < 2, side = Math.sign(l.position.z);
       const { x, up, roll } = dragonStride(a.phase, i);                                  // (render-units: the stride, shared with the 2D art)
       l.getWorldPosition(_lw); _lw.y = DRAGON_FOOT + G.lift * 1.8 * up * a.gait; body.worldToLocal(_lw);
@@ -1701,34 +1749,40 @@
       const T = DRAGON_TUCK[hind ? 'hind' : 'fore'];
       hip += (T.hip - hip) * lie; kn += (T.knee - kn) * lie;
       l.rotation.set(-side * T.out * lie, 0, hip); l.position.y = l.userData.y0 ??= l.position.y;
-      knee.rotation.z = kn;
-      ankle.rotation.z = -(hip + kn) + roll * a.gait * (1 - lie);                         // the foot flat, rolling through the step
+      knee.rotation.set(hind ? -side * 0.7 * lie : 0, 0, kn);                            // lying, the hind shin swings out to the side: the ankle and foot sit beside the thigh, not tucked under it
+      // The foot, set in the body's frame whatever the leg's splay: flat, rolling through the step; lying, its toes turned
+      // out to the side — the hind ones well out, so the foot sits beside the folded shin, not inside it (the leg's own
+      // splay rolled the sole onto its edge)
+      _qa = _qa || new THREE.Quaternion(); _qb = _qb || new THREE.Quaternion(); _ea = _ea || new THREE.Euler(0, 0, 0, 'YZX');
+      l.updateMatrix(); knee.updateMatrix();
+      _qa.copy(l.quaternion).multiply(knee.quaternion).invert();
+      _qb.setFromEuler(_ea.set(0, side * (hind ? 0.5 : 0.35) * lie, roll * a.gait * (1 - lie)));
+      ankle.quaternion.copy(_qa.multiply(_qb));
     });
   }
-  // The dragon's death: it collapses where it stands. The legs buckle and the body drops under gravity, bouncing once
-  // as it lands; a beat later the neck topples and the head slams down (and bounces); the wings flare as it falls and
-  // then sprawl; the tail and jaw go slack, the eyes close. age: ms since death.
+  // The dragon's death (age: ms): one heavy collapse — the legs buckle and the body drops (a bounce as it lands), the
+  // neck follows it down and the head comes to rest on the ground; the wings sag open onto the ground, the tail goes
+  // limp, the eyes close.
   function dragonDeath(model, age){
     const body = model.getObjectByName('body'), neck = model.getObjectByName('neck'), head = model.getObjectByName('head');
     const fall = (t0, dur) => { const u = Math.max(0, Math.min(1, (age - t0) / dur)); return u * u; };        // accelerating
-    const bounce = (t0, amp) => age > t0 ? amp * Math.exp(-(age - t0) / 160) * Math.sin((age - t0) / 55) : 0;
-    const fb = fall(80, 620), fn = fall(420, 560), ft = fall(250, 700);
+    const ease = (t0, dur) => { const u = Math.max(0, Math.min(1, (age - t0) / dur)); return u * u * (3 - 2 * u); };
+    const bounce = (t0, amp) => age > t0 ? amp * Math.exp(-(age - t0) / 170) * Math.sin((age - t0) / 60) : 0;
+    const fb = fall(100, 650), fn = fall(450, 600), limp = ease(300, 900);
     model.rotation.x = 0;
-    body.position.set(0, -0.4 * fb + bounce(700, 0.05), 0); body.rotation.set(0.05 * fb, 0, -0.07 * fb + bounce(700, 0.03));
-    body.scale.set(1 + 0.04 * fb, 1 - 0.05 * fb + bounce(700, 0.03), 1 + 0.03 * fb);                          // it slumps
+    body.position.set(0, -0.44 * fb + bounce(750, 0.05), 0); body.rotation.set(0, 0, bounce(750, 0.03));
     const legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i)), a = { phase: 0, gait: 0, dr: null };
-    dragonLegs(model, a, legs, 0, GAIT.dragon, Math.min(1, fb * 1.4));
-    neck.rotation.set(0, 0.25 * fn, 0.1 - 1.45 * fn + bounce(980, 0.12));
-    head.rotation.set(0.15 * fn, 0, 0.35 * fn + bounce(1000, 0.1));
-    model.getObjectByName('jaw').rotation.z = -0.3 * fall(900, 400);
-    for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * fall(700, 300)); }
-    model.getObjectByName('tail').rotation.set(0, 0.2 * ft, -0.22 * ft + bounce(950, 0.06));                 // the tail drapes limp, joint by joint
-    model.getObjectByName('tail2').rotation.set(0, 0.15 * ft, -0.12 * ft + bounce(1050, 0.08));
-    model.getObjectByName('tail3').rotation.set(0, 0.2 * ft, 0.12 * ft + bounce(1150, 0.1));
-    const flare = Math.sin(Math.min(1, age / 900) * Math.PI) * 0.35, sprawl = fall(500, 700);
+    dragonLegs(model, a, legs, 0, GAIT.dragon, Math.min(1, fb * 1.3));
+    neck.rotation.set(0, 0.25 * fn, 0.1 - 1.2 * fn + bounce(1050, 0.08));
+    head.rotation.set(0, 0, 0.5 * fn + bounce(1070, 0.08));
+    model.getObjectByName('jaw').rotation.z = -0.25 * fall(1000, 400);
+    for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * fall(900, 300)); }
+    model.getObjectByName('tail').rotation.set(0, 0.2 * limp, -0.2 * limp);
+    model.getObjectByName('tail2').rotation.set(0, 0.15 * limp, -0.1 * limp);
+    model.getObjectByName('tail3').rotation.set(0, 0.2 * limp, 0.1 * limp);
     for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
-      poseDragonWing(w, 1 - Math.max(flare, 0.45 * sprawl), 0);
-      w.rotation.set(-sd * (1.35 * (1 - sprawl) + 0.12 * sprawl + 0.15 * flare), 0, 0); }              // stood up → slumped out over the ground
+      poseDragonWing(w, 1 - 0.35 * limp, 0);
+      w.rotation.set(-sd * (1.35 - 1.6 * limp), 0, 0.15 * limp); }                                   // folded upright → sagging open onto the ground
     model.getObjectByName('flame').visible = false;
   }
   // ---- Characters in 3D (design stage: __povCharMock) ----
@@ -1767,6 +1821,10 @@
   function human(g, tc, o = {}){
     const Y = o.y || 0; // lift (a rider sits on the horse)
     const P = (x, y, z = 0) => [ax(x), chh(y) + Y, ar(z)];
+    // Seen through its own eyes only the arms, hands and what they hold show (as in any first-person game): every
+    // other body part is tagged here and collapses in the fp pose (rigPose).
+    const fpTag = (grp, n, self) => (self ? [grp] : grp.children.slice(n)).forEach(o => o.traverse(c => { c.userData.fpHide = true; }));
+    const g0 = g.children.length;
     // Legs: a tube from inside the hip down to the boot (astride: bowed out over the barrel).
     if (o.riding) for (const s of [-1, 1]) { // thigh curving out round the barrel, shin down the flank to the stirrup (rider() seats this on the horse)
       tube(g, LEG, P(0, -3, s * 2), P(3.6, 0.5, s * 9.2), P(2, 5.6, s * 7.6), ar(1.15)); // short cartoon legs, as standing
@@ -1785,6 +1843,7 @@
       tube(g, LEG, P(...hip), P(...knee), P(...foot), ar(o.dress ? 0.85 : 0.95));
       blob(g, BOOT, ...P(fx + 0.6, 3.9 - lift, z), ar(o.dress ? 1.3 : 1.5), ar(0.9), ar(o.dress ? 1 : 1.2));
     }
+    fpTag(g, g0);
     // Upper body and head can move on their own (animation): o.torso {yaw, lean,
     // dip} turns the torso at the hips over planted legs; o.headYaw turns the
     // head at the neck. Parts keep ground-based art coords inside an offset
@@ -1798,6 +1857,7 @@
     const H = o.headYaw ? pivotAt(U, [0, -10], [o.headYaw, 0]) : U;
     g.updateMatrixWorld(true);
     const toU = new THREE.Matrix4().copy(U.matrixWorld).invert().multiply(g.matrixWorld), UK = UNIT_SCALE / PX;
+    const u0 = U.children.length;
     const local = pt => { if (U === g) return pt; const v = V3(P(...pt)).applyMatrix4(toU); return [v.x / UK, 5 - (v.y - Y) / UK, v.z / UK]; };
     if (o.dress) { // one smooth dress from the hem up, rising into the head (DRESS_SHAPES)
       const prof = DRESS_SHAPES.tunic; // hem → skirt → waist → bust → shoulder → neck up into the head
@@ -1806,7 +1866,7 @@
     } else if (o.armor) { // armor over the tunic (armorMat: the 2D layout, team colour kept)
       blob(U, armorMat(o.armor, o.metal || FORGE[1], tc), ...P(0, -6), ar(4.6), ar(5), ar(4.2)).userData.body = 'torso';
     } else blob(U, tc, ...P(0, -6), ar(4.6), ar(5), ar(4.2)).userData.body = 'torso'; // torso
-    const fpTag = (grp, n) => grp.children.slice(n).forEach(o => o.traverse(c => { c.userData.fpHide = true; })); // head parts: hidden seen through the eyes
+    fpTag(U, u0);
     let hn = H.children.length;
     blob(H, SKIN, ...P(0, -14), ar(4)).userData.body = 'head';                    // head
     if (o.hat !== 'great') eyes(H, ...P(0, -14), ar(4), ar(4), ar(4), 1, 0.12, 0.35, ar(0.5));
@@ -1829,8 +1889,11 @@
       }
       const bend = E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2);    // the hose passes through the elbow
       if (armProbe) armProbe.push({ s, ctl: [shA, bend, hand], d, dress: !!o.dress });   // dev: __povArmCheck
+      const a0 = U.children.length;
       tube(U, SKIN, P(...shA), P(...bend), P(...hand), ar(1.05));
       tube(U, tc, P(...shA), P(...bend), P(...hand), ar(1.45), 0, 0.22);    // the puffy sleeve: the tube's first stretch
+      // first person shows the forearm: the arm folds into its elbow, the shoulder cap and the sleeve go (tube = [tube, start cap, end cap])
+      U.children[a0].userData.fpForearm = true; for (const i of [1, 3, 4, 5]) fpTag(U.children[a0 + i], 0, true);
       blob(U, SKIN, ...P(...hand), ar(1.3));                                   // the hand
     }
     const hat = o.hat; hn = H.children.length;
@@ -2881,6 +2944,8 @@
         __animAttack: action === 'attack', atkCooldown: action === 'attack' ? UNITS[kind].rof * (1 - t) : 0, breathTick: action === 'breathe' ? tick - t * T30(22) : undefined };
       const a = g.userData.lab || (g.userData.lab = { phase: 0, gait: 0, graze: 0, lab: true });
       a.moved = walk ? 1e-3 : 0; a.phase = walk ? t * 2 * Math.PI : 0;
+      if (kind === 'bear') { const now = performance.now(); const dt = a.lastNow ? Math.min(0.05, (now - a.lastNow) / 1000) : 1 / 60; a.lastNow = now;
+        a.moved = 0; animateAnimal(g, e, a, dt); return; }                             // (real time: its breathing and eases; the phase drives the walk)
       if (kind !== 'dragon') { animateAnimal(g, e, a, 1); return; }                // dt 1: every ease snaps to the action
       // the dragon plays in real time (its springs and clocks need it): restarted on a new action, the phase driving
       // the walk, the roar and the breath (inhale over the first 40%, then the blast)
@@ -2891,6 +2956,14 @@
         if (t < 0.4) { e.atkCooldown = rof * 0.35 * (1 - t / 0.4); e.breathTick = undefined; } else { e.atkCooldown = rof; e.breathTick = tick - (t - 0.4) / 0.6 * T30(26); } }
       animateAnimal(g, e, a, dt);
     },
+    // A building under construction at progress p (the game's constructionSite): { obj, set(p) }.
+    building: (btype, age = 0) => { teamAge = teamAge || [0, 0]; teamAge[1] = age; const b = BLDGS[btype], g = new THREE.Group(), e = { id: -1, type: 'building', btype, x: -b.w / 2, y: -b.h / 2, w: b.w, h: b.h, team: 1, complete: false, hp: 1, maxHp: 1, buildProgress: 0, buildTime: 1, gateProgress: 0 };
+      if (MODELS[btype]) { MODELS[btype](g, e); addHulls(g); return { obj: g, set: constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype)).set }; }
+      // a wall: a short run of three pieces (linked); a gate on its own
+      const run = isGateBtype(btype) ? [{ ...e, x: -1.5, y: -0.5, w: 3, h: 1 }] : [-1, 0, 1].map(i => ({ ...e, id: -2 - i, x: i - 0.5, y: -0.5 })), at = (x, y) => run.find(p => p.x === x && p.y === y);
+      const sets = run.map(p => { const o = wallModel(p, wallArms(p, at, n => true)).obj; g.add(o); return constructionSite(o, p.x, p.y, p.w, p.h, false).set; });
+      return { obj: g, set: v => sets.forEach(f => f(v)) }; },
+    buildingTypes: [...Object.keys(MODELS), 'WALL', 'SWALL', 'GATE', 'SGATE'],
     kinds: ['idle', 'walk', 'flee', 'carry', 'barrow', 'chop', 'saw', 'mine', 'farm', 'plow', 'forage', 'butcher', 'build', 'repair', 'drop', 'fight', 'die'],
     frame: animFrame,
     check: () => window.__povAnimCheck(),
@@ -3152,8 +3225,9 @@
     const now = performance.now();
     for (const c of corpses) {
       if (c.utype !== 'bear' && c.utype !== 'dragon' && c.utype !== 'villager' && !MIL3D.has(c.utype)) continue;
-      const gx = Math.round(c.x), gy = Math.round(c.y);
-      if (!fog[gy] || fog[gy][gx] !== 2 || (c.x - camAt.x) ** 2 + (c.y - camAt.y) ** 2 > RANGE * RANGE) continue;
+      const gx = Math.round(c.x), gy = Math.round(c.y), f = fog[gy] ? fog[gy][gx] : 0;
+      if (f === 2) c.seen = true;                                                  // witnessed: it stays on the map in the fog (as 2D, render.js)
+      if (!f || (f === 1 && !sameSide(c.team, myTeam) && !c.seen) || (c.x - camAt.x) ** 2 + (c.y - camAt.y) ** 2 > RANGE * RANGE) continue;
       const age = now - c.deathTime;
       if (age >= CORPSE_LIFE) continue;
       used.add('c' + c.id);
@@ -3368,25 +3442,58 @@
     const s = 20 / 32, wallH = 14 / HPX, box = [e.x + 1 - s, e.y, e.x + 1, e.y + s];
     patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile, faint edge
     const f = boxFaces(...box, 0, wallH);
+    if (!e.complete) delete f.top;                                    // (a site: open till its roof goes on)
     f.x1.holes.push(hole('x1', box, 0.5, SILL, s / 4, 8 / HPX));
     solid(g, wallCol, Object.values(f));
     // 'peaked' block roof: in the art's projection its apex sits roofH + bhh
     // (8 + 10px) above the wall top — a pyramid on the block's own corners.
     const rise = 18 / HPX;
-    pyramid(g, roofCol, ...box, wallH, rise);
-    pennant(g, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, wallH + rise, teamColor(e.team));
+    pyramid(piece(g), roofCol, ...box, wallH, rise);
+    if (e.complete) pennant(g, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, wallH + rise, teamColor(e.team));
   }
 
+  // A building is some 50 parts (and as many outline shells): 50+ draw calls each, most of a crowded view's. Its still
+  // parts are merged by material (bakePose, as the cached poses) into a handful; what moves — flags, the mill's
+  // sails, a stable's horses — is lifted out first and put back as it was (its outline shells ride with it: children).
+  // An animal is ~50 draw calls (every blob and its outline shell), posed by its named pivots (body, legs, neck, head,
+  // tail). Under each pivot, the unnamed rigid pieces (and their shells) merge by material in the pivot's own frame,
+  // so they still move with it; anything named (a puff, an eye, a band) stays its own mesh for the code that finds it.
+  // (The dragon keeps its parts: its wings' membranes are rebuilt live.)
+  function bakeRigid(g, loose = null){ // loose: names that may merge too (a living sheep's wool puffs: only a carcass is plucked)
+    const plain = o => (!o.name || (loose && loose.has(o.name))) && (o.isMesh || o.isLineSegments) && !Array.isArray(o.material) && o.children.every(plain);
+    const nodes = []; g.traverse(o => { if (!o.isMesh && !o.isLineSegments) nodes.push(o); });
+    for (const n of nodes) {
+      const parts = n.children.filter(c => c.isMesh && plain(c));
+      if (parts.length < 2) continue;
+      const tmp = new THREE.Group(); for (const c of parts) { n.remove(c); tmp.add(c); }   // (tmp at identity: the parts keep their frame in n)
+      const baked = bakePose(tmp);
+      tmp.traverse(o => { if (o !== tmp && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
+      for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; n.add(c); }
+    }
+  }
+  const SHEEP_LOOSE = new Set(['puff']);
+  function bakeStill(g){
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
+    g.updateMatrixWorld(true);
+    const hold = new THREE.Group(); hold.updateMatrixWorld(true);
+    for (const o of lift) hold.attach(o);
+    const baked = bakePose(g);
+    g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
+    for (const c of g.children.slice()) g.remove(c);
+    for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; g.add(c); } // (own: dropSolid frees it)
+    for (const o of lift) g.attach(o);
+  }
   function refreshModel(e){
-    const done = e.complete ? 1 : Math.max(0.15, e.buildProgress / e.buildTime);
     const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0)
       + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : '');
     let rec = solids.get(e.id);
     if (!rec || rec.key !== key) {
-      if (rec) dropSolid(rec);
+      if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       const g = new THREE.Group();
       MODELS[e.btype](g, e); g.userData.bid = e.id;                // (the world view's click picks it by this)
       addHulls(g);
+      if (e.complete) bakeStill(g);                                // (a site stays in parts: constructionSite reads each wall's depth)
       scene.add(g);
       const flags = [], horses = [];
       g.traverse(o => {
@@ -3394,9 +3501,228 @@
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
+      if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       solids.set(e.id, rec);
     }
-    rec.obj.scale.y = done; // rises as it's built
+  }
+  const OPEN_SITE = new Set(['MARKET', 'FARM']); // open ground (a plaza, a field): no scaffold, the stalls / crops just come up
+  // ---- A construction site: the finished model rising from the ground (cut at the build height, never squashed — the
+  // roof, windows and door keep their shape), inside a scaffold whose work deck rides
+  // the cut. g: a finished, baked model; its footprint (x0, z0, w, h). Returns { set(progress 0..1) }.
+  let siteWood = null;
+  const SITE_SHADE = 0.66; // how much light reaches inside a site's walls (their inner faces, and the ground they enclose)
+  // Finished: the scaffold comes down in a ring of dust round the footprint.
+  function siteDone(e){
+    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, n = Math.min(24, Math.round(2 * (w + h)));
+    for (let i = 0; i < n; i++) { const u = (i + 0.5) / n * 2 * (w + h), x = u < w ? e.x + u : u < w + h ? e.x + w : u < 2 * w + h ? e.x + 2 * w + h - u : e.x,
+      z = u < w ? e.y : u < w + h ? e.y + u - w : u < 2 * w + h ? e.y + h : e.y + 2 * (w + h) - u;
+      puffBurst(x, 0.04, z, 2); }
+  }
+  // A construction site's walls as real slabs, one geometry: each wall face (near vertical) with its inner face its
+  // depth D in, the rim along its outline and the tunnels round its openings joining the two. Flat faces (a floor, a flat
+  // top) stay single, marked clipOnly: a site shows them once it reaches them, never squished into a lid.
+  function thickGeo(faces, D, nMats){
+    const buckets = Array.from({ length: nMats }, () => []);
+    const UP = new THREE.Vector3(0, 1, 0);
+    // sd: the way the face runs up (in its own plane, rising 1 per unit): a site presses it down along itself
+    const put = (b, p0, p1, p2, want, clip, nf, inside = 0, sd = UP) => {
+      const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
+      if (n.lengthSq() < 1e-14) return;
+      if (n.dot(want) < 0) { n.negate(); [p1, p2] = [p2, p1]; }
+      n.normalize();
+      for (const q of [p0, p1, p2]) b.push(q, nf ? nf(q) : n, clip + 2 * inside, sd);        // (clipOnly, + 2 on an inner face)
+    };
+    const top = Math.max(...faces.flatMap(f => f.loop.map(p => p[1])));
+    for (const f of faces) {
+      const pts = f.loop.map(V3), n = new THREE.Vector3();
+      for (let k = 0; k < pts.length; k++) { const a = pts[k], c = pts[(k + 1) % pts.length]; n.x += (a.y - c.y) * (a.z + c.z); n.y += (a.z - c.z) * (a.x + c.x); n.z += (a.x - c.x) * (a.y + c.y); }
+      n.normalize(); if (n.dot(V3(f.out)) < 0) n.negate();
+      if (Math.abs(n.y) >= 0.5 && pts.every(p => p.y >= top - 1e-4)) continue;   // (a flat top on the walls' tops: they close it themselves, pressed down)
+      const up = new THREE.Vector3(0, 1, 0), v = up.clone().addScaledVector(n, -n.y);
+      if (v.lengthSq() < 1e-6) v.set(1, 0, 0).addScaledVector(n, -n.x);
+      v.normalize(); const u = new THREE.Vector3().crossVectors(v, n), o = pts[0];
+      const to2 = p => { const d = p.clone().sub(o); return new THREE.Vector2(d.dot(u), d.dot(v)); };
+      const to3 = q => o.clone().addScaledVector(u, q.x).addScaledVector(v, q.y);
+      const b = buckets[f.mat || 0], wall = Math.abs(n.y) < 0.5, contour = pts.map(to2);
+      const holes = wall ? (f.holes || []).map(h => { const c = to2(V3(h.at)); return [[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)); }) : [];
+      const all = contour.concat(...holes), tris = THREE.ShapeUtils.triangulateShape(contour, holes);
+      if (!wall) { for (const [i0, i1, i2] of tris) put(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, 1); continue; }
+      // the inner face straight in (level), not along a leaning wall's tilted facing: both faces keep every height, so a
+      // tapered wall's (the mill's) inner rim rises in step with its outer one
+      const nh = new THREE.Vector3(n.x, 0, n.z).normalize(), inset = p => p.clone().addScaledVector(nh, -D), back = n.clone().negate();
+      const sd = v.clone().divideScalar(v.y);   // (a leaning wall presses down along its lean: its cut stays on it, exact)
+      const nf = f.smooth ? q => f.smooth(q).clone() : null, nb = f.smooth ? q => f.smooth(q.clone().addScaledVector(nh, D)).clone().negate() : null;
+      for (const [i0, i1, i2] of tris) { const A = to3(all[i0]), B = to3(all[i1]), C = to3(all[i2]);
+        put(b, A, B, C, n, 0, nf, 0, sd); put(b, inset(A), inset(B), inset(C), back, 0, nb, 1, sd); }
+      // face → inset quads: along the outline (facing out, in the face's plane) and round each opening (facing into it)
+      const band = (loop, want, ins = 0) => { for (let k = 0; k < loop.length; k++) { const a = loop[k], c = loop[(k + 1) % loop.length], w = want(a.clone().add(c).multiplyScalar(0.5));
+        put(b, a, c, inset(c), w, 0, null, ins, sd); put(b, a, inset(c), inset(a), w, 0, null, ins, sd); } };
+      const c0 = pts.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+      band(pts, m => { const d = m.clone().sub(c0); return d.addScaledVector(n, -d.dot(n)); });
+      for (const h of holes) { const loop = h.map(to3), hc = loop[0].clone().add(loop[2]).multiplyScalar(0.5); band(loop, m => hc.clone().sub(m), 1); } // (an opening's sides: in the shade too)
+    }
+    // Sliced into thin horizontal bands: pressing a triangle's upper corners straight down is exact only for one that
+    // doesn't reach far past the build height (a long diagonal one — round a window, up a gable — would open a gap).
+    const geo = new THREE.BufferGeometry(), pos = [], nrm = [], clip = [], inside = [], slide = [], BAND = 0.015;
+    const cut = (poly, y, keepAbove) => { const out = [];                         // a convex polygon's part above / below y
+      for (let k = 0; k < poly.length; k++) { const a = poly[k], c = poly[(k + 1) % poly.length], ia = keepAbove ? a.p.y >= y : a.p.y <= y, ic = keepAbove ? c.p.y >= y : c.p.y <= y;
+        if (ia) out.push(a);
+        if (ia !== ic) { const [e0, e1] = a.p.y < c.p.y || (a.p.y === c.p.y && a.p.x < c.p.x) ? [a, c] : [c, a], f = (y - e0.p.y) / (e1.p.y - e0.p.y); // (from its lower end, whichever side asks: the same point)
+          out.push({ p: e0.p.clone().lerp(e1.p, f), n: e0.n.clone().lerp(e1.n, f).normalize() }); } }
+      return out; };
+    let start = 0;
+    buckets.forEach((b, m) => {
+      let count = 0;
+      for (let k = 0; k < b.length; k += 12) {
+        const tri = [0, 4, 8].map(d => ({ p: b[k + d], n: b[k + d + 1] })), cl = b[k + 2] & 1, ins = b[k + 2] >> 1, sd = b[k + 3];
+        const ys = tri.map(v => v.p.y), lo = Math.min(...ys), hi = Math.max(...ys);
+        // (on one grid for the whole building: neighbours split a shared edge at the same heights, so no crack opens along it)
+        const k0 = Math.floor(lo / BAND + 1e-6), k1 = Math.max(k0 + 1, Math.ceil(hi / BAND - 1e-6));
+        // (a flat one: nothing to slice — kept whole)
+        const bands = cl || hi - lo < 1e-6 ? [[lo, hi]] : Array.from({ length: k1 - k0 }, (_, i) => [Math.max(lo, (k0 + i) * BAND), Math.min(hi, (k0 + i + 1) * BAND)]).filter(([y0, y1]) => y1 - y0 > 1e-7);
+        for (const [y0, y1] of bands) {
+          const poly = bands.length > 1 ? cut(cut(tri, y0, true), y1, false) : tri;
+          for (let q = 1; q + 1 < poly.length; q++) for (const v of [poly[0], poly[q], poly[q + 1]]) { pos.push(v.p.x, v.p.y, v.p.z); nrm.push(v.n.x, v.n.y, v.n.z); clip.push(cl); inside.push(ins); slide.push(sd.x, sd.y, sd.z); count++; }
+        }
+      }
+      geo.addGroup(start, count, m); start += count;
+    });
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    geo.setAttribute('clipOnly', new THREE.Float32BufferAttribute(clip, 1));
+    geo.setAttribute('inside', new THREE.Float32BufferAttribute(inside, 1));
+    geo.setAttribute('slide', new THREE.Float32BufferAttribute(slide, 3));
+    return geo;
+  }
+  // The ground a site's walls enclose, in their shade: the walls' inner feet (convex hull), a dark film just above the grass.
+  let _floorMat = null;
+  function floorShade(o){
+    o.updateMatrixWorld(true);
+    const P = o.geometry.attributes.position, In = o.geometry.attributes.inside, v = new THREE.Vector3(), pts = [];
+    for (let i = 0; i < P.count; i++) if (In.getX(i) > 0.5) { v.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); if (v.y < 1e-3) pts.push([v.x, v.z]); }
+    if (pts.length < 3) return null;
+    pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+    for (const p of pts) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (const p of pts.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+    const hull = lo.slice(0, -1).concat(hi.slice(0, -1)); if (hull.length < 3) return null;
+    const pos = []; for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], 0.004, q[1]);
+    const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    _floorMat = _floorMat || new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 1 - SITE_SHADE, depthWrite: false, side: THREE.DoubleSide });
+    return new THREE.Mesh(geo, _floorMat);
+  }
+  function constructionSite(g, x0, z0, w, h, scaffold = true){
+    g.updateMatrixWorld(true);
+    // Pieces (piece(): roofs, caps, awnings) are set in place whole once the walls reach them; the rest rises by the cut.
+    const pieces = [], isPiece = o => o.userData.piece;
+    for (const c of g.children) if (isPiece(c)) pieces.push(c);
+    const walk = (o, f) => { if (isPiece(o)) return; f(o); for (const c of o.children) walk(c, f); };
+    const box = new THREE.Box3(), all = new THREE.Box3().setFromObject(g), base = new THREE.Box3(), mb = new THREE.Box3();
+    for (const c of g.children) walk(c, o => { if (o.isMesh) box.expandByObject(o); });
+    // the base: what stands on the ground and carries the building (its walls — not a fence, post or prop)
+    for (const c of g.children) walk(c, o => { if (!o.isMesh || HULL_MATS.has(o.material)) return; mb.setFromObject(o, true);
+      if (mb.min.y < 0.05 && mb.max.y >= 0.5 * box.max.y) base.union(mb); });
+    const H = Math.max(0.2, box.isEmpty() ? all.max.y : box.max.y);
+    // The walls grow by squishing, never cutting: whatever stands above the build height is pressed down onto it, so a
+    // wall's own top comes down with it (its depth showing, openings above closed over). Flat faces (clipOnly) and the ink
+    // lines are cut there instead; a box's team-coloured top waits for the finished building.
+    const below = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), siteY = { value: 0 };
+    const built = new Map();
+    const cutMat = m => { let c = built.get(m); if (c) return c;
+      c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
+      if (m.isLineBasicMaterial) c.clippingPlanes = [below];                           // (ink: cut at the top, not pressed onto it)
+      else { const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m), lit = !!m.isMeshLambertMaterial && !m.flatShading;
+        c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.siteY = siteY;
+          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float clipOnly; attribute float inside; attribute vec3 slide; uniform float siteY; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside;')
+            .replace('#include <begin_vertex>', `#include <begin_vertex>
+              {
+                #ifdef USE_INSTANCING
+                  mat4 siteM = modelMatrix * instanceMatrix;
+                #else
+                  mat4 siteM = modelMatrix;
+                #endif
+                vec4 sw = siteM * vec4(transformed, 1.0); vSiteY = sw.y; vClip = clipOnly;
+                if (clipOnly < 0.5 && sw.y > siteY) { sw.xyz -= slide * (sw.y - siteY); transformed = (inverse(siteM) * sw).xyz; }
+                vSiteW = sw.xyz; vInside = inside; }`);
+          // a surface pressed flat onto the top (found per pixel, so a wall's side is never touched) is lit and patterned as a top
+          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside;')
+            .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+              if (vClip > 0.5 && vSiteY > siteY + 1e-4) discard;
+              bool sitePressed = vSiteW.y >= siteY - 1e-4 && abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98;`)
+            .replace('abs(normalize(vWNrm))', 'abs(sitePressed ? vec3(0.0, 1.0, 0.0) : normalize(vWNrm))')
+            // the inside of the walls (and of its openings) in the walls' shade
+            .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  if (vInside > 0.5 && !sitePressed) gl_FragColor.rgb *= SITE_SHADE;');
+          if (lit) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  if (sitePressed) normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);'); };
+        c.onBeforeCompile.fow = !!(ob && ob.fow);                        // (a source already fog-patched: not patched again — a double patch won't compile)
+        c.customProgramCacheKey = () => key + ':site';
+        c.defines = { ...(c.defines || {}), SITE_SHADE: SITE_SHADE.toFixed(3) };
+        // a lintel pressed down faces down: from above it must still close its opening's slot
+        if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide; }
+      if (INTERIOR_MATS.has(m) || HULL_MATS.has(m)) c.visible = false;     // (no bold outline on an open, half-built shell: the finished building gets it)
+      built.set(m, c); return c; };
+    // every mesh of a site says what it is (the site shader reads these; an unset attribute reads garbage)
+    const mark = geo => { const n = geo.attributes.position.count;
+      for (const k of ['clipOnly', 'inside']) if (!geo.attributes[k]) geo.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(n), 1));
+      if (!geo.attributes.slide) geo.setAttribute('slide', new THREE.Float32BufferAttribute(new Float32Array(n * 3).map((_, i) => i % 3 === 1 ? 1 : 0), 3)); }; // (straight down)
+    const swap = (o, f) => { if (!o.material) return;
+      if (o.isMesh) mark(o.geometry);
+      if (Array.isArray(o.material) && o.material.length === 6) o.material = o.material.map((m, i) => i === 2 ? o.material[0] : m); // (a box: its body on top)
+      o.material = Array.isArray(o.material) ? o.material.map(f) : f(o.material); o.userData.siteOwn = true; };
+    const set0 = [];
+    for (const c of g.children) if (isPiece(c)) { const b = new THREE.Box3().setFromObject(c); set0.push({ obj: c, y0: c.position.y, base: b.min.y, top: b.max.y, at: null }); }
+    const floors = [];
+    for (const c of g.children) walk(c, o => { if (!o.isMesh || !o.userData.slab) return; o.geometry = own(o.userData.slab());
+      const rl = o.children.find(k => k.userData.rims); if (rl) rl.geometry = own(new THREE.BufferGeometry().setFromPoints(o.userData.slabRims()));
+      floors.push(floorShade(o)); });
+    for (const f of floors) if (f) g.add(f);
+    for (const c of g.children.slice()) walk(c, o => swap(o, cutMat));
+    // a part that starts above the build height isn't there yet (a cap on the walls, a beam higher up) — pressing it down
+    // would lay it over the open top
+    const later = []; g.updateMatrixWorld(true);
+    for (const c of g.children) walk(c, o => { if (o.isMesh && !HULL_MATS.has([].concat(o.material)[0]) && o.parent && !o.parent.isMesh) { const y0 = mb.setFromObject(o, true).min.y; if (y0 > 0.02) later.push([o, y0]); } });
+    const setRing = y => { siteY.value = y; for (const [o, y0] of later) o.visible = y > y0 + 0.005; };
+    // Each piece is set once the walls holding it are up (the cut past its top: a lean-to when the keep reaches its
+    // high edge), dropping the last bit into place; the walls rise over the first 85%, the pieces crowning them (roof,
+    // cap, then a chimney) follow one by one.
+    const tops = set0.filter(q => q.top >= H * 0.98).sort((a, b) => a.base - b.base);
+    for (const q of set0) { const i = tops.indexOf(q); q.when = i < 0 ? q.top / H * 0.85 : 0.85 + 0.12 * (i + 1) / tops.length; }
+    const setPieces = p => { const now = performance.now();
+      for (const q of set0) { const on = p >= q.when - 1e-6;
+        if (on && q.at == null) q.at = now; else if (!on) q.at = null;
+        const k = on ? Math.min(1, (now - q.at) / 260) : 0;
+        q.obj.visible = on; q.obj.position.y = q.y0 + (1 - k) * (1 - k) * 0.22; } };
+    const rise = p => Math.min(1, Math.max(0, p) / (set0.length ? 0.85 : 1));
+    if (!scaffold) { const set = p => { const y = H * rise(p); below.constant = y; setRing(y); setPieces(p); }; set(0); return { set }; } // (a wall piece: too small for one)
+    // Scaffold: timber poles round the footprint, a tile apart, rails every ~0.3 up, a brace on each face; full height
+    siteWood = siteWood || '#9c7448';
+    // round the base (its walls), a plank's width out; up to the wall tops (the roof goes on from it)
+    const [p0, q0, p1, q1] = base.isEmpty() ? [x0, z0, x0 + w, z0 + h] : [base.min.x, base.min.z, base.max.x, base.max.z];
+    const sc = new THREE.Group(), o = 0.12, X0 = p0 - o, Z0 = q0 - o, X1 = p1 + o, Z1 = q1 + o, top = H + 0.04, r = 0.014;
+    const along = (a, b) => { const n = Math.max(1, Math.round(b - a)); return Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n); };
+    const xs = along(X0, X1), zs = along(Z0, Z1), posts = [];
+    for (const x of xs) posts.push([x, Z0], [x, Z1]);
+    for (const z of zs.slice(1, -1)) posts.push([X0, z], [X1, z]);
+    for (const [x, z] of posts) pole(sc, siteWood, [x, 0, z], [x, top, z], r, 'bare');
+    const rails = Math.max(1, Math.round(top / 0.5));
+    for (let i = 1; i <= rails; i++) { const y = top * i / (rails + 0.3);
+      for (const [a, b] of [[[X0, y, Z0], [X1, y, Z0]], [[X0, y, Z1], [X1, y, Z1]], [[X0, y, Z0], [X0, y, Z1]], [[X1, y, Z0], [X1, y, Z1]]]) pole(sc, siteWood, a, b, r * 0.7, 'bare'); }
+    bakeStill(sc); g.add(sc);
+    // it goes up with the walls, a lift ahead of them
+    const lift = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), scMats = new Map();
+    sc.traverse(o => { if (!o.material || Array.isArray(o.material)) return;
+      let c = scMats.get(o.material); if (!c) { c = o.material.clone(); c.onBeforeCompile = o.material.onBeforeCompile; c.customProgramCacheKey = o.material.customProgramCacheKey; c.clippingPlanes = [lift]; scMats.set(o.material, c); }
+      o.material = c; o.userData.siteOwn = true; });
+    // the work deck: planks round the walls at the cut, climbing with it
+    const deck = new THREE.Group(), d = 0.08; // (clear of the outline shell, HULL out from the walls)
+    for (const [a0, b0, a1, b1] of [[X0, Z0, X1, Z0 + d], [X0, Z1 - d, X1, Z1], [X0, Z0 + d, X0 + d, Z1 - d], [X1 - d, Z0 + d, X1, Z1 - d]]) boxAt(deck, '#b88a52', a0, b0, a1, b1, 0, 0.018);
+    g.add(deck);
+    // the scaffold comes down as the roof goes on (the first piece crowning the walls), never through it
+    const down = tops.length ? tops[0].when : 1;
+    const set = p => { const y = H * rise(p); below.constant = y; lift.constant = Math.min(top + 0.01, y + 0.35); setRing(y); setPieces(p);
+      if (sc.visible && p >= down && scene && p < 1) for (const [x, z] of posts) puffBurst(x, 0.04, z, 2); // (in the game: dust as it comes down)
+      sc.visible = p < down; deck.position.y = Math.max(0, y - 0.03); deck.visible = y > 0.12 && p < Math.min(0.9, down); };
+    set(0);
+    return { set };
   }
   // Dev check: a model rendered from the exact iso angle beside its 2D art.
   window.__povIsoCheck = id => {
@@ -3427,6 +3753,7 @@
     const t = aTick * 0.13;
     for (const rec of solids.values()) {
       if (rec.sails) rec.sails.rotation.z += dt * 0.9;
+      if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
       if (rec.door) { // gates slide their door up as they open (read-only)
         const ge = entitiesById.get(rec.doorOf);
         rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
@@ -3472,26 +3799,6 @@
     // Out of range: hidden, not dropped — the model is ready when the view comes back. Gone or unseen: dropped.
     for (const [id, w] of solids) if (!seen.has(id)) { const e = entitiesById.get(id);
       if (e && e.type === 'building' && e.hp > 0 && bldgVisible(e)) { if (w.obj) w.obj.visible = false; } else { dropSolid(w); solids.delete(id); } }
-    buildingShadows(seen);
-  }
-  // Building ground shadows as 2D casts them (render-buildings buildingShadowPath): the footprint grown 1.06× and
-  // nudged 3px right, 1.5px down on screen, at 16% black; farms and the open market cast none. One union: equal-depth
-  // quads that write depth, so where two overlap the second fails the test and nothing darkens twice.
-  let bShadow = null;
-  function buildingShadows(ids){
-    const list = []; for (const id of ids) { const e = entitiesById.get(id); if (e && e.btype !== 'FARM' && e.btype !== 'MARKET') list.push(e); }
-    if (!bShadow || bShadow.instanceMatrix.count < list.length) {
-      if (bShadow) { scene.remove(bShadow); bShadow.dispose(); }
-      const m = new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.16, depthWrite: true, depthFunc: THREE.LessDepth });
-      m.onBeforeCompile = function(){}; m.onBeforeCompile.fow = true;           // (the fog dims the ground it lies on)
-      bShadow = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), m, Math.max(256, list.length * 2));
-      bShadow.frustumCulled = false; scene.add(bShadow);
-    }
-    const ox = (3 / HALF_TW + 1.5 / HALF_TH) / 2, oz = (1.5 / HALF_TH - 3 / HALF_TW) / 2; // the 2D screen nudge, in map units
-    _m = _m || new THREE.Matrix4(); let n = 0;
-    for (const e of list) { const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
-      bShadow.setMatrixAt(n++, _m.makeScale(w * 1.06, 1, h * 1.06).setPosition(e.x + w / 2 + ox, 0.005, e.y + h / 2 + oz)); }
-    bShadow.count = n; bShadow.instanceMatrix.needsUpdate = true;
   }
   // Where a unit faces: along its path, else toward its target, else the last way it faced. It shares the 2D
   // renderer's facing (e.dir, 8 sectors of 45° in map angle — cosmetic, never read by the sim): a unit starts from
@@ -3726,6 +4033,17 @@
       const legs = isUnitMoving(e) && /^(walk|gallop|flee|carry)$/.test(p.kind) ? { kind: p.kind, t: p.t } : null; // swinging on the run: the legs keep walking
       p = { kind: sol ? 'attack' : (tk || 'fight'), t: sol ? u * 0.95 : tk ? (u + 0.3) % 1 : u, opt: p.opt, target: p.target, legs };
     }
+    // First person, a melee strike is the FPS kind: the arm holds its ready pose and the viewmodel itself slashes
+    // across the view (a spear jabs), phased off the same clock as the attack pose — the cut lands on the hit.
+    // (foot soldiers only — the ones drawn as a viewmodel; a rider keeps its own swing, seen from the saddle)
+    v.fpStrike = null;
+    const vmUnit = e.id === followId && mode === 'eye' && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);
+    if (vmUnit && p.kind === 'attack' && e.utype !== 'villager' && !(e.range > 0) && MIL_IMPACT[e.utype] != null) {
+      v.fpStrike = ((p.t - MIL_IMPACT[e.utype]) % 1 + 1) % 1;                        // 0 at the hit
+      p = p.legs ? { kind: p.legs.kind, t: p.legs.t, opt: p.opt } : { kind: 'idle', t: workPhase(e, 'idle'), opt: p.opt };
+    }
+    if (vmUnit && VM.force != null) { v.fpStrike = VM.force; if (p.kind === 'attack') p = { kind: 'idle', t: 0, opt: p.opt }; } // dev: a pinned strike phase
+    v.lastPose = p.kind; // (dev: __povVM)
     if (v.throw) { const el = now - v.throw.at, b = v.throw.b, bx = b.x + (b.w || 1) / 2, bz = b.y + (b.h || 1) / 2;
       if (el > THROW_MS) v.throw = null;
       else { const t = 0.12 + 0.38 * el / THROW_MS; p = { kind: 'drop', t, opt: { load: v.throw.load, noFly: true } };
@@ -3746,7 +4064,7 @@
         if (p.kind === 'mine') oreChips(hitX, 0.22, hitZ, ph, e.task === 'mine_gold' ? ['#e8b90f', '#f5d44a', '#9d9d9d'] : ['#9d9d9d', '#bdbdbd', '#7c7c7c']);
         else if (p.kind === 'butcher') oreChips(hitX, 0.15, hitZ, ph, ['#f2eddd', '#b33']);
         else if (p.kind === 'split') chipBurst(T[0], 0.08, T[1], ph);
-        else puffBurst(hitX, 0.3, hitZ, 3);
+        else { puffBurst(hitX, 0.3, hitZ, 3); if (p.kind === 'build') chipBurst(hitX, 0.25, hitZ, ph); }
       }
     } else if (p.kind === 'fight' || p.target) { const t2 = workTarget(e, 'fight'); if (t2) { const h = Math.atan2(t2[1] - (e.y + 0.5), t2[0] - (e.x + 0.5)); ty = -h; setHeading(e, h); } } // face whom (or what) it strikes
     // Sounds: the 2D draw plays work swings and the ram's thud/creak, but only for
@@ -3773,7 +4091,12 @@
     if (far) { nx = tx; nz = tz; }
     else if (mv && !T && v.ptx !== undefined && e.path.length) {
       const step = Math.hypot(tx - v.ptx, tz - v.ptz), lk = e.path[Math.min(3, e.path.length - 1)];
-      const lx = lk.x + 0.5 - v.x, lz = lk.y + 0.5 - v.z, ll = Math.hypot(lx, lz) || 1, k = Math.min(1, dt * 1.3);
+      // the steered character walks straight along the steering heading (its tile path zigzags in 8 directions round
+      // it — facing the heading, it read as a crab-walk), pulled only gently onto its true spot: the zigzag averages out
+      // along the heading, and a firm pull put the zigzag's sideways jolts right back
+      const steered = e.id === followId && steerActive();
+      const sg = steered && (tx - v.ptx) * Math.cos(yaw) + (tz - v.ptz) * Math.sin(yaw) < 0 ? -1 : 1;   // backing up (S): along the heading, backwards
+      const lx = steered ? sg * Math.cos(yaw) : lk.x + 0.5 - v.x, lz = steered ? sg * Math.sin(yaw) : lk.y + 0.5 - v.z, ll = Math.hypot(lx, lz) || 1, k = Math.min(1, dt * (steered ? 0.5 : 1.3));
       nx = v.x + lx / ll * step; nz = v.z + lz / ll * step; nx += (tx - nx) * k; nz += (tz - nz) * k;
     } else if (!mv && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
       // A villager off its spot (into a work spot, back out of one) walks there, at a walk, legs and all.
@@ -3786,13 +4109,58 @@
     if (!T) v.stride += Math.hypot(nx - v.x, nz - v.z);
     v.x = nx; v.z = nz;
     v.yaw += Math.atan2(Math.sin(ty - v.yaw), Math.cos(ty - v.yaw)) * Math.min(1, dt * 8);
+    const fpv = e.id === followId && mode === 'eye' && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);   // seen through its own eyes: arms as a viewmodel
     if (RIG_UNITS(e.utype)) { if (!rigPose(v, p.kind, p.t, e.female, p.opt, teamColor(e.team), VIL_STEPS, e.id === followId && mode === 'eye', p.legs)) return false; }
     else { const step = Math.floor(p.t * VIL_STEPS) % VIL_STEPS, key = vilKey(p.kind, step, e.female, p.opt);
       const fr = vilFrame(key, p.kind, step / VIL_STEPS, e.female, p.opt, v);
       if (fr) useVilFrame(v, key, fr, teamColor(e.team));
       if (!v.obj) return false; }
-    v.obj.position.set(v.x, 0, v.z); v.obj.rotation.y = v.yaw;
+    if (fpv) viewmodel(v, e);
+    else { if (v.obj.userData.vm) { v.obj.matrixAutoUpdate = true; v.obj.userData.vm = false; } v.obj.position.set(v.x, 0, v.z); v.obj.rotation.y = v.yaw; }
     return true;
+  }
+  // First person, as games do it: forearms, hands and what they hold ride with the camera (a viewmodel), so they're
+  // always in view looking up or down. Framed on the hands: the arm turns forward about the shoulder line to lift
+  // hands that hang low (at the hips at rest), and the whole slides so the hands' average spot sits at VM.at on screen
+  // (a little below and right of centre) whether the pose holds them high, low or off to a side — both eased slowly,
+  // so a swing still sweeps across the view rather than being held still. Upper arms and shoulders never show.
+  const VM = { aim: 0.12, down: 0.12, back: -0.3, ease: 1.5, at: [0.12, -0.22], near: 0.24 };  // lift: hands' angle below level (rad); the shoulders' spot below / behind (− ahead of) the lens (tiles); easing (1/s); the hands' screen spot (tan right, tan up); the hands' nearest distance ahead (tiles)
+  let _vm = null;
+  // The strike's swing at phase u (0 = the hit): [pitch up, roll (+ top to the left), push ahead] about the shoulders.
+  // A slash winds up high and right, cuts down-left through the middle at the hit, then settles; a spear is lowered
+  // level, drawn back, and thrust.
+  function strikeSwing(u, spear){
+    const sm = x => x * x * (3 - 2 * x), W = u >= 0.7 ? sm((u - 0.7) / 0.3) : 0, H = u < 0.12 ? sm(u / 0.12) : 0, R = u >= 0.12 && u < 0.5 ? 1 - sm((u - 0.12) / 0.38) : 0;
+    if (spear) { // lowered level (the point ahead) through the wind-up, drawn back, then thrust out at the hit and eased home
+      const lv = u >= 0.7 ? W : u < 0.12 ? 1 : R;
+      return [-1.15 * lv, 0.15 * lv, u >= 0.7 ? -0.1 * W : u < 0.12 ? -0.1 + 0.32 * H : 0.22 * R]; }
+    const up = [0.55, -0.55, 0], cut = [-0.45, 0.6, 0.04];                           // wound up (high, top leaning right) → cut through (low, leaning left)
+    const k = u >= 0.7 ? W : u < 0.12 ? 1 - H : 0, c = u < 0.12 ? H : R;
+    return up.map((a, i) => a * k + cut[i] * c);
+  }
+  function viewmodel(v, who){
+    const root = v.obj;
+    if (!_vm) _vm = { m: new THREE.Matrix4(), r: new THREE.Matrix4(), t: new THREE.Matrix4() };
+    const S = chh(-8);                                                              // the shoulder line's height (model)
+    const h = v.fpHands || [0.03, S - 0.17, 0], want = Math.max(0, Math.min(2.2, Math.atan2(S - h[1], Math.max(0.01, h[0])) - VM.aim));
+    const first = v.vmTilt == null || !root.userData.vm, e = first ? 1 : Math.min(1, camDt * VM.ease);
+    v.vmTilt = first ? want : v.vmTilt + (want - v.vmTilt) * e;
+    // where the hands land in camera space at this tilt (x right, y up, −z ahead), and the slide that puts them at VM.at
+    const c = Math.cos(v.vmTilt), sn = Math.sin(v.vmTilt), hx = h[0], hy = h[1] - S;
+    const px = h[2], py = -VM.down + hx * sn + hy * c, pz = VM.back - (hx * c - hy * sn), d = Math.max(0.12, -pz);
+    const sx = VM.at[0] * d - px, sy = VM.at[1] * d - py;
+    v.vmSlide = first || !v.vmSlide ? [sx, sy] : [v.vmSlide[0] + (sx - v.vmSlide[0]) * e, v.vmSlide[1] + (sy - v.vmSlide[1]) * e];
+    const push = Math.max(0, VM.near + pz);                                          // a wind-up swings the hands back at the lens: held off at VM.near
+
+    camera.updateMatrixWorld();
+    // model (x forward, y up, z right) → camera (−z forward, y up, x right), turned forward by the tilt about the shoulders
+    _vm.r.set(0, 0, 1, 0,  0, 1, 0, 0,  -1, 0, 0, 0,  0, 0, 0, 1).multiply(_vm.t.makeRotationZ(v.vmTilt));
+    _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0], -VM.down + v.vmSlide[1], VM.back - push));
+    if (v.fpStrike != null) { const [pu, ro, fw] = strikeSwing(v.fpStrike, who.utype === 'spearman');
+      _vm.m.multiply(_vm.t.makeTranslation(0, 0, -fw)).multiply(_vm.t.makeRotationX(pu)).multiply(_vm.t.makeRotationZ(ro)); }
+    _vm.m.multiply(_vm.r).multiply(_vm.t.makeTranslation(0, -S, 0));
+    root.matrixAutoUpdate = false; root.userData.vm = true;
+    root.matrix.copy(_vm.m); root.matrixWorldNeedsUpdate = true;
   }
   // ---- Rigs: units posed on the GPU, never rebuilt ----
   // A TEMPLATE per (unit, gear, action, part layout) is built once from the
@@ -3804,6 +4172,7 @@
   // step, shared by every unit in that state. Each frame a unit blends two
   // samples into its own bone array. Viewer-only (never read by the sim).
   let RIG_LIGHT = false, RIG_NOHULL = false;
+  const FP_ARM = 0.6;                                         // first person: how far the forearm runs on back past the elbow (tiles)
   const RIG_SEG = 8, RIG_RAD = 7;                             // rings along a tube, sides round it
   const rigTemplates = new Map(), rigSamples = new Map();
   let rigSampleUntil = 0, rigTemplateBudget = 0;
@@ -3871,9 +4240,10 @@
     try { g = animFrame(kind, t, female, opt); } finally { POLY = 1; RIG_NOHULL = false; }
     g.updateMatrixWorld(true);
     const parts = rigParts(g), B = new Map(), s = new THREE.Vector3(), inv = new THREE.Matrix4();
-    let bone = 0; const fpBones = [];
+    let bone = 0; const fpBones = [], fpFold = [];
     for (const p of parts) {
-      if (!p.tube && p.o.userData.fpHide) fpBones.push(bone);
+      if (p.o.userData.fpHide) for (let i = 0; i < (p.tube ? RIG_SEG + 1 : 1); i++) fpBones.push(bone + i); // (a tube: all its ring bones)
+      if (p.tube && p.o.userData.fpForearm) fpFold.push(bone);
       if (p.tube) { // rings: surface and a fatter outline ring, both on the ring bones
         for (const [r, m, ord] of [[p.tube.r, p.o.material || mat(p.tube.col), 2], [p.tube.r, hullUnionMat, 1]]) { // (the outline ring: pushed out on screen)
           const { g: rg, ring } = ringGeo(r), { b, base } = rigAdd(B, m, ord, rg, 0, null);
@@ -3903,7 +4273,7 @@
       meshes.push({ geo, mat: b.mat, order: b.order, lines: !!b.lines });
     }
     window.__pov3dLab.dispose(g);
-    return { meshes, bones: bone, fpBones, sig: rigSig(parts), verts: meshes.reduce((a, m) => a + m.geo.attributes.position.count, 0) };
+    return { meshes, bones: bone, fpBones, fpFold, sig: rigSig(parts), verts: meshes.reduce((a, m) => a + m.geo.attributes.position.count, 0) };
   }
   // A pose sample: bone matrices at step `step` (light build; cached).
   function rigSample(tkey, kind, t, female, opt){
@@ -3969,7 +4339,16 @@
         for (let q = 0; q < m.length; q += 3) for (let k = 0; k < m[q + 2] * 16; k++) out[m[q + 1] * 16 + k] = w[m[q] * 16 + k] + (w2[m[q] * 16 + k] - w[m[q] * 16 + k]) * lf;
       }
     }
-    if (fp) for (const bi of T.fpBones) out.fill(0, bi * 16, bi * 16 + 16);
+    if (fp) { for (const bi of T.fpBones) out.fill(0, bi * 16, bi * 16 + 16);
+      // the upper arm's rings run on straight back from the elbow along the forearm's line (FP_ARM tiles), so the arm
+      // reaches past the lens and out the bottom of the view — no stump end, no outline cap at the elbow
+      const mid = RIG_SEG >> 1; // the elbow: the arm's curve passes through it halfway
+      for (const b0 of T.fpFold) { const E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16;
+        let dx = out[E + 12] - out[Hd + 12], dy = out[E + 13] - out[Hd + 13], dz = out[E + 14] - out[Hd + 14]; const L = Math.hypot(dx, dy, dz) || 1; dx /= L; dy /= L; dz /= L;
+        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, k = FP_ARM * (mid - i) / mid; out.copyWithin(o, E, E + 16);
+          out[o + 12] += dx * k; out[o + 13] += dy * k; out[o + 14] += dz * k; } }
+      if (T.fpFold.length) { const hs = [0, 0, 0]; for (const b0 of T.fpFold) for (let k = 0; k < 3; k++) hs[k] += out[(b0 + RIG_SEG) * 16 + 12 + k]; // the hands (the arms' ends)
+        v.fpHands = hs.map(x => x / T.fpFold.length); } }
     v.obj = v.rig.root;
     return true;
   }
@@ -4011,6 +4390,18 @@
     return [x + 0.5, y + 0.5];
   }
   let lastUnitsAt = 0;
+  // Rigs can't be frustum-culled by three (their bones move the mesh off its bind-pose bounds: frustumCulled is off),
+  // so every one in range was drawn, even behind the camera — about half a crowd behind a unit or in first person.
+  // A sphere round each (a rider or a ram with room to spare) against the view, just before drawing; the
+  // first-person viewmodel always stays.
+  let _fr = null, _pm = null, _sp = null;
+  function cullRigs(){
+    if (!_fr) { _fr = new THREE.Frustum(); _pm = new THREE.Matrix4(); _sp = new THREE.Sphere(new THREE.Vector3(), 1.6); }
+    camera.updateMatrixWorld(); _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _fr.setFromProjectionMatrix(_pm);
+    for (const v of villagers.values()) { if (!v.rig) continue; const r = v.rig.root;
+      if (r.userData.vm) { r.visible = true; continue; }
+      _sp.center.set(v.x, 0.6, v.z); r.visible = _fr.intersectsSphere(_sp); }
+  }
   function updateUnits(){
     const now = performance.now(), dt = lastUnitsAt ? Math.min(0.1, (now - lastUnitsAt) / 1000) : 0;
     lastUnitsAt = now;
@@ -4043,11 +4434,17 @@
         let a = animals.get(e.id);
         const ty = dead && a ? a.yaw : -worldFacing(e); // the fallen keep the heading they died with
         if (a && a.key !== key) { dropSolid(a); a = null; }
-        if (!a) { const g = ANIMAL_MODELS[e.utype](teamColor(e.team)); addHulls(g, true); scene.add(g); animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0 }); }
+        if (!a) { const g = ANIMAL_MODELS[e.utype](teamColor(e.team)); addHulls(g, true); if (e.utype !== 'dragon') bakeRigid(g, e.utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0 }); }
         // Glide between sim steps and ease into turns (a jump of 2+ tiles snaps).
         const nx = tx, nz = tz; // interpolated (posOf): no chase lag
-        a.moved = Math.hypot(nx - a.x, nz - a.z); a.x = nx; a.z = nz;
-        a.yaw += Math.atan2(Math.sin(ty - a.yaw), Math.cos(ty - a.yaw)) * Math.min(1, dt * 8);
+        const mvx = nx - a.x, mvz = nz - a.z; a.moved = Math.hypot(mvx, mvz); a.x = nx; a.z = nz;
+        // a walking bear or sheep faces its smoothed course, turning at an animal's pace: facing its path's look-ahead
+        // point (which jumps as the zigzag path shortens or re-plans) swung its head side to side every few steps
+        let want = ty;
+        if (isUnitMoving(e)) a.walkT = now;                                             // (held across a chaser's re-plans, unless at its prey)
+        if (!dead && e.utype !== 'dragon' && now - (a.walkT || -1e9) < 400 && !inActionRange(e)) { if (a.moved > 1e-5) { const c = Math.min(1, a.moved / 1.5), ux = mvx / a.moved, uz = mvz / a.moved; a.vx = (a.vx ?? ux) + (ux - (a.vx ?? ux)) * c; a.vz = (a.vz ?? uz) + (uz - (a.vz ?? uz)) * c; } // (over ~1.5 tiles walked: any game speed)
+          if (a.vx !== undefined) want = -Math.atan2(a.vz, a.vx); }
+        a.yaw += Math.atan2(Math.sin(want - a.yaw), Math.cos(want - a.yaw)) * Math.min(1, dt * (e.utype === 'dragon' ? 8 : 4));
         a.obj.position.set(a.x, 0, a.z); a.obj.rotation.y = a.yaw;
         if (dead) { // seen already dead: lying; then eaten down as it is harvested
           a.deadAt = a.deadAt || (a.alive ? now : now - 2000);
@@ -4123,7 +4520,7 @@
     rec.tex.needsUpdate = true;
   }
 
-  let camDt = 1 / 60;
+  let camDt = 1 / 60, fpDimmed = false;
   function follow(e){
     if (steering && followId !== e.id) { possess(e.id, true); steerId = e.id; }
     followId = e.id;
@@ -4179,7 +4576,8 @@
       const k = fwd > 0 ? 1 : -1, cx = Math.cos(yaw) * k, cy = Math.sin(yaw) * k;
       for (const r of [2.5, 1.5, 1]) { // the farthest open tile ahead
         const tx = Math.round(e.x + cx * r), ty = Math.round(e.y + cy * r);
-        if ((tx === ux && ty === uy) || !walkable(tx, ty, e.id, true)) continue;
+        const blk = unitBlock && tx >= 0 && ty >= 0 && tx < MAP && ty < MAP ? entitiesById.get(unitBlock[tx + ty * MAP]) : null;   // other units are passed through; the dragon's body isn't
+        if ((tx === ux && ty === uy) || !walkable(tx, ty, e.id, true) || (blk && blk.utype === 'dragon')) continue;
         if (!lastMove || lastMove.x !== tx || lastMove.y !== ty || now - lastMoveAt > 600) {
           submitCommand({ kind: 'command', unitIds: [e.id], tileX: tx, tileY: ty });
           lastMove = { x: tx, y: ty }; lastMoveAt = now;
@@ -4271,6 +4669,7 @@
   // and a narrow lens, so the map fills the screen and the horizon never shows; no tilt, zoom by distance.
   const ORBIT_PITCH = 0.66, ORBIT_FOV = 36, ORBIT_MIN = 12, ORBIT_MAX = 34;
   let chaseK = 1, lookUntil = 0; // the chase camera's distance (scroll zooms it); a drag-look holds its view a while
+  const FP_PITCH_MIN = -1.1;
   let oYaw = Math.PI / 4, oPitch = ORBIT_PITCH, oDist = 21, zoomBy = 1, zoomAt = null, fpPitch = -0.3, anchorEase = 0, camH = 14, clearH = 0;
   const mapCenter = () => fromIso(camX, camY);                          // map coords of the 2D camera, unrounded (screenToMap rounds to whole pixels: a fine swipe would step)
   function panTo(x, y){ // map coords
@@ -4342,8 +4741,14 @@
   // away fast, strongest near the camera's focus. Viewer-only.
   let camShake = 0;
   function shakeFrom(x, z, amp){ if (!camAt) return; const d = Math.hypot(x - camAt.x, z - camAt.y); camShake = Math.max(camShake, amp * Math.max(0, 1 - d / 18)); }
+  // Mouse / drag look arrives as pointer events, at their own uneven rate (not the frame's): each is banked here and
+  // paid out over a few frames (LOOK_EASE s), so the view turns evenly instead of in steps.
+  const lookPend = { yaw: 0, pitch: 0 }, LOOK_EASE = 0.03;
   function updateCamera(e){
     if (zoomBy !== 1) applyZoom();
+    if (lookPend.yaw || lookPend.pitch) { const f = 1 - Math.exp(-camDt / LOOK_EASE), dy = lookPend.yaw * f, dp = lookPend.pitch * f;
+      yaw += dy; fpPitch = Math.max(FP_PITCH_MIN, Math.min(0.6, fpPitch + dp)); lookPend.yaw -= dy; lookPend.pitch -= dp;
+      if (Math.abs(lookPend.yaw) < 1e-5 && Math.abs(lookPend.pitch) < 1e-5) lookPend.yaw = lookPend.pitch = 0; }
     const k = 1 - Math.exp(-camDt / (performance.now() < anchorEase ? 0.25 : e ? 0.05 : 0.08)); // a new anchor eases in; a unit is followed tight; the free map camera a touch softer (pan input arrives in bursts)
     let tx, ty;
     if (e) { const v = villagers.get(e.id), [px, py] = posOf(e); tx = v ? v.x : px; ty = v ? v.z : py; }
@@ -4410,6 +4815,7 @@
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
     camDt = dt || 1 / 60; updateCamera(e);
+    { const fp = world && mode === 'eye' && e != null; if (fp !== fpDimmed) { fpDimmed = fp; const mw = document.getElementById('minimap-wrap'); if (mw) mw.classList.toggle('fp-active', fp); } } // first person: the minimap steps back (styles.css)
     // on the cadence, or at once when the view has moved a few tiles (a jump: the new place mustn't wait for it)
     if (now - lastStatic > STATIC_MS || !staticAt || (eye.x - staticAt.x) ** 2 + (eye.y - staticAt.y) ** 2 > 9) {
       refreshGround(); refreshFeatures(); refreshBuildings(); refreshButtons(); lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
@@ -4421,7 +4827,9 @@
     updateXray(); updateSelection();
     if (world) updateGhost();
     const t1 = performance.now();
+    cullRigs();
     renderer.render(scene, camera);
+    if (unrevealed) { unrevealed = false; pip.style.visibility = ''; window.world3D = world; }
     if (world) drawOverlay(); else if (ov) ovx.clearRect(0, 0, ov.width, ov.height);
     // Running averages (ms/frame): our JS (art repaints, uploads, layout) vs the
     // WebGL submit — for profiling from the console.
@@ -4446,7 +4854,7 @@
   // panel, actions, minimap); the 2D map is not drawn under it (render.js).
   function setWorld(on){
     if (!on) { setSteering(false); if (document.pointerLockElement) document.exitPointerLock(); }
-    world = on; window.world3D = on;
+    world = on; window.world3D = on && !unrevealed;
     { const vb = document.querySelector('#view-btn .btn-emoji'); if (vb) vb.textContent = on ? '2D' : '3D'; } // the top bar's switch offers the other view
     pip.classList.toggle('world', on);
     pip.style.top = on ? topH + 'px' : '';
@@ -4581,7 +4989,7 @@
   function onMove(ev){
     if (!world) return;
     if (document.pointerLockElement === renderer.domElement) { // mouse-look through the eyes
-      yaw += ev.movementX * 0.0028; fpPitch = Math.max(-1.1, Math.min(0.6, fpPitch - ev.movementY * 0.0022)); return; }
+      lookPend.yaw += ev.movementX * 0.0028; lookPend.pitch -= ev.movementY * 0.0022; return; }
     const x = ev.clientX, y = ev.clientY, pp = ptrs.get(ev.pointerId);
     hoverXY = { x, y };
     if (pp) { pp.x = x; pp.y = y; }
@@ -4599,7 +5007,7 @@
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 8) drag.moved = true;
     if (!drag.moved) return;
     if (drag.kind === 'pan' && followId != null && mode !== 'orbit') {  // riding a character: a drag turns the view, never pans off it
-      yaw += (x - drag.x) * 0.006; if (mode === 'eye') fpPitch = Math.max(-1.1, Math.min(0.6, fpPitch - (y - drag.y) * 0.004));
+      lookPend.yaw += (x - drag.x) * 0.006; if (mode === 'eye') lookPend.pitch -= (y - drag.y) * 0.004;
       drag.x = x; drag.y = y; lookUntil = performance.now() + 2500; return; }
     if (drag.kind === 'pan') { const k = oDist / (renderer.domElement.clientHeight * 0.9), fx = -Math.cos(oYaw), fz = -Math.sin(oYaw); // grab the ground: the map follows the finger
       panBy((-fz * -dx + fx * dy) * k, (fx * -dx + fz * dy) * k); }
@@ -4698,7 +5106,7 @@
   }
   // ---- The selection outline, the placement ghost ----
   let _v2 = null;
-  function hideSelectionFx(){ if (ghost) ghost.g.visible = false; if (wallGhost) wallGhost.visible = false; }
+  function hideSelectionFx(){ if (ghost) ghost.g.visible = false; }
   // The 2D map's behind-building outlines (render-outlines drawBehindBuildingOutlines): a unit hidden by a building
   // or a tree shows a thin team-colour outline over it. Drawn in the frame itself, no offscreen pass: each nearby
   // unit's meshes get twins in the x-ray group, which draws after the scenery and before the units (group order:
@@ -4715,9 +5123,10 @@
         rimOf: t => { let r = xray.userData.rim.get(t); if (!r) { xray.userData.rim.set(t, r = screenHull(m({ color: teamColor(t), side: THREE.BackSide, stencilFunc: THREE.NotEqualStencilFunc }), HULL * 2, 2.4));
           r.onBeforeCompile.fow = true; } return r; } }; // the ink shell pushed wider: a rim ~1px outside the ink
     }
-    xray.visible = world;
+    const on = world && mode !== 'eye';   // (not through the eyes: team rims through every wall and tree would crowd a first-person view)
+    xray.visible = on;
     const used = new Set();
-    if (world) {
+    if (on) {
       const bl = [];
       for (const [id, rec] of solids) { const b = entitiesById.get(id); if (b && b.type === 'building' && rec.obj && rec.obj.visible) bl.push(b); }
       const nearTree = (x, z) => { // a standing tree within 2 tiles (a crown hides what's up to ~2 tiles behind it)
@@ -4799,33 +5208,56 @@
   }
   // The building being placed, as its real model in a see-through green (fits) or red (doesn't), on the hovered tile;
   // a wall drag, a box per tile.
-  let ghost = null, wallGhost = null, ghostOk = null, ghostBad = null;
+  let ghost = null;
   function updateGhost(){
-    ghostOk = ghostOk || new THREE.MeshBasicMaterial({ color: '#5fe05a', transparent: true, opacity: 0.45, depthWrite: false });
-    ghostBad = ghostBad || new THREE.MeshBasicMaterial({ color: '#ff4a3a', transparent: true, opacity: 0.45, depthWrite: false });
-    if (ghost) ghost.g.visible = false; if (wallGhost) wallGhost.visible = false;
+    if (ghost) ghost.g.visible = false;
     if (!placing || !hoverXY) return;
-    if (isWallBtype(placing) || isGateBtype(placing) || isTowerBtype(placing)) {
-      const tiles = window.isDraggingWall && window.wallDragStart ? getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd) : [pick(hoverXY.x, hoverXY.y).tile];
-      if (!wallGhost) { wallGhost = new THREE.InstancedMesh(unitBox, ghostOk, 256); wallGhost.frustumCulled = false; wallGhost.instanceColor = null; scene.add(wallGhost); wallGhost.userData.bad = new THREE.InstancedMesh(unitBox, ghostBad, 256); wallGhost.userData.bad.frustumCulled = false; scene.add(wallGhost.userData.bad); }
-      const G = wallGhost, B = G.userData.bad, M = new THREE.Matrix4(); let ng = 0, nbd = 0; const h = isTowerBtype(placing) ? 0.8 : 0.35;
-      for (const t of tiles.slice(0, 256)) { M.makeScale(0.5, h, 0.5).setPosition(t.x + 0.5, h / 2, t.y + 0.5); if (canPlace(placing, t.x, t.y, myTeam)) G.setMatrixAt(ng++, M); else B.setMatrixAt(nbd++, M); }
-      G.count = ng; B.count = nbd; G.instanceMatrix.needsUpdate = B.instanceMatrix.needsUpdate = true; G.visible = true; B.visible = nbd > 0;
-      return;
+    // As 2D (drawGhost, render-fx.js): the real piece, see-through in its own colours; no ground tint (it read as a
+    // shadow) — a piece that can't go there is tinted red instead
+    const t0 = pick(hoverXY.x, hoverXY.y).tile, b = BLDGS[placing];
+    const fake = (x, y, w, h) => ({ id: -1, type: 'building', btype: placing, x, y, w, h, team: myTeam, complete: true, hp: b.hp, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0 });
+    let pieces, ok;
+    if (isWallBtype(placing) && window.isDraggingWall && window.wallDragStart) {   // a run of wall: every tile, linked to each other and to the walls there
+      const tiles = getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd).slice(0, 256);
+      pieces = tiles.map((t, i) => ({ ...fake(t.x, t.y, 1, 1), id: -1 - i, ok: canPlace(placing, t.x, t.y, myTeam) })); ok = true;
+    } else {                                                             // one piece; a gate at the footprint it'd really take along the wall run (gateFootprint)
+      let ox = t0.x, oy = t0.y, bw = b.w, bh = b.h;
+      if (isGateBtype(placing)) { const fp = gateFootprint(t0.x, t0.y, (tx, ty) => gateBaseAt(tx, ty, placing, myTeam)); ox = fp.ox; oy = fp.oy; bw = fp.gw; bh = fp.gh; }
+      ok = canPlace(placing, t0.x, t0.y, myTeam);
+      pieces = [{ ...fake(ox, oy, bw, bh), ok }];
     }
-    if (wallGhost) wallGhost.userData.bad.visible = false;
-    const key = placing + ':' + ageBonus(myTeam);
+    const key = placing + ':' + ageBonus(myTeam) + ':' + ok + ':' + pieces.map(p => p.x + ',' + p.y + ',' + p.w + ',' + p.h + ',' + p.ok).join(';');
     if (!ghost || ghost.key !== key) {
-      if (ghost) { scene.remove(ghost.g); ghost.g.traverse(o => { if (o.geometry && o.geometry.userData.own) o.geometry.dispose(); }); }
-      const b = BLDGS[placing], g = new THREE.Group();
-      try { MODELS[placing](g, { id: -1, type: 'building', btype: placing, x: 0, y: 0, w: b.w, h: b.h, team: myTeam, complete: true, hp: 1, maxHp: 1 }); }
-      catch (err) { boxAt(g, '#ffffff', 0, 0, b.w, b.h, 0, 0.5); }
-      const meshes = []; g.traverse(o => { if (o.isLineSegments || (o.isMesh && HULL_MATS.has(o.material))) o.visible = false; else if (o.isMesh) meshes.push(o); });
-      scene.add(g); ghost = { g, key, meshes };
+      if (ghost) dropGhost();
+      const g = new THREE.Group(), parts = [];
+      if (isWallBtype(placing) || isGateBtype(placing)) {
+        // Links as 2D's ghost overlay: to the other ghost tiles and (a valid piece only) the walls already there
+        const at = new Map(); for (const p of pieces) for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) at.set(y * MAP + x, p);
+        const look = (x, y) => at.get(y * MAP + x) || (ok ? occupantAt(x, y) : null);
+        for (const p of pieces) { const o = wallModel(p, wallArms(p, look, n => at.has(n.y * MAP + n.x) && n.btype === placing)).obj; g.add(o); parts.push([o, p.ok]); }
+      } else {
+        const p = pieces[0];
+        try { MODELS[placing](g, { ...p, x: 0, y: 0 }); } catch (err) { boxAt(g, '#ffffff', 0, 0, p.w, p.h, 0, 0.5); }
+        g.position.set(p.x, 0, p.y); parts.push([g, ok]);
+      }
+      // see-through in its own colours (2D: the art at 55%); outline shells hidden, a see-through part would show them
+      const RED = new THREE.Color('#ff3020');
+      for (const [part, good] of parts) part.traverse(o => {
+        if (o.isMesh && HULL_MATS.has(o.material)) { o.visible = false; return; }
+        if (!o.material) return;
+        const own = m => { const c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; c.transparent = true; c.opacity = o.isMesh ? 0.7 : 0.35;
+          if (!good && c.color) c.color.lerp(RED, 0.65); return c; };
+        o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
+        o.userData.ghostOwn = true; o.renderOrder = 5;
+      });
+      scene.add(g); ghost = { g, key };
     }
-    const t = pick(hoverXY.x, hoverXY.y).tile, ok = canPlace(placing, t.x, t.y, myTeam);
-    for (const m of ghost.meshes) m.material = ok ? ghostOk : ghostBad;
-    ghost.g.position.set(t.x, 0, t.y); ghost.g.visible = true;
+    ghost.g.visible = true;
+  }
+  function dropGhost(){
+    scene.remove(ghost.g);
+    ghost.g.traverse(o => { if (o.geometry && o.geometry.userData.own) o.geometry.dispose(); if (o.userData.ghostOwn) [].concat(o.material).forEach(m => m.dispose()); });
+    ghost = null;
   }
 
   function ensurePip(){
@@ -4951,6 +5383,7 @@
   function openWorld(){
     ensurePip();
     followId = null; eye = null; mode = 'orbit';                                // the 2D view's camera carries over (a 2D follow too)
+    unrevealed = true; pip.style.visibility = 'hidden';                         // the 2D map stays up until the first 3D frame is drawn (no black while loading)
     pip.style.display = 'block';
     setWorld(true);
     startLoop(() => world);
@@ -4958,6 +5391,8 @@
 
   function povClose(){
     setSteering(false);
+    if (unrevealed) { unrevealed = false; pip.style.visibility = ''; }
+    if (fpDimmed) { fpDimmed = false; const mw = document.getElementById('minimap-wrap'); if (mw) mw.classList.remove('fp-active'); }
     if (document.pointerLockElement) document.exitPointerLock();
     cancelAnimationFrame(raf); raf = 0;
     followId = null;
@@ -4994,6 +5429,13 @@
     if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld();
   };
   window.povWorld = () => world;
+  // Fetch three.js while the menu is up, so a match opens straight into 3D.
+  if (!/[?&]view=2d/.test(location.search) && !navigator.webdriver)
+    window.addEventListener('load', () => setTimeout(() => loadThree().catch(() => {}), 500), { once: true });
+  window.__povYaw = () => yaw; // dev: the view's heading (tests)
+  window.__povAnimYaw = id => { const a = animals.get(id); return a ? a.yaw : null; }; // dev: an animal's drawn heading (tests)
+  window.__pov3dScene = () => scene; // dev: profiling
+  window.__povVM = (o, pitch) => { Object.assign(VM, o || {}); if (pitch !== undefined) fpPitch = pitch; const v = villagers.get(followId); return { ...VM, tilt: v && v.vmTilt, hands: v && v.fpHands, S: chh(-8), pose: v && v.lastPose, strike: v && v.fpStrike, mode }; }; // dev: tune the first-person viewmodel
   // The eye button: into character mode on a unit — the camera standing behind it (zoom in for its eyes) — opening
   // the world view if need be; again, back to the map.
   const inEyes = id => world && followId === id && mode !== 'orbit';
@@ -5013,5 +5455,5 @@
   window.__povDrawnAt = id => { const v = villagers.get(id); return v ? [v.x, v.z] : null; }; // dev: where a villager is drawn (tests)
   window.povFollowing = () => followId;
   window.povSteering = () => steering;
-  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0 });
+  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0 });
 })();

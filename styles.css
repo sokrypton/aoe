@@ -985,10 +985,11 @@ canvas {
 }
 /* Visual-only cues (the wrap is always pointer-events:none, so these can't
    actually block anything — they just de-emphasize the minimap while
-   something else has priority: placing a building/wall, or dragging a
-   selection box). */
+   something else has priority: placing a building/wall, dragging a
+   selection box, or looking through a unit's eyes in 3D). */
 #minimap-wrap.build-active,
-#minimap-wrap.drag-select-active {
+#minimap-wrap.drag-select-active,
+#minimap-wrap.fp-active {
   opacity: 0.45;
 }
 

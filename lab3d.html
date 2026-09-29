@@ -43,6 +43,7 @@
     <label>attack <select id="lab-atk"><option value="0">base</option><option value="1">Forging</option><option value="2">Iron Casting</option></select></label>
     <label>armor <select id="lab-arm"><option value="0">tunic</option><option value="1">scale</option><option value="2">chain</option></select></label>
     <label><input type="checkbox" id="lab-fletch"> fletching</label></span>
+  <span class="g"><span class="l">Building</span><select id="lab-bldg"><option value="">—</option></select><span style="opacity:.6">(phase = build progress)</span></span>
   <span class="g"><span class="l">Villager</span><button id="lab-female">♀ female</button>
     <label>resource <select id="lab-load"><option>wood</option><option>stone</option><option>gold</option><option value="food">wheat</option><option>wool</option><option>berries</option></select></label>
     <label>held tool <select id="lab-tool"><option value="">none</option><option>axe</option><option>pick</option><option>mallet</option><option>scythe</option></select></label></span>
@@ -74,6 +75,7 @@
   const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8, attack: 1.3, gallop: 0.62, sleep: 5, graze: 3, roar: 1.6, breathe: 1.6 }; // seconds per cycle
   const $ = id => document.getElementById(id);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.localClippingEnabled = true; // construction sites
   renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
   $('lab-view').appendChild(renderer.domElement);
   const scene = new THREE.Scene();
@@ -224,6 +226,17 @@
   $('lab-play').onclick = () => { playing = !playing; $('lab-play').textContent = playing ? '❚❚' : '▶'; $('lab-play').classList.toggle('on', playing); };
   $('lab-phase').oninput = e => { t = +e.target.value; playing = false; $('lab-play').textContent = '▶'; $('lab-play').classList.remove('on'); };
   $('lab-readout').textContent = 'collision check (≥0 = clear)\n' + LAB.check();
+  // A building going up: its construction site at the phase (the game's constructionSite).
+  for (const b of LAB.buildingTypes) { const o = document.createElement('option'); o.value = o.textContent = b; $('lab-bldg').appendChild(o); }
+  let site = null;
+  const pickBldg = () => { if (site) { scene.remove(site.obj); LAB.dispose(site.obj); site = null; }
+    for (const c of bits.splice(0)) { scene.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose(); } // (the villager's chips and dust: not on a building's stage)
+    for (const p of puffs.splice(0)) { scene.remove(p.m); p.m.geometry.dispose(); p.m.material.dispose(); }
+    const b = $('lab-bldg').value; if (!b) return;
+    site = LAB.building(b, +$('lab-age').value); site.btype = b; scene.add(site.obj);
+    const B = new THREE.Box3().setFromObject(site.obj), sz = B.getSize(new THREE.Vector3());
+    orbit.dist = Math.max(3, Math.max(sz.x, sz.y, sz.z) * 3.6); orbit.target.set(0, sz.y * 0.35, 0); orbit.pitch = 0.5; };
+  $('lab-bldg').onchange = pickBldg; $('lab-age').addEventListener('change', () => { if (site) pickBldg(); });
 
   // Poses are rebuilt per frame from the phase (quantized to 1/120 of a cycle,
   // so a paused or slow view doesn't rebuild the same pose over and over).
@@ -231,7 +244,15 @@
   const frame = now => {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
-    if (playing) { t = (t + dt * +$('lab-speed').value / PERIOD[kind]) % 1; $('lab-phase').value = t; }
+    if (playing) { t = (t + dt * +$('lab-speed').value / (site ? 8 : PERIOD[kind])) % 1; $('lab-phase').value = t; }
+    $('lab-pv').textContent = t.toFixed(2);
+    if (site) { // a building: nothing else on stage
+      site.set(t);
+      for (const k in T) T[k].obj.visible = false;
+      if (current) current.visible = false; if (animal) animal.visible = false;
+      placeCam(); renderer.render(scene, ortho || camera); return;
+    }
+    if (current) current.visible = true; if (animal) animal.visible = true;
     for (const k in T) T[k].obj.visible = k === kind && opts.unit === 'villager';
     const tg = opts.unit === 'villager' ? T[kind] : null;
     if (tg && tg.hit && t < lastT && lastT > 0.85) tg.hit(now);            // the phase wrapped: the tool just struck

@@ -421,6 +421,15 @@ function unitVelocityPerTick(e){
 // "busy" and skipping retaliation forever, and updateUnit()'s multi-leg
 // resume walking an idle unit back toward an old, no-longer-relevant tile.
 function issueMoveOrder(e,x,y){
+  // A goal on the dragon's body (a formation slot, a click on it) can never be reached — the unit ahead would stall
+  // on the ring forever: moved out past its edge, on that side (a unit ordered onto its very centre: toward the unit).
+  for(let i=0;i<entities.length;i++){ let d=entities[i];
+    if(d.utype!=='dragon'||d.hp<=0||!inDragonBody(d,x,y,0.35))continue;
+    let dx=x-d.x, dy=y-d.y, l=Math.sqrt(dx*dx+dy*dy);
+    if(l<0.5){ dx=e.x-d.x; dy=e.y-d.y; l=Math.sqrt(dx*dx+dy*dy)||1; }
+    let r=dragonBodyRadius(d,d.x+dx,d.y+dy)+1;
+    x=Math.round(d.x+dx/l*r); y=Math.round(d.y+dy/l*r);
+  }
   // Clamped like the anchor below: edge-of-map formation offsets produce
   // off-map goals findPath silently clamps — an unclamped goal then never
   // matches the arrival tile, so the "arrived, clear order" check churned

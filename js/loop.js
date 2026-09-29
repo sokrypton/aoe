@@ -34,7 +34,7 @@ function update(){
       let shooter = entitiesById.get(p.attackerId) || p.attackerSnap;
       if (p.targetBuildingId) {
         let b = entitiesById.get(p.targetBuildingId);
-        if (b && b.hp > 0) damageEntity(shooter, b);
+        if (b && b.hp > 0) { damageEntity(shooter, b); stickArrow(p, b); }
       } else {
         let victim = null, vd = 0.45;
         entities.forEach(en => {
@@ -50,6 +50,7 @@ function update(){
           if (d < vd) { vd = d; victim = en; }
         });
         if (victim) damageEntity(shooter, victim);
+        stickArrow(p, victim && victim.hp > 0 ? victim : null); // (cosmetic: in the body, or in the ground — a miss, or it just fell)
       }
     } else {
       p.x += (dx / dist) * speed;
@@ -93,6 +94,7 @@ function update(){
   // heaviest fixed per-tick passes after updateUnit itself (profile:
   // separate 17%, nudge 3%). Tick-derived, so lockstep-deterministic.
   if(tick%2===0)separateUnits();
+  dragonShove(); // js/logic.js — standing units the dragon came down on step out of its body
   updateStuckWatchdog(); // js/logic.js — general safety net over every task/path state machine
   // Run every AI-controlled team's brain. Which teams those are is DATA
   // (teamControllers, js/core.js): clicking "Host Game" flips slot 1 to
@@ -287,13 +289,21 @@ function makeWayFor(mover){
 function rebuildBlockGrid(){
   if(!unitBlock||unitBlock.length!==MAP*MAP)unitBlock=new Int32Array(MAP*MAP);
   else unitBlock.fill(0);
+  let dragons=null;
   for(let i=0;i<entities.length;i++){
     let e=entities[i];
     if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)continue;
+    if(e.utype==='dragon'){ (dragons||(dragons=[])).push(e); continue; } // its whole body, stamped last (below)
     if(e.utype==='sheep_carcass')continue; // a corpse on the ground blocks nobody (and never moves)
     if(e.path.length>0)continue; // moving units don't block
     let x=Math.round(e.x),y=Math.round(e.y);
     if(x>=0&&x<MAP&&y>=0&&y<MAP)unitBlock[x+y*MAP]=e.id;
+  }
+  // The dragon blocks every tile under its body (inDragonBody, js/logic.js), moving or not: nobody walks through it.
+  if(dragons)for(const d of dragons){
+    let cx=Math.round(d.x), cy=Math.round(d.y);
+    for(let y=cy-2;y<=cy+2;y++)for(let x=cx-2;x<=cx+2;x++)
+      if(x>=0&&x<MAP&&y>=0&&y<MAP&&inDragonBody(d,x,y,0))unitBlock[x+y*MAP]=d.id;
   }
 }
 // Nudging keeps its 2-tick cadence; the grid rebuilds every tick. Movers are
