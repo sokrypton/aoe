@@ -958,10 +958,10 @@ function newMatchSeed(seed){
 }
 
 // Corpse decay timeline (wall-clock ms, AoE2-style): fresh body until
-// CORPSE_SKEL, then bones that stay on the map (CORPSE_LIFE = never fades) —
-// the oldest dropped once CORPSE_MAX lie about (logic.js), bounding memory and
-// saves. See drawCorpse() in render-units.js.
-const CORPSE_SKEL=12000, CORPSE_LIFE=Infinity, CORPSE_MAX=200;
+// CORPSE_SKEL, then bones, fading out over the last 3s before CORPSE_LIFE (pruned
+// in render(), both views); CORPSE_MAX caps how many lie about at once (logic.js).
+// See drawCorpse() in render-units.js.
+const CORPSE_SKEL=12000, CORPSE_LIFE=45000, CORPSE_MAX=200;
 // Arrows that landed stay stuck where they hit — the ground (a miss), a unit's body (riding with it; they drop where
 // it falls), a building's wall — then fade. Cosmetic like corpses: the sim never reads them; keyed by the projectile's
 // id, so a lockstep rollback replaying the impact doesn't stick it twice. At most STUCK_PER_HOST in any one target.
@@ -998,7 +998,7 @@ function tendStuckArrows(){
 // Tick-based corpse lifetime for the headless simulator only: render.js prunes
 // corpses by wall-clock (CORPSE_LIFE ms), but headless never runs render(), so
 // it prunes by tick age instead to bound memory (~CORPSE_LIFE at 30 tps).
-const CORPSE_LIFE_TICKS=T30(750);
+const CORPSE_LIFE_TICKS=T30(1350);
 
 // ---- GAME STATE ----
 let map=[], entities=[], entitiesById=new Map(), corpses=[], selected=[], camX=0, camY=0, tick=0;

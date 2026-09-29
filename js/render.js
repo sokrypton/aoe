@@ -109,6 +109,8 @@ function render(){
   // tile-drawing loop below indexes map[y][x] assuming a fully populated
   // MAP x MAP grid, so bail out before that rather than crash.
   if (map.length === 0) return;
+  // Expired corpses go by wall-clock, so they still fade after game over (and under the 3D view, which returns below)
+  if (corpses.length && performance.now() - corpses[0].deathTime >= CORPSE_LIFE) corpses = corpses.filter(c => performance.now() - c.deathTime < CORPSE_LIFE);
   // The 3D view is the world view (js/pov3d.js): the 2D map isn't drawn under it; the minimap still is.
   if (window.world3D) { drawMinimap(); return; }
 
