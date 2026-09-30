@@ -2608,9 +2608,10 @@ function updateVillagerBuild(e){
         }
         if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
 
-        if(!checkNextBuild(e)){
-          autoTaskBuilder(e, bt);
-        }
+        // Next site, else the finished building's own work (a camp's resource, a farm), else properly IDLE — a builder
+        // with nothing next was left task 'build' with no target: neither working nor counted idle.
+        const handOff = u => { if(!checkNextBuild(u)){ u.task=null; autoTaskBuilder(u, bt); } };
+        handOff(e);
         // The whole crew is done, not just whoever landed the last tick: co-builders hand off the same way (a site
         // damaged while going up would otherwise turn them into PAID repairers the next tick).
         for(let i=0;i<entities.length;i++){
@@ -2618,7 +2619,7 @@ function updateVillagerBuild(e){
           if(u===e||u.type!=='unit'||u.task!=='build'||u.buildTarget!==bt.id)continue;
           u.buildTarget=null;
           if(u.buildQueue) u.buildQueue=u.buildQueue.filter(id=>id!==bt.id);
-          if(!checkNextBuild(u)) autoTaskBuilder(u, bt);
+          handOff(u);
         }
       }
     } else {

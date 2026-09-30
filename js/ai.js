@@ -58,6 +58,22 @@ function updateAIGarrisonReaction(ai){
     if(tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && tryAIMilitiaResponse(ai)){aiProbe('militia:t'+ai.team);return;}
     aiProbe('bell:t'+ai.team);
     ringTownBell(ai.team);
+  } else if(underAttack && window.bellRinging[ai.team] && tick%AI_ESCALATE_EVERY===0
+            && tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && aiMilitiaThreat(ai)){
+    // BREAK-OUT: hiding from a raid the villagers could mob (it shrank, or the army fell) starves the town for the rest
+    // of the game — two soldiers held whole economies in shelter for 18 game-minutes. Only the mob comes out (the
+    // nearest, up to the militia cap); the rest stay sheltered for the real all-clear — a whole-town all-clear here
+    // jammed every doorway as the town streamed out and back. (The same hold as the bell-time choice keeps a raid
+    // that outlives its mob from flipping hide/fight every second.)
+    let threat=aiMilitiaThreat(ai), cap=aiProfileFor(ai.team).civilianMilitia||0, inside=[];
+    for(const b of entities){
+      if(b.type!=='building'||b.team!==ai.team||!b.garrison||!b.garrison.length)continue;
+      for(const id of b.garrison){const u=entitiesById.get(id); if(u&&u.utype==='villager')inside.push({b,u,d:dist(footprintCenter(b),threat)});}
+    }
+    inside.sort((p,q)=>p.d-q.d||p.u.id-q.u.id);
+    let out=new Set(inside.slice(0,cap).map(p=>p.u.id));
+    for(const b of new Set(inside.filter(p=>out.has(p.u.id)).map(p=>p.b)))ejectGarrison(b,u=>out.has(u.id));
+    if(tryAIMilitiaResponse(ai))aiProbe('breakout:t'+ai.team);
   } else if(!underAttack && window.bellRinging[ai.team] && tick%AI_ESCALATE_EVERY===0){
     // (on the ~1s cadence: the reachability probe below was a full A* EVERY tick while a raider lurked — over half of
     // all pathfinding in a war)
@@ -85,24 +101,29 @@ function updateAIGarrisonReaction(ai){
 // the whole workforce hiding from one scout. Returns true if dispatched (the
 // caller then skips the bell); the militia-recall pass in updateAI releases
 // the mob once the raider dies or flees the town radius.
-function tryAIMilitiaResponse(ai){
+// The raider the villagers should mob, or null: a raid small enough (AI_MILITIA_MAX_THREAT) that the army can't answer.
+function aiMilitiaThreat(ai){
   let profile=aiProfileFor(ai.team);
-  let cap=profile.civilianMilitia||0;
-  if(cap<=0)return false;
-  let aiTC=teamTC(ai.team);
-  if(!aiTC)return false;
+  if((profile.civilianMilitia||0)<=0)return null;
+  if(!teamTC(ai.team))return null;
   let threat=findEnemyThreatNear(ai,AI_BASE_ALARM_RADIUS*aiScale());
-  if(!threat)return false;
+  if(!threat)return null;
   let raidPower=estimateLocalEnemyPower(ai,threat,10*aiScale());
-  if(raidPower>AI_MILITIA_MAX_THREAT)return false; // a real attack — hide, don't mob
+  if(raidPower>AI_MILITIA_MAX_THREAT)return null; // a real attack — hide, don't mob
   // The army handles it if it has comparable local strength — then the bell
   // still rings to tuck the villagers away while the soldiers fight.
   let armyPower=0;
   for(let e of entities){
-    if(e.team!==ai.team||e.type!=='unit'||e.utype==='scout'||!isArmyUnit(e.utype))continue;
+    if(e.team!==ai.team||e.type!=='unit'||e.utype==='scout'||!isArmyUnit(e.utype)||e.garrisonedIn)continue;
     if(dist(e,threat)<=12*aiScale())armyPower+=unitPower(e.utype);
   }
-  if(armyPower>=raidPower*0.5)return false;
+  if(armyPower>=raidPower*0.5)return null;
+  return threat;
+}
+function tryAIMilitiaResponse(ai){
+  let cap=aiProfileFor(ai.team).civilianMilitia||0;
+  let threat=aiMilitiaThreat(ai);
+  if(!threat)return false;
   let fighters=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager'
     &&!e.garrisonedIn&&e.task!=='garrison'&&!e.possessed);
   let committed=fighters.filter(v=>v.target===threat.id).length;
