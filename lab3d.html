@@ -43,7 +43,8 @@
     <label>attack <select id="lab-atk"><option value="0">base</option><option value="1">Forging</option><option value="2">Iron Casting</option></select></label>
     <label>armor <select id="lab-arm"><option value="0">tunic</option><option value="1">scale</option><option value="2">chain</option></select></label>
     <label><input type="checkbox" id="lab-fletch"> fletching</label></span>
-  <span class="g"><span class="l">Building</span><select id="lab-bldg"><option value="">—</option></select><span style="opacity:.6">(phase = build progress)</span></span>
+  <span class="g"><span class="l">Building</span><select id="lab-bldg"><option value="">—</option></select><span style="opacity:.6">(phase = build progress)</span>
+    <label><input type="checkbox" id="lab-dmg"> damage</label> <label>health <input id="lab-hp" type="range" min="0" max="1" step="0.01" value="1"></label><button id="lab-fall">collapse</button></span>
   <span class="g"><span class="l">Villager</span><button id="lab-female">♀ female</button>
     <label>resource <select id="lab-load"><option>wood</option><option>stone</option><option>gold</option><option value="food">wheat</option><option>wool</option><option>berries</option></select></label>
     <label>held tool <select id="lab-tool"><option value="">none</option><option>axe</option><option>pick</option><option>mallet</option><option>scythe</option></select></label></span>
@@ -233,10 +234,14 @@
     for (const c of bits.splice(0)) { scene.remove(c.m); c.m.geometry.dispose(); c.m.material.dispose(); } // (the villager's chips and dust: not on a building's stage)
     for (const p of puffs.splice(0)) { scene.remove(p.m); p.m.geometry.dispose(); p.m.material.dispose(); }
     const b = $('lab-bldg').value; if (!b) return;
-    site = LAB.building(b, +$('lab-age').value); site.btype = b; scene.add(site.obj);
+    site = $('lab-dmg').checked ? LAB.damaged(b, +$('lab-age').value) : LAB.building(b, +$('lab-age').value); site.btype = b; scene.add(site.obj);
+    if (site.setHp) site.setHp(+$('lab-hp').value);
     const B = new THREE.Box3().setFromObject(site.obj), sz = B.getSize(new THREE.Vector3());
     orbit.dist = Math.max(3, Math.max(sz.x, sz.y, sz.z) * 3.6); orbit.target.set(0, sz.y * 0.35, 0); orbit.pitch = 0.5; };
-  $('lab-bldg').onchange = pickBldg; $('lab-age').addEventListener('change', () => { if (site) pickBldg(); });
+  $('lab-bldg').onchange = pickBldg; $('lab-dmg').onchange = pickBldg;
+  $('lab-hp').oninput = () => { if (site && site.setHp) site.setHp(+$('lab-hp').value); };
+  $('lab-fall').onclick = () => { if (site && site.collapse) site.collapse(); else if (site) { $('lab-dmg').checked = true; pickBldg(); site.collapse(); } };
+  window.__labSite = () => site; // dev: scripted checks $('lab-age').addEventListener('change', () => { if (site) pickBldg(); });
 
   // Poses are rebuilt per frame from the phase (quantized to 1/120 of a cycle,
   // so a paused or slow view doesn't rebuild the same pose over and over).
@@ -246,8 +251,8 @@
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (playing) { t = (t + dt * +$('lab-speed').value / (site ? 8 : PERIOD[kind])) % 1; $('lab-phase').value = t; }
     $('lab-pv').textContent = t.toFixed(2);
-    if (site) { // a building: nothing else on stage
-      site.set(t);
+    if (site) { // a building: nothing else on stage (a damaged one: its fires by health, its collapse)
+      if (site.tick) site.tick(dt); else site.set(t);
       for (const k in T) T[k].obj.visible = false;
       if (current) current.visible = false; if (animal) animal.visible = false;
       placeCam(); renderer.render(scene, ortho || camera); return;

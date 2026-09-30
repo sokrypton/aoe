@@ -109,7 +109,8 @@ full tooling guide. Working rules:
 - One predicate/helper per concept (`isSoldierUnit`, `isRetreatingUnit`,
   `stashVillagerTask`, `stampBuildingFootprint`, `effectiveBuildCost`,
   `centerOf`/`centerTile` (fractional vs floored building centers — the split
-  is load-bearing), `mapToScreen` (render-side world→screen), `byId`/`show`
+  is load-bearing; `centerOf` is the render/3D centre, the SIM uses
+  `footprintCenter` since sim tile centres are integers), `mapToScreen` (render-side world→screen), `byId`/`show`
   (DOM)) — never re-spell the raw check or math at call sites.
 - AoE2 fidelity decisions and their AoE2-DE reference values live in
   `docs/aoe2-ai-behavior.md`; update its §11 table when closing a gap.

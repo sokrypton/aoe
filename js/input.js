@@ -1042,7 +1042,7 @@ function finishMobileUnitCommand(){
   // Only a plain walk keeps the selection (see the keep rule in doCommand);
   // every committed task deselects.
   if(hasSelectedMobileWalkOrder())return;
-  selected=[];
+  selected=selected.filter(s=>{let p=pendingOrderUI.get(s.id);return p&&p.farmFull&&tick-p.t<=INPUT_DELAY_TICKS+T30(30);});
   window.settingRally=false;
   window.settingGuard=false;
   window.settingGarrison=null;
@@ -2006,10 +2006,18 @@ function doCommand(sx,sy){
     let GATHERABLE_T = t0p && (t0p.t === TERRAIN.FOREST || t0p.t === TERRAIN.GOLD || t0p.t === TERRAIN.STONE || t0p.t === TERRAIN.BERRIES || t0p.t === TERRAIN.FARM);
     let unexplored = !seen; // `seen` (viewer fog) computed above for the marker color
     let plainWalk = !target && !buildTarget && !followTarget;
+    // A farm click fills the free farmer places near it; villagers past them get no farm (the engine says so) and
+    // stay selected for another order.
+    let farmDispatch = buildTarget && buildTarget.btype === 'FARM' && buildTarget.complete
+      && buildTarget.hp >= buildTarget.maxHp && !buildTarget.exhausted; // a healthy farm: dispatch, not a build
+    let farmSlots = farmDispatch ? farmSlotsNear(myTeam, buildTarget.x, buildTarget.y, movers)
+      : (plainWalk && !unexplored && t0p && t0p.t === TERRAIN.FARM) ? farmSlotsNear(myTeam, tile.x, tile.y, movers)
+      : Infinity;
     movers.forEach(s => {
-      let keep = unexplored || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
+      let farmFull = s.utype === 'villager' && farmSlots !== Infinity && farmSlots-- <= 0;
+      let keep = unexplored || farmFull || (plainWalk && !(s.utype === 'villager' && GATHERABLE_T));
       if(!keep) committedTask = true;
-      pendingOrderUI.set(s.id, { t: tick, keep });
+      pendingOrderUI.set(s.id, { t: tick, keep, farmFull });
     });
   }
 

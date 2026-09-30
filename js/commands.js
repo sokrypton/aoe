@@ -732,6 +732,7 @@ function execUnitCommand(cmd){
   // together instead of trickling in fastest-first. Solo orders run free.
   let groupSpeed = movers.length > 1
     ? Math.min(...movers.map(m => m.speed || 1)) : undefined;
+  let farmsFullTeam = null;
   movers.forEach(s => {
     s.groupSpeed = groupSpeed;
     s.gatherX = -1; s.gatherY = -1; s.prevTask = null; s.savedTask = null; // fully clear old state
@@ -791,7 +792,10 @@ function execUnitCommand(cmd){
           && !(buildTarget.btype === 'FARM' && buildTarget.exhausted)) {
         s.target = null; s.task = null; s.buildTarget = null;
         autoTaskBuilder(s, buildTarget, !isAITeam(s.team));
-        if (!s.task) { pathToBuilding(s, buildTarget); return; } // no resource found: plain walk to the camp
+        if (!s.task) { // no resource found (or every farm near it full): plain walk to the camp
+          if (buildTarget.btype === 'FARM') farmsFullTeam = s.team;
+          pathToBuilding(s, buildTarget); return;
+        }
         // A MATCHING load banks first (the deposit is on the way — the
         // return leg resumes the gather via prevTask); a MISMATCHED one
         // is lost the instant the order lands (AoE2), so the carry
@@ -860,8 +864,10 @@ function execUnitCommand(cmd){
         // team (information parity), same gate as canPlace (js/logic.js)
         // and findNearTile's gather scan.
         let unseen = tileHiddenForTeam(s.team, tileY*MAP + tileX);
-        if (gTask && !unseen) {
-          let g = claimGatherTileNear(s, t.t, tileX, tileY);
+        // null: every farm near the clicked one is full — the villager walks there and the player is told once.
+        let g = gTask && !unseen ? claimGatherTileNear(s, t.t, tileX, tileY) : null;
+        if (gTask && !unseen && !g) farmsFullTeam = s.team;
+        if (g) {
           s.task = gTask; s.gatherX = g.x; s.gatherY = g.y;
           // AoE2: a mismatched load is lost the INSTANT the gather order
           // lands — zeroing on the next sim tick left one rendered frame
@@ -873,7 +879,7 @@ function execUnitCommand(cmd){
           // co-gatherer to a distinct cheapest contact tile.
           pathToContact(s, {x:g.x, y:g.y, w:1, h:1}, contactClaims(s, p=>p.gatherX===g.x && p.gatherY===g.y));
         } else {
-          // Move command (also the unexplored-tile case): keep the
+          // Move command (also the unexplored-tile and full-farms cases): keep the
           // group's relative arrangement (see formOff above).
           let [ox, oy] = slotFor(s);
           s.task = null; issueMoveOrder(s, tileX + ox, tileY + oy);
@@ -913,6 +919,8 @@ function execUnitCommand(cmd){
       }
     }
   });
+  if (farmsFullTeam !== null)
+    feedbackFor(farmsFullTeam, () => showMsg('Farms full: ' + FARM_MAX_FARMERS + ' farmers per farm. Build another farm.'));
 }
 
 // ---- Shared building-placement primitives ----
@@ -1283,7 +1291,8 @@ function execCancelQueue(bldgId, idx, team){
   if (!utype) return;
   // Refund exactly what was paid: the free rescue villager (first villager while
   // 0 living) refunds nothing, so cancelling it can't mint resources.
-  let refund = unitTrainCost(bldg.team, utype, bldg.queue.slice(0, idx));
+  let refund = queuedCost(bldg, idx);
+  if (utype === 'villager' && bldg.freeVillagerQueued && bldg.queue.indexOf('villager') === idx) bldg.freeVillagerQueued = false;
   bldg.queue.splice(idx, 1);
   refundCost(bldg.team, refund);
   if (idx === 0) bldg.trainTick = 0;

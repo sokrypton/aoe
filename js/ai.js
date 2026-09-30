@@ -158,7 +158,7 @@ function updateAI(ai){
   // Field flee is event-driven: damageEntity (js/logic.js) stamps a danger
   // zone and runs a field-hit villager home at the moment of the hit.
   let alarmR=AI_BASE_ALARM_RADIUS*aiScale();
-  let tcCenter=centerOf(aiTC);
+  let tcCenter=footprintCenter(aiTC);
   // Militia recall: a raider beyond the town radius isn't worth chasing —
   // release the fighters back to work (savedTask restores in updateUnit).
   // Villagers only ever carry explicitAttack from tryAIMilitiaResponse, so
@@ -201,6 +201,8 @@ function updateAI(ai){
 // AI_STATES); the message broadcasts to every viewer.
 function maybeResignAI(ai,aiUnits){
   if(defeatedTeams[ai.team])return true;
+  // A player's own town on the Town AI (autopilot) never concedes for them: that's the player's call.
+  if(teamControllers[ai.team]&&teamControllers[ai.team].autopilot)return false;
   let vils=0,mils=0;
   for(let u of aiUnits){if(u.utype==='villager')vils++;else if(isArmyUnit(u.utype))mils++;}
   let hit=lastTeamHit&&lastTeamHit[ai.team];
@@ -331,7 +333,7 @@ function updateAIIntel(ai,aiTC){
   // Walls/rally/wave direction point at where the enemy was actually
   // ENCOUNTERED until a TC is found. Deterministic pick: min distance, id tiebreak.
   if(aiTC&&spotted.length){
-    let tcC=centerOf(aiTC),best=null,bd=Infinity;
+    let tcC=footprintCenter(aiTC),best=null,bd=Infinity;
     spotted.forEach(e=>{let d=dist(e,tcC);if(d<bd||(d===bd&&(!best||e.id<best.id))){bd=d;best=e;}});
     intel.contactX=Math.round(best.x);intel.contactY=Math.round(best.y);intel.contactTick=tick;
   }
@@ -795,11 +797,21 @@ function wallTileSealed(pt,team){
 // OPEN gate is passable to anyone, so it counts as a hole (walkable(-1) reads
 // every gate as closed, so isOpen is tested explicitly). `extraBlock`
 // optionally treats one tile as walled. Returns true = SEALED.
+// Flood-fill scratch for the base checks below: per-tile stamps (seen, and a pass() answer cached per call) instead of
+// string-keyed Sets — a call bumps the stamp, nothing to clear. Pure caches: the fills visit and answer as before.
+let _ffGen=0, _ffSeen=null, _ffPass=null, _ffPassGen=null;
+function ffBegin(){
+  if(!_ffSeen||_ffSeen.length!==MAP*MAP){_ffSeen=new Int32Array(MAP*MAP);_ffPass=new Uint8Array(MAP*MAP);_ffPassGen=new Int32Array(MAP*MAP);_ffGen=0;}
+  if(++_ffGen>=2147483647){_ffSeen.fill(0);_ffPassGen.fill(0);_ffGen=1;}
+  return _ffGen;
+}
+const ffCached=(gen,pass)=>(x,y)=>{if(x<0||y<0||x>=MAP||y>=MAP)return pass(x,y);const i=x+y*MAP; // (off the map: asked straight, never aliased)
+  if(_ffPassGen[i]!==gen){_ffPassGen[i]=gen;_ffPass[i]=pass(x,y)?1:0;}return _ffPass[i]===1;};
 function aiBaseSealed(aiTC,radius,extraBlock){
   let {x:cx, y:cy} = centerTile(aiTC);
   let R=Math.round(radius)+6, slack=2;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
-  let pass=(x,y)=>{
+  let pass0=(x,y)=>{
     if(extraBlock&&x===extraBlock.x&&y===extraBlock.y)return false;
     if(walkable(x,y,-1,true))return true;
     let t=map[y]&&map[y][x];
@@ -808,17 +820,18 @@ function aiBaseSealed(aiTC,radius,extraBlock){
         if(idx===Math.floor(Math.max(o.w,o.h)/2))return true; } } // open gate = doorway hole
     return false;
   };
-  let seen=new Set(), q=[], head=0;
-  let seed=(x,y)=>{ let k=x+','+y; if(!seen.has(k)&&pass(x,y)){seen.add(k);q.push([x,y]);} };
+  const gen=ffBegin(), pass=ffCached(gen,pass0), seen=_ffSeen;
+  let q=[], head=0;
+  let seed=(x,y)=>{ let k=x+y*MAP; if(seen[k]!==gen&&pass(x,y)){seen[k]=gen;q.push([x,y]);} };
   for(let x=loX;x<=hiX;x++){ seed(x,loY); seed(x,hiY); }
   for(let y=loY;y<=hiY;y++){ seed(loX,y); seed(hiX,y); }
   while(head<q.length){ let e=q[head++], x=e[0], y=e[1];
     if(Math.abs(x-cx)<=slack&&Math.abs(y-cy)<=slack)return false; // outside reached the TC → leak
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
-      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+','+ny;
-      if(seen.has(k)||!pass(nx,ny))continue;
+      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+ny*MAP;
+      if(seen[k]===gen||!pass(nx,ny))continue;
       if(dx&&dy&&(!pass(x+dx,y)||!pass(x,y+dy)))continue; // no corner-cut through a wall seam
-      seen.add(k); q.push([nx,ny]); } }
+      seen[k]=gen; q.push([nx,ny]); } }
   return true;
 }
 
@@ -829,19 +842,19 @@ function armyCanReachEnemy(ai,aiTC){
   let {x:cx, y:cy} = centerTile(aiTC);
   let R=(ai.wallRadiusUsed||8)+6;
   let loX=Math.max(0,cx-R),hiX=Math.min(MAP-1,cx+R),loY=Math.max(0,cy-R),hiY=Math.min(MAP-1,cy+R);
-  let pass=(x,y)=>walkable(x,y,aiTC.id,true);
+  const gen=ffBegin(), pass=ffCached(gen,(x,y)=>walkable(x,y,aiTC.id,true)), seen=_ffSeen;
   let sx=cx,sy=cy,seed=false;
   for(let r2=1;r2<=3&&!seed;r2++)for(let dy=-r2;dy<=r2&&!seed;dy++)for(let dx=-r2;dx<=r2&&!seed;dx++){
     if(pass(cx+dx,cy+dy)){sx=cx+dx;sy=cy+dy;seed=true;} }
   if(!seed)return true; // no courtyard to escape from → don't force a self-breach
-  let seen=new Set([sx+','+sy]), q=[[sx,sy]], head=0;
+  seen[sx+sy*MAP]=gen; let q=[[sx,sy]], head=0;
   while(head<q.length){ let e=q[head++], x=e[0], y=e[1];
     if(x<=loX||y<=loY||x>=hiX||y>=hiY)return true; // reached the box edge → army can leave
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ if(!dx&&!dy)continue;
-      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+','+ny;
-      if(seen.has(k)||!pass(nx,ny))continue;
+      let nx=x+dx,ny=y+dy; if(nx<loX||ny<loY||nx>hiX||ny>hiY)continue; let k=nx+ny*MAP;
+      if(seen[k]===gen||!pass(nx,ny))continue;
       if(dx&&dy&&(!pass(x+dx,y)||!pass(x,y+dy)))continue;
-      seen.add(k); q.push([nx,ny]); } }
+      seen[k]=gen; q.push([nx,ny]); } }
   return false;
 }
 
@@ -1445,6 +1458,22 @@ function queueAIMilitary(ai,readyBarracks,profile){
 }
 
 const AI_REBALANCE_MAX=2; // gatherers re-tasked per decision — gradual, avoids thrash
+
+// The wall-labor governor (see assignAIVillagers): WALL/GATE work gets at most a third of the workforce. Shared with
+// checkNextBuild, where a finished segment's builder would otherwise chain onto the next one forever.
+function isWallWork(b){return !!b&&(isWallBtype(b.btype)||isGateBtype(b.btype));}
+function aiWallBuilderCap(vilCount){return Math.max(2,Math.floor(vilCount/3));}
+function aiWallCrewFull(team,except){
+  let v=0,w=0;
+  for(let i=0;i<entities.length;i++){
+    const u=entities[i];
+    if(u.type!=='unit'||u.utype!=='villager'||u.team!==team||u.hp<=0)continue;
+    v++;
+    if(u!==except&&u.task==='build'&&isWallWork(entitiesById.get(u.buildTarget)))w++;
+  }
+  return w>=aiWallBuilderCap(v);
+}
+
 function assignAIVillagers(ai,vils,profile){
   let incompleteBuilds=entities.filter(en=>en.type==='building'&&en.team===ai.team&&(!en.complete || en.hp < en.maxHp));
   // Active re-tasking by need: the balancer below only re-picks for an IDLE
@@ -1461,8 +1490,7 @@ function assignAIVillagers(ai,vils,profile){
   // work to a third of the workforce; a healthy economy that walls slower
   // beats a frozen one that walls fast then starves. Houses/farms/barracks/TC
   // are uncapped — few, and economically essential.
-  let wallBuilderCap=Math.max(2,Math.floor(vils.length/3));
-  let isWallWork=b=>b&&(isWallBtype(b.btype)||isGateBtype(b.btype));
+  let wallBuilderCap=aiWallBuilderCap(vils.length);
   let wallBuilders=vils.filter(u=>u.task==='build'&&isWallWork(entitiesById.get(u.buildTarget))).length;
   let overSubscribed=(task)=>{
     if(!GATHER_TASKS[task])return false;
@@ -1705,6 +1733,12 @@ function aiEcoPlan(ai,vilCount,profile){
     if(base.farm)base.farm*=2;
     if(base.forage)base.forage*=2;
   }
+  // WOOD runs dry the same way — and it's what farms, houses and the army are built from: food spent as fast as it's
+  // gathered doubled the food share forever while wood sat at zero and the whole town stalled. Low wood gets the same
+  // doubling (not while saving for an age: that wants food/gold, below).
+  if(store.wood<150&&!ai.savingForAge)base.chop=(base.chop||1)*2;
+  // Gold with no spend in sight stops attracting hands: banked while wood is dry, one miner is plenty.
+  if(store.gold>300&&store.wood<150&&base.mine_gold)base.mine_gold=1;
   // Saving for the next age: bias gatherers toward the resources that age
   // actually COSTS. Gold always drops at the TC, so pointing more hands at
   // gold accrues the age price even with the gold camp unreachable — this is
@@ -1713,6 +1747,7 @@ function aiEcoPlan(ai,vilCount,profile){
     let next=teamAge[ai.team]+1;
     let cost=(AGES[next]&&AGES[next].cost)||{};
     if(cost.g&&store.gold<cost.g)   base.mine_gold=(base.mine_gold||1)+4;
+    else if(base.mine_gold)         base.mine_gold=1;   // the age's gold (if any) is banked
     if(cost.f&&store.food<cost.f){ if(base.farm)base.farm+=2; base.forage=(base.forage||1)+2; }
     // don't keep pouring hands into wood/stone the age-up (food/gold) doesn't need
     if(base.chop)base.chop=Math.max(1,Math.floor(base.chop/2));
@@ -1941,7 +1976,7 @@ function aiCampHolding(ai){return ai.campSince!=null&&!ai.campAssault;}
 // fire one unit at a time. Unit fights (skirmish) are never vetoed.
 function aiCampVeto(ai,t){
   if(!aiCampHolding(ai)||!t||t.type!=='building')return false;
-  return dist(centerOf(t),{x:ai.campX,y:ai.campY})<=AI_CAMP_R+10;
+  return dist(footprintCenter(t),{x:ai.campX,y:ai.campY})<=AI_CAMP_R+10;
 }
 function aiAttackCampControl(ai,mils,aiTC,profile){
   let intel=ai.intel;
@@ -1953,7 +1988,7 @@ function aiAttackCampControl(ai,mils,aiTC,profile){
   if(campers.length<AI_CAMP_MIN){clear();return;}
   if(ai.campSince==null){
     // Establish: a walkable picket on OUR side of the town, outside fire.
-    let home=centerOf(aiTC);
+    let home=footprintCenter(aiTC);
     let dx=home.x-etc.x, dy=home.y-etc.y, L=Math.max(0.001,simHypot(dx,dy));
     let cx=Math.round(etc.x+dx/L*AI_CAMP_R), cy=Math.round(etc.y+dy/L*AI_CAMP_R);
     cx=Math.max(1,Math.min(MAP-2,cx));cy=Math.max(1,Math.min(MAP-2,cy));
@@ -2018,7 +2053,7 @@ function controlAIMilitary(ai,mils,aiTC,profile){
 }
 
 function aiRetreatControl(ai,mils,aiTC,profile){
-  let tcHome=centerOf(aiTC);
+  let tcHome=footprintCenter(aiTC);
   // Per-unit health retreat. Runs first so fresh retreaters are excluded from
   // every dispatch below on this same decision tick. Directed sieges persist
   // (a ram/committed sieger holds under fire — the escort handles defenders);
@@ -2307,7 +2342,7 @@ function launchAIWave(ai,mils,aiTC,profile){
   // Every decision tick, any target-less soldier far from home is pointed at
   // the next objective, independent of the wave cooldown.
   {
-    let tcC0=centerOf(aiTC);
+    let tcC0=footprintCenter(aiTC);
     // FIXED 22-tile radius, not scaled: a scaled "near home" exemption let
     // mid-map camps of targetless survivors sit inside it un-re-pointed. The
     // forward rally posture parks ~16 tiles out at most, so 22 keeps home
@@ -2387,7 +2422,7 @@ function launchAIWave(ai,mils,aiTC,profile){
         }
       }
       let targetStrength=targetTeam!=null?sbt[targetTeam]:intel.strength;
-      let tcC=centerOf(aiTC);
+      let tcC=footprintCenter(aiTC);
       let allyPower=nearbyAlliedPower(ai,tcC,20*aiScale());
       if(availablePower+allyPower*0.5<targetStrength*requiredFactor){holding=true;aiProbe('holdIntel:t'+ai.team);}
     }
@@ -2681,7 +2716,7 @@ function findEnemyThreatNear(ai,range){
   
   playerUnits.forEach(pu => {
     aiBuildings.forEach(ab => {
-      let d = dist(centerOf(ab), pu);
+      let d = dist(footprintCenter(ab), pu);
       if (d <= range && d < minDist) {
         minDist = d;
         closestThreat = pu;
@@ -2860,7 +2895,7 @@ function findAIBuildSpot(ai,tc,type){
   // Measure from the TC CENTRE, not its origin corner — an origin-based
   // radius makes the reserved belt lopsided. tcHalf is the TC's half-extent.
   let tcHalf=Math.ceil(tc.w/2);
-  let {x:cx, y:cy} = centerOf(tc);
+  let {x:cx, y:cy} = footprintCenter(tc);
   // The MARKET is placed late, when the walled core is usually full — give it
   // a much larger radius so it can sit at the base edge/outside instead of
   // failing to place and never trading.

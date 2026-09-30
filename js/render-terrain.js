@@ -217,7 +217,7 @@ function drawStump(sx, cy, s, darken = false) {
   X.lineTo(sx - 3.2 * s, cy - 8 * s);
   X.closePath(); X.fill();
   
-  X.fillStyle = darken ? '#3a1e08' : '#8B4513';
+  X.fillStyle = darken ? darkenColor(TREE_BARK) : TREE_BARK;
   X.beginPath();
   X.moveTo(sx - 3.5 * s, cy + 2 * s);
   X.lineTo(sx + 3.5 * s, cy + 2 * s);
@@ -225,7 +225,7 @@ function drawStump(sx, cy, s, darken = false) {
   X.lineTo(sx - 2.2 * s, cy - 8 * s);
   X.closePath(); X.fill();
   
-  X.fillStyle = darken ? '#5a3a1b' : '#cd853f';
+  X.fillStyle = darken ? darkenColor(TREE_CUT) : TREE_CUT;
   X.beginPath();
   X.ellipse(sx, cy - 8 * s, 2.2 * s, 1.0 * s, 0, 0, Math.PI * 2); X.fill();
   X.strokeStyle = '#000000'; X.lineWidth = 1; X.stroke();
@@ -243,7 +243,7 @@ function drawFullTreeBody(sx, cy, s, darken = false) {
   X.fill();
   
   // B. Trunk Fill (Warm Rich Wood Brown)
-  X.fillStyle = darken ? '#3a1e08' : '#8B4513';
+  X.fillStyle = darken ? darkenColor(TREE_BARK) : TREE_BARK;
   X.beginPath();
   X.moveTo(sx - 2.5 * s, cy + 2 * s);
   X.lineTo(sx + 2.5 * s, cy + 2 * s);

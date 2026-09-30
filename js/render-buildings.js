@@ -1578,8 +1578,8 @@ function drawBuilding(e, part = null){
         // a growth ring), so market timber matches camp timber.
         // Lighter warm brown than the camp's — matches the crate's wood
         // palette so the wares corner reads as one set.
-        let logCol=darken?darkenColor('#9b7245'):'#9b7245';
-        let endCol=darken?darkenColor('#ebd2b0'):'#ebd2b0';
+        let logCol=darken?darkenColor(TREE_BARK):TREE_BARK;
+        let endCol=darken?darkenColor(TREE_CUT):TREE_CUT;
         const UX=0.894, UY=0.447;   // SE ground direction
         const VX=-0.894, VY=0.447;  // SW ground direction
         let isoLog=(lx,ly,L,r)=>{
@@ -1691,9 +1691,9 @@ function drawBuilding(e, part = null){
     drawDoorRight(sx+14, sy+8, 20, 10, '#5c3d24', darken);
     drawPennant(sx+14, sy-14, tc, darken);
     if(e.complete){
-      let logCol=darken ? darkenColor('#6e473b') : '#6e473b';
+      let logCol=darken ? darkenColor(TREE_BARK) : TREE_BARK;
       let logTop=darken ? darkenColor('#7d5344') : '#7d5344';
-      let endCol=darken ? darkenColor('#ebd2b0') : '#ebd2b0';
+      let endCol=darken ? darkenColor(TREE_CUT) : TREE_CUT;
       X.strokeStyle='#000000';X.lineWidth=1.2;
       // ISO log pile: logs lie along the tile's SE diagonal (screen slope
       // +0.5), cut ends facing the camera, stacked with real gravity —
@@ -1729,7 +1729,7 @@ function drawBuilding(e, part = null){
       drawIsoLog(lx, ly-4.5, 11, 4);           // stacked on top
       // Chopping stump: cylinder with a rounded base and pale cut top
       let cbx=sx+6, cby=sy+bhh*1.55;
-      let stumpC=darken ? darkenColor('#8a5a3a') : '#8a5a3a';
+      let stumpC=darken ? darkenColor(TREE_BARK) : TREE_BARK;
       X.fillStyle=stumpC;X.beginPath();
       X.moveTo(cbx-5,cby-7);X.lineTo(cbx-5,cby+2);
       X.ellipse(cbx,cby+2,5,2.6,0,Math.PI,0,true);   // rounded bottom

@@ -82,6 +82,9 @@ async function launchBrowser(headed) {
   throw new Error('could not launch a browser (install Chrome, or: cd tools && npx playwright install chromium)\n' + lastErr.message);
 }
 
+// stdout to a pipe is async on macOS: wait for the flush before process.exit.
+const out = s => new Promise(r => process.stdout.write(s, r));
+
 async function runOne(browser, base, cfg, timeoutMs) {
   const page = await browser.newPage();
   const pageErrors = [];
@@ -98,7 +101,9 @@ async function runOne(browser, base, cfg, timeoutMs) {
   try {
     await page.goto(base + '/tools/sim.html', { waitUntil: 'load' });
     await page.waitForFunction(() => typeof window.runSimulation === 'function', { timeout: 15000 });
-    const report = await page.evaluate(c => window.runSimulation(c), cfg);
+    let timer;
+    const wedged = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`seed ${cfg.seed}: no result after ${timeoutMs}ms (wedged sim or crashed page)`)), timeoutMs); });
+    const report = await Promise.race([page.evaluate(c => window.runSimulation(c), cfg), wedged]).finally(() => clearTimeout(timer));
     // Fold in any errors the driver saw that the in-page listener missed.
     report.health.jsErrors = report.health.jsErrors || [];
     for (const e of pageErrors)
@@ -183,7 +188,7 @@ function aggregate(reports) {
 
     if (runs === 1) {
       const rep = await runOne(browser, base, baseCfg, timeoutMs);
-      process.stdout.write(JSON.stringify(rep, null, 1) + '\n');
+      await out(JSON.stringify(rep, null, 1) + '\n');
       process.exitCode = (rep.health.jsErrors || []).length ? 1 : 0;
     } else {
       // PARALLEL batch: every run is an independent deterministic match in
@@ -212,13 +217,16 @@ function aggregate(reports) {
         }
       };
       await Promise.all(Array.from({length: jobs}, worker));
-      process.stdout.write(JSON.stringify(aggregate(reports), null, 1) + '\n');
+      await out(JSON.stringify(aggregate(reports), null, 1) + '\n');
       process.exitCode = reports.some(r => (r.health.jsErrors || []).length) ? 1 : 0;
     }
   } catch (err) {
     console.error('SIM HARNESS ERROR: ' + (err && err.stack || err));
     process.exitCode = 2;
   } finally {
-    cleanup();
+    // Exit rather than await a graceful Chrome shutdown (~10s, longer than an 80k-tick match); Playwright kills its
+    // browser on process exit.
+    if (srv) srv.close();
+    process.exit(process.exitCode || 0);
   }
 })();

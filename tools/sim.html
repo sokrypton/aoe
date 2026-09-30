@@ -119,6 +119,7 @@ window.runSimulation = async function(opts){
     // rollback check asked for it — it was the single biggest cost.
     window.__headlessSim = true;
     window.playSound = () => {};
+    window.initAudio = () => {}; // a real AudioContext costs ~0.1s per match
     window.showMsg = () => {};
     window.updateUI = () => {};
     DET.enabled = cfg.rollback; DET.strict = true; // Math.random-in-sim tripwire stays on
@@ -166,6 +167,11 @@ window.runSimulation = async function(opts){
         swalls: bldgs.filter(b => b.btype === 'SWALL' || b.btype === 'SGATE').length,
         pwalls: bldgs.filter(b => b.btype === 'WALL' || b.btype === 'GATE').length,
         mills: bldgs.filter(b => b.btype === 'MILL').length,
+        builders: units.filter(u => u.utype === 'villager' && u.task === 'build').length,
+        wallBuilders: units.filter(u => { if (u.utype !== 'villager' || u.task !== 'build') return false; const b = entitiesById.get(u.buildTarget); return !!b && (isWallBtype(b.btype) || isGateBtype(b.btype)); }).length,
+        farmers: units.filter(u => u.utype === 'villager' && u.task === 'farm').length,
+        maxPerFarm: (() => { const m = {}; let mx = 0; for (const u of units) if (u.utype === 'villager' && u.task === 'farm' && u.gatherX >= 0) { const f = farmAtTile(u.gatherX, u.gatherY, t, false); if (f) mx = Math.max(mx, m[f.id] = (m[f.id] || 0) + 1); } return mx; })(),
+        markets: bldgs.filter(b => b.btype === 'MARKET' && b.complete).length,
         ptowers: bldgs.filter(b => b.btype === 'PTOWER').length,
         towers: bldgs.filter(b => b.btype === 'TOWER').length,
         houses: bldgs.filter(b => b.btype === 'HOUSE').length,

@@ -199,6 +199,9 @@ function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 // The floor/non-floor split is load-bearing — mixing them shifts distances by
 // up to half a tile and desyncs AI decisions.
 function centerOf(e){ return { x: e.x + e.w / 2, y: e.y + e.h / 2 }; }
+// The SIM's footprint centre: sim coords put tile centres on integers (tiles x..x+w-1), so the middle is x+(w-1)/2.
+// centerOf is the render/3D world centre (a tile spans x..x+1 there) — never mix them.
+function footprintCenter(e){ return { x: e.x + (e.w - 1) / 2, y: e.y + (e.h - 1) / 2 }; }
 function centerTile(e){ return { x: e.x + Math.floor(e.w / 2), y: e.y + Math.floor(e.h / 2) }; }
 // Wall/gate material families: palisade (Dark) and stone (Feudal).
 function isWallBtype(bt){ return bt === 'WALL' || bt === 'SWALL'; }
@@ -609,6 +612,9 @@ function resetDefeatedTeams(){
 // plausible player id so team 2, 3, ... stay free for actual players —
 // gaia at 2 was exactly where the 3rd player's id would have landed.
 const GAIA_TEAM = 255;
+// One wood palette for trees and what's cut from them (trunks, stumps, felled trees, logs carried and piled): the
+// bark, and the pale cut face (a stump's top, a log's end).
+const TREE_BARK = '#6e473b', TREE_CUT = '#ebd2b0';
 // Real player teams only, indexed by team id; gaia has its own color below.
 // Entries 2+ are pre-picked for future players.
 const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800'];
@@ -1355,6 +1361,21 @@ function updateTeamVision(){
     }
   };
 
+  // A disk moved a step or two (same team, same sight): only where the two disks differ changes — -1 on the old
+  // disk's tiles outside the new one, +1 (and explored) on the new one's outside the old. The counts come out as a
+  // full remove + add would leave them; explored is monotonic, so the overlap was marked when the old disk went down.
+  const inDisk = (ox, oy, s) => s === 1 ? (Math.abs(ox) <= 1 && Math.abs(oy) <= 1) : (Math.abs(ox) <= s && Math.abs(oy) <= s && ox * ox + oy * oy <= s * s);
+  const shiftDisk = (t, ocx, ocy, ncx, ncy, s) => {
+    const offs = sightOffsets(s), group = allied[t], ddx = ncx - ocx, ddy = ncy - ocy;
+    for (let i = 0; i < offs.length; i += 2) {
+      const ox = offs[i], oy = offs[i + 1];
+      if (!inDisk(ox - ddx, oy - ddy, s)) { const tx = ocx + ox, ty = ocy + oy;             // left behind
+        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) { const k = ty * MAP + tx; for (let g = 0; g < group.length; g++) teamVisGrid[group[g]][k] -= 1; } }
+      if (!inDisk(ox + ddx, oy + ddy, s)) { const tx = ncx + ox, ty = ncy + oy;             // newly in sight
+        if (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) { const k = ty * MAP + tx; for (let g = 0; g < group.length; g++) { const u = group[g]; teamVisGrid[u][k] += 1; teamExploredGrid[u][k] = 1; } } }
+    }
+  };
+
   if (visionRebuild) { for (let t = 0; t < NUM_TEAMS; t++) teamVisGrid[t].fill(0); visStamps.clear(); visionRebuild = false; }
 
   visScanGen++;
@@ -1385,6 +1406,8 @@ function updateTeamVision(){
       cy = Math.round(e.y);
     }
     if (old && old.t === team && old.cx === cx && old.cy === cy && old.s === sight) { old.gen = gsig; continue; } // unchanged: keep its disk
+    if (old && old.t === team && old.s === sight && Math.abs(cx - old.cx) <= 2 && Math.abs(cy - old.cy) <= 2) {
+      shiftDisk(team, old.cx, old.cy, cx, cy, sight); old.cx = cx; old.cy = cy; old.gen = gsig; continue; } // stepped: the difference only
     if (old) applyDisk(old.t, old.cx, old.cy, old.s, -1); // moved / grew: drop the stale disk
     applyDisk(team, cx, cy, sight, +1);
     visStamps.set(e.id, { t: team, cx, cy, s: sight, gen: gsig });

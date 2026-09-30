@@ -191,6 +191,18 @@ async function withPage(browser, port, entry, fn){
       tc2.hp = 1;
       damageEntity({ atk: 9999, team: 1, range: 0, type: 'unit', utype: 'militia', id: 77777, x: tc2.x, y: tc2.y }, tc2);
       T.ok('losing the TC with a free villager queued mints nothing', tc2.hp <= 0 && s0.food === 0);
+      // ONE free villager per team: a second TC doesn't get its own (that pair could mint food via a cancel).
+      const tc3 = createBuilding('TC', 30, 15, 0), tc4 = createBuilding('TC', 30, 30, 0);
+      tc0.queue = []; tc0.freeVillagerQueued = false; s0.food = 0;
+      T.ok('first TC: free', queueUnit(tc3, 'villager').ok === true);
+      T.ok('second TC: not free while one is queued', queueUnit(tc4, 'villager').reason === 'resources');
+      // A PAID villager keeps its price even if every villager dies before the cancel (the refund was re-derived).
+      tc3.queue = []; tc3.freeVillagerQueued = false;
+      const v = createUnit('villager', 31, 31, 0);
+      s0.food = 50; queueUnit(tc3, 'villager');          // paid: a villager is alive
+      v.hp = 0; handleDeath(v, 1);                        // …then the last villager dies
+      execCancelQueue(tc3.id, 0, 0);
+      T.ok('cancelling a paid villager refunds 50 food after the villagers died (' + s0.food + ')', s0.food === 50);
       return T;
     })),
 
@@ -1033,6 +1045,183 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < T30(600); i++) update();
       T.ok('auto path does NOT spend a human\'s wood without prepaid', resources[0].wood === 100);
       T.ok('farm stays exhausted until reseeded deliberately', farm.exhausted);
+      return T;
+    })),
+
+    // ------------------------------------------------------ farmers per farm
+    // A farm takes FARM_MAX_FARMERS; a third villager sent to a full farm farms the next free plot. Real command shape.
+    'farm-max-farmers': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'FARM', x: 13, y: 9, team: 0 },
+          { b: 'FARM', x: 13, y: 12, team: 0 },
+          { u: 'villager', x: 16, y: 9, team: 0 },
+          { u: 'villager', x: 16, y: 10, team: 0 },
+          { u: 'villager', x: 16, y: 11, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farms = entities.filter(e => e.team === 0 && e.btype === 'FARM');
+      const vils = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      selected = vils;
+      execUnitCommand({ tileX: farms[0].x, tileY: farms[0].y });
+      for (let i = 0; i < T30(900); i++) update();
+      const on = f => vils.filter(v => (v.task === 'farm' || v.prevTask === 'farm') && farmAtTile(v.gatherX, v.gatherY, 0, false) === f).length;
+      T.ok('no farm over ' + FARM_MAX_FARMERS + ' farmers (' + on(farms[0]) + '+' + on(farms[1]) + ')', on(farms[0]) <= FARM_MAX_FARMERS && on(farms[1]) <= FARM_MAX_FARMERS);
+      T.ok('all three villagers farm', on(farms[0]) + on(farms[1]) === 3);
+      T.ok('farmers bring food home', resources[0].food > 0 || vils.some(v => v.carrying > 0));
+
+      // One farm, three villagers: two farm it, the third walks there idle, stays selected, and the player is told.
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'FARM', x: 13, y: 9, team: 0 },
+          { u: 'villager', x: 16, y: 9, team: 0 },
+          { u: 'villager', x: 16, y: 10, team: 0 },
+          { u: 'villager', x: 16, y: 11, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farm1 = entities.find(e => e.team === 0 && e.btype === 'FARM');
+      const vils1 = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      const msgs = [], showMsg0 = window.showMsg;
+      window.showMsg = m => msgs.push(m);
+      selected = vils1;
+      // the tap's shape: a healthy farm resolves as a dispatch buildTarget (input.js doCommand)
+      execUnitCommand({ tileX: farm1.x, tileY: farm1.y, buildTargetId: farm1.id });
+      window.showMsg = showMsg0;
+      const tasked = vils1.filter(v => v.task === 'farm').length;
+      T.ok('one farm: exactly ' + FARM_MAX_FARMERS + ' tasked (' + tasked + ')', tasked === FARM_MAX_FARMERS);
+      T.ok('the extra villager walks there untasked', vils1.some(v => !v.task && v.path.length > 0));
+      T.ok('player told the farm is full (' + msgs.join(' / ') + ')', msgs.some(m => /farmers per farm/.test(m)));
+      T.ok('selection kept', selected.length === 3);
+      for (let i = 0; i < T30(900); i++) update();
+      T.ok('never more than ' + FARM_MAX_FARMERS + ' on the farm', vils1.filter(v => v.task === 'farm' || v.prevTask === 'farm').length <= FARM_MAX_FARMERS);
+      return T;
+    })),
+
+    // ------------------------------------------------- builders take the near side, spread out
+    'build-crew-near-edge': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 6, y: 6, team: 0 },
+          { u: 'villager', x: 27, y: 21, team: 0 },
+          { u: 'villager', x: 27, y: 21, team: 0 },
+          { u: 'villager', x: 27, y: 22, team: 0 },
+          { u: 'villager', x: 27, y: 22, team: 0 },
+          { u: 'villager', x: 19, y: 10, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const rax = createBuilding('BARRACKS', 20, 20, 0);   // foundation: x 20..22
+      const farm = createBuilding('FARM', 13, 9, 0);       // foundation: x 13..14
+      for (const b of [rax, farm]) { b.complete = false; b.buildProgress = 0; b.hp = 1; } // unbuilt sites
+      const vils = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      const crew = vils.filter(v => v.x === 27), farmer = vils.find(v => v.x === 19);
+      selected = crew;
+      execUnitCommand({ tileX: 21, tileY: 21, buildTargetId: rax.id });
+      selected = [farmer];
+      execUnitCommand({ tileX: 13, tileY: 9, buildTargetId: farm.id });
+      const dest = u => u.path.length ? u.path[u.path.length - 1] : { x: Math.round(u.x), y: Math.round(u.y) };
+      const ends = crew.map(dest);
+      T.ok('each builder heads for its own tile (' + ends.map(t => t.x + ',' + t.y).join(' ') + ')', new Set(ends.map(t => t.x + ',' + t.y)).size === crew.length);
+      T.ok('all on the near (east) side', ends.every(t => t.x === 23));
+      const fd = dest(farmer);
+      T.ok('farm builder takes the near plot column (' + fd.x + ',' + fd.y + ')', fd.x === 14);
+      for (let i = 0; i < T30(600); i++) update();
+      T.ok('the crew is building', crew.every(v => v.task === 'build' && atBuildSite(v, rax)));
+      return T;
+    })),
+
+    // ------------------------------------------------- a destroyed building's garrison survives (AoE2)
+    'garrison-survives-destruction': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 6, y: 6, team: 0 },
+          { b: 'HOUSE', x: 20, y: 20, team: 0 },
+          { u: 'villager', x: 19, y: 20, team: 0 },
+          { u: 'villager', x: 19, y: 21, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const tower = createBuilding('TOWER', 24, 24, 0);
+      const vils = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      for (const v of vils) { v.garrisonedIn = tower.id; tower.garrison.push(v.id); }
+      tower.hp = 0; handleDeath(tower, 1);
+      T.ok('the tower is gone', !entitiesById.has(tower.id));
+      T.ok('its villagers are alive and outside', vils.every(v => v.hp > 0 && entitiesById.has(v.id) && !v.garrisonedIn));
+      T.ok('ejected onto tile centres', vils.every(v => Number.isInteger(v.x) && Number.isInteger(v.y)));
+      return T;
+    })),
+
+    // ------------------------------------------------- spawn never into a sealed pocket
+    // A training building whose spawn corner is wedged into forest must not birth units there (they could never leave).
+    'spawn-not-in-pocket': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 6, y: 6, team: 0 },
+          { b: 'BARRACKS', x: 20, y: 20, team: 0 },   // x,y 20..22: the spawn corner is (23,23)
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      for (const [x, y] of [[22,23],[22,24],[23,24],[24,24],[24,23],[24,22],[23,22]]) {
+        const t = map[y][x]; t.t = TERRAIN.FOREST; t.res = 100; t.occupied = null; markMapDirty(x, y);
+      }
+      T.ok('the corner is a sealed pocket', walkable(23, 23) && !tileOpensOut(23, 23));
+      const rax = entities.find(e => e.btype === 'BARRACKS');
+      resources[0].food = 500; resources[0].gold = 500;
+      rax.queue.push('militia');
+      for (let i = 0; i < T30(1200) && !entities.some(e => e.utype === 'militia'); i++) update();
+      const m = entities.find(e => e.utype === 'militia');
+      T.ok('the militia was trained', !!m);
+      T.ok('it spawned onto open ground (' + (m && m.x) + ',' + (m && m.y) + ')', !!m && !(Math.round(m.x) === 23 && Math.round(m.y) === 23) && tileOpensOut(Math.round(m.x), Math.round(m.y)));
+      return T;
+    })),
+
+    // ------------------------------------------------- exhausted farm: idle in the middle
+    // AoE2: with no reseed paid, the player's farmer stands idle in the centre of its dry plot; any order ends that.
+    'farm-exhausted-idle': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 8, y: 8, team: 0 },
+          { b: 'FARM', x: 13, y: 9, team: 0 },
+          { u: 'villager', x: 13, y: 9, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farm = entities.find(e => e.team === 0 && e.btype === 'FARM');
+      const v = entities.find(e => e.team === 0 && e.utype === 'villager');
+      v.task = 'farm'; v.gatherX = farm.x; v.gatherY = farm.y;
+      resources[0].wood = 0; resources[0].prepaidFarms = 0;
+      map[farm.y][farm.x].res = 3; // the next bites drain it: the real exhaustion path
+      let exhaustedAt = -1;
+      for (let i = 0; i < T30(1500); i++) { update(); if (exhaustedAt < 0 && farm.exhausted) exhaustedAt = i; }
+      const cx = farm.x + 0.5, cy = farm.y + 0.5, d = Math.hypot(v.x - cx, v.y - cy);
+      T.ok('the farm ran dry', farm.exhausted);
+      T.ok('farmer idles (task=' + v.task + ')', !v.task && v.idleFarm === farm.id);
+      T.ok('farmer stands in the middle of the plot (d=' + d.toFixed(2) + ')', d <= 0.25);
+      selected = [v];
+      execUnitCommand({ tileX: 20, tileY: 14 });
+      for (let i = 0; i < T30(900); i++) update();
+      T.ok('a move order ends the wait', v.idleFarm == null && Math.hypot(v.x - 20, v.y - 14) < 1.5);
       return T;
     })),
 

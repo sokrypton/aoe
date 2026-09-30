@@ -4888,7 +4888,7 @@ function drawUnit(e){
             // atop the other — no tilt, no stagger
             X.save();
             const slog=(lx,ly)=>{
-              X.fillStyle='#6e473b';X.beginPath();
+              X.fillStyle=TREE_BARK;X.beginPath();
               X.moveTo(lx+1.8,ly-1.9);X.lineTo(lx-2.2,ly-1.9);
               X.arc(lx-2.2,ly,1.9,-Math.PI/2,Math.PI/2,true);
               X.lineTo(lx+1.8,ly+1.9);X.closePath();X.fill();X.stroke();
@@ -4908,7 +4908,7 @@ function drawUnit(e){
           const log=(lx,ly)=>{
             // body: flat at the grain end, ROUNDED cap at the far end —
             // a sawn log is blunt, not square-cut on both faces
-            X.fillStyle='#6e473b';X.beginPath();
+            X.fillStyle=TREE_BARK;X.beginPath();
             X.moveTo(lx+0.5,ly-1.7);X.lineTo(lx-8.6,ly-1.7);
             X.arc(lx-8.6,ly,1.7,-Math.PI/2,Math.PI/2,true);
             X.lineTo(lx+0.5,ly+1.7);X.closePath();X.fill();X.stroke();

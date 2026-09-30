@@ -1509,6 +1509,20 @@ function pageSuite() {
       assertEq(r.sel, 0, 'enabling auto-scout deselects the scout');
     });
 
+    await tapT('farm tap: villagers past the farm\'s room stay selected; the ones that fit deselect', async () => {
+      const stage = n => tapStage(`
+        const f=createBuilding('FARM',30,30,0); f.complete=true; f.buildProgress=f.buildTime;
+        selected=[]; for(let i=0;i<${n};i++) selected.push(createUnit('villager',34,30+i,0));
+        window.__pts=(scr)=>({ f: scr(30.5,30.5) });`);
+      const tap = pts => page.evaluate(`(()=>{ handleTap(${pts.f.x}, ${pts.f.y}, false);
+        return { sel: selected.length, cmds: window.__cmds.length }; })()`);
+      let r = await tap(await page.evaluate(stage(3)));
+      assertEq(r.cmds, 1, 'one gather command issued');
+      assertEq(r.sel, 1, 'the villager with no farm place stays selected');
+      r = await tap(await page.evaluate(stage(2)));
+      assertEq(r.sel, 0, 'villagers that all fit deselect (assign and move on)');
+    });
+
     await tapT('game over: See Map is view-only — no select, box-select or command over the frozen map', async () => {
       const r = await page.evaluate(tapStage(`
         const m=createUnit('militia',30,30,0);

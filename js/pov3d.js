@@ -234,6 +234,14 @@
       const c = rgb(cols[(x * 7 + y * 13) % cols.length]);
       groundData[i] = c[0]; groundData[i + 1] = c[1]; groundData[i + 2] = c[2]; groundData[i + 3] = 255;
     }
+    // A building shows at ONE fog level, as 2D draws it (buildingFogLevel): its whole footprint takes that level in the
+    // fog texture, so a building half on unexplored ground isn't half black
+    for (const e of entities) {
+      if (e.type !== 'building' || e.hp <= 0 || !bldgVisible(e)) continue;
+      const lv = buildingFogLevel(e) === 2 ? 255 : 140, b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
+      for (let y = e.y; y < e.y + h; y++) for (let x = e.x; x < e.x + w; x++) {
+        if (x < 0 || y < 0 || x >= MAP || y >= MAP) continue; const i = ((MAP - 1 - y) * MAP + x) * 4; if (fowData[i] < lv) fowData[i] = lv; }
+    }
     // Building shadows baked into the ground, tile by tile (16% darker under each footprint, as 2D's 16% black): on the
     // grid, once per tile however many pieces meet there (a wall run never doubles up); farms and the open market none.
     for (const e of entities) {
@@ -269,7 +277,7 @@
       // surfaces over the outline hulls (else they fight at grazing angles).
       m = new THREE.MeshLambertMaterial({ color, side: twoSided ? THREE.DoubleSide : THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       if (detail) withDetail(m, detail);
-      m.userData.detail = detail;
+      m.userData.detail = detail; m.userData.plain = !detail;             // (plain: a colour and nothing more — a rig merges these)
       mats.set(k, m);
       // made in the cached poses' placeholder team colour (or its light tint): a clone swaps it for the real team's
       if (color === VIL_TC) tcSwaps.set(m, t => mat(t + col.slice(VIL_TC.length), twoSided));
@@ -359,12 +367,14 @@
   }
   const occupantAt = (x, y) => { const row = map[y], cell = row && row[x]; return cell && cell.occupied != null ? entitiesById.get(cell.occupied) : null; };
   function refreshWall(e){
-    const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), key = wallKey(e, arms);
+    const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), hurt = isHurt(e), key = wallKey(e, arms) + (hurt ? ':hurt' : '');
     let rec = solids.get(e.id);
     if (rec && rec.key === key) return;
     if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
     const r = wallModel(e, arms); r.obj.userData.bid = e.id;
-    if (!e.complete) { const b = BLDGS[e.btype]; r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
+    const b = BLDGS[e.btype];
+    if (!e.complete) { r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
+    else if (hurt) { r.dmg = buildingDamage(r.obj, e.x, e.y, e.w || b.w, e.h || b.h); r.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
     scene.add(r.obj); solids.set(e.id, { ...r, key });
   }
   // The links a wall/gate e draws to its same-team wall-like neighbors (at(x, y) → the entity there); shared(n):
@@ -653,7 +663,7 @@
     m.add(new THREE.LineSegments(own(new THREE.EdgesGeometry(plain, thresh)), ink));
     if (rims.length) { const rl = new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), ink); rl.userData.rims = true; m.add(rl); }
     m.userData.hullGeo = plain; m.userData.T = depth;
-    m.userData.slab = () => thickGeo(faces, depth, cols.length);                    // (a site's walls: real slabs)
+    m.userData.slab = jag => thickGeo(faces, depth, cols.length, jag);                    // (a site's walls: real slabs)
     m.userData.slabRims = () => { const r = []; solidGeo(faces, depth, cols.length, true, r, true); return r; }; // (their openings' frames, back edge on the inner face)
     g.add(m); return m;
   }
@@ -743,17 +753,24 @@
     g.add(m); return m;
   };
   // A small team pennant (drawPennant: 8px pole, 7px triangle flag).
+  // A camp's little team pennant: it swings on its pole (animateModels, the 'pennant' pivot); damaged, it comes down
+  // with the big flags (buildingDamage: 'flagPole').
   function pennant(g, x, z, y0, col){
-    pole(g, '#1c1208', [x, y0, z], [x, y0 + 8 / HPX, z], 0.012, 'line');
+    pole(g, '#1c1208', [x, y0, z], [x, y0 + 8 / HPX, z], 0.012, 'line').name = 'flagPole';
     const t = own(new THREE.BufferGeometry());
     t.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 7 / 32, -2 / HPX, 0, 0, -4 / HPX, 0], 3));
     t.computeVertexNormals();
-    g.add(inked(t, mat(col, true), x, y0 + 8 / HPX, z, 1, 1, 1));
+    const pv = new THREE.Group(); pv.name = 'pennant'; pv.position.set(x, y0 + 8 / HPX, z); pv.userData.phase = (x * 3.7 + z * 5.3) % 6.28;
+    pv.add(inked(t, mat(col, true), 0, 0, 0, 1, 1, 1)); g.add(pv);
   }
-  // A faceted boulder.
-  const rock = (g, col, x, z, r) => { // lowest vertex on the ground; small stones get a thinner outline
-    const m = inked(own(new THREE.DodecahedronGeometry(r, 0)), mat(col), x, r * 0.55 * 0.93, z, 1.1, 0.55, 1);
-    m.userData.hullW = Math.min(HULL, r * 0.25); g.add(m);
+  // A stone boulder as the map's deposits draw them (initFeatures 'stone'): the same squat spun profile, flat-shaded, in
+  // their greys; radius r, height h.
+  let _oreGeo = null; const _oreMat = new Map();
+  const rock = (g, col, x, z, r, h = r * 1.7) => {
+    _oreGeo = _oreGeo || (() => { const q = new THREE.LatheGeometry([[0, 0], [0.95, 0], [1.02, 0.35], [0.82, 0.74], [0.4, 0.98], [0, 1]].map(([a, b]) => new THREE.Vector2(a, b)), 7).toNonIndexed(); q.computeVertexNormals(); return q; })();
+    let m0 = _oreMat.get(col); if (!m0) _oreMat.set(col, m0 = new THREE.MeshLambertMaterial({ color: col, flatShading: true }));
+    const m = new THREE.Mesh(_oreGeo, m0); m.position.set(x, 0, z); m.scale.set(r, h, r); m.rotation.y = x * 7.1 + z * 3.3;
+    m.userData.hullGeo = _oreGeo; g.add(m); return m;                                 // (an outline, no inner edge lines: as the deposits)
   };
   // The market stall canopy (drawBuilding MARKET stall): FLAT at height y0 over
   // the square, split along the back→front diagonal; each half fans from its
@@ -831,8 +848,8 @@
   // loop() as the art's travelling wave (aTick; viewer-only). s: the building's art scale (the TC's k), cloth included.
   function flag(g, x, z, y0, h, col, s = 1){
     const poleH = h != null ? h : 22 / HPX;
-    pole(g, '#1c1208', [x, y0, z], [x, y0 + poleH, z], 0.012, 'line'); // thin, as the art's 1.5px stroke
-    g.add(inked(own(new THREE.SphereGeometry(0.03 * s, 8, 6)), mat('#1c1208'), x, y0 + poleH + 0.02 * s, z, 1, 1, 1, 30));
+    pole(g, '#1c1208', [x, y0, z], [x, y0 + poleH, z], 0.012, 'line').name = 'flagPole'; // thin, as the art's 1.5px stroke
+    const knob = inked(own(new THREE.SphereGeometry(0.03 * s, 8, 6)), mat('#1c1208'), x, y0 + poleH + 0.02 * s, z, 1, 1, 1, 30); knob.name = 'flagPole'; g.add(knob);
     const L = 17 * s / PX, Hf = 8.5 * s / HPX, geo = own(new THREE.PlaneGeometry(L, Hf, 8, 1).translate(L / 2, -Hf / 2, 0));
     geo.userData.rest = Float32Array.from(geo.attributes.position.array);
     const f = new THREE.Mesh(geo, mat(col, true));
@@ -892,7 +909,7 @@
       const a = ageOf(e), x0 = e.x, z0 = e.y, x1 = e.x + 1, z1 = e.y + 1, box = [x0, z0, x1, z1];
       const wallH = 16 / HPX, roofH = 20 / HPX, tc = teamColor(e.team);
       const wall = a === 0 ? WOOD.plankL : AGE_WALLS[Math.min(a, 2)].gl, beam = a >= 2 ? '#57432e' : WOOD.beam;
-      const thick = 0.035, rise = roofH - thick, f = houseFaces(x0, z0, x1, z1, wallH, rise, true, !e.complete);
+      const thick = 0.035, rise = roofH - thick, f = houseFaces(x0, z0, x1, z1, wallH, rise, true, !e.complete || e.openTop);
       f.z0.holes.push(hole('z0', box, 0.5, SILL, 0.2, wallH * 0.85)); // the door, round the back: the art shows none
       solid(g, wall + (a === 0 ? '|planks' : '|plaster'), Object.values(f));
       if (a > 0) for (const f of FACES) { // half-timber frame: two studs, a mid-rail between them
@@ -960,7 +977,7 @@
       const BP = (A, B) => ({ x: x + s + (0.406 + B / 32 - 1) * s, z: z + s + (1.031 - A / 32 - 1) * s });
       const h0 = BP(30, -13), h1 = BP(-30, 13), wallH = 24 * s / HPX, roofH = 12 * s / HPX;
       const wall = AGE_WALLS[Math.min(a, 2)].gl, hall = [h0.x, h0.z, h1.x, h1.z];
-      const f = houseFaces(...hall, wallH, roofH, false, !e.complete);
+      const f = houseFaces(...hall, wallH, roofH, false, !e.complete || e.openTop);
       f.z1.holes.push(hole('z1', hall, 0.5, SILL, 0.42, wallH * 0.7));                 // door, lit gable end
       for (const u of [0.18, 0.38, 0.62, 0.82]) f.x1.holes.push(hole('x1', hall, u, wallH * 0.46, 0.2, 0.19));
       solid(g, wall + '|plaster', Object.values(f));
@@ -1016,15 +1033,15 @@
       if (!e.complete) return;
       // Everything inside the tile, in front of the hut (z > 0.625), the pile lower than its walls.
       const rr = 0.075, lz = e.y + 0.81;
-      for (const dz of [-rr, rr]) log(g, '#6e473b', e.x + 0.29, lz + dz, 0.5, rr, true, rr, '#ebd2b0');
-      log(g, '#6e473b', e.x + 0.29, lz, 0.5, rr, true, rr * (1 + Math.sqrt(3)), '#ebd2b0'); // resting in the two's groove
-      round(g, '#8a5a3a', e.x + 0.8, e.y + 0.82, 0.1, 0.1, 0, 9 / HPX, 12, true, '#ebd2b0'); // stump with a pale cut top
+      for (const dz of [-rr, rr]) log(g, TREE_BARK, e.x + 0.29, lz + dz, 0.5, rr, true, rr, TREE_CUT);
+      log(g, TREE_BARK, e.x + 0.29, lz, 0.5, rr, true, rr * (1 + Math.sqrt(3)), TREE_CUT); // resting in the two's groove
+      round(g, TREE_BARK, e.x + 0.8, e.y + 0.82, 0.1, 0.1, 0, 9 / HPX, 12, true, TREE_CUT); // stump with a pale cut top
       return hut;
     },
-    // Same hut in dark stone; in front, an ore cart heaped with gold nuggets
+    // Same hut in dark timber; in front, an ore cart heaped with gold nuggets
     // and a pair of boulders (drawBuilding MCAMP), laid out clear of each other.
     MCAMP(g, e){
-      campHut(g, e, '#7a6a55|stone', '#55483a|shingles');
+      campHut(g, e, '#7a6a55|planks', '#55483a|shingles');                        // (the 2D art's dark timber mine shed)
       if (!e.complete) return;
       // Inside the tile, in front of the hut (z > 0.625): a two-wheeled handcart
       // heaped with gold nuggets — the tray rides on the axle between two big
@@ -1038,7 +1055,7 @@
         const sz2 = c.z + sz * (Wd - 0.02); // shaft: tray front → ground
         pole(g, '#6e5138', [c.x - L, y0 + 0.02, sz2], [e.x + 0.03, 0.0125, sz2], 0.0125);
       }
-      for (const [x, z, r] of [[0.8, 0.8, 0.16], [0.6, 0.96, 0.06]]) rock(g, '#8b8b8b', e.x + x, e.y + z, r);
+      for (const [x, z, r, col] of [[0.8, 0.8, 0.15, '#9d9d9d'], [0.6, 0.96, 0.07, '#8c8c8c']]) rock(g, col, e.x + x, e.y + z, r);
     },
     // Tapered tower (8-sided plank in the Dark Age, round masonry after) with
     // a door, a wooden cone cap and turning canvas sails (drawBuilding MILL).
@@ -1061,7 +1078,8 @@
       const ap = Math.cos(Math.PI / seg), A = r0 * ap, B = (r0 - r1) / H * ap, K = Math.tan(Math.PI / 6);
       const D0 = r1 + 0.1, y0 = H + 0.06, D = Math.max(D0, (A - B * (y0 - D0 * K - 1) + 0.05) / (1 + B * K)), hy = y0 + (D - D0) * K;
       const shaft = own(new THREE.CylinderGeometry(0.04, 0.04, D - r1 * 0.5, 8).rotateX(Math.PI / 2).rotateY(Math.PI / 4));
-      g.add(inked(shaft, mat(WOOD.beam), c.x + (D + r1 * 0.5) / 2 * Math.SQRT1_2, hy, c.y + (D + r1 * 0.5) / 2 * Math.SQRT1_2, 1, 1, 1, 30));
+      const sh = inked(shaft, mat(WOOD.beam), c.x + (D + r1 * 0.5) / 2 * Math.SQRT1_2, hy, c.y + (D + r1 * 0.5) / 2 * Math.SQRT1_2, 1, 1, 1, 30);
+      sh.name = 'millShaft'; g.add(sh);                                          // (goes with the sails when it's damaged)
       const hub = new THREE.Group(), spin = new THREE.Group();
       hub.position.set(c.x + D * Math.SQRT1_2, hy, c.y + D * Math.SQRT1_2);
       hub.rotation.y = Math.PI / 4;
@@ -1105,25 +1123,25 @@
     MARKET(g, e){
       const x = e.x, z = e.y, W = e.w || 3, tc = teamColor(e.team), H = 20 / HPX;
       patch(g, '#b7b2a6|slabs', x, z, x + W, z + W);
-      const r = 21 / 32 / 2;
+      const r = 21 / 32 / 2, gd = new THREE.Group(); gd.name = 'goods'; g.add(gd); // (the goods: gone with the awnings when it's damaged)
       for (const [tx, tz, good] of [[0, 0, 'sacks'], [0, W - 1, 'gold'], [W - 1, 0, 'stone']]) {
         const cx = x + tx + 0.5, cz = z + tz + 0.5;
         for (const [px, pz] of [[-r, -r], [r, -r], [-r, r], [r, r]]) post(g, cx + px, cz + pz, H - 0.025, WOOD.post, 0.028); // under the canopy, outline included
         awning(piece(g), cx, cz, r + 0.02, H, '#efe7d2', tc);
         if (!e.complete) continue;                                                            // (the goods come with the finished market)
         // drawGood: plump grain sacks / a pyramid of gold bars / squared stone blocks
-        if (good === 'sacks') for (const [dx, dz] of [[-0.14, 0.03], [0.14, -0.03]]) ball(g, '#c9a86a', cx + dx, 0.12, cz + dz, 0.13, 0.92);
+        if (good === 'sacks') for (const [dx, dz] of [[-0.14, 0.03], [0.14, -0.03]]) ball(gd, '#c9a86a', cx + dx, 0.12, cz + dz, 0.13, 0.92);
         if (good === 'gold') for (const [i, layer] of [[0, 0], [1, 0], [2, 0], [0.5, 1], [1.5, 1], [1, 2]]) {
           const bx = cx - 0.2 + i * 0.14, y = layer * 0.075;
-          boxAt(g, '#e8b90f', bx - 0.065, cz - 0.12, bx + 0.065, cz + 0.12, y, y + 0.075);
+          boxAt(gd, '#e8b90f', bx - 0.065, cz - 0.12, bx + 0.065, cz + 0.12, y, y + 0.075);
         }
         if (good === 'stone') for (const [dx, dz, sz, y] of [[-0.13, -0.05, 0.11, 0], [0.13, 0.05, 0.11, 0], [0, 0, 0.1, 0.2]]) // two blocks, one across them
-          boxAt(g, '#9a9a9a', cx + dx - sz, cz + dz - sz, cx + dx + sz, cz + dz + sz, y, y + 0.2);
+          boxAt(gd, '#9a9a9a', cx + dx - sz, cz + dz - sz, cx + dx + sz, cz + dz + sz, y, y + 0.2);
       }
       if (!e.complete) return;
       const cr = { x: x + 2.47, z: z + 2.22 }, lg = { x: x + 2.52, z: z + 2.64 }; // on the front tile, clear of each other
-      boxAt(g, WOOD.plankL + '|planks', cr.x - 0.2, cr.z - 0.2, cr.x + 0.2, cr.z + 0.2, 0, 0.36);
-      for (const [dz, y] of [[-0.1, 0.09], [0.1, 0.09], [0, 0.09 + Math.sqrt(0.18 * 0.18 - 0.1 * 0.1)]]) log(g, '#6e473b', lg.x, lg.z + dz, 0.55, 0.09, true, y, '#ebd2b0');
+      boxAt(gd, WOOD.plankL + '|planks', cr.x - 0.2, cr.z - 0.2, cr.x + 0.2, cr.z + 0.2, 0, 0.36);
+      for (const [dz, y] of [[-0.1, 0.09], [0.1, 0.09], [0, 0.09 + Math.sqrt(0.18 * 0.18 - 0.1 * 0.1)]]) log(gd, TREE_BARK, lg.x, lg.z + dz, 0.55, 0.09, true, y, TREE_CUT);
     },
   };
   MODELS.PTOWER = MODELS.TOWER;
@@ -1225,10 +1243,10 @@
     const crown = crowns[0];
     part('trunk', trunk, sway, one, HULL, hullSway);
     crowns.forEach((c, i) => part('crown' + i, c, leaf, one, HULL, hullCrown));
-    part('trunkF', trunk, new THREE.MeshLambertMaterial({ color: '#8B4513' }), one, HULL); // felled: no sway
+    part('trunkF', trunk, new THREE.MeshLambertMaterial({ color: TREE_BARK }), one, HULL); // felled: no sway
     part('crownF', crown, new THREE.MeshLambertMaterial({ color: '#4db536' }), one, HULL);
     part('stump', new THREE.CylinderGeometry(TRUNK_R * 1.1, TRUNK_R * 1.5, STUMP_H, 12).translate(0, STUMP_H / 2, 0),
-      [mat('#8B4513'), mat('#cd853f'), mat('#8B4513')], one, HULL); // drawStump: a pale cut top
+      [mat(TREE_BARK), mat(TREE_CUT), mat(TREE_BARK)], one, HULL); // drawStump: a pale cut top
     // Ore boulders: a low-poly spun profile, flat-shaded; colored per instance.
     const rock = new THREE.LatheGeometry([[0, 0], [0.95, 0], [1.02, 0.35], [0.82, 0.74], [0.4, 0.98], [0, 1]].map(([a, b]) => new THREE.Vector2(a, b)), 7).toNonIndexed();
     rock.computeVertexNormals();
@@ -1295,7 +1313,7 @@
           const h = n => tileHash(x, y, n);
           const tx = wx + (h(1) - 0.5) * 0.2, tz = wz + (h(2) - 0.5) * 0.2, rot = h(3) * 6.283, kw = k * (0.9 + h(4) * 0.2), kh = k * (0.9 + h(5) * 0.22);
           shade(0.36 * CROWN_K * kw, tx, tz);
-          put('trunk', tx, 0, tz, kw, kh, kw, rot, _c2.setRGB(0.545, 0.271, 0.075, THREE.SRGBColorSpace).multiplyScalar(0.9 + h(6) * 0.2).getHex());
+          put('trunk', tx, 0, tz, kw, kh, kw, rot, _c2.set(TREE_BARK).multiplyScalar(0.9 + h(6) * 0.2).getHex());
           put('crown' + Math.floor(h(7) * 3), tx, 0, tz, kw, kh, kw, rot, _c2.setHSL(0.31 + (h(8) - 0.5) * 0.05, 0.54, 0.46 + (h(9) - 0.5) * 0.1, THREE.SRGBColorSpace).getHex());
           continue;
         }
@@ -1612,7 +1630,7 @@
     // the fire: nested cones out of the mouth (+x), glowing where they overlap, no outline
     const flame = pivot(jaw, 0.5, 0.02, 0, 'flame');
     const cone = (col, r, L, op, add) => { const m = new THREE.Mesh(new THREE.ConeGeometry(r, L, 16, 1, true).rotateZ(Math.PI / 2).translate(L / 2, 0, 0),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending }));
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending }));
       m.material.onBeforeCompile = function(){}; m.material.onBeforeCompile.fow = true; m.renderOrder = add ? 4 : 3; flame.add(m); return m; }; // (the glowing core over the solid fire)
     cone('#e0441a', 0.5, 2.1, 0.7); cone('#ff8a1e', 0.34, 1.8, 0.85); cone('#ffd24a', 0.2, 1.3, 0.9, true); cone('#fff6c8', 0.09, 0.8, 0.9, true); // (outer fire solid: it read washed-out white against the sky)
     flame.visible = false;
@@ -1933,14 +1951,18 @@
   // no pommel. Built with the grip's middle at the origin — that's where the
   // fist closes — then stood along `dir`. tier (attack techs): brighter
   // steel and a longer blade, as the 2D art.
-  function sword(g, hand, tier = 0, dir = [0.75, 0.66, 0]){ // held out in front, tipped forward — clear of the face
+  // edge: the way its cutting edge faces (made square to dir) — a swing leads with the edge; else the plain turn to dir
+  function sword(g, hand, tier = 0, dir = [0.75, 0.66, 0], edge = null){ // held out in front, tipped forward — clear of the face
     const sw = new THREE.Group(), ext = tier >= 2 ? 3 : tier >= 1 ? 1.5 : 0, k = UNIT_SCALE / PX;
     const outline = [[-2.2, 4.5], [2.2, 4.5], [1.9, 19.5 + ext], [0, 24.5 + ext], [-1.9, 19.5 + ext]];
     const blade = own(new THREE.ExtrudeGeometry(new THREE.Shape(outline.map(([x, y]) => new THREE.Vector2(x * k, y * k))), { depth: 0.7 * k, bevelEnabled: false }).translate(0, 0, -0.35 * k));
     const bm = new THREE.Mesh(blade, mat(['#a7abb0', '#dde3ea', '#f2f6fb'][tier])); bm.userData.hullGeo = blade; sw.add(bm);
     boxAt(sw, GOLD, -3.8 * k, -0.9 * k, 3.8 * k, 0.9 * k, 2.7 * k, 4.5 * k);                  // crossguard
     pole(sw, '#5c3d24', [0, -2.7 * k, 0], [0, 2.7 * k, 0], 0.8 * k);                        // grip
-    sw.position.copy(V3(hand)); sw.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), V3(dir).normalize());
+    sw.position.copy(V3(hand)); const d = V3(dir).normalize();
+    const x = edge && V3(edge).addScaledVector(d, -V3(edge).dot(d));
+    if (x && x.lengthSq() > 1e-4) { x.normalize(); sw.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, d, x.clone().cross(d))); } // (the blade's flat lies in its local x–y: x is the edge)
+    else sw.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
     g.add(sw); return sw;
   }
   const spear = (g, hand) => { const h = V3(hand), d = new THREE.Vector3(0.62, 0.78, 0).normalize(); // tilted well forward, clear of the face
@@ -2052,7 +2074,7 @@
       const pv = new THREE.Group(); pv.position.x = sA * L; pv.rotation.z = -sA * tg; shed.add(pv);
       const m = new THREE.Mesh(geo, mat(wallC)); m.userData.hullGeo = geo; pv.add(m); }
     // the log drops straight out of its slings
-    const lf = fall(620, 430); log(shed, weathered ? '#877e6c' : '#6e473b', X(12 + (pose.log || 0)), 0, X(12), RLOG, true, (Yh(9) - CB) * (1 - lf) + RLOG * lf + bump(1050, 220, R(0.8)), weathered ? '#9a917f' : '#8a6a4a');
+    const lf = fall(620, 430); log(shed, weathered ? '#877e6c' : TREE_BARK, X(12 + (pose.log || 0)), 0, X(12), RLOG, true, (Yh(9) - CB) * (1 - lf) + RLOG * lf + bump(1050, 220, R(0.8)), weathered ? '#9a917f' : '#8a6a4a');
     // the roof slopes: rigid slabs (length w0) whose ridge drops onto the log while the eave swings out onto the fallen wall
     const Tr = R(1), Lr = L + R(1.2), w0 = Math.hypot(WE, rise - wallH), phi0 = Math.atan2(rise - wallH, WE);
     const rf = fall(600, 520), ridgeY = rise + (2 * RLOG + Tr * 0.3 - rise) * rf + bump(1120, 220, R(0.9)), phi1 = Math.asin(Math.min(1, (2 * RLOG + Tr * 0.3 - T) / w0)), phi = phi0 + (phi1 - phi0) * rf;
@@ -2193,7 +2215,7 @@
   // gold, and the three foods — a wheat sheaf, a wool bundle, a heap of berries.
   function load(g, kind, at3, sc = 1.5){
     const L = new THREE.Group(), K = v => ar(v * sc); L.position.set(...at3); g.add(L); // loads exaggerated, cartoon-big
-    if (kind === 'wood') for (const z of [-1.7, 1.7]) log(L, '#6e473b', 0, K(z), K(13), K(1.9), true, 0, '#ebd2b0');
+    if (kind === 'wood') for (const z of [-1.7, 1.7]) log(L, TREE_BARK, 0, K(z), K(13), K(1.9), true, 0, TREE_CUT);
     if (kind === 'stone') for (const [x, y, z] of [[-2, 0, 0], [2, 0.2, 0.6], [0, 3, 0.2]]) boxAt(L, '#9d9d9d', K(x - 2.1), K(z - 2.1), K(x + 2.1), K(z + 2.1), K(y - 1.6), K(y + 1.6));
     if (kind === 'gold') for (const [x, y, z] of [[-2, 0, 0], [2, 0, 0.6], [0, 0, -2], [0, 2.1, 0.2], [1.1, 1.6, 1.8]]) blob(L, '#e8b90f', K(x), K(y), K(z), K(1.9));
     if (kind === 'food') { // a wheat sheaf: nine stalks pinched at the tie, fanning to grain heads at one end and stubble at the other
@@ -2600,7 +2622,7 @@
     const G = V3(grip), up = new THREE.Vector3(0, 1, 0), back = V3(pull).sub(G).setY(0); if (back.lengthSq() < 1e-8) back.set(-1, 0, 0); back.normalize();
     const L = ar(10.6), bend = ar(2.2 + 1.8 * draw), tips = [1, -1].map(s => G.clone().addScaledVector(up, s * L).addScaledVector(back, bend));
     for (const tp of tips) tube(g, '#b3874a', G.toArray(), G.clone().lerp(tp, 0.5).addScaledVector(back, -ar(1.2)).toArray(), tp.toArray(), ar(0.75));
-    const P = draw > 0 ? V3(pull) : tips[0].clone().lerp(tips[1], 0.5);
+    const P = tips[0].clone().lerp(tips[1], 0.5).lerp(V3(pull), Math.min(1, Math.max(0, draw) / 0.15)); // (eased onto the hand as the draw starts, not snapped)
     for (const tp of tips) pole(g, '#e8e8e8', tp.toArray(), P.toArray(), ar(0.22), 'line');
     return { tips, P };
   }
@@ -2625,26 +2647,39 @@
     for (const z of [-0.8, 0.8]) { pole(q, '#8b6a3a', [0, ar(3.6), ar(z)], [0, ar(5.6 + z * 0.25), ar(z)], ar(0.35), 'line'); if (fletched) blob(q, lightOf(tc), 0, ar(5.6 + z * 0.25), ar(z), ar(0.9)); } // shafts peeking out; the tech's light-team fletching
   }
   const mixP = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
+  // A sword swing through key poses [phase, hand, blade dir, the way its edge faces (null: as the sword sits unkeyed, so
+  // a rest pose matches the idle one)] at t: each edge squared to its blade and chained to agree with the one before (a
+  // blade looks the same turned over, so it never rolls through a half turn between two poses).
+  const restEdge = dir => new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), V3(dir).normalize()));
+  function swingPose(K, t){
+    // (compared with the one before carried along the blade's own swing: a cut turns its edge with it, forward to down)
+    let prev = null, pd = null; const E = K.map(k => { const d = V3(k[2]).normalize(), e = k[3] ? V3(k[3]) : restEdge(k[2]);
+      e.addScaledVector(d, -e.dot(d)).normalize();
+      if (prev && e.dot(prev.clone().applyQuaternion(new THREE.Quaternion().setFromUnitVectors(pd, d))) < 0) e.negate();
+      prev = e; pd = d; return e.toArray(); });
+    let i = 0; while (i < K.length - 2 && t > K[i + 1][0]) i++;
+    const u = easeC(Math.max(0, Math.min(1, (t - K[i][0]) / (K[i + 1][0] - K[i][0]))));
+    return { hand: mixP(K[i][1], K[i + 1][1], u), dir: mixP(K[i][2], K[i + 1][2], u), edge: mixP(E[i], E[i + 1], u) };
+  }
   const along = (p, d, k) => { const L = Math.hypot(...d); return [p[0] + d[0] / L * k, p[1] - d[1] / L * k, p[2] + d[2] / L * k]; }; // art pt + k px along a world-style dir
   // Poses by unit and action: { hands, torso, headYaw, feet, weapon: {...} }.
   function militiaPose(kind, t, eq){
     const two = !eq.shield, shieldHand = [5.6, -6.6, -6.4]; // out from the body and below the chin, so a turning head clears the shield's top
     if (kind === 'attack') { // a diagonal cut: from guard the blade is laid back over the right shoulder (the
       // torso turned away), then driven down across the front to the low left with a step in, followed through, and recovered to guard
-      const K = [ // [phase, hand, blade dir (world-style, y up)]
-        [0.00, [7.5, -6.5, 1.5], [0.75, 0.66, 0]],       // guard
-        [0.2, [5.2, -10.5, two ? 5 : 6.8], [0.25, 0.92, 0.3]],     // raised up the sword side, the blade clear of the chest
-        [0.42, [-0.5, -14, 6.4], [-0.75, 0.35, 0.45]],   // wound up: blade back over the shoulder
-        [0.50, [2.5, -15.5, 5], [-0.1, 0.99, 0.15]],     // coming over
-        [0.60, [8.8, -8, 0.5], [0.95, -0.1, -0.3]],      // the cut, at full extension
-        two ? [0.70, [7.8, -5, -4.6], [0.5, -0.3, -0.8]]      // followed through low across the body (the blade kept off the ground)
-            : [0.70, [7.6, -4.6, 1], [0.7, -0.35, -0.25]],   // with a shield: finished low in front, clear of the shield arm
-        [1.00, [7.5, -6.5, 1.5], [0.75, 0.66, 0]]];      // back to guard
-      let i = 0; while (i < K.length - 2 && t > K[i + 1][0]) i++;
-      const u = easeC((t - K[i][0]) / (K[i + 1][0] - K[i][0])), hand = mixP(K[i][1], K[i + 1][1], u), dir = mixP(K[i][2], K[i + 1][2], u);
+      const K = [ // [phase, hand, blade dir (world-style, y up), the way its edge faces: where the blade is heading]
+        [0.00, [7.5, -6.5, 1.5], [0.75, 0.66, 0], null],                   // guard (as it stands)
+        [0.2, [5.2, -10.5, two ? 5 : 6.8], [0.25, 0.92, 0.3], [-0.9, -0.4, 0.2]],     // raised up the sword side, the blade clear of the chest
+        [0.42, [-0.5, -14, 6.4], [-0.75, 0.35, 0.45], [0.3, 0.9, -0.2]],   // wound up: blade back over the shoulder, edge up for the stroke
+        [0.50, [2.5, -15.5, 5], [-0.1, 0.99, 0.15], [1, 0.1, -0.2]],       // coming over, edge leading forward
+        [0.60, [8.8, -8, 0.5], [0.95, -0.1, -0.3], [0.05, -1, -0.3]],      // the cut, at full extension: edge down into it
+        two ? [0.70, [7.8, -5, -4.6], [0.5, -0.3, -0.8], [-0.45, -0.2, -0.5]]      // followed through low across the body (the blade kept off the ground)
+            : [0.70, [7.6, -4.6, 1], [0.7, -0.35, -0.25], [-0.25, -0.25, 0.05]],   // with a shield: finished low in front, clear of the shield arm
+        [1.00, [7.5, -6.5, 1.5], [0.75, 0.66, 0], null]];                  // back to guard
+      const { hand, dir, edge } = swingPose(K, t);
       const wind = t < 0.42 ? easeC(t / 0.42) : t < 0.6 ? 1 - easeC((t - 0.42) / 0.18) : 0, cut = t >= 0.5 && t < 0.72 ? Math.sin(Math.PI * (t - 0.5) / 0.22) : 0, rec = t >= 0.72 ? easeC((t - 0.72) / 0.28) : 0;
       const follow = t >= 0.6 ? Math.min(1, (t - 0.6) / 0.1) * (1 - rec) : 0; // the turn builds through the follow-through
-      return { hands: two ? [along(hand, dir, -2), hand] : [shieldHand, hand], weapon: { hand, dir },
+      return { hands: two ? [along(hand, dir, -2), hand] : [shieldHand, hand], weapon: { hand, dir, edge },
         // with a shield up the cut is tighter (less turn and lean), or the head swings into its top edge
         torso: { yaw: (two ? -0.12 : 0) - (two ? 0.8 : 0.5) * wind + (two ? 0.85 : 0.22) * follow, lean: -0.12 * wind + (two ? 0.3 : 0.16) * cut + (two ? 0.15 : 0.05) * follow, dip: (two ? 1.2 : 0.7) * cut },
         headYaw: 0.35 * wind - 0.3 * follow, feet: [[1.2 + 1.8 * (cut + follow * 0.6), 0], [-1.5, 0.4 * wind]], shieldHand };
@@ -2714,7 +2749,7 @@
     const p = SOLDIER_POSE[ut](kind, t, eq);
     if (p.bob) body.position.y = p.bob * UNIT_SCALE / PX;
     human(body, tc, { ...dress, hands: p.hands, torso: p.torso, headYaw: p.headYaw, feet: p.feet });
-    if (ut === 'militia') { weaponTag(body, () => sword(body, at(...p.weapon.hand), eq.weapon, p.weapon.dir));
+    if (ut === 'militia') { weaponTag(body, () => sword(body, at(...p.weapon.hand), eq.weapon, p.weapon.dir, p.weapon.edge));
       if (eq.shield === 'round') weaponTag(body, () => roundShield(body, at(p.shieldHand[0] + 1.2, p.shieldHand[1], p.shieldHand[2] - 0.5), tc));
       if (eq.shield === 'kite') weaponTag(body, () => kiteShield(body, at(p.shieldHand[0] + 1.4, p.shieldHand[1] + 1, p.shieldHand[2] + 0.4), tc)).rotation.y = Math.PI / 2 - 0.3; } // its face (the cross, +z) turned forward
     if (ut === 'spearman') weaponTag(body, () => spearAt(body, at(...p.weapon.hand), p.weapon.dir, eq.metal));
@@ -2746,18 +2781,18 @@
     const rest = [[6.5, -7, 6], [0.5, 0.84, 0.2]], up = [[1.5, -16, 6.8], [-0.45, 0.88, 0.15]], cut = [[9.5, -8.5, 6.8], [0.93, -0.3, 0.2]];
     if (kind === 'die') return [[3.2, -6.5, 6.2], [-0.9, -0.25, 0.3]];   // limp: the sword trailing back from a slack hand
     if (kind !== 'attack') return rest;
-    const K = [[0, rest], [0.42, up], [0.58, cut], [1, rest]]; let i = 0; while (i < 2 && t > K[i + 1][0]) i++;
-    const u = easeC((t - K[i][0]) / (K[i + 1][0] - K[i][0]));
-    return [mixP(K[i][1][0], K[i + 1][1][0], u), mixP(K[i][1][1], K[i + 1][1][1], u)];
+    // the edge: forward over the top (where the cut goes), down through the cut
+    const p = swingPose([[0, ...rest, null], [0.42, ...up, [0.9, 0.45, 0]], [0.58, ...cut, [-0.3, -0.95, 0]], [1, ...rest, null]], t);
+    return [p.hand, p.dir, p.edge];
   }
   function riderFig(tc, eq, kind, t, gait = {}, bare = false){ // bare: no sword or shield (dropped) // rider()'s seat and kit, with gear by age and an animated sword arm
-    const r = new THREE.Group(), side = eq.shield ? -1 : 1, [h, d] = riderArm(kind, t);
+    const r = new THREE.Group(), side = eq.shield ? -1 : 1, [h, d, ed] = riderArm(kind, t);
     const jog = kind === 'gallop' ? 0.9 * Math.sin(2 * Math.PI * t) : kind === 'walk' ? 0.35 * Math.sin(4 * Math.PI * t) : 0; // the hands ride with the horse
-    const hand = [h[0], h[1] + jog, side * h[2]], dir = [d[0], d[1], side * d[2]];
+    const hand = [h[0], h[1] + jog, side * h[2]], dir = [d[0], d[1], side * d[2]], edge = ed ? [ed[0], ed[1], side * ed[2]] : null;
     const off = eq.shield ? [1.5, -6.5 + jog * 0.6, 7.8] : [6 + 5 * (gait.nod || 0), -6.8 + jog * 0.6, -3.9]; // the rein hand follows the head                   // shield grip, or the reins (held out past the belly)
     const lean = kind === 'gallop' ? 0.12 : 0, sw = kind === 'attack' ? (t < 0.42 ? -0.2 * easeC(t / 0.42) : 0.25 * Math.sin(Math.PI * Math.min(1, (t - 0.42) / 0.3))) : 0;
     human(r, tc, { hat: eq.helmet, armor: eq.torso, metal: eq.metal, riding: true, hands: side > 0 ? [off, hand] : [hand, off], torso: { lean: lean + Math.max(0, sw), yaw: side * sw } });
-    if (!bare) weaponTag(r, () => sword(r, at(...hand), eq.weapon, dir));
+    if (!bare) weaponTag(r, () => sword(r, at(...hand), eq.weapon, dir, edge));
     if (bare) {}
     else if (eq.shield === 'kite') kiteShield(r, at(1, -6.5, 9), tc).rotation.y = 0.35;
     if (eq.shield === 'round') roundShield(r, at(1, -6.5, 9), tc).rotation.y = Math.PI / 2 - 0.35;
@@ -2963,6 +2998,12 @@
       const run = isGateBtype(btype) ? [{ ...e, x: -1.5, y: -0.5, w: 3, h: 1 }] : [-1, 0, 1].map(i => ({ ...e, id: -2 - i, x: i - 0.5, y: -0.5 })), at = (x, y) => run.find(p => p.x === x && p.y === y);
       const sets = run.map(p => { const o = wallModel(p, wallArms(p, at, n => true)).obj; g.add(o); return constructionSite(o, p.x, p.y, p.w, p.h, false).set; });
       return { obj: g, set: v => sets.forEach(f => f(v)) }; },
+    // A finished building to damage (breaking down by health) and bring down.
+    damaged: (btype, age = 0) => { teamAge = teamAge || [0, 0]; teamAge[1] = age; const b = BLDGS[btype], g = new THREE.Group();
+      const e = { id: -1, type: 'building', btype, x: -b.w / 2, y: -b.h / 2, w: b.w, h: b.h, team: 1, complete: true, openTop: true, hp: 1, maxHp: 1, buildProgress: 1, buildTime: 1, gateProgress: 0 };
+      if (MODELS[btype]) MODELS[btype](g, e); else if (isWallBtype(btype) || isGateBtype(btype)) g.add(wallModel(isGateBtype(btype) ? { ...e, x: -1.5, y: -0.5, w: 3, h: 1 } : { ...e, x: -0.5, y: -0.5, w: 1, h: 1 }, []).obj);
+      addHulls(g); const d = buildingDamage(g, e.x, e.y, b.w, b.h);
+      return { obj: g, setHp: f => d.set(f), collapse: () => d.collapse(), tick: dt => d.tick(dt), get shown(){ return d.shown; } }; },
     buildingTypes: [...Object.keys(MODELS), 'WALL', 'SWALL', 'GATE', 'SGATE'],
     kinds: ['idle', 'walk', 'flee', 'carry', 'barrow', 'chop', 'saw', 'mine', 'farm', 'plow', 'forage', 'butcher', 'build', 'repair', 'drop', 'fight', 'die'],
     frame: animFrame,
@@ -2972,7 +3013,7 @@
     // crown sways on top of it (the game tree's design: a round trunk, puffs).
     tree(){
       const k = 1.05, root = new THREE.Group(), sway = new THREE.Group(); root.add(sway);
-      pole(sway, '#8B4513', [0, 0, 0], [0, TREE_H * k, 0], TRUNK_R * k, 'post');
+      pole(sway, TREE_BARK, [0, 0, 0], [0, TREE_H * k, 0], TRUNK_R * k, 'post');
       const crown = new THREE.Group(); crown.position.y = TREE_H * k; sway.add(crown);
       ball(crown, '#4db536', 0, 0, 0, CROWN_R * k);
       for (let i = 0; i < 4; i++) { const a = Math.PI / 4 + i * Math.PI / 2; ball(crown, '#4db536', Math.cos(a) * CROWN_R * 0.8 * k, -0.04 * CROWN_K, Math.sin(a) * CROWN_R * 0.8 * k, 9 / PX * CROWN_K * k); }
@@ -3017,7 +3058,7 @@
     },
     // The post being sawn stands in the middle of the blade's free span —
     // between the frame's ends at both ends of the stroke, clear of the hand.
-    log(){ const g = new THREE.Group(); pole(g, '#8B4513', [0, 0, 0], [0, 0.4, 0], 2.2 * UNIT_SCALE / PX, 'post'); addHulls(g, true); return g; },
+    log(){ const g = new THREE.Group(); pole(g, TREE_BARK, [0, 0, 0], [0, 0.4, 0], 2.2 * UNIT_SCALE / PX, 'post'); addHulls(g, true); return g; },
     sawBlade: t => new THREE.Vector3(ax(SAW_X + 0.6), chh(SAW_Y), ar(SAW_Z - 11.5)), // where the teeth bite the bark (the middle of the stroke)
     // Targets for the new actions, placed where the poses meet them (world, relative to the character).
     bush(){ // the game's berry bush (full): a mound of leaf puffs with berries, its front where the hands reach
@@ -3442,7 +3483,7 @@
     const s = 20 / 32, wallH = 14 / HPX, box = [e.x + 1 - s, e.y, e.x + 1, e.y + s];
     patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile, faint edge
     const f = boxFaces(...box, 0, wallH);
-    if (!e.complete) delete f.top;                                    // (a site: open till its roof goes on)
+    if (!e.complete || e.openTop) delete f.top;                       // (a site: open till its roof goes on; a damaged one, open under it)
     f.x1.holes.push(hole('x1', box, 0.5, SILL, s / 4, 8 / HPX));
     solid(g, wallCol, Object.values(f));
     // 'peaked' block roof: in the art's projection its apex sits roofH + bhh
@@ -3473,11 +3514,11 @@
   }
   const SHEEP_LOOSE = new Set(['puff']);
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
-    for (const o of lift) hold.attach(o);
+    for (const o of lift) { hold.attach(o); bakeRigid(o); }                       // (a moving part merged too, round its own pivots: a horse's neck, head, tail)
     const baked = bakePose(g);
     g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
     for (const c of g.children.slice()) g.remove(c);
@@ -3485,31 +3526,37 @@
     for (const o of lift) g.attach(o);
   }
   function refreshModel(e){
-    const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0)
+    const hurt = isHurt(e);
+    const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
       + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : '');
     let rec = solids.get(e.id);
     if (!rec || rec.key !== key) {
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       const g = new THREE.Group();
-      MODELS[e.btype](g, e); g.userData.bid = e.id;                // (the world view's click picks it by this)
+      MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
       addHulls(g);
-      if (e.complete) bakeStill(g);                                // (a site stays in parts: constructionSite reads each wall's depth)
+      if (e.complete && !hurt) bakeStill(g);                       // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       scene.add(g);
       const flags = [], horses = [];
       g.traverse(o => {
         if (o.name === 'flag') flags.push(o);
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
-      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
+      const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
+      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
+      else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
     }
   }
   const OPEN_SITE = new Set(['MARKET', 'FARM']); // open ground (a plaza, a field): no scaffold, the stalls / crops just come up
+  // a finished building hurt enough to show it (a farm is worn out, not broken)
+  const isHurt = e => e.complete && e.btype !== 'FARM' && e.hp < e.maxHp * DMG_FROM;
   // ---- A construction site: the finished model rising from the ground (cut at the build height, never squashed — the
   // roof, windows and door keep their shape), inside a scaffold whose work deck rides
   // the cut. g: a finished, baked model; its footprint (x0, z0, w, h). Returns { set(progress 0..1) }.
   let siteWood = null;
+  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods']); // a site's parts with their own life: never merged
   const SITE_SHADE = 0.66; // how much light reaches inside a site's walls (their inner faces, and the ground they enclose)
   // Finished: the scaffold comes down in a ring of dust round the footprint.
   function siteDone(e){
@@ -3521,7 +3568,8 @@
   // A construction site's walls as real slabs, one geometry: each wall face (near vertical) with its inner face its
   // depth D in, the rim along its outline and the tunnels round its openings joining the two. Flat faces (a floor, a flat
   // top) stay single, marked clipOnly: a site shows them once it reaches them, never squished into a lid.
-  function thickGeo(faces, D, nMats){
+  // jag: also sliced into narrow upright strips on one world grid, so a damaged wall's top can break to a jagged line.
+  function thickGeo(faces, D, nMats, jag = false){
     const buckets = Array.from({ length: nMats }, () => []);
     const UP = new THREE.Vector3(0, 1, 0);
     // sd: the way the face runs up (in its own plane, rising 1 per unit): a site presses it down along itself
@@ -3538,6 +3586,7 @@
       for (let k = 0; k < pts.length; k++) { const a = pts[k], c = pts[(k + 1) % pts.length]; n.x += (a.y - c.y) * (a.z + c.z); n.y += (a.z - c.z) * (a.x + c.x); n.z += (a.x - c.x) * (a.y + c.y); }
       n.normalize(); if (n.dot(V3(f.out)) < 0) n.negate();
       if (Math.abs(n.y) >= 0.5 && pts.every(p => p.y >= top - 1e-4)) continue;   // (a flat top on the walls' tops: they close it themselves, pressed down)
+      if (n.y < -0.5) continue;                                                  // (an underside: never seen from above, and two-sided it would lie on the ground)
       const up = new THREE.Vector3(0, 1, 0), v = up.clone().addScaledVector(n, -n.y);
       if (v.lengthSq() < 1e-6) v.set(1, 0, 0).addScaledVector(n, -n.x);
       v.normalize(); const u = new THREE.Vector3().crossVectors(v, n), o = pts[0];
@@ -3563,13 +3612,20 @@
     }
     // Sliced into thin horizontal bands: pressing a triangle's upper corners straight down is exact only for one that
     // doesn't reach far past the build height (a long diagonal one — round a window, up a gable — would open a gap).
-    const geo = new THREE.BufferGeometry(), pos = [], nrm = [], clip = [], inside = [], slide = [], BAND = 0.015;
-    const cut = (poly, y, keepAbove) => { const out = [];                         // a convex polygon's part above / below y
-      for (let k = 0; k < poly.length; k++) { const a = poly[k], c = poly[(k + 1) % poly.length], ia = keepAbove ? a.p.y >= y : a.p.y <= y, ic = keepAbove ? c.p.y >= y : c.p.y <= y;
+    const geo = new THREE.BufferGeometry(), pos = [], nrm = [], clip = [], inside = [], slide = [], BAND = jag ? 0.04 : 0.015, COL = 0.1; // (a broken top needn't be as fine as a rising one)
+    const cut = (poly, y, keepAbove, ax = 'y') => { const out = [];              // a convex polygon's part above / below y (along ax)
+      const lo = (a, c) => a.p[ax] < c.p[ax] || (a.p[ax] === c.p[ax] && (a.p.x < c.p.x || (a.p.x === c.p.x && a.p.y < c.p.y)));
+      for (let k = 0; k < poly.length; k++) { const a = poly[k], c = poly[(k + 1) % poly.length], ia = keepAbove ? a.p[ax] >= y : a.p[ax] <= y, ic = keepAbove ? c.p[ax] >= y : c.p[ax] <= y;
         if (ia) out.push(a);
-        if (ia !== ic) { const [e0, e1] = a.p.y < c.p.y || (a.p.y === c.p.y && a.p.x < c.p.x) ? [a, c] : [c, a], f = (y - e0.p.y) / (e1.p.y - e0.p.y); // (from its lower end, whichever side asks: the same point)
+        if (ia !== ic) { const [e0, e1] = lo(a, c) ? [a, c] : [c, a], f = (y - e0.p[ax]) / (e1.p[ax] - e0.p[ax]); // (from its lower end, whichever side asks: the same point)
           out.push({ p: e0.p.clone().lerp(e1.p, f), n: e0.n.clone().lerp(e1.n, f).normalize() }); } }
       return out; };
+    // a polygon diced on the world grid along ax (step st): its pieces
+    const dice = (polys, ax, st) => polys.flatMap(poly => { if (poly.length < 3) return [];
+      const vs = poly.map(v => v.p[ax]), lo = Math.min(...vs), hi = Math.max(...vs), k0 = Math.floor(lo / st + 1e-6), k1 = Math.ceil(hi / st - 1e-6);
+      if (k1 - k0 <= 1) return [poly];
+      const out = []; for (let k = k0; k < k1; k++) { const q = cut(cut(poly, Math.max(lo, k * st), true, ax), Math.min(hi, (k + 1) * st), false, ax); if (q.length >= 3) out.push(q); }
+      return out; });
     let start = 0;
     buckets.forEach((b, m) => {
       let count = 0;
@@ -3581,7 +3637,8 @@
         // (a flat one: nothing to slice — kept whole)
         const bands = cl || hi - lo < 1e-6 ? [[lo, hi]] : Array.from({ length: k1 - k0 }, (_, i) => [Math.max(lo, (k0 + i) * BAND), Math.min(hi, (k0 + i + 1) * BAND)]).filter(([y0, y1]) => y1 - y0 > 1e-7);
         for (const [y0, y1] of bands) {
-          const poly = bands.length > 1 ? cut(cut(tri, y0, true), y1, false) : tri;
+          const band = bands.length > 1 ? cut(cut(tri, y0, true), y1, false) : tri;
+          for (const poly of jag && !cl ? dice(dice([band], 'x', COL), 'z', COL) : [band])
           for (let q = 1; q + 1 < poly.length; q++) for (const v of [poly[0], poly[q], poly[q + 1]]) { pos.push(v.p.x, v.p.y, v.p.z); nrm.push(v.n.x, v.n.y, v.n.z); clip.push(cl); inside.push(ins); slide.push(sd.x, sd.y, sd.z); count++; }
         }
       }
@@ -3608,10 +3665,14 @@
     const hull = lo.slice(0, -1).concat(hi.slice(0, -1)); if (hull.length < 3) return null;
     const pos = []; for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], 0.004, q[1]);
     const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    _floorMat = _floorMat || new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 1 - SITE_SHADE, depthWrite: false, side: THREE.DoubleSide });
+    _floorMat = _floorMat || new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 1 - SITE_SHADE, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }); // (single pass: a see-through two-sided material is otherwise drawn twice, recompiled each time)
     return new THREE.Mesh(geo, _floorMat);
   }
-  function constructionSite(g, x0, z0, w, h, scaffold = true){
+  // jag: a damaged building (buildingDamage) — walls broken to a jagged top, pieces crumbling; no scaffold.
+  const SITE_NOISE = `float siteH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float siteN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(siteH(i), siteH(i + vec2(1.0, 0.0)), f.x), mix(siteH(i + vec2(0.0, 1.0)), siteH(i + vec2(1.0, 1.0)), f.x), f.y); }`;
+  function constructionSite(g, x0, z0, w, h, scaffold = true, jag = false){
     g.updateMatrixWorld(true);
     // Pieces (piece(): roofs, caps, awnings) are set in place whole once the walls reach them; the rest rises by the cut.
     const pieces = [], isPiece = o => o.userData.piece;
@@ -3626,14 +3687,15 @@
     // The walls grow by squishing, never cutting: whatever stands above the build height is pressed down onto it, so a
     // wall's own top comes down with it (its depth showing, openings above closed over). Flat faces (clipOnly) and the ink
     // lines are cut there instead; a box's team-coloured top waits for the finished building.
-    const below = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), siteY = { value: 0 };
+    const below = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), siteY = { value: 0 }, siteJag = { value: 0 };
     const built = new Map();
     const cutMat = m => { let c = built.get(m); if (c) return c;
       c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
       if (m.isLineBasicMaterial) c.clippingPlanes = [below];                           // (ink: cut at the top, not pressed onto it)
       else { const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m), lit = !!m.isMeshLambertMaterial && !m.flatShading;
-        c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.siteY = siteY;
-          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float clipOnly; attribute float inside; attribute vec3 slide; uniform float siteY; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside;')
+        c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.siteY = siteY; sh.uniforms.siteJag = siteJag;
+          // the top: level while building; broken (siteJag: how far it dips, by a smooth noise along the walls) when damaged
+          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float clipOnly; attribute float inside; attribute vec3 slide; uniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;\n' + SITE_NOISE)
             .replace('#include <begin_vertex>', `#include <begin_vertex>
               {
                 #ifdef USE_INSTANCING
@@ -3642,19 +3704,20 @@
                   mat4 siteM = modelMatrix;
                 #endif
                 vec4 sw = siteM * vec4(transformed, 1.0); vSiteY = sw.y; vClip = clipOnly;
-                if (clipOnly < 0.5 && sw.y > siteY) { sw.xyz -= slide * (sw.y - siteY); transformed = (inverse(siteM) * sw).xyz; }
+                float sy = siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(sw.xz * 3.2)) : siteY; vSiteTop = sy;
+                if (clipOnly < 0.5 && sw.y > sy) { sw.xyz -= slide * (sw.y - sy); transformed = (inverse(siteM) * sw).xyz; }
                 vSiteW = sw.xyz; vInside = inside; }`);
           // a surface pressed flat onto the top (found per pixel, so a wall's side is never touched) is lit and patterned as a top
-          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside;')
+          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;')
             .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-              if (vClip > 0.5 && vSiteY > siteY + 1e-4) discard;
-              bool sitePressed = vSiteW.y >= siteY - 1e-4 && abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98;`)
+              if (vClip > 0.5 && vSiteY > vSiteTop + 1e-4) discard;
+              bool sitePressed = vSiteW.y >= vSiteTop - 1e-4 && (siteJag > 0.0 || abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98);`)
             .replace('abs(normalize(vWNrm))', 'abs(sitePressed ? vec3(0.0, 1.0, 0.0) : normalize(vWNrm))')
             // the inside of the walls (and of its openings) in the walls' shade
             .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  if (vInside > 0.5 && !sitePressed) gl_FragColor.rgb *= SITE_SHADE;');
           if (lit) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n  if (sitePressed) normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);'); };
         c.onBeforeCompile.fow = !!(ob && ob.fow);                        // (a source already fog-patched: not patched again — a double patch won't compile)
-        c.customProgramCacheKey = () => key + ':site';
+        c.customProgramCacheKey = () => key + (jag ? ':siteJ' : ':site');
         c.defines = { ...(c.defines || {}), SITE_SHADE: SITE_SHADE.toFixed(3) };
         // a lintel pressed down faces down: from above it must still close its opening's slot
         if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide; }
@@ -3671,7 +3734,7 @@
     const set0 = [];
     for (const c of g.children) if (isPiece(c)) { const b = new THREE.Box3().setFromObject(c); set0.push({ obj: c, y0: c.position.y, base: b.min.y, top: b.max.y, at: null }); }
     const floors = [];
-    for (const c of g.children) walk(c, o => { if (!o.isMesh || !o.userData.slab) return; o.geometry = own(o.userData.slab());
+    for (const c of g.children) walk(c, o => { if (!o.isMesh || !o.userData.slab) return; o.geometry = own(o.userData.slab(jag));
       const rl = o.children.find(k => k.userData.rims); if (rl) rl.geometry = own(new THREE.BufferGeometry().setFromPoints(o.userData.slabRims()));
       floors.push(floorShade(o)); });
     for (const f of floors) if (f) g.add(f);
@@ -3681,6 +3744,29 @@
     const later = []; g.updateMatrixWorld(true);
     for (const c of g.children) walk(c, o => { if (o.isMesh && !HULL_MATS.has([].concat(o.material)[0]) && o.parent && !o.parent.isMesh) { const y0 = mb.setFromObject(o, true).min.y; if (y0 > 0.02) later.push([o, y0]); } });
     const setRing = y => { siteY.value = y; for (const [o, y0] of later) o.visible = y > y0 + 0.005; };
+    // the rest, merged by material (as a finished building): what comes and goes on its own (pieces, parts above the
+    // build line, flags, goods, a horse, the floor shade) is lifted out first and put back as it was
+    { const keep = new Set([...set0.map(q => q.obj), ...later.map(([o]) => o), ...floors.filter(Boolean)]);
+      g.traverse(o => { if (SITE_LIVE.has(o.name)) keep.add(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) keep.add(o.parent); });
+      const lift = [...keep].filter(o => ![...keep].some(p => p !== o && p.getObjectById(o.id)));
+      g.updateMatrixWorld(true); const hold = new THREE.Group(); hold.updateMatrixWorld(true);
+      for (const o of lift) hold.attach(o);
+      const siteMats = new Set(built.values()), baked = bakePose(g);
+      g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
+      for (const c of g.children.slice()) g.remove(c);
+      for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; if (siteMats.has(c.material)) c.userData.siteOwn = true; g.add(c); }
+      for (const o of lift) g.attach(o);
+      // the parts above the build line, merged per height band (0.05): a band shows as one once the walls reach it
+      const bands = new Map(), keepL = new Set(set0.map(q => q.obj));
+      const inLive = o => { for (let p = o; p && p !== g; p = p.parent) if (SITE_LIVE.has(p.name) || keepL.has(p) || p.name === 'horseNeck') return true; return false; }; // (part of something with its own life)
+      for (const [o, y0] of later) { if (!o.parent || inLive(o)) continue; const k = Math.floor(y0 / 0.05); let b = bands.get(k); if (!b) bands.set(k, b = { y0, objs: [] }); b.y0 = Math.min(b.y0, y0); b.objs.push(o); }
+      const merged = new Set();
+      for (const b of bands.values()) { if (b.objs.length < 2) continue;
+        const tmp = new THREE.Group(); for (const o of b.objs) { tmp.attach(o); merged.add(o); }
+        const bg = bakePose(tmp); tmp.traverse(o => { if (o !== tmp && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
+        bg.traverse(c => { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; if (siteMats.has(c.material)) c.userData.siteOwn = true; });
+        g.add(bg); later.push([bg, b.y0]); }
+      for (let i = later.length - 1; i >= 0; i--) if (merged.has(later[i][0])) later.splice(i, 1); }
     // Each piece is set once the walls holding it are up (the cut past its top: a lean-to when the keep reaches its
     // high edge), dropping the last bit into place; the walls rise over the first 85%, the pieces crowning them (roof,
     // cap, then a chimney) follow one by one.
@@ -3692,6 +3778,33 @@
         const k = on ? Math.min(1, (now - q.at) / 260) : 0;
         q.obj.visible = on; q.obj.position.y = q.y0 + (1 - k) * (1 - k) * 0.22; } };
     const rise = p => Math.min(1, Math.max(0, p) / (set0.length ? 0.85 : 1));
+    if (jag) { // damaged, health f: the pieces crumble away (95% → 55%, or none), then the walls break down to nothing
+      const crumble = { value: 0 }, own2 = new Map();
+      const crumbleMat = m => { let c = own2.get(m); if (c) return c; c = m.clone(); const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m);
+        c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.crumble = crumble;
+          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCrW;').replace('#include <project_vertex>', '#include <project_vertex>\nvCrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float crumble; varying vec3 vCrW;\n' + SITE_NOISE)
+            .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (siteN(vCrW.xz * 4.5 + vCrW.y * 3.1) * 0.8 + siteN(vCrW.xz * 13.0 - vCrW.y * 7.0) * 0.2 < crumble) discard;'); };  // (ragged holes that spread)
+        c.onBeforeCompile.fow = !!(ob && ob.fow); c.customProgramCacheKey = () => key + ':crumble'; c.side = HULL_MATS.has(m) ? m.side : THREE.DoubleSide;
+        own2.set(m, c); return c; };
+      for (const q of set0) q.obj.traverse(o => { if (o.material) { o.material = Array.isArray(o.material) ? o.material.map(crumbleMat) : crumbleMat(o.material); o.userData.siteOwn = true; } });
+      const flags = [], goods = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'flagPole' || o.name === 'pennant' || o.name === 'sails' || o.name === 'millShaft') flags.push(o); else if (o.name === 'goods') goods.push(o); });
+      const R0 = 0.95, R1 = set0.length ? 0.55 : R0;                                        // the pieces' stretch, then the walls'
+      const damage = f => {
+        const k = Math.min(1, Math.max(0, (R0 - f) / (R0 - R1 || 1)));
+        // (the noise sits mostly within 0.2–0.9)
+        crumble.value = set0.length && k > 0 ? 0.2 + 0.72 * k : 0; for (const q of set0) { q.obj.visible = k < 1; q.obj.position.y = q.y0; }
+        const wv = Math.min(1, Math.max(0, f / R1)), y = H * wv;
+        siteY.value = f >= R1 ? H + 1 : y; siteJag.value = f >= R1 ? 0 : Math.min(y, 0.06 + 0.4 * H * (1 - wv));
+        below.constant = f >= R1 ? H + 1 : Math.max(0, y - siteJag.value);           // (ink only below the lowest break)
+        for (const [o, y0] of later) o.visible = f >= R1 || y - siteJag.value > y0 + 0.005;
+        for (const fl of floors) if (fl) fl.visible = f >= R1 || wv > 0.08;                // (its shade goes with the walls)
+        for (const o of flags) o.visible = k < 0.4;                                      // (last: over the parts-above rule)
+        for (const o of goods) o.visible = k < 1;
+        return { roof: k, wall: 1 - wv, top: f >= R1 ? H : y };
+      };
+      damage(1); return { damage, H };
+    }
     if (!scaffold) { const set = p => { const y = H * rise(p); below.constant = y; setRing(y); setPieces(p); }; set(0); return { set }; } // (a wall piece: too small for one)
     // Scaffold: timber poles round the footprint, a tile apart, rails every ~0.3 up, a brace on each face; full height
     siteWood = siteWood || '#9c7448';
@@ -3715,7 +3828,7 @@
     // the work deck: planks round the walls at the cut, climbing with it
     const deck = new THREE.Group(), d = 0.08; // (clear of the outline shell, HULL out from the walls)
     for (const [a0, b0, a1, b1] of [[X0, Z0, X1, Z0 + d], [X0, Z1 - d, X1, Z1], [X0, Z0 + d, X0 + d, Z1 - d], [X1 - d, Z0 + d, X1, Z1 - d]]) boxAt(deck, '#b88a52', a0, b0, a1, b1, 0, 0.018);
-    g.add(deck);
+    bakeStill(deck); g.add(deck);                                                 // (one piece: it only ever moves whole)
     // the scaffold comes down as the roof goes on (the first piece crowning the walls), never through it
     const down = tops.length ? tops[0].when : 1;
     const set = p => { const y = H * rise(p); below.constant = y; lift.constant = Math.min(top + 0.01, y + 0.35); setRing(y); setPieces(p);
@@ -3723,6 +3836,51 @@
       sc.visible = p < down; deck.position.y = Math.max(0, y - 0.03); deck.visible = y > 0.12 && p < Math.min(0.9, down); };
     set(0);
     return { set };
+  }
+  // ---- A damaged building: construction run backward. As its health drops the roof (and cap, chimney, awnings) crumbles
+  // away, then the walls break down to a jagged top, lower and lower; destroyed, the last of it drops into dust. Chunks
+  // fall off as it goes. Viewer-only: it reads hp, nothing more. g: a fresh (unbaked) finished model; (x0, z0, w, h) its
+  // footprint; its falling bits go into g. Returns { set(hpFrac), collapse(), tick(dt) → true once gone, shown }.
+  const structure = (g, f) => { const walk = o => { if (o.name === 'sails' || o.name === 'flag') return; if (o.isMesh && !o.isInstancedMesh && !HULL_MATS.has(o.material)) f(o); for (const c of o.children) walk(c); }; walk(g); };
+  function buildingDamage(g, x0, z0, w, h){
+    g.updateMatrixWorld(true);
+    // the chunks' colours: the pieces' (roof) and the walls' (the most-used face)
+    const inPiece = o => { for (let p = o; p && p !== g; p = p.parent) if (p.userData.piece) return true; return false; };
+    let roofCol = null; const wallN = new Map(), bb = new THREE.Box3(), box = new THREE.Box3();
+    structure(g, o => { box.union(bb.setFromObject(o, true)); for (const m of [].concat(o.material)) { if (!m.color || INTERIOR_MATS.has(m)) continue;
+      if (inPiece(o)) roofCol = roofCol || '#' + m.color.getHexString(); else wallN.set(m, (wallN.get(m) || 0) + 1); } });
+    const wallCol = '#' + (([...wallN.entries()].sort((a, b) => b[1] - a[1])[0] || [{ color: new THREE.Color('#9a8a74') }])[0].color.getHexString());
+    const site = constructionSite(g, x0, z0, w, h, false, true);
+    let shown = 1, target = 1, rate = 0.5, last = 1, st = site.damage(1);
+    const bits = [], puffs2 = [];
+    const burst = (n, y, col) => { for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(unitBox, mat(col)), s0 = 0.03 + Math.random() * 0.04;
+      m.scale.set(s0 * 1.4, s0, s0); m.position.set(box.min.x + Math.random() * (box.max.x - box.min.x), y, box.min.z + Math.random() * (box.max.z - box.min.z));
+      g.add(m); bits.push({ m, v: new THREE.Vector3((Math.random() - 0.5) * 0.7, 0.3 + Math.random() * 0.4, (Math.random() - 0.5) * 0.7), age: 0, r: (Math.random() - 0.5) * 14 }); } };
+    const dust = (x, y, z, sc = 1) => { const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ color: '#b9a88c', transparent: true, opacity: 0.5, depthWrite: false }));
+      m.position.set(x, y, z); m.scale.setScalar(0.05 * sc); g.add(m); puffs2.push({ m, age: 0, s: 0.05 * sc }); };
+    const tick = dt => {
+      if (shown !== target) {
+        shown = target < shown ? Math.max(target, shown - rate * dt) : Math.min(target, shown + rate * dt);
+        st = site.damage(shown);
+        if (shown < last - 0.03) {                                                      // a bit more of it gone: bits off it
+          const onRoof = roofCol && st.roof > 0 && st.roof < 1;
+          burst(onRoof ? 3 : 2, onRoof ? site.H : st.top, onRoof ? roofCol : wallCol);
+          for (let i = 0; i < 2; i++) dust(box.min.x + Math.random() * (box.max.x - box.min.x), onRoof ? site.H : st.top, box.min.z + Math.random() * (box.max.z - box.min.z));
+          last = shown;
+        } else if (shown > last) last = shown;
+      }
+      for (let i = bits.length - 1; i >= 0; i--) { const b = bits[i]; b.age += dt;
+        if (b.m.position.y > 0.02) { b.v.y -= 3.2 * dt; b.m.position.addScaledVector(b.v, dt); b.m.rotation.x += b.r * dt; b.m.rotation.z += b.r * 0.7 * dt;
+          if (b.m.position.y <= 0.02) { b.m.position.y = 0.02; dust(b.m.position.x, 0.03, b.m.position.z, 0.8); } }
+        if (b.age > 2.2) { g.remove(b.m); bits.splice(i, 1); } else if (b.age > 1.6) b.m.scale.multiplyScalar(Math.exp(-dt * 6)); }
+      for (let i = puffs2.length - 1; i >= 0; i--) { const p = puffs2[i]; p.age += dt; p.m.position.y += dt * 0.1; p.m.scale.setScalar(p.s * (1 + p.age * 2.5));
+        p.m.material.opacity = 0.5 * Math.max(0, 1 - p.age / 1.2); if (p.age > 1.2) { g.remove(p.m); p.m.material.dispose(); puffs2.splice(i, 1); } }
+      return shown <= 0 && !bits.length && !puffs2.length;
+    };
+    return { set: f => { target = Math.max(0, Math.min(1, f)); }, jump: f => { shown = last = target = f; st = site.damage(f); },
+      collapse: () => { target = 0; rate = 1.4; for (let i = 0; i < 8; i++) dust(box.min.x + Math.random() * (box.max.x - box.min.x), 0.05, box.min.z + Math.random() * (box.max.z - box.min.z), 1.6); },
+      tick, get shown(){ return shown; } };
   }
   // Dev check: a model rendered from the exact iso angle beside its 2D art.
   window.__povIsoCheck = id => {
@@ -3749,11 +3907,36 @@
   };
   // Viewer-only motion (aTick, never the sim): sails, gate doors, flags, horses.
   const ease = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // Destroyed buildings (logic.js calls onBuildingFell): one seen falling comes down to nothing (buildingDamage's collapse)
+  // — its damaged model carries on from where it stood, else a fresh one.
+  const falls = [];
+  const DMG_FROM = 0.95; // below this share of its health a building shows its damage (buildingDamage)
+  window.onBuildingFell = e => {
+    if (!scene || !raf) return;                                                      // (the 3D view is running)
+    const rec = solids.get(e.id);
+    if (buildingFogLevel(e) !== 2) return;                                          // (fell unseen: nothing to show)
+    const c = centerOf(e), b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
+    if (Math.abs(c.x - camAt.x) > RANGE || Math.abs(c.y - camAt.y) > RANGE) return;
+    let g, d;
+    if (rec && rec.dmg) { solids.delete(e.id); g = rec.obj; d = rec.dmg; g.userData.bid = null; }   // (taken over: refreshBuildings won't drop it)
+    else { g = new THREE.Group(); const snap = { ...e, hp: 1, complete: true, openTop: true };
+      try { if (isWallBtype(e.btype) || isGateBtype(e.btype)) g.add(wallModel(snap, []).obj); else if (MODELS[e.btype]) MODELS[e.btype](g, snap); else return; } catch (err) { return; }
+      addHulls(g); scene.add(g); d = buildingDamage(g, e.x, e.y, w, h); }
+    d.collapse(); falls.push({ g, d });
+    shakeFrom(c.x, c.y, Math.min(0.06, 0.012 * Math.sqrt(w * h)));
+  };
+  function dropFalls(){ for (const f of falls) dropSolid({ obj: f.g }); falls.length = 0; }
+  function animateFalls(dt){
+    for (let i = falls.length - 1; i >= 0; i--) if (falls[i].d.tick(dt)) { dropSolid({ obj: falls[i].g }); falls.splice(i, 1); }
+  }
   function animateModels(dt){
+    animateFalls(dt);
     const t = aTick * 0.13;
     for (const rec of solids.values()) {
       if (rec.sails) rec.sails.rotation.z += dt * 0.9;
+      if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)
       if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
+      if (rec.dmg && rec.obj.visible) { const fe = entitiesById.get(rec.obj.userData.bid); if (fe) rec.dmg.set(fe.hp / fe.maxHp); rec.dmg.tick(dt); } // (its damage by its health)
       if (rec.door) { // gates slide their door up as they open (read-only)
         const ge = entitiesById.get(rec.doorOf);
         rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
@@ -3844,37 +4027,58 @@
   let bakesLeft = 0;
   // Merge a posed group into one mesh per (material, draw order); multi-material
   // boxes and ink lines are kept as they are.
+  const BAKE_STD = new Set(['position', 'normal', 'uv']), BAKE_DEF = { slide: [0, 1, 0] };
   function bakePose(g){
     g.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), groups = new Map(), root = new THREE.Group();
+    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), groups = new Map(), lineGroups = new Map(), root = new THREE.Group();
     g.traverseVisible(o => {
       if (o === g || !(o.isMesh || o.isLineSegments)) return;
       const M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
-      if (o.isMesh && !Array.isArray(o.material)) { const k = o.material.uuid + '|' + o.renderOrder;
-        if (!groups.has(k)) groups.set(k, { mat: o.material, ro: o.renderOrder, parts: [] }); groups.get(k).parts.push({ geo: o.geometry, M }); return; }
+      const put = (m, range) => { const k = m.uuid + '|' + o.renderOrder;
+        if (!groups.has(k)) groups.set(k, { mat: m, ro: o.renderOrder, parts: [] }); groups.get(k).parts.push({ geo: o.geometry, M, range }); };
+      if (o.isMesh && !Array.isArray(o.material)) { put(o.material); return; }
+      // a multi-material mesh (a box with its own top): each material's triangles into that material's merge
+      if (o.isMesh && o.geometry.groups.length && o.geometry.groups.every(gr => o.material[gr.materialIndex])) { for (const gr of o.geometry.groups) put(o.material[gr.materialIndex], gr); return; }
+      if (o.isLineSegments && !o.geometry.index) { const k = 'L' + o.material.uuid + '|' + o.renderOrder;   // ink: merged the same way, as lines
+        if (!lineGroups.has(k)) lineGroups.set(k, { mat: o.material, ro: o.renderOrder, parts: [] }); lineGroups.get(k).parts.push({ geo: o.geometry, M }); return; }
       const c = o.isMesh ? new THREE.Mesh(o.geometry, o.material) : new THREE.LineSegments(o.geometry, o.material);
       c.renderOrder = o.renderOrder; M.decompose(c.position, c.quaternion, c.scale); root.add(c); o.geometry.userData.kept = true; // referenced, not copied: survives the source's cleanup
     });
     const nm = new THREE.Matrix3(), v = new THREE.Vector3();
     for (const { mat: m, ro, parts } of groups.values()) {
       let nv = 0, ni = 0; const uv = parts.every(p => p.geo.attributes.uv);
-      for (const p of parts) { nv += p.geo.attributes.position.count; ni += p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
+      for (const p of parts) { nv += p.geo.attributes.position.count; ni += p.range ? p.range.count : p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
       const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uvs = uv ? new Float32Array(nv * 2) : null, idx = new Uint32Array(ni);
       let ov = 0, oi = 0;
-      for (const { geo, M } of parts) {
+      for (const { geo, M, range } of parts) {
         const P = geo.attributes.position, N = geo.attributes.normal, n = P.count; nm.getNormalMatrix(M);
         for (let i = 0; i < n; i++) {
           v.fromBufferAttribute(P, i).applyMatrix4(M); pos.set([v.x, v.y, v.z], (ov + i) * 3);
           if (N) { v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); nrm.set([v.x, v.y, v.z], (ov + i) * 3); }
           if (uv) uvs.set([geo.attributes.uv.getX(i), geo.attributes.uv.getY(i)], (ov + i) * 2);
         }
-        if (geo.index) for (let i = 0; i < geo.index.count; i++) idx[oi++] = geo.index.getX(i) + ov; else for (let i = 0; i < n; i++) idx[oi++] = i + ov;
+        const r0 = range ? range.start : 0, r1 = range ? range.start + range.count : geo.index ? geo.index.count : n;
+        if (geo.index) for (let i = r0; i < r1; i++) idx[oi++] = geo.index.getX(i) + ov; else for (let i = r0; i < r1; i++) idx[oi++] = i + ov;
         ov += n;
       }
       const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); bg.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
       if (uv) bg.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      // any other per-vertex data (a site's clipOnly / inside / slide) carried as is — a part without it takes its default
+      const extra = new Set(); for (const p of parts) for (const k in p.geo.attributes) if (!BAKE_STD.has(k)) extra.add(k);
+      for (const k of extra) { const size = parts.find(p => p.geo.attributes[k]).geo.attributes[k].itemSize, arr = new Float32Array(nv * size), def = BAKE_DEF[k] || [];
+        let o = 0; for (const { geo } of parts) { const A = geo.attributes[k], n = geo.attributes.position.count;
+          for (let i = 0; i < n; i++) for (let c = 0; c < size; c++) arr[(o + i) * size + c] = A ? A.array[i * A.itemSize + c] : (def[c] || 0);
+          o += n; }
+        bg.setAttribute(k, new THREE.BufferAttribute(arr, size)); }
       bg.setIndex(new THREE.BufferAttribute(idx, 1)); bg.computeBoundingSphere();
       bg.userData.baked = true; const mesh = new THREE.Mesh(bg, m); mesh.renderOrder = ro; root.add(mesh);
+    }
+    for (const { mat: m, ro, parts } of lineGroups.values()) {
+      let n = 0; for (const p of parts) n += p.geo.attributes.position.count;
+      const pos = new Float32Array(n * 3); let o = 0;
+      for (const { geo, M } of parts) { const P = geo.attributes.position; for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).applyMatrix4(M); pos[o++] = v.x; pos[o++] = v.y; pos[o++] = v.z; } }
+      const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); bg.computeBoundingSphere(); bg.userData.baked = true;
+      const ls = new THREE.LineSegments(bg, m); ls.renderOrder = ro; root.add(ls);
     }
     return root;
   }
@@ -3906,7 +4110,8 @@
       let kind = 'walk';
       // the load shows only while HAULING along a path (as 2D's carryShow) — not in the last press into contact, where
       // the first bite already lands
-      if (e.carrying > 0 && !farmWalk && e.path.length > 0) { kind = up('wheelbarrow') ? 'barrow' : 'carry'; opt.load = carriedLoad(e); }
+      // (a hauler on its way to drop it — task 'return' — keeps it in hand right up to the throw, the last step too)
+      if (e.carrying > 0 && !farmWalk && (e.path.length > 0 || e.task === 'return')) { kind = up('wheelbarrow') ? 'barrow' : 'carry'; opt.load = carriedLoad(e); }
       else if (farmWalk && up('heavy_plow')) kind = 'plow';
       else if (isRetreatingUnit(e)) kind = 'flee';
       else if (VIL_TOOL[e.task]) opt.tool = VIL_TOOL[e.task];
@@ -3918,6 +4123,7 @@
     else if (e.task === 'build' && e.buildTarget) { bt = entitiesById.get(e.buildTarget); atSite = !!bt && atBuildSite(e, bt); }
     else if (e.target) atSite = inActionRange(e);
     let kind = 'idle';
+    if (e.task === 'return' && e.carrying > 0) { opt.load = carriedLoad(e); return { kind: 'carry', t: 0.25, opt }; } // at the drop, the load still in hand till the throw
     if ((e.task || e.target) && atSite) {
       if (e.task === 'chop') { const felled = e.gatherX >= 0 && map[e.gatherY] && map[e.gatherY][e.gatherX].res <= 60; // a cut tree lies felled: split the trunk on the ground
         kind = felled ? 'split' : up('bow_saw') ? 'saw' : 'chop'; opt.up = { double: up('double_bit_axe') }; }
@@ -4043,11 +4249,14 @@
       p = p.legs ? { kind: p.legs.kind, t: p.legs.t, opt: p.opt } : { kind: 'idle', t: workPhase(e, 'idle'), opt: p.opt };
     }
     if (vmUnit && VM.force != null) { v.fpStrike = VM.force; if (p.kind === 'attack') p = { kind: 'idle', t: 0, opt: p.opt }; } // dev: a pinned strike phase
-    v.lastPose = p.kind; // (dev: __povVM)
+    v.lastPose = p.kind; v.lastLoad = p.opt && p.opt.load; // (dev: __povVM, __povPose)
     if (v.throw) { const el = now - v.throw.at, b = v.throw.b, bx = b.x + (b.w || 1) / 2, bz = b.y + (b.h || 1) / 2;
       if (el > THROW_MS) v.throw = null;
-      else { const t = 0.12 + 0.38 * el / THROW_MS; p = { kind: 'drop', t, opt: { load: v.throw.load, noFly: true } };
-        ty = -Math.atan2(bz - v.z, bx - v.x);                                                // turn to the building while throwing
+      else { const t = 0.12 + 0.38 * el / THROW_MS;
+        // It throws standing at the drop, turned to the building — though the sim sends it off the tick it drops: the
+        // drawn villager holds its spot for the throw (below) and catches up after, at a walk
+        p = { kind: 'drop', t, opt: { load: v.throw.load, noFly: true } };
+        ty = -Math.atan2(bz - v.z, bx - v.x);
         if (!v.throw.flew && t >= REL) { v.throw.flew = true; const o = loadModel(v.throw.load); scene.add(o);
           const fw = [Math.cos(-ty), Math.sin(-ty)];
           flying.push({ obj: o, age: 0, dur: 0.5, h: 0.35, yaw: ty, a: [v.x + fw[0] * ax(6.7), chh(-19.3 - LOAD_SIT[v.throw.load]), v.z + fw[1] * ax(6.7)], b: [bx, 0.22, bz] }); } } }
@@ -4098,14 +4307,16 @@
       const sg = steered && (tx - v.ptx) * Math.cos(yaw) + (tz - v.ptz) * Math.sin(yaw) < 0 ? -1 : 1;   // backing up (S): along the heading, backwards
       const lx = steered ? sg * Math.cos(yaw) : lk.x + 0.5 - v.x, lz = steered ? sg * Math.sin(yaw) : lk.y + 0.5 - v.z, ll = Math.hypot(lx, lz) || 1, k = Math.min(1, dt * (steered ? 0.5 : 1.3));
       nx = v.x + lx / ll * step; nz = v.z + lz / ll * step; nx += (tx - nx) * k; nz += (tz - nz) * k;
-    } else if (!mv && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
-      // A villager off its spot (into a work spot, back out of one) walks there, at a walk, legs and all.
-      const dx = tx - v.x, dz = tz - v.z, d = Math.hypot(dx, dz), step = Math.min(d, WALK_IN * GAME_SPEED * dt);
+    } else if (!mv && !v.throw && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
+      // A villager off its spot (into a work spot, back out of one) walks there, at a walk, legs and all — a load in
+      // hand stays in hand (the carrying walk); never over a throw (it stands for that: held below)
+      const dx = tx - v.x, dz = tz - v.z, d = Math.hypot(dx, dz), step = Math.min(d, WALK_IN * GAME_SPEED * dt), wk = p.opt && p.opt.load ? 'carry' : 'walk';
       nx = v.x + dx / d * step; nz = v.z + dz / d * step; v.stride += step;
-      ty = -Math.atan2(dz, dx); p = { kind: 'walk', t: ((v.stride / WALK_TILES.walk) % 1 + 1) % 1, opt: p.opt };
+      ty = -Math.atan2(dz, dx); p = { kind: wk, t: ((v.stride / WALK_TILES[wk]) % 1 + 1) % 1, opt: p.opt };
     } else { const f = T ? Math.min(1, dt * 10) : Math.min(1, dt * 14); nx = v.x + (tx - v.x) * f; nz = v.z + (tz - v.z) * f; }
     v.ptx = tx; v.ptz = tz;
     if (steerActive() && e.id === followId && (mv || (!e.target && !T && !e.task)) || (!T && steeredFacing(e))) { ty = -yaw; setHeading(e, yaw); } // the steered character faces where it's steered, and keeps it
+    if (v.throw) { nx = v.x; nz = v.z; }                                            // (held at the drop while it throws)
     if (!T) v.stride += Math.hypot(nx - v.x, nz - v.z);
     v.x = nx; v.z = nz;
     v.yaw += Math.atan2(Math.sin(ty - v.yaw), Math.cos(ty - v.yaw)) * Math.min(1, dt * 8);
@@ -4173,6 +4384,7 @@
   // samples into its own bone array. Viewer-only (never read by the sim).
   let RIG_LIGHT = false, RIG_NOHULL = false;
   const FP_ARM = 0.6;                                         // first person: how far the forearm runs on back past the elbow (tiles)
+  let _fpA = null;
   const RIG_SEG = 8, RIG_RAD = 7;                             // rings along a tube, sides round it
   const rigTemplates = new Map(), rigSamples = new Map();
   let rigSampleUntil = 0, rigTemplateBudget = 0;
@@ -4208,6 +4420,9 @@
     return out;
   }
   // Merge buckets: material → { mat, order, pos[], nrm[], uv[], bone[], idx[] }.
+  const rigPlainMats = new Map();
+  const rigPlainMat = side => { let m = rigPlainMats.get(side);
+    if (!m) rigPlainMats.set(side, m = new THREE.MeshLambertMaterial({ vertexColors: true, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })); return m; };
   function rigAdd(B, mat, order, geo, bone, M){
     const k = mat.uuid + '|' + order; let b = B.get(k);
     if (!b) B.set(k, b = { mat, order, pos: [], nrm: [], uv: [], bone: [], idx: [] });
@@ -4263,9 +4478,23 @@
       for (const c of o.children) if (c.isLineSegments) { const { b, base } = rigAdd(B, c.material, 3, c.geometry, bone, null); b.lines = true; rigIndex(b, base, c.geometry); } // edge ink (posts), on the part's bone
       bone++;
     }
+    // Plain-coloured parts (skin, cloth, leather, wood: no texture, no team colour, opaque) go in ONE mesh per side,
+    // coloured per vertex — a unit is a handful of draws, not one per colour
+    const plain = m => m.isMeshLambertMaterial && !m.map && !m.userData.detail && !m.transparent && !tcSwaps.has(m) && !HULL_MATS.has(m) && m.userData.plain; // (a mat() colour: fog is patched on at draw, on the merged one too)
+    for (const side of [THREE.FrontSide, THREE.DoubleSide]) {
+      const group = [...B.entries()].filter(([, b]) => !b.lines && b.order === 2 && plain(b.mat) && b.mat.side === side);
+      if (group.length < 2) continue;
+      const m = { mat: rigPlainMat(side), order: 2, pos: [], nrm: [], uv: [], bone: [], idx: [], col: [] };
+      for (const [k, b] of group) { const base = m.pos.length / 3, c = b.mat.color;
+        m.pos.push(...b.pos); m.nrm.push(...b.nrm); m.uv.push(...b.uv); m.bone.push(...b.bone);
+        for (let i = 0; i < b.pos.length / 3; i++) m.col.push(c.r, c.g, c.b);
+        for (const i of b.idx) m.idx.push(i + base); B.delete(k); }
+      B.set('plain|' + side, m);
+    }
     const meshes = [];
     for (const b of B.values()) {
       const geo = new THREE.BufferGeometry(), n = b.pos.length / 3, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+      if (b.col) geo.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
       for (let i = 0; i < n; i++) { si[i * 4] = b.bone[i]; sw[i * 4] = 1; }
       geo.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2)); geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4)); geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
@@ -4280,6 +4509,7 @@
     let s = rigSamples.get(tkey);
     if (s) return s;
     if (performance.now() > rigSampleUntil) return null;                      // ≤1.5ms of sampling a frame (the rest wait: a unit keeps its last pose)
+    frameParts.samp++;
    
     RIG_LIGHT = true; RIG_NOHULL = true; POLY = 0.6; let g;
     try { g = animFrame(kind, t, female, opt); } finally { RIG_LIGHT = false; RIG_NOHULL = false; POLY = 1; }
@@ -4291,13 +4521,16 @@
   }
   function rigTemplateFor(base, sig, kind, t, female, opt){
     const k = base + '#' + sig; let T = rigTemplates.get(k);
-    if (!T) { if (rigTemplateBudget <= 0) return null; rigTemplateBudget--; T = rigTemplate(kind, t, female, opt); if (T.sig !== sig) console.warn('rig: layout moved', k, T.sig.length, sig.length); rigTemplates.set(k, T); }
+    if (!T) { if (rigTemplateBudget <= 0) return null; rigTemplateBudget--; const tb = performance.now(); T = rigTemplate(kind, t, female, opt); frameParts.tpl = (frameParts.tpl || 0) + performance.now() - tb; if (T.sig !== sig) console.warn('rig: layout moved', k, T.sig.length, sig.length); rigTemplates.set(k, T); }
     return T;
   }
   // A unit's skinned instance of a template (shared geometry/materials, its own bones; team colour swapped).
   // bindMode 'detached': the default 'attached' re-inverts each mesh's own world matrix every frame, which cancels the unit's placement
   function rigInstance(T, tc){
-    const bones = Array.from({ length: T.bones }, () => new THREE.Bone()), sk = new THREE.Skeleton(bones);
+    // the bones are never moved (rigPose writes the bone matrices directly): every instance of a template shares one
+    // set, and its inverses — a unit is then its meshes and a bone texture, not ~60 scene objects of its own
+    if (!T.skBones) { T.skBones = Array.from({ length: T.bones }, () => new THREE.Bone()); T.skInv = T.skBones.map(() => new THREE.Matrix4()); }
+    const sk = new THREE.Skeleton(T.skBones, T.skInv);
     sk.update = function(){ if (this.boneTexture) this.boneTexture.needsUpdate = true; }; // the bone array is written directly (rigPose)
     const root = new THREE.Group(), sw = m => tcSwaps.has(m) ? tcSwaps.get(m)(tc) : m, id = new THREE.Matrix4();
     for (const m of T.meshes) { if (m.lines) continue; const sm = new THREE.SkinnedMesh(m.geo, tc !== VIL_TC ? sw(m.mat) : m.mat); sm.bindMode = 'detached'; sm.bind(sk, id); sm.renderOrder = m.order; sm.frustumCulled = false; root.add(sm); }
@@ -4328,7 +4561,17 @@
     if (!A) return !!v.rig;                                                     // keep the last pose until the sample's built
     const T = rigTemplateFor(base, A.sig, kind, s0 / steps, female, opt);
     if (!T) return !!v.rig;
-    if (!v.rig || v.rig.T !== T || v.rig.tc !== tc) { dropRig(v); v.rig = rigInstance(T, tc); v.rig.tc = tc; scene.add(v.rig.root); }
+    if (!v.rig || v.rig.T !== T || v.rig.tc !== tc) {
+      // an action whose parts come and go (an arrow drawn, a tool fetched) flips between templates: each unit keeps the
+      // few it has used and swaps, never rebuilding (a rebuild is new meshes, bones and x-ray twins — a crowd's worth a frame)
+      const rigs = v.rigs || (v.rigs = new Map());
+      if (v.rig) scene.remove(v.rig.root);
+      let r = rigs.get(T); if (r && r.tc !== tc) { freeRig(r); rigs.delete(T); r = null; }
+      if (!r) { const ti = performance.now(); r = rigInstance(T, tc); frameParts.inst = (frameParts.inst || 0) + performance.now() - ti; r.tc = tc; rigs.set(T, r);
+        if (rigs.size > RIG_KEEP) for (const [k, o] of rigs) if (o !== r) { freeRig(o); rigs.delete(k); break; } }   // (the oldest goes)
+      else { rigs.delete(T); rigs.set(T, r); }                                              // (most recent last)
+      v.rig = r; scene.add(r.root);
+    }
     const out = v.rig.sk.boneMatrices, a = A.m, b = Bs.sig === A.sig ? Bs.m : a;
     if (out.length >= a.length) for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * f; // (three pads the array to its bone-texture size)
     if (legs) { // the walk's lower body under this pose's upper body (legMap)
@@ -4340,21 +4583,32 @@
       }
     }
     if (fp) { for (const bi of T.fpBones) out.fill(0, bi * 16, bi * 16 + 16);
-      // the upper arm's rings run on straight back from the elbow along the forearm's line (FP_ARM tiles), so the arm
-      // reaches past the lens and out the bottom of the view — no stump end, no outline cap at the elbow
+      // the upper arm: from the elbow it curves on toward where the shoulder really sits (below and beside the lens), and
+      // past it out of view — a real arm's bend, not a stump or a straight pipe. Each ring turns to follow the curve.
       const mid = RIG_SEG >> 1; // the elbow: the arm's curve passes through it halfway
+      _fpA = _fpA || { m: new THREE.Matrix4(), q: new THREE.Quaternion(), f: new THREE.Vector3(), t: new THREE.Vector3(), p: new THREE.Vector3(), s: new THREE.Vector3(), c: new THREE.Vector3(), e: new THREE.Vector3() };
+      const A = _fpA;
       for (const b0 of T.fpFold) { const E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16;
-        let dx = out[E + 12] - out[Hd + 12], dy = out[E + 13] - out[Hd + 13], dz = out[E + 14] - out[Hd + 14]; const L = Math.hypot(dx, dy, dz) || 1; dx /= L; dy /= L; dz /= L;
-        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, k = FP_ARM * (mid - i) / mid; out.copyWithin(o, E, E + 16);
-          out[o + 12] += dx * k; out[o + 13] += dy * k; out[o + 14] += dz * k; } }
+        A.e.set(out[E + 12], out[E + 13], out[E + 14]);
+        A.f.set(out[E + 12] - out[Hd + 12], out[E + 13] - out[Hd + 13], out[E + 14] - out[Hd + 14]).normalize();   // the forearm's line, hand → elbow
+        // the shoulder (model: x ahead, y up, z right): the arm's own root, carried on down and back out of view
+        A.s.set(out[b0 * 16 + 12] - FP_ARM * 0.35, out[b0 * 16 + 13] - FP_ARM * 0.6, out[b0 * 16 + 14] * 0.8);
+        A.c.copy(A.e).addScaledVector(A.f, FP_ARM * 0.3);                                    // the bend: on along the forearm a little first
+        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, u = i / mid;                    // u: 0 at the far end, 1 at the elbow
+          A.p.copy(A.s).multiplyScalar((1 - u) * (1 - u)).addScaledVector(A.c, 2 * u * (1 - u)).addScaledVector(A.e, u * u);
+          A.t.copy(A.c).sub(A.s).multiplyScalar(1 - u).addScaledVector(A.e.clone().sub(A.c), u).normalize().negate(); // the curve's heading, toward the far end
+          A.m.fromArray(out, E); A.q.setFromUnitVectors(A.f, A.t);
+          A.m.premultiply(new THREE.Matrix4().makeRotationFromQuaternion(A.q)).setPosition(A.p); A.m.toArray(out, o); } }
       if (T.fpFold.length) { const hs = [0, 0, 0]; for (const b0 of T.fpFold) for (let k = 0; k < 3; k++) hs[k] += out[(b0 + RIG_SEG) * 16 + 12 + k]; // the hands (the arms' ends)
         v.fpHands = hs.map(x => x / T.fpFold.length); } }
     v.obj = v.rig.root;
     return true;
   }
-  window.__povRigLab = (kind, t, opt, tc = VIL_TC) => { rigSampleUntil = Infinity; rigTemplateBudget = 9; const v = {}; const sc0 = scene; scene = { add(){}, remove(){} };
-    try { rigPose(v, kind, t, false, opt || {}, tc); } finally { scene = sc0; } return v.rig && v.rig.root; };
-  function dropRig(v){ if (!v.rig) return; scene.remove(v.rig.root); disposeFaded(v.rig.root); if (v.rig.sk.boneTexture) v.rig.sk.boneTexture.dispose(); v.rig = null; v.obj = null; }
+  window.__povRigLab = (kind, t, opt, tc = VIL_TC, female = false, legs = null) => { rigSampleUntil = Infinity; rigTemplateBudget = 9; const v = {}; const sc0 = scene; scene = { add(){}, remove(){} };
+    try { rigPose(v, kind, t, female, opt || {}, tc, VIL_STEPS, false, legs); } finally { scene = sc0; } return v.rig && v.rig.root; };
+  const RIG_KEEP = 6; // rigs a unit keeps to swap between (rigPose)
+  function freeRig(r){ scene.remove(r.root); disposeFaded(r.root); if (r.sk.boneTexture) r.sk.boneTexture.dispose(); }
+  function dropRig(v){ if (!v.rig) return; if (v.rigs) { for (const r of v.rigs.values()) freeRig(r); v.rigs = null; } else freeRig(v.rig); v.rig = null; v.obj = null; }
   const dropVillager = v => { if (v.rig) { dropRig(v); return; } if (v.obj) { scene.remove(v.obj); disposeFaded(v.obj); vilRefs.set(v.key, (vilRefs.get(v.key) || 1) - 1); } };
   // Frame interpolation (viewer-only). The sim ticks inside the frame loop, so
   // ticks land in bursts on frame boundaries (at 40 ticks/s on a 60Hz screen:
@@ -4810,33 +5064,36 @@
     const dt = lastNow ? Math.min(0.1, (now - lastNow) / 1000) : 0;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
-    bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1;
+    bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
     camDt = dt || 1 / 60; updateCamera(e);
     { const fp = world && mode === 'eye' && e != null; if (fp !== fpDimmed) { fpDimmed = fp; const mw = document.getElementById('minimap-wrap'); if (mw) mw.classList.toggle('fp-active', fp); } } // first person: the minimap steps back (styles.css)
     // on the cadence, or at once when the view has moved a few tiles (a jump: the new place mustn't wait for it)
+    const P = frameParts, mark = k => { const n = performance.now(); P[k] = n - P._t; P._t = n; }; P._t = performance.now(); // (the last frame's time by part: __povFrame)
     if (now - lastStatic > STATIC_MS || !staticAt || (eye.x - staticAt.x) ** 2 + (eye.y - staticAt.y) ** 2 > 9) {
       refreshGround(); refreshFeatures(); refreshBuildings(); refreshButtons(); lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
+    mark('static');
     animateFeatures(dt);
     updateArrows(now);
     clouds.position.set(camera.position.x, 0, camera.position.z); clouds.rotation.y = aTick * 0.00004;
-    animateModels(dt);
-    updateUnits();
+    animateModels(dt); mark('models');
+    updateUnits(); mark('units');
     updateXray(); updateSelection();
-    if (world) updateGhost();
+    if (world) updateGhost(); mark('fx');
     const t1 = performance.now();
     cullRigs();
-    renderer.render(scene, camera);
+    renderer.render(scene, camera); mark('render');
     if (unrevealed) { unrevealed = false; pip.style.visibility = ''; window.world3D = world; }
-    if (world) drawOverlay(); else if (ov) ovx.clearRect(0, 0, ov.width, ov.height);
+    if (world) drawOverlay(); else if (ov) ovx.clearRect(0, 0, ov.width, ov.height); mark('overlay');
     // Running averages (ms/frame): our JS (art repaints, uploads, layout) vs the
     // WebGL submit — for profiling from the console.
     stats.js += ((t1 - t0) - stats.js) * 0.05;
     stats.gl += ((performance.now() - t1) - stats.gl) * 0.05;
   }
-  const stats = { js: 0, gl: 0 };
+  const stats = { js: 0, gl: 0 }, frameParts = { _t: 0 };
+  window.__povFrame = () => frameParts; // dev: the last frame's time by part (ms)
 
   function refreshButtons(){
     if (!pip) return;
@@ -5116,6 +5373,15 @@
   // body's twin marks its hidden pixels in the stencil, then the ink shell's twin paints team colour outside them —
   // a rim. The real unit draws last and covers whatever is actually in view.
   let xray = null; const xTwins = new Map(); // source mesh → twin
+  // A twin material for a skinned mesh is its own copy: one material drawn on both skinned and plain meshes has its
+  // shader program swapped (re-set up) at every change between them.
+  const skinnedCopies = new WeakMap();
+  function skinnedTwin(m, skinned){
+    if (!skinned) return m; let c = skinnedCopies.get(m);
+    if (!c) { c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; c.onBeforeRender = m.onBeforeRender; skinnedCopies.set(m, c); }
+    return c;
+  }
+  let _xr = null;
   function updateXray(){
     if (!xray) {
       xray = new THREE.Group(); xray.renderOrder = 5; scene.add(xray);
@@ -5129,22 +5395,29 @@
     xray.visible = on;
     const used = new Set();
     if (on) {
+      // only a unit something actually stands in front of: a building's box on the line from the lens to it, or a tree
+      // crown over that line within a couple of tiles of it
       const bl = [];
-      for (const [id, rec] of solids) { const b = entitiesById.get(id); if (b && b.type === 'building' && rec.obj && rec.obj.visible) bl.push(b); }
-      const nearTree = (x, z) => { // a standing tree within 2 tiles (a crown hides what's up to ~2 tiles behind it)
-        for (let ty = Math.floor(z) - 2; ty <= Math.floor(z) + 2; ty++) for (let tx = Math.floor(x) - 2; tx <= Math.floor(x) + 2; tx++) {
-          const t = map[ty] && map[ty][tx]; if (t && t.t === TERRAIN.FOREST && t.res > 60 && fog[ty][tx]) return true; }
+      for (const rec of solids.values()) if (rec.obj && rec.obj.visible && rec.obj.userData.bid != null) {
+        if (!rec.box || rec.boxKey !== rec.key) { rec.box = new THREE.Box3().setFromObject(rec.obj); rec.boxKey = rec.key; } bl.push(rec.box); }
+      _xr = _xr || { ray: new THREE.Ray(), p: new THREE.Vector3(), hit: new THREE.Vector3() };
+      const cam = camera.position, R = _xr.ray;
+      const hidden = v => {
+        _xr.p.set(v.x, 0.3, v.z); const dist = cam.distanceTo(_xr.p); R.origin.copy(cam); R.direction.copy(_xr.p).sub(cam).normalize();
+        for (const b of bl) if (R.intersectBox(b, _xr.hit) && cam.distanceTo(_xr.hit) < dist - 0.05) return true;
+        const dx = cam.x - v.x, dz = cam.z - v.z, dh = Math.hypot(dx, dz) || 1;                   // back toward the lens, along the ground
+        for (let s = 0.5; s <= 2.5; s += 0.5) { const x = v.x + dx / dh * s, z = v.z + dz / dh * s, ty = Math.floor(z), tx = Math.floor(x), t = map[ty] && map[ty][tx];
+          if (t && t.t === TERRAIN.FOREST && t.res > 60 && fog[ty][tx] && 0.3 + (cam.y - 0.3) * s / dh < TREE_H + CROWN_R * 1.2) return true; }
         return false; };
       for (const u of entities) {
         if (u.type !== 'unit' || u.hp <= 0 || u.garrisonedIn || (u.id === followId && mode === 'eye')) continue;
         const v = villagers.get(u.id) || animals.get(u.id); if (!v || !v.obj || !v.obj.visible) continue;
-        if (!bl.some(b => { const w = b.w || BLDGS[b.btype].w, h = b.h || BLDGS[b.btype].h; // near a footprint: a tall roof reaches ~4 tiles
-          return v.x > b.x - 4.5 && v.x < b.x + w + 1.5 && v.z > b.y - 4.5 && v.z < b.y + h + 1.5; }) && !nearTree(v.x, v.z)) continue;
+        if (!hidden(v)) continue;
         v.obj.traverse(o => { if (o.isGroup) o.renderOrder = 10; });                              // the unit draws after its x-ray
         v.obj.updateWorldMatrix(true, true);
         v.obj.traverseVisible(o => {
           if (!o.isMesh || o.isInstancedMesh) return;
-          const hull = o.material && o.material.side === THREE.BackSide, mat = hull ? xray.userData.rimOf(u.team) : xray.userData.mask;
+          const hull = o.material && o.material.side === THREE.BackSide, mat = skinnedTwin(hull ? xray.userData.rimOf(u.team) : xray.userData.mask, o.isSkinnedMesh);
           let t = xTwins.get(o);
           if (!t || t.geometry !== o.geometry) {
             if (t) xray.remove(t);
@@ -5153,11 +5426,13 @@
             t.matrixAutoUpdate = false; t.matrixWorldAutoUpdate = false; t.frustumCulled = false; t.renderOrder = hull ? 1 : 0;
             xTwins.set(o, t); xray.add(t);
           }
-          t.material = mat; t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld); t.visible = true; used.add(o); // (the group sits at the origin: local = world)
+          t.material = mat; t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld); t.visible = true; t.userData.idle = 0; used.add(o); // (the group sits at the origin: local = world)
         });
       }
     }
-    for (const [o, t] of xTwins) if (!used.has(o)) { xray.remove(t); xTwins.delete(o); }
+    // unused: hidden, and dropped only after a while (a unit swapping rigs, or passing behind a building now and then,
+    // would otherwise rebuild its twins each time)
+    for (const [o, t] of xTwins) if (!used.has(o)) { t.visible = false; if (++t.userData.idle > 120) { xray.remove(t); xTwins.delete(o); } }
   }
   // The 2D selection outline: a white rim just outside the selected shapes' ink, any team, over everything — the
   // x-ray's method with the depth test off. Twins in the selection group (drawn last): the body and its ink shell
@@ -5177,7 +5452,7 @@
   function updateSelection(){
     if (!selG) {
       selG = new THREE.Group(); selG.renderOrder = 20; scene.add(selG);
-      const m = o => { const x = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, stencilWrite: true, stencilRef: 2, side: THREE.DoubleSide, ...o });
+      const m = o => { const x = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false, stencilWrite: true, stencilRef: 2, side: THREE.DoubleSide, forceSinglePass: true, ...o });
         x.onBeforeCompile = function(){}; x.onBeforeCompile.fow = true; return x; };
       const mark = { colorWrite: false, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }, paint = { color: '#ffffff', stencilFunc: THREE.NotEqualStencilFunc };
       const fowOff = x => { x.onBeforeCompile.fow = true; return x; };
@@ -5187,7 +5462,7 @@
     const M = selG.userData, used = new Set();
     selG.visible = world; for (const pr of sTwins.values()) for (const t of pr) if (t) t.visible = false; // shown again below if still wanted
     const twin = (o, i, mat, geo) => { let pr = sTwins.get(o); if (!pr) sTwins.set(o, pr = []);
-      let t = pr[i];
+      let t = pr[i]; mat = skinnedTwin(mat, o.isSkinnedMesh);
       if (!t || t.geometry !== geo) { if (t) selG.remove(t);
         if (o.isSkinnedMesh) { t = new THREE.SkinnedMesh(geo, mat); t.bindMode = 'detached'; t.bind(o.skeleton, o.bindMatrix); } else t = new THREE.Mesh(geo, mat);
         t.matrixAutoUpdate = false; t.matrixWorldAutoUpdate = false; t.frustumCulled = false; t.renderOrder = i; pr[i] = t; selG.add(t); }
@@ -5408,6 +5683,7 @@
     villagers.clear();
     for (const r of corpseModels.values()) dropCorpse(r);
     corpseModels.clear();
+    dropFalls();
     for (const [id, r] of vilCorpses) { dropVillager(r); scene.remove(r.blood); r.blood.geometry.dispose(); r.blood.material.dispose(); }
     vilCorpses.clear();
     unitSprites.clear();
@@ -5453,9 +5729,22 @@
   window.__povProject = u => { _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); return project(x, (PICK_H[u.utype] || 0.32), z); }; // dev: a unit's screen spot (tests)
   window.__povPick = (x, y) => { const p = pick(x, y); return { unit: p.unit && p.unit.id, building: p.building && p.building.id, resource: p.resource, map: p.map }; }; // dev: what a click there hits (tests)
   window.__povCam = () => camera.position.toArray().map(v => +v.toFixed(2)); // dev: the camera spot (tests)
+  window.__povPose = id => { const v = villagers.get(id); return v ? v.lastPose + ':' + (v.lastLoad || '') : null; }; // dev: a villager's drawn pose and load
   window.__povFacing = id => { const v = villagers.get(id); return v ? +v.yaw.toFixed(2) : null; }; // dev: a unit's drawn heading (tests)
   window.__povDrawnAt = id => { const v = villagers.get(id); return v ? [v.x, v.z] : null; }; // dev: where a villager is drawn (tests)
   window.povFollowing = () => followId;
   window.povSteering = () => steering;
+  window.__povRigMix = () => { const out = { templates: rigTemplates.size, meshes: 0, plain: 0, team: 0, detail: 0, hull: 0, lines: 0, other: 0 };
+    for (const T of rigTemplates.values()) for (const m of T.meshes) { out.meshes++; const M = m.mat;
+      if (m.lines) out.lines++; else if (HULL_MATS.has(M)) out.hull++; else if (tcSwaps.has(M)) out.team++; else if (M.isMeshLambertMaterial && !M.map && !M.userData.detail && !M.transparent) out.plain++; else if (M.userData.detail || M.map) out.detail++; else out.other++; }
+    return out; }; // dev
+  window.__povBldParts = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible || rec.site || rec.dmg) continue; const e = entitiesById.get(rec.obj.userData.bid); if (!e) continue;
+    const k = e.btype; if (out[k]) continue; const c = {}; rec.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments)) return; const t = o.isLineSegments ? 'lines' : HULL_MATS.has(o.material) ? 'hull' : (o.name || (o.parent && o.parent.name) || 'mesh'); c[t] = (c[t] || 0) + 1; }); out[k] = c; } return out; }; // dev
+  window.__povBldDraws = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible) continue; const k = rec.site ? 'site' : rec.dmg ? 'damaged' : rec.door ? 'gate' : 'finished';
+    let n = 0; rec.obj.traverseVisible(o => { if (o.isMesh || o.isLineSegments) n++; }); const e = out[k] || (out[k] = { count: 0, draws: 0 }); e.count++; e.draws += n; } return out; }; // dev
+  window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
+    let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
+    return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
+      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, farmPrev: farmPrev.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, unitSprites: unitSprites.size, villagers: villagers.size }; }; // dev: cache sizes
   window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0 });
 })();

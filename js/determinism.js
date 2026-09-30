@@ -174,6 +174,8 @@ function detEntityHash(e){
   if (e.possessed) h = detMix(h, 0x9055); // player-steered (the AI skips it); folded only when set
   h = detMix(h, e.lastDodgeTick || 0); // step-aside pacing (makeWayFor, js/loop.js): gates the next dodge
   h = detMix(h, e.dodgeCount || 0);   // …and the anti-dance stubbornness (isStubborn)
+  if (e.idleFarm != null) h = detMix(h, e.idleFarm); // idle farmer's exhausted plot: it strolls to the centre (logic.js)
+  if (e.freeVillagerQueued) h = detMix(h, 0xf7ee); // this queue holds the free rescue villager (refunds read it)
   return h >>> 0;
 }
 
@@ -195,7 +197,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','awake','calmSince','spent','faceAng',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:
