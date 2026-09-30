@@ -1193,6 +1193,36 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------- two farmers keep their own rows
+    'farm-two-lanes': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'],
+        ages: [1, 1],
+        entities: [
+          { b: 'TC', x: 6, y: 6, team: 0 },
+          { b: 'FARM', x: 13, y: 9, team: 0 },
+          { u: 'villager', x: 17, y: 10, team: 0 },
+          { u: 'villager', x: 17, y: 10, team: 0 },
+          { b: 'TC', x: 44, y: 44, team: 1 },
+        ],
+      });
+      const farm = entities.find(e => e.team === 0 && e.btype === 'FARM');
+      const [a, b] = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      selected = [a, b];
+      execUnitCommand({ tileX: farm.x, tileY: farm.y, buildTargetId: farm.id });
+      let shared = 0, working = 0;
+      for (let i = 0; i < T30(1500); i++) {
+        update();
+        const on = u => u.task === 'farm' && u.path.length === 0 && u.carrying > 0;
+        if (on(a) && on(b)) { working++; if (Math.round(a.x) === Math.round(b.x) && Math.round(a.y) === Math.round(b.y)) shared++; }
+      }
+      T.ok('both farmers worked the plot together (' + working + ' ticks)', working > 100);
+      T.ok('never on the same tile (' + shared + ' shared ticks)', shared === 0);
+      T.ok('each keeps its own row', Math.round(a.y) !== Math.round(b.y));
+      return T;
+    })),
+
     // ------------------------------------------------- exhausted farm: idle in the middle
     // AoE2: with no reseed paid, the player's farmer stands idle in the centre of its dry plot; any order ends that.
     'farm-exhausted-idle': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {

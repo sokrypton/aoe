@@ -58,7 +58,9 @@ function updateAIGarrisonReaction(ai){
     if(tick-(ai.militiaUntil??-1e9)>AI_GARRISON_HOLD_TICKS && tryAIMilitiaResponse(ai)){aiProbe('militia:t'+ai.team);return;}
     aiProbe('bell:t'+ai.team);
     ringTownBell(ai.team);
-  } else if(!underAttack && window.bellRinging[ai.team]){
+  } else if(!underAttack && window.bellRinging[ai.team] && tick%AI_ESCALATE_EVERY===0){
+    // (on the ~1s cadence: the reachability probe below was a full A* EVERY tick while a raider lurked — over half of
+    // all pathfinding in a war)
     // All-clear needs the raiders GONE, not merely a pause in hits — campers
     // waited out the hold window and villagers walked out to die (self-play
     // finding). Same visible-threat test as the soldier shelter recall, with
@@ -1531,12 +1533,12 @@ function assignAIVillagers(ai,vils,profile){
       if(rebalanced<AI_REBALANCE_MAX && (overSubscribed(v.task)||hoardStone)){
         rebalanced++;
         counts[v.task]=(counts[v.task]||0)-1;              // source loses a hand
-        assignAIGatherTask(ai,v,vils,profile);
+        assignAIGatherTask(ai,v,vils,profile,desired);
         if(GATHER_TASKS[v.task])counts[v.task]=(counts[v.task]||0)+1; // ...and credit the destination, so a 2nd pull this tick judges against the updated mix
       }
       return;
     }
-    assignAIGatherTask(ai,v,vils,profile);
+    assignAIGatherTask(ai,v,vils,profile,desired);
   });
 }
 
@@ -1612,8 +1614,10 @@ function nearestAISheep(ai,v){
   return null;
 }
 
-function assignAIGatherTask(ai,v,vils,profile){
-  let desired=aiEcoPlan(ai,vils.length,profile);
+// `plan`: assignAIVillagers' aiEcoPlan for this pass (nothing it reads changes mid-pass) — recomputing it per villager
+// scanned every entity each time.
+function assignAIGatherTask(ai,v,vils,profile,plan){
+  let desired=plan||aiEcoPlan(ai,vils.length,profile);
   let counts=countAIGatherers(vils);
   // What can this villager work for task T right now? Returns a resource TILE
   // {x,y}, or a {sheep} sentinel for forage. findNearTile is a proximity
@@ -2713,17 +2717,20 @@ function findEnemyThreatNear(ai,range){
   
   let closestThreat = null;
   let minDist = 9999;
-  
-  playerUnits.forEach(pu => {
-    aiBuildings.forEach(ab => {
-      let d = dist(footprintCenter(ab), pu);
+  // centres once, not per pair; a pair whose x or y gap alone exceeds the range can't qualify (same picks, same order)
+  let cs = aiBuildings.map(footprintCenter);
+  for (let i = 0; i < playerUnits.length; i++) {
+    let pu = playerUnits[i];
+    for (let j = 0; j < cs.length; j++) {
+      let c = cs[j];
+      if (Math.abs(c.x - pu.x) > range || Math.abs(c.y - pu.y) > range) continue;
+      let d = dist(c, pu);
       if (d <= range && d < minDist) {
         minDist = d;
         closestThreat = pu;
       }
-    });
-  });
-  
+    }
+  }
   return closestThreat;
 }
 

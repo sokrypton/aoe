@@ -242,7 +242,7 @@ function makeWayFor(mover){
   // loop — it walked back, got dodged again, an infinite dance that never
   // resumed farm duty.
   if(s.utype==='villager'&&s.path.length===0&&(s.gatherX>=0||s.buildTarget))return;
-  if(tick-(s.lastDodgeTick||0)<30)return; // don't jitter between two movers
+  if(tick-(s.lastDodgeTick||0)<T30(30))return; // don't jitter between two movers
   // Anti-dance: a unit that keeps getting displaced (3+ dodges in ~10s)
   // digs its heels in and stops yielding — isStubborn() below also makes
   // it non-pushable, so the traffic re-routes around it instead. This
@@ -250,7 +250,7 @@ function makeWayFor(mover){
   // other forever (dodge → task re-path → counter-dodge → …), while
   // one-off step-asides and the anti-trapping behavior stay intact.
   if(isStubborn(s))return;
-  if(tick-(s.lastDodgeTick||0)>=300)s.dodgeCount=0; // peace resets the tally
+  if(tick-(s.lastDodgeTick||0)>=T30(300))s.dodgeCount=0; // peace resets the tally (paired with isStubborn)
   // Step to an adjacent free tile that isn't on the mover's onward path,
   // and never onto the mover's OWN tile — movers don't register in the
   // block grid, so that tile looks free but is a guaranteed swap-collision
@@ -331,12 +331,14 @@ function cartAtMarket(c){
 // it won't step aside and walkable() treats it as a hard obstacle so paths
 // route around it. Wears off after ~10s without being harassed.
 function isStubborn(u){
-  return (u.dodgeCount||0)>=3 && tick-(u.lastDodgeTick||0)<300;
+  return (u.dodgeCount||0)>=3 && tick-(u.lastDodgeTick||0)<T30(300);
 }
 
 // Gate open/close sensing — see the call site at the top of update().
 let _gateCells = [], _gateTouched = [];
+// On a 2-tick cadence at twice the step — the same open/close speed, half the per-tick unit index (was ~5% of a tick).
 function updateGates(){
+  if (tick % 2 === 1) return;
   let gates = null;
   for (let i = 0; i < entities.length; i++) {
     let e = entities[i];
@@ -381,9 +383,9 @@ function updateGates(){
     // A locked gate never swings open — it slides shut and stays sealed even
     // with allies standing on it (they route around until it's unlocked).
     if (friendlyNear && !e.locked) {
-      e.gateProgress = Math.min(1.0, e.gateProgress + 0.08);
+      e.gateProgress = Math.min(1.0, e.gateProgress + 0.16);
     } else {
-      e.gateProgress = Math.max(0.0, e.gateProgress - 0.08);
+      e.gateProgress = Math.max(0.0, e.gateProgress - 0.16);
     }
     e.isOpen = e.gateProgress > 0.5;
   });

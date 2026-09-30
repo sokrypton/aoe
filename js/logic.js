@@ -294,11 +294,12 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 //   FOLLOW         follow/escort repath cadence             T30(12)
 //   MOVE           multi-leg move repath cadence            T30(10)
 //   BUILD          crowded build-site retry                 maxN 6
+//   REAIM          moving-foe re-aim that can't reach it    T30(60)
 const RETRY = Object.freeze({
   CHASE:'chase', CHASE_BLOCKED:'chaseBlocked', HARVEST_WAIT:'harvestWait',
   FLEE_RAID:'fleeRaid', FLEE_BEAR:'fleeBear', GUARD_RETURN:'guardret',
   DROP_WAIT:'dropWait', DROP_TUCK:'dropTuck', GARRISON:'garrison', FOLLOW:'follow',
-  MOVE:'move', BUILD:'build',
+  MOVE:'move', BUILD:'build', REAIM:'reaim',
 });
 
 function retryReady(e,key){
@@ -536,7 +537,29 @@ function farmersOn(farm,except,exceptList){
   }
   return n;
 }
-function farmHasRoom(farm,e){ return farmersOn(farm,e)<FARM_MAX_FARMERS; }
+// Holders per farm, counted once a tick (tick+simGen keyed like claimedGatherSet) — for a farmer RE-CHECKING the plot
+// it already holds, every farmer every tick (the exact scan per call was ~10% of the sim). Assignment stays exact.
+let farmOccTick=-1, farmOccGen=-1, farmOcc=new Map();
+registerSimCache(()=>{farmOccTick=-1;farmOcc.clear();});
+function farmHolders(farm){
+  if(farmOccTick!==tick||farmOccGen!==simGen){
+    farmOccTick=tick; farmOccGen=simGen; farmOcc.clear();
+    for(let i=0;i<entities.length;i++){
+      const u=entities[i];
+      if(u.type!=='unit'||u.utype!=='villager'||u.hp<=0||u.garrisonedIn||u.gatherX<0)continue;
+      if(u.task!=='farm'&&!(u.task==='return'&&u.prevTask==='farm'))continue;
+      const f=farmAtTile(u.gatherX,u.gatherY,u.team,false);
+      if(f)farmOcc.set(f.id,(farmOcc.get(f.id)||0)+1);
+    }
+  }
+  return farmOcc.get(farm.id)||0;
+}
+const holdsFarm=(e,farm)=>(e.task==='farm'||(e.task==='return'&&e.prevTask==='farm'))&&e.hp>0&&!e.garrisonedIn
+  &&e.gatherX>=farm.x&&e.gatherY>=farm.y&&e.gatherX<farm.x+farm.w&&e.gatherY<farm.y+farm.h;
+function farmHasRoom(farm,e){
+  if(holdsFarm(e,farm))return farmHolders(farm)-1<FARM_MAX_FARMERS; // itself excluded
+  return farmersOn(farm,e)<FARM_MAX_FARMERS;
+}
 // Free farmer places within a farm click's reach (claimGatherTileNear's 5-ring around the clicked tile); `except`
 // villagers don't count as occupants (they are the ones being re-sent).
 function farmSlotsNear(team,cx,cy,except){
@@ -1215,10 +1238,26 @@ function rememberedGatherTile(e,terrain){
 // current row, with a short N/S headland shift every 3rd bite. carrying
 // is the bite counter; it resets each load, which just restarts the row
 // phase. Off-plot positions clamp onto the plot.
+// Two farmers on one plot each keep their OWN row (by id: the lower id row 0), so they never walk the same tiles;
+// a lone farmer alternates rows (-1). Derived from who holds the farm now — no stored state.
+function farmLane(e){
+  let f=farmAtTile(e.gatherX,e.gatherY,e.team,false);
+  if(!f)return -1;
+  let others=0,lower=0;
+  for(let i=0;i<entities.length;i++){
+    const u=entities[i];
+    if(u===e||u.type!=='unit'||u.utype!=='villager'||u.team!==e.team||u.hp<=0||u.garrisonedIn)continue;
+    if(u.task!=='farm'&&!(u.task==='return'&&u.prevTask==='farm'))continue;
+    if(u.gatherX<f.x||u.gatherY<f.y||u.gatherX>=f.x+f.w||u.gatherY>=f.y+f.h)continue;
+    others++; if(u.id<e.id)lower++;
+  }
+  return others?Math.min(lower,1):-1;
+}
 function farmPlotNextTile(e){
   let dx=Math.min(1,Math.max(0,Math.round(e.x)-e.gatherX));
   let dy=Math.min(1,Math.max(0,Math.round(e.y)-e.gatherY));
-  let row=Math.floor(e.carrying/3)&1;
+  let lane=farmLane(e);
+  let row=lane>=0?lane:Math.floor(e.carrying/3)&1;
   if(dy!==row)return{x:e.gatherX+dx,y:e.gatherY+row};  // headland shift
   return{x:e.gatherX+(1-dx),y:e.gatherY+row};          // furrow pass
 }
@@ -1284,6 +1323,11 @@ function depleteGatherTile(pos,config,gatherer){
 }
 
 function updateGatherTask(e,config){
+  // A farmer standing on its plot between bites has nothing to decide: it re-checks the plot when it bites, and once
+  // a second besides (id-staggered) — a farm changes only by its own bite, or rarely: destroyed, or over-filled when
+  // bell shelterers all walk back at once. Farmers were the costliest units per tick.
+  if(e.task==='farm'&&e.gatherCooldown>0&&e.gatherX>=0&&e.path.length===0&&(tick+e.id)%T30(30)!==0
+     &&atGatherTile(e,e.gatherX,e.gatherY))return;
   let gatherTile = rememberedGatherTile(e, config.terrain);
   if(!gatherTile){
     gatherTile = findNearTile(e, config.terrain);
@@ -1333,7 +1377,10 @@ function updateGatherTask(e,config){
       // Farmer stands ON the plot; every other gatherer approaches the solid
       // node's cheapest UNCLAIMED contact tile (goalBldg + contactClaims), so
       // co-gatherers of the same node fan out and surround it.
-      if(e.task==='farm') pathUnitTo(e, gatherTile.x, gatherTile.y);
+      if(e.task==='farm'){ // onto its own row (farmLane), the plot column on its side: two farmers don't walk in single file
+        let lane=Math.max(0,farmLane(e)), col=Math.round(e.x)>gatherTile.x?1:0;
+        pathUnitTo(e, gatherTile.x+col, gatherTile.y+lane);
+      }
       else pathToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, contactClaims(e, p=>p.gatherX===gatherTile.x && p.gatherY===gatherTile.y));
       if(e.path.length===0){
         avoidAdd(e,'gather',gatherTile.x + gatherTile.y * MAP);
@@ -1859,6 +1906,17 @@ function restoreSavedTask(e) {
     if (e.savedTask.target && entitiesById.get(e.savedTask.target))
       e.target = e.savedTask.target;
     e.savedTask = null;
+    // Back from shelter to a farm others filled meanwhile: a free farm near it instead, else look afresh (the exact
+    // count — several shelterers come back on the same tick).
+    if (e.task === 'farm' && e.gatherX >= 0) {
+      let f = farmAtTile(e.gatherX, e.gatherY, e.team, true);
+      if (f && farmersOn(f, e) >= FARM_MAX_FARMERS) {
+        let gx = e.gatherX, gy = e.gatherY;
+        clearGatherTarget(e);                     // no longer its holder: every check below is an exact assignment check
+        let g = claimGatherTileNear(e, TERRAIN.FARM, gx, gy);
+        if (g) { e.gatherX = g.x; e.gatherY = g.y; }
+      }
+    }
 
     if (e.task === 'build' && e.buildTarget) {
       let bt = entitiesById.get(e.buildTarget);
@@ -3030,7 +3088,7 @@ function adjustTargetApproach(e){
 
     if(inRange){
       clearUnitPath(e);
-    } else if(t.type==='unit' && tick % T30(15) === 0 && e.path.length > 0){
+    } else if(t.type==='unit' && tick % T30(15) === 0 && e.path.length > 0 && retryReady(e,RETRY.REAIM)){
       let endTile = e.path[e.path.length - 1];
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
       let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
@@ -3041,6 +3099,11 @@ function adjustTargetApproach(e){
         let keep = e.path;
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
         if(keep && e.path.length === 0) setUnitPath(e, keep);
+        // A MELEE re-aim that still can't END at the foe (search capped, or walled off) waits before paying for another:
+        // every 0.5s against an unreachable mover was the costliest pathfinding in a war. (Ranged units only need a
+        // firing spot, so they keep the quick re-aim: a foe drifting into range must be answered at once.)
+        let ne = e.path[e.path.length - 1], nx = ne ? ne.x - t.x : 99, ny = ne ? ne.y - t.y : 99;
+        if(range === 0 && nx*nx + ny*ny > 2.25) retryStamp(e, RETRY.REAIM, T30(60));
       }
     }
   }
@@ -3119,7 +3182,7 @@ function updateBearBehavior(e){
     // Aggro: charge the closest player/AI unit that wanders into range.
     // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
     // runs on a stagger so 5 bears don't all scan every tick.
-    if(!e.leashCooling && tick%10===e.id%10){
+    if(!e.leashCooling && tick%T30(10)===e.id%T30(10)){
       let closest=closestUnitNear(e,5.5,en=>isPlayerTeam(en.team));
       if(closest){
         e.target=closest.id;
@@ -3184,7 +3247,7 @@ function updateDragonBehavior(e){
   if(e.spent){ if(e.hp>=e.maxHp)e.spent=false; else { e.target=null; clearUnitPath(e); return; } }
   let home={x:e.homeX,y:e.homeY}, hit=e.lastEnemyHitTick!==undefined&&tick-e.lastEnemyHitTick<3; // (hashed; lastHitTick is the minimap's)
   if(!e.awake){
-    if(!e.target&&!hit&&!(tick%10===e.id%10&&closestUnitNear(e,DRAGON_WAKE_R,en=>isPlayerTeam(en.team)))){ clearUnitPath(e); return; } // still asleep
+    if(!e.target&&!hit&&!(tick%T30(10)===e.id%T30(10)&&closestUnitNear(e,DRAGON_WAKE_R,en=>isPlayerTeam(en.team)))){ clearUnitPath(e); return; } // still asleep
     e.awake=true; e.calmSince=tick; e.leashCooling=false;
     if(window.playSound)window.playSound('dragon',e.x,e.y);
   }
@@ -3197,7 +3260,7 @@ function updateDragonBehavior(e){
       // prey is in the cone before it. Out of reach it lumbers closer; in reach it stands and turns — a runner quick
       // enough round its flank stays out of the fire.
       let d=distToTarget(e,t), a=simAtan2(t.y-e.y,t.x-e.x);
-      if(d>DRAGON_BREATH_R-0.4){ if(e.path.length===0&&tick%10===e.id%10)pathUnitTo(e,Math.round(t.x),Math.round(t.y)); }
+      if(d>DRAGON_BREATH_R-0.4){ if(e.path.length===0&&tick%T30(10)===e.id%T30(10))pathUnitTo(e,Math.round(t.x),Math.round(t.y)); }
       else clearUnitPath(e);
       dragonTurn(e, e.path.length?simAtan2(e.path[0].y-e.y,e.path[0].x-e.x):a);
       let off=e.faceAng-a; off=simAtan2(simSin(off),simCos(off));
@@ -3207,7 +3270,7 @@ function updateDragonBehavior(e){
     return;
   }
   if(e.leashCooling&&dist(e,home)<3)e.leashCooling=false;
-  if(!e.leashCooling&&(hit||tick%10===e.id%10)){
+  if(!e.leashCooling&&(hit||tick%T30(10)===e.id%T30(10))){
     let prey=closestUnitNear(e,hit?9:DRAGON_AGGRO_R,en=>isPlayerTeam(en.team));
     if(prey){ e.target=prey.id; clearUnitPath(e); e.calmSince=tick; if(window.playSound)window.playSound('dragon',e.x,e.y); return; }
   }
@@ -3897,6 +3960,8 @@ function updateBuildingArrows(e){
           spawnProjectile(bCenter, inRange[i % inRange.length].en);
         }
         e.atkCooldown = T30(60); // fire every 2 game-seconds (AoE2 TC/tower reload)
+      } else {
+        e.atkCooldown = T30(6); // nothing in range: look again in 0.2s, not every tick (idle towers were ~5% of the sim)
       }
     }
   }

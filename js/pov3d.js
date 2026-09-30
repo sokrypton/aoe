@@ -18,6 +18,7 @@
 
   let THREE = null, loading = null;
   let unrevealed = false;   // the world view opened, its first frame not drawn yet (window.world3D waits for it)
+  let fadeIn = false;       // that first frame fades up (a match opening in 3D)
   let renderer, scene, camera, groundTex, groundData, groundMesh, groundFor = null, fowTex, fowData, SKY, VOID;
   const unitSprites = new Map(), solids = new Map(), mats = new Map(), footRow = new Map(), animals = new Map(); // animals: id → 3D sheep/bear // footRow: utype → lowest painted canvas row
   let unitBox = null, unitRod = null;
@@ -4387,7 +4388,7 @@
   let _fpA = null;
   const RIG_SEG = 8, RIG_RAD = 7;                             // rings along a tube, sides round it
   const rigTemplates = new Map(), rigSamples = new Map();
-  let rigSampleUntil = 0, rigTemplateBudget = 0;
+  let rigSampleUntil = 0, rigTemplateBudget = 0, warmFrames = 0;
   // The parts of a built frame, in build order: [{ o, tube }] (tube: its ring record).
   function rigParts(g){
     const parts = [];
@@ -5065,6 +5066,7 @@
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
+    if (warmFrames > 0) { warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
@@ -5085,7 +5087,10 @@
     const t1 = performance.now();
     cullRigs();
     renderer.render(scene, camera); mark('render');
-    if (unrevealed) { unrevealed = false; pip.style.visibility = ''; window.world3D = world; }
+    if (unrevealed) { unrevealed = false; pip.style.visibility = ''; window.world3D = world;
+      if (fadeIn) { fadeIn = false;                                               // a match opening: its first frame (and the minimap) fade up from black
+        for (const el of [renderer.domElement, document.getElementById('minimap-wrap')]) { if (!el) continue;
+          el.style.transition = 'none'; el.style.opacity = '0'; void el.offsetWidth; el.style.transition = 'opacity 200ms ease-out'; el.style.opacity = '1'; } } }
     if (world) drawOverlay(); else if (ov) ovx.clearRect(0, 0, ov.width, ov.height); mark('overlay');
     // Running averages (ms/frame): our JS (art repaints, uploads, layout) vs the
     // WebGL submit — for profiling from the console.
@@ -5657,10 +5662,14 @@
     startLoop(() => followId === e.id);
   }
   // The 3D world view (the 2D/3D toggle): anchored to the selected unit, if one.
-  function openWorld(){
+  // atStart: a match opening in 3D shows its black backdrop while the first frame builds — not a flash of the 2D map.
+  function openWorld(atStart){
     ensurePip();
     followId = null; eye = null; mode = 'orbit';                                // the 2D view's camera carries over (a 2D follow too)
-    unrevealed = true; pip.style.visibility = 'hidden';                         // the 2D map stays up until the first 3D frame is drawn (no black while loading)
+    unrevealed = true; pip.style.visibility = atStart ? '' : 'hidden';          // mid-game: the 2D map stays up until the first 3D frame is drawn (no black while loading)
+    if (atStart && renderer) renderer.clear();                                  // a rematch: never the last match's final frame
+    fadeIn = !!atStart;
+    if (fadeIn) { const mm = document.getElementById('minimap-wrap'); if (mm) { mm.style.transition = 'none'; mm.style.opacity = '0'; } } // arrives with the first frame
     pip.style.display = 'block';
     setWorld(true);
     startLoop(() => world);
@@ -5703,8 +5712,10 @@
   // A match opens in the 3D world view. ?view=2d|3d picks; automated browsers (the test battery drives the 2D map)
   // default to 2D.
   window.enterDefaultView = () => {
+    warmFrames = 2;                                                             // every match start, the world already open (a rematch) or not
+    eye = null; camFrom = null; camLast = null;                                 // a new match CUTS to its base (no glide from the last match's view)
     const v = new URLSearchParams(location.search).get('view');
-    if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld();
+    if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld(true);
   };
   window.povWorld = () => world;
   // Fetch three.js while the menu is up, so a match opens straight into 3D.

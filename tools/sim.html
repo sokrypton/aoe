@@ -195,6 +195,9 @@ window.runSimulation = async function(opts){
 
     // ---- main loop, run in batches so the page stays responsive ----
     const BATCH = 2000;
+    // yield via a message, not setTimeout(0): nested timeouts clamp to >=4ms each
+    const yc = new MessageChannel(); let yr = null; yc.port1.onmessage = () => { const r = yr; yr = null; r && r(); };
+    const yieldNow = () => new Promise(r => { yr = r; yc.port2.postMessage(0); });
     const t0 = performance.now();
     let i = 0;
     while (i < cfg.ticks && !gameOver) {
@@ -228,7 +231,7 @@ window.runSimulation = async function(opts){
           prev = cur;
         }
       }
-      await new Promise(r => setTimeout(r, 0)); // yield between batches
+      await yieldNow(); // yield between batches
     }
     const wallMs = performance.now() - t0;
 
