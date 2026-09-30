@@ -2456,6 +2456,20 @@ function launchAIWave(ai,mils,aiTC,profile){
     rallyIdleMilitary(ai,mils,aiTC); // forward defensive posture between waves
     return;
   }
+  // The trigger counts the whole army, but only the IDLE march: with most of it already fighting, the idle few were sent
+  // off alone as a "wave" of one or two (over half of all waves) — fed to the enemy one by one, and each reset the wave
+  // cooldown. Short of a group, they JOIN the nearest engaged comrade's fight instead; no wave is spent.
+  if(available.length<minGroup){
+    let engaged=mils.filter(m=>m.target&&entitiesById.get(m.target)&&m.utype!=='scout');
+    if(!engaged.length){rallyIdleMilitary(ai,mils,aiTC);return;}
+    available.forEach(m=>{
+      let best=null,bd=Infinity;
+      for(const c of engaged){const d=dist(m,c); if(d<bd||(d===bd&&c.id<best.id)){bd=d;best=c;}}
+      assignAttack(m,entitiesById.get(best.target));
+    });
+    aiProbe('waveJoin:t'+ai.team);
+    return;
+  }
 
   // AoE2 sn-percent-attack-soldiers: commit this % of the whole army, keep
   // the rest home as defense (the difficulty lever). Clamp to a valid group:
