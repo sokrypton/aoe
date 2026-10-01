@@ -1198,6 +1198,58 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------- the line-on-the-grid primitive (any-angle walking)
+    'walk-line-tiles': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      let r = 12345; const rnd = () => (r = (r * 1103515245 + 12345) % 2147483648) / 2147483648;
+      let bad = 0, ex = null;
+      for (let n = 0; n < 300; n++) {
+        const ax = rnd() * 20, ay = rnd() * 20, bx = rnd() * 20, by = rnd() * 20;
+        const got = [[Math.round(ax), Math.round(ay)]];
+        walkLineTiles(ax, ay, bx, by, (tx, ty) => { got.push([tx, ty]); });
+        // brute force: every tile a very fine sampling of the line touches, in order
+        const want = [[Math.round(ax), Math.round(ay)]];
+        for (let i = 1; i <= 20000; i++) { const t = i / 20000, k = [Math.round(ax + (bx - ax) * t), Math.round(ay + (by - ay) * t)];
+          const l = want[want.length - 1]; if (k[0] !== l[0] || k[1] !== l[1]) want.push(k); }
+        // exact: every reported tile really meets the segment (clip it to the tile's square), and nothing the sampling
+        // sees is missed or out of order (sampling itself can jump a corner the line just clips, so it isn't the oracle)
+        const meets = ([tx, ty]) => { let t0 = 0, t1 = 1; const d = [bx - ax, by - ay], o = [ax, ay], lo = [tx - 0.5, ty - 0.5], hi = [tx + 0.5, ty + 0.5];
+          for (let k = 0; k < 2; k++) { if (d[k] === 0) { if (o[k] < lo[k] || o[k] > hi[k]) return false; continue; }
+            let u = (lo[k] - o[k]) / d[k], v = (hi[k] - o[k]) / d[k]; if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); }
+          return t0 <= t1 + 1e-9; };
+        let k = 0; for (const w of want) { while (k < got.length && (got[k][0] !== w[0] || got[k][1] !== w[1])) k++; if (k === got.length) break; }
+        if (!got.every(meets) || k === got.length) { bad++; ex = ex || { ax, ay, bx, by, got, want }; }
+      }
+      T.ok('the DDA visits exactly the tiles the line crosses, in order (' + bad + '/300 wrong' + (ex ? ': ' + JSON.stringify(ex).slice(0, 200) : '') + ')', bad === 0);
+      const diag = []; walkLineTiles(0, 0, 2, 2, (tx, ty, px, py) => { diag.push([tx, ty, px, py]); });
+      T.ok('a line exactly through corners steps diagonally', JSON.stringify(diag) === '[[1,1,0,0],[2,2,1,1]]');
+      return T;
+    })),
+
+    // ------------------------------------------------- straight legs keep the body clear of walls and corners
+    'walk-clearance': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [0, 0],
+        entities: [ { b: 'TC', x: 4, y: 4, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 }, { b: 'HOUSE', x: 30, y: 30, team: 0 } ] });
+      for (let y = 20; y < 42; y++) for (let x = 20; x < 42; x++) { const t = map[y][x]; if (!t.occupied) { t.t = TERRAIN.GRASS; t.res = 0; } }
+      const house = entities.find(e => e.btype === 'HOUSE');
+      let worst = 9, legs = 0;
+      const pairs = [];   // every start round the house to every goal on the far sides: some straight lines must graze a corner
+      for (let k = 26; k <= 35; k++) { pairs.push([k, 27, 61 - k, 34], [27, k, 34, 61 - k], [k, 27, 34, k], [27, k, k, 34]); }
+      for (const [sx, sy, gx, gy] of pairs) {
+        const v = createUnit('villager', sx, sy, 0);
+        selected = [v]; execUnitCommand({ tileX: gx, tileY: gy });
+        legs = Math.max(legs, v.path.length);
+        for (let i = 0; i < 1500 && v.path.length; i++) { update();
+          const dx = Math.max(house.x - 0.5 - v.x, 0, v.x - (house.x + house.w - 0.5)), dy = Math.max(house.y - 0.5 - v.y, 0, v.y - (house.y + house.h - 0.5));
+          worst = Math.min(worst, Math.hypot(dx, dy)); }
+        v.hp = 0; handleDeath(v, 1);
+      }
+      T.ok('around a corner the body stays clear (closest ' + worst.toFixed(2) + ' >= ' + UNIT_BODY_R + ')', worst >= UNIT_BODY_R - 1e-9);
+      T.ok('…and walks are straight legs, not a staircase (most ' + legs + ' legs)', legs <= 4);
+      return T;
+    })),
+
     // ------------------------------------------------- one ground speed in every direction (AoE2)
     'walk-speed-isotropic': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;

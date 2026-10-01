@@ -297,29 +297,73 @@ function clearUnitPath(e){
   if(e.order&&e.order.kind==='move')e.order=null;
 }
 
-// Can `e` walk a STRAIGHT line to the off-grid point (x,y)? (character-mode steering: no tile zigzag.) Every tile the line
-// crosses must be walkable (other units passed through; the dragon's body not), and a diagonal tile change obeys
-// findPath's rule — both orthogonal sides open — so the line never squeezes between two touching obstacles.
-function straightWalkClear(e,x,y){
-  const dx=x-e.x, dy=y-e.y, n=Math.max(1,Math.ceil(Math.sqrt(dx*dx+dy*dy)/0.1));
-  const open=(tx,ty)=>{ if(tx<0||ty<0||tx>=MAP||ty>=MAP||!walkable(tx,ty,e.id,true))return false;
-    const b=unitBlock&&entitiesById.get(unitBlock[tx+ty*MAP]); return !(b&&b.utype==='dragon'); };
-  let px=Math.round(e.x), py=Math.round(e.y);
-  for(let i=1;i<=n;i++){
-    const tx=Math.round(e.x+dx*i/n), ty=Math.round(e.y+dy*i/n);
-    if(tx===px&&ty===py)continue;
-    if(!open(tx,ty))return false;
-    if(tx!==px&&ty!==py&&(!open(tx,py)||!open(px,ty)))return false;
-    px=tx; py=ty;
+// THE line-on-the-grid primitive: every tile a straight line from (ax,ay) to (bx,by) passes through, in order (tile t
+// spans t-0.5..t+0.5; an exact DDA walk, nothing sampled). visit(tx,ty,px,py) gets each tile entered after the start
+// (px,py = the tile it came from: a diagonal step means the line ran exactly through their shared corner); returning
+// false stops the walk, and walkLineTiles returns false.
+function walkLineTiles(ax,ay,bx,by,visit){
+  const ux=ax+0.5, uy=ay+0.5, dx=bx+0.5-ux, dy=by+0.5-uy;
+  let cx=Math.floor(ux), cy=Math.floor(uy);
+  const ex=Math.floor(bx+0.5), ey=Math.floor(by+0.5), sx=Math.sign(dx), sy=Math.sign(dy);
+  const tdx=sx?Math.abs(1/dx):Infinity, tdy=sy?Math.abs(1/dy):Infinity;
+  let tmx=sx>0?(cx+1-ux)*tdx:sx<0?(ux-cx)*tdx:Infinity, tmy=sy>0?(cy+1-uy)*tdy:sy<0?(uy-cy)*tdy:Infinity;
+  for(let steps=Math.abs(ex-cx)+Math.abs(ey-cy);steps>0&&(cx!==ex||cy!==ey);steps--){ // (each step closes a column or a row)
+    const px=cx, py=cy;
+    if(tmx<tmy){cx+=sx;tmx+=tdx;} else if(tmy<tmx){cy+=sy;tmy+=tdy;} else {cx+=sx;cy+=sy;tmx+=tdx;tmy+=tdy;}
+    if(visit(cx,cy,px,py)===false)return false;
   }
   return true;
 }
+// Can `e` walk a straight line from (ax,ay) to (bx,by)? Its BODY must fit (UNIT_BODY_R): the centre line enters only
+// tiles walkable to `e` — standing units block as they do findPath's (passUnits: the steered character's lines go
+// through them, never the dragon's body) — and the two edges of the corridor it sweeps (±UNIT_BODY_R) only open ground,
+// so it never grazes a wall or building corner it would clip through (a tile path keeps ≥0.7 from one). A line through a
+// corner obeys findPath's diagonal rule: both orthogonal sides open, never squeezing between touching obstacles.
+const UNIT_BODY_R = 0.3;
+function lineWalkClear(e,ax,ay,bx,by,passUnits){
+  const open=(tx,ty,units)=>{
+    if(tx<0||ty<0||tx>=MAP||ty>=MAP||!walkable(tx,ty,e.id,!units))return false;
+    const b=unitBlock&&entitiesById.get(unitBlock[tx+ty*MAP]); return !(b&&b.utype==='dragon');
+  };
+  const clear=(x0,y0,x1,y1,units)=>walkLineTiles(x0,y0,x1,y1,(tx,ty,px,py)=>
+    open(tx,ty,units)&&(tx===px||ty===py||(open(tx,py,units)&&open(px,ty,units))));
+  const dx=bx-ax, dy=by-ay, l=Math.sqrt(dx*dx+dy*dy);
+  if(!clear(ax,ay,bx,by,!passUnits))return false;
+  if(l===0)return true;
+  const nx=-dy/l*UNIT_BODY_R, ny=dx/l*UNIT_BODY_R;
+  return clear(ax+nx,ay+ny,bx+nx,by+ny,false)&&clear(ax-nx,ay-ny,bx-nx,by-ny,false);
+}
+// (character-mode steering: a straight line from where the unit stands to an off-grid point)
+function straightWalkClear(e,x,y){ return lineWalkClear(e,e.x,e.y,x,y,true); }
+// ANY-ANGLE walking (AoE2): findPath's tile path is an 8-direction staircase. A unit adopting one walks it as straight
+// legs instead: from each leg start, the farthest of the following waypoints it can see along a clear line (at most
+// SMOOTH_AHEAD on — that bounds the line checks a re-plan pays). The goal is always kept.
+const SMOOTH_AHEAD = 10;
+function smoothPath(e,path){
+  if(path.length<2)return path;
+  const out=[]; let ax=e.x, ay=e.y, i=0;
+  while(i<path.length){
+    let j=i;
+    for(let k=i+1;k<path.length&&k<=i+SMOOTH_AHEAD&&lineWalkClear(e,ax,ay,path[k].x,path[k].y);k++)j=k;
+    out.push(path[j]); ax=path[j].x; ay=path[j].y; i=j+1;
+  }
+  return out;
+}
 function setUnitPath(e,path){
-  e.path=path;
+  e.path=smoothPath(e,path);
   e.moveT=0;
   e.fromX=e.x;
   e.fromY=e.y;
   return e.path;
+}
+// The tiles a walker will enter next along its path, in order, up to `max` — what's in its way (a leg spans several).
+function pathTilesAhead(e,max){
+  const out=[]; let ax=e.x, ay=e.y;
+  for(const n of e.path){
+    if(!walkLineTiles(ax,ay,n.x,n.y,(tx,ty)=>{out.push({x:tx,y:ty}); return out.length<max;}))break;
+    ax=n.x; ay=n.y;
+  }
+  return out;
 }
 
 function pathUnitTo(e,x,y){
@@ -415,30 +459,23 @@ function legPx(ax,ay,bx,by){
   return Math.sqrt(dx*dx+dy*dy)*TILE_PX||1.0;
 }
 function stepUnitAlongPath(e, distPx, checkWalkable){
-  e.moveT += distPx;
-  while(e.path.length>0){
-    let nextTile=e.path[0];
-    let legLen=legPx(e.fromX,e.fromY,nextTile.x,nextTile.y);
-    if(e.moveT>=legLen){
-      if(checkWalkable && !walkable(Math.round(nextTile.x),Math.round(nextTile.y),e.id)){ // (rounded: a steered character's waypoints are off-grid)
-        stepBlocked(e); return;
-      }
-      e.moveT-=legLen;
-      let next=e.path.shift();
-      e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
-    } else break;
+  // Where this advance takes it, finishing legs on the way…
+  const P=e.path, pts=[e.x,e.y]; let moveT=e.moveT+distPx, fx=e.fromX, fy=e.fromY, x=e.x, y=e.y, done=0;
+  while(done<P.length){
+    const n=P[done], L=legPx(fx,fy,n.x,n.y);
+    if(moveT>=L){ moveT-=L; fx=x=n.x; fy=y=n.y; done++; pts.push(x,y); }
+    else { const t=moveT/L; x=fx+(n.x-fx)*t; y=fy+(n.y-fy)*t; break; }
   }
-  if(e.path.length>0){
-    let next=e.path[0];
-    if(checkWalkable && !walkable(Math.round(next.x),Math.round(next.y),e.id)){
-      stepBlocked(e); return;
+  pts.push(x,y);
+  // …and every tile it would step into on the way: one taken, it waits where it stands (stepBlocked).
+  if(checkWalkable){
+    for(let i=0;i+3<pts.length;i+=2){
+      if(!walkLineTiles(pts[i],pts[i+1],pts[i+2],pts[i+3],(tx,ty)=>walkable(tx,ty,e.id))){ stepBlocked(e); return; }
     }
-    e.stepWait=0;
-    let legLen=legPx(e.fromX,e.fromY,next.x,next.y);
-    let t=e.moveT/legLen;
-    e.x=e.fromX+(next.x-e.fromX)*t;
-    e.y=e.fromY+(next.y-e.fromY)*t;
   }
+  if(P.length)e.stepWait=0;
+  if(done)P.splice(0,done);
+  e.moveT=moveT; e.fromX=fx; e.fromY=fy; e.x=x; e.y=y;
 }
 
 // Tiles/tick this unit is CURRENTLY moving (null when settled). Mirrors

@@ -29,7 +29,12 @@ function init(){
   placeWildBears();
   placeDragonLair();
   }
-  let iso=toIso(STARTS[0].x+1,STARTS[0].y+1);camX=iso.ix;camY=iso.iy;
+  // Open on YOUR town, midway between its TC and the people standing below it — centred on the TC alone, the
+  // starting villagers sat under the bottom HUD.
+  let st=STARTS.find(s=>s.team===myTeam)||STARTS[0], fx=st.x+1.5, fy=st.y+1.5;
+  let mine=entities.filter(e=>e.team===st.team&&e.type==='unit');
+  if(mine.length){ fx=(fx+mine.reduce((s,e)=>s+e.x,0)/mine.length)/2; fy=(fy+mine.reduce((s,e)=>s+e.y,0)/mine.length)/2; }
+  let iso=toIso(fx,fy);camX=iso.ix;camY=iso.iy;
   window.targetCamX=camX;window.targetCamY=camY;
   refreshPopulationCounts();
   // (No auto-shown mobile gesture hint here \u2014 anything fired from init()

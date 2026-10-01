@@ -1275,12 +1275,12 @@
     const stex = new THREE.CanvasTexture(sc), smat = new THREE.MeshBasicMaterial({ map: stex, transparent: true, depthWrite: false });
     const sgeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     part('shadow', sgeo, smat, null); part('shadowU', sgeo, smat, null);
-    // Arrows (drawProjectiles): a pale 14px shaft behind a steel head, built
+    // Arrows (drawProjectiles): a pale 20px shaft behind a steel head, built
     // along +y with the tip at the origin; fletched archer arrows add two
     // crossed team-color vanes at the tail.
-    const L = 14 / PX, thin = new THREE.Vector3(1, 1, 1);
-    part('shaft', new THREE.CylinderGeometry(0.009, 0.009, L, 6).translate(0, -L / 2, 0), new THREE.MeshLambertMaterial({ color: '#f5f2e9' }), thin, 0.006);
-    part('head', new THREE.ConeGeometry(0.022, 0.07, 6).translate(0, -0.01, 0), new THREE.MeshLambertMaterial({ color: '#dde3ea' }), thin, 0.006);
+    const L = 20 / PX, thin = new THREE.Vector3(1, 1, 1); // (bigger than the 2D art's 14px: thinner reads as nothing at a 3D distance)
+    part('shaft', new THREE.CylinderGeometry(0.017, 0.017, L, 6).translate(0, -L / 2, 0), new THREE.MeshLambertMaterial({ color: '#f5f2e9' }), thin, 0.008);
+    part('head', new THREE.ConeGeometry(0.035, 0.1, 6).translate(0, -0.01, 0), new THREE.MeshLambertMaterial({ color: '#dde3ea' }), thin, 0.008);
     const vane = new THREE.BufferGeometry();
     vane.setAttribute('position', new THREE.Float32BufferAttribute([0, -L + 0.11, 0, 0.04, -L + 0.02, 0, 0, -L + 0.02, 0, 0, -L + 0.11, 0, 0, -L + 0.02, 0.04, 0, -L + 0.02, 0,
       0, -L + 0.11, 0, -0.04, -L + 0.02, 0, 0, -L + 0.02, 0, 0, -L + 0.11, 0, 0, -L + 0.02, -0.04, 0, -L + 0.02, 0], 3));
@@ -1436,7 +1436,20 @@
   // each pointed along its true 3D flight line. The sim steps them 20 times
   // a second; between steps each is carried on along its path (never past
   // its aim point) so a fast arrow glides instead of hopping.
+  // The angle an arrow leaves the bow at: the flight below climbs (eH − sH + π·A)/HPX over its D-tile run, A = 7·D px —
+  // the same for every shot but for the small launch-to-impact drop (taken at the archer's range, 4 tiles).
+  const ARROW_LAUNCH = Math.atan2((8 - 12 + Math.PI * 7 * 4) / HPX, 4);
   let arrowTick = -1, arrowT0 = 0, _d;
+  // Where each arrow is drawn from (viewer-side, kept per projectile): a building's, the point of its footprint nearest
+  // the target; a unit's, the unit.
+  const arrowStart = new WeakMap();
+  function arrowFrom(p){
+    let S = arrowStart.get(p);
+    if (!S) { const b = entitiesById.get(p.attackerId);
+      S = b && b.type === 'building' ? [Math.max(b.x - 0.5, Math.min(b.x + b.w - 0.5, p.tx)), Math.max(b.y - 0.5, Math.min(b.y + b.h - 0.5, p.ty))] : [p.startX, p.startY];
+      arrowStart.set(p, S); }
+    return S;
+  }
   function updateArrows(now){
     if (tick !== arrowTick) { arrowTick = tick; arrowT0 = now; }
     const ahead = Math.min(1, (now - arrowT0) / (1000 / TPS)) * PROJECTILE_TILES_PER_TICK;
@@ -1446,12 +1459,15 @@
       const gx = Math.round(p.x), gy = Math.round(p.y);
       if (!Number.isFinite(gx) || !Number.isFinite(gy) || !fog[gy] || fog[gy][gx] !== 2 || S.n >= FEAT_CAP) continue;
       const rx = p.tx - p.x, ry = p.ty - p.y, left = Math.hypot(rx, ry), step = Math.min(ahead, left);
-      const x = p.x + (left > 1e-6 ? rx / left * step : 0), y = p.y + (left > 1e-6 ? ry / left * step : 0);
-      const D = p.totalDist, prog = D > 0.1 ? Math.max(0, Math.min(1, 1 - Math.hypot(x - p.tx, y - p.ty) / D)) : 1;
+      const ax_ = p.x + (left > 1e-6 ? rx / left * step : 0), ay_ = p.y + (left > 1e-6 ? ry / left * step : 0);
+      const D = p.totalDist, prog = D > 0.1 ? Math.max(0, Math.min(1, 1 - Math.hypot(ax_ - p.tx, ay_ - p.ty) / D)) : 1;
+      // drawn from where it's loosed: a building's arrow leaves its EDGE facing the target (the sim flies it from the
+      // footprint's centre — out of the middle of a TC roof); same progress, same landing
+      const from = arrowFrom(p), x = from[0] + (p.tx - from[0]) * prog, y = from[1] + (p.ty - from[1]) * prog;
       const sH = p.startH || 12, eH = 8, A = 35 * (D / 5);
       const h = (sH + (eH - sH) * prog + Math.sin(prog * Math.PI) * A) / HPX;
       // Flight tangent: ground run over the whole flight, and d(height)/d(progress).
-      const gdx = p.tx - p.startX, gdy = p.ty - p.startY;
+      const gdx = p.tx - from[0], gdy = p.ty - from[1];
       dir.set(gdx, ((eH - sH) + Math.cos(prog * Math.PI) * Math.PI * A) / HPX, gdy).normalize();
       _m.compose(_p.set(x + 0.5, h, y + 0.5), _q.setFromUnitVectors(_s.set(0, 1, 0), dir), _s.set(1, 1, 1));
       S.mesh.setMatrixAt(S.n++, _m); Hd.mesh.setMatrixAt(Hd.n++, _m);
@@ -2705,13 +2721,21 @@
   }
   function archerPose(kind, t, eq){
     if (kind === 'attack') { // side-on: the bow arm out, nock, draw to the cheek, hold, loose (the string hand flicks back), recover
-      const bowH = [9.2, -12, -1.2], nock = [5.8, -12.8, 1.8], cheek = [2.6, -12.2, 4.2], after = [0.4, -11.6, 6]; // anchored at the outside of the cheek (the head's a sphere)
+      // anchored at the outside of the cheek (the head's a sphere), and the bow straight out AHEAD of that anchor: the arrow
+      // between them lies along the facing — the way the loosed one flies (bow off to the side, it pointed ~40° astray)
+      const bowH = [9.6, -12, 3.6], nock = [5.8, -12.6, 3.9], cheek = [2.6, -12.2, 4.2], after = [0.4, -11.6, 6];
       const draw = t < 0.15 ? 0 : t < 0.55 ? easeC((t - 0.15) / 0.4) : t < 0.75 ? 1 : 0;
       const loose = t >= 0.75 ? Math.max(0, 1 - (t - 0.75) / 0.12) : 0;                    // the snap after the release
       // after the loose the string hand fetches the next arrow — over the shoulder from the Castle quiver, else from the hip — and nocks it
       const src = eq.quiver ? [-2.2, -16.8, 3.2] : [0.6, -2.8, 6.4];
-      const hand = t < 0.75 ? mixP(nock, cheek, draw) : t < 0.85 ? mixP(after, cheek, loose) : t < 0.92 ? mixP(after, src, easeC((t - 0.85) / 0.07)) : mixP(src, nock, easeC((t - 0.92) / 0.08));
+      let hand = t < 0.75 ? mixP(nock, cheek, draw) : t < 0.85 ? mixP(after, cheek, loose) : t < 0.92 ? mixP(after, src, easeC((t - 0.85) / 0.07)) : mixP(src, nock, easeC((t - 0.92) / 0.08));
       bowH[1] -= 0.8 * Math.sin(Math.PI * Math.min(1, (t - 0.75) / 0.12)) * (t >= 0.75 && t < 0.87 ? 1 : 0); bowH[0] += 0.6 * loose * (t >= 0.75 ? 1 : 0); // the bow arm kicks
+      // aimed up along the flight the arrow takes (ARROW_LAUNCH): the draw pitched about the shoulder, so the nocked
+      // arrow points the way the loosed one flies
+      const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 13), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
+        return [2.2 + dx * c - u * sn, -13 - (dx * sn + u * c), q[2]]; };
+      const bh = aimed(bowH); hand = aimed(hand);
+      bowH[0] = bh[0]; bowH[1] = bh[1];
       return { hands: [bowH, hand], bow: { grip: bowH, pull: hand, draw, arrow: t < 0.75, fetched: t >= 0.92 }, torso: { yaw: -0.75 - 0.1 * draw, lean: 0.05 - 0.08 * draw, dip: 0.3 + 0.3 * draw }, headYaw: 0.75 + 0.1 * draw, feet: [[1.8, 0], [-1.8, 0]] };
     }
     const walk = kind === 'walk' ? walkPose(t) : null, L = carryLife(kind, t), bowH = addP([3.2, -4.8, -5.8], L.d);
@@ -4150,10 +4174,14 @@
   function soldierPose(e, v){
     const ut = e.utype, opt = { unit: ut, eq: milEquip(ut, e.team) }, cav = ut === 'scout' || ut === 'knight';
     if (ut === 'tradecart') { opt.load = e.carrying > 0; const mv = isUnitMoving(e); return { kind: mv ? 'walk' : 'idle', t: mv ? ((v.stride / MIL_STRIDE.cart) % 1 + 1) % 1 : workPhase(e, 'idle'), opt }; } // the sack while it carries gold
-    if (isUnitMoving(e)) { const kind = cav ? 'gallop' : 'walk', per = ut === 'ram' ? MIL_STRIDE.roll : MIL_STRIDE[kind];
-      return { kind, t: ((v.stride / per) % 1 + 1) % 1, opt }; }
-    if (inActionRange(e)) { const rof = (UNITS[ut] && UNITS[ut].rof) || T30(60);
-      return { kind: 'attack', t: ((1 - (e.atkCooldown || 0) / rof + MIL_IMPACT[ut]) % 1 + 1) % 1, opt, target: true }; }
+    // The swing follows the HITS: one struck this reload cycle plays its cut (landing on the hit) — on the move too, the
+    // legs (or the horse) running on underneath. Gated on being in range alone, a hit on the run showed no blow at all,
+    // and a chase flipping in and out of range restarted the swing over and over.
+    const rof = (UNITS[ut] && UNITS[ut].rof) || T30(60), cd = e.atkCooldown || 0;
+    const swing = e.target && MIL_IMPACT[ut] != null && (cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT[ut]) % 1 + 1) % 1 : null;
+    if (isUnitMoving(e)) { const kind = cav ? 'gallop' : 'walk', per = ut === 'ram' ? MIL_STRIDE.roll : MIL_STRIDE[kind], lt = ((v.stride / per) % 1 + 1) % 1;
+      return swing != null && cd > 0 ? { kind: 'attack', t: swing, opt, target: true, legs: { kind, t: lt } } : { kind, t: lt, opt }; }
+    if (swing != null) return { kind: 'attack', t: swing, opt, target: true };
     return { kind: 'idle', t: workPhase(e, 'idle'), opt };
   }
   const vilKey = (kind, step, female, opt) => (opt.unit ? opt.unit + JSON.stringify(opt.eq) + (opt.load === false ? '|e' : '') + '|' : '') + kind + '|' + step + '|' + (female ? 'f' : 'm') + '|' + (opt.load || '') + '|' + (opt.tool || '') + '|' + (opt.up ? (opt.up.double ? 'd' : '') + (opt.up.bright ? 'b' : '') : '') + (opt.noBlood ? '|nb' : '') + (opt.noFly ? '|nf' : '');
@@ -4291,23 +4319,13 @@
     v.lastT = p.t; v.t = p.t; v.farm = p.kind === 'farm' || p.kind === 'plow' ? [e.gatherX, e.gatherY] : null;
     if (p.kind === 'farm') { const pts = window.__pov3dLab.toolHead('farm', Math.floor(p.t * VIL_STEPS) / VIL_STEPS), c = Math.cos(-v.yaw), sn = Math.sin(-v.yaw);
       for (const i of [2, 4, 6]) { const q = pts[i]; if (q.y < 0.2) bladePush.push([v.x + q.x * c - q.z * sn, v.z + q.x * sn + q.z * c]); } } // the blade skimming the crop
-    // The sim walks tile to tile, so a heading off the grid lines is a staircase of
-    // straight and diagonal steps. A mover is drawn string-pulled: each frame it
-    // advances the distance it really moved, straight toward a point 3–4 tiles
-    // on down its path, pulled gently back to its true spot (so it never drifts):
-    // the corners are cut, the walk is a line. Work spots ease in; standing units sit.
-    const mv = isUnitMoving(e), far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
+    // The sim walks straight legs (smoothPath, js/pathfinding.js): a mover is drawn at its TRUE spot, facing its leg —
+    // no smoothing overlay of its own to drift off it and catch up when it stops. Work spots ease in; standing units sit.
+    // (the drawn spot runs a tick behind the sim: still gliding into the final spot after the sim has stopped, it is moving)
+    const mv = isUnitMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
     let nx, nz;
-    if (far) { nx = tx; nz = tz; }
-    else if (mv && !T && v.ptx !== undefined && e.path.length) {
-      const step = Math.hypot(tx - v.ptx, tz - v.ptz), lk = e.path[Math.min(3, e.path.length - 1)];
-      // the steered character walks straight along the steering heading (its tile path zigzags in 8 directions round
-      // it — facing the heading, it read as a crab-walk), pulled only gently onto its true spot: the zigzag averages out
-      // along the heading, and a firm pull put the zigzag's sideways jolts right back
-      const steered = e.id === followId && steerActive();
-      const sg = steered && (tx - v.ptx) * Math.cos(yaw) + (tz - v.ptz) * Math.sin(yaw) < 0 ? -1 : 1;   // backing up (S): along the heading, backwards
-      const lx = steered ? sg * Math.cos(yaw) : lk.x + 0.5 - v.x, lz = steered ? sg * Math.sin(yaw) : lk.y + 0.5 - v.z, ll = Math.hypot(lx, lz) || 1, k = Math.min(1, dt * (steered ? 0.5 : 1.3));
-      nx = v.x + lx / ll * step; nz = v.z + lz / ll * step; nx += (tx - nx) * k; nz += (tz - nz) * k;
+    if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
+      if (mv && !T && e.path.length) ty = -Math.atan2(e.path[0].y - e.y, e.path[0].x - e.x);
     } else if (!mv && !v.throw && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
       // A villager off its spot (into a work spot, back out of one) walks there, at a walk, legs and all — a load in
       // hand stays in hand (the carrying walk); never over a throw (it stands for that: held below)

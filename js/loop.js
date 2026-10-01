@@ -219,8 +219,9 @@ function updateBuildingDamageFx(){
 // BLOCKER dodges — the mover keeps its path). Fed by rebuildBlockAndNudge's
 // fused walk.
 function makeWayFor(mover){
-  let next=mover.path[0];
-  if(next.x<0||next.x>=MAP||next.y<0||next.y>=MAP)return;
+  const ahead=pathTilesAhead(mover,3);              // the tiles it's about to enter (one leg can span several)
+  let next=ahead[0];
+  if(!next||next.x<0||next.x>=MAP||next.y<0||next.y>=MAP)return;
   let uid=unitBlock?unitBlock[next.x+next.y*MAP]:0;
   if(!uid||uid===mover.id)return;
   let s=entitiesById.get(uid);
@@ -255,7 +256,7 @@ function makeWayFor(mover){
   // and never onto the mover's OWN tile — movers don't register in the
   // block grid, so that tile looks free but is a guaranteed swap-collision
   // (the classic trigger for the dance above).
-  let onward=new Set(mover.path.slice(0,3).map(p=>p.x+','+p.y));
+  let onward=new Set(ahead.map(p=>p.x+','+p.y));
   onward.add(Math.round(mover.x)+','+Math.round(mover.y));
   let best=null;
   for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
