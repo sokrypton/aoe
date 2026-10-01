@@ -4009,18 +4009,18 @@
       if (e && e.type === 'building' && e.hp > 0 && bldgVisible(e)) { if (w.obj) w.obj.visible = false; } else { dropSolid(w); solids.delete(id); } }
   }
   // Where a unit faces: along its path, else toward its target, else the last way it faced. It shares the 2D
-  // renderer's facing (e.dir, 8 sectors of 45° in map angle — cosmetic, never read by the sim): a unit starts from
+  // renderer's facing (e.dir, the sprite direction nearest on screen — cosmetic, never read by the sim): a unit starts from
   // it, 3D writes its turns back (both views agree after a switch), and a 2D turn since overrides the finer memory.
   const heading = new Map(); // id → { h, dir }
   function setHeading(e, h){
-    const dir = ((Math.round(h / (Math.PI / 4)) % 8) + 8) % 8;
+    const dir = spriteDir(Math.cos(h), Math.sin(h));
     heading.set(e.id, { h, dir });
     if (world && e.dir !== dir) { e.dir = dir; if (typeof setFacingFromDir === 'function') setFacingFromDir(e, dir); }
   }
   function worldFacing(e){
     if (e.faceAng !== undefined) return e.faceAng;                                        // the dragon's own slow heading (its fire goes where it faces)
     let tx, ty;
-    if (e.path && e.path.length) { const a = e.path[Math.min(3, e.path.length - 1)]; tx = a.x; ty = a.y; }
+    if (e.path && e.path.length) { const a = e.path[0]; tx = a.x; ty = a.y; }               // the current leg: a straight line
     else if (e.target && entitiesById.get(e.target)) { const t = entitiesById.get(e.target); tx = t.x; ty = t.y; }
     if (tx !== undefined && (tx !== e.x || ty !== e.y)) { const h = Math.atan2(ty - e.y, tx - e.x); setHeading(e, h); return h; }
     const r = heading.get(e.id);

@@ -1209,6 +1209,14 @@ function setFacingFromDir(e, dir){
   }
 }
 
+// The sprite direction (0..7 = map angle k·45°) whose ON-SCREEN heading is nearest a map move (dx,dy): iso squashes
+// the 8 map directions into uneven screen sectors, so an any-angle walk snapped in map angle could face 37° off.
+const DIR_SCREEN_ANG = [0, 1, 2, 3, 4, 5, 6, 7].map(d => { const c = Math.cos(d * Math.PI / 4), s = Math.sin(d * Math.PI / 4); return Math.atan2((c + s) * HALF_TH, (c - s) * HALF_TW); });
+function spriteDir(dx, dy){
+  const a = Math.atan2((dx + dy) * HALF_TH, (dx - dy) * HALF_TW); let best = 0, bd = Infinity;
+  for (let d = 0; d < 8; d++) { const g = Math.abs(Math.atan2(Math.sin(a - DIR_SCREEN_ANG[d]), Math.cos(a - DIR_SCREEN_ANG[d]))); if (g < bd) { bd = g; best = d; } }
+  return best;
+}
 function mirroredDir(e){
   if (e.facing === -1) {
     if (e.dir === 2) return 0;      // SW -> SE
@@ -3202,10 +3210,9 @@ function drawUnit(e){
   // AoE2 units face their travel direction in transit and square up to the
   // target only when the walk ends (in range / at the work site).
   if(e.path && e.path.length > 0){
-    // Look 3 steps ahead to smooth out diagonal paths that alternate N+E or S+W steps
-    let ahead = Math.min(3, e.path.length - 1);
-    tx = e.path[ahead].x;
-    ty = e.path[ahead].y;
+    // the current leg's own line (its start to its end): steady the whole leg, never a turn further on
+    const fx = e.fromX ?? e.x, fy = e.fromY ?? e.y, lx = e.path[0].x - fx, ly = e.path[0].y - fy;
+    if (lx || ly) { tx = e.x + lx; ty = e.y + ly; } else { tx = e.path[0].x; ty = e.path[0].y; }
   } else if(e.target){
     let t = entitiesById.get(e.target);
     if(t) { tx = t.x; ty = t.y; }
@@ -3231,10 +3238,7 @@ function drawUnit(e){
     }
   }
   if(dx !== 0 || dy !== 0){
-    let angle = Math.atan2(dy, dx);
-    let dir = Math.round(angle / (Math.PI / 4));
-    if (dir < 0) dir += 8;
-    dir = dir % 8;
+    let dir = spriteDir(dx, dy);
     // Turn hysteresis (AoE2 units have turn inertia — they never strobe):
     // the raw Math.round above flickers between two adjacent sectors every
     // frame when the movement/target angle sits near a 45° boundary (bear
