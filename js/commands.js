@@ -240,6 +240,27 @@ function execCommand(cmd, team){
       damageEntity(u, t); u.atkCooldown = UNITS[u.utype].rof;
       break;
     }
+    case 'steer': {
+      // A steered character walking (character mode, js/pov3d.js): a STRAIGHT line to an off-grid point along the
+      // view — no tile zigzag, so it goes, and stops, exactly where it looks. A line that isn't clear walks the tiles.
+      const u = entitiesById.get(cmd.unitId);
+      if (!u || u.type !== 'unit' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn) break;
+      if (!(Number.isFinite(cmd.x) && Number.isFinite(cmd.y))) break;
+      if (u.order) issueOrder(u, null);
+      u.task = null; u.target = null; u.buildTarget = null; u.buildQueue = []; u.prevTask = null; u.savedTask = null;
+      u.explicitAttack = false; clearGatherTarget(u); u.defendX = u.x; u.defendY = u.y;
+      if (straightWalkClear(u, cmd.x, cmd.y)) setUnitPath(u, [{ x: cmd.x, y: cmd.y }]);
+      else pathUnitTo(u, Math.max(0, Math.min(MAP - 1, Math.round(cmd.x))), Math.max(0, Math.min(MAP - 1, Math.round(cmd.y))));
+      break;
+    }
+    case 'halt': {
+      // A steered character let go (character mode, js/pov3d.js): it stops WHERE IT IS. A move to "its tile" made it
+      // finish onto a tile centre — off the line it was looking along on a zigzag walk (a sideways jump in first person).
+      const u = entitiesById.get(cmd.unitId);
+      if (!u || u.type !== 'unit' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn) break;
+      if (!u.task && !u.target) clearUnitPath(u);
+      break;
+    }
     case 'deposit': {
       // A steered villager against a drop-off banks its load on the spot (character mode, js/pov3d.js); the same
       // banking as a return trip (logic.js updateVillagerDropoff), without walking one.

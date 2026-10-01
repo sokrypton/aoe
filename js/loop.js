@@ -421,7 +421,8 @@ function separateUnits(){
   for(let i=0;i<units.length;i++){
     let a=units[i];
     gathering[i]=(a.gatherX >= 0 && a.path.length === 0) ||
-                 (a.buildTarget !== null && a.path.length === 0);
+                 (a.buildTarget !== null && a.path.length === 0) ||
+                 a.possessed === true; // a steered character holds its spot (others make way): shoved, it shook under the controls
   }
   // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be
   // within minDist (0.5), so each unit compares against its 3×3 cell

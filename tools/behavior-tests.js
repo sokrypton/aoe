@@ -1166,6 +1166,57 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------- character mode: let go = stop on the spot
+    'possess-halt': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({
+        map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [1, 1],
+        entities: [ { b: 'TC', x: 6, y: 6, team: 0 }, { u: 'villager', x: 20, y: 20, team: 0 }, { u: 'villager', x: 20, y: 24, team: 0 }, { b: 'TC', x: 44, y: 44, team: 1 } ],
+      });
+      const [v, w] = entities.filter(e => e.team === 0 && e.utype === 'villager');
+      execCommand({ kind: 'possess', unitId: v.id, on: true }, 0);
+      for (const u of [v, w]) { selected = [u]; execUnitCommand({ tileX: u.x + 6, tileY: u.y + 3 }); }
+      for (let i = 0; i < T30(25); i++) update();
+      execCommand({ kind: 'halt', unitId: v.id }, 0);
+      execCommand({ kind: 'halt', unitId: w.id }, 0);           // not possessed: no effect
+      const at = [v.x, v.y];
+      T.ok('the possessed unit stops (path cleared)', v.path.length === 0);
+      update(); update();
+      T.ok('…on the spot, not snapped to a tile centre (' + v.x.toFixed(2) + ',' + v.y.toFixed(2) + ')', Math.hypot(v.x - at[0], v.y - at[1]) < 0.05);
+      T.ok('a unit not possessed ignores halt', w.path.length > 0);
+      // steer: a straight off-grid line, exactly along the heading (no tile zigzag)
+      const s0 = [v.x, v.y], hx = Math.cos(0.4), hy = Math.sin(0.4);
+      execCommand({ kind: 'steer', unitId: v.id, x: +(v.x + hx * 2.5).toFixed(3), y: +(v.y + hy * 2.5).toFixed(3) }, 0);
+      T.ok('steer walks one straight off-grid leg', v.path.length === 1 && !Number.isInteger(v.path[0].x));
+      let off = 0;
+      for (let i = 0; i < T30(30); i++) { update(); const ox = v.x - s0[0], oy = v.y - s0[1]; off = Math.max(off, Math.abs(-ox * hy + oy * hx)); }
+      T.ok('…never off the heading line (max ' + off.toFixed(3) + ')', off < 0.01);
+      // a line through a wall falls back to the tile path
+      for (let y = 10; y <= 30; y++) { const t = map[y][Math.round(v.x) + 2]; t.t = TERRAIN.WATER; markMapDirty(Math.round(v.x) + 2, y); }
+      execCommand({ kind: 'steer', unitId: v.id, x: v.x + 3.4, y: v.y }, 0);
+      T.ok('a blocked line walks the tiles instead', v.path.length === 0 || Number.isInteger(v.path[0].x));
+      return T;
+    })),
+
+    // ------------------------------------------------- one ground speed in every direction (AoE2)
+    'walk-speed-isotropic': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [0, 0],
+        entities: [ { b: 'TC', x: 4, y: 4, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 } ] });
+      for (let y = 15; y < 45; y++) for (let x = 15; x < 45; x++) { const t = map[y][x]; t.t = TERRAIN.GRASS; t.res = 0; t.occupied = null; }
+      const speeds = [];
+      for (const [dx, dy] of [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]) {
+        const v = createUnit('villager', 30, 30, 0);
+        selected = [v]; execUnitCommand({ tileX: 30 + dx * 6, tileY: 30 + dy * 6 });
+        let n = 0; while ((v.path.length || Math.hypot(v.x - (30 + dx * 6), v.y - (30 + dy * 6)) > 0.01) && n < 2000) { update(); n++; }
+        speeds.push(Math.hypot(dx * 6, dy * 6) / n);
+        v.hp = 0; handleDeath(v, 1);
+      }
+      const lo = Math.min(...speeds), hi = Math.max(...speeds);
+      T.ok('same ground speed every way (tiles/tick ' + speeds.map(s => s.toFixed(4)).join(' ') + ')', hi / lo < 1.06);
+      return T;
+    })),
+
     // ------------------------------------------------- spawn never into a sealed pocket
     // A training building whose spawn corner is wedged into forest must not birth units there (they could never leave).
     'spawn-not-in-pocket': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {

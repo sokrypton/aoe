@@ -3097,9 +3097,12 @@ function adjustTargetApproach(e){
         // Never trade a walk for nothing: an UNREACHABLE foe re-paths to [],
         // and dropping the path there strands the unit mid-approach instead of
         // closing on the obstacle.
+        // …nor for no gain: the new walk must END closer to the foe — against one it can't reach, the best spot flips
+        // between equally-near tiles as it moves, and each swap walked it back and forth.
         let keep = e.path;
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
-        if(keep && e.path.length === 0) setUnitPath(e, keep);
+        let fresh = e.path[e.path.length - 1], fx = fresh ? fresh.x - t.x : 0, fy = fresh ? fresh.y - t.y : 0;
+        if(keep && (e.path.length === 0 || fx*fx + fy*fy >= dToDest*dToDest - 0.25)) setUnitPath(e, keep);
         // A MELEE re-aim that still can't END at the foe (search capped, or walled off) waits before paying for another:
         // every 0.5s against an unreachable mover was the costliest pathfinding in a war. (Ranged units only need a
         // firing spot, so they keep the quick re-aim: a foe drifting into range must be answered at once.)
@@ -3121,7 +3124,10 @@ function updateSheepBehavior(e){
     e.eatingGrass = false;
   }
 
-  if(e.path.length===0 && !e.eatingGrass){
+  // A sheep the player steers (character mode) is theirs to move: no grazing stops or wander steps of its own (they
+  // jittered it under the controls).
+  if(e.possessed){ e.eatTicks=0; e.eatingGrass=false; }
+  else if(e.path.length===0 && !e.eatingGrass){
     // Periodically stop to eat grass (approx. every 4-8 seconds)
     if(tick % SHEEP_EAT_EVERY === 0 && simRandom() < 0.4){
       e.eatTicks = simRandInt(T30(60), T30(120));

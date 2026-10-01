@@ -4662,7 +4662,12 @@
     lastUnitsAt = now;
     const near = [];
     for (const e of entities) {
-      if (e.type !== 'unit' || (e.id === followId && mode === 'eye' && !RIG_UNITS(e.utype))) continue; // seen through its eyes: a rig shows its arms and tool (fp), anything else nothing
+      if (e.type !== 'unit') continue;
+      if (e.id === followId && mode === 'eye' && !(RIG_UNITS(e.utype) && (e.utype === 'villager' || MIL3D.has(e.utype)))) { // seen through its eyes: a rigged person shows its arms and tool (fp); anything else (an animal too) nothing
+        const a = animals.get(e.id), rs = unitSprites.get(e.id);              // (HIDDEN, not just left un-updated: a sheep's own body sat
+        if (a) a.obj.visible = false; if (rs) rs.sprite.visible = false;      // over the camera, bobbing with every step)
+        continue;
+      }
       const dx = e.x + 0.5 - camAt.x, dy = e.y + 0.5 - camAt.y, d2 = dx * dx + dy * dy;
       if (d2 > RANGE * RANGE || !unitVisible(e)) continue; // (nothing near the camera is hidden: a tree or unit in the way blocks the view, as it would)
       near.push({ e, d2, k: world ? (e.x + 0.5 - camera.position.x) ** 2 + (e.y + 0.5 - camera.position.z) ** 2 : d2 }); // the world view keeps those nearest the camera
@@ -4699,8 +4704,11 @@
         if (isUnitMoving(e)) a.walkT = now;                                             // (held across a chaser's re-plans, unless at its prey)
         if (!dead && e.utype !== 'dragon' && now - (a.walkT || -1e9) < 400 && !inActionRange(e)) { if (a.moved > 1e-5) { const c = Math.min(1, a.moved / 1.5), ux = mvx / a.moved, uz = mvz / a.moved; a.vx = (a.vx ?? ux) + (ux - (a.vx ?? ux)) * c; a.vz = (a.vz ?? uz) + (uz - (a.vz ?? uz)) * c; } // (over ~1.5 tiles walked: any game speed)
           if (a.vx !== undefined) want = -Math.atan2(a.vz, a.vx); }
-        a.yaw += Math.atan2(Math.sin(want - a.yaw), Math.cos(want - a.yaw)) * Math.min(1, dt * (e.utype === 'dragon' ? 8 : 4));
-        a.obj.position.set(a.x, 0, a.z); a.obj.rotation.y = a.yaw;
+        // Steered (character mode): it faces where it's steered and turns with the controls, as a villager does
+        const steered = !dead && e.id === followId && (steerActive() && (isUnitMoving(e) || (!e.target && !e.task)) || steeredFacing(e));
+        if (steered) { want = -yaw; setHeading(e, yaw); }
+        a.yaw += Math.atan2(Math.sin(want - a.yaw), Math.cos(want - a.yaw)) * Math.min(1, dt * (steered ? 14 : e.utype === 'dragon' ? 8 : 4));
+        a.obj.visible = true; a.obj.position.set(a.x, 0, a.z); a.obj.rotation.y = a.yaw;
         if (dead) { // seen already dead: lying; then eaten down as it is harvested
           a.deadAt = a.deadAt || (a.alive ? now : now - 2000);
           deathPose(a.obj, 'sheep', now - a.deadAt);
@@ -4829,6 +4837,16 @@
     if (Math.abs(fwd) > 0.25) {
       if (now - lastMoveAt < 150) return;
       const k = fwd > 0 ? 1 : -1, cx = Math.cos(yaw) * k, cy = Math.sin(yaw) * k;
+      // A straight line off the grid, exactly along the view, when it's clear ('steer'); else the farthest open tile
+      for (const r of [2.5, 1.5, 1]) {
+        const px = +(e.x + cx * r).toFixed(3), py = +(e.y + cy * r).toFixed(3);
+        if (!straightWalkClear(e, px, py)) continue;
+        if (!lastMove || Math.hypot(lastMove.x - px, lastMove.y - py) > 0.35 || now - lastMoveAt > 600) {
+          submitCommand({ kind: 'steer', unitId: e.id, x: px, y: py });
+          lastMove = { x: px, y: py }; lastMoveAt = now;
+        }
+        return;
+      }
       for (const r of [2.5, 1.5, 1]) { // the farthest open tile ahead
         const tx = Math.round(e.x + cx * r), ty = Math.round(e.y + cy * r);
         const blk = unitBlock && tx >= 0 && ty >= 0 && tx < MAP && ty < MAP ? entitiesById.get(unitBlock[tx + ty * MAP]) : null;   // other units are passed through; the dragon's body isn't
@@ -4839,11 +4857,9 @@
         }
         return;
       }
-    } else if (lastMove) { // let go: stop here — on the nearest tile not behind it (walking a diagonal, the rounded tile
-      // is often half a step back on one axis: stopping there would turn it round), else the next one it's stepping to
-      const n = e.path && e.path.length ? e.path[0] : null;
-      const back = n && (ux - e.x) * (n.x - e.x) + (uy - e.y) * (n.y - e.y) < -0.01;
-      submitCommand({ kind: 'command', unitIds: [e.id], tileX: back ? n.x : ux, tileY: back ? n.y : uy });
+    } else if (lastMove) { // let go: stop where it is ('halt') — not at a tile centre, which on a zigzag walk lies off the
+      // line it was looking along (it stepped sideways: a jump in first person)
+      submitCommand({ kind: 'halt', unitId: e.id });
       lastMove = null;
     }
   }

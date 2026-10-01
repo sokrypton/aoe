@@ -297,6 +297,23 @@ function clearUnitPath(e){
   if(e.order&&e.order.kind==='move')e.order=null;
 }
 
+// Can `e` walk a STRAIGHT line to the off-grid point (x,y)? (character-mode steering: no tile zigzag.) Every tile the line
+// crosses must be walkable (other units passed through; the dragon's body not), and a diagonal tile change obeys
+// findPath's rule — both orthogonal sides open — so the line never squeezes between two touching obstacles.
+function straightWalkClear(e,x,y){
+  const dx=x-e.x, dy=y-e.y, n=Math.max(1,Math.ceil(Math.sqrt(dx*dx+dy*dy)/0.1));
+  const open=(tx,ty)=>{ if(tx<0||ty<0||tx>=MAP||ty>=MAP||!walkable(tx,ty,e.id,true))return false;
+    const b=unitBlock&&entitiesById.get(unitBlock[tx+ty*MAP]); return !(b&&b.utype==='dragon'); };
+  let px=Math.round(e.x), py=Math.round(e.y);
+  for(let i=1;i<=n;i++){
+    const tx=Math.round(e.x+dx*i/n), ty=Math.round(e.y+dy*i/n);
+    if(tx===px&&ty===py)continue;
+    if(!open(tx,ty))return false;
+    if(tx!==px&&ty!==py&&(!open(tx,py)||!open(px,ty)))return false;
+    px=tx; py=ty;
+  }
+  return true;
+}
 function setUnitPath(e,path){
   e.path=path;
   e.moveT=0;
@@ -370,7 +387,7 @@ const PROJECTILE_TILES_PER_TICK = 7.5 / TPS;
 // moving unit rubber-bands on the guest, and the guest's whole prediction
 // premise is that its stepping matches the host's EXACTLY.
 //
-// `distPx`: how many screen-pixels of progress to consume (host: one whole
+// `distPx`: how many walk-px of progress to consume (legPx; host: one whole
 // tick's worth; guest: fractional, per rendered frame).
 // `checkWalkable`: host-only — it re-validates each tile against the live
 // block grid, which only the host's update() keeps current; the guest
@@ -384,38 +401,41 @@ const PROJECTILE_TILES_PER_TICK = 7.5 / TPS;
 // what a real queue does — the blocker almost always moves on within a
 // few ticks. moveT is reset so unblocking can't teleport banked progress.
 function stepBlocked(e){
-  e.moveT=0;
+  e.fromX=e.x; e.fromY=e.y; // the leg resumes from where it stands: with the progress zeroed, measured from the old
+  e.moveT=0;                // leg start it snapped back there
   e.stepWait=(e.stepWait||0)+1;
-  if(e.stepWait>30){e.stepWait=0;e.path=[];}
+  if(e.stepWait>T30(30)){e.stepWait=0;e.path=[];}
 }
-// A leg's length on screen (px) from (ax,ay) to (bx,by): toIso's own arithmetic, in its order (the same doubles),
-// without the two objects a call — this runs per walking unit per tick.
-function isoLegDist(ax,ay,bx,by){
-  let ddx=(bx-by)*HALF_TW-(ax-ay)*HALF_TW, ddy=(bx+by)*HALF_TH-(ax+ay)*HALF_TH;
-  return Math.sqrt(ddx*ddx+ddy*ddy)||1.0;
+// A leg's length in walk "px": its WORLD length in tiles × one orthogonal tile's px (√(32²+16²)), so a unit has one
+// ground speed in every direction (AoE2; the isometric view only projects it). Measured on screen, one diagonal walked
+// 1.58× and the other 0.79× the straight-line speed. Orthogonal legs are exactly what they were.
+const TILE_PX = Math.sqrt(HALF_TW * HALF_TW + HALF_TH * HALF_TH);
+function legPx(ax,ay,bx,by){
+  let dx=bx-ax, dy=by-ay;
+  return Math.sqrt(dx*dx+dy*dy)*TILE_PX||1.0;
 }
 function stepUnitAlongPath(e, distPx, checkWalkable){
   e.moveT += distPx;
   while(e.path.length>0){
     let nextTile=e.path[0];
-    let screenDist=isoLegDist(e.fromX,e.fromY,nextTile.x,nextTile.y);
-    if(e.moveT>=screenDist){
-      if(checkWalkable && !walkable(nextTile.x,nextTile.y,e.id)){
+    let legLen=legPx(e.fromX,e.fromY,nextTile.x,nextTile.y);
+    if(e.moveT>=legLen){
+      if(checkWalkable && !walkable(Math.round(nextTile.x),Math.round(nextTile.y),e.id)){ // (rounded: a steered character's waypoints are off-grid)
         stepBlocked(e); return;
       }
-      e.moveT-=screenDist;
+      e.moveT-=legLen;
       let next=e.path.shift();
       e.fromX=next.x;e.fromY=next.y;e.x=next.x;e.y=next.y;
     } else break;
   }
   if(e.path.length>0){
     let next=e.path[0];
-    if(checkWalkable && !walkable(next.x,next.y,e.id)){
+    if(checkWalkable && !walkable(Math.round(next.x),Math.round(next.y),e.id)){
       stepBlocked(e); return;
     }
     e.stepWait=0;
-    let screenDist=isoLegDist(e.fromX,e.fromY,next.x,next.y);
-    let t=e.moveT/screenDist;
+    let legLen=legPx(e.fromX,e.fromY,next.x,next.y);
+    let t=e.moveT/legLen;
     e.x=e.fromX+(next.x-e.fromX)*t;
     e.y=e.fromY+(next.y-e.fromY)*t;
   }
@@ -432,10 +452,10 @@ function unitVelocityPerTick(e){
   let tdx=next.x-e.x, tdy=next.y-e.y;
   let tileLen=Math.sqrt(tdx*tdx+tdy*tdy);
   if(tileLen<0.000001) return null;
-  let screenDist=isoLegDist(e.fromX,e.fromY,next.x,next.y);
+  let legLen=legPx(e.fromX,e.fromY,next.x,next.y);
   let ldx=next.x-e.fromX, ldy=next.y-e.fromY;
   let legTile=Math.sqrt(ldx*ldx+ldy*ldy)||1.0;
-  let step=unitMoveSpeed(e)*UNIT_PX_PER_TICK*legTile/screenDist;   // tiles per tick
+  let step=unitMoveSpeed(e)*UNIT_PX_PER_TICK*legTile/legLen;   // tiles per tick
   return {vx:tdx/tileLen*step, vy:tdy/tileLen*step};
 }
 
