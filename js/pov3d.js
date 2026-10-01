@@ -4213,7 +4213,7 @@
     if (kind === 'forage' && e.gatherX >= 0) return [e.gatherX + 0.5, e.gatherY + 0.5];
     if (kind === 'butcher' || kind === 'fight') { const t = entitiesById.get(e.target); if (t) { // a unit where it's drawn; a building at the nearest point of its footprint (not its corner tile)
       if (t.type === 'building') return [Math.max(t.x, Math.min(t.x + (t.w || 1), e.x + 0.5)), Math.max(t.y, Math.min(t.y + (t.h || 1), e.y + 0.5))];
-      const a = animals.get(t.id) || villagers.get(t.id); return a ? [a.x, a.z] : [t.x + 0.5, t.y + 0.5]; } }
+      return animals.has(t.id) || villagers.has(t.id) ? drawnAt(t) : [t.x + 0.5, t.y + 0.5]; } }
     if ((kind === 'build' || kind === 'repair') && e.buildTarget) { const b = entitiesById.get(e.buildTarget); if (b) {
       const px = Math.max(b.x, Math.min(b.x + (b.w || 1), e.x + 0.5)), pz = Math.max(b.y, Math.min(b.y + (b.h || 1), e.y + 0.5)); return [px, pz]; } }
     return null;
@@ -5173,20 +5173,42 @@
   // the ordinary input functions through window.__pick3D (iso.js / input.js),
   // so selection, commands, placement, rally/guard/garrison stay one set of rules.
   let _ray = null, _ndc = null, _v3 = null;
-  const PICK_H = { villager: 0.32, militia: 0.32, spearman: 0.32, archer: 0.32, scout: 0.55, knight: 0.55, sheep: 0.2, sheep_carcass: 0.12, bear: 0.35, ram: 0.35, tradecart: 0.35, dragon: 1.0 }; // (half the drawn height: the HP bar sits over the head)
+  const PICK_H = { villager: 0.32, militia: 0.32, spearman: 0.32, archer: 0.32, scout: 0.55, knight: 0.55, sheep: 0.2, sheep_carcass: 0.2, bear: 0.35, ram: 0.35, tradecart: 0.35, dragon: 1.0 }; // (half the drawn height: the HP bar sits over the head)
   function project(x, y, z){ _v3.set(x, y, z).project(camera); const r = renderer.domElement.getBoundingClientRect();
     return { x: r.left + (_v3.x + 1) / 2 * r.width, y: r.top + (1 - _v3.y) / 2 * r.height, z: _v3.z }; }
+  // A solid model (animal, carcass, vehicle) is boxed as drawn: a carcass lies rolled off its spot, the cart's ox walks
+  // ahead of it. The rigs pose on the GPU, so a person keeps the box over its spot.
+  let _bb = null, _bc = null;
+  function solidModel(u){ const a = animals.get(u.id) || (!RIG_UNITS(u.utype) && villagers.get(u.id)); return a && a.obj && a.obj.visible ? a.obj : null; }
+  function visibleMeshes(o, fn){ if (!o.visible) return; if (o.isMesh) fn(o); for (const c of o.children) visibleMeshes(c, fn); }
+  function modelBox(obj){ _bb = _bb || new THREE.Box3(); _bc = _bc || new THREE.Vector3(); _bb.makeEmpty(); obj.updateMatrixWorld(true);
+    visibleMeshes(obj, m => _bb.expandByObject(m, false)); return _bb; }
   // Where a unit is drawn (its model / billboard), else its interpolated spot.
-  function drawnAt(u){ const a = villagers.get(u.id) || animals.get(u.id); if (a) return [a.x, a.z]; const s = unitSprites.get(u.id); return s ? [s.sprite.position.x, s.sprite.position.z] : posOf(u); }
+  function drawnAt(u){ const m = solidModel(u); if (m) { modelBox(m).getCenter(_bc); return [_bc.x, _bc.z]; }
+    const a = villagers.get(u.id) || animals.get(u.id); if (a) return [a.x, a.z]; const s = unitSprites.get(u.id); return s ? [s.sprite.position.x, s.sprite.position.z] : posOf(u); }
+  // Its box on screen {x0, x1, y0, y1} (null: behind the camera).
+  function screenRect(u, x, z){
+    const m = solidModel(u);
+    if (m) { const r = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity }; let behind = false; m.updateMatrixWorld(true);
+      // each part's own box on screen (one box round the whole posed model swells on the diagonal camera)
+      visibleMeshes(m, o => { const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const B = g.boundingBox;
+        for (let i = 0; i < 8; i++) { _v3.set(i & 1 ? B.max.x : B.min.x, i & 2 ? B.max.y : B.min.y, i & 4 ? B.max.z : B.min.z).applyMatrix4(o.matrixWorld);
+          const p = project(_v3.x, _v3.y, _v3.z); if (p.z > 1) behind = true;
+          r.x0 = Math.min(r.x0, p.x); r.x1 = Math.max(r.x1, p.x); r.y0 = Math.min(r.y0, p.y); r.y1 = Math.max(r.y1, p.y); } });
+      return behind || r.x0 > r.x1 ? null : r; }
+    const h = PICK_H[u.utype] || 0.32, b = project(x, 0, z), t = project(x, h * 2, z);
+    if (b.z > 1 || t.z > 1) return null;
+    const w = Math.max(8, b.y - t.y) * (u.utype === 'scout' || u.utype === 'knight' ? 0.9 : 0.55);
+    return { x0: Math.min(b.x, t.x) - w, x1: Math.max(b.x, t.x) + w, y0: t.y, y1: b.y };
+  }
   function pickUnits(test){
     const out = [];
     for (const u of entities) {
       if (u.type !== 'unit' || u.garrisonedIn || u.hp <= 0 || !unitVisible(u)) continue;
       if (u.id === followId && mode === 'eye') continue;
       const [x, z] = drawnAt(u); if ((x - camAt.x) ** 2 + (z - camAt.y) ** 2 > RANGE * RANGE) continue;
-      const h = PICK_H[u.utype] || 0.32, b = project(x, 0, z), t = project(x, h * 2, z);
-      if (b.z > 1 || t.z > 1) continue;                                          // behind the camera
-      const hp = Math.max(8, b.y - t.y), r = test(u, b, t, hp);
+      const rect = screenRect(u, x, z); if (!rect) continue;
+      const r = test(u, rect, x, z);
       if (r != null) out.push({ u, d: r });
     }
     return out;
@@ -5202,11 +5224,9 @@
     const slack = (typeof isMobile !== 'undefined' && isMobile) ? 14 : 5;
     // units: their drawn box on screen (the rigs pose on the GPU, so no mesh raycast)
     let unit = null, ud = Infinity;
-    for (const { u, d: dd } of pickUnits((u, b, t, hp) => {
-      const w = hp * (u.utype === 'dragon' ? 1.6 : u.utype === 'scout' || u.utype === 'knight' || u.utype === 'ram' || u.utype === 'tradecart' || u.utype === 'bear' ? 0.9 : 0.55) + slack;
-      if (Math.abs(cx - b.x) > w && Math.abs(cx - t.x) > w) return null;
-      if (cy < t.y - slack || cy > b.y + slack) return null;
-      return camera.position.distanceTo(_v3.set(drawnAt(u)[0], PICK_H[u.utype] || 0.32, drawnAt(u)[1])); // its body, not its feet
+    for (const { u, d: dd } of pickUnits((u, R, x, z) => {
+      if (cx < R.x0 - slack || cx > R.x1 + slack || cy < R.y0 - slack || cy > R.y1 + slack) return null;
+      return camera.position.distanceTo(_v3.set(x, PICK_H[u.utype] || 0.32, z)); // its body, not its feet
     })) if (dd < ud) { ud = dd; unit = u; }
     // buildings: a real raycast on their models
     let building = null, bd = Infinity;
@@ -5256,7 +5276,7 @@
   function anchorTo(u){ if (followId === u.id) return; follow(u); window.cameraFollowId = u.id; anchorEase = performance.now() + 500; refreshButtons(); }
   function boxSelect(x0, y0, x1, y1){
     const lx = Math.min(x0, x1), hx = Math.max(x0, x1), ly = Math.min(y0, y1), hy = Math.max(y0, y1);
-    const box = pickUnits((u, b, t) => u.team === myTeam && Math.max(lx, b.x - 6) <= Math.min(hx, b.x + 6) && Math.max(ly, t.y) <= Math.min(hy, b.y) ? 0 : null).map(o => o.u);
+    const box = pickUnits((u, R) => u.team === myTeam && Math.max(lx, (R.x0 + R.x1) / 2 - 6) <= Math.min(hx, (R.x0 + R.x1) / 2 + 6) && Math.max(ly, R.y0) <= Math.min(hy, R.y1) ? 0 : null).map(o => o.u);
     withPick({ box, map: { x: 0, y: 0 }, tile: { x: 0, y: 0 } }, () => { if (window.settingGarrison) garrisonBoxLoad(x0, y0, x1, y1); else doBoxSelect(x0, y0, x1, y1); });
   }
   // Pointer, as the 2D map: mouse — left click = tap (select/command), left-drag = box select, double-click = all of

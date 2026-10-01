@@ -1228,6 +1228,17 @@ let grazeCycles = new Map(); // per-sheep grazing-puff cycle (same pattern)
 // proportions cannot drift between views. World units are local px at
 // scale 1 (RAM_SCALE applied at draw time): X = movement axis (a),
 // Y = width axis (b), Z = up (c).
+// 2D walk cycles (legs, bobs, wheels) run on this clock, not animTick: a walk's ground speed is the same every way,
+// but on screen one heading covers 0.63×–1.26× the px of another, so a fixed rate slid the feet. Viewer-only.
+const _paceClk = new WeakMap();
+function paceClock(e){
+  let c = _paceClk.get(e); if (!c) _paceClk.set(e, c = { t: animTick, at: animTick });
+  const d = animTick - c.at; c.at = animTick;
+  if (d > 0) { const n = e.path && e.path[0]; let k = 1;
+    if (n) { const dx = n.x - e.x, dy = n.y - e.y, w = Math.hypot(dx, dy); if (w > 1e-6) k = Math.hypot((dx - dy) * HALF_TW, (dx + dy) * HALF_TH) / (w * TILE_PX); }
+    c.t += d * k; }
+  return c.t;
+}
 // A rolling wheel's turn (rad) for a vehicle whose wheel radius is rPx art px
 // (before UNIT_SCALE): rolled, not spun — the ground it covers (speed ×
 // UNIT_PX_PER_TICK screen px a tick, animTick running at the authored 30/s)
@@ -1235,7 +1246,7 @@ let grazeCycles = new Map(); // per-sheep grazing-puff cycle (same pattern)
 // groupSpeed (a render-side write would desync); the ram's rider boost is read here.
 function wheelSpin(e, rPx){
   const sp = e.speed * (e.utype === 'ram' && e.garrison ? 1 + 0.08 * e.garrison.length : 1);
-  return animTick * sp * UNIT_PX_PER_TICK * (TPS / 30) / (rPx * UNIT_SCALE) + e.id;
+  return paceClock(e) * sp * UNIT_PX_PER_TICK * (TPS / 30) / (rPx * UNIT_SCALE) + e.id;
 }
 const RAM_DIM = {
   L: 12,      // body half-length (gable planes at a=±L)
@@ -1384,7 +1395,7 @@ function drawBarrow(e, rolling, tilt, loadFn, part, kind, shift){
     X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE;
     disc(axle.x, axle.y, WR); X.stroke(); disc(axle.x, axle.y, WR-1.2); X.stroke();
     let ang = typeof rolling === 'number' ? rolling
-            : rolling ? animTick*0.35 + e.id : 0.6;
+            : rolling ? paceClock(e)*0.35 + e.id : 0.6;
     X.strokeStyle='#8a6a4a'; X.lineWidth=1.2/UNIT_SCALE;
     for (let k = 0; k < 3; k++){
       let A = ang + k*Math.PI/3, c2 = Math.cos(A), s2 = Math.sin(A), t = WR - 0.9;
@@ -1572,7 +1583,7 @@ function drawRamBody(e){
 
   X.save();
   // Rolling: gentle sway, no head-bob (suppressed in drawUnit's translate)
-  if (rolling) X.translate(0, Math.sin(animTick*0.2 + e.id) * 0.5);
+  if (rolling) X.translate(0, Math.sin(paceClock(e)*0.2 + e.id) * 0.5);
   X.translate(recoil * u.x, recoil * u.y);
   X.scale(SCALE, SCALE); // the ram out-bulks even the horse units
 
@@ -1926,7 +1937,7 @@ function drawRamBody(e){
 function drawQuadruped(e, p){
   let useDir = mirroredDir(e);
   let moving = e.path && e.path.length>0 && !e.corpseRot;
-  let walk = moving ? Math.sin(animTick*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
+  let walk = moving ? Math.sin(paceClock(e)*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
   let idle = !moving;
   let swish = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idle?0.18:0.07);
   let nod = (idle && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.5 : 0; // a dead ox's head doesn't bob
@@ -2143,7 +2154,7 @@ function drawTradeCartBody(e){
   }
 
   X.save();
-  if (rolling) X.translate(0, Math.sin(animTick*0.2+e.id)*0.5);
+  if (rolling) X.translate(0, Math.sin(paceClock(e)*0.2+e.id)*0.5);
   // Recenter the RIG on the unit anchor: the ox extends far ahead of the
   // bed, so shift the whole drawing back along the facing axis — the
   // anchor (pathing position, shadow, selection) sits mid-composite.
@@ -3045,14 +3056,14 @@ function drawDragonBody(e){
 function drawSheepBody(e){
   let tc = teamColor(e.team);
   // Sheep — scalloped wool cloud; head tracks movement direction
-  let waddle = e.path.length > 0 ? Math.sin(animTick * 0.2 + e.id) * 0.06 : 0;
+  let waddle = e.path.length > 0 ? Math.sin(paceClock(e) * 0.2 + e.id) * 0.06 : 0;
   let breath = e.path.length === 0 ? Math.sin(animTick * 0.06 + e.id) * 0.12 : 0;
 
   X.save();
   X.rotate(waddle);
 
   // 4-leg walk cycle: outlined stubby legs with hooves
-  let hw1 = e.path.length > 0 ? Math.sin(animTick * 0.45 + e.id) * 3.0 : 0;
+  let hw1 = e.path.length > 0 ? Math.sin(paceClock(e) * 0.45 + e.id) * 3.0 : 0;
   let hw2 = -hw1;
   let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
   X.beginPath();
@@ -3255,8 +3266,8 @@ function drawUnit(e){
   e.lastY = e.y;
 
   // Torso / Head bobbing
-  let bob=moving?Math.sin(animTick*0.3+e.id)*1.5:0;
-  let sbob=moving?Math.sin(animTick*0.2+e.id)*1:0;
+  let bob=moving?Math.sin(paceClock(e)*0.3+e.id)*1.5:0;
+  let sbob=moving?Math.sin(paceClock(e)*0.2+e.id)*1:0;
 
   // Save context and apply horizontal flipping based on facing direction
   X.save();
@@ -3529,7 +3540,7 @@ function drawUnit(e){
     // facing, so any phase math they share must live here, not in either
     // closure. Pure reads only (safe under the outline mask pass); sounds/
     // particles stay in drawHeldLayer behind their _maskDraw guards.
-    const anim = { armSwing: moving ? Math.sin(animTick*0.4+e.id)*1.5 : 0 };
+    const anim = { armSwing: moving ? Math.sin(paceClock(e)*0.4+e.id)*1.5 : 0 };
     // TRUE PROFILE views (E/W): the body is seen exactly side-on —
     // legs align under the center and the shoulders sit ON the
     // centerline (consumers: legs in drawBodyLayer, shoulders in
@@ -4231,7 +4242,7 @@ function drawUnit(e){
     }
     // Walking leg cycle (swinging legs with constant leg length)
     if(isMountedUnit(e.utype)){
-      let walk = moving ? Math.sin(animTick*0.45+e.id)*4.5 : 0;
+      let walk = moving ? Math.sin(paceClock(e)*0.45+e.id)*4.5 : 0;
       X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
       X.beginPath();
       
@@ -4486,7 +4497,7 @@ function drawUnit(e){
       // walkers scissor full screen-x strides, face-on walkers read as a
       // small vertical alternation, and on diagonals the NEAR leg stands
       // slightly lower (closer to the camera) than the far one.
-      let walk = moving ? Math.sin(animTick*0.4+e.id)*2.5 : 0;
+      let walk = moving ? Math.sin(paceClock(e)*0.4+e.id)*2.5 : 0;
       let st = anim.stance || 0;
       // legs FOLLOW the attack lunge, on the SAME axis upperly translates
       // the torso (view-axis y at S/N, screen-x else): hips ride half of
