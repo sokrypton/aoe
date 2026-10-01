@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2D Animation Lab — Age of Epochs</title>
+<style>
+  /* The 2D twin of lab3d.html: drives the game's own 2D draw code (drawUnit / drawCorpse) on one specimen — or
+     all eight facings at once — with the same bar. Scripts load cache-busted: what you see is the code on disk. */
+  html, body { margin: 0; height: 100%; background: #3e7a24; overflow: hidden; font: 13px sans-serif; }
+  #lab-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000; background: #2a1c10; color: #e8d9b0;
+    padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  }
+  #lab-bar .g { display: flex; gap: 5px; align-items: center; }
+  #lab-bar .g + .g { border-left: 1px solid #4a3419; padding-left: 18px; }
+  #lab-bar .l { opacity: .6; text-transform: uppercase; font-size: 11px; margin-right: 2px; }
+  #lab-bar button, #lab-bar select { background: #4a3419; color: #e8d9b0; border: 1px solid #7a5a38; padding: 3px 10px; cursor: pointer; font: 13px sans-serif; }
+  #lab-bar button.on { background: #7a5a38; color: #fff; }
+  #lab-bar input[type=range] { width: 140px; }
+  #lab-readout { position: fixed; left: 10px; bottom: 10px; z-index: 1000; background: rgba(42,28,16,.85); color: #e8d9b0;
+    padding: 6px 10px; white-space: pre; font: 12px monospace; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="lab-bar">
+  <strong>2D Animation Lab</strong>
+  <span class="g"><span class="l">Unit</span><select id="lab-unit">
+    <option value="villager">villager</option><option value="villager-f">villager ♀</option><option>militia</option><option>spearman</option>
+    <option>archer</option><option>scout</option><option>knight</option><option>ram</option><option value="tradecart">trade cart</option>
+    <option>sheep</option><option>bear</option><option>dragon</option></select></span>
+  <span class="g" id="lab-actions"><span class="l">Action</span></span>
+  <span class="g" id="lab-dirs"><span class="l">Facing</span></span>
+  <span class="g"><span class="l">Play</span>
+    <button id="lab-play" class="on">❚❚</button><button id="lab-step" title="one tick">⏭</button>
+    <label>speed <input id="lab-speed" type="range" min="0.05" max="2" step="0.05" value="1"></label></span>
+  <span class="g"><span class="l">Kit</span>
+    <label>age <select id="lab-age"><option value="0">Dark</option><option value="1" selected>Feudal</option><option value="2">Castle</option></select></label>
+    <label><input type="checkbox" id="lab-techs"> all techs</label>
+    <label>load <select id="lab-load"><option>wood</option><option>gold</option><option>stone</option><option>meat</option><option>wheat</option><option>berries</option></select></label></span>
+  <span class="g"><span class="l">Zoom</span><button data-z="2">2x</button><button data-z="4" class="on">4x</button><button data-z="7">7x</button></span>
+  <span class="g"><label><input type="checkbox" id="lab-guides" checked> ground</label></span>
+</div>
+<div id="lab-readout"></div>
+<script>
+(function(){
+  const v = Date.now();
+  ['page-shell','audio','core','map','entities','pathfinding','iso',
+   'render-terrain','render-buildings','render-units','render-outlines',
+   'render-fx','render','logic'].forEach(n =>
+    document.write('<script src="js/' + n + '.js?t=' + v + '"><\/script>'));
+})();
+</script>
+<script>
+// Scriptable as window.LAB: set({ unit, action, dir, age, techs, load, zoom }), pause(on), step(n).
+(function(){
+  for (const el of [...document.body.children]) if (!['lab-bar', 'lab-readout'].includes(el.id) && el.tagName !== 'SCRIPT' && el.tagName !== 'CANVAS') el.style.display = 'none';
+  // a small grass world, fog off (the style gallery's recipe)
+  MAP = 48; map = [];
+  for (let y = 0; y < MAP; y++) { map[y] = []; for (let x = 0; x < MAP; x++) map[y][x] = { t: TERRAIN.GRASS, res: 0, occupied: null }; }
+  window.fogDisabled = true; window.unitScatterOff = true;
+  initFog(); resetTeamVision(); resetTeamAge(); resetTeamTechs(); resetLastTeamHit(); resetDefeatedTeams(); resetAIStates();
+  gameStarted = true; window.playSound = null;
+
+  const DIRL = ['SE', 'S', 'SW', 'W', 'NW', 'N', 'NE', 'E'];
+  const DIRV = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  // what each unit can do (the button row): walk is a gallop for cavalry, work is a villager's job by its load
+  const ACTIONS = { villager: ['idle', 'walk', 'carry', 'work', 'die'], militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'],
+    archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'attack', 'die'], knight: ['idle', 'walk', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'],
+    tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['idle', 'walk', 'attack'] };
+  const S = window.LAB = { unit: 'scout', action: 'walk', dir: 0, all: false, age: 1, techs: false, load: 'wood', zoom: 4, paused: false, speed: 1,
+    set(o){ if (o.pose) o.action = o.pose === 'attack' && S.unit.startsWith('villager') ? 'work' : o.pose; Object.assign(S, o); build(); sync(); },
+    pause(p){ S.paused = p === undefined ? !S.paused : p; sync(); },
+    step(n){ for (let i = 0; i < (n || 1); i++) advance(1); } };
+  let specs = [], T = 0, deathAt = 0;
+  const ut = () => S.unit === 'villager-f' ? 'villager' : S.unit;
+  function build(){
+    entitiesById.clear(); entities.length = 0;
+    for (const M of [horse2DState, sheep2DState, bear2D, dragon2D]) M.clear();
+    const dirs = S.all ? [0, 1, 2, 3, 4, 5, 6, 7] : [S.dir];
+    specs = dirs.map((d, i) => { const u = createUnit(ut(), 8 + (S.all ? (i % 4) * 9 : 12), 8 + (S.all ? Math.floor(i / 4) * 9 : 12), 0);
+      if (S.unit === 'villager-f') u.female = true;
+      u.__d = d; u.__home = { x: u.x, y: u.y }; delete u.gatherX; delete u.gatherY; u.task = 'gallery'; return u; });
+    deathAt = performance.now(); T = 0;
+  }
+  // a unit's facing, held at its cell's direction (drawUnit's turn hysteresis would drift it)
+  function face(u, d){ u.dir = d; u.facing = d === 2 || d === 3 || d === 4 ? -1 : 1; u.facingNorth = d >= 4 && d <= 6; }
+  // pose one specimen for this tick: walking is a treadmill — it really covers ground at its own pace (the horse, sheep,
+  // bear and dragon stride by the ground covered) and steps back every 2 tiles (a jump isn't a stride)
+  function pose(u){
+    const d = u.__d, a = S.action, walks = a === 'walk' || a === 'carry', dl = Math.hypot(...DIRV[d]);
+    const v = (u.speed || 1) * UNIT_PX_PER_TICK / TILE_PX, w = walks ? (T * v) % 2 : 0;
+    u.x = u.__home.x + DIRV[d][0] / dl * w; u.y = u.__home.y + DIRV[d][1] / dl * w;
+    face(u, d); u.__lockDir = d;
+    u.path = walks ? [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }] : [];
+    u.__animAttack = a === 'attack'; u.eatingGrass = a === 'graze';
+    if (a === 'attack') { const rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60); u.atkCooldown = rof - (tick % (rof + 1)); }
+    u.task = 'gallery'; u.carrying = 0; u.carryType = null; u.target = null; delete u.gatherX; delete u.gatherY;
+    if (a === 'carry') { u.task = 'return'; u.carrying = 10; const food = ['meat', 'wheat', 'berries'].includes(S.load); u.carryType = food ? 'food' : S.load; if (food) u.foodSrc = S.load; }
+    // work, as the style gallery's villager rows: the job at its own tile (passes the at-site gate); butchering a real
+    // carcass beside it (the harvest-range gate needs a live entity)
+    if (a === 'work') {
+      if (S.load === 'meat') { if (!u.__carcass) u.__carcass = createUnit('sheep_carcass', u.x + 0.7, u.y + 0.18, 0); u.task = null; u.target = u.__carcass.id; }
+      else { u.task = { wood: 'chop', gold: 'mine_gold', stone: 'mine_stone', wheat: 'farm', berries: 'forage' }[S.load]; u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y); }
+    }
+  }
+  function advance(n){ T += n; tick = Math.floor(T); }
+  let last = performance.now();
+  function frame(now){
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (!S.paused) advance(dt * TPS * S.speed);
+    teamAge[0] = S.age; teamTechs[0] = S.techs ? techMask(Object.keys(UPGRADES)) : 0;
+    invalidateBuildingFogMemo(); if (typeof particles !== 'undefined') particles.length = 0;
+    const dpr = window.devicePixelRatio || 1;
+    X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = '#3e7a24'; X.fillRect(0, 0, W, window.innerHeight);
+    const cols = S.all ? 4 : 1, rows = S.all ? 2 : 1, cw = W / cols, ch = (window.innerHeight - 60) / rows;
+    specs.forEach((u, i) => {
+      if (S.action !== 'die') pose(u);
+      // (the cell centre on a whole pixel: drawUnit rounds its anchor, and a .5 centre flickered a pixel row with float noise)
+      const cx = Math.round(cw * (i % cols + 0.5)), cy = Math.round(60 + ch * (Math.floor(i / cols) + 0.62)), z = S.zoom / (S.all ? 2 : 1);
+      // the camera on the specimen, its cell centred on screen: zoom about the cell's centre
+      const iso = toIso(u.x, u.y); camX = iso.ix - (cx - W / 2); camY = iso.iy - (cy - H / 2 - topH);
+      X.save(); X.translate(cx, cy); X.scale(z, z); X.translate(-cx, -cy);
+      const scr = mapToScreen(u.x, u.y);
+      if (S.guides) { X.strokeStyle = 'rgba(255,255,255,0.25)'; X.lineWidth = 0.5; const gy = scr.sy + HALF_TH + 5 * UNIT_SCALE; X.beginPath(); X.moveTo(scr.sx - 60, gy); X.lineTo(scr.sx + 60, gy); X.stroke(); } // (the feet: drawUnit's ground, art y 5)
+      if (S.action === 'die') { // the real corpse sequence on a loop: ~2.6s of the death, then a beat of the late stage
+        if (u.utype === 'sheep') { u.utype = 'sheep_carcass'; u.team = GAIA_TEAM; }
+        if (u.utype === 'sheep_carcass') drawUnit(u);
+        else { const t = (now - deathAt) % 4100; drawCorpse({ type: 'corpse', utype: u.utype, x: u.x, y: u.y, team: u.team, id: u.id, facing: u.facing, female: u.female, dir: u.__d,
+          carrying: u.utype === 'tradecart' ? 40 : 0, deathTime: now - (t < 2600 ? t : 12500 + (t - 2600)) }); }
+      } else {
+        if (u.__carcass) drawUnit(u.__carcass);
+        drawUnitShadow(u, scr.sx, scr.sy + HALF_TH); drawUnit(u);
+      }
+      X.restore();
+      if (S.all) { X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = 'rgba(255,255,255,0.7)'; X.font = '12px sans-serif'; X.textAlign = 'center'; X.fillText(DIRL[u.__d], cx, cy + ch * 0.3); }
+    });
+    const h = specs[0] && horse2DState.get(specs[0].id), sh = specs[0] && sheep2DState.get(specs[0].id);
+    $('lab-readout').textContent = 'tick ' + tick + (h ? '   stride ' + (h.stride % HORSE_STRIDE.gallop / HORSE_STRIDE.gallop).toFixed(2) : '')
+      + (sh && sh.P ? '   gait ' + sh.gait.toFixed(2) + '  graze ' + sh.graze.toFixed(2) : '');
+    requestAnimationFrame(frame);
+  }
+  // ---- the bar ----
+  const $ = id => document.getElementById(id);
+  function sync(){
+    const acts = ACTIONS[ut()]; if (!acts.includes(S.action)) S.action = acts.includes('walk') ? 'walk' : acts[0];
+    $('lab-actions').querySelectorAll('button').forEach(b => b.remove());
+    for (const a of acts) { const b = document.createElement('button'); b.textContent = a === 'walk' && (ut() === 'scout' || ut() === 'knight') ? 'gallop' : a; b.dataset.a = a; b.classList.toggle('on', a === S.action); $('lab-actions').appendChild(b); }
+    $('lab-dirs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.d === 'all' ? S.all : !S.all && +b.dataset.d === S.dir));
+    document.querySelectorAll('[data-z]').forEach(b => b.classList.toggle('on', +b.dataset.z === S.zoom));
+    $('lab-play').textContent = S.paused ? '▶' : '❚❚'; $('lab-play').classList.toggle('on', !S.paused);
+    $('lab-unit').value = S.unit; $('lab-age').value = S.age; $('lab-techs').checked = S.techs; $('lab-load').value = S.load;
+  }
+  [...DIRL.map((l, i) => [l, i]), ['All 8', 'all']].forEach(([l, d]) => { const b = document.createElement('button'); b.textContent = l; b.dataset.d = d; $('lab-dirs').appendChild(b); });
+  $('lab-actions').onclick = e => { const b = e.target.closest('button'); if (b) S.set({ action: b.dataset.a }); };
+  $('lab-dirs').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.set(b.dataset.d === 'all' ? { all: true } : { all: false, dir: +b.dataset.d }); };
+  document.querySelectorAll('[data-z]').forEach(b => b.onclick = () => { S.zoom = +b.dataset.z; sync(); });
+  $('lab-unit').onchange = () => S.set({ unit: $('lab-unit').value });
+  $('lab-age').onchange = () => { S.age = +$('lab-age').value; };
+  $('lab-techs').onchange = () => { S.techs = $('lab-techs').checked; };
+  $('lab-load').onchange = () => { S.load = $('lab-load').value; build(); };
+  $('lab-speed').oninput = () => { S.speed = +$('lab-speed').value; };
+  $('lab-play').onclick = () => S.pause();
+  $('lab-step').onclick = () => { S.pause(true); S.step(); };
+  $('lab-guides').onchange = () => { S.guides = $('lab-guides').checked; };
+  S.guides = true;
+  build(); sync(); requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

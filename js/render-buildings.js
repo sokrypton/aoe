@@ -1165,74 +1165,13 @@ function drawBuilding(e, part = null){
     X.save();
     X.translate(bkCx, bkCy); X.scale(bkS, bkS); X.translate(-bkCx, -bkCy);
     bh = 32 * bkS; // scaled height, for overlays drawn after restore()
-    // Small tethered horse in side profile (east-facing), one-piece
-    // silhouette: rump -> back -> neck crest -> head -> muzzle -> chest ->
-    // belly. Used by the age-gated hitching rail below to advertise that
-    // this building trains cavalry.
-    // East-profile horse borrowed from the unit renderer's construction
-    // (body capsule + arched neck/head silhouette + straight legs with
-    // hooves + rounded tail). graze: the whole head group rotates about
-    // the withers so the muzzle dips to the ground and back — the same
-    // rigid-group motion as the units' idle nod, just bigger.
-    let drawYardHorse=(hx,hy,coat,maneC,graze=false)=>{
-      let c=darken?darkenColor(coat):coat, m=darken?darkenColor(maneC):maneC;
-      let legC=coat==='#e9e6de'?'#b3ada1':'#6e4520';
-      if(darken) legC=darkenColor(legC);
-      // over-driven clamped sine: dwells at head-down / head-up
-      let g=(graze&&visible)?Math.min(1,Math.max(0,Math.sin(animTick*0.02+e.id)*1.5+0.4)):0;
-      let swish=visible?Math.sin(animTick*0.08+e.id)*0.2:0;
-      X.save();X.translate(hx,hy-5.2);X.scale(1.05,1.05);
-      X.lineJoin='round';
-      // tail (farthest — behind the legs)
-      X.save();X.translate(-6.6,-7);X.rotate(swish);
-      X.beginPath();X.moveTo(0,0);X.quadraticCurveTo(-2.7,3,-2.2,9);
-      X.strokeStyle='#000';X.lineWidth=2.5;X.lineCap='round';X.stroke();
-      X.strokeStyle=m;X.lineWidth=1.3;X.stroke();X.lineCap='butt';
-      X.restore();
-      // legs
-      X.beginPath();
-      X.moveTo(3.5,-4);X.lineTo(3.5,4.4);X.moveTo(5.5,-4);X.lineTo(5.5,4.4);
-      X.moveTo(-4.5,-4);X.lineTo(-4.5,4.4);X.moveTo(-6.5,-4);X.lineTo(-6.5,4.4);
-      X.strokeStyle='#000';X.lineWidth=2.2;X.lineCap='round';X.stroke();
-      X.strokeStyle=legC;X.lineWidth=1.1;X.stroke();X.lineCap='butt';
-      X.fillStyle='#241408';
-      [[3.5,4.4],[5.5,4.4],[-4.5,4.4],[-6.5,4.4]].forEach(p=>{
-        X.beginPath();X.ellipse(p[0],p[1]+0.5,1.5,1.1,0,0,Math.PI*2);X.fill();
-      });
-      // body capsule
-      X.strokeStyle='#000';X.lineWidth=0.95;X.fillStyle=c;
-      X.beginPath();X.ellipse(0,-6,7.4,4.9,0,0,Math.PI*2);X.fill();X.stroke();
-      // neck + head group, rotating about the withers to graze
-      X.save();
-      X.translate(2,-5);X.rotate(g*0.85);X.translate(-2,5);
-      X.translate(2.6,0);
-      const ear=(ex,ey,ang)=>{X.save();X.translate(ex,ey);X.rotate(ang);
-        X.beginPath();X.moveTo(-1.1,0.6);
-        X.quadraticCurveTo(-1.3,-1.6,0,-2.4);
-        X.quadraticCurveTo(1.3,-1.6,1.1,0.6);X.closePath();
-        X.fillStyle=c;X.strokeStyle='#000';X.lineWidth=0.95;X.fill();X.stroke();X.restore();};
-      ear(8.5,-13.9,-0.2);ear(10.1,-13.3,0.3);
-      X.fillStyle=c;X.strokeStyle='#000';X.lineWidth=0.95;
-      X.beginPath();
-      X.moveTo(2.2,-2.6);
-      X.quadraticCurveTo(6.6,-4.6,7.8,-9);      // front of neck up to the throat
-      X.quadraticCurveTo(10.5,-8.6,14.2,-8.6);  // long flat jaw out to the muzzle
-      X.lineTo(14.8,-12);                       // tall squared nose end
-      X.quadraticCurveTo(12.5,-13.6,9.6,-13.9); // long flat forehead back to the poll
-      X.quadraticCurveTo(4.6,-14.4,1.6,-11);    // arched crest of the neck
-      X.quadraticCurveTo(-0.4,-8.5,-0.6,-5.5);  // down into the withers
-      X.fill();X.stroke();
-      // mane along the crest
-      X.strokeStyle=m;X.lineWidth=1.5;X.lineCap='round';
-      X.beginPath();X.moveTo(0.4,-7.5);X.quadraticCurveTo(3.4,-12,7.6,-13.2);X.stroke();
-      X.lineCap='butt';
-      // eye high on the head, nostril at the nose (same as the unit horse)
-      X.fillStyle='#000';
-      X.beginPath();X.arc(9.7,-11.7,0.6,0,Math.PI*2);X.fill();
-      X.fillStyle='rgba(0,0,0,0.45)';
-      X.beginPath();X.arc(13.9,-10.3,0.5,0,Math.PI*2);X.fill();
-      X.restore();
-      X.restore();
+    // The cavalry's horse (horseRig2D, the unit renderer's rig) standing in east profile, riderless, grazing on the
+    // shared cycle (horseGrazePose, as the 3D yard); drawn a little smaller than a mount, as the yard's props are.
+    let drawYardHorse=(hx,hy,knight,graze=false)=>{
+      const P0=HORSE_PAL[knight?'knight':'scout'], C=darken?Object.fromEntries(Object.entries(P0).map(([k,v])=>[k,darkenColor(v)])):P0;
+      const gp=graze&&visible?horseGrazePose(animTick/30,e.id*0.37%1):{neck:0,head:0,tail:0};
+      const rig=horseRig2D(-Math.PI/4,{legs:[[0,0],[0,0],[0,0],[0,0]],bob:0,nod:0,tail:gp.tail*0.5},C,darken?darkenColor(tc):tc,gp,1.25);
+      X.save();X.translate(hx,hy);X.scale(1.05/1.35,1.05/1.35);rig.back();if(rig.front)rig.front();X.restore();
     };
     // Shared compound geometry: everything (hall, yard, fence, props)
     // lives on one parallelogram grid. BP(a,b) maps a (along the NE long
@@ -1382,10 +1321,8 @@ function drawBuilding(e, part = null){
     // with a haystack — a bay when scouts unlock at Feudal, swapped for
     // the knight's white charger at Castle.
     if(ownerAge >= 1){
-      let coat = ownerAge >= 2 ? '#e9e6de' : '#8b5a2b';
-      let mane = ownerAge >= 2 ? '#9a948a' : '#3f2810';
       let hp0=BP(14,33);
-      drawYardHorse(hp0.x, hp0.y, coat, mane, true); // grazing at the haystack
+      drawYardHorse(hp0.x, hp0.y, ownerAge >= 2, true); // grazing at the haystack
       // haystack mound in front of the horse
       let hayC=darken?darkenColor('#d9b44a'):'#d9b44a';
       let hpH=BP(20,44); // near the front fence — its rails overlap the mound slightly

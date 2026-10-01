@@ -240,13 +240,29 @@ function swordSwingAngle(e){
   // strike exactly as the sim deals damage (the +0.52 offset parks the
   // just-hit frame at the strike's end).
   let rof=(typeof UNITS!=='undefined' && UNITS[e.utype] && UNITS[e.utype].rof)||T30(60);
-  let ph=(1-(e.atkCooldown||0)/rof+0.52)%1;
+  return swordSwingCurve((1-(e.atkCooldown||0)/rof+SWORD_HIT)%1);
+}
+// The swing's angle at phase ph (0..1, the hit at SWORD_HIT) — both views' sword swing (pov3d follows the same arc).
+const SWORD_HIT = 0.52;
+function swordSwingCurve(ph){
   if(ph<0.35){let t=ph/0.35;return 0.5+0.65*t*t;}                        // windup -> 1.15
   if(ph<0.52){let t=(ph-0.35)/0.17;return 1.15-2.5*(1-Math.pow(1-t,3));} // strike -> -1.35
   if(ph<0.68){let t=(ph-0.52)/0.16;return -1.35+0.25*t;}                 // settle -> -1.1
   let t=(ph-0.68)/0.32;return -1.1+1.6*(t*t*(3-2*t));                    // recover -> 0.5
 }
 
+// The swing's arc at angle ssa (art px, +x the attack direction, y down): the grip's offset from its rest anchor
+// (ox, oy) orbiting the shoulder — base: the orbit radius (mounted 3.4, on foot 4.2) — and the blade's canvas rotation
+// rot (0 up, π/2 forward). Wide and DRAMATIC (user call): the grip rises over the head at the windup and drives down
+// through the strike. The radius is BOOSTED past the neutral on the windup side so the HAND genuinely rises OVER the
+// head (a short cocked radius left the overhead drama all wrist, user caught it); the boost is zero AT the neutral
+// (s = sin 0.5), so the orbit lands exactly ON the rest anchor and engage can't pop. The blade: OVER THE HEAD at the
+// windup (tipped back ~−69°), down through vertical, HORIZONTAL at the strike — never past it into the ground.
+function swordSwingArc(ssa, base){
+  const s = Math.sin(ssa), phi = -0.63 - 1.3*ssa;
+  const r = base - 1.2*s + 18*Math.max(0, s - 0.479), r0 = base - SWING_NEUTRAL.rs;
+  return { ox: -r0*SWING_NEUTRAL.cos + r*Math.cos(phi), oy: -r0*SWING_NEUTRAL.sin + r*Math.sin(phi), rot: 1.366 - 1.275*ssa - 0.831*ssa*ssa };
+}
 // Should this unit be showing its attack/harvest ANIMATION right now? It must
 // be the SAME predicate the sim fires on — inWeaponRange (js/logic.js) — never a
 // re-spelling: a looser gate swings at thin air, a tighter one shoots in silence
@@ -2443,6 +2459,226 @@ function drawUnitShadow(e, sx, sy){
 // on this exact tick (js/logic.js).
 function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
 
+// The ground a drawn animal covered since its last frame (a: its render state, px/py the spot last seen) → [mx, my];
+// a jump of a tile or more — out of a garrison, a snap, a gallery treadmill stepping back — isn't walking: [0, 0].
+function walkedSince(a, e){
+  const mx = e.x - a.px, my = e.y - a.py; a.px = e.x; a.py = e.y;
+  return mx * mx + my * my >= 1 ? [0, 0] : [mx, my];
+}
+// ---- The horse: one model and one gait for both views ----
+// pov3d's horseKit shape (art px ×1.35: x forward, y down to the ground at 5, z across), posed by horseGait and
+// projected at the unit's facing: heights 1:1 as the 2D art draws them (the rider sprite sits on it), the ground plane
+// as the iso map. Each leg plants and keeps pace with the ground (a stride per 1.3 tiles walked, as the 3D view).
+// Gaits in horseKit's leg order [hind −z, hind +z, fore −z, fore +z]: each leg plants (its hoof sliding back under the
+// moving body) then lifts and swings forward. walk: four-beat, three feet down; gallop: the hinds then the fores in
+// quick pairs, a long reach, the body rocking and the head pumping.
+const HORSE_GAITS = {
+  walk:   { ph: [0, 0.5, 0.25, 0.75], stance: 0.72, S: 2.4, lift: 2.3, bob: 0.35, nod: 0.05 },
+  gallop: { ph: [0, 0.1, 0.48, 0.58], stance: 0.42, S: 4.6, lift: 4.2, bob: 1.3, nod: 0.16 },
+};
+function horseGait(kind, t){
+  const G = HORSE_GAITS[kind], legs = G.ph.map(ph => { const u = ((t + ph) % 1 + 1) % 1;
+    return u < G.stance ? [G.S * (1 - 2 * u / G.stance), 0] : [G.S * (-1 + 2 * (u - G.stance) / (1 - G.stance)), G.lift * Math.sin(Math.PI * (u - G.stance) / (1 - G.stance))]; });
+  const c = Math.cos(2 * Math.PI * t * (kind === 'walk' ? 2 : 1));
+  return { legs, bob: G.bob * (0.5 + 0.5 * c), nod: G.nod * c, tail: kind === 'gallop' ? 0.8 + 0.3 * c : 0.2 * c };
+}
+const HORSE_STRIDE = { walk: 0.62, gallop: 1.3 };                                     // ground per cycle, tiles (pov3d's MIL_STRIDE)
+// [x, z, knee bend]: hocks back, knees forward. (2D stands them and the barrel a little wider than horseKit: head-on,
+// the 3D's width read as a stick under the rider)
+const HORSE_LEGS = [[-5.4, -3.1, -1.2], [-4.6, 3.1, -1.2], [4.6, -3.1, 1], [5.4, 3.1, 1]];
+// coats as pov3d's HORSE_COAT (scout bay, knight white charger); legFar: the far pair, in the body's shade
+const HORSE_PAL = { scout: { coat: '#8b5a2b', mane: '#3f2810', leg: '#6e4520', legFar: '#583718', muzzle: '#6e4520', hoof: '#241408', hoofFar: '#1a0e05', eye: '#141414' },
+  knight: { coat: '#e9e6de', mane: '#9a948a', leg: '#b3ada1', legFar: '#948e83', muzzle: '#b8b2a6', hoof: '#241408', hoofFar: '#1a0e05', eye: '#141414' } };
+const horse2DState = new Map();                                                    // (by id, as bear2D: a rollback's restored copy keeps its stride)
+// The rider's seat in art px (x forward, up): where the 2D rider sprite's origin sits on the horse.
+const HORSE_SEAT = [-2, 16];
+// A grazing horse's ~11s cycle (both views' barracks yard): head up with a slow bob, then down to graze a few seconds,
+// nibbling. neck/head: rotations about the withers and the poll (− lowers the nose); tail: its swing.
+function horseGrazePose(sec, seed){
+  const ph = ((sec + seed * 11) / 11) % 1, t = sec + seed * 11, ss = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+  const graze = ss(0.3, 0.4, ph) - ss(0.72, 0.82, ph);
+  return { neck: -1.05 * graze + 0.07 * graze * Math.sin(t * 7) + 0.04 * (1 - graze) * Math.sin(t * 0.9), head: -0.8 * graze, tail: 0.35 * Math.sin(t * 2.3 + seed * 6) };
+}
+// A posed model projected into the 2D view at map heading h (rad) — the horse's and the sheep's shared kit. Parts are
+// ellipsoids and tapered tubes in art px (forward, up, across; heights 1:1 as the 2D art draws them, the ground plane
+// as the iso map), depth-sorted and painted as one silhouette: outlines far to near, then fills.
+function projKit(h){
+  const fx = Math.cos(h), fy = Math.sin(h), sx = -fy, sy = fx, R2 = Math.SQRT2, TAU = Math.PI * 2;
+  // art px → screen px; depth: larger is nearer the viewer
+  const P = (x, u, z) => [(x * (fx - fy) + z * (sx - sy)) / R2, (x * (fx + fy) + z * (sx + sy)) / (2 * R2) - u];
+  const depth = (x, z) => x * (fx + fy) + z * (sx + sy);
+  // how squarely a surface with normal n faces the viewer: the cosine to the screen axes' normal (> 0: seen at all)
+  const ax_ = (fx - fy) / R2, az_ = (sx - sy) / R2, bx_ = (fx + fy) / (2 * R2), bz_ = (sx + sy) / (2 * R2), V = [-az_, ax_ * bz_ - az_ * bx_, ax_], VL = Math.hypot(...V);
+  const faces = n => (V[0] * n[0] + V[1] * n[1] + V[2] * n[2]) / (VL * (Math.hypot(...n) || 1));
+  const parts = [], add = (col, d, path, grp, outline = true) => { const pt = { col, d, path, grp, outline }; parts.push(pt); return pt; };
+  // an ellipsoid: m(x,y,z) maps its local frame to art (fwd, up, across); radii in that frame
+  const blob = (col, m, x, y, z, rx, ry, rz, grp, bias = 0, outline = true) => {
+    const o = m(x, y, z), c = P(...o), ax = [m(x + rx, y, z), m(x, y + ry, z), m(x, y, z + rz)].map(q => { const v = P(...q); return [v[0] - c[0], v[1] - c[1]]; });
+    let a = 0, b = 0, d = 0; for (const [u, v] of ax) { a += u * u; b += u * v; d += v * v; }
+    const tr = (a + d) / 2, dd = Math.sqrt(((a - d) / 2) ** 2 + b * b), rot = 0.5 * Math.atan2(2 * b, a - d);
+    const r1 = Math.sqrt(tr + dd), r2 = Math.sqrt(Math.max(0, tr - dd)), e = { c, r1, r2, rot, o };
+    e.pt = add(col, depth(o[0], o[2]) + bias, () => { X.moveTo(c[0] + r1 * Math.cos(rot), c[1] + r1 * Math.sin(rot)); X.ellipse(c[0], c[1], Math.max(0.4, r1), Math.max(0.4, r2), rot, 0, TAU); }, grp, outline);
+    return e; };
+  // a tube through 2..3 art points: radius r (art px, one per point to taper), round caps, straight segments
+  const tube = (col, pts, r, grp, bias = 0) => { const sp = pts.map(q => P(...q)), rs = pts.map((_, i) => Array.isArray(r) ? r[i] : r);
+    const dAvg = pts.reduce((t, q) => t + depth(q[0], q[2]), 0) / pts.length;
+    return add(col, dAvg + bias, () => { for (let i = 0; i < sp.length; i++) { X.moveTo(sp[i][0] + rs[i], sp[i][1]); X.arc(sp[i][0], sp[i][1], rs[i], 0, TAU); }
+      for (let i = 0; i + 1 < sp.length; i++) { const [x0, y0] = sp[i], [x1, y1] = sp[i + 1], l = Math.hypot(x1 - x0, y1 - y0) || 1e-6, nx = -(y1 - y0) / l, ny = (x1 - x0) / l, r0 = rs[i], r1 = rs[i + 1];
+        // (wound as the caps are, so the overlaps fill solid)
+        const q = [[x0 + nx * r0, y0 + ny * r0], [x1 + nx * r1, y1 + ny * r1], [x1 - nx * r1, y1 - ny * r1], [x0 - nx * r0, y0 - ny * r0]]; let ar = 0; for (let j = 0; j < 4; j++) ar += q[j][0] * q[(j + 1) % 4][1] - q[(j + 1) % 4][0] * q[j][1];
+        const qq = ar < 0 ? q.reverse() : q; X.moveTo(...qq[0]); for (let j = 1; j < 4; j++) X.lineTo(...qq[j]); X.closePath(); } }, grp); };
+  // paint: pt.merge (an ellipse from blob) — no outline inside it, the part grows out of it; pt.line — its own thin
+  // line over what's behind; lw: outline weight (×, for contexts not under UNIT_SCALE)
+  const paint = (list, lw = 1) => { if (!list.length) return; list.sort((p, q) => p.d - q.d);
+    X.save(); X.lineJoin = 'round'; X.strokeStyle = '#000';
+    for (const pt of list) if (pt.outline) { X.save(); X.lineWidth = 2.2 * lw / UNIT_SCALE;
+      if (pt.merge) { const m = pt.merge; X.beginPath(); X.rect(m.c[0] - 200, m.c[1] - 200, 400, 400); X.ellipse(m.c[0], m.c[1], m.r1, m.r2, m.rot, 0, TAU); X.clip('evenodd'); }
+      X.beginPath(); pt.path(); X.stroke(); X.restore(); }
+    X.lineWidth = 1.2 * lw / UNIT_SCALE;
+    for (const pt of list) { X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill(); if (pt.line) X.stroke(); }
+    X.restore(); };
+  return { P, depth, faces, parts, add, blob, tube, paint, ID: (x, y, z) => [x, y, z] };
+}
+// The horse, posed and projected at map heading h (rad). gait: horseGait's { legs, bob, nod, tail }; C: a HORSE_PAL
+// palette; graze: { neck, head } (horseGrazePose); lw: outline weight (×, for contexts not under UNIT_SCALE). Returns
+// { back, front, seat }: painters in a frame with the ground under the horse at (0,0) — back the whole horse when nothing
+// is nearer than its saddle, else the neck and head go in front (over a rider) — and seat, the saddle point in that frame.
+function horseRig2D(h, gait, C, tc, graze, lw = 1){
+  const coat = C.coat, mane = C.mane, legC = C.leg, muzzle = C.muzzle, k = 1.35, TAU = Math.PI * 2;
+  const { P, depth, faces, parts, add, blob, tube, paint, ID } = projKit(h);
+  const B = gait.bob;
+  // horseKit's frames, ×k: H rides the bob (body, neck, head), G is the ground (feet)
+  const H = (x, y, z = 0) => [x * k, (5 - y + B) * k, z * k], G = (x, y, z = 0) => [x * k, (5 - y) * k, z * k];
+  // the neck lowered about the withers (grazing)
+  const W = H(4.5, -7.5), gn = graze ? graze.neck : 0, gc = Math.cos(gn), gs = Math.sin(gn);
+  const NK = q => { const dx = q[0] - W[0], du = q[1] - W[1]; return [W[0] + dx * gc - du * gs, W[1] + dx * gs + du * gc, q[2]]; };
+  // barrel, and the team saddle cloth over its back (clipped to the barrel: one silhouette)
+  const bc = H(-0.4, -6.2), barrel = blob(coat, ID, ...bc, 8.2 * k, 4.4 * k, 5.4 * k, 'body');
+  const bodyD = depth(bc[0], bc[2]);
+  // (the team tell: draped down both flanks to a hem under the barrel's middle — the band of the barrel within
+  // the cloth's length, above the hem)
+  { const cc = H(-0.6, -6.2), cl = blob(tc, ID, ...cc, 3.5 * k, 6 * k, 6 * k, 'body', 0.001, false); parts.pop();
+    const hemY = barrel.c[1] + barrel.r2 * 0.35;
+    add(tc, bodyD + 0.001, () => { X.save(); X.beginPath(); X.ellipse(barrel.c[0], barrel.c[1], barrel.r1 - 0.4, barrel.r2 - 0.4, barrel.rot, 0, TAU); X.clip();
+      X.beginPath(); X.ellipse(cl.c[0], hemY - 30, cl.r1 * 1.25, 31.2, 0, 0, TAU); X.clip();       // (the hem dips at the middle)
+      X.beginPath(); X.ellipse(cl.c[0], cl.c[1], cl.r1, cl.r2, cl.rot, 0, TAU); X.fill(); X.restore(); X.beginPath(); }, 'body', false); }
+  // legs: hip in the body → knee/hock → hoof (planted or lifted), a dark hoof; the far pair a shade darker
+  HORSE_LEGS.forEach(([x, z, bend], i) => { const [dx, lift] = gait.legs[i], hy = 3.9 - lift;
+    const hip = H(x, -5, z), knee = G(x + bend * (0.25 + lift * 0.45) + dx * 0.5, (-5 - B + hy) / 2, z), hoof = G(x + dx, hy, z);
+    const far = depth(hoof[0], hoof[2]) < bodyD;
+    const lg = tube(far ? C.legFar : legC, [hip, knee, hoof], [1.3 * k, 0.95 * k, 0.75 * k], 'legs', 0); lg.d = bodyD - 0.5 + (depth(hoof[0], hoof[2]) - bodyD) * 0.01;
+    blob(far ? C.hoofFar : C.hoof, ID, ...G(x + dx + 0.3, hy + 0.4, z), 1.3 * k, 0.75 * k, 1.1 * k, 'legs').pt.d = lg.d + 1e-4; });
+  // tail (from the rump), neck + mane, and the long head nose-down off the poll (nodding with the gait)
+  // the tail as horseKit's: hanging, streaming at a gallop (gait.tail)
+  const tl = gait.tail; tube(mane, [H(-8.2, -7.6), H(-10.4 - 2 * tl, -4.5 - 2 * tl), H(-9.6 - 4 * tl, -0.8 - 4.5 * tl)], 1.05 * k, 'tail');
+  // (the neck and mane grow out of the body: no outline inside its silhouette, even drawn over a rider)
+  tube(coat, [H(4.5, -7.5), H(8.5, -10.5), H(9.6, -14.2)].map(NK), [2.8 * k, 2.3 * k, 1.9 * k], 'head').merge = barrel;
+  tube(mane, [H(3.6, -9.5), H(7.6, -13.6), H(9.4, -15.8)].map(NK), 0.95 * k, 'head', 0.01).merge = barrel;
+  const poll = NK(H(10, -14)), a = -0.55 - gait.nod + gn + (graze ? graze.head : 0), ca = Math.cos(a), sa = Math.sin(a);
+  const hd = (x, y, z) => [poll[0] + (x * ca - y * sa) * k, poll[1] + (x * sa + y * ca) * k, poll[2] + z * k];   // head frame (y up), rotated about z
+  blob(coat, hd, 2.8, 0, 0, 4, 2.3, 2.2, 'head', 0.02);
+  blob(muzzle, hd, 5.9, -0.2, 0, 1.8, 1.9, 1.9, 'head', 0.03);
+  // ears: pricked leaves on the poll, the 2D art's size (the 3D's read as nubs here), each lined against the head
+  for (const zz of [-1, 1]) blob(coat, (x, y, z) => hd(x - 0.35 * y, y, z), -0.2, 2.6, zz * 1.05, 0.8, 1.9, 0.55, 'head', 0.025).pt.line = true;
+  // eyes: only the ones clearly facing us (one just round the silhouette's edge read as a stray dot)
+  { const hc = hd(2.8, 0, 0); for (const zz of [-1, 1]) { const ex = 1.9, ey = 0.7, fxe = 0.2, fye = 0.4, fze = 0.9 * zz, t = 1 / Math.hypot(fxe / 1.6, fye / 1.6, fze / 2.2), m = hd(ex + fxe * t, ey + fye * t, fze * t);
+      if (faces([m[0] - hc[0], m[1] - hc[1], m[2] - hc[2]]) > 0.3) blob(C.eye, ID, ...m, 0.55, 0.55, 0.55, 'head', 0.05, false); } }
+  // the neck and head go over a rider when nearer than the saddle
+  const seatP = H(HORSE_SEAT[0] / k, 5 - HORSE_SEAT[1] / k), seatD = depth(seatP[0], seatP[2]);
+  const headD = depth(...(q => [q[0], q[2]])(hd(2.8, 0, 0))), frontHead = headD > seatD + 2;
+  const back = parts.filter(p => !(frontHead && p.grp === 'head')), front = frontHead ? parts.filter(p => p.grp === 'head') : [];
+  return { back: () => paint(back, lw), front: front.length ? () => paint(front, lw) : null, seat: P(...seatP) };
+}
+// A cavalry unit's mount: its gallop (a stride per 1.3 tiles walked), or standing with a slow nod and tail swish.
+// Returns { back, front, seat } in drawUnit's (possibly mirrored) frame, the ground at y 5; a corpse keeps its pose.
+function horse2D(e, tc){
+  let S = horse2DState.get(e.id); if (!S) horse2DState.set(e.id, S = { px: e.x, py: e.y, stride: 0 });
+  if (!window._maskDraw) S.stride += Math.hypot(...walkedSince(S, e));
+  const gait = isUnitMoving(e) && !e.corpseRot ? horseGait('gallop', ((S.stride / HORSE_STRIDE.gallop) % 1 + 1) % 1)
+    : e.corpseRot ? { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod: 0, tail: 0 }
+    : { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod: Math.sin(animTick * 0.05 + e.id) * 0.06, tail: Math.sin(animTick * 0.08 + e.id) * 0.25 };
+  const rig = horseRig2D((e.dir || 0) * Math.PI / 4, gait, HORSE_PAL[e.utype] || HORSE_PAL.scout, tc, null), m = e.facing === -1 ? -1 : 1;
+  const at = f => f && (() => { X.save(); X.scale(m, 1); X.translate(0, 5); f(); X.restore(); });   // (it draws its own heading: undo drawUnit's mirror)
+  return { back: at(rig.back), front: at(rig.front), seat: [rig.seat[0] * m, rig.seat[1] + 5] };
+}
+// ---- The sheep: one model and one animation for both views ----
+// pov3d's sheepModel (tiles: x forward, y up, z across), posed by sheepAnim — set on the model by the 3D view, projected
+// at the sheep's heading by the 2D view (projKit). A trot that keeps pace with the ground (half the cycle a foot is
+// planted), breathing and a slow look round at rest; grazing, the head goes down and chews; the tail wags.
+// (the legs hang from high inside the fleece — hipY/leg — so the stride's swing reads under it; L, the stride's
+// reach, matches the leg so a planted foot keeps pace with the ground)
+const SHEEP = { A: 0.55, L: 0.2, lift: 0.03, bob: 0.01, cy: 0.27, wool: '#f2eddd', face: '#3f3b34', ear: '#4d4940', legCol: '#3d3a35', hoof: '#1e1b16',
+  hips: [[-0.11, -0.075], [-0.11, 0.075], [0.1, -0.07], [0.1, 0.07]], hipY: 0.21, leg: 0.2, legPhase: [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI) };
+// a: per-sheep state (gait, phase, graze); moved: tiles walked since the last frame; clk: the authored-tick clock.
+// Returns { bob, breath, neck (nod, − lowers), look (turn), tail, legs: [{ ang, up }] (hind −z, hind +z, fore −z, fore +z) }.
+function sheepAnim(e, a, dt, moved, clk){
+  const C = SHEEP, idp = e.id || 0;
+  a.gait = (a.gait || 0) + ((moved > 1e-4 ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 8);
+  a.phase = (a.phase || 0) + moved / (4 * C.L * Math.sin(C.A)) * 2 * Math.PI;
+  a.graze = (a.graze || 0) + ((e.eatingGrass ? 1 : 0) - (a.graze || 0)) * Math.min(1, dt * 4);
+  const look = 0.35 * Math.sin(clk * 0.013 + idp) ** 3 * (1 - a.gait);                 // now and then a slow look round
+  // each leg: half the cycle planted, its foot sweeping back at an even pace, half swinging forward through the air
+  const legs = C.legPhase.map(lp => { const q = (((a.phase + lp - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    let x, up = 0; if (q < Math.PI) x = 1 - 2 * q / Math.PI; else { const u = q / Math.PI - 1; x = -Math.cos(u * Math.PI); up = Math.sin(u * Math.PI); }
+    return { ang: Math.asin(Math.sin(C.A) * x) * a.gait, up: C.lift * up * a.gait }; });
+  return { bob: C.bob * Math.abs(Math.sin(2 * a.phase)) * a.gait, breath: Math.sin(clk * 0.06 + idp) * 0.015 * (1 - a.gait),
+    neck: -0.95 * a.graze + Math.sin(clk * 0.6) * 0.05 * a.graze, look: look * (1 - a.graze),
+    tail: Math.sin(clk * (e.eatingGrass ? 0.35 : a.gait > 0.5 ? 0.25 : 0.08) + idp) * 0.4, legs };
+}
+const sheep2DState = new Map();
+// The 2D sheep: sheepModel projected at its smoothed course (as the bear: the tile path's turns averaged over ~1.5 tiles
+// walked, so it doesn't swing at each corner), turning at a sheep's pace; standing, it keeps its heading.
+function drawSheep2D(e){
+  let a = sheep2DState.get(e.id); if (!a) sheep2DState.set(e.id, a = { px: e.x, py: e.y, hd: (e.dir || 0) * Math.PI / 4 });
+  if (!window._maskDraw || !a.P) {
+    const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
+    const [mx, my] = walkedSince(a, e), moved = Math.hypot(mx, my);
+    if (moved > 1e-4) { const c = Math.min(1, moved / 1.5), ux = mx / moved, uy = my / moved; a.cx = (a.cx ?? ux) + (ux - (a.cx ?? ux)) * c; a.cy = (a.cy ?? uy) + (uy - (a.cy ?? uy)) * c; }
+    if (isUnitMoving(e)) a.walkT = now;
+    if (now - (a.walkT || -1e9) < 400 && a.cx !== undefined) { const want = Math.atan2(a.cy, a.cx); a.hd += Math.atan2(Math.sin(want - a.hd), Math.cos(want - a.hd)) * Math.min(1, dt * 6); }
+    a.P = sheepAnim(e, a, dt, moved, animTick);
+  }
+  const P = a.P, C = SHEEP, S = 0.75 * HALF_TW * Math.SQRT2 / UNIT_SCALE;                // art px per tile (×0.75: the 2D sheep's size beside the 2D villagers)
+  const { P: pj, depth, faces, parts, blob, tube, paint } = projKit(a.hd), TAU = Math.PI * 2;
+  // frames (tiles in, art px out): the body rides the bob and breathes; the legs, tail and neck hang from it
+  const bd = (x, y, z) => [x * S, (y * (1 + P.breath) + P.bob) * S, z * S];
+  const nz = Math.cos(P.neck), ns = Math.sin(P.neck), ly = Math.cos(P.look), ls = Math.sin(P.look);
+  const nk = (x, y, z) => { const x1 = x * nz - y * ns, y1 = x * ns + y * nz, x2 = x1 * ly + z * ls, z2 = -x1 * ls + z * ly; return bd(0.2 + x2, C.cy + 0.03 + y1, z2); };
+  const tc = e.team === GAIA_TEAM ? C.wool : teamColor(e.team);                        // the fringe: its owner's colour (white: nobody's yet)
+  // the fleece: a fat core and eight puffs over the upper body (golden-angle spiral, as the 3D)
+  const core = blob(C.wool, bd, 0, C.cy, 0, 0.24, 0.17, 0.2, 'body'), bodyD = core.pt.d;
+  for (let i = 0; i < 8; i++) { const v = 1 - (i + 0.5) / 8 * 1.45, r = Math.sqrt(Math.max(0, 1 - v * v)), an = i * 2.39996;
+    const pr = 0.1 + (i % 3) * 0.012; blob(C.wool, bd, Math.cos(an) * r * 0.21, C.cy + v * 0.13, Math.sin(an) * r * 0.16, pr, pr, pr, 'body'); }
+  // the belly's shade (as the 2D art had it): a soft band along the bottom of the fleece, clipped to its outline
+  { const fleece = parts.filter(p => p.grp === 'body'), dTop = Math.max(...fleece.map(p => p.d)), b0 = core.c;
+    parts.push({ col: 'rgba(110,95,70,0.24)', d: dTop + 1e-4, grp: 'body', outline: false, path: () => { X.save(); X.beginPath(); for (const p of fleece) p.path(); X.clip();
+      X.beginPath(); X.ellipse(b0[0], b0[1] + core.r2 * 1.05, core.r1 * 1.15, core.r2 * 0.75, core.rot, 0, TAU); X.fill(); X.restore(); X.beginPath(); } }); }
+  // legs from the belly (lifted on the swing), a dark hoof; drawn behind the fleece so only what hangs below shows
+  C.hips.forEach(([hx, hz], i) => { const L = P.legs[i], sa = Math.sin(L.ang), ca = Math.cos(L.ang), hy = C.hipY + L.up;
+    // (a size up on the 3D's: at 2D size its thin legs vanished under the fleece)
+    const lg = tube(C.legCol, [bd(hx, hy, hz), bd(hx + C.leg * sa, hy - C.leg * ca, hz)], 0.03 * S, 'legs'), fd = depth(...(m => [m[0], m[2]])(bd(hx, 0, hz)));
+    lg.d = bodyD - 1 + (fd - bodyD) * 0.01; blob(C.hoof, bd, hx + (C.leg + 0.01) * sa, hy - (C.leg + 0.01) * ca, hz, 0.036, 0.026, 0.032, 'legs').pt.d = lg.d + 1e-4; });
+  // the tail: a wool puff wagging side to side
+  // (its own outline, as the 2D art's wool-puff tail: it reads as a tail against the fleece from every side)
+  blob(C.wool, bd, -0.25 - 0.03 * Math.cos(P.tail), C.cy + 0.03, 0.03 * Math.sin(P.tail), 0.045, 0.045, 0.045, 'tail').pt.line = true;
+  // the head: big and dark, pale eyes, ears out to the sides, the fringe on top
+  const hx = 0.12, hy = 0.035, head = blob(C.face, nk, hx, hy, 0, 0.1, 0.115, 0.09, 'head', 0.01);
+  for (const z of [-1, 1]) blob(C.ear, nk, hx - 0.025, hy + 0.04 - 0.012, z * 0.105, 0.033, 0.017, 0.06, 'head', 0.005).pt.line = true;
+  { const hc = head.o; for (const z of [-1, 1]) { const fx = 0.55, fy = 0.35, fz = 0.55 * z, t = 1 / Math.hypot(fx / 0.1, fy / 0.115, fz / 0.09), sz = 0.027;
+      const m = nk(hx + fx * t, hy + fy * t, fz * t); if (faces([m[0] - hc[0], m[1] - hc[1], m[2] - hc[2]]) <= 0.3) continue;   // (only the eyes clearly facing us: one round the edge read as a stray dot)
+      const n = [fx / 0.01, fy / 0.013225, fz / 0.0081], nl = Math.hypot(...n);
+      blob('#f4efe2', nk, hx + fx * t, hy + fy * t, fz * t, sz, sz, sz, 'head', 0.03, false);
+      blob('#141414', nk, hx + fx * t + n[0] / nl * sz * 0.55, hy + fy * t + n[1] / nl * sz * 0.55, fz * t + n[2] / nl * sz * 0.55, sz * 0.6, sz * 0.6, sz * 0.6, 'head', 0.031, false); } }
+  // (the fringe a size up on the 3D's: it's the owned-sheep tell, and read small at 2D size)
+  blob(tc, nk, hx - 0.01, hy + 0.115, 0, 0.075, 0.07, 0.075, 'head', 0.02).pt.line = e.team !== GAIA_TEAM;
+  X.save(); if (e.facing === -1) X.scale(-1, 1);                                      // (it draws its own heading: undo drawUnit's mirror)
+  X.translate(0, 5); paint(parts);
+  // grazing: a few blades at the mouth
+  const mo = nk(hx + 0.09, hy - 0.06, 0);
+  if (e.eatingGrass && depth(mo[0], mo[2]) > bodyD) { const m = pj(...mo);   // (not when the mouth is behind the fleece)
+    X.strokeStyle = '#4e8c2d'; X.lineWidth = 1.2 / UNIT_SCALE; X.beginPath(); X.moveTo(m[0], m[1]); X.lineTo(m[0] + 2.5, m[1] + 2); X.moveTo(m[0] - 0.4, m[1] + 0.3); X.lineTo(m[0] + 1.6, m[1] + 2.8); X.stroke(); }
+  X.restore();
+}
 // Bear body — same per-archetype seam as drawRamBody/drawTradeCartBody, which
 // drawUnit's dispatch already delegates to.
 // ---- The bear: one model and one animation for both views ----
@@ -2518,7 +2754,7 @@ function drawBearBody(e){
   const target = (e.dir !== undefined ? e.dir : 1) * Math.PI / 4;
   if (!window._maskDraw || !a.P) {
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
-    const mx = e.x - a.px, my = e.y - a.py, moved = Math.hypot(mx, my); a.px = e.x; a.py = e.y;
+    const [mx, my] = walkedSince(a, e), moved = Math.hypot(mx, my);
     // walking, it faces its smoothed course (the tile path zigzags in 8 directions: facing each step swung it side to
     // side); standing, its facing (toward its prey) — turning at a heavy animal's pace
     // (the course averaged over the last ~1.5 tiles walked, not over time: at 2× speed a time average followed each zig)
@@ -2799,7 +3035,7 @@ function drawDragonBody(e){
   if (!a) dragon2D.set(e.id, a = { phase: 0, gait: 0, px: e.x, py: e.y, last: 0 });
   if (!window._maskDraw || !a.P) {
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
-    const moved = Math.hypot(e.x - a.px, e.y - a.py); a.px = e.x; a.py = e.y;
+    const moved = Math.hypot(...walkedSince(a, e));
     dragonGaitStep(e, a, moved, dt, DRAGON_STRIDE);
     a.P = dragonAnim(e, a, dt);
     if (!e.corpseRot) {
@@ -3061,110 +3297,12 @@ function drawDragonBody(e){
 }
 
 // Sheep body — the last self-contained archetype block; see drawBearBody.
-function drawSheepBody(e){
-  let tc = teamColor(e.team);
-  // Sheep — scalloped wool cloud; head tracks movement direction
-  let waddle = e.path.length > 0 ? Math.sin(paceClock(e) * 0.2 + e.id) * 0.06 : 0;
-  let breath = e.path.length === 0 ? Math.sin(animTick * 0.06 + e.id) * 0.12 : 0;
-
-  X.save();
-  X.rotate(waddle);
-
-  // 4-leg walk cycle: outlined stubby legs with hooves
-  let hw1 = e.path.length > 0 ? Math.sin(paceClock(e) * 0.45 + e.id) * 3.0 : 0;
-  let hw2 = -hw1;
-  let legPts = [[-4, 0, hw1], [-1, 1, hw2], [2, 1, hw1], [5, 0, hw2]];
-  X.beginPath();
-  legPts.forEach(p => { X.moveTo(p[0], p[1]); X.lineTo(p[0] + p[2], 5); });
-  X.strokeStyle='#000'; X.lineWidth=2.6/UNIT_SCALE; X.lineCap='round'; X.stroke();
-  X.strokeStyle='#8a8378'; X.lineWidth=1.3/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-  X.fillStyle='#241f18';
-  legPts.forEach(p => { X.beginPath(); X.ellipse(p[0] + p[2], 5.3, 1.2, 0.9, 0, 0, Math.PI*2); X.fill(); });
-
-  // Waggable wool-puff tail at the rear
-  let tailRate = e.eatingGrass ? 0.35 : (e.path.length > 0 ? 0.25 : 0.08);
-  let tailAngle = Math.sin(animTick * tailRate + e.id) * 0.4;
-  X.save();
-  X.translate(-7.5, -4);
-  X.rotate(tailAngle - 0.2);
-  X.fillStyle='#000';
-  X.beginPath(); X.arc(-1.5, 0, 2.6, 0, Math.PI*2); X.fill();
-  X.fillStyle='#f2eddd';
-  X.beginPath(); X.arc(-1.5, 0, 1.7, 0, Math.PI*2); X.fill();
-  X.restore();
-
-  // Scalloped wool cloud: black silhouette pass, then wool fill pass
-  let puffs = [[-4.5,-3.5,3.4],[-1.5,-6.5,3.5],[2.5,-6,3.4],[5,-3,3.2],[2,-0.5,3.3],[-2,-0.5,3.4],[0,-3.5,4.4]];
-  X.fillStyle='#000';
-  puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+1.1+breath, 0, Math.PI*2); X.fill(); });
-  X.fillStyle='#f2eddd';
-  puffs.forEach(p => { X.beginPath(); X.arc(p[0], p[1], p[2]+breath, 0, Math.PI*2); X.fill(); });
-  // Wool shading: highlight on top, ground shade underneath
-  X.fillStyle='rgba(255,255,255,0.5)';
-  X.beginPath(); X.arc(-1, -6.5, 2.6, 0, Math.PI*2); X.fill();
-  X.fillStyle='rgba(110,95,70,0.20)';
-  X.beginPath(); X.ellipse(0, 1.6, 5.8, 2, 0, 0, Math.PI*2); X.fill();
-
-  let earWiggle = e.eatingGrass ? Math.sin(animTick * 0.5 + e.id) * 1.2 : Math.sin(animTick * 0.1 + e.id) * 0.4;
-
-  // Sheep head: dark face, droopy ears, and the wool tuft on top in its owner's colour (white: nobody's yet — gaia).
-  const tuft = e.team === GAIA_TEAM ? '#f2eddd' : tc;
-  // mode: 'front' (two eyes), 'side' (one eye), 'back' (no face)
-  const sheepHead = (hx, hy, mode) => {
-    X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-    // Droopy ears
-    X.fillStyle = mode==='back' ? '#4a463e' : '#57534a';
-    X.save(); X.translate(hx-2.6, hy-0.6+earWiggle); X.rotate(-0.5);
-    X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
-    X.save(); X.translate(hx+2.6, hy-0.6-earWiggle); X.rotate(0.5);
-    X.beginPath(); X.ellipse(0, 0, 2.0, 1.1, 0, 0, Math.PI*2); X.fill(); X.stroke(); X.restore();
-    // Head
-    X.fillStyle = mode==='back' ? '#3a362f' : '#4a463e';
-    X.beginPath(); X.ellipse(hx, hy, 3, 3.4, 0, 0, Math.PI*2); X.fill(); X.stroke();
-    // Wool tuft on top of the head: the owner's colour
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(hx, hy-3.2, 2.5, 0, Math.PI*2); X.fill();
-    X.fillStyle=tuft;
-    X.beginPath(); X.arc(hx, hy-3.2, 1.9, 0, Math.PI*2); X.fill();
-  };
-
-  let headX = 0, headY = 0;
-  if (e.eatingGrass) {
-    let chew = Math.sin(animTick * 0.6);
-    headX = 6; headY = 2 + chew;
-    sheepHead(headX, headY, 'side');
-  } else if (e.dir === 1) {
-    // Strictly South: head center-front
-    headX = 0; headY = 1.5;
-    sheepHead(headX, headY, 'front');
-  } else if (e.dir === 5) {
-    // Strictly North: head center-back, no face
-    headX = 0; headY = -8;
-    sheepHead(headX, headY, 'back');
-  } else {
-    // Side and diagonal directions
-    let useDir = mirroredDir(e);
-    if (useDir === 7)      { headX = 6.5; headY = -3.5; sheepHead(headX, headY, 'side'); }
-    else if (useDir === 0) { headX = 5.5; headY = -1.5; sheepHead(headX, headY, 'side'); }
-    else                   { headX = 3.5; headY = -7.5; sheepHead(headX, headY, 'back'); }
-  }
-
-  if(e.eatingGrass){
-    X.strokeStyle='#4e8c2d'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath();X.moveTo(headX,headY+1.2);X.lineTo(headX+4,headY+3);X.stroke();
-    X.beginPath();X.moveTo(headX-0.5,headY+1.5);X.lineTo(headX+3,headY+4);X.stroke();
-    
-    // Spawn tiny grass particle puffs (not in the outline mask pass —
-    // a SELECTED grazing sheep would double-spawn them). Counter-advance
-    // guard (the workSwingCycles pattern): a bare tick%N renders the
-    // same tick 2-3 rAF frames in a row and fired a triple puff.
-    let gcyc = Math.floor(tick / T30(24));
-    if(!window._maskDraw && grazeCycles.get(e.id) !== gcyc){
-      grazeCycles.set(e.id, gcyc);
-      spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9);
-    }
-  }
-  X.restore();
+// A grazing sheep's tiny grass puffs (not in the outline mask pass — a SELECTED grazing sheep would double-spawn them).
+// Counter-advance guard (the workSwingCycles pattern): a bare tick%N renders the same tick 2-3 rAF frames in a row.
+function sheepGrazePuffs(e){
+  if (!e.eatingGrass) return;
+  let gcyc = Math.floor(tick / T30(24));
+  if (!window._maskDraw && grazeCycles.get(e.id) !== gcyc) { grazeCycles.set(e.id, gcyc); spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9); }
 }
 
 function drawUnit(e){
@@ -3403,11 +3541,10 @@ function drawUnit(e){
   } else if(e.utype!=='sheep'){
     // Seated over the saddle center; face-on (S) the saddle reads at
     // body center, so the rider sits right of the -2 profile seat.
-    // face-on riders sit CENTERED on the horse (S 0.5 / N 0 — the head
-    // is centered there too); the side/diagonal views keep the saddle
-    // seat back at −2
-    let humanXOffset = isMountedUnit(e.utype) ? (e.dir === 1 ? 0.5 : e.dir === 5 ? 0 : -2) : 0;
-    let humanYOffset = isMountedUnit(e.utype) ? -11 : 0;
+    // a rider sits on the horse rig's saddle (horse2D: the mount at its heading)
+    const horseRig = isMountedUnit(e.utype) ? horse2D(e, tc) : null;
+    let humanXOffset = horseRig ? horseRig.seat[0] : 0;
+    let humanYOffset = horseRig ? horseRig.seat[1] : 0;
     let eq = unitEquipment(e); // null for non-soldiers (villager)
     let weaponTier = eq ? eq.weapon : 0;
 
@@ -3890,22 +4027,8 @@ function drawUnit(e){
                            + drive*nr + (nr > 0.05 ? DROP : nr < -0.05 ? DROPN : 0) };
           anim.swordRot = Math.PI/2;
         } else {
-          // wide DRAMATIC arc (user call): the grip rises up over the
-          // head at the windup and drives down through the strike; the
-          // neutral angle (0.5) still lands exactly on the rest anchor
-          let phi = -0.63 - 1.3*ssa;
-          // Radius: extended at the strike, and BOOSTED past the neutral
-          // on the windup side so the HAND genuinely rises OVER the head
-          // — the fist crests slightly above and behind it at full windup
-          // (a short cocked radius left the overhead drama all wrist —
-          // the arm barely moved, user caught it). The boost is zero AT
-          // the neutral (s = sin 0.5), so the orbit still lands exactly
-          // ON the rest anchor and engage can't pop.
-          let base = isMountedUnit(e.utype) ? 3.4 : 4.2;
-          let r = base - 1.2*anim.s + 18*Math.max(0, anim.s - 0.479);
-          let r0 = base - SWING_NEUTRAL.rs;
-          let ox = -r0*SWING_NEUTRAL.cos + r*Math.cos(phi);
-          let oy = -r0*SWING_NEUTRAL.sin + r*Math.sin(phi);
+          // the wide overhead arc (swordSwingArc), anchored on the rest grip
+          const { ox, oy } = swordSwingArc(ssa, isMountedUnit(e.utype) ? 3.4 : 4.2);
           // The arc AIMS at the target (like the spear/bow): the offset
           // is authored with +x = attack direction, rotated by the aim
           // mapped INTO the mirrored body frame — the atan2 fold keeps
@@ -3914,12 +4037,8 @@ function drawUnit(e){
           anim.swordAimM = Math.atan2(Math.sin(aim), e.facing*Math.cos(aim));
           let cr = Math.cos(anim.swordAimM), nr = Math.sin(anim.swordAimM);
           anim.grip = { x: rest0.x + ox*cr - oy*nr, y: rest0.y + ox*nr + oy*cr };
-          // blade sweep: OVER THE HEAD at the windup (tipped back ~−69°),
-          // down through vertical, HORIZONTAL (90°) at the strike — never
-          // past it into the ground. Quadratic in ssa through all three
-          // user-set constraints incl. neutral(0.5) = the ~30° rest lean
-          // (engage can't pop). (ssa: windup ~1.15 → strike −1.35.)
-          anim.swordRot = 1.366 - 1.275*ssa - 0.831*ssa*ssa;
+          // the blade's sweep (swordSwingArc: user-set constraints incl. neutral(0.5) = the ~30° rest lean)
+          anim.swordRot = swordSwingArc(ssa, 0).rot;
         }
         // Weight shifts back on windup, into the strike — but the BODY is
         // segmented: legs plant (stance), the torso leans hard from the
@@ -4226,265 +4345,9 @@ function drawUnit(e){
     // away, the rider's forward-held sword is on the FAR side of the
     // horse too, so the mount must paint over it.
     const drawMountLayer = () => {
-    if(!isMountedUnit(e.utype)) return;
-    {
-      // Profile / front-diagonal tail is the FARTHEST part of the horse —
-      // drawn before everything (legs included) so it sits behind them.
-      let useDirM = mirroredDir(e);
-      if (useDirM === 7 || useDirM === 0) {
-        const coatM = e.utype==='knight'?'#9a948a':'#3f2810';
-        let idleM = !moving && !e.corpseRot;
-        let swishM = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idleM?0.2:0.08);
-        let kM = useDirM === 7 ? 1 : 0.72;
-        X.save(); X.translate(0,-1); X.scale(1.35,1.35);
-        X.translate(-6.6*kM,-7); X.rotate(swishM);
-        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7*kM,3,-2.2*kM,9);
-        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
-        X.strokeStyle=coatM; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-        X.restore();
-      }
-    }
-    // Walking leg cycle (swinging legs with constant leg length)
-    if(isMountedUnit(e.utype)){
-      let walk = moving ? Math.sin(paceClock(e)*0.45+e.id)*4.5 : 0;
-      X.save(); X.translate(0,-1); X.scale(1.35,1.35); // horse is drawn larger than the rider grid
-      X.beginPath();
-      
-      let useDir = mirroredDir(e);
-
-      if (useDir === 1 || useDir === 5) {
-        // South / North: Centered legs
-        // Front pair
-        X.moveTo(-3, -4); X.lineTo(-3, 4.4 + walk);
-        X.moveTo(3, -4); X.lineTo(3, 4.4 - walk);
-        // Back pair
-        X.moveTo(-4.5, -4); X.lineTo(-4.5, 3.4 - walk);
-        X.moveTo(4.5, -4); X.lineTo(4.5, 3.4 + walk);
-      } else if (useDir === 7) {
-        // East (Profile)
-        X.moveTo(3.5, -4); X.lineTo(3.5 + walk, 4.4);
-        X.moveTo(5.5, -4); X.lineTo(5.5 - walk, 4.4);
-        X.moveTo(-4.5, -4); X.lineTo(-4.5 + walk, 4.4);
-        X.moveTo(-6.5, -4); X.lineTo(-6.5 - walk, 4.4);
-      } else {
-        // Diagonal 3/4 views: the +x pair is the horse's FRONT. Facing
-        // the camera (SE/SW) the front is the NEAR end — it plants lower
-        // and wider while the hind pair recedes (ends higher). Facing
-        // away (NE/NW) the horse's front is the FAR end, so the depths
-        // swap: hind pair near/low, front pair receding/high.
-        let fy = useDir === 6 ? 3.4 : 4.8; // front pair endpoint
-        let ry = useDir === 6 ? 4.8 : 3.4; // rear pair endpoint
-        X.moveTo(3.4, -4); X.lineTo(3.4 + walk, fy);
-        X.moveTo(5.2, -4); X.lineTo(5.2 - walk, fy);
-        X.moveTo(-3.2, -4); X.lineTo(-3.2 + walk, ry);
-        X.moveTo(-4.8, -4); X.lineTo(-4.8 - walk, ry);
-      }
-      X.strokeStyle = '#000000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-      // Leg color follows the coat: grey legs on the knight's white
-      // charger, brown on the scout's bay
-      X.strokeStyle = e.utype==='knight' ? '#b3ada1' : '#6e4520'; X.lineWidth=1.5/UNIT_SCALE; X.stroke();
-      X.lineCap='butt';
-      // Hooves: dark caps at each leg endpoint
-      let hoofPts;
-      if (useDir === 1 || useDir === 5) hoofPts=[[-3,4.4+walk],[3,4.4-walk],[-4.5,3.4-walk],[4.5,3.4+walk]];
-      else if (useDir === 7) hoofPts=[[3.5+walk,4.4],[5.5-walk,4.4],[-4.5+walk,4.4],[-6.5-walk,4.4]];
-      else {
-        let fy = useDir === 6 ? 3.4 : 4.8, ry = useDir === 6 ? 4.8 : 3.4;
-        hoofPts=[[3.4+walk,fy],[5.2-walk,fy],[-3.2+walk,ry],[-4.8-walk,ry]];
-      }
-      X.fillStyle='#241408';
-      hoofPts.forEach(p=>{X.beginPath();X.ellipse(p[0],p[1]+0.5,1.5,1.1,0,0,Math.PI*2);X.fill();});
-      X.restore();
-    }
-    // (human legs are drawn inside drawBodyLayer below, so a weapon held
-    // behind the body when facing away is occluded by the legs too)
-
-    // Horse drawn under the rider. The neck+head are one arched silhouette
-    // (curved crest, jaw, squared muzzle) — the key to reading "horse" at
-    // icon size. Idle horses nod gently, swish their tail and flick an ear.
-    if(isMountedUnit(e.utype)){
-      let useDir = mirroredDir(e);
-      // Knight rides a darker courser; scout keeps the bay.
-      // Knight rides a WHITE charger (unmistakable vs the scout's bay).
-      const coat=e.utype==='knight'?'#e9e6de':'#8b5a2b', maneC=e.utype==='knight'?'#9a948a':'#3f2810';
-      let idle = !moving && !e.corpseRot;
-      let nod = idle ? Math.sin(animTick*0.05+e.id)*0.8 : 0;
-      let swish = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idle?0.2:0.08);
-      X.save(); X.translate(0,-1); X.scale(1.35,1.35); // match the enlarged legs
-      const ear=(x,y,ang)=>{ X.save(); X.translate(x,y); X.rotate(ang);
-        // Rounded leaf-shaped ear (a bare triangle reads as a horn)
-        X.beginPath(); X.moveTo(-1.1,0.6);
-        X.quadraticCurveTo(-1.3,-1.6, 0,-2.4);
-        X.quadraticCurveTo(1.3,-1.6, 1.1,0.6); X.closePath();
-        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fill(); X.stroke(); X.restore(); };
-      X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-      // One spelling of the body ellipse per view. Armor techs leave the
-      // horse untouched, but every mount wears a team-color saddle blanket
-      // — the always-on team tell (a mailed rider is mostly steel).
-      // Clipped inside the body so the silhouette stays one piece.
-      const drawHorseBody = (bx,by,brx,bry) => {
-        X.fillStyle=coat;
-        X.beginPath(); X.ellipse(bx,by,brx,bry,0,0,Math.PI*2); X.fill(); X.stroke();
-        X.save();
-        X.beginPath(); X.ellipse(bx,by,brx-0.5,bry-0.5,0,0,Math.PI*2); X.clip();
-        let dx0 = bx-brx*0.55, dw = brx*1.1, dy0 = by-bry, hem = by+bry*0.7;
-        // hanging cloth: the hem dips at the middle
-        const drapePath = () => {
-          X.beginPath();
-          X.moveTo(dx0, dy0); X.lineTo(dx0+dw, dy0);
-          X.lineTo(dx0+dw, hem-0.9);
-          X.quadraticCurveTo(bx, hem+1.5, dx0, hem-0.9);
-          X.closePath();
-        };
-        drapePath(); X.fillStyle=tc; X.fill();
-        // volume: lit from the upper-left, curving away lower-right
-        X.save(); drapePath(); X.clip();
-        X.fillStyle='rgba(255,255,255,0.25)'; X.fillRect(dx0, dy0, dw, 1.5);
-        X.fillStyle='rgba(255,255,255,0.10)'; X.fillRect(dx0, dy0, dw*0.3, bry*2);
-        X.fillStyle='rgba(0,0,0,0.18)';       X.fillRect(dx0+dw*0.7, dy0, dw*0.3, bry*2);
-        X.fillStyle='rgba(0,0,0,0.15)';       X.fillRect(dx0, by+bry*0.2, dw, bry);
-        // light seam stitched above the hem
-        X.strokeStyle='rgba(255,255,255,0.35)'; X.lineWidth=0.7/UNIT_SCALE;
-        X.beginPath(); X.moveTo(dx0+0.6, hem-2.1); X.quadraticCurveTo(bx, hem+0.3, dx0+dw-0.6, hem-2.1); X.stroke();
-        X.restore();
-        // hem outline + cast shadow onto the barrel below
-        X.strokeStyle='rgba(0,0,0,0.5)'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(dx0, hem-0.9); X.quadraticCurveTo(bx, hem+1.5, dx0+dw, hem-0.9); X.stroke();
-        X.fillStyle='rgba(0,0,0,0.15)';
-        X.beginPath();
-        X.moveTo(dx0, hem-0.9); X.quadraticCurveTo(bx, hem+1.5, dx0+dw, hem-0.9);
-        X.quadraticCurveTo(bx, hem+3.6, dx0, hem-0.9);
-        X.closePath(); X.fill();
-        X.restore();
-        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-      };
-
-      if (useDir === 7 || useDir === 0) {
-        // East profile / Southeast diagonal (same construction, SE compressed)
-        // Profile k=1; diagonal k=0.72 — at 0.85 the diagonal is so close
-        // to the profile that SW/W read as the same sprite. The 3/4 view is sold
-        // by real foreshortening plus receding hindquarters (legs below).
-        let k = useDir === 7 ? 1 : 0.72;
-        // (tail drawn earlier in drawMountLayer, behind the legs)
-        // Body capsule
-        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-        drawHorseBody(0,-6,7.4*k,4.9);
-        // Neck + head silhouette, anchored at the front of the body
-        // (nods gently while idle)
-        X.save(); X.translate(2.6*k,nod);
-        ear(8.5*k,-13.9,-0.2); ear(10.1*k,-13.3,0.3);
-        X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-        X.beginPath();
-        X.moveTo(2.2*k,-2.6);
-        X.quadraticCurveTo(6.6*k,-4.6, 7.8*k,-9);        // front of neck up to the throat
-        X.quadraticCurveTo(10.5*k,-8.6, 14.2*k,-8.6);    // long flat jaw out to the muzzle
-        X.lineTo(14.8*k,-12);                            // tall squared nose end
-        X.quadraticCurveTo(12.5*k,-13.6, 9.6*k,-13.9);   // long flat forehead back to the poll
-        X.quadraticCurveTo(4.6*k,-14.4, 1.6*k,-11);      // arched crest of the neck
-        X.quadraticCurveTo(-0.4*k,-8.5, -0.6*k,-5.5);    // down into the withers
-        // fill() closes the path on its own; stroking the OPEN path skips
-        // the bottom edge, so the neck has no outline where it meets the
-        // body and reads as one connected shape (both stroke ends land
-        // inside the body silhouette).
-        X.fill(); X.stroke();
-        // Mane along the crest
-        X.strokeStyle=maneC; X.lineWidth=2.4/UNIT_SCALE; X.lineCap='round';
-        X.beginPath(); X.moveTo(0.2*k,-7.5); X.quadraticCurveTo(4.4*k,-13.2, 8.4*k,-13); X.stroke();
-        X.lineCap='butt';
-        // Eye high on the head, nostril at the nose
-        X.fillStyle='#000';
-        X.beginPath(); X.arc(9.7*k,-11.7,0.6,0,Math.PI*2); X.fill();
-        X.fillStyle='rgba(0,0,0,0.45)';
-        X.beginPath(); X.arc(13.9*k,-10.3,0.5,0,Math.PI*2); X.fill();
-        X.restore();
-      } else if (useDir === 6) {
-        // Northeast diagonal (back view): arched neck seen from behind
-        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-        drawHorseBody(0,-6,6.6,4.9);
-        // Tail AFTER the body: facing away, the rump is the NEAR end, so
-        // the tail hangs in front of it (SE/SW draw the tail behind,
-        // since there the rump is the far end).
-        X.save(); X.translate(-5.8,-6.5); X.rotate(swish);
-        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.7,3,-2.2,9);
-        X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.8/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-        X.restore();
-        X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
-        X.save(); X.translate(1.6,nod);
-        ear(3.9,-16.4,-0.25); ear(6.1,-16,0.25);
-        X.fillStyle=coat;
-        // Slim tapering neck seen from behind (was a wide flat slab)
-        X.beginPath();
-        X.moveTo(2.2,-4.5); X.quadraticCurveTo(2.4,-10, 3.5,-14.2);
-        X.lineTo(6,-13.8);
-        X.quadraticCurveTo(6.2,-9, 5.4,-4);
-        // open-path stroke: no outline along the base where it joins the body
-        X.fill(); X.stroke();
-        // Round skull from behind, dipped forward
-        X.beginPath(); X.ellipse(4.9,-14.3,2.1,2.2,0.15,0,Math.PI*2); X.fill(); X.stroke();
-        // Mane down the crest
-        X.strokeStyle=maneC; X.lineWidth=2/UNIT_SCALE; X.lineCap='round';
-        X.beginPath(); X.moveTo(3,-5); X.quadraticCurveTo(3.6,-10,4.2,-14.4); X.stroke();
-        X.lineCap='butt';
-        X.restore();
-      } else if (useDir === 1) {
-        // South (front view): body behind the rider; the hanging head is
-        // deferred so it renders in front of the rider.
-        drawHorseBody(0,-5.5,5.6,5.2);
-        horseHeadFront = () => {
-          let nod2 = (!moving) ? Math.sin(animTick*0.05+e.id)*0.8 : 0;
-          // the head hangs CENTERED — the sword clears it by moving to
-          // the grip hand's side instead (user call)
-          X.save(); X.translate(0,-1+nod2);
-          X.scale(1.35, 1.35); X.translate(-4.1, 0);
-          X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE; X.fillStyle=coat;
-          ear(2.4,-12.6,-0.3); ear(5.8,-12.4,0.3);
-          // Rounded skull narrowing into a short hanging muzzle
-          X.beginPath();
-          X.moveTo(1.6,-10.6);
-          X.quadraticCurveTo(1.4,-7.2, 2.7,-4.9);   // left cheek down to the muzzle
-          X.quadraticCurveTo(4.1,-3.9, 5.5,-4.9);   // rounded chin
-          X.quadraticCurveTo(6.8,-7.2, 6.6,-10.6);  // right cheek back up
-          X.quadraticCurveTo(4.1,-13.8, 1.6,-10.6); // domed forehead
-          X.closePath(); X.fill(); X.stroke();
-          // Forelock tuft
-          X.fillStyle=maneC;
-          X.beginPath(); X.arc(4.1,-11.7,1.9,Math.PI*0.9,Math.PI*0.1,true); X.fill();
-          // Big friendly eyes wide on the skull
-          X.fillStyle='#000';
-          X.beginPath(); X.arc(2.7,-9.2,0.7,0,Math.PI*2); X.fill();
-          X.beginPath(); X.arc(5.5,-9.2,0.7,0,Math.PI*2); X.fill();
-          // Lighter rounded muzzle with nostril dots
-          X.fillStyle = e.utype==='knight' ? '#b8b2a6' : '#6e4520';
-          X.beginPath(); X.ellipse(4.1,-5.4,1.8,1.4,0,0,Math.PI*2); X.fill(); X.stroke();
-          X.fillStyle='rgba(0,0,0,0.55)';
-          X.beginPath(); X.arc(3.4,-5.4,0.35,0,Math.PI*2); X.fill();
-          X.beginPath(); X.arc(4.8,-5.4,0.35,0,Math.PI*2); X.fill();
-          X.restore();
-        };
-      } else {
-        // North (back view): neck/head face away, CENTERED on the body
-        // (they sat +3 off-center, user caught it), body and tail closest
-        X.save(); X.translate(0,nod);
-        X.fillStyle=coat;
-        X.beginPath(); X.ellipse(0,-10,2.9,4.6,0,0,Math.PI*2); X.fill(); X.stroke(); // neck
-        ear(-1.5,-15,-0.25); ear(1.7,-14.9,0.25);
-        X.beginPath(); X.ellipse(0,-13.1,2.6,2.8,0,0,Math.PI*2); X.fill(); X.stroke(); // back of head
-        X.fillStyle=maneC;
-        X.beginPath(); X.ellipse(0,-11.8,1.3,4.2,0,0,Math.PI*2); X.fill(); // mane down the crest
-        X.restore();
-        // Body drawn over the neck base
-        drawHorseBody(0,-5,5.8,5.3);
-        // Swishing tail down the center
-        X.save(); X.translate(0,-3); X.rotate(swish);
-        X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-0.8,4.5,0,8.5);
-        X.strokeStyle='#000'; X.lineWidth=3.2/UNIT_SCALE; X.lineCap='round'; X.stroke();
-        X.strokeStyle=maneC; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-        X.restore();
-      }
-      X.restore();
-    }
-    }; // end drawMountLayer
+      if (!horseRig) return;
+      horseRig.back(); horseHeadFront = horseRig.front;
+    };
 
     // Layering: hand-held weapons/tools draw BEHIND the body when the
     // unit faces away from the camera (they're on the far side of the
@@ -5389,7 +5252,8 @@ function drawUnit(e){
           [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
           [0, drawMountLayer],
           [0.01, drawBodyLayer],
-          [8, () => { if (horseHeadFront) horseHeadFront(); }],
+          // the neck and head nearer than the saddle: over the rider's body, under a near-side sword, arm or shield
+          [0.015, () => { if (horseHeadFront) horseHeadFront(); }],
           [shield, () => upperly(drawShieldPiece)],
         ]);
       }
@@ -5462,7 +5326,7 @@ function drawUnit(e){
       ]);
     }
   } else {
-    drawSheepBody(e);
+    drawSheep2D(e); sheepGrazePuffs(e);
   }
 
   X.restore(); // restore to absolute coordinates so text and UI aren't mirrored

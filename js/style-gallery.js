@@ -439,6 +439,13 @@
               else if (d === 2 || d === 3)       { u.facing = -1; u.facingNorth = false; }
               else if (d === 4)                  { u.facing = -1; u.facingNorth = true;  }
               else                               { u.facing = 1;  u.facingNorth = true;  }
+              // walking, a treadmill: it really walks its facing at its own pace (the horse and sheep rigs stride by the
+              // ground covered) — aim() keeps it in its cell — stepping back every 2 tiles (a jump isn't a stride)
+              if (pose === 'walk') {
+                const dl = Math.hypot(DIRV[d][0], DIRV[d][1]), v = (u.speed || 1) * UNIT_PX_PER_TICK / TILE_PX;
+                u.__home = u.__home || { x: u.x, y: u.y }; u.__walked = ((u.__walked || 0) + v) % 2;
+                u.x = u.__home.x + DIRV[d][0] / dl * u.__walked; u.y = u.__home.y + DIRV[d][1] / dl * u.__walked;
+              } else if (u.__home) { u.x = u.__home.x; u.y = u.__home.y; u.__walked = 0; }
               aim(u.x, u.y, 90 + i * CELL_W, cy + 55, true);
               // Equip rows force this column's tech mask (and the selected
               // age) onto the specimen's team for EVERY draw path — corpses
@@ -476,6 +483,7 @@
               // the gait cycle going AND keeps drawUnit's dir derivation
               // pointing the way the cell is labelled
               u.__animAttack = pose === 'attack';
+              if (u.utype === 'sheep') u.eatingGrass = pose === 'attack'; // a sheep's "work": grazing
               // Archer draw, bear maul and sword swings ride the REAL
               // reload clock, which gallery specimens don't have —
               // synthesize one so the attack pose plays the full cycle
@@ -517,7 +525,13 @@
               } else {
                 u.path = [];
               }
+              // the animal/mount rigs keep their render state by id, and every specimen shares id 4 (above): each
+              // gets its own state swapped in for its draw
+              const RIGS = [horse2DState, sheep2DState, bear2D, dragon2D];
+              u.__rigs = u.__rigs || RIGS.map(() => undefined);
+              RIGS.forEach((M, k) => { if (u.__rigs[k]) M.set(u.id, u.__rigs[k]); else M.delete(u.id); });
               drawUnit(u);
+              RIGS.forEach((M, k) => { u.__rigs[k] = M.get(u.id); });
               if (u.__prop) drawUnit(u.__prop); // cell prop (butcher carcass), in front
               unforce();
             });
@@ -529,7 +543,7 @@
     requestAnimationFrame(frame);
   }
 
-  // Scriptable handle, same idea as lab.html's window.LAB: tools/render-parity.js
+  // Scriptable handle, same idea as lab2d.html's window.LAB: tools/render-parity.js
   // drives pose/age/scroll and steps EXACTLY one frame, so a pixel-parity run is
   // reproducible instead of riding rAF timing (frame() advances `tick` itself).
   window.GALLERY = {
