@@ -123,6 +123,15 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
   X.restore();
 }
 
+// A camp's shed (drawBuildingBlock's pyramid roof), as the 3D's: plank walls, rows of shingles across both roof faces
+function drawCampShed(sx,sy,bw,bhh,bh,roofH,wallL,wallR,roofL,roofR,darken){
+  drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,'peaked',roofH,roofL,roofR,darken);
+  const apex=[sx,sy-bh-roofH], C=[sx,sy+bhh*2-bh], L=[sx-bw,sy+bhh-bh], R=[sx+bw,sy+bhh-bh], at=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+  X.save(); X.strokeStyle='rgba(0,0,0,0.2)'; X.lineWidth=0.9; X.beginPath();
+  for(const t of [0.42,0.66,0.86]) for(const E of [L,R]){ const a=at(apex,E,t), b=at(apex,C,t); X.moveTo(...a); X.lineTo(...b); }
+  X.stroke(); X.restore();
+}
+
 // Worn dirt clearing a camp's footprint sits on, so an open-sided shelter
 // (no walls of its own to ground it) doesn't look like it's floating on
 // untouched grass.
@@ -1165,12 +1174,13 @@ function drawBuilding(e, part = null){
     X.save();
     X.translate(bkCx, bkCy); X.scale(bkS, bkS); X.translate(-bkCx, -bkCy);
     bh = 32 * bkS; // scaled height, for overlays drawn after restore()
-    // The cavalry's horse (horseRig2D, the unit renderer's rig) standing in east profile, riderless, grazing on the
+    // The cavalry's horse (horseRig2D, the unit renderer's rig) standing three-quarter toward the yard's front (its head
+    // and ears read; in profile the lowered white head ran into its neck), riderless, grazing on the
     // shared cycle (horseGrazePose, as the 3D yard); drawn a little smaller than a mount, as the yard's props are.
     let drawYardHorse=(hx,hy,knight,graze=false)=>{
       const P0=HORSE_PAL[knight?'knight':'scout'], C=darken?Object.fromEntries(Object.entries(P0).map(([k,v])=>[k,darkenColor(v)])):P0;
       const gp=graze&&visible?horseGrazePose(animTick/30,e.id*0.37%1):{neck:0,head:0,tail:0};
-      const rig=horseRig2D(-Math.PI/4,{legs:[[0,0],[0,0],[0,0],[0,0]],bob:0,nod:0,tail:gp.tail*0.5},C,darken?darkenColor(tc):tc,gp,1.25);
+      const rig=horseRig2D(0,{legs:[[0,0],[0,0],[0,0],[0,0]],bob:0,nod:0,tail:gp.tail*0.5},C,darken?darkenColor(tc):tc,gp,1.25);
       X.save();X.translate(hx,hy);X.scale(1.05/1.35,1.05/1.35);rig.back();if(rig.front)rig.front();X.restore();
     };
     // Shared compound geometry: everything (hall, yard, fence, props)
@@ -1322,10 +1332,9 @@ function drawBuilding(e, part = null){
     // the knight's white charger at Castle.
     if(ownerAge >= 1){
       let hp0=BP(14,33);
-      drawYardHorse(hp0.x, hp0.y, ownerAge >= 2, true); // grazing at the haystack
-      // haystack mound in front of the horse
+      // the haystack under its muzzle (drawn first: the horse's lowered head is over it, eating), its near rails over it
       let hayC=darken?darkenColor('#d9b44a'):'#d9b44a';
-      let hpH=BP(20,44); // near the front fence — its rails overlap the mound slightly
+      let hpH=BP(18,42);
       let hx2=hpH.x, hy2=hpH.y;
       X.fillStyle=hayC;X.strokeStyle='#000';X.lineWidth=1;
       X.beginPath();
@@ -1338,6 +1347,7 @@ function drawBuilding(e, part = null){
       X.beginPath();X.moveTo(hx2-2.6,hy2-1.4);X.lineTo(hx2-0.9,hy2-3.6);
       X.moveTo(hx2+0.9,hy2-3.8);X.lineTo(hx2+2.6,hy2-1.4);X.stroke();
       X.restore();
+      drawYardHorse(hp0.x, hp0.y, ownerAge >= 2, true); // grazing at the haystack
     }
 
     // Straw training dummies. Dark age (militia only) drills at TWO
@@ -1461,7 +1471,7 @@ function drawBuilding(e, part = null){
         X.beginPath();X.moveTo(C[0],C[1]-hh*0.5);X.lineTo(D[0],D[1]-hh*0.5);X.stroke();X.restore();
       } else if(type==='sacks'){
         // The SAME plump tied-neck grain sack the trade cart hauls
-        // (drawCartLoad, js/render-units.js) — stall goods and cart cargo
+        // (cartRig2D, js/render-units.js) — stall goods and cart cargo
         // read as one and the same trade. One big + one smaller behind.
         let sc =darken?darkenColor('#cdb98c'):'#cdb98c';
         let sc2=darken?darkenColor('#b6a074'):'#b6a074';
@@ -1624,7 +1634,7 @@ function drawBuilding(e, part = null){
     drawCampClearing(sx, sy, bw, bhh, darken);
     
     // Small plank shack in the back-right quadrant
-    drawBuildingBlock(sx+14, sy+8, 20, 10, 14, '#b89868','#987848','peaked',8,'#8a6a48','#715539', darken);
+    drawCampShed(sx+14, sy+8, 20, 10, 14, 8, '#b89868','#987848','#8a6a48','#715539', darken);
     drawDoorRight(sx+14, sy+8, 20, 10, '#5c3d24', darken);
     drawPennant(sx+14, sy-14, tc, darken);
     if(e.complete){
@@ -1682,68 +1692,46 @@ function drawBuilding(e, part = null){
     drawCampClearing(sx, sy, bw, bhh, darken);
 
     // Dark timber mine shed in the back-right quadrant
-    drawBuildingBlock(sx+14, sy+8, 20, 10, 12, '#7a6a55','#635546','peaked',7,'#55483a','#463b2f', darken);
+    drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken);
     drawDoorRight(sx+14, sy+8, 20, 10, '#2e2519', darken);
     drawPennant(sx+14, sy-10, tc, darken);
     if(e.complete){
       X.strokeStyle='#000000';X.lineWidth=1.2;
-      // ISO ore cart: an open-top 3D box aligned to the tile's SE
-      // diagonal, gold heaped inside, wheels on the visible flank.
-      let mx=sx-18, my=sy+bhh*1.1;
-      const UX=0.894, UY=0.447;   // SE (cart axis)
-      const VX=-0.894, VY=0.447;  // SW (across the cart)
-      const a=8, b=4.5, h=8;      // half-length, half-width, wall height
-      // ground corners: A back, B right, C front(nearest), D left
-      let Ax=mx-a*UX-b*VX, Ay=my-a*UY-b*VY;
-      let Bx=mx+a*UX-b*VX, By=my+a*UY-b*VY;
-      let Cx=mx+a*UX+b*VX, Cy=my+a*UY+b*VY;
-      let Dx=mx-a*UX+b*VX, Dy=my-a*UY+b*VY;
-      let wood=darken ? darkenColor('#6e5138') : '#6e5138';
-      let woodL=darken ? darkenColor('#7d5f42') : '#7d5f42';
-      // right-end face (B-C edge, toward the camera along the axis)
-      X.fillStyle=wood;X.beginPath();
-      X.moveTo(Bx,By-h);X.lineTo(Cx,Cy-h);X.lineTo(Cx,Cy);X.lineTo(Bx,By);X.closePath();X.fill();X.stroke();
-      // long flank (C-D edge, the near side) with plank lines
-      X.fillStyle=woodL;X.beginPath();
-      X.moveTo(Cx,Cy-h);X.lineTo(Dx,Dy-h);X.lineTo(Dx,Dy);X.lineTo(Cx,Cy);X.closePath();X.fill();X.stroke();
-      X.save();X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.9;
-      X.beginPath();X.moveTo(Cx-0.8,Cy-h*0.62);X.lineTo(Dx+0.8,Dy-h*0.62);X.stroke();
-      X.beginPath();X.moveTo(Cx-0.8,Cy-h*0.3);X.lineTo(Dx+0.8,Dy-h*0.3);X.stroke();
-      X.restore();
-      // open top: dark interior rim, then the gold heap rising out of it
-      X.fillStyle=darken ? darkenColor('#3c2d1e') : '#3c2d1e';
-      X.beginPath();
-      X.moveTo(Ax,Ay-h);X.lineTo(Bx,By-h);X.lineTo(Cx,Cy-h);X.lineTo(Dx,Dy-h);X.closePath();X.fill();X.stroke();
-      let gcol=darken ? darkenColor('#e8b90f') : '#e8b90f';
-      let gtop=darken ? darkenColor('#ffe14d') : '#ffe14d';
-      [[-3,-1.5],[0,-3],[3,-1.5],[-1.5,0],[2,0.5]].forEach(([dx,dy])=>{
-        let nx2=mx+dx, ny2=my-h-2+dy;
-        X.fillStyle=gcol;X.beginPath();X.arc(nx2,ny2,2.6,0,Math.PI*2);X.fill();X.stroke();
-        X.fillStyle=gtop;X.beginPath();X.arc(nx2-0.8,ny2-0.8,1.1,0,Math.PI*2);X.fill();
-      });
-      // wheels on the near flank, perpendicular to the axis (squashed)
-      X.fillStyle=darken ? darkenColor('#3a2f24') : '#3a2f24';
-      [[-4],[4]].forEach(([t])=>{
-        let wx2=mx+t*UX+b*VX, wy2=my+t*UY+b*VY+1;
-        X.beginPath();X.ellipse(wx2,wy2,2.1,2.7,0,0,Math.PI*2);X.fill();X.stroke();
-        X.fillStyle='rgba(255,255,255,0.25)';
-        X.beginPath();X.arc(wx2,wy2,0.7,0,Math.PI*2);X.fill();
-        X.fillStyle=darken ? darkenColor('#3a2f24') : '#3a2f24';
-      });
-      // Faceted stone boulders beside the cart (polygonal, lit upper-left)
-      let scol=darken ? darkenColor('#8b8b8b') : '#8b8b8b';
-      let scol2=darken ? darkenColor('#9a9a9a') : '#9a9a9a';
-      let rock=(rx,ry,r)=>{
-        X.fillStyle=scol;X.beginPath();
-        X.moveTo(rx-r,ry+r*0.35);X.lineTo(rx-r*0.55,ry-r*0.75);X.lineTo(rx+r*0.4,ry-r);
-        X.lineTo(rx+r,ry-r*0.15);X.lineTo(rx+r*0.65,ry+r*0.8);X.lineTo(rx-r*0.35,ry+r*0.95);
-        X.closePath();X.fill();X.stroke();
-        X.fillStyle=scol2;X.beginPath();
-        X.moveTo(rx-r*0.55,ry-r*0.75);X.lineTo(rx+r*0.4,ry-r);X.lineTo(rx+r*0.2,ry-r*0.1);X.lineTo(rx-r*0.5,ry-r*0.05);
-        X.closePath();X.fill();
-      };
-      rock(sx+2, sy+bhh*1.5, 5.5);
-      rock(sx+10, sy+bhh*1.42, 4);
+      // The props, as pov3d's MCAMP lays them on the tile (tile-local tiles → screen, heights ×√3/2): a two-wheeled
+      // handcart — an open plank tray on the axle between two spoked wheels, gold ore heaped in it, its shafts resting
+      // on the ground ahead — and a pair of boulders (the deposits' own rocks: oreBoulder).
+      const W=(x,y,z)=>[sx+(x-z)*HALF_TW, sy+(x+z)*HALF_TH-y*TREE_HPX], dk=c=>darken?darkenColor(c):c;
+      const L=0.17, Wd=0.11, wr=0.1, t=0.015, wh=0.08, cx=0.3, cz=0.8, y0=wr, y1=y0+t+wh, wood=dk('#6e5138');
+      const poly=(pts,col,line=true)=>{X.fillStyle=col;X.beginPath();X.moveTo(...pts[0]);for(const q of pts.slice(1))X.lineTo(...q);X.closePath();X.fill();if(line)X.stroke();};
+      const ring=(zw,r)=>Array.from({length:24},(_,i)=>{const a=i/24*Math.PI*2;return W(cx+Math.cos(a)*r,wr+Math.sin(a)*r,zw);});
+      const wheel=zw=>{ X.lineCap='round';                                                                   // rim, three spokes, hub (the trade cart's)
+        X.strokeStyle='#000';X.lineWidth=3.2;X.beginPath();ring(zw,wr-0.012).forEach((q,i)=>i?X.lineTo(...q):X.moveTo(...q));X.closePath();X.stroke();
+        X.strokeStyle=dk('#5a4630');X.lineWidth=1.4;X.stroke();
+        X.strokeStyle=dk('#74593a');X.lineWidth=0.9;X.beginPath();for(let i=0;i<3;i++){const a=i*Math.PI/3,dx=Math.cos(a)*(wr-0.015),dy=Math.sin(a)*(wr-0.015);X.moveTo(...W(cx-dx,wr-dy,zw));X.lineTo(...W(cx+dx,wr+dy,zw));}X.stroke();
+        X.fillStyle=dk('#74593a');X.strokeStyle='#000';X.lineWidth=0.8;X.beginPath();X.arc(...W(cx,wr,zw),1.1,0,Math.PI*2);X.fill();X.stroke();X.lineCap='butt';X.lineWidth=1.2; };
+      const shaft=zs=>{ const a=W(cx-L,y0+0.03,zs), b=W(0.03,0.0125,zs); X.lineCap='round';
+        X.strokeStyle='#000';X.lineWidth=2.4;X.beginPath();X.moveTo(...a);X.lineTo(...b);X.stroke();X.strokeStyle=wood;X.lineWidth=1;X.beginPath();X.moveTo(...a);X.lineTo(...b);X.stroke();
+        X.lineCap='butt';X.strokeStyle='#000';X.lineWidth=1.2; };
+      X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
+      wheel(cz-Wd-0.025); shaft(cz-Wd+0.02);                                                   // the far side, behind the tray
+      const xa=cx-L, xb=cx+L, za=cz-Wd, zb=cz+Wd;
+      // the open tray: its inside — the floor and the far walls' inner faces — the gold on the floor, then its near
+      // outside (the +x end, shaded; the near side) over the gold's foot, and the walls' top rim
+      poly([W(xa,y0,za),W(xb,y0,za),W(xb,y0,zb),W(xa,y0,zb)],dk('#5c4430'));
+      poly([W(xa+t,y0+t,za+t),W(xb-t,y0+t,za+t),W(xb-t,y0+t,zb-t),W(xa+t,y0+t,zb-t)],dk('#3c2d1e'),false);                       // the floor inside
+      poly([W(xa+t,y0+t,za+t),W(xb-t,y0+t,za+t),W(xb-t,y1,za+t),W(xa+t,y1,za+t)],dk('#4d3a28'),false);                            // the far side's inner face
+      poly([W(xa+t,y0+t,za+t),W(xa+t,y0+t,zb-t),W(xa+t,y1,zb-t),W(xa+t,y1,za+t)],dk('#453424'),false);                            // the back end's inner face
+      for (const [dx,dz,r,col] of [[-0.08,-0.04,0.05,'#d1a017'],[0.06,-0.04,0.045,'#c99815'],[0,0.03,0.055,'#e8b90f'],[-0.06,0.05,0.04,'#e8b90f'],[0.08,0.04,0.04,'#d1a017']].sort((p,q)=>(p[0]+p[1])-(q[0]+q[1]))) {
+        X.save();X.translate(...W(cx+dx,y0+t,cz+dz));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.6,az:r,rot:dx*31+dz*17,col:dk(col)},2);X.restore(); }   // the gold heaped on the floor
+      X.strokeStyle='#000';X.lineWidth=1.2;
+      poly([W(xb,y0,za),W(xb,y0,zb),W(xb,y1,zb),W(xb,y1,za)],dk('#5c4430'));
+      poly([W(xa,y0,zb),W(xb,y0,zb),W(xb,y1,zb),W(xa,y1,zb)],wood);
+      X.save();X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.8;X.beginPath();X.moveTo(...W(xa+0.01,(y0+y1)/2,zb));X.lineTo(...W(xb-0.01,(y0+y1)/2,zb));X.stroke();X.restore();   // a plank seam
+      poly([W(xa,y1,za),W(xb,y1,za),W(xb,y1,zb),W(xa,y1,zb),W(xa,y1,za),W(xa+t,y1,za+t),W(xa+t,y1,zb-t),W(xb-t,y1,zb-t),W(xb-t,y1,za+t),W(xa+t,y1,za+t)],dk('#7d5f42'));   // the walls' top rim
+      wheel(cz+Wd+0.025); shaft(cz+Wd-0.02);                                                   // the near side, over it
+      for (const [x,z,r,col] of [[0.6,0.96,0.07,'#8c8c8c'],[0.8,0.8,0.15,'#9d9d9d']]) {      // the boulders, far to near
+        X.save();X.translate(...W(x,0,z));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.7,az:r,rot:(e.x+x)*7.1+(e.y+z)*3.3,col:dk(col)},2.4);X.restore(); }
+      X.strokeStyle='#000000';X.lineWidth=1.2;
     }
   }
   else if(e.btype==='MILL'){

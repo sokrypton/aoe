@@ -40,6 +40,51 @@ function getMaster() {
   return masterOut;
 }
 
+// Music bus: every music voice → dry to master + a send into one shared hall
+// reverb, so notes ring in a room instead of sounding dry.
+let _musicIn = null;
+function musicOut() {
+  if (!_musicIn) {
+    _musicIn = audioCtx.createGain();
+    const verb = audioCtx.createConvolver(), send = audioCtx.createGain();
+    verb.buffer = hallImpulse(2.8);
+    send.gain.value = 0.34;
+    _musicIn.connect(getMaster());
+    _musicIn.connect(send); send.connect(verb); verb.connect(getMaster());
+  }
+  return _musicIn;
+}
+// Stereo hall tail: decaying noise whose highs die first (stone room).
+function hallImpulse(sec) {
+  const sr = audioCtx.sampleRate, len = Math.floor(sr * sec), buf = audioCtx.createBuffer(2, len, sr);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch); let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / len, k = 0.5 + 0.45 * t;              // smoothing grows → highs fade faster than lows
+      lp = lp * k + (cosmeticRandom() * 2 - 1) * (1 - k);
+      d[i] = lp * Math.pow(1 - t, 2.2) * (i < sr * 0.012 ? i / (sr * 0.012) : 1);
+    }
+  }
+  return buf;
+}
+
+// Clock-accurate phrase scheduling: a coarse timer wakes often and books the
+// next phrase on the AUDIO clock slightly ahead, so phrases join sample-exact
+// however late the timer fires. play(at) returns seconds to the next phrase.
+const MUSIC_AHEAD = 0.3, MUSIC_WAKE_MS = 100;
+function musicClock(play) {
+  const c = { next: 0, timer: null };
+  const wake = () => {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    if (c.next < t) c.next = t + 0.05;                    // fell behind (suspended / throttled tab): restart on now
+    while (c.next - t <= MUSIC_AHEAD) c.next += play(c.next);
+  };
+  c.start = (delay) => { c.stop(); c.next = audioCtx ? audioCtx.currentTime + (delay || 0.05) : 0; wake(); c.timer = setInterval(wake, MUSIC_WAKE_MS); };
+  c.stop = () => { if (c.timer) clearInterval(c.timer); c.timer = null; };
+  return c;
+}
+
 // One reusable second of white noise for every impact/scrape/whoosh.
 let _noiseBuf = null;
 function noiseBuffer() {
@@ -656,22 +701,21 @@ window.initAudio = initAudio;
 // random walks) so the tune has shape, and variation comes from voice
 // choice, ornaments, drum pattern, and light humanization of timing.
 let ambientSeq = 0;
-let ambientTimer = null;
 
 const MUSIC_PHRASE_BEATS = 8;
 
-// Modal scales, degree 0 = tonic. Negative degrees dip below.
-// Mixolydian: bright major-with-flat-7 "heroic folk". Dorian: minor-leaning,
-// determined — the march. Phrygian: flat 2 right above the tonic — instant
-// menace, the "we're in trouble" mode.
+// Modal scales, degree 0 = tonic. Negative degrees dip below. EVERY mode sits
+// on the same D tonic, so a mood or age change never shifts the key under the
+// drone — only the colour of the scale changes.
+// Dorian: minor-leaning, sober. Mixolydian: bright folk major with a flat 7.
+// Ionian: plain major, stately. Phrygian: flat 2 over the tonic — menace.
 const MUSIC_SCALES = {
   dorian:     [293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25], // D E F G A B C
-  mixolydian: [392.00, 440.00, 493.88, 523.25, 587.33, 659.25, 698.46], // G A B C D E F
-  phrygian:   [329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33], // E F G A B C D
+  mixolydian: [293.66, 329.63, 369.99, 392.00, 440.00, 493.88, 523.25], // D E F# G A B C
+  ionian:     [293.66, 329.63, 369.99, 392.00, 440.00, 493.88, 554.37], // D E F# G A B C#
+  phrygian:   [293.66, 311.13, 349.23, 392.00, 440.00, 466.16, 523.25], // D Eb F G A Bb C
   harmonic:   [293.66, 329.63, 349.23, 392.00, 440.00, 466.16, 554.37]  // D E F G A Bb C# — the dragon's: the raised 7th's old, dark pull
 };
-// Peacetime scale preference (kept from before): 'mixolydian' | 'dorian'
-window.musicMode = window.musicMode || 'mixolydian';
 function degFreq(deg, scaleName) {
   let scale = MUSIC_SCALES[scaleName] || MUSIC_SCALES.mixolydian;
   let oct = Math.floor(deg / 7);
@@ -681,11 +725,11 @@ function degFreq(deg, scaleName) {
 
 // ---- ADAPTIVE MOOD ----
 // Checked once per phrase: the music reacts to what's happening on the map.
-//   peace  — building & gathering: bright, gentle, flute/lute alternate
+//   peace  — building & gathering: the current age's tune (AGE_TUNES)
 //   war    — our army is at their gates: driving march, lute lead
 //   danger — enemies near our buildings: fast, dark, urgent drums
 const MUSIC_MOODS = {
-  peace:  { get scale(){ return window.musicMode; }, bpm: 84,  droneVol: 0.014, melVol: 1.0, drum: 'gentle', drumVol: 1.0 },
+  peace:  { droneVol: 0.014, melVol: 1.0, drum: 'gentle', drumVol: 1.0 }, // scale + tempo come from the age's tune
   // Combat moods play noticeably louder — they have to cut through the
   // clash/arrow SFX of the very battles that trigger them.
   war:    { scale: 'dorian',   bpm: 100, droneVol: 0.024, melVol: 1.7, drum: 'march',  drumVol: 1.8 },
@@ -694,27 +738,73 @@ const MUSIC_MOODS = {
   dragon: { scale: 'harmonic', bpm: 72,  droneVol: 0,     melVol: 1.0, drum: 'dragon', drumVol: 1.0 }
 };
 let _moodHold = { war: 0, danger: 0 };
-let _currentMoodName = 'peace';
+let _currentKey = 'peace0';   // what's playing (or pending): mood, and for peace the age
 let _moodWatcher = null;
-// Everything in the current phrase plays through this bus so a mood change
-// or game over can fade the whole phrase out at once instead of letting
-// up to ~6s of already-scheduled notes ring on.
-let _phraseBus = null;
-function newPhraseBus() {
-  _phraseBus = audioCtx.createGain();
-  _phraseBus.gain.value = 1;
-  _phraseBus.connect(getMaster());
-  return _phraseBus;
+// Each phrase plays through its own bus so a switch or game over can fade it
+// at once. The clock books ahead, so the PLAYING phrase and the BOOKED one
+// both need fading — the last two buses are kept.
+let _buses = [];
+function newPhraseBus(at) {
+  const bus = audioCtx.createGain();
+  bus.connect(musicOut());
+  _buses = [_buses[_buses.length - 1], { bus, at }].filter(Boolean);
+  return bus;
 }
-function fadeOutPhrase(dur) {
-  if (!_phraseBus || !audioCtx) { _phraseBus = null; return; }
+// Fade out from audio time `at` (default now); a phrase not yet started by
+// then is muted outright. The reverb tail rings on past it.
+function fadeOutPhrase(dur, at) {
+  if (!audioCtx) { _buses = []; return; }
+  const t = Math.max(audioCtx.currentTime, at || 0);
+  for (const { bus, at: b0 } of _buses) {
+    try {
+      const g = bus.gain;
+      if (b0 >= t - 0.01) { g.cancelScheduledValues(b0); g.setValueAtTime(0, b0); continue; }
+      g.cancelScheduledValues(t); g.setValueAtTime(1, t);
+      g.linearRampToValueAtTime(0.0001, t + (dur || 0.3));
+    } catch (_) {}
+  }
+  _buses = [];
+}
+
+// ---- HELD DRONE ----
+// Root + fifth + octave, detuned pairs, sustained across phrases (a per-phrase
+// restart pumped). A root change dips the level and steps under the dip — a
+// glide would slide like a siren.
+let _drone = null;
+function droneTo(at, rootFreq, vol) {
+  if (!_drone) {
+    if (vol <= 0) return;
+    const fl = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+    fl.type = 'lowpass'; fl.frequency.value = 300;
+    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    fl.connect(g); g.connect(musicOut());
+    const oscs = [];
+    [1, 1.5, 2].forEach(m => [-5, 5].forEach(det => {
+      const o = audioCtx.createOscillator();
+      o.type = 'triangle'; o.detune.value = det; o.frequency.value = rootFreq * m;
+      o.connect(fl); o.start(); oscs.push({ o, m });
+    }));
+    _drone = { g, oscs, root: rootFreq };
+  }
+  const g = _drone.g.gain;
+  const stepped = vol > 0 && rootFreq !== _drone.root;
+  if (stepped) {
+    const dip = Math.max(audioCtx.currentTime, at - 0.15);
+    g.setTargetAtTime(0.0001, dip, 0.04);
+    _drone.oscs.forEach(({ o, m }) => o.frequency.setValueAtTime(rootFreq * m, at));
+    _drone.root = rootFreq;
+  }
+  g.setTargetAtTime(Math.max(0.0001, vol), at, stepped ? 0.35 : 1.2);   // level-only changes ease
+}
+function stopDrone(dur) {
+  if (!_drone || !audioCtx) { _drone = null; return; }
+  const t = audioCtx.currentTime, { g, oscs } = _drone;
   try {
-    let g = _phraseBus.gain, t = audioCtx.currentTime;
-    g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
-    g.linearRampToValueAtTime(0.0001, t + (dur || 0.3));
+    g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.linearRampToValueAtTime(0.0001, t + (dur || 0.3));
+    oscs.forEach(({ o }) => o.stop(t + (dur || 0.3) + 0.05));
   } catch (_) {}
-  _phraseBus = null;
+  _drone = null;
 }
 function detectMusicMood() {
   try {
@@ -780,16 +870,46 @@ const MELODY_PHRASES = [
   // D: high lament — starts on the octave and sighs stepwise back down
   [[7,0,1],[6,1,0.5],[5,1.5,0.5],[4,2,1],[5,3,0.5],[4,3.5,0.5],[2,4,1],[1,5,0.5],[2,5.5,0.5],[0,6,2]],
   // E: dancing round — quicker note pairs circling the 5th, estampie feel
-  [[0,0,0.5],[2,0.5,0.5],[4,1,1],[4,2,0.5],[5,2.5,0.5],[6,3,1],[5,4,0.5],[4,4.5,0.5],[2,5,1],[1,6,0.5],[0,6.5,1.5]]
+  [[0,0,0.5],[2,0.5,0.5],[4,1,1],[4,2,0.5],[5,2.5,0.5],[6,3,1],[5,4,0.5],[4,4.5,0.5],[2,5,1],[1,6,0.5],[0,6.5,1.5]],
+  // F: pastoral call — leans on the 5th, comes to rest on the 3rd (open)
+  [[4,0,1.5],[3,1.5,0.5],[2,2,1],[4,3,1],[5,4,1.5],[4,5.5,0.5],[2,6,2]],
+  // G: step-dance — busy stepwise run that stops on the VII, wanting more
+  [[0,0,0.5],[1,0.5,0.5],[2,1,0.5],[0,1.5,0.5],[4,2,1],[3,3,0.5],[2,3.5,0.5],[1,4,1],[2,5,0.5],[1,5.5,0.5],[-1,6,2]],
+  // H: homecoming — leaps to the octave, then walks all the way home
+  [[2,0,1],[4,1,1],[7,2,2],[6,4,0.5],[5,4.5,0.5],[4,5,1],[0,6,2]]
 ];
-// Phrase order forms two answering verses so long games repeat less:
-// A B A' C B' | A D A' E B' — same bar-form skeleton, new middle lines.
-const PHRASE_ORDER = [0, 1, 2, 3, 4, 0, 5, 2, 6, 4];
+// Combat phrase order: two answering verses, A B A' C B' | A D A' E B'.
+const COMBAT_ORDER = [0, 1, 2, 3, 4, 0, 5, 2, 6, 4];
+
+// Peacetime: each age has its OWN tune — mode, tempo, melody and lead voices —
+// played once per lead, then a rest (AoE2's soundtrack breathes). Layers grow
+// with the age: Dark a lone voice, Feudal adds drum and harp chords, Castle a
+// voice in thirds on held notes.
+const AGE_TUNES = [
+  // Dark: sober and sparse — A B D B
+  { scale: 'dorian',     bpm: 76, order: [0, 1, 5, 1],    leads: ['flute', 'lute'], drums: false, harp: false, thirds: false },
+  // Feudal: bright folk dance — A' E A' C B'
+  { scale: 'mixolydian', bpm: 84, order: [2, 6, 2, 3, 4], leads: ['lute', 'flute'], drums: true,  harp: true,  thirds: false },
+  // Castle: stately major — F G F H
+  { scale: 'ionian',     bpm: 92, order: [7, 8, 7, 9],    leads: ['harp', 'flute'], drums: true,  harp: true,  thirds: true  }
+];
+const PEACE_REST_PHRASES = 2;
+function musicAge() {
+  return Math.min((typeof teamAge !== 'undefined' && teamAge && teamAge[myTeam]) || 0, AGE_TUNES.length - 1);
+}
+function musicKey(mood) { return mood === 'peace' ? 'peace' + musicAge() : mood; }
 
 // Drone roots per PHRASE (as scale degrees), parallel to MELODY_PHRASES:
-// i — VII — i — III — i for the original five; the high lament keeps the
-// tonic under it, the dance sits on VII for lift.
-const DRONE_ROOTS = [0, -1, 0, 2, 0, 0, -1];
+// i — VII — i — III — i for the first five; the high lament keeps the
+// tonic under it, the dance sits on VII for lift; G hangs on VII too.
+const DRONE_ROOTS = [0, -1, 0, 2, 0, 0, -1, 0, -1, 0];
+
+// Harp: a long ringing pluck with a quick bright overtone.
+function harpPluck(out, now, t0, freq, vol) {
+  tone(out, now, { type: 'sine', f0: freq, t0, dur: 2.4, vol, att: 0.003, detune: rnd(-2, 2) });
+  tone(out, now, { type: 'triangle', f0: freq * 2, t0, dur: 0.8, vol: vol * 0.25, att: 0.003 });
+  tone(out, now, { type: 'sine', f0: freq * 3, t0, dur: 0.3, vol: vol * 0.1, att: 0.002 });
+}
 
 // Plucked string: bright attack that decays fast, plus a soft octave partial.
 function lutePluck(out, now, t0, freq, vol) {
@@ -819,19 +939,26 @@ function fluteNote(out, now, t0, freq, dur, vol) {
   noiseHit(out, now, { t0, dur: Math.min(0.3, dur), vol: vol * 0.12, type: 'bandpass', f0: freq * 2, q: 3, att: 0.05 });
 }
 
-// Plays one phrase in the current mood; returns the phrase duration in
-// seconds so the scheduler knows when the next phrase is due (tempo varies).
-function playAmbientChord() {
+// Plays one phrase in the current mood starting at audio time `at`; returns
+// the phrase duration so the clock books the next one (tempo varies).
+let _phraseAt = 0, _phraseBeat = 0.7, _phraseDur = 5.6;
+let _orderPos = 0, _restLeft = 0, _playedKey = '';
+function playAmbientChord(at) {
   let moodName = detectMusicMood();
   let mood = MUSIC_MOODS[moodName] || MUSIC_MOODS.peace;
-  let beat = 60 / mood.bpm;
+  let peace = moodName === 'peace';
+  let tune = AGE_TUNES[musicAge()];
+  let beat = 60 / (peace ? tune.bpm : mood.bpm);
   let phraseDur = MUSIC_PHRASE_BEATS * beat;
-  if (window.audioMuted || window.musicEnabled === false) return phraseDur;
-  if (!audioCtx || gamePaused || gameOver || !gameStarted) return phraseDur;
+  if (!audioCtx) return phraseDur;
+  // A silent phrase also silences the held drone.
+  const rest = () => { droneTo(at, 0, 0); return phraseDur; };
+  if (window.audioMuted || window.musicEnabled === false) return rest();
+  if (gamePaused || gameOver || !gameStarted) return rest();
   // Hidden tab, SINGLE-PLAYER only: rAF halts the sim there, so music over a
   // frozen game is wrong. An MP host keeps simulating in hidden tabs (the
   // background interval in js/init.js) and its music should keep playing.
-  if (netRole === null && document.hidden) return phraseDur;
+  if (netRole === null && document.hidden) return rest();
   // Same self-heal as playSound: a context that re-suspended after a long
   // background stint would otherwise stay silent until the next click.
   if (audioCtx.state === 'suspended') {
@@ -839,61 +966,60 @@ function playAmbientChord() {
     if (audioCtx.state === 'suspended') return phraseDur; // no gesture yet — inaudible anyway
   }
 
-  _currentMoodName = moodName;
-  let bus = newPhraseBus();
-  let now = audioCtx.currentTime;
-  if (moodName === 'dragon') { playDragonTheme(bus, now, beat, ambientSeq++); return phraseDur; }
-  let phraseIdx = PHRASE_ORDER[ambientSeq % PHRASE_ORDER.length];
-  let verse = Math.floor(ambientSeq / PHRASE_ORDER.length);
-  ambientSeq++;
-  let scale = mood.scale;
+  let key = musicKey(moodName);
+  // A new mood or a new age: its tune starts from the top.
+  if (key !== _playedKey) { _orderPos = 0; _restLeft = 0; }
+  _currentKey = _playedKey = key;
+  _phraseAt = at; _phraseBeat = beat; _phraseDur = phraseDur;
+  if (peace && _restLeft > 0) { _restLeft--; return rest(); }
+  let bus = newPhraseBus(at);
+  let now = at;
+  if (moodName === 'dragon') { droneTo(at, 0, 0); playDragonTheme(bus, now, beat, ambientSeq++); return phraseDur; }
+  let order = peace ? tune.order : COMBAT_ORDER;
+  let pos = _orderPos % (peace ? order.length * tune.leads.length : order.length);
+  let phraseIdx = order[pos % order.length];
+  let verse = Math.floor(pos / order.length);
+  ambientSeq++; _orderPos++;
+  // Peace: once every lead has had the tune, rest, then start over.
+  if (peace && _orderPos % (order.length * tune.leads.length) === 0) _restLeft = PEACE_REST_PHRASES;
+  let scale = peace ? tune.scale : mood.scale;
 
-  // ---- Drone: root + open fifth, detuned ensemble, swelling under the phrase
-  let rootFreq = degFreq(DRONE_ROOTS[phraseIdx], scale) / 2; // an octave below melody
-  let filter = audioCtx.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.setValueAtTime(300, now);
-  let droneGain = audioCtx.createGain();
-  droneGain.gain.setValueAtTime(0.0001, now);
-  droneGain.gain.linearRampToValueAtTime(mood.droneVol, now + phraseDur * 0.25);
-  droneGain.gain.setValueAtTime(mood.droneVol, now + phraseDur * 0.8);
-  droneGain.gain.linearRampToValueAtTime(0.0001, now + phraseDur + 0.3);
-  filter.connect(droneGain);
-  droneGain.connect(bus);
-  [rootFreq, rootFreq * 1.5, rootFreq * 2].forEach(freq => {
-    [-5, 5].forEach(det => {
-      let osc = audioCtx.createOscillator();
-      osc.type = 'triangle';
-      osc.detune.value = det;
-      osc.frequency.setValueAtTime(freq, now);
-      osc.connect(filter);
-      osc.start(now);
-      osc.stop(now + phraseDur + 0.4);
-    });
-  });
+  // ---- Drone: held across phrases, glides to this phrase's root
+  droneTo(at, degFreq(DRONE_ROOTS[phraseIdx], scale) / 2, mood.droneVol); // an octave below melody
 
-  // ---- Melody: peace alternates flute/lute by verse; war marches on the
+  // ---- Melody: peace takes the age's lead for this verse; war marches on the
   // lute; danger puts the flute up high over the drums like a warning cry.
-  let useFlute = mood.drum === 'urgent' ? true : (mood.drum === 'march' ? false : verse % 2 === 0);
-  let mVol = (useFlute ? 0.028 : 0.035) * mood.melVol;
+  let lead = mood.drum === 'urgent' ? 'flute' : (mood.drum === 'march' ? 'lute' : tune.leads[verse]);
+  let mVol = { flute: 0.028, lute: 0.035, harp: 0.03 }[lead] * mood.melVol;
+  const play = (voice, t0, freq, dur, vol) => {
+    if (voice === 'flute') fluteNote(bus, now, t0, freq, dur, vol);
+    else if (voice === 'harp') harpPluck(bus, now, t0, freq, vol);
+    else lutePluck(bus, now, t0, freq, vol);
+  };
   MELODY_PHRASES[phraseIdx].forEach(([deg, beat_, len]) => {
-    // Humanize, but never before the phrase start: at audioCtx creation
-    // (first Start click) currentTime≈0 and a negative offset makes
-    // setValueAtTime throw, aborting startGame mid-way.
+    // Humanize, but never before the phrase start (a negative time throws).
     let t0 = Math.max(0, beat_ * beat + rnd(-0.015, 0.015));
     let freq = degFreq(deg, scale);
     let dur = len * beat * 0.95;
-    if (useFlute) fluteNote(bus, now, t0, freq, dur, mVol);
-    else lutePluck(bus, now, t0, freq, mVol);
+    play(lead, t0, freq, dur, mVol);
+    // Castle peace: a second voice a third below on held notes.
+    if (peace && tune.thirds && len >= 1.5) play(lead === 'flute' ? 'lute' : 'flute', t0 + 0.02, degFreq(deg - 2, scale), dur, mVol * 0.45);
     // Occasional grace note a step above, medieval ornament style (peace only —
     // combat phrases stay stark)
-    if (mood.drum === 'gentle' && len >= 1 && Math.random() < 0.18) {
-      let gf = degFreq(deg + 1, scale);
-      let gt = Math.max(0, t0 - 0.07);
-      if (useFlute) fluteNote(bus, now, gt, gf, 0.07, mVol * 0.5);
-      else lutePluck(bus, now, gt, gf, mVol * 0.4);
+    if (peace && len >= 1 && cosmeticRandom() < 0.18) {
+      play(lead, Math.max(0, t0 - 0.07), degFreq(deg + 1, scale), 0.07, mVol * 0.45);
     }
   });
+  // ---- Harp chords (Feudal+ peace): the drone's chord broken root-fifth-
+  // octave-fifth on every beat; the lute takes them when the harp leads.
+  if (peace && tune.harp) {
+    let root = DRONE_ROOTS[phraseIdx], aVol = mVol * 0.38;
+    for (let b = 0; b < MUSIC_PHRASE_BEATS; b++) {
+      let f = degFreq(root + [0, 4, 7, 4][b % 4], scale) / 2;
+      if (lead === 'harp') lutePluck(bus, now, b * beat, f, aVol * 0.8);
+      else harpPluck(bus, now, b * beat, f, aVol);
+    }
+  }
 
   // ---- Frame drum, per mood
   const thump = (t0, vol) => {
@@ -905,11 +1031,11 @@ function playAmbientChord() {
   };
   let dv = mood.drumVol || 1;
   if (mood.drum === 'gentle') {
-    // Soft heartbeat, sits out every third verse for air
-    if (verse % 3 !== 2) {
+    // Soft heartbeat (Feudal+), sits out the second verse for air
+    if (tune.drums && verse === 0) {
       for (let b = 0; b < MUSIC_PHRASE_BEATS; b += 2) {
         thump(b * beat, 0.03 * dv);
-        if (Math.random() < 0.5) edgeTap((b + 1.5) * beat, 0.012 * dv);
+        if (cosmeticRandom() < 0.5) edgeTap((b + 1.5) * beat, 0.012 * dv);
       }
     }
   } else if (mood.drum === 'march') {
@@ -999,11 +1125,11 @@ function playDragonTheme(bus, now, beat, seq) {
 // One-shot low horn hit for the peace→combat mood transition — the same
 // detuned-sawtooth recipe as the 'alert' war horn, but shorter and quieter
 // (it accompanies the music, it isn't an alert the player must act on).
-function moodStinger() {
+function moodStinger(at) {
   try {
     if (!audioCtx || window.audioMuted || window.musicEnabled === false) return;
-    const out = getMaster();
-    const now = audioCtx.currentTime;
+    const out = musicOut();
+    const now = Math.max(audioCtx.currentTime, at || 0);
     const fl = audioCtx.createBiquadFilter();
     fl.type = 'lowpass';
     fl.frequency.setValueAtTime(420, now);
@@ -1024,51 +1150,57 @@ function moodStinger() {
   } catch (_) {}
 }
 
+const _ambientClock = musicClock(at => playAmbientChord(at));
+const AGE_UP_FANFARE_S = 3.1;   // the 'victory' fanfare the age-up plays (js/logic.js)
 function startAmbientMusic() {
   if (window.musicEnabled === false) return;
-  if (ambientTimer) clearTimeout(ambientTimer);
   if (_moodWatcher) clearInterval(_moodWatcher);
-  ambientSeq = 0;
+  ambientSeq = 0; _orderPos = 0; _restLeft = 0; _playedKey = '';
   _moodHold = { war: 0, danger: 0, dragon: 0 };
-  _currentMoodName = 'peace';
-  const loop = () => {
-    let dur = playAmbientChord();
-    ambientTimer = setTimeout(loop, dur * 1000);
-  };
-  loop();
-  // Mood watcher: checks the battlefield twice a second. When the mood
-  // shifts (raid starts, battle won…) the current phrase fades over ~0.3s
-  // and the new mood's phrase begins immediately instead of waiting out the
-  // rest of the bar. Game over cuts the ambient entirely — gameLoop plays
-  // the victory/defeat piece on top of silence.
+  _currentKey = musicKey('peace');
+  _ambientClock.start();
+  // Watcher, twice a second: a mood change lands on the next BAR LINE (combat
+  // entry with a horn on that beat); leaving a fight lets it end first. An
+  // age-up rests under its fanfare, then the new age's tune enters. Game over
+  // cuts the ambient — gameLoop plays the victory/defeat piece on silence.
   _moodWatcher = setInterval(() => {
     if (!audioCtx || !gameStarted) return;
-    if (gameOver) { fadeOutPhrase(0.25); return; }
+    if (gameOver) { fadeOutPhrase(0.25); stopDrone(0.4); return; }
     if (gamePaused || window.audioMuted || window.musicEnabled === false) return;
     if (netRole === null && document.hidden) return; // SP hidden tab: sim frozen, hold the music
-    let m = detectMusicMood();
-    if (m !== _currentMoodName) {
-      // Entering combat from peace gets a one-shot horn stinger over the
-      // crossfade, so the mood change lands as an event instead of the
-      // soundtrack just quietly changing gears.
-      if ((_currentMoodName === 'peace' && (m === 'war' || m === 'danger')) || m === 'dragon') moodStinger();
-      fadeOutPhrase(0.3);
-      clearTimeout(ambientTimer);
-      ambientTimer = setTimeout(loop, 320);
+    let m = detectMusicMood(), key = musicKey(m);
+    if (key === _currentKey) return;
+    const t = audioCtx.currentTime + 0.05;
+    let at;
+    if (m === 'peace' && _currentKey.startsWith('peace')) {
+      fadeOutPhrase(0.8, t); droneTo(t, 0, 0);
+      at = t + AGE_UP_FANFARE_S;
+    } else if (m === 'peace') {
+      // Leaving a fight settles: the combat phrase plays out (a booked one is
+      // dropped), the drone eases to peace level, and a bar of air follows.
+      const end = _phraseAt > t ? _phraseAt : _phraseAt + _phraseDur;
+      fadeOutPhrase(0.5, end);
+      if (_drone) droneTo(end, _drone.root, MUSIC_MOODS.peace.droneVol);
+      at = end + 4 * 60 / AGE_TUNES[musicAge()].bpm;
+    } else {
+      const bar = 4 * _phraseBeat;
+      at = _phraseAt + Math.max(0, Math.ceil((t - _phraseAt) / bar)) * bar;
+      if ((_currentKey.startsWith('peace') && (m === 'war' || m === 'danger')) || m === 'dragon') moodStinger(at);
+      fadeOutPhrase(0.2, at);
     }
+    _currentKey = key;                               // pending: don't re-trigger before it lands
+    _ambientClock.next = at;
   }, 500);
 }
 
 function stopAmbientMusic() {
-  if (ambientTimer) {
-    clearTimeout(ambientTimer);
-    ambientTimer = null;
-  }
+  _ambientClock.stop();
   if (_moodWatcher) {
     clearInterval(_moodWatcher);
     _moodWatcher = null;
   }
   fadeOutPhrase(0.25);
+  stopDrone(0.4);
 }
 
 // ---- GAME OVER MUSIC ----
@@ -1096,21 +1228,22 @@ const GAMEOVER_TUNES = {
     ]
   }
 };
-let _gameOverTimer = null;
 let _goSeq = 0;
 let _goBus = null;
-function playGameOverPhrase(cfg) {
+let _goCfg = null;
+const _gameOverClock = musicClock(at => playGameOverPhrase(_goCfg, at));
+function playGameOverPhrase(cfg, at) {
   let beat = 60 / cfg.bpm;
   let phraseDur = MUSIC_PHRASE_BEATS * beat;
-  if (!audioCtx || window.audioMuted || window.soundMode === 'off') return phraseDur;
+  if (!audioCtx || window.audioMuted || window.musicEnabled === false) return phraseDur;
   if (audioCtx.state === 'suspended') {
     tryResumeAudio(); // self-heal like playSound
     if (audioCtx.state === 'suspended') return phraseDur;
   }
-  let now = audioCtx.currentTime;
+  let now = at;
   let bus = audioCtx.createGain();
   bus.gain.value = 1;
-  bus.connect(getMaster());
+  bus.connect(musicOut());
   _goBus = bus;
   let phrase = cfg.phrases[_goSeq % cfg.phrases.length];
   _goSeq++;
@@ -1155,20 +1288,12 @@ function playGameOverPhrase(cfg) {
 function startGameOverMusic(wonFlag) {
   stopGameOverMusic();
   _goSeq = 0;
-  let cfg = wonFlag ? GAMEOVER_TUNES.victory : GAMEOVER_TUNES.defeat;
+  _goCfg = wonFlag ? GAMEOVER_TUNES.victory : GAMEOVER_TUNES.defeat;
   playSound(wonFlag ? 'victory' : 'defeat'); // intro stinger
-  const loop = () => {
-    let dur = playGameOverPhrase(cfg);
-    _gameOverTimer = setTimeout(loop, dur * 1000);
-  };
-  // Theme enters as the intro finishes
-  _gameOverTimer = setTimeout(loop, wonFlag ? 3100 : 4700);
+  _gameOverClock.start(wonFlag ? 3.1 : 4.7);       // theme enters as the intro finishes
 }
 function stopGameOverMusic() {
-  if (_gameOverTimer) {
-    clearTimeout(_gameOverTimer);
-    _gameOverTimer = null;
-  }
+  _gameOverClock.stop();
   if (_goBus && audioCtx) {
     try {
       let g = _goBus.gain, t = audioCtx.currentTime;

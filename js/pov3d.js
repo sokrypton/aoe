@@ -1039,22 +1039,27 @@
       round(g, TREE_BARK, e.x + 0.8, e.y + 0.82, 0.1, 0.1, 0, 9 / HPX, 12, true, TREE_CUT); // stump with a pale cut top
       return hut;
     },
-    // Same hut in dark timber; in front, an ore cart heaped with gold nuggets
+    // Same hut in dark timber; in front, an ore cart heaped with gold ore
     // and a pair of boulders (drawBuilding MCAMP), laid out clear of each other.
     MCAMP(g, e){
       campHut(g, e, '#7a6a55|planks', '#55483a|shingles');                        // (the 2D art's dark timber mine shed)
       if (!e.complete) return;
-      // Inside the tile, in front of the hut (z > 0.625): a two-wheeled handcart
-      // heaped with gold nuggets — the tray rides on the axle between two big
-      // wheels, its shafts resting on the ground ahead so it stands level-ish.
-      const L = 0.17, Wd = 0.11, wr = 0.1, c = { x: e.x + 0.3, z: e.y + 0.8 }, y0 = wr, y1 = y0 + 0.11;
-      boxAt(g, '#6e5138', c.x - L, c.z - Wd, c.x + L, c.z + Wd, y0, y1);
-      for (const [dx, dz] of [[-0.08, -0.05], [0, -0.05], [0.08, -0.04], [-0.04, 0.05], [0.05, 0.05]])
-        ball(g, '#e8b90f', c.x + dx, y1 + 0.01, c.z + dz, 0.05);
+      // Inside the tile, in front of the hut (z > 0.625): a two-wheeled handcart (the trade cart's build, small) — an
+      // open plank tray riding on the axle between two spoked wheels, gold ore heaped in it (the deposits' rocks), its
+      // shafts resting on the ground ahead. drawBuilding MCAMP draws the same.
+      const L = 0.17, Wd = 0.11, wr = 0.1, t = 0.015, wh = 0.08, c = { x: e.x + 0.3, z: e.y + 0.8 }, y0 = wr;
+      boxAt(g, '#5c4430', c.x - L, c.z - Wd, c.x + L, c.z + Wd, y0, y0 + t);                                    // the floor
+      for (const [x0, z0, x1, z1] of [[-L, -Wd, L, -Wd + t], [-L, Wd - t, L, Wd], [-L, -Wd, -L + t, Wd], [L - t, -Wd, L, Wd]])
+        boxAt(g, topped('#6e5138', '#7d5f42'), c.x + x0, c.z + z0, c.x + x1, c.z + z1, y0 + t, y0 + t + wh, 'hull');   // its walls
+      for (const [dx, dz, r, col] of [[-0.08, -0.04, 0.05, '#d1a017'], [0.06, -0.04, 0.045, '#c99815'], [0, 0.03, 0.055, '#e8b90f'], [-0.06, 0.05, 0.04, '#e8b90f'], [0.08, 0.04, 0.04, '#d1a017']])
+        rock(g, col, c.x + dx, c.z + dz, r, r * 1.6).position.y = y0 + t;                                       // the gold heaped in it
       for (const sz of [-1, 1]) {
-        log(g, '#3a2f24', c.x, c.z + sz * (Wd + 0.02), 0.035, wr, false, wr); // wheel beside the tray, on the axle
-        const sz2 = c.z + sz * (Wd - 0.02); // shaft: tray front → ground
-        pole(g, '#6e5138', [c.x - L, y0 + 0.02, sz2], [e.x + 0.03, 0.0125, sz2], 0.0125);
+        const wg = new THREE.Group(); wg.position.set(c.x, wr, c.z + sz * (Wd + 0.025)); g.add(wg);              // a spoked wheel beside the tray, on the axle
+        const rim = new THREE.Mesh(own(new THREE.TorusGeometry(wr - 0.012, 0.012, 6, 20)), mat('#5a4630')); rim.userData.hullGeo = rim.geometry; wg.add(rim);
+        wheel(wg, 0, 0, 0, 0.025, 0.03, '#5a4630', '#74593a');
+        for (let i = 0; i < 3; i++) { const a = i * Math.PI / 3, dx = Math.cos(a) * (wr - 0.015), dy = Math.sin(a) * (wr - 0.015); pole(wg, '#74593a', [-dx, -dy, 0], [dx, dy, 0], 0.007); }
+        const sz2 = c.z + sz * (Wd - 0.02);                                                                      // a shaft: the tray's front → the ground
+        pole(g, '#6e5138', [c.x - L, y0 + 0.03, sz2], [e.x + 0.03, 0.0125, sz2], 0.0125);
       }
       for (const [x, z, r, col] of [[0.8, 0.8, 0.15, '#9d9d9d'], [0.6, 0.96, 0.07, '#8c8c8c']]) rock(g, col, e.x + x, e.y + z, r);
     },
@@ -1296,8 +1301,7 @@
     if (color) f.mesh.setColorAt(f.n, _c.set(color));
     f.tiles[f.n++] = putTile;
   }
-  // A fixed 0..1 value per tile and channel n: natural variety that never flickers.
-  const tileHash = (x, y, n) => { let v = (x * 73856093) ^ (y * 19349663) ^ (n * 83492791); v = Math.imul(v ^ (v >>> 13), 1274126177); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; };
+  // (tileHash: render-terrain — the per-tile variety is shared with the 2D)
   // Rebuild every instance list from the map (fog: explored tiles, like the ground).
   function refreshFeatures(){
     for (const k in feat) feat[k].n = 0;
@@ -1436,11 +1440,7 @@
   // each pointed along its true 3D flight line. The sim steps them 20 times
   // a second; between steps each is carried on along its path (never past
   // its aim point) so a fast arrow glides instead of hopping.
-  // The 3D flight is flat — a low arc, ARROW_ARC px of rise per tile of run (the 2D map's 7 px/tile reads well
-  // top-down; seen in the round it lobbed the arrows) — so the bow draws nearly level. The angle an arrow leaves the
-  // bow at: the flight below climbs (eH − sH + π·A)/HPX over its D-tile run, A = ARROW_ARC·D px — the same for every
-  // shot but for the small launch-to-impact drop (taken at the archer's range, 4 tiles).
-  const ARROW_ARC = 2.4, ARROW_LAUNCH = Math.atan2((8 - 12 + Math.PI * ARROW_ARC * 4) / HPX, 4);
+  // (ARROW_ARC, ARROW_LAUNCH: render-units — the bow's aim is shared with the 2D)
   let arrowTick = -1, arrowT0 = 0, _d;
   // Where each arrow is drawn from (viewer-side, kept per projectile): a building's, the point of its footprint nearest
   // the target; a unit's, the unit.
@@ -1539,8 +1539,6 @@
       pole(leg, SHEEP.legCol, [0, 0, 0], [0, -SHEEP.leg, 0], 0.02);
       blob(leg, SHEEP.hoof, 0, -SHEEP.leg - 0.01, 0, 0.026, 0.02, 0.024);
     });
-    const tail = pivot(body, -0.25, cy + 0.03, 0, 'tail');
-    blob(tail, wool, -0.03, 0, 0, 0.045);
     const neck = pivot(body, 0.2, cy + 0.03, 0, 'neck'), hx = 0.12, hy = 0.035; // a big cartoon head
     blob(neck, '#3f3b34', hx, hy, 0, 0.1, 0.115, 0.09);
     eyes(neck, hx, hy, 0, 0.1, 0.115, 0.09, 0.55, 0.35, 0.55, 0.027, true);
@@ -1712,11 +1710,10 @@
     const bob = G.bob * Math.abs(Math.sin(2 * a.phase)) * a.gait;
     let reach = 0; // bear pounce: fore legs reach, hind brace
     if (e.utype === 'sheep') {
-      // sheepAnim (render-units, shared with the 2D art): the trot, breathing, the look round, grazing and the tail
+      // sheepAnim (render-units, shared with the 2D art): the trot, breathing, the look round, grazing
       const P = sheepAnim(e, a, dt, a.moved, aTick);
       b.position.y = P.bob; b.scale.y = 1 + P.breath;
       neck.rotation.z = P.neck; neck.rotation.y = P.look;
-      model.getObjectByName('tail').rotation.y = P.tail;
       legs.forEach((l, i) => { l.userData.y0 ??= l.position.y; l.rotation.z = P.legs[i].ang; l.position.y = l.userData.y0 + P.legs[i].up; });
       return;
     } else if (e.utype === 'dragon') {
@@ -1825,11 +1822,11 @@
   }
   // ---- Characters in 3D (design stage: __povCharMock) ----
   // One kit for every unit, from the 2D rig's numbers (drawBodyLayer /
-  // drawUpperBody, unitEquipment): art px, x forward, y down from the ground
+  // soldierEquip): art px, x forward, y down from the ground
   // point, z lateral — the same ax/ah/ar mapping as the animals.
   // Characters are drawn upright in the art (billboard-true), so heights use PX, not the iso HPX.
   const chh = (y, k = 1) => (5 - y) * UNIT_SCALE * k / PX;
-  const SKIN = '#edc9a0', HAIR = '#b58e3d', LEG = '#5b3a1e', BOOT = '#3a2412', STEEL = '#a7abb0', GOLD = '#daa520';
+  const SKIN = HUMAN_COL.skin, HAIR = HUMAN_COL.hair, LEG = HUMAN_COL.leg, BOOT = HUMAN_COL.boot, STEEL = '#a7abb0', GOLD = '#daa520'; // (HUMAN_COL: render-units, both views)
   const at = (x, y, z = 0) => [ax(x), chh(y), ar(z)];
   // A cartoon limb: one bendy tube along a quadratic curve a → (bent through c) → b,
   // capped round at both ends; t0..t1 draws just a stretch of it (a sleeve).
@@ -1864,9 +1861,10 @@
     const fpTag = (grp, n, self) => (self ? [grp] : grp.children.slice(n)).forEach(o => o.traverse(c => { c.userData.fpHide = true; }));
     const g0 = g.children.length;
     // Legs: a tube from inside the hip down to the boot (astride: bowed out over the barrel).
-    if (o.riding) for (const s of [-1, 1]) { // thigh curving out round the barrel, shin down the flank to the stirrup (rider() seats this on the horse)
-      tube(g, LEG, P(0, -3, s * 2), P(3.6, 0.5, s * 9.2), P(2, 5.6, s * 7.6), ar(1.15)); // short cartoon legs, as standing
-      blob(g, BOOT, ...P(2.8, 6, s * 7.6), ar(1.8), ar(1), ar(1.3));
+    if (o.riding) for (const s of [-1, 1]) { // thigh curving out round the barrel, shin down the flank to the stirrup (rider() seats this on the horse); riderLeg
+      const lg = riderLeg(s, o.riding);
+      tube(g, LEG, P(...lg.hip), P(...lg.ctrl), P(...lg.foot), ar(1.15)); // short cartoon legs, as standing
+      blob(g, BOOT, ...P(...lg.boot), ar(1.8), ar(1), ar(1.3));
     }
     // o.feet: [[x, lift], [x, lift]] per side (art px forward / up off the ground) — the
     // knee bends forward toward the foot (a tube, so it stays one piece).
@@ -1902,7 +1900,7 @@
       const hem = prof[0][1], geo = own(new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(ar(r), chh(y) - chh(hem))), 20));
       const m = new THREE.Mesh(geo, mat(tc)); m.position.set(0, chh(hem) + Y, 0); m.userData.hullGeo = geo; U.add(m);
     } else if (o.armor) { // armor over the tunic (armorMat: the 2D layout, team colour kept)
-      blob(U, armorMat(o.armor, o.metal || FORGE[1], tc), ...P(0, -6), ar(4.6), ar(5), ar(4.2)).userData.body = 'torso';
+      blob(U, armorMat(o.armor, o.metal || FORGE_STEEL[1], tc), ...P(0, -6), ar(4.6), ar(5), ar(4.2)).userData.body = 'torso';
     } else blob(U, tc, ...P(0, -6), ar(4.6), ar(5), ar(4.2)).userData.body = 'torso'; // torso
     fpTag(U, u0);
     let hn = H.children.length;
@@ -1947,7 +1945,7 @@
     }
     if (hat === 'hood') blob(H, tc, ...P(-0.8, -16), ar(4.4), ar(3), ar(4.4)); // a cap over the crown and back, the face left clear
     if (hat === 'spiked') { blob(H, '#b9bec6', ...P(-0.3, -15.8), ar(4.4), ar(3.6), ar(4.4)); const sp = new THREE.Mesh(own(new THREE.ConeGeometry(ar(0.9), ar(3.4), 8)), mat('#b9bec6')); sp.position.set(...P(-0.3, -20.6)); sp.userData.hullGeo = sp.geometry; H.add(sp); }
-    if (o.feather) { // Fletching's tell (drawHelmet): a tall light-team plume pinned upright in the cap's crown, leaning back, a quill up the middle
+    if (o.feather) { // Fletching's tell: a tall light-team plume pinned upright in the cap's crown, leaning back, a quill up the middle
       const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(-2.2, 3.6, -1.1, 7.6); sh.quadraticCurveTo(-0.1, 9.4, 1.4, 7.9); sh.quadraticCurveTo(1.7, 3.6, 0.9, 0.2);
       const geo = own(new THREE.ExtrudeGeometry(sh, { depth: 0.5, bevelEnabled: false, curveSegments: 6 }).translate(0, 0, -0.25).scale(ar(1), ar(1), ar(1)));
       const f = new THREE.Mesh(geo, mat(lightOf(tc))); f.position.set(...P(-1.2, -18.2)); f.rotation.set(o.flutter ? o.flutter[1] : 0, 0, 0.25 + (o.flutter ? o.flutter[0] : 0)); f.userData.hullGeo = geo; f.userData.hullW = HULL * 0.5; H.add(f); // o.flutter [lean, twist]
@@ -1966,7 +1964,7 @@
     if (o.plume) blob(H, teamColorLight ? teamColorLight(myTeam) : tc, ...P(-1.5, -20), ar(1.2), ar(4.5), ar(1));
     fpTag(H, hn);
   }
-  // drawBigSword in the round: a flat blade (parallel edges tapering to a
+  // The 2D sword in the round: a flat blade (parallel edges tapering to a
   // point), a flat gold crossguard in the blade's own plane, a leather grip,
   // no pommel. Built with the grip's middle at the origin — that's where the
   // fist closes — then stood along `dir`. tier (attack techs): brighter
@@ -2000,7 +1998,11 @@
   function kiteShield(g, at3, tc){ // white kite with a team cross, face out to the side
     const sh = new THREE.Shape([[-4.2, 5.5], [-5.6, 0], [0, -8.5], [5.6, 0], [4.2, 5.5]].map(([a, b]) => new THREE.Vector2(ar(a), ar(b)))); // flat top, point down
     const geo = own(new THREE.ExtrudeGeometry(sh, { depth: ar(1), bevelEnabled: false }));
-    const m = new THREE.Mesh(geo, [mat('#f5f5f0'), mat('#7a5230')]); m.position.set(...at3); m.userData.hullGeo = geo; g.add(m);
+    // the back is the slab's own bottom cap, bare wood (both views) — a separate plane just behind it z-fought into a
+    // white/wood flicker. Extrude's cap group holds the bottom cap's triangles first, then the top's (the face).
+    const cap = geo.groups[0], half = cap.count / 2;
+    geo.groups[0] = { start: cap.start, count: half, materialIndex: 2 }; geo.groups.push({ start: cap.start + half, count: half, materialIndex: 0 });
+    const m = new THREE.Mesh(geo, [mat('#f5f5f0'), mat('#7a5230'), mat(SHIELD_BACK)]); m.position.set(...at3); m.userData.hullGeo = geo; g.add(m);
     boxAt(m, tc, -ar(0.85), ar(1), ar(0.85), ar(1.25), -ar(6.5), ar(5), false); boxAt(m, tc, -ar(4.4), ar(1), ar(4.4), ar(1.25), ar(1), ar(2.7), false); // the cross, on the face
     return m;
   }
@@ -2046,12 +2048,12 @@
   // other arm 9px out, clear of the rider's leg and the horse's neck.
   // pose 'strike': the sword swung forward-down past the horse's head.
   function rider(tc, hat, shield, pose){
-    const r = new THREE.Group(), side = shield ? -1 : 1, strike = pose === 'strike';
-    const hand = strike ? [9, -9, side * 6.5] : [6.5, -7, side * 6];
-    const off = shield ? [1.5, -6.5, 7.8] : [4.5, -6, -2.5];                     // shield grip, or the reins
-    human(r, tc, { hat, riding: true, hands: side > 0 ? [off, hand] : [hand, off] });
-    sword(r, at(...hand), 0, strike ? [0.93, -0.3, side * 0.2] : [0.5, 0.84, side * 0.2]);
-    if (shield) kiteShield(r, at(1, -6.5, 9), tc).rotation.y = 0.35;           // face mostly outward, a little forward
+    const r = new THREE.Group(), strike = pose === 'strike';
+    const hand = strike ? [9, -9, 6.5] : [6.5, -7, 6];
+    const off = shield ? [1.5, -6.5, -7.8] : [4.5, -6, -2.5];                     // shield grip, or the reins
+    human(r, tc, { hat, riding: 1, hands: [off, hand] });
+    sword(r, at(...hand), 0, strike ? [0.93, -0.3, 0.2] : [0.5, 0.84, 0.2]);
+    if (shield) kiteShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI - 0.35;           // face mostly outward, a little forward
     r.position.set(ax(-0.8), (20 - 6) * UNIT_SCALE / PX, 0);
     return r;
   }
@@ -2115,7 +2117,7 @@
     } });
     return g;
   }
-  // drawTradeCartBody (CART_DIM ×1.32): an open team-walled bed on two spoked
+  // The trade cart (×1.32; render-units' cartRig2D projects this same model): an open team-walled bed on two spoked
   // wheels, the grain sack while loaded, an ox yoked ahead on shafts — built from
   // rigid parts on their own hinges (as the ram), so the living cart and its
   // wreck are the same pieces. pose: roll (wheel turn, rad), step (the ox's walk
@@ -2159,7 +2161,7 @@
       wheel(wg, 0, 0, 0, R(1.6), R(1.5), G('#5a4630'), G('#74593a'));
       for (let i = 0; i < 3; i++) { const a = i * Math.PI / 3, dx = Math.cos(a) * R(WR - 0.8), dy = Math.sin(a) * R(WR - 0.8); pole(wg, G('#74593a'), [-dx, -dy, 0], [dx, dy, 0], R(0.45)); }
     }
-    // The ox (OX_PROFILE): heavy barrel, shoulder hump, stocky tube legs stepping
+    // The ox (×1.2): heavy barrel, shoulder hump, stocky tube legs stepping
     // with the walk, the head low on a thick neck nodding, big horns, the yoke.
     const oxRoot = new THREE.Group(); oxRoot.position.set(X(L + 13), 0, 0); g.add(oxRoot);
     const K = 1.2, O = (x, y, z = 0) => [ax(x, K), chh(y, K), ar(z, K)], q = v => ar(v, K), coat = G('#8d6b47');
@@ -2258,7 +2260,7 @@
       }
     return L;
   }
-  // The Wheelbarrow / Heavy Plow rig (BARROW_DIM, drawBarrow): handles from the
+  // The Wheelbarrow / Heavy Plow rig (render-units' barrowRig2D draws it in 2D): handles from the
   // villager's hands (9.2px up, ±3.1) forward to a wheel 22px ahead. The barrow
   // carries a wooden tray and the load in it; the plow swaps the tray for a
   // steel share cutting the soil. World px along +x, heights up from the ground.
@@ -2328,8 +2330,7 @@
     tool(g, tl, at((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 1.5), [0.66, 0.75, 0], up); return g;
   };
   // Each load's half-height (art px, at the carried 1.5× size): it sits on the head's top (−18) or the ground by this.
-  const LOAD_SIT = { wood: 2.85, stone: 2.4, gold: 2.85, food: 2.85, wool: 3.4, berries: 1.8 };
-  const CARRY_HANDS = [[0.4, -17.1, -5.6], [0.4, -17.1, 5.6]]; // under the load's edges, either side of the head
+  // (LOAD_SIT, CARRY_HANDS: render-units — the carry is shared with the 2D)
   const carrier = (tc, what) => { // the load resting on the head, hands up steadying it at the sides
     const g = new THREE.Group(), hs = CARRY_HANDS;
     human(g, tc, { hat: 'hair', hands: hs });
@@ -2341,124 +2342,9 @@
   // opposite the legs; the body bobs twice a stride. chop: the hands travel
   // an arc out in front of the chest on the tool side — a slow wind-up, a
   // fast strike — the axe along the arc's radius (the arms' extension).
-  const STRIDE = 2.6;
-  function walkPose(t){
-    const leg = ph => { const u = ((ph % 1) + 1) % 1;
-      return u < 0.5 ? [STRIDE * (1 - 4 * u), 0] : [STRIDE * (-1 + 4 * (u - 0.5)), 1.6 * Math.sin((u - 0.5) * 2 * Math.PI)]; };
-    const L = leg(t), R = leg(t + 0.5), bob = 0.55 * Math.abs(Math.cos(2 * Math.PI * t));
-    const arm = (fx, s) => [1 - fx * 0.9, -2.6 + Math.abs(fx) * 0.25, s * 5.6];
-    return { feet: [L, R], hands: [arm(L[0], -1), arm(R[0], 1)], bob };
-  }
-  // chop: a horizontal sweep (how a real axe fells a trunk) — wound back and a
-  // little up behind the tool-side shoulder, then whipped round through the
-  // front to strike at waist height, slightly downhill; the torso twists with
-  // it. yaw φ: 0 = straight ahead, + = round to the tool side (+z), behind at ~115°.
-  const CHOP_R = 8.6;
-  // The lower fist sits ON the handle, a fist's width below the upper one toward
-  // the butt (dir: world-style, y up; art y runs down).
-  const onHandle = (grip, dir, d = 2.2) => { const L = Math.hypot(...dir); return [grip[0] - dir[0] / L * d, grip[1] + dir[1] / L * d, grip[2] - dir[2] / L * d]; };
-  function chopYaw(t){ // 70% slow wind-up to 140°, 30% fast strike round to −20°
-    return t < 0.7 ? -20 + 160 * (1 - Math.cos(Math.PI * t / 0.7)) / 2 : 140 - 160 * Math.pow((t - 0.7) / 0.3, 1.6);
-  }
-  // The whole body chops: feet planted apart, lead foot forward; the torso
-  // winds back toward the tool side (weight on the back foot, leaning back),
-  // then unwinds hard through the front (weight onto the lead foot, leaning
-  // into the cut, a small dip at impact); the head counter-turns to keep the
-  // eyes on the trunk.
-  function chopPose(t){
-    const f = chopYaw(t) * Math.PI / 180, c = Math.cos(f), s = Math.sin(f);
-    const wind = Math.max(0, s), strike = t >= 0.7 ? (t - 0.7) / 0.3 : 0;
-    const y = -8 - 2.2 * wind;                                                              // raised a little in the wind-up
-    const grip = [CHOP_R * c, y, CHOP_R * s], dir = [c, -0.18 + 0.7 * wind, s], low = onHandle(grip, dir);
-    const yaw = -0.85 * Math.max(-0.35, Math.min(2.45, f));                                // a big twist with the swing (+z side = back)
-    const lean = -0.16 * wind + 0.26 * Math.sin(Math.PI * Math.min(1, strike * 1.2));
-    const dip = 1.1 * Math.max(0, Math.sin(Math.PI * (strike - 0.55) / 0.45));
-    return { hands: [low, grip], dir, edge: [s, 0, -c], grip,
-      torso: { yaw, lean, dip }, headYaw: -yaw * 0.85, feet: [[1.6 + 0.4 * strike, 0], [-1.4, 0.25 * wind]] };
-  }
-  // Overhead strike (mine / build): the hands ride an arc in a plane out on the
-  // tool side (clear of the head) — raised back over the shoulder with the body
-  // arching back, then driven down to the ground ahead, bending over into it
-  // with a knee dip. θ: degrees above horizontal.
-  // Overhead power swing, straight down the middle (mine, build): both fists on
-  // the handle on the body's centre line (so neither arm crosses the body), the
-  // hands riding an arc in front of the face from overhead — the tool cocked
-  // back over the head — down to the blow ahead; the body arches back as it's
-  // raised and bends into the blow with a knee dip. θ: the hands' arc angle,
-  // φ: the handle's (it leads the arc by `cock` at the top, `lead` at the blow).
-  function overheadPose(t, { top, low, R, cock, lead, split = 0.6 }){
-    const raise = t < split ? easeC(t / split) : 1 - Math.pow((t - split) / (1 - split), 1.7), strike = t >= split ? (t - split) / (1 - split) : 0;
-    const th = (low + (top - low) * raise) * Math.PI / 180, ph = th + (lead + (cock - lead) * raise) * Math.PI / 180;
-    const d = [Math.cos(ph), Math.sin(ph), 0], grip = [1.5 + R * Math.cos(th), -9.5 - R * Math.sin(th), 0];
-    const butt = [grip[0] - d[0] * 2.2, grip[1] + d[1] * 2.2, 0];
-    const lean = -0.18 * raise + 0.4 * Math.sin(Math.PI * Math.min(1, strike * 1.15) / 2) * (1 - Math.max(0, strike - 0.85) * 3);
-    return { hands: [butt, grip], grip, dir: d, edge: [Math.sin(ph), -Math.cos(ph), 0],
-      torso: { yaw: 0, lean, dip: 1.4 * Math.max(0, Math.sin(Math.PI * (strike - 0.5) / 0.5)) }, headYaw: 0, feet: [[1.8, 0], [-1.4, 0]] };
-  }
-  const minePose = t => overheadPose(t, { top: 74, low: -26, R: 10, cock: 40, lead: -12 });   // the point driven down into the rock
-  const splitPose = t => overheadPose(t, { top: 70, low: -30, R: 10, cock: 40, lead: -14 });  // a felled trunk: the axe brought straight down onto it
-  const buildPose = t => overheadPose(t, { top: 62, low: -8, R: 7.4, cock: 34, lead: 8, split: 0.55 }); // the handle level at the blow: the face lands flat on the post
-  function strikePose(t, top, low, split = 0.65, pvY = -9){
-    const th = (t < split ? low + (top - low) * (1 - Math.cos(Math.PI * t / split)) / 2 : top - (top - low) * Math.pow((t - split) / (1 - split), 1.5)) * Math.PI / 180;
-    const c = Math.cos(th), sn = Math.sin(th), PV = [2, pvY, 2.6 + 2.9 * Math.max(0, sn)], R = 6.6; // out beside the head when raised, toward the middle at the strike
-    const grip = [PV[0] + R * c, PV[1] - R * sn, PV[2]], lowH = onHandle(grip, [c, sn, 0]);
-    const raise = Math.max(0, sn), strike = t >= split ? (t - split) / (1 - split) : 0;
-    const lean = -0.14 * raise + 0.36 * Math.sin(Math.PI * Math.min(1, strike * 1.15) / 2) * (1 - Math.max(0, strike - 0.8) * 2);
-    const dip = 1.2 * Math.max(0, Math.sin(Math.PI * (strike - 0.5) / 0.5));
-    return { hands: [grip, lowH], dir: [c, sn, 0], edge: [0, -1, 0], grip, torso: { yaw: -0.5 - 0.2 * raise, lean, dip }, headYaw: 0.1, feet: [[1.4, 0], [-1.2, 0]] }; // the far (left) fist up the handle: its arm crosses well ahead of the stomach
-  }
-  // Scythe: the blade always points the same way — toward the cutting side,
-  // square to the snath (it never flips). It mows on one stroke only, swept
-  // from the tool side across the front with the blade skimming the ground
-  // (45% of the cycle), then carried back empty and a little lifted.
-  function mowPose(t){
-    const cut = t < 0.45, u = cut ? t / 0.45 : (t - 0.45) / 0.55, ease = (1 - Math.cos(Math.PI * u)) / 2;
-    const f = (cut ? 62 - 124 * ease : -62 + 124 * ease) * Math.PI / 180, c = Math.cos(f), sn = Math.sin(f);
-    const lift = cut ? 0 : 1.6 * Math.sin(Math.PI * u);
-    const grip = [7.6 * c, -5.2 - lift, 7.6 * sn], dir = [c, -0.9 + lift * 0.12, sn], low = onHandle(grip, dir);
-    return { hands: [low, grip], dir, edge: [sn, 0, -c], grip, torso: { yaw: -0.85 * f, lean: 0.12, dip: cut ? 0.4 : 0.2 }, headYaw: 0.6 * f, feet: [[1, 0], [-1, 0]] };
-  }
-  // Bow saw, felling: laid on its side against the trunk — the blade level at
-  // the waist SAW_X ahead, teeth into the bark, the frame tipped back toward
-  // the villager (SAW_TIP from flat, so the arch clears his body) — stroked side
-  // to side along the blade, both hands on the middle of the bow.
-  const SAW_X = 14.5, SAW_Z = 12.2, SAW_Y = -6, SAW_TIP = 1.35; // the saw's near end at z = SAW_Z − 4 (art px)
-  function sawPose(t){ const off = 3 * Math.sin(2 * Math.PI * t);
-    // both fists round the frame's top bar (bowSaw: 6.5px above the blade), either side of its middle
-    const bow = 6.4, bx = SAW_X - Math.sin(SAW_TIP) * bow, by = SAW_Y - Math.cos(SAW_TIP) * bow;
-    return { off, hands: [[bx, by, SAW_Z - 12.7 - off], [bx, by, SAW_Z - 10.3 - off]], torso: { yaw: 0.1 * off - 0.15, lean: 0.2, dip: 0.5 }, feet: [[1.6, 0], [-1.2, 0]] }; }
+  const walkPose = villagerWalkPose;                                             // (render-units: one walk for both views)
   const easeC = u => (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, u)))) / 2;
   const mix = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
-  // forage: one hand at a time reaches into the bush, plucks (a small tug) and
-  // drops the berry into the other, cupped at the belly; the hands trade each pick.
-  const FORAGE_REACH = [[9.4, -4.6, -2.4], [9.8, -6.8, 2.6]];
-  function foragePose(t){
-    const s = t < 0.5 ? 1 : -1, u = (t % 0.5) / 0.5, i = s > 0 ? 1 : 0;
-    const e = u < 0.45 ? easeC(u / 0.45) : u < 0.6 ? 1 - 0.1 * (u - 0.45) / 0.15 : 0.9 * (1 - easeC((u - 0.6) / 0.4));
-    const hands = [];
-    hands[i] = mix([6.3, -7.6, s * 1.2], FORAGE_REACH[i], e);
-    hands[1 - i] = [6.6, -6.2, -s * 1];                                                       // cupped, catching
-    return { hands, berry: u > 0.5 && u < 0.95 ? hands[i] : null, torso: { yaw: -0.14 * s * e, lean: 0.16 + 0.14 * e, dip: 0.3 }, headYaw: 0.1 * s * e, feet: [[1, 0], [-0.6, 0]] };
-  }
-  // butcher: bent right over the carcass, one hand pinning it, the knife
-  // hand stabbing down in quick jabs and drawing back slowly (the 2D jab clock).
-  function butcherPose(t){
-    const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
-    const kh = mix([7, -9, 2.4], [9.4, -5.6, 1.4], jb);
-    return { hands: [[10, -4.6, -2.8], kh], knife: kh, kdir: [0.45 - 0.1 * jb, -1, -0.1], jab: jb,
-      torso: { yaw: -0.1, lean: 0.5 + 0.08 * jb, dip: 1.6 + 0.4 * jb }, headYaw: 0, feet: [[2.4, 0], [-1.8, 0]] };
-  }
-  // repair: hammering a wall, the mallet choked up in one fist: the arm lifts
-  // it up and back over the shoulder (out on the tool side, clear of the head),
-  // then brings it down and forward so the face meets the planks square at
-  // shoulder height (handle near upright); the free hand braces on the wall.
-  const WALL_X = 10.5, REP_HIT = [5.6, -4.5, 6.2], REP_UP = [1.6, -14, 9.5];
-  function repairPose(t){
-    const w = t < 0.6 ? easeC(t / 0.6) : 1 - Math.pow((t - 0.6) / 0.4, 1.6);        // 1 = wound up over the shoulder
-    const phi = (10 - 65 * w) * Math.PI / 180, grip = mix(REP_HIT, REP_UP, w);
-    return { hands: [[WALL_X - 0.6, -9.5, -3], grip], grip, dir: [Math.sin(phi), Math.cos(phi), 0], edge: [Math.cos(phi), -Math.sin(phi), 0],
-      torso: { yaw: 0.12 * w - 0.08, lean: 0.14 - 0.12 * w, dip: 0.2 }, headYaw: 0.1, feet: [[1.4, 0], [-1, 0]] };
-  }
   // drop-off: a throw — a dip at the knees, then both arms drive the load up and
   // forward off the head; it flies on in an arc (tumbling) onto
   // the pile while the arms follow through and come back down. It flies lengthwise,
@@ -2479,53 +2365,10 @@
     return { hands: [hand(-1), hand(1)], load: ld, landed: t >= LAND, torso: { yaw: 0, lean: 0.3 * drive - 0.08 * dip, dip: 1.4 * dip },
       feet: [[1.4 * drive + 0.2, 0], [-0.8, 0.9 * drive]] };
   }
-  // fight: a lunging knife jab from a guard, the shoulder turning into it.
-  const FIGHT_X = 18.5;
-  function fightPose(t){
-    const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
-    const kh = [6.2 + 4.6 * jb, -8.4 - 0.4 * jb, 2.6 - 1.4 * jb];
-    return { hands: [[4.2, -11.5, -3.2], kh], knife: kh, kdir: [1, 0.12, -0.08], jab: jb,
-      torso: { yaw: -0.25 + 0.5 * jb, lean: 0.08 + 0.22 * jb, dip: 0.4 + 0.4 * jb }, headYaw: 0.2 - 0.3 * jb, feet: [[1.8 + 1.4 * jb, 0], [-1.6, 0]] };
-  }
   // idle: breathing, the weight shifting, a slow look round.
-  function idlePose(t){
-    const b = Math.sin(2 * Math.PI * t), br = 0.5 + 0.5 * Math.sin(8 * Math.PI * t);
-    return { hands: [[1 + 0.3 * b, -2.4 - 0.2 * br, -5.6], [1 - 0.3 * b, -2.4 - 0.2 * br, 5.6]], torso: { yaw: 0.06 * b, lean: 0.02, dip: 0.25 * br }, headYaw: 0.5 * Math.sin(2 * Math.PI * t + 0.6), feet: [[0.4, 0], [-0.3, 0]] };
-  }
-  // flee: a run — long strides with high knees, leaning into it; the elbows stay
-  // bent and each fist pumps opposite its leg: up and in to the chest in front,
-  // down past the hip behind.
-  function runPose(t){
-    const S = 3.8, leg = ph => { const u = ((ph % 1) + 1) % 1;
-      return u < 0.5 ? [S * (1 - 4 * u), 0] : [S * (-1 + 4 * (u - 0.5)), 3.4 * Math.sin((u - 0.5) * 2 * Math.PI)]; };
-    const L = leg(t), R = leg(t + 0.5), bob = 1.1 * Math.abs(Math.cos(2 * Math.PI * t));
-    // Each upper arm swings from the shoulder (a: + forward), the elbow held at ~90°.
-    const arm = s => { const sw = s * Math.cos(2 * Math.PI * t), a = sw > 0 ? 0.85 * sw : 0.95 * sw;
-      const el = [4.5 * Math.sin(a), -8 + 4.5 * Math.cos(a), s * 5.3];
-      return { el, hand: [el[0] + 4.2 * Math.cos(a), el[1] - 4.2 * Math.sin(a), s * (4.6 - 0.8 * Math.max(0, sw))] }; };
-    const A = [arm(-1), arm(1)];
-    return { feet: [L, R], hands: A.map(x => x.hand), elbows: A.map(x => x.el), bob, torso: { yaw: 0.05 * Math.sin(2 * Math.PI * t), lean: 0.26, dip: 0 }, headYaw: 0 };
-  }
-  // death (drawCorpse's staged sequence, in the round), by age in ms: struck —
-  // the head and shoulders snap back, arms flung out; the knees buckle and the
-  // hips drop; he goes over backward off the heels, accelerating, the legs
-  // straightening as he lays out; a small bounce on impact, the arms flopping
-  // out to the sides and the head rolling over. Blood seeps out from under
-  // him and dries brown; at `skel` the body gives way to cartoon bones (the
-  // bear's), which shrink away by `life`.
-  const DIE = { hit: 260, buckle: 700, land: 1200 };
-  function villagerDeathPose(age){
-    const cl = v => Math.max(0, Math.min(1, v));
-    const hit = easeC(age / DIE.hit), buck = easeC((age - 150) / (DIE.buckle - 150)), u = cl((age - 480) / (DIE.land - 480)), flop = easeC((age - DIE.land + 60) / 380);
-    let fall = (Math.PI / 2) * u * u;                                                           // accelerating, as a body falls
-    if (age > DIE.land && age < DIE.land + 280) fall *= 1 - 0.06 * Math.sin((age - DIE.land) / 280 * Math.PI); // the bounce
-    else if (age >= DIE.land + 280 && age < DIE.land + 440) fall *= 1 - 0.022 * Math.sin((age - DIE.land - 280) / 160 * Math.PI); // and a smaller one
-    const rest = s => [1, -2.4, s * 5.6], fling = s => [-1.5, -15.5, s * 8.6], limp = s => [2.2, -5, s * 6.4], trail = s => [-1.2, -17.5, s * 7.5], splay = s => [-1, -11.5, s * 10.5];
-    const hand = s => mix(mix(mix(mix(rest(s), fling(s), hit), limp(s), buck), trail(s), u), splay(s), flop);
-    return { fall, hands: [hand(-1), hand(1)], headYaw: 0.7 * flop - 0.25 * Math.sin(Math.PI * u),
-      torso: { yaw: 0.12 * hit * (1 - u) + 0.35 * Math.sin(Math.PI * u), lean: -0.35 * hit * (1 - buck) + 0.3 * buck * (1 - u), dip: 3 * buck * (1 - u * u) + 0.3 * u }, // twisting as he goes over
-      feet: [[1.4 * buck * (1 - u) + 0.3, 0], [-0.6, 0.8 * hit * (1 - buck)]] };
-  }
+  const idlePose = villagerIdlePose;
+  // (runPose: render-units — the flee is shared with the 2D)
+  // (villagerDeathPose, DIE: render-units — the death is shared with the 2D)
   // The villager's bones, lying on his back where the body fell (along −x from
   // the heels): a big skull with big sockets, a spine, two fat ribs, a pelvis,
   // arms flung out, legs — the fewest bones that read (the bear's idiom).
@@ -2570,7 +2413,7 @@
   }
   // Swings hold near the handle's end (the lower hand at the butt): the head
   // rides a wider, faster arc, as a real power swing.
-  const GRIP_OUT = 3.6, HEAD_REACH = 10 + GRIP_OUT;
+  const HEAD_REACH = 10 + GRIP_OUT;
   // Clash check: the gap (art px) from a point of radius r to the torso and head spheres; < 0 = overlap.
   function bodyGap(pt, r){
     const d = (c, cr) => Math.hypot(pt[0] - c[0], pt[1] - c[1], pt[2] - c[2]) - cr - r;
@@ -2595,19 +2438,10 @@
     return out.join('\n');
   };
   // ---- Military (foot): militia, spearman, archer ----
-  // Gear by age and the Blacksmith lines, as unitEquipment decides it in 2D:
+  // Gear by age and the Blacksmith lines, shared with the 2D (soldierEquip):
   // helmet and shield by age; the torso by the armor line (tunic → scale →
   // chain); weapon steel by the attack line; the archer's fletching pin and
   // Castle-age quiver.
-  const FORGE = ['#8f8a7d', '#a8adb3', '#c6cdd8'];
-  function soldierEquip(ut, age, atk, arm, fletch){
-    const v = { metal: FORGE[atk], weapon: atk, torso: arm >= 2 ? 'chain' : arm >= 1 ? 'scale' : null, helmet: 'hood', shield: null, feather: false, quiver: false };
-    if (ut === 'militia') { v.helmet = age >= 2 ? 'norman' : age === 1 ? 'kettle' : 'hood'; v.shield = age >= 2 ? 'kite' : age === 1 ? 'round' : null; }
-    if (ut === 'spearman') v.helmet = age >= 2 ? 'norman' : 'kettle';
-    if (ut === 'archer') { v.feather = fletch; v.quiver = age >= 2; }
-    if (ut === 'scout' || ut === 'knight') { v.helmet = ut === 'knight' ? 'great' : age >= 2 ? 'spiked' : 'hood'; v.shield = ut === 'knight' ? 'kite' : age >= 2 ? 'round' : null; }
-    return v;
-  }
   // Armor worn over the tunic, painted on the torso: overlapping scale rows or a ring mesh, in the forge's steel.
   // The 2D armor read (drawBodyLayer): SCALE is forge-steel scallop rows over
   // the lower torso under a hard edge, the shoulders and chest left team colour;
@@ -2666,92 +2500,6 @@
     tube(q, '#7a5230', [0, -ar(4), 0], [0, 0, 0], [0, ar(4), 0], ar(1.5));
     for (const z of [-0.8, 0.8]) { pole(q, '#8b6a3a', [0, ar(3.6), ar(z)], [0, ar(5.6 + z * 0.25), ar(z)], ar(0.35), 'line'); if (fletched) blob(q, lightOf(tc), 0, ar(5.6 + z * 0.25), ar(z), ar(0.9)); } // shafts peeking out; the tech's light-team fletching
   }
-  const mixP = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
-  // A sword swing through key poses [phase, hand, blade dir, the way its edge faces (null: as the sword sits unkeyed, so
-  // a rest pose matches the idle one)] at t: each edge squared to its blade and chained to agree with the one before (a
-  // blade looks the same turned over, so it never rolls through a half turn between two poses).
-  const restEdge = dir => new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), V3(dir).normalize()));
-  function swingPose(K, t){
-    // (compared with the one before carried along the blade's own swing: a cut turns its edge with it, forward to down)
-    let prev = null, pd = null; const E = K.map(k => { const d = V3(k[2]).normalize(), e = k[3] ? V3(k[3]) : restEdge(k[2]);
-      e.addScaledVector(d, -e.dot(d)).normalize();
-      if (prev && e.dot(prev.clone().applyQuaternion(new THREE.Quaternion().setFromUnitVectors(pd, d))) < 0) e.negate();
-      prev = e; pd = d; return e.toArray(); });
-    let i = 0; while (i < K.length - 2 && t > K[i + 1][0]) i++;
-    const u = easeC(Math.max(0, Math.min(1, (t - K[i][0]) / (K[i + 1][0] - K[i][0]))));
-    return { hand: mixP(K[i][1], K[i + 1][1], u), dir: mixP(K[i][2], K[i + 1][2], u), edge: mixP(E[i], E[i + 1], u) };
-  }
-  // The sword swing both views share: render-units' swordSwingCurve/swordSwingArc (the 2D art's overhead chop — a slow
-  // windup over the shoulder, a whip-fast strike, a settle, the recovery) in the unit's own side plane: the grip orbits
-  // from its guard hand0 (art px), the blade turns as the 2D one does (horizontal at the strike, never into the ground).
-  // zOut: how far the raised hand swings out to the sword side (in the round the blade would pass through the head).
-  // t: the phase, the hit at SWORD_HIT. Returns the hand, blade dir and edge, and w / c: windup / strike 0..1.
-  function swordArc(t, hand0, base, zOut){
-    const ssa = swordSwingCurve(((t % 1) + 1) % 1), A = swordSwingArc(ssa, base);
-    const th = A.rot, w = Math.max(0, Math.min(1, (ssa - 0.5) / 0.65)), c = Math.max(0, Math.min(1, (0.5 - ssa) / 1.85));
-    return { hand: [hand0[0] + A.ox, hand0[1] + A.oy, hand0[2] + zOut * w], dir: [Math.sin(th), Math.cos(th), 0], edge: [Math.cos(th), -Math.sin(th), 0], w, c };
-  }
-  const along = (p, d, k) => { const L = Math.hypot(...d); return [p[0] + d[0] / L * k, p[1] - d[1] / L * k, p[2] + d[2] / L * k]; }; // art pt + k px along a world-style dir
-  // Poses by unit and action: { hands, torso, headYaw, feet, weapon: {...} }.
-  function militiaPose(kind, t, eq){
-    const two = !eq.shield, shieldHand = [5.6, -6.6, -6.4]; // out from the body and below the chin, so a turning head clears the shield's top
-    if (kind === 'attack') { // the 2D art's overhead chop (swordArc: render-units' swordSwingArc), from its guard
-      const { hand, dir, edge, w, c } = swordArc(t, two ? [7.6, -6.2, 0.4] : [5.8, -6.4, 4.6], 4.2, 4.5);
-      return { hands: two ? [along(hand, dir, -2), hand] : [shieldHand, hand], weapon: { hand, dir, edge },
-        // weight back on the windup, into the strike (with a shield up: tighter, or the head swings into its top edge)
-        torso: { yaw: (two ? -0.12 : 0) - (two ? 0.5 : 0.3) * w + (two ? 0.35 : 0.15) * c, lean: -0.12 * w + (two ? 0.3 : 0.16) * c, dip: (two ? 1.2 : 0.7) * c },
-        headYaw: 0.3 * w - 0.15 * c, feet: [[1.2 + 2.4 * c, 0], [-1.5, 0.4 * w]], shieldHand };
-    }
-    const walk = kind === 'walk' ? walkPose(t) : null, L = carryLife(kind, t);
-    const hand = addP(two ? [7.6, -6.2, 0.4] : [5.8, -6.4, 4.6], L.d), dir = two ? [0.72, 0.68 + L.tilt, 0] : [0.45 + L.tilt, 0.88, 0.1];
-    const hands = two ? [along(hand, dir, -2), hand] : [walk ? walk.hands[0] : shieldHand, hand];
-    if (eq.shield) hands[0] = addP(shieldHand, [0, L.d[1] * 0.8, 0]);
-    const it = idlePose(t).torso; // two-handed: the body turned a little toward the sword side, so the far arm reaches round the chest
-    return { hands, weapon: { hand, dir }, torso: two ? { ...it, yaw: it.yaw - 0.12 } : it, headYaw: kind === 'idle' ? idlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0, shieldHand: hands[0] };
-  }
-  function spearmanPose(kind, t, eq){
-    if (kind === 'attack') { // spear levelled, driven forward in a lunge and drawn back
-      const th = t < 0.3 ? easeC(t / 0.3) * 0.25 : t < 0.5 ? 0.25 - 1.25 * easeC((t - 0.3) / 0.2) : -1 + easeC((t - 0.5) / 0.5);
-      const d = -th * 6, dir = [1, 0.06, -0.24];                                               // + forward: a deep thrust
-      const rear = [2 + d, -7.2, 5], front = [6.4 + d, -8.2, 3.6];            // the shaft held out past the hip, angled in toward the target
-      const lunge = Math.max(0, -th);
-      return { hands: [front, rear], weapon: { hand: rear, dir }, torso: { yaw: -0.5 + 0.2 * lunge - 0.15 * Math.max(0, th) * 4, lean: 0.08 + 0.5 * lunge, dip: 1.8 * lunge }, headYaw: 0.2, feet: [[2 + 3.2 * lunge, 0.6 * Math.max(0, Math.sin(Math.PI * lunge))], [-1.8 - 0.6 * lunge, 0]] };
-    }
-    const walk = kind === 'walk' ? walkPose(t) : null, L = carryLife(kind, t), hand = addP([5, -6.5, 3.6], L.d), dir = [0.3 + L.tilt, 0.95, 0]; // the spear tip sways with the step
-    return { hands: [walk ? walk.hands[0] : [1, -2.4, -5.6], hand], weapon: { hand, dir }, torso: idlePose(t).torso, headYaw: kind === 'idle' ? idlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0 };
-  }
-  function archerPose(kind, t, eq){
-    if (kind === 'attack') { // side-on: the bow arm out, nock, draw to the cheek, hold, loose (the string hand flicks back), recover
-      // anchored at the outside of the cheek (the head's a sphere), and the bow straight out AHEAD of that anchor: the arrow
-      // between them lies along the facing — the way the loosed one flies (bow off to the side, it pointed ~40° astray)
-      const bowH = [9.6, -12, 3.6], nock = [5.8, -12.6, 3.9], cheek = [2.6, -12.2, 4.2], after = [0.4, -11.6, 6];
-      const draw = t < 0.15 ? 0 : t < 0.55 ? easeC((t - 0.15) / 0.4) : t < 0.75 ? 1 : 0;
-      const loose = t >= 0.75 ? Math.max(0, 1 - (t - 0.75) / 0.12) : 0;                    // the snap after the release
-      // after the loose the string hand fetches the next arrow — over the shoulder from the Castle quiver, else from the hip — and nocks it
-      const src = eq.quiver ? [-2.2, -16.8, 3.2] : [0.6, -2.8, 6.4];
-      let hand = t < 0.75 ? mixP(nock, cheek, draw) : t < 0.85 ? mixP(after, cheek, loose) : t < 0.92 ? mixP(after, src, easeC((t - 0.85) / 0.07)) : mixP(src, nock, easeC((t - 0.92) / 0.08));
-      bowH[1] -= 0.8 * Math.sin(Math.PI * Math.min(1, (t - 0.75) / 0.12)) * (t >= 0.75 && t < 0.87 ? 1 : 0); bowH[0] += 0.6 * loose * (t >= 0.75 ? 1 : 0); // the bow arm kicks
-      // aimed up along the flight the arrow takes (ARROW_LAUNCH): the draw pitched about the shoulder, so the nocked
-      // arrow points the way the loosed one flies
-      const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 13), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
-        return [2.2 + dx * c - u * sn, -13 - (dx * sn + u * c), q[2]]; };
-      const bh = aimed(bowH); hand = aimed(hand);
-      bowH[0] = bh[0]; bowH[1] = bh[1];
-      return { hands: [bowH, hand], bow: { grip: bowH, pull: hand, draw, arrow: t < 0.75, fetched: t >= 0.92 }, torso: { yaw: -0.75 - 0.1 * draw, lean: 0.05 - 0.08 * draw, dip: 0.3 + 0.3 * draw }, headYaw: 0.75 + 0.1 * draw, feet: [[1.8, 0], [-1.8, 0]] };
-    }
-    const walk = kind === 'walk' ? walkPose(t) : null, L = carryLife(kind, t), bowH = addP([3.2, -4.8, -5.8], L.d);
-    return { hands: [bowH, walk ? walk.hands[1] : [1, -2.4, 5.6]], bow: { grip: bowH, pull: bowH, draw: 0, arrow: false }, torso: idlePose(t).torso, headYaw: kind === 'idle' ? idlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0 };
-  }
-  // Life at rest and on the march, shared: at rest the weight rolls from foot to
-  // foot and the weapon hand drifts; marching, the carried hands bounce with each
-  // step and swing a little with the stride.
-  function carryLife(kind, t){
-    const s = Math.sin(2 * Math.PI * t), c = Math.cos(2 * Math.PI * t);
-    if (kind === 'walk') return { d: [0.35 * s, -0.55 * Math.abs(c), 0], tilt: 0.06 * s };
-    return { d: [0.25 * s, 0.3 * Math.sin(4 * Math.PI * t), 0.15 * c], tilt: 0.04 * c, feet: [[0.4 + 0.45 * s, 0], [-0.3 + 0.45 * s, 0.15 * Math.max(0, -s)]] };
-  }
-  const addP = (a, d) => a.map((v, i) => v + d[i]);
-  const SOLDIER_POSE = { militia: militiaPose, spearman: spearmanPose, archer: archerPose };
   // One posed foot soldier (lab + game). Death uses the villager's staged fall,
   // the weapon (and shield) dropped beside the body.
   function soldierFrame(g, body, ut, kind, t, eq, tc, opt){
@@ -2787,26 +2535,13 @@
   // ---- Cavalry: scout, knight ----
   // (the horse's gaits: horseGait, js/render-units.js — one gait for both views)
   const HORSE_COAT = { scout: ['#8b5a2b', '#3f2810', '#6e4520'], knight: ['#e9e6de', '#9a948a', '#b3ada1', '#b8b2a6'] };
-  // The rider's sword arm, by action: at rest the blade up by the neck; the attack the 2D rider's overhead chop
-  // (swordArc), out on the sword side, clear of the horse's neck.
-  function riderArm(kind, t){
-    const rest = [[6.5, -7, 6], [0.5, 0.84, 0.2]];
-    if (kind === 'die') return [[3.2, -6.5, 6.2], [-0.9, -0.25, 0.3]];   // limp: the sword trailing back from a slack hand
-    if (kind !== 'attack') return rest;
-    const p = swordArc(t, rest[0], 3.4, 0);                                // the 2D rider's overhead chop, from the saddle
-    return [p.hand, [p.dir[0], p.dir[1], rest[1][2]], p.edge];
-  }
   function riderFig(tc, eq, kind, t, gait = {}, bare = false){ // bare: no sword or shield (dropped) // rider()'s seat and kit, with gear by age and an animated sword arm
-    const r = new THREE.Group(), side = eq.shield ? -1 : 1, [h, d, ed] = riderArm(kind, t);
-    const jog = kind === 'gallop' ? 0.9 * Math.sin(2 * Math.PI * t) : kind === 'walk' ? 0.35 * Math.sin(4 * Math.PI * t) : 0; // the hands ride with the horse
-    const hand = [h[0], h[1] + jog, side * h[2]], dir = [d[0], d[1], side * d[2]], edge = ed ? [ed[0], ed[1], side * ed[2]] : null;
-    const off = eq.shield ? [1.5, -6.5 + jog * 0.6, 7.8] : [6 + 5 * (gait.nod || 0), -6.8 + jog * 0.6, -3.9]; // the rein hand follows the head                   // shield grip, or the reins (held out past the belly)
-    const lean = kind === 'gallop' ? 0.12 : 0, sw = kind === 'attack' ? (q => 0.25 * q.c - 0.2 * q.w)(swordArc(t, [0, 0, 0], 3.4, 0)) : 0; // (leaning back on the windup, into the cut)
-    human(r, tc, { hat: eq.helmet, armor: eq.torso, metal: eq.metal, riding: true, hands: side > 0 ? [off, hand] : [hand, off], torso: { lean: lean + Math.max(0, sw), yaw: side * sw } });
+    const r = new THREE.Group(), o = riderPose(kind, t, eq, gait), { hand, dir, edge } = o.weapon;   // (render-units: shared with the 2D)
+    human(r, tc, { hat: eq.helmet, armor: eq.torso, metal: eq.metal, riding: o.riding, hands: o.hands, torso: o.torso });
     if (!bare) weaponTag(r, () => sword(r, at(...hand), eq.weapon, dir, edge));
     if (bare) {}
-    else if (eq.shield === 'kite') kiteShield(r, at(1, -6.5, 9), tc).rotation.y = 0.35;
-    if (eq.shield === 'round') roundShield(r, at(1, -6.5, 9), tc).rotation.y = Math.PI / 2 - 0.35;
+    else if (eq.shield === 'kite') kiteShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI - 0.35;
+    if (eq.shield === 'round') roundShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI / 2 - 0.35;
     r.position.set(ax(-0.8), (20 - 6) * UNIT_SCALE / PX, 0);
     return r;
   }
@@ -2826,12 +2561,11 @@
   function cavalryFrame(g, ut, kind, t, eq, tc){
     const [coat, mane, legC, muzzle] = HORSE_COAT[ut];
     if (kind === 'die') { // the horse stumbles (fore legs buckling, head dropping), rolls onto its side and kicks; the rider is thrown clear
-      const age = t * DIE_LAB.life, { skel, life } = DIE_LAB, cl = v => Math.max(0, Math.min(1, v)), side = eq.shield ? -1 : 1;
+      const age = t * DIE_LAB.life, { skel, life } = DIE_LAB, cl = v => Math.max(0, Math.min(1, v));
       const h = chh(-6.2, 1.35), rideY = (20 - 6) * UNIT_SCALE / PX, land = [ax(-0.8) + 0.25, -0.72];   // barrel centre height; where the rider ends up
       const tg = new THREE.Group(); tg.userData.fade = age < skel ? 1 : cl((life - age) / 1500); g.add(tg);
-      const wz = side * 6.8; // the sword hand's side
-      droppedItem(tg, age, [6.5, -21, wz], it => sword(it, [0, ar(2.7), 0], eq.weapon, [0, 1, 0]), [0.2, 0, side * 0.98], 0.3);
-      if (eq.shield) { const F = [0.2, 0, -0.98]; droppedItem(tg, age, [1, -20.5, 9], it => { if (eq.shield === 'kite') kiteShield(it, [0, ar(8.5), 0], tc).rotation.y = Math.atan2(-F[0], -F[2]); else roundShield(it, [0, ar(4.8), 0], tc).rotation.y = Math.atan2(F[2], -F[0]); }, [0.15, 0, 0.99], 0.35); }
+      droppedItem(tg, age, [6.5, -21, 6.8], it => sword(it, [0, ar(2.7), 0], eq.weapon, [0, 1, 0]), [0.2, 0, 0.98], 0.3);   // from the sword hand, the right
+      if (eq.shield) { const F = [0.15, 0, -0.99]; droppedItem(tg, age, [1, -20.5, -9], it => { if (eq.shield === 'kite') kiteShield(it, [0, ar(8.5), 0], tc).rotation.y = Math.atan2(-F[0], -F[2]); else roundShield(it, [0, ar(4.8), 0], tc).rotation.y = Math.atan2(F[2], -F[0]); }, F, 0.35); }
       if (age < skel) {
         const st = easeC(age / 300), u = cl((age - 250) / 550);
         let rot = (Math.PI / 2.1) * u * u; if (age > 800 && age < 1100) rot *= 1 + 0.07 * Math.sin((age - 800) / 300 * Math.PI);
@@ -2841,7 +2575,7 @@
         horseKit(roll, coat, mane, legC, tc, muzzle || legC, pose);
         roll.position.y = 0.12 * Math.sin(Math.min(rot, Math.PI / 2));
         // The rider leaves the saddle as the horse goes down: an arc off its falling side, turning over to land on his back.
-        const v = cl((age - 150) / 650), rf = riderFig(tc, eq, 'die', 0, {}, true); g.add(rf);
+        const v = cl((age - 150) / 650), rf = riderFig(tc, eq, 'die', v, {}, true); g.add(rf);
         let lie = (Math.PI / 2) * v ** 1.3; if (age > 800 && age < 1050) lie *= 1 - 0.06 * Math.sin((age - 800) / 250 * Math.PI);
         rf.position.set(ax(-0.8) + 0.25 * v, rideY * (1 - v) + 0.18 * Math.sin(Math.PI * v), land[1] * v); rf.rotation.x = -lie;
       } else { // the bones where the bodies came to rest: the horse's spine at its rolled barrel, the rider's along his landing line
@@ -3209,13 +2943,13 @@
     const face = neck.children.filter(o => o !== skull), legs = [0, 1, 2, 3].map(i => model.getObjectByName('leg' + i));
     const puffs = []; model.traverse(o => { if (o.name === 'puff') puffs.push(o); });
     puffs.sort((a, b) => b.position.z - a.position.z || b.position.y - a.position.y); // up-facing (once lying) first
-    return { face, legs, puffs, sk, band: model.getObjectByName('band'), tail: model.getObjectByName('tail'), core: model.getObjectByName('core'), skull };
+    return { face, legs, puffs, sk, band: model.getObjectByName('band'), core: model.getObjectByName('core'), skull };
   }
   function harvestPose(model, bones, left){
     const wool = Math.max(0, Math.min(1, (left - 0.12) / 0.88)), bare = left < 0.12;
     bones.puffs.forEach((p, i) => { p.visible = i >= Math.round(bones.puffs.length * (1 - wool)); });
     bones.legs.forEach(o => { o.visible = left > 0.9; }); // the legs go first
-    for (const o of [bones.core, bones.tail, ...bones.face]) o.visible = !bare;
+    for (const o of [bones.core, ...bones.face]) o.visible = !bare;
     bones.band.visible = wool > 0.5;
     bones.sk.visible = bare; bones.skull.visible = bare;
   }
@@ -3227,7 +2961,7 @@
     const d = V3(b).sub(V3(a)), n = new THREE.Vector3(-d.z, 0, d.x).normalize().multiplyScalar(r * 1.05);
     for (const e of [a, b]) for (const k of [-1, 1]) blob(g, col, e[0] + n.x * k, e[1], e[2] + n.z * k, r * 1.55);
   }
-  // The ox's bones, sized from the ox itself (OX_PROFILE ×1.2: barrel ±8px long,
+  // The ox's bones, sized from the ox itself (×1.2: barrel ±8px long,
   // 5.4 tall; legs at ±4.4–5px; the head 12px ahead), lying on its side as the
   // rolled body did: legs out toward +z, ribs over the flank, the horned skull.
   function oxSkeleton(){
@@ -3319,7 +3053,7 @@
       const v = RIG_DIRV[c.dir] || [1, 0]; vilCorpses.set(c.id, r = { obj: null, key: '', blood, yaw: -Math.atan2(v[1], v[0]) });
     }
     // the lab's death on the corpse's age: the fall (≤1.8s, 50ms steps), then the bones (or the weathered wreck)
-    const ut = c.utype, mil = MIL3D.has(ut), opt = mil ? { unit: ut, eq: milEquip(ut, c.team), noBlood: true } : { noBlood: true };
+    const ut = c.utype, mil = MIL3D.has(ut), opt = mil ? { unit: ut, eq: ut === 'ram' || ut === 'tradecart' ? null : soldierGear(c), noBlood: true } : { noBlood: true };
     if (ut === 'tradecart') opt.load = (c.carrying || 0) > 0;                  // the corpse keeps the load it died with
     const bones = age >= CORPSE_SKEL, lab = bones ? DIE_LAB.skel + 10 : Math.min(age, 1800), step = bones ? -1 : Math.floor(lab / 50);
     if (RIG_UNITS(ut)) rigPose(r, 'die', lab / DIE_LAB.life, c.female, opt, teamColor(c.team), DIE_LAB.life / 50); // 50ms steps, blended
@@ -4026,12 +3760,9 @@
   // (clones share geometry). Team colour is swapped per clone, so poses are
   // shared across teams. Viewer-only: reads sim state, never writes it.
   const VIL_TC = '#2d6bd1', VIL_STEPS = 16; // pose steps per cycle (timing is smooth — aTick — and more steps multiply the cache)
-  // Work cycles in cycles per authored tick (aTick, 30/s): the 3D swings
-  // run slower and fuller than the 2D jab.
-  const VIL_RATE = { split: 0.021, chop: 0.022, saw: 0.034, mine: 0.021, build: 0.03, repair: 0.034, farm: 0.019, plow: 0.03, forage: 0.019, butcher: 0.036, fight: 0.042, idle: 0.0085 };
-  const workPhase = (e, k) => { const r = aTick * VIL_RATE[k] + e.id * 0.37; return ((r % 1) + 1) % 1; };
-  const WALK_TILES = { walk: 0.62, carry: 0.62, barrow: 0.66, plow: 0.5, flee: 1.0 }; // ground covered per stride cycle
   const WALK_IN = 0.9; // tiles per game-second a villager steps to its work spot at (a walk)
+  const workPhase = (e, k) => villagerWorkPhase(e, k, aTick), carriedLoad = villagerLoad;
+  const villagerPose = (e, v) => villagerAction(e, v.stride, aTick);                // (render-units: the action, one reading for both views)
   const vilCache = new Map(), vilRefs = new Map(), bladePush = [], VIL_CACHE_VERTS = 1.5e6;
   let cacheVerts = 0;
   let bakesLeft = 0;
@@ -4107,67 +3838,24 @@
       if (!vilRefs.get(k)) { old.traverse(o => { if (o.geometry && (o.geometry.userData.baked || o.geometry.userData.own)) o.geometry.dispose(); }); cacheVerts -= old.userData.verts; vilCache.delete(k); } }
     return f;
   }
-  const VIL_TOOL = { chop: 'axe', mine_gold: 'pick', mine_stone: 'pick', build: 'mallet', farm: 'scythe' };
-  function carriedLoad(e){
-    if (e.carryType !== 'food') return e.carryType;
-    return e.foodSrc === 'wheat' ? 'food' : e.foodSrc === 'meat' ? 'wool' : 'berries';
-  }
-  // What a villager is doing, as a lab action (the 2D rig's reading of the same state).
-  function villagerPose(e, v){
-    const moving = isUnitMoving(e), up = hasUpgrade.bind(null, e.team), opt = {};
-    if (moving) {
-      const farmWalk = e.task === 'farm' && e.gatherX >= 0 && Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
-      let kind = 'walk';
-      // the load shows only while HAULING along a path (as 2D's carryShow) — not in the last press into contact, where
-      // the first bite already lands
-      // (a hauler on its way to drop it — task 'return' — keeps it in hand right up to the throw, the last step too)
-      if (e.carrying > 0 && !farmWalk && (e.path.length > 0 || e.task === 'return')) { kind = up('wheelbarrow') ? 'barrow' : 'carry'; opt.load = carriedLoad(e); }
-      else if (farmWalk && up('heavy_plow')) kind = 'plow';
-      else if (isRetreatingUnit(e)) kind = 'flee';
-      else if (VIL_TOOL[e.task]) opt.tool = VIL_TOOL[e.task];
-      if (kind === 'barrow' && !(e.carrying > 0)) opt.load = null;
-      return { kind, t: ((v.stride / WALK_TILES[kind]) % 1 + 1) % 1, opt };
-    }
-    let atSite = true, bt = null;
-    if (e.task === 'chop' || e.task === 'mine_gold' || e.task === 'mine_stone') atSite = e.gatherX >= 0 && atGatherTile(e, e.gatherX, e.gatherY);
-    else if (e.task === 'build' && e.buildTarget) { bt = entitiesById.get(e.buildTarget); atSite = !!bt && atBuildSite(e, bt); }
-    else if (e.target) atSite = inActionRange(e);
-    let kind = 'idle';
-    if (e.task === 'return' && e.carrying > 0) { opt.load = carriedLoad(e); return { kind: 'carry', t: 0.25, opt }; } // at the drop, the load still in hand till the throw
-    if ((e.task || e.target) && atSite) {
-      if (e.task === 'chop') { const felled = e.gatherX >= 0 && map[e.gatherY] && map[e.gatherY][e.gatherX].res <= 60; // a cut tree lies felled: split the trunk on the ground
-        kind = felled ? 'split' : up('bow_saw') ? 'saw' : 'chop'; opt.up = { double: up('double_bit_axe') }; }
-      else if (e.task === 'mine_gold' || e.task === 'mine_stone') { kind = 'mine'; opt.up = { bright: e.task === 'mine_gold' && up('gold_mining') }; }
-      else if (e.task === 'build') kind = bt && bt.complete ? 'repair' : 'build';
-      else if (e.task === 'farm') { kind = up('heavy_plow') ? 'plow' : 'farm'; opt.up = { bright: up('horse_collar') }; }
-      else if (e.task === 'forage') kind = 'forage';
-      else if (!e.task && e.target) { const tg = entitiesById.get(e.target); kind = tg && tg.utype === 'sheep_carcass' ? 'butcher' : 'fight'; }
-    } else if (e.carrying > 0) { opt.load = carriedLoad(e); return { kind: 'carry', t: 0.25, opt }; } // waiting with a load
-    return { kind, t: workPhase(e, kind), opt };
-  }
   // Soldiers (the lab's military frames): march / gallop / roll while moving, the
   // attack while in weapon range, else at rest. The attack rides the REAL reload
   // clock (atkCooldown resets to rof ON the hit — render-units' convention), each
   // swing placed so its blow lands on that reset. Gear: the team's age and forge
-  // lines, by unitEquipment's rules.
+  // lines, by soldierEquip's rules.
   const RIG_UNITS = ut => ut !== 'ram' && ut !== 'tradecart'; // vehicles keep the pose cache (their building-style parts carry ink lines)
   const VIL_SOUND = { chop: 'chop', split: 'chop', mine: 'mine', build: 'build', repair: 'build' }; // the 2D work sounds, by 3D action
   const MIL3D = new Set(['militia', 'spearman', 'archer', 'scout', 'knight', 'ram', 'tradecart']);
-  const MIL_IMPACT = { militia: SWORD_HIT, spearman: 0.5, archer: 0.75, scout: SWORD_HIT, knight: SWORD_HIT, ram: 0.63 }; // (swords: the shared swing's hit)
-  const MIL_STRIDE = { walk: 0.62, gallop: 1.3, roll: 0.76, cart: 0.2825 }; // cart: one ox stride = 1/6 of a wheel turn (r ≈ 0.27, circumference 1.695)                 // ground per cycle (the ram: one wheel turn)
-  const milEquip = (ut, team) => ut === 'ram' || ut === 'tradecart' ? null : soldierEquip(ut, ageBonus(team), upgradeAtkBonus(team), upgradeArmorBonus(team), hasUpgrade(team, 'fletching'));
+  // (MIL_IMPACT, soldierEquip, the soldier poses: render-units — shared with the 2D)
+  const MIL_STRIDE = { walk: 0.62, gallop: 1.3, roll: 0.76, cart: CART_STRIDE }; // cart: one ox stride = 1/6 of a wheel turn (r ≈ 0.27, circumference 1.695)                 // ground per cycle (the ram: one wheel turn)
   function soldierPose(e, v){
-    const ut = e.utype, opt = { unit: ut, eq: milEquip(ut, e.team) }, cav = ut === 'scout' || ut === 'knight';
-    if (ut === 'tradecart') { opt.load = e.carrying > 0; const mv = isUnitMoving(e); return { kind: mv ? 'walk' : 'idle', t: mv ? ((v.stride / MIL_STRIDE.cart) % 1 + 1) % 1 : workPhase(e, 'idle'), opt }; } // the sack while it carries gold
-    // The swing follows the HITS: one struck this reload cycle plays its cut (landing on the hit) — on the move too, the
-    // legs (or the horse) running on underneath. Gated on being in range alone, a hit on the run showed no blow at all,
-    // and a chase flipping in and out of range restarted the swing over and over.
-    const rof = (UNITS[ut] && UNITS[ut].rof) || T30(60), cd = e.atkCooldown || 0;
-    const swing = e.target && MIL_IMPACT[ut] != null && (cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT[ut]) % 1 + 1) % 1 : null;
-    if (isUnitMoving(e)) { const kind = cav ? 'gallop' : 'walk', per = ut === 'ram' ? MIL_STRIDE.roll : MIL_STRIDE[kind], lt = ((v.stride / per) % 1 + 1) % 1;
-      return swing != null && cd > 0 ? { kind: 'attack', t: swing, opt, target: true, legs: { kind, t: lt } } : { kind, t: lt, opt }; }
-    if (swing != null) return { kind: 'attack', t: swing, opt, target: true };
-    return { kind: 'idle', t: workPhase(e, 'idle'), opt };
+    const ut = e.utype;
+    if (ut === 'tradecart') { const mv = isUnitMoving(e); return { kind: mv ? 'walk' : 'idle', t: mv ? ((v.stride / MIL_STRIDE.cart) % 1 + 1) % 1 : workPhase(e, 'idle'), opt: { unit: ut, eq: null, load: e.carrying > 0 } }; } // the sack while it carries gold
+    if (ut === 'ram') { const rof = (UNITS.ram && UNITS.ram.rof) || T30(60), cd = e.atkCooldown || 0, opt = { unit: ut, eq: null };
+      const swing = e.target && (cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT.ram) % 1 + 1) % 1 : null;
+      if (isUnitMoving(e)) { const lt = ((v.stride / MIL_STRIDE.roll) % 1 + 1) % 1; return swing != null && cd > 0 ? { kind: 'attack', t: swing, opt, legs: { kind: 'walk', t: lt } } : { kind: 'walk', t: lt, opt }; }
+      return swing != null ? { kind: 'attack', t: swing, opt } : { kind: 'idle', t: workPhase(e, 'idle'), opt }; }
+    const a = soldierAction(e, v.stride, aTick); if (a.kind === 'attack') a.target = true; return a;   // (render-units: one reading for both views)
   }
   const vilKey = (kind, step, female, opt) => (opt.unit ? opt.unit + JSON.stringify(opt.eq) + (opt.load === false ? '|e' : '') + '|' : '') + kind + '|' + step + '|' + (female ? 'f' : 'm') + '|' + (opt.load || '') + '|' + (opt.tool || '') + '|' + (opt.up ? (opt.up.double ? 'd' : '') + (opt.up.bright ? 'b' : '') : '') + (opt.noBlood ? '|nb' : '') + (opt.noFly ? '|nf' : '');
   function useVilFrame(rec, key, f, tc){
@@ -4178,16 +3866,9 @@
     scene.add(o); rec.obj = o; rec.key = key; vilRefs.set(key, (vilRefs.get(key) || 0) + 1);
   }
   const villagers = new Map();
-  // Where each action's target sits in the villager's own frame (world units,
-  // +x ahead) — the lab's placements: the model steps in so the tool meets it.
-  let WORK_AT = null;
-  function workAt(){
-    if (WORK_AT) return WORK_AT;
-    const L = window.__pov3dLab, h = k => L.toolHead(k, 0.9999)[0], d = new THREE.Vector3(-0.34, 0, -0.94).normalize();
-    const chop = h('chop').addScaledVector(d, TRUNK_R * 1.05), mine = h('mine'), saw = L.sawBlade(0);
-    return WORK_AT = { chop: [chop.x, chop.z], saw: [saw.x + TRUNK_R * 0.9, saw.z], mine: [mine.x + 0.17, mine.z],
-      split: [h('split').x, h('split').z], forage: [ax(FORAGE_REACH[1][0]) + 0.16, 0], butcher: [ax(10) + 0.44, 0], build: [h('build').x, h('build').z], repair: [ax(WALL_X), 0] };
-  }
+  // Where each action's target sits in the villager's own frame (tiles, +x ahead): villagerWorkReach (render-units,
+  // shared with the 2D) — the model steps in so the tool meets it.
+  const workAt = villagerWorkReach;
   // The point the villager works on: a resource tile's centre, a carcass, or the
   // nearest point of the building's footprint (building / repairing).
   function workTarget(e, kind){

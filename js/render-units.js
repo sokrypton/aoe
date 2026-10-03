@@ -1,247 +1,6 @@
-// Mounted units share the scout's horse rendering; the knight swaps the
-// coat/rider styling (see the knight accents in the shared branches).
+// The riders (horse2D, drawPerson2D's rider seat).
 function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
 
-// Accent metal by the owner's FORGE tier (forging/iron_casting): crude
-// grey -> steel -> polished. Every metal piece a soldier wears (helm,
-// shield metal, scale rows) shows the blacksmith's quality; SHAPES
-// (kettle vs Norman helm) stay age-driven via the unitEquipment tables.
-const FORGE_METAL = ['#8f8a7d', '#a8adb3', '#c6cdd8'];
-
-// ---- equipment loadout ----
-// Cosmetic gear for SOLDIER units, selected from (utype, owner age, owner
-// techs): what this unit visibly wears. Read-only view of sim state
-// (teamAge/teamTechs) — never feeds a sim decision, never written to `e`
-// (entities are wholesale-replaced on MP sync; the outline mask pass
-// re-calls drawUnit and relies on draws being pure).
-const EQUIP_TECHS = ['forging','iron_casting','scale_armor','chain_mail','fletching'];
-const EQUIP_TECH_MASK = techMask(EQUIP_TECHS);
-const equipCache = new Map();
-function unitEquipment(e){
-  if(!MILITARY.has(e.utype)) return null;
-  let age = ageBonus(e.team);
-  let techs = (teamTechs && isPlayerTeam(e.team) ? teamTechs[e.team] : 0) & EQUIP_TECH_MASK;
-  let key = e.utype + '|' + age + '|' + techs; // + future per-unit tier
-  let v = equipCache.get(key);
-  if(v) return v;
-  // Tiers come from the SAME helpers the sim uses (spawn attack / live
-  // armor), so the drawn gear can never drift from the stats it signals.
-  let atk = upgradeAtkBonus(e.team), arm = upgradeArmorBonus(e.team);
-  v = {
-    metal: FORGE_METAL[atk],
-    // Armor line reads on the torso: plain tunic → scale rows → chain mail.
-    torso: arm >= 2 ? 'chain' : arm >= 1 ? 'scale' : null,
-    // Attack line reads on the weapon: base → forged (1) → iron-cast (2).
-    weapon: atk,
-    fletched: hasUpgrade(e.team, 'fletching'),
-    helmet: null, shield: null, quiver: false,
-  };
-  switch(e.utype){
-    case 'militia':
-      // helmetless tiers wear the team cap — ONE bare-head read for all
-      // military (matches archer/scout)
-      v.helmet = age >= 2 ? 'norman' : age === 1 ? 'kettle' : 'hood-team';
-      v.shield = age >= 2 ? 'kite' : age === 1 ? 'round' : null;
-      break;
-    case 'spearman':
-      v.helmet = age >= 2 ? 'norman' : 'kettle';
-      break;
-    case 'archer':
-      v.helmet = 'hood-team'; // team-color cap at every age — the archer's team tell
-      v.feather = v.fletched; // fletching pin, archer only (fletched is team-wide)
-      v.quiver = age >= 2;    // the back quiver is the CASTLE-age mark
-      break;
-    case 'scout':
-    case 'knight':
-      v.helmet = e.utype === 'knight' ? 'greathelm' : age >= 2 ? 'spiked' : 'hood-team';
-      v.shield = e.utype === 'knight' ? 'kite' : age >= 2 ? 'round' : null;
-      break;
-  }
-  equipCache.set(key, v);
-  return v;
-}
-
-// One painter per helmet design, front (face open) and back views. hx/hy are
-// the human offsets, id feeds the feather's flutter phase; assumes
-// strokeStyle '#000' / lineWidth 1 on entry (the torso pass contract) and
-// leaves them that way.
-// hturn = the head's lateral turn on screen (0 face-on, .707 on the
-// diagonals, 1 in profile), from e.facing·RIG[dir].sx — the facing mirror
-// puts the face side at +x, so hturn is never negative here and ONE
-// profile variant serves both W and E. The crown/dome is ~spherical so
-// it stays put; FACE-attached details (nose bar, ridge, eye slit, brim
-// tilt) slide toward the facing by fx — the same rule the eyes follow —
-// and profiles (hturn ≥ .9) get dedicated side reads. Lighting
-// highlights are world-fixed (upper-left) and never shift.
-function drawHelmet(v, hx, hy, back, team, id, hturn = 0){
-  let tc = teamColor(team);
-  let fx = hturn * 2.4;                    // face-detail lateral shift (matches the eyes)
-  let prof = !back && hturn > 0.9;         // true side view (W/E)
-  if (v.helmet === 'kettle') {
-    // Iron kettle hat (chapel-de-fer): dome seated ON the head, brim
-    // tilted BACK so it flares out BEHIND the dome — never a floating
-    // halo over the brow, and the face/eyes stay fully open.
-    X.fillStyle = v.metal;
-    if (back) {
-      // Dome first, brim ON TOP — seen from behind, the near side of the
-      // brim crosses the head.
-      X.beginPath();X.arc(hx,-15.2+hy,4,0,Math.PI*2);X.fill();X.stroke();
-      X.beginPath();X.ellipse(hx,-13.9+hy,5.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
-    } else if (prof) {
-      // Profile: the brim is a disk seen EDGE-ON at the dome's base —
-      // tilted BACK, so its FRONT rim foreshortens (short raised stub
-      // over the brow) while the back rim trails long and low behind
-      // the head: the board sits shifted rearward with a gentle slope.
-      X.beginPath();X.arc(hx-0.2,-15.4+hy,3.9,Math.PI,0);X.fill();X.stroke();
-      X.beginPath();X.ellipse(hx-0.8,-15.5+hy,5.2,0.85,-0.14,0,Math.PI*2);X.fill();X.stroke();
-    } else {
-      // Front: the BACK RIM (upper half-disk) flares behind the dome —
-      // visible as brim wings past its sides at brow height; the brim
-      // mass eases toward the back of the head as it turns.
-      let bx = hx - fx*0.3;
-      X.beginPath();X.ellipse(bx,-15.4+hy,5.6,1.7,0,Math.PI,0);X.closePath();X.fill();X.stroke();
-      X.beginPath();X.arc(hx,-15.4+hy,3.9,Math.PI,0);X.fill();X.stroke();
-      // hard line at the helm's base so the lower edge reads on the face
-      X.beginPath();X.moveTo(hx-3.9,-15.4+hy);X.lineTo(hx+3.9,-15.4+hy);X.stroke();
-    }
-  } else if (v.helmet === 'norman') {
-    // Norman iron helm: dome with ridge + highlight, riveted gold band,
-    // nose bar (front hemisphere only, turning with the head).
-    let cy0 = -15, bandY = back ? cy0 - 0.5 : cy0; // one crown height in EVERY view
-    X.fillStyle = v.metal;
-    X.beginPath();
-    if (back) X.arc(hx,cy0+hy,4.5,0,Math.PI*2); else X.arc(hx,cy0+hy,4.5,Math.PI,0);
-    X.fill();X.stroke();
-    X.save();
-    X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1/UNIT_SCALE;
-    if (prof) {
-      // side-on the center ridge descends the dome's FRONT curve
-      X.beginPath();X.moveTo(hx+2.6,cy0-3.4+hy);X.quadraticCurveTo(hx+3.8,cy0-1.8+hy,hx+4.1,cy0-0.2+hy);X.stroke();
-    } else {
-      X.beginPath();X.moveTo(hx+fx,cy0-4.4+hy);X.lineTo(hx+fx,cy0+(back?-0.6:-0.2)+hy);X.stroke();
-    }
-    X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.2/UNIT_SCALE;X.lineCap='round';
-    X.beginPath();X.arc(hx,cy0+hy,3.3,Math.PI*1.15,Math.PI*1.55);X.stroke();
-    X.lineCap='butt';X.restore();
-    X.fillStyle='#daa520';
-    X.beginPath();X.rect(hx-4.5,bandY+hy,9,1.5);X.fill();X.stroke();
-    X.fillStyle='rgba(0,0,0,0.45)';
-    [-3,0,3].forEach(rx=>{X.beginPath();X.arc(hx+rx,bandY+0.75+hy,0.4,0,Math.PI*2);X.fill();});
-    if (!back) {
-      // nose bar rides the head turn; in profile it's the thin guard
-      // hanging edge-on off the helm's leading rim
-      X.fillStyle=v.metal;
-      if (prof) { X.beginPath();X.rect(hx+3.7,cy0+1.2+hy,1.2,2.8);X.fill();X.stroke(); }
-      else { X.beginPath();X.rect(hx+fx-0.75,cy0+hy,1.5,4);X.fill();X.stroke(); }
-    }
-  } else if (v.helmet === 'greathelm') {
-    // Blocky GREAT HELM — flat-topped box covering the whole face:
-    // team-color plume, brighter crown band; front adds the face ridge,
-    // dark eye slit and breath holes (all turning with the head).
-    X.fillStyle=tc;
-    X.beginPath();
-    X.moveTo(hx-1.2,-18.5+hy);
-    X.quadraticCurveTo(hx-2.2,-21.5+hy,hx,-22.3+hy);
-    X.quadraticCurveTo(hx+2.2,-21.5+hy,hx+1.2,-18.5+hy);
-    X.closePath();X.fill();X.stroke();
-    X.fillStyle=v.metal;
-    X.beginPath();X.rect(hx-4,-18.5+hy,8,7.5);X.fill();X.stroke();
-    X.fillStyle='rgba(255,255,255,0.28)';
-    X.fillRect(hx-4,-18.5+hy,8,1.6);
-    if (!back && prof) {
-      // Profile: the face plate is edge-on — a SHORT slit wraps the
-      // leading corner and only the forward breath holes show; the
-      // center ridge vanishes with the plate.
-      X.fillStyle='#1c1c1c';
-      X.fillRect(hx+1.4,-15.4+hy,2.6,1.2);
-      X.fillStyle='rgba(0,0,0,0.45)';
-      X.beginPath();X.arc(hx+2.1,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(hx+3.3,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-    } else if (!back) {
-      X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=1.1/UNIT_SCALE;
-      X.beginPath();X.moveTo(hx+fx,-16.9+hy);X.lineTo(hx+fx,-11+hy);X.stroke();
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-      X.fillStyle='#1c1c1c';
-      X.fillRect(hx+fx-2.6,-15.4+hy,5.2,1.2);
-      X.fillStyle='rgba(0,0,0,0.45)';
-      X.beginPath();X.arc(hx+fx-1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(hx+fx,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(hx+fx+1.6,-12.4+hy,0.4,0,Math.PI*2);X.fill();
-    }
-  } else if (v.helmet === 'spiked') {
-    // Spiked cavalry helm — open face, small spike on top; distinct from
-    // the knight's flat-topped great helm.
-    let cy0 = -15, sb = -18.6; // one crown height in EVERY view
-    X.fillStyle=v.metal;
-    X.beginPath();
-    X.moveTo(hx-0.8,sb+hy);
-    X.lineTo(hx,sb-2.8+hy);
-    X.lineTo(hx+0.8,sb+hy);
-    X.closePath();X.fill();X.stroke();
-    X.beginPath();X.arc(hx,sb-0.1+hy,0.9,0,Math.PI*2);X.fill();X.stroke(); // spike ball base
-    X.beginPath();
-    if (back) X.arc(hx,cy0+hy,4.2,0,Math.PI*2); else X.arc(hx,cy0+hy,4.2,Math.PI,0);
-    X.fill();X.stroke();
-    // hard BLACK line at the helm's lower edge so the boundary reads
-    if (back) { X.beginPath();X.moveTo(hx-3.7,-13+hy);X.lineTo(hx+3.7,-13+hy);X.stroke(); }
-    else { X.beginPath();X.moveTo(hx-4.2,cy0+hy);X.lineTo(hx+4.2,cy0+hy);X.stroke(); }
-    X.save();
-    X.strokeStyle='rgba(255,255,255,0.5)';X.lineWidth=1.1/UNIT_SCALE;X.lineCap='round';
-    X.beginPath();X.arc(hx,cy0+hy,3,Math.PI*1.15,Math.PI*1.55);X.stroke();
-    X.lineCap='butt';X.restore();
-  } else {
-    // Hoods: archer's green, everyone else's peasant leather.
-    X.fillStyle = v.helmet === 'hood-team' ? tc : '#4a2e1b';
-    X.beginPath();
-    if (back) X.arc(hx,-15+hy,4.5,0,Math.PI*2); else X.arc(hx,-15+hy,4.5,Math.PI,0); // one crown height in EVERY view
-    X.fill();X.stroke();
-    if (prof && v.helmet !== 'hood-team') {
-      // side-on the leather hood drapes down the NAPE behind the head
-      // (the team CAP is brimless and close-fitting — no flap)
-      X.beginPath();
-      X.moveTo(hx-4.4,-15.2+hy);
-      X.quadraticCurveTo(hx-5.5,-12.4+hy,hx-3.9,-10.4+hy); // outer drape curve
-      X.quadraticCurveTo(hx-2.9,-11.6+hy,hx-3.2,-14.6+hy); // tucks back to the crown
-      X.closePath();X.fill();X.stroke();
-    }
-    if (v.helmet === 'hood-team' && v.feather) {
-      // Fletching tell: a tall team-color plume pinned in the cap, fluttering
-      // gently (idle-anim idiom: tick + id phase) — the tech's only
-      // always-visible mark, so it's deliberately exaggerated.
-      let fy = 0; // crowns align in every view
-      let sway = Math.sin(animTick*0.12 + id*0.7)*0.16;
-      X.save();
-      X.translate(hx+fx*0.5, -18.6+fy+hy); X.rotate(0.08 + sway); // rides the crown as the head turns
-      X.fillStyle=teamColorLight(team); // lighter than the cap so it pops
-      X.beginPath();
-      X.moveTo(0,0);
-      X.quadraticCurveTo(-2.2,-3.6, -1.1,-7.6);  // outer edge up
-      X.quadraticCurveTo(-0.1,-9.4, 1.4,-7.9);   // rounded tip
-      X.quadraticCurveTo(1.7,-3.6, 0.9,-0.2);    // inner edge back down
-      X.closePath();X.fill();X.stroke();
-      // quill line up the middle
-      X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
-      X.beginPath();X.moveTo(0.1,-0.5);X.quadraticCurveTo(-0.5,-3.8, 0.1,-7.8);X.stroke();
-      X.restore();
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    }
-  }
-}
-
-// Big readable broadsword, drawn with the context translated to the grip.
-// Combat swing is shaped: slow overhead wind-up, fast slash (like the
-// villagers' work swing) instead of a symmetric sine wobble.
-// Shaped slash cycle shared by the sword and the arm that swings it:
-// slow windup over the shoulder → whip-fast strike (ease-out cubic) with
-// a small overshoot settle → smooth recovery back to guard.
-function swordSwingAngle(e){
-  // Rides the reload clock like the archer's draw and the bear's bite —
-  // atkCooldown resets to rof ON the hit, so the phase sweeps through the
-  // strike exactly as the sim deals damage (the +0.52 offset parks the
-  // just-hit frame at the strike's end).
-  let rof=(typeof UNITS!=='undefined' && UNITS[e.utype] && UNITS[e.utype].rof)||T30(60);
-  return swordSwingCurve((1-(e.atkCooldown||0)/rof+SWORD_HIT)%1);
-}
 // The swing's angle at phase ph (0..1, the hit at SWORD_HIT) — both views' sword swing (pov3d follows the same arc).
 const SWORD_HIT = 0.52;
 function swordSwingCurve(ph){
@@ -277,197 +36,19 @@ function inActionRange(e){
   return inWeaponRange(e, t);                // THE shared gate (js/logic.js)
 }
 
-// attack-tech steel ramp: 0 crude grey iron, 1 forged steel, 2 polished
-const tierSteel = t => t >= 2 ? '#f2f6fb' : t >= 1 ? '#dde3ea' : '#a7abb0';
-// two-stroke wooden shaft: black round-cap outline + timber core
-function strokeShaft(x1, y1, x2, y2, wOut, wIn){
-  X.strokeStyle='#000';X.lineWidth=wOut/UNIT_SCALE;X.lineCap='round';
-  X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
-  X.strokeStyle='#8B4513';X.lineWidth=wIn/UNIT_SCALE;
-  X.beginPath();X.moveTo(x1,y1);X.lineTo(x2,y2);X.stroke();
-  X.lineCap='butt';
-}
-function drawBigSword(rot, tier = 0, edgeOn = false){
-  // rot 0 = blade straight up; rest passes the seam's anim.restRot;
-  // swings pass anim.swordRot so the blade is the ARM'S EXTENSION — it
-  // continues the shoulder→grip line, never scissors against the arm.
-  X.rotate(rot);
-  // The anchor (= the gripping hand) sits at the CENTER of the handle —
-  // grip runs local y 0..5.4, so shift the whole sword up half that along
-  // the blade axis; swings then rotate about the fist, not the crossguard.
-  // The art's blade axis is drawn at local x +0.5 — the −0.5 centers it
-  // on the anchor so the fist sits exactly ON the blade line (visible at
-  // the dead-center S rest, user caught it).
-  X.translate(-0.5,-2.7);
-  if (edgeOn){
-    // The sword ROTATED 90° about its long axis — seen down the guard
-    // (face-on idle: the flat rests against the leg, the camera sees the
-    // EDGE): thin blade line, crossguard foreshortened to a nub. The
-    // chop keeps the wide face — the edge leads a strike, turning the
-    // flat toward the camera.
-    let ext = tier >= 2 ? 3 : tier >= 1 ? 1.5 : 0;
-    // THREE flat rectangles — grey blade, gold guard, brown grip (user
-    // call: no round caps or beads; the edge-on sword is pure silhouette)
-    X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-    X.fillStyle = tier >= 2 ? '#f2f6fb' : tier >= 1 ? '#dde3ea' : '#a7abb0';
-    X.beginPath();X.rect(-0.3,-21-ext,1.6,19+ext);X.fill();X.stroke();
-    X.fillStyle='#daa520';
-    X.beginPath();X.rect(-1.2,-1.6,3.4,1.8);X.fill();X.stroke();
-    X.fillStyle='#5c3d24';
-    X.beginPath();X.rect(-0.3,0.2,1.6,5.2);X.fill();X.stroke();
-    // (no pommel — simplified silhouette, user call)
-    return;
-  }
-  X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-  // Same design as the barracks' crossed-swords emblem: parallel-edged
-  // blade tapering to a point, rounded gold crossguard, leather grip,
-  // gold pommel.
-  // Blade tier (attack techs), dark→bright so the upgrade pops: 0 crude
-  // grey iron, 1 forged steel (a touch longer), 2 iron-cast polish
-  // (+fuller groove, longer again).
-  let ext = tier >= 2 ? 3 : tier >= 1 ? 1.5 : 0;
-  X.fillStyle = tierSteel(tier);
-  X.beginPath();
-  X.moveTo(-1.7,-2);X.lineTo(-1.4,-17-ext);X.lineTo(0.5,-22-ext);
-  X.lineTo(2.4,-17-ext);X.lineTo(2.7,-2);X.closePath();X.fill();X.stroke();
-  if(tier >= 2){ // fuller groove down the center
-    X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=0.9/UNIT_SCALE;
-    X.beginPath();X.moveTo(0.5,-3.5);X.lineTo(0.5,-16.5-ext);X.stroke();
-  }
-  // FLAT rectangular crossguard (a rounded capsule read as tilted
-  // toward the screen, user call)
-  X.fillStyle='#daa520';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-  X.beginPath();X.rect(-4.2,-1.6,9.4,1.8);X.fill();X.stroke();
-  // Grip
-  X.strokeStyle='#000';X.lineWidth=3/UNIT_SCALE;
-  X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.6);X.stroke();
-  X.strokeStyle='#5c3d24';X.lineWidth=1.6/UNIT_SCALE;
-  X.beginPath();X.moveTo(0.5,0);X.lineTo(0.5,5.4);X.stroke();
-  X.lineCap='butt';
-  // (no pommel — simplified silhouette, user call)
-}
 
-// The spearman's long spear in drawBigSword's frame (the spearman rides
-// the whole sword pose seam): rot 0 = shaft straight up, the anchor (=
-// the gripping hand) 12 up from the butt — most of the spear above the
-// fist. Butt +12 → head base −16 → tip −24 (total 36). k foreshortens
-// the shaft along its own axis about the grip (a tilted thrust points
-// into the iso depth — drawn full-length it overshoots both ways).
-function drawBigSpear(rot, tier = 0, k = 1){
-  X.rotate(rot);
-  if (k !== 1) X.scale(1, k);
-  X.strokeStyle='#000';X.lineWidth=3.2/UNIT_SCALE;X.lineCap='round';
-  X.beginPath();X.moveTo(0,12);X.lineTo(0,-16);X.stroke();
-  X.strokeStyle='#8B4513';X.lineWidth=1.6/UNIT_SCALE;
-  X.beginPath();X.moveTo(0,12);X.lineTo(0,-16);X.stroke();
-  X.lineCap='butt';
-  // Spearhead tier (attack techs), dark→bright like the sword: 0 crude
-  // grey iron, 1 forged steel (leaf head), 2 polished DIAMOND head.
-  X.fillStyle = tierSteel(tier);
-  X.strokeStyle='#000';X.lineWidth=1.1/UNIT_SCALE;X.lineJoin='round';
-  if(tier >= 2){
-    // diamond symmetric about the shaft: back overlaps the shaft end
-    X.beginPath();X.moveTo(0,-15.2);X.lineTo(-2.5,-19.6);X.lineTo(0,-24);X.lineTo(2.5,-19.6);
-    X.closePath();X.fill();X.stroke();
-  } else {
-    // leaf head: base corners at the shaft end ± perpendicular
-    X.beginPath();X.moveTo(-2.8,-16);X.lineTo(0,-24);X.lineTo(2.8,-16);X.closePath();
-    X.fill();X.stroke();
-  }
-}
 
-// Recurve bow about the archer's grip anchor (+x = shoot direction). f is
-// the flex: 0 braced rest, →1 at full draw (tips pull back and inward,
-// limb curvature deepens), <0 during the forward release snap. Tier
-// (attack techs) changes a DIFFERENT part per step — 0 pale selfbow,
-// 1 laminated dark wood + leather-wrapped riser, 2 composite with in-path
-// siyahs + horn nocks — while the string always attaches at the tips, so
-// the nock/pull math is tier-invariant. Returns the tip position.
-function drawRecurveBow(f, tier){
-  // BIG dramatic recurve with a REAL-bow silhouette (user calls, both):
-  // TALL limbs sweep back from the riser through a deep belly and curl
-  // OUTWARD at the tips (an S per limb — cubic), while the string still
-  // braces only ~4 behind the riser so the draw arm never overstretches
-  // (the old deep-C put the brace ~7 back and the arm read rubber).
-  let tx = 4.6 - 2.6*f, ty = 10.6 - 1.8*f;     // limb tips (string ends)
-  let c1x = 5.6 + 0.8*f, c1y = 7.2 - 1.4*f;    // back-sweep (belly) control
-  // tip-curl control PINNED to the tip (fixed offset): the flex bends the
-  // BELLY only — a drawn recurve keeps its outward tip curls (user call);
-  // an f-term here flattened the S at full draw. (The old tier-2 siyah
-  // tip segments are gone — stacked on the built-in curls they kinked
-  // the silhouette; the horn nocks carry the tier-2 read.)
-  let c2x = tx - 2.2, c2y = ty - 1.0;
-  const path = () => {
-    X.beginPath();
-    X.moveTo(tx, -ty);
-    X.bezierCurveTo(c2x, -c2y, c1x, -c1y, 7.6, -2.6); // upper limb: curl out, sweep in
-    X.quadraticCurveTo(8.5, 0, 7.6, 2.6);             // rigid riser (never flexes)
-    X.bezierCurveTo(c1x, c1y, c2x, c2y, tx, ty);      // lower limb
-  };
-  const riser = () => {
-    X.beginPath(); X.moveTo(7.6, -2.6); X.quadraticCurveTo(8.5, 0, 7.6, 2.6);
-  };
-  X.lineCap='round'; X.lineJoin='round';
-  X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; path(); X.stroke();
-  X.lineWidth=4.6/UNIT_SCALE; riser(); X.stroke();  // thicker handle
-  let wood = tier >= 2 ? '#7d4a14' : tier >= 1 ? '#6e3d10' : '#b3874a';
-  X.strokeStyle=wood; X.lineWidth=1.8/UNIT_SCALE; path(); X.stroke();
-  X.strokeStyle = tier >= 1 ? '#c9a15e' : wood; X.lineWidth=2.8/UNIT_SCALE; riser(); X.stroke();
-  if (tier >= 1) { // wrap ticks across the leather riser
-    X.strokeStyle='#8a6a3a'; X.lineWidth=0.8/UNIT_SCALE;
-    X.beginPath();
-    X.moveTo(7.3,-1.2); X.lineTo(8.6,-1.2);
-    X.moveTo(7.5,0);    X.lineTo(8.8,0);
-    X.moveTo(7.3,1.2);  X.lineTo(8.6,1.2);
-    X.stroke();
-  }
-  if (tier >= 2) { // horn nocks at the tips
-    X.fillStyle='#ece4d2'; X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-    X.beginPath(); X.arc(tx,-ty,1.1,0,Math.PI*2); X.fill(); X.stroke();
-    X.beginPath(); X.arc(tx, ty,1.1,0,Math.PI*2); X.fill(); X.stroke();
-  }
-  X.lineCap='butt';
-  return { tx, ty };
-}
 
 // Uniform size multiplier for every drawn character (units and corpses).
 const UNIT_SCALE = 1.25;
 
-// Rest grip anchors in the mirrored body frame — shared by the hand-pose
-// seam, drawHeldLayer's translates, and drawCorpse's dropped-weapon HOLD
-// table. (Scout/knight HOLD is a drop point, not a grip — stays local.)
-const GRIP_REST = { militia:{x:6.5,y:-6}, spearman:{x:3,y:-6}, archer:{x:4,y:-8},
-                    mountedRest:{x:5.5,y:-8.5} }; // swing grips orbit the shoulder (see the seam)
-// Villager work-tool anchor: the handle rotates about this point and the
-// gripping hand rides the same anchor (hand-pose seam) — one spelling so
-// they can't drift, same contract as GRIP_REST.
-// (tool anchor lives in RIG_MOUNTS.villager.tool — projected per dir
-// at the seam as anim.toolRest)
-// Carried-resource mount: the load rides OVERHEAD, centered above the
-// head with both arms raised to steady it — identical in every
-// direction by construction (user call: dir-independent and clear).
-const CARRY_UP = 20.5;
-// tasks whose walking villager pushes the (post-tech) wheelbarrow —
-// resource gathering only; builders keep bare hands
-const BARROW_TASKS = new Set(['chop', 'mine_gold', 'mine_stone', 'farm', 'forage']);
-// Swing-orbit neutral pose (angle 0.5): constants of anchoring the orbit
-// center onto GRIP_REST, so idle IS the swing's neutral frame (same
-// grip, same side) and engage can't pop. The blade-angle constant in the
-// swing (see the seam) is chosen so the NEUTRAL blade stands DEAD
-// VERTICAL — matching the rest draw — and the windup tips PAST vertical
-// backward before the strike sweeps forward.
+// Swing-orbit neutral pose (angle 0.5): the orbit centre anchored so the swing's neutral frame lands exactly on the
+// rest grip (engage can't pop); the blade-angle constant (swordSwingArc) stands the NEUTRAL blade dead vertical and
+// tips the windup PAST vertical before the strike sweeps forward.
 const SWING_NEUTRAL = (() => {
   let p0 = -0.8 - 0.96*0.5;
   return { rs: 1.2*Math.sin(0.5), cos: Math.cos(p0), sin: Math.sin(p0) };
 })();
-// Face-on (S/N) chop model — see the sword pose seam. REACH = elevation
-// driven past vertical at the strike; DOWN_K = a down-pointing blade
-// reads shorter (it's coming at the camera); DROP = how far the grip
-// falls over the chop; RISE = how high the hands climb on the windup
-// (th < 0) — a FULL overhead swing, fists up over the head before the
-// blade drives down. The grip NEVER moves inward — the arm hangs at
-// the shoulder line and the whole chop happens straight down out there.
-const CHOP = { REACH: 2.4, DOWN_K: 0.75, DROP: 2.2, RISE: 10 };
 
 // ---- POSE RIG ----
 // Body-local 3D anchors (lat = the unit's RIGHT, fwd = the facing
@@ -480,114 +61,14 @@ const CHOP = { REACH: 2.4, DOWN_K: 0.75, DROP: 2.2, RISE: 10 };
 // Depth = world (x+y) toward the camera; the body center is depth 0.
 const RIG_DIRV = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]; // SE,S,SW,W,NW,N,NE,E
 const RIG_C1 = Math.SQRT1_2, RIG_C2 = RIG_C1 * 0.5;
-// Vertical PARALLAX damping for mounts: the full iso projection puts a
-// near-side grip ~2px lower than a far-side one — 3D-correct, but at
-// ~20px sprites the ±2px reads as units sitting UN-LEVEL across dirs.
-// Keep a hint of the depth cue, not the full effect.
-const RIG_YK = 0.35;
 // Per-dir FORWARD screen basis {sx,sy,d}; the RIGHT basis is row
 // (d+2)&7 — the right of facing d is the facing two dirs clockwise.
 const RIG = RIG_DIRV.map(([wx, wy]) => {
   let n = Math.hypot(wx, wy), x = wx / n, y = wy / n;
   return { sx: (x - y) * RIG_C1, sy: (x + y) * RIG_C2, d: (x + y) * RIG_C1 };
 });
-// Sword mount per silhouette (rig coords), FITTED so the projections
-// reproduce the hand-approved per-dir anchors.
-// ONE sword hold for both silhouettes — the mount is relative to the
-// HUMAN body origin, and the rider's humanX/YOffset already seats that
-// origin on the horse, so foot and rider grip the sword identically.
-// ONE sword placement for EVERY weapon-arm mode (user call): the
-// UNHANDED centerline mount. L/R/B render the sword identically — only
-// the arms differ — and because lat = 0 every mirror-dir pair places
-// the sword symmetrically (S/N dead-center falls out free). The old
-// handed per-dir table (cross-body SW, E far-stretch, NW/NE pins) was
-// one-hand-LEFT choreography and died with this decision.
-// profileHeld: at the dead-on profiles (W/E) the forward depth projects
-// to 0 and would TIE with the body — the field pins the forward-held kit
-// just over it. One value; any pin in (0.01, ~2.5) sorts identically.
-// (The archer's bow deliberately has NONE: it derives BEHIND the body at
-// E side-on, nocked arrow furthest back — user call.)
-const SWORD_MOUNT = { lat: 0, fwd: 8.0, up: 7.1, profileHeld: 0.5 }; // fwd keeps the blade clear of the face in every dir
-// Shield mount: ALWAYS strapped to the off forearm (side = −gripS folds
-// the L/R flip in), in every view and mode — the plate turns with the
-// body: full face at the profiles, edge-on STRIP at S/N (the sword's
-// edge convention, user call), back face on the away quarters. A
-// separate slung-on-back mode was built and cut — one mount is honest
-// and covers every read.
-const SHIELD_MOUNT = { lat: 6.2, fwd: 0.8, up: 5.5 }; // lat clears the hanging arm at S/N
-const RIG_MOUNTS = {
-  // (militia/spearman/mounted read SWORD_MOUNT directly)
-  // held-item DEPTH mounts for the other humanoids (lat/fwd only —
-  // their draw anchors stay where they are; these place the item in the
-  // sort: forward-held kit sorts over the body facing camera, behind it
-  // facing away, from the F.d sign alone)
-  // (spearman: pose + heldD fully derived at its seam — no mount entry)
-  archer:   { bow:   { lat: -1, fwd: 6 } },
-  // fwd 6.5: the tool swings clearly IN FRONT of the body — lower values
-  // put the NE/E grips backward past the shoulder (user calls, twice)
-  villager: { tool:  { lat: 0,  fwd: 6.5, up: 9, profileHeld: 0.5 } },
-};
-// Tool-head frames: +x along the drawn handle (fixed handle geometry).
-const AXE_HEAD_ROT = Math.atan2(-14, 9);
-const MALLET_HEAD_ROT = Math.atan2(-12, 7.5);
-// ---- skeleton decay art (shared by drawCorpse and the trade cart wreck) ----
-const BONE='#e8e4d8';
-function drawHumanSkeleton(ox2,oy2,ss){
-      X.save();X.translate(ox2,oy2);
-      X.fillStyle=BONE;
-      X.beginPath();X.arc(0,-9*ss,2.8*ss,0,Math.PI*2);X.fill(); // skull — plain bone white, matching the ribs
-      X.fillStyle='#000';
-      X.beginPath();X.arc(-0.9*ss,-9.3*ss,0.55*ss,0,Math.PI*2);X.fill();   // eye sockets
-      X.beginPath();X.arc(0.9*ss,-9.3*ss,0.55*ss,0,Math.PI*2);X.fill();
-      X.strokeStyle=BONE;X.lineWidth=1.4/UNIT_SCALE;
-      X.beginPath();X.moveTo(0,-6*ss);X.lineTo(0,1*ss);X.stroke();         // spine
-      for(let i=0;i<3;i++){
-        X.beginPath();X.arc(0,(-4.5+i*2)*ss,2.2*ss,0.15*Math.PI,0.85*Math.PI);X.stroke();
-      }
-      X.restore();
-}
-function drawHorseSkeleton(hs){
-      X.save();X.scale(hs,hs); // spans the living horse's 1.35x footprint
-      // Leg bones with hoof knobs, same stance as the living legs
-      X.strokeStyle=BONE;X.lineWidth=1.6/UNIT_SCALE;X.lineCap='round';
-      [[3.5,-4,3.9],[5.5,-4,5.9],[-4.5,-4,-4.1],[-6.5,-4,-6.1]].forEach(p=>{
-        X.beginPath();X.moveTo(p[0],p[1]);X.lineTo(p[2],4.4);X.stroke();
-      });
-      X.lineCap='butt';
-      X.fillStyle=BONE;
-      [[3.9,4.4],[5.9,4.4],[-4.1,4.4],[-6.1,4.4]].forEach(p=>{
-        X.beginPath();X.arc(p[0],p[1],0.9,0,Math.PI*2);X.fill();
-      });
-      // Arched spine from hip to withers, and the bony tail
-      X.strokeStyle=BONE;X.lineWidth=1.8/UNIT_SCALE;
-      X.beginPath();X.moveTo(-7,-7.5);X.quadraticCurveTo(0,-10,5,-8.5);X.stroke();
-      X.lineWidth=1.2/UNIT_SCALE;
-      X.beginPath();X.moveTo(-7,-7.5);X.quadraticCurveTo(-9.2,-6,-9,-1.5);X.stroke();
-      // Ribcage: a proper barrel — each rib springs FROM the spine and
-      // sweeps down-and-back in a long curve; longest over the chest,
-      // tapering toward the hip. Rounded caps so the tips read as bone.
-      X.lineWidth=1.5/UNIT_SCALE;X.lineCap='round';
-      for(let i=0;i<6;i++){
-        let rx=-5+i*1.7;                    // rib root along the spine
-        let ry=-8.6+Math.abs(rx)*0.12;      // follows the spine's arch
-        let len=4.6-Math.abs(i-3.2)*0.55;   // chest ribs longest
-        X.beginPath();
-        X.moveTo(rx,ry);
-        X.quadraticCurveTo(rx-1.6,ry+len*0.65, rx-1.1,ry+len);
-        X.stroke();
-      }
-      X.lineCap='butt';
-      // Neck vertebrae rising to the skull
-      X.lineWidth=1.8/UNIT_SCALE;
-      X.beginPath();X.moveTo(5,-8.5);X.quadraticCurveTo(7,-10.5,8.3,-12.3);X.stroke();
-      // Skull kept simple: one elongated bone shape + eye socket, plain
-      // bone white with no outline so it matches the ribcage strokes
-      X.fillStyle=BONE;
-      X.beginPath();X.ellipse(10.4,-12.2,3.2,1.6,0.25,0,Math.PI*2);X.fill();
-      X.fillStyle='#000';
-      X.beginPath();X.arc(9.2,-12.8,0.6,0,Math.PI*2);X.fill();
-      X.restore();
-}
+// ---- skeleton decay art (drawBones2D and the trade cart's ox): pov3d's bone and socket ----
+const BONE = '#e8e0cc', BONE_HOLE = '#2a241c';
 
 // ---- vehicle wreck helpers (trade cart + battering ram death) ----
 // Projection basis for a vehicle corpse: the same RAM_AXES bases the live
@@ -626,209 +107,6 @@ function drawFallenWheel(R, squash, seed, weathered, lw, solid){
   X.fillStyle=weathered?'#9a917f':'#8a6a4a';
   X.strokeStyle='#000'; X.lineWidth=0.7/UNIT_SCALE;
   X.beginPath();X.arc(0,0,R*0.24,0,Math.PI*2);X.fill();X.stroke();
-  X.restore();
-}
-
-// Trade cart death — a staged physical fall in the cart's own projection
-// basis (facing-aware, not a canonical morph):
-//   wheels tip off their axles one by one (0–~600ms, staggered) →
-//   the unsupported bed drops to the ground with a dust thud (~280–580ms) →
-//   the walls and end boards fold outward flat (~600–1050ms), the cargo
-//   tumbling out beside the bed (gold scatter on the loaded leg).
-// The ox buckles separately (rigid topple, +350ms). At CORPSE_SKEL the wood
-// weathers gray in place (the final fold layout IS the decay layout — no
-// pop) and the cargo is gone. Render-only; one-time particle bursts gated
-// through corpseImpactFxDone so lockstep resyncs don't re-fire them.
-function drawTradeCartCorpse(c, sx, sy, age, alpha){
-  const { L, WB, CB, CH, WR, WA, WTH, SCALE } = CART_DIM;
-  const OXDELAY=350, OXFALL=700;
-  const WDUR=320, BSTART=280, BDUR=300, CSTART=600, CDUR=450;
-  let ax = corpseVehicleAxes(c), u = ax.u, v = ax.v;
-  let P = (a,b,h) => ({ x:a*u.x + b*v.x, y:a*u.y + b*v.y - h });
-  let vlen = Math.hypot(v.x, v.y), ulen = Math.hypot(u.x, u.y);
-  let clamp01 = x => Math.min(1, Math.max(0, x));
-  let eo = t => 1-(1-t)*(1-t);                 // ease-out (folding to rest)
-  let jit = n => { let s=Math.sin(c.id*7.3+n*13.7)*43758.5453; return s-Math.floor(s)-0.5; };
-  let weathered = age >= CORPSE_SKEL;
-  let tc = teamColor(c.team);
-
-  if (!corpseImpactFxDone.has(c.id)) {
-    corpseImpactFxDone.add(c.id);
-    spawnParticles(c.x, c.y, '#c9a15e', 8, 0.04, 1.8);              // wood chips
-    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 5, 0.02, 1.8); // dust
-  }
-  if (age >= BSTART+BDUR && !corpseImpactFxDone.has(c.id+':thud')) {
-    corpseImpactFxDone.add(c.id+':thud');
-    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 6, 0.03, 2.0); // bed hits the ground
-  }
-
-  // phase clocks (all pinned to 1 once weathered so the decay layout is
-  // exactly the settled wreck, weathered in place)
-  let tWheel = k => weathered ? 1 : clamp01((age - (CSTART + k*70))/WDUR); // wheels slide off WITH the collapse
-  let tBed   = weathered ? 1 : clamp01((age - BSTART)/BDUR);          // bed drop
-  let tFold  = weathered ? 1 : clamp01((age - CSTART)/CDUR);          // walls fold flat
-
-  // ox yoked ahead along the movement axis (hitch snaps at death — no rods)
-  let hoofDrop = OX_PROFILE.legBot*OX_PROFILE.scale - 1;
-  let oxOff = { x: SCALE*(L+10)*u.x, y: SCALE*(L+10)*u.y + SCALE*(WB+0.4)*Math.abs(v.y) - hoofDrop };
-
-  X.save();
-  X.globalAlpha = alpha;
-
-  // ox blood pool (screen coords, same recipe as the shared corpse pool)
-  let obp = clamp01((age-(OXDELAY+OXFALL*0.7))/2000);
-  if (obp > 0) {
-    let spread = eo(obp);
-    let dry = clamp01((age-8000)/8000);
-    let poolA = 0.6*Math.min(1,obp*3)*(1-dry*0.55);
-    X.fillStyle='rgba('+Math.round(120-40*dry)+', '+Math.round(25*dry)+', '+Math.round(10*dry)+', '+poolA.toFixed(3)+')';
-    X.beginPath();
-    X.ellipse(sx+c.facing*(oxOff.x-u.x*CART_RECENTER*SCALE)*UNIT_SCALE, sy+(oxOff.y-u.y*CART_RECENTER*SCALE)*UNIT_SCALE+3,
-              8*UNIT_SCALE*spread, 4*UNIT_SCALE*spread, 0, 0, Math.PI*2);
-    X.fill();
-  }
-
-  X.translate(sx, sy);
-  X.scale(c.facing*UNIT_SCALE, UNIT_SCALE);
-  X.translate(-u.x*CART_RECENTER*SCALE, -u.y*CART_RECENTER*SCALE); // same rig recentering as the live cart
-  let lw = 1.2/UNIT_SCALE;
-  X.lineJoin='round';
-
-  // The ox: buckles a beat after the cart, as a RIGID topple over the feet
-  // (any non-uniform scale mixed into a fall reads as squish/stretch).
-  let drawOx = () => {
-    let ot = age<=OXDELAY ? 0 : Math.min(1, (age-OXDELAY)/OXFALL);
-    let oxRot = (Math.PI/2.3)*ot*ot;
-    if (age>OXDELAY+OXFALL && age<OXDELAY+OXFALL+300)
-      oxRot *= 1+0.06*Math.sin((age-OXDELAY-OXFALL)/300*Math.PI); // impact recoil
-    X.save(); X.translate(oxOff.x, oxOff.y);
-    if (weathered) {
-      X.rotate(Math.PI/2.3);
-      drawHorseSkeleton(1.05); // squat ox bones (bear-style horse skeleton)
-    } else {
-      X.rotate(oxRot);
-      if(!c.oxPose) c.oxPose={id:c.id, dir:7, facing:1, facingNorth:false, path:[], corpseRot:1};
-      drawQuadruped(c.oxPose, OX_PROFILE);
-    }
-    X.restore();
-  };
-  let frontNear = (mirroredDir({dir: c.dir !== undefined ? c.dir : 7, facing: c.facing||1}) === 0 ||
-                   mirroredDir({dir: c.dir !== undefined ? c.dir : 7, facing: c.facing||1}) === 1);
-  if (!frontNear) drawOx();
-
-  X.save(); X.scale(SCALE, SCALE);
-  let lw2 = lw; // stroked inside the cart scale, same as the live cart
-  let poly = (pts, fill) => {
-    X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
-    X.strokeStyle='#000'; X.lineWidth=lw2; X.lineJoin='round'; X.stroke();
-  };
-  let wood = (fresh, gray) => weathered ? gray : fresh;
-  let bedInner= wood('#74593a', '#9a917f'); // shadowed inner faces (matches the live cart)
-  let bedNear = wood('#a07c4c', '#877e6c');
-  let bedTop  = wood('#b48c58', '#9a917f');
-  let bedFloor= wood('#3a2c1c', '#55503f');
-
-  // A wheel mid-tip: from its mounted axle position to flat on the ground
-  // just outside it, squashing from near-upright to the flat rest pose.
-  let wheelAt = (a, b, k) => {
-    let t = eo(tWheel(k));
-    // rest offset normalized by the axis length so wheels land a constant
-    // SCREEN distance outside the bed (they peek from under the folded
-    // walls in every facing, incl. the near-vertical side-elevation axis)
-    let bRest = b + Math.sign(b)*(0.8*(WB+0.4))*(vlen < 0.5 ? 0.55 : 1)/vlen; // damped in the compressed side view
-    let p0 = P(a, b, WR), p1 = P(a*(1+0.25*Math.abs(jit(k))), bRest, 0);
-    X.save();
-    X.translate(p0.x+(p1.x-p0.x)*t, p0.y+(p1.y-p0.y)*t);
-    X.rotate(jit(k+40)*0.45*t); // settles at a lazy lean, not flat
-    let raw = tWheel(k);
-    if (u.x === 0 && raw < 0.5) {
-      // head-on facings keep the live cart's SQUARE slab wheels until
-      // midway through the collapse tip-off
-      let w2 = WTH*1.3, h2 = WR*0.78;
-      X.fillStyle='#33261a'; X.fillRect(-w2, -h2, w2*2, h2*2);
-      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(-w2,-h2,w2*2,h2*2);
-      X.fillStyle='#5a4630'; X.fillRect(-0.6,-h2+0.6,1.2,h2*2-1.2);
-    } else {
-      // widening from the edge-on slab into the side-view disc
-      if (u.x === 0) X.scale(0.45+0.55*Math.min(1,(raw-0.5)*2), 1);
-      drawFallenWheel(WR*1.15, 0.9-0.18*t, 0.5+k+jit(k+20), weathered, lw2);
-    }
-    X.restore();
-  };
-  let nearB = Math.sign(v.y) || 1; // +v is the near side on every authored facing
-
-  // two-wheeler: ONE big wheel per side on the center axle.
-  // far wheel first (behind the bed)
-  wheelAt(0, -nearB*(WB+0.4), 0);
-
-  // Near wheel: in FRONT of the standing box while it tips off, but UNDER
-  // the near wall once it folds out over it — the order swaps mid-fold,
-  // when the wall is still mostly upright and the wheel is already at rest
-  // clear of it, so the two barely overlap and no pop reads.
-  // Head-on (u.x===0): both wheels behind the body, like the live cart.
-  let nearWheels = () => wheelAt(0, nearB*(WB+0.4), 2);
-  if (u.x === 0 || tFold > 0.3) nearWheels();
-
-  // the bed: rides at axle height while the wheels hold, then drops CB to
-  // the ground with a small landing recoil
-  let drop = CB*tBed*tBed;
-  if (!weathered && age>BSTART+BDUR && age<BSTART+BDUR+250)
-    drop -= 0.6*Math.sin((age-BSTART-BDUR)/250*Math.PI);
-  X.save(); X.translate(0, drop);
-  // walls/end boards fold outward flat as the fold clock runs: the bottom
-  // edge stays put, the top edge swings out into the ground plane. Fold
-  // reach is divided by the axis length so a board of height H covers ~H px
-  // on screen in EVERY facing — the head-on basis cheats (v widened to
-  // 1.25, u squashed to 0.55) otherwise splay the side walls way too far
-  // and barely fold the end boards (they read distorted).
-  let f = eo(tFold);
-  let reachB = (CH-CB)/vlen, reachA = (CH-CB)/ulen;
-  let wallQ = (sgn, fill) => poly([
-    P(-L, sgn*WB, CB), P(L, sgn*WB, CB),
-    P( L, sgn*(WB+reachB*f), CH-(CH-CB)*f), P(-L, sgn*(WB+reachB*f), CH-(CH-CB)*f)
-  ], fill);
-  let endQ = (aE, fill) => { let sA = Math.sign(aE); poly([
-    P(aE, -WB, CB), P(aE, WB, CB),
-    P(aE+sA*reachA*f, WB, CH-(CH-CB)*f), P(aE+sA*reachA*f, -WB, CH-(CH-CB)*f)
-  ], fill); };
-  // The SAME canonical load as the living cart rides inside the box, then
-  // tumbles out over the folding near wall as it opens: each piece lerps
-  // from its in-bed seat to its own spilled ground rest with the fold
-  // clock. In the bed's translated space the true ground sits at height CB
-  // once the bed has landed.
-  let cargoT = eo(tFold);
-  let drawCargo = () => {
-    let anchor = P(0, 0, CH-2.2);
-    let out = P(-L*0.3, nearB*(WB+reachB*0.7), CB); // the sack tumbles out over the near wall
-    drawCartLoad((k,dx,dy)=>({
-      x: (anchor.x+dx)+(out.x-(anchor.x+dx))*cargoT,
-      y: (anchor.y+dy)+(out.y-(anchor.y+dy))*cargoT
-    }), lw2);
-  };
-
-  wallQ(-nearB, bedInner);          // far side wall: inner face
-  endQ(u.y<0 ? L : -L, bedInner);   // far end (view-dependent): inner face
-  poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor); // floor
-  if (c.carrying > 0 && !weathered && cargoT < 0.55) drawCargo(); // still boxed in: walls occlude it
-  // near outer faces are TEAM-COLORED panels (the live cart's ownership
-  // read) — but once a wall folds past ~45° its blue outer face turns
-  // toward the ground, so the visible side becomes the brown INNER face
-  let faceFlipped = tFold > 0.5;
-  wallQ(nearB, wood(faceFlipped ? '#74593a' : teamColor(c.team), '#877e6c'));
-  endQ(u.y<0 ? -L : L, wood(faceFlipped ? '#74593a' : teamColorDark(c.team), '#877e6c'));
-  X.restore();
-
-  if (u.x !== 0 && tFold <= 0.3) nearWheels(); // still tipping: over the standing box
-
-  // once the walls have mostly folded open the spilled cargo lies ON them
-  if (c.carrying > 0 && !weathered && cargoT >= 0.55) {
-    X.save(); X.translate(0, drop);
-    drawCargo();
-    X.restore();
-  }
-  X.restore();
-
-  if (frontNear) drawOx();
   X.restore();
 }
 
@@ -1049,25 +327,13 @@ function drawCorpse(c){
   
   let { ox, oy } = getUnitGroupOffset(c.id);
   sx += ox; sy += oy;
-  let tc=teamColor(c.team);
-  
   let age = performance.now() - c.deathTime;
 
   // AoE2-style death sequence, staged instead of popping in flat:
-  // (1) 0-600ms the body topples over its feet, accelerating, with a small
-  //     impact recoil and dust puff;
-  // (2) blood seeps out from under it and spreads over ~2s, drying to a
-  //     brown stain over time;
-  // (3) the corpse lies solid, per-unit-type art (a scout dies WITH its
-  //     horse, a bear is a bear-sized mound);
-  // (4) at CORPSE_SKEL it decays to bones (AoE2 skeleton stage), and only
-  //     fades away in the last seconds of CORPSE_LIFE.
-  const TOPPLE = 600;
-  let p = Math.min(1, age / TOPPLE);
-  let rot = (Math.PI / 2.25) * p * p; // accelerating fall
-  if (age > TOPPLE && age < TOPPLE + 300) {
-    rot *= 1 + 0.07 * Math.sin((age - TOPPLE) / 300 * Math.PI); // impact recoil
-  }
+  // (1) the unit's own rig plays its death (a fall, a thrown rider, a rolled beast) with a dust puff as it lands;
+  // (2) blood seeps out from under it and spreads over ~2s, drying to a brown stain over time;
+  // (3) at CORPSE_SKEL it decays to bones (AoE2 skeleton stage), and only fades away in the last seconds of CORPSE_LIFE.
+  const TOPPLE = 600;                                                   // (when the body is down: the puff, the blood)
   let alpha = age < CORPSE_LIFE - 3000 ? 1 : Math.max(0, 1 - (age - (CORPSE_LIFE - 3000)) / 3000);
   let big = isMountedUnit(c.utype) || isWildPredator(c); // horse/bear-sized corpse
 
@@ -1093,116 +359,38 @@ function drawCorpse(c){
   //    from fresh red to a brown stain as the corpse ages
   let bp = Math.max(0, Math.min(1, (age - TOPPLE * 0.7) / 2000));
   if (bp > 0) {
-    let spread = (1 - (1 - bp) * (1 - bp)) * (big ? 1.4 : 1); // ease-out growth
+    const rider = isMountedUnit(c.utype), spread = (1 - (1 - bp) * (1 - bp)) * (big && !rider ? 1.4 : 1); // ease-out growth
+    // under the body: the villager rig falls backward; a thrown rider lies where he landed (drawPerson2D), not under his horse
+    const at = rider ? projKit((c.dir || 0) * Math.PI / 4).P(-0.8 + 0.25 * HORSE_TILE, 0, -0.72 * HORSE_TILE - 13).map(v => v * UNIT_SCALE)
+      : c.utype === 'bear' ? projKit((c.dir || 0) * Math.PI / 4).P(0, 0, -0.38 * HORSE_TILE).map(v => v * UNIT_SCALE)   // (the bear rolled a body-height onto its side)
+      : [c.utype === 'villager' || FOOT_SOLDIERS.has(c.utype) ? -9 * UNIT_SCALE * c.facing : 0, 0];
     let dry = Math.max(0, Math.min(1, (age - 8000) / 8000));
     let poolA = 0.7 * Math.min(1, bp * 3) * (1 - dry * 0.55);
     X.fillStyle = 'rgba(' + Math.round(120 - 40*dry) + ', ' + Math.round(25*dry) + ', ' + Math.round(10*dry) + ', ' + poolA.toFixed(3) + ')';
     X.beginPath();
-    X.ellipse(sx, sy + 3, 9*UNIT_SCALE*spread, 4.5*UNIT_SCALE*spread, 0, 0, Math.PI * 2);
+    X.ellipse(sx + at[0], sy + 3 + at[1], 9*UNIT_SCALE*spread, 4.5*UNIT_SCALE*spread, 0, 0, Math.PI * 2);
     X.fill();
   }
 
-  // 2. Skeleton decay stage (AoE2): after CORPSE_SKEL the body is bones,
-  //    laid out flat by the same over-the-feet rotation the corpse used.
-  //    Humans get a round skull with two sockets and a ribcage; the horse
-  //    gets a full side-view horse skeleton (long muzzled skull on neck
-  //    vertebrae, arched spine, hanging ribcage, four leg bones, tail) at
-  //    the living horse's size, with the rider's small skeleton beside it.
-  if (age >= CORPSE_SKEL) {
-    X.translate(sx, sy);
-    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
-    X.rotate(Math.PI / 2.25);
-    if(isMountedUnit(c.utype)){
-      drawHorseSkeleton(1.35);
-      drawHumanSkeleton(-11,-11,1);     // the rider, beside his horse
-    } else if(c.utype==='bear'){
-      // Bear remains: same construction as the horse but squatter — the
-      // boulder ribcage is the read
-      drawHorseSkeleton(1.15);
-    } else if(c.utype==='dragon'){
-      drawHorseSkeleton(2.1);             // a great beast's bones
-    } else {
-      drawHumanSkeleton(0,0,1.25);
-    }
-    X.restore();
-    return;
-  }
+  // 2. Skeleton decay stage (AoE2): after CORPSE_SKEL the body is bones, where it came to rest (drawBones2D)
+  if (age >= CORPSE_SKEL) { drawBones2D(c, sx, sy, age); X.restore(); return; }
 
-  // 3. Fresh corpse: the LIVING sprite itself, toppled over its feet — no
-  //    simplified stand-in art. drawUnit() applies e.corpseRot after its
-  //    own transform, so the character keeps every detail (outfit, hair,
-  //    held weapon, the scout's whole horse+rider) at exactly its living
-  //    size; only the pose changes. The pseudo-entity is cached on the
-  //    corpse and frozen (path empty, no target) so nothing animates.
+  // 3. Fresh corpse: the unit's own rig, playing its death at the corpse's age (e.__deathAge) — every living detail at
+  //    its living size. The pseudo-entity is cached on the corpse and frozen (path empty, no target).
   X.restore(); // blood pool used screen coords; drawUnit sets its own transform
   if(!c.pose){
     c.pose = {type:'unit', utype:c.utype, team:c.team, id:c.id, x:c.x, y:c.y,
       female:c.female, dir:7, facing:c.facing, facingNorth:false,
       path:[], target:null, buildTarget:null, task:null, order:null,
       hp:1, maxHp:1, carrying:0, carryType:null,
-      lastX:c.x, lastY:c.y, corpseRot:0};
+      lastX:c.x, lastY:c.y};
   }
-  c.pose.corpseRot = rot;
+  c.pose.__deathAge = age;
+  if (c.dir != null) c.pose.dir = c.dir;   // (the rigs fall along the facing they died in)
   X.save();
   X.globalAlpha = alpha;
   drawUnit(c.pose);
 
-  // Dropped weapon: drawUnit suppresses the held weapon on corpse poses,
-  // and here it falls as its own body — released from the HAND's position
-  // the moment the unit dies, dropping under gravity at its own rate
-  // (a touch slower than the 600ms body topple) while tumbling to its
-  // final lying angle, with a small clatter-wobble as it lands.
-  let armed = c.utype==='militia'||isMountedUnit(c.utype)||c.utype==='spearman'||c.utype==='archer';
-  if (armed) {
-    const WDROP = 850;
-    // Held position (where the living sprite draws the weapon) -> rest
-    // spot on the ground beside the body, per type. {x,y,angle}.
-    const HOLD = {
-      militia:  {...GRIP_REST.militia,  a:0.5},
-      scout:    {x:-4.5, y:-17, a:-0.6},
-      knight:   {x:-4.5, y:-17, a:-0.6},
-      spearman: {...GRIP_REST.spearman, a:0},
-      archer:   {...GRIP_REST.archer,   a:0}
-    };
-    const REST = {
-      militia:  {x:10,  y:1.5, a:2.0},
-      scout:    {x:-11, y:1.5, a:-2.0},
-      knight:   {x:-11, y:1.5, a:-2.0},
-      spearman: {x:8,   y:2,   a:0.8},
-      archer:   {x:9,   y:2,   a:1.2}
-    };
-    let h = HOLD[c.utype], r = REST[c.utype];
-    let wt = Math.min(1, age / WDROP);
-    let fall = wt * wt; // gravity: accelerating drop
-    let wx = h.x + (r.x - h.x) * fall;
-    let wy = h.y + (r.y - h.y) * fall;
-    let wa = h.a + (r.a - h.a) * fall;
-    if (age > WDROP && age < WDROP + 250) {
-      wa += 0.1 * Math.sin((age - WDROP) / 250 * Math.PI); // landing wobble
-    }
-    X.translate(sx, sy);
-    X.scale(c.facing * UNIT_SCALE, UNIT_SCALE);
-    X.translate(wx, wy);
-    X.rotate(wa);
-    if(c.utype==='spearman'){
-      // The spear, lying loose — the LIVING art fn at the owner's tier
-      // (a static copy here went stale against two shaft rewrites)
-      X.save();X.scale(0.8,0.8);X.rotate(0.785);
-      drawBigSpear(0, (unitEquipment(c.pose) || {}).weapon || 0);
-      X.restore();
-    } else if(c.utype==='archer'){
-      // The bow, lying loose at its braced rest profile (owner's tier)
-      X.save();X.scale(0.95,0.95);
-      let bt = drawRecurveBow(0, (unitEquipment(c.pose) || {}).weapon || 0);
-      X.strokeStyle='#e8e8e8';X.lineWidth=1/UNIT_SCALE;
-      X.beginPath();X.moveTo(bt.tx,-bt.ty);X.quadraticCurveTo(0.4,0,bt.tx,bt.ty);X.stroke();
-      X.restore();
-    } else {
-      // Militia / scout broadsword — dropped at the owner's forged tier
-      X.rotate(0.35);
-      drawBigSword(0.5, (unitEquipment(c.pose) || {}).weapon || 0);
-    }
-  }
   X.restore();
   return;
 }
@@ -1317,219 +505,6 @@ const RAM_AXES = {
   5: { u:{x:0,y:-0.55},      v:{x:1.25,y:0} },
   6: { u:{x:0.894,y:-0.447}, v:{x:0.72,y:0.36} }
 };
-// ---- WHEELBARROW (the Wheelbarrow tech's tell) ----
-// A true projected box in the trade-cart idiom: authored ONCE in the
-// facing frame (u = push axis, v = ground lateral, c = up); the five
-// authored facings come from mirroredDir, dirs 2/3/4 free via the facing
-// mirror. Drawn about the unit's GROUND CENTER; the barrow extends
-// forward along u (tray TB..TF, axle at AXA, handles back to HA at HZ —
-// the fist points barrowGrips exports for the hand seam). tilt rocks
-// tray + handles + load about the AXLE while the wheel stays planted.
-// FWD shifts the whole composite ahead along u: the handles land AT the
-// body (a+FWD ~ 0) and tray/wheel push out front — authored about the
-// unit center they put the handles BEHIND the villager, arms reaching
-// backward (user caught it at E).
-const BARROW_DIM = { TB:-2.5, TF:7.5, WB:3.1, CB:2.7, CH:6.2, WR:3.6, AXA:12, HA:-8.2, HZ:9.2, FWD:10, WTH:1.5 };
-function barrowAxes(e){
-  let useDir = mirroredDir(e);
-  let ax = useDir === 7 ? SIDE_AXES : (RAM_AXES[useDir] || SIDE_AXES);
-  // RIG_YK-style vertical parallax damping on u ONLY: the barrow
-  // reaches ~22px along u, and full-strength u.y hoists it to head
-  // height on the up-screen diagonals (floating barrow). v spans just
-  // ±WB — damping it flattens the tray until loads leak through. The
-  // head-on facings keep the FULL axis: there u is purely vertical,
-  // and damping it eclipses the whole barrow behind the body at N.
-  let k = useDir === 1 || useDir === 5 ? 1 : 0.4;
-  return { useDir, ax: { u: { x: ax.u.x, y: ax.u.y * k }, v: ax.v } };
-}
-function barrowGrips(e, tilt, shift){
-  const { WB, WR, AXA, HA, HZ, FWD } = BARROW_DIM;
-  let { ax } = barrowAxes(e);
-  let u = ax.u, v = ax.v, sh = shift || 0;
-  const P = (a,b,c) => ({ x: (a+sh+FWD)*u.x + b*v.x, y: (a+sh+FWD)*u.y + b*v.y - c });
-  let axle = P(AXA, 0, WR), ca = Math.cos(tilt || 0), sa = Math.sin(tilt || 0);
-  let nearB = Math.sign(v.y) || 1;
-  const rot = p => ({ x: axle.x + (p.x-axle.x)*ca - (p.y-axle.y)*sa,
-                      y: axle.y + (p.x-axle.x)*sa + (p.y-axle.y)*ca });
-  return [rot(P(HA, nearB*WB, HZ)), rot(P(HA, -nearB*WB, HZ))]; // [near, far]
-}
-function drawBarrow(e, rolling, tilt, loadFn, part, kind, shift){
-  const { TB, TF, WB, CB, CH, WR, AXA, HA, HZ, FWD, WTH } = BARROW_DIM;
-  let { useDir, ax } = barrowAxes(e);
-  let u = ax.u, v = ax.v, headOn = useDir === 1 || useDir === 5;
-  let plow = kind === 'plow', sh = shift || 0;
-  const P = (a,b,c) => ({ x: (a+sh+FWD)*u.x + b*v.x, y: (a+sh+FWD)*u.y + b*v.y - c });
-  let axle0 = P(AXA, 0, WR);
-  X.save();
-  X.translate(axle0.x, axle0.y); X.rotate(tilt || 0); X.translate(-axle0.x, -axle0.y);
-  const lw = 1.1/UNIT_SCALE;
-  const poly = (pts, fill) => {
-    X.fillStyle = fill; X.beginPath();
-    pts.forEach((p,i) => i ? X.lineTo(p.x,p.y) : X.moveTo(p.x,p.y));
-    X.closePath(); X.fill();
-    X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
-  };
-  const rod = (p, q, wOut, wIn) => {
-    X.lineCap='round';
-    X.strokeStyle='#000'; X.lineWidth=wOut/UNIT_SCALE;
-    X.beginPath(); X.moveTo(p.x,p.y); X.lineTo(q.x,q.y); X.stroke();
-    X.strokeStyle='#8B4513'; X.lineWidth=wIn/UNIT_SCALE;
-    X.beginPath(); X.moveTo(p.x,p.y); X.lineTo(q.x,q.y); X.stroke();
-    X.lineCap='butt';
-  };
-  // wheel ground drop: at the PROFILE the near leg dips v.y·WB below
-  // the anchor plane but the centered wheel doesn't; the up-screen
-  // diagonals (NE/NW) hover worse — the damped push axis lifts the far
-  // wheel off its ground line (user caught both). Hoisted so the plow
-  // beam can aim at the REAL wheel center, not the undropped axle.
-  const wDrop = useDir === 7 ? WB*0.85*Math.abs(v.y) : useDir === 6 ? 2.2 : 0;
-  const wheel = () => {
-    let axle = { x: axle0.x, y: axle0.y + wDrop };
-    if (headOn) { // edge-on slab — the cart's S/N wheel convention.
-      // full WR height: the 0.8 shave read as a smaller wheel at S
-      // next to the side views' full disc (user caught it)
-      let w2 = 1.3, h2 = WR;
-      X.fillStyle='#33261a'; X.fillRect(axle.x-w2, axle.y-h2, w2*2, h2*2);
-      X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE;
-      X.strokeRect(axle.x-w2, axle.y-h2, w2*2, h2*2);
-      X.fillStyle='#5a4630'; X.fillRect(axle.x-0.4, axle.y-h2+0.5, 0.8, h2*2-1);
-      return;
-    }
-    // single spoked wheel in the push plane (the cart's chariot wheel).
-    // No extra shear damp here: barrowAxes already damps u.y, and a
-    // second 0.35 left the disc flatter than the tray's edge — the
-    // wheel read as skewed off the barrel at NE/NW (user caught it;
-    // the original squished-oval fix predates the axis-level damping)
-    let wu = { x: u.x, y: u.y };
-    const ringAt = (cx, cy, fill) => {
-      X.save(); X.transform(wu.x,wu.y,0,-1,cx,cy);
-      X.beginPath(); X.arc(0,0,WR,0,Math.PI*2); X.arc(0,0,WR-1.2,0,Math.PI*2,true);
-      X.restore(); X.fillStyle=fill; X.fill('evenodd');
-    };
-    const disc = (cx, cy, rr) => { X.save(); X.transform(wu.x,wu.y,0,-1,cx,cy);
-      X.beginPath(); X.arc(0,0,rr,0,Math.PI*2); X.restore(); };
-    // DEPTH: the far rim face peeks behind the near one along the
-    // lateral axis (the cart's two-face treatment)
-    let bx = axle.x - v.x*WTH, by = axle.y - v.y*WTH;
-    ringAt(bx, by, '#453522');
-    X.strokeStyle='#1d150c'; X.lineWidth=0.7/UNIT_SCALE;
-    disc(bx, by, WR); X.stroke();
-    // near rim face
-    ringAt(axle.x, axle.y, '#6b543a');
-    X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE;
-    disc(axle.x, axle.y, WR); X.stroke(); disc(axle.x, axle.y, WR-1.2); X.stroke();
-    let ang = typeof rolling === 'number' ? rolling
-            : rolling ? paceClock(e)*0.35 + e.id : 0.6;
-    X.strokeStyle='#8a6a4a'; X.lineWidth=1.2/UNIT_SCALE;
-    for (let k = 0; k < 3; k++){
-      let A = ang + k*Math.PI/3, c2 = Math.cos(A), s2 = Math.sin(A), t = WR - 0.9;
-      X.beginPath();
-      X.moveTo(axle.x - c2*wu.x*t, axle.y - (c2*wu.y + s2)*t);
-      X.lineTo(axle.x + c2*wu.x*t, axle.y + (c2*wu.y + s2)*t);
-      X.stroke();
-    }
-    X.fillStyle='#8a6a4a'; X.strokeStyle='#1d150c'; X.lineWidth=0.7/UNIT_SCALE;
-    X.beginPath(); X.arc(axle.x, axle.y, WR*0.25, 0, Math.PI*2); X.fill(); X.stroke();
-  };
-  let nearB = Math.sign(v.y) || 1;   // +v.y side is nearer the camera
-  // the FAR handle rod is its own depth part (drawn BEHIND the villager
-  // on the front facings — the poles straddle the body, user call)
-  if (part === 'farRod') {
-    // plow handles fan from ONE beam root (no tray corners on a plow)
-    rod(P(TB, plow ? 0 : -nearB*WB, CH), P(HA, -nearB*WB, HZ), 2.2, 1.1);
-    X.restore(); return;
-  }
-  let wheelFar = u.y < -0.05;        // pushing up-screen: the wheel is far
-  if (wheelFar) wheel();
-  if (plow) {
-    // PLOW body on the barrow frame: beam from the handle root to the
-    // axle, a polished-steel share digging at the ground line (the
-    // plow IS the Heavy Plow tier tell — always tierSteel(2)), and the
-    // twin handles fanning back from the beam root to the same grips
-    // the barrow uses (fists weld via the shared barrowGrips).
-    // the share is a MOLDBOARD blade in the WHEEL's full convention
-    // (user call): push-plane transform, own projected anchor, two
-    // faces offset along v (the back-rim treatment), a face-on SLAB
-    // shape at S/N (the plane is edge-on there and the true
-    // projection collapses to a sliver), and painter order by the
-    // same far/near rule as the wheel.
-    // V-WEDGE share (user call): both faces meet on one shared KEEL
-    // line at the ground (closed bottom) and spread apart upward along
-    // v — the far face draws BEHIND the beam, the near face in front.
-    // No blade at S/N: the wedge is edge-on there, beam+wheel carry
-    // the head-on read alone.
-    // ONE triangle in plane coordinates for every view (the wheel's
-    // one-circle-one-transform rule); the anchor rides wDrop so blade
-    // and wheel share the same ground line in every facing — the NE
-    // collision was the wheel dropping out from under the blade, not
-    // a shape problem.
-    // the blade takes the BEAM's local share of the wheel drop (~40%
-    // at this a-position), not the full drop: constant triangle height
-    // and constant beam overlap in every view (full drop grew the
-    // blade at NE/E, user caught it); the keel floats a hair above the
-    // dropped-wheel ground there, hidden behind the wheel.
-    // up-screen the dropped wheel leans back over the blade's ground
-    // slot — the blade steps back ~2 along the axis there so the tip
-    // clears the rim (user call)
-    let shB0 = P(useDir === 6 ? 3.6 : 4.6, 0, 0);
-    let shB = { x: shB0.x, y: shB0.y + wDrop*0.39
-                   - (useDir === 6 ? 1.0 : useDir === 0 ? 0.6 : useDir === 7 ? 0.6 : 0) };
-    const shareFace = (ox, oy, fill) => {
-      X.beginPath();
-      X.save(); X.transform(u.x, u.y, 0, -1, shB.x, shB.y);
-      // NE/NW: slight clockwise turn about the apex — counters most of
-      // the axis slope so the keel runs near-parallel to the ground
-      // (user call); other views keep the pure plane keel
-      if (useDir === 6) { X.moveTo(-3.5, 0.15); X.lineTo(3.8, -0.75); }
-      // E/W: ~8deg clockwise about the apex (user call) — the front
-      // tip dips into the soil, the back corner rises
-      else if (useDir === 7) { X.moveTo(-4.15, 0.05); X.lineTo(3.05, -1.0); }
-      else { X.moveTo(-3.5, -0.3); X.lineTo(3.8, -0.3); }
-      X.restore();
-      X.save(); X.transform(u.x, u.y, 0, -1, shB.x + ox, shB.y + oy);
-      X.lineTo(-1.4, 4.6);                             // spread top corner
-      X.restore();
-      X.closePath();
-      X.fillStyle = fill; X.fill();
-      X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
-    };
-    if (!headOn) shareFace(-v.x*WTH, -v.y*WTH, '#8f8f8f');            // far, shadowed
-    rod(P(TB, 0, CH), { x: axle0.x, y: axle0.y + wDrop }, 3.4, 2.0);
-    if (!headOn) shareFace(v.x*WTH*0.7, v.y*WTH*0.7, tierSteel(2));    // near, polished
-    rod(P(TB, 0, CH), P(HA, nearB*WB, HZ), 2.2, 1.1);
-    if (!wheelFar || useDir === 6) wheel();
-    X.restore(); return;
-  }
-  // rear legs to the ground — at the PROFILE the two legs project
-  // nearly on top of each other and read as clutter (user caught it):
-  // keep only the NEAR leg there (same geometry as every other view,
-  // so its length matches), the true pair everywhere else
-  rod(P(TB+0.6, nearB*WB, CB), P(TB+1.2, nearB*WB*0.85, 0), 2.0, 1.0);
-  if (useDir !== 7)
-    rod(P(TB+0.6, -nearB*WB, CB), P(TB+1.2, -nearB*WB*0.85, 0), 2.0, 1.0);
-  // tray, painter order: far wall (shadowed inner) → far end board →
-  // floor → cargo → near end board → near wall (lit)
-  poly([P(TB,-nearB*WB,CB), P(TF,-nearB*WB,CB), P(TF,-nearB*WB,CH), P(TB,-nearB*WB,CH)], '#74593a');
-  let endFarA = u.y < 0 ? TF : TB;
-  poly([P(endFarA,-WB,CB), P(endFarA,WB,CB), P(endFarA,WB,CH), P(endFarA,-WB,CH)], '#74593a');
-  poly([P(TB,-WB,CB), P(TF,-WB,CB), P(TF,WB,CB), P(TB,WB,CB)], '#3a2c1c'); // floor
-  // head-on the handles rise straight through the cargo zone — draw the
-  // near rod BEFORE the load so both poles sit behind the resources
-  // (user call; the split-out far rod is already a behind part)
-  const nearRod = () => rod(P(TB, nearB*WB, CH), P(HA, nearB*WB, HZ), 2.2, 1.1);
-  if (headOn) nearRod();
-  // seat the cargo HIGH: most of each art rides above the tray rim so
-  // the resource reads at a glance (user call), while the near wall
-  // still crops the base — nothing pokes out the underside
-  if (loadFn) loadFn(P((TB+TF)/2, 0, CB+4.4));
-  let endNearA = u.y < 0 ? TB : TF;
-  poly([P(endNearA,-WB,CB), P(endNearA,WB,CB), P(endNearA,WB,CH), P(endNearA,-WB,CH)], '#a07c4c');
-  poly([P(TB,nearB*WB,CB), P(TF,nearB*WB,CB), P(TF,nearB*WB,CH), P(TB,nearB*WB,CH)], '#a07c4c');
-  // near handle rod, over everything (side views)
-  if (!headOn) nearRod();
-  if (!wheelFar) wheel();
-  X.restore();
-}
 
 // ---- BATTERING RAM (covered ram, AoE2 style) ----
 // A rigid wooden shed on four wheels with a suspended log protruding from
@@ -1949,226 +924,112 @@ function drawRamBody(e){
   X.restore();
 }
 
-// ---- DRAFT QUADRUPED (ox) ----
-// Horse-derived body/legs (see the mount block in drawUnit) RESHAPED via the
-// `p` profile so it reads as an OX rather than a recolored horse: a heavy
-// barrel, a shoulder hump, a short neck carried LOW, a blocky head, and curved
-// horns. Drawn in drawUnit's translated/mirrored/scaled context at the animal's
-// ground origin, same convention as the horse. Only the 5 right-facing poses
-// are authored ({0,1,5,6,7}); mirroredDir folds the left three onto them. Legs
-// plod on the shared clock while moving. `p` supplies colors + a few shape
-// knobs so the same routine can back other draft animals later.
-function drawQuadruped(e, p){
-  let useDir = mirroredDir(e);
-  let moving = e.path && e.path.length>0 && !e.corpseRot;
-  let walk = moving ? Math.sin(paceClock(e)*0.4 + e.id)*p.walkAmp : 0; // oxen plod: shorter, slower stride
-  let idle = !moving;
-  let swish = e.corpseRot ? 0 : Math.sin(animTick*0.08+e.id)*(idle?0.18:0.07);
-  let nod = (idle && !e.corpseRot) ? Math.sin(animTick*0.05+e.id)*0.5 : 0; // a dead ox's head doesn't bob
-  const coat=p.coat, dark=p.maneC, legC=p.legC, hornC=p.hornC;
-  const LT=p.legTop, LB=p.legBot;
-  X.save(); X.translate(0,-1); X.scale(p.scale, p.scale);
-  X.lineJoin='round';
-
-  // One FILLED crescent horn (single path, outer-silhouette stroke only —
-  // fat stroke-curls read as white bananas): broad at the poll,
-  // sweeping out along sd, tapering to an upturned tip.
-  let horn=(bx,by,sd,s,rot=0)=>{
-    X.save(); X.translate(bx,by); if(rot) X.rotate(rot);
-    X.fillStyle=hornC; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath();
-    X.moveTo(0, 1.0*s);
-    X.quadraticCurveTo(sd*3.1*s, 1.1*s, sd*4.0*s, -1.6*s);  // long outward sweep
-    X.quadraticCurveTo(sd*4.4*s, -3.0*s, sd*3.6*s, -3.4*s); // high upturned tip
-    X.quadraticCurveTo(sd*2.4*s, -1.3*s, 0, -0.5*s);
-    X.closePath(); X.fill(); X.stroke();
-    X.restore();
-  };
-  // small droopy ear, tucked behind/below the horn
-  let ear=(xx,yy,rot)=>{
-    X.fillStyle=dark; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath(); X.ellipse(xx,yy,1.5,0.9,rot,0,Math.PI*2); X.fill(); X.stroke();
-  };
-
-  // Tail (rump end): drawn first for profile/SE so the legs/body overlap it.
-  if(useDir===7||useDir===0){
-    let k = useDir===7?1:0.74;
-    X.save(); X.translate(-6.8*k,-7.5); X.rotate(swish);
-    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.4*k,3,-1.8*k,8.5);
-    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke();
-    X.fillStyle=dark; X.beginPath(); X.arc(-1.8*k,8.9,1.4,0,Math.PI*2); X.fill(); // tuft
-    X.lineCap='butt'; X.restore();
+// ---- The trade cart: pov3d's cartModel projected at its heading (projKit) ----
+// An open team-walled bed on two spoked wheels, the grain sack while loaded, an ox yoked ahead on shafts — rigid parts
+// on their own hinges, so the living cart and its wreck are the same pieces. pose: roll (wheel turn, rad), step (the
+// ox's walk phase, or null standing), load (the sack shows), tail (swish), wreck { age, weathered }: the wheels tip off
+// outward, the bed drops and its walls fall open, the sack slumps out; the ox, a beat later, goes down on its side
+// (its bones at the skeleton stage). Weathered: grey. Art px (x forward, up, z across); the rig recentred on the anchor.
+const CART_STRIDE = 0.2825;                                                            // tiles per ox stride: 1/6 of a wheel turn (pov3d's MIL_STRIDE.cart)
+const CART_RECENTER = 13.5 * 1.32;                                                    // half the rig's span, bed's rear to the ox's muzzle
+const cartRot = (p, ax, a) => { const c = Math.cos(a), s = Math.sin(a), [x, y, z] = p;   // three's rotation about one axis
+  return ax === 'x' ? [x, y * c - z * s, y * s + z * c] : ax === 'y' ? [x * c + z * s, y, -x * s + z * c] : [x * c - y * s, x * s + y * c, z]; };
+const addV = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const shadeHex = (hex, f) => { const n = parseInt(hex.slice(1), 16); return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v * f).toString(16).padStart(2, '0')).join(''); };
+// a box [x0,x1]×[y0,y1]×[z0,z1] through m: one outlined hull, its visible faces filled on it (the top lit, the sides by
+// which way they turn: top > left > right), sorted as one piece by its centre
+function box2D(k, m, col, top, x0, y0, z0, x1, y1, z1, bias = 0){
+  const C = [0, 1].flatMap(i => [0, 1].flatMap(j => [0, 1].map(l => m(i ? x1 : x0, j ? y1 : y0, l ? z1 : z0)))), S = C.map(q => k.P(...q));
+  const ctr = C.reduce((a, q) => addV(a, q), [0, 0, 0]).map(v => v / 8), d = k.depth(ctr[0], ctr[2]) + bias;
+  const hull = loadHull(S); k.add(col, d, () => { X.moveTo(...hull[0]); for (const q of hull.slice(1)) X.lineTo(...q); X.closePath(); }, 'cart');
+  // faces: [corner indices], its outward normal from the box's own axes (i: x, j: y, l: z — index = i*4 + j*2 + l)
+  const F = [[[0, 1, 3, 2], -4], [[4, 5, 7, 6], 4], [[0, 1, 5, 4], -2], [[2, 3, 7, 6], 2], [[0, 2, 6, 4], -1], [[1, 3, 7, 5], 1]];
+  F.forEach(([ix, nn], f) => { const a = Math.abs(nn), sgn = Math.sign(nn), b = a === 4 ? 0 : a === 2 ? 2 : 1;   // the axis index pair
+    const e0 = C[a === 4 ? 4 : a === 2 ? 2 : 1], n = [0, 1, 2].map(i => (e0[i] - C[0][i]) * sgn);
+    const v = k.faces(n); if (v <= 0.02) return; const isTop = a === 2 && sgn > 0, P2 = ix.map(i => S[i]);
+    const sx = (P2[0][0] + P2[2][0]) / 2 - (S.reduce((t, q) => t + q[0], 0) / 8);   // (left of the centre: the lit side)
+    k.add(isTop ? top : shadeHex(col, sx < 0 ? 0.9 : 0.78), d + 0.0001 * (f + 1), () => { X.moveTo(...P2[0]); for (const q of P2.slice(1)) X.lineTo(...q); X.closePath(); }, 'cart', false); });
+}
+function cartRig2D(h, pose, tc){
+  const k = projKit(h), { tube, blob } = k, kc = 1.32, R = r => r * kc, Wr = pose.wreck, age = Wr ? Wr.age : 0, grey = !!(Wr && Wr.weathered);
+  const cl = v => Math.max(0, Math.min(1, v)), fall = (a, d) => Wr ? (grey ? 1 : cl((age - a) / d) ** 2) : 0;
+  const bump = (a, d, amp) => Wr && !grey && age > a && age < a + d ? amp * Math.sin((age - a) / d * Math.PI) : 0;
+  const G = c => grey ? '#8a826f' : c, TC = grey ? '#8f877a' : tc, shift = [-CART_RECENTER, 0, 0];
+  const WR = 7.4, y0 = R(WR - 1.2), y1 = R(WR - 1.2 + 7.6), w = 5, L = 9, t = 0.5, jog = pose.step != null ? R(0.25) * Math.abs(Math.sin(2 * Math.PI * pose.step * 2)) : 0;
+  // the bed rides the axle; drops when the wheels go
+  const bedY = jog - (y0 - R(0.6)) * fall(280, 300) + bump(580, 220, R(0.5)), bedRx = 0.06 * fall(280, 300);
+  const mB = p => addV(addV(cartRot(p, 'x', bedRx), [0, bedY, 0]), shift), mb = (x, y, z) => mB([x, y, z]);
+  box2D(k, mb, G('#3a2c1c'), G('#4a3826'), R(-L), y0 - R(0.6), R(-w), R(L), y0, R(w));                       // floor
+  const tw = (Math.PI / 2) * fall(600, 450) - bump(1050, 200, 0.07);                                            // the walls fall open about their bottom edges
+  for (const [a0, b0, a1, b1, ax_, sg] of [[-L, -w, L, -w + t, 'x', -1], [-L, w - t, L, w, 'x', 1], [-L, -w, -L + t, w, 'z', -1], [L - t, -w, L, w, 'z', 1]]) {
+    const o = ax_ === 'x' ? [0, y0, R(sg > 0 ? w : -w)] : [R(sg > 0 ? L : -L), y0, 0], rot = ax_ === 'x' ? ['x', sg * tw] : ['z', -sg * tw];
+    box2D(k, (x, y, z) => mB(addV(o, cartRot([x - o[0], y, z - o[2]], rot[0], rot[1]))), TC, G('#b48c58'), R(a0), 0, R(b0), R(a1), y1 - y0, R(b1));
   }
-
-  // Legs — shorter, stockier than the horse, same swing scheme.
-  {
-    X.beginPath();
-    if(useDir===1||useDir===5){
-      X.moveTo(-3.2,LT); X.lineTo(-3.2, LB+walk);
-      X.moveTo(3.2,LT);  X.lineTo(3.2, LB-walk);
-      X.moveTo(-4.6,LT); X.lineTo(-4.6, LB-1-walk);
-      X.moveTo(4.6,LT);  X.lineTo(4.6, LB-1+walk);
-    } else if(useDir===7){
-      X.moveTo(3.6,LT); X.lineTo(3.6+walk, LB);
-      X.moveTo(5.6,LT); X.lineTo(5.6-walk, LB);
-      X.moveTo(-4.6,LT);X.lineTo(-4.6+walk, LB);
-      X.moveTo(-6.6,LT);X.lineTo(-6.6-walk, LB);
-    } else {
-      let fy=useDir===6?LB-1:LB, ry=useDir===6?LB:LB-1;
-      X.moveTo(3.6,LT); X.lineTo(3.6+walk, fy);
-      X.moveTo(5.4,LT); X.lineTo(5.4-walk, fy);
-      X.moveTo(-3.4,LT);X.lineTo(-3.4+walk, ry);
-      X.moveTo(-5.0,LT);X.lineTo(-5.0-walk, ry);
+  if (pose.load) { // a big fat sack heaped high over the rim, its neck tied off on top; it slumps out as the walls fall
+    const sf = cl((age - 650) / 500), iL = L - t - 0.35, iW = w - t - 0.3, up = 7.4, sp = [R(7) * sf, y1 - (y1 - y0 - R(4)) * sf, R(3.5) * sf];
+    const ms = (x, y, z) => mB(addV(sp, cartRot([x, y, z], 'z', -0.5 * sf))), sack = G('#cdb98c');
+    const belly = blob(sack, ms, 0, 0, 0, R(iL), R(up) * (1 - 0.2 * sf), R(iW), 'cart');                          // the belly
+    // the gathered neck, its tie and its tuft, each just over the last (they sit on the belly's top: sorted by their own
+    // depths, from some sides the neck went under the belly and the tie with it)
+    const neck = blob(sack, ms, -R(0.5), R(up - 0.2), 0, R(2), R(2), R(1.8), 'cart'), nd = neck.pt.d = belly.pt.d + 0.01;
+    // the cord round it: its far half under the neck, its near half over it (a whole ring over it read as painted on)
+    { const cx = -R(0.4), cy = R(up - 1.2), r = R(1.7), dp = q => k.depth(q[0], q[2]), c0 = dp(ms(cx, cy, 0));
+      const th = Math.atan2(dp(ms(cx, cy, r)) - c0, dp(ms(cx + r, cy, 0)) - c0);   // the angle round it that faces us
+      for (const [a0, d] of [[th + Math.PI / 2, nd - 0.001], [th - Math.PI / 2, nd + 0.001]])
+        tube(G('#8b5a2b'), Array.from({ length: 7 }, (_, i) => { const a = a0 + i / 6 * Math.PI; return ms(cx + r * Math.cos(a), cy, r * Math.sin(a)); }), R(0.45), 'cart').d = d; }
+    blob(sack, ms, -R(0.7), R(up + 1.7), 0, R(1.4), R(1.3), R(1.5), 'cart').pt.d = nd + 0.002;                // the tuft above the tie
+  }
+  for (const s of [-1, 1]) { // spoked wheels, each hinged at its outer rim: rolling alive, tipping off in the wreck
+    const kk = s > 0 ? 1 : 0, tw2 = (Math.PI / 2) * fall(600 + kk * 70, 320) - bump(920 + kk * 70, 180, 0.08), cz = s * R(w + 1.2);
+    const mw = (x, y, z) => addV(addV([0, 0, cz + s * R(0.6)], cartRot(addV([0, R(WR), -s * R(0.6)], cartRot([x, y, z], 'z', -(pose.roll || 0))), 'x', s * tw2)), shift);
+    const wc = G('#5a4630'), wd = k.depth(mw(0, 0, 0)[0], mw(0, 0, 0)[2]);
+    tube(wc, Array.from({ length: 25 }, (_, i) => { const a = i / 24 * 2 * Math.PI; return mw(R(WR - 0.5) * Math.cos(a), R(WR - 0.5) * Math.sin(a), 0); }), R(0.75), 'cart').d = wd;
+    for (let i = 0; i < 3; i++) { const a = i * Math.PI / 3, dx = Math.cos(a) * R(WR - 0.8), dy = Math.sin(a) * R(WR - 0.8); tube(G('#74593a'), [mw(-dx, -dy, 0), mw(dx, dy, 0)], R(0.45), 'cart').d = wd + 0.001; }
+    blob(G('#74593a'), mw, 0, 0, 0, R(1.6), R(1.6), R(0.75), 'cart').pt.d = wd + 0.002;                          // the hub
+  }
+  // The ox: heavy barrel, shoulder hump, stocky legs stepping with the walk, the head low on a thick neck nodding, big
+  // horns, the yoke (O: the ox's art px, y down, ×1.2)
+  const K = 1.2, O = (x, y, z = 0) => [x * K, (5 - y) * K, z * K], q = v => v * K, coat = G('#8d6b47'), root = [R(L + 13), 0, 0];
+  const of = cl((age - 350) / 700), orot = Wr ? (Math.PI / 2.1) * (grey ? 1 : of * of) * (age > 1050 && age < 1350 && !grey ? 1 + 0.07 * Math.sin((age - 1050) / 300 * Math.PI) : 1) : 0;
+  const mO = p => addV(addV(addV(root, [0, q(5.4) * Math.sin(Math.min(orot, Math.PI / 2)) * 0.9, 0]), cartRot(p, 'x', -orot)), shift);
+  const gait = pose.step != null ? horseGait('walk', pose.step) : { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod: 0 };
+  const B = gait.bob * 0.6, OB = (x, y, z = 0) => O(x, y - B, z), mo = (x, y, z) => mO([x, y, z]);
+  if (grey) oxBones2D(k, (x, y, z) => addV(addV(root, [x, y, z - 13.8]), shift));                              // (rolled onto its side: a body-height over)
+  else {
+    const bar = blob(coat, mo, ...OB(0, -6.5), q(8), q(5.4), q(5), 'ox'), bd = bar.pt.d;                            // heavy barrel
+    blob(coat, mo, ...OB(3.5, -9.8), q(3.8), q(2.6), q(3.6), 'ox');                                                // shoulder hump
+    [[-5, -2.6], [-4.4, 2.6], [4.4, -2.6], [5, 2.6]].forEach(([x, z], i) => { const [dx, lift] = gait.legs[i], d = dx * 1.3, hy = 3.6 - lift * 0.7;
+      const foot = mO(O(x + 0.3 + d, hy - 0.2, z)), fd = k.depth(foot[0], foot[2]);                                 // (behind the barrel: only what hangs below shows)
+      tube(G('#705232'), [mO(OB(x, -5, z)), mO(O(x + 0.3 + d * 0.5, (-5 - B + hy) / 2, z)), foot], q(1.25), 'ox').d = bd - 1 + (fd - bd) * 0.01;
+      blob(G('#241408'), mo, ...O(x + 0.3 + d, hy + 0.35, z), q(1.55), q(1), q(1.4), 'ox').pt.d = bd - 1 + (fd - bd) * 0.01 + 1e-4; });
+    const pv = OB(6, -8), hr = -(gait.nod || 0) - 0.3 * (Wr ? of : 0), H = (x, y, z = 0) => mO(addV(pv, cartRot(addV(OB(x, y, z), pv.map(v => -v)), 'z', hr)));
+    const hm = (x, y, z) => mO(addV(pv, cartRot([x - pv[0], y - pv[1], z - pv[2]], 'z', hr)));                   // (the head's frame, for blobs: O coords in)
+    tube(coat, [H(6, -8), H(9, -8.8), H(10.5, -6.5)], q(2.6), 'ox');                                             // thick neck sloping down
+    const hc = O(12, -5.8 + B * 0), head = blob(coat, hm, ...OB(12, -5.8), q(3.4), q(3), q(3), 'ox');            // head, low
+    blob(G('#5a3f28'), hm, ...OB(14.6, -4.3), q(1.9), q(1.7), q(2.2), 'ox', 0.01);                                // broad muzzle
+    for (const s of [-1, 1]) {
+      const c = OB(12, -5.8), dd = [0.55 / q(3.4), 0.45 / q(3), s * 0.75 / q(3)], tl = 1 / Math.hypot(...dd), p = [c[0] + 0.55 * tl, c[1] + 0.45 * tl, c[2] + s * 0.75 * tl];
+      const ep = hm(...p), ec = head.o; if (k.faces(ep.map((v, i) => v - ec[i])) > 0.25) blob('#141414', hm, ...p, q(0.5), q(0.5), q(0.5), 'ox', 0.02, false);   // eyes
+      tube(G('#ece4cf'), [H(11.2, -8.4, s * 1.8), H(11, -9.6, s * 5.8), H(10.6, -12.8, s * 6.6)], q(0.75), 'ox');   // horns: out, then up
+      blob(coat, hm, ...OB(10.2, -7.2, s * 3.6), q(1.6), q(0.6), q(1), 'ox');                                      // droopy ears
     }
-    X.strokeStyle='#000'; X.lineWidth=3.4/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle=legC; X.lineWidth=1.9/UNIT_SCALE; X.stroke(); X.lineCap='butt';
-    let hoof;
-    if(useDir===1||useDir===5) hoof=[[-3.2,LB+walk],[3.2,LB-walk],[-4.6,LB-1-walk],[4.6,LB-1+walk]];
-    else if(useDir===7) hoof=[[3.6+walk,LB],[5.6-walk,LB],[-4.6+walk,LB],[-6.6-walk,LB]];
-    else { let fy=useDir===6?LB-1:LB, ry=useDir===6?LB:LB-1; hoof=[[3.6+walk,fy],[5.4-walk,fy],[-3.4+walk,ry],[-5.0-walk,ry]]; }
-    X.fillStyle='#1e1408';
-    hoof.forEach(h=>{X.beginPath();X.ellipse(h[0],h[1]+0.4,1.6,1.2,0,0,Math.PI*2);X.fill();});
+    const sw = pose.tail || 0, rt = OB(-7.6, -8), T = (x, y) => mO(addV(rt, cartRot(cartRot(addV(OB(x, y), rt.map(v => -v)), 'z', 0.15 * Math.abs(sw)), 'x', 0.5 * sw)));   // the tail swishes from its root
+    tube(G('#5a3f28'), [T(-7.6, -8), T(-9.2, -4), T(-8.6, -1)], q(0.8), 'ox'); const tp = T(-8.6, -0.6); blob(G('#3a2818'), (x, y, z) => [x, y, z], ...tp, q(1), q(1.3), q(1), 'ox');   // tail and its tuft
+    // the yoke: a round rod lying on the neck's crest, forward of the hump, its bows down either side to the shafts
+    const YX = 8.4, YY = -11.8;
+    tube(G(WOOD.beam), [mO(O(YX, YY + B, -5.6)), mO(O(YX, YY + B, 5.6))], q(0.8), 'ox');
+    for (const s of [-1, 1]) tube(G(WOOD.beam), [mO(O(YX, YY + B, s * 5)), mO(O(YX, -6.2 + B, s * 5))], q(0.5), 'ox');
   }
-
-  X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-
-  if(useDir===7||useDir===0){
-    let k=useDir===7?1:0.74;
-    // heavy barrel
-    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6.5, 8.0*k, 5.6, 0,0,Math.PI*2); X.fill(); X.stroke();
-    // Working-ox head carriage: thick neck sloping DOWN from the withers,
-    // the head carried clearly BELOW the topline, with a long face ending
-    // in a broad blunt muzzle and a dewlap fold hanging under the throat.
-    // One open path (fill closes it invisibly inside the barrel; the
-    // stroke stays open so no seam cuts across the body).
-    X.save(); X.translate(1.2*k, nod); // head pulled back toward the body
-    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath();
-    X.moveTo(4.8*k,-10.8);                            // withers (inside the barrel)
-    X.quadraticCurveTo(8.5*k,-9.6, 11.2*k,-8.0);      // thick neck sloping down
-    X.quadraticCurveTo(12.5*k,-8.2, 12.9*k,-7.2);     // low poll / brow
-    X.quadraticCurveTo(15.0*k,-5.6, 15.4*k,-3.4);     // LONG face down to the muzzle
-    X.quadraticCurveTo(15.7*k,-2.2, 14.2*k,-2.2);     // broad blunt muzzle
-    X.quadraticCurveTo(11.8*k,-2.6, 9.6*k,-3.8);      // jaw back to the cheek
-    X.quadraticCurveTo(8.6*k,-2.7, 7.2*k,-3.3);       // dewlap: loose fold hanging
-    X.quadraticCurveTo(6.0*k,-3.0, 4.4*k,-4.8);       //   under the throat into the chest
-    X.fill(); X.stroke();
-    ear(10.6*k,-7.5, -0.3);                           // droopy ear behind the poll
-    horn(11.6*k,-8.1, 1, 1.25*k, -0.5);               // near horn from the poll top, up-forward (exaggerated)
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(12.7*k,-6.0,0.7,0,Math.PI*2); X.fill();   // eye high on the long face
-    X.beginPath(); X.arc(14.7*k,-3.0,0.5,0,Math.PI*2); X.fill();   // nostril
-    X.restore();
-  } else if(useDir===6){
-    // NE back-diagonal: rump near, head recedes.
-    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6.5, 7.0, 5.6, 0,0,Math.PI*2); X.fill(); X.stroke();
-    X.save(); X.translate(-5.6,-7); X.rotate(swish); // near tail
-    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-2.2,3,-1.6,8.5);
-    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt'; X.restore();
-    X.save(); X.translate(1.4,nod);
-    // back-ish view of the low head (horse logic): short thick neck wedge,
-    // then the head ball seen from behind with BOTH horns sweeping out
-    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath();
-    X.moveTo(1.0,-8.6); X.quadraticCurveTo(2.8,-11.3, 4.3,-11.9); // left edge pulled left: wider neck
-    X.lineTo(6.2,-11.5); X.quadraticCurveTo(5.7,-9.2, 5.1,-7.4);
-    X.fill(); X.stroke();
-    // kept simple: just the head circle and the two horns
-    X.beginPath(); X.arc(5.6,-11.9,2.1,0,Math.PI*2); X.fill(); X.stroke(); // head, low
-    horn(4.3,-12.2, -1, 1.0, 0.15); horn(6.8,-12.4, 1, 1.0, -0.3); // both horns, out and up
-    X.restore();
-  } else if(useDir===1){
-    // S head-on: body behind; the head hangs LOW in front of the chest —
-    // broad flat poll, long face tapering to a broad muzzle near the
-    // ground, horns from the poll's top corners, horizontal droopy ears.
-    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6, 6.4,5.6,0,0,Math.PI*2); X.fill(); X.stroke();
-    X.save(); X.translate(0,nod);
-    // dewlap hint: a soft fold peeking below the muzzle
-    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath(); X.ellipse(0,-1.3,2.7,1.1,0,0,Math.PI*2); X.fill(); X.stroke();
-    X.beginPath();
-    X.moveTo(-3.6,-8.8);
-    X.quadraticCurveTo(-3.9,-5.2, -2.5,-2.8);         // cheeks taper down the long face
-    X.quadraticCurveTo(0,-1.5, 2.5,-2.8);             // broad blunt muzzle
-    X.quadraticCurveTo(3.9,-5.2, 3.6,-8.8);
-    X.quadraticCurveTo(0,-10.4, -3.6,-8.8);           // broad flat poll
-    X.closePath(); X.fill(); X.stroke();
-    ear(-4.6,-8.4, 0.15); ear(4.6,-8.4, -0.15);       // ears held out horizontally
-    horn(-2.6,-9.0, -1, 1.5); horn(2.6,-9.0, 1, 1.5); // horn pair from the poll corners (exaggerated)
-    X.fillStyle='#000';
-    X.beginPath(); X.arc(-2.0,-6.6,0.7,0,Math.PI*2); X.fill();     // wide-set eyes
-    X.beginPath(); X.arc(2.0,-6.6,0.7,0,Math.PI*2); X.fill();
-    X.beginPath(); X.arc(-0.9,-2.9,0.5,0,Math.PI*2); X.fill();     // nostrils
-    X.beginPath(); X.arc(0.9,-2.9,0.5,0,Math.PI*2); X.fill();
-    X.restore();
-  } else {
-    // N back view: with the low head carriage the head hides behind the
-    // body — only the poll sliver, horn crescents and ear tips peek above
-    // the topline. Rump + tail nearest.
-    X.save(); X.translate(0,nod);
-    X.fillStyle=coat; X.strokeStyle='#000'; X.lineWidth=1.2/UNIT_SCALE;
-    X.beginPath(); X.ellipse(0,-12.2,2.5,1.5,0,0,Math.PI*2); X.fill(); X.stroke(); // poll sliver
-    ear(-3.2,-11.9, 0.3); ear(3.2,-11.9, -0.3);
-    horn(-1.6,-12.6, -1, 1.2); horn(1.6,-12.6, 1, 1.2); // horn tips peek from behind
-    X.restore();
-    X.fillStyle=coat; X.beginPath(); X.ellipse(0,-6,6.2,5.6,0,0,Math.PI*2); X.fill(); X.stroke(); // body
-    X.save(); X.translate(0,-3.5); X.rotate(swish); // tail down center
-    X.beginPath(); X.moveTo(0,0); X.quadraticCurveTo(-0.7,4,0,8);
-    X.strokeStyle='#000'; X.lineWidth=3.0/UNIT_SCALE; X.lineCap='round'; X.stroke();
-    X.strokeStyle=dark; X.lineWidth=1.6/UNIT_SCALE; X.stroke(); X.lineCap='butt'; X.restore();
-  }
-  X.restore();
+  // the shafts: from the bed's front corners to the foot of each bow, wherever the ox is (walking, falling)
+  if (!grey) for (const s of [-1, 1]) tube(G('#6e5138'), [mb(R(L), y0 + R(2.5), s * R(5)), mO(O(8.4, -6.2 + B, s * 5))], R(0.6), 'cart');
+  return k.parts;
 }
-
-// ---- TRADE CART: ox-drawn covered wagon ----
-// Reuses the ram's iso projection (RAM_AXES / mirroredDir) and wheel machinery,
-// swapping the ram shed for a covered canvas tilt and yoking an ox
-// (drawQuadruped) at the front. Gold cargo rides hidden under the canvas.
-// Drawn inside drawUnit's translated + mirrored + scaled context, coords local
-// px around the ground anchor.
-// The trade cart's ONE canonical load: crate + sack + gold. Drawn only while
-// the cart is LOADED (carrying>0) — the sack appears when it picks up gold at
-// the far market and vanishes when it deposits at home, mirroring a villager's
-// carried resource. Shared by the living cart and the death-spill sequence.
-// `pos(key, dx, dy)` maps each piece's local offset from the load anchor to its
-// final center, which lets the wreck spill the pieces apart along their paths.
-function drawCartLoad(pos, lw){
-  X.lineJoin='round';
-  // one BIG plump grain sack, tied at the neck — clean over busy
-  let p = pos('sack', 0, -3.0);
-  X.strokeStyle='#000'; X.lineWidth=lw; X.fillStyle='#cdb98c';
-  X.beginPath(); X.ellipse(p.x, p.y, 5.2, 5.6, 0, 0, Math.PI*2); X.fill(); X.stroke();
-  X.fillStyle='#cdb98c';
-  X.beginPath(); X.ellipse(p.x+1.6, p.y-6.3, 1.9, 1.3, 0.5, 0, Math.PI*2); X.fill(); X.stroke();
-  X.strokeStyle=WOOD.beam; X.lineWidth=1.2/UNIT_SCALE;
-  X.beginPath(); X.moveTo(p.x-0.6, p.y-5.1); X.lineTo(p.x+2.4, p.y-4.5); X.stroke();
-  X.strokeStyle='#000'; X.lineWidth=lw; X.fillStyle='#b6a074';
-  X.beginPath(); X.ellipse(p.x+1.1, p.y+1.9, 2.2, 2.5, 0, 0, Math.PI*2); X.fill();
-}
-
-const CART_DIM = { L:8, WB:4.4, CB:2.4, CH:7.6, TILT:8.5, WR:5.4, WA:9, WTH:1.3, SCALE:1.32, GAP:3 };
-// Shift (in a-units) that recenters the whole bed+ox composite on the unit
-// anchor — half of the rig's span from the bed's rear to the ox's muzzle.
-const CART_RECENTER = 13.5;
-const OX_PROFILE = { coat:'#8d6b47', maneC:'#5a3f28', legC:'#705232', hornC:'#ece4cf', scale:1.2, walkAmp:3.0, legTop:-4, legBot:3.8 };
+const cart2DState = new Map(), cartCache = new Map();
 function drawTradeCartBody(e){
-  let useDir = mirroredDir(e);
-  // E/W uses the true side-elevation basis: straight-on profile, not the
-  // slightly-rotated generic dir-7 basis (matches the ram's profile pose)
-  let ax = useDir === 7 ? SIDE_AXES : (RAM_AXES[useDir] || SIDE_AXES);
-  let u = ax.u, v = ax.v;
-  let P = (a,b,c) => ({ x:a*u.x + b*v.x, y:a*u.y + b*v.y - c });
-  const { L, WB, CB, CH, TILT, WR, WA, WTH, SCALE, GAP } = CART_DIM;
-  let tc = teamColor(e.team), tcD = teamColorDark(e.team);
-  let rolling = e.path.length > 0;
-  // Whether the ox draws ON TOP of the wagon (ox nearer the camera). For the
-  // side profile (E/W, dir7) the cart reads better drawn in FRONT of the ox,
-  // so 7 is excluded here (ox drawn first, wagon laps over it).
-  let frontNear = (useDir===0 || useDir===1);
-
-  // Rolling creak — same cadence/counter as the ram.
+  let a = cart2DState.get(e.id); if (!a) cart2DState.set(e.id, a = { px: e.x, py: e.y, stride: 0 });
+  const rolling = isUnitMoving(e);
+  if (!window._maskDraw) a.stride += Math.hypot(...walkedSince(a, e));
+  // rolling creak — same cadence/counter as the ram
   if (rolling && !window._maskDraw && window.playSound) {
     let ck = Math.floor((animTick + e.id*7)/90);
     if (ramCreakCycles.get(e.id) !== ck) {
@@ -2176,216 +1037,39 @@ function drawTradeCartBody(e){
       ramCreakCycles.set(e.id, ck);
     }
   }
-
-  X.save();
-  if (rolling) X.translate(0, Math.sin(paceClock(e)*0.2+e.id)*0.5);
-  // Recenter the RIG on the unit anchor: the ox extends far ahead of the
-  // bed, so shift the whole drawing back along the facing axis — the
-  // anchor (pathing position, shadow, selection) sits mid-composite.
-  X.translate(-u.x*CART_RECENTER*SCALE, -u.y*CART_RECENTER*SCALE);
-
-  // Ox yoked ahead along the movement axis. Drawn in its own UNIT_SCALE space
-  // (drawQuadruped applies its own scale); the offset uses the CART-scaled
-  // projection so it lines up with the wagon's front. Grounding: the ox's
-  // origin sits a hoof-height ABOVE its feet, and the wagon's near wheels sit a
-  // half-width BELOW the axle center — offset y by (nearWheelDrop − hoofDrop)
-  // so the ox's hooves land on the wagon's near-wheel contact line (level).
-  //
-  // The hitch gap is per-facing: the projection compresses the offset along
-  // u (head-on |u.y|=0.55) but the drawn ART doesn't compress, so a single
-  // world-space GAP left the ox's hindquarters buried in the bed on some
-  // facings. Values tuned so the ox's rump just clears the wagon front with
-  // the shafts visibly bridging the gap.
-  const HITCH_GAP = {7:12.5, 0:10, 6:10, 1:14, 5:14};
-  let gap = HITCH_GAP[useDir] !== undefined ? HITCH_GAP[useDir] : GAP;
-  let hoofDrop = OX_PROFILE.legBot*OX_PROFILE.scale - 1;
-  let nearDrop = SCALE*(WB+0.4)*Math.abs(v.y);
-  let oxOff = { x: SCALE*(L+gap)*u.x, y: SCALE*(L+gap)*u.y + nearDrop - hoofDrop };
-  let drawOx = () => { X.save(); X.translate(oxOff.x, oxOff.y); drawQuadruped(e, OX_PROFILE); X.restore(); };
-  // Hitch: a PARALLEL pair of shaft rods, one along each side of the ox,
-  // from the wagon's front top corners to the shoulder area. Same ±WB
-  // perpendicular offset at both ends keeps them parallel on screen, and
-  // riding high (bed top rim → just under the topline) lets the far rod
-  // show above the body silhouette instead of vanishing behind it. The +v
-  // side is nearer the camera on every authored facing: far rod draws
-  // before the ox, near rod after, lying visibly along the flank. Head-on
-  // (v.y=0, sides are pure left/right) both draw behind the ox so nothing
-  // crosses the face.
-  let rod = sgn => {
-    let a = { x: SCALE*P(L, sgn*WB, CH-1).x, y: SCALE*P(L, sgn*WB, CH-1).y };
-    // ox end rises to the withers (above the topline, ~-12.3 local) so the
-    // far rod is actually visible over the back instead of hiding behind
-    // it; the far rod gets extra lift — in iso the far side genuinely sits
-    // higher on screen, and without it the body swallows the whole rod
-    let lift = (sgn<0 && !headOn) ? 2.5 : 0;
-    let b = { x: oxOff.x + SCALE*(3.8*u.x + WB*v.x*sgn), y: oxOff.y + SCALE*(3.8*u.y + WB*v.y*sgn) - 12 - lift };
-    X.lineCap='round';
-    X.strokeStyle='#000'; X.lineWidth=2.8/UNIT_SCALE; X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
-    X.strokeStyle=WOOD.beam; X.lineWidth=1.4/UNIT_SCALE; X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
-    X.lineCap='butt';
-  };
-  let headOn = (useDir===1 || useDir===5);
-  // Paint order around the wagon: the far rod always sits behind the ox;
-  // the near rod lies over BOTH the ox and the wagon (it's the closest
-  // thing to the camera along its whole run), so on facings where the
-  // wagon draws after the ox (E/W profile, NE) it must wait for the wagon.
-  let hitchPre, hitchPost;
-  if (headOn) {
-    let grp = () => { rod(-1); rod(1); drawOx(); };
-    hitchPre  = useDir===5 ? grp : null;   // facing away: whole hitch behind the wagon
-    hitchPost = useDir===1 ? grp : null;   // facing viewer: whole hitch over the wagon
-  } else if (frontNear) { // SE diagonal: wagon first, hitch entirely on top
-    hitchPre  = null;
-    hitchPost = () => { rod(-1); drawOx(); rod(1); };
-  } else { // E/W profile, NE: far rod + ox behind the wagon, near rod over it
-    hitchPre  = () => { rod(-1); drawOx(); };
-    hitchPost = () => rod(1);
+  const t = a.stride / CART_STRIDE, ti = ((animTick * VIL_RATE.idle + (e.id || 0) * 0.37) % 1 + 1) % 1;
+  const pose = rolling ? { load: e.carrying > 0, roll: 2 * Math.PI * t / 6, step: ((t % 1) + 1) % 1, tail: 0.35 * Math.sin(4 * Math.PI * t) }
+    : { load: e.carrying > 0, roll: 2 * Math.PI * t / 6, tail: 0.7 * Math.sin(2 * Math.PI * ti) * Math.max(0, Math.sin(Math.PI * ti)) + 0.25 * Math.sin(6 * Math.PI * ti) };   // (a lazy swish, now and then a flick)
+  // (cached by pose, snapped: the walk to PERSON_STEPS, the wheel to its spokes' repeat — a sixth of a turn — the tail)
+  const Q = (v, n) => Math.round(v * n) / n, spoke = Math.PI / 3;
+  if (pose.step != null) pose.step = Q(pose.step, PERSON_STEPS) % 1;
+  pose.roll = Q((((pose.roll % spoke) + spoke) % spoke) / spoke, 8) * spoke; pose.tail = Q(pose.tail, 20);
+  const dir = e.dir !== undefined ? e.dir : 7, key = [dir, pose.load ? 1 : 0, pose.step, pose.roll.toFixed(3), pose.tail, teamColor(e.team)].join('|');
+  let parts = cartCache.get(key);
+  if (!parts) { parts = cartRig2D(dir * Math.PI / 4, pose, teamColor(e.team)); if (cartCache.size > 2000) cartCache.clear(); cartCache.set(key, parts); }
+  X.save(); if (e.facing === -1) X.scale(-1, 1); paintParts(parts); X.restore();   // (it draws its own heading: undo drawUnit's mirror)
+}
+// The cart's wreck: the rig's own (cartRig2D's wreck), with chips and dust as it breaks and the ox's blood under it
+function drawTradeCartCorpse(c, sx, sy, age, alpha){
+  if (!corpseImpactFxDone.has(c.id)) {
+    corpseImpactFxDone.add(c.id);
+    spawnParticles(c.x, c.y, '#c9a15e', 8, 0.04, 1.8);              // wood chips
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 5, 0.02, 1.8); // dust
   }
-
-  if (hitchPre) hitchPre();
-
-  X.save(); X.scale(SCALE, SCALE);
-  let lw = 1.2/UNIT_SCALE;
-  let poly = (pts, fill) => {
-    X.fillStyle=fill; X.beginPath(); pts.forEach((p,i)=>i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill();
-    X.strokeStyle='#000'; X.lineWidth=lw; X.lineJoin='round'; X.stroke();
-  };
-  // Wheels — proper spoked cartwheels: wooden rim ring, dark interior seen
-  // through the spokes, 3 rotating spoke diameters, hub. Two axles (±WA/2).
-  let wheelRot = wheelSpin(e, CART_DIM.WR * CART_DIM.SCALE);
-  // Edge-on wheel slab for the head-on facings (also used by the head-on
-  // body assembly below).
-  let slab = (a,b,r,w2) => {
-    let p=P(a,b,r), h2=r*0.7;
-    X.fillStyle='#33261a'; X.fillRect(p.x-w2,p.y-h2,w2*2,h2*2);
-    X.strokeStyle='#1d150c'; X.lineWidth=0.9/UNIT_SCALE; X.strokeRect(p.x-w2,p.y-h2,w2*2,h2*2);
-    X.fillStyle='#5a4630'; X.fillRect(p.x-0.6,p.y-h2+0.6,1.2,h2*2-1.2);
-  };
-  let wheel = (a,b,r) => {
-    if (useDir===1||useDir===5) { slab(a,b,r,WTH*1.15); return; }
-    // CHARIOT wheel: a big open ring — wooden rim annulus, spokes, hub —
-    // with the world visible THROUGH the gaps (no solid interior disc, no
-    // swept 3D tread).
-    // the wheel's camera-side face: +v points toward the viewer, so the
-    // NEAR wheel (b>0) faces at its outer plane b, but the FAR wheel (b<0)
-    // faces at its inner plane b+WTH — getting this backwards drew the far
-    // wheel's lit face behind its own dark rim
-    let bF = b > 0 ? b : b + WTH, bB = b > 0 ? b - WTH : b;
-    let pF=P(a,bF,r), pIn=P(a,bB,r);
-    let discPath=(cx,cy,rr)=>{X.save();X.transform(u.x,u.y,0,-1,cx,cy);X.beginPath();X.arc(0,0,rr,0,Math.PI*2);X.restore();};
-    let annulus=(cx,cy,fill)=>{
-      X.save();X.transform(u.x,u.y,0,-1,cx,cy);
-      X.beginPath();
-      X.arc(0,0,r,0,Math.PI*2); X.arc(0,0,r-1.5,0,Math.PI*2,true);
-      X.restore();
-      X.fillStyle=fill; X.fill('evenodd');
-    };
-    // depth: the wheel's FAR rim face peeks behind the near one, dark
-    annulus(pIn.x, pIn.y, '#453522');
-    X.strokeStyle='#1d150c';X.lineWidth=0.7/UNIT_SCALE;
-    discPath(pIn.x,pIn.y,r);X.stroke();
-    // near rim face
-    annulus(pF.x, pF.y, '#6b543a');
-    X.strokeStyle='#1d150c';X.lineWidth=0.9/UNIT_SCALE;
-    discPath(pF.x,pF.y,r);X.stroke();
-    discPath(pF.x,pF.y,r-1.5);X.stroke();
-    // 3 spoke diameters (6 spokes) turning with the wheel
-    let ang=(rolling?wheelRot:0.6);
-    let sp=(A,t)=>({x:pF.x+(Math.cos(A)*u.x)*r*t, y:pF.y+(Math.cos(A)*u.y+Math.sin(A))*r*t});
-    X.strokeStyle='#8a6a4a';X.lineWidth=1.4/UNIT_SCALE;
-    for(let k=0;k<3;k++){
-      let A=ang+k*Math.PI/3, s1=sp(A,-0.85), s2=sp(A,0.85);
-      X.beginPath();X.moveTo(s1.x,s1.y);X.lineTo(s2.x,s2.y);X.stroke();
-    }
-    X.fillStyle='#8a6a4a';X.strokeStyle='#1d150c';X.lineWidth=0.7/UNIT_SCALE;
-    X.beginPath();X.arc(pF.x,pF.y,r*0.2,0,Math.PI*2);X.fill();X.stroke();
-  };
-  // Classic two-wheeler: ONE large wheel per side on a single center axle.
-  let wheelPair = (bSide) => wheel(0, bSide, WR);
-  // OPEN wooden bed (no tarp) so the cargo shows. Colors — pieces on the
-  // FAR side of the view show their shadowed INNER surface (bedInner);
-  // near-side pieces show lit outer wood:
-  let bedInner= '#74593a';
-  let bedNear = '#a07c4c';
-  let bedTop  = '#b48c58';
-  let bedFloor= '#3a2c1c';
-  // Plank seams: light interior strokes (convention: rgba .13, never hard
-  // black inside one piece of timber).
-  let seam = (p,q) => {
-    X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=0.8/UNIT_SCALE;
-    X.beginPath();X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);X.stroke();
-  };
-  let wall = (sgn, fill) => {
-    poly([P(-L,sgn*WB,CB),P(L,sgn*WB,CB),P(L,sgn*WB,CH),P(-L,sgn*WB,CH)], fill);
-    for(let t of [1/3,2/3]) seam(P(-L,sgn*WB,CB+(CH-CB)*t), P(L,sgn*WB,CB+(CH-CB)*t));
-    if (sgn===1) for(let a of [-0.45*L,0.45*L]) seam(P(a,WB,CB), P(a,WB,CH)); // stakes on the near wall
-  };
-  let endBoard = (a, fill) => {
-    poly([P(a,-WB,CB),P(a,WB,CB),P(a,WB,CH),P(a,-WB,CH)], fill);
-    seam(P(a,0,CB), P(a,0,CH));
-  };
-  // Ownership read: the box's visible OUTER walls are painted flat team
-  // color (a solid panel reads far better at gameplay zoom than the old
-  // thin rim stripe). Interior faces/floor stay wood for contrast.
-  // (cargo is the shared drawCartLoad — one canonical load, identical in
-  // every trade phase and through the death sequence)
-
-  // Assemble far→near. Near side is +WB for the authored right-facings.
-  let nearB = WB+0.4, farB = -(WB+0.4);
-  if (useDir===1 || useDir===5) {
-    // Head-on (S/N): a real shallow open box using the projection's depth
-    // (u.y=±0.55) instead of a single flat plank — far board first,
-    // thin side rails, floor, cargo peeking over the far rim, then the near
-    // board and near wheels over it. Widened (like the ram's head-on v) so
-    // it doesn't read as a narrow spike.
-    let nearA = useDir===5 ? -L : L; // the end toward the camera
-    let farA  = -nearA;
-    // modest widening only (WB*1.25): at 1.7 the head-on cart reads
-    // wider than every other view
-    let hw = WB*1.25, fw = hw*0.82, fh = CH*0.9; // far board slightly narrower/shorter (depth cue)
-    // the single axle's two big wheel slabs, behind the body at its sides
-    [-1,1].forEach(sd=>slab(0, sd*hw, WR, WTH*1.2));
-    // far board — we're looking INTO the box, so it shows its inner face
-    poly([P(farA,-fw,CB),P(farA,fw,CB),P(farA,fw,fh),P(farA,-fw,fh)], bedInner);
-    // side rails, edge-on slivers tapering far→near (inner faces too)
-    poly([P(farA,-fw,fh),P(nearA,-hw,CH),P(nearA,-hw,CB),P(farA,-fw,CB)], bedInner);
-    poly([P(farA, fw,fh),P(nearA, hw,CH),P(nearA, hw,CB),P(farA, fw,CB)], bedInner);
-    // interior floor
-    poly([P(farA,-fw,CB),P(farA,fw,CB),P(nearA,hw,CB),P(nearA,-hw,CB)], bedFloor);
-    // the load sits IN the box, sunk low between the boards: the near
-    // board occludes its base, the top rising only to the far rim
-    let cc=P(0,0,CH-3.4);
-    if (e.carrying > 0) drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
-    // near board: team-colored outer face with plank seams
-    let bl=P(nearA,-hw,CB), br=P(nearA,hw,CB), tl=P(nearA,-hw,CH), tr=P(nearA,hw,CH);
-    poly([bl,br,tr,tl], tc);
-    seam(P(nearA,-hw,(CB+CH)/2), P(nearA,hw,(CB+CH)/2));
-    for(let t of [-0.5,0,0.5]) seam(P(nearA,hw*t,CB), P(nearA,hw*t,CH));
-  } else {
-    // Which END faces away is view-dependent: for the up-facing diagonals
-    // (u.y<0, NE/NW) the +L end points away — hardcoding back=-L left the
-    // actually-near end painted early and buried under the floor, so the
-    // box read as open at the back. Far pieces show their INNER faces.
-    let farEnd = u.y < 0 ? L : -L, nearEnd = -farEnd;
-    wheelPair(farB);
-    wall(-1, bedInner);        // far side wall: inner face
-    endBoard(farEnd, bedInner); // far end: inner face
-    // open interior floor
-    poly([P(-L,-WB,CB),P(L,-WB,CB),P(L,WB,CB),P(-L,WB,CB)], bedFloor);
-    // the load sits INSIDE the open-topped box: drawn between the floor and
-    // the near wall, so the wall occludes its base and only the tops peek
-    // over the rim
-    let cc=P(0,0,CH-2.2);
-    if (e.carrying > 0) drawCartLoad((k,dx,dy)=>({x:cc.x+dx, y:cc.y+dy}), lw);
-    // near structure (open top): team-colored outer faces — side wall lit
-    // (tc), end board shaded (tcD)
-    wall(1, tc);
-    endBoard(nearEnd, tcD);
-    wheelPair(nearB);
+  if (age >= 580 && !corpseImpactFxDone.has(c.id+':thud')) {
+    corpseImpactFxDone.add(c.id+':thud');
+    spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', 6, 0.03, 2.0); // bed hits the ground
   }
-  X.restore();
-
-  if (hitchPost) hitchPost();
+  const h = (c.dir !== undefined ? c.dir : 7) * Math.PI / 4, k = projKit(h);
+  X.save(); X.globalAlpha = alpha;
+  // the ox's blood, under its rolled body (a body-height to its side), spreading after it lands and drying brown
+  const obp = Math.max(0, Math.min(1, (age - 840) / 2000));
+  if (obp > 0) { const spread = 1 - (1 - obp) * (1 - obp), dry = Math.max(0, Math.min(1, (age - 8000) / 8000)), poolA = 0.6 * Math.min(1, obp * 3) * (1 - dry * 0.55);
+    const at = k.P(1.32 * 22 - CART_RECENTER, 0, -13.8).map(v => v * UNIT_SCALE);
+    X.fillStyle = 'rgba(' + Math.round(120 - 40 * dry) + ', ' + Math.round(25 * dry) + ', ' + Math.round(10 * dry) + ', ' + poolA.toFixed(3) + ')';
+    X.beginPath(); X.ellipse(sx + at[0], sy + 3 + at[1], 8 * UNIT_SCALE * spread, 4 * UNIT_SCALE * spread, 0, 0, Math.PI * 2); X.fill(); }
+  X.translate(sx, sy); X.scale(UNIT_SCALE, UNIT_SCALE);
+  paintParts(cartRig2D(h, { load: (c.carrying || 0) > 0, wreck: { age, weathered: age >= CORPSE_SKEL } }, teamColor(c.team)));
   X.restore();
 }
 
@@ -2496,17 +1180,76 @@ const HORSE_SEAT = [-2, 16];
 // nibbling. neck/head: rotations about the withers and the poll (− lowers the nose); tail: its swing.
 function horseGrazePose(sec, seed){
   const ph = ((sec + seed * 11) / 11) % 1, t = sec + seed * 11, ss = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
-  const graze = ss(0.3, 0.4, ph) - ss(0.72, 0.82, ph);
-  return { neck: -1.05 * graze + 0.07 * graze * Math.sin(t * 7) + 0.04 * (1 - graze) * Math.sin(t * 0.9), head: -0.8 * graze, tail: 0.35 * Math.sin(t * 2.3 + seed * 6) };
+  // (mostly eating: down ~70% of the cycle, a short look up now and then; a slow tug at the hay, not a fast nod)
+  const graze = ss(0.12, 0.2, ph) - ss(0.86, 0.94, ph);
+  return { neck: -1.05 * graze + 0.04 * graze * Math.sin(t * 3.6) + 0.04 * (1 - graze) * Math.sin(t * 0.9), head: -0.8 * graze, tail: 0.35 * Math.sin(t * 2.3 + seed * 6) };
 }
+// The 2D animals' light from above (the bear's, the villager's): a band of a group's MERGED outline (so overlapping
+// parts leave no seams) — the shape less itself moved up by lift (+: the underside in shade; −: a lit band along the
+// top) — masked on a scratch canvas and laid on at alpha. paths: the parts' path fns (drawing on X); bb: their local box.
+let bandC = null;
+function silhouetteBand(paths, bb, lift, col, alpha){
+  if (window._maskDraw) return;
+  const m = X.getTransform(); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [u, v] of [[bb[0], bb[1]], [bb[2], bb[1]], [bb[0], bb[3]], [bb[2], bb[3]]]) {
+    const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
+  x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
+  if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
+  if (!bandC) bandC = document.createElement('canvas');
+  if (bandC.width < w || bandC.height < h) { bandC.width = Math.max(bandC.width, w); bandC.height = Math.max(bandC.height, h); }
+  const O = bandC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
+  O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                           // (the path helpers draw on X)
+  try { O.fillStyle = col; O.beginPath(); for (const p of paths) p(); O.fill();
+    O.globalCompositeOperation = 'destination-out'; O.translate(0, -lift); O.beginPath(); for (const p of paths) p(); O.fill();
+    O.globalCompositeOperation = 'source-over'; } finally { X = X0; }
+  X.save(); X.setTransform(1, 0, 0, 1, 0, 0); X.globalAlpha *= alpha; X.drawImage(bandC, 0, 0, w, h, x0, y0, w, h); X.restore();
+}
+// Paint a kit's parts (projKit): outlines far to near, then fills — see projKit's paint notes
+// A parts list's paths, built once as Path2Ds (a cached pose's — personCache, horseCache, cartCache — is painted every
+// frame; rebuilding its tubes' arcs was most of the cost): the outline, the silhouette, and each outlined part's fill
+// (each its own: two parts' windings can oppose — the blade's tube and its flat face — and a shared nonzero fill
+// cancels where they overlap); a part that paints itself, or lines its edge, stays live. null if a part's path can't
+// be captured (it draws, not just traces).
+function partsPaths(list){
+  const cap = fn => { const P = new Path2D(), sv = X; X = P; try { fn(); return P; } catch (err) { return null; } finally { X = sv; } };
+  const out = new Path2D(), all = [], runs = [];
+  for (const pt of list) {
+    if (!pt.outline) { runs.push({ pt }); continue; }
+    const q = cap(pt.path); if (!q) return null; all.push(q);
+    if (!pt.merge) { const o = pt.strokePath ? cap(pt.strokePath) : q; if (!o) return null; out.addPath(o); }
+    runs.push(pt.line ? { pt } : { col: pt.col, path: q });
+  }
+  return { out, all, runs };
+}
+function paintParts(list, lw = 1){ if (!list.length) return; const TAU = Math.PI * 2;
+  // (sorted, and its paths built on its second paint: a one-off list — a body falling — never pays for them)
+  if (list.__pp === undefined) { list.sort((p, q) => p.d - q.d); if ((list.__n = (list.__n || 0) + 1) >= 2) list.__pp = partsPaths(list); }
+  const pp = list.__pp;
+  X.save(); X.lineJoin = 'round'; X.strokeStyle = '#000'; X.lineWidth = 2.2 * lw / UNIT_SCALE;
+  // a silhouette pass (outlines, occluder masks, picking — not the 3D's billboards, which keep the colours) reads only
+  // coverage: the outline, then every part (each its own fill: a shared one cancels where windings oppose)
+  if (window._maskDraw && !window._povDraw) { X.fillStyle = '#000';
+    if (pp) { X.stroke(pp.out); for (const q of pp.all) X.fill(q); X.restore(); return; }
+    X.beginPath(); for (const pt of list) if (pt.outline) (pt.strokePath || pt.path)(); X.stroke();
+    for (const pt of list) if (pt.outline) { X.beginPath(); pt.path(); X.fill(); } X.restore(); return; }
+  // the plain outlines in one stroke; a merged part clips its own
+  if (pp) X.stroke(pp.out); else { X.beginPath(); for (const pt of list) if (pt.outline && !pt.merge) (pt.strokePath || pt.path)(); X.stroke(); }
+  for (const pt of list) if (pt.outline && pt.merge) { X.save(); const m = pt.merge; X.beginPath(); X.rect(m.c[0] - 200, m.c[1] - 200, 400, 400); X.ellipse(m.c[0], m.c[1], m.r1, m.r2, m.rot, 0, TAU); X.clip('evenodd');
+    X.beginPath(); (pt.strokePath || pt.path)(); X.stroke(); X.restore(); }
+  X.lineWidth = 1.2 * lw / UNIT_SCALE;
+  if (pp) { for (const r of pp.runs) { if (r.pt) { X.fillStyle = r.pt.col; X.beginPath(); r.pt.path(); X.fill(); if (r.pt.line) X.stroke(); } else { X.fillStyle = r.col; X.fill(r.path); } } }
+  else for (const pt of list) { X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill(); if (pt.line) X.stroke(); }
+  X.restore(); }
 // A posed model projected into the 2D view at map heading h (rad) — the horse's and the sheep's shared kit. Parts are
 // ellipsoids and tapered tubes in art px (forward, up, across; heights 1:1 as the 2D art draws them, the ground plane
 // as the iso map), depth-sorted and painted as one silhouette: outlines far to near, then fills.
-function projKit(h){
+// xf (optional): a transform of the model's points before they're projected (a body rolling over as it falls)
+function projKit(h, xf = null){
   const fx = Math.cos(h), fy = Math.sin(h), sx = -fy, sy = fx, R2 = Math.SQRT2, TAU = Math.PI * 2;
   // art px → screen px; depth: larger is nearer the viewer
-  const P = (x, u, z) => [(x * (fx - fy) + z * (sx - sy)) / R2, (x * (fx + fy) + z * (sx + sy)) / (2 * R2) - u];
-  const depth = (x, z) => x * (fx + fy) + z * (sx + sy);
+  const P0 = (x, u, z) => [(x * (fx - fy) + z * (sx - sy)) / R2, (x * (fx + fy) + z * (sx + sy)) / (2 * R2) - u];
+  const P = xf ? (x, u, z) => P0(...xf([x, u, z])) : P0;
+  const depth = (x, z) => x * (fx + fy) + z * (sx + sy), dq = xf ? q => { const t = xf(q); return depth(t[0], t[2]); } : q => depth(q[0], q[2]);
   // how squarely a surface with normal n faces the viewer: the cosine to the screen axes' normal (> 0: seen at all)
   const ax_ = (fx - fy) / R2, az_ = (sx - sy) / R2, bx_ = (fx + fy) / (2 * R2), bz_ = (sx + sy) / (2 * R2), V = [-az_, ax_ * bz_ - az_ * bx_, ax_], VL = Math.hypot(...V);
   const faces = n => (V[0] * n[0] + V[1] * n[1] + V[2] * n[2]) / (VL * (Math.hypot(...n) || 1));
@@ -2517,35 +1260,28 @@ function projKit(h){
     let a = 0, b = 0, d = 0; for (const [u, v] of ax) { a += u * u; b += u * v; d += v * v; }
     const tr = (a + d) / 2, dd = Math.sqrt(((a - d) / 2) ** 2 + b * b), rot = 0.5 * Math.atan2(2 * b, a - d);
     const r1 = Math.sqrt(tr + dd), r2 = Math.sqrt(Math.max(0, tr - dd)), e = { c, r1, r2, rot, o };
-    e.pt = add(col, depth(o[0], o[2]) + bias, () => { X.moveTo(c[0] + r1 * Math.cos(rot), c[1] + r1 * Math.sin(rot)); X.ellipse(c[0], c[1], Math.max(0.4, r1), Math.max(0.4, r2), rot, 0, TAU); }, grp, outline);
+    e.pt = add(col, dq(o) + bias, () => { X.moveTo(c[0] + r1 * Math.cos(rot), c[1] + r1 * Math.sin(rot)); X.ellipse(c[0], c[1], Math.max(0.4, r1), Math.max(0.4, r2), rot, 0, TAU); }, grp, outline);
     return e; };
   // a tube through 2..3 art points: radius r (art px, one per point to taper), round caps, straight segments
   const tube = (col, pts, r, grp, bias = 0) => { const sp = pts.map(q => P(...q)), rs = pts.map((_, i) => Array.isArray(r) ? r[i] : r);
-    const dAvg = pts.reduce((t, q) => t + depth(q[0], q[2]), 0) / pts.length;
+    const dAvg = pts.reduce((t, q) => t + dq(q), 0) / pts.length;
     return add(col, dAvg + bias, () => { for (let i = 0; i < sp.length; i++) { X.moveTo(sp[i][0] + rs[i], sp[i][1]); X.arc(sp[i][0], sp[i][1], rs[i], 0, TAU); }
       for (let i = 0; i + 1 < sp.length; i++) { const [x0, y0] = sp[i], [x1, y1] = sp[i + 1], l = Math.hypot(x1 - x0, y1 - y0) || 1e-6, nx = -(y1 - y0) / l, ny = (x1 - x0) / l, r0 = rs[i], r1 = rs[i + 1];
         // (wound as the caps are, so the overlaps fill solid)
         const q = [[x0 + nx * r0, y0 + ny * r0], [x1 + nx * r1, y1 + ny * r1], [x1 - nx * r1, y1 - ny * r1], [x0 - nx * r0, y0 - ny * r0]]; let ar = 0; for (let j = 0; j < 4; j++) ar += q[j][0] * q[(j + 1) % 4][1] - q[(j + 1) % 4][0] * q[j][1];
         const qq = ar < 0 ? q.reverse() : q; X.moveTo(...qq[0]); for (let j = 1; j < 4; j++) X.lineTo(...qq[j]); X.closePath(); } }, grp); };
   // paint: pt.merge (an ellipse from blob) — no outline inside it, the part grows out of it; pt.line — its own thin
-  // line over what's behind; lw: outline weight (×, for contexts not under UNIT_SCALE)
-  const paint = (list, lw = 1) => { if (!list.length) return; list.sort((p, q) => p.d - q.d);
-    X.save(); X.lineJoin = 'round'; X.strokeStyle = '#000';
-    for (const pt of list) if (pt.outline) { X.save(); X.lineWidth = 2.2 * lw / UNIT_SCALE;
-      if (pt.merge) { const m = pt.merge; X.beginPath(); X.rect(m.c[0] - 200, m.c[1] - 200, 400, 400); X.ellipse(m.c[0], m.c[1], m.r1, m.r2, m.rot, 0, TAU); X.clip('evenodd'); }
-      X.beginPath(); pt.path(); X.stroke(); X.restore(); }
-    X.lineWidth = 1.2 * lw / UNIT_SCALE;
-    for (const pt of list) { X.fillStyle = pt.col; X.beginPath(); pt.path(); X.fill(); if (pt.line) X.stroke(); }
-    X.restore(); };
-  return { P, depth, faces, parts, add, blob, tube, paint, ID: (x, y, z) => [x, y, z] };
+  // line over what's behind; pt.strokePath — its outline's shape when its fill is cut (a hole); lw: outline weight (×, for contexts not under UNIT_SCALE)
+  const paint = paintParts;
+  return { P, depth, faces, view: V.map(v => v / VL), parts, add, blob, tube, paint, ID: (x, y, z) => [x, y, z] };
 }
 // The horse, posed and projected at map heading h (rad). gait: horseGait's { legs, bob, nod, tail }; C: a HORSE_PAL
 // palette; graze: { neck, head } (horseGrazePose); lw: outline weight (×, for contexts not under UNIT_SCALE). Returns
 // { back, front, seat }: painters in a frame with the ground under the horse at (0,0) — back the whole horse when nothing
 // is nearer than its saddle, else the neck and head go in front (over a rider) — and seat, the saddle point in that frame.
-function horseRig2D(h, gait, C, tc, graze, lw = 1){
+function horseRig2D(h, gait, C, tc, graze, lw = 1, xf = null){
   const coat = C.coat, mane = C.mane, legC = C.leg, muzzle = C.muzzle, k = 1.35, TAU = Math.PI * 2;
-  const { P, depth, faces, parts, add, blob, tube, paint, ID } = projKit(h);
+  const { P, depth, faces, parts, add, blob, tube, paint, ID } = projKit(h, xf);
   const B = gait.bob;
   // horseKit's frames, ×k: H rides the bob (body, neck, head), G is the ground (feet)
   const H = (x, y, z = 0) => [x * k, (5 - y + B) * k, z * k], G = (x, y, z = 0) => [x * k, (5 - y) * k, z * k];
@@ -2587,30 +1323,65 @@ function horseRig2D(h, gait, C, tc, graze, lw = 1){
   const seatP = H(HORSE_SEAT[0] / k, 5 - HORSE_SEAT[1] / k), seatD = depth(seatP[0], seatP[2]);
   const headD = depth(...(q => [q[0], q[2]])(hd(2.8, 0, 0))), frontHead = headD > seatD + 2;
   const back = parts.filter(p => !(frontHead && p.grp === 'head')), front = frontHead ? parts.filter(p => p.grp === 'head') : [];
-  return { back: () => paint(back, lw), front: front.length ? () => paint(front, lw) : null, seat: P(...seatP) };
+  const body = parts.filter(p => p.grp !== 'head'), head = parts.filter(p => p.grp === 'head');
+  return { back: () => paint(back, lw), front: front.length ? () => paint(front, lw) : null, body: () => paint(body, lw), head: () => paint(head, lw), frontHead, seat: P(...seatP) };
 }
 // A cavalry unit's mount: its gallop (a stride per 1.3 tiles walked), or standing with a slow nod and tail swish.
 // Returns { back, front, seat } in drawUnit's (possibly mirrored) frame, the ground at y 5; a corpse keeps its pose.
+const horseCache = new Map();
 function horse2D(e, tc){
   let S = horse2DState.get(e.id); if (!S) horse2DState.set(e.id, S = { px: e.x, py: e.y, stride: 0 });
   if (!window._maskDraw) S.stride += Math.hypot(...walkedSince(S, e));
-  const gait = isUnitMoving(e) && !e.corpseRot ? horseGait('gallop', ((S.stride / HORSE_STRIDE.gallop) % 1 + 1) % 1)
-    : e.corpseRot ? { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod: 0, tail: 0 }
-    : { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod: Math.sin(animTick * 0.05 + e.id) * 0.06, tail: Math.sin(animTick * 0.08 + e.id) * 0.25 };
-  const rig = horseRig2D((e.dir || 0) * Math.PI / 4, gait, HORSE_PAL[e.utype] || HORSE_PAL.scout, tc, null), m = e.facing === -1 ? -1 : 1;
+  // (the gallop's phase snaps to PERSON_STEPS, the idle sway to 16 steps: each pose built once, cached by its key)
+  const q = (v, n) => Math.round(v * n) / n, moving = isUnitMoving(e);
+  const ph = moving ? (Math.round(((S.stride / HORSE_STRIDE.gallop) % 1 + 1) % 1 * PERSON_STEPS) % PERSON_STEPS) / PERSON_STEPS : 0;
+  const nod = moving ? 0 : q(Math.sin(animTick * 0.05 + e.id), 8) * 0.06, tail = moving ? 0 : q(Math.sin(animTick * 0.08 + e.id), 8) * 0.25;
+  const key = [e.utype, e.dir || 0, tc, moving ? 'g' + ph : nod + ',' + tail].join('|');
+  let rig = horseCache.get(key);
+  if (!rig) { const gait = moving ? horseGait('gallop', ph) : { legs: [[0, 0], [0, 0], [0, 0], [0, 0]], bob: 0, nod, tail };
+    rig = horseRig2D((e.dir || 0) * Math.PI / 4, gait, HORSE_PAL[e.utype] || HORSE_PAL.scout, tc, null); rig.gait = gait;
+    if (horseCache.size > 2000) horseCache.clear(); horseCache.set(key, rig); }
+  const gait = rig.gait, m = e.facing === -1 ? -1 : 1;
   const at = f => f && (() => { X.save(); X.scale(m, 1); X.translate(0, 5); f(); X.restore(); });   // (it draws its own heading: undo drawUnit's mirror)
-  return { back: at(rig.back), front: at(rig.front), seat: [rig.seat[0] * m, rig.seat[1] + 5] };
+  return { back: at(rig.back), front: at(rig.front), body: at(rig.body), head: at(rig.head), frontHead: rig.frontHead, seat: [rig.seat[0] * m, rig.seat[1] + 5], gait };
+}
+// A dropped weapon or shield (pov3d's droppedItem): built upright on its base, it leaves the hand at `from` (art px),
+// tips over sideways toward `fall` (world-style: x fwd, y up, z across) as it falls — accelerating — spins a little in
+// the air, clatters with a bounce and lies flat, `travel` tiles out. Returns a point mapping: the item's own frame
+// (art px, y down from its base) → art px in the unit's frame.
+function dropXf(age, from, fall = [0.3, 0, 0.95], travel = 0.24){
+  const u = Math.max(0, Math.min(1, (age - 120) / 560)), bounce = age > 680 && age < 920 ? 1 - 0.07 * Math.sin((age - 680) / 240 * Math.PI) : 1;
+  const ax = [fall[2], 0, -fall[0]], al = Math.hypot(...ax), n = ax.map(v => v / al), a = (Math.PI / 2) * u ** 1.5 * bounce, sp = 0.9 * u;
+  const rot = (v, k, t) => { const c = Math.cos(t), s = Math.sin(t), d = k[0] * v[0] + k[1] * v[1] + k[2] * v[2], cr = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+    return v.map((vi, i) => vi * c + cr[i] * s + k[i] * d * (1 - c)); };
+  const T = HORSE_TILE, base = [from[0] + fall[0] * travel * T * u, from[1] + (4.1 - from[1]) * u * u - 0.1 * T * 4 * u * (1 - u), from[2] + fall[2] * travel * T * u];
+  return q => { const w = rot(rot([q[0], -q[1], q[2]], n, a), [0, 1, 0], sp); return [base[0] + w[0], base[1] - w[1], base[2] + w[2]]; };
+}
+// A dead rider's horse (pov3d's cavalryFrame die): it stumbles — nose down, the fore legs buckling — then rolls onto
+// its −z flank, accelerating, with a bounce as it lands and a last kick. age: ms since the death. A painter in
+// drawUnit's frame (the ground at y 5), as horse2D's.
+const HORSE_TILE = HALF_TW * Math.SQRT2 / UNIT_SCALE;                           // art px per tile (pov3d's ax: tiles ↔ art px)
+function horseDeath2D(e, age, tc){
+  const cl = v => Math.max(0, Math.min(1, v)), st = easeC(age / 300), u = cl((age - 250) / 550);
+  let rot = (Math.PI / 2.1) * u * u; if (age > 800 && age < 1100) rot *= 1 + 0.07 * Math.sin((age - 800) / 300 * Math.PI);
+  const kick = age > 900 && age < 1700 ? Math.max(0, Math.sin((age - 900) / 110 * Math.PI)) * (1 - (age - 900) / 800) : 0;
+  const gait = { legs: [0, 1, 2, 3].map(i => i < 2 ? [-2.2 * u, 1.4 * kick * (i ? 0.6 : 1)] : [-1.8 * st * (1 - u) + 2.2 * u, 1.8 * st * (1 - u)]), bob: -1.4 * st * (1 - u) - 0.8 * u, nod: 0.5 * st, tail: 0.4 * kick };
+  // (three's rotation.set(−rot, 0, pitch): the pitch nose-down first, then the roll about the long axis; lifted onto its flank)
+  const pa = -0.2 * st * (1 - u), cp = Math.cos(pa), sp = Math.sin(pa), cr = Math.cos(-rot), sr = Math.sin(-rot), lift = 0.12 * HORSE_TILE * Math.sin(Math.min(rot, Math.PI / 2));
+  const xf = ([x, y, z]) => { const x1 = x * cp - y * sp, y1 = x * sp + y * cp; return [x1, y1 * cr - z * sr + lift, y1 * sr + z * cr]; };
+  const rig = horseRig2D((e.dir || 0) * Math.PI / 4, gait, HORSE_PAL[e.utype] || HORSE_PAL.scout, tc, null, 1, xf), m = e.facing === -1 ? -1 : 1;
+  return () => { X.save(); X.scale(m, 1); X.translate(0, 5); rig.back(); if (rig.front) rig.front(); X.restore(); };
 }
 // ---- The sheep: one model and one animation for both views ----
 // pov3d's sheepModel (tiles: x forward, y up, z across), posed by sheepAnim — set on the model by the 3D view, projected
 // at the sheep's heading by the 2D view (projKit). A trot that keeps pace with the ground (half the cycle a foot is
-// planted), breathing and a slow look round at rest; grazing, the head goes down and chews; the tail wags.
+// planted), breathing and a slow look round at rest; grazing, the head goes down and chews.
 // (the legs hang from high inside the fleece — hipY/leg — so the stride's swing reads under it; L, the stride's
 // reach, matches the leg so a planted foot keeps pace with the ground)
 const SHEEP = { A: 0.55, L: 0.2, lift: 0.03, bob: 0.01, cy: 0.27, wool: '#f2eddd', face: '#3f3b34', ear: '#4d4940', legCol: '#3d3a35', hoof: '#1e1b16',
   hips: [[-0.11, -0.075], [-0.11, 0.075], [0.1, -0.07], [0.1, 0.07]], hipY: 0.21, leg: 0.2, legPhase: [0, 0.5, 0.25, 0.75].map(f => f * 2 * Math.PI) };
 // a: per-sheep state (gait, phase, graze); moved: tiles walked since the last frame; clk: the authored-tick clock.
-// Returns { bob, breath, neck (nod, − lowers), look (turn), tail, legs: [{ ang, up }] (hind −z, hind +z, fore −z, fore +z) }.
+// Returns { bob, breath, neck (nod, − lowers), look (turn), legs: [{ ang, up }] (hind −z, hind +z, fore −z, fore +z) }.
 function sheepAnim(e, a, dt, moved, clk){
   const C = SHEEP, idp = e.id || 0;
   a.gait = (a.gait || 0) + ((moved > 1e-4 ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 8);
@@ -2622,15 +1393,24 @@ function sheepAnim(e, a, dt, moved, clk){
     let x, up = 0; if (q < Math.PI) x = 1 - 2 * q / Math.PI; else { const u = q / Math.PI - 1; x = -Math.cos(u * Math.PI); up = Math.sin(u * Math.PI); }
     return { ang: Math.asin(Math.sin(C.A) * x) * a.gait, up: C.lift * up * a.gait }; });
   return { bob: C.bob * Math.abs(Math.sin(2 * a.phase)) * a.gait, breath: Math.sin(clk * 0.06 + idp) * 0.015 * (1 - a.gait),
-    neck: -0.95 * a.graze + Math.sin(clk * 0.6) * 0.05 * a.graze, look: look * (1 - a.graze),
-    tail: Math.sin(clk * (e.eatingGrass ? 0.35 : a.gait > 0.5 ? 0.25 : 0.08) + idp) * 0.4, legs };
+    neck: -0.95 * a.graze + Math.sin(clk * 0.12) * 0.04 * a.graze, look: look * (1 - a.graze),   // (grazing: a slow tug at the grass, every ~1.7 s — a faster nod read as the head shaking)
+    legs };
 }
 const sheep2DState = new Map();
 // The 2D sheep: sheepModel projected at its smoothed course (as the bear: the tile path's turns averaged over ~1.5 tiles
 // walked, so it doesn't swing at each corner), turning at a sheep's pace; standing, it keeps its heading.
+// Dead (sheep_carcass, the same entity): it rolls onto its side and lies with the heading it died with (pov3d's
+// deathPose), then is eaten down as it's harvested (harvestPose): the legs go first, then the wool, the side facing up
+// first, until only the bones are left (sheepBones).
+const SHEEP_DEAD_HALF = 0.19;                                                          // (pov3d's DEAD_HALF: tiles it lifts as it rolls onto its side)
 function drawSheep2D(e){
   let a = sheep2DState.get(e.id); if (!a) sheep2DState.set(e.id, a = { px: e.x, py: e.y, hd: (e.dir || 0) * Math.PI / 4 });
-  if (!window._maskDraw || !a.P) {
+  const dead = e.utype === 'sheep_carcass';
+  if (dead) { const now = performance.now(); a.deadAt = a.deadAt || (a.P ? now : now - 2000);   // (seen already dead: lying)
+    const age = now - a.deadAt, p = Math.min(1, age / 600);
+    a.rot = (Math.PI / 2.1) * p * p * (age > 600 && age < 900 ? 1 + 0.07 * Math.sin((age - 600) / 300 * Math.PI) : 1);   // accelerating, an impact recoil
+    a.P = { bob: 0, breath: 0, neck: -0.35 * p, look: 0, legs: [0, 1, 2, 3].map(i => ({ ang: (i < 2 ? -0.45 : 0.45) * p, up: 0 })) }; }
+  else if (!window._maskDraw || !a.P) {
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
     const [mx, my] = walkedSince(a, e), moved = Math.hypot(mx, my);
     if (moved > 1e-4) { const c = Math.min(1, moved / 1.5), ux = mx / moved, uy = my / moved; a.cx = (a.cx ?? ux) + (ux - (a.cx ?? ux)) * c; a.cy = (a.cy ?? uy) + (uy - (a.cy ?? uy)) * c; }
@@ -2639,46 +1419,1031 @@ function drawSheep2D(e){
     a.P = sheepAnim(e, a, dt, moved, animTick);
   }
   const P = a.P, C = SHEEP, S = 0.75 * HALF_TW * Math.SQRT2 / UNIT_SCALE;                // art px per tile (×0.75: the 2D sheep's size beside the 2D villagers)
-  const { P: pj, depth, faces, parts, blob, tube, paint } = projKit(a.hd), TAU = Math.PI * 2;
-  // frames (tiles in, art px out): the body rides the bob and breathes; the legs, tail and neck hang from it
+  // dead: rolled about its long axis onto its −z flank (three's rotation.x = −rot), lifted by its half-width
+  const cr = Math.cos(dead ? a.rot : 0), sr = Math.sin(dead ? a.rot : 0), lift = dead ? SHEEP_DEAD_HALF * S * Math.sin(Math.min(a.rot, Math.PI / 2)) : 0;
+  const { P: pj, depth, faces, parts, blob, tube, paint } = projKit(a.hd, dead ? ([x, y, z]) => [x, y * cr + z * sr + lift, z * cr - y * sr] : null), TAU = Math.PI * 2;
+  // harvested (the food left, 1 → 0): the legs go at the first bite, the fleece puff by puff (the side up first), the bones at the end
+  const left = dead ? Math.max(0, Math.min(1, e.hp / (e.maxHp || 100))) : 1, wool = Math.max(0, Math.min(1, (left - 0.12) / 0.88)), bare = left < 0.12;
+  // frames (tiles in, art px out): the body rides the bob and breathes; the legs and neck hang from it
   const bd = (x, y, z) => [x * S, (y * (1 + P.breath) + P.bob) * S, z * S];
   const nz = Math.cos(P.neck), ns = Math.sin(P.neck), ly = Math.cos(P.look), ls = Math.sin(P.look);
   const nk = (x, y, z) => { const x1 = x * nz - y * ns, y1 = x * ns + y * nz, x2 = x1 * ly + z * ls, z2 = -x1 * ls + z * ly; return bd(0.2 + x2, C.cy + 0.03 + y1, z2); };
   const tc = e.team === GAIA_TEAM ? C.wool : teamColor(e.team);                        // the fringe: its owner's colour (white: nobody's yet)
   // the fleece: a fat core and eight puffs over the upper body (golden-angle spiral, as the 3D)
   const core = blob(C.wool, bd, 0, C.cy, 0, 0.24, 0.17, 0.2, 'body'), bodyD = core.pt.d;
-  for (let i = 0; i < 8; i++) { const v = 1 - (i + 0.5) / 8 * 1.45, r = Math.sqrt(Math.max(0, 1 - v * v)), an = i * 2.39996;
-    const pr = 0.1 + (i % 3) * 0.012; blob(C.wool, bd, Math.cos(an) * r * 0.21, C.cy + v * 0.13, Math.sin(an) * r * 0.16, pr, pr, pr, 'body'); }
+  if (bare) parts.pop();
+  const puffs = Array.from({ length: 8 }, (_, i) => { const v = 1 - (i + 0.5) / 8 * 1.45, r = Math.sqrt(Math.max(0, 1 - v * v)), an = i * 2.39996;
+    return [Math.cos(an) * r * 0.21, C.cy + v * 0.13, Math.sin(an) * r * 0.16, 0.1 + (i % 3) * 0.012]; });
+  const kept = dead ? puffs.slice().sort((p, q) => q[2] - p[2] || q[1] - p[1]).slice(Math.round(8 * (1 - wool))) : puffs;   // (pulled off the up-facing, +z, side first)
+  for (const [x, y, z, pr] of kept) blob(C.wool, bd, x, y, z, pr, pr, pr, 'body');
+  if (bare) sheepBones2D({ blob, tube }, bd, nk);
   // the belly's shade (as the 2D art had it): a soft band along the bottom of the fleece, clipped to its outline
-  { const fleece = parts.filter(p => p.grp === 'body'), dTop = Math.max(...fleece.map(p => p.d)), b0 = core.c;
+  if (!bare) { const fleece = parts.filter(p => p.grp === 'body'), dTop = Math.max(...fleece.map(p => p.d)), b0 = core.c;
     parts.push({ col: 'rgba(110,95,70,0.24)', d: dTop + 1e-4, grp: 'body', outline: false, path: () => { X.save(); X.beginPath(); for (const p of fleece) p.path(); X.clip();
       X.beginPath(); X.ellipse(b0[0], b0[1] + core.r2 * 1.05, core.r1 * 1.15, core.r2 * 0.75, core.rot, 0, TAU); X.fill(); X.restore(); X.beginPath(); } }); }
   // legs from the belly (lifted on the swing), a dark hoof; drawn behind the fleece so only what hangs below shows
-  C.hips.forEach(([hx, hz], i) => { const L = P.legs[i], sa = Math.sin(L.ang), ca = Math.cos(L.ang), hy = C.hipY + L.up;
+  if (left > 0.9) C.hips.forEach(([hx, hz], i) => { const L = P.legs[i], sa = Math.sin(L.ang), ca = Math.cos(L.ang), hy = C.hipY + L.up;
     // (a size up on the 3D's: at 2D size its thin legs vanished under the fleece)
     const lg = tube(C.legCol, [bd(hx, hy, hz), bd(hx + C.leg * sa, hy - C.leg * ca, hz)], 0.03 * S, 'legs'), fd = depth(...(m => [m[0], m[2]])(bd(hx, 0, hz)));
     lg.d = bodyD - 1 + (fd - bodyD) * 0.01; blob(C.hoof, bd, hx + (C.leg + 0.01) * sa, hy - (C.leg + 0.01) * ca, hz, 0.036, 0.026, 0.032, 'legs').pt.d = lg.d + 1e-4; });
-  // the tail: a wool puff wagging side to side
-  // (its own outline, as the 2D art's wool-puff tail: it reads as a tail against the fleece from every side)
-  blob(C.wool, bd, -0.25 - 0.03 * Math.cos(P.tail), C.cy + 0.03, 0.03 * Math.sin(P.tail), 0.045, 0.045, 0.045, 'tail').pt.line = true;
-  // the head: big and dark, pale eyes, ears out to the sides, the fringe on top
-  const hx = 0.12, hy = 0.035, head = blob(C.face, nk, hx, hy, 0, 0.1, 0.115, 0.09, 'head', 0.01);
-  for (const z of [-1, 1]) blob(C.ear, nk, hx - 0.025, hy + 0.04 - 0.012, z * 0.105, 0.033, 0.017, 0.06, 'head', 0.005).pt.line = true;
+  // the head: big and dark, pale eyes, ears out to the sides, the fringe on top — its pieces sorted against the head
+  // itself, not by their own depths (as it nods and turns, those crossed the fleece's at other moments: the fringe
+  // popped in front of the fleece and back while the head didn't)
+  const hx = 0.12, hy = 0.035;
+  if (!bare) { const head = blob(C.face, nk, hx, hy, 0, 0.1, 0.115, 0.09, 'head', 0.01), hd = head.pt.d;
+  // ears out to the sides, drooping (the 3D's: tipped 0.35 down about the head's long axis), one piece with the head
+  // (no line of their own: end-on, in profile, an outlined ear read as a second eye)
+  for (const z of [-1, 1]) { const ec = [hx - 0.025, hy + 0.04 - 0.012, z * 0.105], ca = Math.cos(z * -0.35), sa = Math.sin(z * -0.35);
+    const ef = (x, y, zz) => { const dy = y - ec[1], dz = zz - ec[2]; return nk(x, ec[1] + dy * ca - dz * sa, ec[2] + dy * sa + dz * ca); };
+    const ear = blob(C.ear, ef, ...ec, 0.033, 0.017, 0.06, 'head'); ear.pt.d = hd + (depth(ear.o[0], ear.o[2]) > depth(head.o[0], head.o[2]) ? 0.0015 : -0.0015); }   // (the near ear over the head, the far one under)
   { const hc = head.o; for (const z of [-1, 1]) { const fx = 0.55, fy = 0.35, fz = 0.55 * z, t = 1 / Math.hypot(fx / 0.1, fy / 0.115, fz / 0.09), sz = 0.027;
       const m = nk(hx + fx * t, hy + fy * t, fz * t); if (faces([m[0] - hc[0], m[1] - hc[1], m[2] - hc[2]]) <= 0.3) continue;   // (only the eyes clearly facing us: one round the edge read as a stray dot)
-      const n = [fx / 0.01, fy / 0.013225, fz / 0.0081], nl = Math.hypot(...n);
-      blob('#f4efe2', nk, hx + fx * t, hy + fy * t, fz * t, sz, sz, sz, 'head', 0.03, false);
-      blob('#141414', nk, hx + fx * t + n[0] / nl * sz * 0.55, hy + fy * t + n[1] / nl * sz * 0.55, fz * t + n[2] / nl * sz * 0.55, sz * 0.6, sz * 0.6, sz * 0.6, 'head', 0.031, false); } }
+      // the 3D's eyes: pale, a dark pupil set forward on each along the head's surface normal
+      const ex = hx + fx * t, ey = hy + fy * t, ez = fz * t, nl = Math.hypot(fx / 0.01, fy / 0.013225, fz / 0.0081), n3 = [fx / 0.01 / nl, fy / 0.013225 / nl, fz / 0.0081 / nl];
+      blob('#f4efe2', nk, ex, ey, ez, sz, sz, sz, 'head', 0, false).pt.d = hd + 0.003;
+      blob('#141414', nk, ex + n3[0] * sz * 0.55, ey + n3[1] * sz * 0.55, ez + n3[2] * sz * 0.55, sz * 0.6, sz * 0.6, sz * 0.6, 'head', 0, false).pt.d = hd + 0.004; } }
   // (the fringe a size up on the 3D's: it's the owned-sheep tell, and read small at 2D size)
-  blob(tc, nk, hx - 0.01, hy + 0.115, 0, 0.075, 0.07, 0.075, 'head', 0.02).pt.line = e.team !== GAIA_TEAM;
+  if (wool > 0.5) { const f = blob(tc, nk, hx - 0.01, hy + 0.115, 0, 0.075, 0.07, 0.075, 'head'); f.pt.d = hd + 0.002; f.pt.line = e.team !== GAIA_TEAM; } }
   X.save(); if (e.facing === -1) X.scale(-1, 1);                                      // (it draws its own heading: undo drawUnit's mirror)
   X.translate(0, 5); paint(parts);
   // grazing: a few blades at the mouth
   const mo = nk(hx + 0.09, hy - 0.06, 0);
-  if (e.eatingGrass && depth(mo[0], mo[2]) > bodyD) { const m = pj(...mo);   // (not when the mouth is behind the fleece)
+  if (!dead && e.eatingGrass && depth(mo[0], mo[2]) > bodyD) { const m = pj(...mo);   // (not when the mouth is behind the fleece)
     X.strokeStyle = '#4e8c2d'; X.lineWidth = 1.2 / UNIT_SCALE; X.beginPath(); X.moveTo(m[0], m[1]); X.lineTo(m[0] + 2.5, m[1] + 2); X.moveTo(m[0] - 0.4, m[1] + 0.3); X.lineTo(m[0] + 1.6, m[1] + 2.8); X.stroke(); }
   X.restore();
 }
+// The harvested sheep's bones (pov3d's sheepBones), in the body frame bd and the neck frame nk (tiles): the fewest that
+// read — a spine, two fat ribs arching up over it once it lies on its side (+z up), a big skull with big sockets
+function sheepBones2D(k, bd, nk){
+  const S = (bd(1, 0, 0)[0] - bd(0, 0, 0)[0]);
+  k.tube(BONE, [bd(-0.16, 0.3, 0), bd(0.15, 0.31, 0)], 0.026 * S, 'body');
+  for (const x of [-0.07, 0.06]) k.tube(BONE, Array.from({ length: 9 }, (_, i) => { const a = i / 8 * Math.PI; return bd(x, 0.3 + 0.1 * Math.cos(a), 0.1 * Math.sin(a)); }), 0.026 * S, 'body');
+  const sk = k.blob(BONE, nk, 0.12, 0.04, 0, 0.095, 0.1, 0.08, 'head'); k.blob(BONE, nk, 0.21, 0.01, 0, 0.05, 0.045, 0.045, 'head');
+  for (const z of [-1, 1]) k.blob(BONE_HOLE, nk, 0.17, 0.07, z * 0.045, 0.03, 0.03, 0.03, 'head', 0, false).pt.d = sk.pt.d + 0.001;
+}
+// ---- The villager: pov3d's human() projected at its heading ----
+// (one piece, as the 3D: a single outer outline, no lines inside it — inner lines carved it into a muscled look)
+// The same build (art px: x forward, y down to the ground at 5, z across) and the same poses as the 3D view: two-bone
+// legs knee-forward, the torso (or the dress, a lathe) turning at the hips, the head at the neck, two-bone arms with a
+// puffed sleeve, hair. Walk and idle are shared (villagerWalkPose / villagerIdlePose).
+const HUMAN_COL = { skin: '#edc9a0', hair: '#b58e3d', leg: '#5b3a1e', boot: '#3a2412' };
+const VIL_STRIDE = 2.6;                                                                // art px of foot travel
+// walk: each foot half the cycle planted, sweeping back, half swinging forward with a lift; the arms swing opposite the
+// legs; the body bobs twice a stride. Returns { feet: [[x, lift] ×2], hands, bob } (sides −z, +z).
+function villagerWalkPose(t){
+  const leg = ph => { const u = ((ph % 1) + 1) % 1;
+    return u < 0.5 ? [VIL_STRIDE * (1 - 4 * u), 0] : [VIL_STRIDE * (-1 + 4 * (u - 0.5)), 1.6 * Math.sin((u - 0.5) * 2 * Math.PI)]; };
+  const L = leg(t), R = leg(t + 0.5), bob = 0.55 * Math.abs(Math.cos(2 * Math.PI * t));
+  const arm = (fx, s) => [1 - fx * 0.9, -2.6 + Math.abs(fx) * 0.25, s * 5.6];
+  return { feet: [L, R], hands: [arm(L[0], -1), arm(R[0], 1)], bob };
+}
+// idle: the weight rolling, a breath, a slow look round
+function villagerIdlePose(t){
+  const b = Math.sin(2 * Math.PI * t), br = 0.5 + 0.5 * Math.sin(8 * Math.PI * t);
+  return { hands: [[1 + 0.3 * b, -2.4 - 0.2 * br, -5.6], [1 - 0.3 * b, -2.4 - 0.2 * br, 5.6]], torso: { yaw: 0.06 * b, lean: 0.02, dip: 0.25 * br }, headYaw: 0.5 * Math.sin(2 * Math.PI * t + 0.6), feet: [[0.4, 0], [-0.3, 0]] };
+}
+// ---- The villager's work: actions and poses, both views (pov3d builds them in the round, the 2D projects them) ----
+// Poses: art px (x forward, y down, z across, +z the tool side), from a phase t in [0,1): { hands: [−z, +z], torso
+// { yaw, lean, dip }, headYaw, feet, and the tool's grip / dir (world-style, y up) / edge }.
+const easeC = u => (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, u)))) / 2;
+const lerpV = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
+// Swings hold near the handle's end (the lower hand at the butt): the head rides a wider, faster arc, a real power swing.
+const GRIP_OUT = 3.6;
+// Work cycles in cycles per authored tick (aTick, 30/s): the 3D swings
+// run slower and fuller than the 2D jab.
+const VIL_RATE = { split: 0.021, chop: 0.022, saw: 0.034, mine: 0.021, build: 0.03, repair: 0.034, farm: 0.019, plow: 0.03, forage: 0.019, butcher: 0.036, fight: 0.042, idle: 0.0085 };
+// a work cycle's phase on the clock clk (authored ticks: pov3d's aTick, the 2D's animTick), each villager offset
+const villagerWorkPhase = (e, k, clk) => { const r = clk * VIL_RATE[k] + e.id * 0.37; return ((r % 1) + 1) % 1; };
+const WALK_TILES = { walk: 0.62, carry: 0.62, barrow: 0.66, plow: 0.5, flee: 1.0 }; // ground covered per stride cycle
+
+// chop: a horizontal sweep (how a real axe fells a trunk) — wound back and a
+// little up behind the tool-side shoulder, then whipped round through the
+// front to strike at waist height, slightly downhill; the torso twists with
+// it. yaw φ: 0 = straight ahead, + = round to the tool side (+z), behind at ~115°.
+const CHOP_R = 8.6;
+// The lower fist sits ON the handle, a fist's width below the upper one toward
+// the butt (dir: world-style, y up; art y runs down).
+const onHandle = (grip, dir, d = 2.2) => { const L = Math.hypot(...dir); return [grip[0] - dir[0] / L * d, grip[1] + dir[1] / L * d, grip[2] - dir[2] / L * d]; };
+function chopYaw(t){ // 70% slow wind-up to 140°, 30% fast strike round to −20°
+  return t < 0.7 ? -20 + 160 * (1 - Math.cos(Math.PI * t / 0.7)) / 2 : 140 - 160 * Math.pow((t - 0.7) / 0.3, 1.6);
+}
+// The whole body chops: feet planted apart, lead foot forward; the torso
+// winds back toward the tool side (weight on the back foot, leaning back),
+// then unwinds hard through the front (weight onto the lead foot, leaning
+// into the cut, a small dip at impact); the head counter-turns to keep the
+// eyes on the trunk.
+function chopPose(t){
+  const f = chopYaw(t) * Math.PI / 180, c = Math.cos(f), s = Math.sin(f);
+  const wind = Math.max(0, s), strike = t >= 0.7 ? (t - 0.7) / 0.3 : 0;
+  const y = -8 - 2.2 * wind;                                                              // raised a little in the wind-up
+  const grip = [CHOP_R * c, y, CHOP_R * s], dir = [c, -0.18 + 0.7 * wind, s], low = onHandle(grip, dir);
+  const yaw = -0.85 * Math.max(-0.35, Math.min(2.45, f));                                // a big twist with the swing (+z side = back)
+  const lean = -0.16 * wind + 0.26 * Math.sin(Math.PI * Math.min(1, strike * 1.2));
+  const dip = 1.1 * Math.max(0, Math.sin(Math.PI * (strike - 0.55) / 0.45));
+  return { hands: [low, grip], dir, edge: [s, 0, -c], grip,
+    torso: { yaw, lean, dip }, headYaw: -yaw * 0.85, feet: [[1.6 + 0.4 * strike, 0], [-1.4, 0.25 * wind]] };
+}
+// Overhead strike (mine / build): the hands ride an arc in a plane out on the
+// tool side (clear of the head) — raised back over the shoulder with the body
+// arching back, then driven down to the ground ahead, bending over into it
+// with a knee dip. θ: degrees above horizontal.
+// Overhead power swing, straight down the middle (mine, build): both fists on
+// the handle on the body's centre line (so neither arm crosses the body), the
+// hands riding an arc in front of the face from overhead — the tool cocked
+// back over the head — down to the blow ahead; the body arches back as it's
+// raised and bends into the blow with a knee dip. θ: the hands' arc angle,
+// φ: the handle's (it leads the arc by `cock` at the top, `lead` at the blow).
+function overheadPose(t, { top, low, R, cock, lead, split = 0.6 }){
+  const raise = t < split ? easeC(t / split) : 1 - Math.pow((t - split) / (1 - split), 1.7), strike = t >= split ? (t - split) / (1 - split) : 0;
+  const th = (low + (top - low) * raise) * Math.PI / 180, ph = th + (lead + (cock - lead) * raise) * Math.PI / 180;
+  const d = [Math.cos(ph), Math.sin(ph), 0], grip = [1.5 + R * Math.cos(th), -9.5 - R * Math.sin(th), 0];
+  const butt = [grip[0] - d[0] * 2.2, grip[1] + d[1] * 2.2, 0];
+  const lean = -0.18 * raise + 0.4 * Math.sin(Math.PI * Math.min(1, strike * 1.15) / 2) * (1 - Math.max(0, strike - 0.85) * 3);
+  return { hands: [butt, grip], grip, dir: d, edge: [Math.sin(ph), -Math.cos(ph), 0],
+    torso: { yaw: 0, lean, dip: 1.4 * Math.max(0, Math.sin(Math.PI * (strike - 0.5) / 0.5)) }, headYaw: 0, feet: [[1.8, 0], [-1.4, 0]] };
+}
+const minePose = t => overheadPose(t, { top: 74, low: -26, R: 10, cock: 40, lead: -12 });   // the point driven down into the rock
+const splitPose = t => overheadPose(t, { top: 70, low: -30, R: 10, cock: 40, lead: -14 });  // a felled trunk: the axe brought straight down onto it
+const buildPose = t => overheadPose(t, { top: 62, low: -8, R: 7.4, cock: 34, lead: 8, split: 0.55 }); // the handle level at the blow: the face lands flat on the post
+// Scythe: the blade always points the same way — toward the cutting side,
+// square to the snath (it never flips). It mows on one stroke only, swept
+// from the tool side across the front with the blade skimming the ground
+// (45% of the cycle), then carried back empty and a little lifted.
+function mowPose(t){
+  const cut = t < 0.45, u = cut ? t / 0.45 : (t - 0.45) / 0.55, ease = (1 - Math.cos(Math.PI * u)) / 2;
+  const f = (cut ? 62 - 124 * ease : -62 + 124 * ease) * Math.PI / 180, c = Math.cos(f), sn = Math.sin(f);
+  const lift = cut ? 0 : 1.6 * Math.sin(Math.PI * u);
+  const grip = [7.6 * c, -5.2 - lift, 7.6 * sn], dir = [c, -0.9 + lift * 0.12, sn], low = onHandle(grip, dir);
+  return { hands: [low, grip], dir, edge: [sn, 0, -c], grip, torso: { yaw: -0.85 * f, lean: 0.12, dip: cut ? 0.4 : 0.2 }, headYaw: 0.6 * f, feet: [[1, 0], [-1, 0]] };
+}
+// Bow saw, felling: laid on its side against the trunk — the blade level at
+// the waist SAW_X ahead, teeth into the bark, the frame tipped back toward
+// the villager (SAW_TIP from flat, so the arch clears his body) — stroked side
+// to side along the blade, both hands on the middle of the bow.
+const SAW_X = 14.5, SAW_Z = 12.2, SAW_Y = -6, SAW_TIP = 1.35; // the saw's near end at z = SAW_Z − 4 (art px)
+function sawPose(t){ const off = 3 * Math.sin(2 * Math.PI * t);
+  // both fists round the frame's top bar (bowSaw: 6.5px above the blade), either side of its middle
+  const bow = 6.4, bx = SAW_X - Math.sin(SAW_TIP) * bow, by = SAW_Y - Math.cos(SAW_TIP) * bow;
+  return { off, hands: [[bx, by, SAW_Z - 12.7 - off], [bx, by, SAW_Z - 10.3 - off]], torso: { yaw: 0.1 * off - 0.15, lean: 0.2, dip: 0.5 }, feet: [[1.6, 0], [-1.2, 0]] }; }
+// forage: one hand at a time reaches into the bush, plucks (a small tug) and
+// drops the berry into the other, cupped at the belly; the hands trade each pick.
+const FORAGE_REACH = [[9.4, -4.6, -2.4], [9.8, -6.8, 2.6]];
+function foragePose(t){
+  const s = t < 0.5 ? 1 : -1, u = (t % 0.5) / 0.5, i = s > 0 ? 1 : 0;
+  const e = u < 0.45 ? easeC(u / 0.45) : u < 0.6 ? 1 - 0.1 * (u - 0.45) / 0.15 : 0.9 * (1 - easeC((u - 0.6) / 0.4));
+  const hands = [];
+  hands[i] = lerpV([6.3, -7.6, s * 1.2], FORAGE_REACH[i], e);
+  hands[1 - i] = [6.6, -6.2, -s * 1];                                                       // cupped, catching
+  return { hands, berry: u > 0.5 && u < 0.95 ? hands[i] : null, torso: { yaw: -0.14 * s * e, lean: 0.16 + 0.14 * e, dip: 0.3 }, headYaw: 0.1 * s * e, feet: [[1, 0], [-0.6, 0]] };
+}
+// butcher: bent right over the carcass, one hand pinning it, the knife
+// hand stabbing down in quick jabs and drawing back slowly (the 2D jab clock).
+function butcherPose(t){
+  const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
+  const kh = lerpV([7, -9, 2.4], [9.4, -5.6, 1.4], jb);
+  return { hands: [[10, -4.6, -2.8], kh], knife: kh, kdir: [0.45 - 0.1 * jb, -1, -0.1], jab: jb,
+    torso: { yaw: -0.1, lean: 0.5 + 0.08 * jb, dip: 1.6 + 0.4 * jb }, headYaw: 0, feet: [[2.4, 0], [-1.8, 0]] };
+}
+// repair: hammering a wall, the mallet choked up in one fist: the arm lifts
+// it up and back over the shoulder (out on the tool side, clear of the head),
+// then brings it down and forward so the face meets the planks square at
+// shoulder height (handle near upright); the free hand braces on the wall.
+const WALL_X = 10.5, REP_HIT = [5.6, -4.5, 6.2], REP_UP = [1.6, -14, 9.5];
+// Where each job's target sits from the villager at the blow (tiles: [ahead, across]) — its tool's head at impact on
+// the shared poses (as toolHead lays a tool along its dir from the grip): both views step a worker in by it so the
+// tool meets the trunk, the rock, the post. A tree's target is its trunk's centre: the axe's edge meets its bark.
+let WORK_REACH = null;
+function villagerWorkReach(){
+  if (WORK_REACH) return WORK_REACH;
+  const U = UNIT_SCALE / (HALF_TW * Math.SQRT2), TRUNK = 2.2 / (HALF_TW * Math.SQRT2) * 1.35;   // art px → tiles; the 3D tree's trunk radius
+  const head = (pose, lx, ly) => { const P = pose(0.9999), dl = Math.hypot(...P.dir), d = P.dir.map(v => v / dl), ed = P.edge[0] * d[0] + P.edge[1] * d[1] + P.edge[2] * d[2];
+    let e = P.edge.map((v, i) => v - d[i] * ed); const el = Math.hypot(...e) || 1; e = e.map(v => v / el);
+    const k = GRIP_OUT + 13 * 0.55 + ly; return [(P.grip[0] + d[0] * k + e[0] * lx) * U, (P.grip[2] + d[2] * k + e[2] * lx) * U]; };
+  const n = Math.hypot(-0.34, -0.94), chop = head(chopPose, 5, -1.5), mine = head(minePose, 4.6, -1.4);
+  return WORK_REACH = { chop: [chop[0] - 0.34 / n * TRUNK * 1.05, chop[1] - 0.94 / n * TRUNK * 1.05], saw: [(SAW_X + 0.6) * U + TRUNK * 0.9, (SAW_Z - 11.5) * U],
+    mine: [mine[0] + 0.17, mine[1]], split: head(splitPose, 5, -1.5), forage: [FORAGE_REACH[1][0] * U + 0.16, 0], butcher: [10 * U + 0.44, 0],
+    build: head(buildPose, 3.75, 0), repair: [WALL_X * U, 0] };
+}
+function repairPose(t){
+  const w = t < 0.6 ? easeC(t / 0.6) : 1 - Math.pow((t - 0.6) / 0.4, 1.6);        // 1 = wound up over the shoulder
+  const phi = (10 - 65 * w) * Math.PI / 180, grip = lerpV(REP_HIT, REP_UP, w);
+  return { hands: [[WALL_X - 0.6, -9.5, -3], grip], grip, dir: [Math.sin(phi), Math.cos(phi), 0], edge: [Math.cos(phi), -Math.sin(phi), 0],
+    torso: { yaw: 0.12 * w - 0.08, lean: 0.14 - 0.12 * w, dip: 0.2 }, headYaw: 0.1, feet: [[1.4, 0], [-1, 0]] };
+}
+// fight: a lunging knife jab from a guard, the shoulder turning into it.
+const FIGHT_X = 18.5;
+function fightPose(t){
+  const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
+  const kh = [6.2 + 4.6 * jb, -8.4 - 0.4 * jb, 2.6 - 1.4 * jb];
+  return { hands: [[4.2, -11.5, -3.2], kh], knife: kh, kdir: [1, 0.12, -0.08], jab: jb,
+    torso: { yaw: -0.25 + 0.5 * jb, lean: 0.08 + 0.22 * jb, dip: 0.4 + 0.4 * jb }, headYaw: 0.2 - 0.3 * jb, feet: [[1.8 + 1.4 * jb, 0], [-1.6, 0]] };
+}
+
+const VIL_TOOL = { chop: 'axe', mine_gold: 'pick', mine_stone: 'pick', build: 'mallet', farm: 'scythe' };
+function villagerLoad(e){
+  if (e.carryType !== 'food') return e.carryType;
+  return e.foodSrc === 'wheat' ? 'food' : e.foodSrc === 'meat' ? 'wool' : 'berries';
+}
+// What a villager is doing, as a lab action ({ kind, t, opt }) — both views' reading of the same sim state. stride: tiles
+// walked (the walk's phase), clk: the work clock (authored ticks). Viewer-only: reads sim state, never writes it.
+function villagerAction(e, stride, clk){
+  const moving = isUnitMoving(e), up = hasUpgrade.bind(null, e.team), opt = {};
+  if (moving) {
+    const farmWalk = e.task === 'farm' && e.gatherX >= 0 && Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
+    let kind = 'walk';
+    // the load shows only while HAULING along a path (as 2D's carryShow) — not in the last press into contact, where
+    // the first bite already lands
+    // (a hauler on its way to drop it — task 'return' — keeps it in hand right up to the throw, the last step too)
+    if (e.carrying > 0 && !farmWalk && (e.path.length > 0 || e.task === 'return')) { kind = up('wheelbarrow') ? 'barrow' : 'carry'; opt.load = villagerLoad(e); }
+    else if (farmWalk && up('heavy_plow')) kind = 'plow';
+    else if (isRetreatingUnit(e)) kind = 'flee';
+    else if (VIL_TOOL[e.task]) opt.tool = VIL_TOOL[e.task];
+    if (kind === 'barrow' && !(e.carrying > 0)) opt.load = null;
+    return { kind, t: ((stride / WALK_TILES[kind]) % 1 + 1) % 1, opt };
+  }
+  let atSite = true, bt = null;
+  if (e.task === 'chop' || e.task === 'mine_gold' || e.task === 'mine_stone') atSite = e.gatherX >= 0 && atGatherTile(e, e.gatherX, e.gatherY);
+  else if (e.task === 'build' && e.buildTarget) { bt = entitiesById.get(e.buildTarget); atSite = !!bt && atBuildSite(e, bt); }
+  else if (e.target) atSite = inActionRange(e);
+  let kind = 'idle';
+  if (e.task === 'return' && e.carrying > 0) { opt.load = villagerLoad(e); return { kind: 'carry', t: 0.25, opt }; } // at the drop, the load still in hand till the throw
+  if ((e.task || e.target) && atSite) {
+    if (e.task === 'chop') { const felled = e.gatherX >= 0 && map[e.gatherY] && map[e.gatherY][e.gatherX].res <= 60; // a cut tree lies felled: split the trunk on the ground
+      kind = felled ? 'split' : up('bow_saw') ? 'saw' : 'chop'; opt.up = { double: up('double_bit_axe') }; }
+    else if (e.task === 'mine_gold' || e.task === 'mine_stone') { kind = 'mine'; opt.up = { bright: e.task === 'mine_gold' && up('gold_mining') }; }
+    else if (e.task === 'build') kind = bt && bt.complete ? 'repair' : 'build';
+    else if (e.task === 'farm') { kind = up('heavy_plow') ? 'plow' : 'farm'; opt.up = { bright: up('horse_collar') }; }
+    else if (e.task === 'forage') kind = 'forage';
+    else if (!e.task && e.target) { const tg = entitiesById.get(e.target); kind = tg && tg.utype === 'sheep_carcass' ? 'butcher' : 'fight'; }
+  } else if (e.carrying > 0) { opt.load = villagerLoad(e); return { kind: 'carry', t: 0.25, opt }; } // waiting with a load
+  return { kind, t: villagerWorkPhase(e, kind, clk), opt };
+}
+// death (drawCorpse's staged sequence, in the round), by age in ms: struck —
+// the head and shoulders snap back, arms flung out; the knees buckle and the
+// hips drop; he goes over backward off the heels, accelerating, the legs
+// straightening as he lays out; a small bounce on impact, the arms flopping
+// out to the sides and the head rolling over. Blood seeps out from under
+// him and dries brown; at `skel` the body gives way to cartoon bones (the
+// bear's), which shrink away by `life`.
+const DIE = { hit: 260, buckle: 700, land: 1200 };
+function villagerDeathPose(age){
+  const cl = v => Math.max(0, Math.min(1, v));
+  const hit = easeC(age / DIE.hit), buck = easeC((age - 150) / (DIE.buckle - 150)), u = cl((age - 480) / (DIE.land - 480)), flop = easeC((age - DIE.land + 60) / 380);
+  let fall = (Math.PI / 2) * u * u;                                                           // accelerating, as a body falls
+  if (age > DIE.land && age < DIE.land + 280) fall *= 1 - 0.06 * Math.sin((age - DIE.land) / 280 * Math.PI); // the bounce
+  else if (age >= DIE.land + 280 && age < DIE.land + 440) fall *= 1 - 0.022 * Math.sin((age - DIE.land - 280) / 160 * Math.PI); // and a smaller one
+  const rest = s => [1, -2.4, s * 5.6], fling = s => [-1.5, -15.5, s * 8.6], limp = s => [2.2, -5, s * 6.4], trail = s => [-1.2, -17.5, s * 7.5], splay = s => [-1, -11.5, s * 10.5];
+  const hand = s => lerpV(lerpV(lerpV(lerpV(rest(s), fling(s), hit), limp(s), buck), trail(s), u), splay(s), flop);
+  return { fall, hands: [hand(-1), hand(1)], headYaw: 0.7 * flop - 0.25 * Math.sin(Math.PI * u),
+    torso: { yaw: 0.12 * hit * (1 - u) + 0.35 * Math.sin(Math.PI * u), lean: -0.35 * hit * (1 - buck) + 0.3 * buck * (1 - u), dip: 3 * buck * (1 - u * u) + 0.3 * u }, // twisting as he goes over
+    feet: [[1.4 * buck * (1 - u) + 0.3, 0], [-0.6, 0.8 * hit * (1 - buck)]] };
+}
+// flee: a run — long strides with high knees, leaning into it; the elbows stay
+// bent and each fist pumps opposite its leg: up and in to the chest in front,
+// down past the hip behind.
+function runPose(t){
+  const S = 3.8, leg = ph => { const u = ((ph % 1) + 1) % 1;
+    return u < 0.5 ? [S * (1 - 4 * u), 0] : [S * (-1 + 4 * (u - 0.5)), 3.4 * Math.sin((u - 0.5) * 2 * Math.PI)]; };
+  const L = leg(t), R = leg(t + 0.5), bob = 1.1 * Math.abs(Math.cos(2 * Math.PI * t));
+  // Each upper arm swings from the shoulder (a: + forward), the elbow held at ~90°.
+  const arm = s => { const sw = s * Math.cos(2 * Math.PI * t), a = sw > 0 ? 0.85 * sw : 0.95 * sw;
+    const el = [4.5 * Math.sin(a), -8 + 4.5 * Math.cos(a), s * 5.3];
+    return { el, hand: [el[0] + 4.2 * Math.cos(a), el[1] - 4.2 * Math.sin(a), s * (4.6 - 0.8 * Math.max(0, sw))] }; };
+  const A = [arm(-1), arm(1)];
+  return { feet: [L, R], hands: A.map(x => x.hand), elbows: A.map(x => x.el), bob, torso: { yaw: 0.05 * Math.sin(2 * Math.PI * t), lean: 0.26, dip: 0 }, headYaw: 0 };
+}
+// ---- Soldiers: gear, swings and poses, both views (pov3d builds them in the round, the 2D projects them) ----
+const MIL_IMPACT = { militia: SWORD_HIT, spearman: 0.5, archer: 0.75, scout: SWORD_HIT, knight: SWORD_HIT, ram: 0.63 }; // where in each attack cycle the blow lands (swords: the shared swing's hit)
+// The 3D flight is flat — a low arc, ARROW_ARC px of rise per tile of run (the 2D map's 7 px/tile reads well
+// top-down; seen in the round it lobbed the arrows) — so the bow draws nearly level. The angle an arrow leaves the
+// bow at: the flight below climbs (eH − sH + π·A)/HPX over its D-tile run, A = ARROW_ARC·D px — the same for every
+// shot but for the small launch-to-impact drop (taken at the archer's range, 4 tiles).
+const ARROW_ARC = 2.4, ARROW_LAUNCH = Math.atan2((8 - 12 + Math.PI * ARROW_ARC * 4) / (HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2), 4);
+const FORGE_STEEL = ['#8f8a7d', '#a8adb3', '#c6cdd8'];   // a soldier's steel by forge tier
+function soldierEquip(ut, age, atk, arm, fletch){
+  const v = { metal: FORGE_STEEL[atk], weapon: atk, torso: arm >= 2 ? 'chain' : arm >= 1 ? 'scale' : null, helmet: 'hood', shield: null, feather: false, quiver: false };
+  if (ut === 'militia') { v.helmet = age >= 2 ? 'norman' : age === 1 ? 'kettle' : 'hood'; v.shield = age >= 2 ? 'kite' : age === 1 ? 'round' : null; }
+  if (ut === 'spearman') v.helmet = age >= 2 ? 'norman' : 'kettle';
+  if (ut === 'archer') { v.feather = fletch; v.quiver = age >= 2; }
+  if (ut === 'scout' || ut === 'knight') { v.helmet = ut === 'knight' ? 'great' : age >= 2 ? 'spiked' : 'hood'; v.shield = ut === 'knight' ? 'kite' : age >= 2 ? 'round' : null; }
+  return v;
+}
+// The sword swing both views share: render-units' swordSwingCurve/swordSwingArc (the 2D art's overhead chop — a slow
+// windup over the shoulder, a whip-fast strike, a settle, the recovery) in the unit's own side plane: the grip orbits
+// from its guard hand0 (art px), the blade turns as the 2D one does (horizontal at the strike, never into the ground).
+// zOut: how far the raised hand swings out to the sword side (in the round the blade would pass through the head).
+// t: the phase, the hit at SWORD_HIT. Returns the hand, blade dir and edge, and w / c: windup / strike 0..1.
+function swordArc(t, hand0, base, zOut){
+  const ssa = swordSwingCurve(((t % 1) + 1) % 1), A = swordSwingArc(ssa, base);
+  const th = A.rot, w = Math.max(0, Math.min(1, (ssa - 0.5) / 0.65)), c = Math.max(0, Math.min(1, (0.5 - ssa) / 1.85));
+  return { hand: [hand0[0] + A.ox, hand0[1] + A.oy, hand0[2] + zOut * w], dir: [Math.sin(th), Math.cos(th), 0], edge: [Math.cos(th), -Math.sin(th), 0], w, c };
+}
+const along = (p, d, k) => { const L = Math.hypot(...d); return [p[0] + d[0] / L * k, p[1] - d[1] / L * k, p[2] + d[2] / L * k]; }; // art pt + k px along a world-style dir
+// Poses by unit and action: { hands, torso, headYaw, feet, weapon: {...} }.
+function militiaPose(kind, t, eq){
+  const two = !eq.shield, shieldHand = [5.6, -6.6, -6.4]; // out from the body and below the chin, so a turning head clears the shield's top
+  if (kind === 'attack') { // the 2D art's overhead chop (swordArc: render-units' swordSwingArc), from its guard
+    const { hand, dir, edge, w, c } = swordArc(t, two ? [7.6, -6.2, 0.4] : [5.8, -6.4, 4.6], 4.2, 4.5);
+    return { hands: two ? [along(hand, dir, -2), hand] : [shieldHand, hand], weapon: { hand, dir, edge },
+      // weight back on the windup, into the strike (with a shield up: tighter, or the head swings into its top edge)
+      torso: { yaw: (two ? -0.12 : 0) - (two ? 0.5 : 0.3) * w + (two ? 0.35 : 0.15) * c, lean: -0.12 * w + (two ? 0.3 : 0.16) * c, dip: (two ? 1.2 : 0.7) * c },
+      headYaw: 0.3 * w - 0.15 * c, feet: [[1.2 + 2.4 * c, 0], [-1.5, 0.4 * w]], shieldHand };
+  }
+  const walk = kind === 'walk' ? villagerWalkPose(t) : null, L = carryLife(kind, t);
+  const hand = addP(two ? [7.6, -6.2, 0.4] : [5.8, -6.4, 4.6], L.d), dir = two ? [0.72, 0.68 + L.tilt, 0] : [0.45 + L.tilt, 0.88, 0.1];
+  const hands = two ? [along(hand, dir, -2), hand] : [walk ? walk.hands[0] : shieldHand, hand];
+  if (eq.shield) hands[0] = addP(shieldHand, [0, L.d[1] * 0.8, 0]);
+  const it = villagerIdlePose(t).torso; // two-handed: the body turned a little toward the sword side, so the far arm reaches round the chest
+  return { hands, weapon: { hand, dir }, torso: two ? { ...it, yaw: it.yaw - 0.12 } : it, headYaw: kind === 'idle' ? villagerIdlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0, shieldHand: hands[0] };
+}
+function spearmanPose(kind, t, eq){
+  if (kind === 'attack') { // spear levelled, driven forward in a lunge and drawn back
+    const th = t < 0.3 ? easeC(t / 0.3) * 0.25 : t < 0.5 ? 0.25 - 1.25 * easeC((t - 0.3) / 0.2) : -1 + easeC((t - 0.5) / 0.5);
+    const d = -th * 6, dir = [1, 0.06, -0.24];                                               // + forward: a deep thrust
+    const rear = [2 + d, -7.2, 5], front = [6.4 + d, -8.2, 3.6];            // the shaft held out past the hip, angled in toward the target
+    const lunge = Math.max(0, -th);
+    return { hands: [front, rear], weapon: { hand: rear, dir }, torso: { yaw: -0.5 + 0.2 * lunge - 0.15 * Math.max(0, th) * 4, lean: 0.08 + 0.5 * lunge, dip: 1.8 * lunge }, headYaw: 0.2, feet: [[2 + 3.2 * lunge, 0.6 * Math.max(0, Math.sin(Math.PI * lunge))], [-1.8 - 0.6 * lunge, 0]] };
+  }
+  const walk = kind === 'walk' ? villagerWalkPose(t) : null, L = carryLife(kind, t), hand = addP([5, -6.5, 3.6], L.d), dir = [0.3 + L.tilt, 0.95, 0]; // the spear tip sways with the step
+  return { hands: [walk ? walk.hands[0] : [1, -2.4, -5.6], hand], weapon: { hand, dir }, torso: villagerIdlePose(t).torso, headYaw: kind === 'idle' ? villagerIdlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0 };
+}
+function archerPose(kind, t, eq){
+  if (kind === 'attack') { // side-on: the bow arm out, nock, draw to the cheek, hold, loose (the string hand flicks back), recover
+    // anchored at the outside of the cheek (the head's a sphere), and the bow straight out AHEAD of that anchor: the arrow
+    // between them lies along the facing — the way the loosed one flies (bow off to the side, it pointed ~40° astray)
+    const bowH = [9.6, -12, 3.6], nock = [5.8, -12.6, 3.9], cheek = [2.6, -12.2, 4.2], after = [0.4, -11.6, 6];
+    const draw = t < 0.15 ? 0 : t < 0.55 ? easeC((t - 0.15) / 0.4) : t < 0.75 ? 1 : 0;
+    const loose = t >= 0.75 ? Math.max(0, 1 - (t - 0.75) / 0.12) : 0;                    // the snap after the release
+    // after the loose the string hand fetches the next arrow — over the shoulder from the Castle quiver, else from the hip — and nocks it
+    const src = eq.quiver ? [-2.2, -16.8, 3.2] : [0.6, -2.8, 6.4];
+    let hand = t < 0.75 ? lerpV(nock, cheek, draw) : t < 0.85 ? lerpV(after, cheek, loose) : t < 0.92 ? lerpV(after, src, easeC((t - 0.85) / 0.07)) : lerpV(src, nock, easeC((t - 0.92) / 0.08));
+    bowH[1] -= 0.8 * Math.sin(Math.PI * Math.min(1, (t - 0.75) / 0.12)) * (t >= 0.75 && t < 0.87 ? 1 : 0); bowH[0] += 0.6 * loose * (t >= 0.75 ? 1 : 0); // the bow arm kicks
+    // aimed up along the flight the arrow takes (ARROW_LAUNCH): the draw pitched about the shoulder, so the nocked
+    // arrow points the way the loosed one flies
+    const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 13), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
+      return [2.2 + dx * c - u * sn, -13 - (dx * sn + u * c), q[2]]; };
+    const bh = aimed(bowH); hand = aimed(hand);
+    bowH[0] = bh[0]; bowH[1] = bh[1];
+    return { hands: [bowH, hand], bow: { grip: bowH, pull: hand, draw, arrow: t < 0.75, fetched: t >= 0.92 }, torso: { yaw: -0.75 - 0.1 * draw, lean: 0.05 - 0.08 * draw, dip: 0.3 + 0.3 * draw }, headYaw: 0.75 + 0.1 * draw, feet: [[1.8, 0], [-1.8, 0]] };
+  }
+  const walk = kind === 'walk' ? villagerWalkPose(t) : null, L = carryLife(kind, t), bowH = addP([3.2, -4.8, -5.8], L.d);
+  return { hands: [bowH, walk ? walk.hands[1] : [1, -2.4, 5.6]], bow: { grip: bowH, pull: bowH, draw: 0, arrow: false }, torso: villagerIdlePose(t).torso, headYaw: kind === 'idle' ? villagerIdlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0 };
+}
+// Life at rest and on the march, shared: at rest the weight rolls from foot to
+// foot and the weapon hand drifts; marching, the carried hands bounce with each
+// step and swing a little with the stride.
+function carryLife(kind, t){
+  const s = Math.sin(2 * Math.PI * t), c = Math.cos(2 * Math.PI * t);
+  if (kind === 'walk') return { d: [0.35 * s, -0.55 * Math.abs(c), 0], tilt: 0.06 * s };
+  return { d: [0.25 * s, 0.3 * Math.sin(4 * Math.PI * t), 0.15 * c], tilt: 0.04 * c, feet: [[0.4 + 0.45 * s, 0], [-0.3 + 0.45 * s, 0.15 * Math.max(0, -s)]] };
+}
+const addP = (a, d) => a.map((v, i) => v + d[i]);
+const SOLDIER_POSE = { militia: militiaPose, spearman: spearmanPose, archer: archerPose };
+// The rider's sword arm, by action: at rest the blade up by the neck; the attack the 2D rider's overhead chop
+// (swordArc), out on the sword side, clear of the horse's neck.
+// A rider's leg (s: ±1 side), astride by `k`: 1 bowed out round the barrel to the stirrup; 0 hanging straight and
+// together, as a thrown rider's legs drop by gravity. Art px: hip, the curve's control point, the foot, the boot.
+function riderLeg(s, k){
+  const L = (a, b) => a.map((v, i) => b[i] + (v - b[i]) * k);
+  return { hip: [0, -3, s * 2], ctrl: L([3.6, 0.5, s * 9.2], [1.2, 0.4, s * 2.3]), foot: L([2, 5.6, s * 7.6], [0.6, 3.7, s * 2.2]), boot: L([2.8, 6, s * 7.6], [0.8, 3.9, s * 2.2]) };
+}
+function riderArm(kind, t){
+  const rest = [[6.5, -7, 6], [0.5, 0.84, 0.2]];
+  if (kind === 'die') return [[3.2, -6.5, 6.2], [-0.9, -0.25, 0.3]];   // limp: the sword trailing back from a slack hand
+  if (kind !== 'attack') return rest;
+  const p = swordArc(t, rest[0], 3.4, 0);                                // the 2D rider's overhead chop, from the saddle
+  return [p.hand, [p.dir[0], p.dir[1], rest[1][2]], p.edge];
+}
+// A soldier's gear by its team's age and forge lines (soldierEquip's rules)
+const soldierGear = e => soldierEquip(e.utype, ageBonus(e.team), upgradeAtkBonus(e.team), upgradeArmorBonus(e.team), hasUpgrade(e.team, 'fletching'));
+// What a soldier is doing ({ kind, t, legs, opt: { unit, eq } }) — both views' reading. The swing follows the HITS: one
+// struck this reload cycle plays its cut (landing on the hit) — on the move too, the legs (or the horse) running on
+// underneath; gated on range alone, a hit on the run showed no blow, and a chase flipping in and out of range restarted
+// the swing over and over. stride: tiles walked, clk: the idle clock (authored ticks). Viewer-only.
+const SOLDIER_STRIDE = { walk: 0.62, gallop: 1.3 };
+function soldierAction(e, stride, clk){
+  const ut = e.utype, opt = { unit: ut, eq: soldierGear(e) }, cav = ut === 'scout' || ut === 'knight';
+  const rof = (UNITS[ut] && UNITS[ut].rof) || T30(60), cd = e.atkCooldown || 0;
+  // (__animAttack: the gallery / lab preview swings on its own clock, no target)
+  const swing = (e.__animAttack || e.target) && MIL_IMPACT[ut] != null && (e.__animAttack || cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT[ut]) % 1 + 1) % 1 : null;
+  if (isUnitMoving(e)) { const kind = cav ? 'gallop' : 'walk', lt = ((stride / SOLDIER_STRIDE[kind]) % 1 + 1) % 1;
+    return swing != null && cd > 0 ? { kind: 'attack', t: swing, opt, legs: { kind, t: lt } } : { kind, t: lt, opt }; }
+  if (swing != null) return { kind: 'attack', t: swing, opt };
+  return { kind: 'idle', t: villagerWorkPhase(e, 'idle', clk), opt };
+}
+// Carrying: the load overhead, both hands under its edges either side of the head; LOAD_SIT: how far each load's middle
+// sits above its bottom (art px, before its ×1.5 cartoon size), so it rests on the head.
+const LOAD_SIT = { wood: 2.85, stone: 2.4, gold: 2.85, food: 2.85, wool: 3.4, berries: 1.8 };
+const CARRY_HANDS = [[0.4, -17.1, -5.6], [0.4, -17.1, 5.6]];
+// The female villager's dress [radius, art y] from the hem up (pov3d's DRESS_SHAPES.tunic)
+const VIL_DRESS = [[0, -0.4], [4.2, -0.45], [4.95, -0.65], [5.3, -1.1], [5.1, -2.8], [4.8, -6], [4, -9.2], [2.3, -11.1], [1.4, -12], [0, -12.2]];
+// A solid ellipsoid for line-of-sight tests in a projKit frame: centre c and its three half-axis vectors (kit coords).
+// M maps a point's offset from c into the unit sphere's (inside: |M v| < 1).
+function solidOf(c, a1, a2, a3){
+  const det = a1[0] * (a2[1] * a3[2] - a2[2] * a3[1]) - a2[0] * (a1[1] * a3[2] - a1[2] * a3[1]) + a3[0] * (a1[1] * a2[2] - a1[2] * a2[1]);
+  const cof = [[a2[1] * a3[2] - a2[2] * a3[1], a2[2] * a3[0] - a2[0] * a3[2], a2[0] * a3[1] - a2[1] * a3[0]],
+               [a3[1] * a1[2] - a3[2] * a1[1], a3[2] * a1[0] - a3[0] * a1[2], a3[0] * a1[1] - a3[1] * a1[0]],
+               [a1[1] * a2[2] - a1[2] * a2[1], a1[2] * a2[0] - a1[0] * a2[2], a1[0] * a2[1] - a1[1] * a2[0]]];
+  return { c, M: v => cof.map(r => (r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) / det) };
+}
+// The face: where the head (a sphere, radius 4 art px at hc) shows in front of what caps it — his hair (pov3d's hair
+// ellipsoid at head-frame (−0.6, −15.6), radii 3.9 × 3.2 × 4.1) or a helmet (cap: [x, y, z, rx, ry, rz], head-frame art;
+// mH maps head-frame art to kit coords), seen along
+// the projection's line of sight V. Returns the outline's points on the sphere's mid-plane (kit coords: project with P),
+// or null when no face shows (from behind).
+function headFaceOutline(hc, mH, V, cap = [-0.6, -15.6, 0, 3.9, 3.2, 4.1]){
+  const [cx, cy, cz, rx, ry, rz] = cap, R = 4, ch = mH(cx, cy, cz), a = [mH(cx + rx, cy, cz), mH(cx, cy - ry, cz), mH(cx, cy, cz + rz)].map(q => q.map((v, i) => v - ch[i])), Mv = solidOf(ch, ...a).M;
+  // the mid-plane through the head's centre, square to the line of sight: e1, e2
+  const t0 = Math.abs(V[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  let e1 = cr(V, t0), l = Math.hypot(...e1); e1 = e1.map(v => v / l); const e2 = cr(V, e1);
+  const mv = Mv(V), mvv = mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2];
+  // how far the face's surface stands in front of the hair's at (α, β) (< 0: covered, null: off the head)
+  const margin = (al, be) => { const r2 = al * al + be * be; if (r2 >= R * R) return null;
+    const th = Math.sqrt(R * R - r2), p = [0, 1, 2].map(i => hc[i] + al * e1[i] + be * e2[i] - ch[i]), mp = Mv(p);
+    const b = 2 * (mp[0] * mv[0] + mp[1] * mv[1] + mp[2] * mv[2]), c = mp[0] * mp[0] + mp[1] * mp[1] + mp[2] * mp[2] - 1, D = b * b - 4 * mvv * c;
+    return D < 0 ? th + 9 : th - (-b + Math.sqrt(D)) / (2 * mvv); };
+  let best = null, bm = 0.05;
+  for (let i = -4; i <= 4; i++) for (let j = -4; j <= 4; j++) { const m = margin(i * 0.85, j * 0.85); if (m != null && m > bm) { bm = m; best = [i * 0.85, j * 0.85]; } }
+  if (!best) return null;
+  const out = [];
+  for (let k = 0; k < 28; k++) { const an = k / 28 * 2 * Math.PI, dx = Math.cos(an), dy = Math.sin(an); let lo = 0, hi = 2 * R;
+    for (let it = 0; it < 14; it++) { const mid = (lo + hi) / 2, m = margin(best[0] + dx * mid, best[1] + dy * mid); if (m != null && m > 0) lo = mid; else hi = mid; }
+    const al = best[0] + dx * lo, be = best[1] + dy * lo; out.push([0, 1, 2].map(i => hc[i] + al * e1[i] + be * e2[i])); }
+  return out;
+}
+const vil2DState = new Map();
+// The actions the 2D rig draws (pov3d's animFrame poses), and the tool each holds; the rest keep the old art for now.
+const VIL2D_POSE = { idle: villagerIdlePose, walk: villagerWalkPose, chop: chopPose, split: splitPose, mine: minePose, build: buildPose,
+  farm: mowPose, forage: foragePose, butcher: butcherPose, fight: fightPose, repair: repairPose,
+  carry: t => ({ ...villagerWalkPose(t), hands: CARRY_HANDS }),
+  flee: runPose, saw: sawPose,
+  barrow: t => ({ ...villagerWalkPose(t), hands: BARROW_GRIPS }), plow: t => ({ ...villagerWalkPose(t), hands: BARROW_GRIPS, torso: { lean: 0.14 } }) };
+// Pushing the wheelbarrow / the Heavy Plow (pov3d's barrowRig): both fists on the grips out in front of the belly
+const BARROW_GRIPS = [[6.5, -6.5, -3.9], [6.5, -6.5, 3.9]];
+const VIL2D_TOOL = { chop: 'axe', split: 'axe', mine: 'pick', build: 'mallet', farm: 'scythe', repair: 'mallet', butcher: 'knife', fight: 'knife' };
+const VIL_SHOULDER = [2.4, -9.2, 5.3], VIL_TOOL_COL = { handle: '#8B4513', steel: '#b8bfc6', bright: '#f2f6fb', wood: '#b08850' };
+// pov3d's tube: one smooth quadratic from a to c through the joint (its control ctl = 2·joint − (a+c)/2), sampled
+const quadPts = (a, ctl, c, n = 6) => Array.from({ length: n + 1 }, (_, i) => { const u = i / n, k0 = (1 - u) * (1 - u), k1 = 2 * u * (1 - u), k2 = u * u;
+  return a.map((v, j) => k0 * v + k1 * ctl[j] + k2 * c[j]); });
+// a person's draw layers (drawPerson2D's DRAW ORDER; FAR_SIDE: beyond a horse's far flank, painted before the horse),
+// and its pose cache: the parts built for a pose key
+const FAR_SIDE = -40, BACK_TOOL = -30, FAR_ARM = -20, LEGS = -10, BODY = 0, NEAR_ARM = 50, HEAD = 100, HAIR_FRONT = 150, RAISED_ARM = 200, FRONT_TOOL = 210;
+const PERSON_STEPS = 24, personCache = new Map();
+// The point a villager works on (pov3d's workTarget, in sim coords — a tile's centre at its integer): a resource
+// tile's centre, the nearest point along a felled trunk, a carcass, the nearest point of a building's footprint
+function villagerWorkTarget(e, kind){
+  if ((kind === 'chop' || kind === 'saw' || kind === 'mine' || kind === 'forage') && e.gatherX >= 0) return [e.gatherX, e.gatherY];
+  if (kind === 'split' && e.gatherX >= 0) { // along the fallen trunk (it falls toward +x −y: screen right)
+    const L = TREE_TRUNK_H * 0.7, dx = Math.SQRT1_2, dy = -Math.SQRT1_2, u = Math.max(0.15, Math.min(1, ((e.x - e.gatherX) * dx + (e.y - e.gatherY) * dy) / L));
+    return [e.gatherX + dx * L * u, e.gatherY + dy * L * u]; }
+  const foot = b => [Math.max(b.x - 0.5, Math.min(b.x + (b.w || 1) - 0.5, e.x)), Math.max(b.y - 0.5, Math.min(b.y + (b.h || 1) - 0.5, e.y))];
+  if (kind === 'butcher') { const t = entitiesById.get(e.target); if (t) return t.type === 'building' ? foot(t) : [t.x, t.y]; }
+  if ((kind === 'build' || kind === 'repair') && e.buildTarget) { const b = entitiesById.get(e.buildTarget); if (b) return foot(b); }
+  return null;
+}
+// Where a villager is drawn (pov3d's, the shared reach): at work, turned to its target and stepped in so the tool meets
+// it — as far as the sim lets it stand off, ≤ 1.6 tiles from its sim spot; off its spot, it walks there (legs and
+// all, at WALK_IN), else it rides its sim spot. Viewer-only state on S. Returns { act, hd } or null (its own dir).
+const WALK_IN = 0.9;   // tiles per game-second a villager steps to its work spot at (a walk)
+function villagerWorkSpot(e, act, S){
+  const now = performance.now(), dt = S.wt ? Math.min(0.1, (now - S.wt) / 1000) : 0; if (!window._maskDraw) S.wt = now;
+  const W = villagerWorkReach()[act.kind], T = W && villagerWorkTarget(e, act.kind), mv = isUnitMoving(e);
+  let tx = e.x, ty = e.y, hd = null;
+  if (T) { const ph = Math.atan2(T[1] - e.y, T[0] - e.x), c = Math.cos(ph), sn = Math.sin(ph), px = T[0] - (W[0] * c - W[1] * sn), py = T[1] - (W[0] * sn + W[1] * c);
+    if ((px - e.x) ** 2 + (py - e.y) ** 2 < 1.6 * 1.6) { tx = px; ty = py; }
+    if (!mv) hd = ph; }
+  if (S.wx == null || (S.wx - tx) ** 2 + (S.wy - ty) ** 2 > 4 || (mv && !T)) { S.wx = tx; S.wy = ty; return hd == null ? null : { act, hd }; }
+  if (window._maskDraw) return hd == null ? null : { act, hd };
+  const dx = tx - S.wx, dy = ty - S.wy, d = Math.hypot(dx, dy);
+  if (!mv && d > 0.03) { // walking into its work spot (or back out of it): a walk, a load in hand stays in hand
+    const step = Math.min(d, WALK_IN * GAME_SPEED * dt), wk = act.opt && act.opt.load ? 'carry' : 'walk';
+    S.wx += dx / d * step; S.wy += dy / d * step; S.inStride = (S.inStride || 0) + step;
+    return { act: { kind: wk, t: ((S.inStride / WALK_TILES[wk]) % 1 + 1) % 1, opt: act.opt }, hd: Math.atan2(dy, dx) }; }
+  const f = Math.min(1, dt * 10); S.wx += dx * f; S.wy += dy * f;
+  return hd == null ? null : { act, hd };
+}
+function drawPerson2D(e){
+  let S = vil2DState.get(e.id); if (!S) vil2DState.set(e.id, S = { px: e.x, py: e.y, stride: 0 });
+  if (!window._maskDraw) S.stride += Math.hypot(...walkedSince(S, e));
+  // a corpse (drawCorpse sets __deathAge): the staged death, the whole body going over backward about a pivot behind the
+  // heels (fall, as the 3D's)
+  // a soldier (soldierAction, SOLDIER_POSE) or a villager (villagerAction, VIL2D_POSE): one body, its gear by unit
+  const soldier = e.utype !== 'villager', eq = soldier ? soldierGear(e) : null, dying = e.__deathAge != null;
+  let act = dying ? { kind: 'die', t: 0, opt: {} } : soldier ? soldierAction(e, S.stride, animTick) : villagerAction(e, S.stride, animTick);
+  // a villager at work (pov3d's): turned to what it works on and stepped in so its tool meets it (villagerWorkReach) —
+  // walking there, and back out after, rather than popping; drawn there (S.wx/S.wy, its drawn spot), facing it
+  let hd = (e.dir || 0) * Math.PI / 4;
+  if (!soldier && !dying) { const spot = villagerWorkSpot(e, act, S); if (spot) { act = spot.act; hd = spot.hd; } }
+  // (phases snap to PERSON_STEPS a cycle: each pose is built once and cached — the 3D's pose cache, in 2D)
+  if (!dying) { act.t = (Math.round(act.t * PERSON_STEPS) % PERSON_STEPS) / PERSON_STEPS; if (act.legs) act.legs.t = (Math.round(act.legs.t * PERSON_STEPS) % PERSON_STEPS) / PERSON_STEPS; }
+  // a rider sits on the horse rig (horse2D): his seat 14 px up (pov3d's riderFig), riding the gait's rise
+  const horse = soldier && isMountedUnit(e.utype) && !dying ? horse2D(e, teamColor(e.team)) : null;
+  // a dead rider: his horse goes down (horseDeath2D) and he's thrown clear — off its falling side in an arc, landing on
+  // his back (pov3d's cavalryFrame: from the saddle, 0.25 tile on and 0.72 tile across)
+  const fallen = dying && isMountedUnit(e.utype) ? horseDeath2D(e, e.__deathAge, teamColor(e.team)) : null;
+  const thrown = fallen ? Math.max(0, Math.min(1, (e.__deathAge - 150) / 650)) : 0;
+  const hq = Math.round(hd / (2 * Math.PI) * 64);   // (the heading in 64 steps: the cache key)
+  const key = dying ? null : [e.utype, e.female ? 1 : 0, teamColor(e.team), hq, act.kind, act.t, act.legs ? act.legs.t : '',
+    JSON.stringify(act.opt), horse ? [Math.round(horse.gait.bob * 40), Math.round((horse.gait.nod || 0) * 100), isUnitMoving(e) ? 1 : 0, horse.frontHead ? 1 : 0].join(',') : ''].join('|');
+  let parts = key && personCache.get(key);
+  if (!parts) { parts = buildPerson(); if (key) { if (personCache.size > 4000) personCache.clear(); personCache.set(key, parts); } }
+  function buildPerson(){
+  const pose = fallen ? () => riderPose('die', thrown, eq) : dying ? () => villagerDeathPose(e.__deathAge) : horse ? () => riderPose(act.kind, act.t, eq, horse.gait) : soldier ? () => soldierPose2D(e.utype, act, eq) : VIL2D_POSE[act.kind];
+  const o = pose(act.t), tool = !soldier && (VIL2D_TOOL[act.kind] || (act.kind === 'walk' && act.opt.tool)), up = act.opt.up || {};
+  if (act.kind === 'walk' && tool) o.hands = [o.hands[0], VIL_SHOULDER];              // a work tool on the shoulder, the other arm swinging
+  const C = HUMAN_COL, dress = !soldier && !!e.female, tc = teamColor(e.team), bob = o.bob || 0, TAU = Math.PI * 2;
+  const { P, depth, faces, view, parts, add, blob, tube } = projKit(hq * Math.PI / 32);
+  const fall = o.fall || 0, cf = Math.cos(fall), sf = Math.sin(fall);
+  const rX = horse ? -0.8 : fallen ? -0.8 + 0.25 * HORSE_TILE * thrown : 0, rZ = fallen ? -0.72 * HORSE_TILE * thrown : 0;
+  const rU = horse ? 14 + horse.gait.bob * (isUnitMoving(e) ? 0.55 : 0.85) * 1.35 : fallen ? 14 * (1 - thrown) + 0.18 * HORSE_TILE * Math.sin(Math.PI * thrown) : 0;
+  // a thrown rider keeps his seat and rolls over sideways, about his seat, onto the −z side he lands on (pov3d's rotation.x = −lie)
+  let lie = fallen ? (Math.PI / 2) * thrown ** 1.3 : 0; if (fallen && e.__deathAge > 800 && e.__deathAge < 1050) lie *= 1 - 0.06 * Math.sin((e.__deathAge - 800) / 250 * Math.PI);
+  const cLie = Math.cos(lie), sLie = Math.sin(lie);
+  const K = q => { const dx = q[0] + 2.4, u = 5 - q[1] + bob, x = -2.4 + dx * cf - u * sf, y = dx * sf + u * cf;   // art (y down) → the kit's (up), fallen
+    return [x + rX, y * cLie + q[2] * sLie + rU, q[2] * cLie - y * sLie + rZ]; };
+  // the torso turns at the hips [0, −3]: lean tips it forward, yaw turns it, dip sinks it; the head turns at the neck
+  const tor = o.torso || {}, ty = tor.yaw || 0, tl = -(tor.lean || 0), dip = tor.dip || 0, hy = o.headYaw || 0;
+  const U = q => { const dx = q[0], du = -(q[1] + 3), dz = q[2], x1 = dx * Math.cos(tl) - du * Math.sin(tl), u1 = dx * Math.sin(tl) + du * Math.cos(tl);
+    return [x1 * Math.cos(ty) + dz * Math.sin(ty), -3 - u1 + dip, -x1 * Math.sin(ty) + dz * Math.cos(ty)]; };
+  const Uinv = q => { const x2 = q[0], z2 = q[2], u1 = -(q[1] - dip + 3), x1 = x2 * Math.cos(ty) - z2 * Math.sin(ty), dz = x2 * Math.sin(ty) + z2 * Math.cos(ty);
+    return [x1 * Math.cos(tl) + u1 * Math.sin(tl), -3 - (-x1 * Math.sin(tl) + u1 * Math.cos(tl)), dz]; };
+  const Hd = q => { const dx = q[0], dz = q[2]; return U([dx * Math.cos(hy) + dz * Math.sin(hy), q[1], -dx * Math.sin(hy) + dz * Math.cos(hy)]); };
+  const mU = (x, y, z) => K(U([x, y, z])), mH = (x, y, z) => K(Hd([x, y, z])), mG = (x, y, z) => K([x, y, z]);
+  // DRAW ORDER, fixed layers (as the 2D art): a tool held behind, the far arms, the legs, the body, the near arms (under
+  // the head: the shoulders tuck in below the chin and her hair), the head (hair, face, eyes), arms raised in front,
+  // a tool held in front (the fists over its handle). Each arm splits at the elbow: the upper arm goes by its shoulder's
+  // side; the forearm comes over the head when raised above the shoulders in front, and a far arm gripping a tool held
+  // in front brings its forearm round to it; a hand swung back behind the body goes behind it. A tool is in front when
+  // its head, or the fists on it, are nearer than the body's middle.
+  const bodyD = (q => depth(q[0], q[2]))(mU(0, -6, 0)), nearer = q => depth(q[0], q[2]) > bodyD;
+  const grips = ({ chop: [0, 1], split: [0, 1], mine: [0, 1], build: [0, 1], farm: [0, 1], repair: [1], butcher: [1], fight: [1], walk: [1] }[act.kind] || []).slice();
+  let toolFront = false, toolHead = null, bodyOutline = null;
+  // a screen point inside the body's outline (the hand behind it is hidden there)
+  const overBody = q => { const [x, y] = q; let inside = false;
+    for (let i = 0, j = bodyOutline.length - 1; i < bodyOutline.length; j = i++) { const [xi, yi] = bodyOutline[i], [xj, yj] = bodyOutline[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside; } return inside; };
+  // torso / dress
+
+  if (dress) { const rings = []; for (let i = 0; i + 1 < VIL_DRESS.length; i++) { const [r0, y0] = VIL_DRESS[i], [r1, y1] = VIL_DRESS[i + 1], n = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 0.5));
+      for (let j = 0; j < n; j++) { const u = j / n; rings.push([r0 + (r1 - r0) * u, y0 + (y1 - y0) * u]); } }
+    // (a lathe seen from above at an angle: its outline is the hull of its rings — the profile narrows from the hem up —
+    // one crisp polygon, not a pile of overlapping ellipses whose soft edges stack up)
+    const pts = []; for (const [r, y] of rings) for (let k = 0; k < 24; k++) { const th = k / 24 * TAU; pts.push(P(...mU(r * Math.cos(th), y, r * Math.sin(th)))); }
+    const hl = loadHull(pts); bodyOutline = hl; add(tc, BODY, () => { X.moveTo(...hl[0]); for (const q of hl.slice(1)) X.lineTo(...q); X.closePath(); }, 'body');
+  } else { const t = blob(tc, mU, 0, -6, 0, 4.6, 5, 4.2, 'body'); t.pt.d = BODY;
+    // armor over the tunic (pov3d's armorMat, the 2D read): SCALE — forge-steel scallop rows over the lower torso, the
+    // chest left team colour; CHAIN — steel over the whole torso, finer rows, a faint team wash
+    if (soldier && eq.torso) { const tp = t.pt.path, chain = eq.torso === 'chain', top = t.c[1] - t.r2 + (chain ? 0 : t.r2 * 0.95), M = eq.metal;
+      let rows = null;   // (the rows of scales as one path, built once: the pose is cached)
+      add(M, BODY + 0.0001, () => { X.save(); X.beginPath(); tp(); X.clip(); X.fillStyle = M; X.fillRect(t.c[0] - 12, top, 24, 30);
+        if (chain) { X.globalAlpha = 0.18; X.fillStyle = tc; X.fillRect(t.c[0] - 12, top, 24, 30); X.globalAlpha = 1; }
+        X.strokeStyle = 'rgba(0,0,0,0.28)'; X.lineWidth = 0.6 / UNIT_SCALE; const r = chain ? 0.9 : 1.4;
+        if (!rows) { rows = new Path2D(); for (let y = top + r, i = 0; y < t.c[1] + t.r2 + 2; y += r * 1.3, i++) for (let x = t.c[0] - 12 + (i % 2) * r; x < t.c[0] + 12; x += r * 2) { rows.moveTo(x + r, y); rows.arc(x, y, r, 0, Math.PI); } }
+        X.stroke(rows); X.restore(); X.beginPath(); }, 'body', false); }
+    bodyOutline = Array.from({ length: 24 }, (_, i) => { const a = i / 24 * TAU, x = t.r1 * Math.cos(a), y = t.r2 * Math.sin(a); return [t.c[0] + x * Math.cos(t.rot) - y * Math.sin(t.rot), t.c[1] + x * Math.sin(t.rot) + y * Math.cos(t.rot)]; }); }
+  // a rider's legs astride: the thigh curving out round the barrel, the shin down the flank to the stirrup (pov3d's
+  // human() riding); the far one goes behind the horse
+  if (o.riding) for (const s of [-1, 1]) { const lg = riderLeg(s, o.riding), far = depth(...(q => [q[0], q[2]])(mG(...lg.foot))) < bodyD, g = far ? 'farleg' : 'legs';
+    tube(C.leg, quadPts(lg.hip, lg.ctrl, lg.foot).map(K), 1.15, g).d = LEGS;
+    blob(C.boot, mG, ...lg.boot, 1.8, 1, 1.3, g).pt.d = LEGS + 0.005; }
+  // legs (behind the tunic: only what shows below it), knee forward, a boot
+  if (!o.riding) for (const s of [-1, 1]) { const [fx, lift] = (o.feet && o.feet[s > 0 ? 1 : 0]) || [0, 0], z = s * (dress ? 1.9 : 2.2), hipY = (dress ? -2 : -3) + dip;
+    const foot = [fx + 0.5, 3.7 - lift, z], hip = [0, hipY, z], seg = (3.7 - (dress ? -2 : -3)) / 2 * 1.02;
+    const dx = foot[0] - hip[0], dy = foot[1] - hip[1], d = Math.hypot(dx, dy) || 1e-6, h = Math.sqrt(Math.max(0, seg * seg - d * d / 4));
+    const kn = [(hip[0] + foot[0]) / 2 + dy / d * h, (hip[1] + foot[1]) / 2 - dx / d * h, z];
+    tube(C.leg, quadPts(hip, kn.map((v, i) => 2 * v - (hip[i] + foot[i]) / 2), foot).map(K), dress ? 0.85 : 0.95, 'legs').d = LEGS + 0.01 * depth(foot[0], z);
+    blob(C.boot, mG, fx + 0.6, 3.9 - lift, z, dress ? 1.3 : 1.5, 0.9, dress ? 1 : 1.2, 'legs').pt.d = LEGS + 0.005 + 0.01 * depth(foot[0], z); }
+  // head; the hair over it; the face — a patch of the head on its front, clipped to the head — over the hair where the
+  // front faces us (so hair frames a face head-on, shows behind it in profile, and covers the head from behind); eyes
+  const head = blob(C.skin, mH, 0, -14, 0, 4, 4, 4, 'head'); head.pt.d = HEAD;
+  const hc = head.o, H0 = HEAD, fw = mH(4, -14, 0), front = faces([fw[0] - hc[0], fw[1] - hc[1], fw[2] - hc[2]]);
+  if (soldier && eq.helmet === 'great') {
+    // the knight's great helm (pov3d's): a flat-topped steel pail over the whole head, a T of cuts to see and breathe,
+    // eyes peering out, a team plume on top
+    const rings = []; for (const y of [-19, -10.2]) for (let k = 0; k < 24; k++) { const a = k / 24 * TAU, r = y < -15 ? 4.3 : 4.5; rings.push(P(...mH(r * Math.cos(a), y, r * Math.sin(a)))); }
+    const hl = loadHull(rings); add('#c6cdd8', H0 + 0.1, () => { X.moveTo(...hl[0]); for (const q of hl.slice(1)) X.lineTo(...q); X.closePath(); }, 'head');
+    const topRing = Array.from({ length: 24 }, (_, k) => { const a = k / 24 * TAU; return P(...mH(4.3 * Math.cos(a), -19, 4.3 * Math.sin(a))); });
+    if (faces([0, 1, 0]) > 0) add('#d6dce5', H0 + 0.11, () => { X.moveTo(...topRing[0]); for (const q of topRing.slice(1)) X.lineTo(...q); X.closePath(); }, 'head', false); // the flat top
+    if (front > 0.15) { const slit = (z0, z1, y0, y1) => { const ps = [[z0, y0], [z1, y0], [z1, y1], [z0, y1]].map(([z, y]) => P(...mH(4.4, y, z))); add('#1c1c1c', H0 + 0.2, () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); }, 'head', false); };
+      slit(-3.2, 3.2, -14.6, -16); slit(-0.55, 0.55, -11.5, -15);                                                         // the eye slit and the breathing slit
+      for (const z of [-1.5, 1.5]) blob('#ffffff', mH, 4.55, -15.3, z, 0.5, 0.45, 0.6, 'head', 0, false).pt.d = H0 + 0.21; }   // eyes peering out
+    blob(tc, mH, 0, -20.5, 0, 1.8, 2.6, 1.2, 'head').pt.d = H0 + 0.3;                                                     // the team plume
+  } else if (soldier) {
+    // the helmet (pov3d's human() hats: hood, kettle, Norman, spiked) over the head, the face traced in front of it
+    const hm = SOLDIER_HELM[eq.helmet] || SOLDIER_HELM.hood, hcol = eq.helmet === 'hood' ? tc : hm[6];
+    blob(hcol, mH, ...hm.slice(0, 6), 'head').pt.d = H0 + 0.1;
+    const face = headFaceOutline(hc, mH, view, hm);
+    if (face) { const hp = head.pt.path, fp = face.map(q => P(...q));
+      add(C.skin, H0 + 0.2, () => { X.save(); X.beginPath(); hp(); X.clip(); X.beginPath(); X.moveTo(...fp[0]); for (const q of fp.slice(1)) X.lineTo(...q); X.closePath(); X.fill(); X.restore(); X.beginPath(); }, 'head', false); }
+    // a ring round the helmet at height y, radius r: its points, and which face us (the near arc)
+    const ringPts = (cx, y, r) => Array.from({ length: 33 }, (_, i) => { const a = i / 32 * TAU, q = mH(cx + r * Math.cos(a), y, r * Math.sin(a)), c = mH(cx, y, 0);
+      return { q, near: depth(q[0], q[2]) > depth(c[0], c[2]) }; });
+    if (eq.helmet === 'kettle') {  // the wide brim; the dome rises out of it — over its far half, under its near half
+      const br = blob(hm[6], mH, 0, -15.2, 0, 5.6, 0.7, 5.6, 'head'); br.pt.d = H0 + 0.4; br.pt.line = true;
+      const ring = ringPts(0, -15.2, 5.6).filter(o => o.near).map(o => P(...o.q)), dome = blob(hm[6], mH, ...hm.slice(0, 6), 'head'), dp = dome.pt.path;
+      dome.pt.d = H0 + 0.45; dome.pt.line = true; dome.pt.outline = false;
+      dome.pt.path = () => { X.save(); X.beginPath(); X.rect(-200, -200, 400, 400); X.moveTo(...ring[0]); for (const q of ring.slice(1)) X.lineTo(...q); X.closePath(); X.clip('evenodd'); X.beginPath(); dp(); X.fill(); X.stroke(); X.restore(); X.beginPath(); }; }
+    if (eq.helmet === 'norman') {  // the gold band: a thin rim round the helm, the arc that faces us
+      const arc = ringPts(-0.3, -15.2, 4.55), runs = []; let cur = [];
+      for (const o of arc) { if (o.near) cur.push(o.q); else if (cur.length) { runs.push(cur); cur = []; } } if (cur.length) runs.push(cur);
+      for (const r of runs) if (r.length > 1) tube('#daa520', r, 0.5, 'head').d = H0 + 0.4;
+      if (front > 0) tube(hm[6], [mH(4.2, -16, 0), mH(4.3, -12.5, 0)], 0.7, 'head').d = H0 + 0.5; }           // the nasal, down the face
+    if (eq.helmet === 'spiked') tube(hm[6], [mH(-0.3, -18.9, 0), mH(-0.3, -22.3, 0)], [0.9, 0.1], 'head').d = H0 + 0.4;
+    if (eq.feather) tube(teamColorLight(e.team), quadPts([-1.2, -18.2, 0], [-1.6, -22, 0], [-3.2, -25.4, 0], 5).map(q => mH(...q)), [0.7, 1.1, 1.3, 1.1, 0.7, 0.2], 'head').d = H0 + 0.35; // Fletching's plume
+  } else if (dress) {
+    // straight long hair (as the 3D): a cap over the crown to a flat fringe at the brow, and a curtain falling straight
+    // from it to the shoulders all round, open at the front — the face shows through the opening
+    const R = 4.35, yTop = -14 - R * Math.cos(1.2), yBot = -9.4, rTop = R * Math.sin(1.2), rBot = 4.4, GAP = 0.95;
+    const ring = (y, r, th) => mH(-0.2 + r * Math.sin(th), y, r * Math.cos(th));
+    // the convex hull of screen points (the cap's outline)
+    const hullOf = ps => { ps = ps.slice().sort((p, q) => p[0] - q[0] || p[1] - q[1]); const cr = (o, p, q) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]), lo = [], up = [];
+      for (const p of ps) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      for (const p of ps.slice().reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+      return lo.slice(0, -1).concat(up.slice(0, -1)); };
+    const poly = ps => () => { X.moveTo(...ps[0]); for (const p of ps.slice(1)) X.lineTo(...p); X.closePath(); };
+    const Hf = HAIR_FRONT;                                                              // over the head (the back strips: behind the body)
+    // the curtain, in strips round its open front: the ones facing us go over the head (the
+    // face), the ones facing away (its inside seen through the opening) behind it — split where it turns edge-on
+    const N = 40, ths = Array.from({ length: N + 1 }, (_, i) => Math.PI / 2 + GAP + i / N * (TAU - 2 * GAP));
+    const facing = th => { const q = ring(-12, 4.3, th), c = mH(-0.2, -12, 0); return faces([q[0] - c[0], q[1] - c[1], q[2] - c[2]]) > 0; };
+    let run = [ths[0]];
+    const flush = () => { if (run.length < 2) return; const ps = run.map(th => P(...ring(yTop, rTop, th))).concat(run.slice().reverse().map(th => P(...ring(yBot, rBot, th))));
+      const front = facing(run[run.length >> 1]), mid = ring((yTop + yBot) / 2, 4.2, run[run.length >> 1]);
+      add(C.hair, front ? Hf : -50, poly(ps), 'head'); };
+    for (let i = 1; i <= N; i++) { if (facing(ths[i]) !== facing(ths[i - 1])) { flush(); run = [ths[i - 1]]; } run.push(ths[i]); }
+    flush();
+    // the cap: the crown of a sphere down to the flat fringe at the brow (all round), over the curtain
+    const capPts = []; for (let la = 0; la <= 1.2001; la += 0.2) for (let k = 0; k < 24; k++) { const th = k / 24 * TAU;
+      capPts.push(P(...mH(-0.2 + R * Math.sin(la) * Math.sin(th), -14 - R * Math.cos(la), R * Math.sin(la) * Math.cos(th)))); }
+    const ch = hullOf(capPts), cap = add(C.hair, Hf + 0.1, poly(ch), 'head');
+    // (no line: the crown flows into the curtain)
+  } else {
+    blob(C.hair, mH, -0.6, -15.6, 0, 3.9, 3.2, 4.1, 'head').pt.d = H0 + 0.1;
+    // the face over it: the part of the head sphere in FRONT of the hair ellipsoid along the line of sight (the 3D's
+    // hairline is where the two surfaces cross) — found by tracing, an outline marched out from the face's middle
+    const face = headFaceOutline(hc, mH, view);
+    if (face) { const hp = head.pt.path, fp = face.map(q => P(...q));
+      add(C.skin, H0 + 0.2, () => { X.save(); X.beginPath(); hp(); X.clip(); X.beginPath(); X.moveTo(...fp[0]); for (const q of fp.slice(1)) X.lineTo(...q); X.closePath(); X.fill(); X.restore(); X.beginPath(); }, 'head', false); }
+  }
+  if (!(soldier && eq.helmet === 'great')) for (const zz of [-1, 1]) { const m = mH(3.75, -14.45, zz * 1.31); if (faces([m[0] - hc[0], m[1] - hc[1], m[2] - hc[2]]) > 0.15) blob('#141414', (x, y, z) => [x, y, z], ...m, 0.68, 0.68, 0.68, 'head', 0, false).pt.d = H0 + 0.3; }   // (the 3D's eye reads a size up at its camera)
+  let toolK = null;
+  if (tool) { const T = TOOLS2D[tool], wk = act.kind === 'walk';
+    const dir = wk ? [-0.62, 0.76, 0.14] : tool === 'knife' ? o.kdir : o.dir, grip = wk ? VIL_SHOULDER : tool === 'knife' ? o.knife : o.grip;
+    const dl = Math.hypot(...dir), Y = [dir[0] / dl, -dir[1] / dl, dir[2] / dl];      // along the handle, art (y down)
+    const ed = wk ? [0, 0.3, 1] : o.edge || [Y[2], 0, -Y[0]], e0 = [ed[0], -ed[1], ed[2]], ey = e0[0] * Y[0] + e0[1] * Y[1] + e0[2] * Y[2];
+    let Xs = e0.map((v, i) => v - ey * Y[i]); const xl = Math.hypot(...Xs) || 1; Xs = Xs.map(v => v / xl);
+    const base = grip.map((v, i) => v + Y[i] * (tool === 'knife' ? 0 : wk ? 4.4 : GRIP_OUT));
+    const at = (u, v) => mG(...base.map((b, i) => b + Y[i] * u + Xs[i] * v));         // u along the handle, v to the blade side
+    toolFront = nearer(at(T.top, 0)) || nearer(mG(...grip));                       // (its head, or the fists on it, out in front)
+    toolHead = { q: at(T.top, 0), r: T.headR };
+    toolK = { at, tube, add, P, up, quadPts, mow: act.kind === 'farm' }; }
+  // the wheelbarrow / plow rig ahead of him (pov3d's barrowRig, in rig px: x forward from the grips' foot, h up, z
+  // across; ×1.25, carried at half the step's bob): drawn in front of him, or behind facing away — the fists on its grips
+  let rigK = null;
+  if (act.kind === 'barrow' || act.kind === 'plow') {
+    const R = (x, h, z) => mG(4.7 + x * 1.25, 5 - h * 1.25 + bob * 0.5, z * 1.25);
+    toolFront = nearer(R(12, 5, 0)); rigK = { R }; }
+  if (rigK) grips.push(0, 1);
+  // the bow saw (pov3d's bowSaw, laid on its side against the trunk, the frame tipped back toward him, stroked along its
+  // blade): a point (x along it, u up its frame) → his frame; both fists on the bow
+  let sawK = null;
+  // (pov3d's transforms in order: tipped back SAW_TIP about the blade line, turned across his front; y: the saw's own art y)
+  if (act.kind === 'saw') { const ct = Math.cos(SAW_TIP), st = Math.sin(SAW_TIP), off = o.off;
+    const Sw = (x, y) => { const v = SAW_Y - y; return mG(SAW_X - v * st, SAW_Y - v * ct, SAW_Z - off - x); };
+    toolFront = nearer(Sw(11.5, -8)); sawK = Sw; grips.push(0, 1); }
+  // a soldier's weapon (pov3d's sword / spearAt / drawnBow): placed before the arms (the fists grip it), drawn after
+  let wK = null;
+  let wL = null;
+  // dying: the weapon (and shield) drop beside the body
+  if (soldier && dying) soldierDrops2D(e, eq, e.__deathAge, { tube, add, blob, P, faces, tc, nearer });
+  if (soldier && !dying) { wK = soldierWeapon2D(e.utype, o, eq, mG);
+    toolFront = nearer(wK.tip) || nearer(mG(...wK.hand)); grips.push(...wK.grips);
+    // a rider's sword in a fist out past the horse's far flank — by its side, not how far forward it reaches: behind the whole horse
+    const hdD = (q => depth(q[0], q[2]))(mH(0, -14, 0)), tq = wK.tip;
+    if (horse && (q => depth(0, q[2]))(mG(...wK.hand)) < -3) wL = FAR_SIDE;
+    // a blade raised behind his head (the windup, seen from the front): under the head, over the body
+    else if (toolFront && depth(tq[0], tq[2]) < hdD && P(...tq)[1] < P(...mH(0, -10, 0))[1]) wL = NEAR_ARM + 2; }
+  // the shield, strapped on the left forearm: in front of the body or behind it by its own depth; its face toward us,
+  // it covers that forearm and fist — its back toward us, the arm is in front of it
+  let shieldL = null, shieldFace = false;
+  const shield = soldier && !dying && eq.shield ? shieldOf(o, eq.shield, !!horse) : null, shieldArm = -1;
+  if (shield) { const S = shield, q0 = mG(...S.c), q1 = mG(...S.c.map((v, i) => v + S.n[i]));
+    shieldFace = faces(q1.map((v, i) => v - q0[i])) > 0;
+    shieldL = nearer(q0) ? (shieldFace ? NEAR_ARM + 5 : NEAR_ARM + 1) : (shieldFace ? BODY - 0.5 : FAR_ARM - 0.5); }
+  // arms: shoulder → elbow (two-bone, bent back and out; across the body it wraps forward) → hand, a puffed sleeve
+  for (const s of [-1, 1]) { const shA = [0, -8, s * (dress ? 3.4 : 3.9)], hand = Uinv((o.hands && o.hands[s > 0 ? 1 : 0]) || [1, -2.4, s * 5.6]);
+    if (dress && hand[0] < 3.5 && hand[1] > -9 && s * hand[2] > 0) hand[2] = s * Math.max(s * hand[2], 6.7);
+    const D = hand.map((v, i) => v - shA[i]), d = Math.hypot(...D) || 1e-6, n = D.map(v => v / d);
+    const cross = Math.max(0, Math.min(1, (1.5 - s * hand[2]) / 5)), pole = [-0.55 + 1.75 * cross, 0.25, s * (1 - 0.6 * cross)], pd = pole[0] * n[0] + pole[1] * n[1] + pole[2] * n[2];
+    const q = pole.map((v, i) => v - pd * n[i]), qL = Math.hypot(...q) || 1, Lu = Math.min(5.2, Math.max(3.2, d * 0.56)), a = d / 2, h = Math.sqrt(Math.max(0, Lu * Lu - a * a));
+    const E = o.elbows ? Uinv(o.elbows[s > 0 ? 1 : 0]) : shA.map((v, i) => v + n[i] * a + q[i] / qL * h), arm = quadPts(shA, E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2), hand, 8);
+    const sq = mU(...shA), hq = mU(...hand), gripFront = toolFront && grips.includes(s > 0 ? 1 : 0);
+    const farGrip = wL === FAR_SIDE && wK.grips.includes(s > 0 ? 1 : 0);   // (a sword behind the horse takes its whole arm along: the torso covers the shoulder)
+    const upperL = farGrip ? FAR_SIDE : depth(sq[0], sq[2]) >= bodyD - 0.5 ? NEAR_ARM : FAR_ARM;
+    // (a hand swung back behind the body — further than its middle, and over its outline on screen — goes behind it)
+    const handBehind = !nearer(hq) && overBody(P(...hq));
+    const foreL = (upperL === NEAR_ARM || gripFront) && !handBehind ? (hand[1] < -9 && nearer(hq) ? RAISED_ARM : NEAR_ARM) : FAR_ARM;
+    tube(C.skin, arm.slice(0, 5).map(q => mU(...q)), 1.05, 'arm').d = upperL;           // shoulder → elbow
+    tube(tc, arm.slice(0, 3).map(q => mU(...q)), 1.45, 'arm').d = upperL + 0.001;      // the puffed sleeve: the arm's first stretch (as the 3D's 0.22)
+    const shArm = shieldL != null && s === shieldArm, foreD = shArm ? shieldL + (shieldFace ? -0.01 : 0.01) : farGrip ? FAR_SIDE + 0.001 : foreL;   // (the shield arm: inside the shield)
+    tube(C.skin, arm.slice(4).map(q => mU(...q)), 1.05, 'arm').d = foreD;               // elbow → wrist
+    // a fist over the handle it grips — but under the tool's head where that head covers it on screen, nearer us (a
+    // blow coming down at us hides the fists behind it)
+    const hp = P(...hq), th = toolHead && P(...toolHead.q), hidden = gripFront && th && Math.hypot(hp[0] - th[0], hp[1] - th[1]) < toolHead.r && depth(toolHead.q[0], toolHead.q[2]) > depth(hq[0], hq[2]) + 0.5;
+    const wFront = wL != null && wK && wK.grips.includes(s > 0 ? 1 : 0) ? wL : FRONT_TOOL;   // (a fist rides its weapon's layer)
+    if (gripFront && wFront !== FRONT_TOOL) { tube(C.skin, arm.slice(4).map(q => mU(...q)), 1.05, 'arm').d = wFront + 0.001; }
+    blob(C.skin, mU, ...hand, 1.3, 1.3, 1.3, 'arm').pt.d = shArm || farGrip ? foreD + 0.002 : gripFront ? wFront + (hidden ? -0.002 : 0.002) : foreL + 0.002; }
+  // the tool (pov3d's tool()/knife(), in the character's frame): its handle along dir from the hands, the head on top, the
+  // blade side toward edge; in front of the body or behind it by where its head is
+  if (toolK) TOOLS2D[tool].draw({ ...toolK, d: toolFront ? FRONT_TOOL : BACK_TOOL });
+  if (wK) wK.draw({ tube, add, blob, P, faces, quadPts, mG, tc, eq, d: wL != null ? wL : toolFront ? FRONT_TOOL : BACK_TOOL, nearer, layers: { BACK_TOOL, BODY, NEAR_ARM, FRONT_TOOL } });
+  if (shield) drawShield2D({ add, blob, P, faces, mG, tc, shieldL }, shield, eq.shield);
+  if (sawK) { const L = toolFront ? FRONT_TOOL : BACK_TOOL;
+    tube(VIL_TOOL_COL.handle, quadPts([4, -4.5], [4.6, -11], [11.5, -11], 6).concat(quadPts([11.5, -11], [18.4, -11], [19, -4.5], 6).slice(1)).map(([x, y]) => sawK(x, y)), 0.8, 'tool').d = L;  // the bowed frame
+    const pts = [[3.4, 0]]; for (let x = 3.4; x < 19.6; x += 1.35) pts.push([x + 0.45, -1.1], [x + 1.35, -0.55]);
+    pts.push([19.6, -0.55], [19.6, 0.9], [3.4, 0.9]);                                    // the blade: a bright strip, toothed along its lower edge
+    const bp = pts.map(([x, y]) => P(...sawK(x, -4.5 - y)));
+    add('#f2f6fb', L + 0.001, () => { X.moveTo(...bp[0]); for (const q of bp.slice(1)) X.lineTo(...q); X.closePath(); }, 'tool'); }
+  if (rigK) barrowRig2D({ ...rigK, tube, blob, add, P, depth, faces, quadPts, d: toolFront ? FRONT_TOOL : BACK_TOOL, kind: act.kind, load: act.opt.load });
+  // the load overhead (pov3d's load(): its own frame — x forward, y up, z across — ×1.5, rocking a little with the step)
+  if (act.kind === 'carry' && act.opt.load) { const k = 1.5, ld = act.opt.load, tilt = 0.08 * Math.sin(4 * Math.PI * act.t), ct = Math.cos(tilt), st = Math.sin(tilt);
+    const L = (x, y, z) => { const y1 = y * ct - z * st, z1 = y * st + z * ct; return mG(0.3 + x * k, -18.1 - LOAD_SIT[ld] - y1 * k, z1 * k); };
+    const LOAD = 205, ld3 = q => LOAD + 0.01 * depth(q[0], q[2]);
+    VIL_LOADS[ld]({ L, k, tube, blob, add, P, faces, ld3 }); }
+  if (act.kind === 'forage' && o.berry) blob('#cc3344', mG, o.berry[0] + 0.8, o.berry[1] - 0.6, o.berry[2], 1.1, 1.1, 1.1, 'tool').pt.d = RAISED_ARM + 0.003;
+  parts.sort((p, q) => p.d - q.d);
+  return parts;
+  }
+  // (it draws its own heading: undo drawUnit's mirror; its ground: drawUnit's art y 5; a villager at its drawn spot)
+  const ddx = S.wx != null ? S.wx - e.x : 0, ddy = S.wy != null ? S.wy - e.y : 0;
+  const paintSet = list => { X.save(); if (e.facing === -1) X.scale(-1, 1); X.translate((ddx - ddy) * HALF_TW / UNIT_SCALE, (ddx + ddy) * HALF_TH / UNIT_SCALE + 5); paintParts(list); X.restore(); };
+  // a rider: what's past the horse's far flank (his far leg, a sword on that side), the horse, the rest of him, the
+  // horse's head (when nearer than the saddle), a weapon held in front
+  if (horse) { // (its subsets kept on the cached pose: their paths are built once, as the pose's)
+    const sub = parts.__sub || (parts.__sub = (() => { const far = p => p.grp === 'farleg' || p.d < FAR_SIDE + 1, rest = parts.filter(p => !far(p));
+      return { far: parts.filter(far), rest, under: rest.filter(p => p.d < FRONT_TOOL), over: rest.filter(p => p.d >= FRONT_TOOL) }; })());
+    paintSet(sub.far); horse.body();
+    if (horse.frontHead) { paintSet(sub.under); horse.head(); paintSet(sub.over); }
+    else { horse.head(); paintSet(sub.rest); } }
+  else if (fallen) { const h = (e.dir || 0) * Math.PI / 4, nearer0 = (Math.cos(h) + Math.sin(h)) * (-0.8 + 0.25 * HORSE_TILE * thrown) + (Math.cos(h) - Math.sin(h)) * (-0.72 * HORSE_TILE * thrown) > 0;   // (thrown clear: in front of the horse or behind it, by where he lands)
+    if (nearer0) { fallen(); paintSet(parts); } else { paintSet(parts); fallen(); } }
+  else paintSet(parts);
+  return true;
+}
+// The loads in 2D (pov3d's load(), in its frame L: x forward, y up, z across, before the ×k cartoon size).
+const loadHull = ps => { ps = ps.slice().sort((p, q) => p[0] - q[0] || p[1] - q[1]); const cr = (o, p, q) => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]), lo = [], up = [];
+  for (const p of ps) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of ps.slice().reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  return lo.slice(0, -1).concat(up.slice(0, -1)); };
+const loadPoly = ps => () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); };
+const VIL_LOADS = {
+  wood: g => { for (const z of [-1.7, 1.7]) {                                          // two logs along the head, a light cut end toward us
+    const end = x => Array.from({ length: 16 }, (_, i) => g.L(x, 1.9 * Math.cos(i / 16 * 2 * Math.PI), z + 1.9 * Math.sin(i / 16 * 2 * Math.PI)));
+    const a = end(-6.5), b = end(6.5), mid = g.L(0, 0, z); g.add(TREE_BARK, g.ld3(mid), loadPoly(loadHull(a.concat(b).map(q => g.P(...q)))), 'load');
+    const ax = g.L(1, 0, z).map((v, i) => v - mid[i]), cap = g.faces(ax) > 0 ? b : a;
+    if (Math.abs(g.faces(ax)) > 0.05) g.add(TREE_CUT, g.ld3(mid) + 0.001, loadPoly(cap.map(q => g.P(...q))), 'load').line = true; } },
+  stone: g => { for (const [x, y, z] of [[-2, 0, 0], [2, 0.2, 0.6], [0, 3, 0.2]]) {      // three blocks, the top face lit
+    const c = [], top = []; for (const dx of [-2.1, 2.1]) for (const dz of [-2.1, 2.1]) { for (const dy of [-1.6, 1.6]) c.push(g.L(x + dx, y + dy, z + dz)); top.push(g.L(x + dx, y + 1.6, z + dz)); }
+    const d = g.ld3(g.L(x, y, z)); g.add('#9d9d9d', d, loadPoly(loadHull(c.map(q => g.P(...q)))), 'load');
+    g.add('#b8b8b8', d + 0.0001, loadPoly(loadHull(top.map(q => g.P(...q)))), 'load', false); } },
+  gold: g => { for (const [x, y, z] of [[-2, 0, 0], [2, 0, 0.6], [0, 0, -2], [0, 2.1, 0.2], [1.1, 1.6, 1.8]]) { const b = g.blob('#e8b90f', g.L, x, y, z, 1.9, 1.9, 1.9, 'load'); b.pt.d = g.ld3(b.o); } },
+  food: g => { for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {             // a wheat sheaf: stalks pinched at the tie, grain heads at one end
+    const pin = g.L(0, a * 0.35, b * 0.35);
+    g.tube('#d4ab2c', [g.L(-4, a * 0.9, b * 0.9), pin, g.L(5.2, a * 1.9, b * 1.9)], 0.5 * g.k, 'load').d = g.ld3(pin);
+    const h = g.blob('#e8c84a', g.L, 6.4, a * 2.1, b * 2.1, 1.7, 0.85, 0.85, 'load'); h.pt.d = g.ld3(h.o) + 0.001; }
+    const t = g.blob('#8b5a2b', g.L, 0, 0, 0, 0.4, 1.3, 1.3, 'load'); t.pt.d = g.ld3(t.o) + 0.002; },                 // the cord round the middle
+  wool: g => { for (const [x, y, z, r] of [[0, 0, 0, 2.6], [-2.2, -0.3, 0.8, 2], [2.2, -0.2, -0.6, 2.1], [0.4, 1.8, 0.2, 1.9], [-0.8, 0.2, -1.8, 1.8], [1, 0.3, 1.9, 1.8]]) {
+    const b = g.blob('#f2eddd', g.L, x, y, z, r, r, r, 'load'); b.pt.d = g.ld3(b.o); } },                           // a fluffy bundle of fleece
+  berries: g => { for (let n = 0; n < 11; n++) { const a = n * 2.39996, rr = n < 7 ? 1.9 : 0.9;                                  // a heap of red berries
+    const b = g.blob('#cc3344', g.L, Math.cos(a) * rr, (n < 7 ? 0 : 1.3) + (n % 2) * 0.3, Math.sin(a) * rr, 1.05, 1.05, 1.05, 'load'); b.pt.d = g.ld3(b.o); } },
+};
+// ---- Soldiers in 2D: the same body as the villager (drawPerson2D), their gear from pov3d's models ----
+// helmets: [x, y, z, rx, ry, rz] (head-frame art px) and steel
+const SOLDIER_HELM = { great: [0, -14.6, 0, 4.5, 4.4, 4.5, '#c6cdd8'], hood: [-0.8, -16, 0, 4.4, 3, 4.4, null], kettle: [0, -16, 0, 3.9, 2.8, 3.9, '#8f8a7d'], norman: [-0.3, -15.6, 0, 4.5, 3.8, 4.5, '#a8adb3'], spiked: [-0.3, -15.8, 0, 4.4, 3.6, 4.4, '#b9bec6'] };
+const FOOT_SOLDIERS = new Set(['militia', 'spearman', 'archer']);
+// a soldier's pose this frame; attacking on the move, the legs keep walking underneath
+function soldierPose2D(ut, act, eq){
+  const p = SOLDIER_POSE[ut](act.kind, act.t, eq);
+  if (act.legs) { const w = villagerWalkPose(act.legs.t); p.feet = w.feet; p.bob = w.bob; }
+  return p;
+}
+// the edge a sword rests with, unkeyed (pov3d's sword(): +y stood along dir, its local +x turned the same way)
+function restEdge2D(d){ const L = Math.hypot(...d), y = d.map(v => v / L), ax = [y[2], 0, -y[0]], s = Math.hypot(...ax);
+  if (s < 1e-6) return [1, 0, 0]; const n = ax.map(v => v / s), c = y[1], k = n[0];   // rotate (1,0,0) about n by acos(y): Rodrigues
+  const v = [1, 0, 0], cr = [n[1] * v[2] - n[2] * v[1], n[2] * v[0] - n[0] * v[2], n[0] * v[1] - n[1] * v[0]];
+  return v.map((vi, i) => vi * c + cr[i] * s + n[i] * k * (1 - c)); }
+// A soldier's weapon in his frame: { hand, tip, grips, draw(k) } — the hand it rides, its far end (front or behind), the
+// fists on it, and its parts (all at layer k.d). Art px: x forward, y down, z across; dirs world-style (y up).
+function soldierWeapon2D(ut, o, eq, mG){
+  const frame = (hand, dir, edge) => { const dl = Math.hypot(...dir), Y = [dir[0] / dl, -dir[1] / dl, dir[2] / dl], e0 = edge || restEdge2D(dir), E = [e0[0], -e0[1], e0[2]], ey = E[0] * Y[0] + E[1] * Y[1] + E[2] * Y[2];
+    let Xs = E.map((v, i) => v - ey * Y[i]); const xl = Math.hypot(...Xs) || 1; Xs = Xs.map(v => v / xl);
+    return (u, v) => mG(...hand.map((b, i) => b + Y[i] * u + Xs[i] * v)); };
+  const poly = (k, pts, col, d) => { const ps = pts.map(q => k.P(...q)); k.add(col, d, () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); }, 'tool'); };
+  if (ut === 'militia' || isMountedUnit(ut)) { const { hand, dir, edge } = o.weapon, at = frame(hand, dir, edge), ext = eq.weapon >= 2 ? 3 : eq.weapon >= 1 ? 1.5 : 0;
+    // gripped in the right hand (a rider's too), both hands without a shield
+    return { hand, tip: at(20, 0), grips: ut === 'militia' && !eq.shield ? [0, 1] : [1], draw: k => {
+      k.tube('#5c3d24', [at(-2.7, 0), at(2.7, 0)], 0.8, 'tool').d = k.d;                                                     // the grip
+      poly(k, [[-3.8, 2.7], [3.8, 2.7], [3.8, 4.5], [-3.8, 4.5]].map(([v, u]) => at(u, v)), '#daa520', k.d + 0.001);          // the crossguard
+      const steel = ['#a7abb0', '#dde3ea', '#f2f6fb'][eq.weapon] || '#a7abb0';
+      k.tube(steel, [at(4.5, 0), at(21 + ext, 0)], [0.6, 0.35], 'tool').d = k.d + 0.0004;                                     // (the blade's thickness: edge-on it stays a steel sliver)
+      poly(k, [[-2.2, 4.5], [2.2, 4.5], [1.9, 19.5 + ext], [0, 24.5 + ext], [-1.9, 19.5 + ext]].map(([v, u]) => at(u, v)), steel, k.d + 0.0005); } }; }
+  if (ut === 'spearman') { const { hand, dir } = o.weapon, at = frame(hand, dir);
+    return { hand, tip: at(18, 0), grips: [0, 1], draw: k => {
+      k.tube('#8B4513', [at(-9, 0), at(16, 0)], 0.8, 'tool').d = k.d;                                                        // the shaft
+      k.tube(eq.metal, [at(16, 0), at(21, 0)], [1.5, 0.15], 'tool').d = k.d + 0.001; } }; }                                // the steel point (a cone: round from any side)
+  // archer: the bow at its grip, the string drawn back to the pull hand, an arrow on the string
+  // (the stave runs along `up` — upright unless dropped — and bends toward the pull hand, square to it)
+  const b = o.bow, G = b.grip, pull = b.pull, up = b.up || [0, -1, 0], d0 = pull.map((v, i) => v - G[i]), du = d0[0] * up[0] + d0[1] * up[1] + d0[2] * up[2];
+  let back = d0.map((v, i) => v - du * up[i]), bl = Math.hypot(...back);
+  back = bl < 1e-4 ? [-1, 0, 0] : back.map(v => v / bl);
+  const L = 10.6, bend = 2.2 + 1.8 * b.draw, tips = [1, -1].map(s => G.map((v, i) => v + back[i] * bend + s * L * up[i]));
+  const mid = [(tips[0][0] + tips[1][0]) / 2, (tips[0][1] + tips[1][1]) / 2, (tips[0][2] + tips[1][2]) / 2], f = Math.min(1, Math.max(0, b.draw) / 0.15), Pq = mid.map((v, i) => v + (pull[i] - v) * f);
+  return { hand: G, tip: G, grips: [0], draw: k => {
+    for (const tp of tips) { const c = [(G[0] + tp[0]) / 2 - back[0] * 1.2, (G[1] + tp[1]) / 2, (G[2] + tp[2]) / 2 - back[2] * 1.2];
+      k.tube('#b3874a', quadPts(G, c, tp, 5).map(q => mG(...q)), 0.75, 'tool').d = k.d; }                                   // the two limbs
+    for (const tp of tips) k.tube('#e8e8e8', [mG(...tp), mG(...Pq)], 0.22, 'tool').d = k.d + 0.001;                           // the string
+    const nock = b.arrow ? Pq : b.fetched ? pull : null;
+    if (nock) { const d = [G[0] - nock[0], G[1] - nock[1], G[2] - nock[2]], dl = Math.hypot(...d) || 1, at = u => nock.map((v, i) => v + d[i] / dl * u);
+      k.tube('#8b6a3a', [mG(...at(0)), mG(...at(15))], 0.35, 'tool').d = k.d + 0.002;                                        // the shaft
+      k.tube('#dde3ea', [mG(...at(14.2)), mG(...at(16.4))], [0.9, 0.1], 'tool').d = k.d + 0.003;                            // the head
+      if (eq.feather) k.tube(lightOfHex(k.tc), [mG(...at(0.4)), mG(...at(3.4))], [1, 0.3], 'tool').d = k.d + 0.0025; }  // Fletching's vanes
+    if (eq.quiver) { const c = [-4.2, -9, 1.5], ax = [0.247, -0.91, 0.332], q = u => mG(...c.map((v, i) => v + ax[i] * u)), qd = k.nearer(mG(...c)) ? k.layers.NEAR_ARM + 1 : k.layers.BACK_TOOL - 0.5;   // (facing away it's on top of his back and shoulder, under the head)
+      k.tube('#7a5230', [q(-4), q(4)], 1.5, 'tool').d = qd;                                                                   // the quiver on his back, fletchings showing
+      for (const z of [-0.8, 0.8]) k.tube(eq.feather ? lightOfHex(k.tc) : '#8b6a3a', [mG(...c.map((v, i) => v + ax[i] * 3.6 + (i === 2 ? z : 0))), mG(...c.map((v, i) => v + ax[i] * 5.8 + (i === 2 ? z : 0)))], 0.5, 'tool').d = qd + 0.001; } } };
+}
+// a light tint of a team colour (pov3d's lightOf: 45% toward white)
+const lightOfHex = hex => { const n = parseInt(hex.slice(1), 16), f = v => Math.round(v + (255 - v) * 0.45);
+  return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => f(v).toString(16).padStart(2, '0')).join(''); };
+// The militia's shield on his left forearm (pov3d's roundShield / kiteShield): the round one faces forward, a white boss;
+// the kite turned forward, white with a team cross. In front of him, or behind facing away.
+// Where a shield sits (pov3d's roundShield / kiteShield): its centre c and yaw th (three's rotation.y) — the militia's
+// on his left forearm, a rider's out to his left (riderFig) — and the way its face looks, n (art: x fwd, y down, z across)
+const KITE_TURN = Math.PI / 2 - 0.3, SHIELD_BACK = '#9a6a3a';   // (the kite's back: bare wood, both views)
+function shieldOf(o, kind, rider){
+  const sh = o.shieldHand, c = rider ? [1, -6.5, -9] : kind === 'round' ? [sh[0] + 1.2, sh[1], sh[2] - 0.5] : [sh[0] + 1.4, sh[1] + 1, sh[2] + 0.4];
+  const th = rider ? (kind === 'round' ? Math.PI / 2 - 0.35 : Math.PI - 0.35) : kind === 'round' ? 0 : KITE_TURN;
+  return { c, th, n: kind === 'round' ? [Math.cos(th), 0, -Math.sin(th)] : [Math.sin(th), 0, Math.cos(th)] };
+}
+// A dead soldier's weapon and shield (pov3d's droppedItem): out of the hand (dropXf) to lie beside him, in the ground
+// frame — a rider's from the saddle, the sword off his right, the shield off his left, tipped to land face up. k: a
+// projKit's { tube, add, blob, P, faces }, the team colour tc, and nearer (in front of the body).
+function soldierDrops2D(e, eq, age, k){
+  const mGround = (x, y, z) => [x, 5 - y, z], R = isMountedUnit(e.utype);
+  const dx = R ? dropXf(age, [6.5, -21, 6.8], [0.2, 0, 0.98], 0.3) : dropXf(age, [3, -6.5, 5.8]), o0 = dx([0, 0, 0]), t1 = dx([0, -1, 0]);
+  const axis = [t1[0] - o0[0], -(t1[1] - o0[1]), t1[2] - o0[2]], up = y => ({ hand: dx([0, -y, 0]), dir: axis });
+  const od = e.utype === 'archer' ? { bow: { grip: dx([0, -10.6, 0]), pull: dx([0.95, -10.6, -0.3]), up: t1.map((v, i) => v - o0[i]), draw: 0, arrow: false } }
+    : e.utype === 'spearman' ? { weapon: up(9) } : { weapon: up(2.7) };
+  const w = soldierWeapon2D(R ? 'knight' : e.utype, od, { ...eq, quiver: false, feather: false }, mGround);
+  w.draw({ ...k, quadPts, mG: mGround, eq, d: k.nearer(w.hand) ? FRONT_TOOL : BACK_TOOL, layers: { BACK_TOOL, BODY, NEAR_ARM, FRONT_TOOL } });
+  if (!eq.shield) return;
+  const F = R ? [0.15, 0, -0.99] : [0.25, 0, -0.97], sy = eq.shield === 'kite' ? 8.5 : 4.8;
+  const sx = R ? dropXf(age, [1, -20.5, -9], F, 0.35) : dropXf(age, [4, -7, -6], F, 0.2);
+  drawShield2D({ ...k, mG: (x, y, z) => mGround(...sx([x, y - sy, z])), shieldL: k.nearer(mGround(...sx([0, -sy, 0]))) ? FRONT_TOOL - 1 : BACK_TOOL - 1 },
+    { c: [0, 0, 0], th: eq.shield === 'kite' ? Math.atan2(-F[0], -F[2]) : Math.atan2(F[2], -F[0]), n: [0, 0, 1] }, eq.shield);
+}
+// The bones (pov3d's humanSkeleton / horseSkeleton), into projKit k through m: the skeleton's frame (art px: x fwd, y up,
+// z across) → the kit's. A man lies on his back along −x from his heels: a big skull with big sockets looking up, a
+// spine, two fat ribs arching over it, a pelvis, arms flung out, legs — the fewest bones that read.
+function bone2D(k, m, a, b, r){   // a cartoon bone: a shaft with a double knob at each end
+  k.tube(BONE, [m(...a), m(...b)], r, 'bone'); const dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz) || 1, n = [-dz / L * r * 1.05, dx / L * r * 1.05];
+  for (const e of [a, b]) for (const s of [-1, 1]) k.blob(BONE, m, e[0] + n[0] * s, e[1], e[2] + n[1] * s, r * 1.55, r * 1.55, r * 1.55, 'bone');
+}
+const ribArch2D = (k, m, x, y, zc, R, r) => k.tube(BONE, Array.from({ length: 9 }, (_, i) => { const a = i / 8 * Math.PI; return m(x, y + R * Math.sin(a), zc - R * Math.cos(a)); }), r, 'bone');
+function humanBones2D(k, m){
+  k.tube(BONE, [m(-19, 0.9, 0), m(-9.5, 0.9, 0)], 0.9, 'bone');                                    // spine
+  for (const x of [-15.5, -12.6]) ribArch2D(k, m, x, 0.9, 0, 3.2, 0.8);                             // two fat ribs
+  k.blob(BONE, m, -9.5, 0.9, 0, 2, 1.1, 3, 'bone');                                                 // pelvis
+  const sk = k.blob(BONE, m, -22, 3, -0.6, 3.6, 3.2, 3.4, 'bone');                                  // big skull, rolled a little to one side
+  for (const z of [-1, 1]) k.blob(BONE_HOLE, m, -22.4, 5.4, z * 1.4 - 0.6, 1.05, 1.05, 1.05, 'bone', 0, false).pt.d = sk.pt.d + 0.001;   // sockets, looking up
+  for (const s of [-1, 1]) { bone2D(k, m, [-17.5, 0.9, s * 3.6], [-19.5, 0.9, s * 10.5], 0.7); bone2D(k, m, [-9.5, 0.9, s * 2], [-1.5, 0.9, s * 2.6], 0.8); }   // arms; legs
+}
+// lying on its side (the corpse's roll), in tiles (pov3d's world units): legs out to the belly side, ribs over the flank,
+// the long skull on its side
+function horseBones2D(k, m){
+  const T = HORSE_TILE, S = (...q) => q.map(v => v * T), y = 0.06;
+  k.tube(BONE, [m(...S(-0.42, y, 0)), m(...S(0.3, y + 0.02, 0))], 0.04 * T, 'bone');                // spine
+  for (let i = 0; i < 3; i++) { const R = i === 1 ? 0.19 : 0.16; ribArch2D(k, m, ...S(-0.18 + i * 0.14, y, R * 0.9, R, 0.035)); }
+  k.tube(BONE, [m(...S(0.3, y + 0.02, 0)), m(...S(0.55, y + 0.04, 0.08))], 0.035 * T, 'bone');       // neck bones
+  const sk = k.blob(BONE, m, ...S(0.68, 0.09, 0.1, 0.16, 0.085, 0.08), 'bone'); k.blob(BONE, m, ...S(0.83, 0.07, 0.12, 0.07, 0.05, 0.05), 'bone');   // the long skull, the muzzle
+  k.blob(BONE_HOLE, m, ...S(0.63, 0.165, 0.1, 0.04, 0.04, 0.04), 'bone', 0, false).pt.d = sk.pt.d + 0.001;   // the upturned socket
+  for (const [x, dx] of [[-0.4, -0.08], [-0.3, 0.02], [0.14, 0.06], [0.24, 0.14]]) bone2D(k, m, S(x, 0.035, 0.1), S(x + dx, 0.035, 0.55), 0.026 * T);
+}
+// the bear's (pov3d's bearSkeleton), lying on its side as the corpse did: legs out to the belly side, the ribs arching
+// over the upturned flank, a big skull on its side
+function bearBones2D(k, m){
+  const T = HORSE_TILE, S = (...q) => q.map(v => v * T), y = 0.05;
+  k.tube(BONE, [m(...S(-0.34, y, 0)), m(...S(0.24, y + 0.02, 0))], 0.035 * T, 'bone');               // spine
+  for (let i = 0; i < 3; i++) { const R = i === 1 ? 0.17 : 0.14; ribArch2D(k, m, ...S(-0.1 + i * 0.12, y, R * 0.9, R, 0.032)); }
+  const sk = k.blob(BONE, m, ...S(0.38, 0.09, 0.02, 0.15, 0.1, 0.12), 'bone'); k.blob(BONE, m, ...S(0.52, 0.06, 0.03, 0.08, 0.05, 0.065), 'bone');   // skull, snout
+  k.blob(BONE_HOLE, m, ...S(0.43, 0.17, 0.03, 0.045, 0.045, 0.045), 'bone', 0, false).pt.d = sk.pt.d + 0.001;   // the upturned socket
+  for (const [x, dx] of [[-0.3, -0.06], [-0.22, 0.02], [0.1, 0.05], [0.18, 0.12]]) bone2D(k, m, S(x, 0.03, 0.08), S(x + dx, 0.03, 0.42), 0.022 * T);
+}
+// the ox's (pov3d's oxSkeleton), sized from the ox (×1.2), lying on its side as the rolled body did: legs out toward
+// +z, ribs over the flank, the horned skull
+function oxBones2D(k, m){
+  const S = (...q) => q.map(v => v * 1.2), y = 1.4;
+  k.tube(BONE, [m(...S(-8.5, y, 0)), m(...S(8, y + 0.3, 0))], 1.2, 'bone');                          // spine
+  for (const x of [-4, 0, 4]) { const R = x ? 4.3 : 4.8; ribArch2D(k, m, ...S(x, y, R * 0.9, R, 0.9)); }
+  k.tube(BONE, [m(...S(8, y + 0.3, 0)), m(...S(11, y + 0.5, 1))], 0.9 * 1.2, 'bone');               // neck bones
+  const sk = k.blob(BONE, m, ...S(12.6, y + 1.2, 1.2, 3, 2.3, 2.4), 'bone'); k.blob(BONE, m, ...S(15, y + 0.8, 1.4, 1.6, 1.4, 1.6), 'bone');   // skull, muzzle
+  k.blob(BONE_HOLE, m, ...S(12.8, y + 3.1, 1.2, 0.9, 0.9, 0.9), 'bone', 0, false).pt.d = sk.pt.d + 0.001;   // the upturned socket
+  for (const h of [[[11.6, y + 1.8, -0.5], [11, y + 2, -4.5], [10.2, y + 5.5, -5.5]], [[11.6, y + 2.8, 2.5], [11.2, y + 6, 4.5], [10.4, y + 8.5, 3.5]]])
+    k.tube('#ece4cf', h.map(q => m(...S(...q))), 0.75 * 1.2, 'bone');                                 // the horns, still on
+  for (const [x, dx] of [[-5, -1.5], [-4.4, 0.8], [4.4, 1], [5, 2.6]]) bone2D(k, m, S(x, 1, 2.5), S(x + dx, 1, 11), 0.8 * 1.2);
+}
+// A rigged corpse's skeleton stage (villager, foot soldier, rider), in drawUnit's frame at the corpse (sx, sy): the bones
+// where the body came to rest, facing the way it died — a rider's beside his horse's, where he was thrown — and his
+// dropped weapon and shield still lying by them (pov3d's corpse skeleton)
+const RIG_BEASTS = new Set(['bear', 'dragon']);
+function drawBones2D(c, sx, sy, age){
+  const h = (c.dir || 0) * Math.PI / 4, k = projKit(h), soldier = FOOT_SOLDIERS.has(c.utype) || isMountedUnit(c.utype);
+  let mid = [-14, 0];
+  if (RIG_BEASTS.has(c.utype)) { const sc = c.utype === 'dragon' ? 2.2 : 1, zc = c.utype === 'bear' ? -0.38 * HORSE_TILE : 0;   // (the spine where the body lay: the rolled bear's a body-height to the side; the dragon's, the bear's ×2.2, where it sank)
+    bearBones2D(k, (x, y, z) => [x * sc, y * sc, z * sc + zc]); }
+  else if (isMountedUnit(c.utype)) { const T = HORSE_TILE, lx = -0.8 + 0.25 * T, lz = -0.72 * T, hz = 11.2 * 1.35;   // (his landing spot; the barrel's height: the rolled horse's offset)
+    horseBones2D(k, (x, y, z) => [x, y, z - hz]);
+    humanBones2D(k, (x, y, z) => [lx - z, y, lz + x]); mid = [0, -hz]; }                                // (turned so his head lies toward −z, as he rolled)
+  else humanBones2D(k, (x, y, z) => [x, y, z]);
+  if (soldier) soldierDrops2D(c, soldierGear(c), age, { ...k, tc: teamColor(c.team), nearer: q => k.depth(q[0], q[2]) > k.depth(...mid) });
+  X.save(); X.translate(sx, sy); X.scale(UNIT_SCALE, UNIT_SCALE); X.translate(0, 5); paintParts(k.parts); X.restore();
+}
+// The shield in 2D, in layer k.shieldL: the round one a wooden disc (its axis local x) with a white boss on its face; the
+// kite (its face local +z) white with the team cross, the back bare wood, 1 px thick with a brown edge round it
+function drawShield2D(k, S, kind){
+  const L = k.shieldL, ct = Math.cos(S.th), st = Math.sin(S.th), c = S.c;
+  const R = (x, y, z) => k.mG(c[0] + x * ct + z * st, c[1] + y, c[2] - x * st + z * ct), facing = q => { const a = k.mG(...c); return k.faces(q.map((v, i) => v - a[i])) > 0; };
+  if (kind === 'round') { k.blob('#a5723a', R, 0, 0, 0, 0.6, 4.8, 4.8, 'tool').pt.d = L;
+    if (facing(R(1, 0, 0))) k.blob('#f5f5f0', R, 0.7, 0, 0, 0.5, 1.6, 1.6, 'tool').pt.d = L + 0.001; return; }
+  const face = facing(R(0, 0, 1)), zn = face ? 1 : 0, at = (x, y, z = zn) => R(x, -y, z);
+  const poly = (pts, col, d) => { const ps = pts.map(([x, y]) => k.P(...at(x, y))); k.add(col, d, () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); }, 'tool', false); };
+  const kite = [[-4.2, 5.5], [-5.6, 0], [0, -8.5], [5.6, 0], [4.2, 5.5]], slab = loadHull(kite.flatMap(([x, y]) => [k.P(...at(x, y, 0)), k.P(...at(x, y, 1))]));
+  k.add('#7a5230', L, () => { X.moveTo(...slab[0]); for (const q of slab.slice(1)) X.lineTo(...q); X.closePath(); }, 'tool');
+  poly(kite, face ? '#f5f5f0' : SHIELD_BACK, L + 0.0005);
+  if (face) { poly([[-0.85, -6.5], [0.85, -6.5], [0.85, 5], [-0.85, 5]], k.tc, L + 0.001); poly([[-4.4, 1], [4.4, 1], [4.4, 2.7], [-4.4, 2.7]], k.tc, L + 0.001); }
+}
+// A rider's pose (2D and pov3d's riderFig): the sword arm (riderArm) on his right, as on foot; the other hand on the
+// reins — or the shield out on his left — the hands jogging with the horse, leaning into a gallop and back on the windup.
+// Dying (t: how far he's thrown) his legs close (riderLeg).
+function riderPose(kind, t, eq, gait = {}){
+  const [hand0, dir, edge] = riderArm(kind, t);
+  const jog = kind === 'gallop' ? 0.9 * Math.sin(2 * Math.PI * t) : kind === 'walk' ? 0.35 * Math.sin(4 * Math.PI * t) : 0;
+  const hand = [hand0[0], hand0[1] + jog, hand0[2]];
+  const off = eq.shield ? [1.5, -6.5 + jog * 0.6, -7.8] : [6 + 5 * (gait.nod || 0), -6.8 + jog * 0.6, -3.9];   // shield grip, or the reins (the rein hand follows the head)
+  const lean = kind === 'gallop' ? 0.12 : 0, sw = kind === 'attack' ? (q => 0.25 * q.c - 0.2 * q.w)(swordArc(t, [0, 0, 0], 3.4, 0)) : 0;   // (leaning back on the windup, into the cut)
+  return { hands: [off, hand], torso: { lean: lean + Math.max(0, sw), yaw: sw }, weapon: { hand, dir, edge: edge || null }, riding: kind === 'die' ? 1 - t : 1 };
+}
+// The wheelbarrow and the Heavy Plow in 2D (pov3d's barrowRig): k.R maps rig px (x forward, h up, z across) to the kit;
+// parts in layer k.d, ordered among themselves by depth — the wheel and handles under the tray, the load in it, the rim.
+const RIG_WOOD = { beam: '#6e5138', plank: '#b89868', inside: '#7d6448' };
+function barrowRig2D(k){
+  const { R, P, d } = k, dd = q => d + 0.001 * k.depth(q[0], q[2]), poly = ps => () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); };
+  const pole = (a, b, r, col, bias = 0) => { k.tube(col, [R(...a), R(...b)], r * 1.25, 'rig').d = dd(R((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)) + bias; };
+  for (const z of [-1, 1]) pole([1.8, 9.2, z * 3.1], [22, 3.6, z * 1.6], 0.6, RIG_WOOD.beam, -0.02);   // handles running to the axle ends
+  const wh = k.blob('#5a4630', R, 22, 3.6, 0, 3.6, 3.6, 0.75, 'rig'); wh.pt.d = dd(wh.o) - 0.03;           // the wheel, a hub cap toward us
+  for (const z of [-1, 1]) { const c = R(22, 3.6, z * 0.9), ax = R(22, 3.6, z).map((v, i) => v - R(22, 3.6, 0)[i]);
+    if (k.faces(ax) > 0.05) k.blob('#3a2c1c', R, 22, 3.6, z * 0.9, 1.1, 1.1, 0.2, 'rig', 0, false).pt.d = wh.pt.d + 0.0001; }
+  pole([22, 3.6, -1.9], [22, 3.6, 1.9], 0.5, RIG_WOOD.beam, -0.031);                                    // the axle
+  if (k.kind === 'barrow') {
+    // the open tray, flared: a narrow base, a wide rim raked forward over the wheel; seen from above, its inside
+    const B = [[9, 2.7, -2.4], [16, 2.7, -2.4], [16, 2.7, 2.4], [9, 2.7, 2.4]], T = [[7.5, 7.2, -4], [20, 7.8, -4], [20, 7.8, 4], [7.5, 7.2, 4]];
+    for (const z of [-1, 1]) pole([9.5, 2.7, z * 2.4], [9.5, 0, z * 2.4], 0.5, RIG_WOOD.beam, -0.025);  // two legs to rest on
+    const hull = loadHull(B.concat(T).map(q => P(...R(...q)))), mid = R(13.5, 5, 0);
+    k.add(RIG_WOOD.plank, dd(mid), poly(hull), 'rig');
+    k.add(RIG_WOOD.inside, dd(mid) + 0.0001, poly(T.map(q => P(...R(...q)))), 'rig', false);
+    // the load heaped in it (pov3d's FIT: [height, scale, x, tilt] — logs and the sheaf lean front-up on the raked wall)
+    const FIT = { wood: [7.6, 0.88, 14, 0.32], stone: [7.2, 0.95], gold: [7.4, 0.95], food: [7.8, 0.9, 12.8, 0.36], wool: [7.4, 0.95], berries: [7.8, 1.35] };
+    if (k.load) { const [y, sc, x = 13.5, tilt = 0] = FIT[k.load] || [7, 1.15], c = Math.cos(tilt), sn = Math.sin(tilt);
+      const L = (lx, ly, lz) => R(x + (lx * c - ly * sn) * sc, y + (lx * sn + ly * c) * sc, lz * sc);
+      VIL_LOADS[k.load]({ L, k: sc * 1.25, tube: k.tube, blob: k.blob, add: k.add, P, faces: k.faces, ld3: q => dd(mid) + 0.001 + 0.00001 * k.depth(q[0], q[2]) }); }
+    for (let i = 0; i < 4; i++) k.tube(RIG_WOOD.beam, [R(...T[i]), R(...T[(i + 1) % 4])], 0.55 * 1.25, 'rig').d = dd(mid) + (k.depth(...(q => [q[0], q[2]])(R((T[i][0] + T[(i + 1) % 4][0]) / 2, 7.5, (T[i][2] + T[(i + 1) % 4][2]) / 2))) > k.depth(mid[0], mid[2]) ? 0.002 : -0.00005); // the rim (its near edges over the load)
+  } else {
+    // a crossbar between the handles (where they pass x 12.5), the standard down to the share: one curved steel blade
+    // sweeping down and forward to a point in the soil
+    const u = (12.5 - 1.8) / (22 - 1.8), cy = 9.2 - 5.6 * u, cz = 3.1 - 1.5 * u;
+    pole([12.5, cy, -cz], [12.5, cy, cz], 0.6, RIG_WOOD.beam);
+    pole([12.5, cy, 0], [12.5, 3, 0], 0.6, RIG_WOOD.beam, -0.001);
+    const S = (x, h, z) => R(12.5 + x, 3 + h, z);
+    k.tube('#b8bfc6', k.quadPts([0, 0, 0], [1.5, -3, 0], [5.5, -2.8, 0], 6).map(q => S(...q)), 1.1 * 1.25, 'rig').d = dd(S(3, -2.5, 0)) - 0.002;
+    const pt = k.blob('#b8bfc6', S, 5.9, -2.8, 0, 1.4, 0.7, 1.1, 'rig'); pt.pt.d = dd(pt.o) - 0.0019;
+  }
+}
+// The work tools in 2D (pov3d's tool() and knife(): art px, u up the handle from the grip, v to the blade side). top:
+// where the head sits; draw: its parts at layer k.d.
+const toolPoly = (k, pts, col) => { const ps = pts.map(([v, u]) => k.P(...k.at(u, v)));
+  k.add(col, k.d + 0.001, () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); }, 'tool'); };
+const toolHandle = (k, len) => { k.tube(VIL_TOOL_COL.handle, [k.at(-len * 0.45, 0), k.at(len * 0.55, 0)], 0.8, 'tool').d = k.d; };
+const TOOLS2D = {
+  axe: { top: 7.15, headR: 3.5, draw: k => { toolHandle(k, 13); const t = 7.15 - 1.5, blade = [[0.3, 1.8], [4.6, 3.2], [5, 0], [4.6, -3.2], [0.3, -1.4]];  // a flat wedge off the handle top
+    toolPoly(k, blade.map(([v, u]) => [v, t + u]), VIL_TOOL_COL.steel);
+    if (k.up.double) toolPoly(k, blade.map(([v, u]) => [-v, t + u]), VIL_TOOL_COL.steel); } },                                           // Double-Bit: a second blade mirrored
+  pick: { top: 7.15, headR: 2.5, draw: k => { toolHandle(k, 13); const t = 7.15;                                                                          // a curved double point across the top
+    k.tube(k.up.bright ? VIL_TOOL_COL.bright : VIL_TOOL_COL.steel, k.quadPts([-4.2, t - 1.4, 0], [0, t + 1.2, 0], [4.6, t - 1.4, 0], 6).map(([v, u]) => k.at(u, v)), 0.7, 'tool').d = k.d + 0.001; } },
+  mallet: { top: 7.15, headR: 3, draw: k => { toolHandle(k, 13); k.tube(VIL_TOOL_COL.wood, [k.at(7.15, -3.75), k.at(7.15, 3.75)], 2.2, 'tool').d = k.d + 0.001; } }, // a fat wooden barrel head
+  scythe: { top: 9.35, headR: 2, draw: k => { toolHandle(k, 17); const t = 9.35, m = k.mow;   // a long curved blade off the snath's top (mowing: lying nearly flat)
+    k.tube(k.up.bright ? VIL_TOOL_COL.bright : VIL_TOOL_COL.steel, k.quadPts([0, t, 0], [5, t + (m ? 1.2 : 1.5), 0], [10, t + (m ? 0.8 : -3.5), 0], 6).map(([v, u]) => k.at(u, v)), 0.6, 'tool').d = k.d + 0.001; } },
+  knife: { top: 4, headR: 1, draw: k => { k.tube(VIL_TOOL_COL.handle, [k.at(-1.6, 0), k.at(1.4, 0)], 0.75, 'tool').d = k.d;                          // a short butcher's knife
+    toolPoly(k, [[-0.9, 1.4], [0.8, 1.4], [0.6, 5.2], [-0.1, 6.8], [-0.9, 5]], '#dde3ea'); } },
+};
 // Bear body — same per-archetype seam as drawRamBody/drawTradeCartBody, which
 // drawUnit's dispatch already delegates to.
 // ---- The bear: one model and one animation for both views ----
@@ -2705,7 +2470,7 @@ function bearAnim(e, a, dt, moved){
   a.gait = (a.gait || 0) + ((walking ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 4);
   a.phase = (a.phase || 0) + moved * Math.PI * BEAR.duty / BEAR.stride;
   const g = a.gait, ph = a.phase;
-  const rof = (UNITS.bear && UNITS.bear.rof) || T30(60), cd = e.atkCooldown || 0, att = !e.corpseRot && inActionRange(e) && !moving;
+  const rof = (UNITS.bear && UNITS.bear.rof) || T30(60), cd = e.atkCooldown || 0, att = inActionRange(e) && !moving;
   const bp = att ? 1 - cd / rof : 0, snap = att ? Math.max(0, (cd - rof * 0.85) / (rof * 0.15)) : 0;   // bp: 0 just bitten → 1 the next bite
   const sm = x => x * x * (3 - 2 * x);
   // The maul, in beats on the bite clock: settle back after the bite → crouch low, weight back, head down → rear up on
@@ -2747,12 +2512,22 @@ function bearAnim(e, a, dt, moved){
   const reach = paws;
   return { g, pitch, lunge: lungeT, bob, roll, breath, neckYaw, neckPitch, shake, jaw, reach, legs, att };
 }
-const bear2D = new Map(); let bearShadeC = null;
+// dead (pov3d's deathPose): it rolls onto its −z flank, accelerating, with an impact recoil, lifted by its half-width;
+// the legs splay, the head drops, the jaw falls slack. age: ms since the death.
+const BEAR_DEAD_HALF = 0.27;
+function bearDeathPose(age){
+  const p = Math.min(1, age / 600); let rot = (Math.PI / 2.1) * p * p;
+  if (age > 600 && age < 900) rot *= 1 + 0.07 * Math.sin((age - 600) / 300 * Math.PI);
+  return { g: 0, pitch: 0, lunge: 0, bob: BEAR_DEAD_HALF * Math.sin(Math.min(rot, Math.PI / 2)), roll: -rot, breath: 0, neckYaw: 0, neckPitch: -0.35 * p, shake: 0,
+    jaw: 0.36 * p, reach: 0, legs: [0, 1, 2, 3].map(i => ({ ang: (i < 2 ? -0.45 : 0.45) * p, len: 1 })), att: false };
+}
+const bear2D = new Map();
 function drawBearBody(e){
   let a = bear2D.get(e.id);
   if (!a) bear2D.set(e.id, a = { px: e.x, py: e.y, last: 0, hd: undefined });
   const target = (e.dir !== undefined ? e.dir : 1) * Math.PI / 4;
-  if (!window._maskDraw || !a.P) {
+  if (e.__deathAge != null) { a.hd = target; a.P = bearDeathPose(e.__deathAge); }   // (dead: lying the way it faced as it died)
+  else if (!window._maskDraw || !a.P) {
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
     const [mx, my] = walkedSince(a, e), moved = Math.hypot(mx, my);
     // walking, it faces its smoothed course (the tile path zigzags in 8 directions: facing each step swung it side to
@@ -2847,22 +2622,7 @@ function drawBearBody(e){
   // fills far to near; each group (the body, the head) gets the dragon's light underside shade as its last part is
   // painted — the shape less itself lifted — so nearer parts cover it
   const last = new Map(); for (const pt of parts) if (pt.g) last.set(pt.g, pt);
-  // A band of a group's merged outline (so overlapping parts leave no seams): the shape less itself moved by lift
-  // (+ up: the underside band; −: the top), masked on a scratch canvas and laid on at alpha.
-  const band = (ms, lift, col, alpha) => { if (window._maskDraw) return;
-    const m = X.getTransform(); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const p of ms) for (const [u, v] of [[p.bb[0], p.bb[1]], [p.bb[2], p.bb[1]], [p.bb[0], p.bb[3]], [p.bb[2], p.bb[3]]]) {
-      const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
-    x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
-    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
-    if (!bearShadeC) bearShadeC = document.createElement('canvas');
-    if (bearShadeC.width < w || bearShadeC.height < h) { bearShadeC.width = Math.max(bearShadeC.width, w); bearShadeC.height = Math.max(bearShadeC.height, h); }
-    const O = bearShadeC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
-    O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                         // (the path helpers draw on X)
-    try { O.fillStyle = col; O.beginPath(); for (const p of ms) p.path(); O.fill();
-      O.globalCompositeOperation = 'destination-out'; O.translate(0, -lift); O.beginPath(); for (const p of ms) p.path(); O.fill();
-      O.globalCompositeOperation = 'source-over'; } finally { X = X0; }
-    X.save(); X.setTransform(1, 0, 0, 1, 0, 0); X.globalAlpha *= alpha; X.drawImage(bearShadeC, 0, 0, w, h, x0, y0, w, h); X.restore(); };
+  const band = (ms, lift, col, alpha) => silhouetteBand(ms.map(p => p.path), ms.reduce((b, p) => [Math.min(b[0], p.bb[0]), Math.min(b[1], p.bb[1]), Math.max(b[2], p.bb[2]), Math.max(b[3], p.bb[3])], [Infinity, Infinity, -Infinity, -Infinity]), lift, col, alpha);
   // the light from above: a lit band along the top, the underside in shade
   const shade = g => { const ms = parts.filter(p => p.g === g && p.outline), k = g === 'head' ? 0.09 : 0.13;
     band(ms, k * K, '#140a00', 0.22); band(ms, -k * 0.55 * K, '#ffe1b4', 0.16); };
@@ -2905,6 +2665,18 @@ function dragonGaitStep(e, a, moved, dt, strideLen){
   const on = isUnitMoving(e) || Math.abs(a.turn) > 0.15;                            // (from the sim's state: a frame without a tick moved nothing)
   a.gait = (a.gait || 0) + ((on ? 1 : 0) - (a.gait || 0)) * Math.min(1, dt * 3.5);
   a.phase = (a.phase || 0) + go * Math.PI * DRAGON_DUTY / strideLen;              // a stance sweeps 2·strideLen in DRAGON_DUTY of the cycle: planted feet keep pace with the ground
+}
+// dead (pov3d's dragonDeath): the body drops, legs folding under it, with a bounce; the neck and head fall after,
+// the jaw slack, the eyes shut; the tail goes limp and the wings sag open onto the ground. age: ms since the death.
+function dragonDeathPose(age){
+  const fall = (t0, dur) => { const u = Math.max(0, Math.min(1, (age - t0) / dur)); return u * u; };        // accelerating
+  const ease = (t0, dur) => { const u = Math.max(0, Math.min(1, (age - t0) / dur)); return u * u * (3 - 2 * u); };
+  const bounce = (t0, amp) => age > t0 ? amp * Math.exp(-(age - t0) / 170) * Math.sin((age - t0) / 60) : 0;
+  const fb = fall(100, 650), fn = fall(450, 600), limp = ease(300, 900);
+  return { ck: 0, sl: 0, lie: Math.min(1, fb * 1.3), awake: 0, g: 0, rr: 0, inhale: 0, bl: 0, blast: 1, chest: 0, sink: 0, roll: 0, pitch: bounce(750, 0.03),
+    bodyX: 0, bodyY: -0.44 * fb + bounce(750, 0.05), neck: 0.1 - 1.2 * fn + bounce(1050, 0.08), neckY: 0.25 * fn, head: 0.5 * fn + bounce(1070, 0.08), headX: 0,
+    jaw: 0.25 * fall(1000, 400), eyeShut: fall(900, 300), tail: [0.2, 0.15, 0.2].map(v => v * limp), tailZ: [-0.2, -0.1, 0.1].map(v => v * limp), spade: 0,
+    open: 0.35 * limp, wingAng: 1.35 - 1.6 * limp, beat: 0, flame: 0, reach: 0, ev: { steps: [], slam: false, snore: false, smoke: false } };
 }
 function dragonAnim(e, a, dt){
   const D = a.dr || (a.dr = { ck: 0, sp: {}, q: [0, 0, 0, 0] }); D.ck += dt; const ck = D.ck, idp = e.id || 0;
@@ -2969,10 +2741,10 @@ function dragonAnim(e, a, dt){
   ev.smoke = blast > 0.6 && blast < 1 && Math.random() < dt * 6;
   D.lastBp = bp;
   const reach = rr * (0.7 + 0.3 * Math.sin(ck * 5)) + 0.3 * inhale;                              // fore legs paw the air as it rears
-  a.lie = sl;
+  a.lie = sl;   // (lie: the legs tucked under; sl: asleep — one and the same, but for the dead)
   // the body's offset: pitched about the hind feet, lurched by the breath, crouched by the inhale, lowered asleep
   const hind = -0.45, bodyX = hind - hind * Math.cos(pitch) + 0.1 * bl - 0.04 * inhale, bodyY = -hind * Math.sin(pitch) + sink * 0.12 - 0.07 * inhale - 0.4 * sl;
-  return { ck, sl, awake, g, rr, inhale, bl, blast, chest, sink, roll, pitch, bodyX, bodyY, neck, neckY, head, headX, jaw, eyeShut,
+  return { ck, sl, lie: sl, awake, g, rr, inhale, bl, blast, chest, sink, roll, pitch, bodyX, bodyY, neck, neckY, head, headX, jaw, eyeShut,
     tail, tailZ, spade, open, beat, flame, reach, ev };
 }
 // The dragon's wing, bat-style, laid out for fold fd (0 spread … 1 folded; tuck 0..1 tighter still, asleep): joints
@@ -3037,8 +2809,8 @@ function drawDragonBody(e){
     const now = performance.now(), dt = a.last ? Math.min(0.1, (now - a.last) / 1000) : 1 / 60; a.last = now;
     const moved = Math.hypot(...walkedSince(a, e));
     dragonGaitStep(e, a, moved, dt, DRAGON_STRIDE);
-    a.P = dragonAnim(e, a, dt);
-    if (!e.corpseRot) {
+    a.P = e.__deathAge != null ? dragonDeathPose(e.__deathAge) : dragonAnim(e, a, dt);
+    if (e.__deathAge == null) {
       for (const i of a.P.ev.steps) spawnParticles(e.x, e.y, '#b7a27a', 2, 0.02, 0.6);
       if (a.P.ev.slam) spawnParticles(e.x, e.y, '#b7a27a', 8, 0.04, 1.4);
       dragonSounds(e, a.P.ev);
@@ -3203,22 +2975,22 @@ function drawDragonBody(e){
     const bx = tw[0] - P.bodyX, by = tw[1] - P.bodyY; let tx = bx * cp + by * spc - hx, ty = -bx * spc + by * cp - hy;
     if (!hind && P.reach > 0.2) { const pw = P.ck * 5.5 + (z > 0 ? 0 : Math.PI), px = 0.2 + 0.14 * sin(pw), py = -0.3 + 0.1 * cos(pw), w = Math.min(1, (P.reach - 0.2) * 2);
       tx += (px - tx) * w; ty += (Math.max(ty, py) - ty) * w; }
-    let [h, k] = dragonLegIK(L, tx, ty); const T = DRAGON_TUCK[hind ? 'hind' : 'fore']; h += (T.hip - h) * P.sl; k += (T.knee - k) * P.sl;
+    let [h, k] = dragonLegIK(L, tx, ty); const T = DRAGON_TUCK[hind ? 'hind' : 'fore']; h += (T.hip - h) * P.lie; k += (T.knee - k) * P.lie;
     const kx = hx + sin(h) * L.th, ky = hy - cos(h) * L.th, ax = kx + sin(h + k) * L.sh, ay = ky - cos(h + k) * L.sh;
-    const out = T.out * P.sl * Math.sign(z) * 0.5, zk = z + out * 0.6, za = z + out;
+    const out = T.out * P.lie * Math.sign(z) * 0.5, zk = z + out * 0.6, za = z + out;
     const col = C.body, r0 = hind ? 0.17 : 0.13, r1 = hind ? 0.11 : 0.095; grp = 'leg' + i;
     blob(col, bm(hx, hy - 0.03, z), hind ? 0.21 : 0.16, hind ? 0.22 : 0.17, hind ? 0.17 : 0.14);   // the haunch / shoulder at the leg's top (as 3D)
     tube(col, bm(hx, hy, z), bm(kx, ky, zk), r0, r1, -0.05); tube(col, bm(kx, ky, zk), bm(ax, ay, za), r1, 0.065, -0.04);
-    const A = bm(ax, ay, za), fa = -P.pitch + dragonStride(a.phase, i).roll * P.g * (1 - P.sl);
+    const A = bm(ax, ay, za), fa = -P.pitch + dragonStride(a.phase, i).roll * P.g * (1 - P.lie);
     const ft = (x, y) => [A[0] + x * cos(fa) - y * sin(fa), A[1] + x * sin(fa) + y * cos(fa), za];      // the foot, flat on the ground
-    const toe = (hind ? 1.25 : 0.35) * P.sl * Math.sign(z);                                            // lying, the toes turn out to its side (as 3D)
+    const toe = (hind ? 1.25 : 0.35) * P.lie * Math.sign(z);                                            // lying, the toes turn out to its side (as 3D)
     const fF = (x, y, z2) => { const q = ft(x * Math.cos(toe), y); return [q[0], q[1], za + z2 + x * Math.sin(toe)]; }; // the foot's frame (turned with it)
     blobF(col, fF, 0.07, -DRAGON_FOOT * 0.5, 0, 0.17, DRAGON_FOOT * 0.55, 0.14); grp = null;         // a broad round foot
     for (const cz of [-0.06, 0.06]) tube(C.horn, fF(0.19, -DRAGON_FOOT * 0.62, cz), fF(0.27, -DRAGON_FOOT * 0.95, cz * 1.15), 0.04, 0.014, 0.02); // two fat claws
   };
   leg(0, -0.34); leg(1, 0.34); leg(2, -0.32); leg(3, 0.32);
   // wings: the shared joints; the plane stood up by its angle, out from its side as it spreads
-  const wingAng = (1.35 + (0.35 + 0.6 * P.rr + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl;
+  const wingAng = P.wingAng ?? (1.35 + (0.35 + 0.6 * P.rr + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl;
   for (const sd of [-1, 1]) {
     const J = dragonWingJoints(1 - P.open, P.sl, sd), up = sin(wingAng), outw = cos(wingAng);
     const at = q => bm(0.1 + q[0], 1.08 + q[1] * up, sd * (0.32 + q[1] * outw));
@@ -3317,13 +3089,6 @@ function drawUnit(e){
   // Group spread: offset based on unit ID so stacked units are visible
   let { ox, oy } = getUnitGroupOffset(e.id);
   sx += ox; sy += oy;
-  let tc=teamColor(e.team);
-  let isActive=e.task||e.target||e.path.length>0;
-  // "Moving" for animation = following a path OR pressing into contact this
-  // tick (js/logic.js pressToContact sets e.pressWalk=tick when it steps). A
-  // pressing unit walks at its normal pace now, so it should show the walk
-  // cycle (legs), not the planted attack/idle pose, until it settles at contact.
-  let moving = isUnitMoving(e);
 
   // Shadow — not part of the body silhouette: the outline mask pass must
   // skip it or the selection ring traces the shadow blob too.
@@ -3332,13 +3097,15 @@ function drawUnit(e){
     // projects a per-type ground oval through the real iso transform and
     // rotates it to the unit's facing. So a horse (or ram) in profile
     // casts a long flat shadow, head-on a shorter rounder one, and the
-    // diagonal facings (SE/SW/NW/NE) a properly TILTED one.
-    drawUnitShadow(e, sx, sy);
+    // diagonal facings (SE/SW/NW/NE) a properly TILTED one. (The villager rig's corpse lies down: no standing shadow
+    // once it goes over.)
+    // (a villager stepped into its work spot casts it there: villagerWorkSpot's drawn spot)
+    const S = e.utype === 'villager' && vil2DState.get(e.id), wdx = S && S.wx != null ? S.wx - e.x : 0, wdy = S && S.wy != null ? S.wy - e.y : 0;
+    if (!(e.__deathAge > DIE.buckle)) drawUnitShadow(e, sx + (wdx - wdy) * HALF_TW, sy + (wdx + wdy) * HALF_TH);
   }
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location
   if(e.facing===undefined) e.facing = 1;
-  let targetDx = 0;
   let tx = -1, ty = -1;
   // Facing priority: the PATH wins while the unit is actually walking —
   // facing the target first made a unit on a detour route (pathing around a
@@ -3407,129 +3174,14 @@ function drawUnit(e){
   e.lastX = e.x;
   e.lastY = e.y;
 
-  // Torso / Head bobbing
-  let bob=moving?Math.sin(paceClock(e)*0.3+e.id)*1.5:0;
-  let sbob=moving?Math.sin(paceClock(e)*0.2+e.id)*1:0;
-
-  // Save context and apply horizontal flipping based on facing direction
+  // (every body bobs with its own step: the rigs' gaits, the ram's rolling sway)
   X.save();
-  if(e.utype==='sheep') X.translate(sx, sy + sbob);
-  else if(e.utype==='bear'||e.utype==='dragon') X.translate(sx, sy); // (they bob with their own step)
-  // Vehicles don't head-bob — the ram applies its own subtle rolling sway
-  else if(e.utype==='sheep_carcass'||e.utype==='ram'||e.utype==='tradecart') X.translate(sx, sy);
-  else X.translate(sx, sy + bob);
+  X.translate(sx, sy);
   X.scale(e.facing * UNIT_SCALE, UNIT_SCALE);
-  // Corpse pose (see drawCorpse): the dead are drawn with this very
-  // function so they keep every living detail — just toppled over their
-  // feet by this rotation. corpseRot also freezes the idle animations
-  // (breathing, tail swish, idle "?") so the body lies still.
-  if(e.corpseRot) X.rotate(e.corpseRot);
 
   // --- DRAW FLIPPABLE STUFF ---
   if(e.utype==='sheep_carcass'){
-    let dt = performance.now() - (e.deathTime || 0);
-    let duration = 750; // 0.75 seconds collapse
-    if(dt < duration){
-      let progress = dt / duration;
-      
-      X.save();
-      X.translate(0, progress * 4.5);
-      X.rotate(progress * (Math.PI / 2.2));
-      
-      // Draw 4 legs twitching/kicking
-      let legKick = Math.sin(animTick * 0.7 + e.id) * 3 * (1 - progress);
-      X.strokeStyle='#000000'; X.lineWidth=1.8/UNIT_SCALE;
-      X.beginPath();
-      X.moveTo(-4, 0); X.lineTo(-4 + legKick, 5 * (1 - progress));
-      X.moveTo(-1, 1); X.lineTo(-1 - legKick, 5 * (1 - progress));
-      X.moveTo(2, 1);  X.lineTo(2  + legKick, 5 * (1 - progress));
-      X.moveTo(5, 0);  X.lineTo(5  - legKick, 5 * (1 - progress));
-      X.stroke();
-
-      // Fluffy wool body
-      X.fillStyle='#000000';
-      X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
-      
-      X.fillStyle='#f2eddd';
-      X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
-      X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
-
-      // Head falling
-      let headX = 6, headY = -3 + progress * 4.5;
-      let earX = 7, earY = -5 + progress * 4.5;
-      X.fillStyle='#333';
-      X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;X.stroke();
-      X.fillStyle='#e0d8c0';
-      X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
-      
-      X.restore();
-      X.restore();
-      return;
-    }
-
-    // --- FULLY COLLAPSED ROUND CARCASS ---
-    X.save();
-    X.translate(0, 3.5);
-
-    // Tail dropped to ground
-    X.save();
-    X.translate(-8, -1.0);
-    X.rotate(-0.5);
-    X.fillStyle = '#000000';
-    X.beginPath(); X.ellipse(-2, 0, 3, 2, 0, 0, Math.PI*2); X.fill();
-    X.fillStyle = '#f2eddd';
-    X.beginPath(); X.ellipse(-2, 0, 2, 1.2, 0, 0, Math.PI*2); X.fill();
-    X.restore();
-
-    // Round fluffy wool body (identical to live sheep, but no legs)
-    X.fillStyle='#000000';
-    X.beginPath();X.arc(-4,-3,5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,5.5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,5.5,0,Math.PI*2);X.fill();
-    
-    X.fillStyle='#e8e2d2'; // slightly dirtier/darker wool for carcass
-    X.beginPath();X.arc(-4,-3,4,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(4,-3,4,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-6,4.5,0,Math.PI*2);X.fill();
-    X.beginPath();X.arc(0,-1,4.5,0,Math.PI*2);X.fill();
-
-    // Head dropped flat to ground
-    let headX = 6, headY = 1.0;
-    let earX = 7, earY = -0.5;
-
-    X.fillStyle='#333';
-    X.beginPath();X.arc(headX,headY,2.5,0,Math.PI*2);X.fill();
-    X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;X.stroke();
-    // its owner's tuft, still on the head
-    X.fillStyle = e.team === GAIA_TEAM ? '#f2eddd' : tc;
-    X.beginPath(); X.arc(headX - 1.2, headY - 2.2, 1.5, 0, Math.PI*2); X.fill(); X.stroke();
-    X.fillStyle='#e0d8c0';
-    X.beginPath();X.arc(earX,earY,1.1,0,Math.PI*2);X.fill();X.stroke();
-
-    // Partially eaten raw meat/ribs in the center of the round wool body
-    let foodPct = e.hp / e.maxHp;
-    if(foodPct < 0.75){
-      X.fillStyle='#c84b4b'; // raw meat
-      X.beginPath();X.ellipse(0, -3.5, 4.2 * (1 - foodPct), 2.8 * (1 - foodPct), 0, 0, Math.PI*2);X.fill();
-      X.strokeStyle='#000000';X.lineWidth=0.85/UNIT_SCALE;X.stroke();
-      
-      if(foodPct < 0.4){
-        X.strokeStyle='#ffffff';X.lineWidth=1.1/UNIT_SCALE;
-        X.beginPath();X.moveTo(-1.2, -5);X.lineTo(-1.2, -2);X.stroke();
-        X.beginPath();X.moveTo(1.2, -5.5);X.lineTo(1.2, -2.5);X.stroke();
-      }
-    }
-    
-    X.restore();
-    X.restore();
-    return;
+    drawSheep2D(e);
   } else if(e.utype==='ram'){
     drawRamBody(e);
   } else if(e.utype==='tradecart'){
@@ -3539,1792 +3191,7 @@ function drawUnit(e){
   } else if(e.utype==='dragon'){
     drawDragonBody(e);
   } else if(e.utype!=='sheep'){
-    // Seated over the saddle center; face-on (S) the saddle reads at
-    // body center, so the rider sits right of the -2 profile seat.
-    // a rider sits on the horse rig's saddle (horse2D: the mount at its heading)
-    const horseRig = isMountedUnit(e.utype) ? horse2D(e, tc) : null;
-    let humanXOffset = horseRig ? horseRig.seat[0] : 0;
-    let humanYOffset = horseRig ? horseRig.seat[1] : 0;
-    let eq = unitEquipment(e); // null for non-soldiers (villager)
-    let weaponTier = eq ? eq.weapon : 0;
-
-    // ---- hand-pose seam ----
-    // TRUE screen-space angle from this unit to its combat target. Used to
-    // point aimed weapons (bow, spear) along the real attack line. Callers
-    // must first UNDO the facing mirror (X.scale(e.facing,1) inside the
-    // already-mirrored context cancels it) and then rotate by this — never
-    // clamp the angle to the mirrored frame (a clamp renders steep or
-    // across-the-body shots up to ~130° off). When the target entity is
-    // gone mid-swing (or a preview has none), fall back to the FACING
-    // projected through the rig — NOT horizontal: a horizontal fallback
-    // made the NW/NE diagonals swing sideways instead of up-screen.
-    const facingAim = () => Math.atan2(RIG[e.dir].sy, RIG[e.dir].sx);
-    // Character mode (pov3d) redraws a unit turned to face its camera and sets
-    // window._povAimRot so the target offset turns with the body (viewer-only).
-    const targetCenter = (t) => {
-      const c = t.type === 'building' ? { x: t.x + (t.w || 1) / 2, y: t.y + (t.h || 1) / 2 } : { x: t.x, y: t.y };
-      const r = window._povAimRot;
-      if (!r) return c;
-      const dx = c.x - e.x, dy = c.y - e.y, cs = Math.cos(r), sn = Math.sin(r);
-      return { x: e.x + dx * cs - dy * sn, y: e.y + dx * sn + dy * cs };
-    };
-    let aimAngle = () => {
-      let t = entitiesById.get(e.target);
-      if (!t) return facingAim();
-      let tc = targetCenter(t);
-      let dix = ((tc.x - e.x) - (tc.y - e.y)) * HALF_TW;
-      let diy = ((tc.x - e.x) + (tc.y - e.y)) * HALF_TH;
-      if (dix === 0 && diy === 0) return facingAim();
-      return Math.atan2(diy, dix);
-    };
-    // Archer variant: the LAUNCH tangent of the ballistic arc, not the flat
-    // line to the target — the nocked arrow releases exactly along the real
-    // arrow's initial flight line. Constants (35, /5, startH 12, endH 8)
-    // must stay in sync with spawnProjectile/drawProjectiles.
-    let aimAngleBallistic = () => {
-      let t = entitiesById.get(e.target);
-      if (!t) return facingAim();
-      let tc = targetCenter(t);
-      let dix = ((tc.x - e.x) - (tc.y - e.y)) * HALF_TW;
-      let diy = ((tc.x - e.x) + (tc.y - e.y)) * HALF_TH;
-      let A = 35 * (Math.hypot(tc.x - e.x, tc.y - e.y) / 5); // arc amplitude
-      diy -= Math.PI * A + (8 - 12); // + endH − startH (units launch at 12, impact at 8)
-      if (dix === 0 && diy === 0) return facingAim();
-      return Math.atan2(diy, dix);
-    };
-    // ---- ARM-STATE MODEL ----
-    // Arms are BODY sides (s: −1 left, +1 right); this maps a body side
-    // to its mirrored-frame hand target. Profiles (lateral axis edge-on)
-    // keep FIXED sides (left→rear, right→front — the approved reads).
-    // One helper replaces every front/rear choice heuristic; it
-    // reproduces all 8 previously hand-picked sword-arm choices.
-    const armFrameSide = (s) => {
-      let v = e.facing * s * RIG[(e.dir + 2) & 7].sx;
-      if (v > 0.1) return 'front';
-      if (v < -0.1) return 'rear';
-      return s > 0 ? 'front' : 'rear';
-    };
-    // ---- SHARED PARTS-PASS RULES (one copy for every humanoid family;
-    // per-family riders come in as flags — see each parts block) ----
-    // frame-forward sign for tool mirroring: facing-projected forward,
-    // ties broken by the lateral axis depth.
-    const frameFwdSign = () => {
-      let v = e.facing * RIG[e.dir].sx;
-      return v > 0.05 ? 1 : v < -0.05 ? -1 : (RIG[e.dir].d >= 0 ? 1 : -1);
-    };
-    // held-item sort depth from a mount; at the dead-on profiles the
-    // forward depth ties with the body, so profileHeld pins it just over
-    // (lat parameter for the militia's mode-adjusted lateral)
-    const mountHeldD = (M, R, F, lat = M.lat) =>
-      (Math.abs(F.d) < 0.05 && M.profileHeld !== undefined) ? M.profileHeld
-        : lat * R.d + M.fwd * F.d;
-    // ONE arm-depth rule: grip/support arms span THEIR OWN shoulder to
-    // the held item; the shoulder side decides occlusion AT ALL TIMES
-    // (user calls) — a camera-side shoulder's arm reaches around visibly,
-    // its hand wrapping the handle viewer-side over body AND weapon; a
-    // far shoulder's arm tucks BEHIND the torso (its fist still sweeps
-    // past the silhouette). Pins win; shield hands sit just under their
-    // plate; carry arms ride the load; idle arms hang. o riders:
-    //   farGripPin    (mounted)  far grip arm pinned just under the sword
-    //   farBehindHeld (militia)  far arm deepens UNDER a behind-body sword
-    //   flankClamp    (mounted)  the idle rein arm hangs ON the flank
-    //   shieldGap     per-family gap under the plate
-    const armDepthRule = (s, o) => {
-      let st = anim.armState ? anim.armState[s] : 'idle';
-      if (st === 'grip' || st === 'support') {
-        if (o.farGripPin && st === 'grip' && anim.gripS * o.R.d < -0.05)
-          return o.held - 0.1;
-        let d = (s * 4.5 * o.R.d + o.held) / 2;
-        if (s * o.R.d > 0.05) d = Math.max(d, o.held + 0.1, 0.02);
-        else if (s * o.R.d < -0.05)
-          d = d > 0.005 ? 0.005 : o.farBehindHeld ? Math.min(d, o.held - 0.1) : d;
-        return d;
-      }
-      if (st === 'shield') return o.shield - o.shieldGap;
-      // carry arms follow the IDLE convention: the far-shoulder arm
-      // tucks BEHIND the body (its fist re-emerges at the handle/load —
-      // the bigger forward barrow rig puts the far grip past the
-      // silhouette, so the fist reads), the near arm rides over the
-      // carried thing.
-      if (st === 'carry') {
-        // barrow at dead-away N: arms AND shoulders render behind the
-        // body with the barrow (user call) — near arm still over far.
-        // N is where sx≈0 with sy<0 (F.d is strongly NEGATIVE there,
-        // not ~0 — the first cut keyed on d and never fired)
-        if ((anim.barrow || anim.plowRig) && Math.abs(o.F.sx) < 0.05 && o.F.sy < -0.05)
-          return anim.carryD + 0.03 + (s > 0 ? 0.01 : 0);
-        return s * o.R.d < -0.05 ? 0.005
-          : (anim.barrow || anim.plowRig) ? Math.max(anim.carryD + 0.03, 0.02)
-          : anim.carryD + 0.03;
-      }
-      let hang = s * 4.5 * o.R.d + 0.15 * o.F.d;
-      return o.flankClamp && hang < 0.01 ? 0.005 : hang;
-    };
-    // the plate straps OUTSIDE its (idle) arm; nearOnly skips far-side
-    // (behind-the-horse) braces so the flank clamp can't drag them on top
-    const strapShieldOut = (shield, armDepth, nearOnly) => {
-      if (anim.shieldState && (!nearOnly || shield > 0) &&
-          anim.armState[-anim.gripS] !== 'shield') {
-        let ad = armDepth(-anim.gripS);
-        if (shield < ad + 0.03) shield = ad + 0.03;
-      }
-      return shield;
-    };
-    // ascending depth sort IS the draw order
-    const runParts = (parts) => {
-      parts.sort((a, b) => a[0] - b[0]);
-      for (let i = 0; i < parts.length; i++) parts[i][1]();
-    };
-
-    // Per-frame animation snapshot shared by the ARM pass (body layer) and
-    // the GRIP anchors (held layer) — the two draw at different times per
-    // facing, so any phase math they share must live here, not in either
-    // closure. Pure reads only (safe under the outline mask pass); sounds/
-    // particles stay in drawHeldLayer behind their _maskDraw guards.
-    const anim = { armSwing: moving ? Math.sin(paceClock(e)*0.4+e.id)*1.5 : 0 };
-    // TRUE PROFILE views (E/W): the body is seen exactly side-on —
-    // legs align under the center and the shoulders sit ON the
-    // centerline (consumers: legs in drawBodyLayer, shoulders in
-    // computeHandTargets). Other dirs keep the 3/4 read.
-    anim.profile = e.dir === 3 || e.dir === 7;
-    // POSE-RIG shoulders — EVERY humanoid (villager convention adopted
-    // unit-wide): both shoulders project to the rotated rim (face-on
-    // wide, diagonals tucked, profiles on the centerline) and the near
-    // shoulder rides slightly lower, damped like the weapon mounts
-    // (RIG_YK). The FAR arm keeps its true anchor even where the body
-    // hides it. (Arm layering itself is the parts pass — the old
-    // farArm flag is gone.)
-    {
-      // sPlus = which body side (±lat) lands on the mirrored frame's +x
-      let sPlus = R.sx > 0.1 ? e.facing : R.sx < -0.1 ? -e.facing : 0;
-      anim.shDx = Math.abs(R.sx);        // shoulder rim scale per dir
-      anim.shDy = sPlus * R.sy * RIG_YK; // frame-front shoulder drop, per unit of rim width
-    }
-    // One spelling of "mid-attack-animation" for every weapon branch
-    // (inActionRange already honors the gallery's __animAttack preview).
-    if (MILITARY.has(e.utype))
-      anim.swinging = !e.corpseRot && inActionRange(e) && e.path.length===0;
-    if (e.utype === 'villager') {
-      // "At the work site" — a villager whose task is already back to
-      // chop/mine but who is still STANDING AT THE DROP-OFF must not flash
-      // the tool or swing it; require actual proximity to the work.
-      let atSite = true;
-      if (e.task === 'chop' || e.task === 'mine_gold' || e.task === 'mine_stone') {
-        atSite = e.gatherX >= 0 && atGatherTile(e, e.gatherX, e.gatherY);
-      } else if (e.task === 'build' && e.buildTarget) {
-        let bt = entitiesById.get(e.buildTarget);
-        atSite = !!bt && atBuildSite(e, bt);
-      } else if (e.target) {
-        atSite = inActionRange(e);
-      }
-      anim.atSite = atSite;
-      anim.working = isActive && e.path.length===0 && atSite;
-      // ON-PLOT STROLL (the sim's farm stroll legs): a farmer walking
-      // between tiles of its own 2×2 plot keeps its farm tool — rolling
-      // plow / held scythe — not the hauling reads (barrow / overhead
-      // carry). Off-plot trips (to the mill and back) haul as usual;
-      // the Chebyshev bound is what separates the two.
-      anim.farmWalk = e.task==='farm' && moving && e.gatherX >= 0 &&
-        Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
-      anim.gripTask = e.task==='chop'||e.task==='mine_gold'||e.task==='mine_stone'||e.task==='build';
-      // Shaped work swing: slow wind-up (70% of the cycle), fast strike
-      // (30%). swing is the tool's rotation: -1.1 raised, +0.5 at impact.
-      anim.phRaw = animTick*0.055 + e.id*0.37;
-      let ph = ((anim.phRaw % 1) + 1) % 1;
-      let u = ph < 0.7 ? ph/0.7 : 1-(ph-0.7)/0.3;
-      // gripTask-gated like every consumer — a working forager/farmer has
-      // no swinging tool, and an ungated value invites wiring one on.
-      // DRAMATIC overhead arc (the sword-swing treatment): the windup
-      // raises the tool head well over the shoulder before the strike;
-      // the impact angle (+0.5) is unchanged, so sound/particle sync and
-      // the work cycle counter are untouched.
-      anim.swing = (anim.working && anim.gripTask) ? (0.5 - 2.4*u) : 0;
-      // Bow Saw replaces the chopping AXE with a literal bow saw: the
-      // motion becomes a horizontal SAWING stroke (translation along the
-      // blade), not a rotation — sawOff drives tool + hand + body alike.
-      anim.sawing = anim.working && e.task === 'chop' && hasUpgrade(e.team, 'bow_saw');
-      anim.sawOff = anim.sawing ? Math.sin(anim.phRaw * Math.PI * 2) * 3.8 : 0;
-      if (anim.sawing) anim.swing = 0; // the saw never rotates
-      // Heavy Plow replaces the farm SCYTHE with a literal wheeled PLOW
-      // (the Bow Saw treatment): the motion becomes a PUSH along the
-      // facing — slow drive forward on the work cycle's 70%, quick reset
-      // drag on the 30% — plowOff drives tool + hands + body alike.
-      anim.plowing = anim.working && e.task === 'farm' && hasUpgrade(e.team, 'heavy_plow');
-      anim.plowOff = anim.plowing ? u*4 - 2 : 0;
-      // the plow RIDES the barrow rig (same projected frame, wheel,
-      // grips, depth rules): a wheelbarrow minus the tray plus a share.
-      // On stroll legs the rig stays out (wheel rolling, no dig stroke).
-      anim.plowRig = anim.plowing || (anim.farmWalk && hasUpgrade(e.team, 'heavy_plow'));
-      // Farmers below Heavy Plow work a SCYTHE: a horizontal sweep
-      // (rotation about the grip anchor) at the standard work-cycle
-      // rate; sweep drives tool + hand from one value.
-      anim.scythe = (anim.working || anim.farmWalk) && e.task === 'farm' && !anim.plowRig;
-      anim.sweep = anim.scythe && anim.working ? Math.sin(anim.phRaw * Math.PI * 2) * 0.3 : 0; // held static on stroll legs
-      // The rock accompanies the TOOL swing only (gripTask + the plow):
-      // 'working' alone is true for any truthy task standing at-site
-      // (foragers, fighters, the gallery's dummy task) — no shake there.
-      if (anim.working && (anim.gripTask || anim.plowing)) { // upper body rocks gently, legs planted
-        // gentle: the DRAMA lives in the oversized saw's travel, the
-        // body keeps the same quiet work rock as every other task
-        if (anim.sawing) { anim.upperLean = 0.02*anim.sawOff; anim.upperLunge = 0.31*anim.sawOff; }
-        // the plow push leans the body INTO the drive (legs follow via
-        // the attack-legwork rule — a real digging step)
-        else if (anim.plowing) { anim.upperLean = 0.03*anim.plowOff; anim.upperLunge = 0.5*anim.plowOff; }
-        // rock rescaled for the wider overhead swing (±2.4 vs the old
-        // ±1.6) — same perceived body sway, no twitch
-        else { anim.upperLean = 0.05*anim.swing; anim.upperLunge = 0.12*anim.swing; }
-        anim.upperPivot = -2.5; anim.stance = 1.2;
-      }
-      anim.pick = Math.sin(animTick*0.18+e.id);
-      anim.carcassTarget = !e.task&&e.target&&entitiesById.get(e.target)?.utype==='sheep_carcass';
-      let jabPh = ((animTick*0.06 + e.id*0.41) % 1 + 1) % 1;
-      anim.jab = jabPh < 0.25 ? jabPh/0.25 : 1-(jabPh-0.25)/0.75; // 0..1 spike
-      // TOOL RIG — the weapon conventions adopted: tools live in the
-      // LEFT hand (rig convention), swung TWO-HANDED (grip + support on
-      // the shaft, like the militia's B mode); the anchor projects from
-      // the tool mount per dir, and the face-on views (S/N) shift it to
-      // the grip side exactly like the sword's rule — a centered screen-
-      // plane swing would read sideways. Saws/scythes stay one-handed
-      // in art terms (their support hand is on the frame/snath grip).
-      // grip side follows the NEAR shoulder per dir: with a fixed left
-      // grip the viewer-side arm held the handle TOP at NW but the
-      // BOTTOM at NE — mirror pairs read asymmetric (user caught NE).
-      // Tools have no visible handedness, so the near hand always takes
-      // the grip; face-on (R.d 0) keeps the left-grip convention, which
-      // drives the S/N grip-side shift.
-      {
-        let Rd = RIG[(e.dir + 2) & 7].d;
-        anim.gripS = Math.abs(Rd) > 0.05 ? (Rd > 0 ? 1 : -1) : -1;
-      }
-      let toolHeld = (anim.working && anim.gripTask) || anim.sawing || anim.scythe;
-      anim.armState = {};
-      // the LOAD shows only while HAULING (collected, walking to the
-      // drop-off) — never during ANY work action (user call, keeps the
-      // reads simple): tool swings stay two-handed, and butchering/
-      // foraging keep their poses too (they work via TARGET, not task —
-      // a toolHeld-only gate let the carry pose hijack the butcher jab,
-      // user caught it). anim.working covers them all.
-      anim.carryShow = e.carrying > 0 && !anim.working && !anim.farmWalk;
-      // WHEELBARROW (the tech's literal tell): hauling villagers push a
-      // barrow — load in the tray outbound, EMPTY on the walk back to
-      // the resource (user call; builders keep bare hands). Never on the
-      // plot itself (farmWalk): the farm tool is the read there, and the
-      // plow rig has no tray for the wheat anyway.
-      anim.barrow = hasUpgrade(e.team, 'wheelbarrow') && !anim.working && !anim.farmWalk &&
-        (e.carrying > 0 || (e.path.length > 0 && BARROW_TASKS.has(e.task)));
-      anim.armState[anim.gripS] = (anim.barrow || anim.plowRig || anim.carryShow) ? 'carry'
-        : toolHeld ? 'grip' : 'idle';
-      anim.armState[-anim.gripS] = (anim.barrow || anim.plowRig || anim.carryShow) ? 'carry'
-        : (toolHeld && !anim.sawing && !anim.scythe) ? 'support' : 'idle';
-      {
-        let M = RIG_MOUNTS.villager.tool;
-        anim.heldD = mountHeldD(M, R, F);
-        // face-on side shift kept SMALL — 4 read as the tool drifting off
-        // the body; near-center with just enough offset to clear the head
-        let mLat = faceOnView ? 2 * anim.gripS : 0;
-        anim.toolRest = { x: e.facing * (mLat * R.sx + M.fwd * F.sx),
-                          y: (mLat * R.sy + M.fwd * F.sy) * RIG_YK - M.up };
-        // CARRY RIG: overhead — centered above the head, the SAME spot
-        // in every direction. Facing the camera the assembly rides over
-        // everything; dead-away (N) the load AND both raised arms render
-        // BEHIND the character (user call) — the carry-arm rule
-        // (carryD + 0.03) follows the flip automatically.
-        // With the BARROW the anchor is the unit's GROUND CENTER — the
-        // barrow rig (drawBarrow/barrowGrips) owns all directionality
-        // through its projected axes; sorting by the forward sign.
-        if (anim.barrow || anim.plowRig) {
-          anim.carryRest = { x: 0, y: 4.6 };
-          // sort by the barrow's own push axis, not F.d — at dead-away
-          // N the face depth is ~0 but the barrow still extends
-          // up-screen and must draw behind the body
-          anim.carryD = barrowAxes(e).ax.u.y < -0.05 ? -2 : 2;
-          // the WHEEL stays planted; the tray ROCKS about the axle as
-          // the bobbing hands lift and drop the handles (user call) —
-          // one tilt for frame, load and fists alike
-          // lever-aware: the grips ride ~20 behind the axle, so a
-          // small angle already moves them visibly — 0.013 keeps the
-          // rock under ~0.4px (0.05 swung a full bob-height at E/W and
-          // the hands read as bouncing, user caught it)
-          anim.barrowTilt = anim.plowRig ? 0 : moving ? bob * 0.013 : 0;
-        } else {
-          anim.carryRest = { x: 0, y: -CARRY_UP };
-          anim.carryD = F.d < -0.9 ? -2 : 2;
-        }
-      }
-    } else if (e.utype === 'militia' || e.utype === 'spearman' || isMountedUnit(e.utype)) {
-      // Sword pose seam — the spearman rides it WHOLESALE (user call:
-      // exact replication, spear art in the sword's hands; only the
-      // swing choreography is spear-tuned later) — TWO models by view,
-      // both anchored on GRIP_REST
-      // so idle IS the swing's frame at its neutral phase (offset-free
-      // body coords; consumers add humanX/YOffset):
-      //  side/diagonal — the grip ORBITS (φ linear in the swing angle:
-      //    windup over the shoulder, strike forward-down) and the whole
-      //    arc AIMS at the target;
-      //  face-on (S/N) — a forward CHOP through the VIEW PLANE: the pose
-      //    is ONE elevation angle θ (0 = the vertical rest, π/2 = at the
-      //    camera, CHOP.REACH = driven down past the target, negative =
-      //    tipped back over the shoulder), drawn as the EDGE-ON art
-      //    scaled by cos θ — the blade never sweeps sideways.
-      anim.faceOn = faceOnView;
-      // POSE RIG: the rest anchor, binding arm and sort depth all derive
-      // from ONE 3D sword mount projected through the per-dir basis (see
-      // the RIG consts).
-      {
-        let M = SWORD_MOUNT; // militia, spearman AND mounted share it
-        // ARM-STATE RESOLVER. The SWORD placement per dir is CANONICAL
-        // (one mount; it NEVER moves with the mode — user call). The mode picks the ARMS only: 'L' left-hand grip
-        // (default), 'R' right-hand (the other arm reaches the same
-        // grip), 'B' both (grip + support; dark-age militia default).
-        // Every arm is in exactly ONE state — grip | support | shield |
-        // idle — and an idle arm is IDENTICAL to the idle pose at all
-        // times, attacks included (no counterswing, no special cases).
-        // window.__weaponArm (gallery [L]/[R]/[B] toggle) forces a mode.
-        let armMode = window.__weaponArm ||
-            (!isMountedUnit(e.utype) && !(eq && eq.shield) ? 'B' : 'L');
-        anim.gripS = armMode === 'R' ? 1 : -1; // body side of the gripping hand
-        anim.twoHand = armMode === 'B';
-        anim.armState = {};
-        anim.armState[anim.gripS] = 'grip';
-        anim.armState[-anim.gripS] = anim.twoHand ? 'support'
-            : (eq && eq.shield && !e.facingNorth) ? 'shield' : 'idle';
-        let mLat = M.lat, mFwd = M.fwd, mUp = M.up;
-        // face-on views (S/N), militia AND mounted: one-handed grips
-        // shift the sword (and its arm) to the GRIP hand's side, shield-
-        // spaced — L right / R left on screen — clearing the centered
-        // horse head / body line; two-handed stays DEAD-CENTER (user
-        // call; the one deliberate mode-dependent placement)
-        if (faceOnView) mLat = anim.twoHand ? 0 : 6.2 * anim.gripS;
-        var rest0 = { x: e.facing * (mLat * R.sx + mFwd * F.sx),
-                      y: (mLat * R.sy + mFwd * F.sy) * RIG_YK - mUp };
-        // sort depth resolved ONCE here for the parts pass
-        anim.heldD = mountHeldD(M, R, F, mLat);
-        // ---- SHIELD RIG ----
-        // BRACED on the off forearm when that arm is in shield state;
-        // SLUNG across the back when nobody can brace it (facing away,
-        // or mode B — both hands on the sword). Position projects from
-        // the mount like the sword's rest0; the plate's outward normal
-        // is the LATERAL axis, so face (front iff normal toward camera)
-        // and width foreshortening derive from R.d — full face at the
-        // profiles, floored at 0.55 face-on so it never goes sliver.
-        if (eq && eq.shield) {
-          let side = -anim.gripS, SM = SHIELD_MOUNT;
-          anim.shieldState = 'braced'; // strapped to the off forearm in EVERY view
-          anim.shieldRest = { x: e.facing * (side * SM.lat * R.sx + SM.fwd * F.sx),
-                              y: (side * SM.lat * R.sy + SM.fwd * F.sy) * RIG_YK - SM.up };
-          anim.shieldD = side * SM.lat * R.d + SM.fwd * F.d;
-          anim.shieldFace = side * R.d > 0 ? 'front' : 'back';
-          anim.shieldWK = 0.55 + 0.45 * Math.abs(R.d);
-          // S/N: the plate's normal is perpendicular to the view —
-          // EDGE-ON, drawn as a thin strip (the sword's convention)
-          anim.shieldEdge = Math.abs(R.d) < 0.3;
-        } else anim.shieldState = null;
-        // the gripping hand's frame target (derived — armFrameSide
-        // reproduces every previously hand-picked choice)
-        anim.swArm = armFrameSide(anim.gripS);
-      }
-      // idle blade leans ~30° toward the facing (user call); the S/N
-      // edge views stay dead vertical — the chop model pivots there
-      anim.restRot = anim.faceOn ? 0 : 0.52;
-      // θ → blade scale + grip. fwdChop(0) IS the rest pose (fwdK 1,
-      // grip = rest0), so idle/engage continuity is structural.
-      const fwdChop = (th) => {
-        anim.swordRot = 0; anim.swordAimM = 0;
-        anim.fwdK = Math.cos(th) * (th > Math.PI/2 ? CHOP.DOWN_K : 1);
-        anim.grip = { x: rest0.x, // straight down — never inward
-                      y: rest0.y + CHOP.DROP*(1 - Math.cos(Math.max(0, th)))
-                                 - CHOP.RISE*Math.sin(-Math.min(0, th)) };
-      };
-      if (anim.swinging) {
-        let ssa = swordSwingAngle(e); // one phase read per frame — everything derives from it
-        anim.s = Math.sin(ssa);
-        if (anim.faceOn) {
-          if (e.utype === 'spearman') {
-            // face-on STAB: no overhead cock (the chop's rise/sweep read
-            // as swinging) — the SPRING drive runs the show instead.
-            let t = Math.sin(0.5) - anim.s;
-            let drive = t < 0 ? 7*t : 5*Math.pow(t, 1.6);
-            // straight POKES, elevation FIXED (an elevation sweep read
-            // as swinging, user call); the spring drive pushes along the
-            // view axis. S: the shaft FLIPS tip-down (rot π) — the enemy
-            // stands down-screen, an up-pointing poke never read as an
-            // attack — heavily foreshortened, tip striking toward the
-            // viewer, butt clearing the chin. N: tip up, driving away.
-            if (e.dir === 1) {
-              fwdChop(0.9);
-              anim.swordRot = Math.PI;
-              anim.grip.y += 0.55*drive;
-            } else {
-              fwdChop(0.7);
-              anim.grip.y -= 0.55*drive;
-            }
-          } else {
-            // elevation runs from the rest pose at the cycle's neutral
-            // (t = −anim.s, t0 at the rest angle 0.5) up to CHOP.REACH at
-            // the strike; the windup goes negative — blade tips back.
-            let t = -anim.s, t0 = -Math.sin(0.5);
-            fwdChop((t - t0) / (1 - t0) * CHOP.REACH);
-          }
-        } else if (e.utype === 'spearman') {
-          // SPEAR STAB — a PIERCE, not a sweep: the shaft lies DEAD
-          // LEVEL (aimM 0; the facing mirror gives left/right — the iso
-          // aim slope ran the back of the shaft up OVER the shoulder on
-          // the S-side diagonals, user call) at a height pinned just
-          // UNDER the shoulder line, constant 90° the whole engagement.
-          // Only the linear drive animates, like a SPRING: it compresses
-          // back past the rest point, then releases in an accelerating
-          // extension — t^1.6 keeps the early travel slow and the last
-          // stretch a SNAP.
-          // Tilted thrust knobs (live-tunable from the gallery's SPEAR
-          // TUNE panel via window.__spearTune; untouched knobs keep
-          // these defaults): TILT the shaft angle on the diagonals;
-          // SLEN = foreshortening along the shaft — a tilted thrust
-          // points INTO the iso depth, so it projects shorter, shrinking
-          // the butt-over-shoulder AND tip-into-ground overshoots at
-          // once; BACK/FWD/EXP the spring drive; TY the line height
-          // (all dirs); DROP = how much LOWER the tilted diagonals ride
-          // than the level profiles (one height dial per concern — the
-          // old rotation-pivot knob had degenerated into a second,
-          // overlapping height, user caught it).
-          let TN = window.__spearTune || 0;
-          // per-dir tilt: down-forward on the S-side diagonals, up-forward
-          // on the N-side (pointing at an up-screen enemy), dead level at
-          // the E/W profiles — the sign rides the facing's screen slope
-          // (F.sy, mirror-invariant), the magnitude is the TILT knob.
-          let tiltBase = TN.tiltDeg !== undefined ? TN.tiltDeg*Math.PI/180 : Math.PI/4;
-          let fsy = RIG[e.dir].sy;
-          let tilt = (fsy > 0.05 ? 1 : fsy < -0.05 ? -1 : 0) * tiltBase;
-          // per-side height offsets from LINE HEIGHT: the down- and
-          // up-tilts arrange the shaft oppositely around the shoulder
-          // (S-side butt-high behind, N-side tip-high ahead) — one
-          // shared offset kept fixing one side and breaking the other.
-          let DROP  = TN.drop  !== undefined ? TN.drop  : 3.5; // S-side (down-tilts)
-          let DROPN = TN.dropN !== undefined ? TN.dropN : -2;  // N-side (up-tilts)
-          anim.spearLen = tilt ? (TN.slen !== undefined ? TN.slen : 0.75) : 1;
-          anim.swordAimM = tilt;
-          let t = Math.sin(0.5) - anim.s; // −0.43 compressed … +1.48 extended
-          let drive = t < 0 ? (TN.back !== undefined ? TN.back : 7)*t
-                            : (TN.fwd !== undefined ? TN.fwd : 5)*Math.pow(t, TN.exp !== undefined ? TN.exp : 1.6);
-          let cr = Math.cos(tilt), nr = Math.sin(tilt);
-          // HOLD-IN: the hold base pulled toward the chest (fraction of
-          // the sword mount's forward offset) — at full offset the arms
-          // were ALREADY stretched straight before the drive, so the
-          // spring read as rubber; pulled in, compression = bent elbows
-          // and full extension lands exactly on the snap.
-          let bx = rest0.x * (TN.basek !== undefined ? TN.basek : 0.4);
-          // up-tilts ride a touch FORWARD: their extension climbs, so the
-          // same path read as starting BEHIND the body and ending at
-          // center (caught at NE vs SW) — biased ahead, compression sits
-          // at the center and the drive reads forward like the S-side.
-          if (nr < -0.05) bx += 2.5;
-          // TY is authoritative (no rest0.y floor — it blocked exploring
-          // overhead lines; crown ~ -18.6, shoulder -8, waist -3)
-          // The drive follows the tilt line through the WHOLE cycle: any
-          // phase-split height term made the grip bounce mid-cycle and
-          // each stab read as two motions.
-          anim.grip = { x: bx + drive*cr,
-                        y: (TN.ty !== undefined ? TN.ty : -6.4)
-                           + drive*nr + (nr > 0.05 ? DROP : nr < -0.05 ? DROPN : 0) };
-          anim.swordRot = Math.PI/2;
-        } else {
-          // the wide overhead arc (swordSwingArc), anchored on the rest grip
-          const { ox, oy } = swordSwingArc(ssa, isMountedUnit(e.utype) ? 3.4 : 4.2);
-          // The arc AIMS at the target (like the spear/bow): the offset
-          // is authored with +x = attack direction, rotated by the aim
-          // mapped INTO the mirrored body frame — the atan2 fold keeps
-          // "up" up for either facing.
-          let aim = aimAngle();
-          anim.swordAimM = Math.atan2(Math.sin(aim), e.facing*Math.cos(aim));
-          let cr = Math.cos(anim.swordAimM), nr = Math.sin(anim.swordAimM);
-          anim.grip = { x: rest0.x + ox*cr - oy*nr, y: rest0.y + ox*nr + oy*cr };
-          // the blade's sweep (swordSwingArc: user-set constraints incl. neutral(0.5) = the ~30° rest lean)
-          anim.swordRot = swordSwingArc(ssa, 0).rot;
-        }
-        // Weight shifts back on windup, into the strike — but the BODY is
-        // segmented: legs plant (stance), the torso leans hard from the
-        // hips, the head counter-rotates to stay level. Mounted: the horse
-        // gets only a small global surge; the rider does the leaning from
-        // the saddle.
-        let lean = 0.07 - 0.14*anim.s;
-        if (isMountedUnit(e.utype)) {
-          anim.lean = lean*0.18; anim.lunge = -0.5*anim.s;      // horse surge
-          anim.upperLean = lean*0.8; anim.upperPivot = -12;     // rider from the saddle
-        } else {
-          // spearman: NO lean — the upperly rotation tilted the level
-          // pierce line (caught at E/W); the lunge alone drives the body
-          anim.upperLean = e.utype === 'spearman' ? 0 : lean;
-          anim.upperLunge = -1.0*anim.s; // torso from the hips
-          anim.upperPivot = -2.5; anim.stance = 1.6;
-        }
-      } else { anim.s = 0; anim.grip = { x: rest0.x, y: rest0.y }; }
-    } else if (e.utype === 'archer') {
-      // Draw cycle rides the REAL reload timer, so the nocked arrow
-      // releases exactly when the real arrow leaves (works on MP guests).
-      let rof = (UNITS.archer && UNITS.archer.rof) || T30(60), cd = e.atkCooldown || 0;
-      anim.drawT = Math.min(1, Math.max(0, 1 - cd/(rof*0.85)));
-      anim.justFired = cd > rof*0.85;
-      anim.snapT = Math.max(0, (cd - rof*0.85)/(rof*0.15)); // string still snapping forward
-      // draw starts ON the brace string (x 4.6, matching the rest bow)
-      // and anchors at the chest — the old -6 full draw dragged the rear
-      // arm way past the shoulder (overstretched, user call)
-      anim.pull = 4.6 - 7.6*anim.drawT;
-      // arm states: bow always in the left fist; the right hand is on
-      // the string only while drawing — otherwise it IS the idle arm
-      anim.gripS = -1;
-      anim.armState = { '-1': 'grip',
-        '1': (anim.swinging && !anim.justFired) ? 'support' : 'idle' };
-      {
-        let M = RIG_MOUNTS.archer.bow;
-        anim.heldD = mountHeldD(M, R, F);
-      }
-      if (anim.swinging) {
-        anim.theta = aimAngleBallistic();
-        anim.upperLean = -0.10*anim.drawT;  // torso braces back into the draw
-        anim.upperLunge = -0.5*anim.drawT;
-        anim.upperPivot = -2.5; anim.stance = 1.4;
-      }
-    }
-
-    // The head counter-rotates against the torso lean (stays near level —
-    // eyes on the target) — the tell that the body is segmented.
-    if (anim.upperLean) anim.headLean = -0.4*anim.upperLean;
-
-    // One arm subpath shoulder→hand through a bent elbow. bend is signed
-    // (elbow toward the left normal of shoulder→hand; the facing mirror
-    // flips it with the context) and straightens as the arm extends. The
-    // quadratic passes THROUGH the elbow at t=0.5, hence ctrl = mid + 2·n·off.
-    const armPath = (sx0, sy0, hx, hy, bend, reach = 8) => {
-      let dx = hx-sx0, dy = hy-sy0, d = Math.hypot(dx, dy) || 0.01;
-      let off = bend ? bend * 2.6 * Math.max(0, 1 - d/reach) : 0;
-      X.moveTo(sx0, sy0);
-      // a zero-bend arm is a true line — a degenerate quadratic rasterizes
-      // with subtly different antialiasing
-      if (!off) X.lineTo(hx, hy);
-      else X.quadraticCurveTo((sx0+hx)/2 - dy/d*2*off, (sy0+hy)/2 + dx/d*2*off, hx, hy);
-    };
-
-    // Where each hand IS this frame, in the mirrored body frame — the arm
-    // pass draws to these, the held layer anchors its items on the same
-    // values, so hands and grips can never drift apart. Memoized per
-    // drawUnit invocation (anim is frozen for the frame; mounted units
-    // draw their two arms in separate passes and would recompute).
-    let _hands = null;
-    const handTargets = () => _hands || (_hands = computeHandTargets());
-    const computeHandTargets = () => {
-      let hxo = humanXOffset, hyo = humanYOffset;
-      // Lego-style shoulders: anchors sit ON the torso rim (narrower dress
-      // rim for the female villager), never inside it — wide in every view
-      // (tucked per-view shoulders were tried and rejected), and an arm
-      // drawn behind the torso still shows its shoulder cap and hanging
-      // length instead of vanishing into the body's cover.
-      let shx = (e.utype==='villager' && e.female) ? 3.9 : 4.5;
-      // rig-projected shoulders for EVERY humanoid — rim width and
-      // near/far drop scale with the direction (anim.shDx/shDy from the
-      // pose seam); profiles collapse to the centerline via shDx = 0
-      let shdy = anim.shDy * shx;
-      shx *= anim.shDx;
-      let shF = shx+hxo, shR = -shx+hxo;
-      let shFy = -8 + shdy + hyo, shRy = -8 - shdy + hyo;
-      // SE reads slightly TURNED: the sword-side shoulder rides a touch
-      // toward the facing (user call). Two-handed (dark-age) also applies
-      // it at SW — the same shift in the mirrored frame — so the pair
-      // stays an EXACT mirror; feudal SW keeps its cross-body shifts.
-      if ((e.utype === 'militia' || e.utype === 'spearman') &&
-          (e.dir === 0 || (e.dir === 2 && anim.twoHand))) shF += 0.8;
-      // The walk swing is FORWARD/BACK motion. Facing the camera or away
-      // (S/N) that axis is depth, not screen-x — an x swing there drags
-      // the hands across the torso silhouette (vanishing behind it, or
-      // smearing over the unit's back), so it maps to a small antiphase
-      // bob instead.
-      let nsView = faceOnView;
-      let axial = nsView ? 0 : anim.armSwing;
-      let bobY  = nsView ? anim.armSwing*0.4 : 0;
-      // Idle/walk: arms hang extended, symmetric about the shoulders. In
-      // the N/S views both arms hang RELAXED, straight down from the
-      // shoulders with barely-bowed elbows (an inward point toward the
-      // hips was tried and read tense, user call; bend signs flip per
-      // side — armPath's bend is path-direction-relative).
-      let front = nsView ? { x: shF-0.1, y: -3+bobY+hyo, bend: -0.15 }
-                         : { x: shF+0.9+axial, y: -3.2+shdy+hyo, bend: 0.3 };
-      let rear  = nsView ? { x: shR+0.1, y: -3-bobY+hyo, bend: 0.15 }
-                         : { x: shR-0.9-axial, y: -3.2-shdy+hyo, bend: 0.3 };
-      // Corpses keep the hanging default: drawCorpse suppresses the held
-      // weapon and lays it on the ground — a grip target would leave the
-      // toppled arms clutching empty air.
-      if (e.corpseRot) return { front, rear, shF, shR, shFy, shRy };
-      // A weapon-local grip point mapped into the mirrored body frame,
-      // riding the aim rotation while swinging. The facing un-mirror
-      // (X.scale(e.facing,1) in the held layer) folds ONLY into the x
-      // rotation term — keep both weapons on this one spelling.
-      const gripAt = (A, px, py) => {
-        if (!anim.swinging) return { x: A.x+px+hxo, y: A.y+py+hyo };
-        let c = Math.cos(anim.theta), n = Math.sin(anim.theta);
-        return { x: A.x + e.facing*(px*c - py*n) + hxo, y: A.y + px*n + py*c + hyo };
-      };
-      // Off hand strapped to the BRACED shield's inner face — bound to
-      // the SHIELD RIG's projected center, so the arm follows the plate
-      // wherever the mount lands (the shield draws over, covering the
-      // hand). Slung shields bind nothing (the off arm is idle).
-      const shieldGrip = () => ({
-        x: anim.shieldRest.x + hxo,
-        y: anim.shieldRest.y + hyo,
-        bend: anim.swArm === 'rear' ? 0.5 : -0.5
-      });
-      if (e.utype === 'villager') {
-        let picking  = !moving && (e.task==='forage'||anim.carcassTarget); // farmers hold the scythe instead
-        let fighting = !moving && !e.task && e.target && !picking && !anim.carcassTarget;
-        if (anim.gripTask && anim.working) {
-          // TWO-HANDED tool grip riding the swinging handle (the militia
-          // B-mode treatment): grip fist partway up the shaft, support
-          // fist below it, both rotated by the swing about the rig-
-          // projected toolRest; twf mirrors the swing offsets with the
-          // tool art. Saws stay one-handed (frame grip).
-          // (same predicate as the tool draw: frame-forward sign, ties
-          // by depth — the hands must mirror WITH the art)
-          let twf = frameFwdSign();
-          let c = Math.cos(anim.swing), n = Math.sin(anim.swing);
-          let gx = anim.toolRest.x + twf*(2.2*c + 2.4*n), gy = anim.toolRest.y + 2.2*n - 2.4*c;
-          let bend = 0.8;
-          if (anim.sawing) { // hand wraps the saw's near frame upright, riding the stroke
-            gx = anim.toolRest.x + twf*(anim.sawOff + 0.5); gy = anim.toolRest.y + 1.5; bend = 0.5;
-          }
-          let gT = armFrameSide(anim.gripS);
-          if (gT === 'rear') rear = { x: gx, y: gy, bend: -bend };
-          else front = { x: gx, y: gy, bend };
-          if (anim.armState[-anim.gripS] === 'support') {
-            // support fist further DOWN the handle — ON the handle LINE
-            // (collinear with the grip vector (2.2,-2.4) about the
-            // anchor; the old (-1.5,-1.7) sat up-back OFF the shaft and
-            // the near arm floated misaligned, caught at NE)
-            let sx2 = anim.toolRest.x + twf*(-0.9*c - 1.0*n), sy2 = anim.toolRest.y - 0.9*n + 1.0*c;
-            let s2 = { x: sx2, y: sy2, bend: 0.5 };
-            if (gT === 'rear') front = s2; else rear = s2;
-          }
-        }
-        else if (anim.scythe) {
-          // hand rides the snath through the sweep, about the RIG-
-          // projected tool anchor (same predicate/side as every tool —
-          // the fixed (2,−8) + facingNorth mirror was the last pre-rig
-          // hand bind)
-          let twf2 = frameFwdSign();
-          let c2 = Math.cos(anim.sweep), n2 = Math.sin(anim.sweep);
-          let gx = anim.toolRest.x + twf2*(1.2*c2 - 2.2*n2);
-          let gy = anim.toolRest.y + 1 + 1.2*n2 + 2.2*c2;
-          if (armFrameSide(anim.gripS) === 'rear') rear = { x: gx, y: gy, bend: -0.5 };
-          else front = { x: gx, y: gy, bend: 0.5 };
-        }
-        else if (picking)   front = { x: 5.6+anim.pick*0.8, y: -5.5-anim.pick*3.5, bend: 0.6 };
-        // (the rear arm keeps its IDLE hang during the jab — idle-state
-        // arms never take attack-specific poses, user call)
-        else if (fighting)  front = { x: 4.5+anim.jab*4.5, y: -6.5-anim.jab*1.5, bend: 0.6 };
-        if (anim.barrow || anim.plowRig) {
-          // both fists on the barrow's projected handle ends (barrowGrips
-          // rides the same axes + axle rock drawBarrow draws with, so
-          // hands and barrow can never drift apart in any facing) — the
-          // PLOW rides the same weld, its work stroke fed in as the
-          // shared rig shift so the arms pump with the drive.
-          // -bob: fists pin to the COUNTER-BOBBED handles — the barrow
-          // stays grounded while the shoulders bob, the arms absorb it.
-          let g = barrowGrips(e, anim.barrowTilt || 0, anim.plowRig ? anim.plowOff : 0);
-          let by = anim.carryRest.y - bob/UNIT_SCALE;
-          // each fist takes the handle on ITS OWN side of the frame
-          // (assigning near-handle-to-front-arm crossed the arms on the
-          // diagonals — one hand read as missing, the other on the
-          // wrong handle, user caught it at SE). Side comes from the
-          // UNTILTED lateral axis: at the profiles the grips tie in
-          // screen x and the axle rock flipped the tie-break every half
-          // bob cycle — the fists hopped between handles (the E/W
-          // "bouncing hands", user caught it twice)
-          let bv = barrowAxes(e).ax.v;
-          // second clause: at the MIRRORED profile (W) the front-depth
-          // arm carries the other frame label than at E (R.d flips
-          // under the mirror, the label fallback doesn't) — swap so the
-          // visible near arm still gets the near/lower handle
-          if ((Math.sign(bv.y) || 1) * bv.x < -0.005 ||
-              (Math.abs(bv.x) <= 0.005 && e.facing < 0)) g = [g[1], g[0]];
-          // REAL elbows: these arms run ~10 long, past armPath's default
-          // reach of 8 — the bend damping clamped to ZERO and every bend
-          // value drew dead-straight rods (why the elbows "weren't
-          // used", user caught it). reach 14 restores the bow; one
-          // shared positive bend bows BOTH elbows back-down (the same
-          // world side — mirrored signs sent one elbow forward).
-          // face-on (S/N) the arms run foreshortened toward the viewer
-          // — sideways elbow bows read wrong there (user call): tiny
-          // mirrored bends instead.
-          let bF = faceOnView ? -0.15 : 0.55, bR = faceOnView ? 0.15 : 0.55;
-          front = { x: anim.carryRest.x + g[0].x, y: by + g[0].y, bend: bF, reach: 14 };
-          rear  = { x: anim.carryRest.x + g[1].x, y: by + g[1].y, bend: bR, reach: 14 };
-        } else if (anim.carryShow) {
-          // BOTH hands under the overhead load, elbows bowed outward —
-          // hands and resource can never drift apart, every direction.
-          // The spread rides the lateral axis's visible width: widest
-          // face-on (S/N — arms clearly OUT holding the load, user
-          // call), tapering to the profiles.
-          let w = 2.2 + 2.3 * Math.abs(RIG[(e.dir + 2) & 7].sx);
-          front = { x: w, y: anim.carryRest.y + 2.2, bend: -0.3 };
-          rear  = { x: -w, y: anim.carryRest.y + 2.2, bend: 0.3 };
-        }
-      } else if (e.utype === 'militia' || e.utype === 'spearman' || isMountedUnit(e.utype)) {
-        // ONE sword-hand bind for foot + spearman + mounted. bend per pose: the
-        // cross-body arm SAGS (0.45); face-on vertical arms bow OUTWARD
-        // (sign flips with the arm); else the standard reach bow.
-        let g = { x: anim.grip.x+hxo, y: anim.grip.y+hyo,
-                  bend: anim.faceOn ? (anim.swArm === 'rear' ? 0.35 : -0.35) : 0.5 };
-        if (anim.swArm === 'rear') rear = g; else front = g;
-        // DARK-AGE militia (no shield yet): the off hand JOINS the sword
-        // — a TWO-HANDED grip, both fists on the SAME grip point in every
-        // view (a 1.5 down-the-handle stack was tried and reverted — it
-        // dragged one arm visibly lower, read as broken, user call).
-        // Face-on the support elbow mirrors the grip's bend so the two
-        // arms are exact mirrors. (Riders keep a hanging off arm —
-        // reins; shielded tiers strap it below.)
-        if (anim.twoHand) {
-          let g2 = { x: g.x, y: g.y, bend: anim.faceOn ? -g.bend : 0.4 };
-          if (anim.swArm === 'rear') front = g2; else rear = g2;
-        }
-        // the non-grip arm: shield state binds it to the shield's inner
-        // face; support (two-hand) bound to g2 above; IDLE arms keep the
-        // hanging defaults untouched — identical to the idle pose at all
-        // times, attacks included (the counterswing was deleted, user call)
-        if (anim.armState[-anim.gripS] === 'shield') {
-          let sg = shieldGrip();
-          if (anim.swArm === 'rear') front = sg; else rear = sg;
-        }
-      } else if (e.utype === 'archer') {
-        // Front fist wraps the riser BELOW the arrow line (the arrow skims
-        // over the hand, not through it) — closer grip keeps the arm bent;
-        // rear hand tracks the string nock while drawing (the release
-        // reads for free when it lets go).
-        // the fist always reads at the BOTTOM of the riser: the grip's
-        // bow-local side flips with the aim's cos so the rotated hand
-        // never rides the upper handle (user call); ±90° aims converge
-        // on the riser center gracefully
-        let gy = 1.8 * ((anim.swinging ? Math.cos(anim.theta) : 1) >= 0 ? 1 : -1);
-        front = { ...gripAt(GRIP_REST.archer, 7.2, gy), bend: 0.55 };
-        if (anim.swinging && !anim.justFired) rear = { ...gripAt(GRIP_REST.archer, anim.pull, 0), bend: 0.9 };
-      }
-      return { front, rear, shF, shR, shFy, shRy };
-    };
-    // Upper-body pose: torso-and-up (arms, gear, head) leans/lunges from
-    // a pivot — the hips on foot, the saddle when mounted — while legs or
-    // horse stay planted. The head then counter-rotates inside (headly).
-    const upperly = (fn) => {
-      if (!anim.upperLean && !anim.upperLunge) { fn(); return; }
-      X.save();
-      if (faceOnView) {
-        // Facing the camera (S) or away (N): forward is down/up-screen —
-        // a sideways rotate reads as a SIDE attack. Lunge shifts along
-        // the view axis; the lean foreshortens the torso instead.
-        let sgn = e.dir === 1 ? 1 : -1;
-        X.translate(0, sgn*(anim.upperLunge || 0)*0.6 + anim.upperPivot);
-        X.scale(1, 1 - Math.abs(anim.upperLean || 0)*0.35);
-        X.translate(0, -anim.upperPivot);
-      } else {
-        X.translate(anim.upperLunge || 0, anim.upperPivot);
-        X.rotate(anim.upperLean || 0);
-        X.translate(0, -anim.upperPivot);
-      }
-      fn(); X.restore();
-    };
-    const headly = (fn) => {
-      // no counter-rotation in the S/N views — the torso doesn't rotate there
-      if (!anim.headLean || faceOnView) { fn(); return; }
-      X.save();
-      X.translate(humanXOffset, -11+humanYOffset);
-      X.rotate(anim.headLean);
-      X.translate(-humanXOffset, 11-humanYOffset);
-      fn(); X.restore();
-    };
-    // ---- end hand-pose seam ----
-
-    // When the horse faces the camera its head hangs in front of the
-    // rider, so that part is deferred and drawn after the rider.
-    let horseHeadFront = null;
-
-    // The whole mount (legs + horse body) is a layer of its own: facing
-    // away, the rider's forward-held sword is on the FAR side of the
-    // horse too, so the mount must paint over it.
-    const drawMountLayer = () => {
-      if (!horseRig) return;
-      horseRig.back(); horseHeadFront = horseRig.front;
-    };
-
-    // Layering: hand-held weapons/tools draw BEHIND the body when the
-    // unit faces away from the camera (they're on the far side of the
-    // torso); shields stay on top in every facing (front arm toward the
-    // camera, or slung across the back). Body and held-item drawing are
-    // wrapped in closures so the invocation order can flip per facing.
-    const drawBodyLayer = () => {
-    if(!isMountedUnit(e.utype)){
-      // Human legs: they never ride the upper-body LEAN (rotation), but
-      // they do follow the LUNGE below. During actions the stance spreads
-      // (front foot steps out, rear braces).
-      // POSE-RIG legs: hips sit ±lat on the body's lateral axis and the
-      // stride swings along the FACING, both projected per dir — profile
-      // walkers scissor full screen-x strides, face-on walkers read as a
-      // small vertical alternation, and on diagonals the NEAR leg stands
-      // slightly lower (closer to the camera) than the far one.
-      let walk = moving ? Math.sin(paceClock(e)*0.4+e.id)*2.5 : 0;
-      let st = anim.stance || 0;
-      // legs FOLLOW the attack lunge, on the SAME axis upperly translates
-      // the torso (view-axis y at S/N, screen-x else): hips ride half of
-      // it, the front foot steps fully with it, the rear foot stays
-      // planted — the segmented torso can no longer detach from standing
-      // legs. upperLunge is only set by action seams: idle/walk exact.
-      let lgx = 0, lgy = 0;
-      if (anim.upperLunge) {
-        if (faceOnView) lgy = (e.dir === 1 ? 1 : -1)*anim.upperLunge*0.6;
-        else lgx = anim.upperLunge;
-      }
-      // lateral screen separation, floored so profile legs don't merge
-      let latX = 2.8 * R.sx, latY = 2.8 * R.sy;
-      if (Math.abs(latX) < 0.6) latX = 0.6;
-      const leg = (s, stride) => { // s = ±1 lateral side; stride rides the facing
-        let f = stride > 0 ? 1 : 0; // the stride-forward leg does the stepping
-        let hx2 = e.facing * (s * latX) + humanXOffset + lgx*0.5;
-        let hy2 = -2 - bob + lgy*0.5;
-        let fx2 = e.facing * (s * latX + stride * F.sx) + humanXOffset + lgx*f;
-        let fy2 = 3 + s * latY + stride * F.sy + lgy*f;
-        // KNEE: the elbow treatment — one quadratic, control point pushed
-        // along the FACING (foreshortens at S/N for free). The forward-
-        // swinging leg flexes on the walk, the front leg crouches under
-        // an attack lunge; a braced rear leg stays STRAIGHT (kneeK 0 =
-        // straight line, so the idle stance is bit-identical).
-        let kneeK = Math.min(2, Math.max(0, stride)*0.5 + f*Math.hypot(lgx, lgy)*0.35);
-        X.beginPath();
-        // hip anchored INSIDE the torso (bottom edge ≈ −1; legs draw
-        // behind it) so the lowered-side leg never detaches from the body
-        X.moveTo(hx2, hy2);
-        if (kneeK) X.quadraticCurveTo((hx2+fx2)/2 + e.facing*F.sx*kneeK,
-                                      (hy2 + fy2 - bob)/2 + F.sy*kneeK, fx2, fy2 - bob);
-        else X.lineTo(fx2, fy2 - bob);
-        X.strokeStyle = '#000000'; X.lineWidth = 3.0/UNIT_SCALE; X.lineCap = 'round'; X.stroke();
-        X.strokeStyle = '#5b3a1e'; X.lineWidth = 1.5/UNIT_SCALE; X.stroke();
-        X.fillStyle = '#3a2412';
-        X.beginPath(); X.arc(fx2, fy2 + 0.4 - bob, 1.4, 0, Math.PI*2); X.fill();
-      };
-      // far leg first, near leg over it (near side = the lateral side
-      // whose depth points at the camera; equal at S/N — order moot)
-      let sNear = (2.8 * R.d) >= 0 ? 1 : -1;
-      leg(-sNear, -sNear * (walk + (sNear > 0 ? 0.6 : 1) * st));
-      leg(sNear, sNear * (walk + (sNear > 0 ? 1 : 0.6) * st));
-      X.lineCap = 'butt';
-    }
-    // (mounted riders stay legless — legs over the drape read as clutter
-    // at this scale; the saddle cloth carries the seated silhouette)
-    drawUpperBody();
-    }; // end drawBodyLayer
-    // Arms: shoulder→hand to the targets computed at the hand-pose seam —
-    // the same values the held layer anchors its items on. One shared path,
-    // one outline stroke, one skin stroke. Hoisted out of drawBodyLayer so
-    // the mounted sword arm can be sequenced against the HELD layer.
-    const drawArms = (which) => { // 'front'/'rear' = that hand-target's arm only; omit for both
-      let hands = handTargets();
-      X.beginPath();
-      if (which !== 'front')
-        armPath(hands.shR, hands.shRy, hands.rear.x, hands.rear.y, hands.rear.bend, hands.rear.reach);
-      if (which !== 'rear')
-        armPath(hands.shF, hands.shFy, hands.front.x, hands.front.y, hands.front.bend, hands.front.reach);
-      // Fatter than the legs on purpose — chunky lego-limb read keeps the
-      // arm legible even where it brushes the torso edge.
-      X.strokeStyle='#000000';X.lineWidth=4.2/UNIT_SCALE;X.lineCap='round';X.stroke();
-      X.strokeStyle='#edc9a0';X.lineWidth=2.6/UNIT_SCALE;X.stroke();
-      // SHORT SLEEVE over the upper arm: the first stretch of the SAME
-      // quadratic (de Casteljau split), stroked in the tunic's team
-      // color — every humanoid gets clothed shoulders and the arm reads
-      // as attached to the outfit, not bare from the joint.
-      const sleeve = (sx0, sy0, hx2, hy2, bend, reach = 8) => {
-        let dx = hx2-sx0, dy = hy2-sy0, d = Math.hypot(dx, dy) || 0.01;
-        let off = bend ? bend * 2.6 * Math.max(0, 1 - d/reach) : 0;
-        let cx = (sx0+hx2)/2 - dy/d*2*off, cy = (sy0+hy2)/2 + dx/d*2*off;
-        const t = 0.18;
-        let ax = sx0+(cx-sx0)*t, ay = sy0+(cy-sy0)*t;
-        let bx2 = cx+(hx2-cx)*t, by2 = cy+(hy2-cy)*t;
-        X.beginPath(); X.moveTo(sx0, sy0);
-        X.quadraticCurveTo(ax, ay, ax+(bx2-ax)*t, ay+(by2-ay)*t);
-        // PUFFY on purpose — slightly wider than the arm so the sleeve
-        // reads as cloth over the limb (user call, after trying slim)
-        X.strokeStyle='#000000';X.lineWidth=5.4/UNIT_SCALE;X.stroke();
-        X.strokeStyle=tc;X.lineWidth=3.6/UNIT_SCALE;X.stroke();
-      };
-      if (which !== 'front')
-        sleeve(hands.shR, hands.shRy, hands.rear.x, hands.rear.y, hands.rear.bend, hands.rear.reach);
-      if (which !== 'rear')
-        sleeve(hands.shF, hands.shFy, hands.front.x, hands.front.y, hands.front.bend, hands.front.reach);
-      X.lineCap='butt';
-      // Head/headwear drawing below relies on the black outline stroke —
-      // restore it after the skin-colored arm pass.
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    };
-    const drawUpperBody = () => {
-    upperly(() => {
-    // (Arms are NEVER drawn inside the body layer — every humanoid's
-    // arms are depth-sorted parts at the layer block.)
-    // The archer's CASTLE-age quiver rides on the back: facing the camera
-    // it peeks BEHIND the shoulder (drawn before the torso); facing away
-    // it's strapped across the near side (drawn after, see below).
-    const drawQuiver = () => {
-      X.save(); X.translate(-4.2+humanXOffset,-9+humanYOffset); X.rotate(-0.3);
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-      // arrows peeking out: shafts + red fletchings
-      X.strokeStyle='#000';X.lineWidth=1.6/UNIT_SCALE;X.lineCap='round';
-      X.beginPath();X.moveTo(-0.8,-3.2);X.lineTo(-0.8,-5.4);X.moveTo(0.8,-3.2);X.lineTo(0.8,-5.6);X.stroke();
-      X.lineCap='butt';
-      // Bare shafts until Fletching — the tech adds LIGHT-team-color
-      // feathers (matches the nocked arrow and the cap plume)
-      if (eq && eq.fletched) {
-        X.fillStyle=teamColorLight(e.team);
-        X.beginPath();X.arc(-0.8,-5.4,0.9,0,Math.PI*2);X.fill();
-        X.beginPath();X.arc(0.8,-5.6,0.9,0,Math.PI*2);X.fill();
-      }
-      // leather tube
-      X.fillStyle='#7a5230';X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-      X.beginPath();X.rect(-1.8,-3.6,3.6,7.2);X.fill();X.stroke();
-      X.restore();
-    };
-    let hasQuiver = !!(eq && eq.quiver);
-    if (hasQuiver && !e.facingNorth) drawQuiver();
-
-    // Torso
-    X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    if(e.utype==='villager'&&e.female){
-      // Female villagers wear a dress drawn as ONE continuous path — a
-      // rounded bodice (smaller than the male torso) flowing into a
-      // bell-shaped skirt wider than the shoulders, with a single outline
-      // so there's no seam at the waist. Boots peek out below the hem.
-      let sway = moving ? Math.sin(animTick*0.4+e.id)*0.7 : 0;
-      X.fillStyle=tc;
-      X.beginPath();
-      X.arc(0,-6,4.1,Math.PI,0);                        // rounded bodice over the chest
-      X.quadraticCurveTo(4.5,-2.5,5.6+sway,2.4-bob);    // waist flaring out to the hem
-      X.quadraticCurveTo(0,3.8-bob,-5.6+sway,2.4-bob);  // rounded hem
-      X.quadraticCurveTo(-4.5,-2.5,-4.1,-6);            // back up to the bodice
-      X.closePath();
-      X.fill();X.stroke();
-      // Hem shadow so the skirt reads as a cone, not a flat triangle
-      X.strokeStyle='rgba(0,0,0,0.25)';X.lineWidth=1.4/UNIT_SCALE;
-      X.beginPath();X.moveTo(4+sway,1.3-bob);X.quadraticCurveTo(0,2.5-bob,-4+sway,1.3-bob);X.stroke();
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    } else {
-      // Team-colored peasant shirt
-      X.fillStyle=tc;
-      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,5,0,Math.PI*2);X.fill();X.stroke();
-    }
-
-    // Armor techs read on the torso (drawn before the volume pass so the
-    // lighting shades the armor too, and clipped inside the tunic outline
-    // so the silhouette stays one piece). Scale: metal rows over the lower
-    // torso, team color keeps the shoulders. Chain: full mail under a
-    // team-color tabard stripe so team identity survives.
-    if (eq && eq.torso) {
-      let acx = humanXOffset, acy = -6 + humanYOffset;
-      X.save();
-      X.beginPath();X.arc(acx,acy,4.6,0,Math.PI*2);X.clip();
-      // Multiply the inherited alpha — drawUnit runs under the corpse
-      // fade's globalAlpha; an absolute reset would flash the armor solid.
-      let ga = X.globalAlpha;
-      if (eq.torso === 'scale') {
-        X.fillStyle=eq.metal;X.globalAlpha=ga*0.85;
-        X.fillRect(acx-5,acy-1.2,10,6.2);X.globalAlpha=ga;
-        X.strokeStyle='rgba(0,0,0,0.4)';X.lineWidth=0.9/UNIT_SCALE;
-        for(let ry=0;ry<3;ry++){
-          let sy2 = acy + 0.1 + ry*1.6;
-          for(let rx=-2;rx<=2;rx++){
-            X.beginPath();X.arc(acx+rx*2+(ry%2),sy2,1.1,0,Math.PI);X.stroke();
-          }
-        }
-        // hard upper edge so the armor reads as a piece, not a stain
-        X.strokeStyle='rgba(0,0,0,0.5)';X.lineWidth=0.9/UNIT_SCALE;
-        X.beginPath();X.moveTo(acx-5,acy-1.2);X.lineTo(acx+5,acy-1.2);X.stroke();
-      } else { // chain
-        // Chain reuses the scale texture language — finer rows over the
-        // WHOLE torso in a fixed light steel that stays brighter than any
-        // forge-tier scale — so the armor tiers read as coverage +
-        // brightness steps of one idea.
-        X.fillStyle='#dde3ea';X.globalAlpha=ga*0.95;
-        X.fillRect(acx-5,acy-5,10,10);
-        // Slight team-color wash over the steel (user call: a full-mail
-        // torso hid the team at a glance). Low alpha keeps chain brighter
-        // than any scale tier so the armor-ladder brightness read survives.
-        X.fillStyle=tc;X.globalAlpha=ga*0.2;
-        X.fillRect(acx-5,acy-5,10,10);X.globalAlpha=ga;
-        X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
-        for(let ry=0;ry<7;ry++){
-          let sy2 = acy - 4.6 + ry*1.4;
-          for(let rx=-3;rx<=3;rx++){
-            X.beginPath();X.arc(acx+rx*1.6+(ry%2?0.8:0),sy2,0.9,0,Math.PI);X.stroke();
-          }
-        }
-      }
-      X.restore();
-      X.strokeStyle='#000000';X.lineWidth=1/UNIT_SCALE;
-    }
-
-    // Torso volume: soft highlight upper-left, shade lower-right
-    {
-      let torsoR = (e.utype==='villager'&&e.female) ? 3.7 : 4.6;
-      X.save();
-      X.beginPath();X.arc(humanXOffset,-6+humanYOffset,torsoR,0,Math.PI*2);X.clip();
-      X.fillStyle='rgba(255,255,255,0.22)';
-      X.beginPath();X.arc(humanXOffset-2,-8.5+humanYOffset,3.6,0,Math.PI*2);X.fill();
-      X.fillStyle='rgba(0,0,0,0.18)';
-      X.beginPath();X.arc(humanXOffset+2.5,-3+humanYOffset,3.6,0,Math.PI*2);X.fill();
-      X.restore();
-    }
-
-    // (no arm draws here — arms are depth-sorted parts for every humanoid)
-    // Head lateral turn on screen (0 face-on, ±.707 diagonal, ±1 profile)
-    // — the helmet's face details ride it through all 8 dirs.
-    let hturn = e.facing * RIG[e.dir].sx;
-    headly(() => {
-    if (e.facingNorth) {
-      // Facing North (away from camera): Draw back of headwear/hair covering the head (no face)
-      if(eq){
-        drawHelmet(eq, humanXOffset, humanYOffset, true, e.team, e.id, hturn);
-      } else {
-        // Villager (the only hatless humanoid): back of blonde hair
-        X.fillStyle = '#b58e3d';
-        if(e.female){
-          // Back view shares the FRONT hairdo's silhouette (one crown
-          // height in EVERY view; same outer edges and shoulder-length
-          // tips), solid across the back of the head, ending in a soft
-          // nape curve at the shoulders so the dress reads below it.
-          // POSE-RIG turn bias: on the back quarters (NW/NE) the hair
-          // mass shifts toward the back-of-head side, matching the front
-          // views' strand asymmetry (N stays symmetric).
-          let bs = -0.5 * Math.abs(RIG[e.dir].sx), hx = humanXOffset + bs, hy = humanYOffset;
-          X.beginPath();
-          X.moveTo(-3.4+hx,-6.6+hy);                             // left tip at the shoulder
-          X.quadraticCurveTo(-4.6+hx,-8+hy,-4.7+hx,-10.5+hy);    // left outer edge up
-          X.quadraticCurveTo(-5+hx,-14+hy,-4.2+hx,-15.4+hy);     // into the crown's left end
-          X.arc(hx,-15.4+hy,4.2,Math.PI,0);                      // over the top of the head
-          X.quadraticCurveTo(5+hx,-14+hy,4.7+hx,-10.5+hy);       // right outer edge down
-          X.quadraticCurveTo(4.6+hx,-8+hy,3.4+hx,-6.6+hy);       // right tip
-          X.quadraticCurveTo(0+hx,-4.9+hy,-3.4+hx,-6.6+hy);      // soft nape curve
-          X.closePath();X.fill();X.stroke();
-        } else {
-          X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4.2,0,Math.PI*2);X.fill();X.stroke();
-        }
-      }
-    } else {
-      // Facing South (towards camera): Draw flesh face and headwear cap
-      // Flesh Head
-      X.fillStyle='#edc9a0';
-      X.beginPath();X.arc(humanXOffset,-14+humanYOffset,4,0,Math.PI*2);X.fill();X.stroke();
-
-      // Draw 8-direction friendly facial features (eyes)
-      if (e.dir === 7 || e.dir === 3) {
-        // East/West profile: single eye toward the facing side
-        X.fillStyle='#000';
-        X.beginPath(); X.arc(humanXOffset + 2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
-      } else if (e.dir === 1) {
-        // South: Draw two centered eyes (facing straight forward)
-        X.fillStyle='#000';
-        X.beginPath(); X.arc(humanXOffset - 1.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.arc(humanXOffset + 1.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
-      } else if (e.dir === 0 || e.dir === 2) {
-        // Southeast/Southwest: Draw two eyes shifted to the front-right/front-left
-        X.fillStyle='#000';
-        X.beginPath(); X.arc(humanXOffset + 0.5, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
-        X.beginPath(); X.arc(humanXOffset + 2.2, -14.5 + humanYOffset, 0.55, 0, Math.PI*2); X.fill();
-      }
-      
-      // Headwear Cap
-      if(eq){
-        drawHelmet(eq, humanXOffset, humanYOffset, false, e.team, e.id, hturn);
-      } else {
-        // Villager (the only hatless humanoid): natural blonde hair
-        X.fillStyle = '#b58e3d';
-        if(e.female){
-          // The whole hairdo (crown + strands) is ONE path with a single
-          // fill and stroke, so the outline traces the outer silhouette and
-          // the pieces can't read as disconnected. The crown arc runs over
-          // the top of the head between the strands' upper ends; the
-          // hairline height matches the male cap so the face stays visible.
-          // POSE-RIG hair: the hairdo anchors to the BACK of the head and
-          // rides its rotation. u = |F.sx| is the head's turn off face-on
-          // (0 = S, .707 = 3/4, 1 = profile); the mirrored frame keeps
-          // the back of the head at −x, so ONE parametric path covers
-          // every front direction: the back strand stays full while the
-          // front strand recedes to a rim hugging the head edge, and the
-          // face opening biases toward the facing (with the eyes).
-          let u = Math.abs(RIG[e.dir].sx), hx = humanXOffset, hy = humanYOffset;
-          const L = (a, b) => a + (b - a) * u;
-          X.beginPath();
-          X.moveTo(L(-3.4,-3.6)+hx, L(-6.6,-6.4)+hy);                                          // back strand tip
-          X.quadraticCurveTo(L(-4.6,-4.7)+hx, -8+hy, L(-4.7,-4.9)+hx, -10.5+hy);               // back outer edge up
-          X.quadraticCurveTo(L(-5,-5.2)+hx, -14+hy, -4.2+hx, -15.4+hy);                        // into the crown's back end
-          X.arc(hx, -15.4+hy, 4.2, Math.PI, 0);                                                // over the top of the head
-          X.quadraticCurveTo(L(5,4.4)+hx, L(-14,-15)+hy, L(4.7,4.3)+hx, L(-10.5,-14.6)+hy);    // front outer edge down
-          X.quadraticCurveTo(L(4.6,4.2)+hx, L(-8,-14.4)+hy, L(3.4,4.1)+hx, L(-6.6,-14.5)+hy);  // front strand tip (recedes with the turn)
-          X.quadraticCurveTo(L(2.9,4)+hx, L(-8.5,-14.7)+hy, L(3,4)+hx, L(-11,-14.9)+hy);       // front inner edge up
-          X.quadraticCurveTo(L(3.1,3.9)+hx, L(-14,-15.1)+hy, L(2.7,3.8)+hx, -15.4+hy);
-          X.lineTo(L(-2.7,-2.4)+hx, -15.4+hy);                                                 // hairline across the forehead
-          X.quadraticCurveTo(L(-3.1,-2.8)+hx, L(-14,-11.5)+hy, L(-3,-2.5)+hx, L(-11,-8)+hy);   // back inner edge down
-          X.quadraticCurveTo(L(-2.9,-2.6)+hx, L(-8.5,-7)+hy, L(-3.4,-3.6)+hx, L(-6.6,-6.4)+hy);
-          X.closePath();
-          X.fill();X.stroke();
-        } else {
-          X.beginPath();
-          X.arc(humanXOffset, -16+humanYOffset, 3.2, Math.PI, 0);
-          X.fill(); X.stroke();
-        }
-      }
-    }
-
-    // Head/helmet highlight: small crescent on the upper-left for volume
-    X.save();
-    X.beginPath();X.arc(humanXOffset,-14.5+humanYOffset,4.1,0,Math.PI*2);X.clip();
-    X.fillStyle='rgba(255,255,255,0.25)';
-    X.beginPath();X.arc(humanXOffset-1.8,-16.5+humanYOffset,2.6,0,Math.PI*2);X.fill();
-    X.restore();
-    }); // end headly
-
-    if (hasQuiver && e.facingNorth) drawQuiver();
-    }); // end upperly (torso and up)
-    }; // end drawUpperBody (the front-facing horse head is deferred
-    // further: it draws after the held-items layer, so the horse's head
-    // is in front of the rider AND the resting sword)
-
-    // ONE sword draw for militia + mounted (they differ only by the
-    // rider offsets): pose comes entirely from the sword seam — grip
-    // anchor, aim fold, face-on chop foreshorten (fwdK: 0 = edge-on
-    // sliver, negative = flipped down), edge-on art selection (faceOn),
-    // rest = the swing's neutral frame.
-    const drawSwordHeld = (ox2, oy2) => {
-      X.save();
-      X.translate(anim.grip.x + ox2, anim.grip.y + oy2);
-      if (anim.swinging) {
-        X.rotate(anim.swordAimM);
-        if (anim.fwdK !== undefined) X.scale(1, anim.fwdK);
-      }
-      let rot = anim.swinging ? anim.swordRot : anim.restRot;
-      if (e.utype === 'spearman') drawBigSpear(rot, weaponTier, anim.spearLen || 1);
-      else drawBigSword(rot, weaponTier, anim.faceOn);
-      X.restore();
-    };
-
-    // Carried resource at the CARRY RIG's mount — its OWN depth-sorted
-    // part (independent of the tool, so chop-while-carrying sorts the
-    // axe and the load separately). Each art keeps its shape; anchors
-    // are small offsets about anim.carryRest.
-    const drawCarriedLoad = (part) => {
-      if (!anim.carryShow && !anim.barrow && !anim.plowRig) return;
-      if (part === 'farRod' && !anim.barrow && !anim.plowRig) return;
-      X.save();
-      // the barrow COUNTER-BOBS like the legs: the whole unit origin
-      // rides the walk bob (drawUnit's translate), so without this the
-      // wheel bounced off the ground (user caught it — twice). The
-      // overhead carry keeps riding the bob: it's held, not wheeled.
-      // bob/UNIT_SCALE: the origin bob is applied PRE-scale, this cancel
-      // runs INSIDE the 1.25x art frame — unscaled it over-cancelled by
-      // 25% and a sub-pixel bounce survived (user caught it)
-      X.translate(anim.carryRest.x, anim.carryRest.y - (anim.barrow ? bob/UNIT_SCALE : 0));
-      if (anim.barrow || anim.plowRig) {
-        // the projected-box barrow rig (see drawBarrow) — the cargo art
-        // draws INSIDE the tray at the slot the painter order provides,
-        // shrunk and recentered (the arts keep their overhead centroids;
-        // the logs hang way off the back)
-        // plow roll: stroke-tied spoke angle while digging (number),
-        // free animTick spin on the stroll legs (true) — the
-        // wheelbarrow's exact rolling convention
-        drawBarrow(e, anim.plowRig ? (anim.plowing ? anim.plowOff/3.6 : true) : moving,
-                   anim.barrowTilt || 0, anim.barrow && anim.carryShow ? (p) => {
-          X.save();
-          // per-art seating: the tall stone stack lifts clear of the
-          // tray's underside AND shrinks to the tray footprint (full
-          // size overflowed the front rim and tangled with the near
-          // arm at E, user call); head-on the log stack drops back
-          // into the tray mouth (it floated above the rim at S)
-          X.translate(p.x + (e.carryType === 'stone' ? 0.8 : 0),
-                      p.y - (e.carryType === 'stone' ? 1.2 : 0)
-                          + (e.carryType === 'wood' && faceOnView ? 1.7 : 0));
-          if (e.carryType === 'stone') X.scale(0.8, 0.8);
-          // full-size, icon-readable (0.75 made the resource illegible
-          // at game zoom, user call) — the tray walls crop the base
-          drawLoadArt();
-          X.restore();
-        } : null, part, anim.plowRig ? 'plow' : 'barrow',
-                   anim.plowRig ? anim.plowOff : 0);
-        X.restore(); return;
-      }
-      drawLoadArt();
-      X.restore();
-    };
-    // the six per-resource load arts, drawn about the current origin —
-    // the overhead carry calls this at carryRest, the barrow inside its
-    // tray slot
-    const drawLoadArt = () => {
-        X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-        if(e.carryType==='wood'){
-          if(anim.barrow){
-            // BARROW cut: short fat rounds — same grain-forward idiom,
-            // but squared into the tray's box footprint like the other
-            // loads (the long shoulder logs overshot the tray, user
-            // call: "shorter and fatter")
-            // dead simple (user call): two level rounds, one exactly
-            // atop the other — no tilt, no stagger
-            X.save();
-            const slog=(lx,ly)=>{
-              X.fillStyle=TREE_BARK;X.beginPath();
-              X.moveTo(lx+1.8,ly-1.9);X.lineTo(lx-2.2,ly-1.9);
-              X.arc(lx-2.2,ly,1.9,-Math.PI/2,Math.PI/2,true);
-              X.lineTo(lx+1.8,ly+1.9);X.closePath();X.fill();X.stroke();
-              X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+1.8,ly,1.9,2.1,0,0,Math.PI*2);X.fill();X.stroke();
-              X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
-              X.beginPath();X.arc(lx+1.8,ly,0.95,0,Math.PI*2);X.stroke();
-              X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-            };
-            slog(0,1.2); slog(0,-2.6);
-            X.restore();
-            return;
-          }
-          // Two logs over the shoulder, one atop the other so BOTH round
-          // end grains face the camera — side-by-side logs overlap and
-          // read as one thick log with a single grain.
-          X.save();X.translate(0.5,0);X.rotate(-0.18);
-          const log=(lx,ly)=>{
-            // body: flat at the grain end, ROUNDED cap at the far end —
-            // a sawn log is blunt, not square-cut on both faces
-            X.fillStyle=TREE_BARK;X.beginPath();
-            X.moveTo(lx+0.5,ly-1.7);X.lineTo(lx-8.6,ly-1.7);
-            X.arc(lx-8.6,ly,1.7,-Math.PI/2,Math.PI/2,true);
-            X.lineTo(lx+0.5,ly+1.7);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#ebd2b0';X.beginPath();X.ellipse(lx+0.5,ly,1.8,2.0,0,0,Math.PI*2);X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE;
-            X.beginPath();X.arc(lx+0.5,ly,0.8,0,Math.PI*2);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-          };
-          log(4,1.6); log(2.2,-1.6);
-          X.restore();
-        } else if(e.carryType==='stone'){
-          // Comically oversized haul: a big cut block with a smaller one
-          // stacked on top, hoisted on the shoulder.
-          X.save();X.translate(-1,-1);
-          const block=(bx,by,s)=>{
-            X.fillStyle='#b3b3b3';X.beginPath(); // top face
-            X.moveTo(bx,by-2.2*s);X.lineTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx-3.4*s,by-0.6*s);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#8f8f8f';X.beginPath(); // left face
-            X.moveTo(bx-3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx-3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
-            X.fillStyle='#787878';X.beginPath(); // right face
-            X.moveTo(bx+3.4*s,by-0.6*s);X.lineTo(bx,by+1*s);X.lineTo(bx,by+4.6*s);X.lineTo(bx+3.4*s,by+3*s);X.closePath();X.fill();X.stroke();
-            X.strokeStyle='rgba(0,0,0,0.35)';X.lineWidth=0.8/UNIT_SCALE; // crack
-            X.beginPath();X.moveTo(bx-1.8*s,by+1.2*s);X.lineTo(bx-1.2*s,by+2.6*s);X.lineTo(bx-1.9*s,by+3.6*s);X.stroke();
-            X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-          };
-          block(0,0,1.5);          // big base block
-          block(1.2,-4.6,0.95);    // smaller block stacked on top
-          X.restore();
-        } else if(e.carryType==='gold'){
-          // Overflowing armful of gold: heaped shiny nuggets with twinkles
-          X.save();X.translate(0,0.5);
-          const nug=(nx,ny,r)=>{
-            X.fillStyle='#e8b90f';X.beginPath();X.arc(nx,ny,r,0,Math.PI*2);X.fill();X.stroke();
-            X.fillStyle='#ffe14d';X.beginPath();X.arc(nx-r*0.3,ny-r*0.3,r*0.5,0,Math.PI*2);X.fill();
-          };
-          nug(-2.2,0.5,2.2); nug(2,0.8,2.0); nug(0,-0.6,2.4);
-          nug(-1,-2.6,1.9); nug(1.6,-2.2,1.7); nug(0.3,-4,1.5);
-          // Twinkling 4-point sparkles
-          let tw=(Math.sin(animTick*0.25+e.id)+1)/2;
-          X.fillStyle='rgba(255,255,255,'+(0.5+0.5*tw).toFixed(2)+')';
-          const spark=(px,py,r)=>{
-            X.beginPath();
-            X.moveTo(px,py-r);X.lineTo(px+r*0.3,py-r*0.3);X.lineTo(px+r,py);X.lineTo(px+r*0.3,py+r*0.3);
-            X.lineTo(px,py+r);X.lineTo(px-r*0.3,py+r*0.3);X.lineTo(px-r,py);X.lineTo(px-r*0.3,py-r*0.3);
-            X.closePath();X.fill();
-          };
-          spark(-1.5,-3.6,0.6+1.6*tw); spark(2.4,-0.6,0.5+1.2*(1-tw));
-          X.restore();
-        } else {
-          // Food — carry the goods themselves, big and readable, no basket.
-          // What shows depends on where the food came from.
-          X.save();X.translate(-0.5,1);
-          if(e.foodSrc==='meat'){
-            // Fluffy white wool bundle (from sheep): scalloped cloud like
-            // the sheep's own coat — silhouette pass, then wool fill
-            let puffs=[[-1.8,-0.8,1.9],[1.8,-1,1.9],[0,-2.8,1.9],[0,0.6,2.0]];
-            X.fillStyle='#000';
-            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2]+1,0,Math.PI*2);X.fill();});
-            X.fillStyle='#f2eddd';
-            puffs.forEach(p=>{X.beginPath();X.arc(p[0],p[1],p[2],0,Math.PI*2);X.fill();});
-            X.fillStyle='rgba(255,255,255,0.5)';
-            X.beginPath();X.arc(-0.6,-2.2,1.2,0,Math.PI*2);X.fill();
-          } else if(e.foodSrc==='wheat'){
-            // Tied wheat sheaf over the shoulder
-            X.save();X.rotate(-0.25);
-            X.strokeStyle='#c9a227';X.lineWidth=1.4/UNIT_SCALE;
-            for(let i=-2;i<=2;i++){
-              X.beginPath();X.moveTo(0,3);X.lineTo(i*1.7,-4);X.stroke();
-            }
-            X.strokeStyle='#000';X.lineWidth=1.2/UNIT_SCALE;
-            X.beginPath();X.moveTo(-1.7,1);X.lineTo(1.7,1);X.stroke();
-            X.fillStyle='#e8c84a';X.strokeStyle='#000';X.lineWidth=0.8/UNIT_SCALE;
-            for(let i=-2;i<=2;i++){
-              X.beginPath();X.ellipse(i*1.7,-4.7,0.9,1.7,i*0.15,0,Math.PI*2);X.fill();X.stroke();
-            }
-            X.restore();
-          } else {
-            // Armful of big glossy berries
-            X.fillStyle='#cc3344';X.strokeStyle='#000';X.lineWidth=1/UNIT_SCALE;
-            [[-1.6,-0.8],[1.6,-1.1],[0,-3.2],[0,1]].forEach(([bx2,by2])=>{
-              X.beginPath();X.arc(bx2,by2,2.2,0,Math.PI*2);X.fill();X.stroke();
-            });
-            X.fillStyle='#ff99a8';
-            X.beginPath();X.arc(-2.2,-1.4,0.7,0,Math.PI*2);X.fill();
-            X.beginPath();X.arc(-0.6,-3.8,0.7,0,Math.PI*2);X.fill();
-          }
-          X.restore();
-        }
-    };
-    // Tools & weapons (animated swinging swings during active tasks)
-    const drawHeldLayer = () => {
-    if(e.utype==='villager'){
-      // Work-swing phase and the at-site gate live at the hand-pose seam
-      // (anim.*) — shared with the arm pass.
-      let atSite = anim.atSite, working = anim.working, swing = anim.swing;
-      // The tool POINTS ALONG THE FACING: art mirror = the facing's
-      // frame-forward sign (a depth-sign flip inverted NW/NE, user
-      // caught it); the face-on ties (S/N, no lateral forward) fall to
-      // the depth sign — S ahead, N mirrored away.
-      let twf = frameFwdSign();
-      // One impact burst per cycle, right as the tool lands. Detected by the
-      // cycle COUNTER advancing between frames, not by a frame happening to
-      // land inside the narrow strike window — at 4x speed that window (7%
-      // of a ~0.15s cycle ≈ 10ms) is shorter than one frame, so impacts
-      // dropped nondeterministically and the work sounds/particles
-      // stuttered. Tracked in workSwingCycles (js/core.js), not
-      // `e._swingCyc` — entities get wholesale-replaced by every sync,
-      // which would wipe that field and fire extras. Never during the
-      // outline mask pass: it would consume this cycle's one impact (and
-      // spawn duplicate particles) before the real draw.
-      let swingCyc = Math.floor(anim.phRaw);
-      let prevCyc = workSwingCycles.get(e.id);
-      let impact = !window._maskDraw && working && prevCyc !== undefined && swingCyc !== prevCyc;
-      if(!window._maskDraw && working) workSwingCycles.set(e.id, swingCyc);
-      // work audio at the tool's VISUAL impact; every other swing at 4x
-      // (at speed the full rate reads as machine-gun clatter)
-      const workSound = (name, x, y) => {
-        if (window.playSound && (GAME_SPEED < 4 || swingCyc % 2 === 0)) playSound(name, x, y);
-      };
-      // Impact point in tile coords: the gather tile if known, else just ahead
-      let hitX = (e.gatherX >= 0 && e.gatherX !== undefined) ? e.gatherX + 0.5 : e.x + e.facing*0.4;
-      let hitY = (e.gatherY >= 0 && e.gatherY !== undefined) ? e.gatherY + 0.3 : e.y;
-      if(e.task==='chop'&&e.path.length===0&&atSite){
-        // Sound at the axe's VISUAL impact, not at resource extraction (the
-        // sim's gather cycle) — extraction lags the first visible hit by up
-        // to a full cycle, which read as delayed audio. Render runs on the
-        // guest too, so this also gives MP guests animation-synced chops.
-        if(impact){
-          spawnParticles(hitX, hitY, '#c9a15e', 2, 0.02, 1.5); // wood chips
-          // At 4x the swing period drops to ~0.15s and every villager's hits
-          // pile into the global rate limiter, which then drops them
-          // ARBITRARILY — the texture turns inconsistent. Sounding every
-          // OTHER swing at 4x restores the deterministic 2x cadence.
-          workSound('chop', hitX, hitY);
-        }
-        if (anim.sawing) {
-          // Bow saw: bowed wooden frame over a straight bright blade,
-          // held at trunk height and stroked along the blade (sawOff —
-          // the same value the hand target rides). Local +x = forward.
-          // Comically OVERSIZED on purpose (same exaggeration as the
-          // stone haul) — a Castle tech should read at one glance.
-          X.save();X.translate(anim.toolRest.x+anim.sawOff*twf, anim.toolRest.y);X.scale(twf,1);
-          X.strokeStyle='#000000';X.lineWidth=3.6/UNIT_SCALE;X.lineCap='round';X.lineJoin='round';
-          X.beginPath();X.moveTo(0,4.5);X.quadraticCurveTo(0.8,-4.5,7.5,-4.5);X.quadraticCurveTo(14.2,-4.5,15,4.5);X.stroke();
-          X.strokeStyle='#8B4513';X.lineWidth=2.0/UNIT_SCALE;X.stroke();
-          // serrated bright blade — teeth ticks under a bold chord
-          X.strokeStyle='#000000';X.lineWidth=2.8/UNIT_SCALE;
-          X.beginPath();X.moveTo(-0.4,4.5);X.lineTo(15.4,4.5);X.stroke();
-          X.strokeStyle='#f2f6fb';X.lineWidth=1.4/UNIT_SCALE;X.stroke();
-          X.strokeStyle='#000000';X.lineWidth=0.9/UNIT_SCALE;
-          X.beginPath();
-          for(let tx2=1;tx2<15;tx2+=2){ X.moveTo(tx2,5.1); X.lineTo(tx2+1,6.1); X.lineTo(tx2+2,5.1); }
-          X.stroke();
-          X.lineCap='butt';
-          X.restore();
-        } else {
-        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
-        // Long handle
-        strokeShaft(0, 1, 9, -13, 3.4, 1.8);
-        // Felling-axe head, authored in a shaft-aligned frame (+x along
-        // the handle, +y toward the strike): socket wraps the shaft end,
-        // cheeks flare into a curved cutting edge facing the swing, small
-        // poll behind the shaft; bright bevel along the edge. Wood-line
-        // techs read on the tool itself: Double-Bit Axe adds the LITERAL
-        // second blade on the poll side; Bow Saw is the polished tier
-        // (dark→bright, same language as forging).
-        const axeHead = () => {
-          X.beginPath();
-          X.moveTo(-1.6,-1.2);X.lineTo(1.6,-1.2);
-          X.quadraticCurveTo(2.8,0.8,3.3,3.4);
-          X.quadraticCurveTo(3.5,4.7,3.0,5.2);
-          X.quadraticCurveTo(0,6.6,-3.0,5.2);
-          X.quadraticCurveTo(-3.5,4.7,-3.3,3.4);
-          X.quadraticCurveTo(-2.8,0.8,-1.6,-1.2);
-          X.closePath();X.fill();X.stroke();
-          X.save();
-          X.strokeStyle='#fff';X.lineWidth=1.4/UNIT_SCALE;
-          X.beginPath();X.moveTo(-2.7,5.1);X.quadraticCurveTo(0,6.3,2.7,5.1);X.stroke();
-          X.restore();
-        };
-        X.save();X.translate(9,-13);X.rotate(AXE_HEAD_ROT);
-        X.fillStyle = hasUpgrade(e.team,'bow_saw') ? '#f2f6fb' : '#b8bfc6';
-        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-        if (hasUpgrade(e.team,'double_bit_axe')) {
-          // smaller mirrored bit where the poll was — main head's socket draws over the join
-          X.save();X.scale(0.72,-0.72);axeHead();X.restore();
-        }
-        axeHead();
-        X.restore();
-        X.restore();
-        }
-      } else if((e.task==='mine_gold'||e.task==='mine_stone')&&e.path.length===0&&atSite){
-        if(impact){
-          spawnParticles(hitX, hitY, e.task==='mine_gold' ? '#ffd700' : '#c0c0c0', 2, 0.02, 1.3); // sparks
-          workSound('mine', hitX, hitY); // synced to the pick's visual impact
-        }
-        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
-        // Long handle
-        strokeShaft(0, 1, 9, -13, 3.4, 1.8);
-        // Big curved pick head, points tapering both ways. Gold Mining
-        // reads on the GOLD miner's pick as the polished tier (dark→
-        // bright); stone mining has no tech, so its pick stays plain.
-        X.strokeStyle='#000000';X.lineWidth=5/UNIT_SCALE;X.lineCap='round';
-        X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
-        X.strokeStyle = (e.task==='mine_gold' && hasUpgrade(e.team,'gold_mining')) ? '#f2f6fb' : '#b8bfc6';
-        X.lineWidth=2.4/UNIT_SCALE;
-        X.beginPath();X.moveTo(2.5,-17.5);X.quadraticCurveTo(9.5,-16,15.5,-9);X.stroke();
-        X.lineCap='butt';
-        X.restore();
-      } else if(e.task==='build'&&e.path.length===0&&atSite){
-        if(impact){
-          spawnParticles(e.x + e.facing*0.35, e.y - 0.1, '#cbbca0', 2, 0.015, 1.2); // dust
-          workSound('build', e.x + e.facing*0.35, e.y - 0.1); // at the mallet's visual impact
-        }
-        X.save();X.translate(anim.toolRest.x,anim.toolRest.y);X.scale(twf,1);X.rotate(swing);
-        // Handle
-        strokeShaft(0, 1, 7.5, -11, 3.2, 1.7);
-        // Two-faced wooden mallet, authored in a shaft-aligned frame so
-        // the barrel stays PERPENDICULAR to the handle at every swing
-        // angle: slight belly bulge, iron bands at both ends, bright
-        // striking face on the impact side.
-        X.save();X.translate(7.5,-11);X.rotate(MALLET_HEAD_ROT);
-        X.fillStyle='#b08850';
-        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-        X.beginPath();
-        X.moveTo(-2.0,-4.6);X.lineTo(2.0,-4.6);
-        X.quadraticCurveTo(3.0,0,2.0,4.6);
-        X.lineTo(-2.0,4.6);
-        X.quadraticCurveTo(-3.0,0,-2.0,-4.6);
-        X.closePath();X.fill();X.stroke();
-        X.strokeStyle='rgba(0,0,0,0.4)';X.lineWidth=1.0/UNIT_SCALE;
-        X.beginPath();X.moveTo(-2.25,-3.2);X.lineTo(2.25,-3.2);X.moveTo(-2.25,3.2);X.lineTo(2.25,3.2);X.stroke();
-        X.strokeStyle='#fff';X.lineWidth=1.3/UNIT_SCALE;
-        X.beginPath();X.moveTo(-1.6,4.6);X.lineTo(1.6,4.6);X.stroke();
-        X.restore();
-        X.restore();
-      } else if(anim.scythe){
-        // Scythe: curved snath from the hands down-forward, a long bright
-        // crescent blade skimming the crop; the whole tool sweeps about
-        // the grip anchor (anim.sweep — the hand rides the same value).
-        // OVERSIZED like the bow saw — the drama lives in the tool's
-        // reach and travel, the body keeps its quiet work rock.
-        X.save();X.translate(anim.toolRest.x,anim.toolRest.y+1);X.scale(twf,1);X.rotate(anim.sweep);
-        X.strokeStyle='#000000';X.lineWidth=3.4/UNIT_SCALE;X.lineCap='round';X.lineJoin='round';
-        X.beginPath();X.moveTo(0,-1.5);X.quadraticCurveTo(4,3.5,7,12);X.stroke();
-        X.strokeStyle='#8B4513';X.lineWidth=1.9/UNIT_SCALE;X.stroke();
-        // blade weight matches the pick's curved head (5 / 2.4); Horse
-        // Collar reads as the POLISHED tier (dark→bright, the gold-
-        // mining treatment on the farm line)
-        X.strokeStyle='#000000';X.lineWidth=5/UNIT_SCALE;
-        X.beginPath();X.moveTo(7,12);X.quadraticCurveTo(12.5,14,17,10);X.stroke();
-        X.strokeStyle = tierSteel(hasUpgrade(e.team,'horse_collar') ? 2 : 0);
-        X.lineWidth=2.4/UNIT_SCALE;X.stroke();
-        X.lineCap='butt';
-        X.restore();
-      }
-    } else if(e.utype==='militia' || e.utype==='spearman'){
-      // Militia broadsword / spearman long spear — pose entirely from the
-      // shared sword seam; only the art differs (a corpse has dropped its
-      // weapon; the militia shield stays strapped to the arm).
-      if(!e.corpseRot) drawSwordHeld(0, 0);
-      // (kite shield drawn in drawShieldLayer — always on top)
-    } else if(e.utype==='archer'&&!e.corpseRot){
-      // Big bow with a full draw cycle: nock and pull back slowly, release,
-      // string snaps forward and vibrates until the next arrow. (Corpses
-      // drop it — drawCorpse lays it on the ground.)
-      // The cycle is driven by the REAL reload timer (atkCooldown resets to
-      // rof the moment the projectile spawns — js/logic.js), not the old
-      // free-running per-id phase: the nocked arrow now releases exactly
-      // when the real arrow leaves, so the flight reads as THE arrow off
-      // the string. Works on the guest too — atkCooldown/target ride the
-      // entity sync.
-      let swinging = anim.swinging; // gate + draw cycle from the hand-pose seam
-      let justFired = anim.justFired; // string still snapping forward
-      X.save(); X.translate(GRIP_REST.archer.x, GRIP_REST.archer.y+humanYOffset);
-      // Un-mirror (the context is under X.scale(e.facing,1); scaling by
-      // e.facing again cancels it — the translate above stays mirrored so
-      // the bow remains in the correct hand), then rotate to the arc's
-      // LAUNCH tangent so the nocked arrow points exactly along the real
-      // arrow's initial flight line (see aimAngleBallistic above).
-      if(swinging){ X.scale(e.facing,1); X.rotate(anim.theta); }
-      // Recurve bow with flexing limbs: the flex rides the REAL draw
-      // clock; on release the limbs snap forward while the string ctrl
-      // lags near the body — the slack string catching up.
-      let f = swinging ? (justFired ? -0.35*anim.snapT : anim.drawT) : 0;
-      // Nocked arrow: thick shaft, steel head, fletching. Facing away we
-      // see the bow's BACK, so the arrow (far side) draws first and the
-      // limbs paint over it; facing the camera it rides on top.
-      const drawNockedArrow = () => {
-        let pull = anim.pull;
-        X.strokeStyle='#000'; X.lineWidth=2.4/UNIT_SCALE; X.lineCap='round';
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+13, 0); X.stroke();
-        X.strokeStyle='#f5f2e9'; X.lineWidth=1.2/UNIT_SCALE;
-        X.beginPath(); X.moveTo(pull, 0); X.lineTo(pull+13, 0); X.stroke();
-        X.lineCap='butt';
-        X.fillStyle='#dde3ea'; X.strokeStyle='#000'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(pull+15, 0); X.lineTo(pull+11, -2.1); X.lineTo(pull+11, 2.1); X.closePath(); X.fill(); X.stroke();
-        // Fletching is LITERAL: bare shaft until the tech is researched,
-        // LIGHT-team-color feather vanes after — the research adds the
-        // feathers (lighter than the tunic so they pop).
-        if (eq && eq.fletched) {
-          X.fillStyle=teamColorLight(e.team);
-          X.strokeStyle='#000'; X.lineWidth=0.9/UNIT_SCALE; X.lineJoin='round';
-          const vane = (sgn) => {
-            X.beginPath();
-            X.moveTo(pull+4.6, sgn*0.5);   // front, hugging the shaft
-            X.lineTo(pull+1.2, sgn*3.2);   // swept outer edge
-            X.lineTo(pull-2.6, sgn*3.2);   // feather back edge
-            X.lineTo(pull-0.6, sgn*0.5);   // notch into the nock
-            X.closePath(); X.fill(); X.stroke();
-          };
-          vane(-1); vane(1);
-        }
-      };
-      // the arrow rides the bow's FAR side whenever the bow itself is
-      // behind the body (facing away + E profile): arrow furthest back
-      let arrowBack = anim.heldD < 0;
-      if (swinging && !justFired && arrowBack) drawNockedArrow();
-      let bowTip = drawRecurveBow(f, weaponTier);
-      let tipX = bowTip.tx, tipY = bowTip.ty;
-      if(swinging && !justFired){
-        // Drawn string
-        X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(tipX, -tipY); X.lineTo(anim.pull, 0); X.lineTo(tipX, tipY); X.stroke();
-        if (!arrowBack) drawNockedArrow();
-      } else {
-        // String at rest — STRAIGHT between the tips (ctrl on the chord;
-        // the old ctrl-at-0 relied on tips sitting near x 0 and would sag
-        // slack against the shallow bow) — vibrating briefly right after
-        // the release, decaying over the first 15% of the reload window
-        let vib = swinging ? Math.sin(animTick*1.2)*1.8*anim.snapT : 0;
-        X.strokeStyle='#e8e8e8'; X.lineWidth=1/UNIT_SCALE;
-        X.beginPath(); X.moveTo(tipX, -tipY); X.quadraticCurveTo(tipX + vib, 0, tipX, tipY); X.stroke();
-      }
-      X.restore();
-    } else if(isMountedUnit(e.utype)&&!e.corpseRot){
-      // Scout/knight broadsword — same seam pose as the militia, at the
-      // rider's offsets. (Corpses drop it — drawCorpse lays it down.)
-      drawSwordHeld(humanXOffset, humanYOffset);
-      // (knight's kite shield drawn in drawShieldLayer — always on top)
-    }
-    }; // end drawHeldLayer
-
-    // Shield faces, drawn AT THE ORIGIN (drawShieldPiece places, turns
-    // and scales them). Front face carries the identity art (boss /
-    // team-cross heraldry — a metal shield made team ID vanish under
-    // full mail); the back face is plain wood.
-    // rimFill draws the bare silhouette in the rim wood — the offset
-    // back copy that gives the plate its THICKNESS read; strokeC lets
-    // the BRIDGE copy hide its outline (stroke = fill → seamless side
-    // wall, so rim + face read as ONE cylinder, not two circles).
-    const drawKiteShield = (back = false, rimFill = null, strokeC = '#000000') => {
-      X.strokeStyle=strokeC;X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle = rimFill || (back ? '#a5723a' : '#f5f5f0');X.beginPath();
-      X.moveTo(-4.2, -5.5);X.lineTo(4.2, -5.5);
-      X.lineTo(5.6, 0);X.lineTo(0, 8.5);X.lineTo(-5.6, 0);X.closePath();X.fill();X.stroke();
-      if (!back && !rimFill) {
-        X.fillStyle=tc;
-        X.fillRect(-4.2, -0.8, 8.4, 1.7);
-        X.fillRect(-0.85, -4.5, 1.7, 9);
-      }
-    };
-    const drawRoundShield = (back = false, rimFill = null, strokeC = '#000000') => {
-      X.strokeStyle=strokeC;X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-      X.fillStyle = rimFill || '#a5723a';
-      X.beginPath();X.arc(0,0,4.8,0,Math.PI*2);X.fill();X.stroke();
-      if (!back && !rimFill) {
-        X.fillStyle='#f5f5f0';
-        X.beginPath();X.arc(0,0,1.6,0,Math.PI*2);X.fill();X.stroke();
-      }
-    };
-    // The shield plate: position, face and width all come from the
-    // SHIELD RIG at the seam (braced = on the off forearm; slung = across
-    // the back) — the width scale is the plate turning with the body.
-    const drawShieldPiece = () => {
-      if (!anim.shieldState) return;
-      X.save();
-      X.translate(anim.shieldRest.x + humanXOffset, anim.shieldRest.y + humanYOffset);
-      // the plate has THICKNESS (user call): a dark rim copy offset
-      // along the projected plate NORMAL peeks past the face — the SAME
-      // vector in every view (fully lateral at the S/N edge strips,
-      // diagonal on the quarters, zero at the dead-on profiles). Seeing
-      // the BACK face, the visible rim is the FRONT rim — the offset
-      // flips sides with the face (user caught the inversion at NW).
-      let R2 = RIG[(e.dir + 2) & 7], sd = -anim.gripS;
-      let rs = anim.shieldFace === 'back' ? -1 : 1;
-      let nx = rs * e.facing * sd * R2.sx * 1.7, ny = rs * sd * R2.sy * 1.7 * RIG_YK;
-      if (anim.shieldEdge) {
-        // edge-on (S/N): a plain slim RECTANGLE — one slab, one fill,
-        // one outline, nothing else (user call)
-        X.strokeStyle='#000000';X.lineWidth=1.2/UNIT_SCALE;X.lineJoin='round';
-        let ky = eq.shield === 'kite' ? 1.5 : 0, ry = eq.shield === 'kite' ? 7.6 : 5.6;
-        X.fillStyle='#a5723a';
-        X.beginPath();X.rect(-1.1, ky-ry, 2.2, 2*ry);X.fill();X.stroke();
-      } else {
-        // CYLINDER read: back rim outline → strokeless bridge sweeping
-        // the side wall → face on top (an outlined rim alone read as a
-        // second circle, user caught it)
-        const face = eq.shield === 'kite' ? drawKiteShield : drawRoundShield;
-        X.save(); X.translate(-nx, -ny); X.scale(anim.shieldWK, 1);
-        face(true, '#7a5230'); X.restore();
-        X.save(); X.translate(-nx/2, -ny/2); X.scale(anim.shieldWK, 1);
-        face(true, '#7a5230', '#7a5230'); X.restore();
-        X.scale(anim.shieldWK, 1);
-        face(anim.shieldFace === 'back');
-      }
-      X.restore();
-    };
-    const drawShieldLayer = () => {
-      // On-top shield for branch-drawn units only — militia + mounted
-      // shields are depth-sorted parts at the layer block.
-      if (e.utype === 'militia' || isMountedUnit(e.utype)) return;
-      drawShieldPiece();
-    };
-
-    // Facing away → held weapons/tools are on the far side of the torso,
-    // so the body must paint over them; facing the camera → the reverse.
-    // Facing away: held items are on the far side of BOTH the horse and
-    // the rider, so they draw first and everything paints over them.
-    // Global surge (mounted only — the horse steps into the charge a
-    // little; foot units act through the segmented upper body instead).
-    // Origin = the ground point; the facing mirror flips both. Corpses
-    // never set these. S/N views surge along the view axis instead of
-    // sideways.
-    if (faceOnView) {
-      if (anim.lunge) X.translate(0, (e.dir === 1 ? 1 : -1)*anim.lunge*0.6);
-    } else {
-      if (anim.lean) X.rotate(anim.lean);
-      if (anim.lunge) X.translate(anim.lunge, 0);
-    }
-
-    if (isMountedUnit(e.utype)) {
-      // POSE-RIG parts draw (Stage B): same sort as the militia's, with
-      // the HORSE as the depth reference (0), the rider just over it,
-      // and two horse-side facts kept as fixed depths — the S hanging
-      // head in front of everything (nearest the camera), the shield
-      // always on top (worn on the near arm, user call).
-      {
-        // pinned depths from the seam (mode/mount/overrides resolved there)
-        let held = anim.heldD;
-        // The GRIP hand's shoulder side picks the sword's side of the
-        // HORSE (user calls): FAR hand (L at SE/E, R at SW/W) → sword
-        // and arm swing BEHIND the horse's head/neck, arm deepest with
-        // the blade over it (the blade still peeks above the silhouette
-        // through the arc); NEAR hand (L at NW, R at NE) → sword in
-        // FRONT of the horse and its head. No near side at S/N.
-        if (anim.gripS * R.d < -0.05) held = Math.min(held, -0.2);
-        else if (anim.gripS * R.d > 0.05) held = Math.max(held, 0.2);
-        // shield from the SHIELD RIG — far-side braces render BEHIND the
-        // horse like the far-side sword (user call at NW; edges still
-        // peek past the silhouette)
-        let shield = anim.shieldState ? anim.shieldD : -99;
-        // the shared rule + horse riders: far grip pinned just under the
-        // sword ("arm deepest with the blade over it"), the idle rein
-        // arm hangs ON the flank; nearOnly strap-out (user caught NW)
-        const armDepth = (s) => armDepthRule(s, { held, R, F,
-          farGripPin: true, flankClamp: true, shield, shieldGap: 0.002 });
-        shield = strapShieldOut(shield, armDepth, true);
-        let loose = anim.swArm === 'front' ? 'rear' : 'front';
-        runParts([
-          [held, () => upperly(drawHeldLayer)],
-          [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
-          [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
-          [0, drawMountLayer],
-          [0.01, drawBodyLayer],
-          // the neck and head nearer than the saddle: over the rider's body, under a near-side sword, arm or shield
-          [0.015, () => { if (horseHeadFront) horseHeadFront(); }],
-          [shield, () => upperly(drawShieldPiece)],
-        ]);
-      }
-    }
-    else if (e.utype === 'militia' || e.utype === 'spearman') {
-      // POSE-RIG parts draw (Stage A2): every part takes a camera depth
-      // from its rig anchors and the ascending sort IS the draw order —
-      // the per-dir layer branches this replaces survive only as the
-      // mounts' profileHeld sort pin.
-      // mount/mode were resolved ONCE at the seam — the parts pass
-      // reads the resolved depth (anim.heldD) + shield rig
-      let held = anim.heldD;
-      // single-hand grip, the mounted near/far convention: a far-side
-      // grip (L at SE/E, R at SW/W) swings the cross-body sword BEHIND
-      // the body, drawn right after its own arm; a near-side grip (L at
-      // NW, R at NE) holds it in FRONT — body, then sword, then the
-      // active arm wrapping it.
-      if (!anim.twoHand) {
-        if (anim.gripS * R.d < -0.05) held = Math.min(held, -0.2);
-        else if (anim.gripS * R.d > 0.05) held = Math.max(held, 0.2);
-      }
-      // two-handed, facing away with a near side (NW/NE): same front
-      // hold — body, then sword, then the near active arm + shoulder
-      // wrapping it; the far active arm stays tucked behind the torso.
-      else if (held < -0.05 && Math.abs(R.d) > 0.05) held = Math.max(held, 0.2);
-      // shield depth from the SHIELD RIG (braced forearm mount or the
-      // back sling — resolved at the seam with position/face/width)
-      let shield = anim.shieldState ? anim.shieldD : -99;
-      // the shared rule + the sword rider: where the sword rides behind
-      // the body (N-side dirs) the far arm draws FIRST, under it too, so
-      // the grip wraps the handle from the far side
-      const armDepth = (s) => armDepthRule(s, { held, R, F,
-        farBehindHeld: true, shield, shieldGap: 0.05 });
-      shield = strapShieldOut(shield, armDepth, false);
-      let loose = anim.swArm === 'front' ? 'rear' : 'front';
-      runParts([
-        [held, () => upperly(drawHeldLayer)],
-        [armDepth(anim.gripS), () => upperly(() => drawArms(anim.swArm))],
-        [armDepth(-anim.gripS), () => upperly(() => drawArms(loose))],
-        [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
-        [shield, () => upperly(drawShieldPiece)],
-      ]);
-    }
-    else {
-      // spearman / archer / villager — the SAME depth-sorted parts pass:
-      // arms are BODY sides whose depths come from their STATE (grip/
-      // support span their shoulder to the held item; idle/carry arms
-      // use the hanging rule — identical at all times, attacks included);
-      // the held item sorts by its rig-mount depth (over the body facing
-      // camera, behind it facing away, straight from the F.d sign).
-      let held = anim.heldD !== undefined ? anim.heldD : 0.005;
-      // the shared rule, no riders (carry arms follow the shoulder-side
-      // rule inside it: near grips OVER the load, far rises behind)
-      const armDepth = (s) => armDepthRule(s, { held, R, F, shieldGap: 0.05 });
-      runParts([
-        [held, () => upperly(drawHeldLayer)],
-        [armDepth(-1), () => upperly(() => drawArms(armFrameSide(-1)))],
-        [armDepth(1), () => upperly(() => drawArms(armFrameSide(1)))],
-        [0.01, () => { drawMountLayer(); drawBodyLayer(); }],
-        // the carried load is its OWN part, shown while hauling (or
-        // pushing the post-tech barrow, loaded or empty); the barrow's
-        // FAR handle rod splits out to draw behind the villager
-        [(anim.barrow || anim.plowRig || anim.carryShow) ? anim.carryD : -99, () => upperly(() => drawCarriedLoad('main'))],
-        // the poles STRADDLE the body (far rod behind) everywhere except
-        // dead-on S, where the handles both come toward the viewer and
-        // render in front (user call)
-        [(anim.barrow || anim.plowRig) ? (mirroredDir(e) === 1 ? anim.carryD - 0.01
-                        : anim.carryD > 0 ? 0.004 : anim.carryD - 0.03) : -99,
-          () => upperly(() => drawCarriedLoad('farRod'))],
-      ]);
-    }
+    drawPerson2D(e);
   } else {
     drawSheep2D(e); sheepGrazePuffs(e);
   }
@@ -5337,7 +3204,7 @@ function drawUnit(e){
   // walking, as long as no task/target is actually assigned (a bare move order
   // isn't "working"). Absolute coords — not under UNIT_SCALE. A HUD cue, so
   // the 3D eye view (window._povDraw, js/pov3d.js) leaves it out.
-  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&!e.corpseRot&&!window._povDraw){
+  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&e.__deathAge==null&&!window._povDraw){
     X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
     X.font='bold 16px sans-serif';X.textAlign='center';
     X.strokeText('?',sx,sy-20*UNIT_SCALE);

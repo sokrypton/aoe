@@ -3,7 +3,8 @@
 // two per-gate draw proxies (see their use sites in render()).
 const _treesScratch = [];
 const _drawableScratch = [];
-const _treePool = new Map();      // tile key (y*MAP+x) -> tree record
+const _treePool = new Map();      // tile key (y*MAP+x) -> [trunk, crown] tree records
+const _resPool = new Map();       // tile key -> sorted resource record (ore, bush)
 const _gateProxyPool = new Map(); // gate entity id -> {back, front} proxies
 const _marketProxyPool = new Map(); // market entity id -> per-part proxies (walkable plaza)
 const _farmProxyPool = new Map();   // farm entity id -> flat ground-layer proxy (bed + crops)
@@ -96,7 +97,7 @@ function buildingCenterScreen(b){
 function render(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
-  if (MAP !== _poolMapSize) { _treePool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _poolMapSize = MAP; }
+  if (MAP !== _poolMapSize) { _treePool.clear(); _resPool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _poolMapSize = MAP; }
   // Black background so unexplored fog (drawTile() skips drawing when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
@@ -141,12 +142,20 @@ function render(){
   // dynamically. The per-tile tree records are pooled (keyed by tile) and
   // both work arrays are reused across frames — building fresh objects/
   // arrays for every visible tree every frame was steady GC churn.
+  // A tree sorts as two records: its trunk at its tile, its crown out to where its canopy reaches (a unit under it is
+  // over the trunk, under the crown). Ore and bushes on visible tiles sort too (isSortedRes): a unit behind is behind.
   let trees = _treesScratch; trees.length = 0;
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
-    if(map[y][x].t===TERRAIN.FOREST && map[y][x].res>0){
+    const tl = map[y][x];
+    if(tl.t===TERRAIN.FOREST && tl.res>0){
       let key = y*MAP + x;
       let rec = _treePool.get(key);
-      if(!rec){ rec = {type:'tree', x:x, y:y, sortVal:0}; _treePool.set(key, rec); }
+      if(!rec){ rec = [{type:'tree', part:'trunk', x:x, y:y, sortVal:0}, {type:'tree', part:'crown', x:x, y:y, sortVal:0}]; _treePool.set(key, rec); }
+      trees.push(rec[0], rec[1]);
+    } else if(tl.res>0 && isSortedRes(tl.t) && fog[y] && fog[y][x]===2){
+      let key = y*MAP + x;
+      let rec = _resPool.get(key);
+      if(!rec){ rec = {type:'res', x:x, y:y, sortVal:y+x+0.2}; _resPool.set(key, rec); }
       trees.push(rec);
     }
   }
@@ -278,7 +287,8 @@ function render(){
         sortVal = en.y + en.x + ((en.h || 1) + (en.w || 1)) / 2 - 1;
       } else {
         if (en.utype === 'sheep_carcass') sortVal = en.y + en.x + 0.05;
-        else sortVal = en.y + en.x + 0.25;
+        else { const S = en.utype === 'villager' && vil2DState.get(en.id);   // (a villager stepped into its work spot sorts there)
+          sortVal = (S && S.wx != null ? S.wy + S.wx : en.y + en.x) + 0.25; }
       }
       en.sortVal = sortVal;
       allDrawable.push(en);
@@ -307,7 +317,7 @@ function render(){
   });
 
   trees.forEach(t => {
-    t.sortVal = t.y + t.x + 0.1;
+    if (t.type === 'tree') t.sortVal = t.y + t.x + (t.part === 'crown' ? 0.7 : 0.1);   // (the crown: ~0.4 tiles of canopy toward the viewer)
     allDrawable.push(t);
   });
 
@@ -383,7 +393,8 @@ function render(){
     else if(e.type==='farm_part') drawBuilding(e.entity, e.part); // flat — never occludes
     else if(e.type==='corpse') drawCorpse(e);
     else if(e.type==='stuckArrow') drawStuckArrow(e);
-    else if(e.type==='tree'){ drawTreeEntity(e.x, e.y); _silOccScratch.push(e); } // trees occlude units too (AoE2)
+    else if(e.type==='tree'){ drawTreeEntity(e.x, e.y, e.part); _silOccScratch.push(e); } // trees occlude units too (AoE2)
+    else if(e.type==='res') drawTileResourceAt(e.x, e.y);
     else {
       drawUnit(e);
       if(!e.garrisonedIn && e.utype!=='sheep_carcass') _silUnitScratch.push(e);

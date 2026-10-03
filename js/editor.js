@@ -64,7 +64,7 @@ function worldToScreen(wx, wy){
 function injectStyle(){
   let css = `
     body.editor-ui #ui, body.editor-ui #bottom, body.editor-ui #topbar,
-    body.editor-ui #tutorial, body.editor-ui #pop-wrap, body.editor-ui #see-map-btn,
+    body.editor-ui #tutorial, body.editor-ui #pop-wrap, body.editor-ui #see-map-btn, body.editor-ui #game-over-screen,
     body.editor-ui #chat-input-wrap, body.editor-ui #mp-status-panel,
     body.editor-ui #menu-btn, body.editor-ui #fs-btn { display: none !important; }
     body.editor-ui #game { cursor: crosshair; }

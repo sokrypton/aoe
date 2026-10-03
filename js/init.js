@@ -1386,6 +1386,7 @@ function restartGame(difficulty){
   window.__gameOverBannerDismissed = false; // fresh match → banner armed again
   window.seeMapMode = false; // exit the finished-map review mode
   { let sm = byId('see-map-btn'); if (sm) sm.style.display = 'none'; }
+  { let gos = byId('game-over-screen'); if (gos) gos.style.display = 'none'; }
 
   // Re-generate map and spawn starts
   init();
@@ -1625,24 +1626,18 @@ function gameLoop(){
       window.gameOverMenuShown = true;
       show('see-map-btn', true);
     }
-    if (!window.__gameOverBannerDismissed) {
-      X.fillStyle='rgba(0,0,0,0.65)';X.fillRect(0,0,W,window.innerHeight);
-      let cy=topH+H/2;
-      // Gold banner background
-      X.fillStyle='rgba(40,20,5,0.85)';
-      X.fillRect(0,cy-80,W,140);
-      X.strokeStyle='#bfa054';X.lineWidth=3;
-      X.beginPath();X.moveTo(0,cy-80);X.lineTo(W,cy-80);X.stroke();
-      X.beginPath();X.moveTo(0,cy+60);X.lineTo(W,cy+60);X.stroke();
-      // Main text using Cinzel
-      X.fillStyle=iWon?'#ffd700':'#ff4444';X.font="bold 44px 'Cinzel', serif";X.textAlign='center';
-      X.shadowColor='rgba(0,0,0,0.8)';X.shadowBlur=6;X.shadowOffsetX=2;X.shadowOffsetY=2;
-      X.fillText(iWon?'VICTORY':'DEFEAT',W/2,cy-15);
-      // Subtext using Georgia
-      X.fillStyle='#ffebad';X.font="italic 16px Georgia, serif";
-      X.shadowBlur=3;X.shadowOffsetX=1;X.shadowOffsetY=1;
-      X.fillText(iWon?'Your empire has triumphed! The enemy town lies in ruins.':'Your forces have been vanquished. Your empire falls to dust.',W/2,cy+25);
-      X.shadowBlur=0;X.shadowOffsetX=0;X.shadowOffsetY=0; // Reset shadow
+    let gos = byId('game-over-screen');
+    if (gos) {
+      let showIt = !window.__gameOverBannerDismissed;
+      if (showIt && gos.style.display === 'none') {
+        let word = byId('game-over-word');
+        word.textContent = iWon ? 'VICTORY' : 'DEFEAT';
+        word.className = iWon ? 'victory' : 'defeat';
+        byId('game-over-line').textContent = iWon
+          ? 'Your empire has triumphed! The enemy town lies in ruins.'
+          : 'Your forces have been vanquished. Your empire falls to dust.';
+      }
+      gos.style.display = showIt ? '' : 'none';
     }
   }
   requestAnimationFrame(gameLoop);

@@ -214,7 +214,7 @@
     }
   };
   buttons(LAB.kinds);
-  // Unit and gear: a soldier's gear follows its age and the Blacksmith lines (unitEquipment's rules).
+  // Unit and gear: a soldier's gear follows its age and the Blacksmith lines (soldierEquip's rules).
   const gear = () => { opts.unit = $('lab-unit').value;
     opts.eq = opts.unit === 'villager' || opts.unit === 'ram' || opts.unit === 'tradecart' || LAB.animals[opts.unit] ? null : LAB.equip(opts.unit, +$('lab-age').value, +$('lab-atk').value, +$('lab-arm').value, $('lab-fletch').checked); };
   const ANIMAL_VIEW = { sheep: [1.6, 0.25], bear: [2.4, 0.4], dragon: [6.5, 1.1] }; // [camera distance, look height]

@@ -1033,11 +1033,21 @@ function stampUnreachable(e, id, ticks){
   e.unreachUntil = tick + ticks;
 }
 
+// A wall/tower/gate of `team` this unit is touching right now (the weakest; id tiebreak) — the breach in front of it.
+// An overflow attacker (its target's contact tiles all held) parks against the run beside it: hitting that beats
+// walking off to another segment whose contact tiles are just as full — that swap was an endless shuttle.
+function wallLikeInContact(u, team, excludeId){
+  let best = null;
+  for (const b of entities) if (b.type === 'building' && b.id !== excludeId && b.hp > 0 && sameSide(b.team, team) &&
+      (isWallBtype(b.btype) || b.btype === 'TOWER' || isGateBtype(b.btype)) && adjToBuilding(u.x, u.y, b) &&
+      (!best || b.hp < best.hp || (b.hp === best.hp && b.id < best.id))) best = b;
+  return best;
+}
 function resolveStalledAttack(u, tgt){
   let stalledId = tgt.id;
   let disengage = null, approach = false; // set below; walked after the shared cleanup
   let mayRedirect = aiDrives(u) || tgt.type === 'building';
-  let w = (mayRedirect && u.utype !== 'scout') ? nearestReachableWallLike(u, tgt.team, stalledId) : null;
+  let w = (mayRedirect && u.utype !== 'scout') ? (wallLikeInContact(u, tgt.team, stalledId) || nearestReachableWallLike(u, tgt.team, stalledId)) : null;
   if (w && w.id !== stalledId && !sameSide(w.team, u.team)) {
     u.target = w.id; u.explicitAttack = true;
   } else if (aiDrives(u)) {

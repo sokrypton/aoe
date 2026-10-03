@@ -181,9 +181,11 @@ document.body.insertAdjacentHTML('afterbegin', `
   <span id="chat-input-prefix">To opponent:</span>
   <input id="chat-input" type="text" maxlength="200" autocomplete="off" spellcheck="false">
 </div>
-<!-- Standalone "See Map" button under the canvas VICTORY/DEFEAT banner. Shown
-     on game over (js/init.js gameLoop); dismisses the banner to reveal the map.
-     No menu is opened over the result. -->
+<!-- VICTORY/DEFEAT end screen: DOM, not canvas, so it also shows over the 3D
+     world view. "See Map" dismisses it to reveal the map (js/init.js seeMap). -->
+<div id="game-over-screen" style="display:none;"><div id="game-over-band">
+  <div id="game-over-word"></div><div id="game-over-line"></div>
+</div></div>
 <button type="button" id="see-map-btn" class="menu-action-btn" style="display:none;" onclick="seeMap()">🔍 See Map</button>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">

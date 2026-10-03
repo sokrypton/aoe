@@ -1439,14 +1439,34 @@ canvas {
   padding: 5px 8px;
   outline: none;
 }
-/* Standalone game-over "See Map" button, centered just below the canvas
-   VICTORY/DEFEAT banner (banner spans the vertical middle). */
+/* Game-over VICTORY/DEFEAT screen: above the canvas and the 3D world view
+   (#pov-pip.world z 6), below the HUD (#ui z 10). Display-only, never eats input. */
+#game-over-screen {
+  position: fixed; inset: 0; z-index: 8; pointer-events: none;
+  background: rgba(0,0,0,0.65);
+}
+#game-over-band {
+  position: absolute; left: 0; right: 0; top: calc(50% - 80px); height: 140px;
+  background: rgba(40,20,5,0.85); border-block: 3px solid #bfa054;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  text-align: center; padding-inline: 16px;
+}
+#game-over-word {
+  font: bold 44px 'Cinzel', serif; text-shadow: 2px 2px 6px rgba(0,0,0,0.8);
+}
+#game-over-word.victory { color: #ffd700; }
+#game-over-word.defeat { color: #ff4444; }
+#game-over-line {
+  font: italic 16px Georgia, serif; color: #ffebad; text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+}
+/* Standalone game-over "See Map" button, centered just below the
+   VICTORY/DEFEAT band (the band spans the vertical middle). */
 #see-map-btn {
   position: fixed;
   left: 50%;
   top: calc(50% + 74px);
   transform: translateX(-50%);
-  z-index: 140; /* above the canvas banner, below the help/menu overlays */
+  z-index: 140; /* above the end screen, below the help/menu overlays */
   width: auto;
   min-width: 160px;
 }

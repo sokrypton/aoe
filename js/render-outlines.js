@@ -321,7 +321,7 @@ function _buildOccMask(occs){
   const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
   try{
     for(const d of occs){
-      if(d.type==='tree'){ drawTreeEntity(d.x, d.y); continue; }
+      if(d.type==='tree'){ drawTreeEntity(d.x, d.y, d.part); continue; }
       const en = proxyEntity(d);
       const part = proxyPart(d);
       // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw
@@ -415,9 +415,11 @@ function _bsilFillOccBox(rec, d){
     // 1-tile canopy; box from the tile's screen anchor (mapToScreen, same as
     // drawTreeEntity), padded up for the canopy and down to the trunk base.
     const p = mapToScreen(d.x, d.y);
-    const ax = Math.round(p.sx), ay = Math.round(p.sy);
-    rec.left = ax-(HALF_TW+10); rec.right = ax+(HALF_TW+10);
-    rec.top = ay-64; rec.bottom = ay+TH+8;
+    const ax = Math.round(p.sx), ay = Math.round(p.sy), cy = ay + HALF_TH;
+    // (each part its own box, padded for the biggest tree, its nudge and sway: the narrow trunk, the canopy round its top)
+    if (d.part === 'trunk') { rec.left = ax-14; rec.right = ax+14; rec.top = cy-62; rec.bottom = cy+10; }
+    else if (d.part === 'crown') { rec.left = ax-(HALF_TW+18); rec.right = ax+(HALF_TW+18); rec.top = cy-125; rec.bottom = cy-14; }
+    else { rec.left = ax-(HALF_TW+18); rec.right = ax+(HALF_TW+18); rec.top = cy-125; rec.bottom = cy+10; }
     return;
   }
   const en = proxyEntity(d);

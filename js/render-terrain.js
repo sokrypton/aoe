@@ -42,139 +42,98 @@ function buildingFogLevel(e) {
 
 // The gold / stone / berry art standing on a tile, ground point (sx, cy).
 // Shared by the map (drawTile) and the 3D eye view's billboards (js/pov3d.js).
+// ---- Gold and stone: pov3d's ore boulders (refreshFeatures), projected ----
+// Per tile a main boulder and two smaller ones round it, each a low seven-sided spun rock, flat-shaded by the 3D's
+// light, worn lower as the deposit is mined. Drawn once per tile, state and zoom into a small cached image.
+const ORE_PROFILE = [[0, 0], [0.95, 0], [1.02, 0.35], [0.82, 0.74], [0.4, 0.98], [0, 1]];
+const oreCache = new Map();
+const srgbToLin = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const linToSrgb = c => Math.round(255 * Math.min(1, c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
+// a face lit as the 3D lights it: ambient 0.69, the sun (0, 0.36, 0.31) — the left (+z) face its own colour, the top brighter
+const oreLit = (hex, n) => { const l = Math.hypot(...n), f = 0.69 + Math.max(0, (0.36 * n[1] + 0.31 * n[2]) / l), v = parseInt(hex.slice(1), 16);
+  return 'rgb(' + [v >> 16, (v >> 8) & 255, v & 255].map(c => linToSrgb(srgbToLin(c) * f)).join(',') + ')'; };
+// A fixed 0..1 value per tile and channel n: natural variety that never flickers (both views)
+function tileHash(x, y, n){ let v = (x * 73856093) ^ (y * 19349663) ^ (n * 83492791); v = Math.imul(v ^ (v >>> 13), 1274126177); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; }
+function drawOreTile(t, x, y, sx, cy){
+  const gold = t.t === TERRAIN.GOLD, lvl = Math.round(Math.min(1, t.res / (gold ? 800 : 350)) * 16), sc = Math.max(0.25, Math.round((Math.abs(X.getTransform().a) || 1) * 8) / 8);   // (the zoom in eighths: a pinch reuses the images)
+  const key = x + ',' + y + ',' + gold + ',' + lvl + ',' + sc.toFixed(2), W = 96, H = 72, OX = 48, OY = 52;
+  let c = oreCache.get(key);
+  if (!c) { if (oreCache.size > 3000) oreCache.clear(); c = document.createElement('canvas'); c.width = Math.ceil(W * sc); c.height = Math.ceil(H * sc);
+    const Y = c.getContext('2d'); Y.scale(sc, sc); Y.translate(OX, OY); const keep = X; X = Y; oreRocks(gold, lvl / 16, x, y); X = keep; oreCache.set(key, c); }
+  X.drawImage(c, sx - OX, cy - OY, W, H);
+}
+// (in the cached image: the tile's centre at the origin, screen px; the 3D's numbers, in tiles — heights ×√3/2, the 2:1
+// view's 30° elevation)
+// One ore boulder q {bx, bz (tiles, its foot), ax, ay, az (half-width, height, half-depth), rot, col} at the origin:
+// the 3D's low seven-sided spun rock, flat-shaded by its light, outlined (lw: half of it under the facets)
+function oreBoulder(q, lw = 3){
+  const T = HALF_TW * Math.SQRT2, TH3 = T * Math.sqrt(3) / 2, k = projKit(0), cr = Math.cos(q.rot), sr = Math.sin(q.rot);
+  // the spun profile's rings (three's LatheGeometry: x = r·sin φ, z = r·cos φ), scaled, turned, placed — in tiles
+  const ring = ORE_PROFILE.map(([pr, py]) => Array.from({ length: 7 }, (_, i) => { const ph = i / 7 * 2 * Math.PI, lx = pr * Math.sin(ph) * q.ax, lz = pr * Math.cos(ph) * q.az;
+    return [q.bx + lx * cr + lz * sr, py * q.ay, q.bz - lx * sr + lz * cr]; }));
+  const S = ring.map(rw => rw.map(([a, b, c2]) => k.P(a * T, b * TH3, c2 * T))), hull = loadHull(S.flat());
+  X.beginPath(); X.moveTo(...hull[0]); for (const h of hull.slice(1)) X.lineTo(...h); X.closePath(); X.strokeStyle = '#000'; X.lineWidth = lw; X.lineJoin = 'round'; X.stroke();
+  for (let j = 1; j < ring.length - 1; j++) for (let i = 0; i < 7; i++) { const i2 = (i + 1) % 7, A = ring[j][i], Bq = ring[j][i2], C = ring[j + 1][i2];
+    const u = [Bq[0] - A[0], Bq[1] - A[1], Bq[2] - A[2]], v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const mx = (A[0] + C[0]) / 2 - q.bx, mz = (A[2] + C[2]) / 2 - q.bz; if (n[0] * mx + n[2] * mz + n[1] * 0.3 < 0) n = n.map(e => -e);   // (outward)
+    if (k.faces(n) <= 0) continue;
+    const P4 = [S[j][i], S[j][i2], S[j + 1][i2], S[j + 1][i]]; X.beginPath(); X.moveTo(...P4[0]); for (const h of P4.slice(1)) X.lineTo(...h); X.closePath();
+    X.fillStyle = oreLit(q.col, n); X.fill(); X.strokeStyle = X.fillStyle; X.lineWidth = 0.5; X.stroke(); }   // (its own colour round the edge: no hairline seams)
+}
+function oreRocks(gold, p, x, y){
+  const T = HALF_TW * Math.SQRT2, TH3 = T * Math.sqrt(3) / 2, k = projKit(0), r = n => tileHash(x, y, n), size = 0.85 + 0.25 * r(20), kh = 0.25 + 0.75 * p, w = 0.8 + 0.2 * p;
+  const cols = gold ? ['#e8b90f', '#d1a017', '#c99815'] : ['#9d9d9d', '#8c8c8c', '#95958f'];
+  const B = [[0.19, 0.32, 1.08, 0.94], [0.11, 0.2, 0.94, 1.06], [0.1, 0.18, 1, 0.92]];   // [half, height, x-, z-stretch]: fat and squat
+  const V = B.map((_, i) => size * (0.9 + r(4 + i * 5) * 0.2)), R = B.map(([half, , sx, sz], i) => half * Math.max(sx, sz) * w * V[i] * 1.02);
+  const a1 = r(31) * 2 * Math.PI, rocks = B.map(([half, h, sx, sz], i) => {
+    let bx = 0, bz = 0;
+    if (i) { const a = i === 1 ? a1 : a1 + 1.2 + r(32) * (2 * Math.PI - 2.4), d = R[0] + R[i] + 0.03 + r(33 + i) * 0.05; bx = d * Math.cos(a); bz = d * Math.sin(a); }
+    return { bx, bz, ax: half * sx * w * V[i], ay: h * kh * size * (0.9 + r(3 + i * 5) * 0.2), az: half * sz * w * V[i], rot: i * 0.7 + r(5 + i * 5) * 6.283, col: cols[i], R: R[i], half, v: V[i] }; });
+  rocks.sort((a, b) => k.depth(a.bx, a.bz) - k.depth(b.bx, b.bz));
+  for (const q of rocks) { const g = k.P(q.bx * T, 0, q.bz * T); X.fillStyle = 'rgba(0,0,0,0.22)'; X.beginPath(); X.ellipse(g[0], g[1], q.R * T * 1.05, q.R * T * 0.55, 0, 0, Math.PI * 2); X.fill(); }   // its shadow on the ground
+  for (const q of rocks) {
+    oreBoulder(q);
+    if (gold) for (const [u, v] of q === rocks.find(o => o.half === 0.19) ? [[0.3, -0.2], [-0.35, 0.3]] : [[0.1, 0.1]]) {   // glints on the gold (the 3D's spots)
+      const g = k.P((q.bx + u * q.half * q.v) * T, q.ay * 1.02 * TH3, (q.bz + v * q.half * q.v) * T), rr = (q.half === 0.19 ? 2.6 : 1.8) * size;
+      X.fillStyle = '#fff8dc'; X.strokeStyle = 'rgba(120,80,0,0.5)'; X.lineWidth = 0.6; X.beginPath();
+      for (let n = 0; n < 8; n++) { const a = n / 8 * 2 * Math.PI - Math.PI / 2, m = n % 2 ? rr * 0.4 : rr; X.lineTo(g[0] + Math.cos(a) * m, g[1] + Math.sin(a) * m); }
+      X.closePath(); X.fill(); X.stroke(); }
+  }
+}
+// ---- The berry bush: pov3d's (refreshFeatures), projected, cel-shaded as the trees ----
+// A low mound of leaf puffs (three tiers), stripped in two steps as it's picked; berries on the leaves' upper sides,
+// picked one by one (seeded per tile). Puffs and berries sorted by depth together: a berry round the back stays hidden.
+const BUSH_PUFFS = [[-7, 0, 5.5, 0], [7, 0, 5, 0], [0, 0.07, 6.5, 0], [0, -0.1, 5.5, 0], [-3.5, 0, 5, 1], [4, -0.04, 4.5, 1], [0, 0, 4.5, 2]];   // [screen-x px, depth (tiles), r px, tier]
+function drawBerryBush(t, x, y, sx, cy){
+  const p = Math.min(1, t.res / 125), seed = x * 7 + y * 13, S = Math.SQRT1_2;
+  const scr = (dx, dy, dz) => [sx + (dx - dz) * HALF_TW, cy + (dx + dz) * HALF_TH - dy * TREE_HPX, dx + dz];
+  const puffs = BUSH_PUFFS.slice(0, p <= 0.33 ? 4 : p <= 0.66 ? 6 : 7).map(([px, depth, rPx, tier]) => { const r = rPx / TREE_PX;
+    return { dx: px / TREE_PX * S + depth * S, dz: -px / TREE_PX * S + depth * S, dy: r * 0.8 + tier * 0.085, r }; });
+  const items = puffs.map(q => ({ q, s: scr(q.dx, q.dy, q.dz), rr: q.r * TREE_PX }));
+  for (let i = 0, n = Math.round(12 * p); i < n; i++) { const q = puffs[(seed + i * 5) % puffs.length], a = (seed + i) * 2.39996, up = 0.15 + 0.5 * (((seed + i * 3) % 4) / 4), h = Math.sqrt(1 - up * up);
+    items.push({ berry: true, s: scr(q.dx + Math.cos(a) * h * q.r, q.dy + up * q.r, q.dz + Math.sin(a) * h * q.r), rr: 2.6 }); }
+  items.sort((a, b) => a.s[2] - b.s[2]);
+  X.fillStyle = 'rgba(0,0,0,0.25)'; X.beginPath(); X.ellipse(sx, cy + 1.5, 13, 4, 0, 0, Math.PI * 2); X.fill();   // on the ground, not floating
+  X.strokeStyle = '#000'; X.lineWidth = 2.6; X.beginPath(); for (const it of items) if (!it.berry) { X.moveTo(it.s[0] + it.rr, it.s[1]); X.arc(it.s[0], it.s[1], it.rr, 0, Math.PI * 2); } X.stroke();   // one outline round the leaves
+  // the leaves one lit mass (as the trees); a berry over them unless a nearer leaf puff covers it (round the back)
+  const leafs = items.filter(it => !it.berry);
+  litMass(leafs.map(it => ({ px: it.s[0], py: it.s[1], r: it.rr })), '#3c8a25', '#2a631b', 2.5, 3);
+  for (const it of items) { if (!it.berry) continue; const [px, py, d] = it.s, r = it.rr;
+    if (leafs.some(l => l.s[2] > d && Math.hypot(l.s[0] - px, l.s[1] - py) < l.rr - r * 0.5)) continue;
+    X.fillStyle = '#cc3344'; X.beginPath(); X.arc(px, py, r, 0, Math.PI * 2); X.fill(); X.strokeStyle = '#000'; X.lineWidth = 0.8; X.stroke();
+    X.fillStyle = '#ff99a8'; X.beginPath(); X.arc(px - r * 0.3, py - r * 0.3, r * 0.33, 0, Math.PI * 2); X.fill(); }   // (a glint)
+}
+// Resources with height (ore boulders, bushes) on a visible tile sort with the units (render.js 'res' records: a
+// villager behind a bush is behind it); fogged, nothing walks there — they stay in the ground pass, under its fog
+const isSortedRes = t => t === TERRAIN.GOLD || t === TERRAIN.STONE || t === TERRAIN.BERRIES;
+function drawTileResourceAt(x, y){
+  const p = mapToScreen(x, y), sx = Math.round(p.sx), sy = Math.round(p.sy);
+  if (!isOffscreen(sx, sy, TW * 2)) drawTileResource(map[y][x], x, y, sx, sy + HALF_TH);
+}
 function drawTileResource(t, x, y, sx, cy){
-  // Faceted 3D boulder — a low-poly rock spire with a bright top facet, a
-  // lit left face, and a shadowed right face, instead of a flat painted
-  // dome. The apex sits well above the ground-contact point so, like the
-  // berry bushes, a tall boulder visibly rises past the tile's own edge.
-  const boulder=(cx0,cy0,r,cTop,cLeft,cRight)=>{
-    let apex={x:cx0,        y:cy0-r*1.7};
-    let topL={x:cx0-r*0.85, y:cy0-r*0.85};
-    let topR={x:cx0+r*0.8,  y:cy0-r*0.9};
-    let midL={x:cx0-r*1.15, y:cy0-r*0.05};
-    let midR={x:cx0+r*1.1,  y:cy0-r*0.02};
-    let baseL={x:cx0-r*0.65,y:cy0+r*0.4};
-    let baseR={x:cx0+r*0.6, y:cy0+r*0.45};
-    let baseC={x:cx0,       y:cy0+r*0.55};
-    X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
-    // Left-lit facet
-    X.fillStyle=cLeft;X.beginPath();
-    X.moveTo(apex.x,apex.y);X.lineTo(topL.x,topL.y);X.lineTo(midL.x,midL.y);X.lineTo(baseL.x,baseL.y);X.lineTo(baseC.x,baseC.y);X.closePath();X.fill();X.stroke();
-    // Right-shadow facet
-    X.fillStyle=cRight;X.beginPath();
-    X.moveTo(apex.x,apex.y);X.lineTo(topR.x,topR.y);X.lineTo(midR.x,midR.y);X.lineTo(baseR.x,baseR.y);X.lineTo(baseC.x,baseC.y);X.closePath();X.fill();X.stroke();
-    // Bright highlight sliver at the apex
-    X.fillStyle=cTop;X.beginPath();
-    X.moveTo(apex.x,apex.y);X.lineTo(topL.x,topL.y);X.lineTo(cx0,cy0-r*0.6);X.lineTo(topR.x,topR.y);X.closePath();X.fill();X.stroke();
-  };
-  // Rubble left where a mined-out boulder used to stand: a few small
-  // faceted-ish pebbles, so depletion reads as "carted away", not "shrunk".
-  const rubble=(ox,oy,col,colDark)=>{
-    X.strokeStyle='#000';X.lineWidth=1;
-    X.fillStyle=col;
-    X.beginPath();X.ellipse(ox-2.5,oy,2.4,1.5,0,0,Math.PI*2);X.fill();X.stroke();
-    X.beginPath();X.ellipse(ox+2.5,oy+1,1.9,1.2,0,0,Math.PI*2);X.fill();X.stroke();
-    X.fillStyle=colDark;
-    X.beginPath();X.ellipse(ox+0.5,oy-1.8,1.5,1.0,0,0,Math.PI*2);X.fill();X.stroke();
-  };
-  if(t.t===TERRAIN.GOLD){
-    // Discrete depletion (AoE2 mine damage states): the flanking boulders
-    // get mined away one at a time — leaving rubble — and the central spire
-    // finally breaks to a stub, instead of the whole cluster scaling down.
-    let pct=Math.min(t.res/800,1);
-    let gy=cy-8; // centered on the tile — the tall spire's apex pokes into
-                 // the tile above, same deliberate overflow as the bushes.
-    // Same faceted boulder cluster as stone, just cast in solid gold —
-    // reads as "this whole vein is gold" at a glance instead of grey rock
-    // with a few small nuggets stuck on.
-    if(pct>0.66) boulder(sx-9, gy+5, 6, '#f4d35e', '#d1a017', '#8f6607');
-    else rubble(sx-9, gy+7, '#d1a017', '#8f6607');
-    if(pct>0.33) boulder(sx+9, gy+5, 5.5, '#f4d35e', '#c99815', '#916d0a');
-    else rubble(sx+9, gy+6, '#c99815', '#916d0a');
-    boulder(sx, gy+6, pct>0.12?9.5:5.5, '#ffe066', '#e8b90f', '#a8790a'); // broken stub at the end
-    // Sparkle glints scattered across the gold facets — small 4-point stars
-    // so it unmistakably reads as shiny metal, not just yellow stone.
-    // Fewer glints as the vein empties (they sit on the remaining rock).
-    const sparkle=(ox,oy,r)=>{
-      X.fillStyle='#fff8dc';X.strokeStyle='rgba(120,80,0,0.5)';X.lineWidth=0.6;
-      X.beginPath();
-      X.moveTo(ox,oy-r);X.lineTo(ox+r*0.28,oy-r*0.28);X.lineTo(ox+r,oy);
-      X.lineTo(ox+r*0.28,oy+r*0.28);X.lineTo(ox,oy+r);X.lineTo(ox-r*0.28,oy+r*0.28);
-      X.lineTo(ox-r,oy);X.lineTo(ox-r*0.28,oy-r*0.28);X.closePath();
-      X.fill();X.stroke();
-    };
-    let glints=[[sx+1,gy+5,1.3],[sx-1.5,gy-13,2.6],[sx+4.5,gy-6,1.8],[sx-7,gy-2,1.6],[sx+8.5,gy+2,1.4]];
-    if(pct<=0.12){glints=[[sx+1,gy+2,1.3]];} // only the stub remains to glint
-    else if(pct<=0.33)glints=glints.slice(0,3);
-    else if(pct<=0.66)glints=glints.slice(0,4);
-    glints.forEach(g=>sparkle(g[0],g[1],g[2]));
-  }
-  if(t.t===TERRAIN.STONE){
-    // Same discrete quarrying states as the gold vein above.
-    let pct=Math.min(t.res/350,1);
-    let gy=cy-8; // centered on the tile, matching gold
-    // Granite cluster: two flanking boulders, one tall central spire
-    if(pct>0.66) boulder(sx-9, gy+5, 6, '#b0b0b0', '#8c8c8c', '#686868');
-    else rubble(sx-9, gy+7, '#9d9d9d', '#767678');
-    if(pct>0.33) boulder(sx+9, gy+5, 5.5, '#b0b0b0', '#95958f', '#6e6e6e');
-    else rubble(sx+9, gy+6, '#95958f', '#6e6e6e');
-    boulder(sx, gy+6, pct>0.12?9.5:5.5, '#c2c2c2', '#9d9d9d', '#767678'); // broken stub at the end
-    // Cracks across the central spire (only while it still stands tall)
-    if(pct>0.12){
-      X.strokeStyle='rgba(0,0,0,0.45)';X.lineWidth=1;
-      X.beginPath();X.moveTo(sx-2,gy-11);X.lineTo(sx-3.5,gy-5);X.lineTo(sx-2,gy-1);X.stroke();
-      X.beginPath();X.moveTo(sx+3,gy-8);X.lineTo(sx+4.5,gy-3);X.stroke();
-    }
-    // Pebbles scattered at the base
-    X.strokeStyle='#000';X.lineWidth=1;X.fillStyle='#8b8b8b';
-    X.beginPath();X.ellipse(sx-4,gy+7,1.8,1.2,0,0,Math.PI*2);X.fill();X.stroke();
-    X.beginPath();X.ellipse(sx+11,gy+6,1.5,1.0,0,0,Math.PI*2);X.fill();X.stroke();
-  }
-  if(t.t===TERRAIN.BERRIES){
-    // Discrete depletion: the bush itself stays FULL SIZE while foragers
-    // strip it — berries pop off one by one, then the crown puffs get
-    // picked bare (removed) in two steps. Only the number of sub-elements
-    // changes, never the scale, so a half-empty bush reads as "picked
-    // over", not "smaller bush".
-    let pct=Math.min(t.res/125,1);
-    let gy=cy+2; // foliage ground line, low on the tile
-    // Ground contact shadow so the bush sits ON the tile, not floats
-    X.fillStyle='rgba(0,0,0,0.25)';
-    X.beginPath();X.ellipse(sx,gy+1.5,10,3,0,0,Math.PI*2);X.fill();
-    // Big scalloped foliage cloud rising well past the tile edge — one black
-    // silhouette pass, then leaf fills (same one-piece-outline treatment as
-    // the unit sprites). Lower puffs darker, crown brighter. The last two
-    // puffs are the upper crown: gone below 2/3, then the mid pair below 1/3.
-    let puffs=[[-7,-4,5.5],[7,-4,5],[0,-4.5,6.5],[-4,-10.5,5.5],[4.5,-10,5],[0,-14.5,4.5]];
-    if(pct<=0.33)puffs=puffs.slice(0,3);
-    else if(pct<=0.66)puffs=puffs.slice(0,5);
-    X.fillStyle='#000';
-    puffs.forEach(p=>{X.beginPath();X.arc(sx+p[0],gy+p[1],p[2]+1.2,0,Math.PI*2);X.fill();});
-    puffs.forEach(p=>{
-      X.fillStyle=p[1]>-7?'#2a631b':'#3c8a25';
-      X.beginPath();X.arc(sx+p[0],gy+p[1],p[2],0,Math.PI*2);X.fill();
-    });
-    // Sunlit crown (only while the crown puff is still there)
-    if(pct>0.66){
-      X.fillStyle='rgba(255,255,210,0.20)';
-      X.beginPath();X.arc(sx-1,gy-14.5,3.4,0,Math.PI*2);X.fill();
-    }
-    // Fat red berries with shiny glints, seeded per tile so neighboring
-    // bushes don't look like clones. Count tracks remaining food 1:1-ish —
-    // this IS the depletion animation, berries visibly popping off.
-    let seed=x*7+y*13;
-    let berryCount=Math.round(8*pct);
-    let berryLift=pct<=0.33?4:0; // picked-low bush: berries sit on the low puffs
-    for(let i=0;i<berryCount;i++){
-      let a=(seed+i)*2.39996; // golden-angle scatter
-      let rr=3.5+((seed+i*3)%4)*1.6;
-      let bx=sx+Math.cos(a)*rr*1.6;
-      let by=gy-8+berryLift+Math.sin(a)*rr;
-      X.fillStyle='#000000';X.beginPath();X.arc(bx,by,3.4,0,Math.PI*2);X.fill(); // berry outline
-      X.fillStyle='#cc3344';X.beginPath();X.arc(bx,by,2.6,0,Math.PI*2);X.fill();
-      X.fillStyle='#ff99a8';X.beginPath();X.arc(bx-0.7,by-0.7,0.85,0,Math.PI*2);X.fill(); // shiny glint
-    }
-  }
+  if(t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE){ drawOreTile(t, x, y, sx, cy); return; }
+  if(t.t===TERRAIN.BERRIES) drawBerryBush(t, x, y, sx, cy);
 }
 
 function drawTile(x,y){
@@ -195,7 +154,7 @@ function drawTile(x,y){
   X.closePath();X.fill();
   let cy=sy+HALF_TH;
 
-  drawTileResource(t, x, y, sx, cy);
+  if (!(f === 2 && isSortedRes(t.t))) drawTileResource(t, x, y, sx, cy);
 
   // Draw fog of war overlay to darken the tile and its static resources
   if (f === 1) {
@@ -231,96 +190,77 @@ function drawStump(sx, cy, s, darken = false) {
   X.strokeStyle = '#000000'; X.lineWidth = 1; X.stroke();
 }
 
-function drawFullTreeBody(sx, cy, s, darken = false) {
-  // A. Trunk Outline (Dark)
-  X.fillStyle = '#000000';
-  X.beginPath();
-  X.moveTo(sx - 3.5 * s, cy + 2 * s);
-  X.lineTo(sx + 3.5 * s, cy + 2 * s);
-  X.lineTo(sx + 1.5 * s, cy - 22 * s);
-  X.lineTo(sx - 1.5 * s, cy - 22 * s);
-  X.closePath();
-  X.fill();
-  
-  // B. Trunk Fill (Warm Rich Wood Brown)
-  X.fillStyle = darken ? darkenColor(TREE_BARK) : TREE_BARK;
-  X.beginPath();
-  X.moveTo(sx - 2.5 * s, cy + 2 * s);
-  X.lineTo(sx + 2.5 * s, cy + 2 * s);
-  X.lineTo(sx + 0.8 * s, cy - 22 * s);
-  X.lineTo(sx - 0.8 * s, cy - 22 * s);
-  X.closePath();
-  X.fill();
-  
-  // C. Puffy Cloud Canopy Circles
-  let bubbles = [
-    { x: 0, y: -22, r: 12 },    // Main center
-    { x: -9, y: -20, r: 9 },     // Left cheek
-    { x: 9, y: -20, r: 9 },      // Right cheek
-    { x: -5, y: -29, r: 9 },     // Top-left cap
-    { x: 5, y: -29, r: 9 }       // Top-right cap
-  ];
-  
-  // 1. Bold Outline Border
-  X.fillStyle = '#000000';
-  bubbles.forEach(b => {
-    X.beginPath();
-    X.arc(sx + b.x * s, cy + b.y * s, b.r * s + 1.2, 0, Math.PI * 2);
-    X.fill();
-  });
-  
-  // 2. Vibrant Saturated Green Fill
-  X.fillStyle = darken ? '#10300a' : '#2e8b1d';
-  bubbles.forEach(b => {
-    X.beginPath();
-    X.arc(sx + b.x * s, cy + b.y * s, b.r * s, 0, Math.PI * 2);
-    X.fill();
-  });
-  
-  // 3. Cell-Shaded Mid-Light Highlights
-  X.fillStyle = darken ? '#184010' : '#52be3a';
-  bubbles.forEach(b => {
-    X.beginPath();
-    X.arc(sx + (b.x - b.r * 0.15) * s, cy + (b.y - b.r * 0.15) * s, b.r * 0.75 * s, 0, Math.PI * 2);
-    X.fill();
-  });
-  
-  // 4. Bright Lime Sunlit Tips (Extra pop)
-  X.fillStyle = darken ? '#28551a' : '#99e550';
-  bubbles.forEach(b => {
-    X.beginPath();
-    X.arc(sx + (b.x - b.r * 0.3) * s, cy + (b.y - b.r * 0.3) * s, b.r * 0.35 * s, 0, Math.PI * 2);
-    X.fill();
-  });
+// One lit mass of puffs ({px, py, r}): all of it lit, then the base colour over it shifted (dx, dy) away from the light,
+// clipped to it — the light's side keeps a rim that follows the bumps, with no highlight inside on each puff
+function litMass(puffs, lit, base, dx, dy){
+  const path = (ox, oy) => { X.beginPath(); for (const q of puffs) { X.moveTo(q.px + ox + q.r, q.py + oy); X.arc(q.px + ox, q.py + oy, q.r, 0, Math.PI * 2); } };
+  X.fillStyle = lit; path(0, 0); X.fill();
+  X.save(); path(0, 0); X.clip(); X.fillStyle = base; path(dx, dy); X.fill(); X.restore();
+}
+// ---- The tree: pov3d's (initFeatures / refreshFeatures), projected ----
+// A round trunk into a cloud of puffs, one of three crown shapes (the round one, a taller, a wide spreading one), at
+// the 3D's proportions (trunk ×1.8, crown ×1.5 the old art), turned per tree, its green a shade lighter or darker.
+// World units (tiles); the 2:1 view: ground (x, z) → screen by the iso axes, heights ×√3/2.
+const TREE_PX = HALF_TW * Math.SQRT2, TREE_HPX = TREE_PX * Math.sqrt(3) / 2;
+const TREE_ART_H = 24 / TREE_HPX, TREE_TRUNK_H = TREE_ART_H * 1.8, TREE_CROWN_K = 1.5, TREE_TRUNK_R = 2.2 / TREE_PX * 1.35;
+const TREE_CROWNS = (() => { const cr = 12 / TREE_PX, sm = 9 / TREE_PX, H = TREE_ART_H, S = Math.SQRT1_2;   // [r, x, y, z] puffs about the art's trunk top
+  const ring = (n, rad, y, r, rot = Math.PI / 4) => Array.from({ length: n }, (_, i) => { const a = rot + i * 2 * Math.PI / n; return [r, Math.cos(a) * rad, y, Math.sin(a) * rad]; });
+  const caps = (y, d) => [-1, 1].map(s => [sm, s * S * d, y, -s * S * d]);                       // across the screen
+  return [[[cr, 0, H, 0], ...ring(4, cr * 0.8, H - 0.04, sm), ...caps(30 / TREE_HPX, 5 / TREE_PX)],
+    [[cr * 0.9, 0, H + 0.05, 0], ...ring(3, cr * 0.65, H - 0.02, sm * 0.95, 0.3), ...caps(H + 0.2, 3 / TREE_PX), [sm * 0.8, 0, H + 0.3, 0]],
+    [[cr, 0, H - 0.02, 0], ...ring(5, cr, H - 0.06, sm, 0.2), [sm, 0, H + 0.13, 0]]]
+    .map(c => c.map(([r, x, y, z]) => [r * TREE_CROWN_K, x * TREE_CROWN_K, (y - H) * TREE_CROWN_K + TREE_TRUNK_H, z * TREE_CROWN_K])); })();
+// one tree's body at (sx, cy) (its trunk's foot): crown shape, turn (rad), shade (0 dark … 2 light), fogged; part:
+// 'trunk' or 'crown' alone (they sort apart: a unit under the canopy is over the trunk, under the crown), else both
+function drawFullTreeBody(sx, cy, crown, rot, shade, darken = false, part = null){
+  const cr = Math.cos(rot), sr = Math.sin(rot), scr = (x, y, z) => { const x1 = x * cr + z * sr, z1 = -x * sr + z * cr; return [sx + (x1 - z1) * HALF_TW, cy + (x1 + z1) * HALF_TH - y * TREE_HPX, x1 + z1]; };
+  const puffs = TREE_CROWNS[crown].map(([r, x, y, z]) => { const [px, py, d] = scr(x, y, z); return { px, py, d, r: r * TREE_PX }; }).sort((a, b) => a.d - b.d);
+  // the green (the 3D's hue, its lightness by shade), the crown lit as ONE mass: its lit rim up and left (the light's
+  // side) — the crown filled lit, then filled again in the base green shifted away from the light, inside its outline
+  const L = 0.41 + shade * 0.05, g3 = f => 'hsl(113,54%,' + Math.round(L * 100 * f) + '%)';
+  const [base, mid] = darken ? ['#10300a', '#184010'] : [g3(0.78), g3(1.12)];
+  const tw = TREE_TRUNK_R * TREE_PX, th = TREE_TRUNK_H * TREE_HPX, bark = darken ? darkenColor(TREE_BARK) : TREE_BARK;
+  const trunk = () => { X.moveTo(sx - tw, cy); X.lineTo(sx - tw * 0.9, cy - th); X.lineTo(sx + tw * 0.9, cy - th); X.lineTo(sx + tw, cy); X.ellipse(sx, cy, tw, tw * 0.5, 0, 0, Math.PI); X.closePath(); };
+  // one outline round the whole tree (stroked under the fills), then the trunk, then the puffs far to near
+  X.lineJoin = 'round'; X.strokeStyle = '#000'; X.lineWidth = 2.6;
+  X.beginPath(); if (part !== 'crown') trunk(); if (part !== 'trunk') for (const q of puffs) { X.moveTo(q.px + q.r, q.py); X.arc(q.px, q.py, q.r, 0, Math.PI * 2); } X.stroke();
+  if (part !== 'crown') { X.fillStyle = bark; X.beginPath(); trunk(); X.fill(); }
+  if (part !== 'trunk') litMass(puffs, mid, base, 5, 6);
 }
 
-// Tree-body art cache: re-running drawFullTreeBody (22 fills) per tree per frame
-// was the top render cost (a forest = hundreds of trees, redrawn again into the
-// behind-occluder clip mask). The body is static per (size-variant, darken), so
-// render it ONCE into an offscreen canvas and blit it — sway/fall stay a cheap
-// rotate around the blit. Cached at ceil(ZOOM*dpr) resolution (dpr is baked into
-// the main ctx, core.js) so the raster has ≥1 texel per on-screen pixel (crisp at
-// any zoom); only ~5 size × 2 darken × a couple zoom buckets ever exist, so no
-// eviction. Anchor (ax,ay) is where the tree's (sx,cy) lands in the canvas.
-// Render-only — no determinism impact.
+// Tree-body art cache: a forest is hundreds of trees, redrawn again into the behind-occluder clip mask, so each body
+// renders ONCE into an offscreen canvas and is blitted — its size variety a stretch of the blit, sway/fall a rotate
+// about its foot. Keyed by crown × turn (4 steps) × shade × darken × ceil(ZOOM*dpr): a few dozen, no eviction.
 const _treeArtCache = new Map();
-function _treeArt(idx, s, darken, scale){
-  const key = idx + ':' + (darken?1:0) + ':' + scale;
+// A cached art canvas cropped to its painted pixels (a trunk or a crown alone leaves most of the frame empty, and a
+// blit's cost is its area): { canvas, ax, ay (the anchor in logical px), wL, hL }
+function cropArt(cv, scale, ax, ay){
+  const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data, W = cv.width, H = cv.height;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return { canvas: cv, ax, ay, wL: 0, hL: 0 };
+  const out = document.createElement('canvas'); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+  out.getContext('2d').drawImage(cv, -x0, -y0);
+  return { canvas: out, ax: ax - x0 / scale, ay: ay - y0 / scale, wL: out.width / scale, hL: out.height / scale };
+}
+function _treeArt(crown, rotStep, shade, darken, scale, part = null){
+  const key = crown + ':' + rotStep + ':' + shade + ':' + (darken ? 1 : 0) + ':' + scale + ':' + part;
   let a = _treeArtCache.get(key);
   if(a) return a;
-  const halfW = 18*s + 4, above = 38*s + 4, below = 2*s + 4; // drawFullTreeBody extent about (sx,cy)
+  const halfW = 46, above = 104, below = 8; // the body's extent about its foot
   const wL = 2*halfW, hL = above + below;
   const cv = document.createElement('canvas');
   cv.width = Math.ceil(wL*scale); cv.height = Math.ceil(hL*scale);
   const cx = cv.getContext('2d');
   cx.scale(scale, scale);
   const sv = X; X = cx;
-  try { drawFullTreeBody(halfW, above, s, darken); } finally { X = sv; }
-  a = { canvas: cv, ax: halfW, ay: above, wL, hL };
+  try { drawFullTreeBody(halfW, above, crown, rotStep * Math.PI / 2, shade, darken, part); } finally { X = sv; }
+  a = cropArt(cv, scale, halfW, above);
   _treeArtCache.set(key, a);
   return a;
 }
-function drawTreeEntity(x,y){
+// part: 'trunk' or 'crown' (render.js sorts them apart), else the whole tree
+function drawTreeEntity(x,y,part=null){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (black)
 
@@ -330,9 +270,10 @@ function drawTreeEntity(x,y){
   let t=map[y][x];
   if(!t || t.res<=0) return;
 
-  // 1. Organic height and scale variability
-  let sizeNoise = 0.8 + ((x * 17 + y * 23) % 5) * 0.08;
-  let s = 1.05 * sizeNoise;
+  // 1. Each tree its own (pov3d's): size, crown shape, turn, proportions, shade, a nudge off the grid
+  const h = n => tileHash(x, y, n), s = 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08);
+  const kw = s * (0.9 + h(4) * 0.2), kh = s * (0.9 + h(5) * 0.22), crown = Math.floor(h(7) * 3), rotStep = Math.floor(h(3) * 4), shade = Math.min(2, Math.floor(h(9) * 3));
+  sx += Math.round(((h(1) - h(2)) * 0.2) * HALF_TW); cy += Math.round(((h(1) + h(2) - 1) * 0.2) * HALF_TH);
   
   // 2. Dynamic Wind Sway — frozen in shroud (static snapshot when out of sight)
   let totalSway = 0;
@@ -368,21 +309,24 @@ function drawTreeEntity(x,y){
   if(t.res > 60 || isFalling){
     // Stage 1: Standing or falling full tree — blit the cached body, sway/fall
     // as a rotate about (sx,cy). Cache at ceil(ZOOM*dpr) so it stays crisp.
-    let idx = (x * 17 + y * 23) % 5;
-    let art = _treeArt(idx, s, darken, Math.max(1, Math.ceil(ZOOM*dpr))); // dpr: match the main ctx scale (core.js) for crisp edges
+    let art = _treeArt(crown, rotStep, shade, darken, Math.max(1, Math.ceil(ZOOM*dpr)), part); // dpr: match the main ctx scale (core.js) for crisp edges
     X.save();
     X.translate(sx, cy);
     X.rotate(totalSway + fallAngle);
+    X.scale(kw, kh);
     X.drawImage(art.canvas, -art.ax, -art.ay, art.wL, art.hL);
     X.restore();
+  } else if(part === 'crown'){
+    return; // (a cut tree is all on the ground: its trunk part draws it)
   } else if(t.res > 20){
     // Stage 2: Standing stump AND fallen tree lying on the ground
     drawStump(sx, cy, s, darken);
+    let art = _treeArt(crown, rotStep, shade, darken, Math.max(1, Math.ceil(ZOOM*dpr)));
     X.save();
     X.translate(sx, cy);
     X.rotate(Math.PI / 2.15);
-    X.translate(-sx, -cy);
-    drawFullTreeBody(sx, cy, s, darken);
+    X.scale(kw * 0.85, kh * 0.85);   // (a little smaller lying, as the 3D: mostly on its own square)
+    X.drawImage(art.canvas, -art.ax, -art.ay, art.wL, art.hL);
     X.restore();
   } else {
     // Stage 3: Standing stump only

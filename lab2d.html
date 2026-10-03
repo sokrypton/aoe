@@ -52,7 +52,7 @@
 })();
 </script>
 <script>
-// Scriptable as window.LAB: set({ unit, action, dir, age, techs, load, zoom }), pause(on), step(n).
+// Scriptable as window.LAB: set({ unit, action, dir, age, techs, load, zoom, deathAge, food, cartLoad }), pause(on), step(n).
 (function(){
   for (const el of [...document.body.children]) if (!['lab-bar', 'lab-readout'].includes(el.id) && el.tagName !== 'SCRIPT' && el.tagName !== 'CANVAS') el.style.display = 'none';
   // a small grass world, fog off (the style gallery's recipe)
@@ -65,9 +65,9 @@
   const DIRL = ['SE', 'S', 'SW', 'W', 'NW', 'N', 'NE', 'E'];
   const DIRV = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
   // what each unit can do (the button row): walk is a gallop for cavalry, work is a villager's job by its load
-  const ACTIONS = { villager: ['idle', 'walk', 'carry', 'work', 'die'], militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'],
+  const ACTIONS = { villager: ['idle', 'walk', 'flee', 'carry', 'work', 'build', 'repair', 'fight', 'die'], militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'],
     archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'attack', 'die'], knight: ['idle', 'walk', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'],
-    tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['idle', 'walk', 'attack'] };
+    tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['idle', 'walk', 'attack', 'die'] };
   const S = window.LAB = { unit: 'scout', action: 'walk', dir: 0, all: false, age: 1, techs: false, load: 'wood', zoom: 4, paused: false, speed: 1,
     set(o){ if (o.pose) o.action = o.pose === 'attack' && S.unit.startsWith('villager') ? 'work' : o.pose; Object.assign(S, o); build(); sync(); },
     pause(p){ S.paused = p === undefined ? !S.paused : p; sync(); },
@@ -79,8 +79,9 @@
     for (const M of [horse2DState, sheep2DState, bear2D, dragon2D]) M.clear();
     const dirs = S.all ? [0, 1, 2, 3, 4, 5, 6, 7] : [S.dir];
     specs = dirs.map((d, i) => { const u = createUnit(ut(), 8 + (S.all ? (i % 4) * 9 : 12), 8 + (S.all ? Math.floor(i / 4) * 9 : 12), 0);
-      if (S.unit === 'villager-f') u.female = true;
+      if (u.utype === 'villager') u.female = S.unit === 'villager-f';
       u.__d = d; u.__home = { x: u.x, y: u.y }; delete u.gatherX; delete u.gatherY; u.task = 'gallery'; return u; });
+    for (const row of map) for (const tl of row) { tl.t = TERRAIN.GRASS; tl.res = 0; }
     deathAt = performance.now(); T = 0;
   }
   // a unit's facing, held at its cell's direction (drawUnit's turn hysteresis would drift it)
@@ -88,20 +89,30 @@
   // pose one specimen for this tick: walking is a treadmill — it really covers ground at its own pace (the horse, sheep,
   // bear and dragon stride by the ground covered) and steps back every 2 tiles (a jump isn't a stride)
   function pose(u){
-    const d = u.__d, a = S.action, walks = a === 'walk' || a === 'carry', dl = Math.hypot(...DIRV[d]);
+    const d = u.__d, a = S.action, walks = a === 'walk' || a === 'carry' || a === 'flee', dl = Math.hypot(...DIRV[d]);
     const v = (u.speed || 1) * UNIT_PX_PER_TICK / TILE_PX, w = walks ? (T * v) % 2 : 0;
     u.x = u.__home.x + DIRV[d][0] / dl * w; u.y = u.__home.y + DIRV[d][1] / dl * w;
     face(u, d); u.__lockDir = d;
     u.path = walks ? [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }] : [];
-    u.__animAttack = a === 'attack'; u.eatingGrass = a === 'graze';
+    u.__animAttack = a === 'attack'; u.eatingGrass = a === 'graze'; u.retreatUntil = a === 'flee' ? tick + 1e6 : 0;   // (flee: running away)
     if (a === 'attack') { const rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60); u.atkCooldown = rof - (tick % (rof + 1)); }
-    u.task = 'gallery'; u.carrying = 0; u.carryType = null; u.target = null; delete u.gatherX; delete u.gatherY;
+    // (the trade cart loaded, unless S.cartLoad = false)
+    u.task = 'gallery'; u.carrying = u.utype === 'tradecart' && S.cartLoad !== false ? 40 : 0; u.carryType = null; u.target = null; u.buildTarget = null; delete u.gatherX; delete u.gatherY;
     if (a === 'carry') { u.task = 'return'; u.carrying = 10; const food = ['meat', 'wheat', 'berries'].includes(S.load); u.carryType = food ? 'food' : S.load; if (food) u.foodSrc = S.load; }
     // work, as the style gallery's villager rows: the job at its own tile (passes the at-site gate); butchering a real
     // carcass beside it (the harvest-range gate needs a live entity)
+    // build / repair: a house beside it (a site, or standing); fight: a foe in reach — not drawn, the lab shows the worker
+    if (a === 'build' || a === 'repair') { if (!u.__bld) { const gx = Math.round(u.__home.x) + Math.sign(DIRV[d][0]), gy = Math.round(u.__home.y) + Math.sign(DIRV[d][1]); // (the house's one tile, the one it faces)
+        u.__bld = createBuilding('HOUSE', gx, gy, 0); u.__bld.complete = a === 'repair'; if (a === 'repair') u.__bld.hp = u.__bld.maxHp * 0.5; }
+      u.task = 'build'; u.buildTarget = u.__bld.id; }
+    if (a === 'fight') { if (!u.__foe) { u.__foe = createUnit('militia', u.__home.x + DIRV[d][0] / dl * 0.9, u.__home.y + DIRV[d][1] / dl * 0.9, 1); u.__foe.speed = 0; }
+      u.task = null; u.target = u.__foe.id; }
     if (a === 'work') {
       if (S.load === 'meat') { if (!u.__carcass) u.__carcass = createUnit('sheep_carcass', u.x + 0.7, u.y + 0.18, 0); u.task = null; u.target = u.__carcass.id; }
-      else { u.task = { wood: 'chop', gold: 'mine_gold', stone: 'mine_stone', wheat: 'farm', berries: 'forage' }[S.load]; u.gatherX = Math.floor(u.x); u.gatherY = Math.floor(u.y); }
+      else { u.task = { wood: 'chop', gold: 'mine_gold', stone: 'mine_stone', wheat: 'farm', berries: 'forage' }[S.load];
+        // the job on the tile it faces, stocked (a tree with wood left stands to be chopped, not split)
+        u.gatherX = Math.round(u.__home.x + DIRV[d][0]); u.gatherY = Math.round(u.__home.y + DIRV[d][1]);
+        const tl = map[u.gatherY][u.gatherX]; tl.res = 200; tl.t = { wood: TERRAIN.FOREST, gold: TERRAIN.GOLD, stone: TERRAIN.STONE, wheat: TERRAIN.FARM, berries: TERRAIN.BERRIES }[S.load]; }
     }
   }
   function advance(n){ T += n; tick = Math.floor(T); }
@@ -124,10 +135,14 @@
       const scr = mapToScreen(u.x, u.y);
       if (S.guides) { X.strokeStyle = 'rgba(255,255,255,0.25)'; X.lineWidth = 0.5; const gy = scr.sy + HALF_TH + 5 * UNIT_SCALE; X.beginPath(); X.moveTo(scr.sx - 60, gy); X.lineTo(scr.sx + 60, gy); X.stroke(); } // (the feet: drawUnit's ground, art y 5)
       if (S.action === 'die') { // the real corpse sequence on a loop: ~2.6s of the death, then a beat of the late stage
+        face(u, u.__d);   // (the corpse keeps its facing: a mirrored view's wreck is drawn mirrored)
         if (u.utype === 'sheep') { u.utype = 'sheep_carcass'; u.team = GAIA_TEAM; }
-        if (u.utype === 'sheep_carcass') drawUnit(u);
-        else { const t = (now - deathAt) % 4100; drawCorpse({ type: 'corpse', utype: u.utype, x: u.x, y: u.y, team: u.team, id: u.id, facing: u.facing, female: u.female, dir: u.__d,
-          carrying: u.utype === 'tradecart' ? 40 : 0, deathTime: now - (t < 2600 ? t : 12500 + (t - 2600)) }); }
+        if (u.utype === 'sheep_carcass') { const st = sheep2DState.get(u.id), t = (now - deathAt) % 4100;   // (the death on the lab's loop, or pinned; S.food: the food left, 100 → 0)
+          if (st) st.deadAt = performance.now() - (S.deathAge != null ? S.deathAge : t); u.hp = S.food != null ? S.food : 100; u.maxHp = 100; drawUnit(u); }
+        // (S.deathAge, ms: a pinned moment of the death; else it loops)
+        else { const t = (now - deathAt) % 4100, age = S.deathAge != null ? S.deathAge : t < 2600 ? t : 12500 + (t - 2600);
+          drawCorpse({ type: 'corpse', utype: u.utype, x: u.x, y: u.y, team: u.team, id: u.id, facing: u.facing, female: u.female, dir: u.__d,
+          carrying: u.utype === 'tradecart' ? 40 : 0, deathTime: performance.now() - age }); }
       } else {
         if (u.__carcass) drawUnit(u.__carcass);
         drawUnitShadow(u, scr.sx, scr.sy + HALF_TH); drawUnit(u);
@@ -137,7 +152,7 @@
     });
     const h = specs[0] && horse2DState.get(specs[0].id), sh = specs[0] && sheep2DState.get(specs[0].id);
     $('lab-readout').textContent = 'tick ' + tick + (h ? '   stride ' + (h.stride % HORSE_STRIDE.gallop / HORSE_STRIDE.gallop).toFixed(2) : '')
-      + (sh && sh.P ? '   gait ' + sh.gait.toFixed(2) + '  graze ' + sh.graze.toFixed(2) : '');
+      + (sh && sh.P && sh.gait != null ? '   gait ' + sh.gait.toFixed(2) + '  graze ' + sh.graze.toFixed(2) : '');
     requestAnimationFrame(frame);
   }
   // ---- the bar ----

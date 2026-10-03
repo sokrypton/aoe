@@ -1869,8 +1869,10 @@ function findAIFarmSpot(ai,tc){
       }
     }
   }
-  // Nearest drop-edge first; deterministic tie-break keeps the sim in lockstep.
-  cands.sort((a,b)=>a.dd-b.dd || a.x-b.x || a.y-b.y);
+  // Plots inside the wall ring first (a farm by a berry-mill outside the wall
+  // is undefended food), then nearest drop-edge; deterministic tie-break.
+  let inside=c=>aiInsideWallRing(ai,c.x,c.y,F,F);
+  cands.sort((a,b)=>inside(b)-inside(a) || a.dd-b.dd || a.x-b.x || a.y-b.y);
   // Keep plots out of the gate corridor (a farmer in the gateway looks
   // wrong), and require the plot be reachable from the TC: an unreachable
   // farm parks as unbuildable work and wedges the assigned villager
@@ -2930,6 +2932,14 @@ function aiOnWallRing(ai,tx,ty,w,h,btype){
     if(t.x>=tx && t.x<tx+w && t.y>=ty && t.y<ty+h) return true;
   }
   return false;
+}
+
+// Footprint strictly inside the planned wall ring's box (false with no plan).
+function aiInsideWallRing(ai,tx,ty,w,h){
+  let plan=ai.wallPlan; if(!plan||!plan.length) return false;
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(const t of plan){ if(t.x<x0)x0=t.x; if(t.x>x1)x1=t.x; if(t.y<y0)y0=t.y; if(t.y>y1)y1=t.y; }
+  return tx>x0 && tx+w-1<x1 && ty>y0 && ty+h-1<y1;
 }
 
 function findAIBuildSpot(ai,tc,type){
