@@ -76,7 +76,7 @@
   function initScene(){
     renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true }); // stencil: the behind-building outlines
     renderer.localClippingEnabled = true;                                   // construction sites (constructionSite)
-    renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1)); // full screen on phones gets heavy
+    renderer.setPixelRatio(Math.min(isMobile ? 1.5 : 3, window.devicePixelRatio || 1)); // full res on desktop (below it, edges pixelate vs 2D); capped on phones, full screen gets heavy
     pip.insertBefore(renderer.domElement, pip.firstChild);
     scene = new THREE.Scene();
     SKY = new THREE.Color('#9fc8e6'); VOID = new THREE.Color('#000000');
