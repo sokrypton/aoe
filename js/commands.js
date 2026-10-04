@@ -1018,34 +1018,10 @@ function execBuildPlacement(cmd){
   let tile = { x: cmd.tileX, y: cmd.tileY };
   let vils = selected.filter(s => s.type === 'unit' && s.utype === 'villager');
   if (vils.length === 0) return;
-  if (canPlace(btype, tile.x, tile.y, myTeam)) {
-    let b = BLDGS[btype];
-    // Dropping a stone piece on its wooden counterpart IS the upgrade. A COMPLETE
-    // counterpart salvage-swaps in place via the shared applyStoneUpgrade (so
-    // hand-placement and the Upgrade button behave identically); an UNBUILT one
-    // is cancelled+refunded and overwritten with a fresh stone site (handled just
-    // below). Everything else keeps the build-placement path.
-    let counterpart = stoneCounterpartAt(tile.x, tile.y, btype, myTeam);
-    if (counterpart && counterpart.complete) {
-      if (applyStoneUpgrade([counterpart], myTeam)) dispatchBuilders(vils, counterpart);
-      return;
-    }
-    let plan = resolveBuildingPlacement(btype, tile.x, tile.y, myTeam);
-    // The unbuilt counterpart is refunded+removed by overwriteUnbuiltFoundation
-    // below; drop it from plan.replaced (a 1x1 wall counterpart lands there via the
-    // wall scan) so commit treats the new piece as a fresh site, not a wall-consume.
-    if (counterpart) plan.replaced = plan.replaced.filter(w => w !== counterpart);
-    let consumes = isGateBtype(btype) || isTowerBtype(btype);
-    let actualCost = effectiveBuildCost(btype, consumes ? plan.replaced : null);
-    if (!canAfford(myTeam, actualCost)) { feedbackFor(myTeam, () => showMsg('Not enough resources!')); return; }
-    if (counterpart) overwriteUnbuiltFoundation(counterpart, myTeam); // cancel the unbuilt piece before placing fresh
-    spendCost(myTeam, actualCost);
-    let bldg = commitBuildingPlacement(btype, plan, myTeam, false);
-    if (!bldg) return;
-    dispatchBuilders(vils, bldg);
-  } else {
-    feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
-  }
+  let r = placeBuilding(btype, tile.x, tile.y, myTeam);
+  if (r.bldg) { dispatchBuilders(vils, r.bldg); return; }
+  if (r.fail === 'afford') feedbackFor(myTeam, () => showMsg('Not enough resources!'));
+  else if (r.fail === 'place') feedbackFor(myTeam, () => { showMsg('Can\'t build here!'); if (window.playSound) playSound('error'); });
 }
 // Queue villagers onto a build target and send each idle one to it (pathToBuilding:
 // farm plot, else cheapest-walk contact tile).
@@ -1086,31 +1062,15 @@ function execWallDrag(cmd){
   if (vils.length === 0) return;
   let line = getWallElbowTiles(cmd.start, cmd.corner || cmd.end, cmd.end);
   let wallB = isWallBtype(cmd.btype) ? cmd.btype : 'WALL';
-  let b = BLDGS[wallB];
   let targets = [];   // new foundations + in-place upgrades, in drag order
   let upgrades = [];  // palisade counterparts to salvage-swap in one batch
   line.forEach(t => {
-    if (!canPlace(wallB, t.x, t.y, myTeam)) return;
-    // A stone wall dragged over an allied palisade IS the upgrade: a COMPLETE one
-    // salvage-swaps in place (batched below), an UNBUILT one is cancelled+refunded
-    // and overwritten fresh — either way nothing stacks on the tile.
-    let counterpart = stoneCounterpartAt(t.x, t.y, wallB, myTeam);
-    if (counterpart && counterpart.complete) {
-      upgrades.push(counterpart); targets.push(counterpart);
-      return;
-    }
-    let actualCost = { ...b.cost };
-    if (canAfford(myTeam, actualCost)) {
-      if (counterpart) overwriteUnbuiltFoundation(counterpart, myTeam); // cancel the unbuilt palisade first
-      spendCost(myTeam, actualCost);
-      let bldg = createBuilding(wallB, t.x, t.y, myTeam);
-      bldg.complete = false;
-      bldg.buildProgress = 0;
-      bldg.hp = 1; // AoE2 foundation HP — the drag path skipped this and unbuilt walls soaked full maxHp (user caught it)
-      targets.push(bldg);
-    } else {
-      feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
-    }
+    // THE placement step (placeBuilding, js/logic.js): a stone wall dragged over an allied palisade IS the upgrade —
+    // nothing stacks on the tile
+    let r = placeBuilding(wallB, t.x, t.y, myTeam, true);
+    if (r.upgrade) { upgrades.push(r.upgrade); targets.push(r.upgrade); }
+    else if (r.bldg) targets.push(r.bldg);
+    else if (r.fail === 'afford') feedbackFor(myTeam, () => { showMsg('Not enough stone!'); if (window.playSound) playSound('error'); });
   });
   // Batch the counterpart upgrades (one afford/salvage pass, like the button). A
   // batch that can't afford aborts inside applyStoneUpgrade — drop those targets.

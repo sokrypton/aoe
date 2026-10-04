@@ -48,12 +48,12 @@ function canPlace(type,x,y,team=0,ignoreAge=false,rejectUnits=false){
       let existing = entitiesById.get(t.occupied);
       // GATE, TOWER, and a STONE WALL upgrade may be placed on top of an
       // existing allied wall (they consume the wall tile(s) they're built on,
-      // see execBuildPlacement's plan.replaced); anything else must not overlap
+      // see placeBuilding's plan.replaced); anything else must not overlap
       // an existing building. Dropping a stone piece on its palisade counterpart
       // (WALL_STONE_MATCH: wall/gate/tower) is the upgrade: a COMPLETE piece
       // salvage-swaps in place (like the Upgrade button); an UNBUILT one is
-      // cancelled (refunded) and overwritten with a fresh stone site — the exec
-      // paths split on `complete`, both handled, neither stacks.
+      // cancelled (refunded) and overwritten with a fresh stone site — placeBuilding
+      // (below) splits on `complete` for every caller, player and AI; neither stacks.
       if (existing && existing.type === 'building' && existing.team === team &&
           (WALL_STONE_MATCH[existing.btype] === type ||
            (isGateBtype(type) && (existing.btype === GATE_WALL_MATCH[type] || existing.btype === type)) ||
@@ -298,7 +298,7 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 const RETRY = Object.freeze({
   CHASE:'chase', CHASE_BLOCKED:'chaseBlocked', HARVEST_WAIT:'harvestWait',
   FLEE_RAID:'fleeRaid', FLEE_BEAR:'fleeBear', GUARD_RETURN:'guardret',
-  DROP_WAIT:'dropWait', DROP_TUCK:'dropTuck', GARRISON:'garrison', FOLLOW:'follow',
+  DROP_WAIT:'dropWait', DROP_TUCK:'dropTuck', DROP_THROW:'dropThrow', GARRISON:'garrison', FOLLOW:'follow',
   MOVE:'move', BUILD:'build', REAIM:'reaim',
 });
 
@@ -2402,7 +2402,37 @@ function updateIdleMilitary(e){
 }
 
 
+// ---- BUILDING PLACEMENT ----
+// THE placement step — the player's execBuildPlacement and the AI's placeAIBuilding both call it (parity). Dropped on
+// its own wooden counterpart a stone piece IS the upgrade: a finished one salvage-swaps in place (applyStoneUpgrade), an
+// unbuilt one is cancelled and overwritten. Returns { bldg } (the new site, or the upgraded piece) or { fail: 'place' |
+// 'afford' | 'upgrade' } (applyStoneUpgrade reports its own failures). batchUpgrade: hand a finished counterpart back as
+// { upgrade } for the caller to swap with the rest of its batch (wall drag: one afford/salvage pass, like the button).
+function placeBuilding(btype, x, y, team, batchUpgrade){
+  if (!canPlace(btype, x, y, team)) return { fail: 'place' };
+  let counterpart = stoneCounterpartAt(x, y, btype, team);
+  if (counterpart && counterpart.complete) {
+    if (batchUpgrade) return { upgrade: counterpart };
+    return applyStoneUpgrade([counterpart], team) ? { bldg: counterpart } : { fail: 'upgrade' };
+  }
+  let plan = resolveBuildingPlacement(btype, x, y, team);
+  // (an unbuilt 1x1 counterpart lands in plan.replaced via the wall scan: it's refunded+removed below, not wall-consumed)
+  if (counterpart) plan.replaced = plan.replaced.filter(w => w !== counterpart);
+  let cost = effectiveBuildCost(btype, (isGateBtype(btype) || isTowerBtype(btype)) ? plan.replaced : null);
+  if (!canAfford(team, cost)) return { fail: 'afford' };
+  if (counterpart) overwriteUnbuiltFoundation(counterpart, team);
+  spendCost(team, cost);
+  let bldg = commitBuildingPlacement(btype, plan, team, false);
+  return bldg ? { bldg } : { fail: 'place' };
+}
+
 // ---- VILLAGER DROP-OFF (task==='return') ----
+const DROP_THROW_TICKS = T30(18);
+// How far into its drop-off throw a villager is (0..1), or null — read by the 3D draw.
+function dropThrowPhase(e){
+  const r = e.task === 'return' && e.carrying > 0 && e.retry && e.retry[RETRY.DROP_THROW];
+  return r && tick <= r.next ? Math.max(0, 1 - (r.next - tick) / DROP_THROW_TICKS) : null;
+}
 // Always ends the tick (the dispatcher returns after calling).
 function updateVillagerDropoff(e){
   // Patience gate: when every route was blocked (usually a crowded drop
@@ -2423,6 +2453,7 @@ function updateVillagerDropoff(e){
     return;
   }
   if(!adjToBuilding(e.x,e.y,drop)){
+    retryClear(e,RETRY.DROP_THROW);   // (an interrupted throw starts over at the next drop)
     // Path ONCE to the cheapest-to-WALK drop-off edge (goalBldg A*), then let
     // movement + the block-wait queue carry the hauler — same discipline as the
     // build loop and the trade cart. Recomputing every tick made returning
@@ -2467,6 +2498,13 @@ function updateVillagerDropoff(e){
       // budget elapsed without settling -> stop tucking, deposit now
     }
     retryClear(e,RETRY.DROP_TUCK);
+    // The throw: it stands at the wall and heaves the load in (DROP_THROW_TICKS) before it banks and walks off — the
+    // drawn throw plays on this clock (dropThrowPhase), so the villager never has to catch up with a sim that left.
+    // (a leftover from a throw cut short — bell, new order — is stale: start over rather than bank instantly)
+    const th=e.retry&&e.retry[RETRY.DROP_THROW];
+    if(!th||tick>th.next+DROP_THROW_TICKS){ retryStamp(e,RETRY.DROP_THROW,DROP_THROW_TICKS); return; }
+    if(tick<th.next) return;
+    retryClear(e,RETRY.DROP_THROW);
     resourceStore(e.team)[e.carryType]+=e.carrying;
     e.carrying=0;
     avoidClear(e,'drops');

@@ -4033,21 +4033,21 @@
       if (u >= 1) { puffBurst(f.b[0], f.b[1], f.b[2], 5); scene.remove(f.obj); flying.splice(i, 1); }
     }
   }
-  const THROW_MS = 560; // the drop pose played from its knee dip (0.12) through the follow-through (0.5)
   // Place and pose one villager; false when it has no 3D pose yet (it shows as art this frame).
   function updateVillager3D(e, dt){
     const now = performance.now();
     let [tx, tz] = posOf(e), ty = -worldFacing(e);
     let v = villagers.get(e.id);
-    if (!v) villagers.set(e.id, v = { obj: null, key: '', x: tx, z: tz, yaw: ty, stride: 0, carry: e.carrying, lastT: 0 });
-    // A load gone at a drop-off: throw it in (the sim banked it already; this is the show).
-    if (v.carry > 0 && !(e.carrying > 0) && v.ctype) {
+    if (!v) villagers.set(e.id, v = { obj: null, key: '', x: tx, z: tz, yaw: ty, stride: 0, lastT: 0 });
+    // At a drop-off the sim holds the villager for its throw (dropThrowPhase, js/logic.js): the throw plays on that clock.
+    const tp = e.utype === 'villager' ? dropThrowPhase(e) : null;
+    if (tp == null) v.throw = null;
+    else if (!v.throw) {
       let best = null, bd = 1.6;                                                    // measured to the footprint's edge, as the sim's drop-off contact (a TC corner is 3.5 tiles from its centre)
-      for (const b of entities) if (b.type === 'building' && b.team === e.team && b.complete !== false && dropAccepts(b, v.ctype)) {
+      for (const b of entities) if (b.type === 'building' && b.team === e.team && b.complete !== false && dropAccepts(b, e.carryType)) {
         const d = edgeDistToBuilding(e.x, e.y, b); if (d < bd) { bd = d; best = b; } }
-      if (best) v.throw = { at: now, load: v.cload, b: best, flew: false };
+      if (best) v.throw = { load: carriedLoad(e), b: best, flew: false };
     }
-    v.carry = e.carrying; if (e.carrying > 0) { v.ctype = e.carryType; v.cload = carriedLoad(e); }
     let p = e.utype === 'villager' ? villagerPose(e, v) : soldierPose(e, v);
     // A swing the player asked for (first person: click / Space / ACT): played at once, while the command it sent takes effect.
     if (e.id === followId && swingAt && now - swingAt < SWING_MS && p.kind !== 'attack') {
@@ -4067,11 +4067,9 @@
     }
     if (vmUnit && VM.force != null) { v.fpStrike = VM.force; if (p.kind === 'attack') p = { kind: 'idle', t: 0, opt: p.opt }; } // dev: a pinned strike phase
     v.lastPose = p.kind; v.lastLoad = p.opt && p.opt.load; // (dev: __povVM, __povPose)
-    if (v.throw) { const el = now - v.throw.at, b = v.throw.b, bx = b.x + (b.w || 1) / 2, bz = b.y + (b.h || 1) / 2;
-      if (el > THROW_MS) v.throw = null;
-      else { const t = 0.12 + 0.38 * el / THROW_MS;
-        // It throws standing at the drop, turned to the building — though the sim sends it off the tick it drops: the
-        // drawn villager holds its spot for the throw (below) and catches up after, at a walk
+    if (v.throw) { const b = v.throw.b, bx = b.x + (b.w || 1) / 2, bz = b.y + (b.h || 1) / 2;
+      { const t = 0.12 + 0.38 * tp;                                                 // knee dip (0.12) through the follow-through (0.5)
+        // It throws standing at the drop, turned to the building
         p = { kind: 'drop', t, opt: { load: v.throw.load, noFly: true } };
         ty = -Math.atan2(bz - v.z, bx - v.x);
         if (!v.throw.flew && t >= REL) { v.throw.flew = true; const o = loadModel(v.throw.load); scene.add(o);
@@ -4113,7 +4111,10 @@
     const mv = isUnitMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
     let nx, nz;
     if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
-      if (mv && !T && !v.throw && e.path.length) ty = -Math.atan2(e.path[0].y - e.y, e.path[0].x - e.x); // (a throw keeps facing its drop: the sim already sent it off)
+      // leaving a work spot on the move: the step-in offset walks off (at WALK_IN, game-speed scaled), never pops
+      const ox = v.x - tx, oz = v.z - tz, od = Math.hypot(ox, oz);
+      if (!far && od > 0.01) { const k = Math.max(0, od - WALK_IN * GAME_SPEED * dt) / od; nx = tx + ox * k; nz = tz + oz * k; }
+      if (mv && !T && !v.throw && e.path.length) ty = -Math.atan2(e.path[0].y - e.y, e.path[0].x - e.x); // (a throw keeps facing its drop)
     } else if (!mv && !v.throw && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
       // A villager off its spot (into a work spot, back out of one) walks there, at a walk, legs and all — a load in
       // hand stays in hand (the carrying walk); never over a throw (it stands for that: held below)
@@ -5593,6 +5594,7 @@
     for (const T of rigTemplates.values()) for (const m of T.meshes) { out.meshes++; const M = m.mat;
       if (m.lines) out.lines++; else if (HULL_MATS.has(M)) out.hull++; else if (tcSwaps.has(M)) out.team++; else if (M.isMeshLambertMaterial && !M.map && !M.userData.detail && !M.transparent) out.plain++; else if (M.userData.detail || M.map) out.detail++; else out.other++; }
     return out; }; // dev
+  window.__povModelsOf = id => scene ? scene.children.filter(o => o.userData && o.userData.bid === id).map(o => ({ visible: o.visible, kids: o.children.length })) : null; // dev: the 3D models claiming building id (tests)
   window.__povBldParts = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible || rec.site || rec.dmg) continue; const e = entitiesById.get(rec.obj.userData.bid); if (!e) continue;
     const k = e.btype; if (out[k]) continue; const c = {}; rec.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments)) return; const t = o.isLineSegments ? 'lines' : HULL_MATS.has(o.material) ? 'hull' : (o.name || (o.parent && o.parent.name) || 'mesh'); c[t] = (c[t] || 0) + 1; }); out[k] = c; } return out; }; // dev
   window.__povBldDraws = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible) continue; const k = rec.site ? 'site' : rec.dmg ? 'damaged' : rec.door ? 'gate' : 'finished';

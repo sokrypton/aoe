@@ -1922,7 +1922,10 @@ function villagerWorkSpot(e, act, S){
   if (T) { const ph = Math.atan2(T[1] - e.y, T[0] - e.x), c = Math.cos(ph), sn = Math.sin(ph), px = T[0] - (W[0] * c - W[1] * sn), py = T[1] - (W[0] * sn + W[1] * c);
     if ((px - e.x) ** 2 + (py - e.y) ** 2 < 1.6 * 1.6) { tx = px; ty = py; }
     if (!mv) hd = ph; }
-  if (S.wx == null || (S.wx - tx) ** 2 + (S.wy - ty) ** 2 > 4 || (mv && !T)) { S.wx = tx; S.wy = ty; return hd == null ? null : { act, hd }; }
+  if (S.wx == null || (S.wx - tx) ** 2 + (S.wy - ty) ** 2 > 4) { S.wx = tx; S.wy = ty; return hd == null ? null : { act, hd }; }
+  if (mv && !T) { // leaving a work spot on the move: the step-in offset walks off (game-speed scaled), never pops
+    const ox = S.wx - tx, oy = S.wy - ty, od = Math.hypot(ox, oy), k = od > 0.01 ? Math.max(0, od - WALK_IN * GAME_SPEED * dt) / od : 0;
+    if (!window._maskDraw) { S.wx = tx + ox * k; S.wy = ty + oy * k; } return hd == null ? null : { act, hd }; }
   if (window._maskDraw) return hd == null ? null : { act, hd };
   const dx = tx - S.wx, dy = ty - S.wy, d = Math.hypot(dx, dy);
   if (!mv && d > 0.03) { // walking into its work spot (or back out of it): a walk, a load in hand stays in hand

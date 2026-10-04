@@ -452,6 +452,28 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- build-over parity
+    // A stone tower placed on its wooden counterpart IS the upgrade, for the AI exactly as for a player (both go
+    // through placeBuilding): never two buildings on one tile.
+    'build-over-parity': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (complete) => {
+        loadScenario({ map: 'medium', seed: 5, numTeams: 2, controllers: ['ai', 'ai'], ages: [1, 1], entities: [] });
+        gameStarted = true; window.__headlessSim = true;
+        for (let i = 0; i < teamExploredGrid[0].length; i++) teamExploredGrid[0][i] = 1;
+        const st = resourceStore(0); st.wood = 1000; st.stone = 1000;
+        const pt = createBuilding('PTOWER', 30, 20, 0); pt.complete = complete; if (complete) pt.hp = pt.maxHp;
+        const got = placeAIBuilding(AI_STATES[0], 'TOWER', 30, 20);
+        const here = entities.filter(e => e.type === 'building' && e.x === 30 && e.y === 20);
+        return { got: !!got, n: here.length, btype: here[0] && here[0].btype, complete: here[0] && here[0].complete, sameId: here[0] && here[0].id === pt.id };
+      };
+      const a = stage(true);
+      T.ok('AI tower over a finished PTOWER: one building, upgraded in place', a.got && a.n === 1 && a.btype === 'TOWER' && !a.complete && a.sameId);
+      const b = stage(false);
+      T.ok('AI tower over an unbuilt PTOWER: the foundation is replaced, not stacked', b.got && b.n === 1 && b.btype === 'TOWER' && !b.sameId);
+      return T;
+    })),
+
     // ---------------------------------------------- sheep donation (AoE2)
     // A sheep goes to another player's unit that reaches it first — an ALLY's
     // too (donating a sheep). Against an ally only the owner's own units guard

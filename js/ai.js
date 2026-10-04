@@ -1552,6 +1552,9 @@ function assignAIVillagers(ai,vils,profile){
     // them as the sole builder of something they can't reach.
     if(v.garrisonedIn||v.task==='garrison')return;
     if(v.path.length>0||v.target)return;
+    // A hauler at the drop (tucking in, throwing) is mid-trip, not idle: re-tasked there it walked off with its load.
+    // The drop resumes its job, or leaves it idle for the next decision. (One waiting out an unreachable drop is free.)
+    if(v.task==='return'&&!retryActive(v,RETRY.DROP_WAIT))return;
     if(v.task==='build'){
       // isAIGatherTaskStale() doesn't know 'build' as a task type — treating
       // a builder as stale yanks it off mid-construction and oscillates.
@@ -2948,15 +2951,7 @@ function hasAIBuilding(ai,type){
 }
 
 function placeAIBuilding(ai,type,x,y){
-  // PARITY: delegate to THE shared placement pipeline the player's
-  // execBuildPlacement uses — resolveBuildingPlacement + effectiveBuildCost
-  // (consumed walls refund their own cost) + commitBuildingPlacement — so AI
-  // wall/gate/tower geometry can never drift from the human rules.
-  let plan = resolveBuildingPlacement(type, x, y, ai.team);
-  let actualCost = effectiveBuildCost(type, (isGateBtype(type) || isTowerBtype(type)) ? plan.replaced : null);
-  if(!canPlace(type,x,y,ai.team)||!canAfford(ai.team,actualCost))return null;
-  spendCost(ai.team,actualCost);
-  return commitBuildingPlacement(type, plan, ai.team, false);
+  return placeBuilding(type,x,y,ai.team).bldg||null; // THE shared placement step (js/logic.js): same rules as a player's
 }
 
 // Food drop-offs (the TC and every Mill) each reserve a farm belt around
