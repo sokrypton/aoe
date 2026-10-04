@@ -350,7 +350,17 @@ function smoothPath(e,path){
   return out;
 }
 function setUnitPath(e,path){
-  e.path=smoothPath(e,path);
+  // A path is planned from the unit's ROUNDED tile; a unit pressed off its tile centre (against the tree it was
+  // chopping) can find the straight line from where it really stands clipping a corner that tile-to-tile step clears —
+  // the walker then refuses the first step every retry, forever (stuck-watchdog). Step back to its own centre first.
+  // (Judged on the SMOOTHED first leg — the one actually walked: a raw first hop clips corners the smoothed leg clears,
+  // and a re-pathing chaser was yanked back to its centre every re-plan. Terrain only: a unit in the way is the
+  // walker's to wait out, not a reason to back up.)
+  let sp=smoothPath(e,path);
+  if(sp.length){ const cx=Math.round(e.x), cy=Math.round(e.y);
+    if((e.x!==cx||e.y!==cy)&&!(sp[0].x===cx&&sp[0].y===cy)&&!lineWalkClear(e,e.x,e.y,sp[0].x,sp[0].y,true)&&lineWalkClear(e,e.x,e.y,cx,cy,true))
+      sp=[{x:cx,y:cy}].concat(sp); }
+  e.path=sp;
   e.moveT=0;
   e.fromX=e.x;
   e.fromY=e.y;

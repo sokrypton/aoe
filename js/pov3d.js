@@ -268,6 +268,13 @@
     solids.clear();
   }
 
+  // ART PROTOTYPE (?proto, or window.__artProto before the 3D loads): faces, fuller wheat. Viewer-only look; off by
+  // default until approved.
+  const ART_PROTO = typeof location !== 'undefined' && /[?&]proto\b/.test(location.search) || !!window.__artProto;
+  // the steel (forge tiers, blades, tools, helmets) and gold colours: a broad sheen, as the painted icons' highlights
+  const SHINY = new Map([['#a7abb0', 1], ['#a8adb3', 1], ['#c6cdd8', 1], ['#b9bec6', 1], ['#b8bfc6', 1], ['#dde3ea', 1], ['#f2f6fb', 1],
+    ['#daa520', 2], ['#e8b90f', 2], ['#d1a017', 2], ['#c99815', 2]]);
+  const DETAIL_K = 1.7;   // surface pattern contrast (the pattern's darkening, scaled up)
   // col is '#rrggbb', or '#rrggbb|detail' to add a surface texture (DETAIL).
   function mat(col, twoSided){
     const k = col + (twoSided ? '/2' : '');
@@ -276,7 +283,8 @@
       const [color, detail] = col.split('|');
       // Depth offsets order near-coincident layers: ink lines over surfaces,
       // surfaces over the outline hulls (else they fight at grazing angles).
-      m = new THREE.MeshLambertMaterial({ color, side: twoSided ? THREE.DoubleSide : THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      const shine = SHINY.get(color), base = { color, side: twoSided ? THREE.DoubleSide : THREE.FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+      m = shine ? new THREE.MeshPhongMaterial({ ...base, specular: shine === 2 ? '#fff2b0' : '#6b6b6b', shininess: shine === 2 ? 22 : 24 }) : new THREE.MeshLambertMaterial(base);   // (steel: a soft sheen; gold: a glint)
       if (detail) withDetail(m, detail);
       m.userData.detail = detail; m.userData.plain = !detail;             // (plain: a colour and nothing more — a rig merges these)
       mats.set(k, m);
@@ -289,7 +297,7 @@
   // Surface detail: a tileable grey pattern multiplying the art color, mapped
   // from world position (walls: along the face × height, so courses and boards
   // stay level; flat tops: x × z) — every model gets the same scale with no
-  // UVs. Subtle on purpose: the art stays clean and flat-colored.
+  // UVs. Its darkening is scaled by DETAIL_K: courses and boards read, the art stays flat-colored.
   const DETAIL = { // [world units per tile repeat, painter]
     planks:  [0.5, (c, r) => rows(c, r, 4, true)],
     planksR: [0.5, (c, r) => { c.translate(64, 0); c.rotate(Math.PI / 2); rows(c, r, 4, true); }], // boards running the other way
@@ -298,6 +306,9 @@
     slabs:   [2, (c, r) => blocks(c, r, 2, 2, 0)],
     shingles:[0.4, (c, r) => blocks(c, r, 6, 6)],
     plaster: [1, (c, r) => speckle(c, r, 240)],
+    thatch:  [0.3, (c, r) => { tone(c, 255); c.fillRect(0, 0, 64, 64);                      // straw strands down the slope, in courses
+      for (let k = 0; k < 70; k++) { tone(c, 196 + r() * 50 | 0); c.fillRect(r() * 64, r() * 64 - 8, 1 + r() * 1.2, 8 + r() * 14); }
+      for (let i = 0; i < 4; i++) { tone(c, 186); c.fillRect(0, i * 16 + 15, 64, 1.2); } }],
     soil:    [1, (c, r) => speckle(c, r, 205)],
   };
   const tone = (c, v) => { c.fillStyle = `rgb(${v},${v},${v})`; };
@@ -334,14 +345,14 @@
       detailTex.set(name, tex);
     }
     m.onBeforeCompile = sh => {
-      sh.uniforms.detailMap = { value: tex }; sh.uniforms.detailScale = { value: 1 / span };
+      sh.uniforms.detailMap = { value: tex }; sh.uniforms.detailScale = { value: 1 / span }; sh.uniforms.detailK = { value: DETAIL_K };
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWNrm = mat3(modelMatrix) * objectNormal;'); // after skinning: patterns ride a skinned part
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm; uniform sampler2D detailMap; uniform float detailScale;')
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNrm; uniform sampler2D detailMap; uniform float detailScale; uniform float detailK;')
         .replace('#include <map_fragment>', `#include <map_fragment>
           vec3 an = abs(normalize(vWNrm));
           vec2 duv = an.y > 0.85 ? vWPos.xz : vec2(an.x > an.z ? vWPos.z : vWPos.x, -vWPos.y);
-          diffuseColor.rgb *= texture2D(detailMap, duv * detailScale).rgb;`);
+          diffuseColor.rgb *= max(vec3(0.0), 1.0 - detailK * (1.0 - texture2D(detailMap, duv * detailScale).rgb));`);
     };
     m.customProgramCacheKey = () => 'detail';
   }
@@ -518,15 +529,27 @@
         if (off.y < 0) { off.y = 0; o.copy(off.applyMatrix3(Mi)); }
       }, scr);
       if (!hg) continue;
+      if (!union) dropGroundFaces(hg, src, m.matrixWorld);
       const h = new THREE.Mesh(own(hg), hm);
       if (union) h.renderOrder = 1;
       m.add(h);
     }
   }
+  // A building's shell has no underside: its faces lying on the ground are never seen from outside, and through an open
+  // (damaged) roof they showed as a black floor. Triangles with all three corners on the ground leave the index.
+  function dropGroundFaces(hg, src, M){
+    const P = src.attributes.position, idx = hg.index ? hg.index.array : null, n = idx ? idx.length : P.count, keep = [], v = new THREE.Vector3();
+    const low = i => v.fromBufferAttribute(P, i).applyMatrix4(M).y < 0.004;
+    for (let t = 0; t < n; t += 3) { const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2;
+      if (!(low(a) && low(b) && low(c))) keep.push(a, b, c); }
+    if (keep.length < n) hg.setIndex(keep);
+  }
   // The hull of src seen at scale s (its own units; null if too thin to show):
   // every vertex out along its averaged face normal so each face moves HW.
   // ground(i, offset) may trim a vertex's offset in place.
-  function hullGeometry(src, s, HW, ground, screen = false){ // screen: the shell stays on the part, its push direction in the normals (screenHull)
+  // screen: the shell stays on the part, its push direction in the normals (screenHull); 'skinned' (a rig): that
+  // normal goes through the bone matrix — the part's scale itself, not its inverse-transpose
+  function hullGeometry(src, s, HW, ground, screen = false){
     const pos = src.attributes.position, idx = src.index;
     if (!src.boundingBox) src.computeBoundingBox();
     const d = new THREE.Vector3(); src.boundingBox.getSize(d);
@@ -558,7 +581,8 @@
       o.set(0, 0, 0);
       if (e && e.sum.lengthSq() > 1e-9 && screen) { const dir = e.sum.clone().normalize(); // the push direction as a normal (scale's inverse-transpose), after any ground trim
         o.set(dir.x * HW / s.x, dir.y * HW / s.y, dir.z * HW / s.z); if (ground) ground(i, o);
-        const k = 1 / HW; nOut[3 * i] = o.x * s.x * s.x * k; nOut[3 * i + 1] = o.y * s.y * s.y * k; nOut[3 * i + 2] = o.z * s.z * s.z * k; o.set(0, 0, 0); } // (per unit width: the shader normalizes)
+        const k = 1 / HW, q = screen === 'skinned' ? [1, 1, 1] : [s.x * s.x, s.y * s.y, s.z * s.z]; // (a stretched pole: else its push turns down its length)
+        nOut[3 * i] = o.x * q[0] * k; nOut[3 * i + 1] = o.y * q[1] * k; nOut[3 * i + 2] = o.z * q[2] * k; o.set(0, 0, 0); } // (per unit width: the shader normalizes)
       else if (e && e.sum.lengthSq() > 1e-9) {
         const dir = e.sum.clone().normalize();
         const L = mitre ? HW / Math.max(0.33, Math.min(...e.ns.map(q => q.dot(dir)))) : HW;
@@ -591,6 +615,56 @@
   // A thin plate on one face of the box [x0,x1]×[z0,z1]: face 'x0'|'x1'|'z0'|'z1',
   // u0..u1 along that face (0 = its low-coordinate end), y0..y1 absolute,
   // standing out by d. Windows, doors, beams.
+  // Dark Age thatch (every first-age roof), as a real thatched roof: a deep, soft mass of straw — the eaves rounded into
+  // a fat nose drooping below the wall tops, a rounded crown, the gable ends softened — under the owner's ridge roll
+  const THATCH = '#d2ac58|thatch';
+  function thatchRoof(g, tc, box, wallH, rise, alongX){
+    const [x0, z0, x1, z1] = box, T = 0.085, over = 0.16, end = 0.14;
+    const hw = (alongX ? z1 - z0 : x1 - x0) / 2 + over, eY = wallH - 0.06, rY = wallH + rise + T * 0.6, slope = (rY - eY) / hw;
+    // the cross-section (s across the ridge, y up): outer surface eave → crown → eave, a rounded nose at each eave,
+    // the underside a thickness T below
+    const sh = new THREE.Shape(), n = 0.35 * T;
+    sh.moveTo(-hw, eY + n); sh.quadraticCurveTo(-hw - n * 0.4, eY - n * 0.3, -hw + n, eY - n * 0.2);       // the left nose, curled under
+    sh.lineTo(0, rY - T * 1.7);                                                                             // underside up to the apex
+    sh.lineTo(hw - n, eY - n * 0.2); sh.quadraticCurveTo(hw + n * 0.4, eY - n * 0.3, hw, eY + n);          // the right nose
+    sh.lineTo(T * 1.1, rY - T * 1.1 * slope * 0.9); sh.quadraticCurveTo(0, rY + T * 0.15, -T * 1.1, rY - T * 1.1 * slope * 0.9);   // the rounded crown
+    sh.lineTo(-hw, eY + n);
+    const len = (alongX ? x1 - x0 : z1 - z0) + end * 2 - 0.06;
+    const geo = own(new THREE.ExtrudeGeometry(sh, { depth: len, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 3, curveSegments: 6 }));
+    if (alongX) geo.rotateY(Math.PI / 2).translate(x0 - end + 0.03, 0, (z0 + z1) / 2);
+    else geo.translate((x0 + x1) / 2, 0, z0 - end + 0.03);
+    const m = new THREE.Mesh(geo, mat(THATCH)); m.userData.hullGeo = geo; g.add(m);
+    const top = rY + T * 0.05;
+    if (alongX) pole(g, tc, [x0 - end, top, (z0 + z1) / 2], [x1 + end, top, (z0 + z1) / 2], 0.042);
+    else pole(g, tc, [(x0 + x1) / 2, top, z0 - end], [(x0 + x1) / 2, top, z1 + end], 0.042);
+  }
+  // A turned thatch roof (the mill's cone: many sides; a camp's hipped pyramid: 4, turned to the walls): the straw
+  // bulging out from the apex and curling under at the eave into a fat lip
+  function thatchCone(g, cx, cz, r, y0, rise, sides, turn = 0){
+    const T = 0.08, pts = [];
+    for (let i = 0; i <= 8; i++) { const t = i / 8; pts.push(new THREE.Vector2(r * t + Math.sin(Math.PI * t) * 0.035, y0 + rise * (1 - Math.pow(t, 0.85)))); }
+    pts.push(new THREE.Vector2(r + T * 0.45, y0 - T * 0.15), new THREE.Vector2(r + T * 0.15, y0 - T * 0.5), new THREE.Vector2(r - T * 0.6, y0 - T * 0.35), new THREE.Vector2(0.001, y0 + rise * 0.35));
+    const geo = own(new THREE.LatheGeometry(pts.reverse(), sides).rotateY(turn)); geo.translate(cx, 0, cz); geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat(THATCH)); m.userData.hullGeo = geo; g.add(m); return m;
+  }
+  // A half-timber frame on one wall face (the 2D house draws the same): sill, top plate and corner posts, two studs, and
+  // one brace across a bay (brace: its bay, -1 none) from its bottom corner up to the far stud's top
+  function timberFrame(g, col, face, box, wallH, brace){
+    const B = 0.055, d = 0.016, v = y => y * wallH, on = (u0, u1, y0, y1) => onFace(g, col, face, ...box, u0, u1, v(y0), v(y1), d);   // (no ink: thin strips' edge lines fought the wall)
+    on(0, 1, 0, 0.09); on(0, 1, 0.91, 1);                                              // sill, plate
+    on(0, B, 0.09, 0.91); on(1 - B, 1, 0.09, 0.91);                                    // corner posts
+    for (const t of [0.36, 0.64]) on(t - B / 2, t + B / 2, 0.09, 0.91);               // studs
+    if (brace < 0) return;
+    // the brace: a beam laid on the face between two (u, y) points
+    const [x0, z0, x1, z1] = box, alongZ = face[0] === 'x', sgn = face[1] === '1' ? 1 : -1, at = face === 'x0' ? x0 : face === 'x1' ? x1 : face === 'z0' ? z0 : z1;
+    const P = (u, y) => { const a = alongZ ? z0 + (z1 - z0) * u : x0 + (x1 - x0) * u, n = at + sgn * d / 2; return alongZ ? new THREE.Vector3(n, v(y), a) : new THREE.Vector3(a, v(y), n); };
+    for (const [ua, ub] of [HOUSE_BRACE[brace]]) {
+      const p0 = P(ua, 0.09), p1 = P(ub, 0.91), X3 = p1.clone().sub(p0), L = X3.length(); X3.normalize();
+      const Z3 = alongZ ? new THREE.Vector3(sgn, 0, 0) : new THREE.Vector3(0, 0, sgn), Y3 = new THREE.Vector3().crossVectors(Z3, X3);
+      const m = new THREE.Mesh(unitBox, faceMats(col)); m.position.copy(p0).add(p1).multiplyScalar(0.5);
+      m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X3, Y3, Z3)); m.scale.set(L, B * 0.85, d); g.add(m);
+    }
+  }
   function onFace(g, col, face, x0, z0, x1, z1, u0, u1, y0, y1, d = 0.02, inkIt = false){
     const alongZ = face[0] === 'x', at = face === 'x0' ? x0 : face === 'x1' ? x1 : face === 'z0' ? z0 : z1;
     const sgn = face[1] === '1' ? 1 : -1, a0 = alongZ ? z0 : x0, a1 = alongZ ? z1 : x1;
@@ -604,13 +678,14 @@
   // face's color) to a dark back plate — the unlit interior. One mesh, so no
   // joint lines; hull from the unpierced faces so openings stay unstroked.
   const V3 = (a) => new THREE.Vector3(...a);
-  // What an opening looks into: the wall's own colour inside, in the walls' shade (SITE_SHADE — as a site's inside), not black.
-  const INTERIOR_MATS = new Set();
+  // What an opening looks into: its inside — the reveal's sides, its floor and its back — the wall's own colour darkened
+  // (little light gets in), lit so each surface shades apart; not black.
+  const INTERIOR_MATS = new Set(), ROOM_SHADE = 0.5;
   function interiorMat(col){
-    const [c, detail] = col.split('|'), n = parseInt(c.slice(1), 16), ch = v => Math.round(v * SITE_SHADE).toString(16).padStart(2, '0'); // (on the screen colour, as the site's shade)
+    const [c, detail] = col.split('|'), n = parseInt(c.slice(1), 16), ch = v => Math.round(v * ROOM_SHADE).toString(16).padStart(2, '0');
     const m = mat('#' + ch(n >> 16) + ch((n >> 8) & 255) + ch(n & 255) + (detail ? '|' + detail : ''));
     INTERIOR_MATS.add(m); return m; }
-  function solidGeo(faces, T, nMats, pierce, rims = [], level = false){ // level: openings tunnel straight in (a site's slabs: thickGeo)
+  function solidGeo(faces, T, nMats, pierce, rims = [], level = false){ // level: openings tunnel straight in (a site's slabs: thickGeo) // level: openings tunnel straight in (a site's slabs: thickGeo)
     const buckets = Array.from({ length: nMats + 1 }, () => []);
     const tri = (b, p0, p1, p2, want, smooth) => { // flat-shaded unless smooth(p) gives the vertex normal
       const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
@@ -640,7 +715,7 @@
         for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges
         for (let k = 0; k < 4; k++) {
           const k1 = (k + 1) % 4, want = mid.clone().sub(out3[k].clone().add(out3[k1]).multiplyScalar(0.5));
-          tri(b, out3[k], out3[k1], in3[k1], want); tri(b, out3[k], in3[k1], in3[k], want);
+          tri(buckets[nMats], out3[k], out3[k1], in3[k1], want); tri(buckets[nMats], out3[k], in3[k1], in3[k], want);   // (the reveal: inside, in shade)
         }
         tri(buckets[nMats], in3[0], in3[1], in3[2], n); tri(buckets[nMats], in3[0], in3[2], in3[3], n);
       }
@@ -888,8 +963,8 @@
           const x = e.x + w * farmSheafU(ri, i) + (((n * 5 + fseed) % 5) - 2) * 0.5 * px, z = e.y + h * t + (((n * 11 + fseed) % 3) - 1) * px;
           if (!standing[n]) { stubs.push([x, 0.03, z, 0.018, 0.06, 0.018]); if (prev && prev[n]) cutSheaf(x, z, live && live.away.has(n) ? live.away.get(n) : n * 2.39996); continue; } // just cut: it falls away from the blade
           const lean = (((n * 13 + fseed) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + fseed) % 3) - 1) * 0.7) / HPX;
-          for (const k of [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2
-            const hk = H * (k ? 0.78 : 1), s = (k * 2.5 * px + lean) * Math.SQRT1_2;
+          for (const k of ART_PROTO ? [-2, -1, 0, 1, 2] : [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2 (prototype: a fuller sheaf)
+            const hk = H * (ART_PROTO ? 1.4 : 1) * (k ? (Math.abs(k) > 1 ? 0.66 : 0.82) : 1), s = (k * (ART_PROTO ? 1.8 : 2.5) * px + lean) * Math.SQRT1_2;
             const dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
             stalks.push([x + s / 2, hk / 2, z - s / 2, 0.028, L, 0.028, q]);  // the art: 1.4px stalks
             heads.push([x + s + dir.x * 0.035, hk + dir.y * 0.035, z - s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); // 2×4px heads
@@ -902,30 +977,29 @@
       }
       if (stubs.length) g.add(new THREE.Mesh(boxBatch(stubs, 'rod'), mat('#9a7f4a')));
     },
-    // Cottage under a team gable (drawGableBlock: W 32, hh 16, wall 16, roof
-    // 20). Dark: plank walls; Feudal: plaster + half-timber
-    // studs and mid-rail; Castle: whitewash + darker oak. A brick
-    // chimney with a stone cap from Feudal on.
+    // Cottage under a gable (drawGableBlock: W 32, hh 16, wall 16, roof 20). Dark: plank walls under a thick thatch and
+    // the owner's ridge roll (every Dark building is thatched: THATCH); Feudal: plaster, half-timbering, the owner's
+    // shingles; Castle: whitewash, darker oak. A brick chimney (smoking) from Feudal on. Brace and chimney placed per house (houseLayout, shared
+    // with the 2D art).
     HOUSE(g, e){
       const a = ageOf(e), x0 = e.x, z0 = e.y, x1 = e.x + 1, z1 = e.y + 1, box = [x0, z0, x1, z1];
-      const wallH = 16 / HPX, roofH = 20 / HPX, tc = teamColor(e.team);
+      const wallH = 16 / HPX, roofH = 20 / HPX, tc = teamColor(e.team), L = houseLayout(e);
       const wall = a === 0 ? WOOD.plankL : AGE_WALLS[Math.min(a, 2)].gl, beam = a >= 2 ? '#57432e' : WOOD.beam;
       const thick = 0.035, rise = roofH - thick, f = houseFaces(x0, z0, x1, z1, wallH, rise, true, !e.complete || e.openTop);
-      f.z0.holes.push(hole('z0', box, 0.5, SILL, 0.2, wallH * 0.85)); // the door, round the back: the art shows none
       solid(g, wall + (a === 0 ? '|planks' : '|plaster'), Object.values(f));
-      if (a > 0) for (const f of FACES) { // half-timber frame: two studs, a mid-rail between them
-        for (const t of [0.35, 0.7]) onFace(g, beam, f, ...box, t - 0.025, t + 0.025, 0, wallH, 0.012);
-        for (const [u0, u1] of [[0.03, 0.325], [0.375, 0.675], [0.725, 0.97]]) onFace(g, beam, f, ...box, u0, u1, wallH * 0.5 - 0.015, wallH * 0.5 + 0.015, 0.012);
-      }
-      // drawGableBlock: ridge along x through the middle, 20px up; the roof
-      // rests on the gable walls, overhanging 13% past the front (+x) gable,
-      // 10% past the back and 5% past the eaves — so the overhang and the back
-      // slope's end edge show beyond the gable, as in the art.
-      roofOn(piece(g), tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13);
-      if (a >= 1) { // chimney: 30% along the ridge, 30% down the +z slope, 16px proud
-        const cx = x0 + 0.3, cz = z0 + 0.665, top = wallH + 0.67 * roofH + 16 / HPX, ch = piece(g);
+      if (a > 0) for (const fc of FACES) timberFrame(g, beam, fc, box, wallH, L.braceBay(fc));   // (no door: the house reads cleaner without one)
+      // the roof: Dark thatch (thick, deep eaves) under the owner's ridge roll; later the owner's shingles
+      const rp = piece(g);
+      if (a === 0) thatchRoof(rp, tc, box, wallH, rise, true);
+      else roofOn(rp, tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13);
+      // (drawGableBlock: ridge along x through the middle, 20px up; the roof rests on the gable walls, overhanging 13% past
+      // the front (+x) gable, 10% past the back and 5% past the eaves — the overhang and the back slope's end show, as the art)
+      if (a >= 1) { // chimney: along the ridge (per house), 30% down the +z slope, 16px proud; a dark flue, smoke from it
+        const cx = x0 + L.chimney, cz = z0 + 0.665, top = wallH + 0.67 * roofH + 16 / HPX, ch = piece(g), capT = top + 3 / HPX;
         boxAt(ch, '#9a4a34', cx - 0.08, cz - 0.08, cx + 0.08, cz + 0.08, wallH, top);
-        boxAt(ch, '#8d857a', cx - 0.11, cz - 0.11, cx + 0.11, cz + 0.11, top, top + 3 / HPX);
+        boxAt(ch, '#8d857a', cx - 0.11, cz - 0.11, cx + 0.11, cz + 0.11, top, capT);
+        boxAt(ch, '#1c1208', cx - 0.045, cz - 0.045, cx + 0.045, cz + 0.045, capT - 0.004, capT + 0.002, false);
+        (g.userData.smoke = g.userData.smoke || []).push([cx, capT + 0.01, cz]);
       }
     },
     // Keep in the back quadrant: plank (Dark) or stone, a
@@ -982,7 +1056,7 @@
       f.z1.holes.push(hole('z1', hall, 0.5, SILL, 0.42, wallH * 0.7));                 // door, lit gable end
       for (const u of [0.18, 0.38, 0.62, 0.82]) f.x1.holes.push(hole('x1', hall, u, wallH * 0.46, 0.2, 0.19));
       solid(g, wall + '|plaster', Object.values(f));
-      roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
+      if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
       patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                                    // yard
       const fh = 9 * s / HPX, posts = [[-30, 13], [-30, 26], [-30, 38.5], [-30, 51], [-15, 51], [0, 51], [15, 51], [30, 51], [30, 13], [30, 26], [30, 38.5]];
@@ -1074,8 +1148,10 @@
       const d = r0 * Math.cos(Math.PI / seg) * Math.SQRT1_2;
       faces[0].holes.push({ at: [c.x + d, SILL, c.y + d], w: 9 / 32, h: 13 / HPX });
       solid(g, a === 0 ? WOOD.plankL + '|planks' : '#cfc8b6|plaster', faces, { T: 0.1, thresh: 31 });
-      const cap = own(new THREE.ConeGeometry(r1 + 0.03, 22 / HPX, a === 0 ? 8 : 16).rotateY(Math.PI / 8).translate(0, 11 / HPX, 0)); // corners over the octagon's
-      piece(g).add(inked(cap, mat(WOOD.L + '|shingles'), c.x, H, c.y, 1, 1, 1, 30));
+      // the cap: Dark thatch (a fat, low-hanging straw cone), later shingles; corners over the octagon's
+      if (a === 0) thatchCone(piece(g), c.x, c.y, r1 + 0.1, H - 0.06, 28 / HPX, 12);
+      else { const cap = own(new THREE.ConeGeometry(r1 + 0.03, 22 / HPX, 16).rotateY(Math.PI / 8).translate(0, 11 / HPX, 0));
+        piece(g).add(inked(cap, mat(WOOD.L + '|shingles'), c.x, H, c.y, 1, 1, 1, 30)); }
       if (!e.complete) return;
       // Sails face the iso front (+x,+z); the 'sails' group turns in loop().
       // The hub stands out on a windshaft far enough that a sail pointing
@@ -1520,7 +1596,7 @@
       blob(parent, pale ? '#f4efe2' : '#141414', p.x, p.y, p.z, size);
       if (pale) blob(parent, '#141414', p.x + n.x * size * 0.55, p.y + n.y * size * 0.55, p.z + n.z * size * 0.55, size * 0.6);
     }
-    for (const o of parent.children.slice(n0)) delete o.userData.hullGeo; // eyes carry no outline
+    for (const o of parent.children.slice(n0)) { delete o.userData.hullGeo; o.name = o.name || 'eye'; } // eyes carry no outline (named: a dead animal's close, deathPose)
   }
   function pivot(parent, x, y, z, name){ const p = new THREE.Group(); p.position.set(x, y, z); p.name = name; parent.add(p); return p; }
   // The funny 2D sheep, in the round: a fleece of mixed puffs on a round
@@ -1533,6 +1609,10 @@
     for (let i = 0; i < 8; i++) { // a few fat puffs over the upper body (golden-angle spiral)
       const v = 1 - (i + 0.5) / 8 * 1.45, r = Math.sqrt(Math.max(0, 1 - v * v)), a = i * 2.39996;
       blob(body, wool, Math.cos(a) * r * 0.21, cy + v * 0.13, Math.sin(a) * r * 0.16, 0.1 + (i % 3) * 0.012).name = 'puff';
+    }
+    for (let i = 0; i < 12; i++) { // a ring of puffs standing out of the fleece — a scalloped edge, not a smooth ball
+      const a = i / 12 * 2 * Math.PI + 0.26, up = i % 2 ? 0.05 : -0.01;
+      blob(body, wool, Math.cos(a) * 0.235, cy + up, Math.sin(a) * 0.19, 0.07 + (i % 3) * 0.008).name = 'puff';
     }
     SHEEP.hips.forEach(([x, z], i) => { // (SHEEP, render-units: hung high inside the fleece, so the stride swings wide)
       const leg = pivot(body, x, SHEEP.hipY, z, 'leg' + i);
@@ -1906,6 +1986,12 @@
     let hn = H.children.length;
     blob(H, SKIN, ...P(0, -14), ar(4)).userData.body = 'head';                    // head
     if (o.hat !== 'great') eyes(H, ...P(0, -14), ar(4), ar(4), ar(4), 1, 0.12, 0.35, ar(0.5));
+    if (ART_PROTO && o.hat !== 'great') { // prototype: a mouth and brows, the painted faces' character (no outline, as the eyes)
+      const c = V3(P(0, -14)), R = ar(4), on = (dx, dy, dz) => c.clone().addScaledVector(new THREE.Vector3(dx, dy, dz).normalize(), R * 0.97), n0 = H.children.length;
+      tube(H, '#7a3f2c', on(1, -0.3, -0.3).toArray(), on(1.05, -0.52, 0).toArray(), on(1, -0.3, 0.3).toArray(), ar(0.24));   // a small smile
+      for (const s of [-1, 1]) blob(H, '#5a3d28', ...on(1, 0.5, s * 0.36).toArray(), ar(0.22), ar(0.2), ar(0.62));        // level brows
+      for (const m of H.children.slice(n0)) delete m.userData.hullGeo;
+    }
     fpTag(H, hn);
     for (const s of [-1, 1]) { // arms: an upper arm and a forearm of fixed length (ARM_U, ARM_F), one bendy tube
       const shA = [0, -8, s * (o.dress ? 3.4 : 3.9)], hand = local((o.hands && o.hands[s > 0 ? 1 : 0]) || [1, -2.4, s * 5.6]);
@@ -2643,7 +2729,7 @@
   };
   function animFrame(kind, t, female, opt = {}){
     const LD = opt.load || 'wood', HELD = opt.tool, UP = opt.up || {};   // options: the load carried, the tool in hand, tool upgrades (double, bright)
-    const g = new THREE.Group(), body = new THREE.Group(), tc = '#2d6bd1', who = female ? { hat: 'long', dress: 'tunic' } : { hat: 'hair' }; g.add(body);
+    const g = new THREE.Group(), body = new THREE.Group(), tc = opt.tc || '#2d6bd1', who = female ? { hat: 'long', dress: 'tunic' } : { hat: 'hair' }; g.add(body);
     if (opt.unit === 'tradecart') { const cl = v => Math.max(0, Math.min(1, v)); let pose = { load: opt.load !== false };
       pose.tail = 0.7 * Math.sin(2 * Math.PI * t) * Math.max(0, Math.sin(Math.PI * t * 1)) + 0.25 * Math.sin(6 * Math.PI * t); // a lazy swish, now and then a flick
       if (kind === 'walk') pose = { ...pose, roll: 2 * Math.PI * t / 6, step: t, tail: 0.35 * Math.sin(4 * Math.PI * t) }; // one ox stride = a sixth of a wheel turn (its three spokes repeat every 60°)
@@ -2715,7 +2801,7 @@
     equip: soldierEquip,
     // Animals: built once, posed live by animateAnimal from a stand-in entity (their game path), one action at phase t.
     animals: { sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'idle', 'walk', 'roar', 'breathe', 'die'] },
-    animal: kind => { const g = ANIMAL_MODELS[kind](VIL_TC); addHulls(g, true); return g; },
+    animal: (kind, tc = VIL_TC) => { const g = ANIMAL_MODELS[kind](tc); addHulls(g, true); return g; },
     poseAnimal: (g, kind, action, t) => {
       g.position.set(0, 0, 0); g.rotation.set(0, 0, 0);
       if (action === 'die') { if (kind === 'dragon') dragonDeath(g, t * 3000); else deathPose(g, kind, t * 3000); return; }
@@ -2749,9 +2835,16 @@
       if (MODELS[btype]) MODELS[btype](g, e); else if (isWallBtype(btype) || isGateBtype(btype)) g.add(wallModel(isGateBtype(btype) ? { ...e, x: -1.5, y: -0.5, w: 3, h: 1 } : { ...e, x: -0.5, y: -0.5, w: 1, h: 1 }, []).obj);
       addHulls(g); const d = buildingDamage(g, e.x, e.y, b.w, b.h);
       return { obj: g, setHp: f => d.set(f), collapse: () => d.collapse(), tick: dt => d.tick(dt), get shown(){ return d.shown; } }; },
+    // A finished building exactly as the map draws it at full health (refreshModel: the model, its outline shells, baked).
+    finished: (btype, age = 0) => { teamAge = teamAge || [0, 0]; teamAge[1] = age; const b = BLDGS[btype], g = new THREE.Group();
+      const e = { id: -1, type: 'building', btype, x: -b.w / 2, y: -b.h / 2, w: b.w, h: b.h, team: 1, complete: true, hp: 1, maxHp: 1, buildProgress: 1, buildTime: 1, gateProgress: 0 };
+      MODELS[btype](g, e); addHulls(g); bakeStill(g); return g; },
     buildingTypes: [...Object.keys(MODELS), 'WALL', 'SWALL', 'GATE', 'SGATE'],
     kinds: ['idle', 'walk', 'flee', 'carry', 'barrow', 'chop', 'saw', 'mine', 'farm', 'plow', 'forage', 'butcher', 'build', 'repair', 'drop', 'fight', 'die'],
     frame: animFrame,
+    // the prop builders (icons.html poses tech and resource icons from them): the game's own parts, nothing new
+    kit: () => ({ mat, blob, tube, pole, ball, round, rock, boxAt, tool, sword, spear, bow, roundShield, kiteShield, bowSaw, knife, flag, pennant,
+      load, arrowAt, drawnBow, quiver, barrowRig, horseKit, wallModel, wallArms, addHulls, own, V3, ax, ar, chh, HANDLE, TOOL_STEEL, STEEL, GOLD, MODELS }),
     check: () => window.__povAnimCheck(),
     dispose: g => { disposeFaded(g); g.traverse(o => { if (o.geometry && o.geometry.userData.own) o.geometry.dispose(); }); },
     // A tree for the chop: the trunk pivots at its base so it can shake, the
@@ -2920,6 +3013,7 @@
     model.position.y += DEAD_HALF[kind] * Math.sin(Math.min(rot, Math.PI / 2));
     [0, 1, 2, 3].forEach(i => { const l = model.getObjectByName('leg' + i); l.rotation.z = (i < 2 ? -0.45 : 0.45) * p; l.position.y = l.userData.y0 ?? l.position.y; });
     const neck = model.getObjectByName('neck'); neck.rotation.set(0.25 * p, 0, -0.35 * p);
+    model.traverse(o => { if (o.name === 'eye') o.visible = false; });                 // dead: the eyes close
     const jaw = model.getObjectByName('jaw'); if (jaw) jaw.rotation.z = -0.25 * p;
   }
   // A carcass being harvested (its hp is the food left, 100 → 0): the legs go
@@ -3233,9 +3327,11 @@
     solid(g, wallCol, Object.values(f));
     // 'peaked' block roof: in the art's projection its apex sits roofH + bhh
     // (8 + 10px) above the wall top — a pyramid on the block's own corners.
-    const rise = 18 / HPX;
-    pyramid(piece(g), roofCol, ...box, wallH, rise);
-    if (e.complete) pennant(g, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, wallH + rise, teamColor(e.team));
+    // (Dark: a thatched hip, the turned straw roof on four sides over the block's corners)
+    const dark = ageOf(e) === 0, rise = (dark ? 24 : 18) / HPX;
+    if (dark) thatchCone(piece(g), (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, (box[2] - box[0]) * Math.SQRT1_2 + 0.07, wallH - 0.05, rise + 0.05, 4, Math.PI / 4);
+    else pyramid(piece(g), roofCol, ...box, wallH, rise);
+    if (e.complete) pennant(g, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, wallH + rise, teamColor(e.team));   // (the apex: eave + rise + wallH − eave)
   }
 
   // A building is some 50 parts (and as many outline shells): 50+ draw calls each, most of a crowded view's. Its still
@@ -3288,7 +3384,7 @@
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
+      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -3397,21 +3493,28 @@
     return geo;
   }
   // The ground a site's walls enclose, in their shade: the walls' inner feet (convex hull), a dark film just above the grass.
-  let _floorMat = null;
-  function floorShade(o){
+  let _floorMat = null, _floorDepthMat = null;
+  function floorShade(o, jag){
     o.updateMatrixWorld(true);
-    const P = o.geometry.attributes.position, In = o.geometry.attributes.inside, v = new THREE.Vector3(), pts = [];
-    for (let i = 0; i < P.count; i++) if (In.getX(i) > 0.5) { v.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); if (v.y < 1e-3) pts.push([v.x, v.z]); }
+    const P = o.geometry.attributes.position, In = o.geometry.attributes.inside, v = new THREE.Vector3(), pts = [], all = [];
+    for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); if (v.y < 1e-3) { all.push([v.x, v.z]); if (In.getX(i) > 0.5) pts.push([v.x, v.z]); } }
     if (pts.length < 3) return null;
-    pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
-    for (const p of pts) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
-    for (const p of pts.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
-    const hull = lo.slice(0, -1).concat(hi.slice(0, -1)); if (hull.length < 3) return null;
-    const pos = []; for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], 0.004, q[1]);
-    const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    // a convex fan over points on the ground
+    const fan = (ps, y) => { ps = ps.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+      for (const p of ps) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      for (const p of ps.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+      const hull = lo.slice(0, -1).concat(hi.slice(0, -1)), pos = [];
+      for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], y, q[1]);
+      const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); return hull.length < 3 ? null : geo; };
+    const geo = fan(pts, 0.004), under = fan(all, 0.002); if (!geo) return null;   // (the twin a hair lower: at one height their two triangulations z-fought, the shade flickering)
     _floorMat = _floorMat || new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 1 - SITE_SHADE, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }); // (single pass: a see-through two-sided material is otherwise drawn twice, recompiled each time)
-    return new THREE.Mesh(geo, _floorMat);
+    // its twin writes depth only, drawn first, over the walls' whole footprint: the ground blocks nothing, so without it an
+    // outline shell's floor shows black through the open top
+    _floorDepthMat = _floorDepthMat || new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide });
+    const m = new THREE.Mesh(geo, _floorMat);
+    if (jag) { const d = new THREE.Mesh(under || geo, _floorDepthMat); d.renderOrder = -0.5; m.add(d); }   // (the twin: under the walls too; a damaged building's only — a site's walls start pressed flat onto it and fought it)
+    return m;
   }
   // jag: a damaged building (buildingDamage) — walls broken to a jagged top, pieces crumbling; no scaffold.
   const SITE_NOISE = `float siteH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -3450,12 +3553,17 @@
                 #endif
                 vec4 sw = siteM * vec4(transformed, 1.0); vSiteY = sw.y; vClip = clipOnly;
                 float sy = siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(sw.xz * 3.2)) : siteY; vSiteTop = sy;
-                if (clipOnly < 0.5 && sw.y > sy) { sw.xyz -= slide * (sw.y - sy); transformed = (inverse(siteM) * sw).xyz; }
+                #ifndef SITE_HULL
+                  if (clipOnly < 0.5 && sw.y > sy) { sw.xyz -= slide * (sw.y - sy); transformed = (inverse(siteM) * sw).xyz; }
+                #endif
                 vSiteW = sw.xyz; vInside = inside; }`);
           // a surface pressed flat onto the top (found per pixel, so a wall's side is never touched) is lit and patterned as a top
-          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;')
+          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;\n' + SITE_NOISE)
             .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
               if (vClip > 0.5 && vSiteY > vSiteTop + 1e-4) discard;
+              #ifdef SITE_HULL
+                if (vSiteW.y > (siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(vSiteW.xz * 3.2)) : siteY)) discard;   // an outline: cut at the broken top, per pixel (pressed, it laid a black sheet over it)
+              #endif
               bool sitePressed = vSiteW.y >= vSiteTop - 1e-4 && (siteJag > 0.0 || abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98);`)
             .replace('abs(normalize(vWNrm))', 'abs(sitePressed ? vec3(0.0, 1.0, 0.0) : normalize(vWNrm))')
             // the inside of the walls (and of its openings) in the walls' shade
@@ -3464,9 +3572,10 @@
         c.onBeforeCompile.fow = !!(ob && ob.fow);                        // (a source already fog-patched: not patched again — a double patch won't compile)
         c.customProgramCacheKey = () => key + (jag ? ':siteJ' : ':site');
         c.defines = { ...(c.defines || {}), SITE_SHADE: SITE_SHADE.toFixed(3) };
+        if (HULL_MATS.has(m)) c.defines.SITE_HULL = '';
         // a lintel pressed down faces down: from above it must still close its opening's slot
         if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide; }
-      if (INTERIOR_MATS.has(m) || HULL_MATS.has(m)) c.visible = false;     // (no bold outline on an open, half-built shell: the finished building gets it)
+      if (INTERIOR_MATS.has(m) || (HULL_MATS.has(m) && !jag)) c.visible = false;     // (no bold outline on an open, half-built shell: the finished building gets it; a damaged one keeps its own, pressed down with its broken walls)
       built.set(m, c); return c; };
     // every mesh of a site says what it is (the site shader reads these; an unset attribute reads garbage)
     const mark = geo => { const n = geo.attributes.position.count;
@@ -3481,7 +3590,7 @@
     const floors = [];
     for (const c of g.children) walk(c, o => { if (!o.isMesh || !o.userData.slab) return; o.geometry = own(o.userData.slab(jag));
       const rl = o.children.find(k => k.userData.rims); if (rl) rl.geometry = own(new THREE.BufferGeometry().setFromPoints(o.userData.slabRims()));
-      floors.push(floorShade(o)); });
+      floors.push(floorShade(o, jag)); });
     for (const f of floors) if (f) g.add(f);
     for (const c of g.children.slice()) walk(c, o => swap(o, cutMat));
     // a part that starts above the build height isn't there yet (a cap on the walls, a beam higher up) — pressing it down
@@ -3679,6 +3788,8 @@
     const t = aTick * 0.13;
     for (const rec of solids.values()) {
       if (rec.sails) rec.sails.rotation.z += dt * 0.9;
+      if (rec.smoke && !rec.site && !rec.dmg && rec.obj.visible && (rec.smokeT = (rec.smokeT || Math.random()) - dt) <= 0) { // chimney smoke (the 2D's drawChimneySmoke)
+        rec.smokeT = 0.55 + Math.random() * 0.3; for (const [x, y, z] of rec.smoke) chimneyPuff(x, y, z); }
       if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)
       if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
       if (rec.dmg && rec.obj.visible) { const fe = entitiesById.get(rec.obj.userData.bid); if (fe) rec.dmg.set(fe.hp / fe.maxHp); rec.dmg.tick(dt); } // (its damage by its health)
@@ -3866,6 +3977,7 @@
     scene.add(o); rec.obj = o; rec.key = key; vilRefs.set(key, (vilRefs.get(key) || 0) + 1);
   }
   const villagers = new Map();
+  window.__povVil = id => { const v = villagers.get(id); return v ? { x: v.x, z: v.z, yaw: v.yaw, key: v.key, rig: !!v.rig, ox: v.rig ? v.rig.root.position.x : v.obj && v.obj.position.x, oz: v.rig ? v.rig.root.position.z : v.obj && v.obj.position.z, oyaw: v.rig ? v.rig.root.rotation.y : v.obj && v.obj.rotation.y } : null; };   // dev: a villager's drawn state (tests)
   // Where each action's target sits in the villager's own frame (tiles, +x ahead): villagerWorkReach (render-units,
   // shared with the 2D) — the model steps in so the tool meets it.
   const workAt = villagerWorkReach;
@@ -3891,6 +4003,12 @@
       m.position.set(x + (Math.random() - 0.5) * 0.12, y, z + (Math.random() - 0.5) * 0.12); m.scale.setScalar(0.03); scene.add(m); puffs.push({ m, age: 0 }); }
   }
   let _usph = null; const unitSphere = () => _usph || (_usph = new THREE.SphereGeometry(1, 8, 6));
+  // a chimney's smoke: soft grey puffs rising slowly, drifting, swelling and thinning out (updateFlyers)
+  const smokes = [];
+  function chimneyPuff(x, y, z){
+    const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ color: '#c9c6c0', transparent: true, opacity: 0.45, depthWrite: false }));
+    m.position.set(x, y, z); m.scale.setScalar(0.035); scene.add(m); smokes.push({ m, age: 0, dx: 0.04 + Math.random() * 0.03 });
+  }
   function oreChips(x, y, z, ang, cols){
     for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(unitBox, mat(cols[i % cols.length])); m.scale.set(0.02, 0.016, 0.022); m.position.set(x, y, z); scene.add(m);
       const sp = 0.5 + Math.random() * 0.4, a2 = ang + Math.PI + (Math.random() - 0.5) * 1.8;
@@ -3902,6 +4020,10 @@
     return f.clone();
   }
   function updateFlyers(dt){
+    for (let i = smokes.length - 1; i >= 0; i--) { const p = smokes[i]; p.age += dt;
+      p.m.position.y += dt * 0.14; p.m.position.x -= dt * p.dx; p.m.position.z -= dt * p.dx * 0.6; p.m.scale.setScalar(0.035 * (1 + p.age * 1.4));
+      p.m.material.opacity = 0.45 * Math.max(0, 1 - p.age / 2.6);
+      if (p.age > 2.6) { scene.remove(p.m); p.m.material.dispose(); smokes.splice(i, 1); } }
     for (let i = puffs.length - 1; i >= 0; i--) { const p = puffs[i]; p.age += dt; p.m.scale.setScalar(0.03 * (1 + p.age * 3)); p.m.position.y += dt * 0.08; p.m.material.opacity = Math.max(0, 0.7 - p.age);
       if (p.age > 0.8) { scene.remove(p.m); p.m.material.dispose(); puffs.splice(i, 1); } }
     for (let i = flying.length - 1; i >= 0; i--) { // a thrown load: an arc from the hands into the drop-off, a puff where it lands
@@ -3961,7 +4083,7 @@
     if (T) { const ph = Math.atan2(T[1] - (e.y + 0.5), T[0] - (e.x + 0.5)), c = Math.cos(ph), sn = Math.sin(ph);
       const px = T[0] - (W[0] * c - W[1] * sn), pz = T[1] - (W[0] * sn + W[1] * c);
       if ((px - tx) ** 2 + (pz - tz) ** 2 < 1.6 * 1.6) { tx = px; tz = pz; }
-      if (!isUnitMoving(e)) { ty = -ph; setHeading(e, ph); }                   // at work: turned to what it works on
+      if (!isDrawnMoving(e)) { ty = -ph; setHeading(e, ph); }                  // at work: turned to what it works on
       // A blow lands as the swing wraps: the target reacts.
       if (p.t < v.lastT - 0.5 && (p.kind === 'mine' || p.kind === 'split' || p.kind === 'build' || p.kind === 'repair' || p.kind === 'butcher')) {
         const hitX = T[0] - c * 0.08, hitZ = T[1] - sn * 0.08;
@@ -4158,7 +4280,7 @@
       // Its outline, made at the part's size in THIS pose: a part that stretches between samples (a pole, a
       // squashed blob) keeps the outline width of the template pose — fine for these small ranges.
       if (o.userData.hullGeo) { o.getWorldScale(s).set(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z));
-        const hg = hullGeometry(o.userData.hullGeo, s, o.userData.hullW || HULL, null, true);
+        const hg = hullGeometry(o.userData.hullGeo, s, o.userData.hullW || HULL, null, 'skinned');
         if (hg) { const { b, base } = rigAdd(B, hullUnionMat, 1, hg, bone, null); rigIndex(b, base, hg); hg.dispose(); } }
       for (const c of o.children) if (c.isLineSegments) { const { b, base } = rigAdd(B, c.material, 3, c.geometry, bone, null); b.lines = true; rigIndex(b, base, c.geometry); } // edge ink (posts), on the part's bone
       bone++;
@@ -4377,8 +4499,10 @@
         const key = kind + teamColor(e.team), [tx, tz] = posOf(e);
         let a = animals.get(e.id);
         const ty = dead && a ? a.yaw : -worldFacing(e); // the fallen keep the heading they died with
-        if (a && a.key !== key) { dropSolid(a); a = null; }
-        if (!a) { const g = ANIMAL_MODELS[e.utype](teamColor(e.team)); addHulls(g, true); if (e.utype !== 'dragon') bakeRigid(g, e.utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0 }); }
+        // a rebuild (its colour changed: a slain sheep's tuft goes to nobody's white) keeps its life — else a sheep seen
+        // alive came back already lying, its fall skipped
+        let life = null; if (a && a.key !== key) { life = { alive: a.alive, deadAt: a.deadAt }; dropSolid(a); a = null; }
+        if (!a) { const g = ANIMAL_MODELS[e.utype](teamColor(e.team)); addHulls(g, true); if (e.utype !== 'dragon') bakeRigid(g, e.utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
         // Glide between sim steps and ease into turns (a jump of 2+ tiles snaps).
         const nx = tx, nz = tz; // interpolated (posOf): no chase lag
         const mvx = nx - a.x, mvz = nz - a.z; a.moved = Math.hypot(mvx, mvz); a.x = nx; a.z = nz;

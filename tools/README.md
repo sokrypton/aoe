@@ -13,6 +13,7 @@
 | `free-vars.js` | for a line range, lists identifiers it reads but doesn't declare, split into globals vs **enclosing-scope locals** — the ones that turn an extract-a-function refactor into a runtime `ReferenceError`. Heuristic (no parser), so eyeball it; validated against the two known traps in git history | before cutting a block out of a long function |
 | `screenshot.js` / `screenshot-hud.js` | visual acceptance snapshots | UI/art changes |
 | `resheet-sprites.py` | sprite-sheet rebuild | art pipeline |
+| `build-icons.js` | renders every recipe in `icons.html` (the icon studio: units, buildings, props posed from the 3D models) into its `sprites.png` cell and writes the sheet, losslessly optimized; cells without a recipe keep their art | after changing a model or an icon recipe |
 
 All Playwright drivers share `lib/harness.js` (static server over the repo +
 system-Chrome launch; first run does a one-time `cd tools && npm install`).

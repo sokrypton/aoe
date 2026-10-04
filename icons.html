@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Icon Studio — Age of Epochs</title>
+<style>
+  /* Icon studio: every HUD icon posed from the game's own 3D models (js/pov3d.js builders, the lab3d hooks), rendered
+     large and brought down to the sprite cell. Each card: the current sheet icon beside the new render. */
+  html, body { margin: 0; background: #2a1c10; color: #e8d9b0; font: 13px sans-serif; }
+  #ic-bar { position: sticky; top: 0; z-index: 10; background: #1d130a; padding: 8px 12px; display: flex; gap: 16px; align-items: center; }
+  #ic-bar button { background: #4a3419; color: #e8d9b0; border: 1px solid #7a5a38; padding: 3px 10px; cursor: pointer; }
+  #ic-grid { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px; }
+  .ic-card { background: #3a2a18; border: 1px solid #5a4126; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
+  .ic-card .k { font: 12px monospace; opacity: .8; }
+  .ic-pair { display: flex; gap: 6px; }
+  .ic-pair > * { width: 128px; height: 128px; border-radius: 4px; }
+  .ic-old { background-image: url(sprites.png); background-size: 800% 1100%; background-color: #e8dcc0; }
+  .ic-new { background: #e8dcc0; }
+  .ic-pair.dark > * { background-color: #3d2f1f; }
+</style>
+</head>
+<body>
+<div id="ic-bar"><strong>Icon Studio</strong><span id="ic-status">loading…</span><button id="ic-bg">dark background</button></div>
+<div id="ic-grid"></div>
+
+<script src="js/page-shell.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/core.js"></script>
+<script src="js/map.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/pathfinding.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/render-terrain.js"></script>
+<script src="js/render-buildings.js"></script>
+<script src="js/render-units.js"></script>
+<script src="js/render-outlines.js"></script>
+<script src="js/render-fx.js"></script>
+<script src="js/render.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/pov3d.js"></script>
+<script>
+// One recipe per icon (keys are js/page-shell.js SPRITE_CELLS names):
+// The subject, one of:
+//   unit/kind/t      — LAB.frame's posed character (its gear from LAB.equip(unit, age, atk, arm, fletch); a villager's
+//                      female/tool/load as the lab's)
+//   animal/kind/t    — LAB.animal posed by LAB.poseAnimal
+//   bldg/age         — the finished building (LAB.damaged at full health)
+//   prop             — a PROPS builder: the game's own parts (LAB.kit) arranged for the icon
+//   yaw/pitch        — the camera's angle (the lab's orbit: the model faces +x, yaw π/2 looks at its front); the
+//                      camera frames the whole model by its bounds
+//   cut / cutFrac    — a portrait: cut flat at this height (world y, tile units; or this fraction of the model's
+//                      height) and stood on the cell's bottom edge; none: the whole silhouette, centred
+// Prop builders: (g, K = LAB.kit(), r) → the subject built into g, in world (tile) units, standing on y = 0.
+const PROPS = {
+  // a run of linked wall pieces along x (r.run: [btype, width] left to right), as the map links them
+  wallRun(g, K, r){
+    teamAge[1] = r.age || 0; let x = 0; const run = r.run.map(([btype, w], i) => { const p = { id: -10 - i, type: 'building', btype, x, y: 0, w, h: 1, team: 1, complete: true, hp: 1, maxHp: 1, buildProgress: 1, gateProgress: 0 }; x += w; return p; });
+    const at = (tx, ty) => run.find(p => tx >= p.x && tx < p.x + p.w && ty === p.y);
+    for (const p of run) g.add(K.wallModel(p, K.wallArms(p, at, () => true)).obj);
+  },
+  // two villagers side by side (population): the lab's posed characters, already outlined
+  pop(g, K){
+    const LAB = window.__pov3dLab;
+    for (const [female, z, x] of [[true, -0.085, -0.02], [false, 0.085, 0.02]]) { const f = LAB.frame('idle', 0, female, { unit: 'villager', tc: NEUTRAL }); f.position.set(x, 0, z); g.add(f); }
+    return false;
+  },
+  // a resource heap: the carried loads (LAB load), stacked (r.loads: [kind, x, y, z] in art px)
+  heap(g, K, r){ for (const [k, x, y, z, sc] of r.loads) K.load(g, k, [K.ar(x), K.ar(y), K.ar(z)], sc || 1.5); },   // (sc: the load's scale, 1.5 as carried)
+  // the town bell under its wooden yoke: a lathed bronze bell, a clapper, two posts and the beam
+  bell(g, K){
+    const a = K.ar, prof = [[0, 13], [2.2, 12.6], [3.6, 11], [4.2, 8], [4.8, 4], [6.2, 1.2], [6.8, 0], [6.2, 0.6], [0, 0.6]];
+    const geo = K.own(new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(a(x), a(y))), 24)), m = new THREE.Mesh(geo, K.mat(K.GOLD, true));
+    m.position.y = a(4); m.userData.hullGeo = geo; g.add(m);
+    K.blob(g, '#8a6a20', 0, a(3.2), 0, a(1.3));
+    for (const z of [-1, 1]) K.pole(g, K.HANDLE, [0, 0, z * a(10)], [0, a(21), z * a(10)], a(1.1));
+    K.pole(g, K.HANDLE, [0, a(19.5), -a(11.5)], [0, a(19.5), a(11.5)], a(1.3));
+    K.pole(g, '#5a4630', [0, a(17), 0], [0, a(19.5), 0], a(0.5));
+  },
+  // a rally banner (not a team's): a swallowtail flag, a wooden pole planted in a little cairn
+  rally(g, K){
+    const a = K.ar; K.pole(g, K.HANDLE, [0, 0, 0], [0, a(30), 0], a(0.9)); K.ball(g, K.GOLD, 0, a(31), 0, a(1.4));
+    const sh = new THREE.Shape([[0, 0], [15, 0.8], [11, -4.5], [15, -9.8], [0, -9]].map(([x, y]) => new THREE.Vector2(a(x), a(y))));
+    const geo = K.own(new THREE.ExtrudeGeometry(sh, { depth: a(0.5), bevelEnabled: false })), f = new THREE.Mesh(geo, K.mat('#e07a2a'));
+    f.position.set(a(0.6), a(29), 0); f.rotation.y = -0.35; f.userData.hullGeo = geo; g.add(f);
+    K.rock(g, '#8c8c8c', 0, 0, a(5), a(3.5)); K.rock(g, '#9d9d9d', a(4), a(2), a(3), a(2.5));
+  },
+  // a seed sack, tied, a few ears of wheat in its mouth (reseed)
+  sack(g, K){
+    const a = K.ar; K.blob(g, '#c9a66b', 0, a(6), 0, a(7), a(6.5), a(6.2)); K.blob(g, '#c9a66b', 0, a(13), 0, a(3), a(2.2), a(3));
+    const tie = new THREE.Mesh(K.own(new THREE.TorusGeometry(a(2.6), a(0.6), 6, 16).rotateX(Math.PI / 2)), K.mat('#6b4a2a')); tie.position.y = a(11.6); tie.userData.hullGeo = tie.geometry; g.add(tie);
+    for (const dx of [-1.2, 0, 1.3]) { K.pole(g, '#d4ab2c', [a(dx * 0.5), a(13), 0], [a(dx * 2.2), a(19), a(dx * 0.4)], a(0.35)); K.blob(g, '#e8c84a', a(dx * 2.4), a(20), a(dx * 0.45), a(0.9), a(1.8), a(0.9)); }
+  },
+  // shields as the soldiers carry them (age crests): round wood, the white kite, a kite over crossed swords
+  shield(g, K, r){
+    const a = K.ar;
+    if (r.kind === 'round') K.roundShield(g, [0, a(6), 0], NEUTRAL);
+    else K.kiteShield(g, [0, a(9), 0], NEUTRAL).rotation.y = Math.PI / 2;
+    if (r.swords) for (const s of [-1, 1]) K.sword(g, [a(-2), a(-2), s * a(-5)], 2, [0, 1, s * 0.75]);
+  },
+  // a blade or spear planted in a rock (stances: passive / stand ground)
+  planted(g, K, r){
+    const a = K.ar; K.rock(g, '#8c8c8c', 0, 0, a(9), a(7)); K.rock(g, '#9d9d9d', a(6), a(4), a(5), a(4));
+    if (r.kind === 'sword') K.sword(g, [0, a(22), 0], 1, [0, -1, 0]);   // (the blade 4.5–24.5 px from the grip: its point in the rock)
+    else { K.pole(g, '#8B4513', [0, a(3), 0], [0, a(30), 0], a(0.9)); const tip = new THREE.Mesh(K.own(new THREE.ConeGeometry(a(1.6), a(5.5), 4)), K.mat(K.STEEL)); tip.position.y = a(32.6); tip.userData.hullGeo = tip.geometry; g.add(tip); }
+  },
+  // a lone tool, upright and turned to show its head (r.tool, r.up: the upgrade's look)
+  tool(g, K, r){ K.tool(g, r.tool, [0, K.ar(8), 0], r.dir || [0.25, 1, 0], r.up || {}); if (r.ore) K.load(g, r.ore, [K.ar(7), K.ar(2), K.ar(2)]); },
+  bowSaw(g, K){ K.bowSaw(g); },
+  barrow(g, K, r){ K.barrowRig(g, r.kind, r.load || null); },
+  // arrows: fanned (Fletching, the vanes), one long bodkin, or one in a target (Ballistics)
+  arrows(g, K, r){
+    const a = K.ar, tan = '#d8c09a';
+    if (r.kind === 'fan') for (const s of [-1, 0, 1]) K.arrowAt(g, [0, 0, s * a(1.6)], [0.35 * s, 1, 0.12 * s], true, tan);
+    if (r.kind === 'bodkin') { K.pole(g, '#8b6a3a', [0, 0, 0], [0, a(15), 0], a(0.5)); const h = new THREE.Mesh(K.own(new THREE.ConeGeometry(a(1.4), a(6.5), 4)), K.mat('#dde3ea')); h.position.y = a(18); h.userData.hullGeo = h.geometry; g.add(h);
+      K.arrowAt(g, [0, 0, 0], [0, 1, 0], true, tan); }
+    if (r.kind === 'target') { const T = new THREE.Group(); T.position.y = a(12); T.rotation.y = Math.PI / 2; g.add(T);
+      [[9, '#f2ead8'], [7, '#c8322a'], [5, '#f2ead8'], [3, '#c8322a']].forEach(([rr, col], i) => { const c = new THREE.Mesh(K.own(new THREE.CylinderGeometry(a(rr), a(rr), a(1.4), 28).rotateX(Math.PI / 2)), K.mat(col)); c.position.z = a(i * 0.12); if (!i) c.userData.hullGeo = c.geometry; T.add(c); });
+      for (const s of [-1, 1]) K.pole(g, K.HANDLE, [0, a(12), 0], [-a(3), 0, s * a(5)], a(0.8));
+      K.arrowAt(g, [a(13), a(16), a(-2)], [-1, -0.3, 0.15], true, tan); }
+  },
+  // the smith's anvil, a hot bar on its face, the hammer (Forging)
+  anvil(g, K){
+    const a = K.ar; K.boxAt(g, '#4b4f55', -a(4), -a(3), a(4), a(3), 0, a(2.5)); K.boxAt(g, '#4b4f55', -a(2), -a(1.6), a(2), a(1.6), a(2.5), a(6));
+    K.boxAt(g, '#5d6269', -a(6.5), -a(2.4), a(5), a(2.4), a(6), a(8.6));
+    const horn = new THREE.Mesh(K.own(new THREE.ConeGeometry(a(2), a(5), 12).rotateZ(-Math.PI / 2)), K.mat('#5d6269')); horn.position.set(a(7.4), a(7.6), 0); horn.userData.hullGeo = horn.geometry; g.add(horn);
+    K.boxAt(g, '#ff8a1c', -a(4), -a(0.7), a(2), a(0.7), a(8.6), a(9.6));
+    const H = new THREE.Group(); H.position.set(-a(1), a(13), a(3)); H.rotation.z = 0.6; g.add(H);
+    K.pole(H, K.HANDLE, [a(4), -a(5), 0], [-a(2), a(4), 0], a(0.7)); K.boxAt(H, '#3b3f45', -a(4.5), -a(1.3), a(0.5), a(1.3), a(3), a(5.6));
+  },
+  // molten iron poured from a crucible into a helmet (Iron Casting)
+  casting(g, K){
+    const a = K.ar; K.ball(g, '#9ca3ab', 0, a(3), 0, a(6), 0.95, true); K.round(g, '#8a9098', 0, 0, a(7.5), a(7.5), a(2.6), a(3.6), 20);
+    const C = new THREE.Group(); C.position.set(-a(7), a(16), 0); C.rotation.z = -0.9; g.add(C); K.round(C, '#5a4a3a', 0, 0, a(3.2), a(4.2), -a(4), a(4), 16);
+    K.tube(g, '#ff8a1c', [-a(3.6), a(17), 0], [-a(1), a(14), 0], [0, a(8.4), 0], a(0.9)); K.blob(g, '#ffb347', 0, a(8.6), 0, a(2), a(0.7), a(2));
+  },
+  // a bricklayer's trowel on cut stone (Masonry)
+  masonry(g, K){
+    const a = K.ar; K.load(g, 'stone', [0, a(2.4), 0]);
+    const sh = new THREE.Shape([[0, 0], [4, 7], [0, 11], [-4, 7]].map(([x, y]) => new THREE.Vector2(a(x), a(y)))), geo = K.own(new THREE.ExtrudeGeometry(sh, { depth: a(0.4), bevelEnabled: false }));
+    const T = new THREE.Group(); T.position.set(a(6), a(9), a(5)); T.rotation.set(-1.1, 0.4, 0.5); g.add(T);
+    const m = new THREE.Mesh(geo, K.mat('#c9ced4')); m.userData.hullGeo = geo; T.add(m); K.pole(T, K.HANDLE, [0, 0, a(0.2)], [0, -a(6), a(0.2)], a(0.8));
+  },
+  // the draught horse's collar: a padded leather ring, brass hames down its sides (Horse Collar)
+  collar(g, K){
+    const a = K.ar, ring = new THREE.Mesh(K.own(new THREE.TorusGeometry(a(6), a(2.2), 12, 28)), K.mat('#6b4a2a')); ring.scale.set(1, 1.35, 1); ring.position.y = a(10); ring.userData.hullGeo = ring.geometry; g.add(ring);
+    for (const s of [-1, 1]) K.tube(g, '#d6a326', [s * a(4), a(2), a(2)], [s * a(9.5), a(10), a(2)], [s * a(3), a(19), a(2)], a(0.8));
+  },
+  // a row of town houses (Guilds)
+  town(g, K){
+    let i = 0; for (const [x, y] of [[0, 0], [1.25, -0.2], [0.55, 1.15]]) K.MODELS.HOUSE(g, { id: -30 - i++, type: 'building', btype: 'HOUSE', x, y, w: 2, h: 2, team: 1, complete: true, hp: 1, maxHp: 1, buildProgress: 1 });
+  },
+  // the farm, ripe: its crop reads the tile's food (MODELS.FARM → farmStanding), so the studio's one-tile map holds a full field
+  farm(g, K){
+    map[0] = map[0] || []; map[0][0] = { ...(map[0][0] || {}), res: 1e9 };
+    K.MODELS.FARM(g, { id: -20, type: 'building', btype: 'FARM', x: 0, y: 0, w: 2, h: 2, team: 1, complete: true, hp: 1, maxHp: 1, buildProgress: 1 });
+  },
+};
+const ICONS = {
+  // ---- units: portraits cut at the waist, riders/siege/animals whole
+  villager:          { unit: 'villager', female: true, kind: 'build', t: 0, yaw: 0.85, pitch: 0.22, cut: 0.2 },
+  militia:           { unit: 'militia', age: 0, kind: 'attack', t: 0, yaw: 0.95, pitch: 0.22, cut: 0.2 },
+  'militia-feudal':  { unit: 'militia', age: 1, arm: 1, kind: 'attack', t: 0, yaw: 0.95, pitch: 0.22, cut: 0.2 },
+  'militia-castle':  { unit: 'militia', age: 2, atk: 1, arm: 2, kind: 'attack', t: 0, yaw: 0.95, pitch: 0.22, cut: 0.2 },
+  spearman:          { unit: 'spearman', age: 1, kind: 'idle', t: 0, yaw: 0.6, pitch: 0.22, cut: 0.2 },
+  'spearman-castle': { unit: 'spearman', age: 2, atk: 1, arm: 2, kind: 'idle', t: 0, yaw: 0.6, pitch: 0.22, cut: 0.2 },
+  archer:            { unit: 'archer', age: 1, kind: 'attack', t: 0.5, yaw: 0.45, pitch: 0.22, cut: 0.2 },
+  'archer-castle':   { unit: 'archer', age: 2, arm: 2, fletch: true, kind: 'attack', t: 0.5, yaw: 0.45, pitch: 0.22, cut: 0.2 },
+  scout:             { unit: 'scout', age: 1, kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
+  'scout-castle':    { unit: 'scout', age: 2, arm: 2, kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
+  knight:            { unit: 'knight', age: 2, atk: 1, arm: 2, kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
+  ram:               { unit: 'ram', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.3 },
+  tradecart:         { unit: 'tradecart', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.3 },
+  sheep:             { animal: 'sheep', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
+  bear:              { animal: 'bear', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
+  dragon:            { animal: 'dragon', kind: 'roar', t: 0.5, yaw: 0.75, pitch: 0.25 },
+  // ---- buildings: whole, from the map's isometric side (yaw π/4)
+  'TC-dark':   { bldg: 'TC', age: 0, yaw: 0.785, pitch: 0.55 },
+  'TC-feudal': { bldg: 'TC', age: 1, yaw: 0.785, pitch: 0.55 },
+  'TC-castle': { bldg: 'TC', age: 2, yaw: 0.785, pitch: 0.55 },
+  HOUSE:       { bldg: 'HOUSE', yaw: 0.785, pitch: 0.55 },
+  MILL:        { bldg: 'MILL', yaw: 0.785, pitch: 0.55 },
+  FARM:        { prop: 'farm', yaw: 0.785, pitch: 0.6 },
+  LCAMP:       { bldg: 'LCAMP', yaw: 0.785, pitch: 0.55 },
+  MCAMP:       { bldg: 'MCAMP', yaw: 0.785, pitch: 0.55 },
+  BARRACKS:    { bldg: 'BARRACKS', age: 1, yaw: 0.785, pitch: 0.55 },
+  MARKET:      { bldg: 'MARKET', age: 1, yaw: 0.785, pitch: 0.55 },
+  PTOWER:      { bldg: 'PTOWER', yaw: 0.785, pitch: 0.4 },
+  'WT-feudal': { bldg: 'TOWER', age: 1, yaw: 0.785, pitch: 0.4 },
+  'WT-castle': { bldg: 'TOWER', age: 2, yaw: 0.785, pitch: 0.4 },
+  WALL:        { prop: 'wallRun', run: [['WALL', 1], ['WALL', 1], ['WALL', 1]], yaw: 0.45, pitch: 0.35 },
+  SWALL:       { prop: 'wallRun', run: [['SWALL', 1], ['SWALL', 1], ['SWALL', 1]], yaw: 0.45, pitch: 0.35 },
+  GATE:        { prop: 'wallRun', run: [['GATE', 3]], yaw: 0.25, pitch: 0.15 },
+  SGATE:       { prop: 'wallRun', run: [['SGATE', 3]], yaw: 0.25, pitch: 0.15 },
+  // ---- the Home button: each age's Town Center, its top only (keep and flag)
+  home:          { bldg: 'TC', age: 2, yaw: 0.785, pitch: 0.4, cutFrac: 0.45 },
+  'home-dark':   { bldg: 'TC', age: 0, yaw: 0.785, pitch: 0.4, cutFrac: 0.45 },
+  'home-feudal': { bldg: 'TC', age: 1, yaw: 0.785, pitch: 0.4, cutFrac: 0.45 },
+  'home-castle': { bldg: 'TC', age: 2, yaw: 0.785, pitch: 0.4, cutFrac: 0.45 },
+  // ---- resources: the loads villagers carry, heaped
+  food:  { prop: 'heap', loads: [['food', 0, 2.5, -3], ['berries', 2, 1.6, 5]], yaw: 0.6, pitch: 0.45 },
+  wood:  { prop: 'heap', loads: [['wood', 0, 2.9, 0], ['wood', 0, 8.2, 0]], yaw: 1.15, pitch: 0.35 },
+  gold:  { prop: 'heap', loads: [['gold', -3, 1.6, -3, 0.8], ['gold', 3, 1.6, -2, 0.8], ['gold', -2, 1.6, 3, 0.8], ['gold', 3, 1.6, 3.5, 0.8], ['gold', 0, 4.6, 0, 0.8]], yaw: 0.6, pitch: 0.45 },
+  stone: { prop: 'heap', loads: [['stone', 0, 2.4, 0]], yaw: 0.6, pitch: 0.45 },
+  pop:   { prop: 'pop', yaw: 1.1, pitch: 0.1, cut: 0.36 },
+  // ---- symbols, built from the game's parts
+  rally:  { prop: 'rally', yaw: 0.45, pitch: 0.2 },
+  bell:   { prop: 'bell', yaw: 0.5, pitch: 0.2 },
+  reseed: { prop: 'sack', yaw: 0.6, pitch: 0.3 },
+  'age-dark':   { prop: 'shield', kind: 'round', yaw: 1.3, pitch: 0.1 },
+  'age-feudal': { prop: 'shield', kind: 'kite', yaw: 1.3, pitch: 0.1 },
+  'age-castle': { prop: 'shield', kind: 'kite', swords: true, yaw: 1.3, pitch: 0.1 },
+  'stance-aggressive':  { unit: 'militia', age: 0, kind: 'attack', t: 0.15, yaw: 0.95, pitch: 0.2, cut: 0.2 },
+  'stance-defensive':   { prop: 'shield', kind: 'kite', yaw: 1.3, pitch: 0.1 },
+  'stance-standground': { prop: 'planted', kind: 'spear', yaw: 0.8, pitch: 0.25 },
+  'stance-passive':     { prop: 'planted', kind: 'sword', yaw: 0.8, pitch: 0.25 },
+  // ---- techs: the thing each one improves
+  'up-forging':        { prop: 'anvil', yaw: 0.5, pitch: 0.35 },
+  'up-iron_casting':   { prop: 'casting', yaw: 1.4, pitch: 0.3 },
+  'up-scale_armor':    { unit: 'militia', age: 0, arm: 1, kind: 'idle', t: 0, yaw: 1.3, pitch: 0.2, cut: 0.2 },
+  'up-chain_mail':     { unit: 'militia', age: 0, arm: 2, kind: 'idle', t: 0, yaw: 1.3, pitch: 0.2, cut: 0.2 },
+  'up-fletching':      { prop: 'arrows', kind: 'fan', yaw: 1.4, pitch: 0.2 },
+  'up-bodkin_arrow':   { prop: 'arrows', kind: 'bodkin', yaw: 1.2, pitch: 0.2, rot: 0.7 },
+  'up-ballistics':     { prop: 'arrows', kind: 'target', yaw: 1.2, pitch: 0.2 },
+  'up-masonry':        { prop: 'masonry', yaw: 0.6, pitch: 0.4 },
+  'up-fortified_wall': { prop: 'wallRun', age: 2, run: [['SWALL', 1], ['SWALL', 1]], yaw: 0.6, pitch: 0.3 },
+  'up-horse_collar':   { prop: 'collar', yaw: 0.5, pitch: 0.15 },
+  'up-heavy_plow':     { prop: 'barrow', kind: 'plow', yaw: 0.6, pitch: 0.3 },
+  'up-wheelbarrow':    { prop: 'barrow', kind: 'barrow', load: 'wood', yaw: 0.6, pitch: 0.35 },
+  'up-double_bit_axe': { prop: 'tool', tool: 'axe', up: { double: true }, yaw: 0.2, pitch: 0.15 },
+  'up-bow_saw':        { prop: 'bowSaw', yaw: 0.1, pitch: 0.2 },
+  'up-gold_mining':    { prop: 'tool', tool: 'pick', up: { bright: true }, dir: [0.5, 1, 0], ore: 'gold', yaw: 0.3, pitch: 0.3 },
+  'up-guilds':         { prop: 'town', yaw: 0.785, pitch: 0.55 },
+};
+// Icons are for every player, so nothing wears a team's colour: one neutral leather tone stands in for it everywhere.
+const NEUTRAL = '#8a6440', NEUTRAL_DARK = '#5e4329';
+const SIZE = 1024, CELL = 256, PAD = 0.07, LINE = 15, INK = '#1b130b';   // render px, sheet cell px, cell margin, outline px (at SIZE)
+const INNER = 5, STEP = 0.035;   // inner line px (at SIZE), and the depth step that draws one (× the model's radius)
+
+(async () => {
+  for (const el of [...document.body.children]) if (!['ic-bar', 'ic-grid'].includes(el.id) && el.tagName !== 'SCRIPT') el.style.display = 'none';
+  const LAB = window.__pov3dLab, THREE = await LAB.load();
+  // the studio's buildings are team 1's: its palette slot holds the neutral tone (this page only)
+  PLAYER_TEAM_COLORS[1] = NEUTRAL; PLAYER_TEAM_COLORS_DARK[1] = NEUTRAL_DARK; resetTeamColorMap();
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(1); renderer.setSize(SIZE, SIZE); renderer.localClippingEnabled = true;
+  const scene = new THREE.Scene();
+  // the character view's calibrated light (pov3d initScene), as lab3d
+  scene.add(new THREE.AmbientLight('#ffffff', 0.69 * Math.PI));
+  const sun = new THREE.DirectionalLight('#ffffff', Math.hypot(0.31, 0.36) * Math.PI); sun.position.set(0, 0.36, 0.31); scene.add(sun);
+
+  const K = LAB.kit();
+  // the subject of a recipe, posed (r.rot: turned about the vertical, radians)
+  function subject(r){
+    let g;
+    if (r.unit) g = LAB.frame(r.kind || 'idle', r.t || 0, !!r.female, { unit: r.unit, eq: r.unit === 'villager' || r.unit === 'ram' || r.unit === 'tradecart' ? null : LAB.equip(r.unit, r.age || 0, r.atk || 0, r.arm || 0, !!r.fletch), load: r.load, tool: r.tool, up: r.up, tc: NEUTRAL });
+    else if (r.rig) g = window.__povRigLab(r.rig, r.t || 0, { load: r.load });   // dev: the game's bone rig (what the map draws)
+    else if (r.animal) { g = LAB.animal(r.animal, NEUTRAL); LAB.poseAnimal(g, r.animal, r.kind || 'idle', r.t || 0); }
+    // r.state: 'site' (under construction at r.p), 'damaged' (at r.hp), else finished as the map draws it
+    else if (r.bldg && r.state === 'site') { const b = LAB.building(r.bldg, r.age || 0); b.set(r.p ?? 0.6); g = b.obj; }
+    else if (r.bldg && r.state === 'damaged') { const b = LAB.damaged(r.bldg, r.age || 0); b.setHp(r.hp ?? 0.5); if (b.tick) b.tick(10); g = b.obj; }
+    else if (r.bldg) g = LAB.finished(r.bldg, r.age || 0);
+    else { g = new THREE.Group(); if (PROPS[r.prop](g, K, r) !== false) K.addHulls(g, true); }   // (false: built from outlined parts already)
+    if (r.rot) { const w = new THREE.Group(); w.add(g); w.rotation.y = r.rot; g = w; }
+    if (window.__hullsOnly) g.traverse(o => { if (o.isMesh && !(o.material && o.material.side === THREE.BackSide)) o.visible = false; });
+    g.updateMatrixWorld(true); return g;
+  }
+
+  // 3D render → a SIZE×SIZE canvas
+  // (a long lens, framed on the model's bounding sphere; a portrait's cut: the cut height under the model's centre,
+  // projected, everything below it cleared — a flat edge, as the painted portraits)
+  function render3D(r){
+    const g = subject(r); scene.add(g);
+    const box = new THREE.Box3().setFromObject(g); if (r.cutFrac != null) r = { ...r, cut: box.min.y + (box.max.y - box.min.y) * r.cutFrac }; if (r.cut != null) box.min.y = Math.max(box.min.y, r.cut);
+    const ctr = box.getCenter(new THREE.Vector3()), rad = box.getBoundingSphere(new THREE.Sphere()).radius, fov = 18;
+    const dist = rad / Math.sin(fov / 2 * Math.PI / 180) * 1.02, cam = new THREE.PerspectiveCamera(fov, 1, dist * 0.2, dist * 3);
+    cam.position.set(ctr.x + Math.sin(r.yaw) * Math.cos(r.pitch) * dist, ctr.y + Math.sin(r.pitch) * dist, ctr.z + Math.cos(r.yaw) * Math.cos(r.pitch) * dist);
+    cam.lookAt(ctr); renderer.render(scene, cam);
+    const c = document.createElement('canvas'); c.width = c.height = SIZE; const cx = c.getContext('2d'); cx.drawImage(renderer.domElement, 0, 0);
+    innerLines(g, cam, cx, rad * STEP);
+    if (r.cut != null) { const q = new THREE.Vector3(ctr.x, r.cut, ctr.z).project(cam), y = Math.round((1 - q.y) / 2 * SIZE); cx.clearRect(0, y, SIZE, SIZE - y); }
+    scene.remove(g); LAB.dispose(g); return c;
+  }
+  // Inner lines, as the 2D art's part outlines: a depth pass of the same view (the game's hull shells hidden), and ink
+  // on the NEAR side of every step deeper than `step` — where an arm passes over the body, not where parts join.
+  const rt = new THREE.WebGLRenderTarget(SIZE, SIZE), depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  const px = new Uint8Array(SIZE * SIZE * 4), lin = new Float32Array(SIZE * SIZE);
+  function innerLines(g, cam, cx, step){
+    const hulls = []; g.traverse(o => { if (o.isMesh && o.visible && o.material && o.material.side === THREE.BackSide) { hulls.push(o); o.visible = false; } });
+    scene.overrideMaterial = depthMat; renderer.setRenderTarget(rt); renderer.setClearColor(0xffffff, 1); renderer.clear();
+    renderer.render(scene, cam); renderer.readRenderTargetPixels(rt, 0, 0, SIZE, SIZE, px);
+    renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 0); scene.overrideMaterial = null; for (const o of hulls) o.visible = true;
+    // (three's unpackRGBAToDepth, then perspective depth → distance; rows come bottom-up)
+    const n = cam.near, f = cam.far;
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) { const i = ((SIZE - 1 - y) * SIZE + x) * 4;
+      const d = (255 / 256) * (px[i] / 255 / 16777216 + px[i + 1] / 255 / 65536 + px[i + 2] / 255 / 256 + px[i + 3] / 255);
+      lin[y * SIZE + x] = d >= 0.9999 ? Infinity : 2 * n * f / (f + n - (d * 2 - 1) * (f - n)); }
+    const img = cx.getImageData(0, 0, SIZE, SIZE), D = img.data, line = new Uint8Array(SIZE * SIZE), dirs = [];
+    for (let a = 0; a < 16; a++) for (let k = 1; k <= INNER; k++) dirs.push([Math.round(Math.cos(a / 8 * Math.PI) * k), Math.round(Math.sin(a / 8 * Math.PI) * k)]);
+    for (let y = INNER; y < SIZE - INNER; y++) for (let x = INNER; x < SIZE - INNER; x++) { const z = lin[y * SIZE + x]; if (z === Infinity) continue;
+      for (const [dx, dy] of dirs) { const z2 = lin[(y + dy) * SIZE + x + dx]; if (z2 !== Infinity && z2 - z > step) { line[y * SIZE + x] = 1; break; } } }
+    const [ir, ig, ib] = [0x1b, 0x13, 0x0b];
+    for (let i = 0; i < SIZE * SIZE; i++) if (line[i] && D[i * 4 + 3] > 0) { D[i * 4] = ir; D[i * 4 + 1] = ig; D[i * 4 + 2] = ib; }
+    cx.putImageData(img, 0, 0);
+  }
+  // the opaque bounds of a canvas
+  function bounds(c){
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  }
+  // fit into the cell (a bust sits on the cell's bottom edge), ring it in a bold outline, bring it down to CELL
+  function compose(src, r){
+    const b = bounds(src), c = document.createElement('canvas'); c.width = c.height = SIZE; if (!b) return c;
+    const room = SIZE * (1 - 2 * PAD) - 2 * LINE, s = Math.min(room / b.w, room / b.h), w = b.w * s, h = b.h * s;
+    const x = (SIZE - w) / 2, y = r.cut != null ? SIZE - h : (SIZE - h) / 2;
+    const fit = document.createElement('canvas'); fit.width = fit.height = SIZE; fit.getContext('2d').drawImage(src, b.x, b.y, b.w, b.h, x, y, w, h);
+    // the outline: the silhouette stamped round a disc of offsets, inked (a portrait's cut runs off the cell's edge)
+    const ink = document.createElement('canvas'); ink.width = ink.height = SIZE; const ix = ink.getContext('2d');
+    for (let a = 0; a < 48; a++) for (const rr of [LINE, LINE * 0.6]) ix.drawImage(fit, Math.cos(a / 48 * 2 * Math.PI) * rr, Math.sin(a / 48 * 2 * Math.PI) * rr);
+    ix.globalCompositeOperation = 'source-in'; ix.fillStyle = INK; ix.fillRect(0, 0, SIZE, SIZE);
+    const cx = c.getContext('2d'); cx.drawImage(ink, 0, 0); cx.drawImage(fit, 0, 0);
+    // halve down to the cell (each halving a clean box filter)
+    let cur = c; while (cur.width > CELL) { const n = document.createElement('canvas'); n.width = n.height = cur.width / 2;
+      const nx = n.getContext('2d'); nx.imageSmoothingQuality = 'high'; nx.drawImage(cur, 0, 0, n.width, n.height); cur = n; }
+    return cur;
+  }
+  const iconCanvas = key => compose(render3D(ICONS[key]), ICONS[key]);
+  window.__icon = key => iconCanvas(key).toDataURL('image/png');             // dev / the sheet builder: one cell's PNG
+  window.__iconKeys = () => Object.keys(ICONS);
+  window.__iconRaw = key => render3D(ICONS[key]).toDataURL('image/png');     // dev: the unframed render
+  window.__iconTry = r => compose(render3D(r), r).toDataURL('image/png');   // dev: a recipe that isn't in the table yet
+  window.__iconRawRecipe = r => render3D(r).toDataURL('image/png');         // dev: a recipe's bare render (no studio ink)
+  window.__hullsOnly = false;                                                 // dev: render only the outline shells
+
+  const grid = document.getElementById('ic-grid'), cells = window.SPRITE_CELLS;
+  for (const key of Object.keys(ICONS)) {
+    const card = document.createElement('div'); card.className = 'ic-card';
+    const [cx, cy] = cells[key] || [0, 0], old = document.createElement('div'); old.className = 'ic-old';
+    old.style.backgroundPosition = `${cx / 7 * 100}% ${cy / 10 * 100}%`;
+    const nw = iconCanvas(key); nw.className = 'ic-new';
+    const pair = document.createElement('div'); pair.className = 'ic-pair'; pair.append(old, nw);
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = key;
+    card.append(k, pair); grid.appendChild(card);
+  }
+  document.getElementById('ic-bg').onclick = () => document.querySelectorAll('.ic-pair').forEach(p => p.classList.toggle('dark'));
+  document.getElementById('ic-status').textContent = Object.keys(ICONS).length + ' icons';
+  window.__iconsReady = true;
+})();
+</script>
+</body>
+</html>

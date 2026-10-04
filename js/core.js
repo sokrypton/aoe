@@ -192,6 +192,8 @@ function aiTimeMult(team){
 // a wall), but the AI's army control, wave sizing and the idle-military
 // hotkey must still treat it as a soldier.
 function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
+// The riders (cavalry): drawn on a horse (horse2D, riderFig), and never garrisoned in a building (AoE2: only foot units).
+function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
 // ---- Building-center helpers: THE two spellings, do not inline them. ----
 // centerOf = the TRUE midpoint (fractional for even footprints — a 4-wide TC
 // centers at +2.0): feeds dist()/vector math. centerTile = the floored center
@@ -352,7 +354,7 @@ function hasUpgrade(team, key){
 // ready by age-up. (Age advancement itself stays at the Town Center.)
 function canResearch(team, key){
   let c = UPGRADES[key];
-  if (!c || hasUpgrade(team, key)) return false;
+  if (!c || hasUpgrade(team, key) || techResearching(team, key)) return false;
   if (teamAge && isPlayerTeam(team) && teamAge[team] < c.age - TECH_RESEARCH_LEAD) return false;
   let pre = TECH_PREREQ[key];
   return !pre || hasUpgrade(team, pre);
@@ -362,9 +364,14 @@ function canResearch(team, key){
 // age-up sweep; called from research completion (updateBuildingResearch).
 // apply() isn't idempotent (fortified_wall ×1.5 hp), but execResearch/
 // canResearch never let an owned tech re-research, so each fires exactly once.
+// A tech underway at any of the team's buildings: it can't start at a second one (paid twice, applied twice).
+function techResearching(team, key){
+  return entities.some(e => e.type === 'building' && e.team === team && e.research && e.research.target === key);
+}
 function applyTech(team, key){
   let c = UPGRADES[key];
   if (!c || !teamTechs) return;
+  if (hasUpgrade(team, key)) return;                     // (owned: its one-time sweep never runs twice)
   if (c.apply) c.apply(team);
   teamTechs[team] |= (1 << UPGRADE_BITS[key]);
 }
@@ -593,7 +600,7 @@ function resetAIStates(){
   AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
 }
 
-// Last hit each team TOOK: lastTeamHit[team] = {tick,x,y} | null. Sim
+// Last hit each team TOOK: lastTeamHit[team] = {tick,x,y,core,coreTick,coreX,coreY} | null (core*: the last villager/TC hit, kept through later ones). Sim
 // state (AI garrison reactions read it on later ticks — snapshot/save it);
 // the viewer-local music mood keeps using window.lastWarTick separately.
 let lastTeamHit = null;

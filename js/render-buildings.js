@@ -123,10 +123,13 @@ function drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,roofType,roofH,roofL,roof
   X.restore();
 }
 
-// A camp's shed (drawBuildingBlock's pyramid roof), as the 3D's: plank walls, rows of shingles across both roof faces
-function drawCampShed(sx,sy,bw,bhh,bh,roofH,wallL,wallR,roofL,roofR,darken){
+// A camp's shed (drawBuildingBlock's pyramid roof), as the 3D's: plank walls, rows of shingles across both roof faces;
+// thatch (the Dark Age): a straw pyramid, taller, strands down both faces
+function drawCampShed(sx,sy,bw,bhh,bh,roofH,wallL,wallR,roofL,roofR,darken,thatch=false,seed=0){
+  if(thatch){ roofH+=4; roofL=darken?darkenColor(THATCH_2D):THATCH_2D; roofR=darken?darkenColor(THATCH_2D_DARK):THATCH_2D_DARK; }
   drawBuildingBlock(sx,sy,bw,bhh,bh,wallL,wallR,'peaked',roofH,roofL,roofR,darken);
   const apex=[sx,sy-bh-roofH], C=[sx,sy+bhh*2-bh], L=[sx-bw,sy+bhh-bh], R=[sx+bw,sy+bhh-bh], at=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+  if(thatch){ const pt=q=>({x:q[0],y:q[1]}); for(const E of [L,R]) drawThatch2D(pt(apex),pt(apex),pt(C),pt(E),seed+(E===L?0:7),null,darken,false); return; }
   X.save(); X.strokeStyle='rgba(0,0,0,0.2)'; X.lineWidth=0.9; X.beginPath();
   for(const t of [0.42,0.66,0.86]) for(const E of [L,R]){ const a=at(apex,E,t), b=at(apex,C,t); X.moveTo(...a); X.lineTo(...b); }
   X.stroke(); X.restore();
@@ -463,6 +466,29 @@ function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC
     X.stroke();
   }
   return {M1,M2,Rp,Bp,Lp,M1e,M2e,EL,EB};
+}
+
+// A house's own layout, the same in 2D and 3D (viewer-only, from its tile): one brace per face, in one of the outer bays
+// (between a corner post and a stud), and the chimney along the ridge.
+const HOUSE_BRACE = [[0.055, 0.3325], [0.3875, 0.6125], [0.945, 0.6675]];                 // a bay's brace: bottom u → top u
+function houseLayout(e){
+  const h = n => tileHash(e.x, e.y, n);
+  return { chimney: 0.25 + h(13) * 0.5, braceBay: f => h(14 + f.charCodeAt(0) + +f[1]) < 0.5 ? 0 : 2 };
+}
+
+// Dark Age thatch (every first-age roof, as the 3D's THATCH): the straw colours, then strands down a slope (ridge
+// a→b, eaves c→d, clipped to it) and the owner's ridge roll along a→b (ridge: false for a cone or a pyramid's faces)
+const THATCH_2D = '#d2ac58', THATCH_2D_DARK = '#a8873e';
+function drawThatch2D(a, b, c, d, seed, tc, darken, ridge = true){
+  X.save(); X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.lineTo(c.x,c.y); X.lineTo(d.x,d.y); X.closePath(); X.clip();
+  X.strokeStyle = 'rgba(120,85,25,0.35)'; X.lineWidth = 1;
+  const n = Math.max(8, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / 1.3));
+  for (let i = 0; i < n; i++) { const t = (i + 0.5) / n, r = tileHash(seed, i, 40), p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, q = { x: d.x + (c.x - d.x) * t, y: d.y + (c.y - d.y) * t }, s0 = r * 0.5, s1 = s0 + 0.35 + r * 0.3;
+    X.beginPath(); X.moveTo(p.x + (q.x - p.x) * s0, p.y + (q.y - p.y) * s0); X.lineTo(p.x + (q.x - p.x) * s1, p.y + (q.y - p.y) * s1); X.stroke(); }
+  X.restore();
+  if (!ridge) return;
+  X.lineCap = 'round'; X.strokeStyle = '#000'; X.lineWidth = 4.2; X.beginPath(); X.moveTo(a.x, a.y); X.lineTo(b.x, b.y); X.stroke();
+  X.strokeStyle = darken ? darkenColor(tc) : tc; X.lineWidth = 2.6; X.stroke(); X.lineCap = 'butt';
 }
 
 // Small team pennant on a short pole (for houses/small buildings)
@@ -1080,7 +1106,7 @@ function drawBuilding(e, part = null){
     if(part === 'back'){ X.globalAlpha = 1; return; }
   }
   else if(e.btype==='HOUSE'){
-    // Timber-framed cottage under a big yellow hay gable roof.
+    // Cottage: Dark planks under thatch, Feudal+ timber-framed under shingles; its brace and chimney per house (houseLayout).
     // Base spans the full tile diamond (W/hh = HALF_TW/HALF_TH), so all
     // four wall corners land exactly on the tile's edges.
     // Shared gable geometry (walls, gable end, team-colored roof slope,
@@ -1101,33 +1127,34 @@ function drawBuilding(e, part = null){
     let hwR = ownerAge === 0 ? WOOD.plankR : aw.gr;
     let beamCol = ownerAge >= 2 ? '#57432e' : WOOD.beam;
     let beam=darken?darkenColor(beamCol):beamCol;
+    // its layout (houseLayout, as the 3D): the door's face and bay, a brace per face, the chimney along the ridge.
+    // A face point (u along it as the 3D's, v up the wall): z1 is the left face, x1 the right (its u runs right → left).
+    const HL = houseLayout(e), thatch = ownerAge === 0;   // (every Dark building is thatched, as the 3D)
+    const FP = { z1: (u, v) => [sx - W + W * u, sy0 + hh + hh * u - wallH * v], x1: (u, v) => [sx + W * (1 - u), sy0 + hh * 2 - hh * (1 - u) - wallH * v] };
+    const quad = (f, u0, u1, v0, v1, col) => { const P = FP[f]; X.fillStyle = col; X.beginPath(); X.moveTo(...P(u0, v0)); X.lineTo(...P(u1, v0)); X.lineTo(...P(u1, v1)); X.lineTo(...P(u0, v1)); X.closePath(); X.fill(); };
     let {M1,M2,M1e,M2e,EL,EB} = drawGableBlock(sx, sy0, W, hh, wallH, roofH,
-      hwL, hwR, tc, beamCol, darken, ()=>{
-        if (ownerAge === 0) {
-          // plank seams: vertical board joints on both faces
-          X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
-          [0.25,0.5,0.75].forEach(t=>{
-            X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
-            X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
-          });
-        } else {
-          // Half-timber framing: studs and a mid-rail per face
-          X.strokeStyle=beam;X.lineWidth=1.6;
-          [0.35,0.7].forEach(t=>{
-            X.beginPath();X.moveTo(sx-W+W*t,sy0+hh-wallH+hh*t);X.lineTo(sx-W+W*t,sy0+hh+hh*t);X.stroke();
-            X.beginPath();X.moveTo(sx+W*t,sy0+hh*2-wallH-hh*t);X.lineTo(sx+W*t,sy0+hh*2-hh*t);X.stroke();
-          });
-          X.beginPath();X.moveTo(sx-W,sy0+hh-wallH*0.5);X.lineTo(sx,sy0+hh*2-wallH*0.5);X.lineTo(sx+W,sy0+hh-wallH*0.5);X.stroke();
+      hwL, hwR, thatch ? THATCH_2D : tc, beamCol, darken, ()=>{
+        for (const f of ['z1', 'x1']) {
+          if (ownerAge === 0) { // plank seams: vertical board joints
+            X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
+            for (const t of [0.25,0.5,0.75]) { X.beginPath(); X.moveTo(...FP[f](t, 0)); X.lineTo(...FP[f](t, 1)); X.stroke(); }
+          } else { // half-timbering (the 3D's timberFrame): sill, plate, corner posts, two studs, one brace — filled beams, no ink
+            quad(f, 0, 1, 0, 0.09, beam); quad(f, 0, 1, 0.91, 1, beam); quad(f, 0, 0.055, 0, 1, beam); quad(f, 0.945, 1, 0, 1, beam);
+            for (const t of [0.36, 0.64]) quad(f, t - 0.0275, t + 0.0275, 0.09, 0.91, beam);
+            const [ua, ub] = HOUSE_BRACE[HL.braceBay(f)]; X.strokeStyle = beam; X.lineWidth = 2;
+            X.beginPath(); X.moveTo(...FP[f](ua, 0.09)); X.lineTo(...FP[f](ub, 0.91)); X.stroke();
+          }
         }
       });
+    if (thatch) drawThatch2D(M2e, M1e, EB, EL, e.id, tc, darken);
     // (no pennant — the house stays clean)
     // Big 3D brick chimney poking through the roof slope: an iso block
     // with two shaded faces, a wider cap slab, and a dark flue opening.
     // FEUDAL+ only — the Dark-age cottage has a bare roof (a brick
     // chimney is part of the town growing up).
     if (ownerAge >= 1) {
-      let cru={x:M2.x+(M1.x-M2.x)*0.3, y:M2.y+(M1.y-M2.y)*0.3};
-      let cre={x:EL.x+(EB.x-EL.x)*0.3, y:EL.y+(EB.y-EL.y)*0.3};
+      let cru={x:M2.x+(M1.x-M2.x)*HL.chimney, y:M2.y+(M1.y-M2.y)*HL.chimney};
+      let cre={x:EL.x+(EB.x-EL.x)*HL.chimney, y:EL.y+(EB.y-EL.y)*HL.chimney};
       let bx=cru.x+(cre.x-cru.x)*0.3, by=cru.y+(cre.y-cru.y)*0.3;
       let topY=by-16, w=5, hh2=2.5;
       let brickL=darken?darkenColor('#9a4a34'):'#9a4a34';
@@ -1229,7 +1256,8 @@ function drawBuilding(e, part = null){
       let Wc=P(-L,-D), Sc=P(-L,D), Ec=P(L,D);
       let R1=up(P(-L,0),wallH+roofH), R1e=up(P(-L-g,0),wallH+roofH), R2e=up(P(L+g,0),wallH+roofH);
       let wl=darken?darkenColor(aw.gl):aw.gl, wr=darken?darkenColor(aw.gr):aw.gr;
-      let rl=darken?darkenColor(tc):tc;
+      const thatchB = ownerAge === 0;   // (Dark: thatch, as every first-age roof)
+      let rl=darken?darkenColor(thatchB ? THATCH_2D : tc):(thatchB ? THATCH_2D : tc);
       X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
       // BACK roof slope first: it recedes NW at screen slope 0.19/unit
       // while the ridge climbs 0.5/unit, so it shows as a strip above the
@@ -1237,7 +1265,7 @@ function drawBuilding(e, part = null){
       // offsets each ridge point by (-(D+2), (D+2)*(roofH/D-0.5)).
       {
         let bo={x:-(D+2), y:(D+2)*(roofH/D-0.5)};
-        let rd=darken?darkenColor(tcD):tcD;
+        let rd=thatchB ? (darken?darkenColor(THATCH_2D_DARK):THATCH_2D_DARK) : (darken?darkenColor(tcD):tcD);
         X.fillStyle=rd;X.beginPath();
         X.moveTo(R1e.x,R1e.y);X.lineTo(R2e.x,R2e.y);
         X.lineTo(R2e.x+bo.x,R2e.y+bo.y);X.lineTo(R1e.x+bo.x,R1e.y+bo.y);
@@ -1316,6 +1344,7 @@ function drawBuilding(e, part = null){
         X.stroke();
       });
       X.restore();
+      if (thatchB) drawThatch2D(R1e, R2e, Ee, Se, e.id, tc, darken);
       // Team banner flying from the ridge's right end (the tower is gone;
       // the hall carries the flag now)
       if(e.complete && visible) drawWavingFlag(R2e.x, sy, 26, tc, tcD); // base on the raised ridge end
@@ -1634,7 +1663,7 @@ function drawBuilding(e, part = null){
     drawCampClearing(sx, sy, bw, bhh, darken);
     
     // Small plank shack in the back-right quadrant
-    drawCampShed(sx+14, sy+8, 20, 10, 14, 8, '#b89868','#987848','#8a6a48','#715539', darken);
+    drawCampShed(sx+14, sy+8, 20, 10, 14, 8, '#b89868','#987848','#8a6a48','#715539', darken, ownerAge === 0, e.id);
     drawDoorRight(sx+14, sy+8, 20, 10, '#5c3d24', darken);
     drawPennant(sx+14, sy-14, tc, darken);
     if(e.complete){
@@ -1692,7 +1721,7 @@ function drawBuilding(e, part = null){
     drawCampClearing(sx, sy, bw, bhh, darken);
 
     // Dark timber mine shed in the back-right quadrant
-    drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken);
+    drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken, ownerAge === 0, e.id);
     drawDoorRight(sx+14, sy+8, 20, 10, '#2e2519', darken);
     drawPennant(sx+14, sy-10, tc, darken);
     if(e.complete){
@@ -1829,11 +1858,13 @@ function drawBuilding(e, part = null){
     X.lineTo(sx+dhw1,frontY(13/H));X.lineTo(sx-dhw1,frontY(13/H));X.closePath();
     X.fill();X.stroke();
 
-    // ---- Tall pointed cone cap (wood, both ages) ----
+    // ---- Tall pointed cone cap: Dark thatch (fatter, taller, straw strands), later wood ----
     // Two-tone halves filled WITHOUT strokes, then one silhouette stroke —
     // no center seam line splitting the cone.
-    let capH=22;
-    let cl=darken?darkenColor(WOOD.L):WOOD.L, cr=darken?darkenColor(WOOD.R):WOOD.R;
+    const thatchM = ownerAge === 0, W1c = W1;
+    { const W1 = W1c + (thatchM ? 4 : 0);
+    let capH=thatchM ? 27 : 22;
+    let cl=darken?darkenColor(thatchM?THATCH_2D:WOOD.L):(thatchM?THATCH_2D:WOOD.L), cr=darken?darkenColor(thatchM?THATCH_2D_DARK:WOOD.R):(thatchM?THATCH_2D_DARK:WOOD.R);
     let capBaseY=frontY(1);
     X.fillStyle=cl;X.beginPath();
     X.moveTo(sx,ty-capH);X.lineTo(sx-W1-1,ty);
@@ -1847,6 +1878,8 @@ function drawBuilding(e, part = null){
     X.quadraticCurveTo(sx-W1*0.4,capBaseY+1,sx,capBaseY+1);
     X.quadraticCurveTo(sx+W1*0.4,capBaseY+1,sx+W1+1,ty);
     X.closePath();X.stroke();
+    if (thatchM) for (const sd of [-1, 1]) drawThatch2D({x:sx,y:ty-capH}, {x:sx,y:ty-capH}, {x:sx,y:capBaseY+1}, {x:sx+sd*(W1+1),y:ty}, e.id + sd, null, darken, false);
+    }
 
     if(e.complete && visible){
       // Front-mounted fan, hub centered on the cap. Sails alternate

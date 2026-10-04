@@ -437,6 +437,45 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- garrison: foot units only (AoE2)
+    // A Town Center / tower takes villagers, infantry and archers — never
+    // cavalry. The rule is canGarrisonIn's, so every boarding path (button,
+    // bell, AI shelter, rally) shares it.
+    'garrison-foot-only': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 5, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [] });
+      gameStarted = true; window.__headlessSim = true;
+      const tc = createBuilding('TC', 20, 20, 0); tc.complete = true;
+      const tw = createBuilding('TOWER', 30, 20, 0); tw.complete = true;
+      for (const [ut, ok] of [['villager', true], ['militia', true], ['archer', true], ['knight', false], ['scout', false]])
+        for (const b of [tc, tw]) T.ok(`${ut} ${ok ? 'may' : 'may not'} garrison in a ${b.btype}`, canGarrisonIn(b, 0, createUnit(ut, 25, 25, 0)) === ok);
+      return T;
+    })),
+
+    // ---------------------------------------------- sheep donation (AoE2)
+    // A sheep goes to another player's unit that reaches it first — an ALLY's
+    // too (donating a sheep). Against an ally only the owner's own units guard
+    // it; against an enemy the owner's allies guard as well.
+    'sheep-donation': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (units) => {
+        loadScenario({ map: 'medium', seed: 5, numTeams: 3, controllers: ['ai', 'ai', 'ai'], ages: [0, 0, 0], entities: [] });
+        gameStarted = true; window.__headlessSim = true;
+        teamAlliance = [0, 0, 1];                 // 0+1 allied vs 2
+        for (const tm of [0, 1, 2]) teamControllers[tm] = { type: 'human' };   // (no AI moving them)
+        const sh = createUnit('sheep', 30, 30, 0); sh.speed = 0;
+        for (const [tm, x, y] of units) { const u = createUnit('villager', x, y, tm); u.speed = 0; }
+        for (let i = 0; i < 9; i++) update();
+        return sh.team;
+      };
+      T.ok('an ally reaching it alone takes the sheep (donated)', stage([[1, 32, 30]]) === 1);
+      T.ok('the owner nearer than the ally keeps it', stage([[1, 33, 30], [0, 31, 30]]) === 0);
+      T.ok('an enemy loses it to an ally standing nearer (the ally takes it, not the enemy)', stage([[2, 33, 30], [1, 31, 30]]) === 1);
+      T.ok('an enemy is held off by the owner and an ally both nearer', stage([[2, 34, 30], [0, 31, 30], [1, 32, 30]]) === 0);
+      T.ok('an enemy alone takes it', stage([[2, 32, 30]]) === 2);
+      return T;
+    })),
+
     // ---------------------------------------------- checksum-coverage guard
     // detEntityHash coverage is hand-maintained; an unhashed sim-read field is
     // an invisible desync. detEntityCoverageGaps flags any entity key that is

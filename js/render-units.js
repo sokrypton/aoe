@@ -1,6 +1,3 @@
-// The riders (horse2D, drawPerson2D's rider seat).
-function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
-
 // The swing's angle at phase ph (0..1, the hit at SWORD_HIT) — both views' sword swing (pov3d follows the same arc).
 const SWORD_HIT = 0.52;
 function swordSwingCurve(ph){
@@ -1142,6 +1139,10 @@ function drawUnitShadow(e, sx, sy){
 // Walking THIS frame: a queued path, or the press-to-contact ring re-armed
 // on this exact tick (js/logic.js).
 function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
+// For the drawing: a press-slide onto a target already in reach (the sim's cosmetic packing round a carcass) isn't a
+// walk — the drawn work spot walks it in (villagerWorkSpot); counted, the two disagreed and the villager lurched in and
+// out, its heading swinging, as the sheep fell. Viewer-only.
+function isDrawnMoving(e){ return e.path.length>0 || (e.pressWalk===tick && !(e.target && !e.task && inActionRange(e))); }
 
 // The ground a drawn animal covered since its last frame (a: its render state, px/py the spot last seen) → [mx, my];
 // a jump of a tile or more — out of a garrison, a snap, a gallery treadmill stepping back — isn't walking: [0, 0].
@@ -1244,6 +1245,9 @@ function paintParts(list, lw = 1){ if (!list.length) return; const TAU = Math.PI
 // ellipsoids and tapered tubes in art px (forward, up, across; heights 1:1 as the 2D art draws them, the ground plane
 // as the iso map), depth-sorted and painted as one silhouette: outlines far to near, then fills.
 // xf (optional): a transform of the model's points before they're projected (a body rolling over as it falls)
+// the 2D sheen of pov3d's SHINY colours: soft on steel, a brighter glint on gold
+const SHINE_2D = { '#a8adb3': 'rgba(255,255,255,0.28)', '#c6cdd8': 'rgba(255,255,255,0.32)', '#b9bec6': 'rgba(255,255,255,0.3)', '#b8bfc6': 'rgba(255,255,255,0.3)',
+  '#e8b90f': 'rgba(255,248,210,0.55)', '#d1a017': 'rgba(255,248,210,0.5)', '#c99815': 'rgba(255,248,210,0.5)', '#daa520': 'rgba(255,248,210,0.5)' };
 function projKit(h, xf = null){
   const fx = Math.cos(h), fy = Math.sin(h), sx = -fy, sy = fx, R2 = Math.SQRT2, TAU = Math.PI * 2;
   // art px → screen px; depth: larger is nearer the viewer
@@ -1261,6 +1265,10 @@ function projKit(h, xf = null){
     const tr = (a + d) / 2, dd = Math.sqrt(((a - d) / 2) ** 2 + b * b), rot = 0.5 * Math.atan2(2 * b, a - d);
     const r1 = Math.sqrt(tr + dd), r2 = Math.sqrt(Math.max(0, tr - dd)), e = { c, r1, r2, rot, o };
     e.pt = add(col, dq(o) + bias, () => { X.moveTo(c[0] + r1 * Math.cos(rot), c[1] + r1 * Math.sin(rot)); X.ellipse(c[0], c[1], Math.max(0.4, r1), Math.max(0.4, r2), rot, 0, TAU); }, grp, outline);
+    // steel and gold catch the light (pov3d's SHINY): a soft dab toward the upper-left, riding its part's depth
+    const sh = SHINE_2D[col];
+    if (sh && r2 > 0.6) { const pt = e.pt, hr = 0.34 * Math.min(r1, r2), hx = c[0] - 0.3 * r1, hy = c[1] - 0.38 * r2;
+      parts.push({ col: sh, get d(){ return pt.d + 0.0005; }, grp, outline: false, path: () => { X.moveTo(hx + hr, hy); X.ellipse(hx, hy, hr * 1.15, hr, -0.5, 0, TAU); } }); }
     return e; };
   // a tube through 2..3 art points: radius r (art px, one per point to taper), round caps, straight segments
   const tube = (col, pts, r, grp, bias = 0) => { const sp = pts.map(q => P(...q)), rs = pts.map((_, i) => Array.isArray(r) ? r[i] : r);
@@ -1429,12 +1437,14 @@ function drawSheep2D(e){
   const nz = Math.cos(P.neck), ns = Math.sin(P.neck), ly = Math.cos(P.look), ls = Math.sin(P.look);
   const nk = (x, y, z) => { const x1 = x * nz - y * ns, y1 = x * ns + y * nz, x2 = x1 * ly + z * ls, z2 = -x1 * ls + z * ly; return bd(0.2 + x2, C.cy + 0.03 + y1, z2); };
   const tc = e.team === GAIA_TEAM ? C.wool : teamColor(e.team);                        // the fringe: its owner's colour (white: nobody's yet)
-  // the fleece: a fat core and eight puffs over the upper body (golden-angle spiral, as the 3D)
+  // the fleece: a fat core, eight puffs over the upper body (golden-angle spiral) and a ring of twelve standing out of
+  // its edge — a scalloped fleece, not a smooth ball (as the 3D)
   const core = blob(C.wool, bd, 0, C.cy, 0, 0.24, 0.17, 0.2, 'body'), bodyD = core.pt.d;
   if (bare) parts.pop();
   const puffs = Array.from({ length: 8 }, (_, i) => { const v = 1 - (i + 0.5) / 8 * 1.45, r = Math.sqrt(Math.max(0, 1 - v * v)), an = i * 2.39996;
     return [Math.cos(an) * r * 0.21, C.cy + v * 0.13, Math.sin(an) * r * 0.16, 0.1 + (i % 3) * 0.012]; });
-  const kept = dead ? puffs.slice().sort((p, q) => q[2] - p[2] || q[1] - p[1]).slice(Math.round(8 * (1 - wool))) : puffs;   // (pulled off the up-facing, +z, side first)
+  for (let i = 0; i < 12; i++) { const an = i / 12 * TAU + 0.26; puffs.push([Math.cos(an) * 0.235, C.cy + (i % 2 ? 0.05 : -0.01), Math.sin(an) * 0.19, 0.07 + (i % 3) * 0.008]); }
+  const kept = dead ? puffs.slice().sort((p, q) => q[2] - p[2] || q[1] - p[1]).slice(Math.round(puffs.length * (1 - wool))) : puffs;   // (pulled off the up-facing, +z, side first)
   for (const [x, y, z, pr] of kept) blob(C.wool, bd, x, y, z, pr, pr, pr, 'body');
   if (bare) sheepBones2D({ blob, tube }, bd, nk);
   // the belly's shade (as the 2D art had it): a soft band along the bottom of the fleece, clipped to its outline
@@ -1456,7 +1466,7 @@ function drawSheep2D(e){
   for (const z of [-1, 1]) { const ec = [hx - 0.025, hy + 0.04 - 0.012, z * 0.105], ca = Math.cos(z * -0.35), sa = Math.sin(z * -0.35);
     const ef = (x, y, zz) => { const dy = y - ec[1], dz = zz - ec[2]; return nk(x, ec[1] + dy * ca - dz * sa, ec[2] + dy * sa + dz * ca); };
     const ear = blob(C.ear, ef, ...ec, 0.033, 0.017, 0.06, 'head'); ear.pt.d = hd + (depth(ear.o[0], ear.o[2]) > depth(head.o[0], head.o[2]) ? 0.0015 : -0.0015); }   // (the near ear over the head, the far one under)
-  { const hc = head.o; for (const z of [-1, 1]) { const fx = 0.55, fy = 0.35, fz = 0.55 * z, t = 1 / Math.hypot(fx / 0.1, fy / 0.115, fz / 0.09), sz = 0.027;
+  if (!dead) { const hc = head.o; for (const z of [-1, 1]) { const fx = 0.55, fy = 0.35, fz = 0.55 * z, t = 1 / Math.hypot(fx / 0.1, fy / 0.115, fz / 0.09), sz = 0.027;
       const m = nk(hx + fx * t, hy + fy * t, fz * t); if (faces([m[0] - hc[0], m[1] - hc[1], m[2] - hc[2]]) <= 0.3) continue;   // (only the eyes clearly facing us: one round the edge read as a stray dot)
       // the 3D's eyes: pale, a dark pupil set forward on each along the head's surface normal
       const ex = hx + fx * t, ey = hy + fy * t, ez = fz * t, nl = Math.hypot(fx / 0.01, fy / 0.013225, fz / 0.0081), n3 = [fx / 0.01 / nl, fy / 0.013225 / nl, fz / 0.0081 / nl];
@@ -1647,7 +1657,7 @@ function villagerLoad(e){
 // What a villager is doing, as a lab action ({ kind, t, opt }) — both views' reading of the same sim state. stride: tiles
 // walked (the walk's phase), clk: the work clock (authored ticks). Viewer-only: reads sim state, never writes it.
 function villagerAction(e, stride, clk){
-  const moving = isUnitMoving(e), up = hasUpgrade.bind(null, e.team), opt = {};
+  const moving = isDrawnMoving(e), up = hasUpgrade.bind(null, e.team), opt = {};
   if (moving) {
     const farmWalk = e.task === 'farm' && e.gatherX >= 0 && Math.max(Math.abs(e.x - e.gatherX), Math.abs(e.y - e.gatherY)) < 1.8;
     let kind = 'walk';
@@ -1907,7 +1917,7 @@ function villagerWorkTarget(e, kind){
 const WALK_IN = 0.9;   // tiles per game-second a villager steps to its work spot at (a walk)
 function villagerWorkSpot(e, act, S){
   const now = performance.now(), dt = S.wt ? Math.min(0.1, (now - S.wt) / 1000) : 0; if (!window._maskDraw) S.wt = now;
-  const W = villagerWorkReach()[act.kind], T = W && villagerWorkTarget(e, act.kind), mv = isUnitMoving(e);
+  const W = villagerWorkReach()[act.kind], T = W && villagerWorkTarget(e, act.kind), mv = isDrawnMoving(e);
   let tx = e.x, ty = e.y, hd = null;
   if (T) { const ph = Math.atan2(T[1] - e.y, T[0] - e.x), c = Math.cos(ph), sn = Math.sin(ph), px = T[0] - (W[0] * c - W[1] * sn), py = T[1] - (W[0] * sn + W[1] * c);
     if ((px - e.x) ** 2 + (py - e.y) ** 2 < 1.6 * 1.6) { tx = px; ty = py; }

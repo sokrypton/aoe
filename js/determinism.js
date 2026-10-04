@@ -346,6 +346,7 @@ function simChecksum(){
     }
     let hit = lastTeamHit && lastTeamHit[t];
     h = detMix(h, hit ? hit.tick : -1);
+    h = detMix(h, hit && hit.coreTick != null ? hit.coreTick : -1);
     h = detMix(h, allianceOf(t));
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
     h = detMix(h, teamAge && teamAge[t] || 0);

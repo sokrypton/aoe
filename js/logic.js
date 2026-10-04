@@ -1737,8 +1737,12 @@ function damageEntity(attacker, target){
     // itself. A peripheral WALL hit is NOT core — the AI garrison reaction
     // must not hide the whole workforce over an army poking a ring it can't
     // breach (that froze the eco forever).
-    let core = target.utype === 'villager' || target.btype === 'TC';
-    lastTeamHit[target.team] = { tick, x: target.x, y: target.y, core };
+    // The last CORE hit rides along (coreTick/X/Y) and survives later
+    // non-core hits: a raid's soldiers being hit must not erase that its
+    // villagers just were (the pressure read flickered off mid-raid).
+    let core = target.utype === 'villager' || target.btype === 'TC', prev = lastTeamHit[target.team];
+    lastTeamHit[target.team] = { tick, x: target.x, y: target.y, core,
+      coreTick: core ? tick : prev ? prev.coreTick : null, coreX: core ? target.x : prev ? prev.coreX : null, coreY: core ? target.y : prev ? prev.coreY : null };
   }
 
   // Under attack alarm (player team 0): the horn announces a NEW attack, not
@@ -1962,7 +1966,7 @@ function teamTC(team){
 
 function canGarrisonIn(b,team,u){
   if(b.team!==team||b.hp<=0||garrisonCap(b)<=0)return false;
-  if(b.type==='building')return !!b.complete;
+  if(b.type==='building')return !!b.complete&&!(u&&isMountedUnit(u.utype));   // (AoE2: a building takes foot units, never cavalry)
   return b.utype==='ram'&&!!(u&&canRideRam(u));
 }
 function enterGarrison(e,b){
@@ -2739,14 +2743,15 @@ function updateUnitCombat(e){
   // visibility (entityVisibleToTeam, js/core.js) — NEVER the viewer-local
   // `fog` grid, which differs between lockstep peers. ONE rule for humans
   // and AI (information parity). Sole asymmetry: an AI EXPLICIT march keeps
-  // its target out of sight (controlAIMilitary attacks the remembered enemy
+  // a BUILDING target out of sight (controlAIMilitary attacks the remembered enemy
   // TC — otherwise the army's attack order is wiped the tick after it's
-  // given and it never leaves home). A human's explicit attack instead
-  // drops on lost vision: the player is watching the fog and re-clicks.
+  // given and it never leaves home). A building can't move; a fogged UNIT's live
+  // position is information the AI doesn't have, so that chase drops like anyone's.
+  // A human's explicit attack drops on lost vision: the player watches the fog and re-clicks.
   // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its
   // own aggro rules.
   if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
-      && !(aiDrives(e) && e.explicitAttack)) {
+      && !(aiDrives(e) && e.explicitAttack && t.type === 'building')) {
     if (!entityVisibleToTeam(t, e.team)) {
       if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
       e.target = null;
@@ -3109,10 +3114,12 @@ function adjustTargetApproach(e){
         // closing on the obstacle.
         // …nor for no gain: the new walk must END closer to the foe — against one it can't reach, the best spot flips
         // between equally-near tiles as it moves, and each swap walked it back and forth.
-        let keep = e.path;
+        // Keeping restores the leg exactly as it was being walked (not via setUnitPath: re-planning it from mid-leg
+        // stepped the unit back to its tile centre every re-aim — a ranged chaser rocked in place).
+        let keep = e.path, keepT = e.moveT, keepX = e.fromX, keepY = e.fromY;
         pathUnitTo(e, Math.round(t.x), Math.round(t.y));
         let fresh = e.path[e.path.length - 1], fx = fresh ? fresh.x - t.x : 0, fy = fresh ? fresh.y - t.y : 0;
-        if(keep && (e.path.length === 0 || fx*fx + fy*fy >= dToDest*dToDest - 0.25)) setUnitPath(e, keep);
+        if(keep && (e.path.length === 0 || fx*fx + fy*fy >= dToDest*dToDest - 0.25)){ e.path = keep; e.moveT = keepT; e.fromX = keepX; e.fromY = keepY; }
         // A MELEE re-aim that still can't END at the foe (search capped, or walled off) waits before paying for another:
         // every 0.5s against an unreachable mover was the costliest pathfinding in a war. (Ranged units only need a
         // firing spot, so they keep the quick re-aim: a foe drifting into range must be answered at once.)
@@ -3152,17 +3159,19 @@ function updateSheepBehavior(e){
     }
   }
 
-  // Convert/steal sheep (AoE2): an opposing unit within 5 tiles converts it
-  // unless a friendly unit (other than sheep) is closer. 3-tick id-stagger
+  // Convert/steal sheep (AoE2): another player's unit within 5 tiles takes it
+  // unless a guard is at least as close — an ally's too (a sheep can be
+  // donated to an ally by walking it over). Guards: the owner's units against
+  // an ally; the owner's or its allies' against an enemy. 3-tick id-stagger
   // (perf). WRAPPED, not an early return — the sheep branch falls through
   // to the shared movement step below, which must still walk the wander path.
   if((tick+e.id)%3===0){
     let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
-    if(closest && !sameSide(closest.team, e.team)){
+    if(closest && closest.team!==e.team){
       let guarded = false;
       if (isPlayerTeam(e.team)) {
-        let guardDist = dist(e,closest);
-        guarded = !!closestUnitNear(e,guardDist,en=>sameSide(en.team,e.team)); // allied guards protect too
+        let guardDist = dist(e,closest), ally = sameSide(closest.team, e.team);
+        guarded = !!closestUnitNear(e,guardDist,en=>ally ? en.team===e.team : sameSide(en.team,e.team));
       }
       if(!guarded){
         e.team=closest.team;
@@ -3773,7 +3782,8 @@ const STUCK_CHECK_EVERY = T30(30);       // sample once per game-second
 function updateStuckWatchdog(){
   if (tick % STUCK_CHECK_EVERY !== 0) return;
   entities.forEach(e => {
-    if (e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn) return;
+    if (e.type !== 'unit' || e.hp <= 0) return;
+    if (e.garrisonedIn) { e.stuck = undefined; return; } // sheltering isn't a freeze — nor may it age a stale signature
     if (e.utype === 'sheep' || e.utype === 'sheep_carcass' || isWildPredator(e)) return;
     let busy = e.path.length > 0 || e.task || e.target || e.buildTarget;
     if (!busy) { e.stuck = undefined; return; }
