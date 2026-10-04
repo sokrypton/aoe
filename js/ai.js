@@ -1750,7 +1750,7 @@ function assignAIGatherTask(ai,v,vils,profile,plan){
       // claiming/standing MECHANICS are now identical to a player's.
       let g=claimGatherTileNear(v, gc.terrain, target.x, target.y);
       v.gatherX=g.x; v.gatherY=g.y;
-      pathToContact(v, {x:g.x, y:g.y, w:1, h:1}, contactClaims(v, p=>p.gatherX===g.x && p.gatherY===g.y));
+      pathToGatherNode(v, g.x, g.y);
     }
     depositFirst(v,gc.resource);
   }

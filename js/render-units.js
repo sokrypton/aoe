@@ -1919,12 +1919,14 @@ function villagerWorkSpot(e, act, S){
   const now = performance.now(), dt = S.wt ? Math.min(0.1, (now - S.wt) / 1000) : 0; if (!window._maskDraw) S.wt = now;
   const W = villagerWorkReach()[act.kind], T = W && villagerWorkTarget(e, act.kind), mv = isDrawnMoving(e);
   let tx = e.x, ty = e.y, hd = null;
+  const prx = S.prx ?? e.x, pry = S.pry ?? e.y; if (!window._maskDraw) { S.prx = e.x; S.pry = e.y; } // (its true spot last frame)
   if (T) { const ph = Math.atan2(T[1] - e.y, T[0] - e.x), c = Math.cos(ph), sn = Math.sin(ph), px = T[0] - (W[0] * c - W[1] * sn), py = T[1] - (W[0] * sn + W[1] * c);
     if ((px - e.x) ** 2 + (py - e.y) ** 2 < 1.6 * 1.6) { tx = px; ty = py; }
-    if (!mv) hd = ph; }
+    if (!mv || !e.path.length) hd = ph; } // (a step into its place, path-less — a press — is a sidestep: it keeps facing its work)
   if (S.wx == null || (S.wx - tx) ** 2 + (S.wy - ty) ** 2 > 4) { S.wx = tx; S.wy = ty; return hd == null ? null : { act, hd }; }
-  if (mv && !T) { // leaving a work spot on the move: the step-in offset walks off (game-speed scaled), never pops
-    const ox = S.wx - tx, oy = S.wy - ty, od = Math.hypot(ox, oy), k = od > 0.01 ? Math.max(0, od - WALK_IN * GAME_SPEED * dt) / od : 0;
+  if (mv && !T) { // leaving a work spot on the move: the step-in offset walks off (game-speed scaled), never pops — the
+    // offset from where it stood last frame, so its own walk isn't counted as offset (else it lagged and snapped)
+    const ox = S.wx - prx, oy = S.wy - pry, od = Math.hypot(ox, oy), k = od > 0.01 ? Math.max(0, od - WALK_IN * GAME_SPEED * dt) / od : 0;
     if (!window._maskDraw) { S.wx = tx + ox * k; S.wy = ty + oy * k; } return hd == null ? null : { act, hd }; }
   if (window._maskDraw) return hd == null ? null : { act, hd };
   const dx = tx - S.wx, dy = ty - S.wy, d = Math.hypot(dx, dy);

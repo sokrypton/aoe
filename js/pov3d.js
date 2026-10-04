@@ -4037,6 +4037,7 @@
   function updateVillager3D(e, dt){
     const now = performance.now();
     let [tx, tz] = posOf(e), ty = -worldFacing(e);
+    const rx = tx, rz = tz;                                                         // (its true spot, before any work step-in)
     let v = villagers.get(e.id);
     if (!v) villagers.set(e.id, v = { obj: null, key: '', x: tx, z: tz, yaw: ty, stride: 0, lastT: 0 });
     // At a drop-off the sim holds the villager for its throw (dropThrowPhase, js/logic.js): the throw plays on that clock.
@@ -4081,7 +4082,7 @@
     if (T) { const ph = Math.atan2(T[1] - (e.y + 0.5), T[0] - (e.x + 0.5)), c = Math.cos(ph), sn = Math.sin(ph);
       const px = T[0] - (W[0] * c - W[1] * sn), pz = T[1] - (W[0] * sn + W[1] * c);
       if ((px - tx) ** 2 + (pz - tz) ** 2 < 1.6 * 1.6) { tx = px; tz = pz; }
-      if (!isDrawnMoving(e)) { ty = -ph; setHeading(e, ph); }                  // at work: turned to what it works on
+      if (!isDrawnMoving(e) || !e.path.length) { ty = -ph; setHeading(e, ph); } // at work: turned to what it works on (a path-less press step into its place is a sidestep)
       // A blow lands as the swing wraps: the target reacts.
       if (p.t < v.lastT - 0.5 && (p.kind === 'mine' || p.kind === 'split' || p.kind === 'build' || p.kind === 'repair' || p.kind === 'butcher')) {
         const hitX = T[0] - c * 0.08, hitZ = T[1] - sn * 0.08;
@@ -4111,8 +4112,10 @@
     const mv = isUnitMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
     let nx, nz;
     if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
-      // leaving a work spot on the move: the step-in offset walks off (at WALK_IN, game-speed scaled), never pops
-      const ox = v.x - tx, oz = v.z - tz, od = Math.hypot(ox, oz);
+      // leaving a work spot on the move: the step-in offset walks off (at WALK_IN, game-speed scaled), never pops. The
+      // offset is from where the unit truly stood LAST frame (v.prx): measured from its new spot, a rider's own run counted
+      // as offset, outran WALK_IN and dragged the drawing behind until it snapped 2 tiles
+      const ox = v.x - (v.prx ?? rx), oz = v.z - (v.prz ?? rz), od = Math.hypot(ox, oz);
       if (!far && od > 0.01) { const k = Math.max(0, od - WALK_IN * GAME_SPEED * dt) / od; nx = tx + ox * k; nz = tz + oz * k; }
       if (mv && !T && !v.throw && e.path.length) ty = -Math.atan2(e.path[0].y - e.y, e.path[0].x - e.x); // (a throw keeps facing its drop)
     } else if (!mv && !v.throw && e.utype === 'villager' && (tx - v.x) ** 2 + (tz - v.z) ** 2 > 0.03 * 0.03) {
@@ -4122,7 +4125,7 @@
       nx = v.x + dx / d * step; nz = v.z + dz / d * step; v.stride += step;
       ty = -Math.atan2(dz, dx); p = { kind: wk, t: ((v.stride / WALK_TILES[wk]) % 1 + 1) % 1, opt: p.opt };
     } else { const f = T ? Math.min(1, dt * 10) : Math.min(1, dt * 14); nx = v.x + (tx - v.x) * f; nz = v.z + (tz - v.z) * f; }
-    v.ptx = tx; v.ptz = tz;
+    v.prx = rx; v.prz = rz;
     if (steerActive() && e.id === followId && (mv || (!e.target && !T && !e.task)) || (!T && steeredFacing(e))) { ty = -yaw; setHeading(e, yaw); } // the steered character faces where it's steered, and keeps it
     if (v.throw) { nx = v.x; nz = v.z; }                                            // (held at the drop while it throws)
     if (!T) v.stride += Math.hypot(nx - v.x, nz - v.z);

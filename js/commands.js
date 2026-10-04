@@ -898,7 +898,7 @@ function execUnitCommand(cmd){
           }
           // Ring the solid node evenly: goalBldg + contactClaims sends each
           // co-gatherer to a distinct cheapest contact tile.
-          pathToContact(s, {x:g.x, y:g.y, w:1, h:1}, contactClaims(s, p=>p.gatherX===g.x && p.gatherY===g.y));
+          pathToGatherNode(s, g.x, g.y);
         } else {
           // Move command (also the unexplored-tile and full-farms cases): keep the
           // group's relative arrangement (see formOff above).

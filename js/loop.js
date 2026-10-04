@@ -411,9 +411,9 @@ function separateUnits(){
   // Per-unit flag computed once, not per PAIR — recomputing it (with an
   // entitiesById lookup) in the pair loop is n²/2 work per tick.
   // Skip units working IN PLACE on a fixed tile (resource gather, construction)
-  // — they must not be slid off their claimed tile. Carcass harvesters are NOT
-  // skipped: they press onto the carcass (js/logic.js pressToContact) and need
-  // separation to spread them into a ring around it rather than stack.
+  // — they must not be slid off their claimed tile — and settled butchers, who hold
+  // their own place on the carcass ring (updateUnit's ring spacing, js/logic.js):
+  // separation pushing them too only fought it.
   // Gatherers and builders work IN PLACE (exempt from separation). Each
   // gatherer stands on a DISTINCT contact tile (goalBldg + contactClaims,
   // js/logic.js) — an even surround around the solid node — so they never
@@ -423,6 +423,7 @@ function separateUnits(){
     let a=units[i];
     gathering[i]=(a.gatherX >= 0 && a.path.length === 0) ||
                  (a.buildTarget !== null && a.path.length === 0) ||
+                 (a.target && a.path.length === 0 && a.utype === 'villager' && isButchering(a)) || // spaces itself round the carcass
                  a.possessed === true; // a steered character holds its spot (others make way): shoved, it shook under the controls
   }
   // Spatial hash on 1-tile cells: only same-or-adjacent-cell units can be

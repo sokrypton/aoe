@@ -309,7 +309,10 @@ function walkLineTiles(ax,ay,bx,by,visit){
   let tmx=sx>0?(cx+1-ux)*tdx:sx<0?(ux-cx)*tdx:Infinity, tmy=sy>0?(cy+1-uy)*tdy:sy<0?(uy-cy)*tdy:Infinity;
   for(let steps=Math.abs(ex-cx)+Math.abs(ey-cy);steps>0&&(cx!==ex||cy!==ey);steps--){ // (each step closes a column or a row)
     const px=cx, py=cy;
-    if(tmx<tmy){cx+=sx;tmx+=tdx;} else if(tmy<tmx){cy+=sy;tmy+=tdy;} else {cx+=sx;cy+=sy;tmx+=tdx;tmy+=tdy;}
+    // (a corner crossed to within rounding IS a corner: an exact-diagonal leg and a sliver of it must split the same
+    // way, or the leg check passed it beside a building that the walker's per-step check then refused forever)
+    const dt=tmx-tmy;
+    if(dt<-1e-9){cx+=sx;tmx+=tdx;} else if(dt>1e-9){cy+=sy;tmy+=tdy;} else {cx+=sx;cy+=sy;tmx+=tdx;tmy+=tdy;}
     if(visit(cx,cy,px,py)===false)return false;
   }
   return true;
@@ -468,7 +471,36 @@ function legPx(ax,ay,bx,by){
   let dx=bx-ax, dy=by-ay;
   return Math.sqrt(dx*dx+dy*dy)*TILE_PX||1.0;
 }
+// Walkers keep their spacing: one closing on a unit walking the same way just AHEAD of it (inside their two bodies) walks
+// at half pace till the gap opens — no more two units walking one on top of the other. It never stops (no wait state, no
+// watchdog wedge), and "ahead" is judged along the pair's MEAN heading, so of two exactly one gives way (ids break a tie).
+// Head-on walkers pass, as in AoE2. Derived from positions alone: no new state.
+const BODY_R_MOUNTED = 0.35, BODY_R_FOOT = 0.25;
+const walkBodyR = u => isMountedUnit(u.utype) || u.utype === 'ram' || u.utype === 'tradecart' ? BODY_R_MOUNTED : BODY_R_FOOT;
+function crowdedAhead(e){
+  const n = e.path[0]; let hx = n.x - e.x, hy = n.y - e.y; const hl = Math.sqrt(hx*hx + hy*hy);
+  if (hl < 1e-4) return false; hx /= hl; hy /= hl;
+  const grid = targetableUnitGrid(), c = UNIT_GRID_CELL, R = BODY_R_MOUNTED * 2, R2 = R * R, er = walkBodyR(e);
+  const gx0 = Math.max(0, ((e.x - R) / c) | 0), gx1 = Math.min(unitGridNX - 1, ((e.x + R) / c) | 0);
+  const gy0 = Math.max(0, ((e.y - R) / c) | 0), gy1 = Math.min(unitGridNY - 1, ((e.y + R) / c) | 0);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    const cell = grid[gx * unitGridNY + gy]; if (!cell) continue;
+    for (let i = 0; i < cell.length; i++) {
+      const u = cell[i], rx = u.x - e.x, ry = u.y - e.y, r2 = rx*rx + ry*ry;
+      if (r2 >= R2 || u === e || !u.path.length || u.hp <= 0 || u.garrisonedIn) continue; // (the cheap reject first: most of a cell is far)
+      const sp = er + walkBodyR(u);
+      if (r2 >= sp*sp) continue;
+      const m = u.path[0]; let ux = m.x - u.x, uy = m.y - u.y; const ul = Math.sqrt(ux*ux + uy*uy);
+      if (ul < 1e-4) continue; ux /= ul; uy /= ul;
+      if (hx*ux + hy*uy < 0.3) continue;                                          // not walking the same way
+      const ahead = rx*(hx + ux) + ry*(hy + uy);
+      if (ahead > 0 || (ahead === 0 && u.id < e.id)) return true;
+    }
+  }
+  return false;
+}
 function stepUnitAlongPath(e, distPx, checkWalkable){
+  if(checkWalkable && e.path.length && crowdedAhead(e)) distPx *= 0.5;
   // Where this advance takes it, finishing legs on the way…
   const P=e.path, pts=[e.x,e.y]; let moveT=e.moveT+distPx, fx=e.fromX, fy=e.fromY, x=e.x, y=e.y, done=0;
   while(done<P.length){

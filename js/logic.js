@@ -1103,14 +1103,15 @@ function resolveStalledAttack(u, tgt){
 // means we never press into terrain/walls but DO press over other units
 // (separation resolves the overlap). contactDist>=minDist(0.5, separateUnits)
 // so a mobile unit target is never itself shoved out of its own surround.
-function pressToContact(e, cx, cy, contactDist){
+function pressToContact(e, cx, cy, contactDist, deadband=0.2){
   if(e.path.length!==0)return;               // only when settled
   let dx=cx-e.x, dy=cy-e.y;
   let d=Math.sqrt(dx*dx+dy*dy);
   // Deadband LARGER than separateUnits' 0.08 nudge: a shoved unit must
   // settle where it lands, or press and separation alternate forever —
-  // the whole crowd vibrates around one target (user caught it).
-  if(d<=contactDist+0.2)return;              // deadband — already in the ring
+  // the whole crowd vibrates around one target (user caught it). A unit
+  // separation leaves alone (a settled butcher) can settle finer.
+  if(d<=contactDist+deadband)return;         // deadband — already in the ring
   // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
   // follower advances unitMoveSpeed/TPS tiles/tick — match it so the unit
   // strolls into contact instead of snapping.
@@ -1158,6 +1159,13 @@ function contactClaims(e, pred){
     claim.add(ty*MAP+tx);
   }
   return claim;
+}
+
+// Walk a gatherer to a free stand beside resource node (gx,gy): the cheapest contact tile no other gatherer holds — of
+// ANY node, not just this one (choppers of two neighbouring trees stood on one tile, one inside the other). Farmers
+// stand on their plot, not beside it: theirs don't count.
+function pathToGatherNode(e, gx, gy){
+  pathToContact(e, {x:gx, y:gy, w:1, h:1}, contactClaims(e, p=>p.gatherX>=0 && p.task!=='farm'));
 }
 
 // Can `e` reach `bldg` to interact — already adjacent, on a farm plot, or a
@@ -1391,7 +1399,7 @@ function updateGatherTask(e,config){
         let lane=Math.max(0,farmLane(e)), col=Math.round(e.x)>gatherTile.x?1:0;
         pathUnitTo(e, gatherTile.x+col, gatherTile.y+lane);
       }
-      else pathToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, contactClaims(e, p=>p.gatherX===gatherTile.x && p.gatherY===gatherTile.y));
+      else pathToGatherNode(e, gatherTile.x, gatherTile.y);
       if(e.path.length===0){
         avoidAdd(e,'gather',gatherTile.x + gatherTile.y * MAP);
 
@@ -1432,6 +1440,10 @@ function updateGatherTask(e,config){
   if(e.task!=='farm') slideToContact(e, {x:gatherTile.x, y:gatherTile.y, w:1, h:1}, -0.18);
 
   if(e.gatherCooldown>0)return;
+  // Sharing its stand (it switched to the next node beside it without moving — the block grid keeps one of two, the
+  // higher id): the other steps to a free stand. Judged once a bite, and only a found path moves it.
+  if(e.task!=='farm'&&unitBlock){ const o=unitBlock[Math.round(e.x)+Math.round(e.y)*MAP], u=o&&o!==e.id&&entitiesById.get(o);
+    if(u&&u.utype==='villager'&&u.gatherX>=0){ pathToGatherNode(e,gatherTile.x,gatherTile.y); if(e.path.length)return; } } // (another gatherer: a sheep or idler passing by isn't a shared stand)
   let tile=map[gatherTile.y][gatherTile.x];
   // Guard against two villagers depleting the same tile in the same tick
   if(tile.res<=0){
@@ -2402,6 +2414,9 @@ function updateIdleMilitary(e){
 }
 
 
+// A villager eating a carcass (its ring place: updateUnit; separation leaves it be: separateUnits, js/loop.js).
+function isButchering(e){ const t=e.target&&entitiesById.get(e.target); return !!t&&t.utype==='sheep_carcass'; }
+
 // ---- BUILDING PLACEMENT ----
 // THE placement step — the player's execBuildPlacement and the AI's placeAIBuilding both call it (parity). Dropped on
 // its own wooden counterpart a stone piece IS the upgrade: a finished one salvage-swaps in place (applyStoneUpgrade), an
@@ -2459,7 +2474,9 @@ function updateVillagerDropoff(e){
     // build loop and the trade cart. Recomputing every tick made returning
     // haulers oscillate and wedge at chokepoints.
     if(e.path.length===0){
-      pathToContact(e,drop);
+      // (a free stand at the wall: haulers no longer all queue onto the one cheapest tile and throw from inside each other)
+      const claims=contactClaims(e,p=>p.task==='return');
+      pathToContact(e,drop,claims);
       if(e.path.length===0){
         avoidAdd(e,'drops',drop.id);
 
@@ -2468,7 +2485,7 @@ function updateVillagerDropoff(e){
           let nextDrop = nearestDrop(e, e.carryType, e.avoid&&e.avoid.drops);
           if (!nextDrop) break;
 
-          pathToContact(e, nextDrop);
+          pathToContact(e, nextDrop, claims);
           if (e.path.length > 0) {
             foundPath = true;
             break;
@@ -2831,25 +2848,25 @@ function updateUnitCombat(e){
       }
     } else {
       clearUnitPath(e);
-      // Press tight against the carcass (pressToContact) so the herding
-      // crew packs onto/around it; separateUnits rings them.
-      // PRESS TIEBREAKER (user call — press and separation are otherwise
-      // two independent controllers contesting the same band, and the
-      // crowd visibly vibrates while they fight): a settled co-harvester
-      // STRICTLY CLOSER to the carcass (id breaks exact ties) owns the
-      // lane — the outer unit holds its spot (any d<=1.5 harvests just
-      // as well; the 0.35 press is cosmetic packing) so press can never
-      // walk one butcher into another and hand separation an overlap.
-      let laneHeld=false;
-      for(let pi=0;pi<entities.length&&!laneHeld;pi++){
+      // Its own place on a ring round the carcass (AoE2's crew round the first sheep). The crew's layout is solved
+      // whole, the same for every member: bearings in their circular order, the circle cut at its widest gap, spread to
+      // a body apart in one pass and re-centred on where they stood — a spaced crew is its own layout (nobody moves), so
+      // it settles once and stays (each reacting to its neighbours, they chased each other's corrections: jitter).
+      // Pressing all at the carcass had packed them ~0.45 apart. Derived from positions: no new state.
+      const RING_R=0.7, crew=[];
+      for(let pi=0;pi<entities.length;pi++){
         let p=entities[pi];
-        if(p===e||p.type!=='unit'||p.hp<=0||p.garrisonedIn||p.target!==e.target)continue;
-        if(p.utype!=='villager'||p.path.length>0)continue;   // movers hold no slot
-        if(dist(p,e)>=0.75)continue;                         // not in my lane
-        let pd=distToTarget(p,t);
-        if(pd<d||(pd===d&&p.id<e.id))laneHeld=true;
+        if(p.type!=='unit'||p.utype!=='villager'||p.hp<=0||p.garrisonedIn||p.target!==e.target||p.path.length>0)continue;
+        crew.push({id:p.id, a:simAtan2(p.y-t.y, p.x-t.x)});
       }
-      if(!laneHeld)pressToContact(e, t.x, t.y, 0.35); // kneel at it (a carcass isn't separated, loop.js separateUnits)
+      crew.sort((x,y)=>x.a-y.a||x.id-y.id);
+      const n=crew.length, TAU=2*Math.PI, g=Math.min(0.62/RING_R, TAU/n);
+      let cut=0, widest=-1;
+      for(let k=0;k<n;k++){ const gap=(k+1<n?crew[k+1].a:crew[0].a+TAU)-crew[k].a; if(gap>widest){widest=gap; cut=(k+1)%n;} }
+      const base=crew[cut].a, lay=new Array(n); let sumA=0, sumL=0, mine=0;
+      for(let k=0;k<n;k++){ const c=crew[(cut+k)%n]; let a=c.a; if(a<base)a+=TAU; lay[k]=k?Math.max(a,lay[k-1]+g):a; sumA+=a; sumL+=lay[k]; if(c.id===e.id)mine=k; }
+      const b=lay[mine]+(sumA-sumL)/n;
+      pressToContact(e, t.x+RING_R*simCos(b), t.y+RING_R*simSin(b), 0, 0.05); // (separation leaves it be: loop.js)
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
         e.task='return';
@@ -4204,7 +4221,7 @@ function rallyNewUnit(e, unit){
             // Fan out onto DISTINCT contact tiles (goalBldg + contactClaims,
             // like updateGatherTask) so units rallied onto a resource surround
             // it instead of piling on the nearest tile.
-            pathToContact(unit, {x:gx, y:gy, w:1, h:1}, contactClaims(unit, p=>p.gatherX===gx && p.gatherY===gy));
+            pathToGatherNode(unit, gx, gy);
           }
         } else {
           pathUnitTo(unit,e.rallyX,e.rallyY);
