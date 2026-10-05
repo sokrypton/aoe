@@ -111,7 +111,7 @@ function detEntityHash(e){
   h = detMix(h, e.rallyResourceType == null ? -1 : e.rallyResourceType); // auto-tasks spawned villagers (js/logic.js)
   h = detMix(h, e.gatherX == null ? -2 : e.gatherX); // villager tile claims steer OTHER villagers
   h = detMix(h, e.gatherY == null ? -2 : e.gatherY);
-  h = detMix(h, e.explicitAttack ? 1 : 0);
+  h = detMix(h, e.explicitAttack === 'building' ? 2 : e.explicitAttack ? 1 : 0); // (what was ordered: a building's fall continues the assault)
   h = detMix(h, e.explicitReseed ? 1 : 0);
   h = detMixFloat(h, e.defendX || 0);
   h = detMixFloat(h, e.defendY || 0);
@@ -176,6 +176,9 @@ function detEntityHash(e){
   h = detMix(h, e.dodgeCount || 0);   // …and the anti-dance stubbornness (isStubborn)
   if (e.idleFarm != null) h = detMix(h, e.idleFarm); // idle farmer's exhausted plot: it strolls to the centre (logic.js)
   if (e.freeVillagerQueued) h = detMix(h, 0xf7ee); // this queue holds the free rescue villager (refunds read it)
+  if (e.woodDebt || e.stoneDebt) { h = detMixFloat(h, e.woodDebt || 0); h = detMixFloat(h, e.stoneDebt || 0); } // repair's fractional cost carry (logic.js)
+  if (e.eatTicks) h = detMix(h, e.eatTicks); // a grazing sheep stands (it gates the wander roll, simRandom)
+  if (e.gateProgress) h = detMixFloat(h, e.gateProgress); // a gate's door swing (isOpen, which walkable() reads, derives from it)
   return h >>> 0;
 }
 
@@ -197,7 +200,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:
@@ -211,6 +214,9 @@ const DET_UNHASHED_KEYS = new Set([
   'w','h',                // footprint dims (constant from type)
   'homeX','homeY',        // animal wander anchor (set once to spawn pos, deterministic)
   'breathTick','breathX','breathY', // the dragon's flame for the renderers (the sim never reads them)
+  'eatingGrass',          // = eatTicks > 0 that tick (the renderer's grazing pose)
+  'lastHitTick',          // the minimap's hit blink (the sim reads lastEnemyHitTick/lastMeleeHitTick)
+  'isOpen',               // = gateProgress > 0.5, recomputed every tick (loop.js) from hashed gateProgress
 ]);
 // Entity keys present on live entities that are neither hashed nor allow-listed.
 // Empty array === full coverage. Call from tests, never inside the tick.
@@ -235,6 +241,7 @@ function simChecksum(){
     h = detMixFloat(h, r.food); h = detMixFloat(h, r.wood);
     h = detMixFloat(h, r.gold); h = detMixFloat(h, r.stone);
     h = detMix(h, r.prepaidFarms || 0);
+    h = detMix(h, window.bellRinging && window.bellRinging[t] ? 1 : 0); // the town bell (the AI's shelter reaction reads it)
   }
   // GLOBAL commodity exchange prices (marketPrices, js/core.js) — one shared
   // table (AoE2), sim state mutated by execMarketTrade; a diverged price

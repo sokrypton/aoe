@@ -2218,7 +2218,7 @@ function aiRamRiderControl(ai,mils){
     if(b.hp>=b.maxHp*0.5)return;
     if(!b.garrison.some(id=>{let u=entitiesById.get(id);return u&&isArmyUnit(u.utype);}))return;
     let meleed=entities.some(u=>u.type==='unit'&&u.hp>0&&isEnemyOf(ai.team,u)
-      &&u.range<=0&&u.atk>0&&distToBuilding(u.x,u.y,b)<=1.6);
+      &&u.range<=0&&u.atk>0&&adjToBuilding(u.x,u.y,b));
     if(meleed)ejectGarrison(b,u=>isArmyUnit(u.utype)&&u.utype!=='scout');
   });
 }

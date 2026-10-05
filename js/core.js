@@ -194,6 +194,8 @@ function aiTimeMult(team){
 function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 // The riders (cavalry): drawn on a horse (horse2D, riderFig), and never garrisoned in a building (AoE2: only foot units).
 function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
+// A person on foot — what a building shelters (AoE2: no cavalry, siege or carts inside).
+function isFootUnit(t){ return t === 'villager' || t === 'militia' || t === 'spearman' || t === 'archer'; }
 // ---- Building-center helpers: THE two spellings, do not inline them. ----
 // centerOf = the TRUE midpoint (fractional for even footprints — a 4-wide TC
 // centers at +2.0): feeds dist()/vector math. centerTile = the floored center
@@ -211,6 +213,8 @@ function isGateBtype(bt){ return bt === 'GATE' || bt === 'SGATE'; }
 // Tower family (wooden Palisade Watch Tower + stone Watch Tower): connects to
 // walls of either material and can be built over a wall tile.
 function isTowerBtype(bt){ return bt === 'TOWER' || bt === 'PTOWER'; }
+// A fortification piece an army breaches: any wall, gate or tower (palisade or stone).
+function isWallLikeBtype(bt){ return isWallBtype(bt) || isGateBtype(bt) || isTowerBtype(bt); }
 // Buildings that auto-fire arrows at nearby enemies (TC + every tower).
 function firesArrows(bt){ return bt === 'TC' || isTowerBtype(bt); }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
@@ -794,8 +798,8 @@ const UNITS={
   // net DPS (~20.8 hp/s after a wall's 8 melee armor, rof 150) clearly
   // EXCEEDS a villager's repair, so sieges breach instead of bouncing (at
   // +70, two repairers stalled a ram forever — the finishing stalemate).
-  // Keep in sync with wallBreachTicks (ai.js). All `bonuses` tables are the
-  // AoE2 attack-bonus data read by damageEntity (js/logic.js).
+  // All `bonuses` tables are the AoE2 attack-bonus data read by damageEntity
+  // and wallBreachTicks (js/logic.js).
   ram:{bonuses:{building:110},name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:180},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Smashes buildings; immune to arrows but helpless in melee. Garrison infantry to ride protected and speed it up.',icon:'🐏'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then

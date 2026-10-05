@@ -452,6 +452,41 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ---------------------------------------------- logic review 2026-10-04
+    // Archer range techs reach combat (not just the acquire scan) and reach archers trained after them; buildings
+    // shelter foot units only; a carcass on a foundation doesn't hold its construction forever.
+    'logic-review': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = () => { loadScenario({ map: 'medium', seed: 5, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [] });
+        gameStarted = true; window.__headlessSim = true; };
+      stage();
+      applyTech(0, 'fletching'); applyTech(0, 'bodkin_arrow');
+      const a = createUnit('archer', 20, 20, 0), foe = createUnit('militia', 25.5, 20, 1);
+      T.ok('an archer trained after Fletching + Bodkin has range 6', a.range === 6);
+      T.ok('…and can strike a foe 5.5 tiles off', inWeaponRange(a, foe));
+      stage();
+      const tc = createBuilding('TC', 20, 20, 0); tc.complete = true;
+      for (const [ut, ok] of [['militia', true], ['villager', true], ['ram', false], ['tradecart', false], ['scout', false]])
+        T.ok(`a ${ut} ${ok ? 'may' : 'may not'} garrison in a TC`, canGarrisonIn(tc, 0, createUnit(ut, 26, 26, 0)) === ok);
+      stage();
+      const h = createBuilding('HOUSE', 30, 30, 0); h.complete = false; h.buildProgress = 0;
+      const c = createUnit('sheep_carcass', 30, 30, GAIA_TEAM);
+      T.ok('a carcass on a foundation does not hold its construction', !footprintOccupiedByOther(h));
+      const v = createUnit('villager', 29, 30, 0); v.task = 'build'; v.buildTarget = h.id;
+      for (let i = 0; i < 120; i++) update();
+      const inside = Math.round(c.x) >= h.x && Math.round(c.x) < h.x + h.w && Math.round(c.y) >= h.y && Math.round(c.y) < h.y + h.h;
+      T.ok('…the site goes up and the carcass is set down outside it, not walled in', h.buildProgress > 0 && !inside && c.hp > 0);
+      stage();
+      const m = createUnit('militia', 40, 40, 0), far = createUnit('militia', 60, 40, 1), stab = createUnit('militia', 41, 40, 1);
+      m.target = far.id; stampUnreachable(m, far.id, UNREACH_UNIT_TICKS);
+      damageEntity(stab, m);
+      T.ok('a unit waiting out an unreachable target fights back at one stabbing it', m.target === stab.id);
+      const m2 = createUnit('militia', 44, 44, 0), far2 = createUnit('militia', 47, 44, 1), stab2 = createUnit('militia', 45, 44, 1);
+      m2.target = far2.id; damageEntity(stab2, m2);
+      T.ok('…while one on a reachable target keeps it (no AoE2 target-hopping)', m2.target === far2.id);
+      return T;
+    })),
+
     // ---------------------------------------------- build-over parity
     // A stone tower placed on its wooden counterpart IS the upgrade, for the AI exactly as for a player (both go
     // through placeBuilding): never two buildings on one tile.
@@ -504,15 +539,15 @@ async function withPage(browser, port, entry, fn){
     // neither hashed nor allow-listed (js/determinism.js). Run a real war so
     // combat/eco/AI/lifecycle fields all appear, then assert no gaps — a new
     // field forces a classify-it-here decision instead of a mystery desync.
-    'checksum-coverage': (page) => withPage(browser, port, '/tools/sim.html?mode=1v1&diff=hard&seed=7100&ticks=1', p => p.evaluate(() => {
+    // (Played through runSimulation — a bare update() loop never started the match and checked nothing.)
+    'checksum-coverage': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(async () => {
       const T = window.__T;
-      let gaps = new Set();
-      for (let i = 0; i < 45000; i++) {
-        update();
-        if (i % 120 === 0) for (const g of detEntityCoverageGaps()) gaps.add(g);
-        if (typeof gameOver !== 'undefined' && gameOver) break;
-      }
+      let gaps = new Set(), real = window.update, ticks = 0;
+      window.update = function(){ real.apply(this, arguments); if (++ticks % 120 === 0) for (const g of detEntityCoverageGaps()) gaps.add(g); };
+      try { await runSimulation({ mode: '1v1', diff: 'hard', map: 'medium', seed: 7100, ticks: 30000 }); }
+      finally { window.update = real; }
       for (const g of detEntityCoverageGaps()) gaps.add(g);
+      T.ok('the coverage run actually played (' + ticks + ' ticks)', ticks >= 29000);
       T.ok('all sim-read entity fields hashed or allow-listed'
         + (gaps.size ? ' — UNCLASSIFIED: ' + Array.from(gaps).sort().join(', ') : ''), gaps.size === 0);
       return T;

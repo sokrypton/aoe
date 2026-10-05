@@ -8,7 +8,7 @@ let nextId=1;
 function applyUnitTechStats(e){
   let base = UNITS[e.utype];
   if (MILITARY.has(e.utype)) e.atk = base.atk + upgradeAtkBonus(e.team);
-  if (e.utype === 'archer') e.range = base.range + (hasUpgrade(e.team, 'fletching') ? 1 : 0);
+  if (e.utype === 'archer') e.range = base.range + (hasUpgrade(e.team, 'fletching') ? 1 : 0) + (hasUpgrade(e.team, 'bodkin_arrow') ? 1 : 0);
   if (e.utype === 'villager') {
     e.speed = base.speed * (hasUpgrade(e.team, 'wheelbarrow') ? 1.1 : 1);
     e.carryMax = 10 + (hasUpgrade(e.team, 'wheelbarrow') ? 3 : 0);

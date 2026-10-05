@@ -409,7 +409,7 @@ function execGarrison(cmd, team){
 function assignAttack(u, target){
   if (u.order) issueOrder(u, null);
   u.target = target.id; u.task = null; clearUnitPath(u); u.buildTarget = null;
-  u.explicitAttack = true;
+  u.explicitAttack = target.type === 'building' ? 'building' : 'unit'; // (truthy; the kind decides the mop-up on its fall)
   u.defendX = Math.round(target.x); u.defendY = Math.round(target.y);
 }
 
@@ -1314,14 +1314,7 @@ function reactivateFarmNow(farm){
     return;
   }
   spendCost(myTeam, cost);
-  farm.exhausted = false;
-  farm.complete = true;
-  farm.buildProgress = farm.buildTime; // match the other reseed paths (reseedFarmForFarmer) — no odd complete-but-unhardened state
-  farm.hp = farm.maxHp;
-  let tile = map[farm.y][farm.x];
-  tile.t = TERRAIN.FARM;
-  tile.res = farmFoodFor(farm.team); // include Horse Collar / Heavy Plow food bonuses, like every other reseed path
-  markMapDirty(farm.x, farm.y);
+  reseedFarm(farm);
   feedbackFor(myTeam, () => showMsg('Farm reactivated!'));
   if (typeof updateUI === 'function') updateUI();
 }
