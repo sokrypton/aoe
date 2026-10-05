@@ -264,6 +264,7 @@ function makeWayFor(mover){
     let nx=next.x+dx,ny=next.y+dy;
     if(onward.has(nx+','+ny))continue;
     if(!walkable(nx,ny,s.id,true))continue;
+    if(dx&&dy&&!(walkable(next.x+dx,next.y,s.id,true)&&walkable(next.x,next.y+dy,s.id,true)))continue; // (findPath's corner rule: never through a seam)
     if(unitBlock[nx+ny*MAP]&&unitBlock[nx+ny*MAP]!==s.id)continue;
     let d=Math.abs(dx)+Math.abs(dy);
     if(!best||d<best.d)best={x:nx,y:ny,d};
@@ -354,7 +355,7 @@ function updateGates(){
   let cells = _gateCells;
   for (let i = 0; i < entities.length; i++) {
     let en = entities[i];
-    if (en.type !== 'unit') continue;
+    if (en.type !== 'unit' || en.garrisonedIn || en.hp <= 0) continue;   // (one sheltering in the tower beside a gate is parked on its corner: it held the gate open for the raid)
     let ux = en.x | 0, uy = en.y | 0;
     if (ux < 0 || uy < 0 || ux >= MAP || uy >= MAP) continue;
     let key = ux + uy * MAP;
@@ -383,10 +384,11 @@ function updateGates(){
     e.gateProgress = e.gateProgress || 0;
     // A locked gate never swings open — it slides shut and stays sealed even
     // with allies standing on it (they route around until it's unlocked).
+    const swing = 0.16 * 30 / TPS;   // per 2-tick call, authored at 30tps (timebase rule: the same door speed at any TPS)
     if (friendlyNear && !e.locked) {
-      e.gateProgress = Math.min(1.0, e.gateProgress + 0.16);
+      e.gateProgress = Math.min(1.0, e.gateProgress + swing);
     } else {
-      e.gateProgress = Math.max(0.0, e.gateProgress - 0.16);
+      e.gateProgress = Math.max(0.0, e.gateProgress - swing);
     }
     e.isOpen = e.gateProgress > 0.5;
   });

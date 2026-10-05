@@ -369,6 +369,10 @@ function canResearch(team, key){
 // apply() isn't idempotent (fortified_wall ×1.5 hp), but execResearch/
 // canResearch never let an owned tech re-research, so each fires exactly once.
 // A tech underway at any of the team's buildings: it can't start at a second one (paid twice, applied twice).
+// An age-up is underway at one of this team's Town Centers (a numeric research target): one at a time, like a tech.
+function ageResearching(team){
+  return entities.some(e => e.type === 'building' && e.team === team && e.research && typeof e.research.target === 'number');
+}
 function techResearching(team, key){
   return entities.some(e => e.type === 'building' && e.team === team && e.research && e.research.target === key);
 }
@@ -770,7 +774,9 @@ const BLDGS={
   // see the `researches` arrays above — Barracks (military/armor/fortification),
   // Mill (farming), Lumber Camp (wood), Mining Camp (gold), Market (Guilds),
   // Town Center (Wheelbarrow). Age advancement stays at the TC (execResearch).
-};
+};// A reseed costs what the farm did (AoE2) — every reseed path (prepay, reactivate, AI/farmer wood) and the UI read it.
+const FARM_RESEED_COST = BLDGS.FARM.cost;
+
 // speed is tiles per game-second; trainTime/rof are ticks (30/game-second).
 // rof = reload between attacks; armor = {m: melee, p: pierce}. All values
 // track AoE2 Dark/Feudal-age stats.

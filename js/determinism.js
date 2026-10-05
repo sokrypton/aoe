@@ -179,6 +179,7 @@ function detEntityHash(e){
   if (e.woodDebt || e.stoneDebt) { h = detMixFloat(h, e.woodDebt || 0); h = detMixFloat(h, e.stoneDebt || 0); } // repair's fractional cost carry (logic.js)
   if (e.eatTicks) h = detMix(h, e.eatTicks); // a grazing sheep stands (it gates the wander roll, simRandom)
   if (e.gateProgress) h = detMixFloat(h, e.gateProgress); // a gate's door swing (isOpen, which walkable() reads, derives from it)
+  if (e.salvage) for (const k of Object.keys(e.salvage).sort()) { h = detMixStr(h, k); h = detMix(h, e.salvage[k]); } // an upgrade site's undo (refundFoundation)
   return h >>> 0;
 }
 
@@ -200,7 +201,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

@@ -559,10 +559,10 @@ function pageSuite() {
     // salvage 55 wood credited before the full TOWER cost is charged
     assert(store.wood === 1000 + 55 - BLDGS.TOWER.cost.w, 'wood salvage off: ' + store.wood);
     assert(store.stone === 1000 - BLDGS.TOWER.cost.s, 'stone cost off: ' + store.stone);
-    // it's a NORMAL foundation now: cancelling it refunds its (new) TOWER cost
-    const wBefore = store.wood, sBefore = store.stone;
+    // a NORMAL foundation now — cancelling it undoes the whole exchange: its TOWER cost back, the 55 wood salvage given
+    // back, so the bank is exactly as before the upgrade (the palisade is gone: deleting a finished piece refunds nothing)
     deleteOwnedEntity(pt);
-    assert(store.wood === wBefore + BLDGS.TOWER.cost.w && store.stone === sBefore + BLDGS.TOWER.cost.s, 'cancel did not refund the upgrade site: ' + store.wood + '/' + store.stone);
+    assert(store.wood === 1000 && store.stone === 1000, 'cancel did not undo the upgrade exchange: ' + store.wood + '/' + store.stone);
     // fresh run: villagers build the swapped site up into a full Watch Tower
     stage();
     const s2 = resourceStore(0); s2.wood = 1000; s2.stone = 1000; teamAge[0] = 1;
@@ -653,7 +653,7 @@ function pageSuite() {
     teamAge[0] = 0;
   });
 
-  T('build-over: the upgrade site is a normal foundation — cancelling it refunds the stone cost', () => {
+  T('build-over: the upgrade site is a normal foundation — cancelling it undoes the exchange (no minted wood)', () => {
     stage();
     const store = resourceStore(0); store.wood = 1000; store.stone = 1000;
     teamAge[0] = 1;
@@ -661,9 +661,8 @@ function pageSuite() {
     const v = createUnit('villager', 29, 29, 0);
     execCommand({ kind: 'build-placement', btype: 'TOWER', tileX: 30, tileY: 30, unitIds: [v.id] }, 0);
     assert(pt.btype === 'TOWER' && !pt.complete, 'setup: should be a TOWER construction site');
-    const w = store.wood, s = store.stone;
     deleteOwnedEntity(pt);
-    assert(store.wood === w + BLDGS.TOWER.cost.w && store.stone === s + BLDGS.TOWER.cost.s, 'cancel did not refund the TOWER cost: ' + store.wood + '/' + store.stone);
+    assert(store.wood === 1000 && store.stone === 1000, 'cancel did not return the bank to before the upgrade: ' + store.wood + '/' + store.stone);
     teamAge[0] = 0;
   });
 

@@ -1178,13 +1178,13 @@ function updateUI(){
         let btn=document.createElement('div');btn.className='act-btn';
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Prepay Farm Reseed';
-        btn.dataset.tipDesc='Pre-pays 60 Wood to auto-reseed an exhausted farm. Queued reseeds are used first.';
-        btn.dataset.tipCost=JSON.stringify({w:60});
-        btn.dataset.cost=JSON.stringify({w:60});
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div>${costChips({w:60})}`;
+        btn.dataset.tipDesc=`Pre-pays ${FARM_RESEED_COST.w} Wood to auto-reseed an exhausted farm. Queued reseeds are used first.`;
+        btn.dataset.tipCost=JSON.stringify(FARM_RESEED_COST);
+        btn.dataset.cost=JSON.stringify(FARM_RESEED_COST);
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Prepay Reseed</div>${costChips(FARM_RESEED_COST)}`;
         // Banked reseeds use the SAME queue language as unit training: index
         // shows a count badge on the button; classic shows one cancellable
-        // slot per reseed in the #sel-queue lane (click to refund 60 wood),
+        // slot per reseed in the #sel-queue lane (click to refund its wood),
         // exactly like the training queue.
         if(!isClassicUI && prepaid>0)btn.innerHTML+=`<div class="queue-count queue-count-static" title="${prepaid} reseed${prepaid>1?'s':''} prepaid">${prepaid}</div>`;
         btn.onclick=()=>prepayFarm();
@@ -1197,7 +1197,7 @@ function updateUI(){
             slot.className='queue-slot'; // no training-active/veil — reseeds are instant banked credits
             slot.dataset.tipType='action';
             slot.dataset.tipLabel='Prepaid reseed';
-            slot.dataset.tipDesc='Click to cancel and refund 60 Wood.';
+            slot.dataset.tipDesc=`Click to cancel and refund ${FARM_RESEED_COST.w} Wood.`;
             slot.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="queue-x">✕</div>`;
             slot.onclick=()=>cancelReseed();
             strip.appendChild(slot);
@@ -1210,10 +1210,10 @@ function updateUI(){
         let btn=document.createElement('div');btn.className='act-btn'; // reseed icon has no baked frame → keep the button border
         btn.dataset.tipType='action';
         btn.dataset.tipLabel='Reactivate Farm';
-        btn.dataset.tipDesc='Spends 60 Wood to restore this exhausted farm to full capacity (175 Food).';
-        btn.dataset.tipCost=JSON.stringify({w:60});
-        btn.dataset.cost=JSON.stringify({w:60});
-        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div>${costChips({w:60})}`;
+        btn.dataset.tipDesc=`Spends ${FARM_RESEED_COST.w} Wood to restore this exhausted farm to full capacity (${BLDGS.FARM.food} Food).`;
+        btn.dataset.tipCost=JSON.stringify(FARM_RESEED_COST);
+        btn.dataset.cost=JSON.stringify(FARM_RESEED_COST);
+        btn.innerHTML=`<div class="btn-emoji sprite-icon icon-reseed"></div><div class="btn-label">Reactivate</div>${costChips(FARM_RESEED_COST)}`;
         btn.onclick=()=>reactivateFarm(e);
         act.appendChild(btn);
       }
@@ -1960,7 +1960,7 @@ function reactivateFarm(farm) {
   submitCommand({ kind: 'reactivate-farm', bldgId: farm.id }); // mutation: reactivateFarmNow (js/commands.js)
 }
 
-// Cancel one banked reseed (classic queue-slot click) — refunds 60 wood, like
+// Cancel one banked reseed (classic queue-slot click) — refunds its wood, like
 // cancelling a queued unit. Mutation: cancelReseedNow (js/commands.js).
 function cancelReseed() {
   if (gameOver) return;

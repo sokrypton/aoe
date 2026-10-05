@@ -107,7 +107,9 @@ function execCommand(cmd, team){
       break;
     case 'train-unit': {
       let bldg = entitiesById.get(cmd.bldgId);
-      if (bldg && bldg.type === 'building' && bldg.team === team) {
+      // (never trust the wire: only what this finished building trains — a forged utype queued free dragons, or an
+      // unknown one threw on every peer)
+      if (bldg && bldg.type === 'building' && bldg.team === team && bldg.complete && (BLDGS[bldg.btype].builds || []).includes(cmd.utype)) {
         withCommandContext(team, [], () => execTrainUnit(bldg, cmd.utype));
       }
       break;
@@ -381,7 +383,7 @@ function execGarrison(cmd, team){
     if (room <= 0) return;
     let u = entitiesById.get(id);
     if (!(u && u.type === 'unit' && u.team === team && u.hp > 0 &&
-          !u.garrisonedIn && u.task !== 'garrison' && canGarrisonIn(b, team, u))) return;
+          !u.garrisonedIn && !(u.task === 'garrison' && u.garrisonTarget === b.id) && canGarrisonIn(b, team, u))) return; // (one walking to ANOTHER shelter is redirected: last order wins)
     if (u.order) issueOrder(u, null);        // LAST ORDER WINS (mirrors execUnitCommand)
     u.target = null; u.buildTarget = null; u.buildQueue = []; u.explicitAttack = false;
     u.task = 'garrison'; u.garrisonTarget = b.id;
@@ -714,9 +716,10 @@ function execUnitCommand(cmd){
   // WALKING to board count against the cap, and each boarding order issued
   // below consumes one — surplus infantry fall through to the follow branch
   // (escort) instead of marching to a full ram and idling there.
-  let ramRoom = ramTarget ? ramSeatsFree(ramTarget) : 0;
-
   let movers = selected.filter(s => s.type === 'unit');
+  // (seats the selection's own walkers already hold are theirs again — re-clicking the ram turned all 4 away)
+  let ramRoom = ramTarget ? ramSeatsFree(ramTarget) + movers.filter(m => m.task === 'garrison' && m.garrisonTarget === ramTarget.id).length : 0;
+
   // Group-move destinations / follow stations: the shared formation
   // concept (formationOffsets above). Following a unit anchors the
   // arrangement on the LEADER (excludeCenter keeps its own tile free —
@@ -1042,7 +1045,7 @@ function dispatchBuilders(vils, target){
 // upgrades in place via applyStoneUpgrade instead. Direct delete, NOT handleDeath
 // — it isn't dying, and it can't hold garrison (incomplete).
 function overwriteUnbuiltFoundation(en, team){
-  refundCost(team, BLDGS[en.btype].cost);
+  refundFoundation(en);
   entities = entities.filter(e => e !== en);
   entitiesById.delete(en.id);
   selected = selected.filter(s => s !== en);
@@ -1075,16 +1078,7 @@ function execWallDrag(cmd){
   // Batch the counterpart upgrades (one afford/salvage pass, like the button). A
   // batch that can't afford aborts inside applyStoneUpgrade — drop those targets.
   if (upgrades.length && !applyStoneUpgrade(upgrades, myTeam)) targets = targets.filter(t => upgrades.indexOf(t) < 0);
-  if (!targets.length) return;
-  vils.forEach(v => {
-    v.buildQueue = v.buildQueue || [];
-    targets.forEach(t => v.buildQueue.push(t.id));
-    if (v.task !== 'build' || !v.buildTarget) {
-      let last = targets[targets.length - 1];
-      v.task = 'build'; v.buildTarget = last.id; v.target = null;
-      pathUnitTo(v, last.x + 1, last.y + 1);
-    }
-  });
+  targets.forEach(t => dispatchBuilders(vils, t));   // queued in drag order; an idle villager starts at the first piece
 }
 
 // Train / cancel (resolvers: trainUnit/cancelQueue, js/ui.js).
@@ -1115,6 +1109,7 @@ function execResearch(bldg, target){
   if (target === 'age') {
     let next = teamAge[bldg.team] + 1;
     if (next >= AGES.length) return;
+    if (ageResearching(bldg.team)) { feedbackFor(bldg.team, () => showMsg('Already advancing!')); return; } // (a second TC charged the age twice)
     let cost = AGES[next].cost;
     if (!canAfford(bldg.team, cost)) {
       feedbackFor(bldg.team, () => { showMsg('Not enough resources to advance!'); if (window.playSound) playSound('error'); });
@@ -1200,6 +1195,7 @@ function applyStoneUpgrade(pieces, team){
   Object.entries(refund).forEach(([k, v]) => { store[resourceName(k)] += v; });
   spendCost(team, cost);
   pieces.forEach(w => {
+    w.salvage = upgradeSalvage(w);   // (the site remembers what its old piece paid out: cancelling it gives that back)
     let upType = WALL_STONE_MATCH[w.btype];
     if (w.garrison && w.garrison.length) ejectGarrison(w); // a tower under rebuild shelters no one
     w.btype = upType; // gates keep their footprint/door state (w/h, gateProgress)
@@ -1268,6 +1264,7 @@ function execCancelResearch(bldg){
 function execCancelQueue(bldgId, idx, team){
   let bldg = entitiesById.get(bldgId);
   if (!bldg || bldg.type !== 'building' || bldg.team !== team) return;
+  if (!Number.isInteger(idx) || idx < 0) return;   // (never trust the wire: 'length' threw on every peer)
   let utype = bldg.queue[idx];
   if (!utype) return;
   // Refund exactly what was paid: the free rescue villager (first villager while
@@ -1282,7 +1279,7 @@ function execCancelQueue(bldgId, idx, team){
 
 // Farm economy (resolvers: prepayFarm/reactivateFarm, js/ui.js).
 function prepayFarmNow(){
-  let cost = { w: 60 };
+  let cost = FARM_RESEED_COST;
   if (!canAfford(myTeam, cost)) {
     feedbackFor(myTeam, () => { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); });
     return;
@@ -1294,21 +1291,21 @@ function prepayFarmNow(){
   if (typeof updateUI === 'function') updateUI();
 }
 
-// Cancel one banked reseed — refunds the 60 wood it was prepaid with, exactly
+// Cancel one banked reseed — refunds the wood it was prepaid with, exactly
 // like cancelling a queued unit refunds its cost (queue parity). No-op when
 // the queue is empty.
 function cancelReseedNow(){
   let store = resourceStore(myTeam);
   if ((store.prepaidFarms || 0) <= 0) return;
   store.prepaidFarms--;
-  store.wood += 60;
-  feedbackFor(myTeam, () => showMsg(`Reseed cancelled (+60 Wood). Queue: ${store.prepaidFarms}`));
+  refundCost(myTeam, FARM_RESEED_COST);
+  feedbackFor(myTeam, () => showMsg(`Reseed cancelled (+${FARM_RESEED_COST.w} Wood). Queue: ${store.prepaidFarms}`));
   if (typeof updateUI === 'function') updateUI();
 }
 
 function reactivateFarmNow(farm){
   if (!farm.exhausted) return;
-  let cost = { w: 60 };
+  let cost = FARM_RESEED_COST;
   if (!canAfford(myTeam, cost)) {
     feedbackFor(myTeam, () => { showMsg('Not enough wood!'); if (window.playSound) playSound('error'); });
     return;

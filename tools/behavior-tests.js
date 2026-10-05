@@ -484,6 +484,67 @@ async function withPage(browser, port, entry, fn){
       const m2 = createUnit('militia', 44, 44, 0), far2 = createUnit('militia', 47, 44, 1), stab2 = createUnit('militia', 45, 44, 1);
       m2.target = far2.id; damageEntity(stab2, m2);
       T.ok('…while one on a reachable target keeps it (no AoE2 target-hopping)', m2.target === far2.id);
+      // second pass
+      stage();
+      const tc2 = createBuilding('TC', 10, 10, 0); tc2.complete = true;
+      const bv = createUnit('villager', 30, 10, 0); bv.task = 'garrison'; bv.garrisonTarget = tc2.id;
+      const raider = createUnit('militia', 31, 10, 1); damageEntity(raider, bv);
+      T.ok('a villager running for shelter does not turn to fight', bv.task === 'garrison' && bv.target !== raider.id);
+      stage();
+      const mill = createBuilding('MILL', 20, 20, 0); mill.complete = true; mill.hp = mill.maxHp - 1; mill.buildProgress = mill.buildTime;
+      resourceStore(0).wood = 500; resourceStore(0).stone = 500;
+      const crew = [createUnit('villager', 19, 20, 0), createUnit('villager', 20, 19, 0), createUnit('villager', 22, 21, 0)];
+      crew.forEach(v => { v.task = 'build'; v.buildTarget = mill.id; });
+      for (let i = 0; i < 200 && mill.hp < mill.maxHp; i++) update();
+      for (let i = 0; i < 5; i++) update();
+      T.ok('a finished repair leaves its whole crew idle (AoE2), not dispatched to the building\'s work',
+        mill.hp >= mill.maxHp && crew.every(v => !v.task && !v.buildTarget && v.gatherX < 0));
+      stage();
+      AI_STATES[0] = freshAIState(0); AI_STATES[0].dangerZones = [{ x: 30, y: 30, until: tick + 9999 }];
+      T.ok('a human seat with a dormant AI brain gets no AI flee rule', aiVillagerSafeAt(0, 30, 30));
+      stage();
+      for (const tm of [0, 1]) { const tcx = createBuilding('TC', 5 + tm * 60, 5, tm); tcx.complete = true; } // (no buildings = both conquered: update() idles)
+      const k = createUnit('militia', 40, 40, 0), prey = createUnit('archer', 46, 40, 1);
+      k.target = prey.id; pathUnitTo(k, 46, 40); prey.hp = 0; handleDeath(prey, 0); update();
+      T.ok('a unit stops walking once its target is dead', k.path.length === 0);
+      // third pass: commands + gates
+      stage();
+      const house = createBuilding('HOUSE', 20, 20, 0); house.complete = true;
+      const nBefore = entities.length;
+      execCommand({ kind: 'train-unit', bldgId: house.id, utype: 'dragon' }, 0);
+      T.ok('a forged train command (a House training a dragon) is refused', entities.length === nBefore && !(house.queue || []).length);
+      stage();
+      const tcA = createBuilding('TC', 10, 10, 0), tcB = createBuilding('TC', 30, 10, 0); tcA.complete = tcB.complete = true;
+      teamAge[0] = 0; resourceStore(0).food = 2000;
+      execResearch(tcA, 'age'); const afterOne = resourceStore(0).food; execResearch(tcB, 'age');
+      T.ok('a second TC cannot charge the age-up again', !tcB.research && resourceStore(0).food === afterOne);
+      stage();
+      const pal = createBuilding('WALL', 40, 40, 0); pal.complete = true; pal.hp = pal.maxHp;
+      const st = resourceStore(0); st.wood = 0; st.stone = 500;
+      applyStoneUpgrade([pal], 0); deleteOwnedEntity(pal);
+      T.ok('upgrading a palisade then cancelling the site mints no wood', st.wood === 0 && st.stone === 500);
+      const pal2 = createBuilding('WALL', 42, 40, 0); pal2.complete = true; pal2.hp = pal2.maxHp;
+      st.wood = 0; st.stone = 500;
+      applyStoneUpgrade([pal2], 0); const salvaged = st.wood; st.wood = 0;   // the salvage, spent
+      deleteOwnedEntity(pal2);
+      T.ok('…nor when the salvage was spent before cancelling (it comes off the refund)', salvaged > 0 && st.wood === 0 && st.stone === 500 - salvaged);
+      stage();
+      const gate = createBuilding('GATE', 50, 50, 0, 3, 1); gate.complete = true;
+      const tw = createBuilding('TOWER', 49, 50, 0); tw.complete = true;
+      const g1 = createUnit('militia', 49.5, 50.5, 0);
+      const swing = n => { for (let i = 0; i < n; i++) { tick++; updateGates(); } };   // (updateGates runs on even ticks)
+      swing(20);
+      T.ok('control: a unit standing at the tower corner does open the gate', gate.isOpen);
+      enterGarrison(g1, tw); swing(20);
+      T.ok('a unit sheltering in the tower beside a gate does not hold the gate open', !gate.isOpen);
+      stage(); window.fogDisabled = false;
+      for (const tm of [0, 1]) { const tcx = createBuilding('TC', 5 + tm * 60, 5, tm); tcx.complete = true; }
+      const enemyTC = entities.find(b => b.btype === 'TC' && b.team === 1);
+      const att = createUnit('militia', 12, 12, 0); assignAttack(att, enemyTC); pathUnitTo(att, enemyTC.x, enemyTC.y);
+      const hid = !entityVisibleToTeam(enemyTC, 0);
+      for (let i = 0; i < 30; i++) update();
+      T.ok('an attack order on a fogged enemy building survives the march (fog on)', hid && att.target === enemyTC.id && att.path.length > 0);
+      window.fogDisabled = true;
       return T;
     })),
 

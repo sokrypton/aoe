@@ -477,8 +477,8 @@ function stampDangerZone(dzAi,x,y,bearId){
 }
 
 function aiVillagerSafeAt(team,x,y){
-  let ai=AI_STATES&&AI_STATES[team];
-  if(!ai)return true; // humans manage their own safety
+  let ai=isAITeam(team)&&AI_STATES&&AI_STATES[team];
+  if(!ai)return true; // humans manage their own safety (a seat back from AI keeps a dormant brain: it isn't one)
   if(ai.dangerZones&&ai.dangerZones.length){
     for(let z of ai.dangerZones){
       if(tick>=z.until)continue;
@@ -1065,7 +1065,7 @@ function resolveStalledAttack(u, tgt){
     // keeps the player's order (they can micro); an unreachable MELEE foe
     // can't hurt us from where it is, so wait-in-place stays for ordinary
     // crowded-fight stalls.
-    let tr = tgt.type === 'unit' ? (UNITS[tgt.utype].range || 0) : 0;
+    let tr = tgt.type === 'unit' ? (tgt.range || 0) : 0;   // its own reach (Fletching/Bodkin), as inWeaponRange
     if (!u.explicitAttack && tr > 0 && dist(u, tgt) <= tr + 1) {
       u.target = null;
       let ux = u.x - tgt.x, uy = u.y - tgt.y, len = Math.sqrt(ux*ux + uy*uy) || 1;
@@ -1367,7 +1367,7 @@ function updateGatherTask(e,config){
       // (updateVillagerBuild) or via the Mill's prepay queue, never silently.
       // Without the isAITeam gate a human farmer with wood but no prepaid
       // ping-pongs build↔farm at the exhausted plot forever.
-      if(store&&((store.prepaidFarms||0)>0||(isAITeam(e.team)&&store.wood>=60))){
+      if(store&&((store.prepaidFarms||0)>0||(isAITeam(e.team)&&canAfford(e.team,FARM_RESEED_COST)))){
         let ex=null,best=Infinity;
         entities.forEach(en=>{
           if(en.type!=='building'||en.btype!=='FARM'||en.team!==e.team||!en.exhausted)return;
@@ -1502,19 +1502,14 @@ function checkNextBuild(e){
   // builder just gave up on as UNREACHABLE must not be re-picked the same tick,
   // or give-up → re-pick loops forever on a sealed foundation. The stamp
   // expires, so a transient block heals.
-  let backedOff = bt => bt.buildBackoffUntil > tick;
   let unfinishedInQueue = e.buildQueue
     .map(id => entitiesById.get(id))
-    .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp) && !backedOff(bt));
+    .filter(bt => bt && (!bt.complete || bt.hp < bt.maxHp) && !(bt.buildBackoffUntil > tick));
 
   if (unfinishedInQueue.length === 0) {
-    // Look for any unfinished allied foundations nearby (within 25 tiles). An AI's villager only joins one short of
-    // its crew (buildersPerBuilding): every finisher chaining onto the same site pulled half a town off gathering for a
-    // tower already nearly done — the AI's assigner (assignAIVillagers) staffs its sites itself.
-    let crewFull = en => { if (!aiDrives(e)) return false; let n = 0; for (const u of entities) if (u.type === 'unit' && u.team === e.team && u !== e && u.task === 'build' && u.buildTarget === en.id) n++; return n >= aiProfileFor(e.team).buildersPerBuilding; };
-    let wallsFull = aiDrives(e) && aiWallCrewFull(e.team, e);
-    // (an exhausted farm is "incomplete" too, but it wants a paid reseed, not a builder)
-    let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete && !en.exhausted && !backedOff(en) && !crewFull(en) && !(wallsFull && isWallWork(en)));
+    // Look for any unfinished allied foundations nearby (within 25 tiles) — joinable ones (joinableSite).
+    let joinable = joinableSite(e);
+    let unfinished = entities.filter(en => en.type === 'building' && en.team === e.team && !en.complete && joinable(en));
     if (unfinished.length > 0) {
       unfinished.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id); // deterministic tiebreak
       if (dist(e, unfinished[0]) <= 25) {
@@ -1544,6 +1539,15 @@ function checkNextBuild(e){
   return false;
 }
 
+// Which unbuilt sites builder `e` may take on its own (checkNextBuild's nearby sweep, tryBuildElsewhere): not backed off,
+// not an exhausted farm (it wants a paid reseed, not a builder), and — for an AI villager — not one already at its crew
+// (buildersPerBuilding) or wall work past the wall-crew cap: every finisher chaining onto the same site pulled half a
+// town off gathering for a tower already nearly done; the AI's assigner (assignAIVillagers) staffs its sites itself.
+function joinableSite(e){
+  const ai = aiDrives(e), wallsFull = ai && aiWallCrewFull(e.team, e), cap = ai ? aiProfileFor(e.team).buildersPerBuilding : 0;
+  const crewFull = en => { if (!ai) return false; let n = 0; for (const u of entities) if (u.type === 'unit' && u.team === e.team && u !== e && u.task === 'build' && u.buildTarget === en.id) n++; return n >= cap; };
+  return en => !en.exhausted && !(en.buildBackoffUntil > tick) && !crewFull(en) && !(wallsFull && isWallWork(en));
+}
 // Site blocked (footprint occupied, can't start): don't idle — rotate to another
 // reachable, currently-UNBLOCKED unbuilt building and circle back later. The
 // blocked site stays in the queue (added if missing), so once it clears the
@@ -1552,10 +1556,10 @@ function checkNextBuild(e){
 // the queue plus nearby (≤25) allied foundations, same reach test as
 // checkNextBuild; deterministic id tiebreak.
 function tryBuildElsewhere(e, blockedId){
-  let seen = new Set(), cands = [];
+  let seen = new Set(), cands = [], joinable = joinableSite(e);
   for (let id of (e.buildQueue || [])) { let b = entitiesById.get(id);
     if (b && b.type === 'building' && !b.complete && !b.exhausted && !seen.has(id)) { seen.add(id); cands.push(b); } }
-  for (let en of entities) { if (en.type === 'building' && en.team === e.team && !en.complete && !en.exhausted &&
+  for (let en of entities) { if (en.type === 'building' && en.team === e.team && !en.complete && joinable(en) &&
     !seen.has(en.id) && dist(e, en) <= 25) { seen.add(en.id); cands.push(en); } }
   cands.sort((a, b) => dist(e, a) - dist(e, b) || a.id - b.id);
   for (let cand of cands) {
@@ -1591,10 +1595,12 @@ function shouldRetaliate(target, attacker){
   // drop-off) — that must not exempt it from defending itself, or gatherers
   // get stabbed mid-commute without reacting. Only an explicit player move
   // order ({kind:'move'}, set solely by issueMoveOrder) keeps a villager walking.
-  let hasActiveMoveOrder = target.type==='unit' && (
+  // A unit running for shelter (the bell, a ram to board) is on an order too: turning to fight it out, a belled villager
+  // then went back to work mid-raid.
+  let hasActiveMoveOrder = target.type==='unit' && (target.task==='garrison' || (
     target.utype==='villager'
       ? (target.order&&target.order.kind==='move')
-      : (target.path.length>0 || (target.order&&target.order.kind==='move')));
+      : (target.path.length>0 || (target.order&&target.order.kind==='move'))));
   // AoE2: villagers fight back against melee attackers — INCLUDING bears:
   // gatherers mob-retaliate as a group (a flee reflex instead let bears
   // outrun and pick off runners one at a time). They don't chase ranged
@@ -1782,7 +1788,7 @@ function damageEntity(attacker, target){
   if(target.utype==='villager'&&isWildPredator(attacker)&&retryReady(target,RETRY.FLEE_BEAR)){
     retryStamp(target,RETRY.FLEE_BEAR,T30(90));
     target.fledBearId=attacker.id;
-    let dzAi=AI_STATES&&AI_STATES[target.team];
+    let dzAi=aiDrives(target)&&AI_STATES&&AI_STATES[target.team];   // (the AI's learning, as the raid stamp)
     if(dzAi&&dzAi.dangerZones)stampDangerZone(dzAi,Math.round(attacker.x),Math.round(attacker.y),attacker.id);
   }
   // An AI unit the dragon hits runs straight away from it (~7 tiles), dropping its task — the AI never fights it.
@@ -2615,9 +2621,9 @@ function updateVillagerBuild(e){
         feedbackFor(e.team, () => showMsg("Reseed consumed from Mill! (Prepaid remaining: " + store.prepaidFarms + ")"));
         reseedFarmForFarmer(bt, e);
         return;
-      } else if (payWood && store && store.wood >= 60) {
-        store.wood -= 60;
-        feedbackFor(e.team, () => showMsg("Farm reseeded (-60 Wood)"));
+      } else if (payWood && store && canAfford(e.team, FARM_RESEED_COST)) {
+        spendCost(e.team, FARM_RESEED_COST);
+        feedbackFor(e.team, () => showMsg(`Farm reseeded (-${FARM_RESEED_COST.w} Wood)`));
         reseedFarmForFarmer(bt, e);
         return;
       } else {
@@ -2678,6 +2684,7 @@ function updateVillagerBuild(e){
       // render-units.js (same treatment as chop/mine).
       if(bt.buildProgress>=bt.buildTime){
         bt.complete=true;
+        bt.salvage=undefined;   // (an upgrade site is a finished piece now: nothing left to undo)
         bt.hp=Math.min(bt.maxHp,Math.round(bt.hp));
         e.buildTarget=null;
         if (e.team === myTeam && window.playSound) { // myTeam, not 0: on the host they're equal, and the guest completion path (js/net-sync.js) mirrors this gate
@@ -2750,16 +2757,27 @@ function updateVillagerBuild(e){
         }
       }
       if (bt.hp >= bt.maxHp) {
-        e.buildTarget = null;
         bt.woodDebt = 0;
         bt.stoneDebt = 0;
-        if(e.buildQueue) e.buildQueue = e.buildQueue.filter(id => id !== bt.id);
-        if(!checkNextBuild(e)){
-          e.task=null;
+        // The whole repair crew is done, as construction's: next site, else idle (AoE2) — the co-repairers otherwise
+        // fell into the finished-site branch next tick and were dispatched to the building's work like its builders.
+        for(let i=0;i<entities.length;i++){
+          const u=entities[i];
+          if(u!==e&&(u.type!=='unit'||u.task!=='build'||u.buildTarget!==bt.id))continue;
+          u.buildTarget=null;
+          if(u.buildQueue) u.buildQueue=u.buildQueue.filter(id=>id!==bt.id);
+          if(!checkNextBuild(u)) u.task=null;
         }
       }
     }
   }
+}
+
+// THE fog gate for a combat target (rules: updateUnitCombat's note) — also judged mid-walk for a moving foe by the chase
+// re-aim, which otherwise tracked a fogged unit's live tile across the map (the path never emptied for combat to see it).
+function combatTargetHidden(e, t){
+  return !sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
+    && !(aiDrives(e) && e.explicitAttack && t.type === 'building') && !entityVisibleToTeam(t, e.team);
 }
 
 // ---- COMBAT (unit has a target; ranged fire / melee press / mop-up /
@@ -2815,15 +2833,12 @@ function updateUnitCombat(e){
   // A human's explicit attack drops on lost vision: the player watches the fog and re-clicks.
   // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its
   // own aggro rules.
-  if (!sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
-      && !(aiDrives(e) && e.explicitAttack && t.type === 'building')) {
-    if (!entityVisibleToTeam(t, e.team)) {
-      if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
-      e.target = null;
-      e.explicitAttack = false;
-      clearUnitPath(e);
-      return;
-    }
+  if (combatTargetHidden(e, t)) {
+    if(window.__dropStats)window.__dropStats.visionDrop=(window.__dropStats.visionDrop||0)+1;
+    e.target = null;
+    e.explicitAttack = false;
+    clearUnitPath(e);
+    return;
   }
 
   // Anchor retreat check ("leash"): a guard post leashes AUTO-acquired
@@ -3126,7 +3141,7 @@ function updateFollowOrder(e){
       }
     } else if(e.path.length>0){
       // Close enough — stop walking but keep following so we resume if it moves away.
-      e.path=[];e.moveT=0;e.fromX=e.x;e.fromY=e.y;
+      clearUnitPath(e);
     }
   }
 }
@@ -3179,6 +3194,8 @@ function adjustTargetApproach(e){
 
     if(inRange){
       clearUnitPath(e);
+    } else if(t.type==='unit' && combatTargetHidden(e, t)){
+      e.target = null; e.explicitAttack = false; clearUnitPath(e);   // a mover lost to the fog mid-chase (a building can't move: judged on arrival)
     } else if(t.type==='unit' && tick % T30(15) === 0 && e.path.length > 0 && retryReady(e,RETRY.REAIM)){
       let endTile = e.path[e.path.length - 1];
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
@@ -3422,6 +3439,9 @@ function dropPathIfInPosition(e){
   // path now and let the combat block strike this same tick.
   if(e.target && e.task!=='return'){
     let ct=entitiesById.get(e.target);
+    // (gone — killed by another, or it garrisoned: stop now, so the combat block continues the assault or acquire
+    // re-picks here, instead of walking on to the empty spot holding a dead id)
+    if(!ct||ct.hp<=0){ clearUnitPath(e); return; }
     if(ct && ct.hp>0){
       let inPos = ct.type==='building'
         ? adjToBuilding(e.x,e.y,ct)
@@ -3474,7 +3494,7 @@ function updateUnit(e){
   // Targets that garrisoned mid-fight become unattackable — drop them.
   if(e.target){
     let t=entitiesById.get(e.target);
-    if(t&&t.garrisonedIn){e.target=null;e.explicitAttack=false;} // like every target drop: a later self-acquired fight is no order
+    if(t&&t.garrisonedIn){e.target=null;e.explicitAttack=false;clearUnitPath(e);} // like every target drop: a later self-acquired fight is no order
   }
   if(e.utype==='villager' && !e.target && e.savedTask && e.task!=='garrison'){
     restoreSavedTask(e);
@@ -3626,6 +3646,25 @@ function findNearTile(e,terrain,excludeList=null,anchor=null,noClaim=false){
 // js/commands.js's 'delete-units' case for the queued command) — a
 // player deliberately killing their OWN unit/building (AoE2 has this too,
 // e.g. to free population cap or cancel a mis-placed foundation).
+// THE cancel refund of an unbuilt site: its cost back — and an upgrade site (applyStoneUpgrade) settles the salvage its
+// old piece paid out first: from that resource's own refund, then the bank, and whatever was already spent comes off the
+// rest of the refund. Upgrade-then-cancel (spend between, or not) is never a sale of a finished palisade.
+function refundFoundation(en){
+  let refund = { ...BLDGS[en.btype].cost };
+  if (en.salvage) {
+    let st = resourceStore(en.team), owed = 0;
+    for (const k of Object.keys(en.salvage).sort()) {
+      let v = en.salvage[k], fromRefund = Math.min(refund[k] || 0, v);
+      if (fromRefund) refund[k] -= fromRefund;
+      v -= fromRefund;
+      const r = resourceName(k), take = Math.min(st[r], v);
+      st[r] -= take; owed += v - take;
+    }
+    for (const k of Object.keys(refund).sort()) { const t = Math.min(refund[k], owed); refund[k] -= t; owed -= t; }
+    en.salvage = undefined;
+  }
+  refundCost(en.team, refund);
+}
 function deleteOwnedEntity(en){
   // AoE2: deleting an UNFINISHED foundation refunds its cost (mis-click
   // recovery / quick-wall cancel). Completed buildings and units refund
@@ -3634,7 +3673,7 @@ function deleteOwnedEntity(en){
   // gate/tower consumed wall tiles for a stone discount — in the player's favor,
   // acceptable.)
   if(en.type==='building'&&!en.complete&&!en.exhausted){
-    refundCost(en.team, BLDGS[en.btype].cost); // the OWNING team's resources, not always team 0's
+    refundFoundation(en); // the OWNING team's resources, not always team 0's
     // Feedback belongs to the OWNER's screen only — under lockstep both
     // peers execute this for either team's delete commands.
     feedbackFor(en.team, () => showMsg(BLDGS[en.btype].name+' cancelled (refunded)'));
@@ -3656,8 +3695,8 @@ function handleDeath(e,killerTeam){
     for(let gi=0;gi<entities.length;gi++){
       let g=entities[gi], o=g.order;
       if(!o||g.hp<=0)continue;
-      if(o.kind==='escort'&&o.id===e.id) g.order={kind:'guard',x:fx,y:fy};
-      else if(o.kind==='guardBuilding'&&o.id===e.id) g.order={kind:'guard',x:o.x,y:o.y};
+      if(o.kind==='escort'&&o.id===e.id) issueOrder(g,{kind:'guard',x:fx,y:fy});   // (THE order writer: a fresh post resets its return tries)
+      else if(o.kind==='guardBuilding'&&o.id===e.id) issueOrder(g,{kind:'guard',x:o.x,y:o.y});
     }
   }
   // Riders survive a destroyed ram (AoE2: units pop out of the wreck), as a building's garrison does below.
@@ -3972,8 +4011,8 @@ function updateBuildingFarmReseed(e){
     // be surprising and remove their control over the decision.
     if (isAITeam(e.team)) {
       let store = resourceStore(e.team);
-      if (store && store.wood >= 60) {
-        store.wood -= 60;
+      if (store && canAfford(e.team, FARM_RESEED_COST)) {
+        spendCost(e.team, FARM_RESEED_COST);
         reseedFarm(e);
       }
     }
