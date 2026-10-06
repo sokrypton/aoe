@@ -151,7 +151,7 @@ function updateAI(ai){
   // The dragon's lair is off limits: a standing danger zone (it can't be killed, so the zone never lapses for good).
   for(const d of entities) if(d.utype==='dragon'&&d.homeX!==undefined&&ai.dangerZones) stampDangerZone(ai,Math.round(d.homeX),Math.round(d.homeY),d.id);
   let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===ai.team);
-  let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team);
+  let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team&&!e.possessed); // (a player-steered unit is never dispatched — TC or not)
   let aiTC=aiBuildings.find(b=>b.btype==='TC');
   if(!aiTC){
     // TC destroyed = the knockout (handleDeath flags it; no rebuilding).
@@ -168,8 +168,6 @@ function updateAI(ai){
 
   updateAIIntel(ai,aiTC); // what has scouting/combat actually revealed about the player this tick
   if(maybeResignAI(ai,aiUnits))return; // AoE2-style concession — nothing left to plan
-  // A player-steered unit (character mode, e.possessed) is never dispatched.
-  aiUnits=aiUnits.filter(u=>!u.possessed);
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
   // !garrisonedIn: a rider sealed inside a ram cannot act — enterGarrison
@@ -258,7 +256,7 @@ function huntAIBears(ai,mils){
   // passes: fighters first, scouts only if nothing else answered.
   // Retreating units sit the hunt out: re-sending a mauled hunter is the
   // fight-to-the-death ping-pong the retreat exists to break.
-  let candidates=mils.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
+  let candidates=mils.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison'&&m.utype!=='ram'); // (a ram — 2 atk, -3 melee armor — never melees a bear)
   let ordered=[...candidates.filter(m=>m.utype!=='scout'),...candidates.filter(m=>m.utype==='scout')];
   for(let m of ordered){
     if(sent>=3)break;
@@ -1462,7 +1460,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
     // While the camp stands, the banking scope covers the DEEPENED train —
     // medium's first-ram-only reserve otherwise stops feeding the siege.
     let ramBankScope=ai.campSince!=null?Math.max(profile.ramWoodReserve||0,Math.ceil(maxArmy/3)):(profile.ramWoodReserve||0);
-    if(wantRam&&ramCount<ramBankScope&&store.gold>=ramGold&&store.wood<(UNITS.ram.cost.w||0)&&isUnlocked(ai.team,'militia'))return 'militia';}
+    if(wantRam&&ramCount<ramBankScope&&store.gold>=ramGold+(UNITS.militia.cost.g||0)&&store.wood<(UNITS.ram.cost.w||0)&&isUnlocked(ai.team,'militia'))return 'militia';} // (its own gold on top: else it ate the ram's, and the gold-free spearman next ate the wood)
     // Saving for a ram but gold-short: train the gold-free spearman so gold
     // banks toward the ram instead of dribbling into militia/knights —
     // otherwise attacks bounce off walls forever (the finishing stalemate).
@@ -2459,6 +2457,9 @@ function launchAIWave(ai,mils,aiTC,profile){
       strays.forEach(m=>{
         let t=chooseAIAttackTarget(ai,m,spotted);
         if(t&&aiCampVeto(ai,t))t=null;   // camped: town buildings wait for the assault
+        // A lone defender (never in a wave) takes only a foe near where it stands — not a far villager shared vision
+        // shows it — and otherwise goes home (below): it must not walk on alone into the enemy town.
+        if(t&&!m.waveId&&ai.campSince==null&&distToTarget(m,t)>12*aiScale())t=null;
         if(t){assignAttack(m,t);return;}
         if(m.order&&m.order.kind==='move')return; // already marching
         if(m.order&&m.order.kind==='guard'&&aiCampHolding(ai))return; // holding the picket
@@ -2545,9 +2546,12 @@ function launchAIWave(ai,mils,aiTC,profile){
     if(!engaged.length){rallyIdleMilitary(ai,mils,aiTC);return;}
     available.forEach(m=>{
       let best=null,bd=Infinity;
-      for(const c of engaged){const d=dist(m,c); if(d<bd||(d===bd&&c.id<best.id)){bd=d;best=c;}}
-      assignAttack(m,entitiesById.get(best.target));
+      for(const c of engaged){
+        if(m.utype==='ram'&&entitiesById.get(c.target).type!=='building')continue; // a ram joins a siege, never a melee
+        const d=dist(m,c); if(d<bd||(d===bd&&c.id<best.id)){bd=d;best=c;}}
+      if(best)assignAttack(m,entitiesById.get(best.target));
     });
+    let left=available.filter(m=>!m.target); if(left.length)rallyIdleMilitary(ai,left,aiTC); // (a ram with no siege to join: back to the picket)
     aiProbe('waveJoin:t'+ai.team);
     return;
   }
@@ -2684,8 +2688,7 @@ function ensureAIScout(ai,readyBarracks){
   if(scouts+queued>=1)return;                   // one explorer is enough
   if(tick-(ai.lastScoutTrainTick??-1e9)<AI_SCOUT_RETRAIN_COOLDOWN)return; // don't churn food re-feeding scouts to a raider
   if(!canAfford(ai.team,UNITS.scout.cost))return;
-  queueUnit(readyBarracks[0],'scout');
-  ai.lastScoutTrainTick=tick;
+  if(queueUnit(readyBarracks[0],'scout').ok) ai.lastScoutTrainTick=tick;   // (a refused queue — pop cap — isn't a retrain)
 }
 
 function controlAIScouts(ai,mils,aiTC){

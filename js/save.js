@@ -253,6 +253,8 @@ function applySavedGame(data, opts){
     // reports, watchdog sweeps) then never evaluates true again, silently
     // breaking them forever with no error anywhere.
     tick = Math.round(data.tick) || 0;
+    if (typeof clearCommandQueue === 'function') clearCommandQueue(); // (the old timeline's queued commands would replay as the loaded game reaches their ticks)
+    if (typeof lockstepEpoch !== 'undefined') lockstepEpoch = 'load-' + Date.now(); // a new command timeline (network bookkeeping, not sim): resynced guests clear theirs
     bumpSimGen(); // tick jumped — invalidate every registered sim cache (js/core.js)
     camX = data.camX || 0;
     camY = data.camY || 0;

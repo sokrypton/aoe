@@ -434,6 +434,10 @@ function setTeamAge(team, age){
 function upgradeAtkBonus(team){
   return (hasUpgrade(team,'forging') ? 1 : 0) + (hasUpgrade(team,'iron_casting') ? 1 : 0);
 }
+// The archers' own line: Fletching and Bodkin Arrow, each +1 attack and +1 range.
+function archerAtkBonus(team){
+  return (hasUpgrade(team,'fletching') ? 1 : 0) + (hasUpgrade(team,'bodkin_arrow') ? 1 : 0);
+}
 // +1 melee AND pierce armor per armor card — read live in damageEntity.
 function upgradeArmorBonus(team){
   return (hasUpgrade(team,'scale_armor') ? 1 : 0) + (hasUpgrade(team,'chain_mail') ? 1 : 0);
@@ -578,6 +582,7 @@ function freshAIIntel(){
 function freshAIState(team){
   return { team, tick: 0,
     intel: freshAIIntel(), wallPlan: null, gateBuilt: false, gateTile: null,
+    gatePairs: null, gatesDone: null, wallRadiusUsed: 0, wallCx: 0, wallCy: 0,   // (the ring's geometry: set by computeAIWallRing / planAIWalls)
     // Scout bookkeeping (controlAIScouts/ensureAIScout, js/ai.js): the
     // base-survey lap progress and the retrain cooldown. Sim state read on
     // later ticks — hashed in the AI digest.

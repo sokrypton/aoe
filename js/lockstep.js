@@ -378,6 +378,8 @@ function lockstepCaptureState(){
     entities, projectiles, corpses, resources, map, marketPrices,
     popUsed, popCap, tick, gameOver, won,
     nextId, nextProjectileId, simRngState,
+    numTeams: NUM_TEAMS, // (a resync's fresh page must size its per-team state to the match)
+    epoch: lockstepEpoch, // (the command timeline — see lockstepEpoch)
     bellRinging: window.bellRinging,
     // All-Visible match: the explored grids are not maintained (stay zeroed;
     // every read short-circuits on fogDisabled), so don't clone NUM_TEAMS x
@@ -467,6 +469,10 @@ function lockstepRollback(execTick){
 // brief hiccup instead of freezing the match. Rate-limited; a match that
 // keeps desyncing still freezes loudly so the bug gets reported.
 let lockstepResyncBarrier = -1; // drop stale cmd-ls at/below this tick
+// Which command timeline this peer's queue belongs to: a save load starts a new one (applySavedGame stamps a fresh token
+// — network bookkeeping, never sim state). A resync carries the sender's; a peer holding another timeline's commands
+// clears its queue instead of pruning it (they'd replay on that peer alone, and their seqs collide with the new ones).
+let lockstepEpoch = null;
 let lockstepResyncCount = 0, lastResyncAt = 0;
 const LOCKSTEP_MAX_RESYNCS = 5;
 
@@ -492,6 +498,7 @@ function lockstepApplyResync(state){
   // and viewer-local structures don't exist yet. MAP must be set before
   // anything indexes the restored map, and fog is per-viewer (never part
   // of sim state) so it's rebuilt empty and recomputed next tick.
+  if (state.numTeams) NUM_TEAMS = state.numTeams;   // (a fresh page boots at 2: a 3-4 player match never re-matched)
   MAP = state.map.length;
   // Before initFog(): it seeds the whole grid as revealed when fog is off.
   if (state.fogDisabled !== undefined) window.fogDisabled = !!state.fogDisabled;
@@ -518,8 +525,10 @@ function lockstepApplyResync(state){
   nextId = state.nextId; nextProjectileId = state.nextProjectileId;
   simRngState = state.simRngState;
   window.bellRinging = state.bellRinging;
+  // Fresh vision grids first (a fresh page has none: the first tick's lazy reset wiped the restored explored grids),
+  // then the explored memory on top — the visible counts rebuild next tick (resetTeamVision forces it).
+  resetTeamVision();
   if (state.exploredSim) teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
-  else resetTeamVision(); // All-Visible match: grids unmaintained — fresh zeros are exact
   restoreTeamState(state); // controllers/AI_STATES/lastTeamHit (js/core.js)
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
   // explored memory only survives in the sim's explored grid. Seed fog=1
@@ -546,7 +555,17 @@ function lockstepApplyResync(state){
   // already sent on the wire, and the peer's stale-guard keeps anything
   // with execTick > barrier: it WILL execute them. Wiping them here made
   // the issuer skip commands the peer runs — an instant re-desync loop.
-  commandQueue.forEach((v, t) => { if (t <= tick) commandQueue.delete(t); });
+  if ((state.epoch ?? null) !== lockstepEpoch) {
+    // Another timeline (the host loaded a save): nothing queued here belongs to the world just received.
+    clearCommandQueue();
+    lockstepEpoch = state.epoch ?? null;
+  } else {
+    commandQueue.forEach((v, t) => { if (t <= tick) commandQueue.delete(t); });
+    // …but a command lost in transit when the link dropped (or issued while disconnected) never reached the host: it
+    // would run here only. A guest re-sends its own pending ones; the host schedules what it lacks, relays it, and
+    // every peer drops the duplicates (scheduleCommand).
+    if (netRole === 'guest') commandQueue.forEach((arr, t) => { if (t > tick) for (const c of arr) if (c.team === myTeam) sendToAllPeers({ type: 'cmd-ls', execTick: t, seq: c.seq, cmd: c.cmd }); });
+  }
   lockstepSnapshots.length = 0;
   DET.history.length = 0;
   lockstepResyncBarrier = tick;

@@ -44,6 +44,7 @@ function submitCommand(cmd){
 function scheduleCommand(execTick, team, seq, cmd){
   let arr = commandQueue.get(execTick);
   if (!arr) { arr = []; commandQueue.set(execTick, arr); }
+  if (arr.some(c => c.team === team && c.seq === seq)) return;   // one command, once (a guest re-sends after a resync)
   arr.push({ team, seq, cmd });
   detRecordCommand(execTick, team, seq, cmd); // no-op unless a replay log is active
 }

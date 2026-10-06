@@ -1825,7 +1825,7 @@ function riderArm(kind, t){
   return [p.hand, [p.dir[0], p.dir[1], rest[1][2]], p.edge];
 }
 // A soldier's gear by its team's age and forge lines (soldierEquip's rules)
-const soldierGear = e => soldierEquip(e.utype, ageBonus(e.team), upgradeAtkBonus(e.team), upgradeArmorBonus(e.team), hasUpgrade(e.team, 'fletching'));
+const soldierGear = e => soldierEquip(e.utype, ageBonus(e.team), e.utype === 'archer' ? archerAtkBonus(e.team) : upgradeAtkBonus(e.team), upgradeArmorBonus(e.team), hasUpgrade(e.team, 'fletching')); // (each its own attack line)
 // What a soldier is doing ({ kind, t, legs, opt: { unit, eq } }) — both views' reading. The swing follows the HITS: one
 // struck this reload cycle plays its cut (landing on the hit) — on the move too, the legs (or the horse) running on
 // underneath; gated on range alone, a hit on the run showed no blow, and a chase flipping in and out of range restarted

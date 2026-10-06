@@ -350,11 +350,18 @@ function simChecksum(){
         for (let u = 0; u < NUM_TEAMS; u++) h = detMix(h, (ai.intel.strengthByTeam && ai.intel.strengthByTeam[u]) || 0);
       }
       if (ai.wallPlan) h = detMix(h, ai.wallPlan.reduce((s, p) => s + (p.done ? 1 : 0), 0));
+      // The ring's geometry and its gates' state steer rallies, flanks and gate rebuilds on later ticks.
+      h = detMix(h, ai.gateTile ? ai.gateTile.x : -1); h = detMix(h, ai.gateTile ? ai.gateTile.y : -1);
+      h = detMix(h, ai.gatePairs ? ai.gatePairs.length : -1);
+      if (ai.gatesDone) for (let gi = 0; gi < (ai.gatePairs ? ai.gatePairs.length : 0); gi++) h = detMix(h, ai.gatesDone[gi] ? 1 : 0);
+      h = detMixFloat(h, ai.wallRadiusUsed || 0); h = detMixFloat(h, ai.wallCx || 0); h = detMixFloat(h, ai.wallCy || 0);
       if (ai.dangerZones) for (const z of ai.dangerZones) { h = detMix(h, z.x); h = detMix(h, z.y); h = detMix(h, z.until); h = detMix(h, z.bearId || -1); }
     }
     let hit = lastTeamHit && lastTeamHit[t];
     h = detMix(h, hit ? hit.tick : -1);
     h = detMix(h, hit && hit.coreTick != null ? hit.coreTick : -1);
+    if (hit) { h = detMixFloat(h, hit.x); h = detMixFloat(h, hit.y); h = detMix(h, hit.core ? 1 : 0);   // (where: the siege hold / bell direction read it)
+      h = detMixFloat(h, hit.coreX == null ? -1 : hit.coreX); h = detMixFloat(h, hit.coreY == null ? -1 : hit.coreY); }
     h = detMix(h, allianceOf(t));
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
     h = detMix(h, teamAge && teamAge[t] || 0);

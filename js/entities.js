@@ -7,8 +7,10 @@ let nextId=1;
 // looked up live in damageEntity — no stamp needed.
 function applyUnitTechStats(e){
   let base = UNITS[e.utype];
-  if (MILITARY.has(e.utype)) e.atk = base.atk + upgradeAtkBonus(e.team);
-  if (e.utype === 'archer') e.range = base.range + (hasUpgrade(e.team, 'fletching') ? 1 : 0) + (hasUpgrade(e.team, 'bodkin_arrow') ? 1 : 0);
+  // (each line its own: Forging/Iron Casting for infantry+cavalry, Fletching/Bodkin for archers — as the techs' sweeps)
+  if (FORGE_UNITS.has(e.utype)) e.atk = base.atk + upgradeAtkBonus(e.team);
+  else if (e.utype === 'archer') e.atk = base.atk + archerAtkBonus(e.team);
+  if (e.utype === 'archer') e.range = base.range + archerAtkBonus(e.team);   // (the same two cards: +1 range each)
   if (e.utype === 'villager') {
     e.speed = base.speed * (hasUpgrade(e.team, 'wheelbarrow') ? 1.1 : 1);
     e.carryMax = 10 + (hasUpgrade(e.team, 'wheelbarrow') ? 3 : 0);

@@ -3,6 +3,9 @@ function update(){
   if(gameOver||!gameStarted)return;
   detEnterSim(); // no-op unless DET.strict — traps un-migrated Math.random in sim code
   tick++;
+  // Vision FIRST: every sim read this tick (commands, gates, arrow impacts, units) sees the refreshed grid — after a
+  // rollback/resync the forced rebuild lands before them too, so no peer reads a grid left from another timeline.
+  updateTeamVision(); // deterministic per-team visibility for SIM reads (js/core.js)
   // Execute every command stamped for this tick, in canonical (team, seq)
   // order — the ONLY entry point for player mutations (js/commands.js).
   runScheduledCommands();
@@ -60,7 +63,6 @@ function update(){
   });
   projectiles = remainingProjectiles;
 
-  updateTeamVision(); // deterministic per-team visibility for SIM reads (js/core.js)
   // Viewer-local work — skipped by the headless self-play simulator
   // (tools/sim.html): fog and explored-ever memory are render/save-side
   // only, never read by the sim, and cost real per-tick time at scale.
