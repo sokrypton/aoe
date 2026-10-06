@@ -88,10 +88,22 @@ function drawBuildingFootprintOutline(b, alpha){
   X.setLineDash([]);
   X.globalAlpha = 1;
 }
-// Ground-plane center of a building's footprint, in screen space.
-function buildingCenterScreen(b){
+// A dashed order line between two WORLD points (tile coords). The ends are projected here as a segment, not one by one:
+// the 3D overlay replaces worldSegmentScreen with one that clips at the camera's near plane — a far end behind the
+// camera projected alone came back as a sentinel corner, and the line pointed up-left whatever the real direction.
+let worldSegmentScreen = (ax, ay, bx, by) => [flagScreen(ax, ay), flagScreen(bx, by)];
+function drawWorldFlagLine(ax, ay, bx, by, alpha){
+  const s = worldSegmentScreen(ax, ay, bx, by);
+  if (s) drawFlagLine(s[0].x, s[0].y, s[1].x, s[1].y, alpha);
+}
+// Ground-plane center of a building's footprint, in world (tile) coords / screen space.
+function buildingCenterWorld(b){
   let bd = BLDGS[b.btype];
-  return flagScreen(b.x + (b.w || bd.w) / 2, b.y + (b.h || bd.h) / 2);
+  return { x: b.x + (b.w || bd.w) / 2, y: b.y + (b.h || bd.h) / 2 };
+}
+function buildingCenterScreen(b){
+  const c = buildingCenterWorld(b);
+  return flagScreen(c.x, c.y);
 }
 
 function render(){
@@ -453,9 +465,9 @@ function drawOrderOverlays(){
     if (bData && bData.builds && bData.builds.length > 0 && bldg.rallyX !== undefined && bldg.rallyY !== undefined) {
       let rx = bldg.rallyX, ry = bldg.rallyY;
       if (rallyPrev && rallyPrev.bldgId === bldg.id) { rx = rallyPrev.x; ry = rallyPrev.y; }
-      let from = flagScreen(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
+      let c = buildingCenterWorld(bldg);
+      drawWorldFlagLine(c.x, c.y, rx + 0.5, ry + 0.5, 1);
       let to = flagScreen(rx + 0.5, ry + 0.5);
-      drawFlagLine(from.x, from.y, to.x, to.y, 1);
       drawFlagMarker(to.x, to.y, false);
     }
   }
@@ -474,16 +486,14 @@ function drawOrderOverlays(){
       // command hasn't executed yet — draw its line to the clicked spot
       // instead of the stale (or absent) post.
       if (guardPrev && guardPrev.ids.has(u.id)) {
-        let from = flagScreen(u.x, u.y);
+        drawWorldFlagLine(u.x, u.y, guardPrev.x + 0.5, guardPrev.y + 0.5, 0.55);
         let to = flagScreen(guardPrev.x + 0.5, guardPrev.y + 0.5);
-        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
         let key = 'prev';
         if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
         return;
       }
       let uo = u.order;
       if (!uo || !(uo.kind === 'guard' || uo.kind === 'guardBuilding' || uo.kind === 'escort')) return;
-      let from = flagScreen(u.x, u.y);
       // Guarding a BUILDING: outline the whole footprint and draw the line to
       // its center, instead of a flag at the single perimeter post tile — the
       // post IS the building (see the footprint leash in js/logic.js). Ground
@@ -493,8 +503,8 @@ function drawOrderOverlays(){
         let key = 'b' + gb.id;
         if (!drawnFlags.has(key)) drawBuildingFootprintOutline(gb, 0.7); // once per building
         drawnFlags.add(key);
-        let to = buildingCenterScreen(gb);
-        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+        let c = buildingCenterWorld(gb);
+        drawWorldFlagLine(u.x, u.y, c.x, c.y, 0.55);
         return;
       }
       if (uo.kind === 'escort' && gb && gb.type === 'unit') {
@@ -503,15 +513,15 @@ function drawOrderOverlays(){
         // instead lagged it — that field only re-syncs on sim ticks (and is
         // the unit's raw x/y, so the +0.5 tile-centering below would offset
         // the flag off the unit) — which read as the flag "skipping".
+        drawWorldFlagLine(u.x, u.y, gb.x, gb.y, 0.55);
         let to = flagScreen(gb.x, gb.y);
-        drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
         let key = 'u' + gb.id;
         if (!drawnFlags.has(key)) { drawnFlags.add(key); drawFlagMarker(to.x, to.y, false); }
         return;
       }
       if (uo.x == null) return; // escort whose escortee vanished mid-frame
+      drawWorldFlagLine(u.x, u.y, uo.x + 0.5, uo.y + 0.5, 0.55);
       let to = flagScreen(uo.x + 0.5, uo.y + 0.5);
-      drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
       let key = Math.round(uo.x / 2) + '_' + Math.round(uo.y / 2);
       if (!drawnFlags.has(key)) {
         drawnFlags.add(key);
@@ -530,8 +540,7 @@ function drawOrderOverlays(){
     if (u.type !== 'unit' || u.team !== myTeam || u.task !== 'garrison' || u.garrisonedIn) continue;
     let c = u.garrisonTarget != null ? entitiesById.get(u.garrisonTarget) : null;
     if (!c || c.utype !== 'ram') continue;
-    let from = flagScreen(u.x, u.y), to = flagScreen(c.x, c.y);
-    drawFlagLine(from.x, from.y, to.x, to.y, 0.55);
+    drawWorldFlagLine(u.x, u.y, c.x, c.y, 0.55);
   }
 
   // Flag placement GHOST — armed by EITHER the Guard button (units) or the
@@ -550,15 +559,14 @@ function drawOrderOverlays(){
       if (window.settingGuard) {
         selected.forEach(u => {
           if (u.type !== 'unit' || u.team !== myTeam) return;
-          let from = flagScreen(u.x, u.y);
-          drawFlagLine(from.x, from.y, g.x, g.y, 0.45);
+          drawWorldFlagLine(u.x, u.y, mt.x + 0.5, mt.y + 0.5, 0.45);
         });
       } else {
         let bldg = selected[0];
         let bData = bldg && BLDGS[bldg.btype];
         if (bldg && bldg.type === 'building' && bldg.team === myTeam && bData) {
-          let from = flagScreen(bldg.x + (bData.w || 1)/2, bldg.y + (bData.h || 1)/2);
-          drawFlagLine(from.x, from.y, g.x, g.y, 0.45);
+          let c = buildingCenterWorld(bldg);
+          drawWorldFlagLine(c.x, c.y, mt.x + 0.5, mt.y + 0.5, 0.45);
         }
       }
       drawFlagMarker(g.x, g.y, true);

@@ -1991,7 +1991,7 @@ function teamTC(team){
 
 function canGarrisonIn(b,team,u){
   if(b.team!==team||b.hp<=0||garrisonCap(b)<=0)return false;
-  if(b.type==='building')return !!b.complete&&!(u&&!isFootUnit(u.utype));   // (AoE2: a building takes foot units — never cavalry, siege or carts)
+  if(b.type==='building')return !!b.complete&&!(u&&u.utype!=='villager');   // (a building shelters villagers only — the bell's; soldiers fight)
   return b.utype==='ram'&&!!(u&&canRideRam(u));
 }
 function enterGarrison(e,b){

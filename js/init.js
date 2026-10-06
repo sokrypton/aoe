@@ -45,8 +45,8 @@ function init(){
 
 function placeStartingSheep(){
   let starts=STARTS.map(s=>({x:s.x+1,y:s.y+1}));
-  // AoE2 Arabia herdables: 4 sheep near the TC, plus 2 far PAIRS the player
-  // has to scout to find (8 per player total). TWO starts keep the original
+  // AoE2 Arabia herdables: 4 sheep near the TC, plus far PAIRS the player has to scout to find — 4 pairs (12 sheep):
+  // the extra two stand in for AoE2's boar and deer (no hunting here), the Dark Age's free, wood-less food. TWO starts keep the original
   // shared-axis + sign-flip layout verbatim (exact sim-RNG order, 1v1 maps
   // bit-identical); more starts orient each base's kit toward the map
   // center, each with its own far-pair jitter draws.
@@ -59,7 +59,9 @@ function placeStartingSheep(){
     ],
     far:[
       {angle:angle+1.6+simRandom()*0.4,dist:9},
-      {angle:angle-1.6-simRandom()*0.4,dist:9}
+      {angle:angle-1.6-simRandom()*0.4,dist:9},
+      {angle:angle+3.0+simRandom()*0.3,dist:11},
+      {angle:angle-3.0-simRandom()*0.3,dist:11}
     ]
   });
   let placeKit=(center,offs,sign)=>{

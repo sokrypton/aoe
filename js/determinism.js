@@ -313,6 +313,8 @@ function simChecksum(){
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
       h = detMix(h, ai.lastWaveSize || 0);                                  // wave-casualty retreat reads it
+      h = detMix(h, ai.lastRaidTick == null ? -1 : ai.lastRaidTick);       // the Feudal raid cadence
+      h = detMix(h, ai.raidWave == null ? -1 : ai.raidWave);               // …and which wave is the raid (its members stay raiders)
       h = detMix(h, ai.militiaUntil == null ? -1 : ai.militiaUntil);        // civilian-militia window (bell suppression)
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);

@@ -438,7 +438,7 @@
     const door = new THREE.Group(), span0 = (alongZ ? a0[1] : a0[0]) + P / 2 + 0.004, span1 = (alongZ ? a1[1] : a1[0]) - P / 2 - 0.004; // a hair short of the pillars: no end face lying on theirs, none inside them (an open site shows their inside)
     const dx0 = alongZ ? a0[0] - dt : span0, dx1 = alongZ ? a0[0] + dt : span1, dz0 = alongZ ? span0 : a0[1] - dt, dz1 = alongZ ? span1 : a0[1] + dt;
     boxAt(door, topped('#8b5a2b|stakes', '#a5723a'), dx0, dz0, dx1, dz1, 0, doorH, 'hull'); softEdges(door, dx0, dz0, dx1, dz1, 0, doorH, alongZ ? 'z' : 'x');
-    g.add(door);
+    door.userData.keepWhole = true; g.add(door);
     addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
     return { obj: g, door, doorOf: e.id };
   }
@@ -3525,7 +3525,8 @@
     // Pieces (piece(): roofs, caps, awnings) are set in place whole once the walls reach them; the rest rises by the cut.
     const pieces = [], isPiece = o => o.userData.piece;
     for (const c of g.children) if (isPiece(c)) pieces.push(c);
-    const walk = (o, f) => { if (isPiece(o)) return; f(o); for (const c of o.children) walk(c, f); };
+    // (a damaged gate's door (keepWhole) stays whole and unmerged: the moving part that shows it opening — only the pillars break)
+    const walk = (o, f) => { if (isPiece(o) || (jag && o.userData.keepWhole)) return; f(o); for (const c of o.children) walk(c, f); };
     const box = new THREE.Box3(), all = new THREE.Box3().setFromObject(g), base = new THREE.Box3(), mb = new THREE.Box3();
     for (const c of g.children) walk(c, o => { if (o.isMesh) box.expandByObject(o); });
     // the base: what stands on the ground and carries the building (its walls — not a fence, post or prop)
@@ -3601,7 +3602,7 @@
     // the rest, merged by material (as a finished building): what comes and goes on its own (pieces, parts above the
     // build line, flags, goods, a horse, the floor shade) is lifted out first and put back as it was
     { const keep = new Set([...set0.map(q => q.obj), ...later.map(([o]) => o), ...floors.filter(Boolean)]);
-      g.traverse(o => { if (SITE_LIVE.has(o.name)) keep.add(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) keep.add(o.parent); });
+      g.traverse(o => { if (SITE_LIVE.has(o.name) || o.userData.keepWhole) keep.add(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) keep.add(o.parent); });
       const lift = [...keep].filter(o => ![...keep].some(p => p !== o && p.getObjectById(o.id)));
       g.updateMatrixWorld(true); const hold = new THREE.Group(); hold.updateMatrixWorld(true);
       for (const o of lift) hold.attach(o);
@@ -3612,7 +3613,7 @@
       for (const o of lift) g.attach(o);
       // the parts above the build line, merged per height band (0.05): a band shows as one once the walls reach it
       const bands = new Map(), keepL = new Set(set0.map(q => q.obj));
-      const inLive = o => { for (let p = o; p && p !== g; p = p.parent) if (SITE_LIVE.has(p.name) || keepL.has(p) || p.name === 'horseNeck') return true; return false; }; // (part of something with its own life)
+      const inLive = o => { for (let p = o; p && p !== g; p = p.parent) if (SITE_LIVE.has(p.name) || p.userData.keepWhole || keepL.has(p) || p.name === 'horseNeck') return true; return false; }; // (part of something with its own life)
       for (const [o, y0] of later) { if (!o.parent || inLive(o)) continue; const k = Math.floor(y0 / 0.05); let b = bands.get(k); if (!b) bands.set(k, b = { y0, objs: [] }); b.y0 = Math.min(b.y0, y0); b.objs.push(o); }
       const merged = new Set();
       for (const b of bands.values()) { if (b.objs.length < 2) continue;
@@ -5159,16 +5160,34 @@
     ov = document.createElement('canvas'); ov.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none';
     pip.insertBefore(ov, renderer.domElement.nextSibling); ovx = ov.getContext('2d');
   }
-  const ovProj = (x, h, z) => { _v3.set(x, h, z).project(camera); return { sx: (_v3.x + 1) / 2 * ov.clientWidth, sy: (1 - _v3.y) / 2 * ov.clientHeight, behind: _v3.z > 1 }; };
+  // "behind" = behind the camera, judged in view space: past the FAR plane (an ally Market across the map) still
+  // projects to its true spot — NDC z > 1 lumped the two together, and such a point became a sentinel corner.
+  const ovProj = (x, h, z) => { _v3.set(x, h, z).applyMatrix4(camera.matrixWorldInverse); const behind = _v3.z > -camera.near;
+    _v3.applyMatrix4(camera.projectionMatrix); return { sx: (_v3.x + 1) / 2 * ov.clientWidth, sy: (1 - _v3.y) / 2 * ov.clientHeight, behind }; };
+  // An order line's two ground points as a SEGMENT (render.js worldSegmentScreen): clipped where it crosses the camera's
+  // near plane, so an end behind the camera bends nothing — projected alone it was a sentinel, and the line pointed off
+  // to the top-left corner whatever the real direction. Both ends behind: nothing to draw.
+  let _sa = null, _sb = null;
+  const ovSegment = (ax, ay, bx, by) => {
+    _sa = _sa || new THREE.Vector3(); _sb = _sb || new THREE.Vector3();
+    _sa.set(ax, 0, ay).applyMatrix4(camera.matrixWorldInverse); _sb.set(bx, 0, by).applyMatrix4(camera.matrixWorldInverse);
+    const zn = -camera.near * 1.05, inA = _sa.z < zn, inB = _sb.z < zn;      // (view space looks down -z)
+    if (!inA && !inB) return null;
+    if (!inA) _sa.lerp(_sb, (zn - _sa.z) / (_sb.z - _sa.z));               // slide the hidden end along to the plane
+    if (!inB) _sb.lerp(_sa, (zn - _sb.z) / (_sa.z - _sb.z));
+    const P = v => { v.applyMatrix4(camera.matrixWorld).project(camera); return { x: (v.x + 1) / 2 * ov.clientWidth, y: (1 - v.y) / 2 * ov.clientHeight }; };
+    return [P(_sa), P(_sb)];
+  };
   function drawOverlay(){
     ensureOverlay(); _v3 = _v3 || new THREE.Vector3();
     const w = ov.clientWidth, h = ov.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
     if (ov.width !== Math.round(w * dpr) || ov.height !== Math.round(h * dpr)) { ov.width = Math.round(w * dpr); ov.height = Math.round(h * dpr); }
     ovx.setTransform(dpr, 0, 0, dpr, 0, 0); ovx.clearRect(0, 0, w, h);
-    const sv = { X, W, H, topH, ZOOM, m2s: mapToScreen };
+    const sv = { X, W, H, topH, ZOOM, m2s: mapToScreen, seg: worldSegmentScreen };
     try {
       X = ovx; W = w; H = h; topH = 0; ZOOM = 1;
       mapToScreen = (x, y) => { const p = ovProj(x, 0, y); return p.behind ? { sx: -9999, sy: -9999 } : p; };
+      worldSegmentScreen = ovSegment;
       window.__pick3D = hoverXY && (window.settingGuard || window.settingRally) ? pick(hoverXY.x, hoverXY.y) : null;          // the flag ghost reads the hovered tile (screenToTile)
       drawParticles();
       drawOrderOverlays();
@@ -5181,7 +5200,7 @@
         ovx.font = 'bold 12px sans-serif'; ovx.textAlign = 'left'; const tw = ovx.measureText(label).width + 9;
         ovx.fillStyle = 'rgba(0,0,0,0.6)'; ovx.fillRect(p.sx + 3, fy - 2, tw, 15); ovx.fillStyle = '#ffd700'; ovx.fillText(label, p.sx + 7, fy + 9);
       }
-    } finally { window.__pick3D = null; X = sv.X; W = sv.W; H = sv.H; topH = sv.topH; ZOOM = sv.ZOOM; mapToScreen = sv.m2s; }
+    } finally { window.__pick3D = null; X = sv.X; W = sv.W; H = sv.H; topH = sv.topH; ZOOM = sv.ZOOM; mapToScreen = sv.m2s; worldSegmentScreen = sv.seg; }
     // units: HP bar when damaged (2D: 18×5 over the head), idle villager's "?"
     ovx.lineWidth = 2;
     for (const u of entities) {

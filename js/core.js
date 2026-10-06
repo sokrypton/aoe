@@ -194,7 +194,7 @@ function aiTimeMult(team){
 function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
 // The riders (cavalry): drawn on a horse (horse2D, riderFig), and never garrisoned in a building (AoE2: only foot units).
 function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
-// A person on foot — what a building shelters (AoE2: no cavalry, siege or carts inside).
+// A person on foot — what a ram carries (cavalry, siege and carts don't fit).
 function isFootUnit(t){ return t === 'villager' || t === 'militia' || t === 'spearman' || t === 'archer'; }
 // ---- Building-center helpers: THE two spellings, do not inline them. ----
 // centerOf = the TRUE midpoint (fractional for even footprints — a 4-wide TC
@@ -582,7 +582,8 @@ function freshAIIntel(){
 function freshAIState(team){
   return { team, tick: 0,
     intel: freshAIIntel(), wallPlan: null, gateBuilt: false, gateTile: null,
-    gatePairs: null, gatesDone: null, wallRadiusUsed: 0, wallCx: 0, wallCy: 0,   // (the ring's geometry: set by computeAIWallRing / planAIWalls)
+    gatePairs: null, gatesDone: null, wallRadiusUsed: 0, wallCx: 0, wallCy: 0,
+    lastRaidTick: null, raidWave: null,   // the last Feudal raid and its wave id (launchAIWave)   // (the ring's geometry: set by computeAIWallRing / planAIWalls)
     // Scout bookkeeping (controlAIScouts/ensureAIScout, js/ai.js): the
     // base-survey lap progress and the retrain cooldown. Sim state read on
     // later ticks — hashed in the AI digest.
@@ -848,10 +849,8 @@ function isSoldierUnit(u){
   return u.type === 'unit' && u.utype !== 'villager' && !isWildPredator(u)
     && !isHarmlessAnimal(u) && !isWoodVehicle(u);
 }
-// Who may ride inside a ram (AoE2 garrison-rams: melee infantry only —
-// archers need to shoot, cavalry doesn't fit, villagers work).
-const RAM_RIDER_TYPES = new Set(['militia', 'spearman']);
-function canRideRam(u){ return u.type === 'unit' && RAM_RIDER_TYPES.has(u.utype); }
+// Who may ride inside a ram: soldiers on foot (militia, spearmen, archers) — not villagers (AoE2), not cavalry.
+function canRideRam(u){ return u.type === 'unit' && u.utype !== 'villager' && isFootUnit(u.utype); }
 // Mid-tactical-retreat (retreatUntil stamp, js/ai.js aiRetreatUnit): the unit
 // is running home and must not be re-engaged by retaliation/auto-acquire or
 // re-dispatched by any AI pass. THE one predicate — the raw `retreatUntil >
@@ -907,9 +906,9 @@ const AI_BASE = {
   ageSurgeFactor: 0.6,
 };
 const AI_LEVELS = {
-  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:18, attackSize:3, waveCap:8, commitPercent:35, armyPerVil:0.3, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,10,13], ageUpTick:[0,T30(21600),T30(63000)] },
-  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:18, attackSize:4, waveCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,12,16], ageUpTick:[0,T30(12600),T30(27000)] },
-  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:24, attackSize:5, waveCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,10,14], ageUpTick:[0,T30(9000),T30(19800)] },
+  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:25, attackSize:3, waveCap:8, commitPercent:35, armyPerVil:0.3, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,18,24], ageUpTick:[0,T30(21600),T30(63000)] },
+  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:40, attackSize:4, waveCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
+  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:60, attackSize:5, waveCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
 };
 
 

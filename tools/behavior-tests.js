@@ -447,8 +447,12 @@ async function withPage(browser, port, entry, fn){
       gameStarted = true; window.__headlessSim = true;
       const tc = createBuilding('TC', 20, 20, 0); tc.complete = true;
       const tw = createBuilding('TOWER', 30, 20, 0); tw.complete = true;
-      for (const [ut, ok] of [['villager', true], ['militia', true], ['archer', true], ['knight', false], ['scout', false]])
+      // buildings shelter villagers only (soldiers fight — the AI's rule as the player's); a ram carries soldiers on foot, never villagers
+      for (const [ut, ok] of [['villager', true], ['militia', false], ['archer', false], ['knight', false], ['scout', false]])
         for (const b of [tc, tw]) T.ok(`${ut} ${ok ? 'may' : 'may not'} garrison in a ${b.btype}`, canGarrisonIn(b, 0, createUnit(ut, 25, 25, 0)) === ok);
+      const ram = createUnit('ram', 40, 40, 0);
+      for (const [ut, ok] of [['villager', false], ['militia', true], ['spearman', true], ['archer', true], ['scout', false], ['knight', false]])
+        T.ok(`${ut} ${ok ? 'may' : 'may not'} ride a ram`, canGarrisonIn(ram, 0, createUnit(ut, 41, 41, 0)) === ok);
       return T;
     })),
 
@@ -466,7 +470,7 @@ async function withPage(browser, port, entry, fn){
       T.ok('…and can strike a foe 5.5 tiles off', inWeaponRange(a, foe));
       stage();
       const tc = createBuilding('TC', 20, 20, 0); tc.complete = true;
-      for (const [ut, ok] of [['militia', true], ['villager', true], ['ram', false], ['tradecart', false], ['scout', false]])
+      for (const [ut, ok] of [['militia', false], ['villager', true], ['ram', false], ['tradecart', false], ['scout', false]])
         T.ok(`a ${ut} ${ok ? 'may' : 'may not'} garrison in a TC`, canGarrisonIn(tc, 0, createUnit(ut, 26, 26, 0)) === ok);
       stage();
       const h = createBuilding('HOUSE', 30, 30, 0); h.complete = false; h.buildProgress = 0;
@@ -637,15 +641,13 @@ async function withPage(browser, port, entry, fn){
 
       // eligibility
       T.ok('canGarrisonIn(ram, militia)', canGarrisonIn(ram, 0, mil) === true);
-      T.ok('archer/villager rejected', !canGarrisonIn(ram, 0, arch) && !canGarrisonIn(ram, 0, vil));
+      T.ok('archer rides too; villager never', canGarrisonIn(ram, 0, arch) && !canGarrisonIn(ram, 0, vil));
       T.ok('cap = 4', garrisonCap(ram) === 4);
 
-      // boarding walk; the archer's walk must self-cancel (walker re-validation)
-      for (const u of [mil, spear]) { u.task = 'garrison'; u.garrisonTarget = ram.id; }
-      arch.task = 'garrison'; arch.garrisonTarget = ram.id;
-      for (let i = 0; i < 300 && !(mil.garrisonedIn && spear.garrisonedIn); i++) update();
-      T.ok('infantry boarded (2 seated)', garrisonCount(ram) === 2 && mil.garrisonedIn === ram.id);
-      T.ok('archer walk cancelled', arch.garrisonedIn == null && arch.task !== 'garrison');
+      // boarding walk: anyone on foot boards (the archer too)
+      for (const u of [mil, spear, arch]) { u.task = 'garrison'; u.garrisonTarget = ram.id; }
+      for (let i = 0; i < 300 && !(mil.garrisonedIn && spear.garrisonedIn && arch.garrisonedIn); i++) update();
+      T.ok('foot riders boarded (3 seated, the archer too)', garrisonCount(ram) === 3 && mil.garrisonedIn === ram.id && arch.garrisonedIn === ram.id);
 
       // loaded speed + riders track the moving ram (1-tick sync lag allowed)
       T.ok('loaded ram speed boosted', unitMoveSpeed(ram) > UNITS.ram.speed + 0.05);
@@ -676,7 +678,7 @@ async function withPage(browser, port, entry, fn){
       const boarding = crew.filter(c => c.task === 'garrison' && c.garrisonTarget === ram2.id);
       T.ok('cmd: boards to capacity (4/5)', boarding.length === 4);
       T.ok('cmd: surplus rider escorts', crew.filter(c => c.order && c.order.kind === 'follow' && c.order.id === ram2.id).length === 1);
-      T.ok('cmd: archer follows, never boards', bowman.order && bowman.order.kind === 'follow' && bowman.order.id === ram2.id && bowman.task !== 'garrison');
+      T.ok('cmd: a surplus archer escorts (the ram is full)', bowman.order && bowman.order.kind === 'follow' && bowman.order.id === ram2.id && bowman.task !== 'garrison');
       for (let i = 0; i < 400 && boarding.some(c => !c.garrisonedIn); i++) update();
       T.ok('cmd: all 4 seated', garrisonCount(ram2) === 4);
       selected = [];
@@ -739,28 +741,29 @@ async function withPage(browser, port, entry, fn){
       const reset = () => { entities.length = 0; entitiesById.clear(); selected.length = 0; };
       const seatLoop = () => { for (let i = 0; i < 400 && entities.some(e => e.task === 'garrison'); i++) update(); };
 
-      // 1. Soldiers AND a villager seat into a forced tower (any unit into a building).
+      // 1. Villagers seat into a tower; a soldier sent along is refused (buildings shelter villagers only).
       { reset();
         const tower = mkBldg('TOWER', 30, 30);
-        const crew = [createUnit('militia', 33, 30, 0), createUnit('militia', 33, 31, 0), createUnit('villager', 34, 30, 0)];
-        execCommand({ kind: 'garrison', unitIds: crew.map(u => u.id), bldgId: tower.id }, 0);
-        T.ok('cmd: crew tasked to tower', crew.every(u => u.task === 'garrison' && u.garrisonTarget === tower.id));
+        const crew = [createUnit('villager', 33, 30, 0), createUnit('villager', 33, 31, 0), createUnit('villager', 34, 30, 0)];
+        const sold = createUnit('militia', 34, 31, 0);
+        execCommand({ kind: 'garrison', unitIds: [...crew, sold].map(u => u.id), bldgId: tower.id }, 0);
+        T.ok('cmd: villagers tasked to tower, the soldier refused', crew.every(u => u.task === 'garrison' && u.garrisonTarget === tower.id) && sold.task !== 'garrison');
         seatLoop();
-        T.ok('cmd: all 3 seated (soldiers + villager)', garrisonCount(tower) === 3 && crew.every(u => u.garrisonedIn === tower.id)); }
+        T.ok('cmd: all 3 villagers seated', garrisonCount(tower) === 3 && crew.every(u => u.garrisonedIn === tower.id)); }
 
-      // 2. Ram: rider (militia) tasked, non-rider (archer) rejected by canGarrisonIn.
+      // 2. Ram: anyone on foot rides (militia, archer); cavalry (scout) is rejected by canGarrisonIn.
       { reset();
         const ram = createUnit('ram', 30, 30, 0);
-        const mil = createUnit('militia', 32, 30, 0), arc = createUnit('archer', 32, 31, 0);
-        execCommand({ kind: 'garrison', unitIds: [mil.id, arc.id], bldgId: ram.id }, 0);
-        T.ok('ram: rider tasked, archer rejected', mil.task === 'garrison' && arc.task !== 'garrison'); }
+        const mil = createUnit('militia', 32, 30, 0), arc = createUnit('archer', 32, 31, 0), sc = createUnit('scout', 31, 32, 0);
+        execCommand({ kind: 'garrison', unitIds: [mil.id, arc.id, sc.id], bldgId: ram.id }, 0);
+        T.ok('ram: militia + archer tasked, scout rejected', mil.task === 'garrison' && arc.task === 'garrison' && sc.task !== 'garrison'); }
 
       // 3. Reservation: tower (cap 5) pre-filled to 4 → only 1 of 3 more boards.
       { reset();
         const tower = mkBldg('TOWER', 30, 30);
         tower.garrison = [];
-        for (let i = 0; i < 4; i++) { let u = createUnit('militia', 35 + i, 35, 0); u.garrisonedIn = tower.id; tower.garrison.push(u.id); }
-        const extra = [createUnit('militia', 33, 30, 0), createUnit('militia', 33, 31, 0), createUnit('militia', 33, 32, 0)];
+        for (let i = 0; i < 4; i++) { let u = createUnit('villager', 35 + i, 35, 0); u.garrisonedIn = tower.id; tower.garrison.push(u.id); }
+        const extra = [createUnit('villager', 33, 30, 0), createUnit('villager', 33, 31, 0), createUnit('villager', 33, 32, 0)];
         execCommand({ kind: 'garrison', unitIds: extra.map(u => u.id), bldgId: tower.id }, 0);
         T.ok('reservation: only 1 of 3 boards (cap-1 free)', extra.filter(u => u.task === 'garrison').length === 1); }
 
@@ -793,7 +796,7 @@ async function withPage(browser, port, entry, fn){
       window.updateUI = () => {}; window.showMsg = () => {};
       entities.length = 0; entitiesById.clear(); selected.length = 0;
       const tower = createBuilding('TOWER', 30, 30, 0); tower.complete = true; tower.hp = tower.maxHp;
-      const mil = createUnit('militia', 33, 30, 0);
+      const mil = createUnit('villager', 33, 30, 0);   // (a building shelters villagers)
       const iso = toIso(mil.x, mil.y); camX = iso.ix; camY = iso.iy; ZOOM = 2;
       const scr = (u) => { const i = toIso(u.x, u.y), { ox, oy } = getUnitGroupOffset(u.id); return { sx: (i.ix - camX + ox) * ZOOM + W / 2, sy: (i.iy - camY + HALF_TH + oy) * ZOOM + H / 2 + topH }; };
 
@@ -941,6 +944,8 @@ async function withPage(browser, port, entry, fn){
     // ------------------------------------------ soldier garrison (doctrine)
     // Outmatched home defenders SHELTER in the TC (AoE2 sn-number-garrison-
     // units) instead of standing to die piecemeal, then eject on all-clear.
+    // An outmatched AI defends from its TC's doorstep but never garrisons soldiers — buildings shelter villagers only,
+    // the AI's rule as the player's.
     'soldier-garrison': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
       loadScenario({
@@ -949,36 +954,19 @@ async function withPage(browser, port, entry, fn){
         entities: [
           { b: 'TC', x: 8, y: 8, team: 0 },
           { b: 'TC', x: 44, y: 44, team: 1 },
-          // Militia AT the TC doorstep (one-tile garrison walk) so the shelter
-          // decision beats the knights' charge — the contract under test is
-          // the decision, not a footrace.
           { u: 'militia', x: 43, y: 43, team: 1 }, { u: 'militia', x: 44, y: 43, team: 1 },
           { u: 'militia', x: 43, y: 44, team: 1 },
-          // Overwhelming raid parked west of the TC: nearest knight (35,46) is
-          // 11 tiles from the TC CENTER (46,46) — inside the 12-tile threat
-          // scan (findEnemyThreatNear) — but 8.5+ from the militia at (43,43),
-          // outside BOTH sides' 8-tile auto-acquire, so the shelter decision
-          // runs before any melee starts. 6 knights ≈ 900 power vs 3 militia
-          // ≈ 180 — far over the 1.6x shelter bar.
+          // an overwhelming raid inside the threat scan: the outmatched branch runs
           ...Array.from({ length: 6 }, (_, i) => ({ u: 'knight', x: 33 + (i % 3), y: 45 + Math.floor(i / 3), team: 0 })),
         ],
       });
       resources[1] = { food: 0, wood: 0, gold: 0, stone: 0, prepaidFarms: 0 };
-      const mine = () => entities.filter(e => e.team === 1 && e.utype === 'militia' && e.hp > 0);
-      let sheltered = 0;
-      for (let i = 0; i < T30(1200) && sheltered < 2; i++) {
+      let everIn = 0;
+      for (let i = 0; i < T30(600); i++) {
         update();
-        sheltered = mine().filter(m => m.garrisonedIn != null).length;
+        everIn = Math.max(everIn, entities.filter(e => e.team === 1 && e.utype === 'militia' && (e.garrisonedIn != null || e.task === 'garrison')).length);
       }
-      T.ok(`outmatched defenders garrison the TC (${sheltered}/3 sheltered, ${mine().length} alive)`, sheltered >= 2);
-      // Raid ends: knights die → all-clear window passes → recall ejects.
-      entities.forEach(e => { if (e.team === 0 && e.utype === 'knight') e.hp = 0; });
-      let out = false;
-      for (let i = 0; i < T30(1200) && !out; i++) {
-        update();
-        out = mine().length > 0 && mine().every(m => m.garrisonedIn == null && m.task !== 'garrison');
-      }
-      T.ok('all-clear: sheltered soldiers eject and survive', out);
+      T.ok('outmatched AI soldiers never garrison a building', everIn === 0);
       return T;
     })),
 
