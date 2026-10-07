@@ -2891,7 +2891,9 @@ function updateUnitCombat(e){
       const base=crew[cut].a, lay=new Array(n); let sumA=0, sumL=0, mine=0;
       for(let k=0;k<n;k++){ const c=crew[(cut+k)%n]; let a=c.a; if(a<base)a+=TAU; lay[k]=k?Math.max(a,lay[k-1]+g):a; sumA+=a; sumL+=lay[k]; if(c.id===e.id)mine=k; }
       const b=lay[mine]+(sumA-sumL)/n;
-      pressToContact(e, t.x+RING_R*simCos(b), t.y+RING_R*simSin(b), 0, 0.05); // (separation leaves it be: loop.js)
+      const sx=t.x+RING_R*simCos(b), sy=t.y+RING_R*simSin(b);
+      // (only onto open ground: a carcass at the map edge or a wall put ring spots off the map / inside the wall)
+      if(walkable(Math.round(sx),Math.round(sy),null,true))pressToContact(e, sx, sy, 0, 0.05); // (separation leaves it be: loop.js)
       if(e.carrying>=e.carryMax){
         e.prevTask=null;
         e.task='return';

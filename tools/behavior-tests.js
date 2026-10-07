@@ -441,6 +441,23 @@ async function withPage(browser, port, entry, fn){
     // A Town Center / tower takes villagers, infantry and archers — never
     // cavalry. The rule is canGarrisonIn's, so every boarding path (button,
     // bell, AI shelter, rally) shares it.
+    // A camp is never founded at a remnant the planner itself counts as spent (AI_CAMP_LIVE_MIN) — that stacked
+    // mining camps side by side as each new one was retired at once.
+    'ai-camp-no-remnant': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 5, numTeams: 2, controllers: ['ai', 'ai'], ages: [1, 1], entities: [] });
+      gameStarted = true; window.__headlessSim = true;
+      for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) { const c = map[y][x]; c.t = TERRAIN.GRASS; c.res = 0; }
+      teamExploredGrid[0].fill(1);
+      const tc = createBuilding('TC', 20, 20, 0); tc.complete = true;
+      const ai = AI_STATES[0] = freshAIState(0);
+      const gold = (x, y) => { map[y][x].t = TERRAIN.GOLD; map[y][x].res = 800; };
+      gold(34, 21); gold(35, 21);
+      T.ok('no camp at a 2-tile remnant', findAIDropSite(ai, TERRAIN.GOLD, 'MCAMP', tc, true, [tc], AI_DROP_COVER) === null);
+      gold(35, 22);
+      T.ok('a camp at a live (3-tile) deposit', !!findAIDropSite(ai, TERRAIN.GOLD, 'MCAMP', tc, true, [tc], AI_DROP_COVER));
+      return T;
+    })),
     'garrison-foot-only': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
       loadScenario({ map: 'medium', seed: 5, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [] });

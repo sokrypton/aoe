@@ -541,6 +541,9 @@ function ensureAIHousing(ai,aiTC,profile){
 const AI_DROP_COVER=10;  // a drop-off "covers" resource within this radius:
                          // only build a camp for resources FARTHER than this
 const AI_MAX_LCAMP=3, AI_MAX_MCAMP=2;
+// A drop site is worth having with at least this many resource tiles within 4: below it a camp is retired, and
+// none is founded there (else each new camp counted as spent at once and the next went up beside it).
+const AI_CAMP_LIVE_MIN=3;
 function planAIDropSites(ai,aiTC,vils,profile){
   if(!profile.dropSites||vils.length<5)return;
   let hasBarracks=hasAIBuilding(ai,'BARRACKS');
@@ -549,7 +552,7 @@ function planAIDropSites(ai,aiTC,vils,profile){
   // of any food drop-off's farm belt.
   // A camp whose resource has run out is retired: it neither counts against the cap nor "covers" the ground the
   // receding wood/ore line moved to (AoE2: a new camp at the new edge) — else late-game trips grew without bound.
-  const campLive=(c,terrs)=>terrs.some(t=>countResourceTilesNear(t,c.x,c.y,4)>=3);
+  const campLive=(c,terrs)=>terrs.some(t=>countResourceTilesNear(t,c.x,c.y,4)>=AI_CAMP_LIVE_MIN);
   let lcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP'&&campLive(e,[TERRAIN.FOREST]));
   // (one in the Dark Age — AoE2's single woodline: three by minute 3 sank 300 wood into 4 choppers)
   if(lcamps.length<(teamAge[ai.team]===0?1:AI_MAX_LCAMP)&&canAfford(ai.team,BLDGS.LCAMP.cost)&&aiEcoFundClear(ai,profile,BLDGS.LCAMP.cost)){
@@ -3084,6 +3087,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
       if(!canPlace(type,bx,by,ai.team))continue;
       if(coveredBy(bx,by))continue; // an existing drop already serves this patch
       let nearby=countResourceTilesNear(terrain,bx,by,4);
+      if(nearby<AI_CAMP_LIVE_MIN)continue;
       // NEAREST ADEQUATE patch, AoE2-style: density only has to clear a
       // workability floor (>=8 tiles), then DISTANCE decides — an open-ended
       // density bonus founded camps 20+ tiles out with commuters dying en

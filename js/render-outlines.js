@@ -122,25 +122,11 @@ function _outlineExtent(e){
   };
 }
 
-// Renders every entity in `infos` into ONE shared buffer (each at its own
-// offset within it), flattens+dilates+subtracts ONCE for the whole group,
-// then blits the result — this is what makes touching/adjacent selected
-// entities merge into a single continuous outline instead of showing a
-// visible seam where two individually-dilated rings overlap. `bufW`/`bufH`
-// is the buffer size (logical px); `originLeft`/`originTop` is where that
-// buffer's (0,0) sits on screen.
-// Default color WHITE for selection: the behind-building path passes a bright
-// team color, and a yellow selection ring collided with the yellow team's.
-function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffffff', clipC=null){
-  _silEnsure(bufW,bufH);
-  const ss = _silSuperSample();
-  const physW = Math.ceil(bufW*ss), physH = Math.ceil(bufH*ss);
-
-  // ── Step 1: render every entity's exact shape into the shared mask,
-  // each positioned at its own offset within the group's buffer. ──────────
-  _silMaskX.clearRect(0,0,bufW,bufH);
+// Step 1 of a ring: every entity of `infos` drawn into ctx (already transformed to the buffer's logical space), each
+// at its own offset from the buffer origin (originLeft, originTop) — the shared mask a ring dilates.
+function _drawInfosMask(ctx, infos, originLeft, originTop){
   const sv={X,camX,camY,W,H,topH,ZOOM};
-  X=_silMaskX; W=2000; H=2000; topH=0; ZOOM=1;
+  X=ctx; W=2000; H=2000; topH=0; ZOOM=1;
   // Flag the re-invocation of the REAL drawUnit/drawBuilding below as a
   // mask pass: drawUnit checks this to suppress its side effects (facing
   // hysteresis advancement, particle spawns, swing-cycle bookkeeping) and
@@ -176,6 +162,25 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
     X=sv.X; camX=sv.camX; camY=sv.camY;
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
   }
+}
+
+// Renders every entity in `infos` into ONE shared buffer (each at its own
+// offset within it), flattens+dilates+subtracts ONCE for the whole group,
+// then blits the result — this is what makes touching/adjacent selected
+// entities merge into a single continuous outline instead of showing a
+// visible seam where two individually-dilated rings overlap. `bufW`/`bufH`
+// is the buffer size (logical px); `originLeft`/`originTop` is where that
+// buffer's (0,0) sits on screen.
+// Color WHITE: the selection ring (a yellow one collided with the yellow team's behind-building outlines).
+function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffffff'){
+  _silEnsure(bufW,bufH);
+  const ss = _silSuperSample();
+  const physW = Math.ceil(bufW*ss), physH = Math.ceil(bufH*ss);
+
+  // ── Step 1: render every entity's exact shape into the shared mask,
+  // each positioned at its own offset within the group's buffer. ──────────
+  _silMaskX.clearRect(0,0,bufW,bufH);
+  _drawInfosMask(_silMaskX, infos, originLeft, originTop);
 
   // ── Step 2: flatten mask to a solid-color silhouette ──────────────────
   _silFlatX.clearRect(0,0,physW,physH);
@@ -221,19 +226,6 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   _silRingX.drawImage(_silFlatC,0,0,physW,physH, 0,0,physW,physH);
   _silRingX.globalCompositeOperation='source-over';
 
-  // ── Step 3.5 (behind-building outline only): clip the ring to the
-  // occluder mask, so it shows ONLY where the unit is actually behind a
-  // building (not the parts hanging out over open ground). clipC is a
-  // viewport-space, ss=1 mask of the occluding buildings' pixels; the source
-  // rect is this buffer's screen region, upscaled to the ring's resolution.
-  if(clipC){
-    // clipC's (0,0) is logical (_occMaskOffX,_occMaskOffY), not (0,0) — subtract
-    // that anchor so the sampled region lines up with this ring's screen origin.
-    _silRingX.globalCompositeOperation='destination-in';
-    _silRingX.drawImage(clipC, originLeft-_occMaskOffX, originTop-_occMaskOffY, bufW, bufH, 0,0, physW, physH);
-    _silRingX.globalCompositeOperation='source-over';
-  }
-
   // ── Step 4: blit ring to screen at its logical-pixel size ─────────────
   // Destination is bufW×bufH logical pixels — the SAME units drawUnit/
   // drawBuilding draw in — so the active X.scale(ZOOM,ZOOM) transform
@@ -242,14 +234,6 @@ function _renderRingGroup(infos, originLeft, originTop, bufW, bufH, color='#ffff
   X.drawImage(_silRingC,0,0,physW,physH, originLeft, originTop, bufW, bufH);
 }
 
-// Viewport-space mask (ss=1) of the pixels of the occluders that are actually
-// hiding a unit this frame — clips the behind-building outline
-// (drawBehindBuildingOutlines) to the regions really behind an occluder. Drawn
-// at ZOOM=1 in logical screen coords (matching _renderRingGroup's buffers), real
-// camera so occluders land where they render. `occs` is the candidate-driven
-// active set, so this is a handful of redraws even on a dense map — never all
-// on-screen occluders.
-let _occMaskC=null, _occMaskX=null, _occMaskW=0, _occMaskH=0, _occMaskOffX=0, _occMaskOffY=0;
 
 // ---- Cached SOLID-building occluder silhouettes ----
 // Buildings don't move, and the occluder mask is drawn at ZOOM=1 (logical
@@ -297,50 +281,81 @@ function _bldgSil(en, part){
   return a;
 }
 
-function _buildOccMask(occs){
-  // Occluders are drawn at ZOOM=1 LOGICAL coords, but the transform scales
-  // around screen-center (render.js), so when zoomed OUT the visible logical
-  // rect extends past [0,W]×[0,H] — even NEGATIVE near the top-left. A mask
-  // anchored at logical (0,0) with size W×H would drop those pixels, so a unit
-  // in the left/top of the screen loses its clip and the outline flickers as it
-  // crosses the x=0 boundary. Anchor the mask at the visible rect's top-left
-  // (same bounds drawBehindBuildingOutlines clamps groups to) and record the
-  // offset so the clip step samples the right region.
-  const hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH, M=48;
-  const offX=Math.floor(W/2-hw-M), offY=Math.floor(cyv-hh-M);
-  const needW=Math.ceil(2*(hw+M)), needH=Math.ceil(2*(hh+M));
-  _occMaskOffX=offX; _occMaskOffY=offY;
-  if(!_occMaskC || _occMaskW<needW || _occMaskH<needH){
-    _occMaskC=document.createElement('canvas');
-    _occMaskC.width=Math.max(needW,_occMaskW); _occMaskC.height=Math.max(needH,_occMaskH);
-    _occMaskX=_occMaskC.getContext('2d'); _occMaskW=_occMaskC.width; _occMaskH=_occMaskC.height;
-  }
-  _occMaskX.setTransform(1,0,0,1,0,0);
-  _occMaskX.clearRect(0,0,needW,needH);
-  _occMaskX.setTransform(1,0,0,1,-offX,-offY); // logical (offX,offY) -> canvas (0,0)
-  const sv={X,ZOOM}; X=_occMaskX; ZOOM=1; window._maskDraw=true;
+// The occluders that hide a group, drawn into ctx (already transformed: logical screen coords at ZOOM=1 -> the target).
+// Only their alpha matters: it clips the group's ring to where it's really behind something.
+function _drawOccluders(ctx, occs){
+  const sv={X,ZOOM}; X=ctx; ZOOM=1; window._maskDraw=true;
   try{
     for(const d of occs){
       if(d.type==='tree'){ drawTreeEntity(d.x, d.y, d.part); continue; }
       const en = proxyEntity(d);
       const part = proxyPart(d);
-      // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw
-      // live. Everything else blits its baked silhouette at the same
-      // footprint-top corner drawBuilding would have drawn it at (real camera,
-      // ZOOM=1 — the offX/offY shift is already on _occMaskX's transform).
+      // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw live. Everything else blits its baked
+      // silhouette at the footprint-top corner drawBuilding would have drawn it at, rounded through mapToScreen as
+      // drawBuilding does (the live wall-like branch draws through it too).
       if(isWallLike(en)){ drawBuilding(en, part); continue; }
       const sil = _bldgSil(en, part);
       const b = BLDGS[en.btype];
-      // mapToScreen, matching drawBuilding's rounding exactly — the live
-      // wall-like branch above draws through it, so the baked blits must
-      // quantize through the same display camera.
       const p = mapToScreen(en.x+b.w/2, en.y+b.h/2);
       const rsx = Math.round(p.sx);
       const rsy = Math.round(p.sy) - b.h*HALF_TH;
       X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
     }
   } finally { window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
-  return _occMaskC;
+}
+
+// The behind-occluder rings, batched: every group's mask, occluder clip and ring share three atlas canvases (a cell
+// each), so the pass is a handful of whole-atlas operations. Per-group canvases cost a GPU flush at every hand-off
+// (mask -> flat -> ring -> screen, ~4 per group) — that, not the drawing, was most of the pass.
+// jobs: [{infos, l, t, w, h (the group's logical screen rect), color, occs}]
+const BSIL_ATLAS_W=2048;
+let _bsilAtlas=null;
+function _bsilAtlasFor(w,h){
+  const A=_bsilAtlas;
+  if(A && A.w>=w && A.h>=h) return A;
+  const W2=Math.max(w, A?A.w:0), H2=Math.max(h, A?A.h:0);
+  const mk=()=>{ const c=document.createElement('canvas'); c.width=W2; c.height=H2; return c; };
+  const mask=mk(), clip=mk(), ring=mk();
+  return _bsilAtlas={ w:W2, h:H2, mask, clip, ring, maskX:mask.getContext('2d'), clipX:clip.getContext('2d'), ringX:ring.getContext('2d') };
+}
+function _renderBehindRings(jobs){
+  if(!jobs.length) return;
+  const ss=_silSuperSample(), R=2*ss, PAD=Math.ceil(R)+2;
+  // shelf-pack the cells (PAD apart: the dilation never reaches a neighbour)
+  let aw=BSIL_ATLAS_W;
+  for(const j of jobs){ j.pw=Math.ceil(j.w*ss); j.ph=Math.ceil(j.h*ss); if(j.pw+2*PAD>aw) aw=j.pw+2*PAD; }
+  let x=PAD, y=PAD, rowH=0;
+  for(const j of jobs){
+    if(x+j.pw+PAD>aw && x>PAD){ x=PAD; y+=rowH+PAD; rowH=0; }
+    j.cx=x; j.cy=y; x+=j.pw+PAD; if(j.ph>rowH) rowH=j.ph;
+  }
+  const ah=y+rowH+PAD, A=_bsilAtlasFor(aw,ah), mx=A.maskX, cx=A.clipX, rx=A.ringX;
+  mx.setTransform(1,0,0,1,0,0); mx.clearRect(0,0,aw,ah);
+  cx.setTransform(1,0,0,1,0,0); cx.clearRect(0,0,aw,ah);
+  for(const j of jobs){
+    // each group's shape, and the occluders in front of it, clipped to its own cell: art spilling past it lands in a
+    // neighbour's ring (a stray outline) or outside the cleared area (a stale one, frames later)
+    mx.save(); mx.beginPath(); mx.rect(j.cx,j.cy,j.pw,j.ph); mx.clip();
+    mx.setTransform(ss,0,0,ss,j.cx,j.cy);
+    _drawInfosMask(mx, j.infos, j.l, j.t);
+    mx.restore();
+    cx.save(); cx.beginPath(); cx.rect(j.cx,j.cy,j.pw,j.ph); cx.clip();
+    cx.setTransform(ss,0,0,ss,j.cx-j.l*ss,j.cy-j.t*ss); // logical screen coords (ZOOM=1) -> the cell
+    _drawOccluders(cx, j.occs);
+    cx.restore();
+  }
+  // dilate by ~2 logical px (4 shifted copies), cut the shape itself out, keep what's behind an occluder
+  rx.setTransform(1,0,0,1,0,0); rx.clearRect(0,0,aw,ah);
+  rx.globalCompositeOperation='source-over';
+  for(let i=0;i<4;i++){ const a=i/4*Math.PI*2; rx.drawImage(A.mask,0,0,aw,ah, Math.cos(a)*R,Math.sin(a)*R,aw,ah); }
+  rx.globalCompositeOperation='destination-out'; rx.drawImage(A.mask,0,0,aw,ah, 0,0,aw,ah);
+  rx.globalCompositeOperation='destination-in';  rx.drawImage(A.clip,0,0,aw,ah, 0,0,aw,ah);
+  // the team colour, cell by cell (source-atop: only over the ring, and nothing outside the rect is touched)
+  rx.globalCompositeOperation='source-atop';
+  for(const j of jobs){ rx.fillStyle=j.color; rx.fillRect(j.cx-PAD/2,j.cy-PAD/2,j.pw+PAD,j.ph+PAD); }
+  rx.globalCompositeOperation='source-over';
+  // onto the screen at each group's logical size, through the caller's active ZOOM transform
+  for(const j of jobs) X.drawImage(A.ring, j.cx,j.cy,j.pw,j.ph, j.l,j.t,j.w,j.h);
 }
 
 // AoE2-style white silhouette ring for selected units and buildings. Call
@@ -401,14 +416,17 @@ function drawOutlines(){
 const _bsilOccBoxes = [];      // pooled occluder bbox records, refilled each frame
 const _bsilGroups = new Map(); // key (team|occluder-set) -> pooled group record
 const _bsilGroupPool = [];     // reused {team,occIdx[],infos[]} records across frames
-const _bsilActive = [];        // one group's occluders — rebuilt per group (mask input)
 const _occIdxScratch = [];     // indices of occluders in front of the current unit
+// A unit's painted extent about its anchor [left, right, top, bottom] (logical px; measured over every facing and pose,
+// padded for raised tools and the ring) — the occluder-overlap test's box. Others use the full draw buffer.
+const BSIL_FOOT=[-30,30,-64,14], BSIL_RIDER=[-36,36,-72,16], BSIL_CART=[-48,48,-52,18];
+const BSIL_BODY={ villager:BSIL_FOOT, militia:BSIL_FOOT, spearman:BSIL_FOOT, archer:BSIL_FOOT, scout:BSIL_RIDER, knight:BSIL_RIDER, ram:BSIL_CART, tradecart:BSIL_CART };
 
 // Screen bbox of an occluder drawable (building/gate/market part proxy, or a
 // tree) — deliberately generous: sortVal decides "in front", pixels decide
 // overlap (the clip mask trims the ring to real occluder pixels), so a false
 // positive costs nothing. The candidate sweep reads only sortVal + the box; the
-// exact draw is re-derived in _buildOccMask.
+// exact draw is re-derived in _drawOccluders.
 function _bsilFillOccBox(rec, d){
   rec.sortVal = d.sortVal;
   if(d.type==='tree'){
@@ -457,11 +475,14 @@ function drawBehindBuildingOutlines(units, occs){
   for(const e of units){
     if(sel && sel.has(e)) continue;
     const ext=_outlineExtent(e); if(!ext) continue;
+    // overlap is tested against the unit's body box (BSIL_BODY), not its 112px draw buffer (which caught ~30 forest
+    // trees per unit); the ring itself is still drawn in the whole buffer, so nothing it outlines is cut off
+    const bb=BSIL_BODY[e.utype], bl=bb?ext.sx+bb[0]:ext.left, br=bb?ext.sx+bb[1]:ext.right, bt=bb?ext.sy+bb[2]:ext.top, bbt=bb?ext.sy+bb[3]:ext.bottom;
     _occIdxScratch.length=0;
     for(let j=0;j<nOcc;j++){
       const o=_bsilOccBoxes[j];
       if(o.sortVal<=e.sortVal) continue;
-      if(o.right<ext.left||o.left>ext.right||o.bottom<ext.top||o.top>ext.bottom) continue;
+      if(o.right<bl||o.left>br||o.bottom<bt||o.top>bbt) continue;
       _occIdxScratch.push(j); // ascending j → key is order-stable without sorting
     }
     if(!_occIdxScratch.length) continue; // in front of everything overlapping it → visible
@@ -477,7 +498,7 @@ function drawBehindBuildingOutlines(units, occs){
     g.infos.push(ext);
   }
   if(!_bsilGroups.size) return;
-  const M=4, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH;
+  const M=4, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH, jobs=[];
   _bsilGroups.forEach(g=>{
     let minL=Infinity,minT=Infinity,maxR=-Infinity,maxB=-Infinity;
     for(const inf of g.infos){
@@ -488,44 +509,8 @@ function drawBehindBuildingOutlines(units, occs){
     minT=Math.max(minT,cyv-hh-M); maxB=Math.min(maxB,cyv+hh+M);
     const spanW=maxR-minL, spanH=maxB-minT;
     if(spanW<=0 || spanH<=0) return;
-    _bsilActive.length=0;
-    for(let k=0;k<g.occIdx.length;k++) _bsilActive.push(occs[g.occIdx[k]]);
-    const clip=_buildOccMask(_bsilActive); // ONLY this group's occluders
-    _renderRingGroup(g.infos, minL, minT, spanW, spanH, teamColorMinimap(g.team), clip);
+    const occList=[]; for(let k=0;k<g.occIdx.length;k++) occList.push(occs[g.occIdx[k]]); // ONLY this group's occluders
+    jobs.push({infos:g.infos, l:minL, t:minT, w:spanW, h:spanH, color:teamColorMinimap(g.team), occs:occList});
   });
-}
-
-
-// ---- Every-other-frame cache for the behind-occluder pass ----
-// The outline layer is decorative (units hidden behind buildings/trees) and
-// by far the most expensive render pass (~85% of a dense frame, profiled).
-// Recompute it on alternate frames into an offscreen layer; skip frames blit
-// the cached layer shifted by the camera delta (same ZOOM), so panning never
-// ghosts and the one-frame content lag is invisible behind occluders.
-let _bsilFrameNo=0, _bsilLayer=null;
-const _bsilCam={x:0,y:0,zoom:0,topH:0,empty:true};
-function drawBehindBuildingOutlinesCached(units,occs){
-  _bsilFrameNo++;
-  const cv=X.canvas, dpr=window.devicePixelRatio||1;
-  if(!_bsilLayer||_bsilLayer.width!==cv.width||_bsilLayer.height!==cv.height){
-    _bsilLayer=document.createElement('canvas');
-    _bsilLayer.width=cv.width; _bsilLayer.height=cv.height;
-    _bsilCam.empty=true;
-  }
-  // zoom/layout changes can't be delta-blitted — recompute those frames
-  if(_bsilFrameNo%2===1||_bsilCam.zoom!==ZOOM||_bsilCam.topH!==topH||_bsilCam.empty){
-    const lc=_bsilLayer.getContext('2d');
-    lc.setTransform(1,0,0,1,0,0); lc.clearRect(0,0,_bsilLayer.width,_bsilLayer.height);
-    lc.setTransform(X.getTransform()); // the caller's dpr+ZOOM transform, verbatim
-    const sv=X; X=lc;
-    try{ drawBehindBuildingOutlines(units,occs); } finally{ X=sv; }
-    _bsilCam.x=camDX(); _bsilCam.y=camDY(); _bsilCam.zoom=ZOOM; _bsilCam.topH=topH; _bsilCam.empty=false;
-  }
-  // blit in device space, shifted by the camera pan since the layer was
-  // built. The layer's content was positioned through the quantized display
-  // camera (camDX/camDY, js/iso.js), so the shift is measured in the same
-  // currency — whole logical pixels; ·ZOOM·dpr is then exact in device px
-  // whenever ZOOM·dpr is integral (no resample shimmer).
-  const dx=Math.round((_bsilCam.x-camDX())*ZOOM*dpr), dy=Math.round((_bsilCam.y-camDY())*ZOOM*dpr);
-  X.save(); X.setTransform(1,0,0,1,0,0); X.drawImage(_bsilLayer,dx,dy); X.restore();
+  _renderBehindRings(jobs);
 }

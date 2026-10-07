@@ -4877,6 +4877,9 @@
   function loop(now){
     raf = requestAnimationFrame(loop);
     if (!gameStarted) { povClose(); return; }
+    withDrawPositions(() => drawFrame(now));   // (units between their last two ticks: js/render.js)
+  }
+  function drawFrame(now){
     let e = followId != null ? entitiesById.get(followId) : null;
     if (followId != null && (!e || e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn)) {
       // fallen (or gone): the view lets go — no handover to another unit; the world view back to its map camera
@@ -5458,7 +5461,7 @@
     joyEl.addEventListener('pointerup', joyEnd); joyEl.addEventListener('pointercancel', joyEnd);
     actEl.addEventListener('pointerdown', ev => { actEl.setPointerCapture(ev.pointerId); const e = entitiesById.get(followId); actHeld = true; if (e) actNow(e); });
     for (const t of ['pointerup', 'pointercancel']) actEl.addEventListener(t, () => { actHeld = false; });
-    btnFull.onclick = () => { if (world) povClose(); else openWorld(); };
+    btnFull.onclick = () => { if (world) povClose(); else openWorld(); rememberView(); };
     btnClose.onclick = () => povClose();
     document.body.appendChild(pip);
     window.addEventListener('resize', () => { if (renderer && pip.style.display !== 'none') setWorld(world); });
@@ -5575,18 +5578,26 @@
   window.povOpen = povOpen;
   window.povClose = povClose;
   window.povToggle = povToggle;
-  window.toggleView3D = () => { if (world) povClose(); else openWorld(); };
-  // A match opens in the 3D world view. ?view=2d|3d picks; automated browsers (the test battery drives the 2D map)
-  // default to 2D.
+  // The player's view choice, kept across reloads (localStorage 'aoeView'); the URL's ?view= wins, and automated
+  // browsers ignore the stored one (the battery's default stays 2D)
+  function preferredView(){
+    const v = new URLSearchParams(location.search).get('view');
+    if (v || navigator.webdriver) return v;
+    try { return localStorage.getItem('aoeView'); } catch (e) { return null; }
+  }
+  function rememberView(){ try { localStorage.setItem('aoeView', world ? '3d' : '2d'); } catch (e) {} }
+  window.toggleView3D = () => { if (world) povClose(); else openWorld(); rememberView(); };
+  // A match (or a loaded save) opens in the view the player last switched to — the 3D world view until they pick one.
+  // ?view=2d|3d overrides; automated browsers (the test battery drives the 2D map) default to 2D.
   window.enterDefaultView = () => {
     warmFrames = 2;                                                             // every match start, the world already open (a rematch) or not
     eye = null; camFrom = null; camLast = null;                                 // a new match CUTS to its base (no glide from the last match's view)
-    const v = new URLSearchParams(location.search).get('view');
+    const v = preferredView();
     if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld(true);
   };
   window.povWorld = () => world;
   // Fetch three.js while the menu is up, so a match opens straight into 3D.
-  if (!/[?&]view=2d/.test(location.search) && !navigator.webdriver)
+  if (preferredView() !== '2d' && !navigator.webdriver)
     window.addEventListener('load', () => setTimeout(() => loadThree().catch(() => {}), 500), { once: true });
   window.__povYaw = () => yaw; // dev: the view's heading (tests)
   window.__povAnimYaw = id => { const a = animals.get(id); return a ? a.yaw : null; }; // dev: an animal's drawn heading (tests)

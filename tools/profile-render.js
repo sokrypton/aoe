@@ -74,7 +74,7 @@ const SCENE = (frames) => `(() => {
     scene: { units: nu, buildings: nb, trees: 256, selected: selected.length, occludedUnits: occluded, activeOccluders: activeSet.size, outlineGroups: groups },
     msPerFrame: +full.toFixed(3),
     breakdown: {
-      behindOccluderOutlines: stubDiff('drawBehindBuildingOutlinesCached'),
+      behindOccluderOutlines: stubDiff('drawBehindBuildingOutlines'),
       selectionOutlines: stubDiff('drawOutlines'),
       trees: stubDiff('drawTreeEntity'),
       units: stubDiff('drawUnit'),

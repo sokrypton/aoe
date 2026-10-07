@@ -66,7 +66,26 @@ function drawOreTile(t, x, y, sx, cy){
 // view's 30° elevation)
 // One ore boulder q {bx, bz (tiles, its foot), ax, ay, az (half-width, height, half-depth), rot, col} at the origin:
 // the 3D's low seven-sided spun rock, flat-shaded by its light, outlined (lw: half of it under the facets)
+// A lone boulder at the origin (a camp's heap: q.bx = q.bz = 0) is the same rock every frame: baked once per shape and
+// device scale, then blitted (oreRocks' whole tile is cached already: oreCache)
+const _boulderArt = new Map();
 function oreBoulder(q, lw = 3){
+  if (!q.bx && !q.bz && !window._maskDraw) {
+    const m = X.getTransform(), sc = Math.max(1, Math.ceil(Math.hypot(m.a, m.b) - 1e-6));
+    const T = HALF_TW * Math.SQRT2, rr = Math.max(q.ax, q.az) * T * 1.2 + lw + 2, up = q.ay * T * Math.sqrt(3) / 2 + rr;
+    const key = q.ax + ',' + q.ay + ',' + q.az + ',' + q.rot + ',' + q.col + ',' + lw + '|' + sc;
+    let c = _boulderArt.get(key);
+    if (!c) { if (_boulderArt.size > 500) _boulderArt.clear();
+      c = document.createElement('canvas'); c.width = Math.ceil(2 * rr * sc); c.height = Math.ceil((up + rr) * sc);
+      const cx = c.getContext('2d'); cx.scale(sc, sc); cx.translate(rr, up);
+      const sv = X; X = cx; try { oreBoulderPaint(q, lw); } finally { X = sv; }
+      _boulderArt.set(key, c); }
+    X.drawImage(c, -rr, -up, 2 * rr, up + rr);
+    return;
+  }
+  oreBoulderPaint(q, lw);
+}
+function oreBoulderPaint(q, lw){
   const T = HALF_TW * Math.SQRT2, TH3 = T * Math.sqrt(3) / 2, k = projKit(0), cr = Math.cos(q.rot), sr = Math.sin(q.rot);
   // the spun profile's rings (three's LatheGeometry: x = r·sin φ, z = r·cos φ), scaled, turned, placed — in tiles
   const ring = ORE_PROFILE.map(([pr, py]) => Array.from({ length: 7 }, (_, i) => { const ph = i / 7 * 2 * Math.PI, lx = pr * Math.sin(ph) * q.ax, lz = pr * Math.cos(ph) * q.az;
@@ -136,35 +155,31 @@ function drawTileResource(t, x, y, sx, cy){
   if(t.t===TERRAIN.BERRIES) drawBerryBush(t, x, y, sx, cy);
 }
 
-function drawTile(x,y){
-  let f = fog[y] && fog[y][x];
-  if (f === 0) return; // unexplored (completely black)
-
-  let p=mapToScreen(x,y);
-  let sx=Math.round(p.sx), sy=Math.round(p.sy);
-  if(isOffscreen(sx,sy,TW*2))return;
-  let t=map[y][x];
-  let cols=TCOL[t.t]||TCOL[0];
-  let col=cols[(x*7+y*13)%cols.length];
-
-  X.fillStyle=col;
-  X.beginPath();
-  X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
-  X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
-  X.closePath();X.fill();
-  let cy=sy+HALF_TH;
-
-  if (!(f === 2 && isSortedRes(t.t))) drawTileResource(t, x, y, sx, cy);
-
-  // Draw fog of war overlay to darken the tile and its static resources
-  if (f === 1) {
-    X.fillStyle = 'rgba(0,0,0,0.55)';
-    X.beginPath();
-    X.moveTo(sx,sy);X.lineTo(sx+HALF_TW,sy+HALF_TH);
-    X.lineTo(sx,sy+TH);X.lineTo(sx-HALF_TW,sy+HALF_TH);
-    X.closePath();
-    X.fill();
+// The ground as one image: a MAP×MAP canvas, a pixel per tile in its base colour, drawn through the iso grid's affine
+// map (tile (x,y)'s top corner = origin + x·(HALF_TW, HALF_TH) + y·(−HALF_TW, HALF_TH)) lands every pixel as its
+// tile's diamond — one drawImage for what was a path fill per tile. The fog overlay is a second such image, laid over
+// the fogged tiles' ore and bushes.
+let _gnd=null;
+const _rgbOf = new Map();
+function drawGround(minX, maxX, minY, maxY){
+  if (!_gnd || _gnd.n !== MAP) {
+    const mk = () => { const c = document.createElement('canvas'); c.width = MAP; c.height = MAP; const x = c.getContext('2d'); return { c, x, d: x.createImageData(MAP, MAP) }; };
+    _gnd = { n: MAP, base: mk(), fog: mk() };
   }
+  const g = _gnd.base.d.data, fd = _gnd.fog.d.data;
+  for (let y = 0; y < MAP; y++) { const fr = fog[y], row = map[y]; for (let x = 0; x < MAP; x++) {
+    const i = (y * MAP + x) * 4, f = fr ? fr[x] : 0;
+    if (!f) { g[i + 3] = 0; fd[i + 3] = 0; continue; }
+    const t = row[x], cols = TCOL[t.t] || TCOL[0], col = cols[(x * 7 + y * 13) % cols.length];
+    let rgb = _rgbOf.get(col); if (!rgb) { rgb = [1, 3, 5].map(k => parseInt(col.slice(k, k + 2), 16)); _rgbOf.set(col, rgb); }
+    g[i] = rgb[0]; g[i + 1] = rgb[1]; g[i + 2] = rgb[2]; g[i + 3] = 255;
+    fd[i] = fd[i + 1] = fd[i + 2] = 0; fd[i + 3] = f === 1 ? 140 : 0;   // (rgba(0,0,0,0.55))
+  } }
+  _gnd.base.x.putImageData(_gnd.base.d, 0, 0); _gnd.fog.x.putImageData(_gnd.fog.d, 0, 0);
+  const o = mapToScreen(0, 0), lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
+  lay(_gnd.base.c);
+  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && isSortedRes(map[y][x].t)) drawTileResourceAt(x, y);
+  lay(_gnd.fog.c);
 }
 
 function drawStump(sx, cy, s, darken = false) {
@@ -244,7 +259,7 @@ function cropArt(cv, scale, ax, ay){
   return { canvas: out, ax: ax - x0 / scale, ay: ay - y0 / scale, wL: out.width / scale, hL: out.height / scale };
 }
 function _treeArt(crown, rotStep, shade, darken, scale, part = null){
-  const key = crown + ':' + rotStep + ':' + shade + ':' + (darken ? 1 : 0) + ':' + scale + ':' + part;
+  const key = (((((crown * 4 + rotStep) * 3 + shade) * 2 + (darken ? 1 : 0)) * 64 + scale) * 3) + (part === 'trunk' ? 1 : part === 'crown' ? 2 : 0);   // (a number: ~2000 lookups a frame)
   let a = _treeArtCache.get(key);
   if(a) return a;
   const halfW = 46, above = 104, below = 8; // the body's extent about its foot

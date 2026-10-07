@@ -1,3 +1,28 @@
+// ---- Render interpolation (viewer-only) ----
+// Units are drawn between their last two tick positions, by the share of the next tick already elapsed: drawn at the
+// newest tick, a 4x frame advanced 1,1,2 ticks — every third frame each unit jumped double. gameLoop notes the
+// positions before its last tick; a draw runs inside withDrawPositions, which restores the sim's own positions after.
+const _drawPrev = new Map();   // unit id -> [x, y] one tick before the newest
+function noteDrawPositions(){
+  _drawPrev.clear();
+  for (const e of entities) if (e.type === 'unit') _drawPrev.set(e.id, [e.x, e.y]);
+}
+function withDrawPositions(fn){
+  if (!_drawPrev.size || typeof accumulator === 'undefined') return fn();   // (pages without the game loop: labs, icons)
+  const a = Math.max(0, Math.min(1, accumulator / timeStep));
+  if (a >= 1) return fn();
+  const moved = [];
+  for (const e of entities) {
+    if (e.type !== 'unit' || e.garrisonedIn) continue;
+    const p = _drawPrev.get(e.id); if (!p) continue;
+    const dx = e.x - p[0], dy = e.y - p[1];
+    if ((!dx && !dy) || dx * dx + dy * dy > 4) continue;   // (still, or a real jump — spawn, unload, rollback: no tween)
+    moved.push(e, e.x, e.y); e.x = p[0] + dx * a; e.y = p[1] + dy * a;
+  }
+  try { return fn(); }
+  finally { for (let i = 0; i < moved.length; i += 3) { moved[i].x = moved[i + 1]; moved[i].y = moved[i + 2]; } }
+}
+
 // Frame-scratch structures, reused every frame instead of reallocated:
 // the drawable list, the visible-tree list, per-tile tree records and the
 // two per-gate draw proxies (see their use sites in render()).
@@ -107,10 +132,14 @@ function buildingCenterScreen(b){
 }
 
 function render(){
+  poseBuildBudget = 12; // (js/render-units.js) — lifted again at the end
+  try { renderFrame(); } finally { poseBuildBudget = Infinity; }
+}
+function renderFrame(){
   // Tree-pool keys encode MAP — a different map size would silently alias
   // old records onto wrong tiles, so reset the pools on any size change.
   if (MAP !== _poolMapSize) { _treePool.clear(); _resPool.clear(); _gateProxyPool.clear(); _marketProxyPool.clear(); _farmProxyPool.clear(); _tcProxyPool.clear(); _poolMapSize = MAP; }
-  // Black background so unexplored fog (drawTile() skips drawing when
+  // Black background so unexplored fog (drawGround() leaves it clear when
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
   X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
@@ -147,7 +176,7 @@ function render(){
   X.translate(-ax, -ay);}
 
   // Draw ground tiles (only visible ones)
-  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++)drawTile(x,y);
+  drawGround(minX,maxX,minY,maxY);
 
   
   // Find visible trees with wood resource remaining to depth-sort them
@@ -414,9 +443,8 @@ function render(){
   });
 
   // Behind-building team-color outlines, before drawOutlines so the selection
-  // ring paints on top. Same active-ZOOM-transform requirement. Cached:
-  // recomputed on alternate frames, delta-blitted between (see the wrapper).
-  drawBehindBuildingOutlinesCached(_silUnitScratch, _silOccScratch);
+  // ring paints on top. Same active-ZOOM-transform requirement.
+  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

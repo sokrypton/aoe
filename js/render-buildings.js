@@ -143,7 +143,7 @@ function drawCampClearing(sx,sy,bw,bhh,darken=false){
   X.strokeStyle = 'rgba(0,0,0,0.25)';
   X.lineWidth = 1;
   // The full tile diamond — (sx,sy)/(sx+bw,sy+bhh)/(sx,sy+bhh*2)/(sx-bw,sy+bhh)
-  // are exactly the building's footprint tile corners (same shape drawTile()
+  // are exactly the building's footprint tile corners (the same diamonds drawGround
   // uses for terrain), not a smaller inset shape. In iso view the building's
   // base should cover its whole ground tile, not float as a patch within it.
   X.beginPath();
@@ -753,7 +753,7 @@ function buildingShadowPath(e){
     // square footprint: one diamond over the whole base
     let p = mapToScreen(e.x + fw/2, e.y + fh/2);
     let sx = Math.round(p.sx), sy = Math.round(p.sy);
-    if (isOffscreen(sx, sy, 100)) return;
+    if (isOffscreen(sx, sy, buildingCullMargin(fw, fh))) return;
     let bw = fw * HALF_TW, bhh = fh * HALF_TH;
     X.moveTo(sx + ox, sy - bhh * g + oy);
     X.lineTo(sx + bw * g + ox, sy + oy);
@@ -777,6 +777,27 @@ function buildingShadowPath(e){
   }
 }
 
+// Art that only changes with a few known inputs (a farm's standing crop, a camp's ore heap) baked once into an offscreen
+// canvas at the device scale and blitted after — the trees' approach (_treeArt). One bake per owner (a WeakMap: never
+// a field on a sim object), redone when its key changes. (l, t, w, h): the art's box about its anchor (ax, ay), logical
+// px; draw(ox, oy) paints it anchored there. Not for the ghost/mask passes (no owner state, silhouettes).
+const _bakes = new WeakMap();
+function drawBaked(owner, key, ax, ay, l, t, w, h, draw){
+  const sc = Math.ceil(ZOOM * (window.devicePixelRatio || 1)), k = key + '|' + sc;
+  let bk = _bakes.get(owner);
+  if (!bk || bk.k !== k) {
+    const c = document.createElement('canvas'); c.width = Math.ceil(w * sc); c.height = Math.ceil(h * sc);
+    const cx = c.getContext('2d'); cx.scale(sc, sc);
+    const sv = X; X = cx; try { draw(-l, -t); } finally { X = sv; }
+    _bakes.set(owner, bk = { k, c });
+  }
+  X.drawImage(bk.c, ax + l, ay + t, w, h);
+}
+
+// How far past the screen edge a building's footprint centre may sit and still show: half its diamond's width plus its
+// art's height (the conservative pad the outline boxes use) — a flat 100px culled a 4x4 Town Center half in view.
+function buildingCullMargin(fw, fh){ return (fw + fh) / 2 * HALF_TW + 60 + 18 * Math.max(fw, fh) + 16; }
+
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   if(!b)return; // unknown btype: skip this entity instead of crashing the whole frame on b.w
@@ -786,7 +807,7 @@ function drawBuilding(e, part = null){
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
   let p=mapToScreen(cx,cy);
   let sx=Math.round(p.sx), sy=Math.round(p.sy);
-  if(isOffscreen(sx,sy,100))return;
+  if(isOffscreen(sx,sy,buildingCullMargin(e.w||b.w, e.h||b.h)))return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
   sy-=bhh;
   // Compute fog level once for the full footprint; used to gate animations and overlay
@@ -1992,32 +2013,32 @@ function drawBuilding(e, part = null){
     // part 'body' = pillar only, 'link' = the S/E slabs only — the hit test
     // (input.js wallGateHitPart) renders each in isolation to tag a click as
     // pillar vs walkway WITHOUT re-deriving the geometry. null draws both.
-    if (part !== 'link')
-      drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
-    if (part === 'body') { X.globalAlpha = 1; return; }
-
-    // 2. Draw South and East links second (running towards the front, overlapping the pillar)
-    // Slab half-thickness = pillar half-width/... matches the pillar's
-    // cross-section exactly; d1 centers it so the near-end edge lands on
-    // the pillar's FRONT vertical edge and the back top corner on its
-    // BACK vertical edge — outlines coincide instead of doubling.
-    // (linkY - 0.5: the slab's bottom front corner otherwise lands just
-    // below the pillar's bottom vertex)
-    let d1 = lthick * Math.sqrt(5) / 2;
-    // A tile draws only its S and E links (N/W joins come from those
-    // neighbours). Joining ANY wall-like neighbour, two parallel runs one
-    // tile apart would rung together into a ladder — so drop a link that runs
-    // PERPENDICULAR to the run both its tiles belong to: skip it when both
-    // endpoints sit on a rail crossing the link AND the link isn't itself
-    // continuing a run along its own axis. Corners, T-junctions, single runs
-    // and closed rings keep every join; only side-by-side parallels separate.
-    // South link (vertical) and East link (horizontal); skip cross-rungs
-    // between parallel runs (see wallSouthRung/wallEastRung).
-    if (drawsWallStubs(e)) {
-    if (_wlLike(e.x, e.y+1) && !wallSouthRung(e.x, e.y)) drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
-    if (_wlLike(e.x+1, e.y) && !wallEastRung(e.x, e.y)) drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
-    // Ghost-only: preview the N/W joins real neighbours will draw once placed.
-    drawGhostBackJoins(e.x, e.y, sx, linkY - 0.5, wallH, tc);
+    // A finished tile in the plain pass is the same art until a neighbour, its material, owner or fog changes: baked
+    // (drawBaked). Sites, ghosts, the hit-test parts and silhouette passes draw live.
+    // Links: slab half-thickness = the pillar's; d1 centres it so the near-end edge lands on the pillar's FRONT
+    // vertical edge and the back top corner on its BACK one — outlines coincide instead of doubling. (linkY - 0.5: the
+    // slab's bottom front corner otherwise lands just below the pillar's bottom vertex.)
+    // A tile draws only its S and E links (N/W joins come from those neighbours). Joining ANY wall-like neighbour, two
+    // parallel runs one tile apart would rung together into a ladder — so a link running PERPENDICULAR to the run both
+    // its tiles belong to is dropped (wallSouthRung/wallEastRung). Corners, T-junctions, single runs and closed rings
+    // keep every join; only side-by-side parallels separate.
+    const d1 = lthick * Math.sqrt(5) / 2;
+    const sLink = _wlLike(e.x, e.y+1) && !wallSouthRung(e.x, e.y), eLink = _wlLike(e.x+1, e.y) && !wallEastRung(e.x, e.y);
+    const wallArt = (sx, sy, pillar = true, links = true) => {
+      if (pillar) drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
+      if (!links) return;
+      if (sLink) drawWallLink(sx, sy + 15.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
+      if (eLink) drawWallLink(sx, sy + 15.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
+    };
+    if (part === null && e.complete && !window._ghostDraw && !window._maskDraw && !window._selOutline)
+      drawBaked(e, mat + '|' + tc + '|' + (darken ? 1 : 0) + '|' + (sLink ? 1 : 0) + (eLink ? 1 : 0), sx, sy, -40, -24, 80, 66, wallArt);
+    else {
+      if (part !== 'link') wallArt(sx, sy, true, false);
+      if (part === 'body') { X.globalAlpha = 1; return; }
+      if (drawsWallStubs(e)) {
+        wallArt(sx, sy, false, true);
+        drawGhostBackJoins(e.x, e.y, sx, linkY - 0.5, wallH, tc); // ghost-only: the N/W joins real neighbours will draw once placed
+      }
     }
   }
 
@@ -2165,122 +2186,128 @@ function drawBuilding(e, part = null){
   }
   else if(e.btype==='FARM'){
     bh=0;
-    // AoE2-style FLAT farm: bed, furrows and wheat all draw in one pass in
-    // the ground layer (render.js emits a single ground-layer proxy far
-    // below the depth contest), so units and buildings always draw over
-    // the field. part is 'ground' (in-game) or null (gallery/ghost/mask) —
-    // both mean "draw everything".
-    let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
-    // Fraction of food LEFT — drives how much wheat still stands (below). Divide
-    // by the farm's CURRENT capacity (farmFoodFor, incl. horse-collar/heavy-plow
-    // bonuses the tile was seeded with); e.maxFood is only the un-upgraded base,
-    // so an upgraded farm would read >1.0 and sit visually full until its bonus
-    // food is gone. Each gather cycle drops tile.res by 1, so the field thins
-    // sheaf-by-sheaf as it's worked — roughly one per villager carry-trip.
-    let growth=tileRes/(farmFoodFor(e.team)||e.maxFood||300);
-    // Ground-level footprint corners and the raised bed (tilled soil sits
-    // a few px proud of the grass, with visible dirt sides on the two
-    // camera-facing edges — that lift is what makes the field read 3D).
-    const bedH=2.5;
-    let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
-    let up=c=>({x:c.x,y:c.y-bedH});
-    let rT=up(cT), rR=up(cR), rB=up(cB), rL=up(cL);
-    // exhausted soil is paler and greyer — worked-out dirt
-    let dead=e.exhausted;
-    let soil    = dead ? '#7d6a52' : '#7a5a38';
-    let ridgeDk = dead ? '#6f5d47' : '#6b4d2e'; // furrow strip
-    let sideSW  = dead ? '#5f5040' : '#5e4527'; // bed side, SW-facing (lit side)
-    let sideSE  = dead ? '#4f4234' : '#4b371f'; // bed side, SE-facing (shaded)
-    if(darken){ soil=darkenColor(soil); ridgeDk=darkenColor(ridgeDk); sideSW=darkenColor(sideSW); sideSE=darkenColor(sideSE); }
-    // Furrow/crop-row geometry
-    let rowEnds=t=>[
-      {x:rT.x+(rL.x-rT.x)*t, y:rT.y+(rL.y-rT.y)*t},
-      {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
-    ];
-    X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
-    // bed side faces (front-left and front-right edges, extruded to ground)
-    X.fillStyle=sideSW;X.beginPath();
-    X.moveTo(rL.x,rL.y);X.lineTo(rB.x,rB.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();X.stroke();
-    X.fillStyle=sideSE;X.beginPath();
-    X.moveTo(rB.x,rB.y);X.lineTo(rR.x,rR.y);X.lineTo(cR.x,cR.y);X.lineTo(cB.x,cB.y);X.closePath();X.fill();X.stroke();
-    // bed top
-    X.fillStyle=soil;X.beginPath();
-    X.moveTo(rT.x,rT.y);X.lineTo(rR.x,rR.y);X.lineTo(rB.x,rB.y);X.lineTo(rL.x,rL.y);X.closePath();X.fill();
-    X.strokeStyle='rgba(0,0,0,0.35)';X.stroke();
-    // Furrows, cartoon-flat: the soil top IS the lit surface; one bold
-    // dark strip under each crop row suggests the ploughing — no per-ridge
-    // lit/trough shading (that read as botanical realism and dissolved
-    // into noise zoomed out).
-    for(const t of FARM_CROP_ROWS){
-      let [a0,b0]=rowEnds(t+0.02), [a1,b1]=rowEnds(t+0.07);
-      X.fillStyle=ridgeDk;X.beginPath();
-      X.moveTo(a0.x,a0.y);X.lineTo(b0.x,b0.y);X.lineTo(b1.x,b1.y);X.lineTo(a1.x,a1.y);X.closePath();X.fill();
-    }
-    let rows=FARM_CROP_ROWS;
-    const COLS=FARM_CROP_COLS;
-    // Sheaf base position, shared by the crop and stubble passes so the
-    // harvested field lines up with where the wheat stood.
-    let tuftAt=(t,ri,i)=>{
-      let [a,b2]=rowEnds(t);
-      let u=farmSheafU(ri,i);
-      return {x:a.x+(b2.x-a.x)*u, y:a.y+(b2.y-a.y)*u};
-    };
-    // AoE2-style HARVEST-DOWN: a farm is a full RIPE (golden) crop when fresh
-    // and is progressively CUT as its food is eaten — each sheaf stands at full
-    // height with grain heads until the food fraction drops past its own harvest
-    // threshold, then it becomes a stubble stump. Fresh = dense gold, worked =
-    // thinning to stubble, exhausted = all stubble on pale dirt. The crop never
-    // "un-grows" (no green stage): less food simply means less standing crop.
-    // Sheaf read matches the gathering villager's shoulder sheaf (render-units).
-    const NSHEAF=rows.length*COLS;
-    // Per-FARM seed (anchor tile — same scheme as the berry bushes) so adjacent
-    // farms aren't identical clones: it varies each field's sheaf jitter, lean,
-    // height and the ORDER sheaves are cut as the field is worked down.
-    let fseed=e.x*7+e.y*13;
-    let stalkCol = darken ? darkenColor('#c9a227') : '#c9a227';
-    let headCol  = darken ? darkenColor('#e8c84a') : '#e8c84a';
-    let stub     = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
-    rows.forEach((t,ri)=>{
-      for(let i=0;i<COLS;i++){
-        let n=ri*COLS+i;
-        let p=tuftAt(t,ri,i);
-        // Subtle off-grid jitter so sheaves look hand-sown, not stamped — small
-        // enough that the planted-in-rows read holds (the furrows stay straight).
-        p={x:p.x+(((n*5+fseed)%5)-2)*0.5, y:p.y+(((n*11+fseed)%3)-1)*0.5};
-        // Scattered harvest order: a coprime multiplier permutes the sheaves
-        // (gcd(7,NSHEAF)=1); +fseed rotates it per farm so each field thins in
-        // its own patchy pattern rather than every farm alike.
-        let thresh=(((n*7+fseed)%NSHEAF + 0.5)/NSHEAF);
-        if(!dead && growth>thresh){
-          // standing ripe sheaf: three splayed golden stalks, each grain-headed
-          let lean=(((n*13+fseed)%5)-2)*0.55; // deterministic per-sheaf lean
-          let sheafH=6+(((n*3+fseed)%3)-1)*0.7, splay=2.5;
-          X.strokeStyle=stalkCol;X.lineWidth=1.4;X.lineCap='round';
-          for(let k=-1;k<=1;k++){
-            X.beginPath();X.moveTo(p.x,p.y);
-            X.lineTo(p.x+k*splay+lean, p.y-sheafH*(k===0?1:0.78));X.stroke();
-          }
-          X.lineCap='butt';
-          X.fillStyle=headCol;X.strokeStyle='#000';X.lineWidth=0.8;
-          for(let k=-1;k<=1;k++){
-            let hx=p.x+k*splay+lean, hy=p.y-sheafH*(k===0?1:0.78);
-            X.beginPath();X.ellipse(hx,hy-0.8,1.05,1.9,k*0.18+lean*0.1,0,Math.PI*2);X.fill();X.stroke();
-          }
-        } else {
-          // cut stubble stump where the sheaf stood
-          X.strokeStyle=stub;X.lineWidth=1.6;
-          X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-0.5,p.y-2.5);X.stroke();
-        }
+    // (a flat field, unchanged between bites: baked — drawBaked — keyed by its food, cap, exhaustion and fog)
+    const field=(sx,sy)=>{
+      // AoE2-style FLAT farm: bed, furrows and wheat all draw in one pass in
+      // the ground layer (render.js emits a single ground-layer proxy far
+      // below the depth contest), so units and buildings always draw over
+      // the field. part is 'ground' (in-game) or null (gallery/ghost/mask) —
+      // both mean "draw everything".
+      let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
+      // Fraction of food LEFT — drives how much wheat still stands (below). Divide
+      // by the farm's CURRENT capacity (farmFoodFor, incl. horse-collar/heavy-plow
+      // bonuses the tile was seeded with); e.maxFood is only the un-upgraded base,
+      // so an upgraded farm would read >1.0 and sit visually full until its bonus
+      // food is gone. Each gather cycle drops tile.res by 1, so the field thins
+      // sheaf-by-sheaf as it's worked — roughly one per villager carry-trip.
+      let growth=tileRes/(farmFoodFor(e.team)||e.maxFood||300);
+      // Ground-level footprint corners and the raised bed (tilled soil sits
+      // a few px proud of the grass, with visible dirt sides on the two
+      // camera-facing edges — that lift is what makes the field read 3D).
+      const bedH=2.5;
+      let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
+      let up=c=>({x:c.x,y:c.y-bedH});
+      let rT=up(cT), rR=up(cR), rB=up(cB), rL=up(cL);
+      // exhausted soil is paler and greyer — worked-out dirt
+      let dead=e.exhausted;
+      let soil    = dead ? '#7d6a52' : '#7a5a38';
+      let ridgeDk = dead ? '#6f5d47' : '#6b4d2e'; // furrow strip
+      let sideSW  = dead ? '#5f5040' : '#5e4527'; // bed side, SW-facing (lit side)
+      let sideSE  = dead ? '#4f4234' : '#4b371f'; // bed side, SE-facing (shaded)
+      if(darken){ soil=darkenColor(soil); ridgeDk=darkenColor(ridgeDk); sideSW=darkenColor(sideSW); sideSE=darkenColor(sideSE); }
+      // Furrow/crop-row geometry
+      let rowEnds=t=>[
+        {x:rT.x+(rL.x-rT.x)*t, y:rT.y+(rL.y-rT.y)*t},
+        {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
+      ];
+      X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
+      // bed side faces (front-left and front-right edges, extruded to ground)
+      X.fillStyle=sideSW;X.beginPath();
+      X.moveTo(rL.x,rL.y);X.lineTo(rB.x,rB.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();X.stroke();
+      X.fillStyle=sideSE;X.beginPath();
+      X.moveTo(rB.x,rB.y);X.lineTo(rR.x,rR.y);X.lineTo(cR.x,cR.y);X.lineTo(cB.x,cB.y);X.closePath();X.fill();X.stroke();
+      // bed top
+      X.fillStyle=soil;X.beginPath();
+      X.moveTo(rT.x,rT.y);X.lineTo(rR.x,rR.y);X.lineTo(rB.x,rB.y);X.lineTo(rL.x,rL.y);X.closePath();X.fill();
+      X.strokeStyle='rgba(0,0,0,0.35)';X.stroke();
+      // Furrows, cartoon-flat: the soil top IS the lit surface; one bold
+      // dark strip under each crop row suggests the ploughing — no per-ridge
+      // lit/trough shading (that read as botanical realism and dissolved
+      // into noise zoomed out).
+      for(const t of FARM_CROP_ROWS){
+        let [a0,b0]=rowEnds(t+0.02), [a1,b1]=rowEnds(t+0.07);
+        X.fillStyle=ridgeDk;X.beginPath();
+        X.moveTo(a0.x,a0.y);X.lineTo(b0.x,b0.y);X.lineTo(b1.x,b1.y);X.lineTo(a1.x,a1.y);X.closePath();X.fill();
       }
-    });
-    // a fallen straw or two once the field has been worked down
-    if(!dead && growth<0.6){
-      X.strokeStyle=stub;X.lineWidth=1.6;
-      let s=tuftAt(rows[1],1,0);
-      X.beginPath();X.moveTo(s.x+2,s.y+2);X.lineTo(s.x+7.5,s.y+3.5);X.stroke();
-    }
-    X.lineWidth=1.1;
-    // (No corner fence posts — the raised bed alone frames the field.)
+      let rows=FARM_CROP_ROWS;
+      const COLS=FARM_CROP_COLS;
+      // Sheaf base position, shared by the crop and stubble passes so the
+      // harvested field lines up with where the wheat stood.
+      let tuftAt=(t,ri,i)=>{
+        let [a,b2]=rowEnds(t);
+        let u=farmSheafU(ri,i);
+        return {x:a.x+(b2.x-a.x)*u, y:a.y+(b2.y-a.y)*u};
+      };
+      // AoE2-style HARVEST-DOWN: a farm is a full RIPE (golden) crop when fresh
+      // and is progressively CUT as its food is eaten — each sheaf stands at full
+      // height with grain heads until the food fraction drops past its own harvest
+      // threshold, then it becomes a stubble stump. Fresh = dense gold, worked =
+      // thinning to stubble, exhausted = all stubble on pale dirt. The crop never
+      // "un-grows" (no green stage): less food simply means less standing crop.
+      // Sheaf read matches the gathering villager's shoulder sheaf (render-units).
+      const NSHEAF=rows.length*COLS;
+      // Per-FARM seed (anchor tile — same scheme as the berry bushes) so adjacent
+      // farms aren't identical clones: it varies each field's sheaf jitter, lean,
+      // height and the ORDER sheaves are cut as the field is worked down.
+      let fseed=e.x*7+e.y*13;
+      let stalkCol = darken ? darkenColor('#c9a227') : '#c9a227';
+      let headCol  = darken ? darkenColor('#e8c84a') : '#e8c84a';
+      let stub     = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
+      rows.forEach((t,ri)=>{
+        for(let i=0;i<COLS;i++){
+          let n=ri*COLS+i;
+          let p=tuftAt(t,ri,i);
+          // Subtle off-grid jitter so sheaves look hand-sown, not stamped — small
+          // enough that the planted-in-rows read holds (the furrows stay straight).
+          p={x:p.x+(((n*5+fseed)%5)-2)*0.5, y:p.y+(((n*11+fseed)%3)-1)*0.5};
+          // Scattered harvest order: a coprime multiplier permutes the sheaves
+          // (gcd(7,NSHEAF)=1); +fseed rotates it per farm so each field thins in
+          // its own patchy pattern rather than every farm alike.
+          let thresh=(((n*7+fseed)%NSHEAF + 0.5)/NSHEAF);
+          if(!dead && growth>thresh){
+            // standing ripe sheaf: three splayed golden stalks, each grain-headed
+            let lean=(((n*13+fseed)%5)-2)*0.55; // deterministic per-sheaf lean
+            let sheafH=6+(((n*3+fseed)%3)-1)*0.7, splay=2.5;
+            X.strokeStyle=stalkCol;X.lineWidth=1.4;X.lineCap='round';
+            for(let k=-1;k<=1;k++){
+              X.beginPath();X.moveTo(p.x,p.y);
+              X.lineTo(p.x+k*splay+lean, p.y-sheafH*(k===0?1:0.78));X.stroke();
+            }
+            X.lineCap='butt';
+            X.fillStyle=headCol;X.strokeStyle='#000';X.lineWidth=0.8;
+            for(let k=-1;k<=1;k++){
+              let hx=p.x+k*splay+lean, hy=p.y-sheafH*(k===0?1:0.78);
+              X.beginPath();X.ellipse(hx,hy-0.8,1.05,1.9,k*0.18+lean*0.1,0,Math.PI*2);X.fill();X.stroke();
+            }
+          } else {
+            // cut stubble stump where the sheaf stood
+            X.strokeStyle=stub;X.lineWidth=1.6;
+            X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-0.5,p.y-2.5);X.stroke();
+          }
+        }
+      });
+      // a fallen straw or two once the field has been worked down
+      if(!dead && growth<0.6){
+        X.strokeStyle=stub;X.lineWidth=1.6;
+        let s=tuftAt(rows[1],1,0);
+        X.beginPath();X.moveTo(s.x+2,s.y+2);X.lineTo(s.x+7.5,s.y+3.5);X.stroke();
+      }
+      X.lineWidth=1.1;
+      // (No corner fence posts — the raised bed alone frames the field.)
+    };
+    const farmCap=farmFoodFor(e.team)||e.maxFood||300, farmRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
+    if(window._ghostDraw||window._maskDraw) field(sx,sy);
+    else drawBaked(e, farmRes+'|'+farmCap+'|'+(e.exhausted?1:0)+'|'+(darken?1:0), sx, sy, -bw-6, -18, 2*bw+12, 2*bhh+24, field);
   }
 
   X.globalAlpha=1;

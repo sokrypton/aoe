@@ -489,6 +489,7 @@ function applySavedGame(data, opts){
     } else {
       let menu = byId('tutorial');
       if (menu) menu.style.display = 'none';
+      if (window.enterDefaultView) window.enterDefaultView(); // the player's 2D/3D choice (js/pov3d.js)
       if (window.showMsg) showMsg('Game loaded');
     }
   } catch (err) {

@@ -1188,7 +1188,15 @@ function horseGrazePose(sec, seed){
 // The 2D animals' light from above (the bear's, the villager's): a band of a group's MERGED outline (so overlapping
 // parts leave no seams) — the shape less itself moved up by lift (+: the underside in shade; −: a lit band along the
 // top) — masked on a scratch canvas and laid on at alpha. paths: the parts' path fns (drawing on X); bb: their local box.
-let bandC = null;
+// Scratch canvases for the shade-band masks, handed out round-robin: rewriting ONE canvas right after drawing it onto
+// the screen made the GPU finish that draw first — a stall per band, most of an awake dragon's frame
+const _bandRing = []; let _bandNext = 0;
+function bandCanvas(w, h){
+  let c = _bandRing[_bandNext]; if (!c) c = _bandRing[_bandNext] = document.createElement('canvas');
+  _bandNext = (_bandNext + 1) % 24;
+  if (c.width < w || c.height < h) { c.width = Math.max(c.width, w); c.height = Math.max(c.height, h); }
+  return c;
+}
 function silhouetteBand(paths, bb, lift, col, alpha){
   if (window._maskDraw) return;
   const m = X.getTransform(); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -1196,9 +1204,7 @@ function silhouetteBand(paths, bb, lift, col, alpha){
     const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
   x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
   if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
-  if (!bandC) bandC = document.createElement('canvas');
-  if (bandC.width < w || bandC.height < h) { bandC.width = Math.max(bandC.width, w); bandC.height = Math.max(bandC.height, h); }
-  const O = bandC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
+  const bandC = bandCanvas(w, h), O = bandC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
   O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                           // (the path helpers draw on X)
   try { O.fillStyle = col; O.beginPath(); for (const p of paths) p(); O.fill();
     O.globalCompositeOperation = 'destination-out'; O.translate(0, -lift); O.beginPath(); for (const p of paths) p(); O.fill();
@@ -1696,6 +1702,12 @@ function villagerAction(e, stride, clk){
 // him and dries brown; at `skel` the body gives way to cartoon bones (the
 // bear's), which shrink away by `life`.
 const DIE = { hit: 260, buckle: 700, land: 1200 };
+// (ms) from here every death pose is still — the body's last bounce (villagerDeathPose), a thrown rider, the fallen
+// horse's last kick (horseDeath2D) — so a corpse at rest is built once (_stillCorpse) instead of every frame
+const DEATH_STILL = Math.max(DIE.land + 440, 1700);
+// corpse pose object (drawCorpse's c.pose) -> { parts, fallen }: viewer-only, never on the corpse itself (corpses are
+// saved and structuredClone'd into the lockstep snapshots — closures and Path2Ds would break both)
+const _stillCorpse = new WeakMap();
 function villagerDeathPose(age){
   const cl = v => Math.max(0, Math.min(1, v));
   const hit = easeC(age / DIE.hit), buck = easeC((age - 150) / (DIE.buckle - 150)), u = cl((age - 480) / (DIE.land - 480)), flop = easeC((age - DIE.land + 60) / 380);
@@ -1854,7 +1866,7 @@ function solidOf(c, a1, a2, a3){
   const cof = [[a2[1] * a3[2] - a2[2] * a3[1], a2[2] * a3[0] - a2[0] * a3[2], a2[0] * a3[1] - a2[1] * a3[0]],
                [a3[1] * a1[2] - a3[2] * a1[1], a3[2] * a1[0] - a3[0] * a1[2], a3[0] * a1[1] - a3[1] * a1[0]],
                [a1[1] * a2[2] - a1[2] * a2[1], a1[2] * a2[0] - a1[0] * a2[2], a1[0] * a2[1] - a1[1] * a2[0]]];
-  return { c, M: v => cof.map(r => (r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) / det) };
+  return { c, cof, det, M: v => cof.map(r => (r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) / det) };
 }
 // The face: where the head (a sphere, radius 4 art px at hc) shows in front of what caps it — his hair (pov3d's hair
 // ellipsoid at head-frame (−0.6, −15.6), radii 3.9 × 3.2 × 4.1) or a helmet (cap: [x, y, z, rx, ry, rz], head-frame art;
@@ -1862,15 +1874,18 @@ function solidOf(c, a1, a2, a3){
 // the projection's line of sight V. Returns the outline's points on the sphere's mid-plane (kit coords: project with P),
 // or null when no face shows (from behind).
 function headFaceOutline(hc, mH, V, cap = [-0.6, -15.6, 0, 3.9, 3.2, 4.1]){
-  const [cx, cy, cz, rx, ry, rz] = cap, R = 4, ch = mH(cx, cy, cz), a = [mH(cx + rx, cy, cz), mH(cx, cy - ry, cz), mH(cx, cy, cz + rz)].map(q => q.map((v, i) => v - ch[i])), Mv = solidOf(ch, ...a).M;
+  const [cx, cy, cz, rx, ry, rz] = cap, R = 4, ch = mH(cx, cy, cz), a = [mH(cx + rx, cy, cz), mH(cx, cy - ry, cz), mH(cx, cy, cz + rz)].map(q => q.map((v, i) => v - ch[i])), sol = solidOf(ch, ...a), Mv = sol.M;
   // the mid-plane through the head's centre, square to the line of sight: e1, e2
   const t0 = Math.abs(V[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], cr = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
   let e1 = cr(V, t0), l = Math.hypot(...e1); e1 = e1.map(v => v / l); const e2 = cr(V, e1);
   const mv = Mv(V), mvv = mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2];
   // how far the face's surface stands in front of the hair's at (α, β) (< 0: covered, null: off the head)
+  // (~470 calls a face, so written out without arrays: the same arithmetic, in the same order, as Mv(p))
+  const [c0, c1, c2] = sol.cof, det = sol.det;
   const margin = (al, be) => { const r2 = al * al + be * be; if (r2 >= R * R) return null;
-    const th = Math.sqrt(R * R - r2), p = [0, 1, 2].map(i => hc[i] + al * e1[i] + be * e2[i] - ch[i]), mp = Mv(p);
-    const b = 2 * (mp[0] * mv[0] + mp[1] * mv[1] + mp[2] * mv[2]), c = mp[0] * mp[0] + mp[1] * mp[1] + mp[2] * mp[2] - 1, D = b * b - 4 * mvv * c;
+    const th = Math.sqrt(R * R - r2), p0 = hc[0] + al * e1[0] + be * e2[0] - ch[0], p1 = hc[1] + al * e1[1] + be * e2[1] - ch[1], p2 = hc[2] + al * e1[2] + be * e2[2] - ch[2];
+    const m0 = (c0[0] * p0 + c0[1] * p1 + c0[2] * p2) / det, m1 = (c1[0] * p0 + c1[1] * p1 + c1[2] * p2) / det, m2 = (c2[0] * p0 + c2[1] * p1 + c2[2] * p2) / det;
+    const b = 2 * (m0 * mv[0] + m1 * mv[1] + m2 * mv[2]), c = m0 * m0 + m1 * m1 + m2 * m2 - 1, D = b * b - 4 * mvv * c;
     return D < 0 ? th + 9 : th - (-b + Math.sqrt(D)) / (2 * mvv); };
   let best = null, bm = 0.05;
   for (let i = -4; i <= 4; i++) for (let j = -4; j <= 4; j++) { const m = margin(i * 0.85, j * 0.85); if (m != null && m > bm) { bm = m; best = [i * 0.85, j * 0.85]; } }
@@ -1899,6 +1914,10 @@ const quadPts = (a, ctl, c, n = 6) => Array.from({ length: n + 1 }, (_, i) => { 
 // and its pose cache: the parts built for a pose key
 const FAR_SIDE = -40, BACK_TOOL = -30, FAR_ARM = -20, LEGS = -10, BODY = 0, NEAR_ARM = 50, HEAD = 100, HAIR_FRONT = 150, RAISED_ARM = 200, FRONT_TOOL = 210;
 const PERSON_STEPS = 24, personCache = new Map();
+// New poses a game frame may build (render() sets it, then lifts it): a battle's opening shows thousands of never-seen
+// poses at once (~0.3 ms each) — past the budget a unit keeps last frame's pose and catches up a frame or two later.
+// Unlimited outside render() (gallery, labs, the 3D view's billboards).
+let poseBuildBudget = Infinity;
 // The point a villager works on (pov3d's workTarget, in sim coords — a tile's centre at its integer): a resource
 // tile's centre, the nearest point along a felled trunk, a carcass, the nearest point of a building's footprint
 function villagerWorkTarget(e, kind){
@@ -1955,13 +1974,20 @@ function drawPerson2D(e){
   const horse = soldier && isMountedUnit(e.utype) && !dying ? horse2D(e, teamColor(e.team)) : null;
   // a dead rider: his horse goes down (horseDeath2D) and he's thrown clear — off its falling side in an arc, landing on
   // his back (pov3d's cavalryFrame: from the saddle, 0.25 tile on and 0.72 tile across)
-  const fallen = dying && isMountedUnit(e.utype) ? horseDeath2D(e, e.__deathAge, teamColor(e.team)) : null;
+  const still = dying && e.__deathAge >= DEATH_STILL ? _stillCorpse.get(e) : null;
+  const fallen = dying && isMountedUnit(e.utype) ? (still ? still.fallen : horseDeath2D(e, e.__deathAge, teamColor(e.team))) : null;
   const thrown = fallen ? Math.max(0, Math.min(1, (e.__deathAge - 150) / 650)) : 0;
   const hq = Math.round(hd / (2 * Math.PI) * 64);   // (the heading in 64 steps: the cache key)
   const key = dying ? null : [e.utype, e.female ? 1 : 0, teamColor(e.team), hq, act.kind, act.t, act.legs ? act.legs.t : '',
     JSON.stringify(act.opt), horse ? [Math.round(horse.gait.bob * 40), Math.round((horse.gait.nod || 0) * 100), isUnitMoving(e) ? 1 : 0, horse.frontHead ? 1 : 0].join(',') : ''].join('|');
-  let parts = key && personCache.get(key);
-  if (!parts) { parts = buildPerson(); if (key) { if (personCache.size > 4000) personCache.clear(); personCache.set(key, parts); } }
+  let parts = still ? still.parts : key && personCache.get(key);
+  // (least-recently-used out, one at a time: clearing it whole when full rebuilt every pose on screen at once — a
+  // battle's opening seconds filled it twice)
+  if (parts && key) { personCache.delete(key); personCache.set(key, parts); }
+  if (!parts && poseBuildBudget <= 0 && S.parts && !dying) parts = S.parts;   // (the outline pass too: it must match the sprite)
+  if (!parts) { poseBuildBudget--; parts = buildPerson(); if (key) { if (personCache.size >= 4000) personCache.delete(personCache.keys().next().value); personCache.set(key, parts); }
+    else if (dying && e.__deathAge >= DEATH_STILL) _stillCorpse.set(e, { parts, fallen }); }
+  if (!dying) S.parts = parts;
   function buildPerson(){
   const pose = fallen ? () => riderPose('die', thrown, eq) : dying ? () => villagerDeathPose(e.__deathAge) : horse ? () => riderPose(act.kind, act.t, eq, horse.gait) : soldier ? () => soldierPose2D(e.utype, act, eq) : VIL2D_POSE[act.kind];
   const o = pose(act.t), tool = !soldier && (VIL2D_TOOL[act.kind] || (act.kind === 'walk' && act.opt.tool)), up = act.opt.up || {};
@@ -2370,7 +2396,15 @@ function oxBones2D(k, m){
 // where the body came to rest, facing the way it died — a rider's beside his horse's, where he was thrown — and his
 // dropped weapon and shield still lying by them (pov3d's corpse skeleton)
 const RIG_BEASTS = new Set(['bear', 'dragon']);
+// corpse -> its bones' parts: bones never move (every drop has landed long before CORPSE_SKEL), so built once — a
+// WeakMap, not a field: corpses are saved and structuredClone'd (see _stillCorpse)
+const _bonesParts = new WeakMap();
 function drawBones2D(c, sx, sy, age){
+  let parts = _bonesParts.get(c);
+  if (!parts) { parts = buildBones2D(c, age); _bonesParts.set(c, parts); }
+  X.save(); X.translate(sx, sy); X.scale(UNIT_SCALE, UNIT_SCALE); X.translate(0, 5); paintParts(parts); X.restore();
+}
+function buildBones2D(c, age){
   const h = (c.dir || 0) * Math.PI / 4, k = projKit(h), soldier = FOOT_SOLDIERS.has(c.utype) || isMountedUnit(c.utype);
   let mid = [-14, 0];
   if (RIG_BEASTS.has(c.utype)) { const sc = c.utype === 'dragon' ? 2.2 : 1, zc = c.utype === 'bear' ? -0.38 * HORSE_TILE : 0;   // (the spine where the body lay: the rolled bear's a body-height to the side; the dragon's, the bear's ×2.2, where it sank)
@@ -2380,7 +2414,7 @@ function drawBones2D(c, sx, sy, age){
     humanBones2D(k, (x, y, z) => [lx - z, y, lz + x]); mid = [0, -hz]; }                                // (turned so his head lies toward −z, as he rolled)
   else humanBones2D(k, (x, y, z) => [x, y, z]);
   if (soldier) soldierDrops2D(c, soldierGear(c), age, { ...k, tc: teamColor(c.team), nearer: q => k.depth(q[0], q[2]) > k.depth(...mid) });
-  X.save(); X.translate(sx, sy); X.scale(UNIT_SCALE, UNIT_SCALE); X.translate(0, 5); paintParts(k.parts); X.restore();
+  return k.parts;
 }
 // The shield in 2D, in layer k.shieldL: the round one a wooden disc (its axis local x) with a white boss on its face; the
 // kite (its face local +z) white with the team cross, the back bare wood, 1 px thick with a brown edge round it
@@ -2813,7 +2847,6 @@ const DRAGON_COL = { plate: '#2c5a28', plateLit: '#4b8341', plateDark: '#24491f'
 // tall — divided by the UNIT_SCALE drawUnit applies)
 // the underside shade: its tint, and each group's lift (model units: the band's depth under a level part)
 const DRAGON_SHADE = { col: '#0c280c', alpha: 0.2, trunk: 0.2, neck: 0.07, face: 0.07, tail: 0.08, leg: 0.06, wing: 0.14 };
-let dragonShadeC = null;
 const DRAGON_K = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2 / UNIT_SCALE, DRAGON_C = HALF_TW / UNIT_SCALE, dragon2D = new Map();
 const DRAGON_STRIDE = 0.5 * Math.sin(0.6), DRAGON_LIFT = 0.12; // (GAIT.dragon, js/pov3d.js — keep the two equal)
 function drawDragonBody(e){
@@ -3047,9 +3080,7 @@ function drawDragonBody(e){
       const dx = m.a * u + m.c * v + m.e, dy = m.b * u + m.d * v + m.f; x0 = Math.min(x0, dx); y0 = Math.min(y0, dy); x1 = Math.max(x1, dx); y1 = Math.max(y1, dy); }
     x0 = Math.floor(x0) - 2; y0 = Math.floor(y0) - 2; const w = Math.ceil(x1) + 2 - x0, h = Math.ceil(y1) + 2 - y0;
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
-    if (!dragonShadeC) dragonShadeC = document.createElement('canvas');
-    if (dragonShadeC.width < w || dragonShadeC.height < h) { dragonShadeC.width = Math.max(dragonShadeC.width, w); dragonShadeC.height = Math.max(dragonShadeC.height, h); }
-    const O = dragonShadeC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
+    const dragonShadeC = bandCanvas(w, h), O = dragonShadeC.getContext('2d'), X0 = X; O.setTransform(1, 0, 0, 1, 0, 0); O.clearRect(0, 0, w, h);
     O.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0); X = O;                                   // (the path helpers draw on X)
     try { O.fillStyle = DRAGON_SHADE.col; O.beginPath(); for (const p of ms) p.path(); O.fill();
       O.globalCompositeOperation = 'destination-out';

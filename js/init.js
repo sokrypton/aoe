@@ -1588,6 +1588,7 @@ function gameLoop(){
           if (accumulator < timeStep + surcharge) break;
           accumulator -= surcharge;
         }
+        if (accumulator < 2 * timeStep) noteDrawPositions(); // (the frame's last tick: render interpolates from here)
         update();
         accumulator -= timeStep;
         if (lockstepEnabled()) lockstepTakeSnapshot();
@@ -1609,8 +1610,8 @@ function gameLoop(){
   const RENDER_MIN_MS = isMobile ? 1000 / 30 - 2 : 0; // -2ms slack so a 33.4ms rAF gap doesn't drop to 20fps
   if (now - window.__lastRenderAt >= RENDER_MIN_MS) {
     window.__lastRenderAt = now;
-    if (gameStarted) syncCameraFollow(); // after sim ticks — a pre-tick recenter vibrates the followed unit
-    render();
+    // (camera follow inside too: it must track the unit where it's drawn)
+    withDrawPositions(() => { if (gameStarted) syncCameraFollow(); render(); }); // after sim ticks — a pre-tick recenter vibrates the followed unit
     updateUI();
   }
   if(gameOver){
