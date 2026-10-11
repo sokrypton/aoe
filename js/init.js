@@ -248,6 +248,19 @@ function applyGameSettings(){
 // Orthogonal to applyMenuMode()'s menuMode — menuMode decides WHICH actions
 // are visible for the current game state; menuPanel decides which of the
 // two panels is showing. Every path that opens the menu resets to 'main'.
+// The Options panel's live switches — they act the moment they're clicked, so they show the current state when it
+// opens: the view in use (or the remembered one before a match), and Town AI only while there's a town to hand over.
+function syncLiveOptions(){
+  const inMatch = gameStarted && !gameOver;
+  const view = inMatch && window.povWorld ? (povWorld() ? '3d' : '2d') : ((window.preferredView && preferredView()) || '3d');
+  const vr = document.querySelector('input[name="viewmode"][value="' + view + '"]'); if (vr) vr.checked = true;
+  const col = byId('townai-col'); if (col) col.style.display = inMatch ? '' : 'none';
+  const on = !!(typeof teamControllers !== 'undefined' && teamControllers[myTeam] && teamControllers[myTeam].type === 'ai');
+  const tr = document.querySelector('input[name="townai"][value="' + (on ? 'on' : 'off') + '"]'); if (tr) tr.checked = true;
+}
+// Options → Town AI: the AI runs your town (economy, building, army) while you play a character — the 'autopilot' command
+function setTownAI(on){ if (gameStarted && !gameOver) submitCommand({ kind: 'autopilot', on }); }
+
 function showMenuPanel(which){
   let main = byId('menu-panel-main');
   let opts = byId('menu-panel-options');
@@ -255,6 +268,7 @@ function showMenuPanel(which){
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
+  if (which === 'options') syncLiveOptions();
   updateUiSwitchVisibility();
   scaleMenuToFit();
 }
@@ -267,6 +281,17 @@ function showMenuPanel(which){
 function scaleMenuToFit(){
   let wrap = byId('menu-scale-wrap');
   if (!wrap) return;
+  // The title art is the start screen's: Options (before or during a match) and the in-game menu drop it, so their
+  // controls get the room — on a phone they were scaled down to fit under (or squeezed beside) it.
+  let menu = byId('tutorial');
+  if (menu) {
+    menu.classList.toggle('menu-compact', !menuPanelIsMain() || window.menuMode === 'ingame');
+    // a row whose buttons are all hidden (the in-game menu hides Load/Host) collapses instead of leaving a gap — a
+    // class, not style.display, which the menu modes set on some of these containers themselves
+    const shown = el => el.style.display !== 'none' && !el.classList.contains('is-empty');
+    for (const c of menu.querySelectorAll('#menu-panel-main .menu-button-container')) c.classList.toggle('is-empty', ![...c.querySelectorAll('button')].some(shown));
+    for (const r of menu.querySelectorAll('#menu-panel-main .menu-row-pair')) r.classList.toggle('is-empty', ![...r.children].some(shown));
+  }
   wrap.style.transform = 'none';
   let w = wrap.offsetWidth, h = wrap.offsetHeight;
   if (!w || !h) return;
@@ -274,6 +299,10 @@ function scaleMenuToFit(){
   wrap.style.transform = s === 1 ? 'none' : 'scale(' + s + ')';
 }
 window.addEventListener('resize', scaleMenuToFit);
+// (and once laid out: the first fit could run before the fonts/logo had sized the box — a phone in landscape then
+// showed the 720px menu unscaled, cut off at both sides)
+window.addEventListener('load', scaleMenuToFit);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(scaleMenuToFit);
 window.addEventListener('orientationchange', scaleMenuToFit);
 
 // The "Switch to Classic/Mobile UI" link below the menu box only belongs
@@ -560,11 +589,11 @@ function restoreMenuForMatch(){
     // than hiding the grid wholesale: difficulty/map size need a fresh
     // match, and speed is the host's call — a guest's GAME_SPEED arrives
     // via sync (js/net-sync.js), so showing the picker would be a lie.
-    let grid = menu.querySelector('.setup-grid');
+    let grid = byId('opt-groups');
     if (grid) grid.style.display = '';
-    let firstRow = menu.querySelector('.setup-grid .setup-row:first-child');
+    let firstRow = byId('opt-match');
     if (firstRow) firstRow.style.display = 'none';
-    let speedCol = menu.querySelector('.setup-col-speed');
+    let speedCol = byId('opt-speed-row');
     if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
     menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
   }
@@ -1125,7 +1154,7 @@ function enterGuestJoinMode(hostPeerId){
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
   // none of it applies to a guest, who inherits the host's match settings.
   if (menu) {
-    menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, .menu-divider')
+    menu.querySelectorAll('.setup-grid, #opt-groups, .menu-button-container, #save-load-row, #mp-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
   }
   attemptGuestJoin();
@@ -1159,7 +1188,7 @@ function enterHostResumeMode(peerId){
   setTimeout(updateUiSwitchVisibility, 0); // after netRole set by hostSession below
   let menu = byId('tutorial');
   if (menu) {
-    menu.querySelectorAll('.setup-grid, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
+    menu.querySelectorAll('.setup-grid, #opt-groups, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
   }
   showMpStatus('Reconnecting to your match…');
@@ -1211,7 +1240,7 @@ function handleStartButton(){
 
 function applyMenuMode(mode){
   let menu = byId('tutorial');
-  let difficultyRow = menu ? menu.querySelector('.setup-grid .setup-row:first-child') : null;
+  let difficultyRow = byId('opt-match');
   let startBtn = byId('start-game-btn');
   let resumeBtn = byId('resume-game-btn');
   let mpRow = byId('mp-row');

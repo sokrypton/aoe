@@ -111,9 +111,33 @@ const SHEET_COLS = 8, SHEET_ROWS = 11;
 (function(){
 const variant = window.UI_VARIANT || 'mobile';
 
-const SWITCH_LABEL = variant === 'classic' ? '📱 Switch to Mobile UI' : '🏰 Switch to Classic UI';
+const SWITCH_LABEL = variant === 'classic' ? 'Switch to Mobile UI' : 'Switch to Classic UI';
 
 // Legal + provenance line shown under the main menu (the dark backdrop).
+// ---- Menu icons: small ink-line drawings (the art's outline style), one set for every menu/overlay button ----
+// (emoji read as generic and render differently per platform). menuIcon(name) -> inline SVG; lobby.js uses it too.
+const MENU_ICONS = {
+  load:    '<path d="M6 4h10a2 2 0 0 1 2 2v13H8a2 2 0 0 1-2-2z"/><path d="M6 17a2 2 0 0 0 2 2"/><path d="M9.5 9h5M9.5 12.5h5"/>',   // a scroll
+  host:    '<path d="M5 21 15 3"/><path d="M19 21 9 3"/><path d="M15 3l4 2-3 2"/><path d="M9 3 5 5l3 2"/>',                       // crossed banners
+  save:    '<rect x="4" y="9" width="16" height="10" rx="1"/><path d="M4 9a8 4 0 0 1 16 0"/><path d="M12 12v3"/>',               // a chest
+  options: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
+  help:    '<path d="M4 5.5A2 2 0 0 1 6 4h5v15H6a2 2 0 0 0-2 1.5z"/><path d="M20 5.5A2 2 0 0 0 18 4h-5v15h5a2 2 0 0 1 2 1.5z"/>',  // a book
+  back:    '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  close:   '<path d="M6 6l12 12M18 6 6 18"/>',
+  retry:   '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
+  check:   '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  plus:    '<path d="M12 5v14M5 12h14"/>',
+  map:     '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  ai:      '<rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9.5 13h0M14.5 13h0"/>',
+  editor:  '<path d="M14.5 5.5l4 4"/><path d="M4 20l9.5-9.5"/><path d="M12 4l8 8-3 3-8-8z"/>',
+};
+function menuIcon(name){
+  return '<svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + MENU_ICONS[name] + '</svg>';
+}
+
+// A game sprite inline in the help text (the sheet's own icons: js/page-shell.js SPRITE_CELLS)
+function hi(key){ return '<span class="help-ico sprite-icon icon-' + key + '" aria-hidden="true"></span>'; }
+
 const DISCLAIMER_HTML = `A free, open-source fan game — not affiliated with Microsoft, Xbox Game
   Studios, Ensemble Studios, or the Age of Empires franchise. Feedback welcome via
   <a href="https://github.com/sokrypton/aoe" target="_blank" rel="noopener">GitHub</a>.`;
@@ -124,13 +148,15 @@ const DISCLAIMER_HTML = `A free, open-source fan game — not affiliated with Mi
 // dispatch in js/input.js).
 const DESKTOP_HELP_ROWS = variant === 'classic'
   ? `<div class="help-kv"><span class="help-k">Left-click</span><span class="help-v">select units</span></div>
-     <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">do stuff</span></div>
-     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>`
+     <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">command selected units</span></div>
+     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>
+     <div class="help-kv"><span class="help-k">Arrow keys</span><span class="help-v">pan the camera</span></div>`
   : `<div class="help-kv"><span class="help-k">Click</span><span class="help-v">select, or command selected units</span></div>
      <div class="help-kv"><span class="help-k">Shift-click</span><span class="help-v">add/remove a unit</span></div>
      <div class="help-kv"><span class="help-k">Drag</span><span class="help-v">box-select</span></div>
      <div class="help-kv"><span class="help-k">Right-click</span><span class="help-v">also commands</span></div>
-     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>`;
+     <div class="help-kv"><span class="help-k">Scroll wheel</span><span class="help-v">zoom</span></div>
+     <div class="help-kv"><span class="help-k">Arrow keys / two-finger swipe</span><span class="help-v">pan the camera</span></div>`;
 
 document.body.insertAdjacentHTML('afterbegin', `
 <canvas id="game"></canvas>
@@ -174,7 +200,6 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
-<div id="view-btn" onclick="window.toggleView3D && toggleView3D()" data-tip-label="2D / 3D" data-tip-desc="Switch the map between the 2D view and the 3D world view."><span class="btn-emoji">3D</span></div>
 <div id="msg"></div>
 <div id="chat-log"></div>
 <div id="chat-input-wrap" style="display:none;">
@@ -186,14 +211,14 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="game-over-screen" style="display:none;"><div id="game-over-band">
   <div id="game-over-word"></div><div id="game-over-line"></div>
 </div></div>
-<button type="button" id="see-map-btn" class="menu-action-btn" style="display:none;" onclick="seeMap()">🔍 See Map</button>
+<button type="button" id="see-map-btn" class="menu-action-btn" style="display:none;" onclick="seeMap()">${menuIcon('map')}See Map</button>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">
     <div id="mp-disconnect-title">Connection Lost</div>
     <div id="mp-disconnect-text"></div>
     <div id="mp-disconnect-spinner"></div>
-    <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">💾 Save Game</button>
-    <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="kickDisconnectedPlayers()">🤖 Continue without them (AI takes over)</button>
+    <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">${menuIcon('save')}Save Game</button>
+    <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="kickDisconnectedPlayers()">${menuIcon('ai')}Continue without them (AI takes over)</button>
   </div>
 </div>
 <div id="mp-seat-picker" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
@@ -206,69 +231,75 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="help-hint"></div>
 <div id="help-overlay" style="display:none;" onclick="if(event.target===this)toggleHelp()">
   <div id="help-box">
-    <button type="button" id="help-close" onclick="toggleHelp()">✕</button>
-    <h2>❓ How to Play</h2>
+    <button type="button" id="help-close" onclick="toggleHelp()" aria-label="Close">${menuIcon('close')}</button>
+    <h2>How to Play</h2>
 
     <div class="help-section">
-      <h4>🏆 Goal</h4>
-      <p>Destroy the enemy <b>Town Center</b> 🏰 before they destroy yours! Your Town Center trains villagers and stores your resources — if it falls, you lose.</p>
+      <h4>Goal</h4>
+      <p>Destroy the enemy <b>Town Center</b> ${hi('TC-dark')} before they destroy yours. It trains villagers, takes in resources and advances your ages, and it can't be rebuilt: if it falls, you lose. In team games your side is out once every one of its Town Centers has fallen.</p>
     </div>
 
     <div class="help-section">
-      <h4>🧑‍🌾 Gather Resources</h4>
-      <div class="help-row"><span class="help-ico">🌲</span> Trees &rarr; <b>Wood</b> (build almost everything)</div>
-      <div class="help-row"><span class="help-ico">🐑</span> Sheep &amp; <span class="help-ico">🍒</span> berries &amp; <span class="help-ico">🌾</span> farms &rarr; <b>Food</b> (train units)</div>
-      <div class="help-row"><span class="help-ico">⛏️</span> Gold mines &rarr; <b>Gold</b> (soldiers)</div>
-      <div class="help-row"><span class="help-ico">🪨</span> Stone &rarr; <b>Stone</b> (walls &amp; towers)</div>
-      <p>Select a villager, then click a resource. Full hands? They walk it home automatically. Build a <b>Lumber Camp 🪓 / Mill 🛞 / Mining Camp ⛏️</b> next to resources so the walk is short. Farms run dry over time — a soft chime marks an exhausted 🌾 farm; reseed it (a little wood) to keep the food coming.</p>
+      <h4>Gather Resources</h4>
+      <div class="help-row">${hi('wood')}<span>Trees &rarr; <b>Wood</b> (buildings, archers, rams)</span></div>
+      <div class="help-row">${hi('food')}<span>Sheep, berries &amp; farms &rarr; <b>Food</b> (villagers, soldiers, ages)</span></div>
+      <div class="help-row">${hi('gold')}<span>Gold mines &rarr; <b>Gold</b> (soldiers, the Castle Age)</span></div>
+      <div class="help-row">${hi('stone')}<span>Stone &rarr; <b>Stone</b> (stone walls and towers)</span></div>
+      <p>Select a villager, then tap a resource; with full hands they walk it home on their own. Put a <b>Lumber Camp</b> ${hi('LCAMP')}, <b>Mill</b> ${hi('MILL')} or <b>Mining Camp</b> ${hi('MCAMP')} next to the resource to shorten the walk. Farms ${hi('FARM')} run out: a chime marks an exhausted farm, which you reseed for a little wood (or prepay reseeds at the Mill).</p>
     </div>
 
     <div class="help-section">
-      <h4>🏗️ Build</h4>
-      <div class="help-row"><span class="help-ico">🏠</span> House &mdash; +5 population. Build these or you can't train more units!</div>
-      <div class="help-row"><span class="help-ico">⚔️</span> Barracks &mdash; trains your army</div>
-      <div class="help-row"><span class="help-ico">🧱</span> Walls &amp; <span class="help-ico">🗼</span> Towers &mdash; keep raiders out (costs stone). Select a palisade or gate and tap <b>To Stone</b> to rebuild it tougher.</div>
-      <div class="help-row"><span class="help-ico">🚪</span> Gates open automatically for your units &amp; allies. Select a gate and tap <b>🔒 Lock</b> to seal it shut &mdash; nothing passes, not even you &mdash; then <b>🔓 Unlock</b> to reopen. Handy for shutting a raider out of your wall.</div>
-      <p>Select a villager &rarr; tap <b>Build Economic</b> or <b>Build Military</b> &rarr; pick a building &rarr; click the ground.</p>
+      <h4>Build</h4>
+      <div class="help-row">${hi('HOUSE')}<span>House &mdash; +5 population. Build these or you can't train more units!</span></div>
+      <div class="help-row">${hi('BARRACKS')}<span>Barracks &mdash; trains soldiers and researches weapons, armor and wall upgrades</span></div>
+      <div class="help-row">${hi('WALL')}<span>Walls &amp; ${hi('PTOWER')} towers &mdash; keep raiders out. Palisades and wooden towers cost wood; from the Feudal Age, select one and tap <b>To Stone</b> or <b>To Tower</b> to rebuild it in stone.</span></div>
+      <div class="help-row">${hi('GATE')}<span>Gates open for your units and allies. Select a gate and tap <b>Lock</b> to seal it (nothing passes, not even you), then <b>Unlock</b> to reopen.</span></div>
+      <p>Select a villager &rarr; tap <b>Build Economic</b> or <b>Build Military</b> &rarr; pick a building &rarr; tap the ground.</p>
     </div>
 
     <div class="help-section">
-      <h4>⏳ Advance Through the Ages</h4>
-      <p>You start in the <b>Dark Age</b>. From your <b>Town Center 🏰</b>, advance to the <b>Feudal Age</b> (costs food) then the <b>Castle Age</b> (food &amp; gold). Each age unlocks stronger units and buildings — archers, scouts, towers and the Market in Feudal; knights and rams in Castle — and automatically upgrades the economy and army you already have. Getting ahead in ages is a real edge.</p>
+      <h4>Advance Through the Ages</h4>
+      <p>You start in the <b>Dark Age</b> and advance at your <b>Town Center</b>. The <b>Feudal Age</b> (500 food) unlocks spearmen, archers, scouts, watch towers, stone walls and the Market; the <b>Castle Age</b> (800 food, 200 gold) unlocks knights and rams.</p>
+      <p>Each age also opens technologies, researched at the building they belong to: farming at the Mill, wood-cutting at the Lumber Camp, mining at the Mining Camp, the Wheelbarrow at the Town Center, and weapons, armor and walls at the Barracks.</p>
     </div>
 
     <div class="help-section">
-      <h4>🛒 Market &amp; Trade</h4>
-      <p>Running low on a resource? Build a <b>Market 🛒</b> to buy and sell — prices shift with demand — or send <b>Trade Carts</b> to another player's Market to bring back a steady stream of <b>gold</b>.</p>
+      <h4>Market &amp; Trade</h4>
+      <p>Build a <b>Market</b> ${hi('MARKET')} (Feudal Age) to buy and sell resources for gold &mdash; prices move as everyone trades &mdash; or send <b>Trade Carts</b> ${hi('tradecart')} to another player's Market for a steady income of <b>gold</b>. The farther away that Market, the more each trip earns.</p>
     </div>
 
     <div class="help-section">
-      <h4>🛡️ Army &amp; Counters</h4>
-      <div class="help-row"><span class="help-ico">🔱</span> Spearman <b>beats</b> 🏇 Scout &amp; 🐎 Knight — cavalry (big bonus damage)</div>
-      <div class="help-row"><span class="help-ico">🏇</span> Scout <b>beats</b> 🏹 Archer (armor shrugs off arrows)</div>
-      <div class="help-row"><span class="help-ico">🏹</span> Archer <b>beats</b> 🔱 Spearman (and all slow infantry)</div>
-      <div class="help-row"><span class="help-ico">🐎</span> Knight &mdash; strong, fast cavalry (Castle Age) &mdash; watch for spearmen</div>
-      <div class="help-row"><span class="help-ico">🛡️</span> Militia &mdash; solid all-rounder, good vs buildings</div>
-      <div class="help-row"><span class="help-ico">🐏</span> Ram &mdash; siege: smashes buildings &amp; walls (Castle Age), but useless vs soldiers — bring an escort</div>
+      <h4>Army &amp; Counters</h4>
+      <div class="help-row">${hi('spearman')}<span>Spearman <b>beats</b> ${hi('scout')} scouts &amp; ${hi('knight')} knights (big bonus damage against cavalry)</span></div>
+      <div class="help-row">${hi('scout')}<span>Scout <b>beats</b> ${hi('archer')} archers (its armor shrugs off arrows)</span></div>
+      <div class="help-row">${hi('archer')}<span>Archer <b>beats</b> ${hi('spearman')} spearmen and other slow infantry</span></div>
+      <div class="help-row">${hi('knight')}<span>Knight &mdash; strong, fast cavalry (Castle Age); watch out for spearmen</span></div>
+      <div class="help-row">${hi('militia')}<span>Militia &mdash; a solid all-rounder, with bonus damage against buildings</span></div>
+      <div class="help-row">${hi('ram')}<span>Ram &mdash; smashes buildings and walls and shrugs off arrows, but is helpless in melee (Castle Age). Foot soldiers can ride inside: select them and tap your ram.</span></div>
       <p>Mix your army! One unit type alone gets countered.</p>
     </div>
 
     <div class="help-section">
-      <h4>🔔 Defend Yourself</h4>
-      <p>Attacked? Ring the <b>Town Bell 🔔</b> (bottom right) — villagers hide inside the Town Center and towers, which then shoot extra arrows. Ring again to send them back to work. Watch the minimap: anything of yours getting hit <b>blinks white</b>.</p>
+      <h4>Defend Yourself</h4>
+      <p>Attacked? Ring the <b>Town Bell</b> ${hi('bell')} (the buttons at the bottom right): villagers hurry into the Town Center and towers, which then shoot extra arrows. Ring it again to send them back to work. On the minimap, anything of yours under attack <b>blinks white</b>.</p>
     </div>
 
     <div class="help-section">
-      <h4>🎮 Controls</h4>
+      <h4>Play Your Way</h4>
+      <p><b>Character mode:</b> select a unit and tap the eye button to follow it in 3D from right behind it, and steer it yourself. <b>Options &rarr; Town AI</b> hands your town (economy, building, army) to the AI while you play, and <b>Options &rarr; View</b> switches between the 2D map and the 3D world at any time.</p>
+    </div>
+
+    <div class="help-section">
+      <h4>Controls</h4>
       <div class="help-controls">
         <div class="help-controls-col">
-          <div class="help-controls-title">🖱️ Desktop</div>
+          <div class="help-controls-title">Desktop</div>
           ${DESKTOP_HELP_ROWS}
         </div>
         <div class="help-controls-col">
-          <div class="help-controls-title">📱 Mobile</div>
+          <div class="help-controls-title">Mobile</div>
           <div class="help-kv"><span class="help-k">Tap a unit</span><span class="help-v">select</span></div>
-          <div class="help-kv"><span class="help-k">Tap the map</span><span class="help-v">do stuff</span></div>
+          <div class="help-kv"><span class="help-k">Tap the map</span><span class="help-v">move, gather or attack with what's selected</span></div>
           <div class="help-kv"><span class="help-k">Drag</span><span class="help-v">pan the camera</span></div>
           <div class="help-kv"><span class="help-k">Pinch</span><span class="help-v">zoom</span></div>
         </div>
@@ -276,12 +307,12 @@ document.body.insertAdjacentHTML('afterbegin', `
     </div>
 
     <div class="help-section">
-      <h4>👥 Play with Friends</h4>
+      <h4>Play with Friends</h4>
       <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>4 players</b>, in any mix of humans and AI. Drop out and reconnect any time; the match pauses and you rejoin your spot.</p>
     </div>
 
     <div class="help-section">
-      <h4>🙏 Thanks</h4>
+      <h4>Thanks</h4>
       <p>Beta testers who shaped the game with their feedback: <b>Jeremy Ilagan</b>, <b>Orr Ashenberg</b>, <b>Jordan Hoff</b>, and <b>Qing Feng</b>.</p>
     </div>
   </div>
@@ -306,67 +337,54 @@ document.body.insertAdjacentHTML('afterbegin', `
          button. showMenuPanel() (js/init.js) swaps them; the menu always
          opens on 'main'. -->
     <div id="menu-panel-options" style="display:none;">
-    <div class="setup-grid">
-      <div class="setup-row">
+    <!-- Every setting a pill group over the radios the code reads. #opt-match is pre-match only,
+         Town AI in-match only, and the View/Town AI pair act the moment they're clicked (js/init.js). -->
+    <div class="setup-grid" id="opt-groups">
+      <div class="setup-row" id="opt-match">
         <div class="setup-col">
           <h3>Difficulty</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label>
-            <label class="segment"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label>
-            <label class="segment"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label></div>
         </div>
         <div class="setup-col">
           <h3>Players</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="players" value="2" checked><span>1v1</span></label>
-            <label class="segment"><input type="radio" name="players" value="4"><span>2v2</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="players" value="2" checked><span>1v1</span></label><label class="opt-pill"><input type="radio" name="players" value="4"><span>2v2</span></label></div>
         </div>
         <div class="setup-col">
           <h3>Map Size</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="mapsize" value="small"><span title="Small">S</span></label>
-            <label class="segment"><input type="radio" name="mapsize" value="medium" checked><span title="Medium">M</span></label>
-            <label class="segment"><input type="radio" name="mapsize" value="large"><span title="Large">L</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="mapsize" value="small"><span title="Small">S</span></label><label class="opt-pill"><input type="radio" name="mapsize" value="medium" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="mapsize" value="large"><span title="Large">L</span></label></div>
         </div>
-        <div class="setup-col">
-          <h3>Map</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="fogmode" value="fog" checked><span title="Fog of War">Fog</span></label>
-            <label class="segment"><input type="radio" name="fogmode" value="open"><span title="All Visible — the whole map is revealed for everyone (the AI included)">Open</span></label>
-          </div>
+        <div class="setup-col" title="Fog of war. Off: the whole map is revealed for everyone, the AI included">
+          <h3>Fog</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="fogmode" value="fog" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="fogmode" value="open"><span>Off</span></label></div>
         </div>
       </div>
       <div class="setup-row setup-row-audio">
-        <div class="setup-col setup-col-speed">
+        <div class="setup-col setup-col-speed" id="opt-speed-row">
           <h3>Speed</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="gamespeed" value="1"><span>1</span></label>
-            <label class="segment"><input type="radio" name="gamespeed" value="2" checked><span>2</span></label>
-            <label class="segment"><input type="radio" name="gamespeed" value="4"><span>4</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="1"><span>1×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>2×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>4×</span></label></div>
         </div>
-        <div class="setup-col">
+        <div class="setup-col setup-col-wide">
           <h3>Sound</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="soundmode" value="all" checked><span>All</span></label>
-            <label class="segment"><input type="radio" name="soundmode" value="alerts"><span>Alerts</span></label>
-            <label class="segment"><input type="radio" name="soundmode" value="off"><span>Off</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="soundmode" value="all" checked><span>All</span></label><label class="opt-pill"><input type="radio" name="soundmode" value="alerts"><span>Alerts</span></label><label class="opt-pill"><input type="radio" name="soundmode" value="off"><span>Off</span></label></div>
         </div>
         <div class="setup-col">
           <h3>Music</h3>
-          <div class="segmented">
-            <label class="segment"><input type="radio" name="music" value="on" checked><span>On</span></label>
-            <label class="segment"><input type="radio" name="music" value="off"><span>Off</span></label>
-          </div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="music" value="on" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="music" value="off"><span>Off</span></label></div>
+        </div>
+        <div class="setup-col">
+          <h3>View</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="viewmode" value="2d" onchange="setViewMode('2d')"><span title="The 2D map">2D</span></label><label class="opt-pill"><input type="radio" name="viewmode" value="3d" onchange="setViewMode('3d')"><span title="The 3D world view">3D</span></label></div>
+        </div>
+      </div>
+      <div class="setup-row setup-row-view">
+        <div class="setup-col" id="townai-col" title="The AI runs your town (economy, building, army) while you play a character">
+          <h3>Town AI</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="townai" value="on" onchange="setTownAI(true)"><span>On</span></label><label class="opt-pill"><input type="radio" name="townai" value="off" checked onchange="setTownAI(false)"><span>Off</span></label></div>
         </div>
       </div>
     </div>
       <div class="menu-button-container" id="options-back-row">
-        <button type="button" id="options-back-btn" class="menu-action-btn" onclick="closeOptionsPanel()">⬅ Back</button>
+        <button type="button" id="options-back-btn" class="menu-action-btn" onclick="closeOptionsPanel()">${menuIcon('back')}Back</button>
       </div>
     </div>
 
@@ -389,25 +407,25 @@ document.body.insertAdjacentHTML('afterbegin', `
            button stacked awkwardly underneath it. Hidden by default (no
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
-      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">💾 Save</button>
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">${menuIcon('save')}Save</button>
     </div>
     <div class="menu-row-pair">
       <div class="menu-button-container" id="save-load-row">
-        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">📂 Load Game</button>
+        <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">${menuIcon('load')}Load Game</button>
         <!-- Scenario Editor link hidden for now (editor.html still works by direct
              URL); flip the display back on to re-expose it in the menu. -->
-        <button type="button" id="editor-btn" class="menu-action-btn" onclick="location.href='editor.html'" style="display:none;">🛠️ Scenario Editor</button>
+        <button type="button" id="editor-btn" class="menu-action-btn" onclick="location.href='editor.html'" style="display:none;">${menuIcon('editor')}Scenario Editor</button>
       </div>
       <div class="menu-button-container" id="mp-row">
-        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">🌐 Host Multiplayer Game</button>
+        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">${menuIcon('host')}Host Multiplayer</button>
       </div>
     </div>
     <div class="menu-row-pair" id="misc-row">
       <div class="menu-button-container">
-        <button type="button" id="options-btn" class="menu-action-btn" onclick="showMenuPanel('options')">⚙️ Options</button>
+        <button type="button" id="options-btn" class="menu-action-btn" onclick="showMenuPanel('options')">${menuIcon('options')}Options</button>
       </div>
       <div class="menu-button-container">
-        <button type="button" id="help-btn" class="menu-action-btn" onclick="toggleHelp()">❓ Help</button>
+        <button type="button" id="help-btn" class="menu-action-btn" onclick="toggleHelp()">${menuIcon('help')}Help</button>
       </div>
     </div>
     <input type="file" id="load-file-input" accept="application/json,.json" style="display:none" onchange="loadGameFromFile(this.files[0]); this.value='';">
@@ -422,8 +440,8 @@ document.body.insertAdjacentHTML('afterbegin', `
       </div>
       <div id="mp-qr" style="display:none;"></div>
       <div id="mp-share-note" style="display:none;">Share with up to 3 friends — everyone joins through this same link</div>
-      <button type="button" id="mp-cancel-btn" class="menu-action-btn" style="display:none;" onclick="cancelHosting()">✖ Cancel</button>
-      <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">↻ Retry Connection</button>
+      <button type="button" id="mp-cancel-btn" class="menu-action-btn" style="display:none;" onclick="cancelHosting()">${menuIcon('close')}Cancel</button>
+      <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">${menuIcon('retry')}Retry Connection</button>
     </div>
     </div>
 
@@ -440,7 +458,7 @@ document.body.insertAdjacentHTML('afterbegin', `
            remain (renderLobby toggles it) — more friends can join pre-Start. -->
       <div id="lobby-invite-row" style="display:none;">Invite: <input type="text" id="lobby-invite-link" readonly onclick="this.select()"></div>
       <div class="lobby-addai-row" id="lobby-addai-row">
-        <button type="button" id="lobby-addai-btn" class="menu-action-btn" onclick="lobbyAddAi()">＋ Add AI</button>
+        <button type="button" id="lobby-addai-btn" class="menu-action-btn" onclick="lobbyAddAi()">${menuIcon('plus')}Add AI</button>
         <div class="segmented" id="lobby-aidiff-seg">
           <label class="segment"><input type="radio" name="lobbyaidiff" value="easy"><span title="Easy">E</span></label>
           <label class="segment"><input type="radio" name="lobbyaidiff" value="standard" checked><span title="Medium">M</span></label>
@@ -480,9 +498,9 @@ document.body.insertAdjacentHTML('afterbegin', `
       </div>
       <div id="lobby-hint" class="lobby-hint" style="display:none;"></div>
       <div class="menu-button-container">
-        <button type="button" id="lobby-ready-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyReadyClicked()">✔ Ready</button>
+        <button type="button" id="lobby-ready-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyReadyClicked()">${menuIcon('check')}Ready</button>
         <button type="button" id="lobby-start-btn" class="menu-action-btn" style="display:none;" onclick="onLobbyStartClicked()" disabled>Start Match</button>
-        <button type="button" id="lobby-leave-btn" class="menu-action-btn" onclick="onLobbyLeaveClicked()">✖ Leave Lobby</button>
+        <button type="button" id="lobby-leave-btn" class="menu-action-btn" onclick="onLobbyLeaveClicked()">${menuIcon('close')}Leave Lobby</button>
       </div>
     </div>
   </div>

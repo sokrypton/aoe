@@ -323,7 +323,7 @@ function renderLobby(){
       readyBtn.style.display = '';
       let me = lobbyState.seats[lobbyMySeatIndex()];
       let ready = me && me.ready;
-      readyBtn.textContent = ready ? '✔ Ready (waiting for host)' : '✔ Ready';
+      readyBtn.innerHTML = menuIcon('check') + (ready ? 'Ready (waiting for host)' : 'Ready');
     }
     if (startBtn) startBtn.style.display = 'none';
   } else {

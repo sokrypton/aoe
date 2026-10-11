@@ -104,7 +104,7 @@ canvas {
 }
 .res-val{min-width:32px;text-align:right}
 /* Phone portrait (~390px): the chips must clear the fixed fullscreen/menu
-   buttons at the right edge (#view-btn starts 104px from it), with room for a
+   buttons at the right edge (#fs-btn starts 70px from it), with room for a
    late-game "45/100". */
 @media(max-width:420px){
   #topbar{padding-left:6px}
@@ -1524,12 +1524,13 @@ canvas {
 .help-section { margin-bottom: 14px; }
 .help-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 7px;
   margin: 3px 0;
   color: #e2d5ac;
 }
 .help-ico { flex-shrink: 0; }
+.help-ico.sprite-icon { width: 22px; height: 22px; vertical-align: -6px; }   /* the game's own sprites (js/page-shell.js hi) */
 #help-close {
   position: sticky;
   float: right;
@@ -1652,10 +1653,15 @@ canvas {
 #resume-game-btn,
 #save-game-btn,
 #load-game-btn,
-#host-game-btn {
+#host-game-btn,
+#options-btn,
+#help-btn {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* the menu buttons' line icons (js/page-shell.js menuIcon) */
+.menu-action-btn .mi { width: 16px; height: 16px; flex: 0 0 16px; margin-right: 8px; }
+#help-close .mi { width: 18px; height: 18px; display: block; margin: auto; }
 .menu-help-btn {
   flex: 0 0 46px;
   width: 46px;
@@ -1885,7 +1891,7 @@ canvas {
   }
 }
 
-#menu-btn, #fs-btn, #view-btn {
+#menu-btn, #fs-btn {
   color: #ffd700;
   font-family: 'Cinzel', serif;
   font-size: 13px;
@@ -1909,7 +1915,7 @@ canvas {
   z-index: 30;
   pointer-events: auto;
 }
-#menu-btn .btn-emoji, #fs-btn .btn-emoji, #view-btn .btn-emoji{
+#menu-btn .btn-emoji, #fs-btn .btn-emoji{
   display:flex;
   align-items:center;
   justify-content:center;
@@ -1921,17 +1927,13 @@ canvas {
   position: relative;
   top: 1px;
 }
-#menu-btn:hover, #fs-btn:hover, #view-btn:hover {
+#menu-btn:hover, #fs-btn:hover {
   border-color: #fff;
   background: rgba(140, 29, 29, 0.65);
   box-shadow: 0 0 6px rgba(229, 193, 88, 0.4), inset 0 0 4px #000;
 }
 #fs-btn{
   right: 42px;
-}
-#view-btn{
-  right: 76px;
-  font-size: 11px;
 }
 #menu-btn{
   right: 8px;
@@ -2457,6 +2459,8 @@ canvas {
    breakpoint resizing = no snap points; the menu always looks identical,
    only bigger or smaller. */
 #tutorial { overflow: hidden; }
+#tutorial.menu-compact .menu-hero { display: none; }   /* Options and the in-game menu (js/init.js scaleMenuToFit) */
+#tutorial .is-empty { display: none !important; }       /* a menu row with no visible buttons (same) */
 #menu-scale-wrap {
   display: flex;
   flex-direction: column;
@@ -2468,8 +2472,10 @@ canvas {
   max-height: none !important;
 }
 #menu-disclaimer { width: 390px; }
+@media (min-width: 700px) { #tutorial.menu-compact #tutorial-box { width: 460px !important; } }   /* Options / in-game menu on a wide screen: room for four columns */
 @media (max-width: 1200px) and (max-height: 700px) and (min-aspect-ratio: 4/3) {
   #tutorial-box { width: 720px !important; }
+  #tutorial.menu-compact #tutorial-box { width: 460px !important; }   /* Options / in-game menu: no title art, no need for the width */
   #menu-disclaimer { width: 720px; }
 }
 
@@ -2478,3 +2484,35 @@ canvas {
 #eye-btn svg { width: 100%; height: 100%; display: block; }
 #eye-btn.eye-on { border-color: #4ade80 !important; box-shadow: 0 0 8px #4ade80, inset 0 0 4px #000; }
 #eye-btn.eye-on .btn-emoji { color: #4ade80; }
+
+/* ---- Options controls (js/page-shell.js): every setting a pill group, only the chosen one filled ---- */
+.opt-pills { display: inline-flex; gap: 2px; padding: 2px; border-radius: 14px; }
+.opt-pill { position: relative; cursor: pointer; }
+.opt-pill input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; pointer-events: none; }
+.opt-pill span { display: block; font-family: 'Cinzel', Georgia, serif; font-size: 11px; font-weight: 700; letter-spacing: .03em; padding: 5px 10px; border-radius: 12px; line-height: 1.1; }
+.opt-pill input:focus-visible + span { outline: 2px solid #c9a743; outline-offset: 1px; }
+.opt-pills { background: rgba(92, 59, 30, .13); }
+.opt-pill span { color: #5c3b1e; }
+.opt-pill input:checked + span { background: #8c1d1d; color: #fbeed0; }
+/* in the settings grid's label-above-control columns (wide screens) a pill group spans its column, pills sharing it equally */
+@media (min-width: 700px) {
+  .setup-col .opt-pills { display: flex; }
+  .setup-col .opt-pill { flex: 1 1 0; }
+  .setup-col .opt-pill { min-width: 0; }
+  .setup-col-wide { flex-grow: 2 !important; }   /* Sound: three options, one a long word */
+  .setup-row-view { justify-content: center; }
+  #townai-col { flex: 0 1 50%; }   /* (alone in its row, in a match: half width, not stretched) */
+  .setup-col .opt-pill span { text-align: center; padding: 5px 2px; font-size: 10px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* Portrait phones: the same label-above-control style in two columns (Sound, the long one, across both; View across
+   both when Town AI isn't shown) */
+@media (max-width: 699px) {
+  .setup-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; grid-auto-flow: dense; }
+  .setup-col, .setup-col-speed { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; }
+  .setup-col h3 { flex: 0 0 auto; justify-content: center; text-align: center; }   /* (its 92px label width would be a height in a column) */
+  .setup-col .opt-pills { display: flex; }
+  .setup-col .opt-pill { flex: 1 1 0; min-width: 0; }
+  .setup-col .opt-pill span { text-align: center; padding: 6px 2px; }
+  .setup-col-wide { grid-column: 1 / -1; }
+  #townai-col, .setup-row-audio .setup-col:last-child { grid-column: 1 / -1; }   /* (Town AI, View: each a full row) */
+}

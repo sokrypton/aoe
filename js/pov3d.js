@@ -4949,7 +4949,7 @@
   function setWorld(on){
     if (!on) { setSteering(false); if (document.pointerLockElement) document.exitPointerLock(); }
     world = on; window.world3D = on && !unrevealed;
-    { const vb = document.querySelector('#view-btn .btn-emoji'); if (vb) vb.textContent = on ? '2D' : '3D'; } // the top bar's switch offers the other view
+    { const r = document.querySelector('input[name="viewmode"][value="' + (on ? '3d' : '2d') + '"]'); if (r) r.checked = true; } // the Options switch shows it
     pip.classList.toggle('world', on);
     pip.style.top = on ? topH + 'px' : '';
     pip.style.bottom = on ? '0' : (bottomH + 10) + 'px';
@@ -5585,7 +5585,10 @@
     if (v || navigator.webdriver) return v;
     try { return localStorage.getItem('aoeView'); } catch (e) { return null; }
   }
-  function rememberView(){ try { localStorage.setItem('aoeView', world ? '3d' : '2d'); } catch (e) {} }
+  function rememberView(v = world ? '3d' : '2d'){ try { localStorage.setItem('aoeView', v); } catch (e) {} }
+  window.preferredView = preferredView;
+  // Options → View: switch now in a match, else just remember it for the next one
+  window.setViewMode = v => { if (gameStarted && (v === '3d') !== world) toggleView3D(); else rememberView(v); };
   window.toggleView3D = () => { if (world) povClose(); else openWorld(); rememberView(); };
   // A match (or a loaded save) opens in the view the player last switched to — the 3D world view until they pick one.
   // ?view=2d|3d overrides; automated browsers (the test battery drives the 2D map) default to 2D.
