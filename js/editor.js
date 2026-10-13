@@ -470,6 +470,7 @@ function applyTool(tx, ty){
       ? SCENARIO_RES_DEFAULT[tool.key] : 0;
     map[ty][tx] = { t: ty2, res, occupied: null };
     if (typeof markMapDirty === 'function') markMapDirty(tx, ty);
+    if (typeof passabilityChanged === 'function') passabilityChanged();
   } else if (tool.kind === 'unit'){
     if (unitAtTile(tx, ty)) return; // one unit per tile — never stack (matters for drag-paint too)
     let u = createUnit(tool.key, tx, ty, tool.team);
@@ -532,6 +533,7 @@ function eraseAt(tx, ty){
         let mx = hit.x + dx, my = hit.y + dy;
         if (my < MAP && mx < MAP && map[my][mx] && map[my][mx].occupied === hit.id) map[my][mx].occupied = null;
       }
+      if (typeof passabilityChanged === 'function') passabilityChanged();
     }
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
     return;
@@ -539,6 +541,7 @@ function eraseAt(tx, ty){
   // No entity under cursor -> reset the tile to plain grass.
   map[ty][tx] = { t: TERRAIN.GRASS, res: 0, occupied: null };
   if (typeof markMapDirty === 'function') markMapDirty(tx, ty);
+  if (typeof passabilityChanged === 'function') passabilityChanged();
 }
 
 // ----------------------------------------------------------------- play / export

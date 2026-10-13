@@ -59,6 +59,7 @@ function loadScenario(spec){
     let res = o.amount != null ? o.amount : (SCENARIO_RES_DEFAULT[o.t] || 0);
     map[o.y][o.x] = { t: ty, res, occupied: null };
     if(typeof markMapDirty==='function') markMapDirty(o.x, o.y);
+    if(typeof passabilityChanged==='function') passabilityChanged();
   });
 
   // Per-team controllers (after restartGame's defaults).

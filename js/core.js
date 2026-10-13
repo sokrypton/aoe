@@ -582,15 +582,16 @@ function freshAIIntel(){
 function freshAIState(team){
   return { team, tick: 0,
     intel: freshAIIntel(), wallPlan: null, gateBuilt: false, gateTile: null,
-    gatePairs: null, gatesDone: null, wallRadiusUsed: 0, wallCx: 0, wallCy: 0,
-    lastRaidTick: null, raidWave: null,   // the last Feudal raid and its wave id (launchAIWave)   // (the ring's geometry: set by computeAIWallRing / planAIWalls)
+    gatePairs: null, gatesDone: null, wallRadiusUsed: 0, wallCx: 0, wallCy: 0,   // (the ring geometry: computeAIWallRing / planAIWalls)
+    lastRaidTick: null,   // the last Feudal raid (aiLaunchSquad, js/ai.js)
     // Scout bookkeeping (controlAIScouts/ensureAIScout, js/ai.js): the
     // base-survey lap progress and the retrain cooldown. Sim state read on
     // later ticks — hashed in the AI digest.
     baseSurveyed: false, surveyIdx: 0, lastScoutTrainTick: null,
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
-    // Size of the last launched wave — the wave-casualty retreat compares
-    // far-from-home survivors against it (controlAIMilitary, js/ai.js).
+    // The field squad (controlAIMilitary, js/ai.js): {state, x, y, raid, power, since, best, ids} or null.
+    squad: null,
+    // Size of the last launched attack (reported by tools/sim.html).
     lastWaveSize: 0,
     // Civilian-militia response window: while set (> tick), villagers are
     // fighting a small raid and the garrison bell stays suppressed.
@@ -601,10 +602,6 @@ function freshAIState(team){
     // (canGatherTile, js/logic.js) — a 1.2-speed bear outruns 0.8-speed
     // villagers, so avoidance (AoE2 wolf routing), not fleeing, saves them.
     dangerZones: [],
-    // Attacker siege camp (aiAttackCampControl, js/ai.js): where the army
-    // regroups AT the enemy town instead of cycling home — the resolution
-    // posture. campAssault latches once the assault begins.
-    campX: null, campY: null, campSince: null, campTeam: null, campAssault: false,
     // Consecutive "this is hopeless" decision ticks (maybeResignAI,
     // js/ai.js) — AoE2 AIs concede rather than make the winner grind
     // down every last wall segment.
@@ -859,13 +856,13 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // AI pacing, authored against the AoE2-rate economy (30 ticks per
 // game-second; villager trains in 25 game-s, militia in 21 game-s).
 // AoE2-style attack plan: the first strike comes no earlier than attackTick,
-// then waves repeat with at least waveCooldown between launches. Wave SIZE is
-// economy-driven (aiWaveSize, js/ai.js), NOT a per-wave counter: it's a
-// fraction (armyPerVil) of the villagers past a small base (armyEcoFloor),
-// floored at attackSize and capped at waveCap. Waves still escalate over a
-// match — but only because the eco grows toward maxVils, then plateaus —
-// mirroring how AoE2 throttles difficulty through the economy (a stunted eco
-// fields small attacks) rather than a scripted attack timeline.
+// then attacks repeat with at least waveCooldown between launches. The army
+// TRAINED is economy-driven (aiWaveSize → aiArmyTarget, js/ai.js): a fraction
+// (armyPerVil) of the villagers past a small base (armyEcoFloor), floored at
+// attackSize and capped at waveCap, raised by a deep bank; each attack sends
+// commitPercent of it (capped by waveCap). Attacks escalate as the eco grows
+// toward maxVils, mirroring how AoE2 throttles difficulty through the economy
+// rather than a scripted attack timeline.
 // attackTick reference points: hard rushes ~8 game-minutes (a classic drush
 // window), easy waits ~18. Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
@@ -882,7 +879,6 @@ const AI_BASE = {
   buildersPerBuilding: 2,
   maxBarracks: 2,
   barracksVil: 7,
-  sightedResponsePercent: 50,
   civilianMilitia: 10,
   armyEcoFloor: 8,
   waveCooldown: T30(1500),
@@ -910,6 +906,7 @@ const AI_LEVELS = {
   standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:40, attackSize:4, waveCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
   hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:60, attackSize:5, waveCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
 };
+
 
 
 // Cosmetic-only RNG (particles, audio variation). Anything the SIM reads on

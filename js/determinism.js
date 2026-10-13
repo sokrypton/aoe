@@ -170,7 +170,6 @@ function detEntityHash(e){
   h = detMix(h, e.retreatUntil || 0); // AI tactical retreat: gates retaliation/auto-acquire/retasking (js/ai.js, js/logic.js)
   h = detMix(h, e.lastEnemyHitTick == null ? -1 : e.lastEnemyHitTick); // retreat trigger (enemy-player hits only)
   h = detMix(h, e.lastMeleeHitTick == null ? -1 : e.lastMeleeHitTick); // ram rider-disembark trigger (melee only)
-  h = detMix(h, e.waveId == null ? -1 : e.waveId); // AI wave membership (casualty-retreat counts it)
   if (e.possessed) h = detMix(h, 0x9055); // player-steered (the AI skips it); folded only when set
   h = detMix(h, e.lastDodgeTick || 0); // step-aside pacing (makeWayFor, js/loop.js): gates the next dodge
   h = detMix(h, e.dodgeCount || 0);   // …and the anti-dance stubbornness (isStubborn)
@@ -201,7 +200,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','waveId','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:
@@ -312,9 +311,12 @@ function simChecksum(){
       h = detMix(h, ai.gateBuilt ? 1 : 0);
       h = detMix(h, ai.lastWaveTick == null ? -1 : ai.lastWaveTick);
       h = detMix(h, ai.lastWaveGlobalTick == null ? -1 : ai.lastWaveGlobalTick);
-      h = detMix(h, ai.lastWaveSize || 0);                                  // wave-casualty retreat reads it
+      h = detMix(h, ai.lastWaveSize || 0);                                  // the last attack's size (reported)
       h = detMix(h, ai.lastRaidTick == null ? -1 : ai.lastRaidTick);       // the Feudal raid cadence
-      h = detMix(h, ai.raidWave == null ? -1 : ai.raidWave);               // …and which wave is the raid (its members stay raiders)
+      { const sq = ai.squad;                                                   // the field squad (controlAIMilitary)
+        h = detMix(h, sq ? 1 : 0);
+        if (sq) { h = detMix(h, sq.state); h = detMix(h, sq.x); h = detMix(h, sq.y); h = detMix(h, sq.raid); h = detMix(h, sq.power);
+          h = detMix(h, sq.since); h = detMix(h, sq.best == null ? -1 : sq.best); h = detMix(h, sq.ids.length); for (const id of sq.ids) h = detMix(h, id); } }
       h = detMix(h, ai.militiaUntil == null ? -1 : ai.militiaUntil);        // civilian-militia window (bell suppression)
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
@@ -325,12 +327,6 @@ function simChecksum(){
       // classifier cursor).
       h = detMix(h, ai.lastBaseHitTick == null ? -1 : ai.lastBaseHitTick);
       h = detMix(h, ai.seenWarTick == null ? -1 : ai.seenWarTick);
-      // Attacker siege camp: read every decision tick (hold/assault/recall).
-      h = detMix(h, ai.campX == null ? -1 : ai.campX);
-      h = detMix(h, ai.campY == null ? -1 : ai.campY);
-      h = detMix(h, ai.campSince == null ? -1 : ai.campSince);
-      h = detMix(h, ai.campTeam == null ? -1 : ai.campTeam);
-      h = detMix(h, ai.campAssault ? 1 : 0);
       // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
       h = detMix(h, ai.baseSurveyed ? 1 : 0);
       h = detMix(h, ai.surveyIdx || 0);

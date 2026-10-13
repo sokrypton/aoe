@@ -134,6 +134,7 @@ const MENU_ICONS = {
 function menuIcon(name){
   return '<svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + MENU_ICONS[name] + '</svg>';
 }
+window.menuIcon = menuIcon;   // (lobby.js draws its buttons with it too: this file's body is a closure)
 
 // A game sprite inline in the help text (the sheet's own icons: js/page-shell.js SPRITE_CELLS)
 function hi(key){ return '<span class="help-ico sprite-icon icon-' + key + '" aria-hidden="true"></span>'; }
@@ -371,12 +372,12 @@ document.body.insertAdjacentHTML('afterbegin', `
           <h3>Music</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="music" value="on" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="music" value="off"><span>Off</span></label></div>
         </div>
-        <div class="setup-col">
+      </div>
+      <div class="setup-row setup-row-view">
+        <div class="setup-col" id="view-col">
           <h3>View</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="viewmode" value="2d" onchange="setViewMode('2d')"><span title="The 2D map">2D</span></label><label class="opt-pill"><input type="radio" name="viewmode" value="3d" onchange="setViewMode('3d')"><span title="The 3D world view">3D</span></label></div>
         </div>
-      </div>
-      <div class="setup-row setup-row-view">
         <div class="setup-col" id="townai-col" title="The AI runs your town (economy, building, army) while you play a character">
           <h3>Town AI</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="townai" value="on" onchange="setTownAI(true)"><span>On</span></label><label class="opt-pill"><input type="radio" name="townai" value="off" checked onchange="setTownAI(false)"><span>Off</span></label></div>

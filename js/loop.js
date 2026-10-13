@@ -327,10 +327,6 @@ function rebuildBlockAndNudge(){
 }
 
 // A trade cart pulled up to the Market of its current leg (trading, not waiting in traffic).
-function cartAtMarket(c){
-  let m=entitiesById.get(c.tradePhase==='toHome'?c.tradeHomeId:c.tradeDestId);
-  return !!m&&adjToBuilding(c.x,c.y,m);
-}
 // True while a much-displaced unit is holding its ground (see makeWayFor):
 // it won't step aside and walkable() treats it as a hard obstacle so paths
 // route around it. Wears off after ~10s without being harassed.
@@ -392,7 +388,8 @@ function updateGates(){
     } else {
       e.gateProgress = Math.max(0.0, e.gateProgress - swing);
     }
-    e.isOpen = e.gateProgress > 0.5;
+    const open = e.gateProgress > 0.5, flip = open !== !!e.isOpen;
+    e.isOpen = open; if (flip) passabilityChangedAt(e.x, e.y, e.w, e.h);
   });
 }
 

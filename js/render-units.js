@@ -1578,7 +1578,7 @@ function overheadPose(t, { top, low, R, cock, lead, split = 0.6 }){
   return { hands: [butt, grip], grip, dir: d, edge: [Math.sin(ph), -Math.cos(ph), 0],
     torso: { yaw: 0, lean, dip: 1.4 * Math.max(0, Math.sin(Math.PI * (strike - 0.5) / 0.5)) }, headYaw: 0, feet: [[1.8, 0], [-1.4, 0]] };
 }
-const minePose = t => overheadPose(t, { top: 74, low: -26, R: 10, cock: 40, lead: -12 });   // the point driven down into the rock
+const minePose = t => overheadPose(t, { top: 74, low: -26, R: 6.8, cock: 40, lead: -12 });   // the point driven down into the rock
 const splitPose = t => overheadPose(t, { top: 70, low: -30, R: 10, cock: 40, lead: -14 });  // a felled trunk: the axe brought straight down onto it
 const buildPose = t => overheadPose(t, { top: 62, low: -8, R: 7.4, cock: 34, lead: 8, split: 0.55 }); // the handle level at the blow: the face lands flat on the post
 // Scythe: the blade always points the same way — toward the cutting side,
@@ -1616,8 +1616,8 @@ function foragePose(t){
 // hand stabbing down in quick jabs and drawing back slowly (the 2D jab clock).
 function butcherPose(t){
   const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
-  const kh = lerpV([7, -9, 2.4], [9.4, -5.6, 1.4], jb);
-  return { hands: [[10, -4.6, -2.8], kh], knife: kh, kdir: [0.45 - 0.1 * jb, -1, -0.1], jab: jb,
+  const kh = lerpV([9.2, -9, 2.4], [11.6, -5.6, 1.4], jb);
+  return { hands: [[12, -4.6, -2.8], kh], knife: kh, kdir: [0.45 - 0.1 * jb, -1, -0.1], jab: jb,
     torso: { yaw: -0.1, lean: 0.5 + 0.08 * jb, dip: 1.6 + 0.4 * jb }, headYaw: 0, feet: [[2.4, 0], [-1.8, 0]] };
 }
 // repair: hammering a wall, the mallet choked up in one fist: the arm lifts
@@ -1637,7 +1637,7 @@ function villagerWorkReach(){
     const k = GRIP_OUT + 13 * 0.55 + ly; return [(P.grip[0] + d[0] * k + e[0] * lx) * U, (P.grip[2] + d[2] * k + e[2] * lx) * U]; };
   const n = Math.hypot(-0.34, -0.94), chop = head(chopPose, 5, -1.5), mine = head(minePose, 4.6, -1.4);
   return WORK_REACH = { chop: [chop[0] - 0.34 / n * TRUNK * 1.05, chop[1] - 0.94 / n * TRUNK * 1.05], saw: [(SAW_X + 0.6) * U + TRUNK * 0.9, (SAW_Z - 11.5) * U],
-    mine: [mine[0] + 0.17, mine[1]], split: head(splitPose, 5, -1.5), forage: [FORAGE_REACH[1][0] * U + 0.16, 0], butcher: [10 * U + 0.44, 0],
+    mine: [mine[0] + 0.17, mine[1]], split: head(splitPose, 5, -1.5), forage: [FORAGE_REACH[1][0] * U + 0.16, 0], butcher: [10 * U + 0.52, 0],
     build: head(buildPose, 3.75, 0), repair: [WALL_X * U, 0] };
 }
 function repairPose(t){
@@ -1651,7 +1651,8 @@ const FIGHT_X = 18.5;
 function fightPose(t){
   const jb = t < 0.25 ? easeC(t / 0.25) : 1 - easeC((t - 0.25) / 0.75);
   const kh = [6.2 + 4.6 * jb, -8.4 - 0.4 * jb, 2.6 - 1.4 * jb];
-  return { hands: [[4.2, -11.5, -3.2], kh], knife: kh, kdir: [1, 0.12, -0.08], jab: jb,
+  const off = lerpV([6, -7.2, -3.4], [2.6, -6.4, -4.8], jb);   // the free hand out front at the chest, drawn back to the hip as the knife thrusts
+  return { hands: [off, kh], knife: kh, kdir: [1, 0.12, -0.08], jab: jb,
     torso: { yaw: -0.25 + 0.5 * jb, lean: 0.08 + 0.22 * jb, dip: 0.4 + 0.4 * jb }, headYaw: 0.2 - 0.3 * jb, feet: [[1.8 + 1.4 * jb, 0], [-1.6, 0]] };
 }
 
@@ -1779,10 +1780,10 @@ function militiaPose(kind, t, eq){
   return { hands, weapon: { hand, dir }, torso: two ? { ...it, yaw: it.yaw - 0.12 } : it, headYaw: kind === 'idle' ? villagerIdlePose(t).headYaw * 0.5 : 0, feet: walk ? walk.feet : L.feet, bob: walk ? walk.bob : 0, shieldHand: hands[0] };
 }
 function spearmanPose(kind, t, eq){
-  if (kind === 'attack') { // spear levelled, driven forward in a lunge and drawn back
+  if (kind === 'attack') { // spear held low, the rear hand at the hip, driven forward and up in a lunge and drawn back
     const th = t < 0.3 ? easeC(t / 0.3) * 0.25 : t < 0.5 ? 0.25 - 1.25 * easeC((t - 0.3) / 0.2) : -1 + easeC((t - 0.5) / 0.5);
-    const d = -th * 6, dir = [1, 0.06, -0.24];                                               // + forward: a deep thrust
-    const rear = [2 + d, -7.2, 5], front = [6.4 + d, -8.2, 3.6];            // the shaft held out past the hip, angled in toward the target
+    const d = -th * 6, dir = [1, 0.3, -0.26];                                                // + forward: a deep thrust
+    const rear = [1.4 + d, -4.6, 4.8], front = [6.4 + d, -5.9, 3.5];        // on the shaft's line (dir in art px: 5 along), angled up and in toward the target
     const lunge = Math.max(0, -th);
     return { hands: [front, rear], weapon: { hand: rear, dir }, torso: { yaw: -0.5 + 0.2 * lunge - 0.15 * Math.max(0, th) * 4, lean: 0.08 + 0.5 * lunge, dip: 1.8 * lunge }, headYaw: 0.2, feet: [[2 + 3.2 * lunge, 0.6 * Math.max(0, Math.sin(Math.PI * lunge))], [-1.8 - 0.6 * lunge, 0]] };
   }
@@ -1793,7 +1794,7 @@ function archerPose(kind, t, eq){
   if (kind === 'attack') { // side-on: the bow arm out, nock, draw to the cheek, hold, loose (the string hand flicks back), recover
     // anchored at the outside of the cheek (the head's a sphere), and the bow straight out AHEAD of that anchor: the arrow
     // between them lies along the facing — the way the loosed one flies (bow off to the side, it pointed ~40° astray)
-    const bowH = [9.6, -12, 3.6], nock = [5.8, -12.6, 3.9], cheek = [2.6, -12.2, 4.2], after = [0.4, -11.6, 6];
+    const bowH = [9.6, -10.4, 3.6], nock = [5.8, -11, 3.9], cheek = [2.6, -10.6, 4.2], after = [0.4, -10, 6];   // (the draw line at the jaw: the bow arm near shoulder height)
     const draw = t < 0.15 ? 0 : t < 0.55 ? easeC((t - 0.15) / 0.4) : t < 0.75 ? 1 : 0;
     const loose = t >= 0.75 ? Math.max(0, 1 - (t - 0.75) / 0.12) : 0;                    // the snap after the release
     // after the loose the string hand fetches the next arrow — over the shoulder from the Castle quiver, else from the hip — and nocks it
@@ -1802,8 +1803,8 @@ function archerPose(kind, t, eq){
     bowH[1] -= 0.8 * Math.sin(Math.PI * Math.min(1, (t - 0.75) / 0.12)) * (t >= 0.75 && t < 0.87 ? 1 : 0); bowH[0] += 0.6 * loose * (t >= 0.75 ? 1 : 0); // the bow arm kicks
     // aimed up along the flight the arrow takes (ARROW_LAUNCH): the draw pitched about the shoulder, so the nocked
     // arrow points the way the loosed one flies
-    const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 13), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
-      return [2.2 + dx * c - u * sn, -13 - (dx * sn + u * c), q[2]]; };
+    const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 11.4), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
+      return [2.2 + dx * c - u * sn, -11.4 - (dx * sn + u * c), q[2]]; };
     const bh = aimed(bowH); hand = aimed(hand);
     bowH[0] = bh[0]; bowH[1] = bh[1];
     return { hands: [bowH, hand], bow: { grip: bowH, pull: hand, draw, arrow: t < 0.75, fetched: t >= 0.92 }, torso: { yaw: -0.75 - 0.1 * draw, lean: 0.05 - 0.08 * draw, dip: 0.3 + 0.3 * draw }, headYaw: 0.75 + 0.1 * draw, feet: [[1.8, 0], [-1.8, 0]] };
@@ -1837,7 +1838,7 @@ function riderArm(kind, t){
   return [p.hand, [p.dir[0], p.dir[1], rest[1][2]], p.edge];
 }
 // A soldier's gear by its team's age and forge lines (soldierEquip's rules)
-const soldierGear = e => soldierEquip(e.utype, ageBonus(e.team), e.utype === 'archer' ? archerAtkBonus(e.team) : upgradeAtkBonus(e.team), upgradeArmorBonus(e.team), hasUpgrade(e.team, 'fletching')); // (each its own attack line)
+const soldierGear = e => e.__civ ? { ...soldierEquip('archer', 0, 0, 0, false), civ: true } : soldierEquip(e.utype, ageBonus(e.team), e.utype === 'archer' ? archerAtkBonus(e.team) : upgradeAtkBonus(e.team), upgradeArmorBonus(e.team), hasUpgrade(e.team, 'fletching')); // (each its own attack line)
 // What a soldier is doing ({ kind, t, legs, opt: { unit, eq } }) — both views' reading. The swing follows the HITS: one
 // struck this reload cycle plays its cut (landing on the hit) — on the move too, the legs (or the horse) running on
 // underneath; gated on range alone, a hit on the run showed no blow, and a chase flipping in and out of range restarted
@@ -1856,7 +1857,56 @@ function soldierAction(e, stride, clk){
 // Carrying: the load overhead, both hands under its edges either side of the head; LOAD_SIT: how far each load's middle
 // sits above its bottom (art px, before its ×1.5 cartoon size), so it rests on the head.
 const LOAD_SIT = { wood: 2.85, stone: 2.4, gold: 2.85, food: 2.85, wool: 3.4, berries: 1.8 };
-const CARRY_HANDS = [[0.4, -17.1, -5.6], [0.4, -17.1, 5.6]];
+const CARRY_HANDS = [[0.4, -17.6, -5.5], [0.4, -17.6, 5.5]];
+// ---- A TC's roof crew (both views; viewer-only, from the sim's garrison, reload and arrows) ----
+// Its garrisoned villagers up on the keep floor, one per extra arrow (nine: the TC's 1 + 9 = its 10-arrow cap): at rest
+// two along each parapet and one in the front corner, facing out; while it shoots they walk
+// to the parapets that face its mark (up to four a side), aim and loose on its reload, then stroll back. Positions in
+// sim tile coords (the keep floor inside the parapet: 38/48 of the keep's half of the footprint, both views' art).
+const ROOF_REST = [[0.3, 0.86], [0.7, 0.86], [0.86, 0.3], [0.86, 0.7], [0.3, 0.14], [0.7, 0.14], [0.14, 0.3], [0.14, 0.7], [0.86, 0.86]];
+const ROOF_SIDES = [[[0, 1], v => [v, 0.86]], [[1, 0], v => [0.86, v]], [[0, -1], v => [v, 0.14]], [[-1, 0], v => [0.14, v]]];   // outward normal, a spot along it
+const roofCrews = new WeakMap();
+function roofFloor(e){ const mid = (e.w || 4) / 2, rim = mid * (1 - 38 / 48) / 2; return { x0: e.x - 0.5 + rim, y0: e.y - 0.5 + rim, w: mid - 2 * rim }; }
+function roofCrew(e){
+  let R = roofCrews.get(e); if (!R) roofCrews.set(e, R = { figs: [], cdLast: null, firedAt: null, aim: null, at: animTick, volley: -1, shot: 0 });
+  const n = e.complete && e.garrison ? Math.min(e.garrison.length, ROOF_REST.length) : 0, cd = e.atkCooldown || 0, reload = BUILDING_RELOAD;
+  if (cd > T30(6) && (R.cdLast == null || cd > R.cdLast)) R.firedAt = tick;
+  R.cdLast = cd;
+  R.firing = R.firedAt != null && tick - R.firedAt < reload + T30(6);
+  if (R.firing) for (const p of projectiles) if (p.attackerId === e.id) { R.aim = [p.tx, p.ty]; break; }
+  const F = roofFloor(e), cx = F.x0 + F.w / 2, cy = F.y0 + F.w / 2, dt = Math.max(0, Math.min(10, animTick - R.at)); R.at = animTick;
+  // where each stands: at rest its own spot; shooting, the parapets that face the mark, the best first, four a side
+  let slots = ROOF_REST;
+  if (R.firing && R.aim) { const ax = R.aim[0] - cx, ay = R.aim[1] - cy, l = Math.hypot(ax, ay) || 1;
+    const sides = ROOF_SIDES.map(sd => ({ sd, d: (sd[0][0] * ax + sd[0][1] * ay) / l })).sort((a, b) => b.d - a.d);
+    slots = []; for (const { sd } of sides.slice(0, 2)) for (const v of [0.38, 0.62, 0.15, 0.85]) slots.push(sd[1](v));
+    const [a, b] = [sides[0].sd[0], sides[1].sd[0]], cu = a[0] || b[0], cv = a[1] || b[1];   // the ninth: a step behind the corner
+    slots.push([cu > 0 ? 0.64 : 0.36, cv > 0 ? 0.64 : 0.36]); }   // where those two parapets meet (the corner itself is taken)
+  R.figs.length = n;
+  for (let i = 0; i < n; i++) {
+    const [u, v] = slots[i], tx = F.x0 + u * F.w, ty = F.y0 + v * F.w;
+    let f = R.figs[i]; if (!f) R.figs[i] = f = { x: tx, y: ty, hd: Math.atan2(ty - cy, tx - cx), walk: 0, moving: false };
+    const dx = tx - f.x, dy = ty - f.y, d = Math.hypot(dx, dy), step = Math.min(d, 0.03 * dt);   // (0.9 tiles a second)
+    f.moving = d > 0.01;
+    if (f.moving) { f.x += dx / d * step; f.y += dy / d * step; f.walk += step; f.hd = Math.atan2(dy, dx); }
+    else f.hd = R.firing && R.aim ? Math.atan2(R.aim[1] - f.y, R.aim[0] - f.x) : Math.atan2(ty - cy, tx - cx);
+    f.u = (f.x - F.x0) / F.w; f.v = (f.y - F.y0) / F.w;
+  }
+  return R;
+}
+// Where a TC's arrow is drawn from while it has a crew up top: a volley's arrows from its crew in turn, at the bow
+// ({ x, y }: sim tiles, h: art px over the ground; null: the sim's own start). Cached per arrow.
+const roofShots = new WeakMap();
+function roofShot(p){
+  if (roofShots.has(p)) return roofShots.get(p);
+  const b = entitiesById.get(p.attackerId), R = b && b.btype === 'TC' && roofCrews.get(b);
+  let S = null;
+  // (only a crew that is up there and being drawn — emptied, or a damaged TC open under its roof, shoots as the sim's)
+  if (R && R.figs.length && b.garrison && b.garrison.length && animTick - R.at <= 2) { if (R.volley !== tick) { R.volley = tick; R.shot = 0; }
+    const f = R.figs[R.shot++ % R.figs.length], k = (b.w || 4) / 3, a = Math.atan2(p.ty - f.y, p.tx - f.x);
+    S = { x: f.x + Math.cos(a) * 0.2, y: f.y + Math.sin(a) * 0.2, h: 55 * k + 19 }; }   // (the keep floor 55×k up, the bow 19 above the feet)
+  roofShots.set(p, S); return S;
+}
 // The female villager's dress [radius, art y] from the hem up (pov3d's DRESS_SHAPES.tunic)
 const VIL_DRESS = [[0, -0.4], [4.2, -0.45], [4.95, -0.65], [5.3, -1.1], [5.1, -2.8], [4.8, -6], [4, -9.2], [2.3, -11.1], [1.4, -12], [0, -12.2]];
 // A solid ellipsoid for line-of-sight tests in a projKit frame: centre c and its three half-axis vectors (kit coords).
@@ -1992,7 +2042,7 @@ function drawPerson2D(e){
   const pose = fallen ? () => riderPose('die', thrown, eq) : dying ? () => villagerDeathPose(e.__deathAge) : horse ? () => riderPose(act.kind, act.t, eq, horse.gait) : soldier ? () => soldierPose2D(e.utype, act, eq) : VIL2D_POSE[act.kind];
   const o = pose(act.t), tool = !soldier && (VIL2D_TOOL[act.kind] || (act.kind === 'walk' && act.opt.tool)), up = act.opt.up || {};
   if (act.kind === 'walk' && tool) o.hands = [o.hands[0], VIL_SHOULDER];              // a work tool on the shoulder, the other arm swinging
-  const C = HUMAN_COL, dress = !soldier && !!e.female, tc = teamColor(e.team), bob = o.bob || 0, TAU = Math.PI * 2;
+  const kit = soldier && !eq.civ, C = HUMAN_COL, dress = !kit && !!e.female, tc = teamColor(e.team), bob = o.bob || 0, TAU = Math.PI * 2;
   const { P, depth, faces, view, parts, add, blob, tube } = projKit(hq * Math.PI / 32);
   const fall = o.fall || 0, cf = Math.cos(fall), sf = Math.sin(fall);
   const rX = horse ? -0.8 : fallen ? -0.8 + 0.25 * HORSE_TILE * thrown : 0, rZ = fallen ? -0.72 * HORSE_TILE * thrown : 0;
@@ -2034,7 +2084,7 @@ function drawPerson2D(e){
   } else { const t = blob(tc, mU, 0, -6, 0, 4.6, 5, 4.2, 'body'); t.pt.d = BODY;
     // armor over the tunic (pov3d's armorMat, the 2D read): SCALE — forge-steel scallop rows over the lower torso, the
     // chest left team colour; CHAIN — steel over the whole torso, finer rows, a faint team wash
-    if (soldier && eq.torso) { const tp = t.pt.path, chain = eq.torso === 'chain', top = t.c[1] - t.r2 + (chain ? 0 : t.r2 * 0.95), M = eq.metal;
+    if (kit && eq.torso) { const tp = t.pt.path, chain = eq.torso === 'chain', top = t.c[1] - t.r2 + (chain ? 0 : t.r2 * 0.95), M = eq.metal;
       let rows = null;   // (the rows of scales as one path, built once: the pose is cached)
       add(M, BODY + 0.0001, () => { X.save(); X.beginPath(); tp(); X.clip(); X.fillStyle = M; X.fillRect(t.c[0] - 12, top, 24, 30);
         if (chain) { X.globalAlpha = 0.18; X.fillStyle = tc; X.fillRect(t.c[0] - 12, top, 24, 30); X.globalAlpha = 1; }
@@ -2058,7 +2108,7 @@ function drawPerson2D(e){
   // front faces us (so hair frames a face head-on, shows behind it in profile, and covers the head from behind); eyes
   const head = blob(C.skin, mH, 0, -14, 0, 4, 4, 4, 'head'); head.pt.d = HEAD;
   const hc = head.o, H0 = HEAD, fw = mH(4, -14, 0), front = faces([fw[0] - hc[0], fw[1] - hc[1], fw[2] - hc[2]]);
-  if (soldier && eq.helmet === 'great') {
+  if (kit && eq.helmet === 'great') {
     // the knight's great helm (pov3d's): a flat-topped steel pail over the whole head, a T of cuts to see and breathe,
     // eyes peering out, a team plume on top
     const rings = []; for (const y of [-19, -10.2]) for (let k = 0; k < 24; k++) { const a = k / 24 * TAU, r = y < -15 ? 4.3 : 4.5; rings.push(P(...mH(r * Math.cos(a), y, r * Math.sin(a)))); }
@@ -2069,7 +2119,7 @@ function drawPerson2D(e){
       slit(-3.2, 3.2, -14.6, -16); slit(-0.55, 0.55, -11.5, -15);                                                         // the eye slit and the breathing slit
       for (const z of [-1.5, 1.5]) blob('#ffffff', mH, 4.55, -15.3, z, 0.5, 0.45, 0.6, 'head', 0, false).pt.d = H0 + 0.21; }   // eyes peering out
     blob(tc, mH, 0, -20.5, 0, 1.8, 2.6, 1.2, 'head').pt.d = H0 + 0.3;                                                     // the team plume
-  } else if (soldier) {
+  } else if (kit) {
     // the helmet (pov3d's human() hats: hood, kettle, Norman, spiked) over the head, the face traced in front of it
     const hm = SOLDIER_HELM[eq.helmet] || SOLDIER_HELM.hood, hcol = eq.helmet === 'hood' ? tc : hm[6];
     blob(hcol, mH, ...hm.slice(0, 6), 'head').pt.d = H0 + 0.1;
@@ -2177,7 +2227,7 @@ function drawPerson2D(e){
     const D = hand.map((v, i) => v - shA[i]), d = Math.hypot(...D) || 1e-6, n = D.map(v => v / d);
     const cross = Math.max(0, Math.min(1, (1.5 - s * hand[2]) / 5)), pole = [-0.55 + 1.75 * cross, 0.25, s * (1 - 0.6 * cross)], pd = pole[0] * n[0] + pole[1] * n[1] + pole[2] * n[2];
     const q = pole.map((v, i) => v - pd * n[i]), qL = Math.hypot(...q) || 1, Lu = Math.min(5.2, Math.max(3.2, d * 0.56)), a = d / 2, h = Math.sqrt(Math.max(0, Lu * Lu - a * a));
-    const E = o.elbows ? Uinv(o.elbows[s > 0 ? 1 : 0]) : shA.map((v, i) => v + n[i] * a + q[i] / qL * h), arm = quadPts(shA, E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2), hand, 8);
+    const E = o.elbows && o.elbows[s > 0 ? 1 : 0] ? Uinv(o.elbows[s > 0 ? 1 : 0]) : shA.map((v, i) => v + n[i] * a + q[i] / qL * h), arm = quadPts(shA, E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2), hand, 8);
     const sq = mU(...shA), hq = mU(...hand), gripFront = toolFront && grips.includes(s > 0 ? 1 : 0);
     const farGrip = wL === FAR_SIDE && wK.grips.includes(s > 0 ? 1 : 0);   // (a sword behind the horse takes its whole arm along: the torso covers the shoulder)
     const upperL = farGrip ? FAR_SIDE : depth(sq[0], sq[2]) >= bodyD - 0.5 ? NEAR_ARM : FAR_ARM;
@@ -2320,9 +2370,11 @@ const lightOfHex = hex => { const n = parseInt(hex.slice(1), 16), f = v => Math.
 // Where a shield sits (pov3d's roundShield / kiteShield): its centre c and yaw th (three's rotation.y) — the militia's
 // on his left forearm, a rider's out to his left (riderFig) — and the way its face looks, n (art: x fwd, y down, z across)
 const KITE_TURN = Math.PI / 2 - 0.3, SHIELD_BACK = '#9a6a3a';   // (the kite's back: bare wood, both views)
+// a rider's shield: held up and forward on the left, turned RIDER_SHIELD_TURN from facing out toward the front
+const RIDER_SHIELD = [3.6, -7.6, -6.8], RIDER_SHIELD_TURN = 0.75;
 function shieldOf(o, kind, rider){
-  const sh = o.shieldHand, c = rider ? [1, -6.5, -9] : kind === 'round' ? [sh[0] + 1.2, sh[1], sh[2] - 0.5] : [sh[0] + 1.4, sh[1] + 1, sh[2] + 0.4];
-  const th = rider ? (kind === 'round' ? Math.PI / 2 - 0.35 : Math.PI - 0.35) : kind === 'round' ? 0 : KITE_TURN;
+  const sh = o.shieldHand || o.hands[0], F = [Math.sin(RIDER_SHIELD_TURN), -Math.cos(RIDER_SHIELD_TURN)], c = rider ? [sh[0] + 2 * F[0], sh[1], sh[2] + 2 * F[1]] : kind === 'round' ? [sh[0] + 1.2, sh[1], sh[2] - 0.5] : [sh[0] + 1.4, sh[1] + 1, sh[2] + 0.4];
+  const th = rider ? (kind === 'round' ? Math.PI / 2 - RIDER_SHIELD_TURN : Math.PI - RIDER_SHIELD_TURN) : kind === 'round' ? 0 : KITE_TURN;
   return { c, th, n: kind === 'round' ? [Math.cos(th), 0, -Math.sin(th)] : [Math.sin(th), 0, Math.cos(th)] };
 }
 // A dead soldier's weapon and shield (pov3d's droppedItem): out of the hand (dropXf) to lie beside him, in the ground
@@ -2437,9 +2489,11 @@ function riderPose(kind, t, eq, gait = {}){
   const [hand0, dir, edge] = riderArm(kind, t);
   const jog = kind === 'gallop' ? 0.9 * Math.sin(2 * Math.PI * t) : kind === 'walk' ? 0.35 * Math.sin(4 * Math.PI * t) : 0;
   const hand = [hand0[0], hand0[1] + jog, hand0[2]];
-  const off = eq.shield ? [1.5, -6.5 + jog * 0.6, -7.8] : [6 + 5 * (gait.nod || 0), -6.8 + jog * 0.6, -3.9];   // shield grip, or the reins (the rein hand follows the head)
+  const off = eq.shield ? [RIDER_SHIELD[0], RIDER_SHIELD[1] + jog * 0.6, RIDER_SHIELD[2]] : [6 + 5 * (gait.nod || 0), -6.8 + jog * 0.6, -3.9];   // shield grip, or the reins (the rein hand follows the head)
   const lean = kind === 'gallop' ? 0.12 : 0, sw = kind === 'attack' ? (q => 0.25 * q.c - 0.2 * q.w)(swordArc(t, [0, 0, 0], 3.4, 0)) : 0;   // (leaning back on the windup, into the cut)
-  return { hands: [off, hand], torso: { lean: lean + Math.max(0, sw), yaw: sw }, weapon: { hand, dir, edge: edge || null }, riding: kind === 'die' ? 1 - t : 1 };
+  // the shield arm's elbow drawn back and down, tucked by the side (the shield held out in front of it)
+  const elbows = eq.shield ? [[RIDER_SHIELD[0] - 4.4, RIDER_SHIELD[1] + 3.2 + jog * 0.6, RIDER_SHIELD[2] + 0.4], null] : undefined;
+  return { hands: [off, hand], elbows, torso: { lean: lean + Math.max(0, sw), yaw: sw }, weapon: { hand, dir, edge: edge || null }, riding: kind === 'die' ? 1 - t : 1 };
 }
 // The wheelbarrow and the Heavy Plow in 2D (pov3d's barrowRig): k.R maps rig px (x forward, h up, z across) to the kit;
 // parts in layer k.d, ordered among themselves by depth — the wheel and handles under the tray, the load in it, the rim.
@@ -2447,7 +2501,7 @@ const RIG_WOOD = { beam: '#6e5138', plank: '#b89868', inside: '#7d6448' };
 function barrowRig2D(k){
   const { R, P, d } = k, dd = q => d + 0.001 * k.depth(q[0], q[2]), poly = ps => () => { X.moveTo(...ps[0]); for (const q of ps.slice(1)) X.lineTo(...q); X.closePath(); };
   const pole = (a, b, r, col, bias = 0) => { k.tube(col, [R(...a), R(...b)], r * 1.25, 'rig').d = dd(R((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)) + bias; };
-  for (const z of [-1, 1]) pole([1.8, 9.2, z * 3.1], [22, 3.6, z * 1.6], 0.6, RIG_WOOD.beam, -0.02);   // handles running to the axle ends
+  for (const z of [-1, 1]) pole([0.3, 9.62, z * 3.21], [22, 3.6, z * 1.6], 0.6, RIG_WOOD.beam, -0.02);   // handles running to the axle ends
   const wh = k.blob('#5a4630', R, 22, 3.6, 0, 3.6, 3.6, 0.75, 'rig'); wh.pt.d = dd(wh.o) - 0.03;           // the wheel, a hub cap toward us
   for (const z of [-1, 1]) { const c = R(22, 3.6, z * 0.9), ax = R(22, 3.6, z).map((v, i) => v - R(22, 3.6, 0)[i]);
     if (k.faces(ax) > 0.05) k.blob('#3a2c1c', R, 22, 3.6, z * 0.9, 1.1, 1.1, 0.2, 'rig', 0, false).pt.d = wh.pt.d + 0.0001; }

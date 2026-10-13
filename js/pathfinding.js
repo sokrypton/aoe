@@ -2,6 +2,136 @@
 // Raised from the original 800 so long-distance/obstructed routes on bigger
 // maps (90/120 tiles) can still find a full path instead of capping out early.
 const MAX_PATH_ITERS=2200;
+// ---- Regions: which tiles connect to which, as a team's walkers find the ground (tilePassable, findPath's own moves) ----
+// Labelled lazily, a team at a time, then mended in place as passability changes (passabilityChangedAt, below — every
+// site that alters terrain, footprints, construction state or gates calls it); passabilityChanged() and a new `map`
+// (load, rollback, resync) drop them.
+// findPath uses them to answer "no route" without searching; they never decide anything findPath wouldn't.
+let passEpoch=0, _regMap=null, _regEpoch=-1, _regByTeam=new Map();
+function passabilityChanged(){ passEpoch++; }
+// Passability changed on a rect of tiles (a footprint stamped/cleared, a site hardening or finishing, a farm, a gate, a
+// resource used up): the cached labellings are mended in place — cost by the change, not the map (huge maps, and it is
+// derived state: rebuilt locally on every peer, never sent). Call AFTER the mutation; passabilityChanged() stays for
+// whole-map changes (load, editor). Only region NUMBERING can differ from a fresh labelling — sizes are exact and the
+// sim reads labels for equality only, so peers that cached different teams still agree.
+function passabilityChangedAt(x0,y0,w=1,h=1){
+  if(_regMap!==map||_regEpoch!==passEpoch)return;   // (nothing cached: the next query labels afresh)
+  for(const R of _regByTeam.values())regionRefresh(R,x0,y0,w,h);
+}
+const regionPass=(R,a,b)=>a>=0&&b>=0&&a<MAP&&b<MAP&&R.lab[a+b*MAP]>0;   // (every passable tile carries a label)
+const regionStep=(R,x,y,dx,dy)=>regionPass(R,x+dx,y+dy)&&(!dx||!dy||regionPass(R,x+dx,y)&&regionPass(R,x,y+dy));   // findPath's no-corner-cut rule
+function regionRefresh(R,x0,y0,w,h){
+  const opened=[], closed=[];
+  for(let y=Math.max(0,y0);y<Math.min(MAP,y0+h);y++)for(let x=Math.max(0,x0);x<Math.min(MAP,x0+w);x++){
+    const k=x+y*MAP, p=tilePassable(x,y,R.ig,R.stand);
+    if(p&&!R.lab[k])opened.push(k); else if(!p&&R.lab[k])closed.push(k);
+  }
+  if(closed.length)regionClose(R,closed,x0,y0,w,h);
+  for(const k of opened)regionOpen(R,k%MAP,(k/MAP)|0);
+}
+// Tiles turned passable one by one: whatever a tile newly connects connects THROUGH it (a diagonal it unblocks joins
+// two of its own neighbours) — none → a region of its own, one → it joins, several → they merge into the largest.
+function regionOpen(R,x,y){
+  const k0=x+y*MAP, ids=[];
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    if((dx||dy)&&regionStep(R,x,y,dx,dy)){ const id=R.lab[x+dx+(y+dy)*MAP]; if(!ids.includes(id))ids.push(id); }
+  }
+  if(!ids.length){ R.lab[k0]=R.size.length; R.size.push(1); return; }
+  let keep=ids[0]; for(const id of ids) if(R.size[id]>R.size[keep])keep=id;
+  R.lab[k0]=keep; R.size[keep]++;
+  if(ids.length===1)return;
+  const merged=new Set(ids); merged.delete(keep);
+  for(let k=0;k<R.lab.length;k++) if(merged.has(R.lab[k]))R.lab[k]=keep;
+  for(const id of merged){ R.size[keep]+=R.size[id]; R.size[id]=0; }
+}
+// Tiles closed (a footprint, a hardening site, a shut gate): a region can only split where they were. The tiles that
+// bordered them are checked for a way round inside a small window; only when none is found is that one region
+// relabelled — from the labels, never re-testing passability.
+const REGION_DETOUR=4;
+function regionClose(R,closed,x0,y0,w,h){
+  for(const k of closed){ R.size[R.lab[k]]--; R.lab[k]=0; }
+  const byLab=new Map();
+  for(const k of closed){ const x=k%MAP, y=(k/MAP)|0;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx, ny=y+dy;
+      if(!regionPass(R,nx,ny))continue; const nk=nx+ny*MAP, L=R.lab[nk];
+      let s=byLab.get(L); if(!s)byLab.set(L,s=new Set()); s.add(nk); } }
+  const bx0=Math.max(0,x0-REGION_DETOUR), by0=Math.max(0,y0-REGION_DETOUR), bx1=Math.min(MAP-1,x0+w-1+REGION_DETOUR), by1=Math.min(MAP-1,y0+h-1+REGION_DETOUR);
+  for(const [L,tiles] of byLab){
+    if(tiles.size<2)continue;
+    // a way round inside the window joins every bordering tile: no split
+    const seen=new Set(), first=tiles.values().next().value, Q=[first]; seen.add(first); let found=1;
+    while(Q.length&&found<tiles.size){ const k=Q.pop(), x=k%MAP, y=(k/MAP)|0;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx, ny=y+dy, nk=nx+ny*MAP;
+        if((!dx&&!dy)||nx<bx0||ny<by0||nx>bx1||ny>by1||seen.has(nk)||!regionStep(R,x,y,dx,dy))continue;
+        seen.add(nk); Q.push(nk); if(tiles.has(nk))found++; } }
+    if(found<tiles.size)regionSplit(R,L);
+  }
+}
+// Relabel one region's tiles into its connected parts: the first keeps the label, the rest take new ones.
+function regionSplit(R,L){
+  const N=R.lab.length, seen=new Uint8Array(N), Q=new Int32Array(R.size[L]); let tail=0, first=true;
+  for(let k0=0;k0<N;k0++){ if(R.lab[k0]!==L||seen[k0])continue;
+    const start=tail; seen[k0]=1; Q[tail++]=k0;
+    for(let head=start;head<tail;head++){ const k=Q[head], x=k%MAP, y=(k/MAP)|0;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        if((!dx&&!dy)||!regionStep(R,x,y,dx,dy))continue;
+        const nk=x+dx+(y+dy)*MAP; if(R.lab[nk]!==L||seen[nk])continue; seen[nk]=1; Q[tail++]=nk; } }
+    if(first){ R.size[L]=tail-start; first=false; }
+    else { const id=R.size.length; R.size.push(tail-start); for(let i=start;i<tail;i++)R.lab[Q[i]]=id; }
+  }
+}
+// w: the walker — a unit (labelled as its team: units differ only by team here), a building searching as itself (its
+// own footprint open to it: the AI's reach-from-the-TC tests), or null
+function regionsFor(w){
+  if(_regMap!==map||_regEpoch!==passEpoch){ _regMap=map; _regEpoch=passEpoch; _regByTeam.clear(); }
+  const bld=w&&w.type==='building', key=!w?'-':bld?'b'+w.id:'t'+w.team;
+  let R=_regByTeam.get(key); if(R) return R;
+  const N=MAP*MAP, lab=new Int32Array(N), pass=new Uint8Array(N), size=[0], Q=new Int32Array(N), stand=!w?null:bld?w:{team:w.team}, ig=bld?w.id:null;
+  for(let y=0;y<MAP;y++)for(let x=0;x<MAP;x++) pass[x+y*MAP]=tilePassable(x,y,ig,stand)?1:0;
+  const P=(x,y)=>x>=0&&y>=0&&x<MAP&&y<MAP&&pass[x+y*MAP]===1;
+  for(let k0=0;k0<N;k0++){ if(!pass[k0]||lab[k0])continue;
+    const id=size.length; let head=0,tail=0; lab[k0]=id; Q[tail++]=k0;
+    while(head<tail){ const ck=Q[head++], cx=ck%MAP, cy=(ck/MAP)|0;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        if(!dx&&!dy||!P(cx+dx,cy+dy))continue;
+        if(dx&&dy&&(!P(cx+dx,cy)||!P(cx,cy+dy)))continue;   // (no cutting between two touching obstacles: findPath's rule)
+        const k=cx+dx+(cy+dy)*MAP; if(lab[k])continue; lab[k]=id; Q[tail++]=k; } }
+    size.push(tail); }
+  R={lab,size,ig,stand}; _regByTeam.set(key,R); return R;
+}
+// The region a walker starting at (sx,sy) is in: its tile's, else (standing on something solid — a TC keep, a
+// doorway) the first passable neighbour's; 0: boxed in.
+function regionAt(R,sx,sy){
+  sx=Math.round(sx);sy=Math.round(sy);
+  for(let r=0;r<=1;r++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){const x=sx+dx,y=sy+dy;
+    if(x>=0&&y>=0&&x<MAP&&y<MAP&&R.lab[x+y*MAP])return R.lab[x+y*MAP];}
+  return 0;
+}
+// Can the walker (ignore's entity) get from (sx,sy) to within `tol` of (tx,ty) at all — over the ground, buildings and
+// gates as they stand, units ignored (they move)? A* never asked: one lookup per tile of the goal box.
+function regionReaches(sx,sy,tx,ty,ignore,tol=1.5){
+  const R=regionsFor(ignore==null?null:entitiesById.get(ignore)||null), sl=regionAt(R,sx,sy); if(!sl)return false;
+  const t=Math.floor(tol), cx=Math.round(tx), cy=Math.round(ty);
+  for(let y=Math.max(0,cy-t);y<=Math.min(MAP-1,cy+t);y++)for(let x=Math.max(0,cx-t);x<=Math.min(MAP-1,cx+t);x++)if(R.lab[x+y*MAP]===sl)return true;
+  return false;
+}
+// …to a firing spot: some tile within r (Euclidean, tile centres) of (tx,ty) — or of building b's footprint.
+function regionReachesWithin(e,tx,ty,r,b){
+  const R=regionsFor(e), sl=regionAt(R,e.x,e.y); if(!sl)return false;
+  const x0=b?b.x:Math.round(tx), y0=b?b.y:Math.round(ty), x1=b?b.x+b.w-1:x0, y1=b?b.y+b.h-1:y0, k=Math.ceil(r);
+  for(let y=Math.max(0,y0-k);y<=Math.min(MAP-1,y1+k);y++)for(let x=Math.max(0,x0-k);x<=Math.min(MAP-1,x1+k);x++){
+    if(R.lab[x+y*MAP]!==sl)continue;
+    const dx=x<x0?x0-x:x>x1?x-x1:0, dy=y<y0?y0-y:y>y1?y-y1:0;
+    if(dx*dx+dy*dy<=r*r)return true;
+  }
+  return false;
+}
+// …to a building's contact ring (edgeDist ≤ 1.2: where it's worked, traded at, struck).
+function regionReachesBuilding(e,b){
+  const R=regionsFor(e), sl=regionAt(R,e.x,e.y); if(!sl)return false;
+  for(let y=Math.max(0,b.y-1);y<=Math.min(MAP-1,b.y+b.h);y++)for(let x=Math.max(0,b.x-1);x<=Math.min(MAP-1,b.x+b.w);x++)if(R.lab[x+y*MAP]===sl)return true;
+  return false;
+}
 
 // ---- UNIT COLLISION (AoE2-style) ----
 // Stationary units occupy their tile and are hard obstacles: A* routes around
@@ -26,6 +156,11 @@ let unitBlock=null;
 // the path it returns are byte-for-byte identical (verified by checksum equality).
 let _pfGen=0, _pfClosedGen=null, _pfOpenGen=null, _pfG=null, _pfH=null, _pfP=null, _pfS=null, _pfOpen=null, _pfF=null, _pfT=null, _pfCap=0, _pfWalkGen=null, _pfWalk=null; const _pfW=new Array(9), PF_TREE_AT=128;
 
+// A trade cart standing at its Market, trading (it neither dodges nor yields: walkable, makeWayFor in js/loop.js).
+function cartAtMarket(c){
+  let m=entitiesById.get(c.tradePhase==='toHome'?c.tradeHomeId:c.tradeDestId);
+  return !!m&&adjToBuilding(c.x,c.y,m);
+}
 function walkable(x,y,ignore,ignoreUnits){
   if(x<0||x>=MAP||y<0||y>=MAP)return false;
   // Stationary-unit collision (see rebuildUnitBlock above). ignoreUnits is
@@ -42,8 +177,8 @@ function walkable(x,y,ignore,ignoreUnits){
         let harvesting=walker&&walker.target===uid&&(blocker.utype==='sheep'||blocker.utype==='sheep_carcass');
         // Pushables (AoE2 soft-push): sheep yield to anyone; villagers and
         // IDLE soldiers yield to same-team traffic — the walker paths
-        // straight through and nudgeAside/separateUnits (js/loop.js) shove
-        // the blocker on contact. Fighting/moving/stand-ground soldiers
+        // straight through; villagers/carts dodge (makeWayFor) and
+        // separateUnits (js/loop.js) eases the rest aside on contact. Fighting/moving/stand-ground soldiers
         // hold ground (melee surround cap stays intact; a commanded army
         // is a wall) — but a PARKED idle soldier must not: an idle army
         // rallied at its own gate used to plug the single exit tile and
@@ -51,8 +186,10 @@ function walkable(x,y,ignore,ignoreUnits){
         // (repeatedly displaced recently — see isStubborn in loop.js)
         // stops yielding: paths route around it, breaking displacement
         // cycles.
-        let idleSoldier=MILITARY.has(blocker.utype)&&!blocker.target&&!blocker.task&&
-          blocker.path.length===0&&blocker.stance!=='standground';
+        // (A parked ram or a stopped trade cart too — not one trading at a Market, cartAtMarket: the dodge's own rule — one
+        // idling by a gate slowed the town's traffic through it threefold.)
+        let idleSoldier=(MILITARY.has(blocker.utype)||blocker.utype==='ram'||(blocker.utype==='tradecart'&&!cartAtMarket(blocker)))&&
+          !blocker.target&&!blocker.task&&blocker.path.length===0&&blocker.stance!=='standground';
         // A villager WORKING in place (farming/gathering/building) is pure
         // pass-through for same-side traffic, AoE2-style — never displaced,
         // never blocking, stubbornness irrelevant (it can't dance because
@@ -66,6 +203,11 @@ function walkable(x,y,ignore,ignoreUnits){
       }
     }
   }
+  return tilePassable(x,y,ignore);
+}
+// walkable() less the units standing about: the ground, buildings and gates as the walker (ignore's entity, or
+// `walker` given — the regions' stand-in for a team) finds them. Units only ever block MORE (walkable ⊆ this).
+function tilePassable(x,y,ignore,walkerGiven){
   let t=map[y][x];
   if(t.t===TERRAIN.FARM)return true;
 
@@ -111,7 +253,7 @@ function walkable(x,y,ignore,ignoreUnits){
   // calls walkable() for every neighbor of every expanded node (up to tens of
   // thousands of times per search), and most of those checks are against
   // plain open/already-passable tiles where this lookup would be wasted.
-  let walker=entitiesById.get(ignore);
+  let walker=walkerGiven!==undefined?walkerGiven:entitiesById.get(ignore);
   // AoE2: a resource (tree/gold/stone/berries) is SOLID — villagers gather it
   // from an ADJACENT tile, never by standing on it. (Farms are walkable ground
   // above; sheep are units with their own harvest exception.) This is what
@@ -185,6 +327,26 @@ function findPath(sx,sy,ex,ey,ignore,stopDist,goalBldg,claim,bestEffort){
       let maxR = isRes ? 1 : 20;
       for(let r=1;r<=maxR&&!found;r++)for(let dy=-r;dy<=r&&!found;dy++)for(let dx=-r;dx<=r;dx++){
         if(walkable(ex+dx,ey+dy,ignore)){ex+=dx;ey+=dy;found=true;break;}
+      }
+    }
+  }
+  // No route, known without searching: starting in a region smaller than the search budget, no goal tile in it. The
+  // search would exhaust that region (units in the way only shrink it) and return [] — so return it now. (A bigger
+  // region runs out of budget first and walks partway, as callers rely on; a builder's own site opens to it, and
+  // bestEffort wants the nearest reachable spot: those search in full.)
+  if(!bestEffort&&sx>=0&&sy>=0&&sx<MAP&&sy<MAP){
+    const w=ignore==null?null:entitiesById.get(ignore);
+    if(ignore==null||(w&&(w.type==='building'||!w.buildTarget))){
+      const R=regionsFor(w||null), sl=R.lab[sx+sy*MAP];
+      if(sl&&R.size[sl]<MAX_PATH_ITERS){
+        let reach=false;
+        if(!goalBldg&&!(sd>0)) reach=(ex===sx&&ey===sy)||R.lab[ex+ey*MAP]===sl;
+        else { const m=Math.ceil(sd>0?sd:1.2)+1;   // (every tile inGoal can accept: within reach of the footprint, or of the point)
+          const x0=goalBldg?goalBldg.x-m:Math.floor(ex)-m, x1=goalBldg?goalBldg.x+goalBldg.w-1+m:Math.ceil(ex)+m;
+          const y0=goalBldg?goalBldg.y-m:Math.floor(ey)-m, y1=goalBldg?goalBldg.y+goalBldg.h-1+m:Math.ceil(ey)+m;
+          for(let y=Math.max(0,y0);y<=Math.min(MAP-1,y1)&&!reach;y++)for(let x=Math.max(0,x0);x<=Math.min(MAP-1,x1);x++)
+            if(R.lab[x+y*MAP]===sl&&inGoal(x,y)){reach=true;break;} }
+        if(!reach)return [];
       }
     }
   }

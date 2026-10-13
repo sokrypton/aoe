@@ -45,6 +45,7 @@ function stampBuildingFootprint(e){
   for(let dy=0;dy<(e.h||1);dy++)for(let dx=0;dx<(e.w||1);dx++){
     if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=e.id;markMapDirty(e.x+dx,e.y+dy);}
   }
+  passabilityChangedAt(e.x,e.y,e.w||1,e.h||1);
 }
 function createBuilding(type,x,y,team,customW=null,customH=null){
   let b=BLDGS[type];
@@ -58,14 +59,14 @@ function createBuilding(type,x,y,team,customW=null,customH=null){
   // cards arrive get the same HP multipliers the apply() sweeps gave
   // existing ones.
   e.hp = e.maxHp = buildingMaxHpFor(team, type);
+  entities.push(e);
+  entitiesById.set(e.id, e);   // (registered BEFORE the stamp: the region mend reads the occupant — an unknown one is solid)
   stampBuildingFootprint(e);
   // Only the origin tile becomes actual harvestable farmland — the rest of
   // a >1x1 footprint (see FARM in core.js) is just occupied ground under
   // the tilled-plot art, matching AoE2 where a farm is one resource node
   // regardless of how large its visual plot is.
-  if(b.isFarm&&y<MAP&&x<MAP){map[y][x].t=TERRAIN.FARM;map[y][x].res=farmFoodFor(team);markMapDirty(x,y);}
-  entities.push(e);
-  entitiesById.set(e.id, e);
+  if(b.isFarm&&y<MAP&&x<MAP){map[y][x].t=TERRAIN.FARM;map[y][x].res=farmFoodFor(team);markMapDirty(x,y);passabilityChangedAt(x,y);}
   // No displacement here: this stamps a COMPLETE building by default, but the
   // gameplay foundation path flips it to complete=false right after, and a
   // foundation stays walkable until work starts (the build-gate clears the

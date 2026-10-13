@@ -198,6 +198,7 @@ function execCommand(cmd, team){
         let diff = AI_LEVELS[cmd.diff] ? cmd.diff : 'standard';
         teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
         if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
+        AI_STATES[cmd.t].squad = null;   // (a brain kept from before the seat went human: its field squad's ids are the player's units now)
         // Nobody is left to steer a unit the kicked player possessed.
         for (const u of entities) if (u.team === cmd.t && u.possessed) u.possessed = false;
         // Everyone should see this, not just the issuer (feedbackFor would
@@ -226,8 +227,7 @@ function execCommand(cmd, team){
       for (const u of entities) if (u.team === team && u.possessed) u.possessed = false;
       let u = entitiesById.get(cmd.unitId);
       if (cmd.on && u && u.type === 'unit' && u.team === team && u.hp > 0) {
-        u.possessed = true;
-        u.waveId = undefined; // out of any AI wave it was marching with
+        u.possessed = true;   // (out of its AI squad too: the squad drops possessed members)
       }
       break;
     }
@@ -361,7 +361,7 @@ function guardEligible(u){
 
 // THE free-seat count for a garrison container: seats already taken PLUS
 // riders already WALKING to board count against the cap — shared by the
-// player's ram-click boarding and the AI's wave rider planner, so the two
+// player's ram-click boarding and the AI squad's rider planner (aiBoardRams), so the two
 // can never double-book seats differently.
 function ramSeatsFree(container){
   let walkers = 0;
@@ -599,7 +599,7 @@ function execAutoScout(cmd, team){
   units.forEach(u => {
     if (on) {
       issueOrder(u, {kind:'scout'}); // replaces any standing order — exploring IS the new order
-      u.target = null; u.explicitAttack = false; u.task = null; clearUnitPath(u);
+      dropTarget(u); u.task = null;
     } else if (u.order && u.order.kind === 'scout') {
       // Toggle-off clears ONLY a scout order — never an unrelated order
       // issued between the two commands in the same input-delay window.
@@ -1006,9 +1006,9 @@ function commitBuildingPlacement(btype, plan, team, complete){
     // Instant, solid building (editor only — every gameplay caller passes
     // complete=false). The editor's canPlace(rejectUnits) already refuses to
     // place on an occupied tile, so the footprint is clear here: no shove.
-    bldg.complete = true;
+    bldg.complete = true; passabilityChangedAt(bldg.x, bldg.y, bldg.w, bldg.h);
   } else {
-    bldg.complete = false; bldg.buildProgress = 0;
+    bldg.complete = false; bldg.buildProgress = 0; passabilityChangedAt(bldg.x, bldg.y, bldg.w, bldg.h);
     bldg.hp = 1; // AoE2: foundations start at ~no HP and gain it as construction progresses
     // foundation: stays walkable; the build-gate clears the footprint gently
     // when a builder commits (clearFootprintForBuild) — no placement shove.
@@ -1213,7 +1213,7 @@ function applyStoneUpgrade(pieces, team){
     // villagers build it up, it cancels/refunds like any other, and (unbuilt)
     // its tile is a walkable gap in the wall line until construction begins.
     w.complete = false; w.buildProgress = 0; w.hp = 1;
-    markMapDirty(w.x, w.y);
+    markMapDirty(w.x, w.y); passabilityChangedAt(w.x, w.y, w.w, w.h);
   });
   feedbackFor(team, () => {
     let allTowers = pieces.every(p => p.btype === 'TOWER');
@@ -1240,7 +1240,7 @@ function execGateLock(cmd, team){
     .filter(g => g && g.type === 'building' && isGateBtype(g.btype) && g.team === team && g.complete && g.hp > 0);
   if (!gates.length) return;
   let locked = !!cmd.locked;
-  gates.forEach(g => { g.locked = locked; markMapDirty(g.x, g.y); });
+  gates.forEach(g => { g.locked = locked; markMapDirty(g.x, g.y); passabilityChangedAt(g.x, g.y, g.w, g.h); });
   feedbackFor(team, () => {
     showMsg((locked ? 'Gate locked' : 'Gate unlocked') + (gates.length > 1 ? ' ×' + gates.length : ''));
     if (window.playSound) playSound('click');

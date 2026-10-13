@@ -13,9 +13,10 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 |---|---|
 | `core.js` | constants (UNITS/BLDGS/AGES/AI_LEVELS), team model, sim PRNG + det-trig, per-team vision grids, market prices |
 | `logic.js` | the sim: updateUnit/updateBuilding, combat, gathering, garrison, trade carts, guard posts, stuck-watchdog |
-| `ai.js` | per-team AI (economy plan, walls, waves, retreat, militia) — see `docs/aoe2-ai-behavior.md` |
+| `wildlife.js` | the map's animals: sheep graze/wander, bear den/maul, dragon body/turn/breath |
+| `ai.js` | per-team AI (economy plan, walls, home + field squads, villager shelter, militia) — see `docs/aoe2-ai-behavior.md`, `docs/ai-redesign.md` |
 | `entities.js` | createUnit/createBuilding, footprint stamping |
-| `pathfinding.js` | A* (`findPath`, stopDist mode), movement stepping |
+| `pathfinding.js` | A* (`findPath`, stopDist mode), movement stepping, connectivity regions (`regionsFor`/`regionReaches`; mended in place by `passabilityChangedAt` after every passability change) |
 | `commands.js` | THE command executors — every player action goes through `submitCommand` → exec\* on all peers |
 | `input.js` | mouse/touch → command construction (viewer-side) |
 | `lockstep.js` | lockstep netcode: command scheduling, snapshot ring, rollback, resync/rejoin |

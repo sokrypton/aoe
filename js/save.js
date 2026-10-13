@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 9, // v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    version: 10, // v10: the field-squad AI (AI_STATES.squad; camp fields gone) + the exact visible-tile grids and nextProjectileId (a mid-tick-phase save reloads checksum-exact); v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -77,9 +77,9 @@ function serializeGame(){
     // rides lockstep snapshots, so a faithful snapshot must carry it too.
     // Without it a loaded save is NOT reproducible — the next simRandom()
     // draws from a fresh/stale cursor. matchSeed rides along for det-logging
-    // and as the seed of record. (nextProjectileId is derived from the saved
-    // projectiles in applySavedGame, so it needs no explicit field.)
+    // and as the seed of record.
     simRngState, matchSeed,
+    nextProjectileId,   // (hashed: deriving it from the arrows in flight restored a different counter)
     // The EXACT deterministic per-team explored grids (sim state, all
     // teams) — the loader's fog and every rejoining guest's fog rebuild
     // from these. RLE-encoded (v4). Skipped entirely when fog is disabled:
@@ -88,6 +88,12 @@ function serializeGame(){
     // load are equivalent (and identical on every loading peer).
     teamExploredGrids: (!window.fogDisabled && teamExploredGrid)
       ? teamExploredGrid.map(g => rleEncode(g)) : null,
+    // What each team sees right now (as of the last vision refresh — saves fall at any tick phase, between refreshes):
+    // rebuilding it at load from current positions gave a different grid until the next refresh, and every AI and
+    // auto-acquire read diverged from the game that was saved. Counts collapse to seen/unseen; the next refresh
+    // recounts from scratch.
+    teamVisibleGrids: (!window.fogDisabled && teamVisGrid)
+      ? teamVisGrid.map(g => rleEncode(Uint8Array.from(g, v => v > 0 ? 1 : 0))) : null,
     // Corpses decay by age (ms) measured against
     // performance.now() (see render.js/render-units.js), which restarts
     // near 0 every page load — saving deathTime as-is would make every
@@ -224,13 +230,13 @@ function applySavedGame(data, opts){
     if (window.showMsg) showMsg('Load failed: not a recognized save file');
     return;
   }
-  // serializeGame stamps version:8 — actually check it (the net layer's
+  // serializeGame stamps the version — actually check it (the net layer's
   // NET_PROTOCOL_VERSION exists for the same reason), so a format change
   // fails loudly here instead of misloading silently. v8 (AI intel-memory
   // shape + parity sim semantics) deliberately drops older versions — no
   // back-compat shims, per convention.
-  if (data.version !== 9) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v9 saves only');
+  if (data.version !== 10) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v10 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,
@@ -292,6 +298,12 @@ function applySavedGame(data, opts){
     if (Array.isArray(data.teamExploredGrids)) {
       teamExploredGrid = data.teamExploredGrids.map(g => Uint8Array.from(rleDecode(g, MAP * MAP)));
     }
+    // The visible grids as saved: kept until the next phase-anchored refresh, which recounts from scratch
+    const visRestored = Array.isArray(data.teamVisibleGrids);
+    if (visRestored) {
+      teamVisGrid = data.teamVisibleGrids.map(g => Int32Array.from(rleDecode(g, MAP * MAP)));
+      visionFreshTick = data.tick; visionRebuild = true;
+    }
     // null grids = the save was taken with fog disabled: teamHasExplored
     // short-circuits to true there, so resetTeamVision's fresh zero grids
     // (identical on every loading peer) are a faithful restore.
@@ -315,7 +327,7 @@ function applySavedGame(data, opts){
     projectiles = data.projectiles || [];
     // Keep new projectile ids above the loaded ones — the guest's sync-merge
     // dedupes projectiles by id, so a collision would drop a real arrow.
-    nextProjectileId = projectiles.reduce((m,p)=>Math.max(m,p.id||0), 0) + 1;
+    nextProjectileId = data.nextProjectileId;
     particles = [];
 
     entities = data.entities;
@@ -441,7 +453,7 @@ function applySavedGame(data, opts){
 
     if (window.updateBottomHeight) updateBottomHeight();
     if (typeof refreshPopulationCounts === 'function') refreshPopulationCounts();
-    updateTeamVision(); // build the per-team visibility grid before updateFog reads it (post-load cold start)
+    if (!visRestored) updateTeamVision(); // (fog-off save: nothing to restore — build it cold before updateFog reads it)
     updateFog();
     updateUI();
 

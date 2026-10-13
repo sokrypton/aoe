@@ -457,6 +457,7 @@
   const own = geo => { geo.userData.own = true; return geo; };
   function dropSolid(rec){
     if (rec.trainees) for (const t of rec.trainees) dropVillager(t);
+    if (rec.roof) for (const t of rec.roof) dropVillager(t);
     scene.remove(rec.obj);
     rec.obj.traverse(o => {
       if (o.userData.siteOwn) [].concat(o.material).forEach(m => m.dispose());
@@ -924,19 +925,24 @@
   // loop() as the art's travelling wave (aTick; viewer-only). s: the building's art scale (the TC's k), cloth included.
   function flag(g, x, z, y0, h, col, s = 1){
     const poleH = h != null ? h : 22 / HPX;
-    pole(g, '#1c1208', [x, y0, z], [x, y0 + poleH, z], 0.012, 'line').name = 'flagPole'; // thin, as the art's 1.5px stroke
-    const knob = inked(own(new THREE.SphereGeometry(0.03 * s, 8, 6)), mat('#1c1208'), x, y0 + poleH + 0.02 * s, z, 1, 1, 1, 30); knob.name = 'flagPole'; g.add(knob);
+    // a wooden staff and a gilt finial, hull-outlined (the cloth below gets a thin black frame of its own)
+    pole(g, WOOD.post, [x, y0, z], [x, y0 + poleH, z], 0.014 * s).name = 'flagPole';
+    const knob = blob(g, GOLD, x, y0 + poleH + 0.024 * s, z, 0.03 * s); knob.name = 'flagPole';
     const L = 17 * s / PX, Hf = 8.5 * s / HPX, geo = own(new THREE.PlaneGeometry(L, Hf, 8, 1).translate(L / 2, -Hf / 2, 0));
     geo.userData.rest = Float32Array.from(geo.attributes.position.array);
     const f = new THREE.Mesh(geo, mat(col, true));
     f.position.set(x, y0 + poleH - 0.01, z); f.rotation.y = -3 * Math.PI / 4;
     f.name = 'flag'; f.userData.len = L; f.userData.s = s; g.add(f);
-    // Its ink border shares the cloth's vertices, so it waves with it.
-    const nx = 9, rim = [];
-    for (let i = 0; i < nx - 1; i++) rim.push(i, i + 1, nx + i, nx + i + 1);
-    rim.push(0, nx, nx - 1, 2 * nx - 1);
-    const edge = own(new THREE.BufferGeometry()); edge.setAttribute('position', geo.attributes.position); edge.setIndex(rim);
-    f.add(new THREE.LineSegments(edge, ink));
+    // Its outline: a thin black frame round the cloth's edge, in its plane (no overlap, so no depth fight from either
+    // side), waving with it (named 'flag' too: the same wave, the same length)
+    const m = HULL * 0.3, pts = [], idx = [], strip = (x0, x1, y0, y1, n) => { const b = pts.length / 3;
+      for (let a = 0; a <= n; a++) { const xx = x0 + (x1 - x0) * a / n; pts.push(xx, y0, 0, xx, y1, 0); }
+      for (let a = 0; a < n; a++) { const q = b + 2 * a; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); } };
+    strip(-m, L + m, m, 0, 8); strip(-m, L + m, -Hf, -Hf - m, 8); strip(-m, 0, 0, -Hf, 1); strip(L, L + m, 0, -Hf, 1);
+    const bg = own(new THREE.BufferGeometry()); bg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); bg.setIndex(idx);
+    bg.userData.rest = Float32Array.from(pts);
+    const back = new THREE.Mesh(bg, mat('#000000', true));
+    back.name = 'flag'; back.userData.len = L; back.userData.s = s; f.add(back);
   }
 
 
@@ -1010,7 +1016,7 @@
     TC(g, e){
       const a = ageOf(e), W = e.w || 4, k = W / 3, x = e.x, z = e.y, mid = W / 2, tc = teamColor(e.team);
       const keepH = 60 * k / HPX, hK = 28 * k / HPX, hO = 18 * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
-      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : '#ded5c2|stone', kT = wood ? '#c8a878' : '#ece4d2';
+      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
       const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2;
       // The keep, with a real parapet: a floor recessed rimD below the rim top
       // (the art's inset roof), walled by four low parapet walls.
@@ -1039,6 +1045,8 @@
       const run = W - mid, under = d => hK + (hO - hK) * d / run - fas * Math.hypot(run, hK - hO) / run;
       for (const [px, pz] of [[x + W - 0.12, z + 0.12], [x + W - 0.12, z + mid - 0.12]]) post(g, px, pz, under(px - x - mid), WOOD.post, 0.06);
       for (const [px, pz] of [[x + 0.12, z + W - 0.12], [x + mid - 0.12, z + W - 0.12]]) post(g, px, pz, under(pz - z - mid), WOOD.post, 0.06);
+      // the keep floor the garrisoned villagers stand on (roofArchers: where, render-units' roofCrew)
+      g.userData.roof = ROOF_REST.map(() => ({ y: F }));
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).
       if (e.complete) flag(g, x + mid / 2, z + mid / 2, F, a >= 2 ? keepH + 28 * k / HPX - F : 42 * k / HPX, tc, k);
     },
@@ -1525,6 +1533,7 @@
     let S = arrowStart.get(p);
     if (!S) { const b = entitiesById.get(p.attackerId);
       S = b && b.type === 'building' ? [Math.max(b.x - 0.5, Math.min(b.x + b.w - 0.5, p.tx)), Math.max(b.y - 0.5, Math.min(b.y + b.h - 0.5, p.ty))] : [p.startX, p.startY];
+      const R = roofShot(p); if (R) S = [R.x, R.y, R.h];   // a garrisoned TC: from its roof crew's bows
       arrowStart.set(p, S); }
     return S;
   }
@@ -1542,7 +1551,7 @@
       // drawn from where it's loosed: a building's arrow leaves its EDGE facing the target (the sim flies it from the
       // footprint's centre — out of the middle of a TC roof); same progress, same landing
       const from = arrowFrom(p), x = from[0] + (p.tx - from[0]) * prog, y = from[1] + (p.ty - from[1]) * prog;
-      const sH = p.startH || 12, eH = 8, A = ARROW_ARC * D;
+      const sH = from[2] || p.startH || 12, eH = 8, A = ARROW_ARC * D;
       const h = (sH + (eH - sH) * prog + Math.sin(prog * Math.PI) * A) / HPX;
       // Flight tangent: ground run over the whole flight, and d(height)/d(progress).
       const gdx = p.tx - from[0], gdy = p.ty - from[1];
@@ -1932,7 +1941,32 @@
     tunic: [[0, -0.4], [4.2, -0.45], [4.95, -0.65], [5.3, -1.1], [5.1, -2.8], [4.8, -6], [4, -9.2], [2.3, -11.1], [1.4, -12], [0, -12.2]],  // the hem rolls under softly: an even outline, no thick band
   };
   let armProbe = null;
-  const ARM_U = 5.2, ARM_F = 5.2; // art px: upper arm, forearm — every pose keeps the hand's reach within their sum
+  // The LEGO clip hand: a C open at +x around the z axis; its band is rb thick, hzT tall on the thumb jaw, hzF on the
+  // fingers' jaw (fs: +1 = the +y side), blending round the closed back; the jaw tips rounded off. The thumb sits at the
+  // +z end of the fist (a fist's thumb and index lead; +z: the hold's dir, toward the tool's head)
+  function clipGeo(R, rb, hzT, hzF, fs){
+    const gap = Math.PI * 0.5, NA = 18, NS = 8, pos = [], idx = [], sq = (c, e) => Math.sign(c) * Math.pow(Math.abs(c), e);
+    for (let i = 0; i <= NA; i++) { const u = i / NA, th = gap / 2 + u * (2 * Math.PI - gap), c = Math.cos(th), sn = Math.sin(th);
+      const t = Math.max(0, Math.min(1, (fs * sn + 0.5) / 1)), hz = hzT + (hzF - hzT) * t * t * (3 - 2 * t);
+      const e = Math.min(u, 1 - u) * NA / 3, tip = e >= 1 ? 1 : Math.sqrt(Math.max(0, 1 - (1 - e) * (1 - e)));   // the last 3 rings close the jaw
+      const zc = (1 - t * t * (3 - 2 * t)) * (hzF - hzT) * 0.85;   // the thumb's jaw up at the fist's leading end
+      for (let j = 0; j <= NS; j++) { const ph = j / NS * 2 * Math.PI, rr = R + rb * tip * sq(Math.cos(ph), 0.7), z = zc + hz * tip * sq(Math.sin(ph), 0.7);
+        pos.push(rr * c, rr * sn, z); } }
+    for (let i = 0; i < NA; i++) for (let j = 0; j < NS; j++) { const a = i * (NS + 1) + j, b = a + NS + 1; idx.push(a, b, a + 1, b, b + 1, a + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+  }
+  // A LEGO hand on point H: a C-clip open away from the wrist (endM: where the forearm ends); holding something, its
+  // hole is on the grip and along the item (gax), else upright. side: which hand (the fingers' jaw mirrors left/right).
+  function legoHand(U, H, B, gax, endM, side){
+    const v = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], nz = a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); };
+    const f = nz(v(H, B)), up = [0.6, 0.8, 0], fu = up[0] * f[0] + up[1] * f[1] + up[2] * f[2], uu = nz(v(up, f.map(x => x * fu)));
+    const r = ar(1.4), R = r * 0.92, X = new THREE.Vector3(...nz(v(H, endM))), Z = new THREE.Vector3(...(gax || uu));
+    const Y = new THREE.Vector3().crossVectors(Z, X).normalize(); X.crossVectors(Y, Z);
+    // the fingers' jaw by the hand, never by the pose: a swing turning the clip can't swap the thumb over
+    const geo = own(clipGeo(R, r * 0.36, r * 0.42, r * 1.05, -side)), m = new THREE.Mesh(geo, mat(SKIN));
+    m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z)); m.position.set(...H); m.userData.hullGeo = geo; U.add(m);
+  }
+  const ARM_U = 4.9, ARM_F = 4.6; // art px: upper arm, forearm — every pose keeps the hand's reach within their sum
   function human(g, tc, o = {}){
     const Y = o.y || 0; // lift (a rider sits on the horse)
     const P = (x, y, z = 0) => [ax(x), chh(y) + Y, ar(z)];
@@ -1997,26 +2031,53 @@
       const shA = [0, -8, s * (o.dress ? 3.4 : 3.9)], hand = local((o.hands && o.hands[s > 0 ? 1 : 0]) || [1, -2.4, s * 5.6]);
       if (o.dress && hand[0] < 3.5 && hand[1] > -9 && s * hand[2] > 0) hand[2] = s * Math.max(s * hand[2], 6.7); // hands at her sides hang clear of the skirt
       // The elbow (two-bone IK): where the two lengths meet, bent toward the pole —
-      // back and out, a little down; a hand reaching across the body blends it
+      // out and down, a little back (clear of the torso); a hand reaching across the body blends it
       // forward, so the arm wraps round the chest (continuous: no flicker). o.elbows overrides.
-      let E = o.elbows && local(o.elbows[s > 0 ? 1 : 0]);
+      const eo = o.elbows && o.elbows[s > 0 ? 1 : 0]; let E = eo && local(eo);   // (an entry may be null: that arm's elbow solved)
       if (E && o.dress) E[2] += s * 1.2;
       const D = hand.map((v, i) => v - shA[i]), d = Math.hypot(...D), n = D.map(v => v / d);
       if (!E) {
-        const cross = Math.max(0, Math.min(1, (1.5 - s * hand[2]) / 5)), pole = [-0.55 + 1.75 * cross, 0.25, s * (1 - 0.6 * cross)], pd = pole[0] * n[0] + pole[1] * n[1] + pole[2] * n[2];
+        const cross = Math.max(0, Math.min(1, (1.5 - s * hand[2]) / 5)), pole = [-0.35 + 1.4 * cross, 0.5, s * (1.6 - 0.7 * cross)], pd = pole[0] * n[0] + pole[1] * n[1] + pole[2] * n[2];
         const q = pole.map((v, i) => v - pd * n[i]), qL = Math.hypot(...q) || 1;
         // a near hand shortens the arm a little (cartoon give) so it keeps a soft bend, never a folded one
         const Lu = Math.min(ARM_U, Math.max(3.2, d * 0.56)), a = Math.min(d, d / 2), h = Math.sqrt(Math.max(0, Lu * Lu - a * a));
         E = shA.map((v, i) => v + n[i] * a + q[i] / qL * h);
       }
-      const bend = E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2);    // the hose passes through the elbow
+      let bend = E.map((v, i) => 2 * v - (shA[i] + hand[i]) / 2);    // the hose passes through the elbow
       if (armProbe) armProbe.push({ s, ctl: [shA, bend, hand], d, dress: !!o.dress });   // dev: __povArmCheck
       const a0 = U.children.length;
-      tube(U, SKIN, P(...shA), P(...bend), P(...hand), ar(1.05));
+      // A hand on one of o.holds (lines the hands grip: { at: art point | atM: model point, dir: model dir, open?: model dir
+      // the clip opens to, hand?: 0 | 1 | [0, 1] — the hands the pose puts on it, always snapped; else any hand near it })
+      // snaps onto it, the clip's hole along it. The forearm runs into the clip's back (as thick as it): one piece, no seam.
+      let gax = null, Hm = P(...hand), endM = Hm;
+      { let best = null; const B = P(...bend), RH = ar(1.4);
+        for (const h of o.holds || []) { const mine = h.hand == null ? null : [].concat(h.hand).includes(s > 0 ? 1 : 0); if (mine === false) continue;
+          const Lp = h.atM ? (U === g ? h.atM : V3(h.atM).applyMatrix4(toU).toArray()) : P(...local(h.at)), d = V3(h.dir).transformDirection(toU).toArray(), k = Hm.reduce((a, v, i) => a + (v - Lp[i]) * d[i], 0);
+          const c = Lp.map((v, i) => v + d[i] * k), dist = Math.hypot(...c.map((v, i) => v - Hm[i]));
+          if ((mine || dist < ar(2.6)) && (!best || dist < best.dist)) best = { c, d, dist, open: h.open, h }; }
+        let wf;   // the wrist's way out: from the forearm's end toward the ring's centre
+        if (best && best.h.roll) { gax = best.d; Hm = best.c;   // a fist fixed round its handle: its back's side turns with the tool
+          const R = best.h.roll[s > 0 ? 1 : 0], d = V3(best.h.dir).normalize(), e = V3(best.h.edge), n = new THREE.Vector3();
+          e.addScaledVector(d, -e.dot(d)).normalize(); n.crossVectors(d, e);
+          wf = e.multiplyScalar(R[0]).addScaledVector(n, R[1]).transformDirection(toU).toArray(); }
+        else if (best) { gax = best.d; Hm = best.c;
+          const fw = best.open ? V3(best.open).transformDirection(toU).toArray() : Hm.map((v, i) => v - B[i]), fd = fw.reduce((a, v, i) => a + v * gax[i], 0);
+          // a grip along the forearm leaves the wrist's side unsteady: a constant lean (the wrist below the grip) keeps it
+          // continuous — a switch to a fallback side flips the hand between frames
+          const fwl = Math.hypot(...fw), up = [0, 1, 0].map((v, i) => v - gax[1] * gax[i]);
+          const fp = fw.map((v, i) => v - fd * gax[i] + 0.35 * fwl * up[i]), fl = Math.hypot(...fp) || 1; wf = fp.map(v => v / fl); }
+        else { const d = Hm.map((v, i) => v - B[i]), l = Math.hypot(...d) || 1; wf = d.map(v => v / l); } // (an empty hand: the ring on the hand point, as a holding one — arms keep the pose's length)
+        endM = Hm.map((v, i) => v - wf[i] * RH * 1.2);   // (its round end sunk into the clip's back: one piece; a handle hides the overlap)
+        if (best && best.h.roll) { // a fist fixed on its handle: the elbow drawn back along the wrist's line, so the forearm runs straight into it
+          const k = UNIT_SCALE / PX, wr = [endM[0] / k, 5 - (endM[1] - Y) * HPX / UNIT_SCALE, endM[2] / k], wa = [wf[0] / k, -wf[1] * HPX / UNIT_SCALE, wf[2] / k], wl = Math.hypot(...wa) || 1;
+          const E2 = E.map((v, i) => v + (wr[i] - wa[i] / wl * ARM_F * 0.8 - v) * 0.4);
+          bend = E2.map((v, i) => 2 * v - (shA[i] + wr[i]) / 2); } }
+      tube(U, SKIN, P(...shA), P(...bend), endM, ar(1.05));
       tube(U, tc, P(...shA), P(...bend), P(...hand), ar(1.45), 0, 0.22);    // the puffy sleeve: the tube's first stretch
       // first person shows the forearm: the arm folds into its elbow, the shoulder cap and the sleeve go (tube = [tube, start cap, end cap])
       U.children[a0].userData.fpForearm = true; for (const i of [1, 3, 4, 5]) fpTag(U.children[a0 + i], 0, true);
-      blob(U, SKIN, ...P(...hand), ar(1.3));                                   // the hand
+      legoHand(U, Hm, P(...bend), gax, endM, s);
+      if (o.swingArm === s) for (const c of U.children.slice(a0)) c.traverse(q => { q.userData.fpSwing = true; });   // first person: this arm alone swings (rigPose)
     }
     const hat = o.hat; hn = H.children.length;
     if (hat === 'hair') blob(H, HAIR, ...P(-0.6, -15.6), ar(3.9), ar(3.2), ar(4.1));
@@ -2049,6 +2110,32 @@
     }
     if (o.plume) blob(H, teamColorLight ? teamColorLight(myTeam) : tc, ...P(-1.5, -20), ar(1.2), ar(4.5), ar(1));
     fpTag(H, hn);
+  }
+  // The lines a soldier's hands grip (human's o.holds): the weapon's shaft, the bow's stave and the arrow at the string,
+  // the shield's bar (the clip opening toward the shield)
+  function soldierHolds(p, eq, bar, riding = false, poseFn = null, key = ''){   // poseFn(t), key: the action's pose over its cycle (a fixed grip)
+    const hs = [];
+    if (p.weapon) { // the weapon hand on its shaft; the other too when the pose puts it on the shaft (a spear's front hand)
+      const w = V3(at(...p.weapon.hand)), d = V3(p.weapon.dir).normalize(), o = V3(at(...p.hands[0])).sub(w), off = o.addScaledVector(d, -o.dot(d)).length();
+      const two = off < ar(1.5), e = p.weapon.edge;   // a blade: the fist fixed round its grip through the swing (gripRoll)
+      hs.push({ at: p.weapon.hand, dir: p.weapon.dir, hand: two ? [0, 1] : 1,
+        ...(e && poseFn && { edge: e, roll: gripRoll(key + two, t => { const q = poseFn(t); return { hands: q.hands, grip: q.weapon.hand, dir: q.weapon.dir, edge: q.weapon.edge || e }; }, two) }) }); }
+    if (p.bow) { hs.push({ at: p.bow.grip, dir: [0, 1, 0], hand: 0 });   // the bow hand on the stave; the string hand on the arrow, while it holds one
+      const g = at(...p.bow.grip), q = at(...p.bow.pull); if (p.bow.arrow || p.bow.fetched) hs.push({ at: p.bow.pull, dir: g.map((v, i) => v - q[i]), hand: 1 }); }
+    if (bar && p.shieldHand) hs.push({ at: p.shieldHand, dir: [0, 1, 0], open: shieldFace(eq.shield, riding) });
+    return hs;
+  }
+  // which way a held shield faces (model): a footman's forward, a rider's out over the horse's left flank
+  const shieldFace = (kind, riding) => riding ? [Math.sin(RIDER_SHIELD_TURN), 0, -Math.cos(RIDER_SHIELD_TURN)] : kind === 'round' ? [1, 0, 0] : [Math.cos(0.3), 0, Math.sin(0.3)];
+  // A shield hung from the bar its hand grips: the bar on the hand point H (model), the face toward F, two pegs to the boards
+  function barShield(g, kind, H, F, tc){
+    const round = kind === 'round', d = ar(round ? 2.1 : 1.6), y0 = round ? 0 : ar(0.5), k = round ? 0 : 2;
+    const sh = round ? roundShield(g, [H[0] + F[0] * d, H[1] - y0, H[2] + F[2] * d], tc) : kiteShield(g, [H[0] + F[0] * d, H[1] - y0, H[2] + F[2] * d], tc);
+    sh.rotation.y = round ? Math.atan2(-F[2], F[0]) : Math.atan2(F[0], F[2]);                      // (round faces its +x, the kite its +z)
+    const pt = (y, z) => [0, y0 + y, 0].map((v, i) => i === k ? z : v);
+    for (const y of [-1.9, 1.9]) pole(sh, '#5c3d24', pt(ar(y), -d), pt(ar(y), -d * 0.15), ar(0.45));
+    pole(sh, '#5c3d24', pt(-ar(2.2), -d), pt(ar(2.2), -d), ar(0.7));
+    return sh;
   }
   // The 2D sword in the round: a flat blade (parallel edges tapering to a
   // point), a flat gold crossguard in the blade's own plane, a leather grip,
@@ -2119,6 +2206,7 @@
     const head = new THREE.Group(); head.position.set(...H(10, -14)); head.rotation.z = -0.55 - (pose.nod || 0); poll.add(head); // the long head, nose down (nodding with the gait)
     blob(head, coat, r(2.8), 0, 0, r(4), r(2.3), r(2.2)).userData.body = 'horsehead'; // a big cartoon head
     blob(head, muzzle, r(5.9), -r(0.2), 0, r(1.8), r(1.9), r(1.9));                // lighter muzzle
+    if (pose.bridle) { const nb = own(new THREE.TorusGeometry(r(1.95), r(0.32), 6, 18).rotateY(Math.PI / 2)), m = new THREE.Mesh(nb, mat(REIN)); m.position.set(r(5.3), -r(0.2), 0); m.userData.hullGeo = nb; head.add(m); } // the noseband the reins hang from
     eyes(head, r(1.9), r(0.7), 0, r(1.6), r(1.6), r(2.2), 0.2, 0.4, 0.9, r(0.5));
     for (const s of [-1, 1]) { const e = blob(head, coat, -r(0.4), r(2.1), s * r(0.9), r(0.55), r(1.4), r(0.4)); e.rotation.z = -0.3; } // leaf ears
     tube(N, mane, H(3.6, -9.5), H(7.6, -13.6), H(9.4, -15.8), r(0.95));               // mane along the crest
@@ -2136,10 +2224,10 @@
   function rider(tc, hat, shield, pose){
     const r = new THREE.Group(), strike = pose === 'strike';
     const hand = strike ? [9, -9, 6.5] : [6.5, -7, 6];
-    const off = shield ? [1.5, -6.5, -7.8] : [4.5, -6, -2.5];                     // shield grip, or the reins
+    const off = shield ? RIDER_SHIELD : [4.5, -6, -2.5];                         // shield grip, or the reins
     human(r, tc, { hat, riding: 1, hands: [off, hand] });
     sword(r, at(...hand), 0, strike ? [0.93, -0.3, 0.2] : [0.5, 0.84, 0.2]);
-    if (shield) kiteShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI - 0.35;           // face mostly outward, a little forward
+    if (shield) { const s = shieldOf({ shieldHand: off }, 'kite', true); kiteShield(r, at(...s.c), tc).rotation.y = s.th; }   // up and forward on the left
     r.position.set(ax(-0.8), (20 - 6) * UNIT_SCALE / PX, 0);
     return r;
   }
@@ -2346,6 +2434,26 @@
       }
     return L;
   }
+  // A fist keeps its place round a handle (only the wrist bends, it never rolls round the grip): the side its back
+  // faces, in the tool's own frame (dir, edge), fixed per action and hand. The two wrists sit either side of the handle
+  // (side to side, not one over the other): the arms' mean reach turned ±80° round the handle, each out to its own side
+  const gripRolls = new Map();
+  function gripRoll(key, pose, pair = true){   // pair false: one hand on it, its wrist toward the arm's mean reach
+    let r = gripRolls.get(key); if (r) return r;
+    const d = new THREE.Vector3(), e = new THREE.Vector3(), n = new THREE.Vector3(), arm = new THREE.Vector3();
+    let a = 0, b = 0, ez = 0, nz = 0;
+    for (let i = 0; i < 16; i++) { const P = pose(i / 16);
+      d.set(...P.dir).normalize(); e.set(...P.edge); e.addScaledVector(d, -e.dot(d)).normalize(); n.crossVectors(d, e); ez += e.z; nz += n.z;
+      for (const hi of [0, 1]) { const h = P.hands[hi]; arm.set(h[0], -(h[1] + 8) * PX / HPX, h[2] - (hi ? 3.9 : -3.9)).normalize(); a += arm.dot(e); b += arm.dot(n); } }   // shoulder → hand (art → model axes)
+    const th = Math.atan2(b, a), A = pair ? 80 * Math.PI / 180 : 0, side = q => Math.cos(q) * ez + Math.sin(q) * nz;   // (side: + = the right hand's, +z)
+    const p = th + A, m = th - A, [left, right] = side(p) >= side(m) ? [p, m] : [m, p];   // (the wrist's way out points back toward its arm: the right fist's wrist on the left of the handle keeps the arms uncrossed)
+    r = [[Math.cos(left), Math.sin(left)], [Math.cos(right), Math.sin(right)]];
+    gripRolls.set(key, r); return r;
+  }
+  // a handle's grip end (rig px), back far enough to run through the fist; barrowHandle: that point in the pusher's
+  // body frame (animFrame sets the rig at x 4.7 art px, half the body's bob up, ×1.25)
+  const BARROW_H0 = [0.3, 9.62, 3.21];
+  const barrowHandle = (z, bodyY) => { const K = v => v * UNIT_SCALE / PX; return [ax(4.7) + 1.25 * K(BARROW_H0[0]), bodyY * 0.5 + 1.25 * K(BARROW_H0[1]) - bodyY, z * 1.25 * K(BARROW_H0[2])]; };
   // The Wheelbarrow / Heavy Plow rig (render-units' barrowRig2D draws it in 2D): handles from the
   // villager's hands (9.2px up, ±3.1) forward to a wheel 22px ahead. The barrow
   // carries a wooden tray and the load in it; the plow swaps the tray for a
@@ -2353,7 +2461,7 @@
   function barrowRig(g, kind, what){
     const b = new THREE.Group(), K = v => v * UNIT_SCALE / PX, wood = WOOD.plankL + '|planks'; g.add(b);
     b.scale.setScalar(1.25); b.position.x = K(1.8) * (1 - 1.25); // cartoon-big, scaled about the ground under the grips (the grips rise to 11.5)
-    for (const z of [-1, 1]) pole(b, WOOD.beam, [K(1.8), K(9.2), z * K(3.1)], [K(22), K(3.6), z * K(1.6)], K(0.6)); // handles running to the axle ends, either side of the wheel
+    for (const z of [-1, 1]) pole(b, WOOD.beam, [K(BARROW_H0[0]), K(BARROW_H0[1]), z * K(BARROW_H0[2])], [K(22), K(3.6), z * K(1.6)], K(0.6)); // handles running to the axle ends, either side of the wheel
     wheel(b, K(22), K(3.6), 0, K(3.6), K(1.5), '#5a4630', '#74593a').userData.hullW = HULL * 0.45;         // a light outline on the wheel
     for (const z of [-1, 1]) delete wheel(b, K(22), K(3.6), z * K(0.9), K(1.1), K(0.4), '#3a2c1c', '#3a2c1c').userData.hullGeo; // hub caps
     pole(b, WOOD.beam, [K(22), K(3.6), -K(1.9)], [K(22), K(3.6), K(1.9)], K(0.5));                              // axle through the wheel, into both handles
@@ -2388,7 +2496,7 @@
   }
   const pusher = (tc, kind, what) => { // hands on the grips, pushing
     const g = new THREE.Group();
-    human(g, tc, { hat: 'hair', hands: [[6.5, -6.5, -3.9], [6.5, -6.5, 3.9]] });
+    human(g, tc, { hat: 'hair', hands: [[6.5, -6.5, -3.9], [6.5, -6.5, 3.9]], holds: [-1, 1].map((z, i) => ({ atM: barrowHandle(z, 0), dir: [20.2, -5.6, -z * 1.5], hand: i })) });
     barrowRig(g, kind, what).position.x = ax(4.7); return g;
   };
   // The Bow Saw (replaces the axe for chopping): a bowed wooden frame arching
@@ -2417,9 +2525,11 @@
   };
   // Each load's half-height (art px, at the carried 1.5× size): it sits on the head's top (−18) or the ground by this.
   // (LOAD_SIT, CARRY_HANDS: render-units — the carry is shared with the 2D)
+  // the load held up on the palms: each fist open up into it, thumbs in toward each other
+  const CARRY_HOLDS = CARRY_HANDS.map((h, i) => ({ at: h, dir: [0, 0, -Math.sign(h[2])], open: [0, 1, 0], hand: i }));
   const carrier = (tc, what) => { // the load resting on the head, hands up steadying it at the sides
     const g = new THREE.Group(), hs = CARRY_HANDS;
-    human(g, tc, { hat: 'hair', hands: hs });
+    human(g, tc, { hat: 'hair', hands: hs, holds: CARRY_HOLDS });
     load(g, what, at(0.3, -21.2)); return g;
   };
   // ---- Animation mock-up: poses from a phase t in [0,1) ----
@@ -2588,11 +2698,11 @@
   }
   // One posed foot soldier (lab + game). Death uses the villager's staged fall,
   // the weapon (and shield) dropped beside the body.
-  function soldierFrame(g, body, ut, kind, t, eq, tc, opt){
+  function soldierFrame(g, body, ut, kind, t, eq, tc, opt, who){   // eq.civ: a villager with the soldier's weapon (who: its hair and dress)
     const hat = eq.helmet === 'hood' ? 'hood' : eq.helmet;
     // the plume flutters: swaying at rest, streaming back on the march, whipping as the arrow's loosed
     const fl = kind === 'walk' ? [0.45 + 0.15 * Math.sin(4 * Math.PI * t), 0.25 * Math.sin(2 * Math.PI * t)] : kind === 'attack' && t > 0.75 ? [0.2 + 0.45 * Math.exp(-(t - 0.75) * 12) * Math.sin((t - 0.75) * 60), 0.3 * Math.sin((t - 0.75) * 40)] : [0.14 * Math.sin(4 * Math.PI * t), 0.2 * Math.sin(2 * Math.PI * t + 1)];
-    const dress = { hat, armor: eq.torso, metal: eq.metal, feather: eq.feather, flutter: fl };
+    const dress = eq.civ ? { ...who } : { hat, armor: eq.torso, metal: eq.metal, feather: eq.feather, flutter: fl };
     if (kind === 'die') {
       const age = t * DIE_LAB.life, { skel, life } = DIE_LAB;
       const tg = new THREE.Group(); tg.userData.fade = age < skel ? 1 : Math.max(0, Math.min(1, (life - age) / 1500)); g.add(tg);
@@ -2608,10 +2718,12 @@
     }
     const p = SOLDIER_POSE[ut](kind, t, eq);
     if (p.bob) body.position.y = p.bob * UNIT_SCALE / PX;
-    human(body, tc, { ...dress, hands: p.hands, torso: p.torso, headYaw: p.headYaw, feet: p.feet });
-    if (ut === 'militia') { weaponTag(body, () => sword(body, at(...p.weapon.hand), eq.weapon, p.weapon.dir, p.weapon.edge));
-      if (eq.shield === 'round') weaponTag(body, () => roundShield(body, at(p.shieldHand[0] + 1.2, p.shieldHand[1], p.shieldHand[2] - 0.5), tc));
-      if (eq.shield === 'kite') weaponTag(body, () => kiteShield(body, at(p.shieldHand[0] + 1.4, p.shieldHand[1] + 1, p.shieldHand[2] + 0.4), tc)).rotation.y = Math.PI / 2 - 0.3; } // its face (the cross, +z) turned forward
+    const swingArm = ut === 'militia' && eq.shield ? 1 : 0;   // first person: with a shield up, only the sword arm swings
+    const barShieldOn = ut === 'militia' && eq.shield;   // (the shield hangs from a bar the clip holds)
+    human(body, tc, { ...dress, hands: p.hands, elbows: p.elbows, torso: p.torso, headYaw: p.headYaw, feet: p.feet, swingArm, holds: soldierHolds(p, eq, barShieldOn, false, kind === 'attack' && ut === 'militia' ? q => SOLDIER_POSE[ut](kind, q, eq) : null, ut + kind + !!eq.shield) });
+    if (ut === 'militia') { const n0 = body.children.length; weaponTag(body, () => sword(body, at(...p.weapon.hand), eq.weapon, p.weapon.dir, p.weapon.edge));
+      if (swingArm) for (const c of body.children.slice(n0)) c.traverse(q => { q.userData.fpSwing = true; });
+      if (barShieldOn) weaponTag(body, () => barShield(body, eq.shield, at(...p.shieldHand), shieldFace(eq.shield), tc)); }
     if (ut === 'spearman') weaponTag(body, () => spearAt(body, at(...p.weapon.hand), p.weapon.dir, eq.metal));
     if (ut === 'archer') { const b = weaponTag(body, () => drawnBow(body, at(...p.bow.grip), at(...p.bow.pull), p.bow.draw));
       if (p.bow.arrow) arrowAt(body, b.P.toArray(), V3(at(...p.bow.grip)).sub(b.P).toArray(), eq.feather, tc);
@@ -2621,13 +2733,29 @@
   // ---- Cavalry: scout, knight ----
   // (the horse's gaits: horseGait, js/render-units.js — one gait for both views)
   const HORSE_COAT = { scout: ['#8b5a2b', '#3f2810', '#6e4520'], knight: ['#e9e6de', '#9a948a', '#b3ada1', '#b8b2a6'] };
+  const REIN = '#4a2f1c';
+  // Where the reins meet the noseband (cavalry frame, model): horseKit's head turned by the gait's nod, either side of the muzzle
+  // and the path each rein takes back up the cheeks and over the crest beside the mane, where they meet for the one rein hand (clear of head and neck)
+  function bitPoints(gait){
+    const k = 1.35, a = -0.55 - (gait.nod || 0), c = Math.cos(a), sn = Math.sin(a), B = gait.bob || 0, P0 = [ax(10, k), chh(-14 - B, k)];
+    const head = (lx, ly) => [P0[0] + ar(lx, k) * c - ar(ly, k) * sn, P0[1] + ar(lx, k) * sn + ar(ly, k) * c];
+    return [-1, 1].map(z => ({ bit: [...head(5.3, -0.6), z * ar(2, k)], cheek: [...head(1.4, 0.8), z * ar(2.55, k)], neck: [ax(6.2, k), chh(-13.4 - B, k), z * ar(1.6, k)] }));
+  }
   function riderFig(tc, eq, kind, t, gait = {}, bare = false){ // bare: no sword or shield (dropped) // rider()'s seat and kit, with gear by age and an animated sword arm
     const r = new THREE.Group(), o = riderPose(kind, t, eq, gait), { hand, dir, edge } = o.weapon;   // (render-units: shared with the 2D)
-    human(r, tc, { hat: eq.helmet, armor: eq.torso, metal: eq.metal, riding: o.riding, hands: o.hands, torso: o.torso });
+    const barShieldOn = !bare && eq.shield;   // (the shield hangs from a bar the clip holds)
+    // the reins, from the bit to the rein fist (the shield fist on a knight); without a shield they run through the clip
+    const org = [ax(-0.8), (20 - 6) * UNIT_SCALE / PX + (gait.riderLift || 0), 0], bits = gait.reins && bitPoints(gait).map(q => Object.fromEntries(Object.entries(q).map(([n, p]) => [n, p.map((v, i) => v - org[i])]))), fist = at(...o.hands[0]);
+    const holds = bare ? null : soldierHolds({ ...o, shieldHand: o.hands[0] }, eq, barShieldOn, true, kind === 'attack' ? q => riderPose(kind, q, eq, {}) : null, 'rider' + kind + !!eq.shield);   // (the off hand sits apart with a shield: its own grip roll)
+    if (bits && holds && !eq.shield) holds.push({ at: o.hands[0], dir: [0, 1, 0] });   // (an upright fist, open toward the bit: the reins leave through the gap)
+    human(r, tc, { hat: eq.helmet, armor: eq.torso, metal: eq.metal, riding: o.riding, hands: o.hands, elbows: o.elbows, torso: o.torso, holds });
+    // each rein, taut: up the cheek and over the crest, then to the fist (two cubics sharing the tangent at the neck — straight back
+    // along it, no sideways lean: that pulled the far rein into the head)
+    if (bits) for (const b of bits) { const T = V3(fist).sub(V3(b.neck)).setZ(0).normalize(), L1 = V3(b.neck).distanceTo(V3(b.bit)) * 0.35, L2 = V3(fist).distanceTo(V3(b.neck)) * 0.35;
+      tube(r, REIN, b.bit, b.cheek, b.neck, ar(0.3), 0, 1, V3(b.neck).addScaledVector(T, -L1).toArray());
+      tube(r, REIN, b.neck, V3(b.neck).addScaledVector(T, L2).toArray(), fist, ar(0.3), 0, 1, V3(fist).addScaledVector(V3(fist).sub(V3(b.neck)).normalize(), -L2).toArray()); }
     if (!bare) weaponTag(r, () => sword(r, at(...hand), eq.weapon, dir, edge));
-    if (bare) {}
-    else if (eq.shield === 'kite') kiteShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI - 0.35;
-    if (eq.shield === 'round') roundShield(r, at(1, -6.5, -9), tc).rotation.y = Math.PI / 2 - 0.35;
+    if (barShieldOn) weaponTag(r, () => barShield(r, eq.shield, at(...o.hands[0]), shieldFace(eq.shield, true), tc));
     r.position.set(ax(-0.8), (20 - 6) * UNIT_SCALE / PX, 0);
     return r;
   }
@@ -2674,8 +2802,8 @@
     const gait = kind === 'walk' || kind === 'gallop' ? horseGait(kind, t)
       : kind === 'attack' ? { legs: [[0, 0], [0, 0], [0.8, 1.3 * Math.max(0, sn)], [0.8, 1.3 * Math.max(0, -sn)]], bob: 0.3 * Math.abs(sn), nod: 0.14 * Math.sin(Math.PI * t), tail: 0.3 * sn } // prancing on the spot, head tossing
       : { legs: [[0.5, 0.7], [0, 0], [0, 0], [0, 0]], bob: 0, nod: 0.12 + 0.06 * Math.sin(2 * Math.PI * t), tail: 0.35 * Math.sin(3 * 2 * Math.PI * t) * Math.max(0, Math.sin(2 * Math.PI * t)) }; // at rest: a hind hoof cocked, head low, the tail swishing now and then
-    horseKit(g, coat, mane, legC, tc, muzzle || legC, gait);
-    const r = riderFig(tc, eq, kind, t, gait); r.position.y += gait.bob * (kind === 'gallop' ? 0.55 : 0.85) * 1.35 * UNIT_SCALE / PX; g.add(r); // the rider absorbs part of the horse's rise
+    horseKit(g, coat, mane, legC, tc, muzzle || legC, { ...gait, bridle: true });
+    const lift = gait.bob * (kind === 'gallop' ? 0.55 : 0.85) * 1.35 * UNIT_SCALE / PX, r = riderFig(tc, eq, kind, t, { ...gait, reins: true, riderLift: lift }); r.position.y += lift; g.add(r); // the rider absorbs part of the horse's rise
   }
   // Dev check: weapons against bodies over every soldier action. Every mesh a
   // weapon or shield builder adds is sampled against the body ellipsoids (torso,
@@ -2746,32 +2874,38 @@
       g.add(ramModel(tc, pose)); addHulls(g, true); g.traverse(o => { if (o.userData.fade != null) fadeTo(o, o.userData.fade); }); return g; }
     if (opt.unit && HORSE_COAT[opt.unit]) { cavalryFrame(g, opt.unit, kind, t, opt.eq || soldierEquip(opt.unit, 0, 0, 0, false), tc);
       addHulls(g, true); g.traverse(o => { if (o.userData.fade != null) fadeTo(o, o.userData.fade); }); return g; }
-    if (opt.unit && SOLDIER_POSE[opt.unit]) { const eq = opt.eq || soldierEquip(opt.unit, 0, 0, 0, false); soldierFrame(g, body, opt.unit, kind, t, eq, tc, opt);
+    if (opt.unit && SOLDIER_POSE[opt.unit]) { const eq = opt.eq || soldierEquip(opt.unit, 0, 0, 0, false); soldierFrame(g, body, opt.unit, kind, t, eq, tc, opt, who);
       addHulls(g, true); g.traverse(o => { if (o.userData.fade != null) fadeTo(o, o.userData.fade); }); return g; }
-    const person = p => human(body, tc, { ...who, hands: p.hands, elbows: p.elbows, torso: p.torso, headYaw: p.headYaw, feet: p.feet });
+    const person = (p, holds) => human(body, tc, { ...who, hands: p.hands, elbows: p.elbows, torso: p.torso, headYaw: p.headYaw, feet: p.feet, holds });
     if (kind === 'walk' || kind === 'barrow' || kind === 'plow') { const p = walkPose(kind === 'plow' ? t : t); body.position.y = p.bob * UNIT_SCALE / PX;
       const push = kind !== 'walk', grips = [[6.5, -6.5, -3.9], [6.5, -6.5, 3.9]];
       // Walking with a tool: it rests on the right shoulder, held near the butt, the head behind; the other arm swings.
       const shoulder = kind === 'walk' && HELD, sh = [2.4, -9.2, 5.3];
-      human(body, tc, { ...who, feet: p.feet, hands: push ? grips : shoulder ? [p.hands[0], sh] : p.hands, torso: kind === 'plow' ? { lean: 0.14 } : undefined });
+      human(body, tc, { ...who, feet: p.feet, hands: push ? grips : shoulder ? [p.hands[0], sh] : p.hands, torso: kind === 'plow' ? { lean: 0.14 } : undefined,
+        holds: push ? grips.map((gp, i) => ({ atM: barrowHandle(i ? 1 : -1, body.position.y), dir: [20.2, -5.6, -Math.sign(gp[2]) * 1.5], hand: i })) : shoulder ? [{ at: sh, dir: [-0.62, 0.76, 0.14] }] : undefined });   // (barrowRig's handles)
       if (shoulder) tool(body, HELD, at(...sh), [-0.62, 0.76, 0.14], { out: 4.4 }, [0, 0.3, 1]);
       if (push) { const r = barrowRig(g, kind, kind === 'barrow' && opt.load !== null ? LD : null); r.position.set(ax(4.7), body.position.y * 0.5, 0); } } // its grips out in front of the belly; load null: it rolls back empty
-    if (kind === 'chop') { const p = chopPose(t); person(p); tool(body, 'axe', at(...p.grip), p.dir, { out: GRIP_OUT, double: UP.double }, p.edge); }
+    if (kind === 'chop') { const p = chopPose(t); person(p, [{ at: p.grip, dir: p.dir, edge: p.edge, roll: gripRoll('chop', chopPose), hand: [0, 1] }]); tool(body, 'axe', at(...p.grip), p.dir, { out: GRIP_OUT, double: UP.double }, p.edge); }
     const work = { mine: ['pick', minePose], split: ['axe', splitPose], build: ['mallet', buildPose], farm: ['scythe', mowPose] }[kind];
-    if (work) { const p = work[1](t); person(p); tool(body, work[0], at(...p.grip), p.dir, { out: GRIP_OUT, mow: kind === 'farm', bright: UP.bright, double: UP.double }, p.edge); }
-    if (kind === 'saw') { const p = sawPose(t); person(p);
+    if (work) { const p = work[1](t); person(p, [{ at: p.grip, dir: p.dir, edge: p.edge, roll: gripRoll(kind, work[1]), hand: [0, 1] }]); tool(body, work[0], at(...p.grip), p.dir, { out: GRIP_OUT, mow: kind === 'farm', bright: UP.bright, double: UP.double }, p.edge); }
+    if (kind === 'saw') { const p = sawPose(t);
       // turned across the front (local +x, the blade → world −z), then rolled about
       // the blade line so the frame tips back toward the villager and the teeth face the trunk
       const w = new THREE.Group(), roll = new THREE.Group(); body.add(w); w.add(roll);
       const sg = bowSaw(roll); sg.position.set(0, -chh(SAW_Y), 0);
       roll.position.y = chh(SAW_Y); roll.rotation.x = -SAW_TIP;
-      w.rotation.y = Math.PI / 2; w.position.set(ax(SAW_X), 0, ar(SAW_Z - p.off)); }
+      w.rotation.y = Math.PI / 2; w.position.set(ax(SAW_X), 0, ar(SAW_Z - p.off));
+      // both fists on the frame's top bar: its crown (bowSaw's at(11.5, −11)), along the saw, in the body's frame
+      for (const o of [w, roll, sg]) o.updateMatrix();
+      const M = w.matrix.clone().multiply(roll.matrix).multiply(sg.matrix), top = V3(at(11.5, -11)).applyMatrix4(M), along = new THREE.Vector3(1, 0, 0).transformDirection(M);
+      const ah = at(...p.hands[0]), bh = at(...p.hands[1]), toB = along.clone().multiplyScalar(Math.sign(along.dot(V3(bh).sub(V3(ah)))) || 1);   // (thumbs toward each other along the bar)
+      person(p, [{ atM: top.toArray(), dir: toB.toArray(), hand: 0 }, { atM: top.toArray(), dir: toB.clone().negate().toArray(), hand: 1 }]); }
     if (kind === 'carry') { const p = walkPose(t), lift = p.bob * UNIT_SCALE / PX; body.position.y = lift;
-      human(body, tc, { ...who, feet: p.feet, hands: CARRY_HANDS });
+      human(body, tc, { ...who, feet: p.feet, hands: CARRY_HANDS, holds: CARRY_HOLDS });
       load(body, LD, at(0.3, -18.1 - LOAD_SIT[LD])).rotation.x = 0.08 * Math.sin(4 * Math.PI * t); }
     if (kind === 'forage') { const p = foragePose(t); person(p); if (p.berry) blob(body, '#cc3344', ...at(p.berry[0] + 0.8, p.berry[1] - 0.6, p.berry[2]), ar(1.1)); }
-    if (kind === 'butcher' || kind === 'fight') { const p = (kind === 'fight' ? fightPose : butcherPose)(t); person(p); knife(body, at(...p.knife), p.kdir); }
-    if (kind === 'repair') { const p = repairPose(t); person(p); tool(body, 'mallet', at(...p.grip), p.dir, {}, p.edge); }
+    if (kind === 'butcher' || kind === 'fight') { const p = (kind === 'fight' ? fightPose : butcherPose)(t); person(p, [{ at: p.knife, dir: kind === 'fight' ? p.kdir : p.kdir.map(v => -v), hand: 1 }]); /* (the butcher's ice-pick grip: the blade out of the little finger's end) */ knife(body, at(...p.knife), p.kdir); }
+    if (kind === 'repair') { const p = repairPose(t); person(p, [{ at: p.grip, dir: p.dir, edge: p.edge, roll: gripRoll('repair', repairPose), hand: 1 }]); tool(body, 'mallet', at(...p.grip), p.dir, {}, p.edge); }
     if (kind === 'drop') { const p = dropPose(t, LD); person(p);
       if (!(opt.noFly && t >= REL)) { const L = load(p.landed ? g : body, LD, at(p.load.x, p.load.y)); L.rotation.z = -p.load.pitch; } } // noFly: the game flies its own load to the building
     if (kind === 'idle') person(idlePose(t));
@@ -2909,7 +3043,7 @@
     },
     carcass(){ // a slaughtered sheep lying across the front, pinned by the free hand
       const g = sheepModel('#2d6bd1'); deathPose(g, 'sheep', 2000); const bones = sheepBones(g); addHulls(g, true);
-      const root = new THREE.Group(); root.add(g); g.rotation.y = Math.PI / 2; root.position.set(ax(10) + 0.44, 0, 0); // lying on its side the body sits a hip-height off its origin: its back toward the villager, under the hands
+      const root = new THREE.Group(); root.add(g); g.rotation.y = Math.PI / 2; root.position.set(ax(10) + 0.52, 0, 0); // lying on its side the body sits a hip-height off its origin: its back toward the villager, under the hands
       return { g: root, body: g, set: left => harvestPose(g, bones, left) };
     },
     wall(){ const g = new THREE.Group(); boxAt(g, WOOD.plankL + '|planks', ax(WALL_X), -ar(11), ax(WALL_X + 1.4), ar(11), 0, chh(-24)); return g; },
@@ -3384,7 +3518,7 @@
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), team: e.team, age: ageOf(e) };
+      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && !hurt && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -3784,6 +3918,21 @@
   function animateFalls(dt){
     for (let i = falls.length - 1; i >= 0; i--) if (falls[i].d.tick(dt)) { dropSolid({ obj: falls[i].g }); falls.splice(i, 1); }
   }
+  // A TC's garrisoned villagers up on the keep (render-units' roofCrew: where each stands, walking, aiming), posed here
+  // with a bow, each its own villager's look; they loose as the sim spawns the volley (MIL_IMPACT.archer)
+  function roofArchers(rec){
+    const e = entitiesById.get(rec.obj.userData.bid); if (!e) return;
+    const R = roofCrew(e), cd = e.atkCooldown || 0, ph = ((1 - cd / BUILDING_RELOAD + MIL_IMPACT.archer) % 1 + 1) % 1;
+    const opt = { unit: 'archer', eq: { ...soldierEquip('archer', 0, 0, 0, false), civ: true } }, tc = teamColor(rec.team);   // (villagers as they are, a bow in hand)
+    rec.roof.forEach((r, i) => {
+      const f = R.figs[i];
+      if (!f) { if (r.rig || r.obj) { dropVillager(r); r.rig = null; r.obj = null; r.key = ''; } return; }
+      const v = entitiesById.get(e.garrison[i]), kind = f.moving ? 'walk' : R.firing ? 'attack' : 'idle';
+      const t = f.moving ? (f.walk / 0.6) % 1 : R.firing ? (ph + i * 0.04) % 1 : (aTick * 0.004 + i * 0.37) % 1;
+      rigPose(r, kind, t, !!(v && v.female), opt, tc);
+      if (r.obj) { r.obj.position.set(f.x + 0.5, r.y, f.y + 0.5); r.obj.rotation.y = -f.hd; r.obj.visible = rec.obj.visible; }
+    });
+  }
   function animateModels(dt){
     animateFalls(dt);
     const t = aTick * 0.13;
@@ -3812,6 +3961,7 @@
         rigPose(tr, 'attack', ph, false, opt, teamColor(rec.team));
         if (tr.obj) { tr.obj.position.set(tr.x, 0, tr.z); tr.obj.rotation.y = tr.yaw; }
       }
+      if (rec.roof) roofArchers(rec);
       if (rec.horses) for (const h of rec.horses) {
         // Each horse on its own ~11s cycle: head up (a slow bob), then down to
         // graze a few seconds, nibbling; the tail swishes throughout.
@@ -4179,9 +4329,16 @@
     // model (x forward, y up, z right) → camera (−z forward, y up, x right), turned forward by the tilt about the shoulders
     _vm.r.set(0, 0, 1, 0,  0, 1, 0, 0,  -1, 0, 0, 0,  0, 0, 0, 1).multiply(_vm.t.makeRotationZ(v.vmTilt));
     _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0], -VM.down + v.vmSlide[1], VM.back - push));
+    const sw = v.rig && v.rig.T.fpSwing, own = v.fpStrike != null && sw && sw.length;   // a shield arm holds still: only the sword arm's bones swing
     if (v.fpStrike != null) { const [pu, ro, fw] = strikeSwing(v.fpStrike, who.utype === 'spearman');
-      _vm.m.multiply(_vm.t.makeTranslation(0, 0, -fw)).multiply(_vm.t.makeRotationX(pu)).multiply(_vm.t.makeRotationZ(ro)); }
-    _vm.m.multiply(_vm.r).multiply(_vm.t.makeTranslation(0, -S, 0));
+      _vm.k = (_vm.k || new THREE.Matrix4()).makeTranslation(0, 0, -fw).multiply(_vm.t.makeRotationX(pu)).multiply(_vm.t.makeRotationZ(ro));
+      if (!own) _vm.m.multiply(_vm.k); }
+    _vm.r.multiply(_vm.t.makeTranslation(0, -S, 0));                                  // (model → the shoulders' camera frame)
+    if (own && v.posedFrame === frame) { // the same swing, about the same pivot, moved into model space: Q = R⁻¹·K·R on just those bones
+      _vm.q = (_vm.q || new THREE.Matrix4()).copy(_vm.r).invert().multiply(_vm.k).multiply(_vm.r);
+      const out = v.rig.sk.boneMatrices; _vm.b = _vm.b || new THREE.Matrix4();
+      for (const bi of sw) { _vm.b.fromArray(out, bi * 16).premultiply(_vm.q).toArray(out, bi * 16); } }
+    _vm.m.multiply(_vm.r);
     root.matrixAutoUpdate = false; root.userData.vm = true;
     root.matrix.copy(_vm.m); root.matrixWorldNeedsUpdate = true;
   }
@@ -4267,9 +4424,10 @@
     try { g = animFrame(kind, t, female, opt); } finally { POLY = 1; RIG_NOHULL = false; }
     g.updateMatrixWorld(true);
     const parts = rigParts(g), B = new Map(), s = new THREE.Vector3(), inv = new THREE.Matrix4();
-    let bone = 0; const fpBones = [], fpFold = [];
+    let bone = 0; const fpBones = [], fpFold = [], fpSwing = [];
     for (const p of parts) {
       if (p.o.userData.fpHide) for (let i = 0; i < (p.tube ? RIG_SEG + 1 : 1); i++) fpBones.push(bone + i); // (a tube: all its ring bones)
+      if (p.o.userData.fpSwing) for (let i = 0; i < (p.tube ? RIG_SEG + 1 : 1); i++) fpSwing.push(bone + i);
       if (p.tube && p.o.userData.fpForearm) fpFold.push(bone);
       if (p.tube) { // rings: surface and a fatter outline ring, both on the ring bones
         for (const [r, m, ord] of [[p.tube.r, p.o.material || mat(p.tube.col), 2], [p.tube.r, hullUnionMat, 1]]) { // (the outline ring: pushed out on screen)
@@ -4314,7 +4472,7 @@
       meshes.push({ geo, mat: b.mat, order: b.order, lines: !!b.lines });
     }
     window.__pov3dLab.dispose(g);
-    return { meshes, bones: bone, fpBones, fpFold, sig: rigSig(parts), verts: meshes.reduce((a, m) => a + m.geo.attributes.position.count, 0) };
+    return { meshes, bones: bone, fpBones, fpFold, fpSwing, sig: rigSig(parts), verts: meshes.reduce((a, m) => a + m.geo.attributes.position.count, 0) };
   }
   // A pose sample: bone matrices at step `step` (light build; cached).
   function rigSample(tkey, kind, t, female, opt){
@@ -4386,6 +4544,7 @@
     }
     const out = v.rig.sk.boneMatrices, a = A.m, b = Bs.sig === A.sig ? Bs.m : a;
     if (out.length >= a.length) for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * f; // (three pads the array to its bone-texture size)
+    v.posedFrame = frame;   // (the first-person swing adds onto THIS frame's pose only: kept bones already carry it)
     if (legs) { // the walk's lower body under this pose's upper body (legMap)
       const lb = vilKey(legs.kind, 'x', female, opt), lu = ((legs.t % 1) + 1) % 1 * steps, l0 = Math.floor(lu) % steps, l1 = (l0 + 1) % steps, lf = lu - Math.floor(lu);
       const LA = rigSample(lb + '@' + l0, legs.kind, l0 / steps, female, opt), LB = LA && (rigSample(lb + '@' + l1, legs.kind, l1 / steps, female, opt) || LA);
@@ -4877,7 +5036,8 @@
   function loop(now){
     raf = requestAnimationFrame(loop);
     if (!gameStarted) { povClose(); return; }
-    withDrawPositions(() => drawFrame(now));   // (units between their last two ticks: js/render.js)
+    drawFrame(now);   // (units at the render clock, between their recorded tick spots: posOf — never inside render.js's
+                      // withDrawPositions, whose mid-tick positions would be recorded as tick spots and walk unevenly)
   }
   function drawFrame(now){
     let e = followId != null ? entitiesById.get(followId) : null;

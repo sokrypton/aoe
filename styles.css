@@ -2501,11 +2501,11 @@ canvas {
   .setup-col .opt-pill { min-width: 0; }
   .setup-col-wide { flex-grow: 2 !important; }   /* Sound: three options, one a long word */
   .setup-row-view { justify-content: center; }
-  #townai-col { flex: 0 1 50%; }   /* (alone in its row, in a match: half width, not stretched) */
+  .setup-row-view .setup-col { flex: 0 1 34%; }   /* (View and Town AI: their own row, centred — not stretched across it) */
   .setup-col .opt-pill span { text-align: center; padding: 5px 2px; font-size: 10px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
-/* Portrait phones: the same label-above-control style in two columns (Sound, the long one, across both; View across
-   both when Town AI isn't shown) */
+/* Portrait phones: the same label-above-control style in two columns (Sound, the long one, across both; View beside
+   Town AI in a match, across both before one) */
 @media (max-width: 699px) {
   .setup-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; grid-auto-flow: dense; }
   .setup-col, .setup-col-speed { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; }
@@ -2514,5 +2514,5 @@ canvas {
   .setup-col .opt-pill { flex: 1 1 0; min-width: 0; }
   .setup-col .opt-pill span { text-align: center; padding: 6px 2px; }
   .setup-col-wide { grid-column: 1 / -1; }
-  #townai-col, .setup-row-audio .setup-col:last-child { grid-column: 1 / -1; }   /* (Town AI, View: each a full row) */
+  .setup-row-view:has(#townai-col[style*="none"]) #view-col { grid-column: 1 / -1; }
 }

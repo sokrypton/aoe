@@ -782,6 +782,31 @@ function buildingShadowPath(e){
 // a field on a sim object), redone when its key changes. (l, t, w, h): the art's box about its anchor (ax, ay), logical
 // px; draw(ox, oy) paints it anchored there. Not for the ghost/mask passes (no owner state, silhouettes).
 const _bakes = new WeakMap();
+// A TC's garrisoned villagers up on its keep (render-units' roofCrew: where each stands, walking, aiming), as
+// drawPerson2D figures — each villager's own look with a bow — in the keep's authored frame (sx, sy: its top corner;
+// tcS: its scale), the front parapet hiding their legs. Viewer-only.
+const roofFigs2D = new WeakMap();
+function drawRoofArchers2D(e, sx, sy, tcS){
+  const R = roofCrew(e), cd = e.atkCooldown || 0;
+  let figs = roofFigs2D.get(e); if (!figs) roofFigs2D.set(e, figs = []);
+  // the keep floor's diamond (the recess: inset 38/48, dropped 5), u along world x, v along world y
+  const rcx = sx, rcy = sy - 36, ins = ([x, y]) => [rcx + (x - rcx) * 38 / 48, rcy + (y - rcy) * 38 / 48 + 5];
+  const N = ins([sx, sy - 60]), E = ins([sx + 48, sy - 36]), S = ins([sx, sy - 12]), W = ins([sx - 48, sy - 36]);
+  const at = (u, v) => [N[0] + u * (E[0] - N[0]) + v * (W[0] - N[0]), N[1] + u * (E[1] - N[1]) + v * (W[1] - N[1])];
+  const order = R.figs.map((f, i) => i).sort((a, b) => (R.figs[a].u + R.figs[a].v) - (R.figs[b].u + R.figs[b].v));   // back to front
+  X.save();
+  const hp = 5;   // the parapet's top (the floor sits 5 below it): what stands behind it below that line is hidden
+  X.beginPath(); X.moveTo(W[0], W[1] - hp); X.lineTo(S[0], S[1] - hp); X.lineTo(E[0], E[1] - hp); X.lineTo(E[0], E[1] - 200); X.lineTo(W[0], W[1] - 200); X.closePath(); X.clip();
+  for (const i of order) {
+    const c = R.figs[i], vil = entitiesById.get(e.garrison[i]);
+    let f = figs[i]; if (!f) figs[i] = f = { id: -1e6 - e.id * 16 - i, type: 'unit', utype: 'archer', __civ: true, path: [], facing: 1, hp: 1 };
+    Object.assign(f, { team: e.team, female: !!(vil && vil.female), x: c.x, y: c.y, dir: c.hd / (Math.PI / 4), atkCooldown: R.firing && !c.moving ? cd : 0, target: R.firing && !c.moving ? e.id : null });
+    f.path = c.moving ? [{ x: c.x, y: c.y }] : [];   // (walking along the parapet)
+    const [px, py] = at(c.u, c.v);
+    X.save(); X.translate(px, py); X.scale(UNIT_SCALE / tcS, UNIT_SCALE / tcS); drawPerson2D(f); X.restore();
+  }
+  X.restore();
+}
 function drawBaked(owner, key, ax, ay, l, t, w, h, draw){
   const sc = Math.ceil(ZOOM * (window.devicePixelRatio || 1)), k = key + '|' + sc;
   let bk = _bakes.get(owner);
@@ -900,12 +925,11 @@ function drawBuilding(e, part = null){
       let dn = ([x2, y2]) => [x2, y2 + depth];
       // Light model: with one distant light (upper-left), a face's color
       // depends ONLY on its orientation — the N→E inner face looks SW so
-      // it's kL, the W→N face looks SE so it's kR, the floor faces up so
-      // it's kT. Depth inside the pit comes from the CAST shadow below,
+      // it's kL, the W→N face looks SE so it's kR; the floor (the team
+      // plank deck below) faces up. Depth inside the pit comes from the CAST shadow below,
       // not from repainting the material darker.
       let wallSE = darken ? darkenColor(kR) : kR;
       let wallSW = darken ? darkenColor(kL) : kL;
-      let floorC = darken ? darkenColor(kT) : kT;
       // The recess is drawn FLAT (every floor corner dropped by the same
       // depth) and clipped to the rim opening — the front rim then occludes
       // the floor's near edge naturally. (Dropping only the back corner
@@ -924,8 +948,13 @@ function drawBuilding(e, part = null){
       X.moveTo(...W); X.lineTo(...N); X.lineTo(...dn(N)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
       X.fillStyle = wallSW; X.beginPath();
       X.moveTo(...N); X.lineTo(...E); X.lineTo(...dn(E)); X.lineTo(...dn(N)); X.closePath(); X.fill(); X.stroke();
+      // the floor: a team-coloured plank deck (pov3d's TC), boards running N→E
+      let deck = shadeHex(tc, 0.85), floorC = darken ? darkenColor(deck) : deck;
       X.fillStyle = floorC; X.beginPath();
       X.moveTo(...dn(N)); X.lineTo(...dn(E)); X.lineTo(...dn(S)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
+      X.strokeStyle = 'rgba(0,0,0,0.16)'; X.beginPath();
+      for (let i = 1; i < 6; i++) { let u = i / 6, a2 = dn(N).map((v, j) => v + (dn(W)[j] - v) * u), b2 = dn(E).map((v, j) => v + (dn(S)[j] - v) * u); X.moveTo(...a2); X.lineTo(...b2); }
+      X.stroke(); X.strokeStyle = 'rgba(0,0,0,0.13)';
       // Cast shadow: light from upper-left, so the west rim throws a soft
       // band across the floor along the W→N wall base (no outline — it's
       // shadow, not geometry).
@@ -977,6 +1006,7 @@ function drawBuilding(e, part = null){
     if (ownerAge >= 2) merlons.forEach(m => {
       drawMerlon(m.x, m.y);
     });
+    if (e.complete && e.garrison && e.garrison.length) drawRoofArchers2D(e, sx, sy, tcS);
 
     // 3D Recessed windows on the keep walls. One helper, mirrored by the
     // wall slope m (+0.5 left face, -0.5 right face). The 3D read comes

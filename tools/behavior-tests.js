@@ -207,9 +207,8 @@ async function withPage(browser, port, entry, fn){
     })),
 
     // ---------------------------------------------- town bell: nobody stays
-    // Reported: "when I hit the bell some villagers stay to fight". A TC holds
-    // 15 and a tower 5, so the overflow hit `if(!best) return` and carried on
-    // doing whatever it was doing — including fighting.
+    // Reported: "when I hit the bell some villagers stay to fight" — and later "when there is no place to garrison,
+    // why villagers just stand?". A TC holds 15: the overflow neither fights on nor waits at the full door — it runs.
     'bell-overflow': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
       loadScenario({ map:'medium', seed:8, numTeams:2, controllers:['human','ai'], ages:[1,1], entities:[] });
@@ -220,15 +219,23 @@ async function withPage(browser, port, entry, fn){
       const vils = [];
       for (let i = 0; i < cap + 6; i++) {            // MORE villagers than slots
         const v = createUnit('villager', 28 + (i % 6), 28 + ((i / 6) | 0), 0);
-        if (v) { v.target = foe.id; vils.push(v); }  // every one of them is fighting
+        if (v) { v.target = foe.id; v.task = 'chop'; v.gatherX = 32; v.gatherY = 33; vils.push(v); }  // every one of them is fighting (its job right by the raider)
       }
       T.ok('staged more villagers than the TC can hold', vils.length > cap);
       ringTownBell(0);
       const fighting = vils.filter(v => v.target != null);
       const running  = vils.filter(v => v.task === 'garrison');
       T.ok('NO villager is still fighting after the bell', fighting.length === 0);
-      T.ok('every villager is running for cover, not just the first ' + cap,
-           running.length === vils.length);
+      T.ok('the first ' + cap + ' run for cover', running.length === cap);
+      // the overflow has nowhere to go: rather than wait at the full door in the raid, it runs from the soldier on it
+      const away = v => { const g = v.order && v.order.kind === 'move' ? v.order : null;
+        return !!g && Math.hypot(g.x - foe.x, g.y - foe.y) > Math.hypot(v.x - foe.x, v.y - foe.y); };
+      T.ok('the overflow runs away from the raider instead of waiting at a full door',
+           vils.filter(v => v.task !== 'garrison').every(away));
+      // …and keeps running (its stashed job must not pull it straight back to the raider next tick)
+      const overflow = vils.filter(v => v.task !== 'garrison'), d0 = overflow.map(v => Math.hypot(v.x - foe.x, v.y - foe.y));
+      for (let i = 0; i < T30(90); i++) { foe.target = null; foe.x = 33; foe.y = 33; update(); }
+      T.ok('three seconds on, the overflow is farther from the raider', overflow.every((v, i) => v.garrisonedIn || Math.hypot(v.x - foe.x, v.y - foe.y) > d0[i] + 1));
       // out-of-range villagers are still exempt (AoE2 bell range)
       const far = createUnit('villager', 30, 30 + 40, 0);
       if (far) { far.target = foe.id; ringTownBell(0);
@@ -490,7 +497,7 @@ async function withPage(browser, port, entry, fn){
       for (const [ut, ok] of [['militia', false], ['villager', true], ['ram', false], ['tradecart', false], ['scout', false]])
         T.ok(`a ${ut} ${ok ? 'may' : 'may not'} garrison in a TC`, canGarrisonIn(tc, 0, createUnit(ut, 26, 26, 0)) === ok);
       stage();
-      const h = createBuilding('HOUSE', 30, 30, 0); h.complete = false; h.buildProgress = 0;
+      const h = createBuilding('HOUSE', 30, 30, 0); h.complete = false; h.buildProgress = 0; passabilityChangedAt(h.x, h.y, h.w, h.h);
       const c = createUnit('sheep_carcass', 30, 30, GAIA_TEAM);
       T.ok('a carcass on a foundation does not hold its construction', !footprintOccupiedByOther(h));
       const v = createUnit('villager', 29, 30, 0); v.task = 'build'; v.buildTarget = h.id;
@@ -870,7 +877,7 @@ async function withPage(browser, port, entry, fn){
       // (1) An OWN idle villager parked inside is auto-cleared; the site builds
       //     itself and nobody is sealed in.
       const bar = createBuilding('BARRACKS', 20, 20, 0); // 3x3 -> tiles 20..22
-      bar.complete = false; bar.buildProgress = 0; bar.hp = 1;
+      bar.complete = false; bar.buildProgress = 0; bar.hp = 1; passabilityChangedAt(bar.x, bar.y, bar.w, bar.h);
       const builder = createUnit('villager', 19, 20, 0); // west edge, OFF the footprint
       builder.task = 'build'; builder.buildTarget = bar.id;
       const mine = createUnit('villager', 21, 21, 0); // own idle unit parked INSIDE
@@ -880,7 +887,7 @@ async function withPage(browser, port, entry, fn){
 
       // (2) An ENEMY unit parked inside is NOT shoved — it blocks construction.
       const bar2 = createBuilding('BARRACKS', 30, 30, 0);
-      bar2.complete = false; bar2.buildProgress = 0; bar2.hp = 1;
+      bar2.complete = false; bar2.buildProgress = 0; bar2.hp = 1; passabilityChangedAt(bar2.x, bar2.y, bar2.w, bar2.h);
       const b2 = createUnit('villager', 29, 30, 0); b2.task = 'build'; b2.buildTarget = bar2.id;
       // A non-threatening enemy (villager) — the builder won't flee it, it just
       // can't shove it, so the site is blocked. (An enemy SOLDIER would trigger
@@ -895,8 +902,8 @@ async function withPage(browser, port, entry, fn){
       //     then circled back to once it clears.
       loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'human'],
         ages: [4, 4], entities: [{ b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 44, y: 44, team: 1 }] });
-      const h1 = createBuilding('HOUSE', 20, 20, 0); h1.complete = false; h1.buildProgress = 0; h1.hp = 1; // 1x1
-      const h2 = createBuilding('HOUSE', 24, 20, 0); h2.complete = false; h2.buildProgress = 0; h2.hp = 1;
+      const h1 = createBuilding('HOUSE', 20, 20, 0); h1.complete = false; h1.buildProgress = 0; h1.hp = 1; passabilityChangedAt(h1.x, h1.y, h1.w, h1.h); // 1x1
+      const h2 = createBuilding('HOUSE', 24, 20, 0); h2.complete = false; h2.buildProgress = 0; h2.hp = 1; passabilityChangedAt(h2.x, h2.y, h2.w, h2.h);
       const vb = createUnit('villager', 19, 20, 0); vb.task = 'build'; vb.buildTarget = h1.id; vb.buildQueue = [h1.id, h2.id];
       const camper = createUnit('villager', 20, 20, 1); // enemy on h1's tile — blocks it
       for (let i = 0; i < h2.buildTime + T30(600) && !h2.complete; i++) update();
@@ -1105,16 +1112,18 @@ async function withPage(browser, port, entry, fn){
       const v = entities.find(e => e.team === 1 && e.utype === 'villager');
       const farm = entities.find(e => e.team === 1 && e.btype === 'FARM');
       v.task = 'farm'; v.gatherX = farm.x; v.gatherY = farm.y;
-      // Simulate an ongoing base raid: keep the core-hit stamp fresh so
-      // updateAIGarrisonReaction holds the bell (a bare ringTownBell would be
-      // all-cleared by the AI's own reaction machinery the very next tick).
+      // An ongoing base raid: a raider standing by the farm (the AI shelters villagers in harm's way, not by a hit
+      // stamp alone) and the core-hit stamp kept fresh so updateAIGarrisonReaction holds the bell.
+      const raider = createUnit('militia', 43, 41, 0); raider.stance = 'standground';
       ringTownBell(1);
       let inTC = false;
       for (let i = 0; i < T30(900) && !inTC; i++) {
         AI_STATES[1].lastBaseHitTick = tick;
+        raider.target = null; raider.x = 43; raider.y = 41;   // (it stands there: no fight, just the threat)
         update();
         inTC = v.garrisonedIn != null;
       }
+      raider.hp = 0; handleDeath(raider, 1);
       T.ok('bell: farmer shelters in the TC', inTC);
       // Raid ends: stop stamping — the AI's own all-clear fires after the
       // hold window and restoreSavedTask resumes the farm assignment.
@@ -1145,20 +1154,72 @@ async function withPage(browser, port, entry, fn){
       const v = entities.find(e => e.team === 1 && e.utype === 'villager');
       const car = entities.find(e => e.utype === 'sheep_carcass');
       v.target = car.id; // butchering = target-with-no-task (the sheep line)
+      // A raider standing by the carcass (the AI shelters villagers in harm's way, not on a hit alone)
+      const raider = createUnit('militia', 39, 43, 0); raider.stance = 'standground';
       ringTownBell(1);
       let inTC = false;
       for (let i = 0; i < T30(900) && !inTC; i++) {
         AI_STATES[1].lastBaseHitTick = tick;
+        raider.target = null; raider.x = 39; raider.y = 43;   // (it stands there: no fight, just the threat)
         update();
         inTC = v.garrisonedIn != null;
       }
       T.ok('bell: butcher shelters in the TC', inTC);
+      raider.hp = 0; handleDeath(raider, 1);
       let resumed = false;
       for (let i = 0; i < T30(1200) && !resumed; i++) {
         update();
         resumed = v.garrisonedIn == null && v.target === car.id;
       }
       T.ok('all-clear: butcher resumes the SAME carcass (stash/restore)', resumed);
+      return T;
+    })),
+
+    // ------------------------------------------------ gate: parked siege yields
+    // A ram or trade cart parked at the town's own gate gives way like an idle soldier: one idling outside the doorway
+    // slowed the villagers' way out threefold (they squeezed past it one by one).
+    'gate-parked-yields': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const run = blocker => {
+        const ents = [{ b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 }];
+        for (let x = 20; x <= 34; x++) if (x < 26 || x > 28) ents.push({ b: 'SWALL', x, y: 30, team: 0 });
+        ents.push({ b: 'SGATE', x: 26, y: 30, w: 3, h: 1, team: 0 });   // doorway x=27
+        if (blocker) ents.push({ u: blocker, x: 27, y: 31, team: 0 });   // parked just outside it
+        for (let i = 0; i < 4; i++) ents.push({ u: 'villager', x: 26 + i, y: 27, team: 0 });
+        loadScenario({ map: 'small', seed: 3, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [2, 2], entities: ents });
+        const vs = entities.filter(e => e.utype === 'villager' && e.team === 0);
+        vs.forEach((v, i) => issueMoveOrder(v, 24 + i * 2, 36));
+        let t = 0;
+        for (; t < T30(900) && !vs.every(v => v.y > 31.5); t++) update();
+        return t;
+      };
+      const clear = run(null);
+      for (const blocker of ['ram', 'tradecart'])
+        T.ok(`a parked ${blocker} at the gate doesn't hold up the town's traffic`, run(blocker) <= clear * 1.3);
+      return T;
+    })),
+
+    // ------------------------------------------------ trade cart: a shut gate
+    // A loaded cart whose home Market is sealed off for a while (its owner locks the gate in a raid) waits with its
+    // gold and its route, and delivers once the gate opens — the route used to dissolve and the load vanish.
+    'cart-gate-wait': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const ents = [{ b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 },
+        { b: 'MARKET', x: 20, y: 18, team: 0 }, { b: 'MARKET', x: 20, y: 44, team: 1 }];
+      for (let x = 0; x < 60; x++) if (x < 20 || x > 22) ents.push({ b: 'SWALL', x, y: 26, team: 0 });
+      ents.push({ b: 'SGATE', x: 20, y: 26, w: 3, h: 1, team: 0 });
+      loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [2, 2], entities: ents });
+      const [m0, m1] = ['MARKET'].flatMap(k => entities.filter(e => e.btype === k)).sort((a, b) => a.team - b.team);
+      const gate = entities.find(e => e.btype === 'SGATE');
+      const cart = createUnit('tradecart', 21, 32, 0);
+      cart.tradeHomeId = m0.id; cart.tradeDestId = m1.id; cart.tradePhase = 'toHome'; cart.carrying = 40; cart.carryType = 'gold';
+      gate.locked = true; passabilityChangedAt(gate.x, gate.y, gate.w, gate.h);
+      for (let i = 0; i < T30(300); i++) update();
+      T.ok('gate locked: the cart keeps its route and its load', cart.tradeHomeId === m0.id && cart.tradeDestId === m1.id && cart.carrying === 40);
+      const gold0 = resourceStore(0).gold;
+      gate.locked = false; passabilityChangedAt(gate.x, gate.y, gate.w, gate.h);
+      for (let i = 0; i < T30(1500) && resourceStore(0).gold <= gold0; i++) update();
+      T.ok('gate unlocked: the cart goes on and delivers', resourceStore(0).gold > gold0);
       return T;
     })),
 
@@ -1183,7 +1244,7 @@ async function withPage(browser, port, entry, fn){
         const v = entities.find(e => e.team === 0 && e.utype === 'villager');
         // Reproduce a real exhaustion (see updateBuilding): food depleted,
         // marked incomplete, tile drained — hp stays at maxHp.
-        farm.exhausted = true; farm.complete = false; farm.buildProgress = 0;
+        farm.exhausted = true; farm.complete = false; farm.buildProgress = 0; passabilityChangedAt(farm.x, farm.y, farm.w, farm.h);
         map[farm.y][farm.x].res = 0;
         resources[0].wood = 100; resources[0].prepaidFarms = 0;
         return { farm, v };
@@ -1286,7 +1347,7 @@ async function withPage(browser, port, entry, fn){
       });
       const rax = createBuilding('BARRACKS', 20, 20, 0);   // foundation: x 20..22
       const farm = createBuilding('FARM', 13, 9, 0);       // foundation: x 13..14
-      for (const b of [rax, farm]) { b.complete = false; b.buildProgress = 0; b.hp = 1; } // unbuilt sites
+      for (const b of [rax, farm]) { b.complete = false; b.buildProgress = 0; b.hp = 1; passabilityChangedAt(b.x, b.y, b.w, b.h); } // unbuilt sites
       const vils = entities.filter(e => e.team === 0 && e.utype === 'villager');
       const crew = vils.filter(v => v.x === 27), farmer = vils.find(v => v.x === 19);
       selected = crew;
@@ -1645,19 +1706,24 @@ async function withPage(browser, port, entry, fn){
       window.fogDisabled = false;
       gameStarted = true; gamePaused = true;
       for (let i = 0; i < 3000; i++) update();
+      while (tick % VISION_REFRESH_PERIOD === 1) update();   // (a save between vision refreshes: the case a cold rebuild got wrong)
       const cksum = simChecksum(), tick0 = tick;
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v9 stamp + tps', save.version === 9 && save.tps === TPS);
+      T.ok('v10 stamp + tps', save.version === 10 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);
-      for (let i = 0; i < 800; i++) update(); // dirty the world past the save point
+      for (let i = 0; i < 300; i++) update();
+      const ahead = simChecksum();                       // where the saved game goes next
+      for (let i = 0; i < 500; i++) update(); // dirty the world past the save point
       applySavedGame(save);
       T.ok('tick + checksum restored EXACTLY', tick === tick0 && simChecksum() === cksum);
       T.ok('occupied rebuilt exactly', map.map(r => r.map(c => c.occupied).join(',')).join(';') === occ);
       T.ok('explored grids restored exactly', teamExploredGrid.map(g => Array.from(g).join('')).join('|') === grids);
+      for (let i = 0; i < 300; i++) update();
+      T.ok('the reloaded game plays on EXACTLY as the saved one did', simChecksum() === ahead);
       window.fogDisabled = true;
       T.ok('fog-off save omits grids', serializeGameForWire().teamExploredGrids === null);
       window.fogDisabled = false;
@@ -1807,7 +1873,7 @@ async function withPage(browser, port, entry, fn){
       {
         const v = createUnit('villager', 20, 20, 0);
         const store = resourceStore(0); store.wood = 900; store.stone = 900;
-        const site = createBuilding('HOUSE', 26, 20, 0); site.complete = false; site.buildProgress = 0;
+        const site = createBuilding('HOUSE', 26, 20, 0); site.complete = false; site.buildProgress = 0; passabilityChangedAt(site.x, site.y, site.w, site.h);
         v.task = 'build'; v.buildTarget = site.id;
         let prog = site.buildProgress, ticks = 0, silent = 0;
         run(900, () => {

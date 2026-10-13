@@ -333,12 +333,14 @@ function drawProjectiles() {
     let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
 
-    let scr = mapToScreen(p.x, p.y);
+    // a garrisoned TC's arrow leaves its roof crew's bow (roofShot): drawn from there, same progress, same landing
+    let rs = roofShot(p), fx = rs ? rs.x : p.startX, fy = rs ? rs.y : p.startY;
+    let scr = rs ? mapToScreen(fx + (targetX - fx) * progress, fy + (targetY - fy) * progress) : mapToScreen(p.x, p.y);
     let sx = scr.sx;
     let sy = scr.sy + HALF_TH;
     // Height along the flight: launch height (bow / battlements) blends to
     // impact height at the target's body, plus the ballistic arc.
-    let startH = p.startH || 12;
+    let startH = rs ? rs.h : p.startH || 12;
     let endH = 8;
     let A = 35 * (p.totalDist / 5);
     let arcH = Math.sin(progress * Math.PI) * A;
@@ -348,7 +350,7 @@ function drawProjectiles() {
     // Analytic flight tangent in screen space: iso ground motion plus the
     // derivative of arc+height blend, so the arrow always points along its
     // actual path — including right at launch and impact.
-    let isoS = toIso(p.startX, p.startY), isoT = toIso(targetX, targetY);
+    let isoS = toIso(fx, fy), isoT = toIso(targetX, targetY);
     let vx = isoT.ix - isoS.ix;
     let vy = (isoT.iy - isoS.iy) - (Math.cos(progress*Math.PI)*Math.PI*A + (endH - startH));
     let screenAngle = Math.atan2(vy, vx);
