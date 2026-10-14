@@ -728,6 +728,11 @@ function stanceOf(e){ return e.possessed ? STANCES.passive : STANCES[e.stance] |
 // AGAINST a 4x4 TC as out of reach — Stand Ground would soak the fire in silence.
 // THE target drop: forget the target, the order behind it and the walk to it (a later self-acquired fight is no order).
 function dropTarget(e){ e.target=null; e.explicitAttack=false; clearUnitPath(e); }
+// AoE2 (CPSB): on the easier levels a computer player never takes on villagers — its units don't pick them as targets
+// (they still defend themselves when one attacks: shouldRetaliate). profile.attacksVillagers, off for easy.
+function aiSparesVillager(unit, foe){
+  return foe.utype === 'villager' && aiDrives(unit) && aiProfileFor(unit.team).attacksVillagers === false;
+}
 function canStrikeInPlace(e, foe){
   if(!inWeaponRange(e, foe)) return false;
   if((e.range||0)>0 || foe.type==='building') return true;
@@ -2351,6 +2356,7 @@ function updateIdleMilitary(e){
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
         if(en.utype==='dragon')return false; // never picked a fight with on its own: only an explicit order attacks the dragon
+        if(aiSparesVillager(e,en))return false;
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
         // Skip a foe we recently proved unreachable — UNLESS we can hit it
         // RIGHT NOW without moving (canStrikeInPlace: firing range for

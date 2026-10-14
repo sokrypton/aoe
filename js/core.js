@@ -859,10 +859,11 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // then attacks repeat with at least waveCooldown between launches. The army
 // TRAINED is economy-driven (aiWaveSize → aiArmyTarget, js/ai.js): a fraction
 // (armyPerVil) of the villagers past a small base (armyEcoFloor), floored at
-// attackSize and capped at waveCap, raised by a deep bank; each attack sends
-// commitPercent of it (capped by waveCap). Attacks escalate as the eco grows
-// toward maxVils, mirroring how AoE2 throttles difficulty through the economy
-// rather than a scripted attack timeline.
+// attackSize and capped at armyCap, raised by a deep bank at every level (the
+// AoE2 AI always spends). Difficulty shapes the ATTACK as AoE2 does (sn-minimum/
+// maximum-attack-group-size 4/10 and sn-percent-attack-soldiers 75, scaled
+// x0.5 easy / x0.75 medium / x1 hard): attackSize, waveCap — the field squad
+// never grows past it, reinforcements included — and commitPercent.
 // attackTick reference points: hard rushes ~8 game-minutes (a classic drush
 // window), easy waits ~18. Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
@@ -884,6 +885,7 @@ const AI_BASE = {
   waveCooldown: T30(1500),
   attackTick: T30(3600),
   armyReserve: 6,
+  attacksVillagers: true,   // AoE2 (CPSB): computer players on Easiest/Easy never take on villagers
   ramWoodReserve: 99,
   militaryFoodReserve: 120,
   dropSites: true,
@@ -902,9 +904,9 @@ const AI_BASE = {
   ageSurgeFactor: 0.6,
 };
 const AI_LEVELS = {
-  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:25, attackSize:3, waveCap:8, commitPercent:35, armyPerVil:0.3, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,18,24], ageUpTick:[0,T30(21600),T30(63000)] },
-  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:40, attackSize:4, waveCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
-  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:60, attackSize:5, waveCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
+  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:25, attackSize:2, waveCap:5, armyCap:8, commitPercent:38, armyPerVil:0.3, attacksVillagers:false, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,18,24], ageUpTick:[0,T30(21600),T30(63000)] },
+  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:40, attackSize:3, waveCap:8, armyCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
+  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:60, attackSize:4, waveCap:10, armyCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
 };
 
 

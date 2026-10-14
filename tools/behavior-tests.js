@@ -955,11 +955,12 @@ async function withPage(browser, port, entry, fn){
         resources[1] = { food: 0, wood: 0, gold: 0, stone: 0, prepaidFarms: 0 };
       };
       const horizon = T30(3600) + T30(600); // hard attackTick + a couple of decision intervals
-      stage(5); // == attackSize
+      const minGroup = AI_LEVELS.hard.attackSize;   // (AoE2's scaled minimum attack group; the staged AI is hard)
+      stage(minGroup);
       let launched = false;
       for (let i = 0; i < horizon && !launched; i++) { update(); launched = (AI_STATES[1].waveCount || 0) > 0; }
       T.ok('attackSize soldiers: wave launches after attackTick', launched);
-      stage(4); // one below the minimum group
+      stage(minGroup - 1); // one below the minimum group
       for (let i = 0; i < horizon; i++) update();
       T.ok('attackSize-1 soldiers: launch holds', (AI_STATES[1].waveCount || 0) === 0);
       return T;
@@ -1220,6 +1221,39 @@ async function withPage(browser, port, entry, fn){
       gate.locked = false; passabilityChangedAt(gate.x, gate.y, gate.w, gate.h);
       for (let i = 0; i < T30(1500) && resourceStore(0).gold <= gold0; i++) update();
       T.ok('gate unlocked: the cart goes on and delivers', resourceStore(0).gold > gold0);
+      return T;
+    })),
+
+    // ------------------------------------------------ AI siege of a stone-walled town
+    // An AI army with rams at a stone ring: the rams go with it (never left home by the attack's cut), batter the wall
+    // while the infantry escorts them, and the army goes through to the TC — it used to stand outside "busy" with
+    // villagers it could never reach.
+    'ai-stone-siege': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const ents = [{ b: 'TC', x: 10, y: 10, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 }, { b: 'BARRACKS', x: 44, y: 50, team: 1 }];
+      for (let i = 4; i <= 21; i++) { ents.push({ b: 'SWALL', x: i, y: 4, team: 0 }, { b: 'SWALL', x: 4, y: i, team: 0 }, { b: 'SWALL', x: 21, y: i, team: 0 });
+        if (i < 11 || i > 13) ents.push({ b: 'SWALL', x: i, y: 21, team: 0 }); }
+      ents.push({ b: 'SGATE', x: 11, y: 21, w: 3, h: 1, team: 0 });
+      for (let i = 0; i < 5; i++) ents.push({ u: 'villager', x: 12 + i, y: 16, team: 0 });
+      for (let i = 0; i < 14; i++) ents.push({ u: i % 3 ? 'militia' : 'spearman', x: 40 + (i % 5), y: 44 + ((i / 5) | 0), team: 1 });
+      for (let i = 0; i < 2; i++) ents.push({ u: 'ram', x: 45 + i, y: 44, team: 1 });
+      for (let i = 0; i < 20; i++) ents.push({ u: 'villager', x: 52 + (i % 5), y: 46 + ((i / 5) | 0), team: 1 });
+      const fog = window.fogDisabled; window.fogDisabled = true;   // (the AI knows where the town is)
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [2, 2], entities: ents });
+      gameStarted = true; gamePaused = true;
+      AI_STATES[1].tick = aiProfileFor(1).attackTick + 1;
+      const tc = entities.find(e => e.btype === 'TC' && e.team === 0), walls = entities.filter(e => e.team === 0 && /WALL|GATE/.test(e.btype || ''));
+      let ramsOut = false, wallHit = false;
+      for (let i = 0; i < T30(9000) && tc.hp >= tc.maxHp && !gameOver; i++) {
+        update();
+        const sq = AI_STATES[1].squad;
+        if (sq && entities.some(e => e.utype === 'ram' && e.team === 1 && sq.ids.includes(e.id))) ramsOut = true;
+        if (walls.some(w => w.hp < w.maxHp || w.hp <= 0)) wallHit = true;
+      }
+      window.fogDisabled = fog;
+      T.ok('the rams go out with the attack', ramsOut);
+      T.ok('the stone wall is battered', wallHit);
+      T.ok('the army gets through to the TC', tc.hp < tc.maxHp || gameOver);
       return T;
     })),
 

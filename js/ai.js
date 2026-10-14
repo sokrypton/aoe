@@ -1965,8 +1965,9 @@ function findAIFarmSpot(ai,tc){
 // LAUNCH threshold — launches are AoE2 army-size-driven (aiMinGroup); using this eco-scaled number as the launch bar was the
 // defensive-death-spiral lock (an army dying at home could never reach it).
 // The army the economy pays for: the next wave + the home reserve, raised by whatever the bank holds beyond a working
-// float (~100 resources a soldier) up to the 200 pop limit. A fixed target left hard AIs at 30 soldiers on 18 000 food
-// with every tech done; houses follow the queued pop (ensureAIHousing). Saving for an age is spending, not surplus.
+// float (~100 resources a soldier) up to the 200 pop limit, at every difficulty (AoE2's AI always spends: what it sends
+// is what difficulty shapes — waveCap). A fixed target left hard AIs at 30 soldiers on 18 000 food with every tech done;
+// houses follow the queued pop (ensureAIHousing). Saving for an age is spending, not surplus.
 const AI_BANK_FLOAT=400, AI_BANK_PER_UNIT=100, AI_BANK_DEEP=1500;   // (deep: more of it buys nothing — see aiEcoPlan, planAIMarketExchange)
 function aiArmyTarget(ai,profile){
   let base=aiWaveSize(ai,profile)+profile.armyReserve;
@@ -1979,7 +1980,7 @@ function aiArmyTarget(ai,profile){
 function aiWaveSize(ai,profile){
   let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
   let ecoArmy=Math.floor(Math.max(0,vils-(profile.armyEcoFloor||0))*(profile.armyPerVil||0.5));
-  return Math.max(profile.attackSize, Math.min(profile.waveCap||60, ecoArmy));
+  return Math.max(profile.attackSize, Math.min(profile.armyCap||60, ecoArmy));
 }
 
 const AI_MIL_TYPES=['militia','spearman','archer','scout','knight'];
@@ -2009,7 +2010,7 @@ const AI_WAVE_RETREAT_FRACTION=0.35;
 const AI_ATTACK_SCALE_EVERY=T30(18000);
 // AoE2 sn-maximum-attack-group-size [10]: the ceiling the SCALED minimum
 // clamps to — without it the minimum outgrows what a pop-capped army keeps
-// AVAILABLE and late-game attacks stop. waveCap still bounds the size of the squad SENT (aiLaunchSquad).
+// AVAILABLE and late-game attacks stop. waveCap (AoE2's scaled maximum group) bounds the field squad itself.
 const AI_ATTACK_MIN_GROUP_CAP=10;
 // Civilian-militia bounds: only a raid the workforce can genuinely beat is
 // worth fighting (~3 militia-equivalents of power — unitPower('militia')=60);
@@ -2068,7 +2069,7 @@ function aiDefendBase(ai,home,aiTC,profile){
   // (an ally's town too, 2v2: a raid on it is answered, as AoE2 allies do; its walls are its own — reach is from ours)
   const towns=[tcC];
   for(const b of entities) if(b.type==='building'&&b.btype==='TC'&&b.complete&&b.hp>0&&b.team!==ai.team&&sameSide(b.team,ai.team)) towns.push(footprintCenter(b));
-  let foes=aiVisibleEnemies(ai,e=>e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&towns.some(c=>dist(e,c)<=alarmR)
+  let foes=aiVisibleEnemies(ai,e=>e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&!(e.utype==='villager'&&profile.attacksVillagers===false)&&towns.some(c=>dist(e,c)<=alarmR)
     &&pathReaches(tcx,tcy,Math.round(e.x),Math.round(e.y),aiTC.id));   // (sealed outside intact walls: no threat)
   let free=home.filter(m=>m.utype!=='ram'&&!isRetreatingUnit(m)&&m.task!=='garrison');
   if(foes.length){
@@ -2100,7 +2101,7 @@ function aiLaunchSquad(ai,home,mils,aiTC,profile){
   if(ai.tick<profile.attackTick)return;
   let free=home.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
   let raid=null, send;
-  if(teamAge[ai.team]===1&&tick-(ai.lastRaidTick??-1e9)>=AI_FEUDAL_RAID_EVERY){
+  if(teamAge[ai.team]===1&&profile.attacksVillagers!==false&&tick-(ai.lastRaidTick??-1e9)>=AI_FEUDAL_RAID_EVERY){   // (a raid hunts villagers)
     raid=aiRaidPoint(ai,aiTC);
     send=free.filter(m=>m.utype!=='ram').slice(0,AI_FEUDAL_RAID_SIZE);
     if(!raid||send.length<AI_FEUDAL_RAID_MIN)raid=null;
@@ -2113,7 +2114,10 @@ function aiLaunchSquad(ai,home,mils,aiTC,profile){
     if(aiIntelHolds(ai,mils,aiTC,requiredFactor)){aiProbe('holdIntel:t'+ai.team);return;}
     obj=aiMarchPoint(ai,aiTC); if(!obj)return;
     let commit=profile.commitPercent!=null?profile.commitPercent:75;
-    send=free.slice(0,Math.min(profile.waveCap||60, Math.max(minGroup, Math.round(mils.length*commit/100))));
+    // rams first (siege is no home defence: left out by the cut, the last-trained rams stayed home and a stone-walled town
+    // stood untouched), then foot, to commitPercent of the army within the maximum group (waveCap, AoE2-scaled)
+    const n=Math.min(profile.waveCap||60, Math.max(minGroup, Math.round(mils.length*commit/100)));
+    send=free.filter(m=>m.utype==='ram').concat(free.filter(m=>m.utype!=='ram')).slice(0,n);
   }
   ai.waveCount=(ai.waveCount||0)+1; ai.lastWaveTick=ai.tick; ai.lastWaveGlobalTick=tick; ai.lastWaveSize=send.length;
   if(raid)ai.lastRaidTick=tick;
@@ -2183,10 +2187,14 @@ function aiFieldSquad(ai,aiTC,profile,outmatched){
 function aiReinforceSquad(ai,home,profile,threatened){
   let sq=ai.squad;
   if(!sq||sq.raid||threatened)return;
+  let room=(profile.waveCap||60)-sq.ids.length;   // (the squad never grows past the maximum attack group)
+  if(room<=0)return;
   let free=home.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
-  let extra=free.length-(profile.armyReserve||0);
-  if(extra<AI_FEUDAL_RAID_MIN)return;
-  aiSquadJoin(ai,free.slice(free.length-extra),{x:sq.x,y:sq.y});
+  let rams=free.filter(m=>m.utype==='ram'), foot=free.filter(m=>m.utype!=='ram');   // (new rams first: siege is no defence)
+  let extra=foot.length-(profile.armyReserve||0);
+  let go=rams.concat(extra>=AI_FEUDAL_RAID_MIN?foot.slice(foot.length-extra):[]).slice(0,room);
+  if(!go.length)return;
+  aiSquadJoin(ai,go,{x:sq.x,y:sq.y});
   aiProbe('squadReinforce:t'+ai.team);
 }
 
@@ -2615,8 +2623,12 @@ function chooseAIAttackTarget(ai,militia,spotted){
   // no building in sight a ram falls through to marching on the enemy TC.
   // The escorting soldiers handle the defenders (AoE2 siege doctrine).
   // (and masonry it can't dent is no target at all: infantry on a stone wall cycled pick → give up → pick the next)
+  // (and a unit it can't get at — behind walls — is no target either: chasing villagers inside a stone ring kept a whole
+  // army "busy" outside it, never touching the wall)
+  let reach=e=>(militia.range||0)>0 ? regionReachesWithin(militia,e.x,e.y,militia.range+0.5) : regionReaches(militia.x,militia.y,e.x,e.y,militia.id,1);
   let cands = (militia.utype==='ram' ? spottedEnemies.filter(e=>e.type==='building') : spottedEnemies)
-    .filter(e=>!(e.type==='building'&&isWallLikeBtype(e.btype)&&!canBreach(militia,e)));
+    .filter(e=>!(e.type==='building'&&isWallLikeBtype(e.btype)&&!canBreach(militia,e)))
+    .filter(e=>e.type==='building'||(reach(e)&&!aiSparesVillager(militia,e)));
   if (cands.length > 0) {
     // the best few in priority order, the first reachable (or breachable) one — one walled-off favourite left the unit
     // with no target among reachable enemies. (A copy: the caller's spotted list is shared across attackers.)
