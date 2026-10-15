@@ -365,6 +365,7 @@ function simChecksum(){
     h = detMix(h, teamAge && teamAge[t] || 0);
     h = detMix(h, teamTechs && teamTechs[t] || 0);
   }
+  h = scenarioChecksum(h); // scenario trigger state (js/triggers.js); unchanged without a script
   return h >>> 0;
 }
 

@@ -16,10 +16,18 @@
 //     ages: [0, 2],                        // per-team age 0/1/2 (Dark/Feudal/Castle); default all 0
 //     resources: [ {food,wood,gold,stone,prepaidFarms?}, ... ], // per-team start stockpiles;
 //                                          //   default 200/200/100/200. Missing team/field → default.
-//     terrain: [ {t:'FOREST'|'GOLD'|'STONE'|'BERRIES'|'WATER'|'FARM', x, y, amount?} ],
-//     entities:[ {u:'knight', x, y, team, stance?}  // a unit
-//              | {b:'TC',     x, y, team, w?, h?} ]  // a (complete) building
+//     terrain: [ {t:'FOREST'|'GOLD'|'STONE'|'BERRIES'|'WATER'|'FARM', x, y, w?, h?, amount?} ],
+//                                          // w/h: fill a rectangle
+//     entities:[ {u:'knight', x, y, team, stance?, tag?}  // a unit
+//              | {b:'TC',     x, y, team, w?, h?, tag?} ]  // a (complete) building
 //                                                    // w/h: non-default footprint (e.g. a sized gate)
+//                                                    // tag: a name triggers refer to ('#name')
+//                                                    // hp: a building's (max) hit points override
+//     alliances: [0, 1, 0],                // per-team alliance id (same id = allied)
+//     names: ['Scots', 'English'],         // per-team display names
+//     camera: {x, y},                      // opening view (default: the entities' centroid)
+//     // Scripted scenarios (js/triggers.js, docs/scenarios.md):
+//     id, title, next, victory: 'conquest'|'custom', areas, objectives, triggers, steps
 //   }
 // `ages`/`resources` are the compact format's way to carry the per-team state a
 // full save (js/save.js) holds — so a minimal file round-trips team state too.
@@ -42,31 +50,36 @@ function loadScenario(spec){
   // + PRNG. Must run BEFORE restartGame (its init()/genMap use the seeded PRNG).
   window.__pendingMatchSeed = (spec.seed != null ? spec.seed : 1) >>> 0;
   setMapSize(spec.map || 'medium');
-  window.__scenarioMode = true;
-  restartGame(spec.difficulty || 'standard'); // full reset; skips default world
-  window.__scenarioMode = false;
   // Fog OFF by default in scenarios: the whole authored map should be visible,
   // and (crucially) the human-team auto-acquire is fog-gated — with fog on,
   // units can't "see"/engage a target beyond their sight radius, which defeats
   // most combat test setups. Set spec.fog:true to keep fog for a fog test.
+  // Before restartGame: its init() seeds the viewer's fog grid from this setting.
   window.fogDisabled = spec.fog !== true;
+  window.__scenarioMode = true;
+  restartGame(spec.difficulty || 'standard'); // full reset; skips default world
+  window.__scenarioMode = false;
 
   // Terrain / resource overrides on the blank grass base.
   (spec.terrain || []).forEach(o=>{
-    if(o.x<0 || o.y<0 || o.x>=MAP || o.y>=MAP) return;
     let ty = TERRAIN[o.t];
     if(ty === undefined) return;
     let res = o.amount != null ? o.amount : (SCENARIO_RES_DEFAULT[o.t] || 0);
-    map[o.y][o.x] = { t: ty, res, occupied: null };
-    if(typeof markMapDirty==='function') markMapDirty(o.x, o.y);
-    if(typeof passabilityChanged==='function') passabilityChanged();
+    for(let y=o.y; y<o.y+(o.h||1); y++) for(let x=o.x; x<o.x+(o.w||1); x++){
+      if(x<0 || y<0 || x>=MAP || y>=MAP) continue;
+      map[y][x] = { t: ty, res, occupied: null };
+      if(typeof markMapDirty==='function') markMapDirty(x, y);
+    }
   });
+  if(spec.terrain && spec.terrain.length && typeof passabilityChanged==='function') passabilityChanged(); // whole-map rebuild, once
 
   // Per-team controllers (after restartGame's defaults).
   if(spec.controllers && spec.controllers.length){
     teamControllers = Array.from({length: NUM_TEAMS}, (_, t) => parseScenarioController(spec.controllers[t]));
     if(typeof resetAIStates==='function') resetAIStates();
   }
+  if(spec.alliances) teamAlliance = Array.from({length: NUM_TEAMS}, (_, t) => spec.alliances[t] != null ? spec.alliances[t] : t);
+  if(spec.names) teamNames = Array.from({length: NUM_TEAMS}, (_, t) => spec.names[t] || null);
 
   // Per-team AGE and RESOURCES (optional — the compact format's way to carry
   // the team state a full save holds). Applied AFTER restartGame's defaults and
@@ -92,16 +105,21 @@ function loadScenario(spec){
 
   // Entities: buildings first (so unit spawn-out doesn't fight foundations),
   // then units. Buildings are created complete (createBuilding default).
+  let tagged = [];
   (spec.entities || []).filter(o=>o.b).forEach(o=>{
     // o.w/o.h carry a non-default footprint (e.g. a multi-tile gate sized by
     // gateFootprint in the editor); absent → createBuilding uses the BLDGS default.
     let b = createBuilding(o.b, o.x, o.y, o.team||0, o.w != null ? o.w : null, o.h != null ? o.h : null);
     if(b) b.complete = true;
+    if(b && o.hp) b.hp = b.maxHp = o.hp;
+    if(b && o.tag) tagged.push([o.tag, b.id]);
   });
   (spec.entities || []).filter(o=>o.u).forEach(o=>{
     let u = createUnit(o.u, o.x, o.y, o.team||0);
     if(u && o.stance) u.stance = o.stance;
+    if(u && o.tag) tagged.push([o.tag, u.id]);
   });
+  if(spec.triggers || spec.steps) startScenario(Object.assign({}, spec, { _tagged: tagged }));
 
   if(typeof refreshPopulationCounts==='function') refreshPopulationCounts();
   gameStarted = true;
@@ -109,9 +127,9 @@ function loadScenario(spec){
   // Center the camera on the authored content (its default is STARTS[0], which
   // a scenario usually doesn't use). Harmless headless — render never reads it.
   let ents = spec.entities || [];
-  if(ents.length && typeof toIso==='function'){
-    let cx = ents.reduce((s,e)=>s+e.x,0)/ents.length;
-    let cy = ents.reduce((s,e)=>s+e.y,0)/ents.length;
+  if((spec.camera || ents.length) && typeof toIso==='function'){
+    let cx = spec.camera ? spec.camera.x : ents.reduce((s,e)=>s+e.x,0)/ents.length;
+    let cy = spec.camera ? spec.camera.y : ents.reduce((s,e)=>s+e.y,0)/ents.length;
     let iso = toIso(cx, cy);
     camX = iso.ix; camY = iso.iy;
     window.targetCamX = camX; window.targetCamY = camY; window.cameraFollowId = null;

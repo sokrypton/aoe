@@ -392,6 +392,7 @@ function lockstepCaptureState(){
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,
+    scenario: captureScenario(), // trigger script + state (js/triggers.js); null in a plain match
   });
 }
 
@@ -421,6 +422,7 @@ function lockstepRestore(snap){
   if (st.exploredSim) teamExploredGrid = st.exploredSim;
   else resetTeamVision(); // fog-off snapshot: grids were zeroed and unmaintained — fresh zeros are exact
   restoreTeamState(st); // controllers/AI_STATES/lastTeamHit (js/core.js)
+  restoreScenario(st.scenario); // (js/triggers.js)
   bumpSimGen(); // tick rewound — invalidate every registered sim cache (js/core.js)
   // UI object references now point at pre-restore objects — re-resolve by id.
   selected = selected.map(u => entitiesById.get(u.id)).filter(Boolean);
@@ -530,6 +532,7 @@ function lockstepApplyResync(state){
   resetTeamVision();
   if (state.exploredSim) teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
   restoreTeamState(state); // controllers/AI_STATES/lastTeamHit (js/core.js)
+  restoreScenario(state.scenario); // (js/triggers.js)
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
   // explored memory only survives in the sim's explored grid. Seed fog=1
   // from our team's grid; a no-op for tiles already explored/visible, so

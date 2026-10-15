@@ -14,6 +14,8 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `core.js` | constants (UNITS/BLDGS/AGES/AI_LEVELS), team model, sim PRNG + det-trig, per-team vision grids, market prices |
 | `logic.js` | the sim: updateUnit/updateBuilding, combat, gathering, garrison, trade carts, guard posts, stuck-watchdog |
 | `wildlife.js` | the map's animals: sheep graze/wander, bear den/maul, dragon body/turn/breath |
+| `triggers.js` | scenario triggers (AoE2 conditions → effects, objectives, instructions): `scenarioScript` static, `scenarioState` sim-hashed — see `docs/scenarios.md` |
+| `scenario.js` / `scenario-ui.js` | `loadScenario` world builder / the viewer's instruction card, objectives, Learn to Play menu |
 | `ai.js` | per-team AI (economy plan, walls, home + field squads, villager shelter, militia) — see `docs/aoe2-ai-behavior.md`, `docs/ai-redesign.md` |
 | `entities.js` | createUnit/createBuilding, footprint stamping |
 | `pathfinding.js` | A* (`findPath`, stopDist mode), movement stepping, connectivity regions (`regionsFor`/`regionReaches`; mended in place by `passabilityChangedAt` after every passability change) |
@@ -22,7 +24,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `lockstep.js` | lockstep netcode: command scheduling, snapshot ring, rollback, resync/rejoin |
 | `net.js` / `net-sync.js` / `lobby.js` | PeerJS host-relay star, seat/token identity, lobby config |
 | `determinism.js` | `simChecksum` / `detEntityHash` — the desync tripwire |
-| `save.js` | save format **v4** (RLE map, derived `occupied`, RLE explored grids) |
+| `save.js` | save format **v11** (RLE map, derived `occupied`, RLE explored grids, scenario script + state) |
 | `loop.js` | the per-tick `update()` orchestrator |
 | `init.js` | boot, menus, match start paths |
 | `render*.js`, `ui.js`, `audio.js` | viewer-only (never read by the sim) |

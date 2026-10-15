@@ -211,6 +211,15 @@ function drawMinimap(){
       MX.fillRect(p.x-dot/2,p.y-dot/2,dot,dot);
     }
   });
+  // Scenario objective flags (js/triggers.js markers): a gold ring at each area's center.
+  if(typeof scenarioState!=='undefined'&&scenarioState&&scenarioState.markers.length){
+    scenarioState.markers.forEach(m=>{
+      let a=scenarioArea(m); if(!a)return;
+      let p=miniPoint(a.x+a.w/2,a.y+a.h/2);
+      MX.strokeStyle='#ffd34d';MX.lineWidth=2;
+      MX.beginPath();MX.arc(p.x,p.y,4+2*Math.sin(performance.now()/260),0,Math.PI*2);MX.stroke();
+    });
+  }
   let bottomY=window.innerHeight-bottomH;
   let vp=[
     screenToMap(0,topH),

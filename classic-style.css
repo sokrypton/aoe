@@ -1170,7 +1170,7 @@ canvas {
   left: 50%;
   top: calc(50% + 74px);
   transform: translateX(-50%);
-  z-index: 140; /* above the end screen, below the help/menu overlays */
+  z-index: 95; /* above the end screen (8), below the menu (#tutorial 100): the open menu covers it */
   width: auto;
   min-width: 160px;
 }
@@ -2585,3 +2585,72 @@ canvas {
   .setup-col-wide { grid-column: 1 / -1; }
   .setup-row-view:has(#townai-col[style*="none"]) #view-col { grid-column: 1 / -1; }
 }
+
+/* ---- SCENARIO INSTRUCTIONS (js/scenario-ui.js) ---- */
+#scn-card {
+  position: fixed;
+  top: 44px;
+  left: 8px;
+  width: min(380px, calc(100vw - 16px));
+  z-index: 90;
+  background: linear-gradient(180deg, #4c4a44 0%, #2b2924 55%, #26241f 100%);
+  border: 2px solid #8f8560;
+  border-radius: 3px;
+  color: #e8e0c6;
+  font-family: Georgia, 'Times New Roman', serif;
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,0.14), inset -1px -1px 0 rgba(0,0,0,0.65), 0 6px 18px rgba(0,0,0,0.7);
+  overflow: hidden;
+}
+#scn-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 10px; border: 0; border-bottom: 1px solid #57544a; background: rgba(0,0,0,0.2);
+  color: #ffd700; font: 700 13px 'Cinzel', Georgia, serif; letter-spacing: 0.4px; text-align: left; cursor: pointer;
+}
+#scn-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#scn-count { font-size: 12px; font-variant-numeric: tabular-nums; color: #cfc39c; }
+#scn-body { padding: 8px 12px 10px; max-height: 40vh; overflow-y: auto; }
+#scn-card.collapsed #scn-body { display: none; }
+#scn-card.collapsed #scn-head { border-bottom: 0; }
+#scn-text { font-size: 14px; line-height: 1.45; }
+#scn-text b { color: #ffd700; }
+#scn-goals { list-style: none; margin: 8px 0 0; padding: 6px 0 0; border-top: 1px solid #57544a; }
+#scn-goals:empty { display: none; }
+#scn-goals li { position: relative; padding-left: 20px; font-size: 13px; line-height: 1.5; }
+#scn-goals li::before { content: ''; position: absolute; left: 2px; top: 5px; width: 10px; height: 10px; border: 1.5px solid #8f8560; }
+#scn-goals li.done { opacity: 0.6; text-decoration: line-through; }
+#scn-goals li.done::before { background: #6f9a3a; border-color: #6f9a3a; }
+#scn-goals li.failed::before { background: #a32626; border-color: #a32626; }
+#scn-end-btn {
+  position: fixed; left: 50%; top: calc(50% + 124px); transform: translateX(-50%);
+  z-index: 95; width: auto; min-width: 160px;
+}
+#scn-end-btn:hover, #scn-end-btn:active { transform: translateX(-50%); }
+#learn-btn { flex: 1 1 auto; min-width: 0; }
+/* The start row's buttons share it evenly (Start | Learn to Play, Resume | Save | Lessons), whatever their labels */
+#start-row > .menu-action-btn { flex: 1 1 0; }
+.learn-heading { margin-top: 14px; text-align: center; font: 700 15px 'Cinzel', Georgia, serif; color: #ffd700; padding: 10px 0 4px; }
+#learn-list { display: flex; flex-direction: column; gap: 8px; padding: 6px 16px 0; }
+.learn-item { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 8px 12px; height: auto; }
+.learn-num { flex: 0 0 24px; height: 24px; border-radius: 50%; background: #57544a; color: #ffe9a8; display: flex; align-items: center; justify-content: center; font: 700 13px 'Cinzel', Georgia, serif; }
+.learn-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.learn-txt small { font-weight: 400; opacity: 0.75; font-size: 12px; }
+.learn-item.done .learn-num { background: #5d7a2a; }
+.learn-item .mi { margin: 0; color: #9fd06a; }
+.learn-back { flex: 1 1 auto; }
+/* The scenario guide's "press this" (js/scenario-ui.js): a dark inner ring keeps it legible on cream and gold
+   alike, and a solid outer ring pulses gold to orange. No blur, within 6px: #actions clips what spills further
+   (a tile sits 6px from its edge in classic). */
+@keyframes scn-glow { 0%, 100% { box-shadow: 0 0 0 2px #2b1d12, 0 0 0 4px #ffd34d; } 50% { box-shadow: 0 0 0 2px #2b1d12, 0 0 0 6px #ff8a1f; } }
+.scn-glow { animation: scn-glow 0.9s ease-in-out infinite; z-index: 3; }   /* (over the research scroll's rods; .act-btn is positioned) */
+/* Folded instruction card: a one-line task bar, as wide as its text (js/scenario-ui.js) */
+#scn-card.collapsed { width: auto; max-width: min(420px, calc(100vw - 16px)); }
+#scn-card.collapsed #scn-title { font: 600 13px Georgia, 'Times New Roman', serif; letter-spacing: 0; text-transform: none; font-variant: normal; white-space: normal; line-height: 1.35; }
+#scn-card.collapsed #scn-title::before { content: '\25B8  '; color: #ffd700; }
+@media (max-width: 600px) {
+  #scn-card { width: calc(100vw - 16px); }
+  #scn-text { font-size: 13px; line-height: 1.4; }
+  #scn-goals li { font-size: 12px; }
+  #scn-body { max-height: 32vh; padding: 6px 10px 8px; }
+}
+@keyframes scn-in { from { transform: translateY(-10px); opacity: 0.3; } to { transform: none; opacity: 1; } }
+#scn-card.scn-new { animation: scn-in 0.35s ease-out; }

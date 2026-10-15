@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 10, // v10: the field-squad AI (AI_STATES.squad; camp fields gone) + the exact visible-tile grids and nextProjectileId (a mid-tick-phase save reloads checksum-exact); v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    version: 11, // v11: scenario trigger script + state (js/triggers.js); v10: the field-squad AI (AI_STATES.squad; camp fields gone) + the exact visible-tile grids and nextProjectileId (a mid-tick-phase save reloads checksum-exact); v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -119,6 +119,7 @@ function serializeGame(){
     defeatedTeams,
     teamAge,
     teamTechs,
+    scenario: captureScenario(), // trigger script + state (js/triggers.js); null in a plain match
     // Cosmetic per-team labels/colors chosen in the lobby (js/core.js). Not sim
     // state (excluded from the checksum/snapshots), but a loaded MP game should
     // still show the players' agreed names and colors, so they ride the save.
@@ -235,8 +236,8 @@ function applySavedGame(data, opts){
   // fails loudly here instead of misloading silently. v8 (AI intel-memory
   // shape + parity sim semantics) deliberately drops older versions — no
   // back-compat shims, per convention.
-  if (data.version !== 10) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v10 saves only');
+  if (data.version !== 11) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v11 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,
@@ -375,6 +376,7 @@ function applySavedGame(data, opts){
     // fallback picks up the save's difficulty.)
     if (!data.teamControllers) data.teamControllers = defaultControllers(!!data.wasMultiplayerGame);
     restoreTeamState(data);
+    restoreScenario(data.scenario); // (js/triggers.js)
 
     window.fogDisabled = !!data.fogDisabled;
     if (opts && opts.fromOpponentMirror) {

@@ -113,6 +113,83 @@ function drawBuildingFootprintOutline(b, alpha){
   X.setLineDash([]);
   X.globalAlpha = 1;
 }
+// Scenario objective markers (js/triggers.js 'marker' effect): the area's
+// dashed outline plus a tall gold flag, pulsing so a new player finds it.
+const SCN_FLAG_COLOR = '#ffd34d', SCN_INK = '#2b1d12';
+function scnDiamond(a){ return [flagScreen(a.x, a.y), flagScreen(a.x + a.w, a.y), flagScreen(a.x + a.w, a.y + a.h), flagScreen(a.x, a.y + a.h)]; }
+function scnPath(c){ X.beginPath(); X.moveTo(c[0].x, c[0].y); for (let i = 1; i < c.length; i++) X.lineTo(c[i].x, c[i].y); X.closePath(); }
+// The objective banner: a gold swallowtail flying from a tall pole, waving.
+function drawScenarioFlag(x, y, t){
+  const top = y - 44, L = 24, Hb = 15, N = 8;
+  X.strokeStyle = SCN_INK; X.lineWidth = 3; X.beginPath(); X.moveTo(x, y); X.lineTo(x, top); X.stroke();
+  const wave = u => Math.sin(t / 180 - u * 4) * 2.4 * u;
+  const pts = []; for (let i = 0; i <= N; i++) { const u = i / N; pts.push([x + 1.5 + L * u, top + 2 + wave(u)]); }
+  X.beginPath(); X.moveTo(pts[0][0], pts[0][1]);
+  for (const q of pts) X.lineTo(q[0], q[1]);
+  const tip = pts[N];
+  X.lineTo(tip[0] - 6, tip[1] + Hb / 2);                                   // the swallowtail notch
+  for (let i = N; i >= 0; i--) X.lineTo(pts[i][0], pts[i][1] + Hb);
+  X.closePath();
+  X.fillStyle = SCN_FLAG_COLOR; X.fill();
+  X.lineWidth = 1.4; X.strokeStyle = SCN_INK; X.stroke();
+  X.fillStyle = SCN_FLAG_COLOR; X.strokeStyle = SCN_INK; X.lineWidth = 1.2;
+  X.beginPath(); X.arc(x, top - 2, 3, 0, Math.PI * 2); X.fill(); X.stroke();   // the finial
+}
+// A bobbing chevron: "this one" over a unit or building the guide points at.
+function drawScenarioChevron(x, y, t){
+  y += Math.sin(t / 160) * 4;
+  X.fillStyle = SCN_FLAG_COLOR; X.strokeStyle = SCN_INK; X.lineWidth = 2; X.lineJoin = 'round';
+  X.beginPath(); X.moveTo(x - 13, y - 15); X.lineTo(x + 13, y - 15); X.lineTo(x, y); X.closePath(); X.fill(); X.stroke();
+}
+// A flag off the screen: a gold arrow on the screen's edge points the way. Judged in real page pixels — the 2D map
+// draws this pass inside its zoom transform, the 3D overlay on a canvas that starts below the top bar — against the
+// HUD that actually covers the map (top bar, bottom bar, the corner buttons above it), then drawn back in this pass's space.
+function drawScenarioEdgeArrow(p, t){
+  const cr = X.canvas.getBoundingClientRect(), { ax, ay } = zoomAnchor();
+  const toReal = (x, y) => ({ x: cr.left + ax + (x - ax) * ZOOM, y: cr.top + ay + (y - ay) * ZOOM });
+  const rectTop = id => { const e = byId(id); if (!e) return Infinity; const r = e.getBoundingClientRect(); return r.height ? r.top : Infinity; };
+  const tb = byId('topbar'), m = 34;
+  const left = m, right = window.innerWidth - m, top = (tb ? tb.getBoundingClientRect().bottom : 0) + m;
+  const mapBottom = Math.min(rectTop('bottom'), window.innerHeight), bottom = Math.min(mapBottom, rectTop('pop-wrap')) - m; // (the corner buttons only sit at the side: they bound where the arrow goes, not what's in view)
+  const r = toReal(p.x, p.y - 25);                                             // (the banner, not the pole's foot: a flag whose cloth shows is on screen)
+  if (r.x >= 0 && r.x <= window.innerWidth && r.y >= top - m && r.y <= mapBottom) return;
+  const cx = (left + right) / 2, cy = (top + bottom) / 2, dx = r.x - cx, dy = r.y - cy;
+  const k = Math.min(dx ? Math.abs((dx > 0 ? right - cx : cx - left) / dx) : Infinity, dy ? Math.abs((dy > 0 ? bottom - cy : cy - top) / dy) : Infinity);
+  const ex = cx + dx * k, ey = cy + dy * k, ang = Math.atan2(dy, dx), s = 1 / ZOOM, b = 1 + 0.12 * Math.sin(t / 200);
+  X.save();
+  X.translate(ax + (ex - cr.left - ax) / ZOOM, ay + (ey - cr.top - ay) / ZOOM); X.rotate(ang); X.scale(s * b, s * b);
+  X.fillStyle = SCN_FLAG_COLOR; X.strokeStyle = SCN_INK; X.lineWidth = 2; X.lineJoin = 'round';
+  X.beginPath(); X.moveTo(16, 0); X.lineTo(-8, -13); X.lineTo(-3, 0); X.lineTo(-8, 13); X.closePath(); X.fill(); X.stroke();
+  X.restore();
+}
+function drawScenarioMarkers(){
+  if (typeof scenarioState === 'undefined' || !scenarioState) return;
+  const t = performance.now(), pulse = 0.55 + 0.45 * Math.sin(t / 260);
+  // The guide's "press this" (js/scenario-ui.js scnGlow): a bobbing chevron over the unit or building. No ring:
+  // a ring at the feet reads as "already selected".
+  if (typeof scnGlow !== 'undefined') for (const id of scnGlow) {
+    const e = entitiesById.get(id);
+    if (!e || e.hp <= 0 || e.garrisonedIn) continue;
+    if (e.type === 'building') {
+      const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, p = flagScreen(e.x + w / 2, e.y + h / 2);
+      drawScenarioChevron(p.x, p.y - 40 - 30 * Math.max(w, h), t + id * 97);   // (clear of the roof: art rises with the footprint)
+    } else {
+      const p = flagScreen(e.x + 0.5, e.y + 0.5);
+      drawScenarioChevron(p.x, p.y - 60, t + id * 97);                         // (above the idle '?' over a villager's head)
+    }
+  }
+  scenarioState.markers.forEach(m => {
+    const a = scenarioArea(m);
+    if (!a) return;
+    const c = scnDiamond(a);
+    X.strokeStyle = SCN_FLAG_COLOR; X.globalAlpha = 0.45 + 0.35 * pulse; X.lineWidth = 2; scnPath(c); X.stroke();
+    X.globalAlpha = 1;
+    const p = flagScreen(a.x + a.w / 2, a.y + a.h / 2);
+    if (p.x < -9000) return;                                                   // (behind the 3D camera)
+    drawScenarioFlag(p.x, p.y, t);
+    drawScenarioEdgeArrow(p, t);
+  });
+}
 // A dashed order line between two WORLD points (tile coords). The ends are projected here as a segment, not one by one:
 // the 3D overlay replaces worldSegmentScreen with one that clips at the camera's near plane — a far end behind the
 // camera projected alone came back as a sentinel corner, and the line pointed up-left whatever the real direction.
@@ -473,6 +550,7 @@ function renderFrame(){
 // (js/pov3d.js) calls it on its overlay canvas with mapToScreen projecting
 // through the 3D camera, so both views show the same overlays from one code path.
 function drawOrderOverlays(){
+  drawScenarioMarkers();
   // Just-clicked flag PREVIEWS (issuer-side, cosmetic): rally/guard
   // commands execute INPUT_DELAY_TICKS after the click, and the planted
   // flag would render at the STALE spot for those frames — a flicker-and-

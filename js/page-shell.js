@@ -129,6 +129,7 @@ const MENU_ICONS = {
   plus:    '<path d="M12 5v14M5 12h14"/>',
   map:     '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
   ai:      '<rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9.5 13h0M14.5 13h0"/>',
+  learn:   '<path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/>',                                                           // a marker flag
   editor:  '<path d="M14.5 5.5l4 4"/><path d="M4 20l9.5-9.5"/><path d="M12 4l8 8-3 3-8-8z"/>',
 };
 function menuIcon(name){
@@ -213,6 +214,15 @@ document.body.insertAdjacentHTML('afterbegin', `
   <div id="game-over-word"></div><div id="game-over-line"></div>
 </div></div>
 <button type="button" id="see-map-btn" class="menu-action-btn" style="display:none;" onclick="seeMap()">${menuIcon('map')}See Map</button>
+<button type="button" id="scn-end-btn" class="menu-action-btn" style="display:none;" onclick="scenarioEndButton()"></button>
+<!-- Scenario instructions + objectives (js/scenario-ui.js); hidden outside scenarios. -->
+<div id="scn-card" style="display:none;">
+  <button type="button" id="scn-head" onclick="toggleScenarioCard()"><span id="scn-title"></span><span id="scn-count"></span><span id="scn-chev"></span></button>
+  <div id="scn-body">
+    <div id="scn-text"></div>
+    <ul id="scn-goals"></ul>
+  </div>
+</div>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">
     <div id="mp-disconnect-title">Connection Lost</div>
@@ -389,6 +399,15 @@ document.body.insertAdjacentHTML('afterbegin', `
       </div>
     </div>
 
+    <!-- Learn to Play: the tutorial lessons (js/scenario-ui.js fills #learn-list). -->
+    <div id="menu-panel-learn" style="display:none;">
+      <div class="learn-heading">Learn to Play</div>
+      <div id="learn-list"></div>
+      <div class="menu-button-container">
+        <button type="button" class="menu-action-btn learn-back" onclick="showMenuPanel('main')">${menuIcon('back')}Back</button>
+      </div>
+    </div>
+
     <div id="menu-panel-main">
     <div id="game-over-banner" style="display:none;">
       <div id="game-over-title"></div>
@@ -409,6 +428,7 @@ document.body.insertAdjacentHTML('afterbegin', `
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
       <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">${menuIcon('save')}Save</button>
+      <button type="button" id="learn-btn" class="menu-action-btn" onclick="showMenuPanel('learn')">${menuIcon('learn')}Learn to Play</button>
     </div>
     <div class="menu-row-pair">
       <div class="menu-button-container" id="save-load-row">

@@ -134,7 +134,7 @@
           if (dot(hN, hN) > 1e-10) {
             vec2 sd = (projectionMatrix * vec4(normalize(normalMatrix * hN), 0.0)).xy * uHullRes;
             vec2 n2 = sd / max(length(sd), 0.5 * projectionMatrix[1][1] * uHullRes.y);
-            float pw = max(uHullPx, uHullW * projectionMatrix[1][1] * 0.5 * uHullRes.y / gl_Position.w);
+            float pw = clamp(uHullW * projectionMatrix[1][1] * 0.5 * uHullRes.y / gl_Position.w, uHullPx, uHullPx * 2.2);
             gl_Position.xy += n2 * pw * 2.0 / uHullRes * gl_Position.w;
           }`); };
     m.customProgramCacheKey = () => k0 + '|screen-hull';
@@ -170,18 +170,20 @@
 
   // Explored-but-unseen dims every object as it dims the ground (2D darkens buildings, trees and ore there): each
   // mesh material multiplies in the fog texture at its world position — patched once, just before its first draw.
-  const fowU = { value: null }; let fowHooked = false;
+  // The map size is a uniform, not baked into the shader: a material compiled for one match's map keeps sampling right
+  // when the next match's map is another size (baked, a 90-tile key read a 60-tile map's fog off by a third: black units).
+  const fowU = { value: null }, fowN = { value: 1 }; let fowHooked = false;
   function fowPatch(m){
     if (!(m.isMeshBasicMaterial || m.isMeshLambertMaterial || m.isMeshStandardMaterial || m.isMeshPhongMaterial || m.isMeshToonMaterial)) return;
-    const prev = m.onBeforeCompile, key = m.customProgramCacheKey() + '|fow' + MAP;   // key read BEFORE the swap (the default key is the function's source)
-    const f = function(sh, r){ prev.call(this, sh, r); sh.uniforms.fowMap = fowU;
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vFowUv;')
+    const prev = m.onBeforeCompile, key = m.customProgramCacheKey() + '|fow';   // key read BEFORE the swap (the default key is the function's source)
+    const f = function(sh, r){ prev.call(this, sh, r); sh.uniforms.fowMap = fowU; sh.uniforms.fowSize = fowN;
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vFowUv; uniform float fowSize;')
         .replace('#include <project_vertex>', `#include <project_vertex>
           vec4 fowW = vec4(transformed, 1.0);
           #ifdef USE_INSTANCING
             fowW = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);   // (a tree, a rock: lit by the fog of the tile it stands on — a crown over unexplored ground doesn't go black)
           #endif
-          fowW = modelMatrix * fowW; vFowUv = vec2(fowW.x / ${MAP}.0, 1.0 - fowW.z / ${MAP}.0);`);
+          fowW = modelMatrix * fowW; vFowUv = vec2(fowW.x / fowSize, 1.0 - fowW.z / fowSize);`);
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D fowMap; varying vec2 vFowUv;')
         .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb *= texture2D(fowMap, vFowUv).r;'); };
     f.fow = true; m.onBeforeCompile = f; m.customProgramCacheKey = () => key; m.needsUpdate = true;
@@ -200,7 +202,7 @@
     // No depth writes, drawn first: sprite billboards may dip below y=0.
     fowData = new Uint8Array(MAP * MAP * 4);
     fowTex = new THREE.DataTexture(fowData, MAP, MAP); fowTex.magFilter = fowTex.minFilter = THREE.NearestFilter; // crisp tile edges, as 2D
-    fowU.value = fowTex; hookFow();
+    fowU.value = fowTex; fowN.value = MAP; hookFow();
     const gm = new THREE.MeshBasicMaterial({ map: groundTex, depthWrite: false });
     gm.onBeforeCompile = sh => { sh.uniforms.fowMap = { value: fowTex };
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D fowMap;')
@@ -215,7 +217,7 @@
     const edge = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 5, MAP * 5).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#000000', depthWrite: false })); // hazed like the ground: no hard band against the sky
     edge.position.set(0, -0.002, 0); edge.renderOrder = -2; groundMesh.add(edge);             // (a child: it's rebuilt and dropped with the ground)
     groundFor = map;
-    dropBuildings(); heading.clear(); // a new world reuses entity ids
+    dropBuildings(); dropUnits(); heading.clear(); // a new world reuses entity ids
   }
 
   const rgbCache = new Map();
@@ -2049,8 +2051,8 @@
       // A hand on one of o.holds (lines the hands grip: { at: art point | atM: model point, dir: model dir, open?: model dir
       // the clip opens to, hand?: 0 | 1 | [0, 1] — the hands the pose puts on it, always snapped; else any hand near it })
       // snaps onto it, the clip's hole along it. The forearm runs into the clip's back (as thick as it): one piece, no seam.
-      let gax = null, Hm = P(...hand), endM = Hm;
-      { let best = null; const B = P(...bend), RH = ar(1.4);
+      let gax = null, Hm = P(...hand), endM = Hm, best = null;
+      { const B = P(...bend), RH = ar(1.4);
         for (const h of o.holds || []) { const mine = h.hand == null ? null : [].concat(h.hand).includes(s > 0 ? 1 : 0); if (mine === false) continue;
           const Lp = h.atM ? (U === g ? h.atM : V3(h.atM).applyMatrix4(toU).toArray()) : P(...local(h.at)), d = V3(h.dir).transformDirection(toU).toArray(), k = Hm.reduce((a, v, i) => a + (v - Lp[i]) * d[i], 0);
           const c = Lp.map((v, i) => v + d[i] * k), dist = Math.hypot(...c.map((v, i) => v - Hm[i]));
@@ -2072,11 +2074,22 @@
           const k = UNIT_SCALE / PX, wr = [endM[0] / k, 5 - (endM[1] - Y) * HPX / UNIT_SCALE, endM[2] / k], wa = [wf[0] / k, -wf[1] * HPX / UNIT_SCALE, wf[2] / k], wl = Math.hypot(...wa) || 1;
           const E2 = E.map((v, i) => v + (wr[i] - wa[i] / wl * ARM_F * 0.8 - v) * 0.4);
           bend = E2.map((v, i) => 2 * v - (shA[i] + wr[i]) / 2); } }
+      const emptyDangling = !best && hand[1] > -5; // hand dangling at waist/hips without a tool/weapon/hold
+      const carryOverhead = hand[1] < -16; // hand raised over head (carrying load), would slice camera
+      const forcedHide = o.fpArmHide && o.fpArmHide.includes(s);
+      const hideArm = forcedHide || carryOverhead || emptyDangling;
       tube(U, SKIN, P(...shA), P(...bend), endM, ar(1.05));
       tube(U, tc, P(...shA), P(...bend), P(...hand), ar(1.45), 0, 0.22);    // the puffy sleeve: the tube's first stretch
-      // first person shows the forearm: the arm folds into its elbow, the shoulder cap and the sleeve go (tube = [tube, start cap, end cap])
-      U.children[a0].userData.fpForearm = true; for (const i of [1, 3, 4, 5]) fpTag(U.children[a0 + i], 0, true);
+      // first person shows active forearms; empty dangling or overhead arms collapse (fpHide)
+      if (hideArm) {
+        for (let i = 0; i < 6; i++) fpTag(U.children[a0 + i], 0, true);
+      } else {
+        U.children[a0].userData.fpForearm = true;
+        U.children[a0].userData.fpSide = s;
+        for (const i of [1, 3, 4, 5]) fpTag(U.children[a0 + i], 0, true);
+      }
       legoHand(U, Hm, P(...bend), gax, endM, s);
+      if (hideArm) fpTag(U.children[U.children.length - 1], 0, true);
       if (o.swingArm === s) for (const c of U.children.slice(a0)) c.traverse(q => { q.userData.fpSwing = true; });   // first person: this arm alone swings (rigPose)
     }
     const hat = o.hat; hn = H.children.length;
@@ -2720,15 +2733,16 @@
     if (p.bob) body.position.y = p.bob * UNIT_SCALE / PX;
     const swingArm = ut === 'militia' && eq.shield ? 1 : 0;   // first person: with a shield up, only the sword arm swings
     const barShieldOn = ut === 'militia' && eq.shield;   // (the shield hangs from a bar the clip holds)
-    human(body, tc, { ...dress, hands: p.hands, elbows: p.elbows, torso: p.torso, headYaw: p.headYaw, feet: p.feet, swingArm, holds: soldierHolds(p, eq, barShieldOn, false, kind === 'attack' && ut === 'militia' ? q => SOLDIER_POSE[ut](kind, q, eq) : null, ut + kind + !!eq.shield) });
+    const fpArmHide = ut === 'militia' && !eq.shield ? [-1] : null;
+    human(body, tc, { ...dress, hands: p.hands, elbows: p.elbows, torso: p.torso, headYaw: p.headYaw, feet: p.feet, swingArm, fpArmHide, holds: soldierHolds(p, eq, barShieldOn, false, kind === 'attack' && ut === 'militia' ? q => SOLDIER_POSE[ut](kind, q, eq) : null, ut + kind + !!eq.shield) });
     if (ut === 'militia') { const n0 = body.children.length; weaponTag(body, () => sword(body, at(...p.weapon.hand), eq.weapon, p.weapon.dir, p.weapon.edge));
       if (swingArm) for (const c of body.children.slice(n0)) c.traverse(q => { q.userData.fpSwing = true; });
       if (barShieldOn) weaponTag(body, () => barShield(body, eq.shield, at(...p.shieldHand), shieldFace(eq.shield), tc)); }
     if (ut === 'spearman') weaponTag(body, () => spearAt(body, at(...p.weapon.hand), p.weapon.dir, eq.metal));
     if (ut === 'archer') { const b = weaponTag(body, () => drawnBow(body, at(...p.bow.grip), at(...p.bow.pull), p.bow.draw));
       if (p.bow.arrow) arrowAt(body, b.P.toArray(), V3(at(...p.bow.grip)).sub(b.P).toArray(), eq.feather, tc);
-      else if (p.bow.fetched) arrowAt(body, at(...p.bow.pull), V3(at(...p.bow.grip)).sub(V3(at(...p.bow.pull))).toArray(), eq.feather, tc); // the next arrow, carried to the string
-      if (eq.quiver) quiver(body, tc, eq.feather); }
+      else if (p.bow.fetched) arrowAt(body, at(...p.bow.pull), V3(at(...p.bow.grip)).sub(V3(at(...p.bow.pull))).toArray(), eq.feather, tc);
+      if (eq.quiver) { const q0 = body.children.length; quiver(body, tc, eq.feather); body.children.slice(q0).forEach(c => c.traverse(o => { o.userData.fpHide = true; })); } }
   }
   // ---- Cavalry: scout, knight ----
   // (the horse's gaits: horseGait, js/render-units.js — one gait for both views)
@@ -4212,7 +4226,7 @@
     // across the view (a spear jabs), phased off the same clock as the attack pose — the cut lands on the hit.
     // (foot soldiers only — the ones drawn as a viewmodel; a rider keeps its own swing, seen from the saddle)
     v.fpStrike = null;
-    const vmUnit = e.id === followId && mode === 'eye' && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);
+    const vmUnit = e.id === followId && eyeView() && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);
     if (vmUnit && p.kind === 'attack' && e.utype !== 'villager' && !(e.range > 0) && MIL_IMPACT[e.utype] != null) {
       v.fpStrike = ((p.t - MIL_IMPACT[e.utype]) % 1 + 1) % 1;                        // 0 at the hit
       p = p.legs ? { kind: p.legs.kind, t: p.legs.t, opt: p.opt } : { kind: 'idle', t: workPhase(e, 'idle'), opt: p.opt };
@@ -4282,8 +4296,8 @@
     if (!T) v.stride += Math.hypot(nx - v.x, nz - v.z);
     v.x = nx; v.z = nz;
     v.yaw += Math.atan2(Math.sin(ty - v.yaw), Math.cos(ty - v.yaw)) * Math.min(1, dt * 8);
-    const fpv = e.id === followId && mode === 'eye' && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);   // seen through its own eyes: arms as a viewmodel
-    if (RIG_UNITS(e.utype)) { if (!rigPose(v, p.kind, p.t, e.female, p.opt, teamColor(e.team), VIL_STEPS, e.id === followId && mode === 'eye', p.legs)) return false; }
+    const fpv = e.id === followId && eyeView() && RIG_UNITS(e.utype) && !isMountedUnit(e.utype);   // seen through its own eyes: arms as a viewmodel
+    if (RIG_UNITS(e.utype)) { if (!rigPose(v, p.kind, p.t, e.female, p.opt, teamColor(e.team), VIL_STEPS, e.id === followId && eyeView(), p.legs)) return false; }
     else { const step = Math.floor(p.t * VIL_STEPS) % VIL_STEPS, key = vilKey(p.kind, step, e.female, p.opt);
       const fr = vilFrame(key, p.kind, step / VIL_STEPS, e.female, p.opt, v);
       if (fr) useVilFrame(v, key, fr, teamColor(e.team));
@@ -4298,6 +4312,33 @@
   // (a little below and right of centre) whether the pose holds them high, low or off to a side — both eased slowly,
   // so a swing still sweeps across the view rather than being held still. Upper arms and shoulders never show.
   const VM = { aim: 0.12, down: 0.12, back: -0.3, ease: 1.5, at: [0.12, -0.22], near: 0.24 };  // lift: hands' angle below level (rad); the shoulders' spot below / behind (− ahead of) the lens (tiles); easing (1/s); the hands' screen spot (tan right, tan up); the hands' nearest distance ahead (tiles)
+  let _vmOverride = null;
+  const UNIT_VM = {
+    militia: {
+      aim: 0.16, down: 0.14, back: -0.34, ease: 2.0, at: [0.26, -0.22], near: 0.22, maxTilt: 0.25,
+      // Anchor primarily on the sword hand (right hand) so the shield stays steady on the left
+      anchor: (l, r) => r || l
+    },
+    spearman: {
+      aim: 0.24, down: 0.15, back: -0.42, ease: 2.0, at: [0.24, -0.22], near: 0.22, maxTilt: 0.28,
+      // Spear: anchor along the forward grip / front shaft so spear points toward crosshair
+      anchor: (l, r, pose) => (pose === 'attack' && l && r ? [l[0] * 0.7 + r[0] * 0.3, l[1] * 0.7 + r[1] * 0.3, l[2] * 0.7 + r[2] * 0.3] : (r || l))
+    },
+    archer: {
+      aim: 0.08, down: 0.14, back: -0.36, ease: 2.2, at: [-0.22, -0.18], near: 0.20, maxTilt: 0.25,
+      // Bow: anchor on the bow hand (left hand) so the bow stays steady on the left and string draws back
+      anchor: (l, r) => l || r,
+      poseVM: {
+        idle: { at: [-0.24, -0.22], down: 0.16, back: -0.36, aim: 0.08, maxTilt: 0.20 },
+        walk: { at: [-0.24, -0.22], down: 0.16, back: -0.36, aim: 0.08, maxTilt: 0.20 }
+      }
+    },
+    villager: {
+      aim: 0.10, down: 0.16, back: -0.36, ease: 2.0, at: [0.22, -0.22], near: 0.22, maxTilt: 0.25,
+      anchor: (l, r) => r || l
+    }
+  };
+  window.__povUnitVM = UNIT_VM;
   let _vm = null;
   // The strike's swing at phase u (0 = the hit): [pitch up, roll (+ top to the left), push ahead] about the shoulders.
   // A slash winds up high and right, cuts down-left through the middle at the hit, then settles; a spear is lowered
@@ -4315,20 +4356,31 @@
     const root = v.obj;
     if (!_vm) _vm = { m: new THREE.Matrix4(), r: new THREE.Matrix4(), t: new THREE.Matrix4() };
     const S = chh(-8);                                                              // the shoulder line's height (model)
-    const h = v.fpHands || [0.03, S - 0.17, 0], want = Math.max(0, Math.min(2.2, Math.atan2(S - h[1], Math.max(0.01, h[0])) - VM.aim));
-    const first = v.vmTilt == null || !root.userData.vm, e = first ? 1 : Math.min(1, camDt * VM.ease);
+    const uCfg = UNIT_VM[who.utype] || {};
+    const poseCfg = (uCfg.poseVM && uCfg.poseVM[v.lastPose]) || {};
+    const vm = { ...VM, ...uCfg, ...poseCfg, ...(_vmOverride || {}) };
+
+    let h = null;
+    if (uCfg.anchor && (v.fpHandL || v.fpHandR)) {
+      h = uCfg.anchor(v.fpHandL, v.fpHandR, v.lastPose, S);
+    }
+    if (!h) h = v.fpHands;
+
+    const maxTilt = vm.maxTilt != null ? vm.maxTilt : 0.35;
+    const want = h ? Math.max(0, Math.min(maxTilt, Math.atan2(S - h[1], Math.max(0.18, h[0])) - vm.aim)) : 0;
+    const first = v.vmTilt == null || !root.userData.vm, e = first ? 1 : Math.min(1, camDt * vm.ease);
     v.vmTilt = first ? want : v.vmTilt + (want - v.vmTilt) * e;
-    // where the hands land in camera space at this tilt (x right, y up, −z ahead), and the slide that puts them at VM.at
-    const c = Math.cos(v.vmTilt), sn = Math.sin(v.vmTilt), hx = h[0], hy = h[1] - S;
-    const px = h[2], py = -VM.down + hx * sn + hy * c, pz = VM.back - (hx * c - hy * sn), d = Math.max(0.12, -pz);
-    const sx = VM.at[0] * d - px, sy = VM.at[1] * d - py;
+    // where the hands land in camera space at this tilt (x right, y up, −z ahead), and the slide that puts them at vm.at
+    const c = Math.cos(v.vmTilt), sn = Math.sin(v.vmTilt), hx = h ? h[0] : 0, hy = h ? h[1] - S : 0;
+    const px = h ? h[2] : 0, py = -vm.down + hx * sn + hy * c, pz = vm.back - (hx * c - hy * sn), d = Math.max(0.12, -pz);
+    const sx = h ? vm.at[0] * d - px : 0, sy = h ? vm.at[1] * d - py : 0;
     v.vmSlide = first || !v.vmSlide ? [sx, sy] : [v.vmSlide[0] + (sx - v.vmSlide[0]) * e, v.vmSlide[1] + (sy - v.vmSlide[1]) * e];
-    const push = Math.max(0, VM.near + pz);                                          // a wind-up swings the hands back at the lens: held off at VM.near
+    const push = Math.max(0, vm.near + pz);                                          // a wind-up swings the hands back at the lens: held off at vm.near
 
     camera.updateMatrixWorld();
     // model (x forward, y up, z right) → camera (−z forward, y up, x right), turned forward by the tilt about the shoulders
     _vm.r.set(0, 0, 1, 0,  0, 1, 0, 0,  -1, 0, 0, 0,  0, 0, 0, 1).multiply(_vm.t.makeRotationZ(v.vmTilt));
-    _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0], -VM.down + v.vmSlide[1], VM.back - push));
+    _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0], -vm.down + v.vmSlide[1], vm.back - push));
     const sw = v.rig && v.rig.T.fpSwing, own = v.fpStrike != null && sw && sw.length;   // a shield arm holds still: only the sword arm's bones swing
     if (v.fpStrike != null) { const [pu, ro, fw] = strikeSwing(v.fpStrike, who.utype === 'spearman');
       _vm.k = (_vm.k || new THREE.Matrix4()).makeTranslation(0, 0, -fw).multiply(_vm.t.makeRotationX(pu)).multiply(_vm.t.makeRotationZ(ro));
@@ -4428,7 +4480,7 @@
     for (const p of parts) {
       if (p.o.userData.fpHide) for (let i = 0; i < (p.tube ? RIG_SEG + 1 : 1); i++) fpBones.push(bone + i); // (a tube: all its ring bones)
       if (p.o.userData.fpSwing) for (let i = 0; i < (p.tube ? RIG_SEG + 1 : 1); i++) fpSwing.push(bone + i);
-      if (p.tube && p.o.userData.fpForearm) fpFold.push(bone);
+      if (p.tube && p.o.userData.fpForearm) fpFold.push({ bone, side: p.o.userData.fpSide || 1 });
       if (p.tube) { // rings: surface and a fatter outline ring, both on the ring bones
         for (const [r, m, ord] of [[p.tube.r, p.o.material || mat(p.tube.col), 2], [p.tube.r, hullUnionMat, 1]]) { // (the outline ring: pushed out on screen)
           const { g: rg, ring } = ringGeo(r), { b, base } = rigAdd(B, m, ord, rg, 0, null);
@@ -4559,19 +4611,32 @@
       const mid = RIG_SEG >> 1; // the elbow: the arm's curve passes through it halfway
       _fpA = _fpA || { m: new THREE.Matrix4(), q: new THREE.Quaternion(), f: new THREE.Vector3(), t: new THREE.Vector3(), p: new THREE.Vector3(), s: new THREE.Vector3(), c: new THREE.Vector3(), e: new THREE.Vector3() };
       const A = _fpA;
-      for (const b0 of T.fpFold) { const E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16;
+      for (const fold of T.fpFold) { const b0 = fold.bone != null ? fold.bone : fold; const E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16;
         A.e.set(out[E + 12], out[E + 13], out[E + 14]);
-        A.f.set(out[E + 12] - out[Hd + 12], out[E + 13] - out[Hd + 13], out[E + 14] - out[Hd + 14]).normalize();   // the forearm's line, hand → elbow
+        const dx = out[E + 12] - out[Hd + 12], dy = out[E + 13] - out[Hd + 13], dz = out[E + 14] - out[Hd + 14], fl = Math.hypot(dx, dy, dz);
+        if (fl > 1e-4) A.f.set(dx / fl, dy / fl, dz / fl); else A.f.set(-1, 0, 0); // the forearm's line, hand → elbow
         // the shoulder (model: x ahead, y up, z right): the arm's own root, carried on down and back out of view
         A.s.set(out[b0 * 16 + 12] - FP_ARM * 0.35, out[b0 * 16 + 13] - FP_ARM * 0.6, out[b0 * 16 + 14] * 0.8);
-        A.c.copy(A.e).addScaledVector(A.f, FP_ARM * 0.3);                                    // the bend: on along the forearm a little first
-        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, u = i / mid;                    // u: 0 at the far end, 1 at the elbow
+        A.c.copy(A.e).addScaledVector(A.f, FP_ARM * 0.3); // the bend: on along the forearm a little first
+        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, u = i / mid; // u: 0 at the far end, 1 at the elbow
           A.p.copy(A.s).multiplyScalar((1 - u) * (1 - u)).addScaledVector(A.c, 2 * u * (1 - u)).addScaledVector(A.e, u * u);
           A.t.copy(A.c).sub(A.s).multiplyScalar(1 - u).addScaledVector(A.e.clone().sub(A.c), u).normalize().negate(); // the curve's heading, toward the far end
-          A.m.fromArray(out, E); A.q.setFromUnitVectors(A.f, A.t);
+          A.m.fromArray(out, E);
+          if (A.t.lengthSq() > 1e-4) A.q.setFromUnitVectors(A.f, A.t); else A.q.identity();
           A.m.premultiply(new THREE.Matrix4().makeRotationFromQuaternion(A.q)).setPosition(A.p); A.m.toArray(out, o); } }
-      if (T.fpFold.length) { const hs = [0, 0, 0]; for (const b0 of T.fpFold) for (let k = 0; k < 3; k++) hs[k] += out[(b0 + RIG_SEG) * 16 + 12 + k]; // the hands (the arms' ends)
-        v.fpHands = hs.map(x => x / T.fpFold.length); } }
+      if (T.fpFold.length) {
+        const hs = [0, 0, 0];
+        v.fpHandL = null; v.fpHandR = null;
+        for (let fi = 0; fi < T.fpFold.length; fi++) {
+          const fold = T.fpFold[fi], b0 = fold.bone != null ? fold.bone : fold, side = fold.side != null ? fold.side : (fi === 0 ? -1 : 1);
+          for (let k = 0; k < 3; k++) hs[k] += out[(b0 + RIG_SEG) * 16 + 12 + k];
+          const pt = [out[(b0 + RIG_SEG) * 16 + 12], out[(b0 + RIG_SEG) * 16 + 13], out[(b0 + RIG_SEG) * 16 + 14]];
+          if (side < 0) v.fpHandL = pt; else v.fpHandR = pt;
+        }
+        v.fpHands = hs.map(x => x / T.fpFold.length);
+      } else {
+        v.fpHands = null; v.fpHandL = null; v.fpHandR = null;
+      } }
     v.obj = v.rig.root;
     return true;
   }
@@ -4633,7 +4698,7 @@
     const near = [];
     for (const e of entities) {
       if (e.type !== 'unit') continue;
-      if (e.id === followId && mode === 'eye' && !(RIG_UNITS(e.utype) && (e.utype === 'villager' || MIL3D.has(e.utype)))) { // seen through its eyes: a rigged person shows its arms and tool (fp); anything else (an animal too) nothing
+      if (e.id === followId && eyeView() && !(RIG_UNITS(e.utype) && (e.utype === 'villager' || MIL3D.has(e.utype)))) { // seen through its eyes: a rigged person shows its arms and tool (fp); anything else (an animal too) nothing
         const a = animals.get(e.id), rs = unitSprites.get(e.id);              // (HIDDEN, not just left un-updated: a sheep's own body sat
         if (a) a.obj.visible = false; if (rs) rs.sprite.visible = false;      // over the camera, bobbing with every step)
         continue;
@@ -4966,6 +5031,14 @@
   // A mode or character switch glides the camera from where it was to the new view (position, the shortest turn, lens)
   // rather than cutting; each frame blends toward the live target, so the view it lands on is the one it keeps.
   const BLEND_MS = 600; let camFrom = null, camKey = null, camLast = null, _bq = null, blendMs = BLEND_MS;
+  // Through the eyes for drawing: the mode is 'eye' AND the camera has got there — the glide in from behind shows the
+  // whole body until the last stretch (collapsing it the moment the mode flipped left a headless body in view).
+  const EYE_SHOWN_AT = 0.85;
+  function eyeView(){
+    if (mode !== 'eye') return false;
+    if (camKey !== 'eye|' + followId) return false;   // (the glide hasn't started yet: still the view from behind)
+    return !camFrom || (performance.now() - camFrom.t0) / camFrom.ms >= EYE_SHOWN_AT;
+  }
   function blendCamera(){
     const key = mode + '|' + followId;
     if (key !== camKey) { if (camLast) camFrom = { pos: camLast.pos.clone(), quat: camLast.quat.clone(), fov: camLast.fov, t0: performance.now(), ms: blendMs }; camKey = key; blendMs = BLEND_MS; } // from the last DRAWN view
@@ -5016,13 +5089,15 @@
       camera.position.set(camAt.x, camH, camAt.y);
       camera.lookAt(eye.x + cx * 1.5, 0.3, eye.y + cy * 1.5);
     } else { // through the eyes: at the head (a rider's up in the saddle), looking where it faces, pitched by mouse-look
-      const h = isMountedUnit(e.utype) ? 0.97 : e.utype === 'ram' ? 0.8 : 0.58, fwd = RIG_UNITS(e.utype) ? -0.12 : 0; // just behind the (hidden) head: the arms and tool fall in view
+      // just behind the (hidden) head: the arms and tool fall in view. A rider sits a little higher and further back, so the
+      // horse's neck lies below the view rather than rising up the middle of it (close up, a wide lens stretched it tall)
+      const mounted = isMountedUnit(e.utype), h = mounted ? 1.14 : e.utype === 'ram' ? 0.8 : 0.58, fwd = mounted ? -0.32 : RIG_UNITS(e.utype) ? -0.12 : 0;
       camAt = { x: eye.x, y: eye.y };
       camera.position.set(eye.x + cx * fwd, h, eye.y + cy * fwd);
       const pc = Math.cos(fpPitch);
       camera.lookAt(eye.x + cx * pc * 10, h + Math.sin(fpPitch) * 10, eye.y + cy * pc * 10);
     }
-    const orbit = mode === 'orbit' || !e, fov = orbit ? ORBIT_FOV : mode === 'chase' ? 55 : 70;
+    const orbit = mode === 'orbit' || !e, fov = orbit ? ORBIT_FOV : mode === 'chase' ? 55 : isMountedUnit(e.utype) ? 60 : 70;
     if (camera.far !== far || camera.fov !== fov) { camera.far = far; camera.fov = fov; camera.updateProjectionMatrix();
       scene.fog.near = orbit ? far * 0.8 : far * 0.45; scene.fog.far = orbit ? far + 20 : far - 6; } // the world view: only a light haze
     if (scene.background !== VOID) { scene.background = VOID; scene.fog.color = VOID; } // no sky or clouds, in every mode: beyond the map is black, as 2D
@@ -5715,7 +5790,14 @@
     if (pip) { pip.style.display = 'none'; setWorld(false); }
     drag = null; ptrs.clear(); if (boxEl) boxEl.style.display = 'none';
     if (!scene) return;
+    dropUnits();
+    dropBuildings();
+  }
+  // Every per-entity model and its viewer state, keyed by id: a new world reuses ids, so a kept entry would dress the
+  // new entity in the old one's model, team and pose.
+  function dropUnits(){
     for (const rec of unitSprites.values()) { scene.remove(rec.sprite); rec.tex.dispose(); rec.sprite.material.dispose(); }
+    unitSprites.clear();
     for (const a of animals.values()) dropSolid(a);
     animals.clear();
     for (const v of villagers.values()) dropVillager(v);
@@ -5725,8 +5807,7 @@
     dropFalls();
     for (const [id, r] of vilCorpses) { dropVillager(r); scene.remove(r.blood); r.blood.geometry.dispose(); r.blood.material.dispose(); }
     vilCorpses.clear();
-    unitSprites.clear();
-    dropBuildings();
+    tickPos.clear(); farmLive.clear(); farmPrev.clear(); lastPh.clear();
   }
 
   // Toggle for the selected unit: open, switch to it, or close if already on it (the world view: its eyes, or back to orbit).
@@ -5765,15 +5846,25 @@
   window.__povYaw = () => yaw; // dev: the view's heading (tests)
   window.__povAnimYaw = id => { const a = animals.get(id); return a ? a.yaw : null; }; // dev: an animal's drawn heading (tests)
   window.__pov3dScene = () => scene; // dev: profiling
-  window.__povVM = (o, pitch) => { Object.assign(VM, o || {}); if (pitch !== undefined) fpPitch = pitch; const v = villagers.get(followId); return { ...VM, tilt: v && v.vmTilt, hands: v && v.fpHands, S: chh(-8), pose: v && v.lastPose, strike: v && v.fpStrike, mode }; }; // dev: tune the first-person viewmodel
+  window.__povVM = (o, pitch, utype) => {
+    if (o) {
+      if (utype && UNIT_VM[utype]) Object.assign(UNIT_VM[utype], o);
+      else { _vmOverride = _vmOverride || {}; Object.assign(_vmOverride, o); Object.assign(VM, o); }
+    }
+    if (pitch !== undefined) fpPitch = pitch;
+    const v = villagers.get(followId);
+    const u = followId != null && entitiesById.get(followId);
+    const uCfg = (u && UNIT_VM[u.utype]) || {};
+    return { ...VM, ...uCfg, ...(_vmOverride || {}), tilt: v && v.vmTilt, hands: v && v.fpHands, handL: v && v.fpHandL, handR: v && v.fpHandR, S: chh(-8), pose: v && v.lastPose, strike: v && v.fpStrike, mode, eyeView: eyeView(), camKey, blending: !!camFrom, cam: camera && camera.position.toArray().map(x => +x.toFixed(2)), unit: u && [+(u.x + 0.5).toFixed(2), +(u.y + 0.5).toFixed(2)] };
+  }; // dev: tune the first-person viewmodel
   // The eye button: into character mode on a unit — the camera standing behind it (zoom in for its eyes) — opening
   // the world view if need be; again, back to the map.
   const inEyes = id => world && followId === id && mode !== 'orbit';
   window.povEyesUnit = () => world && mode !== 'orbit' ? followId : null;   // whose character mode, if any (the corner eye button)
-  window.povEyes = id => {
+  window.povEyes = (id, force = false) => {
     const u = entitiesById.get(id);
     if (!u || u.type !== 'unit' || u.hp <= 0) return;
-    if (inEyes(id)) { leaveToMap(); return; }
+    if (!force && inEyes(id)) { leaveToMap(); return; }
     if (!world) openWorld();
     blendMs = 1000; anchorTo(u); mode = 'chase'; chaseK = 1; refreshButtons();
   };

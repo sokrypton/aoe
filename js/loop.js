@@ -113,6 +113,7 @@ function update(){
       updateAI(AI_STATES[t]);
     }
   }
+  updateScenario(); // js/triggers.js — authored scenario triggers (no-op without a script)
   refreshPopulationCounts();
 
   // Headless self-play never runs render() (js/render.js), the only place

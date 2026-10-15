@@ -2788,7 +2788,7 @@ function updateVillagerBuild(e){
 // re-aim, which otherwise tracked a fogged unit's live tile across the map (the path never emptied for combat to see it).
 function combatTargetHidden(e, t){
   return !sameSide(t.team, e.team) && t.team !== GAIA_TEAM && e.team !== GAIA_TEAM
-    && !(aiDrives(e) && e.explicitAttack && t.type === 'building') && !entityVisibleToTeam(t, e.team);
+    && !(e.explicitAttack && t.type === 'building') && !entityVisibleToTeam(t, e.team);
 }
 
 // ---- COMBAT (unit has a target; ranged fire / melee press / mop-up /
@@ -2842,12 +2842,10 @@ function updateUnitCombat(e){
   // Fog gate for combat targets: the sim's own deterministic per-team
   // visibility (entityVisibleToTeam, js/core.js) — NEVER the viewer-local
   // `fog` grid, which differs between lockstep peers. ONE rule for humans
-  // and AI (information parity). Sole asymmetry: an AI EXPLICIT march keeps
-  // a BUILDING target out of sight (controlAIMilitary attacks the remembered enemy
-  // TC — otherwise the army's attack order is wiped the tick after it's
-  // given and it never leaves home). A building can't move; a fogged UNIT's live
-  // position is information the AI doesn't have, so that chase drops like anyone's.
-  // A human's explicit attack drops on lost vision: the player watches the fog and re-clicks.
+  // and AI (information parity). An EXPLICIT attack keeps a BUILDING target out
+  // of sight (a player clicks a remembered house; controlAIMilitary marches on the
+  // remembered TC): a building can't move. A fogged UNIT's live position is
+  // information nobody has, so that chase drops on lost vision for everyone.
   // e.team !== GAIA_TEAM: gaia (bears) has no vision grid and keeps its
   // own aggro rules.
   if (combatTargetHidden(e, t)) {
@@ -3640,6 +3638,8 @@ function checkAllianceVictory(){
   // you can watch it play all the way out. Inert in a real game (__editorMode
   // is unset there → checksum unchanged).
   if(window.__editorMode)return;
+  // A custom-victory scenario ends by its triggers (js/triggers.js).
+  if(scenarioBlocksConquest())return;
   // A defeat must have actually happened: the conquest hook calls this on
   // EVERY player-entity death, and a match where all teams share one
   // alliance (sandbox/testing) would otherwise end on the first casualty,

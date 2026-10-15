@@ -296,6 +296,9 @@ function execCommand(cmd, team){
         if (victim) { victim.hp = 0; handleDeath(victim, team); }
       }
       break;
+    case 'scenario-signal':
+      execScenarioSignal(cmd);
+      break;
     case 'town-bell':
       if (cmd.ringing) ringTownBell(team); else soundAllClear(team);
       if (typeof updateUI === 'function') updateUI();

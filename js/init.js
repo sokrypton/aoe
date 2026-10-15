@@ -265,6 +265,9 @@ function showMenuPanel(which){
   let main = byId('menu-panel-main');
   let opts = byId('menu-panel-options');
   let lobby = byId('menu-panel-lobby');
+  let learn = byId('menu-panel-learn');
+  if (learn) learn.style.display = which === 'learn' ? '' : 'none';
+  if (which === 'learn' && window.renderLearnList) renderLearnList();
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
@@ -328,8 +331,8 @@ function updateUiSwitchVisibility(){
   if (disc) disc.style.display = preGame ? '' : 'none';
 }
 function menuPanelIsMain(){
-  let opts = byId('menu-panel-options');
-  return !opts || opts.style.display === 'none';
+  let opts = byId('menu-panel-options'), learn = byId('menu-panel-learn');
+  return (!opts || opts.style.display === 'none') && (!learn || learn.style.display === 'none');
 }
 
 // Back button: settings take effect the moment you leave Options, not only
@@ -1226,6 +1229,8 @@ function attemptGuestJoin(){
 }
 
 function handleStartButton(){
+  // A finished lesson's menu: its main button is the lesson's own next step (js/scenario-ui.js).
+  if (window.menuMode === 'gameover' && window.lessonActive && lessonActive()) { scenarioEndButton(); return; }
   if (window.menuMode === 'restart-ready') {
     onStartClicked();
     return;
@@ -1264,6 +1269,10 @@ function applyMenuMode(mode){
       if (sub) sub.textContent = iWon
         ? 'Your empire has triumphed!'
         : 'Your empire falls to dust.';
+      if (window.lessonActive && lessonActive()) {   // a lesson ends as a lesson, not an empire
+        if (title) title.textContent = iWon ? '🏆 Lesson complete' : '💀 Lesson lost';
+        if (sub) sub.textContent = scenarioScript.title || '';
+      }
     }
   }
 
@@ -1280,6 +1289,7 @@ function applyMenuMode(mode){
     if (startBtn) {
       startBtn.style.display = (liveMp && netRole === 'guest') ? 'none' : '';
       startBtn.textContent = (liveMp && netRole === 'host') ? '🔄 Rematch' : '🔄 Play Again';
+      if (window.lessonActive && lessonActive()) startBtn.innerHTML = menuIcon(didIWin() ? 'learn' : 'retry') + scenarioEndButtonLabel(didIWin());
     }
     if (liveMp && netRole === 'guest') {
       let sub = byId('game-over-sub');
@@ -1330,6 +1340,11 @@ function applyMenuMode(mode){
     if (mpRow) mpRow.style.display = '';
     if (saveBtn) saveBtn.style.display = 'none';
   }
+  // Lessons are single-player: offered from the start/end menus, and mid-lesson (to restart or switch lessons) —
+  // never over a live match of the normal game.
+  { let lb = byId('learn-btn'), inLesson = window.lessonActive && lessonActive();
+    if (lb) { lb.style.display = netRole || (mode === 'ingame' && !inLesson) ? 'none' : '';
+      lb.innerHTML = menuIcon('learn') + (inLesson ? 'Lessons' : 'Learn to Play'); } }
   updateUiSwitchVisibility();
   scheduleMenuRescale();
 }
@@ -1345,6 +1360,7 @@ function openRestartMenu(){
 }
 
 function restartGame(difficulty){
+  resetScenario(); // a scenario re-arms itself after this (loadScenario)
   gameOver = false;
   won = false;
   gameStarted = false;
@@ -1417,6 +1433,7 @@ function restartGame(difficulty){
   window.__gameOverBannerDismissed = false; // fresh match → banner armed again
   window.seeMapMode = false; // exit the finished-map review mode
   { let sm = byId('see-map-btn'); if (sm) sm.style.display = 'none'; }
+  { let sb = byId('scn-end-btn'); if (sb) sb.style.display = 'none'; }
   { let gos = byId('game-over-screen'); if (gos) gos.style.display = 'none'; }
 
   // Re-generate map and spawn starts
@@ -1642,6 +1659,7 @@ function gameLoop(){
     // (camera follow inside too: it must track the unit where it's drawn)
     withDrawPositions(() => { if (gameStarted) syncCameraFollow(); render(); }); // after sim ticks — a pre-tick recenter vibrates the followed unit
     updateUI();
+    if (window.updateScenarioUI) updateScenarioUI(); // scenario instructions/objectives (js/scenario-ui.js)
   }
   if(gameOver){
     let iWon = didIWin();
@@ -1657,6 +1675,7 @@ function gameLoop(){
     if (!window.gameOverMenuShown) {
       window.gameOverMenuShown = true;
       show('see-map-btn', true);
+      if (window.scenarioGameOver) scenarioGameOver(iWon); // a lesson's Next/Try Again (js/scenario-ui.js)
     }
     let gos = byId('game-over-screen');
     if (gos) {
@@ -1665,9 +1684,9 @@ function gameLoop(){
         let word = byId('game-over-word');
         word.textContent = iWon ? 'VICTORY' : 'DEFEAT';
         word.className = iWon ? 'victory' : 'defeat';
-        byId('game-over-line').textContent = iWon
+        byId('game-over-line').textContent = (window.scenarioEndLine && scenarioEndLine(iWon)) || (iWon
           ? 'Your empire has triumphed! The enemy town lies in ruins.'
-          : 'Your forces have been vanquished. Your empire falls to dust.';
+          : 'Your forces have been vanquished. Your empire falls to dust.');
       }
       gos.style.display = showIt ? '' : 'none';
     }

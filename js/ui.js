@@ -828,7 +828,7 @@ function updateUI(){
     // no text rows next to it. Classic keeps the AoE2-style worded card.
     let modern = !isClassicUI;
     byId('sel-name').textContent = modern ? '' : (iWon?'VICTORY!':'DEFEAT!');
-    byId('sel-details').textContent = modern ? '' : (iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!');
+    byId('sel-details').textContent = modern ? '' : ((window.scenarioEndLine && scenarioEndLine(iWon)) || (iWon?'You destroyed the enemy Town Center!':'Your Town Center was destroyed!'));
     return;
   }
   if(!gameStarted){
@@ -1106,6 +1106,7 @@ function updateUI(){
             let item=document.createElement('div');item.className='research-item';
             let btn=document.createElement('div');btn.className='act-btn research-tile';
             if(o.id) btn.id=o.id;
+            if(o.target) btn.dataset.research=o.target; // (the scenario guide finds it: js/scenario-ui.js)
             btn.dataset.tipType='action'; btn.dataset.tipLabel=o.tipLabel;
             if(o.tipDesc) btn.dataset.tipDesc=o.tipDesc;
             if(o.cost) btn.dataset.tipCost=JSON.stringify(o.cost);
@@ -1417,6 +1418,7 @@ function updateUI(){
         ];
         menuButtonDefs.forEach(bi => {
           let btn=document.createElement('div');btn.className='act-btn menu-btn framed';
+          btn.dataset.menu=bi.action; // (the scenario guide finds it: js/scenario-ui.js)
           btn.dataset.tipType='action';
           btn.dataset.tipLabel=bi.tipLabel;
           btn.dataset.tipDesc=bi.tipDesc;

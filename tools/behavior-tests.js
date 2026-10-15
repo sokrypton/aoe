@@ -1745,7 +1745,7 @@ async function withPage(browser, port, entry, fn){
       const occ = map.map(r => r.map(c => c.occupied).join(',')).join(';');
       const grids = teamExploredGrid.map(g => Array.from(g).join('')).join('|');
       const save = serializeGameForWire();
-      T.ok('v10 stamp + tps', save.version === 10 && save.tps === TPS);
+      T.ok('v11 stamp + tps', save.version === 11 && save.tps === TPS);
       T.ok('fog-on save carries RLE grids', Array.isArray(save.teamExploredGrids));
       T.ok(`compact (${(JSON.stringify(save).length / 1024).toFixed(1)}KB < 40KB)`, JSON.stringify(save).length < 40 * 1024);
       T.ok('occupied never serialized', JSON.stringify(save.map).indexOf('occupied') < 0);
@@ -2191,6 +2191,87 @@ async function withPage(browser, port, entry, fn){
       }
       return T;
     })),
+
+    // ------------------------------------------------- Learn to Play: every lesson can be won
+    // A naive player bot reads each armed trigger's conditions (js/triggers.js) and acts
+    // through real commands: move into areas, place buildings, train, gather, research,
+    // attack tagged targets. A lesson that can't be finished this way is a broken lesson.
+    'learn-lessons': async () => {
+      const dir = path.join(ROOT, 'scenarios/learn');
+      const out = { pass: [], fail: [] };
+      for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.js')).sort()) {
+        const SCENARIOS = {};   // the lesson script registers itself here (js/scenario-ui.js)
+        new Function('SCENARIOS', fs.readFileSync(path.join(dir, f), 'utf8'))(SCENARIOS);
+        const spec = Object.values(SCENARIOS)[0];
+        const r = await withPage(browser, port, '/tools/sim.html', p => p.evaluate((spec) => {
+          const T = window.__T;
+          loadScenario(spec);
+          const st = scenarioState, sc = scenarioScript;
+          const cmd = (c) => execCommand(c, 0);
+          const mine = (w) => scenarioObjects(w, 0);
+          const center = (a) => areaCenter(scenarioArea(a));
+          const tc = () => mine('TC')[0];
+          const near = (x, y, t) => { let best = null, bd = 1e9;
+            for (let yy = 0; yy < MAP; yy++) for (let xx = 0; xx < MAP; xx++) if (map[yy][xx].t === t && map[yy][xx].res > 0) {
+              const d = Math.hypot(xx - x, yy - y); if (d < bd) { bd = d; best = { x: xx, y: yy }; } }
+            return best; };
+          const anchorFor = { LCAMP: TERRAIN.FOREST, MCAMP: TERRAIN.GOLD, MILL: TERRAIN.BERRIES };
+          const build = (bt) => {
+            if (scenarioObjects(bt, 0, null, true).length) return;
+            const vils = mine('villager').slice(0, 3); if (!vils.length) return;
+            const t = tc(), res = anchorFor[bt] != null ? near(t.x, t.y, anchorFor[bt]) : null;
+            const a = res || { x: t.x + 6, y: t.y - 4 };
+            for (let rad = 1; rad < 10; rad++) for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+              if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+              cmd({ kind: 'build-placement', btype: bt, tileX: a.x + dx, tileY: a.y + dy, unitIds: vils.map(v => v.id) });
+              if (scenarioObjects(bt, 0, null, true).length) return;
+            }
+          };
+          const gather = (k) => {
+            const terr = { food: TERRAIN.BERRIES, wood: TERRAIN.FOREST, gold: TERRAIN.GOLD, stone: TERRAIN.STONE }[k];
+            const TASK = { food: 'forage', wood: 'chop', gold: 'mine_gold', stone: 'mine_stone' }[k];
+            let idle = mine('villager').filter(v => !v.task && !v.target && !v.buildTarget);
+            if (k !== 'food') idle = idle.slice(0, Math.max(0, 3 - mine('villager').filter(v => v.task === TASK).length));
+            if (k === 'food') { const sh = entities.find(e => e.utype === 'sheep' || e.utype === 'sheep_carcass');
+              if (sh) { cmd({ kind: 'command', unitIds: idle.map(v => v.id), tileX: Math.round(sh.x), tileY: Math.round(sh.y), targetId: sh.id }); return; } }
+            const t = near(tc().x, tc().y, terr); if (t) cmd({ kind: 'command', unitIds: idle.map(v => v.id), tileX: t.x, tileY: t.y });
+          };
+          const trainer = (u) => u === 'villager' ? tc() : mine('BARRACKS')[0];
+          const act = () => {
+            sc.triggers.forEach((t, i) => {
+              if (!st.on[i]) return;
+              t.when.forEach((c, k) => {
+                if (c.ui != null) cmd({ kind: 'scenario-signal', key: i + '.' + k });
+                else if (c.inArea != null) { const m = center(c.inArea);
+                  cmd({ kind: 'command', unitIds: mine(c.what || 'unit').filter(u => u.utype !== 'villager' || c.what === 'villager').map(u => u.id), tileX: m.x, tileY: m.y }); }
+                else if (c.own != null && BLDGS[c.own]) build(c.own);
+                else if (c.own != null && UNITS[c.own]) { const b = trainer(c.own);
+                  if (b && b.queue.length < 2 && mine(c.own).length < (c.n || 1)) cmd({ kind: 'train-unit', bldgId: b.id, utype: c.own }); }
+                else if (c.res != null) Object.keys(c.res).forEach(gather);
+                else if (c.destroyed != null) { const tg = scenarioObjects('#' + c.destroyed, null, null, true)[0];
+                  if (tg) cmd({ kind: 'command', unitIds: mine('military').map(u => u.id), tileX: Math.floor(tg.x), tileY: Math.floor(tg.y),
+                    targetId: entityVisibleToTeam(tg, 0) || tg.type === 'building' ? tg.id : null }); }   // (an unseen unit: walk toward it)
+                else if (c.age != null) { const b = tc(); if (b && !b.research) cmd({ kind: 'research', bldgId: b.id, target: 'age' }); }
+                else if (c.tech != null) { const b = entities.find(e => e.team === 0 && e.type === 'building' && (BLDGS[e.btype].researches || []).includes(c.tech));
+                  if (b && !b.research) cmd({ kind: 'research', bldgId: b.id, target: c.tech }); }
+              });
+            });
+          };
+          // Idle villagers keep gathering food/wood like a player would.
+          for (let n = 0; n < 200 && !gameOver; n++) {
+            act();
+            mine('villager').filter(v => !v.task && !v.target && !v.buildTarget).forEach((v, j) => gather(j % 2 ? 'wood' : 'food'));
+            for (let i = 0; i < 150 && !gameOver; i++) update();
+          }
+          const dbg = JSON.stringify(resources[0]) + ' ' + mine('military').map(u => u.utype[0] + Math.round(u.x) + ',' + Math.round(u.y) + 't' + u.target + 'p' + u.path.length).join(' ') + ' | ' + entities.filter(e => e.team === 1).map(e => (e.utype || e.btype) + Math.round(e.x) + ',' + Math.round(e.y)).join(' ') + ' ' + mine('villager').map(v => (v.task || '-') + (v.buildTarget ? 'B' : '')).join(',') + ' ' + entities.filter(e => e.team === 0 && e.type === 'building').map(e => e.btype + (e.complete ? '' : '*')).join(',');
+          T.ok(spec.title + ': won (step ' + st.fired.join('') + ', tick ' + tick + ') ' + (gameOver && won ? '' : dbg), gameOver && won);
+          T.ok(spec.title + ': every objective shown was completed', Object.keys(st.obj).every(k => st.obj[k] === 2));
+          return T;
+        }, spec));
+        out.pass.push(...r.pass); out.fail.push(...r.fail);
+      }
+      return out;
+    },
   };
 
   for (const [name, run] of Object.entries(sections)) {
