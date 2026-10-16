@@ -2593,30 +2593,33 @@ canvas {
   left: 8px;
   width: min(380px, calc(100vw - 16px));
   z-index: 90;
-  background: linear-gradient(180deg, #4c4a44 0%, #2b2924 55%, #26241f 100%);
-  border: 2px solid #8f8560;
+  /* Dark glass, mostly clear: the map reads through it; a soft shadow behind every letter keeps text legible on busy art */
+  background: rgba(22,20,16,0.28);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  border: 1px solid rgba(143,133,96,0.6);
   border-radius: 3px;
-  color: #e8e0c6;
+  color: #f3ecd6;
   font-family: Georgia, 'Times New Roman', serif;
-  box-shadow: inset 1px 1px 0 rgba(255,255,255,0.14), inset -1px -1px 0 rgba(0,0,0,0.65), 0 6px 18px rgba(0,0,0,0.7);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.6);
   overflow: hidden;
 }
 #scn-head {
   display: flex; align-items: center; gap: 8px; width: 100%;
-  padding: 5px 10px; border: 0; border-bottom: 1px solid #57544a; background: rgba(0,0,0,0.2);
-  color: #ffd700; font: 700 13px 'Cinzel', Georgia, serif; letter-spacing: 0.4px; text-align: left; cursor: pointer;
+  padding: 5px 10px; border: 0; border-bottom: 1px solid rgba(143,133,96,0.4); background: transparent;
+  color: #ffd700; text-shadow: inherit; font: 700 13px 'Cinzel', Georgia, serif; letter-spacing: 0.4px; text-align: left; cursor: pointer;
 }
 #scn-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#scn-count { font-size: 12px; font-variant-numeric: tabular-nums; color: #cfc39c; }
+#scn-count { font-size: 12px; font-variant-numeric: tabular-nums; color: #e8e0c6; }
 #scn-body { padding: 8px 12px 10px; max-height: 40vh; overflow-y: auto; }
 #scn-card.collapsed #scn-body { display: none; }
 #scn-card.collapsed #scn-head { border-bottom: 0; }
 #scn-text { font-size: 14px; line-height: 1.45; }
 #scn-text b { color: #ffd700; }
-#scn-goals { list-style: none; margin: 8px 0 0; padding: 6px 0 0; border-top: 1px solid #57544a; }
+#scn-goals { list-style: none; margin: 8px 0 0; padding: 6px 0 0; border-top: 1px solid rgba(143,133,96,0.4); }
 #scn-goals:empty { display: none; }
 #scn-goals li { position: relative; padding-left: 20px; font-size: 13px; line-height: 1.5; }
-#scn-goals li::before { content: ''; position: absolute; left: 2px; top: 5px; width: 10px; height: 10px; border: 1.5px solid #8f8560; }
+#scn-goals li::before { content: ''; position: absolute; left: 2px; top: 5px; width: 10px; height: 10px; border: 1.5px solid #e8e0c6; box-shadow: 0 0 2px rgba(0,0,0,0.7); }
 #scn-goals li.done { opacity: 0.6; text-decoration: line-through; }
 #scn-goals li.done::before { background: #6f9a3a; border-color: #6f9a3a; }
 #scn-goals li.failed::before { background: #a32626; border-color: #a32626; }
@@ -2644,7 +2647,7 @@ canvas {
 .scn-glow { animation: scn-glow 0.9s ease-in-out infinite; z-index: 3; }   /* (over the research scroll's rods; .act-btn is positioned) */
 /* Folded instruction card: a one-line task bar, as wide as its text (js/scenario-ui.js) */
 #scn-card.collapsed { width: auto; max-width: min(420px, calc(100vw - 16px)); }
-#scn-card.collapsed #scn-title { font: 600 13px Georgia, 'Times New Roman', serif; letter-spacing: 0; text-transform: none; font-variant: normal; white-space: normal; line-height: 1.35; }
+#scn-card.collapsed #scn-title { color: #f3ecd6; font: 600 13px Georgia, 'Times New Roman', serif; letter-spacing: 0; text-transform: none; font-variant: normal; white-space: normal; line-height: 1.35; }
 #scn-card.collapsed #scn-title::before { content: '\25B8  '; color: #ffd700; }
 @media (max-width: 600px) {
   #scn-card { width: calc(100vw - 16px); }

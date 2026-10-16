@@ -9,6 +9,7 @@ SCENARIOS["learn-1"] =
   "controllers": ["human", "human", "human"],
   "alliances": [0, 1, 0],
   "names": ["Scots", "English", "Scottish village"],
+  "colors": [0, 1, 6],
   "resources": [
     {"food": 0, "wood": 0, "gold": 0, "stone": 0},
     {"food": 0, "wood": 0, "gold": 0, "stone": 0},

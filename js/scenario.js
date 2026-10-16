@@ -25,6 +25,7 @@
 //                                                    // hp: a building's (max) hit points override
 //     alliances: [0, 1, 0],                // per-team alliance id (same id = allied)
 //     names: ['Scots', 'English'],         // per-team display names
+//     colors: [0, 1, 6],                   // per-team palette slot (PLAYER_TEAM_COLORS: 6 = grey, a neutral faction)
 //     camera: {x, y},                      // opening view (default: the entities' centroid)
 //     // Scripted scenarios (js/triggers.js, docs/scenarios.md):
 //     id, title, next, victory: 'conquest'|'custom', areas, objectives, triggers, steps
@@ -80,6 +81,7 @@ function loadScenario(spec){
   }
   if(spec.alliances) teamAlliance = Array.from({length: NUM_TEAMS}, (_, t) => spec.alliances[t] != null ? spec.alliances[t] : t);
   if(spec.names) teamNames = Array.from({length: NUM_TEAMS}, (_, t) => spec.names[t] || null);
+  if(spec.colors) teamColorMap = Array.from({length: NUM_TEAMS}, (_, t) => spec.colors[t] != null ? spec.colors[t] : t);
 
   // Per-team AGE and RESOURCES (optional — the compact format's way to carry
   // the team state a full save holds). Applied AFTER restartGame's defaults and

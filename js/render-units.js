@@ -2133,7 +2133,8 @@ function drawPerson2D(e){
       const br = blob(hm[6], mH, 0, -15.2, 0, 5.6, 0.7, 5.6, 'head'); br.pt.d = H0 + 0.4; br.pt.line = true;
       const ring = ringPts(0, -15.2, 5.6).filter(o => o.near).map(o => P(...o.q)), dome = blob(hm[6], mH, ...hm.slice(0, 6), 'head'), dp = dome.pt.path;
       dome.pt.d = H0 + 0.45; dome.pt.line = true; dome.pt.outline = false;
-      dome.pt.path = () => { X.save(); X.beginPath(); X.rect(-200, -200, 400, 400); X.moveTo(...ring[0]); for (const q of ring.slice(1)) X.lineTo(...q); X.closePath(); X.clip('evenodd'); X.beginPath(); dp(); X.fill(); X.stroke(); X.restore(); X.beginPath(); }; }
+      // (no near arc — a body lying flat, side-on — leaves no brim in front: the dome then draws whole)
+      if (ring.length >= 3) dome.pt.path = () => { X.save(); X.beginPath(); X.rect(-200, -200, 400, 400); X.moveTo(...ring[0]); for (const q of ring.slice(1)) X.lineTo(...q); X.closePath(); X.clip('evenodd'); X.beginPath(); dp(); X.fill(); X.stroke(); X.restore(); X.beginPath(); }; }
     if (eq.helmet === 'norman') {  // the gold band: a thin rim round the helm, the arc that faces us
       const arc = ringPts(-0.3, -15.2, 4.55), runs = []; let cur = [];
       for (const o of arc) { if (o.near) cur.push(o.q); else if (cur.length) { runs.push(cur); cur = []; } } if (cur.length) runs.push(cur);

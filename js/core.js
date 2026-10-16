@@ -633,9 +633,9 @@ const GAIA_TEAM = 255;
 // One wood palette for trees and what's cut from them (trunks, stumps, felled trees, logs carried and piled): the
 // bark, and the pale cut face (a stump's top, a log's end).
 const TREE_BARK = '#6e473b', TREE_CUT = '#ebd2b0';
-// Real player teams only, indexed by team id; gaia has its own color below.
-// Entries 2+ are pre-picked for future players.
-const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800'];
+// Real player teams only, indexed by palette slot (teamColorMap); gaia has its own color below. AoE2's eight, in its
+// order: blue, red, green, yellow, cyan, purple, grey, orange (grey is a scenario's neutral faction: js/scenario.js colors).
+const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800', '#1fa3b0', '#8a46b8', '#8d8d8d', '#e07a1f'];
 const GAIA_COLOR = '#cccc88';
 // Seat -> palette-index indirection. teamColorMap[team] is an index into
 // PLAYER_TEAM_COLORS, letting the pre-match lobby (js/lobby.js) give a player
@@ -658,7 +658,7 @@ function teamColor(team){
 // Darker variant per team, for building art's shaded/shadow side — kept as
 // its own hand-picked pair (not a generic darkenColor() pass) since
 // building art wants a specific darker tone, not a percentage darken.
-const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800'];
+const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800', '#147680', '#5f2f80', '#5e5e5e', '#a3550f'];
 const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
   return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[teamColorIdx(team)];
@@ -678,8 +678,8 @@ function teamColorLight(team){
 // PURE, maxed-out player colors for the MINIMAP only (AoE2 does the same): a
 // few-px dot on green terrain needs maximum contrast, so the map uses vivid
 // primaries where the unit art uses the softer PLAYER_TEAM_COLORS above. Same
-// order (blue, red, green, yellow) and same teamColorMap remap.
-const PLAYER_TEAM_COLORS_MINIMAP = ['#0000ff', '#ff0000', '#00ff00', '#ffff00'];
+// order and same teamColorMap remap.
+const PLAYER_TEAM_COLORS_MINIMAP = ['#0000ff', '#ff0000', '#00ff00', '#ffff00', '#00ffff', '#ff00ff', '#c0c0c0', '#ff8000'];
 function teamColorMinimap(team){
   return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS_MINIMAP[teamColorIdx(team)];
 }
