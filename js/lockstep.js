@@ -375,7 +375,7 @@ let lockstepSnapshots = []; // {t, state} — state captured AFTER simming tick 
 
 function lockstepCaptureState(){
   return structuredClone({
-    entities, projectiles, corpses, resources, map, marketPrices,
+    entities, projectiles, corpses, resources, map: packMap(), marketPrices,   // (packed: js/entities.js packMap)
     popUsed, popCap, tick, gameOver, won,
     nextId, nextProjectileId, simRngState,
     numTeams: NUM_TEAMS, // (a resync's fresh page must size its per-team state to the match)
@@ -412,7 +412,7 @@ function lockstepRestore(snap){
   corpses = st.corpses;
   resources = st.resources;
   if (st.marketPrices) marketPrices = st.marketPrices; // global commodity exchange (js/core.js)
-  map = st.map;
+  unpackMap(st.map); // (after entities: it re-stamps their footprints)
   popUsed = st.popUsed; popCap = st.popCap;
   tick = st.tick;
   gameOver = st.gameOver; won = st.won;
@@ -483,6 +483,7 @@ function lockstepBuildResyncState(){
   // null under All-Visible (see lockstepCaptureState) — also keeps the
   // resync/rejoin wire payload free of NUM_TEAMS x MAP^2 dead bytes.
   if (st.exploredSim) st.exploredSim = st.exploredSim.map(g => Array.from(g));
+  st.map = { size: st.map.size, t: Array.from(st.map.t), res: Array.from(st.map.res) }; // typed arrays don't survive the JSON wire
   // Corpse deathTime is performance.now()-epoch — meaningless on the peer's
   // clock (page-load relative). Ship ages instead, same as the save path
   // (js/save.js), and rebase on apply. Cosmetic only, but raw timestamps
@@ -501,7 +502,7 @@ function lockstepApplyResync(state){
   // anything indexes the restored map, and fog is per-viewer (never part
   // of sim state) so it's rebuilt empty and recomputed next tick.
   if (state.numTeams) NUM_TEAMS = state.numTeams;   // (a fresh page boots at 2: a 3-4 player match never re-matched)
-  MAP = state.map.length;
+  MAP = state.map.size;
   // Before initFog(): it seeds the whole grid as revealed when fog is off.
   if (state.fogDisabled !== undefined) window.fogDisabled = !!state.fogDisabled;
   if (!fog.length || fog.length !== MAP) initFog();
@@ -520,7 +521,7 @@ function lockstepApplyResync(state){
   }
   resources = state.resources;
   if (state.marketPrices) marketPrices = state.marketPrices; // global commodity exchange (js/core.js)
-  map = state.map;
+  unpackMap({ size: state.map.size, t: Uint8Array.from(state.map.t), res: Float64Array.from(state.map.res) }); // (wire arrays → typed)
   popUsed = state.popUsed; popCap = state.popCap;
   tick = state.tick;
   gameOver = state.gameOver; won = state.won;

@@ -13,10 +13,13 @@
 // beyond one boolean check per tick.
 
 const DET = {
-  enabled: false,      // per-tick checksum history collection
+  enabled: false,      // checksum history collection
   strict: false,       // Math.random tripwire during update()
-  history: [],         // ring of {tick, sum} while enabled
+  history: [],         // ring of {tick, sum} while enabled — every `every`th tick
   historyMax: 600,
+  // Peers exchange one checksum per report, for a tick a full rollback window old, so hashing every tick was wasted
+  // (it cost several sim ticks each at 100+ units). Every peer uses the same stride, so the exchanged ticks line up.
+  every: 10,
   log: null,           // {seed, settings, commands:[{execTick, team, seq, cmd}]}
 };
 
@@ -378,6 +381,7 @@ function simEntityHashes(){
 
 // Called from update() once per completed sim tick when DET.enabled.
 function detAfterTick(){
+  if (tick % DET.every !== 0) return;
   DET.history.push({ tick: tick, sum: simChecksum() });
   if (DET.history.length > DET.historyMax) DET.history.shift();
 }

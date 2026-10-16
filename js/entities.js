@@ -41,11 +41,27 @@ function createUnit(type,x,y,team){
 // creation stamps it here, and the save loader re-derives it from the saved
 // entities (occupied is never serialized — js/save.js v4). Keep any change
 // to the guard or the stamped rect in this one place.
-function stampBuildingFootprint(e){
+function occupyFootprint(e){
   for(let dy=0;dy<(e.h||1);dy++)for(let dx=0;dx<(e.w||1);dx++){
     if(e.y+dy<MAP&&e.x+dx<MAP){map[e.y+dy][e.x+dx].occupied=e.id;markMapDirty(e.x+dx,e.y+dy);}
   }
+}
+function stampBuildingFootprint(e){
+  occupyFootprint(e);
   passabilityChangedAt(e.x,e.y,e.w||1,e.h||1);
+}
+// The tile grid in snapshot form (lockstep rollback ring, resync): terrain and resources as flat typed arrays —
+// cloning MAP² tile objects every snapshot was most of multiplayer's per-tick overhead. `occupied` is derived and
+// re-stamped on unpack. Unpacking builds a NEW map object, which drops the derived region cache (js/pathfinding.js).
+function packMap(){
+  const n=MAP*MAP, t=new Uint8Array(n), res=new Float64Array(n);
+  for(let y=0,i=0;y<MAP;y++){ const row=map[y]; for(let x=0;x<MAP;x++,i++){ t[i]=row[x].t; res[i]=row[x].res||0; } }
+  return {size:MAP, t, res};
+}
+function unpackMap(m){
+  map=[];
+  for(let y=0,i=0;y<m.size;y++){ const row=map[y]=new Array(m.size); for(let x=0;x<m.size;x++,i++) row[x]={t:m.t[i],res:m.res[i],occupied:null}; }
+  for(const e of entities) if(e.type==='building') occupyFootprint(e);
 }
 function createBuilding(type,x,y,team,customW=null,customH=null){
   let b=BLDGS[type];
