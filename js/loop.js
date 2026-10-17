@@ -39,19 +39,25 @@ function update(){
         let b = entitiesById.get(p.targetBuildingId);
         if (b && b.hp > 0) { damageEntity(shooter, b); stickArrow(p, b); }
       } else {
+        // The unit nearest the landing spot (the unit grid's cells round it: a full entity scan per impact was
+        // O(arrows × entities) in a big battle). Ties go to the lowest id — what the entities-order scan picked.
         let victim = null, vd = 0.45;
-        entities.forEach(en => {
-          if (en.type !== 'unit' || sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) return; // no ally friendly fire
-          if (en.utype === 'sheep' || en.utype === 'sheep_carcass') return; // arrows don't burn food (matches tower target acquisition)
-          // Gaia wildlife is not collateral: a stray/dodged arrow aimed at a
-          // raider must not wing a passing bear (which flips its aggro and
-          // perturbs the AI's hunt bookkeeping). A bear the shooter actually
-          // AIMED at (p.aimId, spawnProjectile) still takes the hit.
-          if (en.team === GAIA_TEAM && en.id !== p.aimId) return;
-          let idx = en.x - p.tx, idy = en.y - p.ty;
-          let d = Math.sqrt(idx*idx + idy*idy);
-          if (d < vd) { vd = d; victim = en; }
-        });
+        const grid = targetableUnitGrid(), c = UNIT_GRID_CELL;
+        const gx0 = Math.max(0, ((p.tx - vd) / c) | 0), gx1 = Math.min(unitGridNX - 1, ((p.tx + vd) / c) | 0);
+        const gy0 = Math.max(0, ((p.ty - vd) / c) | 0), gy1 = Math.min(unitGridNY - 1, ((p.ty + vd) / c) | 0);
+        for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+          const cell = grid[gx * unitGridNY + gy]; if (!cell) continue;
+          for (let i = 0; i < cell.length; i++) { const en = cell[i];
+            if (sameSide(en.team, shooter.team) || en.hp <= 0 || en.garrisonedIn) continue; // no ally friendly fire (the grid: units only, no sheep or carcasses — arrows don't burn food)
+            // Gaia wildlife is not collateral: a stray/dodged arrow aimed at a
+            // raider must not wing a passing bear (which flips its aggro and
+            // perturbs the AI's hunt bookkeeping). A bear the shooter actually
+            // AIMED at (p.aimId, spawnProjectile) still takes the hit.
+            if (en.team === GAIA_TEAM && en.id !== p.aimId) continue;
+            let idx = en.x - p.tx, idy = en.y - p.ty;
+            let d = Math.sqrt(idx*idx + idy*idy);
+            if (d < vd || (d === vd && victim && en.id < victim.id)) { vd = d; victim = en; }
+          } }
         if (victim) damageEntity(shooter, victim);
         stickArrow(p, victim && victim.hp > 0 ? victim : null); // (cosmetic: in the body, or in the ground — a miss, or it just fell)
       }

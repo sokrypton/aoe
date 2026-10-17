@@ -29,7 +29,8 @@ let localCmdSeq = 0;
 
 function submitCommand(cmd){
   cmd.team = myTeam;
-  let execTick = tick + INPUT_DELAY_TICKS;
+  // Single player: the very next tick (nobody to wait for); lockstep: the adaptive delay (js/lockstep.js).
+  let execTick = tick + (typeof lockstepEnabled === 'function' && lockstepEnabled() ? INPUT_DELAY_TICKS : 1);
   let seq = ++localCmdSeq;
   scheduleCommand(execTick, myTeam, seq, cmd);
   // Multiplayer: EVERY peer schedules the command at the issuer-stamped

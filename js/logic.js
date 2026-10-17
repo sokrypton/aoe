@@ -330,7 +330,7 @@ function avoidClear(e,key){
   if(e.avoid&&e.avoid[key]){delete e.avoid[key];if(Object.keys(e.avoid).length===0)e.avoid=undefined;}
 }
 
-const UNIT_GRID_CELL=4;
+const UNIT_GRID_CELL=4, UG_GAIA_BIT=1<<31;
 // Dual-keyed on tick AND simGen (see registerSimCache, js/core.js): entries
 // are live entity references, so serving a pre-rollback grid after a restore
 // hands out orphaned objects from the abandoned timeline.
@@ -363,12 +363,14 @@ function targetableUnitGrid(){
     if(!a)_ugCells[k]=a=[];
     if(a.length===0){_ugTouched.push(a);_ugTouchedK.push(k);}
     a.push(en);
-    if(en.team<32)_ugMask[k]|=1<<en.team;   // which player teams stand in the cell (gaia: none — never a target here)
+    _ugMask[k]|=en.team<31?1<<en.team:UG_GAIA_BIT;   // which teams stand in the cell (gaia and anything past 30: one shared bit)
   }
   return _ugCells;
 }
-// Closest grid unit to `e` strictly within `range` that passes `pred`.
-function closestUnitNear(e,range,pred){
+// Closest grid unit to `e` strictly within `range` that passes `pred` (pure: it's only asked of a candidate nearer than
+// the best so far — same pick, ties to the first in scan order). teams: optional bit mask (as _ugMask) — cells holding
+// none of those teams are skipped whole.
+function closestUnitNear(e,range,pred,teams){
   let grid=targetableUnitGrid();
   let c=UNIT_GRID_CELL;
   let cx=(e.x/c)|0, cy=(e.y/c)|0, cr=Math.ceil(range/c)+1;
@@ -377,18 +379,38 @@ function closestUnitNear(e,range,pred){
     if(gy<0||gy>=unitGridNY)continue;
     for(let gx=cx-cr;gx<=cx+cr;gx++){
       if(gx<0||gx>=unitGridNX)continue;
-      let a=grid[gx*unitGridNY+gy];
+      let k0=gx*unitGridNY+gy, a=grid[k0];
       if(!a||a.length===0)continue;
+      if(teams!==undefined&&!(_ugMask[k0]&teams))continue;
+      // (a cell wholly no nearer than the best so far can't improve it)
+      let ddx=Math.max(gx*c-e.x,0,e.x-(gx+1)*c), ddy=Math.max(gy*c-e.y,0,e.y-(gy+1)*c);
+      if(ddx*ddx+ddy*ddy>closestD*closestD*(1+1e-9))continue;   // (the margin: a rounding hair never skips a cell dist() would accept)
       for(let k=0;k<a.length;k++){
         let en=a[k];
         if(en===e||en.hp<=0||en.garrisonedIn)continue;
-        if(!pred(en))continue;
         let d=dist(e,en);
-        if(d<closestD){closestD=d;closest=en;}
+        if(d>=closestD)continue;
+        if(!pred(en))continue;
+        closestD=d;closest=en;
       }
     }
   }
   return closest;
+}
+// The team bits (as _ugMask) of everything `team` might fight: every player team not on its side, and gaia.
+function foeTeamMask(team){
+  let m=UG_GAIA_BIT;
+  for(let t=0;t<NUM_TEAMS&&t<31;t++) if(!sameSide(t,team)) m|=1<<t;
+  return m;
+}
+// This tick's buildings, in entities order (the idle-acquire building scan walked every unit too: O(units²) at 1000).
+let _bldgListTick=-1, _bldgListGen=-1, _bldgList=[];
+registerSimCache(()=>{_bldgListTick=-1;});
+function tickBuildings(){
+  if(_bldgListTick===tick&&_bldgListGen===simGen)return _bldgList;
+  _bldgListTick=tick;_bldgListGen=simGen;_bldgList=[];
+  for(let i=0;i<entities.length;i++) if(entities[i].type==='building') _bldgList.push(entities[i]);
+  return _bldgList;
 }
 
 function distToTarget(a,b){
@@ -894,8 +916,17 @@ function wallBreachTicks(unit, w){
   dmg = Math.max(1, dmg - (((unit.range || 0) > 0) ? armor.p : armor.m));
   return Math.ceil(w.hp / dmg) * (UNITS[unit.utype].rof || 60);
 }
-// May this unit take on wall-like `w`? The AI leaves masonry it can't dent to rams; a player's order breaches anyway.
-function canBreach(unit, w){ return !aiDrives(unit) || wallBreachTicks(unit, w) <= WALL_BREACH_MAX; }
+// May this unit take on wall-like `w`? The AI leaves masonry it can't dent to the rams in its field army; with none
+// there (Feudal, or none built) its infantry hack at it anyway, as AoE2's do — standing outside a stone gate until the
+// attack timed out read as an army that wouldn't attack. A player's order breaches anyway.
+function canBreach(unit, w){ return !aiDrives(unit) || wallBreachTicks(unit, w) <= WALL_BREACH_MAX || !aiSquadHasRam(unit.team); }
+// Does this AI team's field army have a ram with it? (Derived from the hashed squad roster.)
+function aiSquadHasRam(team){
+  const sq = AI_STATES && AI_STATES[team] && AI_STATES[team].squad;
+  if (!sq) return false;
+  for (const id of sq.ids) { const m = entitiesById.get(id); if (m && m.utype === 'ram' && m.hp > 0) return true; }
+  return false;
+}
 // Cheapest-to-breach enemy wall/tower/gate that `unit` can actually path to,
 // scored by breach time + march time (material-aware like AoE2: a militia eats
 // a palisade but loses to a stone wall even a fair march away). Probes only the
@@ -2374,7 +2405,7 @@ function updateIdleMilitary(e){
         // has no vision grid and keeps its own aggro rules.
         if(e.team!==GAIA_TEAM && !entityVisibleToTeam(en, e.team))return false;
         return true;
-      });
+      }, foeTeamMask(e.team));
       if(closest) {
         if(e.range>0 ? dist(e,closest)<=reachAtk+0.5 : canStrikeInPlace(e,closest)){
           // Already in attack range → engage directly; no pathing needed (also
@@ -2400,9 +2431,10 @@ function updateIdleMilitary(e){
         // visibility gate as units; ties broken by lowest id
         // (deterministic). The AI keeps its own attack planning.
         let bestB = null, bestD = Infinity, bestPri = -1;
-        for (let bi = 0; bi < entities.length; bi++) {
-          let b = entities[bi];
-          if (b.type !== 'building' || sameSide(b.team, e.team) || b.team === GAIA_TEAM || b.hp <= 0) continue;
+        const blds = tickBuildings();
+        for (let bi = 0; bi < blds.length; bi++) {
+          let b = blds[bi];
+          if (sameSide(b.team, e.team) || b.team === GAIA_TEAM || b.hp <= 0) continue;
           if (isWallBtype(b.btype) || isGateBtype(b.btype)) continue;
           if (guardZone && guardZoneDist(guardZone, b.x + b.w/2, b.y + b.h/2) > GUARD_LEASH) continue; // outside the guard zone
           if (b.id === e.unreachId && e.unreachUntil > tick) continue;   // (found unreachable lately: don't let it hide a reachable one)

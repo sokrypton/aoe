@@ -52,17 +52,32 @@ function stampBuildingFootprint(e){
 }
 // The tile grid in snapshot form (lockstep rollback ring, resync): terrain and resources as flat typed arrays —
 // cloning MAP² tile objects every snapshot was most of multiplayer's per-tick overhead. `occupied` is derived and
-// re-stamped on unpack. Unpacking builds a NEW map object, which drops the derived region cache (js/pathfinding.js).
+// re-stamped on unpack. Same-size: written IN PLACE, and the region cache (js/pathfinding.js) is mended only where
+// passability can differ (a rollback rewinds a few ticks; relabelling every team from scratch was ~12% of replay).
+// prevBld: id -> passKey of the buildings BEFORE the entities were swapped (their state gates passability too).
+const bldgPassKey=e=>e.btype+(e.complete?1:0)+(e.buildProgress?2:0)+(e.locked?4:0)+(e.isOpen?8:0)+'|'+e.team+'|'+e.x+','+e.y+','+e.w+','+e.h;
 function packMap(){
   const n=MAP*MAP, t=new Uint8Array(n), res=new Float64Array(n);
   for(let y=0,i=0;y<MAP;y++){ const row=map[y]; for(let x=0;x<MAP;x++,i++){ t[i]=row[x].t; res[i]=row[x].res||0; } }
   return {size:MAP, t, res};
 }
-function unpackMap(m){
-  map=[];
-  for(let y=0,i=0;y<m.size;y++){ const row=map[y]=new Array(m.size); for(let x=0;x<m.size;x++,i++) row[x]={t:m.t[i],res:m.res[i],occupied:null}; }
-  for(const e of entities) if(e.type==='building') occupyFootprint(e);
+function unpackMap(m, prevBld){
+  if(!prevBld||!map||map.length!==m.size){
+    map=[];
+    for(let y=0,i=0;y<m.size;y++){ const row=map[y]=new Array(m.size); for(let x=0;x<m.size;x++,i++) row[x]={t:m.t[i],res:m.res[i],occupied:null}; }
+    for(const e of entities) if(e.type==='building') occupyFootprint(e);
+    return;
+  }
+  const n=m.size, oldT=new Uint8Array(n*n), oldO=new Float64Array(n*n);
+  for(let y=0,i=0;y<n;y++){ const row=map[y]; for(let x=0;x<n;x++,i++){ const c=row[x]; oldT[i]=c.t; oldO[i]=c.occupied==null?-1:c.occupied; c.t=m.t[i]; c.res=m.res[i]; c.occupied=null; } }
+  const dirty=new Set();
+  for(const e of entities) if(e.type==='building'){ occupyFootprint(e);
+    if(prevBld.get(e.id)!==bldgPassKey(e)) for(let dy=0;dy<(e.h||1);dy++)for(let dx=0;dx<(e.w||1);dx++) if(e.y+dy<n&&e.x+dx<n) dirty.add(e.x+dx+(e.y+dy)*n); }
+  for(let y=0,i=0;y<n;y++)for(let x=0;x<n;x++,i++){ const c=map[y][x]; if(c.t!==oldT[i]||(c.occupied==null?-1:c.occupied)!==oldO[i]) dirty.add(i); }
+  for(const k of dirty) passabilityChangedAt(k%n,(k/n)|0);
 }
+// The passability keys of the live buildings, taken before a rollback swaps the entities (unpackMap's prevBld).
+function bldgPassKeys(){ const m=new Map(); for(const e of entities) if(e.type==='building') m.set(e.id,bldgPassKey(e)); return m; }
 function createBuilding(type,x,y,team,customW=null,customH=null){
   let b=BLDGS[type];
   let bw = customW !== null ? customW : b.w;

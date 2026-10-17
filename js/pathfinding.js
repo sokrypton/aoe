@@ -661,20 +661,28 @@ function crowdedAhead(e){
   }
   return false;
 }
+// (the step's points and tile visitor live at module scope: a fresh array and closure per walker per tick were the
+// battle's top allocation — 1000 units)
+let _stepPts = new Float64Array(16), _stepId = 0;
+const _stepVisit = (tx, ty) => walkable(tx, ty, _stepId);
 function stepUnitAlongPath(e, distPx, checkWalkable){
   if(checkWalkable && e.path.length && crowdedAhead(e)) distPx *= 0.5;
   // Where this advance takes it, finishing legs on the way…
-  const P=e.path, pts=[e.x,e.y]; let moveT=e.moveT+distPx, fx=e.fromX, fy=e.fromY, x=e.x, y=e.y, done=0;
+  const P=e.path; let pts=_stepPts, np=0; pts[np++]=e.x; pts[np++]=e.y;
+  let moveT=e.moveT+distPx, fx=e.fromX, fy=e.fromY, x=e.x, y=e.y, done=0;
   while(done<P.length){
     const n=P[done], L=legPx(fx,fy,n.x,n.y);
-    if(moveT>=L){ moveT-=L; fx=x=n.x; fy=y=n.y; done++; pts.push(x,y); }
+    if(moveT>=L){ moveT-=L; fx=x=n.x; fy=y=n.y; done++;
+      if(np+4>pts.length){ const g=new Float64Array(pts.length*2); g.set(pts); pts=_stepPts=g; }
+      pts[np++]=x; pts[np++]=y; }
     else { const t=moveT/L; x=fx+(n.x-fx)*t; y=fy+(n.y-fy)*t; break; }
   }
-  pts.push(x,y);
+  pts[np++]=x; pts[np++]=y;
   // …and every tile it would step into on the way: one taken, it waits where it stands (stepBlocked).
   if(checkWalkable){
-    for(let i=0;i+3<pts.length;i+=2){
-      if(!walkLineTiles(pts[i],pts[i+1],pts[i+2],pts[i+3],(tx,ty)=>walkable(tx,ty,e.id))){ stepBlocked(e); return; }
+    _stepId=e.id;
+    for(let i=0;i+3<np;i+=2){
+      if(!walkLineTiles(pts[i],pts[i+1],pts[i+2],pts[i+3],_stepVisit)){ stepBlocked(e); return; }
     }
   }
   if(P.length)e.stepWait=0;

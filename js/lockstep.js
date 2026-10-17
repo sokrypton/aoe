@@ -40,8 +40,10 @@ const LOCKSTEP_REPORT_EVERY = 6;
 // Snapshot ring: every SNAP_EVERY ticks, keep SNAP_KEEP — a ~5s rewind
 // window (300 ticks). A command later than that means the connection was
 // effectively dead longer than the net-layer heartbeat tolerates anyway.
-const LOCKSTEP_SNAP_EVERY = 10;
-const LOCKSTEP_SNAP_KEEP = 30;
+// Every 20 (the same 300-tick window): with the adaptive input delay late commands are rare, so a snapshot is mostly
+// overhead — ~3ms each at 1000 units — while a rewind's extra replay averages half the spacing.
+const LOCKSTEP_SNAP_EVERY = 20;
+const LOCKSTEP_SNAP_KEEP = 15;
 // The vision refresh phase (VISION_REFRESH_PERIOD, js/core.js) relies on
 // every snapshot tick being a multiple of the refresh period so that a
 // rollback's forced grid rebuild lands on an aligned refresh tick — see
@@ -122,6 +124,40 @@ function lockstepResetState(){
   lockstepRollbacks = 0;
   lockstepSnapshots.length = 0;
   INPUT_DELAY_TICKS = 4;
+  cmdSlack.clear(); slackSeen.clear(); lastDelayDrop = 0; lastDelayRaise = 0;
+}
+
+// ---- Adaptive input delay ----
+// Peers needn't agree on the delay — every command carries its own execTick — so each one tunes its own to its link.
+// Receivers measure each sender's SLACK (execTick − the receiver's tick when the command arrived: below 1 = late, a
+// rollback) and report the worst recent value in their progress report; a sender raises its delay at once when any
+// peer saw its commands late or near it, and lowers it a tick at a time while every peer has spare margin.
+const SLACK_KEEP_MS = 1500, SLACK_TARGET = 2, DELAY_DROP_EVERY_MS = 1500;
+// After a raise, reports still carry slack measured under the old delay for a window plus the round trip: acting on
+// them again ratcheted the delay to its cap. Hold until they've aged out.
+const DELAY_HOLD_MS = SLACK_KEEP_MS + 1000;
+const cmdSlack = new Map();   // sender team -> {slack, at} (the worst within SLACK_KEEP_MS)
+const slackSeen = new Map();  // reporting seat -> {slack, at}: how our commands arrived there
+let lastDelayDrop = 0, lastDelayRaise = 0;
+function noteCmdSlack(team, slack){
+  const now = performance.now(), r = cmdSlack.get(team);
+  if (!r || now - r.at > SLACK_KEEP_MS || slack <= r.slack) cmdSlack.set(team, { slack, at: now });
+}
+function slackReport(){
+  const now = performance.now(), out = [];
+  for (const [t, r] of cmdSlack) if (now - r.at <= SLACK_KEEP_MS) out.push(t, r.slack);
+  return out.length ? out : undefined;
+}
+function adaptInputDelay(seat, sl){
+  if (!Array.isArray(sl)) return;
+  for (let i = 0; i + 1 < sl.length; i += 2) if (sl[i] === myTeam && Number.isInteger(sl[i + 1])) slackSeen.set(seat, { slack: sl[i + 1], at: performance.now() });
+  const now = performance.now(); let worst = Infinity;
+  for (const r of slackSeen.values()) if (now - r.at <= SLACK_KEEP_MS) worst = Math.min(worst, r.slack);
+  if (worst === Infinity) return;                                         // (no command of ours seen lately: keep the delay)
+  const want = Math.max(INPUT_DELAY_MIN, Math.min(INPUT_DELAY_MAX, INPUT_DELAY_TICKS - worst + SLACK_TARGET));
+  if (now - lastDelayRaise < DELAY_HOLD_MS) return;
+  if (want > INPUT_DELAY_TICKS) { INPUT_DELAY_TICKS = want; lastDelayRaise = now; }           // late or close: up at once
+  else if (want < INPUT_DELAY_TICKS && now - lastDelayDrop > DELAY_DROP_EVERY_MS) { INPUT_DELAY_TICKS--; lastDelayDrop = now; } // spare: ease down
 }
 
 // Host side: begin a fresh lockstep match when the host clicks Start in the
@@ -243,6 +279,7 @@ onNetMessage((msg, src) => {
     // LOCKSTEP_HARD_AHEAD, so this ceiling never rejects a real command.
     if (!Number.isInteger(msg.execTick) || msg.execTick > tick + LOCKSTEP_HARD_AHEAD + INPUT_DELAY_MAX) return;
     scheduleCommand(msg.execTick, peerTeam, msg.seq, msg.cmd);
+    noteCmdSlack(peerTeam, msg.execTick - tick);
     if (msg.execTick <= tick) {
       // Late: that tick already ran without this command. Rewind and replay
       // with it in place — converges with what the peer computed on time.
@@ -299,6 +336,7 @@ onNetMessage((msg, src) => {
     let seat = netRole === 'host' ? (src && src.seat) : (msg.from != null ? msg.from : 0);
     if (seat == null) return;
     if (msg.t > (peerSimTicks.get(seat) ?? -1)) peerSimTicks.set(seat, msg.t);
+    adaptInputDelay(seat, msg.sl);
     // Checksums compare host<->guest only: the host checks every guest's
     // reports; a guest checks only the host's (the relay strips ct/h from
     // guest->guest forwards anyway — this guard is belt and braces).
@@ -345,7 +383,7 @@ function lockstepReport(){
   if (tick - lastReportedSimTick < LOCKSTEP_REPORT_EVERY && nowMs - lastReportWallMs < 250) return;
   lastReportedSimTick = tick;
   lastReportWallMs = nowMs;
-  let msg = { type: 'tick', t: tick };
+  let msg = { type: 'tick', t: tick, sl: slackReport() };
   // Attach the newest history entry that is safely beyond rollback reach.
   for (let i = DET.history.length - 1; i >= 0; i--) {
     if (DET.history[i].tick <= tick - LOCKSTEP_CKSUM_LAG) {
@@ -405,6 +443,7 @@ function lockstepTakeSnapshot(){
 function lockstepRestore(snap){
   // Clone again so the ring copy stays pristine for a future rollback.
   let st = structuredClone(snap.state);
+  const prevBld = bldgPassKeys(); // (before the swap: unpackMap mends regions where buildings changed)
   entities = st.entities;
   entitiesById.clear();
   entities.forEach(e => entitiesById.set(e.id, e));
@@ -412,7 +451,7 @@ function lockstepRestore(snap){
   corpses = st.corpses;
   resources = st.resources;
   if (st.marketPrices) marketPrices = st.marketPrices; // global commodity exchange (js/core.js)
-  unpackMap(st.map); // (after entities: it re-stamps their footprints)
+  unpackMap(st.map, prevBld); // (after entities: it re-stamps their footprints)
   popUsed = st.popUsed; popCap = st.popCap;
   tick = st.tick;
   gameOver = st.gameOver; won = st.won;

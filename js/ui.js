@@ -621,7 +621,7 @@ function updateUI(){
       idleBtn.innerHTML = `<span class="btn-emoji sprite-icon icon-idle"></span><div class="idle-badge">${currentIdleCount}</div>`;
       idleBtn.classList.add('idle-active');
       idleBtn.dataset.tipLabel = 'Idle Villager';
-      idleBtn.dataset.tipDesc = `${currentIdleCount} villager${currentIdleCount>1?'s are':' is'} idle. Click to select and cycle through them.`;
+      idleBtn.dataset.tipDesc = `${currentIdleCount} villager${currentIdleCount>1?'s are':' is'} idle. Click to select and cycle through them; double-click for all of them.`;
     } else {
       idleBtn.style.display = 'none';
       idleBtn.classList.remove('idle-active');
@@ -1831,7 +1831,17 @@ window.selectIdleVillager = function() {
     showMsg('No idle villagers!');
     return;
   }
-  
+  // A double click / double tap (or '.' twice quickly) takes them ALL — the first press already centred on one.
+  const now = performance.now(), dbl = now - (window.lastIdleVilAt || -1e9) < 380;
+  window.lastIdleVilAt = dbl ? -1e9 : now;
+  if (dbl) {
+    selected = idleVils;
+    if (window.playSound) window.playSound('select_villager');
+    showMsg('Selected ' + idleVils.length + ' idle villager' + (idleVils.length > 1 ? 's' : ''));
+    updateUI();
+    return;
+  }
+
   window.lastIdleVilIndex = window.lastIdleVilIndex || 0;
   let vil = idleVils[window.lastIdleVilIndex % idleVils.length];
   window.lastIdleVilIndex++;
