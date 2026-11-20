@@ -999,6 +999,15 @@ function crowdedByUnits(u){
 // stuck-watchdog's 240 so the unit self-corrects (redirect/retarget/drop)
 // rather than freezing until the watchdog forcibly frees it.
 const CHASE_STALL_TICKS = T30(90);
+// Chase searches started this tick (keyed on tick AND simGen like unitGrid: derived, never snapshotted — a resim
+// recounts from the tick's start, in entity order, so every peer skips the same units).
+const CHASE_PATHS_PER_TICK=12;
+let chaseBudgetTick=-1, chaseBudgetGen=-1, chaseBudgetUsed=0;
+registerSimCache(()=>{chaseBudgetTick=-1;});
+function chaseBudgetSpent(){
+  if(chaseBudgetTick!==tick||chaseBudgetGen!==simGen){ chaseBudgetTick=tick; chaseBudgetGen=simGen; chaseBudgetUsed=0; }
+  return ++chaseBudgetUsed>CHASE_PATHS_PER_TICK;
+}
 function combatApproach(u,tgt,dist,pathFn,stopDist){
   // Known-unreachable back-off — HUMANS only. Humans KEEP an explicit target
   // (so target===unreachId persists), and without this a player army ordered
@@ -1019,6 +1028,8 @@ function combatApproach(u,tgt,dist,pathFn,stopDist){
   // never converge on one tile. This branch is only entered when the unit is
   // OUT of range (callers gate on d>range), so an empty path here always
   // means "can't reach a firing tile", never "already arrived".
+  // A whole army given targets at once starts its chases over a few ticks, not all on one (a visible hitch).
+  if(chaseBudgetSpent()) return false;
   if(pathFn)pathFn();
   else setUnitPath(u,findPath(Math.round(u.x),Math.round(u.y),Math.round(tgt.x),Math.round(tgt.y),u.id,stopDist||0));
   if(u.path.length>0){
@@ -3225,7 +3236,8 @@ function adjustTargetApproach(e){
       clearUnitPath(e);
     } else if(t.type==='unit' && combatTargetHidden(e, t)){
       dropTarget(e);   // a mover lost to the fog mid-chase (a building can't move: judged on arrival)
-    } else if(t.type==='unit' && tick % T30(15) === 0 && e.path.length > 0 && retryReady(e,RETRY.REAIM)){
+    } else if(t.type==='unit' && tick % T30(15) === e.id % T30(15) && e.path.length > 0 && retryReady(e,RETRY.REAIM)){
+      // (each chaser re-aims on its own tick of the period: a whole battle re-pathing on one tick is a visible hitch)
       let endTile = e.path[e.path.length - 1];
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
       let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
