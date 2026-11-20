@@ -132,6 +132,7 @@ function startGame(difficulty){
   // Sync the AI slots' difficulty to the menu pick (per-team difficulty is
   // what the AI actually reads — aiProfileFor, js/core.js).
   teamControllers.forEach(c => { if (c && c.type === 'ai') c.difficulty = aiDifficulty; });
+  if (!netRole && window.applyAIPlanToSeats) applyAIPlanToSeats(); // the menu's AI Plan on every AI seat (js/aiscript-ui.js); MP: per seat, from the lobby
   gameStarted=true;
   gamePaused=false;
   // A genuine fresh start — no other pause reason should carry over from
@@ -596,6 +597,7 @@ function restoreMenuForMatch(){
     if (grid) grid.style.display = '';
     let firstRow = byId('opt-match');
     if (firstRow) firstRow.style.display = 'none';
+    show('opt-aiplan', false);
     let speedCol = byId('opt-speed-row');
     if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
     menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
@@ -1286,6 +1288,7 @@ function applyMenuMode(mode){
     // the rematch's 'lockstep-start' arrives), plus Load / Host as usual.
     let liveMp = !!netRole && netConnected;
     if (difficultyRow) difficultyRow.style.display = '';
+    show('opt-aiplan', true);
     if (startBtn) {
       startBtn.style.display = (liveMp && netRole === 'guest') ? 'none' : '';
       startBtn.textContent = (liveMp && netRole === 'host') ? '🔄 Rematch' : '🔄 Play Again';
@@ -1301,6 +1304,7 @@ function applyMenuMode(mode){
     if (saveBtn) saveBtn.style.display = 'none';
   } else if (mode === 'ingame') {
     if (difficultyRow) difficultyRow.style.display = 'none';
+    show('opt-aiplan', false);
     // Restart and Load are both dropped from the mid-game menu entirely —
     // keeping things simple: reloading the browser tab already restarts a
     // fresh match, and Load mid-game is the same "why would you overwrite
@@ -1327,6 +1331,7 @@ function applyMenuMode(mode){
     if (saveBtn) saveBtn.style.display = '';
   } else if (mode === 'restart-ready') {
     if (difficultyRow) difficultyRow.style.display = '';
+    show('opt-aiplan', true);
     if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
     if (loadBtn) loadBtn.style.display = '';
@@ -1334,6 +1339,7 @@ function applyMenuMode(mode){
     if (saveBtn) saveBtn.style.display = 'none';
   } else {
     if (difficultyRow) difficultyRow.style.display = '';
+    show('opt-aiplan', true);
     if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
     if (loadBtn) loadBtn.style.display = '';

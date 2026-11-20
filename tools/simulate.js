@@ -12,6 +12,7 @@
 //   node tools/simulate.js runs=5 mode=1v1          # 5 seeds, aggregated
 //
 // Args are key=value (order-independent):
+//   script0=X script1=Y  AI scripts per side (alternating in 2v2): a name in ai-scripts/ (rusher, my-plan) or a file path
 //   mode=1v1|2v2   diff=easy|standard|hard (or comma list: easy,hard)
 //   map=small|medium|large   ticks=N   seed=N   rollback=1   fog=off
 //   runs=N         run N matches (seed varied per run) and print a summary
@@ -48,6 +49,14 @@ function parseArgs(argv) {
     else console.error(`ignoring unrecognized arg: ${a}`);
   }
   return o;
+}
+
+// An AI script arg → its file text: a path, else a name in ai-scripts/ (.json or a .js preset).
+function readAIScript(v) {
+  const dir = path.join(ROOT, 'ai-scripts');
+  const fp = [path.resolve(process.cwd(), v), path.join(dir, v + '.json'), path.join(dir, v + '.js')].find(f => fs.existsSync(f) && fs.statSync(f).isFile());
+  if (!fp) { console.error(`no AI script "${v}" (a path, or one of: ${fs.readdirSync(dir).map(f => f.replace(/\.js(on)?$/, '')).join(', ')})`); process.exit(2); }
+  return fs.readFileSync(fp, 'utf8');
 }
 
 // Minimal static server rooted at the repo (serves the JS the page imports).
@@ -168,6 +177,8 @@ function aggregate(reports) {
     bears: a.bears, // 'bears=0' disables wild bears (isolate eco/wave behavior from fauna losses)
     fog: a.fog,     // 'fog=off' runs an All-Visible match (the fog match-option's no-fog paths)
     scenario, // parsed scenario spec, or null
+    // AI scripts per side (js/aiscript.js; the page compiles the text and fails loudly on errors)
+    scripts: [a.script0, a.script1].map(v => v == null ? null : readAIScript(v)),
   };
   // Generous evaluate timeout: the sim yields between batches, so this only
   // caps a genuinely wedged run. Scales with the tick budget.

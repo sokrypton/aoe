@@ -510,7 +510,9 @@ function aiDrives(u){ return isAITeam(u.team) && !u.possessed; }
 function seatHasPerson(t){ let c = teamControllers[t]; return !!c && (c.type === 'human' || !!c.autopilot); }
 function aiProfileFor(t){
   let c = teamControllers[t];
-  return AI_LEVELS[c && c.difficulty] || AI_LEVELS[aiDifficulty] || AI_LEVELS.standard;
+  let base = AI_LEVELS[c && c.difficulty] || AI_LEVELS[aiDifficulty] || AI_LEVELS.standard;
+  let set = AI_STATES && AI_STATES[t] && AI_STATES[t].scriptSet;   // the seat's AI script levers over it (js/aiscript.js)
+  return set ? aiScriptedProfile(base, set) : base;
 }
 
 // ---- PER-TEAM AI STATE ----
@@ -591,6 +593,9 @@ function freshAIState(team){
     waveCount: 0, lastWaveTick: null, lastWaveGlobalTick: null,
     // The field squad (controlAIMilitary, js/ai.js): {state, x, y, raid, power, since, best, ids} or null.
     squad: null,
+    // The seat's AI script (js/aiscript.js): the levers its rules have set (profile keys → values) and which rules
+    // have fired. Hashed (aiScriptChecksum).
+    scriptSet: null, scriptDone: null,
     // Size of the last launched attack (reported by tools/sim.html).
     lastWaveSize: 0,
     // Civilian-militia response window: while set (> tick), villagers are

@@ -201,8 +201,9 @@ function lobbyKickHuman(idx){
 function lobbyAddAi(){
   if (netRole !== 'host' || !lobbyState) return;
   if (lobbyState.seats.length >= LOBBY_MAX_PLAYERS) return;
+  const plan = typeof aiPlanChoice === 'function' ? aiPlanChoice() : 'default';   // (starts on the host's menu choice)
   lobbyState.seats.push({ type: 'ai', name: lobbyRandomName(), colorIdx: lobbyFirstFreeColor(lobbyState.seats),
-    ready: true, present: true, team: null });
+    ready: true, present: true, team: null, aiPlan: plan, aiScript: typeof aiPlanScript === 'function' ? aiPlanScript(plan) : null });
   lobbyState.numTeams = lobbyState.seats.length;
   lobbyBroadcast();
 }
@@ -232,6 +233,23 @@ function lobbySetTeam(idx, team){
     renderLobby();
     sendLobbySeat();
   }
+}
+
+// Host-only: an AI seat's plan (a preset, or the host's Custom script — compiled here, sent whole).
+function lobbySetAiPlan(idx, plan){
+  if (netRole !== 'host' || !lobbyState) return;
+  const s = lobbyState.seats[idx]; if (!s || s.type !== 'ai') return;
+  s.aiPlan = plan;
+  s.aiScript = aiPlanScript(plan);
+  lobbyBroadcast();
+  if (plan === 'custom' && !s.aiScript) openAIScriptEditor();   // (no saved script yet: write one; saving re-sends)
+}
+// The Custom script was (re)saved: seats on Custom pick up the new version.
+function onLobbyAIPlanSaved(){
+  if (netRole !== 'host' || !lobbyState) return;
+  let any = false;
+  for (const s of lobbyState.seats) if (s.type === 'ai' && s.aiPlan === 'custom') { s.aiScript = aiPlanScript('custom'); any = true; }
+  if (any) lobbyBroadcast();
 }
 
 function onLobbyAiDiffChange(){
@@ -455,10 +473,19 @@ function buildSeatRow(seat, t){
   // colour dot (green = ready, amber = not ready, hollow = waiting) so a long
   // name plus a "Not ready" label never wraps the row onto two lines. The label
   // rides the dot's title for hover/screen-reader clarity.
-  if (seat.type === 'ai' || t === 0) {
+  if (seat.type === 'ai') {   // the AI's plan: the host picks; guests see which (a custom plan by its name)
+    let sel = document.createElement('select');
+    sel.className = 'lobby-team-select lobby-aiplan';
+    for (const k of aiPlanKeys()) { let o = document.createElement('option'); o.value = k; o.textContent = k === 'default' ? 'AI' : k === 'custom' && seat.aiPlan === 'custom' && seat.aiScript ? seat.aiScript.name : aiPlanLabel(k); sel.appendChild(o); }
+    sel.value = seat.aiPlan || 'default';
+    sel.title = 'How this computer player plays';
+    sel.disabled = netRole !== 'host';
+    sel.onchange = () => lobbySetAiPlan(t, sel.value);
+    row.appendChild(sel);
+  } else if (t === 0) {
     let badge = document.createElement('span');
     badge.className = 'lobby-seat-badge';
-    badge.textContent = seat.type === 'ai' ? 'AI' : 'Host';
+    badge.textContent = 'Host';
     row.appendChild(badge);
   } else {
     let dot = document.createElement('span');
@@ -592,7 +619,8 @@ function onLobbyStartClicked(){
 function applyLobbyConfigToTeams(){
   if (!lobbyState) return;
   let diff = lobbyState.aiDifficulty || 'standard';
-  teamControllers = lobbyState.seats.map(s => s.type === 'ai' ? { type: 'ai', difficulty: diff } : { type: 'human' });
+  // (an AI seat's plan: the script compiled on the host travels in the seat — every peer runs the same one)
+  teamControllers = lobbyState.seats.map(s => s.type === 'ai' ? Object.assign({ type: 'ai', difficulty: diff }, s.aiScript ? { script: s.aiScript } : {}) : { type: 'human' });
   teamAlliance = lobbySeatAlliances();
   teamColorMap = lobbyState.seats.map(s => s.colorIdx);
   teamNames = lobbyState.seats.map(s => (s.name && s.name.trim()) || null);

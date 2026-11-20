@@ -156,6 +156,7 @@ function updateAI(ai){
   ai.tick++;
   let profile=aiProfileFor(ai.team);
   if(ai.tick%profile.decisionInterval!==0)return;
+  runAIScript(ai); profile=aiProfileFor(ai.team);   // the seat's script sets its levers first (js/aiscript.js)
 
   // The dragon's lair is off limits: a standing danger zone (it can't be killed, so the zone never lapses for good).
   for(const d of entities) if(d.utype==='dragon'&&d.homeX!==undefined&&ai.dangerZones) stampDangerZone(ai,Math.round(d.homeX),Math.round(d.homeY),d.id);
@@ -446,7 +447,7 @@ function aiEcoFund(ai,profile,skipBastion){
     }
     if(rams<Math.ceil((army+(profile.armyReserve||0))/3))add(UNITS.ram.cost);
   }
-  let plan=AI_TECH_ORDER.slice();
+  let plan=(profile.techOrder||AI_TECH_ORDER).slice();   // (a script's order, else the default)
   for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
   return fund;
 }
@@ -481,7 +482,7 @@ function planAIResearch(ai,profile){
     reserve=(next<AGES.length&&AGES[next].cost)||null;
   }
   if(aiUnderRealPressure(ai))return;                       // spend on the army, not tech, while attacked
-  let plan=AI_TECH_ORDER.slice();
+  let plan=(profile.techOrder||AI_TECH_ORDER).slice();   // (a script's order, else the default)
   // Techs live on the buildings that own them (Barracks/Mill/Lumber/Mining/
   // Market/TC), so research runs in PARALLEL — start one per idle owning
   // building this tick. `used` stops two techs racing for the same building;
@@ -1413,7 +1414,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
   let underPressure=aiUnderRealPressure(ai);
   // The Dark Age is the boom (AoE2): a token guard of militia at most — food goes to villagers and the Feudal click.
   // Real pressure (a raid) still raises an army.
-  if(teamAge[ai.team]===0&&!underPressure&&currentArmy>=AI_DARK_AGE_ARMY)return;
+  if(teamAge[ai.team]===0&&!underPressure&&currentArmy>=(profile.darkAgeArmy!=null?profile.darkAgeArmy:AI_DARK_AGE_ARMY))return;   // (a script's Dark-Age rush raises it)
   // Saving for an age: military spending yields — but never below a small
   // standing defense (half the army reserve); a blanket pause left AIs
   // sitting on banked wood with a barracks and ZERO soldiers.
@@ -1430,7 +1431,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // regenerates and every AI sits in the Dark Age forever. A small standing
   // defense is still allowed, and pressure overrides.
   let next=teamAge[ai.team]+1;
-  let ecoTarget=next<AGES.length&&profile.ageUpVils&&profile.ageUpVils[next];
+  let ecoTarget=next<AGES.length&&next<=(profile.maxAge!=null?profile.maxAge:AGES.length-1)&&profile.ageUpVils&&profile.ageUpVils[next];   // (no next age planned: nothing to save villagers' food for)
   if(ecoTarget&&!underPressure){
     let vilCount=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
     if(vilCount<ecoTarget&&currentArmy>=standing)return;
@@ -1480,7 +1481,18 @@ function queueAIMilitary(ai,readyBarracks,profile){
       // Counter-pick most of the time once there's real intel on what the
       // player is fielding — not always, so the matchup isn't perfectly
       // predictable/exploitable by the player switching unit types.
-      if(dominant&&simRandom()<0.7&&isUnlocked(ai.team,counterMap[dominant]))return counterMap[dominant];
+      if(dominant&&simRandom()<(profile.counterPick!=null?profile.counterPick:0.7)&&isUnlocked(ai.team,counterMap[dominant]))return counterMap[dominant];
+    }
+    // A script's unit mix (js/aiscript.js): the unlocked type furthest below its share of the army (ties by name).
+    if(profile.unitMix){
+      let mix=profile.unitMix, have={}, total=0, wsum=0;
+      for(const e of entities) if(e.team===ai.team&&e.type==='unit'&&mix[e.utype]!=null){ have[e.utype]=(have[e.utype]||0)+1; total++; }
+      for(const b of readyBarracks) for(const q of b.queue) if(mix[q]!=null){ have[q]=(have[q]||0)+1; total++; }
+      let opts=Object.keys(mix).filter(t=>mix[t]>0&&types.includes(t)).sort();
+      for(const t of opts) wsum+=mix[t];
+      let best=null, bestGap=-Infinity;
+      for(const t of opts){ const gap=mix[t]/wsum-(total?(have[t]||0)/total:0); if(gap>bestGap){ bestGap=gap; best=t; } }
+      if(best) return best;
     }
     return types[simRandInt(0, types.length - 1)];
   };

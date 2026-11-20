@@ -2657,3 +2657,25 @@ canvas {
 }
 @keyframes scn-in { from { transform: translateY(-10px); opacity: 0.3; } to { transform: none; opacity: 1; } }
 #scn-card.scn-new { animation: scn-in 0.35s ease-out; }
+/* ---- AI script editor (js/aiscript-ui.js) ---- */
+#aiscript-editor { position: fixed; inset: 0; z-index: 160; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center; padding: 16px; }
+#aiscript-box { width: min(640px, 100%); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+  background: linear-gradient(180deg, #4c4a44 0%, #2b2924 55%, #26241f 100%); border: 2px solid #8f8560; border-radius: 6px; color: #e8e0c6; font-family: 'Inter', sans-serif; box-shadow: 0 15px 45px rgba(0,0,0,0.9); }
+#aiscript-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font: 700 15px 'Cinzel', Georgia, serif; }
+#aiscript-status { font: 600 12px 'Inter', sans-serif; }
+#aiscript-status.ok { color: #4f8a2a; } #aiscript-status.bad { color: #b3261e; }
+#aiscript-help { font-size: 12.5px; line-height: 1.45; opacity: 0.9; }
+#aiscript-help code { font-size: 12px; }
+.aiscript-preset { margin: 2px 4px 0 0; padding: 2px 8px; font-size: 12px; border-radius: 4px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; }
+#aiscript-text { flex: 1 1 auto; min-height: 220px; width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border-radius: 4px;
+  border: 1px solid rgba(92,59,30,0.5); background: #1d1c18; color: inherit; font: 12.5px/1.45 ui-monospace, Menlo, Consolas, monospace; tab-size: 2; }
+#aiscript-errors { margin: 0; padding-left: 18px; font-size: 12.5px; color: #b3261e; max-height: 7.5em; overflow-y: auto; }
+#aiscript-errors:empty { display: none; }
+#aiscript-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; }
+.aiscript-spacer { flex: 1 1 auto; }
+#aiscript-buttons .aiscript-preset { margin: 0; padding: 5px 10px; }
+.aiscript-list { font-size: 12.5px; line-height: 1.6; }
+.aiscript-mine { display: inline-flex; margin: 2px 4px 0 0; }
+.aiscript-mine .aiscript-preset { margin: 0; border-radius: 4px 0 0 4px; }
+.aiscript-mine .aiscript-del { margin: 0; border-left: none; border-radius: 0 4px 4px 0; padding: 2px 6px; }
+#aiscript-buttons .menu-action-btn { flex: 0 1 auto; }

@@ -367,6 +367,7 @@ function simChecksum(){
     h = detMix(h, defeatedTeams && defeatedTeams[t] ? 1 : 0);
     h = detMix(h, teamAge && teamAge[t] || 0);
     h = detMix(h, teamTechs && teamTechs[t] || 0);
+    h = aiScriptChecksum(h, t); // the seat's AI script and what it has set (js/aiscript.js)
   }
   h = scenarioChecksum(h); // scenario trigger state (js/triggers.js); unchanged without a script
   return h >>> 0;

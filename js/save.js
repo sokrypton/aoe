@@ -28,7 +28,7 @@ function rleDecode(pairs, len){
 
 function serializeGame(){
   return {
-    version: 11, // v11: scenario trigger script + state (js/triggers.js); v10: the field-squad AI (AI_STATES.squad; camp fields gone) + the exact visible-tile grids and nextProjectileId (a mid-tick-phase save reloads checksum-exact); v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
+    version: 12, // v12: AI scripts (teamControllers[t].script, AI_STATES scriptSet/scriptDone — js/aiscript.js); v11: scenario trigger script + state (js/triggers.js); v10: the field-squad AI (AI_STATES.squad; camp fields gone) + the exact visible-tile grids and nextProjectileId (a mid-tick-phase save reloads checksum-exact); v9: manual research — per-team teamTechs bitmask replaces auto-applied age-up upgrades (techs researched at their owning buildings); v8: AI information parity — intel memory shape (freshAIIntel: dense strengthByTeam, contact memory) + vision-grid AI spotting changed sim semantics; v7: the exclusive order slot (e.order) replaced moveGoal/guard*/followId/autoScout fields
     // The timebase this save's tick-stamps were written on (js/core.js TPS).
     // Tick counts are meaningless on another clock — the loader rejects a
     // mismatch instead of silently running every timer 1.5x fast/slow.
@@ -236,8 +236,8 @@ function applySavedGame(data, opts){
   // fails loudly here instead of misloading silently. v8 (AI intel-memory
   // shape + parity sim semantics) deliberately drops older versions — no
   // back-compat shims, per convention.
-  if (data.version !== 11) {
-    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v11 saves only');
+  if (data.version !== 12) {
+    if (window.showMsg) showMsg('Load failed: unsupported save version (' + data.version + ') — this build reads v12 saves only');
     return;
   }
   // Same-timebase gate: every stored tick-stamp (cooldowns, retry timers,

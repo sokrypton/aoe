@@ -42,6 +42,7 @@ window.addEventListener('unhandledrejection', e => window.__errors.push('unhandl
 <script src="../js/logic.js"></script>
 <script src="../js/wildlife.js"></script>
 <script src="../js/triggers.js"></script>
+<script src="../js/aiscript.js"></script>
 <script src="../js/commands.js"></script>
 <script src="../js/ai.js"></script>
 <script src="../js/loop.js"></script>
@@ -79,6 +80,7 @@ window.runSimulation = async function(opts){
     // them — the exact code paths the fog match-option enables.
     fog: opts.fog === 'off' ? 'off' : 'on',
     scenario: opts.scenario || null, // parsed scenario spec (js/scenario.js); overrides the procedural match
+    scripts: opts.scripts || null,   // AI scripts per side (js/aiscript.js): script file text or objects
   };
   const report = { config: cfg, timeline: [], events: [], findings: [], health: {}, end: {} };
   const teams = () => Array.from({length: NUM_TEAMS}, (_, t) => t);
@@ -102,6 +104,13 @@ window.runSimulation = async function(opts){
     restartGame(cfg.diff.split(',')[0]);
     const diffs = cfg.diff.split(',');
     teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
+    // AI scripts per side (js/aiscript.js): a bad one fails the run loudly, with the reasons
+    const scripts = (cfg.scripts || []);
+    teams().forEach((t) => { const src = scripts[t % 2]; if (src == null) return;
+      const r = compileAIScript(src);
+      if (r.errors) throw new Error('script' + (t % 2) + ': ' + r.errors.join('; '));
+      teamControllers[t].script = r.script; });
+    report.config.scriptNames = teams().map((t) => teamControllers[t].script ? teamControllers[t].script.name : null);
     resetAIStates();
     }
     // gamePaused = TRUE: this loop drives update() manually. The game's own

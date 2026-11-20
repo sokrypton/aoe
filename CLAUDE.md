@@ -17,6 +17,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `triggers.js` | scenario triggers (AoE2 conditions → effects, objectives, instructions): `scenarioScript` static, `scenarioState` sim-hashed — see `docs/scenarios.md` |
 | `scenario.js` / `scenario-ui.js` | `loadScenario` world builder / the viewer's instruction card, objectives, Learn to Play menu |
 | `ai.js` | per-team AI (economy plan, walls, home + field squads, villager shelter, militia) — see `docs/aoe2-ai-behavior.md`, `docs/ai-redesign.md` |
+| `aiscript.js` / `aiscript-ui.js` | AI scripts: JSON rules (conditions → profile levers, AoE2 .per-style) a seat's AI follows; presets; the AI Plan menu + editor — see `docs/ai-scripts.md` |
 | `entities.js` | createUnit/createBuilding, footprint stamping |
 | `pathfinding.js` | A* (`findPath`, stopDist mode), movement stepping, connectivity regions (`regionsFor`/`regionReaches`; mended in place by `passabilityChangedAt` after every passability change) |
 | `commands.js` | THE command executors — every player action goes through `submitCommand` → exec\* on all peers |
@@ -24,7 +25,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 | `lockstep.js` | lockstep netcode: command scheduling, snapshot ring, rollback, resync/rejoin |
 | `net.js` / `net-sync.js` / `lobby.js` | PeerJS host-relay star, seat/token identity, lobby config |
 | `determinism.js` | `simChecksum` / `detEntityHash` — the desync tripwire |
-| `save.js` | save format **v11** (RLE map, derived `occupied`, RLE explored grids, scenario script + state) |
+| `save.js` | save format **v12** (RLE map, derived `occupied`, RLE explored grids, scenario script + state, AI scripts) |
 | `loop.js` | the per-tick `update()` orchestrator |
 | `init.js` | boot, menus, match start paths |
 | `render*.js`, `ui.js`, `audio.js` | viewer-only (never read by the sim) |

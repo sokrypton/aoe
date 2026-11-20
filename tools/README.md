@@ -3,7 +3,7 @@
 | tool | what it does | when to run |
 |---|---|---|
 | `run-tests.sh` | **the pre-commit battery**: syntax → behavior-tests → hud-tests → sim smoke (findings empty + run-to-run checksum equality). `fast` skips the sim smoke. | before every commit |
-| `behavior-tests.js` | PASS/FAIL assertions on **game mechanics**, headless: ram garrison (incl. the real right-click command shape), forward-building defense, walled-archer disengage (fixture: `scenarios/walled-archer.savegame.json`), save v11 checksum-exact round-trip (and the reloaded game playing on identically), town-bell overflow flight, gate traffic past parked siege, trade carts waiting at a shut gate, the fog match option, large-army group moves, whole-army walled-TC assaults, every Learn to Play lesson won by a command-driven bot (`learn-lessons`). `grep=<name>` runs one section. | after touching js/logic.js, js/ai.js, js/save.js, js/triggers.js, scenarios/learn, combat, garrison, fog |
+| `behavior-tests.js` | PASS/FAIL assertions on **game mechanics**, headless: ram garrison (incl. the real right-click command shape), forward-building defense, walled-archer disengage (fixture: `scenarios/walled-archer.savegame.json`), save v12 checksum-exact round-trip (and the reloaded game playing on identically), town-bell overflow flight, gate traffic past parked siege, trade carts waiting at a shut gate, the fog match option, large-army group moves, whole-army walled-TC assaults, every Learn to Play lesson won by a command-driven bot (`learn-lessons`). `grep=<name>` runs one section. | after touching js/logic.js, js/ai.js, js/save.js, js/triggers.js, scenarios/learn, combat, garrison, fog |
 | `hud-tests.js` | commands + DOM assertions on the real `index.html` (guard posts, rally, auto-scout, selection panel) | after touching js/commands.js, js/ui.js, js/input.js |
 | `simulate.sh` | seeded all-AI self-play with a structured health report — the main debugging/balance workflow (documented below) | reproducing behavior, balance work, determinism checks |
 | `watch-save.js` | loads a save and runs it headless, reporting per team how villagers (working / sheltered / walking / idle) and soldiers (fighting / wall-bash / moving / idle) spend their time, trade carts, stuck units (and how many at a gate), banked resources, worst tick ms and the checksum. `node tools/watch-save.js save=<f.json> [ticks=6000] [every=20] [root=<another checkout>]` — `root=` runs a baseline checkout's engine on the same save for an A/B | AI behaviour work against a saved game |
@@ -50,6 +50,7 @@ a thin wrapper around `node tools/simulate.js` (callable directly).
 | `ticks` | `40000` | tick budget (**20 ticks = 1 game-second** — the TPS build constant, js/core.js; ~33 game-min default) |
 | `seed` | random | fixed seed → reproducible match |
 | `rollback` | off | also run a snapshot→resim determinism check (`rollback=1`) |
+| `script0` / `script1` | — | AI script per side (alternating in 2v2): a name in `ai-scripts/` (`rusher`, `my-plan`) or a file path — see `docs/ai-scripts.md` |
 | `runs` | `1` | run N seeds (`seed`+1000·i) and print an aggregate summary |
 | `jobs` | min(runs, cores−2, 6) | parallel matches for `runs>1` (each in its own page — per-seed results identical to sequential); `jobs=1` for honest per-run tps |
 | `timeout` | scales w/ ticks | per-match evaluate cap (ms) |

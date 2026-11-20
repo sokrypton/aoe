@@ -240,6 +240,25 @@ document.body.insertAdjacentHTML('afterbegin', `
   </div>
 </div>
 <div id="help-hint"></div>
+<!-- AI script editor (js/aiscript-ui.js): a custom AI Plan, pasted, opened from a file or hand-edited, checked as you type. -->
+<div id="aiscript-editor" style="display:none;" onclick="if(event.target===this)closeAIScriptEditor()">
+  <div id="aiscript-box">
+    <div id="aiscript-head"><b>Custom AI Plan</b><span id="aiscript-status"></span></div>
+    <div id="aiscript-help">Rules in JSON: when every condition holds, the levers in <code>set</code> take effect and stay set.</div>
+    <div class="aiscript-list">Start from: <span id="aiscript-presets"></span></div>
+    <div class="aiscript-list" id="aiscript-mine-row">Saved: <span id="aiscript-mine"></span></div>
+    <textarea id="aiscript-text" spellcheck="false" oninput="checkAIScriptEditor()"></textarea>
+    <ul id="aiscript-errors"></ul>
+    <div id="aiscript-buttons">
+      <button type="button" class="aiscript-preset" onclick="byId('aiscript-file').click()">Open file…</button>
+      <button type="button" class="aiscript-preset" id="aiscript-download" onclick="downloadAIScriptEditor()">Save file</button>
+      <input type="file" id="aiscript-file" accept=".json,.js,application/json" style="display:none" onchange="openAIScriptFile(this)">
+      <span class="aiscript-spacer"></span>
+      <button type="button" class="menu-action-btn" onclick="closeAIScriptEditor()">${menuIcon('close')}Cancel</button>
+      <button type="button" id="aiscript-save" class="menu-action-btn" onclick="saveAIScriptEditor()">${menuIcon('check')}Use this plan</button>
+    </div>
+  </div>
+</div>
 <div id="help-overlay" style="display:none;" onclick="if(event.target===this)toggleHelp()">
   <div id="help-box">
     <button type="button" id="help-close" onclick="toggleHelp()" aria-label="Close">${menuIcon('close')}</button>
@@ -367,6 +386,12 @@ document.body.insertAdjacentHTML('afterbegin', `
         <div class="setup-col" title="Fog of war. Off: the whole map is revealed for everyone, the AI included">
           <h3>Fog</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="fogmode" value="fog" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="fogmode" value="open"><span>Off</span></label></div>
+        </div>
+      </div>
+      <div class="setup-row" id="opt-aiplan">
+        <div class="setup-col setup-col-wide" title="How the computer players play: a preset, or your own script (rules that set the AI's strategy)">
+          <h3>AI Plan</h3>
+          <div class="opt-pills" id="aiplan-pills"></div>
         </div>
       </div>
       <div class="setup-row setup-row-audio">
