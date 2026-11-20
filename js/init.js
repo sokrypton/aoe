@@ -243,6 +243,16 @@ function applyGameSettings(){
     let nm = localStorage.getItem('aoePlayerName');
     if (nm) localPlayerName = nm;
   } catch (e) {}
+  // The Map Size pills follow the Players pick: sizes too small for it are disabled (minMapSizeFor, js/core.js).
+  const fitMapPills = () => {
+    const pl = document.querySelector('input[name="players"]:checked'), need = MAP_SIZES[minMapSizeFor(pl ? +pl.value : 2)];
+    let first = null;
+    document.querySelectorAll('input[name="mapsize"]').forEach(el => { el.disabled = MAP_SIZES[el.value] < need; if (!el.disabled && !first) first = el; });
+    const cur = document.querySelector('input[name="mapsize"]:checked');
+    if ((!cur || cur.disabled) && first) first.checked = true;
+  };
+  document.querySelectorAll('input[name="players"]').forEach(el => el.addEventListener('change', fitMapPills));
+  fitMapPills();
 })();
 
 // ---- Two-level menu: 'main' (big actions) vs 'options' (settings grid) ----
@@ -378,7 +388,7 @@ function onStartClicked(){
   // BEFORE setMapSize (which builds STARTS and draws sim RNG) and before
   // restartGame (which sizes every per-team structure from NUM_TEAMS).
   let playersSelected = document.querySelector('input[name="players"]:checked');
-  NUM_TEAMS = playersSelected && playersSelected.value === '4' ? 4 : 2;
+  NUM_TEAMS = playersSelected && [4, 6, 8].includes(+playersSelected.value) ? +playersSelected.value : 2;   // 1v1 / 2v2 / 3v3 / 4v4
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
   let speedSelected = document.querySelector('input[name="gamespeed"]:checked');

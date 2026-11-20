@@ -46,7 +46,9 @@ C.style.width=W+'px';C.style.height=window.innerHeight+'px';
 X.scale(dpr,dpr);
 
 // ---- CONSTANTS ----
-const MAP_SIZES={small:60,medium:90,large:120};
+const MAP_SIZES={small:60,medium:90,large:120,huge:160};
+// The smallest size that fits a player count: each base needs room for its resource kit (genMap).
+function minMapSizeFor(n){ return n>6?'huge':n>4?'large':n>2?'medium':'small'; }
 let MAP=MAP_SIZES.small;
 const TW=64, TH=32, HALF_TW=32, HALF_TH=16;
 let STARTS=[
@@ -68,9 +70,9 @@ function setMapSize(sizeKey, alliances){
   // host/single-player draws a fresh one.
   newMatchSeed(window.__pendingMatchSeed);
   window.__pendingMatchSeed = null;
-  // 2v2 forces at least medium: four corner resource kits (reach ~12*scale
+  // The map is at least big enough for the players: e.g. four corner resource kits (reach ~12*scale
   // tiles each) plus the contested-center deposits collide on a 60-tile map.
-  if(NUM_TEAMS>2&&sizeKey==='small')sizeKey='medium';
+  if((MAP_SIZES[sizeKey]||MAP_SIZES.medium)<MAP_SIZES[minMapSizeFor(NUM_TEAMS)])sizeKey=minMapSizeFor(NUM_TEAMS);
   MAP=MAP_SIZES[sizeKey]||MAP_SIZES.medium;
   let lo=10, hi=MAP-13;
   let corners=[[lo,lo],[hi,lo],[lo,hi],[hi,hi]];
@@ -92,10 +94,16 @@ function setMapSize(sizeKey, alliances){
     // count (one for c, one for a) is fixed, so seeds stay comparable and
     // the default [0,0,1,1] → order [0,1,2,3] is byte-identical to the
     // old two-side version of this code.
-    let al = alliances || Array.from({length:NUM_TEAMS},(_,t)=>t<2?0:1);
+    let al = alliances || defaultAlliances(false);
     let a=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]][simRandInt(0,1)];
     let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
     let ring=[c, a, opp(c), opp(a)];
+    // 5-8 players: bases evenly round a circle about the map centre (the dragon's), at a random rotation.
+    if(NUM_TEAMS>4){
+      let R=MAP/2-13, rot=simRandom()*Math.PI*2;
+      ring=Array.from({length:NUM_TEAMS},(_,i)=>{ let th=rot+i*2*Math.PI/NUM_TEAMS;
+        return [Math.round(MAP/2+simCos(th)*R)-1, Math.round(MAP/2+simSin(th)*R)-1]; });
+    }
     let ordered=[], seen=new Set();
     for(let t=0;t<NUM_TEAMS;t++){
       if(seen.has(t))continue;
@@ -557,10 +565,10 @@ function defaultControllers(mp){
   return Array.from({length: NUM_TEAMS}, (_, t) =>
     t === 0 ? {type:'human'} : {type:'ai', difficulty: aiDifficulty});
 }
-// SP 4-team = 2v2 (teams 0+1 vs 2+3 — the only >2 shape offered today);
+// SP 4/6/8 teams = 2v2/3v3/4v4 (the low half vs the high half);
 // everything else is every-team-for-itself (identity).
 function defaultAlliances(mp){
-  if (!mp && NUM_TEAMS === 4) return [0, 0, 1, 1];
+  if (!mp && NUM_TEAMS >= 4 && NUM_TEAMS % 2 === 0) return Array.from({length: NUM_TEAMS}, (_, t) => t < NUM_TEAMS / 2 ? 0 : 1);
   return Array.from({length: NUM_TEAMS}, (_, t) => t);
 }
 // The AI's knowledge memory (updateAIIntel, js/ai.js) — everything here is

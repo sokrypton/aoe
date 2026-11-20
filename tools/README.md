@@ -44,9 +44,9 @@ a thin wrapper around `node tools/simulate.js` (callable directly).
 
 | arg | default | meaning |
 |-----|---------|---------|
-| `mode` | `1v1` | `1v1` (2 teams) or `2v2` (4 teams, allied) |
+| `mode` | `1v1` | `1v1`, `2v2`, `3v3`, `4v4` (two allied sides) or `ffa3`…`ffa8` (free-for-all) |
 | `diff` | `standard` | `easy`\|`standard`\|`hard`, or a comma list per team: `easy,hard` |
-| `map` | medium (1v1) / large (2v2) | `small`\|`medium`\|`large` |
+| `map` | medium (1v1) / large (others) | `small`\|`medium`\|`large`\|`huge`; raised to fit the players (5–6 → large, 7–8 → huge) |
 | `ticks` | `40000` | tick budget (**20 ticks = 1 game-second** — the TPS build constant, js/core.js; ~33 game-min default) |
 | `seed` | random | fixed seed → reproducible match |
 | `rollback` | off | also run a snapshot→resim determinism check (`rollback=1`) |

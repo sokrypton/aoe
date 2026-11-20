@@ -12,9 +12,9 @@
   and the report renders into a <pre id="result">.
 
   cfg fields (all optional):
-    mode:  '1v1' | '2v2'                     (default '1v1')
+    mode:  '1v1' | '2v2' | '3v3' | '4v4' | 'ffa3'..'ffa8'   (default '1v1')
     diff:  'easy'|'standard'|'hard', or a comma list per team ('easy,hard')
-    map:   'small'|'medium'|'large'          (default: medium 1v1 / large 2v2)
+    map:   'small'|'medium'|'large'|'huge'   (default: medium 1v1 / large otherwise; raised to fit the players)
     ticks: N                                 (default 60000)
     seed:  N                                 (optional — reproducible match)
     rollback: true                           (also run a determinism check)
@@ -66,7 +66,7 @@ window.runSimulation = async function(opts){
   const cfg = {
     mode: opts.mode || '1v1',
     diff: opts.diff || 'standard',       // single value, or comma list per team: 'easy,hard'
-    map:  opts.map  || ((opts.mode||'1v1') === '2v2' ? 'large' : 'medium'),
+    map:  opts.map  || ((opts.mode||'1v1') === '1v1' ? 'medium' : 'large'),   // (setMapSize raises it to fit the player count)
     ticks: parseInt(opts.ticks || 40000, 10), // 40k @ 20tps = ~33 game-min (was 60k @ 30tps)
     seed: (opts.seed !== undefined && opts.seed !== null && opts.seed !== '') ? parseInt(opts.seed, 10) : null,
     rollback: opts.rollback === true || opts.rollback === '1' || opts.rollback === 1,
@@ -95,13 +95,14 @@ window.runSimulation = async function(opts){
       report.config.scenarioLoaded = true;
     } else {
     // ---- procedural all-AI match: every slot AI so the match plays itself ----
-    NUM_TEAMS = cfg.mode === '2v2' ? 4 : 2;
+    { const m = /^(\d)v\1$/.exec(cfg.mode), f = /^ffa(\d)$/.exec(cfg.mode); NUM_TEAMS = m ? 2 * m[1] : f ? +f[1] : 2; window.__simFFA = !!f; }
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
     window.__noDragon = !cfg.dragon; // placeDragonLair (js/init.js): off unless asked, so AI self-play baselines stay comparable
     window.fogDisabled = cfg.fog === 'off'; // match fog setting — before restartGame (initFog reads it)
     setMapSize(cfg.map);
     restartGame(cfg.diff.split(',')[0]);
+    if (window.__simFFA) teamAlliance = teams();
     const diffs = cfg.diff.split(',');
     teamControllers = teams().map((t) => ({type: 'ai', difficulty: diffs[t % diffs.length]}));
     // AI scripts per side (js/aiscript.js): a bad one fails the run loudly, with the reasons

@@ -155,7 +155,8 @@ function tryAIMilitiaResponse(ai){
 function updateAI(ai){
   ai.tick++;
   let profile=aiProfileFor(ai.team);
-  if(ai.tick%profile.decisionInterval!==0)return;
+  // Each seat decides on its own phase of the interval: eight AIs planning on one tick is a visible hitch.
+  if((ai.tick+Math.floor(ai.team*profile.decisionInterval/NUM_TEAMS))%profile.decisionInterval!==0)return;
   runAIScript(ai); profile=aiProfileFor(ai.team);   // the seat's script sets its levers first (js/aiscript.js)
 
   // The dragon's lair is off limits: a standing danger zone (it can't be killed, so the zone never lapses for good).
@@ -1955,8 +1956,8 @@ function findAIFarmSpot(ai,tc){
   }
   // Plots inside the wall ring first (a farm by a berry-mill outside the wall
   // is undefended food), then nearest drop-edge; deterministic tie-break.
-  let inside=c=>aiInsideWallRing(ai,c.x,c.y,F,F);
-  cands.sort((a,b)=>inside(b)-inside(a) || a.dd-b.dd || a.x-b.x || a.y-b.y);
+  for(const c of cands)c.in=aiInsideWallRing(ai,c.x,c.y,F,F)?1:0;   // (once each: the ring test walks the whole plan)
+  cands.sort((a,b)=>b.in-a.in || a.dd-b.dd || a.x-b.x || a.y-b.y);
   // Keep plots out of the gate corridor (a farmer in the gateway looks
   // wrong), and require the plot be reachable from the TC: an unreachable
   // farm parks as unbuildable work and wedges the assigned villager

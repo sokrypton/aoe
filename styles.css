@@ -1265,8 +1265,8 @@ canvas {
 .lobby-swatch.lobby-swatch-sel { border-color: #ffebad; box-shadow: 0 0 0 2px #8c1d1d; }
 .lobby-swatch[disabled] { cursor: not-allowed; opacity: 0.35; }
 .lobby-seat-name {
-  flex: 1 1 150px; /* wide enough for the longest generated name ("Marquis de Mangonel") */
-  min-width: 150px;
+  flex: 1 1 110px; /* (an AI row also fits its plan picker and remove button on one line) */
+  min-width: 110px;
   background: rgba(255,255,255,0.35);
   border: 1px solid #8b6c43;
   border-radius: 3px;
@@ -2609,3 +2609,6 @@ canvas {
 .aiscript-mine .aiscript-preset { margin: 0; border-radius: 4px 0 0 4px; }
 .aiscript-mine .aiscript-del { margin: 0; border-left: none; border-radius: 0 4px 4px 0; padding: 2px 6px; }
 #aiscript-buttons .menu-action-btn { flex: 0 1 auto; }
+
+.opt-pill input:disabled + span { opacity: 0.35; cursor: default; }
+.lobby-aiplan { max-width: 84px; }

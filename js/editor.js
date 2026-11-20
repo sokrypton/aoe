@@ -19,7 +19,7 @@ const EDITOR_TERRAIN = ['GRASS','FOREST','GOLD','STONE','BERRIES','FARM','WATER'
 // All placeable buildings, in a sensible authoring order.
 const EDITOR_BLDGS = ['TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','MARKET','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
 const STANCES = ['aggressive','defensive','standground','passive'];
-const MAP_SIZE_KEYS = ['small','medium','large'];
+const MAP_SIZE_KEYS = ['small','medium','large','huge'];
 
 // Reverse TERRAIN value -> name, for export.
 const TERRAIN_NAME = {};

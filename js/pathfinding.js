@@ -26,7 +26,7 @@ function regionRefresh(R,x0,y0,w,h){
     const k=x+y*MAP, p=tilePassable(x,y,R.ig,R.stand);
     if(p&&!R.lab[k])opened.push(k); else if(!p&&R.lab[k])closed.push(k);
   }
-  if(closed.length)regionClose(R,closed,x0,y0,w,h);
+  if(closed.length)regionClose(R,closed);
   for(const k of opened)regionOpen(R,k%MAP,(k/MAP)|0);
 }
 // Tiles turned passable one by one: whatever a tile newly connects connects THROUGH it (a diagonal it unblocks joins
@@ -44,40 +44,47 @@ function regionOpen(R,x,y){
   for(let k=0;k<R.lab.length;k++) if(merged.has(R.lab[k]))R.lab[k]=keep;
   for(const id of merged){ R.size[keep]+=R.size[id]; R.size[id]=0; }
 }
-// Tiles closed (a footprint, a hardening site, a shut gate): a region can only split where they were. The tiles that
-// bordered them are checked for a way round inside a small window; only when none is found is that one region
-// relabelled — from the labels, never re-testing passability.
-const REGION_DETOUR=4;
-function regionClose(R,closed,x0,y0,w,h){
+// Tiles closed (a footprint, a hardening site, a shut gate): a region can only split where they were. Its tiles that
+// bordered them each flood outward in step, joining as their floods touch: all joined → no split (cost: the detour
+// round the change); a flood that runs dry first is a cut-off part and takes a new label (cost: the smaller part —
+// never the map). Read from the labels, never re-testing passability.
+function regionClose(R,closed){
   for(const k of closed){ R.size[R.lab[k]]--; R.lab[k]=0; }
   const byLab=new Map();
   for(const k of closed){ const x=k%MAP, y=(k/MAP)|0;
     for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx, ny=y+dy;
       if(!regionPass(R,nx,ny))continue; const nk=nx+ny*MAP, L=R.lab[nk];
-      let s=byLab.get(L); if(!s)byLab.set(L,s=new Set()); s.add(nk); } }
-  const bx0=Math.max(0,x0-REGION_DETOUR), by0=Math.max(0,y0-REGION_DETOUR), bx1=Math.min(MAP-1,x0+w-1+REGION_DETOUR), by1=Math.min(MAP-1,y0+h-1+REGION_DETOUR);
-  for(const [L,tiles] of byLab){
-    if(tiles.size<2)continue;
-    // a way round inside the window joins every bordering tile: no split
-    const seen=new Set(), first=tiles.values().next().value, Q=[first]; seen.add(first); let found=1;
-    while(Q.length&&found<tiles.size){ const k=Q.pop(), x=k%MAP, y=(k/MAP)|0;
-      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){ const nx=x+dx, ny=y+dy, nk=nx+ny*MAP;
-        if((!dx&&!dy)||nx<bx0||ny<by0||nx>bx1||ny>by1||seen.has(nk)||!regionStep(R,x,y,dx,dy))continue;
-        seen.add(nk); Q.push(nk); if(tiles.has(nk))found++; } }
-    if(found<tiles.size)regionSplit(R,L);
-  }
+      let s=byLab.get(L); if(!s)byLab.set(L,s=[]); if(!s.includes(nk))s.push(nk); } }
+  for(const [L,tiles] of byLab) if(tiles.length>1)regionSplit(R,L,tiles);
 }
-// Relabel one region's tiles into its connected parts: the first keeps the label, the rest take new ones.
-function regionSplit(R,L){
-  const N=R.lab.length, seen=new Uint8Array(N), Q=new Int32Array(R.size[L]); let tail=0, first=true;
-  for(let k0=0;k0<N;k0++){ if(R.lab[k0]!==L||seen[k0])continue;
-    const start=tail; seen[k0]=1; Q[tail++]=k0;
-    for(let head=start;head<tail;head++){ const k=Q[head], x=k%MAP, y=(k/MAP)|0;
+let _regOwn=null, _regSeen=null, _regStamp=0;   // which flood reached a tile, valid where _regSeen holds this split's stamp
+function regionSplit(R,L,tiles){
+  const n=tiles.length, par=tiles.map((_,i)=>i), Q=tiles.map(k=>[k]), head=new Int32Array(n), done=new Uint8Array(n);
+  const root=i=>{ while(par[i]!==i)i=par[i]=par[par[i]]; return i; };
+  if(!_regOwn||_regOwn.length!==R.lab.length){ _regOwn=new Int32Array(R.lab.length); _regSeen=new Int32Array(R.lab.length); _regStamp=0; }
+  const own=_regOwn, seen=_regSeen, stamp=++_regStamp;
+  tiles.forEach((k,i)=>{ own[k]=i; seen[k]=stamp; });
+  let groups=n;   // floods not yet joined to another or run dry
+  while(groups>1){
+    for(let i=0;i<n&&groups>1;i++){
+      if(head[i]>=Q[i].length)continue;
+      const k=Q[i][head[i]++], x=k%MAP, y=(k/MAP)|0;
       for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
         if((!dx&&!dy)||!regionStep(R,x,y,dx,dy))continue;
-        const nk=x+dx+(y+dy)*MAP; if(R.lab[nk]!==L||seen[nk])continue; seen[nk]=1; Q[tail++]=nk; } }
-    if(first){ R.size[L]=tail-start; first=false; }
-    else { const id=R.size.length; R.size.push(tail-start); for(let i=start;i<tail;i++)R.lab[Q[i]]=id; }
+        const nk=x+dx+(y+dy)*MAP; if(R.lab[nk]!==L)continue;
+        if(seen[nk]!==stamp){ seen[nk]=stamp; own[nk]=i; Q[i].push(nk); }
+        else { const a=root(i), b=root(own[nk]); if(a!==b){ par[b]=a; groups--; } }
+      }
+    }
+    // a group whose floods have all run dry is sealed off: it leaves L under a new label
+    const live=new Set(); for(let i=0;i<n;i++) if(head[i]<Q[i].length)live.add(root(i));
+    for(let r=0;r<n&&groups>1;r++){
+      if(root(r)!==r||done[r]||live.has(r))continue;
+      done[r]=1; groups--;
+      const id=R.size.length; let cnt=0;
+      for(let i=0;i<n;i++) if(root(i)===r) for(const k of Q[i]){ R.lab[k]=id; cnt++; }
+      R.size.push(cnt); R.size[L]-=cnt;
+    }
   }
 }
 // w: the walker — a unit (labelled as its team: units differ only by team here), a building searching as itself (its

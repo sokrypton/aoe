@@ -68,6 +68,8 @@ bit-identical state. When touching anything the sim reads:
 
 ## Team / control model
 
+- Up to 8 players (`NUM_TEAMS`; size every per-team structure from it). 2–4 start in map corners; 5–8 on a ring
+  round the centre, which stays clear for the dragon (`setMapSize`, `minMapSizeFor` in core.js; `genMap`).
 - Seat == team. `teamControllers[t]` is `{type:'human'|'ai', difficulty}` —
   the sim never checks `netRole`; an AI seat is just data, so host-vs-AI over
   a connection and kick-to-AI need no protocol changes.

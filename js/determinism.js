@@ -18,8 +18,10 @@ const DET = {
   history: [],         // ring of {tick, sum} while enabled — every `every`th tick
   historyMax: 600,
   // Peers exchange one checksum per report, for a tick a full rollback window old, so hashing every tick was wasted
-  // (it cost several sim ticks each at 100+ units). Every peer uses the same stride, so the exchanged ticks line up.
-  every: 10,
+  // (it costs several sim ticks each: ~6ms at 1800 entities). Every peer uses the same stride and phase, so the
+  // exchanged ticks line up; the odd phase keeps it off the round-number ticks where snapshots (every 20th) and the
+  // AIs' decisions land, so the costs never stack into one long tick.
+  every: 20, phase: 7,
   log: null,           // {seed, settings, commands:[{execTick, team, seq, cmd}]}
 };
 
@@ -382,7 +384,7 @@ function simEntityHashes(){
 
 // Called from update() once per completed sim tick when DET.enabled.
 function detAfterTick(){
-  if (tick % DET.every !== 0) return;
+  if (tick % DET.every !== DET.phase) return;
   DET.history.push({ tick: tick, sum: simChecksum() });
   if (DET.history.length > DET.historyMax) DET.history.shift();
 }

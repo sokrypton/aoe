@@ -13,6 +13,8 @@ function genMap(){
   // Resource distances below were tuned for the original 60x60 map; scale them
   // so larger maps spread bases/resources out instead of leaving empty grass.
   let scale=MAP/60;
+  // 5+ starts sit on a ring (setMapSize): kits stay medium-map tight so neighbours' kits never collide.
+  let ringLayout=starts.length>4, kitScale=ringLayout?Math.min(scale,1.5):scale;
 
   function randFloat(min,max){return simRandom()*(max-min)+min;}
   function inBounds(x,y,margin=0){return x>=margin&&x<MAP-margin&&y>=margin&&y<MAP-margin;}
@@ -226,15 +228,15 @@ function genMap(){
       Math.max(3,Math.min(MAP-4,starts[i].cy+offset.y)));
     let eachStart=fn=>{for(let i=0;i<starts.length;i++)fn(i,sAngle[i],sSide[i]);};
 
-    eachStart((i,ang,side)=>atStart(i,polar(ang+side*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*scale),placeBerries));
-    eachStart((i,ang,side)=>atStart(i,polar(ang+randFloat(-0.35,0.35),randFloat(7.3,9)*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*scale,6)));
-    eachStart((i,ang,side)=>atStart(i,polar(ang-side*1.45+randFloat(-0.25,0.25),8*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*scale,6)));
-    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI+side*0.65+randFloat(-0.25,0.25),12*scale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*scale,3)));
-    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI-side*0.8+randFloat(-0.25,0.25),11*scale),(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*scale,3)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+side*1.0+randFloat(-0.25,0.25),randFloat(5.8,7.5)*kitScale),placeBerries));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+randFloat(-0.35,0.35),randFloat(7.3,9)*kitScale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,7,800,3,4*kitScale,6)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang-side*1.45+randFloat(-0.25,0.25),8*kitScale),(x,y)=>placePatch(TERRAIN.STONE,x,y,5,350,3,4*kitScale,6)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI+side*0.65+randFloat(-0.25,0.25),12*kitScale),(x,y)=>placePatch(TERRAIN.GOLD,x,y,4,800,3,8*kitScale,3)));
+    eachStart((i,ang,side)=>atStart(i,polar(ang+Math.PI-side*0.8+randFloat(-0.25,0.25),11*kitScale),(x,y)=>placePatch(TERRAIN.STONE,x,y,4,350,2,8*kitScale,3)));
     [[Math.PI,0,8],[0,1.7,9],[0,-1.25,11]].forEach(([flip,lean,dist])=>{
       eachStart((i,ang,side)=>{
         let a=ang+flip+side*lean+randFloat(-0.25,0.25);
-        atStart(i,polar(a,dist*scale),(x,y)=>placeForestLine(x,y,a+Math.PI/2,dist===11?6:5,2));
+        atStart(i,polar(a,dist*kitScale),(x,y)=>placeForestLine(x,y,a+Math.PI/2,dist===11?6:5,2));
       });
     });
     [[Math.PI,-0.7],[Math.PI,0.5],[0,2.2]].forEach(([flip,lean])=>{
@@ -266,7 +268,9 @@ function genMap(){
     let dist=simRandInt(Math.round(9*scale),Math.round(23*scale));
     let x=MAP/2+Math.round(simCos(angle)*dist);
     let y=MAP/2+Math.round(simSin(angle)*dist);
-    if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13*scale))continue;
+    // (ring layout: scatter over the whole map — the centre-out band leaves the corners bare)
+    if(ringLayout){ x=simRandInt(4,MAP-5); y=simRandInt(4,MAP-5); if(distXY(x,y,MAP/2,MAP/2)<9*scale)continue; }
+    if(starts.some(s=>distXY(x,y,s.cx,s.cy)<13*kitScale))continue;
     placeForestLine(x,y,randFloat(0,Math.PI),simRandInt(4,7),simRandInt(2,3));
   }
 
@@ -291,4 +295,5 @@ function genMap(){
   }
 
   starts.forEach(s=>clearArea(s.cx,s.cy,3));
+  if(ringLayout)clearArea(Math.floor(MAP/2),Math.floor(MAP/2),6);   // the dragon's lair (placeDragonLair, js/init.js)
 }
