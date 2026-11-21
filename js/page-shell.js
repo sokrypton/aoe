@@ -391,7 +391,7 @@ document.body.insertAdjacentHTML('afterbegin', `
         </div>
         <div class="setup-col">
           <h3>Players</h3>
-          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="players" value="2" checked><span title="1 vs 1">2</span></label><label class="opt-pill"><input type="radio" name="players" value="4"><span title="2 vs 2">4</span></label><label class="opt-pill"><input type="radio" name="players" value="6"><span title="3 vs 3">6</span></label><label class="opt-pill"><input type="radio" name="players" value="8"><span title="4 vs 4">8</span></label><label class="opt-pill"><input type="radio" name="players" value="10"><span title="5 vs 5">10</span></label></div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="players" value="2" checked><span title="1 vs 1">2</span></label><label class="opt-pill"><input type="radio" name="players" value="4"><span title="2 vs 2">4</span></label></div>
         </div>
         <div class="setup-col">
           <h3>Map Size</h3>

@@ -397,6 +397,16 @@ async function assertChecksumsAgree(pages){
     await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
     for (const p of [host, gA, gB]) await p.waitForFunction(() => !gamePaused, { timeout: 15000 });
     log('   [3p] wait policy held and released');
+    // The hold's own way out: the host's "Continue without them" button lifts it and the AI stands in.
+    await gA.close();
+    await host.waitForFunction(() => disconnectedPause && gamePaused, { timeout: 15000 });
+    await host.click('#mp-disconnect-kick');
+    for (const p of [host, gB]) await p.waitForFunction(s => !gamePaused && teamControllers[s].type === 'ai' && teamControllers[s].standIn, seatA, { timeout: 15000 });
+    await advances(gB, 'guest B after continue-without-them');
+    gA = await newGamePage(joinQuery);
+    await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
+    for (const p of [host, gA, gB]) await p.waitForFunction(s => teamControllers[s].type === 'human', seatA, { timeout: 20000 });
+    log('   [3p] continue-without-them lifted the hold');
 
     // The third choice: 'idle' plays on, and the seat is never handed to the AI by itself.
     await host.evaluate(() => { setMpDropPolicy('idle'); });

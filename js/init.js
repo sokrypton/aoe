@@ -391,7 +391,7 @@ function onStartClicked(){
   // BEFORE setMapSize (which builds STARTS and draws sim RNG) and before
   // restartGame (which sizes every per-team structure from NUM_TEAMS).
   let playersSelected = document.querySelector('input[name="players"]:checked');
-  NUM_TEAMS = playersSelected && [4, 6, 8, 10].includes(+playersSelected.value) ? +playersSelected.value : 2;   // 1v1 … 5v5
+  NUM_TEAMS = playersSelected && +playersSelected.value === 4 ? 4 : 2;   // 1v1 or 2v2 (larger matches are the multiplayer lobby's)
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
   let speedSelected = document.querySelector('input[name="gamespeed"]:checked');
@@ -553,14 +553,16 @@ let waitingHold = false;      // guests: the host is holding the match for a mis
 let manualPause = false, manualPauseBy = null;
 const STAND_IN_AFTER_MS = 60000;
 const missingSince = new Map();   // host: seat -> when its minute started (restarts while the match is paused)
+const standInAsked = new Set();   // host: missing seats already handed to the AI — the command only runs once the hold lifts
 
 
 function hostBroadcastPresence(){
   if (netRole !== 'host' || !mpMatchStarted || gameOver) return;
   missingSeats = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
   for (const t of [...missingSince.keys()]) if (!missingSeats.includes(t)) missingSince.delete(t);
+  for (const t of [...standInAsked]) if (!missingSeats.includes(t)) standInAsked.delete(t);
   // A seat still waiting for its player holds the match under 'wait', or when nobody is left to play with.
-  disconnectedPause = missingSeats.some(t => teamControllers[t].type === 'human')
+  disconnectedPause = missingSeats.some(t => teamControllers[t].type === 'human' && !standInAsked.has(t))
     && (mpDropPolicy() === 'wait' || netConnectedGuestSeats().length === 0);
   broadcastToGuests({ type: 'match-presence', missing: missingSeats, hold: disconnectedPause, policy: mpDropPolicy(), paused: manualPause, by: manualPauseBy });
   recomputeGamePaused();
@@ -604,7 +606,9 @@ function standInForMissing(){
   for (const seat of missingSeats) {
     if (!teamControllers[seat] || teamControllers[seat].type !== 'human') continue;
     submitCommand({ kind: 'set-controller', t: seat, standIn: true, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
+    standInAsked.add(seat);
   }
+  hostBroadcastPresence();
 }
 setInterval(() => {
   if (gameOver) { show('mp-missing-banner', false); return; }
