@@ -1252,6 +1252,41 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------------ trade cart: gold by Market distance
+    // Gold comes only from the distance between the two Markets: side-by-side Markets pay nothing however fast the
+    // cart flips between them, and a load picked up for a far Market isn't cashed in full at a nearer one.
+    'trade-gold-distance': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const stage = (mine, theirs) => {
+        loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [
+          { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 50, y: 50, team: 1 },
+          ...mine.map(([x, y]) => ({ b: 'MARKET', x, y, team: 0 })), { b: 'MARKET', x: theirs[0], y: theirs[1], team: 1 }] });
+        const ms = entities.filter(e => e.btype === 'MARKET');
+        return { mine: ms.filter(m => m.team === 0), dest: ms.find(m => m.team === 1) };
+      };
+      let w = stage([[20, 20]], [24, 20]);
+      let cart = createUnit('tradecart', 23, 24, 0);
+      cart.tradeHomeId = w.mine[0].id; cart.tradeDestId = w.dest.id; cart.tradePhase = 'toDest';
+      let gold0 = resourceStore(0).gold;
+      for (let i = 0; i < T30(1200); i++) update();
+      T.ok('side-by-side Markets pay nothing', resourceStore(0).gold === gold0 && tradeGold(w.mine[0], w.dest) === 0);
+      w = stage([[20, 10]], [20, 44]);
+      const far = tradeGold(w.mine[0], w.dest);
+      cart = createUnit('tradecart', 21, 40, 0);
+      cart.tradeHomeId = w.mine[0].id; cart.tradeDestId = w.dest.id; cart.tradePhase = 'toDest';
+      gold0 = resourceStore(0).gold;
+      for (let i = 0; i < T30(3000) && resourceStore(0).gold === gold0; i++) update();
+      T.ok('a far route pays its distance (' + far + ')', far > 20 && resourceStore(0).gold - gold0 === far);
+      w = stage([[20, 10], [20, 36]], [20, 44]);
+      const [farM, nearM] = w.mine.sort((a, b) => a.y - b.y);
+      cart = createUnit('tradecart', 21, 41, 0);
+      cart.tradeHomeId = nearM.id; cart.tradeDestId = w.dest.id; cart.tradePhase = 'toHome'; cart.carrying = tradeGold(farM, w.dest); cart.carryType = 'gold';
+      gold0 = resourceStore(0).gold;
+      for (let i = 0; i < T30(1500) && cart.tradePhase === 'toHome'; i++) update();
+      T.ok('a far load cashed at a near Market pays the near route only', cart.tradePhase === 'toDest' && resourceStore(0).gold - gold0 === tradeGold(nearM, w.dest));
+      return T;
+    })),
+
     // ------------------------------------------------ AI siege of a stone-walled town
     // An AI army with rams at a stone ring: the rams go with it (never left home by the attack's cut), batter the wall
     // while the infantry escorts them, and the army goes through to the TC — it used to stand outside "busy" with

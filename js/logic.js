@@ -2237,6 +2237,14 @@ function nearestMarket(e, own, allowIncomplete){
     && (e.utype!=='tradecart' || regionReachesBuilding(e,b)));   // (a cart only takes a Market it can reach)
 }
 
+// Gold for one round trip between two Markets — Conquerors trade formula (see TRADE_GOLD_FACTOR, js/core.js).
+// Math.sqrt is exact-IEEE and determinism-safe; the −5 per axis is AoE2's deadzone: Markets side by side earn nothing.
+function tradeGold(home,dest){
+  let dx=Math.max(0,Math.abs(home.x-dest.x)-5), dy=Math.max(0,Math.abs(home.y-dest.y)-5);
+  let d=Math.sqrt(dx*dx+dy*dy);
+  return d>0 ? Math.floor(2*(d/MAP+0.3)*d*TRADE_GOLD_FACTOR+0.5) : 0;
+}
+
 // Trade cart state machine — shuttles between its home Market (tradeHomeId,
 // own team) and a foreign Market (tradeDestId, another player). Modeled on the
 // villager gather→return→dropoff loop: gold is loaded (into carrying/carryType,
@@ -2277,18 +2285,12 @@ function updateTradeCart(e){
     if(!dropContactSettled(e, goal)) return; // tuck up against the Market
     if(!goal.complete) return;               // endpoint still building — wait for it
     if(e.tradePhase==='toDest'){
-      // Load gold sized by Market separation — Conquerors trade formula
-      // (see TRADE_GOLD_FACTOR, js/core.js). Math.sqrt is exact-IEEE and
-      // determinism-safe; the −5 per axis is AoE2's "adjacent markets earn
-      // nothing" deadzone.
-      let tdx=Math.max(0,Math.abs(home.x-dest.x)-5), tdy=Math.max(0,Math.abs(home.y-dest.y)-5);
-      let td=Math.max(0.1,Math.sqrt(tdx*tdx+tdy*tdy));
-      let g=Math.floor(2*(td/MAP+0.3)*td*TRADE_GOLD_FACTOR+0.5);
-      e.carrying=Math.max(1,g); e.carryType='gold';
+      e.carrying=tradeGold(home,dest); e.carryType='gold';
       e.tradePhase='toHome';
       pathToContact(e,home);   // cheapest-to-walk Market edge, not the straight-line-nearest
     } else {
-      resourceStore(e.team).gold += e.carrying;
+      // Paid for the route it ends on: a load picked up for a far Market isn't cashed at a nearer one.
+      resourceStore(e.team).gold += Math.min(e.carrying, tradeGold(home,dest));
       e.carrying=0; e.carryType=null;
       e.tradePhase='toDest';
       pathToContact(e,dest);
