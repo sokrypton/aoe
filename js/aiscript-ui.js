@@ -9,7 +9,9 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 // The plan choices: the presets loaded from ai-scripts/ (in load order), then the custom script.
 function aiPlanKeys(){ return [...Object.keys(AI_SCRIPT_PRESETS), 'custom']; }
 function aiPlanLabel(k){ return k === 'custom' ? 'Custom' : AI_SCRIPT_PRESETS[k].name; }
-function aiPlanChoice(){ const v = lsGet('aoeAIPlan', 'default'); return aiPlanKeys().includes(v) ? v : 'default'; }
+// The AI Plan pickers (Match Setup, lobby seats) are hidden while the feature is finished: every AI plays the default plan.
+const AI_PLAN_MENU = false;
+function aiPlanChoice(){ const v = AI_PLAN_MENU ? lsGet('aoeAIPlan', 'default') : 'default'; return aiPlanKeys().includes(v) ? v : 'default'; }
 function aiCustomScriptText(){ return lsGet('aoeAIScript', ''); }
 function setAIPlan(v){
   lsSet('aoeAIPlan', v);
@@ -27,6 +29,7 @@ function applyAIPlanToSeats(){
 // The menu's pills, one per plan choice; Custom… opens the editor.
 function buildAIPlanPills(){
   const row = byId('aiplan-pills'); if (!row) return;
+  show('opt-aiplan', AI_PLAN_MENU);
   row.innerHTML = '';
   for (const k of aiPlanKeys()) {
     const l = document.createElement('label'); l.className = 'opt-pill';

@@ -482,7 +482,12 @@ function buildSeatRow(seat, t){
   // colour dot (green = ready, amber = not ready, hollow = waiting) so a long
   // name plus a "Not ready" label never wraps the row onto two lines. The label
   // rides the dot's title for hover/screen-reader clarity.
-  if (seat.type === 'ai') {   // the AI's plan: the host picks; guests see which (a custom plan by its name)
+  if (seat.type === 'ai' && !AI_PLAN_MENU) {
+    let badge = document.createElement('span');
+    badge.className = 'lobby-seat-badge';
+    badge.textContent = 'AI';
+    row.appendChild(badge);
+  } else if (seat.type === 'ai') {   // the AI's plan: the host picks; guests see which (a custom plan by its name)
     let sel = document.createElement('select');
     sel.className = 'lobby-team-select lobby-aiplan';
     for (const k of aiPlanKeys()) { let o = document.createElement('option'); o.value = k; o.textContent = k === 'default' ? 'AI' : k === 'custom' && seat.aiPlan === 'custom' && seat.aiScript ? seat.aiScript.name : aiPlanLabel(k); sel.appendChild(o); }
