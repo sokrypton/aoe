@@ -625,26 +625,27 @@ async function withPage(browser, port, entry, fn){
     // ---------------------------------------------- 5-8 player ring layout
     // More than four players sit on a ring round the map centre: the map is raised to fit them, every base has
     // room and its own resources, allies are neighbours, and the centre stays clear for the dragon.
-    'eight-player-ring': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(async () => {
+    'player-ring': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(async () => {
       const T = window.__T;
-      for (const seed of [1, 2, 3]) {
-        await runSimulation({ mode: '4v4', diff: 'hard', map: 'small', seed, ticks: 40, dragon: 1 });
-        const c = MAP / 2, d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-        const tcs = [...Array(8).keys()].map(t => entities.find(e => e.team === t && e.btype === 'TC'));
-        T.ok('seed ' + seed + ': 8 players raise the map to huge', MAP === MAP_SIZES.huge && NUM_TEAMS === 8);
-        T.ok('seed ' + seed + ': every player has a town centre', tcs.every(Boolean));
-        let gap = Infinity; for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) gap = Math.min(gap, d(tcs[i], tcs[j]));
-        T.ok('seed ' + seed + ': bases are 40+ tiles apart (' + gap.toFixed(0) + ')', gap >= 40);
-        T.ok('seed ' + seed + ': no base within 50 tiles of the centre', tcs.every(tc => d(tc, { x: c, y: c }) >= 50));
+      for (const [mode, n, minGap] of [['4v4', 8, 40], ['5v5', 10, 36]]) for (const seed of [1, 2, 3]) {
+        await runSimulation({ mode, diff: 'hard', map: 'small', seed, ticks: 40, dragon: 1 });
+        const c = MAP / 2, d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), tag = mode + ' seed ' + seed + ': ';
+        const tcs = [...Array(n).keys()].map(t => entities.find(e => e.team === t && e.btype === 'TC'));
+        T.ok(tag + n + ' players raise the map to huge', MAP === MAP_SIZES.huge && NUM_TEAMS === n);
+        T.ok(tag + 'every player has a town centre', tcs.every(Boolean));
+        let gap = Infinity; for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) gap = Math.min(gap, d(tcs[i], tcs[j]));
+        T.ok(tag + 'bases are ' + minGap + '+ tiles apart (' + gap.toFixed(0) + ')', gap >= minGap);
+        T.ok(tag + 'no base within 50 tiles of the centre', tcs.every(tc => d(tc, { x: c, y: c }) >= 50));
         const near = (tc, terr) => { for (let y = tc.y - 20; y <= tc.y + 20; y++) for (let x = tc.x - 20; x <= tc.x + 20; x++) if (map[y] && map[y][x] && map[y][x].t === terr) return true; return false; };
-        T.ok('seed ' + seed + ': every base has gold, stone, berries and wood nearby', tcs.every(tc => [TERRAIN.GOLD, TERRAIN.STONE, TERRAIN.BERRIES, TERRAIN.FOREST].every(t => near(tc, t))));
-        // allies (teams 0-3 / 4-7) hold contiguous arcs: walking the ring by angle, the side changes exactly twice
-        const ring = tcs.map((tc, t) => ({ t, a: Math.atan2(tc.y - c, tc.x - c) })).sort((p, q) => p.a - q.a).map(o => o.t < 4 ? 0 : 1);
-        T.ok('seed ' + seed + ': each side holds one arc of the ring', ring.filter((s, i) => s !== ring[(i + 1) % 8]).length === 2);
+        T.ok(tag + 'every base has gold, stone, berries and wood nearby', tcs.every(tc => [TERRAIN.GOLD, TERRAIN.STONE, TERRAIN.BERRIES, TERRAIN.FOREST].every(t => near(tc, t))));
+        // allies (low half / high half) hold contiguous arcs: walking the ring by angle, the side changes exactly twice
+        const ring = tcs.map((tc, t) => ({ t, a: Math.atan2(tc.y - c, tc.x - c) })).sort((p, q) => p.a - q.a).map(o => o.t < n / 2 ? 0 : 1);
+        T.ok(tag + 'each side holds one arc of the ring', ring.filter((s, i) => s !== ring[(i + 1) % n]).length === 2);
         const dr = entities.find(e => e.utype === 'dragon');
-        T.ok('seed ' + seed + ': the dragon sleeps at the map centre', !!dr && d(dr, { x: c, y: c }) <= 2);
+        T.ok(tag + 'the dragon sleeps at the map centre', !!dr && d(dr, { x: c, y: c }) <= 2);
         let clear = true; for (let y = c - 5; y <= c + 5; y++) for (let x = c - 5; x <= c + 5; x++) if (map[y][x].t !== TERRAIN.GRASS) clear = false;
-        T.ok('seed ' + seed + ': the centre is open ground', clear);
+        T.ok(tag + 'the centre is open ground', clear);
+        T.ok(tag + 'every player has its own colour', new Set(tcs.map(tc => teamColor(tc.team))).size === n);
       }
       return T;
     })),

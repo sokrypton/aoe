@@ -1,5 +1,5 @@
 // ---- MULTIPLAYER: PRE-MATCH LOBBY ("handshake") ----
-// Sits between "a guest connects" and "match start". Up to 8 players in
+// Sits between "a guest connects" and "match start". Up to 10 players in
 // any human/AI mix: the host (seat 0), 1-3 human guests, and AI seats the
 // host can add. Everyone picks a name + color + team, everyone can chat,
 // and the host presses Start. Only then does hostStartLockstepMatch()
@@ -9,7 +9,7 @@
 // a joining guest gets the next free seat (js/net.js hello -> js/init.js
 // assignGuestSeat -> lobbyNextFreeSeat here). Every seat has a TEAM pick,
 // AoE2-style: '–' (no team — its own alliance, i.e. free-for-all) or a
-// shared team number 1-8 (allied seats spawn in adjacent corners,
+// shared team number 1-10 (allied seats spawn in adjacent corners,
 // js/core.js setMapSize). ANY combination is allowed — 1v1, 2v2, 3v1,
 // full FFA, even everyone allied (sandbox); there is deliberately no
 // auto-fixing of "invalid" splits. AI seats take NO network input — every
@@ -40,7 +40,7 @@
 // Available color choices = every entry in the shared palette (js/core.js).
 function lobbyPaletteSize(){ return PLAYER_TEAM_COLORS.length; }
 const LOBBY_NAME_MAX = 40; // generous so long/funny names fit; the lobby name field flexes and doesn't ellipsis-clip
-const LOBBY_MAX_PLAYERS = 8;   // any human/AI mix; 5+ sit on a ring round the map centre (setMapSize)
+const LOBBY_MAX_PLAYERS = 10;   // any human/AI mix; 5+ sit on a ring round the map centre (setMapSize)
 
 // Every player starts with a random funny name (host, guests without a
 // remembered name, and AI seats alike) — editable in the lobby; a chosen
@@ -458,7 +458,7 @@ function buildSeatRow(seat, t){
     row.appendChild(nm);
   }
 
-  // Team pick: '–' (no team — own alliance / FFA) or Team 1-8. The host
+  // Team pick: '–' (no team — own alliance / FFA) or Team 1-10. The host
   // sets any seat's team (including AI); a guest sets only its own.
   let canEditTeam = netRole === 'host' || (mine && seat.present);
   let teamSel = document.createElement('select');

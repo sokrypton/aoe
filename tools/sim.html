@@ -12,7 +12,7 @@
   and the report renders into a <pre id="result">.
 
   cfg fields (all optional):
-    mode:  '1v1' | '2v2' | '3v3' | '4v4' | 'ffa3'..'ffa8'   (default '1v1')
+    mode:  '1v1' | '2v2' | '3v3' | '4v4' | '5v5' | 'ffa3'..'ffa10'   (default '1v1')
     diff:  'easy'|'standard'|'hard', or a comma list per team ('easy,hard')
     map:   'small'|'medium'|'large'|'huge'   (default: medium 1v1 / large otherwise; raised to fit the players)
     ticks: N                                 (default 60000)
@@ -95,7 +95,7 @@ window.runSimulation = async function(opts){
       report.config.scenarioLoaded = true;
     } else {
     // ---- procedural all-AI match: every slot AI so the match plays itself ----
-    { const m = /^(\d)v\1$/.exec(cfg.mode), f = /^ffa(\d)$/.exec(cfg.mode); NUM_TEAMS = m ? 2 * m[1] : f ? +f[1] : 2; window.__simFFA = !!f; }
+    { const m = /^(\d)v\1$/.exec(cfg.mode), f = /^ffa(\d+)$/.exec(cfg.mode); NUM_TEAMS = m ? 2 * m[1] : f ? +f[1] : 2; window.__simFFA = !!f; }
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
     window.__noDragon = !cfg.dragon; // placeDragonLair (js/init.js): off unless asked, so AI self-play baselines stay comparable

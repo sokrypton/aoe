@@ -388,7 +388,7 @@ function onStartClicked(){
   // BEFORE setMapSize (which builds STARTS and draws sim RNG) and before
   // restartGame (which sizes every per-team structure from NUM_TEAMS).
   let playersSelected = document.querySelector('input[name="players"]:checked');
-  NUM_TEAMS = playersSelected && [4, 6, 8].includes(+playersSelected.value) ? +playersSelected.value : 2;   // 1v1 / 2v2 / 3v3 / 4v4
+  NUM_TEAMS = playersSelected && [4, 6, 8, 10].includes(+playersSelected.value) ? +playersSelected.value : 2;   // 1v1 … 5v5
   let sizeSelected = document.querySelector('input[name="mapsize"]:checked');
   setMapSize(sizeSelected ? sizeSelected.value : 'medium');
   let speedSelected = document.querySelector('input[name="gamespeed"]:checked');

@@ -98,7 +98,7 @@ function setMapSize(sizeKey, alliances){
     let a=[[c[0]===lo?hi:lo,c[1]],[c[0],c[1]===lo?hi:lo]][simRandInt(0,1)];
     let opp=xy=>[xy[0]===lo?hi:lo,xy[1]===lo?hi:lo];
     let ring=[c, a, opp(c), opp(a)];
-    // 5-8 players: bases evenly round a circle about the map centre (the dragon's), at a random rotation.
+    // 5-10 players: bases evenly round a circle about the map centre (the dragon's), at a random rotation.
     if(NUM_TEAMS>4){
       let R=MAP/2-13, rot=simRandom()*Math.PI*2;
       ring=Array.from({length:NUM_TEAMS},(_,i)=>{ let th=rot+i*2*Math.PI/NUM_TEAMS;
@@ -647,8 +647,9 @@ const GAIA_TEAM = 255;
 // bark, and the pale cut face (a stump's top, a log's end).
 const TREE_BARK = '#6e473b', TREE_CUT = '#ebd2b0';
 // Real player teams only, indexed by palette slot (teamColorMap); gaia has its own color below. AoE2's eight, in its
-// order: blue, red, green, yellow, cyan, purple, grey, orange (grey is a scenario's neutral faction: js/scenario.js colors).
-const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800', '#1fa3b0', '#8a46b8', '#8d8d8d', '#e07a1f'];
+// order: blue, red, green, yellow, cyan, purple, grey, orange (grey is a scenario's neutral faction: js/scenario.js colors),
+// then pink and brown for players 9 and 10.
+const PLAYER_TEAM_COLORS = ['#2266bb', '#dd3b3b', '#2e9e46', '#d8a800', '#1fa3b0', '#8a46b8', '#8d8d8d', '#e07a1f', '#e86aa6', '#8b5a2b'];
 const GAIA_COLOR = '#cccc88';
 // Seat -> palette-index indirection. teamColorMap[team] is an index into
 // PLAYER_TEAM_COLORS, letting the pre-match lobby (js/lobby.js) give a player
@@ -671,7 +672,7 @@ function teamColor(team){
 // Darker variant per team, for building art's shaded/shadow side — kept as
 // its own hand-picked pair (not a generic darkenColor() pass) since
 // building art wants a specific darker tone, not a percentage darken.
-const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800', '#147680', '#5f2f80', '#5e5e5e', '#a3550f'];
+const PLAYER_TEAM_COLORS_DARK = ['#1a4488', '#993333', '#1f6e30', '#9a7800', '#147680', '#5f2f80', '#5e5e5e', '#a3550f', '#a8457a', '#5c3a1a'];
 const GAIA_COLOR_DARK = '#999966';
 function teamColorDark(team){
   return team === GAIA_TEAM ? GAIA_COLOR_DARK : PLAYER_TEAM_COLORS_DARK[teamColorIdx(team)];
@@ -692,7 +693,7 @@ function teamColorLight(team){
 // few-px dot on green terrain needs maximum contrast, so the map uses vivid
 // primaries where the unit art uses the softer PLAYER_TEAM_COLORS above. Same
 // order and same teamColorMap remap.
-const PLAYER_TEAM_COLORS_MINIMAP = ['#0000ff', '#ff0000', '#00ff00', '#ffff00', '#00ffff', '#ff00ff', '#c0c0c0', '#ff8000'];
+const PLAYER_TEAM_COLORS_MINIMAP = ['#0000ff', '#ff0000', '#00ff00', '#ffff00', '#00ffff', '#ff00ff', '#c0c0c0', '#ff8000', '#ff80c0', '#8b4513'];
 function teamColorMinimap(team){
   return team === GAIA_TEAM ? GAIA_COLOR : PLAYER_TEAM_COLORS_MINIMAP[teamColorIdx(team)];
 }
