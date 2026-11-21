@@ -379,7 +379,11 @@ function togglePlayerList(){
 // One row per player, my side first; rebuilt at most once a second and only when a row changes.
 function refreshPlayerList(){
   let box = byId('player-list'); if (!box) return;
-  if (!gameStarted || !teamControllers) { if (box.style.display !== 'none') box.style.display = 'none'; plKey = ''; return; }
+  // (not in a scenario: its instruction card owns this corner)
+  if (!gameStarted || !teamControllers || scenarioScript) {
+    if (box.style.display !== 'none') { box.style.display = 'none'; document.body.classList.remove('pl-open'); }
+    plKey = ''; return;
+  }
   let now = performance.now();
   if (now < plNextAt) return;
   plNextAt = now + 1000;
@@ -395,6 +399,7 @@ function refreshPlayerList(){
   if (key === plKey) return;
   plKey = key;
   box.classList.toggle('collapsed', !open);
+  document.body.classList.toggle('pl-open', open);
   byId('pl-title').textContent = open ? 'Players' : 'Players ' + NUM_TEAMS;
   let body = byId('pl-body'); body.textContent = '';
   if (!open) return;

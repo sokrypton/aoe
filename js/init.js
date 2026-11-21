@@ -268,6 +268,9 @@ function syncLiveOptions(){
   const col = byId('townai-col'); if (col) col.style.display = inMatch ? '' : 'none';
   const on = !!(typeof teamControllers !== 'undefined' && teamControllers[myTeam] && teamControllers[myTeam].type === 'ai');
   const tr = document.querySelector('input[name="townai"][value="' + (on ? 'on' : 'off') + '"]'); if (tr) tr.checked = true;
+  // Speed is a match rule: set in Match Setup, then changed from Settings by whoever owns it (never a guest).
+  const speed = byId('opt-speed-row');
+  if (speed) { byId(inMatch ? 'opt-live-row' : 'setup-speed-row').append(speed); speed.style.display = inMatch && netRole === 'guest' ? 'none' : ''; }
 }
 // Options → Town AI: the AI runs your town (economy, building, army) while you play a character — the 'autopilot' command
 function setTownAI(on){ if (gameStarted && !gameOver) submitCommand({ kind: 'autopilot', on }); }
@@ -282,7 +285,8 @@ function showMenuPanel(which){
   if (main) main.style.display = which === 'main' ? '' : 'none';
   if (opts) opts.style.display = which === 'options' ? '' : 'none';
   if (lobby) lobby.style.display = which === 'lobby' ? '' : 'none';
-  if (which === 'options') syncLiveOptions();
+  show('menu-panel-setup', which === 'setup');
+  if (which === 'options' || which === 'setup') syncLiveOptions();
   updateUiSwitchVisibility();
   scaleMenuToFit();
 }
@@ -342,8 +346,7 @@ function updateUiSwitchVisibility(){
   if (disc) disc.style.display = preGame ? '' : 'none';
 }
 function menuPanelIsMain(){
-  let opts = byId('menu-panel-options'), learn = byId('menu-panel-learn');
-  return (!opts || opts.style.display === 'none') && (!learn || learn.style.display === 'none');
+  return ['menu-panel-options', 'menu-panel-setup', 'menu-panel-learn'].every(id => { let p = byId(id); return !p || p.style.display === 'none'; });
 }
 
 // Back button: settings take effect the moment you leave Options, not only
@@ -644,24 +647,9 @@ function restoreMenuForMatch(){
   show('mp-status-panel', false);
   show('start-game-btn', false);
   let menu = byId('tutorial');
-  // Options + Help ARE available mid-match. Explicitly re-shown — a
-  // guest's enterGuestJoinMode broad-hid every .menu-button-container,
-  // including the ones inside #misc-row.
+  // Settings + Help ARE available mid-match: re-shown, since a guest's enterGuestJoinMode hid every main-panel row.
   if (menu) {
-    menu.querySelectorAll('#misc-row, #misc-row .menu-button-container, #options-back-row')
-      .forEach(el => { el.style.display = ''; });
-    // The settings grid lives in the (hidden) options panel; what's
-    // restart-scoped or host-authoritative gets hidden INSIDE it rather
-    // than hiding the grid wholesale: difficulty/map size need a fresh
-    // match, and speed is the host's call — a guest's GAME_SPEED arrives
-    // via sync (js/net-sync.js), so showing the picker would be a lie.
-    let grid = byId('opt-groups');
-    if (grid) grid.style.display = '';
-    let firstRow = byId('opt-match');
-    if (firstRow) firstRow.style.display = 'none';
-    show('opt-aiplan', false);
-    let speedCol = byId('opt-speed-row');
-    if (speedCol) speedCol.style.display = netRole === 'guest' ? 'none' : '';
+    menu.querySelectorAll('#misc-row, #misc-row .menu-button-container').forEach(el => { el.style.display = ''; });
     menu.querySelectorAll('.menu-divider').forEach(el => { el.style.display = 'none'; });
   }
   show('mp-row', false);
@@ -1138,7 +1126,7 @@ function enterGuestJoinMode(hostPeerId){
   // Hide the normal setup UI (difficulty/map size/start button etc.) —
   // none of it applies to a guest, who inherits the host's match settings.
   if (menu) {
-    menu.querySelectorAll('.setup-grid, #opt-groups, .menu-button-container, #save-load-row, #mp-row, .menu-divider')
+    menu.querySelectorAll('#menu-panel-main .menu-button-container, #save-load-row, #mp-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
   }
   attemptGuestJoin();
@@ -1172,7 +1160,7 @@ function enterHostResumeMode(peerId){
   setTimeout(updateUiSwitchVisibility, 0); // after netRole set by hostSession below
   let menu = byId('tutorial');
   if (menu) {
-    menu.querySelectorAll('.setup-grid, #opt-groups, .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
+    menu.querySelectorAll('#menu-panel-main .menu-button-container, #save-load-row, #mp-row, #misc-row, .menu-divider')
       .forEach(el => { el.style.display = 'none'; });
   }
   showMpStatus('Reconnecting to your match…');
@@ -1217,16 +1205,13 @@ function handleStartButton(){
     return;
   }
   let inMatch = gameStarted && !gameOver && entities.length > 0;
-  if (inMatch) {
-    openRestartMenu();
-  } else {
-    onStartClicked();
-  }
+  if (inMatch) openRestartMenu();
+  else if (netRole && netConnected) onStartClicked();   // a live host's Rematch keeps the lobby's rules
+  else showMenuPanel('setup');
 }
 
 function applyMenuMode(mode){
   let menu = byId('tutorial');
-  let difficultyRow = byId('opt-match');
   let startBtn = byId('start-game-btn');
   let resumeBtn = byId('resume-game-btn');
   let mpRow = byId('mp-row');
@@ -1267,8 +1252,6 @@ function applyMenuMode(mode){
     // onStartClicked); the guest gets no button (its menu closes by itself when
     // the rematch's 'lockstep-start' arrives), plus Load / Host as usual.
     let liveMp = !!netRole && netConnected;
-    if (difficultyRow) difficultyRow.style.display = '';
-    show('opt-aiplan', true);
     if (startBtn) {
       startBtn.style.display = (liveMp && netRole === 'guest') ? 'none' : '';
       startBtn.textContent = (liveMp && netRole === 'host') ? '🔄 Rematch' : '🔄 Play Again';
@@ -1283,8 +1266,6 @@ function applyMenuMode(mode){
     if (mpRow) mpRow.style.display = netRole ? 'none' : '';
     if (saveBtn) saveBtn.style.display = 'none';
   } else if (mode === 'ingame') {
-    if (difficultyRow) difficultyRow.style.display = 'none';
-    show('opt-aiplan', false);
     // Restart and Load are both dropped from the mid-game menu entirely —
     // keeping things simple: reloading the browser tab already restarts a
     // fresh match, and Load mid-game is the same "why would you overwrite
@@ -1310,17 +1291,13 @@ function applyMenuMode(mode){
     // the MP-specific restoreMenuForMatch() path.
     if (saveBtn) saveBtn.style.display = '';
   } else if (mode === 'restart-ready') {
-    if (difficultyRow) difficultyRow.style.display = '';
-    show('opt-aiplan', true);
     if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
     if (loadBtn) loadBtn.style.display = '';
     if (mpRow) mpRow.style.display = '';
     if (saveBtn) saveBtn.style.display = 'none';
   } else {
-    if (difficultyRow) difficultyRow.style.display = '';
-    show('opt-aiplan', true);
-    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Start'; }
+    if (startBtn) { startBtn.style.display = ''; startBtn.textContent = 'Play'; }
     if (resumeBtn) resumeBtn.style.display = 'none';
     if (loadBtn) loadBtn.style.display = '';
     if (mpRow) mpRow.style.display = '';

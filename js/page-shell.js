@@ -329,7 +329,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 
     <div class="help-section">
       <h4>Play Your Way</h4>
-      <p><b>Character mode:</b> select a unit and tap the eye button to follow it in 3D from right behind it, and steer it yourself. <b>Options &rarr; Town AI</b> hands your town (economy, building, army) to the AI while you play, and <b>Options &rarr; View</b> switches between the 2D map and the 3D world at any time.</p>
+      <p><b>Character mode:</b> select a unit and tap the eye button to follow it in 3D from right behind it, and steer it yourself. <b>Settings &rarr; Town AI</b> hands your town (economy, building, army) to the AI while you play, and <b>Settings &rarr; View</b> switches between the 2D map and the 3D world at any time.</p>
     </div>
 
     <div class="help-section">
@@ -351,7 +351,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 
     <div class="help-section">
       <h4>Play with Friends</h4>
-      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>10 players</b>, in any mix of humans and AI. If you drop out, the host's setup decides: the match waits for you, an AI looks after your town until you rejoin, or it plays on and your town stands as you left it. Anyone can pause from the menu.</p>
+      <p>From the main menu, choose <b>Multiplayer</b> and share the link (or QR code) &mdash; up to <b>10 players</b>, in any mix of humans and AI. If you drop out, the host's setup decides: the match waits for you, an AI looks after your town until you rejoin, or it plays on and your town stands as you left it. Anyone can pause from the menu.</p>
     </div>
 
     <div class="help-section">
@@ -379,10 +379,11 @@ document.body.insertAdjacentHTML('afterbegin', `
          settings grid lives in #menu-panel-options behind the Options
          button. showMenuPanel() (js/init.js) swaps them; the menu always
          opens on 'main'. -->
-    <div id="menu-panel-options" style="display:none;">
-    <!-- Every setting a pill group over the radios the code reads. #opt-match is pre-match only,
-         Town AI in-match only, and the View/Town AI pair act the moment they're clicked (js/init.js). -->
-    <div class="setup-grid" id="opt-groups">
+    <!-- Match Setup: what the match is, before it starts. Speed sits here until a match runs, then in Settings
+         (syncLiveOptions, js/init.js). -->
+    <div id="menu-panel-setup" style="display:none;">
+      <div class="learn-heading">Match Setup</div>
+      <div class="setup-grid">
       <div class="setup-row" id="opt-match">
         <div class="setup-col">
           <h3>Difficulty</h3>
@@ -407,11 +408,25 @@ document.body.insertAdjacentHTML('afterbegin', `
           <div class="opt-pills" id="aiplan-pills"></div>
         </div>
       </div>
-      <div class="setup-row setup-row-audio">
+      <div class="setup-row" id="setup-speed-row">
         <div class="setup-col setup-col-speed" id="opt-speed-row">
           <h3>Speed</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="1"><span>1×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>2×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>4×</span></label></div>
         </div>
+      </div>
+      </div>
+      <div class="menu-button-container">
+        <button type="button" class="menu-action-btn" onclick="showMenuPanel('main')">${menuIcon('back')}Back</button>
+        <button type="button" id="setup-start-btn" class="menu-action-btn" onclick="onStartClicked()">Start Match</button>
+      </div>
+    </div>
+
+    <!-- Settings: your own sound and screen, the same before and during a match. View and Town AI act the moment
+         they're clicked; Town AI (and Speed, for whoever sets it) shows only in a match. -->
+    <div id="menu-panel-options" style="display:none;">
+      <div class="learn-heading">Settings</div>
+    <div class="setup-grid" id="opt-groups">
+      <div class="setup-row setup-row-audio">
         <div class="setup-col setup-col-wide">
           <h3>Sound</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="soundmode" value="all" checked><span>All</span></label><label class="opt-pill"><input type="radio" name="soundmode" value="alerts"><span>Alerts</span></label><label class="opt-pill"><input type="radio" name="soundmode" value="off"><span>Off</span></label></div>
@@ -421,7 +436,7 @@ document.body.insertAdjacentHTML('afterbegin', `
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="music" value="on" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="music" value="off"><span>Off</span></label></div>
         </div>
       </div>
-      <div class="setup-row setup-row-view">
+      <div class="setup-row setup-row-view" id="opt-live-row">
         <div class="setup-col" id="view-col">
           <h3>View</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="viewmode" value="2d" onchange="setViewMode('2d')"><span title="The 2D map">2D</span></label><label class="opt-pill"><input type="radio" name="viewmode" value="3d" onchange="setViewMode('3d')"><span title="The 3D world view">3D</span></label></div>
@@ -465,11 +480,11 @@ document.body.insertAdjacentHTML('afterbegin', `
            button stacked awkwardly underneath it. Hidden by default (no
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
-      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">${menuIcon('save')}Save</button>
       <button type="button" id="pause-game-btn" class="menu-action-btn" onclick="setMatchPause(true)" style="display:none;">${menuIcon('pause')}Pause</button>
+      <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">${menuIcon('save')}Save</button>
       <button type="button" id="learn-btn" class="menu-action-btn" onclick="showMenuPanel('learn')">${menuIcon('learn')}Learn to Play</button>
     </div>
-    <div class="menu-row-pair">
+    <div class="menu-row-pair" id="load-mp-pair">
       <div class="menu-button-container" id="save-load-row">
         <button type="button" id="load-game-btn" class="menu-action-btn" onclick="triggerLoadDialog()">${menuIcon('load')}Load Game</button>
         <!-- Scenario Editor link hidden for now (editor.html still works by direct
@@ -477,12 +492,12 @@ document.body.insertAdjacentHTML('afterbegin', `
         <button type="button" id="editor-btn" class="menu-action-btn" onclick="location.href='editor.html'" style="display:none;">${menuIcon('editor')}Scenario Editor</button>
       </div>
       <div class="menu-button-container" id="mp-row">
-        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">${menuIcon('host')}Host Multiplayer</button>
+        <button type="button" id="host-game-btn" class="menu-action-btn" onclick="onHostClicked()">${menuIcon('host')}Multiplayer</button>
       </div>
     </div>
     <div class="menu-row-pair" id="misc-row">
       <div class="menu-button-container">
-        <button type="button" id="options-btn" class="menu-action-btn" onclick="showMenuPanel('options')">${menuIcon('options')}Options</button>
+        <button type="button" id="options-btn" class="menu-action-btn" onclick="showMenuPanel('options')">${menuIcon('options')}Settings</button>
       </div>
       <div class="menu-button-container">
         <button type="button" id="help-btn" class="menu-action-btn" onclick="toggleHelp()">${menuIcon('help')}Help</button>
@@ -499,7 +514,7 @@ document.body.insertAdjacentHTML('afterbegin', `
         <button type="button" id="mp-copy-link-btn" class="menu-action-btn" onclick="copyMpLink()">Copy Link</button>
       </div>
       <div id="mp-qr" style="display:none;"></div>
-      <div id="mp-share-note" style="display:none;">Share with up to 3 friends — everyone joins through this same link</div>
+      <div id="mp-share-note" style="display:none;">Everyone joins through this same link</div>
       <button type="button" id="mp-cancel-btn" class="menu-action-btn" style="display:none;" onclick="cancelHosting()">${menuIcon('close')}Cancel</button>
       <button type="button" id="mp-retry-btn" class="menu-action-btn" style="display:none;" onclick="attemptGuestJoin()">${menuIcon('retry')}Retry Connection</button>
     </div>

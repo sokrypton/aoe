@@ -12,5 +12,5 @@
 // here) — so this is the correct, simplest point to flip it back on.
 (function(){
   var btn = byId('start-game-btn');
-  if (btn) { btn.disabled = false; btn.textContent = 'Start'; }
+  if (btn) { btn.disabled = false; btn.textContent = 'Play'; }
 })();

@@ -2706,7 +2706,7 @@ canvas {
 #sel-owner .so-rel.ally { color: #a9e08a; }
 /* Player list (refreshPlayerList, js/ui.js): dark glass like #scn-card */
 #player-list {
-  position: fixed; top: 46px; right: 6px; z-index: 30; width: 188px; max-width: calc(100vw - 12px);
+  position: fixed; top: 42px; left: 8px; z-index: 19; width: 188px; max-width: calc(100vw - 12px);
   background: rgba(22,13,6,0.42); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
   border: 1px solid rgba(191,160,84,0.45); border-radius: 6px; overflow: hidden;
   color: #fbf1da; font: 500 12px 'Inter', sans-serif; pointer-events: auto;
@@ -2736,3 +2736,17 @@ canvas {
 .pl-score { flex: none; min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
 #sel-owner { grid-area: name; justify-self: end; align-self: start; flex-direction: row; align-items: center; gap: 6px; max-width: 45%; }
 #sel-owner .so-rel { padding-left: 0; }
+
+/* Main menu: one action per line (Play, Learn to Play, Load Game, Multiplayer), then Settings | Help.
+   In a match the start row is Resume, then Pause | Save. */
+#start-row { flex-wrap: wrap; }
+#start-row > .menu-action-btn { flex: 1 1 100%; }
+#start-row > #pause-game-btn, #start-row > #save-game-btn { flex: 1 1 40%; }
+#load-mp-pair { flex-direction: column; }
+#load-mp-pair > .menu-button-container { flex: none; }
+/* Phones: toasts own the top-left, so the list sits top-right. Elsewhere chat lines sit beside the open list. */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { #player-list { top: 46px; left: auto; right: 6px; } }
+@media (min-width: 601px) and (min-height: 501px) { body.pl-open #chat-log { left: 204px; } }
+/* Main menu rows: one even 8px rhythm */
+#menu-panel-main .menu-button-container { padding: 0; }
+#menu-panel-main { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
