@@ -58,10 +58,10 @@ if (LOCKSTEP_SNAP_EVERY % VISION_REFRESH_PERIOD !== 0)
 // 90-300 ticks late rewrote already-exchanged history: a FALSE desync
 // alarm that froze a healthy match.)
 const LOCKSTEP_CKSUM_LAG = LOCKSTEP_SNAP_EVERY * LOCKSTEP_SNAP_KEEP;
-// Drift control (soft): if we're more than SOFT ticks ahead of the peer's
-// last report, run at ~80% speed so they catch up; HARD is a stop — only
-// reachable if the peer is truly wedged (their reports stopped arriving,
-// which the net heartbeat will surface as a disconnect shortly after).
+// Drift control (soft): more than SOFT ticks ahead of the slowest peer's last report, run at ~80% speed so they
+// catch up, and slower the further ahead (half speed at 2×SOFT): a peer that can't keep the pace sets it, at a gap
+// its input delay still covers. HARD is a stop — only reachable if the peer is truly wedged (their reports stopped
+// arriving, which the net heartbeat will surface as a disconnect shortly after).
 const LOCKSTEP_SOFT_AHEAD = 45;
 const LOCKSTEP_HARD_AHEAD = 240;
 
@@ -123,6 +123,7 @@ function lockstepResetState(){
   lockstepDesyncedAt = null;
   lockstepRollbacks = 0;
   lockstepSnapshots.length = 0;
+  lockstepLateTick = Infinity;
   INPUT_DELAY_TICKS = 4;
   cmdSlack.clear(); slackSeen.clear(); lastDelayDrop = 0; lastDelayRaise = 0;
 }
@@ -154,10 +155,10 @@ function adaptInputDelay(seat, sl){
   const now = performance.now(); let worst = Infinity;
   for (const r of slackSeen.values()) if (now - r.at <= SLACK_KEEP_MS) worst = Math.min(worst, r.slack);
   if (worst === Infinity) return;                                         // (no command of ours seen lately: keep the delay)
-  const want = Math.max(INPUT_DELAY_MIN, Math.min(INPUT_DELAY_MAX, INPUT_DELAY_TICKS - worst + SLACK_TARGET));
+  const want = Math.max(INPUT_DELAY_MIN, Math.min(inputDelayMax(), INPUT_DELAY_TICKS - worst + SLACK_TARGET));
   if (now - lastDelayRaise < DELAY_HOLD_MS) return;
   if (want > INPUT_DELAY_TICKS) { INPUT_DELAY_TICKS = want; lastDelayRaise = now; }           // late or close: up at once
-  else if (want < INPUT_DELAY_TICKS && now - lastDelayDrop > DELAY_DROP_EVERY_MS) { INPUT_DELAY_TICKS--; lastDelayDrop = now; } // spare: ease down
+  else if (want < INPUT_DELAY_TICKS && now - lastDelayDrop > DELAY_DROP_EVERY_MS) { INPUT_DELAY_TICKS -= Math.max(1, (INPUT_DELAY_TICKS - want) >> 2); lastDelayDrop = now; } // spare: ease down, a quarter of the gap at a time
 }
 
 // Host side: begin a fresh lockstep match when the host clicks Start in the
@@ -277,14 +278,12 @@ onNetMessage((msg, src) => {
     // OLD entries), and a non-integer key never matches a tick. A legit execTick
     // is issuerTick+INPUT_DELAY, and a receiver trails the issuer by at most
     // LOCKSTEP_HARD_AHEAD, so this ceiling never rejects a real command.
-    if (!Number.isInteger(msg.execTick) || msg.execTick > tick + LOCKSTEP_HARD_AHEAD + INPUT_DELAY_MAX) return;
+    if (!Number.isInteger(msg.execTick) || msg.execTick > tick + LOCKSTEP_HARD_AHEAD + inputDelayMax()) return;
     scheduleCommand(msg.execTick, peerTeam, msg.seq, msg.cmd);
     noteCmdSlack(peerTeam, msg.execTick - tick);
-    if (msg.execTick <= tick) {
-      // Late: that tick already ran without this command. Rewind and replay
-      // with it in place — converges with what the peer computed on time.
-      lockstepRollback(msg.execTick);
-    }
+    // Late: that tick already ran without this command. The next frame rewinds and replays with it in place
+    // (lockstepFlushLate) — converges with what the peer computed on time.
+    if (msg.execTick <= tick) lockstepLateTick = Math.min(lockstepLateTick, msg.execTick);
   } else if (msg.type === 'lockstep-resync' && netRole === 'guest' && lockstepActive) {
     lockstepApplyResync(msg.state);
   } else if (msg.type === 'lockstep-resume' && netRole === 'guest') {
@@ -369,7 +368,7 @@ function lockstepTickSurcharge(){
   if (minPeer < 0) return Infinity;
   let ahead = tick - minPeer;
   if (ahead > LOCKSTEP_HARD_AHEAD) return Infinity;
-  if (ahead > LOCKSTEP_SOFT_AHEAD) return timeStep * 0.25;
+  if (ahead > LOCKSTEP_SOFT_AHEAD) return timeStep * Math.max(0.25, (ahead - LOCKSTEP_SOFT_AHEAD) / LOCKSTEP_SOFT_AHEAD);
   return 0;
 }
 
@@ -410,6 +409,13 @@ function lockstepCheckPeerChecksum(t, h){
 
 // ---- Snapshot ring + rollback ----
 let lockstepSnapshots = []; // {t, state} — state captured AFTER simming tick t
+// The earliest tick a late command landed on since the last frame. One rewind per frame covers them all: with several
+// players ordering at once, a rewind per command replayed the same ticks over and over.
+let lockstepLateTick = Infinity;
+function lockstepFlushLate(){
+  const t = lockstepLateTick; lockstepLateTick = Infinity;
+  if (t <= tick && t > lockstepResyncBarrier) lockstepRollback(t);
+}
 
 function lockstepCaptureState(){
   return structuredClone({

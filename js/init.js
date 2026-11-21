@@ -1605,6 +1605,7 @@ setInterval(() => {
   let elapsed = Math.min(now - lastTime, 1500);
   lastTime = now;
   accumulator += elapsed;
+  if (lockstepEnabled()) lockstepFlushLate();
   // Mirror gameLoop's lockstep hooks exactly: without the surcharge the
   // hidden host free-ran unbounded ahead of the guest (pacing/hard-stop
   // never enforced), the snapshot ring froze at pre-hidden ticks (guest
@@ -1638,6 +1639,7 @@ function gameLoop(){
     // Camera scroll above stays local either way — that's pure UI.
     if (netRole !== 'guest' || lockstepEnabled()) {
       accumulator += elapsed;
+      if (lockstepEnabled()) lockstepFlushLate();
       while (accumulator >= timeStep) {
         // Lockstep runs FREELY — late peer commands rewind-and-resim
         // instead of the sim ever waiting (js/lockstep.js). The surcharge

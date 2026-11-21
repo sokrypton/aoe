@@ -17,12 +17,14 @@
 // tick+delay and mirrors them to the other peer as 'cmd-ls'
 // (js/lockstep.js), which schedules them at the same issuer-stamped tick.
 
-// 4 ticks = 100ms at defaults (TPS*GAME_SPEED = 40 ticks/sec): imperceptible for an
-// RTS (AoE2 ran 250ms command turns). Under rollback lockstep
-// (js/lockstep.js) a late command just triggers a rewind, so this stays
-// small and fixed — it only sets how often rollbacks happen.
+// 4 ticks = 100ms at defaults (TPS*GAME_SPEED = 40 ticks/sec): imperceptible for an RTS (AoE2 ran 250ms command
+// turns). Under rollback lockstep a late command triggers a rewind on every peer, so each peer adapts its own delay
+// to its link (adaptInputDelay, js/lockstep.js).
 let INPUT_DELAY_TICKS = 4;
-const INPUT_DELAY_MIN = 2, INPUT_DELAY_MAX = 16;
+const INPUT_DELAY_MIN = 2;
+// The cap is wall time (1.5s), so it grows with the game speed: at 4x a 16-tick cap was 200ms — under a relayed
+// guest-to-guest hop — and every command past it rewound every peer.
+function inputDelayMax(){ return 30 * GAME_SPEED; }
 
 let commandQueue = new Map(); // execTick -> [{team, seq, cmd}]
 let localCmdSeq = 0;
@@ -170,7 +172,7 @@ function execCommand(cmd, team){
     case 'set-delay':
       // Manual lockstep input-delay override (host-only); under rollback
       // the delay only tunes how often rewinds happen.
-      if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= INPUT_DELAY_MAX && lockstepEnabled()) {
+      if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= inputDelayMax() && lockstepEnabled()) {
         INPUT_DELAY_TICKS = cmd.d;
       }
       break;
