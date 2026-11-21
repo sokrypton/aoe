@@ -1851,6 +1851,19 @@ canvas {
   border-radius: 50%;
   animation: mp-disconnect-spin 0.9s linear infinite;
 }
+/* A player has dropped: the match plays on, so this is a strip, not an overlay. */
+#mp-missing-banner {
+  position: fixed; top: 46px; left: 50%; transform: translateX(-50%);
+  z-index: 170; display: flex; align-items: center; gap: 10px;
+  max-width: calc(100vw - 32px); padding: 5px 12px;
+  background: rgba(43,26,10,0.88); border: 1px solid #b08a4e; border-radius: 4px;
+  color: #f3e3bd; font: 13px 'Inter', sans-serif; pointer-events: auto;
+}
+#mp-missing-ai {
+  font: inherit; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+  background: #e8d5a6; color: #3b220c; border: 1px solid #5c3b1e;
+}
+#mp-pause-resume { margin-top: 4px; }
 @keyframes mp-disconnect-spin {
   to { transform: rotate(360deg); }
 }
@@ -2682,3 +2695,44 @@ canvas {
 
 .opt-pill input:disabled + span { opacity: 0.35; cursor: default; }
 .lobby-aiplan { max-width: 84px; }
+
+/* Owner of a foreign selection (refreshSelOwner, js/ui.js) */
+.pl-sw { flex: none; width: 9px; height: 9px; border: 1px solid rgba(0,0,0,0.75); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,0.25); }
+#sel-owner { flex: 0 0 auto; flex-direction: column; gap: 2px; min-width: 0; max-width: 104px; font: 600 11px 'Inter', sans-serif; line-height: 1.2; color: #fbf1da; }
+#sel-owner .so-name { display: flex; align-items: center; gap: 5px; min-width: 0; }
+#sel-owner .so-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sel-owner .so-rel { font-size: 10px; padding-left: 14px; }
+#sel-owner .so-rel.enemy { color: #ff9a8a; }
+#sel-owner .so-rel.ally { color: #a9e08a; }
+/* Player list (refreshPlayerList, js/ui.js): dark glass like #scn-card */
+#player-list {
+  position: fixed; top: 46px; right: 6px; z-index: 30; width: 188px; max-width: calc(100vw - 12px);
+  background: rgba(22,13,6,0.42); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  border: 1px solid rgba(191,160,84,0.45); border-radius: 6px; overflow: hidden;
+  color: #fbf1da; font: 500 12px 'Inter', sans-serif; pointer-events: auto;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.6);
+}
+#player-list.collapsed { width: auto; }
+#pl-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; border: 0; background: transparent;
+  border-bottom: 1px solid rgba(191,160,84,0.3); color: #ffd34d; text-shadow: inherit; cursor: pointer;
+  font: 700 11px 'Cinzel', Georgia, serif; letter-spacing: 0.4px; text-align: left;
+}
+#player-list.collapsed #pl-head { border-bottom: 0; min-height: 28px; }
+#pl-title { flex: 1 1 auto; }
+#pl-chev::before { content: '\25BE'; }
+#player-list.collapsed #pl-chev::before { content: '\25C2'; }
+#pl-body { padding: 3px 8px 5px; }
+#pl-body:empty { display: none; }
+.pl-row { display: flex; align-items: center; gap: 6px; min-height: 19px; }
+.pl-row.gap { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(191,160,84,0.25); }
+.pl-row.me .pl-name { font-weight: 700; color: #ffd34d; }
+.pl-row.out { opacity: 0.5; }
+.pl-row.out .pl-name { text-decoration: line-through; }
+.pl-side { flex: none; width: 10px; text-align: center; font-size: 10px; color: #d8c9a3; }
+.pl-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-tag { flex: none; font-size: 9px; padding: 0 4px; border: 1px solid rgba(251,241,218,0.45); border-radius: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.pl-age { flex: none; width: 18px; text-align: center; font: 700 10px Georgia, serif; color: #d8c9a3; }
+.pl-score { flex: none; min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+#sel-owner { grid-area: name; justify-self: end; align-self: start; flex-direction: row; align-items: center; gap: 6px; max-width: 45%; }
+#sel-owner .so-rel { padding-left: 0; }

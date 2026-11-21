@@ -325,7 +325,97 @@ function setPortraitIcon(port, key, fallbackEmoji){
 
 
 
+// Whose selection this is, when it is not yours: name in their colour + Ally/Enemy.
+function refreshSelOwner(){
+  let el = byId('sel-owner'); if (!el) return;
+  let t = (gameStarted && !gameOver && selected.length && selected.every(s => s.team === selected[0].team)) ? selected[0].team : -1;
+  if (t === myTeam || !isPlayerTeam(t)) t = -1;
+  if (el._team === t) return;
+  el._team = t;
+  show(el, t >= 0, 'flex');
+  byId('sel-info').classList.toggle('has-owner', t >= 0);
+  if (t < 0) return;
+  el.textContent = '';
+  let name = document.createElement('div'); name.className = 'so-name';
+  let sw = document.createElement('span'); sw.className = 'pl-sw'; sw.style.background = teamColor(t);
+  let nm = document.createElement('b'); nm.textContent = teamName(t);
+  name.append(sw, nm);
+  let rel = document.createElement('div'); rel.className = 'so-rel ' + (sameSide(t, myTeam) ? 'ally' : 'enemy');
+  rel.textContent = (isPlayerTeam(myTeam) ? (sameSide(t, myTeam) ? 'Ally' : 'Enemy') : 'Player') + (seatHasPerson(t) ? '' : ' · AI');
+  el.append(name, rel);
+}
+
+// AoE2-style score from what a team has standing: a tenth of the cost of its
+// living units, finished buildings, researched techs and ages. Viewer-only.
+function teamScores(){
+  const worth = c => c ? (c.f || 0) + (c.w || 0) + (c.g || 0) + (c.s || 0) : 0;
+  let sum = Array.from({length: NUM_TEAMS}, () => 0);
+  for (let e of entities) {
+    if (!isPlayerTeam(e.team) || !(e.hp > 0)) continue;
+    if (e.type === 'unit') sum[e.team] += worth(UNITS[e.utype] && UNITS[e.utype].cost);
+    else if (e.type === 'building' && e.complete) sum[e.team] += worth(BLDGS[e.btype] && BLDGS[e.btype].cost);
+  }
+  for (let t = 0; t < NUM_TEAMS; t++) {
+    for (let k in UPGRADES) if (hasUpgrade(t, k)) sum[t] += worth(UPGRADES[k].cost);
+    for (let a = 1; a <= (teamAge ? teamAge[t] : 0); a++) sum[t] += worth(AGES[a].cost);
+  }
+  return sum.map(v => Math.floor(v / 10));
+}
+
+const PL_AGE_MARK = ['I', 'II', 'III', 'IV'];
+let plOpen = null, plKey = '', plNextAt = 0;
+function playerListOpen(){
+  if (plOpen === null) {
+    let v = null; try { v = localStorage.getItem('aoePlayerList'); } catch (e) {}
+    plOpen = v !== null ? v === '1' : (window.innerWidth >= 700 && window.innerHeight >= 600);
+  }
+  return plOpen;
+}
+function togglePlayerList(){
+  plOpen = !playerListOpen(); plKey = ''; plNextAt = 0;
+  try { localStorage.setItem('aoePlayerList', plOpen ? '1' : '0'); } catch (e) {}
+  refreshPlayerList();
+}
+// One row per player, my side first; rebuilt at most once a second and only when a row changes.
+function refreshPlayerList(){
+  let box = byId('player-list'); if (!box) return;
+  if (!gameStarted || !teamControllers) { if (box.style.display !== 'none') box.style.display = 'none'; plKey = ''; return; }
+  let now = performance.now();
+  if (now < plNextAt) return;
+  plNextAt = now + 1000;
+  let open = playerListOpen(), scores = teamScores();
+  let away = typeof missingSeats !== 'undefined' ? missingSeats : [];
+  let mine = isPlayerTeam(myTeam) ? allianceOf(myTeam) : -1;
+  let rows = Array.from({length: NUM_TEAMS}, (_, t) => t).sort((a, b) =>
+    ((allianceOf(a) === mine ? 0 : 1) - (allianceOf(b) === mine ? 0 : 1)) || (allianceOf(a) - allianceOf(b)) || (a - b));
+  let sides = [...new Set(rows.map(allianceOf))];
+  let key = open + '|' + rows.map(t => [t, teamName(t), teamColor(t), teamAge ? teamAge[t] : 0, scores[t],
+    defeatedTeams && defeatedTeams[t] ? 1 : 0, seatHasPerson(t) ? 1 : 0, away.includes(t) ? 1 : 0].join(':')).join('|');
+  box.style.display = '';
+  if (key === plKey) return;
+  plKey = key;
+  box.classList.toggle('collapsed', !open);
+  byId('pl-title').textContent = open ? 'Players' : 'Players ' + NUM_TEAMS;
+  let body = byId('pl-body'); body.textContent = '';
+  if (!open) return;
+  const cell = (cls, text) => { let s = document.createElement('span'); s.className = cls; if (text !== undefined) s.textContent = text; return s; };
+  let last = -1;
+  for (let t of rows) {
+    let row = document.createElement('div');
+    row.className = 'pl-row' + (t === myTeam ? ' me' : '') + (defeatedTeams && defeatedTeams[t] ? ' out' : '')
+      + (last >= 0 && allianceOf(t) !== last ? ' gap' : '');
+    last = allianceOf(t);
+    let sw = cell('pl-sw'); sw.style.background = teamColor(t);
+    let tag = away.includes(t) ? 'away' : !seatHasPerson(t) ? 'AI' : '';
+    row.append(sw, cell('pl-side', sides.indexOf(allianceOf(t)) + 1), cell('pl-name', teamName(t)));
+    if (tag) row.append(cell('pl-tag', tag));
+    row.append(cell('pl-age', PL_AGE_MARK[teamAge ? teamAge[t] : 0]), cell('pl-score', scores[t]));
+    body.append(row);
+  }
+}
+
 function updateUI(){
+  refreshPlayerList();
   // resourceStore(myTeam): team 0's `res` for the host/single-player, or
   // `aiRes` for a multiplayer guest playing team 1 — so the topbar shows
   // whichever side THIS browser tab actually controls.
@@ -817,6 +907,7 @@ function updateUI(){
   // selection is mixed. Rebuilt only when the selection or any selected
   // unit's HP changes (see currentSelectionDetails).
   renderSelectionGrid(currentSelListKey, myAgeUpBldg);
+  refreshSelOwner();
 
   let port = byId('sel-portrait');
   if(gameOver){

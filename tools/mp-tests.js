@@ -169,7 +169,7 @@ async function assertChecksumsAgree(pages){
     await host.close(); await guest.close();
   });
 
-  await scenario('1v1 character mode: guest on Town AI steers a unit -> paced, agree -> drop pauses -> rejoin', async () => {
+  await scenario('1v1 character mode: guest on Town AI steers a unit -> paced, agree -> drop plays on -> rejoin keeps Town AI', async () => {
     const { host, joinQuery } = await hostGame();
     let guest = await newGamePage(joinQuery);
     await waitInLobby(host);
@@ -206,12 +206,14 @@ async function assertChecksumsAgree(pages){
       if (!s.aiWorking) throw new Error(`${label}: the AI is not running the guest's town`);
     }
     await assertChecksumsAgree([host, guest]);
-    // A person is still at an autopilot seat: dropping it pauses for them.
+    // A person is still at an autopilot seat, so it is awaited (missing) — but its AI plays on, nothing pauses.
     await guest.close();
-    await host.waitForFunction(() => disconnectedPause === true, { timeout: 15000 });
+    await host.waitForFunction(() => missingSeats.includes(1), { timeout: 15000 });
+    { const t0 = await host.evaluate(() => tick);
+      await host.waitForFunction(t => tick > t + 40 && !gamePaused, t0, { timeout: 15000 }); }
     guest = await newGamePage(joinQuery);
     await guest.waitForFunction(() => typeof lockstepActive !== 'undefined' && lockstepActive && gameStarted, { timeout: 30000 });
-    await host.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
+    await host.waitForFunction(() => missingSeats.length === 0, { timeout: 15000 });
     const back = await guest.evaluate(() => ({ team: myTeam, auto: !!teamControllers[1].autopilot }));
     if (back.team !== 1 || !back.auto) throw new Error('rejoin lost the seat or autopilot: ' + JSON.stringify(back));
     // The fresh page steers nothing, so it hands the villager back to the AI.
@@ -322,57 +324,100 @@ async function assertChecksumsAgree(pages){
     await host.close(); await rejoin.close();
   });
 
-  await scenario('3p: drop pauses everyone -> rejoin resumes -> second drop -> kick hands seat to AI', async () => {
+  await scenario('3p: a drop leaves the match running -> rejoin -> anyone pauses/resumes -> AI stands in -> player reclaims', async () => {
     const { host, joinQuery } = await hostGame();
     let gA = await newGamePage(joinQuery);
     const gB = await newGamePage(joinQuery);
     await waitInLobby(host); await waitInLobby(gA); await waitInLobby(gB);
     await host.waitForFunction(() => lobbyState.seats.length === 3, { timeout: 20000 });
     await readyUp(gA); await readyUp(gB);
-    log('   [3p] all ready');
     await startMatch(host);
     for (const p of [host, gA, gB]) await waitMatchRunning(p);
     log('   [3p] match running');
     await host.waitForTimeout(2000);
+    const advances = async (p, who) => {
+      const t0 = await p.evaluate(() => tick);
+      await p.waitForFunction(t => tick > t + 40 && !gamePaused, t0, { timeout: 15000 }).catch(() => { throw new Error(who + ' is not advancing'); });
+    };
+    const bannerText = p => p.evaluate(() => getComputedStyle(document.getElementById('mp-missing-banner')).display === 'none' ? '' : document.getElementById('mp-missing-text').textContent);
 
-    // Drop guest A: host AND guest B must both pause with the waiting overlay.
+    // Drop guest A: host and guest B play on, with a banner naming the missing player.
     const seatA = await gA.evaluate(() => myTeam);
     await gA.close();
-    await host.waitForFunction(() => disconnectedPause === true, { timeout: 15000 });
-    await gB.waitForFunction(() => disconnectedPause === true && gamePaused, { timeout: 15000 });
-    const overlayText = await gB.evaluate(() => document.getElementById('mp-disconnect-text').textContent);
-    if (!overlayText.includes('Waiting for')) throw new Error('guest B overlay: ' + overlayText);
+    await host.waitForFunction(s => missingSeats.includes(s), seatA, { timeout: 15000 });
+    await gB.waitForFunction(s => missingSeats.includes(s), seatA, { timeout: 15000 });
+    await advances(host, 'host after the drop'); await advances(gB, 'guest B after the drop');
+    for (const [p, who] of [[host, 'host'], [gB, 'guest B']]) {
+      const txt = await bannerText(p);
+      if (!txt.includes('disconnected')) throw new Error(who + ' banner: "' + txt + '"');
+    }
+    log('   [3p] playing on after the drop');
 
-    log('   [3p] paused on drop');
-    // Rejoin: same browser context -> token match -> same seat, everyone resumes.
+    // Rejoin: same browser context -> token match -> same seat; the banner clears.
     gA = await newGamePage(joinQuery);
-    await gA.waitForFunction(() => lockstepActive && gameStarted, { timeout: 30000 });
-    log('   [3p] rejoined');
-    await gA.waitForFunction(() => myTeam !== 0, { timeout: 5000 });
+    await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
     const seatA2 = await gA.evaluate(() => myTeam);
     if (seatA2 !== seatA) throw new Error(`rejoined as team ${seatA2}, was ${seatA}`);
-    await host.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
-    await gB.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
-    await host.waitForTimeout(2000);
+    await gB.waitForFunction(() => missingSeats.length === 0, { timeout: 15000 });
+    if (await bannerText(gB)) throw new Error('banner still up after the rejoin');
+    log('   [3p] rejoined');
 
-    // Drop A again and kick: seat becomes AI everywhere, match resumes.
+    // Any player pauses; any other resumes.
+    await gB.evaluate(() => setMatchPause(true));
+    for (const p of [host, gA, gB]) await p.waitForFunction(() => manualPause && gamePaused, { timeout: 15000 });
+    const pauseText = await gA.evaluate(() => document.getElementById('mp-disconnect-text').textContent);
+    if (!pauseText.includes('paused the game')) throw new Error('pause notice: ' + pauseText);
+    await gA.evaluate(() => setMatchPause(false));
+    for (const p of [host, gA, gB]) await p.waitForFunction(() => !manualPause && !gamePaused, { timeout: 15000 });
+    await advances(host, 'host after resume');
+    log('   [3p] pause/resume by guests');
+
+    // Drop A again; the AI stands in (the host's button — the timer does the same after a minute).
     await gA.close();
-    await host.waitForFunction(() => disconnectedPause === true, { timeout: 15000 });
-    log('   [3p] paused on second drop; kicking');
-    await host.evaluate(() => kickDisconnectedPlayers());
-    await host.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
-    await gB.waitForFunction(() => disconnectedPause === false, { timeout: 15000 });
-    await host.waitForFunction(s => teamControllers[s] && teamControllers[s].type === 'ai', seatA, { timeout: 15000 });
-    await gB.waitForFunction(s => teamControllers[s] && teamControllers[s].type === 'ai', seatA, { timeout: 15000 });
-    await host.waitForTimeout(12000); // lagged checksums after the kick
-    await assertHealthy(host, 'host');
-    await assertHealthy(gB, 'guest B');
-    await assertChecksumsAgree([host, gB]);
-    // A kicked identity must stay out.
-    const gA3 = await newGamePage(joinQuery);
-    await gA3.waitForFunction(() =>
-      (document.getElementById('mp-status-text') || {}).textContent.includes('removed'), { timeout: 20000 });
-    await host.close(); await gB.close(); await gA3.close();
+    await host.waitForFunction(s => missingSeats.includes(s), seatA, { timeout: 15000 });
+    await host.evaluate(() => standInForMissing());
+    for (const p of [host, gB]) await p.waitForFunction(s => teamControllers[s].type === 'ai' && teamControllers[s].autopilot, seatA, { timeout: 15000 });
+    await advances(gB, 'guest B with the AI standing in');
+    log('   [3p] AI standing in');
+
+    // A comes back and takes command again.
+    gA = await newGamePage(joinQuery);
+    await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
+    for (const p of [host, gA, gB]) await p.waitForFunction(s => teamControllers[s].type === 'human', seatA, { timeout: 20000 });
+    log('   [3p] player reclaimed the seat');
+
+    // The host's other setup choice: 'wait' holds the match for everyone until the player is back.
+    await host.evaluate(() => setMpDropPolicy('wait'));
+    await gA.close();
+    await host.waitForFunction(() => disconnectedPause && gamePaused, { timeout: 15000 });
+    await gB.waitForFunction(() => waitingHold && gamePaused, { timeout: 15000 });
+    const holdText = await gB.evaluate(() => document.getElementById('mp-disconnect-text').textContent);
+    if (!holdText.includes('Waiting for')) throw new Error('guest B hold notice: ' + holdText);
+    gA = await newGamePage(joinQuery);
+    await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
+    for (const p of [host, gA, gB]) await p.waitForFunction(() => !gamePaused, { timeout: 15000 });
+    log('   [3p] wait policy held and released');
+
+    // The third choice: 'idle' plays on, and the seat is never handed to the AI by itself.
+    await host.evaluate(() => { setMpDropPolicy('idle'); });
+    await gA.close();
+    await host.waitForFunction(s => missingSeats.includes(s), seatA, { timeout: 15000 });
+    await host.evaluate(s => missingSince.set(s, performance.now() - STAND_IN_AFTER_MS - 5000), seatA);   // (the minute is long past)
+    await host.waitForTimeout(3000);
+    await advances(gB, 'guest B under idle');
+    const idle = await gB.evaluate(s => ({ type: teamControllers[s].type, banner: document.getElementById('mp-missing-text').textContent }), seatA);
+    if (idle.type !== 'human' || !idle.banner.includes('rejoin any time')) throw new Error('idle policy: ' + JSON.stringify(idle));
+    // …while under 'ai' the same overdue minute hands it over.
+    await host.evaluate(s => { setMpDropPolicy('ai'); missingSince.set(s, performance.now() - STAND_IN_AFTER_MS - 5000); }, seatA);
+    for (const p of [host, gB]) await p.waitForFunction(s => teamControllers[s].type === 'ai' && teamControllers[s].standIn, seatA, { timeout: 15000 });
+    gA = await newGamePage(joinQuery);
+    await gA.waitForFunction(() => lockstepActive && gameStarted && myTeam !== 0, { timeout: 30000 });
+    for (const p of [host, gA, gB]) await p.waitForFunction(s => teamControllers[s].type === 'human', seatA, { timeout: 20000 });
+    log('   [3p] idle policy left the seat alone; the ai policy timer handed it over');
+    await host.waitForTimeout(12000); // lagged checksums after the handover
+    for (const [p, who] of [[host, 'host'], [gA, 'guest A'], [gB, 'guest B']]) await assertHealthy(p, who);
+    await assertChecksumsAgree([host, gA, gB]);
+    await host.close(); await gA.close(); await gB.close();
   });
 
   await scenario('save/reload: host dies -> loads save in new tab -> both guests rejoin their seats', async () => {
@@ -413,6 +458,10 @@ async function assertChecksumsAgree(pages){
       await g.waitForFunction(() => lockstepActive && gameStarted && disconnectedPause === false, { timeout: 60000 });
     }
     log('   [save] guests rejoined');
+    // A loaded match waits, paused, for the host to resume it.
+    for (const p of [h2, gA, gB]) await p.waitForFunction(() => manualPause && gamePaused, { timeout: 15000 });
+    await h2.evaluate(() => setMatchPause(false));
+    for (const p of [h2, gA, gB]) await p.waitForFunction(() => !gamePaused, { timeout: 15000 });
     const teamsAfter = [await gA.evaluate(() => myTeam), await gB.evaluate(() => myTeam)];
     if (teamsAfter.join() !== teamsBefore.join()) {
       throw new Error(`teams changed across reload: ${teamsBefore} -> ${teamsAfter}`);

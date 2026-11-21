@@ -195,18 +195,20 @@ function execCommand(cmd, team){
       // fresh brain.
       if (team === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
         // Difficulty is stamped into the command payload by the host at submit
-        // time (see kickDisconnectedPlayers) so every peer applies the SAME
+        // time (see standInForMissing, js/init.js) so every peer applies the SAME
         // value. Reading the client-local `aiDifficulty` global here instead
         // would desync: it's set independently per peer from menus/lobby/saves.
         let diff = AI_LEVELS[cmd.diff] ? cmd.diff : 'standard';
-        teamControllers[cmd.t] = { type: 'ai', difficulty: diff };
+        // standIn: the AI plays for a player who dropped and may come back — `autopilot` keeps the seat theirs
+        // (seatHasPerson), and `standIn` tells their page to take command again on rejoining (lockstep-resume).
+        teamControllers[cmd.t] = cmd.standIn ? { type: 'ai', difficulty: diff, autopilot: true, standIn: true } : { type: 'ai', difficulty: diff };
         if (!AI_STATES[cmd.t]) AI_STATES[cmd.t] = freshAIState(cmd.t);
         AI_STATES[cmd.t].squad = null;   // (a brain kept from before the seat went human: its field squad's ids are the player's units now)
         // Nobody is left to steer a unit the kicked player possessed.
         for (const u of entities) if (u.team === cmd.t && u.possessed) u.possessed = false;
         // Everyone should see this, not just the issuer (feedbackFor would
         // limit it to the host) — only a resim replay stays quiet.
-        if (!window.__resim && typeof showMsg === 'function') showMsg(teamName(cmd.t) + "'s seat was handed to the AI");
+        if (!window.__resim && typeof showMsg === 'function') showMsg(cmd.standIn ? 'The AI is playing for ' + teamName(cmd.t) + ' until they return' : teamName(cmd.t) + "'s seat was handed to the AI");
       }
       break;
     case 'autopilot':

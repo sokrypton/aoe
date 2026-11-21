@@ -123,6 +123,7 @@ const MENU_ICONS = {
   options: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
   help:    '<path d="M4 5.5A2 2 0 0 1 6 4h5v15H6a2 2 0 0 0-2 1.5z"/><path d="M20 5.5A2 2 0 0 0 18 4h-5v15h5a2 2 0 0 1 2 1.5z"/>',  // a book
   back:    '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  pause:   '<path d="M9 5v14M15 5v14"/>',
   close:   '<path d="M6 6l12 12M18 6 6 18"/>',
   retry:   '<path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/>',
   check:   '<path d="M5 12.5l4.5 4.5L19 7"/>',
@@ -184,6 +185,8 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="bottom">
 <div id="actions"></div>
 <div id="sel-info">
+  <!-- Owner of a selection that is not yours (refreshSelOwner, js/ui.js). -->
+  <div id="sel-owner" style="display:none;"></div>
   <div id="sel-portrait" ondblclick="toggleCameraFollow()" title="Double-click to lock camera on this unit">⚔️</div>
   <!-- Classic-only HP readout slot, sits under the portrait (real AoE2
        placement). Mobile keeps HP inline in #sel-details and hides this. -->
@@ -223,14 +226,24 @@ document.body.insertAdjacentHTML('afterbegin', `
     <ul id="scn-goals"></ul>
   </div>
 </div>
+<!-- Player list: colour, name, team, age, score (refreshPlayerList, js/ui.js). -->
+<div id="player-list" style="display:none;">
+  <button type="button" id="pl-head" onclick="togglePlayerList()"><span id="pl-title">Players</span><span id="pl-chev"></span></button>
+  <div id="pl-body"></div>
+</div>
 <div id="mp-disconnect-overlay" style="display:none;">
   <div id="mp-disconnect-box">
     <div id="mp-disconnect-title">Connection Lost</div>
     <div id="mp-disconnect-text"></div>
     <div id="mp-disconnect-spinner"></div>
     <button type="button" id="mp-disconnect-save" class="menu-action-btn" style="display:none;" onclick="saveGameToFile()">${menuIcon('save')}Save Game</button>
-    <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="kickDisconnectedPlayers()">${menuIcon('ai')}Continue without them (AI takes over)</button>
+    <button type="button" id="mp-disconnect-kick" class="menu-action-btn" style="display:none;" onclick="standInForMissing()">${menuIcon('ai')}Continue without them (AI takes over)</button>
+    <button type="button" id="mp-pause-resume" class="menu-action-btn" style="display:none;" onclick="setMatchPause(false)">Resume Game</button>
   </div>
+</div>
+<div id="mp-missing-banner" style="display:none;">
+  <span id="mp-missing-text"></span>
+  <button type="button" id="mp-missing-ai" style="display:none;" onclick="standInForMissing()">AI takes over now</button>
 </div>
 <div id="mp-seat-picker" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
   <div id="mp-seat-picker-box" style="background:#2b2b2b;border:2px solid #555;border-radius:8px;padding:22px 26px;max-width:90vw;text-align:center;color:#eee;">
@@ -338,7 +351,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 
     <div class="help-section">
       <h4>Play with Friends</h4>
-      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>10 players</b>, in any mix of humans and AI. Drop out and reconnect any time; the match pauses and you rejoin your spot.</p>
+      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>10 players</b>, in any mix of humans and AI. If you drop out, the host's setup decides: the match waits for you, an AI looks after your town until you rejoin, or it plays on and your town stands as you left it. Anyone can pause from the menu.</p>
     </div>
 
     <div class="help-section">
@@ -453,6 +466,7 @@ document.body.insertAdjacentHTML('afterbegin', `
            match exists on this pre-game screen) — see
            restoreMenuForMatch()/applyMenuMode('ingame') in js/init.js. -->
       <button type="button" id="save-game-btn" class="menu-action-btn" onclick="saveGameToFile()" style="display:none;">${menuIcon('save')}Save</button>
+      <button type="button" id="pause-game-btn" class="menu-action-btn" onclick="setMatchPause(true)" style="display:none;">${menuIcon('pause')}Pause</button>
       <button type="button" id="learn-btn" class="menu-action-btn" onclick="showMenuPanel('learn')">${menuIcon('learn')}Learn to Play</button>
     </div>
     <div class="menu-row-pair">
@@ -535,6 +549,16 @@ document.body.insertAdjacentHTML('afterbegin', `
             <div class="segmented" id="lobby-fog-seg">
               <label class="segment"><input type="radio" name="lobbyfog" value="fog" checked><span title="Fog of War">Fog</span></label>
               <label class="segment"><input type="radio" name="lobbyfog" value="open"><span title="All Visible — whole map revealed for every player and AI">Open</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="setup-row">
+          <div class="setup-col">
+            <h3>If a player drops</h3>
+            <div class="segmented" id="lobby-drop-seg">
+              <label class="segment"><input type="radio" name="lobbydrop" value="wait"><span title="The match pauses for everyone until they rejoin, or the host hands their town to an AI">Wait</span></label>
+              <label class="segment"><input type="radio" name="lobbydrop" value="ai" checked><span title="The match plays on; an AI looks after their town after a minute, until they rejoin">AI steps in</span></label>
+              <label class="segment"><input type="radio" name="lobbydrop" value="idle"><span title="The match plays on and their town stands as they left it; they can rejoin any time">Play on</span></label>
             </div>
           </div>
         </div>

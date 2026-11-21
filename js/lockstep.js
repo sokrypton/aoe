@@ -75,7 +75,7 @@ function sendToAllPeers(msg){
 }
 
 // Host-side: human seats with no live connection right now (dropped
-// mid-match, not yet rejoined). Drives the "waiting for <name>" pause.
+// mid-match, not yet rejoined) — the presence verdict (hostBroadcastPresence).
 function lockstepExpectedSeatsMissing(){
   let out = [];
   if (netRole !== 'host') return out;
@@ -88,11 +88,9 @@ function lockstepExpectedSeatsMissing(){
   return out;
 }
 
-// The human seats this peer expects lockstep progress reports from. On
-// the host that's every CONNECTED guest (a dropped guest must not wedge
-// the pace gate — the pause flow owns that case); guests can't see
-// connectivity, so they expect every human seat and rely on the host's
-// pause broadcast when one goes missing.
+// The human seats this peer expects lockstep progress reports from: every one with a live connection, so a
+// dropped player never wedges the pace gate. The host sees connectivity itself; guests go by its verdict
+// (missingSeats, js/init.js).
 function lockstepExpectedSeats(){
   let seats = [];
   for (let t = 0; t < NUM_TEAMS; t++) {
@@ -101,7 +99,7 @@ function lockstepExpectedSeats(){
     if (netRole === 'host') {
       let rec = typeof netGuestBySeat === 'function' ? netGuestBySeat(t) : null;
       if (!rec || !rec.connected) continue;
-    }
+    } else if (missingSeats.includes(t)) continue;
     seats.push(t);
   }
   return seats;
@@ -327,6 +325,8 @@ onNetMessage((msg, src) => {
     if (entities.some(e => e.team === myTeam && e.possessed) && !(typeof povSteering === 'function' && povSteering())) {
       submitCommand({ kind: 'possess', on: false });
     }
+    // Back at the seat: take command from the AI that stood in while we were gone.
+    if (teamControllers[myTeam] && teamControllers[myTeam].standIn) submitCommand({ kind: 'autopilot', on: false });
   } else if (msg.type === 'lockstep-resync-request' && netRole === 'host' && lockstepActive) {
     lockstepStartResync();
   } else if (msg.type === 'tick' && lockstepActive) {

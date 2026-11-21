@@ -140,6 +140,7 @@ function startGame(difficulty){
   // further down this file).
   localMenuOpen = false;
   disconnectedPause = false;
+  manualPause = false; waitingHold = false; missingSeats = []; missingSince.clear();
   window.playedGameOverSound = false; // Reset game over sound trigger
   if (window.stopGameOverMusic) window.stopGameOverMusic();
   // Initialize audio on first click. Music must never be able to block the
@@ -529,40 +530,93 @@ function claimSeat(seat){
   if (txt) txt.textContent = 'Reconnecting…';
 }
 
-// HOST: recompute the "waiting for a disconnected player" pause and tell
-// every guest. One authority, one verdict — each guest mirrors it rather
-// than tracking connectivity it can't see. Also drives the host's own
-// overlay, with the kick option once someone is actually missing.
-function hostBroadcastDcPause(){
+// ---- Presence and pause in a multiplayer match ----
+// What a dropped player does to the match is the host's setup choice (the lobby's "If a player drops"):
+//   'wait' — the match holds for everyone until the player is back, or the host hands the seat to the AI.
+//   'ai'   — the others play on, an AI stands in for the empty seat after a minute (STAND_IN_AFTER_MS of running
+//            game), and the player takes command back on rejoining.
+//   'idle' — the others play on and the seat stands as its player left it; they rejoin whenever (the host may
+//            still hand it to the AI).
+// Under 'ai' and 'idle' the match waits only when the host has nobody left to play with.
+// Any player may pause the match, and any player may resume it (AoE2's rule).
+// The HOST is the one authority: it sees connectivity, holds the flags, and broadcasts them ('match-presence').
+// The policy is the host's own setting, kept in localStorage — guests only ever see its effect.
+function dropPolicy(v){ return v === 'wait' || v === 'idle' ? v : 'ai'; }
+function mpDropPolicy(){ return dropPolicy(lsGet('aoeDropPolicy', 'ai')); }
+function setMpDropPolicy(v){ lsSet('aoeDropPolicy', dropPolicy(v)); }
+let hostDropPolicy = 'ai';    // guests: the host's policy, for the banner's wording
+let missingSeats = [];        // human seats with no live connection (guests mirror the host's list)
+let waitingHold = false;      // guests: the host is holding the match for a missing player
+let manualPause = false, manualPauseBy = null;
+const STAND_IN_AFTER_MS = 60000;
+const missingSince = new Map();   // host: seat -> when its minute started (restarts while the match is paused)
+
+
+function hostBroadcastPresence(){
   if (netRole !== 'host' || !mpMatchStarted || gameOver) return;
-  let missing = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
-  let waiting = missing.map(t => (typeof teamNames !== 'undefined' && teamNames && teamNames[t]) || ('Player ' + (t + 1)));
-  broadcastToGuests({ type: 'match-pause', kind: 'dc', paused: missing.length > 0, waiting });
-  disconnectedPause = missing.length > 0;
-  if (missing.length > 0) {
-    showDisconnectOverlay('Waiting for ' + waiting.join(', ') + ' to reconnect…', true);
-  } else {
-    hideDisconnectOverlay();
-  }
+  missingSeats = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
+  for (const t of [...missingSince.keys()]) if (!missingSeats.includes(t)) missingSince.delete(t);
+  // A seat still waiting for its player holds the match under 'wait', or when nobody is left to play with.
+  disconnectedPause = missingSeats.some(t => teamControllers[t].type === 'human')
+    && (mpDropPolicy() === 'wait' || netConnectedGuestSeats().length === 0);
+  broadcastToGuests({ type: 'match-presence', missing: missingSeats, hold: disconnectedPause, policy: mpDropPolicy(), paused: manualPause, by: manualPauseBy });
   recomputeGamePaused();
+  refreshMatchNotices();
 }
 
-// HOST: the overlay's "Continue without them" button — every missing seat
-// is closed for good (kicked=true keeps its hello denied) and handed to
-// the AI via the deterministic set-controller command; then the pause
-// verdict is recomputed (nobody missing anymore -> everyone resumes, and
-// the command executes a few ticks later on every peer alike).
-function kickDisconnectedPlayers(){
-  if (netRole !== 'host') return;
-  let missing = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
-  for (const seat of missing) {
-    if (typeof netCloseGuest === 'function') netCloseGuest(seat, 'kicked', true);
-    // Stamp the host's authoritative difficulty into the payload so the new
-    // AI brain is identical on every peer (commands.js set-controller).
-    submitCommand({ kind: 'set-controller', t: seat, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
-  }
-  hostBroadcastDcPause();
+// The overlay and banner for the current presence/pause state (every peer; a guest whose own link is down keeps its
+// "Connection lost" overlay, which onNetConnectionClosed owns).
+function refreshMatchNotices(){
+  if (netRole === 'guest' && !netConnected) return;
+  const names = missingSeats.map(teamName).join(', ');
+  const waiting = netRole === 'host' ? disconnectedPause : waitingHold;
+  if (waiting) showDisconnectOverlay('Waiting for ' + names + ' to reconnect…', netRole === 'host');
+  else if (manualPause) { showMpOverlay('Game Paused', (manualPauseBy === myTeam ? 'You' : teamName(manualPauseBy)) + ' paused the game.', false); show('mp-disconnect-kick', false); }
+  else hideDisconnectOverlay();
+  show('mp-pause-resume', manualPause && !waiting);
+  const banner = missingSeats.length > 0 && !waiting && !gameOver;
+  show('mp-missing-banner', banner);
+  if (!banner) return;
+  const humans = missingSeats.filter(t => teamControllers[t] && teamControllers[t].type === 'human');
+  byId('mp-missing-text').textContent = names + (missingSeats.length > 1 ? ' are' : ' is') + ' disconnected'
+    + (!humans.length ? ' — the AI is playing for them'
+      : (netRole === 'host' ? mpDropPolicy() : hostDropPolicy) === 'ai' ? ' — the AI takes over in a minute' : ' — they can rejoin any time');
+  show('mp-missing-ai', netRole === 'host' && humans.length > 0);
 }
+
+// Any player: pause or resume the match for everyone.
+function setMatchPause(on){
+  if (!lockstepEnabled() || gameOver) return;
+  if (netRole === 'host') { manualPause = !!on; manualPauseBy = on ? 0 : null; hostBroadcastPresence(); }
+  else sendToHost({ type: 'pause-request', paused: !!on });
+  let menu = byId('tutorial');
+  if (on && menu && menu.style.display !== 'none' && menu.style.display !== '') toggleMenu();   // (the pause notice replaces the menu)
+}
+
+// HOST: the AI stands in for every missing player right now (the overlay/banner button; the timer below does it
+// by itself after a minute). Rides the deterministic set-controller command, with the host's difficulty stamped in
+// so the new brain is identical on every peer.
+function standInForMissing(){
+  if (netRole !== 'host') return;
+  for (const seat of missingSeats) {
+    if (!teamControllers[seat] || teamControllers[seat].type !== 'human') continue;
+    submitCommand({ kind: 'set-controller', t: seat, standIn: true, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
+  }
+}
+setInterval(() => {
+  if (gameOver) { show('mp-missing-banner', false); return; }
+  if (!mpMatchStarted || !lockstepEnabled()) return;
+  if (netRole === 'host') {
+    const now = performance.now();
+    let due = false;
+    for (const t of missingSeats) {
+      if (gamePaused || !missingSince.has(t)) missingSince.set(t, now);
+      else if (mpDropPolicy() === 'ai' && now - missingSince.get(t) >= STAND_IN_AFTER_MS) due = true;
+    }
+    if (due) { standInForMissing(); for (const t of missingSeats) missingSince.set(t, now); }
+  }
+  refreshMatchNotices();   // (the banner follows the seats as the AI takes them)
+}, 1000);
 
 // Once the match has genuinely started, the pre-match setup/connecting UI
 // needs to stop showing forever, not just while #tutorial happens to be
@@ -618,6 +672,7 @@ function restoreMenuForMatch(){
   // the host's reload by token instead), so offering it would be a lie.
   let saveBtn = byId('save-game-btn');
   if (saveBtn) saveBtn.style.display = netRole === 'guest' ? 'none' : '';
+  show('pause-game-btn', true);
   show('load-game-btn', false);
 }
 
@@ -869,7 +924,9 @@ window.onNetConnectionOpen = function(seat){
         let menu = byId('tutorial');
         if (menu) menu.style.display = 'none';
         localMenuOpen = false;
-        recomputeGamePaused();
+        // A loaded match starts paused: the host resumes it once the players are back at their seats.
+        manualPause = true; manualPauseBy = 0;
+        hostBroadcastPresence();
         // Re-show the (now minimal) mid-match menu — see restoreMenuForMatch.
         restoreMenuForMatch();
       } else {
@@ -881,16 +938,12 @@ window.onNetConnectionOpen = function(seat){
         if (typeof hostEnterLobby === 'function') hostEnterLobby(seat);
       }
     } else {
-      // Reconnect: resume exactly where the match was paused. Hand the
-      // (possibly brand-new) guest page the full sim state and re-enter
-      // lockstep — same machinery as desync recovery; the OTHER guests get
-      // the same state as a resync so everyone stays bit-identical. Only
-      // clears the pause when no other guest is still out —
-      // recomputeGamePaused() also keeps the game paused if e.g. this
-      // host's own menu happens to be open at the exact moment of the
-      // reconnect.
+      // Reconnect: hand the (possibly brand-new) guest page the full sim
+      // state and re-enter lockstep — same machinery as desync recovery; the
+      // OTHER guests get the same state as a resync so everyone stays
+      // bit-identical.
       if (lockstepEnabled()) lockstepResumeGuest(seat);
-      hostBroadcastDcPause(); // clears the pause once nobody is missing
+      hostBroadcastPresence();
     }
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
@@ -952,7 +1005,7 @@ window.onGuestConnectionClosed = function(seat){
     return;
   }
   if (!mpMatchStarted || gameOver) return;
-  hostBroadcastDcPause();
+  hostBroadcastPresence();
 };
 
 // Guest-only: retries joinSession() against the same host peer id every
@@ -984,7 +1037,7 @@ let disconnectedPause = false;
 // A menu pauses a single-player game only: in a multiplayer match the game runs on behind it for everyone, the
 // player who opened it included (a peer that stopped simulating would stall the others through the pacing).
 function recomputeGamePaused(){
-  gamePaused = (localMenuOpen && !lockstepEnabled()) || disconnectedPause;
+  gamePaused = (localMenuOpen && !lockstepEnabled()) || disconnectedPause || waitingHold || manualPause;
 }
 
 // Which lobby seat (== sim team id) the host assigned this guest. Arrives
@@ -1058,16 +1111,16 @@ onNetMessage((msg) => {
 });
 
 onNetMessage((msg, src) => {
-  if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'dc') {
-    // The host's disconnect-pause verdict: another guest dropped (or came
-    // back). Guests can't see each other's connectivity — mirror it.
-    disconnectedPause = !!msg.paused;
-    if (msg.paused) {
-      showDisconnectOverlay('Waiting for ' + ((msg.waiting || []).join(', ') || 'a player') + ' to reconnect…');
-    } else {
-      hideDisconnectOverlay();
-    }
+  if (msg.type === 'pause-request' && netRole === 'host' && mpMatchStarted) {
+    if (!src || src.seat == null) return;
+    manualPause = !!msg.paused; manualPauseBy = manualPause ? src.seat : null;
+    hostBroadcastPresence();
+  } else if (msg.type === 'match-presence' && netRole === 'guest') {
+    // The host's verdict on who is missing and whether the match is paused.
+    missingSeats = Array.isArray(msg.missing) ? msg.missing.filter(Number.isInteger) : [];
+    manualPause = !!msg.paused; manualPauseBy = msg.by; waitingHold = !!msg.hold; hostDropPolicy = dropPolicy(msg.policy);
     recomputeGamePaused();
+    refreshMatchNotices();
   }
 });
 
@@ -1181,6 +1234,7 @@ function applyMenuMode(mode){
   let loadBtn = byId('load-game-btn');
   if (!menu) return;
   window.menuMode = mode;
+  show('pause-game-btn', mode === 'ingame' && lockstepEnabled());
 
   // The VICTORY/DEFEAT banner block only exists in 'gameover' mode.
   let banner = byId('game-over-banner');
