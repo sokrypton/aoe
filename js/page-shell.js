@@ -386,20 +386,16 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div class="setup-grid">
       <div class="setup-row" id="opt-match">
         <div class="setup-col">
-          <h3>Difficulty</h3>
-          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label></div>
-        </div>
-        <div class="setup-col">
           <h3>Players</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="players" value="2" checked><span title="1 vs 1">2</span></label><label class="opt-pill"><input type="radio" name="players" value="4"><span title="2 vs 2">4</span></label></div>
         </div>
         <div class="setup-col">
+          <h3>Difficulty</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label></div>
+        </div>
+        <div class="setup-col setup-col-wide">
           <h3>Map Size</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="mapsize" value="small"><span title="Small">S</span></label><label class="opt-pill"><input type="radio" name="mapsize" value="medium" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="mapsize" value="large"><span title="Large">L</span></label><label class="opt-pill"><input type="radio" name="mapsize" value="huge"><span title="Huge">XL</span></label></div>
-        </div>
-        <div class="setup-col" title="Fog of war. Off: the whole map is revealed for everyone, the AI included">
-          <h3>Fog</h3>
-          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="fogmode" value="fog" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="fogmode" value="open"><span>Off</span></label></div>
         </div>
       </div>
       <div class="setup-row" id="opt-aiplan">
@@ -409,7 +405,11 @@ document.body.insertAdjacentHTML('afterbegin', `
         </div>
       </div>
       <div class="setup-row" id="setup-speed-row">
-        <div class="setup-col setup-col-speed" id="opt-speed-row">
+        <div class="setup-col" title="Fog of war. Off: the whole map is revealed for everyone, the AI included">
+          <h3>Fog</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="fogmode" value="fog" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="fogmode" value="open"><span>Off</span></label></div>
+        </div>
+        <div class="setup-col" id="opt-speed-row">
           <h3>Speed</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="1"><span>1×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>2×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>4×</span></label></div>
         </div>
