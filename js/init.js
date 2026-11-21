@@ -139,7 +139,6 @@ function startGame(difficulty){
   // whatever came before (see recomputeGamePaused()/the flags it reads,
   // further down this file).
   localMenuOpen = false;
-  remoteMenuOpen = false;
   disconnectedPause = false;
   window.playedGameOverSound = false; // Reset game over sound trigger
   if (window.stopGameOverMusic) window.stopGameOverMusic();
@@ -474,8 +473,8 @@ function showMpOverlay(title, text, spinner){
   if (titleEl) titleEl.textContent = title;
   if (textEl) textEl.textContent = text;
   if (spinnerEl) spinnerEl.style.display = spinner ? '' : 'none';
-  // Safety hatch on a genuine DISCONNECT (the spinner case — not the
-  // opponent-paused overlay): either side can bank the match to a file
+  // Safety hatch on a genuine DISCONNECT (the spinner case — not a
+  // notice like Version Mismatch): either side can bank the match to a file
   // right there while waiting, in case the reconnect never comes. A guest
   // save is just as valid as a host one (see js/save.js).
   show('mp-disconnect-save', (spinner && gameStarted && entities.length > 0 && netRole !== 'guest'));
@@ -542,7 +541,7 @@ function hostBroadcastDcPause(){
   disconnectedPause = missing.length > 0;
   if (missing.length > 0) {
     showDisconnectOverlay('Waiting for ' + waiting.join(', ') + ' to reconnect…', true);
-  } else if (!remoteMenuOpen) {
+  } else {
     hideDisconnectOverlay();
   }
   recomputeGamePaused();
@@ -558,7 +557,6 @@ function kickDisconnectedPlayers(){
   let missing = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
   for (const seat of missing) {
     if (typeof netCloseGuest === 'function') netCloseGuest(seat, 'kicked', true);
-    guestMenuOpenBySeat.delete(seat);
     // Stamp the host's authoritative difficulty into the payload so the new
     // AI brain is identical on every peer (commands.js set-controller).
     submitCommand({ kind: 'set-controller', t: seat, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
@@ -761,7 +759,6 @@ function leaveMpSession(){
   teardownNet();
   myTeam = 0;
   localHumanTeam = 0;
-  guestMenuOpenBySeat.clear();
   window.__mpSession.mySeat = null;
   mpMatchStarted = false;
   mpHostingFromExistingGame = false;
@@ -895,17 +892,6 @@ window.onNetConnectionOpen = function(seat){
       if (lockstepEnabled()) lockstepResumeGuest(seat);
       hostBroadcastDcPause(); // clears the pause once nobody is missing
     }
-    // Re-broadcast the aggregate pause verdict regardless of which branch
-    // above ran. A (re)connecting guest's own remoteMenuOpen is a mirrored
-    // copy of whatever the LAST 'match-pause' it ever received said — if
-    // the previous host session died (crash/reload) while a menu happened
-    // to be open, the matching open:false can never arrive (the whole page
-    // is gone), permanently stranding that guest paused with nothing on
-    // screen to explain why.
-    // The freshly recomputed verdict is always known-correct here. Only
-    // meaningful once the match is live — during the lobby there's no sim
-    // to pause, and a lobby panel isn't a "menu" the host should mirror.
-    if (mpMatchStarted) hostBroadcastPauseState();
   } else if (netRole === 'guest') {
     if (!mpMatchStarted) {
       // First connect → wait for the host's lobby-open (js/lobby.js), which
@@ -958,12 +944,6 @@ window.onNetConnectionClosed = function(){
 // connection died; its registry record (token → seat) survives so the
 // same browser can reconnect into its seat.
 window.onGuestConnectionClosed = function(seat){
-  // A dropped guest's open menu must not keep everyone else paused after
-  // it's gone — the disconnect pause takes over as the reason.
-  if (guestMenuOpenBySeat.get(seat)) {
-    guestMenuOpenBySeat.delete(seat);
-    hostBroadcastPauseState();
-  }
   if (window.__mpSession.inLobby) {
     // Guest left the lobby: free their seat, disable Start (js/lobby.js).
     // The host's Peer stays alive, so anyone reopening the link re-enters
@@ -991,74 +971,20 @@ function attemptReconnect(){
 // gamePaused has three independent reasons it can be true, any of which
 // can be active at once (e.g. this client opens its own local menu WHILE
 // the connection is also mid-reconnect): this client's own #tutorial menu
-// being open, the OTHER peer's menu being open (either direction — see
-// the message handler below), and a disconnect/reconnect in progress. A
-// bug this exact shape already bit once: any
-// code path that just sets `gamePaused = false` directly, without
-// checking whether some OTHER reason is still active, will incorrectly
-// resume the game out from under a menu/overlay that's still visibly
-// showing. recomputeGamePaused() is the one place that ever decides the
-// final value — every handler below only ever touches its own reason flag
-// and then calls this, never `gamePaused` directly (except the hard reset
-// in startGame()).
+// being open and a disconnect/reconnect in progress. A bug this exact shape
+// already bit once: any code path that just sets `gamePaused = false`
+// directly, without checking whether some OTHER reason is still active, will
+// incorrectly resume the game out from under a menu/overlay that's still
+// visibly showing. recomputeGamePaused() is the one place that ever decides
+// the final value — every handler only ever touches its own reason flag and
+// then calls this, never `gamePaused` directly (except the hard reset in
+// startGame()).
 let localMenuOpen = false;
-let remoteMenuOpen = false;
 let disconnectedPause = false;
+// A menu pauses a single-player game only: in a multiplayer match the game runs on behind it for everyone, the
+// player who opened it included (a peer that stopped simulating would stall the others through the pacing).
 function recomputeGamePaused(){
-  gamePaused = localMenuOpen || remoteMenuOpen || disconnectedPause;
-}
-
-// ANY player opening their menu pauses everyone — a player stepping away
-// to check settings must not leave the others free to keep building/
-// fighting in real time. The HOST is the pause authority in the star:
-// guests report their own menu state ('guest-menu'), the host aggregates
-// (its own menu + every guest's) and broadcasts one 'match-pause' verdict.
-// The channel is reliable-ordered, so a lost open:false can only mean a
-// disconnect, which has its own overlay/pause path.
-let guestMenuOpenBySeat = new Map(); // host-side: seat -> that guest's menu is open
-
-// Called from toggleMenu() — reports this client's own menu open/close.
-function broadcastMenuState(open){
-  if (!netConnected) return;
-  if (netRole === 'host') hostBroadcastPauseState();
-  else if (netRole === 'guest') sendToHost({ type: 'guest-menu', open });
-}
-
-// Host: recompute the aggregate menu-pause and tell every guest. byTeam
-// names the (first) responsible player so each guest can label the
-// overlay — or skip it when the culprit is itself.
-function hostBroadcastPauseState(){
-  if (netRole !== 'host') return;
-  let byTeam = localMenuOpen ? 0 : null;
-  if (byTeam == null) {
-    for (const [seat, open] of guestMenuOpenBySeat) { if (open) { byTeam = seat; break; } }
-  }
-  if (mpMatchStarted) {
-    broadcastToGuests({ type: 'match-pause', kind: 'menu', paused: byTeam != null, byTeam });
-  }
-  // The host's own "remote" reason is any GUEST's menu being open.
-  let anyGuest = false;
-  for (const [, open] of guestMenuOpenBySeat) { if (open) { anyGuest = true; break; } }
-  setRemoteMenuOpen(anyGuest, byTeam);
-}
-
-function pauseCulpritName(byTeam){
-  if (byTeam === 0) return 'The host';
-  let n = (typeof teamNames !== 'undefined' && teamNames && teamNames[byTeam]) || null;
-  return n || 'Another player';
-}
-
-function setRemoteMenuOpen(open, byTeam){
-  remoteMenuOpen = !!open;
-  if (remoteMenuOpen) {
-    showMpOverlay('Game Paused', pauseCulpritName(byTeam) + ' has paused the game.', false);
-  } else if (!disconnectedPause) {
-    // Don't blow away a disconnect overlay that's showing for an unrelated
-    // reason — recomputeGamePaused() below still gets the pause state
-    // right either way, this is purely about which message stays on screen.
-    hideMpOverlay();
-  }
-  recomputeGamePaused();
+  gamePaused = (localMenuOpen && !lockstepEnabled()) || disconnectedPause;
 }
 
 // Which lobby seat (== sim team id) the host assigned this guest. Arrives
@@ -1131,24 +1057,14 @@ onNetMessage((msg) => {
   }
 });
 
-// Menu-pause plumbing: guests report their own menu; the host aggregates
-// and broadcasts the verdict (hostBroadcastPauseState above).
 onNetMessage((msg, src) => {
-  if (msg.type === 'guest-menu' && netRole === 'host') {
-    if (!src || src.seat == null) return;
-    guestMenuOpenBySeat.set(src.seat, !!msg.open);
-    hostBroadcastPauseState();
-  } else if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'menu') {
-    // Skip the "paused by X" flag when X is this very tab — its own
-    // localMenuOpen already pauses it (and the menu is on screen).
-    setRemoteMenuOpen(msg.paused && msg.byTeam !== myTeam, msg.byTeam);
-  } else if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'dc') {
+  if (msg.type === 'match-pause' && netRole === 'guest' && msg.kind === 'dc') {
     // The host's disconnect-pause verdict: another guest dropped (or came
     // back). Guests can't see each other's connectivity — mirror it.
     disconnectedPause = !!msg.paused;
     if (msg.paused) {
       showDisconnectOverlay('Waiting for ' + ((msg.waiting || []).join(', ') || 'a player') + ' to reconnect…');
-    } else if (!remoteMenuOpen) {
+    } else {
       hideDisconnectOverlay();
     }
     recomputeGamePaused();
@@ -1545,23 +1461,15 @@ function toggleMenu(){
       let inMatch = entities.length > 0 && gameStarted;
       applyMenuMode((inMatch && !gameOver) ? 'ingame'
         : (gameOver && entities.length > 0) ? 'gameover' : 'prestart');
-      // Pause the OTHER peer too, with an explanatory overlay — otherwise
-      // the match keeps running live on their screen (and, for the guest
-      // opening their own menu, the host keeps building/training/fighting
-      // in real time while the guest sits frozen and unable to respond —
-      // a one-sided advantage neither direction should get away with).
-      broadcastMenuState(true);
     } else {
       menu.style.display = 'none';
       // Unpause BEFORE applying audio settings: playAmbientChord skips
       // scheduling while gamePaused, so starting music against a still-paused
       // game would silently defer it to the next phrase (~6s later).
       // recomputeGamePaused() (not a direct `gamePaused = false`) — stays
-      // paused if remoteMenuOpen or disconnectedPause is also active,
-      // instead of blindly resuming out from under either.
+      // paused if disconnectedPause is also active.
       localMenuOpen = false;
       recomputeGamePaused();
-      broadcastMenuState(false);
       applyAudioSettings();
       // Apply the other menu settings mid-match too (map size is the one
       // exception — it needs a map regen, so it only takes effect on Restart).

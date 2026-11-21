@@ -338,7 +338,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 
     <div class="help-section">
       <h4>Play with Friends</h4>
-      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>4 players</b>, in any mix of humans and AI. Drop out and reconnect any time; the match pauses and you rejoin your spot.</p>
+      <p>From the main menu, <b>Host</b> a game and share the link (or QR code) &mdash; up to <b>10 players</b>, in any mix of humans and AI. Drop out and reconnect any time; the match pauses and you rejoin your spot.</p>
     </div>
 
     <div class="help-section">
