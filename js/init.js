@@ -561,13 +561,19 @@ const missingSince = new Map();   // host: seat -> when its minute started (rest
 const standInAsked = new Set();   // host: missing seats already handed to the AI — the command only runs once the hold lifts
 
 
+// A missing seat the match waits on (or hands to the AI): its town is still a player's and nobody is left playing it —
+// a shared town carries on with whoever is there.
+function townAwaits(seat){
+  const t = seatTeam(seat), c = teamControllers[t];
+  return !!c && c.type === 'human' && teamSeats(t).every(s => missingSeats.includes(s));
+}
 function hostBroadcastPresence(){
   if (netRole !== 'host' || !mpMatchStarted || gameOver) return;
   missingSeats = (typeof lockstepExpectedSeatsMissing === 'function') ? lockstepExpectedSeatsMissing() : [];
   for (const t of [...missingSince.keys()]) if (!missingSeats.includes(t)) missingSince.delete(t);
   for (const t of [...standInAsked]) if (!missingSeats.includes(t)) standInAsked.delete(t);
   // A seat still waiting for its player holds the match under 'wait', or when nobody is left to play with.
-  disconnectedPause = missingSeats.some(t => teamControllers[t].type === 'human' && !standInAsked.has(t))
+  disconnectedPause = missingSeats.some(s => townAwaits(s) && !standInAsked.has(s))
     && (mpDropPolicy() === 'wait' || netConnectedGuestSeats().length === 0);
   broadcastToGuests({ type: 'match-presence', missing: missingSeats, hold: disconnectedPause, policy: mpDropPolicy(), paused: manualPause, by: manualPauseBy });
   recomputeGamePaused();
@@ -578,18 +584,19 @@ function hostBroadcastPresence(){
 // "Connection lost" overlay, which onNetConnectionClosed owns).
 function refreshMatchNotices(){
   if (netRole === 'guest' && !netConnected) return;
-  const names = missingSeats.map(teamName).join(', ');
+  const names = missingSeats.map(seatName).join(', ');
   const waiting = netRole === 'host' ? disconnectedPause : waitingHold;
   if (waiting) showDisconnectOverlay('Waiting for ' + names + ' to reconnect…', netRole === 'host');
-  else if (manualPause) { showMpOverlay('Game Paused', (manualPauseBy === myTeam ? 'You' : teamName(manualPauseBy)) + ' paused the game.', false); show('mp-disconnect-kick', false); }
+  else if (manualPause) { showMpOverlay('Game Paused', (manualPauseBy === mySeat ? 'You' : seatName(manualPauseBy)) + ' paused the game.', false); show('mp-disconnect-kick', false); }
   else hideDisconnectOverlay();
   show('mp-pause-resume', manualPause && !waiting);
   const banner = missingSeats.length > 0 && !waiting && !gameOver;
   show('mp-missing-banner', banner);
   if (!banner) return;
-  const humans = missingSeats.filter(t => teamControllers[t] && teamControllers[t].type === 'human');
+  const humans = missingSeats.filter(townAwaits);
+  const manned = missingSeats.every(s => teamControllers[seatTeam(s)] && teamControllers[seatTeam(s)].type === 'human');   // (their towns play on under the others sharing them)
   byId('mp-missing-text').textContent = names + (missingSeats.length > 1 ? ' are' : ' is') + ' disconnected'
-    + (!humans.length ? ' — the AI is playing for them'
+    + (!humans.length ? (manned ? ' — they can rejoin any time' : ' — the AI is playing for them')
       : (netRole === 'host' ? mpDropPolicy() : hostDropPolicy) === 'ai' ? ' — the AI takes over in a minute' : ' — they can rejoin any time');
   show('mp-missing-ai', netRole === 'host' && humans.length > 0);
 }
@@ -609,9 +616,9 @@ function setMatchPause(on){
 function standInForMissing(){
   if (netRole !== 'host') return;
   for (const seat of missingSeats) {
-    if (!teamControllers[seat] || teamControllers[seat].type !== 'human') continue;
-    submitCommand({ kind: 'set-controller', t: seat, standIn: true, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
-    standInAsked.add(seat);
+    if (!townAwaits(seat) || standInAsked.has(seat)) continue;
+    submitCommand({ kind: 'set-controller', t: seatTeam(seat), standIn: true, diff: (typeof aiDifficulty !== 'undefined' ? aiDifficulty : 'standard') });
+    for (const s of teamSeats(seatTeam(seat))) standInAsked.add(s);
   }
   hostBroadcastPresence();
 }
@@ -811,6 +818,7 @@ function leaveMpSession(){
   teardownNet();
   myTeam = 0;
   localHumanTeam = 0;
+  mySeat = 0; coSeats = [];
   window.__mpSession.mySeat = null;
   mpMatchStarted = false;
   mpHostingFromExistingGame = false;

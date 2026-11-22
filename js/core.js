@@ -700,7 +700,27 @@ let teamNames = null;
 function resetTeamNames(){ teamNames = Array.from({length: NUM_TEAMS}, () => null); }
 // A seat's display label: the lobby name if set, else a stable fallback.
 function teamName(team){
-  return (teamNames && teamNames[team]) ? teamNames[team] : ('Player ' + (team + 1));
+  let n = (teamNames && teamNames[team]) ? teamNames[team] : ('Player ' + (team + 1));
+  for (const c of coSeats) if (c.team === team) n += ' & ' + (c.name || 'Player');   // (everyone playing the town)
+  return n;
+}
+// SHARED CONTROL (multiplayer): several players, one town. A SEAT is a person (a connection); seats 0..NUM_TEAMS-1
+// each own the town of the same number, and every seat past them plays another seat's town: coSeats[i] is seat
+// NUM_TEAMS+i. Net bookkeeping and labels only (never hashed) — the sim reads a command's team, never who sent it.
+let coSeats = [];   // [{team, name}]
+let mySeat = 0;     // the person at THIS keyboard (myTeam = seatTeam(mySeat) in a multiplayer match)
+function seatCount(){ return NUM_TEAMS + coSeats.length; }
+function seatTeam(s){ const c = s >= NUM_TEAMS && coSeats[s - NUM_TEAMS]; return c ? c.team : s; }
+function seatName(s){
+  if (s >= NUM_TEAMS) return (coSeats[s - NUM_TEAMS] && coSeats[s - NUM_TEAMS].name) || ('Player ' + (s + 1));
+  return (teamNames && teamNames[s]) ? teamNames[s] : ('Player ' + (s + 1));
+}
+// The seats playing a town: its own, then the players sharing it.
+function teamSeats(team){ let out = [team]; coSeats.forEach((c, i) => { if (c.team === team) out.push(NUM_TEAMS + i); }); return out; }
+// (the list as it travels: lockstep-start/-resume, saves — never trusted from the wire)
+function setCoSeats(list){
+  coSeats = (Array.isArray(list) ? list : []).filter(c => c && Number.isInteger(c.team) && c.team >= 0 && c.team < NUM_TEAMS)
+    .map(c => ({ team: c.team, name: typeof c.name === 'string' ? c.name.slice(0, 40) : null }));
 }
 // Seed both at load so the very first render (single-player, before any
 // restartGame) has valid maps. restartGame()/the lobby re-derive them later.

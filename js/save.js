@@ -126,6 +126,7 @@ function serializeGame(){
     // still show the players' agreed names and colors, so they ride the save.
     teamNames,
     teamColorMap,
+    coSeats, // the players sharing a town (js/core.js: who sits where, with seatTokens; absent = none)
     // What the player had selected and whether the camera was locked onto a
     // unit are saved by id (not object reference — see the matching restore
     // in applySavedGame, which re-resolves these against the freshly
@@ -379,6 +380,7 @@ function applySavedGame(data, opts){
     restoreTeamState(data);
     restoreScenario(data.scenario); // (js/triggers.js)
     elevSpec = data.elevSpec || null;
+    setCoSeats(data.coSeats); mySeat = 0;   // (a save is loaded by its host)
 
     window.fogDisabled = !!data.fogDisabled;
     if (opts && opts.fromOpponentMirror) {

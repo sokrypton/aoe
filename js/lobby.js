@@ -5,6 +5,10 @@
 // and the host presses Start. Only then does hostStartLockstepMatch()
 // (js/lockstep.js) run.
 //
+// SHARED TOWNS. A human seat may play WITH another human seat (`with`: that seat's index): they run one town
+// together (js/core.js coSeats). lobbyNormalize keeps those seats LAST, so the seats before them are the towns and
+// their index is the sim team id; a seat with `with` set has no team, colour or start of its own.
+//
 // SEATS / TEAMS. Seat index == sim team id (host is always seat/team 0);
 // a joining guest gets the next free seat (js/net.js hello -> js/init.js
 // assignGuestSeat -> lobbyNextFreeSeat here). Every seat has a TEAM pick,
@@ -27,9 +31,9 @@
 // Wire types (over js/net.js's envelope, gated by NET_PROTOCOL_VERSION):
 //   {type:'lobby-open', ...payload, yourSeat}  host->guest: "you're in"
 //   {type:'lobby-sync', ...payload, yourSeat}  host->guest: state changed
-//   {type:'lobby-seat', name, colorIdx, ready, team}  guest->host: request
+//   {type:'lobby-seat', name, colorIdx, ready, team, with}  guest->host: request
 //       (applied to the SENDING connection's seat — never a claimed one)
-// payload = { seats:[{type,name,colorIdx,ready,present,team}], aiDifficulty,
+// payload = { seats:[{type,name,colorIdx,ready,present,team,with}], aiDifficulty,
 //             mapSize, speed, numTeams }. Chat rides the existing
 // {type:'chat'} (js/chat.js, which routes to the lobby log while inLobby).
 //
@@ -74,7 +78,7 @@ function lobbyFirstFreeColor(seats){
 // freely; the AI slide to whatever's free).
 function lobbyReassignAiColors(seats){
   let used = new Set();
-  seats.forEach(s => { if (s.type === 'human') used.add(s.colorIdx); });
+  seats.forEach(s => { if (s.type === 'human' && s.with == null) used.add(s.colorIdx); });
   seats.forEach(s => {
     if (s.type !== 'ai') return;
     if (used.has(s.colorIdx)) {
@@ -89,7 +93,30 @@ function lobbyReassignAiColors(seats){
 // for solo seats — the values are opaque (only compared for equality, in
 // sameSide/spawn grouping/checksum).
 function lobbySeatAlliances(){
-  return lobbyState.seats.map((s, t) => s.team != null ? 100 + s.team : t);
+  return lobbyTownSeats().map((s, t) => s.team != null ? 100 + s.team : t);
+}
+// The seats that are towns (the sim's teams, in order): every seat not playing with another.
+function lobbyTownSeats(){ return lobbyState.seats.filter(s => s.with == null); }
+// Host: the seats sharing a town go last (so a town's seat index is its team id), a `with` pointing at no town is
+// dropped, and the registry (js/net.js) follows the move. Returns old index -> new index.
+function lobbyNormalize(){
+  const seats = lobbyState.seats;
+  seats.forEach((s, i) => { const o = seats[s.with]; if (s.with != null && (i === 0 || s.type !== 'human' || !o || o === s || o.type !== 'human' || o.with != null)) s.with = null; });
+  const order = seats.map((s, i) => i).sort((a, b) => (seats[a].with != null) - (seats[b].with != null) || a - b);
+  const to = []; order.forEach((old, now) => { to[old] = now; });
+  if (order.some((old, now) => old !== now)) {
+    lobbyState.seats = order.map(i => seats[i]);
+    for (const s of lobbyState.seats) if (s.with != null) s.with = to[s.with];
+    if (typeof netGuestsRemap === 'function') netGuestsRemap(to);
+  }
+  lobbyState.numTeams = lobbyTownSeats().length;
+  return to;
+}
+// Host: a seat leaves the roster — later seats shift down, with the registry and the `with` picks.
+function lobbySpliceSeat(idx){
+  lobbyState.seats.splice(idx, 1);
+  for (const s of lobbyState.seats) if (s.with != null) s.with = s.with === idx ? null : s.with > idx ? s.with - 1 : s.with;
+  if (typeof netGuestsReindexAfterSeatRemoval === 'function') netGuestsReindexAfterSeatRemoval(idx);
 }
 
 // ---- Host: seed + lifecycle ----
@@ -125,7 +152,6 @@ function lobbyNextFreeSeat(msg){
     colorIdx: lobbyFirstFreeColor(lobbyState.seats),
     ready: false, present: true, team: null,
   });
-  lobbyState.numTeams = lobbyState.seats.length;
   return seat;
 }
 
@@ -154,7 +180,6 @@ function hostEnsureLobbySeat(seat){
     s = { type: 'human', name: '', colorIdx: lobbyFirstFreeColor(lobbyState.seats),
       ready: false, present: true, team: null };
     lobbyState.seats[seat] = s;
-    lobbyState.numTeams = lobbyState.seats.length;
   }
   s.present = true;
   let rec = (typeof netGuestBySeat === 'function') ? netGuestBySeat(seat) : null;
@@ -170,9 +195,7 @@ function hostEnsureLobbySeat(seat){
 function onGuestLeftLobby(seat){
   if (netRole !== 'host' || !lobbyState) return;
   if (seat != null && seat !== 0 && lobbyState.seats[seat] && lobbyState.seats[seat].type === 'human') {
-    lobbyState.seats.splice(seat, 1);
-    lobbyState.numTeams = lobbyState.seats.length;
-    if (typeof netGuestsReindexAfterSeatRemoval === 'function') netGuestsReindexAfterSeatRemoval(seat);
+    lobbySpliceSeat(seat);
   }
   if (typeof netConnectedGuestSeats === 'function' && netConnectedGuestSeats().length > 0) {
     lobbyBroadcast();
@@ -206,17 +229,13 @@ function lobbyAddAi(){
   const plan = typeof aiPlanChoice === 'function' ? aiPlanChoice() : 'default';   // (starts on the host's menu choice)
   lobbyState.seats.push({ type: 'ai', name: lobbyRandomName(), colorIdx: lobbyFirstFreeColor(lobbyState.seats),
     ready: true, present: true, team: null, aiPlan: plan, aiScript: typeof aiPlanScript === 'function' ? aiPlanScript(plan) : null });
-  lobbyState.numTeams = lobbyState.seats.length;
   lobbyBroadcast();
 }
 function lobbyRemoveAi(idx){
   if (netRole !== 'host' || !lobbyState) return;
   let s = lobbyState.seats[idx];
   if (!s || s.type !== 'ai') return; // humans leave via lobbyKickHuman
-  lobbyState.seats.splice(idx, 1);   // later seats reindex (team ids follow seat order)…
-  lobbyState.numTeams = lobbyState.seats.length;
-  // …so guest connections seated after the removed AI must shift with them.
-  if (typeof netGuestsReindexAfterSeatRemoval === 'function') netGuestsReindexAfterSeatRemoval(idx);
+  lobbySpliceSeat(idx);   // (later seats reindex: team ids follow seat order, and the guest connections shift with them)
   lobbyBroadcast();
 }
 
@@ -234,6 +253,19 @@ function lobbySetTeam(idx, team){
     lobbyState.seats[idx].team = team;
     renderLobby();
     sendLobbySeat();
+  }
+}
+
+// Play with another player (their town, shared) or on your own again (null). Host edits any guest's seat; a guest its own.
+function lobbySetWith(idx, other){
+  if (!lobbyState || idx === 0) return;
+  if (netRole === 'host') {
+    if (!lobbyState.seats[idx]) return;
+    lobbyState.seats[idx].with = other;
+    lobbyBroadcast();
+  } else if (idx === lobbyMySeatIndex()) {
+    lobbyState.seats[idx].with = other;
+    sendLobbySeat();   // (the host's answer redraws the roster: the seat moves)
   }
 }
 
@@ -274,12 +306,13 @@ function lobbyPayload(){
     numTeams: lobbyState.numTeams,
   };
 }
+// (a row's place in the roster can move — lobbyNormalize — so `openSeat` is followed through it)
 // Per-guest send: the payload is identical for everyone except yourSeat —
 // how each guest knows which roster row is its own (there is no implicit
 // "the guest is seat 1" anymore). `openSeat` names a guest that should get
 // a lobby-open (it just joined); everyone else gets a lobby-sync.
 function lobbySendState(openSeat){
-  if (netRole === 'host' && lobbyState) lobbyFitMapSize();
+  if (netRole === 'host' && lobbyState) { const to = lobbyNormalize(); if (openSeat != null && to[openSeat] != null) openSeat = to[openSeat]; lobbyFitMapSize(); }
   renderLobby();
   if (netRole !== 'host' || !lobbyState || !netConnected) return;
   for (const s of netConnectedGuestSeats()) {
@@ -289,7 +322,7 @@ function lobbySendState(openSeat){
 }
 // The map grows to fit the seats (minMapSizeFor, js/core.js) — shown in the picker, never silently at start.
 function lobbyFitMapSize(){
-  const need = minMapSizeFor(lobbyState.seats.length);
+  const need = minMapSizeFor(lobbyState.numTeams);
   if (MAP_SIZES[lobbyState.mapSize] < MAP_SIZES[need]) lobbyState.mapSize = need;
 }
 function lobbyBroadcast(){ lobbySendState(null); }
@@ -396,7 +429,7 @@ function renderLobbyRoster(){
   let keepCaret = (active && active.tagName === 'INPUT' && active.classList.contains('lobby-seat-name'))
     ? active.selectionStart : null;
   roster.textContent = '';
-  lobbyState.seats.forEach((s, t) => roster.appendChild(buildSeatRow(s, t)));
+  lobbyState.seats.forEach((s, t) => roster.appendChild(buildSeatRow(s, t)));   // (towns first: lobbyNormalize)
   if (keepCaret != null) {
     let inp = roster.querySelector('input.lobby-seat-name');
     if (inp) { inp.focus(); try { inp.setSelectionRange(keepCaret, keepCaret); } catch (e) {} }
@@ -415,13 +448,14 @@ function buildSeatRow(seat, t){
   row.className = 'lobby-seat';
   row.dataset.seat = String(t);
   let mine = t === lobbyMySeatIndex();
+  const town = seat.with != null ? lobbyState.seats[seat.with] : null;   // (sharing: that town's colour, no pick of its own)
 
   // Color: MY seat is a single click-to-cycle swatch (each click advances to
   // the next colour no other human has), so the row stays one line; other seats
   // show a read-only swatch.
   let swatches = document.createElement('div');
   swatches.className = 'lobby-seat-swatches';
-  if (mine && seat.present) {
+  if (mine && seat.present && !town) {
     let taken = lobbyTakenColors(t);
     let b = document.createElement('button');
     b.type = 'button';
@@ -439,7 +473,7 @@ function buildSeatRow(seat, t){
   } else {
     let sw = document.createElement('div');
     sw.className = 'lobby-swatch';
-    sw.style.background = PLAYER_TEAM_COLORS[seat.colorIdx];
+    sw.style.background = PLAYER_TEAM_COLORS[(town || seat).colorIdx];
     swatches.appendChild(sw);
   }
   row.appendChild(swatches);
@@ -460,7 +494,7 @@ function buildSeatRow(seat, t){
     nm.className = 'lobby-seat-name';
     nm.setAttribute('readonly', '');
     nm.textContent = lobbySeatLabel(seat, t);
-    nm.style.color = PLAYER_TEAM_COLORS[seat.colorIdx];
+    nm.style.color = PLAYER_TEAM_COLORS[(town || seat).colorIdx];
     row.appendChild(nm);
   }
 
@@ -475,10 +509,23 @@ function buildSeatRow(seat, t){
     o.textContent = label;
     teamSel.appendChild(o);
   });
-  teamSel.value = seat.team == null ? '' : String(seat.team);
-  teamSel.title = 'Team (– = no team)';
+  // …or, for a guest, another player's town: the two run it together.
+  if (seat.type === 'human' && t !== 0) lobbyState.seats.forEach((o, i) => {
+    if (i === t || o.type !== 'human' || o.with != null) return;
+    let op = document.createElement('option');
+    op.value = 'w' + i;
+    op.textContent = 'with ' + lobbySeatLabel(o, i);
+    teamSel.appendChild(op);
+  });
+  teamSel.value = town ? 'w' + seat.with : seat.team == null ? '' : String(seat.team);
+  teamSel.title = 'Team (– = no team), or share another player’s town';
   teamSel.disabled = !canEditTeam;
-  teamSel.onchange = () => lobbySetTeam(t, teamSel.value === '' ? null : parseInt(teamSel.value, 10));
+  teamSel.onchange = () => {
+    const v = teamSel.value;
+    if (v[0] === 'w') { lobbySetWith(t, parseInt(v.slice(1), 10)); return; }
+    if (town) lobbySetWith(t, null);
+    lobbySetTeam(t, v === '' ? null : parseInt(v, 10));
+  };
   row.appendChild(teamSel);
 
   // Status. AI/Host get a short text label; a guest's readiness is a compact
@@ -538,7 +585,7 @@ function lobbyTakenColors(exceptT){
   let set = new Set();
   lobbyState.seats.forEach((s, t) => {
     if (t === exceptT) return;
-    if (s.type === 'human' && s.present) set.add(s.colorIdx);
+    if (s.type === 'human' && s.present && s.with == null) set.add(s.colorIdx);
   });
   return set;
 }
@@ -611,7 +658,7 @@ function sendLobbySeat(){
   if (netRole !== 'guest') return;
   let s = lobbyState.seats[lobbyMySeatIndex()] || {};
   sendToHost({ type: 'lobby-seat', name: s.name || '', colorIdx: s.colorIdx || 0, ready: !!s.ready,
-    team: s.team == null ? null : s.team });
+    team: s.team == null ? null : s.team, with: s.with == null ? null : s.with });
 }
 
 // Host: validate + merge a guest's seat request, then rebroadcast. The
@@ -630,6 +677,7 @@ function hostApplyLobbySeat(msg, src){
   if (msg.team === null || (typeof msg.team === 'number' && msg.team >= 0 && msg.team < LOBBY_MAX_PLAYERS)) {
     s.team = msg.team;
   }
+  if (msg.with === null || Number.isInteger(msg.with)) s.with = msg.with;   // (checked by lobbyNormalize)
   s.ready = !!msg.ready;
   lobbyReassignAiColors(lobbyState.seats); // AI slide off the guest's chosen color
   lobbyBroadcast();
@@ -651,10 +699,12 @@ function applyLobbyConfigToTeams(){
   if (!lobbyState) return;
   let diff = lobbyState.aiDifficulty || 'standard';
   // (an AI seat's plan: the script compiled on the host travels in the seat — every peer runs the same one)
-  teamControllers = lobbyState.seats.map(s => s.type === 'ai' ? Object.assign({ type: 'ai', difficulty: diff }, s.aiScript ? { script: s.aiScript } : {}) : { type: 'human' });
+  const towns = lobbyTownSeats();
+  teamControllers = towns.map(s => s.type === 'ai' ? Object.assign({ type: 'ai', difficulty: diff }, s.aiScript ? { script: s.aiScript } : {}) : { type: 'human' });
   teamAlliance = lobbySeatAlliances();
-  teamColorMap = lobbyState.seats.map(s => s.colorIdx);
-  teamNames = lobbyState.seats.map(s => (s.name && s.name.trim()) || null);
+  teamColorMap = towns.map(s => s.colorIdx);
+  teamNames = towns.map(s => (s.name && s.name.trim()) || null);
+  coSeats = lobbyState.seats.slice(towns.length).map(s => ({ team: s.with, name: (s.name && s.name.trim()) || null }));
   resetAIStates(); // (re)create the AI brains for the AI slots (js/core.js)
 }
 

@@ -26,7 +26,7 @@ const INPUT_DELAY_MIN = 2;
 // guest-to-guest hop — and every command past it rewound every peer.
 function inputDelayMax(){ return 30 * GAME_SPEED; }
 
-let commandQueue = new Map(); // execTick -> [{team, seq, cmd}]
+let commandQueue = new Map(); // execTick -> [{seat, team, seq, cmd}] — seat: who issued it (== team, but for a shared town: seatTeam)
 let localCmdSeq = 0;
 
 function submitCommand(cmd){
@@ -34,7 +34,8 @@ function submitCommand(cmd){
   // Single player: the very next tick (nobody to wait for); lockstep: the adaptive delay (js/lockstep.js).
   let execTick = tick + (typeof lockstepEnabled === 'function' && lockstepEnabled() ? INPUT_DELAY_TICKS : 1);
   let seq = ++localCmdSeq;
-  scheduleCommand(execTick, myTeam, seq, cmd);
+  // (the issuing seat is the team itself outside a lockstep match: the editor and tests issue as any team)
+  scheduleCommand(execTick, typeof lockstepEnabled === 'function' && lockstepEnabled() ? mySeat : myTeam, seq, cmd);
   // Multiplayer: EVERY peer schedules the command at the issuer-stamped
   // tick; peers get it via 'cmd-ls' (js/lockstep.js — guests' commands
   // reach other guests through the host relay) and roll back if it
@@ -44,16 +45,17 @@ function submitCommand(cmd){
   }
 }
 
-function scheduleCommand(execTick, team, seq, cmd){
+function scheduleCommand(execTick, seat, seq, cmd){
+  const team = seatTeam(seat);
   let arr = commandQueue.get(execTick);
   if (!arr) { arr = []; commandQueue.set(execTick, arr); }
-  if (arr.some(c => c.team === team && c.seq === seq)) return;   // one command, once (a guest re-sends after a resync)
-  arr.push({ team, seq, cmd });
+  if (arr.some(c => c.seat === seat && c.seq === seq)) return;   // one command, once (a guest re-sends after a resync)
+  arr.push({ seat, team, seq, cmd });
   detRecordCommand(execTick, team, seq, cmd); // no-op unless a replay log is active
 }
 
 // Called at the top of update() for the tick just started. Canonical order
-// (team asc, then per-sender seq) so arrival order can never matter.
+// (seat asc, then per-sender seq) so arrival order can never matter.
 // Entries are NOT deleted after execution: a lockstep rollback re-simulates
 // past ticks and must re-execute their commands from the queue. Pruned
 // once safely older than the rollback window.
@@ -61,8 +63,8 @@ const COMMAND_KEEP_TICKS = T30(600);
 function runScheduledCommands(){
   let arr = commandQueue.get(tick);
   if (arr) {
-    arr.sort((a, b) => a.team - b.team || a.seq - b.seq);
-    arr.forEach(c => execCommand(c.cmd, c.team));
+    arr.sort((a, b) => a.seat - b.seat || a.seq - b.seq);
+    arr.forEach(c => execCommand(c.cmd, c.team, c.seat));
   }
   if (tick % 100 === 0) {
     commandQueue.forEach((v, t) => { if (t < tick - COMMAND_KEEP_TICKS) commandQueue.delete(t); });
@@ -94,7 +96,8 @@ function withCommandContext(team, unitIds, fn){
 // inside the mutation code goes through feedbackFor(team, …) (js/core.js),
 // which no-ops unless `team` is the human at this keyboard — the local
 // player never gets feedback for actions they didn't take.
-function execCommand(cmd, team){
+// seat: who issued it — the host-only controls check it (a player sharing the host's town is not the host).
+function execCommand(cmd, team, seat = team){
   if (!cmd || !cmd.kind) return;
   switch (cmd.kind) {
     case 'rally':
@@ -172,7 +175,7 @@ function execCommand(cmd, team){
     case 'set-delay':
       // Manual lockstep input-delay override (host-only); under rollback
       // the delay only tunes how often rewinds happen.
-      if (team === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= inputDelayMax() && lockstepEnabled()) {
+      if (seat === 0 && cmd.d >= INPUT_DELAY_MIN && cmd.d <= inputDelayMax() && lockstepEnabled()) {
         INPUT_DELAY_TICKS = cmd.d;
       }
       break;
@@ -180,7 +183,7 @@ function execCommand(cmd, team){
       // Host-only control (team 0); executes at the same tick on both
       // peers so timeStep/pacing never diverge. Range-clamped, never
       // trusted from the wire.
-      if (team === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
+      if (seat === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
         setGameSpeed(cmd.v);
         if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
       }
@@ -193,7 +196,7 @@ function execCommand(cmd, team){
       // The existing brain state is kept if one exists (a seat that began
       // as AI in a loaded save resumes its plans); a never-AI seat gets a
       // fresh brain.
-      if (team === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
+      if (seat === 0 && isPlayerTeam(cmd.t) && cmd.t !== 0) {
         // Difficulty is stamped into the command payload by the host at submit
         // time (see standInForMissing, js/init.js) so every peer applies the SAME
         // value. Reading the client-local `aiDifficulty` global here instead

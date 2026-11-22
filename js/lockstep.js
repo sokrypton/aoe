@@ -19,7 +19,7 @@
 // binding, and a guest trusts `from` because its only link is the host).
 //
 // Wire protocol (on top of js/net.js's envelope):
-//   {type:'lockstep-start', ..., yourTeam}   host -> each guest: begin
+//   {type:'lockstep-start', ..., yourSeat}   host -> each guest: begin
 //   {type:'cmd-ls', execTick, seq, cmd, [from]}  a command, already
 //       world-space, stamped by the ISSUER at issueTick+delay.
 //   {type:'tick', t, [ct, h], [from]}        ~10/s per peer: progress
@@ -79,8 +79,8 @@ function sendToAllPeers(msg){
 function lockstepExpectedSeatsMissing(){
   let out = [];
   if (netRole !== 'host') return out;
-  for (let t = 1; t < NUM_TEAMS; t++) {
-    if (!seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot
+  for (let t = 1; t < seatCount(); t++) {
+    if (t < NUM_TEAMS && !seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot (a shared town's extra seat: always a person)
     let rec = typeof netGuestBySeat === 'function' ? netGuestBySeat(t) : null;
     if (rec && rec.kicked) continue; // being handed to the AI — not awaited
     if (!rec || !rec.connected) out.push(t);
@@ -93,9 +93,9 @@ function lockstepExpectedSeatsMissing(){
 // (missingSeats, js/init.js).
 function lockstepExpectedSeats(){
   let seats = [];
-  for (let t = 0; t < NUM_TEAMS; t++) {
-    if (t === myTeam) continue;
-    if (!seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot
+  for (let t = 0; t < seatCount(); t++) {
+    if (t === mySeat) continue;
+    if (t < NUM_TEAMS && !seatHasPerson(t)) continue; // incl. a player whose town runs on autopilot
     if (netRole === 'host') {
       let rec = typeof netGuestBySeat === 'function' ? netGuestBySeat(t) : null;
       if (!rec || !rec.connected) continue;
@@ -135,7 +135,7 @@ const SLACK_KEEP_MS = 1500, SLACK_TARGET = 2, DELAY_DROP_EVERY_MS = 1500;
 // After a raise, reports still carry slack measured under the old delay for a window plus the round trip: acting on
 // them again ratcheted the delay to its cap. Hold until they've aged out.
 const DELAY_HOLD_MS = SLACK_KEEP_MS + 1000;
-const cmdSlack = new Map();   // sender team -> {slack, at} (the worst within SLACK_KEEP_MS)
+const cmdSlack = new Map();   // sender seat -> {slack, at} (the worst within SLACK_KEEP_MS)
 const slackSeen = new Map();  // reporting seat -> {slack, at}: how our commands arrived there
 let lastDelayDrop = 0, lastDelayRaise = 0;
 function noteCmdSlack(team, slack){
@@ -149,7 +149,7 @@ function slackReport(){
 }
 function adaptInputDelay(seat, sl){
   if (!Array.isArray(sl)) return;
-  for (let i = 0; i + 1 < sl.length; i += 2) if (sl[i] === myTeam && Number.isInteger(sl[i + 1])) slackSeen.set(seat, { slack: sl[i + 1], at: performance.now() });
+  for (let i = 0; i + 1 < sl.length; i += 2) if (sl[i] === mySeat && Number.isInteger(sl[i + 1])) slackSeen.set(seat, { slack: sl[i + 1], at: performance.now() });
   const now = performance.now(); let worst = Infinity;
   for (const r of slackSeen.values()) if (now - r.at <= SLACK_KEEP_MS) worst = Math.min(worst, r.slack);
   if (worst === Infinity) return;                                         // (no command of ours seen lately: keep the delay)
@@ -169,7 +169,8 @@ function hostStartLockstepMatch(){
   // Config comes from the lobby when there is one; fall back to the setup-menu
   // pickers otherwise (defensive — every live path today has a lobbyState).
   let ls = (typeof lobbyState !== 'undefined') ? lobbyState : null;
-  NUM_TEAMS = ls ? (ls.numTeams || 2) : 2; // one team per lobby seat (2-4 humans/AI in any mix)
+  NUM_TEAMS = ls ? (ls.numTeams || 2) : 2; // one team per town; the seats past them share one (lobbyNormalize keeps them last)
+  mySeat = 0;
   let sizeKey = ls ? ls.mapSize : (function(){ let s = document.querySelector('input[name="mapsize"]:checked'); return s ? s.value : 'medium'; })();
   if (ls && typeof setGameSpeed === 'function') setGameSpeed(ls.speed);
   // Match fog setting from the lobby (host-controlled): false = Fog of War,
@@ -190,7 +191,7 @@ function hostStartLockstepMatch(){
   // and BEFORE the seed snapshot/broadcast so both peers + the checksum agree.
   // An AI seat here is what makes host-vs-AI-over-a-connection just a data
   // change (the update() AI loop drives it — no protocol change).
-  if (ls && typeof applyLobbyConfigToTeams === 'function') applyLobbyConfigToTeams();
+  if (ls && typeof applyLobbyConfigToTeams === 'function') applyLobbyConfigToTeams(); else coSeats = [];
   DET.enabled = true; // per-tick checksum ring for the exchange below
   lockstepSeedSnapshot();
   mpMatchStarted = true;
@@ -202,11 +203,11 @@ function hostStartLockstepMatch(){
   if (typeof persistMpSessionMap === 'function') persistMpSessionMap();
   // names/colors are COSMETIC (never hashed/snapshotted) but must reach the
   // guests so every screen renders the agreed labels/colors consistently.
-  // Per-guest send: yourTeam is how each guest learns which seat it plays —
+  // Per-guest send: yourSeat is how each guest learns which seat it plays —
   // the ONE per-recipient field in an otherwise identical payload.
-  let startPayload = { type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, fog: !!window.fogDisabled, dragon: !window.dragonDisabled, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap };
+  let startPayload = { type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, fog: !!window.fogDisabled, dragon: !window.dragonDisabled, numTeams: NUM_TEAMS, co: coSeats, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap };
   for (const s of netConnectedGuestSeats()) {
-    sendToGuest(s, Object.assign({}, startPayload, { yourTeam: s }));
+    sendToGuest(s, Object.assign({}, startPayload, { yourSeat: s }));
   }
 }
 
@@ -221,9 +222,10 @@ onNetMessage((msg, src) => {
     // Which seat this guest plays — assigned by the host (replaces the old
     // hardcoded guest=1). Must land before restartGame/fog/camera below,
     // all of which read myTeam.
-    if (msg.yourTeam != null) { myTeam = msg.yourTeam; localHumanTeam = msg.yourTeam; }
-    if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     NUM_TEAMS = msg.numTeams || 2; // before setMapSize (STARTS) and restartGame (sizing)
+    setCoSeats(msg.co);
+    if (msg.yourSeat != null) { mySeat = msg.yourSeat; myTeam = localHumanTeam = seatTeam(mySeat); }
+    if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     window.__pendingMatchSeed = msg.seed;
     // Pass the host's alliance array so the guest builds identical 4-team
     // spawns (allies in adjacent corners — js/core.js setMapSize).
@@ -263,15 +265,15 @@ onNetMessage((msg, src) => {
     // Commands from before a resync point are stale on BOTH sides — the
     // resync state already reflects (or deliberately drops) them.
     if (msg.execTick <= lockstepResyncBarrier) return;
-    // The issuer's team: on the host it's the SEAT the connection is bound
+    // The issuer's seat (its team: seatTeam): on the host it's the SEAT the connection is bound
     // to (never whatever the payload claims); on a guest it's the host's
     // relay stamp (`from`), absent on the host's own commands (team 0).
-    let peerTeam;
+    let peerSeat;
     if (netRole === 'host') {
       if (!src || src.seat == null) return; // unattributable — drop
-      peerTeam = src.seat;
+      peerSeat = src.seat;
     } else {
-      peerTeam = msg.from != null ? msg.from : 0;
+      peerSeat = msg.from != null ? msg.from : 0;
     }
     // Reject a malformed or absurd execTick before it hits commandQueue: a
     // far-future value would bloat the queue unboundedly (pruning only drops
@@ -279,8 +281,8 @@ onNetMessage((msg, src) => {
     // is issuerTick+INPUT_DELAY, and a receiver trails the issuer by at most
     // LOCKSTEP_HARD_AHEAD, so this ceiling never rejects a real command.
     if (!Number.isInteger(msg.execTick) || msg.execTick > tick + LOCKSTEP_HARD_AHEAD + inputDelayMax()) return;
-    scheduleCommand(msg.execTick, peerTeam, msg.seq, msg.cmd);
-    noteCmdSlack(peerTeam, msg.execTick - tick);
+    scheduleCommand(msg.execTick, peerSeat, msg.seq, msg.cmd);
+    noteCmdSlack(peerSeat, msg.execTick - tick);
     // Late: that tick already ran without this command. The next frame rewinds and replays with it in place
     // (lockstepFlushLate) — converges with what the peer computed on time.
     if (msg.execTick <= tick) lockstepLateTick = Math.min(lockstepLateTick, msg.execTick);
@@ -293,7 +295,9 @@ onNetMessage((msg, src) => {
     lockstepResetState();
     // Adopt the host-assigned seat BEFORE the state apply — the fog
     // seeding and camera recenter below both read myTeam.
-    if (msg.yourTeam != null) { myTeam = msg.yourTeam; localHumanTeam = msg.yourTeam; }
+    if (msg.numTeams) NUM_TEAMS = msg.numTeams;   // (a fresh page boots at 2: the seat → team lookup needs the match's)
+    setCoSeats(msg.co);
+    if (msg.yourSeat != null) { mySeat = msg.yourSeat; myTeam = localHumanTeam = seatTeam(mySeat); }
     if (typeof setGameSpeed === 'function') setGameSpeed(msg.speed);
     // A reconnecting guest is a fresh page with reset (identity/empty) name +
     // color defaults — re-apply the agreed cosmetics so it doesn't show the
@@ -324,7 +328,8 @@ onNetMessage((msg, src) => {
     if (typeof showMpStatus === 'function') showMpStatus('Reconnected! Match resumed.');
     // A fresh page steers nothing: release a unit our team left possessed
     // (character mode, js/pov3d.js), or the AI would ignore it for good.
-    if (entities.some(e => e.team === myTeam && e.possessed) && !(typeof povSteering === 'function' && povSteering())) {
+    // (not on a shared town: the unit may be the other player's)
+    if (teamSeats(myTeam).length === 1 && entities.some(e => e.team === myTeam && e.possessed) && !(typeof povSteering === 'function' && povSteering())) {
       submitCommand({ kind: 'possess', on: false });
     }
     // Back at the seat: take command from the AI that stood in while we were gone.
@@ -619,7 +624,7 @@ function lockstepApplyResync(state){
     // …but a command lost in transit when the link dropped (or issued while disconnected) never reached the host: it
     // would run here only. A guest re-sends its own pending ones; the host schedules what it lacks, relays it, and
     // every peer drops the duplicates (scheduleCommand).
-    if (netRole === 'guest') commandQueue.forEach((arr, t) => { if (t > tick) for (const c of arr) if (c.team === myTeam) sendToAllPeers({ type: 'cmd-ls', execTick: t, seq: c.seq, cmd: c.cmd }); });
+    if (netRole === 'guest') commandQueue.forEach((arr, t) => { if (t > tick) for (const c of arr) if (c.seat === mySeat) sendToAllPeers({ type: 'cmd-ls', execTick: t, seq: c.seq, cmd: c.cmd }); });
   }
   lockstepSnapshots.length = 0;
   DET.history.length = 0;
@@ -652,10 +657,10 @@ function lockstepResumeGuest(seat){
   let state = lockstepBuildResyncState();
   // Carry the cosmetic names/colors so a fresh reconnecting page re-shows
   // them (the resync `state` deliberately excludes them — not sim state),
-  // and yourTeam so the page knows which seat it plays.
+  // and yourSeat (with the shared-town seats) so the page knows which seat it plays.
   for (const s of netConnectedGuestSeats()) {
     if (seat == null || s === seat) {
-      sendToGuest(s, { type: 'lockstep-resume', state, speed: GAME_SPEED, names: teamNames, colors: teamColorMap, yourTeam: s });
+      sendToGuest(s, { type: 'lockstep-resume', state, speed: GAME_SPEED, names: teamNames, colors: teamColorMap, numTeams: NUM_TEAMS, co: coSeats, yourSeat: s });
     } else {
       sendToGuest(s, { type: 'lockstep-resync', state });
     }

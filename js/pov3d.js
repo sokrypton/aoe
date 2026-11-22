@@ -5293,7 +5293,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // The ground shakes under something huge (the dragon's footfalls and slams): an offset on the drawn camera that dies
   // away fast, strongest near the camera's focus. Viewer-only.
-  let camShake = 0;
+  let camShake = 0, rideH = 1.7;   // rideH: the eye's height on a dragon's back
   function shakeFrom(x, z, amp){ if (!camAt) return; const d = Math.hypot(x - camAt.x, z - camAt.y); camShake = Math.max(camShake, amp * Math.max(0, 1 - d / 18)); }
   // Mouse / drag look arrives as pointer events, at their own uneven rate (not the frame's): each is banked here and
   // paid out over a few frames (LOOK_EASE s), so the view turns evenly instead of in steps.
@@ -5329,7 +5329,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     } else { // through the eyes: at the head (a rider's up in the saddle), looking where it faces, pitched by mouse-look
       // just behind the (hidden) head: the arms and tool fall in view. A rider sits a little higher and further back, so the
       // horse's neck lies below the view rather than rising up the middle of it (close up, a wide lens stretched it tall)
-      const mounted = isMountedUnit(e.utype), h = mounted ? 1.14 : e.utype === 'ram' ? 0.8 : 0.58, fwd = mounted ? -0.32 : RIG_UNITS(e.utype) ? -0.12 : 0;
+      const mounted = isMountedUnit(e.utype), fwd = mounted ? -0.32 : RIG_UNITS(e.utype) ? -0.12 : 0;
+      let h = mounted ? 1.14 : e.utype === 'ram' ? 0.8 : 0.58;
+      // the dragon: from its back — over the treetops and roofs once aloft (eased with the take-off and the landing)
+      if (e.utype === 'dragon') { const to = dragonAloft(e) ? 3.6 : 1.7; rideH += (to - rideH) * Math.min(1, camDt * 1.6); h = rideH; }
       camAt = { x: eye.x, y: eye.y };
       camera.position.set(eye.x + cx * fwd, h, eye.y + cy * fwd);
       const pc = Math.cos(fpPitch);

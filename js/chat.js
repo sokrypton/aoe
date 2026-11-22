@@ -30,17 +30,17 @@ function chatSeatColor(team){
   if (window.__mpSession.inLobby && typeof lobbyState !== 'undefined' && lobbyState && lobbyState.seats[team]) {
     return PLAYER_TEAM_COLORS[lobbyState.seats[team].colorIdx];
   }
-  return teamColor(team);
+  return teamColor(seatTeam(team));
 }
 function chatSeatName(team){
   if (window.__mpSession.inLobby && typeof lobbyState !== 'undefined' && lobbyState && lobbyState.seats[team]) {
     let s = lobbyState.seats[team];
     return (s.name && s.name.trim()) ? s.name.trim() : (s.type === 'ai' ? 'Computer' : ('Player ' + (team + 1)));
   }
-  return teamName(team);
+  return seatName(team);
 }
 
-// Sender identified by TEAM (== seat index; the host derives it from the
+// Sender identified by SEAT (the host derives it from the
 // sending connection, guests from the host's relay stamp), labeled with the
 // seat's chosen name in its chosen color. Routes to the lobby's own log
 // while in the lobby, else the in-match overlay log. All text goes through
@@ -105,7 +105,7 @@ function sendChatMessage(text){
   else sendToHost(msg); // the host's relay forwards it to the other guests
   // In the lobby a guest's myTeam isn't assigned yet — the seat index is
   // the identity there.
-  addChatLine(window.__mpSession.inLobby ? lobbyMySeatIndex() : myTeam, text);
+  addChatLine(window.__mpSession.inLobby ? lobbyMySeatIndex() : mySeat, text);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

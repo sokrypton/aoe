@@ -518,6 +518,58 @@ async function assertChecksumsAgree(pages){
     await h2.close(); await gA.close(); await gB.close();
   });
 
+  await scenario('shared town: a guest plays WITH another -> one team, both command it -> one drops, the town plays on -> rejoins its seat', async () => {
+    const { host, joinQuery } = await hostGame();
+    const gA = await newGamePage(joinQuery);
+    let gB = await newGamePage(joinQuery);
+    await waitInLobby(host); await waitInLobby(gA); await waitInLobby(gB);
+    await host.waitForFunction(() => lobbyState.seats.length === 3, { timeout: 20000 });
+    // B picks A's town in its own row (the Team menu's "with …" entry).
+    await gB.evaluate(() => { const me = lobbyMySeatIndex(); lobbySetWith(me, me === 1 ? 2 : 1); });
+    for (const p of [host, gA, gB]) await p.waitForFunction(() => lobbyState.numTeams === 2 && lobbyState.seats[2].with === 1, { timeout: 15000 });
+    const seats = [await gA.evaluate(() => lobbyMySeatIndex()), await gB.evaluate(() => lobbyMySeatIndex())];
+    if (seats.join() !== '1,2') throw new Error('lobby seats ' + seats);
+    await readyUp(gA); await readyUp(gB);
+    await startMatch(host);
+    for (const p of [host, gA, gB]) await waitMatchRunning(p);
+    for (const [p, who, seat, team] of [[host, 'host', 0, 0], [gA, 'A', 1, 1], [gB, 'B', 2, 1]]) {
+      const s = await p.evaluate(() => ({ n: NUM_TEAMS, co: coSeats.length, mySeat, myTeam, towns: entities.filter(e => e.btype === 'TC').length }));
+      if (s.n !== 2 || s.co !== 1 || s.towns !== 2 || s.mySeat !== seat || s.myTeam !== team) throw new Error(who + ': ' + JSON.stringify(s));
+    }
+    log('   [shared] two towns, three players');
+    // A and B each order a different villager of the one town, in the same instant; every peer runs both orders.
+    const vils = await host.evaluate(() => entities.filter(e => e.team === 1 && e.utype === 'villager').sort((a, b) => a.id - b.id).slice(0, 2).map(v => ({ id: v.id, x: Math.round(v.x), y: Math.round(v.y) })));
+    const order = (p, v) => p.evaluate(v => submitCommand({ kind: 'command', unitIds: [v.id], tileX: v.x + 4, tileY: v.y + 4 }), v);
+    await Promise.all([order(gA, vils[0]), order(gB, vils[1]), issueMove(host)]);
+    for (const [p, who] of [[host, 'host'], [gA, 'A'], [gB, 'B']]) {
+      await p.waitForFunction(vs => vs.every(v => { const e = entitiesById.get(v.id); return e && (Math.abs(e.x - v.x) + Math.abs(e.y - v.y)) > 1.5; }), vils, { timeout: 15000 })
+        .catch(() => { throw new Error(who + ': a shared-town order did not run'); });
+    }
+    // A host-only control from a guest is refused, whichever town it sits on.
+    await gB.evaluate(() => submitCommand({ kind: 'set-speed', v: 4 }));
+    await host.waitForTimeout(12000);
+    for (const [p, who] of [[host, 'host'], [gA, 'A'], [gB, 'B']]) { await assertHealthy(p, who); if (await p.evaluate(() => GAME_SPEED) === 4) throw new Error(who + ': a guest set the speed'); }
+    await assertChecksumsAgree([host, gA, gB]);
+    log('   [shared] both command the town; checksums agree');
+    // B drops: nothing waits on it (A still plays the town), and it comes back to its own seat.
+    await gB.close();
+    await host.waitForFunction(() => missingSeats.includes(2), { timeout: 15000 });
+    const st = await host.evaluate(() => ({ paused: gamePaused, awaits: townAwaits(2), human: teamControllers[1].type, txt: document.getElementById('mp-missing-text').textContent }));
+    if (st.paused || st.awaits || st.human !== 'human' || !st.txt.includes('rejoin any time')) throw new Error('after the drop: ' + JSON.stringify(st));
+    await host.evaluate(() => standInForMissing());   // (the AI must not take a town its other player still runs)
+    await order(gA, { id: vils[0].id, x: vils[0].x, y: vils[0].y - 4 });
+    await host.waitForTimeout(3000);
+    if (await host.evaluate(() => teamControllers[1].type) !== 'human') throw new Error('the AI took a town that still has a player');
+    gB = await newGamePage(joinQuery);
+    await gB.waitForFunction(() => lockstepActive && gameStarted && mySeat === 2 && myTeam === 1, { timeout: 30000 });
+    await host.waitForFunction(() => missingSeats.length === 0, { timeout: 15000 });
+    await order(gB, { id: vils[1].id, x: vils[1].x, y: vils[1].y - 4 });
+    await host.waitForTimeout(12000);
+    for (const [p, who] of [[host, 'host'], [gA, 'A'], [gB, 'B']]) await assertHealthy(p, who);
+    await assertChecksumsAgree([host, gA, gB]);
+    await host.close(); await gA.close(); await gB.close();
+  });
+
   await browser.close();
   srv.close();
 
