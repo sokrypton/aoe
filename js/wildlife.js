@@ -41,7 +41,7 @@ function updateSheepBehavior(e){
   // (perf). WRAPPED, not an early return — the sheep branch falls through
   // to the shared movement step below, which must still walk the wander path.
   if((tick+e.id)%3===0){
-    let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team));
+    let closest=closestUnitNear(e,5,en=>isPlayerTeam(en.team)&&en.utype!=='dragon');
     if(closest && closest.team!==e.team){
       let guarded = false;
       if (isPlayerTeam(e.team)) {
@@ -84,7 +84,8 @@ function updateBearBehavior(e){
     // Sheep are ignored (AoE2 wolves don't hunt herdables) and the check
     // runs on a stagger so 5 bears don't all scan every tick.
     if(!e.leashCooling && tick%T30(10)===e.id%T30(10)){
-      let closest=closestUnitNear(e,5.5,en=>isPlayerTeam(en.team));
+      // (a ridden dragon is no prey: it is out of reach overhead)
+      let closest=closestUnitNear(e,5.5,en=>isPlayerTeam(en.team)&&en.utype!=='dragon');
       if(closest){
         e.target=closest.id;
         clearUnitPath(e);
@@ -126,7 +127,7 @@ function dragonBodyRadius(d,x,y){
 // each tick, straight away from it — onto open ground only. Movers aren't pushed: its blocked tiles stop and re-route them.
 function dragonShove(){
   for(let i=0;i<entities.length;i++){
-    let d=entities[i]; if(d.utype!=='dragon'||d.hp<=0||d.garrisonedIn)continue;
+    let d=entities[i]; if(d.utype!=='dragon'||d.hp<=0||d.garrisonedIn||dragonAloft(d))continue;
     for(let j=0;j<entities.length;j++){
       let u=entities[j];
       if(u===d||u.type!=='unit'||u.hp<=0||u.garrisonedIn||u.utype==='sheep_carcass'||u.utype==='dragon'||u.path.length)continue;
@@ -140,15 +141,90 @@ function dragonShove(){
 }
 const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                                       // (turns 30° a game-second)
       DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600), DRAGON_STEP_COS=0.82;
+// The dragon ridden. A player's own sheep brought within DRAGON_FEED_R of the dragon on the ground is eaten, and
+// the dragon is that player's for DRAGON_RIDE: one of their units (e.team), ordered like any other — and aloft: it
+// flies straight over everything (no path, no blocked tiles), turns fast, and burns whatever comes under its nose.
+// Aloft only archers reach it (damageEntity). When its time is up — or it is brought down — it is gaia's again and
+// flies home (homing) to land and sleep; it won't take another offering for DRAGON_REST after landing.
+// The ride is a minute of REAL time: rideLeft counts ticks at 1x, and runs down by 1/GAME_SPEED a tick (GAME_SPEED is
+// peer-synced and rewinds with the lockstep snapshot).
+// rideLeft / homing / flyX / flyY / flyTarget / tameReadyAt are sim state: hashed (js/determinism.js).
+const DRAGON_FEED_R=4, DRAGON_RIDE=T30(1800), DRAGON_REST=T30(5400), DRAGON_FLY=3/TPS, DRAGON_FLY_TURN=(Math.PI*0.9)/TPS, DRAGON_GLIDE=1.5;
+// Real seconds of its ride left (the HUD countdown).
+function dragonRideSeconds(e){ return Math.max(0, Math.ceil(e.rideLeft / TPS)); }
+// Flying home after a ride it is shown to every viewer through the fog (viewer-side only: the sim's sight is unchanged).
+function dragonSeenByAll(e){ return e.utype==='dragon'&&!!e.homing; }
+function dragonAloft(e){ return e.utype==='dragon'&&(e.rideLeft!==undefined||!!e.homing); }
+// The sheep offered to it, if any: the lowest-id live sheep of a player's within DRAGON_FEED_R of it (entities are in
+// id order). Asleep or awake, so long as it is on the ground and whole; resting after a ride, it says so and waits.
+function dragonOffering(e){
+  for(let i=0;i<entities.length;i++){ let s=entities[i];
+    if(s.utype!=='sheep'||s.hp<=0||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
+    if(tick>=(e.tameReadyAt||0))return s;
+    if(!window.__resim&&s.team===myTeam&&tick%T30(150)===0&&typeof showMsg==='function')showMsg('The dragon is resting: it will take an offering in '+Math.ceil((e.tameReadyAt-tick)/TPS/GAME_SPEED)+'s');
+    return null; }
+  return null;
+}
+function dragonTakeOffering(e,s){
+  e.team=s.team; e.rideLeft=DRAGON_RIDE; e.awake=true; e.target=null; e.flyTarget=undefined; e.flyX=e.x; e.flyY=e.y; clearUnitPath(e);
+  s.hp=0;   // (gone this tick too: whatever still holds it sees it dead)
+  selected=selected.filter(u=>u.id!==s.id); entities=entities.filter(u=>u.id!==s.id); entitiesById.delete(s.id);   // eaten whole: no carcass
+  if(window.playSound)window.playSound('dragon',e.x,e.y);
+  if(!window.__resim&&typeof showMsg==='function')showMsg(e.team===myTeam?'The dragon takes your offering: it is yours to fly for a minute!':teamName(e.team)+' rides the dragon!');
+}
+// Its ride over (time up, or brought down): gaia's again, and home to its lair.
+function dragonEndRide(e){
+  if(!window.__resim&&typeof showMsg==='function'&&e.rideLeft!==undefined)showMsg('The dragon returns to its lair');
+  e.possessed=false;   // (character mode lets go of it)
+  e.team=GAIA_TEAM; e.rideLeft=undefined; e.homing=true; e.target=null; e.flyTarget=undefined; e.explicitAttack=false; clearUnitPath(e);
+}
+// One tick aloft: toward (x, y) — turning, and flying forward once roughly headed there; `hold`: hover this far short.
+function dragonFly(e,x,y,hold){
+  let dx=x-e.x, dy=y-e.y, d=Math.sqrt(dx*dx+dy*dy);
+  if(d>hold+0.02||(hold>0&&d>1e-6)){ let a=simAtan2(dy,dx), off=a-(e.faceAng||0); off=simAtan2(simSin(off),simCos(off));
+    e.faceAng=(e.faceAng||0)+Math.max(-DRAGON_FLY_TURN,Math.min(DRAGON_FLY_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
+    let st=Math.min(DRAGON_FLY,d-hold);
+    // (inside its turning circle it slides straight to the spot: flying along its nose it would orbit it)
+    if(st>0&&d-hold<DRAGON_GLIDE){ e.x+=dx/d*st; e.y+=dy/d*st; }
+    else if(st>0&&simCos(off)>0.3){ e.x+=simCos(e.faceAng)*st; e.y+=simSin(e.faceAng)*st; }
+    e.x=Math.max(0,Math.min(MAP-1,e.x)); e.y=Math.max(0,Math.min(MAP-1,e.y)); }
+  else if(!hold){ e.x=x; e.y=y; }
+  e.fromX=e.x; e.fromY=e.y; e.moveT=0;
+  return d;
+}
+function updateDragonAloft(e){
+  if(e.homing){                                                                   // home, to land and sleep
+    if(dragonFly(e,e.homeX,e.homeY,0)<=0.02){ e.x=e.homeX; e.y=e.homeY; e.fromX=e.x; e.fromY=e.y; e.homing=false; e.awake=false; e.calmSince=tick; e.leashCooling=false; e.tameReadyAt=tick+DRAGON_REST; }
+    return;
+  }
+  let was=e.rideLeft; e.rideLeft-=1/GAME_SPEED;
+  if(e.rideLeft<=0){ dragonEndRide(e); return; }
+  if(!window.__resim&&e.team===myTeam&&typeof showMsg==='function'&&was>T30(300)&&e.rideLeft<=T30(300))showMsg('The dragon is yours for 10 more seconds');
+  // Its orders come straight from the player's command (execUnitCommand: flyTarget, or flyX / flyY). Whatever the unit
+  // machinery hands it meanwhile is dropped — a target (hit by a tower, it would turn on the tower) — or, a ground move
+  // (Eye View steering), taken as where to fly.
+  if(e.target)dropTarget(e);
+  if(e.path.length||(e.order&&e.order.kind==='move')){ let o=e.order&&e.order.kind==='move'?e.order:e.path[e.path.length-1];
+    e.flyX=o.x; e.flyY=o.y; e.flyTarget=undefined; clearUnitPath(e); if(e.order)issueOrder(e,null); }
+  let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null;
+  if(t&&(t.hp<=0||t.garrisonedIn||sameSide(t.team,e.team))){ t=null; }
+  if(!t&&e.flyTarget!==undefined){ e.flyTarget=undefined; e.flyX=e.x; e.flyY=e.y; }
+  if(t){ let c=t.type==='building'?footprintCenter(t):t; dragonFly(e,c.x,c.y,DRAGON_BREATH_R-1); }
+  else dragonFly(e,e.flyX,e.flyY,0);
+  if(e.atkCooldown<=0&&dragonBreath(e,true)){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; }   // whatever is under its nose
+}
 function updateDragonBehavior(e){
   if(e.utype!=='dragon')return;
   if(e.homeX===undefined){e.homeX=e.x;e.homeY=e.y;}
+  if(dragonAloft(e)){ updateDragonAloft(e); return; }
   // Asleep it heals, 1 hp every DRAGON_REGEN ticks; knocked out (spent) it stays down, deaf to everything, till whole.
   if(!e.awake&&e.hp<e.maxHp&&tick%DRAGON_REGEN===0)e.hp++;
   if(e.spent){ if(e.hp>=e.maxHp)e.spent=false; else { e.target=null; clearUnitPath(e); return; } }
+  // A sheep brought near is an offering — asleep or awake (a sheep alone never wakes it).
+  if(tick%5===e.id%5){ let s=dragonOffering(e); if(s){ dragonTakeOffering(e,s); return; } }
   let home={x:e.homeX,y:e.homeY}, hit=e.lastEnemyHitTick!==undefined&&tick-e.lastEnemyHitTick<3; // (hashed; lastHitTick is the minimap's)
   if(!e.awake){
-    if(!e.target&&!hit&&!(tick%T30(10)===e.id%T30(10)&&closestUnitNear(e,DRAGON_WAKE_R,en=>isPlayerTeam(en.team)))){ clearUnitPath(e); return; } // still asleep
+    if(!e.target&&!hit&&!(tick%T30(10)===e.id%T30(10)&&closestUnitNear(e,DRAGON_WAKE_R,en=>isPlayerTeam(en.team)&&!isHarmlessAnimal(en)))){ clearUnitPath(e); return; } // still asleep
     e.awake=true; e.calmSince=tick; e.leashCooling=false;
     if(window.playSound)window.playSound('dragon',e.x,e.y);
   }
@@ -193,13 +269,14 @@ function dragonTurn(e,a){
   e.faceAng+=Math.max(-DRAGON_TURN,Math.min(DRAGON_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
 }
 // Fire in a cone along its heading: every player unit and building within reach and angle takes the dragon's hit
-// (buildings its bonus). Entities in id order — the order damage lands in is part of the sim.
-function dragonBreath(e){
+// (buildings its bonus). Entities in id order — the order damage lands in is part of the sim. dry: only whether
+// anything is in the fire (nothing burnt, nothing shown).
+function dragonBreath(e,dry){
   let fx=simCos(e.faceAng), fy=simSin(e.faceAng);
-  e.breathTick=tick; e.breathX=fx; e.breathY=fy; // (the renderers' flame; the sim never reads them)
+  if(!dry){ e.breathTick=tick; e.breathX=fx; e.breathY=fy; } // (the renderers' flame; the sim never reads them)
   for(let i=0;i<entities.length;i++){
     let o=entities[i];
-    if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team))continue;
+    if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team)||sameSide(o.team,e.team))continue;   // (ridden: not its rider's side)
     if(o.type==='unit'&&isHarmlessAnimal(o))continue;
     let ox, oy, d;
     if(o.type==='building'){ let b=BLDGS[o.btype], w=o.w||b.w, h=o.h||b.h;
@@ -208,7 +285,9 @@ function dragonBreath(e){
     let dx=ox-e.x, dy=oy-e.y; d=Math.sqrt(dx*dx+dy*dy);
     if(d>DRAGON_BREATH_R)continue;
     if(d>0.6&&(dx*fx+dy*fy)/d<DRAGON_BREATH_COS)continue;
+    if(dry)return true;
     damageEntity(e,o);
   }
+  if(dry)return false;
   if(window.playSound)window.playSound('fire',e.x,e.y);
 }

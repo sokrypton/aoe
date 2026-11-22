@@ -176,6 +176,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 </div>
 <div id="pop-wrap">
   <div id="chat-btn" onclick="openChatInput()" style="display:none;" data-tip-label="Chat" data-tip-desc="Send a message to your opponent."><span class="btn-emoji">💬</span></div>
+  <div id="view-btn" style="display:none;" onclick="viewBtnClick()"><span class="btn-emoji"></span></div>
   <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji sprite-icon icon-idle"></span></div>
   <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji sprite-icon icon-bell"></span></div>
   <div id="eye-btn" style="display:none;" onclick="eyeBtnClick()"></div>
@@ -206,6 +207,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
+<div id="dragon-timer" style="display:none;" onclick="dragonTimerClick()"><span id="dragon-timer-text"></span><div id="dragon-timer-bar"><div id="dragon-timer-fill"></div></div></div>
 <div id="chat-log"></div>
 <div id="chat-input-wrap" style="display:none;">
   <span id="chat-input-prefix">To opponent:</span>
@@ -325,6 +327,11 @@ document.body.insertAdjacentHTML('afterbegin', `
     <div class="help-section">
       <h4>Defend Yourself</h4>
       <p>Attacked? Ring the <b>Town Bell</b> ${hi('bell')} (the buttons at the bottom right): villagers hurry into the Town Center and towers, which then shoot extra arrows. Ring it again to send them back to work. On the minimap, anything of yours under attack <b>blinks white</b>.</p>
+    </div>
+
+    <div class="help-section">
+      <h4>The Dragon</h4>
+      <p>A dragon sleeps at the heart of the map. Walk up to it and it wakes and burns whatever is near. But bring one of your <b>sheep</b> near it and it takes the offering: for <b>one minute</b> it is yours, in the air. Order it like any unit: it flies over walls and forests and burns what it is sent at, and only archers can reach it. Then it flies home to sleep, and won't take another sheep for a few minutes.</p>
     </div>
 
     <div class="help-section">

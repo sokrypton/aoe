@@ -85,7 +85,7 @@ one Barracks that trains every military unit, no Castle building, monks, relics 
 3. **Siege**: 2–3 rams with the army; infantry rides inside for protection and speed; the army keeps enemy
    melee off the rams while they break walls, gates, towers and finally the TC.
 4. **Defense**: stone walls with gates, towers on the gates, Masonry/Fortified Wall if the enemy has rams.
-5. **Win**: destroy the TC (knockout) or everything. A beaten AI resigns rather than playing on hopelessly.
+5. **Win**: destroy the TC and the villagers who could build another (knockout), or everything. The AI never resigns.
 
 ### Dumb things that must not happen
 
@@ -125,9 +125,9 @@ one Barracks that trains every military unit, no Castle building, monks, relics 
 | Walls (palisade + stone), gates, towers, upgrades wood → stone | ✅ | Salvage-swap; gates lock. |
 | Market buy/sell, trade carts, Guilds | ✅ | Distance-scaled gold; a route to any other player's Market (an ally's in practice — an enemy's gets raided). |
 | Rams: ride inside (soldiers on foot, not villagers), break buildings, helpless in melee | ✅ | AI loads its wave's foot soldiers. |
-| Victory: TC knockout; AI resigns when hopeless | ✅ | `maybeResignAI`. |
+| Victory: no TC and no villager left to rebuild it; the AI never resigns | ✅ | `handleDeath`, `teamHasTC`/`teamCanRebuild`. |
 | **Attack-move** (walk there, fight on the way) | ✖ | Players can only move or attack. The AI's recon march is a plain move. |
-| Second TC / Castle / monks / Imperial Age | ✖ by design | Out of scope (one TC = the knockout rule). |
+| Second TC / Castle / monks / Imperial Age | ✖ by design | Out of scope (one TC a team; a lost one can be rebuilt). |
 
 ### AI following the script (self-play, 1v1 hard, 40 games — round r28)
 

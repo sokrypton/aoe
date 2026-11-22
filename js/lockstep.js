@@ -436,6 +436,7 @@ function lockstepCaptureState(){
     // Sim-relevant (gates buildingVisibleToTeam etc.) — both peers must
     // agree, e.g. after the host loads a fog-disabled save mid-match.
     fogDisabled: !!window.fogDisabled,
+    speed: GAME_SPEED, // the sim reads it (the dragon's ride clock): a rewind across a set-speed must see the old one
     scenario: captureScenario(), // trigger script + state (js/triggers.js); null in a plain match
   });
 }
@@ -550,6 +551,7 @@ function lockstepApplyResync(state){
   MAP = state.map.size;
   // Before initFog(): it seeds the whole grid as revealed when fog is off.
   if (state.fogDisabled !== undefined) window.fogDisabled = !!state.fogDisabled;
+  if (state.speed && state.speed !== GAME_SPEED && typeof setGameSpeed === 'function') setGameSpeed(state.speed);
   if (!fog.length || fog.length !== MAP) initFog();
   if (!window.bellRinging) window.bellRinging = Array.from({length: NUM_TEAMS}, () => false);
   entities = state.entities;

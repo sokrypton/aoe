@@ -80,7 +80,9 @@ function detEntityHash(e){
   h = detMix(h, e.research && typeof e.research.target === 'number' ? e.research.target : -1);
   h = detMixStr(h, e.research && typeof e.research.target === 'string' ? e.research.target : null);
   h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
-  h = detMix(h, e.awake ? 1 : 0); h = detMix(h, e.spent ? 1 : 0); if (e.faceAng !== undefined) h = detMixFloat(h, e.faceAng); h = detMix(h, e.calmSince === undefined ? -1 : e.calmSince); // the dragon's sleep (sim-read)
+  h = detMix(h, e.awake ? 1 : 0); h = detMix(h, e.spent ? 1 : 0); if (e.faceAng !== undefined) h = detMixFloat(h, e.faceAng); h = detMix(h, e.calmSince === undefined ? -1 : e.calmSince);
+  h = detMixFloat(h, e.rideLeft === undefined ? -1 : e.rideLeft); h = detMix(h, e.homing ? 1 : 0); h = detMix(h, e.tameReadyAt || 0); h = detMix(h, e.flyTarget === undefined ? -1 : e.flyTarget);
+  if (e.flyX !== undefined) { h = detMixFloat(h, e.flyX); h = detMixFloat(h, e.flyY); } // the dragon's sleep (sim-read)
   // Fields the sim reads on later ticks that previously went unhashed — a
   // divergence here only tripped the checksum once it eventually moved
   // hp/x/y, often far outside the resync window.
@@ -325,7 +327,6 @@ function simChecksum(){
       h = detMix(h, ai.militiaUntil == null ? -1 : ai.militiaUntil);        // civilian-militia window (bell suppression)
       h = detMix(h, ai.savingForAge ? 1 : 0);
       h = detMix(h, ai.lastAgeUpTick == null ? -1 : ai.lastAgeUpTick);
-      h = detMix(h, ai.resignScore || 0);
       // War-state memory: the bell reads lastBaseHitTick EVERY tick and the
       // under-attack doctrine (walls/eco/garrison-recall) gates on it —
       // both were unhashed sim state (pre-existing gap; seenWarTick is its

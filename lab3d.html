@@ -78,7 +78,7 @@
   // page-shell injects the game's HUD (the core scripts need its canvas); the lab hides all of it.
   for (const el of [...document.body.children]) if (!['lab-bar', 'lab-view', 'lab-readout', 'lab-hint'].includes(el.id) && el.tagName !== 'SCRIPT') el.style.display = 'none';
   const LAB = window.__pov3dLab, THREE = await LAB.load();
-  const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8, attack: 1.3, gallop: 0.62, sleep: 5, graze: 3, roar: 1.6, breathe: 1.6 }; // seconds per cycle
+  const PERIOD = { idle: 4, walk: 1.1, flee: 0.62, carry: 1.1, barrow: 1.1, chop: 1.6, saw: 1.0, mine: 1.5, farm: 1.8, plow: 1.1, forage: 1.8, butcher: 0.9, build: 1.1, repair: 0.9, drop: 2.2, fight: 0.8, die: 8, wake: 12, attack: 1.3, gallop: 0.62, sleep: 5, graze: 3, roar: 1.6, breathe: 1.6 }; // seconds per cycle
   const $ = id => document.getElementById(id);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.localClippingEnabled = true; // construction sites
@@ -115,7 +115,7 @@
     drag = { x: e.clientX, y: e.clientY }; setCamButtons(null);
   });
   renderer.domElement.addEventListener('pointerup', () => { drag = null; });
-  renderer.domElement.addEventListener('wheel', e => { orbit.dist = Math.max(0.8, Math.min(6, orbit.dist * (1 + e.deltaY * 0.001))); e.preventDefault(); }, { passive: false });
+  renderer.domElement.addEventListener('wheel', e => { orbit.dist = Math.max(0.8, Math.min(14, orbit.dist * (1 + e.deltaY * 0.001))); e.preventDefault(); }, { passive: false });
   const CAMS = { side: [0, 0.2], front: [Math.PI / 2, 0.2], q: [Math.PI / 4, 0.28], back: [-Math.PI / 2, 0.35] };
   const setCamButtons = k => document.querySelectorAll('[data-cam]').forEach(b => b.classList.toggle('on', b.dataset.cam === k));
   document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => { [orbit.yaw, orbit.pitch] = CAMS[b.dataset.cam]; setCamButtons(b.dataset.cam); });

@@ -306,6 +306,31 @@ function eyeBtnClick(){
   else if (selected.length === 1 && selected[0].type === 'unit') window.povEyes(selected[0].id);  // in
   updateUI();
 }
+// The 2D/3D switch (#view-btn): one tap, the same switch as Settings → View. Not offered in character mode, which is 3D by nature.
+function viewBtnClick(){ if (window.setViewMode) setViewMode(povWorld() ? '2d' : '3d'); refreshViewBtn(); }
+// The ride countdown: up for as long as the viewer's team has the dragon; a tap selects it and goes to it.
+function myDragon(){ return entities.find(e => e.utype === 'dragon' && e.rideLeft !== undefined && e.team === myTeam); }
+function refreshDragonTimer(){
+  const el = byId('dragon-timer'); if (!el) return;
+  const d = gameStarted ? myDragon() : null, key = d ? dragonRideSeconds(d) : -1;
+  if (el._key === key) return; el._key = key;
+  el.style.display = d ? '' : 'none'; if (!d) return;
+  byId('dragon-timer-text').textContent = 'Dragon  0:' + String(key).padStart(2, '0');
+  byId('dragon-timer-fill').style.width = Math.min(100, d.rideLeft / DRAGON_RIDE * 100) + '%';
+  el.classList.toggle('ending', key <= 10);
+}
+function dragonTimerClick(){ const d = myDragon(); if (!d) return; selected = [d]; jumpCameraToTile(d.x, d.y); }
+function refreshViewBtn(){
+  let btn = byId('view-btn'); if (!btn) return;
+  let on = gameStarted && !gameOver && !!window.setViewMode && !(window.povEyesUnit && povEyesUnit() != null);
+  let to = on ? (povWorld() ? '2D' : '3D') : '';
+  if (btn._to === to) return;
+  btn._to = to;
+  btn.style.display = on ? 'flex' : 'none';
+  btn.firstChild.textContent = to;
+  btn.dataset.tipLabel = 'Switch to ' + to;
+  btn.dataset.tipDesc = to === '3D' ? 'See the world in 3D.' : 'Return to the 2D map.';
+}
 function setPortraitIcon(port, key, fallbackEmoji){
   [...port.classList].filter(c=>c==='sprite-icon'||c.startsWith('icon-')).forEach(c=>port.classList.remove(c));
   if (SPRITE_ICON_KEYS.has(key)) {
@@ -421,6 +446,7 @@ function refreshPlayerList(){
 
 function updateUI(){
   refreshPlayerList();
+  refreshViewBtn(); refreshDragonTimer();
   // resourceStore(myTeam): team 0's `res` for the host/single-player, or
   // `aiRes` for a multiplayer guest playing team 1 — so the topbar shows
   // whichever side THIS browser tab actually controls.
@@ -494,6 +520,8 @@ function updateUI(){
     // toggle lands (the button is derived from selected gates' .locked).
     if (e.type === 'building' && isGateBtype(e.btype)) currentSelectionDetails += ':gl' + selected.filter(s => s.locked).length;
     // Auto Scout state, so the toggle button label flips the instant it lands.
+    if (e.utype === 'villager') currentSelectionDetails += ':tc' + (teamHasTC(myTeam) ? 1 : 0);   // (the build menu offers a Town Center with none standing)
+    if (e.utype === 'dragon' && e.rideLeft !== undefined) currentSelectionDetails += ':ride' + dragonRideSeconds(e);
     if (e.type === 'unit' && e.utype === 'scout') currentSelectionDetails += ':as' + selected.filter(s => s.order && s.order.kind === 'scout').length;
     // Stance, so the highlighted stance button moves the instant a set-stance
     // command lands. This is the COARSE gate (updateUI early-returns unless
@@ -1358,6 +1386,7 @@ function updateUI(){
         +`<div class="hp-bar-bg"><div class="hp-bar-fill" style="width: ${hpPct}%; background-color: ${isCarcass ? '#e2b13c' : hpColor};"></div></div>`;
     setSelHp(isClassicUI ? hpBlock : '');
     let det = isClassicUI ? '' : hpBlock;
+    if (e.utype === 'dragon' && e.rideLeft !== undefined) det += `<div>Yours for ${dragonRideSeconds(e)}s</div>`;
 
     // Display combat stats for military units
     let uData = UNITS[e.utype];
@@ -1533,16 +1562,17 @@ function updateUI(){
 
         // Economic Sub-Menu
         // Ordered by importance: pop cap first, then food, then the drop
-        // sites. TC deliberately hidden for now (rebuild-a-TC may return
-        // later — the placement path still supports it).
+        // sites. The Town Center is offered only with none standing: a lost
+        // one can be built again (placeBuilding holds the one-a-team rule).
         let builds=[
           {type:'HOUSE',label:'House',key:'Q'},
           {type:'FARM',label:'Farm',key:'W'},
           {type:'LCAMP',label:'Lumber Camp',key:'E'},
           {type:'MILL',label:'Mill',key:'R'},
           {type:'MCAMP',label:'Mining Camp',key:'T'},
-          {type:'MARKET',label:'Market',key:'Y'} // Feudal-gated; hidden until then by the filter below
-        ].filter(bi=>isUnlocked(myTeam,bi.type)); // future-proofed via AGE_REQ
+          {type:'MARKET',label:'Market',key:'Y'}, // Feudal-gated; hidden until then by the filter below
+          {type:'TC',label:'Town Center',key:'U'}
+        ].filter(bi=>isUnlocked(myTeam,bi.type)&&(bi.type!=='TC'||!teamHasTC(myTeam))); // future-proofed via AGE_REQ
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';
           btn.dataset.tipType='building';

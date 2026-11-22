@@ -165,12 +165,12 @@ function updateAI(ai){
   let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team&&!e.possessed); // (a player-steered unit is never dispatched — TC or not)
   let aiTC=aiBuildings.find(b=>b.btype==='TC');
   if(!aiTC){
-    // TC destroyed = the knockout (handleDeath flags it; no rebuilding).
-    // Remaining units keep gathering/fighting only until checkAllianceVictory
-    // ends the match.
+    // Its Town Center lost: the villagers build another the moment it can be paid for (placeBuilding allows one, with
+    // none standing; assignAIVillagers sends them to the site), and everything else gathers and fights on meanwhile.
     let vils=aiUnits.filter(u=>u.utype==='villager');
     let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
     let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
+    if(anchor&&vils.length&&canAfford(ai.team,BLDGS.TC.cost)){ let pos=findAIBuildSpot(ai,anchor,'TC'); if(pos)placeAIBuilding(ai,'TC',pos.x,pos.y); }
     assignAIVillagers(ai,vils,profile);
     if(anchor)controlAIMilitary(ai,mils,anchor,profile);
     controlAIScouts(ai,mils,null);
@@ -178,7 +178,7 @@ function updateAI(ai){
   }
 
   updateAIIntel(ai,aiTC); // what has scouting/combat actually revealed about the player this tick
-  if(maybeResignAI(ai,aiUnits))return; // AoE2-style concession — nothing left to plan
+  if(defeatedTeams[ai.team])return;   // (it never concedes: it plays on till it is knocked out)
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
   // !garrisonedIn: a rider sealed inside a ram cannot act — enterGarrison
@@ -224,30 +224,6 @@ function updateAI(ai){
   controlAIMilitary(ai,mils,aiTC,profile);
   controlAIScouts(ai,mils,aiTC);
   controlAITradeCarts(aiUnits);             // route idle carts to an ally Market
-}
-
-// ---- RESIGNATION (AoE2-style) ----
-// A hopeless team (collapsed workforce, no army, under fire, can't recover)
-// concedes after three consecutive hopeless decision ticks instead of forcing
-// the winner to raze a ghost town. Deterministic sim state (resignScore rides
-// AI_STATES); the message broadcasts to every viewer.
-function maybeResignAI(ai,aiUnits){
-  if(defeatedTeams[ai.team])return true;
-  // A player's own town on the Town AI (autopilot) never concedes for them: that's the player's call.
-  if(teamControllers[ai.team]&&teamControllers[ai.team].autopilot)return false;
-  let vils=0,mils=0;
-  for(let u of aiUnits){if(u.utype==='villager')vils++;else if(isArmyUnit(u.utype))mils++;}
-  let hit=lastTeamHit&&lastTeamHit[ai.team];
-  let hopeless=vils<4&&mils===0&&hit&&tick-hit.tick<T30(1800)&&
-    !canAfford(ai.team,UNITS.villager.cost);
-  ai.resignScore=hopeless?(ai.resignScore||0)+1:0;
-  if(ai.resignScore>=3){
-    defeatedTeams[ai.team]=true;
-    if(!window.__resim&&typeof showMsg==='function')showMsg('Team '+(ai.team+1)+' has resigned!');
-    checkAllianceVictory();
-    return true;
-  }
-  return false;
 }
 
 // ---- BEAR HUNT ----

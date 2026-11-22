@@ -730,7 +730,7 @@ function issueMoveOrder(e,x,y){
   // A goal on the dragon's body (a formation slot, a click on it) can never be reached — the unit ahead would stall
   // on the ring forever: moved out past its edge, on that side (a unit ordered onto its very centre: toward the unit).
   for(let i=0;i<entities.length;i++){ let d=entities[i];
-    if(d.utype!=='dragon'||d.hp<=0||!inDragonBody(d,x,y,0.35))continue;
+    if(d.utype!=='dragon'||d.hp<=0||dragonAloft(d)||!inDragonBody(d,x,y,0.35))continue;
     let dx=x-d.x, dy=y-d.y, l=Math.sqrt(dx*dx+dy*dy);
     if(l<0.5){ dx=e.x-d.x; dy=e.y-d.y; l=Math.sqrt(dx*dx+dy*dy)||1; }
     let r=dragonBodyRadius(d,d.x+dx,d.y+dy)+1;

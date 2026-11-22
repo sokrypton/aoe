@@ -264,7 +264,7 @@ function renderFrame(){
   // over the trunk, under the crown). Ore and bushes on visible tiles sort too (isSortedRes): a unit behind is behind.
   let trees = _treesScratch; trees.length = 0;
   for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
-    const tl = map[y][x];
+    const tl = seenTile(x, y);   // (in the fog: as last seen)
     if(tl.t===TERRAIN.FOREST && tl.res>0){
       let key = y*MAP + x;
       let rec = _treePool.get(key);
@@ -286,7 +286,7 @@ function renderFrame(){
       f = buildingFogLevel(en);
     } else {
       let ex = Math.round(en.x), ey = Math.round(en.y);
-      f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
+      f = dragonSeenByAll(en) ? 2 : (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
     }
     if (f === 0) return; // unexplored
 
@@ -407,6 +407,7 @@ function renderFrame(){
         if (en.utype === 'sheep_carcass') sortVal = en.y + en.x + 0.05;
         else { const S = en.utype === 'villager' && vil2DState.get(en.id);   // (a villager stepped into its work spot sorts there)
           sortVal = (S && S.wx != null ? S.wy + S.wx : en.y + en.x) + 0.25; }
+        if (en.utype === 'dragon' && dragonAloft(en)) sortVal += 1000;   // aloft: over every building and tree, never behind one
       }
       en.sortVal = sortVal;
       allDrawable.push(en);
@@ -467,7 +468,7 @@ function renderFrame(){
     } else if (isBuildingProxy(e)) {
       f = buildingFogLevel(e.entity);
     } else {
-      f = (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
+      f = dragonSeenByAll(e) ? 2 : (fog[ey] && fog[ey][ex] !== undefined) ? fog[ey][ex] : 0;
     }
     if (f === 0) return; // completely unexplored
     // A corpse currently in view is WITNESSED — remember it so it keeps

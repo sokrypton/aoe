@@ -1401,7 +1401,7 @@
     camera.updateMatrixWorld(); _fFr.fr.setFromProjectionMatrix(_fFr.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     featView.pos = camera.position.clone(); featView.dir = camera.getWorldDirection(new THREE.Vector3()); featView.fov = camera.fov;
     for (let y = Math.max(0, cy - R); y < Math.min(MAP, cy + R); y++) for (let x = Math.max(0, cx - R); x < Math.min(MAP, cx + R); x++) {
-      const t = map[y][x];
+      const t = seenTile(x, y);   // (in the fog: as last seen)
       if (!t.res || t.res <= 0 || !(fog[y] && fog[y][x])) continue;
       _fFr.s.center.set(x + 0.5, 0.8, y + 0.5); if (!_fFr.fr.intersectsSphere(_fFr.s)) continue; // (radius 2.5: a crown's reach, plus the margin a turn eats before the re-list)
       const wx = x + 0.5, wz = y + 0.5; putTile = y * MAP + x;
@@ -1420,7 +1420,7 @@
         // treeFellTicks, a render-side map) — a stump, the tree falling or lying
         // beside it while wood remains above 20, then just the stump.
         const key = x + ',' + y;
-        if (!treeFellTicks.has(key)) treeFellTicks.set(key, tick);
+        if (!treeFellTicks.has(key)) treeFellTicks.set(key, fog[y][x] === 2 ? tick : tick - T30(40));   // (first met in the fog already cut: it lies there)
         put('stump', wx, 0, wz, k, k, k); shade(0.14 * k);
         const falling = tick - treeFellTicks.get(key) < T30(40);
         if (falling || t.res > 20) fallers.push({ wx, wz, k, key });
@@ -1683,118 +1683,188 @@
   }
   // The dragon, from the same kit and as simple as the others (drawDragonBody, render-units, is its 2D twin): a
   // chest and haunch on four legs, a tapering neck up to a horned head with a hinged jaw, a long tail to a spade,
-  // a few plates along the back, two membrane wings on bones. The flame (hidden till it breathes) rides the jaw.
-  const DRAGON3D = { body: '#3f7a3a', dark: '#2c5a28', belly: '#dcc47e', membrane: '#6f9e4c', horn: '#efe3c4', eye: '#ffd23a' };
+  // a row of spikes down the spine, two membrane wings on bones. The flame (hidden till it breathes) rides the jaw.
+  const DRAGON3D = { body: DRAGON_COL.body, dark: DRAGON_COL.plate, belly: DRAGON_COL.belly, membrane: DRAGON_COL.membrane, horn: DRAGON_COL.horn, eye: DRAGON_COL.eye, glow: DRAGON_COL.glow };   // (render-units: one palette for both views)
   let dragonPlateGeo = null, dragonClawGeo = null;
   // leg bones (thigh, shin) and the knee's bend: hind knees forward (+1), fore back (−1); a little longer than the hip's
   // height, so standing they're a touch bent
-  // A tube along a smooth path through pts, its radius easing r0 → r1 (a neck, a tail); outlined like a blob.
-  function taper(g, col, pts, r0, r1){
-    const path = new THREE.CatmullRomCurve3(pts.map(p => V3(p))), N = segs(20), R = segs(10);
-    const geo = own(new THREE.TubeGeometry(path, N, 1, R, false)), P = geo.attributes.position, c = new THREE.Vector3(), v = new THREE.Vector3();
-    for (let i = 0; i <= N; i++) { const u = i / N, r = r0 + (r1 - r0) * u * u * (3 - 2 * u); path.getPointAt(u, c);
-      for (let k = 0; k <= R; k++) { const q = i * (R + 1) + k; v.fromBufferAttribute(P, q).sub(c).multiplyScalar(r).add(c); P.setXYZ(q, v.x, v.y, v.z); } }
-    geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, mat(col)); m.userData.hullGeo = geo; g.add(m);
-    for (const [p, r] of [[pts[0], r0], [pts[pts.length - 1], r1]]) blob(g, col, p[0], p[1], p[2], r); // round ends
-    return path;
+  // A body as ONE skin: rings along a line of stations that runs through its joints (each station set in its own
+  // pivot: centre c, heading t, half-height ry toward n — the heading turned a quarter up — half-width rz, and `arc`,
+  // how far round from its underside the second colour reaches), round-capped at both ends. The rings are laid again
+  // from the pivots every frame (pose), so the skin bends at a joint instead of two pieces meeting there. Two meshes
+  // over the same vertices, never two shells — nothing overlaps to flicker — and one outline round the whole.
+  function liveSkin(root, col, colUnder, runs){
+    const R = Math.max(8, segs(14) & ~1), H = 3, rings = [];
+    const ring = (pv, c, t, ry, rz, arc) => rings.push({ pv, c, n: new THREE.Vector3(-t.y, t.x, 0), ry, rz, arc });
+    const flat = runs.flatMap(r => r.st.map(q => ({ pv: r.pivot, ...q })));
+    const cap = (q, dir, opening) => { for (let j = 0; j < H; j++) { const f = (opening ? H - j : j + 1) / H * Math.PI / 2;
+      ring(q.pv, q.c.clone().addScaledVector(q.t, dir * Math.min(q.ry, q.rz) * Math.sin(f)), q.t, q.ry * Math.cos(f), q.rz * Math.cos(f), q.arc); } };
+    cap(flat[0], -1, true);
+    for (const q of flat) ring(q.pv, q.c, q.t, q.ry, q.rz, q.arc);
+    cap(flat[flat.length - 1], 1, false);
+    const P = new Float32Array(rings.length * R * 3), all = [], top = [], bot = [];
+    for (let i = 0; i < rings.length - 1; i++) for (let k = 0; k < R; k++) {
+      const A = i * R + k, B = i * R + (k + 1) % R, C2 = (i + 1) * R + (k + 1) % R, D = (i + 1) * R + k, quad = [A, B, D, B, C2, D];
+      all.push(...quad); (-Math.cos((k + 0.5) / R * Math.PI * 2) > Math.cos(Math.min(rings[i].arc, rings[i + 1].arc)) ? bot : top).push(...quad); }
+    const pos = new THREE.BufferAttribute(P, 3), geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', pos); geo.setIndex(all); geo.computeVertexNormals();
+    const part = (idx, m) => { const q = own(new THREE.BufferGeometry()); q.setAttribute('position', pos); q.setAttribute('normal', geo.attributes.normal); q.setIndex(idx);
+      const o = new THREE.Mesh(q, m); o.frustumCulled = false; o.userData.live = true; root.add(o); };
+    part(top, mat(col)); if (bot.length) part(bot, mat(colUnder)); part(all, hullMat);                 // (the outline: the same skin, pushed out along its normals)
+    const mats = new Map(), rel = pv => { let m = mats.get(pv); if (m) return m; m = new THREE.Matrix4();   // the pivot's frame in root's
+      for (let o = pv; o !== root; o = o.parent) { o.updateMatrix(); m.premultiply(o.matrix); } mats.set(pv, m); return m; };
+    // At rest (now): each ring in root's frame, and each pivot's rest frame undone — a pivot then carries its rings
+    // by how far it has turned since. Round a joint the rings go over gradually from the parent's turn to the
+    // child's (w, half at the joint: a pipe's elbow): the parent's tilt where they stand, the child's swing about the
+    // joint itself (J: the child pivot's origin). So the skin bends through an arc, keeps its girth, never folds
+    // through itself — and nothing behind the joint rises as what is past it drops.
+    const rest = new Map(), Z3 = new THREE.Vector3(0, 0, 1); let len = 0;
+    rings.forEach((q, i) => { const M0 = rel(q.pv); if (!rest.has(q.pv)) rest.set(q.pv, M0.clone().invert());
+      q.c0 = q.c.clone().applyMatrix4(M0); q.n0 = q.n.clone().transformDirection(M0); q.z0 = Z3.clone().transformDirection(M0);
+      if (i) len += q.c0.distanceTo(rings[i - 1].c0); q.s = len; });
+    const under = (o, p) => { for (let x = o.parent; x && x !== root.parent; x = x.parent) if (x === p) return true; return false; };
+    rings.forEach((q, i) => { if (!i || rings[i - 1].pv === q.pv) return;                              // a joint: between rings i−1 and i
+      const p = rings[i - 1], sj = (p.s + q.s) / 2, zone = 2 * Math.max(p.ry, p.rz, q.ry, q.rz), kid = under(p.pv, q.pv) ? p.pv : q.pv, par = kid === p.pv ? q.pv : p.pv;
+      const J0 = new THREE.Vector3().setFromMatrixPosition(rel(kid));
+      for (const r of rings) { const d = Math.abs(r.s - sj) / zone; if (d >= 1 || (r.pv !== kid && r.pv !== par) || (r.w && d > r.wd)) continue;
+        const u = r.pv === kid ? (1 + d) / 2 : (1 - d) / 2;                                              // 0 the parent's turn … ½ at the joint … 1 the child's
+        r.a = par; r.b = kid; r.w = Math.max(1e-6, u * u * (3 - 2 * u)); r.wd = d; r.swing = r.pv === kid; r.J0 = J0; r.d0 = r.c0.clone().sub(J0); } });
+    const D = new Map(), turn = pv => { let m = D.get(pv); if (!m) { const M = rel(pv).clone().multiply(rest.get(pv)); D.set(pv, m = { M, q: new THREE.Quaternion().setFromRotationMatrix(M) }); } return m; };
+    const c = new THREE.Vector3(), n = new THREE.Vector3(), z = new THREE.Vector3(), qt = new THREE.Quaternion();
+    return () => { mats.clear(); D.clear();
+      rings.forEach((q, i) => {
+        if (q.w) { const A = turn(q.a); qt.copy(A.q).slerp(turn(q.b).q, q.w);
+          if (q.swing) c.copy(q.d0).applyQuaternion(qt).add(n.copy(q.J0).applyMatrix4(A.M)); else c.copy(q.c0).applyMatrix4(A.M);
+          n.copy(q.n0).applyQuaternion(qt); z.copy(q.z0).applyQuaternion(qt); }
+        else { const A = turn(q.pv); c.copy(q.c0).applyMatrix4(A.M); n.copy(q.n0).applyQuaternion(A.q); z.copy(q.z0).applyQuaternion(A.q); }
+        for (let k = 0; k < R; k++) { const a = k / R * Math.PI * 2, u = q.ry * Math.cos(a), w = q.rz * Math.sin(a), o = (i * R + k) * 3;
+          P[o] = c.x + n.x * u + z.x * w; P[o + 1] = c.y + n.y * u + z.y * w; P[o + 2] = c.z + n.z * u + z.z * w; } });
+      pos.needsUpdate = true; geo.computeVertexNormals(); };
   }
+  const poseDragonSkins = model => { for (const pose of model.getObjectByName('body').userData.skins) pose(); };
   function dragonModel(){
     const C = DRAGON3D, g = new THREE.Group(), body = pivot(g, 0, 0, 0, 'body');
     if (!dragonClawGeo) { dragonClawGeo = new THREE.ConeGeometry(1, 1, 6).translate(0, 0.5, 0); dragonClawGeo.userData.kept = true; } // a claw: base at its root, tip +y
     if (!dragonPlateGeo) { dragonPlateGeo = new THREE.ConeGeometry(1, 1, 3).translate(0, 0.5, 0).scale(1, 1, 0.35); dragonPlateGeo.userData.kept = true; }
     const plate = (par, x, y, z, h, lean = -0.35) => { const m = new THREE.Mesh(dragonPlateGeo, mat(C.dark)); m.position.set(x, y, z); m.scale.set(h * 0.55, h, h * 0.55); m.rotation.z = lean; m.userData.hullGeo = dragonPlateGeo; par.add(m); };
-    // the trunk: chest, barrel, haunch; a banded belly
-    blob(body, C.body, 0.28, 0.8, 0, 0.5, 0.46, 0.46);
-    blob(body, C.body, -0.12, 0.74, 0, 0.62, 0.42, 0.44);
-    blob(body, C.body, -0.52, 0.72, 0, 0.36, 0.36, 0.4);
-    blob(body, C.belly, 0.02, 0.46, 0, 0.62, 0.2, 0.34);                                   // belly
-    for (let k = 0; k < 5; k++) plate(body, 0.42 - k * 0.24, 1.14 - Math.abs(k - 2) * 0.05, 0, 0.36 - Math.abs(k - 2) * 0.07, -0.3); // big back plates, tallest mid-back
+    // a spike standing on a surface point with normal (nx, ny), swept back toward the tail
+    const spike = (par, x, y, nx, ny, h, sweep = DRAGON_SWEEP) => plate(par, x - nx * 0.03, y - ny * 0.03, 0, h, Math.atan2(-nx, ny) + sweep);
+    // The skin's stations. along: n+1 of them on the smooth line through pts (in a pivot's plane), radii by rAt(u) →
+    // [ry, rz], headed the way the line runs (dir 1) or back along it (−1: a tail joint, listed tip-first).
+    const V = (x, y) => new THREE.Vector3(x, y, 0), ease = u => u * u * (3 - 2 * u), UNDER = 1.25;
+    const line = pts => new THREE.CatmullRomCurve3(pts.map(([x, y]) => V(x, y)));
+    const along = (path, n, u0, u1, rAt, arc, dir = 1, len = true) => Array.from({ length: n + 1 }, (_, k) => { const u = u0 + (u1 - u0) * k / n, [ry, rz] = rAt(u);
+      return { c: len ? path.getPointAt(u) : path.getPoint(u), t: (len ? path.getTangentAt(u) : path.getTangent(u)).multiplyScalar(dir), ry, rz, arc }; });
+    const round = (r0, r1) => u => { const r = r0 + (r1 - r0) * ease(u); return [r, r]; };
     // legs, jointed: a muscled thigh from the hip (leg i) to the knee, a shin to the ankle, a flat foot — posed by
-    // placing the foot on the ground (animateAnimal: dragonLegs). Hind 0/1 heavier.
-    [[-0.45, -0.34], [-0.45, 0.34], [0.36, -0.32], [0.36, 0.32]].forEach(([x, z], i) => {
+    // placing the foot on the ground (animateAnimal: dragonLegs). Hind 0/1 heavier. Each leg one skin, haunch to ankle.
+    const legRuns = [];
+    [[-0.45, -0.29], [-0.45, 0.29], [0.36, -0.27], [0.36, 0.27]].forEach(([x, z], i) => {
       const hind = i < 2, L = DRAGON_LEG[hind ? 'hind' : 'fore'], leg = pivot(body, x, 0.62, z, 'leg' + i);
-      blob(leg, C.body, 0, -0.03, 0, hind ? 0.21 : 0.16, hind ? 0.22 : 0.17, hind ? 0.17 : 0.14);   // the haunch / shoulder
-      taper(leg, C.body, [[0, -0.05, 0], [0, -L.th / 2, 0], [0, -L.th, 0]], hind ? 0.17 : 0.13, hind ? 0.11 : 0.095);  // stout: it carries tons
       const knee = pivot(leg, 0, -L.th, 0, 'knee'); knee.userData.leg = L;
-      taper(knee, C.body, [[0, 0, 0], [0, -L.sh / 2, 0], [0, -L.sh + 0.03, 0]], hind ? 0.11 : 0.095, 0.065); // ends inside the foot
-      const ankle = pivot(knee, 0, -L.sh, 0, 'ankle');
-      // the foot: a heel pad round the shin's end, three toes splayed forward, a pale claw hooking down at each tip to the ground
-      blob(ankle, C.dark, 0.02, -DRAGON_FOOT * 0.5, 0, 0.12, DRAGON_FOOT * 0.5, 0.11);
-      for (const z of [-1, 0, 1]) {
-        const tz = z * (hind ? 0.075 : 0.065), tx = 0.1 - Math.abs(z) * 0.015;
-        blob(ankle, C.dark, tx, -DRAGON_FOOT * 0.65, tz, 0.07, 0.035, 0.036);
+      const fl = L.hock ? Math.hypot(...L.hock) : 0, hock = fl ? pivot(knee, 0, -L.sh, 0, 'hock') : null;          // a hind leg's long foot, hock to ankle
+      const k = hind ? 1 : 0.8, down = (y, ry, rz) => ({ c: V(0, y), t: V(0, -1), ry, rz, arc: 0 });            // (headed down: its rings lie flat)
+      // its top a broad flat muscle inside the flank, swelling out of it lower down: the leg grows from the body's side
+      const run = [{ pivot: leg, st: [down(0.15, 0.16 * k, 0.07 * k), down(0.05, 0.2 * k, 0.125 * k), down(-0.05, 0.2 * k, 0.15 * k), down(-0.14, 0.175 * k, 0.145 * k), down(-L.th * 0.62, 0.133 * k + 0.012, 0.118 * k + 0.012), down(-L.th + 0.05, hind ? 0.112 : 0.097, hind ? 0.108 : 0.094)] },
+        { pivot: knee, st: [down(-0.05, hind ? 0.108 : 0.094, hind ? 0.105 : 0.092), down(-L.sh * 0.5, hind ? 0.095 : 0.085, hind ? 0.09 : 0.082), down(-L.sh + (fl ? 0.04 : 0.05), fl ? 0.085 : 0.066, fl ? 0.082 : 0.066)] }];
+      if (hock) run.push({ pivot: hock, st: [down(-0.04, 0.082, 0.08), down(-fl * 0.5, 0.072, 0.07), down(-fl + 0.05, 0.066, 0.066)] });
+      const ankle = pivot(hock || knee, 0, hock ? -fl : -L.sh, 0, 'ankle');
+      // the foot: the leg's skin runs on through the ankle, round the heel, into a broad palm; three toes hinge at
+      // its front ('toes': flat on the ground as the heel lifts, curled in the air — dragonStride), a claw on each
+      const on = (x, y, tx, ty, ry, rz) => ({ c: V(x, y), t: V(tx, ty).normalize(), ry, rz, arc: 0 }), w = hind ? 1 : 0.92;
+      run.push({ pivot: ankle, st: [on(-0.025, -0.015, 1, -1, 0.062, 0.07 * w), on(0.0, -0.05, 1, 0, 0.05, 0.085 * w), on(0.06, -0.054, 1, 0, 0.046, 0.1 * w), on(DRAGON_TOE_BASE + 0.01, -0.06, 1, 0, 0.036, 0.095 * w)] });
+      legRuns.push(run);
+      const toes = pivot(ankle, DRAGON_TOE_BASE, -0.062, 0, 'toes');
+      for (const z of [-1, 0, 1]) { const toe = new THREE.Group(), len = z ? 1 : 1.15; toe.position.set(-0.01, 0, z * 0.06 * w); toe.rotation.y = -z * 0.38; toes.add(toe);
+        blob(toe, C.body, 0.055 * len, 0, 0, 0.075 * len, 0.034, 0.04);
         const cl = new THREE.Mesh(dragonClawGeo, mat(C.horn)); cl.userData.hullGeo = dragonClawGeo;
-        cl.position.set(tx + 0.065, -DRAGON_FOOT * 0.72, tz * 1.12); cl.rotation.set(0, -tz * 2.2, -Math.PI / 2 - 0.55); cl.scale.set(0.028, 0.075, 0.028); ankle.add(cl);
-      }
+        cl.position.set(0.115 * len, 0.004, 0); cl.rotation.z = -Math.PI / 2 - 0.42; cl.scale.set(0.03, 0.105, 0.03); toe.add(cl); }
     });
-    // tail: three jointed segments tapering down and back to a spade (the joints' round ends hide the seams as it bends)
-    const tail = pivot(body, -0.8, 0.74, 0, 'tail');
-    taper(tail, C.body, [[0, 0, 0], [-0.3, -0.05, 0], [-0.6, -0.16, 0]], 0.26, 0.17);
-    const tail2 = pivot(tail, -0.6, -0.16, 0, 'tail2');
-    taper(tail2, C.body, [[0, 0, 0], [-0.3, -0.09, 0], [-0.6, -0.2, 0]], 0.17, 0.1);
-    const tail3 = pivot(tail2, -0.6, -0.2, 0, 'tail3');
-    taper(tail3, C.body, [[0, 0, 0], [-0.28, -0.02, 0], [-0.55, 0.02, 0]], 0.1, 0.05);
+    // tail: three jointed segments tapering down and back to a spade; neck up to the head — pivots only: the skin is laid over them below
+    const TAIL = [[[0, 0], [-0.3, -0.05], [-0.6, -0.16]], [[0, 0], [-0.3, -0.09], [-0.6, -0.2]], [[0, 0], [-0.28, -0.02], [-0.55, 0.02]]], TAIL_R = DRAGON_TAIL_R;
+    const tail = pivot(body, -0.8, 0.74, 0, 'tail'), tail2 = pivot(tail, -0.6, -0.16, 0, 'tail2'), tail3 = pivot(tail2, -0.6, -0.2, 0, 'tail3'), tails = [tail, tail2, tail3];
     const spade = pivot(tail3, -0.55, 0.02, 0, 'spade');
-    const sp = new THREE.Mesh(dragonPlateGeo, mat(C.dark)); sp.scale.set(0.16, 0.26, 0.18); sp.rotation.z = Math.PI / 2 + 0.15; sp.userData.hullGeo = dragonPlateGeo; spade.add(sp);
-    // neck up to the head, plates down its back
+    const sp = new THREE.Mesh(dragonPlateGeo, mat(C.dark)); sp.scale.set(0.2, 0.42, 0.12); sp.rotation.z = Math.PI / 2 + 0.05; sp.userData.hullGeo = dragonPlateGeo; spade.add(sp);
     const neck = pivot(body, 0.62, 0.95, 0, 'neck');
-    taper(neck, C.body, [[0, 0, 0], [0.18, 0.3, 0], [0.3, 0.58, 0], [0.42, 0.74, 0]], 0.26, 0.15);
     const head = pivot(neck, 0.5, 0.78, 0, 'head');
-    blob(head, C.body, 0.06, 0.02, 0, 0.24, 0.19, 0.2);                                    // skull
-    blob(head, C.body, 0.32, -0.02, 0, 0.24, 0.12, 0.14);                                  // snout
+    // the trunk's stations along its line (dragonTrunk, render-units: shared with the 2D art), tail root to neck root
+    const trunkSt = (n, u0, u1) => Array.from({ length: n + 1 }, (_, k) => { const q = dragonTrunk(u0 + (u1 - u0) * k / n); return { c: V(q.x, q.y), t: V(q.tx, q.ty), ry: q.ry, rz: q.rz, arc: UNDER }; });
+    const HEAD = DRAGON_HEAD;   // skull, then a long wedge of a snout
+    const headR = u => { const f = u * (HEAD.length - 1), i = Math.min(HEAD.length - 2, Math.floor(f)), q = f - i; return [HEAD[i][2] + (HEAD[i + 1][2] - HEAD[i][2]) * q, HEAD[i][3] + (HEAD[i + 1][3] - HEAD[i][3]) * q]; };
+    // one skin, tail tip to snout: pale underneath from the tail to the throat
+    const spine = [...tails.map((pv, k) => ({ pivot: pv, st: along(line(TAIL[k]), segs(6), 1, 0.15, round(TAIL_R[k], TAIL_R[k + 1]), UNDER, -1) })).reverse(),
+      { pivot: body, st: trunkSt(segs(30), 0.04, 0.97) },
+      { pivot: neck, st: along(line(DRAGON_NECK), segs(12), 0.1, 1, round(0.23, 0.12), UNDER) },
+      { pivot: head, st: along(line(HEAD), segs(10), 0, 1, headR, 0, 1, false) }];
+    body.userData.skins = [liveSkin(body, C.body, C.belly, spine), ...legRuns.map(r => liveSkin(body, C.body, C.belly, r))];
+    // the spikes down the spine (dragonSpikeRow: one evenly spaced row), each stood on the skin's top line in its own
+    // part's pivot: down the back of the neck, along the back, out the tail
+    { const top = (k, st, up) => st.map(q => ({ k, x: q.c.x - q.t.y * q.ry * up, y: q.c.y + q.t.x * q.ry * up, nx: -q.t.y * up, ny: q.t.x * up }));
+      const par = { neck, body, tail0: tail, tail1: tail2, tail2: tail3 };
+      for (const q of dragonSpikeRow([...top('neck', along(line(DRAGON_NECK), 60, 1, DRAGON_NECK_FROM, round(0.23, 0.12), 0), 1), ...top('body', trunkSt(100, DRAGON_BACK_TO, 0), 1),
+        ...tails.flatMap((pv, k) => top('tail' + k, along(line(TAIL[k]), 50, 0, 1, round(TAIL_R[k], TAIL_R[k + 1]), 0), -1))])) spike(par[q.k], q.x, q.y, q.nx, q.ny, q.h, q.k === 'neck' ? DRAGON_NECK_SWEEP : DRAGON_SWEEP); }
     for (const z of [-1, 1]) {
-      const eye = blob(head, C.eye, 0.17, 0.08, z * 0.14, 0.045, 0.04, 0.02); eye.name = 'eye';
-      blob(eye, '#111', 0.3, 0, z * 0.6, 0.45, 0.55, 0.4);                                 // pupil
-      tube(head, C.horn, [-0.02, 0.15, z * 0.1], [-0.15, 0.27, z * 0.15], [-0.28, 0.25, z * 0.19], 0.042);   // horn swept back
+      blob(head, C.dark, 0.17, 0.105, z * 0.115, 0.085, 0.02, 0.035);                       // brow ridge
+      const eye = blob(head, C.eye, 0.21, 0.062, z * 0.13, 0.045, 0.024, 0.018); eye.name = 'eye';
+      tube(head, C.horn, [-0.05, 0.11, z * 0.09], [-0.22, 0.24, z * 0.13], [-0.36, 0.42, z * 0.16], 0.03);   // horn swept back and up
     }
     const jaw = pivot(head, 0.08, -0.12, 0, 'jaw');
-    blob(jaw, C.belly, 0.2, -0.02, 0, 0.2, 0.04, 0.09);
-    // the fire: nested cones out of the mouth (+x), glowing where they overlap, no outline
+    blob(jaw, C.glow, 0.16, 0.02, 0, 0.14, 0.03, 0.05);                                    // the furnace in its throat
+    blob(jaw, DRAGON_COL.dark, 0.23, -0.025, 0, 0.23, 0.05, 0.075);                        // the lower jaw, a shade darker than the hide (the 2D art's)
+    // the fire's root: nested cones out of the mouth (+x), glowing where they overlap, no outline
     const flame = pivot(jaw, 0.5, 0.02, 0, 'flame');
-    const cone = (col, r, L, op, add) => { const m = new THREE.Mesh(new THREE.ConeGeometry(r, L, 16, 1, true).rotateZ(Math.PI / 2).translate(L / 2, 0, 0),
-      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending }));
-      m.material.onBeforeCompile = function(){}; m.material.onBeforeCompile.fow = true; m.renderOrder = add ? 4 : 3; m.userData.live = true; flame.add(m); return m; }; // (live: its layers keep their own draw order) // (the glowing core over the solid fire)
-    cone('#e0441a', 0.5, 2.1, 0.7); cone('#ff8a1e', 0.34, 1.8, 0.85); cone('#ffd24a', 0.2, 1.3, 0.9, true); cone('#fff6c8', 0.09, 0.8, 0.9, true); // (outer fire solid: it read washed-out white against the sky)
     flame.visible = false;
     for (const side of [1, -1]) dragonWing(body, side);
+    poseDragonSkins(g);
     return g;
   }
-  // A wing, built as a bat's: bones shoulder → elbow → wrist, three fingers fanning from the wrist, and one membrane
+  // A wing, built as a bat's: bones shoulder → elbow → wrist, four fingers fanning from the wrist, and one membrane
   // stretched between them and the hip — the flank panel (shoulder, elbow, wrist, last finger, hip) and the panels
   // between the fingers, scalloped at their edges. The membrane is rebuilt each frame from where the bones are
   // (poseDragonWing), so it can't come loose. All in the wing's own plane: x chord (back −), y span (out), z its
   // normal; 'fold' turns that plane out of the flank.
-  // the flank panel (shoulder, elbow, wrist, last finger, hip) and the two panels between the fingers, each scalloped (M*)
-  const WING_TRIS = [['S', 'E', 'B'], ['E', 'W', 'B'], ['W', 'M3', 'B'], ['W', 'F2', 'M3'], ['W', 'F2', 'M23'], ['W', 'M23', 'F1'], ['W', 'F0', 'M01'], ['W', 'M01', 'F1']];
+  // The membrane's triangles (joint names; F3 a fingertip, M3 a scallop point, C2 a panel's middle): the arm's panel
+  // (shoulder, elbow, wrist, the tail-root attach), then a panel per finger gap and one from the last finger to the
+  // attach — each four facets round its middle, which billows out of the plane, so the wing is a stretched skin and
+  // lit facet by facet.
+  const WING_PANELS = DRAGON_WING.LK.length, WING_TRIS = [['S', 'E', 'B'], ['E', 'W', 'B'], ...Array.from({ length: WING_PANELS }, (_, k) => { const a = 'F' + k, m = 'M' + k, b = k < WING_PANELS - 1 ? 'F' + (k + 1) : 'B', c = 'C' + k;
+    return [['W', a, c], [a, m, c], [m, b, c], [b, 'W', c]]; }).flat()];
+  let dragonBoneGeo = null;
   function dragonWing(body, side){
-    const C = DRAGON3D, w = pivot(body, 0.1, 1.08, 0.32 * side, side > 0 ? 'wingL' : 'wingR');
+    const C = DRAGON3D, w = pivot(body, 0.1, 1.04, 0.25 * side, side > 0 ? 'wingL' : 'wingR');
     const fold = pivot(w, 0, 0, 0, 'fold'); fold.rotation.x = side * Math.PI / 2;
     const n = WING_TRIS.length * 3, pos = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
-    const gm = new THREE.BufferGeometry(); gm.setAttribute('position', pos); gm.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3).map((_, k) => k % 3 === 2 ? 1 : 0), 3));
+    const gm = new THREE.BufferGeometry(); gm.setAttribute('position', pos); gm.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     const gh = new THREE.BufferGeometry(); gh.setAttribute('position', pos); gh.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); // the outline's push directions
     const mem = new THREE.Mesh(gm, mat(C.membrane, true)); mem.frustumCulled = false; mem.renderOrder = 2; fold.add(mem);
     dragonHullDS = dragonHullDS || (HULL_MATS.add(dragonHullDS = screenHull(new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide, depthWrite: false }), HULL, 1.5)), dragonHullDS);
     const hull = new THREE.Mesh(gh, dragonHullDS); hull.frustumCulled = false; fold.add(hull);
-    const bones = [[0.045], [0.04], [0.032], [0.024], [0.022]].map(([r]) => { const b = pole(fold, C.dark, [0, 0, 0], [0, 1, 0], r); b.userData.r = r; return b; });
-    const knob = blob(fold, C.dark, 0, 0, 0, 0.055);                                         // the wrist knuckle
-    w.userData.wing = { pos, gh, bones, knob, side, hull, mem };
-    for (const o of [hull, mem, knob, ...bones]) o.userData.live = true;                        // (re-laid every frame: bakeRigid leaves them be)
+    // bones that taper to their far ends (arm, forearm, a finger each)
+    if (!dragonBoneGeo) { dragonBoneGeo = new THREE.CylinderGeometry(0.22, 0.5, 1, 8); dragonBoneGeo.userData.kept = true; }
+    const stick = (geo, col, r) => { const b = new THREE.Mesh(geo, mat(col)); b.userData.hullGeo = geo; b.userData.hullW = Math.min(HULL, r * 0.6); b.userData.r = r; fold.add(b); return b; };
+    const bones = [0.04, 0.034, ...DRAGON_WING.LK.map((_, k) => 0.024 - k * 0.002)].map(r => stick(dragonBoneGeo, C.dark, r));
+    const knob = blob(fold, C.dark, 0, 0, 0, 0.042);                                        // the wrist knuckle
+    w.userData.wing = { pos, gm, gh, bones, knob, side, hull, mem, lag: 0, ang: null };
+    for (const o of [hull, mem, knob, ...bones]) o.userData.live = true;              // (re-laid every frame: bakeRigid leaves them be)
   }
   let dragonHullDS = null; const _wv = {};
-  // Lay the wing out for fold fd (0 spread … 1 folded): joints from the blended angles, then the membrane triangles
-  // between them, the outline pushed out from the wing's middle, the bones set end to end.
-  function poseDragonWing(w, fd, tuck = 0){
-    const d = w.userData.wing, pt = dragonWingJoints(fd, tuck, d.side), { S, E, W } = pt, F = [pt.F0, pt.F1, pt.F2]; // (render-units: shared with the 2D art)
-    let cx = 0, cy = 0; for (const k of ['S', 'E', 'W', 'B', 'F0', 'F1', 'F2']) { cx += pt[k][0] / 7; cy += pt[k][1] / 7; }
+  // Lay the wing out for fold fd (0 spread … 1 folded): joints from the blended angles, then the membrane's facets
+  // between them, the outline pushed out from the wing's middle, the bones set end to end. lag: the wing's tips
+  // trailing behind its swing (out of its plane, more the farther from the wrist).
+  function poseDragonWing(w, fd, tuck = 0, lag = 0){
+    const d = w.userData.wing, J = dragonWingJoints(fd, tuck, d.side), { S, E, W } = J, pt = { S, E, W, B: J.B }, nF = J.F.length; // (render-units: shared with the 2D art)
+    const trail = p => [p[0], p[1], p[2] + d.side * lag * Math.hypot(p[0] - W[0], p[1] - W[1])];
+    J.F.forEach((p, k) => { pt['F' + k] = trail(p); pt['M' + k] = trail(J.M[k]); });
+    for (let k = 0; k < nF; k++) { const q = [pt['F' + k], pt['M' + k], k < nF - 1 ? pt['F' + (k + 1)] : pt.B, W];   // each panel's middle, billowed (flat when folded)
+      pt['C' + k] = [0, 1, 2].map(c => q.reduce((a, p) => a + p[c], 0) / 4 - (c === 2 ? d.side * 0.07 * (1 - J.e) : 0)); }
+    let cx = 0, cy = 0, m = 0; for (const k in pt) if (k[0] !== 'C' && k[0] !== 'M') { cx += pt[k][0]; cy += pt[k][1]; m++; } cx /= m; cy /= m;
     const P3 = d.pos.array, N = d.gh.attributes.normal.array; let i = 0;
     for (const tri of WING_TRIS) for (const k of tri) { const p = pt[k]; P3[i] = p[0]; P3[i + 1] = p[1]; P3[i + 2] = p[2];
       const nx = p[0] - cx, ny = p[1] - cy, nl = Math.hypot(nx, ny) || 1; N[i] = nx / nl; N[i + 1] = ny / nl; N[i + 2] = 0; i += 3; }
-    d.pos.needsUpdate = true; d.gh.attributes.normal.needsUpdate = true;
+    d.pos.needsUpdate = true; d.gh.attributes.normal.needsUpdate = true; d.gm.computeVertexNormals();
     d.hull.renderOrder = 1; d.mem.renderOrder = 2;                                                // (addHulls' union pass levels every mesh: the outline must go first)
     const set = (b, a, c) => { _wv.a = _wv.a || new THREE.Vector3(); _wv.d = _wv.d || new THREE.Vector3(); _wv.a.set(a[0], a[1], a[2]); _wv.d.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
       const L = _wv.d.length() || 1e-4; b.scale.set(2 * b.userData.r, L, 2 * b.userData.r); b.position.copy(_wv.a).addScaledVector(_wv.d, 0.5); b.quaternion.setFromUnitVectors(_wv.y = _wv.y || new THREE.Vector3(0, 1, 0), _wv.d.normalize()); };
-    set(d.bones[0], S, E); set(d.bones[1], E, W); for (let k = 0; k < 3; k++) set(d.bones[2 + k], W, F[k]);
+    set(d.bones[0], S, E); set(d.bones[1], E, W); for (let k = 0; k < nF; k++) set(d.bones[2 + k], W, pt['F' + k]);
     d.knob.position.set(W[0], W[1], W[2]);
   }
   // Pose an animal from its state (viewer-only). A four-beat walk — hind,
@@ -1828,19 +1898,22 @@
       // model, with the dust and the ground's shake at its footfalls and slam, and smoke from its nostrils.
       const P = dragonAnim(e, a, dt), head = model.getObjectByName('head');
       b.scale.set(1 + P.chest * 0.35, 1 + P.chest, 1 + P.chest * 0.8);
-      b.rotation.set(P.roll, 0, P.pitch);
-      b.position.set(P.bodyX, P.bodyY + bob * 0.4, 0);
+      b.rotation.set(P.roll, P.yaw, P.pitch);
+      b.position.set(P.bodyX, P.bodyY + bob * 0.4, P.bodyZ);
       neck.rotation.z = P.neck; neck.rotation.y = P.neckY;
       head.rotation.z = P.head; head.rotation.x = P.headX;
       model.getObjectByName('jaw').rotation.z = -P.jaw;
       for (const eye of head.children.filter(o => o.name === 'eye')) { eye.userData.sy ??= eye.scale.y; eye.scale.y = eye.userData.sy * (1 - 0.92 * P.eyeShut); }
       ['tail', 'tail2', 'tail3'].forEach((n, k) => { const j = model.getObjectByName(n); j.rotation.y = P.tail[k]; j.rotation.z = P.tailZ[k]; });
       model.getObjectByName('spade').rotation.y = P.spade;
-      for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
-        poseDragonWing(w, 1 - P.open, P.sl);
-        w.rotation.set(-sd * ((1.35 + (0.35 + 0.6 * P.rr + P.beat - 1.35) * P.open) * (1 - P.sl) + (0.45 + P.chest * 1.5) * P.sl), 0, 0); } // (roaring, spread high in a V)
-      const fl = model.getObjectByName('flame'); fl.visible = P.flame > 0;
-      if (fl.visible) fl.scale.set(P.flame * (0.92 + 0.08 * Math.sin(P.ck * 40)), 0.85 + 0.15 * Math.sin(P.ck * 33), 0.85 + 0.15 * Math.cos(P.ck * 29));
+      const carry = dragonWingCarry(P);                                                  // (render-units: how they're carried, shared with the 2D art)
+      for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm), d = w.userData.wing;
+        // the tips trail behind the wing's swing: its turn rate, eased
+        const v = d.ang === null || !dt ? 0 : (carry.ang - d.ang) / dt; d.ang = carry.ang; d.lag += (Math.max(-0.35, Math.min(0.35, v * 0.12)) - d.lag) * Math.min(1, dt * 7);
+        poseDragonWing(w, carry.fd, P.sl, d.lag);
+        w.rotation.set(-sd * carry.ang, 0, carry.pitch); }
+      const fl = model.getObjectByName('flame');   // (the mouth: where the fire leaves it)
+      dragonFire(model, fl, P.flame, dt, P.fly || 0);
       if (!a.lab) {
         for (const i of P.ev.steps) { const f = legs[i].getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 3, '#b7a27a'); shakeFrom(f.x, f.z, 0.03); }
         if (P.ev.slam) { for (const l of [legs[2], legs[3]]) { const f = l.getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 7, '#b7a27a'); } shakeFrom(a.x, a.z, 0.12); }
@@ -1860,7 +1933,7 @@
     }
     // Each leg: half the cycle planted, its foot sweeping back at an even pace (it keeps pace with the ground),
     // half swinging forward through the air.
-    if (e.utype === 'dragon') { dragonLegs(model, a, legs, reach, G); return; }
+    if (e.utype === 'dragon') { dragonLegs(model, a, legs, reach, G); poseDragonSkins(model); return; }
     legs.forEach((l, i) => {
       if (l.userData.y0 === undefined) l.userData.y0 = l.position.y;
       const q = (((a.phase + LEG_PHASE[i] - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
@@ -1870,35 +1943,65 @@
       l.position.y = l.userData.y0 + G.lift * up * a.gait;
     });
   }
+  // The dragon's fire: a stream of puffs blown from the jaws along the head's line, each on its own in the model's
+  // surroundings (its parent: the world) — flying on and slowing, swelling, cooling from white-hot through orange and
+  // red to smoke, rising as it thins. So the jet bends as the head swings and hangs a moment after the blast.
+  let FIRE_RAMP = null, _f0 = null, _f1 = null;
+  function dragonFire(model, mouth, flame, dt, fly = 0){
+    const F = model.userData.fire || (model.userData.fire = { puffs: [], due: 0 }), host = model.parent;
+    FIRE_RAMP = FIRE_RAMP || ['#fff2b0', '#ffc94a', '#ff8a1e', '#d8381a', '#6a2a20', '#33302e'].map(c => new THREE.Color(c));
+    if (flame > 0 && host) { _f0 = _f0 || new THREE.Vector3(); _f1 = _f1 || new THREE.Vector3(); model.updateMatrixWorld(true);
+      host.worldToLocal(mouth.localToWorld(_f0.set(0, 0, 0))); host.worldToLocal(mouth.localToWorld(_f1.set(1, 0, 0))); _f1.sub(_f0).normalize();
+      // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground)
+      _f1.y -= 1.3 * fly; _f1.normalize();
+      for (F.due += dt * 70 * flame * (1 + 0.8 * fly); F.due >= 1; F.due--) { const hot = Math.random() < 0.3, j = () => (Math.random() - 0.5) * 2;
+        const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: hot ? THREE.AdditiveBlending : THREE.NormalBlending }));
+        m.position.copy(_f0); m.renderOrder = hot ? 6 : 5; m.frustumCulled = false; host.add(m);
+        F.puffs.push({ m, hot, age: 0, life: hot ? 0.28 : 0.55 + Math.random() * 0.2, grow: (hot ? 0.5 : 0.75 + Math.random() * 0.35) * (1 + 0.5 * fly),
+          v: new THREE.Vector3(_f1.x + j() * 0.2, _f1.y + j() * 0.16, _f1.z + j() * 0.2).multiplyScalar(8 + Math.random() * 2.5) }); } }
+    for (let i = F.puffs.length - 1; i >= 0; i--) { const p = F.puffs[i]; p.age += dt; const u = p.age / p.life;
+      if (u >= 1 || !p.m.parent) { if (p.m.parent) p.m.parent.remove(p.m); p.m.material.dispose(); F.puffs.splice(i, 1); continue; }
+      p.m.position.addScaledVector(p.v, dt); p.v.multiplyScalar(Math.max(0, 1 - 2.4 * dt)); p.v.y += 0.9 * u * dt;
+      const r = 0.05 + p.grow * p.age; p.m.scale.setScalar(r);
+      if (p.m.position.y < r * 0.4) { p.m.position.y = r * 0.4;
+        // (it rolls out along the ground)
+        if (p.v.y < -1 && !p.hit) { p.hit = 1; const an = Math.random() * Math.PI * 2, k = -p.v.y * 0.8; p.v.x += Math.cos(an) * k; p.v.z += Math.sin(an) * k; }
+        if (p.v.y < 0) p.v.y *= -0.25; }      // it splashes along the ground, never through it
+      const f = Math.min(FIRE_RAMP.length - 1.001, u * (p.hot ? 2.2 : FIRE_RAMP.length - 1)), k = Math.floor(f);
+      p.m.material.color.copy(FIRE_RAMP[k]).lerp(FIRE_RAMP[k + 1], f - k); p.m.material.opacity = (p.hot ? 0.8 : 0.9) * Math.min(1, (1 - u) * 2.5); }
+  }
+  function quenchDragonFire(model){ const F = model.userData.fire; if (!F) return; for (const p of F.puffs) { if (p.m.parent) p.m.parent.remove(p.m); p.m.material.dispose(); } F.puffs.length = 0; }
   // The dragon's legs: each foot's spot is found — under the hip on the ground, swept back through the stance, lifted
   // and brought forward on the swing — and the hip and knee solved to reach it (two-bone IK in the leg's plane). So
   // the feet stay planted as the heavy body sinks and rolls over them. The foot rolls: heel up at toe-off, toes down
   // through the swing. Rearing, the fore feet paw the air; lying (a.lie) the legs blend to a resting pose splayed
   // beside the body — forelegs out in front like a sphinx's, hind legs folded knee-forward.
-  let _lw = null, _qa = null, _qb = null, _ea = null;
+  let _lw = null, _qa = null, _qb = null, _qc = null, _ea = null;
   function dragonLegs(model, a, legs, reach, G, lie = a.lie || 0, i0 = 0){
     const body = model.getObjectByName('body'), ck = a.dr ? a.dr.ck : 0; model.updateMatrixWorld(true);
     _lw = _lw || new THREE.Vector3();
     legs.forEach((l, j) => { const i = j + i0;
       const knee = l.getObjectByName('knee'), ankle = l.getObjectByName('ankle'), L = knee.userData.leg, hind = i < 2, side = Math.sign(l.position.z);
-      const { x, up, roll } = dragonStride(a.phase, i);                                  // (render-units: the stride, shared with the 2D art)
-      l.getWorldPosition(_lw); _lw.y = DRAGON_FOOT + G.lift * 1.8 * up * a.gait; body.worldToLocal(_lw);
+      const lv = a.lieF !== undefined ? (hind ? a.lieH : a.lieF) : lie;                  // (waking, the forelegs stand first: dragonAnim)
+      const { x, up, roll, toe, heel } = dragonStride(a.phase, i);                       // (render-units: the stride, shared with the 2D art)
+      l.getWorldPosition(_lw); _lw.y = DRAGON_FOOT + (G.lift * 1.8 * up + heel) * a.gait; body.worldToLocal(_lw);
+      ankle.getObjectByName('toes').rotation.z = toe * a.gait * (1 - lv);
       let tx = _lw.x - l.position.x + x * G.L * Math.sin(G.A) * a.gait, ty = _lw.y - l.position.y;
       if (!hind && reach > 0.2) { const pw = ck * 5.5 + (side > 0 ? 0 : Math.PI);     // rearing: the fore feet paw the air, alternately
         const px = 0.2 + 0.14 * Math.sin(pw), py = -0.3 + 0.1 * Math.cos(pw), w = Math.min(1, (reach - 0.2) * 2);
         tx += (px - tx) * w; ty += (Math.max(ty, py) - ty) * w; }
-      let [hip, kn] = dragonLegIK(L, tx, ty);
-      const T = DRAGON_TUCK[hind ? 'hind' : 'fore'];
-      hip += (T.hip - hip) * lie; kn += (T.knee - kn) * lie;
-      l.rotation.set(-side * T.out * lie, 0, hip); l.position.y = l.userData.y0 ??= l.position.y;
-      knee.rotation.set(hind ? -side * 0.7 * lie : 0, 0, kn);                            // lying, the hind shin swings out to the side: the ankle and foot sit beside the thigh, not tucked under it
+      const T = DRAGON_TUCK[hind ? 'hind' : 'fore'], [hip, kn, fa] = dragonLegPose(L, T, tx, ty, lv), hock = l.getObjectByName('hock');
+      l.rotation.set(-side * T.out * lv, 0, hip); l.position.y = l.userData.y0 ??= l.position.y;
+      knee.rotation.set(hind ? -side * 0.7 * lv : 0, 0, kn);                            // lying, the hind shin swings out to the side: the ankle and foot sit beside the thigh, not tucked under it
       // The foot, set in the body's frame whatever the leg's splay: flat, rolling through the step; lying, its toes turned
       // out to the side — the hind ones well out, so the foot sits beside the folded shin, not inside it (the leg's own
       // splay rolled the sole onto its edge)
-      _qa = _qa || new THREE.Quaternion(); _qb = _qb || new THREE.Quaternion(); _ea = _ea || new THREE.Euler(0, 0, 0, 'YZX');
+      _qa = _qa || new THREE.Quaternion(); _qb = _qb || new THREE.Quaternion(); _qc = _qc || new THREE.Quaternion(); _ea = _ea || new THREE.Euler(0, 0, 0, 'YZX');
       l.updateMatrix(); knee.updateMatrix();
       _qa.copy(l.quaternion).multiply(knee.quaternion).invert();
-      _qb.setFromEuler(_ea.set(0, side * (hind ? 0.5 : 0.35) * lie, roll * a.gait * (1 - lie)));
+      _qb.setFromEuler(_ea.set(0, side * (hind ? 0.5 : 0.35) * lv, roll * a.gait * (1 - lv)));
+      // (a hind leg's long foot: set in the body's frame too, at its own angle; the ankle then undoes that)
+      if (hock) { _qc.setFromEuler(_ea.set(0, 0, fa)); hock.quaternion.copy(_qa).multiply(_qc); _qa.copy(_qc).invert(); _qb.setFromEuler(_ea.set(0, side * 0.5 * lv, roll * a.gait * (1 - lv))); }
       ankle.quaternion.copy(_qa.multiply(_qb));
     });
   }
@@ -1925,7 +2028,8 @@
     for (const [nm, sd] of [['wingL', 1], ['wingR', -1]]) { const w = model.getObjectByName(nm);
       poseDragonWing(w, 1 - 0.35 * limp, 0);
       w.rotation.set(-sd * (1.35 - 1.6 * limp), 0, 0.15 * limp); }                                   // folded upright → sagging open onto the ground
-    model.getObjectByName('flame').visible = false;
+    dragonFire(model, null, 0, 0.016);   // (its last breath's puffs burn out)
+    poseDragonSkins(model);
   }
   // ---- Characters in 3D (design stage: __povCharMock) ----
   // One kit for every unit, from the 2D rig's numbers (drawBodyLayer /
@@ -2970,13 +3074,14 @@
     unitKinds: { villager: null, militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'], archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'gallop', 'attack', 'die'], knight: ['idle', 'walk', 'gallop', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'], tradecart: ['idle', 'walk', 'die'] },
     equip: soldierEquip,
     // Animals: built once, posed live by animateAnimal from a stand-in entity (their game path), one action at phase t.
-    animals: { sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'idle', 'walk', 'roar', 'breathe', 'die'] },
+    animals: { sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'wake', 'idle', 'walk', 'roar', 'breathe', 'die'] },
     animal: (kind, tc = VIL_TC, poly = 1) => { const p0 = POLY; POLY = poly; try { const g = ANIMAL_MODELS[kind](tc); addHulls(g, true); return g; } finally { POLY = p0; } },
     poseAnimal: (g, kind, action, t) => {
       g.position.set(0, 0, 0); g.rotation.set(0, 0, 0);
       if (action === 'die') { if (kind === 'dragon') dragonDeath(g, t * 3000); else deathPose(g, kind, t * 3000); return; }
       const walk = action === 'walk', att = action === 'attack' || action === 'roar' || action === 'breathe';
-      const e = { utype: kind, id: 1, awake: action !== 'sleep', path: walk ? [{ x: 0, y: 0 }] : [], target: att ? -1 : null, eatingGrass: action === 'graze',
+      // (wake: asleep, woken, and settling again, on a loop)
+      const e = { utype: kind, id: 1, awake: action === 'wake' ? t > 0.2 && t < 0.8 : action !== 'sleep', path: walk ? [{ x: 0, y: 0 }] : [], target: att ? -1 : null, eatingGrass: action === 'graze',
         __animAttack: action === 'attack', atkCooldown: action === 'attack' ? UNITS[kind].rof * (1 - t) : 0, breathTick: action === 'breathe' ? tick - t * T30(22) : undefined };
       const a = g.userData.lab || (g.userData.lab = { phase: 0, gait: 0, graze: 0, lab: true });
       a.moved = walk ? 1e-3 : 0; a.phase = walk ? t * 2 * Math.PI : 0;
@@ -3989,7 +4094,8 @@
       if (rec.dmg && rec.obj.visible) { const fe = entitiesById.get(rec.obj.userData.bid); if (fe) rec.dmg.set(fe.hp / fe.maxHp); rec.dmg.tick(dt); } // (its damage by its health)
       if (rec.door) { // gates slide their door up as they open (read-only)
         const ge = entitiesById.get(rec.doorOf);
-        rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
+        // (out of sight it stays as it was left: an enemy's gate doesn't work in the fog)
+        if (!ge || buildingFogLevel(ge) === 2) rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
       }
       if (rec.flags) for (const f of rec.flags) { // the art's travelling wave
         const pos = f.geometry.attributes.position, rest = f.geometry.userData.rest, L = f.userData.len, fs = f.userData.s || 1;
@@ -4055,6 +4161,7 @@
 
   function unitVisible(e){
     if (e.garrisonedIn || e.hp <= 0) return false;
+    if (dragonSeenByAll(e)) return true;
     const f = (fog[Math.round(e.y)] && fog[Math.round(e.y)][Math.round(e.x)]) || 0;
     return f === 2 || (f === 1 && sameSide(e.team, myTeam));
   }
@@ -4827,7 +4934,7 @@
       scene.remove(rec.sprite); rec.tex.dispose(); rec.sprite.material.dispose(); unitSprites.delete(id);
     }
     SU.mesh.count = SU.n; SU.mesh.instanceMatrix.needsUpdate = true;
-    for (const [id, a] of animals) if (!used.has(id)) { dropSolid(a); animals.delete(id); }
+    for (const [id, a] of animals) if (!used.has(id)) { if (a.obj) quenchDragonFire(a.obj); dropSolid(a); animals.delete(id); }
     for (const [id, v] of villagers) if (!used.has(id)) { dropVillager(v); villagers.delete(id); }
     if (frame % 120 === 0) for (const id of tickPos.keys()) if (!entitiesById.has(id)) tickPos.delete(id);
     updateCorpses(used);
@@ -4920,6 +5027,10 @@
     if (Math.abs(fwd) > 0.25) {
       if (now - lastMoveAt < 150) return;
       const k = fwd > 0 ? 1 : -1, cx = Math.cos(yaw) * k, cy = Math.sin(yaw) * k;
+      // (the dragon ridden flies along the view, over anything)
+      if (dragonAloft(e)) { const px = +(e.x + cx * 4).toFixed(3), py = +(e.y + cy * 4).toFixed(3);
+        if (!lastMove || Math.hypot(lastMove.x - px, lastMove.y - py) > 0.35 || now - lastMoveAt > 600) { submitCommand({ kind: 'steer', unitId: e.id, x: px, y: py }); lastMove = { x: px, y: py }; lastMoveAt = now; }
+        return; }
       // A straight line off the grid, exactly along the view, when it's clear ('steer'); else the farthest open tile
       for (const r of [2.5, 1.5, 1]) {
         const px = +(e.x + cx * r).toFixed(3), py = +(e.y + cy * r).toFixed(3);
@@ -4954,6 +5065,8 @@
     const now = performance.now();
     if (gameOver || now - lastActAt < 300) return;
     lastActAt = now;
+    // (the dragon ridden: fire, where the rider looks)
+    if (e.utype === 'dragon') { if (e.rideLeft !== undefined) submitCommand({ kind: 'dragon-fire', unitId: e.id, ang: +yaw.toFixed(3) }); return false; }
     const reach = e.range > 0 ? e.range + 1 : 2.5, cone = Math.cos(Math.PI * 0.3);
     const fx = Math.cos(yaw), fy = Math.sin(yaw), vil = e.utype === 'villager';
     // Loaded and against a drop-off that takes the load: bank it (moving or not).
@@ -5027,8 +5140,9 @@
   let oYaw = Math.PI / 4, oPitch = ORBIT_PITCH, oDist = 21, zoomBy = 1, zoomAt = null, fpPitch = -0.3, anchorEase = 0, camH = 14, clearH = 0;
   const mapCenter = () => fromIso(camX, camY);                          // map coords of the 2D camera, unrounded (screenToMap rounds to whole pixels: a fine swipe would step)
   function panTo(x, y){ // map coords
-    const iso = toIso(Math.max(0, Math.min(MAP - 1, x)), Math.max(0, Math.min(MAP - 1, y)));
-    camX = iso.ix; camY = iso.iy; window.targetCamX = camX; window.targetCamY = camY; window.cameraFollowId = null;
+    // (ONE limit, clampCamera's — js/input.js: a tighter one here snapped the view back onto the map whenever a zoom
+    // or key pan followed a swipe that had glided past a corner)
+    const iso = toIso(x, y); camX = iso.ix; camY = iso.iy; clampCamera(); window.targetCamX = camX; window.targetCamY = camY; window.cameraFollowId = null;
   }
   function panBy(dx, dy){ if (followId != null) unfollow(); const c = mapCenter(); panTo(c.x + dx, c.y + dy); }
   // The tallest thing within reach of (x, z): standing trees and buildings (towers highest) — the camera stays above it.
@@ -5071,7 +5185,9 @@
   function applyZoom(){
     const f = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, oDist * zoomBy)) / oDist; zoomBy = 1;
     if (f !== 1 && followId == null && eye && zoomAt) { const g = pick(zoomAt.x, zoomAt.y).map, cx = eye.x - 0.5, cy = eye.y - 0.5;
-      const nx = cx + (1 - f) * (g.x - cx), ny = cy + (1 - f) * (g.y - cy); panTo(nx, ny); const c = mapCenter(); eye.x = c.x + 0.5; eye.y = c.y + 0.5; }
+      // (the shift goes to the camera AND the eased view alike, so the view keeps whatever it trails the camera by: set
+      // onto the camera, a zoom in mid-glide skipped the view ahead)
+      const c0 = mapCenter(); panTo(c0.x + (1 - f) * (g.x - cx), c0.y + (1 - f) * (g.y - cy)); const c = mapCenter(); eye.x += c.x - c0.x; eye.y += c.y - c0.y; }
     oDist *= f;
   }
   // A mode or character switch glides the camera from where it was to the new view (position, the shortest turn, lens)
@@ -5162,8 +5278,8 @@
   }
   function drawFrame(now){
     let e = followId != null ? entitiesById.get(followId) : null;
-    if (followId != null && (!e || e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn)) {
-      // fallen (or gone): the view lets go — no handover to another unit; the world view back to its map camera
+    if (followId != null && (!e || e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn || (steering && e.team !== myTeam))) {
+      // fallen (or gone, or no longer the player's: a dragon whose ride is over): the view lets go — no handover to another unit; the world view back to its map camera
       if (world) { unfollow(); e = null; }
       else { povClose(); return; }
     }
@@ -5784,7 +5900,7 @@
       if (followId != null && mode !== 'orbit') { // riding a character: any scroll / pinch zooms the chase camera
         if (ev.deltaY < 0 && chaseK <= CHASE_MIN) { zoomIn(); return; }                                       // in past its nearest: into its eyes
         zoomPush = 0; chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, chaseK * (ev.deltaY < 0 ? 1 / 1.03 : 1.03))); return; }
-      if (!ev.ctrlKey && isTrackpadWheel(ev)) { camX += ev.deltaX / ZOOM; camY += ev.deltaY / ZOOM; window.cameraFollowId = null; return; }
+      if (!ev.ctrlKey && isTrackpadWheel(ev)) { camX += ev.deltaX / ZOOM; camY += ev.deltaY / ZOOM; clampCamera(); window.cameraFollowId = null; return; }
       if (mode === 'orbit') { zoomPush = 0; zoomBy *= ev.deltaY < 0 ? 1 / 1.02 : 1.02; zoomAt = { x: ev.clientX, y: ev.clientY }; } // a fixed 2% a step, as 2D; applied next frame
     }, { passive: false });
   }

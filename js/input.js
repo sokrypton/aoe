@@ -19,7 +19,7 @@ let middleDragLast=null;
 // input.js/ui.js/init.js. Shared here (global scope; called at runtime).
 function jumpCameraToTile(tx, ty){
   let iso = toIso(tx, ty);
-  camX = iso.ix; camY = iso.iy;
+  camX = iso.ix; camY = iso.iy; clampCamera();
   window.targetCamX = camX; window.targetCamY = camY;
   window.cameraFollowId = null;
 }
@@ -207,13 +207,13 @@ document.addEventListener('keydown',e=>{
       else if(key==='w') { window.currentVillagerMenu = 'mil'; updateUI(); return; }
     } else if(window.currentVillagerMenu === 'eco') {
       // Hotkeys mirror the menu's importance order (see ui.js eco builds).
-      // TC placement is hidden for now (no hotkey) but doPlace still handles it.
       if(key==='q') { placing='HOUSE'; showMsg('Place House'); return; }
       else if(key==='w') { placing='FARM'; showMsg('Place Farm'); return; }
       else if(key==='e') { placing='LCAMP'; showMsg('Place Lumber Camp'); return; }
       else if(key==='r') { placing='MILL'; showMsg('Place Mill'); return; }
       else if(key==='t') { placing='MCAMP'; showMsg('Place Mining Camp'); return; }
       else if(key==='y' && isUnlocked(myTeam,'MARKET')) { placing='MARKET'; showMsg('Place Market'); return; }
+      else if(key==='u' && !teamHasTC(myTeam)) { placing='TC'; showMsg('Place Town Center'); return; }
     } else if(window.currentVillagerMenu === 'mil') {
       // Locked types are hidden from the menu, so their hotkeys are inert
       // (silent) too. E/R always place the BEST unlocked wall/gate material
@@ -464,7 +464,7 @@ C.addEventListener('mousemove',e=>{
   if(middleDrag && (e.buttons&4 || e.button===1)){
     if(middleDragLast){
       camX -= (e.clientX - middleDragLast.x) / ZOOM;
-      camY -= (e.clientY - middleDragLast.y) / ZOOM;
+      camY -= (e.clientY - middleDragLast.y) / ZOOM; clampCamera();
       window.cameraFollowId=null;
     }
     middleDragLast={x:e.clientX,y:e.clientY};
@@ -503,7 +503,16 @@ document.addEventListener('mousemove',e=>{if(!gameOver || window.seeMapMode){mou
 // independent of deltaY's own magnitude). Firefox doesn't expose
 // wheelDelta* at all; there, deltaMode 0 (pixel-based) is trackpad-typical
 // while a real wheel reports deltaMode 1 (line-based).
+// A swipe is ONE gesture: an event within TRACKPAD_HOLD_MS of a trackpad one is a trackpad one too. (A glide's
+// straight-vertical events can fail the ratio test below — a zoomed page scales deltaY but not wheelDeltaY — and
+// each one that did zoomed the map a step in mid-pan: the view skipped.)
+const TRACKPAD_HOLD_MS = 250; let _trackpadAt = -1e9;
 function isTrackpadWheel(e){
+  const now = performance.now();
+  if (rawTrackpadWheel(e)) { _trackpadAt = now; return true; }
+  return now - _trackpadAt < TRACKPAD_HOLD_MS;
+}
+function rawTrackpadWheel(e){
   // Any horizontal component means a two-finger trackpad swipe — a plain
   // mouse wheel is vertical-only — so treat it as a pan outright.
   if(e.deltaX!==0) return true;
@@ -536,7 +545,7 @@ C.addEventListener('wheel',e=>{
   if(isTrackpadWheel(e)){
     // Two-finger trackpad swipe (no pinch) — pan the view, same convention
     // as Google Maps/Figma: the camera follows the scroll direction.
-    camX+=e.deltaX/ZOOM; camY+=e.deltaY/ZOOM;
+    camX+=e.deltaX/ZOOM; camY+=e.deltaY/ZOOM; clampCamera();
     window.cameraFollowId=null;
     return;
   }
@@ -753,7 +762,7 @@ C.addEventListener('touchmove',e=>{
       // multiplies by ZOOM). Without /ZOOM the pan outruns the finger when
       // zoomed in and lags it when zoomed out. Same as wheel-pan above.
       camX-=(mx-touchLast.x)/ZOOM;
-      camY-=(my-touchLast.y)/ZOOM;
+      camY-=(my-touchLast.y)/ZOOM; clampCamera();
       window.cameraFollowId=null;
     }
     touchLast={x:mx,y:my};
@@ -819,7 +828,7 @@ C.addEventListener('touchmove',e=>{
       // /ZOOM: see the two-finger pan above — keeps the map glued to the
       // fingertip at every zoom level.
       camX-=dx/ZOOM;
-      camY-=dy/ZOOM;
+      camY-=dy/ZOOM; clampCamera();
       window.cameraFollowId=null;
     }
     touchLast={x:t.clientX,y:t.clientY};
@@ -1410,15 +1419,8 @@ function minimapJump(sx, sy) {
   // outside the minimap canvas until the mouse/touch is released.
   if (!minimapDragging && !isInMinimapDiamond(mx, my, mw, mh)) return;
 
-  // When cursor is outside the minimap canvas during a drag, clamp canvas
-  // coordinates so miniToMap still produces a valid map position.
-  mx = Math.max(0, Math.min(mw, mx));
-  my = Math.max(0, Math.min(mh, my));
-
+  // (a drag carried past the diamond keeps going: the camera's one limit is clampCamera's)
   let p = miniToMap(mx, my, mw, mh);
-  // Clamp to map bounds so dragging past the edge snaps to the corner
-  p.x = Math.max(0, Math.min(MAP, p.x));
-  p.y = Math.max(0, Math.min(MAP, p.y));
   jumpCameraToTile(p.x, p.y);
 }
 
@@ -1653,7 +1655,7 @@ function getUnitUnderCursor(sx, sy) {
         // The dragon (drawDragonBody): long and tall, wings up
         w = 70 * ZOOM + extraHit;
         hStart = 8 * ZOOM + extraHit;
-        hEnd = -80 * ZOOM - extraHit;
+        hEnd = -(dragonAloft(en) ? 150 : 80) * ZOOM - extraHit;   // (aloft it is drawn well above its spot on the ground)
       } else if (en.utype === 'tradecart') {
         // recentered wagon + yoked ox composite spans ~±42px around the
         // anchor — clicking anywhere on it (incl. the ox head) selects
@@ -2112,11 +2114,16 @@ function handleScroll(elapsed){
   // next (a 20Hz vibration on the followed unit, user caught it).
   if(manualPan)window.cameraFollowId=null;
 
-  // Clamp camera to map bounds (with a margin of 200 pixels in screen/iso coordinates)
-  let maxW = MAP * HALF_TW + 200;
-  let maxH = MAP * TH + 200;
+  clampCamera();
+}
+
+// THE camera limit: the map's box plus CAM_MARGIN (iso px), applied wherever the camera is moved — at the source, so
+// no frame ever reads a spot past it (the 3D view runs its own frame loop: it drew the overshoot, then the snap back).
+const CAM_MARGIN = 600;
+function clampCamera(){
+  const maxW = MAP * HALF_TW + CAM_MARGIN, maxH = MAP * TH + CAM_MARGIN;
   camX = Math.max(-maxW, Math.min(maxW, camX));
-  camY = Math.max(-200, Math.min(maxH, camY));
+  camY = Math.max(-CAM_MARGIN, Math.min(maxH, camY));
 }
 
 // Re-center on the followed unit with the unit's POST-sim-tick position —
@@ -2126,10 +2133,7 @@ function syncCameraFollow(){
   let f=entitiesById.get(window.cameraFollowId);
   if(f&&f.hp>0){
     let iso=toIso(f.x,f.y);
-    camX=iso.ix;camY=iso.iy;
-    let maxW=MAP*HALF_TW+200, maxH=MAP*TH+200;
-    camX=Math.max(-maxW,Math.min(maxW,camX));
-    camY=Math.max(-200,Math.min(maxH,camY));
+    camX=iso.ix;camY=iso.iy; clampCamera();
   } else {
     window.cameraFollowId=null;
   }

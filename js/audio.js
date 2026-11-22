@@ -814,11 +814,11 @@ function detectMusicMood() {
     entities.forEach(en => {
       if (en.type === 'building') (en.team === myTeam ? myBldgs : theirBldgs).push(en);
     });
-    // The dragon awake — in your sight (fog is viewer-local, and so is the music) or after one of yours — outranks every
+    // The dragon awake — yours to ride, in your sight (fog is viewer-local, and so is the music) or after one of yours — outranks every
     // other mood; held a phrase after.
     let dragonUp = entities.some(en => { if (en.utype !== 'dragon' || en.hp <= 0 || !en.awake || en.spent) return false;
       const row = fog[Math.round(en.y)], t = en.target != null && entitiesById.get(en.target);
-      return (row && row[Math.round(en.x)] === 2) || (!!t && t.hp > 0 && t.team === myTeam); });
+      return en.team === myTeam || (row && row[Math.round(en.x)] === 2) || (!!t && t.hp > 0 && t.team === myTeam); });
     if (dragonUp) _moodHold.dragon = ambientSeq + 1;
     if (dragonUp || ambientSeq < (_moodHold.dragon || 0)) return 'dragon';
     let danger = false, war = false;
@@ -1184,13 +1184,14 @@ function startAmbientMusic() {
       at = end + 4 * 60 / AGE_TUNES[musicAge()].bpm;
     } else {
       const bar = 4 * _phraseBeat;
-      at = _phraseAt + Math.max(0, Math.ceil((t - _phraseAt) / bar)) * bar;
+      // (the dragon's theme cuts in at once: no waiting out the bar)
+      at = m === 'dragon' ? t : _phraseAt + Math.max(0, Math.ceil((t - _phraseAt) / bar)) * bar;
       if ((_currentKey.startsWith('peace') && (m === 'war' || m === 'danger')) || m === 'dragon') moodStinger(at);
       fadeOutPhrase(0.2, at);
     }
     _currentKey = key;                               // pending: don't re-trigger before it lands
     _ambientClock.next = at;
-  }, 500);
+  }, 250);
 }
 
 function stopAmbientMusic() {

@@ -306,7 +306,7 @@ function rebuildBlockGrid(){
   for(let i=0;i<entities.length;i++){
     let e=entities[i];
     if(e.type!=='unit'||e.garrisonedIn||e.hp<=0)continue;
-    if(e.utype==='dragon'){ (dragons||(dragons=[])).push(e); continue; } // its whole body, stamped last (below)
+    if(e.utype==='dragon'){ if(!dragonAloft(e))(dragons||(dragons=[])).push(e); continue; } // its whole body, stamped last (below) — on the ground
     if(e.utype==='sheep_carcass')continue; // a corpse on the ground blocks nobody (and never moves)
     if(e.path.length>0)continue; // moving units don't block
     let x=Math.round(e.x),y=Math.round(e.y);

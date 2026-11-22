@@ -1644,6 +1644,8 @@ function tryBuildElsewhere(e, blockedId){
 // isSoldierUnit (villagers retaliate but never acquire) and use plain
 // path-or-order move tests; folding them in would change behavior.
 function shouldRetaliate(target, attacker){
+  // Nothing without a missile turns on a dragon overhead (damageEntity: it couldn't touch it).
+  if (attacker.utype === 'dragon' && dragonAloft(attacker) && !(target.range > 1)) return false;
   // A unit actively carrying out a player move order (a path in progress, or
   // a pending multi-leg move goal — see updateUnit()) keeps obeying it
   // instead of being yanked into combat; e.g. a retreating soldier should
@@ -1708,6 +1710,8 @@ function shouldRetaliate(target, attacker){
 function damageEntity(attacker, target){
   // The dragon can be hurt but not killed: knocked out (spent), blows don't land until it has slept itself whole.
   if (target.utype === 'dragon' && target.spent) return;
+  // Aloft, only archers reach it (a unit with range): no blade, and no building's arrows.
+  if (target.utype === 'dragon' && dragonAloft(target) && !(attacker.type === 'unit' && attacker.range > 1)) return;
   let dmg = attacker.atk || 0;
   // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
   // carcasses) into 1 real damage — no attack stat means no damage at all.
@@ -1744,7 +1748,8 @@ function damageEntity(attacker, target){
 
   target.hp -= dmg;
   // A killing blow only knocks the dragon out: it keeps 1 hp and drops asleep where it stands (updateDragonBehavior).
-  if (target.utype === 'dragon' && target.hp <= 0) { target.hp = 1; target.spent = true; target.awake = false; target.target = null; clearUnitPath(target);
+  // (ridden, it is brought down: its ride ends and it limps home to sleep it off)
+  if (target.utype === 'dragon' && target.hp <= 0) { target.hp = 1; target.spent = true; if (dragonAloft(target)) dragonEndRide(target); else { target.awake = false; target.target = null; clearUnitPath(target); }
     if (window.playSound) window.playSound('dragon_groan', target.x, target.y); }
 
   // Combat sound + particles. Sheep don't get the steel clash — the bleat
@@ -2399,7 +2404,7 @@ function updateIdleMilitary(e){
       let guardZone = guardOrderOf(e) ? guardZoneOf(e) : null;
       let closest=closestUnitNear(e,scanRange+0.1,en=>{
         if(sameSide(en.team,e.team))return false;
-        if(en.utype==='dragon')return false; // never picked a fight with on its own: only an explicit order attacks the dragon
+        if(en.utype==='dragon'&&!(en.rideLeft!==undefined&&e.range>1))return false; // never picked a fight with on its own: only an explicit order attacks the dragon — but an enemy's, ridden, is shot at
         if(aiSparesVillager(e,en))return false;
         if(guardZone && guardZoneDist(guardZone, en.x, en.y) > GUARD_LEASH)return false; // outside the guard zone → not our fight
         // Skip a foe we recently proved unreachable — UNLESS we can hit it
@@ -2491,6 +2496,7 @@ function isButchering(e){ const t=e.target&&entitiesById.get(e.target); return !
 // 'afford' | 'upgrade' } (applyStoneUpgrade reports its own failures). batchUpgrade: hand a finished counterpart back as
 // { upgrade } for the caller to swap with the rest of its batch (wall drag: one afford/salvage pass, like the button).
 function placeBuilding(btype, x, y, team, batchUpgrade){
+  if (btype === 'TC' && teamHasTC(team)) return { fail: 'place' };   // one Town Center a team: built only to replace a lost one
   if (!canPlace(btype, x, y, team)) return { fail: 'place' };
   let counterpart = stoneCounterpartAt(x, y, btype, team);
   if (counterpart && counterpart.complete) {
@@ -3568,30 +3574,9 @@ function handleDeath(e,killerTeam){
         if(b.isFarm)map[e.y+dy][e.x+dx].t=TERRAIN.GRASS;}
     }
     passabilityChangedAt(e.x,e.y,e.w,e.h);
-    if(e.btype==='TC'){
-      // Victory condition: each team has exactly ONE Town Center and it
-      // cannot be rebuilt — losing it is the knockout (AoE2-flavored
-      // regicide-on-the-TC). teamEliminated() below remains a fallback for
-      // no-TC-left edge cases. The match ends when the surviving teams are
-      // all one alliance (checkAllianceVictory). isPlayerTeam keeps gaia
-      // TCs (hypothetical) from ever ending the game.
-      if(isPlayerTeam(e.team)){
-        defeatedTeams[e.team]=true;
-        // The human's TC falling means DEFEAT for them — but if an allied
-        // team still stands, the match keeps running and they spectate the
-        // ally's fight (players like to watch). checkAllianceVictory ends
-        // the game the moment their whole SIDE is out (which in 1v1 is
-        // immediately), so no forced gameOver here.
-        if(e.team===localHumanTeam&&!window.__resim){
-          let allyAlive=false;
-          for(let t=0;t<NUM_TEAMS;t++)if(t!==e.team&&sameSide(t,e.team)&&!defeatedTeams[t])allyAlive=true;
-          showMsg(allyAlive?'Your Town Center has fallen — you are defeated! Spectating your ally\u2026'
-                           :'Your Town Center has fallen — you are defeated!');
-        }
-        else if(sameSide(e.team,localHumanTeam)&&e.team!==localHumanTeam&&!window.__resim)showMsg('Your ally has been knocked out!');
-        checkAllianceVictory();
-      }
-    }
+    // A Town Center lost can be built again by the team's villagers (the knockout is decided below, once it is gone).
+    if(e.btype==='TC'&&e.team===localHumanTeam&&!window.__resim&&teamCanRebuild(e.team,e))
+      showMsg('Your Town Center has fallen: your villagers can build another!');
   }
   // Death blood burst — bigger than the per-hit spatter, marks the kill.
   // Bears get a heavier burst to match their bulk.
@@ -3664,13 +3649,29 @@ function handleDeath(e,killerTeam){
   entitiesById.delete(e.id);
   // Conquest victory (AoE2): a team is defeated when it has nothing left —
   // no buildings and no units (sheep don't count, they change hands).
+  // …and the knockout: a team that loses its last Town Center with no villager left to build another — or its last
+  // villager with no Town Center to train one — is out. (Only on those deaths: a scenario's army-only team stands.)
   if(isPlayerTeam(e.team)){
     for(let t=0;t<NUM_TEAMS;t++){
       if(!defeatedTeams[t]&&teamEliminated(t))defeatedTeams[t]=true;
     }
+    if(!defeatedTeams[e.team]&&(e.btype==='TC'||e.utype==='villager')&&!teamHasTC(e.team)&&!teamCanRebuild(e.team)){
+      defeatedTeams[e.team]=true;
+      // (a human knocked out with an ally standing spectates: checkAllianceVictory ends it when the whole side is out)
+      if(!window.__resim){
+        let allyAlive=false;
+        for(let t=0;t<NUM_TEAMS;t++)if(t!==e.team&&sameSide(t,e.team)&&!defeatedTeams[t])allyAlive=true;
+        if(e.team===localHumanTeam)showMsg(allyAlive?'Your town is lost: you are defeated! Spectating your ally\u2026':'Your town is lost: you are defeated!');
+        else if(sameSide(e.team,localHumanTeam))showMsg('Your ally has been knocked out!');
+      }
+    }
     checkAllianceVictory();
   }
 }
+
+// One Town Center a team (placeBuilding); lost, its villagers can build another.
+function teamHasTC(team,except){ return entities.some(en=>en.type==='building'&&en.btype==='TC'&&en.team===team&&en.hp>0&&en!==except); }
+function teamCanRebuild(team,except){ return entities.some(en=>en.utype==='villager'&&en.team===team&&en.hp>0&&en!==except); }
 
 // The match ends when every non-defeated player team is on ONE side.
 // `won` stays binary "did team 0's side win" (didIWin inverts for the
@@ -3886,7 +3887,7 @@ function updateBuildingArrows(e){
           for (let k = 0; k < cell.length; k++) {
             let en = cell[k];
             if (en.hp <= 0 || en.garrisonedIn) continue;
-            if (en.team === GAIA_TEAM || sameSide(en.team, e.team)) continue;
+            if (en.team === GAIA_TEAM || sameSide(en.team, e.team) || dragonAloft(en)) continue;   // (a dragon overhead: archers' work)
             let d = dist(center, en);
             if (d <= range) inRange.push({en, d});
           }

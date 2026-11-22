@@ -614,11 +614,7 @@ function freshAIState(team){
     // villager are off-limits until the stamp expires or the bear is hunted
     // (canGatherTile, js/logic.js) — a 1.2-speed bear outruns 0.8-speed
     // villagers, so avoidance (AoE2 wolf routing), not fleeing, saves them.
-    dangerZones: [],
-    // Consecutive "this is hopeless" decision ticks (maybeResignAI,
-    // js/ai.js) — AoE2 AIs concede rather than make the winner grind
-    // down every last wall segment.
-    resignScore: 0 };
+    dangerZones: [] };
 }
 function resetAIStates(){
   AI_STATES = Array.from({length: NUM_TEAMS}, (_, t) => isAITeam(t) ? freshAIState(t) : null);
@@ -1252,6 +1248,19 @@ function sightOffsets(sight){
   return offs;
 }
 
+// What the VIEWER last saw of each tile's resource (viewer-local, never read by the sim; not saved): out of sight a
+// tree stays standing and ore stays its size till seen again — else the fog showed an enemy's woodline falling.
+// seenRes holds res + 1 (0: nothing recorded — the live tile is drawn). Reset with the fog (fog rows are new arrays).
+let seenRes = null, seenT = null, seenFor = null;
+const _seenTile = { t: 0, res: 0 };
+// The tile as the viewer knows it: {t, res} — the live tile in sight, the remembered one in the fog. (One scratch
+// object: read it at once, don't hold it across another call.)
+function seenTile(x, y){
+  const tl = map[y][x];
+  if (!seenRes || window.fogDisabled || !fog[y] || fog[y][x] !== 1) return tl;
+  const r = seenRes[y * MAP + x]; if (!r) return tl;
+  _seenTile.t = seenT[y * MAP + x]; _seenTile.res = r - 1; return _seenTile;
+}
 function updateFog() {
   if (!gameStarted) return;
   // Fog is about to change — drop the per-building fog-level memo
@@ -1272,10 +1281,12 @@ function updateFog() {
   // here used to make ally-lit tiles flicker visible↔shroud between refreshes.
   if (visionFreshTick < 0 || !teamVisGrid) return;
   const vg = teamVisGrid[myTeam];
+  if (seenFor !== fog || seenRes.length !== MAP * MAP) { seenRes = new Float32Array(MAP * MAP); seenT = new Uint8Array(MAP * MAP); seenFor = fog; }
   for (let y = 0; y < MAP; y++) {
-    const row = fog[y], base = y * MAP;
+    const row = fog[y], base = y * MAP, mrow = map[y];
     for (let x = 0; x < MAP; x++) {
-      if (vg[base + x] > 0) row[x] = 2;
+      if (vg[base + x] > 0) { row[x] = 2;
+        const tl = mrow[x]; if (tl.res > 0 || seenRes[base + x]) { seenRes[base + x] = Math.max(0, tl.res) + 1; seenT[base + x] = tl.t; } }
       else if (row[x] === 2) row[x] = 1;
     }
   }
@@ -1434,6 +1445,7 @@ function updateTeamVision(){
       cy = Math.floor(e.y + (e.h || b.h) / 2);
     } else {
       if (e.utype === 'sheep') sight = 3;
+      else if (e.utype === 'dragon') sight = 11;   // (ridden: from the air it sees far — and ahead of its own speed)
       else if (e.utype === 'scout') sight = 7;
       else sight = 5;
       cx = Math.round(e.x);

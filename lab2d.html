@@ -67,7 +67,7 @@
   // what each unit can do (the button row): walk is a gallop for cavalry, work is a villager's job by its load
   const ACTIONS = { villager: ['idle', 'walk', 'flee', 'carry', 'work', 'build', 'repair', 'fight', 'die'], militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'],
     archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'attack', 'die'], knight: ['idle', 'walk', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'],
-    tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['idle', 'walk', 'attack', 'die'] };
+    tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'wake', 'idle', 'walk', 'roar', 'attack', 'die'] };
   const S = window.LAB = { unit: 'scout', action: 'walk', dir: 0, all: false, age: 1, techs: false, load: 'wood', zoom: 4, paused: false, speed: 1,
     set(o){ if (o.pose) o.action = o.pose === 'attack' && S.unit.startsWith('villager') ? 'work' : o.pose; Object.assign(S, o); build(); sync(); },
     pause(p){ S.paused = p === undefined ? !S.paused : p; sync(); },
@@ -114,6 +114,15 @@
         u.gatherX = Math.round(u.__home.x + DIRV[d][0]); u.gatherY = Math.round(u.__home.y + DIRV[d][1]);
         const tl = map[u.gatherY][u.gatherX]; tl.res = 200; tl.t = { wood: TERRAIN.FOREST, gold: TERRAIN.GOLD, stone: TERRAIN.STONE, wheat: TERRAIN.FARM, berries: TERRAIN.BERRIES }[S.load]; }
     }
+    // the dragon (as lab3d's): awake but for 'sleep'; the roar on a loop; the attack a breath on a loop — the inhale
+    // over its first 40%, then the blast
+    if (u.utype === 'dragon') { const st = dragon2D.get(u.id), sec = T / TPS, rof = UNITS.dragon.rof;
+      // (wake: asleep, woken, and settling again, on a loop)
+      // (once its state exists: a target before that set off its roar)
+      u.awake = a === 'wake' ? sec % 12 > 2.4 && sec % 12 < 9.6 : a !== 'sleep'; u.target = st && (a === 'attack' || a === 'roar') ? -1 : null; u.breathTick = undefined; u.atkCooldown = 0;
+      if (st) { st.roarT = a === 'roar' ? (sec % 3) / 3 : undefined; st.noRoar = a !== 'roar'; }
+      if (a === 'attack') { const t = (sec % 3.2) / 3.2;
+        if (t < 0.4) u.atkCooldown = rof * 0.35 * (1 - t / 0.4); else { u.atkCooldown = rof; u.breathTick = tick - (t - 0.4) / 0.6 * T30(26); } } }
   }
   function advance(n){ T += n; tick = Math.floor(T); }
   let last = performance.now();
@@ -121,7 +130,8 @@
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (!S.paused) advance(dt * TPS * S.speed);
     teamAge[0] = S.age; teamTechs[0] = S.techs ? techMask(Object.keys(UPGRADES)) : 0;
-    invalidateBuildingFogMemo(); if (typeof particles !== 'undefined') particles.length = 0;
+    invalidateBuildingFogMemo();
+    if (typeof particles !== 'undefined') particles.length = 0;
     const dpr = window.devicePixelRatio || 1;
     X.setTransform(dpr, 0, 0, dpr, 0, 0); X.fillStyle = '#3e7a24'; X.fillRect(0, 0, W, window.innerHeight);
     const cols = S.all ? 4 : 1, rows = S.all ? 2 : 1, cw = W / cols, ch = (window.innerHeight - 60) / rows;

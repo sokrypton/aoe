@@ -148,7 +148,7 @@ function drawBerryBush(t, x, y, sx, cy){
 const isSortedRes = t => t === TERRAIN.GOLD || t === TERRAIN.STONE || t === TERRAIN.BERRIES;
 function drawTileResourceAt(x, y){
   const p = mapToScreen(x, y), sx = Math.round(p.sx), sy = Math.round(p.sy);
-  if (!isOffscreen(sx, sy, TW * 2)) drawTileResource(map[y][x], x, y, sx, sy + HALF_TH);
+  if (!isOffscreen(sx, sy, TW * 2)) drawTileResource(seenTile(x, y), x, y, sx, sy + HALF_TH);
 }
 function drawTileResource(t, x, y, sx, cy){
   if(t.t===TERRAIN.GOLD||t.t===TERRAIN.STONE){ drawOreTile(t, x, y, sx, cy); return; }
@@ -178,7 +178,7 @@ function drawGround(minX, maxX, minY, maxY){
   _gnd.base.x.putImageData(_gnd.base.d, 0, 0); _gnd.fog.x.putImageData(_gnd.fog.d, 0, 0);
   const o = mapToScreen(0, 0), lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
   lay(_gnd.base.c);
-  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && isSortedRes(map[y][x].t)) drawTileResourceAt(x, y);
+  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && isSortedRes(seenTile(x, y).t)) drawTileResourceAt(x, y);
   lay(_gnd.fog.c);
 }
 
@@ -282,7 +282,7 @@ function drawTreeEntity(x,y,part=null){
   let p=mapToScreen(x,y);
   let sx=Math.round(p.sx), sy=Math.round(p.sy);
   let cy=sy+HALF_TH;
-  let t=map[y][x];
+  let t=seenTile(x,y);   // (in the fog: as last seen)
   if(!t || t.res<=0) return;
 
   // 1. Each tree its own (pov3d's): size, crown shape, turn, proportions, shade, a nudge off the grid
@@ -303,7 +303,7 @@ function drawTreeEntity(x,y,part=null){
   // (js/core.js), not a field on the tile itself; see its comment.
   let fellKey = x + ',' + y;
   if(t.res <= 60 && !treeFellTicks.has(fellKey)){
-    treeFellTicks.set(fellKey, tick);
+    treeFellTicks.set(fellKey, f === 2 ? tick : tick - T30(40));   // (first met in the fog already cut: it lies there, it doesn't fall)
   }
 
   // Calculate fall progress and angle — frozen in shroud (static snapshot)

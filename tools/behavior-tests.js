@@ -1253,6 +1253,77 @@ async function withPage(browser, port, entry, fn){
     })),
 
     // ------------------------------------------------ trade cart: gold by Market distance
+    // A Town Center lost is not the end while a villager lives: they build another (one a team), the AI does too; the
+    // knockout is the last villager falling with no Town Center standing.
+    'tc-rebuild': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 4, numTeams: 3, controllers: ['human', 'ai', 'human'], ages: [2, 2, 2], entities: [
+        { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }, { b: 'TC', x: 48, y: 6, team: 2 },
+        { u: 'villager', x: 12, y: 12, team: 0 }, { u: 'villager', x: 13, y: 12, team: 0 },
+        ...[0, 1, 2, 3].map(i => ({ u: 'villager', x: 44 + i, y: 44, team: 1 }))] });
+      for (const t of [0, 1]) { const r = resourceStore(t); r.wood = 1000; r.stone = 500; }
+      const tcOf = t => entities.find(e => e.btype === 'TC' && e.team === t);
+      T.ok('a second Town Center is refused while one stands', !!placeBuilding('TC', 14, 14, 0).fail);
+      const raze = b => { b.hp = 0; handleDeath(b); };
+      raze(tcOf(0));
+      T.ok('the Town Center falls: villagers alive, the team plays on', !defeatedTeams[0] && !gameOver);
+      const site = placeBuilding('TC', 14, 14, 0).bldg;
+      T.ok('its villagers found another', !!site && site.btype === 'TC' && !!placeBuilding('TC', 22, 22, 0).fail);
+      raze(tcOf(1));
+      for (let i = 0; i < T30(600) && !tcOf(1); i++) update();
+      const aiSite = tcOf(1);
+      for (let i = 0; i < T30(9000) && aiSite && !aiSite.complete; i++) update();
+      T.ok('the AI rebuilds its own, and is not out', !!aiSite && aiSite.complete && !defeatedTeams[1]);
+      raze(site);
+      T.ok('no Town Center but villagers: still in', !defeatedTeams[0]);
+      entities.filter(e => e.utype === 'villager' && e.team === 0).forEach(v => { v.hp = 0; handleDeath(v); });
+      T.ok('the last villager falls with no Town Center: knocked out', !!defeatedTeams[0]);
+      return T;
+    })),
+
+    // A player's sheep brought to the sleeping dragon is eaten and the dragon is theirs for a minute: it flies straight
+    // over a wall to what it's sent at, burns it, shrugs off melee but not arrows, and goes home to sleep when time is up.
+    'dragon-ride': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [
+        { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }, { b: 'HOUSE', x: 40, y: 30, team: 1 },
+        ...[27, 28, 29, 30, 31, 32, 33].map(y => ({ b: 'WALL', x: 36, y, team: 1 }))] });
+      const d = createUnit('dragon', 30, 30, GAIA_TEAM); d.homeX = 30; d.homeY = 30; d.awake = false; d.calmSince = 0;
+      for (let i = 0; i < T30(60); i++) update();
+      T.ok('asleep and gaia with nobody near', !d.awake && d.team === GAIA_TEAM && !dragonAloft(d));
+      const sheep = createUnit('sheep', 32, 31, 0);
+      for (let i = 0; i < T30(60) && d.rideLeft === undefined; i++) update();
+      T.ok('the sheep is eaten and the dragon is the player\'s, aloft', d.team === 0 && dragonAloft(d) && !entitiesById.get(sheep.id) && dragonRideSeconds(d) > 55);
+      const house = entities.find(e => e.btype === 'HOUSE'), hp0 = house.hp;
+      myTeam = 0; selected = [d]; execUnitCommand({ targetId: house.id, tileX: house.x, tileY: house.y });
+      for (let i = 0; i < T30(600) && house.hp === hp0; i++) update();
+      T.ok('ordered at a house past a wall, it flies over and burns it', house.hp < hp0 && d.x > 36 && d.path.length === 0);
+      const bear = createUnit('bear', Math.round(d.x) + 2, Math.round(d.y) + 2, GAIA_TEAM);
+      for (let i = 0; i < T30(120); i++) update();
+      T.ok('a bear beside it leaves it alone, even burnt', bear.hp <= 0 || bear.target !== d.id);
+      // (character mode: steered and fired by its rider)
+      d.possessed = true; execCommand({ kind: 'steer', unitId: d.id, x: d.x + 3, y: d.y }, 0);
+      const fx0 = d.flyX; d.atkCooldown = 0; d.breathTick = undefined; execCommand({ kind: 'dragon-fire', unitId: d.id, ang: 1 }, 0);
+      T.ok('possessed, it is steered through the air and breathes on command', fx0 > d.x + 2 && d.breathTick === tick && Math.abs(d.faceAng - 1) < 0.02 && d.atkCooldown > 0);
+      d.possessed = false; execCommand({ kind: 'dragon-fire', unitId: d.id, ang: 2 }, 0);
+      const sword = createUnit('militia', d.x, d.y + 1, 1), bow = createUnit('archer', d.x, d.y - 1, 1), h1 = d.hp;
+      damageEntity(sword, d); const h2 = d.hp; damageEntity(bow, d);
+      let towerHurt = false; const tower = createBuilding('TC', 44, 22, 1), vic = createUnit('villager', 42, 36, 1);
+      execUnitCommand({ targetId: vic.id, tileX: vic.x, tileY: vic.y });
+      for (let i = 0; i < T30(90); i++) { if (i % 10 === 0) { const hb = d.hp; damageEntity(tower, d); towerHurt = towerHurt || d.hp !== hb; } update(); }
+      T.ok('aloft, a sword can\'t reach it; an arrow can', h2 === h1 && d.hp < h2);
+      T.ok('sent at a villager, it stays on it; a Town Center\'s arrows can\'t reach it', (vic.hp <= 0 || d.flyTarget === vic.id) && !towerHurt);
+      const t0 = tick; for (let i = 0; i < T30(5000) && !d.homing; i++) update();
+      T.ok('its minute up (real time: ' + GAME_SPEED + 'x), it is gaia\'s again and flies home', d.homing && d.team === GAIA_TEAM && tick - t0 > T30(1500) * GAME_SPEED);
+      execUnitCommand({ tileX: 20, tileY: 40 });
+      for (let i = 0; i < T30(1200) && d.homing; i++) update();
+      T.ok('home, landed, asleep, and resting before the next offering', !dragonAloft(d) && d.x === 30 && d.y === 30 && !d.awake && d.tameReadyAt > tick);
+      const again = createUnit('sheep', 32, 31, 0);
+      for (let i = 0; i < T30(60); i++) update();
+      T.ok('a second sheep straight away is refused', d.rideLeft === undefined && !!entitiesById.get(again.id));
+      return T;
+    })),
+
     // Gold comes only from the distance between the two Markets: side-by-side Markets pay nothing however fast the
     // cart flips between them, and a load picked up for a far Market isn't cashed in full at a nearer one.
     'trade-gold-distance': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {

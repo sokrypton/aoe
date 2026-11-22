@@ -254,6 +254,8 @@ function execCommand(cmd, team){
       const u = entitiesById.get(cmd.unitId);
       if (!u || u.type !== 'unit' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn) break;
       if (!(Number.isFinite(cmd.x) && Number.isFinite(cmd.y))) break;
+      // (the dragon ridden flies there: no ground line to clear)
+      if (dragonAloft(u)) { u.flyTarget = undefined; u.flyX = Math.max(0, Math.min(MAP - 1, cmd.x)); u.flyY = Math.max(0, Math.min(MAP - 1, cmd.y)); break; }
       if (u.order) issueOrder(u, null);
       u.task = null; u.target = null; u.buildTarget = null; u.buildQueue = []; u.prevTask = null; u.savedTask = null;
       u.explicitAttack = false; clearGatherTarget(u); u.defendX = u.x; u.defendY = u.y;
@@ -266,7 +268,15 @@ function execCommand(cmd, team){
       // finish onto a tile centre — off the line it was looking along on a zigzag walk (a sideways jump in first person).
       const u = entitiesById.get(cmd.unitId);
       if (!u || u.type !== 'unit' || u.team !== team || !u.possessed || u.hp <= 0 || u.garrisonedIn) break;
+      if (dragonAloft(u)) { u.flyTarget = undefined; u.flyX = u.x; u.flyY = u.y; break; }
       if (!u.task && !u.target) clearUnitPath(u);
+      break;
+    }
+    case 'dragon-fire': {
+      // The dragon ridden in character mode (js/pov3d.js) breathes where its rider looks, on its own reload.
+      const u = entitiesById.get(cmd.unitId);
+      if (!u || u.team !== team || !u.possessed || u.rideLeft === undefined || !Number.isFinite(cmd.ang) || u.atkCooldown > 0) break;
+      u.faceAng = simAtan2(simSin(cmd.ang), simCos(cmd.ang)); dragonBreath(u); u.atkCooldown = UNITS.dragon.rof;
       break;
     }
     case 'deposit': {
@@ -777,6 +787,13 @@ function execUnitCommand(cmd){
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
     s.explicitReseed = false;
+    // The dragon ridden takes its order straight (js/wildlife.js): it flies, so no path is found for it — the ground
+    // pathfinder can't start from over a forest or reach a spot inside one.
+    if (dragonAloft(s)) {
+      s.target = null; clearUnitPath(s);
+      if (target) s.flyTarget = target.id; else { s.flyTarget = undefined; s.flyX = tileX; s.flyY = tileY; }
+      return;
+    }
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {
       // Ride the ram: same walk-to-container flow as the town bell
       // (task='garrison' + garrisonTarget; enterGarrison seats on arrival).

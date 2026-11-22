@@ -13,7 +13,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 |---|---|
 | `core.js` | constants (UNITS/BLDGS/AGES/AI_LEVELS), team model, sim PRNG + det-trig, per-team vision grids, market prices |
 | `logic.js` | the sim: updateUnit/updateBuilding, combat, gathering, garrison, trade carts, guard posts, stuck-watchdog |
-| `wildlife.js` | the map's animals: sheep graze/wander, bear den/maul, dragon body/turn/breath |
+| `wildlife.js` | the map's animals: sheep graze/wander, bear den/maul, dragon body/turn/breath and its ride (a sheep offered: a minute aloft under a player's orders) |
 | `triggers.js` | scenario triggers (AoE2 conditions → effects, objectives, instructions): `scenarioScript` static, `scenarioState` sim-hashed — see `docs/scenarios.md` |
 | `scenario.js` / `scenario-ui.js` | `loadScenario` world builder / the viewer's instruction card, objectives, Learn to Play menu |
 | `ai.js` | per-team AI (economy plan, walls, home + field squads, villager shelter, militia) — see `docs/aoe2-ai-behavior.md`, `docs/ai-redesign.md` |
