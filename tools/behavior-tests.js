@@ -1253,6 +1253,44 @@ async function withPage(browser, port, entry, fn){
     })),
 
     // ------------------------------------------------ trade cart: gold by Market distance
+    // A sheep on its way to the dragon that an enemy captures stops: the offer was its old owner's. The new owner can
+    // send it again. And a knocked-out AI's soldiers still fight beside its ally.
+    'sheep-capture-and-knocked-out-ally': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 4, numTeams: 3, controllers: ['human', 'ai', 'human'], alliances: [0, 1, 1], ages: [2, 2, 2], entities: [
+        { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 44, y: 44, team: 2 }, { b: 'HOUSE', x: 40, y: 8, team: 1 }] });
+      const d = createUnit('dragon', 30, 30, GAIA_TEAM); d.homeX = 30; d.homeY = 30; d.awake = false; d.calmSince = 0;
+      const s = createUnit('sheep', 20, 20, 0); myTeam = 0; selected = [s]; execUnitCommand({ targetId: d.id, tileX: 30, tileY: 30 });
+      createUnit('militia', 21, 21, 2).stance = 'stand';
+      for (let i = 0; i < 12 && s.team === 0; i++) update();
+      const caught = s.team === 2, off = s.offerTo === undefined && !(s.order && s.order.kind === 'move'), x0 = s.x, y0 = s.y;
+      for (let i = 0; i < T30(300); i++) update();
+      T.ok('captured on its way, it stops: the offer is off, the dragon untouched', caught && off && Math.hypot(s.x - x0, s.y - y0) < 3 && d.rideLeft === undefined);
+      defeatedTeams[1] = true;
+      const vet = createUnit('militia', 46, 41, 1), raider = createUnit('militia', 47, 42, 0); raider.stance = 'stand';
+      let helped = false; for (let i = 0; i < T30(900) && !helped; i++) { update(); helped = vet.target === raider.id || raider.hp <= 0; }
+      T.ok('knocked out, an AI\'s soldier still fights a raider at its ally\'s town', helped);
+      return T;
+    })),
+
+    // Brought down by arrows mid-meal, the dragon's ride and meal are both off: it flies home, and the sheep it was
+    // eating is free again (not left standing, offered, for good).
+    'dragon-ko-mid-meal': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [
+        { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }] });
+      const d = createUnit('dragon', 30, 30, GAIA_TEAM); d.homeX = 30; d.homeY = 30; d.awake = false; d.calmSince = 0;
+      const s = createUnit('sheep', 33, 31, 0); s.offerTo = d.id;
+      for (let i = 0; i < 20 && d.eatLeft === undefined; i++) update();
+      const eating = d.eatLeft !== undefined;
+      d.hp = 1; damageEntity(createUnit('archer', 36, 30, 1), d);
+      for (let i = 0; i < T30(1500) && dragonAloft(d); i++) update();
+      for (let i = 0; i < T30(200); i++) update();
+      T.ok('knocked out mid-meal: home, the meal off, the sheep free', eating && !dragonAloft(d) && d.eatLeft === undefined && d.eatId === undefined
+        && !!entitiesById.get(s.id) && !s.offered && s.offerTo === undefined);
+      return T;
+    })),
+
     // A Town Center lost is not the end while a villager lives: they build another (one a team), the AI does too; the
     // knockout is the last villager falling with no Town Center standing.
     'tc-rebuild': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
@@ -1278,6 +1316,11 @@ async function withPage(browser, port, entry, fn){
       T.ok('no Town Center but villagers: still in', !defeatedTeams[0]);
       entities.filter(e => e.utype === 'villager' && e.team === 0).forEach(v => { v.hp = 0; handleDeath(v); });
       T.ok('the last villager falls with no Town Center: knocked out', !!defeatedTeams[0]);
+      // (a foundation is not a Town Center for the knockout: with no villager left to build it, the team is out)
+      const r1 = resourceStore(1); r1.wood = 1000; r1.stone = 500;
+      raze(tcOf(1)); const found = placeBuilding('TC', 30, 40, 1).bldg;
+      entities.filter(e => e.utype === 'villager' && e.team === 1).forEach(v => { v.hp = 0; handleDeath(v); });
+      T.ok('only a foundation left and no villagers: knocked out', !!found && !found.complete && !!defeatedTeams[1]);
       return T;
     })),
 

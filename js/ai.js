@@ -164,9 +164,10 @@ function updateAI(ai){
   let aiBuildings=entities.filter(e=>e.type==='building'&&e.team===ai.team);
   let aiUnits=entities.filter(e=>e.type==='unit'&&e.team===ai.team&&!e.possessed); // (a player-steered unit is never dispatched — TC or not)
   let aiTC=aiBuildings.find(b=>b.btype==='TC');
-  if(!aiTC){
-    // Its Town Center lost: the villagers build another the moment it can be paid for (placeBuilding allows one, with
-    // none standing; assignAIVillagers sends them to the site), and everything else gathers and fights on meanwhile.
+  // Its Town Center lost: the villagers build another the moment it can be paid for (placeBuilding allows one, with
+  // none standing; assignAIVillagers sends them to the site), and everything else gathers and fights on meanwhile.
+  // Knocked out (no Town Center, no villager to build one), its soldiers still fight on beside its allies.
+  if(!aiTC||defeatedTeams[ai.team]){
     let vils=aiUnits.filter(u=>u.utype==='villager');
     let mils=aiUnits.filter(u=>isArmyUnit(u.utype)&&!u.garrisonedIn);
     let anchor=aiBuildings[0]||(aiUnits[0]?{x:Math.round(aiUnits[0].x),y:Math.round(aiUnits[0].y),w:1,h:1}:null);
@@ -178,7 +179,6 @@ function updateAI(ai){
   }
 
   updateAIIntel(ai,aiTC); // what has scouting/combat actually revealed about the player this tick
-  if(defeatedTeams[ai.team])return;   // (it never concedes: it plays on till it is knocked out)
 
   let vils=aiUnits.filter(u=>u.utype==='villager');
   // !garrisonedIn: a rider sealed inside a ram cannot act — enterGarrison

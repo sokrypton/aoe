@@ -207,7 +207,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
+  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','rideLeft','eatLeft','eatId','offered','offerTo','homing','tameReadyAt','flyTarget','flyX','flyY','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

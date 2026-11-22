@@ -51,7 +51,8 @@ function updateSheepBehavior(e){
         guarded = !!closestUnitNear(e,guardDist+1e-9,en=>ally ? en.team===e.team : sameSide(en.team,e.team)); // (a guard exactly as close counts: closestUnitNear is strict)
       }
       if(!guarded){
-        e.team=closest.team;
+        // (captured: its old owner's orders go with it — an offering to the dragon too; the new owner may send it again)
+        e.team=closest.team; e.offerTo=undefined; if(e.order)issueOrder(e,null);
         clearUnitPath(e);
       }
     }
@@ -166,7 +167,8 @@ function dragonOffering(e){
   for(let i=0;i<entities.length;i++){ let s=entities[i];
     if(s.utype!=='sheep'||s.offerTo!==e.id||s.hp<=0||s.offered||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
     if(tick>=(e.tameReadyAt||0))return s;
-    if(!window.__resim&&s.team===myTeam&&tick%T30(150)===0&&typeof showMsg==='function')showMsg('The dragon is resting: it will take an offering in '+Math.ceil((e.tameReadyAt-tick)/TPS/GAME_SPEED)+'s');
+    if(!window.__resim&&s.team===myTeam&&(((tick-e.id)%T30(150))+T30(150))%T30(150)<5&&typeof showMsg==='function')   // (once in T30(150): checked only every 5th tick)
+      showMsg('The dragon is resting: it will take an offering in '+Math.ceil((e.tameReadyAt-tick)/TPS/GAME_SPEED)+'s');
     return null; }
   return null;
 }
@@ -205,6 +207,8 @@ function dragonEat(e){
 function dragonEndRide(e){
   if(!window.__resim&&typeof showMsg==='function'&&e.rideLeft!==undefined)showMsg('The dragon returns to its lair');
   e.possessed=false;   // (character mode lets go of it)
+  // (brought down mid-meal: the meal is off, and the sheep is free again — else it stood frozen, offered, for good)
+  if(e.eatLeft!==undefined){ let s=entitiesById.get(e.eatId); if(s){ s.offered=false; s.offerTo=undefined; } e.eatLeft=undefined; e.eatId=undefined; }
   e.team=GAIA_TEAM; e.rideLeft=undefined; e.homing=true; e.target=null; e.flyTarget=undefined; e.explicitAttack=false; clearUnitPath(e);
 }
 // One tick aloft: toward (x, y) — turning, and flying forward once roughly headed there; `hold`: hover this far short.

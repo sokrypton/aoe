@@ -3657,13 +3657,14 @@ function handleDeath(e,killerTeam){
     for(let t=0;t<NUM_TEAMS;t++){
       if(!defeatedTeams[t]&&teamEliminated(t))defeatedTeams[t]=true;
     }
-    if(!defeatedTeams[e.team]&&(e.btype==='TC'||e.utype==='villager')&&!teamHasTC(e.team)&&!teamCanRebuild(e.team)){
+    if(!defeatedTeams[e.team]&&(e.btype==='TC'||e.utype==='villager')&&!teamHasTC(e.team,null,true)&&!teamCanRebuild(e.team)){
       defeatedTeams[e.team]=true;
-      // (a human knocked out with an ally standing spectates: checkAllianceVictory ends it when the whole side is out)
+      // (knocked out with an ally standing, its soldiers fight on beside it: checkAllianceVictory ends the match only when
+      // the whole side is out — no Town Center and no villagers on any of its teams)
       if(!window.__resim){
         let allyAlive=false;
         for(let t=0;t<NUM_TEAMS;t++)if(t!==e.team&&sameSide(t,e.team)&&!defeatedTeams[t])allyAlive=true;
-        if(e.team===localHumanTeam)showMsg(allyAlive?'Your town is lost: you are defeated! Spectating your ally\u2026':'Your town is lost: you are defeated!');
+        if(e.team===localHumanTeam)showMsg(allyAlive?'Your town is lost: you are defeated! Your soldiers can still fight beside your ally.':'Your town is lost: you are defeated!');
         else if(sameSide(e.team,localHumanTeam))showMsg('Your ally has been knocked out!');
       }
     }
@@ -3671,8 +3672,9 @@ function handleDeath(e,killerTeam){
   }
 }
 
-// One Town Center a team (placeBuilding); lost, its villagers can build another.
-function teamHasTC(team,except){ return entities.some(en=>en.type==='building'&&en.btype==='TC'&&en.team===team&&en.hp>0&&en!==except); }
+// One Town Center a team (placeBuilding: a foundation counts); lost, its villagers can build another. built: a
+// finished one only — the knockout's test (a foundation with no one left to build it trains no one).
+function teamHasTC(team,except,built){ return entities.some(en=>en.type==='building'&&en.btype==='TC'&&en.team===team&&en.hp>0&&en!==except&&(!built||en.complete)); }
 function teamCanRebuild(team,except){ return entities.some(en=>en.utype==='villager'&&en.team===team&&en.hp>0&&en!==except); }
 
 // The match ends when every non-defeated player team is on ONE side.
