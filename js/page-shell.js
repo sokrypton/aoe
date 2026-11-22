@@ -331,7 +331,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 
     <div class="help-section">
       <h4>The Dragon</h4>
-      <p>A dragon sleeps at the heart of the map. Walk up to it and it wakes and burns whatever is near. But bring one of your <b>sheep</b> near it and it takes the offering: for <b>one minute</b> it is yours, in the air. Order it like any unit: it flies over walls and forests and burns what it is sent at, and only archers can reach it. Then it flies home to sleep, and won't take another sheep for a few minutes.</p>
+      <p>A dragon sleeps at the heart of the map. Walk up to it and it wakes and burns whatever is near. But select one of your <b>sheep</b> and send it at the dragon, as you would order an attack, and it takes the offering: it eats the sheep, and for <b>one minute</b> it is yours, in the air. Order it like any unit: it flies over walls and forests and burns what it is sent at, and only archers can reach it. Then it flies home to sleep, and won't take another sheep for a few minutes.</p>
     </div>
 
     <div class="help-section">

@@ -1633,7 +1633,7 @@ function getUnitUnderCursor(sx, sy) {
     if (en.type === 'unit' && !en.garrisonedIn) {
       let eux = Math.round(en.x), euy = Math.round(en.y);
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
-      if (en.team !== myTeam && uf !== 2) return;
+      if (en.team !== myTeam && uf !== 2 && !dragonSeenByAll(en)) return;
 
       let ua = unitAnchorLogical(en);
       let us = logicalToScreen(ua.x, ua.y);
@@ -1753,7 +1753,7 @@ function doSelect(sx,sy,shift){
   let clicked=getUnitUnderCursor(sx, sy);
   if(clicked && clicked.team!==myTeam){
     let tx = Math.floor(clicked.x), ty = Math.floor(clicked.y);
-    let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+    let visible = ((tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2) || dragonSeenByAll(clicked);
     if(!visible) clicked=null;
   }
   if(!clicked){
@@ -1923,7 +1923,7 @@ function doCommand(sx,sy){
   let clickedUnit = getUnitUnderCursor(sx, sy);
   if (clickedUnit && clickedUnit.team !== myTeam) {
     let tx = Math.floor(clickedUnit.x), ty = Math.floor(clickedUnit.y);
-    let visible = (tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2;
+    let visible = ((tx >= 0 && tx < MAP && ty >= 0 && ty < MAP) && fog[ty][tx] === 2) || dragonSeenByAll(clickedUnit);
     if (!visible) clickedUnit = null;
   }
   if (clickedUnit) {

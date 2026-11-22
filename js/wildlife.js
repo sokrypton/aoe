@@ -143,7 +143,8 @@ function dragonShove(){
 }
 const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                                       // (turns 30° a game-second)
       DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600), DRAGON_STEP_COS=0.82;
-// The dragon ridden. A player's own sheep brought within DRAGON_FEED_R of the dragon on the ground is eaten, and
+// The dragon ridden. A player's own sheep sent at the dragon (ordered onto it, as an attack) is eaten when it comes
+// within DRAGON_FEED_R of it on the ground, and
 // the dragon is that player's for DRAGON_RIDE: one of their units (e.team), ordered like any other — and aloft: it
 // flies straight over everything (no path, no blocked tiles), turns fast, and burns whatever comes under its nose.
 // Aloft only archers reach it (damageEntity). When its time is up — or it is brought down — it is gaia's again and
@@ -154,14 +155,19 @@ const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                         
 const DRAGON_FEED_R=4, DRAGON_RIDE=T30(1800), DRAGON_REST=T30(5400), DRAGON_FLY=3/TPS, DRAGON_FLY_TURN=(Math.PI*0.9)/TPS, DRAGON_GLIDE=1.5;
 // Real seconds of its ride left (the HUD countdown).
 function dragonRideSeconds(e){ return Math.max(0, Math.ceil(e.rideLeft / TPS)); }
-// Flying home after a ride it is shown to every viewer through the fog (viewer-side only: the sim's sight is unchanged).
-function dragonSeenByAll(e){ return e.utype==='dragon'&&!!e.homing; }
+// Shown to the viewer through the fog (viewer-side only: the sim's sight is unchanged): flying home after a ride — to
+// everyone — and asleep in a lair the viewer has found: a landmark, so a sheep can be sent at it from afar.
+function dragonSeenByAll(e){
+  if(e.utype!=='dragon')return false;
+  if(e.homing)return true;
+  let row=fog[Math.round(e.y)]; return !e.awake&&e.rideLeft===undefined&&!!row&&row[Math.round(e.x)]>=1;
+}
 function dragonAloft(e){ return e.utype==='dragon'&&(e.rideLeft!==undefined||!!e.homing); }
-// The sheep offered to it, if any: the lowest-id live sheep of a player's within DRAGON_FEED_R of it (entities are in
-// id order). Asleep or awake, so long as it is on the ground and whole; resting after a ride, it says so and waits.
+// The sheep offered to it, if any: the lowest-id live sheep a player has SENT at it (offerTo: execUnitCommand) that has
+// come within DRAGON_FEED_R of it (entities are in id order) — one merely grazing by is left alone. Asleep or awake, so long as it is on the ground and whole; resting after a ride, it says so and waits.
 function dragonOffering(e){
   for(let i=0;i<entities.length;i++){ let s=entities[i];
-    if(s.utype!=='sheep'||s.hp<=0||s.offered||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
+    if(s.utype!=='sheep'||s.offerTo!==e.id||s.hp<=0||s.offered||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
     if(tick>=(e.tameReadyAt||0))return s;
     if(!window.__resim&&s.team===myTeam&&tick%T30(150)===0&&typeof showMsg==='function')showMsg('The dragon is resting: it will take an offering in '+Math.ceil((e.tameReadyAt-tick)/TPS/GAME_SPEED)+'s');
     return null; }

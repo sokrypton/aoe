@@ -1292,6 +1292,9 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < T30(60); i++) update();
       T.ok('asleep and gaia with nobody near', !d.awake && d.team === GAIA_TEAM && !dragonAloft(d));
       const sheep = createUnit('sheep', 32, 31, 0);
+      for (let i = 0; i < T30(60); i++) update();
+      T.ok('a sheep merely standing by is left alone', d.rideLeft === undefined && !!entitiesById.get(sheep.id) && !d.awake);
+      myTeam = 0; selected = [sheep]; execUnitCommand({ targetId: d.id, tileX: 30, tileY: 30 });
       for (let i = 0; i < T30(60) && d.rideLeft === undefined; i++) update();
       const eating = d.eatLeft !== undefined && !!sheep.offered && !!entitiesById.get(sheep.id), ride0 = d.rideLeft;
       execUnitCommand({ tileX: 5, tileY: 5 }); selected = [sheep]; myTeam = 0; execUnitCommand({ tileX: 5, tileY: 5 });   // (the sheep can't be called away)
@@ -1329,6 +1332,7 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < T30(1200) && d.homing; i++) update();
       T.ok('home, landed, asleep, and resting before the next offering', !dragonAloft(d) && d.x === 30 && d.y === 30 && !d.awake && d.tameReadyAt > tick);
       const again = createUnit('sheep', 32, 31, 0);
+      myTeam = 0; selected = [again]; execUnitCommand({ targetId: d.id, tileX: 30, tileY: 30 });
       for (let i = 0; i < T30(60); i++) update();
       T.ok('a second sheep straight away is refused', d.rideLeft === undefined && !!entitiesById.get(again.id));
       return T;

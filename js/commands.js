@@ -787,6 +787,10 @@ function execUnitCommand(cmd){
     s.defendX = s.x; s.defendY = s.y;
     s.explicitAttack = false;
     s.explicitReseed = false;
+    // A sheep sent AT the dragon is an offering (dragonOffering, js/wildlife.js): it walks up to it. Any other order
+    // takes the offer back.
+    if (s.utype === 'sheep') { s.offerTo = target && target.utype === 'dragon' ? target.id : undefined;
+      if (s.offerTo !== undefined) { s.target = null; issueMoveOrder(s, Math.round(target.x), Math.round(target.y)); return; } }
     // The dragon ridden takes its order straight (js/wildlife.js): it flies, so no path is found for it — the ground
     // pathfinder can't start from over a forest or reach a spot inside one.
     if (dragonAloft(s)) {
