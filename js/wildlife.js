@@ -313,6 +313,10 @@ function dragonTurn(e,a){
 // stretch and its splash: within DRAGON_STRAFE_R of the line from DRAGON_STRAFE_FROM to DRAGON_STRAFE_TO ahead (three
 // circles along it; a building: its nearest edge) — not what is under its belly or beside it. Entities in id order.
 const DRAGON_STRAFE=3.4, DRAGON_STRAFE_FROM=2.2, DRAGON_STRAFE_TO=4.2, DRAGON_STRAFE_R=1.3;
+// Where the renderers aim the jet (viewer-side): {s: how far ahead, h: how high}. The ground DRAGON_STRAFE ahead —
+// or, sent at a building, into its walls: a flatter jet AT it, not down in front of it.
+const DRAGON_AIM_WALL={s:DRAGON_STRAFE+0.9, h:1.2}, DRAGON_AIM_GROUND={s:DRAGON_STRAFE, h:0};
+function dragonFireAim(e){ let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null; return t&&t.type==='building'&&t.hp>0?DRAGON_AIM_WALL:DRAGON_AIM_GROUND; }
 function dragonStrafe(e,fx,fy,dry){
   for(let i=0;i<entities.length;i++){
     let o=entities[i];

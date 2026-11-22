@@ -1913,7 +1913,7 @@
         poseDragonWing(w, carry.fd, P.sl, d.lag);
         w.rotation.set(-sd * carry.ang, 0, carry.pitch); }
       const fl = model.getObjectByName('flame');   // (the mouth: where the fire leaves it)
-      dragonFire(model, fl, P.flame, dt, P.fly || 0);
+      dragonFire(model, fl, P.flame, dt, P.fly || 0, typeof dragonFireAim === 'function' ? dragonFireAim(e) : null);
       if (!a.lab) {
         for (const i of P.ev.steps) { const f = legs[i].getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 3, '#b7a27a'); shakeFrom(f.x, f.z, 0.03); }
         if (P.ev.slam) { for (const l of [legs[2], legs[3]]) { const f = l.getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 7, '#b7a27a'); } shakeFrom(a.x, a.z, 0.12); }
@@ -1951,21 +1951,23 @@
   // screen, out of range, flown on) still has its puffs burn out (updateUnits) — else they hung where it left them.
   const burning = new Set(); let fireFrame = 0;
   let _fT = null;
-  function dragonFire(model, mouth, flame, dt, fly = 0){
+  function dragonFire(model, mouth, flame, dt, fly = 0, aim = null){
     const F = model.userData.fire || (model.userData.fire = { puffs: [], due: 0 }), host = model.parent;
     F.seen = fireFrame; burning.add(model);
     FIRE_RAMP = FIRE_RAMP || ['#fff2b0', '#ffc94a', '#ff8a1e', '#d8381a', '#6a2a20', '#33302e'].map(c => new THREE.Color(c));
     if (flame > 0 && host) { _f0 = _f0 || new THREE.Vector3(); _f1 = _f1 || new THREE.Vector3(); model.updateMatrixWorld(true);
       host.worldToLocal(mouth.localToWorld(_f0.set(0, 0, 0))); host.worldToLocal(mouth.localToWorld(_f1.set(1, 0, 0))); _f1.sub(_f0).normalize();
       // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground)
-      // (…aimed at the spot the sim burns: DRAGON_STRAFE ahead of it, on the ground)
-      if (fly > 0) { const hl = Math.hypot(_f1.x, _f1.z) || 1, S = typeof DRAGON_STRAFE !== 'undefined' ? DRAGON_STRAFE : 3.4; _fT = _fT || new THREE.Vector3();
-        _fT.set(model.position.x + _f1.x / hl * S, 0, model.position.z + _f1.z / hl * S).sub(_f0).normalize(); _f1.lerp(_fT, fly).normalize(); }
+      // (…aimed where the sim burns: dragonFireAim, js/wildlife.js — the ground ahead, or a building's walls; and thrown
+      // just that far, so it breaks on the spot instead of carrying on through it)
+      let reach = 0;
+      if (fly > 0) { const hl = Math.hypot(_f1.x, _f1.z) || 1, S = aim ? aim.s : 3.4, H = aim ? aim.h : 0; _fT = _fT || new THREE.Vector3();
+        _fT.set(model.position.x + _f1.x / hl * S, H, model.position.z + _f1.z / hl * S).sub(_f0); reach = _fT.length(); _fT.normalize(); _f1.lerp(_fT, fly).normalize(); }
       for (F.due += dt * 70 * flame * (1 + 0.8 * fly); F.due >= 1; F.due--) { const hot = Math.random() < 0.3, j = () => (Math.random() - 0.5) * 2;
         const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: hot ? THREE.AdditiveBlending : THREE.NormalBlending }));
         m.position.copy(_f0); m.renderOrder = hot ? 6 : 5; m.frustumCulled = false; host.add(m);
         F.puffs.push({ m, hot, age: 0, life: hot ? 0.28 : 0.55 + Math.random() * 0.2, grow: (hot ? 0.5 : 0.75 + Math.random() * 0.35) * (1 + 0.5 * fly),
-          v: new THREE.Vector3(_f1.x + j() * 0.2, _f1.y + j() * 0.16, _f1.z + j() * 0.2).multiplyScalar(8 + Math.random() * 2.5) }); } }
+          v: new THREE.Vector3(_f1.x + j() * 0.2, _f1.y + j() * 0.16, _f1.z + j() * 0.2).multiplyScalar(reach > 0 && fly > 0.5 ? reach * 2.4 * (1.05 + Math.random() * 0.3) : 8 + Math.random() * 2.5) }); } }
     for (let i = F.puffs.length - 1; i >= 0; i--) { const p = F.puffs[i]; p.age += dt; const u = p.age / p.life;
       if (u >= 1 || !p.m.parent) { if (p.m.parent) p.m.parent.remove(p.m); p.m.material.dispose(); F.puffs.splice(i, 1); continue; }
       p.m.position.addScaledVector(p.v, dt); p.v.multiplyScalar(Math.max(0, 1 - 2.4 * dt)); p.v.y += 0.9 * u * dt;

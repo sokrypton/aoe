@@ -3231,10 +3231,10 @@ function drawDragonBody(e){
       // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground under its nose)
       const fy2 = P.fly || 0;
       for (a.fire = (a.fire || 0) + n * 70 / 30 * P.flame * (1 + 0.8 * fy2); a.fire >= 1; a.fire--) { const sp = (0.36 + cosmeticRandom() * 0.12) * (1 - 0.35 * fy2), j = () => (cosmeticRandom() - 0.5) * 0.12, life = 14 + cosmeticRandom() * 6;
-        // (aloft the jet is aimed at the spot the sim burns: DRAGON_STRAFE ahead of it, on the ground)
+        // (aloft the jet is aimed where the sim burns: dragonFireAim, js/wildlife.js — the ground ahead, or a building's walls)
         let ux = vx * sp, uy = vy * sp, uh = dm[1] * sp - 0.05;
-        if (fy2 > 0) { const S = typeof DRAGON_STRAFE !== 'undefined' ? DRAGON_STRAFE : 3.4, fa = e.faceAng || 0, gx = Math.cos(fa) * S - ox, gy = Math.sin(fa) * S - oy, gl = Math.hypot(gx, gy, m0[1]) || 1, k = gl * 0.118 / gl;
-          ux += (gx * k - ux) * fy2; uy += (gy * k - uy) * fy2; uh += (-m0[1] * k - uh) * fy2; }
+        if (fy2 > 0) { const A = typeof dragonFireAim === 'function' ? dragonFireAim(e) : { s: 3.4, h: 0 }, fa = e.faceAng || 0, gx = Math.cos(fa) * A.s - ox, gy = Math.sin(fa) * A.s - oy, gh = A.h - m0[1], k = 0.118;
+          ux += (gx * k - ux) * fy2; uy += (gy * k - uy) * fy2; uh += (gh * k - uh) * fy2; }
         a.puffs.push({ x: e.x + ox, y: e.y + oy, h: m0[1], vx: ux + j(), vy: uy + j(), vh: uh + j() * 0.4, life: life * (1 + 0.3 * fy2), max: life * (1 + 0.3 * fy2), size: (3 + cosmeticRandom() * 2) * (1 + 0.5 * fy2) }); } }
     for (const p of a.puffs) { const dx = p.x - e.x, dy = p.y - e.y, cx = (dx - dy) * Cc, cy = (dx + dy) * Cc / 2 - p.h * K, pct = p.life / p.max;
       const r = p.size * (0.6 + (1 - pct) * 2.6) / UNIT_SCALE, al = Math.min(1, pct * 3) * 0.9, col = pct > 0.78 ? '#fff3a8' : pct > 0.55 ? '#ffb431' : pct > 0.32 ? '#f0641c' : pct > 0.14 ? '#b02a14' : '#4a3530';
