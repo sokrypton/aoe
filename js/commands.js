@@ -428,6 +428,7 @@ function execGarrison(cmd, team){
 //     not back to wherever it stood when ordered;
 //   - task/build/path cleared like any redirect.
 function assignAttack(u, target){
+  if (outOfReach(u, target)) return;   // (a blade sent at a dragon overhead: not taken up — js/logic.js)
   if (u.order) issueOrder(u, null);
   u.target = target.id; u.task = null; clearUnitPath(u); u.buildTarget = null;
   u.explicitAttack = target.type === 'building' ? 'building' : 'unit'; // (truthy; the kind decides the mop-up on its fall)

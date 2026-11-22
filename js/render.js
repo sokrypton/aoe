@@ -208,6 +208,18 @@ function buildingCenterScreen(b){
   return flagScreen(c.x, c.y);
 }
 
+// Units shown in the shroud — an ally's there, the dragon asleep in a found lair — belong to the layer UNDER the fog
+// overlay, with the fogged tiles' ore and bushes (drawGround lays the overlay over them all): dimmed by the same
+// veil as the ground they stand on. Not one aloft: that flies over everything, in the main pass.
+function unitUnderFog(e){
+  if (e.type !== 'unit' || e.garrisonedIn || window.fogDisabled || window.seeMapMode || dragonAloft(e)) return false;
+  const row = fog[Math.round(e.y)]; return !!row && row[Math.round(e.x)] === 1 && (sameSide(e.team, myTeam) || dragonSeenByAll(e));
+}
+function drawFoggedUnits(minX, maxX, minY, maxY){
+  let list = null;
+  for (const e of entities) if (e.x >= minX - 4 && e.x <= maxX + 4 && e.y >= minY - 4 && e.y <= maxY + 4 && unitUnderFog(e)) (list || (list = [])).push(e);
+  if (list) { list.sort((a, b) => (a.y + a.x) - (b.y + b.x) || a.id - b.id); for (const e of list) drawUnit(e); }
+}
 function render(){
   poseBuildBudget = 12; // (js/render-units.js) — lifted again at the end
   try { renderFrame(); } finally { poseBuildBudget = Infinity; }
@@ -515,6 +527,7 @@ function renderFrame(){
     else if(e.type==='tree'){ drawTreeEntity(e.x, e.y, e.part); _silOccScratch.push(e); } // trees occlude units too (AoE2)
     else if(e.type==='res') drawTileResourceAt(e.x, e.y);
     else {
+      if (unitUnderFog(e)) return;   // (drawn under the fog overlay: drawFoggedUnits)
       drawUnit(e);
       if(!e.garrisonedIn && e.utype!=='sheep_carcass') _silUnitScratch.push(e);
     }

@@ -315,7 +315,7 @@ function refreshDragonTimer(){
   const d = gameStarted ? myDragon() : null, key = d ? dragonRideSeconds(d) : -1;
   if (el._key === key) return; el._key = key;
   el.style.display = d ? '' : 'none'; if (!d) return;
-  byId('dragon-timer-text').textContent = 'Dragon  0:' + String(key).padStart(2, '0');
+  byId('dragon-timer-text').textContent = 'Dragon  ' + Math.floor(key / 60) + ':' + String(key % 60).padStart(2, '0');
   byId('dragon-timer-fill').style.width = Math.min(100, d.rideLeft / DRAGON_RIDE * 100) + '%';
   el.classList.toggle('ending', key <= 10);
 }

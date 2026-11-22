@@ -2914,7 +2914,7 @@ function dragonWingJoints(fd, tuck, sd){
   const mixQ = (a, b) => a + (b - a) * tuck, Q = { u: mixQ(F0.u, T.u), f: mixQ(F0.f, T.f), k: F0.k.map((v, k) => mixQ(v, T.k[k])) }; // the fold, tucked tighter as it sleeps
   const dir = th => [-Math.sin(th), Math.cos(th)], at = (o, th, L, z = 0) => { const v = dir(th); return [o[0] + v[0] * L, o[1] + v[1] * L, z]; };
   const S = [WG.S[0], WG.S[1], 0], u = A(P.u, Q.u), E = at(S, u, WG.LU), f = u + A(P.f, Q.f), W = at(E, f, WG.LF);
-  const F = WG.LK.map((L, k) => at(W, f + A(P.k[k], Q.k[k]), L * A(1, 0.72 - 0.15 * tuck), sd * WG.pleat[k] * e));
+  const F = WG.LK.map((L, k) => at(W, f + A(P.k[k], Q.k[k]), L * A(1, 0.72 - 0.3 * tuck), sd * WG.pleat[k] * e));
   const B = [WG.B[0], WG.B[1], 0], mid = (a, b, t, z) => [(a[0] + b[0]) / 2 + (W[0] - (a[0] + b[0]) / 2) * t, (a[1] + b[1]) / 2 + (W[1] - (a[1] + b[1]) / 2) * t, z];
   const M = F.map((p, k) => k < F.length - 1 ? mid(p, F[k + 1], WG.scallop * (1 - 0.3 * e), (p[2] + F[k + 1][2]) / 2 - sd * 0.03 * e) : mid(p, B, 0.22, p[2] / 2));
   return { S, E, W, B, F, M, e };
@@ -2924,8 +2924,10 @@ function dragonWingJoints(fd, tuck, sd){
 // and a wing raised or tipped much stands edge-on to that view from some side and shows as a line. Folded they lie
 // back over the flanks, lifting a little with each breath; roaring they open wide to the sides.
 function dragonWingCarry(P){
-  const open = 0.1 + 0.12 * P.rr + 0.6 * P.beat, shut = 0.35 + P.chest * 2, asleep = 0.3 + P.chest * 1.5;
-  return { ang: (shut + (open - shut) * P.open) * (1 - P.sl) + asleep * P.sl, pitch: (0.08 - (P.pitch || 0)) * P.open * (1 - P.sl),   // (levelled against the body's rearing)
+  const open = 0.1 + 0.12 * P.rr + 0.6 * P.beat, shut = 0.35 + P.chest * 2;
+  // (asleep they droop down the flanks and tip back along the body: carried level, the folded bundles stood up over
+  // the spine like a spare spike)
+  return { ang: (shut + (open - shut) * P.open) * (1 - P.sl) + (-0.85 + P.chest * 1.5) * P.sl, pitch: (0.08 - (P.pitch || 0)) * P.open * (1 - P.sl) + 0.08 * P.sl,   // (levelled against the body's rearing)
     fd: Math.max(0, Math.min(1, 1 - P.open - P.chest * 1.2 * (1 - P.sl))) };
 }
 // The dragon's legs: a two-bone reach (thigh th, shin sh, the knee bending by `bend`: hind forward +1, fore back −1)
@@ -3220,24 +3222,32 @@ function drawDragonBody(e){
   // blown away from the viewer is painted before the dragon, and hidden by it. Never outlined.
   // (puffs left from before it went out of view — it isn't drawn off screen, so they never burnt out — are dropped)
   if (!window._maskDraw) { const nowMs = performance.now(); if (a.puffSeen !== undefined && nowMs - a.puffSeen > 400 && a.puffs) a.puffs.length = 0; a.puffSeen = nowMs; }
+  // A flame-thrower's jet: each puff flies STRAIGHT and fast, small and white-hot, for its reach (aloft, to where the
+  // sim burns — dragonFireAim, js/wildlife.js: the ground ahead, or a building's walls; on the ground, the breath's
+  // length) — a stream — and only then, where it lands, breaks into rolling fire.
   if (!window._maskDraw) { const puffs = a.puffs || (a.puffs = []), n = (a.dt || 0) * 30; a.dt = 0;   // (30: its numbers are per authored tick)
-    for (const p of puffs) { p.x += p.vx * n; p.y += p.vy * n; p.h += p.vh * n;
-      // (it hits the ground and rolls out along it)
-      if (p.h <= 0) { p.h = 0; if (!p.hit && p.vh < -0.05) { p.hit = 1; const an = cosmeticRandom() * TAU, k = -p.vh * 0.9; p.vx += Math.cos(an) * k; p.vy += Math.sin(an) * k; } }
-      const dr = Math.pow(0.9, n); p.vx *= dr; p.vy *= dr; p.vh *= dr; p.life -= n; }
+    for (const p of puffs) { p.x += p.vx * n; p.y += p.vy * n; p.h += p.vh * n; p.life -= n;
+      if (!p.land) { p.go -= p.sp * n;
+        if (p.go <= 0 || p.h <= 0) { p.land = Math.max(1, p.life); const an = cosmeticRandom() * TAU, k = p.sp * 0.12;   // it lands: breaks up and rolls out
+          p.vx = p.vx * 0.12 + Math.cos(an) * k; p.vy = p.vy * 0.12 + Math.sin(an) * k; p.vh = Math.abs(p.vh) * 0.15 + 0.012; } }
+      else { const dr = Math.pow(0.86, n); p.vx *= dr; p.vy *= dr; p.vh = p.vh * dr + 0.003 * n; }
+      if (p.h < 0) p.h = 0; }
     a.puffs = puffs.filter(p => p.life > 0);
     if (P.flame > 0) { const m0 = jwp(0.45, 0.02), m1 = jwp(1.45, 0.02), dm = [m1[0] - m0[0], m1[1] - m0[1], m1[2] - m0[2]], toW = (x, z) => [x * fx + z * sx, x * fy + z * sy];
-      const [ox, oy] = toW(m0[0], m0[2]), [vx, vy] = toW(dm[0], dm[2]);
-      // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground under its nose)
-      const fy2 = P.fly || 0;
-      for (a.fire = (a.fire || 0) + n * 70 / 30 * P.flame * (1 + 0.8 * fy2); a.fire >= 1; a.fire--) { const sp = (0.36 + cosmeticRandom() * 0.12) * (1 - 0.35 * fy2), j = () => (cosmeticRandom() - 0.5) * 0.12, life = 14 + cosmeticRandom() * 6;
-        // (aloft the jet is aimed where the sim burns: dragonFireAim, js/wildlife.js — the ground ahead, or a building's walls)
-        let ux = vx * sp, uy = vy * sp, uh = dm[1] * sp - 0.05;
-        if (fy2 > 0) { const A = typeof dragonFireAim === 'function' ? dragonFireAim(e) : { s: 3.4, h: 0 }, fa = e.faceAng || 0, gx = Math.cos(fa) * A.s - ox, gy = Math.sin(fa) * A.s - oy, gh = A.h - m0[1], k = 0.118;
-          ux += (gx * k - ux) * fy2; uy += (gy * k - uy) * fy2; uh += (gh * k - uh) * fy2; }
-        a.puffs.push({ x: e.x + ox, y: e.y + oy, h: m0[1], vx: ux + j(), vy: uy + j(), vh: uh + j() * 0.4, life: life * (1 + 0.3 * fy2), max: life * (1 + 0.3 * fy2), size: (3 + cosmeticRandom() * 2) * (1 + 0.5 * fy2) }); } }
-    for (const p of a.puffs) { const dx = p.x - e.x, dy = p.y - e.y, cx = (dx - dy) * Cc, cy = (dx + dy) * Cc / 2 - p.h * K, pct = p.life / p.max;
-      const r = p.size * (0.6 + (1 - pct) * 2.6) / UNIT_SCALE, al = Math.min(1, pct * 3) * 0.9, col = pct > 0.78 ? '#fff3a8' : pct > 0.55 ? '#ffb431' : pct > 0.32 ? '#f0641c' : pct > 0.14 ? '#b02a14' : '#4a3530';
+      const [ox, oy] = toW(m0[0], m0[2]), [vx, vy] = toW(dm[0], dm[2]), fy2 = P.fly || 0;
+      let dxw = vx, dyw = vy, dhw = dm[1] - 0.12, far = 2.6;
+      if (fy2 > 0) { const A = typeof dragonFireAim === 'function' ? dragonFireAim(e) : { s: 3.4, h: 0 }, fa = e.faceAng || 0, gx = Math.cos(fa) * A.s - ox, gy = Math.sin(fa) * A.s - oy, gh = A.h - m0[1], gl = Math.hypot(gx, gy, gh) || 1;
+        dxw += (gx / gl - dxw) * fy2; dyw += (gy / gl - dyw) * fy2; dhw += (gh / gl - dhw) * fy2; far += (gl - far) * fy2; }
+      { const l = Math.hypot(dxw, dyw, dhw) || 1; dxw /= l; dyw /= l; dhw /= l; }
+      for (a.fire = (a.fire || 0) + n * 150 / 30 * P.flame * (1 + 0.4 * fy2); a.fire >= 1; a.fire--) { const sp = far / (4.2 + cosmeticRandom() * 1.6), j = () => (cosmeticRandom() - 0.5) * sp * 0.07, life = 15 + cosmeticRandom() * 7, lead = cosmeticRandom() * sp * n;
+        a.puffs.push({ x: e.x + ox + dxw * lead, y: e.y + oy + dyw * lead, h: m0[1] + dhw * lead, vx: dxw * sp + j(), vy: dyw * sp + j(), vh: dhw * sp + j(), sp, far, go: far * (0.9 + cosmeticRandom() * 0.2) - lead, land: 0,
+          life, max: life, size: (3 + cosmeticRandom() * 2) * (1 + 0.5 * fy2) }); } }
+    const sm2 = x => x * x * (3 - 2 * x);
+    for (const p of a.puffs) { const dx = p.x - e.x, dy = p.y - e.y, cx = (dx - dy) * Cc, cy = (dx + dy) * Cc / 2 - p.h * K, tl = p.land ? Math.min(1, 1 - p.life / p.land) : 0;
+      // (the stream widens a little, and yellows, along its length)
+      const run = p.land ? 1 : Math.max(0, Math.min(1, 1 - p.go / p.far));
+      const r = p.size * (p.land ? 1.05 + 2.3 * sm2(Math.min(1, tl * 1.5)) : 0.6 + 0.45 * run) / UNIT_SCALE, al = Math.min(1, (1 - tl) * 3) * 0.9;
+      const col = !p.land ? (run < 0.45 ? '#fff3a8' : '#ffdc6a') : tl < 0.18 ? '#ffd45a' : tl < 0.42 ? '#ffa02a' : tl < 0.66 ? '#f0641c' : tl < 0.86 ? '#b02a14' : '#4a3530';
       parts.push({ d: dx + dy, draw: () => { X.save(); X.fillStyle = col; X.globalAlpha *= al * 0.25; X.beginPath(); X.arc(cx, cy, r * 1.7, 0, TAU); X.fill(); X.globalAlpha *= 4; X.beginPath(); X.arc(cx, cy, r, 0, TAU); X.fill(); X.restore(); } }); } }
   // --- paint: every outlined part stroked black (the silhouette), then all painted far to near ---
   parts.sort((p, q) => p.d - q.d);

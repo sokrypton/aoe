@@ -1300,7 +1300,7 @@ async function withPage(browser, port, entry, fn){
       execUnitCommand({ tileX: 5, tileY: 5 }); selected = [sheep]; myTeam = 0; execUnitCommand({ tileX: 5, tileY: 5 });   // (the sheep can't be called away)
       for (let i = 0; i < T30(400) && d.eatLeft !== undefined; i++) update();
       T.ok('it eats first: the sheep is held, pounced on and bitten away, and the ride\'s clock waits', eating && !entitiesById.get(sheep.id) && d.rideLeft === ride0 && dist(d, sheep) < 2.3 && d.x > 30);
-      T.ok('the sheep is eaten and the dragon is the player\'s, aloft', d.team === 0 && dragonAloft(d) && !entitiesById.get(sheep.id) && dragonRideSeconds(d) > 55);
+      T.ok('the sheep is eaten and the dragon is the player\'s, aloft', d.team === 0 && dragonAloft(d) && !entitiesById.get(sheep.id) && dragonRideSeconds(d) > 110 / GAME_SPEED);
       const house = entities.find(e => e.btype === 'HOUSE'), hp0 = house.hp;
       myTeam = 0; selected = [d]; execUnitCommand({ targetId: house.id, tileX: house.x, tileY: house.y });
       for (let i = 0; i < T30(600) && house.hp === hp0; i++) update();
@@ -1319,15 +1319,17 @@ async function withPage(browser, port, entry, fn){
       const fx0 = d.flyX; d.atkCooldown = 0; d.breathTick = undefined; execCommand({ kind: 'dragon-fire', unitId: d.id, ang: 1 }, 0);
       T.ok('possessed, it is steered through the air and breathes on command', fx0 > d.x + 2 && d.breathTick === tick && Math.abs(d.faceAng - 1) < 0.02 && d.atkCooldown > 0);
       d.possessed = false; execCommand({ kind: 'dragon-fire', unitId: d.id, ang: 2 }, 0);
+      const grunt = createUnit('militia', d.x + 1, d.y + 1, 1); grunt.target = d.id; update();
+      T.ok('a swordsman set on it lets go: it is out of a blade\'s reach', grunt.target !== d.id); grunt.hp = 0; handleDeath(grunt);
       const sword = createUnit('militia', d.x, d.y + 1, 1), bow = createUnit('archer', d.x, d.y - 1, 1), h1 = d.hp;
       damageEntity(sword, d); const h2 = d.hp; damageEntity(bow, d);
       let towerHurt = false; const tower = createBuilding('TC', 44, 22, 1), vic = createUnit('villager', 42, 36, 1);
       execUnitCommand({ targetId: vic.id, tileX: vic.x, tileY: vic.y });
       for (let i = 0; i < T30(90); i++) { if (i % 10 === 0) { const hb = d.hp; damageEntity(tower, d); towerHurt = towerHurt || d.hp !== hb; } update(); }
       T.ok('aloft, a sword can\'t reach it; an arrow can', h2 === h1 && d.hp < h2);
-      T.ok('sent at a villager, it stays on it; a Town Center\'s arrows can\'t reach it', (vic.hp <= 0 || d.flyTarget === vic.id) && !towerHurt);
+      T.ok('sent at a villager, it stays on it though a Town Center\'s arrows hurt it', (vic.hp <= 0 || d.flyTarget === vic.id) && towerHurt);
       const t0 = tick; for (let i = 0; i < T30(5000) && !d.homing; i++) update();
-      T.ok('its minute up (real time: ' + GAME_SPEED + 'x), it is gaia\'s again and flies home', d.homing && d.team === GAIA_TEAM && tick - t0 > T30(1500) * GAME_SPEED);
+      T.ok('its two game-minutes up, it is gaia\'s again and flies home', d.homing && d.team === GAIA_TEAM && tick - t0 > T30(3000) && tick - t0 < T30(3600));
       execUnitCommand({ tileX: 20, tileY: 40 });
       for (let i = 0; i < T30(1200) && d.homing; i++) update();
       T.ok('home, landed, asleep, and resting before the next offering', !dragonAloft(d) && d.x === 30 && d.y === 30 && !d.awake && d.tameReadyAt > tick);

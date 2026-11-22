@@ -145,16 +145,17 @@ const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                         
       DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600), DRAGON_STEP_COS=0.82;
 // The dragon ridden. A player's own sheep sent at the dragon (ordered onto it, as an attack) is eaten when it comes
 // within DRAGON_FEED_R of it on the ground, and
-// the dragon is that player's for DRAGON_RIDE: one of their units (e.team), ordered like any other — and aloft: it
+// the dragon is that player's for DRAGON_RIDE (game time): one of their units (e.team), ordered like any other — and aloft: it
 // flies straight over everything (no path, no blocked tiles), turns fast, and burns whatever comes under its nose.
-// Aloft only archers reach it (damageEntity). When its time is up — or it is brought down — it is gaia's again and
+// Aloft only missiles reach it — archers and buildings' arrows (outOfReach, js/logic.js). When its time is up — or it is brought down — it is gaia's again and
 // flies home (homing) to land and sleep; it won't take another offering for DRAGON_REST after landing.
-// The ride is a minute of REAL time: rideLeft counts ticks at 1x, and runs down by 1/GAME_SPEED a tick (GAME_SPEED is
-// peer-synced and rewinds with the lockstep snapshot).
+// The ride is two minutes of GAME time (rideLeft, in ticks): a minute at the default 2x, 30 s at 4x, two minutes at
+// 1x. (Its meal is real time: eatLeft runs down by 1/GAME_SPEED a tick — GAME_SPEED is peer-synced and rewinds with
+// the lockstep snapshot.)
 // rideLeft / homing / flyX / flyY / flyTarget / tameReadyAt are sim state: hashed (js/determinism.js).
-const DRAGON_FEED_R=4, DRAGON_RIDE=T30(1800), DRAGON_REST=T30(5400), DRAGON_FLY=3/TPS, DRAGON_FLY_TURN=(Math.PI*0.9)/TPS, DRAGON_GLIDE=1.5;
+const DRAGON_FEED_R=4, DRAGON_RIDE=T30(3600), DRAGON_REST=T30(5400), DRAGON_FLY=3/TPS, DRAGON_FLY_TURN=(Math.PI*0.9)/TPS, DRAGON_GLIDE=1.5;
 // Real seconds of its ride left (the HUD countdown).
-function dragonRideSeconds(e){ return Math.max(0, Math.ceil(e.rideLeft / TPS)); }
+function dragonRideSeconds(e){ return Math.max(0, Math.ceil(e.rideLeft / TPS / GAME_SPEED)); }
 // Shown to the viewer through the fog (viewer-side only: the sim's sight is unchanged): flying home after a ride — to
 // everyone — and asleep in a lair the viewer has found: a landmark, so a sheep can be sent at it from afar.
 function dragonSeenByAll(e){
@@ -183,7 +184,7 @@ function dragonTakeOffering(e,s){
   s.offered=true; s.target=null; clearUnitPath(s);
   if(window.playSound)window.playSound('dragon',e.x,e.y);
   if(!window.__resim){
-    if(typeof showMsg==='function')showMsg(e.team===myTeam?'The dragon takes your offering: it is yours to fly for a minute!':teamName(e.team)+' rides the dragon!');
+    if(typeof showMsg==='function')showMsg(e.team===myTeam?'The dragon takes your offering: it is yours to fly!':teamName(e.team)+' rides the dragon!');
     // (in the rider's hand at once: nothing else, or only the sheep, was selected)
     if(e.team===myTeam&&selected.every(u=>u.id===s.id)){ selected=[e]; if(typeof updateUI==='function')updateUI(); }
   }
@@ -234,9 +235,9 @@ function updateDragonAloft(e){
     return;
   }
   if(e.eatLeft!==undefined){ dragonEat(e); return; }
-  let was=e.rideLeft; e.rideLeft-=1/GAME_SPEED;
+  let was=e.rideLeft, warn=10*TPS*GAME_SPEED; e.rideLeft--;
   if(e.rideLeft<=0){ dragonEndRide(e); return; }
-  if(!window.__resim&&e.team===myTeam&&typeof showMsg==='function'&&was>T30(300)&&e.rideLeft<=T30(300))showMsg('The dragon is yours for 10 more seconds');
+  if(!window.__resim&&e.team===myTeam&&typeof showMsg==='function'&&was>warn&&e.rideLeft<=warn)showMsg('The dragon is yours for 10 more seconds');
   // Its orders come straight from the player's command (execUnitCommand: flyTarget, or flyX / flyY). Whatever the unit
   // machinery hands it meanwhile is dropped — a target (hit by a tower, it would turn on the tower) — or, a ground move
   // (Eye View steering), taken as where to fly.

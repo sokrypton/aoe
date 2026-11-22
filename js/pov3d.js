@@ -1963,21 +1963,28 @@
       let reach = 0;
       if (fly > 0) { const hl = Math.hypot(_f1.x, _f1.z) || 1, S = aim ? aim.s : 3.4, H = aim ? aim.h : 0; _fT = _fT || new THREE.Vector3();
         _fT.set(model.position.x + _f1.x / hl * S, H, model.position.z + _f1.z / hl * S).sub(_f0); reach = _fT.length(); _fT.normalize(); _f1.lerp(_fT, fly).normalize(); }
-      for (F.due += dt * 70 * flame * (1 + 0.8 * fly); F.due >= 1; F.due--) { const hot = Math.random() < 0.3, j = () => (Math.random() - 0.5) * 2;
+      // A flame-thrower's jet: each puff flies STRAIGHT and fast, small and white-hot, for its reach (the aim's
+      // distance; on the ground, the breath's) — a stream — and only then, where it lands, breaks into rolling fire.
+      const far = reach > 0 && fly > 0.5 ? reach : 2.6;
+      for (F.due += dt * 150 * flame * (1 + 0.4 * fly); F.due >= 1; F.due--) { const hot = Math.random() < 0.3, j = () => (Math.random() - 0.5) * 2, sp = far / (0.14 + Math.random() * 0.05);
         const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: hot ? THREE.AdditiveBlending : THREE.NormalBlending }));
-        m.position.copy(_f0); m.renderOrder = hot ? 6 : 5; m.frustumCulled = false; host.add(m);
-        F.puffs.push({ m, hot, age: 0, life: hot ? 0.28 : 0.55 + Math.random() * 0.2, grow: (hot ? 0.5 : 0.75 + Math.random() * 0.35) * (1 + 0.5 * fly),
-          v: new THREE.Vector3(_f1.x + j() * 0.2, _f1.y + j() * 0.16, _f1.z + j() * 0.2).multiplyScalar(reach > 0 && fly > 0.5 ? reach * 2.4 * (1.05 + Math.random() * 0.3) : 8 + Math.random() * 2.5) }); } }
+        m.position.copy(_f0).addScaledVector(_f1, Math.random() * sp * dt); m.renderOrder = hot ? 6 : 5; m.frustumCulled = false; host.add(m);   // (spread along the frame's travel: no gaps in the stream)
+        F.puffs.push({ m, hot, age: 0, land: 0, gone: 0, reach: far * (0.9 + Math.random() * 0.2), sp, life: hot ? 0.3 : 0.6 + Math.random() * 0.25, grow: (hot ? 0.45 : 0.7 + Math.random() * 0.35) * (1 + 0.5 * fly),
+          v: new THREE.Vector3(_f1.x + j() * 0.035, _f1.y + j() * 0.03, _f1.z + j() * 0.035).multiplyScalar(sp) }); } }
+    const sm = x => x * x * (3 - 2 * x);
     for (let i = F.puffs.length - 1; i >= 0; i--) { const p = F.puffs[i]; p.age += dt; const u = p.age / p.life;
       if (u >= 1 || !p.m.parent) { if (p.m.parent) p.m.parent.remove(p.m); p.m.material.dispose(); F.puffs.splice(i, 1); continue; }
-      p.m.position.addScaledVector(p.v, dt); p.v.multiplyScalar(Math.max(0, 1 - 2.4 * dt)); p.v.y += 0.9 * u * dt;
-      const r = 0.05 + p.grow * p.age; p.m.scale.setScalar(r);
-      if (p.m.position.y < r * 0.4) { p.m.position.y = r * 0.4;
-        // (it rolls out along the ground)
-        if (p.v.y < -1 && !p.hit) { p.hit = 1; const an = Math.random() * Math.PI * 2, k = -p.v.y * 0.8; p.v.x += Math.cos(an) * k; p.v.z += Math.sin(an) * k; }
-        if (p.v.y < 0) p.v.y *= -0.25; }      // it splashes along the ground, never through it
-      const f = Math.min(FIRE_RAMP.length - 1.001, u * (p.hot ? 2.2 : FIRE_RAMP.length - 1)), k = Math.floor(f);
-      p.m.material.color.copy(FIRE_RAMP[k]).lerp(FIRE_RAMP[k + 1], f - k); p.m.material.opacity = (p.hot ? 0.8 : 0.9) * Math.min(1, (1 - u) * 2.5); }
+      p.m.position.addScaledVector(p.v, dt);
+      let r, tl = 0;
+      if (!p.land) { p.gone += p.sp * dt; r = (p.hot ? 0.06 : 0.085) + 0.08 * Math.min(1, p.gone / p.reach);   // (the stream widens a little along its length)
+        if (p.gone >= p.reach || p.m.position.y < r) {                                              // it lands: breaks up and rolls out
+          p.land = p.age; const an = Math.random() * Math.PI * 2, k = p.sp * 0.1; p.v.multiplyScalar(0.12); p.v.x += Math.cos(an) * k; p.v.z += Math.sin(an) * k; p.v.y = Math.abs(p.v.y) * 0.3 + 0.35; } }
+      else { p.v.multiplyScalar(Math.max(0, 1 - 3.2 * dt)); p.v.y += 0.5 * dt; tl = Math.min(1, (p.age - p.land) / Math.max(0.05, p.life - p.land));
+        r = 0.16 + p.grow * 0.55 * sm(Math.min(1, tl * 1.5)); }
+      p.m.scale.setScalar(r);
+      if (p.m.position.y < r * 0.4) { p.m.position.y = r * 0.4; if (p.v.y < 0) p.v.y *= -0.25; }      // along the ground, never through it
+      const f = Math.min(FIRE_RAMP.length - 1.001, p.land ? 0.6 + tl * (p.hot ? 1.8 : FIRE_RAMP.length - 1.6) : 0.3), k = Math.floor(f);
+      p.m.material.color.copy(FIRE_RAMP[k]).lerp(FIRE_RAMP[k + 1], f - k); p.m.material.opacity = (p.hot ? 0.8 : 0.9) * Math.min(1, (1 - tl) * 2.5); }
   }
   function quenchDragonFire(model){ const F = model.userData.fire; if (!F) return; for (const p of F.puffs) { if (p.m.parent) p.m.parent.remove(p.m); p.m.material.dispose(); } F.puffs.length = 0; }
   // The dragon's legs: each foot's spot is found — under the hip on the ground, swept back through the stance, lifted
@@ -3676,7 +3683,7 @@
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && !hurt && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
+      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -5413,6 +5420,7 @@
     for (const u of entities) {
       if (u.type !== 'unit' || u.garrisonedIn || u.hp <= 0 || !unitVisible(u)) continue;
       if (u.id === followId && mode === 'eye') continue;
+      if (dragonInHand(u)) continue;   // (a click goes through the dragon in hand: js/input.js)
       const [x, z] = drawnAt(u); if ((x - camAt.x) ** 2 + (z - camAt.y) ** 2 > RANGE * RANGE) continue;
       const rect = screenRect(u, x, z); if (!rect) continue;
       const r = test(u, rect, x, z);

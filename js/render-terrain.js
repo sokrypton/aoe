@@ -158,7 +158,7 @@ function drawTileResource(t, x, y, sx, cy){
 // The ground as one image: a MAP×MAP canvas, a pixel per tile in its base colour, drawn through the iso grid's affine
 // map (tile (x,y)'s top corner = origin + x·(HALF_TW, HALF_TH) + y·(−HALF_TW, HALF_TH)) lands every pixel as its
 // tile's diamond — one drawImage for what was a path fill per tile. The fog overlay is a second such image, laid over
-// the fogged tiles' ore and bushes.
+// the fogged tiles' ore and bushes, and the units shown there.
 let _gnd=null;
 const _rgbOf = new Map();
 function drawGround(minX, maxX, minY, maxY){
@@ -179,6 +179,7 @@ function drawGround(minX, maxX, minY, maxY){
   const o = mapToScreen(0, 0), lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
   lay(_gnd.base.c);
   for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && isSortedRes(seenTile(x, y).t)) drawTileResourceAt(x, y);
+  if (typeof drawFoggedUnits === 'function') drawFoggedUnits(minX, maxX, minY, maxY);   // (js/render.js)
   lay(_gnd.fog.c);
 }
 

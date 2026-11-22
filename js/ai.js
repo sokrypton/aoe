@@ -116,7 +116,7 @@ function aiMilitiaThreat(ai){
   if((profile.civilianMilitia||0)<=0)return null;
   if(!teamTC(ai.team))return null;
   let threat=findEnemyThreatNear(ai,AI_BASE_ALARM_RADIUS*aiScale());
-  if(!threat)return null;
+  if(!threat||dragonAloft(threat))return null;   // (no mobbing a dragon overhead)
   let raidPower=threatAt(ai.team,threat.x,threat.y,10*aiScale());
   if(raidPower>AI_MILITIA_MAX_THREAT)return null; // a real attack — hide, don't mob
   // The army handles it if it has comparable local strength — then the bell
@@ -2065,7 +2065,7 @@ function aiDefendBase(ai,home,aiTC,profile){
     for(const m of free){
       if(m.target)continue;
       let best=null,bd=Infinity;
-      for(const f of foes){ if(aiHopelessChase(m,f)||(m.unreachUntil>tick&&m.unreachId===f.id))continue;
+      for(const f of foes){ if(outOfReach(m,f)||aiHopelessChase(m,f)||(m.unreachUntil>tick&&m.unreachId===f.id))continue;   // (a dragon overhead is the archers' and the towers')
         const d=dist(m,f); if(d<bd||(d===bd&&f.id<best.id)){bd=d;best=f;} }
       if(best)assignAttack(m,best);
     }

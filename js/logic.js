@@ -749,6 +749,9 @@ function stanceOf(e){ return e.possessed ? STANCES.passive : STANCES[e.stance] |
 // (a tower or TC shooting us), and center distance reads a militia standing
 // AGAINST a 4x4 TC as out of reach — Stand Ground would soak the fire in silence.
 // THE target drop: forget the target, the order behind it and the walk to it (a later self-acquired fight is no order).
+// A dragon aloft is out of a blade's reach: only missiles get to it — archers, and a building's arrows. ONE rule,
+// for the blow (damageEntity), a standing target (updateUnit drops it), an attack order (assignAttack) and the AI.
+function outOfReach(attacker, target){ return target.utype === 'dragon' && dragonAloft(target) && attacker.type === 'unit' && !(attacker.range > 1); }
 function dropTarget(e){ e.target=null; e.explicitAttack=false; clearUnitPath(e); }
 // AoE2 (CPSB): on the easier levels a computer player never takes on villagers — its units don't pick them as targets
 // (they still defend themselves when one attacks: shouldRetaliate). profile.attacksVillagers, off for easy.
@@ -1710,8 +1713,7 @@ function shouldRetaliate(target, attacker){
 function damageEntity(attacker, target){
   // The dragon can be hurt but not killed: knocked out (spent), blows don't land until it has slept itself whole.
   if (target.utype === 'dragon' && target.spent) return;
-  // Aloft, only archers reach it (a unit with range): no blade, and no building's arrows.
-  if (target.utype === 'dragon' && dragonAloft(target) && !(attacker.type === 'unit' && attacker.range > 1)) return;
+  if (outOfReach(attacker, target)) return;
   let dmg = attacker.atk || 0;
   // The max(1, ...) armor floor below would turn a 0-attack "hit" (sheep,
   // carcasses) into 1 real damage — no attack stat means no damage at all.
@@ -3333,7 +3335,7 @@ function updateUnit(e){
   // Targets that garrisoned mid-fight become unattackable — drop them.
   if(e.target){
     let t=entitiesById.get(e.target);
-    if(t&&t.garrisonedIn)dropTarget(e);
+    if(t&&(t.garrisonedIn||outOfReach(e,t)))dropTarget(e);   // (…and a dragon that took off out of a blade's reach)
   }
   // (not mid-walk on a move order: a villager evading a raider runs first, then goes back to work — villagerEvade)
   if(e.utype==='villager' && !e.target && e.savedTask && e.task!=='garrison' && !(e.order && e.order.kind==='move')){
@@ -3887,7 +3889,7 @@ function updateBuildingArrows(e){
           for (let k = 0; k < cell.length; k++) {
             let en = cell[k];
             if (en.hp <= 0 || en.garrisonedIn) continue;
-            if (en.team === GAIA_TEAM || sameSide(en.team, e.team) || dragonAloft(en)) continue;   // (a dragon overhead: archers' work)
+            if (en.team === GAIA_TEAM || sameSide(en.team, e.team)) continue;
             let d = dist(center, en);
             if (d <= range) inRange.push({en, d});
           }

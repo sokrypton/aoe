@@ -1620,6 +1620,9 @@ function getBuildingUnderCursor(sx, sy, filter) {
   return bestB || bestLink;
 }
 
+// The dragon ridden and already in hand: a click goes THROUGH it to what is behind — aloft its box covers a good
+// part of the screen, and clicking it again means nothing (it is selected).
+function dragonInHand(e){ return e.utype === 'dragon' && e.rideLeft !== undefined && e.team === myTeam && selected.includes(e); }
 function getUnitUnderCursor(sx, sy) {
   if (window.__pick3D) return window.__pick3D.unit || null; // 3D view (iso.js)
   let bestU = null;
@@ -1634,6 +1637,7 @@ function getUnitUnderCursor(sx, sy) {
       let eux = Math.round(en.x), euy = Math.round(en.y);
       let uf = (eux >= 0 && eux < MAP && euy >= 0 && euy < MAP) ? fog[euy][eux] : 0;
       if (en.team !== myTeam && uf !== 2 && !dragonSeenByAll(en)) return;
+      if (dragonInHand(en)) return;
 
       let ua = unitAnchorLogical(en);
       let us = logicalToScreen(ua.x, ua.y);
