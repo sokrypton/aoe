@@ -108,7 +108,7 @@ function _outlineExtent(e){
     sx=a.x; sy=a.y;
   } else {
     const b=BLDGS[e.btype];
-    const p=mapToScreen(e.x+b.w/2, e.y+b.h/2);
+    const p=groundToScreen(e.x+b.w/2, e.y+b.h/2);
     const bhh=(e.h||b.h)*HALF_TH;
     sx=Math.round(p.sx);
     sy=Math.round(p.sy-bhh);
@@ -133,6 +133,7 @@ function _drawInfosMask(ctx, infos, originLeft, originTop){
   // its floating overlays (HP bar, idle "?"), which would otherwise run
   // twice per frame for selected entities / be rasterized into the outline.
   window._maskDraw=true;
+  window._flatDraw=true;   // (its own camera, set from each entity's flat spot: no hill lift — js/iso.js)
   window._selOutline=true; // this pass IS a selection/behind outline — buildings drawn here skip their wall-link stubs (drawsWallStubs)
   try{
     infos.forEach(info=>{
@@ -158,6 +159,7 @@ function _drawInfosMask(ctx, infos, originLeft, originTop){
     });
   } finally {
     window._maskDraw=false;
+    window._flatDraw=false;
     window._selOutline=false;
     X=sv.X; camX=sv.camX; camY=sv.camY;
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
@@ -273,9 +275,9 @@ function _bldgSil(en, part){
   X=cx; W=4000;H=4000;topH=0;ZOOM=1;
   camX = isoC.ix + W/2 - ax;
   camY = isoC.iy + H/2 - (ay + b.h*HALF_TH);
-  window._maskDraw=true;
+  window._maskDraw=true; window._flatDraw=true;
   try { drawBuilding(en, part); }
-  finally { window._maskDraw=svMask; X=sv.X;camX=sv.camX;camY=sv.camY;W=sv.W;H=sv.H;topH=sv.topH;ZOOM=sv.ZOOM; }
+  finally { window._maskDraw=svMask; window._flatDraw=false; X=sv.X;camX=sv.camX;camY=sv.camY;W=sv.W;H=sv.H;topH=sv.topH;ZOOM=sv.ZOOM; }
   a = { canvas: cv, ax, ay };
   _bldgSilCache.set(key, a);
   return a;
@@ -296,7 +298,7 @@ function _drawOccluders(ctx, occs){
       if(isWallLike(en)){ drawBuilding(en, part); continue; }
       const sil = _bldgSil(en, part);
       const b = BLDGS[en.btype];
-      const p = mapToScreen(en.x+b.w/2, en.y+b.h/2);
+      const p = groundToScreen(en.x+b.w/2, en.y+b.h/2);
       const rsx = Math.round(p.sx);
       const rsy = Math.round(p.sy) - b.h*HALF_TH;
       X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
@@ -443,7 +445,7 @@ function _bsilFillOccBox(rec, d){
   const en = proxyEntity(d);
   const b = BLDGS[en.btype];
   const fw = en.w||b.w, fh = en.h||b.h;
-  const p = mapToScreen(en.x+fw/2, en.y+fh/2);
+  const p = groundToScreen(en.x+fw/2, en.y+fh/2);
   const ax = Math.round(p.sx);
   const ay = Math.round(p.sy) - fh*HALF_TH; // footprint-top anchor, same as drawBuilding
   const halfW = (fw+fh)/2*HALF_TW + 14;

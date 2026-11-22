@@ -215,9 +215,11 @@ function unitUnderFog(e){
   if (e.type !== 'unit' || e.garrisonedIn || window.fogDisabled || window.seeMapMode || dragonAloft(e)) return false;
   const row = fog[Math.round(e.y)]; return !!row && row[Math.round(e.x)] === 1 && sameSide(e.team, myTeam);
 }
-function drawFoggedUnits(minX, maxX, minY, maxY){
+// hill: only those on hill tiles (true) / on level ground (false) — drawGround's two layers; null: all.
+function drawFoggedUnits(minX, maxX, minY, maxY, hill = null){
   let list = null;
-  for (const e of entities) if (e.x >= minX - 4 && e.x <= maxX + 4 && e.y >= minY - 4 && e.y <= maxY + 4 && unitUnderFog(e)) (list || (list = [])).push(e);
+  for (const e of entities) if (e.x >= minX - 4 && e.x <= maxX + 4 && e.y >= minY - 4 && e.y <= maxY + 4 && unitUnderFog(e)
+    && (hill === null || hillTile(Math.max(0, Math.min(MAP - 1, Math.round(e.x))), Math.max(0, Math.min(MAP - 1, Math.round(e.y)))) === hill)) (list || (list = [])).push(e);
   if (list) { list.sort((a, b) => (a.y + a.x) - (b.y + b.x) || a.id - b.id); for (const e of list) drawUnit(e); }
 }
 function render(){
@@ -245,6 +247,7 @@ function renderFrame(){
   // The 3D view is the world view (js/pov3d.js): the 2D map isn't drawn under it; the minimap still is.
   if (window.world3D) { drawMinimap(); return; }
 
+  ensureElevation();   // the hills (js/core.js): generated for this match, terraced under its buildings
   // Viewport culling: calculate visible map tile range
   let p1 = screenToMap(0, 0);
   let p2 = screenToMap(W, 0);
@@ -255,6 +258,8 @@ function renderFrame(){
   let maxX = Math.min(MAP - 1, Math.ceil(Math.max(p1.x, p2.x, p3.x, p4.x)) + 2);
   let minY = Math.max(0, Math.floor(Math.min(p1.y, p2.y, p3.y, p4.y)) - 2);
   let maxY = Math.min(MAP - 1, Math.ceil(Math.max(p1.y, p2.y, p3.y, p4.y)) + 2);
+  // (ground below the screen's foot is lifted up into view by a hill)
+  if (elevAny) { const up = Math.ceil(ELEV_LAIR[2] * ELEV_PX / HALF_TH) + 1; maxX = Math.min(MAP - 1, maxX + up); maxY = Math.min(MAP - 1, maxY + up); }
   
   X.save();
   // Zoom scale about THE shared anchor (zoomAnchor, js/iso.js — same one

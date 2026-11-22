@@ -169,18 +169,68 @@ function drawGround(minX, maxX, minY, maxY){
   const g = _gnd.base.d.data, fd = _gnd.fog.d.data;
   for (let y = 0; y < MAP; y++) { const fr = fog[y], row = map[y]; for (let x = 0; x < MAP; x++) {
     const i = (y * MAP + x) * 4, f = fr ? fr[x] : 0;
-    if (!f) { g[i + 3] = 0; fd[i + 3] = 0; continue; }
+    if (!f || (elevAny && hillTile(x, y))) { g[i + 3] = 0; fd[i + 3] = 0; continue; }   // (a hill's tiles are drawn lifted, veiled there: drawHillGround)
     const t = row[x], cols = TCOL[t.t] || TCOL[0], col = cols[(x * 7 + y * 13) % cols.length];
     let rgb = _rgbOf.get(col); if (!rgb) { rgb = [1, 3, 5].map(k => parseInt(col.slice(k, k + 2), 16)); _rgbOf.set(col, rgb); }
     g[i] = rgb[0]; g[i + 1] = rgb[1]; g[i + 2] = rgb[2]; g[i + 3] = 255;
     fd[i] = fd[i + 1] = fd[i + 2] = 0; fd[i + 3] = f === 1 ? 140 : 0;   // (rgba(0,0,0,0.55))
   } }
   _gnd.base.x.putImageData(_gnd.base.d, 0, 0); _gnd.fog.x.putImageData(_gnd.fog.d, 0, 0);
-  const o = mapToScreen(0, 0), lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
+  // (the map's corner on LEVEL ground: mapToScreen would lift the whole picture by the height of tile 0,0)
+  const o = { sx: W / 2 - camDX(), sy: H / 2 + topH - camDY() }, lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
   lay(_gnd.base.c);
-  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && isSortedRes(seenTile(x, y).t)) drawTileResourceAt(x, y);
-  if (typeof drawFoggedUnits === 'function') drawFoggedUnits(minX, maxX, minY, maxY);   // (js/render.js)
+  // What stands in the shroud goes under its veil. With hills, in two layers — level ground and its veil first, then
+  // the hills and theirs: a hill rises over the level ground behind it, so its tiles must go down after that veil
+  // (laid before, the veil of a fogged flat tile behind darkened the lit slope in front of it).
+  const shrouded = hill => {
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && (hill === null || hillTile(x, y) === hill) && isSortedRes(seenTile(x, y).t)) drawTileResourceAt(x, y);
+    if (typeof drawFoggedUnits === 'function') drawFoggedUnits(minX, maxX, minY, maxY, hill);   // (js/render.js)
+  };
+  shrouded(elevAny ? false : null);
   lay(_gnd.fog.c);
+  if (elevAny) {
+    // A fogged hill tile is painted in its dimmed colour outright (two see-through layers meeting along an edge leave
+    // a hairline, light or dark). Only the few that hold something shown in the shroud — ore, bushes, a unit — are
+    // painted lit, with their own veil over what stands there.
+    const veiled = new Set();
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (fog[y] && fog[y][x] === 1 && hillTile(x, y) && isSortedRes(seenTile(x, y).t)) veiled.add(y * MAP + x);
+    if (typeof unitUnderFog === 'function') for (const e of entities) if (unitUnderFog(e)) { const ex = Math.round(e.x), ey = Math.round(e.y);
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) veiled.add((ey + j) * MAP + ex + i); }
+    drawHillGround(minX, maxX, minY, maxY, null, veiled); shrouded(true); if (veiled.size) drawHillGround(minX, maxX, minY, maxY, veiled);
+  }
+}
+// The ground with hills (js/core.js): each tile a quad between its four LIFTED corners, shaded by how it faces the
+// light (upper left: a slope rising toward +x is lit, one falling away is in shade). Tiles of one colour go down as
+// ONE path — a fill a colour, not a fill a tile — each a hair oversize, so no seam shows between colours (the flat
+// image has no pixels under a hill). A fogged tile takes its colour dimmed as the veil would (×0.45), but for those in
+// `lit`. veil: the shroud's veil instead, over just those tiles.
+// Only the tiles with any height are drawn this way: level ground at 0 — most of the map — is the flat image's.
+const _hillCols = new Map();
+function hillTile(x, y){ const n = MAP + 1, i = y * n + x; return elev[i] > 1e-6 || elev[i + 1] > 1e-6 || elev[i + n] > 1e-6 || elev[i + n + 1] > 1e-6; }
+function hillShade(x, y){
+  const n = MAP + 1, i = y * n + x, a = elev[i], b = elev[i + 1], c = elev[i + n], d = elev[i + n + 1];
+  const dx = (b + d - a - c) / 2, dy = (c + d - a - b) / 2;
+  return Math.max(-6, Math.min(6, Math.round((dx - 0.25 * dy) * 9)));   // (−6 … 6: thirteen shades)
+}
+function drawHillGround(minX, maxX, minY, maxY, veil, lit){
+  const n = MAP + 1, ox = W / 2 - camDX(), oy = H / 2 + topH - camDY(), groups = new Map(), e = 0.6;
+  for (let y = minY; y <= maxY; y++) { const fr = fog[y], row = map[y]; if (!fr) continue;
+    for (let x = minX; x <= maxX; x++) { const f = fr[x]; if (!f || (veil && !veil.has(y * MAP + x)) || !hillTile(x, y)) continue;
+      let key;
+      if (veil) key = 'rgba(0,0,0,0.55)';
+      else { const t = row[x], cols = TCOL[t.t] || TCOL[0], col = cols[(x * 7 + y * 13) % cols.length], sh = hillShade(x, y), dim = f === 1 && !lit.has(y * MAP + x), ck = col + sh + (dim ? 'f' : '');
+        key = _hillCols.get(ck);
+        if (!key) { const k = (1 + sh * 0.055) * (dim ? 0.45 : 1); key = 'rgb(' + [1, 3, 5].map(q => Math.max(0, Math.min(255, Math.round(parseInt(col.slice(q, q + 2), 16) * k)))).join(',') + ')'; _hillCols.set(ck, key); } }
+      let g = groups.get(key); if (!g) groups.set(key, g = []);
+      const i = y * n + x;
+      g.push((x - y) * HALF_TW + ox, (x + y) * HALF_TH + oy - elev[i] * ELEV_PX - e,
+             (x + 1 - y) * HALF_TW + ox + e, (x + 1 + y) * HALF_TH + oy - elev[i + 1] * ELEV_PX,
+             (x - y) * HALF_TW + ox, (x + y + 2) * HALF_TH + oy - elev[i + n + 1] * ELEV_PX + e,
+             (x - y - 1) * HALF_TW + ox - e, (x + y + 1) * HALF_TH + oy - elev[i + n] * ELEV_PX);
+    } }
+  for (const [col, g] of groups) { X.fillStyle = col; X.beginPath();
+    for (let k = 0; k < g.length; k += 8) { X.moveTo(g[k], g[k + 1]); X.lineTo(g[k + 2], g[k + 3]); X.lineTo(g[k + 4], g[k + 5]); X.lineTo(g[k + 6], g[k + 7]); X.closePath(); }
+    X.fill(); }
 }
 
 function drawStump(sx, cy, s, darken = false) {
@@ -352,24 +402,30 @@ function drawTreeEntity(x,y,part=null){
 
 // ---- MODULAR ISOMETRIC RENDERING HELPERS ----
 
-// Draws a half-length wall slab from a pillar center toward the midpoint with a neighbor.
+// Draws a wall slab from a pillar centre toward a neighbour's.
 // sx,sy: start screen pos (pillar center base)
-// dx,dy: screen offset to the midpoint (half tile: ±16, ±8)
+// dx,dy: screen offset to the far end, on level ground (a tile: ±32, ±16)
 // wallH: height of the wall slab in pixels
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood') {
+// lift: on hills, px the ground at a level-ground offset from (sx, sy) stands above it (wallLift) — every base point
+// sits on its own ground, so the slab's foot follows the slope and meets its posts' feet.
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood', lift=null) {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
-  let ux = dx / L, uy = dy / L;
-
-  let nsx = sx + ux * d1;
-  let nsy = sy + uy * d1;
-  let nex = sx + dx - ux * d2;
-  let ney = sy + dy - uy * d2;
+  const t0 = d1 / L, t1 = 1 - d2 / L;
+  // (the ground's one crease along the way is the tile edge, half way)
+  const ts = lift && t0 < 0.5 && t1 > 0.5 ? [t0, 0.5, t1] : [t0, t1];
 
   let isAlongIsoY = (dx > 0) !== (dy > 0);
   let px = isAlongIsoY ? thick : -thick;
   let py = thick / 2; // always positive (both perpendiculars have same Y component)
+  // The point t of the way along, on the near (+1) or far (-1) edge, h px up.
+  const Q = (t, s, h) => { const ox = dx * t + s * px, oy = dy * t + s * py; return [sx + ox, sy + oy - h - (lift ? lift(ox, oy) : 0)]; };
+  const to = (q, move) => move ? X.moveTo(q[0], q[1]) : X.lineTo(q[0], q[1]);
+  // A band between two edge lines, there along the first and back along the second.
+  const band = (s1, h1, s2, h2) => { X.beginPath(); ts.forEach((t, i) => to(Q(t, s1, h1), !i)); for (let i = ts.length - 1; i >= 0; i--) to(Q(ts[i], s2, h2)); X.closePath(); };
+  const seg = (a, b) => { X.beginPath(); to(a, true); to(b); X.stroke(); };
+  const at = u => t0 + (t1 - t0) * u;
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
@@ -390,23 +446,14 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   // 1. Visible side face
   X.fillStyle = fillL;
-  X.beginPath();
-  X.moveTo(nsx + px, nsy + py);
-  X.lineTo(nex + px, ney + py);
-  X.lineTo(nex + px, ney + py - wallH);
-  X.lineTo(nsx + px, nsy + py - wallH);
-  X.closePath(); X.fill(); X.stroke();
+  band(1, 0, 1, wallH); X.fill(); X.stroke();
 
   // Palisade texture: vertical stake seams across the visible side face,
   // so the wooden wall reads as driven beams rather than a flat slab
   if (mat === 'wood' && !colorL) {
     X.save();
     X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=1;
-    for (let t of [0.25, 0.5, 0.75]) {
-      let vx = nsx + (nex - nsx) * t + px;
-      let vy = nsy + (ney - nsy) * t + py;
-      X.beginPath();X.moveTo(vx, vy);X.lineTo(vx, vy - wallH);X.stroke();
-    }
+    for (let u of [0.25, 0.5, 0.75]) seg(Q(at(u), 1, 0), Q(at(u), 1, wallH));
     X.restore();
   }
 
@@ -419,63 +466,30 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
     let courses = 3;
     for (let c = 1; c < courses; c++) {
       let hy = wallH * c / courses;
-      X.beginPath();
-      X.moveTo(nsx + px, nsy + py - hy);
-      X.lineTo(nex + px, ney + py - hy);
-      X.stroke();
+      X.beginPath(); ts.forEach((t, i) => to(Q(t, 1, hy), !i)); X.stroke();
       // staggered vertical joints on this course band
       let joints = c % 2 ? [0.2, 0.5, 0.8] : [0.35, 0.65];
-      for (let t of joints) {
-        let vx = nsx + (nex - nsx) * t + px;
-        let vy = nsy + (ney - nsy) * t + py;
-        X.beginPath();
-        X.moveTo(vx, vy - hy);
-        X.lineTo(vx, vy - hy + wallH / courses);
-        X.stroke();
-      }
+      for (let u of joints) seg(Q(at(u), 1, hy), Q(at(u), 1, hy - wallH / courses));
     }
     // top course joints — offset from the middle course below
-    for (let t of [0.2, 0.5, 0.8]) {
-      let vx = nsx + (nex - nsx) * t + px;
-      let vy = nsy + (ney - nsy) * t + py;
-      X.beginPath();
-      X.moveTo(vx, vy - wallH);
-      X.lineTo(vx, vy - wallH + wallH / courses);
-      X.stroke();
-    }
+    for (let u of [0.2, 0.5, 0.8]) seg(Q(at(u), 1, wallH), Q(at(u), 1, wallH - wallH / courses));
     X.restore();
   }
 
   // 2. Top walkway face
   X.fillStyle = fillTop;
-  X.beginPath();
-  X.moveTo(nsx - px, nsy - py - wallH);
-  X.lineTo(nsx + px, nsy + py - wallH);
-  X.lineTo(nex + px, ney + py - wallH);
-  X.lineTo(nex - px, ney - py - wallH);
-  X.closePath(); X.fill(); X.stroke();
+  band(-1, wallH, 1, wallH); X.fill(); X.stroke();
 
   // Fortified crenellation: two mini merlons riding the walkway, built
   // from the link's own face math (side at +px/+py, cap full thickness)
   // so they read as the wall's masonry continuing upward. Caps keep the
   // walkway's team color (ownership read).
   if (mat === 'stonef') {
-    const mh = 4, w = 3.2;
-    for (let t of [0.3, 0.7]) {
-      let cxm = nsx + (nex - nsx) * t, cym = nsy + (ney - nsy) * t;
-      let ax2 = ux * w, ay2 = uy * w;
-      X.fillStyle = fillL; X.beginPath();
-      X.moveTo(cxm - ax2 + px, cym - ay2 + py - wallH);
-      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH);
-      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH - mh);
-      X.lineTo(cxm - ax2 + px, cym - ay2 + py - wallH - mh);
-      X.closePath(); X.fill(); X.stroke();
-      X.fillStyle = fillTop; X.beginPath();
-      X.moveTo(cxm - ax2 - px, cym - ay2 - py - wallH - mh);
-      X.lineTo(cxm - ax2 + px, cym - ay2 + py - wallH - mh);
-      X.lineTo(cxm + ax2 + px, cym + ay2 + py - wallH - mh);
-      X.lineTo(cxm + ax2 - px, cym + ay2 - py - wallH - mh);
-      X.closePath(); X.fill(); X.stroke();
+    const mh = 4, w = 3.2 / L, quad = (a, b, c, d) => { X.beginPath(); to(a, true); to(b); to(c); to(d); X.closePath(); X.fill(); X.stroke(); };
+    for (let u of [0.3, 0.7]) {
+      const a = at(u) - w, b = at(u) + w;
+      X.fillStyle = fillL; quad(Q(a, 1, wallH), Q(b, 1, wallH), Q(b, 1, wallH + mh), Q(a, 1, wallH + mh));
+      X.fillStyle = fillTop; quad(Q(a, -1, wallH + mh), Q(a, 1, wallH + mh), Q(b, 1, wallH + mh), Q(b, -1, wallH + mh));
     }
   }
 
@@ -483,11 +497,7 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   // link back from its endpoint (e.g. the gate door not reaching its post).
   if (capNear) {
     X.fillStyle = fillL;
-    X.beginPath();
-    X.moveTo(nex - px, ney - py);
-    X.lineTo(nex + px, ney + py);
-    X.lineTo(nex + px, ney + py - wallH);
-    X.lineTo(nex - px, ney - py - wallH);
+    X.beginPath(); to(Q(t1, -1, 0), true); to(Q(t1, 1, 0)); to(Q(t1, 1, wallH)); to(Q(t1, -1, wallH));
     X.closePath(); X.fill(); X.stroke();
   }
 }

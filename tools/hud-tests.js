@@ -1044,6 +1044,7 @@ function pageSuite() {
     const auxErrors = [];
     const newAuxPage = async () => {
       const p = await ctx.newPage();
+      await p.addInitScript(() => { window.__noHills = true; });   // flat ground: the tests click at flat-map points
       p.on('pageerror', e => auxErrors.push('pageerror: ' + String(e.message || e)));
       p.on('console', m => {
         if (m.type() !== 'error') return;
@@ -1054,6 +1055,7 @@ function pageSuite() {
       return p;
     };
     const page = await ctx.newPage();
+    await page.addInitScript(() => { window.__noHills = true; });   // flat ground: the tests click at flat-map points
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(String(e.message || e)));
     await page.goto(base + '/index.html', { waitUntil: 'load' });

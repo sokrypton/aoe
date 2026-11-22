@@ -1603,7 +1603,7 @@ function getBuildingUnderCursor(sx, sy, filter) {
       // area always agrees with the selection outline, by construction.
       // Rounded exactly as drawBuilding anchors it (mapToScreen -> round,
       // then lift by the footprint height), so the box tracks the art.
-      let bp = mapToScreen(cx, cy);
+      let bp = groundToScreen(cx, cy);
       let aX = Math.round(bp.sx);                // logical anchor x (footprint centre)
       let aY = Math.round(bp.sy) - h * HALF_TH;  // logical anchor y (footprint top)
       if (lx >= aX - 175 && lx <= aX + 175 && ly >= aY - 216 && ly <= aY + 134) {

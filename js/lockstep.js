@@ -177,6 +177,7 @@ function hostStartLockstepMatch(){
   // shipped in lockstep-start below — a peer disagreement trips the checksum
   // (the flag is hashed, js/determinism.js).
   window.fogDisabled = !!(ls && ls.fog);
+  window.dragonDisabled = !!ls && ls.dragon === false;   // (shipped below: every peer must build the same world)
   // Each player's ALLIANCE drives the spawn adjacency (js/core.js
   // setMapSize) — every peer must build STARTS from the SAME array, so
   // it's taken from the lobby seats here and sent in lockstep-start below
@@ -203,7 +204,7 @@ function hostStartLockstepMatch(){
   // guests so every screen renders the agreed labels/colors consistently.
   // Per-guest send: yourTeam is how each guest learns which seat it plays —
   // the ONE per-recipient field in an otherwise identical payload.
-  let startPayload = { type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, fog: !!window.fogDisabled, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap };
+  let startPayload = { type: 'lockstep-start', seed: matchSeed, mapSize: sizeKey, speed: GAME_SPEED, fog: !!window.fogDisabled, dragon: !window.dragonDisabled, numTeams: NUM_TEAMS, controllers: teamControllers, alliances: teamAlliance, names: teamNames, colors: teamColorMap };
   for (const s of netConnectedGuestSeats()) {
     sendToGuest(s, Object.assign({}, startPayload, { yourTeam: s }));
   }
@@ -216,6 +217,7 @@ onNetMessage((msg, src) => {
     // Match fog setting, host-decided (lobby): must land before restartGame
     // (initFog seeds from it) and match the host exactly — it's hashed.
     window.fogDisabled = !!msg.fog;
+    window.dragonDisabled = msg.dragon === false;
     // Which seat this guest plays — assigned by the host (replaces the old
     // hardcoded guest=1). Must land before restartGame/fog/camera below,
     // all of which read myTeam.
@@ -438,6 +440,7 @@ function lockstepCaptureState(){
     fogDisabled: !!window.fogDisabled,
     speed: GAME_SPEED, // the sim reads it (the dragon's ride clock): a rewind across a set-speed must see the old one
     scenario: captureScenario(), // trigger script + state (js/triggers.js); null in a plain match
+    elevSpec, // the match's hills (js/core.js: viewer-only — carried so a rejoining guest draws the same ground)
   });
 }
 
@@ -581,6 +584,7 @@ function lockstepApplyResync(state){
   if (state.exploredSim) teamExploredGrid = state.exploredSim.map(g => Uint8Array.from(g));
   restoreTeamState(state); // controllers/AI_STATES/lastTeamHit (js/core.js)
   restoreScenario(state.scenario); // (js/triggers.js)
+  elevSpec = state.elevSpec || null;
   // A rejoining guest's fog was just rebuilt empty (fresh page) — its
   // explored memory only survives in the sim's explored grid. Seed fog=1
   // from our team's grid; a no-op for tiles already explored/visible, so

@@ -11,7 +11,7 @@ diffed — the long-term goal is agents improving `js/ai.js` through self-play.
 
 | file | owns |
 |---|---|
-| `core.js` | constants (UNITS/BLDGS/AGES/AI_LEVELS), team model, sim PRNG + det-trig, per-team vision grids, market prices |
+| `core.js` | constants (UNITS/BLDGS/AGES/AI_LEVELS), team model, sim PRNG + det-trig, per-team vision grids, market prices, elevation (`elevSpec` → `elev`/`groundH`: hills, viewer-only — 2D lifts through `mapToScreen`, 3D in the shaders: `initHills`) |
 | `logic.js` | the sim: updateUnit/updateBuilding, combat, gathering, garrison, trade carts, guard posts, stuck-watchdog |
 | `wildlife.js` | the map's animals: sheep graze/wander, bear den/maul, dragon body/turn/breath and its ride (a sheep offered: a minute aloft under a player's orders) |
 | `triggers.js` | scenario triggers (AoE2 conditions → effects, objectives, instructions): `scenarioScript` static, `scenarioState` sim-hashed — see `docs/scenarios.md` |
@@ -62,6 +62,9 @@ bit-identical state. When touching anything the sim reads:
   divergence surfaces as a mystery desync far from its cause.
 - **Sim vs viewer**: anything `myTeam`-relative (fog grid, `scoutedByMe`,
   selection, popUsed cache) is viewer-local and must never steer sim logic.
+- **Elevation is viewer-only**: `elev`/`groundH` (js/core.js) are derived from `elevSpec` and the buildings and are
+  never read by the sim. A rule that depends on height (high-ground bonus, slope speed, placement) must first make
+  the heights sim state: generated with the map, saved, and hashed.
 - **`window.fogDisabled`** is a match-start-immutable, peer-synced SIM setting
   (SP options / MP lobby → `lockstep-start`). It is hashed when set. The
   game-over reveal uses `seeMapMode` — never flip fogDisabled mid-match.

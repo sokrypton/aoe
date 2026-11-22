@@ -50,12 +50,13 @@
     X = c; W = 2000; H = 2000; topH = 0; ZOOM = 1;
     window._maskDraw = true; // drawUnit stays read-only: no hysteresis, HP bar, shadow, particles
     window._povDraw = true;  // ...and no HUD cues (idle "?")
+    window._flatDraw = true; // ...and no hill lift: the camera here is set from the flat spot (js/iso.js)
     try {
       const iso = toIso(wx, wy);
       camX = iso.ix + W / 2 - ax; camY = iso.iy + H / 2 - ay;
       draw();
     } finally {
-      window._maskDraw = false; window._povDraw = false;
+      window._maskDraw = false; window._povDraw = false; window._flatDraw = false;
       X = sv.X; camX = sv.camX; camY = sv.camY; W = sv.W; H = sv.H; topH = sv.topH; ZOOM = sv.ZOOM;
     }
   }
@@ -99,7 +100,64 @@
     initClouds();
   }
   // Shared shapes and outline materials every model builder uses (the lab page too).
+  // ---- HILLS (js/core.js: elev, groundH) ----
+  // The ground's height is put into the SHADERS, for everything at once: a 256² texture of the corner heights, and
+  // three.js's own vertex-projection chunk changed to lift each vertex by the ground under it (its world x, z). So the
+  // ground itself, every model, instance, billboard, decal and puff rides the hills with no code of its own — a shadow
+  // lies along its slope, a wall steps with it. Opted out with the define NO_HILL (the clouds, the void beyond the map).
+  // The CODE side knows heights in three places only: the camera (camLift: the world is drawn from a camera raised by
+  // the ground under the view's anchor, and everything else here reasons in the flat frame), project() and pick().
+  const HILL_TOP = 3;   // the texture's full scale, in tiles (≥ the tallest ground: ELEV_LAIR)
+  let hillTex = null, hillData = null, hillRev = -1, camLift = 0;
+  function initHills(){
+    if (hillTex) return;
+    hillData = new Uint8Array(256 * 256 * 4);
+    hillTex = new THREE.DataTexture(hillData, 256, 256); hillTex.magFilter = hillTex.minFilter = THREE.LinearFilter; hillTex.needsUpdate = true;
+    for (const k in THREE.ShaderLib) THREE.ShaderLib[k].uniforms.hillMap = { value: hillTex };   // (cloned by reference: one texture for all)
+    THREE.ShaderChunk.common += '\nuniform sampler2D hillMap;\n';
+    const lift = v => `${v}.y += texture2D( hillMap, ( ${v}.xz + 0.5 ) / 256.0 ).r * ${HILL_TOP.toFixed(1)};`;
+    THREE.ShaderChunk.project_vertex = `vec4 mvPosition = vec4( transformed, 1.0 );
+#ifdef USE_BATCHING
+	mvPosition = batchingMatrix * mvPosition;
+#endif
+#ifdef USE_INSTANCING
+	mvPosition = instanceMatrix * mvPosition;
+#endif
+#ifdef NO_HILL
+	mvPosition = modelViewMatrix * mvPosition;
+#else
+	mvPosition = modelMatrix * mvPosition;
+	${lift('mvPosition')}
+	mvPosition = viewMatrix * mvPosition;
+#endif
+gl_Position = projectionMatrix * mvPosition;`;
+    const sv = THREE.ShaderLib.sprite, at = 'vec4 mvPosition = modelViewMatrix * vec4( 0.0, 0.0, 0.0, 1.0 );';
+    if (sv.vertexShader.includes(at)) sv.vertexShader = sv.vertexShader.replace(at, `vec4 hillW = modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ); ${lift('hillW')} vec4 mvPosition = viewMatrix * hillW;`);
+  }
+  const noHill = m => { m.defines = Object.assign(m.defines || {}, { NO_HILL: '' }); return m; };
+  function updateHills(dt){
+    ensureElevation();
+    if (elevRev !== hillRev) { hillRev = elevRev; hillData.fill(0);
+      if (elevAny) { const n = MAP + 1; for (let y = 0; y < n && y < 256; y++) for (let x = 0; x < n && x < 256; x++) hillData[(y * 256 + x) * 4] = Math.round(Math.min(1, elev[y * n + x] / HILL_TOP) * 255); }
+      hillTex.needsUpdate = true; lastStatic = 0; }   // (the ground's slope shading is baked with the static refresh)
+    const to = eye ? groundH(eye.x, eye.y) : 0; camLift += (to - camLift) * Math.min(1, (dt || 0.016) * 10);
+    if (Math.abs(to - camLift) < 1e-4) camLift = to;
+  }
+  // The lift follows the ground under each VERTEX, which shears a body standing on a slope (a horse's head rides higher
+  // than its tail). A unit model stands upright instead: its root matrix carries the opposite shear, so the whole body
+  // is lifted by the ground under its feet. Run once a frame, after every pose has set the root's position.
+  let _shear = null;
+  function standUpright(o){
+    if (!o || o.userData.vm) return;                                 // (the first-person viewmodel is placed in camera space)
+    if (!elevAny) { o.matrixAutoUpdate = true; return; }
+    const x = o.position.x, z = o.position.z, d = 0.35;
+    const gx = (groundH(x + d, z) - groundH(x - d, z)) / (2 * d), gz = (groundH(x, z + d) - groundH(x, z - d)) / (2 * d);
+    _shear = _shear || new THREE.Matrix4();
+    _shear.set(1, 0, 0, 0,  -gx, 1, -gz, gx * x + gz * z,  0, 0, 1, 0,  0, 0, 0, 1);
+    o.updateMatrix(); o.matrix.premultiply(_shear); o.matrixAutoUpdate = false; o.matrixWorldNeedsUpdate = true;
+  }
   function initShared(){
+    initHills();
     if (unitBox) return;
     treeHits.value = Array.from({ length: 8 }, () => new THREE.Vector4(1e6, 1e6, 9, 0));
     wheatPushers.value = Array.from({ length: WHEAT_PUSH }, () => new THREE.Vector4(1e6, 1e6, 0, 0.32));
@@ -151,7 +209,7 @@
     // Barely there: a shade lighter than the sky (#9fc8e6), shading all but
     // flattened by the emissive lift — a hint of cloud, not a feature.
     // Opaque, so overlapping puffs stay one shape (see-through showed seams).
-    const m = new THREE.MeshLambertMaterial({ color: '#b3d4ec', emissive: '#86b0d2', emissiveIntensity: 0.6, fog: false });
+    const m = noHill(new THREE.MeshLambertMaterial({ color: '#b3d4ec', emissive: '#86b0d2', emissiveIntensity: 0.6, fog: false }));
     for (let i = 0; i < 8; i++) {
       const puffs = [], n = 3 + Math.floor(rnd() * 3), w = 2.2 + rnd() * 2.8;
       for (let k = 0; k < n; k++) {
@@ -197,7 +255,7 @@
     groundData = new Uint8Array(MAP * MAP * 4);
     groundTex = new THREE.DataTexture(groundData, MAP, MAP);
     groundTex.colorSpace = THREE.SRGBColorSpace;
-    const geo = new THREE.PlaneGeometry(MAP, MAP);
+    const geo = new THREE.PlaneGeometry(MAP, MAP, MAP, MAP);   // (a vertex a tile corner: the hills lift them — initHills)
     geo.rotateX(-Math.PI / 2);
     // No depth writes, drawn first: sprite billboards may dip below y=0.
     fowData = new Uint8Array(MAP * MAP * 4);
@@ -214,7 +272,7 @@
     groundMesh.position.set(MAP / 2, 0, MAP / 2);
     scene.add(groundMesh);
     // beyond the map's edge: black too (the 2D map's void), just under the ground
-    const edge = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 5, MAP * 5).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#000000', depthWrite: false })); // hazed like the ground: no hard band against the sky
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 5, MAP * 5).rotateX(-Math.PI / 2), noHill(new THREE.MeshBasicMaterial({ color: '#000000', depthWrite: false }))); // hazed like the ground: no hard band against the sky
     edge.position.set(0, -0.002, 0); edge.renderOrder = -2; groundMesh.add(edge);             // (a child: it's rebuilt and dropped with the ground)
     groundFor = map;
     dropBuildings(); dropUnits(); heading.clear(); // a new world reuses entity ids
@@ -234,8 +292,8 @@
       // the tile's own colour and the fog of war, both per tile and crisp as 2D: unexplored black, explored-but-unseen dimmed
       fowData[i] = f === 2 ? 255 : f ? 140 : 0; fowData[i + 1] = fowData[i + 2] = 0; fowData[i + 3] = 255;
       const cols = TCOL[map[y][x].t === TERRAIN.FOREST ? TERRAIN.GRASS : map[y][x].t] || TCOL[0]; // under a tree, grass: its shadow does the darkening
-      const c = rgb(cols[(x * 7 + y * 13) % cols.length]);
-      groundData[i] = c[0]; groundData[i + 1] = c[1]; groundData[i + 2] = c[2]; groundData[i + 3] = 255;
+      const c = rgb(cols[(x * 7 + y * 13) % cols.length]), k = elevAny && typeof hillShade === 'function' ? 1 + hillShade(x, y) * 0.055 : 1;   // (a slope's shade, as 2D's)
+      groundData[i] = Math.min(255, c[0] * k); groundData[i + 1] = Math.min(255, c[1] * k); groundData[i + 2] = Math.min(255, c[2] * k); groundData[i + 3] = 255;
     }
     // A building shows at ONE fog level, as 2D draws it (buildingFogLevel): its whole footprint takes that level in the
     // fog texture, so a building half on unexplored ground isn't half black
@@ -1403,7 +1461,7 @@
     for (let y = Math.max(0, cy - R); y < Math.min(MAP, cy + R); y++) for (let x = Math.max(0, cx - R); x < Math.min(MAP, cx + R); x++) {
       const t = seenTile(x, y);   // (in the fog: as last seen)
       if (!t.res || t.res <= 0 || !(fog[y] && fog[y][x])) continue;
-      _fFr.s.center.set(x + 0.5, 0.8, y + 0.5); if (!_fFr.fr.intersectsSphere(_fFr.s)) continue; // (radius 2.5: a crown's reach, plus the margin a turn eats before the re-list)
+      _fFr.s.center.set(x + 0.5, elevAny ? 0.8 + groundH(x + 0.5, y + 0.5) - camLift : 0.8, y + 0.5); if (!_fFr.fr.intersectsSphere(_fFr.s)) continue; // (radius 2.5: a crown's reach, plus the margin a turn eats before the re-list)
       const wx = x + 0.5, wz = y + 0.5; putTile = y * MAP + x;
       if (t.t === TERRAIN.FOREST) {
         const k = 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08); // the art's per-tree size noise
@@ -5295,6 +5353,7 @@
                       // withDrawPositions, whose mid-tick positions would be recorded as tick spots and walk unevenly)
   }
   function drawFrame(now){
+    updateHills(1 / 60);
     let e = followId != null ? entitiesById.get(followId) : null;
     if (followId != null && (!e || e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn || (steering && e.team !== myTeam))) {
       // fallen (or gone, or no longer the player's: a dragon whose ride is over): the view lets go — no handover to another unit; the world view back to its map camera
@@ -5329,12 +5388,13 @@
     updateArrows(now);
     clouds.position.set(camera.position.x, 0, camera.position.z); clouds.rotation.y = aTick * 0.00004;
     animateModels(dt); mark('models');
-    updateUnits(); mark('units');
+    updateUnits(); for (const m of [villagers, animals, corpseModels]) for (const r of m.values()) standUpright(r.obj); mark('units');
     updateXray(); updateSelection();
     if (world) updateGhost(); mark('fx');
     const t1 = performance.now();
     cullRigs();
-    renderer.render(scene, camera); mark('render');
+    // (drawn from the camera raised over the hills — camLift; back to the flat frame for everything else)
+    camera.position.y += camLift; camera.updateMatrixWorld(); renderer.render(scene, camera); camera.position.y -= camLift; camera.updateMatrixWorld(); mark('render');
     if (unrevealed) { unrevealed = false; pip.style.visibility = ''; window.world3D = world;
       if (fadeIn) { fadeIn = false;                                               // a match opening: its first frame (and the minimap) fade up from black
         for (const el of [renderer.domElement, document.getElementById('minimap-wrap')]) { if (!el) continue;
@@ -5388,7 +5448,8 @@
   // so selection, commands, placement, rally/guard/garrison stay one set of rules.
   let _ray = null, _ndc = null, _v3 = null;
   const PICK_H = { villager: 0.32, militia: 0.32, spearman: 0.32, archer: 0.32, scout: 0.55, knight: 0.55, sheep: 0.2, sheep_carcass: 0.2, bear: 0.35, ram: 0.35, tradecart: 0.35, dragon: 1.0 }; // (half the drawn height: the HP bar sits over the head)
-  function project(x, y, z){ _v3.set(x, y, z).project(camera); const r = renderer.domElement.getBoundingClientRect();
+  function project(x, y, z){ _v3.set(x, elevAny ? y + groundH(x, z) - camLift : y, z).project(camera);   // (what stands at (x, z) is drawn that much higher: initHills)
+    const r = renderer.domElement.getBoundingClientRect();
     return { x: r.left + (_v3.x + 1) / 2 * r.width, y: r.top + (1 - _v3.y) / 2 * r.height, z: _v3.z }; }
   // A solid model (animal, carcass, vehicle) is boxed as drawn: a carcass lies rolled off its spot, the cart's ox walks
   // ahead of it. The rigs pose on the GPU, so a person keeps the box over its spot.
@@ -5435,7 +5496,11 @@
     _ndc.set((cx - r.left) / r.width * 2 - 1, -((cy - r.top) / r.height * 2 - 1));
     _ray.setFromCamera(_ndc, camera);
     const o = _ray.ray.origin, d = _ray.ray.direction;
-    const tg = d.y < -1e-4 ? -o.y / d.y : 200, gx = o.x + d.x * tg, gz = o.z + d.z * tg;
+    let tg = d.y < -1e-4 ? -o.y / d.y : 200, gx = o.x + d.x * tg, gz = o.z + d.z * tg;
+    // Hills: the ground the ray meets (found by stepping onto the height under each guess: it settles), then the ray
+    // lowered by that height — into the flat frame of whatever stands there, which is drawn that much higher.
+    if (elevAny && d.y < -1e-4) { for (let k = 0; k < 8; k++) { tg = (groundH(gx, gz) - camLift - o.y) / d.y; gx = o.x + d.x * tg; gz = o.z + d.z * tg; }
+      o.y -= groundH(gx, gz) - camLift; }
     const slack = (typeof isMobile !== 'undefined' && isMobile) ? 14 : 5;
     // units: their drawn box on screen (the rigs pose on the GPU, so no mesh raycast)
     let unit = null, ud = Infinity;
@@ -5582,7 +5647,7 @@
   }
   // "behind" = behind the camera, judged in view space: past the FAR plane (an ally Market across the map) still
   // projects to its true spot — NDC z > 1 lumped the two together, and such a point became a sentinel corner.
-  const ovProj = (x, h, z) => { _v3.set(x, h, z).applyMatrix4(camera.matrixWorldInverse); const behind = _v3.z > -camera.near;
+  const ovProj = (x, h, z) => { _v3.set(x, elevAny ? h + groundH(x, z) - camLift : h, z).applyMatrix4(camera.matrixWorldInverse); const behind = _v3.z > -camera.near;
     _v3.applyMatrix4(camera.projectionMatrix); return { sx: (_v3.x + 1) / 2 * ov.clientWidth, sy: (1 - _v3.y) / 2 * ov.clientHeight, behind }; };
   // An order line's two ground points as a SEGMENT (render.js worldSegmentScreen): clipped where it crosses the camera's
   // near plane, so an end behind the camera bends nothing — projected alone it was a sentinel, and the line pointed off
@@ -5590,7 +5655,8 @@
   let _sa = null, _sb = null;
   const ovSegment = (ax, ay, bx, by) => {
     _sa = _sa || new THREE.Vector3(); _sb = _sb || new THREE.Vector3();
-    _sa.set(ax, 0, ay).applyMatrix4(camera.matrixWorldInverse); _sb.set(bx, 0, by).applyMatrix4(camera.matrixWorldInverse);
+    const lift = (x, z) => elevAny ? groundH(x, z) - camLift : 0;
+    _sa.set(ax, lift(ax, ay), ay).applyMatrix4(camera.matrixWorldInverse); _sb.set(bx, lift(bx, by), by).applyMatrix4(camera.matrixWorldInverse);
     const zn = -camera.near * 1.05, inA = _sa.z < zn, inB = _sb.z < zn;      // (view space looks down -z)
     if (!inA && !inB) return null;
     if (!inA) _sa.lerp(_sb, (zn - _sa.z) / (_sb.z - _sa.z));               // slide the hidden end along to the plane

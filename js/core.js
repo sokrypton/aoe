@@ -1170,6 +1170,77 @@ let buildingFxTick = new Map();
 
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
+
+// ---- ELEVATION: hills and valleys ----
+// The ground's height at every tile CORNER ((MAP+1)² of them, in tiles): a pure function of the match's elevSpec
+// ({seed, flats: the start spots} — set by genMap, carried in saves and state snapshots: a few numbers) and MAP, so
+// every peer, a loaded save and a rejoining guest derive the same ground. Flat round each start and the map's centre
+// (the dragon's lair); 0 is the lowest ground (sea level, when there is water). VIEWER-ONLY: both renderers lift what they draw by groundH; the
+// SIM NEVER READS IT (no rule depends on height) — were one to, it would have to become hashed sim state.
+// elevBase: the natural ground. elev: the ground as drawn — elevBase with a level terrace under every building,
+// derived from the entities whenever the set of buildings changes. elevRev counts its changes (the renderers' caches).
+// Scenarios (js/scenario.js) and the labs are flat (elevAny false: every caller's fast path).
+const ELEV_LAIR = [3, 13, 2.2];   // the dragon's hill: its level top's radius, its foot's, its height (tiles) — the map's tallest
+const ELEV_HILL = 1.5, ELEV_SLOPE = 0.32, ELEV_SKIRT = 3;   // tallest hill (tiles); steepest corner-to-corner rise; tiles a building pad takes to meet the hill
+const ELEV_PX = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2;      // px of 2D lift per tile of height (the art's TREE_HPX)
+let elevSpec = null, elevBase = null, elev = null, elevKey = '', elevAny = false, elevRev = 0, elevSig = -1;
+function elevHash(ix, iy, seed){ let h = Math.imul(ix, 0x27d4eb2d) ^ Math.imul(iy, 0x165667b1) ^ seed;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d); h = Math.imul(h ^ (h >>> 12), 0x297a2d39); return ((h ^ (h >>> 15)) >>> 0) / 4294967296; }
+function elevNoise(x, y, seed){
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = elevHash(ix, iy, seed), b = elevHash(ix + 1, iy, seed), c = elevHash(ix, iy + 1, seed), d = elevHash(ix + 1, iy + 1, seed);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+function elevSample(A, cx, cy){
+  const n = MAP + 1, x = cx < 0 ? 0 : cx > MAP ? MAP : cx, y = cy < 0 ? 0 : cy > MAP ? MAP : cy;
+  const ix = x >= MAP ? MAP - 1 : Math.floor(x), iy = y >= MAP ? MAP - 1 : Math.floor(y), fx = x - ix, fy = y - iy, i = iy * n + ix;
+  return A[i] + (A[i + 1] - A[i]) * fx + (A[i + n] - A[i]) * fy + (A[i] - A[i + 1] - A[i + n] + A[i + n + 1]) * fx * fy;
+}
+// The ground's height (tiles) at a point, in corner coordinates: tile (i, j) spans [i, i+1) × [j, j+1), its centre —
+// where a unit at integer (i, j) stands — at (i + 0.5, j + 0.5).
+function groundH(cx, cy){ return elevAny ? elevSample(elev, cx, cy) : 0; }
+// Called by the renderers each frame: (re)generates the ground for this match, and re-lays the terraces when the
+// buildings have changed.
+function ensureElevation(){
+  const on = !!elevSpec && !window.elevationOff && MAP > 0 && map.length === MAP, seed = on ? elevSpec.seed >>> 0 : 0;
+  const key = on ? seed + ':' + MAP + ':' + elevSpec.flats.join(';') : 'flat:' + MAP;
+  if (key !== elevKey) {
+    elevKey = key; const n = MAP + 1; elevBase = new Float32Array(n * n); elevAny = false;
+    if (on) {
+      const flat = elevSpec.flats.map(f => [f[0], f[1], 15, 26]);   // [x, y, level within, natural beyond]
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const v = 0.65 * elevNoise(x / 15, y / 15, seed) + 0.35 * elevNoise(x / 6 + 40, y / 6 + 40, seed ^ 0x9e3779b9);
+        let h = Math.max(0, Math.min(1, (v - 0.5) / 0.28)); h = h * h * (3 - 2 * h) * ELEV_HILL;
+        for (const [fx, fy, r0, r1] of flat) { const d = Math.sqrt((x - fx) * (x - fx) + (y - fy) * (y - fy));
+          if (d < r1) { const k = d <= r0 ? 0 : (d - r0) / (r1 - r0); h *= k * k * (3 - 2 * k); } }
+        // the dragon's hill, in the middle: a level top (its lair), down to the land round it
+        const dm = Math.sqrt((x - MAP / 2) * (x - MAP / 2) + (y - MAP / 2) * (y - MAP / 2));
+        if (dm < ELEV_LAIR[1]) { const k = dm <= ELEV_LAIR[0] ? 0 : (dm - ELEV_LAIR[0]) / (ELEV_LAIR[1] - ELEV_LAIR[0]); h = Math.max(h, ELEV_LAIR[2] * (1 - k * k * (3 - 2 * k))); }
+        elevBase[y * n + x] = h;
+      }
+      // No slope steeper than ELEV_SLOPE (two sweeps, as a distance transform): steeper, a hill's far side would sit
+      // BEHIND its crest on the 2D map (a tile there drawn over a nearer one), and units would climb a wall.
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const i = y * n + x; let h = elevBase[i];
+        if (x > 0) h = Math.min(h, elevBase[i - 1] + ELEV_SLOPE); if (y > 0) h = Math.min(h, elevBase[i - n] + ELEV_SLOPE); elevBase[i] = h; }
+      for (let y = n - 1; y >= 0; y--) for (let x = n - 1; x >= 0; x--) { const i = y * n + x; let h = elevBase[i];
+        if (x < n - 1) h = Math.min(h, elevBase[i + 1] + ELEV_SLOPE); if (y < n - 1) h = Math.min(h, elevBase[i + n] + ELEV_SLOPE); elevBase[i] = h;
+        if (h > 0.01) elevAny = true; }
+    }
+    elev = new Float32Array(elevBase); elevSig = -1; elevRev++;
+  }
+  if (!elevAny) return;
+  let sig = 0; for (let i = 0; i < entities.length; i++) { const b = entities[i]; if (b.type === 'building') sig = (sig * 31 + b.id + 1) | 0; }
+  if (sig === elevSig) return;
+  elevSig = sig; elevRev++; elev.set(elevBase);
+  // Each building stands on a level pad, graded back into the hill over ELEV_SKIRT tiles (a sheer step beside it would
+  // bend whatever walks past). The skirts go down first, so no pad is tilted by a neighbour's.
+  const n = MAP + 1, R = ELEV_SKIRT;
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < entities.length; i++) { const b = entities[i]; if (b.type !== 'building' || isWallBtype(b.btype)) continue;   // (a wall follows the slope)
+    const w = b.w || 1, h = b.h || 1, lv = elevSample(elevBase, b.x + w / 2, b.y + h / 2), r = pass ? 0 : R;
+    for (let y = Math.max(0, b.y - r); y <= b.y + h + r && y < n; y++) for (let x = Math.max(0, b.x - r); x <= b.x + w + r && x < n; x++) {
+      const d = Math.max(b.x - x, x - b.x - w, b.y - y, y - b.y - h, 0), j = y * n + x;   // corners out from the pad
+      if (pass) elev[j] = lv; else if (d > 0) elev[j] = lv + (elev[j] - lv) * d / (R + 1); } }
+}
 let nextProjectileId = 1;
 
 // ids of enemy buildings THIS client has ever seen at active vision (2) —

@@ -7,7 +7,10 @@ function genMap(){
 
   // Scenario loader (js/scenario.js) wants a blank, deterministic grass base —
   // it places its own terrain/resources — so skip all procedural generation.
+  elevSpec=null;   // (and flat ground: js/core.js)
   if(window.__scenarioMode) return;
+  // this match's hills (viewer-only: ensureElevation). __noHills: the test pages' flat ground (they click at flat-map points)
+  elevSpec=window.__noHills?null:{seed:matchSeed, flats:STARTS.map(s=>[s.x+2,s.y+2])};
 
   let starts=STARTS.map(s=>({team:s.team,x:s.x,y:s.y,cx:s.x+1,cy:s.y+1}));
   // Resource distances below were tuned for the original 60x60 map; scale them

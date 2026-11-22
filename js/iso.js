@@ -32,15 +32,27 @@ function screenToMap(sx,sy){
   const {ax,ay}=zoomAnchor();
   let ix=ax+(sx-ax)/ZOOM - W/2 + camDX();
   let iy=ay+(sy-ay)/ZOOM - (H/2+topH) + camDY();
-  return fromIso(ix,iy);
+  let p=fromIso(ix,iy);
+  // Hills (js/core.js): the ground drawn at a screen point is the map point whose LIFTED image lands there — found by
+  // putting the lift back and looking again (it settles: a tile's rise is well under a tile's height on screen).
+  if(elevAny) for(let k=0;k<6;k++) p=fromIso(ix,iy+groundH(p.x,p.y)*ELEV_PX);
+  return p;
 }
 // Inverse of screenToMap for the RENDER pass, which draws into a context
 // already scaled by ZOOM — hence no ZOOM term here (input-side code keeps
 // screenToMap). THE one place the world->screen camera math lives; renderers
 // must not re-spell `iso.ix - camX + W/2` inline.
+// Lifted by the ground's height under the TILE at (x, y) (hills, js/core.js; not in a pass that draws with a camera
+// of its own set from the flat spot — _flatDraw: outline masks, the 3D view's billboards) — its centre: what stands on a tile is drawn from the
+// tile's top corner (here) and comes down HALF_TH to its middle, so that is the height it wants.
 function mapToScreen(x,y){
   let iso=toIso(x,y);
-  return{sx:iso.ix-camDX()+W/2, sy:iso.iy-camDY()+H/2+topH};
+  return{sx:iso.ix-camDX()+W/2, sy:iso.iy-camDY()+H/2+topH-(elevAny&&!window._flatDraw?groundH(x+0.5,y+0.5)*ELEV_PX:0)};
+}
+// A point ON the ground, in corner coordinates (a tile's corners, its edges): where the ground itself is drawn.
+function groundToScreen(cx,cy){
+  let iso=toIso(cx,cy);
+  return{sx:iso.ix-camDX()+W/2, sy:iso.iy-camDY()+H/2+topH-(elevAny&&!window._flatDraw?groundH(cx,cy)*ELEV_PX:0)};
 }
 function screenToTile(sx,sy){
   if(window.__pick3D) return window.__pick3D.tile;

@@ -774,8 +774,10 @@ function outOfReach(attacker, target){ return target.utype === 'dragon' && drago
 function dropTarget(e){ e.target=null; e.explicitAttack=false; clearUnitPath(e); }
 // AoE2 (CPSB): on the easier levels a computer player never takes on villagers — its units don't pick them as targets
 // (they still defend themselves when one attacks: shouldRetaliate). profile.attacksVillagers, off for easy.
+// Only while their town stands: with no building left (walls aside) the villagers are all that keeps the match open.
 function aiSparesVillager(unit, foe){
-  return foe.utype === 'villager' && aiDrives(unit) && aiProfileFor(unit.team).attacksVillagers === false;
+  return foe.utype === 'villager' && aiDrives(unit) && aiProfileFor(unit.team).attacksVillagers === false
+    && entities.some(en => en.type === 'building' && en.team === foe.team && en.hp > 0 && !isWallLikeBtype(en.btype));
 }
 function canStrikeInPlace(e, foe){
   if(!inWeaponRange(e, foe)) return false;

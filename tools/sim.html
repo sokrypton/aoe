@@ -98,7 +98,7 @@ window.runSimulation = async function(opts){
     { const m = /^(\d)v\1$/.exec(cfg.mode), f = /^ffa(\d+)$/.exec(cfg.mode); NUM_TEAMS = m ? 2 * m[1] : f ? +f[1] : 2; window.__simFFA = !!f; }
     if (cfg.seed != null) window.__pendingMatchSeed = cfg.seed;
     window.__noBears = !cfg.bears; // consumed by placeWildBears (js/init.js); set before restartGame → init()
-    window.__noDragon = !cfg.dragon; // placeDragonLair (js/init.js): off unless asked, so AI self-play baselines stay comparable
+    window.dragonDisabled = !cfg.dragon; // placeDragonLair (js/init.js): off unless asked, so AI self-play baselines stay comparable
     window.fogDisabled = cfg.fog === 'off'; // match fog setting — before restartGame (initFog reads it)
     setMapSize(cfg.map);
     restartGame(cfg.diff.split(',')[0]);

@@ -105,6 +105,7 @@ function seedHostLobby(){
     mapSize: lobbyReadMapSizeRadio(),
     speed: GAME_SPEED,
     fog: false, // false = Fog of War (default), true = All Visible
+    dragon: true,
     drop: mpDropPolicy(), // what a dropped player does to the match: 'wait' | 'ai' | 'idle' (js/init.js)
     numTeams: 1,
   };
@@ -268,6 +269,7 @@ function lobbyPayload(){
     mapSize: lobbyState.mapSize,
     speed: lobbyState.speed,
     fog: !!lobbyState.fog,
+    dragon: lobbyState.dragon !== false,
     drop: lobbyState.drop,
     numTeams: lobbyState.numTeams,
   };
@@ -295,7 +297,7 @@ function lobbyBroadcast(){ lobbySendState(null); }
 // ---- Guest: apply the host's authoritative state ----
 function applyLobbyState(msg, isOpen){
   lobbyState = { seats: msg.seats || [], aiDifficulty: msg.aiDifficulty || 'standard',
-    mapSize: msg.mapSize, speed: msg.speed, fog: !!msg.fog, drop: dropPolicy(msg.drop), numTeams: msg.numTeams || 2 };
+    mapSize: msg.mapSize, speed: msg.speed, fog: !!msg.fog, dragon: msg.dragon !== false, drop: dropPolicy(msg.drop), numTeams: msg.numTeams || 2 };
   if (msg.yourSeat != null) window.__mpSession.mySeat = msg.yourSeat;
   window.__mpSession.inLobby = true;
   if (isOpen) {
@@ -330,6 +332,7 @@ function renderLobby(){
   lobbySetRadio('lobbymapsize', lobbyState.mapSize);
   lobbySetRadio('lobbyspeed', String(lobbyState.speed));
   lobbySetRadio('lobbyfog', lobbyState.fog ? 'open' : 'fog');
+  lobbySetRadio('lobbydragon', lobbyState.dragon ? 'on' : 'off');
   lobbySetRadio('lobbydrop', dropPolicy(lobbyState.drop));
   // AI difficulty always sits next to the Add AI button (applies to AI added now
   // or later).
@@ -572,6 +575,12 @@ function onLobbyFogChange(){
   lobbyState.fog = !!(sel && sel.value === 'open');
   lobbyBroadcast();
 }
+function onLobbyDragonChange(){
+  if (!lobbyState || netRole !== 'host') return;
+  let sel = document.querySelector('input[name="lobbydragon"]:checked');
+  lobbyState.dragon = !(sel && sel.value === 'off');
+  lobbyBroadcast();
+}
 // Host-only, and the host's to keep: the choice is remembered for its next matches and loaded saves (mpDropPolicy).
 function onLobbyDropChange(){
   if (!lobbyState || netRole !== 'host') return;
@@ -681,6 +690,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="lobbymapsize"]').forEach(el => el.addEventListener('change', onLobbyMapSizeChange));
   document.querySelectorAll('input[name="lobbyspeed"]').forEach(el => el.addEventListener('change', onLobbySpeedChange));
   document.querySelectorAll('input[name="lobbyfog"]').forEach(el => el.addEventListener('change', onLobbyFogChange));
+  document.querySelectorAll('input[name="lobbydragon"]').forEach(el => el.addEventListener('change', onLobbyDragonChange));
   document.querySelectorAll('input[name="lobbydrop"]').forEach(el => el.addEventListener('change', onLobbyDropChange));
   let input = byId('lobby-chat-input');
   if (input) {

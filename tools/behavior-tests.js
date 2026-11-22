@@ -38,6 +38,7 @@ function report(section, r){
 // helpers (ok/silence) are injected so section bodies stay assertion-only.
 async function withPage(browser, port, entry, fn){
   const page = await browser.newPage();
+  await page.addInitScript(() => { window.__noHills = true; });   // flat ground: the tests click at flat-map points
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.goto(`http://127.0.0.1:${port}${entry}`, { waitUntil: 'load' });
   await page.waitForFunction(() => typeof update === 'function');

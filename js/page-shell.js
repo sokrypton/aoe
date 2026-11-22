@@ -416,6 +416,10 @@ document.body.insertAdjacentHTML('afterbegin', `
           <h3>Fog</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="fogmode" value="fog" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="fogmode" value="open"><span>Off</span></label></div>
         </div>
+        <div class="setup-col" title="The dragon asleep at the centre of the map">
+          <h3>Dragon</h3>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="dragonmode" value="on" checked><span>On</span></label><label class="opt-pill"><input type="radio" name="dragonmode" value="off"><span>Off</span></label></div>
+        </div>
         <div class="setup-col" id="opt-speed-row">
           <h3>Speed</h3>
           <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="1"><span>1×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>2×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>4×</span></label></div>
@@ -571,6 +575,13 @@ document.body.insertAdjacentHTML('afterbegin', `
             <div class="segmented" id="lobby-fog-seg">
               <label class="segment"><input type="radio" name="lobbyfog" value="fog" checked><span title="Fog of War">Fog</span></label>
               <label class="segment"><input type="radio" name="lobbyfog" value="open"><span title="All Visible — whole map revealed for every player and AI">Open</span></label>
+            </div>
+          </div>
+          <div class="setup-col">
+            <h3>Dragon</h3>
+            <div class="segmented">
+              <label class="segment"><input type="radio" name="lobbydragon" value="on" checked><span>On</span></label>
+              <label class="segment"><input type="radio" name="lobbydragon" value="off"><span>Off</span></label>
             </div>
           </div>
         </div>

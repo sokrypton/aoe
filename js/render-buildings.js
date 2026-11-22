@@ -665,6 +665,22 @@ function wallEastRung(x, y){ // horizontal link (x,y) -> (x+1,y)
 // Preview the N/W joins here, in each neighbour's material with symmetric trims
 // so each is identical to the link that neighbour will actually draw. sx/linkY
 // is the caller's own link anchor. Shared by WALL/TOWER/PTOWER/GATE ghosts.
+// On hills, a wall piece drawn about tile (x, y)'s centre: px the ground at a level-ground screen offset from that centre
+// stands above it (drawWallLink's lift, drawWallPost). null on flat ground.
+function wallLift(x, y){
+  if (!elevAny) return null;
+  const cx = x + 0.5, cy = y + 0.5, h0 = groundH(cx, cy);
+  return (ox, oy) => (groundH(cx + (ox / HALF_TW + oy / HALF_TH) / 2, cy + (oy / HALF_TH - ox / HALF_TW) / 2) - h0) * ELEV_PX;
+}
+// A wall's post, its foot on the sloping ground and its cap parallel to it (drawBuildingBlock's flat block on the level).
+function drawWallPost(sx, cy, pw, ph, wallL, wallR, cap, darken, lift){
+  if (darken) { wallL = darkenColor(wallL); wallR = darkenColor(wallR); cap = darkenColor(cap); }
+  const P = (ox, oy, h) => [sx + ox, cy + oy - h - lift(ox, oy)];
+  const l = P(-pw, 0, 0), b = P(0, pw / 2, 0), r = P(pw, 0, 0), L = P(-pw, 0, ph), B = P(0, pw / 2, ph), R = P(pw, 0, ph), T = P(0, -pw / 2, ph);
+  const quad = (fill, a, b2, c, d) => { X.fillStyle = fill; X.beginPath(); X.moveTo(a[0], a[1]); X.lineTo(b2[0], b2[1]); X.lineTo(c[0], c[1]); X.lineTo(d[0], d[1]); X.closePath(); X.fill(); X.stroke(); };
+  X.strokeStyle = '#000000'; X.lineWidth = 1.3; X.lineJoin = 'round';
+  quad(wallL, L, B, b, l); quad(wallR, B, R, r, b); quad(cap, T, R, B, L);
+}
 function drawGhostBackJoins(x, y, sx, linkY, wallH, tc){
   if(!window._ghostDraw) return;
   let join = (nx, ny, dx, dy, isRung) => {
@@ -672,7 +688,7 @@ function drawGhostBackJoins(x, y, sx, linkY, wallH, tc){
     let nb = getConnectedBuilding(nx, ny);
     if(!isWallLike(nb) || isRung) return;
     let nm = wallMatOf(nb) || 'wood', nlt = (nm!=='wood'?9:7)/2;
-    drawWallLink(sx, linkY, dx, dy, wallH, false, nlt*Math.sqrt(5)/2, nlt*Math.sqrt(5)/2, null, tc, nlt, false, nm);
+    drawWallLink(sx, linkY, dx, dy, wallH, false, nlt*Math.sqrt(5)/2, nlt*Math.sqrt(5)/2, null, tc, nlt, false, nm, wallLift(x, y));
   };
   join(x, y-1,  32, -16, wallSouthRung(x, y-1)); // N neighbour's South link
   join(x-1, y, -32, -16, wallEastRung(x-1, y));  // W neighbour's East link
@@ -749,9 +765,20 @@ function buildingShadowPath(e){
   let fw = e.w !== undefined ? e.w : b.w;
   let fh = e.h !== undefined ? e.h : b.h;
   let g = 1.06, ox = 3, oy = 1.5;
+  if (elevAny) {
+    // On hills the shadow lies on the ground: each tile's own quad exactly, corner by corner (no growth or nudge —
+    // off its own tile it would leave the ground).
+    for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
+      const mx = e.x + dx + 0.5, my = e.y + dy + 0.5, k = 0.5;
+      const c = groundToScreen(mx, my); if (isOffscreen(c.sx, c.sy, 100)) continue;
+      [[-k, -k], [k, -k], [k, k], [-k, k]].forEach(([u, v], i) => { const q = groundToScreen(mx + u, my + v); i ? X.lineTo(q.sx, q.sy) : X.moveTo(q.sx, q.sy); });
+      X.closePath();
+    }
+    return;
+  }
   if (fw === fh) {
     // square footprint: one diamond over the whole base
-    let p = mapToScreen(e.x + fw/2, e.y + fh/2);
+    let p = groundToScreen(e.x + fw/2, e.y + fh/2);
     let sx = Math.round(p.sx), sy = Math.round(p.sy);
     if (isOffscreen(sx, sy, buildingCullMargin(fw, fh))) return;
     let bw = fw * HALF_TW, bhh = fh * HALF_TH;
@@ -765,7 +792,7 @@ function buildingShadowPath(e){
     // the parallelogram footprint — shadow each tile individually; the
     // union fill merges the overlap seamlessly.
     for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
-      let p = mapToScreen(e.x + dx + 0.5, e.y + dy + 0.5);
+      let p = groundToScreen(e.x + dx + 0.5, e.y + dy + 0.5);
       let sx = Math.round(p.sx), sy = Math.round(p.sy);
       if (isOffscreen(sx, sy, 100)) continue;
       X.moveTo(sx + ox, sy - HALF_TH * g + oy);
@@ -830,7 +857,7 @@ function drawBuilding(e, part = null){
   let ownerAge = (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
   let aw = AGE_WALLS[ownerAge] || AGE_WALLS[1];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
-  let p=mapToScreen(cx,cy);
+  let p=groundToScreen(cx,cy);
   let sx=Math.round(p.sx), sy=Math.round(p.sy);
   if(isOffscreen(sx,sy,buildingCullMargin(e.w||b.w, e.h||b.h)))return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
@@ -1997,14 +2024,14 @@ function drawBuilding(e, part = null){
     let sN = getConnectedBuilding(e.x, e.y + 1);
     if (isWallLike(sN) && !wallSouthRung(e.x, e.y)) {
       let m2 = wallMatOf(sN) || 'wood', lt2 = m2!=='wood'?4:3.5;
-      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2!=='wood'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2);
+      drawWallLink(sx, linkY, -32, 16, wallH, darken, 8, m2!=='wood'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2, wallLift(e.x, e.y));
     }
 
     // East neighbor (x+1)
     let eN = getConnectedBuilding(e.x + 1, e.y);
     if (isWallLike(eN) && !wallEastRung(e.x, e.y)) {
       let m3 = wallMatOf(eN) || 'wood', lt3 = m3!=='wood'?4:3.5;
-      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3!=='wood'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3);
+      drawWallLink(sx, linkY, 32, 16, wallH, darken, 8, m3!=='wood'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3, wallLift(e.x, e.y));
     }
     // Ghost-only: preview the N/W joins real neighbours will draw once placed.
     drawGhostBackJoins(e.x, e.y, sx, linkY, wallH, tc);
@@ -2054,14 +2081,18 @@ function drawBuilding(e, part = null){
     // keep every join; only side-by-side parallels separate.
     const d1 = lthick * Math.sqrt(5) / 2;
     const sLink = _wlLike(e.x, e.y+1) && !wallSouthRung(e.x, e.y), eLink = _wlLike(e.x+1, e.y) && !wallEastRung(e.x, e.y);
+    // (on hills the bake is keyed on the ground it stands on: its own tile's corners and its S and E neighbours')
+    const lift = wallLift(e.x, e.y), slack = lift ? 32 : 0; let lay = '';
+    if (lift) { const n = MAP + 1; for (let j = 0; j <= 2; j++) for (let i = 0; i <= 2; i++) if (i + j < 4) lay += Math.round(elev[Math.min(MAP, e.y + j) * n + Math.min(MAP, e.x + i)] * ELEV_PX * 2) + ','; }
     const wallArt = (sx, sy, pillar = true, links = true) => {
-      if (pillar) drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
+      if (pillar && lift) drawWallPost(sx, sy+20-pw/2, pw, pillarH, pf[0], pf[1], tc, darken, lift);
+      else if (pillar) drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken);
       if (!links) return;
-      if (sLink) drawWallLink(sx, sy + 15.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
-      if (eLink) drawWallLink(sx, sy + 15.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat);
+      if (sLink) drawWallLink(sx, sy + 15.5, -32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat, lift);
+      if (eLink) drawWallLink(sx, sy + 15.5, 32, 16, wallH, darken, d1, d1, null, tc, lthick, false, mat, lift);
     };
     if (part === null && e.complete && !window._ghostDraw && !window._maskDraw && !window._selOutline)
-      drawBaked(e, mat + '|' + tc + '|' + (darken ? 1 : 0) + '|' + (sLink ? 1 : 0) + (eLink ? 1 : 0), sx, sy, -40, -24, 80, 66, wallArt);
+      drawBaked(e, mat + '|' + tc + '|' + (darken ? 1 : 0) + '|' + (sLink ? 1 : 0) + (eLink ? 1 : 0) + '|' + lay, sx, sy, -40, -24 - slack, 80, 66 + 2 * slack, wallArt);
     else {
       if (part !== 'link') wallArt(sx, sy, true, false);
       if (part === 'body') { X.globalAlpha = 1; return; }
@@ -2125,12 +2156,12 @@ function drawBuilding(e, part = null){
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
         if (_wlLike(e.x + 1, e.y) && !wallEastRung(e.x, e.y)) {
-          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t1sx, t1sy, 32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
         if (_wlLike(e.x, e.y + 1) && !wallSouthRung(e.x, e.y)) {
-          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t1sx, t1sy, -32, 16, wallH, darken, 5, dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
         }
       }
       // Ghost-only: the back post's run continuation (W for E-W, N for N-S) is
@@ -2182,19 +2213,19 @@ function drawBuilding(e, part = null){
         // N-S Gate: Post 2 is the far post at (e.x, e.y+n-1). Parallel goes
         // South (y+n), Perpendicular goes East (x+1, y+n-1).
         if (isWallLike(getConnectedBuilding(e.x, e.y + n))) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
         }
         if (_wlLike(e.x + 1, e.y + n - 1) && !wallEastRung(e.x, e.y + n - 1)) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
         }
       } else {
         // E-W Gate: Post 2 is the far post at (e.x+n-1, e.y). Parallel goes
         // East (x+n, y), Perpendicular goes South (x+n-1, y+1).
         if (isWallLike(getConnectedBuilding(e.x + n, e.y))) {
-          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t2sx, t2sy, 32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
         }
         if (_wlLike(e.x + n - 1, e.y + 1) && !wallSouthRung(e.x + n - 1, e.y)) {
-          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat);
+          drawWallLink(t2sx, t2sy, -32, 16, wallH, darken, 8, dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
         }
       }
       } // end stubs (skipped for 'body')

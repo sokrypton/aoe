@@ -120,6 +120,7 @@ function serializeGame(){
     teamAge,
     teamTechs,
     scenario: captureScenario(), // trigger script + state (js/triggers.js); null in a plain match
+    elevSpec, // the match's hills (js/core.js: viewer-only; absent in an older save = flat)
     // Cosmetic per-team labels/colors chosen in the lobby (js/core.js). Not sim
     // state (excluded from the checksum/snapshots), but a loaded MP game should
     // still show the players' agreed names and colors, so they ride the save.
@@ -377,6 +378,7 @@ function applySavedGame(data, opts){
     if (!data.teamControllers) data.teamControllers = defaultControllers(!!data.wasMultiplayerGame);
     restoreTeamState(data);
     restoreScenario(data.scenario); // (js/triggers.js)
+    elevSpec = data.elevSpec || null;
 
     window.fogDisabled = !!data.fogDisabled;
     if (opts && opts.fromOpponentMirror) {

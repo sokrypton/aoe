@@ -113,7 +113,8 @@ function placeWildBears(){
 // One unkillable dragon asleep at the heart of the map: the nearest clear 5×5 of grass to the map's centre, 16+
 // tiles from every town — a hazard every army and scout has to steer round.
 function placeDragonLair(){
-  if(window.__noDragon)return; // headless-sim opt-out (tools/sim.html 'dragon=0') — never set by the real game
+  // The match's Dragon option (SP options / MP lobby → lockstep-start). Read here only: the dragon itself is the state.
+  if(window.dragonDisabled)return;
   let starts=STARTS.map(s=>({x:s.x+2,y:s.y+2}));
   let cx=Math.floor(MAP/2), cy=Math.floor(MAP/2);
   const clear=(x,y)=>{ for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){ let t=map[y+dy]&&map[y+dy][x+dx]; if(!t||t.t!==TERRAIN.GRASS||t.occupied!=null)return false; } return true; };
@@ -197,12 +198,14 @@ function applyGameSettings(){
   let sizeSel = document.querySelector('input[name="mapsize"]:checked');
   let playersSel = document.querySelector('input[name="players"]:checked');
   let fogSel = document.querySelector('input[name="fogmode"]:checked');
+  let dragonSel = document.querySelector('input[name="dragonmode"]:checked');
   try {
     if (diffSel) localStorage.setItem('aoeDifficulty', diffSel.value);
     if (sizeSel) localStorage.setItem('aoeMapSize', sizeSel.value);
     if (speedSel) localStorage.setItem('aoeGameSpeed', speedSel.value);
     if (playersSel) localStorage.setItem('aoePlayers', playersSel.value);
     if (fogSel) localStorage.setItem('aoeFogMode', fogSel.value);
+    if (dragonSel) localStorage.setItem('aoeDragon', dragonSel.value);
   } catch (e) {}
 }
 
@@ -231,7 +234,7 @@ function applyGameSettings(){
 // core.js having initialized.
 (function restoreGameSettings(){
   try {
-    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players'], ['aoeFogMode','fogmode']]
+    [['aoeDifficulty','difficulty'], ['aoeMapSize','mapsize'], ['aoeGameSpeed','gamespeed'], ['aoePlayers','players'], ['aoeFogMode','fogmode'], ['aoeDragon','dragonmode']]
       .forEach(([key, name]) => {
         let v = localStorage.getItem(key);
         if (!v) return;
@@ -404,6 +407,8 @@ function onStartClicked(){
   // save format, lockstep snapshots and the checksum all key off it.
   let fogSel = document.querySelector('input[name="fogmode"]:checked');
   window.fogDisabled = !!(fogSel && fogSel.value === 'open');
+  let dragonSel = document.querySelector('input[name="dragonmode"]:checked');
+  window.dragonDisabled = !!(dragonSel && dragonSel.value === 'off');
 
   // Always regenerate the map (even on a fresh load) so the chosen size takes effect,
   // since init() already ran once at script load with the default size.
