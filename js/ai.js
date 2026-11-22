@@ -511,6 +511,10 @@ const AI_MAX_LCAMP=3, AI_MAX_MCAMP=2;
 // A drop site is worth having with at least this many resource tiles within 4: below it a camp is retired, and
 // none is founded there (else each new camp counted as spent at once and the next went up beside it).
 const AI_CAMP_LIVE_MIN=3;
+// A new camp keeps this far (edge to edge) from every camp of its kind — a retired one too. Retired camps don't count
+// as cover (the receding line is served afresh), so the next one went up beside the last on the same thinning patch,
+// retired in turn, and the next beside that: a cluster of camps in one place.
+const AI_CAMP_SPACING=6;
 function planAIDropSites(ai,aiTC,vils,profile){
   if(!profile.dropSites||vils.length<5)return;
   let hasBarracks=hasAIBuilding(ai,'BARRACKS');
@@ -523,8 +527,8 @@ function planAIDropSites(ai,aiTC,vils,profile){
   let lcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP'&&campLive(e,[TERRAIN.FOREST]));
   // (one in the Dark Age — AoE2's single woodline: three by minute 3 sank 300 wood into 4 choppers)
   if(lcamps.length<(teamAge[ai.team]===0?1:AI_MAX_LCAMP)&&canAfford(ai.team,BLDGS.LCAMP.cost)&&aiEcoFundClear(ai,profile,BLDGS.LCAMP.cost)){
-    let woodDrops=[aiTC,...lcamps];
-    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true,woodDrops,AI_DROP_COVER);
+    let woodDrops=[aiTC,...lcamps], allL=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='LCAMP');
+    let pos=findAIDropSite(ai,TERRAIN.FOREST,'LCAMP',aiTC,true,woodDrops,AI_DROP_COVER,allL);
     if(pos)placeAIBuilding(ai,'LCAMP',pos.x,pos.y);
   }
   // The Mill on the berries comes before the Barracks (AoE2: sheep → wood → berries): gated behind it, berries went
@@ -549,13 +553,13 @@ function planAIDropSites(ai,aiTC,vils,profile){
   // existing camp) — from Feudal, when gold and stone start to matter.
   let mcamps=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='MCAMP'&&campLive(e,[TERRAIN.GOLD,TERRAIN.STONE]));
   if(vils.length>=7&&hasBarracks&&teamAge[ai.team]>=1&&mcamps.length<AI_MAX_MCAMP){
-    let drops=[aiTC,...mcamps];
+    let drops=[aiTC,...mcamps], allM=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='MCAMP');
     for(let ore of [TERRAIN.GOLD,TERRAIN.STONE]){
       // (the FIRST camp skips the fund, like the Mill: the claims are techs whose gold the camp mines — waiting on them
       // kept miners walking to the TC for 25 000 ticks)
       if(mcamps.length>=AI_MAX_MCAMP||!canAfford(ai.team,BLDGS.MCAMP.cost)||(mcamps.length&&!aiEcoFundClear(ai,profile,BLDGS.MCAMP.cost)))break;
-      let pos=findAIDropSite(ai,ore,'MCAMP',aiTC,true,drops,AI_DROP_COVER);
-      if(pos){ let b=placeAIBuilding(ai,'MCAMP',pos.x,pos.y); if(b){mcamps.push(b);drops.push(b);} }
+      let pos=findAIDropSite(ai,ore,'MCAMP',aiTC,true,drops,AI_DROP_COVER,allM);
+      if(pos){ let b=placeAIBuilding(ai,'MCAMP',pos.x,pos.y); if(b){mcamps.push(b);drops.push(b);allM.push(b);} }
     }
   }
 }
@@ -2797,7 +2801,7 @@ function findAIBuildSpot(ai,tc,type){
   return scan(true) || (reserve?scan(false):null) || scan(false,true,maxR*2) || (type!=='HOUSE'?scan(false,false):null);
 }
 
-function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=null,coverR=0){
+function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=null,coverR=0,spacedFrom=null){
   let maxDist=22*aiScale();
   let b=BLDGS[type];
   let beltDrops=avoidFarmBelt?aiFarmBeltDrops(ai.team):null;
@@ -2808,6 +2812,11 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
   let coveredBy=(x,y)=>existingDrops&&existingDrops.some(d=>{
     let ex=Math.max(d.x-x,0,x-(d.x+d.w-1)), ey=Math.max(d.y-y,0,y-(d.y+d.h-1));
     return simHypot(ex,ey)<coverR;
+  });
+  // (spacedFrom: camps of its kind, retired ones included — AI_CAMP_SPACING)
+  let crowded=(x,y)=>spacedFrom&&spacedFrom.some(d=>{
+    let ex=Math.max(d.x-x,0,x-(d.x+d.w-1)), ey=Math.max(d.y-y,0,y-(d.y+d.h-1));
+    return simHypot(ex,ey)<AI_CAMP_SPACING;
   });
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
@@ -2826,6 +2835,7 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,ai.team))continue;
       if(coveredBy(bx,by))continue; // an existing drop already serves this patch
+      if(crowded(bx,by))continue;
       let nearby=countResourceTilesNear(terrain,bx,by,4);
       if(nearby<AI_CAMP_LIVE_MIN)continue;
       // NEAREST ADEQUATE patch, AoE2-style: density only has to clear a
