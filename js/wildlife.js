@@ -8,6 +8,8 @@ const BEAR_WANDER_EVERY = T30(150);  // bear den wander ~every 5 game-s
 // Sheep behavior (AoE2-style)
 function updateSheepBehavior(e){
   if(e.utype!=='sheep')return;
+  // Offered to the dragon (dragonTakeOffering): it stands where it is, whatever it is told, till it is eaten.
+  if(e.offered){ if(e.order)issueOrder(e,null); e.target=null; clearUnitPath(e); e.eatTicks=0; e.eatingGrass=false; return; }
   e.eatTicks = e.eatTicks || 0;
   if(e.eatTicks > 0){
     e.eatTicks--;
@@ -159,18 +161,42 @@ function dragonAloft(e){ return e.utype==='dragon'&&(e.rideLeft!==undefined||!!e
 // id order). Asleep or awake, so long as it is on the ground and whole; resting after a ride, it says so and waits.
 function dragonOffering(e){
   for(let i=0;i<entities.length;i++){ let s=entities[i];
-    if(s.utype!=='sheep'||s.hp<=0||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
+    if(s.utype!=='sheep'||s.hp<=0||s.offered||!isPlayerTeam(s.team)||dist(e,s)>DRAGON_FEED_R)continue;
     if(tick>=(e.tameReadyAt||0))return s;
     if(!window.__resim&&s.team===myTeam&&tick%T30(150)===0&&typeof showMsg==='function')showMsg('The dragon is resting: it will take an offering in '+Math.ceil((e.tameReadyAt-tick)/TPS/GAME_SPEED)+'s');
     return null; }
   return null;
 }
+// The offering taken: the dragon is that player's at once, but first it EATS — DRAGON_EAT of real time (eatLeft, run
+// down like rideLeft) in which it turns on the sheep (held where it stands: offered), pounces to within DRAGON_BITE_R
+// and bites it away (DRAGON_BITE_AT of the way through). The ride's clock starts when it has eaten. The renderers
+// stage the rest off eatLeft (dragonAnim). eatLeft / eatId / offered are sim state: hashed (js/determinism.js).
+const DRAGON_EAT=T30(90), DRAGON_LEAP_FROM=0.3, DRAGON_LEAP_TO=0.46, DRAGON_BITE_AT=0.5, DRAGON_BITE_R=2.1;
 function dragonTakeOffering(e,s){
-  e.team=s.team; e.rideLeft=DRAGON_RIDE; e.awake=true; e.target=null; e.flyTarget=undefined; e.flyX=e.x; e.flyY=e.y; clearUnitPath(e);
-  s.hp=0;   // (gone this tick too: whatever still holds it sees it dead)
-  selected=selected.filter(u=>u.id!==s.id); entities=entities.filter(u=>u.id!==s.id); entitiesById.delete(s.id);   // eaten whole: no carcass
+  e.team=s.team; e.rideLeft=DRAGON_RIDE; e.eatLeft=DRAGON_EAT; e.eatId=s.id; e.awake=true; e.target=null; e.flyTarget=undefined; e.flyX=undefined; clearUnitPath(e);
+  s.offered=true; s.target=null; clearUnitPath(s);
   if(window.playSound)window.playSound('dragon',e.x,e.y);
-  if(!window.__resim&&typeof showMsg==='function')showMsg(e.team===myTeam?'The dragon takes your offering: it is yours to fly for a minute!':teamName(e.team)+' rides the dragon!');
+  if(!window.__resim){
+    if(typeof showMsg==='function')showMsg(e.team===myTeam?'The dragon takes your offering: it is yours to fly for a minute!':teamName(e.team)+' rides the dragon!');
+    // (in the rider's hand at once: nothing else, or only the sheep, was selected)
+    if(e.team===myTeam&&selected.every(u=>u.id===s.id)){ selected=[e]; if(typeof updateUI==='function')updateUI(); }
+  }
+}
+function dragonEat(e){
+  let s=entitiesById.get(e.eatId), u=1-e.eatLeft/DRAGON_EAT, step=1/GAME_SPEED;
+  e.eatLeft-=step;
+  if(s&&s.hp>0){
+    let dx=s.x-e.x, dy=s.y-e.y, d=Math.sqrt(dx*dx+dy*dy);
+    if(d>1e-6){ let off=simAtan2(dy,dx)-(e.faceAng||0); off=simAtan2(simSin(off),simCos(off));
+      e.faceAng=(e.faceAng||0)+Math.max(-DRAGON_FLY_TURN,Math.min(DRAGON_FLY_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng)); }
+    // the pounce: the rest of the way, shared over what is left of the leap
+    if(u>=DRAGON_LEAP_FROM&&d>DRAGON_BITE_R){ let left=Math.max(1,Math.round((DRAGON_LEAP_TO-u)*DRAGON_EAT/step)), st=(d-DRAGON_BITE_R)/left;
+      e.x=Math.max(0,Math.min(MAP-1,e.x+dx/d*st)); e.y=Math.max(0,Math.min(MAP-1,e.y+dy/d*st)); e.fromX=e.x; e.fromY=e.y; e.moveT=0; }
+    if(u>=DRAGON_BITE_AT){                                                        // eaten whole: no carcass
+      if(!window.__resim){ if(typeof spawnParticles==='function'){ spawnParticles(s.x,s.y,'#990000',14,0.05,1.6); spawnParticles(s.x,s.y,'#f4f1e6',10,0.05,1.4); } if(window.playSound)window.playSound('dragon_slam',s.x,s.y); }
+      s.hp=0; selected=selected.filter(v=>v.id!==s.id); entities=entities.filter(v=>v.id!==s.id); entitiesById.delete(s.id); }
+  }
+  if(e.eatLeft<=0){ e.eatLeft=undefined; e.eatId=undefined; if(e.flyX===undefined){ e.flyX=e.x; e.flyY=e.y; } }
 }
 // Its ride over (time up, or brought down): gaia's again, and home to its lair.
 function dragonEndRide(e){
@@ -183,20 +209,25 @@ function dragonFly(e,x,y,hold){
   let dx=x-e.x, dy=y-e.y, d=Math.sqrt(dx*dx+dy*dy);
   if(d>hold+0.02||(hold>0&&d>1e-6)){ let a=simAtan2(dy,dx), off=a-(e.faceAng||0); off=simAtan2(simSin(off),simCos(off));
     e.faceAng=(e.faceAng||0)+Math.max(-DRAGON_FLY_TURN,Math.min(DRAGON_FLY_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
-    let st=Math.min(DRAGON_FLY,d-hold);
+    let st=Math.max(-DRAGON_FLY*0.5,Math.min(DRAGON_FLY,d-hold));
     // (inside its turning circle it slides straight to the spot: flying along its nose it would orbit it)
-    if(st>0&&d-hold<DRAGON_GLIDE){ e.x+=dx/d*st; e.y+=dy/d*st; }
+    if(st<-0.01&&d>1e-6){ if(d-hold<-0.3){ e.x+=dx/d*st; e.y+=dy/d*st; } }   // too close (its target came in under it): it backs off
+    else if(st>0&&d-hold<DRAGON_GLIDE){ e.x+=dx/d*st; e.y+=dy/d*st; }
     else if(st>0&&simCos(off)>0.3){ e.x+=simCos(e.faceAng)*st; e.y+=simSin(e.faceAng)*st; }
     e.x=Math.max(0,Math.min(MAP-1,e.x)); e.y=Math.max(0,Math.min(MAP-1,e.y)); }
   else if(!hold){ e.x=x; e.y=y; }
+  else { e.x=Math.max(0,Math.min(MAP-1,e.x-simCos(e.faceAng||0)*DRAGON_FLY*0.5)); e.y=Math.max(0,Math.min(MAP-1,e.y-simSin(e.faceAng||0)*DRAGON_FLY*0.5)); }   // (dead on it: off it, tail first)
   e.fromX=e.x; e.fromY=e.y; e.moveT=0;
   return d;
 }
+// It burns whatever its fire would reach, as soon as it has the breath for it.
+function dragonAutoBreath(e){ if(e.atkCooldown<=0&&dragonBreath(e,true)){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; } }
 function updateDragonAloft(e){
   if(e.homing){                                                                   // home, to land and sleep
     if(dragonFly(e,e.homeX,e.homeY,0)<=0.02){ e.x=e.homeX; e.y=e.homeY; e.fromX=e.x; e.fromY=e.y; e.homing=false; e.awake=false; e.calmSince=tick; e.leashCooling=false; e.tameReadyAt=tick+DRAGON_REST; }
     return;
   }
+  if(e.eatLeft!==undefined){ dragonEat(e); return; }
   let was=e.rideLeft; e.rideLeft-=1/GAME_SPEED;
   if(e.rideLeft<=0){ dragonEndRide(e); return; }
   if(!window.__resim&&e.team===myTeam&&typeof showMsg==='function'&&was>T30(300)&&e.rideLeft<=T30(300))showMsg('The dragon is yours for 10 more seconds');
@@ -209,9 +240,15 @@ function updateDragonAloft(e){
   let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null;
   if(t&&(t.hp<=0||t.garrisonedIn||sameSide(t.team,e.team))){ t=null; }
   if(!t&&e.flyTarget!==undefined){ e.flyTarget=undefined; e.flyX=e.x; e.flyY=e.y; }
-  if(t){ let c=t.type==='building'?footprintCenter(t):t; dragonFly(e,c.x,c.y,DRAGON_BREATH_R-1); }
+  // It hangs DRAGON_STRAFE short of its target, facing it: its fire lands on it. A building: short of its nearest
+  // EDGE — beside it, not over its roof (from over it, it backs off its centre first).
+  if(t){ let c=t;
+    if(t.type==='building'){ let b=BLDGS[t.btype], w=t.w||b.w, h=t.h||b.h;
+      c={x:Math.max(t.x-0.5,Math.min(e.x,t.x+w-0.5)), y:Math.max(t.y-0.5,Math.min(e.y,t.y+h-0.5))};
+      if(c.x===e.x&&c.y===e.y){ c=footprintCenter(t); dragonFly(e,c.x,c.y,DRAGON_STRAFE+Math.max(w,h)/2); return dragonAutoBreath(e); } }
+    dragonFly(e,c.x,c.y,DRAGON_STRAFE); }
   else dragonFly(e,e.flyX,e.flyY,0);
-  if(e.atkCooldown<=0&&dragonBreath(e,true)){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; }   // whatever is under its nose
+  dragonAutoBreath(e);
 }
 function updateDragonBehavior(e){
   if(e.utype!=='dragon')return;
@@ -271,9 +308,31 @@ function dragonTurn(e,a){
 // Fire in a cone along its heading: every player unit and building within reach and angle takes the dragon's hit
 // (buildings its bonus). Entities in id order — the order damage lands in is part of the sim. dry: only whether
 // anything is in the fire (nothing burnt, nothing shown).
+// Aloft its fire comes DOWN at a slant: onto the ground DRAGON_STRAFE ahead of it (3.4: its jaws are ~1.4 ahead and ~2
+// up — about 45°), where the renderers pour the flame (both read it). It burns EVERYTHING along the jet's last
+// stretch and its splash: within DRAGON_STRAFE_R of the line from DRAGON_STRAFE_FROM to DRAGON_STRAFE_TO ahead (three
+// circles along it; a building: its nearest edge) — not what is under its belly or beside it. Entities in id order.
+const DRAGON_STRAFE=3.4, DRAGON_STRAFE_FROM=2.2, DRAGON_STRAFE_TO=4.2, DRAGON_STRAFE_R=1.3;
+function dragonStrafe(e,fx,fy,dry){
+  for(let i=0;i<entities.length;i++){
+    let o=entities[i];
+    if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team)||sameSide(o.team,e.team))continue;
+    if(o.type==='unit'&&isHarmlessAnimal(o))continue;
+    if(o.type!=='building'&&o.type!=='unit')continue;
+    let b=o.type==='building'?BLDGS[o.btype]:null, w=b?(o.w||b.w):0, h=b?(o.h||b.h):0, hit=false;
+    for(let k=0;k<3&&!hit;k++){ let r=DRAGON_STRAFE_FROM+(DRAGON_STRAFE_TO-DRAGON_STRAFE_FROM)*k/2, cx=e.x+fx*r, cy=e.y+fy*r;
+      let ox=b?Math.max(o.x-0.5,Math.min(cx,o.x+w-0.5)):o.x, oy=b?Math.max(o.y-0.5,Math.min(cy,o.y+h-0.5)):o.y, dx=ox-cx, dy=oy-cy;
+      hit=dx*dx+dy*dy<=DRAGON_STRAFE_R*DRAGON_STRAFE_R; }
+    if(!hit)continue;
+    if(dry)return true;
+    damageEntity(e,o);
+  }
+  return false;
+}
 function dragonBreath(e,dry){
   let fx=simCos(e.faceAng), fy=simSin(e.faceAng);
   if(!dry){ e.breathTick=tick; e.breathX=fx; e.breathY=fy; } // (the renderers' flame; the sim never reads them)
+  if(dragonAloft(e)){ let hit=dragonStrafe(e,fx,fy,dry); if(dry)return hit; if(window.playSound)window.playSound('fire',e.x,e.y); return false; }
   for(let i=0;i<entities.length;i++){
     let o=entities[i];
     if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team)||sameSide(o.team,e.team))continue;   // (ridden: not its rider's side)

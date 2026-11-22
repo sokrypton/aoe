@@ -1051,7 +1051,8 @@ function finishMobileUnitCommand(){
   // Only a plain walk keeps the selection (see the keep rule in doCommand);
   // every committed task deselects.
   if(hasSelectedMobileWalkOrder())return;
-  selected=selected.filter(s=>{let p=pendingOrderUI.get(s.id);return p&&p.farmFull&&tick-p.t<=INPUT_DELAY_TICKS+T30(30);});
+  // (the dragon ridden stays in hand: its minute is spent giving it one order after another)
+  selected=selected.filter(s=>{if(s.rideLeft!==undefined)return true;let p=pendingOrderUI.get(s.id);return p&&p.farmFull&&tick-p.t<=INPUT_DELAY_TICKS+T30(30);});
   window.settingRally=false;
   window.settingGuard=false;
   window.settingGarrison=null;

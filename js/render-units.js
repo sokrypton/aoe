@@ -2800,7 +2800,17 @@ function dragonAnim(e, a, dt){
   // heavy: wakes and settles slowly — but knocked out (spent) it drops, fast, and hits the ground hard
   const ko = !!e.spent && asleep;
   // (a.sleep: 1 asleep … 0 awake, at an even pace — about 3.5 s to wake or settle — so the waking can be staged along it)
-  { const to = asleep ? 1 : 0, s0 = a.sleep ?? to, step = dt * (ko ? 3 : 0.28); a.sleep = Math.abs(to - s0) <= step ? to : s0 + Math.sign(to - s0) * step; }
+  // Eating its offering (dragonEat, js/wildlife.js; eat: how far through, −1 not eating): it starts awake at a snap,
+  // crouches, pounces (the sim carries it), strikes down and bites, lifts its head to bolt it down, and roars.
+  const eat = e.eatLeft !== undefined && typeof DRAGON_EAT !== 'undefined' ? Math.max(0, Math.min(1, 1 - e.eatLeft / DRAGON_EAT)) : -1;
+  const win = (t0, t1) => eat < 0 ? 0 : Math.max(0, Math.min(1, (eat - t0) / (t1 - t0)));
+  const eCrouch = eat < 0 || eat >= 0.32 ? 0 : sm(win(0.06, 0.26)), eLeap = eat < 0 ? 0 : Math.sin(Math.PI * win(0.3, 0.46));
+  const eStrike = eat < 0 ? 0 : sm(win(0.4, 0.5)) * (1 - sm(win(0.5, 0.6))), eGape = eat < 0 ? 0 : sm(win(0.34, 0.44)) * (eat < 0.5 ? 1 : 0);
+  const eUp = eat < 0 ? 0 : sm(win(0.54, 0.64)) * (1 - sm(win(0.72, 0.8))), eChew = eUp * Math.abs(Math.sin(ck * 13));
+  if (eat >= 0) { if ((D.eat ?? -1) < 0.46 && eat >= 0.46) { kick('sink', -1.8); kick('pitch', 0.5); D.landed = true; }
+    if ((D.eat ?? -1) < 0.72 && eat >= 0.72) D.roarAt = ck; }
+  D.eat = eat;
+  { const to = asleep ? 1 : 0, s0 = a.sleep ?? to, step = dt * (ko || eat >= 0 ? 3 : 0.28); a.sleep = Math.abs(to - s0) <= step ? to : s0 + Math.sign(to - s0) * step; }
   if (ko && !D.ko) { D.koAt = ck; D.koSlam = false; } D.ko = ko;
   // Waking, in order (wk 0 asleep → 1 awake; settling to sleep runs it backwards): the eyes open; the head lifts
   // and it looks about; a snort of smoke; it pushes up on its forelegs, then its hindquarters; the wings stretch and
@@ -2811,7 +2821,7 @@ function dragonAnim(e, a, dt){
   // Aloft (ridden, or flying home: dragonAloft, js/wildlife.js): it lifts off — legs tucked up, wings out and beating,
   // neck and tail stretched level — and settles again when it lands.
   // (first seen already aloft — scrolled into view — it is aloft, not taking off)
-  const flyTo = (e.rideLeft !== undefined || e.homing) ? 1 : 0; D.fly = D.fly === undefined ? flyTo : D.fly + (flyTo - D.fly) * Math.min(1, dt * 1.6);
+  const flyTo = ((e.rideLeft !== undefined && eat < 0) || e.homing) ? 1 : 0; D.fly = D.fly === undefined ? flyTo : D.fly + (flyTo - D.fly) * Math.min(1, dt * 1.6);
   const fly = sm(Math.max(0, Math.min(1, D.fly))), flap = Math.sin(ck * 5.2);
   const snort = rising && D.wk < 0.4 && wk >= 0.4;
   if (rising && D.wk < 0.9 && wk >= 0.9) { kick('roll', 1.1); kick('headX', 1.6); kick('tail1', 1.2); kick('tail2', 1.8); }   // the shake
@@ -2821,6 +2831,7 @@ function dragonAnim(e, a, dt){
   const chest = (0.045 * sl + 0.035 * awake) * br0 + 0.08 * inhale - 0.04 * bl;
   // footfalls: each leg's touchdown (its stride phase wrapping) sinks the body and rolls it
   const ev = { steps: [], slam: false, snore: false, smoke: false };
+  if (D.landed) { D.landed = false; ev.slam = true; }   // the pounce comes down
   for (let i = 0; i < 4; i++) { const q = dragonStride(a.phase, i).q;
     // (aloft no foot lands: no thud, no dust, no jolt)
     if (g > 0.5 && fly < 0.2 && q < D.q[i] - Math.PI) { kick('sink', -0.95); kick('roll', (i % 2 ? 1 : -1) * 0.42); kick('pitch', i >= 2 ? -0.32 : 0.22); ev.steps.push(i); }
@@ -2847,19 +2858,19 @@ function dragonAnim(e, a, dt){
   // it that way), the tail swings out wide (−tail yaw) and whips back after
   const tr = Math.max(-0.6, Math.min(0.6, a.turn || 0)) * awake;
   const roll = spring('roll', liftL * 0.075 + shift * 0.04 + tr * 0.18, 11, 0.42);
-  const pitch = spring('pitch', 0.3 * rr + 0.07 * inhale - 0.09 * bl - liftF * 0.07 + acc * 0.035 + 0.24 * (lieH - lieF) - 0.1 * fly, 22, 0.42);   // (up on its forelegs first)
+  const pitch = spring('pitch', 0.3 * rr + 0.07 * inhale - 0.09 * bl - liftF * 0.07 + acc * 0.035 + 0.24 * (lieH - lieF) - 0.1 * fly - 0.1 * eCrouch + 0.16 * eLeap - 0.14 * eStrike + 0.1 * eUp, 22, 0.42);   // (up on its forelegs first)
   const sway = spring('sway', -liftL * 0.07 - shift * 0.025, 14, 0.5);                             // its weight carried across, onto the planted side
   const yaw = spring('yaw', Math.sin(a.phase + 0.4) * 0.07 * g, 18, 0.5);                         // shoulders and hips swing with the stride
   // neck and head: lag behind the body (a head of that weight swings through), look round slowly when idle
   const lookT = (0.45 * Math.sin(ck * 0.29 + idp) + 0.2 * Math.sin(ck * 0.71 + 2)) * (1 - slNeck) * (1 - g * 0.6) * (1 - rr) * (1 - bl);
   // (the head is steadied: it counters the body's pitch, roll and swing, so it rides level and on course while the
   // body works under it; momentum throws the neck back as it starts off and forward as it stops)
-  const neck = spring('neck', -1.25 * slNeck - (0.45 + 0.25 * bl) * fly + 0.2 * inhale - 0.4 * bl + 0.12 * rr - 0.5 * pitch + acc * 0.07 - Math.sin(2 * a.phase + 0.6) * 0.12 * g + Math.sin(ck * 0.5 + idp) * 0.06 * awake * (1 - g), 16, 0.42);
+  const neck = spring('neck', -1.25 * slNeck - 0.35 * eCrouch - 0.95 * eStrike + 0.4 * eUp - (0.45 + 0.25 * bl) * fly + 0.2 * inhale - 0.4 * bl + 0.12 * rr - 0.5 * pitch + acc * 0.07 - Math.sin(2 * a.phase + 0.6) * 0.12 * g + Math.sin(ck * 0.5 + idp) * 0.06 * awake * (1 - g), 16, 0.42);
   const neckY = spring('neckY', lookT * (1 - Math.min(1, Math.abs(tr) * 3)) - tr * 0.9 - yaw * 0.8, 6, 0.55);
-  const head = spring('head', 0.8 * slNeck + (0.3 + 0.75 * bl) * fly - 0.3 * inhale + 0.3 * bl - 0.3 * roarJaw - 0.35 * pitch * awake, 26, 0.45);
+  const head = spring('head', 0.8 * slNeck + 0.2 * eCrouch + 0.55 * eStrike - 0.4 * eUp + (0.3 + 0.75 * bl) * fly - 0.3 * inhale + 0.3 * bl - 0.3 * roarJaw - 0.35 * pitch * awake, 26, 0.45);
   const headX = spring('headX', (Math.sin(ck * 23) * 0.05 * roarJaw + Math.sin(ck * 37) * 0.03 * bl - roll * 0.7) * awake, 60, 0.3);   // the roar and the blast shake it
   const snore = sl * 0.07 * Math.max(0, Math.sin(bp + Math.PI));
-  const jaw = spring('jaw', 0.65 * bl + 0.75 * roarJaw + snore + 0.06 * inhale + Math.sin(ck * 41) * 0.05 * bl, 70, 0.55);
+  const jaw = spring('jaw', 0.65 * bl + 0.75 * roarJaw + 0.85 * eGape + 0.3 * eChew + snore + 0.06 * inhale + Math.sin(ck * 41) * 0.05 * bl, 70, 0.55);
   const blink = Math.max(0, Math.sin(ck * 0.83 + idp)) ** 60, eyeShut = Math.max(slEye, blink);
   // tail, three joints: the swing travels down it — each joint later and wider than the last, on a softer spring,
   // so the tip whips; pressed down when it rears (and bounced by the slam); curled round the body asleep
@@ -2872,7 +2883,7 @@ function dragonAnim(e, a, dt){
   const spade = spring('spade', 0.6 * sl * Math.max(0, Math.sin(ck * 0.3 + idp)) ** 12 * Math.sin(ck * 9) + 0.3 * tail[2], 40, 0.3); // twitching in its sleep
   // wings: open to the roar and the breath (half at the inhale), beating as it roars; folded they rise with the breathing
   const shuffle = 0.3 * Math.max(0, Math.sin(ck * 0.17 + idp)) ** 10 * (1 - g);                // now and then it resettles its wings
-  const open = Math.max(0, Math.min(1, spring('wing', Math.max(bl, rr, 0.55 * inhale, e.target && !moving ? 0.3 : 0, shuffle) * awake + stretch + fly, 12, 0.5)));
+  const open = Math.max(0, Math.min(1, spring('wing', Math.max(bl, rr, 0.55 * inhale, e.target && !moving ? 0.3 : 0, shuffle, 0.35 * eCrouch, 0.8 * eLeap) * awake + stretch + fly, 12, 0.5)));
   const beat = Math.sin(ck * 7) * 0.35 * rr + flap * 0.6 * fly + spring('wingBob', 0, 30, 0.3) * 0.5 + Math.sin(2 * a.phase - 0.8) * 0.08 * g; // folded wings bounce with the steps
   if (g > 0.5) kick('wingBob', -Math.abs(D.sp.sink ? D.sp.sink.v : 0) * dt * 3);
   const flame = bl > 0.02 ? Math.min(1, blast * 6) : 0;
@@ -2880,10 +2891,10 @@ function dragonAnim(e, a, dt){
   ev.smoke = snort || (blast > 0.6 && blast < 1 && Math.random() < dt * 6);
   D.lastBp = bp;
   const reach = rr * (0.7 + 0.3 * Math.sin(ck * 5)) + 0.3 * inhale;                              // fore legs paw the air as it rears
-  const tuckF = Math.max(lieF, fly), tuckH = Math.max(lieH, fly);                              // (aloft the legs fold up as they do lying)
+  const tuckF = Math.max(lieF, fly, 0.55 * eLeap), tuckH = Math.max(lieH, fly, 0.35 * eLeap);                              // (aloft the legs fold up as they do lying)
   a.lie = (tuckF + tuckH) / 2; a.lieF = tuckF; a.lieH = tuckH;   // (lie: the legs tucked under — fore and hind each — apart from sl, asleep)
   // the body's offset: pitched about the hind feet, lurched by the breath, crouched by the inhale, lowered asleep
-  const hind = -0.45, bodyX = hind - hind * Math.cos(pitch) + lunge, bodyY = -hind * Math.sin(pitch) + sink * 0.12 - 0.07 * inhale - 0.4 * (lieF + lieH) / 2 + (1.5 - 0.1 * flap) * fly;
+  const hind = -0.45, bodyX = hind - hind * Math.cos(pitch) + lunge + 0.3 * eStrike, bodyY = -hind * Math.sin(pitch) + sink * 0.12 - 0.07 * inhale - 0.4 * (lieF + lieH) / 2 + (1.5 - 0.1 * flap) * fly - 0.16 * eCrouch + 0.75 * eLeap;
   return { ck, sl, lie: (tuckF + tuckH) / 2, lieF: tuckF, lieH: tuckH, fly, awake, g, rr, inhale, bl, blast, chest, sink, roll, pitch, yaw, bodyX, bodyY, bodyZ: sway, neck, neckY, head, headX, jaw, eyeShut,
     tail, tailZ, spade, open, beat, flame, reach, ev };
 }
@@ -3207,6 +3218,8 @@ function drawDragonBody(e){
   // world: it flies on and slows, swells, cools from white-hot through orange and red to smoke. So the jet bends as the
   // head swings and hangs a moment after the blast. Each puff is a part like the rest, sorted by its own depth: one
   // blown away from the viewer is painted before the dragon, and hidden by it. Never outlined.
+  // (puffs left from before it went out of view — it isn't drawn off screen, so they never burnt out — are dropped)
+  if (!window._maskDraw) { const nowMs = performance.now(); if (a.puffSeen !== undefined && nowMs - a.puffSeen > 400 && a.puffs) a.puffs.length = 0; a.puffSeen = nowMs; }
   if (!window._maskDraw) { const puffs = a.puffs || (a.puffs = []), n = (a.dt || 0) * 30; a.dt = 0;   // (30: its numbers are per authored tick)
     for (const p of puffs) { p.x += p.vx * n; p.y += p.vy * n; p.h += p.vh * n;
       // (it hits the ground and rolls out along it)
@@ -3218,7 +3231,11 @@ function drawDragonBody(e){
       // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground under its nose)
       const fy2 = P.fly || 0;
       for (a.fire = (a.fire || 0) + n * 70 / 30 * P.flame * (1 + 0.8 * fy2); a.fire >= 1; a.fire--) { const sp = (0.36 + cosmeticRandom() * 0.12) * (1 - 0.35 * fy2), j = () => (cosmeticRandom() - 0.5) * 0.12, life = 14 + cosmeticRandom() * 6;
-        a.puffs.push({ x: e.x + ox, y: e.y + oy, h: m0[1], vx: vx * sp + j(), vy: vy * sp + j(), vh: dm[1] * sp - 0.05 - 0.42 * fy2 + j() * 0.4, life: life * (1 + 0.3 * fy2), max: life * (1 + 0.3 * fy2), size: (3 + cosmeticRandom() * 2) * (1 + 0.5 * fy2) }); } }
+        // (aloft the jet is aimed at the spot the sim burns: DRAGON_STRAFE ahead of it, on the ground)
+        let ux = vx * sp, uy = vy * sp, uh = dm[1] * sp - 0.05;
+        if (fy2 > 0) { const S = typeof DRAGON_STRAFE !== 'undefined' ? DRAGON_STRAFE : 3.4, fa = e.faceAng || 0, gx = Math.cos(fa) * S - ox, gy = Math.sin(fa) * S - oy, gl = Math.hypot(gx, gy, m0[1]) || 1, k = gl * 0.118 / gl;
+          ux += (gx * k - ux) * fy2; uy += (gy * k - uy) * fy2; uh += (-m0[1] * k - uh) * fy2; }
+        a.puffs.push({ x: e.x + ox, y: e.y + oy, h: m0[1], vx: ux + j(), vy: uy + j(), vh: uh + j() * 0.4, life: life * (1 + 0.3 * fy2), max: life * (1 + 0.3 * fy2), size: (3 + cosmeticRandom() * 2) * (1 + 0.5 * fy2) }); } }
     for (const p of a.puffs) { const dx = p.x - e.x, dy = p.y - e.y, cx = (dx - dy) * Cc, cy = (dx + dy) * Cc / 2 - p.h * K, pct = p.life / p.max;
       const r = p.size * (0.6 + (1 - pct) * 2.6) / UNIT_SCALE, al = Math.min(1, pct * 3) * 0.9, col = pct > 0.78 ? '#fff3a8' : pct > 0.55 ? '#ffb431' : pct > 0.32 ? '#f0641c' : pct > 0.14 ? '#b02a14' : '#4a3530';
       parts.push({ d: dx + dy, draw: () => { X.save(); X.fillStyle = col; X.globalAlpha *= al * 0.25; X.beginPath(); X.arc(cx, cy, r * 1.7, 0, TAU); X.fill(); X.globalAlpha *= 4; X.beginPath(); X.arc(cx, cy, r, 0, TAU); X.fill(); X.restore(); } }); } }

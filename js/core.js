@@ -1381,7 +1381,10 @@ function updateTeamVision(){
   // Ally-shared groups: an entity's disk is applied to its team AND every
   // team allied with it (teamCanSeeTile/teamHasExplored become ally-shared).
   const allied = [];
-  for (let t = 0; t < NUM_TEAMS; t++) { const g = []; for (let u = 0; u < NUM_TEAMS; u++) if (sameSide(t, u)) g.push(u); allied.push(g); }
+  // (a team that keeps its own counsel — teamControllers[t].aloof, a scenario's neutral village — shares no sight
+  // with its allies: the player finds it by going there)
+  const aloof = t => !!(teamControllers[t] && teamControllers[t].aloof);
+  for (let t = 0; t < NUM_TEAMS; t++) { const g = []; for (let u = 0; u < NUM_TEAMS; u++) if (u === t || (sameSide(t, u) && !aloof(t) && !aloof(u))) g.push(u); allied.push(g); }
   // removeDisk() below uses the CURRENT ally group of the removed disk's team,
   // so a changed alliance would mis-account stale counts — force a clean
   // recount when the alliance layout changes (rare; usually never mid-match).

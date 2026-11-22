@@ -1293,6 +1293,10 @@ async function withPage(browser, port, entry, fn){
       T.ok('asleep and gaia with nobody near', !d.awake && d.team === GAIA_TEAM && !dragonAloft(d));
       const sheep = createUnit('sheep', 32, 31, 0);
       for (let i = 0; i < T30(60) && d.rideLeft === undefined; i++) update();
+      const eating = d.eatLeft !== undefined && !!sheep.offered && !!entitiesById.get(sheep.id), ride0 = d.rideLeft;
+      execUnitCommand({ tileX: 5, tileY: 5 }); selected = [sheep]; myTeam = 0; execUnitCommand({ tileX: 5, tileY: 5 });   // (the sheep can't be called away)
+      for (let i = 0; i < T30(400) && d.eatLeft !== undefined; i++) update();
+      T.ok('it eats first: the sheep is held, pounced on and bitten away, and the ride\'s clock waits', eating && !entitiesById.get(sheep.id) && d.rideLeft === ride0 && dist(d, sheep) < 2.3 && d.x > 30);
       T.ok('the sheep is eaten and the dragon is the player\'s, aloft', d.team === 0 && dragonAloft(d) && !entitiesById.get(sheep.id) && dragonRideSeconds(d) > 55);
       const house = entities.find(e => e.btype === 'HOUSE'), hp0 = house.hp;
       myTeam = 0; selected = [d]; execUnitCommand({ targetId: house.id, tileX: house.x, tileY: house.y });
@@ -1301,6 +1305,12 @@ async function withPage(browser, port, entry, fn){
       const bear = createUnit('bear', Math.round(d.x) + 2, Math.round(d.y) + 2, GAIA_TEAM);
       for (let i = 0; i < T30(120); i++) update();
       T.ok('a bear beside it leaves it alone, even burnt', bear.hp <= 0 || bear.target !== d.id);
+      // (its fire burns everyone along the jet, not what is under or beside it)
+      d.flyTarget = undefined; d.flyX = d.x; d.flyY = d.y; d.faceAng = 0; d.atkCooldown = 999;
+      const row = [2.4, 3.4, 4.4].map(r => createUnit('militia', d.x + r, d.y, 1)), under = createUnit('militia', d.x, d.y, 1), beside = createUnit('militia', d.x + 3, d.y + 3, 1);
+      const hp = [...row, under, beside].map(u => u.hp); dragonBreath(d);
+      T.ok('a blast burns all three in the line of the flame, not the one under it or the one off to the side', row.every((u, i) => u.hp < hp[i]) && under.hp === hp[3] && beside.hp === hp[4]);
+      [...row, under, beside].forEach(u => { u.hp = 0; handleDeath(u); });
       // (character mode: steered and fired by its rider)
       d.possessed = true; execCommand({ kind: 'steer', unitId: d.id, x: d.x + 3, y: d.y }, 0);
       const fx0 = d.flyX; d.atkCooldown = 0; d.breathTick = undefined; execCommand({ kind: 'dragon-fire', unitId: d.id, ang: 1 }, 0);

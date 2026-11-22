@@ -1947,13 +1947,20 @@
   // surroundings (its parent: the world) — flying on and slowing, swelling, cooling from white-hot through orange and
   // red to smoke, rising as it thins. So the jet bends as the head swings and hangs a moment after the blast.
   let FIRE_RAMP = null, _f0 = null, _f1 = null;
+  // Models with fire still in the air, and the frame each was last tended: a dragon that isn't posed this frame (off
+  // screen, out of range, flown on) still has its puffs burn out (updateUnits) — else they hung where it left them.
+  const burning = new Set(); let fireFrame = 0;
+  let _fT = null;
   function dragonFire(model, mouth, flame, dt, fly = 0){
     const F = model.userData.fire || (model.userData.fire = { puffs: [], due: 0 }), host = model.parent;
+    F.seen = fireFrame; burning.add(model);
     FIRE_RAMP = FIRE_RAMP || ['#fff2b0', '#ffc94a', '#ff8a1e', '#d8381a', '#6a2a20', '#33302e'].map(c => new THREE.Color(c));
     if (flame > 0 && host) { _f0 = _f0 || new THREE.Vector3(); _f1 = _f1 || new THREE.Vector3(); model.updateMatrixWorld(true);
       host.worldToLocal(mouth.localToWorld(_f0.set(0, 0, 0))); host.worldToLocal(mouth.localToWorld(_f1.set(1, 0, 0))); _f1.sub(_f0).normalize();
       // (aloft it pours the fire down: a bigger, steeper jet that splashes on the ground)
-      _f1.y -= 1.3 * fly; _f1.normalize();
+      // (…aimed at the spot the sim burns: DRAGON_STRAFE ahead of it, on the ground)
+      if (fly > 0) { const hl = Math.hypot(_f1.x, _f1.z) || 1, S = typeof DRAGON_STRAFE !== 'undefined' ? DRAGON_STRAFE : 3.4; _fT = _fT || new THREE.Vector3();
+        _fT.set(model.position.x + _f1.x / hl * S, 0, model.position.z + _f1.z / hl * S).sub(_f0).normalize(); _f1.lerp(_fT, fly).normalize(); }
       for (F.due += dt * 70 * flame * (1 + 0.8 * fly); F.due >= 1; F.due--) { const hot = Math.random() < 0.3, j = () => (Math.random() - 0.5) * 2;
         const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: hot ? THREE.AdditiveBlending : THREE.NormalBlending }));
         m.position.copy(_f0); m.renderOrder = hot ? 6 : 5; m.frustumCulled = false; host.add(m);
@@ -4935,6 +4942,8 @@
     }
     SU.mesh.count = SU.n; SU.mesh.instanceMatrix.needsUpdate = true;
     for (const [id, a] of animals) if (!used.has(id)) { if (a.obj) quenchDragonFire(a.obj); dropSolid(a); animals.delete(id); }
+    for (const m of burning) { const F = m.userData.fire; if (F.seen !== fireFrame) dragonFire(m, null, 0, dt); if (!F.puffs.length) burning.delete(m); }
+    fireFrame++;
     for (const [id, v] of villagers) if (!used.has(id)) { dropVillager(v); villagers.delete(id); }
     if (frame % 120 === 0) for (const id of tickPos.keys()) if (!entitiesById.has(id)) tickPos.delete(id);
     updateCorpses(used);

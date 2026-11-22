@@ -29,7 +29,7 @@ Campaigns can use the same pieces later.
 ## Spec
 
 The `loadScenario` fields come first: map, seed, numTeams, controllers,
-alliances, names, resources, ages, techs, fog, camera, terrain and entities.
+alliances, aloof (teams sharing no sight with allies), names, resources, ages, techs, fog, camera, terrain and entities.
 Terrain entries take `w`/`h` to fill a rectangle. Entities can also take:
 - `tag`: a name that triggers refer to as `#name`;
 - `hp`: an override for a building's hit points.

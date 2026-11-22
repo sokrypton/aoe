@@ -81,7 +81,7 @@ function detEntityHash(e){
   h = detMixStr(h, e.research && typeof e.research.target === 'string' ? e.research.target : null);
   h = detMix(h, e.leashCooling ? 1 : 0); // bear leash hysteresis (sim-read)
   h = detMix(h, e.awake ? 1 : 0); h = detMix(h, e.spent ? 1 : 0); if (e.faceAng !== undefined) h = detMixFloat(h, e.faceAng); h = detMix(h, e.calmSince === undefined ? -1 : e.calmSince);
-  h = detMixFloat(h, e.rideLeft === undefined ? -1 : e.rideLeft); h = detMix(h, e.homing ? 1 : 0); h = detMix(h, e.tameReadyAt || 0); h = detMix(h, e.flyTarget === undefined ? -1 : e.flyTarget);
+  h = detMixFloat(h, e.rideLeft === undefined ? -1 : e.rideLeft); h = detMixFloat(h, e.eatLeft === undefined ? -1 : e.eatLeft); h = detMix(h, e.eatId === undefined ? -1 : e.eatId); h = detMix(h, e.offered ? 1 : 0); h = detMix(h, e.homing ? 1 : 0); h = detMix(h, e.tameReadyAt || 0); h = detMix(h, e.flyTarget === undefined ? -1 : e.flyTarget);
   if (e.flyX !== undefined) { h = detMixFloat(h, e.flyX); h = detMixFloat(h, e.flyY); } // the dragon's sleep (sim-read)
   // Fields the sim reads on later ticks that previously went unhashed — a
   // divergence here only tripped the checksum once it eventually moved

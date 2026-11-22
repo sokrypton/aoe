@@ -24,6 +24,7 @@
 //                                                    // tag: a name triggers refer to ('#name')
 //                                                    // hp: a building's (max) hit points override
 //     alliances: [0, 1, 0],                // per-team alliance id (same id = allied)
+//     aloof: [2],                          // teams that share no sight with their allies (a village yet to be found)
 //     names: ['Scots', 'English'],         // per-team display names
 //     colors: [0, 1, 6],                   // per-team palette slot (PLAYER_TEAM_COLORS: 6 = grey, a neutral faction)
 //     camera: {x, y},                      // opening view (default: the entities' centroid)
@@ -77,6 +78,7 @@ function loadScenario(spec){
   // Per-team controllers (after restartGame's defaults).
   if(spec.controllers && spec.controllers.length){
     teamControllers = Array.from({length: NUM_TEAMS}, (_, t) => parseScenarioController(spec.controllers[t]));
+    for (const t of spec.aloof || []) if (teamControllers[t]) teamControllers[t].aloof = true;   // allied, but sharing no sight (updateTeamVision)
     if(typeof resetAIStates==='function') resetAIStates();
   }
   if(spec.alliances) teamAlliance = Array.from({length: NUM_TEAMS}, (_, t) => spec.alliances[t] != null ? spec.alliances[t] : t);

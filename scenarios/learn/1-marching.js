@@ -8,6 +8,7 @@ SCENARIOS["learn-1"] =
   "fog": true,
   "controllers": ["human", "human", "human"],
   "alliances": [0, 1, 0],
+  "aloof": [2],
   "names": ["Scots", "English", "Scottish village"],
   "colors": [0, 1, 6],
   "resources": [
