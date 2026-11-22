@@ -2739,6 +2739,17 @@ function aiInsideWallRing(ai,tx,ty,w,h){
   return tx>x0 && tx+w-1<x1 && ty>y0 && ty+h-1<y1;
 }
 
+// A building the AI places keeps a walking lane round it: no other building (a farm aside: it is walked over) on the
+// tiles touching its footprint, corners too. Placed edge to edge along its scan rays, houses ran out from the Town
+// Center in solid lines that met the walls and sealed off pockets of the base — its own army trapped in them.
+function aiKeepsLane(tx,ty,w,h){
+  for(let y=ty-1;y<=ty+h;y++)for(let x=tx-1;x<=tx+w;x++){
+    if(x>=tx&&x<tx+w&&y>=ty&&y<ty+h)continue;
+    const tl=map[y]&&map[y][x]; if(!tl||tl.occupied==null)continue;
+    const o=entitiesById.get(tl.occupied); if(o&&o.type==='building'&&!(BLDGS[o.btype]&&BLDGS[o.btype].isFarm))return false;
+  }
+  return true;
+}
 function findAIBuildSpot(ai,tc,type){
   let b=BLDGS[type];
   // Measure from the TC CENTRE, not its origin corner — an origin-based
@@ -2762,8 +2773,8 @@ function findAIBuildSpot(ai,tc,type){
     let dot=a=>simCos(a*Math.PI*2/16)*ed.dx+simSin(a*Math.PI*2/16)*ed.dy;
     angles.sort((a1,a2)=>dot(a2)-dot(a1)||a1-a2); // equal dots come in symmetric pairs — order them
   }
-  let scan=(respectBelt)=>{
-    for(let r=minEdge;r<maxR;r++){
+  let scan=(respectBelt,lane=true,R=maxR)=>{
+    for(let r=minEdge;r<R;r++){
       for(let a of angles){
         let ang=a*Math.PI*2/16;
         let tx=Math.round(cx+simCos(ang)*r);
@@ -2772,6 +2783,7 @@ function findAIBuildSpot(ai,tc,type){
         if(aiOnWallRing(ai,tx,ty,b.w,b.h,type))continue;   // keep the perimeter walls, not houses
         if(aiWouldBlockGate(tx,ty,b.w,b.h,ai.team))continue;
         if(respectBelt&&reserve&&aiInFarmBelt(tx,ty,b.w,b.h,ai.team,drops))continue;
+        if(lane&&!aiKeepsLane(tx,ty,b.w,b.h))continue;
         if(pathReaches(Math.floor(cx),Math.floor(cy),tx,ty,tc.id))return{x:tx,y:ty};
       }
     }
@@ -2779,8 +2791,10 @@ function findAIBuildSpot(ai,tc,type){
   };
   // Respect the farm belts first; if the base is too cramped to place anything
   // outside them, squeeze in rather than build NOTHING — a barracks that never
-  // lands means zero military forever, and farming itself gates on it.
-  return scan(true) || (reserve?scan(false):null);
+  // lands means zero military forever, and farming itself gates on it. The lane
+  // is kept throughout: a cramped base builds farther out (twice the reach)
+  // before it ever builds edge to edge — and a house, never (more will come).
+  return scan(true) || (reserve?scan(false):null) || scan(false,true,maxR*2) || (type!=='HOUSE'?scan(false,false):null);
 }
 
 function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=null,coverR=0){
