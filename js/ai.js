@@ -495,11 +495,18 @@ function queueAIVillagers(ai,aiTC,vils,profile){
   }
 }
 
+const AI_HOUSE_AHEAD=10;   // the housing margin kept with wood to spare (profile.houseBuffer without)
 function ensureAIHousing(ai,aiTC,profile){
   let requested=teamPopUsed(ai.team)+teamQueuedPop(ai.team);
   let plannedCap=teamPopCap(ai.team,true);
+  if(plannedCap>=POP_LIMIT)return;   // housing for the whole limit stands or is going up: a house more houses no one
   let pendingHouses=entities.filter(e=>e.type==='building'&&e.team===ai.team&&e.btype==='HOUSE'&&!e.complete).length;
-  if(requested<plannedCap-profile.houseBuffer||pendingHouses>1||!canAfford(ai.team,BLDGS.HOUSE.cost))return;
+  // With wood to spare it builds AHEAD — a wider margin, another site at once: one house at a time, each waited for,
+  // held a rich town's growth to the pace of its house-building while its food piled up. (From Feudal: the Dark Age
+  // opening's wood is the lumber camp's and the barracks'.)
+  let ahead=teamAge[ai.team]>=1&&resourceStore(ai.team).wood>=BLDGS.HOUSE.cost.w*6;
+  let buffer=ahead?Math.max(profile.houseBuffer,AI_HOUSE_AHEAD):profile.houseBuffer;
+  if(requested<plannedCap-buffer||pendingHouses>(ahead?2:1)||!canAfford(ai.team,BLDGS.HOUSE.cost))return;
   if(!aiEcoFundClear(ai,profile,BLDGS.HOUSE.cost))return;
   let pos=findAIBuildSpot(ai,aiTC,'HOUSE');
   if(pos)placeAIBuilding(ai,'HOUSE',pos.x,pos.y);
@@ -2802,7 +2809,7 @@ function findAIBuildSpot(ai,tc,type){
 }
 
 function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=null,coverR=0,spacedFrom=null){
-  let maxDist=22*aiScale();
+  let reach=22*aiScale();
   let b=BLDGS[type];
   let beltDrops=avoidFarmBelt?aiFarmBeltDrops(ai.team):null;
   // A patch already within coverR of an existing drop-off is served — so the
@@ -2818,6 +2825,8 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
     let ex=Math.max(d.x-x,0,x-(d.x+d.w-1)), ey=Math.max(d.y-y,0,y-(d.y+d.h-1));
     return simHypot(ex,ey)<AI_CAMP_SPACING;
   });
+  let inReach=false;   // any of the resource, scouted, inside the usual reach (served or not)
+  const search=maxDist=>{
   let candidates=[];
   for(let y=1;y<MAP-1;y++)for(let x=1;x<MAP-1;x++){
     if(map[y][x].t!==terrain||map[y][x].res<=0)continue;
@@ -2827,10 +2836,11 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
     // opening eco is unaffected; farther patches require a scout first.
     if(!teamHasExplored(ai.team, x+y*MAP))continue;
     if(dist({x,y},centerTile(tc))>maxDist)continue;
+    inReach=true;
     // Safety: never found a camp on proven-deadly ground (a live danger
     // zone — bear or raid) or outside the war-state umbrella. The shared
     // villager-safety predicate (js/logic.js); commuters die otherwise.
-    if(!aiVillagerSafeAt(ai.team,x,y))continue;
+    if(!aiVillagerSafeAt(ai.team,x,y,terrain))continue;
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       let bx=x+dx,by=y+dy;
       if(!canPlace(type,bx,by,ai.team))continue;
@@ -2865,6 +2875,12 @@ function findAIDropSite(ai,terrain,type,tc,avoidFarmBelt=false,existingDrops=nul
     if(pathReaches(tcx,tcy,c.x,c.y,tc.id))return{x:c.x,y:c.y};
   }
   return null;
+  };
+  // A camp (spacedFrom) goes beyond the usual reach only once NOTHING of the resource is left inside it — then to the
+  // nearest scouted, safe patch anywhere: its reach cut bare, a town sat woodless and idle with forest standing
+  // farther off. (Something left in reach but no spot for a camp — it is served already — founds none.)
+  let near=search(reach);
+  return near||(spacedFrom&&!inReach?search(Infinity):null);
 }
 
 function countResourceTilesNear(terrain,cx,cy,r){

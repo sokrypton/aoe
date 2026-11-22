@@ -161,9 +161,10 @@ function buildingPop(e,includeIncomplete){
   return BLDGS[e.btype].pop||0;
 }
 
+const POP_LIMIT = 200;   // no team houses more than this, whatever it builds
 function teamPopCap(team,includeIncomplete=false){
   let cap = entities.reduce((total,e)=>e.team===team?total+buildingPop(e,includeIncomplete):total,0);
-  return Math.min(200, cap);
+  return Math.min(POP_LIMIT, cap);
 }
 
 function teamQueuedPop(team){
@@ -548,7 +549,10 @@ function dangerAt(team,x,y){
   return false;
 }
 
-function aiVillagerSafeAt(team,x,y){
+// terrain (optional): the resource being sought there — the contraction below never shuts a town off from a resource
+// it has NONE of inside its umbrella (aiUmbrellaHas): cut bare inside, a raided town sat idle and woodless, its
+// villagers "safe", with forest standing a few tiles beyond.
+function aiVillagerSafeAt(team,x,y,terrain){
   let ai=isAITeam(team)&&AI_STATES&&AI_STATES[team];
   if(!ai)return true; // humans manage their own safety (a seat back from AI keeps a dormant brain: it isn't one)
   if(dangerAt(team,x,y))return false;
@@ -568,10 +572,25 @@ function aiVillagerSafeAt(team,x,y){
     }
     if(ai._tcMemoTick===tick){
       let R=AI_BASE_ALARM_RADIUS*aiScale(),dx=x-ai._tcMemoX,dy=y-ai._tcMemoY;
-      if(dx*dx+dy*dy>R*R)return false;
+      if(dx*dx+dy*dy>R*R&&(terrain===undefined||aiUmbrellaHas(ai,terrain,R)))return false;
     }
   }
   return true;
+}
+
+// Is any `terrain` resource left inside the town's umbrella (radius R round the memoized TC centre)? Asked only for a
+// tile outside it, in war: memoized per team, per terrain, per tick (same-tick cache as _tcMemo*: never carried,
+// never hashed; numbers only — bit masks by terrain id).
+function aiUmbrellaHas(ai,terrain,R){
+  if(ai._umbTick!==tick){ ai._umbTick=tick; ai._umbDone=0; ai._umbHas=0; }
+  const bit=1<<terrain;
+  if(!(ai._umbDone&bit)){
+    ai._umbDone|=bit;
+    const cx=ai._tcMemoX, cy=ai._tcMemoY, x0=Math.max(0,Math.floor(cx-R)), x1=Math.min(MAP-1,Math.ceil(cx+R)), y0=Math.max(0,Math.floor(cy-R)), y1=Math.min(MAP-1,Math.ceil(cy+R));
+    scan: for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){ const t=map[y][x];
+      if(t.t===terrain&&t.res>0&&(x-cx)*(x-cx)+(y-cy)*(y-cy)<=R*R){ ai._umbHas|=bit; break scan; } }
+  }
+  return !!(ai._umbHas&bit);
 }
 
 // Farmers per farm (AoE2 allows 1; 2 here by design). A farmer holds its place while walking there, working, or away
@@ -627,7 +646,7 @@ function canGatherTile(e,terrain,x,y){
   if(terrain===TERRAIN.FARM){const f=farmAtTile(x,y,e.team,true);return !!f&&farmHasRoom(f,e);}
   // Farms bypass the safety predicate via the early-return above —
   // deliberately: farms sit at the TC and are the protected income.
-  return aiVillagerSafeAt(e.team,x,y);
+  return aiVillagerSafeAt(e.team,x,y,terrain);
 }
 
 // AoE2 formation speed-matching: units ordered as a GROUP move at the
@@ -1181,7 +1200,10 @@ function pressToContact(e, cx, cy, contactDist, deadband=0.2){
   let walkStep = unitMoveSpeed(e)/TPS;
   let step=Math.min(walkStep, d-contactDist);
   let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
-  if(walkable(Math.round(nx),Math.round(ny),e.id,true)){
+  // (onto a new tile only as findPath would step there: never diagonally through the gap between two obstacles —
+  // pressed through one after a sheep, a villager stood in a pocket no path led out of)
+  let ox=Math.round(e.x), oy=Math.round(e.y), tx=Math.round(nx), ty=Math.round(ny);
+  if(walkable(tx,ty,e.id,true)&&(tx===ox||ty===oy||(walkable(tx,oy,e.id,true)&&walkable(ox,ty,e.id,true)))){
     e.x=nx; e.y=ny;
     e.pressWalk=tick;   // signal the renderer to show the walk cycle (js/render-units.js)
   }

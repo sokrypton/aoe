@@ -1115,6 +1115,10 @@ async function withPage(browser, port, entry, fn){
       const R = AI_BASE_ALARM_RADIUS * aiScale();
       const farX = 32 + Math.ceil(R) + 8, nearX = 34;
       AI_STATES[1].lastBaseHitTick = tick; // war-state on
+      // (…but never from a resource the town has NONE of inside the radius: bare inside, it may cut wood beyond)
+      const hadWood = []; for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) if (map[y][x].t === TERRAIN.FOREST && Math.hypot(x - 32, y - 32) <= R + 2) { hadWood.push([x, y, map[y][x].res]); map[y][x] = { t: TERRAIN.GRASS, res: 0, occupied: null }; }
+      T.ok('war-state: no wood inside the radius — a far tile is allowed', canGatherTile(probe, TERRAIN.FOREST, farX, 32));
+      map[33][35] = { t: TERRAIN.FOREST, res: 100, occupied: null }; tick++;   // (a tree inside; the answer is memoized per tick)
       T.ok('war-state: far tile rejected', !canGatherTile(probe, TERRAIN.FOREST, farX, 32));
       T.ok('war-state: tile inside the umbrella accepted', canGatherTile(probe, TERRAIN.FOREST, nearX, 32));
       AI_STATES[1].lastBaseHitTick = tick - T30(3600) - 1; // war-state decayed
@@ -1253,6 +1257,21 @@ async function withPage(browser, port, entry, fn){
     })),
 
     // ------------------------------------------------ trade cart: gold by Market distance
+    // Pressing in on its target, a unit never slips diagonally through the gap between two trees (findPath's own rule):
+    // a villager butchering a sheep across such a corner stays on its side of it.
+    'press-no-corner-squeeze': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [1, 1],
+        terrain: [{ t: 'FOREST', x: 31, y: 30 }, { t: 'FOREST', x: 30, y: 31 }],
+        entities: [{ b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }] });
+      const v = createUnit('villager', 31, 31, 0);
+      let crossed = false; for (let i = 0; i < 200; i++) { pressToContact(v, 30, 30, 0.3); if (Math.round(v.x) === 30 && Math.round(v.y) === 30) crossed = true; }
+      T.ok('pressed at a spot across a tree corner, it stays on its side', !crossed && Math.round(v.x) === 31 && Math.round(v.y) === 31);
+      const w = createUnit('villager', 40, 40, 0); for (let i = 0; i < 200; i++) pressToContact(w, 39, 39, 0.3);
+      T.ok('across open ground it presses in as before', Math.hypot(w.x - 39, w.y - 39) < 0.6);
+      return T;
+    })),
+
     // A sheep on its way to the dragon that an enemy captures stops: the offer was its old owner's. The new owner can
     // send it again. And a knocked-out AI's soldiers still fight beside its ally.
     'sheep-capture-and-knocked-out-ally': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
