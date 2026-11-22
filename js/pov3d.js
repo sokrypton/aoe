@@ -104,7 +104,10 @@
   // The ground's height is put into the SHADERS, for everything at once: a 256² texture of the corner heights, and
   // three.js's own vertex-projection chunk changed to lift each vertex by the ground under it (its world x, z). So the
   // ground itself, every model, instance, billboard, decal and puff rides the hills with no code of its own — a shadow
-  // lies along its slope, a wall steps with it. Opted out with the define NO_HILL (the clouds, the void beyond the map).
+  // lies along its slope, a wall follows it. Opted out with the define NO_HILL (the clouds, the void beyond the map).
+  // A BUILDING is lifted as one piece, by the ground at its centre (lifted by its vertices, the ground a neighbour's
+  // pad bends beside it would bend its roof): its baked geometry carries the spot (the hillAt attribute: levelGeo), a
+  // material made for one building — a site's, a damaged one's, a ghost's — a uniform (hillAtU: levelMat).
   // The CODE side knows heights in three places only: the camera (camLift: the world is drawn from a camera raised by
   // the ground under the view's anchor, and everything else here reasons in the flat frame), project() and pick().
   const HILL_TOP = 3;   // the texture's full scale, in tiles (≥ the tallest ground: ELEV_LAIR)
@@ -114,8 +117,10 @@
     hillData = new Uint8Array(256 * 256 * 4);
     hillTex = new THREE.DataTexture(hillData, 256, 256); hillTex.magFilter = hillTex.minFilter = THREE.LinearFilter; hillTex.needsUpdate = true;
     for (const k in THREE.ShaderLib) THREE.ShaderLib[k].uniforms.hillMap = { value: hillTex };   // (cloned by reference: one texture for all)
-    THREE.ShaderChunk.common += '\nuniform sampler2D hillMap;\n';
-    const lift = v => `${v}.y += texture2D( hillMap, ( ${v}.xz + 0.5 ) / 256.0 ).r * ${HILL_TOP.toFixed(1)};`;
+    THREE.ShaderChunk.common += '\nuniform sampler2D hillMap;\n#ifdef HILL_AT_U\nuniform vec2 hillAtU;\n#endif\n';
+    // (a vertex-only chunk every built-in material includes; a geometry without the attribute reads zero: by its vertices)
+    THREE.ShaderChunk.clipping_planes_pars_vertex += '\n#define HILL_ATTR\nattribute vec3 hillAt;\n';
+    const lift = (v, at = `${v}.xz`) => `${v}.y += texture2D( hillMap, ( ${at} + 0.5 ) / 256.0 ).r * ${HILL_TOP.toFixed(1)};`;
     THREE.ShaderChunk.project_vertex = `vec4 mvPosition = vec4( transformed, 1.0 );
 #ifdef USE_BATCHING
 	mvPosition = batchingMatrix * mvPosition;
@@ -127,7 +132,13 @@
 	mvPosition = modelViewMatrix * mvPosition;
 #else
 	mvPosition = modelMatrix * mvPosition;
-	${lift('mvPosition')}
+	vec2 hillXZ = mvPosition.xz;
+#ifdef HILL_AT_U
+	hillXZ = hillAtU;
+#elif defined( HILL_ATTR )
+	if ( hillAt.z > 0.5 ) hillXZ = hillAt.xy;
+#endif
+	${lift('mvPosition', 'hillXZ')}
 	mvPosition = viewMatrix * mvPosition;
 #endif
 gl_Position = projectionMatrix * mvPosition;`;
@@ -135,6 +146,17 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (sv.vertexShader.includes(at)) sv.vertexShader = sv.vertexShader.replace(at, `vec4 hillW = modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 ); ${lift('hillW')} vec4 mvPosition = viewMatrix * hillW;`);
   }
   const noHill = m => { m.defines = Object.assign(m.defines || {}, { NO_HILL: '' }); return m; };
+  function levelMat(c, at){   // c: a material of its own (a clone); at: { value: Vector2 } — the building's centre
+    const ob = c.onBeforeCompile; c.defines = Object.assign({}, c.defines, { HILL_AT_U: '' });
+    c.onBeforeCompile = function(sh, r){ if (ob) ob.call(this, sh, r); sh.uniforms.hillAtU = at; }; c.onBeforeCompile.fow = !!(ob && ob.fow);
+    return c;
+  }
+  function levelGeo(root, x, z){   // every geometry of its own under root (baked: bakeStill)
+    root.traverse(o => { const g = o.geometry; if (!g || !g.userData.own || !g.attributes.position || g.attributes.hillAt) return;
+      const n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = x; a[i * 3 + 1] = z; a[i * 3 + 2] = 1; }
+      g.setAttribute('hillAt', new THREE.BufferAttribute(a, 3)); });
+  }
+  const standsLevel = e => !!e && e.type === 'building' && !isWallBtype(e.btype) && !isGateBtype(e.btype);   // (a wall and a gate follow the slope)
   function updateHills(dt){
     ensureElevation();
     if (elevRev !== hillRev) { hillRev = elevRev; hillData.fill(0);
@@ -3733,7 +3755,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const g = new THREE.Group();
       MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
       addHulls(g);
-      if (e.complete && !hurt) bakeStill(g);                       // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+      if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       scene.add(g);
       const flags = [], horses = [];
       g.traverse(o => {
@@ -3894,7 +3916,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     // wall's own top comes down with it (its depth showing, openings above closed over). Flat faces (clipOnly) and the ink
     // lines are cut there instead; a box's team-coloured top waits for the finished building.
     const below = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), siteY = { value: 0 }, siteJag = { value: 0 };
-    const built = new Map();
+    const built = new Map(), level = standsLevel(entitiesById.get(g.userData.bid)) ? { value: new THREE.Vector2(x0 + w / 2, z0 + h / 2) } : null;
     const cutMat = m => { let c = built.get(m); if (c) return c;
       c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
       if (m.isLineBasicMaterial) c.clippingPlanes = [below];                           // (ink: cut at the top, not pressed onto it)
@@ -3934,6 +3956,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         // a lintel pressed down faces down: from above it must still close its opening's slot
         if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide; }
       if (INTERIOR_MATS.has(m) || (HULL_MATS.has(m) && !jag)) c.visible = false;     // (no bold outline on an open, half-built shell: the finished building gets it; a damaged one keeps its own, pressed down with its broken walls)
+      if (level) levelMat(c, level);
       built.set(m, c); return c; };
     // every mesh of a site says what it is (the site shader reads these; an unset attribute reads garbage)
     const mark = geo => { const n = geo.attributes.position.count;
@@ -3998,6 +4021,7 @@ gl_Position = projectionMatrix * mvPosition;`;
           sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float crumble; varying vec3 vCrW;\n' + SITE_NOISE)
             .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (siteN(vCrW.xz * 4.5 + vCrW.y * 3.1) * 0.8 + siteN(vCrW.xz * 13.0 - vCrW.y * 7.0) * 0.2 < crumble) discard;'); };  // (ragged holes that spread)
         c.onBeforeCompile.fow = !!(ob && ob.fow); c.customProgramCacheKey = () => key + ':crumble'; c.side = HULL_MATS.has(m) ? m.side : THREE.DoubleSide;
+        if (level) levelMat(c, level);
         own2.set(m, c); return c; };
       for (const q of set0) q.obj.traverse(o => { if (o.material) { o.material = Array.isArray(o.material) ? o.material.map(crumbleMat) : crumbleMat(o.material); o.userData.siteOwn = true; } });
       const flags = [], goods = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'flagPole' || o.name === 'pennant' || o.name === 'sails' || o.name === 'millShaft') flags.push(o); else if (o.name === 'goods') goods.push(o); });
@@ -5734,7 +5758,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // scenery 0, x-ray 5, units 10). Twins pass only where something already drawn is NEARER (GreaterDepth): the
   // body's twin marks its hidden pixels in the stencil, then the ink shell's twin paints team colour outside them —
   // a rim. The real unit draws last and covers whatever is actually in view.
-  let xray = null; const xTwins = new Map(); // source mesh → twin
+  let xray = null; const xTwins = new Map(), bTwins = new Map(); // source mesh → twin (a building's: [mask, rim])
   // A twin material for a skinned mesh is its own copy: one material drawn on both skinned and plain meshes has its
   // shader program swapped (re-set up) at every change between them.
   const skinnedCopies = new WeakMap();
@@ -5751,7 +5775,10 @@ gl_Position = projectionMatrix * mvPosition;`;
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, ...o }); x.onBeforeCompile = function(){}; x.onBeforeCompile.fow = true; return x; };
       xray.userData = { mask: m({ colorWrite: false, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }), rim: new Map(),
         rimOf: t => { let r = xray.userData.rim.get(t); if (!r) { xray.userData.rim.set(t, r = screenHull(m({ color: teamColor(t), side: THREE.BackSide, stencilFunc: THREE.NotEqualStencilFunc }), HULL * 2, 2.4));
-          r.onBeforeCompile.fow = true; } return r; } }; // the ink shell pushed wider: a rim ~1px outside the ink
+          r.onBeforeCompile.fow = true; } return r; }, // the ink shell pushed wider: a rim ~1px outside the ink
+        maskB: m({ colorWrite: false, stencilRef: 2, side: THREE.DoubleSide, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }), rimB: new Map(),
+        rimBOf: t => { let r = xray.userData.rimB.get(t); if (!r) { xray.userData.rimB.set(t, r = screenHull(m({ color: t === 'bad' ? '#ff3020' : teamColor(t), stencilRef: 2, side: THREE.DoubleSide, stencilFunc: THREE.NotEqualStencilFunc }), HULL * 2.5, 3));
+          r.onBeforeCompile.fow = true; } return r; } };
     }
     const on = world && mode !== 'eye';   // (not through the eyes: team rims through every wall and tree would crowd a first-person view)
     xray.visible = on;
@@ -5792,6 +5819,37 @@ gl_Position = projectionMatrix * mvPosition;`;
         });
       }
     }
+    // A building behind tree crowns: the same rim, round its whole shape (its own surfaces pushed out, as the selection
+    // outline's). Drawn before the units' twins, on its own stencil value: a unit's rim still shows over it.
+    const usedB = new Set();
+    if (on) {
+      const M = xray.userData, cam = camera.position;
+      const crowned = (x, z) => { const dx = cam.x - x, dz = cam.z - z, dh = Math.hypot(dx, dz) || 1;
+        for (let s = 0.5; s <= 2.5; s += 0.5) { const px = x + dx / dh * s, pz = z + dz / dh * s, ty = Math.floor(pz), tx = Math.floor(px), t = map[ty] && map[ty][tx];
+          if (t && t.t === TERRAIN.FOREST && t.res > 60 && fog[ty][tx] && 0.3 + (cam.y - 0.3) * s / dh < TREE_H + CROWN_R * 1.2) return true; }
+        return false; };
+      const twin = (o, i, mat, geo) => { let pr = bTwins.get(o); if (!pr) bTwins.set(o, pr = []);
+        let t = pr[i];
+        if (!t || t.geometry !== geo) { if (t) xray.remove(t); t = new THREE.Mesh(geo, mat); t.matrixAutoUpdate = false; t.matrixWorldAutoUpdate = false; t.frustumCulled = false; t.renderOrder = i - 2; pr[i] = t; xray.add(t); }
+        t.material = mat; t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld); t.visible = true; };
+      for (const rec of solids.values()) {
+        const b = rec.obj && rec.obj.visible && rec.obj.userData.bid != null ? entitiesById.get(rec.obj.userData.bid) : null; if (!b) continue;
+        let hid = false; for (let y = 0; y < b.h && !hid; y++) for (let x = 0; x < b.w && !hid; x++) hid = crowned(b.x + x + 0.5, b.y + y + 0.5);
+        if (!hid) continue;
+        rec.obj.updateWorldMatrix(true, true);
+        rec.obj.traverseVisible(o => {
+          if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || !o.geometry.attributes.position) return;
+          twin(o, 0, M.maskB, o.geometry);
+          if (!(o.material && o.material.side === THREE.BackSide)) twin(o, 1, M.rimBOf(b.team), smoothNormals(o.geometry));
+          usedB.add(o);
+        });
+      }
+      // …and the piece being placed (a piece that can't go there: red, as its ghost)
+      if (ghost && ghost.g.visible) { ghost.g.updateWorldMatrix(true, true);
+        ghost.g.traverseVisible(o => { if (!o.isMesh || !o.geometry.attributes.position) return;
+          twin(o, 0, M.maskB, o.geometry); twin(o, 1, M.rimBOf(o.userData.ghostBad ? 'bad' : myTeam), smoothNormals(o.geometry)); usedB.add(o); }); }
+    }
+    for (const [o, pr] of bTwins) if (!usedB.has(o)) { for (const t of pr) if (t) xray.remove(t); bTwins.delete(o); }
     // unused: hidden, and dropped only after a while (a unit swapping rigs, or passing behind a building now and then,
     // would otherwise rebuild its twins each time)
     for (const [o, t] of xTwins) if (!used.has(o)) { t.visible = false; if (++t.userData.idle > 120) { xray.remove(t); xTwins.delete(o); } }
@@ -5880,14 +5938,14 @@ gl_Position = projectionMatrix * mvPosition;`;
         g.position.set(p.x, 0, p.y); parts.push([g, ok]);
       }
       // see-through in its own colours (2D: the art at 55%); outline shells hidden, a see-through part would show them
-      const RED = new THREE.Color('#ff3020');
+      const RED = new THREE.Color('#ff3020'), level = standsLevel({ type: 'building', btype: placing }) ? { value: new THREE.Vector2(pieces[0].x + pieces[0].w / 2, pieces[0].y + pieces[0].h / 2) } : null;
       for (const [part, good] of parts) part.traverse(o => {
         if (o.isMesh && HULL_MATS.has(o.material)) { o.visible = false; return; }
         if (!o.material) return;
         const own = m => { const c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; c.transparent = true; c.opacity = o.isMesh ? 0.7 : 0.35;
-          if (!good && c.color) c.color.lerp(RED, 0.65); return c; };
+          if (!good && c.color) c.color.lerp(RED, 0.65); return level ? levelMat(c, level) : c; };
         o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
-        o.userData.ghostOwn = true; o.renderOrder = 5;
+        o.userData.ghostOwn = true; o.userData.ghostBad = !good; o.renderOrder = 5;
       });
       scene.add(g); ghost = { g, key };
     }

@@ -1252,14 +1252,17 @@ function ensureElevation(){
   let sig = 0; for (let i = 0; i < entities.length; i++) { const b = entities[i]; if (b.type === 'building') sig = (sig * 31 + b.id + 1) | 0; }
   if (sig === elevSig) return;
   elevSig = sig; elevRev++; elev.set(elevBase);
-  // Each building stands on a level pad, graded back into the hill over ELEV_SKIRT tiles (a sheer step beside it would
-  // bend whatever walks past). The skirts go down first, so no pad is tilted by a neighbour's.
-  const n = MAP + 1, R = ELEV_SKIRT;
+  // Each building stands on a level pad — its footprint, and (all but level) the ring of corners round it: its art
+  // overhangs its tiles, and a slope there would bury its uphill side — graded back into the hill over ELEV_SKIRT
+  // tiles (a sheer step beside it would bend whatever walks past). Where skirts overlap, each pulls by how near its
+  // pad is (weight (R+1-d)/d against the hill's 1): one building's skirt is a straight grade, and neighbours on
+  // different levels meet without a step.
+  const n = MAP + 1, R = ELEV_SKIRT, sw = new Float32Array(n * n), sl = new Float32Array(n * n);
   for (let pass = 0; pass < 2; pass++) for (let i = 0; i < entities.length; i++) { const b = entities[i]; if (b.type !== 'building' || isWallBtype(b.btype)) continue;   // (a wall follows the slope)
-    const w = b.w || 1, h = b.h || 1, lv = elevSample(elevBase, b.x + w / 2, b.y + h / 2), r = pass ? 0 : R;
+    const w = b.w || 1, h = b.h || 1, lv = elevSample(elevBase, b.x + w / 2, b.y + h / 2), r = pass ? 0 : R + 1;
     for (let y = Math.max(0, b.y - r); y <= b.y + h + r && y < n; y++) for (let x = Math.max(0, b.x - r); x <= b.x + w + r && x < n; x++) {
       const d = Math.max(b.x - x, x - b.x - w, b.y - y, y - b.y - h, 0), j = y * n + x;   // corners out from the pad
-      if (pass) elev[j] = lv; else if (d > 0) elev[j] = lv + (elev[j] - lv) * d / (R + 1); } }
+      if (pass) elev[j] = lv; else if (d > 0) { const dd = Math.max(d - 1, 0.05), k = (R + 1 - dd) / dd; sw[j] += k; sl[j] += k * lv; elev[j] = (sl[j] + elevBase[j]) / (sw[j] + 1); } } }
 }
 let nextProjectileId = 1;
 
