@@ -176,7 +176,6 @@ document.body.insertAdjacentHTML('afterbegin', `
 </div>
 <div id="pop-wrap">
   <div id="chat-btn" onclick="openChatInput()" style="display:none;" data-tip-label="Chat" data-tip-desc="Send a message to your opponent."><span class="btn-emoji">💬</span></div>
-  <div id="view-btn" style="display:none;" onclick="viewBtnClick()"><span class="btn-emoji"></span></div>
   <div id="idle-btn" style="display:none;" onclick="selectIdleVillager()"><span class="btn-emoji sprite-icon icon-idle"></span></div>
   <div id="bell-btn" style="display:none;" onclick="toggleTownBell()"><span class="btn-emoji sprite-icon icon-bell"></span></div>
   <div id="eye-btn" style="display:none;" onclick="eyeBtnClick()"></div>
@@ -205,6 +204,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 </div>
 <div id="minimap-wrap"><canvas id="minimap"></canvas></div>
 <div id="menu-btn" onclick="toggleMenu()" data-tip-label="Menu" data-tip-desc="Pause the game and open settings."><span class="btn-emoji">☰</span></div>
+<div id="view-btn" style="display:none;" onclick="viewBtnClick()"><span class="btn-emoji"></span></div>
 <div id="fs-btn" onclick="toggleFullscreen()" data-tip-label="Fullscreen" data-tip-desc="Enter or exit fullscreen mode."><span class="btn-emoji">⛶</span></div>
 <div id="msg"></div>
 <div id="dragon-timer" style="display:none;" onclick="dragonTimerClick()"><span id="dragon-timer-text"></span><div id="dragon-timer-bar"><div id="dragon-timer-fill"></div></div></div>

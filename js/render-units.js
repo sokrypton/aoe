@@ -2822,7 +2822,8 @@ function dragonAnim(e, a, dt){
   // footfalls: each leg's touchdown (its stride phase wrapping) sinks the body and rolls it
   const ev = { steps: [], slam: false, snore: false, smoke: false };
   for (let i = 0; i < 4; i++) { const q = dragonStride(a.phase, i).q;
-    if (g > 0.5 && q < D.q[i] - Math.PI) { kick('sink', -0.95); kick('roll', (i % 2 ? 1 : -1) * 0.42); kick('pitch', i >= 2 ? -0.32 : 0.22); ev.steps.push(i); }
+    // (aloft no foot lands: no thud, no dust, no jolt)
+    if (g > 0.5 && fly < 0.2 && q < D.q[i] - Math.PI) { kick('sink', -0.95); kick('roll', (i % 2 ? 1 : -1) * 0.42); kick('pitch', i >= 2 ? -0.32 : 0.22); ev.steps.push(i); }
     D.q[i] = q; }
   if (D.lastRo !== undefined && D.lastRo < 0.74 && ro >= 0.74) { kick('sink', -1.6); kick('pitch', -0.6); kick('tailZ1', 1.4); kick('tailZ2', 2); ev.slam = true; } // the slam (the tail bounces)
   D.lastRo = ro;
