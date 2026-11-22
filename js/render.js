@@ -208,12 +208,12 @@ function buildingCenterScreen(b){
   return flagScreen(c.x, c.y);
 }
 
-// Units shown in the shroud — an ally's there, the dragon asleep in a found lair — belong to the layer UNDER the fog
+// Units shown in the shroud — an ally's there — belong to the layer UNDER the fog
 // overlay, with the fogged tiles' ore and bushes (drawGround lays the overlay over them all): dimmed by the same
 // veil as the ground they stand on. Not one aloft: that flies over everything, in the main pass.
 function unitUnderFog(e){
   if (e.type !== 'unit' || e.garrisonedIn || window.fogDisabled || window.seeMapMode || dragonAloft(e)) return false;
-  const row = fog[Math.round(e.y)]; return !!row && row[Math.round(e.x)] === 1 && (sameSide(e.team, myTeam) || dragonSeenByAll(e));
+  const row = fog[Math.round(e.y)]; return !!row && row[Math.round(e.x)] === 1 && sameSide(e.team, myTeam);
 }
 function drawFoggedUnits(minX, maxX, minY, maxY){
   let list = null;

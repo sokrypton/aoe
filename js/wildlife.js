@@ -156,13 +156,9 @@ const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                         
 const DRAGON_FEED_R=4, DRAGON_RIDE=T30(3600), DRAGON_REST=T30(5400), DRAGON_FLY=3/TPS, DRAGON_FLY_TURN=(Math.PI*0.9)/TPS, DRAGON_GLIDE=1.5;
 // Real seconds of its ride left (the HUD countdown).
 function dragonRideSeconds(e){ return Math.max(0, Math.ceil(e.rideLeft / TPS / GAME_SPEED)); }
-// Shown to the viewer through the fog (viewer-side only: the sim's sight is unchanged): flying home after a ride — to
-// everyone — and asleep in a lair the viewer has found: a landmark, so a sheep can be sent at it from afar.
-function dragonSeenByAll(e){
-  if(e.utype!=='dragon')return false;
-  if(e.homing)return true;
-  let row=fog[Math.round(e.y)]; return !e.awake&&e.rideLeft===undefined&&!!row&&row[Math.round(e.x)]>=1;
-}
+// Flying home after a ride it is shown to every viewer through the fog (viewer-side only: the sim's sight is
+// unchanged). Otherwise it is hidden by fog like any unit.
+function dragonSeenByAll(e){ return e.utype==='dragon'&&!!e.homing; }
 function dragonAloft(e){ return e.utype==='dragon'&&(e.rideLeft!==undefined||!!e.homing); }
 // The sheep offered to it, if any: the lowest-id live sheep a player has SENT at it (offerTo: execUnitCommand) that has
 // come within DRAGON_FEED_R of it (entities are in id order) — one merely grazing by is left alone. Asleep or awake, so long as it is on the ground and whole; resting after a ride, it says so and waits.
