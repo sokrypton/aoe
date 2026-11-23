@@ -489,7 +489,10 @@ gl_Position = projectionMatrix * mvPosition;`;
   function wallArms(e, at, shared){
     const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, arms = [], gate = isGateBtype(e.btype);
     // (the 2D's rules — wallRung, wallDiag, render-buildings.js: no rungs inside a doubled wall, corner-to-corner joins)
+    // (the layout goes by every piece there, finished or going up — render-buildings.js: founding a piece changes the
+    // wall at once, and nothing changes when it is done)
     const like = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && isWallLike(n); };
+    const going = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && isWallLike(n) && !n.complete; };
     // (mid-run — wallBare — a piece has no post: its slabs run to its centre, and its neighbours' to it)
     const bareAt = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && wallPostless(n, like); };
     // (a corner the wall wraps round — wallCorner: no post; the slab along x runs on through the corner, the one along
@@ -503,8 +506,16 @@ gl_Position = projectionMatrix * mvPosition;`;
         const n = at(fx + dx, fy + dy), back = dx && dy ? dx < 0 : dx + dy < 0;
         if (!n || n === e || n.id === e.id || n.team !== e.team || !isWallLike(n)) continue;
         if (dx && dy ? gate || isGateBtype(n.btype) || !wallDiag(like, fx, fy, dx, dy) : back ? wallRung(like, fx + dx, fy + dy, -dx, -dy) : wallRung(like, fx, fy, dx, dy)) continue;
-        if (back && shared(n)) continue;
-        arms.push(fx, fy, dx, dy, endAt(fx, fy, dx, e), endAt(fx + dx, fy + dy, dx, n));
+        // A section belongs to ONE of its two pieces, and rises with it (a site's model rises by its cut — constructionSite):
+        // the LESS built of the two, so it stands no higher than either and is never taken down to be put up again;
+        // equally built (both done, or neither begun), the piece it runs forward from — or this one, if the other
+        // draws none (shared: a tower).
+        const pg = p => p.complete ? 1 : Math.max(0, Math.min(1, (p.buildProgress || 0) / (p.buildTime || 1))), pe = pg(e), pn = pg(n);
+        if (shared(n) && (pe > pn || (pe === pn && back))) continue;
+        const rise = 1;
+        // (a finished section that would run on into one still going up ends flush there, its end face kept: FLUSH)
+        const FLUSH = -1e-3, o1 = endAt(fx, fy, dx, e), o2 = endAt(fx + dx, fy + dy, dx, n);
+        arms.push(fx, fy, dx, dy, !o1 && e.complete && going(fx - dx, fy - dy) ? FLUSH : o1, !o2 && e.complete && going(fx + 2 * dx, fy + 2 * dy) ? FLUSH : o2, rise);
       }
     }
     arms.turned = !gate && isWallBtype(e.btype) && wallTurned(like, e.x, e.y);   // (a post in a diagonal run stands square to it)
@@ -524,8 +535,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     const g = new THREE.Group(), body = stone ? '#cfc8b6|wall' : WOOD.L + '|stakes';
     const pw = (stone ? 9 : 7) / 32, T = pw, linkH = 14 / HPX * k; // links as thick as the pillars (drawWallLink thick = pw/2 px each side)
     // A link from this pillar's face to the neighbor's (half-widths o1, o2): a slab with a team top.
-    for (let i = 0; i < arms.length; i += 6) {
-      const [fx, fy, dx, dy, o1, o2] = arms.slice(i, i + 6), cx = fx + 0.5, cz = fy + 0.5;
+    const fullH = linkH;
+    for (let i = 0; i < arms.length; i += 7) {
+      const [fx, fy, dx, dy, o1, o2, rise] = arms.slice(i, i + 7), cx = fx + 0.5, cz = fy + 0.5, linkH = fullH * rise;
       if (dx && dy) {   // corner to corner: the same slab, turned
         const m = boxAt(g, topped(body, tc), -(Math.SQRT2 - o1 - o2) / 2, -T / 2, (Math.SQRT2 - o1 - o2) / 2, T / 2, 0, linkH, 'hull'), mid = (o1 + Math.SQRT2 - o2) / 2 / Math.SQRT2;
         m.position.x = cx + dx * mid; m.position.z = cz + dy * mid; m.rotation.y = -Math.atan2(dy, dx); continue; }
@@ -533,9 +545,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       const a0 = o1 || -0.02, a1 = 1 - (o2 || -0.02);
       const x0 = dx ? Math.min(cx + dx * a0, cx + dx * a1) : cx - T / 2, x1 = dx ? Math.max(cx + dx * a0, cx + dx * a1) : cx + T / 2;
       const z0 = dy ? Math.min(cz + dy * a0, cz + dy * a1) : cz - T / 2, z1 = dy ? Math.max(cz + dy * a0, cz + dy * a1) : cz + T / 2;
-      const slab = boxAt(g, topped(body, tc), x0, z0, x1, z1, 0, linkH, 'hull'); softEdges(g, x0, z0, x1, z1, 0, linkH, dx ? 'x' : 'z');
+      const slab = boxAt(g, topped(body, tc), x0, z0, x1, z1, 0, linkH, 'hull'); slab.userData.arm = true;   // (a gate's selection outline leaves these out: updateSelection) softEdges(g, x0, z0, x1, z1, 0, linkH, dx ? 'x' : 'z');
       // a lapped end has no end face: lying in the next slab, its top edge on that slab's walkway showed as a pale dashed line
-      if (!o1 || !o2) { const far = dx + dy > 0 ? 0 : 1, f = dx ? 0 : 4; slab.material = slab.material.slice();
+      if ((!o1 || !o2) && e.complete) { const far = dx + dy > 0 ? 0 : 1, f = dx ? 0 : 4; slab.material = slab.material.slice();
         if (!o1) slab.material[f + 1 - far] = noFace; if (!o2) slab.material[f + far] = noFace; }
     }
     if (!gate) {
@@ -6024,7 +6036,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         const shell = o.material && o.material.side === THREE.BackSide;
         if (shell && !bld) { twin(o, 0, M.maskInk, o.geometry); twin(o, 1, M.rimU, o.geometry); }  // a unit's ink shell: its ink marked, the rim pushed wider
         else if (shell) twin(o, 0, M.mask, o.geometry);                                                  // a building's ink shell: marked (the rim starts past it)
-        else { twin(o, 0, M.mask, o.geometry); if (bld) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
+        // (a gate's wall sections are the adjoining run's, not the gate: marked — no rim across them — but not outlined)
+        else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype))) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
         used.add(o);
       });
     }

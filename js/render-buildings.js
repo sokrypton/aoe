@@ -638,6 +638,16 @@ function isWallLike(b, mat){
 // joined double-wall corner reads better than a broken ring.) Shared by WALL,
 // TOWER, PTOWER and GATE — every structure that draws these link stubs.
 function _wlLike(tx, ty){ return isWallLike(getConnectedBuilding(tx, ty)); }
+// THE LAYOUT — which pieces join, which have a post — goes by every piece there, finished or going up: founding a
+// piece changes the wall at once (the end post it will replace comes down, the new part starts from the ground), and
+// nothing changes when it is done. Only the new part's HEIGHT follows its construction (wlRise).
+// A wall section rises with the pieces it joins: the fraction of its height it stands at between (x, y) and
+// (x2, y2) — the less built of the two (in eighths: a finished neighbour's art is baked on it), from a board on the
+// ground the moment the piece is founded: the section is laid with it, not added when it is done.
+function wlRise(x, y, x2, y2){
+  const pr = b => !b || b.complete || window._ghostDraw ? 1 : Math.max(1, Math.ceil(Math.max(0, Math.min(1, (b.buildProgress || 0) / (b.buildTime || 1))) * 8)) / 8;
+  return Math.min(pr(getConnectedBuilding(x, y)), pr(getConnectedBuilding(x2, y2)));
+}
 // Whether to draw a piece's link stubs toward its neighbours this pass.
 // In a SELECTION OUTLINE, only a WALL keeps its stubs: they're part of the wall
 // (clicking a stub selects that wall, so the highlight must match what you
@@ -656,7 +666,12 @@ function drawsWallStubs(e){
 // squares of pieces share (one on each side of it). So a doubled wall is two rails closed at its ends (one thick
 // wall, not a ladder), a ring inside a ring stays two rings, and a staircase, a corner, a T and a 2x2 block keep
 // every join.
+// OFF (WALL_RUNGS): every side-by-side pair joins. Dropping rungs made the joins depend on pieces two tiles away, so a
+// wall going up or coming down re-linked the walls round it; joined to everything, a join changes only with its own
+// two pieces.
+const WALL_RUNGS = false;
 function wallRung(like, x, y, dx, dy){
+  if (!WALL_RUNGS) return false;
   const px = dy, py = dx;   // across the link: along the rails
   return like(x-px, y-py) && like(x+px, y+py) && like(x+dx-px, y+dy-py) && like(x+dx+px, y+dy+py);
 }
@@ -778,7 +793,7 @@ function wallPiece(x, y, mat){
   const sMit = [wallMitre(x, y, 0, 1), wallMitre(x, y + 1, 0, 1)], eMit = [wallMitre(x, y, 1, 0), wallMitre(x + 1, y, 1, 0)];
   const corner = !!wallCorner(getConnectedBuilding(x, y), _wlLike);
   const gatePost = wallIsGatePost(x, y), bare = _wlBare(x, y) || corner;
-  const sEnd = _wlBare(x, y + 1) || sMit[1] ? 0 : d1, eEnd = _wlBare(x + 1, y) || eMit[1] ? 0 : d1;
+  const sEnd = _wlBare(x, y + 1) || sMit[1] ? 1 : 0, eEnd = _wlBare(x + 1, y) || eMit[1] ? 1 : 0;   // (1: the far piece is post-less)
   // (a turned post is as wide as its slab is thick: hw across the screen, hd deep; a diagonal slab ends at the post's
   // side — its own, turned or not, and the neighbour's)
   const turned = _wlTurned(x, y), hw = lthick * Math.SQRT2, hd = lthick * Math.SQRT1_2;
@@ -797,7 +812,12 @@ function wallPiece(x, y, mat){
     if (!isGateBtype(n.btype)) return true;
     const len = Math.max(n.w || 1, n.h || 1), i = (n.w || 1) >= (n.h || 1) ? x + dx - n.x : y + dy - n.y;   // (a gate: only its post tiles send a slab)
     return wallMatOf(n) !== 'wood' && (i === 0 || i === len - 1); });
+  const sH = wallH * wlRise(x, y, x, y + 1), eH = wallH * wlRise(x, y, x + 1, y);   // (a section rises with the pieces it joins)
+  // (a section that runs on into the next, post-less — trim 0 — has no end line; one meeting a section of another
+  // HEIGHT there, still going up, ends flush with its end drawn: FLUSH)
+  const FLUSH = 0.01, runOn = (h, x1, y1, x2, y2) => wallH * wlRise(x1, y1, x2, y2) === h ? 0 : FLUSH;
   const art = (sx, sy, tc, darken, lift, pillar = true, links = true, only = null) => {
+    const cap = tc;
     const pcy = sy + 20 - pw / 2;   // the post's centre, on the ground
     // (a plain post above the wall's height, at ox along the screen: the part of it a slab can't be drawn over)
     const postCut = ox => { const P = (px, py, h) => [sx + ox + px, pcy + py - h - (lift ? lift(ox + px, py) : 0)];
@@ -805,9 +825,9 @@ function wallPiece(x, y, mat){
     const diag = draw => { X.save(); X.beginPath(); X.rect(sx - 300, sy - 300, 600, 600); if (plain) postCut(0); if (nePost) postCut(64); X.clip('evenodd'); draw(); X.restore(); };
     const to = (dx, dy) => !only || (only[0] === dx && only[1] === dy);
     if (pillar && (gatePost || bare)) {}   // (the gate's own post stands here; mid-run: none)
-    else if (pillar && turned) drawWallPostTurned(sx, pcy, hw, hd, pillarH, mixHex(pf[0], pf[1]), tc, darken, lift);
-    else if (pillar && lift) drawWallPost(sx, sy+20-pw/2, pw, pillarH, pf[0], pf[1], tc, darken, lift);
-    else if (pillar) drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, tc, tc, darken, false, !isWood);
+    else if (pillar && turned) drawWallPostTurned(sx, pcy, hw, hd, pillarH, mixHex(pf[0], pf[1]), cap, darken, lift);
+    else if (pillar && lift) drawWallPost(sx, sy+20-pw/2, pw, pillarH, pf[0], pf[1], cap, darken, lift);
+    else if (pillar) drawBuildingBlock(sx, sy+20-pw, pw, pw/2, pillarH, pf[0], pf[1], 'flat', 0, cap, cap, darken, false, !isWood);
     if (pillar && !isWood && !gatePost && !bare && !turned) drawPostMasonry(sx, pcy, pw, pillarH, lift);
     if (pillar) for (const [dx, dy, ox, oy, ex] of backs) {
       // (clipped to the post's edge the slab's face meets, below the walkway: ex along the screen from the post's centre)
@@ -822,11 +842,11 @@ function wallPiece(x, y, mat){
     // (stone, leaving its own plain post: the slab's face and the post's are one wall — no line between them)
     // …unless BOTH leave it: their two faces meet in front of the post, in a corner that keeps its line
     const flush = !isWood && plain && !(sLink && eLink);
-    if (sLink && to(0, 1)) drawWallLink(sx, sy + 15.5, -32, 16, wallH, darken, bare ? 0 : d1, sEnd, null, tc, lthick, false, mat, lift, sMit, flush);
-    if (eLink && to(1, 0)) drawWallLink(sx, sy + 15.5, 32, 16, wallH, darken, bare ? 0 : d1, eEnd, null, tc, lthick, false, mat, lift, eMit, flush);
+    if (sLink && to(0, 1)) drawWallLink(sx, sy + 15.5, -32, 16, sH, darken, bare ? runOn(sH, x, y - 1, x, y) : d1, sEnd ? runOn(sH, x, y + 1, x, y + 2) : d1, null, tc, lthick, false, mat, lift, sMit, flush);
+    if (eLink && to(1, 0)) drawWallLink(sx, sy + 15.5, 32, 16, eH, darken, bare ? runOn(eH, x - 1, y, x, y) : d1, eEnd ? runOn(eH, x + 1, y, x + 2, y) : d1, null, tc, lthick, false, mat, lift, eMit, flush);
     if (seLink && to(1, 1)) diag(() => drawWallLink(sx, pcy, 0, 32, wallH, darken, bare ? 0 : gatePost ? GP_D : turned ? hd : sePlain, seEnd, null, tc, lthick, false, mat, lift));
   };
-  return { art, neLink, seLink, key: (sLink ? 1 : 0) + '' + (eLink ? 1 : 0) + (neLink ? 1 : 0) + (seLink ? 1 : 0) + (turned ? 1 : 0) + (gatePost ? 1 : 0) + (bare ? 1 : 0) + (nePost ? 1 : 0) + neEnd + seEnd + sEnd + eEnd + sMit + eMit + backs.map(b => '|' + b[0]).join('') };
+  return { art, neLink, seLink, key: (sLink ? 1 : 0) + '' + (eLink ? 1 : 0) + (neLink ? 1 : 0) + (seLink ? 1 : 0) + (turned ? 1 : 0) + (gatePost ? 1 : 0) + (bare ? 1 : 0) + (nePost ? 1 : 0) + neEnd + seEnd + sEnd + eEnd + sMit + eMit + '|' + sH + ',' + eH + ',' + [runOn(sH, x, y - 1, x, y), runOn(sH, x, y + 1, x, y + 2), runOn(eH, x - 1, y, x, y), runOn(eH, x + 1, y, x + 2, y)] + backs.map(b => '|' + b[0]).join('') };
 }
 // One merlon block: two wall faces + a two-tone cap. Hard-outlined on
 // sides and tops, but the BOTTOM seam gets the light course-line stroke
@@ -2137,14 +2157,14 @@ function drawBuilding(e, part = null){
     let sN = getConnectedBuilding(e.x, e.y + 1);
     if (isWallLike(sN) && !wallSouthRung(e.x, e.y)) {
       let m2 = wallMatOf(sN) || 'wood', lt2 = m2!=='wood'?4.5:3.5;
-      drawWallLink(sx, linkY - 0.5, -32, 16, wallH, darken, 8, _wlBare(e.x, e.y + 1) ? 0 : m2!=='wood'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2, wallLift(e.x, e.y));
+      drawWallLink(sx, linkY - 0.5, -32, 16, wallH * wlRise(e.x, e.y, e.x, e.y + 1), darken, 8, _wlBare(e.x, e.y + 1) ? 0 : m2!=='wood'?5:lt2*Math.sqrt(5)/2, null, tc, lt2, false, m2, wallLift(e.x, e.y));
     }
 
     // East neighbor (x+1)
     let eN = getConnectedBuilding(e.x + 1, e.y);
     if (isWallLike(eN) && !wallEastRung(e.x, e.y)) {
       let m3 = wallMatOf(eN) || 'wood', lt3 = m3!=='wood'?4.5:3.5;
-      drawWallLink(sx, linkY - 0.5, 32, 16, wallH, darken, 8, _wlBare(e.x + 1, e.y) ? 0 : m3!=='wood'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3, wallLift(e.x, e.y));
+      drawWallLink(sx, linkY - 0.5, 32, 16, wallH * wlRise(e.x, e.y, e.x + 1, e.y), darken, 8, _wlBare(e.x + 1, e.y) ? 0 : m3!=='wood'?5:lt3*Math.sqrt(5)/2, null, tc, lt3, false, m3, wallLift(e.x, e.y));
     }
     for (const [ddx, ddy, ox, oy] of WALL_DIAGS) if (wallDiag(_wlLike, e.x, e.y, ddx, ddy)) {
       let m4 = wallMatOf(getConnectedBuilding(e.x + ddx, e.y + ddy)) || 'wood', lt4 = m4!=='wood'?4.5:3.5;
@@ -2243,12 +2263,12 @@ function drawBuilding(e, part = null){
       if (wallLineNS) {
         // N-S Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes East (x+1).
         if (_wlLike(e.x + 1, e.y) && !wallEastRung(e.x, e.y)) {
-          drawWallLink(t1sx, t1sy - 0.5, 32, 16, wallH, darken, 5, _wlBare(e.x + 1, e.y) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
+          drawWallLink(t1sx, t1sy - 0.5, 32, 16, wallH * wlRise(e.x, e.y, e.x + 1, e.y), darken, 5, _wlBare(e.x + 1, e.y) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
         }
       } else {
         // E-W Gate: Post 1 is at (e.x, e.y). Perpendicular connection goes South (y+1).
         if (_wlLike(e.x, e.y + 1) && !wallSouthRung(e.x, e.y)) {
-          drawWallLink(t1sx, t1sy - 0.5, -32, 16, wallH, darken, 5, _wlBare(e.x, e.y + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
+          drawWallLink(t1sx, t1sy - 0.5, -32, 16, wallH * wlRise(e.x, e.y, e.x, e.y + 1), darken, 5, _wlBare(e.x, e.y + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y));
         }
       }
       }
@@ -2296,20 +2316,20 @@ function drawBuilding(e, part = null){
       if (wallLineNS) {
         // N-S Gate: Post 2 is the far post at (e.x, e.y+n-1). Parallel goes
         // South (y+n), Perpendicular goes East (x+1, y+n-1).
-        if (isWallLike(getConnectedBuilding(e.x, e.y + n))) {
-          drawWallLink(t2sx, t2sy - 0.5, -32, 16, wallH, darken, 8, _wlBare(e.x, e.y + n - 1 + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
+        if (_wlLike(e.x, e.y + n)) {
+          drawWallLink(t2sx, t2sy - 0.5, -32, 16, wallH * wlRise(e.x, e.y + n - 1, e.x, e.y + n - 1 + 1), darken, 8, _wlBare(e.x, e.y + n - 1 + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
         }
         if (_wlLike(e.x + 1, e.y + n - 1) && !wallEastRung(e.x, e.y + n - 1)) {
-          drawWallLink(t2sx, t2sy - 0.5, 32, 16, wallH, darken, 8, _wlBare(e.x + 1, e.y + n - 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
+          drawWallLink(t2sx, t2sy - 0.5, 32, 16, wallH * wlRise(e.x, e.y + n - 1, e.x + 1, e.y + n - 1), darken, 8, _wlBare(e.x + 1, e.y + n - 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x, e.y + n - 1));
         }
       } else {
         // E-W Gate: Post 2 is the far post at (e.x+n-1, e.y). Parallel goes
         // East (x+n, y), Perpendicular goes South (x+n-1, y+1).
-        if (isWallLike(getConnectedBuilding(e.x + n, e.y))) {
-          drawWallLink(t2sx, t2sy - 0.5, 32, 16, wallH, darken, 8, _wlBare(e.x + n - 1 + 1, e.y) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
+        if (_wlLike(e.x + n, e.y)) {
+          drawWallLink(t2sx, t2sy - 0.5, 32, 16, wallH * wlRise(e.x + n - 1, e.y, e.x + n - 1 + 1, e.y), darken, 8, _wlBare(e.x + n - 1 + 1, e.y) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
         }
         if (_wlLike(e.x + n - 1, e.y + 1) && !wallSouthRung(e.x + n - 1, e.y)) {
-          drawWallLink(t2sx, t2sy - 0.5, -32, 16, wallH, darken, 8, _wlBare(e.x + n - 1, e.y + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
+          drawWallLink(t2sx, t2sy - 0.5, -32, 16, wallH * wlRise(e.x + n - 1, e.y, e.x + n - 1, e.y + 1), darken, 8, _wlBare(e.x + n - 1, e.y + 1) ? 0 : dEnd, null, tc, lth, false, mat, wallLift(e.x + n - 1, e.y));
         }
       }
       } // end stubs (skipped for 'body')

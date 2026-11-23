@@ -517,8 +517,11 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   // 3. End cap face — closes the cut end exposed when d1/d2 trims the
   // link back from its endpoint (e.g. the gate door not reaching its post).
-  if (capNear || (edgeOn && d2 !== 0)) {
-    X.fillStyle = fillL;
+  // (…and a section ending flush at a lower one, still going up — d2 a hair, wallPiece's FLUSH: its end stands open to
+  // the viewer, in the shade of the face that looks that way)
+  const flushEnd2 = d2 > 0 && d2 < 0.1 && !edgeOn;
+  if (capNear || flushEnd2 || (edgeOn && d2 !== 0)) {
+    X.fillStyle = flushEnd2 && !colorL ? (darken ? darkenColor(isAlongIsoY ? pal.b : pal.a) : isAlongIsoY ? pal.b : pal.a) : fillL;
     X.beginPath(); to(Q(t1, -1, 0), true); to(Q(t1, 1, 0)); to(Q(t1, 1, wallH)); to(Q(t1, -1, wallH));
     X.closePath(); X.fill(); X.stroke();
   }
