@@ -3771,7 +3771,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     for (const o of lift) { hold.attach(o); bakeRigid(o); }                       // (a moving part merged too, round its own pivots: a horse's neck, head, tail)
-    const baked = bakePose(g);
+    const baked = bakePose(g, true);
     g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
     for (const c of g.children.slice()) g.remove(c);
     for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; g.add(c); } // (own: dropSolid frees it)
@@ -4281,16 +4281,23 @@ gl_Position = projectionMatrix * mvPosition;`;
   // A match's start (its first frames, behind the fade): every kind of building is made once as a site and once
   // damaged, and thrown away — the first of a kind is the costly one (its walls' slabs are cut, then kept by shape:
   // thickGeo; its shaders compiled), and it would otherwise be met mid-battle, the frame a building is first hit.
+  // …and again for an age a team reaches (its buildings change shape), one kind a frame (warmStep): all at once it
+  // would be the stall it is there to prevent.
+  const warmQueue = [], warmedAges = new Set();
   function prewarmShapes(){
-    for (const btype in MODELS) { const b = BLDGS[btype]; if (!b || isWallBtype(btype) || isGateBtype(btype) || btype === 'FARM') continue;
-      for (const hurt of [false, true]) {
-        const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: myTeam, complete: hurt, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
-        try { const g = new THREE.Group(); MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g);
-          const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
-          const done = () => dropSolid(rec);
-          if (renderer.compileAsync) renderer.compileAsync(g, camera, scene).then(done, done); else done();
-        } catch (err) { /* a warm-up only */ }
-      } }
+    for (let t = 0; t < NUM_TEAMS; t++) { const age = (teamAge && teamAge[t]) || 0; if (warmedAges.has(age)) continue; warmedAges.add(age);
+      for (const btype in MODELS) { const b = BLDGS[btype]; if (!b || isWallBtype(btype) || isGateBtype(btype) || btype === 'FARM') continue;
+        for (const hurt of [false, true]) warmQueue.push({ btype, hurt, team: t, age }); } }
+  }
+  function warmStep(){
+    const q = warmQueue.shift(); if (!q || ((teamAge && teamAge[q.team]) || 0) !== q.age) return;
+    const { btype, hurt } = q, b = BLDGS[btype];
+    const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: q.team, complete: hurt, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
+    try { const g = new THREE.Group(); MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g);
+      const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
+      const done = () => dropSolid(rec);
+      if (renderer.compileAsync) renderer.compileAsync(g, camera, scene).then(done, done); else done();
+    } catch (err) { /* a warm-up only */ }
   }
   function refreshBuildings(){
     const seen = new Set(), make = e => { if (isWallBtype(e.btype) || isGateBtype(e.btype)) refreshWall(e); else refreshModel(e); return solids.get(e.id); };
@@ -4352,14 +4359,18 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Merge a posed group into one mesh per (material, draw order); multi-material
   // boxes and ink lines are kept as they are.
   const BAKE_STD = new Set(['position', 'normal', 'uv']), BAKE_DEF = { slide: [0, 1, 0] };
-  function bakePose(g){
+  // mergePlain (a finished building: bakeStill): its plain colours — mat() materials that are a colour and nothing more —
+  // go into ONE mesh, the colour per vertex (the rigs' own material, rigPlainMat), not a mesh a colour: a building is
+  // a dozen colours, and each was a draw call.
+  function bakePose(g, mergePlain = false){
+    const plainOf = m => mergePlain && m.isMeshLambertMaterial && m.userData.plain && !m.map && !m.transparent && !HULL_MATS.has(m) && !tcSwaps.has(m);
     g.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), groups = new Map(), lineGroups = new Map(), root = new THREE.Group();
     g.traverseVisible(o => {
       if (o === g || !(o.isMesh || o.isLineSegments)) return;
       const M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
-      const put = (m, range) => { const k = m.uuid + '|' + o.renderOrder;
-        if (!groups.has(k)) groups.set(k, { mat: m, ro: o.renderOrder, parts: [] }); groups.get(k).parts.push({ geo: o.geometry, M, range }); };
+      const put = (m, range) => { const pl = plainOf(m), k = (pl ? 'plain' + m.side : m.uuid) + '|' + o.renderOrder;
+        if (!groups.has(k)) groups.set(k, { mat: pl ? rigPlainMat(m.side) : m, ro: o.renderOrder, parts: [], vc: pl }); groups.get(k).parts.push({ geo: o.geometry, M, range, col: m.color }); };
       if (o.isMesh && !Array.isArray(o.material)) { put(o.material); return; }
       // a multi-material mesh (a box with its own top): each material's triangles into that material's merge
       if (o.isMesh && o.geometry.groups.length && o.geometry.groups.every(gr => o.material[gr.materialIndex])) { for (const gr of o.geometry.groups) put(o.material[gr.materialIndex], gr); return; }
@@ -4369,8 +4380,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       c.renderOrder = o.renderOrder; M.decompose(c.position, c.quaternion, c.scale); root.add(c); o.geometry.userData.kept = true; // referenced, not copied: survives the source's cleanup
     });
     const nm = new THREE.Matrix3(), v = new THREE.Vector3();
-    for (const { mat: m, ro, parts } of groups.values()) {
-      let nv = 0, ni = 0; const uv = parts.every(p => p.geo.attributes.uv);
+    for (const { mat: m, ro, parts, vc } of groups.values()) {
+      let nv = 0, ni = 0; const uv = !vc && parts.every(p => p.geo.attributes.uv);
       for (const p of parts) { nv += p.geo.attributes.position.count; ni += p.range ? p.range.count : p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
       const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uvs = uv ? new Float32Array(nv * 2) : null, idx = new Uint32Array(ni);
       let ov = 0, oi = 0;
@@ -4387,6 +4398,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); bg.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
       if (uv) bg.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      if (vc) { const cols = new Float32Array(nv * 3); let o = 0;
+        for (const { geo, col } of parts) { const n = geo.attributes.position.count; for (let i = 0; i < n; i++) { cols[o++] = col.r; cols[o++] = col.g; cols[o++] = col.b; } }
+        bg.setAttribute('color', new THREE.BufferAttribute(cols, 3)); }
       // any other per-vertex data (a site's clipOnly / inside / slide) carried as is — a part without it takes its default
       const extra = new Set(); for (const p of parts) for (const k in p.geo.attributes) if (!BAKE_STD.has(k)) extra.add(k);
       for (const k of extra) { const size = parts.find(p => p.geo.attributes[k]).geo.attributes[k].itemSize, arr = new Float32Array(nv * size), def = BAKE_DEF[k] || [];
@@ -5495,7 +5509,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
-    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); prewarmShapes(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
+    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedAges.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
@@ -5507,7 +5521,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const t1 = performance.now(); refreshGround(); const t2 = performance.now(); refreshFeatures(); const t3 = performance.now(); refreshBuildings(); refreshButtons();
       P.sGround = t2 - t1; P.sFeat = t3 - t2; P.sBld = performance.now() - t3;   // (the static refresh by part: __povFrame)
       lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
-    else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) refreshBuildings(); }
+    else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) refreshBuildings(); else if (warmQueue.length) warmStep(); else if (frame % 60 === 0) prewarmShapes(); }
     mark('static');
     animateFeatures(dt);
     updateArrows(now);
@@ -6297,6 +6311,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     const k = e.btype; if (out[k]) continue; const c = {}; rec.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments)) return; const t = o.isLineSegments ? 'lines' : HULL_MATS.has(o.material) ? 'hull' : (o.name || (o.parent && o.parent.name) || 'mesh'); c[t] = (c[t] || 0) + 1; }); out[k] = c; } return out; }; // dev
   window.__povBldDraws = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible) continue; const k = rec.site ? 'site' : rec.dmg ? 'damaged' : rec.door ? 'gate' : 'finished';
     let n = 0; rec.obj.traverseVisible(o => { if (o.isMesh || o.isLineSegments) n++; }); const e = out[k] || (out[k] = { count: 0, draws: 0 }); e.count++; e.draws += n; } return out; }; // dev
+  // dev: the frame's drawables (meshes and line sets in view of the scene graph — visible, not yet frustum-culled) by kind
+  window.__povDraws = () => { const n = o => { let k = 0; if (o && o.visible) o.traverseVisible(c => { if (c.isMesh || c.isLineSegments || c.isSprite) k++; }); return k; };
+    const sum = it => { let k = 0; for (const r of it) k += n(r.obj || r.sprite || r); return k; };
+    return { buildings: sum(solids.values()), people: sum(villagers.values()), animals: sum(animals.values()), sprites: sum(unitSprites.values()), corpses: sum(corpseModels.values()), xray: n(xray), selection: n(selG), all: n(scene) }; };
   window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
