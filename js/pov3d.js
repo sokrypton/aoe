@@ -2219,7 +2219,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       // just that far, so it breaks on the spot instead of carrying on through it)
       let reach = 0;
       if (fly > 0) { const hl = Math.hypot(_f1.x, _f1.z) || 1, S = aim ? aim.s : 3.4, H = aim ? aim.h : 0; _fT = _fT || new THREE.Vector3();
-        _fT.set(model.position.x + _f1.x / hl * S, H, model.position.z + _f1.z / hl * S).sub(_f0); reach = _fT.length(); _fT.normalize(); _f1.lerp(_fT, fly).normalize(); }
+        if (aim && aim.dx != null) _fT.set(model.position.x + aim.dx * S, H, model.position.z + aim.dy * S); else _fT.set(model.position.x + _f1.x / hl * S, H, model.position.z + _f1.z / hl * S);   // (on its target: dragonAimAt)
+        _fT.sub(_f0); reach = _fT.length(); _fT.normalize(); _f1.lerp(_fT, fly).normalize(); }
       // A flame-thrower's jet: each puff flies STRAIGHT and fast, small and white-hot, for its reach (the aim's
       // distance; on the ground, the breath's) — a stream — and only then, where it lands, breaks into rolling fire.
       const far = reach > 0 && fly > 0.5 ? reach : 2.6;

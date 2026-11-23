@@ -3236,7 +3236,7 @@ function drawDragonBody(e){
     if (P.flame > 0) { const m0 = jwp(0.45, 0.02), m1 = jwp(1.45, 0.02), dm = [m1[0] - m0[0], m1[1] - m0[1], m1[2] - m0[2]], toW = (x, z) => [x * fx + z * sx, x * fy + z * sy];
       const [ox, oy] = toW(m0[0], m0[2]), [vx, vy] = toW(dm[0], dm[2]), fy2 = P.fly || 0;
       let dxw = vx, dyw = vy, dhw = dm[1] - 0.12, far = 2.6;
-      if (fy2 > 0) { const A = typeof dragonFireAim === 'function' ? dragonFireAim(e) : { s: 3.4, h: 0 }, fa = e.faceAng || 0, gx = Math.cos(fa) * A.s - ox, gy = Math.sin(fa) * A.s - oy, gh = A.h - m0[1], gl = Math.hypot(gx, gy, gh) || 1;
+      if (fy2 > 0) { const A = typeof dragonFireAim === 'function' ? dragonFireAim(e) : { s: 3.4, h: 0 }, fa = e.faceAng || 0, gx = (A.dx != null ? A.dx : Math.cos(fa)) * A.s - ox, gy = (A.dy != null ? A.dy : Math.sin(fa)) * A.s - oy, gh = A.h - m0[1], gl = Math.hypot(gx, gy, gh) || 1;
         dxw += (gx / gl - dxw) * fy2; dyw += (gy / gl - dyw) * fy2; dhw += (gh / gl - dhw) * fy2; far += (gl - far) * fy2; }
       { const l = Math.hypot(dxw, dyw, dhw) || 1; dxw /= l; dyw /= l; dhw /= l; }
       for (a.fire = (a.fire || 0) + n * 150 / 30 * P.flame * (1 + 0.4 * fy2); a.fire >= 1; a.fire--) { const sp = far / (4.2 + cosmeticRandom() * 1.6), j = () => (cosmeticRandom() - 0.5) * sp * 0.07, life = 15 + cosmeticRandom() * 7, lead = cosmeticRandom() * sp * n;

@@ -345,13 +345,29 @@ const DRAGON_STRAFE=3.4, DRAGON_STRAFE_FROM=2.2, DRAGON_STRAFE_TO=4.2, DRAGON_ST
 // Where the renderers aim the jet (viewer-side): {s: how far ahead, h: how high}. The ground DRAGON_STRAFE ahead —
 // or, sent at a building, into its walls: a flatter jet AT it, not down in front of it.
 const DRAGON_AIM_WALL={s:DRAGON_STRAFE+0.9, h:1.2}, DRAGON_AIM_GROUND={s:DRAGON_STRAFE, h:0};
-function dragonFireAim(e){ let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null; return t&&t.type==='building'&&t.hp>0?DRAGON_AIM_WALL:DRAGON_AIM_GROUND; }
+// Aloft with a target, it AIMS: the jet swings off its nose onto the target itself (a building: its nearest edge) —
+// anywhere from DRAGON_AIM_MIN to DRAGON_AIM_MAX off and within DRAGON_AIM_COS of its heading — and stays on it as
+// either moves. [dx, dy, d] from the dragon, or null (nothing to aim at: the ground ahead). Det-trig only: the sim and the viewers both call it.
+const DRAGON_AIM_MIN=1.2, DRAGON_AIM_MAX=5.4, DRAGON_AIM_COS=0.5;
+function dragonAimAt(e){
+  let t=e.flyTarget!==undefined&&e.rideLeft!==undefined?entitiesById.get(e.flyTarget):null; if(!t||!dragonBurns(e,t))return null;
+  let dx=t.x-e.x, dy=t.y-e.y;
+  if(t.type==='building'){ let b=BLDGS[t.btype], w=t.w||b.w, h=t.h||b.h; dx=Math.max(t.x-0.5,Math.min(e.x,t.x+w-0.5))-e.x; dy=Math.max(t.y-0.5,Math.min(e.y,t.y+h-0.5))-e.y; }
+  let d=Math.sqrt(dx*dx+dy*dy); if(d<DRAGON_AIM_MIN||d>DRAGON_AIM_MAX)return null;
+  if((dx*simCos(e.faceAng||0)+dy*simSin(e.faceAng||0))/d<DRAGON_AIM_COS)return null;
+  return [dx,dy,d];
+}
+function dragonFireAim(e){ let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null, wall=t&&t.type==='building'&&t.hp>0, A=wall?DRAGON_AIM_WALL:DRAGON_AIM_GROUND, at=dragonAimAt(e);
+  return at?{s:at[2]+(wall?0.9:0), h:A.h, dx:at[0]/at[2], dy:at[1]/at[2]}:A; }
 function dragonStrafe(e,fx,fy,dry){
+  // (aimed: the same three circles, laid along the line to the target and ending on it)
+  let at=dragonAimAt(e), r0=DRAGON_STRAFE_FROM, r1=DRAGON_STRAFE_TO;
+  if(at){ fx=at[0]/at[2]; fy=at[1]/at[2]; r1=at[2]; r0=Math.max(0.6,r1-(DRAGON_STRAFE_TO-DRAGON_STRAFE_FROM)); }
   for(let i=0;i<entities.length;i++){
     let o=entities[i];
     if(!dragonBurns(e,o))continue;
     let b=o.type==='building'?BLDGS[o.btype]:null, w=b?(o.w||b.w):0, h=b?(o.h||b.h):0, hit=false;
-    for(let k=0;k<3&&!hit;k++){ let r=DRAGON_STRAFE_FROM+(DRAGON_STRAFE_TO-DRAGON_STRAFE_FROM)*k/2, cx=e.x+fx*r, cy=e.y+fy*r;
+    for(let k=0;k<3&&!hit;k++){ let r=r0+(r1-r0)*k/2, cx=e.x+fx*r, cy=e.y+fy*r;
       let ox=b?Math.max(o.x-0.5,Math.min(cx,o.x+w-0.5)):o.x, oy=b?Math.max(o.y-0.5,Math.min(cy,o.y+h-0.5)):o.y, dx=ox-cx, dy=oy-cy;
       hit=dx*dx+dy*dy<=DRAGON_STRAFE_R*DRAGON_STRAFE_R; }
     if(!hit)continue;
