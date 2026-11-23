@@ -350,7 +350,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function dropBuildings(){
     for (const w of solids.values()) dropSolid(w);
-    solids.clear();
+    solids.clear(); wallRuns();
   }
 
   // ART PROTOTYPE (?proto, or window.__artProto before the 3D loads): faces, fuller wheat. Viewer-only look; off by
@@ -422,15 +422,62 @@ gl_Position = projectionMatrix * mvPosition;`;
     for (let k = 0; k < 140; k++) { tone(c, lo + r() * (255 - lo) | 0); c.fillRect(r() * 64, r() * 64, 1 + r() * 2.5, 1 + r() * 2.5); }
   }
   const detailTex = new Map();
+  function detailCanvas(name){
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+    let seed = name.length * 977; // a fixed pattern per texture (viewer-only, but stable)
+    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    DETAIL[name][1](cv.getContext('2d'), r);
+    return cv;
+  }
+  // A still model's whole body as ONE material: colour per vertex, and the surface pattern too (the attribute `det`
+  // picks a layer of all the patterns stacked in one array texture; -1 none) — a house is a body, its outline, its ink.
+  // (after the patterns, a soldier's armour — armorCanvas: its rows in the colour, and in the alpha how much of the
+  // owner's colour shows there; laid by the part's uv, not the world)
+  const DETAIL_IDS = Object.keys(DETAIL), ARMOR_IDS = ['scale', 'chain'], bodyMats = new Map(); let detailArr = null;
+  function detailLayers(){
+    if (!detailArr) { const cvs = DETAIL_IDS.map(detailCanvas).concat(ARMOR_IDS.map(armorCanvas)), n = cvs.length, data = new Uint8Array(64 * 64 * 4 * n);
+      cvs.forEach((cv, i) => { const px = cv.getContext('2d').getImageData(0, 0, 64, 64).data;
+        for (let y = 0; y < 64; y++) data.set(px.subarray(y * 256, y * 256 + 256), i * 16384 + (63 - y) * 256); });   // (rows flipped: as a canvas texture)
+      detailArr = new THREE.DataArrayTexture(data, 64, 64, n); detailArr.wrapS = detailArr.wrapT = THREE.RepeatWrapping;
+      detailArr.minFilter = THREE.LinearMipmapLinearFilter; detailArr.magFilter = THREE.LinearFilter; detailArr.generateMipmaps = true; detailArr.anisotropy = 4; detailArr.needsUpdate = true; }
+    return detailArr;
+  }
+  // An armour layer: white under its dark rows (a multiplier); alpha = the owner's colour's share (scale: the chest
+  // and shoulders whole, above a hard edge; chain: a faint wash all over).
+  function armorCanvas(kind){
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64; const c = cv.getContext('2d');
+    const row = (y0, n, r, dx, col) => { c.strokeStyle = col; c.lineWidth = 1.3; for (let i = 0; i < n; i++) for (let x = (i % 2) * dx / 2 - dx; x < 70; x += dx) { c.beginPath(); c.arc(x, y0 + i * r * 1.45, r, 0, Math.PI); c.stroke(); } };
+    c.fillStyle = '#ffffff'; c.fillRect(0, 0, 64, 64);
+    if (kind === 'scale') { row(31, 6, 3.2, 6.4, 'rgb(153,153,153)'); c.fillStyle = 'rgb(115,115,115)'; c.fillRect(0, 29, 64, 1.6); }
+    else row(2, 22, 2.1, 4.2, 'rgb(171,171,171)');
+    const im = c.getImageData(0, 0, 64, 64), d = im.data;
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) d[(y * 64 + x) * 4 + 3] = kind === 'scale' ? (y < 30 ? 255 : 0) : 51;
+    c.putImageData(im, 0, 0); return cv;
+  }
+  function bodyMat(side){
+    let m = bodyMats.get(side); if (m) return m;
+    detailLayers();
+    m = new THREE.MeshLambertMaterial({ vertexColors: true, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const scales = DETAIL_IDS.map(k => 1 / DETAIL[k][0]);
+    m.onBeforeCompile = sh => {
+      sh.uniforms.detailArr = { value: detailArr }; sh.uniforms.detailScales = { value: scales }; sh.uniforms.detailK = { value: DETAIL_K };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float det; varying float vDet; varying vec3 vWPos; varying vec3 vWNrm;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvDet = det; vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWNrm = mat3(modelMatrix) * objectNormal;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vDet; varying vec3 vWPos; varying vec3 vWNrm; uniform mediump sampler2DArray detailArr; uniform float detailScales[' + scales.length + ']; uniform float detailK;')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          vec3 an = abs(normalize(vWNrm)); int di = int(max(vDet, 0.0) + 0.5);
+          vec2 duv = an.y > 0.85 ? vWPos.xz : vec2(an.x > an.z ? vWPos.z : vWPos.x, -vWPos.y);
+          vec3 dpat = texture(detailArr, vec3(duv * detailScales[di], float(di))).rgb;
+          diffuseColor.rgb *= mix(vec3(1.0), max(vec3(0.0), 1.0 - detailK * (1.0 - dpat)), step(-0.5, vDet));`);
+    };
+    m.customProgramCacheKey = () => 'body';
+    bodyMats.set(side, m); return m;
+  }
   function withDetail(m, name){
     const [span, paint] = DETAIL[name];
     let tex = detailTex.get(name);
     if (!tex) {
-      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
-      let seed = name.length * 977; // a fixed pattern per texture (viewer-only, but stable)
-      const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-      paint(cv.getContext('2d'), r);
-      tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
+      tex = new THREE.CanvasTexture(detailCanvas(name)); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 4;
       detailTex.set(name, tex);
     }
     m.onBeforeCompile = sh => {
@@ -470,6 +517,44 @@ gl_Position = projectionMatrix * mvPosition;`;
   // the tiles' occupants, so they are drawn as they will be once it is built: the 2D's ghostOverlay, render-fx.js.)
   let ghostAt = new Map(), ghostSig = '';
   const occupantAt = (x, y) => { const g = ghostAt.get(y * MAP + x); if (g) return g; const row = map[y], cell = row && row[x]; return cell && cell.occupied != null ? entitiesById.get(cell.occupied) : null; };
+  // A town's wall is hundreds of pieces of three draws each (body, outline, ink). The finished, whole ones are drawn
+  // merged, a run per 8×8 tiles; each piece keeps its own model, on a layer the camera doesn't draw, for all that reads
+  // it (picking, selection and x-ray rims, bounds). A run is rebuilt when its pieces change, or show or hide.
+  const RUN_LAYER = 1, runs = new Map(); let runUid = 0;
+  // (its still, merged meshes — not a flag, the sails, a door: those are named, or groups)
+  function joinRun(rec, e){
+    const c = centerOf(e); rec.run = (c.x >> 3) + (c.y >> 3) * 4096; rec.uid = ++runUid;
+    for (const o of rec.obj.children) if ((o.isMesh || o.isLineSegments) && !o.name && !o.children.length) { o.layers.set(RUN_LAYER); o.userData.run = true; }
+  }
+  function wallRuns(){
+    const by = new Map();
+    for (const rec of solids.values()) if (rec.run != null && !rec.hid) { let m = by.get(rec.run); if (!m) by.set(rec.run, m = { sig: '', recs: [] }); m.sig += rec.uid + ','; m.recs.push(rec); }
+    for (const [k, run] of runs) { const m = by.get(k); if (m && m.sig === run.sig) continue;
+      for (const o of run.objs) { scene.remove(o); o.geometry.dispose(); } runs.delete(k); }
+    const v = new THREE.Vector3(), nm = new THREE.Matrix3();
+    for (const [k, m] of by) { if (runs.has(k)) continue;
+      const groups = new Map();
+      for (const rec of m.recs) { rec.obj.updateMatrixWorld(true);
+        for (const c of rec.obj.children) { if (!c.userData.run) continue; const gk = c.material.uuid + '|' + c.renderOrder; let g = groups.get(gk); if (!g) groups.set(gk, g = { src: c, parts: [] }); g.parts.push(c); } }
+      const objs = [];
+      for (const { src, parts } of groups.values()) {
+        let nv = 0, ni = 0; for (const c of parts) { nv += c.geometry.attributes.position.count; ni += c.geometry.index ? c.geometry.index.count : 0; }
+        const bg = new THREE.BufferGeometry(), idx = src.geometry.index ? new Uint32Array(ni) : null; let oi = 0;
+        for (const name in src.geometry.attributes) { const size = src.geometry.attributes[name].itemSize, arr = new Float32Array(nv * size); let ov = 0;
+          for (const c of parts) { const A = c.geometry.attributes[name], n = c.geometry.attributes.position.count, M = c.matrixWorld;
+            if (name === 'position') for (let i = 0; i < n; i++) { v.fromBufferAttribute(A, i).applyMatrix4(M); arr.set([v.x, v.y, v.z], (ov + i) * 3); }
+            else if (name === 'normal') { nm.getNormalMatrix(M); for (let i = 0; i < n; i++) { v.fromBufferAttribute(A, i).applyMatrix3(nm); arr.set([v.x, v.y, v.z], (ov + i) * 3); } }   // (not normalised: an outline's push keeps its zero normals)
+            else if (A) arr.set(A.array.subarray(0, n * size), ov * size);
+            ov += n; }
+          bg.setAttribute(name, new THREE.BufferAttribute(arr, size)); }
+        if (idx) { let ov = 0; for (const c of parts) { const I = c.geometry.index.array; for (let i = 0; i < I.length; i++) idx[oi++] = I[i] + ov; ov += c.geometry.attributes.position.count; }
+          bg.setIndex(new THREE.BufferAttribute(idx, 1)); }
+        bg.computeBoundingSphere();
+        const o = src.isLineSegments ? new THREE.LineSegments(bg, src.material) : new THREE.Mesh(bg, src.material); o.renderOrder = src.renderOrder; scene.add(o); objs.push(o);
+      }
+      runs.set(k, { sig: m.sig, objs });
+    }
+  }
   function refreshWall(e){
     const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), hurt = isHurt(e), key = wallKey(e, arms) + (hurt ? ':hurt' : '');
     let rec = solids.get(e.id);
@@ -479,8 +564,17 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
     const r = wallModel(e, arms); r.obj.userData.bid = e.id;
     const b = BLDGS[e.btype];
-    // (a finished, whole piece merges by material, as a building does; a gate keeps its door apart)
-    if (e.complete && !hurt && !r.door) bakeStill(r.obj);
+    // (a finished, whole piece merges by material, as a building does, and joins its neighbours' run — wallRuns. A gate:
+    // its wall sections merged apart and marked, for its selection rim; the door stays its own.)
+    if (e.complete && !hurt) {
+      if (r.door) { const g = r.obj, armG = new THREE.Group(); g.remove(r.door);
+        for (const c of g.children.filter(c => c.userData.arm)) { g.remove(c); armG.add(c); }
+        bakeWhole(armG); bakeWhole(g); bakeWhole(r.door);
+        for (const c of armG.children.slice()) { c.userData.arm = true; g.add(c); } }
+      else bakeStill(r.obj);
+      joinRun(r, e);
+      if (r.door) r.obj.add(r.door);
+    }
     if (!e.complete) { r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
     else if (hurt) { r.dmg = buildingDamage(r.obj, e.x, e.y, e.w || b.w, e.h || b.h); r.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
     scene.add(r.obj); solids.set(e.id, { ...r, key });
@@ -966,11 +1060,13 @@ gl_Position = projectionMatrix * mvPosition;`;
   // with the big flags (buildingDamage: 'flagPole').
   function pennant(g, x, z, y0, col){
     pole(g, '#1c1208', [x, y0, z], [x, y0 + 8 / HPX, z], 0.012, 'line').name = 'flagPole';
-    const t = own(new THREE.BufferGeometry());
-    t.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 7 / 32, -2 / HPX, 0, 0, -4 / HPX, 0], 3));
-    t.computeVertexNormals();
+    // (its ink: a thin frame round the triangle, in its mesh — as the flags')
+    const T = [[0, 0], [7 / 32, -2 / HPX], [0, -4 / HPX]], cx = 7 / 96, cy = -2 / HPX, O = T.map(([a, b]) => [cx + (a - cx) * 1.3, cy + (b - cy) * 1.3]), pts = [], idx = [];
+    for (let i = 0; i < 3; i++) { const j = (i + 1) % 3, b = pts.length / 3; pts.push(T[i][0], T[i][1], 0, T[j][0], T[j][1], 0, O[j][0], O[j][1], 0, O[i][0], O[i][1], 0); idx.push(b, b + 1, b + 2, b, b + 2, b + 3); }
+    const t0 = new THREE.BufferGeometry(); t0.setAttribute('position', new THREE.Float32BufferAttribute(T.flatMap(([a, b]) => [a, b, 0]), 3));
+    const t = framed(t0, pts, idx, col);
     const pv = new THREE.Group(); pv.name = 'pennant'; pv.position.set(x, y0 + 8 / HPX, z); pv.userData.phase = (x * 3.7 + z * 5.3) % 6.28;
-    pv.add(inked(t, mat(col, true), 0, 0, 0, 1, 1, 1)); g.add(pv);
+    pv.add(new THREE.Mesh(t, rigPlainMat(THREE.DoubleSide))); g.add(pv);
   }
   // A stone boulder as the map's deposits draw them (initFeatures 'stone'): the same squat spun profile, flat-shaded, in
   // their greys; radius r, height h.
@@ -1061,20 +1157,27 @@ gl_Position = projectionMatrix * mvPosition;`;
     pole(g, WOOD.post, [x, y0, z], [x, y0 + poleH, z], 0.014 * s).name = 'flagPole';
     const knob = blob(g, GOLD, x, y0 + poleH + 0.024 * s, z, 0.03 * s); knob.name = 'flagPole';
     const L = 17 * s / PX, Hf = 8.5 * s / HPX, geo = own(new THREE.PlaneGeometry(L, Hf, 8, 1).translate(L / 2, -Hf / 2, 0));
-    geo.userData.rest = Float32Array.from(geo.attributes.position.array);
-    const f = new THREE.Mesh(geo, mat(col, true));
-    f.position.set(x, y0 + poleH - 0.01, z); f.rotation.y = -3 * Math.PI / 4;
-    f.name = 'flag'; f.userData.len = L; f.userData.s = s; g.add(f);
     // Its outline: a thin black frame round the cloth's edge, in its plane (no overlap, so no depth fight from either
-    // side), waving with it (named 'flag' too: the same wave, the same length)
+    // side), in the cloth's own mesh (the colour per vertex): it waves with it
     const m = HULL * 0.3, pts = [], idx = [], strip = (x0, x1, y0, y1, n) => { const b = pts.length / 3;
       for (let a = 0; a <= n; a++) { const xx = x0 + (x1 - x0) * a / n; pts.push(xx, y0, 0, xx, y1, 0); }
       for (let a = 0; a < n; a++) { const q = b + 2 * a; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); } };
     strip(-m, L + m, m, 0, 8); strip(-m, L + m, -Hf, -Hf - m, 8); strip(-m, 0, 0, -Hf, 1); strip(L, L + m, 0, -Hf, 1);
-    const bg = own(new THREE.BufferGeometry()); bg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); bg.setIndex(idx);
-    bg.userData.rest = Float32Array.from(pts);
-    const back = new THREE.Mesh(bg, mat('#000000', true));
-    back.name = 'flag'; back.userData.len = L; back.userData.s = s; f.add(back);
+    const f = new THREE.Mesh(framed(geo, pts, idx, col), rigPlainMat(THREE.DoubleSide));
+    f.geometry.userData.rest = Float32Array.from(f.geometry.attributes.position.array);
+    f.position.set(x, y0 + poleH - 0.01, z); f.rotation.y = -3 * Math.PI / 4;
+    f.name = 'flag'; f.userData.len = L; f.userData.s = s; g.add(f);
+  }
+  // A flat cloth (geo, facing +z) and its black frame (pts, idx) as one geometry, the colour per vertex; geo is freed.
+  function framed(geo, pts, idx, col){
+    const P = geo.attributes.position, n0 = P.count, n = n0 + pts.length / 3, c = new THREE.Color(col);
+    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), cols = new Float32Array(n * 3);
+    pos.set(P.array); pos.set(pts, n0 * 3);
+    for (let i = 0; i < n; i++) { nrm[i * 3 + 2] = 1; if (i < n0) cols.set([c.r, c.g, c.b], i * 3); }
+    const I = geo.index ? Array.from(geo.index.array) : Array.from({ length: n0 }, (_, i) => i);
+    const out = own(new THREE.BufferGeometry()); out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    out.setAttribute('color', new THREE.BufferAttribute(cols, 3)); out.setIndex(I.concat(idx.map(i => i + n0))); geo.dispose();
+    return out;
   }
 
 
@@ -1082,6 +1185,30 @@ gl_Position = projectionMatrix * mvPosition;`;
 
   // A part set in place whole on a construction site (a roof, a cap, an awning), not built up course by course.
   const piece = g => { const p = new THREE.Group(); p.userData.piece = true; g.add(p); return p; };
+  // A farm's crop — the standing sheaves and the stubble of the cut ones — as one mesh of its own: a sheaf cut
+  // remakes this alone (refreshModel), not the field under it.
+  function farmCrop(e){
+    const w = e.w || 2, h = e.h || 2, fseed = e.x * 7 + e.y * 13, px = 1 / PX;
+    const standing = farmStandingLive(e), stalks = [], heads = [], stubs = [], prev = farmPrev.get(e.id), live = farmLive.get(e.id); farmPrev.set(e.id, standing);
+    const up = new THREE.Vector3(0, 1, 0);
+    FARM_CROP_ROWS.forEach((t, ri) => {
+      for (let i = 0; i < FARM_CROP_COLS; i++) {
+        const n = ri * FARM_CROP_COLS + i;
+        const x = e.x + w * farmSheafU(ri, i) + (((n * 5 + fseed) % 5) - 2) * 0.5 * px, z = e.y + h * t + (((n * 11 + fseed) % 3) - 1) * px;
+        if (!standing[n]) { stubs.push([x, 0.03, z, 0.018, 0.06, 0.018]); if (prev && prev[n]) cutSheaf(x, z, live && live.away.has(n) ? live.away.get(n) : n * 2.39996); continue; } // just cut: it falls away from the blade
+        const lean = (((n * 13 + fseed) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + fseed) % 3) - 1) * 0.7) / HPX;
+        for (const k of ART_PROTO ? [-2, -1, 0, 1, 2] : [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2 (prototype: a fuller sheaf)
+          const hk = H * (ART_PROTO ? 1.4 : 1) * (k ? (Math.abs(k) > 1 ? 0.66 : 0.82) : 1), s = (k * (ART_PROTO ? 1.8 : 2.5) * px + lean) * Math.SQRT1_2;
+          const dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
+          stalks.push([x + s / 2, hk / 2, z - s / 2, 0.028, L, 0.028, q]);  // the art: 1.4px stalks
+          heads.push([x + s + dir.x * 0.035, hk + dir.y * 0.035, z - s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); // 2×4px heads
+        }
+      }
+    });
+    // (stalks, plain grain heads — no ink — and stubble, coloured per vertex)
+    return tintJoin([[boxBatch(stalks, 'rod'), '#c9a227'], [boxBatch(heads, 'ball'), '#e8c84a'], [boxBatch(stubs, 'rod'), '#9a7f4a']]);
+  }
+
   const MODELS = {
     // A flat tilled field (walkable: units stand on the ground, so the bed is
     // paint, not a raised block), a low planting ridge under each crop row, and
@@ -1093,27 +1220,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
       const ridges = FARM_CROP_ROWS.map(t => [e.x + w / 2, 0.004, e.y + h * t, w - 0.08, 0.008, 0.06]);
       g.add(new THREE.Mesh(boxBatch(ridges), mat(dead ? '#6f5d47' : '#6b4d2e')));
-      const standing = farmStandingLive(e), stalks = [], heads = [], stubs = [], prev = farmPrev.get(e.id), live = farmLive.get(e.id); farmPrev.set(e.id, standing);
-      const up = new THREE.Vector3(0, 1, 0);
-      FARM_CROP_ROWS.forEach((t, ri) => {
-        for (let i = 0; i < FARM_CROP_COLS; i++) {
-          const n = ri * FARM_CROP_COLS + i;
-          const x = e.x + w * farmSheafU(ri, i) + (((n * 5 + fseed) % 5) - 2) * 0.5 * px, z = e.y + h * t + (((n * 11 + fseed) % 3) - 1) * px;
-          if (!standing[n]) { stubs.push([x, 0.03, z, 0.018, 0.06, 0.018]); if (prev && prev[n]) cutSheaf(x, z, live && live.away.has(n) ? live.away.get(n) : n * 2.39996); continue; } // just cut: it falls away from the blade
-          const lean = (((n * 13 + fseed) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + fseed) % 3) - 1) * 0.7) / HPX;
-          for (const k of ART_PROTO ? [-2, -1, 0, 1, 2] : [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2 (prototype: a fuller sheaf)
-            const hk = H * (ART_PROTO ? 1.4 : 1) * (k ? (Math.abs(k) > 1 ? 0.66 : 0.82) : 1), s = (k * (ART_PROTO ? 1.8 : 2.5) * px + lean) * Math.SQRT1_2;
-            const dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
-            stalks.push([x + s / 2, hk / 2, z - s / 2, 0.028, L, 0.028, q]);  // the art: 1.4px stalks
-            heads.push([x + s + dir.x * 0.035, hk + dir.y * 0.035, z - s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); // 2×4px heads
-          }
-        }
-      });
-      if (stalks.length) {
-        g.add(new THREE.Mesh(boxBatch(stalks, 'rod'), wheatMat('#c9a227')));
-        g.add(new THREE.Mesh(boxBatch(heads, 'ball'), wheatMat('#e8c84a'))); // plain grain heads: no ink
-      }
-      if (stubs.length) g.add(new THREE.Mesh(boxBatch(stubs, 'rod'), mat('#9a7f4a')));
+      g.add(new THREE.Mesh(farmCrop(e), wheatMat()));
     },
     // Cottage under a gable (drawGableBlock: W 32, hh 16, wall 16, roof 20). Dark: plank walls under a thick thatch and
     // the owner's ridge roll (every Dark building is thatched: THATCH); Feudal: plaster, half-timbering, the owner's
@@ -1622,19 +1729,39 @@ gl_Position = projectionMatrix * mvPosition;`;
     }
     for (; n < 8; n++) H[n].set(1e6, 1e6, 9, 0);
   }
+  // Short-lived bits (chips, smoke, dust) are one instanced mesh a kind, not a mesh each. Each is plain data (p, s,
+  // col, and a rotation or an opacity), written to its instance every frame (bitsDraw).
+  function bitsMesh(geo, m, cap, alpha){
+    geo = geo.clone(); if (alpha) { geo.setAttribute('iAlpha', new THREE.InstancedBufferAttribute(new Float32Array(cap), 1));
+      m.onBeforeCompile = sh => { sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float iAlpha; varying float vBitA;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvBitA = iAlpha;');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vBitA;').replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.a *= vBitA;'); };
+      m.customProgramCacheKey = () => 'bits-alpha'; }
+    const mesh = new THREE.InstancedMesh(geo, m, cap); mesh.setColorAt(0, new THREE.Color()); mesh.count = 0; mesh.frustumCulled = false; scene.add(mesh);
+    return mesh;
+  }
+  let chipMesh = null, hazeMesh = null, _bitQ = null, _bitE, _bitM, _bitS;   // (three.js loads lazily: made on first use)
+  function bitsDraw(mesh, list){
+    if (!_bitQ) { _bitQ = new THREE.Quaternion(); _bitE = new THREE.Euler(); _bitM = new THREE.Matrix4(); _bitS = new THREE.Vector3(); }
+    const n = Math.min(list.length, mesh.instanceMatrix.count), A = mesh.geometry.attributes.iAlpha;
+    for (let i = 0; i < n; i++) { const b = list[i];
+      mesh.setMatrixAt(i, _bitM.compose(b.p, b.rx != null ? _bitQ.setFromEuler(_bitE.set(b.rx, 0, b.rz)) : _bitQ.identity(), b.s.isVector3 ? b.s : _bitS.setScalar(b.s)));
+      mesh.setColorAt(i, b.col); if (A) A.array[i] = b.a; }
+    mesh.count = n; mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true; if (A) A.needsUpdate = true;
+  }
+  const bitCols = new Map(), bitCol = c => { let k = bitCols.get(c); if (!k) bitCols.set(c, k = new THREE.Color(c)); return k; };
   function chipBurst(x, y, z, ang){ // a few wood chips thrown back off the bark, falling and fading
     for (let i = 0; i < 5; i++) {
-      const m = new THREE.Mesh(unitBox, mat(i % 2 ? '#d8b98a' : '#b88a52')); m.scale.set(0.02, 0.014, 0.026); m.position.set(x, y, z); scene.add(m);
       const sp = 0.5 + Math.random() * 0.4, a2 = ang + Math.PI + (Math.random() - 0.5) * 1.6;
-      chips.push({ m, v: new THREE.Vector3(Math.cos(a2) * sp, 0.6 + Math.random() * 0.5, Math.sin(a2) * sp), age: 0 });
+      chips.push({ p: new THREE.Vector3(x, y, z), s: new THREE.Vector3(0.02, 0.014, 0.026), col: bitCol(i % 2 ? '#d8b98a' : '#b88a52'), rx: 0, rz: 0, v: new THREE.Vector3(Math.cos(a2) * sp, 0.6 + Math.random() * 0.5, Math.sin(a2) * sp), age: 0 });
     }
   }
   function updateChips(dt){
     for (let i = chips.length - 1; i >= 0; i--) {
-      const c = chips[i]; c.age += dt; c.v.y -= 3.4 * dt; c.m.position.addScaledVector(c.v, dt); c.m.rotation.x += dt * 12; c.m.rotation.z += dt * 9;
-      if (c.m.position.y < 0.007) { c.m.position.y = 0.007; c.v.set(0, 0, 0); }
-      if (c.age > 1.5) { scene.remove(c.m); chips.splice(i, 1); }
+      const c = chips[i]; c.age += dt; c.v.y -= 3.4 * dt; c.p.addScaledVector(c.v, dt); c.rx += dt * 12; c.rz += dt * 9;
+      if (c.p.y < 0.007) { c.p.y = 0.007; c.v.set(0, 0, 0); }
+      if (c.age > 1.5) chips.splice(i, 1);
     }
+    if (chips.length || chipMesh) bitsDraw(chipMesh = chipMesh || bitsMesh(unitBox, new THREE.MeshLambertMaterial({ polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }), 400), chips);
   }
   // Per frame: the wind clock, falling / fallen trees, twinkling glints.
   function animateFeatures(dt = 0){
@@ -2368,7 +2495,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (hat === 'hair') blob(H, HAIR, ...P(-0.6, -15.6), ar(3.9), ar(3.2), ar(4.1), HEAD_RES); // (hair and helmets: the head's resolution, or its round skin shows through)
     if (hat === 'long') { // straight long hair: a smooth cap over the crown to the brow, and one curtain
       // falling from the brow to the shoulders all round, open at the front for the face.
-      const hm = new THREE.MeshLambertMaterial({ color: HAIR, side: THREE.DoubleSide }), R = ar(4.35);
+      const hm = mat(HAIR, true), R = ar(4.35);
       const cap = new THREE.Mesh(own(new THREE.SphereGeometry(R, 20, 10, 0, 2 * Math.PI, 0, 1.2)), hm);
       cap.position.set(...P(-0.2, -14)); cap.userData.hullGeo = cap.geometry; H.add(cap);
       const top = chh(-14) + Y + R * Math.cos(1.2), bot = chh(-9.4) + Y, gap = 0.95;              // to the shoulders, not past them
@@ -2947,7 +3074,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         row(2, 22, 2.1, 4.2, 'rgba(0,0,0,0.33)');
       }
       const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.repeat.set(3, 1);
-      m = new THREE.MeshLambertMaterial({ map: tex }); armorMats.set(key, m); tcSwaps.set(m, t => armorMat(kind, metal, t));
+      m = new THREE.MeshLambertMaterial({ map: tex }); m.userData.armor = { kind, metal }; armorMats.set(key, m); tcSwaps.set(m, t => armorMat(kind, metal, t));
     }
     return m;
   }
@@ -3660,10 +3787,10 @@ gl_Position = projectionMatrix * mvPosition;`;
   // among them (wheatPushers, set each frame) and spring back as it moves on.
   const wheatPushers = { value: null }; // WHEAT_PUSH × Vector4 [x, z, strength, radius], made in initShared
   const wheatMats = new Map(), WHEAT_PUSH = 16;
-  function wheatMat(col){
-    let m = wheatMats.get(col);
+  function wheatMat(){
+    const col = 'vc'; let m = wheatMats.get(col);
     if (!m) {
-      m = new THREE.MeshLambertMaterial({ color: col, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      m = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
       m.onBeforeCompile = sh => {
         sh.uniforms.uPush = wheatPushers; sh.uniforms.uWind = wind;
         sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 uPush[' + WHEAT_PUSH + ']; uniform float uWind;')
@@ -3688,6 +3815,18 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Many small boxes as one mesh ([x,y,z, sx,sy,sz, rx,rz] or [..., quaternion]
   // each): a farm's 30 sheaves stay a few draw calls.
   const batchTmpl = {};
+  // Non-indexed geometries ([geo, colour] each) as one, the colour per vertex; the sources are freed.
+  function tintJoin(list){
+    let n = 0; for (const [g] of list) n += g.attributes.position.count;
+    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 3), c = new THREE.Color(); let o = 0;
+    for (const [g, hex] of list) { const k = g.attributes.position.count; c.set(hex);
+      pos.set(g.attributes.position.array, o * 3); nrm.set(g.attributes.normal.array, o * 3);
+      for (let i = 0; i < k; i++) col.set([c.r, c.g, c.b], (o + i) * 3);
+      o += k; g.dispose(); }
+    const geo = own(new THREE.BufferGeometry());
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  }
   function boxBatch(parts, shape = 'box'){ // shape: unit 'box', 'rod' (diameter sx) or 'ball' (an oval sx×sy×sz)
     const tm = batchTmpl[shape] = batchTmpl[shape] || (shape === 'rod' ? new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
       : shape === 'ball' ? new THREE.SphereGeometry(0.5, 8, 6) : new THREE.BoxGeometry(1, 1, 1)).toNonIndexed();
@@ -3767,14 +3906,14 @@ gl_Position = projectionMatrix * mvPosition;`;
   // tail). Under each pivot, the unnamed rigid pieces (and their shells) merge by material in the pivot's own frame,
   // so they still move with it; anything named (a puff, an eye, a band) stays its own mesh for the code that finds it.
   // (The dragon keeps its parts: its wings' membranes are rebuilt live.)
-  function bakeRigid(g, loose = null){ // loose: names that may merge too (a living sheep's wool puffs: only a carcass is plucked)
+  function bakeRigid(g, loose = null, merge = false){ // loose: names that may merge too (a living sheep's wool puffs: only a carcass is plucked)
     const plain = o => (!o.name || (loose && loose.has(o.name))) && !o.userData.live && (o.isMesh || o.isLineSegments) && !Array.isArray(o.material) && o.children.every(plain); // (live: moved or reshaped every frame on its own)
     const nodes = []; g.traverse(o => { if (!o.isMesh && !o.isLineSegments) nodes.push(o); });
     for (const n of nodes) {
       const parts = n.children.filter(c => c.isMesh && plain(c));
       if (parts.length < 2) continue;
       const tmp = new THREE.Group(); for (const c of parts) { n.remove(c); tmp.add(c); }   // (tmp at identity: the parts keep their frame in n)
-      const baked = bakePose(tmp);
+      const baked = bakePose(tmp, merge);
       tmp.traverse(o => { if (o !== tmp && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
       for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; n.add(c); }
     }
@@ -3788,18 +3927,25 @@ gl_Position = projectionMatrix * mvPosition;`;
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
-    for (const o of lift) { hold.attach(o); bakeRigid(o); }                       // (a moving part merged too, round its own pivots: a horse's neck, head, tail)
+    // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
+    for (const o of lift) { hold.attach(o); if (o.name === 'sails') bakeWhole(o); else bakeRigid(o, null, true); }
+    bakeWhole(g);
+    for (const o of lift) g.attach(o);
+  }
+  function bakeWhole(g){
     const baked = bakePose(g, true);
     g.traverse(o => { if (o !== g && o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); });
     for (const c of g.children.slice()) g.remove(c);
     for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; g.add(c); } // (own: dropSolid frees it)
-    for (const o of lift) g.attach(o);
   }
   function refreshModel(e){
     const hurt = isHurt(e);
     const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
       + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : '');
     let rec = solids.get(e.id);
+    // (a standing farm whose crop alone changed: the crop's geometry is swapped, the model stays)
+    if (rec && rec.crop && rec.key !== key && e.complete && !hurt && !rec.site && !rec.dmg && rec.key.slice(0, rec.key.lastIndexOf(':')) === key.slice(0, key.lastIndexOf(':'))) {
+      rec.crop.geometry.dispose(); rec.crop.geometry = farmCrop(e); const c = centerOf(e); levelGeo(rec.obj, c.x, c.y); rec.key = key; }
     if (!rec || rec.key !== key) {
       if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (as refreshWall)
       const tb = performance.now();
@@ -3815,7 +3961,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
+      rec = { obj: g, key, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -4326,13 +4472,14 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (Math.abs(c.x - eye.x) > RANGE + 4 || Math.abs(c.y - eye.y) > RANGE + 4) { if (!far && !solids.has(e.id)) far = e; continue; }
       seen.add(e.id);
       const rec = make(e);
-      if (rec && rec.obj) { const gh = isWallBtype(e.btype) && ghostAt.get(e.y * MAP + e.x); rec.obj.visible = !(gh && gh.btype !== e.btype); }   // (a wall where a gate, a tower or a stone piece is being placed: it will be gone)
+      if (rec && rec.obj) { const gh = isWallBtype(e.btype) && ghostAt.get(e.y * MAP + e.x); rec.hid = !!(gh && gh.btype !== e.btype); rec.obj.visible = !rec.hid; }   // (a wall where a gate, a tower or a stone piece is being placed: it will be gone)
     }
     if (!bldSpent && far && solids.size < PREBUILD_MAX) { const rec = make(far);
       if (rec && rec.obj) { rec.obj.visible = false; if (renderer.compileAsync) renderer.compileAsync(rec.obj, camera, scene).catch(() => {}); } }
     // Out of range: hidden, not dropped — the model is ready when the view comes back. Gone or unseen: dropped.
     for (const [id, w] of solids) if (!seen.has(id)) { const e = entitiesById.get(id);
       if (e && e.type === 'building' && e.hp > 0 && bldgVisible(e)) { if (w.obj) w.obj.visible = false; } else { dropSolid(w); solids.delete(id); } }
+    wallRuns();
   }
   // Where a unit faces: along its path, else toward its target, else the last way it faced. It shares the 2D
   // renderer's facing (e.dir, the sprite direction nearest on screen — cosmetic, never read by the sim): a unit starts from
@@ -4381,14 +4528,29 @@ gl_Position = projectionMatrix * mvPosition;`;
   // go into ONE mesh, the colour per vertex (the rigs' own material, rigPlainMat), not a mesh a colour: a building is
   // a dozen colours, and each was a draw call.
   function bakePose(g, mergePlain = false){
-    const plainOf = m => mergePlain && m.isMeshLambertMaterial && m.userData.plain && !m.map && !m.transparent && !HULL_MATS.has(m) && !tcSwaps.has(m);
+    // (mergePlain: a still model in its real team colour — nothing swaps its materials after. Plain and patterned
+    // surfaces alike go into the one body, bodyMat.)
+    const still = m => mergePlain && (m.isMeshLambertMaterial || m.isMeshPhongMaterial) && !m.map && !m.transparent && !HULL_MATS.has(m);
+    const plainOf = m => still(m) && (m.userData.plain || m.flatShading), detOf = m => still(m) && !m.flatShading && m.userData.detail;
+    // (a faceted part — an ore pile's rocks — joins the body with its facets as real normals: a corner per triangle)
+    const facets = (geo, range) => { const P = geo.attributes.position, I = geo.index, r0 = range ? range.start : 0, n = range ? range.count : I ? I.count : P.count;
+      const pos = new Float32Array(n * 3), nr = new Float32Array(n * 3), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      for (let t = 0; t < n; t += 3) { const at = k => I ? I.getX(r0 + t + k) : r0 + t + k;
+        a.fromBufferAttribute(P, at(0)); b.fromBufferAttribute(P, at(1)); c.fromBufferAttribute(P, at(2));
+        pos.set([a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z], t * 3); b.sub(a); c.sub(a); b.cross(c).normalize();
+        for (let k = 0; k < 3; k++) nr.set([b.x, b.y, b.z], (t + k) * 3); }
+      const f = new THREE.BufferGeometry(); f.setAttribute('position', new THREE.BufferAttribute(pos, 3)); f.setAttribute('normal', new THREE.BufferAttribute(nr, 3)); return f; };
     g.updateMatrixWorld(true);
     const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), groups = new Map(), lineGroups = new Map(), root = new THREE.Group();
     g.traverseVisible(o => {
       if (o === g || !(o.isMesh || o.isLineSegments)) return;
       const M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
-      const put = (m, range) => { const pl = plainOf(m), k = (pl ? 'plain' + m.side : m.uuid) + '|' + o.renderOrder;
-        if (!groups.has(k)) groups.set(k, { mat: pl ? rigPlainMat(m.side) : m, ro: o.renderOrder, parts: [], vc: pl }); groups.get(k).parts.push({ geo: o.geometry, M, range, col: m.color }); };
+      const put = (m, range) => { if (!m.visible) return;
+        // (a fine outline, pushed out in the geometry, rides the bold ones' material with no push of its own: zero normals)
+        const zeroN = mergePlain && m === hullWorldMat; if (zeroN) m = hullMat;
+        const pl = plainOf(m), dt = !pl && detOf(m), body = pl || dt, k = (body ? 'body' + m.side : m.uuid) + '|' + o.renderOrder;
+        if (!groups.has(k)) groups.set(k, { mat: body ? bodyMat(m.side) : m, ro: o.renderOrder, parts: [], vc: !!body }); const flat = body && m.flatShading;
+        groups.get(k).parts.push({ geo: flat ? facets(o.geometry, range) : o.geometry, M, range: flat ? null : range, col: m.color, det: dt ? DETAIL_IDS.indexOf(dt) : -1, zeroN, shine: m.isMeshPhongMaterial ? 0.6 : 0 }); };
       if (o.isMesh && !Array.isArray(o.material)) { put(o.material); return; }
       // a multi-material mesh (a box with its own top): each material's triangles into that material's merge
       if (o.isMesh && o.geometry.groups.length && o.geometry.groups.every(gr => o.material[gr.materialIndex])) { for (const gr of o.geometry.groups) put(o.material[gr.materialIndex], gr); return; }
@@ -4403,8 +4565,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (const p of parts) { nv += p.geo.attributes.position.count; ni += p.range ? p.range.count : p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
       const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), uvs = uv ? new Float32Array(nv * 2) : null, idx = new Uint32Array(ni);
       let ov = 0, oi = 0;
-      for (const { geo, M, range } of parts) {
-        const P = geo.attributes.position, N = geo.attributes.normal, n = P.count; nm.getNormalMatrix(M);
+      for (const { geo, M, range, zeroN } of parts) {
+        const P = geo.attributes.position, N = zeroN ? null : geo.attributes.normal, n = P.count; nm.getNormalMatrix(M);
         for (let i = 0; i < n; i++) {
           v.fromBufferAttribute(P, i).applyMatrix4(M); pos.set([v.x, v.y, v.z], (ov + i) * 3);
           if (N) { v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); nrm.set([v.x, v.y, v.z], (ov + i) * 3); }
@@ -4417,8 +4579,12 @@ gl_Position = projectionMatrix * mvPosition;`;
       const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); bg.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
       if (uv) bg.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
       if (vc) { const cols = new Float32Array(nv * 3); let o = 0;
-        for (const { geo, col } of parts) { const n = geo.attributes.position.count; for (let i = 0; i < n; i++) { cols[o++] = col.r; cols[o++] = col.g; cols[o++] = col.b; } }
-        bg.setAttribute('color', new THREE.BufferAttribute(cols, 3)); }
+        // (steel and gold keep their sheen as a glow baked on the faces turned up — as the far rigs')
+        for (const { geo, col, shine } of parts) { const n = geo.attributes.position.count; for (let i = 0; i < n; i++) { const up = shine ? shine * Math.max(0, nrm[o + 1]) : 0;
+          cols[o++] = col.r + (1 - col.r) * up; cols[o++] = col.g + (1 - col.g) * up; cols[o++] = col.b + (1 - col.b) * up; } }
+        bg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+        const dets = new Float32Array(nv); o = 0; for (const { geo, det } of parts) { const n = geo.attributes.position.count; dets.fill(det, o, o + n); o += n; }
+        bg.setAttribute('det', new THREE.BufferAttribute(dets, 1)); }
       // any other per-vertex data (a site's clipOnly / inside / slide) carried as is — a part without it takes its default
       const extra = new Set(); for (const p of parts) for (const k in p.geo.attributes) if (!BAKE_STD.has(k)) extra.add(k);
       for (const k of extra) { const size = parts.find(p => p.geo.attributes[k]).geo.attributes[k].itemSize, arr = new Float32Array(nv * size), def = BAKE_DEF[k] || [];
@@ -4503,20 +4669,18 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Cosmetic dust puffs and flying loads (game-side, like the chips).
   const puffs = [], flying = [], loadCache = new Map();
   function puffBurst(x, y, z, n = 4, col = '#cbb892'){
-    for (let i = 0; i < n; i++) { const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7, depthWrite: false }));
-      m.position.set(x + (Math.random() - 0.5) * 0.12, y, z + (Math.random() - 0.5) * 0.12); m.scale.setScalar(0.03); scene.add(m); puffs.push({ m, age: 0 }); }
+    for (let i = 0; i < n; i++) puffs.push({ p: new THREE.Vector3(x + (Math.random() - 0.5) * 0.12, y, z + (Math.random() - 0.5) * 0.12), s: 0.03, a: 0.7, col: bitCol(col), age: 0 });
   }
   let _usph = null; const unitSphere = () => _usph || (_usph = new THREE.SphereGeometry(1, 8, 6));
   // a chimney's smoke: soft grey puffs rising slowly, drifting, swelling and thinning out (updateFlyers)
   const smokes = [];
   function chimneyPuff(x, y, z){
-    const m = new THREE.Mesh(unitSphere(), new THREE.MeshBasicMaterial({ color: '#c9c6c0', transparent: true, opacity: 0.45, depthWrite: false }));
-    m.position.set(x, y, z); m.scale.setScalar(0.035); scene.add(m); smokes.push({ m, age: 0, dx: 0.04 + Math.random() * 0.03 });
+    smokes.push({ p: new THREE.Vector3(x, y, z), s: 0.035, a: 0.45, col: bitCol('#c9c6c0'), age: 0, dx: 0.04 + Math.random() * 0.03 });
   }
   function oreChips(x, y, z, ang, cols){
-    for (let i = 0; i < 5; i++) { const m = new THREE.Mesh(unitBox, mat(cols[i % cols.length])); m.scale.set(0.02, 0.016, 0.022); m.position.set(x, y, z); scene.add(m);
+    for (let i = 0; i < 5; i++) {
       const sp = 0.5 + Math.random() * 0.4, a2 = ang + Math.PI + (Math.random() - 0.5) * 1.8;
-      chips.push({ m, v: new THREE.Vector3(Math.cos(a2) * sp, 0.7 + Math.random() * 0.5, Math.sin(a2) * sp), age: 0 }); }
+      chips.push({ p: new THREE.Vector3(x, y, z), s: new THREE.Vector3(0.02, 0.016, 0.022), col: bitCol(cols[i % cols.length]), rx: 0, rz: 0, v: new THREE.Vector3(Math.cos(a2) * sp, 0.7 + Math.random() * 0.5, Math.sin(a2) * sp), age: 0 }); }
   }
   function loadModel(kind){
     let f = loadCache.get(kind);
@@ -4525,11 +4689,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function updateFlyers(dt){
     for (let i = smokes.length - 1; i >= 0; i--) { const p = smokes[i]; p.age += dt;
-      p.m.position.y += dt * 0.14; p.m.position.x -= dt * p.dx; p.m.position.z -= dt * p.dx * 0.6; p.m.scale.setScalar(0.035 * (1 + p.age * 1.4));
-      p.m.material.opacity = 0.45 * Math.max(0, 1 - p.age / 2.6);
-      if (p.age > 2.6) { scene.remove(p.m); p.m.material.dispose(); smokes.splice(i, 1); } }
-    for (let i = puffs.length - 1; i >= 0; i--) { const p = puffs[i]; p.age += dt; p.m.scale.setScalar(0.03 * (1 + p.age * 3)); p.m.position.y += dt * 0.08; p.m.material.opacity = Math.max(0, 0.7 - p.age);
-      if (p.age > 0.8) { scene.remove(p.m); p.m.material.dispose(); puffs.splice(i, 1); } }
+      p.p.y += dt * 0.14; p.p.x -= dt * p.dx; p.p.z -= dt * p.dx * 0.6; p.s = 0.035 * (1 + p.age * 1.4);
+      p.a = 0.45 * Math.max(0, 1 - p.age / 2.6);
+      if (p.age > 2.6) smokes.splice(i, 1); }
+    for (let i = puffs.length - 1; i >= 0; i--) { const p = puffs[i]; p.age += dt; p.s = 0.03 * (1 + p.age * 3); p.p.y += dt * 0.08; p.a = Math.max(0, 0.7 - p.age);
+      if (p.age > 0.8) puffs.splice(i, 1); }
+    if (smokes.length || puffs.length || hazeMesh) bitsDraw(hazeMesh = hazeMesh || bitsMesh(unitSphere(), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }), 400, true), smokes.length && puffs.length ? smokes.concat(puffs) : smokes.length ? smokes : puffs);
     for (let i = flying.length - 1; i >= 0; i--) { // a thrown load: an arc from the hands into the drop-off, a puff where it lands
       const f = flying[i]; f.age += dt; const u = Math.min(1, f.age / f.dur);
       f.obj.position.set(f.a[0] + (f.b[0] - f.a[0]) * u, f.a[1] + (f.b[1] - f.a[1]) * u + f.h * 4 * u * (1 - u), f.a[2] + (f.b[2] - f.a[2]) * u);
@@ -4787,6 +4952,44 @@ gl_Position = projectionMatrix * mvPosition;`;
   const rigPlainMats = new Map();
   const rigPlainMat = side => { let m = rigPlainMats.get(side);
     if (!m) rigPlainMats.set(side, m = new THREE.MeshLambertMaterial({ vertexColors: true, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })); return m; };
+  // The same with a team's colour: vertices marked tcw (1 team colour, 2 its light tint) take it from the material, so
+  // one template's geometry serves every team and a unit's cloth, skin and team colour are one draw.
+  const rigTeamMats = new Map(), HULL_BACK = 0.05;
+  const rigTeamMat = (side, tc) => { const k = side + tc; let m = rigTeamMats.get(k);
+    if (!m) { m = new THREE.MeshLambertMaterial({ vertexColors: true, side, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      // The outline shell rides in the same mesh (vertices marked hullV, drawn first): black back faces pushed out on
+      // screen as hullUnionMat's, and set back in depth by HULL_BACK so the unit's own near parts paint over them —
+      // one draw a person. (Small: a deeper set-back sinks the outline into the ground at the feet.)
+      // And its surface patterns and armour, as a building's body (bodyMat): `det` picks the layer.
+      const scales = DETAIL_IDS.map(k => 1 / DETAIL[k][0]), ND = DETAIL_IDS.length;
+      const U = { detailArr: { value: detailLayers() }, detailScales: { value: scales }, detailK: { value: DETAIL_K }, tcA: { value: new THREE.Color(tc) }, tcB: { value: new THREE.Color(lightOf(tc)) }, uHullRes: { value: new THREE.Vector2(1000, 700) }, uHullPx: { value: 2 }, uHullW: { value: HULL } };
+      m.onBeforeRender = r => { r.getDrawingBufferSize(U.uHullRes.value); U.uHullPx.value = 1.5 * r.getPixelRatio(); };
+      m.onBeforeCompile = sh => { Object.assign(sh.uniforms, U);
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float tcw; attribute float hullV; attribute float det; uniform vec3 tcA; uniform vec3 tcB; uniform vec2 uHullRes; uniform float uHullPx, uHullW; varying float vHull; varying float vDet; varying vec3 vWPos; varying vec3 vWNrm; varying vec2 vDUv;')
+          .replace('#include <color_vertex>', '#include <color_vertex>\nif (tcw > 0.5) vColor.rgb = tcw > 1.5 ? tcB : tcA;')
+          .replace('#include <project_vertex>', `#include <project_vertex>
+            vHull = hullV; vDet = det; vDUv = uv; vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz; vWNrm = mat3(modelMatrix) * objectNormal;
+            if (hullV > 0.5) {
+              if (dot(objectNormal, objectNormal) > 1e-10) {
+                vec2 sd = (projectionMatrix * vec4(normalize(normalMatrix * objectNormal), 0.0)).xy * uHullRes;
+                vec2 n2 = sd / max(length(sd), 0.5 * projectionMatrix[1][1] * uHullRes.y);
+                float pw = clamp(uHullW * projectionMatrix[1][1] * 0.5 * uHullRes.y / gl_Position.w, uHullPx, uHullPx * 2.2);
+                gl_Position.xy += n2 * pw * 2.0 / uHullRes * gl_Position.w;
+              }
+              vec4 hb = projectionMatrix * vec4(mvPosition.xyz * (1.0 + ${HULL_BACK.toFixed(3)} / length(mvPosition.xyz)), 1.0);
+              gl_Position.z = hb.z / hb.w * gl_Position.w;
+            }`);
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vHull; varying float vDet; varying vec3 vWPos; varying vec3 vWNrm; varying vec2 vDUv; uniform vec3 tcA; uniform mediump sampler2DArray detailArr; uniform float detailScales[' + ND + ']; uniform float detailK;')
+          .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vHull > 0.5 && gl_FrontFacing) discard;')
+          .replace('#include <color_fragment>', `#include <color_fragment>
+            vec3 an = abs(normalize(vWNrm)); int di = int(max(vDet, 0.0) + 0.5); float arm = step(${ND}.0 - 0.5, vDet);
+            vec2 duv = an.y > 0.85 ? vWPos.xz : vec2(an.x > an.z ? vWPos.z : vWPos.x, -vWPos.y);
+            vec4 dl = texture(detailArr, vec3(mix(duv * detailScales[min(di, ${ND - 1})], vDUv * vec2(3.0, 1.0), arm), float(di)));
+            vec3 worn = max(vec3(0.0), 1.0 - detailK * (1.0 - dl.rgb));
+            diffuseColor.rgb = mix(diffuseColor.rgb * mix(vec3(1.0), worn, step(-0.5, vDet)), mix(diffuseColor.rgb, tcA, dl.a) * dl.rgb, arm);`); };
+      m.customProgramCacheKey = () => 'rig-team';
+      m.userData.tc = tc; tcSwaps.set(m, t => rigTeamMat(side, t)); rigTeamMats.set(k, m); }
+    return m; };
   function rigAdd(B, mat, order, geo, bone, M){
     const k = mat.uuid + '|' + order; let b = B.get(k);
     if (!b) B.set(k, b = { mat, order, pos: [], nrm: [], uv: [], bone: [], idx: [] });
@@ -4846,27 +5049,45 @@ gl_Position = projectionMatrix * mvPosition;`;
     // Plain-coloured parts (skin, cloth, leather, wood: no texture, no team colour, opaque) go in ONE mesh per side,
     // coloured per vertex — a unit is a handful of draws, not one per colour
     // (low: steel and gold join them too — their sheen is a pixel or two at that distance, and it saves a draw a unit)
-    const plain = m => (m.isMeshLambertMaterial || (low && m.isMeshPhongMaterial)) && !m.map && !m.userData.detail && !m.transparent && !tcSwaps.has(m) && !HULL_MATS.has(m) && m.userData.plain; // (a mat() colour: fog is patched on at draw, on the merged one too)
-    for (const side of [THREE.FrontSide, THREE.DoubleSide]) {
-      const group = [...B.entries()].filter(([, b]) => !b.lines && b.order === 2 && plain(b.mat) && b.mat.side === side);
-      if (group.length < 2) continue;
-      const m = { mat: rigPlainMat(side), order: 2, pos: [], nrm: [], uv: [], bone: [], idx: [], col: [] };
-      for (const [k, b] of group) { const base = m.pos.length / 3, c = b.mat.color, shine = b.mat.isMeshPhongMaterial ? 0.6 : 0;
+    // (a mat() colour — plain or patterned, the owner's or not — or a soldier's armour: all one body)
+    const hexOf = m => '#' + m.color.getHexString(), arm = m => m.userData.armor;
+    const tcw = m => arm(m) || !tcSwaps.has(m) ? 0 : hexOf(m) === VIL_TC ? 1 : hexOf(m) === lightOf(VIL_TC) ? 2 : 0;
+    const detOf = m => arm(m) ? DETAIL_IDS.length + ARMOR_IDS.indexOf(arm(m).kind) : m.userData.detail ? DETAIL_IDS.indexOf(m.userData.detail) : -1;
+    const plain = m => arm(m) ? true : (m.isMeshLambertMaterial || (low && m.isMeshPhongMaterial)) && !m.map && !m.transparent && (!tcSwaps.has(m) || tcw(m)) && !HULL_MATS.has(m) && (m.userData.plain || m.userData.detail); // (a mat() colour: fog is patched on at draw, on the merged one too)
+    // (one-sided and two-sided parts together, drawn two-sided: a closed part's back faces are hidden behind its front)
+    { const group = [...B.entries()].filter(([, b]) => !b.lines && b.order === 2 && plain(b.mat));
+      const side = group.some(([, b]) => b.mat.side === THREE.DoubleSide) ? THREE.DoubleSide : THREE.FrontSide;
+      if (group.length) {
+      // (the outline shells first: the body's own triangles then paint over them)
+      const m = { mat: rigTeamMat(THREE.DoubleSide, VIL_TC), order: 2, pos: [], nrm: [], uv: [], bone: [], idx: [], col: [], tcw: [], hull: [], det: [] };
+      for (const [k, b] of [...B.entries()].filter(([, b]) => b.mat === hullUnionMat && !b.lines)) { const base = m.pos.length / 3;
+        m.pos.push(...b.pos); m.nrm.push(...b.nrm); m.uv.push(...b.uv); m.bone.push(...b.bone);
+        for (let i = 0; i < b.pos.length / 3; i++) { m.col.push(0, 0, 0); m.tcw.push(0); m.hull.push(1); m.det.push(-1); }
+        for (const i of b.idx) m.idx.push(i + base); B.delete(k); }
+      m.hullIdx = m.idx.length;
+      for (const [k, b] of group) { const base = m.pos.length / 3, c = arm(b.mat) ? new THREE.Color(arm(b.mat).kind === 'chain' ? '#dde3ea' : arm(b.mat).metal) : b.mat.color, shine = b.mat.isMeshPhongMaterial ? 0.6 : 0;
+        { const w = tcw(b.mat), d = detOf(b.mat); for (let i = 0; i < b.pos.length / 3; i++) { m.tcw.push(w); m.hull.push(0); m.det.push(d); } }
         m.pos.push(...b.pos); m.nrm.push(...b.nrm); m.uv.push(...b.uv); m.bone.push(...b.bone);
         // (a merged steel/gold part keeps its sheen as a baked glow on the faces turned up toward the overhead view)
         for (let i = 0; i < b.pos.length / 3; i++) { const up = shine * Math.max(0, b.nrm[i * 3 + 1]);
           m.col.push(c.r + (1 - c.r) * up, c.g + (1 - c.g) * up, c.b + (1 - c.b) * up); }
         for (const i of b.idx) m.idx.push(i + base); B.delete(k); }
       B.set('plain|' + side, m);
-    }
+    } }
     const meshes = [];
     for (const b of B.values()) {
       const geo = new THREE.BufferGeometry(), n = b.pos.length / 3, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
       if (b.col) geo.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
+      if (b.tcw) geo.setAttribute('tcw', new THREE.Float32BufferAttribute(b.tcw, 1));
+      if (b.hull) geo.setAttribute('hullV', new THREE.Float32BufferAttribute(b.hull, 1));
+      if (b.det) geo.setAttribute('det', new THREE.Float32BufferAttribute(b.det, 1));
       for (let i = 0; i < n; i++) { si[i * 4] = b.bone[i]; sw[i * 4] = 1; }
       geo.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3)); geo.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2)); geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4)); geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
       geo.setIndex(b.idx); geo.userData.rig = true;
+      // (its shell and its body apart, for the rims drawn from them — selection, x-ray: views of the same buffers)
+      if (b.hull && b.hullIdx) { const view = (a, c) => { const v = new THREE.BufferGeometry(); for (const k in geo.attributes) v.setAttribute(k, geo.attributes[k]); v.setIndex(geo.index); v.setDrawRange(a, c); return v; };
+        geo.userData.views = { hull: view(0, b.hullIdx), body: view(b.hullIdx, b.idx.length - b.hullIdx) }; }
       meshes.push({ geo, mat: b.mat, order: b.order, lines: !!b.lines });
     }
     window.__pov3dLab.dispose(g);
@@ -4901,7 +5122,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const sk = new THREE.Skeleton(T.skBones, T.skInv);
     sk.update = function(){ if (this.boneTexture) this.boneTexture.needsUpdate = true; }; // the bone array is written directly (rigPose)
     const root = new THREE.Group(), sw = m => tcSwaps.has(m) ? tcSwaps.get(m)(tc) : m, id = new THREE.Matrix4();
-    for (const m of T.meshes) { if (m.lines) continue; const sm = new THREE.SkinnedMesh(m.geo, tc !== VIL_TC ? sw(m.mat) : m.mat); sm.bindMode = 'detached'; sm.bind(sk, id); sm.renderOrder = m.order; sm.frustumCulled = false; root.add(sm); }
+    for (const m of T.meshes) { if (m.lines) continue; const sm = new THREE.SkinnedMesh(m.geo, tc !== VIL_TC ? sw(m.mat) : m.mat); sm.bindMode = 'detached'; sm.bind(sk, id); sm.renderOrder = m.order; sm.frustumCulled = false; if (m.geo.userData.views) sm.userData.viewKeys = [{}, {}]; root.add(sm); }
     return { root, sk, T };
   }
   // Pose a unit record v (its rig lives in v.rig): kind at phase t (0..1), blended between samples.
@@ -5648,7 +5869,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   const RES_PARTS = ['trunk', 'crown0', 'crown1', 'crown2', 'stump', 'gold', 'stone', 'puff', 'berry'];
   function pick(cx, cy){
-    _ray = _ray || new THREE.Raycaster(); _ndc = _ndc || new THREE.Vector2(); _v3 = _v3 || new THREE.Vector3();
+    if (!_ray) { _ray = new THREE.Raycaster(); _ray.layers.enable(RUN_LAYER); } _ndc = _ndc || new THREE.Vector2(); _v3 = _v3 || new THREE.Vector3();
     const r = renderer.domElement.getBoundingClientRect();
     _ndc.set((cx - r.left) / r.width * 2 - 1, -((cy - r.top) / r.height * 2 - 1));
     _ray.setFromCamera(_ndc, camera);
@@ -5938,16 +6159,20 @@ gl_Position = projectionMatrix * mvPosition;`;
         v.obj.updateWorldMatrix(true, true);
         v.obj.traverseVisible(o => {
           if (!o.isMesh || o.isInstancedMesh) return;
-          const hull = o.material && o.material.side === THREE.BackSide, mat = skinnedTwin(hull ? xray.userData.rimOf(u.team) : xray.userData.mask, o.isSkinnedMesh);
-          let t = xTwins.get(o);
-          if (!t || t.geometry !== o.geometry) {
-            if (t) xray.remove(t);
-            if (o.isSkinnedMesh) { t = new THREE.SkinnedMesh(o.geometry, mat); t.bindMode = 'detached'; t.bind(o.skeleton, o.bindMatrix); }
-            else t = new THREE.Mesh(o.geometry, mat);
-            t.matrixAutoUpdate = false; t.matrixWorldAutoUpdate = false; t.frustumCulled = false; t.renderOrder = hull ? 1 : 0;
-            xTwins.set(o, t); xray.add(t);
-          }
-          t.material = mat; t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld); t.visible = true; t.userData.idle = 0; used.add(o); // (the group sits at the origin: local = world)
+          const one = (key, geo, hull) => { const mat = skinnedTwin(hull ? xray.userData.rimOf(u.team) : xray.userData.mask, o.isSkinnedMesh);
+            let t = xTwins.get(key);
+            if (!t || t.geometry !== geo) {
+              if (t) xray.remove(t);
+              if (o.isSkinnedMesh) { t = new THREE.SkinnedMesh(geo, mat); t.bindMode = 'detached'; t.bind(o.skeleton, o.bindMatrix); }
+              else t = new THREE.Mesh(geo, mat);
+              t.matrixAutoUpdate = false; t.matrixWorldAutoUpdate = false; t.frustumCulled = false; t.renderOrder = hull ? 1 : 0;
+              xTwins.set(key, t); xray.add(t);
+            }
+            t.material = mat; t.matrix.copy(o.matrixWorld); t.matrixWorld.copy(o.matrixWorld); t.visible = true; t.userData.idle = 0; used.add(key); }; // (the group sits at the origin: local = world)
+          // (a rig's one mesh holds its shell and its body: a twin of each)
+          const vw = o.geometry.userData.views, vk = o.userData.viewKeys;
+          if (vw && vk) { one(vk[0], vw.hull, true); one(vk[1], vw.body, false); }
+          else one(o, o.geometry, o.material && o.material.side === THREE.BackSide);
         });
       }
     }
@@ -6026,8 +6251,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       root.updateWorldMatrix(true, true);
       root.traverseVisible(o => {
         if (!o.isMesh || o.isInstancedMesh || !o.geometry.attributes.position) return;
-        const shell = o.material && o.material.side === THREE.BackSide;
-        if (shell && !bld) { twin(o, 0, M.maskInk, o.geometry); twin(o, 1, M.rimU, o.geometry); }  // a unit's ink shell: its ink marked, the rim pushed wider
+        const shell = o.material && o.material.side === THREE.BackSide, vw = o.geometry.userData.views;
+        if (vw && !bld) { twin(o, 0, M.maskInk, vw.hull); twin(o, 1, M.mask, vw.body); twin(o, 2, M.rimU, vw.hull); }   // (a rig's one mesh: its shell and its body)
+        else if (shell && !bld) { twin(o, 0, M.maskInk, o.geometry); twin(o, 1, M.rimU, o.geometry); }  // a unit's ink shell: its ink marked, the rim pushed wider
         else if (shell) twin(o, 0, M.mask, o.geometry);                                                  // a building's ink shell: marked (the rim starts past it)
         // (a gate's wall sections are the adjoining run's, not the gate: marked — no rim across them — but not outlined)
         else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype))) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
@@ -6331,19 +6557,27 @@ gl_Position = projectionMatrix * mvPosition;`;
   window.__povDrawnAt = id => { const v = villagers.get(id); return v ? [v.x, v.z] : null; }; // dev: where a villager is drawn (tests)
   window.povFollowing = () => followId;
   window.povSteering = () => steering;
+  // dev: what the people in the scene draw, by kind of part
+  window.__povPeople = () => { const out = { n: 0 }; for (const v of villagers.values()) { if (!v.obj || !v.obj.visible) continue; out.n++;
+    v.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments || o.isSprite)) return; const M = o.material;
+      const k = o.isLineSegments ? 'lines' : o.isSprite ? 'sprite' : HULL_MATS.has(M) ? 'hull' : rigTeamMats.has(M.side + (M.userData.tc || '')) && M.userData.tc ? 'body' : M.vertexColors ? 'bodyPlain' : (o.isSkinnedMesh ? 'rig:' : 'loose:') + (M.map ? 'map' : M.userData.detail || '#' + M.color.getHexString()) + (M.transparent ? ':tr' : '');
+      out[k] = (out[k] || 0) + 1; }); } return out; };
   window.__povRigMix = () => { const out = { templates: rigTemplates.size, meshes: 0, plain: 0, team: 0, detail: 0, hull: 0, lines: 0, other: 0 };
     for (const T of rigTemplates.values()) for (const m of T.meshes) { out.meshes++; const M = m.mat;
       if (m.lines) out.lines++; else if (HULL_MATS.has(M)) out.hull++; else if (tcSwaps.has(M)) out.team++; else if (M.isMeshLambertMaterial && !M.map && !M.userData.detail && !M.transparent) out.plain++; else if (M.userData.detail || M.map) out.detail++; else out.other++; }
     return out; }; // dev
   window.__povModelsOf = id => scene ? scene.children.filter(o => o.userData && o.userData.bid === id).map(o => ({ visible: o.visible, kids: o.children.length })) : null; // dev: the 3D models claiming building id (tests)
   window.__povBldParts = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible || rec.site || rec.dmg) continue; const e = entitiesById.get(rec.obj.userData.bid); if (!e) continue;
-    const k = e.btype; if (out[k]) continue; const c = {}; rec.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments)) return; const t = o.isLineSegments ? 'lines' : HULL_MATS.has(o.material) ? 'hull' : (o.name || (o.parent && o.parent.name) || 'mesh'); c[t] = (c[t] || 0) + 1; }); out[k] = c; } return out; }; // dev
+    const k = e.btype; if (out[k]) { out[k]._n++; continue; } const c = { _n: 1 }; rec.obj.traverseVisible(o => { if (!(o.isMesh || o.isLineSegments)) return; const t = o.isLineSegments ? 'lines' : HULL_MATS.has(o.material) ? 'hull' : (o.name || (o.parent && o.parent.name) || ((m => (m.vertexColors ? 'vc' : m.map ? 'map' : m.userData.detail ? 'd:' + m.userData.detail : (tcSwaps.has(m) ? 'tc' : '') + '#' + m.color.getHexString()) + (m.side === THREE.DoubleSide ? '/2' : '') + (m.transparent ? '/tr' : '') + (m.isMeshLambertMaterial ? '' : '/' + m.type))([].concat(o.material)[0]))); c[t] = (c[t] || 0) + 1; }); out[k] = c; } return out; }; // dev
   window.__povBldDraws = () => { const out = {}; for (const rec of solids.values()) { if (!rec.obj || !rec.obj.visible) continue; const k = rec.site ? 'site' : rec.dmg ? 'damaged' : rec.door ? 'gate' : 'finished';
     let n = 0; rec.obj.traverseVisible(o => { if (o.isMesh || o.isLineSegments) n++; }); const e = out[k] || (out[k] = { count: 0, draws: 0 }); e.count++; e.draws += n; } return out; }; // dev
   // dev: the frame's drawables (meshes and line sets in view of the scene graph — visible, not yet frustum-culled) by kind
-  window.__povDraws = () => { const n = o => { let k = 0; if (o && o.visible) o.traverseVisible(c => { if (c.isMesh || c.isLineSegments || c.isSprite) k++; }); return k; };
+  window.__povDraws = () => { const n = o => { let k = 0; if (o && o.visible) o.traverseVisible(c => { if ((c.isMesh || c.isLineSegments || c.isSprite) && c.layers.test(camera.layers)) k++; }); return k; };
     const sum = it => { let k = 0; for (const r of it) k += n(r.obj || r.sprite || r); return k; };
-    return { buildings: sum(solids.values()), people: sum(villagers.values()), animals: sum(animals.values()), sprites: sum(unitSprites.values()), corpses: sum(corpseModels.values()), xray: n(xray), selection: n(selG), all: n(scene) }; };
+    const known = new Set(); for (const m of [solids, villagers, animals, unitSprites, corpseModels]) for (const r of m.values()) known.add(r.obj || r.sprite || r); known.add(xray); known.add(selG);
+    const rest = {}; for (const c of scene.children) { if (known.has(c)) continue; const k = n(c); if (!k) continue; const M = [].concat(c.material || [])[0];
+      const key = c.name || (c.isInstancedMesh ? 'inst' : c.isSprite ? 'sprite' : c.isLineSegments ? 'lines' : c.isMesh ? 'mesh:' + (M.map ? 'map' : M.type.replace('Material', '')) + (c.isSkinnedMesh ? ':skin' : '') + ':' + c.geometry.type.replace('Geometry', '') + (M.color ? '#' + M.color.getHexString() : '') + ':' + Object.keys(c.userData).join('.') : c.type + ':' + Object.keys(c.userData).join('.') + ':' + c.children.length); rest[key] = (rest[key] || 0) + k; }
+    return { rest, buildings: sum(solids.values()), people: sum(villagers.values()), animals: sum(animals.values()), sprites: sum(unitSprites.values()), corpses: sum(corpseModels.values()), xray: n(xray), selection: n(selG), all: n(scene) }; };
   window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
