@@ -16,7 +16,7 @@ function canPlace(type,x,y,team=0,ignoreAge=false,rejectUnits=false){
     // EXACTLY the tiles that get built.
     let isWall = (tx, ty) => gateBaseAt(tx, ty, type, team);
     ({ ox, oy, gw: bw, gh: bh } = gateFootprint(x, y, isWall));
-    if (bw === 1 && bh === 1) return false; // no matching run to build on
+    if (bw === 1 && bh === 1 && !(isWall(x, y) && gateDiagRun(x, y, isWall))) return false; // no matching run to build on (one tile: on a diagonal run)
   }
   // rejectUnits (EDITOR only): the editor drops a COMPLETE, instantly-solid
   // building, so refuse to place it on a unit — no shove/teleport, the author

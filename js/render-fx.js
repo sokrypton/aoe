@@ -1,5 +1,41 @@
+// A ghost is painted whole, solid, on a layer of its own, and the layer laid on see-through: painted see-through piece
+// by piece, wherever two of its parts lap (a wall's slabs do, by design) the lap shows darker and what it covers shows
+// through — the preview would not look like the wall it previews.
+let _ghostLayer = null;
+function ghostLayer(draw){
+  const main = X, cv = main.canvas;
+  if (!_ghostLayer) _ghostLayer = document.createElement('canvas');
+  if (_ghostLayer.width !== cv.width || _ghostLayer.height !== cv.height) { _ghostLayer.width = cv.width; _ghostLayer.height = cv.height; }
+  const g = _ghostLayer.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height); g.setTransform(main.getTransform());
+  X = g; try { draw(); } finally { X = main; }
+  main.save(); main.setTransform(1, 0, 0, 1, 0, 0); main.globalAlpha = 0.55; main.drawImage(_ghostLayer, 0, 0); main.restore();
+}
+// The wall pieces, gate or tower being placed, where they FIT, as the tiles' occupants (getConnectedBuilding's
+// overlay): set for the whole frame (renderFrame), so the walls already standing are drawn as they will be once it
+// is built — a join toward it, a post gained or lost, a wall under a new gate gone — and the preview is the finished
+// thing, its new parts see-through. null: nothing wall-like is being placed, or it doesn't fit.
+function ghostOverlay(){
+  if (!placing || !(isWallBtype(placing) || isGateBtype(placing) || isTowerBtype(placing))) return null;
+  const b = BLDGS[placing], m = new Map();
+  const mk = (x, y, w, h) => ({ type:'building', btype:placing, x, y, team:myTeam, hp:b.hp, maxHp:b.hp, complete:true, buildProgress:0, buildTime:200, queue:[], garrison:[], w, h, rallyX:x, rallyY:y, gateProgress:0, ghost:true });
+  if (isWallBtype(placing) && window.isDraggingWall && window.wallDragStart && window.wallDragEnd) {
+    for (const t of getWallElbowTiles(window.wallDragStart, window.wallDragCorner || window.wallDragEnd, window.wallDragEnd))
+      if (canPlace(placing, t.x, t.y, myTeam, window.__editorMode, window.__editorMode)) m.set(t.y * MAP + t.x, mk(t.x, t.y, 1, 1));
+  } else {
+    const tile = screenToTile(mouseX, mouseY); let ox = tile.x, oy = tile.y, bw = b.w, bh = b.h;
+    if (isGateBtype(placing)) { const fp = gateFootprint(tile.x, tile.y, (tx, ty) => gateBaseAt(tx, ty, placing, myTeam)); ox = fp.ox; oy = fp.oy; bw = fp.gw; bh = fp.gh; }
+    if (!canPlace(placing, tile.x, tile.y, myTeam, window.__editorMode, window.__editorMode)) return null;
+    const e = mk(ox, oy, bw, bh); for (let dy = 0; dy < bh; dy++) for (let dx = 0; dx < bw; dx++) m.set((oy + dy) * MAP + ox + dx, e);
+  }
+  return m.size ? m : null;
+}
 function drawGhost(){
   if(!placing)return;
+  const world = window._ghostTiles;   // (the frame's overlay: back when this ghost has drawn through its own)
+  try { drawGhostArt(); } finally { window._ghostTiles = world; }
+}
+function drawGhostArt(){
   let tile=screenToTile(mouseX,mouseY);
 
   // Wall drag: show the actual wall pillars/links along the drag line
@@ -18,13 +54,11 @@ function drawGhost(){
       hp:b.hp, maxHp:b.hp, complete:true, buildProgress:0, buildTime:200,
       queue:[], garrison:[], w:1, h:1
     }));
-    X.globalAlpha = 0.55;
     window._ghostDraw = true; window._ghostValid = true; window._ghostTiles = overlay;
     // Depth order: far tiles (smaller y+x) first so nearer pillars overlap.
-    line.slice().sort((a,c) => (a.y+a.x) - (c.y+c.x))
-        .forEach(t => drawBuilding(overlay.get(t.y*MAP + t.x)));
-    window._ghostTiles = null; window._ghostDraw = false;
-    X.globalAlpha = 1;
+    try { ghostLayer(() => line.slice().sort((a,c) => (a.y+a.x) - (c.y+c.x))
+        .forEach(t => drawBuilding(overlay.get(t.y*MAP + t.x)))); }
+    finally { window._ghostTiles = null; window._ghostDraw = false; }
 
     // Tint each tile green (valid) or red (invalid)
     line.forEach(t => {
@@ -60,12 +94,14 @@ function drawGhost(){
     buildProgress:0, buildTime:200, queue:[],
     w:bw, h:bh_, rallyX:ox, rallyY:oy, gateProgress:0
   };
-  X.globalAlpha=0.55;
   window._ghostDraw=true;
   window._ghostValid=ok; // invalid ghosts draw no wall-connection stubs (getConnectedBuilding)
-  drawBuilding(fakeE);
-  window._ghostDraw=false;
-  X.globalAlpha=1;
+  // (a wall piece, a tower or a gate that fits: on the overlay, as a drag's tiles are — the pieces round it are drawn
+  // by the same rules as when it stands, so they must see it there)
+  if (ok && (isWallBtype(placing) || isGateBtype(placing) || isTowerBtype(placing))) {
+    window._ghostTiles = new Map(); for (let dy = 0; dy < bh_; dy++) for (let dx = 0; dx < bw; dx++) window._ghostTiles.set((oy + dy) * MAP + ox + dx, fakeE);
+  }
+  try { ghostLayer(() => drawBuilding(fakeE)); } finally { window._ghostDraw=false; window._ghostTiles=null; }
 
   // Tint footprint tiles green (valid) or red (invalid)
   X.fillStyle=ok?'rgba(0,200,80,0.28)':'rgba(220,30,0,0.28)';

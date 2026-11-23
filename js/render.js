@@ -234,6 +234,7 @@ function renderFrame(){
   // fog===0) and the area beyond the map edge both read as true black,
   // matching AoE2 rather than showing a dark-green "explored" tint.
   X.fillStyle='#000000';X.fillRect(0,0,W,window.innerHeight);
+  window._ghostTiles = ghostOverlay();   // (render-fx.js: the standing walls are drawn as they will be with the piece being placed)
 
   // A guest arriving via a multiplayer join link skips the normal local
   // init()/genMap() entirely (it's about to receive the host's world over
@@ -336,6 +337,10 @@ function renderFrame(){
       // must draw over it (it's closer to the viewer). Units a full tile
       // nearer still sort higher and correctly draw over the gate.
       prox.front.sortVal = (wallLineNS ? en.y + 1 : en.y) + (wallLineNS ? en.x : en.x + 1) + 0.3;
+      // (a gate on a run down the screen — diagGateAt: its posts stand a tile behind and a tile in front of the doorway)
+      // The near post goes down just BEFORE the wall piece it stands on: that piece's wall runs on toward the viewer,
+      // in front of the post's foot.
+      if (diagGateAt(en.x, en.y) === 2) { prox.back.sortVal = en.x + en.y - 2 + 0.1; prox.front.sortVal = en.x + en.y + 2 - 0.05; }
       // The CLOSED door spans the archway, so it sorts at the run's CENTRE
       // (not the origin like the back post) — otherwise a unit on the far
       // side sorted ABOVE the origin-anchored door and drew in front of it.
@@ -552,6 +557,7 @@ function renderFrame(){
   drawProjectiles(); // Draw archer arrows
   drawParticles();   // Draw fire/dust/blood particles
   drawGhost();
+  window._ghostTiles = null;   // (the frame's only: the hit tests and the next frame's rules read the real grid)
 
   drawOrderOverlays();
 

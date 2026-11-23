@@ -252,6 +252,15 @@ function gateFootprint(x, y, isWall){
   if (isWall(x, y-1) && isWall(x, y)) return { ox:x, oy:y-1, gw:1, gh:2 };
   return { ox:x, oy:y, gw:1, gh:1 };
 }
+// DIAGONAL WALLS — a drag's diagonal leg, corner-to-corner joins (wallDiag, render-buildings.js), posts turned to the
+// run, a gate on a diagonal run — are built but OFF: a doubled diagonal wall seals each tile between its rails (no
+// corner-cutting), which reads as a corridor and traps whoever stands there. Turning it on changes what a gate may be
+// placed on (canPlace): bump NET_PROTOCOL_VERSION with it.
+const WALL_DIAGONALS = false;
+// A gate on a DIAGONAL wall run is ONE tile — the doorway — and the wall pieces beside it on the run stand as its
+// posts (they stay walls). The run through (x, y): 1 = (x-1,y+1)..(x+1,y-1), across the screen; 2 = (x-1,y-1)..(x+1,y+1),
+// down it; 0 = none. A unit crosses the doorway corner to corner or straight: both are open beside a diagonal run.
+function gateDiagRun(x, y, isWall){ return !WALL_DIAGONALS ? 0 : isWall(x-1, y+1) && isWall(x+1, y-1) ? 1 : isWall(x-1, y-1) && isWall(x+1, y+1) ? 2 : 0; }
 // Tiles a gate of `btype` can span (the isWall predicate for gateFootprint):
 // an allied WALL of the gate's material, OR an allied gate of the SAME type.
 // The gate case lets a gate snap onto / rebuild over an existing gate — so

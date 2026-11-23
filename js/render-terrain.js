@@ -408,36 +408,63 @@ function drawTreeEntity(x,y,part=null){
 // wallH: height of the wall slab in pixels
 // lift: on hills, px the ground at a level-ground offset from (sx, sy) stands above it (wallLift) — every base point
 // sits on its own ground, so the slab's foot follows the slope and meets its posts' feet.
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood', lift=null) {
+function mixHex(a, b){ const n = h => parseInt(h.slice(1), 16), x = n(a), y = n(b), c = s => ((x >> s & 255) + (y >> s & 255)) >> 1; return '#' + (c(16) << 16 | c(8) << 8 | c(0)).toString(16).padStart(6, '0'); }
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood', lift=null, mitre=null, flush=false, flushEnd=false) {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
-  const t0 = d1 / L, t1 = 1 - d2 / L;
+  // (an end with no trim runs on into the next slab — a post-less piece of a straight run: 2px past the meeting
+  // point, so each one's soft end lies under the other's solid line; butted, or barely lapped, they leave a hairline
+  // in the fill and a skip in the outline)
+  const t0 = d1 ? d1 / L : -2 / L, t1 = d2 ? 1 - d2 / L : 1 + 2 / L;
   // (the ground's one crease along the way is the tile edge, half way)
-  const ts = lift && t0 < 0.5 && t1 > 0.5 ? [t0, 0.5, t1] : [t0, t1];
+  // A MITRED end (mitre = [start, end], each 0 or ±1): the slab meets another at a right angle with no post between —
+  // a corner the wall wraps round. Its edge on the inside of the turn stops where the other slab's begins, its outer
+  // edge runs on to the outer corner: the other slab's half-thickness either way (+1: the near edge is the inner one).
+  const m1 = mitre ? mitre[0] : 0, m2 = mitre ? mitre[1] : 0, mE = thick * Math.sqrt(5) / 2 / L;
+  // (the slab's reach along edge s; fill: a hair more at a mitre, so the two slabs' fills lap)
+  // flush: the slab's side face lies in one plane with its post's (a stone wall leaving its own post: one piece of
+  // masonry) — the face is painted a little way back over the post's corner line, and has no line of its own there.
+  // flushEnd: the same at the post it arrives at (drawn again over that post, clipped to the join: wallPiece).
+  const tsOf = (s, fill, face) => { const a = m1 ? s * m1 * mE - (fill ? 0.75 / L : 0) : flush && face ? t0 - 1.2 / L : t0, b = m2 ? 1 - s * m2 * mE + (fill ? 0.75 / L : 0) : flushEnd && face ? t1 + 1.2 / L : t1; return lift && a < 0.5 && b > 0.5 ? [a, 0.5, b] : [a, b]; };
+  const ts = tsOf(1, false, true), f0 = ts[0], f1 = ts[ts.length - 1];   // (the visible side face's)
 
+  // Across the slab, half its thickness, on screen (toward the viewer): thick px along a tile edge for a slab along the
+  // other; a diagonal one — straight across the screen, or straight down it — the same thickness on the ground.
   let isAlongIsoY = (dx > 0) !== (dy > 0);
-  let px = isAlongIsoY ? thick : -thick;
-  let py = thick / 2; // always positive (both perpendiculars have same Y component)
+  const wx = dx / 64 + dy / 32, wy = dy / 32 - dx / 64, wl = Math.hypot(wx, wy), nx = -wy / wl * thick, ny = wx / wl * thick;
+  let px = nx - ny, py = (nx + ny) / 2;
+  if (py < -1e-6 || (Math.abs(py) < 1e-6 && px < 0)) { px = -px; py = -py; }
+  const edgeOn = Math.abs(py) < 1e-6, across = dy === 0;   // straight down the screen: no side shows; straight across it: its front does
   // The point t of the way along, on the near (+1) or far (-1) edge, h px up.
   const Q = (t, s, h) => { const ox = dx * t + s * px, oy = dy * t + s * py; return [sx + ox, sy + oy - h - (lift ? lift(ox, oy) : 0)]; };
   const to = (q, move) => move ? X.moveTo(q[0], q[1]) : X.lineTo(q[0], q[1]);
   // A band between two edge lines, there along the first and back along the second.
-  const band = (s1, h1, s2, h2) => { X.beginPath(); ts.forEach((t, i) => to(Q(t, s1, h1), !i)); for (let i = ts.length - 1; i >= 0; i--) to(Q(ts[i], s2, h2)); X.closePath(); };
+  const band = (s1, h1, s2, h2, face) => { const A = tsOf(s1, true, face), B = tsOf(s2, true, face); X.beginPath(); A.forEach((t, i) => to(Q(t, s1, h1), !i)); for (let i = B.length - 1; i >= 0; i--) to(Q(B[i], s2, h2)); X.closePath(); };
+  // …and its outline: the two long edges, and an end only where the slab stops short (a trim of 0 runs on into the
+  // next slab — a post-less piece of a straight run: no seam there).
+  // (at a mitre: the side face's end is the corner's edge — drawn; the walkway's runs on round the corner — not)
+  // (a flush face: its foot and its far end only — its top edge is the walkway's near edge, drawn with the walkway,
+  // which stops at the post: drawn here too, from the face's start, it ran on past the post's corner)
+  const rim = (s1, h1, s2, h2, face) => { const A = tsOf(s1, false, face), B = tsOf(s2, false, face), e = B.length - 1, fl = face && (flush || flushEnd); X.beginPath(); A.forEach((t, i) => to(Q(t, s1, h1), !i));
+    if (fl) { if (!flushEnd && !(m2 ? !face : d2 === 0)) to(Q(B[e], s2, h2)); if (!flush && (m1 ? face : d1 !== 0)) { to(Q(A[0], s1, h1), true); to(Q(B[0], s2, h2)); } }
+    // (the start edge drawn out, not closePath: with the far end open the two long edges are separate subpaths)
+    else { to(Q(B[e], s2, h2), m2 ? !face : d2 === 0); for (let i = e - 1; i >= 0; i--) to(Q(B[i], s2, h2)); if (m1 ? face : d1 !== 0) to(Q(A[0], s1, h1)); }
+    X.lineCap = 'round'; X.stroke(); X.lineCap = 'butt'; };
   const seg = (a, b) => { X.beginPath(); to(a, true); to(b); X.stroke(); };
-  const at = u => t0 + (t1 - t0) * u;
+  const at = u => f0 + (f1 - f0) * u;
 
   X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';
 
   // Default palette by material: palisade wood (Dark age WALL/GATE) or the
   // stone greys (Feudal SWALL/SGATE — the original Stone Wall palette).
-  // 'stonef' = FORTIFIED stone (the Fortified Wall tech tell): same
-  // masonry plus crenellation merlons on the walkway below.
+  // 'stonef' = FORTIFIED stone (the Fortified Wall tech): the same masonry — its tell is a post on every piece
+  // (wallPostless, render-buildings.js).
   let stone = mat === 'stone' || mat === 'stonef';
   let pal = stone
     ? { a: '#aca392', b: '#cfc8b6', top: '#b7ad97' }
     : { a: WOOD.R, b: WOOD.L, top: WOOD.top }; // shared timber palette (render-buildings.js)
-  let fillL = colorL || (isAlongIsoY ? pal.a : pal.b);
+  let fillL = colorL || (across ? mixHex(pal.a, pal.b) : isAlongIsoY ? pal.a : pal.b);
   let fillTop = colorTop || pal.top;
   if (darken) {
     fillL = darkenColor(fillL);
@@ -446,56 +473,51 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
 
   // 1. Visible side face
   X.fillStyle = fillL;
-  band(1, 0, 1, wallH); X.fill(); X.stroke();
+  if (!edgeOn) { band(1, 0, 1, wallH, true); X.fill(); rim(1, 0, 1, wallH, true); }
 
   // Palisade texture: vertical stake seams across the visible side face,
   // so the wooden wall reads as driven beams rather than a flat slab
-  if (mat === 'wood' && !colorL) {
+  if (mat === 'wood' && !colorL && !edgeOn) {
     X.save();
     X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=1;
-    for (let u of [0.25, 0.5, 0.75]) seg(Q(at(u), 1, 0), Q(at(u), 1, wallH));
+    // (stakes of one width along a post-less run: the seams by the whole tile step, one at the meeting point too)
+    const n = across ? 7 : 4;
+    for (let i = d1 ? 1 : 0; i < n; i++) { const t = d1 && d2 ? at(i / n) : i / n; if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, 0), Q(t, 1, wallH)); }
     X.restore();
   }
 
   // Stone masonry texture: horizontal course lines with staggered vertical
   // joints (light strokes per the seam-weight convention — hard black is
   // reserved for silhouettes)
-  if (stone && !colorL) {
+  if (stone && !colorL && !edgeOn) {
     X.save();
     X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
     let courses = 3;
+    // Along a post-less run the bricks keep one length across the meeting points: the joints by the whole tile step
+    // (a third of it apart, the middle course half a brick off — one of its joints ON the meeting point). The course
+    // lines run the slab's whole length, lap included: the next slab's face is painted over this one's lap, lines and
+    // all, so they neither double nor stop short.
+    const run = !(d1 && d2), cs = ts;
+    const joint = (u, h0, h1) => { const t = run ? u : at(u); if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, h0), Q(t, 1, h1)); };
+    const odd = run ? [1/6, 3/6, 5/6] : [0.2, 0.5, 0.8], even = run ? (d1 ? [1/3, 2/3] : [0, 1/3, 2/3]) : [0.35, 0.65];
     for (let c = 1; c < courses; c++) {
       let hy = wallH * c / courses;
-      X.beginPath(); ts.forEach((t, i) => to(Q(t, 1, hy), !i)); X.stroke();
+      X.beginPath(); cs.forEach((t, i) => to(Q(t, 1, hy), !i)); X.stroke();
       // staggered vertical joints on this course band
-      let joints = c % 2 ? [0.2, 0.5, 0.8] : [0.35, 0.65];
-      for (let u of joints) seg(Q(at(u), 1, hy), Q(at(u), 1, hy - wallH / courses));
+      for (let u of c % 2 ? odd : even) joint(u, hy, hy - wallH / courses);
     }
     // top course joints — offset from the middle course below
-    for (let u of [0.2, 0.5, 0.8]) seg(Q(at(u), 1, wallH), Q(at(u), 1, wallH - wallH / courses));
+    for (let u of odd) joint(u, wallH, wallH - wallH / courses);
     X.restore();
   }
 
   // 2. Top walkway face
   X.fillStyle = fillTop;
-  band(-1, wallH, 1, wallH); X.fill(); X.stroke();
-
-  // Fortified crenellation: two mini merlons riding the walkway, built
-  // from the link's own face math (side at +px/+py, cap full thickness)
-  // so they read as the wall's masonry continuing upward. Caps keep the
-  // walkway's team color (ownership read).
-  if (mat === 'stonef') {
-    const mh = 4, w = 3.2 / L, quad = (a, b, c, d) => { X.beginPath(); to(a, true); to(b); to(c); to(d); X.closePath(); X.fill(); X.stroke(); };
-    for (let u of [0.3, 0.7]) {
-      const a = at(u) - w, b = at(u) + w;
-      X.fillStyle = fillL; quad(Q(a, 1, wallH), Q(b, 1, wallH), Q(b, 1, wallH + mh), Q(a, 1, wallH + mh));
-      X.fillStyle = fillTop; quad(Q(a, -1, wallH + mh), Q(a, 1, wallH + mh), Q(b, 1, wallH + mh), Q(b, -1, wallH + mh));
-    }
-  }
+  band(-1, wallH, 1, wallH); X.fill(); rim(-1, wallH, 1, wallH, false);
 
   // 3. End cap face — closes the cut end exposed when d1/d2 trims the
   // link back from its endpoint (e.g. the gate door not reaching its post).
-  if (capNear) {
+  if (capNear || (edgeOn && d2 !== 0)) {
     X.fillStyle = fillL;
     X.beginPath(); to(Q(t1, -1, 0), true); to(Q(t1, 1, 0)); to(Q(t1, 1, wallH)); to(Q(t1, -1, wallH));
     X.closePath(); X.fill(); X.stroke();

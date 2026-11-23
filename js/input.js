@@ -334,7 +334,11 @@ function updateWallDrag(sx,sy){
     window.wallPrimaryAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
   }
   window.wallDragEnd = tile;
-  if (window.wallPrimaryAxis === 'y') {
+  if (WALL_DIAGONALS) {
+    // A straight leg along the longer way, then a diagonal one to the cursor (getWallElbowTiles: each leg a line).
+    const ax = Math.abs(dx), ay = Math.abs(dy), n = Math.abs(ax - ay);
+    window.wallDragCorner = ax >= ay ? { x: start.x + Math.sign(dx) * n, y: start.y } : { x: start.x, y: start.y + Math.sign(dy) * n };
+  } else if (window.wallPrimaryAxis === 'y') {   // an elbow: the first-moved axis, then the other
     window.wallDragCorner = { x: start.x, y: tile.y };
   } else {
     window.wallDragCorner = { x: tile.x, y: start.y };

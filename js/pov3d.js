@@ -474,18 +474,34 @@ gl_Position = projectionMatrix * mvPosition;`;
   // The links a wall/gate e draws to its same-team wall-like neighbors (at(x, y) → the entity there); shared(n):
   // n draws that link itself, so e leaves its -x/-z one to it.
   function wallArms(e, at, shared){
-    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, arms = [];
+    const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, arms = [], gate = isGateBtype(e.btype);
+    // (the 2D's rules — wallRung, wallDiag, render-buildings.js: no rungs inside a doubled wall, corner-to-corner joins)
+    const like = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && isWallLike(n); };
+    // (mid-run — wallBare — a piece has no post: its slabs run to its centre, and its neighbours' to it)
+    const bareAt = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && wallPostless(n, like); };
+    // (a corner the wall wraps round — wallCorner: no post; the slab along x runs on through the corner, the one along
+    // z stops at its side — so their tops don't lie in one another)
+    const cornerAt = (x, y) => { const n = at(x, y); return !!n && n.team === e.team && !!wallCorner(n, like); };
+    const endAt = (x, y, dx, n) => cornerAt(x, y) ? (dx ? -1 : 1) * pillarHalf(n) : bareAt(x, y) ? 0 : pillarHalf(n);
+    arms.corner = !gate && cornerAt(e.x, e.y);
+    arms.bare = !gate && (bareAt(e.x, e.y) || arms.corner);
     for (let fy = e.y; fy < e.y + h; fy++) for (let fx = e.x; fx < e.x + w; fx++) {
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const n = at(fx + dx, fy + dy);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]]) {
+        const n = at(fx + dx, fy + dy), back = dx && dy ? dx < 0 : dx + dy < 0;
         if (!n || n === e || n.id === e.id || n.team !== e.team || !isWallLike(n)) continue;
-        if (dx + dy < 0 && shared(n)) continue;
-        arms.push(fx, fy, dx, dy, pillarHalf(e), pillarHalf(n));
+        if (dx && dy ? gate || isGateBtype(n.btype) || !wallDiag(like, fx, fy, dx, dy) : back ? wallRung(like, fx + dx, fy + dy, -dx, -dy) : wallRung(like, fx, fy, dx, dy)) continue;
+        if (back && shared(n)) continue;
+        arms.push(fx, fy, dx, dy, endAt(fx, fy, dx, e), endAt(fx + dx, fy + dy, dx, n));
       }
     }
+    arms.turned = !gate && isWallBtype(e.btype) && wallTurned(like, e.x, e.y);   // (a post in a diagonal run stands square to it)
+    // a gate on a diagonal run (one tile: gateDiagRun) — its run; and a wall under such a gate's post (the gate's model has it)
+    const dgAt = (x, y) => { const n = at(x, y); return n && n.team === e.team && isGateBtype(n.btype) && (n.w || 1) === 1 && (n.h || 1) === 1 ? gateDiagRun(x, y, like) : 0; };
+    arms.dg = gate && w === 1 && h === 1 ? gateDiagRun(e.x, e.y, like) : 0;
+    arms.gatePost = !gate && (dgAt(e.x + 1, e.y - 1) === 1 || dgAt(e.x - 1, e.y + 1) === 1 || dgAt(e.x + 1, e.y + 1) === 2 || dgAt(e.x - 1, e.y - 1) === 2);
     return arms;
   }
-  const wallKey = (e, arms) => (e.complete ? 1 : 0) + ':' + ageOf(e) + ':' + teamColor(e.team) + ':' + arms.join(',');
+  const wallKey = (e, arms) => (e.complete ? 1 : 0) + ':' + ageOf(e) + ':' + teamColor(e.team) + ':' + arms.join(',') + (arms.turned ? ':t' : '') + (arms.bare ? ':b' : '') + (arms.gatePost ? ':p' : '') + (arms.dg ? ':d' + arms.dg : '');
   function wallModel(e, arms){
     const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, gate = isGateBtype(e.btype);
     const stone = e.btype === 'SWALL' || e.btype === 'SGATE', a = ageOf(e), tc = teamColor(e.team);
@@ -495,31 +511,41 @@ gl_Position = projectionMatrix * mvPosition;`;
     // A link from this pillar's face to the neighbor's (half-widths o1, o2): a slab with a team top.
     for (let i = 0; i < arms.length; i += 6) {
       const [fx, fy, dx, dy, o1, o2] = arms.slice(i, i + 6), cx = fx + 0.5, cz = fy + 0.5;
+      if (dx && dy) {   // corner to corner: the same slab, turned
+        const m = boxAt(g, topped(body, tc), -(Math.SQRT2 - o1 - o2) / 2, -T / 2, (Math.SQRT2 - o1 - o2) / 2, T / 2, 0, linkH, 'hull'), mid = (o1 + Math.SQRT2 - o2) / 2 / Math.SQRT2;
+        m.position.x = cx + dx * mid; m.position.z = cz + dy * mid; m.rotation.y = -Math.atan2(dy, dx); continue; }
       const a0 = o1, a1 = 1 - o2;
       const x0 = dx ? Math.min(cx + dx * a0, cx + dx * a1) : cx - T / 2, x1 = dx ? Math.max(cx + dx * a0, cx + dx * a1) : cx + T / 2;
       const z0 = dy ? Math.min(cz + dy * a0, cz + dy * a1) : cz - T / 2, z1 = dy ? Math.max(cz + dy * a0, cz + dy * a1) : cz + T / 2;
       boxAt(g, topped(body, tc), x0, z0, x1, z1, 0, linkH, 'hull'); softEdges(g, x0, z0, x1, z1, 0, linkH, dx ? 'x' : 'z');
     }
     if (!gate) {
-      for (let fy = e.y; fy < e.y + h; fy++) for (let fx = e.x; fx < e.x + w; fx++) {
+      for (let fy = e.y; fy < e.y + h && !arms.gatePost && !arms.bare; fy++) for (let fx = e.x; fx < e.x + w; fx++) {
         const pH = 22 / HPX * k, cx = fx + 0.5, cz = fy + 0.5;
-        boxAt(g, topped(body, tc), cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH, 'hull'); softEdges(g, cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH);
+        const post = boxAt(g, topped(body, tc), cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH, 'hull');
+        if (arms.turned) post.rotation.y = Math.PI / 4; else softEdges(g, cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH);
       }
       addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
       return { obj: g };
     }
     // Gate: end pillars on the first and last tile of its line, a door between.
     const alongZ = h > w, n = Math.max(w, h), P = 14 / 32, pH = 28 / HPX * k;
-    const ends = [[e.x + 0.5, e.y + 0.5], alongZ ? [e.x + 0.5, e.y + n - 0.5] : [e.x + n - 0.5, e.y + 0.5]];
+    const dg = arms.dg;   // (on a diagonal run: the posts on the wall pieces either side, the door turned between them)
+    const ends = dg === 1 ? [[e.x - 0.5, e.y + 1.5], [e.x + 1.5, e.y - 0.5]] : dg === 2 ? [[e.x - 0.5, e.y - 0.5], [e.x + 1.5, e.y + 1.5]]
+      : [[e.x + 0.5, e.y + 0.5], alongZ ? [e.x + 0.5, e.y + n - 0.5] : [e.x + n - 0.5, e.y + 0.5]];
     for (const [cx, cz] of ends) {
-      boxAt(g, topped(stone ? '#c8c0ae|stone' : WOOD.L + '|stakes', a >= 2 && stone ? '#b0b0a4' : tc), cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH, 'hull'); softEdges(g, cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH);
+      const post = boxAt(g, topped(stone ? '#c8c0ae|stone' : WOOD.L + '|stakes', a >= 2 && stone ? '#b0b0a4' : tc), cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH, 'hull');
+      if (dg) { post.rotation.y = Math.PI / 4; continue; }   // (square to its run)
+      softEdges(g, cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH);
       if (stone && a >= 2) for (const [mx, mz] of [[0, 0], [1, 0], [0, 1], [1, 1]])
         boxAt(g, '#e0d8c6', cx - P / 2 + mx * (P - 0.1), cz - P / 2 + mz * (P - 0.1), cx - P / 2 + mx * (P - 0.1) + 0.1, cz - P / 2 + mz * (P - 0.1) + 0.1, pH, pH + 6 / HPX, 'hull');
     }
     const [a0, a1] = ends, doorH = 16 / HPX * k, dt = 2 / 32; // the door slab: drawWallLink thick 2 each side
     const door = new THREE.Group(), span0 = (alongZ ? a0[1] : a0[0]) + P / 2 + 0.004, span1 = (alongZ ? a1[1] : a1[0]) - P / 2 - 0.004; // a hair short of the pillars: no end face lying on theirs, none inside them (an open site shows their inside)
     const dx0 = alongZ ? a0[0] - dt : span0, dx1 = alongZ ? a0[0] + dt : span1, dz0 = alongZ ? span0 : a0[1] - dt, dz1 = alongZ ? span1 : a0[1] + dt;
-    boxAt(door, topped('#8b5a2b|stakes', '#a5723a'), dx0, dz0, dx1, dz1, 0, doorH, 'hull'); softEdges(door, dx0, dz0, dx1, dz1, 0, doorH, alongZ ? 'z' : 'x');
+    if (dg) { const len = 2 * Math.SQRT2 - P - 0.008, m = boxAt(door, topped('#8b5a2b|stakes', '#a5723a'), -len / 2, -dt, len / 2, dt, 0, doorH, 'hull');
+      m.position.x = e.x + 0.5; m.position.z = e.y + 0.5; m.rotation.y = dg === 1 ? Math.PI / 4 : -Math.PI / 4; }
+    else { boxAt(door, topped('#8b5a2b|stakes', '#a5723a'), dx0, dz0, dx1, dz1, 0, doorH, 'hull'); softEdges(door, dx0, dz0, dx1, dz1, 0, doorH, alongZ ? 'z' : 'x'); }
     door.userData.keepWhole = true; g.add(door);
     addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
     return { obj: g, door, doorOf: e.id };
@@ -5238,6 +5264,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   let chaseK = 1, lookUntil = 0; // the chase camera's distance (scroll zooms it); a drag-look holds its view a while
   const FP_PITCH_MIN = -1.1;
   let oYaw = Math.PI / 4, oPitch = ORBIT_PITCH, oDist = 21, zoomBy = 1, zoomAt = null, fpPitch = -0.3, anchorEase = 0, camH = 14, clearH = 0;
+  // The 2D map's zoom and the world view's distance are ONE setting: a tile is drawn as wide in both (as near as their
+  // ranges allow) — across the view the map shows 64·ZOOM px to a tile's diagonal, the lens (H/2)/tan(FOV/2)/oDist to a
+  // tile — so the zoom carries over a switch of view either way.
+  const zoomK = () => ((renderer && renderer.domElement.clientHeight) || window.innerHeight || 800) / 2 / Math.tan(ORBIT_FOV * Math.PI / 360) / (64 / Math.SQRT2);
+  function distFromZoom(){ oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, zoomK() / ZOOM)); }
+  function zoomFromDist(){ const { ax, ay } = zoomAnchor(); setZoomAroundPoint(zoomK() / oDist, ax, ay); }   // (about the view's centre: the camera stays put)
   const mapCenter = () => fromIso(camX, camY);                          // map coords of the 2D camera, unrounded (screenToMap rounds to whole pixels: a fine swipe would step)
   function panTo(x, y){ // map coords
     // (ONE limit, clampCamera's — js/input.js: a tighter one here snapped the view back onto the map whenever a zoom
@@ -5279,7 +5311,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   function leaveToMap(){
     const e = followId != null ? entitiesById.get(followId) : null, at = e && posOf(e);
     if (document.pointerLockElement) document.exitPointerLock();
-    blendMs = 1000; unfollow(); oDist = ORBIT_MIN;
+    blendMs = 1000; unfollow(); oDist = ORBIT_MIN; zoomFromDist();
     if (at) { panTo(at[0] - 0.5, at[1] - 0.5); eye = { x: at[0], y: at[1] }; }
   }
   function applyZoom(){
@@ -5289,6 +5321,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       // onto the camera, a zoom in mid-glide skipped the view ahead)
       const c0 = mapCenter(); panTo(c0.x + (1 - f) * (g.x - cx), c0.y + (1 - f) * (g.y - cy)); const c = mapCenter(); eye.x += c.x - c0.x; eye.y += c.y - c0.y; }
     oDist *= f;
+    if (f !== 1) zoomFromDist();
   }
   // A mode or character switch glides the camera from where it was to the new view (position, the shortest turn, lens)
   // rather than cutting; each frame blends toward the live target, so the view it lands on is the one it keeps.
@@ -5623,7 +5656,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const r = drag.d / Math.max(20, d);                                                                // pinch: zoom (no rotation, as 2D)
       if (followId != null && mode === 'eye') { if (r > 1.3) { zoomOut(true); drag = null; } return; }
       if (followId != null && mode !== 'orbit') { if (drag.k * r < CHASE_MIN * 0.75) { zoomIn(true); drag = null; return; } chaseK = Math.max(CHASE_MIN, Math.min(CHASE_MAX, drag.k * r)); return; }
-      oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, drag.dist * r)); return; }
+      oDist = Math.max(ORBIT_MIN, Math.min(ORBIT_MAX, drag.dist * r)); zoomFromDist(); return; }
     const dx = x - drag.x, dy = y - drag.y;
     if (drag.kind === 'wall') { withPick(pick(x, y), () => updateWallDrag(x, y)); return; }
     if (drag.kind === 'cmd') return;
@@ -6081,6 +6114,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   function openWorld(atStart){
     ensurePip();
     followId = null; eye = null; mode = 'orbit';                                // the 2D view's camera carries over (a 2D follow too)
+    distFromZoom();                                                             // …and its zoom
     unrevealed = true; pip.style.visibility = atStart ? '' : 'hidden';          // mid-game: the 2D map stays up until the first 3D frame is drawn (no black while loading)
     if (atStart && renderer) renderer.clear();                                  // a rematch: never the last match's final frame
     fadeIn = !!atStart;

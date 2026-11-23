@@ -124,7 +124,7 @@ function _outlineExtent(e){
 
 // Step 1 of a ring: every entity of `infos` drawn into ctx (already transformed to the buffer's logical space), each
 // at its own offset from the buffer origin (originLeft, originTop) — the shared mask a ring dilates.
-function _drawInfosMask(ctx, infos, originLeft, originTop){
+function _drawInfosMask(ctx, infos, originLeft, originTop, stubs=false){
   const sv={X,camX,camY,W,H,topH,ZOOM};
   X=ctx; W=2000; H=2000; topH=0; ZOOM=1;
   // Flag the re-invocation of the REAL drawUnit/drawBuilding below as a
@@ -134,7 +134,7 @@ function _drawInfosMask(ctx, infos, originLeft, originTop){
   // twice per frame for selected entities / be rasterized into the outline.
   window._maskDraw=true;
   window._flatDraw=true;   // (its own camera, set from each entity's flat spot: no hill lift — js/iso.js)
-  window._selOutline=true; // this pass IS a selection/behind outline — buildings drawn here skip their wall-link stubs (drawsWallStubs)
+  window._selOutline=!stubs; // this pass IS a selection/behind outline — buildings drawn here skip their wall-link stubs (drawsWallStubs); a wall run behind trees keeps them (one joined shape)
   try{
     infos.forEach(info=>{
       const {e,isUnit,anchorX,anchorY,sx,sy}=info;
@@ -290,20 +290,38 @@ function _drawOccluders(ctx, occs){
   try{
     for(const d of occs){
       if(d.type==='tree'){ drawTreeEntity(d.x, d.y, d.part); continue; }
-      const en = proxyEntity(d);
-      const part = proxyPart(d);
-      // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw live. Everything else blits its baked
-      // silhouette at the footprint-top corner drawBuilding would have drawn it at, rounded through mapToScreen as
-      // drawBuilding does (the live wall-like branch draws through it too).
-      if(isWallLike(en)){ drawBuilding(en, part); continue; }
-      const sil = _bldgSil(en, part);
-      const b = BLDGS[en.btype];
-      const p = groundToScreen(en.x+b.w/2, en.y+b.h/2);
-      const rsx = Math.round(p.sx);
-      const rsy = Math.round(p.sy) - b.h*HALF_TH;
-      X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
+      _drawOccBuilding(d);
     }
   } finally { window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
+}
+// One building occluder's shape (X: the clip target, logical screen coords).
+function _drawOccBuilding(d){
+  const en = proxyEntity(d);
+  const part = proxyPart(d);
+  // Wall-like pieces (neighbour-dependent stubs) can't be cached — draw live. Everything else blits its baked
+  // silhouette at the footprint-top corner drawBuilding would have drawn it at, rounded through mapToScreen as
+  // drawBuilding does (the live wall-like branch draws through it too).
+  if(isWallLike(en)){ drawBuilding(en, part); return; }
+  const sil = _bldgSil(en, part);
+  const b = BLDGS[en.btype];
+  const p = groundToScreen(en.x+b.w/2, en.y+b.h/2);
+  const rsx = Math.round(p.sx);
+  const rsy = Math.round(p.sy) - b.h*HALF_TH;
+  X.drawImage(sil.canvas, rsx-sil.ax, rsy-sil.ay);
+}
+// The clip for BUILDINGS behind trees: what is left of the trees once everything is painted in depth order (occs: draw
+// order) — a tree adds its shape, a building rubs out what it covers (and r px round it: where its own ring runs). So
+// a building's ring shows only on a tree standing in front of it, never on a tree behind it or on a nearer building.
+const _BSIL_RUB=[[0,0],[1,0],[-1,0],[0,1],[0,-1]];
+function _drawTreeClip(ctx, occs, r){
+  const sv={X,ZOOM}; X=ctx; ZOOM=1; window._maskDraw=true;
+  try{
+    for(const d of occs){
+      if(d.type==='tree'){ X.globalCompositeOperation='source-over'; drawTreeEntity(d.x, d.y, d.part); continue; }
+      X.globalCompositeOperation='destination-out';
+      for(const [ox,oy] of _BSIL_RUB){ X.save(); X.translate(ox*r, oy*r); _drawOccBuilding(d); X.restore(); }
+    }
+  } finally { X.globalCompositeOperation='source-over'; window._maskDraw=false; X=sv.X; ZOOM=sv.ZOOM; }
 }
 
 // The behind-occluder rings, batched: every group's mask, occluder clip and ring share three atlas canvases (a cell
@@ -339,11 +357,11 @@ function _renderBehindRings(jobs){
     // neighbour's ring (a stray outline) or outside the cleared area (a stale one, frames later)
     mx.save(); mx.beginPath(); mx.rect(j.cx,j.cy,j.pw,j.ph); mx.clip();
     mx.setTransform(ss,0,0,ss,j.cx,j.cy);
-    _drawInfosMask(mx, j.infos, j.l, j.t);
+    _drawInfosMask(mx, j.infos, j.l, j.t, !!j.trees);
     mx.restore();
     cx.save(); cx.beginPath(); cx.rect(j.cx,j.cy,j.pw,j.ph); cx.clip();
     cx.setTransform(ss,0,0,ss,j.cx-j.l*ss,j.cy-j.t*ss); // logical screen coords (ZOOM=1) -> the cell
-    _drawOccluders(cx, j.occs);
+    if(j.trees) _drawTreeClip(cx, j.occs, R/ss); else _drawOccluders(cx, j.occs);
     cx.restore();
   }
   // dilate by ~2 logical px (4 shifted copies), cut the shape itself out, keep what's behind an occluder
@@ -462,7 +480,7 @@ function _bsilFillOccBox(rec, d){
 // FRONT of must not contribute pixels to that unit's ring, or its art leaks a
 // stray outline onto a unit standing at its edge (the front-corner artifact).
 function drawBehindBuildingOutlines(units, occs){
-  if(!units.length || !occs.length) return;
+  if(!occs.length) return;
   for(let i=0;i<occs.length;i++){
     if(!_bsilOccBoxes[i]) _bsilOccBoxes[i]={sortVal:0,left:0,right:0,top:0,bottom:0};
     _bsilFillOccBox(_bsilOccBoxes[i], occs[i]);
@@ -499,7 +517,6 @@ function drawBehindBuildingOutlines(units, occs){
     }
     g.infos.push(ext);
   }
-  if(!_bsilGroups.size) return;
   const M=4, hw=(W/2)/ZOOM, hh=(H/2)/ZOOM, cyv=H/2+topH, jobs=[];
   _bsilGroups.forEach(g=>{
     let minL=Infinity,minT=Infinity,maxR=-Infinity,maxB=-Infinity;
@@ -514,5 +531,30 @@ function drawBehindBuildingOutlines(units, occs){
     const occList=[]; for(let k=0;k<g.occIdx.length;k++) occList.push(occs[g.occIdx[k]]); // ONLY this group's occluders
     jobs.push({infos:g.infos, l:minL, t:minT, w:spanW, h:spanH, color:teamColorMinimap(g.team), occs:occList});
   });
+  // BUILDINGS (walls, gates, towers too) behind trees: one ring per team round their joined shapes, on the trees in
+  // front of them (_drawTreeClip). Only trees bring it on — a building behind a building shows none.
+  let anyTree=false; for(let j=0;j<nOcc&&!anyTree;j++) anyTree=occs[j].type==='tree';
+  if(anyTree){
+    const byTeam=new Map(), done=new Set();
+    for(let i=0;i<nOcc;i++){
+      const d=occs[i]; if(d.type==='tree') continue;
+      const en=proxyEntity(d); if(!en||done.has(en)||(sel&&sel.has(en))) continue;
+      const b=_bsilOccBoxes[i]; let hid=false;
+      for(let j=0;j<nOcc&&!hid;j++){ const o=_bsilOccBoxes[j]; hid=occs[j].type==='tree'&&o.sortVal>b.sortVal&&!(o.right<b.left||o.left>b.right||o.bottom<b.top||o.top>b.bottom); }
+      if(!hid) continue;
+      done.add(en);
+      const ext=_outlineExtent(en); if(!ext) continue;
+      let g=byTeam.get(en.team); if(!g) byTeam.set(en.team, g={infos:[], l:Infinity, t:Infinity, r:-Infinity, b:-Infinity, sort:Infinity});
+      g.infos.push(ext); if(b.sortVal<g.sort) g.sort=b.sortVal;
+      if(b.left<g.l)g.l=b.left; if(b.top<g.t)g.t=b.top; if(b.right>g.r)g.r=b.right; if(b.bottom>g.b)g.b=b.bottom;
+    }
+    byTeam.forEach((g,team)=>{
+      const l=Math.max(g.l-M,W/2-hw-M), r=Math.min(g.r+M,W/2+hw+M), t=Math.max(g.t-M,cyv-hh-M), bt=Math.min(g.b+M,cyv+hh+M);
+      if(r-l<=0||bt-t<=0) return;
+      // (everything from the group's rearmost piece forward that touches its rect, in draw order)
+      const list=[]; for(let j=0;j<nOcc;j++){ const o=_bsilOccBoxes[j]; if(o.sortVal>=g.sort&&!(o.right<l||o.left>r||o.bottom<t||o.top>bt)) list.push(occs[j]); }
+      jobs.push({infos:g.infos, l, t, w:r-l, h:bt-t, color:teamColorMinimap(team), occs:list, trees:true});
+    });
+  }
   _renderBehindRings(jobs);
 }
