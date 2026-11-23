@@ -59,8 +59,14 @@ function drawOreTile(t, x, y, sx, cy){
   const key = x + ',' + y + ',' + gold + ',' + lvl + ',' + sc.toFixed(2), W = 96, H = 72, OX = 48, OY = 52;
   let c = oreCache.get(key);
   if (!c) { if (oreCache.size > 3000) oreCache.clear(); c = document.createElement('canvas'); c.width = Math.ceil(W * sc); c.height = Math.ceil(H * sc);
-    const Y = c.getContext('2d'); Y.scale(sc, sc); Y.translate(OX, OY); const keep = X; X = Y; oreRocks(gold, lvl / 16, x, y); X = keep; oreCache.set(key, c); }
+    const Y = c.getContext('2d'); Y.scale(sc, sc); Y.translate(OX, OY); const keep = X; X = Y; try { c.glints = oreRocks(gold, lvl / 16, x, y); } finally { X = keep; } oreCache.set(key, c); }
   X.drawImage(c, sx - OX, cy - OY, W, H);
+  // Gold's glints twinkle, as the 3D's (animateFeatures, js/pov3d.js): each a four-point star that swells and fades on
+  // its own phase — drawn live over the cached rocks.
+  c.glints.forEach(([gx, gy, rr], i) => { const tw = Math.max(0, Math.sin(animTick * 0.05 + (x * 13 + y * 7 + i * 2.3) % 6.28)) ** 3; if (tw < 0.05) return;
+    X.fillStyle = '#fff8dc'; X.strokeStyle = 'rgba(120,80,0,0.5)'; X.lineWidth = 0.6; X.beginPath();
+    for (let n = 0; n < 8; n++) { const a = n / 8 * 2 * Math.PI - Math.PI / 2, m = (n % 2 ? rr * 0.4 : rr) * tw * 1.5; X.lineTo(sx + gx + Math.cos(a) * m, cy + gy + Math.sin(a) * m); }
+    X.closePath(); X.fill(); X.stroke(); });
 }
 // (in the cached image: the tile's centre at the origin, screen px; the 3D's numbers, in tiles — heights ×√3/2, the 2:1
 // view's 30° elevation)
@@ -111,14 +117,13 @@ function oreRocks(gold, p, x, y){
     return { bx, bz, ax: half * sx * w * V[i], ay: h * kh * size * (0.9 + r(3 + i * 5) * 0.2), az: half * sz * w * V[i], rot: i * 0.7 + r(5 + i * 5) * 6.283, col: cols[i], R: R[i], half, v: V[i] }; });
   rocks.sort((a, b) => k.depth(a.bx, a.bz) - k.depth(b.bx, b.bz));
   for (const q of rocks) { const g = k.P(q.bx * T, 0, q.bz * T); X.fillStyle = 'rgba(0,0,0,0.22)'; X.beginPath(); X.ellipse(g[0], g[1], q.R * T * 1.05, q.R * T * 0.55, 0, 0, Math.PI * 2); X.fill(); }   // its shadow on the ground
+  const glints = [];   // [x, y (px from the tile's centre), radius]: where the gold glints (the 3D's spots) — drawOreTile twinkles them
   for (const q of rocks) {
     oreBoulder(q);
-    if (gold) for (const [u, v] of q === rocks.find(o => o.half === 0.19) ? [[0.3, -0.2], [-0.35, 0.3]] : [[0.1, 0.1]]) {   // glints on the gold (the 3D's spots)
-      const g = k.P((q.bx + u * q.half * q.v) * T, q.ay * 1.02 * TH3, (q.bz + v * q.half * q.v) * T), rr = (q.half === 0.19 ? 2.6 : 1.8) * size;
-      X.fillStyle = '#fff8dc'; X.strokeStyle = 'rgba(120,80,0,0.5)'; X.lineWidth = 0.6; X.beginPath();
-      for (let n = 0; n < 8; n++) { const a = n / 8 * 2 * Math.PI - Math.PI / 2, m = n % 2 ? rr * 0.4 : rr; X.lineTo(g[0] + Math.cos(a) * m, g[1] + Math.sin(a) * m); }
-      X.closePath(); X.fill(); X.stroke(); }
+    if (gold) for (const [u, v] of q === rocks.find(o => o.half === 0.19) ? [[0.3, -0.2], [-0.35, 0.3]] : [[0.1, 0.1]]) {
+      const g = k.P((q.bx + u * q.half * q.v) * T, q.ay * 1.02 * TH3, (q.bz + v * q.half * q.v) * T); glints.push([g[0], g[1], (q.half === 0.19 ? 2.6 : 1.8) * size]); }
   }
+  return glints;
 }
 // ---- The berry bush: pov3d's (refreshFeatures), projected, cel-shaded as the trees ----
 // A low mound of leaf puffs (three tiers), stripped in two steps as it's picked; berries on the leaves' upper sides,
@@ -409,7 +414,7 @@ function drawTreeEntity(x,y,part=null){
 // lift: on hills, px the ground at a level-ground offset from (sx, sy) stands above it (wallLift) — every base point
 // sits on its own ground, so the slab's foot follows the slope and meets its posts' feet.
 function mixHex(a, b){ const n = h => parseInt(h.slice(1), 16), x = n(a), y = n(b), c = s => ((x >> s & 255) + (y >> s & 255)) >> 1; return '#' + (c(16) << 16 | c(8) << 8 | c(0)).toString(16).padStart(6, '0'); }
-function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood', lift=null, mitre=null, flush=false, flushEnd=false) {
+function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=null, colorTop=null, thick=4, capNear=false, mat='wood', lift=null, mitre=null, flush=false, flushEnd=false, tile=null) {
 
   let L = Math.sqrt(dx * dx + dy * dy);
   if (L === 0) return;
@@ -482,7 +487,10 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
     X.strokeStyle='rgba(0,0,0,0.28)';X.lineWidth=1;
     // (stakes of one width along a post-less run: the seams by the whole tile step, one at the meeting point too)
     const n = across ? 7 : 4;
-    for (let i = d1 ? 1 : 0; i < n; i++) { const t = d1 && d2 ? at(i / n) : i / n; if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, 0), Q(t, 1, wallH)); }
+    // (tile = [where on its tile's run the slab starts, how much of a tile it spans]: the seams fall at the same places
+    // on every tile, so they keep one rhythm from piece to piece)
+    if (tile) { for (let k = Math.ceil(tile[0] * n - 1e-6); k / n < tile[0] + tile[1] + 1e-6; k++) { const t = (k / n - tile[0]) / tile[1]; if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, 0), Q(t, 1, wallH)); } }
+    else for (let i = d1 ? 1 : 0; i < n; i++) { const t = d1 && d2 ? at(i / n) : i / n; if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, 0), Q(t, 1, wallH)); }
     X.restore();
   }
 
@@ -498,8 +506,10 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
     // lines run the slab's whole length, lap included: the next slab's face is painted over this one's lap, lines and
     // all, so they neither double nor stop short.
     const run = !(d1 && d2), cs = ts;
-    const joint = (u, h0, h1) => { const t = run ? u : at(u); if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, h0), Q(t, 1, h1)); };
-    const odd = run ? [1/6, 3/6, 5/6] : [0.2, 0.5, 0.8], even = run ? (d1 ? [1/3, 2/3] : [0, 1/3, 2/3]) : [0.35, 0.65];
+    const joint = (u, h0, h1) => { const t = tile ? (u - tile[0]) / tile[1] : run ? u : at(u); if (t > f0 + 1e-3 && t < f1 - 1e-3) seg(Q(t, 1, h0), Q(t, 1, h1)); };
+    // (by the tile, as the planks: thirds of it, the middle course half a brick off)
+    const thirds = o => { const a = []; for (let k = Math.floor((tile[0] - o) * 3) ; (k / 3 + o) < tile[0] + tile[1] + 1e-6; k++) a.push(k / 3 + o); return a; };
+    const odd = tile ? thirds(1/6) : run ? [1/6, 3/6, 5/6] : [0.2, 0.5, 0.8], even = tile ? thirds(0) : run ? (d1 ? [1/3, 2/3] : [0, 1/3, 2/3]) : [0.35, 0.65];
     for (let c = 1; c < courses; c++) {
       let hy = wallH * c / courses;
       X.beginPath(); cs.forEach((t, i) => to(Q(t, 1, hy), !i)); X.stroke();
@@ -521,7 +531,7 @@ function drawWallLink(sx, sy, dx, dy, wallH, darken=false, d1=5, d2=5, colorL=nu
   // the viewer, in the shade of the face that looks that way)
   const flushEnd2 = d2 > 0 && d2 < 0.1 && !edgeOn;
   if (capNear || flushEnd2 || (edgeOn && d2 !== 0)) {
-    X.fillStyle = flushEnd2 && !colorL ? (darken ? darkenColor(isAlongIsoY ? pal.b : pal.a) : isAlongIsoY ? pal.b : pal.a) : fillL;
+    X.fillStyle = (flushEnd2 || capNear) && !colorL ? (darken ? darkenColor(isAlongIsoY ? pal.b : pal.a) : isAlongIsoY ? pal.b : pal.a) : fillL;
     X.beginPath(); to(Q(t1, -1, 0), true); to(Q(t1, 1, 0)); to(Q(t1, 1, wallH)); to(Q(t1, -1, wallH));
     X.closePath(); X.fill(); X.stroke();
   }

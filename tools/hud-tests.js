@@ -1677,9 +1677,9 @@ function pageSuite() {
       if (!r.move) throw new Error('own-building right-click should fall through to a plain command');
     });
 
-    await tapT('wall hit-test: link selects its N/W owner (not the other tile), pillar selects its own wall', async () => {
-      // A(30,30) draws the East link toward B(31,30), so A OWNS that link.
-      // Clicking the link must select A; clicking B's pillar must select B.
+    await tapT('wall hit-test: a stretch of wall selects the piece whose tile it stands on, a pillar its own wall', async () => {
+      // Walls are drawn tile by tile (wallPiece): A(30,30) and B(31,30) each draw the half of the wall between them
+      // that stands on its own tile. Clicking either half must select that piece; clicking B's pillar, B.
       // Routing is derived from the REAL drawn pixels (drawBuilding part mask),
       // so this guards against the hit-test drifting from the render.
       const r = await page.evaluate(tapStage(`
@@ -1691,16 +1691,18 @@ function pageSuite() {
           // B's own pillar (scan up from its tile centre)
           let bBody=null; { const base=scr(31.5,30.5);
             for(let d=0;d<=60&&bBody===null;d++){const c={x:base.x,y:base.y-d}; if(hit(B,c)==='body') bBody=gid(c);} }
-          // a point on A's East link slab that is NOT anyone's pillar body
-          let linkOwner='none', ab=scr(30.5,30.5);
-          outer: for(let dx=8;dx<=26;dx+=2) for(let dy=-16;dy<=10;dy+=2){
+          // a point on each piece's stretch that is only that piece's
+          let onA='none', onB='none', ab=scr(30.5,30.5);
+          for(let dx=6;dx<=30;dx+=2) for(let dy=-16;dy<=12;dy+=2){
             const c={x:ab.x+dx,y:ab.y+dy};
-            if(hit(A,c)==='link' && hit(A,c)!=='body' && hit(B,c)!=='body'){ linkOwner=gid(c); break outer; }
+            if(onA==='none' && hit(A,c)==='link' && !hit(B,c)) onA=gid(c);
+            if(onB==='none' && hit(B,c)==='link' && !hit(A,c)) onB=gid(c);
           }
-          return { aId:A.id, bId:B.id, bBody, linkOwner };
+          return { aId:A.id, bId:B.id, bBody, onA, onB };
         };`));
       assertEq(r.bBody, r.bId, "B's pillar selects B");
-      assertEq(r.linkOwner, r.aId, 'the A→B link selects its owner A, not the neighbour');
+      assertEq(r.onA, r.aId, "the stretch on A's tile selects A");
+      assertEq(r.onB, r.bId, "the stretch on B's tile selects B");
     });
 
     await tapT('right-click friendly unit does NOT escort (click-escort disabled)', async () => {
