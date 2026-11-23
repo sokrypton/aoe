@@ -388,6 +388,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     planksR: [0.5, (c, r) => { c.translate(64, 0); c.rotate(Math.PI / 2); rows(c, r, 4, true); }], // boards running the other way
     stakes:  [0.5, (c, r) => { c.translate(64, 0); c.rotate(Math.PI / 2); rows(c, r, 4, false); }], // upright palisade logs
     stone:   [0.6, (c, r) => blocks(c, r, 4, 2)],
+    // a stone wall's masonry, as the 2D draws it (drawWallLink): three equal courses to the wall's height (14 art px:
+    // the pattern repeats every six), bricks about a third of a tile long in running bond, one flat tone, light joints
+    wall:    [28 / (PX * Math.sqrt(3) / 2), c => { tone(c, 255); c.fillRect(0, 0, 64, 64); tone(c, 232);
+      for (let i = 0; i < 6; i++) { c.fillRect(0, i * 64 / 6, 64, 1.3); for (let j = 0; j < 2; j++) c.fillRect((j + (i % 2) * 0.5) * 32, i * 64 / 6, 1.3, 64 / 6); } }],
     slabs:   [2, (c, r) => blocks(c, r, 2, 2, 0)],
     shingles:[0.4, (c, r) => blocks(c, r, 6, 6)],
     plaster: [1, (c, r) => speckle(c, r, 240)],
@@ -462,7 +466,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (!along) for (const x of [x0, x1]) for (const z of [z0, z1]) seg([x, y0, z], [x, y1, z]);
     const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.add(new THREE.LineSegments(geo, softInk));
   }
-  const occupantAt = (x, y) => { const row = map[y], cell = row && row[x]; return cell && cell.occupied != null ? entitiesById.get(cell.occupied) : null; };
+  // (ghostAt: the wall pieces, gate or tower being placed, where they fit — updateGhost. The standing walls see them as
+  // the tiles' occupants, so they are drawn as they will be once it is built: the 2D's ghostOverlay, render-fx.js.)
+  let ghostAt = new Map(), ghostSig = '';
+  const occupantAt = (x, y) => { const g = ghostAt.get(y * MAP + x); if (g) return g; const row = map[y], cell = row && row[x]; return cell && cell.occupied != null ? entitiesById.get(cell.occupied) : null; };
   function refreshWall(e){
     const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), hurt = isHurt(e), key = wallKey(e, arms) + (hurt ? ':hurt' : '');
     let rec = solids.get(e.id);
@@ -508,11 +515,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     return arms;
   }
   const wallKey = (e, arms) => (e.complete ? 1 : 0) + ':' + ageOf(e) + ':' + teamColor(e.team) + ':' + arms.join(',') + (arms.turned ? ':t' : '') + (arms.bare ? ':b' : '') + (arms.gatePost ? ':p' : '') + (arms.dg ? ':d' + arms.dg : '');
+  let noFaceMat = null;   // a box face that isn't drawn
   function wallModel(e, arms){
+    const noFace = noFaceMat || (noFaceMat = new THREE.MeshBasicMaterial({ visible: false }));
     const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h, gate = isGateBtype(e.btype);
     const stone = e.btype === 'SWALL' || e.btype === 'SGATE', a = ageOf(e), tc = teamColor(e.team);
     const k = 1; // (full height: a site rises by its cut — constructionSite)
-    const g = new THREE.Group(), body = stone ? '#cfc8b6|stone' : WOOD.L + '|stakes';
+    const g = new THREE.Group(), body = stone ? '#cfc8b6|wall' : WOOD.L + '|stakes';
     const pw = (stone ? 9 : 7) / 32, T = pw, linkH = 14 / HPX * k; // links as thick as the pillars (drawWallLink thick = pw/2 px each side)
     // A link from this pillar's face to the neighbor's (half-widths o1, o2): a slab with a team top.
     for (let i = 0; i < arms.length; i += 6) {
@@ -520,16 +529,22 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (dx && dy) {   // corner to corner: the same slab, turned
         const m = boxAt(g, topped(body, tc), -(Math.SQRT2 - o1 - o2) / 2, -T / 2, (Math.SQRT2 - o1 - o2) / 2, T / 2, 0, linkH, 'hull'), mid = (o1 + Math.SQRT2 - o2) / 2 / Math.SQRT2;
         m.position.x = cx + dx * mid; m.position.z = cz + dy * mid; m.rotation.y = -Math.atan2(dy, dx); continue; }
-      const a0 = o1, a1 = 1 - o2;
+      // (an end with no post runs on into the next slab: lapped a little — butted, the two leave a hairline between them)
+      const a0 = o1 || -0.02, a1 = 1 - (o2 || -0.02);
       const x0 = dx ? Math.min(cx + dx * a0, cx + dx * a1) : cx - T / 2, x1 = dx ? Math.max(cx + dx * a0, cx + dx * a1) : cx + T / 2;
       const z0 = dy ? Math.min(cz + dy * a0, cz + dy * a1) : cz - T / 2, z1 = dy ? Math.max(cz + dy * a0, cz + dy * a1) : cz + T / 2;
-      boxAt(g, topped(body, tc), x0, z0, x1, z1, 0, linkH, 'hull'); softEdges(g, x0, z0, x1, z1, 0, linkH, dx ? 'x' : 'z');
+      const slab = boxAt(g, topped(body, tc), x0, z0, x1, z1, 0, linkH, 'hull'); softEdges(g, x0, z0, x1, z1, 0, linkH, dx ? 'x' : 'z');
+      // a lapped end has no end face: lying in the next slab, its top edge on that slab's walkway showed as a pale dashed line
+      if (!o1 || !o2) { const far = dx + dy > 0 ? 0 : 1, f = dx ? 0 : 4; slab.material = slab.material.slice();
+        if (!o1) slab.material[f + 1 - far] = noFace; if (!o2) slab.material[f + far] = noFace; }
     }
     if (!gate) {
       for (let fy = e.y; fy < e.y + h && !arms.gatePost && !arms.bare; fy++) for (let fx = e.x; fx < e.x + w; fx++) {
         const pH = 22 / HPX * k, cx = fx + 0.5, cz = fy + 0.5;
         const post = boxAt(g, topped(body, tc), cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH, 'hull');
-        if (arms.turned) post.rotation.y = Math.PI / 4; else softEdges(g, cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH);
+        // (stone, joined: the post's faces and the slabs' are one wall — its soft edges start above them, as the 2D)
+        // (stone: no soft edge lines — the post and its walls are one piece of masonry; the bold outline and the light give its shape)
+        if (arms.turned) post.rotation.y = Math.PI / 4; else if (!stone) softEdges(g, cx - pw / 2, cz - pw / 2, cx + pw / 2, cz + pw / 2, 0, pH);
       }
       addHulls(g, true); // union outlines: drawn first, the parts paint over them — a run's outline can't show through the pillar it butts into
       return { obj: g };
@@ -540,9 +555,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     const ends = dg === 1 ? [[e.x - 0.5, e.y + 1.5], [e.x + 1.5, e.y - 0.5]] : dg === 2 ? [[e.x - 0.5, e.y - 0.5], [e.x + 1.5, e.y + 1.5]]
       : [[e.x + 0.5, e.y + 0.5], alongZ ? [e.x + 0.5, e.y + n - 0.5] : [e.x + n - 0.5, e.y + 0.5]];
     for (const [cx, cz] of ends) {
-      const post = boxAt(g, topped(stone ? '#c8c0ae|stone' : WOOD.L + '|stakes', a >= 2 && stone ? '#b0b0a4' : tc), cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH, 'hull');
+      const post = boxAt(g, topped(stone ? '#cfc8b6|wall' : WOOD.L + '|stakes', a >= 2 && stone ? '#b0b0a4' : tc), cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH, 'hull');
       if (dg) { post.rotation.y = Math.PI / 4; continue; }   // (square to its run)
-      softEdges(g, cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH);
+      if (!stone) softEdges(g, cx - P / 2, cz - P / 2, cx + P / 2, cz + P / 2, 0, pH);
       if (stone && a >= 2) for (const [mx, mz] of [[0, 0], [1, 0], [0, 1], [1, 1]])
         boxAt(g, '#e0d8c6', cx - P / 2 + mx * (P - 0.1), cz - P / 2 + mz * (P - 0.1), cx - P / 2 + mx * (P - 0.1) + 0.1, cz - P / 2 + mz * (P - 0.1) + 0.1, pH, pH + 6 / HPX, 'hull');
     }
@@ -4308,7 +4323,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (Math.abs(c.x - eye.x) > RANGE + 4 || Math.abs(c.y - eye.y) > RANGE + 4) { if (!far && !solids.has(e.id)) far = e; continue; }
       seen.add(e.id);
       const rec = make(e);
-      if (rec && rec.obj) rec.obj.visible = true;
+      if (rec && rec.obj) { const gh = isWallBtype(e.btype) && ghostAt.get(e.y * MAP + e.x); rec.obj.visible = !(gh && gh.btype !== e.btype); }   // (a wall where a gate, a tower or a stone piece is being placed: it will be gone)
     }
     if (!bldSpent && far && solids.size < PREBUILD_MAX) { const rec = make(far);
       if (rec && rec.obj) { rec.obj.visible = false; if (renderer.compileAsync) renderer.compileAsync(rec.obj, camera, scene).catch(() => {}); } }
@@ -6019,6 +6034,10 @@ gl_Position = projectionMatrix * mvPosition;`;
   // a wall drag, a box per tile.
   let ghost = null;
   function updateGhost(){
+    const sig0 = ghostSig; ghostAt = new Map(); ghostSig = '';
+    try { updateGhostArt(); } finally { if (ghostSig !== sig0) lastStatic = 0; }   // (the standing walls are redrawn with it — and without, when it goes)
+  }
+  function updateGhostArt(){
     if (ghost) ghost.g.visible = false;
     if (!placing || !hoverXY) return;
     // As 2D (drawGhost, render-fx.js): the real piece, see-through in its own colours; no ground tint (it read as a
@@ -6035,6 +6054,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       ok = canPlace(placing, t0.x, t0.y, myTeam);
       pieces = [{ ...fake(ox, oy, bw, bh), ok }];
     }
+    if (isWallBtype(placing) || isGateBtype(placing) || isTowerBtype(placing)) for (const p of pieces) if (ok && p.ok !== false) {
+      for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) ghostAt.set(y * MAP + x, p); ghostSig += p.x + ',' + p.y + ',' + p.w + ',' + p.h + ';'; }
+    if (ghostSig) ghostSig = placing + ':' + ghostSig;
     const key = placing + ':' + ageBonus(myTeam) + ':' + ok + ':' + pieces.map(p => p.x + ',' + p.y + ',' + p.w + ',' + p.h + ',' + p.ok).join(';');
     if (!ghost || ghost.key !== key) {
       if (ghost) dropGhost();
@@ -6043,7 +6065,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         // Links as 2D's ghost overlay: to the other ghost tiles and (a valid piece only) the walls already there
         const at = new Map(); for (const p of pieces) for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) at.set(y * MAP + x, p);
         const look = (x, y) => at.get(y * MAP + x) || (ok ? occupantAt(x, y) : null);
-        for (const p of pieces) { const o = wallModel(p, wallArms(p, look, n => at.has(n.y * MAP + n.x) && n.btype === placing)).obj; g.add(o); parts.push([o, p.ok]); }
+        // (a piece that fits is on ghostAt: the walls behind it draw their own slab toward it, as they will)
+        for (const p of pieces) { const o = wallModel(p, wallArms(p, look, n => ghostAt.has(p.y * MAP + p.x) ? !isTowerBtype(n.btype) : at.has(n.y * MAP + n.x) && n.btype === placing)).obj; g.add(o); parts.push([o, p.ok]); }
       } else {
         const p = pieces[0];
         try { MODELS[placing](g, { ...p, x: 0, y: 0 }); } catch (err) { boxAt(g, '#ffffff', 0, 0, p.w, p.h, 0, 0.5); }
