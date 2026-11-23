@@ -1230,8 +1230,11 @@ function elevSample(A, cx, cy){
 function groundH(cx, cy){ return elevAny ? elevSample(elev, cx, cy) : 0; }
 // Called by the renderers each frame: (re)generates the ground for this match, and re-lays the terraces when the
 // buildings have changed.
+// Hills are built but OFF: every map is drawn flat (a match still carries its elevSpec, so turning this on brings its
+// hills back). Look only, either way — the sim never reads them.
+const ELEVATION = false;
 function ensureElevation(){
-  const on = !!elevSpec && !window.elevationOff && MAP > 0 && map.length === MAP, seed = on ? elevSpec.seed >>> 0 : 0;
+  const on = ELEVATION && !!elevSpec && !window.elevationOff && MAP > 0 && map.length === MAP, seed = on ? elevSpec.seed >>> 0 : 0;
   const key = on ? seed + ':' + MAP + ':' + elevSpec.flats.join(';') : 'flat:' + MAP;
   if (key !== elevKey) {
     elevKey = key; const n = MAP + 1; elevBase = new Float32Array(n * n); elevAny = false;

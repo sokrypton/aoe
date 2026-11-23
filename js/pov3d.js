@@ -76,6 +76,9 @@
   }
   function initScene(){
     renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true }); // stencil: the behind-building outlines
+    // (three's shader error check reads each new program's log back — a forced, blocking compile and link: 100+ ms
+    // when a dozen new shaders come into view at once. Off: a broken shader still shows as a GL error in the console.)
+    renderer.debug.checkShaderErrors = false;
     renderer.localClippingEnabled = true;                                   // construction sites (constructionSite)
     renderer.setPixelRatio(Math.min(isMobile ? 1.5 : 3, window.devicePixelRatio || 1)); // full res on desktop (below it, edges pixelate vs 2D); capped on phones, full screen gets heavy
     pip.insertBefore(renderer.domElement, pip.firstChild);
@@ -464,12 +467,15 @@ gl_Position = projectionMatrix * mvPosition;`;
     const arms = wallArms(e, occupantAt, n => !isTowerBtype(n.btype)), hurt = isHurt(e), key = wallKey(e, arms) + (hurt ? ':hurt' : '');
     let rec = solids.get(e.id);
     if (rec && rec.key === key) return;
+    if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (this frame's building is done: the old model stands till its turn)
+    const tb = performance.now();
     if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
     const r = wallModel(e, arms); r.obj.userData.bid = e.id;
     const b = BLDGS[e.btype];
     if (!e.complete) { r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
     else if (hurt) { r.dmg = buildingDamage(r.obj, e.x, e.y, e.w || b.w, e.h || b.h); r.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
     scene.add(r.obj); solids.set(e.id, { ...r, key });
+    bldSpent += performance.now() - tb;
   }
   // The links a wall/gate e draws to its same-team wall-like neighbors (at(x, y) → the entity there); shared(n):
   // n draws that link itself, so e leaves its -x/-z one to it.
@@ -3777,6 +3783,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : '');
     let rec = solids.get(e.id);
     if (!rec || rec.key !== key) {
+      if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (as refreshWall)
+      const tb = performance.now();
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       const g = new THREE.Group();
       MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
@@ -3793,6 +3801,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
+      bldSpent += performance.now() - tb;
     }
   }
   const OPEN_SITE = new Set(['MARKET', 'FARM']); // open ground (a plaza, a field): no scaffold, the stalls / crops just come up
@@ -3815,7 +3824,21 @@ gl_Position = projectionMatrix * mvPosition;`;
   // depth D in, the rim along its outline and the tunnels round its openings joining the two. Flat faces (a floor, a flat
   // top) stay single, marked clipOnly: a site shows them once it reaches them, never squished into a lid.
   // jag: also sliced into narrow upright strips on one world grid, so a damaged wall's top can break to a jagged line.
+  // By SHAPE: the same wall on another tile is the same slabs, moved (the strips' grid, COL, divides a tile, so it
+  // moves with them) — a town of one kind of house under fire cuts its walls once, not once a house.
+  const thickCache = new Map();
   function thickGeo(faces, D, nMats, jag = false){
+    if (faces.some(f => f.smooth)) return thickGeoMake(faces, D, nMats, jag);
+    let ox = Infinity, oz = Infinity; for (const f of faces) for (const p of f.loop) { if (p[0] < ox) ox = p[0]; if (p[2] < oz) oz = p[2]; }
+    ox = Math.floor(ox); oz = Math.floor(oz);
+    const r = v => Math.round(v * 1e4), at = p => r(p[0] - ox) + ',' + r(p[1]) + ',' + r(p[2] - oz);
+    const key = D + '|' + nMats + '|' + jag + '|' + faces.map(f => f.loop.map(at).join(';') + '>' + f.out.join(',') + '>' + (f.mat || 0) + '>' + (f.holes || []).map(h => at(h.at) + ':' + r(h.w) + ':' + r(h.h)).join(';')).join('/');
+    let g = thickCache.get(key);
+    if (!g) { const sh = p => [p[0] - ox, p[1], p[2] - oz];
+      thickCache.set(key, g = thickGeoMake(faces.map(f => ({ ...f, loop: f.loop.map(sh), holes: (f.holes || []).map(h => ({ ...h, at: sh(h.at) })) })), D, nMats, jag)); }
+    return g.clone().translate(ox, 0, oz);
+  }
+  function thickGeoMake(faces, D, nMats, jag){
     const buckets = Array.from({ length: nMats }, () => []);
     const UP = new THREE.Vector3(0, 1, 0);
     // sd: the way the face runs up (in its own plane, rising 1 per unit): a site presses it down along itself
@@ -4248,17 +4271,40 @@ gl_Position = projectionMatrix * mvPosition;`;
     }
   }
 
+  // A model takes time to make — a site's or a damaged building's a frame or several (their walls are cut into real
+  // slabs) — and its shaders more to compile, so they are never made in a burst: a frame makes models (new, or a
+  // standing one's next state: a town under fire turns damaged one building a frame, not all in one) until BLD_MS is
+  // spent, and drawFrame comes back for the rest (bldLeft). With nothing to make in view, one a pass of the buildings
+  // known BEYOND it is made, hidden, its shaders compiled in the background: a view that jumps or flies to another
+  // town finds it built. (A match's first frames make everything at once.)
+  let bldLeft = false, bldSpent = 0; const BLD_MS = 3, PREBUILD_MAX = 600;
+  // A match's start (its first frames, behind the fade): every kind of building is made once as a site and once
+  // damaged, and thrown away — the first of a kind is the costly one (its walls' slabs are cut, then kept by shape:
+  // thickGeo; its shaders compiled), and it would otherwise be met mid-battle, the frame a building is first hit.
+  function prewarmShapes(){
+    for (const btype in MODELS) { const b = BLDGS[btype]; if (!b || isWallBtype(btype) || isGateBtype(btype) || btype === 'FARM') continue;
+      for (const hurt of [false, true]) {
+        const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: myTeam, complete: hurt, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
+        try { const g = new THREE.Group(); MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g);
+          const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
+          const done = () => dropSolid(rec);
+          if (renderer.compileAsync) renderer.compileAsync(g, camera, scene).then(done, done); else done();
+        } catch (err) { /* a warm-up only */ }
+      } }
+  }
   function refreshBuildings(){
-    const seen = new Set();
+    const seen = new Set(), make = e => { if (isWallBtype(e.btype) || isGateBtype(e.btype)) refreshWall(e); else refreshModel(e); return solids.get(e.id); };
+    let far = null; bldLeft = false; bldSpent = warmFrames > 0 ? -Infinity : 0;
     for (const e of entities) {
-      if (e.type !== 'building' || e.hp <= 0) continue;
+      if (e.type !== 'building' || e.hp <= 0 || !bldgVisible(e)) continue;
       const c = centerOf(e);
-      if (Math.abs(c.x - eye.x) > RANGE + 4 || Math.abs(c.y - eye.y) > RANGE + 4 || !bldgVisible(e)) continue;
+      if (Math.abs(c.x - eye.x) > RANGE + 4 || Math.abs(c.y - eye.y) > RANGE + 4) { if (!far && !solids.has(e.id)) far = e; continue; }
       seen.add(e.id);
-      if (isWallBtype(e.btype) || isGateBtype(e.btype)) refreshWall(e);
-      else refreshModel(e);
-      const rec = solids.get(e.id); if (rec && rec.obj) rec.obj.visible = true;
+      const rec = make(e);
+      if (rec && rec.obj) rec.obj.visible = true;
     }
+    if (!bldSpent && far && solids.size < PREBUILD_MAX) { const rec = make(far);
+      if (rec && rec.obj) { rec.obj.visible = false; if (renderer.compileAsync) renderer.compileAsync(rec.obj, camera, scene).catch(() => {}); } }
     // Out of range: hidden, not dropped — the model is ready when the view comes back. Gone or unseen: dropped.
     for (const [id, w] of solids) if (!seen.has(id)) { const e = entitiesById.get(id);
       if (e && e.type === 'building' && e.hp > 0 && bldgVisible(e)) { if (w.obj) w.obj.visible = false; } else { dropSolid(w); solids.delete(id); } }
@@ -4964,6 +5010,23 @@ gl_Position = projectionMatrix * mvPosition;`;
       _sp.center.set(v.x, 0.6, v.z); r.visible = _fr.intersectsSphere(_sp); }
   }
   const _uFr = {}, drawnUnits = new Set();   // (drawnUnits: this frame's modelled units — the overlay's HP bars follow them)
+  // The dragon's model is the one costly animal to make (a frame's worth), and it is made again each time its colour
+  // changes — taken for a ride, the ride over — or it comes back into view. So a dragon model let go is KEPT, hidden,
+  // by its key (kind + colour), and the next dragon of that key takes it; a match's start makes the wild one's and the
+  // player's own ahead of time (prewarmDragon).
+  const keptModels = new Map();
+  function animalBuild(utype, tc){ const g = animalModel(utype, tc); addHulls(g, true); bakeRigid(g, utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); return g; }
+  function dropAnimal(a){
+    if (a.obj) quenchDragonFire(a.obj);
+    if (a.obj && a.key.startsWith('dragon') && !keptModels.has(a.key)) { a.obj.visible = false; keptModels.set(a.key, a.obj); return; }
+    dropSolid(a);
+  }
+  function prewarmDragon(){
+    if (!entities.some(e => e.utype === 'dragon')) return;
+    for (const t of [GAIA_TEAM, myTeam]) { const key = 'dragon' + teamColor(t); if (keptModels.has(key) || [...animals.values()].some(a => a.key === key)) continue;
+      const g = animalBuild('dragon', teamColor(t)); g.visible = false; keptModels.set(key, g);
+      if (renderer.compileAsync) renderer.compileAsync(g, camera, scene).catch(() => {}); }
+  }
   function updateUnits(){
     const now = performance.now(), dt = lastUnitsAt ? Math.min(0.1, (now - lastUnitsAt) / 1000) : 0;
     lastUnitsAt = now;
@@ -5007,8 +5070,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         const ty = dead && a ? a.yaw : -worldFacing(e); // the fallen keep the heading they died with
         // a rebuild (its colour changed: a slain sheep's tuft goes to nobody's white) keeps its life — else a sheep seen
         // alive came back already lying, its fall skipped
-        let life = null; if (a && a.key !== key) { life = { alive: a.alive, deadAt: a.deadAt }; dropSolid(a); a = null; }
-        if (!a) { const g = animalModel(e.utype, teamColor(e.team)); addHulls(g, true); bakeRigid(g, e.utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
+        let life = null; if (a && a.key !== key) { life = { alive: a.alive, deadAt: a.deadAt }; dropAnimal(a); a = null; }
+        if (!a) { const g = keptModels.get(key) || animalBuild(e.utype, teamColor(e.team)); keptModels.delete(key); g.visible = true; animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
         // Glide between sim steps and ease into turns (a jump of 2+ tiles snaps).
         const nx = tx, nz = tz; // interpolated (posOf): no chase lag
         const mvx = nx - a.x, mvz = nz - a.z; a.moved = Math.hypot(mvx, mvz); a.x = nx; a.z = nz;
@@ -5058,7 +5121,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       scene.remove(rec.sprite); rec.tex.dispose(); rec.sprite.material.dispose(); unitSprites.delete(id);
     }
     SU.mesh.count = SU.n; SU.mesh.instanceMatrix.needsUpdate = true;
-    for (const [id, a] of animals) if (!used.has(id)) { if (a.obj) quenchDragonFire(a.obj); dropSolid(a); animals.delete(id); }
+    for (const [id, a] of animals) if (!used.has(id)) { dropAnimal(a); animals.delete(id); }
     for (const m of burning) { const F = m.userData.fire; if (F.seen !== fireFrame) dragonFire(m, null, 0, dt); if (!F.puffs.length) burning.delete(m); }
     fireFrame++;
     for (const [id, v] of villagers) if (!used.has(id)) { dropVillager(v); villagers.delete(id); }
@@ -5432,7 +5495,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
-    if (warmFrames > 0) { warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
+    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); prewarmShapes(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }
@@ -5441,8 +5504,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     // on the cadence, or at once when the view has moved a few tiles (a jump: the new place mustn't wait for it)
     const P = frameParts, mark = k => { const n = performance.now(); P[k] = n - P._t; P._t = n; }; P._t = performance.now(); // (the last frame's time by part: __povFrame)
     if (now - lastStatic > STATIC_MS || !staticAt || (eye.x - staticAt.x) ** 2 + (eye.y - staticAt.y) ** 2 > 9) {
-      refreshGround(); refreshFeatures(); refreshBuildings(); refreshButtons(); lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
-    else if (viewTurned()) refreshFeatures();
+      const t1 = performance.now(); refreshGround(); const t2 = performance.now(); refreshFeatures(); const t3 = performance.now(); refreshBuildings(); refreshButtons();
+      P.sGround = t2 - t1; P.sFeat = t3 - t2; P.sBld = performance.now() - t3;   // (the static refresh by part: __povFrame)
+      lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
+    else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) refreshBuildings(); }
     mark('static');
     animateFeatures(dt);
     updateArrows(now);
@@ -6144,6 +6209,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     unitSprites.clear();
     for (const a of animals.values()) dropSolid(a);
     animals.clear();
+    for (const g of keptModels.values()) dropSolid({ obj: g });
+    keptModels.clear();
     for (const v of villagers.values()) dropVillager(v);
     villagers.clear();
     for (const r of corpseModels.values()) dropCorpse(r);
@@ -6234,5 +6301,6 @@ gl_Position = projectionMatrix * mvPosition;`;
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
       tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, farmPrev: farmPrev.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, unitSprites: unitSprites.size, villagers: villagers.size }; }; // dev: cache sizes
-  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0 });
+  window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: unitSprites.size + villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0,
+    programs: renderer ? renderer.info.programs.length : 0, geos: renderer ? renderer.info.memory.geometries : 0, tex: renderer ? renderer.info.memory.textures : 0 });   // (programs / geos / tex rising in a slow frame: what it was building)
 })();
