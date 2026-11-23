@@ -799,7 +799,8 @@ function execUnitCommand(cmd){
     // pathfinder can't start from over a forest or reach a spot inside one.
     if (dragonAloft(s)) {
       s.target = null; clearUnitPath(s);
-      if (target) s.flyTarget = target.id; else { s.flyTarget = undefined; s.flyX = tileX; s.flyY = tileY; }
+      // (sent at what its fire can't burn — a bear, its own side — it flies there)
+      if (target && dragonBurns(s, target)) s.flyTarget = target.id; else { s.flyTarget = undefined; s.flyX = tileX; s.flyY = tileY; }
       return;
     }
     if (ramTarget && s.id !== ramTarget.id && canRideRam(s) && canGarrisonIn(ramTarget, s.team, s) && ramRoom > 0) {

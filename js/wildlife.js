@@ -227,6 +227,26 @@ function dragonFly(e,x,y,hold){
   e.fromX=e.x; e.fromY=e.y; e.moveT=0;
   return d;
 }
+// What its fire burns, ridden: a player's unit or building not on its rider's side (never the map's harmless animals).
+// ONE rule — its fire, its targets, its orders.
+function dragonBurns(e,o){
+  return o!==e&&o.hp>0&&!o.garrisonedIn&&isPlayerTeam(o.team)&&!sameSide(o.team,e.team)&&(o.type==='building'||(o.type==='unit'&&!isHarmlessAnimal(o)));
+}
+// With no order left — its target burnt, or arrived where it was sent — it takes on the nearest enemy its side can see
+// within DRAGON_SEEK: a unit before a building (they shoot back, or flee). Entities in id order: the first of the
+// nearest. An order always replaces it; while it has a target nothing draws it off (a tower's arrows).
+const DRAGON_SEEK=8;
+function dragonSeek(e){
+  let best=null, bd=Infinity;
+  for(let i=0;i<entities.length;i++){ let o=entities[i];
+    if(!dragonBurns(e,o)||!entityVisibleToTeam(o,e.team))continue;
+    let dx=o.x-e.x, dy=o.y-e.y;
+    if(o.type==='building'){ let b=BLDGS[o.btype], w=o.w||b.w, h=o.h||b.h; dx=Math.max(o.x-0.5,Math.min(e.x,o.x+w-0.5))-e.x; dy=Math.max(o.y-0.5,Math.min(e.y,o.y+h-0.5))-e.y; }
+    let d=dx*dx+dy*dy; if(d>DRAGON_SEEK*DRAGON_SEEK)continue;
+    if(o.type==='building')d+=DRAGON_SEEK*DRAGON_SEEK;                           // (any unit in reach comes first)
+    if(d<bd){ bd=d; best=o; } }
+  return best;
+}
 // It burns whatever its fire would reach, as soon as it has the breath for it.
 function dragonAutoBreath(e){ if(e.atkCooldown<=0&&dragonBreath(e,true)){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; } }
 function updateDragonAloft(e){
@@ -245,8 +265,10 @@ function updateDragonAloft(e){
   if(e.path.length||(e.order&&e.order.kind==='move')){ let o=e.order&&e.order.kind==='move'?e.order:e.path[e.path.length-1];
     e.flyX=o.x; e.flyY=o.y; e.flyTarget=undefined; clearUnitPath(e); if(e.order)issueOrder(e,null); }
   let t=e.flyTarget!==undefined?entitiesById.get(e.flyTarget):null;
-  if(t&&(t.hp<=0||t.garrisonedIn||sameSide(t.team,e.team))){ t=null; }
+  if(t&&!dragonBurns(e,t)){ t=null; }
   if(!t&&e.flyTarget!==undefined){ e.flyTarget=undefined; e.flyX=e.x; e.flyY=e.y; }
+  // (on its own — not steered in character mode — and where it was sent: the next enemy, looked for every few ticks)
+  if(!t&&!e.possessed&&tick%5===e.id%5&&Math.abs(e.flyX-e.x)<0.05&&Math.abs(e.flyY-e.y)<0.05){ t=dragonSeek(e); if(t)e.flyTarget=t.id; }
   // It hangs DRAGON_STRAFE short of its target, facing it: its fire lands on it. A building: short of its nearest
   // EDGE — beside it, not over its roof (from over it, it backs off its centre first).
   if(t){ let c=t;
@@ -327,9 +349,7 @@ function dragonFireAim(e){ let t=e.flyTarget!==undefined?entitiesById.get(e.flyT
 function dragonStrafe(e,fx,fy,dry){
   for(let i=0;i<entities.length;i++){
     let o=entities[i];
-    if(o===e||o.hp<=0||o.garrisonedIn||!isPlayerTeam(o.team)||sameSide(o.team,e.team))continue;
-    if(o.type==='unit'&&isHarmlessAnimal(o))continue;
-    if(o.type!=='building'&&o.type!=='unit')continue;
+    if(!dragonBurns(e,o))continue;
     let b=o.type==='building'?BLDGS[o.btype]:null, w=b?(o.w||b.w):0, h=b?(o.h||b.h):0, hit=false;
     for(let k=0;k<3&&!hit;k++){ let r=DRAGON_STRAFE_FROM+(DRAGON_STRAFE_TO-DRAGON_STRAFE_FROM)*k/2, cx=e.x+fx*r, cy=e.y+fy*r;
       let ox=b?Math.max(o.x-0.5,Math.min(cx,o.x+w-0.5)):o.x, oy=b?Math.max(o.y-0.5,Math.min(cy,o.y+h-0.5)):o.y, dx=ox-cx, dy=oy-cy;

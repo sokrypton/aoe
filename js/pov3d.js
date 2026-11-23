@@ -2474,9 +2474,8 @@ gl_Position = projectionMatrix * mvPosition;`;
           const E2 = E.map((v, i) => v + (wr[i] - wa[i] / wl * ARM_F * 0.8 - v) * 0.4);
           bend = E2.map((v, i) => 2 * v - (shA[i] + wr[i]) / 2); } }
       const emptyDangling = !best && hand[1] > -5; // hand dangling at waist/hips without a tool/weapon/hold
-      const carryOverhead = hand[1] < -16; // hand raised over head (carrying load), would slice camera
       const forcedHide = o.fpArmHide && o.fpArmHide.includes(s);
-      const hideArm = forcedHide || carryOverhead || emptyDangling;
+      const hideArm = forcedHide || emptyDangling;   // (an arm raised to a load on the shoulder stays: it holds it up in view)
       tube(U, SKIN, P(...shA), P(...bend), endM, ar(1.05));
       tube(U, tc, P(...shA), P(...bend), P(...hand), ar(1.45), 0, 0.22);    // the puffy sleeve: the tube's first stretch
       // first person shows active forearms; empty dangling or overhead arms collapse (fpHide)
@@ -2603,7 +2602,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     // cylinder arc along the body, hugging the barrel's cross-section).
     const cloth = own(new THREE.CylinderGeometry(1, 1, r(7), 20, 1, true, Math.PI / 2 - 1.15, 2.3).rotateZ(Math.PI / 2));
     const cm = new THREE.Mesh(cloth, mat(tc, true));
-    cm.position.set(...H(-0.6, -6.2)); cm.scale.set(1, r(4.45), r(4.8)); cm.userData.hullGeo = cloth; g.add(cm);
+    cm.position.set(...H(-0.6, -6.2)); cm.scale.set(1, r(4.45), r(4.8)); cm.userData.hullGeo = cloth; cm.userData.fpHide = true; g.add(cm);   // (not seen from the saddle: a blue slab under the view)
     [[-5.4, -2.7, -1.2], [-4.6, 2.7, -1.2], [4.6, -2.7, 1], [5.4, 2.7, 1]].forEach(([x, z, bend], i) => { // hind (hocks back), fore (knees forward): from the body to a planted or lifted hoof
       const [dx, lift] = (pose.legs && pose.legs[i]) || [0, 0], hy = 3.9 - lift;
       tube(g, legC, H(x, -5, z), G(x + bend * (1 + lift * 0.35) + dx * 0.5, (-5 - B + hy) / 2, z), G(x + dx, hy, z), r(0.95));
@@ -4719,6 +4718,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (best) v.throw = { load: carriedLoad(e), b: best, flew: false };
     }
     let p = e.utype === 'villager' ? villagerPose(e, v) : soldierPose(e, v);
+    if (e.id === followId && window.__povFpPose) { const f = window.__povFpPose; p = { ...p, ...f, opt: { ...(p.opt || {}), ...(f.opt || {}) } }; }   // dev: a pinned pose (the first-person gallery)
     // A swing the player asked for (first person: click / Space / ACT): played at once, while the command it sent takes effect.
     if (e.id === followId && swingAt && now - swingAt < SWING_MS && p.kind !== 'attack') {
       const u = (now - swingAt) / SWING_MS, sol = e.utype !== 'villager';
@@ -4736,7 +4736,11 @@ gl_Position = projectionMatrix * mvPosition;`;
       p = p.legs ? { kind: p.legs.kind, t: p.legs.t, opt: p.opt } : { kind: 'idle', t: workPhase(e, 'idle'), opt: p.opt };
     }
     if (vmUnit && VM.force != null) { v.fpStrike = VM.force; if (p.kind === 'attack') p = { kind: 'idle', t: 0, opt: p.opt }; } // dev: a pinned strike phase
-    v.lastPose = p.kind; v.lastLoad = p.opt && p.opt.load; // (dev: __povVM, __povPose)
+    // First person, empty-handed at rest or on the move: the arms that hang out of sight are held ready, low in view
+    // (the forager's open hands, still) — a body to look out of. The legs keep their own pose.
+    const fpRest = vmUnit && e.utype === 'villager' && /^(idle|walk|flee)$/.test(p.kind);
+    if (fpRest) p = { kind: 'forage', t: 0.08, opt: p.opt, legs: p.kind === 'idle' ? null : { kind: p.kind, t: p.t } };
+    v.lastPose = fpRest ? 'rest' : p.kind; v.lastLoad = p.opt && p.opt.load; // (dev: __povVM, __povPose)
     if (v.throw) { const b = v.throw.b, bx = b.x + (b.w || 1) / 2, bz = b.y + (b.h || 1) / 2;
       { const t = 0.12 + 0.38 * tp;                                                 // knee dip (0.12) through the follow-through (0.5)
         // It throws standing at the drop, turned to the building
@@ -4838,8 +4842,10 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
     },
     villager: {
-      aim: 0.10, down: 0.16, back: -0.36, ease: 2.0, at: [0.22, -0.22], near: 0.22, maxTilt: 0.25,
-      anchor: (l, r) => r || l
+      aim: 0.10, down: 0.16, back: -0.36, ease: 2.0, at: [0.22, -0.22], near: 0.34, maxTilt: 0.25,
+      anchor: (l, r, pose) => /^(rest|carry|drop)$/.test(pose) && l && r ? [0, 1, 2].map(i => (l[i] + r[i]) / 2) : r || l,
+      // rest: both hands low and centred; a load: held up at the top of the view, the arms reaching up to it
+      poseVM: { rest: { at: [0, -0.4] }, carry: { at: [0, 0.46], back: -0.56 }, drop: { at: [0, 0.46], back: -0.56 }, repair: { back: -0.62, at: [0.2, -0.3] } }
     }
   };
   window.__povUnitVM = UNIT_VM;
@@ -4877,14 +4883,19 @@ gl_Position = projectionMatrix * mvPosition;`;
     // where the hands land in camera space at this tilt (x right, y up, −z ahead), and the slide that puts them at vm.at
     const c = Math.cos(v.vmTilt), sn = Math.sin(v.vmTilt), hx = h ? h[0] : 0, hy = h ? h[1] - S : 0;
     const px = h ? h[2] : 0, py = -vm.down + hx * sn + hy * c, pz = vm.back - (hx * c - hy * sn), d = Math.max(0.12, -pz);
-    const sx = h ? vm.at[0] * d - px : 0, sy = h ? vm.at[1] * d - py : 0;
+    const sh = vm.shift || [0, 0], sx = h ? vm.at[0] * d - px : sh[0], sy = h ? vm.at[1] * d - py : sh[1];
     v.vmSlide = first || !v.vmSlide ? [sx, sy] : [v.vmSlide[0] + (sx - v.vmSlide[0]) * e, v.vmSlide[1] + (sy - v.vmSlide[1]) * e];
-    const push = Math.max(0, vm.near + pz);                                          // a wind-up swings the hands back at the lens: held off at vm.near
+    // a wind-up swings the hands back at the lens: the nearer one is held off at vm.near
+    let pzN = pz; for (const q of [v.fpHandL, v.fpHandR]) if (q) pzN = Math.max(pzN, vm.back - (q[0] * c - (q[1] - S) * sn));
+    const push = Math.max(0, vm.near + pzN);
 
     camera.updateMatrixWorld();
     // model (x forward, y up, z right) → camera (−z forward, y up, x right), turned forward by the tilt about the shoulders
     _vm.r.set(0, 0, 1, 0,  0, 1, 0, 0,  -1, 0, 0, 0,  0, 0, 0, 1).multiply(_vm.t.makeRotationZ(v.vmTilt));
-    _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0], -vm.down + v.vmSlide[1], vm.back - push));
+    // on the move the hands sway with the stride (side to side, a dip at each step), eased in and out
+    v.vmBob = (v.vmBob || 0) + ((isUnitMoving(who) ? 1 : 0) - (v.vmBob || 0)) * Math.min(1, camDt * 6);
+    const ph = v.stride * 5, bx = Math.sin(ph) * 0.014 * v.vmBob, by = -Math.abs(Math.cos(ph)) * 0.012 * v.vmBob;
+    _vm.m.copy(camera.matrixWorld).multiply(_vm.t.makeTranslation(v.vmSlide[0] + bx, -vm.down + v.vmSlide[1] + by, vm.back - push));
     const sw = v.rig && v.rig.T.fpSwing, own = v.fpStrike != null && sw && sw.length;   // a shield arm holds still: only the sword arm's bones swing
     if (v.fpStrike != null) { const [pu, ro, fw] = strikeSwing(v.fpStrike, who.utype === 'spearman');
       _vm.k = (_vm.k || new THREE.Matrix4()).makeTranslation(0, 0, -fw).multiply(_vm.t.makeRotationX(pu)).multiply(_vm.t.makeRotationZ(ro));
@@ -5176,24 +5187,24 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
     }
     if (fp) { for (const bi of T.fpBones) out.fill(0, bi * 16, bi * 16 + 16);
-      // the upper arm: from the elbow it curves on toward where the shoulder really sits (below and beside the lens), and
-      // past it out of view — a real arm's bend, not a stump or a straight pipe. Each ring turns to follow the curve.
-      const mid = RIG_SEG >> 1; // the elbow: the arm's curve passes through it halfway
-      _fpA = _fpA || { m: new THREE.Matrix4(), q: new THREE.Quaternion(), f: new THREE.Vector3(), t: new THREE.Vector3(), p: new THREE.Vector3(), s: new THREE.Vector3(), c: new THREE.Vector3(), e: new THREE.Vector3() };
+      // The arm, shoulder to hand, as ONE smooth curve: from the hand back through the elbow's side to where the shoulder
+      // sits for the lens (below, behind and out to its side — out of view). Every ring is laid square to the curve, so
+      // the tube never kinks or shears, whatever the pose's own elbow does.
+      const mid = RIG_SEG >> 1;
+      _fpA = _fpA || { m: new THREE.Matrix4(), h: new THREE.Vector3(), e: new THREE.Vector3(), s: new THREE.Vector3(), p: new THREE.Vector3(), t: new THREE.Vector3(), n: new THREE.Vector3(), b: new THREE.Vector3() };
       const A = _fpA;
-      for (const fold of T.fpFold) { const b0 = fold.bone != null ? fold.bone : fold; const E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16;
-        A.e.set(out[E + 12], out[E + 13], out[E + 14]);
-        const dx = out[E + 12] - out[Hd + 12], dy = out[E + 13] - out[Hd + 13], dz = out[E + 14] - out[Hd + 14], fl = Math.hypot(dx, dy, dz);
-        if (fl > 1e-4) A.f.set(dx / fl, dy / fl, dz / fl); else A.f.set(-1, 0, 0); // the forearm's line, hand → elbow
-        // the shoulder (model: x ahead, y up, z right): the arm's own root, carried on down and back out of view
-        A.s.set(out[b0 * 16 + 12] - FP_ARM * 0.35, out[b0 * 16 + 13] - FP_ARM * 0.6, out[b0 * 16 + 14] * 0.8);
-        A.c.copy(A.e).addScaledVector(A.f, FP_ARM * 0.3); // the bend: on along the forearm a little first
-        for (let i = 0; i < mid; i++) { const o = (b0 + i) * 16, u = i / mid; // u: 0 at the far end, 1 at the elbow
-          A.p.copy(A.s).multiplyScalar((1 - u) * (1 - u)).addScaledVector(A.c, 2 * u * (1 - u)).addScaledVector(A.e, u * u);
-          A.t.copy(A.c).sub(A.s).multiplyScalar(1 - u).addScaledVector(A.e.clone().sub(A.c), u).normalize().negate(); // the curve's heading, toward the far end
-          A.m.fromArray(out, E);
-          if (A.t.lengthSq() > 1e-4) A.q.setFromUnitVectors(A.f, A.t); else A.q.identity();
-          A.m.premultiply(new THREE.Matrix4().makeRotationFromQuaternion(A.q)).setPosition(A.p); A.m.toArray(out, o); } }
+      for (const fold of T.fpFold) { const b0 = fold.bone != null ? fold.bone : fold, E = (b0 + mid) * 16, Hd = (b0 + RIG_SEG) * 16, R0 = b0 * 16;
+        const k = Math.hypot(out[Hd], out[Hd + 1], out[Hd + 2]) || 1;                 // (the rings' own scale)
+        A.h.set(out[Hd + 12], out[Hd + 13], out[Hd + 14]); A.e.set(out[E + 12], out[E + 13], out[E + 14]);
+        A.s.set(out[R0 + 12] - FP_ARM * 0.4, out[R0 + 13] - FP_ARM * 0.75, out[R0 + 14] * 1.15);
+        A.n.set(0, 0, 0);
+        for (let i = 0; i <= RIG_SEG; i++) { const u = i / RIG_SEG, w = 1 - u;        // u: 0 at the shoulder, 1 at the hand
+          A.p.copy(A.s).multiplyScalar(w * w).addScaledVector(A.e, 2 * u * w).addScaledVector(A.h, u * u);
+          A.t.copy(A.e).sub(A.s).multiplyScalar(w).addScaledVector(A.b.copy(A.h).sub(A.e), u).normalize();
+          if (!i) A.n.set(0, 1, 0).addScaledVector(A.t, -A.t.y); else A.n.addScaledVector(A.t, -A.n.dot(A.t));   // (carried along the curve: no twist)
+          if (A.n.lengthSq() < 1e-8) A.n.set(0, 0, 1).addScaledVector(A.t, -A.t.z);
+          A.n.normalize(); A.b.crossVectors(A.t, A.n);
+          A.m.makeBasis(A.t.clone().multiplyScalar(k), A.n.clone().multiplyScalar(k), A.b.clone().multiplyScalar(k)).setPosition(A.p).toArray(out, (b0 + i) * 16); } }
       if (T.fpFold.length) {
         const hs = [0, 0, 0];
         v.fpHandL = null; v.fpHandR = null;
@@ -5702,8 +5713,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     } else { // through the eyes: at the head (a rider's up in the saddle), looking where it faces, pitched by mouse-look
       // just behind the (hidden) head: the arms and tool fall in view. A rider sits a little higher and further back, so the
       // horse's neck lies below the view rather than rising up the middle of it (close up, a wide lens stretched it tall)
-      const mounted = isMountedUnit(e.utype), fwd = mounted ? -0.32 : RIG_UNITS(e.utype) ? -0.12 : 0;
-      let h = mounted ? 1.14 : e.utype === 'ram' ? 0.8 : 0.58;
+      const mounted = isMountedUnit(e.utype), fwd = mounted ? -0.56 : RIG_UNITS(e.utype) ? -0.12 : 0;
+      let h = mounted ? 1.2 : e.utype === 'ram' ? 0.8 : 0.58;
       // the dragon: from its back — over the treetops and roofs once aloft (eased with the take-off and the landing)
       if (e.utype === 'dragon') { const to = dragonAloft(e) ? 3.6 : 1.7; rideH += (to - rideH) * Math.min(1, camDt * 1.6); h = rideH; }
       camAt = { x: eye.x, y: eye.y };
@@ -6042,6 +6053,32 @@ gl_Position = projectionMatrix * mvPosition;`;
     const P = v => { v.applyMatrix4(camera.matrixWorld).project(camera); return { x: (v.x + 1) / 2 * ov.clientWidth, y: (1 - v.y) / 2 * ov.clientHeight }; };
     return [P(_sa), P(_sb)];
   };
+  // The signs over things — an idle villager's "?", a locked gate's padlock — as small models in the world (they grow
+  // with the zoom, as all else), turned to the camera and bobbing a little; one instanced mesh a kind, and its outline.
+  let markMeshes = null; const MARK_PX = 16;
+  function markModels(){
+    const curve = new THREE.CatmullRomCurve3([[-0.24, 0.72], [-0.15, 0.92], [0.02, 0.98], [0.2, 0.9], [0.25, 0.72], [0.15, 0.56], [0.03, 0.44], [0, 0.28]].map(([x, y]) => new THREE.Vector3(x, y, 0)));
+    const ball = (x, y, r) => new THREE.SphereGeometry(r, 12, 8).translate(x, y, 0).toNonIndexed(), GOLD_Q = '#ffd21f';
+    const q = tintJoin([[new THREE.TubeGeometry(curve, 24, 0.085, 10).toNonIndexed(), GOLD_Q], [ball(-0.24, 0.72, 0.085), GOLD_Q], [ball(0, 0.28, 0.085), GOLD_Q], [ball(0, 0.08, 0.105), GOLD_Q]]);
+    const shell = () => [[new THREE.BoxGeometry(0.62, 0.5, 0.26).translate(0, 0.25, 0).toNonIndexed(), '#e8c84a'],
+      [new THREE.TorusGeometry(0.2, 0.055, 8, 16, Math.PI).translate(0, 0.5, 0).toNonIndexed(), '#4a4a4a']];
+    // (the keyhole: a mark on each face, a hair proud of it — and no outline of its own)
+    const lock = tintJoin(shell().concat([[new THREE.BoxGeometry(0.09, 0.2, 0.27).translate(0, 0.24, 0).toNonIndexed(), '#2a2a2a']])), lockHull = tintJoin(shell());
+    const body = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const make = (geo, hg = geo) => { const m = new THREE.InstancedMesh(geo, body, 64), h = new THREE.InstancedMesh(smoothNormals(hg), hullMat, 64);
+      for (const o of [m, h]) { o.count = 0; o.frustumCulled = false; scene.add(o); } h.instanceMatrix = m.instanceMatrix; return { m, h }; };
+    return { q: make(q), lock: make(lock, lockHull) };
+  }
+  function drawMarks(marks){
+    if (!markMeshes) { if (!marks.q.length && !marks.lock.length) return; markMeshes = markModels(); }
+    const t = performance.now() / 1000, cp = camera.position;
+    for (const k of ['q', 'lock']) { const M = markMeshes[k], L = marks[k], n = Math.min(L.length, 64);
+      for (let i = 0; i < n; i++) { const [x, y, z, s0, id] = L[i], bob = k === 'q' ? 0.025 * Math.sin(t * 2.4 + id) : 0;
+        // (never under MARK_PX on screen: far off it stays a sign, close up it is a thing of the world)
+        const sz = Math.max(s0, MARK_PX * 2 * Math.hypot(cp.x - x, cp.y - y, cp.z - z) * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, renderer.domElement.clientHeight));
+        M.m.setMatrixAt(i, _m.compose(_p.set(x, y + bob, z), _q.setFromAxisAngle(_s.set(0, 1, 0), Math.atan2(cp.x - x, cp.z - z)), _s.set(sz, sz, sz))); }
+      M.m.count = M.h.count = n; M.m.instanceMatrix.needsUpdate = true; }
+  }
   function drawOverlay(){
     ensureOverlay(); _v3 = _v3 || new THREE.Vector3();
     const w = ov.clientWidth, h = ov.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -6067,6 +6104,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     } finally { window.__pick3D = null; X = sv.X; W = sv.W; H = sv.H; topH = sv.topH; ZOOM = sv.ZOOM; mapToScreen = sv.m2s; worldSegmentScreen = sv.seg; }
     // units: HP bar when damaged (2D: 18×5 over the head), idle villager's "?"
     ovx.lineWidth = 2;
+    const marks = { q: [], lock: [] };
     for (const u of entities) {
       if (u.type !== 'unit' || u.hp <= 0 || u.garrisonedIn || !unitVisible(u)) continue;
       if (u.id === followId && mode === 'eye') continue;
@@ -6078,8 +6116,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (u.hp < u.maxHp) { const sx = top.sx, y = top.sy - 8;
         ovx.fillStyle = '#000000'; ovx.fillRect(sx - 9, y, 18, 5); ovx.fillStyle = '#300'; ovx.fillRect(sx - 8, y + 1, 16, 3);
         ovx.fillStyle = u.hp / u.maxHp > 0.5 ? '#0c0' : '#c00'; ovx.fillRect(sx - 8, y + 1, 16 * u.hp / u.maxHp, 3); }
-      if (idle) { ovx.fillStyle = '#ffd700'; ovx.strokeStyle = '#000'; ovx.font = 'bold 16px sans-serif'; ovx.textAlign = 'center';
-        ovx.strokeText('?', top.sx, top.sy - (u.hp < u.maxHp ? 12 : 2)); ovx.fillText('?', top.sx, top.sy - (u.hp < u.maxHp ? 12 : 2)); }
+      if (idle) marks.q.push([x, (PICK_H[u.utype] || 0.32) * 2 + 0.1, z, 0.24, u.id]);
     }
     // buildings: HP/construction bar, train or research progress, garrison count — above the roof
     _hb = _hb || new THREE.Box3();
@@ -6088,7 +6125,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const f = buildingFogLevel(e); if (!(f === 2 || sameSide(e.team, myTeam))) continue;
       const hurt = e.hp < e.maxHp, busy = (e.queue && e.queue.length) || e.research, garr = e.team === myTeam && e.garrison && e.garrison.length;
       // a locked gate's padlock over its door, as the 2D (only in view: a lock state never shows through the shroud)
-      if (e.locked && f === 2 && isGateBtype(e.btype)) { const c = centerOf(e), q = ovProj(c.x, 16 / HPX + 0.22, c.y); if (!q.behind) { ovx.save(); ovx.translate(q.sx, q.sy); ovx.scale(Math.max(1, ZOOM), Math.max(1, ZOOM)); drawPadlock(ovx, 0, 0); ovx.restore(); } }   // (sized with the zoom, as the map's)
+      if (e.locked && f === 2 && isGateBtype(e.btype)) { const c = centerOf(e); marks.lock.push([c.x, 16 / HPX + 0.12, c.y, 0.34, id]); }
       if (!hurt && !busy && !garr) continue;
       if (rec.topY == null || rec.topKey !== rec.key) { _hb.setFromObject(rec.obj); rec.topY = _hb.max.y; rec.topKey = rec.key; }
       const c = centerOf(e), t = ovProj(c.x, rec.topY + 0.08, c.y); if (t.behind) continue;
@@ -6101,6 +6138,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (garr) { const label = String(e.garrison.length); ovx.font = 'bold 12px sans-serif'; ovx.textAlign = 'left';
         const tw = ovx.measureText(label).width + 9; ovx.fillStyle = 'rgba(0,0,0,0.6)'; ovx.fillRect(sx + 3, t.sy - 30, tw, 15); ovx.fillStyle = '#ffd700'; ovx.fillText(label, sx + 7, t.sy - 19); }
     }
+    drawMarks(marks);
   }
   // ---- The selection outline, the placement ghost ----
   let _v2 = null;
@@ -6551,6 +6589,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   window.__povOnScreen = u => { if (!renderer) return false; _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); _v3.set(x, 0.3, z).project(camera); return _v3.z < 1 && Math.abs(_v3.x) <= 1.05 && Math.abs(_v3.y) <= 1.05; };
   window.__povProject = u => { _v3 = _v3 || new THREE.Vector3(); const [x, z] = drawnAt(u); return project(x, (PICK_H[u.utype] || 0.32), z); }; // dev: a unit's screen spot (tests)
   window.__povPick = (x, y) => { const p = pick(x, y); return { unit: p.unit && p.unit.id, building: p.building && p.building.id, resource: p.resource, map: p.map }; }; // dev: what a click there hits (tests)
+  window.__povEyeNow = id => { window.povEyes(id, true); zoomIn(true); blendMs = 1; };   // dev: straight into a unit's eyes
   window.__povCam = () => camera.position.toArray().map(v => +v.toFixed(2)); // dev: the camera spot (tests)
   window.__povPose = id => { const v = villagers.get(id); return v ? v.lastPose + ':' + (v.lastLoad || '') : null; }; // dev: a villager's drawn pose and load
   window.__povFacing = id => { const v = villagers.get(id); return v ? +v.yaw.toFixed(2) : null; }; // dev: a unit's drawn heading (tests)

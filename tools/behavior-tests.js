@@ -1346,6 +1346,24 @@ async function withPage(browser, port, entry, fn){
 
     // A player's sheep brought to the sleeping dragon is eaten and the dragon is theirs for a minute: it flies straight
     // over a wall to what it's sent at, burns it, shrugs off melee but not arrows, and goes home to sleep when time is up.
+    // Ridden and left to itself, the dragon takes on the next enemy near it; an order — or a rider steering — comes first.
+    'dragon-seek': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const fresh = () => { loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [{ b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 52, y: 52, team: 1 }] });
+        const d = createUnit('dragon', 30, 30, 0); d.homeX = 30; d.homeY = 30; d.rideLeft = T30(3600); d.awake = true; d.faceAng = 0; d.flyX = 30; d.flyY = 30; d.atkCooldown = 0; myTeam = 0; return d; };
+      let d = fresh(); const pack = [[0, 0], [5, 0], [0, 5], [-5, 0]].map(([a, c]) => createUnit('militia', 42 + a, 30 + c, 1));
+      selected = [d]; execUnitCommand({ targetId: pack[0].id, tileX: 42, tileY: 30 });
+      for (let i = 0; i < T30(1500) && pack.some(u => u.hp > 0); i++) update();
+      T.ok('sent at one of four soldiers 5 tiles apart, it goes on to burn them all', pack.every(u => u.hp <= 0));
+      d = fresh(); const far = createUnit('militia', 30, 44, 1), bear = createUnit('bear', 36, 30, GAIA_TEAM);
+      selected = [d]; execUnitCommand({ targetId: bear.id, tileX: 36, tileY: 30 });
+      for (let i = 0; i < T30(300); i++) update();
+      T.ok('an enemy out of its reach is left alone; sent at a bear, it only flies there', far.hp === far.maxHp && d.flyTarget === undefined && bear.hp === bear.maxHp && Math.hypot(d.x - 36, d.y - 30) < 0.5);
+      d = fresh(); d.possessed = true; const near = createUnit('militia', 30, 34, 1);
+      for (let i = 0; i < T30(300); i++) update();
+      T.ok('steered by its rider it picks no target of its own', d.flyTarget === undefined && near.hp === near.maxHp);
+      return T;
+    })),
     'dragon-ride': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
       const T = window.__T;
       loadScenario({ map: 'small', seed: 4, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [
