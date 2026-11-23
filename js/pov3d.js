@@ -479,6 +479,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
     const r = wallModel(e, arms); r.obj.userData.bid = e.id;
     const b = BLDGS[e.btype];
+    // (a finished, whole piece merges by material, as a building does; a gate keeps its door apart)
+    if (e.complete && !hurt && !r.door) bakeStill(r.obj);
     if (!e.complete) { r.site = constructionSite(r.obj, e.x, e.y, e.w || b.w, e.h || b.h, false); r.siteOf = e.id; }
     else if (hurt) { r.dmg = buildingDamage(r.obj, e.x, e.y, e.w || b.w, e.h || b.h); r.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
     scene.add(r.obj); solids.set(e.id, { ...r, key });

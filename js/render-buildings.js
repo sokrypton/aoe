@@ -2192,7 +2192,11 @@ function drawBuilding(e, part = null){
     // (on a hill the bake sits at its exact height, not the nearest pixel: neighbours rounded apart leave a step where
     // a run passes from one to the next)
     const lh = lift ? groundH(e.x + 0.5, e.y + 0.5) * ELEV_PX : 0, sub = lift ? Math.round(p.sy + lh) - lh - Math.round(p.sy) : 0;
-    if (part === null && e.complete && !window._ghostDraw && !window._maskDraw && !window._selOutline)
+    // (a silhouette pass — outlines behind trees and buildings, the selection ring — needs only the piece's shape:
+    // the image the frame's own draw baked)
+    const sil = window._maskDraw && part === null && e.complete && !window._ghostDraw ? _bakes.get(e) : null;
+    if (sil) X.drawImage(sil.c, sx - 48, sy + sub - 24 - slack, 96, 66 + 2 * slack);
+    else if (part === null && e.complete && !window._ghostDraw && !window._maskDraw && !window._selOutline)
       drawBaked(e, mat + '|' + tc + '|' + (darken ? 1 : 0) + '|' + W.key + '|' + lay, sx, sy + sub, -48, -24 - slack, 96, 66 + 2 * slack, (ax, ay) => W.art(ax, ay, tc, darken, lift));
     else W.art(sx, sy, tc, darken, lift, part !== 'link', part !== 'body');
     if (part === 'body') { X.globalAlpha = 1; return; }
