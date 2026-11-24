@@ -160,8 +160,8 @@ const AGES = [
 ];
 // Minimum age index per unit/building type; absent => available from Dark.
 const AGE_REQ = {
-  spearman:1, archer:1, scout:1, knight:2, ram:2,
-  TOWER:1, SWALL:1, SGATE:1,
+  spearman:1, archer:1, scout:1, knight:2, ram:2, trebuchet:2,
+  TOWER:1, SWALL:1, SGATE:1, CASTLE:2,
   MARKET:1, tradecart:1
 };
 function ageReq(type){ return AGE_REQ[type] || 0; }
@@ -199,7 +199,9 @@ function aiTimeMult(team){
 // in MILITARY (no blacksmith cards, no soft-push yielding: a parked ram is
 // a wall), but the AI's army control, wave sizing and the idle-military
 // hotkey must still treat it as a soldier.
-function isArmyUnit(t){ return MILITARY.has(t) || t === 'ram'; }
+function isArmyUnit(t){ return MILITARY.has(t) || isSiegeUnit(t); }
+// Siege (AoE2 doctrine): it hits structures only, holds its order under fire, goes first in an attack and is escorted.
+function isSiegeUnit(t){ return t === 'ram' || t === 'trebuchet'; }
 // The riders (cavalry): drawn on a horse (horse2D, riderFig), and never garrisoned in a building (AoE2: only foot units).
 function isMountedUnit(t){ return t === 'scout' || t === 'knight'; }
 // A person on foot — what a ram carries (cavalry, siege and carts don't fit).
@@ -224,7 +226,7 @@ function isTowerBtype(bt){ return bt === 'TOWER' || bt === 'PTOWER'; }
 // A fortification piece an army breaches: any wall, gate or tower (palisade or stone).
 function isWallLikeBtype(bt){ return isWallBtype(bt) || isGateBtype(bt) || isTowerBtype(bt); }
 // Buildings that auto-fire arrows at nearby enemies (TC + every tower).
-function firesArrows(bt){ return bt === 'TC' || isTowerBtype(bt); }
+function firesArrows(bt){ return bt === 'TC' || bt === 'CASTLE' || isTowerBtype(bt); }
 const GATE_WALL_MATCH = { GATE: 'WALL', SGATE: 'SWALL' };
 // Palisade→stone upgrade families: dropping the stone piece on its wooden
 // counterpart builds the upgrade in place (build-over), the same salvage-swap
@@ -811,6 +813,9 @@ const BLDGS={
   // footprint passes units (see walkable() in pathfinding.js and the
   // isFarm/walkable skip in clearFootprintForBuild); tiles stay `occupied` so
   // nothing can be built on it.
+  // AoE2 Castle (DE): 650 stone, 4800 hp, 11 pierce at range 8, armor 8/11, garrison 20, 200 s; it looses 5 arrows
+  // unmanned (baseArrows: the AoE2 castle's default 4 extra), one more per garrisoned archer's worth (maxArrows).
+  CASTLE:{name:'Castle',w:4,h:4,hp:4800,cost:{s:650},builds:['trebuchet'],buildTime:T30(6000),range:8,atk:11,baseArrows:5,garrisonCap:20,maxArrows:21,armor:{m:8,p:11},desc:'Fortress: shoots a volley of arrows at nearby enemies. Garrison units for more arrows. Requires the Castle Age.',icon:'🏯'},
   MARKET:{name:'Market',w:3,h:3,hp:1800,hpAge:[1800,1800,2100],cost:{w:175},builds:['tradecart'],researches:['guilds'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts, trades resources for gold, and researches Guilds. Requires the Feudal Age.',icon:'⚖️'}
   // Research is distributed to the buildings that "own" each tech (AoE2-style):
   // see the `researches` arrays above — Barracks (military/armor/fortification),
@@ -849,6 +854,10 @@ const UNITS={
   // All `bonuses` tables are the AoE2 attack-bonus data read by damageEntity
   // and wallBreachTicks (js/logic.js).
   ram:{bonuses:{building:110},name:'Battering Ram',hp:175,atk:2,range:0,speed:0.5,rof:T30(150),armor:{m:-3,p:180},cost:{w:160,g:75},trainTime:T30(1080),garrisonCap:4,desc:'Siege engine. Smashes buildings; immune to arrows but helpless in melee. Garrison infantry to ride protected and speed it up.',icon:'🐏'},
+  // Trebuchet (AoC table: 150 hp, 200 attack +250 vs buildings, range 16, reload 10 s, 0.8 speed, 200W 200G, 50 s): trained
+  // at the Castle. It moves packed and shoots set up (TREB_SETUP ticks each way: e.setup, js/logic.js); nothing inside
+  // minRange (AoE2 4). Packed armor; a wood vehicle (never auto-engages or retaliates — it shoots what it's sent at).
+  trebuchet:{bonuses:{building:250},name:'Trebuchet',hp:150,atk:200,range:16,minRange:4,speed:0.8,rof:T30(300),armor:{m:2,p:8},cost:{w:200,g:200},trainTime:T30(1500),desc:'Heavy siege engine. Hurls stones at buildings from far away. Packs up to move and sets up to shoot; helpless up close.',icon:'🪨'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -872,7 +881,7 @@ const UNITS={
 // FX, guard eligibility); the sites read the predicates — never re-spell
 // inline utype lists.
 const HARMLESS_ANIMALS = new Set(['sheep', 'sheep_carcass']); // never fight back, no death cry
-const WOOD_VEHICLES = new Set(['ram', 'tradecart']);          // timber rigs: collapse sound, wreck corpse, no blood, never retaliate
+const WOOD_VEHICLES = new Set(['ram', 'tradecart', 'trebuchet']);          // timber rigs: collapse sound, wreck corpse, no blood, never retaliate
 function isHarmlessAnimal(u){ return HARMLESS_ANIMALS.has(u.utype); }
 // Gaia hunters with their own leashed behaviour (bear, dragon): not soldiers, no pop, no stance.
 function isWildPredator(u){ return u.utype === 'bear' || u.utype === 'dragon'; }
@@ -1035,6 +1044,7 @@ const STUCK_LIFE=20000, STUCK_FADE=3000, STUCK_MAX=200, STUCK_PER_HOST=5;
 let stuckArrows=[];
 function stickArrow(p, host){
   if (!STUCK_ARROWS || window.__headlessSim || stuckArrows.some(a => a.pid === p.id)) return;
+  if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') { spawnParticles(p.tx, p.ty, '#b9a88c', 14, 0.05, 3); if (window.playSound) window.playSound('ram_hit', p.tx, p.ty); return; }   // a stone: a burst of dust, a crash
   let gx=p.tx-p.startX, gy=p.ty-p.startY, gl=Math.sqrt(gx*gx+gy*gy)||1, sn=p.attackerSnap;
   let a={ type:'stuckArrow', pid:p.id, team:-1, dx:gx/gl, dy:gy/gl, t:performance.now(), x:p.tx, y:p.ty, h:0, hostId:null, ox:0, oy:0,
     tilt:0.45+cosmeticRandom()*0.35, fl:(sn && sn.utype==='archer' && hasUpgrade(sn.team,'fletching')) ? sn.team : null };
@@ -1549,6 +1559,7 @@ function updateTeamVision(){
       const b = BLDGS[e.btype];
       if (!e.complete) sight = 1;
       else if (e.btype === 'TC') sight = 8;
+      else if (e.btype === 'CASTLE') sight = 11;   // (AoE2 castle LOS)
       else if (e.btype === 'TOWER' || e.btype === 'PTOWER') sight = TOWER_LOS_BY_AGE[Math.min(teamAge[team] || 0, 2)];
       else if (e.btype === 'HOUSE') sight = 4;
       else sight = 5;
@@ -1749,7 +1760,7 @@ function spawnProjectile(attacker, target) {
     startY: attacker.y,
     // Launch height: towers/TC fire from their battlements, units from
     // chest height — drawProjectiles blends this down to impact height.
-    startH: attacker.type === 'building' ? (attacker.btype === 'TC' ? 55 : 36) : 12,
+    startH: attacker.type === 'building' ? (attacker.btype === 'TC' ? 55 : 36) : attacker.utype === 'trebuchet' ? 40 : 12,   // (a trebuchet's sling, high on its arm)
     totalDist: d,
     tx: targetX,
     ty: targetY,

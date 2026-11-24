@@ -379,7 +379,8 @@ function drawProjectiles() {
     let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
 
     // a garrisoned TC's arrow leaves its roof crew's bow (roofShot): drawn from there, same progress, same landing
-    let rs = roofShot(p), fx = rs ? rs.x : p.startX, fy = rs ? rs.y : p.startY;
+    // (a crew down inside a broken keep: the 2D's keep stands whole, so from the sim's start)
+    let rs = roofShot(p); if (rs && rs.inside) rs = null; let fx = rs ? rs.x : p.startX, fy = rs ? rs.y : p.startY;
     let scr = rs ? mapToScreen(fx + (targetX - fx) * progress, fy + (targetY - fy) * progress) : mapToScreen(p.x, p.y);
     let sx = scr.sx;
     let sy = scr.sy + HALF_TH;
@@ -391,6 +392,13 @@ function drawProjectiles() {
     let arcH = Math.sin(progress * Math.PI) * A;
     let lift = startH + (endH - startH) * progress + arcH;
     sy -= lift;
+    // a trebuchet's stone: a tumbling boulder, not an arrow
+    if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') {
+      X.fillStyle = '#8f8a80'; X.strokeStyle = '#000'; X.lineWidth = 1.3;
+      X.beginPath(); X.ellipse(sx, sy, 5, 4.3, progress * 9, 0, Math.PI * 2); X.fill(); X.stroke();
+      X.fillStyle = 'rgba(255,255,255,0.25)'; X.beginPath(); X.arc(sx - 1.5, sy - 1.5, 1.6, 0, Math.PI * 2); X.fill();
+      return;
+    }
 
     // Analytic flight tangent in screen space: iso ground motion plus the
     // derivative of arc+height blend, so the arrow always points along its

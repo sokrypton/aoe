@@ -244,6 +244,7 @@ document.addEventListener('keydown',e=>{
       else if(key==='t' && isUnlocked(myTeam,'SWALL')) { tryPlace('WALL','Palisade Wall'); return; }
       else if(key==='y' && isUnlocked(myTeam,'SWALL')) { tryPlace('GATE','Palisade Gate'); return; }
       else if(key==='u' && isUnlocked(myTeam,'TOWER')) { tryPlace('PTOWER','Palisade Watch Tower'); return; }
+      else if(key==='i') { tryPlace('CASTLE','Castle'); return; }
     }
   }
 
@@ -252,6 +253,8 @@ document.addEventListener('keydown',e=>{
     let bldg = selected[0];
     if (bldg.btype === 'TC') {
       if (key === 'v') { trainUnit(bldg, 'villager'); return; }
+    } else if (bldg.btype === 'CASTLE') {
+      if (key === 't') { trainUnit(bldg, 'trebuchet'); return; }
     } else if (bldg.btype === 'BARRACKS') {
       // Locked (future-age) units are hidden from the panel — their
       // hotkeys are inert rather than erroring.

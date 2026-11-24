@@ -317,6 +317,7 @@ function groundArt(){
   return A;
 }
 function drawGround(minX, maxX, minY, maxY){
+  if (!map || map.length < MAP) return;   // (a match being set up: MAP already its size, its map not made yet)
   if (!_gnd || _gnd.n !== MAP) {
     const mk = () => { const c = document.createElement('canvas'); c.width = MAP; c.height = MAP; const x = c.getContext('2d'); return { c, x, d: x.createImageData(MAP, MAP) }; };
     _gnd = { n: MAP, base: mk(), fog: mk() };

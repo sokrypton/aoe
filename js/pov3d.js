@@ -397,9 +397,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     stakes:  [0.5, (c, r) => { c.translate(64, 0); c.rotate(Math.PI / 2); rows(c, r, 4, false); }], // upright palisade logs
     stone:   [0.6, (c, r) => blocks(c, r, 4, 2)],
     // a stone wall's masonry, as the 2D draws it (drawWallLink): three equal courses to the wall's height (14 art px:
-    // the pattern repeats every six), bricks about a third of a tile long in running bond, one flat tone, light joints
-    wall:    [28 / (PX * Math.sqrt(3) / 2), c => { tone(c, 255); c.fillRect(0, 0, 64, 64); tone(c, 232);
-      for (let i = 0; i < 6; i++) { c.fillRect(0, i * 64 / 6, 64, 1.3); for (let j = 0; j < 2; j++) c.fillRect((j + (i % 2) * 0.5) * 32, i * 64 / 6, 1.3, 64 / 6); } }],
+    // the pattern repeats every six), bricks about a third of a tile long in running bond, one flat tone; joints as dark as blocks()'
+    wall:    [28 / (PX * Math.sqrt(3) / 2), c => { tone(c, 255); c.fillRect(0, 0, 64, 64); tone(c, 190);
+      for (let i = 0; i < 6; i++) { c.fillRect(0, i * 64 / 6, 64, 1.2); for (let j = 0; j < 2; j++) c.fillRect((j + (i % 2) * 0.5) * 32, i * 64 / 6, 1.2, 64 / 6); } }],
     slabs:   [2, (c, r) => blocks(c, r, 2, 2, 0)],
     shingles:[0.4, (c, r) => blocks(c, r, 6, 6)],
     plaster: [1, (c, r) => speckle(c, r, 240)],
@@ -990,12 +990,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // Ink comes from the unpierced solid plus each opening's rims: edges traced
   // on the cut faces would catch the triangulation's slivers between openings.
-  function solid(g, cols, faces, { T = 0.06, thresh, depth = T } = {}){ // depth: the wall's thickness (a site's cut shows it)
+  function solid(g, cols, faces, { T = 0.06, thresh, depth = T, line = ink } = {}){ // depth: the wall's thickness (a site's cut shows it); line: its inner edges' ink
     cols = [].concat(cols);
     const rims = [], m = new THREE.Mesh(solidGeo(faces, T, cols.length, true, rims), cols.map(c => mat(c)).concat(interiorMat(cols[0])));
     const plain = solidGeo(faces, T, cols.length, false);
-    m.add(new THREE.LineSegments(own(new THREE.EdgesGeometry(plain, thresh)), ink));
-    if (rims.length) { const rl = new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), ink); rl.userData.rims = true; m.add(rl); }
+    m.add(new THREE.LineSegments(own(new THREE.EdgesGeometry(plain, thresh)), line));
+    if (rims.length) { const rl = new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), line); rl.userData.rims = true; m.add(rl); }
     m.userData.hullGeo = plain; m.userData.T = depth;
     m.userData.slab = jag => thickGeo(faces, depth, cols.length, jag);                    // (a site's walls: real slabs)
     m.userData.slabRims = () => { const r = []; solidGeo(faces, depth, cols.length, true, r, true); return r; }; // (their openings' frames, back edge on the inner face)
@@ -1529,6 +1529,56 @@ gl_Position = projectionMatrix * mvPosition;`;
     },
   };
   MODELS.PTOWER = MODELS.TOWER;
+  // A crenellated block as ONE solid (no joint where a merlon meets its wall): each outer face rises into the merlons
+  // standing flush on it, the top is the roof between them, and each merlon adds its own top and inner sides.
+  // spots: merlon centres (world x, z) flush with the edges (castleMerlonSpots); mW across, mH tall. Returns the named
+  // faces (holes go on .x0/.x1/.z0/.z1).
+  function crenelFaces(X0, Z0, X1, Z1, y0, y1, spots, mW, mH){
+    const w = mW / 2, H = y1 + mH, e = 1e-6, foot = spots.map(([u, v]) => [u - w, v - w, u + w, v + w]);
+    const along = (sel, a0, a1) => foot.filter(sel).map(f => [f[a0], f[a1]]).sort((p, q) => p[0] - q[0]);
+    const iv = { z0: along(f => f[1] <= Z0 + e, 0, 2), z1: along(f => f[3] >= Z1 - e, 0, 2), x0: along(f => f[0] <= X0 + e, 1, 3), x1: along(f => f[2] >= X1 - e, 1, 3) };
+    const prof = (I, A0, A1) => { const pts = [[A0, I.length && I[0][0] <= A0 + e ? H : y1]];   // the top line, A0 → A1: up over each merlon
+      for (const [a, b] of I) { if (a > A0 + e) pts.push([a, y1], [a, H]); pts.push([b, H]); if (b < A1 - e) pts.push([b, y1]); }
+      if (pts[pts.length - 1][0] < A1 - e) pts.push([A1, y1]); return pts; };
+    const side = (n, A0, A1, P, out) => ({ loop: [P(A0, y0), P(A1, y0), ...prof(iv[n], A0, A1).reverse().map(([a, y]) => P(a, y))], out, holes: [] });
+    const F = { z0: side('z0', X0, X1, (a, y) => [a, y, Z0], [0, 0, -1]), z1: side('z1', X0, X1, (a, y) => [a, y, Z1], [0, 0, 1]),
+      x0: side('x0', Z0, Z1, (a, y) => [X0, y, a], [-1, 0, 0]), x1: side('x1', Z0, Z1, (a, y) => [X1, y, a], [1, 0, 0]),
+      bottom: { loop: [[X0, y0, Z0], [X1, y0, Z0], [X1, y0, Z1], [X0, y0, Z1]], out: [0, -1, 0], holes: [] } };
+    // the roof between the merlons: round the edges, dipping in round each merlon (a corner one: one notch for both edges)
+    const top = [], edges = [[[X0, Z0], [1, 0], [0, 1], iv.z0.map(([a, b]) => [a - X0, b - X0]), X1 - X0], [[X1, Z0], [0, 1], [-1, 0], iv.x1.map(([a, b]) => [a - Z0, b - Z0]), Z1 - Z0],
+      [[X1, Z1], [-1, 0], [0, -1], iv.z1.map(([a, b]) => [X1 - b, X1 - a]).reverse(), X1 - X0], [[X0, Z1], [0, -1], [1, 0], iv.x0.map(([a, b]) => [Z1 - b, Z1 - a]).reverse(), Z1 - Z0]];
+    for (const [c, d, n, I, L] of edges) { const P = (t, k) => [c[0] + d[0] * t + n[0] * k, y1, c[1] + d[1] * t + n[1] * k];
+      if (!(I.length && I[0][0] <= e)) top.push(P(0, 0));
+      for (const [a, b] of I) { if (a <= e) { top.push(P(b, 0)); continue; } top.push(P(a, 0), P(a, mW)); if (b < L - e) top.push(P(b, mW), P(b, 0)); } }
+    const faces = [...Object.values(F), { loop: top, out: [0, 1, 0], holes: [] }];
+    for (const [fx0, fz0, fx1, fz1] of foot) {
+      faces.push({ loop: [[fx0, H, fz0], [fx1, H, fz0], [fx1, H, fz1], [fx0, H, fz1]], out: [0, 1, 0] });
+      if (fx0 > X0 + e) faces.push({ loop: [[fx0, y1, fz0], [fx0, y1, fz1], [fx0, H, fz1], [fx0, H, fz0]], out: [-1, 0, 0] });
+      if (fx1 < X1 - e) faces.push({ loop: [[fx1, y1, fz0], [fx1, y1, fz1], [fx1, H, fz1], [fx1, H, fz0]], out: [1, 0, 0] });
+      if (fz0 > Z0 + e) faces.push({ loop: [[fx0, y1, fz0], [fx1, y1, fz0], [fx1, H, fz0], [fx0, H, fz0]], out: [0, 0, -1] });
+      if (fz1 < Z1 - e) faces.push({ loop: [[fx0, y1, fz1], [fx1, y1, fz1], [fx1, H, fz1], [fx0, H, fz1]], out: [0, 0, 1] });
+    }
+    return { F, faces };
+  }
+  // The Castle: render-buildings' CASTLE_PARTS as stone solids (the TC keep's masonry) — arrow slits in the towers,
+  // windows in the keep, the gate's opening; merlons at castleMerlonSpots; the keep's team spire and flag.
+  MODELS.CASTLE = (g, e) => {
+    const x = e.x, z = e.y, tc = teamColor(e.team), col = '#ded5c2|stone', mW = CASTLE_MERLON, mH = 7 / HPX;
+    for (const q of CASTLE_PARTS.flat()) {
+      const box = [x + q.b[0], z + q.b[1], x + q.b[2], z + q.b[3]], y0 = q.y0 / HPX;
+      // (a curtain runs a little into the tower or gatehouse at each end: one piece with it, no seam where they meet)
+      if (q.kind === 'wall') { const k = q.edge[0] === 'u' ? 1 : 0; box[k] -= 0.05; box[k + 2] += 0.05; }
+      if (q.kind === 'roof') { pyramid(piece(g), tc + '|shingles', ...box, y0, q.rise / HPX); continue; }
+      const y1 = q.y1 / HPX, cren = q.kind === 'wall' || q.kind === 'crown' || q.kind === 'gate';
+      const C = cren ? crenelFaces(...box, y0, y1, castleMerlonSpots(q).map(([u, v]) => [x + u, z + v]), mW, mH) : null, f = cren ? C.F : boxFaces(...box, y0, y1);
+      if (q.kind === 'shaft') for (const n of q.out) f[n].holes.push(hole(n, box, 0.5, 20 / HPX, 0.08, 10 / HPX));
+      if (q.kind === 'keep') for (const n of FACES) f[n].holes.push(hole(n, box, 0.5, 36 / HPX, 0.16, 11 / HPX));
+      if (q.kind === 'gate') for (const n of ['z0', 'z1']) f[n].holes.push(hole(n, box, 0.5, 0, 0.42, 20 / HPX));   // (the passage: in from the field, out into the courtyard)
+      solid(g, col, cren ? C.faces : Object.values(f), { depth: mW / 2 });   // (a site's / a ruin's slabs half a merlon thick: its merlons solid, not hollow)
+    }
+    const roof = CASTLE_PARTS.flat().find(q => q.kind === 'roof');
+    if (e.complete) flag(g, x + 2, z + 2, (roof.y0 + roof.rise) / HPX, null, tc);
+  };
 
   // A horse in side profile along local x (barracks yard; drawYardHorse): a
   // rounded barrel on four tapered legs and dark hooves, an arched neck and a
@@ -1872,6 +1922,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       arrowStart.set(p, S); }
     return S;
   }
+  const stones = new Map();   // projectile id → a trebuchet stone's model
   function updateArrows(now){
     if (tick !== arrowTick) { arrowTick = tick; arrowT0 = now; }
     const ahead = Math.min(1, (now - arrowT0) / (1000 / TPS)) * PROJECTILE_TILES_PER_TICK;
@@ -1891,11 +1942,15 @@ gl_Position = projectionMatrix * mvPosition;`;
       // Flight tangent: ground run over the whole flight, and d(height)/d(progress).
       const gdx = p.tx - from[0], gdy = p.ty - from[1];
       dir.set(gdx, ((eH - sH) + Math.cos(prog * Math.PI) * Math.PI * A) / HPX, gdy).normalize();
+      if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') { // a trebuchet's stone, tumbling
+        let st = stones.get(p.id); if (!st) { st = new THREE.Group(); blob(st, '#8f8a80', 0, 0, 0, 0.09); scene.add(st); stones.set(p.id, st); }
+        st.position.set(x + 0.5, h, y + 0.5); st.rotation.set(prog * 9, prog * 5, 0); st.userData.seen = arrowTick; continue; }
       _m.compose(_p.set(x + 0.5, h, y + 0.5), _q.setFromUnitVectors(_s.set(0, 1, 0), dir), _s.set(1, 1, 1));
       S.mesh.setMatrixAt(S.n++, _m); Hd.mesh.setMatrixAt(Hd.n++, _m);
       const a = p.attackerSnap; // bare shafts until the archer's team has Fletching (tower/TC bolts fly bare)
       if (a && a.utype === 'archer' && hasUpgrade(a.team, 'fletching')) { V.mesh.setMatrixAt(V.n, _m); V.mesh.setColorAt(V.n++, _c.set(teamColorLight(a.team))); }
     }
+    for (const [id, st] of stones) if (st.userData.seen !== arrowTick) { scene.remove(st); stones.delete(id); }   // (landed)
     // stuck arrows (stickArrow, js/core.js): the tip a little into what it hit, the shaft up and back along the flight;
     // on a unit they ride its drawn spot; fading, they sink and shrink away
     tendStuckArrows();
@@ -2724,6 +2779,25 @@ gl_Position = projectionMatrix * mvPosition;`;
   // swing out onto the fallen walls; the log drops out of its slings; the wheels
   // tip over their outer rims. Every fall accelerates and lands with a small
   // bounce. Weathered (the bones stage): grey.
+  // The trebuchet (render-units' trebParts, the 2D's own shape), ×1.5: art px x forward, y up, z across → world.
+  // timber's inner edges: a dark brown, not the black ink (the silhouette's hull stays black)
+  let _woodInk = null; const woodInk = () => _woodInk || (_woodInk = new THREE.LineBasicMaterial({ color: 0x3a2716 }));
+  function trebModel(tc, pose = {}){
+    const g = new THREE.Group(), f = ax(1, 1.5), P = v => v.map(c => c * f);
+    for (const q of trebParts(tc, pose)) {
+      if (q.box) { const [x0, y0, z0, x1, y1, z1] = P(q.box); boxAt(g, topped(q.col, q.top), x0, z0, x1, z1, y0, y1, 'hull'); }
+      else if (q.rod) pole(g, q.col, P(q.rod[0]), P(q.rod[1]), q.r * f);
+      else if (q.prism) { const Q = q.prism.map(P), ctr = Q.reduce((a, v) => a.map((c, i) => c + v[i] / 8), [0, 0, 0]);   // its six faces from its corners (x·4 + y·2 + z)
+        const faces = [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]].map(ix => { const loop = ix.map(n => Q[n]);
+          const fc = loop.reduce((a, v) => a.map((c, i) => c + v[i] / 4), [0, 0, 0]); return { loop, out: fc.map((c, i) => c - ctr[i]), holes: [] }; });
+        solid(g, q.col, faces, q.col === tc ? {} : { line: woodInk() }); }   // (timber in brown ink; the team's weight in black)
+      else if (q.ball) blob(g, q.col, ...P(q.ball), q.r * f, q.r * f, (q.rz || q.r) * f);
+      else if (q.wheel) { const wg = new THREE.Group(); wg.position.set(...P(q.wheel)); wg.rotation.set(q.tilt || 0, 0, q.roll); g.add(wg);   // (tilt: a wreck's wheel tipped flat)
+        wheel(wg, 0, 0, 0, q.r * f, q.w * f, '#33261a', '#5a4630');
+        blob(wg, '#a8adb3', 0, 0, Math.sign(q.wheel[2]) * q.w * f / 2, 0.9 * f, 0.9 * f, 0.35 * f); }   // (its iron hub, on the outer face: the 2D's)
+    }
+    return g;
+  }
   function ramModel(tc, pose = {}){
     const g = new THREE.Group(), k = 1.45, X = x => ax(x, k), Yh = y => chh(-y + 5, k) - chh(5, k), R = r => ar(r, k);
     const Wr = pose.wreck, age = Wr ? Wr.age : 0, weathered = !!(Wr && Wr.weathered), cl = v => Math.max(0, Math.min(1, v));
@@ -3341,6 +3415,14 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (kind === 'die') { const age = t * DIE_LAB.life; g.add(cartModel(tc, { load: opt.load !== false, wreck: { age, weathered: age >= DIE_LAB.skel } })); g.userData.fade = age < DIE_LAB.skel ? 1 : cl((DIE_LAB.life - age) / 1500); // the sack spills only if it died loaded
         addHulls(g, true); fadeTo(g, g.userData.fade); return g; }
       g.add(cartModel(tc, pose)); addHulls(g, true); return g; }
+    if (opt.unit === 'trebuchet') { // the game's pose rides opt.eq; the lab's comes from the action and its phase
+      const eq = opt.eq, lab = kind === 'setup' ? { s: t < 0.45 ? t / 0.45 : t < 0.55 ? 1 : (1 - t) / 0.45 } :   // (setup: unpacking, a beat set up, packing again — as lab2d's loop)
+         kind === 'attack' ? trebShot(t) : kind === 'walk' ? { s: 0 } : { s: 1, stone: true };
+      const game = eq && (eq.p != null ? trebShot(eq.p) : { s: eq.s, stone: eq.s >= 1 });
+      if (kind === 'die') { const age = t * DIE_LAB.life; g.add(trebModel(tc, { wreck: { age, weathered: age >= DIE_LAB.skel } })); // its collapse (trebWreck), weathered at the bones stage, then gone
+        g.userData.fade = age < DIE_LAB.skel ? 1 : Math.max(0, Math.min(1, (DIE_LAB.life - age) / 1500)); addHulls(g, true); fadeTo(g, g.userData.fade); return g; }
+      const pose = { ...(game || lab), roll: kind === 'walk' ? 2 * Math.PI * t / 4 : 0 };   // (walking: t is a quarter turn, its spokes' repeat)
+      g.add(trebModel(tc, pose)); addHulls(g, true); return g; }
     if (opt.unit === 'ram') { const cl = v => Math.max(0, Math.min(1, v)), sn = Math.sin(2 * Math.PI * t); let pose = {};
       if (kind === 'walk') pose = { roll: 2 * Math.PI * t, shake: 0.35 * Math.abs(Math.sin(3 * Math.PI * t)), log: 0.5 * sn };    // wheels turning, bumping along
       if (kind === 'attack') { const back = t < 0.55 ? -6 * easeC(t / 0.55) : t < 0.63 ? -6 + 10 * easeC((t - 0.55) / 0.08) : 4 * (1 - easeC((t - 0.63) / 0.37)); // hauled back, slammed, recovering
@@ -3408,7 +3490,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // The 3D animation lab (lab3d.html): the same builders, posed at any phase.
   window.__pov3dLab = {
     load: () => loadThree().then(() => { initShared(); return THREE; }),
-    unitKinds: { villager: null, militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'], archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'gallop', 'attack', 'die'], knight: ['idle', 'walk', 'gallop', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'], tradecart: ['idle', 'walk', 'die'] },
+    unitKinds: { villager: null, militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'], archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'gallop', 'attack', 'die'], knight: ['idle', 'walk', 'gallop', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'], trebuchet: ['idle', 'walk', 'setup', 'attack', 'die'], tradecart: ['idle', 'walk', 'die'] },
     equip: soldierEquip,
     // Animals: built once, posed live by animateAnimal from a stand-in entity (their game path), one action at phase t.
     animals: { sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'wake', 'idle', 'walk', 'roar', 'breathe', 'die'] },
@@ -3763,7 +3845,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const v = RIG_DIRV[c.dir] || [1, 0]; vilCorpses.set(c.id, r = { obj: null, key: '', blood, yaw: -Math.atan2(v[1], v[0]) });
     }
     // the lab's death on the corpse's age: the fall (≤1.8s, 50ms steps), then the bones (or the weathered wreck)
-    const ut = c.utype, mil = MIL3D.has(ut), opt = mil ? { unit: ut, eq: ut === 'ram' || ut === 'tradecart' ? null : soldierGear(c), noBlood: true } : { noBlood: true };
+    const ut = c.utype, mil = MIL3D.has(ut), opt = mil ? { unit: ut, eq: ut === 'ram' || ut === 'tradecart' || ut === 'trebuchet' ? null : soldierGear(c), noBlood: true } : { noBlood: true };
     if (ut === 'tradecart') opt.load = (c.carrying || 0) > 0;                  // the corpse keeps the load it died with
     const bones = age >= CORPSE_SKEL, lab = bones ? DIE_LAB.skel + 10 : Math.min(age, 1800), step = bones ? -1 : Math.floor(lab / 50);
     r.x = c.x + 0.5; r.z = c.y + 0.5;                                              // (where it lies: the rig's detail follows the distance, as a living unit's)
@@ -3777,7 +3859,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const cav = ut === 'scout' || ut === 'knight', side = [Math.sin(-r.yaw), -Math.cos(-r.yaw)];               // the model's −z in world
     const back = ax(12), hz = chh(-6.2, 1.35);
     r.blood.position.set(cav ? cx + side[0] * hz : cx - fw[0] * back, -HULL * 1.5, cav ? cz + side[1] * hz : cz - fw[1] * back);
-    bloodPool(r.blood, age, cav ? 900 : DIE.land * 0.8, ar(cav ? 12 : 8.5)); if (ut === 'ram' || ut === 'tradecart') r.blood.visible = false; // wrecks don't bleed
+    bloodPool(r.blood, age, cav ? 900 : DIE.land * 0.8, ar(cav ? 12 : 8.5)); if (isWoodVehicle(c)) r.blood.visible = false; // wrecks don't bleed
   }
   // Dev check: an animal posed (idle | walk | graze | rear | bite, walk at stride
   // phase ph), rendered front three-quarter and side-on.
@@ -4456,7 +4538,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       const v = entitiesById.get(e.garrison[i]), kind = f.moving ? 'walk' : R.firing ? 'attack' : 'idle';
       const t = f.moving ? (f.walk / 0.6) % 1 : R.firing ? (ph + i * 0.04) % 1 : (aTick * 0.004 + i * 0.37) % 1;
       rigPose(r, kind, t, !!(v && v.female), opt, tc);
-      if (r.obj) { r.obj.position.set(f.x + 0.5, r.y, f.y + 0.5); r.obj.rotation.y = -f.hd; r.obj.visible = rec.obj.visible; }
+      if (r.obj) { r.obj.position.set(f.x + 0.5, R.down ? 0 : r.y, f.y + 0.5);   // (down: on the ground inside the broken keep)
+        r.obj.rotation.y = -f.hd; r.obj.visible = rec.obj.visible; }
     });
   }
   function animateModels(dt){
@@ -4531,7 +4614,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function refreshBuildings(){
     const seen = new Set(), make = e => { if (isWallBtype(e.btype) || isGateBtype(e.btype)) refreshWall(e); else refreshModel(e); return solids.get(e.id); };
-    let far = null; bldLeft = false; bldSpent = warmFrames > 0 ? -Infinity : 0;
+    let far = null; bldLeft = false; bldSpent = warmFrames > 0 || unrevealed ? -Infinity : 0;   // (unrevealed: the view opening behind the 2D — all in view at once)
     for (const e of entities) {
       if (e.type !== 'building' || e.hp <= 0 || !bldgVisible(e)) continue;
       const c = centerOf(e);
@@ -4690,14 +4773,16 @@ gl_Position = projectionMatrix * mvPosition;`;
   // clock (atkCooldown resets to rof ON the hit — render-units' convention), each
   // swing placed so its blow lands on that reset. Gear: the team's age and forge
   // lines, by soldierEquip's rules.
-  const RIG_UNITS = ut => ut !== 'ram' && ut !== 'tradecart'; // vehicles keep the pose cache (their building-style parts carry ink lines)
+  const RIG_UNITS = ut => ut !== 'ram' && ut !== 'tradecart' && ut !== 'trebuchet'; // vehicles keep the pose cache (their building-style parts carry ink lines)
   const VIL_SOUND = { chop: 'chop', split: 'chop', mine: 'mine', build: 'build', repair: 'build' }; // the 2D work sounds, by 3D action
-  const MIL3D = new Set(['militia', 'spearman', 'archer', 'scout', 'knight', 'ram', 'tradecart']);
+  const MIL3D = new Set(['militia', 'spearman', 'archer', 'scout', 'knight', 'ram', 'tradecart', 'trebuchet']);
   // (MIL_IMPACT, soldierEquip, the soldier poses: render-units — shared with the 2D)
   const MIL_STRIDE = { walk: 0.62, gallop: 1.3, roll: 0.76, cart: CART_STRIDE }; // cart: one ox stride = 1/6 of a wheel turn (r ≈ 0.27, circumference 1.695)                 // ground per cycle (the ram: one wheel turn)
   function soldierPose(e, v){
     const ut = e.utype;
     if (ut === 'tradecart') { const mv = isUnitMoving(e); return { kind: mv ? 'walk' : 'idle', t: mv ? ((v.stride / MIL_STRIDE.cart) % 1 + 1) % 1 : workPhase(e, 'idle'), opt: { unit: ut, eq: null, load: e.carrying > 0 } }; } // the sack while it carries gold
+    if (ut === 'trebuchet') { const p = trebPose(e), opt = { unit: ut, eq: p.p != null ? { p: p.p } : { s: Math.round(p.s * 12) / 12 } };   // (a throw by its phase, else how far set up)
+      return isUnitMoving(e) ? { kind: 'walk', t: ((v.stride * TREB_ROLL / (Math.PI / 2)) % 1 + 1) % 1, opt } : { kind: 'idle', t: 0, opt }; }
     if (ut === 'ram') { const rof = (UNITS.ram && UNITS.ram.rof) || T30(60), cd = e.atkCooldown || 0, opt = { unit: ut, eq: null };
       const swing = e.target && (cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT.ram) % 1 + 1) % 1 : null;
       if (isUnitMoving(e)) { const lt = ((v.stride / MIL_STRIDE.roll) % 1 + 1) % 1; return swing != null && cd > 0 ? { kind: 'attack', t: swing, opt, legs: { kind: 'walk', t: lt } } : { kind: 'walk', t: lt, opt }; }
@@ -5389,9 +5474,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     for (const { e, d2 } of near.slice(0, world ? MAX_UNITS_WORLD : MAX_UNITS)) {
       used.add(e.id);
       if (e.utype !== 'sheep_carcass') { // a soft contact shadow under every standing unit
-        const r = e.utype === 'bear' ? 0.42 : e.utype === 'sheep' ? 0.3 : isMountedUnit(e.utype) || e.utype === 'ram' || e.utype === 'tradecart' ? 0.4 : 0.2;
+        const r = e.utype === 'bear' ? 0.42 : e.utype === 'sheep' ? 0.3 : isMountedUnit(e.utype) || e.utype === 'ram' || e.utype === 'tradecart' ? 0.4 : e.utype === 'trebuchet' ? 0.6 : 0.2;
         const a = animals.get(e.id) || villagers.get(e.id);
-        if (e.utype === 'dragon') put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * UNIT_SHADOW.dragon.len, 1, 2 * UNIT_SHADOW.dragon.wid, -worldFacing(e)); // (2D's oval, along its heading)
+        if (e.utype === 'trebuchet') put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * UNIT_SHADOW.trebuchet.len, 1, 2 * UNIT_SHADOW.trebuchet.wid, -worldFacing(e));   // (the 2D's oval, along its heading)
+        else if (e.utype === 'dragon') put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * UNIT_SHADOW.dragon.len, 1, 2 * UNIT_SHADOW.dragon.wid, -worldFacing(e)); // (2D's oval, along its heading)
         else put('shadowU', a ? a.x : e.x + 0.5, 0.007, a ? a.z : e.y + 0.5, 2 * r, 1, 2 * r);
       }
       if (ANIMAL_MODELS[e.utype]) { // 3D, posed live from its state
@@ -5781,7 +5867,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       // just behind the (hidden) head: the arms and tool fall in view. A rider sits a little higher and further back, so the
       // horse's neck lies below the view rather than rising up the middle of it (close up, a wide lens stretched it tall)
       const mounted = isMountedUnit(e.utype), fwd = mounted ? -0.56 : RIG_UNITS(e.utype) ? -0.12 : 0;
-      let h = mounted ? 1.2 : e.utype === 'ram' ? 0.8 : 0.58;
+      let h = mounted ? 1.2 : e.utype === 'ram' ? 0.8 : e.utype === 'trebuchet' ? 1.3 : 0.58;
       // the dragon: from its back — over the treetops and roofs once aloft (eased with the take-off and the landing)
       if (e.utype === 'dragon') { const to = dragonAloft(e) ? 3.6 : 1.7; rideH += (to - rideH) * Math.min(1, camDt * 1.6); h = rideH; }
       camAt = { x: eye.x, y: eye.y };
@@ -5827,6 +5913,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
     if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedAges.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
+    else if (unrevealed) { bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; }   // a switch from 2D: its first frame whole, drawn while the 2D still shows
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
     if (groundFor !== map || groundData.length !== MAP * MAP * 4) { buildGround(); lastStatic = 0; }

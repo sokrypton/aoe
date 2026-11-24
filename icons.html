@@ -173,6 +173,7 @@ const ICONS = {
   'scout-castle':    { unit: 'scout', age: 2, arm: 2, kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
   knight:            { unit: 'knight', age: 2, atk: 1, arm: 2, kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
   ram:               { unit: 'ram', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.3 },
+  trebuchet:         { unit: 'trebuchet', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.3, eq: { s: 1, stone: true } },
   tradecart:         { unit: 'tradecart', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.3 },
   sheep:             { animal: 'sheep', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
   bear:              { animal: 'bear', kind: 'idle', t: 0, yaw: 0.75, pitch: 0.2 },
@@ -188,6 +189,7 @@ const ICONS = {
   MCAMP:       { bldg: 'MCAMP', yaw: 0.785, pitch: 0.55 },
   BARRACKS:    { bldg: 'BARRACKS', age: 1, yaw: 0.785, pitch: 0.55 },
   MARKET:      { bldg: 'MARKET', age: 1, yaw: 0.785, pitch: 0.55 },
+  CASTLE:      { bldg: 'CASTLE', age: 2, yaw: 0.785, pitch: 0.55 },
   PTOWER:      { bldg: 'PTOWER', yaw: 0.785, pitch: 0.4 },
   'WT-feudal': { bldg: 'TOWER', age: 1, yaw: 0.785, pitch: 0.4 },
   'WT-castle': { bldg: 'TOWER', age: 2, yaw: 0.785, pitch: 0.4 },
@@ -256,7 +258,7 @@ const INNER = 5, STEP = 0.035;   // inner line px (at SIZE), and the depth step 
   // the subject of a recipe, posed (r.rot: turned about the vertical, radians)
   function subject(r){
     let g;
-    if (r.unit) g = LAB.frame(r.kind || 'idle', r.t || 0, !!r.female, { unit: r.unit, eq: r.unit === 'villager' || r.unit === 'ram' || r.unit === 'tradecart' ? null : LAB.equip(r.unit, r.age || 0, r.atk || 0, r.arm || 0, !!r.fletch), load: r.load, tool: r.tool, up: r.up, tc: NEUTRAL });
+    if (r.unit) g = LAB.frame(r.kind || 'idle', r.t || 0, !!r.female, { unit: r.unit, eq: r.eq || (r.unit === 'villager' || r.unit === 'ram' || r.unit === 'tradecart' ? null : LAB.equip(r.unit, r.age || 0, r.atk || 0, r.arm || 0, !!r.fletch)), load: r.load, tool: r.tool, up: r.up, tc: NEUTRAL });
     else if (r.rig) g = window.__povRigLab(r.rig, r.t || 0, { load: r.load });   // dev: the game's bone rig (what the map draws)
     else if (r.animal) { g = LAB.animal(r.animal, NEUTRAL); LAB.poseAnimal(g, r.animal, r.kind || 'idle', r.t || 0); }
     // r.state: 'site' (under construction at r.p), 'damaged' (at r.hp), else finished as the map draws it

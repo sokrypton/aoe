@@ -209,6 +209,7 @@ function updateAI(ai){
   ensureAIHousing(ai,aiTC,profile);
   planAIDropSites(ai,aiTC,vils,profile);
   planAIMarket(ai,aiTC,vils,profile);          // Feudal Market — reserve wood BEFORE walls/towers/military drain it
+  planAICastle(ai,aiTC);                        // Castle Age: one Castle once the stone is banked; it trains the trebuchets
   planAIFarming(ai,aiTC,vils,profile);
   planAIWalls(ai,aiTC,vils,profile); // AI defensive wall ring + gate
   planAITowers(ai,aiTC,vils,profile); // AI Watch Tower planning
@@ -243,7 +244,7 @@ function huntAIBears(ai,mils){
   // passes: fighters first, scouts only if nothing else answered.
   // Retreating units sit the hunt out: re-sending a mauled hunter is the
   // fight-to-the-death ping-pong the retreat exists to break.
-  let candidates=mils.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison'&&m.utype!=='ram'); // (a ram — 2 atk, -3 melee armor — never melees a bear)
+  let candidates=mils.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison'&&!isSiegeUnit(m.utype)); // (siege never hunts a bear)
   let ordered=[...candidates.filter(m=>m.utype!=='scout'),...candidates.filter(m=>m.utype==='scout')];
   for(let m of ordered){
     if(sent>=3)break;
@@ -322,7 +323,7 @@ function updateAIIntel(ai,aiTC){
   spotted.forEach(e=>{
     if(e.type==='unit'){
       unitCounts[e.utype]=(unitCounts[e.utype]||0)+1;
-      if(isArmyUnit(e.utype)&&e.utype!=='ram')observed[e.team]+=unitPower(e.utype); // (fighting power: villagers and carts made a scouted economy look like an army)
+      if(isArmyUnit(e.utype)&&!isSiegeUnit(e.utype))observed[e.team]+=unitPower(e.utype); // (fighting power: villagers and carts made a scouted economy look like an army)
     } else if(e.type==='building'&&e.btype==='TC'){
       // Sticky TC memory (last-seen-wins; single remembered TC is a v1 limitation).
       intel.tcSeen=true;
@@ -424,6 +425,8 @@ function aiEcoFund(ai,profile,skipBastion){
     }
     if(rams<Math.ceil((army+(profile.armyReserve||0))/3))add(UNITS.ram.cost);
   }
+  // The Castle (planAICastle): its stone banked once the age allows one and none stands (walls and towers wait for it)
+  if(isUnlocked(ai.team,'CASTLE')&&!entities.some(b=>b.type==='building'&&b.team===ai.team&&b.btype==='CASTLE'&&b.hp>0))add(BLDGS.CASTLE.cost);
   let plan=(profile.techOrder||AI_TECH_ORDER).slice();   // (a script's order, else the default)
   for(let k of plan){if(canResearch(ai.team,k)){add(UPGRADES[k].cost);break;}}
   return fund;
@@ -1277,6 +1280,17 @@ function nearestAllyMarket(e){
 // banked wealth (self-play finding — the market is the one building that
 // turns dead gold back into food income). Fires only when the wood exists
 // ANYWAY, so it starves nothing.
+// AoE2: a Castle once in the Castle Age (its 650 stone banked: the eco fund holds it, aiEcoFund), one at a time; it
+// trains a trebuchet for every six of the army's slots, two deep while the field squad is at the enemy town.
+function planAICastle(ai,aiTC){
+  if(!isUnlocked(ai.team,'CASTLE'))return;
+  let castle=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='CASTLE'&&b.hp>0);
+  if(!castle){ if(canAfford(ai.team,BLDGS.CASTLE.cost)){ let pos=findAIBuildSpot(ai,aiTC,'CASTLE'); if(pos)placeAIBuilding(ai,'CASTLE',pos.x,pos.y); } return; }
+  if(!castle.complete||castle.queue.length||castle.research)return;
+  let trebs=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='trebuchet'&&e.hp>0).length;
+  let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)&&e.hp>0).length;
+  if(trebs<Math.min(aiSieging(ai)?2:1,Math.floor(army/6))&&canAfford(ai.team,UNITS.trebuchet.cost))queueUnit(castle,'trebuchet');
+}
 function planAIMarket(ai,aiTC,vils,profile){
   if(!isUnlocked(ai.team,'MARKET'))return;               // Feudal-gated
   if(aiOwnMarket(ai.team))return;                         // one is enough
@@ -1991,7 +2005,7 @@ const AI_FEUDAL_RAID_SIZE=5, AI_FEUDAL_RAID_MIN=3, AI_FEUDAL_RAID_EVERY=T30(2700
 // low-HP retreat (aiHpRetreat) must not yank it off. The escorting army handles defenders.
 // Soldiers' sieges don't persist: every AI building attack is explicit (assignAttack), so exempting them benched the
 // retreat for any soldier hacking at a house.
-function holdsSiegeOrder(m){ return m.utype==='ram'; }
+function holdsSiegeOrder(m){ return isSiegeUnit(m.utype); }
 
 // ---- TACTICAL RETREAT (AoE2 sn-percent-health-retreat) ----
 // A soldier low on HP that is ACTIVELY taking hits breaks off and runs home.
@@ -2071,7 +2085,7 @@ function aiDefendBase(ai,home,aiTC,profile){
   for(const b of entities) if(b.type==='building'&&b.btype==='TC'&&b.complete&&b.hp>0&&b.team!==ai.team&&sameSide(b.team,ai.team)) towns.push(footprintCenter(b));
   let foes=aiVisibleEnemies(ai,e=>e.type==='unit'&&e.utype!=='sheep'&&e.utype!=='sheep_carcass'&&!(e.utype==='villager'&&profile.attacksVillagers===false)&&towns.some(c=>dist(e,c)<=alarmR)
     &&pathReaches(tcx,tcy,Math.round(e.x),Math.round(e.y),aiTC.id));   // (sealed outside intact walls: no threat)
-  let free=home.filter(m=>m.utype!=='ram'&&!isRetreatingUnit(m)&&m.task!=='garrison');
+  let free=home.filter(m=>!isSiegeUnit(m.utype)&&!isRetreatingUnit(m)&&m.task!=='garrison');
   if(foes.length){
     for(const m of free){
       if(m.target)continue;
@@ -2103,7 +2117,7 @@ function aiLaunchSquad(ai,home,mils,aiTC,profile){
   let raid=null, send;
   if(teamAge[ai.team]===1&&profile.attacksVillagers!==false&&tick-(ai.lastRaidTick??-1e9)>=AI_FEUDAL_RAID_EVERY){   // (a raid hunts villagers)
     raid=aiRaidPoint(ai,aiTC);
-    send=free.filter(m=>m.utype!=='ram').slice(0,AI_FEUDAL_RAID_SIZE);
+    send=free.filter(m=>!isSiegeUnit(m.utype)).slice(0,AI_FEUDAL_RAID_SIZE);
     if(!raid||send.length<AI_FEUDAL_RAID_MIN)raid=null;
   }
   let obj=raid;
@@ -2117,7 +2131,7 @@ function aiLaunchSquad(ai,home,mils,aiTC,profile){
     // rams first (siege is no home defence: left out by the cut, the last-trained rams stayed home and a stone-walled town
     // stood untouched), then foot, to commitPercent of the army within the maximum group (waveCap, AoE2-scaled)
     const n=Math.min(profile.waveCap||60, Math.max(minGroup, Math.round(mils.length*commit/100)));
-    send=free.filter(m=>m.utype==='ram').concat(free.filter(m=>m.utype!=='ram')).slice(0,n);
+    send=free.filter(m=>isSiegeUnit(m.utype)).concat(free.filter(m=>!isSiegeUnit(m.utype))).slice(0,n);
   }
   ai.waveCount=(ai.waveCount||0)+1; ai.lastWaveTick=ai.tick; ai.lastWaveGlobalTick=tick; ai.lastWaveSize=send.length;
   if(raid)ai.lastRaidTick=tick;
@@ -2162,7 +2176,7 @@ function aiFieldSquad(ai,aiTC,profile,outmatched){
   // marching, the clock runs from the last tile of real progress (a march that can't get there comes home)
   if(sq.state===SQ_MARCH&&(sq.best==null||Math.floor(gap)<sq.best)){ sq.best=Math.floor(gap); sq.since=ai.tick; }
   let spotted=aiVisibleEnemies(ai,e=>e.utype!=='sheep'&&e.utype!=='sheep_carcass');
-  let rams=free.filter(m=>m.utype==='ram'), busy=false;
+  let rams=free.filter(m=>isSiegeUnit(m.utype)), busy=false;
   for(const m of free){
     if(m.target){ busy=true; continue; }
     // (marching: only what's in reach is a candidate — each building candidate costs a path search)
@@ -2171,7 +2185,7 @@ function aiFieldSquad(ai,aiTC,profile,outmatched){
     if(t&&sq.raid&&!aiRaidTarget(m,t))t=null;
     if(t&&sq.state===SQ_MARCH&&distToTarget(m,t)>AI_SQ_ENGAGE*aiScale())t=null;   // (a breach it resolved to may lie farther)
     if(t){ assignAttack(m,t); busy=true; continue; }
-    if(sq.state===SQ_ATTACK&&m.utype!=='ram'&&rams.length){   // nothing it can hurt here (masonry): with the rams, first through the gap
+    if(sq.state===SQ_ATTACK&&!isSiegeUnit(m.utype)&&rams.length){   // nothing it can hurt here (masonry): with the siege, first through the gap
       if(m.order&&m.order.kind==='escort'&&entitiesById.get(m.order.id))continue;
       let ram=null,rd=Infinity; for(const r of rams){const d=dist(m,r);if(d<rd||(d===rd&&r.id<ram.id)){rd=d;ram=r;}}
       const ox=m.id%3-1, oy=Math.floor(m.id/3)%3-1;
@@ -2190,7 +2204,7 @@ function aiReinforceSquad(ai,home,profile,threatened){
   let room=(profile.waveCap||60)-sq.ids.length;   // (the squad never grows past the maximum attack group)
   if(room<=0)return;
   let free=home.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
-  let rams=free.filter(m=>m.utype==='ram'), foot=free.filter(m=>m.utype!=='ram');   // (new rams first: siege is no defence)
+  let rams=free.filter(m=>isSiegeUnit(m.utype)), foot=free.filter(m=>!isSiegeUnit(m.utype));   // (new siege first: it is no defence)
   let extra=foot.length-(profile.armyReserve||0);
   let go=rams.concat(extra>=AI_FEUDAL_RAID_MIN?foot.slice(foot.length-extra):[]).slice(0,room);
   if(!go.length)return;
@@ -2626,7 +2640,7 @@ function chooseAIAttackTarget(ai,militia,spotted){
   // (and a unit it can't get at — behind walls — is no target either: chasing villagers inside a stone ring kept a whole
   // army "busy" outside it, never touching the wall)
   let reach=e=>(militia.range||0)>0 ? regionReachesWithin(militia,e.x,e.y,militia.range+0.5) : regionReaches(militia.x,militia.y,e.x,e.y,militia.id,1);
-  let cands = (militia.utype==='ram' ? spottedEnemies.filter(e=>e.type==='building') : spottedEnemies)
+  let cands = (isSiegeUnit(militia.utype) ? spottedEnemies.filter(e=>e.type==='building'&&!(militia.utype==='trebuchet'&&distToTarget(militia,e)<UNITS.trebuchet.minRange)) : spottedEnemies)
     .filter(e=>!(e.type==='building'&&isWallLikeBtype(e.btype)&&!canBreach(militia,e)))
     .filter(e=>e.type==='building'||(reach(e)&&!aiSparesVillager(militia,e)));
   if (cands.length > 0) {

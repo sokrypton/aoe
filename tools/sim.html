@@ -168,6 +168,8 @@ window.runSimulation = async function(opts){
         age: teamAge[t], vils: units.filter(u => u.utype === 'villager').length,
         mil: units.filter(u => isArmyUnit(u.utype)).length,
         rams: units.filter(u => u.utype === 'ram').length,
+        trebs: units.filter(u => u.utype === 'trebuchet').length,
+        castles: entities.filter(b => b.type === 'building' && b.team === t && b.btype === 'CASTLE' && b.hp > 0).map(b => b.complete ? 1 : 0.5).reduce((a, b) => a + b, 0),
         // idleVils EXCLUDES sheltering villagers — a bell-garrisoned villager has
         // no task/target/path and was masquerading as "chronically idle", which
         // made 20-min shelter lockdowns (an AI decision) unreadable in reports.

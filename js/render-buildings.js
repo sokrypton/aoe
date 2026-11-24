@@ -849,6 +849,43 @@ function wallPiece(x, y, mat){
   };
   return { art, key: '' + N + S + W + E + (bare ? 1 : 0) + '|' + rise + '|' + tN + ',' + tS + ',' + tW + ',' + tE };
 }
+// A stone block on any rectangle of ground (drawBuildingBlock's look — its light, its outline, its courses — which only
+// takes a square): at(u, v) → screen; its two seen faces, the left (along u at v1) and the right (along v at u1), and
+// its flat top, from y0 up to y1 (art px). under: px of shade at its top (an overhang above throws it).
+function drawIsoBox(at, u0, v0, u1, v1, y0, y1, cL, cR, cT, darken, under = 0){
+  if (darken) { cL = darkenColor(cL); cR = darkenColor(cR); cT = darkenColor(cT); }
+  const P = (u, v, y) => { const [x, yy] = at(u, v); return [x, yy - y]; }, h = y1 - y0;
+  const W0 = P(u0, v1, y0), S0 = P(u1, v1, y0), E0 = P(u1, v0, y0), W1 = P(u0, v1, y1), S1 = P(u1, v1, y1), E1 = P(u1, v0, y1), N1 = P(u0, v0, y1);
+  const poly = (pts, fill) => { X.fillStyle = fill; X.beginPath(); X.moveTo(...pts[0]); for (const q of pts.slice(1)) X.lineTo(...q); X.closePath(); X.fill(); };
+  poly([W1, S1, S0, W0], cL); poly([S1, E1, E0, S0], cR); poly([N1, E1, S1, W1], cT);
+  X.save(); X.lineWidth = 1; X.strokeStyle = 'rgba(0,0,0,0.13)';   // (the courses, and the top's front rim: light seams)
+  for (let y = y0 + 7; y < y1 - 2; y += 7) { const a = P(u0, v1, y), b = P(u1, v1, y), c = P(u1, v0, y); X.beginPath(); X.moveTo(...a); X.lineTo(...b); X.lineTo(...c); X.stroke(); }
+  X.beginPath(); X.moveTo(...W1); X.lineTo(...S1); X.lineTo(...E1); X.stroke();
+  const band = (ya, yb, fill) => { X.fillStyle = fill; X.beginPath(); X.moveTo(...P(u0, v1, yb)); X.lineTo(...P(u1, v1, yb)); X.lineTo(...P(u1, v0, yb)); X.lineTo(...P(u1, v0, ya)); X.lineTo(...P(u1, v1, ya)); X.lineTo(...P(u0, v1, ya)); X.closePath(); X.fill(); };
+  if (h > 10) band(y0, y0 + h * 0.2, 'rgba(0,0,0,0.10)');   // (drawBuildingBlock's: the foot of the wall a little darker)
+  if (under) band(y1 - under, y1, SHADOW_FILL);
+  else { X.strokeStyle = 'rgba(255,255,255,0.18)'; X.beginPath(); X.moveTo(...P(u0, v1, y1 - 1.5)); X.lineTo(...P(u1, v1, y1 - 1.5)); X.lineTo(...P(u1, v0, y1 - 1.5)); X.stroke(); }
+  X.restore();
+  X.strokeStyle = '#000'; X.lineWidth = 1.3; X.lineJoin = 'round';   // (the hard outline: the silhouette and the near corner)
+  X.beginPath(); X.moveTo(...W1); X.lineTo(...N1); X.lineTo(...E1); X.lineTo(...E0); X.lineTo(...S0); X.lineTo(...W0); X.closePath();
+  X.moveTo(...S0); X.lineTo(...S1); X.stroke();
+}
+// A crenellated top (the Castle's parts): merlons the TC's size (0.2 tile, 7px), one every ~half tile along each edge,
+// flush with it, corners shared; drawn back to front. Shared with pov3d (castleMerlonSpots).
+function castleMerlonSpots(q){
+  const [u0, v0, u1, v1] = q.b, s = CASTLE_MERLON / 2, out = [], seen = new Set();
+  const add = (u, v) => { const k = u.toFixed(3) + ',' + v.toFixed(3); if (!seen.has(k)) { seen.add(k); out.push([u, v]); } };
+  const nu = Math.max(1, Math.round((u1 - u0) / 0.5)), nv = Math.max(1, Math.round((v1 - v0) / 0.5)), on = ed => !q.edge || q.edge === ed;   // (each side its own count; a curtain: its outer edge alone)
+  for (let i = 0; i <= nu; i++) { const uu = u0 + s + (u1 - u0 - 2 * s) * i / nu; if (on('v0')) add(uu, v0 + s); if (on('v1')) add(uu, v1 - s); }
+  for (let i = 0; i <= nv; i++) { const vv = v0 + s + (v1 - v0 - 2 * s) * i / nv; if (on('u0')) add(u0 + s, vv); if (on('u1')) add(u1 - s, vv); }
+  return out.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
+}
+const CASTLE_MERLON = 0.2;
+// near: null all of them, false only the far half (behind its middle), true only the near half
+function castleMerlons(q, at, cL, cR, cT, darken, near = null){
+  const w = CASTLE_MERLON * HALF_TW, mid = (q.b[0] + q.b[1] + q.b[2] + q.b[3]) / 2;   // (a square s tiles across: s × HALF_TW either side on screen)
+  for (const [u, v] of castleMerlonSpots(q)) { if (near !== null && (u + v >= mid) !== near) continue; const [mx, my] = at(u, v); drawMerlonBlock(mx, my - q.y1 - w / 2, w, w / 2, 7, cL, cR, cT, cT, darken); }
+}
 // One merlon block: two wall faces + a two-tone cap. Hard-outlined on
 // sides and tops, but the BOTTOM seam gets the light course-line stroke
 // (matching the material pass) so the merlon reads as continuous with the
@@ -918,6 +955,27 @@ const AGE_WALLS = [
 // The Town Center: its keep, and its two decks (lower; the yard in front is open). The barracks: its hall, not the
 // yard. A camp: its hut. None for a farm, or the market (open paving: its stalls cast their own). A site: its base only.
 const SHADOW_CAST = [0.5, -0.12];
+// The Castle, both views and its shadow: a courtyard ringed by curtain walls between four corner towers, the gatehouse
+// in the front-left wall, the keep standing free in the middle. Groups in the 2D's paint order (back to front: each
+// before anything whose footprint lies past it in u or v), each of parts — b: [u0, v0, u1, v1] (tiles from the
+// footprint's corner, 4×4), y0..y1 (art px), and kind: 'shaft' (a tower: slits), 'crown' (its overhanging top), 'wall'
+// (a curtain: a wall walk behind merlons on its `edge` — the outside), 'gate' (the gatehouse: its arch), 'keep'
+// (windows), 'roof' (a team spire rising `rise` from y0). Crenellated: crown, wall (one edge), gate.
+const CASTLE_WALL_H = 28;
+// (a tower's arrow slits face the field only: its outward faces, by which corner it stands in)
+const CASTLE_TOWER = (u, v) => [{ b: [u + 0.04, v + 0.04, u + 0.96, v + 0.96], y0: 0, y1: 44, kind: 'shaft', out: [u ? 'x1' : 'x0', v ? 'z1' : 'z0'] }, { b: [u, v, u + 1, v + 1], y0: 44, y1: 51, kind: 'crown' }];
+const CASTLE_WALL = (b, edge) => [{ b, y0: 0, y1: CASTLE_WALL_H, kind: 'wall', edge }];
+const CASTLE_PARTS = [
+  CASTLE_TOWER(0, 0),
+  CASTLE_WALL([0.08, 0.96, 0.5, 3.04], 'u0'), CASTLE_WALL([0.96, 0.08, 3.04, 0.5], 'v0'),
+  [{ b: [1.35, 1.35, 2.65, 2.65], y0: 0, y1: 60, kind: 'keep' }, { b: [1.29, 1.29, 2.71, 2.71], y0: 60, y1: 67, kind: 'crown' }, { b: [1.45, 1.45, 2.55, 2.55], y0: 67, rise: 30, kind: 'roof' }],
+  CASTLE_TOWER(0, 3), CASTLE_TOWER(3, 0),
+  CASTLE_WALL([3.5, 0.96, 3.92, 3.04], 'u1'),
+  CASTLE_WALL([0.96, 3.5, 1.55, 3.92], 'v1'),
+  [{ b: [1.55, 3.36, 2.45, 4], y0: 0, y1: 38, kind: 'gate' }],
+  CASTLE_WALL([2.45, 3.5, 3.04, 3.92], 'v1'),
+  CASTLE_TOWER(3, 3),
+];
 function buildingShadowPolys(e){
   if (e.btype === 'FARM' || e.btype === 'MARKET') return [];
   const b = BLDGS[e.btype], w = e.w !== undefined ? e.w : b.w, h = e.h !== undefined ? e.h : b.h, x = e.x, y = e.y;   // (a gate is 1×3 or 3×1 as placed)
@@ -927,6 +985,7 @@ function buildingShadowPolys(e){
   else if (bt === 'BARRACKS') { const k = w / 3; blocks = [[rect(x, y + 0.14 * k, x + 1.22 * k, y + 2.95 * k), 0.75]]; }   // (pov3d's hall, BP(±30, ∓13))
   else if (bt === 'LCAMP' || bt === 'MCAMP') blocks = [[rect(x + 1 - 0.625, y, x + 1, y + 0.625), 0.5]];                  // (campHut's box)
   else if (bt === 'MILL') { const r = 0.36 * w; blocks = [[Array.from({ length: 12 }, (_, i) => [x + w / 2 + r * Math.cos(i * Math.PI / 6), y + h / 2 + r * Math.sin(i * Math.PI / 6)]), 1]]; }
+  else if (bt === 'CASTLE') blocks = CASTLE_PARTS.flat().filter(q => q.kind !== 'crown').map(q => [rect(x + q.b[0], y + q.b[1], x + q.b[2], y + q.b[3]), (q.kind === 'roof' ? q.y0 + q.rise * 0.6 : q.y1) / ART_HPX]);
   else if (isTowerBtype(bt)) blocks = [[rect(x + 0.5 - 0.27, y + 0.5 - 0.27, x + 0.5 + 0.27, y + 0.5 + 0.27), 1.1]];   // (its shaft: narrower than its tile)
   else if (isWallBtype(bt)) blocks = wallShadowBlocks(e);
   else if (isGateBtype(bt)) {   // its two end posts, the door between (pov3d's wallModel: posts 14/32 wide, 28px tall; door 16px)
@@ -974,6 +1033,7 @@ const _bakes = new WeakMap();
 const roofFigs2D = new WeakMap();
 function drawRoofArchers2D(e, sx, sy, tcS){
   const R = roofCrew(e), cd = e.atkCooldown || 0;
+  if (R.down) return;   // (inside the keep: the 2D's keep stands whole, so out of sight)
   let figs = roofFigs2D.get(e); if (!figs) roofFigs2D.set(e, figs = []);
   // the keep floor's diamond (the recess: inset 38/48, dropped 5), u along world x, v along world y
   const rcx = sx, rcy = sy - 36, ins = ([x, y]) => [rcx + (x - rcx) * 38 / 48, rcy + (y - rcy) * 38 / 48 + 5];
@@ -2125,6 +2185,33 @@ function drawBuilding(e, part = null){
       let hubY=ty+W1*0.55; // at the cap's base edge, where a real windshaft exits
       drawWindmillSails(sx, hubY, e.id, 1.75, '#f0ead8', darken?darkenColor(tc):tc);
     }
+  }
+  else if(e.btype==='CASTLE'){
+    // CASTLE_PARTS, back to front: stone blocks (the TC keep's masonry, lit the same), merlons the TC's size round every
+    // crenellated top, arrow slits in the towers, windows in the keep, the gate's arch, the keep's team spire and flag.
+    const at = (u, v) => [sx + (u - v) * HALF_TW, sy + (u + v) * HALF_TH];
+    const cL = '#ded5c2', cR = '#bcb29b', cT = '#ece4d2', ink = darken ? darkenColor('#1c1c1c') : '#1c1c1c';
+    const onFace = (u, v, m, fn) => { const [fx, fy] = at(u, v); X.save(); X.translate(fx, fy); X.transform(1, m, 0, 1, 0, 0); fn(); X.restore(); };
+    const slit = (h0, h, w) => { X.fillStyle = ink; X.fillRect(-w / 2, -h0 - h, w, h); };
+    let front = null;   // (a crown under a spire: its far merlons go before the spire, its near ones after)
+    for (const grp of CASTLE_PARTS) for (const q of grp) {
+      const [u0, v0, u1, v1] = q.b, n = u1 - u0, [tx, ty] = at(u0, v0), um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+      if (q.kind === 'roof') { drawBuildingBlock(tx, ty - q.y0, n * HALF_TW, n * HALF_TH, 0, tc, tcD, 'conical', q.rise - n * HALF_TH, tc, tcD, darken, false, true);
+        if (front) { castleMerlons(front, at, cL, cR, cT, darken, true); front = null; } continue; }
+      const over = grp[grp.indexOf(q) + 1];   // (a crown overhanging it: its shade along the top)
+      drawIsoBox(at, u0, v0, u1, v1, q.y0, q.y1, cL, cR, cT, darken, over && over.kind === 'crown' ? 6 : 0);
+      // (its two seen faces: the left, along u at v1 — slope +½ — and the right, along v at u1 — slope −½)
+      if (q.kind === 'shaft') { if (q.out.includes('z1')) onFace(um, v1, 0.5, () => slit(20, 10, 2.6)); if (q.out.includes('x1')) onFace(u1, vm, -0.5, () => slit(20, 10, 2.6)); }
+      if (q.kind === 'keep') for (const [fu, fv, m] of [[um, v1, 0.5], [u1, vm, -0.5]]) onFace(fu, fv, m, () => { X.fillStyle = ink; X.beginPath(); X.moveTo(-3.5, -36); X.lineTo(-3.5, -44); X.arc(0, -44, 3.5, Math.PI, 0); X.lineTo(3.5, -36); X.closePath(); X.fill(); });
+      if (q.kind === 'gate') onFace(um, v1, 0.5, () => { X.fillStyle = darken ? darkenColor('#2a2118') : '#2a2118'; X.strokeStyle = '#000'; X.lineWidth = 1.3;
+        X.beginPath(); X.moveTo(-7, 0); X.lineTo(-7, -12); X.arc(0, -12, 7, Math.PI, 0); X.lineTo(7, 0); X.closePath(); X.fill(); X.stroke();
+        X.strokeStyle = 'rgba(160,150,128,0.75)'; X.lineWidth = 1; X.beginPath(); for (let k = -4.5; k <= 4.5; k += 3) { X.moveTo(k, 0); X.lineTo(k, -16); } for (let k = -4; k > -18; k -= 4.5) { X.moveTo(-7, k); X.lineTo(7, k); } X.stroke(); });
+      const spired = q.kind === 'crown' && grp[grp.indexOf(q) + 1] && grp[grp.indexOf(q) + 1].kind === 'roof';
+      if (q.kind === 'wall' || q.kind === 'crown' || q.kind === 'gate') castleMerlons(q, at, cL, cR, cT, darken, spired ? false : null);
+      if (spired) front = q;
+    }
+    const [kx, ky] = at(2, 2); bh = 92;
+    if (e.complete && visible) drawWavingFlag(kx, ky - 95, 0, tc, tcD, 30);   // (flying clear over the keep's merlons)
   }
   else if(isTowerBtype(e.btype)){
     // TOWER and its dark-age wooden kin PTOWER share one body: PTOWER is a

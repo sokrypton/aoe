@@ -1344,6 +1344,56 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // The Castle (AoE2): Castle Age only, 650 stone; it looses five arrows unmanned, more with villagers inside.
+    'castle': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 5, numTeams: 2, controllers: ['human', 'human'], ages: [1, 1], entities: [
+        { b: 'TC', x: 6, y: 6, team: 0 }, { b: 'TC', x: 48, y: 48, team: 1 }, { u: 'villager', x: 14, y: 12, team: 0 }] });
+      const r = resourceStore(0); r.stone = 1000;
+      T.ok('Feudal: no Castle', !!placeBuilding('CASTLE', 20, 20, 0).fail);
+      teamAge[0] = 2;
+      const site = placeBuilding('CASTLE', 20, 20, 0).bldg;
+      T.ok('Castle Age: a Castle site, 650 stone spent', !!site && site.btype === 'CASTLE' && r.stone === 350);
+      site.complete = true; site.buildProgress = site.buildTime; site.hp = site.maxHp;
+      const foes = [0, 1, 2, 3, 4, 5].map(i => { const u = createUnit('militia', 24 + (i % 3), 27 + (i / 3 | 0), 1); u.hp = u.maxHp = 9999; return u; });
+      const volley = () => { projectiles.length = 0; site.atkCooldown = 0; updateBuildingArrows(site); return projectiles.filter(q => q.attackerId === site.id).length; };
+      const v0 = volley();
+      T.ok(`unmanned, a volley of 5 (got ${v0})`, v0 === 5);
+      const vils = [0, 1, 2, 3].map(i => createUnit('villager', 14 + i, 14, 0));
+      for (const v of vils) T.ok('a villager garrisons it', enterGarrison(v, site) !== false);
+      const v1 = volley();
+      T.ok(`four villagers inside: one more (got ${v1})`, v1 === 6);
+      return T;
+    })),
+
+    // The Trebuchet (AoE2): trained at the Castle; sent at a building it rolls packed to range, sets up, then hurls
+    // stones (+250 vs buildings); sent away, it packs before it moves.
+    'trebuchet': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'small', seed: 6, numTeams: 2, controllers: ['human', 'human'], ages: [2, 2], entities: [
+        { b: 'TC', x: 4, y: 4, team: 0 }, { b: 'TC', x: 44, y: 28, team: 1 }, { b: 'CASTLE', x: 8, y: 26, team: 0 }] });
+      const castle = entities.find(e => e.btype === 'CASTLE'), tc = entities.find(e => e.btype === 'TC' && e.team === 1);
+      castle.complete = true; castle.buildProgress = castle.buildTime;
+      const r = resourceStore(0); r.wood = 1000; r.gold = 1000;
+      T.ok('the Castle trains it', BLDGS.CASTLE.builds.includes('trebuchet'));
+      const tr = createUnit('trebuchet', 14, 30, 0);
+      submitCommand({ kind: 'command', unitIds: [tr.id], targetId: tc.id, tileX: tc.x, tileY: tc.y });
+      let movedSet = false, shotAt = -1, setAtShot = -1, hp0 = tc.hp;
+      for (let i = 0; i < T30(2400) && shotAt < 0; i++) { const x0 = tr.x; update(); if (tr.x !== x0 && tr.setup > 0) movedSet = true;
+        if (projectiles.some(q => q.attackerId === tr.id)) { shotAt = i; setAtShot = tr.setup; } }
+      T.ok('it rolls packed', !movedSet);
+      T.ok(`it shoots from range, set up (${distToTarget(tr, tc).toFixed(1)} tiles, set-up ${setAtShot})`, shotAt >= 0 && distToTarget(tr, tc) <= 16.5 && setAtShot === TREB_SETUP);
+      for (let i = 0; i < T30(90); i++) update();
+      T.ok(`a stone takes ${hp0 - tc.hp} off the Town Center (200 + 250 − 5)`, hp0 - tc.hp === 445);
+      submitCommand({ kind: 'command', unitIds: [tr.id], tileX: 10, tileY: 30 });
+      update(); const x1 = tr.x; let packTicks = 0;
+      while (tr.setup > 0 && packTicks < T30(600)) { update(); packTicks++; }
+      T.ok(`it packs before it moves (${packTicks} ticks, stood still: ${tr.x === x1})`, tr.x === x1 && packTicks >= TREB_SETUP - 2);
+      for (let i = 0; i < T30(60); i++) update();
+      T.ok('then it rolls', tr.x < x1);
+      return T;
+    })),
+
     // A player's sheep brought to the sleeping dragon is eaten and the dragon is theirs for a minute: it flies straight
     // over a wall to what it's sent at, burns it, shrugs off melee but not arrows, and goes home to sleep when time is up.
     // Ridden and left to itself, the dragon takes on the next enemy near it; an order — or a rider steering — comes first.

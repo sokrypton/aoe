@@ -1625,6 +1625,7 @@ function updateUI(){
         if(isUnlocked(myTeam,'TOWER')){
           builds.push({type:'PTOWER',label:'Palisade Tower',key:'U'});
         }
+        builds.push({type:'CASTLE',label:'Castle',key:'I'});   // Castle-gated: the filter below hides it till then
         builds=builds.filter(bi=>isUnlocked(myTeam,bi.type));
         builds.forEach(bi=>{
           let btn=document.createElement('div');btn.className='act-btn';

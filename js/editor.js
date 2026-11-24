@@ -13,11 +13,11 @@
 'use strict';
 
 // Units offered in the palette (sheep_carcass is a dead-food node, not authored).
-const EDITOR_UNITS = ['villager','militia','spearman','archer','scout','knight','ram','tradecart','sheep','bear','dragon'];
+const EDITOR_UNITS = ['villager','militia','spearman','archer','scout','knight','ram','trebuchet','tradecart','sheep','bear','dragon'];
 // Terrain paints. GRASS doubles as the terrain eraser.
 const EDITOR_TERRAIN = ['GRASS','FOREST','GOLD','STONE','BERRIES','FARM','WATER'];
 // All placeable buildings, in a sensible authoring order.
-const EDITOR_BLDGS = ['TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','MARKET','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
+const EDITOR_BLDGS = ['TC','HOUSE','LCAMP','MCAMP','MILL','FARM','BARRACKS','MARKET','CASTLE','TOWER','PTOWER','WALL','GATE','SWALL','SGATE'];
 const STANCES = ['aggressive','defensive','standground','passive'];
 const MAP_SIZE_KEYS = ['small','medium','large','huge'];
 

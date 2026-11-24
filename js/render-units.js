@@ -338,6 +338,11 @@ function drawCorpse(c){
   // topple like bodies (the cart's ox falls separately; the ram caves in).
   if (c.utype === 'tradecart') { drawTradeCartCorpse(c, sx, sy, age, alpha); return; }
   if (c.utype === 'ram') { drawRamCorpse(c, sx, sy, age, alpha); return; }
+  if (c.utype === 'trebuchet') { // its collapse (trebWreck), chips at the blow and dust where each piece lands
+    for (const [k2, at, n] of [['hit', 0, 10], ...Object.entries(TREB_DIE).map(([g, a]) => [g, a, g.startsWith('frame') || g === 'arm' ? 9 : 6])]) if (age >= at && !corpseImpactFxDone.has(c.id + ':' + k2)) {
+      corpseImpactFxDone.add(c.id + ':' + k2); if (k2 === 'hit') spawnParticles(c.x, c.y, '#c9a15e', n, 0.05, 1.8); else spawnParticles(c.x, c.y, 'rgba(140,120,90,0.7)', n, 0.03, 2.2); }
+    X.save(); X.globalAlpha = alpha; X.translate(sx, sy); X.scale(UNIT_SCALE, UNIT_SCALE);
+    paintParts(trebRig2D((c.dir !== undefined ? c.dir : 7) * Math.PI / 4, { wreck: { age, weathered: age >= CORPSE_SKEL } }, teamColor(c.team))); X.restore(); return; }
 
   // Impact dust puff, once, the moment the body hits the ground (same
   // render-side particle spawning the sheep's grass nibbling uses).
@@ -1021,6 +1026,235 @@ function cartRig2D(h, pose, tc){
   if (!grey) for (const s of [-1, 1]) tube(G('#6e5138'), [mb(R(L), y0 + R(2.5), s * R(5)), mO(O(8.4, -6.2 + B, s * 5))], R(0.6), 'cart');
   return k.parts;
 }
+// ---- The trebuchet: one shape for both views (pov3d's trebModel builds it, trebRig2D projects it) ----
+// Square-cut timber, joined as a carpenter would (art px: x forward — where it throws — y up, z across): two rails and
+// the cross-beams set flush between them, on four wheels on stub axles; on each rail an A-frame — two legs cut level at
+// both ends, standing on the rail and stopping under a head block that carries the axle, a brace across their inner
+// faces; the arm on the axle, swinging between the frames — the long end slings the stone, the short end carries a pin,
+// and on it, hung by straps, the counterweight (the team's colour), clear of the arm, the frames and the base at every
+// angle. Nothing stretches: packing only lowers the arm to lie level (pose.s 0) from its rest, down behind (s 1).
+// pose: s; arm (rad from forward, up positive), cw and sling (the weight's and the sling's swing, rad from hanging
+// down), stone (in the sling), rock (the frame tipping on its rear wheels, rad), shift (rolled, art px), roll (the
+// wheels' turn), wreck (charred, the arm down). Returns [{ prism (8 corners, index x·4 + y·2 + z) | rod | wheel | ball }].
+const TREB_ROLL = 4.5;   // the wheels' turn (rad) per tile rolled
+const TREB_ARM = [26, 8], TREB_REST = 230 * Math.PI / 180, TREB_AXLE = 28, TREB_HANG = [5.5, 7], TREB_SLING = 6;
+function trebParts(tc, pose){
+  const W = pose.wreck, s = W ? 1 : Math.max(0, Math.min(1, pose.s || 0)), out = [];
+  let G = 'base'; const put = q => { q.g = G; out.push(q); };   // (each part's group: a wreck moves them apart)
+  // a wreck: charred, then weathered grey (its bones stage)
+  const C = c => !W ? c : W.weathered ? blendHex(c, '#8f877a', 0.8) : shadeHex(c, 0.72), wood = C('#8a6a44'), woodT = C('#a5835a'), dark = C('#6e5138'), darkT = C('#86643f'), iron = C('#a8adb3');   // (iron: the steel the game's blades wear, with its sheen)
+  const prism = (col, top, P) => put({ prism: P, col, top });
+  const box = (col, top, x0, y0, z0, x1, y1, z1) => prism(col, top, [0, 1, 2, 3, 4, 5, 6, 7].map(n => [n >> 2 ? x1 : x0, (n >> 1) & 1 ? y1 : y0, n & 1 ? z1 : z0]));
+  // a leg: from its foot to its top, cut level at both (a horizontal section wx across, wz deep)
+  const post = (col, top, f, t, wx, wz) => prism(col, top, [0, 1, 2, 3, 4, 5, 6, 7].map(n => { const i = n >> 2, j = (n >> 1) & 1, l = n & 1, q = j ? t : f;
+    return [q[0] + (i ? wx : -wx) / 2, q[1], q[2] + (l ? wz : -wz) / 2]; }));
+  // a timber a → b in its z plane, square to its length (dy across it in that plane, dz deep)
+  const beam = (col, top, a, b, dy, dz = dy) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+    prism(col, top, [0, 1, 2, 3, 4, 5, 6, 7].map(n => { const i = n >> 2, j = (n >> 1) & 1, l = n & 1, q = i ? b : a, o = (j ? dy : -dy) / 2;
+      return [q[0] - uy * o, q[1] + ux * o, q[2] + (l ? dz : -dz) / 2]; })); };
+  for (const z of [4.5, -6.5]) box(wood, woodT, -16, 4, z, 16, 7, z + 2);                             // the rails
+  for (const x of [-16, -1.5, 13]) box(dark, darkT, x, 4.5, -4.5, x + 3, 6.5, 4.5);                    // cross-beams, flush between them
+  for (const x of [-10, 10]) for (const z of [-7.9, 7.9]) { G = 'wheel' + (x > 0 ? 1 : 0) + (z > 0 ? 1 : 0); put({ wheel: [x, 3.2, z], r: 3.2, w: 1.4, roll: (pose.roll || 0) + (pose.shift || 0) / 3.2 });
+    put({ rod: [[x, 3.2, Math.sign(z) * 6.5], [x, 3.2, Math.sign(z) * 7.2]], r: 0.75, col: iron }); }   // (the stub axle: the rail to the wheel)
+  const H = TREB_AXLE, legX = y => 9 - (9 - 1.4) * (y - 7) / (H - 2 - 7);                              // a leg's middle at height y
+  for (const z of [-5.5, 5.5]) { G = z < 0 ? 'frame0' : 'frame1';                                     // the A-frames, on the rails
+    for (const sx of [-1, 1]) post(wood, woodT, [sx * 9, 7, z], [sx * 1.4, H - 2, z], 1.8, 1.8);
+    box(dark, darkT, -2.6, H - 2, z - 1.1, 2.6, H + 1.8, z + 1.1);                                     // its head block, the axle through it
+    const zi = z - Math.sign(z) * 1.4, bx = legX(15.7) + 0.9;                                          // the brace, against the legs' inner faces
+    box(dark, darkT, -bx, 15, zi - 0.5, bx, 16.4, zi + 0.5); }
+  G = 'axle';
+  // the axle — only where it shows: from the arm's faces to the head blocks, and out of their far side (drawn through the
+  // wood, a length of it could sort over the block it's inside)
+  for (const z of [-1, 1]) { put({ rod: [[0, H, z], [0, H, z * 4.4]], r: 1.1, col: iron }); put({ rod: [[0, H, z * 6.6], [0, H, z * 7]], r: 1.1, col: iron }); }
+  for (const z of [-7.1, 7.1]) put({ ball: [0, H, z], r: 1.6, rz: 0.4, col: iron });               // its end caps, outside the head blocks
+  // packing, from s (not shooting): trebPack's arm angle and where the counterweight is
+  const pk = pose.arm == null && !W ? trebPack(s) : null;
+  const phi = W ? TREB_REST : pk ? pk.arm : pose.arm;
+  G = 'arm';
+  const c = Math.cos(phi), sn = Math.sin(phi), at = r => [r * c, H + r * sn, 0], tip = at(TREB_ARM[0]), tail = at(-TREB_ARM[1]);
+  beam(wood, woodT, at(-TREB_ARM[1] - 1.2), tip, 2);                                                   // the arm, a little past its pin
+  for (const z of [-1, 1]) put({ rod: [[tail[0], tail[1], z], [tail[0], tail[1], z * 2.9]], r: 0.75, col: iron });   // the pin, either side of the arm
+  const rope = C('#c8b48a');
+  // the counterweight: hung plumb (swinging: pose.cw) on its straps, or — packed — off its pin, riding on the base, or
+  // being hauled up to it
+  let top; G = 'straps';
+  if (pk && pk.cw) top = [pk.cw[0], pk.cw[1]];
+  else { const ps = pose.cw || 0; top = [tail[0] + Math.sin(ps) * TREB_HANG[0], tail[1] - Math.cos(ps) * TREB_HANG[0]]; }
+  const dirC = pk && pk.cw ? [0, -1] : [Math.sin(pose.cw || 0), -Math.cos(pose.cw || 0)], bot = [top[0] + dirC[0] * TREB_HANG[1], top[1] + dirC[1] * TREB_HANG[1]];
+  if (!pk || pk.hooked) for (const z of [-2.4, 2.4]) put({ rod: [[tail[0], tail[1], z], [top[0], top[1], z]], r: pk && pk.hauling ? 0.35 : 0.55, col: pk && pk.hauling ? rope : iron });   // its straps (hauled up: the ropes)
+  G = 'cw'; beam(C(tc), C(shadeHex(tc, 1.15)), [top[0], top[1], 0], [bot[0], bot[1], 0], 6.2, 6.2);   // the weight
+  G = 'arm';
+  // the sling: coiled at the tip while it travels; else a rope from the tip to the pouch, the stone in it — resting on
+  // the ground behind, or whirled round
+  if (pk && pk.coiled) { put({ rod: [tip, [tip[0], tip[1] - 1.6, 0]], r: 0.35, col: rope }); put({ ball: [tip[0], tip[1] - 2.2, 0], r: 1, col: rope }); }
+  else { const sg = pose.sling || 0, st = [tip[0] + Math.sin(sg) * TREB_SLING, Math.max(2.3, tip[1] - Math.cos(sg) * TREB_SLING), 0];
+    put({ rod: [tip, st], r: 0.35, col: rope });
+    if (!W && (pk ? pk.stone : pose.stone)) put({ ball: st, r: 2.3, col: '#8f8a80' }); }
+  if (pk && pk.lash) { const lx = 14.5, ly = H + (lx / Math.max(1e-6, c)) * sn; put({ rod: [[lx, ly - 1, 0], [lx, 6.5, 0]], r: 0.4, col: rope }); }   // lashed to the front cross-beam
+  // the frame rocks on its rear wheels' contact and rolls (shift): everything with it
+  const rk = pose.rock || 0, sh = pose.shift || 0;
+  if (rk || sh) { const cr = Math.cos(rk), sr = Math.sin(rk), T = p => { const x = p[0] + 10, y = p[1]; return [x * cr - y * sr - 10 + sh, x * sr + y * cr, p[2]]; };
+    for (const q of out) { if (q.prism) q.prism = q.prism.map(T); if (q.rod) q.rod = q.rod.map(T); if (q.ball) q.ball = T(q.ball); if (q.wheel) q.wheel = T(q.wheel); } }
+  if (W) trebWreck(out, W.age, W.weathered);
+  return out;
+}
+const blendHex = (a, b, t) =>   // (a → b by t; render-terrain's mixHex is the even mix)
+   { const A = parseInt(a.slice(1), 16), B = parseInt(b.slice(1), 16);
+  return '#' + [16, 8, 0].map(k => Math.round(((A >> k) & 255) * (1 - t) + ((B >> k) & 255) * t).toString(16).padStart(2, '0')).join(''); };
+// The trebuchet destroyed (age ms; both views' corpse): the hit jolts it; a front wheel breaks off and tips flat, its
+// corner of the base sinking onto it; the counterweight's straps snap and it drops through the open frame to the ground,
+// thuds and rocks; the A-frames, the axle no longer bound, topple outward off their rails one after the other and slam
+// down; the arm, nothing left to hold it, crashes down across the base, its end on the ground. Rigid parts on their own
+// pivots, gravity's easing (TREB_DIE: when each lands — the 2D's chips and dust). Weathered: settled, grey.
+const TREB_DIE = { wheel: 380, cw: 530, frame0: 1000, frame1: 1140, arm: 1140 };
+function trebWreck(out, age, weathered){
+  const cl = v => Math.max(0, Math.min(1, v)), fall = (a, d) => weathered ? 1 : cl((age - a) / d) ** 2;
+  const bump = (a, d, amp) => !weathered && age > a && age < a + d ? amp * Math.sin((age - a) / d * Math.PI) : 0;
+  const rotX = (p, cy, cz, t) => { const dy = p[1] - cy, dz = p[2] - cz, c = Math.cos(t), s = Math.sin(t); return [p[0], cy + dy * c - dz * s, cz + dy * s + dz * c]; };
+  const rotZ = (p, cx, cy, t) => { const dx = p[0] - cx, dy = p[1] - cy, c = Math.cos(t), s = Math.sin(t); return [cx + dx * c - dy * s, cy + dx * s + dy * c, p[2]]; };
+  const jolt = weathered || age > 400 ? 0 : 0.9 * Math.exp(-age / 110) * Math.sin(age / 22);   // (the blow)
+  const fb = fall(180, 200) - bump(TREB_DIE.wheel, 160, 0.15);                                // the base: its front −z corner down on its lost wheel
+  const base = p => rotX(rotZ(p, -10, 0, -0.15 * fb), 0, 7.9, -0.11 * fb).map((v, i) => i ? v : v + jolt);
+  const tw = (Math.PI / 2) * fall(120, 260) - bump(TREB_DIE.wheel, 160, 0.08);               // the broken wheel tips out flat
+  const frame = (g, a, sgn) => { const t = sgn * ((Math.PI / 2 + 0.31) * fall(a, 380) - bump(TREB_DIE[g], 160, 0.07)); return p => base(rotX(p, 7, sgn * 6.4, t)); };
+  const fa = fall(640, 500) - bump(TREB_DIE.arm, 170, 0.05), da = -32 * Math.PI / 180 * fa, py = TREB_AXLE - 20.5 * fa;   // the arm: its pivot down onto the base
+  const arm = p => base(rotZ([p[0], p[1] - TREB_AXLE + py, p[2]], 0, py, da));
+  const fc = fall(300, 230), cwT = p => { const q = [p[0], p[1] - 21.6 * fc + bump(TREB_DIE.cw, 150, 1.2), p[2]]; return rotZ(q, q[0] + 3, 0, 0.18 * fall(TREB_DIE.cw, 220)); };
+  const T = { base, wheel01: base, wheel00: base, wheel11: base, frame0: frame('frame0', 620, -1), frame1: frame('frame1', 760, 1), arm, axle: p => base([p[0], p[1] - TREB_AXLE + py, p[2]]), cw: cwT,
+    wheel10: p => { const q = rotX(p, 0, -8.6, -tw); return [q[0] + jolt, q[1], q[2] - 1.5 * fall(120, 260)]; } };
+  for (let i = out.length - 1; i >= 0; i--) { const q = out[i];
+    if (q.g === 'straps' && (weathered || age > 300)) { out.splice(i, 1); continue; }   // (snapped)
+    const f = T[q.g] || base;
+    if (q.prism) q.prism = q.prism.map(f); if (q.rod) q.rod = q.rod.map(f); if (q.ball) q.ball = f(q.ball);
+    if (q.wheel) { q.tilt = q.g === 'wheel10' ? -tw : 0; q.wheel = f(q.wheel); } }
+}
+// Packing and setting up, as s goes 0 → 1 (the sim's set-up clock; packing plays it backward). Travelling (s 0): the
+// counterweight off its pin, riding on the base between the rails; the arm swung forward and lashed down to the front
+// cross-beam, the sling coiled at its tip. Then: the lashing off; the arm swung up over the top and round to its rest
+// behind (the only way round with nothing hung on it: down, the arm's end would strike the base); the weight hauled up
+// on ropes — forward first, then up, clear of the axle — and hooked on; the stone set in the sling. Nothing stretches.
+const TREB_PACK = Math.atan2(8.1 - TREB_AXLE, 16.7);   // the arm's angle lashed down: its end just past the front beam
+function trebPack(s){
+  const ease = v => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); }, full = TREB_REST + 2 * Math.PI;   // (forward, over the top, round to rest)
+  const lift = 4 * Math.PI / 180, a0 = TREB_PACK + 2 * Math.PI;
+  const arm = s < 0.15 ? a0 + lift * ease(s / 0.15) : s < 0.6 ? a0 + lift + (full - a0 - lift) * ease((s - 0.15) / 0.45) : TREB_REST;
+  const rest = [0, 13.5], c = Math.cos(TREB_REST), sn = Math.sin(TREB_REST), hung = [-TREB_ARM[1] * c, TREB_AXLE - TREB_ARM[1] * sn - TREB_HANG[0]];
+  let cw = rest, hooked = false, hauling = false;
+  if (s >= 0.6) { const u = (s - 0.6) / 0.3, ux = 1 - (1 - Math.min(1, u)) ** 3, uy = Math.min(1, u) ** 2;   // (forward first, then up)
+    cw = [rest[0] + (hung[0] - rest[0]) * ux, rest[1] + (hung[1] - rest[1]) * uy]; hooked = true; hauling = u < 1; }
+  return { arm, cw: s >= 0.9 ? null : cw, hooked, hauling, lash: s < 0.12, coiled: s < 0.6, stone: s >= 0.95 };
+}
+// The throw, worked out once as physics (viewer-only: the sim only times it — TREB_THROW from the drop to the release):
+// the counterweight drives the arm over the top (φ'' = k·cos φ, damped), the weight swings on its pin and the sling on
+// the tip as pendulums from their moving pivots, the stone dragging on the ground till it lifts; it lets go as the
+// stone flies forward and up. Then the arm, lightened, rocks about upright and settles; the crew winch it back down,
+// the weight swaying as it rises; a stone is loaded. The frame rocks on its wheels as the weight drops. Sampled over a
+// reload (p 0..1), time-warped so the release lands exactly at TREB_THROW.
+let _trebMotion = null;
+function trebMotion(){
+  if (_trebMotion) return _trebMotion;
+  const rofS = UNITS.trebuchet.rof / TPS, relS = TREB_THROW / TPS, dt = 1 / 600, G = 420, K = 24, H = TREB_AXLE, Lc = TREB_HANG[0] + TREB_HANG[1] / 2;
+  let phi = TREB_REST, w = 0, ps = 0, pw = 0, sg = 0, sw = 0, released = false, tRel = 0;
+  const pos = (ph, r) => [r * Math.cos(ph), H + r * Math.sin(ph)];
+  const raw = [];   // [t, phi, ps, sg, released]
+  let prevTail = pos(phi, -TREB_ARM[1]), prevTip = pos(phi, TREB_ARM[0]), vTail = [0, 0], vTip = [0, 0], sx = null, svPrev = null;
+  for (let t = 0; t <= rofS + 1e-9; t += dt) {
+    // the arm: driven by the weight till the throw is spent, then damped hard (no stone, the weight's swing fighting it)
+    if (t < 4.2) { const damp = released ? 3.2 : 0.4; w += (K * Math.cos(phi) - damp * w) * dt; phi += w * dt; }
+    else { const a0 = raw.length ? raw[Math.round(4.2 / dt)] : null, f = Math.min(1, (t - 4.2) / (rofS * 0.9 - 4.2)), u = f * f * (3 - 2 * f);   // the winch: back down to rest
+      phi = (a0 ? a0[1] : Math.PI / 2) + (TREB_REST - (a0 ? a0[1] : Math.PI / 2)) * u; }
+    const tail = pos(phi, -TREB_ARM[1]), tip = pos(phi, TREB_ARM[0]);
+    const nvTail = [(tail[0] - prevTail[0]) / dt, (tail[1] - prevTail[1]) / dt], nvTip = [(tip[0] - prevTip[0]) / dt, (tip[1] - prevTip[1]) / dt];
+    const aT = [(nvTail[0] - vTail[0]) / dt, (nvTail[1] - vTail[1]) / dt], aS = [(nvTip[0] - vTip[0]) / dt, (nvTip[1] - vTip[1]) / dt];
+    prevTail = tail; prevTip = tip; vTail = nvTail; vTip = nvTip;
+    // the weight on its pin, and the sling on the tip: pendulums from accelerating pivots (pivot acceleration clamped: a
+    // first step's finite difference is no shove)
+    const cl = v => Math.max(-3000, Math.min(3000, v));
+    pw += (-((G + cl(aT[1])) * Math.sin(ps) + cl(aT[0]) * Math.cos(ps)) / Lc - 2.2 * pw) * dt; ps += pw * dt;
+    if (!released) {
+      sw += (-((G + cl(aS[1])) * Math.sin(sg) + cl(aS[0]) * Math.cos(sg)) / TREB_SLING - 0.3 * sw) * dt; sg += sw * dt;
+      const stY = tip[1] - Math.cos(sg) * TREB_SLING;
+      if (stY < 2.3) { const cc = Math.max(-1, Math.min(1, (tip[1] - 2.3) / TREB_SLING)); sg = Math.sign(sg || -1) * Math.acos(cc); sw *= 0.5; }   // on the ground: dragged
+      const stone = [tip[0] + Math.sin(sg) * TREB_SLING, tip[1] - Math.cos(sg) * TREB_SLING];
+      if (sx) { const v = [(stone[0] - sx[0]) / dt, (stone[1] - sx[1]) / dt];
+        if (t > 0.15 && v[0] > 0 && v[1] > 0 && Math.atan2(v[1], v[0]) < 0.75) { released = true; tRel = t; } }   // flying forward, ~40° up: let go
+      sx = stone;
+    } else { sw += (-(G + cl(aS[1])) * Math.sin(sg) / TREB_SLING - cl(aS[0]) * Math.cos(sg) / TREB_SLING - 5 * sw) * dt; sg += sw * dt; }   // the empty sling flaps, then hangs
+    raw.push([t, phi, ps, sg, released]);
+  }
+  if (!tRel) tRel = relS;
+  // time-warp: the throw [0, tRel] onto [0, relS]; the rest [tRel, rofS] onto [relS, rofS]
+  const N = 600, out = [];
+  for (let i = 0; i <= N; i++) { const T = i / N * rofS, src = T <= relS ? T / relS * tRel : tRel + (T - relS) / (rofS - relS) * (rofS - tRel);
+    const r = raw[Math.min(raw.length - 1, Math.round(src / dt))], since = src - 0.05;   // (the frame starts to rock as the weight drops)
+    const rock = since > 0 ? -0.035 * Math.exp(-since * 2.2) * Math.sin(since * 9) : 0, shift = since > 0 ? -1.6 * Math.exp(-since * 1.6) * Math.sin(since * 4.5) : 0;
+    out.push({ arm: r[1], cw: r[2], sling: r[3], stone: !r[4] && T < relS + 1e-6 || T > rofS * 0.93, rock, shift }); }
+  return _trebMotion = out;
+}
+// Its pose now (both views; viewer-only, from the sim's set-up clock, reload and target): packed and rolling; setting up
+// or packing; set up and ready, the stone on the ground behind; a throw and its reload (trebShot).
+function trebPose(e){
+  const s = (e.setup || 0) / TREB_SETUP, rof = UNITS.trebuchet.rof, cd = e.atkCooldown || 0;
+  if (s < 1 || cd <= 0) return { s, stone: s >= 1 };
+  const p = Math.round((1 - cd / rof) * 240) / 240;   // (240 frames a reload: both views cache by it)
+  return { ...trebShot(p), p };
+}
+// a throw's pose at phase p of its reload (0: the weight drops; TREB_THROW / rof: the stone flies)
+function trebShot(p){ const M = trebMotion(), q = M[Math.max(0, Math.min(M.length - 1, Math.round(p * (M.length - 1))))]; return { s: 1, ...q }; }
+// Painted by depth part by part, each from its centre: first by where across it stands (its z) — parts at different z
+// never pass through each other (the frames, the arm and its weight between them, the wheels), so the nearer always
+// paints over — then by its true depth toward the eye, its height included (a leg on a rail is nearer than the rail).
+function trebRig2D(h, pose, tc){
+  const k = projKit(h), K = 1.5, m = (x, y, z) => [x * K, y * K, z * K], cuts = L => Math.max(1, Math.ceil(L / 4));
+  const depth3 = p => k.depth(p[0] * K, p[2] * K) + p[1] * K / Math.SQRT2, across = z => k.depth(0, z * K) * 1000;
+  const lerp = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t), avg = P => P.reduce((a, v) => a.map((c, i) => c + v[i] / P.length), [0, 0, 0]);
+  // a prism: its outline, then each face it shows — shaded by which way it really faces (up: the top; else lit turned to
+  // the left, the light's side, shaded to the right)
+  const prism = (Q, col, top) => {
+    const W3 = Q.map(c => m(...c)), S = W3.map(c => k.P(...c)), ctr = avg(W3), cq = avg(Q), d = across(cq[2]) + depth3(cq);
+    const hull = loadHull(S); k.add(col, d, () => { X.moveTo(...hull[0]); for (const p2 of hull.slice(1)) X.lineTo(...p2); X.closePath(); }, 'treb');
+    const o0 = k.P(0, 0, 0)[0];
+    [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]].forEach((ix, f) => {
+      const F = ix.map(i => W3[i]), fc = avg(F), e1 = F[1].map((v, i) => v - F[0][i]), e2 = F[3].map((v, i) => v - F[0][i]);
+      let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      if (n.reduce((t, v, i) => t + v * (fc[i] - ctr[i]), 0) < 0) n = n.map(v => -v);
+      if (k.faces(n) <= 0.02) return;
+      const shade = n[1] / Math.hypot(...n) > 0.6 ? top : shadeHex(col, k.P(...n)[0] - o0 < 0 ? 0.92 : 0.7), P2 = ix.map(i => S[i]);
+      k.add(shade, d + 0.0001 * (f + 1), () => { X.moveTo(...P2[0]); for (const p2 of P2.slice(1)) X.lineTo(...p2); X.closePath(); }, 'treb', false); });
+  };
+  for (const q of trebParts(tc, pose)) {
+    if (q.prism) prism(q.prism, q.col, q.top);
+    else if (q.rod) { const [A, B] = q.rod, n = cuts(Math.hypot(B[0] - A[0], B[1] - A[1], B[2] - A[2]));   // (a rod across the frames: a length in each)
+      // cut square at its ends (a tube's round caps reached past them, into the wood it enters), and sorted a little before
+      // what's round it: the block or the arm it goes into covers the joint
+      for (let i = 0; i < n; i++) { const a = lerp(A, B, i / n), b = lerp(A, B, (i + 1) / n), c = avg([a, b]), sa = k.P(...m(...a)), sb = k.P(...m(...b));
+        const L = Math.hypot(sb[0] - sa[0], sb[1] - sa[1]) || 1e-6, r = q.r * K, nx = -(sb[1] - sa[1]) / L * r, ny = (sb[0] - sa[0]) / L * r;
+        k.add(q.col, across(c[2]) + depth3(c) - 0.5, () => { X.moveTo(sa[0] + nx, sa[1] + ny); X.lineTo(sb[0] + nx, sb[1] + ny); X.lineTo(sb[0] - nx, sb[1] - ny); X.lineTo(sa[0] - nx, sa[1] - ny); X.closePath(); }, 'treb'); } }
+    else if (q.ball) k.blob(q.col, m, ...q.ball, q.r, q.r, q.rz || q.r, 'treb').pt.d = across(q.ball[2]) + depth3(q.ball);
+    else if (q.wheel) { // a solid wheel: its tread, the face toward us with two spokes turning, the hub
+      // (tilt: tipped about its rolling direction — a wreck's broken wheel)
+      const [cx, cy, cz] = q.wheel, w = q.w / 2, tl = q.tilt || 0, ct = Math.cos(tl), st = Math.sin(tl), side = k.faces([0, -st, ct]) > 0 ? 1 : -1, wd = across(cz) + depth3(q.wheel);
+      const mt = (x, y, z) => { const dy = y - cy, dz = z - cz; return m(x, cy + dy * ct - dz * st, cz + dy * st + dz * ct); }, zf = cz + side * w;
+      k.blob('#33261a', mt, cx, cy, cz, q.r, q.r, w, 'treb').pt.d = wd;
+      k.blob('#6b5236', mt, cx, cy, zf, q.r - 0.7, q.r - 0.7, 0.05, 'treb', 0, false).pt.d = wd + 0.001;
+      for (let i = 0; i < 2; i++) { const a = q.roll + i * Math.PI / 2, dx = Math.cos(a) * (q.r - 0.9), dy = Math.sin(a) * (q.r - 0.9);
+        k.tube('#4a3826', [mt(cx - dx, cy - dy, zf), mt(cx + dx, cy + dy, zf)], 0.35 * K, 'treb').d = wd + 0.002; }
+      k.blob('#a8adb3', mt, cx, cy, zf, 0.9, 0.9, 0.3, 'treb').pt.d = wd + 0.003; }
+  }
+  return k.parts;
+}
+const trebCache = new Map(), treb2DState = new Map();
+function drawTrebuchetBody(e){
+  let a = treb2DState.get(e.id); if (!a) treb2DState.set(e.id, a = { px: e.x, py: e.y, stride: 0 });
+  if (!window._maskDraw) a.stride += Math.hypot(...walkedSince(a, e));
+  const pose = trebPose(e), Q = (v, n) => Math.round(v * n) / n, spoke = Math.PI / 2;
+  pose.roll = Q(((a.stride * TREB_ROLL % spoke) + spoke) % spoke / spoke, 6) * spoke;   // (the spokes repeat every quarter turn)
+  if (pose.p == null) pose.s = Q(pose.s, 12);
+  const key = [e.dir !== undefined ? e.dir : 7, pose.p != null ? Math.round(pose.p * 240) : 's' + Math.round(pose.s * 12), pose.roll.toFixed(3), pose.stone ? 1 : 0, teamColor(e.team)].join('|'), dir = e.dir !== undefined ? e.dir : 7;   // (a throw by its phase: 240 frames a reload)
+  let parts = trebCache.get(key);
+  if (!parts) { parts = trebRig2D(dir * Math.PI / 4, pose, teamColor(e.team)); if (trebCache.size > 2000) trebCache.clear(); trebCache.set(key, parts); }
+  X.save(); if (e.facing === -1) X.scale(-1, 1); paintParts(parts); X.restore();   // (it draws its own heading: undo drawUnit's mirror)
+}
 const cart2DState = new Map(), cartCache = new Map();
 function drawTradeCartBody(e){
   let a = cart2DState.get(e.id); if (!a) cart2DState.set(e.id, a = { px: e.x, py: e.y, stride: 0 });
@@ -1085,6 +1319,7 @@ const UNIT_SHADOW = {
   // unlike foot units whose feet sit ~6px above it. Goes through the same
   // rotated ground-oval path so its diagonal facings cast a tilted shadow.
   ram:{len:0.62,wid:0.34,yoff:1.5},
+  trebuchet:{len:0.74,wid:0.42,yoff:1.5},   // (its base and wheels: trebParts ×1.5)
   tradecart:{len:0.7,wid:0.32,yoff:1.5}
 };
 // A grounded contact shadow: an oval lying on the iso ground plane,
@@ -1866,12 +2101,15 @@ const CARRY_HANDS = [[0.4, -17.6, -5.5], [0.4, -17.6, 5.5]];
 const ROOF_REST = [[0.3, 0.86], [0.7, 0.86], [0.86, 0.3], [0.86, 0.7], [0.3, 0.14], [0.7, 0.14], [0.14, 0.3], [0.14, 0.7], [0.86, 0.86]];
 const ROOF_SIDES = [[[0, 1], v => [v, 0.86]], [[1, 0], v => [0.86, v]], [[0, -1], v => [v, 0.14]], [[-1, 0], v => [0.14, v]]];   // outward normal, a spot along it
 const roofCrews = new WeakMap();
+// below this health the 3D keep's walls break (pov3d buildingDamage: walls from 55%): the crew shoots from the ground inside it
+const ROOF_CREW_HP = 0.55;
 function roofFloor(e){ const mid = (e.w || 4) / 2, rim = mid * (1 - 38 / 48) / 2; return { x0: e.x - 0.5 + rim, y0: e.y - 0.5 + rim, w: mid - 2 * rim }; }
 function roofCrew(e){
   let R = roofCrews.get(e); if (!R) roofCrews.set(e, R = { figs: [], cdLast: null, firedAt: null, aim: null, at: animTick, volley: -1, shot: 0 });
   const n = e.complete && e.garrison ? Math.min(e.garrison.length, ROOF_REST.length) : 0, cd = e.atkCooldown || 0, reload = BUILDING_RELOAD;
   if (cd > T30(6) && (R.cdLast == null || cd > R.cdLast)) R.firedAt = tick;
   R.cdLast = cd;
+  R.down = e.hp < e.maxHp * ROOF_CREW_HP;
   R.firing = R.firedAt != null && tick - R.firedAt < reload + T30(6);
   if (R.firing) for (const p of projectiles) if (p.attackerId === e.id) { R.aim = [p.tx, p.ty]; break; }
   const F = roofFloor(e), cx = F.x0 + F.w / 2, cy = F.y0 + F.w / 2, dt = Math.max(0, Math.min(10, animTick - R.at)); R.at = animTick;
@@ -1901,10 +2139,10 @@ function roofShot(p){
   if (roofShots.has(p)) return roofShots.get(p);
   const b = entitiesById.get(p.attackerId), R = b && b.btype === 'TC' && roofCrews.get(b);
   let S = null;
-  // (only a crew that is up there and being drawn — emptied, or a damaged TC open under its roof, shoots as the sim's)
+  // (only a crew that is there and being drawn — emptied, it shoots as the sim's)
   if (R && R.figs.length && b.garrison && b.garrison.length && animTick - R.at <= 2) { if (R.volley !== tick) { R.volley = tick; R.shot = 0; }
     const f = R.figs[R.shot++ % R.figs.length], k = (b.w || 4) / 3, a = Math.atan2(p.ty - f.y, p.tx - f.x);
-    S = { x: f.x + Math.cos(a) * 0.2, y: f.y + Math.sin(a) * 0.2, h: 55 * k + 19 }; }   // (the keep floor 55×k up, the bow 19 above the feet)
+    S = { x: f.x + Math.cos(a) * 0.2, y: f.y + Math.sin(a) * 0.2, h: (R.down ? 0 : 55 * k) + 19, inside: R.down }; }   // (the keep floor 55×k up, the bow 19 above the feet)
   roofShots.set(p, S); return S;
 }
 // The female villager's dress [radius, art y] from the hem up (pov3d's DRESS_SHAPES.tunic)
@@ -3393,6 +3631,8 @@ function drawUnit(e){
     drawRamBody(e);
   } else if(e.utype==='tradecart'){
     drawTradeCartBody(e);
+  } else if(e.utype==='trebuchet'){
+    drawTrebuchetBody(e);
   } else if(e.utype==='bear'){
     drawBearBody(e);
   } else if(e.utype==='dragon'){

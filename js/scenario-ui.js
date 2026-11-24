@@ -162,7 +162,7 @@ function updateScenarioUI(){
 //   {train: utype}            the building that trains it → its train button
 //   {research: tech|'age'}    the building that owns it → its research button
 //   {button: id}              a fixed HUD button (e.g. 'bell-btn')
-const MIL_BUILDINGS = new Set(['BARRACKS', 'TOWER', 'PTOWER', 'WALL', 'GATE', 'SWALL', 'SGATE']);
+const MIL_BUILDINGS = new Set(['BARRACKS', 'CASTLE', 'TOWER', 'PTOWER', 'WALL', 'GATE', 'SWALL', 'SGATE']);
 let scnGlow = [];                 // entity ids the map pulses (read by drawScenarioMarkers)
 const scnGlowEls = new Set();
 const ownSelN = what => selected.filter(e => e.team === myTeam && scenarioMatches(e, what)).length;

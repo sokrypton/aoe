@@ -772,6 +772,8 @@ function stanceOf(e){ return e.possessed ? STANCES.passive : STANCES[e.stance] |
 // for the blow (damageEntity), a standing target (updateUnit drops it), an attack order (assignAttack) and the AI.
 function outOfReach(attacker, target){ return target.utype === 'dragon' && dragonAloft(target) && attacker.type === 'unit' && !(attacker.range > 1); }
 function dropTarget(e){ e.target=null; e.explicitAttack=false; clearUnitPath(e); }
+// Ticks a trebuchet takes to set up (and to pack again): e.setup counts them, 0 packed, TREB_SETUP ready to shoot.
+const TREB_SETUP = T30(120), TREB_THROW = T30(24);   // (TREB_THROW: from the counterweight's drop to the stone's release)
 // AoE2 (CPSB): on the easier levels a computer player never takes on villagers — its units don't pick them as targets
 // (they still defend themselves when one attacks: shouldRetaliate). profile.attacksVillagers, off for easy.
 // Only while their town stands: with no building left (walls aside) the villagers are all that keeps the match open.
@@ -3056,6 +3058,13 @@ function updateUnitCombat(e){
       }
     } else {
       clearUnitPath(e);
+      // a trebuchet sets up before it shoots, and can't reach what's inside its minimum range
+      if (e.utype === 'trebuchet') { if ((e.setup || 0) < TREB_SETUP) { e.setup = (e.setup || 0) + 1; return; }
+        if (d < UNITS.trebuchet.minRange) { dropTarget(e); return; }
+        // a shot is a throw: the counterweight drops (its reload starts), and TREB_THROW later the stone leaves the sling
+        if (e.atkCooldown <= 0) e.atkCooldown = UNITS.trebuchet.rof;
+        else if (e.atkCooldown === UNITS.trebuchet.rof - TREB_THROW) spawnProjectile(e, t);
+        return; }
       if (e.atkCooldown <= 0) {
         spawnProjectile(e, t);
         e.atkCooldown = UNITS[e.utype].rof; // per-unit reload (archer 2s)
@@ -3391,7 +3400,7 @@ function updateUnit(e){
 
   dropPathIfInPosition(e);
   if(e.idleFarm!=null&&(e.task||e.target||e.order||e.path.length>0))e.idleFarm=null; // any new job ends the wait
-  if(e.path.length>0){ walkUnitPath(e); return; }
+  if(e.path.length>0){ if(e.setup>0){ e.setup--; return; } walkUnitPath(e); return; }   // (a set-up trebuchet packs before it rolls)
   if(e.utype==='dragon')return;   // it fights with its fire alone (updateDragonBehavior), never the generic strike
 
   if(e.target && e.task !== 'return'){ updateUnitCombat(e); return; }
@@ -3940,7 +3949,7 @@ function updateBuildingArrows(e){
           else if ((g.range || 0) > 0 && g.atk > 0) gDps += g.atk / (UNITS[g.utype].rof / TPS);
         }
         let maxArrows = BLDGS[e.btype].maxArrows || 5;
-        let arrows = Math.min(maxArrows, 1 + Math.floor(gDps / bDps));
+        let arrows = Math.min(maxArrows, (BLDGS[e.btype].baseArrows || 1) + Math.floor(gDps / bDps));
         if (arrows > 1) {
           inRange.sort((a, b) => a.d - b.d || a.en.id - b.en.id); // deterministic (d, id) tiebreak
         } else {

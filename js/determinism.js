@@ -72,6 +72,7 @@ function detEntityHash(e){
   h = detMix(h, e.gatherCooldown || 0);
   h = detMix(h, e.garrisonedIn == null ? -1 : e.garrisonedIn);
   h = detMix(h, e.complete ? 1 : 0);
+  h = detMix(h, e.setup || 0);   // a trebuchet's set-up clock (sim-read: gates its moving and its shooting)
   // Research rides the building entity — hash it so a divergent
   // research clock trips the checksum before it silently lands a mistimed
   // age-up or tech. target is a numeric age index OR a string tech key; fold

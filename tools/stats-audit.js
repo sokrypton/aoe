@@ -54,6 +54,7 @@ const UNIT_MAP = {
   scout: 'Scout Cavalry',
   knight: 'Knight',
   ram: 'Battering Ram',
+  trebuchet: 'Trebuchet',
   tradecart: 'Trade Cart',
 };
 
@@ -66,6 +67,9 @@ const DELIBERATE = {
   // (1.2 + 0.35), not the Dark-Age 1.2 the AoC table lists. See the comment
   // on UNITS.scout in js/core.js.
   'scout.speed': 'Feudal-gated scout carries the AoE2 Feudal speed bonus (1.2+0.35)',
+  // One armor table for both states: the packed row's (2/8). The set-up row's 150 pierce would make it arrow-proof.
+  'trebuchet.melee_armor': 'packed armor (AoC "Trebuchet (Packed)" row) in both states',
+  'trebuchet.pierce_armor': 'packed armor (AoC "Trebuchet (Packed)" row) in both states',
 };
 
 function splitCsvLine(line) {

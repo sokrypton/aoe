@@ -27,7 +27,7 @@
   <strong>2D Animation Lab</strong>
   <span class="g"><span class="l">Unit</span><select id="lab-unit">
     <option value="villager">villager</option><option value="villager-f">villager ♀</option><option>militia</option><option>spearman</option>
-    <option>archer</option><option>scout</option><option>knight</option><option>ram</option><option value="tradecart">trade cart</option>
+    <option>archer</option><option>scout</option><option>knight</option><option>ram</option><option>trebuchet</option><option value="tradecart">trade cart</option>
     <option>sheep</option><option>bear</option><option>dragon</option></select></span>
   <span class="g" id="lab-actions"><span class="l">Action</span></span>
   <span class="g" id="lab-dirs"><span class="l">Facing</span></span>
@@ -61,12 +61,13 @@
   window.fogDisabled = true; window.unitScatterOff = true;
   initFog(); resetTeamVision(); resetTeamAge(); resetTeamTechs(); resetLastTeamHit(); resetDefeatedTeams(); resetAIStates();
   gameStarted = true; window.playSound = null;
+  bottomH = 0; H = window.innerHeight - topH;   // (the HUD's bottom bar is hidden: the view is the whole window — else the cull dropped the All-8 grid's lower row)
 
   const DIRL = ['SE', 'S', 'SW', 'W', 'NW', 'N', 'NE', 'E'];
   const DIRV = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
   // what each unit can do (the button row): walk is a gallop for cavalry, work is a villager's job by its load
   const ACTIONS = { villager: ['idle', 'walk', 'flee', 'carry', 'work', 'build', 'repair', 'fight', 'die'], militia: ['idle', 'walk', 'attack', 'die'], spearman: ['idle', 'walk', 'attack', 'die'],
-    archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'attack', 'die'], knight: ['idle', 'walk', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'],
+    archer: ['idle', 'walk', 'attack', 'die'], scout: ['idle', 'walk', 'attack', 'die'], knight: ['idle', 'walk', 'attack', 'die'], ram: ['idle', 'walk', 'attack', 'die'], trebuchet: ['idle', 'walk', 'setup', 'attack', 'die'],
     tradecart: ['idle', 'walk', 'die'], sheep: ['idle', 'walk', 'graze', 'die'], bear: ['idle', 'walk', 'attack', 'die'], dragon: ['sleep', 'wake', 'idle', 'walk', 'roar', 'attack', 'die'] };
   const S = window.LAB = { unit: 'scout', action: 'walk', dir: 0, all: false, age: 1, techs: false, load: 'wood', zoom: 4, paused: false, speed: 1,
     set(o){ if (o.pose) o.action = o.pose === 'attack' && S.unit.startsWith('villager') ? 'work' : o.pose; Object.assign(S, o); build(); sync(); },
@@ -96,6 +97,9 @@
     u.path = walks ? [{ x: u.x + DIRV[d][0] * 3, y: u.y + DIRV[d][1] * 3 }] : [];
     u.__animAttack = a === 'attack'; u.eatingGrass = a === 'graze'; u.retreatUntil = a === 'flee' ? tick + 1e6 : 0;   // (flee: running away)
     if (a === 'attack') { const rof = (UNITS[u.utype] && UNITS[u.utype].rof) || T30(60); u.atkCooldown = rof - (tick % (rof + 1)); }
+    // the trebuchet: packed to roll, set up to stand and throw; setup loops setting up (and a beat set) then packing
+    if (u.utype === 'trebuchet') { const c = tick % (2 * TREB_SETUP + T30(60));
+      u.setup = a === 'walk' ? 0 : a === 'setup' ? Math.min(TREB_SETUP, c, Math.max(0, 2 * TREB_SETUP + T30(30) - c)) : TREB_SETUP; if (a !== 'attack') u.atkCooldown = 0; }
     // (the trade cart loaded, unless S.cartLoad = false)
     u.task = 'gallery'; u.carrying = u.utype === 'tradecart' && S.cartLoad !== false ? 40 : 0; u.carryType = null; u.target = null; u.buildTarget = null; delete u.gatherX; delete u.gatherY;
     if (a === 'carry') { u.task = 'return'; u.carrying = 10; const food = ['meat', 'wheat', 'berries'].includes(S.load); u.carryType = food ? 'food' : S.load; if (food) u.foodSrc = S.load; }
