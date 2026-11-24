@@ -911,29 +911,56 @@ const AGE_WALLS = [
 // land on top of an already-drawn neighbor. Footprint grown slightly and
 // nudged toward the lower-right (away from the upper-left light); FARM is
 // a flat field — nothing to cast.
+// The shadow a building casts on the ground, both views: each solid block of it — its base outline (tile-corner
+// coordinates) and its height (tiles) — throws its outline along the light (from the upper left of the screen: SHADOW_CAST
+// tiles a tile of height), and the shadow is all the ground between: the hull of the base and the thrown outline. A list
+// of convex outlines, each a fan from its first point; where they overlap they darken once (one fill; one stencil bit).
+// The Town Center: its keep, and its two decks (lower; the yard in front is open). The barracks: its hall, not the
+// yard. A camp: its hut. None for a farm, or the market (open paving: its stalls cast their own). A site: its base only.
+const SHADOW_CAST = [0.5, -0.12];
+function buildingShadowPolys(e){
+  if (e.btype === 'FARM' || e.btype === 'MARKET') return [];
+  const b = BLDGS[e.btype], w = e.w !== undefined ? e.w : b.w, h = e.h !== undefined ? e.h : b.h, x = e.x, y = e.y;   // (a gate is 1×3 or 3×1 as placed)
+  const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], bt = e.btype;
+  let blocks;
+  if (bt === 'TC') blocks = [[rect(x, y, x + w / 2, y + h / 2), 1.3], [rect(x + w / 2, y, x + w, y + h / 2), 0.6], [rect(x, y + h / 2, x + w / 2, y + h), 0.6]];
+  else if (bt === 'BARRACKS') { const k = w / 3; blocks = [[rect(x, y + 0.14 * k, x + 1.22 * k, y + 2.95 * k), 0.75]]; }   // (pov3d's hall, BP(±30, ∓13))
+  else if (bt === 'LCAMP' || bt === 'MCAMP') blocks = [[rect(x + 1 - 0.625, y, x + 1, y + 0.625), 0.5]];                  // (campHut's box)
+  else if (bt === 'MILL') { const r = 0.36 * w; blocks = [[Array.from({ length: 12 }, (_, i) => [x + w / 2 + r * Math.cos(i * Math.PI / 6), y + h / 2 + r * Math.sin(i * Math.PI / 6)]), 1]]; }
+  else if (isTowerBtype(bt)) blocks = [[rect(x + 0.5 - 0.27, y + 0.5 - 0.27, x + 0.5 + 0.27, y + 0.5 + 0.27), 1.1]];   // (its shaft: narrower than its tile)
+  else if (isWallBtype(bt)) blocks = wallShadowBlocks(e);
+  else if (isGateBtype(bt)) {   // its two end posts, the door between (pov3d's wallModel: posts 14/32 wide, 28px tall; door 16px)
+    const along = w >= h, n = Math.max(w, h), P = 7 / 32, d = 2 / 32, a0 = [x + 0.5, y + 0.5], a1 = along ? [x + n - 0.5, y + 0.5] : [x + 0.5, y + n - 0.5];
+    blocks = [[rect(a0[0] - P, a0[1] - P, a0[0] + P, a0[1] + P), 28 / ART_HPX], [rect(a1[0] - P, a1[1] - P, a1[0] + P, a1[1] + P), 28 / ART_HPX],
+      [along ? rect(a0[0], a0[1] - d, a1[0], a1[1] + d) : rect(a0[0] - d, a0[1], a1[0] + d, a1[1]), 16 / ART_HPX]]; }
+  else blocks = [[rect(x, y, x + w, y + h), 0.6]];
+  return blocks.map(([P, H]) => { const k = e.complete === false ? 0 : H; return k ? convexHull(P.concat(P.map(q => [q[0] + SHADOW_CAST[0] * k, q[1] + SHADOW_CAST[1] * k]))) : P; });
+}
+// A wall piece's solid parts, as its model draws them (tile-centric: wallPiece, pov3d's wallArms): a stretch from its
+// centre to each edge a wall-like neighbour stands at — on into a tower's or a gate's tile, to its post — and its post
+// (none where a run passes straight through, bare). Heights from the art: a stretch 14px, a post 22px.
+const ART_HPX = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2;   // (the art's vertical px per tile: pov3d's HPX)
+function wallShadowBlocks(e){
+  const x = e.x, y = e.y, cx = x + 0.5, cy = y + 0.5, t = (e.btype === 'SWALL' ? 9 : 7) / 64, out = [];
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const n = getConnectedBuilding(x + dx, y + dy); if (!isWallLike(n)) continue;
+    const r = isWallBtype(n.btype) ? 0.5 : 0.75;   // (a tower's or a gate's: on to its post)
+    const ex = cx + dx * r, ey = cy + dy * r;
+    out.push([[[Math.min(cx, ex) - (dy ? t : 0), Math.min(cy, ey) - (dx ? t : 0)], [Math.max(cx, ex) + (dy ? t : 0), Math.min(cy, ey) - (dx ? t : 0)],
+      [Math.max(cx, ex) + (dy ? t : 0), Math.max(cy, ey) + (dx ? t : 0)], [Math.min(cx, ex) - (dy ? t : 0), Math.max(cy, ey) + (dx ? t : 0)]], 14 / ART_HPX]); }
+  if (!_wlBare(x, y)) out.push([[[cx - t, cy - t], [cx + t, cy - t], [cx + t, cy + t], [cx - t, cy + t]], 22 / ART_HPX]);
+  return out.length ? out : [[[[cx - t, cy - t], [cx + t, cy - t], [cx + t, cy + t], [cx - t, cy + t]], 22 / ART_HPX]];
+}
+// The convex hull of points [x, y] (monotone chain), in order round it.
+function convexHull(pts){
+  const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]), cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+  for (const p of P) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  lo.pop(); up.pop(); return lo.concat(up);
+}
 function buildingShadowPath(e){
-  if (e.btype === 'FARM') return;
-  // The market is open paving — a full 3x3 shadow diamond would read as a
-  // solid mass. Its stalls cast their own small ellipses (ground part).
-  if (e.btype === 'MARKET') return;
-  let b = BLDGS[e.btype];
-  // per-instance footprint: gates are 1x2 OR 2x1 depending on placement
-  let fw = e.w !== undefined ? e.w : b.w;
-  let fh = e.h !== undefined ? e.h : b.h;
-  // The shadow is the ground the building stands on, exactly: on hills each tile's own quad, corner by corner (grown or
-  // nudged off its tile it would leave the ground); on the flat the footprint in one piece — on the grid either way.
-  if (elevAny) {
-    for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) {
-      const mx = e.x + dx + 0.5, my = e.y + dy + 0.5, k = 0.5;
-      const c = groundToScreen(mx, my); if (isOffscreen(c.sx, c.sy, 100)) continue;
-      [[-k, -k], [k, -k], [k, k], [-k, k]].forEach(([u, v], i) => { const q = groundToScreen(mx + u, my + v); i ? X.lineTo(q.sx, q.sy) : X.moveTo(q.sx, q.sy); });
-      X.closePath();
-    }
-    return;
-  }
+  const b = BLDGS[e.btype], fw = e.w !== undefined ? e.w : b.w, fh = e.h !== undefined ? e.h : b.h;
   const c = groundToScreen(e.x + fw / 2, e.y + fh / 2); if (isOffscreen(c.sx, c.sy, buildingCullMargin(fw, fh))) return;
-  [[0, 0], [fw, 0], [fw, fh], [0, fh]].forEach(([u, v], i) => { const q = groundToScreen(e.x + u, e.y + v); i ? X.lineTo(q.sx, q.sy) : X.moveTo(q.sx, q.sy); });
-  X.closePath();
+  for (const poly of buildingShadowPolys(e)) { poly.forEach(([u, v], i) => { const q = groundToScreen(u, v); i ? X.lineTo(q.sx, q.sy) : X.moveTo(q.sx, q.sy); }); X.closePath(); }
 }
 
 // Art that only changes with a few known inputs (a farm's standing crop, a camp's ore heap) baked once into an offscreen
@@ -988,6 +1015,9 @@ function drawBuilding(e, part = null){
   // A wall standing where a gate, a tower or a stone piece is being placed (ghostOverlay): it will be gone — not drawn.
   if (window._ghostTiles && !window._ghostDraw && !window._maskDraw && !e.ghost && isWallBtype(e.btype)) { const g = window._ghostTiles.get(e.y * MAP + e.x); if (g && g.btype !== e.btype) return; }
 
+  // (standing in the world, on the ground's own picture — not a ghost, a silhouette or the gallery: there a yard or a
+  // camp keeps its painted pad)
+  const inWorld = !window._ghostDraw && !window._maskDraw && !e.ghost && e.id >= 0 && typeof groundArt === 'function';
   let ownerAge = (teamAge && isPlayerTeam(e.team)) ? teamAge[e.team] : 0;
   let aw = AGE_WALLS[ownerAge] || AGE_WALLS[1];
   let cx=e.x+b.w/2,cy=e.y+b.h/2;
@@ -1072,6 +1102,9 @@ function drawBuilding(e, part = null){
       // marks mid-height; a dark beam there doubled the line)
       X.strokeStyle = '#000000'; X.lineWidth = 1.3;
     }
+    // Under the decks the keep's walls are in their shade: both faces, from the ground up to where the decks meet them.
+    { const dH = 26; X.fillStyle = SHADOW_FILL; X.beginPath();
+      X.moveTo(sx - 48, sy + 24); X.lineTo(sx, sy + 48); X.lineTo(sx + 48, sy + 24); X.lineTo(sx + 48, sy + 24 - dH); X.lineTo(sx, sy + 48 - dH); X.lineTo(sx - 48, sy + 24 - dH); X.closePath(); X.fill(); }
     // Recessed rooftop behind a raised parapet rim — properly 3D: the rim
     // keeps the cap color, the floor sits a few px LOWER, and the two far
     // inner walls are drawn so the recess reads as real depth instead of a
@@ -1253,17 +1286,6 @@ function drawBuilding(e, part = null){
     let postColor = WOOD.post;
     let pc = darken ? darkenColor(postColor) : postColor;
     X.lineJoin = 'round';
-    // Contact shadows on the ground first, so every pole overlaps them.
-    // Skipped in the selection-outline mask pass (window._maskDraw, see
-    // render-outlines.js): shadows aren't part of the building's shape,
-    // and rasterizing them into the silhouette put a gold-ringed blob on
-    // the ground beside each courtyard post.
-    if (!window._maskDraw) {
-      X.fillStyle = 'rgba(0,0,0,0.25)';
-      posts.forEach(p => {
-        X.beginPath(); X.ellipse(p.x, p.y + 1, 5, 2.4, 0, 0, Math.PI*2); X.fill();
-      });
-    }
     // Square timber posts drawn as proper iso prisms: lit left face,
     // shaded right face, bright top cap — same light rules as buildings.
     let pL = darken ? darkenColor('#9a7a56') : '#9a7a56';
@@ -1436,10 +1458,14 @@ function drawBuilding(e, part = null){
     // 0. Training-yard pad FIRST (ground layer): a full-length
     // parallelogram running the hall's entire front, wall line to fence.
     let Y1=BP(-bL,bD), Y2=BP(bL,bD), Y3=BP(bL,bYF), Y4=BP(-bL,bYF);
+    // (in the game the yard is the ground's own worn earth — groundArt; the pad is kept where there is no such
+    // ground: a ghost, a silhouette, the gallery)
+    if(!inWorld){
     X.fillStyle=darken ? darkenColor('#bfa38a') : '#bfa38a';X.beginPath();
     X.moveTo(Y1.x,Y1.y);X.lineTo(Y2.x,Y2.y);X.lineTo(Y3.x,Y3.y);X.lineTo(Y4.x,Y4.y);
     X.closePath();X.fill();
     X.strokeStyle='#000000';X.lineWidth=1.2;X.stroke();
+    }
     // rake marks: light lines parallel to the hall
     X.save();X.strokeStyle='rgba(0,0,0,0.08)';X.lineWidth=1;
     [22.5,32,41.5].forEach(b=>{
@@ -1679,7 +1705,7 @@ function drawBuilding(e, part = null){
       // walkers draw over them. Shadow, not shape — skip in the mask pass
       // (the union building-shadow pass skips MARKET entirely).
       if(!window._maskDraw){
-        X.fillStyle='rgba(0,0,0,0.16)';
+        X.fillStyle=SHADOW_FILL;
         [[0,0.42,21],[-64,1.09,21],[64,1.09,21],[0,1.75,15]].forEach(([dx,k,rx])=>{
           X.beginPath();X.ellipse(sx+dx,sy+bhh*k,rx,rx*0.45,0,0,Math.PI*2);X.fill();
         });
@@ -1871,8 +1897,7 @@ function drawBuilding(e, part = null){
     bh=30;
     // Worn dirt clearing, enlarged past the tile so the oversized props
     // (log pile / ore cart) still sit on worked ground
-    // drawCampClearing(sx, sy+bhh-bhh*1.45, bw*1.45, bhh*1.45, darken);
-    drawCampClearing(sx, sy, bw, bhh, darken);
+    if(!inWorld) drawCampClearing(sx, sy, bw, bhh, darken);   // (in the game: the ground's own worn earth)
     
     // Small plank shack in the back-right quadrant
     drawCampShed(sx+14, sy+8, 20, 10, 14, 8, '#b89868','#987848','#8a6a48','#715539', darken, ownerAge === 0, e.id);
@@ -1930,7 +1955,7 @@ function drawBuilding(e, part = null){
     bh=30;
     // Worn dirt clearing, enlarged past the tile so the oversized props
     // (log pile / ore cart) still sit on worked ground
-    drawCampClearing(sx, sy, bw, bhh, darken);
+    if(!inWorld) drawCampClearing(sx, sy, bw, bhh, darken);   // (in the game: the ground's own worn earth)
 
     // Dark timber mine shed in the back-right quadrant
     drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken, ownerAge === 0, e.id);
@@ -2360,7 +2385,9 @@ function drawBuilding(e, part = null){
       // Ground-level footprint corners and the raised bed (tilled soil sits
       // a few px proud of the grass, with visible dirt sides on the two
       // camera-facing edges — that lift is what makes the field read 3D).
-      const bedH=2.5;
+      // (in the game the soil is the ground's own — tilled earth with a ragged edge, groundArt: no raised bed, no outline;
+      // the bed is kept where there is no such ground: a ghost, a silhouette, the gallery)
+      const inGround=part==='ground', bedH=inGround?0:2.5;
       let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
       let up=c=>({x:c.x,y:c.y-bedH});
       let rT=up(cT), rR=up(cR), rB=up(cB), rL=up(cL);
@@ -2377,6 +2404,7 @@ function drawBuilding(e, part = null){
         {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
       ];
       X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
+      if(!inGround){
       // bed side faces (front-left and front-right edges, extruded to ground)
       X.fillStyle=sideSW;X.beginPath();
       X.moveTo(rL.x,rL.y);X.lineTo(rB.x,rB.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();X.stroke();
@@ -2386,6 +2414,7 @@ function drawBuilding(e, part = null){
       X.fillStyle=soil;X.beginPath();
       X.moveTo(rT.x,rT.y);X.lineTo(rR.x,rR.y);X.lineTo(rB.x,rB.y);X.lineTo(rL.x,rL.y);X.closePath();X.fill();
       X.strokeStyle='rgba(0,0,0,0.35)';X.stroke();
+      }
       // Furrows, cartoon-flat: the soil top IS the lit surface; one bold
       // dark strip under each crop row suggests the ploughing — no per-ridge
       // lit/trough shading (that read as botanical realism and dissolved

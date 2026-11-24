@@ -275,10 +275,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (fowHooked) return; fowHooked = true;
     THREE.Mesh.prototype.onBeforeRender = function(r, s, c, g, m){ if (m && !m.onBeforeCompile.fow && fowU.value) fowPatch(m); };
   }
+  const GROUND_SINK = 0.12;
   function buildGround(){
     if (groundMesh) { scene.remove(groundMesh); groundMesh.traverse(o => o.geometry && o.geometry.dispose()); groundTex.dispose(); fowTex.dispose(); }
-    groundData = new Uint8Array(MAP * MAP * 4);
-    groundTex = new THREE.DataTexture(groundData, MAP, MAP);
+    // (the painted picture, render-terrain's groundArt — the 2D's; a slope's shade rides the fog texture's blue)
+    groundData = new Uint8Array(MAP * MAP * 4); groundArtVer = -1; bshadowSig = null;
+    if (typeof groundArt === 'function') { groundTex = new THREE.CanvasTexture(groundArt().c); groundTex.magFilter = THREE.NearestFilter; groundTex.anisotropy = 8; }   // (its pixels crisp up close, as the 2D's)
+    else groundTex = new THREE.DataTexture(groundData, MAP, MAP);
     groundTex.colorSpace = THREE.SRGBColorSpace;
     const geo = new THREE.PlaneGeometry(MAP, MAP, MAP, MAP);   // (a vertex a tile corner: the hills lift them — initHills)
     geo.rotateX(-Math.PI / 2);
@@ -289,13 +292,17 @@ gl_Position = projectionMatrix * mvPosition;`;
     const gm = new THREE.MeshBasicMaterial({ map: groundTex, depthWrite: false });
     gm.onBeforeCompile = sh => { sh.uniforms.fowMap = { value: fowTex };
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D fowMap;')
-        .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= texture2D(fowMap, vMapUv).r;'); };
+        .replace('#include <map_fragment>', '#include <map_fragment>\nvec4 fowG = texture2D(fowMap, vMapUv); diffuseColor.rgb *= fowG.r * (1.0 + (fowG.b * 255.0 - 128.0) * 0.0055);'); };   // (r: the fog; b: a slope's shade, as the 2D's)
     gm.customProgramCacheKey = () => 'ground-fow';
     gm.onBeforeCompile.fow = true;
     groundMesh = new THREE.Mesh(geo, gm);
     groundMesh.renderOrder = -1;
     groundMesh.position.set(MAP / 2, 0, MAP / 2);
     scene.add(groundMesh);
+    // The ground hides what is behind a hill: it writes no depth itself (above), so a copy of it does — unseen, and
+    // GROUND_SINK lower, clear of all that lies on or just under the ground (patches, shadows, outline shells).
+    const sink = new THREE.MeshBasicMaterial({ colorWrite: false }); sink.onBeforeCompile = function(){}; sink.onBeforeCompile.fow = true;
+    const under = new THREE.Mesh(geo, sink); under.position.y = -GROUND_SINK; under.renderOrder = -3; groundMesh.add(under);
     // beyond the map's edge: black too (the 2D map's void), just under the ground
     const edge = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 5, MAP * 5).rotateX(-Math.PI / 2), noHill(new THREE.MeshBasicMaterial({ color: '#000000', depthWrite: false }))); // hazed like the ground: no hard band against the sky
     edge.position.set(0, -0.002, 0); edge.renderOrder = -2; groundMesh.add(edge);             // (a child: it's rebuilt and dropped with the ground)
@@ -309,17 +316,18 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (!c) { const n = parseInt(hex.slice(1), 16); c = [n >> 16, (n >> 8) & 255, n & 255]; rgbCache.set(hex, c); }
     return c;
   }
-  const shadowed = new Set();
+  let groundArtVer = -1, bshadow = null, bshadowSig = null;
   function refreshGround(){
     for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) {
       const f = (fog[y] && fog[y][x]) || 0;
       const i = ((MAP - 1 - y) * MAP + x) * 4; // texture row 0 is the plane's far (+Z) edge
       // the tile's own colour and the fog of war, both per tile and crisp as 2D: unexplored black, explored-but-unseen dimmed
-      fowData[i] = f === 2 ? 255 : f ? 140 : 0; fowData[i + 1] = fowData[i + 2] = 0; fowData[i + 3] = 255;
+      fowData[i] = f === 2 ? 255 : f ? 140 : 0; fowData[i + 1] = 0; fowData[i + 2] = 128 + (elevAny && typeof hillShade === 'function' ? hillShade(x, y) * 10 : 0); fowData[i + 3] = 255;
       const cols = TCOL[map[y][x].t === TERRAIN.FOREST ? TERRAIN.GRASS : map[y][x].t] || TCOL[0]; // under a tree, grass: its shadow does the darkening
       const c = rgb(cols[(x * 7 + y * 13) % cols.length]), k = elevAny && typeof hillShade === 'function' ? 1 + hillShade(x, y) * 0.055 : 1;   // (a slope's shade, as 2D's)
       groundData[i] = Math.min(255, c[0] * k); groundData[i + 1] = Math.min(255, c[1] * k); groundData[i + 2] = Math.min(255, c[2] * k); groundData[i + 3] = 255;
     }
+    const art = groundTex.isCanvasTexture ? groundArt() : null;
     // A building shows at ONE fog level, as 2D draws it (buildingFogLevel): its whole footprint takes that level in the
     // fog texture, so a building half on unexplored ground isn't half black
     for (const e of entities) {
@@ -328,19 +336,19 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (let y = e.y; y < e.y + h; y++) for (let x = e.x; x < e.x + w; x++) {
         if (x < 0 || y < 0 || x >= MAP || y >= MAP) continue; const i = ((MAP - 1 - y) * MAP + x) * 4; if (fowData[i] < lv) fowData[i] = lv; }
     }
-    // Building shadows baked into the ground, tile by tile (16% darker under each footprint, as 2D's 16% black): on the
-    // grid, once per tile however many pieces meet there (a wall run never doubles up); farms and the open market none.
-    for (const e of entities) {
-      if (e.type !== 'building' || e.hp <= 0 || e.btype === 'FARM' || e.btype === 'MARKET' || !bldgVisible(e)) continue;
-      const b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
-      for (let y = e.y; y < e.y + h; y++) for (let x = e.x; x < e.x + w; x++) {
-        if (x < 0 || y < 0 || x >= MAP || y >= MAP || shadowed.has(y * MAP + x)) continue;
-        shadowed.add(y * MAP + x); const i = ((MAP - 1 - y) * MAP + x) * 4;
-        for (let k = 0; k < 3; k++) groundData[i + k] = Math.round(groundData[i + k] * 0.84);
-      }
-    }
-    shadowed.clear();
-    groundTex.needsUpdate = true; fowTex.needsUpdate = true;
+    // Building shadows: flat shapes on the ground under what is solid (buildingShadowPolys, render-buildings — the 2D's),
+    // one mesh for them all, remade when the buildings in sight change. They share the trees' and units' stencil bit:
+    // overlapping shadows darken once.
+    let sig = ''; const cast = [];
+    for (const e of entities) { if (e.type !== 'building' || e.hp <= 0 || !bldgVisible(e)) continue; cast.push(e); sig += e.id + ':' + e.btype + ':' + e.x + ',' + e.y + ',' + (e.w || 0) + (e.complete === false ? 's' : '') + ';'; }
+    if (sig !== bshadowSig) { bshadowSig = sig; const pos = [];
+      for (const e of cast) for (const poly of buildingShadowPolys(e)) for (let i = 1; i < poly.length - 1; i++) for (const q of [poly[0], poly[i + 1], poly[i]]) pos.push(q[0], 0.005, q[1]);
+      if (!bshadow) { bshadow = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false,
+        stencilWrite: true, stencilRef: 4, stencilFuncMask: 4, stencilWriteMask: 4, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp, side: THREE.DoubleSide })); bshadow.frustumCulled = false; }
+      if (bshadow.parent !== scene) scene.add(bshadow);
+      bshadow.geometry.dispose(); bshadow.geometry = new THREE.BufferGeometry(); bshadow.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); bshadow.visible = pos.length > 0; }
+    if (!art) groundTex.needsUpdate = true; else if (art.ver !== groundArtVer) { groundArtVer = art.ver; groundTex.needsUpdate = true; }
+    fowTex.needsUpdate = true;
   }
 
   function bldgVisible(e){
@@ -750,13 +758,13 @@ gl_Position = projectionMatrix * mvPosition;`;
       m.getWorldScale(s).set(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z));
       const ht = m.userData.hullTube, scr = union || !(m.userData.hullW < HULL), hm = union ? hullUnionMat : scr ? hullMat : hullWorldMat; // a deliberately fine outline keeps its world width
       if (ht) { const th = new THREE.Mesh(own(new THREE.TubeGeometry(ht.path, segs(12), ht.r + (scr ? 0 : m.userData.hullW / s.x), segs(8), false)), hm); if (union) th.renderOrder = 1; m.add(th); continue; }
-      const hg = hullGeometry(src, s, m.userData.hullW || HULL, union ? null : (i, o) => { // characters keep their outline under the feet (the ground draws first and blocks nothing)
+      const hg = hullGeometry(src, s, m.userData.hullW || HULL, union || m.userData.hullRound ? null : (i, o) => { // characters keep their outline under the feet (the ground draws first and blocks nothing)
         if (wp.fromBufferAttribute(src.attributes.position, i).applyMatrix4(m.matrixWorld).y >= 0.004) return;
         off.copy(o).applyMatrix3(M); // on the ground: no downward growth
         if (off.y < 0) { off.y = 0; o.copy(off.applyMatrix3(Mi)); }
       }, scr);
       if (!hg) continue;
-      if (!union) dropGroundFaces(hg, src, m.matrixWorld);
+      if (!union && !m.userData.hullRound) dropGroundFaces(hg, src, m.matrixWorld);
       const h = new THREE.Mesh(own(hg), hm);
       if (union) h.renderOrder = 1;
       m.add(h);
@@ -845,25 +853,48 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Dark Age thatch (every first-age roof), as a real thatched roof: a deep, soft mass of straw — the eaves rounded into
   // a fat nose drooping below the wall tops, a rounded crown, the gable ends softened — under the owner's ridge roll
   const THATCH = '#d2ac58|thatch';
-  function thatchRoof(g, tc, box, wallH, rise, alongX){
-    const [x0, z0, x1, z1] = box, T = 0.085, over = 0.16, end = 0.14;
-    const hw = (alongX ? z1 - z0 : x1 - x0) / 2 + over, eY = wallH - 0.06, rY = wallH + rise + T * 0.6, slope = (rY - eY) / hw;
+  // flush: sides where the roof stops at its wall, no overhang — [low across, high across, low end, high end] (along x:
+  // the z0 eave, the z1 eave, the x0 gable, the x1 gable): a house hard against another, their roofs meet, not cross.
+  // A geometry without its end at coordinate ≤ lo / ≥ hi along `ax` (null: kept) — the source of an outline shell that
+  // has no end there: where a roof runs on into the next house's, no black line crosses the join.
+  let rodOpen = null;
+  function openEnded(geo, ax, lo, hi){
+    const g = geo.index ? geo.toNonIndexed() : geo.clone(), P = g.attributes.position, keep = [];
+    const at = i => ax === 'x' ? P.getX(i) : ax === 'y' ? P.getY(i) : P.getZ(i);
+    for (let t = 0; t < P.count; t += 3) { const a = at(t), b = at(t + 1), c = at(t + 2);
+      if ((lo !== null && a <= lo && b <= lo && c <= lo) || (hi !== null && a >= hi && b >= hi && c >= hi)) continue; keep.push(t, t + 1, t + 2); }
+    g.setIndex(keep); const out = own(g.toNonIndexed()); g.dispose(); return out;
+  }
+  // …and an edge-line set without the lines lying in those end planes.
+  function openEdges(lines, ax, lo, hi){
+    const P = lines.attributes.position, k = ax === 'x' ? 0 : ax === 'y' ? 1 : 2, out = [], e = 1e-3;
+    for (let i = 0; i < P.count; i += 2) { const a = P.array[i * 3 + k], b = P.array[i * 3 + 3 + k];
+      if ((lo !== null && Math.abs(a - lo) < e && Math.abs(b - lo) < e) || (hi !== null && Math.abs(a - hi) < e && Math.abs(b - hi) < e)) continue;
+      for (let j = 0; j < 6; j++) out.push(P.array[i * 3 + j]); }
+    const g = own(new THREE.BufferGeometry()); g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3)); return g;
+  }
+  function thatchRoof(g, tc, box, wallH, rise, alongX, flush = null){
+    const [x0, z0, x1, z1] = box, T = 0.085, over = 0.16, end = 0.14, F = flush || [];
+    const half = (alongX ? z1 - z0 : x1 - x0) / 2, hw = half + over, eY = wallH - 0.06, rY = wallH + rise + T * 0.6, slope = (rY - eY) / hw;
+    // (the shape's + side is the low-across side once turned along x; the slope the same either way, so a flush eave sits higher)
+    const lowAcross = alongX ? 1 : -1, hwP = half + (F[lowAcross > 0 ? 0 : 1] ? 0.012 : over), hwN = half + (F[lowAcross > 0 ? 1 : 0] ? 0.012 : over), eP = rY - slope * hwP, eN = rY - slope * hwN;
+    const e0 = F[2] ? 0.03 : end, e1 = F[3] ? 0.03 : end, open = F[2] || F[3];
     // the cross-section (s across the ridge, y up): outer surface eave → crown → eave, a rounded nose at each eave,
     // the underside a thickness T below
     const sh = new THREE.Shape(), n = 0.35 * T;
-    sh.moveTo(-hw, eY + n); sh.quadraticCurveTo(-hw - n * 0.4, eY - n * 0.3, -hw + n, eY - n * 0.2);       // the left nose, curled under
+    sh.moveTo(-hwN, eN + n); sh.quadraticCurveTo(-hwN - n * 0.4, eN - n * 0.3, -hwN + n, eN - n * 0.2);    // the − nose, curled under
     sh.lineTo(0, rY - T * 1.7);                                                                             // underside up to the apex
-    sh.lineTo(hw - n, eY - n * 0.2); sh.quadraticCurveTo(hw + n * 0.4, eY - n * 0.3, hw, eY + n);          // the right nose
+    sh.lineTo(hwP - n, eP - n * 0.2); sh.quadraticCurveTo(hwP + n * 0.4, eP - n * 0.3, hwP, eP + n);       // the + nose
     sh.lineTo(T * 1.1, rY - T * 1.1 * slope * 0.9); sh.quadraticCurveTo(0, rY + T * 0.15, -T * 1.1, rY - T * 1.1 * slope * 0.9);   // the rounded crown
-    sh.lineTo(-hw, eY + n);
-    const len = (alongX ? x1 - x0 : z1 - z0) + end * 2 - 0.06;
+    sh.lineTo(-hwN, eN + n);
+    const len = (alongX ? x1 - x0 : z1 - z0) + e0 + e1 - 0.06;
     const geo = own(new THREE.ExtrudeGeometry(sh, { depth: len, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 3, curveSegments: 6 }));
-    if (alongX) geo.rotateY(Math.PI / 2).translate(x0 - end + 0.03, 0, (z0 + z1) / 2);
-    else geo.translate((x0 + x1) / 2, 0, z0 - end + 0.03);
-    const m = new THREE.Mesh(geo, mat(THATCH)); m.userData.hullGeo = geo; g.add(m);
+    const hg = open ? openEnded(geo, 'z', F[2] ? 0.001 : null, F[3] ? len - 0.001 : null) : geo;   // (extruded along z: its start is the low end)
+    for (const q of open ? [geo, hg] : [geo]) { if (alongX) q.rotateY(Math.PI / 2).translate(x0 - e0 + 0.03, 0, (z0 + z1) / 2); else q.translate((x0 + x1) / 2, 0, z0 - e0 + 0.03); }
+    const m = new THREE.Mesh(geo, mat(THATCH)); m.userData.hullGeo = hg; g.add(m);
     const top = rY + T * 0.05;
-    if (alongX) pole(g, tc, [x0 - end, top, (z0 + z1) / 2], [x1 + end, top, (z0 + z1) / 2], 0.042);
-    else pole(g, tc, [(x0 + x1) / 2, top, z0 - end], [(x0 + x1) / 2, top, z1 + end], 0.042);
+    const rp = alongX ? pole(g, tc, [x0 - e0, top, (z0 + z1) / 2], [x1 + e1, top, (z0 + z1) / 2], 0.042) : pole(g, tc, [(x0 + x1) / 2, top, z0 - e0], [(x0 + x1) / 2, top, z1 + e1], 0.042);
+    if (open) rp.userData.hullGeo = rodOpen || (rodOpen = new THREE.CylinderGeometry(0.5, 0.5, 1, 12, 1, true));   // (the ridge roll runs on too: no ring round its end)
   }
   // A turned thatch roof (the mill's cone: many sides; a camp's hipped pyramid: 4, turned to the walls): the straw
   // bulging out from the apex and curling under at the eave into a fat lip
@@ -1023,17 +1054,27 @@ gl_Position = projectionMatrix * mvPosition;`;
   // surface from eaveTop at the edges to ridgeTop mid-span), ridge along x (or z).
   // roofOn: the shell resting on houseFaces walls — its underside IS the gable
   // slope — overhanging `side` past the eaves and [end0, end1] past the gables.
-  function roofShell(g, col, x0, z0, x1, z1, eaveTop, ridgeTop, t, alongX = true){
-    const d = alongX ? z1 - z0 : x1 - x0;
-    const sh = new THREE.Shape([[0, eaveTop], [d / 2, ridgeTop], [d, eaveTop], [d, eaveTop - t], [d / 2, ridgeTop - t], [0, eaveTop - t]].map(p => new THREE.Vector2(...p)));
+  // (r, eave1: the ridge's place across, and the far eave's height — a roof flush on one side is not symmetric)
+  function roofShell(g, col, x0, z0, x1, z1, eaveTop, ridgeTop, t, alongX = true, r = null, eave1 = eaveTop, open = null){
+    const d = alongX ? z1 - z0 : x1 - x0; if (r === null) r = d / 2;
+    const sh = new THREE.Shape([[0, eaveTop], [r, ridgeTop], [d, eave1], [d, eave1 - t], [r, ridgeTop - t], [0, eaveTop - t]].map(p => new THREE.Vector2(...p)));
     const geo = own(new THREE.ExtrudeGeometry(sh, { depth: alongX ? x1 - x0 : z1 - z0, bevelEnabled: false }));
-    if (alongX) geo.rotateY(-Math.PI / 2);
-    g.add(inked(geo, mat(col), alongX ? x1 : x0, 0, z0, 1, 1, 1));
+    // (open: [its low end, its high end] runs on into the next roof — no outline, no edge line there. Extruded along z
+    // from the high end when along x.)
+    const depth = alongX ? x1 - x0 : z1 - z0, O = open && (open[0] || open[1]) ? (alongX ? [open[1], open[0]] : open) : null;
+    const hg = O ? openEnded(geo, 'z', O[0] ? 0.001 : null, O[1] ? depth - 0.001 : null) : null;
+    for (const q of hg ? [geo, hg] : [geo]) if (alongX) q.rotateY(-Math.PI / 2);
+    const m = inked(geo, mat(col), alongX ? x1 : x0, 0, z0, 1, 1, 1);
+    if (O) { m.userData.hullGeo = hg; const ln = m.children.find(c => c.isLineSegments);
+      ln.geometry = alongX ? openEdges(ln.geometry, 'x', O[1] ? -depth : null, O[0] ? 0 : null) : openEdges(ln.geometry, 'z', O[0] ? 0 : null, O[1] ? depth : null); }
+    g.add(m);
   }
-  function roofOn(g, col, [x0, z0, x1, z1], wallH, rise, t, alongX, side, end0, end1){
-    const half = (alongX ? z1 - z0 : x1 - x0) / 2, slope = rise / half, eaveTop = wallH + t - slope * side, ridgeTop = wallH + rise + t;
-    if (alongX) roofShell(g, col, x0 - end0, z0 - side, x1 + end1, z1 + side, eaveTop, ridgeTop, t, true);
-    else roofShell(g, col, x0 - side, z0 - end0, x1 + side, z1 + end1, eaveTop, ridgeTop, t, false);
+  // (flush: as thatchRoof's)
+  function roofOn(g, col, [x0, z0, x1, z1], wallH, rise, t, alongX, side, end0, end1, flush = null){
+    const F = flush || [], half = (alongX ? z1 - z0 : x1 - x0) / 2, slope = rise / half, ridgeTop = wallH + rise + t;
+    const s0 = F[0] ? 0.01 : side, s1 = F[1] ? 0.01 : side, e0 = F[2] ? 0.01 : end0, e1 = F[3] ? 0.01 : end1, v0 = wallH + t - slope * s0, v1 = wallH + t - slope * s1;
+    if (alongX) roofShell(g, col, x0 - e0, z0 - s0, x1 + e1, z1 + s1, v0, ridgeTop, t, true, s0 + half, v1, [F[2], F[3]]);
+    else roofShell(g, col, x0 - s0, z0 - e0, x1 + s1, z1 + e1, v0, ridgeTop, t, false, s0 + half, v1, [F[2], F[3]]);
   }
   // Pyramid (square base side 1 at y=0, apex y=1) scaled over a footprint.
   function pyramid(g, col, x0, z0, x1, z1, y0, rise){
@@ -1075,7 +1116,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     _oreGeo = _oreGeo || (() => { const q = new THREE.LatheGeometry([[0, 0], [0.95, 0], [1.02, 0.35], [0.82, 0.74], [0.4, 0.98], [0, 1]].map(([a, b]) => new THREE.Vector2(a, b)), 7).toNonIndexed(); q.computeVertexNormals(); return q; })();
     let m0 = _oreMat.get(col); if (!m0) _oreMat.set(col, m0 = new THREE.MeshLambertMaterial({ color: col, flatShading: true }));
     const m = new THREE.Mesh(_oreGeo, m0); m.position.set(x, 0, z); m.scale.set(r, h, r); m.rotation.y = x * 7.1 + z * 3.3;
-    m.userData.hullGeo = _oreGeo; g.add(m); return m;                                 // (an outline, no inner edge lines: as the deposits)
+    m.userData.hullGeo = _oreGeo; m.userData.hullRound = true; g.add(m); return m;   // (hullRound: outlined all round, as the deposits — a wall's outline stops at the ground, a boulder's doesn't)                                 // (an outline, no inner edge lines: as the deposits)
   };
   // The market stall canopy (drawBuilding MARKET stall): FLAT at height y0 over
   // the square, split along the back→front diagonal; each half fans from its
@@ -1209,6 +1250,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     return tintJoin([[boxBatch(stalks, 'rod'), '#c9a227'], [boxBatch(heads, 'ball'), '#e8c84a'], [boxBatch(stubs, 'rod'), '#9a7f4a']]);
   }
 
+  // Which sides of a house stand hard against another house: [z0, z1, x0, x1] (thatchRoof's flush). Viewer-only.
+  function houseFlush(e){
+    if (e.id < 0) return null;
+    const is = (x, y) => { const t = map[y] && map[y][x], o = t && t.occupied != null ? entitiesById.get(t.occupied) : null; return !!(o && o.btype === 'HOUSE' && o.hp > 0); };
+    return [is(e.x, e.y - 1), is(e.x, e.y + 1), is(e.x - 1, e.y), is(e.x + 1, e.y)];
+  }
+  let tcShadeMat = null;
   const MODELS = {
     // A flat tilled field (walkable: units stand on the ground, so the bed is
     // paint, not a raised block), a low planting ridge under each crop row, and
@@ -1217,7 +1265,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     // stagger, jitter, lean and height all from the same per-farm seed).
     FARM(g, e){
       const w = e.w || 2, h = e.h || 2, dead = e.exhausted, fseed = e.x * 7 + e.y * 13, px = 1 / PX;
-      patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
+      // (in the world the soil is the ground's own — groundArt, render-terrain; in the lab, a patch of it)
+      if (e.id < 0 || typeof groundArt !== 'function') patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
       const ridges = FARM_CROP_ROWS.map(t => [e.x + w / 2, 0.004, e.y + h * t, w - 0.08, 0.008, 0.06]);
       g.add(new THREE.Mesh(boxBatch(ridges), mat(dead ? '#6f5d47' : '#6b4d2e')));
       g.add(new THREE.Mesh(farmCrop(e), wheatMat()));
@@ -1235,8 +1284,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (a > 0) for (const fc of FACES) timberFrame(g, beam, fc, box, wallH, L.braceBay(fc));   // (no door: the house reads cleaner without one)
       // the roof: Dark thatch (thick, deep eaves) under the owner's ridge roll; later the owner's shingles
       const rp = piece(g);
-      if (a === 0) thatchRoof(rp, tc, box, wallH, rise, true);
-      else roofOn(rp, tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13);
+      const flush = houseFlush(e);   // (hard against another house: no overhang on that side)
+      if (a === 0) thatchRoof(rp, tc, box, wallH, rise, true, flush);
+      else roofOn(rp, tc + '|shingles', box, wallH, rise, thick, true, 0.05, 0.1, 0.13, flush);
       // (drawGableBlock: ridge along x through the middle, 20px up; the roof rests on the gable walls, overhanging 13% past
       // the front (+x) gable, 10% past the back and 5% past the eaves — the overhang and the back slope's end show, as the art)
       if (a >= 1) { // chimney: along the ridge (per house), 30% down the +z slope, 16px proud; a dark flue, smoke from it
@@ -1263,6 +1313,11 @@ gl_Position = projectionMatrix * mvPosition;`;
       const outer = boxFaces(...box, 0, keepH), inner = boxFaces(i0, j0, i1, j1, F, keepH), wH = 14 * k / HPX;
       for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
       for (const f of FACES) inner[f].out = inner[f].out.map(v => -v);     // the parapet's inner faces look into the recess
+      // Under the decks the keep's two front walls are in their shade (as the 2D): a dark sheet a hair off each, from the
+      // ground to where the decks meet them. (Whole and standing only: a site or a ruin has no decks to shade it.)
+      if (e.complete && !e.openTop) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+        const px = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH).rotateY(Math.PI / 2)), sm); px.position.set(x + mid + 0.004, dH / 2, z + mid / 2); g.add(px);
+        const pz = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH)), sm); pz.position.set(x + mid / 2, dH / 2, z + mid + 0.004); g.add(pz); }
       const H0 = keepH, rim = [
         [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
         [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
@@ -1305,7 +1360,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       solid(g, wall + '|plaster', Object.values(f));
       if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
-      patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                                    // yard
+      if (e.id < 0) patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                      // the yard (in the world: the ground's own worn earth — groundArt)
       const fh = 9 * s / HPX, posts = [[-30, 13], [-30, 26], [-30, 38.5], [-30, 51], [-15, 51], [0, 51], [15, 51], [30, 51], [30, 13], [30, 26], [30, 38.5]];
       // The fence stops a hand's width short of the hall, so both keep their outlines.
       const gap = 0.035 + 0.05, backX = BP(0, 13).x + gap;
@@ -1599,10 +1654,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     // refilled every frame).
     const sc = document.createElement('canvas'); sc.width = sc.height = 64;
     const sx = sc.getContext('2d');
-    sx.fillStyle = 'rgba(0,0,0,0.28)'; sx.beginPath(); sx.arc(32, 32, 30, 0, 2 * Math.PI); sx.fill();
-    const stex = new THREE.CanvasTexture(sc), smat = new THREE.MeshBasicMaterial({ map: stex, transparent: true, depthWrite: false });
+    sx.fillStyle = SHADOW_FILL; sx.beginPath(); sx.arc(32, 32, 30, 0, 2 * Math.PI); sx.fill();
+    // (one darkening a pixel: where ovals overlap — a forest's, a crowd's — they don't pile up; its own stencil bit, and
+    // only where the oval is: alphaTest)
+    const stex = new THREE.CanvasTexture(sc), smat = new THREE.MeshBasicMaterial({ map: stex, transparent: true, depthWrite: false, alphaTest: 0.05,
+      stencilWrite: true, stencilRef: 4, stencilFuncMask: 4, stencilWriteMask: 4, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
     const sgeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    part('shadow', sgeo, smat, null); part('shadowU', sgeo, smat, null);
+    part('shadow', sgeo, smat, null); part('shadowU', sgeo, smat, null); part('shadowF', sgeo, smat, null);   // (F: a felled tree's, laid each frame)
     // Arrows (drawProjectiles): a pale 20px shaft behind a steel head, built
     // along +y with the tip at the origin; fletched archer arrows add two
     // crossed team-color vanes at the tail.
@@ -1643,7 +1701,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       _fFr.s.center.set(x + 0.5, elevAny ? 0.8 + groundH(x + 0.5, y + 0.5) - camLift : 0.8, y + 0.5); if (!_fFr.fr.intersectsSphere(_fFr.s)) continue; // (radius 2.5: a crown's reach, plus the margin a turn eats before the re-list)
       const wx = x + 0.5, wz = y + 0.5; putTile = y * MAP + x;
       if (t.t === TERRAIN.FOREST) {
-        const k = 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08); // the art's per-tree size noise
+        const k = treeSize(x, y); // the art's per-tree size noise (render-terrain)
         const shade = (r, x0 = wx, z0 = wz) => put('shadow', x0, 0.006, z0, 2 * r, 1, 2 * r);
         if (t.res > 60) { // each tree its own: crown shape, turn, proportions, shade, a nudge off the grid
           const h = n => tileHash(x, y, n);
@@ -1770,7 +1828,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     // A cut tree pivots on its stump's top toward screen-right, coming to rest where its crown meets the ground.
     // As 2D, it lies mostly on its own square: a little smaller, and slid back off the stump as it goes down so the
     // crown ends near the square's edge rather than across the next tile.
-    const T = feat.trunkF, C = feat.crownF, FIT = 0.85;
+    const T = feat.trunkF, C = feat.crownF, SF = feat.shadowF, FIT = 0.85; SF.n = 0;
     const dir = _e2 = _e2 || new THREE.Vector3(0, 1, 0).applyAxisAngle(FALL_AXIS, -Math.PI / 2); // the way it falls, on the ground
     T.n = C.n = 0;
     for (const f of fallers) {
@@ -1779,8 +1837,12 @@ gl_Position = projectionMatrix * mvPosition;`;
       const back = Math.max(0, (TREE_H + CROWN_R) * f.k * FIT - 1.05) * u * u;                  // slides with the fall
       _m.compose(_p.set(f.wx - dir.x * back, STUMP_H * f.k, f.wz - dir.z * back), _q.setFromAxisAngle(FALL_AXIS, -rest * u * u), _s.set(sc, sc, sc)); // accelerating, like a real fall
       T.mesh.setMatrixAt(T.n++, _m); C.mesh.setMatrixAt(C.n++, _m);
+      // its shadow, as the 2D's (felledTreeShadow: along the fall, from the stump)
+      for (const [a, along, across] of felledTreeShadow(f.k, u)) { if (SF.n >= FEAT_CAP) break;
+        _m.compose(_p.set(f.wx + dir.x * a, 0.006, f.wz + dir.z * a), _q.setFromAxisAngle(_s.set(0, 1, 0), Math.atan2(-dir.z, dir.x)), _s.set(2 * along, 1, 2 * across)); SF.mesh.setMatrixAt(SF.n++, _m); }
     }
     for (const f of [T, C]) { f.mesh.count = f.n; f.hull.count = f.n; f.mesh.instanceMatrix.needsUpdate = true; }
+    SF.mesh.count = SF.n; SF.mesh.instanceMatrix.needsUpdate = true;
     // Glints face the camera and twinkle: each swells and fades on its own phase.
     const G = feat.glint, face = _q.setFromAxisAngle(_p.set(0, 1, 0), Math.atan2(-Math.cos(yaw), -Math.sin(yaw)));
     G.n = 0;
@@ -3887,7 +3949,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // front; a door in its right (+x) face (drawDoorRight) and a team pennant.
   function campHut(g, e, wallCol, roofCol){
     const s = 20 / 32, wallH = 14 / HPX, box = [e.x + 1 - s, e.y, e.x + 1, e.y + s];
-    patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile, faint edge
+    if (e.id < 0) patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile (in the world: the ground's own)
     const f = boxFaces(...box, 0, wallH);
     if (!e.complete || e.openTop) delete f.top;                       // (a site: open till its roof goes on; a damaged one, open under it)
     f.x1.holes.push(hole('x1', box, 0.5, SILL, s / 4, 8 / HPX));
@@ -3943,7 +4005,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   function refreshModel(e){
     const hurt = isHurt(e);
     const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
-      + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : '');
+      + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : e.btype === 'HOUSE' ? ':' + (houseFlush(e) || []).map(Number).join('') : '');
     let rec = solids.get(e.id);
     // (a standing farm whose crop alone changed: the crop's geometry is swapped, the model stays)
     if (rec && rec.crop && rec.key !== key && e.complete && !hurt && !rec.site && !rec.dmg && rec.key.slice(0, rec.key.lastIndexOf(':')) === key.slice(0, key.lastIndexOf(':'))) {
@@ -4369,7 +4431,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     const c = centerOf(e), b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h;
     if (Math.abs(c.x - camAt.x) > RANGE || Math.abs(c.y - camAt.y) > RANGE) return;
     let g, d;
-    if (rec && rec.dmg) { solids.delete(e.id); g = rec.obj; d = rec.dmg; g.userData.bid = null; }   // (taken over: refreshBuildings won't drop it)
+    // (taken over: refreshBuildings won't drop it — so what stands about it goes now: the yard's trainees, a roof's archers)
+    if (rec && rec.dmg) { solids.delete(e.id); g = rec.obj; d = rec.dmg; g.userData.bid = null;
+      for (const t of (rec.trainees || []).concat(rec.roof || [])) dropVillager(t); rec.trainees = rec.roof = null; }
     else { g = new THREE.Group(); const snap = { ...e, hp: 1, complete: true, openTop: true };
       try { if (isWallBtype(e.btype) || isGateBtype(e.btype)) g.add(wallModel(snap, []).obj); else if (MODELS[e.btype]) MODELS[e.btype](g, snap); else return; } catch (err) { return; }
       addHulls(g); scene.add(g); d = buildingDamage(g, e.x, e.y, w, h); }
@@ -6564,7 +6628,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Fetch three.js while the menu is up, so a match opens straight into 3D.
   if (preferredView() !== '2d' && !navigator.webdriver)
     window.addEventListener('load', () => setTimeout(() => loadThree().catch(() => {}), 500), { once: true });
-  window.__povYaw = () => yaw; // dev: the view's heading (tests)
+  window.__povYaw = a => { if (a !== undefined) yaw = a; return yaw; }; // dev: the view's heading (tests; given one, sets it)
   window.__povAnimYaw = id => { const a = animals.get(id); return a ? a.yaw : null; }; // dev: an animal's drawn heading (tests)
   window.__pov3dScene = () => scene; // dev: profiling
   window.__povVM = (o, pitch, utype) => {

@@ -468,7 +468,7 @@ function renderFrame(){
   // paints: overlapping diamonds (adjacent wall segments, gate+wall runs)
   // darken once instead of stacking, and a later building's shadow can
   // never fall on top of an earlier building's base.
-  X.fillStyle = 'rgba(0,0,0,0.16)';
+  X.fillStyle = SHADOW_FILL;
   X.beginPath();
   allDrawable.forEach(e => {
     if (e.type !== 'building' && e.type !== 'gate_back' && e.type !== 'tc_back') return;

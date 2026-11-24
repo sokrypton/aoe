@@ -1098,7 +1098,7 @@ function drawUnitShadow(e, sx, sy){
   let f = UNIT_SHADOW[e.utype] || {len:0.18, wid:0.18};
   let ta = e.faceAng !== undefined ? e.faceAng : (e.dir || 0) * Math.PI / 4; // facing angle in TILE space (the dragon: its own smooth heading)
   X.save();
-  X.fillStyle = 'rgba(0,0,0,0.28)';
+  X.fillStyle = SHADOW_FILL;
   // No horizontal nudge: units are small enough that the buildings' cast-
   // to-the-right offset reads as the shadow being off its feet rather than
   // as light direction — center it on the legs (origin x). Drop is per-type

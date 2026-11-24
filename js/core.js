@@ -1200,6 +1200,8 @@ let buildingFxTick = new Map();
 // ---- NEW SPEC GAME STATE & HELPERS ----
 let fog=[], projectiles=[], particles=[];
 
+// Every shadow on the ground is this dark, both views: under a building, a tree, a rock, a bush, a unit (viewer-only).
+const SHADOW = 0.22, SHADOW_FILL = 'rgba(0,0,0,' + SHADOW + ')';
 // ---- ELEVATION: hills and valleys ----
 // The ground's height at every tile CORNER ((MAP+1)² of them, in tiles): a pure function of the match's elevSpec
 // ({seed, flats: the start spots} — set by genMap, carried in saves and state snapshots: a few numbers) and MAP, so

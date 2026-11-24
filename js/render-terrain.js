@@ -116,7 +116,10 @@ function oreRocks(gold, p, x, y){
     if (i) { const a = i === 1 ? a1 : a1 + 1.2 + r(32) * (2 * Math.PI - 2.4), d = R[0] + R[i] + 0.03 + r(33 + i) * 0.05; bx = d * Math.cos(a); bz = d * Math.sin(a); }
     return { bx, bz, ax: half * sx * w * V[i], ay: h * kh * size * (0.9 + r(3 + i * 5) * 0.2), az: half * sz * w * V[i], rot: i * 0.7 + r(5 + i * 5) * 6.283, col: cols[i], R: R[i], half, v: V[i] }; });
   rocks.sort((a, b) => k.depth(a.bx, a.bz) - k.depth(b.bx, b.bz));
-  for (const q of rocks) { const g = k.P(q.bx * T, 0, q.bz * T); X.fillStyle = 'rgba(0,0,0,0.22)'; X.beginPath(); X.ellipse(g[0], g[1], q.R * T * 1.05, q.R * T * 0.55, 0, 0, Math.PI * 2); X.fill(); }   // its shadow on the ground
+  // their shadows on the ground: an oval reaching out past each rock's foot (as the 3D's: 1.7 × its radius), the pile's in ONE fill
+  X.fillStyle = SHADOW_FILL; X.beginPath();
+  for (const q of rocks) { const g = k.P(q.bx * T, 0, q.bz * T), rx = q.R * T * 1.7; X.moveTo(g[0] + rx, g[1]); X.ellipse(g[0], g[1], rx, rx * 0.5, 0, 0, Math.PI * 2); }
+  X.fill();
   const glints = [];   // [x, y (px from the tile's centre), radius]: where the gold glints (the 3D's spots) — drawOreTile twinkles them
   for (const q of rocks) {
     oreBoulder(q);
@@ -138,7 +141,7 @@ function drawBerryBush(t, x, y, sx, cy){
   for (let i = 0, n = Math.round(12 * p); i < n; i++) { const q = puffs[(seed + i * 5) % puffs.length], a = (seed + i) * 2.39996, up = 0.15 + 0.5 * (((seed + i * 3) % 4) / 4), h = Math.sqrt(1 - up * up);
     items.push({ berry: true, s: scr(q.dx + Math.cos(a) * h * q.r, q.dy + up * q.r, q.dz + Math.sin(a) * h * q.r), rr: 2.6 }); }
   items.sort((a, b) => a.s[2] - b.s[2]);
-  X.fillStyle = 'rgba(0,0,0,0.25)'; X.beginPath(); X.ellipse(sx, cy + 1.5, 13, 4, 0, 0, Math.PI * 2); X.fill();   // on the ground, not floating
+  X.fillStyle = SHADOW_FILL; X.beginPath(); X.ellipse(sx, cy + 1.5, 13, 4, 0, 0, Math.PI * 2); X.fill();   // on the ground, not floating
   X.strokeStyle = '#000'; X.lineWidth = 2.6; X.beginPath(); for (const it of items) if (!it.berry) { X.moveTo(it.s[0] + it.rr, it.s[1]); X.arc(it.s[0], it.s[1], it.rr, 0, Math.PI * 2); } X.stroke();   // one outline round the leaves
   // the leaves one lit mass (as the trees); a berry over them unless a nearer leaf puff covers it (round the back)
   const leafs = items.filter(it => !it.berry);
@@ -166,24 +169,185 @@ function drawTileResource(t, x, y, sx, cy){
 // the fogged tiles' ore and bushes, and the units shown there.
 let _gnd=null;
 const _rgbOf = new Map();
+// The ground's picture, both views: GROUND_PX pixels a tile, painted once and mended where a tile changes (a tree
+// felled, a farm laid, a building raised or razed). As the old game's: grass with a grain and a slow mottle, bare
+// earth showing through in patches and worn in round the buildings, each running into the next along a speckled,
+// ragged edge. Viewer-only: hashed noise, never the sim's.
+// GROUND_PX: the picture's pixels a tile — the grain's size (fewer: bigger, blockier pixels). ?groundpx=N in the address
+// tries another.
+const GROUND_PX = (typeof location !== 'undefined' && Math.round(+new URLSearchParams(location.search).get('groundpx'))) || 20, GROUND_WEAR = 3;
+// The ground worn bare round buildings and deposits, GROUND_WEAR tiles out (false: grass up to their walls — under a Town
+// Center, a deposit or a farm the ground is still its own, and paths still wear).
+const GROUND_WEAR_ON = true;
+let _gart = null;
+const _gHash = (x, y, s) => { let h = (x * 374761393 + y * 668265263 + s * 2246822519) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const _gBase = new Map();   // a kind's colour: its palette's mean
+function _gKind(t){ let c = _gBase.get(t); if (!c) { const cols = TCOL[t] || TCOL[0]; c = [0, 0, 0];
+  for (const h of cols) for (let k = 0; k < 3; k++) c[k] += parseInt(h.slice(1 + 2 * k, 3 + 2 * k), 16) / cols.length; _gBase.set(t, c); } return c; }
+const GROUND_DIRT = [172, 143, 92], GROUND_THIN = [160, 142, 82], GROUND_STRAW = [144, 142, 70], GROUND_DRY = [108, 142, 54], GROUND_SOIL = [122, 90, 56], GROUND_SPENT = [125, 106, 82];
+// One noise layer over a block of pixels, laid out ahead: its value at pixel (px, py): smooth value noise at (wx·k, wy·k) — or wx / k: div —
+// seeded s, but with each column's cell and blend, each row's, and each lattice corner's hash
+// worked out once for the block — not again at every pixel.
+function _gLayer(k, div, s, px0, px1, py0, py1, G){
+  const at = p => { const w = (p + 0.5) / G; return div ? w / k : w * k; };
+  const nx = px1 - px0, ny = py1 - py0, xc = new Int32Array(nx), xu = new Float64Array(nx), yc = new Int32Array(ny), yv = new Float64Array(ny);
+  for (let i = 0; i < nx; i++) { const x = at(px0 + i), x0 = Math.floor(x), f = x - x0; xc[i] = x0; xu[i] = f * f * (3 - 2 * f); }
+  for (let i = 0; i < ny; i++) { const y = at(py0 + i), y0 = Math.floor(y), f = y - y0; yc[i] = y0; yv[i] = f * f * (3 - 2 * f); }
+  const lx = xc[0], ly = yc[0], w = xc[nx - 1] - lx + 2, h = yc[ny - 1] - ly + 2, T = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) T[y * w + x] = _gHash(lx + x, ly + y, s);
+  for (let i = 0; i < nx; i++) xc[i] -= lx; for (let i = 0; i < ny; i++) yc[i] = (yc[i] - ly) * w;
+  return (i, j) => { const o = yc[j] + xc[i], a = T[o], b = T[o + 1], c = T[o + w], d = T[o + w + 1], u = xu[i], v = yv[j];
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+}
+function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0..ty1
+  const G = GROUND_PX, N = MAP * G, D = A.d.data, OY = A.oy || 0, K = A.kind,   // (OY: the first pixel row D holds — a worker's band)
+    W = GROUND_WEAR, R = Math.ceil(W), ORE = 1.5, src = [];   // (ORE: how far round a deposit the ground is bare)
+  const px0 = tx0 * G, px1 = (tx1 + 1) * G, py0 = ty0 * G, py1 = (ty1 + 1) * G, L = (k, div, s) => _gLayer(k, div, s, px0, px1, py0, py1, G);
+  const J3 = L(1.3, false, 3), J4 = L(1.3, false, 4), P1 = L(6.5, true, 1), P2 = L(2.3, true, 2), P6 = L(1.4, false, 6), E13 = L(2.6, false, 13), G9 = L(3.1, false, 9), G10 = L(4, true, 10);
+  const L11 = GROUND_WEAR_ON ? L(2.1, true, 11) : null, L12 = GROUND_WEAR_ON ? L(1.3, false, 12) : null;
+  const PAL = [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), FOREST = TERRAIN.FOREST, BERRIES = TERRAIN.BERRIES, FARM = TERRAIN.FARM, GOLD = TERRAIN.GOLD, STONE = TERRAIN.STONE, GRASS = TERRAIN.GRASS;
+  // tile by tile: what wears the ground near it — the built tiles and deposits within reach — is gathered once a tile,
+  // not looked for again at each of its pixels
+  for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+  src.length = 0;
+  if (GROUND_WEAR_ON) for (let y = ty - R; y <= ty + R; y++) for (let x = tx - R; x <= tx + R; x++) { if (x < 0 || y < 0 || x >= MAP || y >= MAP) continue;
+    const k = K[y * MAP + x], ore = (k & 7) === GOLD || (k & 7) === STONE, w = k & 8 ? W : ore ? ORE : 0; if (w) src.push(x, y, w); }
+  for (let py = ty * G; py < (ty + 1) * G; py++) { const j = py - py0, wy = (py + 0.5) / G;
+  for (let px = tx * G; px < (tx + 1) * G; px++) { const i = px - px0;
+    // (where it stands, in tiles — pushed about, so the edge between two kinds wanders off the grid)
+    const wx = (px + 0.5) / G, h = _gHash(px, py, 5);
+    const jx = wx + (J3(i, j) - 0.5) * 0.5 + (h - 0.5) * 0.14, jy = wy + (J4(i, j) - 0.5) * 0.5 + (_gHash(px, py, 8) - 0.5) * 0.14;
+    // (under a tree or a bush, grass: its own shadow does the darkening — no dark floor as well)
+    const kx = Math.floor(jx), ky = Math.floor(jy), k0 = K[(ky < 0 ? 0 : ky > MAP - 1 ? MAP - 1 : ky) * MAP + (kx < 0 ? 0 : kx > MAP - 1 ? MAP - 1 : kx)];
+    let t = k0 & 7; if (t === FOREST || t === BERRIES) t = GRASS;
+    if (t === FARM) t = GRASS;   // (a farm marks one tile of its four: the field is told by what stands on it)
+    let c = PAL[t];
+    // a farm's tilled earth (its own art lays the furrows and crop on it); bare under the Town Center, trodden by all
+    // who cross it, and under a deposit
+    if (k0 & 64) c = k0 & 32 ? GROUND_SPENT : GROUND_SOIL;
+    else if (k0 & 16 || t === GOLD || t === STONE) c = GROUND_DIRT;
+    else if (t === GRASS) {
+      // bare earth: in patches of its own, and worn in round what is built (nearest built tile's edge)
+      let wear = 0;
+      for (let q = 0; q < src.length; q += 3) { const x = src[q], y = src[q + 1], w = src[q + 2];
+        const dx = Math.max(x - wx, 0, wx - x - 1), dy = Math.max(y - wy, 0, wy - y - 1), d = Math.sqrt(dx * dx + dy * dy); if (d < w) wear = Math.max(wear, 1 - d / w); }
+      const patch = P1(i, j) * 0.6 + P2(i, j) * 0.3 + P6(i, j) * 0.1;
+      // (grass gives way to earth by degrees, a tone at a time — lush, drying, straw, thin, bare — each band speckled into
+      // the next: a worn edge, in pixels, not a line and not a blur)
+      // (round a building: bare for a tile or so out — its edge wandering in and out as a patch's own, not a frame round it)
+      const lobe = wear > 0 ? (L11(i, j) - 0.5) * 1.1 + (L12(i, j) - 0.5) * 0.4 : 0;
+      const trod = k0 >> 8 & 3;                                                   // (a path: thinned, worn through, bare)
+      const m = Math.max((patch - 0.56) * 8, wear > 0 ? (wear - 0.3 + lobe * 0.6) * 1.9 : -9,   // (as gentle a fall-off as a patch's own: bare for a tile out, thinning over the next)
+        trod ? trod * 0.34 - 0.1 : -9) + (h - 0.5) * 0.3 + (E13(i, j) - 0.5) * 0.3;
+      c = m > 0.62 ? GROUND_DIRT : m > 0.44 ? GROUND_THIN : m > 0.27 ? GROUND_STRAW : m > 0.1 ? GROUND_DRY : c;
+    }
+    // the grain, a blade-scale mottle, and a slow drift from lush to dry
+    const lum = 1 + (h - 0.5) * 0.17 + (G9(i, j) - 0.5) * 0.16 + (G10(i, j) - 0.5) * 0.14, o = ((py - OY) * N + px) * 4;
+    D[o] = c[0] * lum; D[o + 1] = c[1] * lum; D[o + 2] = c[2] * lum; D[o + 3] = 255;   // (the array clamps to 255 itself)
+  } } }
+}
+// A tile's code: its kind, + 8 with a building on it that the viewer has seen (+ 16 too: a Town Center), + 64 a farm (+ 32: worked out) (kept under the shroud, as the fog's own
+// memory; walls, gates and farms wear nothing).
+function _gCode(x, y, old){
+  const t = map[y][x], f = fog[y] ? fog[y][x] : 0; let b = old & 120;
+  if (f === 2 || window.fogDisabled) { const e = t.occupied != null ? entitiesById.get(t.occupied) : null; b = e && e.type === 'building' && e.btype !== 'FARM' && !isWallBtype(e.btype) && !isGateBtype(e.btype) ? (e.btype === 'TC' ? 24 : 8) : e && e.btype === 'FARM' ? (e.exhausted ? 96 : 64) : 0; }
+  return t.t | b | (old & 768);   // (+ 256 / 512: how trodden — groundTread)
+}
+// Paths: where people walk, the grass wears — thin at first, then to bare earth. Counted here, by the viewer alone
+// (never the sim's: it is lost with the page, and only what this player can see is counted): every GROUND_TREAD_EVERY
+// ticks each walking unit in sight treads the tile it is on.
+const GROUND_TREAD_EVERY = 4, GROUND_TREAD = [14, 40, 90];   // (treads to thin the grass, to wear it through, to bare it)
+function groundTread(A){
+  A.treadLv = A.treadLv || (i => { const n = A.tread[i]; return n >= GROUND_TREAD[2] ? 3 : n >= GROUND_TREAD[1] ? 2 : n >= GROUND_TREAD[0] ? 1 : 0; });
+  if (tick === A.treadTick || tick % GROUND_TREAD_EVERY) return; A.treadTick = tick;
+  for (const e of entities) { if (e.type !== 'unit' || e.hp <= 0 || e.garrisonedIn || !e.path.length || e.utype === 'dragon' || isHarmlessAnimal(e)) continue;
+    const x = Math.round(e.x), y = Math.round(e.y); if (x < 0 || y < 0 || x >= MAP || y >= MAP) continue;
+    if (!(window.fogDisabled || sameSide(e.team, myTeam) || (fog[y] && fog[y][x] === 2))) continue;
+    const i = y * MAP + x; if (A.tread[i] < 60000) A.tread[i]++; }
+}
+// The first painting of the picture, off the page's thread: in bands of tile rows, one to a worker, all at once — no
+// pause at a match's start (a big map's picture is a second's work). Till a band comes back its tiles show their kind's
+// plain colour. False where there are no workers (the picture is painted here, as before).
+let _gWorkers = null, _gJob = 0;   // (_gJob: each painting's own number — a late band of an earlier one is dropped)
+function _gPaintAway(A){
+  if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || MAP * GROUND_PX < 600) return false;
+  if (!_gWorkers) { try {
+    const consts = { TERRAIN, GROUND_DIRT, GROUND_THIN, GROUND_STRAW, GROUND_DRY, GROUND_SOIL, GROUND_SPENT, GROUND_WEAR, GROUND_WEAR_ON };
+    const src = Object.entries(consts).map(([k, v]) => 'const ' + k + ' = ' + JSON.stringify(v) + ';').join('\n') + '\nlet MAP, GROUND_PX, _PAL; const _gKind = t => _PAL[t];\nconst _gHash = ' + _gHash + ';\n' + _gLayer + '\n' + _gPaint
+      + '\nonmessage = e => { const m = e.data; MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; const A = { kind: m.K, oy: m.ty0 * m.G, d: { data: new Uint8ClampedArray(MAP * m.G * (m.ty1 - m.ty0 + 1) * m.G * 4) } };'
+      + ' _gPaint(A, 0, m.ty0, MAP - 1, m.ty1); postMessage({ id: m.id, ty0: m.ty0, ty1: m.ty1, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    _gWorkers = Array.from({ length: n }, () => new Worker(url));
+  } catch (err) { _gWorkers = []; } }
+  if (!_gWorkers.length) return false;
+  // till then: each tile its kind's colour
+  const G = GROUND_PX, PAL = [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), n = _gWorkers.length, id = (A.id = ++_gJob);
+  for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) { const k = A.kind[y * MAP + x], t = k & 7, c = k & 64 ? GROUND_SOIL : k & 16 || t === TERRAIN.GOLD || t === TERRAIN.STONE ? GROUND_DIRT : PAL[t === TERRAIN.FOREST || t === TERRAIN.BERRIES || t === TERRAIN.FARM ? TERRAIN.GRASS : t];
+    A.x.fillStyle = 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; A.x.fillRect(x * G, y * G, G, G); }
+  A.away = n;
+  _gWorkers.forEach((w, i) => {
+    const ty0 = Math.floor(MAP * i / n), ty1 = Math.floor(MAP * (i + 1) / n) - 1;
+    w.onmessage = e => { const m = e.data; if (_gart !== A || m.id !== A.id) return;   // (a new match since: dropped)
+      const N = A.n * G, rows = (m.ty1 - m.ty0 + 1) * G; A.d.data.set(new Uint8ClampedArray(m.buf), m.ty0 * G * N * 4);   // (its own size: MAP may be another match's by now)
+      A.x.putImageData(A.d, 0, 0, 0, m.ty0 * G, N, rows); A.ver++; A.away--; };
+    w.postMessage({ id, MAP, G, PAL, K: A.kind.slice(), ty0, ty1 });
+  });
+  return true;
+}
+// The picture, mended: { c: canvas, ver } — ver steps when it changed (the 3D ground's texture follows it).
+function groundArt(){
+  if (!_gart || _gart.n !== MAP || _gart.map !== map) { const c = document.createElement('canvas'); c.width = c.height = MAP * GROUND_PX; const x = c.getContext('2d');
+    _gart = { n: MAP, map, c, x, d: x.createImageData(c.width, c.height), kind: new Uint16Array(MAP * MAP), tread: new Uint16Array(MAP * MAP), treadTick: -1, ver: 0 };
+    for (let y = 0; y < MAP; y++) for (let x2 = 0; x2 < MAP; x2++) _gart.kind[y * MAP + x2] = _gCode(x2, y, 0);
+    if (!_gPaintAway(_gart)) { _gPaint(_gart, 0, 0, MAP - 1, MAP - 1); x.putImageData(_gart.d, 0, 0); }
+    _gart.ver++; return _gart; }
+  const A = _gart, K = A.kind, R0 = GROUND_WEAR_ON ? Math.ceil(GROUND_WEAR) + 1 : 1, ch = []; let x0, y0, x1, y1;
+  groundTread(A);
+  if (A.away > 0) return A;   // (being painted in the workers: mended once it's all in — the tiles' codes wait till then)
+  // (a tile more trodden mends just round itself; any other change, as far as a building wears the ground)
+  for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) { const o = K[y * MAP + x], k = _gCode(x, y, o) & ~768 | A.treadLv(y * MAP + x) << 8; if (k !== o) { K[y * MAP + x] = k; ch.push(x, y, (k ^ o) & ~768 ? R0 : 1); } }
+  // (repainted in boxes, each round changes that lie together: a building is one box, a felled tree a small one —
+  // never one box round two changes at opposite ends of the map)
+  const boxes = [];
+  for (let i = 0; i < ch.length; i += 3) { const x = ch[i], y = ch[i + 1], R = ch[i + 2]; let b = boxes.find(b => b[4] === R && x >= b[0] - R && x <= b[2] + R && y >= b[1] - R && y <= b[3] + R);
+    if (!b) boxes.push(b = [x, y, x, y, R]); else { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); } }
+  for (const b of boxes) { const G = GROUND_PX, R = b[4]; x0 = Math.max(0, b[0] - R); y0 = Math.max(0, b[1] - R); x1 = Math.min(MAP - 1, b[2] + R); y1 = Math.min(MAP - 1, b[3] + R);
+    _gPaint(A, x0, y0, x1, y1); A.x.putImageData(A.d, 0, 0, x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G); }
+  if (boxes.length) A.ver++;
+  return A;
+}
 function drawGround(minX, maxX, minY, maxY){
   if (!_gnd || _gnd.n !== MAP) {
     const mk = () => { const c = document.createElement('canvas'); c.width = MAP; c.height = MAP; const x = c.getContext('2d'); return { c, x, d: x.createImageData(MAP, MAP) }; };
     _gnd = { n: MAP, base: mk(), fog: mk() };
   }
-  const g = _gnd.base.d.data, fd = _gnd.fog.d.data;
+  const g = _gnd.base.d.data, fd = _gnd.fog.d.data, art = true;   // (the painted picture, the unexplored blacked out by the veil; a hill's tiles are drawn lifted, veiled there: drawHillGround)
   for (let y = 0; y < MAP; y++) { const fr = fog[y], row = map[y]; for (let x = 0; x < MAP; x++) {
     const i = (y * MAP + x) * 4, f = fr ? fr[x] : 0;
+    if (art) { fd[i] = fd[i + 1] = fd[i + 2] = 0; fd[i + 3] = !f ? 255 : elevAny && hillTile(x, y) ? 0 : f === 1 ? 140 : 0; continue; }
     if (!f || (elevAny && hillTile(x, y))) { g[i + 3] = 0; fd[i + 3] = 0; continue; }   // (a hill's tiles are drawn lifted, veiled there: drawHillGround)
     const t = row[x], cols = TCOL[t.t] || TCOL[0], col = cols[(x * 7 + y * 13) % cols.length];
     let rgb = _rgbOf.get(col); if (!rgb) { rgb = [1, 3, 5].map(k => parseInt(col.slice(k, k + 2), 16)); _rgbOf.set(col, rgb); }
     g[i] = rgb[0]; g[i + 1] = rgb[1]; g[i + 2] = rgb[2]; g[i + 3] = 255;
     fd[i] = fd[i + 1] = fd[i + 2] = 0; fd[i + 3] = f === 1 ? 140 : 0;   // (rgba(0,0,0,0.55))
   } }
-  _gnd.base.x.putImageData(_gnd.base.d, 0, 0); _gnd.fog.x.putImageData(_gnd.fog.d, 0, 0);
+  if (!art) _gnd.base.x.putImageData(_gnd.base.d, 0, 0); _gnd.fog.x.putImageData(_gnd.fog.d, 0, 0);
   // (the map's corner on LEVEL ground: mapToScreen would lift the whole picture by the height of tile 0,0)
-  const o = { sx: W / 2 - camDX(), sy: H / 2 + topH - camDY() }, lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0); X.restore(); };
-  lay(_gnd.base.c);
+  const o = { sx: W / 2 - camDX(), sy: H / 2 + topH - camDY() }, lay = c => { X.save(); X.transform(HALF_TW, HALF_TH, -HALF_TW, HALF_TH, Math.round(o.sx), Math.round(o.sy)); X.imageSmoothingEnabled = false; X.drawImage(c, 0, 0, MAP, MAP); X.restore(); };   // (crisp: the veil's tiles, the picture's pixels — not smeared)
+  lay(art ? groundArt().c : _gnd.base.c);
+  // The trees' shadows: an oval under each (as the 3D's), all in ONE fill — a forest's don't pile up into black. Under
+  // the veil: a shrouded wood's are dimmed with it. A felled tree's: under its stump, and along it as it goes down and lies.
+  X.fillStyle = SHADOW_FILL; X.beginPath();
+  const oval = (sx, cy, ax, ay) => { X.moveTo(sx + ax, cy); X.ellipse(sx, cy, ax, ay, 0, 0, Math.PI * 2); };
+  for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) { if (!fog[y] || !fog[y][x]) continue; const t = seenTile(x, y); if (!t || t.t !== TERRAIN.FOREST || t.res <= 0) continue;
+    const p = mapToScreen(x, y), k = treeSize(x, y);
+    if (t.res > 60) { const h1 = tileHash(x, y, 1), h2 = tileHash(x, y, 2), r = 0.54 * k * (0.9 + tileHash(x, y, 4) * 0.2) * Math.SQRT2;   // (its crown's reach; where its trunk stands: drawTreeEntity's nudge)
+      oval(Math.round(p.sx) + Math.round((h1 - h2) * 0.2 * HALF_TW), Math.round(p.sy) + HALF_TH + Math.round((h1 + h2 - 1) * 0.2 * HALF_TH), r * HALF_TW, r * HALF_TH); continue; }
+    const sx = Math.round(p.sx), cy = Math.round(p.sy) + HALF_TH, ft = treeFellTicks.get(x + ',' + y), u = ft === undefined ? 1 : Math.min(1, (tick - ft) / T30(40));
+    oval(sx, cy, 0.14 * k * Math.SQRT2 * HALF_TW, 0.14 * k * Math.SQRT2 * HALF_TH);
+    if (t.res > 20 || u < 1) for (const [a, along, across] of felledTreeShadow(k, u, 1.15)) oval(sx + a * Math.SQRT2 * HALF_TW, cy, along * Math.SQRT2 * HALF_TW, across * Math.SQRT2 * HALF_TH);   // (it falls toward screen right: along (1, −1) on the ground)
+  }
+  X.fill();
   // What stands in the shroud goes under its veil. With hills, in two layers — level ground and its veil first, then
   // the hills and theirs: a hill rises over the level ground behind it, so its tiles must go down after that veil
   // (laid before, the veil of a fogged flat tile behind darkened the lit slope in front of it).
@@ -218,20 +382,26 @@ function hillShade(x, y){
   return Math.max(-6, Math.min(6, Math.round((dx - 0.25 * dy) * 9)));   // (−6 … 6: thirteen shades)
 }
 function drawHillGround(minX, maxX, minY, maxY, veil, lit){
-  const n = MAP + 1, ox = W / 2 - camDX(), oy = H / 2 + topH - camDY(), groups = new Map(), e = 0.6;
-  for (let y = minY; y <= maxY; y++) { const fr = fog[y], row = map[y]; if (!fr) continue;
+  const n = MAP + 1, ox = W / 2 - camDX(), oy = H / 2 + topH - camDY(), groups = new Map(), e = 0.6, G = GROUND_PX, art = veil ? null : groundArt().c;
+  const add = (key, q) => { let g = groups.get(key); if (!g) groups.set(key, g = []); g.push(...q); };
+  if (art) X.imageSmoothingEnabled = false;
+  for (let y = minY; y <= maxY; y++) { const fr = fog[y]; if (!fr) continue;
     for (let x = minX; x <= maxX; x++) { const f = fr[x]; if (!f || (veil && !veil.has(y * MAP + x)) || !hillTile(x, y)) continue;
-      let key;
-      if (veil) key = 'rgba(0,0,0,0.55)';
-      else { const t = row[x], cols = TCOL[t.t] || TCOL[0], col = cols[(x * 7 + y * 13) % cols.length], sh = hillShade(x, y), dim = f === 1 && !lit.has(y * MAP + x), ck = col + sh + (dim ? 'f' : '');
-        key = _hillCols.get(ck);
-        if (!key) { const k = (1 + sh * 0.055) * (dim ? 0.45 : 1); key = 'rgb(' + [1, 3, 5].map(q => Math.max(0, Math.min(255, Math.round(parseInt(col.slice(q, q + 2), 16) * k)))).join(',') + ')'; _hillCols.set(ck, key); } }
-      let g = groups.get(key); if (!g) groups.set(key, g = []);
       const i = y * n + x;
-      g.push((x - y) * HALF_TW + ox, (x + y) * HALF_TH + oy - elev[i] * ELEV_PX - e,
-             (x + 1 - y) * HALF_TW + ox + e, (x + 1 + y) * HALF_TH + oy - elev[i + 1] * ELEV_PX,
-             (x - y) * HALF_TW + ox, (x + y + 2) * HALF_TH + oy - elev[i + n + 1] * ELEV_PX + e,
-             (x - y - 1) * HALF_TW + ox - e, (x + y + 1) * HALF_TH + oy - elev[i + n] * ELEV_PX);
+      const tx = (x - y) * HALF_TW + ox, ty = (x + y) * HALF_TH + oy - elev[i] * ELEV_PX, rx = (x + 1 - y) * HALF_TW + ox, ry = (x + 1 + y) * HALF_TH + oy - elev[i + 1] * ELEV_PX;
+      const bx = (x - y) * HALF_TW + ox, by = (x + y + 2) * HALF_TH + oy - elev[i + n + 1] * ELEV_PX, lx = (x - y - 1) * HALF_TW + ox, ly = (x + y + 1) * HALF_TH + oy - elev[i + n] * ELEV_PX;
+      const q = [tx, ty - e, rx + e, ry, bx, by + e, lx - e, ly];
+      if (veil) { add('rgba(0,0,0,0.55)', q); continue; }
+      // the tile's piece of the picture, laid on its lifted quad: as two triangles, each its own exact (affine) fit — a
+      // hair over, so no seam shows — then the slope's shade over it, and the shroud's dimming
+      const tri = (ax, ay, px, py, qx, qy, u0, v0, u1, v1, u2, v2) => { X.save(); X.beginPath(); const cx = (ax + px + qx) / 3, cy = (ay + py + qy) / 3, gr = (a, c) => a + (a - c) * 0.06;
+        X.moveTo(gr(ax, cx), gr(ay, cy)); X.lineTo(gr(px, cx), gr(py, cy)); X.lineTo(gr(qx, cx), gr(qy, cy)); X.closePath(); X.clip();
+        const du1 = u1 - u0, dv1 = v1 - v0, du2 = u2 - u0, dv2 = v2 - v0, det = du1 * dv2 - du2 * dv1;
+        const a = ((px - ax) * dv2 - (qx - ax) * dv1) / det, c = ((qx - ax) * du1 - (px - ax) * du2) / det, b = ((py - ay) * dv2 - (qy - ay) * dv1) / det, d = ((qy - ay) * du1 - (py - ay) * du2) / det;
+        X.transform(a, b, c, d, ax - a * u0 - c * v0, ay - b * u0 - d * v0); X.drawImage(art, x * G, y * G, G, G, 0, 0, 1, 1); X.restore(); };
+      tri(tx, ty, rx, ry, bx, by, 0, 0, 1, 0, 1, 1); tri(tx, ty, bx, by, lx, ly, 0, 0, 1, 1, 0, 1);
+      const sh = hillShade(x, y); if (sh) add(sh < 0 ? 'rgba(0,0,0,' + (-sh * 0.055).toFixed(3) + ')' : 'rgba(255,255,255,' + (sh * 0.035).toFixed(3) + ')', q);
+      if (f === 1 && !lit.has(y * MAP + x)) add('rgba(0,0,0,0.55)', q);
     } }
   for (const [col, g] of groups) { X.fillStyle = col; X.beginPath();
     for (let k = 0; k < g.length; k += 8) { X.moveTo(g[k], g[k + 1]); X.lineTo(g[k + 2], g[k + 3]); X.lineTo(g[k + 4], g[k + 5]); X.lineTo(g[k + 6], g[k + 7]); X.closePath(); }
@@ -331,6 +501,15 @@ function _treeArt(crown, rotStep, shade, darken, scale, part = null){
   return a;
 }
 // part: 'trunk' or 'crown' (render.js sorts them apart), else the whole tree
+// A tree's own size (both views: the art's per-tree noise).
+function treeSize(x, y){ return 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08); }
+// A felled tree's shadow, u of the way down (0 standing … 1 lying): ovals [how far along the fall from the stump, half
+// length along it, half width across], in tiles. The fall is toward screen right — along (1, −1)/√2 on the ground — and
+// the shade slides out with the crown, growing long as it nears the ground (as the 3D tree lies: pov3d's fallers).
+function felledTreeShadow(k, u, reach = 0.73){   // (reach: where its crown comes to rest — the 2D's lies longer than the 3D's)
+  const e = u * u, d = reach * k * e, cr = 0.54 * k + (0.34 * k - 0.54 * k) * e;
+  return e < 0.05 ? [[0, cr, cr]] : [[d, cr, cr], [d / 2 - 0.1 * k, (d + 0.2 * k) / 2, 0.09 * k]];
+}
 function drawTreeEntity(x,y,part=null){
   let f = fog[y] && fog[y][x];
   if (f === 0) return; // unexplored (black)
@@ -342,7 +521,7 @@ function drawTreeEntity(x,y,part=null){
   if(!t || t.res<=0) return;
 
   // 1. Each tree its own (pov3d's): size, crown shape, turn, proportions, shade, a nudge off the grid
-  const h = n => tileHash(x, y, n), s = 1.05 * (0.8 + ((x * 17 + y * 23) % 5) * 0.08);
+  const h = n => tileHash(x, y, n), s = treeSize(x, y);
   const kw = s * (0.9 + h(4) * 0.2), kh = s * (0.9 + h(5) * 0.22), crown = Math.floor(h(7) * 3), rotStep = Math.floor(h(3) * 4), shade = Math.min(2, Math.floor(h(9) * 3));
   sx += Math.round(((h(1) - h(2)) * 0.2) * HALF_TW); cy += Math.round(((h(1) + h(2) - 1) * 0.2) * HALF_TH);
   
