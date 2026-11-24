@@ -2079,11 +2079,13 @@ gl_Position = projectionMatrix * mvPosition;`;
   // between the fingers, scalloped at their edges. The membrane is rebuilt each frame from where the bones are
   // (poseDragonWing), so it can't come loose. All in the wing's own plane: x chord (back −), y span (out), z its
   // normal; 'fold' turns that plane out of the flank.
-  // The membrane's triangles (joint names; F3 a fingertip, M3 a scallop point, C2 a panel's middle): the arm's panel
-  // (shoulder, elbow, wrist, the tail-root attach), then a panel per finger gap and one from the last finger to the
-  // attach — each four facets round its middle, which billows out of the plane, so the wing is a stretched skin and
-  // lit facet by facet.
-  const WING_PANELS = DRAGON_WING.LK.length, WING_TRIS = [['S', 'E', 'B'], ['E', 'W', 'B'], ...Array.from({ length: WING_PANELS }, (_, k) => { const a = 'F' + k, m = 'M' + k, b = k < WING_PANELS - 1 ? 'F' + (k + 1) : 'B', c = 'C' + k;
+  // The membrane's triangles (joint names; F3 a fingertip, M2 a scallop point, R1 a point on the web's edge, C2 a
+  // panel's middle). A finger gap is four facets round its middle, which billows out of the plane, so the wing is a
+  // stretched skin, lit facet by facet.
+  const WING_PANELS = DRAGON_WING.LK.length, FL = 'F' + (WING_PANELS - 1), WEB = Array.from({ length: DRAGON_WING.WEB }, (_, k) => 'R' + k),
+    // (the arm's web, fanned from the elbow: wrist, the last finger, round its scooped edge to the flank, the shoulder —
+    // then the hand's panels between the fingers)
+    WING_TRIS = [...['W', FL, ...WEB, 'B', 'S'].map((k, i, a) => i ? ['E', a[i - 1], k] : null).filter(Boolean), ...Array.from({ length: WING_PANELS - 1 }, (_, k) => { const a = 'F' + k, m = 'M' + k, b = 'F' + (k + 1), c = 'C' + k;
     return [['W', a, c], [a, m, c], [m, b, c], [b, 'W', c]]; }).flat()];
   let dragonBoneGeo = null;
   function dragonWing(body, side){
@@ -2110,8 +2112,8 @@ gl_Position = projectionMatrix * mvPosition;`;
   function poseDragonWing(w, fd, tuck = 0, lag = 0){
     const d = w.userData.wing, J = dragonWingJoints(fd, tuck, d.side), { S, E, W } = J, pt = { S, E, W, B: J.B }, nF = J.F.length; // (render-units: shared with the 2D art)
     const trail = p => [p[0], p[1], p[2] + d.side * lag * Math.hypot(p[0] - W[0], p[1] - W[1])];
-    J.F.forEach((p, k) => { pt['F' + k] = trail(p); pt['M' + k] = trail(J.M[k]); });
-    for (let k = 0; k < nF; k++) { const q = [pt['F' + k], pt['M' + k], k < nF - 1 ? pt['F' + (k + 1)] : pt.B, W];   // each panel's middle, billowed (flat when folded)
+    J.F.forEach((p, k) => { pt['F' + k] = trail(p); }); J.M.forEach((p, k) => { pt['M' + k] = trail(p); }); J.R.forEach((p, k) => { pt['R' + k] = trail(p); });
+    for (let k = 0; k < nF - 1; k++) { const q = [pt['F' + k], pt['M' + k], pt['F' + (k + 1)], W];   // each panel's middle, billowed (flat when folded)
       pt['C' + k] = [0, 1, 2].map(c => q.reduce((a, p) => a + p[c], 0) / 4 - (c === 2 ? d.side * 0.07 * (1 - J.e) : 0)); }
     let cx = 0, cy = 0, m = 0; for (const k in pt) if (k[0] !== 'C' && k[0] !== 'M') { cx += pt[k][0]; cy += pt[k][1]; m++; } cx /= m; cy /= m;
     const P3 = d.pos.array, N = d.gh.attributes.normal.array; let i = 0;

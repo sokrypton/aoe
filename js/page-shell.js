@@ -375,7 +375,7 @@ document.body.insertAdjacentHTML('afterbegin', `
 <div class="menu-shell">
   <div class="menu-hero">
     <div class="title-pane">
-      <img id="title-logo" src="logo.png" alt="Age of Epochs">
+      <img id="title-logo" src="logo.jpg" alt="Age of Epochs">
     </div>
   </div>
 

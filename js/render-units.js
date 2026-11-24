@@ -2899,14 +2899,15 @@ function dragonAnim(e, a, dt){
     tail, tailZ, spade, open, beat, flame, reach, ev };
 }
 // The dragon's wing, bat-style, laid out for fold fd (0 spread … 1 folded; tuck 0..1 tighter still, asleep): joints
-// shoulder S → elbow E → wrist W, fingertips F[0..3], the attach B at the tail's root (the membrane's inner edge S–B
-// runs down the back), the scallop points M[k] (the trailing edge drawn in between fingertips; M[3] between the last
-// and B). In the wing's own plane: x chord (back −), y span (out), z its normal (the
-// pleats step out of it in turn, by side sd).
-const DRAGON_WING = { S: [0.05, 0], LU: 0.56, LF: 0.74, LK: [1.3, 1.24, 1.1, 0.92], B: [-0.9, 0.04], scallop: 0.4,
+// shoulder S → elbow E → wrist W, fingertips F[0..3], the attach B on the flank behind the shoulder. Spread, the arm is
+// a V — the upper arm swept back, the forearm forward to the wrist — and the arm's web (S–E–W–last finger–R[]–B) hangs
+// in it: narrow at the body, its trailing edge R[] a curve scooped in toward the elbow. M[k]: the scallop points
+// between fingertips. In the wing's own plane: x chord (back −), y span (out), z its normal (the pleats step out of it
+// in turn, by side sd).
+const DRAGON_WING = { S: [0.05, 0], LU: 0.56, LF: 0.74, LK: [1.3, 1.24, 1.1, 0.92], B: [-0.46, 0.03], scallop: 0.4, WEB: 4,
   // joint angles from the span axis, + toward the back: spread (arm out, fingers fanned) → folded (upper arm back,
   // forearm doubled forward along it, fingers doubled back along that, drawn together: shut tight against the flank)
-  spread: { u: -0.1, f: -0.05, k: [0, 0.42, 0.86, 1.3] }, folded: { u: 1.4, f: -2.65, k: [2.8, 2.88, 2.96, 3.04] },
+  spread: { u: 0.42, f: -0.86, k: [0.26, 0.68, 1.1, 1.5] }, folded: { u: 1.4, f: -2.65, k: [2.8, 2.88, 2.96, 3.04] },
   tucked: { u: 1.45, f: -2.75, k: [2.9, 2.96, 3.02, 3.08] },                               // asleep: folded tighter still, fingers pulled in
   pleat: [0.07, 0.02, 0.07, 0.02] };                                                       // folded, the fingers step out of the plane in turn: the membrane between zig-zags
 function dragonWingJoints(fd, tuck, sd){
@@ -2914,10 +2915,15 @@ function dragonWingJoints(fd, tuck, sd){
   const mixQ = (a, b) => a + (b - a) * tuck, Q = { u: mixQ(F0.u, T.u), f: mixQ(F0.f, T.f), k: F0.k.map((v, k) => mixQ(v, T.k[k])) }; // the fold, tucked tighter as it sleeps
   const dir = th => [-Math.sin(th), Math.cos(th)], at = (o, th, L, z = 0) => { const v = dir(th); return [o[0] + v[0] * L, o[1] + v[1] * L, z]; };
   const S = [WG.S[0], WG.S[1], 0], u = A(P.u, Q.u), E = at(S, u, WG.LU), f = u + A(P.f, Q.f), W = at(E, f, WG.LF);
-  const F = WG.LK.map((L, k) => at(W, f + A(P.k[k], Q.k[k]), L * A(1, 0.72 - 0.3 * tuck), sd * WG.pleat[k] * e));
+  const F = WG.LK.map((L, k) => at(W, f + A(P.k[k], Q.k[k]), L, sd * WG.pleat[k] * e));
+  // (nothing stretches as it folds: the bones keep their lengths and the membrane its anchor — only the joints turn,
+  // and the slack trailing edge sags in less)
   const B = [WG.B[0], WG.B[1], 0], mid = (a, b, t, z) => [(a[0] + b[0]) / 2 + (W[0] - (a[0] + b[0]) / 2) * t, (a[1] + b[1]) / 2 + (W[1] - (a[1] + b[1]) / 2) * t, z];
-  const M = F.map((p, k) => k < F.length - 1 ? mid(p, F[k + 1], WG.scallop * (1 - 0.3 * e), (p[2] + F[k + 1][2]) / 2 - sd * 0.03 * e) : mid(p, B, 0.22, p[2] / 2));
-  return { S, E, W, B, F, M, e };
+  const M = F.slice(0, -1).map((p, k) => mid(p, F[k + 1], WG.scallop * (1 - 0.3 * e), (p[2] + F[k + 1][2]) / 2 - sd * 0.03 * e));
+  // (the web's edge: a curve from the last fingertip in to the flank, drawn toward the elbow — deeper as it slackens)
+  const L = F[F.length - 1], pull = A(0.8, 0.92), c = [0, 1].map(i => (L[i] + B[i]) / 2 + (E[i] - (L[i] + B[i]) / 2) * pull);
+  const R = Array.from({ length: WG.WEB }, (_, k) => { const t = (k + 1) / (WG.WEB + 1), w = 1 - t; return [w * w * L[0] + 2 * w * t * c[0] + t * t * B[0], w * w * L[1] + 2 * w * t * c[1] + t * t * B[1], L[2] * w * w]; });
+  return { S, E, W, B, F, M, R, e };
 }
 // How the wings are carried (both views), from the pose P: ang — raised from level about the body's long axis;
 // pitch — the leading edge tipped up; fd — the fold. Kept near level, spread or folded: the map is seen from above,
@@ -3209,9 +3215,9 @@ function drawDragonBody(e){
     const J = dragonWingJoints(P.wingAng === undefined ? carry.fd : 1 - P.open, P.sl, sd), up = sin(wingAng), outw = cos(wingAng), cw = cos(wp), sw = sin(wp);
     // (the wing's plane: pitched about its span, then raised about the body's long axis — as the 3D wing's pivot)
     const at = q => bm(0.1 + q[0] * cw, 1.04 + q[0] * sw * outw + q[1] * up, sd * (0.25 + q[1] * outw - q[0] * sw * up));
-    const Q = { S: at(J.S), E: at(J.E), W: at(J.W), B: at(J.B), F: J.F.map(at), M: J.M.map(at) }, nF = Q.F.length;
+    const Q = { S: at(J.S), E: at(J.E), W: at(J.W), B: at(J.B), F: J.F.map(at), M: J.M.map(at), R: J.R.map(at) }, nF = Q.F.length;
     const fo = Math.max(0, Math.min(1, (P.open - 0.15) / 0.35));                                       // folded: one clean fold; the hand opens out of it
-    poly(C.membrane, [Q.S, Q.E, Q.W, fo > 0 ? Q.F[nF - 1] : Q.W, Q.M[nF - 1], Q.B], 0.05 * sd);
+    poly(C.membrane, [Q.S, Q.E, Q.W, fo > 0 ? Q.F[nF - 1] : Q.W, ...Q.R, Q.B], 0.05 * sd);
     if (fo > 0) poly(C.membrane, [Q.W, ...Q.F.flatMap((p, k) => k < nF - 1 ? [p, Q.M[k]] : [p])], 0.05 * sd);
     tube(C.bone, Q.S, Q.E, 0.036, 0.03, 0.06 * sd); tube(C.bone, Q.E, Q.W, 0.03, 0.022, 0.06 * sd);
     for (const p of Q.F) tube(C.bone, Q.W, p, 0.02, 0.008, 0.06 * sd);                               // dark bones rim the wing (as 3D): its edge reads even folded
