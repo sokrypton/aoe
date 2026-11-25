@@ -991,12 +991,11 @@ const CASTLE_PARTS = [
 ];
 // The Barracks, both views: on its compound grid (a along the hall, b across: hall walls b = ±13, a = ±30; the yard to
 // b = 51), heights as fractions of the hall wall. Two storeys split by a timber rail (railV): windows in the upper one,
-// the shields hung low on the studs between them, the banners under the plate either side of the door.
+// the shields hung low on the studs between them.
 // Dark: planks under thatch, a stake stockade; Feudal: plaster and half-timber; Castle: the lower storey stone, flush.
 const BARRACKS_ART = {
-  windows: [-20, 0, 20], winV: [0.62, 0.18], winW: 4.8, doorV: 0.58, doorW: 9,
+  windows: [-20, 0, 20], winV: [0.62, 0.18], winW: 4.8,
   shields: [-10, 10], shieldV: 0.27, shieldR: 3,
-  banners: [-8, 8], bannerV: [0.6, 0.86], bannerW: 4.4, notch: 2,
   studs: [-10, 10], railV: [0.5, 0.56],
   // the Dark stockade's stakes: the near end, the front, the far end (from a stake's width off the hall)
   stakes: [].concat(
@@ -1583,7 +1582,7 @@ function drawBuilding(e, part = null){
     // yard grid: its NW back wall lies on the plot's back-left edge, its SE
     // wall on the yard's back edge). roofH > D/2 keeps the back slope's eave
     // hidden. Per age (BARRACKS_ART, as the 3D): Dark planks under thatch;
-    // Feudal plaster and half-timber, shields and banners; Castle a stone
+    // Feudal plaster and half-timber with shields; Castle a stone
     // ground storey under whitewash and oak.
     {
       // g=0: a ridge overhang past the gable planes projects to a ~1px black
@@ -1648,30 +1647,6 @@ function drawBuilding(e, part = null){
       };
       X.fillStyle=wl;gablePath();X.fill();faceTex(gablePath,GF,-D,D,[],dk('#ded5c2'));X.strokeStyle='#000';X.lineWidth=1.3;gablePath();X.stroke();
       X.fillStyle=wr;longPath();X.fill();faceTex(longPath,LF,-L,L,BA.studs,dk('#bcb29b'));X.strokeStyle='#000';X.lineWidth=1.3;longPath();X.stroke();
-      // Door on the GABLE END (away from the yard), recessed for real depth (as
-      // the TC keep windows): the dark opening shifted back into the wall shows
-      // the lintel's underside and one jamb, clipped to the frame.
-      {
-        let db=P(-L,0);
-        let W=BA.doorW/2, H=BA.doorV*wallH, depth=2;
-        let O1={x:db.x-W, y:db.y-W*0.5-H}, O2={x:db.x+W, y:db.y+W*0.5-H};
-        let O3={x:db.x+W, y:db.y+W*0.5},   O4={x:db.x-W, y:db.y-W*0.5};
-        let B=o=>({x:o.x+depth, y:o.y+depth*0.5+1.5});
-        let B1=B(O1),B2=B(O2),B3=B(O3),B4=B(O4);
-        let framePath=()=>{X.beginPath();X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(O3.x,O3.y);X.lineTo(O4.x,O4.y);X.closePath();};
-        X.save();
-        framePath();X.clip();
-        X.fillStyle=dk('#241505');X.beginPath();
-        X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.lineTo(B3.x,B3.y);X.lineTo(B4.x,B4.y);X.closePath();X.fill();
-        X.fillStyle=dk('#6f5330');X.beginPath();
-        X.moveTo(O1.x,O1.y);X.lineTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.lineTo(O4.x,O4.y);X.closePath();X.fill();
-        X.fillStyle=dk('#503a21');X.beginPath();
-        X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(B2.x,B2.y);X.lineTo(B1.x,B1.y);X.closePath();X.fill();
-        X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
-        X.beginPath();X.moveTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.stroke();
-        X.restore();
-        X.strokeStyle='#000';X.lineWidth=1.1;framePath();X.stroke();
-      }
       // Windows facing the yard (the hall sleeps the garrison)
       X.fillStyle=dk('#2a2a2a');X.strokeStyle='#000';X.lineWidth=0.9;
       for(const a of BA.windows){
@@ -1686,16 +1661,6 @@ function drawBuilding(e, part = null){
           X.fillStyle=dk(tcD);X.strokeStyle='#000';X.lineWidth=1;
           X.beginPath();BARRACKS_SHIELD.forEach(([u,w],i)=>i?X.lineTo(u*BA.shieldR,w*BA.shieldR):X.moveTo(u*BA.shieldR,w*BA.shieldR));X.closePath();X.fill();X.stroke();
           X.restore();
-        }
-        // Team banners flanking the door, swallow-tailed, hung from a bar under the plate
-        for(const b of BA.banners){
-          const w2=BA.bannerW/2, [v0,v1]=BA.bannerV, n=BA.notch/wallH;
-          const pts=[GF(b-w2,v1),GF(b+w2,v1),GF(b+w2,v0),GF(b,v0+n),GF(b-w2,v0)];
-          X.fillStyle=dk(tc);X.strokeStyle='#000';X.lineWidth=1;X.beginPath();
-          pts.forEach((q,i)=>i?X.lineTo(q.x,q.y):X.moveTo(q.x,q.y));X.closePath();X.fill();X.stroke();
-          const r0=GF(b-w2-0.5,v1),r1=GF(b+w2+0.5,v1);
-          X.strokeStyle='#000';X.lineWidth=2;X.lineCap='round';X.beginPath();X.moveTo(r0.x,r0.y);X.lineTo(r1.x,r1.y);X.stroke();
-          X.strokeStyle=dk(WOOD.post);X.lineWidth=1;X.stroke();X.lineCap='butt';
         }
       }
       // Roof: the visible front slope, eaves overhanging
