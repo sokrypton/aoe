@@ -620,7 +620,7 @@ function freshAIState(team){
     // Civilian-militia response window: while set (> tick), villagers are
     // fighting a small raid and the garrison bell stays suppressed.
     militiaUntil: null,
-    seenWarTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null,
+    seenWarTick: null, warNoticeTick: null, lastBaseHitTick: null, savingForAge: false, lastAgeUpTick: null,
     // Wildlife danger memory: gather tiles near a bear that mauled a
     // villager are off-limits until the stamp expires or the bear is hunted
     // (canGatherTile, js/logic.js) — a 1.2-speed bear outruns 0.8-speed
@@ -908,13 +908,12 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // then attacks repeat with at least waveCooldown between launches. The army
 // TRAINED is economy-driven (aiWaveSize → aiArmyTarget, js/ai.js): a fraction
 // (armyPerVil) of the villagers past a small base (armyEcoFloor), floored at
-// attackSize and capped at armyCap, raised by a deep bank at every level (the
-// AoE2 AI always spends). Difficulty shapes the ATTACK as AoE2 does (sn-minimum/
+// attackSize and capped at armyCap, raised by a deep bank (the AoE2 AI always
+// spends) up to armyMax — easy's ceiling, so a slow game never ends in a horde. Difficulty shapes the ATTACK as AoE2 does (sn-minimum/
 // maximum-attack-group-size 4/10 and sn-percent-attack-soldiers 75, scaled
 // x0.5 easy / x0.75 medium / x1 hard): attackSize, waveCap — the field squad
 // never grows past it, reinforcements included — and commitPercent.
-// attackTick reference points: hard rushes ~8 game-minutes (a classic drush
-// window), easy waits ~18. Parity rule: no free resources at any difficulty —
+// Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
 // ONE base profile; a difficulty is BASE plus the handful of knobs that
 // actually scale. Three full copies is how `standard` silently drifted on 20
@@ -953,10 +952,16 @@ const AI_BASE = {
   ageSurgeFactor: 0.6,
 };
 const AI_LEVELS = {
-  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', decisionInterval:T30(300), maxVils:25, attackSize:2, waveCap:5, armyCap:8, commitPercent:38, armyPerVil:0.3, attacksVillagers:false, wallRadius:4, wallAge:1, maxTowers:1, ageUpVils:[0,18,24], ageUpTick:[0,T30(21600),T30(63000)] },
-  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', decisionInterval:T30(180), maxVils:40, attackSize:3, waveCap:8, armyCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
-  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', decisionInterval:T30(120), maxVils:60, attackSize:4, waveCap:10, armyCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
+  easy: { ...AI_BASE, aiTimeMult:2, name:'Easy', reactSec:2.5, decisionInterval:T30(300), maxVils:25, attackSize:2, waveCap:5, armyCap:8, armyMax:15, civilianMilitia:4, commitPercent:38, armyPerVil:0.3, attacksVillagers:false, wallRadius:4, wallAge:2, maxTowers:1, ageUpVils:[0,18,24], ageUpTick:[0,T30(21600),T30(63000)] },
+  standard: { ...AI_BASE, aiTimeMult:1.33, name:'Medium', reactSec:1.5, decisionInterval:T30(180), maxVils:40, attackSize:3, waveCap:8, armyCap:12, commitPercent:56, armyPerVil:0.6, wallRadius:6, wallAge:2, maxTowers:1, ageUpVils:[0,20,28], ageUpTick:[0,T30(12600),T30(27000)] },
+  hard: { ...AI_BASE, aiTimeMult:1, name:'Hard', reactSec:0.8, decisionInterval:T30(120), maxVils:60, attackSize:4, waveCap:10, armyCap:24, commitPercent:75, armyPerVil:0.9, wallRadius:7, wallAge:2, maxTowers:2, ageUpVils:[0,21,30], ageUpTick:[0,T30(9000),T30(19800)] },
 };
+// The AI's human limits are REAL time, so a faster game speed never makes it a faster opponent: it reacts to being hit
+// after reactSec real seconds, and above 2x its planning stretches to keep the 2x real-time pace. (GAME_SPEED is
+// peer-synced and rides the snapshots: lockstep-safe.)
+function aiReactTicks(team){ return Math.max(1, Math.round(aiProfileFor(team).reactSec*TPS*GAME_SPEED)); }
+function aiPace(ticks){ return Math.max(1, Math.round(ticks*Math.max(1, GAME_SPEED/2))); }
+
 
 
 

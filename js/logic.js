@@ -200,6 +200,8 @@ function queuedCost(bldg,i){
 }
 
 function canQueueUnit(bldg,utype){
+  // (only what this building trains — the human's command checks it on the wire; the AI queues through here too)
+  if(!(BLDGS[bldg.btype].builds||[]).includes(utype))return {ok:false,reason:'building'};
   if(!isUnlocked(bldg.team,utype))return {ok:false,reason:'age'};
   if(!hasPopulationRoom(bldg.team,utype,true))return{ok:false,reason:'pop'};
   if(!canAfford(bldg.team,unitTrainCost(bldg.team,utype,bldg.queue)))return{ok:false,reason:'resources'};
@@ -296,13 +298,22 @@ function dist(a,b){let dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
 //   MOVE           multi-leg move repath cadence            T30(10)
 //   BUILD          crowded build-site retry                 maxN 6
 //   REAIM          moving-foe re-aim that can't reach it    T30(60)
+//   REACT          an AI unit's reaction time to a hit      aiReactTicks
 const RETRY = Object.freeze({
   CHASE_BLOCKED:'chaseBlocked', HARVEST_WAIT:'harvestWait',
   FLEE_RAID:'fleeRaid', FLEE_BEAR:'fleeBear', GUARD_RETURN:'guardret',
   DROP_WAIT:'dropWait', DROP_TUCK:'dropTuck', DROP_THROW:'dropThrow', GARRISON:'garrison', FOLLOW:'follow',
-  MOVE:'move', BUILD:'build', REAIM:'reaim',
+  MOVE:'move', BUILD:'build', REAIM:'reaim', REACT:'react',
 });
 
+// An AI unit acts on being hit only once it has been under attack for its reaction time (aiReactTicks: real seconds,
+// so 4x is no twitchier than 1x); a hit long after the last one starts the clock over.
+function aiNoticedHit(e){
+  const n=e.retry&&e.retry[RETRY.REACT];
+  if(!n||tick>n.next+T30(300)){ retryStamp(e,RETRY.REACT,aiReactTicks(e.team)); return false; }
+  if(tick<n.next) return false;
+  retryClear(e,RETRY.REACT); return true;
+}
 function retryReady(e,key){
   let r=e.retry&&e.retry[key];
   return !r||tick>=r.next;
@@ -1806,18 +1817,19 @@ function damageEntity(attacker, target){
   // villager hit by an enemy PLAYER stamps a danger zone at its own tile —
   // learned on the FIRST hit, not on death. Caught in the FIELD (beyond the
   // town's alarm radius, where the bell can't help), it also drops
-  // everything and runs home. Militia villagers (explicitAttack) and
+  // everything and runs home — once it has noticed (aiNoticedHit). Militia villagers (explicitAttack) and
   // villagers already walking to shelter are exempt.
-  if (target.utype === 'villager' && aiDrives(target) && attacker.team !== GAIA_TEAM
-      && isEnemyOf(target.team, attacker) && retryReady(target,RETRY.FLEE_RAID)) {
-    retryStamp(target,RETRY.FLEE_RAID, T30(90));
-    let dzAi = AI_STATES && AI_STATES[target.team];
-    if (dzAi && dzAi.dangerZones) stampDangerZone(dzAi, Math.round(target.x), Math.round(target.y));
+  if (target.utype === 'villager' && aiDrives(target) && attacker.team !== GAIA_TEAM && isEnemyOf(target.team, attacker)) {
+    if (retryReady(target,RETRY.FLEE_RAID)) {
+      retryStamp(target,RETRY.FLEE_RAID, T30(90));
+      let dzAi = AI_STATES && AI_STATES[target.team];
+      if (dzAi && dzAi.dangerZones) stampDangerZone(dzAi, Math.round(target.x), Math.round(target.y));
+    }
     if (!target.explicitAttack && target.task !== 'garrison') {
       let tc = teamTC(target.team);
       if (tc) {
         let c = footprintCenter(tc);
-        if (dist(target, c) > AI_BASE_ALARM_RADIUS * aiScale()) {
+        if (dist(target, c) > AI_BASE_ALARM_RADIUS * aiScale() && aiNoticedHit(target)) {
           target.task = null; target.target = null; target.buildTarget = null;
           clearGatherTarget(target);
           let pt = nearestBldgPerimeter(target.x, target.y, tc, target.id);
@@ -1883,8 +1895,8 @@ function damageEntity(attacker, target){
     let dzAi=aiDrives(target)&&AI_STATES&&AI_STATES[target.team];   // (the AI's learning, as the raid stamp)
     if(dzAi&&dzAi.dangerZones)stampDangerZone(dzAi,Math.round(attacker.x),Math.round(attacker.y),attacker.id);
   }
-  // An AI unit the dragon hits runs straight away from it (~7 tiles), dropping its task — the AI never fights it.
-  if(attacker.utype==='dragon'&&target.type==='unit'&&aiDrives(target)&&!isHarmlessAnimal(target)&&!isRetreatingUnit(target)) dragonScatter(target,attacker);
+  // An AI unit the dragon hits runs away from it (~7 tiles) once it has noticed, dropping its task — the AI never fights it.
+  if(attacker.utype==='dragon'&&target.type==='unit'&&aiDrives(target)&&!isHarmlessAnimal(target)&&!isRetreatingUnit(target)&&aiNoticedHit(target)) dragonScatter(target,attacker);
   // Retaliation: attacked units fight back — the full verdict lives in
   // shouldRetaliate() (one predicate, one place); this site owns only the
   // commit side-effects.

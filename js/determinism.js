@@ -334,6 +334,7 @@ function simChecksum(){
       // classifier cursor).
       h = detMix(h, ai.lastBaseHitTick == null ? -1 : ai.lastBaseHitTick);
       h = detMix(h, ai.seenWarTick == null ? -1 : ai.seenWarTick);
+      h = detMix(h, ai.warNoticeTick == null ? -1 : ai.warNoticeTick);
       // Scout bookkeeping steers controlAIScouts/ensureAIScout on later ticks.
       h = detMix(h, ai.baseSurveyed ? 1 : 0);
       h = detMix(h, ai.surveyIdx || 0);

@@ -24,8 +24,11 @@ function updateAIGarrisonReaction(ai){
   // Only a CORE hit (villager or TC actually damaged) triggers the bell —
   // reacting to perimeter-wall pokes garrisoned the economy for entire sieges
   // the walls were holding (the eco-stall bug).
-  if(hit && hit.coreTick!=null && hit.coreTick!==ai.seenWarTick){
-    ai.seenWarTick=hit.coreTick;
+  // A town not yet alarmed takes its reaction time to notice the first hit (aiReactTicks); once alarmed, it follows on.
+  let alarmed = tick - (ai.lastBaseHitTick ?? -1e9) < AI_GARRISON_HOLD_TICKS;
+  if(hit && hit.coreTick!=null && hit.coreTick!==ai.seenWarTick && !alarmed && ai.warNoticeTick==null) ai.warNoticeTick=tick+aiReactTicks(ai.team);
+  if(hit && hit.coreTick!=null && hit.coreTick!==ai.seenWarTick && (alarmed || tick>=ai.warNoticeTick)){
+    ai.seenWarTick=hit.coreTick; ai.warNoticeTick=null;
     let tc=teamTC(ai.team);
     if(tc){
       let wdx=hit.coreX-(tc.x+tc.w/2), wdy=hit.coreY-(tc.y+tc.h/2);
@@ -42,7 +45,7 @@ function updateAIGarrisonReaction(ai){
     // ESCALATION re-check (~1s cadence, tick-derived so lockstep-safe): if a
     // real army arrived since the window was sized, cancel it and fall
     // through to the bell.
-    if(tick%AI_ESCALATE_EVERY===0){
+    if(tick%aiPace(AI_ESCALATE_EVERY)===0){
       let tc=teamTC(ai.team);
       let threat=tc&&findEnemyThreatNear(ai,AI_BASE_ALARM_RADIUS*aiScale());
       if(threat&&threatAt(ai.team,threat.x,threat.y,10*aiScale())>AI_MILITIA_MAX_THREAT)ai.militiaUntil=0;
@@ -51,7 +54,7 @@ function updateAIGarrisonReaction(ai){
   }
   // The alarm (bellRinging) is on while the base is under attack or anyone is still sheltered; who hides and who
   // works is decided per villager by aiShelterPass, every second the alarm is on — never a whole-town ring/all-clear.
-  let ringing=window.bellRinging[ai.team], cadence=tick%AI_ESCALATE_EVERY===0;
+  let ringing=window.bellRinging[ai.team], cadence=tick%aiPace(AI_ESCALATE_EVERY)===0;
   if(underAttack && !ringing){
     // Fight-or-hide, decided at the exact moment the alarm sounds (so the two responses can never race). A raid that
     // OUTLIVED its militia window escalates to sheltering — a perpetual militia re-arm left the town out in the raid.
@@ -156,7 +159,8 @@ function updateAI(ai){
   ai.tick++;
   let profile=aiProfileFor(ai.team);
   // Each seat decides on its own phase of the interval: eight AIs planning on one tick is a visible hitch.
-  if((ai.tick+Math.floor(ai.team*profile.decisionInterval/NUM_TEAMS))%profile.decisionInterval!==0)return;
+  const every=aiPace(profile.decisionInterval);
+  if((ai.tick+Math.floor(ai.team*every/NUM_TEAMS))%every!==0)return;
   runAIScript(ai); profile=aiProfileFor(ai.team);   // the seat's script sets its levers first (js/aiscript.js)
 
   // The dragon's lair is off limits: a standing danger zone (it can't be killed, so the zone never lapses for good).
@@ -264,7 +268,7 @@ function huntAIBears(ai,mils){
 // lands can't trigger deletions).
 function rescueTrappedAIVillagers(ai,aiTC,vils,profile){
   if(vils.length===0)return;
-  let v=vils[Math.floor(ai.tick/profile.decisionInterval)%vils.length];
+  let v=vils[Math.floor(ai.tick/aiPace(profile.decisionInterval))%vils.length];
   if(v.garrisonedIn||v.task==='garrison')return;
   if(adjToBuilding(v.x,v.y,aiTC))return;
   if(canReachBuilding(v,aiTC))return;
@@ -1513,8 +1517,8 @@ function queueAIMilitary(ai,readyBarracks,profile){
   readyBarracks.forEach(barracks=>{
     while(barracks.queue.length<profile.queueLimit&&popUsedT+popQueuedT<popCapT&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
-      // a knight at the Castle (its queue not full); the rest here
-      let at = utype==='knight'&&castle&&castle.queue.length<profile.queueLimit ? castle : barracks;
+      // a knight at the Castle (its queue full: the Barracks can't train one — canQueueUnit — and the fallbacks below take it)
+      let at = utype==='knight'&&castle ? castle : barracks;
       // Counter-pick first, then cheaper fallbacks if it's unaffordable.
       let placed = queueUnit(at,utype).ok ? utype
                  : queueUnit(barracks,'spearman').ok ? 'spearman'
@@ -1994,7 +1998,7 @@ function aiArmyTarget(ai,profile){
   let r=resourceStore(ai.team), spare=0;
   for(const k of ['food','wood','gold'])spare+=Math.max(0,(r[k]||0)-AI_BANK_FLOAT);
   let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
-  return Math.max(base, Math.min(200-vils, base+Math.floor(spare/AI_BANK_PER_UNIT)));
+  return Math.max(base, Math.min(200-vils, profile.armyMax||Infinity, base+Math.floor(spare/AI_BANK_PER_UNIT)));
 }
 function aiWaveSize(ai,profile){
   let vils=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;

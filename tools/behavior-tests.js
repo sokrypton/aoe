@@ -1078,10 +1078,11 @@ async function withPage(browser, port, entry, fn){
       for (let i = 0; i < T30(1200) && !zones().length && victim.hp > 0; i++) update();
       T.ok('FIRST hit stamps a bearless raid zone (victim still alive)', zones().length >= 1 && victim.hp > 0);
       T.ok('zone sits at the villager tile', zones().some(z => Math.abs(z.x - 30) <= 2 && Math.abs(z.y - 30) <= 2));
-      // Field-hit flee is event-driven: same hit dropped its task and sent
-      // it walking home (the villager is ~22 tiles from its TC, beyond the
-      // 18-tile alarm radius — bell can't cover it).
-      T.ok('field-hit villager flees (task dropped, walking)', victim.task == null && victim.path.length > 0);
+      // Field-hit flee is event-driven, after a human reaction time (aiNoticedHit): not on the first hit, on a later
+      // one, alive (the villager is ~22 tiles from its TC, beyond the 18-tile alarm radius — bell can't cover it).
+      T.ok('field-hit villager does not flee on the very first hit', !(victim.task == null && victim.path.length > 0));
+      for (let i = 0; i < T30(300) && victim.hp > 0 && !(victim.task == null && victim.path.length > 0); i++) update();
+      T.ok('field-hit villager flees once it has noticed (task dropped, walking, alive)', victim.hp > 0 && victim.task == null && victim.path.length > 0);
       const probe = { team: 1, x: 30, y: 30 };
       T.ok('canGatherTile rejects tiles inside the zone', !canGatherTile(probe, TERRAIN.FOREST, 30, 30));
       // Let the bear maul the bait — the prune inside that stamp must KEEP
@@ -2390,6 +2391,30 @@ async function withPage(browser, port, entry, fn){
         T.ok('reachable foe: closed to firing range', distToTarget(a, foe) <= UNITS.archer.range + 0.5);
         T.ok('reachable foe: taking damage', foe.hp < foe.maxHp);
       }
+      return T;
+    })),
+
+    // ------------------------------------------------- AI reaction time
+    // The AI notices an attack after a human reaction time in REAL seconds (aiReactTicks): its town raises no alarm
+    // (bell or militia) before then, does after, and at 4x the wait is 4x the ticks of 1x — no twitchier at speed.
+    'ai-reaction-time': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      const sp = GAME_SPEED;
+      GAME_SPEED = 1; const r1 = aiReactTicks(1); GAME_SPEED = 4; const r4 = aiReactTicks(1); GAME_SPEED = sp;
+      loadScenario({ map: 'small', seed: 15, numTeams: 2, controllers: ['human', 'ai:hard'], ages: [1, 1],
+        entities: [ { b: 'TC', x: 8, y: 8, team: 0 }, { b: 'TC', x: 40, y: 40, team: 1 },
+          { u: 'villager', x: 38, y: 42, team: 1 }, { u: 'knight', x: 37, y: 42, team: 0 } ] });
+      gameStarted = true; gamePaused = false;
+      T.ok('reaction scales with game speed (4x = 4 x 1x ticks)', r4 === 4 * r1 && r1 > 0);
+      const ai = AI_STATES[1], alarm = () => !!window.bellRinging[1] || (ai.militiaUntil || 0) > tick;
+      let hitAt = null;
+      for (let i = 0; i < T30(600) && hitAt == null; i++) { update(); const h = lastTeamHit[1]; if (h && h.coreTick != null) hitAt = h.coreTick; }
+      const react = aiReactTicks(1);
+      let early = false;
+      while (tick < hitAt + react - 1) { update(); early = early || alarm(); }
+      T.ok('no alarm before the reaction time', hitAt != null && !early);
+      for (let i = 0; i < T30(120) && !alarm(); i++) update();
+      T.ok('alarm once the reaction time has passed', alarm());
       return T;
     })),
 
