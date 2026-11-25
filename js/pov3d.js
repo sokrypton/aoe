@@ -4686,17 +4686,22 @@ gl_Position = projectionMatrix * mvPosition;`;
   // spent, and drawFrame comes back for the rest (bldLeft). With nothing to make in view, one a pass of the buildings
   // known BEYOND it is made, hidden, its shaders compiled in the background: a view that jumps or flies to another
   // town finds it built. (A match's first frames make everything at once.)
-  let bldLeft = false, bldSpent = 0; const BLD_MS = 3, PREBUILD_MAX = 600;
+  // BLD_MS a frame for building models; LOAD_MS while the view is still filling in (what's in view first, nearest first)
+  // lastLoad: the frame the view last had models still to build — the warm-up (warmStep) waits a second past it, not to
+  // compete with a view filling in
+  let bldLeft = false, bldSpent = 0, BLD_MS = 3, lastLoad = 0; const BLD_IDLE_MS = 3, LOAD_MS = 10, PREBUILD_MAX = 600;
   // A match's start (its first frames, behind the fade): every kind of building is made once as a site and once
   // damaged, and thrown away — the first of a kind is the costly one (its walls' slabs are cut, then kept by shape:
   // thickGeo; its shaders compiled), and it would otherwise be met mid-battle, the frame a building is first hit.
   // …and again for an age a team reaches (its buildings change shape), one kind a frame (warmStep): all at once it
   // would be the stall it is there to prevent.
-  const warmQueue = [], warmedAges = new Set();
+  const warmQueue = [], warmedKinds = new Set();
   function prewarmShapes(){
-    for (let t = 0; t < NUM_TEAMS; t++) { const age = (teamAge && teamAge[t]) || 0; if (warmedAges.has(age)) continue; warmedAges.add(age);
-      for (const btype in MODELS) { const b = BLDGS[btype]; if (!b || isWallBtype(btype) || isGateBtype(btype) || btype === 'FARM') continue;
-        for (const hurt of [false, true]) warmQueue.push({ btype, hurt, team: t, age }); } }
+    // (only the kinds that stand, each once an age: one first built later is warmed then — drawFrame calls this now and again)
+    const have = new Set(); for (const e of entities) if (e.type === 'building') have.add(e.btype);
+    for (let t = 0; t < NUM_TEAMS; t++) { const age = (teamAge && teamAge[t]) || 0;
+      for (const btype of have) { const b = BLDGS[btype], k = age + ':' + btype; if (!b || !MODELS[btype] || warmedKinds.has(k) || isWallBtype(btype) || isGateBtype(btype) || btype === 'FARM') continue;
+        warmedKinds.add(k); for (const hurt of [false, true]) warmQueue.push({ btype, hurt, team: t, age }); } }
   }
   function warmStep(){
     const q = warmQueue.shift(); if (!q || ((teamAge && teamAge[q.team]) || 0) !== q.age) return;
@@ -4710,11 +4715,17 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function refreshBuildings(){
     const seen = new Set(), make = e => { if (isWallBtype(e.btype) || isGateBtype(e.btype)) refreshWall(e); else refreshModel(e); return solids.get(e.id); };
-    let far = null; bldLeft = false; bldSpent = warmFrames > 0 || unrevealed ? -Infinity : 0;   // (unrevealed: the view opening behind the 2D — all in view at once)
+    let far = null; const loading = bldLeft; BLD_MS = loading ? LOAD_MS : BLD_IDLE_MS; bldLeft = false;
+    bldSpent = warmFrames > 0 || unrevealed ? -Infinity : 0;   // (unrevealed: the view opening behind the 2D — all in view at once)
+    const near = [];
     for (const e of entities) {
       if (e.type !== 'building' || e.hp <= 0 || !bldgVisible(e)) continue;
       const c = centerOf(e);
       if (Math.abs(c.x - eye.x) > RANGE + 4 || Math.abs(c.y - eye.y) > RANGE + 4) { if (!far && !solids.has(e.id)) far = e; continue; }
+      near.push(loading ? [(c.x - eye.x) ** 2 + (c.y - eye.y) ** 2, e] : [0, e]);
+    }
+    if (loading) near.sort((a, b) => a[0] - b[0] || a[1].id - b[1].id);   // (filling in: the nearest first)
+    for (const [, e] of near) {
       seen.add(e.id);
       const rec = make(e);
       if (rec && rec.obj) { const gh = isWallBtype(e.btype) && ghostAt.get(e.y * MAP + e.x); rec.hid = !!(gh && gh.btype !== e.btype); rec.obj.visible = !rec.hid; }   // (a wall where a gate, a tower or a stone piece is being placed: it will be gone)
@@ -6015,7 +6026,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
-    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedAges.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
+    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedKinds.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
     else if (unrevealed) { bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; }   // a switch from 2D: its first frame whole, drawn while the 2D still shows
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
@@ -6025,10 +6036,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     // on the cadence, or at once when the view has moved a few tiles (a jump: the new place mustn't wait for it)
     const P = frameParts, mark = k => { const n = performance.now(); P[k] = n - P._t; P._t = n; }; P._t = performance.now(); // (the last frame's time by part: __povFrame)
     if (now - lastStatic > STATIC_MS || !staticAt || (eye.x - staticAt.x) ** 2 + (eye.y - staticAt.y) ** 2 > 9) {
-      const t1 = performance.now(); refreshGround(); const t2 = performance.now(); refreshFeatures(); const t3 = performance.now(); refreshBuildings(); refreshButtons();
+      const t1 = performance.now(); refreshGround(); const t2 = performance.now(); refreshFeatures(); const t3 = performance.now(); refreshBuildings(); if (bldLeft) lastLoad = frame; refreshButtons();
       P.sGround = t2 - t1; P.sFeat = t3 - t2; P.sBld = performance.now() - t3;   // (the static refresh by part: __povFrame)
       lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
-    else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) refreshBuildings(); else if (warmQueue.length) warmStep(); else if (frame % 60 === 0) prewarmShapes(); }
+    else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) { refreshBuildings(); lastLoad = frame; } else if (frame - lastLoad < 60) {} else if (warmQueue.length) warmStep(); else if (frame % 60 === 0) prewarmShapes(); }
     mark('static');
     animateFeatures(dt);
     updateArrows(now);
@@ -6745,6 +6756,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     followId = null; eye = null; mode = 'orbit';                                // the 2D view's camera carries over (a 2D follow too)
     distFromZoom();                                                             // …and its zoom
     unrevealed = true; pip.style.visibility = atStart ? '' : 'hidden';          // mid-game: the 2D map stays up until the first 3D frame is drawn (no black while loading)
+    // mid-game, the match's warm-up (every kind of building made and thrown away) isn't spent in this first frame: the
+    // view's own buildings are built whole (unrevealed), the rest of the warm-up one kind a frame after (drawFrame)
+    if (!atStart && warmFrames > 0) { warmFrames = 0; warmedKinds.clear(); warmQueue.length = 0; prewarmShapes(); }
     if (atStart && renderer) renderer.clear();                                  // a rematch: never the last match's final frame
     fadeIn = !!atStart;
     if (fadeIn) { const mm = document.getElementById('minimap-wrap'); if (mm) { mm.style.transition = 'none'; mm.style.opacity = '0'; } } // arrives with the first frame
