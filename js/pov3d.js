@@ -17,6 +17,9 @@
   const BLDG_TOP = 230, BLDG_BASE = 10; // px of headroom above / margin below a footprint
 
   let THREE = null, loading = null;
+  // CROWN_BIT: the stencil bit a tree crown marks (the trees); a building's rim (rimBOf) shows only on it and off the
+  // building's own shape (maskB's bit 2) — under a crown in front, never on a unit, a horse, or its own parts
+  const CROWN_BIT = 8;
   let unrevealed = false;   // the world view opened, its first frame not drawn yet (window.world3D waits for it)
   let fadeIn = false;       // that first frame fades up (a match opening in 3D)
   let renderer, scene, camera, groundTex, groundData, groundMesh, groundFor = null, fowTex, fowData, SKY, VOID;
@@ -1238,17 +1241,19 @@ gl_Position = projectionMatrix * mvPosition;`;
     // a wooden staff and a gilt finial, hull-outlined (the cloth below gets a thin black frame of its own)
     pole(g, WOOD.post, [x, y0, z], [x, y0 + poleH, z], 0.014 * s).name = 'flagPole';
     const knob = blob(g, GOLD, x, y0 + poleH + 0.024 * s, z, 0.03 * s); knob.name = 'flagPole';
-    const L = 17 * s / PX, Hf = 8.5 * s / HPX, geo = own(new THREE.PlaneGeometry(L, Hf, 8, 1).translate(L / 2, -Hf / 2, 0));
+    const L = 17 * s / PX, Hf = 8.5 * s / HPX, NX = 12, NY = 4, geo = own(new THREE.PlaneGeometry(L, Hf, NX, NY).translate(L / 2, -Hf / 2, 0));
     // Its outline: a thin black frame round the cloth's edge, in its plane (no overlap, so no depth fight from either
     // side), in the cloth's own mesh (the colour per vertex): it waves with it
     const m = HULL * 0.3, pts = [], idx = [], strip = (x0, x1, y0, y1, n) => { const b = pts.length / 3;
       for (let a = 0; a <= n; a++) { const xx = x0 + (x1 - x0) * a / n; pts.push(xx, y0, 0, xx, y1, 0); }
       for (let a = 0; a < n; a++) { const q = b + 2 * a; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); } };
-    strip(-m, L + m, m, 0, 8); strip(-m, L + m, -Hf, -Hf - m, 8); strip(-m, 0, 0, -Hf, 1); strip(L, L + m, 0, -Hf, 1);
+    // (as finely cut as the cloth, so it bends with it)
+    const side = (x0, x1) => { const b = pts.length / 3; for (let a = 0; a <= NY; a++) { const yy = -Hf * a / NY; pts.push(x0, yy, 0, x1, yy, 0); } for (let a = 0; a < NY; a++) { const q = b + 2 * a; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); } };
+    strip(-m, L + m, m, 0, NX); strip(-m, L + m, -Hf, -Hf - m, NX); side(-m, 0); side(L, L + m);
     const f = new THREE.Mesh(framed(geo, pts, idx, col), rigPlainMat(THREE.DoubleSide));
     f.geometry.userData.rest = Float32Array.from(f.geometry.attributes.position.array);
     f.position.set(x, y0 + poleH - 0.01, z); f.rotation.y = -3 * Math.PI / 4;
-    f.name = 'flag'; f.userData.len = L; f.userData.s = s; g.add(f);
+    f.name = 'flag'; f.userData.len = L; f.userData.hgt = Hf; f.userData.s = s; f.userData.phase = (x * 0.37 + z * 0.71) % (2 * Math.PI); g.add(f);   // (each flag its own phase: not all in step)
   }
   // A flat cloth (geo, facing +z) and its black frame (pts, idx) as one geometry, the colour per vertex; geo is freed.
   function framed(geo, pts, idx, col){
@@ -1738,6 +1743,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     FALL_AXIS = new THREE.Vector3(Math.SQRT1_2, 0, Math.SQRT1_2);
     const one = new THREE.Vector3(1, 1, 1), sway = swaying(new THREE.MeshLambertMaterial({ color: '#ffffff' })); // colored per tree
     const leaf = swaying(new THREE.MeshLambertMaterial({ color: '#ffffff' }), true), hullSway = screenHull(swaying(hullWorldMat.clone()), HULL, 1.5), hullCrown = screenHull(swaying(hullWorldMat.clone(), true), HULL, 1.5);
+    // the crowns (and their outlines) mark CROWN_BIT where they're drawn: a building's rim behind them shows there alone
+    for (const mtl of [leaf, hullCrown]) Object.assign(mtl, { stencilWrite: true, stencilRef: CROWN_BIT, stencilWriteMask: CROWN_BIT, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
     HULL_MATS.add(hullSway).add(hullCrown);
     // drawFullTreeBody: a round trunk 24px tall into a cloud of puffs (12px
     // centre, 9px cheeks round it, two 9px caps across the screen).
@@ -4672,14 +4679,14 @@ gl_Position = projectionMatrix * mvPosition;`;
         // (out of sight it stays as it was left: an enemy's gate doesn't work in the fog)
         if (!ge || buildingFogLevel(ge) === 2) rec.door.position.y = ge ? (ge.gateProgress || 0) * 26 / HPX : 0;
       }
-      if (rec.flags) for (const f of rec.flags) { // the art's travelling wave
-        const pos = f.geometry.attributes.position, rest = f.geometry.userData.rest, L = f.userData.len, fs = f.userData.s || 1;
+      if (rec.flags && rec.obj.visible) for (const f of rec.flags) { // the art's travelling wave, a ripple down its height too, shaded as it folds
+        const pos = f.geometry.attributes.position, rest = f.geometry.userData.rest, L = f.userData.len, H = f.userData.hgt || 1, fs = f.userData.s || 1, ph = f.userData.phase || 0;
         for (let i = 0; i < pos.count; i++) {
-          const u = rest[3 * i] / L;
-          pos.setZ(i, (Math.sin(t - u * 4.2) * 0.07 + Math.sin(t * 0.63 - u * 7) * 0.02) * u * fs);
-          pos.setY(i, rest[3 * i + 1] - 0.05 * u * u * fs);
+          const u = Math.max(0, rest[3 * i] / L), v = Math.max(0, -rest[3 * i + 1] / H), a = t + ph;   // (u out from the staff, v down from its top)
+          pos.setZ(i, (Math.sin(a - u * 4.2) * 0.07 + Math.sin(a * 0.63 - u * 7) * 0.02 + Math.sin(a * 1.4 - u * 5 + v * 2.4) * 0.012) * u * fs);
+          pos.setY(i, rest[3 * i + 1] - (0.05 * u * u + 0.012 * u * v) * fs);   // (the free corner hangs a touch lower)
         }
-        pos.needsUpdate = true;
+        pos.needsUpdate = true; f.geometry.computeVertexNormals();
       }
       if (rec.trainees) for (const tr of rec.trainees) { // the spearman's thrust on the pose cache (villagerPose's idiom), facing the dummy
         const opt = { unit: 'spearman', eq: soldierEquip('spearman', rec.age, 0, 0, false) }, ph = ((aTick * 0.026 + tr.seed) % 1 + 1) % 1, step = Math.floor(ph * VIL_STEPS);
@@ -6455,8 +6462,10 @@ gl_Position = projectionMatrix * mvPosition;`;
       xray.userData = { mask: m({ colorWrite: false, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }), rim: new Map(),
         rimOf: t => { let r = xray.userData.rim.get(t); if (!r) { xray.userData.rim.set(t, r = screenHull(m({ color: teamColor(t), side: THREE.BackSide, stencilFunc: THREE.NotEqualStencilFunc }), HULL * 2, 2.4));
           r.onBeforeCompile.fow = true; } return r; }, // the ink shell pushed wider: a rim ~1px outside the ink
-        maskB: m({ colorWrite: false, stencilRef: 2, side: THREE.DoubleSide, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }), rimB: new Map(),
-        rimBOf: t => { let r = xray.userData.rimB.get(t); if (!r) { xray.userData.rimB.set(t, r = screenHull(m({ color: t === 'bad' ? '#ff3020' : teamColor(t), stencilRef: 2, side: THREE.DoubleSide, stencilFunc: THREE.NotEqualStencilFunc }), HULL * 2.5, 3));
+        // (a building's mask is its whole shape, not only what's hidden: its rim shows only outside it — under a tree's crown —
+        // never on the building's own faces, where one part hides another)
+        maskB: m({ colorWrite: false, depthTest: false, stencilRef: 2, stencilWriteMask: 2, side: THREE.DoubleSide, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }), rimB: new Map(),
+        rimBOf: t => { let r = xray.userData.rimB.get(t); if (!r) { xray.userData.rimB.set(t, r = screenHull(m({ color: t === 'bad' ? '#ff3020' : teamColor(t), stencilRef: t === 'bad' ? 2 : CROWN_BIT, stencilFuncMask: t === 'bad' ? 0xff : CROWN_BIT | 2, side: THREE.DoubleSide, stencilFunc: t === 'bad' ? THREE.NotEqualStencilFunc : THREE.EqualStencilFunc }), HULL * 2.5, 3));
           r.onBeforeCompile.fow = true; } return r; } };
     }
     const on = world && mode !== 'eye';   // (not through the eyes: team rims through every wall and tree would crowd a first-person view)
