@@ -328,6 +328,24 @@ function drawParticles() {
       X.arc(sx, sy, curSize, 0, Math.PI * 2);
       X.fill();
     } 
+    // a stone's strike (stoneLanded): the ring of dust it throws out along the ground, the cloud rolling up, its shards
+    else if (p.type === 'ring') {
+      const pct = 1 - p.life / p.maxLife, r = (6 + 30 * Math.sqrt(pct)) * p.size;
+      X.globalAlpha = 0.75 * (1 - pct); X.strokeStyle = p.color; X.lineWidth = 1.5 + 5 * (1 - pct);
+      X.beginPath(); X.ellipse(sx, sy, r, r / 2, 0, 0, Math.PI * 2); X.stroke();
+    }
+    else if (p.type === 'puff') {
+      const pct = 1 - p.life / p.maxLife;
+      const r = p.size * (1 + 1.6 * Math.sqrt(pct)), g = X.createRadialGradient(sx, sy, 0, sx, sy, r);   // (soft-edged: a cloud, not discs)
+      g.addColorStop(0, p.color); g.addColorStop(0.55, p.color); g.addColorStop(1, p.color + '00');
+      X.globalAlpha = 0.8 * Math.min(1, (1 - pct) * 1.6) * Math.min(1, pct * 8 + 0.3); X.fillStyle = g;
+      X.beginPath(); X.arc(sx, sy, r, 0, Math.PI * 2); X.fill();
+    }
+    else if (p.type === 'chunk') {
+      const r = p.size, c = Math.cos(p.spin), s2 = Math.sin(p.spin);
+      X.globalAlpha = Math.min(1, p.life / 10); X.fillStyle = p.color; X.strokeStyle = '#000'; X.lineWidth = 0.8;
+      X.beginPath(); X.moveTo(sx + c * r, sy + s2 * r); X.lineTo(sx - s2 * r * 0.8, sy + c * r * 0.8); X.lineTo(sx - c * r * 0.9, sy - s2 * r * 0.7); X.lineTo(sx + s2 * r * 0.6, sy - c * r); X.closePath(); X.fill(); X.stroke();
+    }
     else if (p.type === 'blood') {
       X.fillStyle = p.color;
       if (pz <= 0.01) {
@@ -350,7 +368,7 @@ function drawParticles() {
   X.restore();
 }
 
-// An arrow stuck where it landed (stickArrow, js/core.js): the flying arrow's shaft (same pale shaft on a black
+// An arrow stuck where it landed (stickArrow, js/core.js): the flying arrow's shaft (same tan shaft on a black
 // outline), its head buried, tail up and back along the way it came; Fletching's team vanes at the tail.
 function drawStuckArrow(a){
   let s = mapToScreen(a.x, a.y), tx = s.sx, ty = s.sy + HALF_TH - a.h;
@@ -358,7 +376,7 @@ function drawStuckArrow(a){
   let ex = tx - iso.ix / il * L * Math.cos(a.tilt), ey = ty - iso.iy / il * L * Math.cos(a.tilt) - L * Math.sin(a.tilt);
   X.save(); X.globalAlpha *= a.alpha; X.lineCap = 'round';
   X.strokeStyle = '#000'; X.lineWidth = 3; X.beginPath(); X.moveTo(tx, ty); X.lineTo(ex, ey); X.stroke();
-  X.strokeStyle = '#f5f2e9'; X.lineWidth = 1.3; X.beginPath(); X.moveTo(tx, ty); X.lineTo(ex, ey); X.stroke();
+  X.strokeStyle = ARROW_SHAFT; X.lineWidth = 1.3; X.beginPath(); X.moveTo(tx, ty); X.lineTo(ex, ey); X.stroke();
   if (a.fl != null) { let ux = (ex - tx) / L, uy = (ey - ty) / L;
     X.strokeStyle = teamColorLight(a.fl); X.lineWidth = 1.6;
     X.beginPath(); X.moveTo(ex - ux * 3, ey - uy * 3); X.lineTo(ex - ux * 0.5 - uy * 2.2, ey - uy * 0.5 + ux * 2.2);
@@ -366,62 +384,116 @@ function drawStuckArrow(a){
   X.restore();
 }
 
+// ---- Shots in flight: one path, both views ----
+// The sim flies each shot along the ground at PROJECTILE_TILES_PER_TICK to its aim point (js/loop.js). The views add
+// where it was loosed from and lands (projEnds), its height — launch to what it strikes, plus a parabola (a true lob
+// at a steady ground speed) — and carry it on between the sim's steps, never past its aim. V: the view's { flat (2D),
+// heading(e), hk (art px up → its px up), arc (an arrow's rise at the top, px per tile of run) }.
+const PROJ_HIT_H = 8, STONE_ARC = 5;   // px over the ground where it lands: a body's middle; a trebuchet's lob (an arc, both views)
+const isStoneShot = p => !!(p.attackerSnap && p.attackerSnap.utype === 'trebuchet');
+const PROJ_2D = { flat: true, heading: e => (e.dir !== undefined ? e.dir : 7) * Math.PI / 4, hk: 1, arc: ARROW_ARC_2D, pitch: ARROW_PITCH_2D };
+const _projEnds = new WeakMap();
+const ARROW_LEN_2D = 15 * UNIT_SCALE;   // (the nocked arrow's shaft, archerPose's drawing)
+// Its ends, kept per shot: [x, y, h px] it's loosed from, and lands at, and its arc's rise A (px). From: a bowman's
+// bow — an archer's, a garrisoned TC's or Castle's crew's (roofShot; flat: not a TC crew down inside, the 2D's keep
+// stands whole) — where the nocked arrow is at the loose (bowRelease, the view's pitch), turned to its mark; else a
+// building's arrow leaves the edge of its footprint facing the target (the sim's starts in its middle); a trebuchet's
+// stone, its sling where it lets go (trebRelease, turned to the machine's heading). To: a building's wall facing it
+// (shotFace), else the aim point. An arrow's arc is fitted to leave at the bow's pitch (rise 4·arc a tile at the
+// start, whatever the drop to its mark); a stone's lob is STONE_ARC a tile.
+function projEnds(p, V){
+  let S = _projEnds.get(p); if (S) return S;
+  const e = entitiesById.get(p.attackerId), tb = p.targetBuildingId != null ? entitiesById.get(p.targetBuildingId) : null, stone = isStoneShot(p);
+  const aim = (x, y) => tb ? shotFace(x, y, tb) : [p.tx, p.ty];
+  let F = [p.startX, p.startY, p.startH || 12], bow = p.attackerSnap && p.attackerSnap.utype === 'archer' ? [p.startX, p.startY, 0] : null;
+  if (e && e.type === 'building') F = [Math.max(e.x - 0.5, Math.min(e.x + e.w - 0.5, p.tx)), Math.max(e.y - 0.5, Math.min(e.y + e.h - 0.5, p.ty)), F[2]];
+  const R = roofShot(p); if (R && !(V.flat && R.inside)) bow = [R.x, R.y, R.h];
+  if (bow) { const [ax, ay] = aim(bow[0], bow[1]), h = Math.atan2(ay - bow[1], ax - bow[0]), r = bowRelease(V.pitch), k = UNIT_SCALE / (HALF_TW * Math.SQRT2);
+    F = [bow[0] + (Math.cos(h) * r[0] - Math.sin(h) * r[2]) * k, bow[1] + (Math.sin(h) * r[0] + Math.cos(h) * r[2]) * k, bow[2] + r[1] * UNIT_SCALE]; }
+  if (stone) { const r = trebRelease(), h = e && e.hp > 0 ? V.heading(e) : Math.atan2(p.ty - p.startY, p.tx - p.startX), k = 1.5 * UNIT_SCALE, T = HALF_TW * Math.SQRT2;
+    F = [p.startX + Math.cos(h) * r[0] * k / T, p.startY + Math.sin(h) * r[0] * k / T, r[1] * k * V.hk]; }
+  const T = [...aim(F[0], F[1]), tb ? 14 : PROJ_HIT_H], run = Math.hypot(T[0] - F[0], T[1] - F[1]);
+  const A = stone ? STONE_ARC * run : Math.max(0, V.arc * run - (T[2] - F[2]) / 4);
+  _projEnds.set(p, S = [F, T, A]); return S;
+}
+// How far along (0 → 1): the sim's spot, carried on `ahead` tiles (what it has flown since that step)
+function projProg(p, ahead){ const D = p.totalDist; return D > 0.1 ? Math.max(0, Math.min(1, 1 - Math.max(0, Math.hypot(p.tx - p.x, p.ty - p.y) - ahead) / D)) : 1; }
+// The shot at prog: x, y (map), h (px over the ground); its tangent — the whole ground run (gx, gy, tiles) against the
+// climb (dh, px per unit of prog)
+function projAt(p, prog, V, o){
+  const [F, T, A] = projEnds(p, V);
+  o.prog = prog; o.gx = T[0] - F[0]; o.gy = T[1] - F[1]; o.x = F[0] + o.gx * prog; o.y = F[1] + o.gy * prog;
+  o.h = F[2] + (T[2] - F[2]) * prog + 4 * A * prog * (1 - prog); o.dh = T[2] - F[2] + 4 * A * (1 - 2 * prog);
+  return o;
+}
+// Its shadow's spot on the ground: thrown along the light by its height, as a building's (SHADOW_CAST) — a high stone's
+// lies well off, and sweeps in to meet it as it falls
+function projShadowAt(o){ const k = o.h / ART_HPX; return [o.x + SHADOW_CAST[0] * k, o.y + SHADOW_CAST[1] * k]; }
+// the 2D's shots this frame: the share of the next step already elapsed, carried on as the units are (render.js)
+const projAhead2D = () => typeof accumulator === 'undefined' ? 0 : Math.max(0, Math.min(1, accumulator / timeStep)) * PROJECTILE_TILES_PER_TICK;
+const projVisible = p => { const x = Math.round(p.x), y = Math.round(p.y);
+  // (NaN guard, as drawParticles: a degenerate coord would make fog[NaN][NaN] throw and kill the frame)
+  return Number.isFinite(x) && Number.isFinite(y) && y >= 0 && y < MAP && x >= 0 && x < MAP && fog[y][x] === 2; };
+const _po = {}, _pq = {};
+
+// A stone landing in sight shakes the view a moment: the 2D's drawing (render.js, viewShakeOffset), the 3D's camera
+// (pov3d's shakeFrom: by distance) — mag: px in the 2D
+let viewShake = 0, viewShakeAt = 0;
+window.shakeView = (x, y, mag) => {
+  if (window.world3D) { if (window.__povShake) window.__povShake(x, y, mag); return; }
+  const s = mapToScreen(x, y); if (isOffscreen(s.sx, s.sy + HALF_TH, 0)) return;
+  const now = performance.now(); viewShake = Math.max(viewShake * Math.exp(-(now - viewShakeAt) / 90), mag); viewShakeAt = now;
+};
+function viewShakeOffset(){
+  const age = performance.now() - viewShakeAt, k = viewShake * Math.exp(-age / 90);
+  return k < 0.2 ? null : [Math.sin(age * 0.07) * k, Math.sin(age * 0.093 + 1) * k * 0.7];
+}
+
+// The shots' shadows, on the ground under all that stands on it (render.js, after drawGround): an arrow's a thin
+// dash along its flight, a stone's an oval; the higher, the fainter.
+function drawProjectileShadows(){
+  if (!projectiles.length) return;
+  const ahead = projAhead2D(), o = _po;
+  X.save(); X.fillStyle = X.strokeStyle = SHADOW_FILL; X.lineCap = 'round';
+  for (const p of projectiles) {
+    if (!projVisible(p)) continue;
+    projAt(p, projProg(p, ahead), PROJ_2D, o);
+    const g = projShadowAt(o), s = mapToScreen(g[0], g[1]), sx = s.sx, sy = s.sy + HALF_TH;
+    if (isOffscreen(sx, sy, 20)) continue;
+    X.globalAlpha = Math.max(0.5, 1 - o.h / 400);
+    if (isStoneShot(p)) { X.beginPath(); X.ellipse(sx, sy, 8, 4, 0, 0, Math.PI * 2); X.fill(); continue; }
+    const iso = toIso(o.gx, o.gy), il = Math.hypot(iso.ix, iso.iy) || 1, ux = iso.ix / il * 6, uy = iso.iy / il * 6;
+    X.lineWidth = 2; X.beginPath(); X.moveTo(sx - ux, sy - uy); X.lineTo(sx + ux, sy + uy); X.stroke();
+  }
+  X.restore();
+}
+
 function drawProjectiles() {
   X.save();
+  const ahead = projAhead2D(), o = _po, q = _pq, scr = o2 => { const s = mapToScreen(o2.x, o2.y); return [s.sx, s.sy + HALF_TH - o2.h]; };
   projectiles.forEach(p => {
-    let ppx = Math.round(p.x), ppy = Math.round(p.y);
-    // NaN guard (see drawParticles): a degenerate projectile coord would make
-    // fog[NaN][NaN] throw and kill the frame — skip it.
-    if (!Number.isFinite(ppx) || !Number.isFinite(ppy) || ppy < 0 || ppy >= MAP || ppx < 0 || ppx >= MAP || fog[ppy][ppx] !== 2) return;
-    // Arrows fly to a fixed aim point (p.tx/p.ty), not a tracked entity.
-    let targetX = p.tx, targetY = p.ty;
-    let dCurrent = Math.hypot(p.x - targetX, p.y - targetY);
-    let progress = p.totalDist > 0.1 ? Math.max(0, Math.min(1, 1 - dCurrent / p.totalDist)) : 1;
+    if (!projVisible(p)) return;
+    const prog = projProg(p, ahead); projAt(p, prog, PROJ_2D, o);
+    const [sx, sy] = scr(o);
+    if (isOffscreen(sx, sy, 40)) return;
+    // Its screen tangent: the ground run (iso) against the climb — it points along its true path, launch to impact
+    const isoG = toIso(o.gx, o.gy), screenAngle = Math.atan2(isoG.iy - o.dh, isoG.ix), ca = Math.cos(screenAngle), sa = Math.sin(screenAngle), px2 = -sa, py2 = ca;
+    // the air it parts: a short trail back along the arc it came by, fading (a stone's wider, dustier); an arrow's from
+    // its nock, the 14px shaft back along the path in prog (by the tangent's screen length a unit)
+    const stone = isStoneShot(p), D = Math.max(0.5, p.totalDist), step = (stone ? 0.32 : 0.28) / D, n = stone ? 6 : 4, tail = stone ? 0 : ARROW_LEN_2D / Math.max(1, Math.hypot(isoG.ix, isoG.iy - o.dh));
+    let prev = [sx - ca * (stone ? 0 : ARROW_LEN_2D), sy - sa * (stone ? 0 : ARROW_LEN_2D)];
+    X.lineCap = 'round';
+    for (let i = 1; i <= n; i++) { const pr = prog - tail - i * step; if (pr <= 0) break;
+      projAt(p, pr, PROJ_2D, q); const pt = scr(q), f = 1 - i / (n + 1);
+      X.strokeStyle = stone ? 'rgba(222,212,190,' + (0.5 * f) + ')' : 'rgba(255,255,255,' + (0.4 * f) + ')'; X.lineWidth = (stone ? 4.5 : 1.8) * f + 0.4;
+      X.beginPath(); X.moveTo(prev[0], prev[1]); X.lineTo(pt[0], pt[1]); X.stroke(); prev = pt; }
+    if (stone) { drawStoneShot(p, sx, sy, prog); return; }
 
-    // a garrisoned TC's arrow leaves its roof crew's bow (roofShot): drawn from there, same progress, same landing
-    // (a crew down inside a broken keep: the 2D's keep stands whole, so from the sim's start)
-    let rs = roofShot(p); if (rs && rs.inside) rs = null; let fx = rs ? rs.x : p.startX, fy = rs ? rs.y : p.startY;
-    let scr = rs ? mapToScreen(fx + (targetX - fx) * progress, fy + (targetY - fy) * progress) : mapToScreen(p.x, p.y);
-    let sx = scr.sx;
-    let sy = scr.sy + HALF_TH;
-    // Height along the flight: launch height (bow / battlements) blends to
-    // impact height at the target's body, plus the ballistic arc.
-    let startH = rs ? rs.h : p.startH || 12;
-    let endH = 8;
-    let A = 35 * (p.totalDist / 5);
-    let arcH = Math.sin(progress * Math.PI) * A;
-    let lift = startH + (endH - startH) * progress + arcH;
-    sy -= lift;
-    // a trebuchet's stone: a tumbling boulder, not an arrow
-    if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') {
-      X.fillStyle = '#8f8a80'; X.strokeStyle = '#000'; X.lineWidth = 1.3;
-      X.beginPath(); X.ellipse(sx, sy, 5, 4.3, progress * 9, 0, Math.PI * 2); X.fill(); X.stroke();
-      X.fillStyle = 'rgba(255,255,255,0.25)'; X.beginPath(); X.arc(sx - 1.5, sy - 1.5, 1.6, 0, Math.PI * 2); X.fill();
-      return;
-    }
-
-    // Analytic flight tangent in screen space: iso ground motion plus the
-    // derivative of arc+height blend, so the arrow always points along its
-    // actual path — including right at launch and impact.
-    let isoS = toIso(fx, fy), isoT = toIso(targetX, targetY);
-    let vx = isoT.ix - isoS.ix;
-    let vy = (isoT.iy - isoS.iy) - (Math.cos(progress*Math.PI)*Math.PI*A + (endH - startH));
-    let screenAngle = Math.atan2(vy, vx);
-
-    let L = 14;
-    let ca = Math.cos(screenAngle), sa = Math.sin(screenAngle);
-    let px2 = -sa, py2 = ca;
-    // Motion streak trailing the arrow
-    X.strokeStyle = 'rgba(255,255,255,0.3)';
-    X.lineWidth = 2; X.lineCap='round';
-    X.beginPath();
-    X.moveTo(sx - ca*(L+2), sy - sa*(L+2));
-    X.lineTo(sx - ca*(L+11), sy - sa*(L+11));
-    X.stroke();
+    const L = ARROW_LEN_2D;
     // Thick shaft
     X.strokeStyle = '#000'; X.lineWidth = 3.2;
     X.beginPath(); X.moveTo(sx - ca*L, sy - sa*L); X.lineTo(sx, sy); X.stroke();
-    X.strokeStyle = '#f5f2e9'; X.lineWidth = 1.4;
+    X.strokeStyle = ARROW_SHAFT; X.lineWidth = 1.4;
     X.beginPath(); X.moveTo(sx - ca*L, sy - sa*L); X.lineTo(sx, sy); X.stroke();
     X.lineCap='butt';
     // Big steel head
@@ -451,5 +523,20 @@ function drawProjectiles() {
     }
   });
   X.restore();
+}
+// A trebuchet's stone in flight: the sling's stone (its size, its grey), a lumpy rock of 7 corners (seeded by its shot)
+// tumbling end over end as it goes (a turn every ~2.5 tiles, rolling the way it flies), lit from the upper left, cracked
+function stoneCorners(id){ const out = []; for (let i = 0; i < 7; i++) { const a = (i + 0.5 * ((id * 7 + i * 13) % 5) / 5) / 7 * Math.PI * 2; out.push([Math.cos(a), Math.sin(a), 0.78 + 0.3 * (((id * 31 + i * 17) % 11) / 10)]); } return out; }
+function drawStoneShot(p, sx, sy, prog){
+  const C = stoneCorners(p.id), r = TREB_STONE * 1.5 * UNIT_SCALE, spin = prog * p.totalDist * 2.5 * (toIso(p.tx - p.startX, p.ty - p.startY).ix >= 0 ? 1 : -1);
+  const pts = C.map(([cx, cy, k]) => { const c = Math.cos(spin), s = Math.sin(spin); return [sx + (cx * c - cy * s) * r * k, sy + (cx * s + cy * c) * r * k * 0.92]; });
+  const path = () => { X.beginPath(); X.moveTo(...pts[0]); for (const q of pts.slice(1)) X.lineTo(...q); X.closePath(); };
+  X.lineJoin = 'round'; path(); X.fillStyle = '#8f8a80'; X.fill(); X.strokeStyle = '#000'; X.lineWidth = 1.3; X.stroke();
+  X.save(); path(); X.clip();
+  X.fillStyle = '#aaa59a'; X.beginPath(); X.arc(sx - r * 0.45, sy - r * 0.45, r * 0.85, 0, Math.PI * 2); X.fill();       // its lit side
+  X.fillStyle = '#76716a'; X.beginPath(); X.arc(sx + r * 0.75, sy + r * 0.7, r * 0.75, 0, Math.PI * 2); X.fill();        // its shaded underside
+  const a = spin + 0.6; X.strokeStyle = 'rgba(40,36,30,0.55)'; X.lineWidth = 0.8;
+  X.beginPath(); X.moveTo(sx - Math.cos(a) * r, sy - Math.sin(a) * r); X.lineTo(sx + Math.cos(a + 0.5) * r * 0.2, sy + Math.sin(a + 0.5) * r * 0.2); X.lineTo(sx + Math.cos(a) * r * 0.9, sy + Math.sin(a) * r * 0.9); X.stroke();
+  X.restore(); path(); X.strokeStyle = '#000'; X.lineWidth = 1.3; X.stroke();
 }
 

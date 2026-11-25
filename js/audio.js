@@ -174,7 +174,7 @@ const PAUSE_EXEMPT_SOUNDS = new Set(['chat', 'alert', 'click', 'error', 'victory
 const SOUND_MIX_DEFAULT = 0.85;
 const SOUND_MIX = (() => { const m = {};
   for (const t of ['chop', 'mine', 'farm', 'forage', 'build']) m[t] = 0.5;
-  for (const t of ['attack', 'arrow', 'death', 'collapse', 'ram_hit', 'ram_creak']) m[t] = 0.65;
+  for (const t of ['attack', 'arrow', 'death', 'collapse', 'ram_hit', 'ram_creak', 'treb_throw', 'stone_hit']) m[t] = 0.65;
   m.sheep = 0.6; m.bear = 0.45;
   for (const t of ['bell', 'bell_clear']) m[t] = 0.28;                                         // (authored hot, into the compressor: still the loudest cue)
   m.train = 0.45; m.select_villager = 0.45; m.alert = 0.55; m.victory = 0.55; m.defeat = 0.55; m.farm_exhausted = 0.6;
@@ -319,6 +319,24 @@ function playSound(type, wx, wy) {
         // Airy whoosh: rising band-swept noise, not a synth beep
         noiseHit(out, now, { dur: 0.16, vol: 0.2, type: 'bandpass', f0: 600 * p, f1: 2600 * p, q: 2.4, att: 0.03 });
         tone(out, now, { type: 'triangle', f0: 140 * p, f1: 110 * p, dur: 0.07, vol: 0.025, att: 0.002 });     // the string, faintly
+        break;
+      }
+      case 'treb_throw': {
+        // The trebuchet lets fly: the arm's long whoosh round, the sling's rope cracking taut, the frame's timber thump
+        noiseHit(out, now, { dur: 0.38, vol: 0.2, type: 'bandpass', f0: 260 * p, f1: 1100 * p, q: 1.6, att: 0.12 });
+        noiseHit(out, now, { t0: 0.3, dur: 0.04, vol: 0.12, type: 'bandpass', f0: 1500 * p, q: 2 });
+        tone(out, now, { type: 'square', t0: 0.3, f0: 110 * p, f1: 40, dur: 0.14, vol: 0.1 });
+        tone(out, now, { type: 'sine', t0: 0.3, f0: 64 * p, f1: 36, dur: 0.3, vol: 0.12, att: 0.006 });
+        break;
+      }
+      case 'stone_hit': {
+        // A stone lands: a heavy, dull boom under a sharp crack (the 'collapse' lesson: the read is in the mids), the
+        // ground's thud, then rubble and grit pattering down
+        noiseHit(out, now, { dur: 0.08, vol: 0.26, type: 'bandpass', f0: 950 * p, f1: 380, q: 1 });
+        tone(out, now, { type: 'sine', f0: 82 * p, f1: 30, dur: 0.45, vol: 0.18, att: 0.004 });
+        tone(out, now, { type: 'square', f0: 150 * p, f1: 48, dur: 0.12, vol: 0.09 });
+        noiseHit(out, now, { dur: 0.4, vol: 0.12, type: 'lowpass', f0: 420, f1: 140, q: 0.7 });
+        [0.08, 0.15, 0.24, 0.36].forEach(t0 => noiseHit(out, now, { t0, dur: 0.05, vol: 0.07, type: 'bandpass', f0: rnd(800, 1900), q: 1.8 }));
         break;
       }
       case 'select_villager': {

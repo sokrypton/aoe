@@ -263,6 +263,7 @@ function renderFrame(){
   if (elevAny) { const up = Math.ceil(ELEV_LAIR[2] * ELEV_PX / HALF_TH) + 1; maxX = Math.min(MAP - 1, maxX + up); maxY = Math.min(MAP - 1, maxY + up); }
   
   X.save();
+  { const sk = viewShakeOffset(); if (sk) X.translate(sk[0], sk[1]); }   // (a stone landing: render-fx shakeView)
   // Zoom scale about THE shared anchor (zoomAnchor, js/iso.js — same one
   // screenToMap inverts and setZoomAroundPoint solves against)
   {const {ax, ay} = zoomAnchor();
@@ -272,6 +273,7 @@ function renderFrame(){
 
   // Draw ground tiles (only visible ones)
   drawGround(minX,maxX,minY,maxY);
+  drawProjectileShadows();   // (render-fx: on the ground, under all that stands on it)
 
   
   // Find visible trees with wood resource remaining to depth-sort them

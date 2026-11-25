@@ -692,6 +692,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   function dropSolid(rec){
     if (rec.trainees) for (const t of rec.trainees) dropVillager(t);
     if (rec.roof) for (const t of rec.roof) dropVillager(t);
+    if (rec.yard) for (const t of rec.yard) dropVillager(t);
     scene.remove(rec.obj);
     rec.obj.traverse(o => {
       if (o.userData.siteOwn) [].concat(o.material).forEach(m => m.dispose());
@@ -1078,7 +1079,8 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // Pyramid (square base side 1 at y=0, apex y=1) scaled over a footprint.
   function pyramid(g, col, x0, z0, x1, z1, y0, rise){
-    if (!pyramidGeo) pyramidGeo = new THREE.ConeGeometry(Math.SQRT1_2, 1, 4, 1).rotateY(Math.PI / 4).translate(0, 0.5, 0);
+    // (no base: it lies on what carries it — a damaged one's crumbling sides showed it fighting that top)
+    if (!pyramidGeo) pyramidGeo = new THREE.ConeGeometry(Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0);
     g.add(inked(pyramidGeo, mat(col), (x0 + x1) / 2, y0, (z0 + z1) / 2, x1 - x0, rise, z1 - z0));
   }
   function round(g, col, cx, cz, r0, r1, y0, y1, seg, inkIt = true, topCol = col){
@@ -1578,6 +1580,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     }
     const roof = CASTLE_PARTS.flat().find(q => q.kind === 'roof');
     if (e.complete) flag(g, x + 2, z + 2, (roof.y0 + roof.rise) / HPX, null, tc);
+    // the portcullis just inside the gate's mouth, an iron-bound grille that slides up into the stone (animateModels:
+    // render-units' castleYard lifts it); the yard's walkers (yardWalkers)
+    const pc = new THREE.Group(), ph = 20 / HPX, pz = z + 4 - 0.07, bar = 0.022;
+    for (let k = -1.5; k <= 1.5; k++) boxAt(pc, '#3a3129', x + 2 + k * 0.1 - bar / 2, pz - bar / 2, x + 2 + k * 0.1 + bar / 2, pz + bar / 2, 0, ph, false);
+    for (let k = 1; k <= 4; k++) boxAt(pc, '#3a3129', x + 2 - 0.2, pz - bar / 2, x + 2 + 0.2, pz + bar / 2, ph * k / 4.4 - bar / 2, ph * k / 4.4 + bar / 2, false);
+    pc.name = 'portcullis'; pc.userData.keepWhole = true; g.add(pc);
+    if (e.complete) g.userData.yard = Array.from({ length: BLDGS.CASTLE.garrisonCap }, () => ({ y: 0 }));
   };
 
   // A horse in side profile along local x (barracks yard; drawYardHorse): a
@@ -1711,17 +1720,20 @@ gl_Position = projectionMatrix * mvPosition;`;
       stencilWrite: true, stencilRef: 4, stencilFuncMask: 4, stencilWriteMask: 4, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp });
     const sgeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
     part('shadow', sgeo, smat, null); part('shadowU', sgeo, smat, null); part('shadowF', sgeo, smat, null);   // (F: a felled tree's, laid each frame)
-    // Arrows (drawProjectiles): a pale 20px shaft behind a steel head, built
+    part('shadowP', sgeo, smat, null);   // (P: a shot's in flight, updateArrows)
+    // Arrows (drawProjectiles): a tan 20px shaft behind a steel head, built
     // along +y with the tip at the origin; fletched archer arrows add two
     // crossed team-color vanes at the tail.
     const L = 20 / PX, thin = new THREE.Vector3(1, 1, 1); // (bigger than the 2D art's 14px: thinner reads as nothing at a 3D distance)
-    part('shaft', new THREE.CylinderGeometry(0.017, 0.017, L, 6).translate(0, -L / 2, 0), new THREE.MeshLambertMaterial({ color: '#f5f2e9' }), thin, 0.008);
+    part('shaft', new THREE.CylinderGeometry(0.017, 0.017, L, 6).translate(0, -L / 2, 0), new THREE.MeshLambertMaterial({ color: ARROW_SHAFT }), thin, 0.008);
     part('head', new THREE.ConeGeometry(0.035, 0.1, 6).translate(0, -0.01, 0), new THREE.MeshLambertMaterial({ color: '#dde3ea' }), thin, 0.008);
     const vane = new THREE.BufferGeometry();
     vane.setAttribute('position', new THREE.Float32BufferAttribute([0, -L + 0.11, 0, 0.04, -L + 0.02, 0, 0, -L + 0.02, 0, 0, -L + 0.11, 0, 0, -L + 0.02, 0.04, 0, -L + 0.02, 0,
       0, -L + 0.11, 0, -0.04, -L + 0.02, 0, 0, -L + 0.02, 0, 0, -L + 0.11, 0, 0, -L + 0.02, -0.04, 0, -L + 0.02, 0], 3));
     vane.computeVertexNormals();
     part('vane', vane, new THREE.MeshLambertMaterial({ color: '#ffffff', side: THREE.DoubleSide }), null);
+    // the air an arrow parts: a faint streak back from its nock (its matrix: the arrow's)
+    part('streak', new THREE.CylinderGeometry(0.006, 0.014, 0.42, 5).translate(0, -L - 0.21, 0), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.32, depthWrite: false }), null);
   }
   let putTile = -1; // the map tile (y·MAP + x) the next put() belongs to: a click on the instance picks that tile
   let _m, _q, _p, _s, _c, _c2, _e, _e2, FALL_AXIS; // scratch, made once THREE has loaded (initFeatures)
@@ -1904,49 +1916,48 @@ gl_Position = projectionMatrix * mvPosition;`;
     G.mesh.count = G.n; G.mesh.instanceMatrix.needsUpdate = true;
   }
 
-  // Arrows in flight, as drawProjectiles flies them: launch height (chest /
-  // battlements) blending to impact height, plus the distance-scaled arc,
-  // each pointed along its true 3D flight line. The sim steps them 20 times
-  // a second; between steps each is carried on along its path (never past
-  // its aim point) so a fast arrow glides instead of hopping.
-  // (ARROW_ARC, ARROW_LAUNCH: render-units — the bow's aim is shared with the 2D)
-  let arrowTick = -1, arrowT0 = 0, _d;
-  // Where each arrow is drawn from (viewer-side, kept per projectile): a building's, the point of its footprint nearest
-  // the target; a unit's, the unit.
-  const arrowStart = new WeakMap();
-  function arrowFrom(p){
-    let S = arrowStart.get(p);
-    if (!S) { const b = entitiesById.get(p.attackerId);
-      S = b && b.type === 'building' ? [Math.max(b.x - 0.5, Math.min(b.x + b.w - 0.5, p.tx)), Math.max(b.y - 0.5, Math.min(b.y + b.h - 0.5, p.ty))] : [p.startX, p.startY];
-      const R = roofShot(p); if (R) S = [R.x, R.y, R.h];   // a garrisoned TC: from its roof crew's bows
-      arrowStart.set(p, S); }
-    return S;
-  }
+  // Shots in flight, on drawProjectiles' path (render-fx projEnds/projAt: where each is loosed from and lands, its parabola), each
+  // pointed along its true 3D flight line. The sim steps them 20 times a second; between steps each is carried on along
+  // its path (never past its aim point) so a fast arrow glides instead of hopping. Arrows fly flat here (ARROW_ARC:
+  // render-units — the bow's aim is shared with the 2D); a trebuchet's stone is lobbed as the 2D's.
+  let arrowTick = -1, arrowT0 = 0, _d, P3 = null;
+  const _pa = {};
   const stones = new Map();   // projectile id → a trebuchet stone's model
+  // a stone: an icosahedron the sling stone's size, its corners pushed in and out (8 shapes, by its shot), flat faces,
+  // outlined; made once a shape, copied a shot
+  const rocks = [];
+  function stoneModel(id){
+    const k = id % 8; if (rocks[k]) return rocks[k].clone();
+    const geo = new THREE.IcosahedronGeometry(1, 0), P = geo.attributes.position;
+    for (let i = 0; i < P.count; i++) { const x = P.getX(i), y = P.getY(i), z = P.getZ(i), h = Math.abs(Math.round(x * 7 + y * 13 + z * 17 + k * 29)) % 7, f = 0.8 + h * 0.05;
+      P.setXYZ(i, x * f, y * f * 0.9, z * f); }   // (a corner's copies hash alike: they move together, the faces stay shut)
+    geo.computeVertexNormals();
+    const g = new THREE.Group(), m = new THREE.Mesh(geo, mat('#8f8a80')); m.scale.setScalar(ar(TREB_STONE, 1.5)); m.userData.hullGeo = geo; m.userData.hullRound = true; g.add(m); addHulls(g);
+    return (rocks[k] = g).clone();
+  }
   function updateArrows(now){
     if (tick !== arrowTick) { arrowTick = tick; arrowT0 = now; }
+    P3 = P3 || { flat: false, heading: worldFacing, hk: HPX / PX, arc: ARROW_ARC, pitch: ARROW_PITCH };
     const ahead = Math.min(1, (now - arrowT0) / (1000 / TPS)) * PROJECTILE_TILES_PER_TICK;
-    const S = feat.shaft, Hd = feat.head, V = feat.vane, dir = _d = _d || new THREE.Vector3();
-    S.n = Hd.n = V.n = 0;
+    const S = feat.shaft, Hd = feat.head, V = feat.vane, SP = feat.shadowP, TR = feat.streak, dir = _d = _d || new THREE.Vector3(), o = _pa;
+    S.n = Hd.n = V.n = SP.n = TR.n = 0;
     for (const p of projectiles) {
-      const gx = Math.round(p.x), gy = Math.round(p.y);
-      if (!Number.isFinite(gx) || !Number.isFinite(gy) || !fog[gy] || fog[gy][gx] !== 2 || S.n >= FEAT_CAP) continue;
-      const rx = p.tx - p.x, ry = p.ty - p.y, left = Math.hypot(rx, ry), step = Math.min(ahead, left);
-      const ax_ = p.x + (left > 1e-6 ? rx / left * step : 0), ay_ = p.y + (left > 1e-6 ? ry / left * step : 0);
-      const D = p.totalDist, prog = D > 0.1 ? Math.max(0, Math.min(1, 1 - Math.hypot(ax_ - p.tx, ay_ - p.ty) / D)) : 1;
-      // drawn from where it's loosed: a building's arrow leaves its EDGE facing the target (the sim flies it from the
-      // footprint's centre — out of the middle of a TC roof); same progress, same landing
-      const from = arrowFrom(p), x = from[0] + (p.tx - from[0]) * prog, y = from[1] + (p.ty - from[1]) * prog;
-      const sH = from[2] || p.startH || 12, eH = 8, A = ARROW_ARC * D;
-      const h = (sH + (eH - sH) * prog + Math.sin(prog * Math.PI) * A) / HPX;
-      // Flight tangent: ground run over the whole flight, and d(height)/d(progress).
-      const gdx = p.tx - from[0], gdy = p.ty - from[1];
-      dir.set(gdx, ((eH - sH) + Math.cos(prog * Math.PI) * Math.PI * A) / HPX, gdy).normalize();
-      if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') { // a trebuchet's stone, tumbling
-        let st = stones.get(p.id); if (!st) { st = new THREE.Group(); blob(st, '#8f8a80', 0, 0, 0, 0.09); scene.add(st); stones.set(p.id, st); }
-        st.position.set(x + 0.5, h, y + 0.5); st.rotation.set(prog * 9, prog * 5, 0); st.userData.seen = arrowTick; continue; }
+      if (!projVisible(p) || S.n >= FEAT_CAP) continue;
+      const prog = projProg(p, ahead); projAt(p, prog, P3, o);
+      const x = o.x, y = o.y, h = o.h / HPX;
+      // its shadow: thrown along the light by its height (projShadowAt, the 2D's); higher, smaller
+      const sg = projShadowAt(o), fade = Math.max(0.45, 1 - o.h / 400), stone = isStoneShot(p);
+      if (stone) put('shadowP', sg[0] + 0.5, 0.008, sg[1] + 0.5, 0.36 * fade, 1, 0.3 * fade);
+      else put('shadowP', sg[0] + 0.5, 0.008, sg[1] + 0.5, 0.4 * fade, 1, 0.07, -Math.atan2(o.gy, o.gx));
+      // Flight tangent: the ground run over the whole flight, and d(height)/d(progress).
+      dir.set(o.gx, o.dh / HPX, o.gy).normalize();
+      if (stone) { // a trebuchet's stone, tumbling end over end the way it flies
+        let st = stones.get(p.id);
+        if (!st) { st = stoneModel(p.id); scene.add(st); stones.set(p.id, st); }
+        st.position.set(x + 0.5, h, y + 0.5); st.rotation.set(0, -Math.atan2(o.gy, o.gx), -prog * p.totalDist * 2.5, 'YXZ'); st.userData.seen = arrowTick; continue; }
       _m.compose(_p.set(x + 0.5, h, y + 0.5), _q.setFromUnitVectors(_s.set(0, 1, 0), dir), _s.set(1, 1, 1));
       S.mesh.setMatrixAt(S.n++, _m); Hd.mesh.setMatrixAt(Hd.n++, _m);
+      if (prog > 0.04) TR.mesh.setMatrixAt(TR.n++, _m);   // (the air it parts: once it's clear of the bow)
       const a = p.attackerSnap; // bare shafts until the archer's team has Fletching (tower/TC bolts fly bare)
       if (a && a.utype === 'archer' && hasUpgrade(a.team, 'fletching')) { V.mesh.setMatrixAt(V.n, _m); V.mesh.setColorAt(V.n++, _c.set(teamColorLight(a.team))); }
     }
@@ -1966,7 +1977,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       S.mesh.setMatrixAt(S.n++, _m);
       if (a.fl != null) { V.mesh.setMatrixAt(V.n, _m); V.mesh.setColorAt(V.n++, _c.set(teamColorLight(a.fl))); }
     }
-    for (const f of [S, Hd, V]) {
+    for (const f of [S, Hd, V, SP, TR]) {
       f.mesh.count = f.n; if (f.hull) f.hull.count = f.n;
       f.mesh.instanceMatrix.needsUpdate = true; if (f.mesh.instanceColor) f.mesh.instanceColor.needsUpdate = true;
     }
@@ -2783,8 +2794,11 @@ gl_Position = projectionMatrix * mvPosition;`;
   // timber's inner edges: a dark brown, not the black ink (the silhouette's hull stays black)
   let _woodInk = null; const woodInk = () => _woodInk || (_woodInk = new THREE.LineBasicMaterial({ color: 0x3a2716 }));
   function trebModel(tc, pose = {}){
-    const g = new THREE.Group(), f = ax(1, 1.5), P = v => v.map(c => c * f);
-    for (const q of trebParts(tc, pose)) {
+    const g = new THREE.Group(), f = ax(1, 1.5), P = v => v.map(c => c * f), root = g;
+    // live (a set-up stage, trebLive moves them): the arm and the weight each in a group of its own, the straps kept rods
+    const sub = {}; if (pose.live) for (const n of ['arm', 'cw']) { sub[n] = new THREE.Group(); sub[n].name = 'treb_' + n; sub[n].userData.live = true; root.add(sub[n]); }
+    for (const q0 of trebParts(tc, pose)) { const q = q0, g = sub[q.g] || root;
+      if (pose.live && q.strap) { const m = pole(root, q.col, P(q.rod[0]), P(q.rod[1]), q.r * f); m.name = 'treb_strap'; m.userData.live = true; m.userData.z = q.rod[0][2] * f; continue; }
       if (q.box) { const [x0, y0, z0, x1, y1, z1] = P(q.box); boxAt(g, topped(q.col, q.top), x0, z0, x1, z1, y0, y1, 'hull'); }
       else if (q.rod) pole(g, q.col, P(q.rod[0]), P(q.rod[1]), q.r * f);
       else if (q.prism) { const Q = q.prism.map(P), ctr = Q.reduce((a, v) => a.map((c, i) => c + v[i] / 8), [0, 0, 0]);   // its six faces from its corners (x·4 + y·2 + z)
@@ -2796,8 +2810,22 @@ gl_Position = projectionMatrix * mvPosition;`;
         wheel(wg, 0, 0, 0, q.r * f, q.w * f, '#33261a', '#5a4630');
         blob(wg, '#a8adb3', 0, 0, Math.sign(q.wheel[2]) * q.w * f / 2, 0.9 * f, 0.9 * f, 0.35 * f); }   // (its iron hub, on the outer face: the 2D's)
     }
-    return g;
+    return root;
   }
+  // A set-up stage's model (trebModel live, built at stage s0) moved to s: the arm turned on its axle, the weight slid,
+  // each strap re-laid from the arm's tail to the weight's top (trebPack's, as trebParts lays them)
+  function trebLive(obj, s0, s){
+    const L = obj.userData.trebLive || (obj.userData.trebLive = { arm: obj.getObjectByName('treb_arm'), cw: obj.getObjectByName('treb_cw'), straps: [] });
+    if (!L.straps.length) obj.traverse(o => { if (o.name === 'treb_strap') L.straps.push(o); });
+    const f = ax(1, 1.5), H = TREB_AXLE * f, k0 = trebPack(s0), k = trebPack(s), d = k.arm - k0.arm;
+    if (L.arm) { const c = Math.cos(d), sn = Math.sin(d); L.arm.rotation.z = d; L.arm.position.set(H * sn, H - H * c, 0); }   // (about the axle, (0, H))
+    if (L.cw && k.cw && k0.cw) L.cw.position.set((k.cw[0] - k0.cw[0]) * f, (k.cw[1] - k0.cw[1]) * f, 0);
+    if (!_tv1) { _tv1 = new THREE.Vector3(); _tv2 = new THREE.Vector3(); _tv3 = new THREE.Vector3(); }
+    if (L.straps.length && k.cw) { const ca = Math.cos(k.arm), sa = Math.sin(k.arm), tail = [-TREB_ARM[1] * ca * f, (TREB_AXLE - TREB_ARM[1] * sa) * f];
+      for (const m of L.straps) { const a = _tv1.set(tail[0], tail[1], m.userData.z), b = _tv2.set(k.cw[0] * f, k.cw[1] * f, m.userData.z), dv = b.sub(a), len = dv.length();
+        m.position.copy(a).addScaledVector(dv, 0.5); m.scale.y = len; m.quaternion.setFromUnitVectors(_tv3.set(0, 1, 0), dv.normalize()); } }
+  }
+  let _tv1, _tv2, _tv3;
   function ramModel(tc, pose = {}){
     const g = new THREE.Group(), k = 1.45, X = x => ax(x, k), Yh = y => chh(-y + 5, k) - chh(5, k), R = r => ar(r, k);
     const Wr = pose.wreck, age = Wr ? Wr.age : 0, weathered = !!(Wr && Wr.weathered), cl = v => Math.max(0, Math.min(1, v));
@@ -3228,7 +3256,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function arrowAt(g, nock, dir, fletched, tc){ // an arrow from the nock along dir: shaft, light-steel head, and (Fletching) two light-team vanes
     const N = V3(nock), d = V3(dir).normalize(), tip = N.clone().addScaledVector(d, ar(15));
-    pole(g, '#8b6a3a', N.toArray(), tip.toArray(), ar(0.35), 'line');
+    pole(g, ARROW_SHAFT, N.toArray(), tip.toArray(), ar(0.35), 'line');
     const h = new THREE.Mesh(own(new THREE.ConeGeometry(ar(0.9), ar(2.4), 4)), mat('#dde3ea')); h.position.copy(tip); h.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d); h.userData.hullGeo = h.geometry; h.userData.hullW = HULL * 0.4; g.add(h);
     if (!fletched) return;
     const f = new THREE.Group(); f.position.copy(N); f.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), d); g.add(f);
@@ -3244,7 +3272,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   function quiver(g, tc, fletched){ // on the back, slung from the right shoulder: a leather tube, fletchings showing
     const q = new THREE.Group(); q.position.set(...at(-4.2, -9, 1.5)); q.rotation.set(0.35, 0, -0.25); g.add(q);
     tube(q, '#7a5230', [0, -ar(4), 0], [0, 0, 0], [0, ar(4), 0], ar(1.5));
-    for (const z of [-0.8, 0.8]) { pole(q, '#8b6a3a', [0, ar(3.6), ar(z)], [0, ar(5.6 + z * 0.25), ar(z)], ar(0.35), 'line'); if (fletched) blob(q, lightOf(tc), 0, ar(5.6 + z * 0.25), ar(z), ar(0.9)); } // shafts peeking out; the tech's light-team fletching
+    for (const z of [-0.8, 0.8]) { pole(q, ARROW_SHAFT, [0, ar(3.6), ar(z)], [0, ar(5.6 + z * 0.25), ar(z)], ar(0.35), 'line'); if (fletched) blob(q, lightOf(tc), 0, ar(5.6 + z * 0.25), ar(z), ar(0.9)); } // shafts peeking out; the tech's light-team fletching
   }
   // One posed foot soldier (lab + game). Death uses the villager's staged fall,
   // the weapon (and shield) dropped beside the body.
@@ -3418,7 +3446,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (opt.unit === 'trebuchet') { // the game's pose rides opt.eq; the lab's comes from the action and its phase
       const eq = opt.eq, lab = kind === 'setup' ? { s: t < 0.45 ? t / 0.45 : t < 0.55 ? 1 : (1 - t) / 0.45 } :   // (setup: unpacking, a beat set up, packing again — as lab2d's loop)
          kind === 'attack' ? trebShot(t) : kind === 'walk' ? { s: 0 } : { s: 1, stone: true };
-      const game = eq && (eq.p != null ? trebShot(eq.p) : { s: eq.s, stone: eq.s >= 1 });
+      const game = eq && (eq.p != null ? trebShot(eq.p) : { s: eq.s, stone: eq.s >= 1, live: !!eq.live });
       if (kind === 'die') { const age = t * DIE_LAB.life; g.add(trebModel(tc, { wreck: { age, weathered: age >= DIE_LAB.skel } })); // its collapse (trebWreck), weathered at the bones stage, then gone
         g.userData.fade = age < DIE_LAB.skel ? 1 : Math.max(0, Math.min(1, (DIE_LAB.life - age) / 1500)); addHulls(g, true); fadeTo(g, g.userData.fade); return g; }
       const pose = { ...(game || lab), roll: kind === 'walk' ? 2 * Math.PI * t / 4 : 0 };   // (walking: t is a quarter turn, its spokes' repeat)
@@ -4069,12 +4097,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'sails') bakeWhole(o); else bakeRigid(o, null, true); }
+    for (const o of lift) { hold.attach(o); if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4107,7 +4135,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, team: e.team, age: ageOf(e) };
+      rec = { obj: g, key, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -4515,7 +4543,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     let g, d;
     // (taken over: refreshBuildings won't drop it — so what stands about it goes now: the yard's trainees, a roof's archers)
     if (rec && rec.dmg) { solids.delete(e.id); g = rec.obj; d = rec.dmg; g.userData.bid = null;
-      for (const t of (rec.trainees || []).concat(rec.roof || [])) dropVillager(t); rec.trainees = rec.roof = null; }
+      for (const t of (rec.trainees || []).concat(rec.roof || [], rec.yard || [])) dropVillager(t); rec.trainees = rec.roof = rec.yard = null; }
     else { g = new THREE.Group(); const snap = { ...e, hp: 1, complete: true, openTop: true };
       try { if (isWallBtype(e.btype) || isGateBtype(e.btype)) g.add(wallModel(snap, []).obj); else if (MODELS[e.btype]) MODELS[e.btype](g, snap); else return; } catch (err) { return; }
       addHulls(g); scene.add(g); d = buildingDamage(g, e.x, e.y, w, h); }
@@ -4540,6 +4568,21 @@ gl_Position = projectionMatrix * mvPosition;`;
       rigPose(r, kind, t, !!(v && v.female), opt, tc);
       if (r.obj) { r.obj.position.set(f.x + 0.5, R.down ? 0 : r.y, f.y + 0.5);   // (down: on the ground inside the broken keep)
         r.obj.rotation.y = -f.hd; r.obj.visible = rec.obj.visible; }
+    });
+  }
+  // A Castle's garrison up its towers (with a bow, loosing with its volleys: roofArchers') and in its yard, and the
+  // portcullis lifting for them (render-units' castleYard: where each stands and walks)
+  function yardWalkers(rec){
+    const e = entitiesById.get(rec.obj.userData.bid); if (!e) return;
+    const Y = castleYard(e), tc = teamColor(rec.team), cd = e.atkCooldown || 0, ph = ((1 - cd / BUILDING_RELOAD + MIL_IMPACT.archer) % 1 + 1) % 1;
+    const bow = { unit: 'archer', eq: { ...soldierEquip('archer', 0, 0, 0, false), civ: true } }, plain = {};
+    if (rec.portcullis) rec.portcullis.position.y = Y.gate * 18 / HPX;
+    rec.yard.forEach((r, i) => {
+      const f = Y.list[i];
+      if (!f) { if (r.rig || r.obj) { dropVillager(r); r.rig = null; r.obj = null; r.key = ''; } return; }
+      if (f.top) rigPose(r, Y.firing ? 'attack' : 'idle', Y.firing ? (ph + i * 0.04) % 1 : (aTick * 0.004 + i * 0.37) % 1, f.female, bow, tc);
+      else rigPose(r, f.moving ? 'walk' : 'idle', f.moving ? (f.walk / WALK_TILES.walk) % 1 : (aTick * 0.004 + i * 0.37) % 1, f.female, plain, tc);
+      if (r.obj) { r.obj.position.set(Y.ox + f.u + 0.5, f.top ? CASTLE_TOP / HPX : 0, Y.oy + f.v + 0.5); r.obj.rotation.y = -f.hd; r.obj.visible = rec.obj.visible; }
     });
   }
   function animateModels(dt){
@@ -4572,6 +4615,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (tr.obj) { tr.obj.position.set(tr.x, 0, tr.z); tr.obj.rotation.y = tr.yaw; }
       }
       if (rec.roof) roofArchers(rec);
+      if (rec.yard) yardWalkers(rec);
       if (rec.horses) for (const h of rec.horses) {
         // Each horse on its own ~11s cycle: head up (a slow bob), then down to
         // graze a few seconds, nibbling; the tail swishes throughout.
@@ -4760,7 +4804,11 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (f) { vilCache.delete(key); vilCache.set(key, f); return f; }                     // most recently used last
     if (bakesLeft <= 0 && !(rec && (!rec.obj || (rec.starved = (rec.starved || 0) + 1) > 6))) return null;
     bakesLeft--; if (rec) rec.starved = 0; POLY = 0.6;
-    try { const g = animFrame(kind, t, female, opt); f = bakePose(g); g.traverse(o => { if (o.geometry && o.geometry.userData.own && !o.geometry.userData.kept) o.geometry.dispose(); }); } finally { POLY = 1; }
+    try { const g = animFrame(kind, t, female, opt), live = [], free = o => o.traverse(c => { if (c.geometry && c.geometry.userData.own && !c.geometry.userData.kept) c.geometry.dispose(); });
+      // (a moving part — trebModel live — baked on its own, a group (still at the model's origin), or kept as it is, a rod)
+      g.traverse(o => { if (o.userData.live) live.push(o); }); for (const o of live) o.parent.remove(o);
+      f = bakePose(g); free(g);
+      for (const o of live) { if (o.isMesh) { f.add(o); continue; } const b = bakePose(o); free(o); b.name = o.name; f.add(b); } } finally { POLY = 1; }
     f.userData.verts = 0; f.traverse(o => { if (o.geometry && o.geometry.userData.baked) f.userData.verts += o.geometry.attributes.position.count; });
     vilCache.set(key, f); cacheVerts += f.userData.verts;
     // held to a vertex budget (≈50MB), least recently used first; poses still worn are kept
@@ -4781,7 +4829,8 @@ gl_Position = projectionMatrix * mvPosition;`;
   function soldierPose(e, v){
     const ut = e.utype;
     if (ut === 'tradecart') { const mv = isUnitMoving(e); return { kind: mv ? 'walk' : 'idle', t: mv ? ((v.stride / MIL_STRIDE.cart) % 1 + 1) % 1 : workPhase(e, 'idle'), opt: { unit: ut, eq: null, load: e.carrying > 0 } }; } // the sack while it carries gold
-    if (ut === 'trebuchet') { const p = trebPose(e), opt = { unit: ut, eq: p.p != null ? { p: p.p } : { s: Math.round(p.s * 12) / 12 } };   // (a throw by its phase, else how far set up)
+    // (a throw by its phase; else its set-up stage's model, its parts moved to how far set up: trebLive)
+    if (ut === 'trebuchet') { const p = trebPose(e), opt = { unit: ut, eq: p.p != null ? { p: p.p } : { s: trebStage(p.s), live: true } }; if (p.p == null) opt.art = p.s;
       return isUnitMoving(e) ? { kind: 'walk', t: ((v.stride * TREB_ROLL / (Math.PI / 2)) % 1 + 1) % 1, opt } : { kind: 'idle', t: 0, opt }; }
     if (ut === 'ram') { const rof = (UNITS.ram && UNITS.ram.rof) || T30(60), cd = e.atkCooldown || 0, opt = { unit: ut, eq: null };
       const swing = e.target && (cd > 0 || inActionRange(e)) ? ((1 - cd / rof + MIL_IMPACT.ram) % 1 + 1) % 1 : null;
@@ -4961,7 +5010,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     else { const step = Math.floor(p.t * VIL_STEPS) % VIL_STEPS, key = vilKey(p.kind, step, e.female, p.opt);
       const fr = vilFrame(key, p.kind, step / VIL_STEPS, e.female, p.opt, v);
       if (fr) useVilFrame(v, key, fr, teamColor(e.team));
-      if (!v.obj) return false; }
+      if (!v.obj) return false;
+      if (p.opt && p.opt.art != null && v.key === key) trebLive(v.obj, p.opt.eq.s, p.opt.art); }
     if (fpv) viewmodel(v, e);
     else { if (v.obj.userData.vm) { v.obj.matrixAutoUpdate = true; v.obj.userData.vm = false; } v.obj.position.set(v.x, 0, v.z); v.obj.rotation.y = v.yaw; }
     return true;
@@ -5832,6 +5882,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // away fast, strongest near the camera's focus. Viewer-only.
   let camShake = 0, rideH = 1.7;   // rideH: the eye's height on a dragon's back
   function shakeFrom(x, z, amp){ if (!camAt) return; const d = Math.hypot(x - camAt.x, z - camAt.y); camShake = Math.max(camShake, amp * Math.max(0, 1 - d / 18)); }
+  window.__povShake = (x, y, mag) => shakeFrom(x + 0.5, y + 0.5, 0.025 * mag);   // (render-fx shakeView: a stone landing)
   // Mouse / drag look arrives as pointer events, at their own uneven rate (not the frame's): each is banked here and
   // paid out over a few frames (LOOK_EASE s), so the view turns evenly instead of in steps.
   const lookPend = { yaw: 0, pitch: 0 }, LOOK_EASE = 0.03;

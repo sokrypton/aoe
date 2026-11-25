@@ -857,7 +857,8 @@ const UNITS={
   // Trebuchet (AoC table: 150 hp, 200 attack +250 vs buildings, range 16, reload 10 s, 0.8 speed, 200W 200G, 50 s): trained
   // at the Castle. It moves packed and shoots set up (TREB_SETUP ticks each way: e.setup, js/logic.js); nothing inside
   // minRange (AoE2 4). Packed armor; a wood vehicle (never auto-engages or retaliates — it shoots what it's sent at).
-  trebuchet:{bonuses:{building:250},name:'Trebuchet',hp:150,atk:200,range:16,minRange:4,speed:0.8,rof:T30(300),armor:{m:2,p:8},cost:{w:200,g:200},trainTime:T30(1500),desc:'Heavy siege engine. Hurls stones at buildings from far away. Packs up to move and sets up to shoot; helpless up close.',icon:'🪨'},
+  // acc: its accuracy at a unit (AoC 15%; a ranged unit's default 80%, spawnProjectile) — a building it always hits.
+  trebuchet:{bonuses:{building:250},name:'Trebuchet',hp:150,atk:200,range:16,minRange:4,acc:0.15,speed:0.8,rof:T30(300),armor:{m:2,p:8},cost:{w:200,g:200},trainTime:T30(1500),desc:'Heavy siege engine. Hurls stones at buildings from far away. Packs up to move and sets up to shoot; helpless up close.',icon:'🪨'},
   // Wild predator (AoE2 wolf logic, bear body): gaia team, lurks in the
   // wild, charges any player unit that wanders into its territory, then
   // returns to its den area when the prey escapes. Stronger than an AoE2
@@ -1044,18 +1045,48 @@ const STUCK_LIFE=20000, STUCK_FADE=3000, STUCK_MAX=200, STUCK_PER_HOST=5;
 let stuckArrows=[];
 function stickArrow(p, host){
   if (!STUCK_ARROWS || window.__headlessSim || stuckArrows.some(a => a.pid === p.id)) return;
-  if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') { spawnParticles(p.tx, p.ty, '#b9a88c', 14, 0.05, 3); if (window.playSound) window.playSound('ram_hit', p.tx, p.ty); return; }   // a stone: a burst of dust, a crash
+  if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') return;   // (a stone shatters: shotLanded)
   let gx=p.tx-p.startX, gy=p.ty-p.startY, gl=Math.sqrt(gx*gx+gy*gy)||1, sn=p.attackerSnap;
   let a={ type:'stuckArrow', pid:p.id, team:-1, dx:gx/gl, dy:gy/gl, t:performance.now(), x:p.tx, y:p.ty, h:0, hostId:null, ox:0, oy:0,
     tilt:0.45+cosmeticRandom()*0.35, fl:(sn && sn.utype==='archer' && hasUpgrade(sn.team,'fletching')) ? sn.team : null };
   if (host) {
     a.hostId=host.id;
-    if (host.type==='building') { let b=BLDGS[host.btype], hw=(host.w||b.w)/2, hh=(host.h||b.h)/2, k=Math.min(hw/Math.max(1e-6,Math.abs(a.dx)), hh/Math.max(1e-6,Math.abs(a.dy)));
-      a.x=p.tx-a.dx*k; a.y=p.ty-a.dy*k; a.h=8+cosmeticRandom()*16; }                  // on the wall facing the shot
+    if (host.type==='building') { [a.x, a.y]=shotFace(p.startX, p.startY, host); a.h=8+cosmeticRandom()*16; }   // on the wall facing the shot
     else { a.ox=(cosmeticRandom()-0.5)*0.22; a.oy=(cosmeticRandom()-0.5)*0.22; a.x=host.x+a.ox; a.y=host.y+a.oy; a.h=5+cosmeticRandom()*6; }
     let mine=stuckArrows.filter(s => s.hostId===host.id); if (mine.length>=STUCK_PER_HOST) stuckArrows.splice(stuckArrows.indexOf(mine[0]),1);
   }
   stuckArrows.push(a); if (stuckArrows.length>STUCK_MAX) stuckArrows.shift();
+}
+// Where a shot from (fx, fy) meets building b: the edge of its footprint facing the shooter (viewer-side: the sim aims
+// at x + w/2, its corner-coordinate middle; in sim coordinates a tile's centre is whole, the footprint x − ½ … x + w − ½)
+function shotFace(fx, fy, b){
+  const w = b.w || BLDGS[b.btype].w, h = b.h || BLDGS[b.btype].h, cx = b.x + w / 2 - 0.5, cy = b.y + h / 2 - 0.5;
+  const l = Math.hypot(cx - fx, cy - fy) || 1, dx = (cx - fx) / l, dy = (cy - fy) / l, k = Math.min(w / 2 / Math.max(1e-6, Math.abs(dx)), h / 2 / Math.max(1e-6, Math.abs(dy)));
+  return [cx - dx * k, cy - dy * k];
+}
+// A shot lands (js/loop.js; host: what it struck, or null — a miss): what the eye and ear get. Cosmetic, as stickArrow:
+// particles and sound (both silent in a rollback's replay), never sim state.
+function shotLanded(p, host){
+  if (window.__headlessSim) return;
+  if (p.attackerSnap && p.attackerSnap.utype === 'trebuchet') stoneLanded(p, host);
+  else if (!host) spawnParticles(p.tx, p.ty, '#b9a88c', 3, 0.015, 1);   // an arrow in the dirt: a puff
+  stickArrow(p, host);
+}
+// A trebuchet's stone strikes: a ring of dust thrown out along the ground, a cloud rolling up slow, the stone breaking
+// into shards (and, on a building, chips of it: stone or timber) that arc out and bounce; a crash, the ground shaking
+function stoneLanded(p, host){
+  if (window.__resim) return;
+  const b = host && host.type === 'building' ? BLDGS[host.btype] : null, [x, y] = b ? shotFace(p.startX, p.startY, host) : [p.tx, p.ty];
+  const chip = b ? ((b.cost || {}).s ? '#a49d90' : '#8a6a44') : '#8f8a80';   // (built of stone: its cost has stone)
+  particles.push({ type: 'ring', x, y, z: 0, vx: 0, vy: 0, vz: 0, gravity: 0, drag: 1, life: 16, maxLife: 16, size: b ? 1.6 : 1.25, color: '#f1e9d6' });
+  for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2 + cosmeticRandom() * 0.4, sp = 0.015 + cosmeticRandom() * 0.025, life = randInt(45, 80);
+    particles.push({ type: 'puff', x: x + Math.cos(a) * 0.15, y: y + Math.sin(a) * 0.15, z: 0.05 + cosmeticRandom() * 0.35, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: 0.004 + cosmeticRandom() * 0.008,
+      gravity: 0.0002, drag: 0.93, life, maxLife: life, size: 5 + cosmeticRandom() * 4, color: cosmeticRandom() < 0.5 ? '#e0d2b0' : '#c8b590' }); }
+  for (let i = 0; i < 14; i++) { const a = cosmeticRandom() * Math.PI * 2, sp = 0.025 + cosmeticRandom() * 0.06, life = randInt(40, 65);
+    particles.push({ type: 'chunk', x, y, z: 0.2 + cosmeticRandom() * 0.3, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: 0.035 + cosmeticRandom() * 0.05, gravity: 0.005, drag: 0.98,
+      life, maxLife: life, size: 1.8 + cosmeticRandom() * 2.2, color: i < 6 ? '#8f8a80' : chip, spin: cosmeticRandom() * 6, vspin: (cosmeticRandom() - 0.5) * 0.6 }); }
+  if (window.playSound) window.playSound('stone_hit', x, y);
+  if (window.shakeView) window.shakeView(x, y, b ? 3 : 2.2);
 }
 // Once per frame (either view): drop the faded, ride the hosts, and let a dead host's arrows fall where it lay.
 // Returns each live arrow's opacity (1, then fading out) in a.alpha; a.hidden while its host is garrisoned.
@@ -1743,7 +1774,7 @@ function spawnProjectile(attacker, target) {
       targetY += v.vy * flight;
     }
   }
-  let accuracy = attacker.type === 'building' ? 1.0 : 0.8;
+  let accuracy = attacker.type === 'building' ? 1.0 : (UNITS[attacker.utype] && UNITS[attacker.utype].acc) || 0.8;   // (a unit's own, else 80%: AoC's archers)
   if (target.type !== 'building' && simRandom() > accuracy) {
     let ang = simRandom() * Math.PI * 2;
     let off = 0.6 + simRandom() * 0.8;
@@ -1784,7 +1815,7 @@ function spawnProjectile(attacker, target) {
     }
   };
   projectiles.push(proj);
-  if (window.playSound) window.playSound('arrow', attacker.x, attacker.y);
+  if (window.playSound) window.playSound(attacker.utype === 'trebuchet' ? 'treb_throw' : 'arrow', attacker.x, attacker.y);
 }
 
 function isUnitOnScreen(en) {

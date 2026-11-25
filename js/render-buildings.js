@@ -881,10 +881,12 @@ function castleMerlonSpots(q){
   return out.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
 }
 const CASTLE_MERLON = 0.2;
-// near: null all of them, false only the far half (behind its middle), true only the near half
-function castleMerlons(q, at, cL, cR, cT, darken, near = null){
+// near: null all of them, false only the far half (behind its middle), true only the near half; crew: who stands among
+// them ([u, v, draw]), each drawn in its place back to front
+function castleMerlons(q, at, cL, cR, cT, darken, near = null, crew = []){
   const w = CASTLE_MERLON * HALF_TW, mid = (q.b[0] + q.b[1] + q.b[2] + q.b[3]) / 2;   // (a square s tiles across: s × HALF_TW either side on screen)
-  for (const [u, v] of castleMerlonSpots(q)) { if (near !== null && (u + v >= mid) !== near) continue; const [mx, my] = at(u, v); drawMerlonBlock(mx, my - q.y1 - w / 2, w, w / 2, 7, cL, cR, cT, cT, darken); }
+  const items = castleMerlonSpots(q).filter(([u, v]) => near === null || (u + v >= mid) === near).concat(crew).sort((a, b) => a[0] + a[1] - b[0] - b[1]);
+  for (const [u, v, draw] of items) { if (draw) { draw(); continue; } const [mx, my] = at(u, v); drawMerlonBlock(mx, my - q.y1 - w / 2, w, w / 2, 7, cL, cR, cT, cT, darken); }
 }
 // One merlon block: two wall faces + a two-tone cap. Hard-outlined on
 // sides and tops, but the BOTTOM seam gets the light course-line stroke
@@ -1052,6 +1054,18 @@ function drawRoofArchers2D(e, sx, sy, tcS){
     X.save(); X.translate(px, py); X.scale(UNIT_SCALE / tcS, UNIT_SCALE / tcS); drawPerson2D(f); X.restore();
   }
   X.restore();
+}
+// A Castle's garrison figure (render-units' castleYard) for drawPerson2D, its look the garrisoned villager's: up a
+// tower, with a bow (drawRoofArchers2D's), loosing with the volleys
+const yardFigs2D = new WeakMap();
+function castleYardFig2D(e, f, Y){
+  let figs = yardFigs2D.get(e); if (!figs) yardFigs2D.set(e, figs = new Map());
+  let o = figs.get(f.id); if (!o) figs.set(f.id, o = { id: -1e7 - f.id, type: 'unit', path: [], facing: 1, hp: 1, carrying: 0 });   // (its own drawn state: not the parked villager's)
+  const shoot = f.top && Y.firing;
+  Object.assign(o, { utype: f.top ? 'archer' : 'villager', __civ: f.top, team: e.team, female: f.female, x: e.x - 0.5 + f.u, y: e.y - 0.5 + f.v, dir: f.hd / (Math.PI / 4),
+    atkCooldown: shoot ? e.atkCooldown || 0 : 0, target: shoot ? e.id : null });
+  o.path = f.moving ? [{ x: o.x, y: o.y }] : [];
+  return o;
 }
 function drawBaked(owner, key, ax, ay, l, t, w, h, draw){
   const sc = Math.ceil(ZOOM * (window.devicePixelRatio || 1)), k = key + '|' + sc;
@@ -2194,7 +2208,18 @@ function drawBuilding(e, part = null){
     const onFace = (u, v, m, fn) => { const [fx, fy] = at(u, v); X.save(); X.translate(fx, fy); X.transform(1, m, 0, 1, 0, 0); fn(); X.restore(); };
     const slit = (h0, h, w) => { X.fillStyle = ink; X.fillRect(-w / 2, -h0 - h, w, h); };
     let front = null;   // (a crown under a spire: its far merlons go before the spire, its near ones after)
-    for (const grp of CASTLE_PARTS) for (const q of grp) {
+    // the garrison in its yard (render-units' castleYard), each drawn before the first part standing in front of it;
+    // under the gate's arch, in it; round the back, out of sight
+    const Y = e.complete && visible ? castleYard(e) : null, gate = Y ? Y.gate : 0;
+    const passage = f => f.v > 3.36 && f.v < 4 && Math.abs(f.u - 2) < 0.45, hidden = f => f.u < 0.08 || (f.v < 0.08 && f.u < 3.92);
+    let yard = Y ? Y.list.filter(f => !f.top && !passage(f) && !hidden(f)) : [];
+    // a tower's crew, among its crown's merlons ([u, v, draw] for castleMerlons)
+    const towerCrew = q => Y ? Y.list.filter(f => { const T = f.top && CASTLE_TOWERS[CASTLE_POSTS[f.post].t]; return T && T.tu === Math.round(q.b[0]) && T.tv === Math.round(q.b[1]); })
+      .map(f => [f.u, f.v, () => { const [px, py] = at(f.u, f.v); X.save(); X.translate(px, py - CASTLE_TOP); X.scale(UNIT_SCALE, UNIT_SCALE); drawPerson2D(castleYardFig2D(e, f, Y)); X.restore(); }]) : [];
+    const yardFig = f => { const [px, py] = at(f.u, f.v); X.save(); X.translate(px, py); X.scale(UNIT_SCALE, UNIT_SCALE); drawPerson2D(castleYardFig2D(e, f, Y)); X.restore(); };
+    const yardBefore = grp => { const now = yard.filter(f => grp.some(q => (q.b[0] >= f.u && q.b[3] > f.v) || (q.b[1] >= f.v && q.b[2] > f.u)));
+      if (now.length) { now.sort((a, b) => a.u + a.v - b.u - b.v).forEach(yardFig); yard = yard.filter(f => !now.includes(f)); } };
+    for (const grp of CASTLE_PARTS) { yardBefore(grp); for (const q of grp) {
       const [u0, v0, u1, v1] = q.b, n = u1 - u0, [tx, ty] = at(u0, v0), um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
       if (q.kind === 'roof') { drawBuildingBlock(tx, ty - q.y0, n * HALF_TW, n * HALF_TH, 0, tc, tcD, 'conical', q.rise - n * HALF_TH, tc, tcD, darken, false, true);
         if (front) { castleMerlons(front, at, cL, cR, cT, darken, true); front = null; } continue; }
@@ -2203,13 +2228,19 @@ function drawBuilding(e, part = null){
       // (its two seen faces: the left, along u at v1 — slope +½ — and the right, along v at u1 — slope −½)
       if (q.kind === 'shaft') { if (q.out.includes('z1')) onFace(um, v1, 0.5, () => slit(20, 10, 2.6)); if (q.out.includes('x1')) onFace(u1, vm, -0.5, () => slit(20, 10, 2.6)); }
       if (q.kind === 'keep') for (const [fu, fv, m] of [[um, v1, 0.5], [u1, vm, -0.5]]) onFace(fu, fv, m, () => { X.fillStyle = ink; X.beginPath(); X.moveTo(-3.5, -36); X.lineTo(-3.5, -44); X.arc(0, -44, 3.5, Math.PI, 0); X.lineTo(3.5, -36); X.closePath(); X.fill(); });
-      if (q.kind === 'gate') onFace(um, v1, 0.5, () => { X.fillStyle = darken ? darkenColor('#2a2118') : '#2a2118'; X.strokeStyle = '#000'; X.lineWidth = 1.3;
-        X.beginPath(); X.moveTo(-7, 0); X.lineTo(-7, -12); X.arc(0, -12, 7, Math.PI, 0); X.lineTo(7, 0); X.closePath(); X.fill(); X.stroke();
-        X.strokeStyle = 'rgba(160,150,128,0.75)'; X.lineWidth = 1; X.beginPath(); for (let k = -4.5; k <= 4.5; k += 3) { X.moveTo(k, 0); X.lineTo(k, -16); } for (let k = -4; k > -18; k -= 4.5) { X.moveTo(-7, k); X.lineTo(7, k); } X.stroke(); });
+      // the gate: its dark passage, whoever walks it, the portcullis lifted by `gate` (its bars slide up into the stone)
+      if (q.kind === 'gate') onFace(um, v1, 0.5, () => { const arch = () => { X.beginPath(); X.moveTo(-7, 0); X.lineTo(-7, -12); X.arc(0, -12, 7, Math.PI, 0); X.lineTo(7, 0); X.closePath(); };
+        X.fillStyle = darken ? darkenColor('#2a2118') : '#2a2118'; arch(); X.fill();
+        X.save(); arch(); X.clip();
+        if (Y) Y.list.forEach(f => { if (!passage(f)) return; const [px, py] = at(f.u, f.v), [fx, fy] = at(um, v1);
+          X.save(); X.transform(1, -0.5, 0, 1, px - fx, py - fy - 0.5 * (px - fx)); X.scale(UNIT_SCALE, UNIT_SCALE); drawPerson2D(castleYardFig2D(e, f, Y)); X.restore(); });
+        X.translate(0, -gate * 17); X.strokeStyle = 'rgba(160,150,128,0.75)'; X.lineWidth = 1; X.beginPath(); for (let k = -4.5; k <= 4.5; k += 3) { X.moveTo(k, 0); X.lineTo(k, -16); } for (let k = -4; k > -18; k -= 4.5) { X.moveTo(-7, k); X.lineTo(7, k); } X.stroke();
+        X.restore(); X.strokeStyle = '#000'; X.lineWidth = 1.3; arch(); X.stroke(); });
       const spired = q.kind === 'crown' && grp[grp.indexOf(q) + 1] && grp[grp.indexOf(q) + 1].kind === 'roof';
-      if (q.kind === 'wall' || q.kind === 'crown' || q.kind === 'gate') castleMerlons(q, at, cL, cR, cT, darken, spired ? false : null);
+      if (q.kind === 'wall' || q.kind === 'crown' || q.kind === 'gate') castleMerlons(q, at, cL, cR, cT, darken, spired ? false : null, grp[0].kind === 'shaft' ? towerCrew(q) : []);
       if (spired) front = q;
-    }
+    } }
+    yardBefore([{ b: [99, 99, 99, 99] }]);   // (the rest: out in front)
     const [kx, ky] = at(2, 2); bh = 92;
     if (e.complete && visible) drawWavingFlag(kx, ky - 95, 0, tc, tcD, 30);   // (flying clear over the keep's merlons)
   }

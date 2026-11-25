@@ -93,7 +93,7 @@ function parseCsv(text) {
     rows.push({
       name: c[1].trim(), hp: +c[3], att: +c[4], attType: c[5].trim(),
       reload: parseFloat(c[6]), mArm: +c[7], pArm: +c[8],
-      range: +c[10], speed: parseFloat(c[12]), trTime: parseFloat(c[13]),
+      range: +c[10], acc: parseFloat(c[11]), speed: parseFloat(c[12]), trTime: parseFloat(c[13]),
       cost: parseCost(c[14]),
     });
   }
@@ -126,6 +126,8 @@ for (const [ours, refName] of Object.entries(UNIT_MAP)) {
     ['melee_armor', (u.armor && u.armor.m) || 0, ref.mArm],
     ['pierce_armor', (u.armor && u.armor.p) || 0, ref.pArm],
     ['range', u.range || 0, ref.range],
+    // a ranged unit's accuracy at units, % (spawnProjectile: its own acc, else 80)
+    ['accuracy', u.range > 0 ? Math.round((u.acc || 0.8) * 100) : NaN, ref.acc],
     ['speed', u.speed || 0, ref.speed],
     ['train_s', +toSec(u.trainTime || 0).toFixed(1), ref.trTime],
   ];

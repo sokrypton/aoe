@@ -1037,7 +1037,7 @@ function cartRig2D(h, pose, tc){
 // down), stone (in the sling), rock (the frame tipping on its rear wheels, rad), shift (rolled, art px), roll (the
 // wheels' turn), wreck (charred, the arm down). Returns [{ prism (8 corners, index x·4 + y·2 + z) | rod | wheel | ball }].
 const TREB_ROLL = 4.5;   // the wheels' turn (rad) per tile rolled
-const TREB_ARM = [26, 8], TREB_REST = 230 * Math.PI / 180, TREB_AXLE = 28, TREB_HANG = [5.5, 7], TREB_SLING = 6;
+const TREB_ARM = [26, 8], TREB_REST = 230 * Math.PI / 180, TREB_AXLE = 28, TREB_HANG = [5.5, 7], TREB_SLING = 6, TREB_STONE = 3;   // (the stone's radius: in the sling, in flight)
 function trebParts(tc, pose){
   const W = pose.wreck, s = W ? 1 : Math.max(0, Math.min(1, pose.s || 0)), out = [];
   let G = 'base'; const put = q => { q.g = G; out.push(q); };   // (each part's group: a wreck moves them apart)
@@ -1081,15 +1081,15 @@ function trebParts(tc, pose){
   if (pk && pk.cw) top = [pk.cw[0], pk.cw[1]];
   else { const ps = pose.cw || 0; top = [tail[0] + Math.sin(ps) * TREB_HANG[0], tail[1] - Math.cos(ps) * TREB_HANG[0]]; }
   const dirC = pk && pk.cw ? [0, -1] : [Math.sin(pose.cw || 0), -Math.cos(pose.cw || 0)], bot = [top[0] + dirC[0] * TREB_HANG[1], top[1] + dirC[1] * TREB_HANG[1]];
-  if (!pk || pk.hooked) for (const z of [-2.4, 2.4]) put({ rod: [[tail[0], tail[1], z], [top[0], top[1], z]], r: pk && pk.hauling ? 0.35 : 0.55, col: pk && pk.hauling ? rope : iron });   // its straps (hauled up: the ropes)
+  if (!pk || pk.hooked) for (const z of [-2.4, 2.4]) put({ rod: [[tail[0], tail[1], z], [top[0], top[1], z]], r: pk && pk.hauling ? 0.35 : 0.55, col: pk && pk.hauling ? rope : iron, strap: true });   // its straps (hauled up: the ropes)
   G = 'cw'; beam(C(tc), C(shadeHex(tc, 1.15)), [top[0], top[1], 0], [bot[0], bot[1], 0], 6.2, 6.2);   // the weight
   G = 'arm';
   // the sling: coiled at the tip while it travels; else a rope from the tip to the pouch, the stone in it — resting on
   // the ground behind, or whirled round
   if (pk && pk.coiled) { put({ rod: [tip, [tip[0], tip[1] - 1.6, 0]], r: 0.35, col: rope }); put({ ball: [tip[0], tip[1] - 2.2, 0], r: 1, col: rope }); }
-  else { const sg = pose.sling || 0, st = [tip[0] + Math.sin(sg) * TREB_SLING, Math.max(2.3, tip[1] - Math.cos(sg) * TREB_SLING), 0];
+  else { const sg = pose.sling || 0, st = [tip[0] + Math.sin(sg) * TREB_SLING, Math.max(TREB_STONE, tip[1] - Math.cos(sg) * TREB_SLING), 0];
     put({ rod: [tip, st], r: 0.35, col: rope });
-    if (!W && (pk ? pk.stone : pose.stone)) put({ ball: st, r: 2.3, col: '#8f8a80' }); }
+    if (!W && (pk ? pk.stone : pose.stone)) put({ ball: st, r: TREB_STONE, col: '#8f8a80' }); }
   if (pk && pk.lash) { const lx = 14.5, ly = H + (lx / Math.max(1e-6, c)) * sn; put({ rod: [[lx, ly - 1, 0], [lx, 6.5, 0]], r: 0.4, col: rope }); }   // lashed to the front cross-beam
   // the frame rocks on its rear wheels' contact and rolls (shift): everything with it
   const rk = pose.rock || 0, sh = pose.shift || 0;
@@ -1174,7 +1174,7 @@ function trebMotion(){
     if (!released) {
       sw += (-((G + cl(aS[1])) * Math.sin(sg) + cl(aS[0]) * Math.cos(sg)) / TREB_SLING - 0.3 * sw) * dt; sg += sw * dt;
       const stY = tip[1] - Math.cos(sg) * TREB_SLING;
-      if (stY < 2.3) { const cc = Math.max(-1, Math.min(1, (tip[1] - 2.3) / TREB_SLING)); sg = Math.sign(sg || -1) * Math.acos(cc); sw *= 0.5; }   // on the ground: dragged
+      if (stY < TREB_STONE) { const cc = Math.max(-1, Math.min(1, (tip[1] - TREB_STONE) / TREB_SLING)); sg = Math.sign(sg || -1) * Math.acos(cc); sw *= 0.5; }   // on the ground: dragged
       const stone = [tip[0] + Math.sin(sg) * TREB_SLING, tip[1] - Math.cos(sg) * TREB_SLING];
       if (sx) { const v = [(stone[0] - sx[0]) / dt, (stone[1] - sx[1]) / dt];
         if (t > 0.15 && v[0] > 0 && v[1] > 0 && Math.atan2(v[1], v[0]) < 0.75) { released = true; tRel = t; } }   // flying forward, ~40° up: let go
@@ -1193,14 +1193,36 @@ function trebMotion(){
 }
 // Its pose now (both views; viewer-only, from the sim's set-up clock, reload and target): packed and rolling; setting up
 // or packing; set up and ready, the stone on the ground behind; a throw and its reload (trebShot).
+// The set-up's stages (trebPack): within one the same parts only move — the arm turns on its axle, the counterweight
+// slides, its straps follow — and a part comes, goes or changes only from one to the next (the lashing off, the sling
+// uncoiled, the weight hooked and hauled, hung, the stone loaded). The 3D keeps a model a stage and moves its parts.
+const TREB_STAGES = [0, 0.12, 0.6, 0.9, 0.95];
+const trebStage = s => TREB_STAGES[TREB_STAGES.reduce((k, a, i) => s >= a ? i : k, 0)];
+// The set-up as drawn: between the sim's steps it's carried on the way it's going — setting up or packing — by the time
+// since the last (viewer-only; a tick's worth at most)
+const _trebSetup = new WeakMap();
+function trebSetupDrawn(e){
+  const v = e.setup || 0, now = performance.now(); let S = _trebSetup.get(e);
+  if (!S) _trebSetup.set(e, S = { v, dir: 0, at: now });
+  if (v !== S.v) { S.dir = Math.sign(v - S.v); S.v = v; S.at = now; }
+  const step = typeof timeStep === 'number' && timeStep > 0 ? timeStep : 1000 / TPS, f = Math.min(1, (now - S.at) / step);
+  return Math.max(0, Math.min(1, (v + S.dir * f) / TREB_SETUP));
+}
 function trebPose(e){
-  const s = (e.setup || 0) / TREB_SETUP, rof = UNITS.trebuchet.rof, cd = e.atkCooldown || 0;
+  const s = trebSetupDrawn(e), rof = UNITS.trebuchet.rof, cd = e.atkCooldown || 0;
   if (s < 1 || cd <= 0) return { s, stone: s >= 1 };
   const p = Math.round((1 - cd / rof) * 240) / 240;   // (240 frames a reload: both views cache by it)
   return { ...trebShot(p), p };
 }
 // a throw's pose at phase p of its reload (0: the weight drops; TREB_THROW / rof: the stone flies)
 function trebShot(p){ const M = trebMotion(), q = M[Math.max(0, Math.min(M.length - 1, Math.round(p * (M.length - 1))))]; return { s: 1, ...q }; }
+// Where the stone leaves the sling (art px: [forward, up], the machine's own frame): the flight starts there (projEnds)
+let _trebRelease = null;
+function trebRelease(){
+  if (_trebRelease) return _trebRelease;
+  const st = trebParts('#000000', { ...trebShot(TREB_THROW / UNITS.trebuchet.rof), stone: true }).find(q => q.ball && q.r === TREB_STONE);
+  return _trebRelease = st ? [st.ball[0], st.ball[1]] : [0, 40];
+}
 // Painted by depth part by part, each from its centre: first by where across it stands (its z) — parts at different z
 // never pass through each other (the frames, the arm and its weight between them, the wheels), so the nearer always
 // paints over — then by its true depth toward the eye, its height included (a leg on a rail is nearer than the rail).
@@ -1249,10 +1271,11 @@ function drawTrebuchetBody(e){
   if (!window._maskDraw) a.stride += Math.hypot(...walkedSince(a, e));
   const pose = trebPose(e), Q = (v, n) => Math.round(v * n) / n, spoke = Math.PI / 2;
   pose.roll = Q(((a.stride * TREB_ROLL % spoke) + spoke) % spoke / spoke, 6) * spoke;   // (the spokes repeat every quarter turn)
-  if (pose.p == null) pose.s = Q(pose.s, 12);
-  const key = [e.dir !== undefined ? e.dir : 7, pose.p != null ? Math.round(pose.p * 240) : 's' + Math.round(pose.s * 12), pose.roll.toFixed(3), pose.stone ? 1 : 0, teamColor(e.team)].join('|'), dir = e.dir !== undefined ? e.dir : 7;   // (a throw by its phase: 240 frames a reload)
-  let parts = trebCache.get(key);
-  if (!parts) { parts = trebRig2D(dir * Math.PI / 4, pose, teamColor(e.team)); if (trebCache.size > 2000) trebCache.clear(); trebCache.set(key, parts); }
+  const key = [e.dir !== undefined ? e.dir : 7, pose.p != null ? Math.round(pose.p * 240) : 's' + pose.s, pose.roll.toFixed(3), pose.stone ? 1 : 0, teamColor(e.team)].join('|'), dir = e.dir !== undefined ? e.dir : 7;   // (a throw by its phase: 240 frames a reload)
+  // (setting up or packing: drawn from its pose each frame, ~0.15 ms — no frames kept; packed, set up and the throw: kept)
+  const live = pose.p == null && pose.s > 0 && pose.s < 1;
+  let parts = live ? null : trebCache.get(key);
+  if (!parts) { parts = trebRig2D(dir * Math.PI / 4, pose, teamColor(e.team)); if (!live) { if (trebCache.size > 2000) trebCache.clear(); trebCache.set(key, parts); } }
   X.save(); if (e.facing === -1) X.scale(-1, 1); paintParts(parts); X.restore();   // (it draws its own heading: undo drawUnit's mirror)
 }
 const cart2DState = new Map(), cartCache = new Map();
@@ -1972,11 +1995,20 @@ function runPose(t){
 }
 // ---- Soldiers: gear, swings and poses, both views (pov3d builds them in the round, the 2D projects them) ----
 const MIL_IMPACT = { militia: SWORD_HIT, spearman: 0.5, archer: 0.75, scout: SWORD_HIT, knight: SWORD_HIT, ram: 0.63 }; // where in each attack cycle the blow lands (swords: the shared swing's hit)
-// The 3D flight is flat — a low arc, ARROW_ARC px of rise per tile of run (the 2D map's 7 px/tile reads well
-// top-down; seen in the round it lobbed the arrows) — so the bow draws nearly level. The angle an arrow leaves the
-// bow at: the flight below climbs (eH − sH + π·A)/HPX over its D-tile run, A = ARROW_ARC·D px — the same for every
-// shot but for the small launch-to-impact drop (taken at the archer's range, 4 tiles).
-const ARROW_ARC = 2.4, ARROW_LAUNCH = Math.atan2((8 - 12 + Math.PI * ARROW_ARC * 4) / (HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2), 4);
+// An arrow's arc, px of rise per tile of run: the 2D map's high (reads well top-down), the 3D's flat (seen in the round
+// a high one lobbed). Each view's bow aims at the pitch its arc leaves at (art space: rise over run, a tile PX art px
+// across, a px of height one art px up — both views); every flight is fitted to leave at exactly that (projEnds).
+const ARROW_ARC = 2.4, ARROW_ARC_2D = 7, arrowPitch = arc => Math.atan2(4 * arc, HALF_TW * Math.SQRT2);
+const ARROW_PITCH = arrowPitch(ARROW_ARC), ARROW_PITCH_2D = arrowPitch(ARROW_ARC_2D);
+// Where a loosed arrow's middle is as it leaves the bow (archerPose at the loose, the bow aimed at `pitch`): art px
+// [forward, up over the ground, across] — the head's middle, 15 px along the nocked arrow (its drawing's) from the nock
+const _bowRelease = new Map();
+function bowRelease(pitch){
+  let r = _bowRelease.get(pitch); if (r) return r;
+  const b = archerPose('attack', MIL_IMPACT.archer - 1e-3, { pitch }).bow, d = b.grip.map((v, i) => v - b.pull[i]), L = Math.hypot(...d);
+  const at = b.pull.map((v, i) => v + d[i] / L * 15);
+  _bowRelease.set(pitch, r = [at[0], 5 - at[1], at[2]]); return r;
+}
 const FORGE_STEEL = ['#8f8a7d', '#a8adb3', '#c6cdd8'];   // a soldier's steel by forge tier
 function soldierEquip(ut, age, atk, arm, fletch){
   const v = { metal: FORGE_STEEL[atk], weapon: atk, torso: arm >= 2 ? 'chain' : arm >= 1 ? 'scale' : null, helmet: 'hood', shield: null, feather: false, quiver: false };
@@ -2036,9 +2068,10 @@ function archerPose(kind, t, eq){
     const src = eq.quiver ? [-2.2, -16.8, 3.2] : [0.6, -2.8, 6.4];
     let hand = t < 0.75 ? lerpV(nock, cheek, draw) : t < 0.85 ? lerpV(after, cheek, loose) : t < 0.92 ? lerpV(after, src, easeC((t - 0.85) / 0.07)) : lerpV(src, nock, easeC((t - 0.92) / 0.08));
     bowH[1] -= 0.8 * Math.sin(Math.PI * Math.min(1, (t - 0.75) / 0.12)) * (t >= 0.75 && t < 0.87 ? 1 : 0); bowH[0] += 0.6 * loose * (t >= 0.75 ? 1 : 0); // the bow arm kicks
-    // aimed up along the flight the arrow takes (ARROW_LAUNCH): the draw pitched about the shoulder, so the nocked
-    // arrow points the way the loosed one flies
-    const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 11.4), c = Math.cos(ARROW_LAUNCH), sn = Math.sin(ARROW_LAUNCH);
+    // aimed up along the flight the arrow takes (eq.pitch, the view's: ARROW_PITCH*): the draw pitched about the
+    // shoulder, so the nocked arrow points the way the loosed one flies
+    const pitch = eq && eq.pitch != null ? eq.pitch : ARROW_PITCH;
+    const aimed = q => { const dx = q[0] - 2.2, u = -(q[1] + 11.4), c = Math.cos(pitch), sn = Math.sin(pitch);
       return [2.2 + dx * c - u * sn, -11.4 - (dx * sn + u * c), q[2]]; };
     const bh = aimed(bowH); hand = aimed(hand);
     bowH[0] = bh[0]; bowH[1] = bh[1];
@@ -2132,18 +2165,114 @@ function roofCrew(e){
   }
   return R;
 }
-// Where a TC's arrow is drawn from while it has a crew up top: a volley's arrows from its crew in turn, at the bow
-// ({ x, y }: sim tiles, h: art px over the ground; null: the sim's own start). Cached per arrow.
+// Who looses a TC's or a Castle's arrow while it has a crew up top: a volley's arrows from its crew in turn ({ x, y }:
+// where that one stands, sim tiles; h: the floor's art px over the ground; null: the sim's own start). Cached per arrow.
 const roofShots = new WeakMap();
 function roofShot(p){
   if (roofShots.has(p)) return roofShots.get(p);
   const b = entitiesById.get(p.attackerId), R = b && b.btype === 'TC' && roofCrews.get(b);
   let S = null;
+  // a Castle's: its tower crew in turn, at the bow (CASTLE_TOP up, the bow 19 above the feet)
+  const Y = b && b.btype === 'CASTLE' && castleYards.get(b), up = Y && animTick - Y.at <= 2 ? Y.list.filter(f => f.top) : [];
+  if (up.length) { if (Y.volley !== tick) { Y.volley = tick; Y.shot = 0; }
+    const f = up[Y.shot++ % up.length]; S = { x: Y.ox + f.u, y: Y.oy + f.v, h: CASTLE_TOP, inside: false }; }
   // (only a crew that is there and being drawn — emptied, it shoots as the sim's)
-  if (R && R.figs.length && b.garrison && b.garrison.length && animTick - R.at <= 2) { if (R.volley !== tick) { R.volley = tick; R.shot = 0; }
-    const f = R.figs[R.shot++ % R.figs.length], k = (b.w || 4) / 3, a = Math.atan2(p.ty - f.y, p.tx - f.x);
-    S = { x: f.x + Math.cos(a) * 0.2, y: f.y + Math.sin(a) * 0.2, h: (R.down ? 0 : 55 * k) + 19, inside: R.down }; }   // (the keep floor 55×k up, the bow 19 above the feet)
+  else if (R && R.figs.length && b.garrison && b.garrison.length && animTick - R.at <= 2) { if (R.volley !== tick) { R.volley = tick; R.shot = 0; }
+    const f = R.figs[R.shot++ % R.figs.length], k = (b.w || 4) / 3;
+    S = { x: f.x, y: f.y, h: R.down ? 0 : 55 * k, inside: R.down }; }   // (the keep floor 55×k up)
   roofShots.set(p, S); return S;
+}
+// ---- A Castle's garrison (both views; viewer-only, from the sim's garrison, reload and arrows) ----
+// Its garrisoned villagers man the four tower tops first (two a tower, the front ones first: CASTLE_TOWERS), aiming and
+// loosing its volleys from there; the rest stroll in the courtyard between the curtain walls and the keep. Each comes
+// in by the gate, under the portcullis, from where it went in (the sim parks it mid-footprint at once), and a tower's
+// two climb its stair from the yard corner at its foot. Coords: tiles from the footprint's corner (CASTLE_PARTS' u, v);
+// its sim tile is e.x - 0.5 + u. A tower top's floor: its crown's top, CASTLE_TOP art px up.
+const YARD_LO = 1.15, YARD_HI = 2.85, YARD_OUT = [-0.4, 4.4], YARD_GATE = [2, 4.4], YARD_IN = [2, YARD_HI], CASTLE_TOP = 51;
+const YARD_SPOTS = [[YARD_LO, YARD_LO], [YARD_HI, YARD_LO], [YARD_HI, YARD_HI], [YARD_LO, YARD_HI], [1.25, 3.25], [2.75, 3.25]];
+for (const t of [1.3, 1.7, 2.3, 2.7]) YARD_SPOTS.push([t, 0.75], [3.25, t], [0.75, t]);   // (the front side keeps the gate's way clear)
+// the tower tops' posts: [u, v] of its tile corner, the post beside its middle, facing out (hd), the yard corner below
+const CASTLE_TOWERS = [[3, 3], [0, 3], [3, 0], [0, 0]].map(([tu, tv]) => { const du = tu ? 1 : -1, dv = tv ? 1 : -1, k = 0.2 / Math.SQRT2;
+  return { tu, tv, foot: [tu ? YARD_HI : YARD_LO, tv ? YARD_HI : YARD_LO], hd: Math.atan2(dv, du),
+    posts: [[tu + 0.5 - dv * k, tv + 0.5 + du * k], [tu + 0.5 + dv * k, tv + 0.5 - du * k]] }; });
+const CASTLE_POSTS = CASTLE_TOWERS.flatMap((T, t) => T.posts.map(p => ({ t, at: p })));
+const YARD_CLIMB = T30(45);   // (up the tower's stair: out of sight)
+// A loop round the square [lo, hi]²: the point s along it, and the nearest point's s
+function loopAt(s, lo, hi){ const n = hi - lo, L = 4 * n; s = ((s % L) + L) % L; const k = Math.min(3, Math.floor(s / n)), d = s - k * n;
+  return k === 0 ? [lo + d, lo] : k === 1 ? [hi, lo + d] : k === 2 ? [hi - d, hi] : [lo, hi - d]; }
+function loopParam([u, v], lo, hi){ const n = hi - lo, cu = Math.max(lo, Math.min(hi, u)), cv = Math.max(lo, Math.min(hi, v));
+  const d = [Math.abs(v - lo), Math.abs(u - hi), Math.abs(v - hi), Math.abs(u - lo)], k = d.indexOf(Math.min(...d));
+  return k === 0 ? cu - lo : k === 1 ? n + cv - lo : k === 2 ? 3 * n - cu + lo : 4 * n - cv + lo; }
+// P → Q round that loop the short way: onto it, its corners between, off it
+function loopRoute(P, Q, lo, hi){
+  const n = hi - lo, L = 4 * n, a = loopParam(P, lo, hi), b = loopParam(Q, lo, hi);
+  let d = ((b - a) % L + L) % L; if (d > L / 2) d -= L;
+  const out = [loopAt(a, lo, hi)];
+  if (d > 0) for (let c = Math.floor(a / n) + 1; c * n < a + d; c++) out.push(loopAt(c * n, lo, hi));
+  else for (let c = Math.ceil(a / n) - 1; c * n > a + d; c--) out.push(loopAt(c * n, lo, hi));
+  out.push(loopAt(b, lo, hi), Q); return out;
+}
+const yardHash = (a, b) => { let h = (a * 374761393 + b * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+const castleYards = new WeakMap();
+function castleYard(e){
+  let Y = castleYards.get(e); const fresh = !Y || animTick - Y.at > 30;   // (first seen, or back in view: all already in place)
+  if (!Y) castleYards.set(e, Y = { figs: new Map(), at: animTick, gate: 0, pulse: 0, near: new Map(), posts: CASTLE_POSTS.map(() => null), cdLast: null, firedAt: null, aim: null, volley: -1, shot: 0 });
+  const dt = Math.max(0, Math.min(10, animTick - Y.at)); Y.at = animTick;
+  const ox = e.x - 0.5, oy = e.y - 0.5;
+  if (dt > 0 || fresh) for (const u of entities) if (u.task === 'garrison' && u.garrisonTarget === e.id && !u.garrisonedIn) Y.near.set(u.id, [u.x - ox, u.y - oy]);   // (once a tick of the clock: a frame draws it more than once)
+  // shooting: a volley just loosed (its reload jumped back up), at the mark its arrows fly to (roofCrew's reading)
+  const cd = e.atkCooldown || 0;
+  if (cd > T30(6) && (Y.cdLast == null || cd > Y.cdLast)) Y.firedAt = tick;
+  Y.cdLast = cd;
+  Y.firing = Y.firedAt != null && tick - Y.firedAt < BUILDING_RELOAD + T30(6);
+  if (Y.firing) for (const p of projectiles) if (p.attackerId === e.id) { Y.aim = [p.tx - ox, p.ty - oy]; break; }
+  const G = e.complete && e.garrison ? e.garrison : [], live = new Set(G);
+  for (const id of [...Y.figs.keys()]) if (!live.has(id)) { const f = Y.figs.get(id); if (f.post != null) Y.posts[f.post] = null; Y.figs.delete(id); Y.pulse = T30(40); }   // (out: the sim sets it outside at once; the gate lifts after it)
+  const taken = new Set(); for (const f of Y.figs.values()) if (f.post == null) taken.add(f.spot);
+  const freeSpot = (id, k) => { const n = YARD_SPOTS.length; let i = Math.floor(yardHash(id, k) * n); for (let j = 0; j < n && taken.has(i); j++) i = (i + 1) % n; return i; };
+  const toPost = (f, k) => { Y.posts[k] = f.id; f.post = k; taken.delete(f.spot); f.spot = -1; };
+  for (const id of G) if (!Y.figs.has(id)) {
+    const v = entitiesById.get(id), at = Y.near.get(id); Y.near.delete(id);
+    const f = { id, spot: -1, post: null, n: 0, female: !!(v && v.female), u: 0, v: 0, hd: 0, walk: 0, wait: yardHash(id, 99) * T30(300), route: [], inbound: false, climb: 0, top: false };
+    const k = Y.posts.indexOf(null);
+    if (k >= 0) toPost(f, k); else { f.spot = freeSpot(id, 0); taken.add(f.spot); }
+    const Q = f.post != null ? CASTLE_TOWERS[CASTLE_POSTS[k].t].foot : YARD_SPOTS[f.spot];
+    if (fresh) { if (f.post != null) { f.top = true; [f.u, f.v] = CASTLE_POSTS[k].at; f.hd = CASTLE_TOWERS[CASTLE_POSTS[k].t].hd; } else { [f.u, f.v] = Q; f.hd = Math.atan2(2 - Q[1], 2 - Q[0]); } }
+    else { const S = at && Math.hypot(at[0] - 2, at[1] - 2) < 5 ? at : YARD_GATE;   // (from where it stood; out of the way: the gate)
+      f.u = S[0]; f.v = S[1]; f.inbound = true; f.route = [...loopRoute(S, YARD_GATE, ...YARD_OUT), YARD_IN, ...loopRoute(YARD_IN, Q, YARD_LO, YARD_HI)]; }
+    Y.figs.set(id, f);
+  }
+  // a post left empty: the first in the yard goes up to it
+  for (let k = 0; k < Y.posts.length; k++) if (Y.posts[k] == null) { const f = G.map(id => Y.figs.get(id)).find(f => f && f.post == null && !f.inbound); if (!f) break;
+    toPost(f, k); f.route = loopRoute([f.u, f.v], CASTLE_TOWERS[CASTLE_POSTS[k].t].foot, YARD_LO, YARD_HI); }
+  for (const f of Y.figs.values()) {
+    if (f.top) { const T = CASTLE_TOWERS[CASTLE_POSTS[f.post].t]; f.moving = false;
+      f.hd = Y.firing && Y.aim ? Math.atan2(Y.aim[1] - f.v, Y.aim[0] - f.u) : T.hd; continue; }
+    if (f.climb > 0) { if ((f.climb -= dt) <= 0) { f.top = true; [f.u, f.v] = CASTLE_POSTS[f.post].at; } continue; }
+    let step = 0.03 * dt;   // (0.9 tiles a second, the roof crew's)
+    while (step > 0 && f.route.length) {
+      const [tu, tv] = f.route[0], du = tu - f.u, dv = tv - f.v, d = Math.hypot(du, dv);
+      if (d > 1e-6) f.hd = Math.atan2(dv, du);
+      if (d <= step) { f.u = tu; f.v = tv; f.walk += d; step -= d; if (f.route.shift() === YARD_IN) f.inbound = false; continue; }
+      f.u += du / d * step; f.v += dv / d * step; f.walk += step; step = 0;
+    }
+    f.moving = f.route.length > 0;
+    if (f.moving) { f.faced = false; continue; }
+    if (f.post != null) { f.climb = YARD_CLIMB; continue; }   // (at the tower's foot: up its stair)
+    if (!f.faced) { f.hd = Math.atan2(2 - f.v, 2 - f.u) + (yardHash(f.id, f.n + 7) - 0.5) * 2; f.faced = true; }   // (into the yard, each a little its own way)
+    if ((f.wait -= dt) > 0) continue;
+    // done standing about: off to another free spot along the walls
+    taken.delete(f.spot); f.n++; f.spot = freeSpot(f.id, f.n); taken.add(f.spot);
+    f.route = loopRoute([f.u, f.v], YARD_SPOTS[f.spot], YARD_LO, YARD_HI);
+    f.wait = T30(240) + yardHash(f.id, f.n) * T30(600); f.moving = true;
+  }
+  // the portcullis: up while one comes in through it (from a tile and a half out) or just after one went out
+  let want = (Y.pulse -= dt) > 0;
+  for (const f of Y.figs.values()) if (f.inbound && (Math.hypot(f.u - YARD_GATE[0], f.v - YARD_GATE[1]) < 1.5 || (f.v > 3 && Math.abs(f.u - 2) < 0.5))) want = true;
+  Y.gate = Math.max(0, Math.min(1, Y.gate + (want ? 0.06 : -0.03) * dt));
+  Y.list = G.map(id => Y.figs.get(id)).filter(f => f && f.climb <= 0);   // (on the stair: out of sight)
+  Y.ox = ox; Y.oy = oy;
+  return Y;
 }
 // The female villager's dress [radius, art y] from the hem up (pov3d's DRESS_SHAPES.tunic)
 const VIL_DRESS = [[0, -0.4], [4.2, -0.45], [4.95, -0.65], [5.3, -1.1], [5.1, -2.8], [4.8, -6], [4, -9.2], [2.3, -11.1], [1.4, -12], [0, -12.2]];
@@ -2250,11 +2379,14 @@ function drawPerson2D(e){
   // a corpse (drawCorpse sets __deathAge): the staged death, the whole body going over backward about a pivot behind the
   // heels (fall, as the 3D's)
   // a soldier (soldierAction, SOLDIER_POSE) or a villager (villagerAction, VIL2D_POSE): one body, its gear by unit
-  const soldier = e.utype !== 'villager', eq = soldier ? soldierGear(e) : null, dying = e.__deathAge != null;
+  const soldier = e.utype !== 'villager', eq = soldier ? { ...soldierGear(e), pitch: ARROW_PITCH_2D } : null, dying = e.__deathAge != null;
   let act = dying ? { kind: 'die', t: 0, opt: {} } : soldier ? soldierAction(e, S.stride, animTick) : villagerAction(e, S.stride, animTick);
   // a villager at work (pov3d's): turned to what it works on and stepped in so its tool meets it (villagerWorkReach) —
   // walking there, and back out after, rather than popping; drawn there (S.wx/S.wy, its drawn spot), facing it
   let hd = (e.dir || 0) * Math.PI / 4;
+  // a bowman loosing faces its mark (its arrows fly there from the bow: projEnds), not the nearest of the 8 ways
+  const mark = e.utype === 'archer' && !eq.civ && act.kind === 'attack' && e.target != null ? entitiesById.get(e.target) : null;
+  if (mark) { const c = mark.type === 'building' ? centerOf(mark) : mark; if (c.x !== e.x || c.y !== e.y) hd = Math.atan2(c.y - e.y, c.x - e.x); }
   if (!soldier && !dying) { const spot = villagerWorkSpot(e, act, S); if (spot) { act = spot.act; hd = spot.hd; } }
   // (phases snap to PERSON_STEPS a cycle: each pose is built once and cached — the 3D's pose cache, in 2D)
   if (!dying) { act.t = (Math.round(act.t * PERSON_STEPS) % PERSON_STEPS) / PERSON_STEPS; if (act.legs) act.legs.t = (Math.round(act.legs.t * PERSON_STEPS) % PERSON_STEPS) / PERSON_STEPS; }
@@ -2594,13 +2726,16 @@ function soldierWeapon2D(ut, o, eq, mG){
     for (const tp of tips) k.tube('#e8e8e8', [mG(...tp), mG(...Pq)], 0.22, 'tool').d = k.d + 0.001;                           // the string
     const nock = b.arrow ? Pq : b.fetched ? pull : null;
     if (nock) { const d = [G[0] - nock[0], G[1] - nock[1], G[2] - nock[2]], dl = Math.hypot(...d) || 1, at = u => nock.map((v, i) => v + d[i] / dl * u);
-      k.tube('#8b6a3a', [mG(...at(0)), mG(...at(15))], 0.35, 'tool').d = k.d + 0.002;                                        // the shaft
+      k.tube(ARROW_SHAFT, [mG(...at(0)), mG(...at(15))], 0.35, 'tool').d = k.d + 0.002;                                        // the shaft
       k.tube('#dde3ea', [mG(...at(14.2)), mG(...at(16.4))], [0.9, 0.1], 'tool').d = k.d + 0.003;                            // the head
       if (eq.feather) k.tube(lightOfHex(k.tc), [mG(...at(0.4)), mG(...at(3.4))], [1, 0.3], 'tool').d = k.d + 0.0025; }  // Fletching's vanes
     if (eq.quiver) { const c = [-4.2, -9, 1.5], ax = [0.247, -0.91, 0.332], q = u => mG(...c.map((v, i) => v + ax[i] * u)), qd = k.nearer(mG(...c)) ? k.layers.NEAR_ARM + 1 : k.layers.BACK_TOOL - 0.5;   // (facing away it's on top of his back and shoulder, under the head)
       k.tube('#7a5230', [q(-4), q(4)], 1.5, 'tool').d = qd;                                                                   // the quiver on his back, fletchings showing
-      for (const z of [-0.8, 0.8]) k.tube(eq.feather ? lightOfHex(k.tc) : '#8b6a3a', [mG(...c.map((v, i) => v + ax[i] * 3.6 + (i === 2 ? z : 0))), mG(...c.map((v, i) => v + ax[i] * 5.8 + (i === 2 ? z : 0)))], 0.5, 'tool').d = qd + 0.001; } } };
+      for (const z of [-0.8, 0.8]) k.tube(eq.feather ? lightOfHex(k.tc) : ARROW_SHAFT, [mG(...c.map((v, i) => v + ax[i] * 3.6 + (i === 2 ? z : 0))), mG(...c.map((v, i) => v + ax[i] * 5.8 + (i === 2 ? z : 0)))], 0.5, 'tool').d = qd + 0.001; } } };
 }
+// An arrow's shaft, in the hand and in flight (both views): light tan wood, a shade off the bow's limbs, that still reads
+// as a thin line in the air
+const ARROW_SHAFT = '#a8814c';
 // a light tint of a team colour (pov3d's lightOf: 45% toward white)
 const lightOfHex = hex => { const n = parseInt(hex.slice(1), 16), f = v => Math.round(v + (255 - v) * 0.45);
   return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => f(v).toString(16).padStart(2, '0')).join(''); };

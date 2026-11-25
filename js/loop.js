@@ -37,7 +37,7 @@ function update(){
       let shooter = entitiesById.get(p.attackerId) || p.attackerSnap;
       if (p.targetBuildingId) {
         let b = entitiesById.get(p.targetBuildingId);
-        if (b && b.hp > 0) { damageEntity(shooter, b); stickArrow(p, b); }
+        if (b && b.hp > 0) { damageEntity(shooter, b); shotLanded(p, b); } else shotLanded(p, null);
       } else {
         // The unit nearest the landing spot (the unit grid's cells round it: a full entity scan per impact was
         // O(arrows × entities) in a big battle). Ties go to the lowest id — what the entities-order scan picked.
@@ -59,7 +59,7 @@ function update(){
             if (d < vd || (d === vd && victim && en.id < victim.id)) { vd = d; victim = en; }
           } }
         if (victim) damageEntity(shooter, victim);
-        stickArrow(p, victim && victim.hp > 0 ? victim : null); // (cosmetic: in the body, or in the ground — a miss, or it just fell)
+        shotLanded(p, victim && victim.hp > 0 ? victim : null); // (cosmetic: in the body, or in the ground — a miss, or it just fell)
       }
     } else {
       p.x += (dx / dist) * speed;
@@ -181,15 +181,17 @@ function advanceParticles(elapsedMs){
         p.z = 0;
         if (p.type === 'blood') {
           p.vx = 0; p.vy = 0; p.vz = 0;
-        } else if ((p.type === 'dust' || p.type === 'grass') && p.vz < -0.005) {
-          p.vz = -p.vz * 0.45;
+        } else if ((p.type === 'dust' || p.type === 'grass' || p.type === 'chunk') && p.vz < -0.005) {
+          p.vz = -p.vz * (p.type === 'chunk' ? 0.35 : 0.45);
           p.vx *= 0.6;
           p.vy *= 0.6;
+          if (p.vspin) p.vspin *= 0.5;
         } else {
           p.vz = 0;
         }
       }
     }
+    if (p.vspin) p.spin += p.vspin * steps;
     p.life -= steps;
   });
   particles = particles.filter(p => p.life > 0);
