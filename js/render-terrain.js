@@ -269,13 +269,15 @@ function groundTread(A){
 // pause at a match's start (a big map's picture is a second's work). Till a band comes back its tiles show their kind's
 // plain colour. False where there are no workers (the picture is painted here, as before).
 let _gWorkers = null, _gJob = 0;   // (_gJob: each painting's own number — a late band of an earlier one is dropped)
+// GROUND_BAND: rows a worker paints at a go; GROUND_NEAR: rows either side of the camera that count as in view
+const GROUND_BAND = 8, GROUND_NEAR = 20;
 function _gPaintAway(A){
   if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || MAP * GROUND_PX < 600) return false;
   if (!_gWorkers) { try {
     const consts = { TERRAIN, GROUND_DIRT, GROUND_THIN, GROUND_STRAW, GROUND_DRY, GROUND_SOIL, GROUND_SPENT, GROUND_WEAR, GROUND_WEAR_ON };
     const src = Object.entries(consts).map(([k, v]) => 'const ' + k + ' = ' + JSON.stringify(v) + ';').join('\n') + '\nlet MAP, GROUND_PX, _PAL; const _gKind = t => _PAL[t];\nconst _gHash = ' + _gHash + ';\n' + _gLayer + '\n' + _gPaint
       + '\nonmessage = e => { const m = e.data; MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; const A = { kind: m.K, oy: m.ty0 * m.G, d: { data: new Uint8ClampedArray(MAP * m.G * (m.ty1 - m.ty0 + 1) * m.G * 4) } };'
-      + ' _gPaint(A, 0, m.ty0, MAP - 1, m.ty1); postMessage({ id: m.id, ty0: m.ty0, ty1: m.ty1, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
+      + ' _gPaint(A, 0, m.ty0, MAP - 1, m.ty1); postMessage({ id: m.id, ty0: m.ty0, ty1: m.ty1, near: m.near, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
     const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
     _gWorkers = Array.from({ length: n }, () => new Worker(url));
   } catch (err) { _gWorkers = []; } }
@@ -284,14 +286,20 @@ function _gPaintAway(A){
   const G = GROUND_PX, PAL = [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), n = _gWorkers.length, id = (A.id = ++_gJob);
   for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) { const k = A.kind[y * MAP + x], t = k & 7, c = k & 64 ? GROUND_SOIL : k & 16 || t === TERRAIN.GOLD || t === TERRAIN.STONE ? GROUND_DIRT : PAL[t === TERRAIN.FOREST || t === TERRAIN.BERRIES || t === TERRAIN.FARM ? TERRAIN.GRASS : t];
     A.x.fillStyle = 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; A.x.fillRect(x * G, y * G, G, G); }
-  A.away = n;
-  _gWorkers.forEach((w, i) => {
-    const ty0 = Math.floor(MAP * i / n), ty1 = Math.floor(MAP * (i + 1) / n) - 1;
-    w.onmessage = e => { const m = e.data; if (_gart !== A || m.id !== A.id) return;   // (a new match since: dropped)
-      const N = A.n * G, rows = (m.ty1 - m.ty0 + 1) * G; A.d.data.set(new Uint8ClampedArray(m.buf), m.ty0 * G * N * 4);   // (its own size: MAP may be another match's by now)
-      A.x.putImageData(A.d, 0, 0, 0, m.ty0 * G, N, rows); A.ver++; A.away--; };
-    w.postMessage({ id, MAP, G, PAL, K: A.kind.slice(), ty0, ty1 });
-  });
+  // in bands of GROUND_BAND rows, the ones round the camera first (the player's Town Center, where a match opens): those
+  // show at once; the 3D ground's texture (one upload of the whole picture a version) takes the near ones together, then
+  // the rest when all are in
+  const tc = typeof entities !== 'undefined' && entities.find(e => e.btype === 'TC' && e.team === myTeam), fy = tc ? tc.y + 2 : MAP / 2;
+  const bands = []; for (let y = 0; y < MAP; y += GROUND_BAND) bands.push([y, Math.min(MAP, y + GROUND_BAND) - 1]);
+  bands.sort((a, b) => Math.abs((a[0] + a[1]) / 2 - fy) - Math.abs((b[0] + b[1]) / 2 - fy) || a[0] - b[0]);
+  let near = Math.min(bands.length, Math.ceil(2 * GROUND_NEAR / GROUND_BAND));
+  A.away = bands.length;
+  _gWorkers.forEach(w => { w.onmessage = e => { const m = e.data; if (_gart !== A || m.id !== A.id) return;   // (a new match since: dropped)
+    const N = A.n * G, rows = (m.ty1 - m.ty0 + 1) * G; A.d.data.set(new Uint8ClampedArray(m.buf), m.ty0 * G * N * 4);   // (its own size: MAP may be another match's by now)
+    A.x.putImageData(A.d, 0, 0, 0, m.ty0 * G, N, rows); A.away--;
+    if (m.near && --near === 0 || A.away === 0) A.ver++; }; });
+  const K = A.kind.slice();
+  bands.forEach(([ty0, ty1], i) => _gWorkers[i % n].postMessage({ id, MAP, G, PAL, K, ty0, ty1, near: i < near }));
   return true;
 }
 // The picture, mended: { c: canvas, ver } — ver steps when it changed (the 3D ground's texture follows it).
