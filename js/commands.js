@@ -185,7 +185,7 @@ function execCommand(cmd, team, seat = team){
       // trusted from the wire.
       if (seat === 0 && cmd.v >= 0.5 && cmd.v <= 4) {
         setGameSpeed(cmd.v);
-        if (typeof showMsg === 'function') showMsg('Game speed: ' + cmd.v + 'x');
+        if (typeof showMsg === 'function') showMsg('Game speed: ' + (cmd.v >= 4 ? 'Fast' : cmd.v >= 2 ? 'Slow' : cmd.v + 'x'));
       }
       break;
     case 'set-controller':

@@ -128,7 +128,7 @@ function seedHostLobby(){
     seats: [
       { type: 'human', name: (localPlayerName || '').trim(), colorIdx: 0, ready: true, present: true, team: null },
     ],
-    aiDifficulty: (typeof aiDifficulty !== 'undefined' && aiDifficulty) ? aiDifficulty : 'standard',
+    aiDifficulty: (typeof aiDifficulty !== 'undefined' && aiDifficulty) ? aiDifficulty : 'easy',
     mapSize: lobbyReadMapSizeRadio(),
     speed: GAME_SPEED,
     fog: false, // false = Fog of War (default), true = All Visible
@@ -289,7 +289,7 @@ function onLobbyAIPlanSaved(){
 function onLobbyAiDiffChange(){
   if (!lobbyState || netRole !== 'host') return;
   let sel = document.querySelector('input[name="lobbyaidiff"]:checked');
-  lobbyState.aiDifficulty = sel ? sel.value : 'standard';
+  lobbyState.aiDifficulty = sel ? sel.value : 'easy';
   lobbyBroadcast();
 }
 
@@ -329,7 +329,7 @@ function lobbyBroadcast(){ lobbySendState(null); }
 
 // ---- Guest: apply the host's authoritative state ----
 function applyLobbyState(msg, isOpen){
-  lobbyState = { seats: msg.seats || [], aiDifficulty: msg.aiDifficulty || 'standard',
+  lobbyState = { seats: msg.seats || [], aiDifficulty: msg.aiDifficulty || 'easy',
     mapSize: msg.mapSize, speed: msg.speed, fog: !!msg.fog, dragon: msg.dragon !== false, drop: dropPolicy(msg.drop), numTeams: msg.numTeams || 2 };
   if (msg.yourSeat != null) window.__mpSession.mySeat = msg.yourSeat;
   window.__mpSession.inLobby = true;
@@ -361,7 +361,7 @@ function renderLobby(){
   renderLobbyRoster();
 
   // Settings: host-interactive, guest read-only mirror.
-  lobbySetRadio('lobbyaidiff', lobbyState.aiDifficulty || 'standard');
+  lobbySetRadio('lobbyaidiff', lobbyState.aiDifficulty || 'easy');
   lobbySetRadio('lobbymapsize', lobbyState.mapSize);
   lobbySetRadio('lobbyspeed', String(lobbyState.speed));
   lobbySetRadio('lobbyfog', lobbyState.fog ? 'open' : 'fog');
@@ -697,7 +697,7 @@ function onLobbyStartClicked(){
 // BEFORE the seed snapshot + broadcast so both peers and the checksum agree.
 function applyLobbyConfigToTeams(){
   if (!lobbyState) return;
-  let diff = lobbyState.aiDifficulty || 'standard';
+  let diff = lobbyState.aiDifficulty || 'easy';
   // (an AI seat's plan: the script compiled on the host travels in the seat — every peer runs the same one)
   const towns = lobbyTownSeats();
   teamControllers = towns.map(s => s.type === 'ai' ? Object.assign({ type: 'ai', difficulty: diff }, s.aiScript ? { script: s.aiScript } : {}) : { type: 'human' });

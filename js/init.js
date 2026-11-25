@@ -129,7 +129,7 @@ function placeDragonLair(){
 }
 
 function startGame(difficulty){
-  aiDifficulty=AI_LEVELS[difficulty]?difficulty:'standard';
+  aiDifficulty=AI_LEVELS[difficulty]?difficulty:'easy';
   // Sync the AI slots' difficulty to the menu pick (per-team difficulty is
   // what the AI actually reads — aiProfileFor, js/core.js).
   teamControllers.forEach(c => { if (c && c.type === 'ai') c.difficulty = aiDifficulty; });

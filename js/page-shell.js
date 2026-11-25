@@ -399,7 +399,7 @@ document.body.insertAdjacentHTML('afterbegin', `
         </div>
         <div class="setup-col">
           <h3>Difficulty</h3>
-          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="difficulty" value="easy"><span title="Easy">E</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="standard" checked><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label></div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="difficulty" value="easy" checked><span title="Easy">E</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="standard"><span title="Medium">M</span></label><label class="opt-pill"><input type="radio" name="difficulty" value="hard"><span title="Hard">H</span></label></div>
         </div>
         <div class="setup-col setup-col-wide">
           <h3>Map Size</h3>
@@ -423,7 +423,7 @@ document.body.insertAdjacentHTML('afterbegin', `
         </div>
         <div class="setup-col" id="opt-speed-row">
           <h3>Speed</h3>
-          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="1"><span>1×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>2×</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>4×</span></label></div>
+          <div class="opt-pills"><label class="opt-pill"><input type="radio" name="gamespeed" value="2" checked><span>Slow</span></label><label class="opt-pill"><input type="radio" name="gamespeed" value="4"><span>Fast</span></label></div>
         </div>
       </div>
       </div>
@@ -547,8 +547,8 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div class="lobby-addai-row" id="lobby-addai-row">
         <button type="button" id="lobby-addai-btn" class="menu-action-btn" onclick="lobbyAddAi()">${menuIcon('plus')}Add AI</button>
         <div class="segmented" id="lobby-aidiff-seg">
-          <label class="segment"><input type="radio" name="lobbyaidiff" value="easy"><span title="Easy">E</span></label>
-          <label class="segment"><input type="radio" name="lobbyaidiff" value="standard" checked><span title="Medium">M</span></label>
+          <label class="segment"><input type="radio" name="lobbyaidiff" value="easy" checked><span title="Easy">E</span></label>
+          <label class="segment"><input type="radio" name="lobbyaidiff" value="standard"><span title="Medium">M</span></label>
           <label class="segment"><input type="radio" name="lobbyaidiff" value="hard"><span title="Hard">H</span></label>
         </div>
       </div>
@@ -566,9 +566,8 @@ document.body.insertAdjacentHTML('afterbegin', `
           <div class="setup-col">
             <h3>Speed</h3>
             <div class="segmented" id="lobby-speed-seg">
-              <label class="segment"><input type="radio" name="lobbyspeed" value="1"><span>1</span></label>
-              <label class="segment"><input type="radio" name="lobbyspeed" value="2" checked><span>2</span></label>
-              <label class="segment"><input type="radio" name="lobbyspeed" value="4"><span>4</span></label>
+              <label class="segment"><input type="radio" name="lobbyspeed" value="2" checked><span>Slow</span></label>
+              <label class="segment"><input type="radio" name="lobbyspeed" value="4"><span>Fast</span></label>
             </div>
           </div>
           <div class="setup-col">

@@ -1193,7 +1193,7 @@ function didIWin(){
   return sameSide(myTeam, 0) ? won : !won;
 }
 let lastSelKey='';
-let gameStarted=false, gamePaused=false, aiDifficulty='standard';
+let gameStarted=false, gamePaused=false, aiDifficulty='easy';
 
 // ---- MULTIPLAYER (see js/net.js) ----
 // myTeam: which team THIS browser tab plays as. Always 0 in single-player

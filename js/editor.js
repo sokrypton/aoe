@@ -192,7 +192,7 @@ function buildPalette(){
 
   // Sim speed (applies live, in edit or play). GAME_SPEED default is 2.
   let spd = document.createElement('div'); spd.className = 'ed-grid'; spd.style.margin = '3px 0';
-  [1, 2, 4].forEach(v => {
+  [2, 4].forEach(v => {
     let b = document.createElement('button');
     b.className = 'ed-spd' + (GAME_SPEED === v ? ' sel' : '');
     b.textContent = v + '×'; b.title = 'Simulation speed ' + v + '×';
