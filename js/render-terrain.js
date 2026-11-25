@@ -200,7 +200,7 @@ function _gLayer(k, div, s, px0, px1, py0, py1, G){
     return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
 }
 function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0..ty1
-  const G = GROUND_PX, N = MAP * G, D = A.d.data, OY = A.oy || 0, K = A.kind,   // (OY: the first pixel row D holds — a worker's band)
+  const G = GROUND_PX, D = A.d.data, OX = A.ox || 0, OY = A.oy || 0, NW = A.nw || MAP * G, K = A.kind,   // (OX/OY/NW: the pixel corner and row width D holds — a worker's block)
     W = GROUND_WEAR, R = Math.ceil(W), ORE = 1.5, src = [];   // (ORE: how far round a deposit the ground is bare)
   const px0 = tx0 * G, px1 = (tx1 + 1) * G, py0 = ty0 * G, py1 = (ty1 + 1) * G, L = (k, div, s) => _gLayer(k, div, s, px0, px1, py0, py1, G);
   const J3 = L(1.3, false, 3), J4 = L(1.3, false, 4), P1 = L(6.5, true, 1), P2 = L(2.3, true, 2), P6 = L(1.4, false, 6), E13 = L(2.6, false, 13), G9 = L(3.1, false, 9), G10 = L(4, true, 10);
@@ -242,7 +242,7 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
       c = m > 0.62 ? GROUND_DIRT : m > 0.44 ? GROUND_THIN : m > 0.27 ? GROUND_STRAW : m > 0.1 ? GROUND_DRY : c;
     }
     // the grain, a blade-scale mottle, and a slow drift from lush to dry
-    const lum = 1 + (h - 0.5) * 0.17 + (G9(i, j) - 0.5) * 0.16 + (G10(i, j) - 0.5) * 0.14, o = ((py - OY) * N + px) * 4;
+    const lum = 1 + (h - 0.5) * 0.17 + (G9(i, j) - 0.5) * 0.16 + (G10(i, j) - 0.5) * 0.14, o = ((py - OY) * NW + px - OX) * 4;
     D[o] = c[0] * lum; D[o + 1] = c[1] * lum; D[o + 2] = c[2] * lum; D[o + 3] = 255;   // (the array clamps to 255 itself)
   } } }
 }
@@ -265,19 +265,21 @@ function groundTread(A){
     if (!(window.fogDisabled || sameSide(e.team, myTeam) || (fog[y] && fog[y][x] === 2))) continue;
     const i = y * MAP + x; if (A.tread[i] < 60000) A.tread[i]++; }
 }
-// The first painting of the picture, off the page's thread: in bands of tile rows, one to a worker, all at once — no
-// pause at a match's start (a big map's picture is a second's work). Till a band comes back its tiles show their kind's
-// plain colour. False where there are no workers (the picture is painted here, as before).
-let _gWorkers = null, _gJob = 0;   // (_gJob: each painting's own number — a late band of an earlier one is dropped)
-// GROUND_BAND: rows a worker paints at a go; GROUND_NEAR: rows either side of the camera that count as in view
-const GROUND_BAND = 8, GROUND_NEAR = 20;
+// The first painting of the picture, off the page's thread, in square blocks shared out among workers — no pause at a
+// match's start (a big map's picture is a second's work). Till a block comes back its tiles show their kind's plain
+// colour. False where there are no workers (the picture is painted here, as before).
+let _gWorkers = null, _gJob = 0;   // (_gJob: each painting's own number — a late block of an earlier one is dropped)
+// GROUND_BLOCK: tiles a side a worker paints at a go; GROUND_NEAR: tiles from the camera that count as in view
+const GROUND_BLOCK = 12, GROUND_NEAR = 20;
 function _gPaintAway(A){
   if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || MAP * GROUND_PX < 600) return false;
   if (!_gWorkers) { try {
     const consts = { TERRAIN, GROUND_DIRT, GROUND_THIN, GROUND_STRAW, GROUND_DRY, GROUND_SOIL, GROUND_SPENT, GROUND_WEAR, GROUND_WEAR_ON };
-    const src = Object.entries(consts).map(([k, v]) => 'const ' + k + ' = ' + JSON.stringify(v) + ';').join('\n') + '\nlet MAP, GROUND_PX, _PAL; const _gKind = t => _PAL[t];\nconst _gHash = ' + _gHash + ';\n' + _gLayer + '\n' + _gPaint
-      + '\nonmessage = e => { const m = e.data; MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; const A = { kind: m.K, oy: m.ty0 * m.G, d: { data: new Uint8ClampedArray(MAP * m.G * (m.ty1 - m.ty0 + 1) * m.G * 4) } };'
-      + ' _gPaint(A, 0, m.ty0, MAP - 1, m.ty1); postMessage({ id: m.id, ty0: m.ty0, ty1: m.ty1, near: m.near, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
+    const src = Object.entries(consts).map(([k, v]) => 'const ' + k + ' = ' + JSON.stringify(v) + ';').join('\n') + '\nlet MAP, GROUND_PX, _PAL, _K, _id; const _gKind = t => _PAL[t];\nconst _gHash = ' + _gHash + ';\n' + _gLayer + '\n' + _gPaint
+      // (a job's map codes come once a worker; then its blocks, each painted into a buffer of its own and handed back)
+      + '\nonmessage = e => { const m = e.data; if (m.K) { MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; _K = m.K; _id = m.id; return; } if (m.id !== _id) return;'
+      + ' const G = GROUND_PX, nw = (m.tx1 - m.tx0 + 1) * G, A = { kind: _K, ox: m.tx0 * G, oy: m.ty0 * G, nw, d: { data: new Uint8ClampedArray(nw * (m.ty1 - m.ty0 + 1) * G * 4) } };'
+      + ' _gPaint(A, m.tx0, m.ty0, m.tx1, m.ty1); postMessage({ id: m.id, tx0: m.tx0, ty0: m.ty0, tx1: m.tx1, ty1: m.ty1, near: m.near, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
     const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
     _gWorkers = Array.from({ length: n }, () => new Worker(url));
   } catch (err) { _gWorkers = []; } }
@@ -286,20 +288,27 @@ function _gPaintAway(A){
   const G = GROUND_PX, PAL = [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), n = _gWorkers.length, id = (A.id = ++_gJob);
   for (let y = 0; y < MAP; y++) for (let x = 0; x < MAP; x++) { const k = A.kind[y * MAP + x], t = k & 7, c = k & 64 ? GROUND_SOIL : k & 16 || t === TERRAIN.GOLD || t === TERRAIN.STONE ? GROUND_DIRT : PAL[t === TERRAIN.FOREST || t === TERRAIN.BERRIES || t === TERRAIN.FARM ? TERRAIN.GRASS : t];
     A.x.fillStyle = 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; A.x.fillRect(x * G, y * G, G, G); }
-  // in bands of GROUND_BAND rows, the ones round the camera first (the player's Town Center, where a match opens): those
-  // show at once; the 3D ground's texture (one upload of the whole picture a version) takes the near ones together, then
-  // the rest when all are in
-  const tc = typeof entities !== 'undefined' && entities.find(e => e.btype === 'TC' && e.team === myTeam), fy = tc ? tc.y + 2 : MAP / 2;
-  const bands = []; for (let y = 0; y < MAP; y += GROUND_BAND) bands.push([y, Math.min(MAP, y + GROUND_BAND) - 1]);
-  bands.sort((a, b) => Math.abs((a[0] + a[1]) / 2 - fy) - Math.abs((b[0] + b[1]) / 2 - fy) || a[0] - b[0]);
-  let near = Math.min(bands.length, Math.ceil(2 * GROUND_NEAR / GROUND_BAND));
-  A.away = bands.length;
+  // The order: ground the player has explored first (the rest is under the veil: nobody sees it painted), nearest the
+  // camera first. The ones in view show at once; the 3D ground's texture (one upload of the whole picture a version)
+  // takes those together, then the rest when all are in.
+  const c = fromIso(camDX(), camDY()), B = GROUND_BLOCK, blocks = [];
+  const seen = (x0, y0, x1, y1) => { if (window.fogDisabled) return true; for (let y = y0; y <= y1; y++) { const r = fog[y]; if (r) for (let x = x0; x <= x1; x++) if (r[x]) return true; } return false; };
+  for (let y = 0; y < MAP; y += B) for (let x = 0; x < MAP; x += B) { const x1 = Math.min(MAP, x + B) - 1, y1 = Math.min(MAP, y + B) - 1;
+    blocks.push({ x0: x, y0: y, x1, y1, seen: seen(x, y, x1, y1), d: Math.hypot((x + x1) / 2 - c.x, (y + y1) / 2 - c.y) }); }
+  blocks.sort((a, b) => (b.seen - a.seen) || (a.d - b.d) || (a.y0 - b.y0) || (a.x0 - b.x0));
+  for (const b of blocks) b.near = b.seen && b.d < GROUND_NEAR + B / 2;
+  if (!blocks.some(b => b.near)) blocks[0].near = true;
+  let near = blocks.filter(b => b.near).length;
+  A.away = blocks.length;
+  const N = MAP * G;
   _gWorkers.forEach(w => { w.onmessage = e => { const m = e.data; if (_gart !== A || m.id !== A.id) return;   // (a new match since: dropped)
-    const N = A.n * G, rows = (m.ty1 - m.ty0 + 1) * G; A.d.data.set(new Uint8ClampedArray(m.buf), m.ty0 * G * N * 4);   // (its own size: MAP may be another match's by now)
-    A.x.putImageData(A.d, 0, 0, 0, m.ty0 * G, N, rows); A.away--;
+    const nw = (m.tx1 - m.tx0 + 1) * G, rows = (m.ty1 - m.ty0 + 1) * G, buf = new Uint8ClampedArray(m.buf);
+    for (let r = 0; r < rows; r++) A.d.data.set(buf.subarray(r * nw * 4, (r + 1) * nw * 4), ((m.ty0 * G + r) * N + m.tx0 * G) * 4);
+    A.x.putImageData(A.d, 0, 0, m.tx0 * G, m.ty0 * G, nw, rows); A.away--;
     if (m.near && --near === 0 || A.away === 0) A.ver++; }; });
   const K = A.kind.slice();
-  bands.forEach(([ty0, ty1], i) => _gWorkers[i % n].postMessage({ id, MAP, G, PAL, K, ty0, ty1, near: i < near }));
+  _gWorkers.forEach(w => w.postMessage({ id, MAP, G, PAL, K }));
+  blocks.forEach((b, i) => _gWorkers[i % n].postMessage({ id, tx0: b.x0, ty0: b.y0, tx1: b.x1, ty1: b.y1, near: b.near }));
   return true;
 }
 // The picture, mended: { c: canvas, ver } — ver steps when it changed (the 3D ground's texture follows it).
@@ -501,7 +510,7 @@ function _treeArt(crown, rotStep, shade, darken, scale, part = null){
   const wL = 2*halfW, hL = above + below;
   const cv = document.createElement('canvas');
   cv.width = Math.ceil(wL*scale); cv.height = Math.ceil(hL*scale);
-  const cx = cv.getContext('2d');
+  const cx = cv.getContext('2d', { willReadFrequently: true });   // (a CPU canvas: cropArt reads it back — a GPU one stalls ~1 ms a read)
   cx.scale(scale, scale);
   const sv = X; X = cx;
   try { drawFullTreeBody(halfW, above, crown, rotStep * Math.PI / 2, shade, darken, part); } finally { X = sv; }

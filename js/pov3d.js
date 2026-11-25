@@ -6059,7 +6059,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
     bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; firstSamples = FIRST_SAMPLES; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
-    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedKinds.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
+    if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedKinds.clear(); warmQueue.length = 0; prewarmShapes(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place); the building warm-up only queued (one kind a frame, a second on)
     else if (unrevealed) { bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; }   // a switch from 2D: its first frame whole, drawn while the 2D still shows
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
     const t0 = performance.now();
@@ -6864,9 +6864,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (!world && (v ? v !== '2d' : !navigator.webdriver)) openWorld(true);
   };
   window.povWorld = () => world;
-  // Fetch three.js while the menu is up, so a match opens straight into 3D.
+  // Fetch three.js and set up the renderer and scene (nothing of a match's) while the menu is up, so a match opens
+  // straight into 3D.
   if (preferredView() !== '2d' && !navigator.webdriver)
-    window.addEventListener('load', () => setTimeout(() => loadThree().catch(() => {}), 500), { once: true });
+    window.addEventListener('load', () => setTimeout(() => loadThree().then(() => { ensurePip(); if (!renderer) initScene(); }).catch(() => {}), 500), { once: true });
   window.__povYaw = a => { if (a !== undefined) yaw = a; return yaw; }; // dev: the view's heading (tests; given one, sets it)
   window.__povAnimYaw = id => { const a = animals.get(id); return a ? a.yaw : null; }; // dev: an animal's drawn heading (tests)
   window.__pov3dScene = () => scene; // dev: profiling

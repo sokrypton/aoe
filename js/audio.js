@@ -1341,6 +1341,9 @@ window.stopAmbientMusic = stopAmbientMusic;
 // background stints).
 ['pointerdown', 'keydown'].forEach(evt => {
   document.addEventListener(evt, () => {
+    // (the context is made at the first press — the Start button's: opening the audio device is ~80 ms, spent while the
+    // finger is still down, not after the click starts the match)
+    if (!audioCtx) { try { initAudio(); } catch (err) {} }
     // Direct resume (not tryResumeAudio): a real gesture always may resume,
     // and it must also clear the auto-resume latch set before the gesture.
     if (audioCtx && audioCtx.state === 'suspended') {
