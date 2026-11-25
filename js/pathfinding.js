@@ -570,6 +570,10 @@ function pathToContact(e,target,claim){
   let path=findPath(sx,sy,target.x,target.y,e.id,0,target,claim);
   if(claim && !path.length && edgeDistToBuilding(e.x,e.y,target)>1.2)
     path=findPath(sx,sy,target.x,target.y,e.id,0,target);
+  // Planned from its rounded tile, the search finds it already there (that tile touches the building) while the unit,
+  // nudged off that tile's centre, isn't in contact where it really stands (adjToBuilding): it would wait on both
+  // forever — a hauler frozen with its load. Onto its tile's centre, then.
+  if(!path.length && (e.x!==sx||e.y!==sy) && edgeDistToBuilding(e.x,e.y,target)>1.2 && edgeDistToBuilding(sx,sy,target)<=1.2) path=[{x:sx,y:sy}];
   return setUnitPath(e,path);
 }
 // Path a unit to INTERACT with a building: onto a FARM plot (walkable — the

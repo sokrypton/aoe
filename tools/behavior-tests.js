@@ -2393,6 +2393,24 @@ async function withPage(browser, port, entry, fn){
       return T;
     })),
 
+    // ------------------------------------------- hauler off its tile centre
+    // A hauler nudged off its tile's centre, diagonal to the TC's corner: its rounded tile touches the TC (the path
+    // search finds it already there) but where it stands it isn't in contact — it froze forever holding its load
+    // (the player's save, 2026-11-25). It must step onto its tile and drop.
+    'dropoff-off-centre': (page) => withPage(browser, port, '/tools/sim.html', p => p.evaluate(() => {
+      const T = window.__T;
+      loadScenario({ map: 'medium', seed: 9, numTeams: 2, controllers: ['human', 'human'],
+        entities: [ { b: 'TC', x: 10, y: 10, team: 0 }, { b: 'TC', x: 80, y: 80, team: 1 } ] });
+      gameStarted = true; gamePaused = false; myTeam = 0;
+      const v = createUnit('villager', 14, 14, 0);
+      v.x = v.fromX = 14.48; v.y = v.fromY = 14.48;   // (nudged half a tile off its centre, out from the TC's corner)
+      v.carrying = 10; v.carryType = 'food'; v.task = 'return';
+      const food0 = resourceStore(0).food;
+      for (let i = 0; i < 200 && v.carrying > 0; i++) update();
+      T.ok('off-centre hauler drops its load', v.carrying === 0 && resourceStore(0).food === food0 + 10);
+      return T;
+    })),
+
     // ------------------------------------------------------- stance matrix
     // THE disposition contract, one section per stance, driven through the
     // REAL command pipeline (execCommand) — never raw field pokes. Guards
