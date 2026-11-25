@@ -765,14 +765,17 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (off.y < 0) { off.y = 0; o.copy(off.applyMatrix3(Mi)); }
       }, scr);
       if (!hg) continue;
-      if (!union && !m.userData.hullRound) dropGroundFaces(hg, src, m.matrixWorld);
+      if (!union && !m.userData.hullRound && groundSpan(src, m.matrixWorld) > HULL_FLOOR_MAX) dropGroundFaces(hg, src, m.matrixWorld);
       const h = new THREE.Mesh(own(hg), hm);
       if (union) h.renderOrder = 1;
       m.add(h);
     }
   }
-  // A building's shell has no underside: its faces lying on the ground are never seen from outside, and through an open
-  // (damaged) roof they showed as a black floor. Triangles with all three corners on the ground leave the index.
+  // A building's shell has no underside: through an open (damaged) roof it showed as a black floor. Triangles with all
+  // three corners on the ground leave the index. Only past HULL_FLOOR_MAX across (a wall, a hall): a small solid part —
+  // a post, a leg, a prop — keeps its underside, whose rim is its outline where it stands (without, it thinned away).
+  const HULL_FLOOR_MAX = 0.4; let _gb = null;
+  const groundSpan = (src, M) => { _gb = _gb || new THREE.Box3(); if (!src.boundingBox) src.computeBoundingBox(); _gb.copy(src.boundingBox).applyMatrix4(M); return Math.max(_gb.max.x - _gb.min.x, _gb.max.z - _gb.min.z); };
   function dropGroundFaces(hg, src, M){
     const P = src.attributes.position, idx = hg.index ? hg.index.array : null, n = idx ? idx.length : P.count, keep = [], v = new THREE.Vector3();
     const low = i => v.fromBufferAttribute(P, i).applyMatrix4(M).y < 0.004;
