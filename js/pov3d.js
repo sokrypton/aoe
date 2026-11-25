@@ -1258,7 +1258,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const is = (x, y) => { const t = map[y] && map[y][x], o = t && t.occupied != null ? entitiesById.get(t.occupied) : null; return !!(o && o.btype === 'HOUSE' && o.hp > 0); };
     return [is(e.x, e.y - 1), is(e.x, e.y + 1), is(e.x - 1, e.y), is(e.x + 1, e.y)];
   }
-  let tcShadeMat = null;
+  let tcShadeMat = null, shieldGeo = null, bannerGeo = null, stakeTip = null;
   const MODELS = {
     // A flat tilled field (walkable: units stand on the ground, so the bed is
     // paint, not a raised block), a low planting ridge under each crop row, and
@@ -1346,33 +1346,74 @@ gl_Position = projectionMatrix * mvPosition;`;
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).
       if (e.complete) flag(g, x + mid / 2, z + mid / 2, F, a >= 2 ? keepH + 28 * k / HPX - F : 42 * k / HPX, tc, k);
     },
-    // A plaster hall under a team gable along the back (door in the lit gable
-    // end, four windows facing the yard), a fenced training yard with straw
-    // dummies; from Feudal a spear rack, a target, hay and a horse (drawBuilding
+    // The hall along the back (door in the lit gable end, windows facing the yard) and a drill yard with straw dummies;
+    // from Feudal a spear rack, a target, hay and a horse. Per age as the 2D (BARRACKS_ART): Dark planks under thatch in
+    // a stake stockade; Feudal plaster, half-timber, shields and banners; Castle a stone ground storey (drawBuilding
     // BARRACKS, authored 2x2 ×1.5). Yard props are thin: hull outline, no ink.
     BARRACKS(g, e){
       const x = e.x, z = e.y, W = e.w || 3, s = W / 2, tc = teamColor(e.team), a = ageOf(e);
       // BP(a, b): the art's compound grid (b across the hall → +x, a along it → -z).
       const BP = (A, B) => ({ x: x + s + (0.406 + B / 32 - 1) * s, z: z + s + (1.031 - A / 32 - 1) * s });
-      const h0 = BP(30, -13), h1 = BP(-30, 13), wallH = 24 * s / HPX, roofH = 12 * s / HPX;
-      const wall = AGE_WALLS[Math.min(a, 2)].gl, hall = [h0.x, h0.z, h1.x, h1.z];
-      const f = houseFaces(...hall, wallH, roofH, false, !e.complete || e.openTop);
-      f.z1.holes.push(hole('z1', hall, 0.5, SILL, 0.42, wallH * 0.7));                 // door, lit gable end
-      for (const u of [0.18, 0.38, 0.62, 0.82]) f.x1.holes.push(hole('x1', hall, u, wallH * 0.46, 0.2, 0.19));
-      solid(g, wall + '|plaster', Object.values(f));
+      const h0 = BP(30, -13), h1 = BP(-30, 13), wallH = 24 * s / HPX, roofH = 12 * s / HPX, BA = BARRACKS_ART, k = s / 32;
+      const wall = a === 0 ? WOOD.plankL + '|planks' : AGE_WALLS[Math.min(a, 2)].gl + '|plaster', hall = [h0.x, h0.z, h1.x, h1.z];
+      const f = houseFaces(...hall, wallH, roofH, false, !e.complete || e.openTop), doorW = BA.doorW * k, doorH = BA.doorV * wallH;
+      // (u on the yard wall x1 runs a = 30 → -30; on the door's gable z1, b = -13 → 13)
+      const uA = A => (30 - A) / 60, uB = B => (B + 13) / 26;
+      f.z1.holes.push(hole('z1', hall, 0.5, SILL, doorW, doorH));
+      for (const A of BA.windows) f.x1.holes.push(hole('x1', hall, uA(A), BA.winV[0] * wallH, BA.winW * k, BA.winV[1] * wallH));
+      solid(g, wall, Object.values(f));
+      if (a >= 1) { // half-timbering (the 2D's): sill, plate, corner posts, studs on the long walls; the sill parts at the door
+        const beam = a >= 2 ? '#57432e' : WOOD.beam, d = 0.016;
+        for (const fc of FACES) { const long = fc[0] === 'x', n = long ? 60 : 26, B = 1.6 / n, on = (u0, u1, y0, y1) => onFace(g, beam, fc, ...hall, u0, u1, y0 * wallH, y1 * wallH, d);
+          if (fc === 'z1') { const dh = BA.doorW / 2 / 26; on(0, 0.5 - dh, 0, 0.09); on(0.5 + dh, 1, 0, 0.09); } else on(0, 1, 0, 0.09);
+          on(0, 1, 0.91, 1); on(0, B, 0.09, 0.91); on(1 - B, 1, 0.09, 0.91);
+          if (long) for (const A of BA.studs) on(uA(A) - B / 2, uA(A) + B / 2, 0.09, 0.91); }
+      }
+      const so = a >= 2 ? BA.stoneOut * k : 0;
+      if (a >= 2) { // the stone ground storey, proud of the walls, the door through it
+        const sb = [hall[0] - so, hall[1] - so, hall[2] + so, hall[3] + so], sf = boxFaces(...sb, 0, BA.stoneV * wallH);
+        sf.z1.holes.push(hole('z1', sb, 0.5, SILL, doorW, doorH));
+        solid(g, '#ded5c2|stone', Object.values(sf), { T: so + 0.06 });
+      }
+      if (a >= 1 && e.complete) {
+        // heater shields on the yard wall's studs (on the stone at Castle), in team colour; hung, as the yard's gear, once finished
+        if (!shieldGeo) { const sh = new THREE.Shape(BARRACKS_SHIELD.map(([u, w]) => new THREE.Vector2(u, w)));
+          shieldGeo = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }).rotateY(Math.PI / 2); }
+        for (const A of BA.shields) { const m = new THREE.Mesh(shieldGeo, mat(tc)), u = uA(A);
+          m.position.set(hall[2] + so, BA.shieldV * wallH, hall[1] + (hall[3] - hall[1]) * u); m.scale.set(0.014, BA.shieldR * s / HPX, BA.shieldR * k);
+          m.userData.hullGeo = shieldGeo; g.add(m); }
+        // swallow-tailed team banners flanking the door, each on a bar under the plate
+        const [v0, v1] = BA.bannerV, w2 = BA.bannerW / 2, nt = BA.notch / 24;
+        if (!bannerGeo) { const sh = new THREE.Shape([[-w2, v1], [w2, v1], [w2, v0], [0, v0 + nt], [-w2, v0]].map(([u, v]) => new THREE.Vector2(u, v)));
+          bannerGeo = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }); }
+        for (const B of BA.banners) { const m = new THREE.Mesh(bannerGeo, mat(tc)), bx = hall[0] + (hall[2] - hall[0]) * uB(B);
+          m.position.set(bx, 0, hall[3]); m.scale.set(k, wallH, 0.012); m.userData.hullGeo = bannerGeo; g.add(m);
+          pole(g, WOOD.post, [bx - (w2 + 0.8) * k, v1 * wallH, hall[3] + 0.02], [bx + (w2 + 0.8) * k, v1 * wallH, hall[3] + 0.02], 0.012); }
+      }
       if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
       if (e.id < 0) patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                      // the yard (in the world: the ground's own worn earth — groundArt)
       const fh = 9 * s / HPX, posts = [[-30, 13], [-30, 26], [-30, 38.5], [-30, 51], [-15, 51], [0, 51], [15, 51], [30, 51], [30, 13], [30, 26], [30, 38.5]];
-      // The fence stops a hand's width short of the hall, so both keep their outlines.
-      const gap = 0.035 + 0.05, backX = BP(0, 13).x + gap;
-      for (const [A, B] of posts) { const p = BP(A, B); post(g, B === 13 ? backX : p.x, p.z, fh, WOOD.post, 0.035); }
-      // Two rails along the near end (a=-30), the front (b=51) and the far end (a=+30).
+      // The fence stops a hand's width short of the hall (or its stone), so both keep their outlines.
+      const gap = 0.035 + 0.05, backX = BP(0, 13).x + gap + so;
       const nearZ = BP(-30, 0).z, farZ = BP(30, 0).z, frontX = BP(0, 51).x;
-      for (const hy of [3.5 * s / HPX, 7 * s / HPX]) { // rails at 3.5px and 7px
-        pole(g, WOOD.post, [backX, hy, nearZ], [frontX, hy, nearZ], 0.018);
-        pole(g, WOOD.post, [frontX, hy, farZ], [frontX, hy, nearZ], 0.018);
-        pole(g, WOOD.post, [backX, hy, farZ], [frontX, hy, farZ], 0.018);
+      if (a === 0) { // the Dark stockade: sharpened stakes, one lashing rail behind them
+        const sH = BA.stakeH * s / HPX, tip = 2.2 * s / HPX, r = 0.03, ry = BA.stakeRail * s / HPX;
+        if (!stakeTip) stakeTip = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
+        for (const [A, B] of BA.stakes) { const p = BP(A, B), px = B === 13 ? backX : p.x;
+          post(g, px, p.z, sH - tip, WOOD.post, r); g.add(inked(stakeTip, mat(WOOD.post), px, sH - tip, p.z, r, tip, r)); }
+        const back = r + 0.012;
+        pole(g, WOOD.post, [backX, ry, nearZ - back], [frontX, ry, nearZ - back], 0.016);
+        pole(g, WOOD.post, [frontX - back, ry, farZ], [frontX - back, ry, nearZ], 0.016);
+        pole(g, WOOD.post, [backX, ry, farZ - back], [frontX, ry, farZ - back], 0.016);
+      } else {
+        for (const [A, B] of posts) { const p = BP(A, B); post(g, B === 13 ? backX : p.x, p.z, fh, WOOD.post, 0.035); }
+        // Two rails along the near end (a=-30), the front (b=51) and the far end (a=+30).
+        for (const hy of [3.5 * s / HPX, 7 * s / HPX]) { // rails at 3.5px and 7px
+          pole(g, WOOD.post, [backX, hy, nearZ], [frontX, hy, nearZ], 0.018);
+          pole(g, WOOD.post, [frontX, hy, farZ], [frontX, hy, nearZ], 0.018);
+          pole(g, WOOD.post, [backX, hy, farZ], [frontX, hy, farZ], 0.018);
+        }
       }
       // The yard's gear (dummies, target, rack, hay, the horse) and the flags arrive with the finished building.
       if (e.complete) for (const [A, B] of a === 0 ? [[-12, 32], [12, 32]] : [[0, 30]]) { // straw dummy on a post: oval body, head, arm bar through the shoulders

@@ -301,6 +301,17 @@ function drawBarracksFence(posts, railPaths, darken){
   });
 }
 
+// The Dark barracks' stockade: sharpened stakes (back to front), one lashing rail across them.
+function drawBarracksStakes(pts, railPaths, h, railH, darken){
+  const postC = darken ? darkenColor(WOOD.post) : WOOD.post, w = 1.3;
+  X.strokeStyle = '#000'; X.lineWidth = 2.2;
+  railPaths.forEach(path => { X.beginPath(); path.forEach((p, i) => i ? X.lineTo(p.x, p.y - railH) : X.moveTo(p.x, p.y - railH)); X.stroke(); });
+  X.strokeStyle = postC; X.lineWidth = 0.9;
+  railPaths.forEach(path => { X.beginPath(); path.forEach((p, i) => i ? X.lineTo(p.x, p.y - railH) : X.moveTo(p.x, p.y - railH)); X.stroke(); });
+  X.fillStyle = postC; X.strokeStyle = '#000'; X.lineWidth = 1; X.lineJoin = 'round';
+  for (const p of pts) { X.beginPath(); X.moveTo(p.x - w, p.y + 0.5); X.lineTo(p.x - w, p.y - h + 2.2); X.lineTo(p.x, p.y - h); X.lineTo(p.x + w, p.y - h + 2.2); X.lineTo(p.x + w, p.y + 0.5); X.closePath(); X.fill(); X.stroke(); }
+}
+
 // Mirror of drawDoorLeft: skewed door flat against the Right Wall
 function drawDoorRight(sx,sy,bw,bhh,color,darken=false){
   let c = darken ? darkenColor(color) : color;
@@ -978,6 +989,26 @@ const CASTLE_PARTS = [
   CASTLE_WALL([2.45, 3.5, 3.04, 3.92], 'v1'),
   CASTLE_TOWER(3, 3),
 ];
+// The Barracks, both views: on its compound grid (a along the hall, b across: hall walls b = ±13, a = ±30; the yard to
+// b = 51), heights as fractions of the hall wall. windows/shields: a on the yard wall; banners: b on the door's gable.
+// Dark: planks under thatch, a stake stockade; Feudal: plaster, half-timber, shields and banners; Castle: a stone
+// ground storey (stoneOut proud of the wall), whitewash and oak above.
+const BARRACKS_ART = {
+  windows: [-20, 0, 20], winV: [0.69, 0.17], winW: 4.8, doorV: 0.58, doorW: 9,
+  shields: [-10, 10], shieldV: 0.4, shieldR: 3.3,
+  banners: [-8.5, 8.5], bannerV: [0.68, 0.93], bannerW: 5, notch: 2.2,
+  studs: [-10, 10], stoneV: 0.64, stoneOut: 1.2,
+  // the Dark stockade's stakes: the near end, the front, the far end (b = 13 meets the hall)
+  stakes: [].concat(
+    Array.from({ length: 9 }, (_, i) => [-30, 13 + 38 * i / 8]),
+    Array.from({ length: 11 }, (_, i) => [-30 + 60 * (i + 1) / 12, 51]),
+    Array.from({ length: 9 }, (_, i) => [30, 13 + 38 * i / 8])),
+  stakeH: 11, stakeRail: 5,
+};
+// A heater shield's outline in shield radii (x across, y up): a flat top, the sides curving in to the point.
+const BARRACKS_SHIELD = [[-1, 0.9], [1, 0.9]].concat(
+  Array.from({ length: 6 }, (_, i) => { const t = (i + 1) / 6; return [Math.cos(t * Math.PI / 2), 0.9 - 2.2 * Math.sin(t * Math.PI / 2) ** 1.4]; }),
+  Array.from({ length: 5 }, (_, i) => { const t = (5 - i) / 6; return [-Math.cos(t * Math.PI / 2), 0.9 - 2.2 * Math.sin(t * Math.PI / 2) ** 1.4]; }));
 function buildingShadowPolys(e){
   if (e.btype === 'FARM' || e.btype === 'MARKET') return [];
   const b = BLDGS[e.btype], w = e.w !== undefined ? e.w : b.w, h = e.h !== undefined ? e.h : b.h, x = e.x, y = e.y;   // (a gate is 1×3 or 3×1 as placed)
@@ -1548,104 +1579,140 @@ function drawBuilding(e, part = null){
     });
     X.restore();
 
-    // 1. Custom rectangular garrison hall: half-length L along the NE
-    // axis, half-depth D across (drawGableBlock only makes square
-    // diamonds). With cx=sx-20, cy=sy+23, L=30, D=13 the math works out
-    // exactly: the NW back wall lies ON the plot's back-left edge from
-    // the left corner (sx-64,sy+32) to the top corner (sx,sy), and the
-    // SE front wall passes through the yard's top corner (sx,sy+26).
-    // roofH > D/2 keeps the back roof slope entirely hidden — no
-    // back-eave artifacts. Ridge overhangs both gable ends slightly.
+    // 1. The hall: half-length L along the NE axis, half-depth D across (on the
+    // yard grid: its NW back wall lies on the plot's back-left edge, its SE
+    // wall on the yard's back edge). roofH > D/2 keeps the back slope's eave
+    // hidden. Per age (BARRACKS_ART, as the 3D): Dark planks under thatch;
+    // Feudal plaster and half-timber, shields and banners; Castle a stone
+    // ground storey under whitewash and oak.
     {
-      // g=0: a ridge overhang past the gable planes projects to a ~1px
-      // sliver between near-parallel edges (the strip's end edge and the
-      // gable roofline differ by only 0.9px perpendicular) — it renders
-      // as a black spike, so the roof ends exactly at the gable faces.
-      const L=30, D=13, wallH=24, roofH=12, g=0;
+      // g=0: a ridge overhang past the gable planes projects to a ~1px black
+      // sliver, so the roof ends exactly at the gable faces.
+      const L=30, D=13, wallH=24, roofH=12, g=0, BA=BARRACKS_ART;
       const cx=sx-20, cy=sy+23;
       const P=(a,b)=>({x:cx+a+b, y:cy-a/2+b/2});
       const up=(p,h)=>({x:p.x, y:p.y-h});
+      const dk=c=>darken?darkenColor(c):c;
       let Wc=P(-L,-D), Sc=P(-L,D), Ec=P(L,D);
       let R1=up(P(-L,0),wallH+roofH), R1e=up(P(-L-g,0),wallH+roofH), R2e=up(P(L+g,0),wallH+roofH);
-      let wl=darken?darkenColor(aw.gl):aw.gl, wr=darken?darkenColor(aw.gr):aw.gr;
+      const wood=ownerAge===0, stone=ownerAge>=2;
+      let wl=dk(wood?WOOD.plankL:aw.gl), wr=dk(wood?WOOD.plankR:aw.gr);
+      const beam=dk(stone?'#57432e':WOOD.beam);
       const thatchB = ownerAge === 0;   // (Dark: thatch, as every first-age roof)
-      let rl=darken?darkenColor(thatchB ? THATCH_2D : tc):(thatchB ? THATCH_2D : tc);
+      let rl=dk(thatchB ? THATCH_2D : tc);
+      // a point on the lit gable end (b across it) or the yard wall (a along it), v up the wall in wall heights;
+      // o: out from the wall (the stone storey stands proud)
+      const GF=(b,v,o=0)=>up(P(-L-o,b),v*wallH), LF=(a,v,o=0)=>up(P(a,D+o),v*wallH);
+      const quad=(F,u0,u1,v0,v1,col,o=0)=>{X.fillStyle=col;X.beginPath();
+        let p=F(u0,v0,o);X.moveTo(p.x,p.y);p=F(u1,v0,o);X.lineTo(p.x,p.y);p=F(u1,v1,o);X.lineTo(p.x,p.y);p=F(u0,v1,o);X.lineTo(p.x,p.y);X.closePath();X.fill();};
       X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
       // BACK roof slope first: it recedes NW at screen slope 0.19/unit
       // while the ridge climbs 0.5/unit, so it shows as a strip above the
-      // ridge. Darker (faces away from the light). Eave at v=-(D+2)
-      // offsets each ridge point by (-(D+2), (D+2)*(roofH/D-0.5)).
+      // ridge. Eave at v=-(D+2).
       {
         let bo={x:-(D+2), y:(D+2)*(roofH/D-0.5)};
-        let rd=thatchB ? (darken?darkenColor(THATCH_2D_DARK):THATCH_2D_DARK) : (darken?darkenColor(tcD):tcD);
+        let rd=dk(thatchB ? THATCH_2D_DARK : tcD);
         X.fillStyle=rd;X.beginPath();
         X.moveTo(R1e.x,R1e.y);X.lineTo(R2e.x,R2e.y);
         X.lineTo(R2e.x+bo.x,R2e.y+bo.y);X.lineTo(R1e.x+bo.x,R1e.y+bo.y);
         X.closePath();X.fill();X.stroke();
       }
-      // SW gable end: wall + triangle as one lit face
-      X.fillStyle=wl;X.beginPath();
-      X.moveTo(Wc.x,Wc.y);X.lineTo(Sc.x,Sc.y);
-      X.lineTo(Sc.x,Sc.y-wallH);X.lineTo(R1.x,R1.y);X.lineTo(Wc.x,Wc.y-wallH);
-      X.closePath();X.fill();X.stroke();
-      // SE long wall (shaded side)
-      X.fillStyle=wr;X.beginPath();
-      X.moveTo(Sc.x,Sc.y);X.lineTo(Ec.x,Ec.y);
-      X.lineTo(Ec.x,Ec.y-wallH);X.lineTo(Sc.x,Sc.y-wallH);
-      X.closePath();X.fill();X.stroke();
-      // Door on the GABLE END wall (away from the yard) — the yard-facing
-      // wall carries only windows. Recessed into the wall for real depth,
-      // same architecture as the TC keep windows (drawKeepWindow above):
-      // a deep dark opening shifted back into the wall, revealing a lintel
-      // underside across the top (darkest, faces down) and one side jamb
-      // (mid tone), all clipped to the outer frame and following the
-      // upper-left light. The wall face runs along (1,0.5) per along-unit
-      // and rises straight up; the recess shifts the opening sideways into
-      // the wall + down so the lintel shows (mirrors the TC's +down shift).
+      // the two faces, each with its wall's own texture clipped to it
+      const gablePath=()=>{X.beginPath();X.moveTo(Wc.x,Wc.y);X.lineTo(Sc.x,Sc.y);X.lineTo(Sc.x,Sc.y-wallH);X.lineTo(R1.x,R1.y);X.lineTo(Wc.x,Wc.y-wallH);X.closePath();};
+      const longPath=()=>{X.beginPath();X.moveTo(Sc.x,Sc.y);X.lineTo(Ec.x,Ec.y);X.lineTo(Ec.x,Ec.y-wallH);X.lineTo(Sc.x,Sc.y-wallH);X.closePath();};
+      const faceTex=(path,F,u0,u1,studs)=>{
+        X.save();path();X.clip();
+        if(wood){ // plank seams: vertical board joints in the light interior-seam stroke
+          X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
+          const n=Math.round(Math.abs(u1-u0)/5.5);
+          for(let i=1;i<n;i++){const u=u0+(u1-u0)*i/n,p=F(u,0),q=F(u,1.5);X.beginPath();X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);X.stroke();}
+        } else { // half-timbering (the 3D's): sill, plate, corner posts, studs — filled beams, no ink
+          const B=1.6;
+          quad(F,u0,u1,0,0.09,beam);quad(F,u0,u1,0.91,1,beam);
+          quad(F,u0,u0+B*Math.sign(u1-u0),0,1,beam);quad(F,u1-B*Math.sign(u1-u0),u1,0,1,beam);
+          for(const t of studs)quad(F,t-B/2,t+B/2,0.09,0.91,beam);
+        }
+        X.restore();
+      };
+      X.fillStyle=wl;gablePath();X.fill();faceTex(gablePath,GF,-D,D,[]);X.strokeStyle='#000';X.lineWidth=1.3;gablePath();X.stroke();
+      X.fillStyle=wr;longPath();X.fill();faceTex(longPath,LF,-L,L,BA.studs);X.strokeStyle='#000';X.lineWidth=1.3;longPath();X.stroke();
+      // Castle: the stone ground storey, proud of the wall: its two faces, a ledge on top, course lines
+      const so=stone?BA.stoneOut:0;
+      if(stone){
+        const cL=dk('#ded5c2'), cR=dk('#bcb29b'), cT=dk('#ece4d2'), v=BA.stoneV, o=so;
+        quad(GF,-D-o,D+o,0,v,cL,o);quad(LF,-L-o,L+o,0,v,cR,o);
+        X.save();X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
+        for(const t of [1/3,2/3]){let a=GF(-D-o,v*t,o),b=GF(D+o,v*t,o),c=LF(L+o,v*t,o);X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b.x,b.y);X.lineTo(c.x,c.y);X.stroke();}
+        // block joints, staggered course to course
+        X.beginPath();
+        for(let k=0;k<3;k++){const v0=v*k/3,v1=v*(k+1)/3,sh=k%2?3.5:0;
+          for(let u=-D-o+3.5+sh;u<D+o-1;u+=7){const p=GF(u,v0,o),q=GF(u,v1,o);X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);}
+          for(let u=-L-o+3.5+sh;u<L+o-1;u+=7){const p=LF(u,v0,o),q=LF(u,v1,o);X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);}}
+        X.stroke();
+        X.restore();
+        X.strokeStyle='#000';X.lineWidth=1.3;
+        X.beginPath();let p=GF(-D-o,0,o);X.moveTo(p.x,p.y);
+        for(const q of [GF(D+o,0,o),LF(L+o,0,o),LF(L+o,v,o),LF(-L-o,v,o)])X.lineTo(q.x,q.y);
+        p=GF(-D-o,v,o);X.lineTo(p.x,p.y);X.closePath();X.stroke();
+        // the ledge: from the stone's outer edge back to the wall
+        const h=v*wallH, Lg=[P(-L-o,-D-o),P(-L-o,D+o),P(L+o,D+o),P(L+o,D),P(-L,D),P(-L,-D)].map(q=>up(q,h));
+        X.fillStyle=cT;X.beginPath();Lg.forEach((q,i)=>i?X.lineTo(q.x,q.y):X.moveTo(q.x,q.y));X.closePath();X.fill();
+        X.beginPath();X.moveTo(Lg[0].x,Lg[0].y);X.lineTo(Lg[1].x,Lg[1].y);X.lineTo(Lg[2].x,Lg[2].y);X.stroke();
+        X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;X.beginPath();X.moveTo(Lg[5].x,Lg[5].y);X.lineTo(Lg[4].x,Lg[4].y);X.lineTo(Lg[3].x,Lg[3].y);X.stroke();
+      }
+      // Door on the GABLE END (away from the yard), recessed for real depth (as
+      // the TC keep windows): the dark opening shifted back into the wall shows
+      // the lintel's underside and one jamb, clipped to the frame.
       {
-        let db=P(-L,0);
-        let W=4.5, H=11, depth=2;
-        // frame corners on the wall surface (base on the ground line)
-        let O1={x:db.x-W, y:db.y-W*0.5-H}, O2={x:db.x+W, y:db.y+W*0.5-H}; // top-left, top-right
-        let O3={x:db.x+W, y:db.y+W*0.5},   O4={x:db.x-W, y:db.y-W*0.5};   // bottom-right, bottom-left
-        // opening: pushed back into the wall (along +along) and down, so
-        // the top lintel reveal and the left jamb become visible
+        let db=P(-L-so,0);
+        let W=BA.doorW/2, H=BA.doorV*wallH, depth=2;
+        let O1={x:db.x-W, y:db.y-W*0.5-H}, O2={x:db.x+W, y:db.y+W*0.5-H};
+        let O3={x:db.x+W, y:db.y+W*0.5},   O4={x:db.x-W, y:db.y-W*0.5};
         let B=o=>({x:o.x+depth, y:o.y+depth*0.5+1.5});
         let B1=B(O1),B2=B(O2),B3=B(O3),B4=B(O4);
-        let doorDark=darken?darkenColor('#241505'):'#241505';
-        let jambC=darken?darkenColor('#6f5330'):'#6f5330';
-        let lintelC=darken?darkenColor('#503a21'):'#503a21';
         let framePath=()=>{X.beginPath();X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(O3.x,O3.y);X.lineTo(O4.x,O4.y);X.closePath();};
         X.save();
         framePath();X.clip();
-        // deep dark opening
-        X.fillStyle=doorDark;X.beginPath();
+        X.fillStyle=dk('#241505');X.beginPath();
         X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.lineTo(B3.x,B3.y);X.lineTo(B4.x,B4.y);X.closePath();X.fill();
-        // left jamb reveal (frame's left edge → opening's left edge)
-        X.fillStyle=jambC;X.beginPath();
+        X.fillStyle=dk('#6f5330');X.beginPath();
         X.moveTo(O1.x,O1.y);X.lineTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.lineTo(O4.x,O4.y);X.closePath();X.fill();
-        // lintel underside across the top (darkest)
-        X.fillStyle=lintelC;X.beginPath();
+        X.fillStyle=dk('#503a21');X.beginPath();
         X.moveTo(O1.x,O1.y);X.lineTo(O2.x,O2.y);X.lineTo(B2.x,B2.y);X.lineTo(B1.x,B1.y);X.closePath();X.fill();
-        // light interior seams (reveal inner edges)
         X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
         X.beginPath();X.moveTo(B1.x,B1.y);X.lineTo(B4.x,B4.y);X.moveTo(B1.x,B1.y);X.lineTo(B2.x,B2.y);X.stroke();
         X.restore();
-        // dark door frame outline over the clipped interior
         X.strokeStyle='#000';X.lineWidth=1.1;framePath();X.stroke();
       }
-      // Row of small windows facing the yard — the hall SLEEPS the garrison
-      X.fillStyle=darken?darkenColor('#2a2a2a'):'#2a2a2a';X.lineWidth=0.9;
-      [-16,-4,8,20].forEach(a=>{
-        let wb=up(P(a,D), wallH*0.4);
-        X.beginPath();
-        X.moveTo(wb.x-2.4,wb.y+1.2);X.lineTo(wb.x+2.4,wb.y-1.2);
-        X.lineTo(wb.x+2.4,wb.y-1.2-4.5);X.lineTo(wb.x-2.4,wb.y+1.2-4.5);
-        X.closePath();X.fill();X.stroke();
-      });
-      // Roof: single visible front slope, ridge + eaves overhanging
+      // Windows facing the yard (the hall sleeps the garrison)
+      X.fillStyle=dk('#2a2a2a');X.strokeStyle='#000';X.lineWidth=0.9;
+      for(const a of BA.windows){
+        const w2=BA.winW/2, p0=LF(a-w2,BA.winV[0]), p1=LF(a+w2,BA.winV[0]), p2=LF(a+w2,BA.winV[0]+BA.winV[1]), p3=LF(a-w2,BA.winV[0]+BA.winV[1]);
+        X.beginPath();X.moveTo(p0.x,p0.y);X.lineTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.lineTo(p3.x,p3.y);X.closePath();X.fill();X.stroke();
+      }
+      if(!wood){
+        // Heater shields hung on the studs between the windows, in team colour (the wall's shaded side)
+        for(const a of BA.shields){
+          const c=LF(a,BA.shieldV,so);
+          X.save();X.translate(c.x,c.y);X.transform(1,-0.5,0,1,0,0);X.scale(1,-1);
+          X.fillStyle=dk(tcD);X.strokeStyle='#000';X.lineWidth=1;
+          X.beginPath();BARRACKS_SHIELD.forEach(([u,w],i)=>i?X.lineTo(u*BA.shieldR,w*BA.shieldR):X.moveTo(u*BA.shieldR,w*BA.shieldR));X.closePath();X.fill();X.stroke();
+          X.restore();
+        }
+        // Team banners flanking the door, swallow-tailed, hung from a bar under the plate
+        for(const b of BA.banners){
+          const w2=BA.bannerW/2, [v0,v1]=BA.bannerV, n=BA.notch/wallH;
+          const pts=[GF(b-w2,v1),GF(b+w2,v1),GF(b+w2,v0),GF(b,v0+n),GF(b-w2,v0)];
+          X.fillStyle=dk(tc);X.strokeStyle='#000';X.lineWidth=1;X.beginPath();
+          pts.forEach((q,i)=>i?X.lineTo(q.x,q.y):X.moveTo(q.x,q.y));X.closePath();X.fill();X.stroke();
+          const r0=GF(b-w2-0.8,v1),r1=GF(b+w2+0.8,v1);
+          X.strokeStyle='#000';X.lineWidth=2.4;X.lineCap='round';X.beginPath();X.moveTo(r0.x,r0.y);X.lineTo(r1.x,r1.y);X.stroke();
+          X.strokeStyle=dk(WOOD.post);X.lineWidth=1;X.stroke();X.lineCap='butt';
+        }
+      }
+      // Roof: the visible front slope, eaves overhanging
       let Se=up(P(-L-g,D+2), wallH-1.2), Ee=up(P(L+g,D+2), wallH-1.2);
-      X.fillStyle=rl;X.lineWidth=1.3;
+      X.fillStyle=rl;X.strokeStyle='#000';X.lineWidth=1.3;
       X.beginPath();X.moveTo(R1e.x,R1e.y);X.lineTo(R2e.x,R2e.y);
       X.lineTo(Ee.x,Ee.y);X.lineTo(Se.x,Se.y);X.closePath();X.fill();X.stroke();
       X.save();X.strokeStyle='rgba(0,0,0,0.15)';X.lineWidth=1;
@@ -1657,16 +1724,23 @@ function drawBuilding(e, part = null){
       });
       X.restore();
       if (thatchB) drawThatch2D(R1e, R2e, Ee, Se, e.id, tc, darken);
-      // Team banner flying from the ridge's right end (the tower is gone;
-      // the hall carries the flag now)
-      if(e.complete && visible) drawWavingFlag(R2e.x, sy, 26, tc, tcD); // base on the raised ridge end
+      // the team flag on the ridge's far end
+      if(e.complete && visible) drawWavingFlag(R2e.x, sy, 26, tc, tcD);
     }
 
     // Right-end fence edge FIRST so the yard props (horse especially)
     // stand in front of its rails
-    drawBarracksFence(
-      [BP(bL,26),BP(bL,38.5)],
-      [[BP(bL,bD),BP(bL,bYF)]], darken);
+    // (Dark: a stockade of sharpened stakes; from Feudal the post-and-rail fence)
+    const yardFence=(far)=>{
+      if(ownerAge>0){
+        if(far) drawBarracksFence([BP(bL,26),BP(bL,38.5)],[[BP(bL,bD),BP(bL,bYF)]],darken);
+        else drawBarracksFence([BP(-bL,bD),BP(-bL,26),BP(-bL,38.5),BP(-bL,bYF),BP(-15,bYF),BP(0,bYF),BP(15,bYF),BP(bL,bYF)],[[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]],darken);
+        return;
+      }
+      const BA=BARRACKS_ART, pts=BA.stakes.filter(([A])=>(A===bL)===far).map(([A,B])=>BP(A,B)).sort((p,q)=>p.y-q.y||p.x-q.x);
+      drawBarracksStakes(pts, far?[[BP(bL,bD),BP(bL,bYF)]]:[[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]], BA.stakeH, BA.stakeRail, darken);
+    };
+    yardFence(true);
 
     // Cavalry spot at the FAR end of the yard (right corner): one horse
     // with a haystack — a bay when scouts unlock at Feudal, swapped for
@@ -1755,9 +1829,7 @@ function drawBuilding(e, part = null){
     // 3D post-and-rail fence along the LEFT END and the long FRONT edge
     // (the right end was drawn earlier, behind the props): posts at
     // corners and evenly along the run, two rails between.
-    drawBarracksFence(
-      [BP(-bL,bD),BP(-bL,26),BP(-bL,38.5),BP(-bL,bYF),BP(-15,bYF),BP(0,bYF),BP(15,bYF),BP(bL,bYF)],
-      [[BP(-bL,bD),BP(-bL,bYF),BP(bL,bYF)]], darken);
+    yardFence(false);
     X.restore();
   }
   else if(e.btype==='MARKET'){
