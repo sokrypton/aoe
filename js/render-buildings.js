@@ -990,19 +990,19 @@ const CASTLE_PARTS = [
   CASTLE_TOWER(3, 3),
 ];
 // The Barracks, both views: on its compound grid (a along the hall, b across: hall walls b = ±13, a = ±30; the yard to
-// b = 51), heights as fractions of the hall wall. windows/shields: a on the yard wall; banners: b on the door's gable.
-// Dark: planks under thatch, a stake stockade; Feudal: plaster, half-timber, shields and banners; Castle: a stone
-// ground storey (stoneOut proud of the wall), whitewash and oak above.
+// b = 51), heights as fractions of the hall wall. Two storeys split by a timber rail (railV): windows in the upper one,
+// the shields hung low on the studs between them, the banners under the plate either side of the door.
+// Dark: planks under thatch, a stake stockade; Feudal: plaster and half-timber; Castle: the lower storey stone, flush.
 const BARRACKS_ART = {
-  windows: [-20, 0, 20], winV: [0.69, 0.17], winW: 4.8, doorV: 0.58, doorW: 9,
-  shields: [-10, 10], shieldV: 0.4, shieldR: 3.3,
-  banners: [-8.5, 8.5], bannerV: [0.68, 0.93], bannerW: 5, notch: 2.2,
-  studs: [-10, 10], stoneV: 0.64, stoneOut: 1.2,
-  // the Dark stockade's stakes: the near end, the front, the far end (b = 13 meets the hall)
+  windows: [-20, 0, 20], winV: [0.62, 0.18], winW: 4.8, doorV: 0.58, doorW: 9,
+  shields: [-10, 10], shieldV: 0.27, shieldR: 3,
+  banners: [-8, 8], bannerV: [0.6, 0.86], bannerW: 4.4, notch: 2,
+  studs: [-10, 10], railV: [0.5, 0.56],
+  // the Dark stockade's stakes: the near end, the front, the far end (from a stake's width off the hall)
   stakes: [].concat(
-    Array.from({ length: 9 }, (_, i) => [-30, 13 + 38 * i / 8]),
+    Array.from({ length: 8 }, (_, i) => [-30, 16 + 35 * i / 7]),
     Array.from({ length: 11 }, (_, i) => [-30 + 60 * (i + 1) / 12, 51]),
-    Array.from({ length: 9 }, (_, i) => [30, 13 + 38 * i / 8])),
+    Array.from({ length: 8 }, (_, i) => [30, 16 + 35 * i / 7])),
   stakeH: 11, stakeRail: 5,
 };
 // A heater shield's outline in shield radii (x across, y up): a flat top, the sides curving in to the point.
@@ -1620,51 +1620,39 @@ function drawBuilding(e, part = null){
       // the two faces, each with its wall's own texture clipped to it
       const gablePath=()=>{X.beginPath();X.moveTo(Wc.x,Wc.y);X.lineTo(Sc.x,Sc.y);X.lineTo(Sc.x,Sc.y-wallH);X.lineTo(R1.x,R1.y);X.lineTo(Wc.x,Wc.y-wallH);X.closePath();};
       const longPath=()=>{X.beginPath();X.moveTo(Sc.x,Sc.y);X.lineTo(Ec.x,Ec.y);X.lineTo(Ec.x,Ec.y-wallH);X.lineTo(Sc.x,Sc.y-wallH);X.closePath();};
-      const faceTex=(path,F,u0,u1,studs)=>{
+      // each face: its wall, then (Castle) the stone lower storey flush in it, then its beams over both
+      const [rv0,rv1]=BA.railV;
+      const faceTex=(path,F,u0,u1,studs,stoneCol)=>{
         X.save();path();X.clip();
         if(wood){ // plank seams: vertical board joints in the light interior-seam stroke
           X.strokeStyle='rgba(0,0,0,0.22)';X.lineWidth=1;
           const n=Math.round(Math.abs(u1-u0)/5.5);
           for(let i=1;i<n;i++){const u=u0+(u1-u0)*i/n,p=F(u,0),q=F(u,1.5);X.beginPath();X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);X.stroke();}
-        } else { // half-timbering (the 3D's): sill, plate, corner posts, studs — filled beams, no ink
-          const B=1.6;
-          quad(F,u0,u1,0,0.09,beam);quad(F,u0,u1,0.91,1,beam);
-          quad(F,u0,u0+B*Math.sign(u1-u0),0,1,beam);quad(F,u1-B*Math.sign(u1-u0),u1,0,1,beam);
-          for(const t of studs)quad(F,t-B/2,t+B/2,0.09,0.91,beam);
+        } else {
+          if(stone){ // the stone storey: two courses, its joints staggered (the Castle's masonry), up to the rail
+            quad(F,u0,u1,0,rv0,stoneCol);
+            X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;X.beginPath();
+            const m=F(u0,rv0/2),n=F(u1,rv0/2);X.moveTo(m.x,m.y);X.lineTo(n.x,n.y);
+            for(let k=0;k<2;k++){const sh=k?3.5:0,dir=Math.sign(u1-u0);
+              for(let u=u0+dir*(3.5+sh);dir*(u1-u)>1;u+=dir*7){const p=F(u,rv0*k/2),q=F(u,rv0*(k+1)/2);X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);}}
+            X.stroke();
+          }
+          // half-timbering (the 3D's): sill (Feudal), the storey rail, plate, corner posts, studs — filled beams, no ink
+          const B=1.6, lo=stone?rv1:0.09;
+          if(!stone)quad(F,u0,u1,0,0.09,beam);
+          quad(F,u0,u1,rv0,rv1,beam);quad(F,u0,u1,0.91,1,beam);
+          quad(F,u0,u0+B*Math.sign(u1-u0),stone?rv0:0,1,beam);quad(F,u1-B*Math.sign(u1-u0),u1,stone?rv0:0,1,beam);
+          for(const t of studs)quad(F,t-B/2,t+B/2,lo,0.91,beam);
         }
         X.restore();
       };
-      X.fillStyle=wl;gablePath();X.fill();faceTex(gablePath,GF,-D,D,[]);X.strokeStyle='#000';X.lineWidth=1.3;gablePath();X.stroke();
-      X.fillStyle=wr;longPath();X.fill();faceTex(longPath,LF,-L,L,BA.studs);X.strokeStyle='#000';X.lineWidth=1.3;longPath();X.stroke();
-      // Castle: the stone ground storey, proud of the wall: its two faces, a ledge on top, course lines
-      const so=stone?BA.stoneOut:0;
-      if(stone){
-        const cL=dk('#ded5c2'), cR=dk('#bcb29b'), cT=dk('#ece4d2'), v=BA.stoneV, o=so;
-        quad(GF,-D-o,D+o,0,v,cL,o);quad(LF,-L-o,L+o,0,v,cR,o);
-        X.save();X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;
-        for(const t of [1/3,2/3]){let a=GF(-D-o,v*t,o),b=GF(D+o,v*t,o),c=LF(L+o,v*t,o);X.beginPath();X.moveTo(a.x,a.y);X.lineTo(b.x,b.y);X.lineTo(c.x,c.y);X.stroke();}
-        // block joints, staggered course to course
-        X.beginPath();
-        for(let k=0;k<3;k++){const v0=v*k/3,v1=v*(k+1)/3,sh=k%2?3.5:0;
-          for(let u=-D-o+3.5+sh;u<D+o-1;u+=7){const p=GF(u,v0,o),q=GF(u,v1,o);X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);}
-          for(let u=-L-o+3.5+sh;u<L+o-1;u+=7){const p=LF(u,v0,o),q=LF(u,v1,o);X.moveTo(p.x,p.y);X.lineTo(q.x,q.y);}}
-        X.stroke();
-        X.restore();
-        X.strokeStyle='#000';X.lineWidth=1.3;
-        X.beginPath();let p=GF(-D-o,0,o);X.moveTo(p.x,p.y);
-        for(const q of [GF(D+o,0,o),LF(L+o,0,o),LF(L+o,v,o),LF(-L-o,v,o)])X.lineTo(q.x,q.y);
-        p=GF(-D-o,v,o);X.lineTo(p.x,p.y);X.closePath();X.stroke();
-        // the ledge: from the stone's outer edge back to the wall
-        const h=v*wallH, Lg=[P(-L-o,-D-o),P(-L-o,D+o),P(L+o,D+o),P(L+o,D),P(-L,D),P(-L,-D)].map(q=>up(q,h));
-        X.fillStyle=cT;X.beginPath();Lg.forEach((q,i)=>i?X.lineTo(q.x,q.y):X.moveTo(q.x,q.y));X.closePath();X.fill();
-        X.beginPath();X.moveTo(Lg[0].x,Lg[0].y);X.lineTo(Lg[1].x,Lg[1].y);X.lineTo(Lg[2].x,Lg[2].y);X.stroke();
-        X.strokeStyle='rgba(0,0,0,0.13)';X.lineWidth=1;X.beginPath();X.moveTo(Lg[5].x,Lg[5].y);X.lineTo(Lg[4].x,Lg[4].y);X.lineTo(Lg[3].x,Lg[3].y);X.stroke();
-      }
+      X.fillStyle=wl;gablePath();X.fill();faceTex(gablePath,GF,-D,D,[],dk('#ded5c2'));X.strokeStyle='#000';X.lineWidth=1.3;gablePath();X.stroke();
+      X.fillStyle=wr;longPath();X.fill();faceTex(longPath,LF,-L,L,BA.studs,dk('#bcb29b'));X.strokeStyle='#000';X.lineWidth=1.3;longPath();X.stroke();
       // Door on the GABLE END (away from the yard), recessed for real depth (as
       // the TC keep windows): the dark opening shifted back into the wall shows
       // the lintel's underside and one jamb, clipped to the frame.
       {
-        let db=P(-L-so,0);
+        let db=P(-L,0);
         let W=BA.doorW/2, H=BA.doorV*wallH, depth=2;
         let O1={x:db.x-W, y:db.y-W*0.5-H}, O2={x:db.x+W, y:db.y+W*0.5-H};
         let O3={x:db.x+W, y:db.y+W*0.5},   O4={x:db.x-W, y:db.y-W*0.5};
@@ -1693,7 +1681,7 @@ function drawBuilding(e, part = null){
       if(!wood){
         // Heater shields hung on the studs between the windows, in team colour (the wall's shaded side)
         for(const a of BA.shields){
-          const c=LF(a,BA.shieldV,so);
+          const c=LF(a,BA.shieldV);
           X.save();X.translate(c.x,c.y);X.transform(1,-0.5,0,1,0,0);X.scale(1,-1);
           X.fillStyle=dk(tcD);X.strokeStyle='#000';X.lineWidth=1;
           X.beginPath();BARRACKS_SHIELD.forEach(([u,w],i)=>i?X.lineTo(u*BA.shieldR,w*BA.shieldR):X.moveTo(u*BA.shieldR,w*BA.shieldR));X.closePath();X.fill();X.stroke();
@@ -1705,8 +1693,8 @@ function drawBuilding(e, part = null){
           const pts=[GF(b-w2,v1),GF(b+w2,v1),GF(b+w2,v0),GF(b,v0+n),GF(b-w2,v0)];
           X.fillStyle=dk(tc);X.strokeStyle='#000';X.lineWidth=1;X.beginPath();
           pts.forEach((q,i)=>i?X.lineTo(q.x,q.y):X.moveTo(q.x,q.y));X.closePath();X.fill();X.stroke();
-          const r0=GF(b-w2-0.8,v1),r1=GF(b+w2+0.8,v1);
-          X.strokeStyle='#000';X.lineWidth=2.4;X.lineCap='round';X.beginPath();X.moveTo(r0.x,r0.y);X.lineTo(r1.x,r1.y);X.stroke();
+          const r0=GF(b-w2-0.5,v1),r1=GF(b+w2+0.5,v1);
+          X.strokeStyle='#000';X.lineWidth=2;X.lineCap='round';X.beginPath();X.moveTo(r0.x,r0.y);X.lineTo(r1.x,r1.y);X.stroke();
           X.strokeStyle=dk(WOOD.post);X.lineWidth=1;X.stroke();X.lineCap='butt';
         }
       }
