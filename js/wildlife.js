@@ -142,7 +142,7 @@ function dragonShove(){
     }
   }
 }
-const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_REGEN=T30(3),                                       // (turns 30° a game-second)
+const DRAGON_TURN=(Math.PI/6)/TPS, DRAGON_TURN_STAND=(Math.PI/3)/TPS, DRAGON_REGEN=T30(3),     // (turns 30° a game-second walking, 60° standing)
       DRAGON_WAKE_R=3, DRAGON_AGGRO_R=7, DRAGON_LEASH=12, DRAGON_BREATH_R=2.6, DRAGON_BREATH_COS=0.77, DRAGON_SLEEP_AFTER=T30(600), DRAGON_STEP_COS=0.82;
 // The dragon ridden. A player's own sheep sent at the dragon (ordered onto it, as an attack) is eaten when it comes
 // within DRAGON_FEED_R of it on the ground, and
@@ -297,7 +297,10 @@ function updateDragonBehavior(e){
   if(e.target){
     let t=entitiesById.get(e.target);
     if(!t||t.hp<=0||t.garrisonedIn||dist(e,t)>10||dist(e,home)>DRAGON_LEASH){
-      e.target=null; clearUnitPath(e); pathUnitTo(e,Math.round(home.x),Math.round(home.y)); e.leashCooling=true;
+      // its prey gone (burnt, or sheltered): the next in reach at once — only a chase run too far draws it home
+      let lost=!t||t.hp<=0||t.garrisonedIn, next=lost&&dist(e,home)<=DRAGON_LEASH?closestUnitNear(e,DRAGON_AGGRO_R,en=>isPlayerTeam(en.team)):null;
+      e.target=null; clearUnitPath(e);
+      if(next)e.target=next.id; else { pathUnitTo(e,Math.round(home.x),Math.round(home.y)); e.leashCooling=true; }
     } else {
       // It fights only with its fire, where it FACES: it turns slowly toward its prey (dragonTurn) and breathes once the
       // prey is in the cone before it. Out of reach it lumbers closer; in reach it stands and turns — a runner quick
@@ -305,7 +308,7 @@ function updateDragonBehavior(e){
       let d=distToTarget(e,t), a=simAtan2(t.y-e.y,t.x-e.x);
       if(d>DRAGON_BREATH_R-0.4){ if(e.path.length===0&&tick%T30(10)===e.id%T30(10))pathUnitTo(e,Math.round(t.x),Math.round(t.y)); }
       else clearUnitPath(e);
-      dragonTurn(e, e.path.length?simAtan2(e.path[0].y-e.y,e.path[0].x-e.x):a);
+      dragonTurn(e, e.path.length?simAtan2(e.path[0].y-e.y,e.path[0].x-e.x):a, e.path.length?DRAGON_TURN:DRAGON_TURN_STAND);
       let off=e.faceAng-a; off=simAtan2(simSin(off),simCos(off));
       if(e.atkCooldown<=0&&d<=DRAGON_BREATH_R&&simCos(off)>=DRAGON_BREATH_COS){ dragonBreath(e); e.atkCooldown=UNITS.dragon.rof; }
     }
@@ -328,11 +331,12 @@ function dragonScatter(u,d){
   dropTarget(u); pathUnitTo(u,sp.x,sp.y);
   u.retreatUntil=tick+T30(120);
 }
-// Its heading (faceAng, hashed) turns toward `a` at DRAGON_TURN a tick at most: huge, and slow to come round.
-function dragonTurn(e,a){
+// Its heading (faceAng, hashed) turns toward `a` at `rate` a tick at most (DRAGON_TURN walking, DRAGON_TURN_STAND
+// pivoting where it stands): huge, and slow to come round.
+function dragonTurn(e,a,rate=DRAGON_TURN){
   if(e.faceAng===undefined){ e.faceAng=a; return; }
   let off=a-e.faceAng; off=simAtan2(simSin(off),simCos(off));
-  e.faceAng+=Math.max(-DRAGON_TURN,Math.min(DRAGON_TURN,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
+  e.faceAng+=Math.max(-rate,Math.min(rate,off)); e.faceAng=simAtan2(simSin(e.faceAng),simCos(e.faceAng));
 }
 // Fire in a cone along its heading: every player unit and building within reach and angle takes the dragon's hit
 // (buildings its bonus). Entities in id order — the order damage lands in is part of the sim. dry: only whether

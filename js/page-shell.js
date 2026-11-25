@@ -319,7 +319,7 @@ document.body.insertAdjacentHTML('afterbegin', `
       <div class="help-row">${hi('spearman')}<span>Spearman <b>beats</b> ${hi('scout')} scouts &amp; ${hi('knight')} knights (big bonus damage against cavalry)</span></div>
       <div class="help-row">${hi('scout')}<span>Scout <b>beats</b> ${hi('archer')} archers (its armor shrugs off arrows)</span></div>
       <div class="help-row">${hi('archer')}<span>Archer <b>beats</b> ${hi('spearman')} spearmen and other slow infantry</span></div>
-      <div class="help-row">${hi('knight')}<span>Knight &mdash; strong, fast cavalry (Castle Age); watch out for spearmen</span></div>
+      <div class="help-row">${hi('knight')}<span>Knight &mdash; strong, fast cavalry, trained at the Castle; watch out for spearmen</span></div>
       <div class="help-row">${hi('militia')}<span>Militia &mdash; a solid all-rounder, with bonus damage against buildings</span></div>
       <div class="help-row">${hi('ram')}<span>Ram &mdash; smashes buildings and walls and shrugs off arrows, but is helpless in melee (Castle Age). Foot soldiers can ride inside: select them and tap your ram.</span></div>
       <p>Mix your army! One unit type alone gets countered.</p>

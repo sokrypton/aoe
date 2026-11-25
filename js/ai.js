@@ -1281,12 +1281,13 @@ function nearestAllyMarket(e){
 // turns dead gold back into food income). Fires only when the wood exists
 // ANYWAY, so it starves nothing.
 // AoE2: a Castle once in the Castle Age (its 650 stone banked: the eco fund holds it, aiEcoFund), one at a time; it
-// trains a trebuchet for every six of the army's slots, two deep while the field squad is at the enemy town.
+// trains a trebuchet for every six of the army's slots, two deep while the field squad is at the enemy town (and the
+// knights: queueAIMilitary).
 function planAICastle(ai,aiTC){
   if(!isUnlocked(ai.team,'CASTLE'))return;
   let castle=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='CASTLE'&&b.hp>0);
   if(!castle){ if(canAfford(ai.team,BLDGS.CASTLE.cost)){ let pos=findAIBuildSpot(ai,aiTC,'CASTLE'); if(pos)placeAIBuilding(ai,'CASTLE',pos.x,pos.y); } return; }
-  if(!castle.complete||castle.queue.length||castle.research)return;
+  if(!castle.complete||castle.queue.includes('trebuchet')||castle.research)return;   // (knights queued there too: queueAIMilitary)
   let trebs=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='trebuchet'&&e.hp>0).length;
   let army=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&isArmyUnit(e.utype)&&e.hp>0).length;
   if(trebs<Math.min(aiSieging(ai)?2:1,Math.floor(army/6))&&canAfford(ai.team,UNITS.trebuchet.cost))queueUnit(castle,'trebuchet');
@@ -1438,14 +1439,16 @@ function queueAIMilitary(ai,readyBarracks,profile){
     let vilCount=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='villager').length;
     if(vilCount<ecoTarget&&currentArmy>=standing)return;
   }
-  // Only currently-unlocked rosters — Dark-age barracks train militia only.
-  let types = AI_MIL_TYPES.filter(t=>t!=='scout'&&isUnlocked(ai.team,t)); // (the scout is recon only: see below)
+  // Only currently-unlocked rosters — Dark-age barracks train militia only. Knights come from a Castle (BLDGS.CASTLE):
+  // none standing, none picked.
+  let castle=entities.find(b=>b.type==='building'&&b.team===ai.team&&b.btype==='CASTLE'&&b.complete&&b.hp>0)||null;
+  let types = AI_MIL_TYPES.filter(t=>t!=='scout'&&isUnlocked(ai.team,t)&&(t!=='knight'||castle)); // (the scout is recon only: see below)
   if(types.length===0)return;
   // Rock-paper-scissors counters, per the unit descriptions in core.js. The
   // scout line is reserved SOLELY for recon (controlAIScouts owns every
   // utype==='scout'), so it is never a military pick. Picked from real
   // scouted intel, not omniscient knowledge of the player's army.
-  let counterMap={scout:'spearman',knight:'spearman',archer:isUnlocked(ai.team,'knight')?'knight':'militia',militia:'archer',spearman:'archer'};
+  let counterMap={scout:'spearman',knight:'spearman',archer:types.includes('knight')?'knight':'militia',militia:'archer',spearman:'archer'};
   // Castle-age siege contingent: keep ~1 ram per 6 army slots so attacks can crack walls/towers instead of bouncing
   // off them (target choice already points rams at structures — see chooseAIAttackTarget).
   let ramCount=entities.filter(e=>e.team===ai.team&&e.type==='unit'&&e.utype==='ram').length
@@ -1489,7 +1492,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
     if(profile.unitMix){
       let mix=profile.unitMix, have={}, total=0, wsum=0;
       for(const e of entities) if(e.team===ai.team&&e.type==='unit'&&mix[e.utype]!=null){ have[e.utype]=(have[e.utype]||0)+1; total++; }
-      for(const b of readyBarracks) for(const q of b.queue) if(mix[q]!=null){ have[q]=(have[q]||0)+1; total++; }
+      for(const b of castle?readyBarracks.concat(castle):readyBarracks) for(const q of b.queue) if(mix[q]!=null){ have[q]=(have[q]||0)+1; total++; }
       let opts=Object.keys(mix).filter(t=>mix[t]>0&&types.includes(t)).sort();
       for(const t of opts) wsum+=mix[t];
       let best=null, bestGap=-Infinity;
@@ -1502,7 +1505,7 @@ function queueAIMilitary(ai,readyBarracks,profile){
   // Count queued military across ALL barracks against the cap — a
   // per-barracks check lets multiple barracks overshoot maxArmy by a full
   // queue, double-spending food the villager planner may have reserved.
-  let queuedArmy=readyBarracks.reduce((s,b)=>s+b.queue.filter(q=>q!=='scout').length,0); // scout isn't army (see currentArmy)
+  let queuedArmy=(castle?readyBarracks.concat(castle):readyBarracks).reduce((s,b)=>s+b.queue.filter(q=>q!=='scout').length,0); // scout isn't army (see currentArmy)
   // Hoist the population read out of the while-condition: used/cap don't
   // change while we queue, so track queued pop incrementally instead of
   // re-scanning all entities per iteration.
@@ -1510,8 +1513,10 @@ function queueAIMilitary(ai,readyBarracks,profile){
   readyBarracks.forEach(barracks=>{
     while(barracks.queue.length<profile.queueLimit&&popUsedT+popQueuedT<popCapT&&currentArmy+queuedArmy<maxArmy){
       let utype = pickUnitType();
+      // a knight at the Castle (its queue not full); the rest here
+      let at = utype==='knight'&&castle&&castle.queue.length<profile.queueLimit ? castle : barracks;
       // Counter-pick first, then cheaper fallbacks if it's unaffordable.
-      let placed = queueUnit(barracks,utype).ok ? utype
+      let placed = queueUnit(at,utype).ok ? utype
                  : queueUnit(barracks,'spearman').ok ? 'spearman'
                  : queueUnit(barracks,'militia').ok ? 'militia' : null;
       if(placed){

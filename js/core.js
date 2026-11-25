@@ -785,7 +785,7 @@ const BLDGS={
   // (see createBuilding in entities.js) — the extra footprint is just a
   // bigger plot of tilled ground for the crop art to fill, not extra food.
   FARM:{name:'Farm',w:2,h:2,hp:480,cost:{w:60},isFarm:true,food:175,buildTime:T30(450),armor:{m:0,p:0},desc:'Constant source of Food. Placed on flat land.',icon:'🌱'},
-  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,hpAge:[1200,1500,1800],cost:{w:175},builds:['militia','spearman','archer','scout','knight','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','ballistics','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
+  BARRACKS:{name:'Barracks',w:3,h:3,hp:1200,hpAge:[1200,1500,1800],cost:{w:175},builds:['militia','spearman','archer','scout','ram'],researches:['forging','iron_casting','scale_armor','chain_mail','fletching','bodkin_arrow','ballistics','masonry','fortified_wall'],buildTime:T30(1500),armor:{m:0,p:7},desc:'Trains units and researches military, armor, and fortification upgrades.',icon:'⚔️'},
   // Watch Tower doubles as a WALL BASTION here — a deliberate deviation from
   // AoE2, which never lets a tower sit inside a wall line. Because ours anchors
   // the wall, it's the strongest link: hp 2000 (above the 1800 stone wall) and
@@ -815,7 +815,7 @@ const BLDGS={
   // nothing can be built on it.
   // AoE2 Castle (DE): 650 stone, 4800 hp, 11 pierce at range 8, armor 8/11, garrison 20, 200 s; it looses 5 arrows
   // unmanned (baseArrows: the AoE2 castle's default 4 extra), one more per garrisoned archer's worth (maxArrows).
-  CASTLE:{name:'Castle',w:4,h:4,hp:4800,cost:{s:650},builds:['trebuchet'],buildTime:T30(6000),range:8,atk:11,baseArrows:5,garrisonCap:20,maxArrows:21,armor:{m:8,p:11},desc:'Fortress: shoots a volley of arrows at nearby enemies. Garrison units for more arrows. Requires the Castle Age.',icon:'🏯'},
+  CASTLE:{name:'Castle',w:4,h:4,hp:4800,cost:{s:650},builds:['knight','trebuchet'],buildTime:T30(6000),range:8,atk:11,baseArrows:5,garrisonCap:20,maxArrows:21,armor:{m:8,p:11},desc:'Fortress: shoots a volley of arrows at nearby enemies and trains Knights and Trebuchets. Garrison units for more arrows. Requires the Castle Age.',icon:'🏯'},
   MARKET:{name:'Market',w:3,h:3,hp:1800,hpAge:[1800,1800,2100],cost:{w:175},builds:['tradecart'],researches:['guilds'],buildTime:T30(1500),armor:{m:0,p:7},walkable:true,desc:'Trains Trade Carts, trades resources for gold, and researches Guilds. Requires the Feudal Age.',icon:'⚖️'}
   // Research is distributed to the buildings that "own" each tech (AoE2-style):
   // see the `researches` arrays above — Barracks (military/armor/fortification),
@@ -835,7 +835,7 @@ const UNITS={
   // 1.55 is the Feudal+ scout speed (free +0.35 at Feudal in AoE2) — and
   // the scout IS Feudal-gated here now (AGE_REQ), so the speed fits.
   scout:{name:'Scout Cavalry',hp:45,atk:3,range:0,speed:1.55,rof:T30(60),armor:{m:0,p:2},cost:{f:80},trainTime:T30(900),desc:'Fast light cavalry. Effective against archers and for scouting.',icon:'🏇'},
-  // Castle-age heavy cavalry (AoE2-ish knight).
+  // Castle-age heavy cavalry (AoE2-ish knight), trained at the Castle.
   knight:{name:'Knight',hp:100,atk:10,range:0,speed:1.35,rof:T30(54),armor:{m:2,p:2},cost:{f:60,g:75},trainTime:T30(900),desc:'Heavy cavalry. Devastating charges, strong armor; counter with spearmen.',icon:'🐴'},
   // Battering ram — Castle-age siege (AGE_REQ), trained at the Barracks
   // (no siege workshop building exists). NOT in MILITARY on purpose (AoE2

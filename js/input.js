@@ -255,6 +255,7 @@ document.addEventListener('keydown',e=>{
       if (key === 'v') { trainUnit(bldg, 'villager'); return; }
     } else if (bldg.btype === 'CASTLE') {
       if (key === 't') { trainUnit(bldg, 'trebuchet'); return; }
+      else if (key === 'k') { trainUnit(bldg, 'knight'); return; }
     } else if (bldg.btype === 'BARRACKS') {
       // Locked (future-age) units are hidden from the panel — their
       // hotkeys are inert rather than erroring.
@@ -263,7 +264,6 @@ document.addEventListener('keydown',e=>{
       else if (key === 's') { train('spearman'); return; }
       else if (key === 'a') { train('archer'); return; }
       else if (key === 'c') { train('scout'); return; }
-      else if (key === 'k') { train('knight'); return; }
     } else if (bldg.btype === 'MARKET') {
       if (key === 't') { if(isUnlocked(myTeam,'tradecart')) trainUnit(bldg,'tradecart'); return; }
     }
