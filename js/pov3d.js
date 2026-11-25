@@ -1125,41 +1125,61 @@ gl_Position = projectionMatrix * mvPosition;`;
   };
   // A cloth's triangles (P: 9 numbers each, grp: each one's material) as one geometry, sorted into one group per material
   // (a group a triangle made every one a separate part to merge: bakePose)
-  function clothGeo(P, grp){
-    const out = [], groups = [];
-    for (const m of [0, 1]) { const start = out.length / 3; grp.forEach((g2, i) => { if (g2 === m) for (let k = 0; k < 9; k++) out.push(P[i * 9 + k]); }); groups.push([start, out.length / 3 - start, m]); }
+  // W: each vertex's place on the cloth [u across, t down from its tied edge] (blowCloth moves it by them)
+  function clothGeo(P, grp, W){
+    const out = [], wo = [], groups = [];
+    for (const m of [0, 1]) { const start = out.length / 3; grp.forEach((g2, i) => { if (g2 === m) { for (let k = 0; k < 9; k++) out.push(P[i * 9 + k]); for (let k = 0; k < 6; k++) wo.push(W[i * 6 + k]); } }); groups.push([start, out.length / 3 - start, m]); }
     const geo = own(new THREE.BufferGeometry());
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3)); geo.computeVertexNormals();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3)); geo.setAttribute('wind', new THREE.Float32BufferAttribute(wo, 2)); geo.computeVertexNormals();
     for (const [a, n, m] of groups) if (n) geo.addGroup(a, n, m);
     return geo;
+  }
+  // A cloth (canvasAwning, stallTent) made blowable: named 'cloth' (bakeStill leaves it whole), inked, the ink's vertices
+  // given their places on the cloth too (the nearest cloth vertex's), with its wind's strength (world units) and phase
+  function windCloth(mesh, thresh, amp, ph){
+    const geo = mesh.geometry, P = geo.attributes.position, W = geo.attributes.wind, key = (x, y, z) => Math.round(x * 1e4) + ',' + Math.round(y * 1e4) + ',' + Math.round(z * 1e4), at = new Map();
+    for (let i = 0; i < P.count; i++) at.set(key(P.getX(i), P.getY(i), P.getZ(i)), i);
+    const eg = edgesOf(geo, thresh), EP = eg.attributes.position, ew = new Float32Array(EP.count * 2);
+    for (let i = 0; i < EP.count; i++) { const j = at.get(key(EP.getX(i), EP.getY(i), EP.getZ(i))); if (j != null) { ew[2 * i] = W.getX(j); ew[2 * i + 1] = W.getY(j); } }
+    eg.setAttribute('wind', new THREE.BufferAttribute(ew, 2));
+    mesh.add(new THREE.LineSegments(eg, ink)); mesh.name = 'cloth'; mesh.userData.wind = { amp, ph }; return mesh;
+  }
+  // The wind on the cloths (render-buildings' clothWind, the 2D's: the same swell): each vertex lifted from where it was
+  // made by its place on the cloth. Viewer-only, on the flags' clock.
+  function blowCloth(mesh){
+    const { amp, ph } = mesh.userData.wind;
+    for (const geo of [mesh.geometry, mesh.children[0] && mesh.children[0].geometry]) { if (!geo) continue;
+      const P = geo.attributes.position, W = geo.attributes.wind; if (!W) continue;
+      const base = geo.userData.baseY || (geo.userData.baseY = Float32Array.from({ length: P.count }, (_, i) => P.getY(i)));
+      for (let i = 0; i < P.count; i++) P.setY(i, base[i] - amp * clothWind(W.getX(i), W.getY(i), ph));
+      P.needsUpdate = true; }
   }
   // A Market stall's tent (drawBuilding MARKET's stall, MARKET_TENT): four striped faces from a peak over (cx, cz) down to
   // the eaves of the square ±R at height y0, sagging, folded and draped between the corners, the cloth thick (its
   // underside and an edge band round the eaves). Inked at its hips and edges, not along its folds.
   function stallTent(g, cx, cz, R, y0, tc){
     const T = MARKET_TENT, n = T.n, Hk = 1 / HPX, apex = [cx, y0 + T.rise * Hk, cz], th = T.thick * Hk, M = 6, S = 6, P = [], grp = [];
-    const tri = (a, b, c, m) => { P.push(...a, ...b, ...c); grp.push(m); }, lo = p => [p[0], p[1] - th, p[2]];
+    const W = [], tri = (a, b, c, m) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); W.push(a[3], a[4], b[3], b[4], c[3], c[4]); grp.push(m); }, lo = p => [p[0], p[1] - th, p[2], p[3], p[4]];
     const C = [[cx - R, cz - R], [cx + R, cz - R], [cx + R, cz + R], [cx - R, cz + R]];
     for (let f = 0; f < 4; f++) { const A = C[f], B = C[(f + 1) % 4];
       const at = (u, t) => { const e = [A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u], c = (u * n) % 1;
-        return [apex[0] + (e[0] - apex[0]) * t, apex[1] + (y0 - apex[1]) * t - (T.sag * 4 * t * (1 - t) + T.fold * t * (2 - t) * Math.sin(Math.PI * c) + T.drape * 4 * u * (1 - u) * t * t) * Hk, apex[2] + (e[1] - apex[2]) * t]; };
+        return [apex[0] + (e[0] - apex[0]) * t, apex[1] + (y0 - apex[1]) * t - (T.sag * 4 * t * (1 - t) + T.fold * t * (2 - t) * Math.sin(Math.PI * c) + T.drape * 4 * u * (1 - u) * t * t) * Hk, apex[2] + (e[1] - apex[2]) * t, u, t]; };
       for (let i = 0; i < n; i++) for (let q = 0; q < S; q++) { const u0 = (i + q / S) / n, u1 = (i + (q + 1) / S) / n - (q === S - 1 ? 1e-7 : 0), m = i % 2;
         for (let j = 0; j < M; j++) { const t0 = j / M, t1 = (j + 1) / M, a = at(u0, t0), b = at(u1, t0), c = at(u1, t1), d = at(u0, t1);
           tri(a, b, c, m); tri(a, c, d, m); tri(lo(a), lo(c), lo(b), m); tri(lo(a), lo(d), lo(c), m); }
         const e0 = at(u0, 1), e1 = at(u1, 1); tri(e0, e1, lo(e1), m); tri(e0, lo(e1), lo(e0), m); } }   // (the eave's edge band)
-    const geo = clothGeo(P, grp);
-    const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
-    mesh.add(new THREE.LineSegments(edgesOf(geo, 25), ink)); g.add(mesh); return mesh;
+    const mesh = new THREE.Mesh(clothGeo(P, grp, W), [mat(tc, true), mat(TC_CANVAS.tan, true)]);
+    windCloth(mesh, 25, 0.6 * TC_CANVAS.wind * Hk, cx * 0.07 + cz * 0.03); g.add(mesh); return mesh;   // (the 2D's: 0.6 the awnings' swell)
   }
   // A striped canvas awning: from its keep edge P0–P1 (height h0) down to its eave Q0–Q1 (h1), TC_CANVAS.n stripes (team and
   // tan by turns) running down it, sagging, folded and draped between its corner posts (drawTCAnnexRoof's), TC_CANVAS.thick thick.
   // Inked round its edges only, not along its folds.
   function canvasAwning(g, P0, P1, Q0, Q1, h0, h1, tc, k){
     const C = TC_CANVAS, n = C.n, sag = C.sag * k / HPX, fold = C.fold * k / HPX, drape = C.drape * k / HPX, M = 8, P = [], grp = [];
-    const L = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], tri = (a, b, c, m) => { P.push(...a, ...b, ...c); grp.push(m); };
-    const th = C.thick * k / HPX, lo = p => [p[0], p[1] - th, p[2]];   // (its underside, TC_CANVAS.thick below)
+    const L = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], W = [], tri = (a, b, c, m) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); W.push(a[3], a[4], b[3], b[4], c[3], c[4]); grp.push(m); };
+    const th = C.thick * k / HPX, lo = p => [p[0], p[1] - th, p[2], p[3], p[4]];   // (its underside, TC_CANVAS.thick below)
     const at = (u, t) => { const c = (u * n) % 1, p = L(L(P0, P1, u), L(Q0, Q1, u), t);
-      return [p[0], h0 + (h1 - h0) * t - sag * 4 * t * (1 - t) - fold * t * (2 - t) * Math.sin(Math.PI * c) - drape * 4 * u * (1 - u) * t * t, p[1]]; };
+      return [p[0], h0 + (h1 - h0) * t - sag * 4 * t * (1 - t) - fold * t * (2 - t) * Math.sin(Math.PI * c) - drape * 4 * u * (1 - u) * t * t, p[1], u, t]; };
     // one sheet: each stripe 8 columns across, M rows down the slope (shared corners: no seams)
     const S = 8, ts = Array.from({ length: M + 1 }, (_, j) => j / M);
     for (let i = 0; i < n; i++) for (let q = 0; q < S; q++) { const u0 = (i + q / S) / n, u1 = (i + (q + 1) / S) / n - (q === S - 1 ? 1e-7 : 0);
@@ -1169,9 +1189,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     const band = (p, q, m) => { tri(p, q, lo(q), m); tri(p, lo(q), lo(p), m); };
     for (let q = 0; q < n * S; q++) band(at(q / (n * S), 1), at((q + 1) / (n * S), 1), Math.floor(q / S) % 2);
     for (let j = 0; j < M; j++) { band(at(0, ts[j]), at(0, ts[j + 1]), 0); band(at(1 - 1e-7, ts[j]), at(1 - 1e-7, ts[j + 1]), (n - 1) % 2); }
-    const geo = clothGeo(P, grp);
-    const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
-    mesh.add(new THREE.LineSegments(edgesOf(geo, 89), ink)); g.add(mesh); return mesh;
+    const mesh = new THREE.Mesh(clothGeo(P, grp, W), [mat(tc, true), mat(TC_CANVAS.tan, true)]);
+    windCloth(mesh, 89, TC_CANVAS.wind * k / HPX, P0[0] * 0.05 + P0[1] * 0.11 + Q0[0] * 0.3); g.add(mesh); return mesh;   // (each awning its own phase)
   }
   // A slab over [x0,x1]×[z0,z1] falling from h0 to h1 along x or z (lean-to
   // roofs, canopies); `thick` hangs below the surface.
@@ -4149,12 +4168,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
+    for (const o of lift) { hold.attach(o); if (o.name === 'cloth') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4186,8 +4205,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (o.name === 'flag') flags.push(o);
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
-      const pennants = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); });
-      rec = { obj: g, key, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
+      const pennants = [], cloths = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); if (o.name === 'cloth') cloths.push(o); });
+      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -4642,6 +4661,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const t = aTick * 0.13;
     for (const rec of solids.values()) {
       if (rec.sails) rec.sails.rotation.z += dt * 0.9;
+      if (rec.cloths && rec.cloths.length && rec.obj.visible && !rec.site && !rec.dmg) for (const c of rec.cloths) blowCloth(c);   // (the wind in the awnings and tents)
       if (rec.smoke && !rec.site && !rec.dmg && rec.obj.visible && (rec.smokeT = (rec.smokeT || Math.random()) - dt) <= 0) { // chimney smoke (the 2D's drawChimneySmoke)
         rec.smokeT = 0.55 + Math.random() * 0.3; for (const [x, y, z] of rec.smoke) chimneyPuff(x, y, z); }
       if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)

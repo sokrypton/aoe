@@ -382,7 +382,9 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
 // sag between keep and eave, the fold across each stripe, the drape between the corner posts (art px), the tan lit and
 // shaded.
 // thick: the 3D cloth's thickness (art px), its edge showing along the open sides, the posts ending inside it (the 2D's a sheet).
-const TC_CANVAS = { n: 6, sag: 4, fold: 1.6, drape: 6, thick: 2.5, tan: '#e3c991', tanD: '#c9ad73' };
+// wind: how far the cloth lifts and settles in the wind (art px; still where it's tied: the keep, a peak, each post),
+// windRate its pace on the flags' clock (animTick).
+const TC_CANVAS = { n: 6, sag: 4, fold: 1.6, drape: 6, wind: 0.8, windRate: 0.035, thick: 2.5, tan: '#e3c991', tanD: '#c9ad73' };
 function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   const hK = 28, hO = 18; // roof height at the keep edge / outer eave — tall enough for units to walk under
   let s = side;
@@ -397,7 +399,7 @@ function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   // between its seams (the 3D's canvasAwning); stripes team and tan by turns, lit by its side
   const C = TC_CANVAS, n = C.n, lit = s < 0, dk = c => darken ? darkenColor(c) : c, L = (p, q, t) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
   const cols = [dk(lit ? tc : tcD), dk(lit ? C.tan : C.tanD)];
-  const at = (u, t) => { const p = L(L(K1r, K2r, u), L(O1r, O2r, u), t), c = (u * n) % 1; return { x: p.x, y: p.y + C.sag * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * 4 * u * (1 - u) * t * t }; };   // (straight along its batten at the keep, the folds deepening to the eave)
+  const at = (u, t) => { const p = L(L(K1r, K2r, u), L(O1r, O2r, u), t), c = (u * n) % 1; return { x: p.x, y: p.y + C.sag * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * 4 * u * (1 - u) * t * t - clothWind(u, t, s + sx * 0.01) }; };   // (straight along its batten at the keep, the folds deepening to the eave)
   const M = 8, run = (u, t0, t1) => { for (let j = 0; j <= M; j++) { const q = at(u, t0 + (t1 - t0) * j / M); X.lineTo(q.x, q.y); } };
   X.lineJoin = 'round';
   for (let i = 0; i < n; i++) for (let h = 0; h < 2; h++) {
@@ -416,6 +418,10 @@ function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
 
 // The Market's stall tents (both views; the TC's canvas, TC_CANVAS's stripes): n stripes a face, the peak's rise, the
 // sag, fold and drape (art px), the 3D cloth's thickness.
+// The wind on a canvas at (u across 0..1, t down from its tied edge 0..1), art px: one slow, gentle swell across it,
+// nothing where it's tied (t 0, and each post at u 0 and 1), most at the eave between the posts. ph: this cloth's own
+// phase, so neighbours don't move as one. Viewer-only (animTick).
+function clothWind(u, t, ph){ const C = TC_CANVAS, a = animTick * C.windRate + ph; return C.wind * t * t * Math.sin(Math.PI * u) * Math.sin(a - 1.2 * u); }
 const MARKET_TENT = { n: 3, rise: 9, sag: 1.5, fold: 1, drape: 3, thick: 2 };
 function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken, afterWalls, noBackEave){
   let wl=darken?darkenColor(wallL):wallL;
@@ -1920,7 +1926,7 @@ function drawBuilding(e, part = null){
       // a face from eave corner a to b (u 0..1), t from the peak (0) down to the eave (1)
       const face=(a,b,lit)=>{
         const A=up(a),B=up(b),cols=[lit?tccF:tccR, darken?darkenColor(lit?TC_CANVAS.tan:TC_CANVAS.tanD):(lit?TC_CANVAS.tan:TC_CANVAS.tanD)];
-        const at=(u,t)=>{ const e=L2(A,B,u),p=L2(apex,e,t),c=(u*n)%1; return [p[0],p[1]+T.sag*4*t*(1-t)+T.fold*t*(2-t)*Math.sin(Math.PI*c)+T.drape*4*u*(1-u)*t*t]; };
+        const at=(u,t)=>{ const e=L2(A,B,u),p=L2(apex,e,t),c=(u*n)%1; return [p[0],p[1]+T.sag*4*t*(1-t)+T.fold*t*(2-t)*Math.sin(Math.PI*c)+T.drape*4*u*(1-u)*t*t-0.6*clothWind(u,t,cx*0.07+a[0]*0.03)]; };
         const M=6, run=(u,t0,t1)=>{ for(let j=0;j<=M;j++){ const q=at(u,t0+(t1-t0)*j/M); X.lineTo(q[0],q[1]); } };
         for(let i=0;i<n;i++) for(let hh=0;hh<2;hh++){ const u0=(i+hh/2)/n,u1=(i+(hh+1)/2)/n;
           X.fillStyle=cols[i%2]; X.beginPath(); X.moveTo(apex[0],apex[1]); run(u0,0,1); run(u1,1,0); X.closePath(); X.fill();
