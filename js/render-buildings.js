@@ -377,10 +377,12 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
 // One open-sided tent-annex roof for the TC courtyard: two identical
 // quad faces meeting at an apex line (left face toward ax-48, right toward
 // ax+48). The TC draws this twice, at the left and right quadrant.
-// Open-sided lean-to shelter over one courtyard quadrant (AoE2 TC look):
-// a plank roof plane leaning from the keep wall (high) down to the outer
-// posts (low), open underneath — the shade + posts carry the "open
-// market stall" read. side: -1 = left quadrant, +1 = right quadrant.
+// Open-sided canvas awning over one courtyard quadrant (the TC sprite's): striped fabric leaning from the keep wall (high)
+// down to the outer posts (low). side: -1 = left quadrant, +1 = right quadrant. TC_CANVAS (both views): stripes, the
+// sag between keep and eave, the fold across each stripe, the drape between the corner posts (art px), the tan lit and
+// shaded.
+// thick: the 3D cloth's thickness (art px), its edge showing along the open sides, the posts ending inside it (the 2D's a sheet).
+const TC_CANVAS = { n: 6, sag: 4, fold: 1.6, drape: 6, thick: 2.5, tan: '#e3c991', tanD: '#c9ad73' };
 function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   const hK = 28, hO = 18; // roof height at the keep edge / outer eave — tall enough for units to walk under
   let s = side;
@@ -391,35 +393,30 @@ function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   let O2 = { x: sx + 48*s, y: sy + 72 }; // outer front corner
   let up = (p, h) => ({ x: p.x, y: p.y - h });
   let K1r = up(K1,hK), K2r = up(K2,hK), O1r = up(O1,hO), O2r = up(O2,hO);
-  // roof plane: wooden planks, lit by orientation (left plane faces the
-  // light, right plane faces away)
-  let plank = s < 0 ? WOOD.plankL : WOOD.plankR;
-  let pl = darken ? darkenColor(plank) : plank;
-  X.strokeStyle='#000000'; X.lineWidth=1.3; X.lineJoin='round';
-  X.fillStyle = pl; X.beginPath();
-  X.moveTo(K1r.x,K1r.y); X.lineTo(O1r.x,O1r.y); X.lineTo(O2r.x,O2r.y); X.lineTo(K2r.x,K2r.y);
-  X.closePath(); X.fill(); X.stroke();
-  // plank seams running down the slope (keep edge → outer eave)
-  X.save();
-  X.strokeStyle='rgba(0,0,0,0.18)'; X.lineWidth=1;
-  for (let t of [0.25, 0.5, 0.75]) {
-    let a = { x: K1r.x + (K2r.x-K1r.x)*t, y: K1r.y + (K2r.y-K1r.y)*t };
-    let b = { x: O1r.x + (O2r.x-O1r.x)*t, y: O1r.y + (O2r.y-O1r.y)*t };
-    X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
+  // the canvas at (u across, 0..1; t down the slope, 0..1): sagging between keep and eave, each stripe's middle sunk
+  // between its seams (the 3D's canvasAwning); stripes team and tan by turns, lit by its side
+  const C = TC_CANVAS, n = C.n, lit = s < 0, dk = c => darken ? darkenColor(c) : c, L = (p, q, t) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+  const cols = [dk(lit ? tc : tcD), dk(lit ? C.tan : C.tanD)];
+  const at = (u, t) => { const p = L(L(K1r, K2r, u), L(O1r, O2r, u), t), c = (u * n) % 1; return { x: p.x, y: p.y + C.sag * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * 4 * u * (1 - u) * t * t }; };   // (straight along its batten at the keep, the folds deepening to the eave)
+  const M = 8, run = (u, t0, t1) => { for (let j = 0; j <= M; j++) { const q = at(u, t0 + (t1 - t0) * j / M); X.lineTo(q.x, q.y); } };
+  X.lineJoin = 'round';
+  for (let i = 0; i < n; i++) for (let h = 0; h < 2; h++) {
+    // each half-stripe; the half turned from the light a shade darker
+    const u0 = (i + h / 2) / n, u1 = (i + (h + 1) / 2) / n;
+    X.fillStyle = cols[i % 2]; X.beginPath(); const p0 = at(u0, 0); X.moveTo(p0.x, p0.y); run(u0, 0, 1); run(u1, 1, 0); X.closePath(); X.fill();
+    if (h === (lit ? 1 : 0)) { X.fillStyle = 'rgba(0,0,0,0.1)'; X.fill(); }
   }
-  X.restore();
-  // team-color fascia boards along the two visible outer eave edges
-  let fs = 3.5;
-  let cOut = darken ? darkenColor(tc) : tc;   // outer edge (side-facing)
-  let cFrt = darken ? darkenColor(tcD) : tcD; // front edge (darker face)
-  X.fillStyle = s < 0 ? cOut : cFrt; X.beginPath();
-  X.moveTo(O1r.x,O1r.y); X.lineTo(O2r.x,O2r.y); X.lineTo(O2r.x,O2r.y+fs); X.lineTo(O1r.x,O1r.y+fs);
-  X.closePath(); X.fill(); X.stroke();
-  X.fillStyle = s < 0 ? cFrt : cOut; X.beginPath();
-  X.moveTo(O2r.x,O2r.y); X.lineTo(K2r.x,K2r.y); X.lineTo(K2r.x,K2r.y+fs); X.lineTo(O2r.x,O2r.y+fs);
-  X.closePath(); X.fill(); X.stroke();
+  X.strokeStyle = '#000'; X.lineWidth = 1.3; X.beginPath();
+  for (let j = 0; j <= 12; j++) { const q = at(j / 12, 0); j ? X.lineTo(q.x, q.y) : X.moveTo(q.x, q.y); }
+  for (let j = 0; j <= M; j++) { const q = at(0, j / M); X.lineTo(q.x, q.y); }
+  for (let j = 0; j <= n * 8; j++) { const q = at(j / (n * 8), 1); X.lineTo(q.x, q.y); }   // (the eave as the cloth hangs: its folds)
+  for (let j = M; j >= 0; j--) { const q = at(1, j / M); X.lineTo(q.x, q.y); }
+  X.stroke();
 }
 
+// The Market's stall tents (both views; the TC's canvas, TC_CANVAS's stripes): n stripes a face, the peak's rise, the
+// sag, fold and drape (art px), the 3D cloth's thickness.
+const MARKET_TENT = { n: 3, rise: 9, sag: 1.5, fold: 1, drape: 3, thick: 2 };
 function drawGableBlock(sx, sy0, W, hh, wallH, roofH, wallL, wallR, roofC, beamC, darken, afterWalls, noBackEave){
   let wl=darken?darkenColor(wallL):wallL;
   let wr=darken?darkenColor(wallR):wallR;
@@ -1380,11 +1377,10 @@ function drawBuilding(e, part = null){
     // ends at the fascia's bottom edge with no seam, so the roof reads as
     // resting on the beams.
     let posts = [
-      { x: sx - 93.5, y: sy + 48,    h: 15 }, // Left-most corner
-      { x: sx - 48,   y: sy + 70.75, h: 15 }, // Bottom-left corner
-      { x: sx + 93.5, y: sy + 48,    h: 15 }, // Right-most corner
-      { x: sx + 48,   y: sy + 70.75, h: 15 }, // Bottom-right corner
-      { x: sx,        y: sy + 48,    h: 25 }  // Center (under the high keep edge)
+      { x: sx - 93.5, y: sy + 48,    h: 17 }, // Left-most corner
+      { x: sx - 48,   y: sy + 70.75, h: 17 }, // Bottom-left corner
+      { x: sx + 93.5, y: sy + 48,    h: 17 }, // Right-most corner
+      { x: sx + 48,   y: sy + 70.75, h: 17 }  // Bottom-right corner
     ];
     posts.sort((a, b) => a.y - b.y);
     let postColor = WOOD.post;
@@ -1394,25 +1390,12 @@ function drawBuilding(e, part = null){
     // shaded right face, bright top cap — same light rules as buildings.
     let pL = darken ? darkenColor('#9a7a56') : '#9a7a56';
     let pR = darken ? darkenColor('#7c5f40') : '#7c5f40';
-    let pT = darken ? darkenColor('#b08c62') : '#b08c62';
+    // round timber posts (the 3D's), lit on the left, each up to just under the canvas at its corner
     posts.forEach(p => {
-      let w = 2.5, hh2 = 1.25; // half-width / half-height of the post's tiny footprint
-      X.strokeStyle = '#000000'; X.lineWidth = 1.1;
-      // left face
-      X.fillStyle = pL; X.beginPath();
-      X.moveTo(p.x - w, p.y - hh2); X.lineTo(p.x, p.y);
-      X.lineTo(p.x, p.y - p.h); X.lineTo(p.x - w, p.y - hh2 - p.h);
-      X.closePath(); X.fill(); X.stroke();
-      // right face
-      X.fillStyle = pR; X.beginPath();
-      X.moveTo(p.x, p.y); X.lineTo(p.x + w, p.y - hh2);
-      X.lineTo(p.x + w, p.y - hh2 - p.h); X.lineTo(p.x, p.y - p.h);
-      X.closePath(); X.fill(); X.stroke();
-      // top cap
-      X.fillStyle = pT; X.beginPath();
-      X.moveTo(p.x, p.y - p.h); X.lineTo(p.x + w, p.y - hh2 - p.h);
-      X.lineTo(p.x, p.y - 2*hh2 - p.h); X.lineTo(p.x - w, p.y - hh2 - p.h);
-      X.closePath(); X.fill(); X.stroke();
+      const r = 2.6, top = p.y - p.h;
+      X.fillStyle = pL; X.fillRect(p.x - r, top, r, p.h); X.fillStyle = pR; X.fillRect(p.x, top, r, p.h);
+      X.fillStyle = pL; X.beginPath(); X.ellipse(p.x, p.y, r, r / 2, 0, 0, Math.PI); X.fill();
+      X.strokeStyle = '#000000'; X.lineWidth = 1.1; X.beginPath(); X.moveTo(p.x - r, top); X.lineTo(p.x - r, p.y); X.ellipse(p.x, p.y, r, r / 2, 0, Math.PI, 0, true); X.lineTo(p.x + r, top); X.stroke();
     });
 
     } // end 'back' (keep + foundation + support posts) part
@@ -1920,59 +1903,34 @@ function drawBuilding(e, part = null){
       }
     };
 
-    // One market stall: a striped-canvas canopy (a tile-aligned diamond
-    // lifted by H) on 4 posts, goods underneath, and a scalloped valance
-    // hanging from the two front eaves.
+    // One market stall: a little peaked tent (MARKET_TENT — the TC's canvas): four striped faces from a centre peak down to
+    // the eaves, sagging and folded, draped between the four round posts; its goods underneath.
     let stall=(cx,cyc,good)=>{
-      const w=21,h=10.5,H=20;
+      const w=21,h=10.5,H=20,T=MARKET_TENT,n=T.n;
       let corners={T:[cx,cyc-h],R:[cx+w,cyc],B:[cx,cyc+h],L:[cx-w,cyc]};
-      let post=(g)=>{
-        X.lineCap='round';
-        X.strokeStyle='#000';X.lineWidth=3.4;X.beginPath();X.moveTo(g[0],g[1]);X.lineTo(g[0],g[1]-H);X.stroke();
-        X.strokeStyle=postC;X.lineWidth=1.6;X.beginPath();X.moveTo(g[0],g[1]);X.lineTo(g[0],g[1]-H);X.stroke();
-        X.lineCap='butt';
-      };
-      // back + side posts, then goods, then the near (front) post over them;
-      // goods sit at the canopy's center — properly INSIDE the tent
+      // a round post (the TC's), up to just under the eave corner
+      let post=(g)=>{ const r=1.6, top=g[1]-H+1;
+        X.fillStyle=postC; X.fillRect(g[0]-r,top,r,g[1]-top); X.fillStyle=darken?darkenColor('#7c5f40'):'#7c5f40'; X.fillRect(g[0],top,r,g[1]-top);
+        X.strokeStyle='#000'; X.lineWidth=1; X.beginPath(); X.moveTo(g[0]-r,top); X.lineTo(g[0]-r,g[1]); X.ellipse(g[0],g[1],r,r/2,0,Math.PI,0,true); X.lineTo(g[0]+r,top); X.stroke(); };
+      // back + side posts, then goods, then the near (front) post over them; the tent over all
       post(corners.T);post(corners.L);post(corners.R);
       drawGood(cx,cyc+0.5,good);
       post(corners.B);
-      // raised canopy corners
-      let Tr=[corners.T[0],corners.T[1]-H],Rr=[corners.R[0],corners.R[1]-H],
-          Br=[corners.B[0],corners.B[1]-H],Lr=[corners.L[0],corners.L[1]-H];
-      let lerp=(p,q,t)=>[p[0]+(q[0]-p[0])*t, p[1]+(q[1]-p[1])*t];
-      // each triangular face: cream base + 2-of-4 team-color awning stripes
-      // fanning from the eave corner across the Tr→Br ridge (wedges lie
-      // exactly inside the face triangle, so no clip is needed). Quarter
-      // stripes, not fifths: fat enough to survive sub-10px.
-      X.strokeStyle='#000';X.lineWidth=1.3;X.lineJoin='round';
-      let face=(eave,base,stripe)=>{
-        X.fillStyle=base;X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(eave[0],eave[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.fill();
-        X.fillStyle=stripe;
-        for(let k of [0,2]){
-          let r0=lerp(Tr,Br,k/4), r1=lerp(Tr,Br,(k+1)/4);
-          X.beginPath();X.moveTo(eave[0],eave[1]);X.lineTo(r0[0],r0[1]);X.lineTo(r1[0],r1[1]);X.closePath();X.fill();
-        }
-        X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(eave[0],eave[1]);X.lineTo(Br[0],Br[1]);X.closePath();X.stroke();
+      const up=p=>[p[0],p[1]-H], apex=[cx,cyc-H-T.rise], L2=(p,q,t)=>[p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t];
+      // a face from eave corner a to b (u 0..1), t from the peak (0) down to the eave (1)
+      const face=(a,b,lit)=>{
+        const A=up(a),B=up(b),cols=[lit?tccF:tccR, darken?darkenColor(lit?TC_CANVAS.tan:TC_CANVAS.tanD):(lit?TC_CANVAS.tan:TC_CANVAS.tanD)];
+        const at=(u,t)=>{ const e=L2(A,B,u),p=L2(apex,e,t),c=(u*n)%1; return [p[0],p[1]+T.sag*4*t*(1-t)+T.fold*t*(2-t)*Math.sin(Math.PI*c)+T.drape*4*u*(1-u)*t*t]; };
+        const M=6, run=(u,t0,t1)=>{ for(let j=0;j<=M;j++){ const q=at(u,t0+(t1-t0)*j/M); X.lineTo(q[0],q[1]); } };
+        for(let i=0;i<n;i++) for(let hh=0;hh<2;hh++){ const u0=(i+hh/2)/n,u1=(i+(hh+1)/2)/n;
+          X.fillStyle=cols[i%2]; X.beginPath(); X.moveTo(apex[0],apex[1]); run(u0,0,1); run(u1,1,0); X.closePath(); X.fill();
+          if(hh===(lit?1:0)){ X.fillStyle='rgba(0,0,0,0.1)'; X.fill(); } }
+        X.strokeStyle='#000'; X.lineWidth=1.3; X.lineJoin='round'; X.beginPath(); X.moveTo(apex[0],apex[1]); run(0,0,1);
+        for(let j=0;j<=n*6;j++){ const q=at(j/(n*6),1); X.lineTo(q[0],q[1]); } run(1,1,0); X.stroke();
       };
-      face(Lr, canvasL, tccF);   // lit front-left face
-      face(Rr, canvasR, tccR);   // shaded front-right face
-      X.beginPath();X.moveTo(Tr[0],Tr[1]);X.lineTo(Rr[0],Rr[1]);X.lineTo(Br[0],Br[1]);X.lineTo(Lr[0],Lr[1]);X.closePath();X.stroke();
-      // valance: ONE solid team-color zigzag strip per front eave (Lr-Br
-      // lit, Br-Rr shaded) — three fat teeth instead of alternating
-      // micro-scallops
-      let valance=(p,q,col)=>{
-        X.fillStyle=col;X.lineWidth=1.1;
-        X.beginPath();X.moveTo(p[0],p[1]);
-        for(let k=0;k<3;k++){
-          let s0=lerp(p,q,k/3), s1=lerp(p,q,(k+1)/3);
-          X.lineTo((s0[0]+s1[0])/2,(s0[1]+s1[1])/2+5);
-          X.lineTo(s1[0],s1[1]);
-        }
-        X.closePath();X.fill();X.stroke();
-      };
-      valance(Lr,Br,tccF);
-      valance(Br,Rr,tccR);
+      // back faces first, then the front two (lit: those turned to the upper-left light)
+      face(corners.T,corners.L,true); face(corners.R,corners.T,false);
+      face(corners.L,corners.B,true); face(corners.B,corners.R,false);
     };
 
     // Parts painted back → front (in the proxy path each `only()` hits one).

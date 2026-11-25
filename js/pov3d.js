@@ -1123,39 +1123,50 @@ gl_Position = projectionMatrix * mvPosition;`;
     const m = new THREE.Mesh(_oreGeo, m0); m.position.set(x, 0, z); m.scale.set(r, h, r); m.rotation.y = x * 7.1 + z * 3.3;
     m.userData.hullGeo = _oreGeo; m.userData.hullRound = true; g.add(m); return m;   // (hullRound: outlined all round, as the deposits — a wall's outline stops at the ground, a boulder's doesn't)                                 // (an outline, no inner edge lines: as the deposits)
   };
-  // The market stall canopy (drawBuilding MARKET stall): FLAT at height y0 over
-  // the square, split along the back→front diagonal; each half fans from its
-  // side corner to the diagonal in 4 slices, 2 of them team-colored.
-  function awning(g, cx, cz, R, y0, c1, c2){
-    const T = [cx - R, y0, cz - R], B = [cx + R, y0, cz + R], Lc = [cx - R, y0, cz + R], Rc = [cx + R, y0, cz - R];
-    const P = [], groups = [];
-    for (const [corner, flip] of [[Lc, false], [Rc, true]]) for (let k = 0; k < 4; k++) {
-      const D0 = T.map((v, i) => v + (B[i] - v) * k / 4), D1 = T.map((v, i) => v + (B[i] - v) * (k + 1) / 4);
-      P.push(...corner, ...(flip ? D0 : D1), ...(flip ? D1 : D0));
-      groups.push(k % 2 === 0 ? 1 : 0);
-    }
+  // A Market stall's tent (drawBuilding MARKET's stall, MARKET_TENT): four striped faces from a peak over (cx, cz) down to
+  // the eaves of the square ±R at height y0, sagging, folded and draped between the corners, the cloth thick (its
+  // underside and an edge band round the eaves). Inked at its hips and edges, not along its folds.
+  function stallTent(g, cx, cz, R, y0, tc){
+    const T = MARKET_TENT, n = T.n, Hk = 1 / HPX, apex = [cx, y0 + T.rise * Hk, cz], th = T.thick * Hk, M = 6, S = 6, P = [], grp = [];
+    const tri = (a, b, c, m) => { P.push(...a, ...b, ...c); grp.push(m); }, lo = p => [p[0], p[1] - th, p[2]];
+    const C = [[cx - R, cz - R], [cx + R, cz - R], [cx + R, cz + R], [cx - R, cz + R]];
+    for (let f = 0; f < 4; f++) { const A = C[f], B = C[(f + 1) % 4];
+      const at = (u, t) => { const e = [A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u], c = (u * n) % 1;
+        return [apex[0] + (e[0] - apex[0]) * t, apex[1] + (y0 - apex[1]) * t - (T.sag * 4 * t * (1 - t) + T.fold * t * (2 - t) * Math.sin(Math.PI * c) + T.drape * 4 * u * (1 - u) * t * t) * Hk, apex[2] + (e[1] - apex[2]) * t]; };
+      for (let i = 0; i < n; i++) for (let q = 0; q < S; q++) { const u0 = (i + q / S) / n, u1 = (i + (q + 1) / S) / n - (q === S - 1 ? 1e-7 : 0), m = i % 2;
+        for (let j = 0; j < M; j++) { const t0 = j / M, t1 = (j + 1) / M, a = at(u0, t0), b = at(u1, t0), c = at(u1, t1), d = at(u0, t1);
+          tri(a, b, c, m); tri(a, c, d, m); tri(lo(a), lo(c), lo(b), m); tri(lo(a), lo(d), lo(c), m); }
+        const e0 = at(u0, 1), e1 = at(u1, 1); tri(e0, e1, lo(e1), m); tri(e0, lo(e1), lo(e0), m); } }   // (the eave's edge band)
     const geo = own(new THREE.BufferGeometry());
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-    geo.computeVertexNormals();
-    groups.forEach((m, i) => geo.addGroup(i * 3, 3, m));
-    const m = new THREE.Mesh(geo, [mat(c1, true), mat(c2, true)]);
-    m.add(new THREE.LineSegments(edgesOf(geo, 20), ink));
-    g.add(m);
-    // Scalloped valance: three team teeth hanging from each eave edge.
-    const tH = 5 / HPX, teeth = [];
-    for (const [A, Bv] of [[Lc, B], [B, Rc], [Rc, T], [T, Lc]]) for (let k = 0; k < 3; k++) {
-      const p0 = A.map((v, i) => v + (Bv[i] - v) * k / 3), p1 = A.map((v, i) => v + (Bv[i] - v) * (k + 1) / 3);
-      const mid = p0.map((v, i) => (v + p1[i]) / 2); mid[1] -= tH;
-      teeth.push(...p0, ...mid, ...p1);
-    }
-    const tg = own(new THREE.BufferGeometry());
-    tg.setAttribute('position', new THREE.Float32BufferAttribute(teeth, 3));
-    tg.computeVertexNormals();
-    const tm = new THREE.Mesh(tg, mat(c2, true));
-    tm.add(new THREE.LineSegments(edgesOf(tg, 20), ink));
-    g.add(tm);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
+    grp.forEach((m, i) => geo.addGroup(i * 3, 3, m));
+    const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
+    mesh.add(new THREE.LineSegments(edgesOf(geo, 25), ink)); g.add(mesh); return mesh;
   }
-
+  // A striped canvas awning: from its keep edge P0–P1 (height h0) down to its eave Q0–Q1 (h1), TC_CANVAS.n stripes (team and
+  // tan by turns) running down it, sagging, folded and draped between its corner posts (drawTCAnnexRoof's), TC_CANVAS.thick thick.
+  // Inked round its edges only, not along its folds.
+  function canvasAwning(g, P0, P1, Q0, Q1, h0, h1, tc, k){
+    const C = TC_CANVAS, n = C.n, sag = C.sag * k / HPX, fold = C.fold * k / HPX, drape = C.drape * k / HPX, M = 8, P = [], grp = [];
+    const L = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], tri = (a, b, c, m) => { P.push(...a, ...b, ...c); grp.push(m); };
+    const th = C.thick * k / HPX, lo = p => [p[0], p[1] - th, p[2]];   // (its underside, TC_CANVAS.thick below)
+    const at = (u, t) => { const c = (u * n) % 1, p = L(L(P0, P1, u), L(Q0, Q1, u), t);
+      return [p[0], h0 + (h1 - h0) * t - sag * 4 * t * (1 - t) - fold * t * (2 - t) * Math.sin(Math.PI * c) - drape * 4 * u * (1 - u) * t * t, p[1]]; };
+    // one sheet: each stripe 8 columns across, M rows down the slope (shared corners: no seams)
+    const S = 8, ts = Array.from({ length: M + 1 }, (_, j) => j / M);
+    for (let i = 0; i < n; i++) for (let q = 0; q < S; q++) { const u0 = (i + q / S) / n, u1 = (i + (q + 1) / S) / n - (q === S - 1 ? 1e-7 : 0);
+      for (let j = 0; j + 1 < ts.length; j++) { const a = at(u0, ts[j]), b = at(u1, ts[j]), c = at(u1, ts[j + 1]), d = at(u0, ts[j + 1]); tri(a, d, c, i % 2); tri(a, c, b, i % 2);
+        tri(lo(a), lo(c), lo(d), i % 2); tri(lo(a), lo(b), lo(c), i % 2); } }
+    // its thickness: an edge band round the three open sides (the eave and both ends; the keep side is against the wall)
+    const band = (p, q, m) => { tri(p, q, lo(q), m); tri(p, lo(q), lo(p), m); };
+    for (let q = 0; q < n * S; q++) band(at(q / (n * S), 1), at((q + 1) / (n * S), 1), Math.floor(q / S) % 2);
+    for (let j = 0; j < M; j++) { band(at(0, ts[j]), at(0, ts[j + 1]), 0); band(at(1 - 1e-7, ts[j]), at(1 - 1e-7, ts[j + 1]), (n - 1) % 2); }
+    const geo = own(new THREE.BufferGeometry());
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
+    grp.forEach((m, i) => geo.addGroup(i * 3, 3, m));
+    const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
+    mesh.add(new THREE.LineSegments(edgesOf(geo, 89), ink)); g.add(mesh); return mesh;
+  }
   // A slab over [x0,x1]×[z0,z1] falling from h0 to h1 along x or z (lean-to
   // roofs, canopies); `thick` hangs below the surface.
   function leanTo(g, col, x0, z0, x1, z1, h0, h1, alongX, thick = 0.07, inkIt = true){
@@ -1333,17 +1344,17 @@ gl_Position = projectionMatrix * mvPosition;`;
         const px = x + (mid - rimW) * mx / 3, pz = z + (mid - rimW) * mz / 3;
         boxAt(g, kL, px, pz, px + rimW, pz + rimW, keepH, keepH + 7 * k / HPX);
       }
-      // Lean-tos: the keep edge (hK) falling to the outer eave (hO), as thick
-      // as the fascia. The team fascia is the slab's own edge faces: the outer
-      // end and the sloping front edge (+x/+z in the slab's frame) that meet
-      // in a V below the keep's front corner.
-      const fascia = top => [tc, top, top, top, tc, top];
-      leanTo(piece(g), fascia(WOOD.plankR + '|planks'), x + mid, z, x + W, z + mid, hK, hO, true, fas);   // boards run down each slope
-      leanTo(piece(g), fascia(WOOD.plankL + '|planksR'), x, z + mid, x + mid, z + W, hK, hO, false, fas);
-      // Posts under the outer corners, up to the slab's underside (the keep carries the inner edge).
-      const run = W - mid, under = d => hK + (hO - hK) * d / run - fas * Math.hypot(run, hK - hO) / run;
-      for (const [px, pz] of [[x + W - 0.12, z + 0.12], [x + W - 0.12, z + mid - 0.12]]) post(g, px, pz, under(px - x - mid), WOOD.post, 0.06);
-      for (const [px, pz] of [[x + 0.12, z + W - 0.12], [x + mid - 0.12, z + W - 0.12]]) post(g, px, pz, under(pz - z - mid), WOOD.post, 0.06);
+      // The awnings: striped canvas from the keep edge (hK) down to the outer eave (hO), a scallop per stripe hanging there
+      // (the 2D's drawTCAnnexRoof, TC_CANVAS)
+      canvasAwning(piece(g), [x + mid, z], [x + mid, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
+      canvasAwning(piece(g), [x, z + mid], [x + mid, z + mid], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
+      // Posts under the outer corners, up to the cloth where it stands: its sag down the slope, its fold across it
+      const run = W - mid, under = (d, a) => { const t = d / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
+      // (just in from the canvas's eave corners, tucked into the cloth; outlined, no ink ring round their tops — inside the
+      // cloth it showed through)
+      const pr = 0.06, pi = pr + 0.03, cp = (px, pz, h) => pole(g, WOOD.post, [px, 0, pz], [px, h, pz], pr, 'rod');
+      for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) cp(px, pz, under(px - x - mid, pz - z));
+      for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) cp(px, pz, under(pz - z - mid, px - x));
       // the keep floor the garrisoned villagers stand on (roofArchers: where, render-units' roofCrew)
       g.userData.roof = ROOF_REST.map(() => ({ y: F }));
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).
@@ -1538,9 +1549,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (e.complete) flag(g, x + 0.5, z + 0.5, cy + rise, null, tc);
       }
     },
-    // Paved plaza; on three corner tiles a stall — four posts
-    // under a flat canvas canopy striped in team color with a scalloped team
-    // valance — over its goods (grain sacks, gold, stone); a crate and a log
+    // Paved plaza; on three corner tiles a stall — a little striped tent on four posts (stallTent) — over its goods (grain sacks, gold, stone); a crate and a log
     // on the front tile (drawBuilding MARKET, drawMarketPlaza).
     MARKET(g, e){
       const x = e.x, z = e.y, W = e.w || 3, tc = teamColor(e.team), H = 20 / HPX;
@@ -1548,8 +1557,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       const r = 21 / 32 / 2, gd = new THREE.Group(); gd.name = 'goods'; g.add(gd); // (the goods: gone with the awnings when it's damaged)
       for (const [tx, tz, good] of [[0, 0, 'sacks'], [0, W - 1, 'gold'], [W - 1, 0, 'stone']]) {
         const cx = x + tx + 0.5, cz = z + tz + 0.5;
-        for (const [px, pz] of [[-r, -r], [r, -r], [-r, r], [r, r]]) post(g, cx + px, cz + pz, H - 0.025, WOOD.post, 0.028); // under the canopy, outline included
-        awning(piece(g), cx, cz, r + 0.02, H, '#efe7d2', tc);
+        // its posts up into the tent's thick cloth (outlined, no ink ring round their tops: the TC's), the tent over them
+        for (const [px, pz] of [[-r, -r], [r, -r], [-r, r], [r, r]]) pole(g, WOOD.post, [cx + px, 0, cz + pz], [cx + px, H - MARKET_TENT.thick * 0.9 / HPX, cz + pz], 0.028, 'rod');
+        stallTent(piece(g), cx, cz, r + 0.045, H, tc);   // (its corners clear of the posts: they stand wholly under it)
         if (!e.complete) continue;                                                            // (the goods come with the finished market)
         // drawGood: plump grain sacks / a pyramid of gold bars / squared stone blocks
         if (good === 'sacks') for (const [dx, dz] of [[-0.14, 0.03], [0.14, -0.03]]) ball(gd, '#c9a86a', cx + dx, 0.12, cz + dz, 0.13, 0.92);
