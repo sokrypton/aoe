@@ -1123,6 +1123,16 @@ gl_Position = projectionMatrix * mvPosition;`;
     const m = new THREE.Mesh(_oreGeo, m0); m.position.set(x, 0, z); m.scale.set(r, h, r); m.rotation.y = x * 7.1 + z * 3.3;
     m.userData.hullGeo = _oreGeo; m.userData.hullRound = true; g.add(m); return m;   // (hullRound: outlined all round, as the deposits — a wall's outline stops at the ground, a boulder's doesn't)                                 // (an outline, no inner edge lines: as the deposits)
   };
+  // A cloth's triangles (P: 9 numbers each, grp: each one's material) as one geometry, sorted into one group per material
+  // (a group a triangle made every one a separate part to merge: bakePose)
+  function clothGeo(P, grp){
+    const out = [], groups = [];
+    for (const m of [0, 1]) { const start = out.length / 3; grp.forEach((g2, i) => { if (g2 === m) for (let k = 0; k < 9; k++) out.push(P[i * 9 + k]); }); groups.push([start, out.length / 3 - start, m]); }
+    const geo = own(new THREE.BufferGeometry());
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3)); geo.computeVertexNormals();
+    for (const [a, n, m] of groups) if (n) geo.addGroup(a, n, m);
+    return geo;
+  }
   // A Market stall's tent (drawBuilding MARKET's stall, MARKET_TENT): four striped faces from a peak over (cx, cz) down to
   // the eaves of the square ±R at height y0, sagging, folded and draped between the corners, the cloth thick (its
   // underside and an edge band round the eaves). Inked at its hips and edges, not along its folds.
@@ -1137,9 +1147,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         for (let j = 0; j < M; j++) { const t0 = j / M, t1 = (j + 1) / M, a = at(u0, t0), b = at(u1, t0), c = at(u1, t1), d = at(u0, t1);
           tri(a, b, c, m); tri(a, c, d, m); tri(lo(a), lo(c), lo(b), m); tri(lo(a), lo(d), lo(c), m); }
         const e0 = at(u0, 1), e1 = at(u1, 1); tri(e0, e1, lo(e1), m); tri(e0, lo(e1), lo(e0), m); } }   // (the eave's edge band)
-    const geo = own(new THREE.BufferGeometry());
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
-    grp.forEach((m, i) => geo.addGroup(i * 3, 3, m));
+    const geo = clothGeo(P, grp);
     const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
     mesh.add(new THREE.LineSegments(edgesOf(geo, 25), ink)); g.add(mesh); return mesh;
   }
@@ -1161,9 +1169,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const band = (p, q, m) => { tri(p, q, lo(q), m); tri(p, lo(q), lo(p), m); };
     for (let q = 0; q < n * S; q++) band(at(q / (n * S), 1), at((q + 1) / (n * S), 1), Math.floor(q / S) % 2);
     for (let j = 0; j < M; j++) { band(at(0, ts[j]), at(0, ts[j + 1]), 0); band(at(1 - 1e-7, ts[j]), at(1 - 1e-7, ts[j + 1]), (n - 1) % 2); }
-    const geo = own(new THREE.BufferGeometry());
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
-    grp.forEach((m, i) => geo.addGroup(i * 3, 3, m));
+    const geo = clothGeo(P, grp);
     const mesh = new THREE.Mesh(geo, [mat(tc, true), mat(TC_CANVAS.tan, true)]);
     mesh.add(new THREE.LineSegments(edgesOf(geo, 89), ink)); g.add(mesh); return mesh;
   }
