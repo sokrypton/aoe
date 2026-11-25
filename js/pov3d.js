@@ -1379,9 +1379,10 @@ gl_Position = projectionMatrix * mvPosition;`;
         // heater shields on the yard wall's studs (on the stone at Castle), in team colour; hung, as the yard's gear, once finished
         if (!shieldGeo) { const sh = new THREE.Shape(BARRACKS_SHIELD.map(([u, w]) => new THREE.Vector2(u, w)));
           shieldGeo = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }).rotateY(Math.PI / 2); }
-        for (const A of BA.shields) { const m = new THREE.Mesh(shieldGeo, mat(tc)), u = uA(A);
-          m.position.set(hall[2] + 0.018, BA.shieldV * wallH, hall[1] + (hall[3] - hall[1]) * u); m.scale.set(0.014, BA.shieldR * s / HPX, BA.shieldR * k);
-          m.userData.hullGeo = shieldGeo; g.add(m); }
+        // (outlined with ink on its own edges: a shell round a plate this close to the wall loses to the wall)
+        for (const A of BA.shields) { const u = uA(A);
+          const m = inked(shieldGeo, mat(tc), hall[2] + 0.018, BA.shieldV * wallH, hall[1] + (hall[3] - hall[1]) * u, 0.014, BA.shieldR * s / HPX, BA.shieldR * k, 30);
+          m.userData.hullGeo = null; g.add(m); }
       }
       if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
