@@ -1379,14 +1379,14 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (!shieldGeo) { const sh = new THREE.Shape(BARRACKS_SHIELD.map(([u, w]) => new THREE.Vector2(u, w)));
           shieldGeo = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }).rotateY(Math.PI / 2); }
         for (const A of BA.shields) { const m = new THREE.Mesh(shieldGeo, mat(tc)), u = uA(A);
-          m.position.set(hall[2] + (a >= 2 ? 0.012 : 0), BA.shieldV * wallH, hall[1] + (hall[3] - hall[1]) * u); m.scale.set(0.014, BA.shieldR * s / HPX, BA.shieldR * k);
+          m.position.set(hall[2] + 0.018, BA.shieldV * wallH, hall[1] + (hall[3] - hall[1]) * u); m.scale.set(0.014, BA.shieldR * s / HPX, BA.shieldR * k);
           m.userData.hullGeo = shieldGeo; g.add(m); }
         // swallow-tailed team banners flanking the door, each on a bar under the plate
         const [v0, v1] = BA.bannerV, w2 = BA.bannerW / 2, nt = BA.notch / 24;
         if (!bannerGeo) { const sh = new THREE.Shape([[-w2, v1], [w2, v1], [w2, v0], [0, v0 + nt], [-w2, v0]].map(([u, v]) => new THREE.Vector2(u, v)));
           bannerGeo = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false }); }
         for (const B of BA.banners) { const m = new THREE.Mesh(bannerGeo, mat(tc)), bx = hall[0] + (hall[2] - hall[0]) * uB(B);
-          m.position.set(bx, 0, hall[3]); m.scale.set(k, wallH, 0.012); m.userData.hullGeo = bannerGeo; g.add(m);
+          m.position.set(bx, 0, hall[3] + 0.006); m.scale.set(k, wallH, 0.012);   // (in front of the beams) m.userData.hullGeo = bannerGeo; g.add(m);
           pole(g, WOOD.post, [bx - (w2 + 0.5) * k, v1 * wallH, hall[3] + 0.02], [bx + (w2 + 0.5) * k, v1 * wallH, hall[3] + 0.02], 0.012); }
       }
       if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
@@ -1398,9 +1398,10 @@ gl_Position = projectionMatrix * mvPosition;`;
       const nearZ = BP(-30, 0).z, farZ = BP(30, 0).z, frontX = BP(0, 51).x;
       if (a === 0) { // the Dark stockade: sharpened stakes, one lashing rail behind them
         const sH = BA.stakeH * s / HPX, tip = 2.2 * s / HPX, r = 0.03, ry = BA.stakeRail * s / HPX;
-        if (!stakeTip) stakeTip = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
+        if (!stakeTip) stakeTip = new THREE.ConeGeometry(1, 1, 6).translate(0, 0.5, 0);
         for (const [A, B] of BA.stakes) { const p = BP(A, B), px = B === 13 ? backX : p.x;
-          post(g, px, p.z, sH - tip, WOOD.post, r); g.add(inked(stakeTip, mat(WOOD.post), px, sH - tip, p.z, r, tip, r)); }
+          post(g, px, p.z, sH - tip, WOOD.post, r);
+          const tm = new THREE.Mesh(stakeTip, mat(WOOD.post)); tm.position.set(px, sH - tip, p.z); tm.scale.set(r, tip, r); tm.userData.hullGeo = stakeTip; g.add(tm); }   // (a plain point: the outline only, no edge ink)
         const back = r + 0.012;
         pole(g, WOOD.post, [backX, ry, nearZ - back], [frontX, ry, nearZ - back], 0.016);
         pole(g, WOOD.post, [frontX - back, ry, farZ], [frontX - back, ry, nearZ], 0.016);
