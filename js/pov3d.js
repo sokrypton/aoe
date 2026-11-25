@@ -5219,7 +5219,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // lathes (~40% fewer triangles), the same bones, so every pose sample fits both. Near ones keep the full rig.
   const RIG_RAD_LOW = 5, POLY_LOW = 0.35, RIG_LOD_NEAR = 6, RIG_LOD_FAR = 7;
   const rigTemplates = new Map(), rigSamples = new Map();
-  let rigSampleUntil = 0, rigTemplateBudget = 0, warmFrames = 0;
+  let rigSampleUntil = 0, rigTemplateBudget = 0, warmFrames = 0, firstSamples = 0; const FIRST_SAMPLES = 2;
   // The parts of a built frame, in build order: [{ o, tube }] (tube: its ring record).
   function rigParts(g){
     const parts = [];
@@ -5449,8 +5449,14 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function rigPose(v, kind, t, female, opt, tc, steps = VIL_STEPS, fp = false, legs = null, lod = false){ // fp: seen through its own eyes — the head parts collapse; legs: {kind, t} the lower body plays instead; lod: may wear the light template far off
     const base = vilKey(kind, 'x', female, opt), u = ((t % 1) + 1) % 1 * steps, s0 = Math.floor(u) % steps, s1 = (s0 + 1) % steps, f = u - Math.floor(u);
-    const A = rigSample(base + '@' + s0, kind, s0 / steps, female, opt), Bs = A && (rigSample(base + '@' + s1, kind, s1 / steps, female, opt) || A);
-    if (!A) return !!v.rig;                                                     // keep the last pose until the sample's built
+    let A = rigSample(base + '@' + s0, kind, s0 / steps, female, opt), Bs = A && (rigSample(base + '@' + s1, kind, s1 / steps, female, opt) || A);
+    // its step not sampled yet (a pose a crowd takes up at once — farmers to their plows — waits its turn): the nearest
+    // step of the same pose that is, not the last pose (walking on without the plow)
+    if (!A) for (let d = 1; d <= steps >> 1 && !A; d++) A = rigSamples.get(base + '@' + (s0 + d) % steps) || rigSamples.get(base + '@' + (s0 - d + steps) % steps);
+    if (A && !Bs) Bs = A;
+    // (none yet at all: its first is made past the frame's sampling time, FIRST_SAMPLES a frame — the pose shows at once)
+    if (!A && firstSamples > 0) { firstSamples--; const until = rigSampleUntil; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
+    if (!A) return !!v.rig;                                                     // keep the last pose until a sample of it is built
     if (lod && !fp) { const d2 = (v.x - camera.position.x) ** 2 + (v.z - camera.position.z) ** 2;   // (hysteresis: no flicker at the edge)
       if (d2 > RIG_LOD_FAR * RIG_LOD_FAR) v.low = true; else if (d2 < RIG_LOD_NEAR * RIG_LOD_NEAR) v.low = false; }
     else v.low = false;
@@ -6052,7 +6058,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     const dt = lastNow ? Math.min(0.1, (now - lastNow) / 1000) : 0;
     lastNow = now; clockFrame(now);
     // this frame's build budgets (set before anything poses — trainees pose in animateModels): a pose-cache build, 1.5ms of rig sampling, one rig template
-    bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
+    bakesLeft = 1; rigSampleUntil = performance.now() + 1.5; rigTemplateBudget = 1; firstSamples = FIRST_SAMPLES; frameParts.tpl = 0; frameParts.inst = 0; frameParts.samp = 0; frameParts.pose = 0;
     if (warmFrames > 0) { if (warmFrames === 1) { prewarmDragon(); warmedKinds.clear(); warmQueue.length = 0; prewarmShapes(); while (warmQueue.length) warmStep(); } warmFrames--; bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; } // a match's first frames: every unit in its real rig at once (no stand-ins turning into place)
     else if (unrevealed) { bakesLeft = rigTemplateBudget = Infinity; rigSampleUntil = Infinity; }   // a switch from 2D: its first frame whole, drawn while the 2D still shows
     if (steering && e) { steer(e, dt); actHeldTick(e, performance.now()); }
