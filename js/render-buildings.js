@@ -1031,8 +1031,9 @@ function buildingShadowPolys(e){
   return blocks.map(([P, H]) => { const k = e.complete === false ? 0 : H; return k ? convexHull(P.concat(P.map(q => [q[0] + SHADOW_CAST[0] * k, q[1] + SHADOW_CAST[1] * k]))) : P; });
 }
 // A building's footprint as its selection takes it (both views' outline and click area), in tiles from its corner: the
-// whole, but a Town Center's open front court — under neither awning — is the ground's, not the building's.
-function footParts(e, w, h){ if (e.btype !== 'TC') return [[0, 0, w, h]]; const m = w / 2;
+// whole, but a Town Center's open front court — under neither awning — is the ground's, and a tower takes none (its shape).
+function footParts(e, w, h){ if (isTowerBtype(e.btype)) return [];   // (a tower: its own shape alone, as a wall's)
+  if (e.btype !== 'TC') return [[0, 0, w, h]]; const m = w / 2;
   return [[0, 0, m, m], [m, 0, w, m], [0, m, m, h]]; }
 // A wall piece's solid parts, as its model draws them (tile-centric: wallPiece, pov3d's wallArms): a stretch from its
 // centre to each edge a wall-like neighbour stands at — on into a tower's or a gate's tile, to its post — and its post

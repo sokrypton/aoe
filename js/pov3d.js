@@ -6610,7 +6610,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         else if (shell) twin(o, 0, M.mask, o.geometry);                                                  // a building's ink shell: marked (the rim starts past it)
         // (a gate's wall sections are the adjoining run's, not the gate: marked — no rim across them — but not outlined)
         // (a building going up: its outline round its footprint alone — not round every scaffold pole and fence post)
-        else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype)) && (s.complete || o.name === 'plate')) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
+        else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype)) && (s.complete || o.name === 'plate' || isTowerBtype(s.btype))) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
         used.add(o);
       });
     }
