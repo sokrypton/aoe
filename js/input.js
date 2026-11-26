@@ -372,6 +372,11 @@ function finalizeWallDrag(){
     placing=null;
     return;
   }
+  // An all-red drag keeps placement and the builders, as doPlace does.
+  if(!getWallElbowTiles(start, corner, end).some(t => canPlace(placing, t.x, t.y, myTeam))){
+    showMsg('Can\'t build here!'); if(window.playSound) playSound('error');
+    return;
+  }
   // Mutation half is execWallDrag (js/commands.js), run at the scheduled
   // tick — start/corner/end are already world tiles.
   // Undo target: only the tiles that were EMPTY at drag time become fresh
@@ -2075,6 +2080,11 @@ function doPlace(sx,sy){
   if(vils.length===0){
     showMsg('Select a villager to build!');
     placing=null;
+    return;
+  }
+  // A red ghost (the same test it draws with) keeps placement and the builders, so the user just tries again.
+  if(!canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode,window.__editorMode) || (placing==='TC' && teamHasTC(myTeam))){
+    showMsg('Can\'t build here!'); if(window.playSound) playSound('error');
     return;
   }
   // Capture the builders' prior state too: undoing a placement must not leave
