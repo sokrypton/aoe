@@ -5449,13 +5449,17 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function rigPose(v, kind, t, female, opt, tc, steps = VIL_STEPS, fp = false, legs = null, lod = false){ // fp: seen through its own eyes — the head parts collapse; legs: {kind, t} the lower body plays instead; lod: may wear the light template far off
     const base = vilKey(kind, 'x', female, opt), u = ((t % 1) + 1) % 1 * steps, s0 = Math.floor(u) % steps, s1 = (s0 + 1) % steps, f = u - Math.floor(u);
+    // a fall plays once: its own step, always (a stand-in step from the frame's budget could hold it standing for good);
+    // the looping poses share the frame's sampling time
+    const once = kind === 'die', until = rigSampleUntil; if (once) rigSampleUntil = Infinity;
     let A = rigSample(base + '@' + s0, kind, s0 / steps, female, opt), Bs = A && (rigSample(base + '@' + s1, kind, s1 / steps, female, opt) || A);
+    rigSampleUntil = until;
     // its step not sampled yet (a pose a crowd takes up at once — farmers to their plows — waits its turn): the nearest
     // step of the same pose that is, not the last pose (walking on without the plow)
     if (!A) for (let d = 1; d <= steps >> 1 && !A; d++) A = rigSamples.get(base + '@' + (s0 + d) % steps) || rigSamples.get(base + '@' + (s0 - d + steps) % steps);
     if (A && !Bs) Bs = A;
     // (none yet at all: its first is made past the frame's sampling time, FIRST_SAMPLES a frame — the pose shows at once)
-    if (!A && firstSamples > 0) { firstSamples--; const until = rigSampleUntil; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
+    if (!A && firstSamples > 0) { firstSamples--; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
     if (!A) return !!v.rig;                                                     // keep the last pose until a sample of it is built
     if (lod && !fp) { const d2 = (v.x - camera.position.x) ** 2 + (v.z - camera.position.z) ** 2;   // (hysteresis: no flicker at the edge)
       if (d2 > RIG_LOD_FAR * RIG_LOD_FAR) v.low = true; else if (d2 < RIG_LOD_NEAR * RIG_LOD_NEAR) v.low = false; }
