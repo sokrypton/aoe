@@ -1567,8 +1567,7 @@ function pageSuite() {
       const r = await page.evaluate(tapStage(`
         const sc=createUnit('scout',30,30,0); selected=[sc];
         window.__pts=()=>({});`) + `;(()=>{
-        // (the stances live in the Formation popup on this skin: opened, its stance row read with the bar's tiles)
-        window.__formPopupOpen=true;
+        // (one soldier: its stances sit on the bar; a group's live in the Formation popup)
         const lit=()=>[...document.querySelectorAll('#actions .act-btn.stance-on, #form-popup .act-btn.stance-on')].map(b=>b.dataset.tipLabel).filter(l=>!/Formation$/.test(l));
         const has=(l)=>[...document.querySelectorAll('#actions .act-btn')].some(b=>b.dataset.tipLabel===l);
         const sc=selected[0];
@@ -1576,7 +1575,6 @@ function pageSuite() {
         sc.stance='standground'; updateUI(); const st=lit();
         sc.guardX=20; sc.guardY=20; updateUI(); const gd=lit();   // guard hidden → folds to stance
         sc.order={kind:'scout'}; updateUI(); const au=lit();            // auto overrides everything
-        window.__formPopupOpen=false; updateUI();
         return {dflt, st, gd, au, guardShown};
       })()`);
       assertEq(r.guardShown, false, 'Guard tile is hidden for soldiers');

@@ -185,13 +185,14 @@ function formationBtn(fb, cf, ids){
   btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-formation',unitIds:ids,formation:fb.key}); };
   return btn;
 }
-// The Formation popup (mobile skin): the four formations over the four stances (siege in it: formations alone), the selection's own lit. Open while
-// window.__formPopupOpen and an own soldier selection lasts; rebuilt as commands land (updateUI → refreshFormPopup).
+// The Formation popup (mobile skin, two or more units): the four formations over the four stances (siege in it: formations alone),
+// the selection's own lit. Open while window.__formPopupOpen and an own army selection lasts; rebuilt as commands land (updateUI → refreshFormPopup).
 function refreshFormPopup(){
   let pop=byId('form-popup');
   let sel=selected.filter(s=>s&&s.type==='unit'&&s.team===myTeam&&s.hp>0&&formsUp(s)), stances=sel.every(isSoldierUnit);   // (siege: formations alone)
-  let ok=!isClassicUI && !gameOver && window.__formPopupOpen && sel.length && sel.length===selected.length;
-  if(!ok){ if(window.__formPopupOpen && !(sel.length && sel.length===selected.length)) window.__formPopupOpen=false; if(pop) pop.style.display='none'; return; }
+  let fits=sel.length>1 && sel.length===selected.length;   // (one soldier: its stances sit on the bar)
+  let ok=!isClassicUI && !gameOver && window.__formPopupOpen && fits;
+  if(!ok){ if(window.__formPopupOpen && !fits) window.__formPopupOpen=false; if(pop) pop.style.display='none'; return; }
   if(!pop){ pop=document.createElement('div'); pop.id='form-popup'; document.body.appendChild(pop); }
   pop.style.display='';
   let ids=sel.map(s=>s.id), cf=commonFormation(sel), st=s=>(s.order&&s.order.kind==='scout')?'auto':(s.stance||'aggressive'), cs=sel.every(s=>st(s)===st(sel[0]))?st(sel[0]):null;   // (auto-scouting: its own tile lit, no stance — the bar's posture rule)
@@ -1531,19 +1532,20 @@ function updateUI(){
       let common = selected.every(s=>posture(s)===posture(selected[0])) ? posture(selected[0]) : null;
 
       // Stances and formations (soldiers only — rams carry neither). Classic: AoE2's inline rows. Mobile: ONE button
-      // (the current formation, the stance as its badge) that opens the Formation popup — four stance buttons and
+      // (the current formation) that opens the Formation popup — four stance buttons and
       // four formation buttons buried everything else on a phone.
-      if(allArmy){
-        if(isClassicUI){
+      // A formation needs a group: one soldier gets its four stances on the bar (one siege engine: nothing).
+      let forms = allArmy && selected.length>1;
+      if(allArmy && (forms || allSoldiers)){
+        if(isClassicUI || !forms){
           if(allSoldiers) STANCE_BTNS.forEach(sb=>act.appendChild(stanceBtn(sb, common, ids)));
           let cf=commonFormation(selected);
-          FORMATION_BTNS.forEach(fb=>act.appendChild(formationBtn(fb, cf, ids)));
+          if(forms) FORMATION_BTNS.forEach(fb=>act.appendChild(formationBtn(fb, cf, ids)));
         } else {
           let cf=commonFormation(selected), fb=FORMATION_BTNS.find(f=>f.key===cf)||FORMATION_BTNS[0];
           let btn=document.createElement('div');btn.className='act-btn'+(window.__formPopupOpen?' stance-on':'');
           btn.dataset.tipType='action'; btn.dataset.tipLabel='Formation'; btn.dataset.tipDesc=allSoldiers?'Formation and stance.':'Formation.';
-          btn.innerHTML=`<div class="btn-emoji form-ico">${formationSVG(fb.key)}</div><div class="btn-label">${fb.label}</div>`
-            +(allSoldiers&&STANCE_BTNS.some(sb=>sb.stance===common)?`<span class="form-stance-badge sprite-icon icon-stance-${common}"></span>`:'');
+          btn.innerHTML=`<div class="btn-emoji form-ico">${formationSVG(fb.key)}</div><div class="btn-label">${fb.label}</div>`;
           btn.onclick=()=>{ if(gameOver)return; window.__formPopupOpen=!window.__formPopupOpen; updateUI(); };
           act.appendChild(btn);
         }

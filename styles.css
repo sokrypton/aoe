@@ -913,7 +913,6 @@ canvas {
   #form-popup{ bottom: 14px; left: calc(50% + 48px); }
 }
 .btn-emoji.form-ico{ display: block; width: 100%; height: 100%; margin-bottom: 0; }   /* (fills the tile, as a sprite icon) */
-.form-stance-badge{ position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 3px; background-color: rgba(0,0,0,0.35); }
 
 /* ---- Queue/prepaid count badge on action buttons (js/ui.js): the number
    of queued units sits ON the train button (progress fill along its bottom
