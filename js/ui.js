@@ -108,30 +108,28 @@ function refreshMktPopup(mkt){
   pop.innerHTML=`<div id="mkt-popup-head"><span class="sprite-icon icon-MARKET" id="mkt-popup-ico"></span><span>Market</span><button type="button" id="mkt-popup-x">✕</button></div>`;
   pop.querySelector('#mkt-popup-x').onclick=()=>{ window.__mktPopupHidden=true; pop.style.display='none'; };
   pop.appendChild(buildMktExchange());
-  applyMktPopupPos(pop);      // re-apply a dragged position (innerHTML rebuilds every price tick)
-  makeMktPopupDraggable(pop); // (re)wire the freshly-rebuilt header as the drag handle
+  applyPopupPos(pop, 'mkt');   // re-apply a dragged position (innerHTML rebuilds every price tick)
+  makePopupDraggable(pop, pop.querySelector('#mkt-popup-head'), 'mkt'); // (re)wire the freshly-rebuilt header as the drag handle
   refreshActionAffordability();
 }
 
-// Re-apply a previously dragged position (window.__mktPopupPos), clamped to the
-// current viewport (window may have resized). No stored pos → the CSS default
-// (centered above the bottom bar) stands.
-function applyMktPopupPos(pop){
-  let p=window.__mktPopupPos; if(!p) return;
+// A popup card dragged by its header (the Market's exchange, the Formation picker): `key` names where its position is
+// kept (window.__popupPos[key]) across rebuilds and reopens, clamped to the viewport (it may have resized); none kept,
+// the CSS default (centred above the bottom bar) stands. Pointer events (mouse + touch); the ✕ isn't a handle, and the
+// tappable cells aren't in the header, so taps on them are never swallowed. Pointer capture + stopPropagation keep the
+// drag off the canvas (no pan).
+function applyPopupPos(pop, key){
+  let p=(window.__popupPos||{})[key]; if(!p) return;
   let r=pop.getBoundingClientRect();
   let left=Math.max(0, Math.min(p.left, window.innerWidth - r.width));
   let top =Math.max(0, Math.min(p.top,  window.innerHeight - r.height));
   pop.style.left=left+'px'; pop.style.top=top+'px'; pop.style.right='auto'; pop.style.bottom='auto'; pop.style.transform='none';
 }
-
-// Drag the exchange popup by its header. Pointer events (mouse + touch); the ✕
-// and the tappable buy/sell cells are NOT handles, so taps on them are never
-// swallowed. Pointer capture + stopPropagation keep the drag off the canvas
-// (no pan). Position persists in window.__mktPopupPos across rebuilds/reopens.
-function makeMktPopupDraggable(pop){
-  let head=pop.querySelector('#mkt-popup-head'); if(!head) return;
+function makePopupDraggable(pop, head, key){
+  if(!head) return;
+  head.style.cursor='move'; head.style.touchAction='none'; head.style.userSelect='none';
   head.addEventListener('pointerdown', e=>{
-    if(e.target.closest('#mkt-popup-x')) return; // the close button, not a drag
+    if(e.target.closest('button')) return; // the close button, not a drag
     e.preventDefault(); e.stopPropagation();
     let r=pop.getBoundingClientRect();
     let startL=r.left, startT=r.top, px=e.clientX, py=e.clientY, w=r.width, h=r.height;
@@ -141,7 +139,7 @@ function makeMktPopupDraggable(pop){
       let nl=Math.max(0, Math.min(startL+(ev.clientX-px), window.innerWidth - w));
       let nt=Math.max(0, Math.min(startT+(ev.clientY-py), window.innerHeight - h));
       pop.style.left=nl+'px'; pop.style.top=nt+'px';
-      window.__mktPopupPos={left:nl, top:nt};
+      (window.__popupPos=window.__popupPos||{})[key]={left:nl, top:nt};
     };
     let up=()=>{ head.removeEventListener('pointermove',move); head.removeEventListener('pointerup',up); };
     head.addEventListener('pointermove',move);
@@ -187,21 +185,22 @@ function formationBtn(fb, cf, ids){
   btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-formation',unitIds:ids,formation:fb.key}); };
   return btn;
 }
-// The Formation popup (mobile skin): the four formations over the four stances, the selection's own lit. Open while
+// The Formation popup (mobile skin): the four formations over the four stances (siege in it: formations alone), the selection's own lit. Open while
 // window.__formPopupOpen and an own soldier selection lasts; rebuilt as commands land (updateUI → refreshFormPopup).
 function refreshFormPopup(){
   let pop=byId('form-popup');
-  let sel=selected.filter(s=>s&&s.type==='unit'&&s.team===myTeam&&s.hp>0&&isSoldierUnit(s));
+  let sel=selected.filter(s=>s&&s.type==='unit'&&s.team===myTeam&&s.hp>0&&formsUp(s)), stances=sel.every(isSoldierUnit);   // (siege: formations alone)
   let ok=!isClassicUI && !gameOver && window.__formPopupOpen && sel.length && sel.length===selected.length;
   if(!ok){ if(window.__formPopupOpen && !(sel.length && sel.length===selected.length)) window.__formPopupOpen=false; if(pop) pop.style.display='none'; return; }
   if(!pop){ pop=document.createElement('div'); pop.id='form-popup'; document.body.appendChild(pop); }
   pop.style.display='';
   let ids=sel.map(s=>s.id), cf=commonFormation(sel), st=s=>(s.order&&s.order.kind==='scout')?'auto':(s.stance||'aggressive'), cs=sel.every(s=>st(s)===st(sel[0]))?st(sel[0]):null;   // (auto-scouting: its own tile lit, no stance — the bar's posture rule)
-  pop.innerHTML=`<div class="form-popup-head"><span>Formation</span><button type="button" class="form-popup-x">✕</button></div><div class="form-row"></div><div class="form-popup-sub">Stance</div><div class="form-row"></div>`;
+  pop.innerHTML=`<div class="form-popup-head"><span>Formation</span><button type="button" class="form-popup-x">✕</button></div><div class="form-row"></div>`+(stances?`<div class="form-popup-sub">Stance</div><div class="form-row"></div>`:'');
   pop.querySelector('.form-popup-x').onclick=()=>{ window.__formPopupOpen=false; updateUI(); };
   let rows=pop.querySelectorAll('.form-row');
   FORMATION_BTNS.forEach(fb=>rows[0].appendChild(formationBtn(fb, cf, ids)));
-  STANCE_BTNS.forEach(sb=>rows[1].appendChild(stanceBtn(sb, cs, ids)));
+  if(stances) STANCE_BTNS.forEach(sb=>rows[1].appendChild(stanceBtn(sb, cs, ids)));
+  applyPopupPos(pop, 'form'); makePopupDraggable(pop, pop.querySelector('.form-popup-head'), 'form');
 }
 
 // Re-tapping an already-SELECTED Market reopens a dismissed exchange popup
@@ -1501,6 +1500,7 @@ function updateUI(){
     // Scout for all-scout selections. Reuses the rally flag sprite for Guard.
     // Selection is KEPT so the player can keep adjusting (AoE2-style).
     let allSoldiers = selected.length>0 && selected.every(s=>s.type==='unit'&&s.team===myTeam&&isSoldierUnit(s));
+    let allArmy = selected.length>0 && selected.every(s=>s.type==='unit'&&s.team===myTeam&&formsUp(s));   // (formations: soldiers and siege)
     let allScouts   = selected.length>0 && selected.every(s=>s.type==='unit'&&s.utype==='scout'&&s.team===myTeam);
     let guardRow    = allGuardable(selected);
     // A selected own ram: Garrison-IN (load mode, while it has free seats) and
@@ -1512,7 +1512,7 @@ function updateUI(){
       if(ramSeatsFree(ram)>0) appendGarrisonLoadBtn(act, ram);
       if(ram.garrison && ram.garrison.length>0) appendGarrisonEjectBtn(act, ram);
     }
-    if(rebuildActions && (allSoldiers || guardRow)){
+    if(rebuildActions && (allSoldiers || allArmy || guardRow)){
       let ids = selected.map(s=>s.id);
       // Guard tile is HIDDEN for soldiers for now — the four stances already
       // cover "hold this area" (Defensive/Stand Ground), so a separate flag
@@ -1533,17 +1533,17 @@ function updateUI(){
       // Stances and formations (soldiers only — rams carry neither). Classic: AoE2's inline rows. Mobile: ONE button
       // (the current formation, the stance as its badge) that opens the Formation popup — four stance buttons and
       // four formation buttons buried everything else on a phone.
-      if(allSoldiers){
+      if(allArmy){
         if(isClassicUI){
-          STANCE_BTNS.forEach(sb=>act.appendChild(stanceBtn(sb, common, ids)));
+          if(allSoldiers) STANCE_BTNS.forEach(sb=>act.appendChild(stanceBtn(sb, common, ids)));
           let cf=commonFormation(selected);
           FORMATION_BTNS.forEach(fb=>act.appendChild(formationBtn(fb, cf, ids)));
         } else {
           let cf=commonFormation(selected), fb=FORMATION_BTNS.find(f=>f.key===cf)||FORMATION_BTNS[0];
           let btn=document.createElement('div');btn.className='act-btn'+(window.__formPopupOpen?' stance-on':'');
-          btn.dataset.tipType='action'; btn.dataset.tipLabel='Formation'; btn.dataset.tipDesc='Formation and stance.';
+          btn.dataset.tipType='action'; btn.dataset.tipLabel='Formation'; btn.dataset.tipDesc=allSoldiers?'Formation and stance.':'Formation.';
           btn.innerHTML=`<div class="btn-emoji form-ico">${formationSVG(fb.key)}</div><div class="btn-label">${fb.label}</div>`
-            +(STANCE_BTNS.some(sb=>sb.stance===common)?`<span class="form-stance-badge sprite-icon icon-stance-${common}"></span>`:'');
+            +(allSoldiers&&STANCE_BTNS.some(sb=>sb.stance===common)?`<span class="form-stance-badge sprite-icon icon-stance-${common}"></span>`:'');
           btn.onclick=()=>{ if(gameOver)return; window.__formPopupOpen=!window.__formPopupOpen; updateUI(); };
           act.appendChild(btn);
         }

@@ -1111,7 +1111,7 @@ function pageSuite() {
     // Market popup drags by its header (pointer events) and keeps its dragged
     // position across the innerHTML rebuild that fires on every price tick.
     const dragOk = await page.evaluate(`(()=>{
-      selected.length=0; window.__mktPopupHidden=false; window.__mktPopupPos=null;
+      selected.length=0; window.__mktPopupHidden=false; window.__popupPos={};
       const mk=createBuilding('MARKET',26,26,0); selected=[mk]; updateUI();
       const pop=document.getElementById('mkt-popup');
       const head=pop.querySelector('#mkt-popup-head');
@@ -1121,7 +1121,7 @@ function pageSuite() {
       head.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:1,clientX:sx-40,clientY:sy-30}));
       const after=pop.getBoundingClientRect();
       head.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1}));
-      const posSet=!!window.__mktPopupPos;
+      const posSet=!!(window.__popupPos||{}).mkt;
       refreshMktPopup(mk); // price-tick rebuild must NOT reset the position
       const afterRebuild=pop.getBoundingClientRect();
       selected.length=0; updateUI();
