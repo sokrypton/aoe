@@ -5502,7 +5502,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function rigTemplateFor(base, sig, kind, t, female, opt, low = false){
     const k = base + '#' + sig + (low ? '#low' : ''); let T = rigTemplates.get(k);
-    if (!T) { if (rigTemplateBudget <= 0) return null; rigTemplateBudget--; const tb = performance.now(); T = rigTemplate(kind, t, female, opt, low); frameParts.tpl = (frameParts.tpl || 0) + performance.now() - tb; if (T.sig !== sig) console.warn('rig: layout moved', k, T.sig.length, sig.length); rigTemplates.set(k, T); }
+    if (!T) { if (rigTemplateBudget <= 0) return null; rigTemplateBudget--; const tb = performance.now(); T = rigTemplate(kind, t, female, opt, low); frameParts.tpl = (frameParts.tpl || 0) + performance.now() - tb; if (T.sig !== sig) { console.warn('rig: layout moved', k, T.sig.length, sig.length); return null; } rigTemplates.set(k, T); }   // (parts unlike the sample's: never worn — every bone on the wrong part blows them up)
     return T;
   }
   // A unit's skinned instance of a template (shared geometry/materials, its own bones; team colour swapped).
@@ -5545,7 +5545,10 @@ gl_Position = projectionMatrix * mvPosition;`;
     rigSampleUntil = until;
     // its step not sampled yet (a pose a crowd takes up at once — farmers to their plows — waits its turn): the nearest
     // step of the same pose that is, not the last pose (walking on without the plow)
-    if (!A) for (let d = 1; d <= steps >> 1 && !A; d++) A = rigSamples.get(base + '@' + (s0 + d) % steps) || rigSamples.get(base + '@' + (s0 - d + steps) % steps);
+    let sa = s0;   // (the step A is: its template is made from that step's frame — a pose's parts can come and go
+    // between steps (a forager's berry), and a template from another step would put every bone on the wrong part)
+    if (!A) for (let d = 1; d <= steps >> 1 && !A; d++) { const p = (s0 + d) % steps, q = (s0 - d + steps) % steps;
+      A = rigSamples.get(base + '@' + p); if (A) sa = p; else { A = rigSamples.get(base + '@' + q); if (A) sa = q; } }
     if (A && !Bs) Bs = A;
     // (none yet at all: its first is made past the frame's sampling time, FIRST_SAMPLES a frame — the pose shows at once)
     if (!A && firstSamples > 0) { firstSamples--; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
@@ -5553,7 +5556,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (lod && !fp) { const d2 = (v.x - camera.position.x) ** 2 + (v.z - camera.position.z) ** 2;   // (hysteresis: no flicker at the edge)
       if (d2 > RIG_LOD_FAR * RIG_LOD_FAR) v.low = true; else if (d2 < RIG_LOD_NEAR * RIG_LOD_NEAR) v.low = false; }
     else v.low = false;
-    const T = (v.low && rigTemplateFor(base, A.sig, kind, s0 / steps, female, opt, true)) || rigTemplateFor(base, A.sig, kind, s0 / steps, female, opt); // (the light one not built yet: the full one)
+    const T = (v.low && rigTemplateFor(base, A.sig, kind, sa / steps, female, opt, true)) || rigTemplateFor(base, A.sig, kind, sa / steps, female, opt); // (the light one not built yet: the full one)
     if (!T) return !!v.rig;
     if (!v.rig || v.rig.T !== T || v.rig.tc !== tc) {
       // an action whose parts come and go (an arrow drawn, a tool fetched) flips between templates: each unit keeps the
