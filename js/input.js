@@ -1955,7 +1955,7 @@ function doCommand(sx,sy){
     }
   }
   if(!target){
-    target = getBuildingUnderCursor(sx, sy, en => isEnemyOf(myTeam, en) && buildingFogLevel(en) === 2);
+    target = getBuildingUnderCursor(sx, sy, en => isEnemyOf(myTeam, en) && buildingFogLevel(en) >= 1);   // (in sight, or seen and in the fog: AoE2 lets you attack what you remember)
   }
   // Trade cart onto an ALLY's Market: an allied market is same-side-but-not-own,
   // so it's dropped by both the enemy-target and own-building filters — pass it
