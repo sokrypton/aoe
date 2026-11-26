@@ -372,10 +372,12 @@ function finalizeWallDrag(){
     placing=null;
     return;
   }
-  // An all-red drag keeps placement and the builders, as doPlace does.
-  if(!getWallElbowTiles(start, corner, end).some(t => canPlace(placing, t.x, t.y, myTeam))){
-    showMsg('Can\'t build here!'); if(window.playSound) playSound('error');
-    return;
+  // An all-red or unaffordable drag keeps placement and the builders, as doPlace does.
+  let dragTiles = getWallElbowTiles(start, corner, end);
+  if(!dragTiles.some(t => canPlace(placing, t.x, t.y, myTeam))){ refuseMsg('Can\'t build here!'); return; }
+  // (an upgrade drag is priced net of the palisade refund: left to the sim)
+  if(!dragTiles.some(t => stoneCounterpartAt(t.x, t.y, placing, myTeam)) && !canAfford(myTeam, effectiveBuildCost(placing))){
+    refuseMsg('Not enough resources!'); return;
   }
   // Mutation half is execWallDrag (js/commands.js), run at the scheduled
   // tick — start/corner/end are already world tiles.
@@ -2074,6 +2076,16 @@ function doCommand(sx,sy){
 // preview mode, Shift-to-repeat, "select a villager" nag). The actual
 // placement/cost/foundation mutation is execBuildPlacement (js/commands.js),
 // run at the scheduled tick.
+function refuseMsg(m){ showMsg(m); if(window.playSound) playSound('error'); return true; }
+// Viewer-side pre-check mirroring placeBuilding (the sim still decides): true = refused, with its toast.
+function refusePlacement(btype,x,y){
+  if(!canPlace(btype,x,y,myTeam,window.__editorMode,window.__editorMode) || (btype==='TC' && teamHasTC(myTeam)))
+    return refuseMsg('Can\'t build here!');
+  if(stoneCounterpartAt(x,y,btype,myTeam)) return false;
+  let plan=resolveBuildingPlacement(btype,x,y,myTeam);
+  let cost=effectiveBuildCost(btype,(isGateBtype(btype)||isTowerBtype(btype))?plan.replaced:null);
+  return !canAfford(myTeam,cost) && refuseMsg('Not enough resources!');
+}
 function doPlace(sx,sy){
   let tile=screenToTile(sx,sy);
   let vils = selected.filter(s=>s.type==='unit'&&s.utype==='villager'&&s.team===myTeam);
@@ -2082,11 +2094,8 @@ function doPlace(sx,sy){
     placing=null;
     return;
   }
-  // A red ghost (the same test it draws with) keeps placement and the builders, so the user just tries again.
-  if(!canPlace(placing,tile.x,tile.y,myTeam,window.__editorMode,window.__editorMode) || (placing==='TC' && teamHasTC(myTeam))){
-    showMsg('Can\'t build here!'); if(window.playSound) playSound('error');
-    return;
-  }
+  // A refused spot keeps placement and the builders, so the user just tries again.
+  if(refusePlacement(placing,tile.x,tile.y))return;
   // Capture the builders' prior state too: undoing a placement must not leave
   // them standing at the cancelled site. A villager that was GATHERING goes
   // back to that resource tile (re-tasked exactly as a click would); anything
