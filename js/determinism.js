@@ -174,6 +174,7 @@ function detEntityHash(e){
   h = detMix(h, e.tradeHomeId == null ? -1 : e.tradeHomeId);
   h = detMix(h, e.tradeDestId == null ? -1 : e.tradeDestId);
   h = detMixStr(h, e.tradePhase);
+  h = detMixStr(h, e.formation);      // its formation (set-formation): shapes its group orders
   h = detMixStr(h, e.stance);         // combat stance — now mid-game-settable via the HUD (set-stance cmd)
   h = detMix(h, e.retreatUntil || 0); // AI tactical retreat: gates retaliation/auto-acquire/retasking (js/ai.js, js/logic.js)
   h = detMix(h, e.lastEnemyHitTick == null ? -1 : e.lastEnemyHitTick); // retreat trigger (enemy-player hits only)
@@ -208,7 +209,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','rideLeft','eatLeft','eatId','offered','offerTo','homing','tameReadyAt','flyTarget','flyX','flyY','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
+  'stance','formation','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','rideLeft','eatLeft','eatId','offered','offerTo','homing','tameReadyAt','flyTarget','flyX','flyY','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:

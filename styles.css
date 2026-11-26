@@ -897,6 +897,24 @@ canvas {
   #mkt-popup{ bottom: 14px; left: calc(50% + 48px); }
 }
 
+/* ---- Formation POPUP (mobile skin, js/ui.js refreshFormPopup): the army's four formations over its four stances,
+   opened from the one Formation button (the Market popup's card). ---- */
+#form-popup{
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 158px; z-index: 60;
+  background: linear-gradient(180deg, #3d2310 0%, #1f0f04 100%); border: 2px solid #bfa054; border-radius: 10px;
+  padding: 8px 10px 10px; box-shadow: 0 6px 22px rgba(0,0,0,0.65), inset 0 0 6px rgba(0,0,0,0.5);
+}
+#form-popup .form-popup-head{ display: flex; align-items: center; gap: 6px; color: #ffd700; font: bold 14px 'Cinzel', Georgia, serif; margin-bottom: 6px; }
+#form-popup .form-popup-head span{ flex: 1; }
+#form-popup .form-popup-x{ background: none; border: 1px solid #bfa054; color: #ffebad; border-radius: 4px; width: 24px; height: 24px; font-size: 13px; cursor: pointer; line-height: 1; }
+#form-popup .form-popup-sub{ color: #e8d39a; font: bold 11px 'Cinzel', Georgia, serif; margin: 6px 0 4px; }
+#form-popup .form-row{ display: flex; gap: 6px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  #form-popup{ bottom: 14px; left: calc(50% + 48px); }
+}
+.btn-emoji.form-ico{ display: block; width: 100%; height: 100%; margin-bottom: 0; }   /* (fills the tile, as a sprite icon) */
+.form-stance-badge{ position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 3px; background-color: rgba(0,0,0,0.35); }
+
 /* ---- Queue/prepaid count badge on action buttons (js/ui.js): the number
    of queued units sits ON the train button (progress fill along its bottom
    edge shows the active one, same anatomy as Advance Age) — there is no

@@ -333,6 +333,9 @@ function execCommand(cmd, team, seat = team){
     case 'set-stance':
       execSetStance(cmd, team);
       break;
+    case 'set-formation':
+      execSetFormation(cmd, team);
+      break;
     case 'garrison':
       execGarrison(cmd, team);
       break;
@@ -344,6 +347,12 @@ function execCommand(cmd, team, seat = team){
 // lockstep-safe like auto-scout/guard: queued to a shared tick, ids re-resolved
 // against the local entitiesById + ownership-filtered on every peer.
 const VALID_STANCES = new Set(['aggressive', 'defensive', 'standground', 'passive']);
+// A formation for the selected soldiers (the HUD's Formation popup): theirs from now on, every group order they're in.
+function execSetFormation(cmd, team){
+  if (!FORMATIONS.includes(cmd.formation)) return; // never trust a wire value
+  for (const id of cmd.unitIds || []) { const u = entitiesById.get(id);
+    if (u && u.type === 'unit' && u.team === team && u.hp > 0 && isSoldierUnit(u)) u.formation = cmd.formation === 'line' ? undefined : cmd.formation; }
+}
 function execSetStance(cmd, team){
   if (!VALID_STANCES.has(cmd.stance)) return; // never trust a wire value
   let units = (cmd.unitIds || []).map(id => entitiesById.get(id))
@@ -507,12 +516,18 @@ function isRallyBuildingTarget(b, team){
 // anchor every slot is roughly equidistant from every unit — so translating
 // the group's own shape sidesteps the assignment problem entirely.
 // Deterministic: command-payload/scan unit order, exact-order float math.
-// AoE2 LINE formation: crisp RANKS perpendicular to the march direction —
-// melee front, archers behind, siege rear, everyone else last; each rank a
-// centered row, rows stacked from the front and centered on the target.
-// `dir` (optional world vector) orients the front; omitted → SE. Replaces
-// the compact-own-arrangement scheme, under which a scattered selection
-// arrived still scattered — "formations don't work" (user caught it).
+// AoE2's formations (a unit's own e.formation, set by 'set-formation'; a group takes its members' most common —
+// ties to the earlier in FORMATIONS; unset is Line). Ranks are crisp rows perpendicular to the march: melee front,
+// archers behind, siege rear, everyone else last, each row centred, the rows stacked from the front and centred on the
+// target. LINE that alone; STAGGERED with every gap doubled (siege splash finds fewer); FLANK split down the middle,
+// FLANK_GAP tiles apart; BOX a hollow square of the front ranks round the rest. `dir` (optional world vector) orients
+// the front; omitted → SE. Deterministic: command-payload/scan unit order, exact-order float math.
+const FORMATIONS = ['line', 'staggered', 'box', 'flank'], FLANK_GAP = 3;
+function groupFormation(units){
+  const n = new Map(); for (const u of units) { const f = FORMATIONS.includes(u.formation) ? u.formation : 'line'; n.set(f, (n.get(f) || 0) + 1); }
+  let best = 'line', bn = -1; for (const f of FORMATIONS) if ((n.get(f) || 0) > bn) { best = f; bn = n.get(f) || 0; }
+  return best;
+}
 function formationOffsets(units, excludeCenter, dir){
   let off = new Map();
   if (!units.length) return off;
@@ -520,23 +535,37 @@ function formationOffsets(units, excludeCenter, dir){
   let dy = (dir && (dir.dx || dir.dy)) ? dir.dy : 1;
   let L = simHypot(dx, dy) || 1; dx /= L; dy /= L;
   let px = -dy, py = dx;                       // the rank (row) axis
-  const rankOf = u => u.utype === 'archer' ? 1 : u.utype === 'ram' ? 2 : isArmyUnit(u.utype) ? 0 : 3;
+  const rankOf = u => u.utype === 'archer' ? 1 : u.utype === 'ram' || u.utype === 'trebuchet' ? 2 : isArmyUnit(u.utype) ? 0 : 3;
   let sorted = [...units].sort((a, b) => rankOf(a) - rankOf(b) || a.id - b.id);
-  let W = Math.max(2, Math.ceil(Math.sqrt(sorted.length) * 1.6));
-  // Rows fill to W and break at class boundaries so ranks stay pure.
-  let rows = [], row = [], rowRank = rankOf(sorted[0]);
-  for (const u of sorted) {
-    let r = rankOf(u);
-    if (row.length >= W || r !== rowRank) { rows.push(row); row = []; rowRank = r; }
-    row.push(u);
+  const kind = groupFormation(units), slots = [];   // [u, side (along the rank), back (rows behind the centre)]
+  if (kind === 'box' && sorted.some(u => rankOf(u) === 0) && sorted.some(u => rankOf(u) !== 0)) {
+    // the front ranks round the outside of a square, the rest inside it (rows, as a line)
+    const outer = sorted.filter(u => rankOf(u) === 0), inner = sorted.filter(u => rankOf(u) !== 0);
+    let S = 3; while (4 * (S - 1) < outer.length || (S - 2) * (S - 2) < inner.length) S++;
+    const ring = []; for (let k = 0; k < S - 1; k++) ring.push([k, 0]); for (let k = 0; k < S - 1; k++) ring.push([S - 1, k]);
+    for (let k = S - 1; k > 0; k--) ring.push([k, S - 1]); for (let k = S - 1; k > 0; k--) ring.push([0, k]);
+    const c = (S - 1) / 2, step = ring.length / outer.length;
+    outer.forEach((u, i) => { const [a, b] = ring[Math.floor(i * step)]; slots.push([u, a - c, b - c]); });
+    const iw = S - 2; inner.forEach((u, i) => slots.push([u, 1 + (i % iw) - c, 1 + Math.floor(i / iw) - c]));
+  } else {
+    let W = Math.max(2, Math.ceil(Math.sqrt(sorted.length) * 1.6));
+    // Rows fill to W and break at class boundaries so ranks stay pure.
+    let rows = [], row = [], rowRank = rankOf(sorted[0]);
+    for (const u of sorted) {
+      let r = rankOf(u);
+      if (row.length >= W || r !== rowRank) { rows.push(row); row = []; rowRank = r; }
+      row.push(u);
+    }
+    if (row.length) rows.push(row);
+    const g = kind === 'staggered' ? 2 : 1;
+    rows.forEach((r, ri) => { const back = (ri - (rows.length - 1) / 2) * g;
+      r.forEach((u, ci) => { let side = (ci - (r.length - 1) / 2) * g;
+        if (kind === 'flank' && r.length > 1) side += (ci < r.length / 2 ? -1 : 1) * FLANK_GAP / 2;
+        slots.push([u, side, back]); }); });
   }
-  if (row.length) rows.push(row);
   let taken = new Set(excludeCenter ? ['0,0'] : []);
   let R = Math.ceil(Math.sqrt(units.length)) + 1;
-  rows.forEach((r, ri) => {
-    let back = ri - (rows.length - 1) / 2;     // rows centered on the target
-    r.forEach((u, ci) => {
-      let side = ci - (r.length - 1) / 2;
+  for (const [u, side, back] of slots) {
       let ox = Math.round(px * side - dx * back), oy = Math.round(py * side - dy * back);
       if (taken.has(ox + ',' + oy)) {
         outer: for (let rr = 1; rr <= R + 2; rr++) {
@@ -552,8 +581,7 @@ function formationOffsets(units, excludeCenter, dir){
       }
       taken.add(ox + ',' + oy);
       off.set(u.id, [ox, oy]);
-    });
-  });
+  }
   return off;
 }
 

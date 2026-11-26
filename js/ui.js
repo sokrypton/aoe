@@ -149,6 +149,61 @@ function makeMktPopupDraggable(pop){
   });
 }
 
+// ---- Formations + stances (js/commands.js FORMATIONS, set-formation / set-stance) ----
+const STANCE_BTNS=[
+  {stance:'aggressive', label:'Aggressive',   desc:'Attacks any enemy it sees and pursues.'},
+  {stance:'defensive',  label:'Defensive',    desc:'Attacks nearby enemies but returns to its post.'},
+  {stance:'standground',label:'Stand Ground', desc:'Holds position; attacks only what comes into range.'},
+  {stance:'passive',    label:'No Attack',    desc:'Never attacks or retaliates.'},
+];
+const FORMATION_BTNS=[
+  {key:'line',      label:'Line',      desc:'Ranks across the march: melee in front, archers behind, siege at the back.'},
+  {key:'staggered', label:'Staggered', desc:'A line with double the gaps: siege splash finds fewer.'},
+  {key:'box',       label:'Box',       desc:'Melee round the outside, archers and siege safe inside.'},
+  {key:'flank',     label:'Flank',     desc:'The line split in two, a gap between the halves.'},
+];
+// The selection's formation when they all share one (unset is Line), else null.
+function commonFormation(sel){ let f=s=>s.formation||'line'; return sel.every(s=>f(s)===f(sel[0]))?f(sel[0]):null; }
+// A formation's little diagram: front ranks red, the rest blue, the march upward.
+function formationSVG(k){
+  const R=[], B=[], dot=(x,y,c)=>`<circle cx="${x}" cy="${y}" r="2.6" fill="${c}" stroke="#1a0d04" stroke-width="0.8"/>`;
+  if(k==='line'){ for(let i=0;i<5;i++){ R.push([5+i*5,11]); B.push([5+i*5,19]); } }
+  if(k==='staggered'){ for(let i=0;i<3;i++) R.push([5+i*10,10]); for(let i=0;i<2;i++) B.push([10+i*10,21]); }
+  if(k==='box'){ for(const [x,y] of [[6,6],[15,6],[24,6],[24,15],[24,24],[15,24],[6,24],[6,15]]) R.push([x,y]); B.push([15,15]); }
+  if(k==='flank'){ for(let i=0;i<2;i++){ R.push([4+i*5,11]); R.push([21+i*5,11]); B.push([4+i*5,19]); B.push([21+i*5,19]); } }
+  return `<svg viewBox="0 0 30 30" width="100%" height="100%">${R.map(p=>dot(p[0],p[1],'#d6453a')).join('')}${B.map(p=>dot(p[0],p[1],'#3a78d6')).join('')}</svg>`;
+}
+function stanceBtn(sb, common, ids){
+  let btn=document.createElement('div');btn.className='act-btn'+(common===sb.stance?' stance-on':'');
+  btn.dataset.tipType='action'; btn.dataset.tipLabel=sb.label; btn.dataset.tipDesc=sb.desc;
+  btn.innerHTML=`<div class="btn-emoji sprite-icon icon-stance-${sb.stance}"></div><div class="btn-label">${sb.label}</div>`;
+  btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-stance',unitIds:ids,stance:sb.stance}); };
+  return btn;
+}
+function formationBtn(fb, cf, ids){
+  let btn=document.createElement('div');btn.className='act-btn'+(cf===fb.key?' stance-on':'');
+  btn.dataset.tipType='action'; btn.dataset.tipLabel=fb.label+' Formation'; btn.dataset.tipDesc=fb.desc;
+  btn.innerHTML=`<div class="btn-emoji form-ico">${formationSVG(fb.key)}</div><div class="btn-label">${fb.label}</div>`;
+  btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-formation',unitIds:ids,formation:fb.key}); };
+  return btn;
+}
+// The Formation popup (mobile skin): the four formations over the four stances, the selection's own lit. Open while
+// window.__formPopupOpen and an own soldier selection lasts; rebuilt as commands land (updateUI → refreshFormPopup).
+function refreshFormPopup(){
+  let pop=byId('form-popup');
+  let sel=selected.filter(s=>s&&s.type==='unit'&&s.team===myTeam&&s.hp>0&&isSoldierUnit(s));
+  let ok=!isClassicUI && !gameOver && window.__formPopupOpen && sel.length && sel.length===selected.length;
+  if(!ok){ if(window.__formPopupOpen && !(sel.length && sel.length===selected.length)) window.__formPopupOpen=false; if(pop) pop.style.display='none'; return; }
+  if(!pop){ pop=document.createElement('div'); pop.id='form-popup'; document.body.appendChild(pop); }
+  pop.style.display='';
+  let ids=sel.map(s=>s.id), cf=commonFormation(sel), st=s=>(s.order&&s.order.kind==='scout')?'auto':(s.stance||'aggressive'), cs=sel.every(s=>st(s)===st(sel[0]))?st(sel[0]):null;   // (auto-scouting: its own tile lit, no stance — the bar's posture rule)
+  pop.innerHTML=`<div class="form-popup-head"><span>Formation</span><button type="button" class="form-popup-x">✕</button></div><div class="form-row"></div><div class="form-popup-sub">Stance</div><div class="form-row"></div>`;
+  pop.querySelector('.form-popup-x').onclick=()=>{ window.__formPopupOpen=false; updateUI(); };
+  let rows=pop.querySelectorAll('.form-row');
+  FORMATION_BTNS.forEach(fb=>rows[0].appendChild(formationBtn(fb, cf, ids)));
+  STANCE_BTNS.forEach(sb=>rows[1].appendChild(stanceBtn(sb, cs, ids)));
+}
+
 // Re-tapping an already-SELECTED Market reopens a dismissed exchange popup
 // — clicking the building again is the natural "show me the trade screen"
 // gesture, and since the selection doesn't change, no rebuild fires to do
@@ -526,7 +581,8 @@ function updateUI(){
     // Stance, so the highlighted stance button moves the instant a set-stance
     // command lands. This is the COARSE gate (updateUI early-returns unless
     // stateChanged) — the selKey below then rebuilds the strip. Both need it.
-    if (e.type === 'unit') currentSelectionDetails += ':st' + selected.filter(s => s.type === 'unit').map(s => s.stance || '-').join('.');
+    if (e.type === 'unit') currentSelectionDetails += ':st' + selected.filter(s => s.type === 'unit').map(s => (s.stance || '-') + (s.formation || '')).join('.');
+    if (e.type === 'unit') currentSelectionDetails += ':fp' + (window.__formPopupOpen ? 1 : 0);   // (the Formation popup opened or closed)
     // Guard state (posture highlight): whether each unit holds a post, so the
     // Guard tile lights/unlights the instant a guard or stance command lands.
     if (e.type === 'unit') currentSelectionDetails += ':gd' + selected.filter(s => s.type === 'unit').map(s => (s.order && GUARD_ORDER_KINDS.has(s.order.kind)) ? 1 : 0).join('');
@@ -775,7 +831,8 @@ function updateUI(){
     // Stance: the highlighted stance button must refresh when a set-stance
     // command lands (the button set is fixed, but which one is `stance-on`
     // changes). Fold the selection's stances into the key.
-    +':st'+selected.filter(s=>s.type==='unit').map(s=>s.stance||'-').join('.')
+    +':st'+selected.filter(s=>s.type==='unit').map(s=>(s.stance||'-')+(s.formation||'')).join('.')
+    +':fp'+(window.__formPopupOpen?1:0)   // (the Formation popup opened or closed: its button lit, the popup built)
     // Guard state: the Guard tile's highlight (and the fact that a stance clears
     // it) must refresh the strip when a guard/stance command lands.
     +':gd'+selected.filter(s=>s.type==='unit').map(s=>(s.order&&GUARD_ORDER_KINDS.has(s.order.kind))?1:0).join('')
@@ -810,6 +867,7 @@ function updateUI(){
     let mktSel = selected.length===1 && selected[0].type==='building'
       && selected[0].btype==='MARKET' && selected[0].complete && selected[0].team===myTeam;
     if(!isClassicUI && !mktSel) refreshMktPopup(null);
+    if(!isClassicUI) refreshFormPopup();   // (closes itself when the soldiers are no longer the selection; relit as commands land)
   }
 
   // "Back" — leftmost action button whenever anything is selected, a
@@ -945,6 +1003,7 @@ function updateUI(){
   let port = byId('sel-portrait');
   if(gameOver){
     if(!isClassicUI) refreshMktPopup(null); // no trading over the end screen
+    if(!isClassicUI) refreshFormPopup();
     let iWon = didIWin();
     if (port) { setPortraitIcon(port, null, iWon ? '🏆' : '💀'); port.classList.remove('cam-locked'); }
     setSelHp('');
@@ -1471,23 +1530,23 @@ function updateUI(){
       let posture = s => (s.order&&s.order.kind==='scout') ? 'auto' : ((showGuard && s.order && GUARD_ORDER_KINDS.has(s.order.kind)) ? 'guard' : (s.stance||'aggressive'));
       let common = selected.every(s=>posture(s)===posture(selected[0])) ? posture(selected[0]) : null;
 
-      // Stances (soldiers only — rams carry no stance).
+      // Stances and formations (soldiers only — rams carry neither). Classic: AoE2's inline rows. Mobile: ONE button
+      // (the current formation, the stance as its badge) that opens the Formation popup — four stance buttons and
+      // four formation buttons buried everything else on a phone.
       if(allSoldiers){
-        let STANCE_BTNS=[
-          {stance:'aggressive', label:'Aggressive',   desc:'Attacks any enemy it sees and pursues.'},
-          {stance:'defensive',  label:'Defensive',    desc:'Attacks nearby enemies but returns to its post.'},
-          {stance:'standground',label:'Stand Ground', desc:'Holds position; attacks only what comes into range.'},
-          {stance:'passive',    label:'No Attack',    desc:'Never attacks or retaliates.'},
-        ];
-        STANCE_BTNS.forEach(sb=>{
-          let btn=document.createElement('div');btn.className='act-btn'+(common===sb.stance?' stance-on':'');
-          btn.dataset.tipType='action';
-          btn.dataset.tipLabel=sb.label;
-          btn.dataset.tipDesc=sb.desc;
-          btn.innerHTML=`<div class="btn-emoji sprite-icon icon-stance-${sb.stance}"></div><div class="btn-label">${sb.label}</div>`;
-          btn.onclick=()=>{ if(gameOver)return; submitCommand({kind:'set-stance',unitIds:ids,stance:sb.stance}); };
+        if(isClassicUI){
+          STANCE_BTNS.forEach(sb=>act.appendChild(stanceBtn(sb, common, ids)));
+          let cf=commonFormation(selected);
+          FORMATION_BTNS.forEach(fb=>act.appendChild(formationBtn(fb, cf, ids)));
+        } else {
+          let cf=commonFormation(selected), fb=FORMATION_BTNS.find(f=>f.key===cf)||FORMATION_BTNS[0];
+          let btn=document.createElement('div');btn.className='act-btn'+(window.__formPopupOpen?' stance-on':'');
+          btn.dataset.tipType='action'; btn.dataset.tipLabel='Formation'; btn.dataset.tipDesc='Formation and stance.';
+          btn.innerHTML=`<div class="btn-emoji form-ico">${formationSVG(fb.key)}</div><div class="btn-label">${fb.label}</div>`
+            +(STANCE_BTNS.some(sb=>sb.stance===common)?`<span class="form-stance-badge sprite-icon icon-stance-${common}"></span>`:'');
+          btn.onclick=()=>{ if(gameOver)return; window.__formPopupOpen=!window.__formPopupOpen; updateUI(); };
           act.appendChild(btn);
-        });
+        }
       }
 
       // Guard — a flag-the-ground order (rams for now; soldiers hidden via
