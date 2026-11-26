@@ -175,10 +175,13 @@ const _rgbOf = new Map();
 // ragged edge. Viewer-only: hashed noise, never the sim's.
 // GROUND_PX: the picture's pixels a tile — the grain's size (fewer: bigger, blockier pixels). ?groundpx=N in the address
 // tries another.
-const GROUND_PX = (typeof location !== 'undefined' && Math.round(+new URLSearchParams(location.search).get('groundpx'))) || 20, GROUND_WEAR = 3;
+const GROUND_PX = (typeof location !== 'undefined' && Math.round(+new URLSearchParams(location.search).get('groundpx'))) || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('ground') === 'toon' ? 32 : 20), GROUND_WEAR = 3;   // (the cartoon ground: finer, its edges smooth)
 // The ground worn bare round buildings and deposits, GROUND_WEAR tiles out (false: grass up to their walls — under a Town
 // Center, a deposit or a farm the ground is still its own, and paths still wear).
 const GROUND_WEAR_ON = true;
+// MOCK (?ground=toon): the cartoon ground of the concept art — flat greens, clean-edged dirt with a darker rim, no grain
+const GROUND_TOON = typeof location !== 'undefined' && new URLSearchParams(location.search).get('ground') === 'toon';
+const TOON_GRASS = [98, 168, 58], TOON_DIRT = [196, 160, 104], TOON_RIM = [138, 104, 62], TOON_TUFT = [66, 128, 40];
 let _gart = null;
 const _gHash = (x, y, s) => { let h = (x * 374761393 + y * 668265263 + s * 2246822519) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
 const _gBase = new Map();   // a kind's colour: its palette's mean
@@ -216,7 +219,7 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
   for (let px = tx * G; px < (tx + 1) * G; px++) { const i = px - px0;
     // (where it stands, in tiles — pushed about, so the edge between two kinds wanders off the grid)
     const wx = (px + 0.5) / G, h = _gHash(px, py, 5);
-    const jx = wx + (J3(i, j) - 0.5) * 0.5 + (h - 0.5) * 0.14, jy = wy + (J4(i, j) - 0.5) * 0.5 + (_gHash(px, py, 8) - 0.5) * 0.14;
+    const hj = GROUND_TOON ? 0 : 0.14, jx = wx + (J3(i, j) - 0.5) * 0.5 + (h - 0.5) * hj, jy = wy + (J4(i, j) - 0.5) * 0.5 + (_gHash(px, py, 8) - 0.5) * hj;
     // (under a tree or a bush, grass: its own shadow does the darkening — no dark floor as well)
     const kx = Math.floor(jx), ky = Math.floor(jy), k0 = K[(ky < 0 ? 0 : ky > MAP - 1 ? MAP - 1 : ky) * MAP + (kx < 0 ? 0 : kx > MAP - 1 ? MAP - 1 : kx)];
     let t = k0 & 7; if (t === FOREST || t === BERRIES) t = GRASS;
@@ -225,7 +228,7 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
     // a farm's tilled earth (its own art lays the furrows and crop on it); bare under the Town Center, trodden by all
     // who cross it, and under a deposit
     if (k0 & 64) c = k0 & 32 ? GROUND_SPENT : GROUND_SOIL;
-    else if (k0 & 16 || t === GOLD || t === STONE) c = GROUND_DIRT;
+    else if (k0 & 16 || t === GOLD || t === STONE) c = GROUND_TOON ? TOON_DIRT : GROUND_DIRT;
     else if (t === GRASS) {
       // bare earth: in patches of its own, and worn in round what is built (nearest built tile's edge)
       let wear = 0;
@@ -238,11 +241,12 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
       const lobe = wear > 0 ? (L11(i, j) - 0.5) * 1.1 + (L12(i, j) - 0.5) * 0.4 : 0;
       const trod = k0 >> 8 & 3;                                                   // (a path: thinned, worn through, bare)
       const m = Math.max((patch - 0.56) * 8, wear > 0 ? (wear - 0.3 + lobe * 0.6) * 1.9 : -9,   // (as gentle a fall-off as a patch's own: bare for a tile out, thinning over the next)
-        trod ? trod * 0.34 - 0.1 : -9) + (h - 0.5) * 0.3 + (E13(i, j) - 0.5) * 0.3;
-      c = m > 0.62 ? GROUND_DIRT : m > 0.44 ? GROUND_THIN : m > 0.27 ? GROUND_STRAW : m > 0.1 ? GROUND_DRY : c;
+        trod ? trod * 0.34 - 0.1 : -9) + (GROUND_TOON ? 0 : (h - 0.5) * 0.3) + (E13(i, j) - 0.5) * 0.3;
+      if (GROUND_TOON) c = m > 0.5 ? TOON_DIRT : m > 0.4 ? TOON_RIM : TOON_GRASS;   // (dirt inside a darker rim)
+      else c = m > 0.62 ? GROUND_DIRT : m > 0.44 ? GROUND_THIN : m > 0.27 ? GROUND_STRAW : m > 0.1 ? GROUND_DRY : c;
     }
     // the grain, a blade-scale mottle, and a slow drift from lush to dry
-    const lum = 1 + (h - 0.5) * 0.17 + (G9(i, j) - 0.5) * 0.16 + (G10(i, j) - 0.5) * 0.14, o = ((py - OY) * NW + px - OX) * 4;
+    const lum = GROUND_TOON ? 1 + (G10(i, j) - 0.5) * 0.1 : 1 + (h - 0.5) * 0.17 + (G9(i, j) - 0.5) * 0.16 + (G10(i, j) - 0.5) * 0.14, o = ((py - OY) * NW + px - OX) * 4;
     D[o] = c[0] * lum; D[o + 1] = c[1] * lum; D[o + 2] = c[2] * lum; D[o + 3] = 255;   // (the array clamps to 255 itself)
   } } }
 }
@@ -274,7 +278,7 @@ const GROUND_BLOCK = 12, GROUND_NEAR = 20;
 function _gPaintAway(A){
   if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || MAP * GROUND_PX < 600) return false;
   if (!_gWorkers) { try {
-    const consts = { TERRAIN, GROUND_DIRT, GROUND_THIN, GROUND_STRAW, GROUND_DRY, GROUND_SOIL, GROUND_SPENT, GROUND_WEAR, GROUND_WEAR_ON };
+    const consts = { TERRAIN, GROUND_DIRT, GROUND_THIN, GROUND_STRAW, GROUND_DRY, GROUND_SOIL, GROUND_SPENT, GROUND_WEAR, GROUND_WEAR_ON, GROUND_TOON, TOON_GRASS, TOON_DIRT, TOON_RIM, TOON_TUFT };
     const src = Object.entries(consts).map(([k, v]) => 'const ' + k + ' = ' + JSON.stringify(v) + ';').join('\n') + '\nlet MAP, GROUND_PX, _PAL, _K, _id; const _gKind = t => _PAL[t];\nconst _gHash = ' + _gHash + ';\n' + _gLayer + '\n' + _gPaint
       // (a job's map codes come once a worker; then its blocks, each painted into a buffer of its own and handed back)
       + '\nonmessage = e => { const m = e.data; if (m.K) { MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; _K = m.K; _id = m.id; return; } if (m.id !== _id) return;'

@@ -980,13 +980,13 @@ gl_Position = projectionMatrix * mvPosition;`;
       const contour = pts.map(to2), holes = [];
       for (const h of pierce ? f.holes || [] : []) {
         const c = to2(V3(h.at));
-        holes.push(Object.assign([[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)), { bare: h.bare }));
+        holes.push([[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)));
       }
       const all = contour.concat(...holes), b = buckets[f.mat || 0];
       for (const [i0, i1, i2] of THREE.ShapeUtils.triangulateShape(contour, holes)) tri(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, f.smooth);
       for (const h of holes) {
         const nIn = level ? new THREE.Vector3(n.x, 0, n.z).normalize() : n, out3 = h.map(to3), in3 = out3.map(p => p.clone().addScaledVector(nIn, -T)), mid = out3[0].clone().add(out3[2]).multiplyScalar(0.5);
-        if (!h.bare) for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges (bare: none)
+        for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges
         for (let k = 0; k < 4; k++) {
           const k1 = (k + 1) % 4, want = mid.clone().sub(out3[k].clone().add(out3[k1]).multiplyScalar(0.5));
           tri(buckets[nMats], out3[k], out3[k1], in3[k1], want); tri(buckets[nMats], out3[k], in3[k1], in3[k], want);   // (the reveal: inside, in shade)
@@ -1360,24 +1360,22 @@ gl_Position = projectionMatrix * mvPosition;`;
     // and scaled to 4x4).
     TC(g, e){
       const a = ageOf(e), W = e.w || 4, k = W / 3, x = e.x, z = e.y, mid = W / 2, tc = teamColor(e.team);
-      const keepH = (window.__tcVar ? 74 : 60) * k / HPX, hK = (window.__tcVar ? (a === 1 ? 40 : 36) : 28) * k / HPX, hO = (window.__tcVar ? 30 : 18) * k / HPX, fas = 3.5 * k / HPX, rimD = window.__tcVar === 'logs' && a === 0 ? 0.01 : 5 * k / HPX;   // (Dark mock: the deck up at the rim, the log courses its parapet)
-      const wood = a === 0, kL = wood ? (window.__tcVar === 'logs' ? '#8a6238' : WOOD.plankL + '|planks') : window.__tcVar === 'logs' ? (a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough') : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
-      const box = [x, z, x + mid, z + mid], rimW = window.__tcVar === 'logs' && wood ? 0.08 : mid * (1 - 38 / 48) / 2 * (window.__tcVar === 'logs' && a === 1 ? 0.6 : 1);   // (Dark mock: a thin wall, its rim hid under the top logs)
+      const keepH = (window.__tcVar ? 74 : 60) * k / HPX, hK = (window.__tcVar ? (a === 1 ? 40 : 36) : 28) * k / HPX, hO = (window.__tcVar ? 30 : 18) * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
+      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : window.__tcVar === 'logs' ? (a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough') : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
+      const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2 * (window.__tcVar === 'logs' && a === 1 ? 0.6 : 1);
       // The keep, with a real parapet: a floor recessed rimD below the rim top
       // (the art's inset roof), walled by four low parapet walls.
       const F = keepH - rimD, [i0, j0, i1, j1] = [x + rimW, z + rimW, x + mid - rimW, z + mid - rimW];
       // MOCK Dark: a window cuts exactly three whole logs of its wall (rows half a log apart by direction), centred at 0.7 up
-      const logWin = alongX => { const off = alongX ? 0 : 0.1, j0 = Math.round((keepH * 0.7 - off) / 0.2 - 1.5); return [j0 * 0.2 + off, (j0 + 3) * 0.2 + off]; };
       const outer = boxFaces(...box, 0, keepH), inner = boxFaces(i0, j0, i1, j1, F, keepH), wH = 14 * k / HPX;
       const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [1, 2].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, one piece (the corner piers are the corner merlons)
       if (cren) for (const f of FACES) outer[f] = cren.F[f];
       if (window.__tcVar === 'logs' && !wood) { for (const f of FACES) for (const u of a >= 2 ? [0.24, 0.76] : [0.34, 0.66]) outer[f].holes.push(hole(f, box, u, keepH * (a === 1 ? 0.75 : 0.68) - wH / 2, 6 * k / 32, wH)); }   // MOCK
-      else if (window.__tcVar === 'logs') for (const f of FACES) { const [lo, hi] = logWin(f[0] === 'z'); outer[f].holes.push({ ...hole(f, box, 0.5, lo - 0.1, 2 * (4 * k / 32 + 0.03), hi - lo + 0.2), bare: true }); }   // (Dark: an opening as wide as the gap in the logs, no wall showing round it)
       else for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
       for (const f of FACES) inner[f].out = inner[f].out.map(v => -v);     // the parapet's inner faces look into the recess
       // Under the decks the keep's two front walls are in their shade (as the 2D): a dark sheet a hair off each, from the
       // ground to where the decks meet them. (Whole and standing only: a site or a ruin has no decks to shade it.)
-      if (e.complete && !e.openTop && !(window.__tcVar === 'logs' && wood)) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      if (e.complete && !e.openTop) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
         const px = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH).rotateY(Math.PI / 2)), sm); px.position.set(x + mid + 0.004, dH / 2, z + mid / 2); g.add(px);
         const pz = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH)), sm); pz.position.set(x + mid / 2, dH / 2, z + mid + 0.004); g.add(pz); }
       const H0 = keepH + (window.__tcVar === 'logs' ? 0.004 : 0), rim = [   // (MOCK: a hair over the walls' tops — a site's walls are slabs with their own top there, and the two fought)
@@ -1385,11 +1383,9 @@ gl_Position = projectionMatrix * mvPosition;`;
         [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
         [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
       ].map(loop => ({ loop, out: [0, 1, 0], mat: 2 }));
-      const kR = window.__tcVar === 'logs' ? (a <= 1 ? (wood ? '#a8794b' : '#7a5a40|planks') : '#cdc4b0') : kL;   // (Castle: the merlons and rim plain stone, no seams cut short)   // MOCK: a light plank rim round the deck
+      const kR = window.__tcVar === 'logs' ? (wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0') : kL;   // (Castle: the merlons and rim plain stone, no seams cut short)   // MOCK: a light plank rim round the deck
       for (const f of FACES) { inner[f].mat = 2; if (window.__tcVar === 'logs') inner[f].cut = true; }   // (MOCK: a site cuts them, not pressing them onto its walls' tops — two materials there flickered)
-      if (window.__tcVar === 'logs' && wood) { const dk2 = boxFaces(x + 0.05, z + 0.05, x + mid - 0.05, z + mid - 0.05, F - 0.04, F);   // MOCK Dark: no box inside the logs — only the deck they carry
-        solid(g, [kL, kT], [...FACES.map(f => dk2[f]), dk2.bottom, { ...dk2.top, mat: 1 }]); }
-      else if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
+      if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
         const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH);
         for (const f of FACES) { up[f].holes = outer[f].holes; up[f].cut = inner[f].cut = true; lo[f].mat = 3; }   // (plaster: cut, never pressed onto the stone)
         solid(g, [kL, kT, kR, '#cfc6b3|rough'], [...FACES.map(f => lo[f]), ...FACES.map(f => up[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08, depth: rimW * 0.97 }); }
@@ -1400,22 +1396,6 @@ gl_Position = projectionMatrix * mvPosition;`;
         const px = x + (mid - rimW) * mx / 3, pz = z + (mid - rimW) * mz / 3;
         if (window.__tcVar === 'logs') continue;   // MOCK: built into the keep (cren)
         boxAt(g, kL, px, pz, px + rimW, pz + rimW, keepH, keepH + 7 * k / HPX);
-      }
-      if (V === 'logs' && wood) {   // MOCK: a real log keep — whole logs, no outlines (the light rounds them), over a dark wall that
-        // shows as the seams; the two directions half a log apart, interlocking at the corners and running past them to the ground
-        const lh = 0.2, lr = lh * 0.5, over = lr * 2.5, logC = '#a8794b', endC = '#d9b98a', wW = 4 * k / 32 + lr * 0.3;   // (lh, lr: logWin's rows)
-        const courses = new Map();
-        for (let j = 0; ; j++) { let any = false;
-          for (const alongX of [true, false]) {
-            const y = lr + j * lh + (alongX ? 0 : lh / 2); if (y > keepH + lr * 0.5 + lh) continue; any = true;   // (the top two courses stand above the deck: a log parapet)
-            for (const at of alongX ? [z, z + mid] : [x, x + mid]) {
-              const p0 = (alongX ? x : z) - over, p1 = (alongX ? x : z) + mid + over, c = (alongX ? x : z) + mid / 2;
-              const [lo, hi] = logWin(alongX), seg = y > lo && y < hi ? [[p0, c - wW], [c + wW, p1]] : [[p0, p1]];
-              const row = courses.get(y) || (courses.set(y, piece(g)), courses.get(y));   // (each course one piece: set whole as the walls reach it, not pressed flat while building)
-              for (const [u0, u1] of seg) pole(row, logC, alongX ? [u0, y, at] : [at, y, u0], alongX ? [u1, y, at] : [at, y, u1], lr, 'rod');
-              for (const [u0, u1] of seg) for (const [u, sg] of [[u0, -1], [u1, 1]]) pole(row, endC, alongX ? [u, y, at] : [at, y, u], alongX ? [u + sg * 0.03, y, at] : [at, y, u + sg * 0.03], lr * 0.8, 'bare');   // (an end face at every cut: the corners and the windows)
-            } }
-          if (!any) break; }
       }
       const nAcc = g.children.length;   // (the parts laid over the keep's walls from here: siteCut)
       if (V === 'logs' && a === 1) {   // MOCK Feudal: a half-timbered storey over a stone one
@@ -1441,10 +1421,11 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       // The awnings: striped canvas from the keep edge (hK) down to the outer eave (hO), a scallop per stripe hanging there
       // (the 2D's drawTCAnnexRoof, TC_CANVAS)
-      canvasAwning(piece(g), [x + mid, z], [x + mid, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
-      canvasAwning(piece(g), [x, z + mid], [x + mid, z + mid], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
-      if (window.__tcVar === 'logs') {   // MOCK: each cloth hangs from a beam along the wall (Feudal a timber, Castle a stone ledge; Dark: tucked under a log)
-        const bh = 6 * k / HPX, o = 0.1, y0 = hK, bc = a === 0 ? '#a8794b' : a === 1 ? '#5e4330' : '#d8d0bd|stone';
+      const cOut = window.__tcVar === 'logs' && a >= 1 ? 0.1 : 0;   // (MOCK: the cloths hang from under the beam round the keep: from its outer face)
+      canvasAwning(piece(g), [x + mid + cOut, z], [x + mid + cOut, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
+      canvasAwning(piece(g), [x, z + mid + cOut], [x + mid, z + mid + cOut], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
+      if (window.__tcVar === 'logs') {   // MOCK: each cloth hangs from a beam round the keep (Feudal a timber, Castle a stone ledge)
+        const bh = 6 * k / HPX, o = 0.1, y0 = hK, bc = a === 1 ? '#5e4330' : '#d8d0bd|stone';
         if (a >= 1) {   // one ring round the keep, one piece (no joints, one outline)
           const y1 = y0 + bh, O = boxFaces(x - o, z - o, x + mid + o, z + mid + o, y0, y1), I = boxFaces(x, z, x + mid, z + mid, y0, y1);
           for (const f of FACES) I[f].out = I[f].out.map(v => -v);
@@ -1454,12 +1435,12 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       if (window.__tcVar === 'logs') for (let i = nAcc; i < g.children.length; i++) if (!g.children[i].userData.piece) g.children[i].traverse(o => { if (o.isMesh) o.userData.siteCut = true; });
       // Posts under the outer corners, up to the cloth where it stands: its sag down the slope, its fold across it
-      const run = W - mid, under = (d, a) => { const t = d / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; const soft = window.__tcVar ? 0.45 : 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * soft * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * soft * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
+      const run = W - mid - cOut, under = (d, a) => { const t = (d - cOut) / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; const soft = window.__tcVar ? 0.45 : 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * soft * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * soft * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
       // (just in from the canvas's eave corners, tucked into the cloth; outlined, no ink ring round their tops — inside the
       // cloth it showed through)
       const pr = 0.06, pi = pr + 0.03, cp = (px, pz, h) => pole(g, WOOD.post, [px, 0, pz], [px, h, pz], pr, 'rod');
       if (window.__tcVar === 'logs') {   // MOCK: a post under each eave corner (the cloth's frame taken to run just under the cloth)
-        const ps = 0.045, P = (px, pz, h) => pole(g, wood ? '#a8794b' : '#5e4632', [px, 0, pz], [px, h, pz], wood ? ps * 1.5 : ps, 'rod');   // (Dark: log posts)
+        const ps = 0.045, P = (px, pz, h) => pole(g, '#5e4632', [px, 0, pz], [px, h, pz], ps, 'rod');
         if (a >= 2) for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi], [x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) boxAt(g, '#d6cdbb|rough', px - 0.08, pz - 0.08, px + 0.08, pz + 0.08, 0, 0.16, 'hull');   // (stone plinths, Castle)
         for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) P(px, pz, under(px - x - mid, pz - z));   // (each up into the cloth where it stands)
         for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) P(px, pz, under(pz - z - mid, px - x));
