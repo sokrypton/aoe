@@ -1373,7 +1373,6 @@ gl_Position = projectionMatrix * mvPosition;`;
       // The keep, with a real parapet: a floor recessed rimD below the rim top
       // (the art's inset roof), walled by four low parapet walls.
       const F = keepH - rimD, [i0, j0, i1, j1] = [x + rimW, z + rimW, x + mid - rimW, z + mid - rimW];
-      // MOCK Dark: a window cuts exactly three whole logs of its wall (rows half a log apart by direction), centred at 0.7 up
       const outer = boxFaces(...box, 0, keepH), inner = boxFaces(i0, j0, i1, j1, F, keepH), wH = 14 * k / HPX;
       const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [1, 2].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, one piece (the corner piers are the corner merlons)
       if (cren) for (const f of FACES) outer[f] = cren.F[f];
@@ -1390,7 +1389,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
         [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
       ].map(loop => ({ loop, out: [0, 1, 0], mat: 2 }));
-      const kR = window.__tcVar === 'logs' ? (wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0') : kL;   // (Castle: the merlons and rim plain stone, no seams cut short)   // MOCK: a light plank rim round the deck
+      const kR = window.__tcVar === 'logs' ? (wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0') : kL;   // (MOCK: Feudal a plank rim round the deck; Castle the merlons and rim plain stone, no seams cut short)
       for (const f of FACES) { inner[f].mat = 2; if (window.__tcVar === 'logs') inner[f].cut = true; }   // (MOCK: a site cuts them, not pressing them onto its walls' tops — two materials there flickered)
       if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
         const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH);

@@ -1072,7 +1072,7 @@ function buildingShadowPath(e){
 // px; draw(ox, oy) paints it anchored there. Not for the ghost/mask passes (no owner state, silhouettes).
 const _bakes = new WeakMap();
 // MOCK (window.__tcVar 'logs'): the TC keep redesign, drawn from pov3d's MODELS.TC geometry — world tiles across, art px
-// up — projected into the keep's authored frame (sx, sy: its top corner; tcS: its scale). Dark a log keep, Feudal
+// up — projected into the keep's authored frame (sx, sy: its top corner; tcS: its scale). Dark a plank keep, Feudal
 // half-timber over stone, Castle stone with corner piers, shields and merlons. part: 'back' (keep, the frame and goods
 // under the cloth) / 'front' (the awnings, the flag) / null (both).
 function drawTCMock2D(e, sx, sy, tcS, part, a, tc, tcD, darken){
