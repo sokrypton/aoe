@@ -1605,6 +1605,7 @@ function updateTeamVision(){
       if (e.utype === 'sheep') sight = 3;
       else if (e.utype === 'dragon') sight = 11;   // (ridden: from the air it sees far — and ahead of its own speed)
       else if (e.utype === 'scout') sight = 7;
+      else if (e.utype === 'trebuchet') sight = 18;   // (AoC LOS 18: it sees as far as it throws, range 16)
       else sight = 5;
       cx = Math.round(e.x);
       cy = Math.round(e.y);
