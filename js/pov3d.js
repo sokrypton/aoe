@@ -410,6 +410,15 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (let k = 0; k < 70; k++) { tone(c, 196 + r() * 50 | 0); c.fillRect(r() * 64, r() * 64 - 8, 1 + r() * 1.2, 8 + r() * 14); }
       for (let i = 0; i < 4; i++) { tone(c, 186); c.fillRect(0, i * 16 + 15, 64, 1.2); } }],
     soil:    [1, (c, r) => speckle(c, r, 205)],
+    // MOCK: rough-cut stone — big blocks of uneven length, a tone each, lit along the top, shaded along the bottom, dark mortar
+    rough:   [0.95, (c, r) => { const n = 3, h = 64 / n; tone(c, 150); c.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < n; i++) { let x0 = -(r() * 14 | 0); while (x0 < 64) { const w = 15 + r() * 14 | 0, t = 214 + r() * 40 | 0, y = i * h + 1.2;
+        for (const dx of [0, 64]) { const bx = x0 + 1.2 - dx; tone(c, t); c.fillRect(bx, y, w - 1.2, h - 1.2); tone(c, Math.min(255, t + 16)); c.fillRect(bx, y, w - 1.2, 1.6);
+          tone(c, t - 34); c.fillRect(bx, y + h - 3.4, w - 1.2, 2.2); tone(c, t - 14); c.fillRect(bx + w - 3, y, 1.8, h - 1.2); }
+        x0 += w; } } }],
+    // MOCK: round logs laid flat — each a light upper edge, its tone, a shaded underside, a dark seam
+    logs:    [0.42, (c, r) => { const n = 3, h = 64 / n; for (let i = 0; i < n; i++) { const y = i * h, t = 238 + r() * 10 | 0;
+      tone(c, t); c.fillRect(0, y, 64, h); tone(c, 255); c.fillRect(0, y + 2.4, 64, h * 0.2); tone(c, t - 50); c.fillRect(0, y + h * 0.7, 64, h * 0.3); tone(c, 105); c.fillRect(0, y, 64, 2); } }],
   };
   const tone = (c, v) => { c.fillStyle = `rgb(${v},${v},${v})`; };
   function rows(c, r, n, grain){ // long boards: a tone each, a dark seam, a little grain
@@ -971,13 +980,13 @@ gl_Position = projectionMatrix * mvPosition;`;
       const contour = pts.map(to2), holes = [];
       for (const h of pierce ? f.holes || [] : []) {
         const c = to2(V3(h.at));
-        holes.push([[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)));
+        holes.push(Object.assign([[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)), { bare: h.bare }));
       }
       const all = contour.concat(...holes), b = buckets[f.mat || 0];
       for (const [i0, i1, i2] of THREE.ShapeUtils.triangulateShape(contour, holes)) tri(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, f.smooth);
       for (const h of holes) {
         const nIn = level ? new THREE.Vector3(n.x, 0, n.z).normalize() : n, out3 = h.map(to3), in3 = out3.map(p => p.clone().addScaledVector(nIn, -T)), mid = out3[0].clone().add(out3[2]).multiplyScalar(0.5);
-        for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges
+        if (!h.bare) for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges (bare: none)
         for (let k = 0; k < 4; k++) {
           const k1 = (k + 1) % 4, want = mid.clone().sub(out3[k].clone().add(out3[k1]).multiplyScalar(0.5));
           tri(buckets[nMats], out3[k], out3[k1], in3[k1], want); tri(buckets[nMats], out3[k], in3[k1], in3[k], want);   // (the reveal: inside, in shade)
@@ -1091,7 +1100,8 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function round(g, col, cx, cz, r0, r1, y0, y1, seg, inkIt = true, topCol = col){
     const geo = own(new THREE.CylinderGeometry(r1, r0, 1, seg)), ms = [mat(col), mat(topCol), mat(col)];
-    const m = inkIt ? inked(geo, ms, 0, 0, 0, 1, 1, 1, seg > 8 ? 30 : 20) : new THREE.Mesh(geo, ms);
+    const m = inkIt === true ? inked(geo, ms, 0, 0, 0, 1, 1, 1, seg > 8 ? 30 : 20) : new THREE.Mesh(geo, ms);
+    if (inkIt === 'hull') m.userData.hullGeo = geo;   // (its silhouette alone: no inner lines)
     m.position.set(cx, (y0 + y1) / 2, cz); m.scale.set(1, y1 - y0, 1);
     g.add(m); return m;
   }
@@ -1178,7 +1188,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // tan by turns) running down it, sagging, folded and draped between its corner posts (drawTCAnnexRoof's), TC_CANVAS.thick thick.
   // Inked round its edges only, not along its folds.
   function canvasAwning(g, P0, P1, Q0, Q1, h0, h1, tc, k){
-    const C = TC_CANVAS, n = C.n, sag = C.sag * k / HPX, fold = C.fold * k / HPX, drape = C.drape * k / HPX, M = 8, P = [], grp = [];
+    const C = TC_CANVAS, soft = window.__tcVar ? 0.45 : 1, n = C.n, sag = C.sag * soft * k / HPX, fold = C.fold * k / HPX, drape = C.drape * soft * k / HPX, M = 8, P = [], grp = [];
     const L = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], W = [], tri = (a, b, c, m) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); W.push(a[3], a[4], b[3], b[4], c[3], c[4]); grp.push(m); };
     const th = C.thick * k / HPX, lo = p => [p[0], p[1] - th, p[2], p[3], p[4]];   // (its underside, TC_CANVAS.thick below)
     const at = (u, t) => { const c = (u * n) % 1, p = L(L(P0, P1, u), L(Q0, Q1, u), t);
@@ -1350,41 +1360,125 @@ gl_Position = projectionMatrix * mvPosition;`;
     // and scaled to 4x4).
     TC(g, e){
       const a = ageOf(e), W = e.w || 4, k = W / 3, x = e.x, z = e.y, mid = W / 2, tc = teamColor(e.team);
-      const keepH = 60 * k / HPX, hK = 28 * k / HPX, hO = 18 * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
-      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
-      const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2;
+      const keepH = (window.__tcVar ? 74 : 60) * k / HPX, hK = (window.__tcVar ? (a === 1 ? 40 : 36) : 28) * k / HPX, hO = (window.__tcVar ? 30 : 18) * k / HPX, fas = 3.5 * k / HPX, rimD = window.__tcVar === 'logs' && a === 0 ? 0.01 : 5 * k / HPX;   // (Dark mock: the deck up at the rim, the log courses its parapet)
+      const wood = a === 0, kL = wood ? (window.__tcVar === 'logs' ? '#8a6238' : WOOD.plankL + '|planks') : window.__tcVar === 'logs' ? (a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough') : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
+      const box = [x, z, x + mid, z + mid], rimW = window.__tcVar === 'logs' && wood ? 0.08 : mid * (1 - 38 / 48) / 2 * (window.__tcVar === 'logs' && a === 1 ? 0.6 : 1);   // (Dark mock: a thin wall, its rim hid under the top logs)
       // The keep, with a real parapet: a floor recessed rimD below the rim top
       // (the art's inset roof), walled by four low parapet walls.
       const F = keepH - rimD, [i0, j0, i1, j1] = [x + rimW, z + rimW, x + mid - rimW, z + mid - rimW];
+      // MOCK Dark: a window cuts exactly three whole logs of its wall (rows half a log apart by direction), centred at 0.7 up
+      const logWin = alongX => { const off = alongX ? 0 : 0.1, j0 = Math.round((keepH * 0.7 - off) / 0.2 - 1.5); return [j0 * 0.2 + off, (j0 + 3) * 0.2 + off]; };
       const outer = boxFaces(...box, 0, keepH), inner = boxFaces(i0, j0, i1, j1, F, keepH), wH = 14 * k / HPX;
-      for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
+      const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [1, 2].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, one piece (the corner piers are the corner merlons)
+      if (cren) for (const f of FACES) outer[f] = cren.F[f];
+      if (window.__tcVar === 'logs' && !wood) { for (const f of FACES) for (const u of a >= 2 ? [0.24, 0.76] : [0.34, 0.66]) outer[f].holes.push(hole(f, box, u, keepH * (a === 1 ? 0.75 : 0.68) - wH / 2, 6 * k / 32, wH)); }   // MOCK
+      else if (window.__tcVar === 'logs') for (const f of FACES) { const [lo, hi] = logWin(f[0] === 'z'); outer[f].holes.push({ ...hole(f, box, 0.5, lo - 0.1, 2 * (4 * k / 32 + 0.03), hi - lo + 0.2), bare: true }); }   // (Dark: an opening as wide as the gap in the logs, no wall showing round it)
+      else for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
       for (const f of FACES) inner[f].out = inner[f].out.map(v => -v);     // the parapet's inner faces look into the recess
       // Under the decks the keep's two front walls are in their shade (as the 2D): a dark sheet a hair off each, from the
       // ground to where the decks meet them. (Whole and standing only: a site or a ruin has no decks to shade it.)
-      if (e.complete && !e.openTop) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      if (e.complete && !e.openTop && !(window.__tcVar === 'logs' && wood)) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
         const px = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH).rotateY(Math.PI / 2)), sm); px.position.set(x + mid + 0.004, dH / 2, z + mid / 2); g.add(px);
         const pz = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH)), sm); pz.position.set(x + mid / 2, dH / 2, z + mid + 0.004); g.add(pz); }
-      const H0 = keepH, rim = [
+      const H0 = keepH + (window.__tcVar === 'logs' ? 0.004 : 0), rim = [   // (MOCK: a hair over the walls' tops — a site's walls are slabs with their own top there, and the two fought)
+       
         [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
         [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
-      ].map(loop => ({ loop, out: [0, 1, 0] }));
-      solid(g, [kL, kT], [...FACES.map(f => outer[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08, depth: rimW * 0.97 }); // (walls nearly as thick as the parapet: inside, straight up to the rim; the parapet's back stays a hair inside the outer face, not on it)
+      ].map(loop => ({ loop, out: [0, 1, 0], mat: 2 }));
+      const kR = window.__tcVar === 'logs' ? (a <= 1 ? (wood ? '#a8794b' : '#7a5a40|planks') : '#cdc4b0') : kL;   // (Castle: the merlons and rim plain stone, no seams cut short)   // MOCK: a light plank rim round the deck
+      for (const f of FACES) { inner[f].mat = 2; if (window.__tcVar === 'logs') inner[f].cut = true; }   // (MOCK: a site cuts them, not pressing them onto its walls' tops — two materials there flickered)
+      if (window.__tcVar === 'logs' && wood) { const dk2 = boxFaces(x + 0.05, z + 0.05, x + mid - 0.05, z + mid - 0.05, F - 0.04, F);   // MOCK Dark: no box inside the logs — only the deck they carry
+        solid(g, [kL, kT], [...FACES.map(f => dk2[f]), dk2.bottom, { ...dk2.top, mat: 1 }]); }
+      else if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
+        const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH);
+        for (const f of FACES) { up[f].holes = outer[f].holes; up[f].cut = inner[f].cut = true; lo[f].mat = 3; }   // (plaster: cut, never pressed onto the stone)
+        solid(g, [kL, kT, kR, '#cfc6b3|rough'], [...FACES.map(f => lo[f]), ...FACES.map(f => up[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08, depth: rimW * 0.97 }); }
+      else solid(g, [kL, kT, kR], [...FACES.map(f => outer[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }, ...(cren ? cren.faces.slice(6).map(f => ({ ...f, mat: 2 })) : [])], { T: 0.08, depth: rimW * 0.97 }); // (walls nearly as thick as the parapet: inside, straight up to the rim; the parapet's back stays a hair inside the outer face, not on it)
+      const V = window.__tcVar || '';   // MOCK: the keep variants (window.__tcVar)
       if (a >= 2) for (let mx = 0; mx < 4; mx++) for (let mz = 0; mz < 4; mz++) { // flush on the parapet, corners once
         if (mx % 3 && mz % 3) continue;
         const px = x + (mid - rimW) * mx / 3, pz = z + (mid - rimW) * mz / 3;
+        if (window.__tcVar === 'logs') continue;   // MOCK: built into the keep (cren)
         boxAt(g, kL, px, pz, px + rimW, pz + rimW, keepH, keepH + 7 * k / HPX);
+      }
+      if (V === 'logs' && wood) {   // MOCK: a real log keep — whole logs, no outlines (the light rounds them), over a dark wall that
+        // shows as the seams; the two directions half a log apart, interlocking at the corners and running past them to the ground
+        const lh = 0.2, lr = lh * 0.5, over = lr * 2.5, logC = '#a8794b', endC = '#d9b98a', wW = 4 * k / 32 + lr * 0.3;   // (lh, lr: logWin's rows)
+        const courses = new Map();
+        for (let j = 0; ; j++) { let any = false;
+          for (const alongX of [true, false]) {
+            const y = lr + j * lh + (alongX ? 0 : lh / 2); if (y > keepH + lr * 0.5 + lh) continue; any = true;   // (the top two courses stand above the deck: a log parapet)
+            for (const at of alongX ? [z, z + mid] : [x, x + mid]) {
+              const p0 = (alongX ? x : z) - over, p1 = (alongX ? x : z) + mid + over, c = (alongX ? x : z) + mid / 2;
+              const [lo, hi] = logWin(alongX), seg = y > lo && y < hi ? [[p0, c - wW], [c + wW, p1]] : [[p0, p1]];
+              const row = courses.get(y) || (courses.set(y, piece(g)), courses.get(y));   // (each course one piece: set whole as the walls reach it, not pressed flat while building)
+              for (const [u0, u1] of seg) pole(row, logC, alongX ? [u0, y, at] : [at, y, u0], alongX ? [u1, y, at] : [at, y, u1], lr, 'rod');
+              for (const [u0, u1] of seg) for (const [u, sg] of [[u0, -1], [u1, 1]]) pole(row, endC, alongX ? [u, y, at] : [at, y, u], alongX ? [u + sg * 0.03, y, at] : [at, y, u + sg * 0.03], lr * 0.8, 'bare');   // (an end face at every cut: the corners and the windows)
+            } }
+          if (!any) break; }
+      }
+      const nAcc = g.children.length;   // (the parts laid over the keep's walls from here: siteCut)
+      if (V === 'logs' && a === 1) {   // MOCK Feudal: a half-timbered storey over a stone one
+        const sY = hK - 0.02, d = 0.03, bt = 3 * k / HPX, TB = '#5e4330', wy0 = keepH * 0.75 - wH / 2, wy1 = wy0 + wH;
+        const face = (alongX, at, o) => {   // a face's frame: sill and top rails, a middle post, braces in the outer bays
+          const B = (u0, u1, y0, y1, f = 1) => { const oo = o * f; return alongX ? boxAt(g, TB, x + u0, Math.min(at, at + oo), x + u1, Math.max(at, at + oo), y0, y1, false) : boxAt(g, TB, Math.min(at, at + oo), z + u0, Math.max(at, at + oo), z + u1, y0, y1, false); };
+          const Pp = (u0, y0, u1, y1) => pole(g, TB, alongX ? [x + u0, y0, at + o * 0.6] : [at + o * 0.6, y0, z + u0], alongX ? [x + u1, y1, at + o * 0.6] : [at + o * 0.6, y1, z + u1], bt * 0.45, 'bare');
+          B(mid / 2 - bt / 2, mid / 2 + bt / 2, sY + bt, keepH - bt); B(0, mid, sY, sY + bt, 0.7); B(0, mid, keepH - bt, keepH, 0.7);   // (the post between the rails, a little prouder: no face shared)
+          Pp(bt * 0.6, sY + bt, mid * 0.2, keepH - bt); Pp(mid - bt * 0.6, sY + bt, mid * 0.8, keepH - bt); };
+        for (const [cx, cz] of [[x, z], [x + mid, z], [x, z + mid], [x + mid, z + mid]]) boxAt(g, TB, cx - bt / 2 - d, cz - bt / 2 - d, cx + bt / 2 + d, cz + bt / 2 + d, sY - 0.03, keepH - 0.03, false);   // corner posts, both faces at once (clear of the wall's and the rails' tops)
+        face(true, z + mid, d); face(true, z, -d); face(false, x + mid, d); face(false, x, -d);
+      }
+      if (V === 'logs' && a >= 2) {   // MOCK Castle: rough stone, strong corner stones, a team shield between the windows, a coping
+        // the corners: one clean pier each, a little proud of the wall, in a lighter stone (no stepped quoins: they read ragged)
+        const q = rimW - 0.04, d = 0.04;   // (its inner sides well inside the parapet's: no two faces in one place)
+        for (const [cx, cz] of [[x, z], [x + mid, z], [x, z + mid], [x + mid, z + mid]]) { const sx = cx === x ? 1 : -1, sz = cz === z ? 1 : -1;
+          boxAt(g, '#e4ddcc|stone', Math.min(cx - sx * d, cx + sx * q), Math.min(cz - sz * d, cz + sz * q), Math.max(cx - sx * d, cx + sx * q), Math.max(cz - sz * d, cz + sz * q), 0, keepH + 7 * k / HPX, 'hull'); }   // (up through the corner merlon)
+        const sh = (cx, cz, alongX, o) => { const w = 8 * k / HPX, h = 10 * k / HPX, y0 = keepH * 0.66 - h / 2;   // a shield: the team's colour, a gold quarter
+          const B = (u0, u1, y0b, y1b, col, d0, d1) => alongX ? boxAt(g, col, cx + u0, Math.min(cz + d0, cz + d1), cx + u1, Math.max(cz + d0, cz + d1), y0b, y1b, false) : boxAt(g, col, Math.min(cx + d0, cx + d1), cz + u0, Math.max(cx + d0, cx + d1), cz + u1, y0b, y1b, false);
+          B(-w / 2, w / 2, y0, y0 + h, tc, 0, o); B(0.001, w / 2 - 0.001, y0 + h / 2, y0 + h - 0.001, '#e6c34a', o, o * 1.8); B(-w / 2 + 0.001, -0.001, y0 + 0.001, y0 + h / 2, '#e6c34a', o, o * 1.8); };   // (the gold quarters: plates on its face, a hair inside its edges)
+        // (one shield a face, centred between the two windows)
+        sh(x + mid / 2, z + mid, true, 0.03); sh(x + mid / 2, z, true, -0.03); sh(x + mid, z + mid / 2, false, 0.03); sh(x, z + mid / 2, false, -0.03);   // (offsets that hold at any zoom)
       }
       // The awnings: striped canvas from the keep edge (hK) down to the outer eave (hO), a scallop per stripe hanging there
       // (the 2D's drawTCAnnexRoof, TC_CANVAS)
       canvasAwning(piece(g), [x + mid, z], [x + mid, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
       canvasAwning(piece(g), [x, z + mid], [x + mid, z + mid], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
+      if (window.__tcVar === 'logs') {   // MOCK: each cloth hangs from a beam along the wall (Feudal a timber, Castle a stone ledge; Dark: tucked under a log)
+        const bh = 6 * k / HPX, o = 0.1, y0 = hK, bc = a === 0 ? '#a8794b' : a === 1 ? '#5e4330' : '#d8d0bd|stone';
+        if (a >= 1) {   // one ring round the keep, one piece (no joints, one outline)
+          const y1 = y0 + bh, O = boxFaces(x - o, z - o, x + mid + o, z + mid + o, y0, y1), I = boxFaces(x, z, x + mid, z + mid, y0, y1);
+          for (const f of FACES) I[f].out = I[f].out.map(v => -v);
+          const ring = h => [[[x - o, h, z - o], [x + mid + o, h, z - o], [x + mid, h, z], [x, h, z]], [[x + mid + o, h, z - o], [x + mid + o, h, z + mid + o], [x + mid, h, z + mid], [x + mid, h, z]],
+            [[x + mid + o, h, z + mid + o], [x - o, h, z + mid + o], [x, h, z + mid], [x + mid, h, z + mid]], [[x - o, h, z + mid + o], [x - o, h, z - o], [x, h, z], [x, h, z + mid]]];
+          solid(g, bc, [...FACES.map(f => O[f]), ...FACES.map(f => I[f]), ...ring(y1).map(loop => ({ loop, out: [0, 1, 0] })), ...ring(y0).map(loop => ({ loop, out: [0, -1, 0] }))]); }
+      }
+      if (window.__tcVar === 'logs') for (let i = nAcc; i < g.children.length; i++) if (!g.children[i].userData.piece) g.children[i].traverse(o => { if (o.isMesh) o.userData.siteCut = true; });
       // Posts under the outer corners, up to the cloth where it stands: its sag down the slope, its fold across it
-      const run = W - mid, under = (d, a) => { const t = d / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
+      const run = W - mid, under = (d, a) => { const t = d / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; const soft = window.__tcVar ? 0.45 : 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * soft * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * soft * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
       // (just in from the canvas's eave corners, tucked into the cloth; outlined, no ink ring round their tops — inside the
       // cloth it showed through)
       const pr = 0.06, pi = pr + 0.03, cp = (px, pz, h) => pole(g, WOOD.post, [px, 0, pz], [px, h, pz], pr, 'rod');
+      if (window.__tcVar === 'logs') {   // MOCK: a post under each eave corner (the cloth's frame taken to run just under the cloth)
+        const ps = 0.045, P = (px, pz, h) => pole(g, wood ? '#a8794b' : '#5e4632', [px, 0, pz], [px, h, pz], wood ? ps * 1.5 : ps, 'rod');   // (Dark: log posts)
+        if (a >= 2) for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi], [x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) boxAt(g, '#d6cdbb|rough', px - 0.08, pz - 0.08, px + 0.08, pz + 0.08, 0, 0.16, 'hull');   // (stone plinths, Castle)
+        for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) P(px, pz, under(px - x - mid, pz - z));   // (each up into the cloth where it stands)
+        for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) P(px, pz, under(pz - z - mid, px - x));
+        // goods under the cloth, by age: barrels, sacks and a woodpile (Dark), crates (Feudal on), a trading table (Castle)
+        // goods under the cloth, a few and plain (no outlines): barrels and a sack; a woodpile (Dark) or crates (later); an anvil (Feudal on)
+        const barrel = (cx, cz) => round(g, '#a9804e', cx, cz, 0.13, 0.13, 0, 0.31, 10, 'hull');
+        const sack = (cx, cz, col) => round(g, col, cx, cz, 0.14, 0.075, 0, 0.24, 9, 'hull');
+        const crate = (cx, cz, h = 0.27) => boxAt(g, '#c9a26e', cx - h / 2, cz - h / 2, cx + h / 2, cz + h / 2, 0, h, 'hull');
+        // lined along each awning's outer eave, between its posts (the ground under the cloth stays free to walk)
+        const L = mid - 2 * pi - 0.5, A = t => [x + W - 0.32, z + pi + 0.25 + L * t], B = t => [x + pi + 0.25 + L * t, z + W - 0.32];
+        barrel(...A(0)); barrel(...A(0.3)); sack(...A(0.62), '#e3d3a8');
+        if (a >= 1) { const [ax2, az2] = A(1); round(g, '#7a5a3a', ax2, az2, 0.09, 0.09, 0, 0.14, 10, 'hull'); boxAt(g, '#4d5257', ax2 - 0.05, az2 - 0.11, ax2 + 0.05, az2 + 0.11, 0.14, 0.21, 'hull'); }
+        else barrel(...A(1));
+        if (a === 0) { const [cx, cz] = B(0.2); for (const [dy, dz] of [[0.06, -0.1], [0.06, 0.01], [0.06, 0.12], [0.15, -0.045], [0.15, 0.065]]) pole(g, '#9c7046', [cx - 0.24, dy, cz + dz], [cx + 0.24, dy, cz + dz], 0.055, 'rod'); }   // (the woodpile along the eave)
+        else { crate(...B(0)); crate(...B(0.3), 0.22); }
+        sack(...B(0.65), '#c9a46a'); sack(...B(1), '#e3d3a8');
+      } else {
       for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) cp(px, pz, under(px - x - mid, pz - z));
-      for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) cp(px, pz, under(pz - z - mid, px - x));
+      for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) cp(px, pz, under(pz - z - mid, px - x)); }
       // the keep floor the garrisoned villagers stand on (roofArchers: where, render-units' roofCrew)
       g.userData.roof = ROOF_REST.map(() => ({ y: F }));
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).
@@ -3623,6 +3717,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       animateAnimal(g, e, a, dt);
     },
     // A building under construction at progress p (the game's constructionSite): { obj, set(p) }.
+    model: (btype, age = 0) => { teamAge = teamAge || [0, 0]; teamAge[1] = age; const b = BLDGS[btype], g = new THREE.Group();   // dev: a finished model, raw (overlap checks)
+      MODELS[btype](g, { id: -1, type: 'building', btype, x: -b.w / 2, y: -b.h / 2, w: b.w, h: b.h, team: 1, complete: true, hp: 1, maxHp: 1, buildProgress: 1, buildTime: 1, gateProgress: 0 }); return { g, hull: HULL_MATS }; },
     building: (btype, age = 0) => { teamAge = teamAge || [0, 0]; teamAge[1] = age; const b = BLDGS[btype], g = new THREE.Group(), e = { id: -1, type: 'building', btype, x: -b.w / 2, y: -b.h / 2, w: b.w, h: b.h, team: 1, complete: false, hp: 1, maxHp: 1, buildProgress: 0, buildTime: 1, gateProgress: 0 };
       if (MODELS[btype]) { MODELS[btype](g, e); addHulls(g); return { obj: g, set: constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype)).set }; }
       // a wall: a short run of three pieces (linked); a gate on its own
@@ -4248,7 +4344,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     let ox = Infinity, oz = Infinity; for (const f of faces) for (const p of f.loop) { if (p[0] < ox) ox = p[0]; if (p[2] < oz) oz = p[2]; }
     ox = Math.floor(ox); oz = Math.floor(oz);
     const r = v => Math.round(v * 1e4), at = p => r(p[0] - ox) + ',' + r(p[1]) + ',' + r(p[2] - oz);
-    const key = D + '|' + nMats + '|' + jag + '|' + faces.map(f => f.loop.map(at).join(';') + '>' + f.out.join(',') + '>' + (f.mat || 0) + '>' + (f.holes || []).map(h => at(h.at) + ':' + r(h.w) + ':' + r(h.h)).join(';')).join('/');
+    const key = D + '|' + nMats + '|' + jag + '|' + faces.map(f => f.loop.map(at).join(';') + '>' + f.out.join(',') + '>' + (f.mat || 0) + (f.cut ? 'c' : '') + '>' + (f.holes || []).map(h => at(h.at) + ':' + r(h.w) + ':' + r(h.h)).join(';')).join('/');
     let g = thickCache.get(key);
     if (!g) { const sh = p => [p[0] - ox, p[1], p[2] - oz];
       thickCache.set(key, g = thickGeoMake(faces.map(f => ({ ...f, loop: f.loop.map(sh), holes: (f.holes || []).map(h => ({ ...h, at: sh(h.at) })) })), D, nMats, jag)); }
@@ -4278,6 +4374,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const to2 = p => { const d = p.clone().sub(o); return new THREE.Vector2(d.dot(u), d.dot(v)); };
       const to3 = q => o.clone().addScaledVector(u, q.x).addScaledVector(v, q.y);
       const b = buckets[f.mat || 0], wall = Math.abs(n.y) < 0.5, contour = pts.map(to2);
+      const cl = f.cut ? 1 : 0;   // (cut: a site cuts this wall at its build line, not pressing it down — a storey over another's)
       const holes = wall ? (f.holes || []).map(h => { const c = to2(V3(h.at)); return [[c.x - h.w / 2, c.y], [c.x + h.w / 2, c.y], [c.x + h.w / 2, c.y + h.h], [c.x - h.w / 2, c.y + h.h]].map(q => new THREE.Vector2(...q)); }) : [];
       const all = contour.concat(...holes), tris = THREE.ShapeUtils.triangulateShape(contour, holes);
       if (!wall) { for (const [i0, i1, i2] of tris) put(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, 1); continue; }
@@ -4287,10 +4384,10 @@ gl_Position = projectionMatrix * mvPosition;`;
       const sd = v.clone().divideScalar(v.y);   // (a leaning wall presses down along its lean: its cut stays on it, exact)
       const nf = f.smooth ? q => f.smooth(q).clone() : null, nb = f.smooth ? q => f.smooth(q.clone().addScaledVector(nh, D)).clone().negate() : null;
       for (const [i0, i1, i2] of tris) { const A = to3(all[i0]), B = to3(all[i1]), C = to3(all[i2]);
-        put(b, A, B, C, n, 0, nf, 0, sd); put(b, inset(A), inset(B), inset(C), back, 0, nb, 1, sd); }
+        put(b, A, B, C, n, cl, nf, 0, sd); put(b, inset(A), inset(B), inset(C), back, cl, nb, 1, sd); }
       // face → inset quads: along the outline (facing out, in the face's plane) and round each opening (facing into it)
       const band = (loop, want, ins = 0) => { for (let k = 0; k < loop.length; k++) { const a = loop[k], c = loop[(k + 1) % loop.length], w = want(a.clone().add(c).multiplyScalar(0.5));
-        put(b, a, c, inset(c), w, 0, null, ins, sd); put(b, a, inset(c), inset(a), w, 0, null, ins, sd); } };
+        put(b, a, c, inset(c), w, cl, null, ins, sd); put(b, a, inset(c), inset(a), w, cl, null, ins, sd); } };
       const c0 = pts.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
       band(pts, m => { const d = m.clone().sub(c0); return d.addScaledVector(n, -d.dot(n)); });
       for (const h of holes) { const loop = h.map(to3), hc = loop[0].clone().add(loop[2]).multiplyScalar(0.5); band(loop, m => hc.clone().sub(m), 1); } // (an opening's sides: in the shade too)
@@ -4428,6 +4525,9 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (const k of ['clipOnly', 'inside']) if (!geo.attributes[k]) geo.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(n), 1));
       if (!geo.attributes.slide) geo.setAttribute('slide', new THREE.Float32BufferAttribute(new Float32Array(n * 3).map((_, i) => i % 3 === 1 ? 1 : 0), 3)); }; // (straight down)
     const swap = (o, f) => { if (!o.material) return;
+      if (o.isMesh && o.userData.siteCut && !o.geometry.userData.siteCut) {   // (its own copy: a box's geometry is shared)
+          // (a part laid over the walls: cut at the build line, not pressed flat onto their top)
+        o.geometry = own(o.geometry.clone()); o.geometry.userData.siteCut = true; o.geometry.setAttribute('clipOnly', new THREE.Float32BufferAttribute(new Float32Array(o.geometry.attributes.position.count).fill(1), 1)); }
       if (o.isMesh) mark(o.geometry);
       if (Array.isArray(o.material) && o.material.length === 6) o.material = o.material.map((m, i) => i === 2 ? o.material[0] : m); // (a box: its body on top)
       o.material = Array.isArray(o.material) ? o.material.map(f) : f(o.material); o.userData.siteOwn = true; };
@@ -4442,7 +4542,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     // a part that starts above the build height isn't there yet (a cap on the walls, a beam higher up) — pressing it down
     // would lay it over the open top
     const later = []; g.updateMatrixWorld(true);
-    for (const c of g.children) walk(c, o => { if (o.isMesh && !HULL_MATS.has([].concat(o.material)[0]) && o.parent && !o.parent.isMesh) { const y0 = mb.setFromObject(o, true).min.y; if (y0 > 0.02) later.push([o, y0]); } });
+    for (const c of g.children) walk(c, o => { if (o.isMesh && !o.userData.siteCut && !HULL_MATS.has([].concat(o.material)[0]) && o.parent && !o.parent.isMesh) {   // (siteCut: shown cut, from the start)
+      const y0 = mb.setFromObject(o, true).min.y; if (y0 > 0.02) later.push([o, y0]); } });
     const setRing = y => { siteY.value = y; for (const [o, y0] of later) o.visible = y > y0 + 0.005; };
     // the rest, merged by material (as a finished building): what comes and goes on its own (pieces, parts above the
     // build line, flags, goods, a horse, the floor shade) is lifted out first and put back as it was
@@ -5449,13 +5550,17 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function rigPose(v, kind, t, female, opt, tc, steps = VIL_STEPS, fp = false, legs = null, lod = false){ // fp: seen through its own eyes — the head parts collapse; legs: {kind, t} the lower body plays instead; lod: may wear the light template far off
     const base = vilKey(kind, 'x', female, opt), u = ((t % 1) + 1) % 1 * steps, s0 = Math.floor(u) % steps, s1 = (s0 + 1) % steps, f = u - Math.floor(u);
+    // a fall plays once: its own step, always (a stand-in step from the frame's budget could hold it standing for good);
+    // the looping poses share the frame's sampling time
+    const once = kind === 'die', until = rigSampleUntil; if (once) rigSampleUntil = Infinity;
     let A = rigSample(base + '@' + s0, kind, s0 / steps, female, opt), Bs = A && (rigSample(base + '@' + s1, kind, s1 / steps, female, opt) || A);
+    rigSampleUntil = until;
     // its step not sampled yet (a pose a crowd takes up at once — farmers to their plows — waits its turn): the nearest
     // step of the same pose that is, not the last pose (walking on without the plow)
     if (!A) for (let d = 1; d <= steps >> 1 && !A; d++) A = rigSamples.get(base + '@' + (s0 + d) % steps) || rigSamples.get(base + '@' + (s0 - d + steps) % steps);
     if (A && !Bs) Bs = A;
     // (none yet at all: its first is made past the frame's sampling time, FIRST_SAMPLES a frame — the pose shows at once)
-    if (!A && firstSamples > 0) { firstSamples--; const until = rigSampleUntil; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
+    if (!A && firstSamples > 0) { firstSamples--; rigSampleUntil = Infinity; A = Bs = rigSample(base + '@' + s0, kind, s0 / steps, female, opt); rigSampleUntil = until; }
     if (!A) return !!v.rig;                                                     // keep the last pose until a sample of it is built
     if (lod && !fp) { const d2 = (v.x - camera.position.x) ** 2 + (v.z - camera.position.z) ** 2;   // (hysteresis: no flicker at the edge)
       if (d2 > RIG_LOD_FAR * RIG_LOD_FAR) v.low = true; else if (d2 < RIG_LOD_NEAR * RIG_LOD_NEAR) v.low = false; }

@@ -246,7 +246,8 @@
   $('lab-bldg').onchange = pickBldg; $('lab-dmg').onchange = pickBldg;
   $('lab-hp').oninput = () => { if (site && site.setHp) site.setHp(+$('lab-hp').value); };
   $('lab-fall').onclick = () => { if (site && site.collapse) site.collapse(); else if (site) { $('lab-dmg').checked = true; pickBldg(); site.collapse(); } };
-  window.__labSite = () => site; // dev: scripted checks $('lab-age').addEventListener('change', () => { if (site) pickBldg(); });
+  window.__labSite = () => site; // dev: scripted checks
+  $('lab-age').addEventListener('change', () => { if (site) pickBldg(); });   // (a building follows the age too)
 
   // Poses are rebuilt per frame from the phase (quantized to 1/120 of a cycle,
   // so a paused or slow view doesn't rebuild the same pose over and over).

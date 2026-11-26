@@ -1,3 +1,5 @@
+// MOCK: the redesigned TC keep is on everywhere but the deployed sites (window.__tcVar = '' turns it off)
+if (window.__tcVar === undefined && !/github\.io$/.test(location.hostname)) window.__tcVar = 'logs';
 // Shared wood palette — one brown per ROLE, used by every building so
 // timber reads as the same material everywhere:
 //   L/R/top:      structural timber (palisade walls/gates, dark-age tower)
@@ -385,8 +387,7 @@ function drawWavingFlag(sx,sy,bh,color,colorDark,poleLen=22){
 // wind: how far the cloth lifts and settles in the wind (art px; still where it's tied: the keep, a peak, each post),
 // windRate its pace on the flags' clock (animTick).
 const TC_CANVAS = { n: 6, sag: 4, fold: 1.6, drape: 6, wind: 0.8, windRate: 0.035, thick: 2.5, tan: '#e3c991', tanD: '#c9ad73' };
-function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
-  const hK = 28, hO = 18; // roof height at the keep edge / outer eave — tall enough for units to walk under
+function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken, { hK = 28, hO = 18, soft = 1 } = {}){   // hK, hO: its height at the keep edge / outer eave; soft: its sag and drape ×
   let s = side;
   // ground corners of the quadrant diamond
   let K1 = { x: sx + 48*s, y: sy + 24 }; // keep side corner
@@ -399,7 +400,7 @@ function drawTCAnnexRoof(sx, sy, side, tc, tcD, darken){
   // between its seams (the 3D's canvasAwning); stripes team and tan by turns, lit by its side
   const C = TC_CANVAS, n = C.n, lit = s < 0, dk = c => darken ? darkenColor(c) : c, L = (p, q, t) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
   const cols = [dk(lit ? tc : tcD), dk(lit ? C.tan : C.tanD)];
-  const at = (u, t) => { const p = L(L(K1r, K2r, u), L(O1r, O2r, u), t), c = (u * n) % 1; return { x: p.x, y: p.y + C.sag * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * 4 * u * (1 - u) * t * t - clothWind(u, t, s + sx * 0.01) }; };   // (straight along its batten at the keep, the folds deepening to the eave)
+  const at = (u, t) => { const p = L(L(K1r, K2r, u), L(O1r, O2r, u), t), c = (u * n) % 1; return { x: p.x, y: p.y + C.sag * soft * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * soft * 4 * u * (1 - u) * t * t - clothWind(u, t, s + sx * 0.01) }; };   // (straight along its batten at the keep, the folds deepening to the eave)
   const M = 8, run = (u, t0, t1) => { for (let j = 0; j <= M; j++) { const q = at(u, t0 + (t1 - t0) * j / M); X.lineTo(q.x, q.y); } };
   X.lineJoin = 'round';
   for (let i = 0; i < n; i++) for (let h = 0; h < 2; h++) {
@@ -1012,11 +1013,14 @@ const BARRACKS_SHIELD = [[-1, 0.9], [1, 0.9]].concat(
   Array.from({ length: 6 }, (_, i) => { const t = (i + 1) / 6; return [Math.cos(t * Math.PI / 2), 0.9 - 2.2 * Math.sin(t * Math.PI / 2) ** 1.4]; }),
   Array.from({ length: 5 }, (_, i) => { const t = (5 - i) / 6; return [-Math.cos(t * Math.PI / 2), 0.9 - 2.2 * Math.sin(t * Math.PI / 2) ** 1.4]; }));
 function buildingShadowPolys(e){
-  if (e.btype === 'FARM' || e.btype === 'MARKET') return [];
+  if (e.btype === 'FARM') return [];
   const b = BLDGS[e.btype], w = e.w !== undefined ? e.w : b.w, h = e.h !== undefined ? e.h : b.h, x = e.x, y = e.y;   // (a gate is 1×3 or 3×1 as placed)
   const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], bt = e.btype;
   let blocks;
-  if (bt === 'TC') blocks = [[rect(x, y, x + w / 2, y + h / 2), 1.3], [rect(x + w / 2, y, x + w, y + h / 2), 0.6], [rect(x, y + h / 2, x + w / 2, y + h), 0.6]];
+  if (bt === 'MARKET') { const r = 21 / 64 + 0.045;   // its three stall tents (pov3d's MARKET: on the corner tiles, eaves 20px up)
+    blocks = [[0, 0], [0, w - 1], [w - 1, 0]].map(([tx, ty]) => [rect(x + tx + 0.5 - r, y + ty + 0.5 - r, x + tx + 0.5 + r, y + ty + 0.5 + r), 20 / ART_HPX]); }
+  else if (bt === 'TC') blocks = [[rect(x, y, x + w / 2, y + h / 2), window.__tcVar === 'logs' ? 1.6 : 1.3],   // (MOCK: the taller keep)
+     [rect(x + w / 2, y, x + w, y + h / 2), 0.6], [rect(x, y + h / 2, x + w / 2, y + h), 0.6]];
   else if (bt === 'BARRACKS') { const k = w / 3; blocks = [[rect(x, y + 0.14 * k, x + 1.22 * k, y + 2.95 * k), 0.75]]; }   // (pov3d's hall, BP(±30, ∓13))
   else if (bt === 'LCAMP' || bt === 'MCAMP') blocks = [[rect(x + 1 - 0.625, y, x + 1, y + 0.625), 0.5]];                  // (campHut's box)
   else if (bt === 'MILL') { const r = 0.36 * w; blocks = [[Array.from({ length: 12 }, (_, i) => [x + w / 2 + r * Math.cos(i * Math.PI / 6), y + h / 2 + r * Math.sin(i * Math.PI / 6)]), 1]]; }
@@ -1062,21 +1066,244 @@ function buildingShadowPath(e){
 // a field on a sim object), redone when its key changes. (l, t, w, h): the art's box about its anchor (ax, ay), logical
 // px; draw(ox, oy) paints it anchored there. Not for the ghost/mask passes (no owner state, silhouettes).
 const _bakes = new WeakMap();
+// MOCK (window.__tcVar 'logs'): the TC keep redesign, drawn from pov3d's MODELS.TC geometry — world tiles across, art px
+// up — projected into the keep's authored frame (sx, sy: its top corner; tcS: its scale). Dark a log keep, Feudal
+// half-timber over stone, Castle stone with corner piers, shields and merlons. part: 'back' (keep, the frame and goods
+// under the cloth) / 'front' (the awnings, the flag) / null (both).
+function drawTCMock2D(e, sx, sy, tcS, part, a, tc, tcD, darken){
+  const W = e.w || 4, mid = W / 2, s = HALF_TW / tcS, U = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2 / tcS;   // px a tile across, px a world unit up
+  const Q = (x, h, z) => [sx + (x - z) * s, sy + (x + z) * s / 2 - h];
+  const dk = c => darken ? darkenColor(c) : c, wood = a === 0;
+  const keepH = 74, hK = a === 1 ? 40 : 36, hO = 30, rimW = wood ? 0.08 : mid * 10 / 96 * (a === 1 ? 0.6 : 1), rimD = wood ? 0.3 : 5, F = keepH - rimD;
+  const path = (pts, closed = true) => { X.beginPath(); pts.forEach((p, i) => i ? X.lineTo(p[0], p[1]) : X.moveTo(p[0], p[1])); if (closed) X.closePath(); };
+  const fill = (pts, c) => { path(pts); X.fillStyle = c; X.fill(); };
+  const ink = (pts, closed = true, c = '#000', w = 1.3) => { path(pts, closed); X.strokeStyle = c; X.lineWidth = w; X.lineJoin = 'round'; X.stroke(); };
+  const SEAM = 'rgba(0,0,0,0.13)';
+  // the two front faces: 'L' (z = mid, u along x; lit) and 'R' (x = mid, u along z); o: proud of the face (tiles)
+  const onF = (f, u, h, o = 0) => f === 'L' ? Q(u, h, mid + o) : Q(mid + o, h, u);
+  const quad = (f, u0, u1, h0, h1, o = 0) => [onF(f, u0, h0, o), onF(f, u1, h0, o), onF(f, u1, h1, o), onF(f, u0, h1, o)];
+  // an axis box's three seen faces (+z cL, +x cR, top cT); line 'hull' (its silhouette), 'ink' (every edge) or null
+  const box = (x0, z0, x1, z1, h0, h1, cL, cR, cT, line = 'hull') => {
+    const a0 = Q(x0, h0, z1), b0 = Q(x1, h0, z1), c0 = Q(x1, h0, z0), a1 = Q(x0, h1, z1), b1 = Q(x1, h1, z1), c1 = Q(x1, h1, z0), d1 = Q(x0, h1, z0);
+    fill([a0, b0, b1, a1], dk(cL)); fill([b0, c0, c1, b1], dk(cR)); fill([a1, b1, c1, d1], dk(cT || cL));
+    if (line) ink([a0, b0, c0, c1, d1, a1], true, '#000', 1.1);
+    if (line === 'ink') { ink([a1, b1, c1], false, '#000', 1.1); ink([b0, b1], false, '#000', 1.1); }
+  };
+  // a standing round (a post, a barrel, a sack: r1 its top's radius), lit from the left, its silhouette inked; top: its
+  // lid's colour (null: hidden, under the cloth)
+  const round = (cx, cz, r0, r1, h0, h1, col, top) => {
+    const B = Q(cx, h0, cz), T = Q(cx, h1, cz), w0 = r0 * s * Math.SQRT2, w1 = r1 * s * Math.SQRT2, c = dk(col);
+    const g = X.createLinearGradient(B[0] - w0, 0, B[0] + w0, 0); g.addColorStop(0, shadeHex(c, 1.12)); g.addColorStop(0.45, c); g.addColorStop(1, shadeHex(c, 0.72));
+    X.beginPath(); X.moveTo(B[0] - w0, B[1]); X.ellipse(B[0], B[1], w0, w0 / 2, 0, Math.PI, 0, true); X.lineTo(T[0] + w1, T[1]); X.ellipse(T[0], T[1], w1, w1 / 2, 0, 0, Math.PI, true); X.closePath();
+    X.fillStyle = g; X.fill(); X.strokeStyle = '#000'; X.lineWidth = 1.1; X.stroke();
+    if (top) { X.beginPath(); X.ellipse(T[0], T[1], w1, w1 / 2, 0, 0, Math.PI * 2); X.fillStyle = dk(top); X.fill(); X.beginPath(); X.ellipse(T[0], T[1], w1, w1 / 2, 0, Math.PI, Math.PI * 2); X.strokeStyle = '#000'; X.stroke(); }
+  };
+  // a log (or a round beam) from p0 to p1 (world [x, y, z]), radius r: rounded by its light, its ends' outer halves inked.
+  // o.cap: the end face's colour at the end turned to the camera; o.top/o.bot: ink that long edge (else a seam);
+  // o.black: [t0, t1] stretches (0..1 along it) inked on both edges — where it runs out past a corner
+  const rod = (p0, p1, r, col, o = {}) => {
+    const A = Q(p0[0], p0[1] * U, p0[2]), B = Q(p1[0], p1[1] * U, p1[2]), L = Math.hypot(B[0] - A[0], B[1] - A[1]), d = [(B[0] - A[0]) / L, (B[1] - A[1]) / L];
+    let n = [-d[1], d[0]]; if (n[1] > 0) n = [-n[0], -n[1]];   // (the side toward the sky)
+    const alongX = Math.abs(p1[0] - p0[0]) >= Math.abs(p1[2] - p0[2]), va = [0, -U * r], vb = alongX ? [-s * r, s * r / 2] : [s * r, s * r / 2];
+    const ext = Math.hypot(va[0] * n[0] + va[1] * n[1], vb[0] * n[0] + vb[1] * n[1]), c = dk(col);
+    const M = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], g = X.createLinearGradient(M[0] - n[0] * ext, M[1] - n[1] * ext, M[0] + n[0] * ext, M[1] + n[1] * ext);
+    g.addColorStop(0, shadeHex(c, 0.68)); g.addColorStop(0.5, c); g.addColorStop(0.85, shadeHex(c, 1.13)); g.addColorStop(1, shadeHex(c, 1.05));
+    const ell = (P, k) => { X.save(); X.transform(va[0] * k, va[1] * k, vb[0] * k, vb[1] * k, P[0], P[1]); X.moveTo(1, 0); X.arc(0, 0, 1, 0, Math.PI * 2); X.restore(); };
+    X.beginPath(); ell(A, 1); X.fillStyle = g; X.fill(); X.strokeStyle = '#000'; X.lineWidth = 1.1; X.stroke();
+    X.beginPath(); ell(B, 1); X.fill(); X.stroke();
+    const up = (P, k) => [P[0] + n[0] * ext * k, P[1] + n[1] * ext * k], at = t => [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t];
+    fill([up(A, 1), up(B, 1), up(B, -1), up(A, -1)], g);
+    ink([up(A, -1), up(B, -1)], false, o.bot ? '#000' : 'rgba(40,24,10,0.45)', o.bot ? 1.1 : 1);
+    if (o.top) ink([up(A, 1), up(B, 1)], false, '#000', 1.1);
+    for (const [t0, t1] of o.black || []) { ink([up(at(t0), 1), up(at(t1), 1)], false, '#000', 1.1); ink([up(at(t0), -1), up(at(t1), -1)], false, '#000', 1.1); }
+    if (o.cap) { const P = p1[0] + p1[2] > p0[0] + p0[2] ? B : A; X.beginPath(); ell(P, 0.8); X.fillStyle = dk(o.cap); X.fill(); }
+  };
+  // a window in a front face: a dark opening, its sill and the jamb turned to the light seen inside, an inked frame
+  const win = (f, uc, hc, w, h) => {
+    const O = quad(f, uc - w / 2, uc + w / 2, hc - h / 2, hc + h / 2), T = 0.08, I = quad(f, uc - w / 2, uc + w / 2, hc - h / 2, hc + h / 2, -T);
+    X.save(); path(O); X.clip();
+    fill(O, dk('#1c1a17'));
+    fill([O[0], O[1], I[1], I[0]], dk(a >= 1 ? '#8f877a' : '#5a4029'));   // the sill
+    fill([O[0], I[0], I[3], O[3]], dk(a >= 1 ? '#6e675c' : '#4a3626'));   // the jamb
+    X.restore(); ink(O, true, '#000', 1.1);
+  };
+  // the keep's flat top: the rim round a recessed team deck (F), the far inner walls of the recess; rimC its colour
+  const deckTop = (rimC, wallL, wallR) => {
+    const R = [Q(0, keepH, 0), Q(mid, keepH, 0), Q(mid, keepH, mid), Q(0, keepH, mid)];
+    fill(R, dk(rimC));
+    const i0 = rimW, i1 = mid - rimW, O = [Q(i0, keepH, i0), Q(i1, keepH, i0), Q(i1, keepH, i1), Q(i0, keepH, i1)];
+    X.save(); path(O); X.clip();
+    fill([Q(i0, keepH, i0), Q(i1, keepH, i0), Q(i1, F, i0), Q(i0, F, i0)], dk(wallL));   // the far inner walls (z = i0 looks +z,
+    fill([Q(i0, keepH, i0), Q(i0, keepH, i1), Q(i0, F, i1), Q(i0, F, i0)], dk(wallR));   // x = i0 looks +x)
+    const D = [Q(i0, F, i0), Q(i1, F, i0), Q(i1, F, i1), Q(i0, F, i1)], deck = dk(shadeHex(tc, 0.85));
+    fill(D, deck); X.strokeStyle = 'rgba(0,0,0,0.16)'; X.lineWidth = 1; X.beginPath();
+    for (let i = 1; i < 6; i++) { const t = i0 + (i1 - i0) * i / 6, p = Q(i0, F, t), q = Q(i1, F, t); X.moveTo(p[0], p[1]); X.lineTo(q[0], q[1]); }   // (boards along x)
+    X.stroke();
+    if (rimD > 1) fill([Q(i0, F, i0), Q(i1, F, i0), Q(i1, F, i0 + 0.22), Q(i0 + 0.22, F, i0 + 0.22), Q(i0 + 0.22, F, i1), Q(i0, F, i1)], 'rgba(0,0,0,0.13)');   // the far walls' shadow
+    X.restore();
+    ink(O, true, SEAM, 1);
+  };
+  const shadeUnder = () => {   // under the decks the keep's two front walls are in their shade, up to where the cloths meet them
+    const dH = hK - 1.75; fill([Q(0, 0, mid), Q(mid, 0, mid), Q(mid, 0, 0), Q(mid, dH, 0), Q(mid, dH, mid), Q(0, dH, mid)], SHADOW_FILL);
+  };
+  // stone courses on a front face: light mortar seams, the joints staggered course to course
+  const stone = (f, u0, u1, h0, h1, ch = 7, bw = 0.42, o = 0) => {
+    X.save(); path(quad(f, u0, u1, h0, h1, o)); X.clip(); X.strokeStyle = SEAM; X.lineWidth = 1; X.beginPath();
+    for (let h = h0, j = 0; h < h1; h += ch, j++) { const p = onF(f, u0, h, o), q = onF(f, u1, h, o); if (h > h0) { X.moveTo(p[0], p[1]); X.lineTo(q[0], q[1]); }
+      for (let u = u0 + (j % 2 ? bw / 2 : 0) + bw * 0.5; u < u1; u += bw) { const m = onF(f, u, h, o), m2 = onF(f, u, Math.min(h + ch, h1), o); X.moveTo(m[0], m[1]); X.lineTo(m2[0], m2[1]); } }
+    X.stroke(); X.restore();
+  };
+
+  // the garrison up on the deck: drawn after it, before the near parapet (logs, merlons) that stands in front of them
+  const crew = () => { if (e.complete && e.garrison && e.garrison.length) drawRoofArchers2D(e, sx, sy, tcS, { top: keepH, inset: (mid - 2 * rimW) / mid, depth: rimD, hp: wood ? 7 : 5 }); };
+  if (part !== 'front') {
+    fill([Q(0, 0, 0), Q(mid, 0, 0), Q(mid, 0, mid), Q(0, 0, mid)], dk('#b7ad97')); ink([Q(0, 0, 0), Q(mid, 0, 0), Q(mid, 0, mid), Q(0, 0, mid)]);   // the keep's paving
+
+    if (wood) {
+      // A log keep: whole logs, the two directions half a log apart, interlocking at the corners and running past them;
+      // three logs cut out for each window. The far walls go first (the deck hides all but their top), then the deck,
+      // then the near walls bottom to top with the far walls' ends past the side corners (a log higher overlaps the one below).
+      const lh = 0.2, lr = lh / 2, over = lr * 2.5, logC = '#a8794b', endC = '#d9b98a', wW = 4 / 32 * W / 3 + lr * 0.3, kHw = keepH / U;
+      const logWin = alongX => { const off = alongX ? 0 : lh / 2, j0 = Math.round((kHw * 0.7 - off) / lh - 1.5); return [j0 * lh + off, (j0 + 3) * lh + off]; };
+      const logs = [];
+      for (const [alongX, at, far] of [[true, 0, true], [false, 0, true], [true, mid, false], [false, mid, false]]) {
+        const rows = []; for (let y = lr + (alongX ? 0 : lh / 2); y <= kHw + lr * 0.5 + lh; y += lh) rows.push(y);
+        rows.forEach((y, j) => { const [lo, hi] = logWin(alongX), p0 = -over, p1 = mid + over, c = mid / 2;
+          const segs = !far && y > lo && y < hi ? [[p0, c - wW], [c + wW, p1]] : [[p0, p1]];
+          for (const [u0, u1] of segs) logs.push({ y, far, alongX, at, u0, u1, top: j === rows.length - 1, bot: j === 0 }); });
+      }
+      const P = (l, u) => l.alongX ? [u, l.y, l.at] : [l.at, l.y, u];
+      const draw = l => { const len = l.u1 - l.u0, black = []; if (l.u0 < 0) black.push([0, -l.u0 / len]); if (l.u1 > mid) black.push([(mid - l.u0) / len, 1]);
+        rod(P(l, l.u0), P(l, l.u1), lr, l.alongX ? logC : shadeHex(logC, 0.93), { cap: endC, top: l.top, bot: l.bot, black }); };
+      logs.filter(l => l.far).sort((p, q) => p.y - q.y).forEach(draw);
+      fill([Q(0, keepH, 0), Q(mid, keepH, 0), Q(mid, keepH, mid), Q(0, keepH, mid)], dk(logC));
+      deckTop(logC, logC, logC);
+      crew();
+      // the near walls, and where the far walls' logs run out past the side corners (beyond the corner's plumb line)
+      const near = logs.filter(l => !l.far).map(l => ({ l })), ends = logs.filter(l => l.far).map(l => ({ l, clip: l.alongX ? 1 : -1 }));
+      for (const { l, clip } of near.concat(ends).sort((p, q) => p.l.y - q.l.y)) {
+        if (!clip) { draw(l); continue; }
+        const xc = sx + clip * mid * s; X.save(); X.beginPath(); X.rect(clip > 0 ? xc : xc - 200, sy - 200, 200, 400); X.clip(); draw(l); X.restore();
+      }
+    } else {
+      const sY = hK - 0.02 * U, stoneAge = a >= 2;
+      const wL = stoneAge ? '#c7bea9' : '#f0e4c6', wR = stoneAge ? '#a9a18f' : '#d6c9a8';
+      fill(quad('L', 0, mid, 0, keepH), dk(wL)); fill(quad('R', 0, mid, 0, keepH), dk(wR));
+      if (stoneAge) { stone('L', 0, mid, 0, keepH); stone('R', 0, mid, 0, keepH); }
+      shadeUnder();
+      if (a === 1) {   // the stone ground storey, a hair proud, up to where the cloths meet the keep
+        const d = 0.012; fill(quad('L', -d, mid + d, 0, sY, d), dk('#cfc6b3')); fill(quad('R', -d, mid + d, 0, sY, d), dk('#b2aa98'));   // (its top: a hair's lip under the storey above)
+        ink([Q(-d, sY, mid + d), Q(-d, 0, mid + d), Q(mid + d, 0, mid + d), Q(mid + d, 0, -d), Q(mid + d, sY, -d)], false); ink([Q(-d, sY, mid + d), Q(mid + d, sY, mid + d), Q(mid + d, sY, -d)], false);   // (its back edges hide behind the storey above)
+        stone('L', -d, mid + d, 0, sY, 7, 0.42, d); stone('R', -d, mid + d, 0, sY, 7, 0.42, d);
+      }
+      // the windows: two a face
+      for (const f of ['L', 'R']) for (const u of stoneAge ? [0.24, 0.76] : [0.34, 0.66]) win(f, mid * u, keepH * (a === 1 ? 0.75 : 0.68), 6 / 32 * W / 3, 14);
+      // the outline of the walls (the box's silhouette and its front corner)
+      ink([Q(0, 0, mid), Q(mid, 0, mid), Q(mid, 0, 0), Q(mid, keepH, 0), Q(0, keepH, 0), Q(0, keepH, mid)]);
+      ink([Q(mid, 0, mid), Q(mid, keepH, mid)], false);
+      if (a === 1) {   // the timber frame: corner posts, a middle post, sill and top rails, a brace in each outer bay
+        const bt = 3 / U, TB = '#5e4330', TBR = '#4d3727';
+        for (const f of ['L', 'R']) { const c = dk(f === 'L' ? TB : TBR);
+          fill(quad(f, mid / 2 - bt / 2, mid / 2 + bt / 2, sY, keepH), c); fill(quad(f, 0, mid, sY, sY + 3), c); fill(quad(f, 0, mid, keepH - 3, keepH), c);
+          const br = (u0, u1) => { const p = onF(f, u0, sY + 3), q = onF(f, u1, keepH - 3), hw = bt * 0.45 * s * 1.2; X.beginPath(); X.moveTo(p[0] - hw, p[1]); X.lineTo(q[0] - hw, q[1]); X.lineTo(q[0] + hw, q[1]); X.lineTo(p[0] + hw, p[1]); X.closePath(); X.fillStyle = c; X.fill(); };
+          br(bt * 0.6, mid * 0.2); br(mid - bt * 0.6, mid * 0.8); }
+        const d = 0.012;
+        for (const [cx, cz] of [[mid, 0], [0, mid], [mid, mid]]) box(cx - bt / 2 - d, cz - bt / 2 - d, cx + bt / 2 + d, cz + bt / 2 + d, sY, keepH, TB, TBR, TB, null);
+        ink([Q(0, keepH, mid), Q(mid, keepH, mid), Q(mid, keepH, 0)], false);
+      }
+      if (stoneAge) {   // a team shield centred on each face: the team's colour, gold quarters
+        const w = 8 / U, h = 10, y0 = keepH * 0.66 - h / 2;
+        for (const f of ['L', 'R']) { const c = mid / 2, o = 0.012;
+          fill(quad(f, c - w / 2, c + w / 2, y0, y0 + h, o), dk(f === 'L' ? tc : tcD));
+          fill(quad(f, c, c + w / 2, y0 + h / 2, y0 + h, o), dk(f === 'L' ? '#e6c34a' : '#c9a838')); fill(quad(f, c - w / 2, c, y0, y0 + h / 2, o), dk(f === 'L' ? '#e6c34a' : '#c9a838')); }
+      }
+      // the top: the rim round the recessed deck (Feudal planks, Castle plain stone)
+      const mH = 7, q = rimW - 0.03, pd = 0.025;
+      const pier = (cx, cz) => { const ux = cx ? -1 : 1, uz = cz ? -1 : 1;   // a corner pier, a little proud of both walls, up through the corner merlon
+        const x0 = Math.min(cx - ux * pd, cx + ux * q), x1 = Math.max(cx - ux * pd, cx + ux * q), z0 = Math.min(cz - uz * pd, cz + uz * q), z1 = Math.max(cz - uz * pd, cz + uz * q);
+        // its faces as far as they show: a side face turned inward runs inside the keep below the rim, so only its
+        // proud sliver shows there (above the rim, beside the merlons, all of it)
+        const top = keepH + mH, inX = x1 < mid - 1e-6, inZ = z1 < mid - 1e-6, cL = '#e4ddcc', cR = '#c6bfae';
+        const back = inX && inZ, h0 = back ? keepH : 0;   // (the far pier: only its top, above the rim)
+        const fL = inZ && !back ? [Q(mid, 0, z1), Q(x1, 0, z1), Q(x1, top, z1), Q(x0, top, z1), Q(x0, keepH, z1), Q(mid, keepH, z1)] : [Q(x0, h0, z1), Q(x1, h0, z1), Q(x1, top, z1), Q(x0, top, z1)];
+        const fR = inX && !back ? [Q(x1, 0, mid), Q(x1, 0, z1), Q(x1, top, z1), Q(x1, top, z0), Q(x1, keepH, z0), Q(x1, keepH, mid)] : [Q(x1, h0, z1), Q(x1, h0, z0), Q(x1, top, z0), Q(x1, top, z1)];
+        const sil = back ? [Q(x0, h0, z1), Q(x1, h0, z1), Q(x1, h0, z0), Q(x1, top, z0), Q(x0, top, z0), Q(x0, top, z1)]
+          : inX ? [Q(x0, 0, z1), Q(x1, 0, z1), Q(x1, 0, mid), Q(x1, keepH, mid), Q(x1, keepH, z0), Q(x1, top, z0), Q(x0, top, z0), Q(x0, top, z1)]
+          : inZ ? [Q(mid, 0, z1), Q(x1, 0, z1), Q(x1, 0, z0), Q(x1, top, z0), Q(x0, top, z0), Q(x0, top, z1), Q(x0, keepH, z1), Q(mid, keepH, z1)]
+          : [Q(x0, 0, z1), Q(x1, 0, z1), Q(x1, 0, z0), Q(x1, top, z0), Q(x0, top, z0), Q(x0, top, z1)];
+        return { k: x0 + z0 + q, f: () => { fill(fL, dk(cL)); fill(fR, dk(cR)); fill([Q(x0, top, z1), Q(x1, top, z1), Q(x1, top, z0), Q(x0, top, z0)], dk('#ece6d8'));
+          if (!inZ) { X.save(); path(fL); X.clip(); stone('L', x0, x1, 0, top, 9, 0.3, z1 - mid); X.restore(); }
+          if (!inX) { X.save(); path(fR); X.clip(); stone('R', z0, z1, 0, top, 9, 0.3, x1 - mid); X.restore(); }
+          ink(sil, true, '#000', 1.1); } }; };
+      if (stoneAge) pier(0, 0).f();   // (the far one: the deck hides all but its top)
+      if (stoneAge) deckTop('#cdc4b0', '#cdc4b0', '#b3ab98'); else deckTop('#7a5a40', '#7a5a40', '#664a34');
+      crew();
+      ink([Q(0, keepH, mid), Q(mid, keepH, mid), Q(mid, keepH, 0)], false);
+      if (stoneAge) {   // merlons on the rim, one piece with the walls (no seam at their foot), and the corner piers rising through
+        // the corner ones; drawn back to front
+        const parts = [];
+        for (const m of [1, 2]) { const t = (mid - rimW) * m / 3; parts.push([t, 0], [0, t], [t, mid - rimW], [mid - rimW, t]); }
+        const all = parts.map(([x0, z0]) => ({ k: x0 + z0 + rimW, f: () => {
+          const x1 = x0 + rimW, z1 = z0 + rimW, a0 = Q(x0, keepH, z1), b0 = Q(x1, keepH, z1), c0 = Q(x1, keepH, z0), a1 = Q(x0, keepH + mH, z1), b1 = Q(x1, keepH + mH, z1), c1 = Q(x1, keepH + mH, z0), d1 = Q(x0, keepH + mH, z0);
+          const lC = z1 >= mid - 1e-6 ? wL : '#cdc4b0', rC = x1 >= mid - 1e-6 ? wR : '#b3ab98';   // (an outer face is the wall's own)
+          fill([a0, b0, b1, a1], dk(lC)); fill([b0, c0, c1, b1], dk(rC)); fill([a1, b1, c1, d1], dk('#d9d1bf'));
+          ink([a0, a1, d1, c1, c0], false); ink([a1, b1, c1], false); ink([b0, b1], false); } }));
+        for (const [cx, cz] of [[mid, 0], [0, mid], [mid, mid]]) all.push(pier(cx, cz));
+        all.sort((p, q2) => p.k - q2.k).forEach(p => p.f());
+      }
+      // the beam each cloth hangs from, along the wall (Feudal a timber, Castle a stone ledge)
+      const bh2 = 6, o = 0.1, y0 = hK, bc = a === 1 ? ['#5e4330', '#4d3727', '#6e5040'] : ['#d8d0bd', '#bab29f', '#e2dbca'];
+      box(mid, -o, mid + o, mid, y0, y0 + bh2, ...bc, null); box(-o, mid, mid + o, mid + o, y0, y0 + bh2, ...bc, null);   // (a band all round the keep: its back sides hidden)
+      const y1 = y0 + bh2;   // (inked above and at its ends past the side corners; its underside sits on the cloth, the corner's between the cloths unlined)
+      ink([Q(-o, y0, mid + o), Q(-o, y1, mid + o), Q(-o, y1, mid)], false); ink([Q(mid, y1, -o), Q(mid + o, y1, -o), Q(mid + o, y0, -o)], false);
+      ink([Q(-o, y1, mid + o), Q(mid + o, y1, mid + o), Q(mid + o, y1, -o)], false); ink([Q(mid + o, y0, mid + o), Q(mid + o, y1, mid + o)], false);
+    }
+
+    // Under each cloth: posts at its eave corners (its frame taken to run just under the cloth), the goods
+    // lined along the eave (the ground under the cloth stays free to walk); back to front
+    const C = TC_CANVAS, soft = 0.45, run = W - mid;
+    const under = (dd, uu) => { const t = dd / run, u = uu / mid, c = (u * C.n) % 1; return hK + (hO - hK) * t - (C.sag * soft * 4 * t * (1 - t) + C.fold * t * (2 - t) * Math.sin(Math.PI * c) + C.drape * soft * 4 * u * (1 - u) * t * t) - C.thick * 0.6; };
+    const pi = 0.09, ps = wood ? 0.0675 : 0.045, postC = wood ? '#a8794b' : '#5e4632';
+    const items = [];
+    for (const side of [0, 1]) {   // 0: the right cloth (x past the keep), 1: the left (z past it); P(along the eave, out from the keep)
+      const P = (v, w2) => side ? [v, w2] : [w2, v], L = mid - 2 * pi - 0.5, G = t => P(pi + 0.25 + L * t, W - 0.32);
+      const add = (xz, f) => items.push({ k: xz[0] + xz[1], f });
+      if (a >= 2) for (const v of [pi, mid - pi]) { const [px, pz] = P(v, W - pi); add([px, pz - 0.01], () => box(px - 0.08, pz - 0.08, px + 0.08, pz + 0.08, 0, 0.16 * U, '#d6cdbb', '#b8b0a0', '#e0d8c8', 'hull')); }
+      for (const v of [pi, mid - pi]) { const [px, pz] = P(v, W - pi); add([px, pz], () => round(px, pz, ps, ps, a >= 2 ? 0.16 * U : 0, under(run - pi, v) + 1, postC, null)); }   // (each up into the cloth where it stands; Castle: from its plinth's top)
+      // the goods
+      const barrel = t => { const [x, z] = G(t); add([x, z], () => round(x, z, 0.13, 0.13, 0, 0.31 * U, '#a9804e', '#c9a273')); };
+      const sack = (t, col) => { const [x, z] = G(t); add([x, z], () => round(x, z, 0.14, 0.075, 0, 0.24 * U, col, shadeHex(col, 1.05))); };
+      const crate = (t, h = 0.27) => { const [x, z] = G(t); add([x, z], () => box(x - h / 2, z - h / 2, x + h / 2, z + h / 2, 0, h * U, '#c9a26e', '#a8834f', '#dbb987', 'hull')); };
+      if (!side) { barrel(0); barrel(0.3); sack(0.62, '#e3d3a8');
+        if (a >= 1) { const [x, z] = G(1); add([x, z], () => { round(x, z, 0.09, 0.09, 0, 0.14 * U, '#7a5a3a', '#94714c'); box(x - 0.05, z - 0.11, x + 0.05, z + 0.11, 0.14 * U, 0.21 * U, '#4d5257', '#3b3f43', '#61676d', 'hull'); }); }
+        else barrel(1); }
+      else { if (wood) { const [x, z] = G(0.2); add([x, z], () => { for (const [dy, dz] of [[0.06, -0.1], [0.06, 0.01], [0.06, 0.12], [0.15, -0.045], [0.15, 0.065]]) rod([x - 0.24, dy, z + dz], [x + 0.24, dy, z + dz], 0.055, '#9c7046', { cap: '#d9b98a', top: true, bot: true }); }); }
+        else { crate(0); crate(0.3, 0.22); }
+        sack(0.65, '#c9a46a'); sack(1, '#e3d3a8'); }
+    }
+    items.sort((p, q2) => p.k - q2.k).forEach(it => it.f());
+  }
+  if (part !== 'back') {
+    drawTCAnnexRoof(sx, sy, -1, tc, tcD, darken, { hK, hO, soft: 0.45 });
+    drawTCAnnexRoof(sx, sy, +1, tc, tcD, darken, { hK, hO, soft: 0.45 });
+    if (e.complete) drawWavingFlag(sx, sy, F - 26, dk(tc), dk(tcD), a >= 2 ? keepH + 28 - F : 42);
+  }
+}
 // A TC's garrisoned villagers up on its keep (render-units' roofCrew: where each stands, walking, aiming), as
 // drawPerson2D figures — each villager's own look with a bow — in the keep's authored frame (sx, sy: its top corner;
 // tcS: its scale), the front parapet hiding their legs. Viewer-only.
 const roofFigs2D = new WeakMap();
-function drawRoofArchers2D(e, sx, sy, tcS){
+function drawRoofArchers2D(e, sx, sy, tcS, deck = { top: 60, inset: 38 / 48, depth: 5, hp: 5 }){   // deck: the keep top's height, the floor's inset and drop, the parapet over it (art px)
   const R = roofCrew(e), cd = e.atkCooldown || 0;
   if (R.down) return;   // (inside the keep: the 2D's keep stands whole, so out of sight)
   let figs = roofFigs2D.get(e); if (!figs) roofFigs2D.set(e, figs = []);
   // the keep floor's diamond (the recess: inset 38/48, dropped 5), u along world x, v along world y
-  const rcx = sx, rcy = sy - 36, ins = ([x, y]) => [rcx + (x - rcx) * 38 / 48, rcy + (y - rcy) * 38 / 48 + 5];
-  const N = ins([sx, sy - 60]), E = ins([sx + 48, sy - 36]), S = ins([sx, sy - 12]), W = ins([sx - 48, sy - 36]);
+  const rcx = sx, rcy = sy + 24 - deck.top, ins = ([x, y]) => [rcx + (x - rcx) * deck.inset, rcy + (y - rcy) * deck.inset + deck.depth];
+  const N = ins([sx, rcy - 24]), E = ins([sx + 48, rcy]), S = ins([sx, rcy + 24]), W = ins([sx - 48, rcy]);
   const at = (u, v) => [N[0] + u * (E[0] - N[0]) + v * (W[0] - N[0]), N[1] + u * (E[1] - N[1]) + v * (W[1] - N[1])];
   const order = R.figs.map((f, i) => i).sort((a, b) => (R.figs[a].u + R.figs[a].v) - (R.figs[b].u + R.figs[b].v));   // back to front
   X.save();
-  const hp = 5;   // the parapet's top (the floor sits 5 below it): what stands behind it below that line is hidden
+  const hp = deck.hp;   // the parapet's top over the floor: what stands behind it below that line is hidden
   X.beginPath(); X.moveTo(W[0], W[1] - hp); X.lineTo(S[0], S[1] - hp); X.lineTo(E[0], E[1] - hp); X.lineTo(E[0], E[1] - 200); X.lineTo(W[0], W[1] - 200); X.closePath(); X.clip();
   for (const i of order) {
     const c = R.figs[i], vil = entitiesById.get(e.garrison[i]);
@@ -1169,6 +1396,7 @@ function drawBuilding(e, part = null){
     // + foundation (sorts a tile behind centre), 'front' = posts + annex
     // roofs + banner (sorts a tile ahead). null draws the whole building
     // (selection outline, placement ghost, minimap).
+    if (window.__tcVar === 'logs') { bh = 74 * tcS; drawTCMock2D(e, sx, sy, tcS, part, ownerAge, tc, tcD, darken); } else {   // MOCK: the redesigned keep
     if(part !== 'front'){
 
     // Draw stone foundation pavement covering the keep footprint in the back quadrant
@@ -1426,6 +1654,7 @@ function drawBuilding(e, part = null){
     }
 
     } // end 'front' (annex) part
+    }   // (end MOCK switch)
     X.restore();
     // The keep part paints first and must not run the shared overlays (HP
     // bar, garrison flag, progress) — those belong to the front pass / the
