@@ -1555,13 +1555,13 @@ function entityPixelHit(e, lx, ly, part) {
   X = _hitMaskX; ZOOM = 1;                // mask draws in logical px; keep W/H/topH real
   camX = sv.camX + lx - half;            // shift so (lx,ly) -> (half,half)
   camY = sv.camY + ly - half;
-  window._maskDraw = true;
+  window._maskDraw = true; window._footDraw = e.type !== 'unit';   // (a building's footprint is clickable: drawBuilding)
   try {
     if (e.type === 'unit') drawUnit(e); else drawBuilding(e, part);
   } catch (err) {
     /* a draw failure shouldn't wedge selection — treat as miss */
   } finally {
-    window._maskDraw = false;
+    window._maskDraw = false; window._footDraw = false;
     X = sv.X; camX = sv.camX; camY = sv.camY; ZOOM = sv.ZOOM;
   }
   let data = _hitMaskX.getImageData(0, 0, win, win).data;

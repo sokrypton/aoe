@@ -1030,6 +1030,10 @@ function buildingShadowPolys(e){
   else blocks = [[rect(x, y, x + w, y + h), 0.6]];
   return blocks.map(([P, H]) => { const k = e.complete === false ? 0 : H; return k ? convexHull(P.concat(P.map(q => [q[0] + SHADOW_CAST[0] * k, q[1] + SHADOW_CAST[1] * k]))) : P; });
 }
+// A building's footprint as its selection takes it (both views' outline and click area), in tiles from its corner: the
+// whole, but a Town Center's open front court — under neither awning — is the ground's, not the building's.
+function footParts(e, w, h){ if (e.btype !== 'TC') return [[0, 0, w, h]]; const m = w / 2;
+  return [[0, 0, m, m], [m, 0, w, m], [0, m, m, h]]; }
 // A wall piece's solid parts, as its model draws them (tile-centric: wallPiece, pov3d's wallArms): a stretch from its
 // centre to each edge a wall-like neighbour stands at — on into a tower's or a gate's tile, to its post — and its post
 // (none where a run passes straight through, bare). Heights from the art: a stretch 14px, a post 22px.
@@ -1133,6 +1137,12 @@ function drawBuilding(e, part = null){
   if(isOffscreen(sx,sy,buildingCullMargin(e.w||b.w, e.h||b.h)))return;
   let bw=b.w*HALF_TW, bhh=b.h*HALF_TH;
   sy-=bhh;
+  // A selection outline / a click test (_footDraw): the building's whole footprint is part of it — a farm between its
+  // rows, a yard, the ground under an awning — so the outline goes round the whole, not round each post and prop.
+  if (window._footDraw && !isWallBtype(e.btype) && !isGateBtype(e.btype)) { X.fillStyle = '#000'; X.beginPath();
+    const P = (u, v) => [sx + (u - v) * HALF_TW, sy + (u + v) * HALF_TH];   // (footprint tiles from its back corner)
+    for (const [u0, v0, u1, v1] of footParts(e, b.w, b.h)) { X.moveTo(...P(u0, v0)); X.lineTo(...P(u1, v0)); X.lineTo(...P(u1, v1)); X.lineTo(...P(u0, v1)); X.closePath(); }
+    X.fill(); }
   // Compute fog level once for the full footprint; used to gate animations and overlay
   let f = window._ghostDraw ? 2 : buildingFogLevel(e);
   let visible = f === 2; // actively in sight — show live animations

@@ -134,6 +134,7 @@ function _drawInfosMask(ctx, infos, originLeft, originTop, stubs=false){
   // twice per frame for selected entities / be rasterized into the outline.
   window._maskDraw=true;
   window._flatDraw=true;   // (its own camera, set from each entity's flat spot: no hill lift — js/iso.js)
+  window._footDraw=!stubs;   // (a building's footprint is part of its outline: drawBuilding)
   window._selOutline=!stubs; // this pass IS a selection/behind outline — buildings drawn here skip their wall-link stubs (drawsWallStubs); a wall run behind trees keeps them (one joined shape)
   try{
     infos.forEach(info=>{
@@ -161,6 +162,7 @@ function _drawInfosMask(ctx, infos, originLeft, originTop, stubs=false){
     window._maskDraw=false;
     window._flatDraw=false;
     window._selOutline=false;
+    window._footDraw=false;
     X=sv.X; camX=sv.camX; camY=sv.camY;
     W=sv.W; H=sv.H; topH=sv.topH; ZOOM=sv.ZOOM;
   }

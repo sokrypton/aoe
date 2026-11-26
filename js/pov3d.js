@@ -1219,6 +1219,13 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // Worked ground (a camp clearing, yard or plaza): paint lying on the ground,
   // no thickness, just under ground level; optional ink edge.
+  // A building's footprint as one unseen slab: a click on the ground within it is the building (between a farm's rows, in
+  // a yard, under an awning), and its selection outline goes round the whole — not round each post, prop or crop row.
+  let plateMat = null;
+  function footPlate(g, e){ const w = e.w || BLDGS[e.btype].w, h = e.h || BLDGS[e.btype].h;
+    for (const [x0, z0, x1, z1] of footParts(e, w, h)) {
+      const p = new THREE.Mesh(own(new THREE.BoxGeometry(x1 - x0, 0.006, z1 - z0).translate(e.x + (x0 + x1) / 2, 0.003, e.y + (z0 + z1) / 2)), plateMat || (plateMat = new THREE.MeshBasicMaterial({ visible: false })));
+      p.name = 'plate'; g.add(p); } }
   function patch(g, col, x0, z0, x1, z1, outline = true){
     const m = new THREE.Mesh(own(new THREE.PlaneGeometry(x1 - x0, z1 - z0).rotateX(-Math.PI / 2)), mat(col));
     m.position.set((x0 + x1) / 2, -HULL * 1.5, (z0 + z1) / 2); // below the outline hulls' reach, so they draw whole over it (the ground itself writes no depth)
@@ -4175,12 +4182,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'cloth') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
+    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4204,6 +4211,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       const g = new THREE.Group();
       MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
+      footPlate(g, e);
       addHulls(g);
       if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       scene.add(g);
@@ -4227,7 +4235,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // roof, windows and door keep their shape), inside a scaffold whose work deck rides
   // the cut. g: a finished, baked model; its footprint (x0, z0, w, h). Returns { set(progress 0..1) }.
   let siteWood = null;
-  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods']); // a site's parts with their own life: never merged
+  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods', 'plate']); // a site's parts with their own life: never merged
   const SITE_SHADE = 0.66; // how much light reaches inside a site's walls (their inner faces, and the ground they enclose)
   // Finished: the scaffold comes down in a ring of dust round the footprint.
   function siteDone(e){
@@ -6601,7 +6609,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         else if (shell && !bld) { twin(o, 0, M.maskInk, o.geometry); twin(o, 1, M.rimU, o.geometry); }  // a unit's ink shell: its ink marked, the rim pushed wider
         else if (shell) twin(o, 0, M.mask, o.geometry);                                                  // a building's ink shell: marked (the rim starts past it)
         // (a gate's wall sections are the adjoining run's, not the gate: marked — no rim across them — but not outlined)
-        else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype))) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
+        // (a building going up: its outline round its footprint alone — not round every scaffold pole and fence post)
+        else { twin(o, 0, M.mask, o.geometry); if (bld && !(o.userData.arm && isGateBtype(s.btype)) && (s.complete || o.name === 'plate')) twin(o, 1, M.rimB, smoothNormals(o.geometry)); }
         used.add(o);
       });
     }
