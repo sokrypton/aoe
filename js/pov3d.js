@@ -410,15 +410,12 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (let k = 0; k < 70; k++) { tone(c, 196 + r() * 50 | 0); c.fillRect(r() * 64, r() * 64 - 8, 1 + r() * 1.2, 8 + r() * 14); }
       for (let i = 0; i < 4; i++) { tone(c, 186); c.fillRect(0, i * 16 + 15, 64, 1.2); } }],
     soil:    [1, (c, r) => speckle(c, r, 205)],
-    // MOCK: rough-cut stone — big blocks of uneven length, a tone each, lit along the top, shaded along the bottom, dark mortar
+    // rough-cut stone (the Castle Town Center) — big blocks of uneven length, a tone each, lit along the top, shaded along the bottom, dark mortar
     rough:   [0.95, (c, r) => { const n = 3, h = 64 / n; tone(c, 150); c.fillRect(0, 0, 64, 64);
       for (let i = 0; i < n; i++) { let x0 = -(r() * 14 | 0); while (x0 < 64) { const w = 15 + r() * 14 | 0, t = 214 + r() * 40 | 0, y = i * h + 1.2;
         for (const dx of [0, 64]) { const bx = x0 + 1.2 - dx; tone(c, t); c.fillRect(bx, y, w - 1.2, h - 1.2); tone(c, Math.min(255, t + 16)); c.fillRect(bx, y, w - 1.2, 1.6);
           tone(c, t - 34); c.fillRect(bx, y + h - 3.4, w - 1.2, 2.2); tone(c, t - 14); c.fillRect(bx + w - 3, y, 1.8, h - 1.2); }
         x0 += w; } } }],
-    // MOCK: round logs laid flat — each a light upper edge, its tone, a shaded underside, a dark seam
-    logs:    [0.42, (c, r) => { const n = 3, h = 64 / n; for (let i = 0; i < n; i++) { const y = i * h, t = 238 + r() * 10 | 0;
-      tone(c, t); c.fillRect(0, y, 64, h); tone(c, 255); c.fillRect(0, y + 2.4, 64, h * 0.2); tone(c, t - 50); c.fillRect(0, y + h * 0.7, 64, h * 0.3); tone(c, 105); c.fillRect(0, y, 64, 2); } }],
   };
   const tone = (c, v) => { c.fillStyle = `rgb(${v},${v},${v})`; };
   function rows(c, r, n, grain){ // long boards: a tone each, a dark seam, a little grain
@@ -1243,7 +1240,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // tan by turns) running down it, sagging, folded and draped between its corner posts (drawTCAnnexRoof's), TC_CANVAS.thick thick.
   // Inked round its edges only, not along its folds.
   function canvasAwning(g, P0, P1, Q0, Q1, h0, h1, tc, k){
-    const C = TC_CANVAS, soft = window.__tcVar ? 0.45 : 1, n = C.n, sag = C.sag * soft * k / HPX, fold = C.fold * k / HPX, drape = C.drape * soft * k / HPX, M = 8, P = [], grp = [];
+    const C = TC_CANVAS, soft = 0.45, n = C.n, sag = C.sag * soft * k / HPX, fold = C.fold * k / HPX, drape = C.drape * soft * k / HPX, M = 8, P = [], grp = [];
     const L = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], W = [], tri = (a, b, c, m) => { P.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); W.push(a[3], a[4], b[3], b[4], c[3], c[4]); grp.push(m); };
     const th = C.thick * k / HPX, lo = p => [p[0], p[1] - th, p[2], p[3], p[4]];   // (its underside, TC_CANVAS.thick below)
     const at = (u, t) => { const c = (u * n) % 1, p = L(L(P0, P1, u), L(Q0, Q1, u), t);
@@ -1415,44 +1412,36 @@ gl_Position = projectionMatrix * mvPosition;`;
         (g.userData.smoke = g.userData.smoke || []).push([cx, capT + 0.01, cz]);
       }
     },
-    // Keep in the back quadrant: plank (Dark) or stone, a
-    // recessed roof behind a parapet rim, a window in each face, merlons from
-    // Castle. Lean-to plank roofs (team fascia) from the keep to outer posts
-    // over the side quadrants (drawBuilding TC + drawTCAnnexRoof, authored 3x3
-    // and scaled to 4x4).
+    // The keep in the back quadrant (drawTC2D, the 2D's): Dark planks, one window a face; Feudal a stone storey under a
+    // plaster one framed by two timber rings (the cloths' beam, a top plate); Castle rough stone with lighter corner
+    // stones, a team shield a face and merlons all round. A deck recessed behind its rim; striped cloths over the side
+    // quadrants on posts, goods along their eaves (authored 3x3, scaled to 4x4).
     TC(g, e){
       const a = ageOf(e), W = e.w || 4, k = W / 3, x = e.x, z = e.y, mid = W / 2, tc = teamColor(e.team);
-      const keepH = (window.__tcVar ? 74 : 60) * k / HPX, hK = (window.__tcVar ? (a === 1 ? 40 : 36) : 28) * k / HPX, hO = (window.__tcVar ? 30 : 18) * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
-      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : window.__tcVar === 'logs' ? (a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough') : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
-      const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2 * (window.__tcVar === 'logs' && a === 1 ? 0.6 : 1);
+      const keepH = 74 * k / HPX, hK = (a === 1 ? 40 : 36) * k / HPX, hO = 30 * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
+      const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
+      const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2 * (a === 1 ? 0.6 : 1);
       // The keep, with a real parapet: walls rimW thick round a deck recessed rimD below their top (the art's inset roof).
       // The rim and the parapet's inner faces are those walls' top and back (solid's top/back): one body, a site's too.
       const F = keepH - rimD, [i0, j0, i1, j1] = [x + rimW, z + rimW, x + mid - rimW, z + mid - rimW];
       const outer = boxFaces(...box, 0, keepH), deck = { ...boxFaces(i0, j0, i1, j1, F, keepH).bottom, out: [0, 1, 0], mat: 1 }, wH = 14 * k / HPX;
-      const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [0, 1, 2, 3].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, corners too: one piece
+      const cren = a >= 2 ? crenelFaces(...box, 0, keepH, [0, 1, 2, 3].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // (Castle: the walls rise into the merlons, corners too: one piece)
       if (cren) for (const f of FACES) { outer[f] = cren[f]; outer[f].lining = 2; }   // (its parapet and merlons dressed inside, as their crowns)
       const corners = cren ? 3 : null;   // (Castle: the corner columns, one merlon wide, in a lighter stone: strips of the walls — see below)
-      if (window.__tcVar === 'logs' && !wood) { for (const f of FACES) for (const u of a >= 2 ? [0.24, 0.76] : [0.34, 0.66]) outer[f].holes.push(hole(f, box, u, keepH * (a === 1 ? 0.75 : 0.68) - wH / 2, 6 * k / 32, wH)); }   // MOCK
+      if (!wood) { for (const f of FACES) for (const u of a >= 2 ? [0.24, 0.76] : [0.34, 0.66]) outer[f].holes.push(hole(f, box, u, keepH * (a === 1 ? 0.75 : 0.68) - wH / 2, 6 * k / 32, wH)); }   // (two windows a face; Dark one)
       else for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
       // Under the decks the keep's two front walls are in their shade (as the 2D): a dark sheet a hair off each, from the
       // ground to where the decks meet them. (Whole and standing only: a site or a ruin has no decks to shade it.)
       if (e.complete && !e.openTop) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
         const px = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH).rotateY(Math.PI / 2)), sm); px.position.set(x + mid + 0.004, dH / 2, z + mid / 2); g.add(px);
         const pz = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH)), sm); pz.position.set(x + mid / 2, dH / 2, z + mid + 0.004); g.add(pz); }
-      const kR = window.__tcVar === 'logs' ? (wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0') : kL;   // (MOCK: Feudal a plank rim round the deck; Castle the merlons and rim plain stone, no seams cut short)
-      if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
+      const kR = wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0';   // (Feudal a plank rim round the deck; Castle the merlons and rim plain stone)
+      if (a === 1) {   // Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
         const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH - 6 * k / HPX);   // (up to the top plate's foot: the plate is the top)
         for (const f of FACES) { up[f].holes = outer[f].holes; up[f].cut = true; up[f].lining = 2; lo[f].mat = 3; }   // (plaster: cut, never pressed onto the stone; lined with the rim's planks)
         solid(g, [kL, kT, kR, '#cfc6b3|rough'], [...FACES.map(f => lo[f]), ...FACES.map(f => up[f]), outer.bottom, deck], { T: 0.08, depth: rimW, top: 2 }); }
       else { const walls = FACES.flatMap(f => corners == null ? [outer[f]] : stripFace(outer[f], f[0] === 'z' ? [x + rimW, x + mid - rimW] : [z + rimW, z + mid - rimW], [corners, null, corners]));
         solid(g, [kL, kT, kR, '#e4ddcc|stone'], [...walls, outer.bottom, deck], { T: 0.08, depth: rimW, top: 2 }); }   // (a crenelled one: its merlons' crowns, sides and backs the same top and back)
-      const V = window.__tcVar || '';   // MOCK: the keep variants (window.__tcVar)
-      if (a >= 2) for (let mx = 0; mx < 4; mx++) for (let mz = 0; mz < 4; mz++) { // flush on the parapet, corners once
-        if (mx % 3 && mz % 3) continue;
-        const px = x + (mid - rimW) * mx / 3, pz = z + (mid - rimW) * mz / 3;
-        if (window.__tcVar === 'logs') continue;   // MOCK: built into the keep (cren)
-        boxAt(g, kL, px, pz, px + rimW, pz + rimW, keepH, keepH + 7 * k / HPX);
-      }
       const nAcc = g.children.length;   // (the parts laid over the keep's walls from here: siteCut)
       // a ring beam round the keep (its faces o thick: top and back the ring's; the underside, seen from below, its own) — a
       // piece, as the cloths: a site sets it in place whole once the walls reach it (a ruin's comes down with them)
@@ -1462,8 +1451,8 @@ gl_Position = projectionMatrix * mvPosition;`;
           [[x + mid + o, y0, z + mid + o], [x - o, y0, z + mid + o], [x, y0, z + mid], [x + mid, y0, z + mid]], [[x - o, y0, z + mid + o], [x - o, y0, z - o], [x, y0, z], [x, y0, z + mid]]];
         solid(piece(g), topCol ? [col, topCol] : col, [...FACES.map(f => O[f]), ...under.map(loop => ({ loop, out: [0, -1, 0] }))], { depth: o + inner, top: topCol ? 1 : 0 }); };
       const beamH = 6 * k / HPX, beamO = 0.1;   // (the ring the cloths hang from: below)
-      if (V === 'logs' && a === 1) ringBeam('#5e4330', keepH - beamH, keepH, beamO, '#7a5a40|planks', rimW);   // (one wooden ring: the rim and parapet round the deck — no seam with the walls' own top)   // MOCK Feudal: the plaster storey framed by a plate round its top, over the beam
-      if (V === 'logs' && a >= 2) {   // MOCK Castle: rough stone, a team shield between the windows, merlons all round
+      if (a === 1) ringBeam('#5e4330', keepH - beamH, keepH, beamO, '#7a5a40|planks', rimW);   // Feudal: a plate round the plaster storey's top — one wooden ring, the rim and parapet round the deck
+      if (a >= 2) {   // Castle: a team shield between the windows
         // a shield: the team's colour, a gold quarter — a piece (hung, not built): a site hangs it whole once the wall is up
         const sh = (cx, cz, alongX, o) => { const w = 8 * k / HPX, h = 10 * k / HPX, y0 = keepH * 0.66 - h / 2, sp = piece(g);
           const B = (u0, u1, y0b, y1b, col, d0, d1) => alongX ? boxAt(sp, col, cx + u0, Math.min(cz + d0, cz + d1), cx + u1, Math.max(cz + d0, cz + d1), y0b, y1b, false) : boxAt(sp, col, Math.min(cx + d0, cx + d1), cz + u0, Math.max(cx + d0, cx + d1), cz + u1, y0b, y1b, false);
@@ -1473,24 +1462,21 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       // The awnings: striped canvas from the keep edge (hK) down to the outer eave (hO), a scallop per stripe hanging there
       // (the 2D's drawTCAnnexRoof, TC_CANVAS)
-      const cOut = window.__tcVar === 'logs' && a >= 1 ? 0.1 : 0;   // (MOCK: the cloths hang from under the beam round the keep: from its outer face)
+      const cOut = a >= 1 ? 0.1 : 0;   // (the cloths hang from under the beam round the keep: from its outer face)
       canvasAwning(piece(g), [x + mid + cOut, z], [x + mid + cOut, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
       canvasAwning(piece(g), [x, z + mid + cOut], [x + mid, z + mid + cOut], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
-      if (window.__tcVar === 'logs') {   // MOCK: each cloth hangs from a beam round the keep (Feudal a timber, Castle a stone ledge)
-        if (a >= 1) ringBeam(a === 1 ? '#5e4330' : '#d8d0bd|stone', hK, hK + beamH, beamO);   // one ring round the keep, one piece (no joints, one outline)
-      }
-      if (window.__tcVar === 'logs') for (let i = nAcc; i < g.children.length; i++) if (!g.children[i].userData.piece) g.children[i].traverse(o => { if (o.isMesh) o.userData.siteCut = true; });
+      if (a >= 1) ringBeam(a === 1 ? '#5e4330' : '#d8d0bd|stone', hK, hK + beamH, beamO);   // the beam each cloth hangs from (Feudal a timber, Castle a stone ledge): one ring
+      for (let i = nAcc; i < g.children.length; i++) if (!g.children[i].userData.piece) g.children[i].traverse(o => { if (o.isMesh) o.userData.siteCut = true; });
       // Posts under the outer corners, up to the cloth where it stands: its sag down the slope, its fold across it
-      const run = W - mid - cOut, under = (d, a) => { const t = (d - cOut) / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; const soft = window.__tcVar ? 0.45 : 1; return hK + (hO - hK) * t - (TC_CANVAS.sag * soft * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * soft * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
+      const run = W - mid - cOut, under = (d, a) => { const t = (d - cOut) / run, u = a / mid, c = (u * TC_CANVAS.n) % 1; const soft = 0.45; return hK + (hO - hK) * t - (TC_CANVAS.sag * soft * 4 * t * (1 - t) + TC_CANVAS.fold * t * (2 - t) * Math.sin(Math.PI * c) + TC_CANVAS.drape * soft * 4 * u * (1 - u) * t * t) * k / HPX - TC_CANVAS.thick * 0.6 * k / HPX; };   // (its top up inside the cloth, short of where its outline would show through)
       // (just in from the canvas's eave corners, tucked into the cloth; outlined, no ink ring round their tops — inside the
       // cloth it showed through)
-      const pr = 0.06, pi = pr + 0.03, cp = (px, pz, h) => pole(g, WOOD.post, [px, 0, pz], [px, h, pz], pr, 'rod');
-      if (window.__tcVar === 'logs') {   // MOCK: a post under each eave corner (the cloth's frame taken to run just under the cloth)
+      const pi = 0.09;
+      {   // a post under each eave corner (the cloth's frame taken to run just under the cloth)
         const ps = 0.045, P = (px, pz, h) => pole(g, '#5e4632', [px, 0, pz], [px, h, pz], ps, 'rod');
         if (a >= 2) for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi], [x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) boxAt(g, '#d6cdbb|rough', px - 0.08, pz - 0.08, px + 0.08, pz + 0.08, 0, 0.16, 'hull');   // (stone plinths, Castle)
         for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) P(px, pz, under(px - x - mid, pz - z));   // (each up into the cloth where it stands)
         for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) P(px, pz, under(pz - z - mid, px - x));
-        // goods under the cloth, by age: barrels, sacks and a woodpile (Dark), crates (Feudal on), a trading table (Castle)
         // goods under the cloth, a few and plain (no outlines): barrels and a sack; a woodpile (Dark) or crates (later); an anvil (Feudal on)
         const barrel = (cx, cz) => round(g, '#a9804e', cx, cz, 0.13, 0.13, 0, 0.31, 10, 'hull');
         const sack = (cx, cz, col) => round(g, col, cx, cz, 0.14, 0.075, 0, 0.24, 9, 'hull');
@@ -1503,9 +1489,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (a === 0) { const [cx, cz] = B(0.2); for (const [dy, dz] of [[0.06, -0.1], [0.06, 0.01], [0.06, 0.12], [0.15, -0.045], [0.15, 0.065]]) pole(g, '#9c7046', [cx - 0.24, dy, cz + dz], [cx + 0.24, dy, cz + dz], 0.055, 'rod'); }   // (the woodpile along the eave)
         else { crate(...B(0)); crate(...B(0.3), 0.22); }
         sack(...B(0.65), '#c9a46a'); sack(...B(1), '#e3d3a8');
-      } else {
-      for (const [px, pz] of [[x + W - pi, z + pi], [x + W - pi, z + mid - pi]]) cp(px, pz, under(px - x - mid, pz - z));
-      for (const [px, pz] of [[x + pi, z + W - pi], [x + mid - pi, z + W - pi]]) cp(px, pz, under(pz - z - mid, px - x)); }
+      }
       // the keep floor the garrisoned villagers stand on (roofArchers: where, render-units' roofCrew)
       g.userData.roof = ROOF_REST.map(() => ({ y: F }));
       // The pole stands on the keep floor, its flag 42px up (28px above the rim at Castle) (×k).

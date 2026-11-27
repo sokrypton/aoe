@@ -1,5 +1,3 @@
-// MOCK: the redesigned TC keep is on everywhere but the deployed sites (window.__tcVar = '' turns it off)
-if (window.__tcVar === undefined && !/github\.io$/.test(location.hostname)) window.__tcVar = 'logs';
 // Shared wood palette — one brown per ROLE, used by every building so
 // timber reads as the same material everywhere:
 //   L/R/top:      structural timber (palisade walls/gates, dark-age tower)
@@ -1028,7 +1026,7 @@ function buildingShadowPolys(e){
   let blocks;
   if (bt === 'MARKET') { const r = 21 / 64 + 0.045;   // its three stall tents (pov3d's MARKET: on the corner tiles, eaves 20px up)
     blocks = [[0, 0], [0, w - 1], [w - 1, 0]].map(([tx, ty]) => [rect(x + tx + 0.5 - r, y + ty + 0.5 - r, x + tx + 0.5 + r, y + ty + 0.5 + r), 20 / ART_HPX]); }
-  else if (bt === 'TC') blocks = [[rect(x, y, x + w / 2, y + h / 2), window.__tcVar === 'logs' ? 1.6 : 1.3],   // (MOCK: the taller keep)
+  else if (bt === 'TC') blocks = [[rect(x, y, x + w / 2, y + h / 2), 1.6],   // (the keep)
      [rect(x + w / 2, y, x + w, y + h / 2), 0.6], [rect(x, y + h / 2, x + w / 2, y + h), 0.6]];
   else if (bt === 'BARRACKS') { const k = w / 3; blocks = [[rect(x, y + 0.14 * k, x + 1.22 * k, y + 2.95 * k), 0.75]]; }   // (pov3d's hall, BP(±30, ∓13))
   else if (bt === 'LCAMP' && teamAge && isPlayerTeam(e.team) && teamAge[e.team] >= 1) blocks = [[rect(x + 0.36, y + 0.1, x + 0.94, y + 0.6), 0.75]];   // (its Feudal+ two-storey shed)
@@ -1081,11 +1079,11 @@ function buildingShadowPath(e){
 // a field on a sim object), redone when its key changes. (l, t, w, h): the art's box about its anchor (ax, ay), logical
 // px; draw(ox, oy) paints it anchored there. Not for the ghost/mask passes (no owner state, silhouettes).
 const _bakes = new WeakMap();
-// MOCK (window.__tcVar 'logs'): the TC keep redesign, drawn from pov3d's MODELS.TC geometry — world tiles across, art px
-// up — projected into the keep's authored frame (sx, sy: its top corner; tcS: its scale). Dark a plank keep, Feudal
-// half-timber over stone, Castle stone with corner piers, shields and merlons. part: 'back' (keep, the frame and goods
+// The Town Center, drawn from pov3d's MODELS.TC geometry — world tiles across, art px up — projected into the keep's
+// authored frame (sx, sy: its top corner; tcS: its scale). Dark a plank keep, Feudal plaster over stone between two timber
+// rings, Castle stone with lighter corner stones, shields and merlons. part: 'back' (keep, the frame and goods
 // under the cloth) / 'front' (the awnings, the flag) / null (both).
-function drawTCMock2D(e, sx, sy, tcS, part, a, tc, tcD, darken){
+function drawTC2D(e, sx, sy, tcS, part, a, tc, tcD, darken){
   const W = e.w || 4, mid = W / 2, s = HALF_TW / tcS, U = HALF_TW * Math.SQRT2 * Math.sqrt(3) / 2 / tcS;   // px a tile across, px a world unit up
   const Q = (x, h, z) => [sx + (x - z) * s, sy + (x + z) * s / 2 - h];
   const dk = c => darken ? darkenColor(c) : c, wood = a === 0;
@@ -1395,271 +1393,11 @@ function drawBuilding(e, part = null){
     sy = tcCy - 48;                 // authored 3x3 top corner
     X.save();
     X.translate(tcCx, tcCy); X.scale(tcS, tcS); X.translate(-tcCx, -tcCy);
-    bh = 60 * tcS; // scaled keep height, for overlays drawn after restore()
-
-    // Depth split (see the TC proxy branch in render.js): 'back' = keep tower
-    // + foundation (sorts a tile behind centre), 'front' = posts + annex
-    // roofs + banner (sorts a tile ahead). null draws the whole building
+    bh = 74 * tcS; // scaled keep height, for overlays drawn after restore()
+    // Depth split (see the TC proxy branch in render.js): 'back' = the keep, its paving and posts (sorts a tile behind
+    // centre), 'front' = the cloths, posts and goods under them, the flag (a tile ahead). null draws the whole building
     // (selection outline, placement ghost, minimap).
-    if (window.__tcVar === 'logs') { bh = 74 * tcS; drawTCMock2D(e, sx, sy, tcS, part, ownerAge, tc, tcD, darken); } else {   // MOCK: the redesigned keep
-    if(part !== 'front'){
-
-    // Draw stone foundation pavement covering the keep footprint in the back quadrant
-    X.fillStyle = darken ? darkenColor('#8d8577') : '#b7ad97';
-    X.strokeStyle = '#000000';
-    X.lineWidth = 1.3;
-    X.beginPath();
-    X.moveTo(sx, sy);
-    X.lineTo(sx + 48, sy + 24);
-    X.lineTo(sx, sy + 48);
-    X.lineTo(sx - 48, sy + 24);
-    X.closePath();
-    X.fill();
-    X.stroke();
-
-    // 1. Tall Main Keep Tower — stone from Feudal on; the DARK-age keep is
-    // a timber hall (plank walls + half-timber framing below), so a fresh
-    // town doesn't read as a finished castle.
-    let keepWood = ownerAge === 0;
-    let kL = keepWood ? WOOD.plankL : '#ded5c2';
-    let kR = keepWood ? WOOD.plankR : '#bcb29b';
-    // Up-facing rim is the brightest face — same light rule as the merlon
-    // caps (light from upper-left: top > left wall > right wall).
-    let kT = keepWood ? '#c8a878' : '#ece4d2';
-    drawBuildingBlock(sx, sy, 48, 24, 60, kL, kR, 'flat', 0, kT, kT, darken, ownerAge >= 2);
-    if (keepWood) {
-      // Half-timber framing on both visible faces: corner-to-corner studs
-      // and a mid-rail, same beam brown as the house's framing.
-      let beam = darken ? darkenColor('#6e5138') : '#6e5138';
-      X.strokeStyle = beam; X.lineWidth = 1.6;
-      [0.22, 0.78].forEach(t => { // symmetric — flanking the face-centered windows
-        // left face runs from (sx-48,sy+24) toward (sx,sy+48)
-        X.beginPath(); X.moveTo(sx - 48 + 48 * t, sy + 24 + 24 * t - 60); X.lineTo(sx - 48 + 48 * t, sy + 24 + 24 * t); X.stroke();
-        // right face runs from (sx,sy+48) toward (sx+48,sy+24)
-        X.beginPath(); X.moveTo(sx + 48 * t, sy + 48 - 24 * t - 60); X.lineTo(sx + 48 * t, sy + 48 - 24 * t); X.stroke();
-      });
-      // (no mid-rail — the material pass's light course line already
-      // marks mid-height; a dark beam there doubled the line)
-      X.strokeStyle = '#000000'; X.lineWidth = 1.3;
-    }
-    // Under the decks the keep's walls are in their shade: both faces, from the ground up to where the decks meet them.
-    { const dH = 26; X.fillStyle = SHADOW_FILL; X.beginPath();
-      X.moveTo(sx - 48, sy + 24); X.lineTo(sx, sy + 48); X.lineTo(sx + 48, sy + 24); X.lineTo(sx + 48, sy + 24 - dH); X.lineTo(sx, sy + 48 - dH); X.lineTo(sx - 48, sy + 24 - dH); X.closePath(); X.fill(); }
-    // Recessed rooftop behind a raised parapet rim — properly 3D: the rim
-    // keeps the cap color, the floor sits a few px LOWER, and the two far
-    // inner walls are drawn so the recess reads as real depth instead of a
-    // painted-on diamond. At Castle the merlons perch on the rim: the
-    // opening is inset to 32/48 so its lip meets the merlons' inner
-    // faces (merlon centers at ±40, half-width 8 → inner edge ±32).
-    {
-      let rcx = sx, rcy = sy - 36; // center of the top diamond
-      let inset = 38 / 48, depth = 5; // side merlon centers ±43, half-width 5 → inner corner ±38
-      let ins = ([cx2, cy2]) => [rcx + (cx2 - rcx) * inset, rcy + (cy2 - rcy) * inset];
-      let N = ins([sx, sy - 60]), E = ins([sx + 48, sy - 36]), S = ins([sx, sy - 12]), W = ins([sx - 48, sy - 36]);
-      let dn = ([x2, y2]) => [x2, y2 + depth];
-      // Light model: with one distant light (upper-left), a face's color
-      // depends ONLY on its orientation — the N→E inner face looks SW so
-      // it's kL, the W→N face looks SE so it's kR; the floor (the team
-      // plank deck below) faces up. Depth inside the pit comes from the CAST shadow below,
-      // not from repainting the material darker.
-      let wallSE = darken ? darkenColor(kR) : kR;
-      let wallSW = darken ? darkenColor(kL) : kL;
-      // The recess is drawn FLAT (every floor corner dropped by the same
-      // depth) and clipped to the rim opening — the front rim then occludes
-      // the floor's near edge naturally. (Dropping only the back corner
-      // read as a sloped floor; letting the shifted diamond overhang the
-      // front rim flattened the illusion.)
-      let openingPath = () => {
-        X.beginPath();
-        X.moveTo(...N); X.lineTo(...E); X.lineTo(...S); X.lineTo(...W); X.closePath();
-      };
-      X.save();
-      openingPath(); X.clip();
-      // interior seams in the light course-line stroke — hard black inside
-      // the pit fought with the light-seam masonry look everywhere else
-      X.strokeStyle = 'rgba(0,0,0,0.13)'; X.lineWidth = 1;
-      X.fillStyle = wallSE; X.beginPath();
-      X.moveTo(...W); X.lineTo(...N); X.lineTo(...dn(N)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
-      X.fillStyle = wallSW; X.beginPath();
-      X.moveTo(...N); X.lineTo(...E); X.lineTo(...dn(E)); X.lineTo(...dn(N)); X.closePath(); X.fill(); X.stroke();
-      // the floor: a team-coloured plank deck (pov3d's TC), boards running N→E
-      let deck = shadeHex(tc, 0.85), floorC = darken ? darkenColor(deck) : deck;
-      X.fillStyle = floorC; X.beginPath();
-      X.moveTo(...dn(N)); X.lineTo(...dn(E)); X.lineTo(...dn(S)); X.lineTo(...dn(W)); X.closePath(); X.fill(); X.stroke();
-      X.strokeStyle = 'rgba(0,0,0,0.16)'; X.beginPath();
-      for (let i = 1; i < 6; i++) { let u = i / 6, a2 = dn(N).map((v, j) => v + (dn(W)[j] - v) * u), b2 = dn(E).map((v, j) => v + (dn(S)[j] - v) * u); X.moveTo(...a2); X.lineTo(...b2); }
-      X.stroke(); X.strokeStyle = 'rgba(0,0,0,0.13)';
-      // Cast shadow: light from upper-left, so the west rim throws a soft
-      // band across the floor along the W→N wall base (no outline — it's
-      // shadow, not geometry).
-      let sh = 7; // how far the shadow reaches across the floor
-      let off = ([x2, y2]) => [x2 + sh, y2 + sh * 0.5];
-      X.fillStyle = 'rgba(0,0,0,0.13)'; X.beginPath();
-      X.moveTo(...dn(W)); X.lineTo(...dn(N)); X.lineTo(...off(dn(N))); X.lineTo(...off(dn(W))); X.closePath(); X.fill();
-      X.restore();
-      // Rim's inner lip outline on top of the clipped fill — light, like
-      // the rest of the masonry seams (the depth cues carry the recess)
-      X.save();
-      X.strokeStyle = 'rgba(0,0,0,0.13)'; X.lineWidth = 1;
-      openingPath(); X.stroke();
-      X.restore();
-    }
-    // 3D Castle battlements (crenellations) on flat top edges
-    // Merlon centers sit half a merlon-width (3,1.5 iso) inside the rim
-    // edge so each OUTER face lies exactly on the rim edge plane; corner
-    // merlons take both edges' insets so their outer corner touches the
-    // rim corner. Edge merlons at the 1/3 and 2/3 points of each edge.
-    // Four merlons per edge (corners shared), 10px wide (s=5). A diamond's
-    // edges have the same 2:1 slope as the rim edges, so FLUSH means the
-    // center sits at perpendicular distance s/√5 inside the edge line —
-    // an inward offset of (2s/5, s/5) = (2,1), NOT (s, s/2). Corner
-    // merlons offset (0, ±bhh) / (±s, 0) so the shared corner touches the
-    // rim corner with both faces flush. Middles at the edge thirds.
-    let merlons = [
-      { x: sx,      y: sy - 57.5 }, // Top corner (rim corner sy-60)
-      { x: sx - 14, y: sy - 51 },   // Back-left edge, 1/3
-      { x: sx + 14, y: sy - 51 },   // Back-right edge, 1/3
-      { x: sx - 30, y: sy - 43 },   // Back-left edge, 2/3
-      { x: sx + 30, y: sy - 43 },   // Back-right edge, 2/3
-      { x: sx - 43, y: sy - 36 },   // Left corner (rim corner ±48)
-      { x: sx + 43, y: sy - 36 },   // Right corner
-      { x: sx - 30, y: sy - 29 },   // Front-left edge, 2/3
-      { x: sx + 30, y: sy - 29 },   // Front-right edge, 2/3
-      { x: sx - 14, y: sy - 21 },   // Front-left edge, 1/3
-      { x: sx + 14, y: sy - 21 },   // Front-right edge, 1/3
-      { x: sx,      y: sy - 14.5 }  // Bottom corner (rim corner sy-12)
-    ];
-
-    // Merlons are the same masonry as the keep, lit the same way — the
-    // keep's face palette (bright cap kT, walls kL/kR) via the shared
-    // merlon block (light bottom seam so they connect to the rim).
-    let drawMerlon = (mx, my) => drawMerlonBlock(mx, my - 2.5, 5, 2.5, 7, kL, kR, kT, kT, darken);
-
-    // Crenellations are the TC's Castle-age accessory — earlier ages read
-    // as a plain keep.
-    if (ownerAge >= 2) merlons.forEach(m => {
-      drawMerlon(m.x, m.y);
-    });
-    if (e.complete && e.garrison && e.garrison.length) drawRoofArchers2D(e, sx, sy, tcS);
-
-    // 3D Recessed windows on the keep walls. One helper, mirrored by the
-    // wall slope m (+0.5 left face, -0.5 right face). The 3D read comes
-    // from real architectural parts, all following the global light:
-    //  - lintel UNDERSIDE at the top of the reveal (darkest — faces down)
-    //  - side jamb on the light side of the reveal (mid tone)
-    //  - deep dark opening
-    let winFill = darken ? darkenColor('#1c1c1c') : '#1c1c1c';
-    let jambC   = darken ? darkenColor(keepWood ? '#a97e4a' : '#bcb29b') : (keepWood ? '#a97e4a' : '#bcb29b');
-    let lintelC = darken ? darkenColor(keepWood ? '#6f5330' : '#7c766b') : (keepWood ? '#6f5330' : '#7c766b');
-
-    let drawKeepWindow = (wx2, wy2, m) => {
-      X.save();
-      X.strokeStyle = '#000000'; X.lineWidth = 1.3; X.lineJoin = 'round';
-      let P = (x, yc) => ({ x: wx2 + x, y: wy2 + yc });
-      // outer frame (vertical sides, top/bottom edges follow the wall slope)
-      let O1 = P(-4, -7 - 4*m), O2 = P(4, -7 + 4*m), O3 = P(4, 7 + 4*m), O4 = P(-4, 7 - 4*m);
-      // opening, recessed INTO the wall (sideways along the face + down)
-      let B = o => ({ x: o.x + 4*m, y: o.y + 1.5 });
-      let B1 = B(O1), B2 = B(O2), B3 = B(O3), B4 = B(O4);
-
-      // Everything inside the reveal is CLIPPED to the outer frame — the
-      // recessed quads shift sideways into the wall and would otherwise
-      // poke past the frame on the recess side.
-      let framePath = () => {
-        X.beginPath();
-        X.moveTo(O1.x, O1.y); X.lineTo(O2.x, O2.y); X.lineTo(O3.x, O3.y); X.lineTo(O4.x, O4.y);
-        X.closePath();
-      };
-      X.save();
-      framePath(); X.clip();
-      // deep dark opening
-      X.fillStyle = winFill; X.beginPath();
-      X.moveTo(B1.x, B1.y); X.lineTo(B2.x, B2.y); X.lineTo(B3.x, B3.y); X.lineTo(B4.x, B4.y);
-      X.closePath(); X.fill();
-      // side jamb reveal (the side opposite the recess shift stays visible)
-      let J1 = m > 0 ? O1 : O2, J2 = m > 0 ? O4 : O3;
-      let JB1 = m > 0 ? B1 : B2, JB2 = m > 0 ? B4 : B3;
-      X.fillStyle = jambC; X.beginPath();
-      X.moveTo(J1.x, J1.y); X.lineTo(JB1.x, JB1.y); X.lineTo(JB2.x, JB2.y); X.lineTo(J2.x, J2.y);
-      X.closePath(); X.fill();
-      // lintel underside across the top of the reveal (darkest)
-      X.fillStyle = lintelC; X.beginPath();
-      X.moveTo(O1.x, O1.y); X.lineTo(O2.x, O2.y); X.lineTo(B2.x, B2.y); X.lineTo(B1.x, B1.y);
-      X.closePath(); X.fill();
-      // light interior seams (reveal edges)
-      X.strokeStyle = 'rgba(0,0,0,0.2)'; X.lineWidth = 1;
-      X.beginPath();
-      X.moveTo(JB1.x, JB1.y); X.lineTo(JB2.x, JB2.y);
-      X.moveTo(B1.x, B1.y); X.lineTo(B2.x, B2.y);
-      X.stroke();
-      X.restore();
-      // dark outer frame on top of the clipped interior — no protruding
-      // sill: it read as a tacked-on slab at this scale; the lintel
-      // shadow + jamb + deep opening carry the 3D on their own
-      framePath(); X.stroke();
-      X.restore();
-    };
-
-    // Scaled up around their centers — read better against the larger keep
-    // and sit centered between the Dark-age framing studs.
-    drawKeepWindow(sx - 24, sy - 6,  0.5); // left wall window
-    drawKeepWindow(sx + 24, sy - 6, -0.5); // right wall window
-    // 2. Wooden posts, drawn BEFORE the annex roofs so the tent cloth
-    // overlaps the pole tops (sorted back-to-front for depth)
-    // Posts tucked 12% in from the outer roof corners toward the keep so
-    // the whole post (cap included) sits UNDER the roof plane — the roofs
-    // paint after the posts and hide the tops, reading as real support.
-    // Heights meet the roof underside there (surface 18→28 minus boards).
-    // Posts at the roof corners, nudged inward by their own half-width so
-    // the post body stays inside the roof silhouette, and tall enough to
-    // run up BEHIND the fascia (roof draws after posts) — the visible post
-    // ends at the fascia's bottom edge with no seam, so the roof reads as
-    // resting on the beams.
-    let posts = [
-      { x: sx - 93.5, y: sy + 48,    h: 17 }, // Left-most corner
-      { x: sx - 48,   y: sy + 70.75, h: 17 }, // Bottom-left corner
-      { x: sx + 93.5, y: sy + 48,    h: 17 }, // Right-most corner
-      { x: sx + 48,   y: sy + 70.75, h: 17 }  // Bottom-right corner
-    ];
-    posts.sort((a, b) => a.y - b.y);
-    let postColor = WOOD.post;
-    let pc = darken ? darkenColor(postColor) : postColor;
-    X.lineJoin = 'round';
-    // Square timber posts drawn as proper iso prisms: lit left face,
-    // shaded right face, bright top cap — same light rules as buildings.
-    let pL = darken ? darkenColor('#9a7a56') : '#9a7a56';
-    let pR = darken ? darkenColor('#7c5f40') : '#7c5f40';
-    // round timber posts (the 3D's), lit on the left, each up to just under the canvas at its corner
-    posts.forEach(p => {
-      const r = 2.6, top = p.y - p.h;
-      X.fillStyle = pL; X.fillRect(p.x - r, top, r, p.h); X.fillStyle = pR; X.fillRect(p.x, top, r, p.h);
-      X.fillStyle = pL; X.beginPath(); X.ellipse(p.x, p.y, r, r / 2, 0, 0, Math.PI); X.fill();
-      X.strokeStyle = '#000000'; X.lineWidth = 1.1; X.beginPath(); X.moveTo(p.x - r, top); X.lineTo(p.x - r, p.y); X.ellipse(p.x, p.y, r, r / 2, 0, Math.PI, 0, true); X.lineTo(p.x + r, top); X.stroke();
-    });
-
-    } // end 'back' (keep + foundation + support posts) part
-
-    if(part !== 'back'){
-    // 3+4. Annex roofs (open-sided shelter roofs over the left and right
-    // courtyard quadrants, in team color) — the two are the identical shape
-    // mirored about the keep, so one helper drawn at ±48.
-    drawTCAnnexRoof(sx, sy, -1, tc, tcD, darken);
-    drawTCAnnexRoof(sx, sy, +1, tc, tcD, darken);
-
-    // Team banner flying from the keep top
-    // 68 plants the pole base exactly on the top merlon's cap (sy-70)
-    // Every age flies the banner (only merlons are Castle-gated). Pole is
-    // PLANTED on the recessed roof floor (sy-31) and long enough to fly
-    // the flag clear above the rim.
-    // At Castle the pole moves up onto the back merlon's cap (sy-70);
-    // earlier ages plant it on the recessed roof floor as before.
-    if(e.complete){
-      if (ownerAge >= 2) drawWavingFlag(sx, sy, 66, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 22);
-      else drawWavingFlag(sx, sy, 29, darken ? darkenColor(tc) : tc, darken ? darkenColor(tcD) : tcD, 42);
-    }
-
-    } // end 'front' (annex) part
-    }   // (end MOCK switch)
+    drawTC2D(e, sx, sy, tcS, part, ownerAge, tc, tcD, darken);
     X.restore();
     // The keep part paints first and must not run the shared overlays (HP
     // bar, garrison flag, progress) — those belong to the front pass / the
