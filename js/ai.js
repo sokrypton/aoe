@@ -2210,7 +2210,11 @@ function aiFieldSquad(ai,aiTC,profile,outmatched){
 function aiReinforceSquad(ai,home,profile,threatened){
   let sq=ai.squad;
   if(!sq||sq.raid||threatened)return;
-  let room=(profile.waveCap||60)-sq.ids.length;   // (the squad never grows past the maximum attack group)
+  // AoE2: sn-percent-attack-soldiers of the army attacks, in groups of up to sn-maximum-attack-group-size (waveCap) — the
+  // field grows to commitPercent of the army a group at a time (capped at waveCap in all, a big army idled at home)
+  let inField=sq.ids.filter(id=>{ const m=entitiesById.get(id); return m&&m.hp>0; }).length;   // (its living members)
+  let commit=profile.commitPercent!=null?profile.commitPercent:75, total=home.length+inField;
+  let room=Math.min(profile.waveCap||60, Math.round(total*commit/100)-inField);
   if(room<=0)return;
   let free=home.filter(m=>!m.target&&!isRetreatingUnit(m)&&m.task!=='garrison');
   let rams=free.filter(m=>isSiegeUnit(m.utype)), foot=free.filter(m=>!isSiegeUnit(m.utype));   // (new siege first: it is no defence)

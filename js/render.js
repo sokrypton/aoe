@@ -547,7 +547,8 @@ function renderFrame(){
 
   // Behind-building team-color outlines, before drawOutlines so the selection
   // ring paints on top. Same active-ZOOM-transform requirement.
-  drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
+  // (window.__cleanFrame: no HUD cues — outlines, idle "?" — for a trailer capture)
+  if(!window.__cleanFrame) drawBehindBuildingOutlines(_silUnitScratch, _silOccScratch);
 
   // Selection outlines (units + buildings), in their own pass after every
   // entity has painted for the frame — see drawOutlines() for why this

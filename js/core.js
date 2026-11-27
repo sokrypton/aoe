@@ -911,8 +911,9 @@ function isRetreatingUnit(u){ return u.retreatUntil > tick; }
 // attackSize and capped at armyCap, raised by a deep bank (the AoE2 AI always
 // spends) up to armyMax — easy's ceiling, so a slow game never ends in a horde. Difficulty shapes the ATTACK as AoE2 does (sn-minimum/
 // maximum-attack-group-size 4/10 and sn-percent-attack-soldiers 75, scaled
-// x0.5 easy / x0.75 medium / x1 hard): attackSize, waveCap — the field squad
-// never grows past it, reinforcements included — and commitPercent.
+// x0.5 easy / x0.75 medium / x1 hard): attackSize, waveCap — the size of one
+// attack group (a wave launches one; reinforcements join a group at a time) —
+// and commitPercent, the share of the army the field squad grows to.
 // Parity rule: no free resources at any difficulty —
 // the AI plays with exactly the tools a human has.
 // ONE base profile; a difficulty is BASE plus the handful of knobs that

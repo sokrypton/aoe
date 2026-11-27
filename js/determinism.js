@@ -188,6 +188,7 @@ function detEntityHash(e){
   if (e.woodDebt || e.stoneDebt) { h = detMixFloat(h, e.woodDebt || 0); h = detMixFloat(h, e.stoneDebt || 0); } // repair's fractional cost carry (logic.js)
   if (e.eatTicks) h = detMix(h, e.eatTicks); // a grazing sheep stands (it gates the wander roll, simRandom)
   if (e.gateProgress) h = detMixFloat(h, e.gateProgress); // a gate's door swing (isOpen, which walkable() reads, derives from it)
+  if (e.pressWalk != null) h = detMix(h, e.pressWalk); // the tick it last pressed: a press under way walks on to contact (logic.js)
   if (e.salvage) for (const k of Object.keys(e.salvage).sort()) { h = detMixStr(h, k); h = detMix(h, e.salvage[k]); } // an upgrade site's undo (refundFoundation)
   return h >>> 0;
 }
@@ -210,7 +211,7 @@ const DET_HASHED_KEYS = new Set([
   'explicitAttack','explicitReseed','defendX','defendY','savedTask','buildBackoffUntil','retry','avoid',
   'order','prevTask','fledBearId','stepWait','groupSpeed','stuck','chaseProg',
   'lastAtkTick','unreachUntil','unreachId','tradeHomeId','tradeDestId','tradePhase','lastDodgeTick','dodgeCount',
-  'stance','formation','formDir','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','rideLeft','eatLeft','eatId','offered','offerTo','homing','tameReadyAt','flyTarget','flyX','flyY','woodDebt','stoneDebt','eatTicks','gateProgress','salvage',
+  'stance','formation','formDir','retreatUntil','lastEnemyHitTick','lastMeleeHitTick','possessed','idleFarm','freeVillagerQueued','awake','calmSince','spent','faceAng','rideLeft','eatLeft','eatId','offered','offerTo','homing','tameReadyAt','flyTarget','flyX','flyY','woodDebt','stoneDebt','eatTicks','gateProgress','salvage','pressWalk',
 ]);
 // Viewer-only, cosmetic, constant-from-type, or derivable from already-hashed
 // state — legitimately NOT hashed:
@@ -218,7 +219,7 @@ const DET_UNHASHED_KEYS = new Set([
   'fromX','fromY',        // render interpolation anchor (derived from x/path/moveT)
   'tx','ty',              // creation copy of x/y, not sim-mutated
   'dir','facing','facingNorth','pendingDir','pendingDirT', // sprite facing (render-only)
-  'female','pressWalk','foodSrc','lastX','lastY','smoothX','smoothY', // cosmetic/render signals
+  'female','foodSrc','lastX','lastY','smoothX','smoothY', // cosmetic/render signals
   'buildTime',            // = BLDGS[btype].buildTime (derived from hashed btype)
   'food','maxFood',       // huntable/farm food capacity (constant, not sim-mutated)
   'w','h',                // footprint dims (constant from type)

@@ -959,8 +959,49 @@ gl_Position = projectionMatrix * mvPosition;`;
     const [c, detail] = col.split('|'), n = parseInt(c.slice(1), 16), ch = v => Math.round(v * ROOM_SHADE).toString(16).padStart(2, '0');
     const m = mat('#' + ch(n >> 16) + ch((n >> 8) & 255) + ch(n & 255) + (detail ? '|' + detail : ''));
     INTERIOR_MATS.add(m); return m; }
-  function solidGeo(faces, T, nMats, pierce, rims = [], level = false){ // level: openings tunnel straight in (a site's slabs: thickGeo) // level: openings tunnel straight in (a site's slabs: thickGeo)
-    const buckets = Array.from({ length: nMats + 1 }, () => []);
+  // A face's outward normal (Newell's, turned to its `out`).
+  function faceNormal(f){
+    const pts = f.loop, n = new THREE.Vector3();
+    for (let k = 0; k < pts.length; k++) { const a = pts[k], b = pts[(k + 1) % pts.length]; n.x += (a[1] - b[1]) * (a[2] + b[2]); n.y += (a[2] - b[2]) * (a[0] + b[0]); n.z += (a[0] - b[0]) * (a[1] + b[1]); }
+    n.normalize(); if (n.dot(V3(f.out)) < 0) n.negate(); return n;
+  }
+  // A solid's deck: an up-facing face below its top (a walk, a recessed roof) — its height, -Infinity if none.
+  function deckOf(faces){
+    const top = Math.max(...faces.flatMap(f => f.loop.map(p => p[1])));
+    return Math.max(-Infinity, ...faces.filter(f => f.out[1] > 0.5 && f.loop.every(p => p[1] < top - 1e-4)).map(f => f.loop[0][1]));
+  }
+  // The walls' body, D thick behind their faces — one description for the finished model (a parapet's rim and inner
+  // faces: solid's top/back) and a site's or a ruin's slabs (thickGeo). inset: a point's place on the back; where two
+  // walls meet at a corner the backs meet on the bisector (mitred: straight in, the two bodies overlapped there).
+  // shared: an outline edge two wall faces have (a corner, a storey's seam) is inside the body — no band on it.
+  // outward: an outline edge's way out of its face, in the face's plane (from the loop's winding, not its centre: a
+  // merlon's far side faced in). slide: the way a site presses a point down — a corner's along its corner edge, which
+  // both its walls hold (each pressing along its own lean, a round tower's joints opened); else its face's, sd.
+  function wallBody(faces, D){
+    const key = (x, z) => Math.round(x * 1e4) + ',' + Math.round(z * 1e4), ek = (a, c) => { const p = key(a[0], a[2]) + ',' + Math.round(a[1] * 1e4), q = key(c[0], c[2]) + ',' + Math.round(c[1] * 1e4); return p < q ? p + '|' + q : q + '|' + p; };
+    const cols = new Map(), edges = new Map();
+    for (const f of faces) { const n = faceNormal(f); if (Math.abs(n.y) >= 0.5) continue; const nh = new THREE.Vector3(n.x, 0, n.z).normalize();
+      f.loop.forEach((p, k) => { const kk = key(p[0], p[2]); let l = cols.get(kk); if (!l) cols.set(kk, l = []); if (!l.some(q => q.dot(nh) > 0.999)) l.push(nh);
+        const e = ek(p, f.loop[(k + 1) % f.loop.length]); edges.set(e, (edges.get(e) || 0) + 1); }); }
+    const other = (p, nh) => { const l = cols.get(key(p.x, p.z)); return l && l.find(q => q.dot(nh) < 0.999 && 1 + q.dot(nh) > 0.1); };
+    const pk = p => key(p[0], p[2]) + ',' + Math.round(p[1] * 1e4), lean = new Map();
+    for (const f of faces) f.loop.forEach((a, k) => { const c = f.loop[(k + 1) % f.loop.length], dy = c[1] - a[1];
+      if (Math.abs(dy) > 1e-6 && edges.get(ek(a, c)) > 1) { const d = new THREE.Vector3(c[0] - a[0], dy, c[2] - a[2]).divideScalar(dy); lean.set(pk(a), d); lean.set(pk(c), d); } });
+    // deckY: a solid's deck (a walk, a recessed roof: an up-facing face below its top) — its walls' backs are seen above
+    // it only (below, inside the masonry or under the deck)
+    return { deckY: deckOf(faces),
+      slide: (p, sd) => lean.get(pk([p.x, p.y, p.z])) || sd,
+      inset: (p, nh) => { const o = other(p, nh); return o ? p.clone().addScaledVector(nh.clone().add(o), -D / (1 + nh.dot(o))) : p.clone().addScaledVector(nh, -D); },
+      shared: (a, c) => edges.get(ek([a.x, a.y, a.z], [c.x, c.y, c.z])) > 1,
+      outward: (contour, k, u, v) => { let A = 0; for (let i = 0; i < contour.length; i++) { const p = contour[i], q = contour[(i + 1) % contour.length]; A += p.x * q.y - q.x * p.y; }
+        const a = contour[k], c = contour[(k + 1) % contour.length], ex = c.x - a.x, ey = c.y - a.y, s = A > 0 ? 1 : -1;
+        return u.clone().multiplyScalar(s * ey).addScaledVector(v, -s * ex).normalize(); } };
+  }
+  // wallSpec: { D, top } — the walls are D thick, their top (a rim, a merlon's crown and sides) in that material, each
+  // one's back in its lining (f.lining, else its own): the body wallBody makes, so a site or a ruin (thickGeo) is the
+  // very same walls.
+  function solidGeo(faces, T, nMats, pierce, rims = [], level = false, wallSpec = null){ // level: openings tunnel straight in (a site's slabs: thickGeo)
+    const buckets = Array.from({ length: nMats + 1 }, () => []), body = wallSpec && wallBody(faces, wallSpec.D);
     const tri = (b, p0, p1, p2, want, smooth) => { // flat-shaded unless smooth(p) gives the vertex normal
       const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
       if (n.lengthSq() < 1e-12) return;                                   // (a sliver from the triangulation: no facing, so no outline to grow)
@@ -984,6 +1025,16 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       const all = contour.concat(...holes), b = buckets[f.mat || 0];
       for (const [i0, i1, i2] of THREE.ShapeUtils.triangulateShape(contour, holes)) tri(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, f.smooth);
+      if (body && Math.abs(n.y) < 0.5) { // its body: the back (no openings — they end in their reveals) and a band on each free edge but the foot
+        const nh = new THREE.Vector3(n.x, 0, n.z).normalize(), In = p => body.inset(p, nh), bk = n.clone().negate();
+        // (from the deck up: below it the back is never seen, and its edges, where walk and deck meet, were traced as ink)
+        const dv = v.y > 1e-6 ? (body.deckY - o.y) / v.y : -Infinity, bp = [];
+        contour.forEach((a, k) => { const c = contour[(k + 1) % contour.length], ia = a.y >= dv, ic = c.y >= dv;
+          if (ia) bp.push(a); if (ia !== ic) bp.push(new THREE.Vector2(a.x + (c.x - a.x) * (dv - a.y) / (c.y - a.y), dv)); });
+        if (bp.length >= 3) for (const [i0, i1, i2] of THREE.ShapeUtils.triangulateShape(bp, [])) tri(buckets[f.lining ?? f.mat ?? 0], In(to3(bp[i0])), In(to3(bp[i1])), In(to3(bp[i2])), bk);
+        for (let k = 0; k < contour.length; k++) { const a = to3(contour[k]), c = to3(contour[(k + 1) % contour.length]), w = body.outward(contour, k, u, v);
+          if (w.y < -0.5 || body.shared(a, c)) continue;
+          tri(buckets[wallSpec.top], a, c, In(c), w); tri(buckets[wallSpec.top], a, In(c), In(a), w); } }
       for (const h of holes) {
         const nIn = level ? new THREE.Vector3(n.x, 0, n.z).normalize() : n, out3 = h.map(to3), in3 = out3.map(p => p.clone().addScaledVector(nIn, -T)), mid = out3[0].clone().add(out3[2]).multiplyScalar(0.5);
         for (let k = 0; k < 4; k++) for (const r of [out3, in3]) rims.push(r[k], r[(k + 1) % 4]); // the opening's front and back edges
@@ -1006,14 +1057,18 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // Ink comes from the unpierced solid plus each opening's rims: edges traced
   // on the cut faces would catch the triangulation's slivers between openings.
-  function solid(g, cols, faces, { T = 0.06, thresh, depth = T, line = ink } = {}){ // depth: the wall's thickness (a site's cut shows it); line: its inner edges' ink
+  // depth: the walls' thickness (a site's cut shows it); top (a material index): the walls are built that thick here too
+  // — their top and back drawn from it (wallBody; a wall's back in its f.lining), not as faces of their own; line: the
+  // inner edges' ink
+  function solid(g, cols, faces, { T = 0.06, thresh, depth = T, top = null, line = ink } = {}){
     cols = [].concat(cols);
-    const rims = [], m = new THREE.Mesh(solidGeo(faces, T, cols.length, true, rims), cols.map(c => mat(c)).concat(interiorMat(cols[0])));
-    const plain = solidGeo(faces, T, cols.length, false);
+    const ws = top == null ? null : { D: depth, top };
+    const rims = [], m = new THREE.Mesh(solidGeo(faces, T, cols.length, true, rims, false, ws), cols.map(c => mat(c)).concat(interiorMat(cols[0])));
+    const plain = solidGeo(faces, T, cols.length, false, [], false, ws);
     m.add(new THREE.LineSegments(own(new THREE.EdgesGeometry(plain, thresh)), line));
     if (rims.length) { const rl = new THREE.LineSegments(own(new THREE.BufferGeometry().setFromPoints(rims)), line); rl.userData.rims = true; m.add(rl); }
     m.userData.hullGeo = plain; m.userData.T = depth;
-    m.userData.slab = jag => thickGeo(faces, depth, cols.length, jag);                    // (a site's walls: real slabs)
+    m.userData.slab = jag => thickGeo(faces, depth, cols.length, jag, ws);                    // (a site's walls: real slabs)
     m.userData.slabRims = () => { const r = []; solidGeo(faces, depth, cols.length, true, r, true); return r; }; // (their openings' frames, back edge on the inner face)
     g.add(m); return m;
   }
@@ -1370,32 +1425,27 @@ gl_Position = projectionMatrix * mvPosition;`;
       const keepH = (window.__tcVar ? 74 : 60) * k / HPX, hK = (window.__tcVar ? (a === 1 ? 40 : 36) : 28) * k / HPX, hO = (window.__tcVar ? 30 : 18) * k / HPX, fas = 3.5 * k / HPX, rimD = 5 * k / HPX;
       const wood = a === 0, kL = wood ? WOOD.plankL + '|planks' : window.__tcVar === 'logs' ? (a === 1 ? '#f0e4c6|plaster' : '#c7bea9|rough') : '#ded5c2|stone', kT = shadeHex(tc, 0.85) + '|planks';   // (the roof deck: team-coloured planks)
       const box = [x, z, x + mid, z + mid], rimW = mid * (1 - 38 / 48) / 2 * (window.__tcVar === 'logs' && a === 1 ? 0.6 : 1);
-      // The keep, with a real parapet: a floor recessed rimD below the rim top
-      // (the art's inset roof), walled by four low parapet walls.
+      // The keep, with a real parapet: walls rimW thick round a deck recessed rimD below their top (the art's inset roof).
+      // The rim and the parapet's inner faces are those walls' top and back (solid's top/back): one body, a site's too.
       const F = keepH - rimD, [i0, j0, i1, j1] = [x + rimW, z + rimW, x + mid - rimW, z + mid - rimW];
-      const outer = boxFaces(...box, 0, keepH), inner = boxFaces(i0, j0, i1, j1, F, keepH), wH = 14 * k / HPX;
-      const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [1, 2].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, one piece (the corner piers are the corner merlons)
-      if (cren) for (const f of FACES) outer[f] = cren.F[f];
+      const outer = boxFaces(...box, 0, keepH), deck = { ...boxFaces(i0, j0, i1, j1, F, keepH).bottom, out: [0, 1, 0], mat: 1 }, wH = 14 * k / HPX;
+      const cren = window.__tcVar === 'logs' && a >= 2 ? crenelFaces(...box, 0, keepH, [0, 1, 2, 3].flatMap(m => [0, 3].flatMap(n => [[m, n], [n, m]])).map(([mx, mz]) => [x + rimW / 2 + (mid - rimW) * mx / 3, z + rimW / 2 + (mid - rimW) * mz / 3]).filter((p, i, A) => A.findIndex(q => q[0] === p[0] && q[1] === p[1]) === i), rimW, 7 * k / HPX) : null;   // MOCK: the walls rise into the merlons, corners too: one piece
+      if (cren) for (const f of FACES) { outer[f] = cren[f]; outer[f].lining = 2; }   // (its parapet and merlons dressed inside, as their crowns)
+      const corners = cren ? 3 : null;   // (Castle: the corner columns, one merlon wide, in a lighter stone: strips of the walls — see below)
       if (window.__tcVar === 'logs' && !wood) { for (const f of FACES) for (const u of a >= 2 ? [0.24, 0.76] : [0.34, 0.66]) outer[f].holes.push(hole(f, box, u, keepH * (a === 1 ? 0.75 : 0.68) - wH / 2, 6 * k / 32, wH)); }   // MOCK
       else for (const f of FACES) outer[f].holes.push(hole(f, box, 0.5, keepH * 0.7 - wH / 2, 8 * k / 32, wH));
-      for (const f of FACES) inner[f].out = inner[f].out.map(v => -v);     // the parapet's inner faces look into the recess
       // Under the decks the keep's two front walls are in their shade (as the 2D): a dark sheet a hair off each, from the
       // ground to where the decks meet them. (Whole and standing only: a site or a ruin has no decks to shade it.)
       if (e.complete && !e.openTop) { const dH = hK - fas * 0.5, sm = tcShadeMat || (tcShadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: SHADOW, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
         const px = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH).rotateY(Math.PI / 2)), sm); px.position.set(x + mid + 0.004, dH / 2, z + mid / 2); g.add(px);
         const pz = new THREE.Mesh(own(new THREE.PlaneGeometry(mid, dH)), sm); pz.position.set(x + mid / 2, dH / 2, z + mid + 0.004); g.add(pz); }
-      const H0 = keepH + (window.__tcVar === 'logs' ? 0.004 : 0), rim = [   // (MOCK: a hair over the walls' tops — a site's walls are slabs with their own top there, and the two fought)
-       
-        [[x, H0, z], [x + mid, H0, z], [i1, H0, j0], [i0, H0, j0]], [[x + mid, H0, z], [x + mid, H0, z + mid], [i1, H0, j1], [i1, H0, j0]],
-        [[x + mid, H0, z + mid], [x, H0, z + mid], [i0, H0, j1], [i1, H0, j1]], [[x, H0, z + mid], [x, H0, z], [i0, H0, j0], [i0, H0, j1]],
-      ].map(loop => ({ loop, out: [0, 1, 0], mat: 2 }));
       const kR = window.__tcVar === 'logs' ? (wood ? kL : a === 1 ? '#7a5a40|planks' : '#cdc4b0') : kL;   // (MOCK: Feudal a plank rim round the deck; Castle the merlons and rim plain stone, no seams cut short)
-      for (const f of FACES) { inner[f].mat = 2; if (window.__tcVar === 'logs') inner[f].cut = true; }   // (MOCK: a site cuts them, not pressing them onto its walls' tops — two materials there flickered)
       if (window.__tcVar === 'logs' && a === 1) {   // MOCK Feudal: the walls one piece, stone up to the cloths, plaster above (no box inside)
-        const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH);
-        for (const f of FACES) { up[f].holes = outer[f].holes; up[f].cut = inner[f].cut = true; lo[f].mat = 3; }   // (plaster: cut, never pressed onto the stone)
-        solid(g, [kL, kT, kR, '#cfc6b3|rough'], [...FACES.map(f => lo[f]), ...FACES.map(f => up[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }], { T: 0.08, depth: rimW * 0.97 }); }
-      else solid(g, [kL, kT, kR], [...FACES.map(f => outer[f]), outer.bottom, ...rim, ...FACES.map(f => inner[f]), { ...inner.bottom, out: [0, 1, 0], mat: 1 }, ...(cren ? cren.faces.slice(6).map(f => ({ ...f, mat: 2 })) : [])], { T: 0.08, depth: rimW * 0.97 }); // (walls nearly as thick as the parapet: inside, straight up to the rim; the parapet's back stays a hair inside the outer face, not on it)
+        const sY = hK - 0.02, lo = boxFaces(...box, 0, sY), up = boxFaces(...box, sY, keepH - 6 * k / HPX);   // (up to the top plate's foot: the plate is the top)
+        for (const f of FACES) { up[f].holes = outer[f].holes; up[f].cut = true; up[f].lining = 2; lo[f].mat = 3; }   // (plaster: cut, never pressed onto the stone; lined with the rim's planks)
+        solid(g, [kL, kT, kR, '#cfc6b3|rough'], [...FACES.map(f => lo[f]), ...FACES.map(f => up[f]), outer.bottom, deck], { T: 0.08, depth: rimW, top: 2 }); }
+      else { const walls = FACES.flatMap(f => corners == null ? [outer[f]] : stripFace(outer[f], f[0] === 'z' ? [x + rimW, x + mid - rimW] : [z + rimW, z + mid - rimW], [corners, null, corners]));
+        solid(g, [kL, kT, kR, '#e4ddcc|stone'], [...walls, outer.bottom, deck], { T: 0.08, depth: rimW, top: 2 }); }   // (a crenelled one: its merlons' crowns, sides and backs the same top and back)
       const V = window.__tcVar || '';   // MOCK: the keep variants (window.__tcVar)
       if (a >= 2) for (let mx = 0; mx < 4; mx++) for (let mz = 0; mz < 4; mz++) { // flush on the parapet, corners once
         if (mx % 3 && mz % 3) continue;
@@ -1404,23 +1454,19 @@ gl_Position = projectionMatrix * mvPosition;`;
         boxAt(g, kL, px, pz, px + rimW, pz + rimW, keepH, keepH + 7 * k / HPX);
       }
       const nAcc = g.children.length;   // (the parts laid over the keep's walls from here: siteCut)
-      if (V === 'logs' && a === 1) {   // MOCK Feudal: a half-timbered storey over a stone one
-        const sY = hK - 0.02, d = 0.03, bt = 3 * k / HPX, TB = '#5e4330', wy0 = keepH * 0.75 - wH / 2, wy1 = wy0 + wH;
-        const face = (alongX, at, o) => {   // a face's frame: sill and top rails, a middle post, braces in the outer bays
-          const B = (u0, u1, y0, y1, f = 1) => { const oo = o * f; return alongX ? boxAt(g, TB, x + u0, Math.min(at, at + oo), x + u1, Math.max(at, at + oo), y0, y1, false) : boxAt(g, TB, Math.min(at, at + oo), z + u0, Math.max(at, at + oo), z + u1, y0, y1, false); };
-          const Pp = (u0, y0, u1, y1) => pole(g, TB, alongX ? [x + u0, y0, at + o * 0.6] : [at + o * 0.6, y0, z + u0], alongX ? [x + u1, y1, at + o * 0.6] : [at + o * 0.6, y1, z + u1], bt * 0.45, 'bare');
-          B(mid / 2 - bt / 2, mid / 2 + bt / 2, sY + bt, keepH - bt); B(0, mid, sY, sY + bt, 0.7); B(0, mid, keepH - bt, keepH, 0.7);   // (the post between the rails, a little prouder: no face shared)
-          Pp(bt * 0.6, sY + bt, mid * 0.2, keepH - bt); Pp(mid - bt * 0.6, sY + bt, mid * 0.8, keepH - bt); };
-        for (const [cx, cz] of [[x, z], [x + mid, z], [x, z + mid], [x + mid, z + mid]]) boxAt(g, TB, cx - bt / 2 - d, cz - bt / 2 - d, cx + bt / 2 + d, cz + bt / 2 + d, sY - 0.03, keepH - 0.03, false);   // corner posts, both faces at once (clear of the wall's and the rails' tops)
-        face(true, z + mid, d); face(true, z, -d); face(false, x + mid, d); face(false, x, -d);
-      }
-      if (V === 'logs' && a >= 2) {   // MOCK Castle: rough stone, strong corner stones, a team shield between the windows, a coping
-        // the corners: one clean pier each, a little proud of the wall, in a lighter stone (no stepped quoins: they read ragged)
-        const q = rimW - 0.04, d = 0.04;   // (its inner sides well inside the parapet's: no two faces in one place)
-        for (const [cx, cz] of [[x, z], [x + mid, z], [x, z + mid], [x + mid, z + mid]]) { const sx = cx === x ? 1 : -1, sz = cz === z ? 1 : -1;
-          boxAt(g, '#e4ddcc|stone', Math.min(cx - sx * d, cx + sx * q), Math.min(cz - sz * d, cz + sz * q), Math.max(cx - sx * d, cx + sx * q), Math.max(cz - sz * d, cz + sz * q), 0, keepH + 7 * k / HPX, 'hull'); }   // (up through the corner merlon)
-        const sh = (cx, cz, alongX, o) => { const w = 8 * k / HPX, h = 10 * k / HPX, y0 = keepH * 0.66 - h / 2;   // a shield: the team's colour, a gold quarter
-          const B = (u0, u1, y0b, y1b, col, d0, d1) => alongX ? boxAt(g, col, cx + u0, Math.min(cz + d0, cz + d1), cx + u1, Math.max(cz + d0, cz + d1), y0b, y1b, false) : boxAt(g, col, Math.min(cx + d0, cx + d1), cz + u0, Math.max(cx + d0, cx + d1), cz + u1, y0b, y1b, false);
+      // a ring beam round the keep (its faces o thick: top and back the ring's; the underside, seen from below, its own) — a
+      // piece, as the cloths: a site sets it in place whole once the walls reach it (a ruin's comes down with them)
+      // (topCol: its top and inside in another wood; inner: how far in past the keep's face it reaches)
+      const ringBeam = (col, y0, y1, o, topCol = null, inner = 0) => { const O = boxFaces(x - o, z - o, x + mid + o, z + mid + o, y0, y1); if (topCol) for (const f of FACES) O[f].lining = 1;
+        const under = [[[x - o, y0, z - o], [x + mid + o, y0, z - o], [x + mid, y0, z], [x, y0, z]], [[x + mid + o, y0, z - o], [x + mid + o, y0, z + mid + o], [x + mid, y0, z + mid], [x + mid, y0, z]],
+          [[x + mid + o, y0, z + mid + o], [x - o, y0, z + mid + o], [x, y0, z + mid], [x + mid, y0, z + mid]], [[x - o, y0, z + mid + o], [x - o, y0, z - o], [x, y0, z], [x, y0, z + mid]]];
+        solid(piece(g), topCol ? [col, topCol] : col, [...FACES.map(f => O[f]), ...under.map(loop => ({ loop, out: [0, -1, 0] }))], { depth: o + inner, top: topCol ? 1 : 0 }); };
+      const beamH = 6 * k / HPX, beamO = 0.1;   // (the ring the cloths hang from: below)
+      if (V === 'logs' && a === 1) ringBeam('#5e4330', keepH - beamH, keepH, beamO, '#7a5a40|planks', rimW);   // (one wooden ring: the rim and parapet round the deck — no seam with the walls' own top)   // MOCK Feudal: the plaster storey framed by a plate round its top, over the beam
+      if (V === 'logs' && a >= 2) {   // MOCK Castle: rough stone, a team shield between the windows, merlons all round
+        // a shield: the team's colour, a gold quarter — a piece (hung, not built): a site hangs it whole once the wall is up
+        const sh = (cx, cz, alongX, o) => { const w = 8 * k / HPX, h = 10 * k / HPX, y0 = keepH * 0.66 - h / 2, sp = piece(g);
+          const B = (u0, u1, y0b, y1b, col, d0, d1) => alongX ? boxAt(sp, col, cx + u0, Math.min(cz + d0, cz + d1), cx + u1, Math.max(cz + d0, cz + d1), y0b, y1b, false) : boxAt(sp, col, Math.min(cx + d0, cx + d1), cz + u0, Math.max(cx + d0, cx + d1), cz + u1, y0b, y1b, false);
           B(-w / 2, w / 2, y0, y0 + h, tc, 0, o); B(0.001, w / 2 - 0.001, y0 + h / 2, y0 + h - 0.001, '#e6c34a', o, o * 1.8); B(-w / 2 + 0.001, -0.001, y0 + 0.001, y0 + h / 2, '#e6c34a', o, o * 1.8); };   // (the gold quarters: plates on its face, a hair inside its edges)
         // (one shield a face, centred between the two windows)
         sh(x + mid / 2, z + mid, true, 0.03); sh(x + mid / 2, z, true, -0.03); sh(x + mid, z + mid / 2, false, 0.03); sh(x, z + mid / 2, false, -0.03);   // (offsets that hold at any zoom)
@@ -1431,13 +1477,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       canvasAwning(piece(g), [x + mid + cOut, z], [x + mid + cOut, z + mid], [x + W, z], [x + W, z + mid], hK, hO, tc, k);
       canvasAwning(piece(g), [x, z + mid + cOut], [x + mid, z + mid + cOut], [x, z + W], [x + mid, z + W], hK, hO, tc, k);
       if (window.__tcVar === 'logs') {   // MOCK: each cloth hangs from a beam round the keep (Feudal a timber, Castle a stone ledge)
-        const bh = 6 * k / HPX, o = 0.1, y0 = hK, bc = a === 1 ? '#5e4330' : '#d8d0bd|stone';
-        if (a >= 1) {   // one ring round the keep, one piece (no joints, one outline)
-          const y1 = y0 + bh, O = boxFaces(x - o, z - o, x + mid + o, z + mid + o, y0, y1), I = boxFaces(x, z, x + mid, z + mid, y0, y1);
-          for (const f of FACES) I[f].out = I[f].out.map(v => -v);
-          const ring = h => [[[x - o, h, z - o], [x + mid + o, h, z - o], [x + mid, h, z], [x, h, z]], [[x + mid + o, h, z - o], [x + mid + o, h, z + mid + o], [x + mid, h, z + mid], [x + mid, h, z]],
-            [[x + mid + o, h, z + mid + o], [x - o, h, z + mid + o], [x, h, z + mid], [x + mid, h, z + mid]], [[x - o, h, z + mid + o], [x - o, h, z - o], [x, h, z], [x, h, z + mid]]];
-          solid(g, bc, [...FACES.map(f => O[f]), ...FACES.map(f => I[f]), ...ring(y1).map(loop => ({ loop, out: [0, 1, 0] })), ...ring(y0).map(loop => ({ loop, out: [0, -1, 0] }))]); }
+        if (a >= 1) ringBeam(a === 1 ? '#5e4330' : '#d8d0bd|stone', hK, hK + beamH, beamO);   // one ring round the keep, one piece (no joints, one outline)
       }
       if (window.__tcVar === 'logs') for (let i = nAcc; i < g.children.length; i++) if (!g.children[i].userData.piece) g.children[i].traverse(o => { if (o.isMesh) o.userData.siteCut = true; });
       // Posts under the outer corners, up to the cloth where it stands: its sag down the slope, its fold across it
@@ -1566,13 +1606,37 @@ gl_Position = projectionMatrix * mvPosition;`;
     // pile (three logs along SE) and a chopping stump (drawBuilding LCAMP).
     // Laid out on the tile: the art's screen offsets overlap in plan.
     LCAMP(g, e){
-      const hut = campHut(g, e, '#b89868|planks', '#8a6a48|shingles');
+      // Feudal on: a two-storey timber shed, its gable to the view — a loft door high in it, a hoist beam out over it with a
+      // log on its rope; sawn planks stacked beside it (Castle: on a stone plinth). drawBuilding LCAMP draws the same.
+      if (ageOf(e) >= 1) {
+        const a = ageOf(e), x = e.x, z = e.y, b0 = a >= 2 ? 0.12 : 0, box = [x + 0.36, z + 0.1, x + 0.94, z + 0.6], wallH = 0.58, rise = 0.28, ov = 0.08;
+        if (a >= 2) boxAt(g, '#bdb5a3|stone', box[0] - 0.02, box[1] - 0.02, box[2] + 0.02, box[3] + 0.02, 0, b0);
+        const f = houseFaces(...box, wallH, rise, false, !e.complete || e.openTop);
+        f.z1.holes.push(hole('z1', box, 0.5, 0.42, 0.12, 0.14)); f.x1.holes.push(hole('x1', box, 0.5, 0.26, 0.09, 0.09));
+        for (const fc of Object.values(f)) { fc.loop = fc.loop.map(([px, py, pz]) => [px, py + b0, pz]); for (const h of fc.holes || []) h.at = [h.at[0], h.at[1] + b0, h.at[2]]; }
+        solid(g, '#b89868|planks', Object.values(f));
+        roofOn(piece(g), '#8a6a48|shingles', box, b0 + wallH, rise, 0.035, false, 0.05, ov, ov);   // (as much over the back as the front)
+        if (!e.complete) return;
+        const cx = (box[0] + box[2]) / 2, top = b0 + wallH + rise - 0.05, bz = box[3] + 0.17, lr = 0.07;
+        pole(g, '#6e5138', [cx, top, box[3] - 0.05], [cx, top, bz], 0.02);                                         // the hoist beam
+        // the load: a log hauled up to the loft and let down again on its rope (animateModels: rope scaled to its length,
+        // the log at its end). Viewer-only.
+        const hoist = new THREE.Group(); hoist.name = 'hoist'; hoist.position.set(cx, top - 0.02, bz - 0.02); g.add(hoist);
+        hoist.userData = { lo: top - 0.02 - (b0 + lr + 0.02), hi: 0.12, phase: (x * 3.1 + z * 1.7) % 1 };
+        const rope = new THREE.Group(); rope.name = 'hoistRope'; hoist.add(rope); pole(rope, '#3a3027', [0, 0, 0], [0, -1, 0], 0.005);
+        const load = new THREE.Group(); load.name = 'hoistLog'; hoist.add(load); log(load, TREE_BARK, 0, 0, 0.4, lr, true, 0, TREE_CUT);
+        for (let j = 0; j < 4; j++) boxAt(g, j % 2 ? '#c8a476' : '#d6b588', x + 0.06, z + 0.1, x + 0.28, z + 0.56, j * 0.035, (j + 1) * 0.035);   // sawn planks
+        pennant(g, cx, (box[1] + box[3]) / 2, b0 + wallH + rise + 0.03, teamColor(e.team));
+      }
+      const hut = ageOf(e) >= 1 ? null : campHut(g, e, '#b89868|planks', '#8a6a48|shingles');
       if (!e.complete) return;
-      // Everything inside the tile, in front of the hut (z > 0.625), the pile lower than its walls.
+      // Everything inside the tile, in front of the hut (z > 0.625), the pile lower than its walls. (Feudal on: no pile — the
+      // hoisted log is the camp's wood)
       const rr = 0.075, lz = e.y + 0.81;
-      for (const dz of [-rr, rr]) log(g, TREE_BARK, e.x + 0.29, lz + dz, 0.5, rr, true, rr, TREE_CUT);
-      log(g, TREE_BARK, e.x + 0.29, lz, 0.5, rr, true, rr * (1 + Math.sqrt(3)), TREE_CUT); // resting in the two's groove
-      round(g, TREE_BARK, e.x + 0.8, e.y + 0.82, 0.1, 0.1, 0, 9 / HPX, 12, true, TREE_CUT); // stump with a pale cut top
+      if (ageOf(e) === 0) { for (const dz of [-rr, rr]) log(g, TREE_BARK, e.x + 0.29, lz + dz, 0.5, rr, true, rr, TREE_CUT);
+        log(g, TREE_BARK, e.x + 0.29, lz, 0.5, rr, true, rr * (1 + Math.sqrt(3)), TREE_CUT); } // resting in the two's groove
+      const st = ageOf(e) === 0 ? [0.8, 0.82] : [0.22, 0.8];   // (Feudal on: clear of the hoisted log's run)
+      round(g, TREE_BARK, e.x + st[0], e.y + st[1], 0.1, 0.1, 0, 9 / HPX, 12, true, TREE_CUT); // stump with a pale cut top
       return hut;
     },
     // Same hut in dark timber; in front, an ore cart heaped with gold ore
@@ -1688,10 +1752,25 @@ gl_Position = projectionMatrix * mvPosition;`;
     },
   };
   MODELS.PTOWER = MODELS.TOWER;
-  // A crenellated block as ONE solid (no joint where a merlon meets its wall): each outer face rises into the merlons
-  // standing flush on it, the top is the roof between them, and each merlon adds its own top and inner sides.
-  // spots: merlon centres (world x, z) flush with the edges (castleMerlonSpots); mW across, mH tall. Returns the named
-  // faces (holes go on .x0/.x1/.z0/.z1).
+  // A vertical face cut along its run into strips at the given cuts (world coordinate along it: x for a z-face, z for an
+  // x-face): each strip its own face, in the material mats[i] (null: the face's own), its openings with it. Strips of one
+  // face share their seams exactly, so a solid keeps them one body (wallBody: a seam is inside it, no band).
+  function stripFace(f, cuts, mats){
+    const ax = Math.abs(f.out[0]) > 0.5 ? 2 : 0, clip = (poly, c, keepBelow) => { const out = [];
+      for (let k = 0; k < poly.length; k++) { const p = poly[k], q = poly[(k + 1) % poly.length], ip = keepBelow ? p[ax] <= c : p[ax] >= c, iq = keepBelow ? q[ax] <= c : q[ax] >= c;
+        if (ip) out.push(p);
+        if (ip !== iq) { const t = (c - p[ax]) / (q[ax] - p[ax]), r = p.map((v, i) => v + (q[i] - v) * t); r[ax] = c; out.push(r); } }
+      return out; };
+    const edges = [-Infinity, ...cuts, Infinity];
+    return edges.slice(0, -1).map((lo, i) => { let poly = f.loop; if (lo > -Infinity) poly = clip(poly, lo, false); if (edges[i + 1] < Infinity) poly = clip(poly, edges[i + 1], true);
+      const holes = (f.holes || []).filter(h => h.at[ax] > lo && h.at[ax] < edges[i + 1]);
+      return { ...f, loop: poly, holes, mat: mats[i] ?? f.mat }; }).filter(g => g.loop.length >= 3);
+  }
+  // A crenellated block's walls (one solid: no joint where a merlon meets its wall): each face rises into the merlons
+  // standing flush on it. Built mW thick (solid's depth/top), their top is the walk and the merlons' crowns, sides and
+  // backs. spots: merlon centres (world x, z) flush with the edges (castleMerlonSpots); mW across, mH tall. Returns the
+  // named faces (holes go on .x0/.x1/.z0/.z1), the bottom, and the deck: the walk's middle, inside walls mW thick, its
+  // outline through every corner of their top's inner edge (a straight edge past them was traced as ink across the walk).
   function crenelFaces(X0, Z0, X1, Z1, y0, y1, spots, mW, mH){
     const w = mW / 2, H = y1 + mH, e = 1e-6, foot = spots.map(([u, v]) => [u - w, v - w, u + w, v + w]);
     const along = (sel, a0, a1) => foot.filter(sel).map(f => [f[a0], f[a1]]).sort((p, q) => p[0] - q[0]);
@@ -1703,21 +1782,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     const F = { z0: side('z0', X0, X1, (a, y) => [a, y, Z0], [0, 0, -1]), z1: side('z1', X0, X1, (a, y) => [a, y, Z1], [0, 0, 1]),
       x0: side('x0', Z0, Z1, (a, y) => [X0, y, a], [-1, 0, 0]), x1: side('x1', Z0, Z1, (a, y) => [X1, y, a], [1, 0, 0]),
       bottom: { loop: [[X0, y0, Z0], [X1, y0, Z0], [X1, y0, Z1], [X0, y0, Z1]], out: [0, -1, 0], holes: [] } };
-    // the roof between the merlons: round the edges, dipping in round each merlon (a corner one: one notch for both edges)
-    const top = [], edges = [[[X0, Z0], [1, 0], [0, 1], iv.z0.map(([a, b]) => [a - X0, b - X0]), X1 - X0], [[X1, Z0], [0, 1], [-1, 0], iv.x1.map(([a, b]) => [a - Z0, b - Z0]), Z1 - Z0],
-      [[X1, Z1], [-1, 0], [0, -1], iv.z1.map(([a, b]) => [X1 - b, X1 - a]).reverse(), X1 - X0], [[X0, Z1], [0, -1], [1, 0], iv.x0.map(([a, b]) => [Z1 - b, Z1 - a]).reverse(), Z1 - Z0]];
-    for (const [c, d, n, I, L] of edges) { const P = (t, k) => [c[0] + d[0] * t + n[0] * k, y1, c[1] + d[1] * t + n[1] * k];
-      if (!(I.length && I[0][0] <= e)) top.push(P(0, 0));
-      for (const [a, b] of I) { if (a <= e) { top.push(P(b, 0)); continue; } top.push(P(a, 0), P(a, mW)); if (b < L - e) top.push(P(b, mW), P(b, 0)); } }
-    const faces = [...Object.values(F), { loop: top, out: [0, 1, 0], holes: [] }];
-    for (const [fx0, fz0, fx1, fz1] of foot) {
-      faces.push({ loop: [[fx0, H, fz0], [fx1, H, fz0], [fx1, H, fz1], [fx0, H, fz1]], out: [0, 1, 0] });
-      if (fx0 > X0 + e) faces.push({ loop: [[fx0, y1, fz0], [fx0, y1, fz1], [fx0, H, fz1], [fx0, H, fz0]], out: [-1, 0, 0] });
-      if (fx1 < X1 - e) faces.push({ loop: [[fx1, y1, fz0], [fx1, y1, fz1], [fx1, H, fz1], [fx1, H, fz0]], out: [1, 0, 0] });
-      if (fz0 > Z0 + e) faces.push({ loop: [[fx0, y1, fz0], [fx1, y1, fz0], [fx1, H, fz0], [fx0, H, fz0]], out: [0, 0, -1] });
-      if (fz1 < Z1 - e) faces.push({ loop: [[fx0, y1, fz1], [fx1, y1, fz1], [fx1, H, fz1], [fx0, H, fz1]], out: [0, 0, 1] });
+    const d = mW, ends = (I, lo, hi) => I.flatMap(ab => ab).filter(t => t > lo + e && t < hi - e);   // (merlon edges along a wall, inside its corners)
+    if (X1 - X0 > 2 * d + 1e-3 && Z1 - Z0 > 2 * d + 1e-3) {
+      const a0 = X0 + d, a1 = X1 - d, b0 = Z0 + d, b1 = Z1 - d;
+      F.deck = { loop: [[a0, y1, b0], ...ends(iv.z0, a0, a1).sort((p, q) => p - q).map(t => [t, y1, b0]), [a1, y1, b0], ...ends(iv.x1, b0, b1).sort((p, q) => p - q).map(t => [a1, y1, t]),
+        [a1, y1, b1], ...ends(iv.z1, a0, a1).sort((p, q) => q - p).map(t => [t, y1, b1]), [a0, y1, b1], ...ends(iv.x0, b0, b1).sort((p, q) => q - p).map(t => [a0, y1, t])], out: [0, 1, 0], holes: [] };
     }
-    return { F, faces };
+    return F;
   }
   // The Castle: render-buildings' CASTLE_PARTS as stone solids (the TC keep's masonry) — arrow slits in the towers,
   // windows in the keep, the gate's opening; merlons at castleMerlonSpots; the keep's team spire and flag.
@@ -1729,11 +1800,12 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (q.kind === 'wall') { const k = q.edge[0] === 'u' ? 1 : 0; box[k] -= 0.05; box[k + 2] += 0.05; }
       if (q.kind === 'roof') { pyramid(piece(g), tc + '|shingles', ...box, y0, q.rise / HPX); continue; }
       const y1 = q.y1 / HPX, cren = q.kind === 'wall' || q.kind === 'crown' || q.kind === 'gate';
-      const C = cren ? crenelFaces(...box, y0, y1, castleMerlonSpots(q).map(([u, v]) => [x + u, z + v]), mW, mH) : null, f = cren ? C.F : boxFaces(...box, y0, y1);
+      const f = cren ? crenelFaces(...box, y0, y1, castleMerlonSpots(q).map(([u, v]) => [x + u, z + v]), mW, mH) : boxFaces(...box, y0, y1);
       if (q.kind === 'shaft') for (const n of q.out) f[n].holes.push(hole(n, box, 0.5, 20 / HPX, 0.08, 10 / HPX));
       if (q.kind === 'keep') for (const n of FACES) f[n].holes.push(hole(n, box, 0.5, 36 / HPX, 0.16, 11 / HPX));
       if (q.kind === 'gate') for (const n of ['z0', 'z1']) f[n].holes.push(hole(n, box, 0.5, 0, 0.42, 20 / HPX));   // (the passage: in from the field, out into the courtyard)
-      solid(g, col, cren ? C.faces : Object.values(f), { depth: mW / 2 });   // (a site's / a ruin's slabs half a merlon thick: its merlons solid, not hollow)
+      if (!cren) { solid(g, col, Object.values(f), { depth: mW / 2 }); continue; }
+      solid(g, col, [...FACES.map(n => f[n]), f.bottom, ...(f.deck ? [f.deck] : [])], { depth: mW, top: 0 });   // (walls a merlon thick: their top the walk and the merlons)
     }
     const roof = CASTLE_PARTS.flat().find(q => q.kind === 'roof');
     if (e.complete) flag(g, x + 2, z + 2, (roof.y0 + roof.rise) / HPX, null, tc);
@@ -2459,7 +2531,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         poseDragonWing(w, carry.fd, P.sl, d.lag);
         w.rotation.set(-sd * carry.ang, 0, carry.pitch); }
       const fl = model.getObjectByName('flame');   // (the mouth: where the fire leaves it)
-      dragonFire(model, fl, P.flame, dt, P.fly || 0, typeof dragonFireAim === 'function' ? dragonFireAim(e) : null);
+      dragonFire(model, fl, P.flame, fxDt, P.fly || 0, typeof dragonFireAim === 'function' ? dragonFireAim(e) : null);
       if (!a.lab) {
         for (const i of P.ev.steps) { const f = legs[i].getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 3, '#b7a27a'); shakeFrom(f.x, f.z, 0.03); }
         if (P.ev.slam) { for (const l of [legs[2], legs[3]]) { const f = l.getWorldPosition(_dv || (_dv = new THREE.Vector3())); puffBurst(f.x, 0.04, f.z, 7, '#b7a27a'); } shakeFrom(a.x, a.z, 0.12); }
@@ -4258,12 +4330,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate' || o.name === 'hoist') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else bakeRigid(o, null, true); }
+    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else if (o.name === 'hoist') o.children.forEach(c => bakeRigid(c, null, true)); else bakeRigid(o, null, true); }   // (a hoist: its rope and its log, each moving on its own)
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4296,8 +4368,8 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (o.name === 'flag') flags.push(o);
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
-      const pennants = [], cloths = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); if (o.name === 'cloth') cloths.push(o); });
-      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
+      const pennants = [], cloths = [], hoists = []; g.traverse(o => { if (o.name === 'pennant') pennants.push(o); if (o.name === 'cloth') cloths.push(o); if (o.name === 'hoist') hoists.push(o); });
+      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.children.find(c => c.material === wheatMat()) : null, sails: g.getObjectByName('sails'), flags, horses, pennants, hoists, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
       if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
       else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
@@ -4311,7 +4383,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // roof, windows and door keep their shape), inside a scaffold whose work deck rides
   // the cut. g: a finished, baked model; its footprint (x0, z0, w, h). Returns { set(progress 0..1) }.
   let siteWood = null;
-  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods', 'plate']); // a site's parts with their own life: never merged
+  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods', 'plate', 'hoist']); // a site's parts with their own life: never merged
   const SITE_SHADE = 0.66; // how much light reaches inside a site's walls (their inner faces, and the ground they enclose)
   // Finished: the scaffold comes down in a ring of dust round the footprint.
   function siteDone(e){
@@ -4327,29 +4399,34 @@ gl_Position = projectionMatrix * mvPosition;`;
   // By SHAPE: the same wall on another tile is the same slabs, moved (the strips' grid, COL, divides a tile, so it
   // moves with them) — a town of one kind of house under fire cuts its walls once, not once a house.
   const thickCache = new Map();
-  function thickGeo(faces, D, nMats, jag = false){
-    if (faces.some(f => f.smooth)) return thickGeoMake(faces, D, nMats, jag);
+  function thickGeo(faces, D, nMats, jag = false, wallSpec = null){
+    if (faces.some(f => f.smooth)) return thickGeoMake(faces, D, nMats, jag, wallSpec);
     let ox = Infinity, oz = Infinity; for (const f of faces) for (const p of f.loop) { if (p[0] < ox) ox = p[0]; if (p[2] < oz) oz = p[2]; }
     ox = Math.floor(ox); oz = Math.floor(oz);
     const r = v => Math.round(v * 1e4), at = p => r(p[0] - ox) + ',' + r(p[1]) + ',' + r(p[2] - oz);
-    const key = D + '|' + nMats + '|' + jag + '|' + faces.map(f => f.loop.map(at).join(';') + '>' + f.out.join(',') + '>' + (f.mat || 0) + (f.cut ? 'c' : '') + '>' + (f.holes || []).map(h => at(h.at) + ':' + r(h.w) + ':' + r(h.h)).join(';')).join('/');
+    const key = D + '|' + nMats + '|' + jag + '|' + (wallSpec ? wallSpec.top : '') + '|' + faces.map(f => f.loop.map(at).join(';') + '>' + f.out.join(',') + '>' + (f.mat || 0) + (f.cut ? 'c' : '') + (f.lining ?? '') + '>' + (f.holes || []).map(h => at(h.at) + ':' + r(h.w) + ':' + r(h.h)).join(';')).join('/');
     let g = thickCache.get(key);
     if (!g) { const sh = p => [p[0] - ox, p[1], p[2] - oz];
-      thickCache.set(key, g = thickGeoMake(faces.map(f => ({ ...f, loop: f.loop.map(sh), holes: (f.holes || []).map(h => ({ ...h, at: sh(h.at) })) })), D, nMats, jag)); }
+      thickCache.set(key, g = thickGeoMake(faces.map(f => ({ ...f, loop: f.loop.map(sh), holes: (f.holes || []).map(h => ({ ...h, at: sh(h.at) })) })), D, nMats, jag, wallSpec)); }
     return g.clone().translate(ox, 0, oz);
   }
-  function thickGeoMake(faces, D, nMats, jag){
-    const buckets = Array.from({ length: nMats }, () => []);
+  function thickGeoMake(faces, D, nMats, jag, wallSpec){
+    const buckets = Array.from({ length: nMats }, () => []), body = wallBody(faces, D);
     const UP = new THREE.Vector3(0, 1, 0);
-    // sd: the way the face runs up (in its own plane, rising 1 per unit): a site presses it down along itself
-    const put = (b, p0, p1, p2, want, clip, nf, inside = 0, sd = UP) => {
+    // s: each corner's slide (rising 1 per unit: wallBody.slide) — a site presses it down along that
+    // lin: a wall back's lining (its material above the deck: the slicing below sends it there), -1 none
+    // floor: a cut storey's cap's foot (its cap shows only past it: see the site shader), -1 none
+    const put = (b, p0, p1, p2, want, clip, nf, inside = 0, s = [UP, UP, UP], lin = -1, floor = -1) => {
       const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
       if (n.lengthSq() < 1e-14) return;
-      if (n.dot(want) < 0) { n.negate(); [p1, p2] = [p2, p1]; }
+      if (n.dot(want) < 0) { n.negate(); [p1, p2] = [p2, p1]; s = [s[0], s[2], s[1]]; }
       n.normalize();
-      for (const q of [p0, p1, p2]) b.push(q, nf ? nf(q) : n, clip + 2 * inside, sd);        // (clipOnly, + 2 on an inner face)
+      [p0, p1, p2].forEach((q, i) => b.push(q, nf ? nf(q) : n, clip + 2 * inside + 4 * (lin + 1), s[i], floor));        // (clipOnly | inner face << 1 | lining+1 << 2)
     };
     const top = Math.max(...faces.flatMap(f => f.loop.map(p => p[1])));
+    // (a thick wall's back above its deck is outdoors, lit as the finished one's; only below it the inside, in shade — a
+    // merlon's back was dark)
+    const deckY = wallSpec ? body.deckY : -Infinity;
     for (const f of faces) {
       const pts = f.loop.map(V3), n = new THREE.Vector3();
       for (let k = 0; k < pts.length; k++) { const a = pts[k], c = pts[(k + 1) % pts.length]; n.x += (a.y - c.y) * (a.z + c.z); n.y += (a.z - c.z) * (a.x + c.x); n.z += (a.x - c.x) * (a.y + c.y); }
@@ -4368,17 +4445,25 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (!wall) { for (const [i0, i1, i2] of tris) put(b, to3(all[i0]), to3(all[i1]), to3(all[i2]), n, 1); continue; }
       // the inner face straight in (level), not along a leaning wall's tilted facing: both faces keep every height, so a
       // tapered wall's (the mill's) inner rim rises in step with its outer one
-      const nh = new THREE.Vector3(n.x, 0, n.z).normalize(), inset = p => p.clone().addScaledVector(nh, -D), back = n.clone().negate();
+      const nh = new THREE.Vector3(n.x, 0, n.z).normalize(), inset = p => body.inset(p, nh), back = n.clone().negate();
       const sd = v.clone().divideScalar(v.y);   // (a leaning wall presses down along its lean: its cut stays on it, exact)
       const nf = f.smooth ? q => f.smooth(q).clone() : null, nb = f.smooth ? q => f.smooth(q.clone().addScaledVector(nh, D)).clone().negate() : null;
-      for (const [i0, i1, i2] of tris) { const A = to3(all[i0]), B = to3(all[i1]), C = to3(all[i2]);
-        put(b, A, B, C, n, cl, nf, 0, sd); put(b, inset(A), inset(B), inset(C), back, cl, nb, 1, sd); }
+      const tB = wallSpec ? buckets[wallSpec.top] : b, lin = wallSpec ? f.lining ?? f.mat ?? 0 : -1;   // (the solid's top, its back's lining: as the finished one's)
+      const S = p => body.slide(p, sd);
+      for (const [i0, i1, i2] of tris) { const A = to3(all[i0]), B = to3(all[i1]), C = to3(all[i2]), s3 = [S(A), S(B), S(C)];
+        put(b, A, B, C, n, cl, nf, 0, s3); put(b, inset(A), inset(B), inset(C), back, cl, nb, 1, s3, lin); }
       // face → inset quads: along the outline (facing out, in the face's plane) and round each opening (facing into it)
-      const band = (loop, want, ins = 0) => { for (let k = 0; k < loop.length; k++) { const a = loop[k], c = loop[(k + 1) % loop.length], w = want(a.clone().add(c).multiplyScalar(0.5));
-        put(b, a, c, inset(c), w, cl, null, ins, sd); put(b, a, inset(c), inset(a), w, cl, null, ins, sd); } };
-      const c0 = pts.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
-      band(pts, m => { const d = m.clone().sub(c0); return d.addScaledVector(n, -d.dot(n)); });
-      for (const h of holes) { const loop = h.map(to3), hc = loop[0].clone().add(loop[2]).multiplyScalar(0.5); band(loop, m => hc.clone().sub(m), 1); } // (an opening's sides: in the shade too)
+      const quad = (bb, a, c, w, ins, clp = cl, floor = -1) => { const sa = S(a), sc = S(c); put(bb, a, c, inset(c), w, clp, null, ins, [sa, sc, sc], -1, floor); put(bb, a, inset(c), inset(a), w, clp, null, ins, [sa, sc, sa], -1, floor); };
+      const foot = Math.min(...pts.map(p => p.y));
+      for (let k = 0; k < contour.length; k++) { const a = pts[k], c = pts[(k + 1) % pts.length], w = body.outward(contour, k, u, v), sh = body.shared(a, c);
+        // (a shared edge is inside the body — a corner, a storey's foot — but a storey's top seam is its cap while it rises)
+        if (sh && (Math.abs(a.y - c.y) > 1e-6 || w.y < 0.5)) continue;
+        // its top: pressed down to the build line as its cap — a cut wall's too (cut, it was gone: the wall stood open),
+        // from its own foot up. Rising, it is the wall's own cut; a ruin's is its broken top (the solid's, a rim's planks).
+        if (w.y >= 0.5) quad(sh || !jag ? b : tB, a, c, w, 0, 0, cl && foot > 1e-4 ? foot : -1);
+        else quad(w.y < -0.5 ? b : tB, a, c, w, 0); }
+      for (const h of holes) { const loop = h.map(to3), hc = loop[0].clone().add(loop[2]).multiplyScalar(0.5);   // (an opening's sides: in the shade too)
+        for (let k = 0; k < 4; k++) { const a = loop[k], c = loop[(k + 1) % 4]; quad(b, a, c, hc.clone().sub(a.clone().add(c).multiplyScalar(0.5)), 1); } }
     }
     // Sliced into thin horizontal bands: pressing a triangle's upper corners straight down is exact only for one that
     // doesn't reach far past the build height (a long diagonal one — round a window, up a gable — would open a gap).
@@ -4388,7 +4473,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       for (let k = 0; k < poly.length; k++) { const a = poly[k], c = poly[(k + 1) % poly.length], ia = keepAbove ? a.p[ax] >= y : a.p[ax] <= y, ic = keepAbove ? c.p[ax] >= y : c.p[ax] <= y;
         if (ia) out.push(a);
         if (ia !== ic) { const [e0, e1] = lo(a, c) ? [a, c] : [c, a], f = (y - e0.p[ax]) / (e1.p[ax] - e0.p[ax]); // (from its lower end, whichever side asks: the same point)
-          out.push({ p: e0.p.clone().lerp(e1.p, f), n: e0.n.clone().lerp(e1.n, f).normalize() }); } }
+          out.push({ p: e0.p.clone().lerp(e1.p, f), n: e0.n.clone().lerp(e1.n, f).normalize(), s: e0.s.clone().lerp(e1.s, f) }); } }
       return out; };
     // a polygon diced on the world grid along ax (step st): its pieces
     const dice = (polys, ax, st) => polys.flatMap(poly => { if (poly.length < 3) return [];
@@ -4396,47 +4481,61 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (k1 - k0 <= 1) return [poly];
       const out = []; for (let k = k0; k < k1; k++) { const q = cut(cut(poly, Math.max(lo, k * st), true, ax), Math.min(hi, (k + 1) * st), false, ax); if (q.length >= 3) out.push(q); }
       return out; });
-    let start = 0;
+    // (each piece to its material's run: a back above the deck goes to its lining's)
+    const outs = buckets.map(() => ({ pos: [], nrm: [], clip: [], inside: [], slide: [], floor: [] }));
     buckets.forEach((b, m) => {
-      let count = 0;
-      for (let k = 0; k < b.length; k += 12) {
-        const tri = [0, 4, 8].map(d => ({ p: b[k + d], n: b[k + d + 1] })), cl = b[k + 2] & 1, ins = b[k + 2] >> 1, sd = b[k + 3];
+      for (let k = 0; k < b.length; k += 15) {
+        const tri = [0, 5, 10].map(d => ({ p: b[k + d], n: b[k + d + 1], s: b[k + d + 3] })), cl = b[k + 2] & 1, ins = (b[k + 2] >> 1) & 1, lin = (b[k + 2] >> 2) - 1, fl = b[k + 4];
         const ys = tri.map(v => v.p.y), lo = Math.min(...ys), hi = Math.max(...ys);
         // (on one grid for the whole building: neighbours split a shared edge at the same heights, so no crack opens along it)
         const k0 = Math.floor(lo / BAND + 1e-6), k1 = Math.max(k0 + 1, Math.ceil(hi / BAND - 1e-6));
         // (a flat one: nothing to slice — kept whole)
-        const bands = cl || hi - lo < 1e-6 ? [[lo, hi]] : Array.from({ length: k1 - k0 }, (_, i) => [Math.max(lo, (k0 + i) * BAND), Math.min(hi, (k0 + i + 1) * BAND)]).filter(([y0, y1]) => y1 - y0 > 1e-7);
+        const bands = (cl || hi - lo < 1e-6 ? [[lo, hi]] : Array.from({ length: k1 - k0 }, (_, i) => [Math.max(lo, (k0 + i) * BAND), Math.min(hi, (k0 + i + 1) * BAND)]).filter(([y0, y1]) => y1 - y0 > 1e-7))
+          .flatMap(([y0, y1]) => y0 < deckY - 1e-7 && deckY < y1 - 1e-7 ? [[y0, deckY], [deckY, y1]] : [[y0, y1]]);   // (split at the deck)
         for (const [y0, y1] of bands) {
+          // a thick wall's back above its deck (or with none) is outdoors: lit, and in its lining — below, the inside
+          const out = ins && lin >= 0 && (y0 + y1) / 2 > deckY, o = outs[out ? lin : m], pIns = out ? 0 : ins;
           const band = bands.length > 1 ? cut(cut(tri, y0, true), y1, false) : tri;
           for (const poly of jag && !cl ? dice(dice([band], 'x', COL), 'z', COL) : [band])
-          for (let q = 1; q + 1 < poly.length; q++) for (const v of [poly[0], poly[q], poly[q + 1]]) { pos.push(v.p.x, v.p.y, v.p.z); nrm.push(v.n.x, v.n.y, v.n.z); clip.push(cl); inside.push(ins); slide.push(sd.x, sd.y, sd.z); count++; }
+          for (let q = 1; q + 1 < poly.length; q++) for (const v of [poly[0], poly[q], poly[q + 1]]) { o.pos.push(v.p.x, v.p.y, v.p.z); o.nrm.push(v.n.x, v.n.y, v.n.z); o.clip.push(cl); o.inside.push(pIns); o.slide.push(v.s.x, v.s.y, v.s.z); o.floor.push(fl); }
         }
       }
-      geo.addGroup(start, count, m); start += count;
     });
+    let start = 0;
+    const app = (to, from) => { for (let i = 0; i < from.length; i++) to.push(from[i]); };   // (no spread: a big building's run would overflow the call stack)
+    const floor = [];
+    for (const [m, o] of outs.entries()) { const c = o.pos.length / 3; app(pos, o.pos); app(nrm, o.nrm); app(clip, o.clip); app(inside, o.inside); app(slide, o.slide); app(floor, o.floor); geo.addGroup(start, c, m); start += c; }
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     geo.setAttribute('clipOnly', new THREE.Float32BufferAttribute(clip, 1));
     geo.setAttribute('inside', new THREE.Float32BufferAttribute(inside, 1));
     geo.setAttribute('slide', new THREE.Float32BufferAttribute(slide, 3));
+    geo.setAttribute('capFloor', new THREE.Float32BufferAttribute(floor, 1));
     return geo;
   }
-  // The ground a site's walls enclose, in their shade: the walls' inner feet (convex hull), a dark film just above the grass.
-  let _floorMat = null, _floorDepthMat = null;
-  function floorShade(o, jag){
+  // A site's walls' inner feet (where their insides meet the ground: the inside's outline) and all their feet, in world xz.
+  function innerFeet(o){
     o.updateMatrixWorld(true);
     const P = o.geometry.attributes.position, In = o.geometry.attributes.inside, v = new THREE.Vector3(), pts = [], all = [];
     for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); if (v.y < 1e-3) { all.push([v.x, v.z]); if (In.getX(i) > 0.5) pts.push([v.x, v.z]); } }
+    return { pts, all };
+  }
+  // a flat convex fan over points (xz) at height y, facing up
+  function hullFan(ps, y){ ps = ps.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+    for (const p of ps) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (const p of ps.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+    const hull = lo.slice(0, -1).concat(hi.slice(0, -1)), pos = [];
+    if (hull.length < 3) return null;
+    for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], y, q[1]);
+    const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((_, i) => i % 3 === 1 ? 1 : 0), 3)); return geo; }
+  // The ground a site's walls enclose, in their shade: the walls' inner feet (convex hull), a dark film just above the grass.
+  let _floorMat = null, _floorDepthMat = null;
+  function floorShade(o, jag){
+    const { pts, all } = innerFeet(o);
     if (pts.length < 3) return null;
-    // a convex fan over points on the ground
-    const fan = (ps, y) => { ps = ps.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-      const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
-      for (const p of ps) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
-      for (const p of ps.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
-      const hull = lo.slice(0, -1).concat(hi.slice(0, -1)), pos = [];
-      for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k + 1], hull[k]]) pos.push(q[0], y, q[1]);
-      const geo = own(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); return hull.length < 3 ? null : geo; };
-    const geo = fan(pts, 0.004), under = fan(all, 0.002); if (!geo) return null;   // (the twin a hair lower: at one height their two triangulations z-fought, the shade flickering)
+    const geo = hullFan(pts, 0.004), under = hullFan(all, 0.002); if (!geo) return null;   // (the twin a hair lower: at one height their two triangulations z-fought, the shade flickering)
     _floorMat = _floorMat || new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 1 - SITE_SHADE, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }); // (single pass: a see-through two-sided material is otherwise drawn twice, recompiled each time)
     // its twin writes depth only, drawn first, over the walls' whole footprint: the ground blocks nothing, so without it an
     // outline shell's floor shows black through the open top
@@ -4473,7 +4572,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       else { const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m), lit = !!m.isMeshLambertMaterial && !m.flatShading;
         c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.siteY = siteY; sh.uniforms.siteJag = siteJag;
           // the top: level while building; broken (siteJag: how far it dips, by a smooth noise along the walls) when damaged
-          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float clipOnly; attribute float inside; attribute vec3 slide; uniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;\n' + SITE_NOISE)
+          sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float clipOnly; attribute float inside; attribute vec3 slide; attribute float capFloor; uniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop; varying float vCapFloor;\n' + SITE_NOISE)
             .replace('#include <begin_vertex>', `#include <begin_vertex>
               {
                 #ifdef USE_INSTANCING
@@ -4482,19 +4581,30 @@ gl_Position = projectionMatrix * mvPosition;`;
                   mat4 siteM = modelMatrix;
                 #endif
                 vec4 sw = siteM * vec4(transformed, 1.0); vSiteY = sw.y; vClip = clipOnly;
+                vCapFloor = capFloor < -0.5 ? -1e9 : (siteM * vec4(transformed.x, capFloor, transformed.z, 1.0)).y;   // (a cut storey's cap: its foot)
                 float sy = siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(sw.xz * 3.2)) : siteY; vSiteTop = sy;
                 #ifndef SITE_HULL
                   if (clipOnly < 0.5 && sw.y > sy) { sw.xyz -= slide * (sw.y - sy); transformed = (inverse(siteM) * sw).xyz; }
                 #endif
                 vSiteW = sw.xyz; vInside = inside; }`);
           // a surface pressed flat onto the top (found per pixel, so a wall's side is never touched) is lit and patterned as a top
-          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;\n' + SITE_NOISE)
+          sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float siteY; varying float vCapFloor; uniform float siteJag; varying float vSiteY; varying float vClip; varying vec3 vSiteW; varying float vInside; varying float vSiteTop;\n' + SITE_NOISE)
             .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-              if (vClip > 0.5 && vSiteY > vSiteTop + 1e-4) discard;
+              // (the broken top found per pixel: a cut part's top read off its corners was straight across a deck while the
+              // walls round it broke ragged — the deck overhung them)
+              float siteTopPx = siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(vSiteW.xz * 3.2)) : siteY;
+              if (vClip > 0.5 && vSiteY > siteTopPx + 1e-4) discard;
+              if (siteY <= vCapFloor + 1e-4) discard;   // (a cut storey's cap: not till the build passes its foot — below, the storey under it caps)
               #ifdef SITE_HULL
-                if (vSiteW.y > (siteJag > 0.0 ? max(0.0, siteY - siteJag * siteN(vSiteW.xz * 3.2)) : siteY)) discard;   // an outline: cut at the broken top, per pixel (pressed, it laid a black sheet over it)
+                if (vSiteW.y > siteTopPx) discard;   // an outline: cut at the broken top (pressed, it laid a black sheet over it)
               #endif
-              bool sitePressed = vSiteW.y >= vSiteTop - 1e-4 && (siteJag > 0.0 || abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98);`)
+              // (a cut part's inside — a beam's, a box's — seen through its open top, is its cut: drawn as a top, it reads filled
+              // at the build line; a wall has a real cap there. Not the outline shell's: it is drawn from its back faces.)
+              bool siteCap = vClip > 0.5 && !gl_FrontFacing;
+              #ifdef SITE_HULL
+                siteCap = false;
+              #endif
+              bool sitePressed = siteCap || (vSiteW.y >= vSiteTop - 1e-4 && (siteJag > 0.0 || abs(normalize(cross(dFdx(vSiteW), dFdy(vSiteW))).y) > 0.98));`)
             .replace('abs(normalize(vWNrm))', 'abs(sitePressed ? vec3(0.0, 1.0, 0.0) : normalize(vWNrm))')
             // the inside of the walls (and of its openings) in the walls' shade
             .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  if (vInside > 0.5 && !sitePressed) gl_FragColor.rgb *= SITE_SHADE;');
@@ -4511,6 +4621,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     // every mesh of a site says what it is (the site shader reads these; an unset attribute reads garbage)
     const mark = geo => { const n = geo.attributes.position.count;
       for (const k of ['clipOnly', 'inside']) if (!geo.attributes[k]) geo.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(n), 1));
+      if (!geo.attributes.capFloor) geo.setAttribute('capFloor', new THREE.Float32BufferAttribute(new Float32Array(n).fill(-1), 1));
       if (!geo.attributes.slide) geo.setAttribute('slide', new THREE.Float32BufferAttribute(new Float32Array(n * 3).map((_, i) => i % 3 === 1 ? 1 : 0), 3)); }; // (straight down)
     const swap = (o, f) => { if (!o.material) return;
       if (o.isMesh && o.userData.siteCut && !o.geometry.userData.siteCut) {   // (its own copy: a box's geometry is shared)
@@ -4760,6 +4871,8 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (rec.cloths && rec.cloths.length && rec.obj.visible && !rec.site && !rec.dmg) for (const c of rec.cloths) blowCloth(c);   // (the wind in the awnings and tents)
       if (rec.smoke && !rec.site && !rec.dmg && rec.obj.visible && (rec.smokeT = (rec.smokeT || Math.random()) - dt) <= 0) { // chimney smoke (the 2D's drawChimneySmoke)
         rec.smokeT = 0.55 + Math.random() * 0.3; for (const [x, y, z] of rec.smoke) chimneyPuff(x, y, z); }
+      if (rec.hoists && rec.obj.visible && !rec.site && !rec.dmg) for (const h of rec.hoists) { const L = hoistLength(h.userData, aTick);   // (the lumber camp's log, up and down)
+        h.getObjectByName('hoistRope').scale.y = L; h.getObjectByName('hoistLog').position.y = -L; }
       if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)
       if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
       if (rec.dmg && rec.obj.visible) { const fe = entitiesById.get(rec.obj.userData.bid); if (fe) rec.dmg.set(fe.hp / fe.maxHp); rec.dmg.tick(dt); } // (its damage by its health)
@@ -5162,7 +5275,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     // The sim walks straight legs (smoothPath, js/pathfinding.js): a mover is drawn at its TRUE spot, facing its leg —
     // no smoothing overlay of its own to drift off it and catch up when it stops. Work spots ease in; standing units sit.
     // (the drawn spot runs a tick behind the sim: still gliding into the final spot after the sim has stopped, it is moving)
-    const mv = isUnitMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
+    // (isDrawnMoving, as the 2D's: a press-slide into reach is the walk-in's, not a walk — counted, a returning butcher
+    // crouched as it slid in, stood to walk the rest, and crouched again)
+    const mv = isDrawnMoving(e), gliding = (tx - (e.x + 0.5)) ** 2 + (tz - (e.y + 0.5)) ** 2 > 1e-6, far = (tx - v.x) ** 2 + (tz - v.z) ** 2 > 4;
     let nx, nz;
     if (far || ((mv || gliding) && !T)) { nx = tx; nz = tz;
       // leaving a work spot on the move: the step-in offset walks off (at WALK_IN, game-speed scaled), never pops. The
@@ -5629,8 +5744,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // rTick between them. aTick is the animation clock on the same footing.
   // Paused or stalled, the clock stops at the sim's last tick.
   let aTick = 0, rTick = -1, tickRate = TPS * 2 / 1000, rateTick = -1, rateAt = 0, lastClock = 0;
+  // Effects (dust, chips, smoke, debris, fire) age on GAME time, as the 2D particles do — sim events spawn them, so on a
+  // wall clock a faster game piled them up. In seconds at the 2x speed they were tuned at; 0 while paused.
+  let fxDt = 0;
   const tickPos = new Map();
   function clockFrame(now){
+    const r0 = rTick;
     if (rateTick < 0 || tick < rateTick || tick - rateTick > 200) { rateTick = tick; rateAt = now; rTick = tick - 1; }
     else if (now - rateAt > 250) { const r = (tick - rateTick) / (now - rateAt); tickRate = tickRate * 0.6 + r * 0.4; rateTick = tick; rateAt = now; } // ticks per ms, over ¼s windows
     const dt = lastClock ? Math.min(100, now - lastClock) : 0; lastClock = now;
@@ -5639,6 +5758,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     rTick += (target - rTick) * Math.min(1, dt / 400);                         // eased back toward it (no pops)
     rTick = Math.max(tick - 2.5, Math.min(tick, rTick));
     aTick = rTick * (30 / TPS);
+    fxDt = r0 < 0 ? 0 : Math.min(1, Math.max(0, rTick - r0) / (TPS * 2));
   }
   function posOf(e){ // [x, z] world (tile centre) at the render clock
     let h = tickPos.get(e.id);
@@ -5781,7 +5901,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     }
     SU.mesh.count = SU.n; SU.mesh.instanceMatrix.needsUpdate = true;
     for (const [id, a] of animals) if (!used.has(id)) { dropAnimal(a); animals.delete(id); }
-    for (const m of burning) { const F = m.userData.fire; if (F.seen !== fireFrame) dragonFire(m, null, 0, dt); if (!F.puffs.length) burning.delete(m); }
+    for (const m of burning) { const F = m.userData.fire; if (F.seen !== fireFrame) dragonFire(m, null, 0, fxDt); if (!F.puffs.length) burning.delete(m); }
     fireFrame++;
     for (const [id, v] of villagers) if (!used.has(id)) { dropVillager(v); villagers.delete(id); }
     if (frame % 120 === 0) for (const id of tickPos.keys()) if (!entitiesById.has(id)) tickPos.delete(id);
@@ -6075,6 +6195,10 @@ gl_Position = projectionMatrix * mvPosition;`;
   let camShake = 0, rideH = 1.7;   // rideH: the eye's height on a dragon's back
   function shakeFrom(x, z, amp){ if (!camAt) return; const d = Math.hypot(x - camAt.x, z - camAt.y); camShake = Math.max(camShake, amp * Math.max(0, 1 - d / 18)); }
   window.__povShake = (x, y, mag) => shakeFrom(x + 0.5, y + 0.5, 0.025 * mag);   // (render-fx shakeView: a stone landing)
+  // A scripted camera (tools: trailer capture): read or set the world view's orbit and the eye's pitch. Viewer-only.
+  window.__pov3dCam = { get: () => ({ yaw: oYaw, pitch: oPitch, dist: oDist, mode, fpPitch, yawEye: yaw }),
+    set: o => { if (o.yaw != null) oYaw = o.yaw; if (o.pitch != null) oPitch = o.pitch; if (o.dist != null) oDist = o.dist;
+      if (o.mode) mode = o.mode; if (o.fpPitch != null) fpPitch = o.fpPitch; if (o.yawEye != null) yaw = o.yawEye; } };
   // Mouse / drag look arrives as pointer events, at their own uneven rate (not the frame's): each is banked here and
   // paid out over a few frames (LOOK_EASE s), so the view turns evenly instead of in steps.
   const lookPend = { yaw: 0, pitch: 0 }, LOOK_EASE = 0.03;
@@ -6170,10 +6294,10 @@ gl_Position = projectionMatrix * mvPosition;`;
       lastStatic = now; staticAt = { x: eye.x, y: eye.y }; }
     else { P.sGround = P.sFeat = P.sBld = 0; if (viewTurned()) refreshFeatures(); if (bldLeft) { refreshBuildings(); lastLoad = frame; } else if (frame - lastLoad < 60) {} else if (warmQueue.length) warmStep(); else if (frame % 60 === 0) prewarmShapes(); }
     mark('static');
-    animateFeatures(dt);
+    animateFeatures(fxDt);
     updateArrows(now);
     clouds.position.set(camera.position.x, 0, camera.position.z); clouds.rotation.y = aTick * 0.00004;
-    animateModels(dt); mark('models');
+    animateModels(fxDt); mark('models');
     updateUnits(); for (const m of [villagers, animals, corpseModels]) for (const r of m.values()) standUpright(r.obj); mark('units');
     updateXray(); updateSelection();
     if (world) updateGhost(); mark('fx');
@@ -6467,6 +6591,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     return { q: make(q), lock: make(lock, lockHull) };
   }
   function drawMarks(marks){
+    if (window.__cleanFrame) marks = { q: [], lock: [] };   // (a trailer capture: no HUD cues)
     if (!markMeshes) { if (!marks.q.length && !marks.lock.length) return; markMeshes = markModels(); }
     const t = performance.now() / 1000, cp = camera.position;
     for (const k of ['q', 'lock']) { const M = markMeshes[k], L = marks[k], n = Math.min(L.length, 64);
@@ -6570,7 +6695,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         rimBOf: t => { let r = xray.userData.rimB.get(t); if (!r) { xray.userData.rimB.set(t, r = screenHull(m({ color: t === 'bad' ? '#ff3020' : teamColor(t), stencilRef: t === 'bad' ? 2 : CROWN_BIT, stencilFuncMask: t === 'bad' ? 0xff : CROWN_BIT | 2, side: THREE.DoubleSide, stencilFunc: t === 'bad' ? THREE.NotEqualStencilFunc : THREE.EqualStencilFunc }), HULL * 2.5, 3));
           r.onBeforeCompile.fow = true; } return r; } };
     }
-    const on = world && mode !== 'eye';   // (not through the eyes: team rims through every wall and tree would crowd a first-person view)
+    const on = world && mode !== 'eye' && !window.__cleanFrame;   // (not through the eyes: team rims through every wall and tree would crowd a first-person view)
     xray.visible = on;
     const used = new Set();
     if (on) {

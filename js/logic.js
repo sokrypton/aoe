@@ -1045,7 +1045,26 @@ function chaseBudgetSpent(){
   if(chaseBudgetTick!==tick||chaseBudgetGen!==simGen){ chaseBudgetTick=tick; chaseBudgetGen=simGen; chaseBudgetUsed=0; }
   return ++chaseBudgetUsed>CHASE_PATHS_PER_TICK;
 }
-function combatApproach(u,tgt,dist,pathFn,stopDist){
+// THE chase plan onto a unit: the nearest tile in strike reach (findPath stopDist) — and if a co-attacker holds or heads
+// for that tile (contactClaims), one step on to a free one beside it still in reach. The first approach and every re-aim
+// plan it, so they agree where to stand, and a crowd fans round the foe: converging on one tile, all but the first were
+// cut off and turned back. (Claims stay out of the search: inside it they widened every long search.)
+function chasePath(e, t){
+  const tx = Math.round(t.x), ty = Math.round(t.y), r = strikeDist(e, t), r2 = r * r;
+  const p = findPath(Math.round(e.x), Math.round(e.y), tx, ty, e.id, r);
+  const g = p[p.length - 1];
+  if (!g || (g.x-tx)*(g.x-tx) + (g.y-ty)*(g.y-ty) > r2) return p;           // in reach already, or a partial walk
+  const claim = contactClaims(e, q => q.target === t.id);
+  if (!claim.has(g.y * MAP + g.x)) return p;
+  let best = null, bd = Infinity;
+  for (const [dx, dy] of DIRS8) { const x = g.x + dx, y = g.y + dy, ox = x - tx, oy = y - ty, d = ox*ox + oy*oy;
+    if ((!ox && !oy) || d > r2 || claim.has(y * MAP + x) || !walkable(x, y, e.id)) continue;
+    if (dx && dy && !(walkable(g.x + dx, g.y, e.id) && walkable(g.x, g.y + dy, e.id))) continue;   // (no corner cut)
+    const ux = x - e.x, uy = y - e.y, u = ux*ux + uy*uy; if (u < bd) { bd = u; best = {x, y}; } }
+  if (best) p.push(best);
+  return p;
+}
+function combatApproach(u,tgt,dist,pathFn){
   // Known-unreachable back-off — HUMANS only. Humans KEEP an explicit target
   // (so target===unreachId persists), and without this a player army ordered
   // onto a sealed-off target re-runs a full-map findPath every 15 ticks — a
@@ -1068,7 +1087,7 @@ function combatApproach(u,tgt,dist,pathFn,stopDist){
   // A whole army given targets at once starts its chases over a few ticks, not all on one (a visible hitch).
   if(chaseBudgetSpent()) return false;
   if(pathFn)pathFn();
-  else setUnitPath(u,findPath(Math.round(u.x),Math.round(u.y),Math.round(tgt.x),Math.round(tgt.y),u.id,stopDist||0));
+  else setUnitPath(u,chasePath(u,tgt));
   if(u.path.length>0){
     // "Has a path" is NOT "advancing": findPath ignores MOVING units, so a
     // unit can hold a valid path it can't walk (breach-point crowd), and a
@@ -1190,38 +1209,44 @@ function resolveStalledAttack(u, tgt){
   }
 }
 
-// Deterministic "press to contact": once a unit has SETTLED (path empty) in
-// attack/harvest range, nudge it one small step (<=0.08) toward (cx,cy) but
-// never inside contactDist. Pathfinding only ever drops a unit on the adjacent
-// integer TILE (~1.4 out); this closes that gap so attackers/gatherers pack
-// tight against the target, and separateUnits (js/loop.js) spreads co-pressers
-// into a ring. sqrt + division + arithmetic only (all IEEE-exact) — safe under
-// the lockstep checksum; no trig, no PRNG. The walkable(ignoreUnits=true) guard
-// means we never press into terrain/walls but DO press over other units
-// (separation resolves the overlap). contactDist>=minDist(0.5, separateUnits)
-// so a mobile unit target is never itself shoved out of its own surround.
+// Deterministic "press to contact": once a unit has SETTLED (path empty) in attack/harvest range, it walks (at its walk
+// rate) toward (cx,cy) but never inside contactDist. Pathfinding drops a unit on the adjacent integer TILE (~1.4 out);
+// this closes the gap so attackers/gatherers pack tight. Never into terrain/walls, nor another unit's body (intoBody):
+// the ring forms where the bodies meet. sqrt/division/arithmetic only — lockstep-safe.
+const PRESS_REARM = 0.15;   // tiles of drift past the deadband before a unit at rest presses again
 function pressToContact(e, cx, cy, contactDist, deadband=0.2){
   if(e.path.length!==0)return;               // only when settled
   let dx=cx-e.x, dy=cy-e.y;
   let d=Math.sqrt(dx*dx+dy*dy);
-  // Deadband LARGER than separateUnits' 0.08 nudge: a shoved unit must
-  // settle where it lands, or press and separation alternate forever —
-  // the whole crowd vibrates around one target (user caught it). A unit
-  // separation leaves alone (a settled butcher) can settle finer.
-  if(d<=contactDist+deadband)return;         // deadband — already in the ring
-  // Move at the unit's WALK rate (tiles/tick), NOT a fixed jump. The path
-  // follower advances unitMoveSpeed/TPS tiles/tick — match it so the unit
-  // strolls into contact instead of snapping.
+  // Hysteresis: a press runs on to the band's edge, but one at rest only re-arms PRESS_REARM past it — re-armed at the
+  // edge, each hair of drift made a one-tick step and the legs flickered between stand and walk.
+  const band=contactDist+deadband;
+  if(d<=band||(d<=band+PRESS_REARM&&!(e.pressWalk>=tick-1)))return;
   let walkStep = unitMoveSpeed(e)/TPS;
   let step=Math.min(walkStep, d-contactDist);
   let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
   // (onto a new tile only as findPath would step there: never diagonally through the gap between two obstacles —
   // pressed through one after a sheep, a villager stood in a pocket no path led out of)
   let ox=Math.round(e.x), oy=Math.round(e.y), tx=Math.round(nx), ty=Math.round(ny);
-  if(walkable(tx,ty,e.id,true)&&(tx===ox||ty===oy||(walkable(tx,oy,e.id,true)&&walkable(ox,ty,e.id,true)))){
+  if(walkable(tx,ty,e.id,true)&&(tx===ox||ty===oy||(walkable(tx,oy,e.id,true)&&walkable(ox,ty,e.id,true)))&&!intoBody(e,nx,ny)){
     e.x=nx; e.y=ny;
     e.pressWalk=tick;   // signal the renderer to show the walk cycle (js/render-units.js)
   }
+}
+
+// A press never steps into another unit's body (separateUnits' minDist): one that did was shoved back out of its
+// deadband and pressed again — the two took turns and a melee ring twitched in place. Moving away stays free.
+function intoBody(e, nx, ny){
+  const grid = targetableUnitGrid(), c = UNIT_GRID_CELL, R = 0.5 + 0.1;   // (+0.1: the grid's cells were filled at the tick's start)
+  const gx0 = Math.max(0, ((nx - R) / c) | 0), gx1 = Math.min(unitGridNX - 1, ((nx + R) / c) | 0);
+  const gy0 = Math.max(0, ((ny - R) / c) | 0), gy1 = Math.min(unitGridNY - 1, ((ny + R) / c) | 0);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    const cell = grid[gx * unitGridNY + gy]; if (!cell) continue;
+    for (let i = 0; i < cell.length; i++) { const u = cell[i]; if (u === e || u.hp <= 0 || u.garrisonedIn) continue;
+      const ax = u.x - nx, ay = u.y - ny, a2 = ax*ax + ay*ay; if (a2 >= 0.25) continue;
+      const bx = u.x - e.x, by = u.y - e.y; if (a2 < bx*bx + by*by) return true; }
+  }
+  return false;
 }
 
 // THE slide-to-contact against a TARGET FOOTPRINT: press toward the nearest
@@ -3054,7 +3079,7 @@ function updateUnitCombat(e){
       let approachFn = t.type==='building'
         ? () => setUnitPath(e, findPath(Math.round(e.x),Math.round(e.y),Math.round(t.x),Math.round(t.y),e.id,range+0.5,t))
         : null;
-      if(!combatApproach(e,t,d,approachFn,range)) return; // approach only to firing range — not onto the target
+      if(!combatApproach(e,t,d,approachFn)) return; // approach only to firing range — not onto the target
       // Wall-detour hold (self-acquired chases only): a firing tile exists
       // but the walk to it is several times the straight-line distance —
       // fortifications separate us. Arrows fly over walls, so hold at the
@@ -3118,7 +3143,7 @@ function updateUnitCombat(e){
         // in-range (adjacent) tile, so a group rings the target naturally and
         // an overflow attacker (no free adjacent tile reachable) gets an empty
         // path → combatApproach disengages and retargets it.
-        if(!combatApproach(e,t,d,null,maxD)) return;
+        if(!combatApproach(e,t,d,null)) return;
       } else if(cornerBlocked){
         if (e.stance === 'standground' && !e.explicitAttack) {
           e.target = null;
@@ -3296,16 +3321,15 @@ function adjustTargetApproach(e){
       let endTile = e.path[e.path.length - 1];
       let ddx = endTile.x - t.x, ddy = endTile.y - t.y;
       let dToDest = Math.sqrt(ddx*ddx + ddy*ddy);
-      if(dToDest > 1.5){
+      if(dToDest > strikeDist(e, t) + 1){   // (the walk's end no longer reaches the foe: a plan ends at strike reach — chasePath)
         // Never trade a walk for nothing: an UNREACHABLE foe re-paths to [],
         // and dropping the path there strands the unit mid-approach instead of
         // closing on the obstacle.
         // …nor for no gain: the new walk must END closer to the foe — against one it can't reach, the best spot flips
         // between equally-near tiles as it moves, and each swap walked it back and forth.
-        // Keeping restores the leg exactly as it was being walked (not via setUnitPath: re-planning it from mid-leg
-        // stepped the unit back to its tile centre every re-aim — a ranged chaser rocked in place).
+        // Keeping restores the leg exactly as it was being walked.
         let keep = e.path, keepT = e.moveT, keepX = e.fromX, keepY = e.fromY;
-        pathUnitTo(e, Math.round(t.x), Math.round(t.y));
+        setUnitPath(e, chasePath(e, t));
         let fresh = e.path[e.path.length - 1], fx = fresh ? fresh.x - t.x : 0, fy = fresh ? fresh.y - t.y : 0;
         if(keep && (e.path.length === 0 || fx*fx + fy*fy >= dToDest*dToDest - 0.25)){ e.path = keep; e.moveT = keepT; e.fromX = keepX; e.fromY = keepY; }
         // A MELEE re-aim that still can't END at the foe (search capped, or walled off) waits before paying for another:

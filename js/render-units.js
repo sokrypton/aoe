@@ -1921,6 +1921,7 @@ function villagerLoad(e){
 }
 // What a villager is doing, as a lab action ({ kind, t, opt }) — both views' reading of the same sim state. stride: tiles
 // walked (the walk's phase), clk: the work clock (authored ticks). Viewer-only: reads sim state, never writes it.
+const BARROW_HAUL = 6;   // tiles: a haul this long or longer is pushed in the wheelbarrow (villagerAction)
 function villagerAction(e, stride, clk){
   const moving = isDrawnMoving(e), up = hasUpgrade.bind(null, e.team), opt = {};
   if (moving) {
@@ -1929,7 +1930,11 @@ function villagerAction(e, stride, clk){
     // the load shows only while HAULING along a path (as 2D's carryShow) — not in the last press into contact, where
     // the first bite already lands
     // (a hauler on its way to drop it — task 'return' — keeps it in hand right up to the throw, the last step too)
-    if (e.carrying > 0 && !farmWalk && (e.path.length > 0 || e.task === 'return')) { kind = up('wheelbarrow') ? 'barrow' : 'carry'; opt.load = villagerLoad(e); }
+    // (the wheelbarrow for a long haul only — its trip's end BARROW_HAUL tiles or more from where it gathered: chosen per
+    // trip, so a load never jumps between the head and the barrow on the way; a short one rides on the head)
+    if (e.carrying > 0 && !farmWalk && (e.path.length > 0 || e.task === 'return')) { const end = e.path[e.path.length - 1];
+      const haul = end && e.gatherX >= 0 && Math.hypot(end.x - e.gatherX, end.y - e.gatherY) >= BARROW_HAUL;
+      kind = up('wheelbarrow') && haul ? 'barrow' : 'carry'; opt.load = villagerLoad(e); }
     else if (farmWalk && up('heavy_plow')) kind = 'plow';
     else if (isRetreatingUnit(e)) kind = 'flee';
     else if (VIL_TOOL[e.task]) opt.tool = VIL_TOOL[e.task];
@@ -3786,7 +3791,7 @@ function drawUnit(e){
   // walking, as long as no task/target is actually assigned (a bare move order
   // isn't "working"). Absolute coords — not under UNIT_SCALE. A HUD cue, so
   // the 3D eye view (window._povDraw, js/pov3d.js) leaves it out.
-  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&e.__deathAge==null&&!window._povDraw){
+  if(e.team===myTeam&&e.utype==='villager'&&!e.task&&!e.target&&e.__deathAge==null&&!window._povDraw&&!window.__cleanFrame){
     X.fillStyle='#ffd700';X.strokeStyle='#000';X.lineWidth=2;
     X.font='bold 16px sans-serif';X.textAlign='center';
     X.strokeText('?',sx,sy-20*UNIT_SCALE);
