@@ -184,7 +184,7 @@ const GROUND_WEAR_ON = true;
 const GROUND_TOON = GROUND_STYLE === 'toon';
 const TOON_GRASS = [98, 168, 58], TOON_GRASS2 = [93, 162, 55], TOON_DIRT = [196, 160, 104], TOON_DIRT2 = [190, 154, 100], TOON_DIRT_IN = [178, 142, 90], TOON_RIM = [138, 104, 62];
 // A grass or dirt pixel: its tile's shade of the checkerboard (as the old per-tile ground).
-function _toonGrass(px, py, g9, m){
+function _toonGrass(px, py){
   return ((Math.floor(px / GROUND_PX) + Math.floor(py / GROUND_PX)) & 1) ? TOON_GRASS2 : TOON_GRASS;   // (a checkerboard: every other tile a shade deeper)
 }
 function _toonDirt(px, py){
@@ -212,8 +212,9 @@ function _gLayer(k, div, s, px0, px1, py0, py1, G){
 }
 function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0..ty1
   const G = GROUND_PX, D = A.d.data, OX = A.ox || 0, OY = A.oy || 0, NW = A.nw || MAP * G, K = A.kind,   // (OX/OY/NW: the pixel corner and row width D holds — a worker's block)
-    W = GROUND_WEAR, R = Math.ceil(W), ORE = 1.5, src = [];   // (ORE: how far round a deposit the ground is bare)
+    W = GROUND_WEAR, R = Math.ceil(W), ORE = 1.5, FIELD = 0.8, src = [];   // (ORE: how far round a deposit the ground is bare; FIELD: round a farm, the earth its workers tread)
   const px0 = tx0 * G, px1 = (tx1 + 1) * G, py0 = ty0 * G, py1 = (ty1 + 1) * G, L = (k, div, s) => _gLayer(k, div, s, px0, px1, py0, py1, G);
+  const kAt = (x, y) => { const ax = Math.floor(x), ay = Math.floor(y); return K[(ay < 0 ? 0 : ay > MAP - 1 ? MAP - 1 : ay) * MAP + (ax < 0 ? 0 : ax > MAP - 1 ? MAP - 1 : ax)]; };   // (the code of the tile at a point, clamped to the map)
   const J3 = L(1.3, false, 3), J4 = L(1.3, false, 4), P1 = L(6.5, true, 1), P2 = L(2.3, true, 2), P6 = L(1.4, false, 6), E13 = L(2.6, false, 13), G9 = L(3.1, false, 9), G10 = L(4, true, 10);
   const L11 = GROUND_WEAR_ON ? L(2.1, true, 11) : null, L12 = GROUND_WEAR_ON ? L(1.3, false, 12) : null;
   const PAL = [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), FOREST = TERRAIN.FOREST, BERRIES = TERRAIN.BERRIES, FARM = TERRAIN.FARM, GOLD = TERRAIN.GOLD, STONE = TERRAIN.STONE, GRASS = TERRAIN.GRASS;
@@ -222,20 +223,24 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
   for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
   src.length = 0;
   if (GROUND_WEAR_ON) for (let y = ty - R; y <= ty + R; y++) for (let x = tx - R; x <= tx + R; x++) { if (x < 0 || y < 0 || x >= MAP || y >= MAP) continue;
-    const k = K[y * MAP + x], ore = (k & 7) === GOLD || (k & 7) === STONE, w = k & 8 ? W : ore ? ORE : 0; if (w) src.push(x, y, w); }
+    const k = K[y * MAP + x], ore = (k & 7) === GOLD || (k & 7) === STONE, w = k & 8 ? W : k & 64 ? FIELD : ore ? ORE : 0; if (w) src.push(x, y, w); }
   for (let py = ty * G; py < (ty + 1) * G; py++) { const j = py - py0, wy = (py + 0.5) / G;
   for (let px = tx * G; px < (tx + 1) * G; px++) { const i = px - px0;
     // (where it stands, in tiles — pushed about, so the edge between two kinds wanders off the grid)
     const wx = (px + 0.5) / G, h = _gHash(px, py, 5);
     const hj = GROUND_TOON ? 0 : 0.14, jx = wx + (J3(i, j) - 0.5) * 0.5 + (h - 0.5) * hj, jy = wy + (J4(i, j) - 0.5) * 0.5 + (_gHash(px, py, 8) - 0.5) * hj;
     // (under a tree or a bush, grass: its own shadow does the darkening — no dark floor as well)
-    const kx = Math.floor(jx), ky = Math.floor(jy), k0 = K[(ky < 0 ? 0 : ky > MAP - 1 ? MAP - 1 : ky) * MAP + (kx < 0 ? 0 : kx > MAP - 1 ? MAP - 1 : kx)];
+    let k0 = kAt(jx, jy);
+    // a field: tidy — its edge barely wandering (a ploughed rectangle, its corners softened), rimmed as the worn earth is
+    const fx = wx + (J3(i, j) - 0.5) * 0.1, fy = wy + (J4(i, j) - 0.5) * 0.1, kf = kAt(fx, fy), farmRim = 0.09;
+    if ((k0 | kf) & 64) k0 = kf;
+    const onRim = (k0 & 64) && !((kAt(fx + farmRim, fy) & kAt(fx - farmRim, fy) & kAt(fx, fy + farmRim) & kAt(fx, fy - farmRim)) & 64);
     let t = k0 & 7; if (t === FOREST || t === BERRIES) t = GRASS;
     if (t === FARM) t = GRASS;   // (a farm marks one tile of its four: the field is told by what stands on it)
     let c = PAL[t];
     // a farm's tilled earth (its own art lays the furrows and crop on it); bare under the Town Center, trodden by all
     // who cross it, and under a deposit
-    if (k0 & 64) c = k0 & 32 ? GROUND_SPENT : GROUND_SOIL;
+    if (k0 & 64) c = onRim ? (GROUND_TOON ? TOON_DIRT_IN : GROUND_DIRT) : k0 & 32 ? GROUND_SPENT : GROUND_SOIL;   // (its edge a step of trodden earth into the worn margin round it)
     else if (k0 & 16 || t === GOLD || t === STONE) c = GROUND_TOON ? TOON_DIRT : GROUND_DIRT;
     else if (t === GRASS) {
       // bare earth: in patches of its own, and worn in round what is built (nearest built tile's edge)
@@ -250,7 +255,7 @@ function _gPaint(A, tx0, ty0, tx1, ty1){   // repaint the tiles tx0..tx1 × ty0.
       const trod = k0 >> 8 & 3;                                                   // (a path: thinned, worn through, bare)
       const m = Math.max((patch - 0.56) * 8, wear > 0 ? (wear - 0.3 + lobe * 0.6) * 1.9 : -9,   // (as gentle a fall-off as a patch's own: bare for a tile out, thinning over the next)
         trod ? trod * 0.34 - 0.1 : -9) + (GROUND_TOON ? 0 : (h - 0.5) * 0.3) + (E13(i, j) - 0.5) * 0.3;
-      if (GROUND_TOON) c = m > 0.5 ? (m < 0.62 ? TOON_DIRT_IN : _toonDirt(px, py)) : m > 0.4 ? TOON_RIM : _toonGrass(px, py, G9(i, j), m);   // (dirt inside a darker rim, a shade at its edge; grass in two tones)
+      if (GROUND_TOON) c = m > 0.5 ? (m < 0.62 ? TOON_DIRT_IN : _toonDirt(px, py)) : m > 0.4 ? TOON_RIM : _toonGrass(px, py);   // (dirt inside a darker rim, a shade at its edge; grass in two tones)
       else c = m > 0.62 ? GROUND_DIRT : m > 0.44 ? GROUND_THIN : m > 0.27 ? GROUND_STRAW : m > 0.1 ? GROUND_DRY : c;
     }
     // the grain, a blade-scale mottle, and a slow drift from lush to dry
@@ -320,7 +325,9 @@ function _gPaintAway(A){
     const nw = (m.tx1 - m.tx0 + 1) * G, rows = (m.ty1 - m.ty0 + 1) * G, buf = new Uint8ClampedArray(m.buf);
     for (let r = 0; r < rows; r++) A.d.data.set(buf.subarray(r * nw * 4, (r + 1) * nw * 4), ((m.ty0 * G + r) * N + m.tx0 * G) * 4);
     A.x.putImageData(A.d, 0, 0, m.tx0 * G, m.ty0 * G, nw, rows);
-    if (m.mend) { if (A.dirty) A.dirty.push([m.tx0 * G, m.ty0 * G, nw, rows]); A.ver++; return; }
+    if (m.mend) { if (A.dirty) A.dirty.push([m.tx0 * G, m.ty0 * G, nw, rows]); A.ver++;
+      const q = A.pend.shift(); if (q) _gShown(A, ...q);   // (worker 0 mends in order: the oldest posted is this one)
+      if (window.onGroundMended) window.onGroundMended(); return; }   // (the 3D ground takes it now, not at its next refresh)
     A.away--; if (m.near && --near === 0 || A.away === 0) { A.ver++; A.dirty = null; } }; });
   A.workers = true;
   const K = A.kind.slice();
@@ -330,10 +337,16 @@ function _gPaintAway(A){
 }
 // The picture, mended: { c: canvas, ver, dirty } — ver steps when it changed (the 3D ground's texture follows it); dirty:
 // the pixel boxes mended since its reader last took them ([x, y, w, h]), or null when the whole picture is new.
+// a mended box's codes, as now painted
+function _gShown(A, x0, y0, x1, y1, K){ for (let y = y0; y <= y1; y++) A.shown.set(K.subarray(y * MAP + x0, y * MAP + x1 + 1), y * MAP + x0); }
+// Is a farm's field in the ground's picture yet? (placed, its mend may still be in a worker: till then the field's own
+// art lays its earth)
+function groundShowsField(e){ const A = _gart; return !!(A && A.shown && A.shown[e.y * MAP + e.x] & 64); }
 function groundArt(){
   if (!_gart || _gart.n !== MAP || _gart.map !== map) { const c = document.createElement('canvas'); c.width = c.height = MAP * GROUND_PX; const x = c.getContext('2d');
     _gart = { n: MAP, map, c, x, d: x.createImageData(c.width, c.height), kind: new Uint16Array(MAP * MAP), tread: new Uint16Array(MAP * MAP), treadTick: -1, ver: 0 };
     for (let y = 0; y < MAP; y++) for (let x2 = 0; x2 < MAP; x2++) _gart.kind[y * MAP + x2] = _gCode(x2, y, 0);
+    _gart.shown = _gart.kind.slice(); _gart.pend = [];   // (shown: the codes as painted — a mend in a worker lands later)
     if (!_gPaintAway(_gart)) { _gPaint(_gart, 0, 0, MAP - 1, MAP - 1); x.putImageData(_gart.d, 0, 0); }
     _gart.ver++; _gart.dirty = null; return _gart; }
   const A = _gart, K = A.kind, R0 = GROUND_WEAR_ON ? Math.ceil(GROUND_WEAR) + 1 : 1, ch = []; let x0, y0, x1, y1;
@@ -349,10 +362,11 @@ function groundArt(){
   // (in a worker when there are: a building's box is 30-90ms of painting on a phone. All to the one worker, in order, so
   // a later mend of a spot never lands under an earlier one; the codes go with them)
   const W0 = A.workers && boxes.length ? _gWorkers[0] : null;
-  if (W0) W0.postMessage({ id: A.id, MAP, G: GROUND_PX, PAL: [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), K: K.slice() });
+  const snap = W0 ? K.slice() : K;
+  if (W0) W0.postMessage({ id: A.id, MAP, G: GROUND_PX, PAL: [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), K: snap });
   for (const b of boxes) { const G = GROUND_PX, R = b[4]; x0 = Math.max(0, b[0] - R); y0 = Math.max(0, b[1] - R); x1 = Math.min(MAP - 1, b[2] + R); y1 = Math.min(MAP - 1, b[3] + R);
-    if (W0) { W0.postMessage({ id: A.id, tx0: x0, ty0: y0, tx1: x1, ty1: y1, mend: true }); continue; }
-    _gPaint(A, x0, y0, x1, y1); A.x.putImageData(A.d, 0, 0, x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G);
+    if (W0) { W0.postMessage({ id: A.id, tx0: x0, ty0: y0, tx1: x1, ty1: y1, mend: true }); A.pend.push([x0, y0, x1, y1, snap]); continue; }
+    _gPaint(A, x0, y0, x1, y1); _gShown(A, x0, y0, x1, y1, K); A.x.putImageData(A.d, 0, 0, x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G);
     if (A.dirty) A.dirty.push([x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G]); }
   if (boxes.length && !W0) A.ver++;
   return A;

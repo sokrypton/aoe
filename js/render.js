@@ -470,6 +470,7 @@ function renderFrame(){
   });
 
   allDrawable.sort((a, b) => a.sortVal - b.sortVal);
+  wheatWalkersFrame(allDrawable);   // (who stands in the wheat: its stalks part round them, and come over their legs)
 
   // Building ground shadows, all in ONE union fill before any entity
   // paints: overlapping diamonds (adjacent wall segments, gate+wall runs)
@@ -545,7 +546,7 @@ function renderFrame(){
     else if(e.type==='res') drawTileResourceAt(e.x, e.y);
     else {
       if (unitUnderFog(e)) return;   // (drawn under the fog overlay: drawFoggedUnits)
-      drawUnit(e);
+      drawUnit(e); wheatOverUnit(e);
       if(!e.garrisonedIn && e.utype!=='sheep_carcass') _silUnitScratch.push(e);
     }
   });

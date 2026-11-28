@@ -185,8 +185,35 @@ const MARKET_PART_ANCHORS = {
 // parallel to the top-right edge, sheaf columns along each row. The whole
 // field draws FLAT in the ground layer (see the FARM branch + render.js),
 // so this is pure layout, not a depth-sorting contract.
-const FARM_CROP_ROWS = [0.1, 0.28, 0.46, 0.64, 0.82];
+const FARM_CROP_ROWS = [0.14, 0.32, 0.5, 0.68, 0.86];   // (centred on the field: as far in from its front as its back)
+// A sheaf of ripe wheat, both views' (render-buildings' field, pov3d's cropGeo): WHEAT_STALKS stalks from one foot, each a
+// long grain ear at its top. Art px: x across the screen from the foot (bx at the foot, tx at the top), h up, z into it
+// (3D only: the clump's depth), tone 0/1: the ear's gold. Per farm only the seed mod 5 and mod 3 enter (lean, height) —
+// pov3d shares a field geometry among farms by that.
+const WHEAT_STALKS = 7, WHEAT_EAR = [1.15, 2.4];   // (the ear's half-width and half-length, art px)
+// its two golds, stalk by stalk (a stalk's tone): a deep one and a bright one, ear and stalk alike, so the fan reads strand by strand
+const WHEAT_GOLD = { stalk: ['#9a7426', '#c4a23e'], ear: ['#cf9322', '#f4d354'] };
+function wheatClump(n, fseed){
+  const lean = (((n * 13 + fseed) % 5) - 2) * 0.55, H = 7.5 + (((n * 3 + fseed) % 3) - 1) * 0.8, out = [];
+  for (let k = 0; k < WHEAT_STALKS; k++) { const c = k - (WHEAT_STALKS - 1) / 2, v = ((n * 7 + k * 5) % 7) / 6;
+    out.push({ bx: c * 0.35, tx: c * 1.25 + lean, h: H * (1 - Math.abs(c) * 0.07) * (0.92 + 0.14 * v), z: ((k * 2 + n) % 3 - 1) * 0.9, tone: (k + n) % 2 }); }
+  return out;
+}
 const FARM_CROP_COLS = 6;
+// How much of a farm's crop stands, both views': its food left — or, being built, how far along it is, the sheaves
+// coming up one by one in the order the harvest takes them (each sheaf n stands while this is past its threshold).
+function farmCropShown(e){
+  if (window._ghostDraw) return 1;   // (a placement preview: the field it will be)
+  // (sown: sheaf k comes up over the build's k-th 1/N and stands from its end — half a step behind the harvest's thresholds)
+  if (!e.complete) return e.buildTime ? Math.min(1, (e.buildProgress || 0) / e.buildTime) - 0.5 / (FARM_CROP_ROWS.length * FARM_CROP_COLS) : 0;
+  const t = map[e.y] && map[e.y][e.x]; return (t ? t.res : 0) / (farmFoodFor(e.team) || e.maxFood || 300);
+}
+// A field being sown: the sheaf coming up now — its rank in that order ((n·7 + seed) mod N) and how far up, 0–1 — or null
+function farmSprout(e){
+  if (e.complete) return null;
+  const N = FARM_CROP_ROWS.length * FARM_CROP_COLS, f = farmCropShown(e) * N, k = Math.floor(f + 0.5);
+  return k < N ? { k, g: f + 0.5 - k } : null;
+}
 function farmSheafU(ri, i){
   // per-row ±0.02 stagger keeps the planting from reading as a rigid grid
   return (i + 1) / (FARM_CROP_COLS + 1) + ((ri % 2) ? 0.02 : -0.02);
@@ -1333,6 +1360,61 @@ function castleYardFig2D(e, f, Y){
   o.path = f.moving ? [{ x: o.x, y: o.y }] : [];
   return o;
 }
+// A farm's standing wheat, in the wind (its field baked without it: drawBaked). The 3D's sway (pov3d's wheat shader):
+// a stalk's own plus a gust rolling over the field, by its spot in the world, on the animation clock — its top led
+// 0.29·wave·height px aside. Each sheaf a cached sprite (by tone and height: all the clump's shape), sheared for its
+// lean and the wind; the sheaf coming up on a field being sown also scaled from its foot.
+const _farmWheat = new WeakMap(), _wheatSprites = new Map(); let _wheatSc = 0;
+const WHEAT_SPR = { w: 26, h: 22, ox: 13, oy: 19 };   // (art px; the foot at ox, oy)
+function wheatSprite(n, fseed, darken, sc){
+  const k = (n % 2) + '|' + ((n * 3 + fseed) % 3) + '|' + (darken ? 1 : 0); let c = _wheatSprites.get(k); if (c) return c;
+  c = document.createElement('canvas'); c.width = Math.ceil(WHEAT_SPR.w * sc); c.height = Math.ceil(WHEAT_SPR.h * sc);
+  const x = c.getContext('2d'); x.scale(sc, sc);
+  const gold = col => darken ? darkenColor(col) : col, lean = (((n * 13 + fseed) % 5) - 2) * 0.55, px = WHEAT_SPR.ox, py = WHEAT_SPR.oy;
+  const clump = wheatClump(n, fseed).sort((a, b) => b.z - a.z).map(s => ({ ...s, tx: s.tx - lean })), [E0, E1] = WHEAT_EAR;
+  x.lineWidth = 1; x.lineCap = 'round';
+  for (const t of [0, 1]) { x.strokeStyle = gold(WHEAT_GOLD.stalk[t]); x.beginPath(); for (const s of clump) if (s.tone === t) { x.moveTo(px + s.bx, py); x.lineTo(px + s.tx, py - s.h); } x.stroke(); }
+  for (const s of clump) { const a = Math.atan2(s.tx - s.bx, s.h);
+    x.fillStyle = gold(WHEAT_GOLD.ear[s.tone]); x.beginPath(); x.ellipse(px + s.tx + Math.sin(a) * E1 * 0.8, py - s.h - Math.cos(a) * E1 * 0.8, E0, E1, a, 0, Math.PI * 2); x.fill(); }
+  _wheatSprites.set(k, c); return c;
+}
+// Who stands among a farm's wheat this frame (render.js, before drawing): their feet, by farm — the stalks part round them
+const _wheatWalkers = new Map(), _farmWheatAt = new WeakMap(); let _wheatFrame = 0;
+// the farms whose sheaves might stand about a foot: its tile's, and the ones beside it (sheaves reach a tile edge)
+function farmsAboutFoot(f, out){ const rx = Math.round(f.wx), ry = Math.round(f.wy); out.length = 0;
+  for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1]]) { const fm = buildingAtTile(rx + dx, ry + dy, b => b.btype === 'FARM'); if (fm && !out.includes(fm)) out.push(fm); } return out; }
+function wheatWalkersFrame(list){
+  _wheatWalkers.clear(); _wheatFrame++; const near = [];
+  for (const e of list) { if (e.type !== 'unit' || e.garrisonedIn || e.hp <= 0 || (e.utype === 'dragon' && dragonAloft(e))) continue;
+    const f = unitFootScreen(e); for (const fm of farmsAboutFoot(f, near)) { let a = _wheatWalkers.get(fm); if (!a) _wheatWalkers.set(fm, a = []); a.push(f); } }
+}
+// After a unit is drawn: the sheaves standing just in front of its feet, again, over its legs (as it wades through)
+function wheatOverUnit(e){
+  if (window._maskDraw || !_wheatWalkers.size) return;
+  const f = unitFootScreen(e), near = farmsAboutFoot(f, []);
+  for (const fm of near) { const at = _farmWheatAt.get(fm); if (at && at.frame === _wheatFrame) drawFarmWheat(fm, at.sx, at.sy, at.darken, f); }
+}
+function drawFarmWheat(e, sx, sy, darken, over){
+  const L = _farmWheat.get(e); if (!L || !L.length) return;
+  if (!over) _farmWheatAt.set(e, { sx, sy, darken, frame: _wheatFrame });
+  const walkers = _wheatWalkers.get(e), R = 14.5;   // (R: 0.32 tile, the 3D's push reach, in px with the iso squash undone)
+  const sc = Math.ceil(ZOOM * (window.devicePixelRatio || 1)); if (sc !== _wheatSc) { _wheatSprites.clear(); _wheatSc = sc; }
+  const M = X.getTransform(), fseed = e.x * 7 + e.y * 13, N = FARM_CROP_ROWS.length * FARM_CROP_COLS, sp = farmSprout(e), at = animTick, w = e.w || 2, h = e.h || 2;
+  for (const q of L) {
+    const g = sp && (q.n * 7 + fseed) % N === sp.k ? sp.g : 1; if (g < 0.03) continue;
+    const bx = sx + q.dx, by = sy + q.dy;
+    if (over && !(by > over.y && by - over.y < 13 && Math.abs(bx - over.x) < 12)) continue;   // (over a unit: only the sheaves before its legs)
+    const H = 7.5 + (((q.n * 3 + fseed) % 3) - 1) * 0.8, lean = (((q.n * 13 + fseed) % 5) - 2) * 0.55;
+    const wx = e.x + w * farmSheafU(q.ri, q.i), wz = e.y + h * FARM_CROP_ROWS[q.ri];
+    const wave = Math.sin(at * 0.05 + wx * 2.3 + wz * 1.7) * 0.35 + Math.max(0, Math.sin(at * 0.03 - (wx - wz) * 1.6)) * 0.9;
+    let push = 0;   // a unit among the stalks: they lean away from it (as the 3D's), never folding flat
+    if (walkers) for (const f of walkers) { const ddx = bx - f.x, ddy = (by - f.y) * 2, d = Math.hypot(ddx, ddy); if (d < R && d > 0.01) push += ddx / d * Math.min((1 - d / R) * 1.6, 0.55) * H; }
+    const k = -(lean + 0.294 * wave * H + push) / H, px = bx, py = by;   // (the shear: its top led lean + sway + push aside)
+    X.setTransform(M.a * g, M.b * g, (M.a * k + M.c) * g, (M.b * k + M.d) * g, M.a * px + M.c * py + M.e, M.b * px + M.d * py + M.f);
+    X.drawImage(wheatSprite(q.n, fseed, darken, sc), -WHEAT_SPR.ox, -WHEAT_SPR.oy, WHEAT_SPR.w, WHEAT_SPR.h);
+  }
+  X.setTransform(M);
+}
 function drawBaked(owner, key, ax, ay, l, t, w, h, draw){
   const sc = Math.ceil(ZOOM * (window.devicePixelRatio || 1)), k = key + '|' + sc;
   let bk = _bakes.get(owner);
@@ -1358,23 +1440,29 @@ function drawShaftHouse2D(sx, sy, e, tc, darken){
   // a box: its three faces filled, one outline round the silhouette (per-face strokes swamp thin posts in black)
   const box=(x0,z0,x1,z1,y0,y1,top,left,right,lw=1.2)=>{ poly([W(x0,y0,z1),W(x1,y0,z1),W(x1,y1,z1),W(x0,y1,z1)],left,false); poly([W(x1,y0,z0),W(x1,y0,z1),W(x1,y1,z1),W(x1,y1,z0)],right,false);
     poly([W(x0,y1,z0),W(x1,y1,z0),W(x1,y1,z1),W(x0,y1,z1)],top,false); poly([W(x0,y1,z0),W(x1,y1,z0),W(x1,y0,z0),W(x1,y0,z1),W(x0,y0,z1),W(x0,y1,z1)],'rgba(0,0,0,0)',false); X.lineWidth=lw; X.stroke(); X.lineWidth=1.2; };
-  const {cx,cz,hw,b0,wH,Yr,Yc,rc,ho,H,wr,wy,po}=S, X0=cx-hw, X1=cx+hw, Z0=cz-hw, Z1=cz+hw, TW=dk('#b89868'), TL=dk('#c8a87a'), TD=dk('#987848');
+  const {cx,cz,hw,b0,wH,Yr,Yc,rc,ho,H,wr,wy,po}=S, X0=cx-hw, X1=cx+hw, Z0=cz-hw, Z1=cz+hw, TW=dk('#8a6a44'), TL=dk('#a5835a'), TD=dk('#6e5138');
   const seam=dk('#2e2216'), up=shaftLift(animTick), by=S.lo+up*(S.hi-S.lo);
   X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
   box(X0-0.03,Z0-0.03,X1+0.03,Z1+0.03,0,b0,dk('#b3ab9b'),dk('#a39a89'),dk('#8f8778'));                        // the stone floor
   if(done){ poly([W(cx-po,b0,cz-po),W(cx+po,b0,cz-po),W(cx+po,b0,cz+po),W(cx-po,b0,cz+po)],'#14110e',false);            // the pit, its glow and flames
     const k=0.6+0.4*Math.sin(animTick*0.08)*Math.sin(animTick*0.031), g=po*0.6;
-    poly([W(cx-g,b0,cz-g),W(cx+g,b0,cz-g),W(cx+g,b0,cz+g),W(cx-g,b0,cz+g)],dk(`rgb(255,${Math.round(77+77*k)},${Math.round(15*k)})`),false);
+    poly([W(cx-g,b0,cz-g),W(cx+g,b0,cz-g),W(cx+g,b0,cz+g),W(cx-g,b0,cz+g)],dk(`rgb(255,${Math.round(77+77*k)},${Math.round(15*k)})`),false); }
+  const flames=()=>{
     for(const [dx,dz,fh,col,ph] of [[-0.05,-0.03,0.09,'#ff7a1a',0],[0.05,0.04,0.11,'#ffb02e',2],[0,0,0.15,'#ffd44a',4],[-0.03,0.05,0.08,'#ff7a1a',1],[0.05,-0.05,0.08,'#ff7a1a',3]]){
       const h=fh*(0.75+0.25*Math.sin(animTick*0.21+ph)+0.12*Math.sin(animTick*0.47+ph*2)), [fx,fy]=W(cx+dx,b0,cz+dz), [,ty]=W(cx+dx,b0+h,cz+dz);
-      X.fillStyle=dk(col);X.beginPath();X.moveTo(fx-2.6,fy);X.lineTo(fx+2.6,fy);X.lineTo(fx,ty);X.closePath();X.fill(); } }
+      X.fillStyle=dk(col);X.beginPath();X.moveTo(fx-2.6,fy);X.lineTo(fx+2.6,fy);X.lineTo(fx,ty);X.closePath();X.fill(); } };
   const pr=0.022, post=(px,pz)=>box(px-pr,pz-pr,px+pr,pz+pr,b0,wH-0.04,TL,TW,TD,0.9);
   const bucket=()=>{ const [rx,ry]=W(cx,by+0.1,cz), [,ty]=W(cx,wy-wr,cz); X.strokeStyle=dk('#3a3027');X.lineWidth=1;X.beginPath();X.moveTo(rx,ry);X.lineTo(rx,ty);X.stroke();
     const r0=0.055, r1=0.062, [bx,b1]=W(cx,by,cz), [,b2]=W(cx,by+0.1,cz), e0=r0*HALF_TW*Math.SQRT2, e1=r1*HALF_TW*Math.SQRT2;
     X.strokeStyle='#000';X.lineWidth=1.2;X.fillStyle=dk('#5c4430');X.beginPath();X.moveTo(bx-e1,b2);X.lineTo(bx-e0,b1);X.ellipse(bx,b1,e0,e0/2,0,Math.PI,0,true);X.lineTo(bx+e1,b2);X.closePath();X.fill();X.stroke();
     X.fillStyle=dk('#e8b90f');X.beginPath();X.ellipse(bx,b2,e1,e1/2,0,0,Math.PI*2);X.fill();X.stroke(); };
   post(X0+pr,Z0+pr);
-  if(done) bucket();                                                                                            // (the roof hides it up there)
+  // the bucket down the pit: seen only through its mouth (above the floor, or within the opening), the fire over it
+  if(done){ const sunk=by<b0;
+    if(sunk){ const [,fy]=W(cx,b0,cz), m=[W(cx-po,b0,cz-po),W(cx+po,b0,cz-po),W(cx+po,b0,cz+po),W(cx-po,b0,cz+po)];
+      X.save();X.beginPath();X.moveTo(-1e5,-1e5);X.lineTo(1e5,-1e5);X.lineTo(1e5,fy);X.lineTo(-1e5,fy);X.closePath();   // (both clockwise: their union)
+      X.moveTo(...m[0]);for(const q of m.slice(1))X.lineTo(...q);X.closePath();X.clip(); }
+    bucket(); if(sunk) X.restore(); flames(); }                                                                 // (the roof hides it up there)
   post(X1-pr,Z0+pr); post(X0+pr,Z1-pr); post(X1-pr,Z1-pr);
   const bt=0.044, y0=wH-0.04;   // the beam ring: the far beams' inner faces, the near beams' outer
   poly([W(X0,y0,Z0+bt),W(X1,y0,Z0+bt),W(X1,wH,Z0+bt),W(X0,wH,Z0+bt)],TD); poly([W(X0+bt,y0,Z0),W(X0+bt,y0,Z1),W(X0+bt,wH,Z1),W(X0+bt,wH,Z0)],TD);
@@ -1408,8 +1496,8 @@ function drawShaftHouse2D(sx, sy, e, tc, darken){
   if(done){ const ang=-up*(S.hi-S.lo)/wr, ring=Array.from({length:28},(_,i)=>{const a=i/28*Math.PI*2;return W(cx+Math.cos(a)*wr,wy+Math.sin(a)*wr,cz);});
     X.lineCap='round';X.beginPath();
     for(const a of [ang,ang+Math.PI/2]){X.moveTo(...W(cx-Math.cos(a)*wr,wy-Math.sin(a)*wr,cz));X.lineTo(...W(cx+Math.cos(a)*wr,wy+Math.sin(a)*wr,cz));}
-    X.strokeStyle='#000';X.lineWidth=2.8;X.stroke();X.strokeStyle=dk('#c8a87a');X.lineWidth=1.5;X.stroke();
-    X.strokeStyle='#000';X.lineWidth=3.2;X.beginPath();ring.forEach((q,i)=>i?X.lineTo(...q):X.moveTo(...q));X.closePath();X.stroke();X.strokeStyle=dk('#a08058');X.lineWidth=1.9;X.stroke();X.lineCap='butt'; }
+    X.strokeStyle='#000';X.lineWidth=2.8;X.stroke();X.strokeStyle=dk('#a5835a');X.lineWidth=1.5;X.stroke();
+    X.strokeStyle='#000';X.lineWidth=3.2;X.beginPath();ring.forEach((q,i)=>i?X.lineTo(...q):X.moveTo(...q));X.closePath();X.stroke();X.strokeStyle=dk('#86643f');X.lineWidth=1.9;X.stroke();X.lineCap='butt'; }
   X.strokeStyle='#000';X.lineWidth=1.2; blk(1);
   X.fillStyle=dk('#3a3027');X.beginPath();X.arc(...W(cx,wy,cz+0.065),1,0,Math.PI*2);X.fill();                 // the axle's end
   if(done){ const [mx,my]=W(cx-0.1,wy+wr,cz+0.1); drawChimneySmoke(mx,my-4); }                              // smoke risen through the tower, clear of the wheel
@@ -1444,7 +1532,8 @@ function drawBuilding(e, part = null){
   // Foundation scaffold fade — skipped in the occluder-mask pass (_maskDraw):
   // the behind-building outline needs FULL footprint coverage to clip a crisp
   // ring, even while the building itself renders translucent under construction.
-  if(!e.complete && !window._ghostDraw && !window._maskDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
+  // (a site fades in as it's built — not a farm: its field is the finished one's, its sheaves coming up show the progress)
+  if(!e.complete && e.btype!=='FARM' && !window._ghostDraw && !window._maskDraw) X.globalAlpha=0.5+e.buildProgress/e.buildTime*0.5;
   let tc=teamColor(e.team);
   let tcD=teamColorDark(e.team);
   let bh=10;
@@ -2502,26 +2591,26 @@ function drawBuilding(e, part = null){
   else if(e.btype==='FARM'){
     bh=0;
     // (a flat field, unchanged between bites: baked — drawBaked — keyed by its food, cap, exhaustion and fog)
-    const field=(sx,sy)=>{
+    const field=(sx,sy,live)=>{
       // AoE2-style FLAT farm: bed, furrows and wheat all draw in one pass in
       // the ground layer (render.js emits a single ground-layer proxy far
       // below the depth contest), so units and buildings always draw over
       // the field. part is 'ground' (in-game) or null (gallery/ghost/mask) —
       // both mean "draw everything".
-      let tileRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
       // Fraction of food LEFT — drives how much wheat still stands (below). Divide
       // by the farm's CURRENT capacity (farmFoodFor, incl. horse-collar/heavy-plow
       // bonuses the tile was seeded with); e.maxFood is only the un-upgraded base,
       // so an upgraded farm would read >1.0 and sit visually full until its bonus
       // food is gone. Each gather cycle drops tile.res by 1, so the field thins
       // sheaf-by-sheaf as it's worked — roughly one per villager carry-trip.
-      let growth=tileRes/(farmFoodFor(e.team)||e.maxFood||300);
+      let growth=farmCropShown(e);
       // Ground-level footprint corners and the raised bed (tilled soil sits
       // a few px proud of the grass, with visible dirt sides on the two
       // camera-facing edges — that lift is what makes the field read 3D).
       // (in the game the soil is the ground's own — tilled earth with a ragged edge, groundArt: no raised bed, no outline;
       // the bed is kept where there is no such ground: a ghost, a silhouette, the gallery)
-      const inGround=part==='ground', bedH=inGround?0:2.5;
+      // (a preview or a silhouette: flat, as the field will lie — only the gallery, with no ground art, raises a bed)
+      const inGround=part==='ground', flat=inGround||window._ghostDraw||window._maskDraw, bedH=flat?0:2.5;
       let cT={x:sx,y:sy}, cR={x:sx+bw,y:sy+bhh}, cB={x:sx,y:sy+bhh*2}, cL={x:sx-bw,y:sy+bhh};
       let up=c=>({x:c.x,y:c.y-bedH});
       let rT=up(cT), rR=up(cR), rB=up(cB), rL=up(cL);
@@ -2538,7 +2627,11 @@ function drawBuilding(e, part = null){
         {x:rR.x+(rB.x-rR.x)*t, y:rR.y+(rB.y-rR.y)*t}
       ];
       X.lineWidth=1.2;X.lineJoin='round';X.strokeStyle='#000';
-      if(!inGround){
+      if(flat&&(!inGround||!groundShowsField(e))){   // the tilled earth the ground paints (or will: a preview, a field just placed), its rim a step of trodden earth
+        X.fillStyle=soil;X.beginPath();X.moveTo(rT.x,rT.y);X.lineTo(rR.x,rR.y);X.lineTo(rB.x,rB.y);X.lineTo(rL.x,rL.y);X.closePath();X.fill();
+        X.strokeStyle=darken?darkenColor('#b28e5a'):'#b28e5a';X.lineWidth=2;X.stroke();X.lineWidth=1.2;X.strokeStyle='#000';
+      }
+      if(!flat){
       // bed side faces (front-left and front-right edges, extruded to ground)
       X.fillStyle=sideSW;X.beginPath();
       X.moveTo(rL.x,rL.y);X.lineTo(rB.x,rB.y);X.lineTo(cB.x,cB.y);X.lineTo(cL.x,cL.y);X.closePath();X.fill();X.stroke();
@@ -2578,9 +2671,8 @@ function drawBuilding(e, part = null){
       // Per-FARM seed (anchor tile — same scheme as the berry bushes) so adjacent
       // farms aren't identical clones: it varies each field's sheaf jitter, lean,
       // height and the ORDER sheaves are cut as the field is worked down.
-      let fseed=e.x*7+e.y*13;
-      let stalkCol = darken ? darkenColor('#c9a227') : '#c9a227';
-      let headCol  = darken ? darkenColor('#e8c84a') : '#e8c84a';
+      let fseed=e.x*7+e.y*13, sprout=farmSprout(e);
+      const gold = c => darken ? darkenColor(c) : c, stalkCols = WHEAT_GOLD.stalk.map(gold), earCols = WHEAT_GOLD.ear.map(gold);
       let stub     = darken ? darkenColor('#9a7f4a') : '#9a7f4a';
       rows.forEach((t,ri)=>{
         for(let i=0;i<COLS;i++){
@@ -2592,31 +2684,27 @@ function drawBuilding(e, part = null){
           // Scattered harvest order: a coprime multiplier permutes the sheaves
           // (gcd(7,NSHEAF)=1); +fseed rotates it per farm so each field thins in
           // its own patchy pattern rather than every farm alike.
-          let thresh=(((n*7+fseed)%NSHEAF + 0.5)/NSHEAF);
-          if(!dead && growth>thresh){
-            // standing ripe sheaf: three splayed golden stalks, each grain-headed
-            let lean=(((n*13+fseed)%5)-2)*0.55; // deterministic per-sheaf lean
-            let sheafH=6+(((n*3+fseed)%3)-1)*0.7, splay=2.5;
-            X.strokeStyle=stalkCol;X.lineWidth=1.4;X.lineCap='round';
-            for(let k=-1;k<=1;k++){
-              X.beginPath();X.moveTo(p.x,p.y);
-              X.lineTo(p.x+k*splay+lean, p.y-sheafH*(k===0?1:0.78));X.stroke();
-            }
+          let thresh=(((n*7+fseed)%NSHEAF + 0.5)/NSHEAF), gk=sprout&&(n*7+fseed)%NSHEAF===sprout.k?sprout.g:1;
+          if(!dead && (growth>thresh || gk<1) && live) live.push({n, ri, i, dx:p.x-sx, dy:p.y-sy});   // (in the world: swaying, drawn each frame)
+          else if(!dead && (growth>thresh || (gk<1 && gk>0.03))){
+            // standing ripe sheaf: the 3D's (wheatClump) — its stalks fanned from one foot, a plump grain ear on each in two
+            // golds, back to front, no ink (as the 3D's wheat)
+            // (the sheaf coming up — farmSprout — drawn as far up as it's got: its stalks and ears scaled from the foot)
+            const clump=wheatClump(n,fseed).sort((a,b)=>b.z-a.z).map(s=>gk<1?{...s,tx:s.bx+(s.tx-s.bx)*gk,h:s.h*gk}:s), E0=WHEAT_EAR[0]*gk, E1=WHEAT_EAR[1]*gk;
+            X.lineWidth=1;X.lineCap='round';
+            for(const t of [0,1]){ X.strokeStyle=stalkCols[t];X.beginPath(); for(const s of clump) if(s.tone===t){ X.moveTo(p.x+s.bx,p.y); X.lineTo(p.x+s.tx,p.y-s.h); } X.stroke(); }
             X.lineCap='butt';
-            X.fillStyle=headCol;X.strokeStyle='#000';X.lineWidth=0.8;
-            for(let k=-1;k<=1;k++){
-              let hx=p.x+k*splay+lean, hy=p.y-sheafH*(k===0?1:0.78);
-              X.beginPath();X.ellipse(hx,hy-0.8,1.05,1.9,k*0.18+lean*0.1,0,Math.PI*2);X.fill();X.stroke();
-            }
-          } else {
-            // cut stubble stump where the sheaf stood
+            for(const s of clump){ const a=Math.atan2(s.tx-s.bx,s.h);
+              X.fillStyle=earCols[s.tone]; X.beginPath(); X.ellipse(p.x+s.tx+Math.sin(a)*E1*0.8,p.y-s.h-Math.cos(a)*E1*0.8,E0,E1,a,0,Math.PI*2); X.fill(); }
+          } else if(e.complete){
+            // cut stubble stump where the sheaf stood (a field being sown: bare soil, the sheaf still to come)
             X.strokeStyle=stub;X.lineWidth=1.6;
             X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-0.5,p.y-2.5);X.stroke();
           }
         }
       });
       // a fallen straw or two once the field has been worked down
-      if(!dead && growth<0.6){
+      if(!dead && e.complete && growth<0.6){
         X.strokeStyle=stub;X.lineWidth=1.6;
         let s=tuftAt(rows[1],1,0);
         X.beginPath();X.moveTo(s.x+2,s.y+2);X.lineTo(s.x+7.5,s.y+3.5);X.stroke();
@@ -2626,7 +2714,8 @@ function drawBuilding(e, part = null){
     };
     const farmCap=farmFoodFor(e.team)||e.maxFood||300, farmRes=map[e.y]&&map[e.y][e.x]?map[e.y][e.x].res:0;
     if(window._ghostDraw||window._maskDraw) field(sx,sy);
-    else drawBaked(e, farmRes+'|'+farmCap+'|'+(e.exhausted?1:0)+'|'+(darken?1:0), sx, sy, -bw-6, -18, 2*bw+12, 2*bhh+24, field);
+    else { drawBaked(e, farmRes+'|'+farmCap+'|'+(e.exhausted?1:0)+'|'+(darken?1:0)+(typeof groundShowsField!=='function'||groundShowsField(e)?'':'|own')+(e.complete?'':'|s'+Math.floor(farmCropShown(e)*FARM_CROP_ROWS.length*FARM_CROP_COLS*5)), sx, sy, -bw-6, -18, 2*bw+12, 2*bhh+24, (x,y)=>{ const L=[]; field(x,y,L); _farmWheat.set(e,L); });
+      drawFarmWheat(e, sx, sy, darken); }
   }
 
   X.globalAlpha=1;

@@ -3674,6 +3674,13 @@ function sheepGrazePuffs(e){
   if (!window._maskDraw && grazeCycles.get(e.id) !== gcyc) { grazeCycles.set(e.id, gcyc); spawnParticles(e.x + (e.facing * 0.25), e.y + 0.1, '#4e8c2d', 1, 0.008, 0.9); }
 }
 
+// Where a unit's feet are drawn, screen art px (and its world spot): its tile, its group spread, a villager stepped
+// into its work spot (villagerWorkSpot's drawn spot)
+function unitFootScreen(e){
+  const scr = mapToScreen(e.x, e.y), { ox, oy } = getUnitGroupOffset(e.id), S = e.utype === 'villager' && vil2DState.get(e.id);
+  const wdx = S && S.wx != null ? S.wx - e.x : 0, wdy = S && S.wy != null ? S.wy - e.y : 0;
+  return { x: Math.round(scr.sx) + ox + (wdx - wdy) * HALF_TW, y: Math.round(scr.sy + HALF_TH) + oy + (wdx + wdy) * HALF_TH, wx: e.x + wdx, wy: e.y + wdy };
+}
 function drawUnit(e){
   if(e.garrisonedIn)return; // hidden inside a building
   const faceOnView = e.dir === 1 || e.dir === 5; // S/N — forward is the view axis
@@ -3696,9 +3703,7 @@ function drawUnit(e){
     // casts a long flat shadow, head-on a shorter rounder one, and the
     // diagonal facings (SE/SW/NW/NE) a properly TILTED one. (The villager rig's corpse lies down: no standing shadow
     // once it goes over.)
-    // (a villager stepped into its work spot casts it there: villagerWorkSpot's drawn spot)
-    const S = e.utype === 'villager' && vil2DState.get(e.id), wdx = S && S.wx != null ? S.wx - e.x : 0, wdy = S && S.wy != null ? S.wy - e.y : 0;
-    if (!(e.__deathAge > DIE.buckle)) drawUnitShadow(e, sx + (wdx - wdy) * HALF_TW, sy + (wdx + wdy) * HALF_TH);
+    if (!(e.__deathAge > DIE.buckle)) { const f = unitFootScreen(e); drawUnitShadow(e, f.x, f.y); }
   }
 
   // Smart Face Direction: defaults to right, automatically flips based on movement or target location

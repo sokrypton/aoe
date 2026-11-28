@@ -355,6 +355,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     fowTex.needsUpdate = true;
   }
 
+  // a mend landed (render-terrain's ground workers): into the texture now, not at the next static refresh
+  window.onGroundMended = () => { const art = _gart; if (!scene || !renderer || !groundTex || !groundTex.isCanvasTexture || !art || art.ver === groundArtVer) return;
+    groundArtVer = art.ver; if (!groundSubUpload(art.dirty)) groundTex.needsUpdate = true; art.dirty = []; };
   // The ground's mended boxes, sent to its texture alone: a whole upload of the picture (MAP·GROUND_PX square, 33MB on a
   // 90-tile map) stalled a phone's GPU ~100ms at every path worn or building sighted. False: upload it whole.
   function groundSubUpload(boxes){
@@ -1399,43 +1402,55 @@ gl_Position = projectionMatrix * mvPosition;`;
   const cropGeos = new Map();
   function cropGeo(w, h, f15){
     const ck = w + 'x' + h + ':' + f15; let geo = cropGeos.get(ck); if (geo) return geo;
-    const px = 1 / PX, K = ART_PROTO ? 5 : 3, N = FARM_CROP_ROWS.length * FARM_CROP_COLS, stalks = [], heads = [], stubs = [], xz = [];
-    const up = new THREE.Vector3(0, 1, 0);
+    const px = 1 / PX, stalks = [[], []], ears = [[], []], stubs = [], xz = [];   // (by tone: WHEAT_GOLD's two golds)
+    const up = new THREE.Vector3(0, 1, 0), AX = [Math.SQRT1_2, 0, -Math.SQRT1_2], AZ = [Math.SQRT1_2, 0, Math.SQRT1_2];   // (across the screen; into it)
     FARM_CROP_ROWS.forEach((t, ri) => {
       for (let i = 0; i < FARM_CROP_COLS; i++) {
         const n = ri * FARM_CROP_COLS + i;
         const x = w * farmSheafU(ri, i) + (((n * 5 + f15) % 5) - 2) * 0.5 * px, z = h * t + (((n * 11 + f15) % 3) - 1) * px;
-        xz[n] = [x, z]; stubs.push([x, 0.03, z, 0.018, 0.06, 0.018]);
-        const lean = (((n * 13 + f15) % 5) - 2) * 0.55 * px, H = (6 + (((n * 3 + f15) % 3) - 1) * 0.7) / HPX;
-        for (const k of ART_PROTO ? [-2, -1, 0, 1, 2] : [-1, 0, 1]) { // splayed across the screen: world (1,0,-1)/√2 (prototype: a fuller sheaf)
-          const hk = H * (ART_PROTO ? 1.4 : 1) * (k ? (Math.abs(k) > 1 ? 0.66 : 0.82) : 1), s = (k * (ART_PROTO ? 1.8 : 2.5) * px + lean) * Math.SQRT1_2;
-          const dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
-          stalks.push([x + s / 2, hk / 2, z - s / 2, 0.028, L, 0.028, q]);  // the art: 1.4px stalks
-          heads.push([x + s + dir.x * 0.035, hk + dir.y * 0.035, z - s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); // 2×4px heads
-        }
+        xz[n] = [x, z]; const sb = [x, 0.03, z, 0.018, 0.06, 0.018]; sb.sheaf = n + 64; stubs.push(sb);
+        // wheatClump (the 2D's sheaf): each stalk foot → top, its ear along it at the top; kept apart by tone
+        for (const c of wheatClump(n, f15)) { const zz = c.z * px;
+          const b0 = [x + AX[0] * c.bx * px + AZ[0] * zz, 0, z + AX[2] * c.bx * px + AZ[2] * zz], t0 = [x + AX[0] * c.tx * px + AZ[0] * zz, c.h / HPX, z + AX[2] * c.tx * px + AZ[2] * zz];
+          const dir = new THREE.Vector3(t0[0] - b0[0], t0[1], t0[2] - b0[2]), L = dir.length(); dir.normalize();
+          const q = new THREE.Quaternion().setFromUnitVectors(up, dir), el = WHEAT_EAR[1] * 2 / HPX;
+          const st = [(b0[0] + t0[0]) / 2, t0[1] / 2, (b0[2] + t0[2]) / 2, 0.022, L, 0.022, q]; st.sheaf = n; stalks[c.tone].push(st);
+          const ear = [t0[0] + dir.x * el * 0.4, t0[1] + dir.y * el * 0.4, t0[2] + dir.z * el * 0.4, WHEAT_EAR[0] * 2 * px, el, WHEAT_EAR[0] * 2 * px, q]; ear.sheaf = n; ears[c.tone].push(ear); }
       }
     });
-    // (stalks, plain grain heads — no ink — and stubble, coloured per vertex: in that order, K boxes a sheaf, one stub)
-    const sg = boxBatch(stalks, 'rod'), hg = boxBatch(heads, 'ball'), Pr = sg.attributes.position.count / (N * K), Pb = hg.attributes.position.count / (N * K);
-    geo = tintJoin([[sg, '#c9a227'], [hg, '#e8c84a'], [boxBatch(stubs, 'rod'), '#9a7f4a']]);
+    // (in order: the two golds' stalks, their ears, stubble — each sheaf's run of vertices in each found by its count)
+    const sg = stalks.map(l => boxBatch(l, 'rod')), eg = ears.map(l => boxBatch(l, 'ear')), stg = boxBatch(stubs, 'rod');
+    const Pr = sg[0].attributes.position.count / stalks[0].length, Pe = eg[0].attributes.position.count / ears[0].length;
+    geo = tintJoin([[sg[0], WHEAT_GOLD.stalk[0]], [sg[1], WHEAT_GOLD.stalk[1]], [eg[0], WHEAT_GOLD.ear[0]], [eg[1], WHEAT_GOLD.ear[1]], [stg, '#9a7f4a']]);
     const nv = geo.attributes.position.count, sh = new Float32Array(nv), at = new Float32Array(nv * 3);
-    for (let n = 0; n < N; n++) { sh.fill(n, n * K * Pr, (n + 1) * K * Pr); sh.fill(n, N * K * Pr + n * K * Pb, N * K * Pr + (n + 1) * K * Pb); sh.fill(n + 64, N * K * (Pr + Pb) + n * Pr, N * K * (Pr + Pb) + (n + 1) * Pr); }
+    { let o = 0; const run = (list, P) => { for (const q of list) { sh.fill(q.sheaf, o, o + P); o += P; } };
+      run(stalks[0], Pr); run(stalks[1], Pr); run(ears[0], Pe); run(ears[1], Pe); run(stubs, Pr); }
     for (let i = 0; i < nv; i++) { at[3 * i] = w / 2; at[3 * i + 1] = h / 2; at[3 * i + 2] = 2; }   // (levelled by its middle, in its own frame)
     geo.setAttribute('sheaf', new THREE.BufferAttribute(sh, 1)); geo.setAttribute('hillAt', new THREE.BufferAttribute(at, 3));
     geo.userData.own = false; geo.userData.xz = xz; cropGeos.set(ck, geo); return geo;
   }
   // The farm's standing sheaves as a mask (bit n: sheaf n standing)
-  function cropMask(e){ const st = farmStandingLive(e); let m = 0; for (let n = 0; n < st.length; n++) if (st[n]) m |= 1 << n; return m; }
-  // the mask goes up just before its crop is drawn: one wheat material for every farm (three re-sends its uniforms on the flag)
-  const cropU = { value: 0 };
-  function cropDraw(r, sc, cam, geo, m, grp){ THREE.Mesh.prototype.onBeforeRender.call(this, r, sc, cam, geo, m, grp); cropU.value = this.userData.cropMask; m.uniformsNeedUpdate = true; }
+  function cropMask(e){ const st = farmStandingLive(e); let m = e.complete ? 0 : 1 << 30; for (let n = 0; n < st.length; n++) if (st[n]) m |= 1 << n; return m; }   // (bit 30: being sown)
+  // its mask in its own copy of the wheat material (the one program: three sends a material's uniforms as it changes
+  // between draws — one shared material's per-crop value went unsent, every farm showing one farm's crop)
+  function cropMat(mask){ const w = wheatMat(), m = w.clone(); m.onBeforeCompile = w.onBeforeCompile; m.customProgramCacheKey = w.customProgramCacheKey;
+    m.userData.cropU = { value: mask }; m.userData.growU = { value: new THREE.Vector4(-1, 1, 0, 0) }; return m; }   // (growU: the sheaf coming up, how far, its foot)
+  // A field being sown: the sheaf coming up (farmSprout) — which, how far, its foot — for the wheat shader
+  function cropGrow(e, crop){
+    const sp = farmSprout(e), G = crop.material.userData.growU.value, N = FARM_CROP_ROWS.length * FARM_CROP_COLS, fs = e.x * 7 + e.y * 13;
+    let n = -1; if (sp) for (let i = 0; i < N; i++) if ((i * 7 + fs) % N === sp.k) { n = i; break; }
+    const ft = n >= 0 ? crop.geometry.userData.xz[n] : [0, 0]; G.set(n, sp ? sp.g : 1, ft[0], ft[1]);
+  }
   // A farm's crop changed: the sheaves just cut fall away from the blade
   function cropCut(e, crop, mask){
-    const was = crop.userData.cropMask, live = farmLive.get(e.id), xz = crop.geometry.userData.xz;
+    const U = crop.material.userData.cropU, was = U.value, live = farmLive.get(e.id), xz = crop.geometry.userData.xz;
     for (let n = 0; n < xz.length; n++) if ((was >> n & 1) && !(mask >> n & 1)) cutSheaf(e.x + xz[n][0], e.y + xz[n][1], live && live.away.has(n) ? live.away.get(n) : n * 2.39996);
-    crop.userData.cropMask = mask;
+    U.value = mask;
   }
 
+  // A stand-in drawn off the map (the lab, a gallery — not a warm-up's, which makes the world's own): it brings its own
+  // patch of ground, the world's being the ground art's
+  const offMap = e => e.id < 0 && !e.warm;
   // Which sides of a house stand hard against another house: [z0, z1, x0, x1] (thatchRoof's flush). Viewer-only.
   function houseFlush(e){
     if (e.id < 0) return null;
@@ -1452,12 +1467,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     FARM(g, e){
       const w = e.w || 2, h = e.h || 2, dead = e.exhausted, fseed = e.x * 7 + e.y * 13, px = 1 / PX;
       // (in the world the soil is the ground's own — groundArt, render-terrain; in the lab, a patch of it)
-      if (e.id < 0 || typeof groundArt !== 'function') patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
-      const ridges = FARM_CROP_ROWS.map(t => [e.x + w / 2, 0.004, e.y + h * t, w - 0.08, 0.008, 0.06]);
-      g.add(new THREE.Mesh(boxBatch(ridges), mat(dead ? '#6f5d47' : '#6b4d2e')));
+      if (offMap(e) || typeof groundArt !== 'function') patch(g, dead ? '#7d6a52|soil' : '#7a5a38|soil', e.x, e.y, e.x + w, e.y + h);
+      else patch(g, '#7a5a38', e.x, e.y, e.x + w, e.y + h, false).name = 'ownEarth';   // (its earth till the ground's picture has it: groundShowsField)
+      const ridges = FARM_CROP_ROWS.map(t => [e.x + w / 2, 0.012, e.y + h * t, w - 0.16, 0.024, 0.13]);   // (raised rows, lighter than the furrows between)
+      g.add(new THREE.Mesh(boxBatch(ridges), mat(dead ? '#8a7860' : '#8f6a45')));
       if (!e.complete || e.openTop) return;   // (a site: its soil and ridges, the crop sown when it's done; a damaged one's broken in parts: none — the crop's geometry is shared)
-      const crop = new THREE.Mesh(cropGeo(w, h, fseed % 15), wheatMat()); crop.position.set(e.x, 0, e.y); crop.name = 'crop';
-      crop.userData.cropMask = e.id < 0 ? -1 : cropMask(e); crop.onBeforeRender = cropDraw; g.add(crop);
+      const crop = new THREE.Mesh(cropGeo(w, h, fseed % 15), cropMat(offMap(e) ? -1 : cropMask(e))); crop.position.set(e.x, 0, e.y); crop.name = 'crop';
+      crop.userData.siteOwn = true; g.add(crop);   // (its material its own: freed with it)
     },
     // Cottage under a gable (drawGableBlock: W 32, hh 16, wall 16, roof 20). Dark: plank walls under a thick thatch and
     // the owner's ridge roll (every Dark building is thatched: THATCH); Feudal: plaster, half-timbering, the owner's
@@ -1605,7 +1621,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       if (a === 0) thatchRoof(piece(g), tc, hall, wallH, roofH, false); else roofOn(piece(g), tc + '|shingles', hall, wallH, roofH, 0.04, false, 0.06, 0.05, 0.05);
       const y0 = BP(30, 13), y1 = BP(-30, 51);
-      if (e.id < 0) patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                      // the yard (in the world: the ground's own worn earth — groundArt)
+      if (offMap(e)) patch(g, '#bfa38a|soil', y0.x, y0.z, y1.x, y1.z);                      // the yard (in the world: the ground's own worn earth — groundArt)
       const fh = 9 * s / HPX, posts = [[-30, 13], [-30, 26], [-30, 38.5], [-30, 51], [-15, 51], [0, 51], [15, 51], [30, 51], [30, 13], [30, 26], [30, 38.5]];
       // The fence stops a hand's width short of the hall (or its stone), so both keep their outlines.
       const gap = 0.035 + 0.05, backX = BP(0, 13).x + gap;
@@ -4264,12 +4280,13 @@ gl_Position = projectionMatrix * mvPosition;`;
     const col = 'vc'; let m = wheatMats.get(col);
     if (!m) {
       m = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-      m.onBeforeCompile = sh => {
-        sh.uniforms.uPush = wheatPushers; sh.uniforms.uWind = wind; sh.uniforms.uCrop = cropU;
-        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 uPush[' + WHEAT_PUSH + ']; uniform float uWind; uniform int uCrop; attribute float sheaf;')
+      m.onBeforeCompile = function(sh){
+        sh.uniforms.uPush = wheatPushers; sh.uniforms.uWind = wind; sh.uniforms.uCrop = this.userData.cropU || { value: -1 }; sh.uniforms.uGrow = this.userData.growU || { value: new THREE.Vector4(-1, 1, 0, 0) };
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec4 uPush[' + WHEAT_PUSH + ']; uniform float uWind; uniform int uCrop; uniform vec4 uGrow; attribute float sheaf;')
           .replace('#include <begin_vertex>', `#include <begin_vertex>
             { int sn = int(sheaf + 0.5); bool stub = sn >= 64; bool up = ((uCrop >> (stub ? sn - 64 : sn)) & 1) == 1;
-              if (up == stub) transformed = vec3(0.0); }   // (a sheaf cut, or its stubble while it stands: pinched to nothing)
+              if (up == stub || (stub && ((uCrop >> 30) & 1) == 1)) transformed = vec3(0.0);   // (a sheaf cut, its stubble while it stands, or any on a field being sown — bit 30: pinched to nothing)
+              if (sn == int(uGrow.x + 0.5)) { transformed.y *= uGrow.y; transformed.xz = uGrow.zw + (transformed.xz - uGrow.zw) * uGrow.y; } }   // (the sheaf coming up on a field being sown: grown from its foot only so far)
             vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
             // the wind: each stalk's own sway plus a slow wave rolling across the field, more toward the tip
             float wave = sin(uWind * 0.05 + wp.x * 2.3 + wp.z * 1.7) * 0.35 + max(0.0, sin(uWind * 0.03 - (wp.x - wp.z) * 1.6)) * 0.9;
@@ -4282,7 +4299,7 @@ gl_Position = projectionMatrix * mvPosition;`;
               }
             }`);
       };
-      m.customProgramCacheKey = () => 'wheat3';
+      m.customProgramCacheKey = () => 'wheat4';
       wheatMats.set(col, m);
     }
     return m;
@@ -4303,7 +4320,7 @@ gl_Position = projectionMatrix * mvPosition;`;
     return geo;
   }
   function boxBatch(parts, shape = 'box'){ // shape: unit 'box', 'rod' (diameter sx) or 'ball' (an oval sx×sy×sz)
-    const tm = batchTmpl[shape] = batchTmpl[shape] || (shape === 'rod' ? new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
+    const tm = batchTmpl[shape] = batchTmpl[shape] || (shape === 'rod' ? new THREE.CylinderGeometry(0.5, 0.5, 1, 6) : shape === 'ear' ? new THREE.SphereGeometry(0.5, 6, 4)
       : shape === 'ball' ? new THREE.SphereGeometry(0.5, 8, 6) : new THREE.BoxGeometry(1, 1, 1)).toNonIndexed();
     const P = tm.attributes.position, N = tm.attributes.normal, pos = [], nrm = [];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3(), nm = new THREE.Matrix3();
@@ -4350,9 +4367,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     return Array.from({ length: N }, (_, n) => !st.cut.has(n));
   }
   function farmStanding(e){
-    const res = map[e.y] && map[e.y][e.x] ? map[e.y][e.x].res : 0;
-    const growth = res / (farmFoodFor(e.team) || e.maxFood || 300), N = FARM_CROP_ROWS.length * FARM_CROP_COLS, fseed = e.x * 7 + e.y * 13;
-    return Array.from({ length: N }, (_, n) => !e.exhausted && growth > (((n * 7 + fseed) % N + 0.5) / N));
+    const growth = farmCropShown(e), N = FARM_CROP_ROWS.length * FARM_CROP_COLS, fseed = e.x * 7 + e.y * 13;
+    const sp = farmSprout(e);
+    return Array.from({ length: N }, (_, n) => !e.exhausted && (growth > (((n * 7 + fseed) % N + 0.5) / N) || (sp && (n * 7 + fseed) % N === sp.k)));
   }
 
   // Camp hut (drawBuildingBlock half-width 20 → 0.625-tile block: wall 14px,
@@ -4362,7 +4379,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   const fireMats = new Map(), fireMat = col => fireMats.get(col) || fireMats.set(col, new THREE.MeshBasicMaterial({ color: col })).get(col);
   const animPart = (o, f) => { o.name = 'anim'; o.userData.anim = f; return o; };
   function shaftHouse(g, e){
-    const { b0, wH, Yr, Yc, rc, ho, H, wr, wy, po, lo, hi } = SHAFT, TW = '#b89868', grp = () => new THREE.Group();
+    const { b0, wH, Yr, Yc, rc, ho, H, wr, wy, po, lo, hi } = SHAFT, TW = '#8a6a44', grp = () => new THREE.Group();
     const cx = e.x + SHAFT.cx, cz = e.y + SHAFT.cz, hw = SHAFT.hw, X0 = cx - hw, X1 = cx + hw, Z0 = cz - hw, Z1 = cz + hw;
     boxAt(g, '#a89f8e|rough', X0 - 0.03, Z0 - 0.03, X1 + 0.03, Z1 + 0.03, 0, b0);                       // the stone floor
     const pr = 0.022, bt = 0.044;   // open all round: four corner posts, a ring of beams under the eaves
@@ -4390,11 +4407,11 @@ gl_Position = projectionMatrix * mvPosition;`;
       const fl = new THREE.Mesh(own(new THREE.ConeGeometry(0.036, 1, 6).translate(0, 0.5, 0)), fireMat(col)); fl.position.set(cx + dx, b0, cz + dz);
       g.add(animPart(fl, (o, t) => { o.scale.y = fh * (0.75 + 0.25 * Math.sin(t * 0.21 + ph) + 0.12 * Math.sin(t * 0.47 + ph * 2)); }));
     }
-    (g.userData.smoke = g.userData.smoke || []).push([cx, b0 + 0.14, cz]);
+    (g.userData.smoke = g.userData.smoke || []).push([cx - 0.1, wy + wr + 0.1, cz + 0.1]);   // (the 2D's: risen through the tower, clear of the wheel)
     // the wheel turns as its rope winds: the bucket up out of the pit to under the cap, a pause, back down
     const wg = animPart(grp(), (o, t) => { o.rotation.z = -shaftLift(t) * (hi - lo) / wr; }); wg.position.set(cx, wy, cz); hd.add(wg);   // (in the head-frame: they go with it)
-    const rim = new THREE.Mesh(own(new THREE.TorusGeometry(wr, 0.02, 6, 24)), mat('#a08058')); rim.userData.hullGeo = rim.geometry; wg.add(rim);
-    for (const an of [0, Math.PI / 2]) pole(wg, '#c8a87a', [-Math.cos(an) * wr, -Math.sin(an) * wr, 0], [Math.cos(an) * wr, Math.sin(an) * wr, 0], 0.013);
+    const rim = new THREE.Mesh(own(new THREE.TorusGeometry(wr, 0.02, 6, 24)), mat('#86643f')); rim.userData.hullGeo = rim.geometry; wg.add(rim);
+    for (const an of [0, Math.PI / 2]) pole(wg, '#a5835a', [-Math.cos(an) * wr, -Math.sin(an) * wr, 0], [Math.cos(an) * wr, Math.sin(an) * wr, 0], 0.013);
     const lift = animPart(grp(), (o, t) => { const y = lo + shaftLift(t) * (hi - lo); o.children[0].position.y = y; o.children[1].position.y = y + 0.1; o.children[1].scale.y = wy - wr - y - 0.1; });
     lift.position.set(cx, 0, cz); hd.add(lift);
     const bk = grp(); lift.add(bk); round(bk, '#5c4430', 0, 0, 0.055, 0.062, 0, 0.1, 10, true, '#e8b90f');
@@ -4403,7 +4420,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   function campHut(g, e, wallCol, roofCol){
     const s = 20 / 32, wallH = 14 / HPX, box = [e.x + 1 - s, e.y, e.x + 1, e.y + s];
-    if (e.id < 0) patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile (in the world: the ground's own)
+    if (offMap(e)) patch(g, '#8a7252|soil', e.x, e.y, e.x + 1, e.y + 1); // drawCampClearing: packed dirt over the whole tile (in the world: the ground's own)
     const f = boxFaces(...box, 0, wallH);
     if (!e.complete || e.openTop) delete f.top;                       // (a site: open till its roof goes on; a damaged one, open under it)
     f.x1.holes.push(hole('x1', box, 0.5, SILL, s / 4, 8 / HPX));
@@ -4441,12 +4458,12 @@ gl_Position = projectionMatrix * mvPosition;`;
   // twenty wool puffs; the outlines follow the same spheres.
   function animalModel(kind, tc){ const p0 = POLY; POLY = 0.6; try { return ANIMAL_MODELS[kind](tc); } finally { POLY = p0; } }
   function bakeStill(g){
-    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate' || o.name === 'hoist' || o.name === 'anim' || o.name === 'crop') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
+    const live = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'sails' || o.name === 'pennant' || o.name === 'portcullis' || o.name === 'cloth' || o.name === 'plate' || o.name === 'hoist' || o.name === 'anim' || o.name === 'crop' || o.name === 'ownEarth') live.push(o); else if (o.name === 'horseNeck' && o.parent && o.parent !== g) live.push(o.parent); });
     const lift = live.filter(o => !live.some(p => p !== o && p.getObjectById(o.id)));   // (outermost only)
     g.updateMatrixWorld(true);
     const hold = new THREE.Group(); hold.updateMatrixWorld(true);
     // (a moving part merged too: round its own pivots — a horse's neck, head, tail — or whole, as the sails that only turn)
-    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate' || o.name === 'crop') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else if (o.name === 'hoist' || o.name === 'anim') o.children.forEach(c => bakeRigid(c, null, true)); else bakeRigid(o, null, true); }   // (a hoist: its rope and its log, each moving on its own)
+    for (const o of lift) { hold.attach(o); if (o.name === 'cloth' || o.name === 'plate' || o.name === 'crop' || o.name === 'ownEarth') continue; if (o.name === 'sails' || o.name === 'portcullis') bakeWhole(o); else if (o.name === 'hoist' || o.name === 'anim') o.children.forEach(c => bakeRigid(c, null, true)); else bakeRigid(o, null, true); }   // (a hoist: its rope and its log, each moving on its own)
     bakeWhole(g);
     for (const o of lift) g.attach(o);
   }
@@ -4473,13 +4490,10 @@ gl_Position = projectionMatrix * mvPosition;`;
   // spots in the world (smoke, trainees) and a horse's gait seed set here.
   const SHARED_MODELS = new Set(['TC', 'BARRACKS', 'LCAMP', 'MCAMP', 'MILL', 'TOWER', 'PTOWER', 'MARKET', 'CASTLE']);
   const bldTemplates = new Map();
-  const SKINNED = new Set([...SHARED_MODELS, 'HOUSE']);   // (a farm and a wall keep their own site: another shape)
   function sharedModel(e, key){
     const sk = e.btype + '|' + key; let T = bldTemplates.get(sk);
     if (!T) { const eL = { ...e, x: 0, y: 0 }; T = new THREE.Group();
-      MODELS[e.btype](T, eL); footPlate(T, eL); addHulls(T);
-      T.userData.bodyH = bodyHeight(T);   // (its skin's full height: before the bake merges a flagpole into the body)
-      bakeStill(T); const c = centerOf(eL); levelGeo(T, c.x, c.y, true);
+      MODELS[e.btype](T, eL); footPlate(T, eL); addHulls(T); bakeStill(T); const c = centerOf(eL); levelGeo(T, c.x, c.y, true);
       T.traverse(o => { if (o.geometry) o.geometry.userData.own = false; });   // (shared: never freed with a building)
       bldTemplates.set(sk, T); }
     const g = T.clone(), src = [], dst = []; T.traverse(o => src.push(o)); g.traverse(o => dst.push(o));
@@ -4490,30 +4504,32 @@ gl_Position = projectionMatrix * mvPosition;`;
     if (g.userData.trainees) g.userData.trainees = g.userData.trainees.map(t => ({ ...t, x: t.x + e.x, z: t.z + e.y }));
     freezeStill(g); return g;
   }
-  // A model's key: what shapes it (a skinned kind's states are its skin, not its model)
+  // A model's key: what shapes it
   function modelKey(e, hurt){
-    return (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + (SKINNED.has(e.btype) ? '' : ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : ''))
+    return (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
       + (e.btype === 'FARM' ? (e.exhausted ? ':x' : '') : e.btype === 'HOUSE' ? ':' + (houseFlush(e) || []).map(Number).join('') : '');
   }
   function refreshModel(e){
     const hurt = isHurt(e);
-    const skinned = SKINNED.has(e.btype), key = modelKey(e, hurt);
+    const key = modelKey(e, hurt);
     let rec = solids.get(e.id);
-    if (rec && rec.crop && rec.key === key) { const m = cropMask(e); if (m !== rec.crop.userData.cropMask) cropCut(e, rec.crop, m); }   // (its crop: a mask, set in place)
+    if (rec && rec.crop && rec.key === key) { const m = cropMask(e); if (m !== rec.crop.material.userData.cropU.value) cropCut(e, rec.crop, m); }   // (its crop: a mask, set in place)
     if (!rec || rec.key !== key) {
       if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (as refreshWall)
       const tb = performance.now();
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
       let g;
-      if (skinned && SHARED_MODELS.has(e.btype)) g = sharedModel({ ...e, complete: true }, key);
+      let cp = null;
+      if (e.complete && !hurt && SHARED_MODELS.has(e.btype)) g = sharedModel(e, key);
+      else if (!e.complete || hurt) { cp = siteCopy(siteTemplate(e, key, hurt), e); g = cp.obj;
+        if (e.btype === 'FARM' && !e.complete) { const crop = new THREE.Mesh(cropGeo(e.w || 2, e.h || 2, (e.x * 7 + e.y * 13) % 15), cropMat(cropMask(e)));   // (being sown: its sheaves come up as it's built)
+          crop.position.set(e.x - g.position.x, 0, e.y - g.position.z); crop.name = 'crop'; crop.userData.siteOwn = true; cropGrow(e, crop); g.add(crop); } }
       else {
         g = new THREE.Group();
-        const em = skinned ? { ...e, complete: true } : hurt ? { ...e, openTop: true } : e;   // (a damaged unskinned one: open under its roof)
-        MODELS[e.btype](g, em); g.userData.bid = e.id; // (the world view's click picks it by this)
+        MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
         footPlate(g, e);
         addHulls(g);
-        if (skinned) g.userData.bodyH = bodyHeight(g);
-        if (skinned || (e.complete && !hurt)) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (an unskinned site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+        if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
       }
       scene.add(g);
       const horses = [];
@@ -4521,24 +4537,12 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (o.name === 'horseNeck') horses.push({ neck: o, head: o.getObjectByName('horseHead'), tail: o.parent.getObjectByName('horseTail'), seed: o.parent.userData.horseSeed });
       });
       const pennants = [], cloths = [], hoists = [], anims = []; g.traverse(o => { if (o.name === 'anim') anims.push(o); if (o.name === 'pennant') pennants.push(o); if (o.name === 'cloth') cloths.push(o); if (o.name === 'hoist') hoists.push(o); });
-      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.getObjectByName('crop') : null, sails: g.getObjectByName('sails'), horses, pennants, hoists, anims, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
-      if (skinned) {}
-      else if (!e.complete) { const b = BLDGS[e.btype]; rec.site = constructionSite(g, e.x, e.y, e.w || b.w, e.h || b.h, !OPEN_SITE.has(e.btype)); rec.siteOf = e.id; }
-      else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
+      rec = { obj: g, key, cloths, crop: e.btype === 'FARM' ? g.getObjectByName('crop') : null, earth: e.btype === 'FARM' ? g.getObjectByName('ownEarth') : null, sails: g.getObjectByName('sails'), horses, pennants, hoists, anims, smoke: g.userData.smoke, trainees: (g.userData.trainees || []).map(t => ({ ...t, obj: null, key: '' })), roof: e.complete && g.userData.roof ? g.userData.roof.map(p => ({ ...p, obj: null, key: '' })) : null, yard: g.userData.yard ? g.userData.yard.map(p => ({ ...p, obj: null, key: '' })) : null, portcullis: g.getObjectByName('portcullis'), team: e.team, age: ageOf(e) };
+      if (!e.complete) { rec.site = cp.drive; rec.siteOf = e.id; }
+      else if (hurt) { const b = BLDGS[e.btype]; rec.dmg = buildingDamage(g, e.x, e.y, e.w || b.w, e.h || b.h, cp.drive, cp.look); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
       solids.set(e.id, rec);
       bldSpent += performance.now() - tb;
     }
-    if (skinned) skinState(rec, e, hurt);
-  }
-  // its skin for what it is now: a site's, a damaged one's, none (a site done: its dust)
-  function skinState(rec, e, hurt){
-    const want = !e.complete ? 'site' : hurt ? 'dmg' : 'ok';
-    if (rec.state === want) return;
-    if (rec.site) { rec.site.skin.restore(); rec.site = null; if (want !== 'site') siteDone(e); }
-    if (rec.dmg) { rec.dmg.skin.restore(); rec.dmg = null; }
-    if (want === 'site') { rec.site = shaderSite(rec.obj); rec.siteOf = e.id; }
-    else if (want === 'dmg') { rec.dmg = shaderDamage(rec.obj); rec.dmg.jump(Math.min(DMG_FROM, e.hp / e.maxHp)); }
-    rec.state = want;
   }
   const OPEN_SITE = new Set(['MARKET', 'FARM']); // open ground (a plaza, a field): no scaffold, the stalls / crops just come up
   // a finished building hurt enough to show it (a farm is worn out, not broken)
@@ -4547,7 +4551,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // roof, windows and door keep their shape), inside a scaffold whose work deck rides
   // the cut. g: a finished, baked model; its footprint (x0, z0, w, h). Returns { set(progress 0..1) }.
   let siteWood = null;
-  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods', 'plate', 'hoist', 'anim']); // a site's parts with their own life: never merged
+  const SITE_LIVE = new Set(['flag', 'flagPole', 'pennant', 'sails', 'millShaft', 'goods', 'plate', 'hoist', 'anim', 'ownEarth']); // a site's parts with their own life: never merged
   const SITE_SHADE = 0.66; // how much light reaches inside a site's walls (their inner faces, and the ground they enclose)
   // Finished: the scaffold comes down in a ring of dust round the footprint.
   function siteDone(e){
@@ -4712,47 +4716,50 @@ gl_Position = projectionMatrix * mvPosition;`;
   const SITE_NOISE = `float siteH(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float siteN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       return mix(mix(siteH(i), siteH(i + vec2(1.0, 0.0)), f.x), mix(siteH(i + vec2(0.0, 1.0)), siteH(i + vec2(1.0, 1.0)), f.x), f.y); }`;
-  // A building's states — a site going up, damaged, falling — as its finished model under a SKIN of cut materials: each
-  // part's material cloned once for the building (the same program for all), cut in the shader at a height (uCut) its
-  // top broken by a noise (uJag), its insides in shade. No model made for a site, none made again when it's done,
-  // damaged or repaired: the skin comes off (restore). H: the body's height (bodyHeight, before the bake).
-  function bodyHeight(g){
-    const hb = new THREE.Box3(), skip = o => { for (let q = o; q && q !== g; q = q.parent) if (LIVE_PARTS.has(q.name) || q.name === 'flagPole' || q.name === 'pennant') return true; return false; };
-    g.updateMatrixWorld(true); g.traverse(o => { if (o.isMesh && !skip(o) && !HULL_MATS.has([].concat(o.material)[0])) hb.expandByObject(o); });
-    return hb.isEmpty() ? 1 : hb.max.y - g.position.y;
+  // A site, or a damaged building's look, is made ONCE a kind (its btype and model key) and copied for each building:
+  // the copy shares the geometry; its cut materials are its own (the same programs) on its own uniforms and clip planes.
+  // Kept while any building shows one, the oldest unused dropped past SITE_TEMPLATES.
+  const siteTemplates = new Map(), SITE_TEMPLATES = 16;
+  function siteTemplate(e, key, hurt){
+    const tk = e.btype + '|' + key; let tp = siteTemplates.get(tk);
+    if (tp) return tp;
+    const g = new THREE.Group(), b = BLDGS[e.btype], w = e.w || b.w, h = e.h || b.h; g.userData.levelAs = e;
+    MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); footPlate(g, e); addHulls(g);
+    const look = hurt ? damageLook(g) : null;
+    const S = constructionSite(g, e.x, e.y, w, h, !hurt && !OPEN_SITE.has(e.btype), hurt).S;
+    g.traverse(o => { if (o.geometry) o.geometry.userData.own = false; });   // (shared: never freed with a copy)
+    tp = { g, S, look, x: e.x, y: e.y }; siteTemplates.set(tk, tp);
+    if (siteTemplates.size > SITE_TEMPLATES) {
+      const used = new Set(); for (const r of solids.values()) if (r.obj && r.obj.userData.tpl) used.add(r.obj.userData.tpl);
+      for (const f of falls) if (f.g.userData.tpl) used.add(f.g.userData.tpl);
+      for (const [k, t] of siteTemplates) { if (siteTemplates.size <= SITE_TEMPLATES) break; if (t === tp || used.has(t)) continue;
+        siteTemplates.delete(k); t.g.traverse(o => { if (o.geometry) { const eg = edgeCache.get(o.geometry); if (eg) { eg.dispose(); edgeCache.delete(o.geometry); } o.geometry.dispose(); } });
+        for (const m of t.S.mats) m.dispose(); } }
+    return tp;
   }
-  function cutSkin(g){
-    const H = g.userData.bodyH || 1, cut = { value: 1e9 }, jag = { value: 0 }, made = new Map(), was = [];
-    const cm = m => { let c = made.get(m); if (c) return c; c = m.clone(); const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m) + '|cut';
-      c.onBeforeCompile = function(sh, r){ if (ob) ob.call(this, sh, r); sh.uniforms.uCut = cut; sh.uniforms.uJag = jag;
-        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCutW;').replace('#include <project_vertex>', '#include <project_vertex>\nvCutW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uCut; uniform float uJag; varying vec3 vCutW;\n' + SITE_NOISE)
-          .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vCutW.y > uCut - uJag * siteN(vCutW.xz * 3.2)) discard;')
-          .replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (!gl_FrontFacing) gl_FragColor.rgb *= ' + SITE_SHADE.toFixed(3) + ';'); };
-      c.onBeforeCompile.fow = !!(ob && ob.fow); c.customProgramCacheKey = () => key; if (!HULL_MATS.has(m)) c.side = THREE.DoubleSide;
+  function siteCopy(tp, e){
+    const g = tp.g.clone(), src = [], dst = []; tp.g.traverse(o => src.push(o)); g.traverse(o => dst.push(o));
+    const map = new Map(); for (let i = 0; i < src.length; i++) { map.set(src[i], dst[i]); dst[i].userData = { ...src[i].userData }; }   // (clone() copies userData through JSON)
+    const S0 = tp.S, off = [e.x - tp.x, e.y - tp.y], M = o => o && (map.get(o) || o);
+    g.position.set(off[0], 0, off[1]); g.userData.bid = e.id; g.userData.tpl = tp;
+    if (g.userData.smoke) g.userData.smoke = g.userData.smoke.map(([x, y, z]) => [x + off[0], y, z + off[1]]);
+    if (g.userData.trainees) g.userData.trainees = g.userData.trainees.map(t => ({ ...t, x: t.x + off[0], z: t.z + off[1] }));
+    // (the planes are world-space and level: moved along the ground they cut the same; the levelling centre moves with it)
+    const U = { siteY: { value: 0 }, siteJag: { value: 0 }, crumble: S0.crumble ? { value: 0 } : null, below: S0.below.clone(), lift: S0.lift ? S0.lift.clone() : null,
+      level: S0.level ? { value: S0.level.value.clone().add(new THREE.Vector2(off[0], off[1])) } : null };
+    const uni = { siteY: U.siteY, siteJag: U.siteJag, crumble: U.crumble, hillAtU: U.level }, made = new Map();
+    const cp = m => { if (!S0.mats.has(m)) return m; let c = made.get(m); if (c) return c;
+      c = m.clone(); const ob = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; if (m.defines) c.defines = { ...m.defines };   // (clone() keeps a ShaderMaterial's defines only)
+      c.onBeforeCompile = function(sh, r){ ob.call(this, sh, r); for (const k in uni) if (uni[k] && sh.uniforms[k]) sh.uniforms[k] = uni[k]; }; c.onBeforeCompile.fow = ob.fow;
+      if (m.clippingPlanes) c.clippingPlanes = m.clippingPlanes.map(q => q === S0.below ? U.below : q === S0.lift ? U.lift : q);
       made.set(m, c); return c; };
-    g.traverse(o => { if (!o.material) return; was.push([o, o.material, o.userData.siteOwn]); o.material = Array.isArray(o.material) ? o.material.map(cm) : cm(o.material); o.userData.siteOwn = true; });
-    return { H, cut, jag, made, restore(){ for (const [o, m, so] of was) { o.material = m; o.userData.siteOwn = so; } for (const c of made.values()) c.dispose(); } };
-  }
-  // a site: cut at the build height (the full height at 95% built)
-  function shaderSite(g){
-    const skin = cutSkin(g), set = p => { skin.cut.value = skin.H * Math.min(1, Math.max(0, p) / 0.95) + (p > 0 ? 0.001 : -1); };
-    set(0); return { set, skin };
-  }
-  // damaged: health f lowers the top, broken more the lower it goes; it falls to nothing (collapse), dust where it breaks
-  function shaderDamage(g){
-    const skin = cutSkin(g), H = skin.H, box = new THREE.Box3().setFromObject(g);
-    let shown = DMG_FROM, target = DMG_FROM, rate = 0.5, last = shown;
-    const show = f => { const k = Math.max(0, Math.min(1, f / DMG_FROM)); skin.cut.value = f <= 0 ? -1 : H * (0.3 + 0.7 * k) + 0.02; skin.jag.value = H * 0.45 * (1 - k); };
-    const dustAt = (y, n) => { for (let i = 0; i < n; i++) puffBurst(box.min.x + Math.random() * (box.max.x - box.min.x), y, box.min.z + Math.random() * (box.max.z - box.min.z), 3); };
-    const tick = dt => {
-      if (shown !== target) { shown = target < shown ? Math.max(target, shown - rate * dt) : Math.min(target, shown + rate * dt); show(shown);
-        if (shown < last - 0.03) { dustAt(Math.max(0.05, skin.cut.value - skin.jag.value * 0.5), 2); last = shown; } else if (shown > last) last = shown; }
-      return shown <= 0;
-    };
-    show(shown);
-    return { skin, set: f => { target = Math.max(0, Math.min(1, f)); }, jump: f => { shown = last = target = f; show(f); },
-      collapse: () => { target = 0; rate = 1.4; dustAt(0.05, 6); }, tick, get shown(){ return shown; } };
+    g.traverse(o => { if (!o.material) return; const ms = [].concat(o.material); o.material = Array.isArray(o.material) ? o.material.map(cp) : cp(o.material);
+      o.userData.siteOwn = ms.every(m => S0.mats.has(m)); });
+    const set0 = S0.set0.map(q => ({ ...q, obj: M(q.obj), at: null }));
+    const S = { ...S0, ...U, off, set0, tops: S0.tops.map(q => set0[S0.set0.indexOf(q)]), later: S0.later.map(([o, y]) => [M(o), y]), floors: S0.floors.map(M),
+      flags: S0.flags.map(M), goods: S0.goods.map(M), sc: M(S0.sc), deck: M(S0.deck) };
+    const look = tp.look && { ...tp.look, box: tp.look.box.clone().translate(new THREE.Vector3(off[0], 0, off[1])) };
+    return { obj: g, drive: siteDrive(S), look };
   }
   function constructionSite(g, x0, z0, w, h, scaffold = true, jag = false){
     g.updateMatrixWorld(true);
@@ -4850,7 +4857,6 @@ gl_Position = projectionMatrix * mvPosition;`;
     const later = []; g.updateMatrixWorld(true);
     for (const c of g.children) walk(c, o => { if (o.isMesh && !o.userData.siteCut && !HULL_MATS.has([].concat(o.material)[0]) && o.parent && !o.parent.isMesh) {   // (siteCut: shown cut, from the start)
       const y0 = mb.setFromObject(o, true).min.y; if (y0 > 0.02) later.push([o, y0]); } });
-    const setRing = y => { siteY.value = y; for (const [o, y0] of later) o.visible = y > y0 + 0.005; };
     // the rest, merged by material (as a finished building): what comes and goes on its own (pieces, parts above the
     // build line, flags, goods, a horse, the floor shade) is lifted out first and put back as it was
     { const keep = new Set([...set0.map(q => q.obj), ...later.map(([o]) => o), ...floors.filter(Boolean)]);
@@ -4879,14 +4885,11 @@ gl_Position = projectionMatrix * mvPosition;`;
     // cap, then a chimney) follow one by one.
     const tops = set0.filter(q => q.top >= H * 0.98).sort((a, b) => a.base - b.base);
     for (const q of set0) { const i = tops.indexOf(q); q.when = i < 0 ? q.top / H * 0.85 : 0.85 + 0.12 * (i + 1) / tops.length; }
-    const setPieces = p => { const now = performance.now();
-      for (const q of set0) { const on = p >= q.when - 1e-6;
-        if (on && q.at == null) q.at = now; else if (!on) q.at = null;
-        const k = on ? Math.min(1, (now - q.at) / 260) : 0;
-        q.obj.visible = on; q.obj.position.y = q.y0 + (1 - k) * (1 - k) * 0.22; } };
-    const rise = p => Math.min(1, Math.max(0, p) / (set0.length ? 0.85 : 1));
-    if (jag) { // damaged, health f: the pieces crumble away (95% → 55%, or none), then the walls break down to nothing
-      const crumble = { value: 0 }, own2 = new Map();
+    // (all a site's own state — its uniforms, clip planes and the parts it shows, hides and drops — in S: siteDrive works
+    // it, siteCopy re-binds it to a copy)
+    const S = { H, jag, set0, tops, later, floors, siteY, siteJag, below, level, off: [0, 0], flags: [], goods: [], mats: new Set(built.values()) };
+    if (jag) { // damaged: the pieces crumble (their own cut materials)
+      const crumble = S.crumble = { value: 0 }, own2 = new Map();
       const crumbleMat = m => { let c = own2.get(m); if (c) return c; c = m.clone(); const ob = m.onBeforeCompile, key = m.customProgramCacheKey.call(m);
         c.onBeforeCompile = (sh, r) => { if (ob) ob.call(c, sh, r); sh.uniforms.crumble = crumble;
           sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCrW;').replace('#include <project_vertex>', '#include <project_vertex>\nvCrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -4894,10 +4897,48 @@ gl_Position = projectionMatrix * mvPosition;`;
             .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n  if (siteN(vCrW.xz * 4.5 + vCrW.y * 3.1) * 0.8 + siteN(vCrW.xz * 13.0 - vCrW.y * 7.0) * 0.2 < crumble) discard;'); };  // (ragged holes that spread)
         c.onBeforeCompile.fow = !!(ob && ob.fow); c.customProgramCacheKey = () => key + ':crumble'; c.side = HULL_MATS.has(m) ? m.side : THREE.DoubleSide;
         if (level) levelMat(c, level);
-        own2.set(m, c); return c; };
+        own2.set(m, c); S.mats.add(c); return c; };
       for (const q of set0) q.obj.traverse(o => { if (o.material) { o.material = Array.isArray(o.material) ? o.material.map(crumbleMat) : crumbleMat(o.material); o.userData.siteOwn = true; } });
-      const flags = [], goods = []; g.traverse(o => { if (o.name === 'flag' || o.name === 'flagPole' || o.name === 'pennant' || o.name === 'sails' || o.name === 'millShaft') flags.push(o); else if (o.name === 'goods') goods.push(o); });
-      const R0 = 0.95, R1 = set0.length ? 0.55 : R0;                                        // the pieces' stretch, then the walls'
+      g.traverse(o => { if (o.name === 'flag' || o.name === 'flagPole' || o.name === 'pennant' || o.name === 'sails' || o.name === 'millShaft') S.flags.push(o); else if (o.name === 'goods') S.goods.push(o); });
+    } else if (scaffold) { // Scaffold: timber poles round the footprint, a tile apart, rails every ~0.3 up, a brace on each face; full height
+      siteWood = siteWood || '#9c7448';
+      // round the base (its walls), a plank's width out; up to the wall tops (the roof goes on from it)
+      const [p0, q0, p1, q1] = base.isEmpty() ? [x0, z0, x0 + w, z0 + h] : [base.min.x, base.min.z, base.max.x, base.max.z];
+      const sc = new THREE.Group(), o = 0.12, X0 = p0 - o, Z0 = q0 - o, X1 = p1 + o, Z1 = q1 + o, top = H + 0.04, r = 0.014;
+      const along = (a, b) => { const n = Math.max(1, Math.round(b - a)); return Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n); };
+      const xs = along(X0, X1), zs = along(Z0, Z1), posts = [];
+      for (const x of xs) posts.push([x, Z0], [x, Z1]);
+      for (const z of zs.slice(1, -1)) posts.push([X0, z], [X1, z]);
+      for (const [x, z] of posts) pole(sc, siteWood, [x, 0, z], [x, top, z], r, 'bare');
+      const rails = Math.max(1, Math.round(top / 0.5));
+      for (let i = 1; i <= rails; i++) { const y = top * i / (rails + 0.3);
+        for (const [a, b] of [[[X0, y, Z0], [X1, y, Z0]], [[X0, y, Z1], [X1, y, Z1]], [[X0, y, Z0], [X0, y, Z1]], [[X1, y, Z0], [X1, y, Z1]]]) pole(sc, siteWood, a, b, r * 0.7, 'bare'); }
+      bakeStill(sc); g.add(sc);
+      // it goes up with the walls, a lift ahead of them
+      const lift = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), scMats = new Map();
+      sc.traverse(o => { if (!o.material || Array.isArray(o.material)) return;
+        let c = scMats.get(o.material); if (!c) { c = o.material.clone(); c.onBeforeCompile = o.material.onBeforeCompile; c.customProgramCacheKey = o.material.customProgramCacheKey; c.clippingPlanes = [lift]; scMats.set(o.material, c); S.mats.add(c); }
+        o.material = c; o.userData.siteOwn = true; });
+      // the work deck: planks round the walls at the cut, climbing with it
+      const deck = new THREE.Group(), d = 0.08; // (clear of the outline shell, HULL out from the walls)
+      for (const [a0, b0, a1, b1] of [[X0, Z0, X1, Z0 + d], [X0, Z1 - d, X1, Z1], [X0, Z0 + d, X0 + d, Z1 - d], [X1 - d, Z0 + d, X1, Z1 - d]]) boxAt(deck, '#b88a52', a0, b0, a1, b1, 0, 0.018);
+      bakeStill(deck); g.add(deck);                                                 // (one piece: it only ever moves whole)
+      Object.assign(S, { sc, deck, posts, lift, top });
+    }
+    return siteDrive(S);
+  }
+  // A site's (or a damaged building's) controller over its state S (constructionSite): set(progress), or damage(health).
+  function siteDrive(S){
+    const { H, set0, tops, later, floors, siteY, siteJag, below } = S;
+    const setRing = y => { siteY.value = y; for (const [o, y0] of later) o.visible = y > y0 + 0.005; };
+    const setPieces = p => { const now = performance.now();
+      for (const q of set0) { const on = p >= q.when - 1e-6;
+        if (on && q.at == null) q.at = now; else if (!on) q.at = null;
+        const k = on ? Math.min(1, (now - q.at) / 260) : 0;
+        q.obj.visible = on; q.obj.position.y = q.y0 + (1 - k) * (1 - k) * 0.22; } };
+    const rise = p => Math.min(1, Math.max(0, p) / (set0.length ? 0.85 : 1));
+    if (S.jag) { // damaged, health f: the pieces crumble away (95% → 55%, or none), then the walls break down to nothing
+      const { crumble, flags, goods } = S, R0 = 0.95, R1 = set0.length ? 0.55 : R0;   // the pieces' stretch, then the walls'
       const damage = f => {
         const k = Math.min(1, Math.max(0, (R0 - f) / (R0 - R1 || 1)));
         // (the noise sits mostly within 0.2–0.9)
@@ -4911,54 +4952,36 @@ gl_Position = projectionMatrix * mvPosition;`;
         for (const o of goods) o.visible = k < 1;
         return { roof: k, wall: 1 - wv, top: f >= R1 ? H : y };
       };
-      damage(1); return { damage, H };
+      damage(1); return { damage, H, S };
     }
-    if (!scaffold) { const set = p => { const y = H * rise(p); below.constant = y; setRing(y); setPieces(p); }; set(0); return { set }; } // (a wall piece: too small for one)
-    // Scaffold: timber poles round the footprint, a tile apart, rails every ~0.3 up, a brace on each face; full height
-    siteWood = siteWood || '#9c7448';
-    // round the base (its walls), a plank's width out; up to the wall tops (the roof goes on from it)
-    const [p0, q0, p1, q1] = base.isEmpty() ? [x0, z0, x0 + w, z0 + h] : [base.min.x, base.min.z, base.max.x, base.max.z];
-    const sc = new THREE.Group(), o = 0.12, X0 = p0 - o, Z0 = q0 - o, X1 = p1 + o, Z1 = q1 + o, top = H + 0.04, r = 0.014;
-    const along = (a, b) => { const n = Math.max(1, Math.round(b - a)); return Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n); };
-    const xs = along(X0, X1), zs = along(Z0, Z1), posts = [];
-    for (const x of xs) posts.push([x, Z0], [x, Z1]);
-    for (const z of zs.slice(1, -1)) posts.push([X0, z], [X1, z]);
-    for (const [x, z] of posts) pole(sc, siteWood, [x, 0, z], [x, top, z], r, 'bare');
-    const rails = Math.max(1, Math.round(top / 0.5));
-    for (let i = 1; i <= rails; i++) { const y = top * i / (rails + 0.3);
-      for (const [a, b] of [[[X0, y, Z0], [X1, y, Z0]], [[X0, y, Z1], [X1, y, Z1]], [[X0, y, Z0], [X0, y, Z1]], [[X1, y, Z0], [X1, y, Z1]]]) pole(sc, siteWood, a, b, r * 0.7, 'bare'); }
-    bakeStill(sc); g.add(sc);
-    // it goes up with the walls, a lift ahead of them
-    const lift = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), scMats = new Map();
-    sc.traverse(o => { if (!o.material || Array.isArray(o.material)) return;
-      let c = scMats.get(o.material); if (!c) { c = o.material.clone(); c.onBeforeCompile = o.material.onBeforeCompile; c.customProgramCacheKey = o.material.customProgramCacheKey; c.clippingPlanes = [lift]; scMats.set(o.material, c); }
-      o.material = c; o.userData.siteOwn = true; });
-    // the work deck: planks round the walls at the cut, climbing with it
-    const deck = new THREE.Group(), d = 0.08; // (clear of the outline shell, HULL out from the walls)
-    for (const [a0, b0, a1, b1] of [[X0, Z0, X1, Z0 + d], [X0, Z1 - d, X1, Z1], [X0, Z0 + d, X0 + d, Z1 - d], [X1 - d, Z0 + d, X1, Z1 - d]]) boxAt(deck, '#b88a52', a0, b0, a1, b1, 0, 0.018);
-    bakeStill(deck); g.add(deck);                                                 // (one piece: it only ever moves whole)
+    if (!S.sc) { const set = p => { const y = H * rise(p); below.constant = y; setRing(y); setPieces(p); }; set(0); return { set, S }; } // (a wall piece: too small for one)
     // the scaffold comes down as the roof goes on (the first piece crowning the walls), never through it
-    const down = tops.length ? tops[0].when : 1;
+    const { sc, deck, posts, lift, top, off } = S, down = tops.length ? tops[0].when : 1;
     const set = p => { const y = H * rise(p); below.constant = y; lift.constant = Math.min(top + 0.01, y + 0.35); setRing(y); setPieces(p);
-      if (sc.visible && p >= down && scene && p < 1) for (const [x, z] of posts) puffBurst(x, 0.04, z, 2); // (in the game: dust as it comes down)
+      if (sc.visible && p >= down && scene && p < 1) for (const [x, z] of posts) puffBurst(x + off[0], 0.04, z + off[1], 2); // (in the game: dust as it comes down)
       sc.visible = p < down; deck.position.y = Math.max(0, y - 0.03); deck.visible = y > 0.12 && p < Math.min(0.9, down); };
     set(0);
-    return { set };
+    return { set, S };
   }
   // ---- A damaged building: construction run backward. As its health drops the roof (and cap, chimney, awnings) crumbles
   // away, then the walls break down to a jagged top, lower and lower; destroyed, the last of it drops into dust. Chunks
   // fall off as it goes. Viewer-only: it reads hp, nothing more. g: a fresh (unbaked) finished model; (x0, z0, w, h) its
   // footprint; its falling bits go into g. Returns { set(hpFrac), collapse(), tick(dt) → true once gone, shown }.
   const structure = (g, f) => { const walk = o => { if (o.name === 'sails' || o.name === 'flag') return; if (o.isMesh && !o.isInstancedMesh && !HULL_MATS.has(o.material)) f(o); for (const c of o.children) walk(c); }; walk(g); };
-  function buildingDamage(g, x0, z0, w, h){
+  // the chunks' colours — the pieces' (roof) and the walls' (the most-used face) — and the box they fall from
+  function damageLook(g){
     g.updateMatrixWorld(true);
-    // the chunks' colours: the pieces' (roof) and the walls' (the most-used face)
     const inPiece = o => { for (let p = o; p && p !== g; p = p.parent) if (p.userData.piece) return true; return false; };
     let roofCol = null; const wallN = new Map(), bb = new THREE.Box3(), box = new THREE.Box3();
     structure(g, o => { box.union(bb.setFromObject(o, true)); for (const m of [].concat(o.material)) { if (!m.color || INTERIOR_MATS.has(m)) continue;
       if (inPiece(o)) roofCol = roofCol || '#' + m.color.getHexString(); else wallN.set(m, (wallN.get(m) || 0) + 1); } });
     const wallCol = '#' + (([...wallN.entries()].sort((a, b) => b[1] - a[1])[0] || [{ color: new THREE.Color('#9a8a74') }])[0].color.getHexString());
-    const site = constructionSite(g, x0, z0, w, h, false, true);
+    return { roofCol, wallCol, box };
+  }
+  // (site, look: a copy's — siteCopy — else made here)
+  function buildingDamage(g, x0, z0, w, h, site = null, look = null){
+    const { roofCol, wallCol, box } = look || damageLook(g);
+    site = site || constructionSite(g, x0, z0, w, h, false, true);
     let shown = 1, target = 1, rate = 0.5, last = 1, st = site.damage(1);
     const bits = [], puffs2 = [];
     const burst = (n, y, col) => { for (let i = 0; i < n; i++) {
@@ -5029,8 +5052,11 @@ gl_Position = projectionMatrix * mvPosition;`;
     // (taken over: refreshBuildings won't drop it — so what stands about it goes now: the yard's trainees, a roof's archers)
     if (rec && rec.dmg) { solids.delete(e.id); g = rec.obj; d = rec.dmg; g.userData.bid = null;
       for (const t of (rec.trainees || []).concat(rec.roof || [], rec.yard || [])) dropVillager(t); rec.trainees = rec.roof = rec.yard = null; }
+    else if (!isWallBtype(e.btype) && !isGateBtype(e.btype)) { if (!MODELS[e.btype]) return;   // (its damaged look: a copy, as a standing one's)
+      const snap = { ...e, hp: 1, complete: true }; let cp; try { cp = siteCopy(siteTemplate(snap, modelKey(snap, true), true), snap); } catch (err) { return; }
+      g = cp.obj; g.userData.bid = null; scene.add(g); d = buildingDamage(g, e.x, e.y, w, h, cp.drive, cp.look); }
     else { g = new THREE.Group(); const snap = { ...e, hp: 1, complete: true, openTop: true };
-      try { if (isWallBtype(e.btype) || isGateBtype(e.btype)) g.add(wallModel(snap, []).obj); else if (MODELS[e.btype]) MODELS[e.btype](g, snap); else return; } catch (err) { return; }
+      try { g.add(wallModel(snap, []).obj); } catch (err) { return; }
       addHulls(g); scene.add(g); d = buildingDamage(g, e.x, e.y, w, h); }
     d.collapse(); falls.push({ g, d });
     shakeFrom(c.x, c.y, Math.min(0.06, 0.012 * Math.sqrt(w * h)));
@@ -5081,7 +5107,9 @@ gl_Position = projectionMatrix * mvPosition;`;
         namedPart(h, 'hoistRope').scale.y = L; namedPart(h, 'hoistLog').position.y = -L; }
       if (rec.anims && rec.anims.length && rec.obj.visible && !rec.site && !rec.dmg) for (const o of rec.anims) o.userData.anim(o, aTick);   // (the mining camp's wheel, bucket and fire)
       if (rec.pennants) for (const p of rec.pennants) p.rotation.y = 0.35 * Math.sin(t * 0.9 + p.userData.phase) + 0.12 * Math.sin(t * 2.3 + p.userData.phase * 2); // (swinging in the wind)
-      if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) rec.site.set((be.buildProgress || 0) / be.buildTime); }
+      if (rec.earth) { const fe = entitiesById.get(rec.obj.userData.bid); rec.earth.visible = !!fe && !groundShowsField(fe); }
+      // (a field being sown: its sheaf grows each frame, not at the static refresh)
+      if (rec.site) { const be = entitiesById.get(rec.siteOf); if (be) { rec.site.set((be.buildProgress || 0) / be.buildTime); if (rec.crop) cropGrow(be, rec.crop); } }
       if (rec.dmg && rec.obj.visible) { const fe = entitiesById.get(rec.obj.userData.bid); if (fe) rec.dmg.set(fe.hp / fe.maxHp); rec.dmg.tick(dt); } // (its damage by its health)
       if (rec.door) { // gates slide their door up as they open (read-only)
         const ge = entitiesById.get(rec.doorOf);
@@ -5149,24 +5177,14 @@ gl_Position = projectionMatrix * mvPosition;`;
     fowAll(g);
     return renderer.compileAsync ? renderer.compileAsync(g, camera, scene) : Promise.resolve();
   }
-  // A skinned kind: its finished model (the shared template made ahead too) under its skin, compiled and drawn once,
-  // the skin's materials kept (their programs held)
-  function warmSkin(btype, team){
-    try { const e = { id: -9, type: 'building', btype, x: 2, y: 2, team, complete: true, hp: 1, maxHp: 1, queue: [], garrison: [] };
-      let g; if (SHARED_MODELS.has(btype)) g = sharedModel(e, modelKey(e, false));
-      else { g = new THREE.Group(); MODELS[btype](g, e); footPlate(g, e); addHulls(g); g.userData.bodyH = bodyHeight(g); bakeStill(g); }
-      fowAll(g); const skin = cutSkin(g); skin.cut.value = (g.userData.bodyH || 1) * 0.5;
-      const done = () => { warmKept.push(...skin.made.values()); g.traverse(o => { o.userData.siteOwn = false; }); dropSolid({ obj: g }); };
-      warmCompile(g).then(() => { warmRender(g); done(); }, done);
-    } catch (err) { /* a warm-up only */ }
-  }
   function warmStep(){
     const q = warmQueue.shift(); if (!q || ((teamAge && teamAge[q.team]) || 0) !== q.age) return;
     const { btype, hurt } = q, b = BLDGS[btype];
-    if (SKINNED.has(btype)) { if (hurt) return; warmSkin(btype, q.team); return; }
-    const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: q.team, complete: hurt || !!q.whole, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
-    try { const g = new THREE.Group(); g.userData.levelAs = e; MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g); fowAll(g);   // (patched before a site's clones of them are cut, as a standing world's are)
-      const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else if (!q.whole) rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
+    const e = { id: -9, warm: true, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: q.team, complete: hurt || !!q.whole, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
+    try { let g, rec;
+      if (!q.whole) { const cp = siteCopy(siteTemplate(e, modelKey(e, hurt), hurt), e); g = cp.obj; fowAll(g); rec = { obj: g };   // (the template made ahead: a first site is a copy)
+        if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h, cp.drive, cp.look); else rec.site = cp.drive; }
+      else { g = new THREE.Group(); g.userData.levelAs = e; MODELS[btype](g, e); addHulls(g); fowAll(g); rec = { obj: g }; }
       // (its site and damage materials kept: three frees a program once no material holds it — dropped with the stand-in,
       // every program warmed here was gone again before the first real site, which compiled them all over)
       const done = () => { g.traverse(o => { if (o.userData.siteOwn) { warmKept.push(...[].concat(o.material)); o.userData.siteOwn = false; } }); dropSolid(rec); };
@@ -7354,7 +7372,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   window.__povMem = () => { const sz = m => { let b = 0; for (const v of m.values()) { if (v && v.m) b += v.m.byteLength || 0; } return b; };
     let tv = 0; for (const T of rigTemplates.values()) tv += T.verts || 0; let cv = 0; for (const c of vilCache.values()) cv += c.verts || 0;
     return { rigSamples: rigSamples.size, rigSampleMB: +(sz(rigSamples) / 1048576).toFixed(1), rigTemplates: rigTemplates.size, templateVertsK: Math.round(tv / 1000), vilCache: vilCache.size, vilCacheVertsK: Math.round(cv / 1000),
-      tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, villagers: villagers.size }; }; // dev: cache sizes
+      siteTpl: siteTemplates.size, siteTplVertsK: Math.round([...siteTemplates.values()].reduce((n, t) => { t.g.traverse(o => { if (o.geometry && o.geometry.attributes.position) n += o.geometry.attributes.position.count; }); return n; }, 0) / 1000), tickPos: tickPos.size, heading: heading.size, lastPh: lastPh.size, legMaps: legMaps.size, mats: mats.size, blobGeos: blobGeos.size, painted: painted.size, villagers: villagers.size }; }; // dev: cache sizes
   window.povStats = () => ({ frames: frame, jsMs: +stats.js.toFixed(2), glMs: +stats.gl.toFixed(2), units: villagers.size, animals: animals.size, buildings: solids.size, arrows: feat.shaft ? feat.shaft.n : 0, shadows: feat.shadow ? feat.shadow.mesh.count : 0, calls: renderer ? renderer.info.render.calls : 0, tris: renderer ? renderer.info.render.triangles : 0,
     programs: renderer ? renderer.info.programs.length : 0, geos: renderer ? renderer.info.memory.geometries : 0, tex: renderer ? renderer.info.memory.textures : 0 });   // (programs / geos / tex rising in a slow frame: what it was building)
 })();
