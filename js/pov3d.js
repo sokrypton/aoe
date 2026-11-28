@@ -111,7 +111,8 @@
   // ground itself, every model, instance, billboard, decal and puff rides the hills with no code of its own — a shadow
   // lies along its slope, a wall follows it. Opted out with the define NO_HILL (the clouds, the void beyond the map).
   // A BUILDING is lifted as one piece, by the ground at its centre (lifted by its vertices, the ground a neighbour's
-  // pad bends beside it would bend its roof): its baked geometry carries the spot (the hillAt attribute: levelGeo), a
+  // pad bends beside it would bend its roof): its baked geometry carries the spot (the hillAt attribute: levelGeo — the
+  // world spot, or (z = 2) a spot in the model's own frame: a model shared by buildings, placed by its position), a
   // material made for one building — a site's, a damaged one's, a ghost's — a uniform (hillAtU: levelMat).
   // The CODE side knows heights in three places only: the camera (camLift: the world is drawn from a camera raised by
   // the ground under the view's anchor, and everything else here reasons in the flat frame), project() and pick().
@@ -141,7 +142,8 @@
 #ifdef HILL_AT_U
 	hillXZ = hillAtU;
 #elif defined( HILL_ATTR )
-	if ( hillAt.z > 0.5 ) hillXZ = hillAt.xy;
+	if ( hillAt.z > 1.5 ) hillXZ = ( modelMatrix * vec4( hillAt.x, 0.0, hillAt.y, 1.0 ) ).xz;
+	else if ( hillAt.z > 0.5 ) hillXZ = hillAt.xy;
 #endif
 	${lift('mvPosition', 'hillXZ')}
 	mvPosition = viewMatrix * mvPosition;
@@ -156,9 +158,9 @@ gl_Position = projectionMatrix * mvPosition;`;
     c.onBeforeCompile = function(sh, r){ if (ob) ob.call(this, sh, r); sh.uniforms.hillAtU = at; }; c.onBeforeCompile.fow = !!(ob && ob.fow);
     return c;
   }
-  function levelGeo(root, x, z){   // every geometry of its own under root (baked: bakeStill)
+  function levelGeo(root, x, z, local = false){   // every geometry of its own under root (baked: bakeStill); local: x, z in its own frame
     root.traverse(o => { const g = o.geometry; if (!g || !g.userData.own || !g.attributes.position || g.attributes.hillAt) return;
-      const n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = x; a[i * 3 + 1] = z; a[i * 3 + 2] = 1; }
+      const n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = x; a[i * 3 + 1] = z; a[i * 3 + 2] = local ? 2 : 1; }
       g.setAttribute('hillAt', new THREE.BufferAttribute(a, 3)); });
   }
   const standsLevel = e => !!e && e.type === 'building' && !isWallBtype(e.btype) && !isGateBtype(e.btype);   // (a wall and a gate follow the slope)
@@ -4433,6 +4435,28 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // (models the same in every age: an age-up re-keyed every farm and market, rebuilt for nothing)
   const AGELESS = new Set(['FARM', 'MARKET']);
+  // A finished building's model is the same for every building of its kind, age and team: made ONCE, at the origin, and
+  // each building takes a copy placed by its position — its geometry shared (a second barracks, an age-up's fifty
+  // buildings: no model made again). Not a house or a farm (their shape is their spot's: their neighbours, their crop),
+  // a site or a damaged one (their parts each their own). A copy's own: its root, its moving parts' transforms, a flag's
+  // cloth (waved in place each frame); its spots in the world (smoke, trainees) and a horse's gait seed set here.
+  const SHARED_MODELS = new Set(['TC', 'BARRACKS', 'LCAMP', 'MCAMP', 'MILL', 'TOWER', 'PTOWER', 'MARKET', 'CASTLE']);
+  const bldTemplates = new Map();
+  function sharedModel(e, key){
+    const sk = e.btype + '|' + key; let T = bldTemplates.get(sk);
+    if (!T) { const eL = { ...e, x: 0, y: 0 }; T = new THREE.Group();
+      MODELS[e.btype](T, eL); footPlate(T, eL); addHulls(T); bakeStill(T); const c = centerOf(eL); levelGeo(T, c.x, c.y, true);
+      T.traverse(o => { if (o.geometry) o.geometry.userData.own = false; });   // (shared: never freed with a building)
+      bldTemplates.set(sk, T); }
+    const g = T.clone(), src = [], dst = []; T.traverse(o => src.push(o)); g.traverse(o => dst.push(o));
+    for (let i = 0; i < src.length; i++) { const o = dst[i]; o.userData = { ...src[i].userData };   // (clone() copies userData through JSON: an anim's function lost)
+      if (o.name === 'flag' && o.geometry) { const gu = o.geometry.userData; o.geometry = o.geometry.clone(); o.geometry.userData = { ...gu, own: true }; }
+      if (o.userData.horseSeed !== undefined) o.userData.horseSeed = e.id * 0.37 % 1; }
+    g.position.set(e.x, 0, e.y); g.userData.bid = e.id;
+    if (g.userData.smoke) g.userData.smoke = g.userData.smoke.map(([x, y, z]) => [x + e.x, y, z + e.y]);
+    if (g.userData.trainees) g.userData.trainees = g.userData.trainees.map(t => ({ ...t, x: t.x + e.x, z: t.z + e.y }));
+    freezeStill(g); return g;
+  }
   function refreshModel(e){
     const hurt = isHurt(e);
     const key = (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
@@ -4447,11 +4471,15 @@ gl_Position = projectionMatrix * mvPosition;`;
       if (bldSpent > BLD_MS) { bldLeft = true; return; }   // (as refreshWall)
       const tb = performance.now();
       if (rec) { if (rec.site && e.complete) siteDone(e); dropSolid(rec); }
-      const g = new THREE.Group();
-      MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
-      footPlate(g, e);
-      addHulls(g);
-      if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+      let g;
+      if (e.complete && !hurt && SHARED_MODELS.has(e.btype)) g = sharedModel(e, key);
+      else {
+        g = new THREE.Group();
+        MODELS[e.btype](g, hurt ? { ...e, openTop: true } : e); g.userData.bid = e.id; // (the world view's click picks it by this; a damaged one open under its roof)
+        footPlate(g, e);
+        addHulls(g);
+        if (e.complete && !hurt) { bakeStill(g); const c = centerOf(e); levelGeo(g, c.x, c.y); freezeStill(g); }   // (a site, or a damaged one, stays in parts: constructionSite reads each wall's depth)
+      }
       scene.add(g);
       const flags = [], horses = [];
       g.traverse(o => {
@@ -4655,7 +4683,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     // wall's own top comes down with it (its depth showing, openings above closed over). Flat faces (clipOnly) and the ink
     // lines are cut there instead; a box's team-coloured top waits for the finished building.
     const below = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), siteY = { value: 0 }, siteJag = { value: 0 };
-    const built = new Map(), level = standsLevel(entitiesById.get(g.userData.bid)) ? { value: new THREE.Vector2(x0 + w / 2, z0 + h / 2) } : null;
+    // (levelAs: a warm-up's stand-in, no entity behind it — levelled as its kind is, or it compiles programs no site uses)
+    const built = new Map(), level = standsLevel(entitiesById.get(g.userData.bid) || g.userData.levelAs) ? { value: new THREE.Vector2(x0 + w / 2, z0 + h / 2) } : null;
     const cutMat = m => { let c = built.get(m); if (c) return c;
       c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey;
       if (m.isLineBasicMaterial) c.clippingPlanes = [below];                           // (ink: cut at the top, not pressed onto it)
@@ -5014,7 +5043,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // thickGeo; its shaders compiled), and it would otherwise be met mid-battle, the frame a building is first hit.
   // …and again for an age a team reaches (its buildings change shape), one kind a frame (warmStep): all at once it
   // would be the stall it is there to prevent.
-  const warmQueue = [], warmedKinds = new Set();
+  const warmQueue = [], warmedKinds = new Set(), warmKept = [];   // warmKept: the warm-ups' site materials, holding their programs
   function prewarmShapes(){
     // (only the kinds that stand, each once an age: one first built later is warmed then — drawFrame calls this now and again)
     const have = new Set(); for (const e of entities) if (e.type === 'building') have.add(e.btype);
@@ -5028,6 +5057,15 @@ gl_Position = projectionMatrix * mvPosition;`;
   // Compile what g will draw with, off the frame (parallel where the GPU can): its materials fog-patched first, as they
   // will be at their first draw (fowPatch, on render) — compiled unpatched, the warm-up made programs nothing uses.
   const fowAll = g => { if (fowU.value) g.traverse(o => { for (const m of [].concat(o.material || [])) if (m && m.onBeforeCompile && !m.onBeforeCompile.fow) fowPatch(m); }); };
+  // …and drawn once, into a 1×1 target, after the parallel compile: some programs are made only in a real draw, from its
+  // state (a site's cut ink: its clipping plane) — compiled ahead, the first real site still stalled on them.
+  let warmRT = null;
+  function warmRender(g){
+    warmRT = warmRT || new THREE.WebGLRenderTarget(1, 1); const cull = [];
+    g.traverse(o => { if (o.frustumCulled) { cull.push(o); o.frustumCulled = false; } });
+    scene.add(g); const rt = renderer.getRenderTarget();
+    try { renderer.setRenderTarget(warmRT); renderer.render(scene, camera); } finally { renderer.setRenderTarget(rt); scene.remove(g); for (const o of cull) o.frustumCulled = true; }
+  }
   function warmCompile(g){
     fowAll(g);
     return renderer.compileAsync ? renderer.compileAsync(g, camera, scene) : Promise.resolve();
@@ -5036,10 +5074,12 @@ gl_Position = projectionMatrix * mvPosition;`;
     const q = warmQueue.shift(); if (!q || ((teamAge && teamAge[q.team]) || 0) !== q.age) return;
     const { btype, hurt } = q, b = BLDGS[btype];
     const e = { id: -9, type: 'building', btype, x: 2, y: 2, w: b.w, h: b.h, team: q.team, complete: hurt || !!q.whole, hp: b.hp * 0.4, maxHp: b.hp, buildProgress: 0, buildTime: 200, gateProgress: 0, queue: [], garrison: [] };
-    try { const g = new THREE.Group(); MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g); fowAll(g);   // (patched before a site's clones of them are cut, as a standing world's are)
+    try { const g = new THREE.Group(); g.userData.levelAs = e; MODELS[btype](g, hurt ? { ...e, openTop: true } : e); addHulls(g); fowAll(g);   // (patched before a site's clones of them are cut, as a standing world's are)
       const rec = { obj: g }; if (hurt) rec.dmg = buildingDamage(g, e.x, e.y, b.w, b.h); else if (!q.whole) rec.site = constructionSite(g, e.x, e.y, b.w, b.h, !OPEN_SITE.has(btype));
-      const done = () => dropSolid(rec);
-      warmCompile(g).then(done, done);
+      // (its site and damage materials kept: three frees a program once no material holds it — dropped with the stand-in,
+      // every program warmed here was gone again before the first real site, which compiled them all over)
+      const done = () => { g.traverse(o => { if (o.userData.siteOwn) { warmKept.push(...[].concat(o.material)); o.userData.siteOwn = false; } }); dropSolid(rec); };
+      warmCompile(g).then(() => { warmRender(g); done(); }, done);
     } catch (err) { /* a warm-up only */ }
   }
   function refreshBuildings(){
