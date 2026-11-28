@@ -2540,9 +2540,16 @@ async function withPage(browser, port, entry, fn){
               const d = Math.hypot(xx - x, yy - y); if (d < bd) { bd = d; best = { x: xx, y: yy }; } }
             return best; };
           const anchorFor = { LCAMP: TERRAIN.FOREST, MCAMP: TERRAIN.GOLD, MILL: TERRAIN.BERRIES };
+          const TERR = { food: TERRAIN.BERRIES, wood: TERRAIN.FOREST, gold: TERRAIN.GOLD, stone: TERRAIN.STONE };
+          const TASKOF = { food: 'forage', wood: 'chop', gold: 'mine_gold', stone: 'mine_stone' };
           const build = (bt) => {
             if (scenarioObjects(bt, 0, null, true).length) return;
             const vils = mine('villager').slice(0, 3); if (!vils.length) return;
+            // short of its cost: put two villagers on what's missing, as a player would (no one may be idle to send)
+            const cost = effectiveBuildCost(bt), short = Object.keys(cost).filter(k => resourceStore(0)[resourceName(k)] < cost[k]).map(resourceName);
+            if (short.length) { for (const k of short) { if (mine('villager').some(v => v.task === TASKOF[k])) continue;
+              const r = near(tc().x, tc().y, TERR[k]), vs = mine('villager').filter(v => !v.buildTarget).slice(0, 2);
+              if (r && vs.length) cmd({ kind: 'command', unitIds: vs.map(v => v.id), tileX: r.x, tileY: r.y }); } return; }
             const t = tc(), res = anchorFor[bt] != null ? near(t.x, t.y, anchorFor[bt]) : null;
             const a = res || { x: t.x + 6, y: t.y - 4 };
             for (let rad = 1; rad < 10; rad++) for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {

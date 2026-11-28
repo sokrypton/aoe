@@ -1011,7 +1011,7 @@ function crowdedByUnits(u){
 // T30(240) so units self-correct instead of freezing until forcibly freed:
 //
 //   1. strike spacing (T30(15))     — a failed re-plan waits before searching again
-//   2. chaseProg (CHASE_STALL_TICKS T30(90)) — "has a path but zero progress"
+//   2. chaseProg (CHASE_STALL_TICKS T30(90)) — "has a path but zero progress" (nearer, the foe hurt, or a tile walked)
 //      detector inside combatApproach; reset on real progress only
 //   3. 'chaseBlocked' 2-strike      — two stalled/empty-path rounds hand off
 //      to resolveStalledAttack (redirect to a breachable wall / disengage /
@@ -1022,8 +1022,8 @@ function crowdedByUnits(u){
 //      nearestReachableWallLike's exclusion
 //   5. stuck-watchdog (updateStuckWatchdog) — last-resort net, unchanged
 //
-// State contract (lockstep): chaseProg{id,d,hp,since} — since+id hashed,
-// d/hp deliberately derived-only; unreachId/Until hashed; retry entries
+// State contract (lockstep): chaseProg{id,d,hp,x,y,since} — since+id hashed,
+// d/hp/x/y deliberately derived-only; unreachId/Until hashed; retry entries
 // hashed generically. Field names and stamp ticks are frozen — see
 // detEntityHash (js/determinism.js).
 // Shared approach-with-patience: pathing can fail TRANSIENTLY when the
@@ -1098,8 +1098,10 @@ function combatApproach(u,tgt,dist,pathFn){
     // no-progress window is a deadlock — fall through to the empty-path
     // give-up.
     let pr=u.chaseProg;
-    if(!pr || pr.id!==tgt.id || dist < pr.d-0.25 || tgt.hp < pr.hp){
-      u.chaseProg={id:tgt.id, d:dist, hp:tgt.hp, since:tick};
+    // (…or the chaser walked a tile: on the heels of a mover going its own pace — a wandering sheep — the gap holds,
+    // and read as a jam it stood idle a strike-spacing at every window, then walked on: stop-start the whole chase)
+    if(!pr || pr.id!==tgt.id || dist < pr.d-0.25 || tgt.hp < pr.hp || (u.x-pr.x)*(u.x-pr.x) + (u.y-pr.y)*(u.y-pr.y) >= 1){
+      u.chaseProg={id:tgt.id, d:dist, hp:tgt.hp, x:u.x, y:u.y, since:tick};
       retryClear(u,RETRY.CHASE_BLOCKED);
       return true;
     }
@@ -1214,14 +1216,14 @@ function resolveStalledAttack(u, tgt){
 // this closes the gap so attackers/gatherers pack tight. Never into terrain/walls, nor another unit's body (intoBody):
 // the ring forms where the bodies meet. sqrt/division/arithmetic only — lockstep-safe.
 const PRESS_REARM = 0.15;   // tiles of drift past the deadband before a unit at rest presses again
-function pressToContact(e, cx, cy, contactDist, deadband=0.2){
+function pressToContact(e, cx, cy, contactDist, deadband=0.2, rearm=PRESS_REARM){
   if(e.path.length!==0)return;               // only when settled
   let dx=cx-e.x, dy=cy-e.y;
   let d=Math.sqrt(dx*dx+dy*dy);
   // Hysteresis: a press runs on to the band's edge, but one at rest only re-arms PRESS_REARM past it — re-armed at the
   // edge, each hair of drift made a one-tick step and the legs flickered between stand and walk.
   const band=contactDist+deadband;
-  if(d<=band||(d<=band+PRESS_REARM&&!(e.pressWalk>=tick-1)))return;
+  if(d<=band||(d<=band+rearm&&!(e.pressWalk>=tick-1)))return;
   let walkStep = unitMoveSpeed(e)/TPS;
   let step=Math.min(walkStep, d-contactDist);
   let nx=e.x+dx*(step/d), ny=e.y+dy*(step/d);
@@ -3139,6 +3141,11 @@ function updateUnitCombat(e){
           e.target = null;
           return;
         }
+        // Its tile already in reach of the foe's (findPath's rounded goal test: no walk to plan) but not the foe itself —
+        // a mover sitting off its tile's centre: press in. Planned, the empty path read as a failed chase and it stood a
+        // strike-spacing, then tried again: stop-start after a wandering sheep.
+        let rx=Math.round(e.x)-Math.round(t.x), ry=Math.round(e.y)-Math.round(t.y);
+        if(e.path.length===0 && rx*rx+ry*ry <= maxD*maxD && !cornerBlocked){ pressToContact(e, t.x, t.y, Math.max(0.7, maxD-0.2), 0.2, 0); if(e.pressWalk===tick) return; }   // (no re-arm band: short of reach it must close; a press blocked — a body in the way — plans as before)
         // Approach to strike range: findPath stops at the nearest reachable
         // in-range (adjacent) tile, so a group rings the target naturally and
         // an overflow attacker (no free adjacent tile reachable) gets an empty

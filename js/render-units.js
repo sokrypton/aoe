@@ -1400,7 +1400,16 @@ function isUnitMoving(e){ return e.path.length>0 || e.pressWalk===tick; }
 // For the drawing: a press-slide onto a target already in reach (the sim's cosmetic packing round a carcass) isn't a
 // walk — the drawn work spot walks it in (villagerWorkSpot); counted, the two disagreed and the villager lurched in and
 // out, its heading swinging, as the sheep fell. Viewer-only.
-function isDrawnMoving(e){ return e.path.length>0 || (e.pressWalk===tick && !(e.target && !e.task && inActionRange(e))); }
+// Moving as drawn: on a path, pressing into reach this tick, or walking the tick before and moved since (render.js's
+// _drawPrev) — the sim stands a unit at its tile's centre one tick between its path's end and its press into contact:
+// read as stopped, it flicked into its work pose for that frame and back. (Walking before: a worker nudged by its
+// neighbours isn't walking.)
+function isDrawnMoving(e){
+  if (e.target && !e.task && inActionRange(e)) return e.path.length > 0;   // (a fighter in reach: its press steps are its strike's)
+  if (e.path.length > 0 || e.pressWalk === tick) return true;
+  const p = typeof _drawPrev !== 'undefined' && _drawPrev.get(e.id);
+  return !!(p && p[2] && (e.x !== p[0] || e.y !== p[1]));
+}
 
 // The ground a drawn animal covered since its last frame (a: its render state, px/py the spot last seen) → [mx, my];
 // a jump of a tile or more — out of a garrison, a snap, a gallery treadmill stepping back — isn't walking: [0, 0].

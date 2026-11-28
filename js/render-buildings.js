@@ -1019,6 +1019,13 @@ const BARRACKS_SHIELD = [[-1, 0.9], [1, 0.9]].concat(
 // aTick) — the log hauled up from lo to hi, a pause at the loft, let down, a pause on the ground. Viewer-only.
 function hoistLength({ lo, hi, phase }, clk){ const u = ((clk / 520 + phase) % 1 + 1) % 1, e = v => v * v * (3 - 2 * v);
   const k = u < 0.4 ? e(u / 0.4) : u < 0.5 ? 1 : u < 0.9 ? 1 - e((u - 0.5) / 0.4) : 0; return lo + (hi - lo) * k; }
+// The mining camp's shaft house (Feudal on), tile-local, shared by drawBuilding MCAMP and pov3d's shaftHouse: an open
+// shed on four posts round a fire pit, its hipped roof (ov: the eaves past the posts) closing in a collar (rc; its
+// opening ho) under a head-frame (cap at H) whose wheel (wr, axle at wy) winds a bucket between lo and hi.
+const SHAFT = (() => { const b0 = 0.05, wH = b0 + 0.34, Yr = wH + 0.2, H = 1.12, wr = 0.13;
+  return { cx: 0.6, cz: 0.38, hw: 0.29, ov: 0.064, b0, wH, Yr, Yc: Yr + 0.06, rc: 0.13, ho: 0.095, H, wr, wy: H + 0.035 + wr + 0.015, po: 0.15, lo: b0 - 0.1, hi: H - 0.13, cyc: 320 }; })();
+function shaftLift(clk){ const u = ((clk / SHAFT.cyc) % 1 + 1) % 1, e = v => v * v * (3 - 2 * v);   // the bucket's height 0..1: up, a pause, down, a pause
+  return u < 0.42 ? e(u / 0.42) : u < 0.55 ? 1 : u < 0.95 ? 1 - e((u - 0.55) / 0.4) : 0; }
 function buildingShadowPolys(e){
   if (e.btype === 'FARM') return [];
   const b = BLDGS[e.btype], w = e.w !== undefined ? e.w : b.w, h = e.h !== undefined ? e.h : b.h, x = e.x, y = e.y;   // (a gate is 1×3 or 3×1 as placed)
@@ -1030,6 +1037,8 @@ function buildingShadowPolys(e){
      [rect(x + w / 2, y, x + w, y + h / 2), 0.6], [rect(x, y + h / 2, x + w / 2, y + h), 0.6]];
   else if (bt === 'BARRACKS') { const k = w / 3; blocks = [[rect(x, y + 0.14 * k, x + 1.22 * k, y + 2.95 * k), 0.75]]; }   // (pov3d's hall, BP(±30, ∓13))
   else if (bt === 'LCAMP' && teamAge && isPlayerTeam(e.team) && teamAge[e.team] >= 1) blocks = [[rect(x + 0.36, y + 0.1, x + 0.94, y + 0.6), 0.75]];   // (its Feudal+ two-storey shed)
+  else if (bt === 'MCAMP' && teamAge && isPlayerTeam(e.team) && teamAge[e.team] >= 1) { const S = SHAFT, R = S.hw + S.ov, cx = x + S.cx, cz = y + S.cz;   // (its shaft house: the roof, the head-frame)
+    blocks = [[rect(cx - R, cz - R, cx + R, cz + R), S.Yr], [rect(cx - 0.1, cz - 0.1, cx + 0.1, cz + 0.1), S.wy + S.wr]]; }
   else if (bt === 'LCAMP' || bt === 'MCAMP') blocks = [[rect(x + 1 - 0.625, y, x + 1, y + 0.625), 0.5]];                  // (campHut's box)
   else if (bt === 'MILL') { const r = 0.36 * w; blocks = [[Array.from({ length: 12 }, (_, i) => [x + w / 2 + r * Math.cos(i * Math.PI / 6), y + h / 2 + r * Math.sin(i * Math.PI / 6)]), 1]]; }
   else if (bt === 'CASTLE') blocks = CASTLE_PARTS.flat().filter(q => q.kind !== 'crown').map(q => [rect(x + q.b[0], y + q.b[1], x + q.b[2], y + q.b[3]), (q.kind === 'roof' ? q.y0 + q.rise * 0.6 : q.y1) / ART_HPX]);
@@ -1340,6 +1349,71 @@ function drawBaked(owner, key, ax, ay, l, t, w, h, draw){
 // art's height (the conservative pad the outline boxes use) — a flat 100px culled a 4x4 Town Center half in view.
 function buildingCullMargin(fw, fh){ return (fw + fh) / 2 * HALF_TW + 60 + 18 * Math.max(fw, fh) + 16; }
 
+// pov3d's shaftHouse, projected (tile-local → screen; SHAFT), back to front: the floor, the pit and its fire, the far
+// post, the bucket below the eaves, the other posts, the beam ring, the roof, the collar, the head-frame (far legs, the
+// bucket in it, near legs, braces), its cap, the wheel between its bearing blocks. A site: the frame, no fire or wheel.
+function drawShaftHouse2D(sx, sy, e, tc, darken){
+  const S=SHAFT, W=(x,y,z)=>[sx+(x-z)*HALF_TW, sy+(x+z)*HALF_TH-y*TREE_HPX], dk=c=>darken?darkenColor(c):c, done=e.complete;
+  const poly=(pts,col,line=true)=>{X.fillStyle=col;X.beginPath();X.moveTo(...pts[0]);for(const q of pts.slice(1))X.lineTo(...q);X.closePath();X.fill();if(line)X.stroke();};
+  // a box: its three faces filled, one outline round the silhouette (per-face strokes swamp thin posts in black)
+  const box=(x0,z0,x1,z1,y0,y1,top,left,right,lw=1.2)=>{ poly([W(x0,y0,z1),W(x1,y0,z1),W(x1,y1,z1),W(x0,y1,z1)],left,false); poly([W(x1,y0,z0),W(x1,y0,z1),W(x1,y1,z1),W(x1,y1,z0)],right,false);
+    poly([W(x0,y1,z0),W(x1,y1,z0),W(x1,y1,z1),W(x0,y1,z1)],top,false); poly([W(x0,y1,z0),W(x1,y1,z0),W(x1,y0,z0),W(x1,y0,z1),W(x0,y0,z1),W(x0,y1,z1)],'rgba(0,0,0,0)',false); X.lineWidth=lw; X.stroke(); X.lineWidth=1.2; };
+  const {cx,cz,hw,b0,wH,Yr,Yc,rc,ho,H,wr,wy,po}=S, X0=cx-hw, X1=cx+hw, Z0=cz-hw, Z1=cz+hw, TW=dk('#b89868'), TL=dk('#c8a87a'), TD=dk('#987848');
+  const seam=dk('#2e2216'), up=shaftLift(animTick), by=S.lo+up*(S.hi-S.lo);
+  X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
+  box(X0-0.03,Z0-0.03,X1+0.03,Z1+0.03,0,b0,dk('#b3ab9b'),dk('#a39a89'),dk('#8f8778'));                        // the stone floor
+  if(done){ poly([W(cx-po,b0,cz-po),W(cx+po,b0,cz-po),W(cx+po,b0,cz+po),W(cx-po,b0,cz+po)],'#14110e',false);            // the pit, its glow and flames
+    const k=0.6+0.4*Math.sin(animTick*0.08)*Math.sin(animTick*0.031), g=po*0.6;
+    poly([W(cx-g,b0,cz-g),W(cx+g,b0,cz-g),W(cx+g,b0,cz+g),W(cx-g,b0,cz+g)],dk(`rgb(255,${Math.round(77+77*k)},${Math.round(15*k)})`),false);
+    for(const [dx,dz,fh,col,ph] of [[-0.05,-0.03,0.09,'#ff7a1a',0],[0.05,0.04,0.11,'#ffb02e',2],[0,0,0.15,'#ffd44a',4],[-0.03,0.05,0.08,'#ff7a1a',1],[0.05,-0.05,0.08,'#ff7a1a',3]]){
+      const h=fh*(0.75+0.25*Math.sin(animTick*0.21+ph)+0.12*Math.sin(animTick*0.47+ph*2)), [fx,fy]=W(cx+dx,b0,cz+dz), [,ty]=W(cx+dx,b0+h,cz+dz);
+      X.fillStyle=dk(col);X.beginPath();X.moveTo(fx-2.6,fy);X.lineTo(fx+2.6,fy);X.lineTo(fx,ty);X.closePath();X.fill(); } }
+  const pr=0.022, post=(px,pz)=>box(px-pr,pz-pr,px+pr,pz+pr,b0,wH-0.04,TL,TW,TD,0.9);
+  const bucket=()=>{ const [rx,ry]=W(cx,by+0.1,cz), [,ty]=W(cx,wy-wr,cz); X.strokeStyle=dk('#3a3027');X.lineWidth=1;X.beginPath();X.moveTo(rx,ry);X.lineTo(rx,ty);X.stroke();
+    const r0=0.055, r1=0.062, [bx,b1]=W(cx,by,cz), [,b2]=W(cx,by+0.1,cz), e0=r0*HALF_TW*Math.SQRT2, e1=r1*HALF_TW*Math.SQRT2;
+    X.strokeStyle='#000';X.lineWidth=1.2;X.fillStyle=dk('#5c4430');X.beginPath();X.moveTo(bx-e1,b2);X.lineTo(bx-e0,b1);X.ellipse(bx,b1,e0,e0/2,0,Math.PI,0,true);X.lineTo(bx+e1,b2);X.closePath();X.fill();X.stroke();
+    X.fillStyle=dk('#e8b90f');X.beginPath();X.ellipse(bx,b2,e1,e1/2,0,0,Math.PI*2);X.fill();X.stroke(); };
+  post(X0+pr,Z0+pr);
+  if(done) bucket();                                                                                            // (the roof hides it up there)
+  post(X1-pr,Z0+pr); post(X0+pr,Z1-pr); post(X1-pr,Z1-pr);
+  const bt=0.044, y0=wH-0.04;   // the beam ring: the far beams' inner faces, the near beams' outer
+  poly([W(X0,y0,Z0+bt),W(X1,y0,Z0+bt),W(X1,wH,Z0+bt),W(X0,wH,Z0+bt)],TD); poly([W(X0+bt,y0,Z0),W(X0+bt,y0,Z1),W(X0+bt,wH,Z1),W(X0+bt,wH,Z0)],TD);
+  poly([W(X0,y0,Z1),W(X1,y0,Z1),W(X1,wH,Z1),W(X0,wH,Z1)],TW); poly([W(X1,y0,Z0),W(X1,y0,Z1),W(X1,wH,Z1),W(X1,wH,Z0)],TD);
+  // the roof: four hipped faces, the far two first — lit from the upper left (top > left > right)
+  const R=hw+S.ov, base=[[cx-R,cz-R],[cx+R,cz-R],[cx+R,cz+R],[cx-R,cz+R]], tip=[[cx-rc,cz-rc],[cx+rc,cz-rc],[cx+rc,cz+rc],[cx-rc,cz+rc]], rl=dk(tc);
+  for(const [i,shade] of [[0,0.1],[3,0],[1,0.28],[2,0.14]]){ const j=(i+1)%4, q=[W(base[i][0],wH,base[i][1]),W(base[j][0],wH,base[j][1]),W(tip[j][0],Yr,tip[j][1]),W(tip[i][0],Yr,tip[i][1])];
+    poly(q,rl); if(shade){X.fillStyle=`rgba(0,0,0,${shade})`;X.beginPath();X.moveTo(...q[0]);for(const p of q.slice(1))X.lineTo(...p);X.closePath();X.fill();}
+    drawShingles2D(q[3],q[2],q[1],q[0],3); X.strokeStyle='#000';X.lineWidth=1.2;X.beginPath();X.moveTo(...q[0]);for(const p of q.slice(1))X.lineTo(...p);X.closePath();X.stroke(); }
+  // the collar: a box round the shaft, open on top
+  box(cx-rc,cz-rc,cx+rc,cz+rc,Yr-0.03,Yc,TL,TW,TD,0.9);
+  const hole=[W(cx-ho,Yc,cz-ho),W(cx+ho,Yc,cz-ho),W(cx+ho,Yc,cz+ho),W(cx-ho,Yc,cz+ho)], dp=0.08;   // the opening: dark, its far inner walls
+  X.save(); poly(hole,'#14110e',false); X.clip();
+  poly([W(cx-ho,Yc,cz-ho),W(cx+ho,Yc,cz-ho),W(cx+ho,Yc-dp,cz-ho),W(cx-ho,Yc-dp,cz-ho)],TD,false); poly([W(cx-ho,Yc,cz-ho),W(cx-ho,Yc,cz+ho),W(cx-ho,Yc-dp,cz+ho),W(cx-ho,Yc-dp,cz-ho)],TW,false);
+  X.restore(); X.beginPath();X.moveTo(...hole[0]);for(const q of hole.slice(1))X.lineTo(...q);X.closePath();X.strokeStyle=seam;X.lineWidth=0.7;X.stroke();X.strokeStyle='#000';X.lineWidth=1.2;
+  // the head-frame: legs from the collar's corners, tapering to the cap
+  const lb=0.105, lt=0.07, leg=(sx_,sz_,y)=>{ const r=lb+(lt-lb)*(y-Yc)/(H-Yc); return W(cx+sx_*r,y,cz+sz_*r); }, ym=(Yc+H)/2;
+  // the timbers at the 3D's own girth (poles 0.022, braces 0.014 — a hair's breadth of black each), so the tower stays
+  // open between its legs as in 3D; fatter 2D legs close it into a dark column
+  const beam=(a,b,wa,wb,col)=>{ const dx=b[0]-a[0], dy=b[1]-a[1], l=Math.hypot(dx,dy)||1, nx=-dy/l/2, ny=dx/l/2;
+    const q=[[a[0]+nx*wa,a[1]+ny*wa],[b[0]+nx*wb,b[1]+ny*wb],[b[0]-nx*wb,b[1]-ny*wb],[a[0]-nx*wa,a[1]-ny*wa]]; poly(q,col,false);
+    X.lineWidth=0.9;X.beginPath();X.moveTo(...q[0]);X.lineTo(...q[1]);X.moveTo(...q[2]);X.lineTo(...q[3]);X.stroke();X.lineWidth=1.2; };   // (its ends butt into other timber: un-inked)
+  const gw=HALF_TW*Math.SQRT2*2, Leg=(i,j)=>beam(leg(i,j,Yc),leg(i,j,H),0.022*gw,0.022*gw,TW), brace=(a,b)=>beam(leg(...a,ym),leg(...b,ym),0.014*gw,0.014*gw,TL);
+  Leg(-1,-1); brace([-1,-1],[1,-1]); brace([-1,-1],[-1,1]);                                                      // back to front: the far leg and its braces,
+  if(done&&by+0.1>Yc-0.1){ const A=W(cx-rc,Yc,cz+rc), B=W(cx+rc,Yc,cz+rc), C=W(cx+rc,Yc,cz-rc);   // the bucket up in it: only above the collar's near rim
+    X.save();X.beginPath();X.moveTo(...A);X.lineTo(...B);X.lineTo(...C);X.lineTo(C[0],C[1]-400);X.lineTo(A[0],A[1]-400);X.closePath();X.clip(); bucket(); X.restore(); }
+  brace([1,-1],[1,1]); brace([-1,1],[1,1]); Leg(1,-1); Leg(-1,1); Leg(1,1);                                     // the near braces, the legs over their ends
+  box(cx-0.1,cz-0.1,cx+0.1,cz+0.1,H,H+0.035,TL,TW,TD,0.9);                                                          // the cap
+  const blk=s_=>box(cx-0.025,cz+s_*0.035-(s_<0?0.03:0),cx+0.025,cz+s_*0.035+(s_>0?0.03:0),H+0.035,wy+0.02,TL,TW,TD,0.9);
+  blk(-1);                                                                                                      // the far bearing block, the wheel, the near one
+  if(done){ const ang=-up*(S.hi-S.lo)/wr, ring=Array.from({length:28},(_,i)=>{const a=i/28*Math.PI*2;return W(cx+Math.cos(a)*wr,wy+Math.sin(a)*wr,cz);});
+    X.lineCap='round';X.beginPath();
+    for(const a of [ang,ang+Math.PI/2]){X.moveTo(...W(cx-Math.cos(a)*wr,wy-Math.sin(a)*wr,cz));X.lineTo(...W(cx+Math.cos(a)*wr,wy+Math.sin(a)*wr,cz));}
+    X.strokeStyle='#000';X.lineWidth=2.8;X.stroke();X.strokeStyle=dk('#c8a87a');X.lineWidth=1.5;X.stroke();
+    X.strokeStyle='#000';X.lineWidth=3.2;X.beginPath();ring.forEach((q,i)=>i?X.lineTo(...q):X.moveTo(...q));X.closePath();X.stroke();X.strokeStyle=dk('#a08058');X.lineWidth=1.9;X.stroke();X.lineCap='butt'; }
+  X.strokeStyle='#000';X.lineWidth=1.2; blk(1);
+  X.fillStyle=dk('#3a3027');X.beginPath();X.arc(...W(cx,wy,cz+0.065),1,0,Math.PI*2);X.fill();                 // the axle's end
+  if(done){ const [mx,my]=W(cx-0.1,wy+wr,cz+0.1); drawChimneySmoke(mx,my-4); }                              // smoke risen through the tower, clear of the wheel
+}
 function drawBuilding(e, part = null){
   let b=BLDGS[e.btype];
   if(!b)return; // unknown btype: skip this entity instead of crashing the whole frame on b.w
@@ -1983,10 +2057,9 @@ function drawBuilding(e, part = null){
       // edge (no drawn thickness: as the house's, drawGableBlock — a thickness strip doubled the line)
       const t=0.035, se=0.05, ov=0.08, slope=rise/((x1-x0)/2), ev=wt+t-slope*se, za=z0-ov, zb=z1+ov;
       X.strokeStyle='#000';X.lineWidth=1.2;
-      poly([W(x0-se,ev,za),W(x0-se,ev,zb),W(xm,R+t,zb),W(xm,R+t,za)],dk('#8a6a48'));
-      poly([W(x1+se,ev,za),W(x1+se,ev,zb),W(xm,R+t,zb),W(xm,R+t,za)],dk('#715539'));
-      for(const xe of [x0-se,x1+se]) drawShingles2D(W(xm,R+t,za),W(xm,R+t,zb),W(xe,ev,zb),W(xe,ev,za));
-      drawPennant(...W(xm,R+t,(z0+z1)/2),tc,darken);
+      for(const [xe,shade] of [[x0-se,0],[x1+se,0.14]]){ const q=[W(xe,ev,za),W(xe,ev,zb),W(xm,R+t,zb),W(xm,R+t,za)];   // team shingles, the right slope shaded
+        poly(q,dk(tc),false); if(shade){path(q);X.fillStyle=`rgba(0,0,0,${shade})`;X.fill();}
+        drawShingles2D(W(xm,R+t,za),W(xm,R+t,zb),W(xe,ev,zb),W(xe,ev,za)); X.strokeStyle='#000';X.lineWidth=1.2; path(q); X.stroke(); }
       if(e.complete){   // the stump (behind the load), then the rope from the beam's end and the log on it, hauled up and down (hoistLength, as the 3D's)
         stump(0.22,0.8);
         const hy=top-0.02, L=hoistLength({lo:hy-(b0+lr+0.02), hi:0.12, phase:(e.x*3.1+e.y*1.7)%1}, animTick);
@@ -1997,51 +2070,23 @@ function drawBuilding(e, part = null){
     }
   }
   else if(e.btype==='MCAMP'){
-    bh=30;
+    bh=ownerAge===0?30:58;
     // Worn dirt clearing, enlarged past the tile so the oversized props
-    // (log pile / ore cart) still sit on worked ground
+    // (log pile / ore heaps) still sit on worked ground
     if(!inWorld) drawCampClearing(sx, sy, bw, bhh, darken);   // (in the game: the ground's own worn earth)
-
-    // Dark timber mine shed in the back-right quadrant
-    drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken, ownerAge === 0, e.id);
-    drawDoorRight(sx+14, sy+8, 20, 10, '#2e2519', darken);
-    drawPennant(sx+14, sy-10, tc, darken);
+    if(ownerAge===0){   // Dark timber mine shed in the back-right quadrant
+      drawCampShed(sx+14, sy+8, 20, 10, 12, 7, '#7a6a55','#635546','#55483a','#463b2f', darken, true, e.id);
+      drawDoorRight(sx+14, sy+8, 20, 10, '#2e2519', darken);
+      drawPennant(sx+14, sy-10, tc, darken);
+    } else drawShaftHouse2D(sx, sy, e, tc, darken);
     if(e.complete){
-      X.strokeStyle='#000000';X.lineWidth=1.2;
-      // The props, as pov3d's MCAMP lays them on the tile (tile-local tiles → screen, heights ×√3/2): a two-wheeled
-      // handcart — an open plank tray on the axle between two spoked wheels, gold ore heaped in it, its shafts resting
-      // on the ground ahead — and a pair of boulders (the deposits' own rocks: oreBoulder).
       const W=(x,y,z)=>[sx+(x-z)*HALF_TW, sy+(x+z)*HALF_TH-y*TREE_HPX], dk=c=>darken?darkenColor(c):c;
-      const L=0.17, Wd=0.11, wr=0.1, t=0.015, wh=0.08, cx=0.3, cz=0.8, y0=wr, y1=y0+t+wh, wood=dk('#6e5138');
-      const poly=(pts,col,line=true)=>{X.fillStyle=col;X.beginPath();X.moveTo(...pts[0]);for(const q of pts.slice(1))X.lineTo(...q);X.closePath();X.fill();if(line)X.stroke();};
-      const ring=(zw,r)=>Array.from({length:24},(_,i)=>{const a=i/24*Math.PI*2;return W(cx+Math.cos(a)*r,wr+Math.sin(a)*r,zw);});
-      const wheel=zw=>{ X.lineCap='round';                                                                   // rim, three spokes, hub (the trade cart's)
-        X.strokeStyle='#000';X.lineWidth=3.2;X.beginPath();ring(zw,wr-0.012).forEach((q,i)=>i?X.lineTo(...q):X.moveTo(...q));X.closePath();X.stroke();
-        X.strokeStyle=dk('#5a4630');X.lineWidth=1.4;X.stroke();
-        X.strokeStyle=dk('#74593a');X.lineWidth=0.9;X.beginPath();for(let i=0;i<3;i++){const a=i*Math.PI/3,dx=Math.cos(a)*(wr-0.015),dy=Math.sin(a)*(wr-0.015);X.moveTo(...W(cx-dx,wr-dy,zw));X.lineTo(...W(cx+dx,wr+dy,zw));}X.stroke();
-        X.fillStyle=dk('#74593a');X.strokeStyle='#000';X.lineWidth=0.8;X.beginPath();X.arc(...W(cx,wr,zw),1.1,0,Math.PI*2);X.fill();X.stroke();X.lineCap='butt';X.lineWidth=1.2; };
-      const shaft=zs=>{ const a=W(cx-L,y0+0.03,zs), b=W(0.03,0.0125,zs); X.lineCap='round';
-        X.strokeStyle='#000';X.lineWidth=2.4;X.beginPath();X.moveTo(...a);X.lineTo(...b);X.stroke();X.strokeStyle=wood;X.lineWidth=1;X.beginPath();X.moveTo(...a);X.lineTo(...b);X.stroke();
-        X.lineCap='butt';X.strokeStyle='#000';X.lineWidth=1.2; };
-      X.strokeStyle='#000';X.lineWidth=1.2;X.lineJoin='round';
-      wheel(cz-Wd-0.025); shaft(cz-Wd+0.02);                                                   // the far side, behind the tray
-      const xa=cx-L, xb=cx+L, za=cz-Wd, zb=cz+Wd;
-      // the open tray: its inside — the floor and the far walls' inner faces — the gold on the floor, then its near
-      // outside (the +x end, shaded; the near side) over the gold's foot, and the walls' top rim
-      poly([W(xa,y0,za),W(xb,y0,za),W(xb,y0,zb),W(xa,y0,zb)],dk('#5c4430'));
-      poly([W(xa+t,y0+t,za+t),W(xb-t,y0+t,za+t),W(xb-t,y0+t,zb-t),W(xa+t,y0+t,zb-t)],dk('#3c2d1e'),false);                       // the floor inside
-      poly([W(xa+t,y0+t,za+t),W(xb-t,y0+t,za+t),W(xb-t,y1,za+t),W(xa+t,y1,za+t)],dk('#4d3a28'),false);                            // the far side's inner face
-      poly([W(xa+t,y0+t,za+t),W(xa+t,y0+t,zb-t),W(xa+t,y1,zb-t),W(xa+t,y1,za+t)],dk('#453424'),false);                            // the back end's inner face
-      for (const [dx,dz,r,col] of [[-0.08,-0.04,0.05,'#d1a017'],[0.06,-0.04,0.045,'#c99815'],[0,0.03,0.055,'#e8b90f'],[-0.06,0.05,0.04,'#e8b90f'],[0.08,0.04,0.04,'#d1a017']].sort((p,q)=>(p[0]+p[1])-(q[0]+q[1]))) {
-        X.save();X.translate(...W(cx+dx,y0+t,cz+dz));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.6,az:r,rot:dx*31+dz*17,col:dk(col)},2);X.restore(); }   // the gold heaped on the floor
-      X.strokeStyle='#000';X.lineWidth=1.2;
-      poly([W(xb,y0,za),W(xb,y0,zb),W(xb,y1,zb),W(xb,y1,za)],dk('#5c4430'));
-      poly([W(xa,y0,zb),W(xb,y0,zb),W(xb,y1,zb),W(xa,y1,zb)],wood);
-      X.save();X.strokeStyle='rgba(0,0,0,0.3)';X.lineWidth=0.8;X.beginPath();X.moveTo(...W(xa+0.01,(y0+y1)/2,zb));X.lineTo(...W(xb-0.01,(y0+y1)/2,zb));X.stroke();X.restore();   // a plank seam
-      poly([W(xa,y1,za),W(xb,y1,za),W(xb,y1,zb),W(xa,y1,zb),W(xa,y1,za),W(xa+t,y1,za+t),W(xa+t,y1,zb-t),W(xb-t,y1,zb-t),W(xb-t,y1,za+t),W(xa+t,y1,za+t)],dk('#7d5f42'));   // the walls' top rim
-      wheel(cz+Wd+0.025); shaft(cz+Wd-0.02);                                                   // the near side, over it
-      for (const [x,z,r,col] of [[0.6,0.96,0.07,'#8c8c8c'],[0.8,0.8,0.15,'#9d9d9d']]) {      // the boulders, far to near
+      for (const [x,z,r,y,col] of [[0.24,0.78,0.06,0,'#d1a017'],[0.34,0.72,0.055,0,'#c99815'],[0.3,0.88,0.065,0,'#e8b90f'],[0.4,0.84,0.05,0,'#d1a017'],[0.32,0.8,0.05,0.07,'#e8b90f']].sort((p,q)=>(p[0]+p[1])-(q[0]+q[1]))) {   // the gold heap (pov3d's)
+        X.save();X.translate(...W(x,y,z));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.4,az:r,rot:(e.x+x)*5.3+(e.y+z)*2.9,col:dk(col)},2);X.restore(); }
+      if(ownerAge===0) for (const [x,z,r,col] of [[0.6,0.96,0.07,'#8c8c8c'],[0.8,0.8,0.15,'#9d9d9d']]) {      // the boulders, far to near
         X.save();X.translate(...W(x,0,z));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.7,az:r,rot:(e.x+x)*7.1+(e.y+z)*3.3,col:dk(col)},2.4);X.restore(); }
+      else for (const [x,z,r,y] of [[0.84,0.9,0.06,0],[0.9,0.76,0.055,0],[0.73,0.88,0.045,0],[0.8,0.8,0.07,0],[0.85,0.82,0.05,0.07]].sort((p,q)=>(p[0]+p[1])-(q[0]+q[1]))) {   // the stone heap (pov3d's)
+        X.save();X.translate(...W(x,y,z));oreBoulder({bx:0,bz:0,ax:r,ay:r*1.4,az:r,rot:(e.x+x)*7.1+(e.y+z)*3.3,col:dk('#9d9d9d')},2);X.restore(); }
       X.strokeStyle='#000000';X.lineWidth=1.2;
     }
   }

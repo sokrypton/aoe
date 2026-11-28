@@ -291,7 +291,7 @@ function _gPaintAway(A){
       // (a job's map codes come once a worker; then its blocks, each painted into a buffer of its own and handed back)
       + '\nonmessage = e => { const m = e.data; if (m.K) { MAP = m.MAP; GROUND_PX = m.G; _PAL = m.PAL; _K = m.K; _id = m.id; return; } if (m.id !== _id) return;'
       + ' const G = GROUND_PX, nw = (m.tx1 - m.tx0 + 1) * G, A = { kind: _K, ox: m.tx0 * G, oy: m.ty0 * G, nw, d: { data: new Uint8ClampedArray(nw * (m.ty1 - m.ty0 + 1) * G * 4) } };'
-      + ' _gPaint(A, m.tx0, m.ty0, m.tx1, m.ty1); postMessage({ id: m.id, tx0: m.tx0, ty0: m.ty0, tx1: m.tx1, ty1: m.ty1, near: m.near, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
+      + ' _gPaint(A, m.tx0, m.ty0, m.tx1, m.ty1); postMessage({ id: m.id, tx0: m.tx0, ty0: m.ty0, tx1: m.tx1, ty1: m.ty1, near: m.near, mend: m.mend, buf: A.d.data.buffer }, [A.d.data.buffer]); };';
     const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
     _gWorkers = Array.from({ length: n }, () => new Worker(url));
   } catch (err) { _gWorkers = []; } }
@@ -319,20 +319,23 @@ function _gPaintAway(A){
   _gWorkers.forEach(w => { w.onmessage = e => { const m = e.data; if (_gart !== A || m.id !== A.id) return;   // (a new match since: dropped)
     const nw = (m.tx1 - m.tx0 + 1) * G, rows = (m.ty1 - m.ty0 + 1) * G, buf = new Uint8ClampedArray(m.buf);
     for (let r = 0; r < rows; r++) A.d.data.set(buf.subarray(r * nw * 4, (r + 1) * nw * 4), ((m.ty0 * G + r) * N + m.tx0 * G) * 4);
-    A.x.putImageData(A.d, 0, 0, m.tx0 * G, m.ty0 * G, nw, rows); A.away--;
-    if (m.near && --near === 0 || A.away === 0) A.ver++; }; });
+    A.x.putImageData(A.d, 0, 0, m.tx0 * G, m.ty0 * G, nw, rows);
+    if (m.mend) { if (A.dirty) A.dirty.push([m.tx0 * G, m.ty0 * G, nw, rows]); A.ver++; return; }
+    A.away--; if (m.near && --near === 0 || A.away === 0) { A.ver++; A.dirty = null; } }; });
+  A.workers = true;
   const K = A.kind.slice();
   _gWorkers.forEach(w => w.postMessage({ id, MAP, G, PAL, K }));
   blocks.forEach((b, i) => _gWorkers[i % n].postMessage({ id, tx0: b.x0, ty0: b.y0, tx1: b.x1, ty1: b.y1, near: b.near }));
   return true;
 }
-// The picture, mended: { c: canvas, ver } — ver steps when it changed (the 3D ground's texture follows it).
+// The picture, mended: { c: canvas, ver, dirty } — ver steps when it changed (the 3D ground's texture follows it); dirty:
+// the pixel boxes mended since its reader last took them ([x, y, w, h]), or null when the whole picture is new.
 function groundArt(){
   if (!_gart || _gart.n !== MAP || _gart.map !== map) { const c = document.createElement('canvas'); c.width = c.height = MAP * GROUND_PX; const x = c.getContext('2d');
     _gart = { n: MAP, map, c, x, d: x.createImageData(c.width, c.height), kind: new Uint16Array(MAP * MAP), tread: new Uint16Array(MAP * MAP), treadTick: -1, ver: 0 };
     for (let y = 0; y < MAP; y++) for (let x2 = 0; x2 < MAP; x2++) _gart.kind[y * MAP + x2] = _gCode(x2, y, 0);
     if (!_gPaintAway(_gart)) { _gPaint(_gart, 0, 0, MAP - 1, MAP - 1); x.putImageData(_gart.d, 0, 0); }
-    _gart.ver++; return _gart; }
+    _gart.ver++; _gart.dirty = null; return _gart; }
   const A = _gart, K = A.kind, R0 = GROUND_WEAR_ON ? Math.ceil(GROUND_WEAR) + 1 : 1, ch = []; let x0, y0, x1, y1;
   groundTread(A);
   if (A.away > 0) return A;   // (being painted in the workers: mended once it's all in — the tiles' codes wait till then)
@@ -343,9 +346,15 @@ function groundArt(){
   const boxes = [];
   for (let i = 0; i < ch.length; i += 3) { const x = ch[i], y = ch[i + 1], R = ch[i + 2]; let b = boxes.find(b => b[4] === R && x >= b[0] - R && x <= b[2] + R && y >= b[1] - R && y <= b[3] + R);
     if (!b) boxes.push(b = [x, y, x, y, R]); else { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); } }
+  // (in a worker when there are: a building's box is 30-90ms of painting on a phone. All to the one worker, in order, so
+  // a later mend of a spot never lands under an earlier one; the codes go with them)
+  const W0 = A.workers && boxes.length ? _gWorkers[0] : null;
+  if (W0) W0.postMessage({ id: A.id, MAP, G: GROUND_PX, PAL: [0, 1, 2, 3, 4, 5, 6, 7].map(_gKind), K: K.slice() });
   for (const b of boxes) { const G = GROUND_PX, R = b[4]; x0 = Math.max(0, b[0] - R); y0 = Math.max(0, b[1] - R); x1 = Math.min(MAP - 1, b[2] + R); y1 = Math.min(MAP - 1, b[3] + R);
-    _gPaint(A, x0, y0, x1, y1); A.x.putImageData(A.d, 0, 0, x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G); }
-  if (boxes.length) A.ver++;
+    if (W0) { W0.postMessage({ id: A.id, tx0: x0, ty0: y0, tx1: x1, ty1: y1, mend: true }); continue; }
+    _gPaint(A, x0, y0, x1, y1); A.x.putImageData(A.d, 0, 0, x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G);
+    if (A.dirty) A.dirty.push([x0 * G, y0 * G, (x1 - x0 + 1) * G, (y1 - y0 + 1) * G]); }
+  if (boxes.length && !W0) A.ver++;
   return A;
 }
 function drawGround(minX, maxX, minY, maxY){

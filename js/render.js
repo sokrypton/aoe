@@ -2,10 +2,10 @@
 // Units are drawn between their last two tick positions, by the share of the next tick already elapsed: drawn at the
 // newest tick, a 4x frame advanced 1,1,2 ticks — every third frame each unit jumped double. gameLoop notes the
 // positions before its last tick; a draw runs inside withDrawPositions, which restores the sim's own positions after.
-const _drawPrev = new Map();   // unit id -> [x, y] one tick before the newest
+const _drawPrev = new Map();   // unit id -> [x, y, walking] one tick before the newest
 function noteDrawPositions(){
   _drawPrev.clear();
-  for (const e of entities) if (e.type === 'unit') _drawPrev.set(e.id, [e.x, e.y]);
+  for (const e of entities) if (e.type === 'unit') _drawPrev.set(e.id, [e.x, e.y, e.path.length > 0 || e.pressWalk === tick]);   // (+ walking then: isDrawnMoving)
 }
 function withDrawPositions(fn){
   if (!_drawPrev.size || typeof accumulator === 'undefined') return fn();   // (pages without the game loop: labs, icons)
