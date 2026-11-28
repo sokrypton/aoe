@@ -2746,13 +2746,17 @@ gl_Position = projectionMatrix * mvPosition;`;
   }
   // A LEGO hand on point H: a C-clip open away from the wrist (endM: where the forearm ends); holding something, its
   // hole is on the grip and along the item (gax), else upright. side: which hand (the fingers' jaw mirrors left/right).
+  const clipGeos = new Map();
   function legoHand(U, H, B, gax, endM, side){
     const v = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], nz = a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); };
     const f = nz(v(H, B)), up = [0.6, 0.8, 0], fu = up[0] * f[0] + up[1] * f[1] + up[2] * f[2], uu = nz(v(up, f.map(x => x * fu)));
     const r = ar(1.4), R = r * 0.92, X = new THREE.Vector3(...nz(v(H, endM))), Z = new THREE.Vector3(...(gax || uu));
     const Y = new THREE.Vector3().crossVectors(Z, X).normalize(); X.crossVectors(Y, Z);
     // the fingers' jaw by the hand, never by the pose: a swing turning the clip can't swap the thumb over
-    const geo = own(clipGeo(R, r * 0.36, r * 0.42, r * 1.05, -side)), m = new THREE.Mesh(geo, mat(SKIN));
+    // (the clip's shape is the hand's own — its side and the detail — so made once each and shared, never disposed, as
+    // blobGeos: every pose sampled made its hands anew)
+    const ck = side + ':' + POLY; let geo = clipGeos.get(ck); if (!geo) clipGeos.set(ck, geo = clipGeo(R, r * 0.36, r * 0.42, r * 1.05, -side));
+    const m = new THREE.Mesh(geo, mat(SKIN));
     m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z)); m.position.set(...H); m.userData.hullGeo = geo; U.add(m);
   }
   const ARM_U = 4.9, ARM_F = 4.6; // art px: upper arm, forearm — every pose keeps the hand's reach within their sum
@@ -4004,6 +4008,7 @@ gl_Position = projectionMatrix * mvPosition;`;
   // first, then the wool is pulled off bit by bit — the side facing up first — until only the simple
   // skeleton remains. The bones are built inside the body on the first dead
   // frame, so they roll with the fallen sheep.
+  const carcassBones = new WeakMap();   // (a kept carcass model keeps its bones: made once a model)
   function sheepBones(model){
     const body = model.getObjectByName('body'), neck = model.getObjectByName('neck'), bone = '#e8e0cc', sy = 0.3;
     const sk = new THREE.Group(), skull = new THREE.Group();
@@ -4200,11 +4205,15 @@ gl_Position = projectionMatrix * mvPosition;`;
   });
   // A sheaf just cut: it tips over from its stubble, falls flat, and fades.
   const farmPrev = new Map(), sheaves = [];
+  // A cut sheaf's shape, made once and shared (its own materials only: each fades on its own)
+  let sheafGeo = null;
   function cutSheaf(x, z, away){
-    const g = new THREE.Group(), px = 1 / PX, H = 6 / HPX, st = [], hd = [], up = new THREE.Vector3(0, 1, 0);
-    for (const k of [-1, 0, 1]) { const hk = H * (k ? 0.78 : 1), s = k * 2.5 * px * Math.SQRT1_2, dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
-      st.push([s / 2, hk / 2, -s / 2, 0.028, L, 0.028, q]); hd.push([s + dir.x * 0.035, hk + dir.y * 0.035, -s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); }
-    g.add(new THREE.Mesh(boxBatch(st, 'rod'), mat('#c9a227').clone())); g.add(new THREE.Mesh(boxBatch(hd, 'ball'), mat('#e8c84a').clone()));
+    if (!sheafGeo) { const px = 1 / PX, H = 6 / HPX, st = [], hd = [], up = new THREE.Vector3(0, 1, 0);
+      for (const k of [-1, 0, 1]) { const hk = H * (k ? 0.78 : 1), s = k * 2.5 * px * Math.SQRT1_2, dir = new THREE.Vector3(s, hk, -s), L = dir.length(), q = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
+        st.push([s / 2, hk / 2, -s / 2, 0.028, L, 0.028, q]); hd.push([s + dir.x * 0.035, hk + dir.y * 0.035, -s + dir.z * 0.035, 0.05, 0.09, 0.05, q]); }
+      sheafGeo = [boxBatch(st, 'rod'), boxBatch(hd, 'ball')]; for (const gg of sheafGeo) gg.userData.own = false; }
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(sheafGeo[0], mat('#c9a227').clone())); g.add(new THREE.Mesh(sheafGeo[1], mat('#e8c84a').clone()));
     g.position.set(x, 0.03, z); scene.add(g);
     // tips over toward `away` (world xz angle): about the horizontal axis square to it
     sheaves.push({ g, axis: new THREE.Vector3(Math.sin(away), 0, -Math.cos(away)), age: 0 });
@@ -4214,7 +4223,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const u = Math.min(1, s.age / 0.45); s.g.quaternion.setFromAxisAngle(s.axis, (Math.PI / 2 - 0.1) * u * u * (s.age > 0.45 && s.age < 0.6 ? 1 - 0.06 * Math.sin((s.age - 0.45) / 0.15 * Math.PI) : 1));
       const f = Math.max(0, Math.min(1, (2.2 - s.age) / 0.8));
       for (const m of s.g.children) { m.material.transparent = f < 1; m.material.opacity = f; }
-      if (s.age > 2.2) { scene.remove(s.g); for (const m of s.g.children) { m.geometry.dispose(); m.material.dispose(); } sheaves.splice(i, 1); } }
+      if (s.age > 2.2) { scene.remove(s.g); for (const m of s.g.children) m.material.dispose(); sheaves.splice(i, 1); } }
   }
   // Wheat that gives way: stalks and heads bend away from any unit standing
   // among them (wheatPushers, set each frame) and spring back as it moves on.
@@ -4422,9 +4431,11 @@ gl_Position = projectionMatrix * mvPosition;`;
     for (const c of g.children.slice()) g.remove(c);
     for (const c of baked.children.slice()) { if (c.geometry && c.geometry.userData.baked) c.geometry.userData.own = true; g.add(c); } // (own: dropSolid frees it)
   }
+  // (models the same in every age: an age-up re-keyed every farm and market, rebuilt for nothing)
+  const AGELESS = new Set(['FARM', 'MARKET']);
   function refreshModel(e){
     const hurt = isHurt(e);
-    const key = ageOf(e) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
+    const key = (AGELESS.has(e.btype) ? '-' : ageOf(e)) + ':' + teamColor(e.team) + ':' + (e.w || 0) + 'x' + (e.h || 0) + ':' + (e.complete ? 1 : 0) + (hurt ? ':hurt' : '')
       + (e.btype === 'FARM' ? ':' + farmStandingLive(e).map(Number).join('') : e.btype === 'HOUSE' ? ':' + (houseFlush(e) || []).map(Number).join('') : '');
     let rec = solids.get(e.id);
     // (a standing farm whose crop alone changed: the crop's geometry is swapped, the model stays)
@@ -5777,7 +5788,7 @@ gl_Position = projectionMatrix * mvPosition;`;
       const rigs = v.rigs || (v.rigs = new Map());
       if (v.rig) scene.remove(v.rig.root);
       let r = rigs.get(T); if (r && r.tc !== tc) { freeRig(r); rigs.delete(T); r = null; }
-      if (!r) { const ti = performance.now(); r = rigInstance(T, tc); frameParts.inst = (frameParts.inst || 0) + performance.now() - ti; r.tc = tc; rigs.set(T, r);
+      if (!r) { const ti = performance.now(); r = takeRig(T, tc) || rigInstance(T, tc); frameParts.inst = (frameParts.inst || 0) + performance.now() - ti; r.tc = tc; rigs.set(T, r);
         if (rigs.size > RIG_KEEP) for (const [k, o] of rigs) if (o !== r) { freeRig(o); rigs.delete(k); break; } }   // (the oldest goes)
       else { rigs.delete(T); rigs.set(T, r); }                                              // (most recent last)
       v.rig = r; scene.add(r.root);
@@ -5831,7 +5842,17 @@ gl_Position = projectionMatrix * mvPosition;`;
   window.__povRigLab = (kind, t, opt, tc = VIL_TC, female = false, legs = null) => { rigSampleUntil = Infinity; rigTemplateBudget = 9; const v = {}; const sc0 = scene; scene = { add(){}, remove(){} };
     try { rigPose(v, kind, t, female, opt || {}, tc, VIL_STEPS, false, legs); } finally { scene = sc0; } return v.rig && v.rig.root; };
   const RIG_KEEP = 6; // rigs a unit keeps to swap between (rigPose)
-  function freeRig(r){ scene.remove(r.root); disposeFaded(r.root); if (r.sk.boneTexture) r.sk.boneTexture.dispose(); }
+  // A rig let go (its unit out of view, a pose's spare) is KEPT by template and colour and the next unit needing one takes
+  // it: a pan re-made every villager coming back into view — new skinned meshes, bones, a bone texture each. (A faded one,
+  // a dying unit's, has its own see-through materials: freed.)
+  const rigPool = new Map(), RIG_POOL_PER = 8;
+  function freeRig(r){ scene.remove(r.root);
+    let faded = false; r.root.traverse(o => { if (o.userData.fadeOwn) faded = true; });
+    let m = rigPool.get(r.T); if (!m) rigPool.set(r.T, m = new Map()); let L = m.get(r.tc); if (!L) m.set(r.tc, L = []);
+    if (!faded && L.length < RIG_POOL_PER) { L.push(r); return; }
+    disposeRig(r); }
+  function disposeRig(r){ disposeFaded(r.root); if (r.sk.boneTexture) r.sk.boneTexture.dispose(); }
+  function takeRig(T, tc){ const m = rigPool.get(T), L = m && m.get(tc), r = L && L.length ? L.pop() : null; if (r) r.root.visible = true; return r; }
   function dropRig(v){ if (!v.rig) return; if (v.rigs) { for (const r of v.rigs.values()) freeRig(r); v.rigs = null; } else freeRig(v.rig); v.rig = null; v.obj = null; }
   const dropVillager = v => { if (v.rig) { dropRig(v); return; } if (v.obj) { scene.remove(v.obj); disposeFaded(v.obj); vilRefs.set(v.key, (vilRefs.get(v.key) || 1) - 1); } };
   // Frame interpolation (viewer-only). The sim ticks inside the frame loop, so
@@ -5888,21 +5909,28 @@ gl_Position = projectionMatrix * mvPosition;`;
   const _uFr = {}, drawnUnits = new Set();   // (drawnUnits: this frame's modelled units — the overlay's HP bars follow them)
   // An animal's model is costly to make (modelled, outlined, baked: the dragon a frame's worth), and every animal
   // leaving the camera's range and coming back — all through a pan — was made again. So a model let go is KEPT, hidden,
-  // by its key (kind + colour), a few a key, and the next animal of that key takes it; a match's start makes the wild
-  // dragon's and the player's own ahead of time (prewarmDragon). (Never one that died: a death pose stays in its parts.)
-  const keptModels = new Map(), KEPT_PER_KEY = 6;
+  // by its kind, and the next animal of that kind takes it; a match's start makes the dragon's ahead of time
+  // (prewarmDragon). (Never one that died: a death pose stays in its parts.) A model is the same for every owner — a
+  // sheep's owner shows only in its band, recoloured in place (animalTint): keyed by colour, a herd changing hands was
+  // all rebuilt, a dragon taken for a ride rebuilt for nothing.
+  const keptModels = new Map(), KEPT_PER_KEY = 24;
+  function animalTint(model, utype, tc){
+    if (utype !== 'sheep') return; const b = namedPart(model, 'band'); if (!b) return;
+    const m = mat(tc === teamColor(GAIA_TEAM) ? '#f2eddd' : tc); if (b.material !== m) b.material = m; }
   const keptTake = key => { const L = keptModels.get(key); return L && L.length ? L.pop() : null; };
   function animalBuild(utype, tc){ const g = animalModel(utype, tc); addHulls(g, true); bakeRigid(g, utype === 'sheep' ? SHEEP_LOOSE : null); scene.add(g); return g; }
   function dropAnimal(a){
     if (a.obj) quenchDragonFire(a.obj);
-    if (a.obj && !a.deadAt) { const L = keptModels.get(a.key) || []; if (L.length < (a.key.startsWith('dragon') ? 1 : KEPT_PER_KEY)) { a.obj.visible = false; L.push(a.obj); keptModels.set(a.key, L); return; } }
+    // (a carcass keeps for another carcass only: its pose is re-laid each frame from its age and what's left — deathPose, harvestPose)
+    const k = a.deadAt ? (a.key === 'sheep' ? 'sheep:dead' : null) : a.key;
+    if (a.obj && k) { const L = keptModels.get(k) || []; if (L.length < (k === 'dragon' ? 1 : KEPT_PER_KEY)) { a.obj.visible = false; L.push(a.obj); keptModels.set(k, L); return; } }
     dropSolid(a);
   }
   function prewarmDragon(){
     if (!entities.some(e => e.utype === 'dragon')) return;
-    for (const t of [GAIA_TEAM, myTeam]) { const key = 'dragon' + teamColor(t); if ((keptModels.get(key) || []).length || [...animals.values()].some(a => a.key === key)) continue;
-      const g = animalBuild('dragon', teamColor(t)); g.visible = false; keptModels.set(key, [g]);
-      warmCompile(g).catch(() => {}); }
+    if ((keptModels.get('dragon') || []).length || [...animals.values()].some(a => a.key === 'dragon')) return;
+    const g = animalBuild('dragon', teamColor(GAIA_TEAM)); g.visible = false; keptModels.set('dragon', [g]);
+    warmCompile(g).catch(() => {});
   }
   function updateUnits(){
     const now = performance.now(), dt = lastUnitsAt ? Math.min(0.1, (now - lastUnitsAt) / 1000) : 0;
@@ -5943,13 +5971,14 @@ gl_Position = projectionMatrix * mvPosition;`;
       }
       if (ANIMAL_MODELS[e.utype]) { // 3D, posed live from its state
         const dead = e.utype === 'sheep_carcass', kind = dead ? 'sheep' : e.utype; // a carcass keeps its sheep, toppled
-        const key = kind + teamColor(e.team), [tx, tz] = posOf(e);
+        const key = kind, [tx, tz] = posOf(e);
         let a = animals.get(e.id);
         const ty = dead && a ? a.yaw : -worldFacing(e); // the fallen keep the heading they died with
         // a rebuild (its colour changed: a slain sheep's tuft goes to nobody's white) keeps its life — else a sheep seen
         // alive came back already lying, its fall skipped
         let life = null; if (a && a.key !== key) { life = { alive: a.alive, deadAt: a.deadAt }; dropAnimal(a); a = null; }
-        if (!a) { const g = keptTake(key) || animalBuild(e.utype, teamColor(e.team)); g.visible = true; animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
+        if (!a) { const g = (dead && keptTake('sheep:dead')) || keptTake(key) || animalBuild(e.utype, teamColor(e.team)); g.visible = true; animals.set(e.id, a = { obj: g, key, x: tx, z: tz, yaw: ty, phase: 0, gait: 0, graze: 0, ...life }); }
+        animalTint(a.obj, kind, teamColor(e.team));
         // Glide between sim steps and ease into turns (a jump of 2+ tiles snaps).
         const nx = tx, nz = tz; // interpolated (posOf): no chase lag
         const mvx = nx - a.x, mvz = nz - a.z; a.moved = Math.hypot(mvx, mvz); a.x = nx; a.z = nz;
@@ -5967,7 +5996,7 @@ gl_Position = projectionMatrix * mvPosition;`;
         if (dead) { // seen already dead: lying; then eaten down as it is harvested
           a.deadAt = a.deadAt || (a.alive ? now : now - 2000);
           deathPose(a.obj, 'sheep', now - a.deadAt);
-          a.bones = a.bones || sheepBones(a.obj);
+          a.bones = a.bones || carcassBones.get(a.obj) || carcassBones.set(a.obj, sheepBones(a.obj)).get(a.obj);
           harvestPose(a.obj, a.bones, Math.max(0, Math.min(1, e.hp / (e.maxHp || 100))));
         }
         else { a.alive = true; animateAnimal(a.obj, e, a, dt); }
@@ -7091,6 +7120,8 @@ gl_Position = projectionMatrix * mvPosition;`;
     keptModels.clear();
     for (const v of villagers.values()) dropVillager(v);
     villagers.clear();
+    for (const m of rigPool.values()) for (const L of m.values()) for (const r of L) disposeRig(r);
+    rigPool.clear();
     for (const r of corpseModels.values()) dropCorpse(r);
     corpseModels.clear();
     dropFalls();
